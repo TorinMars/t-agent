@@ -1,0 +1,22 @@
+{
+  "name": "torin-x-web",
+  "version": "1.0.0",
+  "description": "Personal task dashboard",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "dependencies": {
+    "axios": "^1.7.2",
+    "better-sqlite3": "^12.11.1",
+    "dotenv": "^16.0.0",
+    "express": "^4.19.2",
+    "express-session": "^1.18.0",
+    "node-pty": "^1.1.0",
+    "ws": "^8.21.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.4"
+  }
+}

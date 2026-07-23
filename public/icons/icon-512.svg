@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- 背景 -->
+  <rect width="512" height="512" rx="106" fill="#1a1f2e"/>
+
+  <!-- 顶部高光条 -->
+  <rect x="0" y="0" width="512" height="10" rx="5" fill="#3b82f6" opacity="0.6"/>
+
+  <!-- 卡片底板 -->
+  <rect x="72" y="94" width="368" height="322" rx="38" fill="#252d3d"/>
+  <rect x="72" y="94" width="368" height="322" rx="38" fill="none" stroke="#3b4560" stroke-width="4"/>
+
+  <!-- 第一行：已完成 -->
+  <rect x="112" y="148" width="50" height="50" rx="25" fill="#1a7f37"/>
+  <polyline points="125,173 140,190 168,160" fill="none" stroke="#fff" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="186" y="158" width="152" height="14" rx="7" fill="#4b5878" opacity="0.7"/>
+  <rect x="186" y="178" width="100" height="10" rx="5" fill="#3b4560" opacity="0.5"/>
+
+  <!-- 分割线 -->
+  <rect x="112" y="216" width="288" height="3" rx="1.5" fill="#3b4560" opacity="0.6"/>
+
+  <!-- 第二行：进行中 -->
+  <circle cx="137" cy="272" r="25" fill="none" stroke="#3b4560" stroke-width="7"/>
+  <path d="M137 247 A25 25 0 0 1 162 272" fill="none" stroke="#3b82f6" stroke-width="7" stroke-linecap="round"/>
+  <rect x="186" y="258" width="176" height="14" rx="7" fill="#4b5878" opacity="0.8"/>
+  <rect x="186" y="278" width="120" height="10" rx="5" fill="#3b4560" opacity="0.5"/>
+
+  <!-- 分割线 -->
+  <rect x="112" y="316" width="288" height="3" rx="1.5" fill="#3b4560" opacity="0.6"/>
+
+  <!-- 第三行：待办 -->
+  <circle cx="137" cy="370" r="25" fill="none" stroke="#3b4560" stroke-width="7"/>
+  <rect x="186" y="356" width="136" height="14" rx="7" fill="#4b5878" opacity="0.6"/>
+  <rect x="186" y="376" width="88" height="10" rx="5" fill="#3b4560" opacity="0.4"/>
+</svg>

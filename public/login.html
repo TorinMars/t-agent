@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Login - Torin's Dashboard</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #0d1117;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    }
+    .card {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 12px;
+      padding: 48px 40px;
+      width: 340px;
+    }
+    .logo {
+      font-size: 24px;
+      font-weight: 700;
+      color: #c9d1d9;
+      margin-bottom: 6px;
+      text-align: center;
+    }
+    .subtitle {
+      font-size: 13px;
+      color: #8b949e;
+      margin-bottom: 32px;
+      text-align: center;
+    }
+    .form-group {
+      margin-bottom: 14px;
+    }
+    label {
+      display: block;
+      font-size: 12px;
+      color: #8b949e;
+      margin-bottom: 5px;
+    }
+    input {
+      width: 100%;
+      padding: 9px 12px;
+      background: #0d1117;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      color: #c9d1d9;
+      font-size: 14px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    input:focus { border-color: #58a6ff; }
+    input.error { border-color: #f85149; }
+    .btn-login {
+      width: 100%;
+      padding: 10px;
+      margin-top: 8px;
+      background: #238636;
+      border: none;
+      border-radius: 6px;
+      color: #fff;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .btn-login:hover { background: #2ea043; }
+    .btn-login:active { background: #1a7f37; }
+    .error-msg {
+      font-size: 12px;
+      color: #f85149;
+      margin-top: 10px;
+      text-align: center;
+      min-height: 18px;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo">📋 Tasks</div>
+    <div class="subtitle">个人任务管理 &amp; 快捷导航</div>
+    <div class="form-group">
+      <label>用户名</label>
+      <input type="text" id="username" autocomplete="username" placeholder="用户名">
+    </div>
+    <div class="form-group">
+      <label>密码</label>
+      <input type="password" id="password" autocomplete="current-password" placeholder="密码">
+    </div>
+    <button class="btn-login" id="btn-login">登录</button>
+    <div class="error-msg" id="error-msg"></div>
+    <div style="text-align:center;margin-top:20px;font-size:13px;color:#8b949e">
+      没有账号？<a href="/register.html" style="color:#58a6ff;text-decoration:none">注册</a>
+    </div>
+  </div>
+  <script>
+    async function doLogin() {
+      const username = document.getElementById('username').value.trim();
+      const password = document.getElementById('password').value;
+      const errEl = document.getElementById('error-msg');
+      errEl.textContent = '';
+
+      if (!username || !password) {
+        errEl.textContent = '用户名和密码不能为空';
+        return;
+      }
+
+      try {
+        const res = await fetch('/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password }),
+        });
+        if (res.ok) {
+          location.href = '/';
+        } else {
+          const data = await res.json().catch(() => ({}));
+          errEl.textContent = data.error || '登录失败';
+        }
+      } catch (e) {
+        errEl.textContent = '网络错误，请重试';
+      }
+    }
+
+    document.getElementById('btn-login').addEventListener('click', doLogin);
+    document.getElementById('password').addEventListener('keydown', e => {
+      if (e.key === 'Enter') doLogin();
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Torin's Tasks</title>
+  <link rel="manifest" href="/manifest.json">
+  <meta name="theme-color" content="#f6f8fa">
+  <link rel="stylesheet" href="/css/style.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5/css/xterm.css">
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5/lib/xterm.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10/lib/addon-fit.js"></script>
+</head>
+<body>
+  <header class="header">
+    <div class="header-left">
+      <span class="header-logo">📋 Tasks</span>
+    </div>
+    <div class="header-right">
+      <img id="user-avatar" class="user-avatar" src="" alt="" style="display:none">
+      <span id="user-name" class="user-name"></span>
+      <button class="btn-logout" id="btn-settings" style="margin-right:2px">⚙ 设置</button>
+      <form action="/auth/logout" method="POST" style="display:inline">
+        <button type="submit" class="btn-logout">登出</button>
+      </form>
+    </div>
+  </header>
+
+  <div class="quicklinks-bar" id="quicklinks-bar">
+    <span class="quicklinks-label">🔗</span>
+    <div class="quicklinks-chips" id="quicklinks-chips"></div>
+    <button class="quicklinks-add" id="btn-add-link" title="添加链接">+</button>
+    <button class="quicklinks-toggle" id="btn-toggle-links" title="展开/折叠">▾</button>
+  </div>
+
+  <div class="layout">
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-toolbar">
+        <button class="btn-new-task" id="btn-new-task">+ 新建任务</button>
+      </div>
+      <div class="task-nav" id="task-nav"></div>
+    </aside>
+
+    <div class="content-area">
+      <div class="content-toolbar" id="content-toolbar" style="display:none">
+        <button class="toolbar-btn" id="btn-reveal-folder" title="在 Finder 中显示">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M1 3.5A1.5 1.5 0 0 1 2.5 2h2.764c.958 0 1.76.56 2.311 1.184C7.985 3.648 8.48 4 9 4h4.5A1.5 1.5 0 0 1 15 5.5v7a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 1 12.5z"/></svg>
+          打开文件夹
+        </button>
+        <button class="toolbar-btn" id="btn-open-vscode" title="用 VSCode 打开">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M2 2.5A.5.5 0 0 1 2.5 2h11a.5.5 0 0 1 .5.5v11a.5.5 0 0 1-.5.5h-11a.5.5 0 0 1-.5-.5zm1 1v9h9v-9z"/><path d="M5.5 7a.5.5 0 0 1 .5-.5h4a.5.5 0 0 1 0 1H6a.5.5 0 0 1-.5-.5m0 2a.5.5 0 0 1 .5-.5h2a.5.5 0 0 1 0 1H6a.5.5 0 0 1-.5-.5M5 4.5a.5.5 0 0 0 0 1h6a.5.5 0 0 0 0-1z"/></svg>
+          VSCode 打开
+        </button>
+        <button class="toolbar-btn" id="btn-share-md" title="生成分享链接">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M11 2.5a2.5 2.5 0 1 1 .603 1.628l-6.718 3.12a2.499 2.499 0 0 1 0 1.504l6.718 3.12a2.5 2.5 0 1 1-.488.876l-6.718-3.12a2.5 2.5 0 1 1 0-3.256l6.718-3.12A2.5 2.5 0 0 1 11 2.5"/></svg>
+          分享
+        </button>
+      </div>
+
+      <!-- Tab 栏 -->
+      <div class="content-tabs" id="content-tabs" style="display:none">
+        <button class="tab-btn active" data-tab="doc">📄 文档</button>
+        <button class="tab-btn" data-tab="shell">⌨ 终端</button>
+      </div>
+
+      <div class="content-body">
+        <main class="preview-pane" id="preview-pane">
+          <div class="preview-empty" id="preview-empty">
+            <span>← 选择左侧任务查看详情</span>
+          </div>
+          <div class="preview-content" id="preview-content" style="display:none"></div>
+        </main>
+
+        <aside class="toc-pane" id="toc-pane" style="display:none">
+          <div class="toc-title">目录</div>
+          <div class="toc-list" id="toc-list"></div>
+        </aside>
+
+        <!-- 终端面板 -->
+        <div class="terminal-pane" id="terminal-pane" style="display:none">
+          <div id="xterm-container"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="modal-overlay" style="display:none">
+    <div class="modal" id="modal">
+      <div class="modal-header">
+        <span id="modal-title">新建任务</span>
+        <button class="modal-close" id="modal-close">&times;</button>
+      </div>
+      <div class="modal-body" id="modal-body"></div>
+    </div>
+  </div>
+
+  <div class="context-menu" id="context-menu" style="display:none">
+    <ul id="context-menu-list"></ul>
+  </div>
+
+  <script src="/js/app.js"></script>
+  <script src="/js/bookmarks.js"></script>
+  <script src="/js/tasks.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js').catch(() => {});
+    }
+  </script>
+</body>
+</html>

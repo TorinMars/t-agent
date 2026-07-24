@@ -58,7 +58,12 @@ function getOrCreateSession(taskId, workDir, dirWarning) {
       '/sbin',
       process.env.PATH,
     ].filter(Boolean).join(':');
-    pty = nodePty.spawn('/bin/zsh', [], {
+    // macOS 通常使用 zsh，而 Linux 服务器常只有 bash/sh。选择实际存在的
+    // shell，避免 node-pty 因固定的 /bin/zsh 路径不存在而启动失败。
+    const shell = ['/bin/zsh', '/bin/bash', '/bin/sh'].find(candidate => fs.existsSync(candidate));
+    if (!shell) throw new Error('未找到可用的 shell（/bin/zsh、/bin/bash、/bin/sh）');
+
+    pty = nodePty.spawn(shell, [], {
       name: 'xterm-256color',
       cols: 220,
       rows: 50,
@@ -67,9 +72,11 @@ function getOrCreateSession(taskId, workDir, dirWarning) {
         ...process.env,
         TERM: 'xterm-256color',
         PATH: fullPath,
-        LANG: 'zh_CN.UTF-8',
-        LC_ALL: 'zh_CN.UTF-8',
-        LC_CTYPE: 'zh_CN.UTF-8',
+        // 使用服务器实际可用的 UTF-8 locale。部分 Linux 最小安装没有
+        // zh_CN.UTF-8，强制设置会导致 bash 报错并让中文路径显示乱码。
+        LANG: 'C.UTF-8',
+        LC_ALL: 'C.UTF-8',
+        LC_CTYPE: 'C.UTF-8',
       },
     });
   } catch (e) {

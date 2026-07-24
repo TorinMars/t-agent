@@ -4,21 +4,24 @@
 
 ---
 
-## 部署步骤
+## 安装
 
-### 1. 创建 GitHub OAuth App
+支持 macOS 和主流 Linux 服务器发行版。脚本会安装 Node 依赖，并在首次运行时交互询问用户名和密码来创建本地账号与 `.env` 配置；网页端不提供注册功能。脚本会注册开机自启服务：macOS 使用 LaunchAgent，Linux 使用 systemd。
 
-前往 https://github.com/settings/developers → **New OAuth App**
+```bash
+chmod +x install.sh
+./install.sh
+```
 
-| 字段 | 填写 |
-|------|------|
-| Application name | 随意 |
-| Homepage URL | `http://localhost:3000` |
-| Authorization callback URL | `http://localhost:3000/auth/github/callback` |
+可在非交互环境传入账号、密码与端口：
 
-创建后记录 **Client ID** 和 **Client Secret**。
+```bash
+./install.sh --port 13148 --username admin --password '请换成强密码' --tasks-dir /srv/t-agent-tasks
+```
 
-### 2. 配置环境变量
+已有 `.env` 不会被覆盖；仅在显式传入 `--port` 或 `--tasks-dir` 时更新相应值。使用 `./install.sh --help` 查看完整参数。
+
+### 手动配置（可选）
 
 ```bash
 cp .env.example .env
@@ -27,12 +30,10 @@ cp .env.example .env
 编辑 `.env`：
 
 ```env
-GITHUB_CLIENT_ID=你的 Client ID
-GITHUB_CLIENT_SECRET=你的 Client Secret
-GITHUB_CALLBACK_URL=http://localhost:3000/auth/github/callback
-ALLOWED_GITHUB_USERS=你的 GitHub 用户名
 PORT=3000
 SESSION_SECRET=随机字符串（越长越好）
+# 用 node scripts/gen-password.js <用户名> <密码> 生成
+AUTH_USERS=用户名:salt:hash
 TASKS_BASE_DIR=/你想存放任务 md 文件的目录
 ```
 
@@ -48,7 +49,7 @@ UPDATE_ADMIN_USERS=你的本地用户名
 
 定时检查只读取 GitHub 上的 `VERSION.json`。只有更新管理员在页面二次确认后，服务才会检查工作区、备份 SQLite、执行 fast-forward 更新、安装依赖、构建并请求守护进程重启。未设置 `GITHUB_VERSION_URL` 时，会尝试根据 Git `origin` 和目标分支推导 Raw 链接。
 
-### 3. 安装依赖
+### 安装依赖
 
 需要 Node.js 18+。
 
@@ -60,13 +61,13 @@ npm install
 > macOS: `xcode-select --install`
 > Linux: `apt install build-essential python3`
 
-### 4. 启动
+### 启动
 
 ```bash
 npm start
 ```
 
-访问 http://localhost:3000，用 GitHub 账号登录即可。
+访问 http://localhost:3000，用本地账号登录即可。
 
 ---
 

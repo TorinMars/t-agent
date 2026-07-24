@@ -14,6 +14,11 @@ const updates = require('./services/update-manager');
 
 const app = express();
 
+// 宝塔/Nginx 在 HTTPS 终止后转发到本服务时，会通过
+// X-Forwarded-Proto 传递原始协议。信任一层代理，确保安全会话 Cookie
+// 能在 HTTPS 域名访问时被正确写入。
+app.set('trust proxy', 1);
+
 function getLocalIP() {
   for (const ifaces of Object.values(os.networkInterfaces())) {
     for (const iface of ifaces) {

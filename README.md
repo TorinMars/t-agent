@@ -36,6 +36,18 @@ SESSION_SECRET=随机字符串（越长越好）
 TASKS_BASE_DIR=/你想存放任务 md 文件的目录
 ```
 
+检查更新相关配置：
+
+```env
+GITHUB_VERSION_URL=https://raw.githubusercontent.com/owner/repository/main/VERSION.json
+UPDATE_GIT_REMOTE=origin
+UPDATE_GIT_BRANCH=main
+UPDATE_CHECK_INTERVAL_SECONDS=1800
+UPDATE_ADMIN_USERS=你的本地用户名
+```
+
+定时检查只读取 GitHub 上的 `VERSION.json`。只有更新管理员在页面二次确认后，服务才会检查工作区、备份 SQLite、执行 fast-forward 更新、安装依赖、构建并请求守护进程重启。未设置 `GITHUB_VERSION_URL` 时，会尝试根据 Git `origin` 和目标分支推导 Raw 链接。
+
 ### 3. 安装依赖
 
 需要 Node.js 18+。

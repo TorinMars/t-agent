@@ -1,19 +1,22 @@
 const Tasks = (() => {
   let tasks = [];
   let selectedId = null;
-  const STATUS_ORDER = ['doing', 'todo', 'done'];
-  const STATUS_LABEL = { doing: '进行中', todo: '待办', done: '已完成' };
-  const STATUS_NEXT = { todo: 'doing', doing: 'done', done: 'todo' };
+  const STATUS_ORDER = ['personal', 'doing', 'todo', 'done'];
+  const STATUS_LABEL = { doing: '进行中', todo: '待办', done: '已完成', personal: '个人任务' };
+  const STATUS_NEXT = { todo: 'doing', doing: 'done', done: 'personal', personal: 'todo' };
   const PRIORITY_LABEL = { high: '高', normal: '中', low: '低' };
   const collapsedGroups = {};
   let tocObserver = null;
   let mdWatcher = null;
+  let editorState = null;
 
   // ── Tab & Terminal state ──
-  let activeTab = 'doc';   // 'doc' | 'shell'
+  const VALID_TABS = ['doc', 'readme', 'agent', 'todos', 'shell'];
+  let activeTab = 'doc';
 
   function getTaskTab(id) {
-    return localStorage.getItem(`task-tab-${id}`) || 'doc';
+    const tab = localStorage.getItem(`task-tab-${id}`) || 'doc';
+    return VALID_TABS.includes(tab) ? tab : 'doc';
   }
   function saveTaskTab(id, tab) {
     localStorage.setItem(`task-tab-${id}`, tab);
@@ -23,7 +26,7 @@ const Tasks = (() => {
   let termWs = null;
   let termTaskId = null;   // 当前终端绑定的 taskId
 
-  mermaid.initialize({ startOnLoad: false, theme: 'default' });
+  mermaid.initialize({ startOnLoad: false, theme: 'default', gantt: { useWidth: undefined }, locale: 'zh-CN' });
 
   const previewPane = document.getElementById('preview-pane');
   const contentToolbar = document.getElementById('content-toolbar');
@@ -32,27 +35,33 @@ const Tasks = (() => {
 
   // ── Tab 切换 ──
   contentTabs.addEventListener('click', (e) => {
+    if (window.RemoteTasks && window.RemoteTasks.isSelected()) return;
     const btn = e.target.closest('.tab-btn');
     if (!btn) return;
     const tab = btn.dataset.tab;
     if (tab === activeTab) return;
+    if (!confirmDiscardEditor()) return;
+    const previousTab = activeTab;
     activeTab = tab;
     if (selectedId) saveTaskTab(selectedId, tab);
     contentTabs.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
-    if (tab === 'doc') {
-      // 离开 shell tab → 补设 done
-      if (selectedId) onLeaveShellTab(selectedId);
+    if (tab !== 'shell') {
+      if (selectedId && previousTab === 'shell') onLeaveShellTab(selectedId);
       previewPane.style.display = '';
       terminalPane.style.display = 'none';
       const task = tasks.find(t => t.id === selectedId);
       if (task) renderPreview(task);
     } else {
+      const task = tasks.find(t => t.id === selectedId);
+      contentToolbar.style.visibility = 'visible';
+      contentToolbar.style.pointerEvents = '';
+      contentToolbar.style.display = task && task.md_path ? 'flex' : 'none';
+      setEditButtonState(false);
       previewPane.style.display = 'none';
       document.getElementById('toc-pane').style.display = 'none';
       terminalPane.style.display = 'flex';
       // 切到终端时清除"执行完成待查看"状态
       if (selectedId && termState.get(selectedId) === 'done') updateTermDot(selectedId, 'idle');
-      const task = tasks.find(t => t.id === selectedId);
       if (task) {
         connectTerminal(task);
         // connectTerminal 是异步的（onopen），已有实例直接 focus
@@ -109,14 +118,85 @@ const Tasks = (() => {
     termDoneTimers.set(taskId, timer);
   }
 
+  function disposeTerminalInstance(taskId) {
+    const inst = termInstances.get(taskId);
+    if (!inst) return;
+    inst.disposed = true;
+    if (inst.reconnectTimer) clearTimeout(inst.reconnectTimer);
+    if (inst.ws) inst.ws.close();
+    inst.term.dispose();
+    inst.el.remove();
+    termInstances.delete(taskId);
+    if (termTaskId === taskId) {
+      term = null;
+      fitAddon = null;
+      termWs = null;
+      termTaskId = null;
+    }
+  }
+
+  function scheduleReconnect(task, inst) {
+    if (inst.disposed || termInstances.get(task.id) !== inst || inst.reconnectTimer) return;
+    const delay = Math.min(1000 * (2 ** inst.reconnectAttempts), 30000);
+    inst.reconnectAttempts += 1;
+    inst.reconnectTimer = setTimeout(() => {
+      inst.reconnectTimer = null;
+      if (!inst.disposed && termInstances.get(task.id) === inst) connectWebSocket(task, inst);
+    }, delay);
+    inst.term.write(`\r\n\x1b[33m[连接已断开，${Math.ceil(delay / 1000)}s 后自动重连...]\x1b[0m\r\n`);
+  }
+
+  function connectWebSocket(task, inst) {
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    const ws = new WebSocket(`${proto}://${location.host}/terminal/ws?taskId=${task.id}`);
+    ws.binaryType = 'arraybuffer';
+    inst.ws = ws;
+    termWs = ws;
+
+    ws.onopen = () => {
+      const reconnecting = inst.reconnectAttempts > 0;
+      if (reconnecting) inst.term.reset();
+      inst.reconnectAttempts = 0;
+      inst.fitAddon.fit();
+      inst.term.focus();
+      ws.send(JSON.stringify({ type: 'resize', cols: inst.term.cols, rows: inst.term.rows }));
+      if (reconnecting) inst.term.write('\x1b[32m[重新连接成功]\x1b[0m\r\n');
+    };
+
+    ws.onmessage = (e) => {
+      if (typeof e.data === 'string' && e.data.startsWith('{"type":"history"')) {
+        try {
+          const msg = JSON.parse(e.data);
+          inst.paused = true;
+          inst.term.write(msg.data, () => {
+            requestAnimationFrame(() => requestAnimationFrame(() => { inst.paused = false; }));
+          });
+        } catch { inst.term.write(e.data); }
+        return;
+      }
+      if (e.data instanceof ArrayBuffer) {
+        inst.term.write(new Uint8Array(e.data));
+      } else {
+        inst.term.write(e.data);
+        onTermData(task.id, e.data);
+      }
+    };
+
+    ws.onclose = () => {
+      if (inst.ws !== ws || inst.disposed || termInstances.get(task.id) !== inst) return;
+      inst.ws = null;
+      scheduleReconnect(task, inst);
+    };
+
+    ws.onerror = () => {};
+  }
+
   function connectTerminal(task) {
     const container = document.getElementById('xterm-container');
 
-    // 已有实例且 ws 活着：直接显示，不重连
     if (termInstances.has(task.id)) {
       const inst = termInstances.get(task.id);
       if (inst.ws && inst.ws.readyState === WebSocket.OPEN) {
-        // 隐藏所有，显示当前
         termInstances.forEach((i, id) => i.el.style.display = id === task.id ? '' : 'none');
         term = inst.term;
         fitAddon = inst.fitAddon;
@@ -125,17 +205,11 @@ const Tasks = (() => {
         setTimeout(() => { inst.fitAddon.fit(); inst.term.focus(); }, 0);
         return;
       }
-      // ws 断了，清理旧实例
-      inst.ws && inst.ws.close();
-      inst.term.dispose();
-      inst.el.remove();
-      termInstances.delete(task.id);
+      disposeTerminalInstance(task.id);
     }
 
-    // 隐藏其他任务的终端
     termInstances.forEach(i => i.el.style.display = 'none');
 
-    // 为当前任务创建新 Terminal 实例
     const el = document.createElement('div');
     el.style.cssText = 'width:100%;height:100%';
     container.appendChild(el);
@@ -151,67 +225,33 @@ const Tasks = (() => {
     t.loadAddon(fa);
     t.open(el);
 
+    const inst = {
+      term: t,
+      fitAddon: fa,
+      ws: null,
+      el,
+      paused: false,
+      disposed: false,
+      reconnectTimer: null,
+      reconnectAttempts: 0,
+    };
+    termInstances.set(task.id, inst);
     termTaskId = task.id;
     term = t;
     fitAddon = fa;
 
-    let paused = false;
-    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    const ws = new WebSocket(`${proto}://${location.host}/terminal/ws?taskId=${task.id}`);
-    termWs = ws;
-
-    const inst = { term: t, fitAddon: fa, ws, el };
-    termInstances.set(task.id, inst);
-
-    ws.binaryType = 'arraybuffer';
-
-    ws.onopen = () => {
-      fa.fit();
-      t.focus();
-      ws.send(JSON.stringify({ type: 'resize', cols: t.cols, rows: t.rows }));
-    };
-
-    ws.onmessage = (e) => {
-      if (typeof e.data === 'string' && e.data.startsWith('{"type":"history"')) {
-        try {
-          const msg = JSON.parse(e.data);
-          paused = true;
-          t.write(msg.data, () => {
-            // 等 xterm 处理完所有 ANSI 序列（含 DA response）再解除暂停
-            // 双 rAF 确保当前帧渲染完毕后再开放输入，避免 DA response 漏入 shell
-            requestAnimationFrame(() => requestAnimationFrame(() => { paused = false; }));
-          });
-        } catch { t.write(e.data); }
-        return;
-      }
-      if (e.data instanceof ArrayBuffer) {
-        t.write(new Uint8Array(e.data));
-      } else {
-        t.write(e.data);
-        onTermData(task.id, e.data);
-      }
-    };
-
-    ws.onclose = () => {
-      if (termInstances.get(task.id)?.ws === ws) {
-        t.write('\r\n\x1b[31m[连接已断开，切换任务可重新连接]\x1b[0m\r\n');
-      }
-    };
-
-    ws.onerror = () => {
-      t.write('\r\n\x1b[31m[WebSocket 连接失败]\x1b[0m\r\n');
-    };
-
     t.onData(data => {
-      if (paused) return;
-      if (ws.readyState === WebSocket.OPEN) ws.send(data);
+      if (inst.paused) return;
+      if (inst.ws && inst.ws.readyState === WebSocket.OPEN) inst.ws.send(data);
     });
 
     t.onResize(({ cols, rows }) => {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'resize', cols, rows }));
+      if (inst.ws && inst.ws.readyState === WebSocket.OPEN) {
+        inst.ws.send(JSON.stringify({ type: 'resize', cols, rows }));
       }
     });
+
+    connectWebSocket(task, inst);
 
     window.addEventListener('resize', () => {
       if (activeTab === 'shell' && termTaskId === task.id) fa.fit();
@@ -253,12 +293,20 @@ const Tasks = (() => {
     }
   });
 
+  document.getElementById('btn-edit-md').addEventListener('click', () => {
+    if (!selectedId || !['doc', 'readme', 'agent'].includes(activeTab)) return;
+    const task = tasks.find(t => t.id === selectedId);
+    if (task) openDocumentEditor(task, activeTab);
+  });
+
   let scrollSaveTimer = null;
   previewPane.addEventListener('scroll', () => {
     if (!selectedId) return;
     clearTimeout(scrollSaveTimer);
     scrollSaveTimer = setTimeout(() => {
-      localStorage.setItem(`mdScroll_${selectedId}`, previewPane.scrollTop);
+      if (['doc', 'readme', 'agent'].includes(activeTab)) {
+        localStorage.setItem(`mdScroll_${selectedId}_${activeTab}`, previewPane.scrollTop);
+      }
     }, 150);
   });
 
@@ -297,6 +345,193 @@ const Tasks = (() => {
     return m.parse(content);
   }
 
+  // 给已渲染的 mermaid SVG 加放大按钮，点击弹出 modal
+  function wrapMermaidDiagrams(container) {
+    container.querySelectorAll('.mermaid').forEach(el => {
+      if (el.dataset.zoomBound) return;
+      el.dataset.zoomBound = '1';
+
+      const wrap = document.createElement('div');
+      wrap.className = 'mermaid-wrap';
+      // actor 每个参与者渲染顶部+底部共2个 g.actor，除以2得实际数量
+      const actorCount = el.querySelectorAll('g.actor').length / 2;
+      const svg = el.querySelector('svg');
+      if (actorCount > 0 && actorCount <= 3) {
+        wrap.style.width = '50%';
+        if (svg) { svg.style.width = '100%'; svg.style.height = 'auto'; }
+      } else {
+        if (svg) { svg.style.width = '100%'; svg.style.height = 'auto'; }
+      }
+      el.parentNode.insertBefore(wrap, el);
+      wrap.appendChild(el);
+
+      const btn = document.createElement('button');
+      btn.className = 'mermaid-expand-btn';
+      btn.title = '放大查看';
+      btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>';
+      wrap.appendChild(btn);
+
+      btn.addEventListener('click', () => openMermaidModal(el));
+    });
+  }
+
+  // Modal 放大查看
+  let mermaidModal = null;
+  function openMermaidModal(el) {
+    if (!mermaidModal) {
+      mermaidModal = document.createElement('div');
+      mermaidModal.className = 'mermaid-modal';
+      mermaidModal.innerHTML = `
+        <div class="mermaid-modal-backdrop"></div>
+        <div class="mermaid-modal-box">
+          <button class="mermaid-modal-close" title="关闭">✕</button>
+          <div class="mermaid-modal-hint">触控板缩放 · 拖拽移动 · 双击重置</div>
+          <div class="mermaid-modal-viewport">
+            <div class="mermaid-modal-canvas"></div>
+          </div>
+        </div>`;
+      document.body.appendChild(mermaidModal);
+
+      const backdrop = mermaidModal.querySelector('.mermaid-modal-backdrop');
+      const closeBtn = mermaidModal.querySelector('.mermaid-modal-close');
+      const viewport = mermaidModal.querySelector('.mermaid-modal-viewport');
+      const canvas = mermaidModal.querySelector('.mermaid-modal-canvas');
+
+      let scale = 1, tx = 0, ty = 0;
+      let fitScale = 1; // 每次打开时计算的适合缩放值
+      let dragging = false, startX = 0, startY = 0, startTx = 0, startTy = 0;
+
+      const applyTransform = () => {
+        canvas.style.transform = `translate(${tx}px,${ty}px) scale(${scale})`;
+      };
+      const reset = () => {
+        fitScale = mermaidModal._fitScale || 1;
+        scale = fitScale; tx = 0; ty = 0;
+        applyTransform();
+      };
+
+      viewport.addEventListener('wheel', e => {
+        e.preventDefault();
+        if (e.ctrlKey || e.metaKey) {
+          // 触控板双指捏合 → 缩放
+          const delta = e.deltaY < 0 ? 0.1 : -0.1;
+          scale = Math.min(8, Math.max(0.2, +(scale + delta).toFixed(2)));
+        } else {
+          // 触控板双指平移 → 移动
+          tx -= e.deltaX;
+          ty -= e.deltaY;
+        }
+        applyTransform();
+      }, { passive: false });
+
+      viewport.addEventListener('mousedown', e => {
+        dragging = true;
+        startX = e.clientX; startY = e.clientY;
+        startTx = tx; startTy = ty;
+        viewport.style.cursor = 'grabbing';
+      });
+      window.addEventListener('mousemove', e => {
+        if (!dragging) return;
+        tx = startTx + (e.clientX - startX);
+        ty = startTy + (e.clientY - startY);
+        applyTransform();
+      });
+      window.addEventListener('mouseup', () => { dragging = false; viewport.style.cursor = ''; });
+
+      // 触控：双指开合缩放，双指/单指移动
+      let lastTouchDist = null, lastTouchMidX = 0, lastTouchMidY = 0;
+      viewport.addEventListener('touchstart', e => {
+        e.preventDefault();
+        if (e.touches.length === 2) {
+          const dx = e.touches[0].clientX - e.touches[1].clientX;
+          const dy = e.touches[0].clientY - e.touches[1].clientY;
+          lastTouchDist = Math.hypot(dx, dy);
+          lastTouchMidX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+          lastTouchMidY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+        } else if (e.touches.length === 1) {
+          lastTouchDist = null;
+          startX = e.touches[0].clientX; startY = e.touches[0].clientY;
+          startTx = tx; startTy = ty;
+        }
+      }, { passive: false });
+
+      viewport.addEventListener('touchmove', e => {
+        e.preventDefault();
+        if (e.touches.length === 2) {
+          const dx = e.touches[0].clientX - e.touches[1].clientX;
+          const dy = e.touches[0].clientY - e.touches[1].clientY;
+          const dist = Math.hypot(dx, dy);
+          const midX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+          const midY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+          // 缩放
+          if (lastTouchDist) {
+            scale = Math.min(8, Math.max(0.2, +(scale * dist / lastTouchDist).toFixed(3)));
+          }
+          // 平移：用当前帧与上一帧中心点的差值增量累加
+          tx += midX - lastTouchMidX;
+          ty += midY - lastTouchMidY;
+          lastTouchDist = dist;
+          lastTouchMidX = midX;
+          lastTouchMidY = midY;
+          applyTransform();
+        } else if (e.touches.length === 1 && lastTouchDist === null) {
+          tx = startTx + (e.touches[0].clientX - startX);
+          ty = startTy + (e.touches[0].clientY - startY);
+          applyTransform();
+        }
+      }, { passive: false });
+
+      viewport.addEventListener('touchend', e => {
+        if (e.touches.length < 2) lastTouchDist = null;
+        if (e.touches.length === 1) {
+          startX = e.touches[0].clientX; startY = e.touches[0].clientY;
+          startTx = tx; startTy = ty;
+        }
+      }, { passive: false });
+
+      viewport.addEventListener('dblclick', reset);
+      closeBtn.addEventListener('click', () => closeMermaidModal(reset));
+      backdrop.addEventListener('click', () => closeMermaidModal(reset));
+      document.addEventListener('keydown', e => {
+        if (e.key === 'Escape' && mermaidModal.classList.contains('open')) closeMermaidModal(reset);
+      });
+
+      mermaidModal._reset = reset;
+    }
+
+    const canvas = mermaidModal.querySelector('.mermaid-modal-canvas');
+    const viewport = mermaidModal.querySelector('.mermaid-modal-viewport');
+    canvas.innerHTML = '';
+    const cloned = el.cloneNode(true);
+    // 克隆的 SVG 恢复原始尺寸，由 modal 自己决定缩放
+    const clonedSvg = cloned.querySelector('svg');
+    if (clonedSvg) { clonedSvg.style.width = ''; clonedSvg.style.height = ''; }
+    canvas.appendChild(cloned);
+    mermaidModal.classList.add('open');
+    document.body.style.overflow = 'hidden';
+
+    // 等 modal 显示后计算合适的初始 scale
+    requestAnimationFrame(() => {
+      const vw = viewport.clientWidth - 48;
+      const vh = viewport.clientHeight - 48;
+      const cw = canvas.scrollWidth;
+      const ch = canvas.scrollHeight;
+      if (cw > 0 && ch > 0) {
+        mermaidModal._fitScale = cw > 0 ? (vw / cw) : 1;
+      } else {
+        mermaidModal._fitScale = 1;
+      }
+      mermaidModal._reset();
+    });
+  }
+
+  function closeMermaidModal(reset) {
+    if (!mermaidModal) return;
+    mermaidModal.classList.remove('open');
+    document.body.style.overflow = '';
+    if (reset) reset();
+  }
+
   function formatDue(dateStr) {
     if (!dateStr) return null;
     const today = new Date();
@@ -314,6 +549,11 @@ const Tasks = (() => {
     const scrollTop = nav.scrollTop;
     nav.innerHTML = '';
 
+    const localHeading = document.createElement('div');
+    localHeading.className = 'sidebar-section-heading';
+    localHeading.innerHTML = '<span>本地任务</span><span class="sidebar-section-count">' + tasks.length + '</span>';
+    nav.appendChild(localHeading);
+
     const grouped = {};
     STATUS_ORDER.forEach(s => grouped[s] = []);
     tasks.forEach(t => { if (grouped[t.status]) grouped[t.status].push(t); });
@@ -323,6 +563,7 @@ const Tasks = (() => {
 
       const groupEl = document.createElement('div');
       groupEl.className = 'task-group';
+      groupEl.dataset.status = status;
 
       const headerEl = document.createElement('div');
       headerEl.className = 'task-group-header';
@@ -339,8 +580,48 @@ const Tasks = (() => {
 
       const itemsEl = document.createElement('div');
       itemsEl.className = `task-group-items${collapsedGroups[status] ? ' collapsed' : ''}`;
+      itemsEl.dataset.status = status;
 
       group.forEach(task => itemsEl.appendChild(buildNavItem(task)));
+
+      // 拖拽放置到组（空组也能接收）
+      itemsEl.addEventListener('dragover', e => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        const draggingEl = document.querySelector('.task-nav-item.dragging');
+        if (!draggingEl) return;
+        // 确保 placeholder 存在
+        let placeholder = document.getElementById('drag-placeholder');
+        if (!placeholder) {
+          placeholder = document.createElement('div');
+          placeholder.id = 'drag-placeholder';
+          placeholder.className = 'drag-placeholder';
+        }
+        const afterEl = getDragAfterElement(itemsEl, e.clientY);
+        if (afterEl) itemsEl.insertBefore(placeholder, afterEl);
+        else itemsEl.appendChild(placeholder);
+      });
+
+      itemsEl.addEventListener('dragleave', e => {
+        // 只在真正离开整个 itemsEl 时移除 placeholder
+        if (!itemsEl.contains(e.relatedTarget)) {
+          const ph = document.getElementById('drag-placeholder');
+          if (ph && ph.parentNode === itemsEl) ph.remove();
+        }
+      });
+
+      itemsEl.addEventListener('drop', e => {
+        e.preventDefault();
+        const id = parseInt(e.dataTransfer.getData('text/plain'));
+        const placeholder = document.getElementById('drag-placeholder');
+        const targetStatus = itemsEl.dataset.status;
+        const items = [...itemsEl.querySelectorAll('.task-nav-item')];
+        const afterEl = placeholder ? placeholder.nextElementSibling : null;
+        let newIndex = afterEl ? items.indexOf(afterEl) : items.length;
+        if (newIndex < 0) newIndex = items.length;
+        placeholder && placeholder.remove();
+        onDrop(id, targetStatus, newIndex);
+      });
 
       headerEl.addEventListener('click', () => {
         const c = itemsEl.classList.toggle('collapsed');
@@ -354,17 +635,62 @@ const Tasks = (() => {
     });
 
     nav.scrollTop = scrollTop;
+    if (window.RemoteTasks) window.RemoteTasks.render();
+  }
+
+  function getDragAfterElement(container, y) {
+    const els = [...container.querySelectorAll('.task-nav-item:not(.dragging)')];
+    return els.reduce((closest, el) => {
+      const box = el.getBoundingClientRect();
+      const offset = y - box.top - box.height / 2;
+      if (offset < 0 && offset > closest.offset) return { offset, el };
+      return closest;
+    }, { offset: Number.NEGATIVE_INFINITY }).el;
+  }
+
+  async function onDrop(id, targetStatus, newIndex) {
+    const task = tasks.find(t => t.id === id);
+    if (!task) return;
+
+    // 更新 status
+    if (task.status !== targetStatus) {
+      await API.put(`/api/tasks/${id}`, { status: targetStatus });
+    }
+
+    // 重新计算目标组内的 sort_order
+    const groupTasks = tasks
+      .filter(t => t.id !== id && t.status === targetStatus)
+      .sort((a, b) => a.sort_order - b.sort_order);
+    groupTasks.splice(newIndex, 0, { ...task, status: targetStatus });
+    const reorderBody = groupTasks.map((t, i) => ({ id: t.id, sort_order: i }));
+    await API.put('/api/tasks/reorder', reorderBody);
+
+    await Tasks.load();
   }
 
   function buildNavItem(task) {
     const item = document.createElement('div');
     item.className = `task-nav-item${task.id === selectedId ? ' active' : ''}`;
     item.dataset.id = task.id;
+    item.draggable = true;
+
+    item.addEventListener('dragstart', e => {
+      e.dataTransfer.setData('text/plain', task.id);
+      e.dataTransfer.effectAllowed = 'move';
+      item.classList.add('dragging');
+      setTimeout(() => item.classList.add('drag-ghost'), 0);
+    });
+
+    item.addEventListener('dragend', () => {
+      item.classList.remove('dragging', 'drag-ghost');
+      document.getElementById('drag-placeholder')?.remove();
+    });
 
     const statusBtn = document.createElement('button');
     statusBtn.className = `task-status-btn ${task.status}`;
     if (task.status === 'doing') statusBtn.textContent = '●';
     else if (task.status === 'done') statusBtn.textContent = '✓';
+    else if (task.status === 'personal') statusBtn.textContent = '★';
     statusBtn.title = `点击切换状态（当前：${STATUS_LABEL[task.status]}）`;
     statusBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
@@ -408,6 +734,7 @@ const Tasks = (() => {
         { label: '标记为进行中', action: () => setStatus(task.id, 'doing') },
         { label: '标记为待办', action: () => setStatus(task.id, 'todo') },
         { label: '标记为已完成', action: () => setStatus(task.id, 'done') },
+        { label: '标记为个人任务', action: () => setStatus(task.id, 'personal') },
         { separator: true },
         { label: '编辑', action: () => showEditModal(task) },
         { label: '删除', danger: true, action: () => deleteTask(task.id) },
@@ -433,11 +760,13 @@ const Tasks = (() => {
   }
 
   function selectTask(id) {
+    if (selectedId !== id && !confirmDiscardEditor()) return;
     // 离开旧任务的 shell tab 时补设 done
     if (selectedId && selectedId !== id && activeTab === 'shell') {
       onLeaveShellTab(selectedId);
     }
     selectedId = id;
+    if (window.RemoteTasks) window.RemoteTasks.clearSelection();
     localStorage.setItem('selectedTaskId', id);
     document.querySelectorAll('.task-nav-item').forEach(el => {
       el.classList.toggle('active', parseInt(el.dataset.id) === id);
@@ -447,6 +776,11 @@ const Tasks = (() => {
     activeTab = tab;
     contentTabs.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
     if (tab === 'shell') {
+      const task = tasks.find(t => t.id === id);
+      contentToolbar.style.visibility = 'visible';
+      contentToolbar.style.pointerEvents = '';
+      contentToolbar.style.display = task && task.md_path ? 'flex' : 'none';
+      setEditButtonState(false);
       previewPane.style.display = 'none';
       document.getElementById('toc-pane').style.display = 'none';
       terminalPane.style.display = 'flex';
@@ -477,10 +811,28 @@ const Tasks = (() => {
     hideToc();
     stopWatcher();
 
-    contentToolbar.style.display = task.md_path ? 'flex' : 'none';
     contentTabs.style.display = 'flex';
 
-    if (!task.md_path) {
+    if (activeTab === 'todos') {
+      // 待办页沿用完整工具栏，避免切换 Tab 时内容区上下跳动。
+      contentToolbar.style.display = 'flex';
+      contentToolbar.style.visibility = 'visible';
+      contentToolbar.style.pointerEvents = '';
+      document.getElementById('btn-share-md').style.display = task.md_path ? '' : 'none';
+      setEditButtonState(false);
+      await renderTodos(task);
+      return;
+    }
+
+    contentToolbar.style.visibility = 'visible';
+    contentToolbar.style.pointerEvents = '';
+    const isTechnical = activeTab === 'doc';
+    const hasDocumentRoot = isTechnical ? Boolean(task.md_path) : Boolean(task.work_dir || task.md_path);
+    contentToolbar.style.display = hasDocumentRoot ? 'flex' : 'none';
+    document.getElementById('btn-share-md').style.display = isTechnical && task.md_path ? '' : 'none';
+    setEditButtonState(hasDocumentRoot);
+
+    if (isTechnical && !task.md_path) {
       const due = formatDue(task.due_date);
       content.innerHTML = `
         <div class="task-info-card">
@@ -493,26 +845,311 @@ const Tasks = (() => {
       return;
     }
 
-    await loadMdContent(task);
-    startWatcher(task);
+    if (!hasDocumentRoot) {
+      content.innerHTML = '<div class="document-empty">该任务尚未配置工作目录</div>';
+      return;
+    }
+
+    await loadMdContent(task, activeTab);
+    startWatcher(task, activeTab);
   }
 
-  async function loadMdContent(task) {
+  function setEditButtonState(enabled) {
+    const button = document.getElementById('btn-edit-md');
+    button.disabled = !enabled;
+    button.title = enabled ? '在页面中编辑当前 Markdown' : '当前页面不是可编辑的 Markdown';
+  }
+
+  function confirmDiscardEditor() {
+    if (!editorState) return true;
+    if (editorState.dirty && !confirm('当前文档有未保存的修改，确认放弃吗？')) return false;
+    disposeDocumentEditor(editorState);
+    editorState = null;
+    document.getElementById('preview-content').classList.remove('editor-active');
+    return true;
+  }
+
+  function disposeDocumentEditor(state) {
+    if (!state) return;
+    if (state.editor) state.editor.dispose();
+    if (state.model) state.model.dispose();
+  }
+
+  async function openDocumentEditor(task, tab) {
+    if (editorState || typeof monaco === 'undefined') {
+      if (typeof monaco === 'undefined') alert('编辑器资源加载失败，请刷新页面');
+      return;
+    }
+    stopWatcher();
+    hideToc();
     const content = document.getElementById('preview-content');
-    const savedScroll = parseInt(localStorage.getItem(`mdScroll_${task.id}`)) || 0;
+    const editButton = document.getElementById('btn-edit-md');
+    editButton.disabled = true;
+    content.innerHTML = '<div class="preview-loading">正在打开编辑器...</div>';
+    try {
+      const kind = documentKind(tab);
+      const res = await fetch(`/api/tasks/${task.id}/document/${kind}`, {
+        headers: { 'X-Requested-With': 'XMLHttpRequest' },
+      });
+      if (!res.ok) throw new Error('文档读取失败');
+      const source = await res.text();
+      if (selectedId !== task.id || activeTab !== tab) return;
+      content.classList.add('editor-active');
+      content.innerHTML = `
+        <div class="md-editor-shell">
+          <div class="md-editor-header">
+            <span class="md-editor-file">${escapeHtml(documentLabel(tab))}</span>
+            <span class="md-editor-status" id="md-editor-status">未修改</span>
+            <span class="md-editor-shortcuts">VS Code 原生快捷键 · Alt/Option+点击多光标 · Shift+Alt/Option+拖拽列选</span>
+            <button type="button" class="md-editor-action secondary" id="md-editor-cancel">取消</button>
+            <button type="button" class="md-editor-action primary" id="md-editor-save">保存</button>
+          </div>
+          <div class="md-editor-host" id="md-editor-host"></div>
+        </div>`;
+      const modelUri = monaco.Uri.parse(`inmemory://task/${task.id}/${kind}.md`);
+      const existingModel = monaco.editor.getModel(modelUri);
+      if (existingModel) existingModel.dispose();
+      const model = monaco.editor.createModel(source, 'markdown', modelUri);
+      const editor = monaco.editor.create(document.getElementById('md-editor-host'), {
+        model,
+        theme: 'vs',
+        lineNumbers: true,
+        wordWrap: 'on',
+        automaticLayout: true,
+        fontFamily: 'Menlo, Monaco, Consolas, "Courier New", monospace',
+        fontSize: 13,
+        lineHeight: 22,
+        tabSize: 2,
+        insertSpaces: true,
+        autoClosingBrackets: 'always',
+        autoClosingQuotes: 'always',
+        multiCursorModifier: 'alt',
+        minimap: { enabled: false },
+        scrollBeyondLastLine: false,
+        renderWhitespace: 'selection',
+        find: {
+          addExtraSpaceOnTop: false,
+          autoFindInSelection: 'multiline',
+          seedSearchStringFromSelection: 'selection',
+        },
+      });
+      editorState = { task, tab, kind, editor, model, source, dirty: false, saving: false };
+      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, saveDocumentEditor);
+      editor.onDidChangeModelContent(() => {
+        if (!editorState) return;
+        editorState.dirty = model.getValue() !== source;
+        document.getElementById('md-editor-status').textContent = editorState.dirty ? '未保存' : '未修改';
+      });
+      document.getElementById('md-editor-save').addEventListener('click', saveDocumentEditor);
+      document.getElementById('md-editor-cancel').addEventListener('click', cancelDocumentEditor);
+      requestAnimationFrame(() => editor.focus());
+    } catch (e) {
+      content.classList.remove('editor-active');
+      editorState = null;
+      editButton.disabled = false;
+      alert('打开编辑器失败: ' + e.message);
+      await loadMdContent(task, tab);
+      startWatcher(task, tab);
+    }
+  }
+
+  async function saveDocumentEditor() {
+    const state = editorState;
+    if (!state || state.saving) return;
+    state.saving = true;
+    const saveButton = document.getElementById('md-editor-save');
+    const status = document.getElementById('md-editor-status');
+    saveButton.disabled = true;
+    status.textContent = '保存中...';
+    try {
+      await API.put(`/api/tasks/${state.task.id}/document/${state.kind}`, { content: state.model.getValue() });
+      disposeDocumentEditor(state);
+      editorState = null;
+      document.getElementById('preview-content').classList.remove('editor-active');
+      setEditButtonState(true);
+      await loadMdContent(state.task, state.tab);
+      startWatcher(state.task, state.tab);
+    } catch (e) {
+      state.saving = false;
+      saveButton.disabled = false;
+      status.textContent = '保存失败';
+      alert('保存文档失败: ' + e.message);
+    }
+  }
+
+  async function cancelDocumentEditor() {
+    const state = editorState;
+    if (!state) return;
+    if (state.dirty && !confirm('确认放弃未保存的修改吗？')) return;
+    disposeDocumentEditor(state);
+    editorState = null;
+    document.getElementById('preview-content').classList.remove('editor-active');
+    setEditButtonState(true);
+    await loadMdContent(state.task, state.tab);
+    startWatcher(state.task, state.tab);
+  }
+
+  async function renderTodos(task) {
+    const content = document.getElementById('preview-content');
+    const renderForId = task.id;
+    content.innerHTML = '<div class="preview-loading">正在加载待办...</div>';
+    try {
+      const todos = await API.get(`/api/tasks/${task.id}/todos`);
+      if (selectedId !== renderForId || activeTab !== 'todos') return;
+      const completedCount = todos.filter(todo => todo.completed).length;
+      content.innerHTML = `
+        <section class="todo-page">
+          <div class="todo-heading">
+            <div>
+              <h2>待办清单</h2>
+              <p>${todos.length ? `已完成 ${completedCount} / ${todos.length}` : '记录这个任务接下来要做的事情'}</p>
+            </div>
+          </div>
+          <form class="todo-add-form" id="todo-add-form">
+            <input id="todo-new-content" type="text" maxlength="500" autocomplete="off" placeholder="添加一项待办，按 Enter 保存">
+            <button type="submit">添加</button>
+          </form>
+          <div class="todo-list" id="todo-list">
+            ${todos.length ? todos.map(todo => `
+              <div class="todo-item${todo.completed ? ' completed' : ''}" data-todo-id="${todo.id}">
+                <label class="todo-check-wrap" title="${todo.completed ? '标记为未完成' : '标记为已完成'}">
+                  <input class="todo-check" type="checkbox" ${todo.completed ? 'checked' : ''}>
+                  <span class="todo-checkmark"></span>
+                </label>
+                <span class="todo-content" title="双击编辑">${escapeHtml(todo.content)}</span>
+                <button class="todo-delete" type="button" title="删除待办">×</button>
+              </div>`).join('') : '<div class="todo-empty">还没有待办事项</div>'}
+          </div>
+        </section>`;
+
+      const form = document.getElementById('todo-add-form');
+      const input = document.getElementById('todo-new-content');
+      form.addEventListener('submit', async event => {
+        event.preventDefault();
+        const value = input.value.trim();
+        if (!value) return;
+        input.disabled = true;
+        try {
+          await API.post(`/api/tasks/${task.id}/todos`, { content: value });
+          await renderTodos(task);
+        } catch (e) {
+          input.disabled = false;
+          alert('添加待办失败: ' + e.message);
+        }
+      });
+
+      document.querySelectorAll('#todo-list .todo-item').forEach(item => {
+        const todoId = item.dataset.todoId;
+        const checkbox = item.querySelector('.todo-check');
+        const label = item.querySelector('.todo-content');
+        checkbox.addEventListener('change', async () => {
+          try {
+            await API.put(`/api/tasks/${task.id}/todos/${todoId}`, { completed: checkbox.checked });
+            await renderTodos(task);
+          } catch (e) {
+            checkbox.checked = !checkbox.checked;
+            alert('更新待办失败: ' + e.message);
+          }
+        });
+        label.addEventListener('dblclick', () => editTodoInline(task, todoId, label));
+        item.querySelector('.todo-delete').addEventListener('click', async () => {
+          try {
+            await API.delete(`/api/tasks/${task.id}/todos/${todoId}`);
+            await renderTodos(task);
+          } catch (e) {
+            alert('删除待办失败: ' + e.message);
+          }
+        });
+      });
+      input.focus();
+    } catch (e) {
+      if (selectedId === renderForId && activeTab === 'todos') {
+        content.innerHTML = '<div class="preview-loading">待办加载失败</div>';
+      }
+    }
+  }
+
+  function editTodoInline(task, todoId, label) {
+    const original = label.textContent;
+    const input = document.createElement('input');
+    input.className = 'todo-edit-input';
+    input.value = original;
+    label.replaceWith(input);
+    input.focus();
+    input.select();
+    let saved = false;
+    const save = async () => {
+      if (saved) return;
+      saved = true;
+      const content = input.value.trim();
+      if (!content || content === original) {
+        await renderTodos(task);
+        return;
+      }
+      try {
+        await API.put(`/api/tasks/${task.id}/todos/${todoId}`, { content });
+      } catch (e) {
+        alert('更新待办失败: ' + e.message);
+      }
+      await renderTodos(task);
+    };
+    input.addEventListener('blur', save);
+    input.addEventListener('keydown', event => {
+      if (event.key === 'Enter') input.blur();
+      if (event.key === 'Escape') {
+        saved = true;
+        renderTodos(task);
+      }
+    });
+  }
+
+  function documentKind(tab) {
+    return tab === 'readme' ? 'readme' : tab === 'agent' ? 'agent' : 'technical';
+  }
+
+  function documentLabel(tab) {
+    return tab === 'readme' ? 'README.md' : tab === 'agent' ? 'AGENT.md' : '技术方案';
+  }
+
+  async function loadMdContent(task, tab = activeTab) {
+    const content = document.getElementById('preview-content');
+    const savedScroll = parseInt(localStorage.getItem(`mdScroll_${task.id}_${tab}`)) || 0;
     const scrollTop = previewPane.scrollTop || savedScroll;
     // 记录本次渲染时的目标任务，异步回来后校验是否仍是当前任务/tab，防止竞态更新 UI
     const renderForId = task.id;
+    const renderForTab = tab;
 
     try {
-      const res = await fetch(`/api/tasks/${task.id}/md`, {
+      const kind = documentKind(tab);
+      const res = await fetch(`/api/tasks/${task.id}/document/${kind}`, {
         headers: { 'X-Requested-With': 'XMLHttpRequest' },
       });
-      // 异步回来后检查：若已切换任务或切换到 shell，丢弃本次结果
-      if (selectedId !== renderForId || activeTab !== 'doc') return;
+      if (selectedId !== renderForId || activeTab !== renderForTab) return;
+      if (res.status === 404) {
+        setEditButtonState(false);
+        const canCreate = tab === 'readme' || tab === 'agent';
+        content.innerHTML = `
+          <div class="document-empty">
+            <p>${escapeHtml(documentLabel(tab))} 不存在</p>
+            ${canCreate ? `<button class="document-create-btn" id="document-create-btn">创建 ${escapeHtml(documentLabel(tab))}</button>` : ''}
+          </div>`;
+        if (canCreate) {
+          document.getElementById('document-create-btn').addEventListener('click', async () => {
+            try {
+              await API.post(`/api/tasks/${task.id}/document/${documentKind(tab)}`, {});
+              setEditButtonState(true);
+              await loadMdContent(task, tab);
+              startWatcher(task, tab);
+            } catch (e) {
+              alert('创建文档失败: ' + e.message);
+            }
+          });
+        }
+        return;
+      }
       if (!res.ok) throw new Error('Failed');
       const text = await res.text();
-      if (selectedId !== renderForId || activeTab !== 'doc') return;
+      if (selectedId !== renderForId || activeTab !== renderForTab) return;
       content.innerHTML = renderMd(text, task.id);
       for (const script of Array.from(content.querySelectorAll('script'))) {
         if (script.src) {
@@ -524,24 +1161,34 @@ const Tasks = (() => {
             document.head.appendChild(s);
           });
         } else {
-          try { new Function(script.textContent)(); } catch (e) { console.warn('script error:', e); }
+          try { new Function(script.textContent)(); } catch (e) { /* inline script parse error, ignored */ }
         }
       }
-      await mermaid.run({ nodes: content.querySelectorAll('.mermaid') });
+      // 逐个渲染 mermaid，单个失败不影响整体
+      for (const node of content.querySelectorAll('.mermaid')) {
+        try {
+          await mermaid.run({ nodes: [node] });
+        } catch (e) {
+          node.innerHTML = `<pre style="color:#c0392b;font-size:12px;white-space:pre-wrap">⚠️ Mermaid 渲染失败：${e.message || e.str || '语法错误'}</pre>`;
+        }
+      }
+      wrapMermaidDiagrams(content);
       addHeadingIds(content);
       buildToc(content);
       setupScrollSpy(content);
       previewPane.scrollTop = scrollTop;
     } catch (e) {
+      console.error('[loadMdContent] error:', e);
       content.innerHTML = '<div class="preview-loading">加载失败，请检查文件路径是否有效</div>';
     }
   }
 
-  function startWatcher(task) {
+  function startWatcher(task, tab = activeTab) {
     stopWatcher();
-    mdWatcher = new EventSource(`/api/tasks/${task.id}/md/watch`);
+    const watchedTab = tab;
+    mdWatcher = new EventSource(`/api/tasks/${task.id}/document/${documentKind(tab)}/watch`);
     mdWatcher.onmessage = (e) => {
-      if (e.data === 'changed') loadMdContent(task);
+      if (e.data === 'changed' && activeTab === watchedTab) loadMdContent(task, watchedTab);
     };
     mdWatcher.onerror = () => stopWatcher();
   }
@@ -758,6 +1405,13 @@ const Tasks = (() => {
         </div>
       </div>
       <div class="form-group">
+        <label class="form-label">分组</label>
+        <div class="form-radio-group">
+          <label><input type="radio" name="status-group" value="" ${(!task.status || task.status !== 'personal') ? 'checked' : ''}> 工作任务</label>
+          <label><input type="radio" name="status-group" value="personal" ${task.status === 'personal' ? 'checked' : ''}> 个人任务</label>
+        </div>
+      </div>
+      <div class="form-group">
         <label class="form-label">截止日期</label>
         <input class="form-input" id="f-due-date" type="date" value="${task.due_date || ''}">
       </div>
@@ -803,6 +1457,16 @@ const Tasks = (() => {
       const work_dir = workDirInput.value.trim() || null;
       const priority = document.querySelector('input[name="priority"]:checked')?.value || 'normal';
       const due_date = document.getElementById('f-due-date').value || null;
+      const statusGroupVal = document.querySelector('input[name="status-group"]:checked')?.value;
+      // personal 分组直接用 'personal' 状态；工作任务新建默认 todo，编辑时保留原状态（除非原来是 personal）
+      let status;
+      if (statusGroupVal === 'personal') {
+        status = 'personal';
+      } else if (existingTask.id) {
+        status = existingTask.status === 'personal' ? 'todo' : undefined;
+      } else {
+        status = 'todo';
+      }
 
       if (!title && !md_path) {
         titleInput.classList.add('error');
@@ -812,7 +1476,7 @@ const Tasks = (() => {
 
       try {
         if (existingTask.id) {
-          await API.put(`/api/tasks/${existingTask.id}`, { title: title || undefined, md_path, work_dir, priority, due_date });
+          await API.put(`/api/tasks/${existingTask.id}`, { title: title || undefined, md_path, work_dir, priority, due_date, ...(status !== undefined ? { status } : {}) });
           Modal.hide();
           await Tasks.load();
           if (selectedId === existingTask.id) {
@@ -820,7 +1484,7 @@ const Tasks = (() => {
             if (updated) renderPreview(updated);
           }
         } else {
-          const newTask = await API.post('/api/tasks', { title: title || undefined, md_path, work_dir, priority, due_date });
+          const newTask = await API.post('/api/tasks', { title: title || undefined, md_path, work_dir, priority, due_date, status });
           Modal.hide();
           tasks = await API.get('/api/tasks');
           renderSidebar();
@@ -856,6 +1520,11 @@ const Tasks = (() => {
         if (task) renderPreview(task);
         else { selectedId = null; localStorage.removeItem('selectedTaskId'); showEmpty(); }
       }
+    },
+    clearSelection() {
+      selectedId = null;
+      stopWatcher();
+      document.querySelectorAll('.task-nav-item').forEach(el => el.classList.remove('active'));
     },
   };
 })();

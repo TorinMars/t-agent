@@ -41,12 +41,26 @@ function autoCreateTaskFiles(title, userWorkDir) {
   const slug = titleToSlug(title);
   const base = userWorkDir || DEFAULT_BASE;
   const dir = path.join(base, slug);
-  const mdFile = path.join(dir, `${slug}.md`);
+  const mdFile = path.join(dir, 'DESIGN.md');
   fs.mkdirSync(dir, { recursive: true });
   if (!fs.existsSync(mdFile)) {
     fs.writeFileSync(mdFile, `# ${title}\n`, 'utf8');
   }
+  ensureTaskCompanionDocuments(title, dir);
   return { work_dir: dir, md_path: mdFile };
+}
+
+// 在当前任务目录补齐固定文档；已有文件保持原样，不做覆盖。
+function ensureTaskCompanionDocuments(title, taskDir) {
+  fs.mkdirSync(taskDir, { recursive: true });
+  const readmeFile = path.join(taskDir, 'README.md');
+  const agentFile = path.join(taskDir, 'AGENT.md');
+  if (!fs.existsSync(readmeFile)) {
+    fs.writeFileSync(readmeFile, `# ${title}\n\n## 项目说明\n\n`, 'utf8');
+  }
+  if (!fs.existsSync(agentFile)) {
+    fs.writeFileSync(agentFile, '# AGENT.md\n\n## 工作约定\n\n', 'utf8');
+  }
 }
 
 router.post('/', (req, res) => {
@@ -75,6 +89,17 @@ router.post('/', (req, res) => {
     } catch (err) {
       console.error('[tasks] autoCreateTaskFiles error:', err.message);
     }
+  } else {
+    // 手动指定技术方案时，也在当前 Task 目录自动补齐 README 与 AGENT.md。
+    try {
+      ensureTaskCompanionDocuments(title, work_dir || path.dirname(md_path));
+      if (!fs.existsSync(md_path)) {
+        fs.mkdirSync(path.dirname(md_path), { recursive: true });
+        fs.writeFileSync(md_path, `# ${title}\n`, 'utf8');
+      }
+    } catch (err) {
+      return res.status(500).json({ error: `Failed to create task documents: ${err.message}` });
+    }
   }
 
   const info = db.prepare(`
@@ -83,6 +108,16 @@ router.post('/', (req, res) => {
   `).run({ title, status: status || 'todo', priority: priority || 'normal', due_date: due_date || null, md_path: md_path || null, work_dir: work_dir || null, sort_order: sort_order || 0, user_id: uid });
 
   res.status(201).json(db.prepare('SELECT * FROM tasks WHERE id = ?').get(info.lastInsertRowid));
+});
+
+router.put('/reorder', (req, res) => {
+  const uid = ownerFilter(req);
+  const items = req.body; // [{ id, sort_order }]
+  if (!Array.isArray(items)) return res.status(400).json({ error: 'body must be array' });
+  const stmt = db.prepare('UPDATE tasks SET sort_order = ? WHERE id = ? AND user_id = ?');
+  const update = db.transaction(() => items.forEach(({ id, sort_order }) => stmt.run(sort_order, id, uid)));
+  update();
+  res.json({ success: true });
 });
 
 router.put('/:id', (req, res) => {
@@ -148,6 +183,135 @@ router.get('/:id/md', (req, res) => {
   } catch (err) {
     res.status(err.code === 'ENOENT' ? 404 : 500).json({ error: 'Failed to read file' });
   }
+});
+
+function getTaskDocumentPath(task, kind) {
+  if (kind === 'technical') return task.md_path || null;
+  const rootDir = task.work_dir || (task.md_path ? path.dirname(task.md_path) : null);
+  if (!rootDir) return null;
+  if (kind === 'readme') return path.join(rootDir, 'README.md');
+  if (kind === 'agent') return path.join(rootDir, 'AGENT.md');
+  return null;
+}
+
+router.get('/:id/document/:kind', (req, res) => {
+  const uid = ownerFilter(req);
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, uid);
+  if (!task) return res.status(404).json({ error: 'Task not found' });
+  const filePath = getTaskDocumentPath(task, req.params.kind);
+  if (!filePath) return res.status(404).json({ error: 'Document path is not configured' });
+  try {
+    res.type('text/plain').send(fs.readFileSync(filePath, 'utf8'));
+  } catch (err) {
+    res.status(err.code === 'ENOENT' ? 404 : 500).json({ error: err.code === 'ENOENT' ? 'Document not found' : 'Failed to read document' });
+  }
+});
+
+router.put('/:id/document/:kind', (req, res) => {
+  const uid = ownerFilter(req);
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, uid);
+  if (!task) return res.status(404).json({ error: 'Task not found' });
+  if (!['technical', 'readme', 'agent'].includes(req.params.kind)) {
+    return res.status(400).json({ error: 'Invalid document kind' });
+  }
+  const filePath = getTaskDocumentPath(task, req.params.kind);
+  if (!filePath) return res.status(400).json({ error: 'Document path is not configured' });
+  const content = req.body.content;
+  if (typeof content !== 'string') return res.status(400).json({ error: 'content must be a string' });
+  if (Buffer.byteLength(content, 'utf8') > 5 * 1024 * 1024) {
+    return res.status(413).json({ error: 'Document is too large (maximum 5MB)' });
+  }
+  try {
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, content, 'utf8');
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to save document' });
+  }
+});
+
+router.post('/:id/document/:kind', (req, res) => {
+  const uid = ownerFilter(req);
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, uid);
+  if (!task) return res.status(404).json({ error: 'Task not found' });
+  if (!['readme', 'agent'].includes(req.params.kind)) {
+    return res.status(400).json({ error: 'Only README.md and AGENT.md can be created here' });
+  }
+  const filePath = getTaskDocumentPath(task, req.params.kind);
+  if (!filePath) return res.status(400).json({ error: 'Task work directory is not configured' });
+  const title = req.params.kind === 'readme' ? task.title : 'AGENT.md';
+  const section = req.params.kind === 'readme' ? '项目说明' : '工作约定';
+  try {
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    if (!fs.existsSync(filePath)) fs.writeFileSync(filePath, `# ${title}\n\n## ${section}\n\n`, 'utf8');
+    res.status(201).json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to create document' });
+  }
+});
+
+router.get('/:id/todos', (req, res) => {
+  const uid = ownerFilter(req);
+  const task = db.prepare('SELECT id FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, uid);
+  if (!task) return res.status(404).json({ error: 'Task not found' });
+  const todos = db.prepare(`
+    SELECT * FROM task_todos WHERE task_id = ?
+    ORDER BY completed ASC, sort_order ASC, created_at ASC
+  `).all(task.id);
+  res.json(todos.map(todo => ({ ...todo, completed: Boolean(todo.completed) })));
+});
+
+router.post('/:id/todos', (req, res) => {
+  const uid = ownerFilter(req);
+  const task = db.prepare('SELECT id FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, uid);
+  if (!task) return res.status(404).json({ error: 'Task not found' });
+  const content = typeof req.body.content === 'string' ? req.body.content.trim() : '';
+  if (!content) return res.status(400).json({ error: 'content is required' });
+  const nextOrder = db.prepare('SELECT COALESCE(MAX(sort_order), -1) + 1 AS value FROM task_todos WHERE task_id = ?').get(task.id).value;
+  const info = db.prepare('INSERT INTO task_todos (task_id, content, sort_order) VALUES (?, ?, ?)').run(task.id, content, nextOrder);
+  const todo = db.prepare('SELECT * FROM task_todos WHERE id = ?').get(info.lastInsertRowid);
+  res.status(201).json({ ...todo, completed: Boolean(todo.completed) });
+});
+
+router.put('/:id/todos/:todoId', (req, res) => {
+  const uid = ownerFilter(req);
+  const todo = db.prepare(`
+    SELECT td.* FROM task_todos td
+    JOIN tasks t ON t.id = td.task_id
+    WHERE td.id = ? AND td.task_id = ? AND t.user_id = ?
+  `).get(req.params.todoId, req.params.id, uid);
+  if (!todo) return res.status(404).json({ error: 'Todo not found' });
+  const contentSet = req.body.content !== undefined;
+  const content = contentSet && typeof req.body.content === 'string' ? req.body.content.trim() : null;
+  if (contentSet && !content) return res.status(400).json({ error: 'content is required' });
+  const completedSet = req.body.completed !== undefined;
+  db.prepare(`
+    UPDATE task_todos SET
+      content = CASE WHEN @content_set = 1 THEN @content ELSE content END,
+      completed = CASE WHEN @completed_set = 1 THEN @completed ELSE completed END,
+      updated_at = CURRENT_TIMESTAMP
+    WHERE id = @id
+  `).run({
+    id: todo.id,
+    content_set: contentSet ? 1 : 0,
+    content,
+    completed_set: completedSet ? 1 : 0,
+    completed: req.body.completed ? 1 : 0,
+  });
+  const updated = db.prepare('SELECT * FROM task_todos WHERE id = ?').get(todo.id);
+  res.json({ ...updated, completed: Boolean(updated.completed) });
+});
+
+router.delete('/:id/todos/:todoId', (req, res) => {
+  const uid = ownerFilter(req);
+  const todo = db.prepare(`
+    SELECT td.id FROM task_todos td
+    JOIN tasks t ON t.id = td.task_id
+    WHERE td.id = ? AND td.task_id = ? AND t.user_id = ?
+  `).get(req.params.todoId, req.params.id, uid);
+  if (!todo) return res.status(404).json({ error: 'Todo not found' });
+  db.prepare('DELETE FROM task_todos WHERE id = ?').run(todo.id);
+  res.json({ success: true });
 });
 
 router.get('/:id/file', (req, res) => {
@@ -222,6 +386,31 @@ router.get('/:id/md/watch', (req, res) => {
     return res.end();
   }
 
+  const heartbeat = setInterval(() => res.write(': ping\n\n'), 20000);
+  req.on('close', () => { clearInterval(heartbeat); watcher.close(); });
+});
+
+router.get('/:id/document/:kind/watch', (req, res) => {
+  const uid = ownerFilter(req);
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, uid);
+  if (!task) return res.status(404).end();
+  const filePath = getTaskDocumentPath(task, req.params.kind);
+  if (!filePath) return res.status(404).end();
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+
+  let watcher;
+  try {
+    watcher = fs.watch(filePath, { persistent: false }, event => {
+      if (event === 'change') res.write('data: changed\n\n');
+    });
+  } catch (e) {
+    res.write('data: error\n\n');
+    return res.end();
+  }
   const heartbeat = setInterval(() => res.write(': ping\n\n'), 20000);
   req.on('close', () => { clearInterval(heartbeat); watcher.close(); });
 });

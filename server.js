@@ -10,6 +10,7 @@ const config = require('./config');
 const db = require('./db');
 const SqliteStore = require('./db/session-store');
 const terminal = require('./routes/terminal');
+const updates = require('./services/update-manager');
 
 const app = express();
 
@@ -22,7 +23,7 @@ function getLocalIP() {
   return 'localhost';
 }
 
-app.use(express.json());
+app.use(express.json({ limit: '6mb' }));
 app.use(express.urlencoded({ extended: true }));
 
 const sessionMiddleware = session({
@@ -46,6 +47,14 @@ app.get('/api/local-ip', (req, res) => {
 app.use('/auth', require('./routes/auth'));
 app.use('/api/tasks', require('./routes/tasks'));
 app.use('/api/bookmarks', require('./routes/bookmarks'));
+app.use('/api/system', require('./routes/system'));
+app.use('/api/remote-servers', require('./routes/remote-servers'));
+app.use('/api/remote-tokens', require('./routes/remote-tokens'));
+app.use('/api/remote/v1', require('./routes/remote-api'));
+
+app.get('/health', (req, res) => {
+  res.json({ ok: true });
+});
 
 function escapeHtml(value) {
   return String(value)
@@ -265,4 +274,5 @@ server.on('upgrade', (req, socket, head) => {
 server.listen(config.port, () => {
   console.log(`Server running at http://localhost:${config.port}`);
   console.log(`             LAN: http://${getLocalIP()}:${config.port}`);
+  updates.start();
 });

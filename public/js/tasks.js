@@ -549,10 +549,15 @@ const Tasks = (() => {
     const scrollTop = nav.scrollTop;
     nav.innerHTML = '';
 
+    const localSection = document.createElement('div');
+    localSection.className = 'local-sidebar-section';
+    localSection.dataset.engineKey = 'local';
+    nav.appendChild(localSection);
+
     const localHeading = document.createElement('div');
     localHeading.className = 'sidebar-section-heading';
     localHeading.innerHTML = '<span>本地任务</span><span class="sidebar-section-count">' + tasks.length + '</span>';
-    nav.appendChild(localHeading);
+    localSection.appendChild(localHeading);
 
     const grouped = {};
     STATUS_ORDER.forEach(s => grouped[s] = []);
@@ -631,7 +636,7 @@ const Tasks = (() => {
 
       groupEl.appendChild(headerEl);
       groupEl.appendChild(itemsEl);
-      nav.appendChild(groupEl);
+      localSection.appendChild(groupEl);
     });
 
     nav.scrollTop = scrollTop;
@@ -766,7 +771,10 @@ const Tasks = (() => {
       onLeaveShellTab(selectedId);
     }
     selectedId = id;
-    if (window.RemoteTasks) window.RemoteTasks.clearSelection();
+    if (window.RemoteTasks) {
+      window.RemoteTasks.setActiveEngine('local', { selectContent: false });
+      window.RemoteTasks.clearSelection();
+    }
     localStorage.setItem('selectedTaskId', id);
     document.querySelectorAll('.task-nav-item').forEach(el => {
       el.classList.toggle('active', parseInt(el.dataset.id) === id);
@@ -1370,7 +1378,9 @@ const Tasks = (() => {
   }
 
   function showEmpty() {
-    document.getElementById('preview-empty').style.display = 'flex';
+    const empty = document.getElementById('preview-empty');
+    empty.style.display = 'flex';
+    empty.querySelector('span').textContent = '← 选择左侧任务查看详情';
     document.getElementById('preview-content').style.display = 'none';
     contentToolbar.style.display = 'none';
     contentTabs.style.display = 'none';
@@ -1382,12 +1392,13 @@ const Tasks = (() => {
 
   function buildTaskForm(task = {}) {
     const remoteServers = !task.id && window.RemoteTasks ? RemoteTasks.getServers() : [];
+    const activeEngineKey = !task.id && window.RemoteTasks ? RemoteTasks.getActiveEngineKey() : 'local';
     const enginePicker = task.id ? '' : `
       <div class="form-group">
         <label class="form-label">所属 Engine</label>
         <select class="form-input" id="f-engine">
-          <option value="local">本地 Engine（默认）</option>
-          ${remoteServers.map(server => `<option value="remote:${server.id}" ${server.status !== 'online' ? 'disabled' : ''}>${escapeHtml(server.name)}${server.status === 'online' ? '' : '（离线）'}</option>`).join('')}
+          <option value="local" ${activeEngineKey === 'local' ? 'selected' : ''}>本地 Engine</option>
+          ${remoteServers.map(server => `<option value="remote:${server.id}" ${activeEngineKey === `remote:${server.id}` && server.status === 'online' ? 'selected' : ''} ${server.status !== 'online' ? 'disabled' : ''}>${escapeHtml(server.name)}${server.status === 'online' ? '' : '（离线）'}</option>`).join('')}
         </select>
         <div class="form-hint" id="f-engine-hint">任务和工作目录将保存在所选 Engine 上</div>
       </div>`;
@@ -1557,6 +1568,8 @@ const Tasks = (() => {
         selectedId = cached;
       }
       renderSidebar();
+      const localActive = !window.RemoteTasks || RemoteTasks.getActiveEngineKey() === 'local';
+      if (!localActive) return;
       if (selectedId) {
         const task = tasks.find(t => t.id === selectedId);
         if (task) renderPreview(task);
@@ -1568,5 +1581,13 @@ const Tasks = (() => {
       stopWatcher();
       document.querySelectorAll('.task-nav-item').forEach(el => el.classList.remove('active'));
     },
+    activateLocal() {
+      const cached = parseInt(localStorage.getItem('selectedTaskId'));
+      const task = tasks.find(item => item.id === cached) || tasks[0];
+      if (task) selectTask(task.id);
+      else showEmpty();
+    },
   };
 })();
+
+window.Tasks = Tasks;

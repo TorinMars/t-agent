@@ -4,6 +4,7 @@ const RemoteTasks = (() => {
   let selected = null;
   let activeTab = 'doc';
   let remoteTerminal = null;
+  let activeEngineKey = localStorage.getItem('active-engine-key') || 'local';
 
   const nav = document.getElementById('task-nav');
   const previewPane = document.getElementById('preview-pane');
@@ -28,31 +29,114 @@ const RemoteTasks = (() => {
         catch { tasksByServer.set(server.id, []); }
       }));
       render();
-    } catch {}
+      setActiveEngine(activeEngineKey);
+    } catch {
+      servers = [];
+      activeEngineKey = 'local';
+      render();
+      setActiveEngine('local');
+    }
+  }
+
+  function normalizeActiveEngine() {
+    if (activeEngineKey === 'local') return;
+    const id = Number(activeEngineKey.slice('remote:'.length));
+    if (!activeEngineKey.startsWith('remote:') || !servers.some(server => server.id === id)) {
+      activeEngineKey = 'local';
+      localStorage.setItem('active-engine-key', activeEngineKey);
+    }
+  }
+
+  function renderEngineTabs() {
+    normalizeActiveEngine();
+    const tabs = document.getElementById('engine-tabs');
+    tabs.innerHTML = '';
+
+    function appendTab(key, label, status, title) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = `engine-tab${activeEngineKey === key ? ' active' : ''}`;
+      button.dataset.engineKey = key;
+      button.title = title || label;
+      const dot = document.createElement('span');
+      dot.className = `engine-tab-status ${status}`;
+      const text = document.createElement('span');
+      text.textContent = label;
+      button.append(dot, text);
+      button.addEventListener('click', () => setActiveEngine(key));
+      tabs.appendChild(button);
+    }
+
+    appendTab('local', '本地', 'local', '本地 Engine');
+    servers.forEach(server => appendTab(
+      `remote:${server.id}`,
+      server.name,
+      server.status || 'unknown',
+      `${server.name} · ${server.base_url}`,
+    ));
+  }
+
+  function applyEngineVisibility() {
+    const local = nav.querySelector('.local-sidebar-section');
+    if (local) local.hidden = activeEngineKey !== 'local';
+    nav.querySelectorAll('.remote-sidebar-section').forEach(section => {
+      section.hidden = section.dataset.engineKey !== activeEngineKey;
+    });
+    document.querySelectorAll('.engine-tab').forEach(tab => {
+      tab.classList.toggle('active', tab.dataset.engineKey === activeEngineKey);
+    });
+  }
+
+  function showRemoteEmpty(server) {
+    disposeRemoteTerminal();
+    selected = null;
+    const empty = document.getElementById('preview-empty');
+    empty.style.display = 'flex';
+    empty.querySelector('span').textContent = `${server.name} 暂无任务`;
+    document.getElementById('preview-content').style.display = 'none';
+    contentToolbar.style.display = 'none';
+    contentTabs.style.display = 'none';
+    terminalPane.style.display = 'none';
+    previewPane.style.display = '';
+    document.getElementById('toc-pane').style.display = 'none';
+  }
+
+  function setActiveEngine(key, { selectContent = true } = {}) {
+    activeEngineKey = key;
+    normalizeActiveEngine();
+    localStorage.setItem('active-engine-key', activeEngineKey);
+    renderEngineTabs();
+    applyEngineVisibility();
+    if (!selectContent) return;
+
+    if (activeEngineKey === 'local') {
+      clearSelection();
+      if (window.Tasks) Tasks.activateLocal();
+      return;
+    }
+
+    const serverId = Number(activeEngineKey.slice('remote:'.length));
+    const server = servers.find(item => item.id === serverId);
+    if (!server) return;
+    const serverTasks = tasksByServer.get(server.id) || [];
+    const cachedId = Number(localStorage.getItem(`remote-selected-task-${server.id}`));
+    const task = serverTasks.find(item => item.id === cachedId) || serverTasks[0];
+    if (task) select(server, task);
+    else {
+      if (window.Tasks) Tasks.clearSelection();
+      showRemoteEmpty(server);
+    }
   }
 
   function render() {
     nav.querySelectorAll('.remote-sidebar-section').forEach(node => node.remove());
-    const section = document.createElement('div');
-    section.className = 'remote-sidebar-section';
-    const heading = document.createElement('div');
-    heading.className = 'sidebar-section-heading remote-heading';
-    heading.innerHTML = `<span>远程服务</span><span class="sidebar-section-count">${servers.length}</span>`;
-    section.appendChild(heading);
-
-    if (!servers.length) {
-      const empty = document.createElement('div');
-      empty.className = 'remote-empty';
-      empty.textContent = '尚未连接远程服务';
-      section.appendChild(empty);
-    }
-
     servers.forEach(server => {
-      const group = document.createElement('div');
-      group.className = 'remote-server-group';
+      const section = document.createElement('div');
+      section.className = 'remote-sidebar-section';
+      section.dataset.engineKey = `remote:${server.id}`;
       const header = document.createElement('div');
       header.className = 'remote-server-header';
-      header.innerHTML = `<span class="remote-status ${escapeHtml(server.status)}"></span><span class="remote-server-name" title="${escapeHtml(server.base_url)}">${escapeHtml(server.name)}</span><button class="remote-menu" title="远程服务操作">⋯</button>`;
+      header.innerHTML = `<span class="remote-status ${escapeHtml(server.status)}"></span><span class="remote-server-name" title="${escapeHtml(server.base_url)}">${escapeHtml(server.name)}</span><span class="sidebar-section-count">${(tasksByServer.get(server.id) || []).length}</span><button class="remote-menu" title="远程服务操作">⋯</button>`;
       header.querySelector('.remote-menu').addEventListener('click', event => {
         event.stopPropagation();
         ContextMenu.show(event.clientX, event.clientY, [
@@ -61,7 +145,7 @@ const RemoteTasks = (() => {
           { label: '移除连接', danger: true, action: () => removeServer(server.id) },
         ]);
       });
-      group.appendChild(header);
+      section.appendChild(header);
       const list = document.createElement('div');
       list.className = 'remote-task-list';
       (tasksByServer.get(server.id) || []).forEach(task => {
@@ -77,14 +161,18 @@ const RemoteTasks = (() => {
         noTasks.textContent = server.status === 'online' ? '没有任务' : errorLabel(server.last_error) || '离线';
         list.appendChild(noTasks);
       }
-      group.appendChild(list);
-      section.appendChild(group);
+      section.appendChild(list);
+      nav.appendChild(section);
     });
-    nav.appendChild(section);
+    renderEngineTabs();
+    applyEngineVisibility();
   }
 
   function select(server, task) {
     if (window.Tasks) Tasks.clearSelection();
+    activeEngineKey = `remote:${server.id}`;
+    localStorage.setItem('active-engine-key', activeEngineKey);
+    localStorage.setItem(`remote-selected-task-${server.id}`, task.id);
     selected = { serverId: server.id, server, task };
     activeTab = localStorage.getItem(`remote-task-tab-${server.id}-${task.id}`) || 'doc';
     render();
@@ -285,12 +373,22 @@ const RemoteTasks = (() => {
     return refreshedTask;
   }
 
-  return { load, render, getServers: () => servers.map(server => ({ ...server })), createTask, isSelected: () => Boolean(selected), clearSelection: () => {
+  return {
+    load,
+    render,
+    setActiveEngine,
+    getActiveEngineKey: () => activeEngineKey,
+    getServers: () => servers.map(server => ({ ...server })),
+    createTask,
+    isSelected: () => Boolean(selected),
+    clearSelection: () => {
     selected = null;
     disposeRemoteTerminal();
     contentTabs.querySelectorAll('.tab-btn').forEach(button => { button.disabled = false; button.title = ''; });
     ['btn-reveal-folder', 'btn-open-vscode', 'btn-share-md'].forEach(id => { document.getElementById(id).disabled = false; });
-  }, showTokens };
+    },
+    showTokens,
+  };
 })();
 
 // 供先加载的本地 Tasks 组件调用 Engine 列表和远程创建能力。

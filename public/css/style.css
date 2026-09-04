@@ -26,6 +26,7 @@
   --toc-width: 220px;
   --header-height: 48px;
   --quicklinks-height: 36px;
+  --engine-tabs-height: 39px;
 }
 
 html, body {
@@ -130,7 +131,7 @@ html, body {
   }
   /* layout 高度重新计算：扣掉 titlebar + quicklinks */
   .layout {
-    height: calc(100vh - env(titlebar-area-height, var(--header-height)) - var(--quicklinks-height));
+    height: calc(100vh - env(titlebar-area-height, var(--header-height)) - var(--quicklinks-height) - var(--engine-tabs-height));
   }
 }
 
@@ -277,7 +278,7 @@ html, body {
 /* Layout */
 .layout {
   display: flex;
-  height: calc(100vh - var(--header-height) - var(--quicklinks-height));
+  height: calc(100vh - var(--header-height) - var(--quicklinks-height) - var(--engine-tabs-height));
   overflow: hidden;
 }
 
@@ -349,6 +350,72 @@ html, body {
   overflow: hidden;
 }
 
+.engine-tabs-bar {
+  min-height: 39px;
+  display: flex;
+  align-items: flex-end;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-secondary);
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.engine-tabs {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.engine-tabs::-webkit-scrollbar { display: none; }
+
+.engine-tab {
+  height: 38px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 15px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.engine-tab:hover {
+  color: var(--text);
+  background: var(--bg-tertiary);
+}
+
+.engine-tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+
+.engine-tab-status {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.engine-tab-status.local,
+.engine-tab-status.online { background: #1a7f37; }
+.engine-tab-status.offline,
+.engine-tab-status.unauthorized { background: #cf222e; }
+
+.local-sidebar-section[hidden],
+.remote-sidebar-section[hidden] { display: none; }
+
 .sidebar-toolbar {
   padding: 12px 14px;
   border-bottom: 1px solid var(--border);
@@ -359,7 +426,7 @@ html, body {
 .btn-connect-remote:hover { color: var(--text); background: var(--bg-tertiary); }
 .sidebar-section-heading { display: flex; justify-content: space-between; align-items: center; padding: 7px 14px 5px; color: var(--text-muted); font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
 .sidebar-section-count { font-weight: 500; opacity: .7; }
-.remote-sidebar-section { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border); }
+.remote-sidebar-section { padding-top: 2px; }
 .remote-server-header { display: flex; align-items: center; gap: 7px; padding: 6px 10px 5px 14px; font-size: 12px; font-weight: 600; color: var(--text); }
 .remote-server-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .remote-status { width: 7px; height: 7px; border-radius: 50%; background: #8c959f; }

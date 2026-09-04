@@ -274,10 +274,24 @@ const RemoteTasks = (() => {
 
   document.getElementById('btn-connect-remote').addEventListener('click', showConnect);
 
-  return { load, render, isSelected: () => Boolean(selected), clearSelection: () => {
+  async function createTask(serverId, payload) {
+    const server = servers.find(item => item.id === Number(serverId));
+    if (!server) throw new Error('REMOTE_NOT_FOUND');
+    const task = await API.post(`/api/remote-servers/${server.id}/tasks`, payload);
+    await load();
+    const refreshedServer = servers.find(item => item.id === server.id) || server;
+    const refreshedTask = (tasksByServer.get(server.id) || []).find(item => item.id === task.id) || task;
+    select(refreshedServer, refreshedTask);
+    return refreshedTask;
+  }
+
+  return { load, render, getServers: () => servers.map(server => ({ ...server })), createTask, isSelected: () => Boolean(selected), clearSelection: () => {
     selected = null;
     disposeRemoteTerminal();
     contentTabs.querySelectorAll('.tab-btn').forEach(button => { button.disabled = false; button.title = ''; });
     ['btn-reveal-folder', 'btn-open-vscode', 'btn-share-md'].forEach(id => { document.getElementById(id).disabled = false; });
   }, showTokens };
 })();
+
+// 供先加载的本地 Tasks 组件调用 Engine 列表和远程创建能力。
+window.RemoteTasks = RemoteTasks;

@@ -1381,7 +1381,18 @@ const Tasks = (() => {
   }
 
   function buildTaskForm(task = {}) {
+    const remoteServers = !task.id && window.RemoteTasks ? RemoteTasks.getServers() : [];
+    const enginePicker = task.id ? '' : `
+      <div class="form-group">
+        <label class="form-label">所属 Engine</label>
+        <select class="form-input" id="f-engine">
+          <option value="local">本地 Engine（默认）</option>
+          ${remoteServers.map(server => `<option value="remote:${server.id}" ${server.status !== 'online' ? 'disabled' : ''}>${escapeHtml(server.name)}${server.status === 'online' ? '' : '（离线）'}</option>`).join('')}
+        </select>
+        <div class="form-hint" id="f-engine-hint">任务和工作目录将保存在所选 Engine 上</div>
+      </div>`;
     return `
+      ${enginePicker}
       <div class="form-group">
         <label class="form-label">标题</label>
         <input class="form-input" id="f-title" type="text" value="${escapeHtml(task.title || '')}" placeholder="任务标题（可由 MD 文件名自动填充）">
@@ -1428,10 +1439,34 @@ const Tasks = (() => {
     const mdHint = document.getElementById('f-md-hint');
     const titleInput = document.getElementById('f-title');
     const workDirInput = document.getElementById('f-work-dir');
+    const engineInput = document.getElementById('f-engine');
+    const engineHint = document.getElementById('f-engine-hint');
+
+    function isRemoteTarget() {
+      return engineInput && engineInput.value.startsWith('remote:');
+    }
+
+    if (engineInput) {
+      engineInput.addEventListener('change', () => {
+        const remote = isRemoteTarget();
+        engineHint.textContent = remote
+          ? '路径指向远程 Engine 的文件系统；留空可由 Engine 自动创建'
+          : '任务和工作目录将保存在本地 Engine 上';
+        mdHint.textContent = remote && mdInput.value.trim() ? '路径将在远程 Engine 创建时校验' : '';
+        mdHint.className = 'form-hint';
+        mdInput.classList.remove('error');
+      });
+    }
 
     mdInput.addEventListener('blur', async () => {
       const val = mdInput.value.trim();
       if (!val) { mdHint.textContent = ''; mdHint.className = 'form-hint'; return; }
+      if (isRemoteTarget()) {
+        mdHint.textContent = '路径将在远程 Engine 创建时校验';
+        mdHint.className = 'form-hint';
+        mdInput.classList.remove('error');
+        return;
+      }
       try {
         const result = await API.post('/api/tasks/validate-path', { md_path: val });
         if (result.valid) {
@@ -1484,12 +1519,19 @@ const Tasks = (() => {
             if (updated) renderPreview(updated);
           }
         } else {
-          const newTask = await API.post('/api/tasks', { title: title || undefined, md_path, work_dir, priority, due_date, status });
-          Modal.hide();
-          tasks = await API.get('/api/tasks');
-          renderSidebar();
-          // 自动选中新建的任务，会正确触发 renderPreview，处理 TOC 显隐
-          selectTask(newTask.id);
+          const payload = { title: title || undefined, md_path, work_dir, priority, due_date, status };
+          if (isRemoteTarget()) {
+            const serverId = Number(engineInput.value.slice('remote:'.length));
+            await RemoteTasks.createTask(serverId, payload);
+            Modal.hide();
+          } else {
+            const newTask = await API.post('/api/tasks', payload);
+            Modal.hide();
+            tasks = await API.get('/api/tasks');
+            renderSidebar();
+            // 自动选中新建的任务，会正确触发 renderPreview，处理 TOC 显隐
+            selectTask(newTask.id);
+          }
         }
       } catch (e) {
         alert('操作失败: ' + e.message);

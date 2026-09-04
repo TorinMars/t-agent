@@ -11,6 +11,8 @@ const db = require('./db');
 const SqliteStore = require('./db/session-store');
 const terminal = require('./routes/terminal');
 const updates = require('./services/update-manager');
+const { consumeTerminalTicket, pruneExpiredTickets } = require('./services/terminal-tickets');
+const { handleRemoteTerminalUpgrade } = require('./services/remote-terminal-proxy');
 
 const app = express();
 
@@ -56,6 +58,8 @@ app.use('/api/system', require('./routes/system'));
 app.use('/api/remote-servers', require('./routes/remote-servers'));
 app.use('/api/remote-tokens', require('./routes/remote-tokens'));
 app.use('/api/remote/v1', require('./routes/remote-api'));
+// 标准 Engine API。Client 安装包默认内置并暴露与独立 Engine 相同的协议。
+app.use('/v1', require('./routes/engine-v1'));
 
 app.get('/health', (req, res) => {
   res.json({ ok: true });
@@ -257,6 +261,36 @@ const server = http.createServer(app);
 const wss = new WebSocket.Server({ noServer: true });
 
 server.on('upgrade', (req, socket, head) => {
+  const engineUrl = new URL(req.url, 'http://engine.local');
+  const engineMatch = engineUrl.pathname.match(/^\/v1\/terminal-sessions\/(\d+)\/stream$/);
+  if (engineMatch) {
+    pruneExpiredTickets();
+    const authorization = consumeTerminalTicket(engineUrl.searchParams.get('ticket'));
+    if (!authorization || Number(engineMatch[1]) !== authorization.taskId) {
+      socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+      socket.destroy();
+      return;
+    }
+    wss.handleUpgrade(req, socket, head, ws => {
+      terminal.handleWs(ws, req, { login: authorization.principalId }, authorization.taskId);
+    });
+    return;
+  }
+  if (engineUrl.pathname.match(/^\/api\/remote-servers\/\d+\/terminal\/ws$/)) {
+    const fakeRes = { getHeader: () => {}, setHeader: () => {}, end: () => {} };
+    sessionMiddleware(req, fakeRes, () => {
+      const user = req.session && req.session.user;
+      if (!user) {
+        socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+        socket.destroy();
+        return;
+      }
+      handleRemoteTerminalUpgrade(req, socket, head, wss, user).catch(() => {
+        if (!socket.destroyed) socket.destroy();
+      });
+    });
+    return;
+  }
   if (!req.url.startsWith('/terminal/ws')) {
     socket.destroy();
     return;
@@ -276,7 +310,7 @@ server.on('upgrade', (req, socket, head) => {
   });
 });
 
-server.listen(config.port, () => {
+server.listen(config.port, config.host, () => {
   console.log(`Server running at http://localhost:${config.port}`);
   console.log(`             LAN: http://${getLocalIP()}:${config.port}`);
   updates.start();

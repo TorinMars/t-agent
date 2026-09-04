@@ -18,12 +18,20 @@ function normalizeBaseUrl(urlValue, port) {
   return url.toString().replace(/\/$/, '');
 }
 
-function request(baseUrl, pathname, token, { expectText = false } = {}) {
+function request(baseUrl, pathname, token, { expectText = false, method = 'GET', body } = {}) {
   const target = new URL(pathname, `${baseUrl}/`);
   const client = target.protocol === 'https:' ? https : http;
   return new Promise((resolve, reject) => {
-    const req = client.get(target, {
-      headers: { Authorization: `Bearer ${token}`, Accept: expectText ? 'text/plain' : 'application/json' },
+    const payload = body === undefined ? null : Buffer.from(JSON.stringify(body));
+    const headers = { Accept: expectText ? 'text/plain' : 'application/json' };
+    if (token) headers.Authorization = `Bearer ${token}`;
+    if (payload) {
+      headers['Content-Type'] = 'application/json';
+      headers['Content-Length'] = payload.length;
+    }
+    const req = client.request(target, {
+      method,
+      headers,
       timeout: 10_000,
     }, res => {
       const chunks = [];
@@ -46,6 +54,8 @@ function request(baseUrl, pathname, token, { expectText = false } = {}) {
     });
     req.on('timeout', () => req.destroy(new Error('REMOTE_TIMEOUT')));
     req.on('error', reject);
+    if (payload) req.write(payload);
+    req.end();
   });
 }
 

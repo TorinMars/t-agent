@@ -69,3 +69,34 @@ CREATE TABLE IF NOT EXISTS remote_servers (
 );
 
 CREATE INDEX IF NOT EXISTS idx_remote_servers_owner ON remote_servers(owner_id, created_at);
+
+-- Engine 授权与配对数据。Engine 只保存 Token 哈希，明文只在创建时返回一次。
+CREATE TABLE IF NOT EXISTS engine_access_tokens (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  principal_id TEXT    NOT NULL DEFAULT 'engine',
+  name         TEXT    NOT NULL,
+  token_hash   TEXT    NOT NULL UNIQUE,
+  token_prefix TEXT    NOT NULL,
+  role         TEXT    NOT NULL DEFAULT 'operator',
+  scopes       TEXT    NOT NULL,
+  last_used_at DATETIME,
+  created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  revoked_at   DATETIME
+);
+
+CREATE TABLE IF NOT EXISTS engine_pairing_codes (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  principal_id TEXT    NOT NULL DEFAULT 'engine',
+  code_hash    TEXT    NOT NULL UNIQUE,
+  code_prefix  TEXT    NOT NULL,
+  role         TEXT    NOT NULL DEFAULT 'operator',
+  expires_at   DATETIME NOT NULL,
+  created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  consumed_at  DATETIME
+);
+
+CREATE TABLE IF NOT EXISTS engine_identity (
+  key        TEXT PRIMARY KEY,
+  value      TEXT NOT NULL,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);

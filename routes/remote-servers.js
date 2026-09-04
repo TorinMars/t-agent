@@ -1,5 +1,4 @@
 const express = require('express');
-const crypto = require('crypto');
 const db = require('../db');
 const config = require('../config');
 const requireAuth = require('../middleware/auth');
@@ -27,9 +26,9 @@ function getServer(req) {
 async function checkServer(row) {
   const token = decryptToken(row.token_cipher, config.sessionSecret);
   try {
-    const capabilities = await request(row.base_url, '/api/remote/v1/capabilities', token);
+    const capabilities = await request(row.base_url, '/v1/info', token);
     db.prepare(`UPDATE remote_servers SET status = 'online', remote_version = ?, last_checked_at = CURRENT_TIMESTAMP,
-      last_error = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(capabilities.app_version || null, row.id);
+      last_error = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(capabilities.engine_version || capabilities.app_version || null, row.id);
     return capabilities;
   } catch (error) {
     const code = safeError(error);
@@ -46,9 +45,13 @@ router.get('/', (req, res) => {
 router.post('/test', async (req, res) => {
   try {
     const baseUrl = normalizeBaseUrl(req.body.url, req.body.port);
-    const token = typeof req.body.token === 'string' ? req.body.token.trim() : '';
-    if (!token) return res.status(400).json({ error: 'TOKEN_REQUIRED' });
-    const capabilities = await request(baseUrl, '/api/remote/v1/capabilities', token);
+    const credential = typeof req.body.token === 'string' ? req.body.token.trim() : '';
+    if (!credential) return res.status(400).json({ error: 'TOKEN_REQUIRED' });
+    if (/^TA-/i.test(credential)) {
+      const health = await request(baseUrl, '/v1/health', null);
+      return res.json({ success: true, base_url: baseUrl, pairing_code: true, engine: health });
+    }
+    const capabilities = await request(baseUrl, '/v1/info', credential);
     res.json({ success: true, base_url: baseUrl, capabilities });
   } catch (error) { res.status(400).json({ error: safeError(error) }); }
 });
@@ -56,13 +59,21 @@ router.post('/test', async (req, res) => {
 router.post('/', async (req, res) => {
   try {
     const baseUrl = normalizeBaseUrl(req.body.url, req.body.port);
-    const token = typeof req.body.token === 'string' ? req.body.token.trim() : '';
-    if (!token) return res.status(400).json({ error: 'TOKEN_REQUIRED' });
-    const capabilities = await request(baseUrl, '/api/remote/v1/capabilities', token);
+    const credential = typeof req.body.token === 'string' ? req.body.token.trim() : '';
+    if (!credential) return res.status(400).json({ error: 'TOKEN_REQUIRED' });
+    let token = credential;
+    if (/^TA-/i.test(credential)) {
+      const paired = await request(baseUrl, '/v1/pair', null, {
+        method: 'POST',
+        body: { code: credential, client_name: `T-Agent Client (${owner(req)})` },
+      });
+      token = paired.access_token;
+    }
+    const capabilities = await request(baseUrl, '/v1/info', token);
     const name = (typeof req.body.name === 'string' && req.body.name.trim()) || new URL(baseUrl).hostname;
     const result = db.prepare(`INSERT INTO remote_servers
       (owner_id, name, base_url, token_cipher, status, remote_version, last_checked_at)
-      VALUES (?, ?, ?, ?, 'online', ?, CURRENT_TIMESTAMP)`).run(owner(req), name.slice(0, 80), baseUrl, encryptToken(token, config.sessionSecret), capabilities.app_version || null);
+      VALUES (?, ?, ?, ?, 'online', ?, CURRENT_TIMESTAMP)`).run(owner(req), name.slice(0, 80), baseUrl, encryptToken(token, config.sessionSecret), capabilities.engine_version || capabilities.app_version || null);
     res.status(201).json(publicServer(db.prepare('SELECT * FROM remote_servers WHERE id = ?').get(result.lastInsertRowid)));
   } catch (error) {
     const code = error.code === 'SQLITE_CONSTRAINT_UNIQUE' ? 'REMOTE_ALREADY_EXISTS' : safeError(error);
@@ -86,7 +97,7 @@ router.post('/:id/check', async (req, res) => {
 router.get('/:id/tasks', async (req, res) => {
   const row = getServer(req);
   if (!row) return res.status(404).json({ error: 'REMOTE_NOT_FOUND' });
-  try { res.json(await request(row.base_url, '/api/remote/v1/tasks', decryptToken(row.token_cipher, config.sessionSecret))); }
+  try { res.json(await request(row.base_url, '/v1/tasks', decryptToken(row.token_cipher, config.sessionSecret))); }
   catch (error) { res.status(502).json({ error: safeError(error) }); }
 });
 
@@ -95,7 +106,7 @@ router.get('/:id/tasks/:taskId/document/:kind', async (req, res) => {
   if (!row) return res.status(404).json({ error: 'REMOTE_NOT_FOUND' });
   if (!['technical', 'readme', 'agent'].includes(req.params.kind)) return res.status(400).json({ error: 'INVALID_DOCUMENT_KIND' });
   try {
-    const text = await request(row.base_url, `/api/remote/v1/tasks/${encodeURIComponent(req.params.taskId)}/document/${req.params.kind}`, decryptToken(row.token_cipher, config.sessionSecret), { expectText: true });
+    const text = await request(row.base_url, `/v1/tasks/${encodeURIComponent(req.params.taskId)}/documents/${req.params.kind}`, decryptToken(row.token_cipher, config.sessionSecret), { expectText: true });
     res.type('text/plain').send(text);
   } catch (error) { res.status(error.statusCode === 404 ? 404 : 502).json({ error: safeError(error) }); }
 });
@@ -103,8 +114,42 @@ router.get('/:id/tasks/:taskId/document/:kind', async (req, res) => {
 router.get('/:id/tasks/:taskId/todos', async (req, res) => {
   const row = getServer(req);
   if (!row) return res.status(404).json({ error: 'REMOTE_NOT_FOUND' });
-  try { res.json(await request(row.base_url, `/api/remote/v1/tasks/${encodeURIComponent(req.params.taskId)}/todos`, decryptToken(row.token_cipher, config.sessionSecret))); }
+  try { res.json(await request(row.base_url, `/v1/tasks/${encodeURIComponent(req.params.taskId)}/todos`, decryptToken(row.token_cipher, config.sessionSecret))); }
   catch (error) { res.status(error.statusCode === 404 ? 404 : 502).json({ error: safeError(error) }); }
+});
+
+router.post('/:id/tasks', async (req, res) => {
+  const row = getServer(req);
+  if (!row) return res.status(404).json({ error: 'REMOTE_NOT_FOUND' });
+  try {
+    const task = await request(row.base_url, '/v1/tasks', decryptToken(row.token_cipher, config.sessionSecret), { method: 'POST', body: req.body });
+    res.status(201).json(task);
+  } catch (error) { res.status(error.statusCode || 502).json({ error: safeError(error) }); }
+});
+
+router.patch('/:id/tasks/:taskId', async (req, res) => {
+  const row = getServer(req);
+  if (!row) return res.status(404).json({ error: 'REMOTE_NOT_FOUND' });
+  try {
+    res.json(await request(row.base_url, `/v1/tasks/${encodeURIComponent(req.params.taskId)}`, decryptToken(row.token_cipher, config.sessionSecret), { method: 'PATCH', body: req.body }));
+  } catch (error) { res.status(error.statusCode || 502).json({ error: safeError(error) }); }
+});
+
+router.delete('/:id/tasks/:taskId', async (req, res) => {
+  const row = getServer(req);
+  if (!row) return res.status(404).json({ error: 'REMOTE_NOT_FOUND' });
+  try {
+    res.json(await request(row.base_url, `/v1/tasks/${encodeURIComponent(req.params.taskId)}`, decryptToken(row.token_cipher, config.sessionSecret), { method: 'DELETE' }));
+  } catch (error) { res.status(error.statusCode || 502).json({ error: safeError(error) }); }
+});
+
+router.put('/:id/tasks/:taskId/document/:kind', async (req, res) => {
+  const row = getServer(req);
+  if (!row) return res.status(404).json({ error: 'REMOTE_NOT_FOUND' });
+  if (!['technical', 'readme', 'agent'].includes(req.params.kind)) return res.status(400).json({ error: 'INVALID_DOCUMENT_KIND' });
+  try {
+    res.json(await request(row.base_url, `/v1/tasks/${encodeURIComponent(req.params.taskId)}/documents/${req.params.kind}`, decryptToken(row.token_cipher, config.sessionSecret), { method: 'PUT', body: req.body }));
+  } catch (error) { res.status(error.statusCode || 502).json({ error: safeError(error) }); }
 });
 
 module.exports = router;

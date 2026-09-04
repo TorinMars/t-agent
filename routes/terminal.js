@@ -113,8 +113,8 @@ function getOrCreateSession(taskId, workDir, dirWarning) {
  * Handle WebSocket upgrade for /terminal/ws?taskId=:id
  * Called from server.js with (ws, req, sessionData)
  */
-function handleWs(ws, req, sessionUser) {
-  const taskId = parseInt(new URL(req.url, 'http://x').searchParams.get('taskId'));
+function handleWs(ws, req, sessionUser, requestedTaskId = null) {
+  const taskId = parseInt(requestedTaskId || new URL(req.url, 'http://x').searchParams.get('taskId'));
   if (!taskId) { ws.close(1008, 'missing taskId'); return; }
 
   const task = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(taskId, sessionUser.login);

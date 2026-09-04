@@ -3,6 +3,7 @@ const RemoteTasks = (() => {
   let tasksByServer = new Map();
   let selected = null;
   let activeTab = 'doc';
+  let remoteTerminal = null;
 
   const nav = document.getElementById('task-nav');
   const previewPane = document.getElementById('preview-pane');
@@ -15,6 +16,7 @@ const RemoteTasks = (() => {
       INVALID_REMOTE_URL: 'URL 格式不正确', INVALID_REMOTE_PORT: '端口不正确', TOKEN_REQUIRED: '请输入 Token',
       REMOTE_TIMEOUT: '连接超时', REMOTE_HTTP_401: 'Token 无效或已撤销', REMOTE_ALREADY_EXISTS: '该远程服务已连接',
       REMOTE_CONNECTION_FAILED: '远程服务连接失败', REMOTE_URL_MUST_NOT_HAVE_PATH: 'URL 只填写协议和主机，不要包含路径',
+      PAIRING_CODE_INVALID: '配对码格式不正确', PAIRING_CODE_INVALID_OR_EXPIRED: '配对码无效或已过期',
     })[code] || code || '操作失败';
   }
 
@@ -85,17 +87,19 @@ const RemoteTasks = (() => {
     if (window.Tasks) Tasks.clearSelection();
     selected = { serverId: server.id, server, task };
     activeTab = localStorage.getItem(`remote-task-tab-${server.id}-${task.id}`) || 'doc';
-    if (activeTab === 'shell') activeTab = 'doc';
     render();
     contentTabs.style.display = 'flex';
     contentTabs.querySelectorAll('.tab-btn').forEach(button => {
       button.classList.toggle('active', button.dataset.tab === activeTab);
-      button.disabled = button.dataset.tab === 'shell';
-      if (button.dataset.tab === 'shell') button.title = '远程终端将在后续版本开放';
+      button.disabled = false;
+      button.title = '';
     });
-    terminalPane.style.display = 'none';
-    previewPane.style.display = '';
-    renderSelected();
+    if (activeTab === 'shell') renderRemoteTerminal();
+    else {
+      terminalPane.style.display = 'none';
+      previewPane.style.display = '';
+      renderSelected();
+    }
   }
 
   async function renderSelected() {
@@ -133,13 +137,82 @@ const RemoteTasks = (() => {
   contentTabs.addEventListener('click', event => {
     if (!selected) return;
     const button = event.target.closest('.tab-btn');
-    if (!button || button.dataset.tab === 'shell') return;
+    if (!button) return;
     event.stopImmediatePropagation();
     activeTab = button.dataset.tab;
     localStorage.setItem(`remote-task-tab-${selected.serverId}-${selected.task.id}`, activeTab);
     contentTabs.querySelectorAll('.tab-btn').forEach(item => item.classList.toggle('active', item.dataset.tab === activeTab));
-    renderSelected();
+    if (activeTab === 'shell') renderRemoteTerminal();
+    else {
+      disposeRemoteTerminal();
+      terminalPane.style.display = 'none';
+      previewPane.style.display = '';
+      renderSelected();
+    }
   }, true);
+
+  function disposeRemoteTerminal() {
+    if (!remoteTerminal) return;
+    remoteTerminal.disposed = true;
+    if (remoteTerminal.ws) remoteTerminal.ws.close();
+    remoteTerminal.term.dispose();
+    remoteTerminal.el.remove();
+    remoteTerminal = null;
+  }
+
+  function renderRemoteTerminal() {
+    if (!selected) return;
+    disposeRemoteTerminal();
+    previewPane.style.display = 'none';
+    document.getElementById('toc-pane').style.display = 'none';
+    terminalPane.style.display = 'flex';
+    contentToolbar.style.display = 'none';
+
+    const container = document.getElementById('xterm-container');
+    Array.from(container.children).forEach(child => { child.style.display = 'none'; });
+    const el = document.createElement('div');
+    el.style.cssText = 'width:100%;height:100%';
+    container.appendChild(el);
+    const term = new Terminal({
+      cursorBlink: true,
+      fontSize: 13,
+      fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+      theme: { background: '#1e1e1e' },
+      scrollback: 5000,
+    });
+    const fitAddon = new FitAddon.FitAddon();
+    term.loadAddon(fitAddon);
+    term.open(el);
+    term.write(`\x1b[36m[正在连接 ${selected.server.name}...]\x1b[0m\r\n`);
+
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    const ws = new WebSocket(`${proto}://${location.host}/api/remote-servers/${selected.serverId}/terminal/ws?taskId=${selected.task.id}`);
+    ws.binaryType = 'arraybuffer';
+    remoteTerminal = { term, fitAddon, ws, el, disposed: false };
+    term.onData(data => {
+      if (ws.readyState === WebSocket.OPEN) ws.send(data);
+    });
+    term.onResize(({ cols, rows }) => {
+      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'resize', cols, rows }));
+    });
+    ws.onopen = () => {
+      term.write('\x1b[32m[远程 Engine 已连接]\x1b[0m\r\n');
+      fitAddon.fit();
+      term.focus();
+      ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+    };
+    ws.onmessage = event => {
+      if (event.data instanceof ArrayBuffer) term.write(new Uint8Array(event.data));
+      else term.write(event.data);
+    };
+    ws.onclose = () => {
+      if (remoteTerminal && remoteTerminal.ws === ws && !remoteTerminal.disposed) {
+        term.write('\r\n\x1b[33m[远程终端连接已断开]\x1b[0m\r\n');
+      }
+    };
+    ws.onerror = () => {};
+    setTimeout(() => fitAddon.fit(), 0);
+  }
 
   async function refreshServer(id) {
     try { await API.post(`/api/remote-servers/${id}/check`, {}); } catch {}
@@ -157,7 +230,7 @@ const RemoteTasks = (() => {
     Modal.show('连接远程服务', `
       <div class="form-group"><label class="form-label">URL</label><input class="form-input" id="remote-url" placeholder="例如 http://192.168.1.20" autocomplete="off"></div>
       <div class="form-group"><label class="form-label">端口</label><input class="form-input" id="remote-port" type="number" min="1" max="65535" placeholder="例如 14002"></div>
-      <div class="form-group"><label class="form-label">Token</label><input class="form-input" id="remote-token" type="password" placeholder="txw_…" autocomplete="new-password"><div class="form-hint">Token 加密保存在本机，之后不会返回浏览器。</div></div>
+      <div class="form-group"><label class="form-label">配对码或访问 Token</label><input class="form-input" id="remote-token" type="password" placeholder="TA-XXXX-XXXX-XXXX 或 tae_…" autocomplete="new-password"><div class="form-hint">配对码只使用一次；换取的 Token 会加密保存在 Client 服务端。</div></div>
       <div class="form-hint error" id="remote-connect-error"></div>
       <div class="form-actions"><button class="btn-cancel" id="remote-connect-cancel">取消</button><button class="btn-cancel" id="remote-connect-test">测试连接</button><button class="btn-submit" id="remote-connect-save">连接</button></div>
     `);
@@ -182,10 +255,10 @@ const RemoteTasks = (() => {
 
   async function showTokens() {
     const tokens = await API.get('/api/remote-tokens');
-    Modal.show('远程访问 Token', `
-      <div class="form-hint">将 Token 提供给另一台 torin-x-web，即可只读访问当前账号的任务、文档和待办。</div>
+    Modal.show('Engine 访问凭证', `
+      <div class="form-hint">为其他 Client 创建配对码。配对码 10 分钟内有效且只能使用一次。</div>
       <div class="remote-token-list">${tokens.length ? tokens.map(token => `<div class="remote-token-row"><div><strong>${escapeHtml(token.name)}</strong><small>${escapeHtml(token.token_prefix)}… · ${escapeHtml(token.scopes)}</small></div><button class="remote-token-revoke" data-id="${token.id}">撤销</button></div>`).join('') : '<div class="remote-empty">尚未创建 Token</div>'}</div>
-      <div class="form-actions"><button class="btn-cancel" id="remote-token-close">关闭</button><button class="btn-submit" id="remote-token-create">创建 Token</button></div>
+      <div class="form-actions"><button class="btn-cancel" id="remote-token-close">关闭</button><button class="btn-submit" id="remote-token-create">生成配对码</button></div>
     `);
     document.getElementById('remote-token-close').addEventListener('click', Modal.hide);
     document.getElementById('remote-token-create').addEventListener('click', createToken);
@@ -193,9 +266,9 @@ const RemoteTasks = (() => {
   }
 
   async function createToken() {
-    const created = await API.post('/api/remote-tokens', { name: '远程连接' });
-    Modal.show('Token 已创建', `<div class="form-hint">只显示这一次，请立即复制并妥善保存。</div><div class="created-token"><code>${escapeHtml(created.token)}</code><button class="btn-cancel" id="copy-created-token">复制</button></div><div class="form-actions"><button class="btn-submit" id="created-token-done">完成</button></div>`);
-    document.getElementById('copy-created-token').addEventListener('click', async event => { await navigator.clipboard.writeText(created.token); event.target.textContent = '已复制'; });
+    const created = await API.post('/api/remote-tokens/pairing', { role: 'operator' });
+    Modal.show('配对码已创建', `<div class="form-hint">10 分钟内有效，只能使用一次。在另一个 Client 中输入当前 Engine 地址和此配对码。</div><div class="created-token"><code>${escapeHtml(created.code)}</code><button class="btn-cancel" id="copy-created-token">复制</button></div><div class="form-actions"><button class="btn-submit" id="created-token-done">完成</button></div>`);
+    document.getElementById('copy-created-token').addEventListener('click', async event => { await navigator.clipboard.writeText(created.code); event.target.textContent = '已复制'; });
     document.getElementById('created-token-done').addEventListener('click', Modal.hide);
   }
 
@@ -203,6 +276,7 @@ const RemoteTasks = (() => {
 
   return { load, render, isSelected: () => Boolean(selected), clearSelection: () => {
     selected = null;
+    disposeRemoteTerminal();
     contentTabs.querySelectorAll('.tab-btn').forEach(button => { button.disabled = false; button.title = ''; });
     ['btn-reveal-folder', 'btn-open-vscode', 'btn-share-md'].forEach(id => { document.getElementById(id).disabled = false; });
   }, showTokens };

@@ -420,6 +420,31 @@ sudo systemctl restart t-agent-engine
 sudo journalctl -u t-agent-engine -f
 ```
 
+### Linux 容器或未运行 systemd
+
+有些 Ubuntu 容器虽然安装了 `systemctl`，但 PID 1 不是 systemd。安装脚本会自动识别这种环境、跳过服务注册，并显示手动启动命令。Engine 可以前台运行：
+
+```bash
+cd /path/to/t-agent
+npm run start:engine
+```
+
+生产环境建议把上面的命令配置为容器启动命令，或者交给已有的进程管理器托管。临时后台运行可以使用：
+
+```bash
+cd /path/to/t-agent
+nohup npm run start:engine >> logs/stdout.log 2>> logs/stderr.log &
+```
+
+如果旧版安装脚本在注册 systemd 服务时中断，初始 Token 可能已经生成但尚未显示。可以重新生成一个可用 Token：
+
+```bash
+cd /path/to/t-agent
+node scripts/create-engine-token.js owner 'Replacement Client'
+```
+
+命令输出就是新 Token，只显示一次。
+
 ## 手动启动和开发
 
 安装依赖：

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 一键安装脚本：兼容 macOS（LaunchAgent）和 Linux（systemd）。
+# 一键安装脚本：兼容 macOS（LaunchAgent）和 Linux（systemd 或手动启动）。
 # 示例：
 #   ./install.sh
 #   ./install.sh --mode engine --port 3100 --tasks-dir /srv/t-agent-tasks
@@ -84,6 +84,12 @@ run_as_root() {
   else
     fail "需要管理员权限，请以 root 运行或安装 sudo"
   fi
+}
+
+systemd_is_available() {
+  command -v systemctl >/dev/null 2>&1 \
+    && [ -d /run/systemd/system ] \
+    && systemctl show-environment >/dev/null 2>&1
 }
 
 install_system_dependencies() {
@@ -331,22 +337,6 @@ if ! verify_node_pty; then
   verify_node_pty || fail "node-pty 无法加载；macOS 请先运行 xcode-select --install，再重新执行安装脚本"
 fi
 
-if [ "$MODE" = "engine" ]; then
-  # 首次 npm 安装若在原生模块编译阶段失败，.env 已存在但 Token 尚未创建。
-  # 只在数据库历史上从未出现过 Engine Token 时补发，避免升级或全部撤销后意外生成 owner Token。
-  ENGINE_TOKEN_COUNT="$(node - "$APP_DIR" <<'NODE'
-const path = require('path');
-const appDir = process.argv[2];
-const db = require(path.join(appDir, 'db'));
-const row = db.prepare('SELECT COUNT(*) count FROM engine_access_tokens').get();
-process.stdout.write(String(row.count));
-NODE
-)"
-  if [ "$ENGINE_TOKEN_COUNT" = "0" ]; then
-    CREATED_ENGINE_TOKEN="$(node "$APP_DIR/scripts/create-engine-token.js" owner 'Initial Client')"
-  fi
-fi
-
 NODE_BIN="$(command -v node)"
 SERVICE_PATH="$(dirname "$NODE_BIN"):/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 if [ "$MODE" = "engine" ]; then
@@ -387,7 +377,7 @@ EOF
   launchctl bootstrap "gui/$UID" "$PLIST_FILE"
   launchctl kickstart -k "gui/$UID/$LAUNCH_LABEL"
   SERVICE_HINT="launchctl kickstart -k gui/$UID/$LAUNCH_LABEL"
-elif [ "$INSTALL_SERVICE" -eq 1 ] && [ "$PLATFORM" = "Linux" ] && command -v systemctl >/dev/null 2>&1; then
+elif [ "$INSTALL_SERVICE" -eq 1 ] && [ "$PLATFORM" = "Linux" ] && systemd_is_available; then
   SERVICE_USER="${SUDO_USER:-$USER}"
   SERVICE_FILE="/etc/systemd/system/$SERVICE_BASENAME.service"
   SERVICE_CONTENT="[Unit]
@@ -410,10 +400,26 @@ WantedBy=multi-user.target
   run_as_root systemctl enable --now "$SERVICE_BASENAME.service"
   SERVICE_HINT="systemctl status $SERVICE_BASENAME.service"
 elif [ "$INSTALL_SERVICE" -eq 1 ] && [ "$PLATFORM" = "Linux" ]; then
-  printf '提示：未检测到 systemd，未注册开机服务；请使用以下命令手动启动。\n' >&2
+  printf '提示：当前 Linux 环境没有运行 systemd，未注册开机服务；请使用以下命令启动，或交给容器/进程管理器托管。\n' >&2
   SERVICE_HINT="$MANUAL_START"
 else
   SERVICE_HINT="$MANUAL_START"
+fi
+
+if [ "$MODE" = "engine" ]; then
+  # 在可能失败的服务注册完成后再生成 Token，避免脚本中断导致首次 Token 无法看到。
+  # 若首次 npm 安装失败但 .env 已存在，只要数据库从未生成过 Token，重试后仍会补发。
+  ENGINE_TOKEN_COUNT="$(node - "$APP_DIR" <<'NODE'
+const path = require('path');
+const appDir = process.argv[2];
+const db = require(path.join(appDir, 'db'));
+const row = db.prepare('SELECT COUNT(*) count FROM engine_access_tokens').get();
+process.stdout.write(String(row.count));
+NODE
+)"
+  if [ "$ENGINE_TOKEN_COUNT" = "0" ]; then
+    CREATED_ENGINE_TOKEN="$(node "$APP_DIR/scripts/create-engine-token.js" owner 'Initial Client')"
+  fi
 fi
 
 ACTIVE_PORT="$(sed -n 's/^PORT=//p' "$ENV_FILE" | tail -n 1)"

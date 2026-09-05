@@ -4,6 +4,7 @@ const RemoteTasks = (() => {
   let selected = null;
   let activeTab = 'doc';
   let remoteTerminal = null;
+  const remoteTerminals = new Map();
   let activeEngineKey = localStorage.getItem('active-engine-key') || 'local';
 
   const nav = document.getElementById('task-nav');
@@ -115,7 +116,7 @@ const RemoteTasks = (() => {
   }
 
   function showRemoteEmpty(server) {
-    disposeRemoteTerminal();
+    hideRemoteTerminal();
     selected = null;
     const empty = document.getElementById('preview-empty');
     empty.style.display = 'flex';
@@ -196,17 +197,6 @@ const RemoteTasks = (() => {
   }
 
   function select(server, task) {
-    const sameTask = Boolean(selected
-      && selected.serverId === server.id
-      && selected.task.id === task.id);
-    const canReuseTerminal = sameTask
-      && activeTab === 'shell'
-      && remoteTerminal
-      && remoteTerminal.serverId === server.id
-      && remoteTerminal.taskId === task.id
-      && (remoteTerminal.ws.readyState === WebSocket.CONNECTING
-        || remoteTerminal.ws.readyState === WebSocket.OPEN);
-
     if (window.Tasks) Tasks.clearSelection();
     activeEngineKey = `remote:${server.id}`;
     localStorage.setItem('active-engine-key', activeEngineKey);
@@ -221,21 +211,9 @@ const RemoteTasks = (() => {
       button.title = '';
     });
     if (activeTab === 'shell') {
-      if (canReuseTerminal) {
-        previewPane.style.display = 'none';
-        document.getElementById('toc-pane').style.display = 'none';
-        terminalPane.style.display = 'flex';
-        contentToolbar.style.display = 'none';
-        setTimeout(() => {
-          if (!remoteTerminal) return;
-          remoteTerminal.fitAddon.fit();
-          remoteTerminal.term.focus();
-        }, 0);
-      } else {
-        renderRemoteTerminal();
-      }
-    }
-    else {
+      renderRemoteTerminal();
+    } else {
+      hideRemoteTerminal();
       terminalPane.style.display = 'none';
       previewPane.style.display = '';
       renderSelected();
@@ -284,25 +262,44 @@ const RemoteTasks = (() => {
     contentTabs.querySelectorAll('.tab-btn').forEach(item => item.classList.toggle('active', item.dataset.tab === activeTab));
     if (activeTab === 'shell') renderRemoteTerminal();
     else {
-      disposeRemoteTerminal();
+      hideRemoteTerminal();
       terminalPane.style.display = 'none';
       previewPane.style.display = '';
       renderSelected();
     }
   }, true);
 
-  function disposeRemoteTerminal() {
-    if (!remoteTerminal) return;
-    remoteTerminal.disposed = true;
-    if (remoteTerminal.ws) remoteTerminal.ws.close();
-    remoteTerminal.term.dispose();
-    remoteTerminal.el.remove();
+  function terminalKey(serverId, taskId) {
+    return `${serverId}:${taskId}`;
+  }
+
+  function hideRemoteTerminal() {
+    if (remoteTerminal) remoteTerminal.el.style.display = 'none';
     remoteTerminal = null;
+  }
+
+  function disposeRemoteTerminal(instance) {
+    if (!instance) return;
+    instance.disposed = true;
+    if (instance.ws) instance.ws.close();
+    instance.term.dispose();
+    instance.el.remove();
+    remoteTerminals.delete(terminalKey(instance.serverId, instance.taskId));
+    if (remoteTerminal === instance) remoteTerminal = null;
+  }
+
+  function disposeServerTerminals(serverId) {
+    for (const instance of remoteTerminals.values()) {
+      if (instance.serverId === Number(serverId)) disposeRemoteTerminal(instance);
+    }
   }
 
   function renderRemoteTerminal() {
     if (!selected) return;
-    disposeRemoteTerminal();
+    const serverId = selected.serverId;
+    const taskId = selected.task.id;
+    const key = terminalKey(serverId, taskId);
+    hideRemoteTerminal();
     previewPane.style.display = 'none';
     document.getElementById('toc-pane').style.display = 'none';
     terminalPane.style.display = 'flex';
@@ -310,6 +307,19 @@ const RemoteTasks = (() => {
 
     const container = document.getElementById('xterm-container');
     Array.from(container.children).forEach(child => { child.style.display = 'none'; });
+    const existing = remoteTerminals.get(key);
+    if (existing && (existing.ws.readyState === WebSocket.CONNECTING || existing.ws.readyState === WebSocket.OPEN)) {
+      remoteTerminal = existing;
+      existing.el.style.display = '';
+      setTimeout(() => {
+        if (remoteTerminal !== existing) return;
+        existing.fitAddon.fit();
+        existing.term.focus();
+      }, 0);
+      return;
+    }
+    if (existing) disposeRemoteTerminal(existing);
+
     const el = document.createElement('div');
     el.style.cssText = 'width:100%;height:100%';
     container.appendChild(el);
@@ -326,17 +336,19 @@ const RemoteTasks = (() => {
     term.write(`\x1b[36m[正在连接 ${selected.server.name}...]\x1b[0m\r\n`);
 
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    const ws = new WebSocket(`${proto}://${location.host}/api/remote-servers/${selected.serverId}/terminal/ws?taskId=${selected.task.id}`);
+    const ws = new WebSocket(`${proto}://${location.host}/api/remote-servers/${serverId}/terminal/ws?taskId=${taskId}`);
     ws.binaryType = 'arraybuffer';
     remoteTerminal = {
       term,
       fitAddon,
       ws,
       el,
-      serverId: selected.serverId,
-      taskId: selected.task.id,
+      serverId,
+      taskId,
       disposed: false,
     };
+    remoteTerminals.set(key, remoteTerminal);
+    const instance = remoteTerminal;
     term.onData(data => {
       if (ws.readyState === WebSocket.OPEN) ws.send(data);
     });
@@ -354,7 +366,7 @@ const RemoteTasks = (() => {
       else term.write(event.data);
     };
     ws.onclose = () => {
-      if (remoteTerminal && remoteTerminal.ws === ws && !remoteTerminal.disposed) {
+      if (!instance.disposed) {
         term.write('\r\n\x1b[33m[远程终端连接已断开，重新点击当前任务可重连]\x1b[0m\r\n');
       }
     };
@@ -369,6 +381,7 @@ const RemoteTasks = (() => {
 
   async function removeServer(id) {
     if (!confirm('确认移除这个远程连接？远程数据不会被删除。')) return;
+    disposeServerTerminals(id);
     await API.delete(`/api/remote-servers/${id}`);
     if (selected && selected.serverId === id) { selected = null; location.reload(); return; }
     await load();
@@ -443,7 +456,7 @@ const RemoteTasks = (() => {
     isSelected: () => Boolean(selected),
     clearSelection: () => {
     selected = null;
-    disposeRemoteTerminal();
+    hideRemoteTerminal();
     contentTabs.querySelectorAll('.tab-btn').forEach(button => { button.disabled = false; button.title = ''; });
     ['btn-reveal-folder', 'btn-open-vscode', 'btn-share-md'].forEach(id => { document.getElementById(id).disabled = false; });
     },

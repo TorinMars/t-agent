@@ -2,6 +2,7 @@ const WebSocket = require('ws');
 const db = require('../db');
 const config = require('../config');
 const { decryptToken } = require('../lib/token-crypto');
+const { closeWebSocket } = require('../lib/websocket-close');
 const { request } = require('./remote-client');
 
 function rejectUpgrade(socket, status, message) {
@@ -43,8 +44,8 @@ async function handleRemoteTerminalUpgrade(req, socket, head, wss, user) {
       settled = true;
       wss.handleUpgrade(req, socket, head, downstream => {
         const closeBoth = (code = 1000, reason = '') => {
-          if (downstream.readyState === WebSocket.OPEN) downstream.close(code, reason);
-          if (upstream.readyState === WebSocket.OPEN) upstream.close(code, reason);
+          closeWebSocket(downstream, code, reason);
+          closeWebSocket(upstream, code, reason);
         };
         downstream.on('message', (data, binary) => {
           if (upstream.readyState === WebSocket.OPEN) upstream.send(data, { binary });
@@ -53,10 +54,10 @@ async function handleRemoteTerminalUpgrade(req, socket, head, wss, user) {
           if (downstream.readyState === WebSocket.OPEN) downstream.send(data, { binary });
         });
         downstream.on('close', (code, reason) => {
-          if (upstream.readyState === WebSocket.OPEN) upstream.close(code, reason.toString());
+          closeWebSocket(upstream, code, reason);
         });
         upstream.on('close', (code, reason) => {
-          if (downstream.readyState === WebSocket.OPEN) downstream.close(code, reason.toString());
+          closeWebSocket(downstream, code, reason);
         });
         downstream.on('error', () => closeBoth(1011, 'Client connection error'));
         upstream.on('error', () => closeBoth(1011, 'Engine connection error'));

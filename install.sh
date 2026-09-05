@@ -134,14 +134,38 @@ compiler_supports_cxx20() {
 
 configure_linux_cxx20_compiler() {
   local compiler="${CXX:-g++}"
+  local clang_c
+  local clang_cxx
   local toolset
   local toolset_root
   if compiler_supports_cxx20 "$compiler"; then
     return
   fi
 
-  printf '当前 C++ 编译器不支持 -std=c++20，正在查找 GCC Toolset……\n'
-  if command -v dnf >/dev/null 2>&1; then
+  # Ubuntu 20.04 ships GCC 9, which only understands the older c++2a spelling.
+  # Clang 10+ accepts c++20 and can compile the native modules with libstdc++.
+  if command -v clang++ >/dev/null 2>&1 && compiler_supports_cxx20 clang++; then
+    clang_c="$(command -v clang)"
+    clang_cxx="$(command -v clang++)"
+    export CC="$clang_c"
+    export CXX="$clang_cxx"
+    printf '当前 g++ 不支持 -std=c++20，改用 %s 编译原生模块。\n' "$(clang++ --version | head -n 1)"
+    return
+  fi
+
+  if command -v apt-get >/dev/null 2>&1; then
+    printf '当前 C++ 编译器不支持 -std=c++20，正在安装 Clang……\n'
+    run_as_root apt-get update
+    if run_as_root apt-get install -y clang && compiler_supports_cxx20 clang++; then
+      clang_c="$(command -v clang)"
+      clang_cxx="$(command -v clang++)"
+      export CC="$clang_c"
+      export CXX="$clang_cxx"
+      printf '使用 %s 编译原生模块。\n' "$(clang++ --version | head -n 1)"
+      return
+    fi
+  elif command -v dnf >/dev/null 2>&1; then
+    printf '当前 C++ 编译器不支持 -std=c++20，正在查找 GCC Toolset……\n'
     for toolset in 14 13 12 11 10; do
       toolset_root="/opt/rh/gcc-toolset-$toolset/root/usr/bin"
       if [ ! -x "$toolset_root/g++" ]; then
@@ -173,7 +197,7 @@ configure_linux_cxx20_compiler() {
     done
   fi
 
-  fail "当前 g++ 不支持 C++20。CentOS/RHEL 8+ 请安装 gcc-toolset-12，并设置 CC=/opt/rh/gcc-toolset-12/root/usr/bin/gcc、CXX=/opt/rh/gcc-toolset-12/root/usr/bin/g++ 后重试"
+  fail "未找到支持 -std=c++20 的 C++ 编译器。Ubuntu/Debian 请安装 clang；CentOS/RHEL 8+ 请安装 gcc-toolset-12，然后重新运行安装脚本"
 }
 
 install_system_dependencies

@@ -76,8 +76,10 @@ function configuredVersionUrl() {
   if (config.githubVersionUrl) {
     const configured = validateGithubVersionUrl(config.githubVersionUrl).toString();
     const canonical = githubVersionUrlFromRepository(config.updateRepository, config.updateRef);
-    const legacy = canonical && canonical.replace('/refs/heads/', '/');
-    return configured === legacy ? canonical : configured;
+    const rawBase = `https://raw.githubusercontent.com/${config.updateRepository}`;
+    const legacyRaw = `${rawBase}/${config.updateRef}/VERSION.json`;
+    const explicitRaw = `${rawBase}/refs/heads/${config.updateRef}/VERSION.json`;
+    return configured === legacyRaw || configured === explicitRaw ? canonical : configured;
   }
   let remote = '';
   try {
@@ -101,8 +103,9 @@ function requestManifest(urlValue, headers = {}, redirects = 0) {
   const url = validateGithubVersionUrl(urlValue);
   return new Promise((resolve, reject) => {
     const requestHeaders = {
-      Accept: 'application/json',
+      Accept: 'application/vnd.github.raw+json',
       'Cache-Control': 'no-cache',
+      'X-GitHub-Api-Version': '2022-11-28',
       'User-Agent': 'torin-x-web-update-checker',
       ...headers,
     };

@@ -20,14 +20,14 @@ test('compares stable and prerelease SemVer values', () => {
 });
 
 test('derives a raw GitHub VERSION.json URL from common remotes', () => {
-  assert.equal(githubVersionUrlFromRemote('git@github.com:TorinMars/t-agent.git', 'main'), 'https://raw.githubusercontent.com/TorinMars/t-agent/refs/heads/main/VERSION.json');
-  assert.equal(githubVersionUrlFromRemote('https://github.com/TorinMars/t-agent.git', 'release'), 'https://raw.githubusercontent.com/TorinMars/t-agent/refs/heads/release/VERSION.json');
+  assert.equal(githubVersionUrlFromRemote('git@github.com:TorinMars/t-agent.git', 'main'), 'https://api.github.com/repos/TorinMars/t-agent/contents/VERSION.json?ref=main');
+  assert.equal(githubVersionUrlFromRemote('https://github.com/TorinMars/t-agent.git', 'release'), 'https://api.github.com/repos/TorinMars/t-agent/contents/VERSION.json?ref=release');
 });
 
 test('derives a version URL for archive installs without Git metadata', () => {
   assert.equal(
     githubVersionUrlFromRepository('TorinMars/t-agent', 'codex/component-engine-client-token'),
-    'https://raw.githubusercontent.com/TorinMars/t-agent/refs/heads/codex/component-engine-client-token/VERSION.json',
+    'https://api.github.com/repos/TorinMars/t-agent/contents/VERSION.json?ref=codex%2Fcomponent-engine-client-token',
   );
   assert.equal(githubVersionUrlFromRepository('../invalid', 'main'), null);
   assert.equal(githubVersionUrlFromRepository('TorinMars/t-agent', '../main'), null);

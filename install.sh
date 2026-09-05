@@ -179,7 +179,7 @@ TASKS_BASE_DIR=$TASKS_DIR
 ENGINE_OWNER_ID=${USERNAME:-engine}
 ENGINE_WORKSPACE_ROOTS=$TASKS_DIR
 ENGINE_HOST=$([ "$MODE" = "engine" ] && printf '0.0.0.0' || printf '127.0.0.1')
-GITHUB_VERSION_URL=https://raw.githubusercontent.com/$UPDATE_REPOSITORY/$UPDATE_REF/VERSION.json
+GITHUB_VERSION_URL=https://raw.githubusercontent.com/$UPDATE_REPOSITORY/refs/heads/$UPDATE_REF/VERSION.json
 UPDATE_GITHUB_REPOSITORY=$UPDATE_REPOSITORY
 UPDATE_GITHUB_REF=$UPDATE_REF
 UPDATE_GIT_BRANCH=$UPDATE_REF
@@ -201,7 +201,7 @@ else
 fi
 
 # 旧版压缩包安装没有 Git 元数据；补齐更新来源后也能自动检查和按钮升级。
-ensure_env_value GITHUB_VERSION_URL "https://raw.githubusercontent.com/$UPDATE_REPOSITORY/$UPDATE_REF/VERSION.json"
+ensure_env_value GITHUB_VERSION_URL "https://raw.githubusercontent.com/$UPDATE_REPOSITORY/refs/heads/$UPDATE_REF/VERSION.json"
 ensure_env_value UPDATE_GITHUB_REPOSITORY "$UPDATE_REPOSITORY"
 ensure_env_value UPDATE_GITHUB_REF "$UPDATE_REF"
 ensure_env_value UPDATE_GIT_BRANCH "$UPDATE_REF"

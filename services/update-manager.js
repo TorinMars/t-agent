@@ -73,7 +73,12 @@ function readLocalManifest() {
 }
 
 function configuredVersionUrl() {
-  if (config.githubVersionUrl) return validateGithubVersionUrl(config.githubVersionUrl).toString();
+  if (config.githubVersionUrl) {
+    const configured = validateGithubVersionUrl(config.githubVersionUrl).toString();
+    const canonical = githubVersionUrlFromRepository(config.updateRepository, config.updateRef);
+    const legacy = canonical && canonical.replace('/refs/heads/', '/');
+    return configured === legacy ? canonical : configured;
+  }
   let remote = '';
   try {
     remote = execFileSync('git', ['config', '--get', `remote.${config.gitRemote}.url`], {

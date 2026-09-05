@@ -90,7 +90,7 @@ ENGINE_WORKSPACE_ROOTS=/允许 Engine 读写的任务目录
 检查更新相关配置：
 
 ```env
-GITHUB_VERSION_URL=https://raw.githubusercontent.com/TorinMars/t-agent/main/VERSION.json
+GITHUB_VERSION_URL=https://raw.githubusercontent.com/TorinMars/t-agent/refs/heads/main/VERSION.json
 UPDATE_GITHUB_REPOSITORY=TorinMars/t-agent
 UPDATE_GITHUB_REF=main
 UPDATE_GIT_REMOTE=origin

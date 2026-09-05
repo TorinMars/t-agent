@@ -88,33 +88,106 @@ run_as_root() {
 }
 
 install_system_dependencies() {
-  if command -v node >/dev/null 2>&1; then
+  if ! command -v node >/dev/null 2>&1; then
+    printf '未检测到 Node.js，正在安装……\n'
+    if [ "$PLATFORM" = "macOS" ]; then
+      command -v brew >/dev/null 2>&1 || fail "请先安装 Homebrew：https://brew.sh/"
+      brew install node
+    elif command -v apt-get >/dev/null 2>&1; then
+      run_as_root apt-get update
+      run_as_root apt-get install -y nodejs npm
+    elif command -v dnf >/dev/null 2>&1; then
+      run_as_root dnf install -y nodejs npm
+    elif command -v yum >/dev/null 2>&1; then
+      run_as_root yum install -y nodejs npm
+    else
+      fail "未识别的包管理器；请先安装 Node.js 20+、Python 3 和支持 C++20 的编译工具"
+    fi
+  fi
+
+  if [ "$PLATFORM" = "Linux" ] && { ! command -v python3 >/dev/null 2>&1 || ! command -v make >/dev/null 2>&1 || ! command -v g++ >/dev/null 2>&1; }; then
+    printf '正在安装原生模块构建工具……\n'
+    if command -v apt-get >/dev/null 2>&1; then
+      run_as_root apt-get update
+      run_as_root apt-get install -y python3 build-essential
+    elif command -v dnf >/dev/null 2>&1; then
+      run_as_root dnf install -y python3 make gcc gcc-c++
+    elif command -v yum >/dev/null 2>&1; then
+      run_as_root yum install -y python3 make gcc gcc-c++
+    else
+      fail "未识别的包管理器；请先安装 Python 3、make 和支持 C++20 的 g++"
+    fi
+  fi
+}
+
+compiler_supports_cxx20() {
+  local compiler="$1"
+  local probe_dir
+  command -v "$compiler" >/dev/null 2>&1 || return 1
+  probe_dir="$(mktemp -d)"
+  if printf 'int main() { return 0; }\n' | "$compiler" -std=c++20 -x c++ -c -o "$probe_dir/probe.o" - >/dev/null 2>&1; then
+    rm -rf "$probe_dir"
+    return 0
+  fi
+  rm -rf "$probe_dir"
+  return 1
+}
+
+configure_linux_cxx20_compiler() {
+  local compiler="${CXX:-g++}"
+  local toolset
+  local toolset_root
+  if compiler_supports_cxx20 "$compiler"; then
     return
   fi
 
-  printf '未检测到 Node.js，正在安装……\n'
-  if [ "$PLATFORM" = "macOS" ]; then
-    command -v brew >/dev/null 2>&1 || fail "请先安装 Homebrew：https://brew.sh/"
-    brew install node
-  elif command -v apt-get >/dev/null 2>&1; then
-    run_as_root apt-get update
-    run_as_root apt-get install -y nodejs npm python3 build-essential
-  elif command -v dnf >/dev/null 2>&1; then
-    run_as_root dnf install -y nodejs npm python3 make gcc-c++
+  printf '当前 C++ 编译器不支持 -std=c++20，正在查找 GCC Toolset……\n'
+  if command -v dnf >/dev/null 2>&1; then
+    for toolset in 14 13 12 11 10; do
+      toolset_root="/opt/rh/gcc-toolset-$toolset/root/usr/bin"
+      if [ ! -x "$toolset_root/g++" ]; then
+        if ! dnf -q list --available "gcc-toolset-$toolset-gcc-c++" >/dev/null 2>&1; then
+          continue
+        fi
+        run_as_root dnf install -y "gcc-toolset-$toolset-gcc" "gcc-toolset-$toolset-gcc-c++" || continue
+      fi
+      if compiler_supports_cxx20 "$toolset_root/g++"; then
+        export CC="$toolset_root/gcc"
+        export CXX="$toolset_root/g++"
+        printf '使用 GCC Toolset %s 编译原生模块。\n' "$toolset"
+        return
+      fi
+    done
   elif command -v yum >/dev/null 2>&1; then
-    run_as_root yum install -y nodejs npm python3 make gcc-c++
-  else
-    fail "未识别的包管理器；请先安装 Node.js 18+、Python 3 和 C/C++ 编译工具"
+    run_as_root yum install -y centos-release-scl >/dev/null 2>&1 || true
+    for toolset in 11 10; do
+      toolset_root="/opt/rh/devtoolset-$toolset/root/usr/bin"
+      if [ ! -x "$toolset_root/g++" ]; then
+        run_as_root yum install -y "devtoolset-$toolset-gcc" "devtoolset-$toolset-gcc-c++" || continue
+      fi
+      if compiler_supports_cxx20 "$toolset_root/g++"; then
+        export CC="$toolset_root/gcc"
+        export CXX="$toolset_root/g++"
+        printf '使用 Developer Toolset %s 编译原生模块。\n' "$toolset"
+        return
+      fi
+    done
   fi
+
+  fail "当前 g++ 不支持 C++20。CentOS/RHEL 8+ 请安装 gcc-toolset-12，并设置 CC=/opt/rh/gcc-toolset-12/root/usr/bin/gcc、CXX=/opt/rh/gcc-toolset-12/root/usr/bin/g++ 后重试"
 }
 
 install_system_dependencies
 command -v node >/dev/null 2>&1 || fail "Node.js 安装失败"
+command -v npm >/dev/null 2>&1 || fail "未检测到 npm，请安装与当前 Node.js 配套的 npm 后重试"
 NODE_MAJOR="$(node -p "process.versions.node.split('.')[0]")"
-[ "$NODE_MAJOR" -ge 18 ] || fail "需要 Node.js 18+，当前为 $(node --version)"
+[ "$NODE_MAJOR" -ge 20 ] && [ "$NODE_MAJOR" -ne 21 ] || fail "当前依赖需要 Node.js 20 或 22+（推荐 22 LTS），当前为 $(node --version)"
 
 if [ "$PLATFORM" = "macOS" ] && ! xcode-select -p >/dev/null 2>&1; then
   printf '提示：未检测到 Xcode Command Line Tools。node-pty 编译失败时，请运行：xcode-select --install\n' >&2
+fi
+if [ "$PLATFORM" = "Linux" ]; then
+  configure_linux_cxx20_compiler
 fi
 
 mkdir -p "$APP_DIR/logs" "$APP_DIR/data"

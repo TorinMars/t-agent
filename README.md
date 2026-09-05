@@ -62,9 +62,9 @@ flowchart LR
 ## 系统要求
 
 - macOS 或使用主流发行版的 Linux。
-- Node.js 18 或更高版本。
+- Node.js 20 或 22+；推荐 Node.js 22 LTS。
 - Client 使用 Git 安装，需要系统已安装 Git。
-- `node-pty` 需要 Python 3 和 C/C++ 编译工具。
+- `better-sqlite3` 和 `node-pty` 在无法下载预编译包时需要 Python 3、make 和支持 C++20 的编译器。
 
 macOS 可安装命令行工具：
 
@@ -491,6 +491,28 @@ node scripts/verify-node-pty.js
 ```
 
 macOS 请先确保已安装 Xcode Command Line Tools，然后重新运行安装脚本。
+
+### CentOS 安装时报 `unrecognized command line option '-std=c++20'`
+
+这表示 npm 未能下载原生模块的预编译包，回退源码编译后发现系统 `g++` 版本过旧。新版安装脚本会检测并尝试安装 GCC Toolset；已有安装目录可以直接重新运行：
+
+```bash
+cd /path/to/t-agent
+./install.sh --mode engine
+```
+
+CentOS/RHEL 8 系统也可以手动安装 GCC Toolset 12 后重试：
+
+```bash
+sudo dnf install -y gcc-toolset-12-gcc gcc-toolset-12-gcc-c++
+export CC=/opt/rh/gcc-toolset-12/root/usr/bin/gcc
+export CXX=/opt/rh/gcc-toolset-12/root/usr/bin/g++
+
+cd /path/to/t-agent
+./install.sh --mode engine
+```
+
+`prebuild-install` 的 deprecated 警告和 npm 新版本提示不是此次编译失败的原因。
 
 ### 日志反复出现 `VERSION_URL_NOT_CONFIGURED`
 

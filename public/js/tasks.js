@@ -55,7 +55,8 @@ const Tasks = (() => {
       const task = tasks.find(t => t.id === selectedId);
       contentToolbar.style.visibility = 'visible';
       contentToolbar.style.pointerEvents = '';
-      contentToolbar.style.display = task && task.md_path ? 'flex' : 'none';
+      contentToolbar.style.display = task ? 'flex' : 'none';
+      document.getElementById('btn-share-md').style.display = task && task.md_path ? '' : 'none';
       setEditButtonState(false);
       previewPane.style.display = 'none';
       document.getElementById('toc-pane').style.display = 'none';
@@ -785,7 +786,8 @@ const Tasks = (() => {
       const task = tasks.find(t => t.id === id);
       contentToolbar.style.visibility = 'visible';
       contentToolbar.style.pointerEvents = '';
-      contentToolbar.style.display = task && task.md_path ? 'flex' : 'none';
+      contentToolbar.style.display = task ? 'flex' : 'none';
+      document.getElementById('btn-share-md').style.display = task && task.md_path ? '' : 'none';
       setEditButtonState(false);
       previewPane.style.display = 'none';
       document.getElementById('toc-pane').style.display = 'none';

@@ -220,17 +220,24 @@ const RemoteTasks = (() => {
     }
   }
 
+  function showRemoteToolbar() {
+    contentToolbar.style.display = 'flex';
+    contentToolbar.style.visibility = 'visible';
+    contentToolbar.style.pointerEvents = '';
+    ['btn-reveal-folder', 'btn-open-vscode', 'btn-share-md', 'btn-edit-md'].forEach(id => {
+      const button = document.getElementById(id);
+      button.style.display = '';
+      button.disabled = true;
+    });
+  }
+
   async function renderSelected() {
     if (!selected) return;
     const content = document.getElementById('preview-content');
     document.getElementById('preview-empty').style.display = 'none';
     content.style.display = 'block';
     document.getElementById('toc-pane').style.display = 'none';
-    contentToolbar.style.display = 'flex';
-    document.getElementById('btn-reveal-folder').disabled = true;
-    document.getElementById('btn-open-vscode').disabled = true;
-    document.getElementById('btn-share-md').disabled = true;
-    document.getElementById('btn-edit-md').disabled = true;
+    showRemoteToolbar();
     content.innerHTML = '<div class="preview-loading">正在从远程服务加载…</div>';
     try {
       if (activeTab === 'todos') {
@@ -303,7 +310,7 @@ const RemoteTasks = (() => {
     previewPane.style.display = 'none';
     document.getElementById('toc-pane').style.display = 'none';
     terminalPane.style.display = 'flex';
-    contentToolbar.style.display = 'none';
+    showRemoteToolbar();
 
     const container = document.getElementById('xterm-container');
     Array.from(container.children).forEach(child => { child.style.display = 'none'; });

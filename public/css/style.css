@@ -363,6 +363,7 @@ html, body {
 
 .engine-tabs {
   display: flex;
+  flex: 1;
   align-items: flex-end;
   gap: 2px;
   min-width: 0;
@@ -372,6 +373,29 @@ html, body {
 }
 
 .engine-tabs::-webkit-scrollbar { display: none; }
+
+.engine-connect-remote {
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0 0 5px 10px;
+  padding: 0 10px;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.engine-connect-remote:hover {
+  color: var(--text);
+  background: var(--bg-tertiary);
+}
 
 .engine-tab {
   height: 38px;
@@ -422,8 +446,6 @@ html, body {
   flex-shrink: 0;
 }
 
-.btn-connect-remote { width: 100%; margin-top: 7px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; background: transparent; color: var(--text-muted); font-size: 12px; text-align: left; cursor: pointer; }
-.btn-connect-remote:hover { color: var(--text); background: var(--bg-tertiary); }
 .sidebar-section-heading { display: flex; justify-content: space-between; align-items: center; padding: 7px 14px 5px; color: var(--text-muted); font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
 .sidebar-section-count { font-weight: 500; opacity: .7; }
 .remote-sidebar-section { padding-top: 2px; }

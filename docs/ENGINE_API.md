@@ -15,6 +15,10 @@ Authorization: Bearer tae_xxx
 
 ## 任务和文档
 
+- `GET /v1/task-groups`
+- `POST /v1/task-groups`
+- `PUT /v1/task-groups/:id`
+- `DELETE /v1/task-groups/:id`
 - `GET /v1/tasks`
 - `POST /v1/tasks`
 - `PATCH /v1/tasks/:id`
@@ -27,6 +31,8 @@ Authorization: Bearer tae_xxx
 - `DELETE /v1/tasks/:id/todos/:todoId`
 
 `kind` 支持 `technical`、`readme` 和 `agent`。
+
+任务的 `status` 保存分组返回的 `key`。`doing`、`todo`、`done` 是系统分组，不能重命名或删除；其他分组可以重命名，且只能在没有任务时删除。
 
 ## 终端
 

@@ -450,14 +450,8 @@ html, body {
 
 .sidebar-section-heading { display: flex; justify-content: space-between; align-items: center; padding: 7px 14px 5px; color: var(--text-muted); font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
 .sidebar-section-count { font-weight: 500; opacity: .7; }
-.remote-sidebar-section { padding-top: 2px; }
-.remote-server-header { display: flex; align-items: center; gap: 7px; padding: 6px 10px 5px 14px; font-size: 12px; font-weight: 600; color: var(--text); }
-.remote-server-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.remote-status { width: 7px; height: 7px; border-radius: 50%; background: #8c959f; }
-.remote-status.online { background: #1a7f37; }
-.remote-status.offline, .remote-status.unauthorized { background: #cf222e; }
-.remote-menu { border: 0; background: transparent; color: var(--text-muted); cursor: pointer; padding: 0 4px; }
-.remote-task-item { padding-left: 24px; }
+.remote-sidebar-section { padding-top: 4px; }
+.remote-task-item { padding-left: 18px; }
 .remote-task-item .task-status-btn { pointer-events: none; }
 .remote-empty { padding: 10px 14px; color: var(--text-muted); font-size: 11px; }
 .remote-empty.small { padding: 4px 24px 7px; }
@@ -513,6 +507,19 @@ html, body {
 }
 .task-group-header:hover {
   color: var(--text);
+}
+
+.task-group-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-group-count {
+  margin-left: auto;
+  font-weight: 500;
+  opacity: .7;
 }
 
 .task-group-toggle {

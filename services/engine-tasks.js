@@ -3,6 +3,7 @@ const os = require('os');
 const path = require('path');
 const db = require('../db');
 const config = require('../config');
+const taskGroups = require('./task-groups');
 
 const DEFAULT_BASE = process.env.TASKS_BASE_DIR || path.join(os.homedir(), 'tasks');
 
@@ -86,6 +87,8 @@ function createTask(principalId, input = {}) {
   if (mdPath && path.extname(mdPath).toLowerCase() !== '.md') throw Object.assign(new Error('MD_PATH_INVALID'), { statusCode: 400 });
   if (mdPath && !title) title = path.basename(mdPath, '.md');
   if (!title) throw Object.assign(new Error('TITLE_REQUIRED'), { statusCode: 400 });
+  const status = input.status || 'todo';
+  taskGroups.assertGroupKey(db, principalId, status);
 
   if (!workDir && mdPath) workDir = path.dirname(mdPath);
   if (!workDir) workDir = assertWorkspacePath(path.join(DEFAULT_BASE, titleToSlug(title)));
@@ -97,7 +100,7 @@ function createTask(principalId, input = {}) {
     (title, status, priority, due_date, md_path, work_dir, sort_order, user_id)
     VALUES (@title, @status, @priority, @due_date, @md_path, @work_dir, @sort_order, @user_id)`).run({
     title,
-    status: input.status || 'todo',
+    status,
     priority: input.priority || 'normal',
     due_date: input.due_date || null,
     md_path: mdPath,
@@ -123,6 +126,7 @@ function updateTask(principalId, id, input = {}) {
     user_id: principalId,
   };
   if (!values.title) throw Object.assign(new Error('TITLE_REQUIRED'), { statusCode: 400 });
+  taskGroups.assertGroupKey(db, principalId, values.status);
   if (values.md_path && path.extname(values.md_path).toLowerCase() !== '.md') {
     throw Object.assign(new Error('MD_PATH_INVALID'), { statusCode: 400 });
   }

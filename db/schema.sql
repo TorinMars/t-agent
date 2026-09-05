@@ -10,6 +10,24 @@ CREATE TABLE IF NOT EXISTS tasks (
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+-- 任务分组。doing/todo/done 是不可修改的系统分组；其他分组由用户管理。
+-- tasks.status 保存 group_key，以兼容已有任务数据。
+CREATE TABLE IF NOT EXISTS task_groups (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  owner_id   TEXT    NOT NULL,
+  group_key  TEXT    NOT NULL,
+  name       TEXT    NOT NULL,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  is_system  INTEGER NOT NULL DEFAULT 0,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(owner_id, group_key),
+  UNIQUE(owner_id, name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_task_groups_owner
+  ON task_groups(owner_id, sort_order, created_at);
+
 CREATE TABLE IF NOT EXISTS bookmarks (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   title      TEXT    NOT NULL,

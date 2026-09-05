@@ -4,6 +4,12 @@ const Tasks = (() => {
   const STATUS_ORDER = ['personal', 'doing', 'todo', 'done'];
   const STATUS_LABEL = { doing: '进行中', todo: '待办', done: '已完成', personal: '个人任务' };
   const STATUS_NEXT = { todo: 'doing', doing: 'done', done: 'personal', personal: 'todo' };
+  const DEFAULT_FORM_GROUPS = [
+    { key: 'personal', name: '个人任务' },
+    { key: 'doing', name: '进行中' },
+    { key: 'todo', name: '待办' },
+    { key: 'done', name: '已完成' },
+  ];
   const PRIORITY_LABEL = { high: '高', normal: '中', low: '低' };
   const collapsedGroups = {};
   let tocObserver = null;
@@ -1393,6 +1399,10 @@ const Tasks = (() => {
   function buildTaskForm(task = {}) {
     const remoteServers = !task.id && window.RemoteTasks ? RemoteTasks.getServers() : [];
     const activeEngineKey = !task.id && window.RemoteTasks ? RemoteTasks.getActiveEngineKey() : 'local';
+    const initialGroups = activeEngineKey.startsWith('remote:') && window.RemoteTasks
+      ? RemoteTasks.getGroups(Number(activeEngineKey.slice('remote:'.length)))
+      : DEFAULT_FORM_GROUPS;
+    const selectedGroup = task.status || 'todo';
     const enginePicker = task.id ? '' : `
       <div class="form-group">
         <label class="form-label">所属 Engine</label>
@@ -1428,10 +1438,9 @@ const Tasks = (() => {
       </div>
       <div class="form-group">
         <label class="form-label">分组</label>
-        <div class="form-radio-group">
-          <label><input type="radio" name="status-group" value="" ${(!task.status || task.status !== 'personal') ? 'checked' : ''}> 工作任务</label>
-          <label><input type="radio" name="status-group" value="personal" ${task.status === 'personal' ? 'checked' : ''}> 个人任务</label>
-        </div>
+        <select class="form-input" id="f-task-group">
+          ${initialGroups.map(group => `<option value="${escapeHtml(group.key)}" ${group.key === selectedGroup ? 'selected' : ''}>${escapeHtml(group.name)}</option>`).join('')}
+        </select>
       </div>
       <div class="form-group">
         <label class="form-label">截止日期</label>
@@ -1452,6 +1461,17 @@ const Tasks = (() => {
     const workDirInput = document.getElementById('f-work-dir');
     const engineInput = document.getElementById('f-engine');
     const engineHint = document.getElementById('f-engine-hint');
+    const groupInput = document.getElementById('f-task-group');
+
+    function updateGroupOptions() {
+      if (!groupInput || !engineInput) return;
+      const previous = groupInput.value;
+      const groups = engineInput.value.startsWith('remote:') && window.RemoteTasks
+        ? RemoteTasks.getGroups(Number(engineInput.value.slice('remote:'.length)))
+        : DEFAULT_FORM_GROUPS;
+      groupInput.innerHTML = groups.map(group => `<option value="${escapeHtml(group.key)}">${escapeHtml(group.name)}</option>`).join('');
+      groupInput.value = groups.some(group => group.key === previous) ? previous : 'todo';
+    }
 
     function isRemoteTarget() {
       return engineInput && engineInput.value.startsWith('remote:');
@@ -1466,6 +1486,7 @@ const Tasks = (() => {
         mdHint.textContent = remote && mdInput.value.trim() ? '路径将在远程 Engine 创建时校验' : '';
         mdHint.className = 'form-hint';
         mdInput.classList.remove('error');
+        updateGroupOptions();
       });
     }
 
@@ -1503,16 +1524,7 @@ const Tasks = (() => {
       const work_dir = workDirInput.value.trim() || null;
       const priority = document.querySelector('input[name="priority"]:checked')?.value || 'normal';
       const due_date = document.getElementById('f-due-date').value || null;
-      const statusGroupVal = document.querySelector('input[name="status-group"]:checked')?.value;
-      // personal 分组直接用 'personal' 状态；工作任务新建默认 todo，编辑时保留原状态（除非原来是 personal）
-      let status;
-      if (statusGroupVal === 'personal') {
-        status = 'personal';
-      } else if (existingTask.id) {
-        status = existingTask.status === 'personal' ? 'todo' : undefined;
-      } else {
-        status = 'todo';
-      }
+      const status = groupInput?.value || 'todo';
 
       if (!title && !md_path) {
         titleInput.classList.add('error');
@@ -1522,7 +1534,7 @@ const Tasks = (() => {
 
       try {
         if (existingTask.id) {
-          await API.put(`/api/tasks/${existingTask.id}`, { title: title || undefined, md_path, work_dir, priority, due_date, ...(status !== undefined ? { status } : {}) });
+          await API.put(`/api/tasks/${existingTask.id}`, { title: title || undefined, md_path, work_dir, priority, due_date, status });
           Modal.hide();
           await Tasks.load();
           if (selectedId === existingTask.id) {

@@ -53,6 +53,7 @@ app.get('/api/local-ip', (req, res) => {
 
 app.use('/auth', require('./routes/auth'));
 app.use('/api/tasks', require('./routes/tasks'));
+app.use('/api/task-groups', require('./routes/task-groups'));
 app.use('/api/bookmarks', require('./routes/bookmarks'));
 app.use('/api/system', require('./routes/system'));
 app.use('/api/remote-servers', require('./routes/remote-servers'));

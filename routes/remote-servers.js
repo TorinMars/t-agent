@@ -127,6 +127,38 @@ router.get('/:id/tasks', async (req, res) => {
   catch (error) { res.status(502).json({ error: safeError(error) }); }
 });
 
+router.get('/:id/task-groups', async (req, res) => {
+  const row = getServer(req);
+  if (!row) return res.status(404).json({ error: 'REMOTE_NOT_FOUND' });
+  try { res.json(await request(row.base_url, '/v1/task-groups', decryptToken(row.token_cipher, config.sessionSecret))); }
+  catch (error) { res.status(error.statusCode || 502).json({ error: safeError(error) }); }
+});
+
+router.post('/:id/task-groups', async (req, res) => {
+  const row = getServer(req);
+  if (!row) return res.status(404).json({ error: 'REMOTE_NOT_FOUND' });
+  try {
+    const group = await request(row.base_url, '/v1/task-groups', decryptToken(row.token_cipher, config.sessionSecret), { method: 'POST', body: req.body });
+    res.status(201).json(group);
+  } catch (error) { res.status(error.statusCode || 502).json({ error: safeError(error) }); }
+});
+
+router.put('/:id/task-groups/:groupId', async (req, res) => {
+  const row = getServer(req);
+  if (!row) return res.status(404).json({ error: 'REMOTE_NOT_FOUND' });
+  try {
+    res.json(await request(row.base_url, `/v1/task-groups/${encodeURIComponent(req.params.groupId)}`, decryptToken(row.token_cipher, config.sessionSecret), { method: 'PUT', body: req.body }));
+  } catch (error) { res.status(error.statusCode || 502).json({ error: safeError(error) }); }
+});
+
+router.delete('/:id/task-groups/:groupId', async (req, res) => {
+  const row = getServer(req);
+  if (!row) return res.status(404).json({ error: 'REMOTE_NOT_FOUND' });
+  try {
+    res.json(await request(row.base_url, `/v1/task-groups/${encodeURIComponent(req.params.groupId)}`, decryptToken(row.token_cipher, config.sessionSecret), { method: 'DELETE' }));
+  } catch (error) { res.status(error.statusCode || 502).json({ error: safeError(error) }); }
+});
+
 router.get('/:id/tasks/:taskId/document/:kind', async (req, res) => {
   const row = getServer(req);
   if (!row) return res.status(404).json({ error: 'REMOTE_NOT_FOUND' });
@@ -158,6 +190,14 @@ router.patch('/:id/tasks/:taskId', async (req, res) => {
   if (!row) return res.status(404).json({ error: 'REMOTE_NOT_FOUND' });
   try {
     res.json(await request(row.base_url, `/v1/tasks/${encodeURIComponent(req.params.taskId)}`, decryptToken(row.token_cipher, config.sessionSecret), { method: 'PATCH', body: req.body }));
+  } catch (error) { res.status(error.statusCode || 502).json({ error: safeError(error) }); }
+});
+
+router.put('/:id/tasks/:taskId', async (req, res) => {
+  const row = getServer(req);
+  if (!row) return res.status(404).json({ error: 'REMOTE_NOT_FOUND' });
+  try {
+    res.json(await request(row.base_url, `/v1/tasks/${encodeURIComponent(req.params.taskId)}`, decryptToken(row.token_cipher, config.sessionSecret), { method: 'PUT', body: req.body }));
   } catch (error) { res.status(error.statusCode || 502).json({ error: safeError(error) }); }
 });
 

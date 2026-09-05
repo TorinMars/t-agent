@@ -1,11 +1,13 @@
 const RemoteTasks = (() => {
   let servers = [];
   let tasksByServer = new Map();
+  let groupsByServer = new Map();
   let selected = null;
   let activeTab = 'doc';
   let remoteTerminal = null;
   const remoteTerminals = new Map();
   let activeEngineKey = localStorage.getItem('active-engine-key') || 'local';
+  const collapsedGroups = {};
 
   const nav = document.getElementById('task-nav');
   const previewPane = document.getElementById('preview-pane');
@@ -19,7 +21,27 @@ const RemoteTasks = (() => {
       REMOTE_TIMEOUT: '连接超时', REMOTE_HTTP_401: 'Token 无效或已撤销', REMOTE_ALREADY_EXISTS: '该远程服务已连接',
       REMOTE_CONNECTION_FAILED: '远程服务连接失败', REMOTE_URL_MUST_NOT_HAVE_PATH: 'URL 只填写协议和主机，不要包含路径',
       PAIRING_CODE_INVALID: '配对码格式不正确', PAIRING_CODE_INVALID_OR_EXPIRED: '配对码无效或已过期',
+      GROUP_NAME_REQUIRED: '请输入分组名称', GROUP_NAME_TOO_LONG: '分组名称不能超过 40 个字符',
+      GROUP_NAME_ALREADY_EXISTS: '已有同名分组', TASK_GROUP_NOT_FOUND: '任务分组不存在',
+      SYSTEM_GROUP_IMMUTABLE: '默认分组不能修改或删除', TASK_GROUP_NOT_EMPTY: '分组内还有任务，不能删除',
     })[code] || code || '操作失败';
+  }
+
+  function fallbackGroups(tasks = []) {
+    const defaults = [
+      { id: null, key: 'personal', name: '个人任务', sort_order: 0, is_system: false },
+      { id: null, key: 'doing', name: '进行中', sort_order: 1000, is_system: true },
+      { id: null, key: 'todo', name: '待办', sort_order: 2000, is_system: true },
+      { id: null, key: 'done', name: '已完成', sort_order: 3000, is_system: true },
+    ];
+    const known = new Set(defaults.map(group => group.key));
+    tasks.forEach(task => {
+      if (!known.has(task.status)) {
+        known.add(task.status);
+        defaults.splice(defaults.length - 3, 0, { id: null, key: task.status, name: task.status, sort_order: 500, is_system: false });
+      }
+    });
+    return defaults;
   }
 
   async function load() {
@@ -38,6 +60,7 @@ const RemoteTasks = (() => {
 
     servers = loadedServers;
     tasksByServer = new Map(servers.map(server => [server.id, tasksByServer.get(server.id) || []]));
+    groupsByServer = new Map(servers.map(server => [server.id, groupsByServer.get(server.id) || fallbackGroups()]));
 
     // Engine 标签应在服务器列表返回后立即出现，不等待较慢的远程任务请求。
     render();
@@ -45,9 +68,18 @@ const RemoteTasks = (() => {
 
     await Promise.all(servers.map(async server => {
       try {
-        tasksByServer.set(server.id, await API.get(`/api/remote-servers/${server.id}/tasks`));
+        const remoteTasks = await API.get(`/api/remote-servers/${server.id}/tasks`);
+        tasksByServer.set(server.id, remoteTasks);
+        try {
+          groupsByServer.set(server.id, await API.get(`/api/remote-servers/${server.id}/task-groups`));
+        } catch (error) {
+          // 兼容尚未升级任务分组 API 的旧 Engine。
+          groupsByServer.set(server.id, fallbackGroups(remoteTasks));
+          console.warn(`[remote-tasks] 加载 ${server.name} 的分组失败`, error);
+        }
       } catch (error) {
         tasksByServer.set(server.id, []);
+        groupsByServer.set(server.id, fallbackGroups());
         console.warn(`[remote-tasks] 加载 ${server.name} 的任务失败`, error);
       }
     }));
@@ -80,7 +112,7 @@ const RemoteTasks = (() => {
     const tabs = document.getElementById('engine-tabs');
     tabs.innerHTML = '';
 
-    function appendTab(key, label, status, title) {
+    function appendTab(key, label, status, title, server = null) {
       const button = document.createElement('button');
       button.type = 'button';
       button.className = `engine-tab${activeEngineKey === key ? ' active' : ''}`;
@@ -92,6 +124,13 @@ const RemoteTasks = (() => {
       text.textContent = label;
       button.append(dot, text);
       button.addEventListener('click', () => setActiveEngine(key));
+      if (server) {
+        button.addEventListener('contextmenu', event => {
+          event.preventDefault();
+          event.stopPropagation();
+          showServerMenu(event.clientX, event.clientY, server);
+        });
+      }
       tabs.appendChild(button);
     }
 
@@ -101,7 +140,19 @@ const RemoteTasks = (() => {
       server.name,
       server.status || 'unknown',
       `${server.name} · ${server.base_url}`,
+      server,
     ));
+  }
+
+  function showServerMenu(x, y, server) {
+    ContextMenu.show(x, y, [
+      { label: '刷新', action: () => refreshServer(server.id) },
+      { label: '编辑连接', action: () => showEdit(server.id) },
+      { separator: true },
+      { label: '新建任务分组', action: () => showCreateGroup(server.id) },
+      { separator: true },
+      { label: '移除连接', danger: true, action: () => removeServer(server.id) },
+    ]);
   }
 
   function applyEngineVisibility() {
@@ -162,39 +213,72 @@ const RemoteTasks = (() => {
       const section = document.createElement('div');
       section.className = 'remote-sidebar-section';
       section.dataset.engineKey = `remote:${server.id}`;
-      const header = document.createElement('div');
-      header.className = 'remote-server-header';
-      header.innerHTML = `<span class="remote-status ${escapeHtml(server.status)}"></span><span class="remote-server-name" title="${escapeHtml(server.base_url)}">${escapeHtml(server.name)}</span><span class="sidebar-section-count">${(tasksByServer.get(server.id) || []).length}</span><button class="remote-menu" title="远程服务操作">⋯</button>`;
-      header.querySelector('.remote-menu').addEventListener('click', event => {
-        event.stopPropagation();
-        ContextMenu.show(event.clientX, event.clientY, [
-          { label: '刷新', action: () => refreshServer(server.id) },
-          { label: '编辑连接', action: () => showEdit(server.id) },
-          { separator: true },
-          { label: '移除连接', danger: true, action: () => removeServer(server.id) },
-        ]);
-      });
-      section.appendChild(header);
-      const list = document.createElement('div');
-      list.className = 'remote-task-list';
-      (tasksByServer.get(server.id) || []).forEach(task => {
-        const item = document.createElement('div');
-        item.className = `task-nav-item remote-task-item${selected && selected.serverId === server.id && selected.task.id === task.id ? ' active' : ''}`;
-        item.innerHTML = `<span class="task-status-btn ${escapeHtml(task.status)}"></span><span class="task-nav-title${task.status === 'done' ? ' done' : ''}">${escapeHtml(task.title)}</span>`;
-        item.addEventListener('click', () => select(server, task));
-        list.appendChild(item);
-      });
-      if (!(tasksByServer.get(server.id) || []).length) {
-        const noTasks = document.createElement('div');
-        noTasks.className = 'remote-empty small';
-        noTasks.textContent = server.status === 'online' ? '没有任务' : errorLabel(server.last_error) || '离线';
-        list.appendChild(noTasks);
-      }
-      section.appendChild(list);
+      const serverTasks = tasksByServer.get(server.id) || [];
+      const groups = groupsByServer.get(server.id) || fallbackGroups(serverTasks);
+      groups.forEach(group => section.appendChild(buildRemoteGroup(server, group, groups, serverTasks)));
       nav.appendChild(section);
     });
     renderEngineTabs();
     applyEngineVisibility();
+  }
+
+  function buildRemoteGroup(server, group, groups, serverTasks) {
+    const groupEl = document.createElement('div');
+    groupEl.className = 'task-group remote-task-group';
+    groupEl.dataset.status = group.key;
+    const collapseKey = `${server.id}:${group.key}`;
+
+    const header = document.createElement('div');
+    header.className = 'task-group-header';
+    const toggle = document.createElement('span');
+    toggle.className = `task-group-toggle${collapsedGroups[collapseKey] ? ' collapsed' : ''}`;
+    toggle.textContent = '▾';
+    const label = document.createElement('span');
+    label.className = 'task-group-label';
+    label.textContent = group.name;
+    header.title = group.is_system ? '默认分组' : '右键管理分组';
+    const count = document.createElement('span');
+    count.className = 'task-group-count';
+    const groupTasks = serverTasks.filter(task => task.status === group.key);
+    count.textContent = groupTasks.length;
+    header.append(toggle, label, count);
+
+    const items = document.createElement('div');
+    items.className = `task-group-items${collapsedGroups[collapseKey] ? ' collapsed' : ''}`;
+    groupTasks.forEach(task => items.appendChild(buildRemoteTaskItem(server, task, groups)));
+
+    header.addEventListener('click', () => {
+      const collapsed = items.classList.toggle('collapsed');
+      toggle.classList.toggle('collapsed', collapsed);
+      collapsedGroups[collapseKey] = collapsed;
+    });
+    header.addEventListener('contextmenu', event => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (group.is_system || !group.id) return;
+      ContextMenu.show(event.clientX, event.clientY, [
+        { label: '重命名分组', action: () => showRenameGroup(server.id, group) },
+        { label: '删除分组', danger: true, action: () => removeGroup(server.id, group) },
+      ]);
+    });
+    groupEl.append(header, items);
+    return groupEl;
+  }
+
+  function buildRemoteTaskItem(server, task, groups) {
+    const item = document.createElement('div');
+    item.className = `task-nav-item remote-task-item${selected && selected.serverId === server.id && selected.task.id === task.id ? ' active' : ''}`;
+    item.innerHTML = `<span class="task-status-btn ${escapeHtml(task.status)}"></span><span class="task-nav-title${task.status === 'done' ? ' done' : ''}">${escapeHtml(task.title)}</span>`;
+    item.addEventListener('click', () => select(server, task));
+    item.addEventListener('contextmenu', event => {
+      event.preventDefault();
+      event.stopPropagation();
+      ContextMenu.show(event.clientX, event.clientY, groups.map(group => ({
+        label: `${task.status === group.key ? '✓ ' : ''}移到「${group.name}」`,
+        action: () => moveTask(server.id, task.id, group.key),
+      })));
+    });
+    return item;
   }
 
   function select(server, task) {
@@ -399,6 +483,73 @@ const RemoteTasks = (() => {
     await load();
   }
 
+  async function moveTask(serverId, taskId, groupKey) {
+    try {
+      await API.put(`/api/remote-servers/${serverId}/tasks/${taskId}`, { status: groupKey });
+      await load();
+    } catch (error) {
+      alert('移动任务失败：' + errorLabel(parseApiError(error)));
+    }
+  }
+
+  function showCreateGroup(serverId) {
+    Modal.show('新建任务分组', `
+      <div class="form-group"><label class="form-label">分组名称</label><input class="form-input" id="remote-group-name" maxlength="40" placeholder="例如：客户项目" autocomplete="off"></div>
+      <div class="form-hint error" id="remote-group-error"></div>
+      <div class="form-actions"><button class="btn-cancel" id="remote-group-cancel">取消</button><button class="btn-submit" id="remote-group-save">创建</button></div>
+    `);
+    document.getElementById('remote-group-cancel').addEventListener('click', Modal.hide);
+    document.getElementById('remote-group-save').addEventListener('click', async event => {
+      event.target.disabled = true;
+      try {
+        await API.post(`/api/remote-servers/${serverId}/task-groups`, { name: document.getElementById('remote-group-name').value.trim() });
+        Modal.hide();
+        await load();
+      } catch (error) {
+        document.getElementById('remote-group-error').textContent = errorLabel(parseApiError(error));
+        event.target.disabled = false;
+      }
+    });
+    document.getElementById('remote-group-name').focus();
+  }
+
+  function showRenameGroup(serverId, group) {
+    Modal.show('重命名任务分组', `
+      <div class="form-group"><label class="form-label">分组名称</label><input class="form-input" id="remote-group-name" maxlength="40" value="${escapeHtml(group.name)}" autocomplete="off"></div>
+      <div class="form-hint error" id="remote-group-error"></div>
+      <div class="form-actions"><button class="btn-cancel" id="remote-group-cancel">取消</button><button class="btn-submit" id="remote-group-save">保存</button></div>
+    `);
+    document.getElementById('remote-group-cancel').addEventListener('click', Modal.hide);
+    document.getElementById('remote-group-save').addEventListener('click', async event => {
+      event.target.disabled = true;
+      try {
+        await API.put(`/api/remote-servers/${serverId}/task-groups/${group.id}`, { name: document.getElementById('remote-group-name').value.trim() });
+        Modal.hide();
+        await load();
+      } catch (error) {
+        document.getElementById('remote-group-error').textContent = errorLabel(parseApiError(error));
+        event.target.disabled = false;
+      }
+    });
+    const input = document.getElementById('remote-group-name');
+    input.focus();
+    input.select();
+  }
+
+  async function removeGroup(serverId, group) {
+    if (Number(group.task_count) > 0) {
+      alert('分组内还有任务，请先将任务移到其他分组。');
+      return;
+    }
+    if (!confirm(`确认删除分组“${group.name}”？`)) return;
+    try {
+      await API.delete(`/api/remote-servers/${serverId}/task-groups/${group.id}`);
+      await load();
+    } catch (error) {
+      alert('删除分组失败：' + errorLabel(parseApiError(error)));
+    }
+  }
+
   async function removeServer(id) {
     if (!confirm('确认移除这个远程连接？远程数据不会被删除。')) return;
     disposeServerTerminals(id);
@@ -532,6 +683,7 @@ const RemoteTasks = (() => {
     setActiveEngine,
     getActiveEngineKey: () => activeEngineKey,
     getServers: () => servers.map(server => ({ ...server })),
+    getGroups: serverId => (groupsByServer.get(Number(serverId)) || fallbackGroups()).map(group => ({ ...group })),
     createTask,
     isSelected: () => Boolean(selected),
     clearSelection: () => {

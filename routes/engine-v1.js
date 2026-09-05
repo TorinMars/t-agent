@@ -3,6 +3,7 @@ const db = require('../db');
 const config = require('../config');
 const requireEngineAuth = require('../middleware/engine-auth');
 const tasks = require('../services/engine-tasks');
+const taskGroups = require('../services/task-groups');
 const { exchangePairingCode, createAccessToken } = require('../services/engine-auth');
 const { getEngineIdentity } = require('../services/engine-identity');
 const { createTerminalTicket } = require('../services/terminal-tickets');
@@ -58,6 +59,7 @@ function infoHandler(req, res) {
     role: req.engineAuth.role,
     capabilities: [
       'tasks:read', 'tasks:write',
+      'task-groups:read', 'task-groups:write',
       'documents:read', 'documents:write',
       'todos:read', 'todos:write',
       'terminal:interactive', 'token:pairing',
@@ -70,6 +72,26 @@ router.get('/capabilities', requireEngineAuth(), infoHandler);
 
 router.get('/tasks', requireEngineAuth('tasks:read'), (req, res) => {
   try { res.json(tasks.listTasks(principal(req), req.query.status)); }
+  catch (error) { errorResponse(res, error); }
+});
+
+router.get('/task-groups', requireEngineAuth('tasks:read'), (req, res) => {
+  try { res.json(taskGroups.listGroups(db, principal(req))); }
+  catch (error) { errorResponse(res, error); }
+});
+
+router.post('/task-groups', requireEngineAuth('tasks:write'), (req, res) => {
+  try { res.status(201).json(taskGroups.createGroup(db, principal(req), req.body)); }
+  catch (error) { errorResponse(res, error); }
+});
+
+router.put('/task-groups/:id', requireEngineAuth('tasks:write'), (req, res) => {
+  try { res.json(taskGroups.updateGroup(db, principal(req), req.params.id, req.body)); }
+  catch (error) { errorResponse(res, error); }
+});
+
+router.delete('/task-groups/:id', requireEngineAuth('tasks:write'), (req, res) => {
+  try { taskGroups.deleteGroup(db, principal(req), req.params.id); res.json({ success: true }); }
   catch (error) { errorResponse(res, error); }
 });
 

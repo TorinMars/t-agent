@@ -44,7 +44,12 @@ function request(baseUrl, pathname, token, { expectText = false, method = 'GET',
       res.on('end', () => {
         const body = Buffer.concat(chunks).toString('utf8');
         if (res.statusCode < 200 || res.statusCode >= 300) {
-          const error = new Error(`REMOTE_HTTP_${res.statusCode}`);
+          let code = `REMOTE_HTTP_${res.statusCode}`;
+          try {
+            const parsed = JSON.parse(body);
+            if (/^[A-Z0-9_]+$/.test(parsed.error || '')) code = parsed.error;
+          } catch {}
+          const error = new Error(code);
           error.statusCode = res.statusCode;
           return reject(error);
         }

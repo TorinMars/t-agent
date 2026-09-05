@@ -97,6 +97,7 @@ function requestManifest(urlValue, headers = {}, redirects = 0) {
   return new Promise((resolve, reject) => {
     const requestHeaders = {
       Accept: 'application/json',
+      'Cache-Control': 'no-cache',
       'User-Agent': 'torin-x-web-update-checker',
       ...headers,
     };
@@ -152,7 +153,9 @@ async function runCheck({ force = false } = {}) {
   const headers = {};
   if (!force && state.manifest_etag) headers['If-None-Match'] = state.manifest_etag;
   if (!force && state.manifest_last_modified) headers['If-Modified-Since'] = state.manifest_last_modified;
-  const result = await requestManifest(url, headers);
+  const requestUrl = new URL(url);
+  if (force) requestUrl.searchParams.set('_update_check', String(Date.now()));
+  const result = await requestManifest(requestUrl.toString(), headers);
   const remote = result.notModified ? state.remote_manifest : result.manifest;
   if (!remote) throw new Error('VERSION_CACHE_EMPTY');
   validateVersionManifest(remote);

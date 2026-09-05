@@ -169,6 +169,7 @@ const RemoteTasks = (() => {
         event.stopPropagation();
         ContextMenu.show(event.clientX, event.clientY, [
           { label: '刷新', action: () => refreshServer(server.id) },
+          { label: '编辑连接', action: () => showEdit(server.id) },
           { separator: true },
           { label: '移除连接', danger: true, action: () => removeServer(server.id) },
         ]);
@@ -426,6 +427,66 @@ const RemoteTasks = (() => {
       event.target.disabled = true;
       try { await API.post('/api/remote-servers', values()); Modal.hide(); await load(); }
       catch (error) { document.getElementById('remote-connect-error').textContent = errorLabel(parseApiError(error)); event.target.disabled = false; }
+    });
+  }
+
+  function splitRemoteAddress(baseUrl) {
+    try {
+      const parsed = new URL(baseUrl);
+      return {
+        url: `${parsed.protocol}//${parsed.hostname}`,
+        port: parsed.port,
+      };
+    } catch {
+      return { url: baseUrl, port: '' };
+    }
+  }
+
+  function showEdit(serverId) {
+    const server = servers.find(item => item.id === Number(serverId));
+    if (!server) return;
+    const address = splitRemoteAddress(server.base_url);
+    Modal.show('编辑远程连接', `
+      <div class="form-group"><label class="form-label">名称</label><input class="form-input" id="remote-edit-name" maxlength="80" value="${escapeHtml(server.name)}" autocomplete="off"></div>
+      <div class="form-group"><label class="form-label">URL</label><input class="form-input" id="remote-edit-url" value="${escapeHtml(address.url)}" placeholder="例如 https://tasks.example.com" autocomplete="off"></div>
+      <div class="form-group"><label class="form-label">端口</label><input class="form-input" id="remote-edit-port" type="number" min="1" max="65535" value="${escapeHtml(address.port)}" placeholder="HTTPS 默认可留空"></div>
+      <div class="form-hint">将沿用当前连接已保存的 Token，无需重新输入。新地址验证成功后才会保存。</div>
+      <div class="form-hint error" id="remote-edit-error"></div>
+      <div class="form-actions"><button class="btn-cancel" id="remote-edit-cancel">取消</button><button class="btn-cancel" id="remote-edit-test">测试连接</button><button class="btn-submit" id="remote-edit-save">保存</button></div>
+    `);
+    document.getElementById('remote-edit-cancel').addEventListener('click', Modal.hide);
+    const values = () => ({
+      name: document.getElementById('remote-edit-name').value.trim(),
+      url: document.getElementById('remote-edit-url').value.trim(),
+      port: document.getElementById('remote-edit-port').value,
+    });
+    const showError = (message, ok = false) => {
+      const output = document.getElementById('remote-edit-error');
+      output.className = `form-hint ${ok ? 'ok' : 'error'}`;
+      output.textContent = message;
+    };
+    document.getElementById('remote-edit-test').addEventListener('click', async event => {
+      event.target.disabled = true;
+      try {
+        await API.post(`/api/remote-servers/${server.id}/test`, values());
+        showError('连接成功，Token 有效', true);
+      } catch (error) {
+        showError(errorLabel(parseApiError(error)));
+      } finally {
+        event.target.disabled = false;
+      }
+    });
+    document.getElementById('remote-edit-save').addEventListener('click', async event => {
+      event.target.disabled = true;
+      try {
+        await API.put(`/api/remote-servers/${server.id}`, values());
+        disposeServerTerminals(server.id);
+        Modal.hide();
+        await load();
+      } catch (error) {
+        showError(errorLabel(parseApiError(error)));
+        event.target.disabled = false;
+      }
     });
   }
 

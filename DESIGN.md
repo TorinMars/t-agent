@@ -1504,8 +1504,9 @@ update_notice_version  semver           # 已弹窗的远程版本
 | Method | 路径 | 说明 |
 |--------|------|------|
 | GET/POST | `/api/remote-servers` | 列表 / 新增连接 |
-| PUT/DELETE | `/api/remote-servers/:id` | 修改 / 移除连接 |
+| PUT/DELETE | `/api/remote-servers/:id` | 使用已保存 Token 验证新地址后修改 / 移除连接 |
 | POST | `/api/remote-servers/test` | 保存前测试连接 |
+| POST | `/api/remote-servers/:id/test` | 使用已保存 Token 测试待修改的新地址 |
 | POST | `/api/remote-servers/:id/check` | 重新检查指定服务 |
 | GET | `/api/remote-servers/:id/tasks` | 通过本地代理获取远程任务 |
 | `*` | `/api/remote-servers/:id/tasks/:taskId/...` | 代理任务、文档和待办操作 |

@@ -32,6 +32,8 @@ curl -fsSL https://raw.githubusercontent.com/TorinMars/t-agent/main/bootstrap.sh
 
 连接完成后，点击 Client 左侧的“新建任务”，在“所属 Engine”中选择远程节点。任务数据、文档和工作目录会直接创建在所选 Engine 上。路径留空时，Engine 会在自己的 `TASKS_BASE_DIR` 下自动创建目录。
 
+远程 Engine 更换 IP、端口或 HTTPS 域名后，可在对应远程服务的“⋯”菜单选择“编辑连接”。Client 会沿用已保存的 Token 测试新地址，验证成功后才保存，无需重新配对。
+
 后续要为其他 Client 生成一次性配对码：
 
 ```bash

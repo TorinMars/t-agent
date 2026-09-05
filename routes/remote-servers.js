@@ -4,6 +4,7 @@ const config = require('../config');
 const requireAuth = require('../middleware/auth');
 const { decryptToken, encryptToken } = require('../lib/token-crypto');
 const { normalizeBaseUrl, request } = require('../services/remote-client');
+const { inspectRemoteAddress, persistRemoteServerEdit } = require('../services/remote-server-settings');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -75,6 +76,31 @@ router.post('/', async (req, res) => {
       (owner_id, name, base_url, token_cipher, status, remote_version, last_checked_at)
       VALUES (?, ?, ?, ?, 'online', ?, CURRENT_TIMESTAMP)`).run(owner(req), name.slice(0, 80), baseUrl, encryptToken(token, config.sessionSecret), capabilities.engine_version || capabilities.app_version || null);
     res.status(201).json(publicServer(db.prepare('SELECT * FROM remote_servers WHERE id = ?').get(result.lastInsertRowid)));
+  } catch (error) {
+    const code = error.code === 'SQLITE_CONSTRAINT_UNIQUE' ? 'REMOTE_ALREADY_EXISTS' : safeError(error);
+    res.status(400).json({ error: code });
+  }
+});
+
+router.post('/:id/test', async (req, res) => {
+  const row = getServer(req);
+  if (!row) return res.status(404).json({ error: 'REMOTE_NOT_FOUND' });
+  try {
+    const { baseUrl, capabilities } = await inspectRemoteAddress(row, req.body, config.sessionSecret);
+    res.json({ success: true, base_url: baseUrl, capabilities });
+  } catch (error) {
+    res.status(400).json({ error: safeError(error) });
+  }
+});
+
+router.put('/:id', async (req, res) => {
+  const row = getServer(req);
+  if (!row) return res.status(404).json({ error: 'REMOTE_NOT_FOUND' });
+  try {
+    // 验证新地址时沿用已加密保存的 Token；只有远端认证成功后才落库。
+    const { baseUrl, capabilities } = await inspectRemoteAddress(row, req.body, config.sessionSecret);
+    persistRemoteServerEdit(db, row, owner(req), req.body, baseUrl, capabilities);
+    res.json(publicServer(db.prepare('SELECT * FROM remote_servers WHERE id = ?').get(row.id)));
   } catch (error) {
     const code = error.code === 'SQLITE_CONSTRAINT_UNIQUE' ? 'REMOTE_ALREADY_EXISTS' : safeError(error);
     res.status(400).json({ error: code });

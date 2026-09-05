@@ -333,7 +333,6 @@ const RemoteTasks = (() => {
     const fitAddon = new FitAddon.FitAddon();
     term.loadAddon(fitAddon);
     term.open(el);
-    term.write(`\x1b[36m[正在连接 ${selected.server.name}...]\x1b[0m\r\n`);
 
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
     const ws = new WebSocket(`${proto}://${location.host}/api/remote-servers/${serverId}/terminal/ws?taskId=${taskId}`);
@@ -358,7 +357,6 @@ const RemoteTasks = (() => {
       if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'resize', cols, rows }));
     });
     ws.onopen = () => {
-      term.write('\x1b[32m[远程 Engine 已连接]\x1b[0m\r\n');
       fitAddon.fit();
       term.focus();
       ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));

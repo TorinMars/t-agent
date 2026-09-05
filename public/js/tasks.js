@@ -154,13 +154,11 @@ const Tasks = (() => {
     termWs = ws;
 
     ws.onopen = () => {
-      const reconnecting = inst.reconnectAttempts > 0;
-      if (reconnecting) inst.term.reset();
+      if (inst.reconnectAttempts > 0) inst.term.reset();
       inst.reconnectAttempts = 0;
       inst.fitAddon.fit();
       inst.term.focus();
       ws.send(JSON.stringify({ type: 'resize', cols: inst.term.cols, rows: inst.term.rows }));
-      if (reconnecting) inst.term.write('\x1b[32m[重新连接成功]\x1b[0m\r\n');
     };
 
     ws.onmessage = (e) => {

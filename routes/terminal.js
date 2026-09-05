@@ -1,6 +1,7 @@
 const os = require('os');
 const fs = require('fs');
 const db = require('../db');
+const { prepareTerminalHistoryBuffer } = require('../lib/terminal-history');
 
 // per-task sessions: Map<taskId, { pty, buffer, ws, flushTimer, pendingSince }>
 const sessions = new Map();
@@ -142,14 +143,13 @@ function handleWs(ws, req, sessionUser, requestedTaskId = null) {
   }
   s.ws = ws;
 
-  // 回放历史 buffer（剥离会触发 xterm DA/DSR 响应的设备查询序列，避免回放时响应序列漏入 shell）
+  // 原样恢复终端状态，只剥离会触发 xterm 响应的 DA/DSR 查询。
+  // 不可追加换行或移除 h/l 模式指令，否则全屏 TUI 的光标与备用屏幕会错位。
   if (s.buffer) {
-    const safeBuffer = s.buffer
-      .replace(/\x1b\[[\x30-\x3f]*[\x20-\x2f]*c/g, '')
-      .replace(/\x1b\[[\x30-\x3f]*[\x20-\x2f]*n/g, '')
-      .replace(/\x1b\[[\x30-\x3f]*[\x20-\x2f]*\?[\x30-\x3f]*[\x20-\x2f]*[hln]/g, '');
-    // 末尾补 \r\n 确保光标在新行行首，避免 zsh PROMPT_SP 打印多余的 % 也避免 prompt 覆盖历史内容
-    ws.send(JSON.stringify({ type: 'history', data: safeBuffer + '\r\n' }));
+    ws.send(JSON.stringify({
+      type: 'history',
+      data: prepareTerminalHistoryBuffer(s.buffer),
+    }));
   }
 
   ws.on('message', (msg) => {

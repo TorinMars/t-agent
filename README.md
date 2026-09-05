@@ -494,7 +494,7 @@ macOS 请先确保已安装 Xcode Command Line Tools，然后重新运行安装�
 
 ### CentOS 安装时报 `unrecognized command line option '-std=c++20'`
 
-这表示 npm 未能下载原生模块的预编译包，回退源码编译后发现系统 `g++` 版本过旧。新版安装脚本会检测并尝试安装 GCC Toolset；已有安装目录可以直接重新运行：
+这表示 npm 未能下载原生模块的预编译包，回退源码编译后发现系统 `g++` 版本过旧。新版安装脚本会检测并尝试安装 GCC Toolset；已有安装目录可以直接重新运行。即使上次失败时已经创建 `.env`，只要数据库从未生成过 Token，安装成功后仍会补发初始 owner Token：
 
 ```bash
 cd /path/to/t-agent

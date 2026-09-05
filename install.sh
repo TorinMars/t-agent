@@ -18,7 +18,6 @@ MODE="client"
 CREATED_USERNAME=""
 CREATED_PASSWORD=""
 CREATED_ENGINE_TOKEN=""
-NEW_INSTALL=0
 UPDATE_REPOSITORY="${T_AGENT_REPOSITORY:-TorinMars/t-agent}"
 DETECTED_UPDATE_REF="main"
 if command -v git >/dev/null 2>&1 && git -C "$APP_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
@@ -216,7 +215,6 @@ ensure_env_value() {
 }
 
 if [ ! -f "$ENV_FILE" ]; then
-  NEW_INSTALL=1
   if [ -z "$PORT" ]; then
     [ "$MODE" = "engine" ] && PORT=3100 || PORT=3000
   fi
@@ -309,8 +307,20 @@ if ! verify_node_pty; then
   verify_node_pty || fail "node-pty 无法加载；macOS 请先运行 xcode-select --install，再重新执行安装脚本"
 fi
 
-if [ "$MODE" = "engine" ] && [ "$NEW_INSTALL" -eq 1 ]; then
-  CREATED_ENGINE_TOKEN="$(node "$APP_DIR/scripts/create-engine-token.js" owner 'Initial Client')"
+if [ "$MODE" = "engine" ]; then
+  # 首次 npm 安装若在原生模块编译阶段失败，.env 已存在但 Token 尚未创建。
+  # 只在数据库历史上从未出现过 Engine Token 时补发，避免升级或全部撤销后意外生成 owner Token。
+  ENGINE_TOKEN_COUNT="$(node - "$APP_DIR" <<'NODE'
+const path = require('path');
+const appDir = process.argv[2];
+const db = require(path.join(appDir, 'db'));
+const row = db.prepare('SELECT COUNT(*) count FROM engine_access_tokens').get();
+process.stdout.write(String(row.count));
+NODE
+)"
+  if [ "$ENGINE_TOKEN_COUNT" = "0" ]; then
+    CREATED_ENGINE_TOKEN="$(node "$APP_DIR/scripts/create-engine-token.js" owner 'Initial Client')"
+  fi
 fi
 
 NODE_BIN="$(command -v node)"

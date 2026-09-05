@@ -25,6 +25,8 @@ module.exports = {
   githubToken: process.env.GITHUB_TOKEN || '',
   gitRemote: process.env.UPDATE_GIT_REMOTE || 'origin',
   gitBranch: process.env.UPDATE_GIT_BRANCH || 'main',
+  updateRepository: process.env.UPDATE_GITHUB_REPOSITORY || 'TorinMars/t-agent',
+  updateRef: process.env.UPDATE_GITHUB_REF || process.env.UPDATE_GIT_BRANCH || 'main',
   updateCheckEnabled: process.env.UPDATE_CHECK_ENABLED !== 'false',
   updateCheckIntervalMs: positiveInteger(process.env.UPDATE_CHECK_INTERVAL_SECONDS, 1800) * 1000,
   updateCheckStartupDelayMs: positiveInteger(process.env.UPDATE_CHECK_STARTUP_DELAY_SECONDS, 30) * 1000,

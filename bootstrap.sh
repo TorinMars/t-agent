@@ -4,8 +4,9 @@
 
 set -euo pipefail
 
+REPOSITORY="${T_AGENT_REPOSITORY:-TorinMars/t-agent}"
 REPOSITORY_REF="${T_AGENT_REF:-main}"
-REPOSITORY_ARCHIVE="https://github.com/TorinMars/t-agent/archive/refs/heads/$REPOSITORY_REF.tar.gz"
+REPOSITORY_ARCHIVE="https://github.com/$REPOSITORY/archive/refs/heads/$REPOSITORY_REF.tar.gz"
 TARGET_DIR="${T_AGENT_DIR:-$PWD/t-agent}"
 INSTALL_MODE="${T_AGENT_MODE:-client}"
 TEMP_DIR="$(mktemp -d)"
@@ -17,6 +18,8 @@ trap cleanup EXIT
 
 command -v curl >/dev/null 2>&1 || { printf '错误：请先安装 curl。\n' >&2; exit 1; }
 command -v tar >/dev/null 2>&1 || { printf '错误：请先安装 tar。\n' >&2; exit 1; }
+[ -n "$REPOSITORY" ] && [[ "$REPOSITORY" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] && [[ "$REPOSITORY" != ../* ]] && [[ "$REPOSITORY" != */.. ]] || { printf '错误：T_AGENT_REPOSITORY 格式不正确。\n' >&2; exit 1; }
+[ -n "$REPOSITORY_REF" ] && [[ "$REPOSITORY_REF" =~ ^[A-Za-z0-9._/-]+$ ]] && [[ "$REPOSITORY_REF" != *..* ]] || { printf '错误：T_AGENT_REF 格式不正确。\n' >&2; exit 1; }
 [ "$INSTALL_MODE" = "client" ] || [ "$INSTALL_MODE" = "engine" ] || { printf '错误：T_AGENT_MODE 只能是 client 或 engine。\n' >&2; exit 1; }
 [ -r /dev/tty ] || { printf '错误：需要可交互终端来设置安装参数。\n' >&2; exit 1; }
 

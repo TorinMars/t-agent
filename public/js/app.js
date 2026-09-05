@@ -69,6 +69,9 @@ const Updates = {
       UNTRUSTED_VERSION_URL: '版本链接不受信任', VERSION_URL_NOT_CONFIGURED: '未配置 GitHub 版本链接',
       WORKTREE_DIRTY: '本地有未提交修改', BRANCH_DIVERGED: '本地分支已分叉',
       VERSION_SOURCE_MISMATCH: 'GitHub 版本与 Git 分支不一致', UPDATE_ADMIN_REQUIRED: '只有更新管理员可以执行更新',
+      INVALID_UPDATE_REPOSITORY: '更新仓库配置不正确', INVALID_UPDATE_REF: '更新分支配置不正确',
+      INVALID_UPDATE_ARCHIVE: '下载的更新包结构不正确', UNSAFE_UPDATE_ARCHIVE: '更新包包含不安全的文件',
+      ARCHIVE_CURL_FAILED: '更新包下载失败', ARCHIVE_TAR_FAILED: '更新包解压失败',
     })[code] || code || '';
   },
 
@@ -99,7 +102,7 @@ const Updates = {
         <span class="update-arrow">→</span>
         <span class="update-version new">${escapeHtml(status.remote_version)}</span>
       </div>
-      <div class="update-message">GitHub 上已有新版本${status.remote_manifest && status.remote_manifest.published_at ? `，发布于 ${escapeHtml(this.formatTime(status.remote_manifest.published_at))}` : ''}。</div>
+      <div class="update-message">GitHub 上已有新版本${status.remote_manifest && status.remote_manifest.published_at ? `，发布于 ${escapeHtml(this.formatTime(status.remote_manifest.published_at))}` : ''}。请点击“立即更新”完成升级。</div>
       ${release ? `<a class="update-release-link" href="${escapeHtml(release)}" target="_blank" rel="noopener noreferrer">查看 GitHub 发布说明 ↗</a>` : ''}
       <div class="form-actions">
         <button class="btn-cancel" id="update-later">稍后提醒</button>
@@ -112,11 +115,13 @@ const Updates = {
   },
 
   confirmApply(status) {
+    const archiveInstall = status.install_type === 'archive';
     Modal.show('确认更新本地服务', `
-      <div class="update-warning">更新将检查本地工作区、备份数据库、快进代码、安装依赖并重启服务。</div>
+      <div class="update-warning">${archiveInstall ? '更新将下载官方安装包，保留配置、数据库、日志和任务目录' : '更新将检查 Git 工作区并快进代码'}，随后安装依赖并重启服务。</div>
       <div class="update-detail-row"><span>目标版本</span><strong>${escapeHtml(status.remote_version)}</strong></div>
+      <div class="update-detail-row"><span>安装方式</span><strong>${archiveInstall ? '安装包更新' : 'Git 快进更新'}</strong></div>
       <div class="update-detail-row"><span>GitHub 版本源</span><code title="${escapeHtml(status.version_url || '')}">${escapeHtml(status.version_url || '未配置')}</code></div>
-      <div class="form-hint">本地存在未提交修改或分支分叉时会安全阻断，不会自动覆盖文件。</div>
+      <div class="form-hint">更新前会自动备份 SQLite 数据库；账号、Token、任务和工作目录不会被覆盖。</div>
       <div class="form-actions">
         <button class="btn-cancel" id="update-confirm-cancel">取消</button>
         <button class="btn-submit" id="update-confirm-apply">确认更新并重启</button>
@@ -191,6 +196,7 @@ const Updates = {
         <div class="update-detail-row"><span>远程版本</span><strong>${escapeHtml(status.remote_version || '尚未获取')}</strong></div>
         <div class="update-detail-row"><span>上次检查</span><span>${escapeHtml(this.formatTime(status.last_checked_at))}</span></div>
         <div class="update-detail-row"><span>检查间隔</span><span>${escapeHtml(String(status.check_interval_seconds / 60))} 分钟</span></div>
+        <div class="update-detail-row"><span>安装方式</span><span>${status.install_type === 'archive' ? '安装包更新' : 'Git 快进更新'}</span></div>
         <div class="update-detail-row update-url-row"><span>GitHub 版本源</span><code title="${escapeHtml(status.version_url || '')}">${escapeHtml(status.version_url || '未配置')}</code></div>
         ${remote.release_url ? `<div class="update-detail-row"><span>发布说明</span><a href="${escapeHtml(remote.release_url)}" target="_blank" rel="noopener noreferrer">GitHub Release ↗</a></div>` : ''}
         ${status.error ? `<div class="form-hint error update-error">${escapeHtml(this.errorLabel(status.error))}</div>` : ''}
@@ -226,8 +232,16 @@ const Updates = {
     if (apply) apply.addEventListener('click', () => this.confirmApply(status));
   },
 
-  start() {
-    this.load();
+  async start() {
+    const status = await this.load();
+    if (status && (status.status === 'idle' || status.status === 'failed')) {
+      try {
+        const next = await API.post('/api/system/check-update', {});
+        this.latestStatus = next;
+        document.getElementById('update-dot').style.display = next.status === 'available' ? 'block' : 'none';
+        if (next.status === 'available' && next.remote_version !== next.notice_version) this.showAvailable(next);
+      } catch {}
+    }
     this.pollTimer = setInterval(() => this.load(), 60_000);
   },
 };

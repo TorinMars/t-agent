@@ -7,9 +7,11 @@ const config = require('../config');
 const {
   compareSemver,
   githubVersionUrlFromRemote,
+  githubVersionUrlFromRepository,
   validateGithubVersionUrl,
   validateVersionManifest,
 } = require('../lib/version-utils');
+const { copyRelease, stageGithubArchive } = require('./archive-updater');
 
 const projectRoot = path.resolve(__dirname, '..');
 const versionPath = path.join(projectRoot, 'VERSION.json');
@@ -80,9 +82,14 @@ function configuredVersionUrl() {
       timeout: 3000,
     }).trim();
   } catch {}
-  const derived = githubVersionUrlFromRemote(remote, config.gitBranch);
+  const derived = githubVersionUrlFromRemote(remote, config.gitBranch)
+    || githubVersionUrlFromRepository(config.updateRepository, config.updateRef);
   if (!derived) throw new Error('VERSION_URL_NOT_CONFIGURED');
   return validateGithubVersionUrl(derived).toString();
+}
+
+function installationType() {
+  return fs.existsSync(path.join(projectRoot, '.git')) ? 'git' : 'archive';
 }
 
 function requestManifest(urlValue, headers = {}, redirects = 0) {
@@ -212,7 +219,34 @@ async function runApply() {
   const checked = await runCheck({ force: true });
   if (checked.status !== 'available') throw new Error('NO_UPDATE_AVAILABLE');
 
-  saveState({ status: 'updating', stage: 'checking_workspace', message: '正在检查本地工作区' });
+  if (installationType() === 'archive') await applyArchiveUpdate(checked);
+  else await applyGitUpdate(checked);
+
+  await execNpm(['ci'], 'installing');
+  await execNpm(['run', 'build:monaco'], 'building');
+  saveState({ status: 'updating', stage: 'restarting', message: '更新完成，正在重启服务' });
+  // 非 0 退出码可让 systemd Restart=on-failure 和 macOS KeepAlive 都拉起新版本。
+  setTimeout(() => process.exit(75), 750).unref();
+  return publicState();
+}
+
+async function backupDatabase(metadata = {}) {
+  const backupDir = path.join(projectRoot, 'data', 'backups');
+  fs.mkdirSync(backupDir, { recursive: true });
+  const backupPath = path.join(backupDir, `db-${new Date().toISOString().replace(/[:.]/g, '-')}.sqlite`);
+  saveState({
+    status: 'updating',
+    stage: 'backing_up',
+    message: '正在备份数据库',
+    backup_path: backupPath,
+    ...metadata,
+  });
+  await db.backup(backupPath);
+  return backupPath;
+}
+
+async function applyGitUpdate(checked) {
+  saveState({ status: 'updating', stage: 'checking_workspace', message: '正在检查 Git 工作区' });
   const dirty = await execGit(['status', '--porcelain']);
   if (dirty) throw new Error('WORKTREE_DIRTY');
 
@@ -227,19 +261,26 @@ async function runApply() {
   if (!counts[1]) throw new Error('NO_GIT_CHANGES');
 
   const previousCommit = await execGit(['rev-parse', 'HEAD']);
-  const backupDir = path.join(projectRoot, 'data', 'backups');
-  fs.mkdirSync(backupDir, { recursive: true });
-  const backupPath = path.join(backupDir, `db-${new Date().toISOString().replace(/[:.]/g, '-')}.sqlite`);
-  saveState({ status: 'updating', stage: 'backing_up', message: '正在备份数据库', previous_commit: previousCommit, backup_path: backupPath });
-  await db.backup(backupPath);
+  await backupDatabase({ previous_commit: previousCommit, install_type: 'git' });
 
   saveState({ status: 'updating', stage: 'merging', message: '正在快进代码' });
   await execGit(['merge', '--ff-only', target]);
-  await execNpm(['ci'], 'installing');
-  await execNpm(['run', 'build:monaco'], 'building');
-  saveState({ status: 'updating', stage: 'restarting', message: '更新完成，正在重启服务' });
-  setTimeout(() => process.exit(0), 750).unref();
-  return publicState();
+}
+
+async function applyArchiveUpdate(checked) {
+  saveState({ status: 'updating', stage: 'downloading', message: '正在下载更新包', install_type: 'archive' });
+  const staged = await stageGithubArchive({
+    repository: config.updateRepository,
+    ref: config.updateRef,
+    expectedVersion: checked.remote_version,
+  });
+  try {
+    await backupDatabase({ previous_version: checked.local_version, install_type: 'archive' });
+    saveState({ status: 'updating', stage: 'copying', message: '正在安装更新文件' });
+    copyRelease(staged.sourceRoot, projectRoot);
+  } finally {
+    staged.cleanup();
+  }
 }
 
 async function apply() {
@@ -258,6 +299,9 @@ function publicState() {
     ...state,
     local_manifest: localManifest,
     version_url: state.version_url || (() => { try { return configuredVersionUrl(); } catch { return null; } })(),
+    install_type: installationType(),
+    update_repository: config.updateRepository,
+    update_ref: config.updateRef,
     check_interval_seconds: config.updateCheckIntervalMs / 1000,
   };
 }

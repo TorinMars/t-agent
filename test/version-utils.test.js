@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const {
   compareSemver,
   githubVersionUrlFromRemote,
+  githubVersionUrlFromRepository,
   parseSemver,
   validateGithubVersionUrl,
   validateVersionManifest,
@@ -21,6 +22,15 @@ test('compares stable and prerelease SemVer values', () => {
 test('derives a raw GitHub VERSION.json URL from common remotes', () => {
   assert.equal(githubVersionUrlFromRemote('git@github.com:TorinMars/t-agent.git', 'main'), 'https://raw.githubusercontent.com/TorinMars/t-agent/main/VERSION.json');
   assert.equal(githubVersionUrlFromRemote('https://github.com/TorinMars/t-agent.git', 'release'), 'https://raw.githubusercontent.com/TorinMars/t-agent/release/VERSION.json');
+});
+
+test('derives a version URL for archive installs without Git metadata', () => {
+  assert.equal(
+    githubVersionUrlFromRepository('TorinMars/t-agent', 'codex/component-engine-client-token'),
+    'https://raw.githubusercontent.com/TorinMars/t-agent/codex/component-engine-client-token/VERSION.json',
+  );
+  assert.equal(githubVersionUrlFromRepository('../invalid', 'main'), null);
+  assert.equal(githubVersionUrlFromRepository('TorinMars/t-agent', '../main'), null);
 });
 
 test('only trusts HTTPS GitHub version hosts', () => {

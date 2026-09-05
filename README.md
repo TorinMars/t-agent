@@ -90,14 +90,18 @@ ENGINE_WORKSPACE_ROOTS=/允许 Engine 读写的任务目录
 检查更新相关配置：
 
 ```env
-GITHUB_VERSION_URL=https://raw.githubusercontent.com/owner/repository/main/VERSION.json
+GITHUB_VERSION_URL=https://raw.githubusercontent.com/TorinMars/t-agent/main/VERSION.json
+UPDATE_GITHUB_REPOSITORY=TorinMars/t-agent
+UPDATE_GITHUB_REF=main
 UPDATE_GIT_REMOTE=origin
 UPDATE_GIT_BRANCH=main
 UPDATE_CHECK_INTERVAL_SECONDS=1800
 UPDATE_ADMIN_USERS=你的本地用户名
 ```
 
-定时检查只读取 GitHub 上的 `VERSION.json`。只有更新管理员在页面二次确认后，服务才会检查工作区、备份 SQLite、执行 fast-forward 更新、安装依赖、构建并请求守护进程重启。未设置 `GITHUB_VERSION_URL` 时，会尝试根据 Git `origin` 和目标分支推导 Raw 链接。
+服务启动后会自动检查一次，之后默认每 30 分钟检查 GitHub 上的 `VERSION.json`。发现新版本时，设置按钮会显示提示点并弹出“立即更新”按钮；只有更新管理员二次确认后才会执行。
+
+Git 安装会检查工作区并执行 fast-forward；一键安装产生的不含 `.git` 目录会下载对应分支的官方归档。两种方式都会先备份 SQLite，保留 `.env`、数据库、日志和任务目录，然后安装依赖、构建资源并由守护进程重启。
 
 ### 安装依赖
 

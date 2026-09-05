@@ -19,6 +19,13 @@ CREATED_USERNAME=""
 CREATED_PASSWORD=""
 CREATED_ENGINE_TOKEN=""
 NEW_INSTALL=0
+UPDATE_REPOSITORY="${T_AGENT_REPOSITORY:-TorinMars/t-agent}"
+DETECTED_UPDATE_REF="main"
+if command -v git >/dev/null 2>&1 && git -C "$APP_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  DETECTED_UPDATE_REF="$(git -C "$APP_DIR" branch --show-current 2>/dev/null || printf 'main')"
+  [ -n "$DETECTED_UPDATE_REF" ] || DETECTED_UPDATE_REF="main"
+fi
+UPDATE_REF="${T_AGENT_REF:-$DETECTED_UPDATE_REF}"
 
 usage() {
   cat <<'EOF'
@@ -57,6 +64,8 @@ while [ "$#" -gt 0 ]; do
 done
 
 [ "$MODE" = "client" ] || [ "$MODE" = "engine" ] || fail "--mode 只能是 client 或 engine"
+[[ "$UPDATE_REPOSITORY" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] && [[ "$UPDATE_REPOSITORY" != ../* ]] && [[ "$UPDATE_REPOSITORY" != */.. ]] || fail "T_AGENT_REPOSITORY 格式不正确"
+[[ "$UPDATE_REF" =~ ^[A-Za-z0-9._/-]+$ ]] && [[ "$UPDATE_REF" != *..* ]] || fail "T_AGENT_REF 格式不正确"
 
 if [ -n "$PORT" ] && ! [[ "$PORT" =~ ^[1-9][0-9]{0,4}$ ]] || { [ -n "$PORT" ] && [ "$PORT" -gt 65535 ]; }; then
   fail "端口必须是 1-65535 的整数"
@@ -125,6 +134,14 @@ fs.writeFileSync(file, text, { mode: 0o600 });
 NODE
 }
 
+ensure_env_value() {
+  local key="$1"
+  local value="$2"
+  if ! grep -q "^${key}=" "$ENV_FILE" 2>/dev/null; then
+    update_env_value "$key" "$value"
+  fi
+}
+
 if [ ! -f "$ENV_FILE" ]; then
   NEW_INSTALL=1
   if [ -z "$PORT" ]; then
@@ -162,6 +179,12 @@ TASKS_BASE_DIR=$TASKS_DIR
 ENGINE_OWNER_ID=${USERNAME:-engine}
 ENGINE_WORKSPACE_ROOTS=$TASKS_DIR
 ENGINE_HOST=$([ "$MODE" = "engine" ] && printf '0.0.0.0' || printf '127.0.0.1')
+GITHUB_VERSION_URL=https://raw.githubusercontent.com/$UPDATE_REPOSITORY/$UPDATE_REF/VERSION.json
+UPDATE_GITHUB_REPOSITORY=$UPDATE_REPOSITORY
+UPDATE_GITHUB_REF=$UPDATE_REF
+UPDATE_GIT_BRANCH=$UPDATE_REF
+UPDATE_CHECK_ENABLED=true
+UPDATE_CHECK_INTERVAL_SECONDS=1800
 EOF
   printf '已创建 %s\n' "$ENV_FILE"
 else
@@ -176,6 +199,14 @@ else
     update_env_value ENGINE_HOST 0.0.0.0
   fi
 fi
+
+# 旧版压缩包安装没有 Git 元数据；补齐更新来源后也能自动检查和按钮升级。
+ensure_env_value GITHUB_VERSION_URL "https://raw.githubusercontent.com/$UPDATE_REPOSITORY/$UPDATE_REF/VERSION.json"
+ensure_env_value UPDATE_GITHUB_REPOSITORY "$UPDATE_REPOSITORY"
+ensure_env_value UPDATE_GITHUB_REF "$UPDATE_REF"
+ensure_env_value UPDATE_GIT_BRANCH "$UPDATE_REF"
+ensure_env_value UPDATE_CHECK_ENABLED true
+ensure_env_value UPDATE_CHECK_INTERVAL_SECONDS 1800
 
 TASKS_DIR="$(sed -n 's/^TASKS_BASE_DIR=//p' "$ENV_FILE" | tail -n 1)"
 [ -n "$TASKS_DIR" ] && mkdir -p "$TASKS_DIR"
@@ -241,7 +272,7 @@ Type=simple
 User=$SERVICE_USER
 WorkingDirectory=$APP_DIR
 ExecStart=$NODE_BIN $ENTRY_SCRIPT
-Restart=on-failure
+Restart=always
 RestartSec=3
 
 [Install]

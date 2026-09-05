@@ -22,19 +22,46 @@ const RemoteTasks = (() => {
   }
 
   async function load() {
+    let loadedServers;
     try {
-      servers = await API.get('/api/remote-servers');
-      await Promise.all(servers.map(async server => {
-        try { tasksByServer.set(server.id, await API.get(`/api/remote-servers/${server.id}/tasks`)); }
-        catch { tasksByServer.set(server.id, []); }
-      }));
-      render();
-      setActiveEngine(activeEngineKey);
-    } catch {
+      loadedServers = await API.get('/api/remote-servers');
+      if (!Array.isArray(loadedServers)) throw new Error('INVALID_REMOTE_SERVERS_RESPONSE');
+    } catch (error) {
+      console.error('[remote-tasks] 加载远程 Engine 列表失败', error);
       servers = [];
       activeEngineKey = 'local';
       render();
-      setActiveEngine('local');
+      activateCurrentEngine();
+      return;
+    }
+
+    servers = loadedServers;
+    tasksByServer = new Map(servers.map(server => [server.id, tasksByServer.get(server.id) || []]));
+
+    // Engine 标签应在服务器列表返回后立即出现，不等待较慢的远程任务请求。
+    render();
+    activateCurrentEngine();
+
+    await Promise.all(servers.map(async server => {
+      try {
+        tasksByServer.set(server.id, await API.get(`/api/remote-servers/${server.id}/tasks`));
+      } catch (error) {
+        tasksByServer.set(server.id, []);
+        console.warn(`[remote-tasks] 加载 ${server.name} 的任务失败`, error);
+      }
+    }));
+    render();
+    activateCurrentEngine();
+  }
+
+  function activateCurrentEngine() {
+    try {
+      setActiveEngine(activeEngineKey);
+    } catch (error) {
+      // 已加载的服务器标签不能因为内容区初始化失败而消失。
+      console.error('[remote-tasks] 初始化 Engine 视图失败', error);
+      renderEngineTabs();
+      applyEngineVisibility();
     }
   }
 

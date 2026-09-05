@@ -27,6 +27,7 @@ function defaultState() {
     remote_version: null,
     last_checked_at: null,
     error: null,
+    error_details: null,
     notice_version: null,
     manifest_etag: null,
     manifest_last_modified: null,
@@ -157,7 +158,7 @@ function safeError(error) {
 async function runCheck({ force = false } = {}) {
   const local = readLocalManifest();
   const url = configuredVersionUrl();
-  saveState({ status: 'checking', stage: 'checking_version', error: null, local_version: local.app_version, message: null });
+  saveState({ status: 'checking', stage: 'checking_version', error: null, error_details: null, local_version: local.app_version, message: null });
   const headers = {};
   if (!force && state.manifest_etag) headers['If-None-Match'] = state.manifest_etag;
   if (!force && state.manifest_last_modified) headers['If-Modified-Since'] = state.manifest_last_modified;
@@ -179,6 +180,7 @@ async function runCheck({ force = false } = {}) {
     manifest_last_modified: result.lastModified || state.manifest_last_modified,
     last_checked_at: new Date().toISOString(),
     error: null,
+    error_details: null,
     version_url: url,
     message: status === 'available' ? '发现新版本' : status === 'current' ? '已是最新版本' : '本地版本较新',
   });
@@ -209,9 +211,16 @@ function execGit(args, timeout = 60_000) {
 
 function execNpm(args, stage) {
   saveState({ status: 'updating', stage, message: stage === 'installing' ? '正在安装依赖' : '正在构建前端资源' });
+  const executablePath = [
+    path.dirname(process.execPath),
+    '/opt/homebrew/bin',
+    '/usr/local/bin',
+    process.env.PATH,
+  ].filter(Boolean).join(path.delimiter);
   return new Promise((resolve, reject) => {
     execFile(process.platform === 'win32' ? 'npm.cmd' : 'npm', args, {
       cwd: projectRoot,
+      env: { ...process.env, PATH: executablePath },
       timeout: 10 * 60_000,
       maxBuffer: 2 * 1024 * 1024,
     }, (error, stdout, stderr) => {
@@ -297,7 +306,13 @@ async function applyArchiveUpdate(checked) {
 async function apply() {
   if (applyPromise) return applyPromise;
   applyPromise = runApply().catch(error => {
-    saveState({ status: 'blocked', stage: null, error: safeError(error), message: error.message === 'WORKTREE_DIRTY' ? '本地有未提交修改，无法更新' : '更新已阻断' });
+    saveState({
+      status: 'blocked',
+      stage: null,
+      error: safeError(error),
+      error_details: error.details || null,
+      message: error.message === 'WORKTREE_DIRTY' ? '本地有未提交修改，无法更新' : '更新已阻断',
+    });
     throw error;
   }).finally(() => { applyPromise = null; });
   return applyPromise;

@@ -223,6 +223,7 @@ if [ "$MODE" = "engine" ] && [ "$NEW_INSTALL" -eq 1 ]; then
 fi
 
 NODE_BIN="$(command -v node)"
+SERVICE_PATH="$(dirname "$NODE_BIN"):/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 if [ "$MODE" = "engine" ]; then
   ENTRY_SCRIPT="$APP_DIR/apps/engine/server.js"
   SERVICE_BASENAME="t-agent-engine"
@@ -248,6 +249,7 @@ if [ "$INSTALL_SERVICE" -eq 1 ] && [ "$PLATFORM" = "macOS" ]; then
   <key>Label</key><string>$LAUNCH_LABEL</string>
   <key>ProgramArguments</key><array><string>$NODE_BIN</string><string>$ENTRY_SCRIPT</string></array>
   <key>WorkingDirectory</key><string>$APP_DIR</string>
+  <key>EnvironmentVariables</key><dict><key>PATH</key><string>$SERVICE_PATH</string></dict>
   <key>RunAtLoad</key><true/><key>KeepAlive</key><true/>
   <key>StandardOutPath</key><string>$APP_DIR/logs/stdout.log</string>
   <key>StandardErrorPath</key><string>$APP_DIR/logs/stderr.log</string>

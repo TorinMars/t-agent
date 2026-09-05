@@ -72,6 +72,8 @@ const Updates = {
       INVALID_UPDATE_REPOSITORY: '更新仓库配置不正确', INVALID_UPDATE_REF: '更新分支配置不正确',
       INVALID_UPDATE_ARCHIVE: '下载的更新包结构不正确', UNSAFE_UPDATE_ARCHIVE: '更新包包含不安全的文件',
       ARCHIVE_CURL_FAILED: '更新包下载失败', ARCHIVE_TAR_FAILED: '更新包解压失败',
+      NPM_INSTALLING_FAILED: '依赖安装失败，请检查 Node/npm 环境',
+      NPM_BUILDING_FAILED: '前端资源构建失败',
     })[code] || code || '';
   },
 
@@ -143,7 +145,7 @@ const Updates = {
       document.getElementById('update-progress-message').textContent = '更新未执行';
       const errorNode = document.getElementById('update-progress-error');
       errorNode.className = 'form-hint error';
-      errorNode.textContent = this.errorLabel(code) || error.message;
+      errorNode.textContent = `${this.errorLabel(code) || error.message}${status && status.error_details ? `：${status.error_details}` : ''}`;
       const spinner = document.querySelector('.update-spinner');
       if (spinner) spinner.remove();
     }
@@ -162,7 +164,7 @@ const Updates = {
         const errorNode = document.getElementById('update-progress-error');
         if (errorNode) {
           errorNode.className = 'form-hint error';
-          errorNode.textContent = this.errorLabel(status.error) || status.message || '更新失败';
+          errorNode.textContent = `${this.errorLabel(status.error) || status.message || '更新失败'}${status.error_details ? `：${status.error_details}` : ''}`;
         }
         const spinner = document.querySelector('.update-spinner');
         if (spinner) spinner.remove();
@@ -199,7 +201,7 @@ const Updates = {
         <div class="update-detail-row"><span>安装方式</span><span>${status.install_type === 'archive' ? '安装包更新' : 'Git 快进更新'}</span></div>
         <div class="update-detail-row update-url-row"><span>GitHub 版本源</span><code title="${escapeHtml(status.version_url || '')}">${escapeHtml(status.version_url || '未配置')}</code></div>
         ${remote.release_url ? `<div class="update-detail-row"><span>发布说明</span><a href="${escapeHtml(remote.release_url)}" target="_blank" rel="noopener noreferrer">GitHub Release ↗</a></div>` : ''}
-        ${status.error ? `<div class="form-hint error update-error">${escapeHtml(this.errorLabel(status.error))}</div>` : ''}
+        ${status.error ? `<div class="form-hint error update-error">${escapeHtml(this.errorLabel(status.error))}${status.error_details ? `：${escapeHtml(status.error_details)}` : ''}</div>` : ''}
         <div class="settings-inline-actions">
           <button class="btn-cancel" id="settings-check-update">立即检查</button>
           ${status.status === 'available' && status.is_update_admin ? '<button class="btn-submit" id="settings-apply-update">立即更新</button>' : ''}
@@ -234,7 +236,7 @@ const Updates = {
 
   async start() {
     const status = await this.load();
-    if (status && (status.status === 'idle' || status.status === 'failed')) {
+    if (status && (status.status === 'idle' || status.status === 'failed' || status.status === 'blocked')) {
       try {
         const next = await API.post('/api/system/check-update', {});
         this.latestStatus = next;

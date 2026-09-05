@@ -345,11 +345,13 @@ const RemoteTasks = (() => {
       el,
       serverId,
       taskId,
+      paused: false,
       disposed: false,
     };
     remoteTerminals.set(key, remoteTerminal);
     const instance = remoteTerminal;
     term.onData(data => {
+      if (instance.paused) return;
       if (ws.readyState === WebSocket.OPEN) ws.send(data);
     });
     term.onResize(({ cols, rows }) => {
@@ -362,6 +364,18 @@ const RemoteTasks = (() => {
       ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
     };
     ws.onmessage = event => {
+      if (typeof event.data === 'string' && event.data.startsWith('{"type":"history"')) {
+        try {
+          const message = JSON.parse(event.data);
+          instance.paused = true;
+          term.write(message.data, () => {
+            requestAnimationFrame(() => requestAnimationFrame(() => { instance.paused = false; }));
+          });
+        } catch {
+          term.write(event.data);
+        }
+        return;
+      }
       if (event.data instanceof ArrayBuffer) term.write(new Uint8Array(event.data));
       else term.write(event.data);
     };

@@ -41,22 +41,6 @@ if ! [[ "$SETUP_PORT" =~ ^[1-9][0-9]{0,4}$ ]] || [ "$SETUP_PORT" -gt 65535 ]; th
   exit 1
 fi
 
-SETUP_USERNAME=""
-SETUP_PASSWORD=""
-if [ "$INSTALL_MODE" = "client" ]; then
-  read -r -p '登录用户名: ' SETUP_USERNAME </dev/tty
-  if ! [[ "$SETUP_USERNAME" =~ ^[a-zA-Z0-9_-]{2,32}$ ]]; then
-    printf '错误：用户名只能包含字母、数字、下划线、连字符，且为 2-32 位。\n' >&2
-    exit 1
-  fi
-  read -r -s -p '登录密码（至少 6 位）: ' SETUP_PASSWORD </dev/tty
-  printf '\n'
-  if [ "${#SETUP_PASSWORD}" -lt 6 ]; then
-    printf '错误：密码至少需要 6 位。\n' >&2
-    exit 1
-  fi
-fi
-
 DEFAULT_TASKS_DIR="$TARGET_DIR/tasks"
 read -r -p "任务工作路径 [$DEFAULT_TASKS_DIR]: " SETUP_TASKS_DIR </dev/tty
 SETUP_TASKS_DIR="${SETUP_TASKS_DIR:-$DEFAULT_TASKS_DIR}"
@@ -80,7 +64,4 @@ INSTALL_ARGS=(
   --port "$SETUP_PORT"
   --tasks-dir "$SETUP_TASKS_DIR"
 )
-if [ "$INSTALL_MODE" = "client" ]; then
-  INSTALL_ARGS+=(--username "$SETUP_USERNAME" --password "$SETUP_PASSWORD")
-fi
 exec "$TARGET_DIR/install.sh" "${INSTALL_ARGS[@]}" "$@" < /dev/tty

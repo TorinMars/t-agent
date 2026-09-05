@@ -1,13 +1,13 @@
 const express = require('express');
 const requireAuth = require('../middleware/auth');
-const config = require('../config');
 const updates = require('../services/update-manager');
 
 const router = express.Router();
 router.use(requireAuth);
 
 function isAdmin(req) {
-  return config.updateAdminUsers.includes(req.session.user.login);
+  // Client 是单用户应用，本地用户始终可以执行更新。
+  return Boolean(req.session.user);
 }
 
 router.get('/version', (req, res) => {

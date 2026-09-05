@@ -22,7 +22,7 @@ flowchart LR
 
 | 组件 | 职责 |
 | --- | --- |
-| Client | 登录与界面、本地 Engine、多 Engine 标签切换、远程连接管理、Token 加密保存、更新检查 |
+| Client | 单用户界面、本地 Engine、多 Engine 标签切换、远程连接管理、Token 加密保存、更新检查 |
 | Engine | 任务和待办数据、Markdown 文件、工作目录、终端执行、Token 鉴权 |
 
 浏览器只连接本机 Client，不会直接拿到远程 Token，也不直接请求远程 Engine。远程凭证由 Client 使用 `SESSION_SECRET` 加密后保存在 SQLite 中。
@@ -55,6 +55,7 @@ flowchart LR
 
 ### 安全边界
 
+- Client 不使用用户名密码，默认只监听 `127.0.0.1`，仅供安装它的本机用户访问。
 - 独立 Engine 不提供用户名密码登录，只接受 Bearer Token。
 - Engine 只保存 Token 的 SHA-256 哈希，Token 明文只在创建时显示一次。
 - 配对码默认 10 分钟有效且只能使用一次。
@@ -85,11 +86,12 @@ Ubuntu 20.04 默认的 GCC 9 不识别依赖使用的 `-std=c++20` 参数；安�
 
 ## 快速安装
 
-安装脚本会询问端口、登录账号和任务目录，安装依赖后注册开机自启服务。默认安装目录是当前目录下的 `t-agent`。
+安装脚本会询问端口和任务目录，安装依赖后注册开机自启服务。默认安装目录是当前目录下的 `t-agent`。
 
 ### 安装 Client
 
 Client 用于个人电脑或管理节点，内含本地 Engine。默认端口为 `3000`。
+Client 按单用户方式运行，打开页面即可使用，不需要设置用户名或密码；默认仅监听本机地址。
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/TorinMars/t-agent/main/bootstrap.sh | T_AGENT_MODE=client bash
@@ -134,8 +136,6 @@ chmod +x install.sh
 ```bash
 ./install.sh --mode client \
   --port 13500 \
-  --username admin \
-  --password '请换成强密码' \
   --tasks-dir /srv/t-agent-tasks
 
 ./install.sh --mode engine \
@@ -149,7 +149,7 @@ chmod +x install.sh
 
 ### 1. 创建本地任务
 
-登录 Client 后点击“新建任务”：
+打开 Client 后点击“新建任务”：
 
 1. “所属 Engine”选择“本地 Engine”。
 2. 填写标题；MD 文件路径和工作路径可以留空。
@@ -309,8 +309,10 @@ PORT=3000
 T_AGENT_MODE=client
 SESSION_SECRET=请替换为足够长的随机字符串
 
-# Client 登录账号，使用 scripts/gen-password.js 生成
-AUTH_USERS=用户名:salt:hash
+# Client 内部数据归属 ID，不用于登录
+SINGLE_USER_ID=local
+# 免登录 Client 默认只能监听本机
+HOST=127.0.0.1
 
 # 自动创建任务文件的根目录
 TASKS_BASE_DIR=/path/to/tasks
@@ -318,15 +320,11 @@ TASKS_BASE_DIR=/path/to/tasks
 # Engine 可访问的目录，多个路径用逗号分隔
 ENGINE_WORKSPACE_ROOTS=/path/to/tasks
 ENGINE_NAME=my-engine
-ENGINE_OWNER_ID=alice
+ENGINE_OWNER_ID=local
 ENGINE_HOST=127.0.0.1
 ```
 
-生成 Client 登录密码记录：
-
-```bash
-node scripts/gen-password.js alice '你的密码'
-```
+从旧版本升级时无需手动设置 `SINGLE_USER_ID`。程序会沿用原数据库中的首个账号作为唯一数据归属，旧 `.env` 中的 `AUTH_USERS` 可以暂时保留，但不再参与认证。
 
 更新相关配置：
 
@@ -339,7 +337,6 @@ UPDATE_GIT_BRANCH=main
 UPDATE_CHECK_ENABLED=true
 UPDATE_CHECK_INTERVAL_SECONDS=1800
 UPDATE_CHECK_STARTUP_DELAY_SECONDS=30
-UPDATE_ADMIN_USERS=alice
 ```
 
 私有仓库可在服务端设置 `GITHUB_TOKEN`。不要把 GitHub Token 或 Engine Token 写入网页代码、Nginx 配置或提交到 Git。
@@ -352,7 +349,7 @@ Client 服务启动后会自动检查更新，之后默认每 30 分钟检查一
 2. 点击“立即检查”查看版本。
 3. 有新版本时点击更新按钮并二次确认。
 
-只有 `UPDATE_ADMIN_USERS` 中的用户可以执行更新。
+Client 是单用户实例，设置页面中的本地用户可以执行更新。
 
 - Git Client 会检查工作区、拉取配置分支并只执行 fast-forward 更新。
 - 旧版归档 Client 会下载对应 GitHub 分支的安装包；建议先迁移为 Git 安装。
@@ -569,7 +566,7 @@ UPDATE_CHECK_ENABLED=false
 建议备份：
 
 ```text
-.env             # 登录配置、SESSION_SECRET、更新来源
+.env             # 单用户 ID、SESSION_SECRET、更新来源
 data/            # SQLite、会话、远程连接和更新状态
 tasks/           # 默认任务工作目录；自定义目录需单独备份
 logs/            # 可选，运行日志

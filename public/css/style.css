@@ -64,18 +64,6 @@ html, body {
   gap: 10px;
 }
 
-.user-avatar {
-  width: 26px;
-  height: 26px;
-  border-radius: 50%;
-  border: 1px solid var(--border);
-}
-
-.user-name {
-  font-size: 13px;
-  color: var(--text-muted);
-}
-
 .btn-logout {
   padding: 3px 10px;
   background: transparent;

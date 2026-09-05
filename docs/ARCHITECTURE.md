@@ -10,7 +10,7 @@ Client 通过标准 `/v1` API 连接远程 Engine。远程 Token 使用 `SESSION
 
 ## Engine
 
-Engine 是任务、Todo、Markdown 文档、工作目录和终端执行的权威数据源。独立 Engine 不需要用户名密码，仅使用可撤销的 Bearer Token。
+Engine 是任务、Todo、Markdown 文档、工作目录和终端执行的权威数据源。独立 Engine 不需要用户名密码，仅使用可撤销的 Bearer Token。Client 按单用户免登录模式运行，使用稳定的内部用户 ID 保留数据归属，并默认只监听 `127.0.0.1`。
 
 每个 Engine 在 SQLite 中保存稳定的 `engine_id`。Client 使用 `(engine_id, task_id)` 区分不同节点上的资源。
 

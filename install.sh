@@ -3,20 +3,16 @@
 # 示例：
 #   ./install.sh
 #   ./install.sh --mode engine --port 3100 --tasks-dir /srv/t-agent-tasks
-#   ./install.sh --port 13148 --username admin --tasks-dir /srv/t-agent-tasks
+#   ./install.sh --port 13148 --tasks-dir /srv/t-agent-tasks
 
 set -euo pipefail
 
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 ENV_FILE="$APP_DIR/.env"
 PORT=""
-USERNAME=""
-PASSWORD=""
 TASKS_DIR=""
 INSTALL_SERVICE=1
 MODE="client"
-CREATED_USERNAME=""
-CREATED_PASSWORD=""
 CREATED_ENGINE_TOKEN=""
 UPDATE_REPOSITORY="${T_AGENT_REPOSITORY:-TorinMars/t-agent}"
 DETECTED_UPDATE_REF="main"
@@ -33,13 +29,11 @@ usage() {
 选项：
   --mode MODE          安装模式：client（默认，内含本地 Engine）或 engine
   --port PORT          服务端口（默认 3000）
-  --username NAME      首个本地登录账号
-  --password PASSWORD  首个本地登录账号的密码（不建议在共享终端中使用）
   --tasks-dir PATH     任务 Markdown 文件保存目录（默认：项目目录/tasks）
   --no-service         只安装依赖和配置，不注册开机服务
   -h, --help           显示帮助
 
-Client 模式首次运行会询问本地登录账号。
+Client 是单用户应用，安装后直接打开，不使用用户名和密码。
 Engine 模式不创建账号，而是生成一个只显示一次的访问 Token。
 EOF
 }
@@ -53,8 +47,7 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     --mode) MODE="${2:-}"; shift 2 ;;
     --port) PORT="${2:-}"; shift 2 ;;
-    --username) USERNAME="${2:-}"; shift 2 ;;
-    --password) PASSWORD="${2:-}"; shift 2 ;;
+    --username|--password) shift 2 ;; # 兼容旧自动化参数，单用户模式不再使用。
     --tasks-dir) TASKS_DIR="${2:-}"; shift 2 ;;
     --no-service) INSTALL_SERVICE=0; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -250,36 +243,19 @@ if [ ! -f "$ENV_FILE" ]; then
   fi
   [ -n "$TASKS_DIR" ] || TASKS_DIR="$APP_DIR/tasks"
 
-  AUTH_USER=""
-  if [ "$MODE" = "client" ]; then
-    if [ -z "$USERNAME" ]; then
-      [ -t 0 ] || fail "Client 首次安装请通过 --username 和 --password 指定本地登录账号"
-      read -r -p '设置登录用户名: ' USERNAME
-    fi
-    [[ "$USERNAME" =~ ^[a-zA-Z0-9_-]{2,32}$ ]] || fail "用户名只能包含字母、数字、下划线、连字符，且为 2-32 位"
-
-    if [ -z "$PASSWORD" ]; then
-      [ -t 0 ] || fail "Client 首次安装请通过 --password 指定本地登录密码"
-      read -r -s -p '设置登录密码（至少 6 位）: ' PASSWORD
-      printf '\n'
-    fi
-    [ "${#PASSWORD}" -ge 6 ] || fail "密码至少需要 6 位"
-    AUTH_USER="$(node "$APP_DIR/scripts/gen-password.js" "$USERNAME" "$PASSWORD")"
-    CREATED_USERNAME="$USERNAME"
-    CREATED_PASSWORD="$PASSWORD"
-  fi
-
   SESSION_SECRET="$(node -e "process.stdout.write(require('crypto').randomBytes(32).toString('hex'))")"
   umask 077
   cat > "$ENV_FILE" <<EOF
 PORT=$PORT
 T_AGENT_MODE=$MODE
 SESSION_SECRET=$SESSION_SECRET
-AUTH_USERS=$AUTH_USER
+SINGLE_USER_ID=$([ "$MODE" = "client" ] && printf 'local' || printf '')
+AUTH_USERS=
 TASKS_BASE_DIR=$TASKS_DIR
-ENGINE_OWNER_ID=${USERNAME:-engine}
+ENGINE_OWNER_ID=$([ "$MODE" = "client" ] && printf 'local' || printf 'engine')
 ENGINE_WORKSPACE_ROOTS=$TASKS_DIR
 ENGINE_HOST=$([ "$MODE" = "engine" ] && printf '0.0.0.0' || printf '127.0.0.1')
+HOST=127.0.0.1
 GITHUB_VERSION_URL=https://api.github.com/repos/$UPDATE_REPOSITORY/contents/VERSION.json?ref=$UPDATE_REF
 UPDATE_GITHUB_REPOSITORY=$UPDATE_REPOSITORY
 UPDATE_GITHUB_REF=$UPDATE_REF
@@ -289,7 +265,7 @@ UPDATE_CHECK_INTERVAL_SECONDS=1800
 EOF
   printf '已创建 %s\n' "$ENV_FILE"
 else
-  printf '保留现有 %s（不会覆盖账号和密钥）。\n' "$ENV_FILE"
+  printf '保留现有 %s（不会覆盖数据归属和密钥）。\n' "$ENV_FILE"
   [ -n "$PORT" ] && update_env_value PORT "$PORT"
   if [ -n "$TASKS_DIR" ]; then
     update_env_value TASKS_BASE_DIR "$TASKS_DIR"
@@ -298,6 +274,9 @@ else
   update_env_value T_AGENT_MODE "$MODE"
   if [ "$MODE" = "engine" ]; then
     update_env_value ENGINE_HOST 0.0.0.0
+  else
+    # Client 免登录后必须默认仅供本机访问。
+    update_env_value HOST 127.0.0.1
   fi
 fi
 
@@ -429,10 +408,6 @@ else
   ACCESS_HINT="http://127.0.0.1:${ACTIVE_PORT:-3000}"
 fi
 printf '\n%s 安装完成。\n访问地址：%s\n服务检查：%s\n' "$MODE" "$ACCESS_HINT" "$SERVICE_HINT"
-if [ -n "$CREATED_USERNAME" ]; then
-  printf '\n请使用以下账号登录：\n用户名：%s\n密码：%s\n' "$CREATED_USERNAME" "$CREATED_PASSWORD"
-  printf '请妥善保存账号信息；网页端不提供注册功能。\n'
-fi
 if [ -n "$CREATED_ENGINE_TOKEN" ]; then
   printf '\nEngine 访问 Token（只显示这一次）：\n%s\n' "$CREATED_ENGINE_TOKEN"
   printf '在 Client 中填写引擎地址和此 Token 即可完成连接。\n'

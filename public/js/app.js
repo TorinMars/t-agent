@@ -300,17 +300,6 @@ document.getElementById('modal-overlay').addEventListener('click', e => {
 });
 
 async function init() {
-  try {
-    const user = await API.get('/auth/me');
-    if (user && user.login) {
-      const avatar = document.getElementById('user-avatar');
-      avatar.src = user.avatar_url;
-      avatar.alt = user.login;
-      avatar.style.display = 'inline-block';
-      document.getElementById('user-name').textContent = user.login;
-    }
-  } catch (e) {}
-
   document.getElementById('btn-settings').addEventListener('click', async () => {
     let user = {};
     try { user = await API.get('/auth/me'); } catch(e) {}
@@ -321,7 +310,7 @@ async function init() {
         <input class="form-input" id="settings-work-dir" value="${user.work_dir || ''}" placeholder="例如 /Users/yourname/tasks">
         <div class="form-hint">新建任务时 md 文件的根目录，目录不存在会自动创建</div>
       </div>
-      <div class="settings-section"><div class="settings-section-title">远程服务</div><div class="form-hint">管理允许其他 torin-x-web 读取当前账号任务的访问 Token。</div><div class="settings-inline-actions"><button class="btn-cancel" id="settings-remote-tokens">管理访问 Token</button></div></div>
+      <div class="settings-section"><div class="settings-section-title">远程服务</div><div class="form-hint">管理允许其他 T-Agent Client 访问本地 Engine 的 Token。</div><div class="settings-inline-actions"><button class="btn-cancel" id="settings-remote-tokens">管理访问 Token</button></div></div>
       ${updateStatus ? Updates.renderSettings(updateStatus) : ''}
       <div class="form-actions">
         <button class="btn-cancel" id="settings-cancel">取消</button>

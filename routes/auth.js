@@ -1,35 +1,24 @@
 const express = require('express');
-const crypto = require('crypto');
 const fs = require('fs');
 const db = require('../db');
+const { ensureSingleUser } = require('../services/single-user');
 
 const router = express.Router();
 
-// POST /auth/login
+function attachUser(req) {
+  const user = ensureSingleUser();
+  req.session.user = user;
+  return user;
+}
+
+// 兼容旧页面和旧客户端：不再校验用户名或密码。
 router.post('/login', (req, res) => {
-  const { username, password } = req.body;
-  if (!username || !password) {
-    return res.status(400).json({ error: '用户名和密码不能为空' });
-  }
-  const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username);
-  if (!user) {
-    return res.status(401).json({ error: '用户名或密码错误' });
-  }
-  try {
-    const hash = crypto.scryptSync(password, user.salt, 64).toString('hex');
-    if (hash !== user.hash) {
-      return res.status(401).json({ error: '用户名或密码错误' });
-    }
-  } catch (e) {
-    return res.status(500).json({ error: '服务器错误' });
-  }
-  req.session.user = { login: username, avatar_url: '', name: username, work_dir: user.work_dir };
-  res.json({ success: true });
+  res.json({ success: true, user: attachUser(req) });
 });
 
 // PUT /auth/settings — 更新工作路径
 router.put('/settings', (req, res) => {
-  if (!req.session.user) return res.status(401).json({ error: 'Unauthorized' });
+  attachUser(req);
   const { work_dir } = req.body;
   const username = req.session.user.login;
 
@@ -50,16 +39,13 @@ router.put('/settings', (req, res) => {
 // POST /auth/logout
 router.post('/logout', (req, res) => {
   req.session.destroy(() => {
-    res.redirect('/login.html');
+    res.redirect('/');
   });
 });
 
 // GET /auth/me
 router.get('/me', (req, res) => {
-  if (!req.session.user) {
-    return res.status(401).json({ error: 'Not logged in' });
-  }
-  res.json(req.session.user);
+  res.json(attachUser(req));
 });
 
 module.exports = router;

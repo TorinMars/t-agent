@@ -13,6 +13,7 @@ const terminal = require('./routes/terminal');
 const updates = require('./services/update-manager');
 const { consumeTerminalTicket, pruneExpiredTickets } = require('./services/terminal-tickets');
 const { handleRemoteTerminalUpgrade } = require('./services/remote-terminal-proxy');
+const { ensureSingleUser } = require('./services/single-user');
 
 const app = express();
 
@@ -249,11 +250,11 @@ app.get('/share/:token/file', (req, res) => {
 });
 
 app.get('/', (req, res) => {
-  if (!req.session.user) {
-    return res.redirect('/login.html');
-  }
+  req.session.user = ensureSingleUser();
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
+
+app.get('/login.html', (req, res) => res.redirect('/'));
 
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -280,12 +281,7 @@ server.on('upgrade', (req, socket, head) => {
   if (engineUrl.pathname.match(/^\/api\/remote-servers\/\d+\/terminal\/ws$/)) {
     const fakeRes = { getHeader: () => {}, setHeader: () => {}, end: () => {} };
     sessionMiddleware(req, fakeRes, () => {
-      const user = req.session && req.session.user;
-      if (!user) {
-        socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
-        socket.destroy();
-        return;
-      }
+      const user = (req.session && req.session.user) || ensureSingleUser();
       handleRemoteTerminalUpgrade(req, socket, head, wss, user).catch(() => {
         if (!socket.destroyed) socket.destroy();
       });
@@ -299,12 +295,7 @@ server.on('upgrade', (req, socket, head) => {
   // 复用 express session 中间件解析 session cookie
   const fakeRes = { getHeader: () => {}, setHeader: () => {}, end: () => {} };
   sessionMiddleware(req, fakeRes, () => {
-    const user = req.session && req.session.user;
-    if (!user) {
-      socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
-      socket.destroy();
-      return;
-    }
+    const user = (req.session && req.session.user) || ensureSingleUser();
     wss.handleUpgrade(req, socket, head, (ws) => {
       terminal.handleWs(ws, req, user);
     });

@@ -82,7 +82,7 @@ function getOrCreateSession(taskId, workDir, dirWarning) {
     });
   } catch (e) {
     console.error('[terminal] node-pty spawn error:', e.message, '\ncwd:', workDir, '\nenv.HOME:', process.env.HOME);
-    return null;
+    return { startupError: e };
   }
 
   const s = {
@@ -135,7 +135,14 @@ function handleWs(ws, req, sessionUser, requestedTaskId = null) {
     dirWarning = `\r\n\x1b[33m[⚠ 工作目录不存在: ${workDir}]\x1b[0m\r\n\x1b[33m[已回退到 ${actualDir}，请编辑任务更新工作路径]\x1b[0m\r\n\r\n`;
   }
   const s = getOrCreateSession(taskId, actualDir, dirWarning);
-  if (!s) { ws.send('\r\n\x1b[31m[node-pty 未安装，请先 npm install]\x1b[0m\r\n'); ws.close(); return; }
+  if (s.startupError) {
+    const details = String(s.startupError.message || '未知错误')
+      .replace(/[\x00-\x1f\x7f]/g, ' ')
+      .slice(0, 500);
+    ws.send(`\r\n\x1b[31m[终端启动失败]\x1b[0m\r\n${details}\r\n`);
+    ws.close();
+    return;
+  }
 
   // 断开旧连接（同 task 的旧 ws）
   if (s.ws && s.ws.readyState === 1) {

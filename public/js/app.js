@@ -74,6 +74,7 @@ const Updates = {
       ARCHIVE_CURL_FAILED: '更新包下载失败', ARCHIVE_TAR_FAILED: '更新包解压失败',
       NPM_INSTALLING_FAILED: '依赖安装失败，请检查 Node/npm 环境',
       NPM_BUILDING_FAILED: '前端资源构建失败',
+      NODE_PTY_LOAD_FAILED: '终端原生模块安装失败',
     })[code] || code || '';
   },
 

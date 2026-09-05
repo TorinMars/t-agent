@@ -221,9 +221,19 @@ TASKS_DIR="$(sed -n 's/^TASKS_BASE_DIR=//p' "$ENV_FILE" | tail -n 1)"
 
 printf '安装 Node.js 依赖……\n'
 if [ -f "$APP_DIR/package-lock.json" ]; then
-  npm ci --omit=dev --prefix "$APP_DIR"
+  npm ci --omit=dev --ignore-scripts=false --prefix "$APP_DIR"
 else
-  npm install --omit=dev --prefix "$APP_DIR"
+  npm install --omit=dev --ignore-scripts=false --prefix "$APP_DIR"
+fi
+
+verify_node_pty() {
+  node -e "require(require.resolve('node-pty', { paths: [process.argv[1]] }))" "$APP_DIR" >/dev/null 2>&1
+}
+
+if ! verify_node_pty; then
+  printf 'node-pty 原生模块未就绪，正在重新编译……\n'
+  npm rebuild node-pty --ignore-scripts=false --foreground-scripts --prefix "$APP_DIR"
+  verify_node_pty || fail "node-pty 无法加载；macOS 请先运行 xcode-select --install，再重新执行安装脚本"
 fi
 
 if [ "$MODE" = "engine" ] && [ "$NEW_INSTALL" -eq 1 ]; then

@@ -261,12 +261,29 @@ async function runApply() {
   if (installationType() === 'archive') await applyArchiveUpdate(checked);
   else await applyGitUpdate(checked);
 
-  await execNpm(['ci'], 'installing');
+  await execNpm(['ci', '--ignore-scripts=false'], 'installing');
+  await verifyNodePty();
   await execNpm(['run', 'build:monaco'], 'building');
   saveState({ status: 'updating', stage: 'restarting', message: '更新完成，正在重启服务' });
   // 非 0 退出码可让 systemd Restart=on-failure 和 macOS KeepAlive 都拉起新版本。
   setTimeout(() => process.exit(75), 750).unref();
   return publicState();
+}
+
+function verifyNodePty() {
+  return new Promise((resolve, reject) => {
+    execFile(process.execPath, ['-e', "require('node-pty')"], {
+      cwd: projectRoot,
+      env: { ...process.env, PATH: executablePath() },
+      timeout: 30_000,
+      maxBuffer: 1024 * 1024,
+    }, (error, stdout, stderr) => {
+      if (!error) return resolve();
+      const wrapped = new Error('NODE_PTY_LOAD_FAILED');
+      wrapped.details = String(stderr || stdout || error.message || '').trim().slice(-2000);
+      reject(wrapped);
+    });
+  });
 }
 
 async function backupDatabase(metadata = {}) {

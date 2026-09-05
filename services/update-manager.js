@@ -100,6 +100,17 @@ function installationType() {
   return fs.existsSync(path.join(projectRoot, '.git')) ? 'git' : 'archive';
 }
 
+function executablePath() {
+  return [
+    path.dirname(process.execPath),
+    '/opt/homebrew/bin',
+    '/usr/local/bin',
+    '/usr/bin',
+    '/bin',
+    process.env.PATH,
+  ].filter(Boolean).join(path.delimiter);
+}
+
 function requestManifest(urlValue, headers = {}, redirects = 0) {
   const url = validateGithubVersionUrl(urlValue);
   return new Promise((resolve, reject) => {
@@ -157,14 +168,23 @@ function safeError(error) {
 
 async function runCheck({ force = false } = {}) {
   const local = readLocalManifest();
-  const url = configuredVersionUrl();
-  saveState({ status: 'checking', stage: 'checking_version', error: null, error_details: null, local_version: local.app_version, message: null });
-  const headers = {};
-  if (!force && state.manifest_etag) headers['If-None-Match'] = state.manifest_etag;
-  if (!force && state.manifest_last_modified) headers['If-Modified-Since'] = state.manifest_last_modified;
-  const requestUrl = new URL(url);
-  if (force) requestUrl.searchParams.set('_update_check', String(Date.now()));
-  const result = await requestManifest(requestUrl.toString(), headers);
+  const gitInstall = installationType() === 'git';
+  const url = gitInstall ? null : configuredVersionUrl();
+  saveState({ status: 'checking', stage: gitInstall ? 'fetching' : 'checking_version', error: null, error_details: null, local_version: local.app_version, message: null });
+  let result;
+  if (gitInstall) {
+    await execGit(['fetch', '--prune', config.gitRemote, config.gitBranch], 120_000);
+    const target = `${config.gitRemote}/${config.gitBranch}`;
+    const manifestText = await execGit(['show', `${target}:VERSION.json`]);
+    result = { manifest: validateVersionManifest(JSON.parse(manifestText)) };
+  } else {
+    const headers = {};
+    if (!force && state.manifest_etag) headers['If-None-Match'] = state.manifest_etag;
+    if (!force && state.manifest_last_modified) headers['If-Modified-Since'] = state.manifest_last_modified;
+    const requestUrl = new URL(url);
+    if (force) requestUrl.searchParams.set('_update_check', String(Date.now()));
+    result = await requestManifest(requestUrl.toString(), headers);
+  }
   const remote = result.notModified ? state.remote_manifest : result.manifest;
   if (!remote) throw new Error('VERSION_CACHE_EMPTY');
   validateVersionManifest(remote);
@@ -176,12 +196,12 @@ async function runCheck({ force = false } = {}) {
     local_version: local.app_version,
     remote_version: remote.app_version,
     remote_manifest: remote,
-    manifest_etag: result.etag || state.manifest_etag,
-    manifest_last_modified: result.lastModified || state.manifest_last_modified,
+    manifest_etag: gitInstall ? null : result.etag || state.manifest_etag,
+    manifest_last_modified: gitInstall ? null : result.lastModified || state.manifest_last_modified,
     last_checked_at: new Date().toISOString(),
     error: null,
     error_details: null,
-    version_url: url,
+    version_url: url || `${config.gitRemote}/${config.gitBranch}:VERSION.json`,
     message: status === 'available' ? '发现新版本' : status === 'current' ? '已是最新版本' : '本地版本较新',
   });
 }
@@ -190,7 +210,7 @@ async function check(options) {
   if (applyPromise) throw new Error('UPDATE_IN_PROGRESS');
   if (checkPromise) return checkPromise;
   checkPromise = runCheck(options).catch(error => {
-    saveState({ status: 'failed', stage: null, error: safeError(error), last_checked_at: new Date().toISOString(), message: '检查更新失败' });
+    saveState({ status: 'failed', stage: null, error: safeError(error), error_details: error.details || null, last_checked_at: new Date().toISOString(), message: '检查更新失败' });
     throw error;
   }).finally(() => { checkPromise = null; });
   return checkPromise;
@@ -198,7 +218,12 @@ async function check(options) {
 
 function execGit(args, timeout = 60_000) {
   return new Promise((resolve, reject) => {
-    execFile('git', args, { cwd: projectRoot, timeout, maxBuffer: 1024 * 1024 }, (error, stdout, stderr) => {
+    execFile('git', args, {
+      cwd: projectRoot,
+      env: { ...process.env, PATH: executablePath() },
+      timeout,
+      maxBuffer: 1024 * 1024,
+    }, (error, stdout, stderr) => {
       if (error) {
         const wrapped = new Error(`GIT_${String(args[0]).toUpperCase()}_FAILED`);
         wrapped.details = String(stderr || stdout || '').trim().slice(0, 1000);
@@ -211,16 +236,10 @@ function execGit(args, timeout = 60_000) {
 
 function execNpm(args, stage) {
   saveState({ status: 'updating', stage, message: stage === 'installing' ? '正在安装依赖' : '正在构建前端资源' });
-  const executablePath = [
-    path.dirname(process.execPath),
-    '/opt/homebrew/bin',
-    '/usr/local/bin',
-    process.env.PATH,
-  ].filter(Boolean).join(path.delimiter);
   return new Promise((resolve, reject) => {
     execFile(process.platform === 'win32' ? 'npm.cmd' : 'npm', args, {
       cwd: projectRoot,
-      env: { ...process.env, PATH: executablePath },
+      env: { ...process.env, PATH: executablePath() },
       timeout: 10 * 60_000,
       maxBuffer: 2 * 1024 * 1024,
     }, (error, stdout, stderr) => {

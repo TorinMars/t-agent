@@ -10,7 +10,7 @@ Client 安装包已经包含本地 Engine，无需再安装一次。无界面服
 
 ## 安装
 
-支持 macOS 和主流 Linux 发行版。脚本会安装 Node.js 依赖并注册开机自启服务：macOS 使用 LaunchAgent，Linux 使用 systemd。
+支持 macOS 和主流 Linux 发行版。脚本会安装 Node.js 依赖并注册开机自启服务：macOS 使用 LaunchAgent，Linux 使用 systemd。Client 默认通过 Git 安装和快进更新；Engine 使用轻量安装包。
 
 ### 安装 Client（内含本地 Engine）
 
@@ -101,7 +101,17 @@ UPDATE_ADMIN_USERS=你的本地用户名
 
 服务启动后会自动检查一次，之后默认每 30 分钟检查 GitHub 上的 `VERSION.json`。发现新版本时，设置按钮会显示提示点并弹出“立即更新”按钮；只有更新管理员二次确认后才会执行。
 
-Git 安装会检查工作区并执行 fast-forward；一键安装产生的不含 `.git` 目录会下载对应分支的官方归档。两种方式都会先备份 SQLite，保留 `.env`、数据库、日志和任务目录，然后安装依赖、构建资源并由守护进程重启。
+Git Client 会检查工作区并执行 fast-forward；不含 `.git` 的 Engine 安装会下载对应分支的官方归档。两种方式都会先备份 SQLite，保留 `.env`、数据库、日志和任务目录，然后安装依赖、构建资源并由守护进程重启。
+
+### 将旧 Client 迁移为 Git 安装
+
+在旧 Client 项目目录运行迁移脚本。脚本会保留 `.env`、数据库、日志、任务和远程连接配置，并将旧安装完整备份到同级目录：
+
+```bash
+T_AGENT_REF=main ./scripts/migrate-client-to-git.sh
+```
+
+迁移后，网页自动检查更新会使用 `git fetch/show`，点击更新会执行严格的 fast-forward，不再依赖 GitHub Contents API。
 
 ### 安装依赖
 

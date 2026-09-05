@@ -7,6 +7,7 @@ set -euo pipefail
 REPOSITORY="${T_AGENT_REPOSITORY:-TorinMars/t-agent}"
 REPOSITORY_REF="${T_AGENT_REF:-main}"
 REPOSITORY_ARCHIVE="https://github.com/$REPOSITORY/archive/refs/heads/$REPOSITORY_REF.tar.gz"
+REPOSITORY_GIT_URL="https://github.com/$REPOSITORY.git"
 TARGET_DIR="${T_AGENT_DIR:-$PWD/t-agent}"
 INSTALL_MODE="${T_AGENT_MODE:-client}"
 TEMP_DIR="$(mktemp -d)"
@@ -60,12 +61,18 @@ DEFAULT_TASKS_DIR="$TARGET_DIR/tasks"
 read -r -p "任务工作路径 [$DEFAULT_TASKS_DIR]: " SETUP_TASKS_DIR </dev/tty
 SETUP_TASKS_DIR="${SETUP_TASKS_DIR:-$DEFAULT_TASKS_DIR}"
 
-printf '正在下载 T-Agent 源码……\n'
-curl -fsSL "$REPOSITORY_ARCHIVE" -o "$TEMP_DIR/t-agent.tar.gz"
-tar -xzf "$TEMP_DIR/t-agent.tar.gz" -C "$TEMP_DIR"
-SOURCE_DIR="$(find "$TEMP_DIR" -mindepth 1 -maxdepth 1 -type d -name 't-agent-*' | head -n 1)"
-[ -n "$SOURCE_DIR" ] || { printf '错误：下载包结构不正确。\n' >&2; exit 1; }
-mv "$SOURCE_DIR" "$TARGET_DIR"
+if [ "$INSTALL_MODE" = "client" ]; then
+  command -v git >/dev/null 2>&1 || { printf '错误：Client 使用 Git 安装，请先安装 Git。macOS 可运行 xcode-select --install。\n' >&2; exit 1; }
+  printf '正在通过 Git 下载 T-Agent Client……\n'
+  git clone --branch "$REPOSITORY_REF" --single-branch "$REPOSITORY_GIT_URL" "$TARGET_DIR"
+else
+  printf '正在下载安装包……\n'
+  curl -fsSL "$REPOSITORY_ARCHIVE" -o "$TEMP_DIR/t-agent.tar.gz"
+  tar -xzf "$TEMP_DIR/t-agent.tar.gz" -C "$TEMP_DIR"
+  SOURCE_DIR="$(find "$TEMP_DIR" -mindepth 1 -maxdepth 1 -type d -name 't-agent-*' | head -n 1)"
+  [ -n "$SOURCE_DIR" ] || { printf '错误：下载包结构不正确。\n' >&2; exit 1; }
+  mv "$SOURCE_DIR" "$TARGET_DIR"
+fi
 
 printf '源码已下载到：%s\n' "$TARGET_DIR"
 INSTALL_ARGS=(

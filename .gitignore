@@ -1,3 +1,5 @@
 .env
 data/
+logs/
 node_modules/
+tasks/

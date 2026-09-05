@@ -208,6 +208,14 @@ ensure_env_value UPDATE_GIT_BRANCH "$UPDATE_REF"
 ensure_env_value UPDATE_CHECK_ENABLED true
 ensure_env_value UPDATE_CHECK_INTERVAL_SECONDS 1800
 
+# Git 工作副本以当前分支为唯一更新来源，避免旧配置仍指向其他分支。
+if git -C "$APP_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  update_env_value UPDATE_GITHUB_REPOSITORY "$UPDATE_REPOSITORY"
+  update_env_value UPDATE_GITHUB_REF "$UPDATE_REF"
+  update_env_value UPDATE_GIT_REMOTE origin
+  update_env_value UPDATE_GIT_BRANCH "$UPDATE_REF"
+fi
+
 TASKS_DIR="$(sed -n 's/^TASKS_BASE_DIR=//p' "$ENV_FILE" | tail -n 1)"
 [ -n "$TASKS_DIR" ] && mkdir -p "$TASKS_DIR"
 

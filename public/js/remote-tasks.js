@@ -196,6 +196,17 @@ const RemoteTasks = (() => {
   }
 
   function select(server, task) {
+    const sameTask = Boolean(selected
+      && selected.serverId === server.id
+      && selected.task.id === task.id);
+    const canReuseTerminal = sameTask
+      && activeTab === 'shell'
+      && remoteTerminal
+      && remoteTerminal.serverId === server.id
+      && remoteTerminal.taskId === task.id
+      && (remoteTerminal.ws.readyState === WebSocket.CONNECTING
+        || remoteTerminal.ws.readyState === WebSocket.OPEN);
+
     if (window.Tasks) Tasks.clearSelection();
     activeEngineKey = `remote:${server.id}`;
     localStorage.setItem('active-engine-key', activeEngineKey);
@@ -209,7 +220,21 @@ const RemoteTasks = (() => {
       button.disabled = false;
       button.title = '';
     });
-    if (activeTab === 'shell') renderRemoteTerminal();
+    if (activeTab === 'shell') {
+      if (canReuseTerminal) {
+        previewPane.style.display = 'none';
+        document.getElementById('toc-pane').style.display = 'none';
+        terminalPane.style.display = 'flex';
+        contentToolbar.style.display = 'none';
+        setTimeout(() => {
+          if (!remoteTerminal) return;
+          remoteTerminal.fitAddon.fit();
+          remoteTerminal.term.focus();
+        }, 0);
+      } else {
+        renderRemoteTerminal();
+      }
+    }
     else {
       terminalPane.style.display = 'none';
       previewPane.style.display = '';
@@ -303,7 +328,15 @@ const RemoteTasks = (() => {
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
     const ws = new WebSocket(`${proto}://${location.host}/api/remote-servers/${selected.serverId}/terminal/ws?taskId=${selected.task.id}`);
     ws.binaryType = 'arraybuffer';
-    remoteTerminal = { term, fitAddon, ws, el, disposed: false };
+    remoteTerminal = {
+      term,
+      fitAddon,
+      ws,
+      el,
+      serverId: selected.serverId,
+      taskId: selected.task.id,
+      disposed: false,
+    };
     term.onData(data => {
       if (ws.readyState === WebSocket.OPEN) ws.send(data);
     });
@@ -322,7 +355,7 @@ const RemoteTasks = (() => {
     };
     ws.onclose = () => {
       if (remoteTerminal && remoteTerminal.ws === ws && !remoteTerminal.disposed) {
-        term.write('\r\n\x1b[33m[远程终端连接已断开]\x1b[0m\r\n');
+        term.write('\r\n\x1b[33m[远程终端连接已断开，重新点击当前任务可重连]\x1b[0m\r\n');
       }
     };
     ws.onerror = () => {};

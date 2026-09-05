@@ -1,7 +1,9 @@
 const os = require('os');
 const fs = require('fs');
+const path = require('path');
 const db = require('../db');
 const { prepareTerminalHistoryBuffer } = require('../lib/terminal-history');
+const { repairSpawnHelperPermissions } = require('../lib/node-pty-runtime');
 
 // per-task sessions: Map<taskId, { pty, buffer, ws, flushTimer, pendingSince }>
 const sessions = new Map();
@@ -47,6 +49,7 @@ function getOrCreateSession(taskId, workDir, dirWarning) {
 
   let pty;
   try {
+    repairSpawnHelperPermissions(path.resolve(__dirname, '..'));
     const nodePty = require('node-pty');
     // LaunchAgent 启动时 PATH 很精简，手动补全常用路径确保 node/brew/工具可用
     const fullPath = [

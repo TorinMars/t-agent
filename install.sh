@@ -227,7 +227,7 @@ else
 fi
 
 verify_node_pty() {
-  node -e "require(require.resolve('node-pty', { paths: [process.argv[1]] }))" "$APP_DIR" >/dev/null 2>&1
+  node "$APP_DIR/scripts/verify-node-pty.js" >/dev/null 2>&1
 }
 
 if ! verify_node_pty; then

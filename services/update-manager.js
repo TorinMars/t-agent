@@ -272,7 +272,7 @@ async function runApply() {
 
 function verifyNodePty() {
   return new Promise((resolve, reject) => {
-    execFile(process.execPath, ['-e', "require('node-pty')"], {
+    execFile(process.execPath, [path.join(projectRoot, 'scripts', 'verify-node-pty.js')], {
       cwd: projectRoot,
       env: { ...process.env, PATH: executablePath() },
       timeout: 30_000,

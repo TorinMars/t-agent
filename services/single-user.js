@@ -7,17 +7,40 @@ function normalizeId(value) {
   return id;
 }
 
-function discoverExistingId(database) {
+function discoverDataOwner(database) {
+  const row = database.prepare(`
+    SELECT owner_id value, SUM(item_count) item_count
+    FROM (
+      SELECT user_id owner_id, COUNT(*) item_count
+      FROM tasks
+      WHERE user_id IS NOT NULL AND user_id != ''
+      GROUP BY user_id
+      UNION ALL
+      SELECT owner_id, COUNT(*) item_count
+      FROM remote_servers
+      WHERE owner_id IS NOT NULL AND owner_id != ''
+      GROUP BY owner_id
+    ) owners
+    GROUP BY owner_id
+    ORDER BY item_count DESC, owner_id ASC
+    LIMIT 1
+  `).get();
+  return row ? row.value : '';
+}
+
+function ownsVisibleData(database, id) {
+  if (!id) return false;
+  const row = database.prepare(`
+    SELECT
+      EXISTS(SELECT 1 FROM tasks WHERE user_id = ? LIMIT 1)
+      OR EXISTS(SELECT 1 FROM remote_servers WHERE owner_id = ? LIMIT 1) owns_data
+  `).get(id, id);
+  return Boolean(row && row.owns_data);
+}
+
+function discoverExistingUser(database) {
   const user = database.prepare('SELECT username FROM users ORDER BY id ASC LIMIT 1').get();
-  if (user) return user.username;
-
-  const taskOwner = database.prepare(`SELECT user_id value, COUNT(*) count FROM tasks
-    WHERE user_id IS NOT NULL AND user_id != '' GROUP BY user_id ORDER BY count DESC LIMIT 1`).get();
-  if (taskOwner) return taskOwner.value;
-
-  const remoteOwner = database.prepare(`SELECT owner_id value, COUNT(*) count FROM remote_servers
-    WHERE owner_id IS NOT NULL AND owner_id != '' GROUP BY owner_id ORDER BY count DESC LIMIT 1`).get();
-  return remoteOwner ? remoteOwner.value : '';
+  return user ? user.username : '';
 }
 
 function ensureSingleUser(database, preferredId) {
@@ -25,7 +48,18 @@ function ensureSingleUser(database, preferredId) {
   const configuredId = preferredId === undefined ? require('../config').singleUserId : preferredId;
   const preferred = normalizeId(configuredId);
   const saved = activeDatabase.prepare('SELECT value FROM system_state WHERE key = ?').get(STATE_KEY);
-  const id = preferred || normalizeId(saved && saved.value) || normalizeId(discoverExistingId(activeDatabase)) || 'local';
+  const savedId = normalizeId(saved && saved.value);
+  const dataOwner = normalizeId(discoverDataOwner(activeDatabase));
+
+  // 升级时 .env 可能已经写入默认 local，或首次启动曾保存过 local。
+  // 如果它名下没有数据，应回到真正拥有旧任务/远程连接的账号，避免数据被查询条件隐藏。
+  const id = (ownsVisibleData(activeDatabase, preferred) && preferred)
+    || (ownsVisibleData(activeDatabase, savedId) && savedId)
+    || dataOwner
+    || preferred
+    || savedId
+    || normalizeId(discoverExistingUser(activeDatabase))
+    || 'local';
 
   const existingUser = activeDatabase.prepare('SELECT username FROM users WHERE username = ?').get(id);
   if (!existingUser) {

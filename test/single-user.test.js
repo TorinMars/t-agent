@@ -51,3 +51,28 @@ test('没有用户记录时优先继承已有任务的数据归属', () => {
   assert.equal(ensureSingleUser(database, '').login, 'legacy-owner');
   database.close();
 });
+
+test('默认 local 不会遮蔽旧账号的任务和远程连接', () => {
+  const database = testDb();
+  database.prepare('INSERT INTO users (username, salt, hash) VALUES (?, ?, ?)').run('local', 'x', 'x');
+  database.prepare('INSERT INTO users (username, salt, hash, work_dir) VALUES (?, ?, ?, ?)')
+    .run('torin', 'legacy', 'legacy', '/Users/torin/tasks');
+  database.prepare("INSERT INTO system_state (key, value) VALUES ('single_user_id', 'local')").run();
+  database.prepare('INSERT INTO tasks (id, user_id) VALUES (1, ?)').run('torin');
+  database.prepare('INSERT INTO remote_servers (id, owner_id) VALUES (1, ?)').run('torin');
+
+  const user = ensureSingleUser(database, 'local');
+  assert.equal(user.login, 'torin');
+  assert.equal(user.work_dir, '/Users/torin/tasks');
+  assert.equal(database.prepare("SELECT value FROM system_state WHERE key = 'single_user_id'").get().value, 'torin');
+  database.close();
+});
+
+test('只有旧远程连接时也继承其账号归属', () => {
+  const database = testDb();
+  database.prepare("INSERT INTO system_state (key, value) VALUES ('single_user_id', 'local')").run();
+  database.prepare('INSERT INTO remote_servers (id, owner_id) VALUES (1, ?)').run('remote-owner');
+
+  assert.equal(ensureSingleUser(database, 'local').login, 'remote-owner');
+  database.close();
+});

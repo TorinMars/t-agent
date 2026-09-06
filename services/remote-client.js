@@ -18,7 +18,7 @@ function normalizeBaseUrl(urlValue, port) {
   return url.toString().replace(/\/$/, '');
 }
 
-function request(baseUrl, pathname, token, { expectText = false, method = 'GET', body } = {}) {
+function request(baseUrl, pathname, token, { expectText = false, method = 'GET', body, timeoutMs = 10_000 } = {}) {
   const target = new URL(pathname, `${baseUrl}/`);
   const client = target.protocol === 'https:' ? https : http;
   return new Promise((resolve, reject) => {
@@ -32,7 +32,7 @@ function request(baseUrl, pathname, token, { expectText = false, method = 'GET',
     const req = client.request(target, {
       method,
       headers,
-      timeout: 10_000,
+      timeout: timeoutMs,
     }, res => {
       const chunks = [];
       let length = 0;

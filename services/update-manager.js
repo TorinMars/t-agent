@@ -359,6 +359,8 @@ function publicState() {
   try { localManifest = readLocalManifest(); } catch {}
   return {
     ...state,
+    // 更新文件落盘后以及重启恢复时，以实际清单版本为准，避免状态缓存仍显示旧版本。
+    local_version: (localManifest && localManifest.app_version) || state.local_version,
     local_manifest: localManifest,
     version_url: state.version_url || (() => { try { return configuredVersionUrl(); } catch { return null; } })(),
     install_type: installationType(),

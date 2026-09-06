@@ -22,6 +22,8 @@ Engine 是任务、Todo、Markdown 文档、工作目录和终端执行的权威
 
 Token 角色分为 `readonly`、`operator` 和 `owner`。对外协议使用细粒度 scope，界面只向用户展示三种角色。
 
+Engine 的检查更新、应用更新接口要求 `engine:admin` scope，只有 `owner` Token 可以调用。Client 浏览器只请求本机代理接口；Client 服务端解密已保存的 Token 后调用 Engine，Token 不会进入浏览器。更新完成后 Engine 以非零状态退出，由 systemd、launchd 或等效进程管理器重新拉起。
+
 ## 文件边界
 
 Engine 只能读写 `ENGINE_WORKSPACE_ROOTS` 列出的根目录。任务 API 提供的 `work_dir` 和 `md_path` 必须位于允许的根目录内。

@@ -46,3 +46,13 @@ Token 列表、创建和撤销需要 `owner` 角色：
 - `GET /v1/tokens`
 - `POST /v1/tokens`
 - `DELETE /v1/tokens/:id`
+
+## Engine 更新
+
+检查和应用更新需要 `owner` 角色（`engine:admin` scope）：
+
+- `GET /v1/update/status`
+- `POST /v1/update/check`
+- `POST /v1/update/apply`，请求体必须为 `{ "confirm": true }`
+
+应用接口接受请求后返回 `202`。Client 应轮询状态接口；Engine 进入 `restarting` 阶段后会退出，并依赖 systemd、launchd 或其他进程管理器自动重启。

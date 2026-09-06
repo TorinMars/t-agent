@@ -24,6 +24,13 @@ const RemoteTasks = (() => {
       GROUP_NAME_REQUIRED: '请输入分组名称', GROUP_NAME_TOO_LONG: '分组名称不能超过 40 个字符',
       GROUP_NAME_ALREADY_EXISTS: '已有同名分组', TASK_GROUP_NOT_FOUND: '任务分组不存在',
       SYSTEM_GROUP_IMMUTABLE: '默认分组不能修改或删除', TASK_GROUP_NOT_EMPTY: '分组内还有任务，不能删除',
+      ENGINE_SCOPE_REQUIRED: '当前连接 Token 没有 Engine 管理权限，请改用 owner Token',
+      ENGINE_ROUTE_NOT_FOUND: '远程 Engine 版本过旧，需要先手动升级一次',
+      VERSION_URL_NOT_CONFIGURED: '远程 Engine 未配置版本来源', WORKTREE_DIRTY: '远程 Engine 工作区有未提交修改',
+      BRANCH_DIVERGED: '远程 Engine 的 Git 分支已经分叉', NO_UPDATE_AVAILABLE: '远程 Engine 已经是最新版本',
+      UPDATE_IN_PROGRESS: '远程 Engine 正在执行其他更新', UPDATE_CHECK_FAILED: '远程 Engine 检查更新失败',
+      NPM_INSTALLING_FAILED: '远程 Engine 安装依赖失败', NPM_BUILDING_FAILED: '远程 Engine 构建资源失败',
+      NODE_PTY_LOAD_FAILED: '远程 Engine 的终端原生模块校验失败',
     })[code] || code || '操作失败';
   }
 
@@ -147,6 +154,7 @@ const RemoteTasks = (() => {
   function showServerMenu(x, y, server) {
     ContextMenu.show(x, y, [
       { label: '刷新', action: () => refreshServer(server.id) },
+      { label: '检查更新', action: () => showEngineUpdate(server.id) },
       { label: '编辑连接', action: () => showEdit(server.id) },
       { separator: true },
       { label: '新建任务分组', action: () => showCreateGroup(server.id) },
@@ -481,6 +489,132 @@ const RemoteTasks = (() => {
   async function refreshServer(id) {
     try { await API.post(`/api/remote-servers/${id}/check`, {}); } catch {}
     await load();
+  }
+
+  function updateStatusLabel(status) {
+    return ({
+      idle: '尚未检查', checking: '正在检查', current: '已是最新', available: '发现新版本',
+      local_newer: '当前版本较新', updating: '正在更新', blocked: '更新被阻断', failed: '更新失败',
+    })[status] || status || '未知';
+  }
+
+  function updateVersion(status, remote = false) {
+    if (!status) return '未知';
+    if (remote) return status.remote_version || '尚未获取';
+    return status.local_version || (status.local_manifest && status.local_manifest.app_version) || '未知';
+  }
+
+  function showEngineUpdateResult(server, status) {
+    const canApply = status.status === 'available';
+    const releaseUrl = status.remote_manifest && status.remote_manifest.release_url;
+    Modal.show(`${server.name} · Engine 更新`, `
+      <div class="update-hero">
+        <span class="update-version">${escapeHtml(updateVersion(status))}</span>
+        <span class="update-arrow">→</span>
+        <span class="update-version${canApply ? ' new' : ''}">${escapeHtml(updateVersion(status, true))}</span>
+      </div>
+      <div class="update-detail-row"><span>状态</span><strong class="update-status ${escapeHtml(status.status)}">${escapeHtml(updateStatusLabel(status.status))}</strong></div>
+      <div class="update-detail-row"><span>安装方式</span><span>${status.install_type === 'archive' ? '安装包更新' : 'Git 快进更新'}</span></div>
+      <div class="update-detail-row"><span>目标分支</span><code>${escapeHtml(status.update_ref || '未配置')}</code></div>
+      ${releaseUrl ? `<div class="update-detail-row"><span>发布说明</span><a href="${escapeHtml(releaseUrl)}" target="_blank" rel="noopener noreferrer">GitHub Release ↗</a></div>` : ''}
+      ${status.error ? `<div class="form-hint error update-error">${escapeHtml(errorLabel(status.error))}${status.error_details ? `：${escapeHtml(status.error_details)}` : ''}</div>` : ''}
+      <div class="form-actions">
+        <button class="btn-cancel" id="remote-update-close">关闭</button>
+        <button class="btn-cancel" id="remote-update-check">重新检查</button>
+        ${canApply ? '<button class="btn-submit" id="remote-update-apply">立即更新</button>' : ''}
+      </div>
+    `);
+    document.getElementById('remote-update-close').addEventListener('click', Modal.hide);
+    document.getElementById('remote-update-check').addEventListener('click', () => showEngineUpdate(server.id));
+    const applyButton = document.getElementById('remote-update-apply');
+    if (applyButton) applyButton.addEventListener('click', () => confirmEngineUpdate(server, status));
+  }
+
+  async function showEngineUpdate(serverId) {
+    const server = servers.find(item => item.id === Number(serverId));
+    if (!server) return;
+    Modal.show(`${server.name} · 检查更新`, '<div class="update-progress"><span class="update-spinner"></span><span>正在让远程 Engine 检查 GitHub 更新…</span></div>');
+    try {
+      showEngineUpdateResult(server, await API.post(`/api/remote-servers/${server.id}/check-update`, {}));
+    } catch (error) {
+      const code = parseApiError(error);
+      Modal.show(`${server.name} · Engine 更新`, `
+        <div class="form-hint error update-error">${escapeHtml(errorLabel(code))}</div>
+        <div class="form-actions"><button class="btn-cancel" id="remote-update-close">关闭</button></div>
+      `);
+      document.getElementById('remote-update-close').addEventListener('click', Modal.hide);
+    }
+  }
+
+  function confirmEngineUpdate(server, status) {
+    const targetVersion = updateVersion(status, true);
+    Modal.show(`更新 ${server.name}`, `
+      <div class="update-warning">更新期间远程终端会断开。Engine 完成依赖安装后将自动重启，Client 会等待它恢复。</div>
+      <div class="update-detail-row"><span>当前版本</span><strong>${escapeHtml(updateVersion(status))}</strong></div>
+      <div class="update-detail-row"><span>目标版本</span><strong>${escapeHtml(targetVersion)}</strong></div>
+      <div class="form-actions"><button class="btn-cancel" id="remote-update-cancel">取消</button><button class="btn-submit" id="remote-update-confirm">确认更新</button></div>
+    `);
+    document.getElementById('remote-update-cancel').addEventListener('click', Modal.hide);
+    document.getElementById('remote-update-confirm').addEventListener('click', () => applyEngineUpdate(server, targetVersion));
+  }
+
+  async function applyEngineUpdate(server, targetVersion) {
+    Modal.show(`正在更新 ${server.name}`, '<div class="update-progress"><span class="update-spinner"></span><span id="remote-update-progress">正在启动远程更新流程…</span></div><div class="form-hint" id="remote-update-error"></div>');
+    try {
+      await API.post(`/api/remote-servers/${server.id}/apply-update`, {});
+    } catch (error) {
+      const spinner = document.querySelector('.update-spinner');
+      if (spinner) spinner.style.display = 'none';
+      document.getElementById('remote-update-progress').textContent = '更新未启动';
+      const output = document.getElementById('remote-update-error');
+      output.className = 'form-hint error';
+      output.textContent = errorLabel(parseApiError(error));
+      return;
+    }
+    waitForEngineRestart(server, targetVersion);
+  }
+
+  function waitForEngineRestart(server, targetVersion) {
+    const deadline = Date.now() + 12 * 60_000;
+    const poll = async () => {
+      const message = document.getElementById('remote-update-progress');
+      const errorOutput = document.getElementById('remote-update-error');
+      try {
+        const status = await API.get(`/api/remote-servers/${server.id}/update-status`);
+        if (status.status === 'blocked' || status.status === 'failed') {
+          const spinner = document.querySelector('.update-spinner');
+          if (spinner) spinner.style.display = 'none';
+          if (message) message.textContent = '远程 Engine 更新失败';
+          if (errorOutput) {
+            errorOutput.className = 'form-hint error';
+            errorOutput.textContent = errorLabel(status.error) + (status.error_details ? `：${status.error_details}` : '');
+          }
+          return;
+        }
+        if (updateVersion(status) === targetVersion && status.status !== 'updating') {
+          disposeServerTerminals(server.id);
+          await load();
+          Modal.show('Engine 更新完成', `<div class="update-message">${escapeHtml(server.name)} 已升级到 ${escapeHtml(targetVersion)} 并恢复连接。</div><div class="form-actions"><button class="btn-submit" id="remote-update-done">完成</button></div>`);
+          document.getElementById('remote-update-done').addEventListener('click', Modal.hide);
+          return;
+        }
+        if (message) message.textContent = status.message || (status.stage === 'restarting' ? 'Engine 正在重启…' : 'Engine 正在更新…');
+      } catch {
+        if (message) message.textContent = 'Engine 暂时离线，正在等待重启…';
+      }
+      if (Date.now() >= deadline) {
+        const spinner = document.querySelector('.update-spinner');
+        if (spinner) spinner.style.display = 'none';
+        if (message) message.textContent = '等待 Engine 恢复超时';
+        if (errorOutput) {
+          errorOutput.className = 'form-hint error';
+          errorOutput.textContent = '请检查远程服务进程和日志；更新可能仍在后台执行。';
+        }
+        return;
+      }
+      setTimeout(poll, 2000);
+    };
+    setTimeout(poll, 1000);
   }
 
   async function moveTask(serverId, taskId, groupKey) {

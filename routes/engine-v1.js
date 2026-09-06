@@ -7,6 +7,7 @@ const taskGroups = require('../services/task-groups');
 const { exchangePairingCode, createAccessToken } = require('../services/engine-auth');
 const { getEngineIdentity } = require('../services/engine-identity');
 const { createTerminalTicket } = require('../services/terminal-tickets');
+const updates = require('../services/update-manager');
 
 const router = express.Router();
 const pairingAttempts = new Map();
@@ -51,7 +52,7 @@ router.post('/pair', rateLimitPairing, (req, res) => {
 
 function infoHandler(req, res) {
   let version = {};
-  try { version = require('../services/update-manager').readLocalManifest(); } catch {}
+  try { version = updates.readLocalManifest(); } catch {}
   res.json({
     ...getEngineIdentity(),
     engine_version: version.app_version || require('../package.json').version,
@@ -63,12 +64,33 @@ function infoHandler(req, res) {
       'documents:read', 'documents:write',
       'todos:read', 'todos:write',
       'terminal:interactive', 'token:pairing',
+      'engine:update',
     ],
   });
 }
 
 router.get('/info', requireEngineAuth(), infoHandler);
 router.get('/capabilities', requireEngineAuth(), infoHandler);
+
+// Engine 自更新属于主机管理操作，只允许 owner（* / engine:admin）Token。
+router.get('/update/status', requireEngineAuth('engine:admin'), (req, res) => {
+  res.json(updates.publicState());
+});
+
+router.post('/update/check', requireEngineAuth('engine:admin'), async (req, res) => {
+  try { res.json(await updates.check({ force: true })); }
+  catch (error) {
+    res.status(502).json({ error: error.message || 'UPDATE_CHECK_FAILED', status: updates.publicState() });
+  }
+});
+
+router.post('/update/apply', requireEngineAuth('engine:admin'), (req, res) => {
+  if (!req.body || req.body.confirm !== true) {
+    return res.status(400).json({ error: 'UPDATE_CONFIRMATION_REQUIRED' });
+  }
+  updates.apply().catch(error => console.error('[engine-apply-update]', error.message));
+  res.status(202).json({ accepted: true, status: updates.publicState() });
+});
 
 router.get('/tasks', requireEngineAuth('tasks:read'), (req, res) => {
   try { res.json(tasks.listTasks(principal(req), req.query.status)); }

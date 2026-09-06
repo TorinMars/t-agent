@@ -5,6 +5,7 @@ const requireAuth = require('../middleware/auth');
 const { decryptToken, encryptToken } = require('../lib/token-crypto');
 const { normalizeBaseUrl, request } = require('../services/remote-client');
 const { inspectRemoteAddress, persistRemoteServerEdit } = require('../services/remote-server-settings');
+const remoteUpdates = require('../services/remote-engine-updates');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -118,6 +119,40 @@ router.post('/:id/check', async (req, res) => {
   if (!row) return res.status(404).json({ error: 'REMOTE_NOT_FOUND' });
   try { await checkServer(row); res.json(publicServer(db.prepare('SELECT * FROM remote_servers WHERE id = ?').get(row.id))); }
   catch (error) { res.status(502).json({ error: safeError(error), server: publicServer(db.prepare('SELECT * FROM remote_servers WHERE id = ?').get(row.id)) }); }
+});
+
+router.get('/:id/update-status', async (req, res) => {
+  const row = getServer(req);
+  if (!row) return res.status(404).json({ error: 'REMOTE_NOT_FOUND' });
+  try {
+    const status = await remoteUpdates.getStatus(row, config.sessionSecret);
+    remoteUpdates.syncServerVersion(db, row.id, status);
+    res.json(status);
+  } catch (error) {
+    res.status(error.statusCode || 502).json({ error: safeError(error) });
+  }
+});
+
+router.post('/:id/check-update', async (req, res) => {
+  const row = getServer(req);
+  if (!row) return res.status(404).json({ error: 'REMOTE_NOT_FOUND' });
+  try {
+    const status = await remoteUpdates.check(row, config.sessionSecret);
+    remoteUpdates.syncServerVersion(db, row.id, status);
+    res.json(status);
+  } catch (error) {
+    res.status(error.statusCode || 502).json({ error: safeError(error) });
+  }
+});
+
+router.post('/:id/apply-update', async (req, res) => {
+  const row = getServer(req);
+  if (!row) return res.status(404).json({ error: 'REMOTE_NOT_FOUND' });
+  try {
+    res.status(202).json(await remoteUpdates.apply(row, config.sessionSecret));
+  } catch (error) {
+    res.status(error.statusCode || 502).json({ error: safeError(error) });
+  }
 });
 
 router.get('/:id/tasks', async (req, res) => {

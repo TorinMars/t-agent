@@ -339,4 +339,11 @@ async function init() {
   Updates.start();
 }
 
-init();
+// app.js 在其他业务脚本之前加载，以便提供 API、Modal、ContextMenu 等公共对象。
+// 等 DOMContentLoaded 再启动，确保后续的 bookmarks.js、tasks.js、remote-tasks.js
+// 已经完成声明。单用户模式移除登录请求后，不能再依赖异步请求隐式让出执行时机。
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', init, { once: true });
+} else {
+  init();
+}

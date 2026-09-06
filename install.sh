@@ -273,7 +273,8 @@ else
   fi
   update_env_value T_AGENT_MODE "$MODE"
   if [ "$MODE" = "engine" ]; then
-    update_env_value ENGINE_HOST 0.0.0.0
+    # 迁移或重装时保留已有监听地址，避免把反向代理后的 Engine 意外暴露到公网。
+    grep -q '^ENGINE_HOST=' "$ENV_FILE" || update_env_value ENGINE_HOST 0.0.0.0
   else
     # Client 免登录后必须默认仅供本机访问。
     update_env_value HOST 127.0.0.1

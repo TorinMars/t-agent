@@ -2,7 +2,7 @@
 
 > 日期：2026-07-15
 
-> 当前实现说明（v2.4.0）：本文保留了项目早期设计记录；现行架构已经拆分为 Client 与 Engine。Client 按单用户应用运行，启动后自动建立本地用户上下文，不再使用用户名、密码、登录页或退出入口；升级时会优先沿用数据库中已有用户及其任务归属。Client 默认仅监听 `127.0.0.1`。Engine 仍通过 Bearer Token 对 Client 提供远程 API 与终端连接，且允许持有 owner Token 的 Client 触发受控自更新。完整现行架构与部署方式以 `README.md` 和 `docs/ARCHITECTURE.md` 为准。
+> 当前实现说明（v2.4.1）：本文保留了项目早期设计记录；现行架构已经拆分为 Client 与 Engine。Client 按单用户应用运行，启动后自动建立本地用户上下文，不再使用用户名、密码、登录页或退出入口；升级时会优先沿用数据库中已有用户及其任务归属。Client 默认仅监听 `127.0.0.1`。Engine 仍通过 Bearer Token 对 Client 提供远程 API 与终端连接，且允许持有 owner Token 的 Client 触发受控自更新。完整现行架构与部署方式以 `README.md` 和 `docs/ARCHITECTURE.md` 为准。
 
 ---
 

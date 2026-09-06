@@ -207,7 +207,7 @@ Client 会沿用已保存的 Token。只有新地址能够通过 Token 访问 `/
 3. 经用户二次确认后触发更新，并等待 Engine 自动重启恢复。
 4. 更新成功后刷新 Client 中记录的 Engine 版本和任务列表。
 
-远程升级属于主机管理操作，连接必须使用 `owner` Token；`readonly` 和 `operator` Token 会被 Engine 拒绝。旧版 Engine 尚未提供更新 API，需要先手动升级到 `2.4.0` 一次，此后即可由 Client 完成后续升级。Engine 必须由 systemd、launchd 或其他带自动重启能力的进程管理器托管。
+远程升级属于主机管理操作，连接必须使用 `owner` Token；`readonly` 和 `operator` Token 会被 Engine 拒绝。旧版 Engine 尚未提供更新 API，需要先手动升级到 `2.4.0` 或更高版本一次，此后即可由 Client 完成后续升级。Engine 必须由 systemd、launchd 或其他带自动重启能力的进程管理器托管。
 
 ## Token 与配对
 
@@ -383,15 +383,19 @@ node scripts/verify-node-pty.js
 
 然后按当前系统重启服务，浏览器使用 `Command/Ctrl + Shift + R` 强制刷新静态资源。
 
-### 将旧 Client 迁移为 Git 安装
+### 将安装包迁移为 Git 安装
 
-旧版压缩包 Client 可在项目目录执行：
+新版安装目录可直接使用通用迁移脚本。脚本会保留 `.env`、`data/`、`logs/` 和 `tasks/`，并把原安装完整备份到同级目录：
 
 ```bash
-T_AGENT_REF=main ./scripts/migrate-client-to-git.sh
+# Client
+T_AGENT_REF=main ./scripts/migrate-to-git.sh --mode client
+
+# Engine
+T_AGENT_REF=main ./scripts/migrate-to-git.sh --mode engine
 ```
 
-脚本会保留 `.env`、`data/`、`logs/` 和 `tasks/`，并把原安装完整备份到同级目录。确认新 Client 的任务和远程连接正常后，再自行处理备份。
+旧安装包中还没有通用脚本时，可以先从目标分支下载脚本到当前项目的 `scripts/` 目录。迁移期间 systemd 或 launchd 服务会自动停止并重新注册；没有 systemd 的 Linux 环境需要先手动停止当前进程。确认新安装的配置和任务正常后，再自行处理备份。
 
 ## 服务管理
 

@@ -13,12 +13,17 @@ RUN npm ci --omit=dev --ignore-scripts=false \
 
 FROM node:22-bookworm-slim AS engine
 
+ARG CODEX_VERSION=latest
+
 LABEL org.opencontainers.image.source="https://github.com/TorinMars/t-agent" \
       org.opencontainers.image.description="T-Agent remote execution Engine"
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends bash ca-certificates curl git openssh-client tini \
-  && rm -rf /var/lib/apt/lists/*
+  && rm -rf /var/lib/apt/lists/* \
+  && npm install -g "@openai/codex@${CODEX_VERSION}" \
+  && codex --version \
+  && npm cache clean --force
 
 WORKDIR /app
 COPY --from=dependencies /app/node_modules ./node_modules
@@ -32,9 +37,9 @@ ENV NODE_ENV=production \
     ENGINE_HOST=0.0.0.0 \
     PORT=3100
 
-RUN mkdir -p /var/lib/t-agent /workspace
+RUN mkdir -p /var/lib/t-agent /workspace /root/.codex
 
-VOLUME ["/var/lib/t-agent", "/workspace"]
+VOLUME ["/var/lib/t-agent", "/workspace", "/root/.codex"]
 EXPOSE 3100
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \

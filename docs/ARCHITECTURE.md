@@ -24,7 +24,7 @@ Token 角色分为 `readonly`、`operator` 和 `owner`。对外协议使用细�
 
 Engine 的检查更新、应用更新接口要求 `engine:admin` scope，只有 `owner` Token 可以调用。Client 浏览器只请求本机代理接口；Client 服务端解密已保存的 Token 后调用 Engine，Token 不会进入浏览器。更新完成后 Engine 以非零状态退出，由 systemd、launchd 或等效进程管理器重新拉起。
 
-Docker Engine 使用不可变镜像，不在容器内覆盖应用文件。它仍会检查并展示远程版本，但镜像拉取和容器重建由宿主机更新脚本完成；数据库和任务文件通过 bind mount 持久化，Engine 容器不持有 Docker Socket。
+Docker Engine 使用不可变镜像，不在容器内覆盖应用文件。它仍会检查并展示远程版本，但镜像拉取和容器重建由宿主机更新脚本完成；数据库、任务文件和独立的 Codex 配置目录通过 bind mount 持久化，Engine 容器不持有 Docker Socket。镜像内置 Codex CLI，任务终端可以直接调用 `/usr/local/bin/codex`。
 
 ## 文件边界
 

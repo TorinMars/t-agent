@@ -13,11 +13,14 @@ test('Docker Engine 固定构建工具链并使用持久化目录', () => {
   assert.match(dockerfile, /FROM node:22-bookworm AS dependencies/);
   assert.match(dockerfile, /build-essential python3 pkg-config/);
   assert.match(dockerfile, /npm ci --omit=dev/);
+  assert.match(dockerfile, /npm install -g "@openai\/codex@\$\{CODEX_VERSION\}"/);
+  assert.match(dockerfile, /codex --version/);
   assert.match(compose, /T_AGENT_INSTALL_TYPE: docker/);
   assert.match(compose, /target: engine/);
   assert.match(compose, /T_AGENT_DATA_DIR: \/var\/lib\/t-agent/);
   assert.match(compose, /T_AGENT_ENGINE_STORAGE_DIR.*\/data:\/var\/lib\/t-agent/);
   assert.match(compose, /T_AGENT_ENGINE_STORAGE_DIR.*\/tasks/);
+  assert.match(compose, /T_AGENT_ENGINE_STORAGE_DIR.*\/codex:\/root\/\.codex/);
   assert.doesNotMatch(compose, /docker\.sock/);
   assert.match(updater, /docker compose/);
 });

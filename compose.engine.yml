@@ -29,4 +29,5 @@ services:
     volumes:
       - "${T_AGENT_ENGINE_STORAGE_DIR}/data:/var/lib/t-agent"
       - "${T_AGENT_ENGINE_STORAGE_DIR}/tasks:${T_AGENT_ENGINE_WORKSPACE_CONTAINER:-/workspace}"
+      - "${T_AGENT_ENGINE_STORAGE_DIR}/codex:/root/.codex"
     stop_grace_period: 15s

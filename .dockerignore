@@ -1,0 +1,14 @@
+.git
+.github
+.env
+.env.*
+!.env.example
+node_modules
+data
+logs
+tasks
+docker-data
+docker/engine.env
+npm-debug.log*
+.DS_Store
+

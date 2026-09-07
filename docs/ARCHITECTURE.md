@@ -24,6 +24,8 @@ Token 角色分为 `readonly`、`operator` 和 `owner`。对外协议使用细�
 
 Engine 的检查更新、应用更新接口要求 `engine:admin` scope，只有 `owner` Token 可以调用。Client 浏览器只请求本机代理接口；Client 服务端解密已保存的 Token 后调用 Engine，Token 不会进入浏览器。更新完成后 Engine 以非零状态退出，由 systemd、launchd 或等效进程管理器重新拉起。
 
+Docker Engine 使用不可变镜像，不在容器内覆盖应用文件。它仍会检查并展示远程版本，但镜像拉取和容器重建由宿主机更新脚本完成；数据库和任务文件通过 bind mount 持久化，Engine 容器不持有 Docker Socket。
+
 ## 文件边界
 
 任务 API 的 `work_dir` 和 `md_path` 接受 Engine 服务器上的任意绝对路径，不使用目录白名单。每个任务可以单独指定工作目录；未指定 `md_path` 时，技术方案默认使用工作目录下的 `DESIGN.md`。实际读写范围由 Engine 进程的操作系统账号权限决定，因此写权限 Token 只应发给可信 Client，Engine 也应使用权限受限的专用账号运行。

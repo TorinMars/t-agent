@@ -34,6 +34,7 @@ const RemoteTasks = (() => {
       UPDATE_IN_PROGRESS: '远程 Engine 正在执行其他更新', UPDATE_CHECK_FAILED: '远程 Engine 检查更新失败',
       NPM_INSTALLING_FAILED: '远程 Engine 安装依赖失败', NPM_BUILDING_FAILED: '远程 Engine 构建资源失败',
       NODE_PTY_LOAD_FAILED: '远程 Engine 的终端原生模块校验失败',
+      DOCKER_MANAGED_UPDATE: '该 Engine 由 Docker 管理，请在宿主机更新镜像',
     })[code] || code || '操作失败';
   }
 
@@ -575,19 +576,25 @@ const RemoteTasks = (() => {
     return status.local_version || (status.local_manifest && status.local_manifest.app_version) || '未知';
   }
 
+  function updateInstallTypeLabel(type) {
+    return ({ archive: '安装包更新', git: 'Git 快进更新', docker: 'Docker 镜像更新' })[type] || '未知';
+  }
+
   function showEngineUpdateResult(server, status) {
-    const canApply = status.status === 'available';
+    const hasUpdate = status.status === 'available';
+    const canApply = hasUpdate && status.install_type !== 'docker';
     const releaseUrl = status.remote_manifest && status.remote_manifest.release_url;
     Modal.show(`${server.name} · Engine 更新`, `
       <div class="update-hero">
         <span class="update-version">${escapeHtml(updateVersion(status))}</span>
         <span class="update-arrow">→</span>
-        <span class="update-version${canApply ? ' new' : ''}">${escapeHtml(updateVersion(status, true))}</span>
+        <span class="update-version${hasUpdate ? ' new' : ''}">${escapeHtml(updateVersion(status, true))}</span>
       </div>
       <div class="update-detail-row"><span>状态</span><strong class="update-status ${escapeHtml(status.status)}">${escapeHtml(updateStatusLabel(status.status))}</strong></div>
-      <div class="update-detail-row"><span>安装方式</span><span>${status.install_type === 'archive' ? '安装包更新' : 'Git 快进更新'}</span></div>
+      <div class="update-detail-row"><span>安装方式</span><span>${updateInstallTypeLabel(status.install_type)}</span></div>
       <div class="update-detail-row"><span>目标分支</span><code>${escapeHtml(status.update_ref || '未配置')}</code></div>
       ${releaseUrl ? `<div class="update-detail-row"><span>发布说明</span><a href="${escapeHtml(releaseUrl)}" target="_blank" rel="noopener noreferrer">GitHub Release ↗</a></div>` : ''}
+      ${status.install_type === 'docker' && hasUpdate ? '<div class="form-hint">Docker Engine 将由宿主机更新脚本拉取新镜像并重建容器。</div>' : ''}
       ${status.error ? `<div class="form-hint error update-error">${escapeHtml(errorLabel(status.error))}${status.error_details ? `：${escapeHtml(status.error_details)}` : ''}</div>` : ''}
       <div class="form-actions">
         <button class="btn-cancel" id="remote-update-close">关闭</button>

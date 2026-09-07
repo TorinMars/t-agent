@@ -120,6 +120,7 @@ const Updates = {
       NPM_INSTALLING_FAILED: '依赖安装失败，请检查 Node/npm 环境',
       NPM_BUILDING_FAILED: '前端资源构建失败',
       NODE_PTY_LOAD_FAILED: '终端原生模块安装失败',
+      DOCKER_MANAGED_UPDATE: '该服务由 Docker 管理，请在宿主机更新镜像',
     })[code] || code || '';
   },
 
@@ -144,17 +145,18 @@ const Updates = {
   showAvailable(status) {
     this.markNotified(status);
     const release = status.remote_manifest && status.remote_manifest.release_url;
+    const dockerInstall = status.install_type === 'docker';
     Modal.show('发现新版本', `
       <div class="update-hero">
         <span class="update-version">${escapeHtml(status.local_version || '未知')}</span>
         <span class="update-arrow">→</span>
         <span class="update-version new">${escapeHtml(status.remote_version)}</span>
       </div>
-      <div class="update-message">GitHub 上已有新版本${status.remote_manifest && status.remote_manifest.published_at ? `，发布于 ${escapeHtml(this.formatTime(status.remote_manifest.published_at))}` : ''}。请点击“立即更新”完成升级。</div>
+      <div class="update-message">GitHub 上已有新版本${status.remote_manifest && status.remote_manifest.published_at ? `，发布于 ${escapeHtml(this.formatTime(status.remote_manifest.published_at))}` : ''}。${dockerInstall ? 'Docker 服务将由宿主机更新镜像。' : '请点击“立即更新”完成升级。'}</div>
       ${release ? `<a class="update-release-link" href="${escapeHtml(release)}" target="_blank" rel="noopener noreferrer">查看 GitHub 发布说明 ↗</a>` : ''}
       <div class="form-actions">
         <button class="btn-cancel" id="update-later">稍后提醒</button>
-        ${status.is_update_admin ? '<button class="btn-submit" id="update-apply">立即更新</button>' : '<span class="form-hint">请联系更新管理员执行更新</span>'}
+        ${dockerInstall ? '<span class="form-hint">请在宿主机执行 Docker 更新</span>' : status.is_update_admin ? '<button class="btn-submit" id="update-apply">立即更新</button>' : '<span class="form-hint">请联系更新管理员执行更新</span>'}
       </div>
     `);
     document.getElementById('update-later').addEventListener('click', Modal.hide);
@@ -244,13 +246,13 @@ const Updates = {
         <div class="update-detail-row"><span>远程版本</span><strong>${escapeHtml(status.remote_version || '尚未获取')}</strong></div>
         <div class="update-detail-row"><span>上次检查</span><span>${escapeHtml(this.formatTime(status.last_checked_at))}</span></div>
         <div class="update-detail-row"><span>检查间隔</span><span>${escapeHtml(String(status.check_interval_seconds / 60))} 分钟</span></div>
-        <div class="update-detail-row"><span>安装方式</span><span>${status.install_type === 'archive' ? '安装包更新' : 'Git 快进更新'}</span></div>
+        <div class="update-detail-row"><span>安装方式</span><span>${({ archive: '安装包更新', git: 'Git 快进更新', docker: 'Docker 镜像更新' })[status.install_type] || '未知'}</span></div>
         <div class="update-detail-row update-url-row"><span>GitHub 版本源</span><code title="${escapeHtml(status.version_url || '')}">${escapeHtml(status.version_url || '未配置')}</code></div>
         ${remote.release_url ? `<div class="update-detail-row"><span>发布说明</span><a href="${escapeHtml(remote.release_url)}" target="_blank" rel="noopener noreferrer">GitHub Release ↗</a></div>` : ''}
         ${status.error ? `<div class="form-hint error update-error">${escapeHtml(this.errorLabel(status.error))}${status.error_details ? `：${escapeHtml(status.error_details)}` : ''}</div>` : ''}
         <div class="settings-inline-actions">
           <button class="btn-cancel" id="settings-check-update">立即检查</button>
-          ${status.status === 'available' && status.is_update_admin ? '<button class="btn-submit" id="settings-apply-update">立即更新</button>' : ''}
+          ${status.status === 'available' && status.is_update_admin && status.install_type !== 'docker' ? '<button class="btn-submit" id="settings-apply-update">立即更新</button>' : ''}
         </div>
       </div>
     `;

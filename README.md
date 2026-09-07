@@ -4,6 +4,8 @@ T-Agent 是一个面向开发任务的组件化工作台。一个 Client 可以�
 
 Client 安装包已经内置本地 Engine，因此个人电脑只需安装一次。没有桌面界面的 Linux 服务器可以只安装独立 Engine，再使用一次性配对码或访问 Token 接入 Client。
 
+独立 Engine 同时支持原生安装和 Docker Compose 部署；Docker 镜像固定 Node.js 与原生模块编译环境，宿主机无需安装 Node/npm/C++ 工具链。
+
 ## 项目架构
 
 ```mermaid
@@ -116,6 +118,22 @@ curl -fsSL https://raw.githubusercontent.com/TorinMars/t-agent/main/bootstrap.sh
 首次安装结束时会输出一个 `tae_...` owner Token。它只显示一次，请立即保存；稍后需要把 Engine 地址和 Token 填入 Client。
 
 Linux 会注册 `t-agent-engine.service`。安装脚本默认让独立 Engine 监听 `0.0.0.0`，直接开放端口时请同时配置防火墙；使用 Nginx 反向代理时建议改为只监听 `127.0.0.1`。
+
+### 使用 Docker 安装独立 Engine
+
+Docker 方式只需要 Docker Engine 与 Docker Compose v2，默认从 GHCR 拉取已构建镜像：
+
+```bash
+git clone https://github.com/TorinMars/t-agent.git
+cd t-agent
+cp docker/engine.env.example docker/engine.env
+mkdir -p docker-data tasks
+docker compose --env-file docker/engine.env -f compose.engine.yml up -d
+docker compose --env-file docker/engine.env -f compose.engine.yml \
+  exec engine node scripts/create-engine-token.js owner 'Initial Client'
+```
+
+最后一条命令输出首次连接所需的 owner Token。数据库和任务分别保存在宿主机的 `docker-data/` 与 `tasks/`，容器替换后不会丢失。完整的目录挂载、旧数据迁移、自动更新和终端工具说明见 [Docker Engine 部署](docs/DOCKER_ENGINE.md)。
 
 ### 指定安装目录或分支
 
@@ -448,7 +466,7 @@ cd /path/to/t-agent
 npm run start:engine
 ```
 
-生产环境建议把上面的命令配置为容器启动命令，或者交给已有的进程管理器托管。临时后台运行可以使用：
+生产环境可以使用项目提供的 [Docker Engine 部署](docs/DOCKER_ENGINE.md)，或者把上面的命令交给已有的进程管理器托管。临时后台运行可以使用：
 
 ```bash
 cd /path/to/t-agent

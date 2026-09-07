@@ -1,0 +1,32 @@
+name: t-agent-engine
+
+services:
+  engine:
+    image: ${T_AGENT_ENGINE_IMAGE:-ghcr.io/torinmars/t-agent-engine:latest}
+    build:
+      context: .
+      target: engine
+    container_name: t-agent-engine
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      T_AGENT_MODE: engine
+      T_AGENT_INSTALL_TYPE: docker
+      T_AGENT_DATA_DIR: /var/lib/t-agent
+      TASKS_BASE_DIR: ${T_AGENT_ENGINE_WORKSPACE_CONTAINER:-/workspace}
+      ENGINE_HOST: 0.0.0.0
+      PORT: 3100
+      ENGINE_NAME: ${T_AGENT_ENGINE_NAME:-docker-engine}
+      ENGINE_OWNER_ID: ${T_AGENT_ENGINE_OWNER_ID:-engine}
+      GITHUB_VERSION_URL: https://api.github.com/repos/TorinMars/t-agent/contents/VERSION.json?ref=main
+      UPDATE_GITHUB_REPOSITORY: TorinMars/t-agent
+      UPDATE_GITHUB_REF: main
+      UPDATE_CHECK_ENABLED: "true"
+      UPDATE_CHECK_INTERVAL_SECONDS: ${T_AGENT_UPDATE_CHECK_INTERVAL_SECONDS:-1800}
+      TZ: ${TZ:-Asia/Shanghai}
+    ports:
+      - "${T_AGENT_ENGINE_BIND:-127.0.0.1}:${T_AGENT_ENGINE_PORT:-3100}:3100"
+    volumes:
+      - "${T_AGENT_ENGINE_DATA_DIR:-./docker-data}:/var/lib/t-agent"
+      - "${T_AGENT_ENGINE_WORKSPACE_DIR:-./tasks}:${T_AGENT_ENGINE_WORKSPACE_CONTAINER:-/workspace}"
+    stop_grace_period: 15s

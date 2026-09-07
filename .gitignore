@@ -3,5 +3,4 @@ data/
 logs/
 node_modules/
 tasks/
-docker-data/
 docker/engine.env

@@ -27,6 +27,6 @@ services:
     ports:
       - "${T_AGENT_ENGINE_BIND:-127.0.0.1}:${T_AGENT_ENGINE_PORT:-3100}:3100"
     volumes:
-      - "${T_AGENT_ENGINE_DATA_DIR:-./docker-data}:/var/lib/t-agent"
-      - "${T_AGENT_ENGINE_WORKSPACE_DIR:-./tasks}:${T_AGENT_ENGINE_WORKSPACE_CONTAINER:-/workspace}"
+      - "${T_AGENT_ENGINE_STORAGE_DIR}/data:/var/lib/t-agent"
+      - "${T_AGENT_ENGINE_STORAGE_DIR}/tasks:${T_AGENT_ENGINE_WORKSPACE_CONTAINER:-/workspace}"
     stop_grace_period: 15s

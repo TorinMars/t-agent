@@ -10,7 +10,7 @@ Docker 部署只面向独立 Engine。Client 仍建议原生安装，以便直�
 git clone https://github.com/TorinMars/t-agent.git
 cd t-agent
 cp docker/engine.env.example docker/engine.env
-mkdir -p docker-data tasks
+mkdir -p "$HOME/.torin/t-agent-data/data" "$HOME/.torin/t-agent-data/tasks"
 
 docker compose --env-file docker/engine.env -f compose.engine.yml pull
 docker compose --env-file docker/engine.env -f compose.engine.yml up -d
@@ -48,8 +48,8 @@ Compose 默认挂载：
 
 | 宿主机 | 容器 | 用途 |
 | --- | --- | --- |
-| `./docker-data` | `/var/lib/t-agent` | SQLite、Engine ID、Token、终端历史和更新状态 |
-| `./tasks` | `/workspace` | 默认任务工作目录和 Markdown 文件 |
+| `~/.torin/t-agent-data/data` | `/var/lib/t-agent` | SQLite、Engine ID、Token、终端历史和更新状态 |
+| `~/.torin/t-agent-data/tasks` | `/workspace` | 默认任务工作目录和 Markdown 文件 |
 
 任务 API 没有目录白名单，但容器只能看到镜像内目录和显式挂载的宿主机目录。需要使用其他目录时，应在 `compose.engine.yml` 的 `volumes` 中按相同绝对路径增加挂载，例如：
 
@@ -70,11 +70,18 @@ pm2 stop t-agent-engine
 # 或 sudo systemctl stop t-agent-engine
 ```
 
-在 `docker/engine.env` 中把数据目录指向原数据目录：
+停止服务后，将旧数据复制到统一持久化目录：
+
+```bash
+mkdir -p "$HOME/.torin/t-agent-data/data" "$HOME/.torin/t-agent-data/tasks"
+cp -a /home/root/t-agent/data/. "$HOME/.torin/t-agent-data/data/"
+cp -a /home/root/t-agent/tasks/. "$HOME/.torin/t-agent-data/tasks/"
+```
+
+如果数据库中的旧任务路径以 `/home/root/t-agent/tasks` 开头，在 `docker/engine.env` 中让容器继续使用这个路径：
 
 ```env
-T_AGENT_ENGINE_DATA_DIR=/home/root/t-agent/data
-T_AGENT_ENGINE_WORKSPACE_DIR=/home/root/t-agent/tasks
+T_AGENT_ENGINE_STORAGE_DIR=${HOME}/.torin/t-agent-data
 T_AGENT_ENGINE_WORKSPACE_CONTAINER=/home/root/t-agent/tasks
 ```
 

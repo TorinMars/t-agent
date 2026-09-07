@@ -16,7 +16,8 @@ test('Docker Engine 固定构建工具链并使用持久化目录', () => {
   assert.match(compose, /T_AGENT_INSTALL_TYPE: docker/);
   assert.match(compose, /target: engine/);
   assert.match(compose, /T_AGENT_DATA_DIR: \/var\/lib\/t-agent/);
-  assert.match(compose, /T_AGENT_ENGINE_WORKSPACE_DIR/);
+  assert.match(compose, /T_AGENT_ENGINE_STORAGE_DIR.*\/data:\/var\/lib\/t-agent/);
+  assert.match(compose, /T_AGENT_ENGINE_STORAGE_DIR.*\/tasks/);
   assert.doesNotMatch(compose, /docker\.sock/);
   assert.match(updater, /docker compose/);
 });

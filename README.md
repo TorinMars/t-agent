@@ -127,13 +127,13 @@ Docker 方式只需要 Docker Engine 与 Docker Compose v2，默认从 GHCR 拉�
 git clone https://github.com/TorinMars/t-agent.git
 cd t-agent
 cp docker/engine.env.example docker/engine.env
-mkdir -p docker-data tasks
+mkdir -p "$HOME/.torin/t-agent-data/data" "$HOME/.torin/t-agent-data/tasks"
 docker compose --env-file docker/engine.env -f compose.engine.yml up -d
 docker compose --env-file docker/engine.env -f compose.engine.yml \
   exec engine node scripts/create-engine-token.js owner 'Initial Client'
 ```
 
-最后一条命令输出首次连接所需的 owner Token。数据库和任务分别保存在宿主机的 `docker-data/` 与 `tasks/`，容器替换后不会丢失。完整的目录挂载、旧数据迁移、自动更新和终端工具说明见 [Docker Engine 部署](docs/DOCKER_ENGINE.md)。
+最后一条命令输出首次连接所需的 owner Token。数据库和任务分别保存在宿主机的 `~/.torin/t-agent-data/data/` 与 `~/.torin/t-agent-data/tasks/`，容器替换后不会丢失。完整的目录挂载、旧数据迁移、自动更新和终端工具说明见 [Docker Engine 部署](docs/DOCKER_ENGINE.md)。
 
 ### 指定安装目录或分支
 

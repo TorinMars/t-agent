@@ -9,7 +9,6 @@ const dataDir = path.join(root, 'data');
 const workspace = path.join(root, 'workspace');
 process.env.T_AGENT_DATA_DIR = dataDir;
 process.env.TASKS_BASE_DIR = workspace;
-process.env.ENGINE_WORKSPACE_ROOTS = workspace;
 
 const db = require('../db');
 const tasks = require('../services/engine-tasks');
@@ -20,8 +19,8 @@ test.after(() => {
   fs.rmSync(root, { recursive: true, force: true });
 });
 
-test('远程 Engine 新建任务时使用指定工作目录', () => {
-  const requestedDir = path.join(workspace, 'customer-a', 'project-one');
+test('远程 Engine 可在默认根目录外使用指定工作目录，并默认创建 DESIGN.md', () => {
+  const requestedDir = path.join(root, 'external-projects', 'customer-a', 'project-one');
   const created = tasks.createTask('owner', {
     title: '指定目录任务',
     work_dir: requestedDir,
@@ -32,6 +31,13 @@ test('远程 Engine 新建任务时使用指定工作目录', () => {
   assert.equal(fs.existsSync(path.join(requestedDir, 'DESIGN.md')), true);
   assert.equal(fs.existsSync(path.join(requestedDir, 'README.md')), true);
   assert.equal(fs.existsSync(path.join(requestedDir, 'AGENT.md')), true);
+});
+
+test('远程 Engine 拒绝相对工作目录', () => {
+  assert.throws(() => tasks.createTask('owner', {
+    title: '相对目录任务',
+    work_dir: 'relative/project',
+  }), /WORKSPACE_PATH_MUST_BE_ABSOLUTE/);
 });
 
 test('从工作目录重新打开会清除旧终端历史', () => {

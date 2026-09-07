@@ -253,7 +253,6 @@ SINGLE_USER_ID=$([ "$MODE" = "client" ] && printf 'local' || printf '')
 AUTH_USERS=
 TASKS_BASE_DIR=$TASKS_DIR
 ENGINE_OWNER_ID=$([ "$MODE" = "client" ] && printf 'local' || printf 'engine')
-ENGINE_WORKSPACE_ROOTS=$TASKS_DIR
 ENGINE_HOST=$([ "$MODE" = "engine" ] && printf '0.0.0.0' || printf '127.0.0.1')
 HOST=127.0.0.1
 GITHUB_VERSION_URL=https://api.github.com/repos/$UPDATE_REPOSITORY/contents/VERSION.json?ref=$UPDATE_REF
@@ -269,7 +268,6 @@ else
   [ -n "$PORT" ] && update_env_value PORT "$PORT"
   if [ -n "$TASKS_DIR" ]; then
     update_env_value TASKS_BASE_DIR "$TASKS_DIR"
-    update_env_value ENGINE_WORKSPACE_ROOTS "$TASKS_DIR"
   fi
   update_env_value T_AGENT_MODE "$MODE"
   if [ "$MODE" = "engine" ]; then

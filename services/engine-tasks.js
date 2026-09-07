@@ -2,10 +2,9 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const db = require('../db');
-const config = require('../config');
 const taskGroups = require('./task-groups');
 
-const DEFAULT_BASE = process.env.TASKS_BASE_DIR || path.join(os.homedir(), 'tasks');
+const DEFAULT_BASE = path.resolve(process.env.TASKS_BASE_DIR || path.join(os.homedir(), 'tasks'));
 
 function publicTask(task) {
   if (!task) return null;
@@ -13,39 +12,14 @@ function publicTask(task) {
   return result;
 }
 
-function allowedRoots() {
-  const roots = config.engineWorkspaceRoots.length ? config.engineWorkspaceRoots : [DEFAULT_BASE];
-  return roots.map(root => canonicalPath(path.resolve(root)));
-}
-
-function canonicalPath(target) {
-  let ancestor = target;
-  while (!fs.existsSync(ancestor)) {
-    const parent = path.dirname(ancestor);
-    if (parent === ancestor) break;
-    ancestor = parent;
-  }
-  try {
-    const realAncestor = fs.realpathSync.native(ancestor);
-    return path.resolve(realAncestor, path.relative(ancestor, target));
-  } catch {
-    return path.resolve(target);
-  }
-}
-
-function isInside(root, target) {
-  const relative = path.relative(root, target);
-  return relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative));
-}
-
 function assertWorkspacePath(value) {
-  const target = canonicalPath(path.resolve(String(value)));
-  if (!allowedRoots().some(root => isInside(root, target))) {
-    const error = new Error('WORKSPACE_PATH_NOT_ALLOWED');
+  const target = String(value || '').trim();
+  if (!target || !path.isAbsolute(target)) {
+    const error = new Error('WORKSPACE_PATH_MUST_BE_ABSOLUTE');
     error.statusCode = 400;
     throw error;
   }
-  return target;
+  return path.normalize(target);
 }
 
 function titleToSlug(title) {
@@ -215,7 +189,6 @@ function deleteTodo(principalId, taskId, todoId) {
 }
 
 module.exports = {
-  allowedRoots,
   assertWorkspacePath,
   ownedTask,
   listTasks,

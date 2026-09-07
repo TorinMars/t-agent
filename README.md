@@ -60,7 +60,7 @@ flowchart LR
 - Engine 只保存 Token 的 SHA-256 哈希，Token 明文只在创建时显示一次。
 - 配对码默认 10 分钟有效且只能使用一次。
 - 远程终端使用 30 秒有效、只能消费一次的 WebSocket ticket。
-- Engine 只允许访问 `ENGINE_WORKSPACE_ROOTS` 配置的目录。
+- Engine 接受任务指定的任意绝对工作目录；持有写权限的 Token 因而具备在 Engine 运行账号权限范围内创建和修改任务文件的能力。
 
 ## 系统要求
 
@@ -187,7 +187,7 @@ URL 只能填写协议和主机，不要包含 `/v1` 或其他路径。使用 HT
 
 点击“新建任务”，在“所属 Engine”中选择目标远程节点，然后可在“远程工作目录”中填写服务器上的绝对路径。任务、文档和工作目录会直接创建在该 Engine 上，不会复制到 Client 本机；指定目录不存在时 Engine 会自动创建。
 
-远程路径指的是服务器文件系统中的路径，并且必须位于该 Engine 的 `ENGINE_WORKSPACE_ROOTS` 内。路径留空时，Engine 会在自己的 `TASKS_BASE_DIR` 下自动创建任务目录。
+每个任务都可以单独指定工作目录，不再受工作区根目录白名单限制。只填写工作目录时，技术方案默认使用该目录下的 `DESIGN.md`；路径留空时，Engine 会在自己的 `TASKS_BASE_DIR` 下自动创建任务目录。远程路径必须是绝对路径，并且 Engine 进程账号需要拥有相应目录的读写权限。
 
 远程终端同样支持重新打开、关闭以及从工作目录重新打开。终端控制接口从 `2.5.0` 开始提供；控制旧 Engine 时，Client 会提示先升级，不会把控制内容写入 Shell。
 
@@ -334,8 +334,6 @@ HOST=127.0.0.1
 # 自动创建任务文件的根目录
 TASKS_BASE_DIR=/path/to/tasks
 
-# Engine 可访问的目录，多个路径用逗号分隔
-ENGINE_WORKSPACE_ROOTS=/path/to/tasks
 ENGINE_NAME=my-engine
 ENGINE_OWNER_ID=local
 ENGINE_HOST=127.0.0.1

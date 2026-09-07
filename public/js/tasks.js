@@ -1468,7 +1468,7 @@ const Tasks = (() => {
       <div class="form-group">
         <label class="form-label" id="f-work-dir-label">${initialRemoteTarget ? '远程工作目录' : '工作目录'}</label>
         <input class="form-input" id="f-work-dir" type="text" value="${escapeHtml(task.work_dir || '')}" placeholder="${initialRemoteTarget ? '/home/user/projects/example' : '自动取 MD 文件所在目录'}" autocomplete="off">
-        <div class="form-hint" id="f-work-dir-hint">${initialRemoteTarget ? '填写远程 Engine 上的绝对路径；目录不存在时会自动创建，且必须位于 Engine 允许的工作区内' : '打开终端时使用此路径'}</div>
+        <div class="form-hint" id="f-work-dir-hint">${initialRemoteTarget ? '填写远程 Engine 上的绝对路径；目录不存在时会自动创建，技术方案默认为该目录下的 DESIGN.md' : '打开终端时使用此路径'}</div>
       </div>
       <div class="form-group">
         <label class="form-label">优先级</label>
@@ -1531,7 +1531,7 @@ const Tasks = (() => {
       workDirLabel.textContent = remote ? '远程工作目录' : '工作目录';
       workDirInput.placeholder = remote ? '/home/user/projects/example' : '自动取 MD 文件所在目录';
       workDirHint.textContent = remote
-        ? '填写远程 Engine 上的绝对路径；目录不存在时会自动创建，且必须位于 Engine 允许的工作区内'
+        ? '填写远程 Engine 上的绝对路径；目录不存在时会自动创建，技术方案默认为该目录下的 DESIGN.md'
         : '打开终端时使用此路径';
       mdHint.textContent = remote && mdInput.value.trim() ? '路径将在远程 Engine 创建时校验' : '';
       mdHint.className = 'form-hint';

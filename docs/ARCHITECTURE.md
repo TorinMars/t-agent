@@ -26,7 +26,7 @@ Engine 的检查更新、应用更新接口要求 `engine:admin` scope，只有 
 
 ## 文件边界
 
-Engine 只能读写 `ENGINE_WORKSPACE_ROOTS` 列出的根目录。任务 API 提供的 `work_dir` 和 `md_path` 必须位于允许的根目录内。
+任务 API 的 `work_dir` 和 `md_path` 接受 Engine 服务器上的任意绝对路径，不使用目录白名单。每个任务可以单独指定工作目录；未指定 `md_path` 时，技术方案默认使用工作目录下的 `DESIGN.md`。实际读写范围由 Engine 进程的操作系统账号权限决定，因此写权限 Token 只应发给可信 Client，Engine 也应使用权限受限的专用账号运行。
 
 ## 终端连接
 

@@ -39,8 +39,4 @@ module.exports = {
     .filter(Boolean),
   engineName: process.env.ENGINE_NAME || require('os').hostname(),
   engineOwnerId: process.env.ENGINE_OWNER_ID || singleUserId || Object.keys(authUsers)[0] || 'engine',
-  engineWorkspaceRoots: (process.env.ENGINE_WORKSPACE_ROOTS || process.env.TASKS_BASE_DIR || '')
-    .split(',')
-    .map(value => value.trim())
-    .filter(Boolean),
 };

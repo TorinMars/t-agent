@@ -7,7 +7,10 @@ const RemoteTasks = (() => {
   let remoteTerminal = null;
   const remoteTerminals = new Map();
   let activeEngineKey = localStorage.getItem('active-engine-key') || 'local';
+  let localEngineVersion = null;
+  let lastVersionRefreshAt = 0;
   const collapsedGroups = {};
+  const VERSION_REFRESH_INTERVAL_MS = 60_000;
 
   const nav = document.getElementById('task-nav');
   const previewPane = document.getElementById('preview-pane');
@@ -53,18 +56,26 @@ const RemoteTasks = (() => {
 
   async function load() {
     let loadedServers;
+    const localVersionRequest = API.get('/api/system/version')
+      .then(manifest => manifest.app_version || null)
+      .catch(error => {
+        console.warn('[remote-tasks] 加载本地 Engine 版本失败', error);
+        return localEngineVersion;
+      });
     try {
       loadedServers = await API.get('/api/remote-servers');
       if (!Array.isArray(loadedServers)) throw new Error('INVALID_REMOTE_SERVERS_RESPONSE');
     } catch (error) {
       console.error('[remote-tasks] 加载远程 Engine 列表失败', error);
       servers = [];
+      localEngineVersion = await localVersionRequest;
       activeEngineKey = 'local';
       render();
       activateCurrentEngine();
       return;
     }
 
+    localEngineVersion = await localVersionRequest;
     servers = loadedServers;
     tasksByServer = new Map(servers.map(server => [server.id, tasksByServer.get(server.id) || []]));
     groupsByServer = new Map(servers.map(server => [server.id, groupsByServer.get(server.id) || fallbackGroups()]));
@@ -73,7 +84,15 @@ const RemoteTasks = (() => {
     render();
     activateCurrentEngine();
 
+    const refreshVersions = Date.now() - lastVersionRefreshAt >= VERSION_REFRESH_INTERVAL_MS;
+    if (refreshVersions) lastVersionRefreshAt = Date.now();
+
     await Promise.all(servers.map(async server => {
+      const versionRequest = refreshVersions
+        ? API.post(`/api/remote-servers/${server.id}/check`, {})
+          .then(refreshed => Object.assign(server, refreshed))
+          .catch(error => console.warn(`[remote-tasks] 刷新 ${server.name} 的版本失败`, error))
+        : Promise.resolve();
       try {
         const remoteTasks = await API.get(`/api/remote-servers/${server.id}/tasks`);
         tasksByServer.set(server.id, remoteTasks);
@@ -89,6 +108,8 @@ const RemoteTasks = (() => {
         groupsByServer.set(server.id, fallbackGroups());
         console.warn(`[remote-tasks] 加载 ${server.name} 的任务失败`, error);
       }
+      // 即使任务接口失败，也等待独立的版本探测完成后再刷新 Tab。
+      await versionRequest;
     }));
     render();
     activateCurrentEngine();
@@ -119,17 +140,21 @@ const RemoteTasks = (() => {
     const tabs = document.getElementById('engine-tabs');
     tabs.innerHTML = '';
 
-    function appendTab(key, label, status, title, server = null) {
+    function appendTab(key, label, status, title, server = null, version = null) {
       const button = document.createElement('button');
       button.type = 'button';
       button.className = `engine-tab${activeEngineKey === key ? ' active' : ''}`;
       button.dataset.engineKey = key;
-      button.title = title || label;
+      const versionLabel = version ? (String(version).startsWith('v') ? String(version) : `v${version}`) : '版本未知';
+      button.title = `${title || label} · ${versionLabel}`;
       const dot = document.createElement('span');
       dot.className = `engine-tab-status ${status}`;
       const text = document.createElement('span');
       text.textContent = label;
-      button.append(dot, text);
+      const versionText = document.createElement('span');
+      versionText.className = `engine-tab-version${version ? '' : ' unknown'}`;
+      versionText.textContent = versionLabel;
+      button.append(dot, text, versionText);
       button.addEventListener('click', () => setActiveEngine(key));
       if (server) {
         button.addEventListener('contextmenu', event => {
@@ -141,13 +166,14 @@ const RemoteTasks = (() => {
       tabs.appendChild(button);
     }
 
-    appendTab('local', '本地', 'local', '本地 Engine');
+    appendTab('local', '本地', 'local', '本地 Engine', null, localEngineVersion);
     servers.forEach(server => appendTab(
       `remote:${server.id}`,
       server.name,
       server.status || 'unknown',
       `${server.name} · ${server.base_url}`,
       server,
+      server.remote_version,
     ));
   }
 

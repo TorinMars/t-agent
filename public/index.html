@@ -91,6 +91,12 @@
 
         <!-- 终端面板 -->
         <div class="terminal-pane" id="terminal-pane" style="display:none">
+          <div class="terminal-toolbar" role="toolbar" aria-label="终端操作">
+            <button type="button" class="terminal-toolbar-btn" id="btn-terminal-reopen" title="重新建立与当前终端会话的连接">↻ 重新打开</button>
+            <button type="button" class="terminal-toolbar-btn danger" id="btn-terminal-close" title="终止当前 Shell 及其中运行的程序">× 关闭当前终端</button>
+            <button type="button" class="terminal-toolbar-btn" id="btn-terminal-restart-workdir" title="终止当前 Shell，并从任务配置的工作目录启动新 Shell">⌂ 从工作目录重新打开</button>
+          </div>
+          <div class="terminal-empty" id="terminal-empty" style="display:none"></div>
           <div id="xterm-container"></div>
         </div>
       </div>

@@ -8,6 +8,7 @@ const { exchangePairingCode, createAccessToken } = require('../services/engine-a
 const { getEngineIdentity } = require('../services/engine-identity');
 const { createTerminalTicket } = require('../services/terminal-tickets');
 const updates = require('../services/update-manager');
+const terminal = require('./terminal');
 
 const router = express.Router();
 const pairingAttempts = new Map();
@@ -63,7 +64,7 @@ function infoHandler(req, res) {
       'task-groups:read', 'task-groups:write',
       'documents:read', 'documents:write',
       'todos:read', 'todos:write',
-      'terminal:interactive', 'token:pairing',
+      'terminal:interactive', 'terminal:control', 'token:pairing',
       'engine:update',
     ],
   });
@@ -192,6 +193,13 @@ router.post('/terminal-sessions', requireEngineAuth('terminal:execute'), (req, r
     ...created,
     websocket_path: `/v1/terminal-sessions/${task.id}/stream?ticket=${encodeURIComponent(created.ticket)}`,
   });
+});
+
+router.post('/terminal-sessions/:id/control', requireEngineAuth('terminal:execute'), (req, res) => {
+  const task = tasks.ownedTask(principal(req), req.params.id);
+  if (!task) return res.status(404).json({ error: 'TASK_NOT_FOUND' });
+  try { res.json(terminal.controlSession(task.id, req.body && req.body.action)); }
+  catch (error) { errorResponse(res, error); }
 });
 
 router.get('/tokens', requireEngineAuth('engine:admin'), (req, res) => {

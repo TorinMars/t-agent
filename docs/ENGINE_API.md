@@ -38,6 +38,21 @@ Authorization: Bearer tae_xxx
 
 - `POST /v1/terminal-sessions`
 - `WS /v1/terminal-sessions/:sessionId/stream?ticket=...`
+- `POST /v1/terminal-sessions/:taskId/control`
+
+终端控制请求体支持：
+
+```json
+{ "action": "close" }
+```
+
+或：
+
+```json
+{ "action": "restart-workdir" }
+```
+
+`close` 终止当前 PTY 并保留历史；`restart-workdir` 终止 PTY、清空历史，下一次连接将从任务的 `work_dir` 创建新 Shell。两个操作都需要 `terminal:execute` scope。
 
 ## Token 管理
 

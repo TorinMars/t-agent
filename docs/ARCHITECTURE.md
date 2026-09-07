@@ -31,3 +31,5 @@ Engine 只能读写 `ENGINE_WORKSPACE_ROOTS` 列出的根目录。任务 API 提
 ## 终端连接
 
 Client 先用 Access Token 请求 `POST /v1/terminal-sessions`，Engine 返回一次性 ticket 和 WebSocket 路径。建立 WebSocket 后 ticket 立即作废。
+
+浏览器重新打开终端时只重建 WebSocket，Engine 中的 PTY 保持运行。关闭或从工作目录重新打开时，Client 使用受认证的 REST 控制接口终止 PTY；后者还会清空旧历史，使下一次连接严格从任务 `work_dir` 创建新 Shell。控制指令不复用终端输入通道，避免被旧 Engine 当作 Shell 输入。

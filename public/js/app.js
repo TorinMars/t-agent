@@ -44,6 +44,51 @@ const Modal = {
   },
 };
 
+const TerminalControls = {
+  controller() {
+    if (window.RemoteTasks && window.RemoteTasks.isSelected()) return window.RemoteTasks;
+    return window.Tasks || null;
+  },
+
+  showMessage(message) {
+    const empty = document.getElementById('terminal-empty');
+    const container = document.getElementById('xterm-container');
+    empty.textContent = message;
+    empty.style.display = 'flex';
+    container.style.display = 'none';
+  },
+
+  clearMessage() {
+    document.getElementById('terminal-empty').style.display = 'none';
+    document.getElementById('xterm-container').style.display = '';
+  },
+
+  async run(method, confirmation = '') {
+    const controller = this.controller();
+    if (!controller || typeof controller[method] !== 'function') return;
+    if (confirmation && !confirm(confirmation)) return;
+    const buttons = document.querySelectorAll('.terminal-toolbar-btn');
+    buttons.forEach(button => { button.disabled = true; });
+    try {
+      await controller[method]();
+    } catch (error) {
+      alert(`终端操作失败：${error.message}`);
+    } finally {
+      buttons.forEach(button => { button.disabled = false; });
+    }
+  },
+};
+
+document.getElementById('btn-terminal-reopen').addEventListener('click', () => {
+  TerminalControls.run('reopenTerminal');
+});
+document.getElementById('btn-terminal-close').addEventListener('click', () => {
+  TerminalControls.run('closeTerminal', '关闭当前终端会终止其中正在运行的程序，确认继续吗？');
+});
+document.getElementById('btn-terminal-restart-workdir').addEventListener('click', () => {
+  TerminalControls.run('restartTerminalFromWorkDir', '这会终止当前终端并清除终端历史，然后从任务工作目录重新打开，确认继续吗？');
+});
+
 const Updates = {
   pollTimer: null,
   restartTimer: null,

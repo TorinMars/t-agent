@@ -198,6 +198,7 @@ const Tasks = (() => {
 
   function connectTerminal(task) {
     const container = document.getElementById('xterm-container');
+    TerminalControls.clearMessage();
 
     if (termInstances.has(task.id)) {
       const inst = termInstances.get(task.id);
@@ -261,6 +262,46 @@ const Tasks = (() => {
     window.addEventListener('resize', () => {
       if (activeTab === 'shell' && termTaskId === task.id) fa.fit();
     });
+  }
+
+  function selectedTerminalTask() {
+    const task = tasks.find(item => item.id === selectedId);
+    if (!task) throw new Error('请先选择任务');
+    return task;
+  }
+
+  async function reopenTerminal() {
+    const task = selectedTerminalTask();
+    disposeTerminalInstance(task.id);
+    TerminalControls.clearMessage();
+    connectTerminal(task);
+  }
+
+  async function controlTerminal(action) {
+    const task = selectedTerminalTask();
+    disposeTerminalInstance(task.id);
+    try {
+      await API.post(`/api/tasks/${task.id}/terminal/control`, { action });
+    } catch (error) {
+      // 控制请求失败时恢复到原服务端会话，避免留下不可见的运行进程。
+      connectTerminal(task);
+      throw error;
+    }
+    updateTermDot(task.id, 'idle');
+    if (action === 'restart-workdir') {
+      TerminalControls.clearMessage();
+      connectTerminal(task);
+    } else {
+      TerminalControls.showMessage('当前终端已关闭。点击“重新打开”可从任务工作目录启动新终端。');
+    }
+  }
+
+  function closeTerminal() {
+    return controlTerminal('close');
+  }
+
+  function restartTerminalFromWorkDir() {
+    return controlTerminal('restart-workdir');
   }
 
 
@@ -1402,6 +1443,7 @@ const Tasks = (() => {
     const initialGroups = activeEngineKey.startsWith('remote:') && window.RemoteTasks
       ? RemoteTasks.getGroups(Number(activeEngineKey.slice('remote:'.length)))
       : DEFAULT_FORM_GROUPS;
+    const initialRemoteTarget = !task.id && activeEngineKey.startsWith('remote:');
     const selectedGroup = task.status || 'todo';
     const enginePicker = task.id ? '' : `
       <div class="form-group">
@@ -1424,9 +1466,9 @@ const Tasks = (() => {
         <div class="form-hint" id="f-md-hint"></div>
       </div>
       <div class="form-group">
-        <label class="form-label">工作路径</label>
-        <input class="form-input" id="f-work-dir" type="text" value="${escapeHtml(task.work_dir || '')}" placeholder="自动取 MD 文件所在目录">
-        <div class="form-hint">打开终端时使用此路径</div>
+        <label class="form-label" id="f-work-dir-label">${initialRemoteTarget ? '远程工作目录' : '工作目录'}</label>
+        <input class="form-input" id="f-work-dir" type="text" value="${escapeHtml(task.work_dir || '')}" placeholder="${initialRemoteTarget ? '/home/user/projects/example' : '自动取 MD 文件所在目录'}" autocomplete="off">
+        <div class="form-hint" id="f-work-dir-hint">${initialRemoteTarget ? '填写远程 Engine 上的绝对路径；目录不存在时会自动创建，且必须位于 Engine 允许的工作区内' : '打开终端时使用此路径'}</div>
       </div>
       <div class="form-group">
         <label class="form-label">优先级</label>
@@ -1459,6 +1501,8 @@ const Tasks = (() => {
     const mdHint = document.getElementById('f-md-hint');
     const titleInput = document.getElementById('f-title');
     const workDirInput = document.getElementById('f-work-dir');
+    const workDirLabel = document.getElementById('f-work-dir-label');
+    const workDirHint = document.getElementById('f-work-dir-hint');
     const engineInput = document.getElementById('f-engine');
     const engineHint = document.getElementById('f-engine-hint');
     const groupInput = document.getElementById('f-task-group');
@@ -1477,18 +1521,30 @@ const Tasks = (() => {
       return engineInput && engineInput.value.startsWith('remote:');
     }
 
+    function updateEnginePathFields() {
+      const remote = isRemoteTarget();
+      if (engineHint) {
+        engineHint.textContent = remote
+          ? '任务和目录将创建在远程 Engine 上'
+          : '任务和工作目录将保存在本地 Engine 上';
+      }
+      workDirLabel.textContent = remote ? '远程工作目录' : '工作目录';
+      workDirInput.placeholder = remote ? '/home/user/projects/example' : '自动取 MD 文件所在目录';
+      workDirHint.textContent = remote
+        ? '填写远程 Engine 上的绝对路径；目录不存在时会自动创建，且必须位于 Engine 允许的工作区内'
+        : '打开终端时使用此路径';
+      mdHint.textContent = remote && mdInput.value.trim() ? '路径将在远程 Engine 创建时校验' : '';
+      mdHint.className = 'form-hint';
+      mdInput.classList.remove('error');
+    }
+
     if (engineInput) {
       engineInput.addEventListener('change', () => {
-        const remote = isRemoteTarget();
-        engineHint.textContent = remote
-          ? '路径指向远程 Engine 的文件系统；留空可由 Engine 自动创建'
-          : '任务和工作目录将保存在本地 Engine 上';
-        mdHint.textContent = remote && mdInput.value.trim() ? '路径将在远程 Engine 创建时校验' : '';
-        mdHint.className = 'form-hint';
-        mdInput.classList.remove('error');
+        updateEnginePathFields();
         updateGroupOptions();
       });
     }
+    updateEnginePathFields();
 
     mdInput.addEventListener('blur', async () => {
       const val = mdInput.value.trim();
@@ -1599,6 +1655,9 @@ const Tasks = (() => {
       if (task) selectTask(task.id);
       else showEmpty();
     },
+    reopenTerminal,
+    closeTerminal,
+    restartTerminalFromWorkDir,
   };
 })();
 

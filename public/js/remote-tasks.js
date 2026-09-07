@@ -422,6 +422,7 @@ const RemoteTasks = (() => {
 
   function renderRemoteTerminal() {
     if (!selected) return;
+    TerminalControls.clearMessage();
     const serverId = selected.serverId;
     const taskId = selected.task.id;
     const key = terminalKey(serverId, taskId);
@@ -510,6 +511,50 @@ const RemoteTasks = (() => {
     };
     ws.onerror = () => {};
     setTimeout(() => fitAddon.fit(), 0);
+  }
+
+  function selectedRemoteTerminal() {
+    if (!selected) throw new Error('请先选择远程任务');
+    return {
+      serverId: selected.serverId,
+      taskId: selected.task.id,
+      key: terminalKey(selected.serverId, selected.task.id),
+    };
+  }
+
+  async function reopenTerminal() {
+    const target = selectedRemoteTerminal();
+    disposeRemoteTerminal(remoteTerminals.get(target.key));
+    TerminalControls.clearMessage();
+    renderRemoteTerminal();
+  }
+
+  async function controlTerminal(action) {
+    const target = selectedRemoteTerminal();
+    disposeRemoteTerminal(remoteTerminals.get(target.key));
+    try {
+      await API.post(`/api/remote-servers/${target.serverId}/tasks/${target.taskId}/terminal/control`, { action });
+    } catch (error) {
+      renderRemoteTerminal();
+      if (/ENGINE_ROUTE_NOT_FOUND|REMOTE_HTTP_404/.test(error.message)) {
+        throw new Error('远程 Engine 版本过旧，请先升级该 Engine');
+      }
+      throw error;
+    }
+    if (action === 'restart-workdir') {
+      TerminalControls.clearMessage();
+      renderRemoteTerminal();
+    } else {
+      TerminalControls.showMessage('远程终端已关闭。点击“重新打开”可从任务工作目录启动新终端。');
+    }
+  }
+
+  function closeTerminal() {
+    return controlTerminal('close');
+  }
+
+  function restartTerminalFromWorkDir() {
+    return controlTerminal('restart-workdir');
   }
 
   async function refreshServer(id) {
@@ -853,6 +898,9 @@ const RemoteTasks = (() => {
     ['btn-reveal-folder', 'btn-open-vscode', 'btn-share-md'].forEach(id => { document.getElementById(id).disabled = false; });
     },
     showTokens,
+    reopenTerminal,
+    closeTerminal,
+    restartTerminalFromWorkDir,
   };
 })();
 

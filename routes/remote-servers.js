@@ -220,6 +220,19 @@ router.post('/:id/tasks', async (req, res) => {
   } catch (error) { res.status(error.statusCode || 502).json({ error: safeError(error) }); }
 });
 
+router.post('/:id/tasks/:taskId/terminal/control', async (req, res) => {
+  const row = getServer(req);
+  if (!row) return res.status(404).json({ error: 'REMOTE_NOT_FOUND' });
+  try {
+    res.json(await request(
+      row.base_url,
+      `/v1/terminal-sessions/${encodeURIComponent(req.params.taskId)}/control`,
+      decryptToken(row.token_cipher, config.sessionSecret),
+      { method: 'POST', body: req.body },
+    ));
+  } catch (error) { res.status(error.statusCode || 502).json({ error: safeError(error) }); }
+});
+
 router.patch('/:id/tasks/:taskId', async (req, res) => {
   const row = getServer(req);
   if (!row) return res.status(404).json({ error: 'REMOTE_NOT_FOUND' });

@@ -5,6 +5,7 @@ const { exec } = require('child_process');
 const { randomUUID } = require('crypto');
 const db = require('../db');
 const requireAuth = require('../middleware/auth');
+const terminal = require('./terminal');
 
 const router = express.Router();
 
@@ -163,6 +164,17 @@ router.put('/:id', (req, res) => {
   });
 
   res.json(db.prepare('SELECT * FROM tasks WHERE id = ?').get(id));
+});
+
+router.post('/:id/terminal/control', (req, res) => {
+  const uid = ownerFilter(req);
+  const task = db.prepare('SELECT id FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, uid);
+  if (!task) return res.status(404).json({ error: 'TASK_NOT_FOUND' });
+  try {
+    res.json(terminal.controlSession(task.id, req.body && req.body.action));
+  } catch (error) {
+    res.status(error.statusCode || 400).json({ error: error.message || 'TERMINAL_CONTROL_FAILED' });
+  }
 });
 
 router.delete('/:id', (req, res) => {

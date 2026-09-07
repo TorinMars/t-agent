@@ -15,12 +15,16 @@ const FLUSH_SIZE = 50 * 1024;          // 50KB
 function flushToDB(taskId) {
   const s = sessions.get(taskId);
   if (!s) return;
+  persistBuffer(taskId, s.buffer);
+  s.pendingSince = 0;
+}
+
+function persistBuffer(taskId, buffer) {
   db.prepare(`
     INSERT INTO terminal_logs (task_id, buffer, updated_at)
     VALUES (?, ?, CURRENT_TIMESTAMP)
     ON CONFLICT(task_id) DO UPDATE SET buffer = excluded.buffer, updated_at = excluded.updated_at
-  `).run(taskId, s.buffer);
-  s.pendingSince = 0;
+  `).run(taskId, buffer || '');
 }
 
 function appendBuffer(taskId, data) {
@@ -105,12 +109,50 @@ function getOrCreateSession(taskId, workDir, dirWarning) {
   });
 
   pty.onExit(() => {
+    // 被控制接口主动关闭的旧 PTY 可能在新会话建立后才触发 onExit，
+    // 只允许当前 Map 中的同一个实例清理状态。
+    if (sessions.get(taskId) !== s) return;
     clearInterval(s.flushTimer);
-    flushToDB(taskId);
+    persistBuffer(taskId, s.buffer);
     sessions.delete(taskId);
+    const activeWs = s.ws;
+    s.ws = null;
+    if (activeWs && activeWs.readyState === 1) activeWs.close(1000, 'terminal exited');
   });
 
   return s;
+}
+
+/**
+ * 终止任务的服务端 PTY。restart-workdir 同时清空旧历史，下一次连接会从
+ * 任务 work_dir 创建全新 Shell；close 保留历史，方便之后重新查看。
+ */
+function controlSession(taskId, action) {
+  const id = Number.parseInt(taskId, 10);
+  if (!id || !['close', 'restart-workdir'].includes(action)) {
+    const error = new Error('INVALID_TERMINAL_ACTION');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const session = sessions.get(id);
+  const clearHistory = action === 'restart-workdir';
+  if (session) {
+    sessions.delete(id);
+    clearInterval(session.flushTimer);
+    if (clearHistory) db.prepare('DELETE FROM terminal_logs WHERE task_id = ?').run(id);
+    else persistBuffer(id, session.buffer);
+    session.pendingSince = 0;
+
+    const activeWs = session.ws;
+    session.ws = null;
+    try { session.pty.kill(); } catch {}
+    if (activeWs && activeWs.readyState === 1) activeWs.close(1000, `terminal ${action}`);
+  } else if (clearHistory) {
+    db.prepare('DELETE FROM terminal_logs WHERE task_id = ?').run(id);
+  }
+
+  return { success: true, action, had_session: Boolean(session) };
 }
 
 /**
@@ -193,4 +235,4 @@ function handleWs(ws, req, sessionUser, requestedTaskId = null) {
   });
 }
 
-module.exports = { handleWs };
+module.exports = { controlSession, handleWs };

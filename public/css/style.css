@@ -1444,6 +1444,39 @@ html, body {
   display: flex;
   flex-direction: column;
 }
+.terminal-toolbar {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-bottom: 1px solid #3a3a3a;
+  background: #252526;
+  flex-shrink: 0;
+}
+.terminal-toolbar-btn {
+  min-height: 25px;
+  padding: 2px 9px;
+  border: 1px solid #4b4b4b;
+  border-radius: 5px;
+  background: #2d2d2d;
+  color: #d4d4d4;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+.terminal-toolbar-btn:hover { background: #3a3a3a; color: #fff; }
+.terminal-toolbar-btn.danger:hover { border-color: #cf222e; color: #ff7b72; }
+.terminal-toolbar-btn:disabled { cursor: wait; opacity: .55; }
+.terminal-empty {
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  color: #aaa;
+  text-align: center;
+}
 #xterm-container {
   flex: 1;
   overflow: hidden;

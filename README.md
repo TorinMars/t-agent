@@ -117,7 +117,7 @@ curl -fsSL https://raw.githubusercontent.com/TorinMars/t-agent/main/bootstrap.sh
 
 首次安装结束时会输出一个 `tae_...` owner Token。它只显示一次，请立即保存；稍后需要把 Engine 地址和 Token 填入 Client。
 
-Linux 会注册 `t-agent-engine.service`。安装脚本默认让独立 Engine 监听 `0.0.0.0`，直接开放端口时请同时配置防火墙；使用 Nginx 反向代理时建议改为只监听 `127.0.0.1`。
+Linux 会注册 `t-agent-engine.service`。独立 Engine 固定监听 `0.0.0.0`，以便外部 Client 连接；请同时配置防火墙、访问 Token，并优先通过 HTTPS/WSS 对外提供服务。
 
 ### 使用 Docker 安装独立 Engine
 
@@ -277,14 +277,7 @@ Client 保存的远程 Token 依赖 `.env` 中的 `SESSION_SECRET` 解密。迁�
 
 ## HTTPS 与 Nginx 反向代理
 
-生产环境推荐让独立 Engine 仅监听本机地址，由 Nginx 提供 HTTPS/WSS。
-
-先修改 Engine 的 `.env`：
-
-```env
-PORT=3100
-ENGINE_HOST=127.0.0.1
-```
+生产环境推荐由 Nginx 为独立 Engine 提供 HTTPS/WSS。Engine 固定监听 `0.0.0.0`，Nginx 仍通过 `127.0.0.1:3100` 回源；请用服务器防火墙阻止公网直接访问原始端口。
 
 Nginx 的核心代理配置如下：
 
@@ -354,7 +347,7 @@ TASKS_BASE_DIR=/path/to/tasks
 
 ENGINE_NAME=my-engine
 ENGINE_OWNER_ID=local
-ENGINE_HOST=127.0.0.1
+# 独立 Engine 固定监听 0.0.0.0，无需配置 ENGINE_HOST
 ```
 
 从旧版本升级时无需手动设置 `SINGLE_USER_ID`。程序会沿用原数据库中的首个账号作为唯一数据归属，旧 `.env` 中的 `AUTH_USERS` 可以暂时保留，但不再参与认证。

@@ -2,7 +2,7 @@
 
 > 日期：2026-07-15
 
-> 当前实现说明（v2.7.0）：本文保留了项目早期设计记录；现行架构已经拆分为 Client 与 Engine。Client 按单用户应用运行，启动后自动建立本地用户上下文，不再使用用户名、密码、登录页或退出入口；升级时会优先沿用数据库中已有用户及其任务归属。Client 默认仅监听 `127.0.0.1`。Engine 仍通过 Bearer Token 对 Client 提供远程 API 与终端连接，允许持有 owner Token 的 Client 触发受控自更新，并提供关闭终端及从任务工作目录重新建立终端的控制接口。任务可使用 Engine 服务器上的任意绝对工作目录，技术方案默认是工作目录中的 `DESIGN.md`。独立 Engine 支持固定 Node/C++ 工具链的 Docker 镜像部署，由宿主机更新镜像，并把数据、任务和独立 Codex 配置统一持久化到 `~/.torin/t-agent-data`；Engine 镜像内置 Codex CLI。完整现行架构与部署方式以 `README.md` 和 `docs/ARCHITECTURE.md` 为准。
+> 当前实现说明（v2.7.1）：本文保留了项目早期设计记录；现行架构已经拆分为 Client 与 Engine。Client 按单用户应用运行，启动后自动建立本地用户上下文，不再使用用户名、密码、登录页或退出入口；升级时会优先沿用数据库中已有用户及其任务归属。Client 默认仅监听 `127.0.0.1`。独立 Engine 固定监听 `0.0.0.0`，通过 Bearer Token 对 Client 提供远程 API 与终端连接，允许持有 owner Token 的 Client 触发受控自更新，并提供关闭终端及从任务工作目录重新建立终端的控制接口。任务可使用 Engine 服务器上的任意绝对工作目录，技术方案默认是工作目录中的 `DESIGN.md`。独立 Engine 支持固定 Node/C++ 工具链的 Docker 镜像部署，由宿主机更新镜像，并把数据、任务和独立 Codex 配置统一持久化到 `~/.torin/t-agent-data`；Engine 镜像内置 Codex CLI。安装应用模式采用动态视口与 Flex 高度约束，并在终端容器尺寸变化时自动重新计算终端行列，避免底部输入行被窗口边界裁切。完整现行架构与部署方式以 `README.md` 和 `docs/ARCHITECTURE.md` 为准。
 
 ---
 

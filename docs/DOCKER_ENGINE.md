@@ -23,7 +23,7 @@ docker compose --env-file docker/engine.env -f compose.engine.yml build engine
 docker compose --env-file docker/engine.env -f compose.engine.yml up -d
 ```
 
-默认只把端口发布到宿主机的 `127.0.0.1:3100`，适合由 Nginx 反向代理。需要直接通过服务器 IP 访问时，将 `docker/engine.env` 中的 `T_AGENT_ENGINE_BIND` 改为 `0.0.0.0`，并配置防火墙。
+Engine 进程固定监听容器内的 `0.0.0.0:3100`，Compose 默认把端口发布到宿主机所有网卡，外部 Client 可直接连接。请配置防火墙和访问 Token；通过 Nginx 提供 HTTPS/WSS 时，可按需把 `T_AGENT_ENGINE_BIND` 显式改为 `127.0.0.1`，只允许本机反向代理回源。
 
 首次启动后生成 owner Token：
 

@@ -130,6 +130,7 @@ const Tasks = (() => {
     if (!inst) return;
     inst.disposed = true;
     if (inst.reconnectTimer) clearTimeout(inst.reconnectTimer);
+    if (inst.resizeObserver) inst.resizeObserver.disconnect();
     if (inst.ws) inst.ws.close();
     inst.term.dispose();
     inst.el.remove();
@@ -217,7 +218,7 @@ const Tasks = (() => {
     termInstances.forEach(i => i.el.style.display = 'none');
 
     const el = document.createElement('div');
-    el.style.cssText = 'width:100%;height:100%';
+    el.className = 'xterm-host';
     container.appendChild(el);
 
     const t = new Terminal({
@@ -240,7 +241,14 @@ const Tasks = (() => {
       disposed: false,
       reconnectTimer: null,
       reconnectAttempts: 0,
+      resizeObserver: null,
     };
+    if (typeof ResizeObserver !== 'undefined') {
+      inst.resizeObserver = new ResizeObserver(() => {
+        if (!inst.disposed && el.clientWidth > 0 && el.clientHeight > 0) fa.fit();
+      });
+      inst.resizeObserver.observe(el);
+    }
     termInstances.set(task.id, inst);
     termTaskId = task.id;
     term = t;

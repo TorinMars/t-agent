@@ -34,7 +34,6 @@ ENV NODE_ENV=production \
     T_AGENT_INSTALL_TYPE=docker \
     T_AGENT_DATA_DIR=/var/lib/t-agent \
     TASKS_BASE_DIR=/workspace \
-    ENGINE_HOST=0.0.0.0 \
     PORT=3100
 
 RUN mkdir -p /var/lib/t-agent /workspace /root/.codex

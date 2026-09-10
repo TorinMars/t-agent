@@ -253,7 +253,6 @@ SINGLE_USER_ID=$([ "$MODE" = "client" ] && printf 'local' || printf '')
 AUTH_USERS=
 TASKS_BASE_DIR=$TASKS_DIR
 ENGINE_OWNER_ID=$([ "$MODE" = "client" ] && printf 'local' || printf 'engine')
-ENGINE_HOST=$([ "$MODE" = "engine" ] && printf '0.0.0.0' || printf '127.0.0.1')
 HOST=127.0.0.1
 GITHUB_VERSION_URL=https://api.github.com/repos/$UPDATE_REPOSITORY/contents/VERSION.json?ref=$UPDATE_REF
 UPDATE_GITHUB_REPOSITORY=$UPDATE_REPOSITORY
@@ -270,10 +269,7 @@ else
     update_env_value TASKS_BASE_DIR "$TASKS_DIR"
   fi
   update_env_value T_AGENT_MODE "$MODE"
-  if [ "$MODE" = "engine" ]; then
-    # 迁移或重装时保留已有监听地址，避免把反向代理后的 Engine 意外暴露到公网。
-    grep -q '^ENGINE_HOST=' "$ENV_FILE" || update_env_value ENGINE_HOST 0.0.0.0
-  else
+  if [ "$MODE" != "engine" ]; then
     # Client 免登录后必须默认仅供本机访问。
     update_env_value HOST 127.0.0.1
   fi

@@ -5,7 +5,8 @@ const { createEngineApp } = require('./app');
 const terminal = require('../../routes/terminal');
 const { consumeTerminalTicket, pruneExpiredTickets } = require('../../services/terminal-tickets');
 
-const host = process.env.ENGINE_HOST || '127.0.0.1';
+// 独立 Engine 必须能被其他机器上的 Client 连接，固定监听所有网卡。
+const host = '0.0.0.0';
 const port = Number.parseInt(process.env.ENGINE_PORT || process.env.PORT || '3100', 10);
 const app = createEngineApp();
 const server = http.createServer(app);

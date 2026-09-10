@@ -39,6 +39,15 @@ html, body {
   overflow: hidden;
 }
 
+body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100vh;
+  height: 100dvh;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
 /* Header */
 .header {
   display: flex;
@@ -117,9 +126,9 @@ html, body {
   body > .layout {
     margin-top: 0;
   }
-  /* layout 高度重新计算：扣掉 titlebar + quicklinks */
+  /* fixed header 不参与 Flex 布局，由 quicklinks 的 margin 补回标题栏高度。 */
   .layout {
-    height: calc(100vh - env(titlebar-area-height, var(--header-height)) - var(--quicklinks-height) - var(--engine-tabs-height));
+    height: auto;
   }
 }
 
@@ -266,7 +275,9 @@ html, body {
 /* Layout */
 .layout {
   display: flex;
-  height: calc(100vh - var(--header-height) - var(--quicklinks-height) - var(--engine-tabs-height));
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 0;
   overflow: hidden;
 }
 
@@ -275,6 +286,7 @@ html, body {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
   overflow: hidden;
 }
 
@@ -324,6 +336,7 @@ html, body {
 .content-body {
   flex: 1;
   display: flex;
+  min-height: 0;
   overflow: hidden;
 }
 
@@ -1439,6 +1452,7 @@ html, body {
 .terminal-pane {
   flex: 1;
   min-width: 0;
+  min-height: 0;
   background: #1e1e1e;
   overflow: hidden;
   display: flex;
@@ -1479,13 +1493,15 @@ html, body {
 }
 #xterm-container {
   flex: 1;
+  min-height: 0;
   overflow: hidden;
-  padding: 4px;
   position: relative;
 }
-#xterm-container > div {
+#xterm-container > .xterm-host {
   position: absolute;
-  inset: 4px;
+  inset: 4px 4px 8px;
+  min-width: 0;
+  min-height: 0;
 }
 /* xterm canvas 自适应填满 */
 #xterm-container .xterm {

@@ -408,6 +408,7 @@ const RemoteTasks = (() => {
   function disposeRemoteTerminal(instance) {
     if (!instance) return;
     instance.disposed = true;
+    if (instance.resizeObserver) instance.resizeObserver.disconnect();
     if (instance.ws) instance.ws.close();
     instance.term.dispose();
     instance.el.remove();
@@ -449,7 +450,7 @@ const RemoteTasks = (() => {
     if (existing) disposeRemoteTerminal(existing);
 
     const el = document.createElement('div');
-    el.style.cssText = 'width:100%;height:100%';
+    el.className = 'xterm-host';
     container.appendChild(el);
     const term = new Terminal({
       cursorBlink: true,
@@ -474,9 +475,16 @@ const RemoteTasks = (() => {
       taskId,
       paused: false,
       disposed: false,
+      resizeObserver: null,
     };
     remoteTerminals.set(key, remoteTerminal);
     const instance = remoteTerminal;
+    if (typeof ResizeObserver !== 'undefined') {
+      instance.resizeObserver = new ResizeObserver(() => {
+        if (!instance.disposed && el.clientWidth > 0 && el.clientHeight > 0) fitAddon.fit();
+      });
+      instance.resizeObserver.observe(el);
+    }
     term.onData(data => {
       if (instance.paused) return;
       if (ws.readyState === WebSocket.OPEN) ws.send(data);

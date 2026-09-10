@@ -12,6 +12,7 @@ const {
   validateVersionManifest,
 } = require('../lib/version-utils');
 const { copyRelease, stageGithubArchive } = require('./archive-updater');
+const { prepareWorkspace } = require('../lib/git-update-workspace');
 
 const projectRoot = path.resolve(__dirname, '..');
 const versionPath = path.join(projectRoot, 'VERSION.json');
@@ -174,7 +175,7 @@ async function runCheck({ force = false } = {}) {
   saveState({ status: 'checking', stage: gitInstall ? 'fetching' : 'checking_version', error: null, error_details: null, local_version: local.app_version, message: null });
   let result;
   if (gitInstall) {
-    await execGit(['fetch', '--prune', config.gitRemote, config.gitBranch], 120_000);
+    await execGit(['fetch', config.gitRemote, `refs/heads/${config.gitBranch}:refs/remotes/${config.gitRemote}/${config.gitBranch}`], 120_000);
     const target = `${config.gitRemote}/${config.gitBranch}`;
     const manifestText = await execGit(['show', `${target}:VERSION.json`]);
     result = { manifest: validateVersionManifest(JSON.parse(manifestText)) };
@@ -254,14 +255,14 @@ function execNpm(args, stage) {
   });
 }
 
-async function runApply() {
+async function runApply({ force = false } = {}) {
   if (installationType() === 'docker') throw new Error('DOCKER_MANAGED_UPDATE');
   saveState({ status: 'updating', stage: 'refreshing_version', error: null, message: '正在确认远程版本' });
   const checked = await runCheck({ force: true });
   if (checked.status !== 'available') throw new Error('NO_UPDATE_AVAILABLE');
 
   if (installationType() === 'archive') await applyArchiveUpdate(checked);
-  else await applyGitUpdate(checked);
+  else await applyGitUpdate(checked, force);
 
   await execNpm(['ci', '--ignore-scripts=false'], 'installing');
   await verifyNodePty();
@@ -303,13 +304,13 @@ async function backupDatabase(metadata = {}) {
   return backupPath;
 }
 
-async function applyGitUpdate(checked) {
+async function applyGitUpdate(checked, force = false) {
   saveState({ status: 'updating', stage: 'checking_workspace', message: '正在检查 Git 工作区' });
   const dirty = await execGit(['status', '--porcelain']);
-  if (dirty) throw new Error('WORKTREE_DIRTY');
+  if (dirty && !force) throw new Error('WORKTREE_DIRTY');
 
   saveState({ status: 'updating', stage: 'fetching', message: '正在获取 Git 更新' });
-  await execGit(['fetch', '--prune', config.gitRemote, config.gitBranch]);
+  await execGit(['fetch', config.gitRemote, `refs/heads/${config.gitBranch}:refs/remotes/${config.gitRemote}/${config.gitBranch}`]);
   const target = `${config.gitRemote}/${config.gitBranch}`;
   const remoteVersionText = await execGit(['show', `${target}:VERSION.json`]);
   const targetManifest = validateVersionManifest(JSON.parse(remoteVersionText));
@@ -320,9 +321,11 @@ async function applyGitUpdate(checked) {
 
   const previousCommit = await execGit(['rev-parse', 'HEAD']);
   await backupDatabase({ previous_commit: previousCommit, install_type: 'git' });
+  const codeBackup = await prepareWorkspace(execGit, force);
+  if (codeBackup) saveState({ code_backup: codeBackup, message: '本地修改已备份到 Git stash' });
 
   saveState({ status: 'updating', stage: 'merging', message: '正在快进代码' });
-  await execGit(['merge', '--ff-only', target]);
+  await execGit(['merge', '--ff-only', '--no-overwrite-ignore', target]);
 }
 
 async function applyArchiveUpdate(checked) {
@@ -341,9 +344,9 @@ async function applyArchiveUpdate(checked) {
   }
 }
 
-async function apply() {
+async function apply(options = {}) {
   if (applyPromise) return applyPromise;
-  applyPromise = runApply().catch(error => {
+  applyPromise = runApply(options).catch(error => {
     saveState({
       status: 'blocked',
       stage: null,

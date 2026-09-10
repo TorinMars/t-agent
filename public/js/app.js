@@ -113,6 +113,7 @@ const Updates = {
       INVALID_APP_VERSION: '远程版本号不符合 SemVer', INVALID_MANIFEST: '远程版本文件格式错误',
       UNTRUSTED_VERSION_URL: '版本链接不受信任', VERSION_URL_NOT_CONFIGURED: '未配置 GitHub 版本链接',
       WORKTREE_DIRTY: '本地有未提交修改', BRANCH_DIVERGED: '本地分支已分叉',
+      TRACKED_RUNTIME_FILES: '配置或数据文件被 Git 跟踪，为保护数据已停止强制更新',
       VERSION_SOURCE_MISMATCH: 'GitHub 版本与 Git 分支不一致', UPDATE_ADMIN_REQUIRED: '只有更新管理员可以执行更新',
       INVALID_UPDATE_REPOSITORY: '更新仓库配置不正确', INVALID_UPDATE_REF: '更新分支配置不正确',
       INVALID_UPDATE_ARCHIVE: '下载的更新包结构不正确', UNSAFE_UPDATE_ARCHIVE: '更新包包含不安全的文件',
@@ -172,19 +173,20 @@ const Updates = {
       <div class="update-detail-row"><span>安装方式</span><strong>${archiveInstall ? '安装包更新' : 'Git 快进更新'}</strong></div>
       <div class="update-detail-row"><span>GitHub 版本源</span><code title="${escapeHtml(status.version_url || '')}">${escapeHtml(status.version_url || '未配置')}</code></div>
       <div class="form-hint">更新前会自动备份 SQLite 数据库；账号、Token、任务和工作目录不会被覆盖。</div>
+      ${archiveInstall ? '' : '<label class="form-hint"><input type="checkbox" id="update-force"> 强制更新：将本地未提交代码及未跟踪文件备份到 Git stash，再使用远程代码；忽略的配置和任务数据保留。备份不会自动恢复，已提交的分叉仍会阻止更新。</label>'}
       <div class="form-actions">
         <button class="btn-cancel" id="update-confirm-cancel">取消</button>
         <button class="btn-submit" id="update-confirm-apply">确认更新并重启</button>
       </div>
     `);
     document.getElementById('update-confirm-cancel').addEventListener('click', Modal.hide);
-    document.getElementById('update-confirm-apply').addEventListener('click', () => this.apply());
+    document.getElementById('update-confirm-apply').addEventListener('click', () => this.apply(document.getElementById('update-force')?.checked === true));
   },
 
-  async apply() {
+  async apply(force = false) {
     Modal.show('正在更新', '<div class="update-progress"><span class="update-spinner"></span><span id="update-progress-message">正在启动更新流程…</span></div><div class="form-hint" id="update-progress-error"></div>');
     try {
-      await API.post('/api/system/apply-update', { confirm: true });
+      await API.post('/api/system/apply-update', { confirm: true, force });
       this.monitorApply();
     } catch (error) {
       let status = null;
@@ -216,6 +218,13 @@ const Updates = {
         }
         const spinner = document.querySelector('.update-spinner');
         if (spinner) spinner.remove();
+        if (status.error === 'WORKTREE_DIRTY' && errorNode) {
+          const retry = document.createElement('button');
+          retry.className = 'btn-submit';
+          retry.textContent = '选择强制更新…';
+          retry.addEventListener('click', () => this.confirmApply(status));
+          errorNode.after(retry);
+        }
       } else if (status.stage === 'restarting') {
         clearInterval(this.restartTimer);
         this.waitForRestart(status.remote_version);

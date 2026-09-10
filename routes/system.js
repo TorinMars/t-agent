@@ -31,7 +31,7 @@ router.post('/update-notified', (req, res) => {
 router.post('/apply-update', async (req, res) => {
   if (!isAdmin(req)) return res.status(403).json({ error: 'UPDATE_ADMIN_REQUIRED' });
   if (!req.body || req.body.confirm !== true) return res.status(400).json({ error: 'UPDATE_CONFIRMATION_REQUIRED' });
-  updates.apply().catch(error => console.error('[apply-update]', error.message));
+  updates.apply({ force: req.body.force === true }).catch(error => console.error('[apply-update]', error.message));
   res.status(202).json({ accepted: true, status: updates.publicState() });
 });
 

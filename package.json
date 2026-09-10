@@ -1,6 +1,6 @@
 {
   "name": "torin-x-web",
-  "version": "2.7.1",
+  "version": "2.7.2",
   "description": "Componentized task client and remote execution engine",
   "main": "server.js",
   "scripts": {
@@ -9,6 +9,7 @@
     "start:engine": "node apps/engine/server.js",
     "dev": "nodemon server.js",
     "test": "node --test",
+    "build:markdown": "esbuild scripts/markdown-view-entry.js --bundle --minify --format=iife --global-name=MarkdownView --outfile=public/js/markdown-view.js",
     "build:monaco": "esbuild scripts/monaco-entry.js --bundle --minify --format=iife --global-name=MonacoBundle --loader:.ttf=file --asset-names=[name]-[hash] --outfile=public/vendor/monaco/monaco.js && esbuild node_modules/monaco-editor/esm/vs/editor/editor.worker.js --bundle --minify --format=iife --outfile=public/vendor/monaco/editor.worker.js"
   },
   "dependencies": {
@@ -17,12 +18,14 @@
     "dotenv": "^16.0.0",
     "express": "^4.19.2",
     "express-session": "^1.18.0",
+    "highlight.js": "11.11.1",
     "monaco-editor": "^0.56.0",
     "node-pty": "^1.1.0",
     "ws": "^8.21.1"
   },
   "devDependencies": {
     "esbuild": "^0.25.9",
+    "linkedom": "0.18.12",
     "nodemon": "^3.1.4"
   }
 }

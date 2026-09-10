@@ -1214,6 +1214,7 @@ const Tasks = (() => {
       const text = await res.text();
       if (selectedId !== renderForId || activeTab !== renderForTab) return;
       content.innerHTML = renderMd(text, task.id);
+      MarkdownView.enhance(content);
       for (const script of Array.from(content.querySelectorAll('script'))) {
         if (script.src) {
           await new Promise(resolve => {

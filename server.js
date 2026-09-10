@@ -144,6 +144,8 @@ function sendSharedMarkdown(res, task, token, content, currentPath = '') {
     th{background:#f6f8fa} img{max-width:100%}
     ::-webkit-scrollbar{width:5px} ::-webkit-scrollbar-thumb{background:#e0e0e0;border-radius:3px}
   </style>
+  <link rel="stylesheet" href="/css/markdown.css">
+  <script src="/js/markdown-view.js"></script>
 </head>
 <body>
   <div class="header">
@@ -189,6 +191,7 @@ function sendSharedMarkdown(res, task, token, content, currentPath = '') {
 
     var preview = document.getElementById('preview');
     preview.innerHTML = marked.parse(${escaped});
+    MarkdownView.enhance(preview);
     mermaid.run({nodes:preview.querySelectorAll('.mermaid')});
 
     // assign heading ids

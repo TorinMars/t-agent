@@ -371,6 +371,7 @@ const RemoteTasks = (() => {
       if (!response.ok) throw new Error('REMOTE_DOCUMENT_FAILED');
       const source = await response.text();
       content.innerHTML = `<div class="remote-readonly-banner">${escapeHtml(selected.server.name)} · 只读</div>${marked.parse(source)}`;
+      MarkdownView.enhance(content);
       for (const node of content.querySelectorAll('.mermaid')) {
         try { await mermaid.run({ nodes: [node] }); } catch {}
       }

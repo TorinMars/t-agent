@@ -463,6 +463,10 @@ const RemoteTasks = (() => {
     const fitAddon = new FitAddon.FitAddon();
     term.loadAddon(fitAddon);
     term.open(el);
+    term.attachCustomKeyEventHandler(e => {
+      if (e.metaKey && e.key.toLowerCase() === 'c' && term.hasSelection()) return false;
+      return true;
+    });
 
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
     const ws = new WebSocket(`${proto}://${location.host}/api/remote-servers/${serverId}/terminal/ws?taskId=${taskId}`);

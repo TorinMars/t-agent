@@ -231,6 +231,10 @@ const Tasks = (() => {
     const fa = new FitAddon.FitAddon();
     t.loadAddon(fa);
     t.open(el);
+    t.attachCustomKeyEventHandler(e => {
+      if (e.metaKey && e.key.toLowerCase() === 'c' && t.hasSelection()) return false;
+      return true;
+    });
 
     const inst = {
       term: t,

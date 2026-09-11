@@ -411,6 +411,7 @@ const RemoteTasks = (() => {
     instance.disposed = true;
     if (instance.resizeObserver) instance.resizeObserver.disconnect();
     if (instance.ws) instance.ws.close();
+    instance.clipboard.dispose();
     instance.term.dispose();
     instance.el.remove();
     remoteTerminals.delete(terminalKey(instance.serverId, instance.taskId));
@@ -463,15 +464,13 @@ const RemoteTasks = (() => {
     const fitAddon = new FitAddon.FitAddon();
     term.loadAddon(fitAddon);
     term.open(el);
-    term.attachCustomKeyEventHandler(e => {
-      if (e.metaKey && e.key.toLowerCase() === 'c' && term.hasSelection()) return false;
-      return true;
-    });
+    const clipboard = TerminalClipboard.attach(term, el);
 
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
     const ws = new WebSocket(`${proto}://${location.host}/api/remote-servers/${serverId}/terminal/ws?taskId=${taskId}`);
     ws.binaryType = 'arraybuffer';
     remoteTerminal = {
+      clipboard,
       term,
       fitAddon,
       ws,
@@ -507,7 +506,7 @@ const RemoteTasks = (() => {
         try {
           const message = JSON.parse(event.data);
           instance.paused = true;
-          term.write(message.data, () => {
+          instance.clipboard.writeHistory(message.data, () => {
             requestAnimationFrame(() => requestAnimationFrame(() => { instance.paused = false; }));
           });
         } catch {

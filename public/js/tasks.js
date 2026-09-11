@@ -132,6 +132,7 @@ const Tasks = (() => {
     if (inst.reconnectTimer) clearTimeout(inst.reconnectTimer);
     if (inst.resizeObserver) inst.resizeObserver.disconnect();
     if (inst.ws) inst.ws.close();
+    inst.clipboard.dispose();
     inst.term.dispose();
     inst.el.remove();
     termInstances.delete(taskId);
@@ -174,7 +175,7 @@ const Tasks = (() => {
         try {
           const msg = JSON.parse(e.data);
           inst.paused = true;
-          inst.term.write(msg.data, () => {
+          inst.clipboard.writeHistory(msg.data, () => {
             requestAnimationFrame(() => requestAnimationFrame(() => { inst.paused = false; }));
           });
         } catch { inst.term.write(e.data); }
@@ -231,12 +232,10 @@ const Tasks = (() => {
     const fa = new FitAddon.FitAddon();
     t.loadAddon(fa);
     t.open(el);
-    t.attachCustomKeyEventHandler(e => {
-      if (e.metaKey && e.key.toLowerCase() === 'c' && t.hasSelection()) return false;
-      return true;
-    });
+    const clipboard = TerminalClipboard.attach(t, el);
 
     const inst = {
+      clipboard,
       term: t,
       fitAddon: fa,
       ws: null,

@@ -164,10 +164,14 @@ const Tasks = (() => {
     termWs = ws;
 
     ws.onopen = () => {
-      if (inst.reconnectAttempts > 0) inst.term.reset();
+      const reconnecting = inst.reconnectAttempts > 0;
+      if (reconnecting) {
+        inst.reconnectScroll = TerminalViewport.capture(inst.term);
+        inst.term.reset();
+      }
       inst.reconnectAttempts = 0;
-      inst.fitAddon.fit();
-      inst.term.focus();
+      TerminalViewport.fit(inst.term, inst.fitAddon, inst.el);
+      if (!reconnecting) inst.term.focus();
       ws.send(JSON.stringify({ type: 'resize', cols: inst.term.cols, rows: inst.term.rows }));
     };
 
@@ -177,6 +181,8 @@ const Tasks = (() => {
           const msg = JSON.parse(e.data);
           inst.paused = true;
           inst.clipboard.writeHistory(msg.data, () => {
+            TerminalViewport.restore(inst.term, inst.reconnectScroll || { bottom: true });
+            inst.reconnectScroll = null;
             requestAnimationFrame(() => requestAnimationFrame(() => { inst.paused = false; }));
           });
         } catch { inst.term.write(e.data); }
@@ -219,7 +225,7 @@ const Tasks = (() => {
         fitAddon = inst.fitAddon;
         termWs = inst.ws;
         termTaskId = task.id;
-        setTimeout(() => { inst.fitAddon.fit(); inst.term.focus(); }, 0);
+        setTimeout(() => { TerminalViewport.fit(inst.term, inst.fitAddon, inst.el); inst.term.focus(); }, 0);
         return;
       }
       disposeTerminalInstance(task.id);
@@ -258,7 +264,7 @@ const Tasks = (() => {
     };
     if (typeof ResizeObserver !== 'undefined') {
       inst.resizeObserver = new ResizeObserver(() => {
-        if (!inst.disposed && el.clientWidth > 0 && el.clientHeight > 0) fa.fit();
+        if (!inst.disposed && el.clientWidth > 0 && el.clientHeight > 0) TerminalViewport.fit(t, fa, el);
       });
       inst.resizeObserver.observe(el);
     }
@@ -281,7 +287,7 @@ const Tasks = (() => {
     connectWebSocket(task, inst);
 
     inst.onWindowResize = () => {
-      if (activeTab === 'shell' && termTaskId === task.id) fa.fit();
+      if (activeTab === 'shell' && termTaskId === task.id) TerminalViewport.fit(t, fa, el);
     };
     window.addEventListener('resize', inst.onWindowResize);
   }

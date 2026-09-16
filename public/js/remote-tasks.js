@@ -450,7 +450,7 @@ const RemoteTasks = (() => {
       existing.el.style.display = '';
       setTimeout(() => {
         if (remoteTerminal !== existing) return;
-        existing.fitAddon.fit();
+        TerminalViewport.fit(existing.term, existing.fitAddon, existing.el);
         existing.term.focus();
       }, 0);
       return;
@@ -492,7 +492,7 @@ const RemoteTasks = (() => {
     const instance = remoteTerminal;
     if (typeof ResizeObserver !== 'undefined') {
       instance.resizeObserver = new ResizeObserver(() => {
-        if (!instance.disposed && el.clientWidth > 0 && el.clientHeight > 0) fitAddon.fit();
+        if (!instance.disposed && el.clientWidth > 0 && el.clientHeight > 0) TerminalViewport.fit(term, fitAddon, el);
       });
       instance.resizeObserver.observe(el);
     }
@@ -504,7 +504,7 @@ const RemoteTasks = (() => {
       if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'resize', cols, rows }));
     });
     ws.onopen = () => {
-      fitAddon.fit();
+      TerminalViewport.fit(term, fitAddon, el);
       term.focus();
       ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
     };
@@ -514,6 +514,7 @@ const RemoteTasks = (() => {
           const message = JSON.parse(event.data);
           instance.paused = true;
           instance.clipboard.writeHistory(message.data, () => {
+            TerminalViewport.restore(term, { bottom: true });
             requestAnimationFrame(() => requestAnimationFrame(() => { instance.paused = false; }));
           });
         } catch {
@@ -530,7 +531,7 @@ const RemoteTasks = (() => {
       }
     };
     ws.onerror = () => {};
-    setTimeout(() => fitAddon.fit(), 0);
+    setTimeout(() => TerminalViewport.fit(term, fitAddon, el), 0);
   }
 
   function selectedRemoteTerminal() {

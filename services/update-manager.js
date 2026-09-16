@@ -3,6 +3,7 @@ const path = require('path');
 const https = require('https');
 const { execFileSync } = require('child_process');
 const { logUpdate, runUpdateCommand } = require('../lib/update-command');
+const { requiresRestart } = require('../lib/update-impact');
 const db = require('../db');
 const config = require('../config');
 const {
@@ -16,6 +17,10 @@ const { copyRelease, stageGithubArchive } = require('./archive-updater');
 const { prepareWorkspace } = require('../lib/git-update-workspace');
 
 const projectRoot = path.resolve(__dirname, '..');
+const runningCommit = (() => {
+  try { return execFileSync('git', ['rev-parse', 'HEAD'], { cwd: projectRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); }
+  catch { return null; }
+})();
 const versionPath = path.join(projectRoot, 'VERSION.json');
 const stateKey = 'update_state';
 const MAX_RESPONSE_BYTES = 16 * 1024;
@@ -177,11 +182,13 @@ async function runCheck({ force = false } = {}) {
   const url = gitInstall ? null : configuredVersionUrl();
   saveState({ status: 'checking', stage: gitInstall ? 'fetching' : 'checking_version', error: null, error_details: null, local_version: local.app_version, message: null });
   let result;
+  let restartRequired = true;
   if (gitInstall) {
     await execGit(['fetch', config.gitRemote, `refs/heads/${config.gitBranch}:refs/remotes/${config.gitRemote}/${config.gitBranch}`], 120_000);
     const target = `${config.gitRemote}/${config.gitBranch}`;
     const manifestText = await execGit(['show', `${target}:VERSION.json`]);
     result = { manifest: validateVersionManifest(JSON.parse(manifestText)) };
+    restartRequired = await requiresRestart(execGit, runningCommit, target);
   } else {
     const headers = {};
     if (!force && state.manifest_etag) headers['If-None-Match'] = state.manifest_etag;
@@ -200,6 +207,7 @@ async function runCheck({ force = false } = {}) {
     stage: null,
     local_version: local.app_version,
     remote_version: remote.app_version,
+    restart_required: restartRequired,
     remote_manifest: remote,
     manifest_etag: gitInstall ? null : result.etag || state.manifest_etag,
     manifest_last_modified: gitInstall ? null : result.lastModified || state.manifest_last_modified,
@@ -246,8 +254,16 @@ async function runApply({ force = false } = {}) {
   const checked = await runCheck({ force: true });
   if (checked.status !== 'available') throw new Error('NO_UPDATE_AVAILABLE');
 
+  let restartRequired = true;
   if (installationType() === 'archive') await applyArchiveUpdate(checked);
-  else await applyGitUpdate(checked, force);
+  else restartRequired = await applyGitUpdate(checked, force);
+
+  if (!restartRequired) {
+    logUpdate('completed', '前端更新完成，跳过依赖安装、构建和服务重启，保留现有 Shell 连接');
+    return saveState({ status: 'current', stage: 'completed', restart_required: false,
+      local_version: checked.remote_version, error: null, error_details: null,
+      message: '前端更新完成，服务未重启，现有 Shell 连接保持。可稍后手动刷新页面加载新界面。' });
+  }
 
   await execNpm(['ci', '--ignore-scripts=false'], 'installing');
   await verifyNodePty();
@@ -295,6 +311,8 @@ async function applyGitUpdate(checked, force = false) {
   const remoteVersionText = await execGit(['show', `${target}:VERSION.json`]);
   const targetManifest = validateVersionManifest(JSON.parse(remoteVersionText));
   if (targetManifest.app_version !== checked.remote_version) throw new Error('VERSION_SOURCE_MISMATCH');
+  const restartRequired = await requiresRestart(execGit, runningCommit, target);
+  saveState({ restart_required: restartRequired });
   const counts = (await execGit(['rev-list', '--left-right', '--count', `HEAD...${target}`])).split(/\s+/).map(Number);
   if (counts[0] > 0) throw new Error('BRANCH_DIVERGED');
   if (!counts[1]) throw new Error('NO_GIT_CHANGES');
@@ -306,6 +324,7 @@ async function applyGitUpdate(checked, force = false) {
 
   saveState({ status: 'updating', stage: 'merging', message: '正在快进代码' });
   await execGit(['merge', '--ff-only', '--no-overwrite-ignore', target]);
+  return restartRequired;
 }
 
 async function applyArchiveUpdate(checked) {

@@ -187,8 +187,9 @@ const Updates = {
 
   confirmApply(status) {
     const archiveInstall = status.install_type === 'archive';
+    const noRestart = status.restart_required === false;
     Modal.show('确认更新本地服务', `
-      <div class="update-warning">${archiveInstall ? '更新将下载官方安装包，保留配置、数据库、日志和任务目录' : '更新将检查 Git 工作区并快进代码'}，随后安装依赖并重启服务。</div>
+      <div class="update-warning">${noRestart ? '本次仅更新前端资源，服务不会重启，现有 Shell 连接保持；完成后可稍后手动刷新页面。' : `${archiveInstall ? '更新将下载官方安装包' : '更新将检查 Git 工作区并快进代码'}，随后安装依赖并重启服务，现有 Shell 连接会中断。`}</div>
       <div class="update-detail-row"><span>目标版本</span><strong>${escapeHtml(status.remote_version)}</strong></div>
       <div class="update-detail-row"><span>安装方式</span><strong>${archiveInstall ? '安装包更新' : 'Git 快进更新'}</strong></div>
       <div class="update-detail-row"><span>GitHub 版本源</span><code title="${escapeHtml(status.version_url || '')}">${escapeHtml(status.version_url || '未配置')}</code></div>
@@ -196,7 +197,7 @@ const Updates = {
       ${archiveInstall ? '' : '<label class="form-hint"><input type="checkbox" id="update-force"> 强制更新：将本地未提交代码及未跟踪文件备份到 Git stash，再使用远程代码；忽略的配置和任务数据保留。备份不会自动恢复，已提交的分叉仍会阻止更新。</label>'}
       <div class="form-actions">
         <button class="btn-cancel" id="update-confirm-cancel">取消</button>
-        <button class="btn-submit" id="update-confirm-apply">确认更新并重启</button>
+        <button class="btn-submit" id="update-confirm-apply">${noRestart ? '确认更新（不重启）' : '确认更新并重启'}</button>
       </div>
     `);
     document.getElementById('update-confirm-cancel').addEventListener('click', Modal.hide);
@@ -206,7 +207,8 @@ const Updates = {
   async apply(force = false) {
     Modal.show('正在更新', '<div class="update-progress"><span class="update-spinner"></span><span id="update-progress-message">正在启动更新流程…</span></div><div class="form-hint" id="update-progress-error"></div>');
     try {
-      await API.post('/api/system/apply-update', { confirm: true, force });
+      const status = await API.post('/api/system/apply-update', { confirm: true, force });
+      if (status.stage === 'completed') { this.showCompleted(status); return; }
       this.monitorApply();
     } catch (error) {
       let status = null;
@@ -245,11 +247,19 @@ const Updates = {
           retry.addEventListener('click', () => this.confirmApply(status));
           errorNode.after(retry);
         }
+      } else if (status.stage === 'completed') {
+        clearInterval(this.restartTimer);
+        this.showCompleted(status);
       } else if (status.stage === 'restarting') {
         clearInterval(this.restartTimer);
         this.waitForRestart(status.remote_version);
       }
     }, 1000);
+  },
+
+  showCompleted(status) {
+    Modal.show('更新完成', `<div class="update-message">${escapeHtml(status.message || '更新完成，服务未重启。可稍后手动刷新页面。')}</div><div class="form-actions"><button class="btn-submit" id="update-completed-close">继续使用</button></div>`);
+    document.getElementById('update-completed-close').addEventListener('click', Modal.hide);
   },
 
   waitForRestart(targetVersion) {

@@ -116,3 +116,33 @@ test('return targets are restricted to actual Client pages', () => {
   for (const value of ['https://attacker.test', '//attacker.test', '/auth/logout', '/h5?x=1', undefined]) assert.equal(safeReturnTo(value), '/');
   for (const value of ['/', '/web', '/h5']) assert.equal(safeReturnTo(value), value);
 });
+
+test('active sessions slide by 30 days without granting recent verification', t => {
+  const f = fixture(); t.after(() => f.database.close());
+  const { session } = bind(f);
+  session.cookie = {};
+  const verifiedAt = session.clientAuth.authenticatedAt;
+  assert.equal(SESSION_TTL, 30 * 24 * 60 * 60 * 1000);
+  f.advance(29 * 24 * 60 * 60 * 1000);
+  assert.equal(f.auth.renew(session), true);
+  assert.equal(session.clientAuth.expiresAt, f.now() + SESSION_TTL);
+  assert.equal(session.cookie.maxAge, SESSION_TTL);
+  assert.equal(session.clientAuth.authenticatedAt, verifiedAt);
+  assert.throws(() => f.auth.beginSetup(session, true, 'owner'), /AUTH_RECENT_VERIFICATION_REQUIRED/);
+  f.advance(SESSION_TTL);
+  assert.equal(f.auth.renew(session), false);
+  assert.equal(f.auth.authenticated(session), false);
+});
+
+test('valid old sessions migrate on use while revoked sessions cannot renew', t => {
+  const f = fixture(); t.after(() => f.database.close());
+  const { session } = bind(f);
+  session.clientAuth.expiresAt = f.now() + 12 * 60 * 60 * 1000;
+  f.advance(60 * 60 * 1000);
+  assert.equal(f.auth.renew(session), true);
+  assert.equal(session.clientAuth.expiresAt, f.now() + SESSION_TTL);
+  session.clientAuth.version = 'revoked';
+  const expiry = session.clientAuth.expiresAt;
+  assert.equal(f.auth.renew(session), false);
+  assert.equal(session.clientAuth.expiresAt, expiry);
+});

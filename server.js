@@ -14,7 +14,7 @@ const updates = require('./services/update-manager');
 const { consumeTerminalTicket, pruneExpiredTickets } = require('./services/terminal-tickets');
 const { handleRemoteTerminalUpgrade } = require('./services/remote-terminal-proxy');
 const { ensureSingleUser } = require('./services/single-user');
-const { getClientAuth, safeReturnTo, isLocalInitialization } = require('./services/client-auth');
+const { getClientAuth, safeReturnTo, isLocalInitialization, SESSION_TTL } = require('./services/client-auth');
 const requireAuth = require('./middleware/auth');
 const clientOrigin = require('./middleware/client-origin');
 
@@ -41,12 +41,13 @@ const sessionMiddleware = session({
   store: new SqliteStore(db),
   secret: config.sessionSecret,
   resave: false,
+  rolling: true,
   saveUninitialized: false,
   cookie: {
     httpOnly: true,
     sameSite: 'strict',
     secure: process.env.NODE_ENV === 'production',
-    maxAge: 7 * 24 * 60 * 60 * 1000,
+    maxAge: SESSION_TTL,
   },
 });
 
@@ -55,6 +56,7 @@ app.use((req, res, next) => {
   // Local enrollment also works in production over direct loopback HTTP.
   // All remote production requests still require Secure cookies.
   req.session.cookie.secure = req.secure || (process.env.NODE_ENV === 'production' && !isLocalInitialization(req));
+  getClientAuth().renew(req.session);
   next();
 });
 

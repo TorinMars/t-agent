@@ -1,4 +1,5 @@
 const session = require('express-session');
+const { SESSION_TTL } = require('../services/client-auth');
 
 class SqliteStore extends session.Store {
   constructor(db) {
@@ -30,7 +31,7 @@ class SqliteStore extends session.Store {
     try {
       const ttl = session.cookie && session.cookie.maxAge
         ? session.cookie.maxAge
-        : 7 * 24 * 60 * 60 * 1000;
+        : SESSION_TTL;
       const expired = Date.now() + ttl;
       this.db.prepare(`
         INSERT INTO sessions (sid, sess, expired) VALUES (@sid, @sess, @expired)

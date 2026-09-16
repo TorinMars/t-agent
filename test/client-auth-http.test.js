@@ -6,7 +6,7 @@ const path = require('path');
 const http = require('node:http');
 const { spawn } = require('child_process');
 const WebSocket = require('ws');
-const { totp } = require('../services/client-auth');
+const { totp, SESSION_TTL } = require('../services/client-auth');
 
 for (const environment of ['test', 'production']) test(`Web/H5 HTTP and WebSocket authentication cannot be bypassed (${environment})`, { timeout: 20000 }, async t => {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 't-agent-client-auth-test-'));
@@ -103,7 +103,12 @@ for (const environment of ['test', 'production']) test(`Web/H5 HTTP and WebSocke
   assert.equal(confirmed.redirect, '/h5');
   assert.equal((await call('/api/tasks')).status, 401);
   assert.equal((await call('/api/tasks', { cookie: setupCookie })).status, 401);
-  assert.equal((await call('/auth/me', { cookie: boundCookie })).status, 200);
+  const meResponse = await call('/auth/me', { cookie: boundCookie });
+  assert.equal(meResponse.status, 200);
+  const refreshedCookie = meResponse.headers.get('set-cookie');
+  assert.ok(refreshedCookie, 'active HTTP request reissues the rolling cookie');
+  const expiry = Date.parse(refreshedCookie.match(/Expires=([^;]+)/)[1]);
+  assert.ok(Math.abs(expiry - Date.now() - SESSION_TTL) < 5000, 'cookie lasts 30 days from this request');
   const h5 = await call('/h5', { cookie: boundCookie });
   assert.equal(h5.status, 200);
   const h5Html = await h5.text();

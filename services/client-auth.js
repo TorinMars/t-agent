@@ -1,7 +1,7 @@
 const crypto = require('crypto');
 
 const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
-const SESSION_TTL = 12 * 60 * 60 * 1000;
+const SESSION_TTL = 30 * 24 * 60 * 60 * 1000;
 const SETUP_TTL = 10 * 60 * 1000;
 const ATTEMPT_WINDOW = 15 * 60 * 1000;
 
@@ -110,6 +110,13 @@ function createClientAuth(database, { sessionSecret, ownerId, now = Date.now } =
     return Boolean(auth && row.secret_cipher && auth.ownerId === ownerId && auth.version === row.version && auth.expiresAt > now());
   }
   function sessionGrant(version) { return { ownerId, version, authenticatedAt: now(), expiresAt: now() + SESSION_TTL }; }
+  function renew(session) {
+    // Never revive expired or revoked sessions, or reset recent-verification time.
+    if (!authenticated(session)) return false;
+    session.clientAuth.expiresAt = now() + SESSION_TTL;
+    if (session.cookie) session.cookie.maxAge = SESSION_TTL;
+    return true;
+  }
   function authenticate(code, ip) {
     secureConfiguration();
     attempt(ip);
@@ -175,7 +182,7 @@ function createClientAuth(database, { sessionSecret, ownerId, now = Date.now } =
     return { auth: sessionGrant(version), recoveryCodes };
   }
   return {
-    authenticated, authenticate, beginSetup, confirmSetup,
+    authenticated, authenticate, renew, beginSetup, confirmSetup,
     sessionActive(sid) {
       const row = database.prepare('SELECT sess, expired FROM sessions WHERE sid = ?').get(sid);
       try { return Boolean(row && row.expired > now() && authenticated(JSON.parse(row.sess))); } catch { return false; }

@@ -36,9 +36,17 @@ Authorization: Bearer tae_xxx
 
 ## 终端
 
+- `GET /v1/tasks/:id/terminals`：列出终端（包含兼容旧版本的 `default`）。
+- `POST /v1/tasks/:id/terminals`：创建终端记录，返回 `{terminal_id, title}`；首次 WebSocket 连接时启动 Shell。
 - `POST /v1/terminal-sessions`
 - `WS /v1/terminal-sessions/:sessionId/stream?ticket=...`
 - `POST /v1/terminal-sessions/:taskId/control`
+
+列表和创建需要 `terminal:execute` scope。`/v1/info` 返回 `terminal:multiple` 能力标记。
+
+创建 ticket 的请求体为 `{ "task_id": 1, "terminal_id": "终端 ID" }`。ticket 同时绑定任务和终端，WebSocket URL 无法更改目标。省略 `terminal_id` 使用 `default`，兼容原有接口和历史。
+
+终端控制请求体也接受可选的 `terminal_id`，只控制对应 Shell。终端的历史分别持久化；切换、断线不会终止 Shell。
 
 终端控制请求体支持：
 

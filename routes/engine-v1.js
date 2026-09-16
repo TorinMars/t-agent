@@ -64,7 +64,7 @@ function infoHandler(req, res) {
       'task-groups:read', 'task-groups:write',
       'documents:read', 'documents:write',
       'todos:read', 'todos:write',
-      'terminal:interactive', 'terminal:control', 'token:pairing',
+      'terminal:interactive', 'terminal:control', 'terminal:multiple', 'token:pairing',
       'engine:update',
     ],
   });
@@ -184,10 +184,25 @@ router.delete('/tasks/:id/todos/:todoId', requireEngineAuth('todos:write'), (req
   catch (error) { errorResponse(res, error); }
 });
 
+router.get('/tasks/:id/terminals', requireEngineAuth('terminal:execute'), (req, res) => {
+  const task = tasks.ownedTask(principal(req), req.params.id);
+  if (!task) return res.status(404).json({ error: 'TASK_NOT_FOUND' });
+  res.status(200).json(terminal.listTerminals(task.id));
+});
+
+router.post('/tasks/:id/terminals', requireEngineAuth('terminal:execute'), (req, res) => {
+  const task = tasks.ownedTask(principal(req), req.params.id);
+  if (!task) return res.status(404).json({ error: 'TASK_NOT_FOUND' });
+  res.status(201).json(terminal.createTerminal(task.id));
+});
+
 router.post('/terminal-sessions', requireEngineAuth('terminal:execute'), (req, res) => {
   const task = tasks.ownedTask(principal(req), req.body.task_id);
   if (!task) return res.status(404).json({ error: 'TASK_NOT_FOUND' });
-  const created = createTerminalTicket({ principalId: principal(req), taskId: task.id });
+  let terminalId;
+  try { terminalId = terminal.assertTerminal(task.id, req.body.terminal_id); }
+  catch (error) { return errorResponse(res, error); }
+  const created = createTerminalTicket({ principalId: principal(req), taskId: task.id, terminalId });
   res.status(201).json({
     session_id: String(task.id),
     ...created,
@@ -198,7 +213,7 @@ router.post('/terminal-sessions', requireEngineAuth('terminal:execute'), (req, r
 router.post('/terminal-sessions/:id/control', requireEngineAuth('terminal:execute'), (req, res) => {
   const task = tasks.ownedTask(principal(req), req.params.id);
   if (!task) return res.status(404).json({ error: 'TASK_NOT_FOUND' });
-  try { res.json(terminal.controlSession(task.id, req.body && req.body.action)); }
+  try { res.json(terminal.controlSession(task.id, req.body && req.body.action, req.body && req.body.terminal_id)); }
   catch (error) { errorResponse(res, error); }
 });
 

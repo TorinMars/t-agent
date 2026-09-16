@@ -432,6 +432,10 @@ const RemoteTasks = (() => {
     const serverId = selected.serverId;
     const taskId = selected.task.id;
     const key = terminalKey(serverId, taskId);
+    const terminalId = TerminalTabs.show(`/api/remote-servers/${serverId}/tasks/${taskId}`, () => {
+      disposeRemoteTerminal(remoteTerminals.get(key));
+      renderRemoteTerminal();
+    });
     hideRemoteTerminal();
     previewPane.style.display = 'none';
     document.getElementById('toc-pane').style.display = 'none';
@@ -441,7 +445,7 @@ const RemoteTasks = (() => {
     const container = document.getElementById('xterm-container');
     Array.from(container.children).forEach(child => { child.style.display = 'none'; });
     const existing = remoteTerminals.get(key);
-    if (existing && (existing.ws.readyState === WebSocket.CONNECTING || existing.ws.readyState === WebSocket.OPEN)) {
+    if (existing && existing.terminalId === terminalId && (existing.ws.readyState === WebSocket.CONNECTING || existing.ws.readyState === WebSocket.OPEN)) {
       remoteTerminal = existing;
       existing.el.style.display = '';
       setTimeout(() => {
@@ -469,7 +473,7 @@ const RemoteTasks = (() => {
     const clipboard = TerminalClipboard.attach(term, el);
 
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    const ws = new WebSocket(`${proto}://${location.host}/api/remote-servers/${serverId}/terminal/ws?taskId=${taskId}`);
+    const ws = new WebSocket(`${proto}://${location.host}/api/remote-servers/${serverId}/terminal/ws?taskId=${taskId}&terminalId=${encodeURIComponent(terminalId)}`);
     ws.binaryType = 'arraybuffer';
     remoteTerminal = {
       clipboard,
@@ -479,6 +483,7 @@ const RemoteTasks = (() => {
       el,
       serverId,
       taskId,
+      terminalId,
       paused: false,
       disposed: false,
       resizeObserver: null,
@@ -548,7 +553,7 @@ const RemoteTasks = (() => {
     const target = selectedRemoteTerminal();
     disposeRemoteTerminal(remoteTerminals.get(target.key));
     try {
-      await API.post(`/api/remote-servers/${target.serverId}/tasks/${target.taskId}/terminal/control`, { action });
+      await API.post(`/api/remote-servers/${target.serverId}/tasks/${target.taskId}/terminal/control`, { action, terminal_id: TerminalTabs.current(`/api/remote-servers/${target.serverId}/tasks/${target.taskId}`) });
     } catch (error) {
       renderRemoteTerminal();
       if (/ENGINE_ROUTE_NOT_FOUND|REMOTE_HTTP_404/.test(error.message)) {
@@ -919,6 +924,7 @@ const RemoteTasks = (() => {
     ['btn-reveal-folder', 'btn-open-vscode', 'btn-share-md'].forEach(id => { document.getElementById(id).disabled = false; });
     },
     showTokens,
+    newTerminal: () => TerminalTabs.create(),
     reopenTerminal,
     closeTerminal,
     restartTerminalFromWorkDir,

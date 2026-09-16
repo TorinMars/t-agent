@@ -3,10 +3,11 @@ const crypto = require('crypto');
 const tickets = new Map();
 const TTL_MS = 30_000;
 
-function createTerminalTicket({ principalId, taskId }) {
+function createTerminalTicket({ principalId, taskId, terminalId = 'default' }) {
   const ticket = `tat_${crypto.randomBytes(24).toString('base64url')}`;
   tickets.set(ticket, {
     principalId,
+    terminalId,
     taskId: Number(taskId),
     expiresAt: Date.now() + TTL_MS,
   });

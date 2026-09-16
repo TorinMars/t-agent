@@ -131,6 +131,7 @@ const Tasks = (() => {
     inst.disposed = true;
     if (inst.reconnectTimer) clearTimeout(inst.reconnectTimer);
     if (inst.resizeObserver) inst.resizeObserver.disconnect();
+    if (inst.onWindowResize) window.removeEventListener('resize', inst.onWindowResize);
     if (inst.ws) inst.ws.close();
     inst.clipboard.dispose();
     inst.term.dispose();
@@ -157,7 +158,7 @@ const Tasks = (() => {
 
   function connectWebSocket(task, inst) {
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    const ws = new WebSocket(`${proto}://${location.host}/terminal/ws?taskId=${task.id}`);
+    const ws = new WebSocket(`${proto}://${location.host}/terminal/ws?taskId=${task.id}&terminalId=${encodeURIComponent(inst.terminalId)}`);
     ws.binaryType = 'arraybuffer';
     inst.ws = ws;
     termWs = ws;
@@ -189,9 +190,13 @@ const Tasks = (() => {
       }
     };
 
-    ws.onclose = () => {
+    ws.onclose = (event) => {
       if (inst.ws !== ws || inst.disposed || termInstances.get(task.id) !== inst) return;
       inst.ws = null;
+      if (event.code === 1000 || event.code === 1008) {
+        inst.term.write('\r\n[终端已断开，点击“重新打开”可再次连接]\r\n');
+        return;
+      }
       scheduleReconnect(task, inst);
     };
 
@@ -201,10 +206,14 @@ const Tasks = (() => {
   function connectTerminal(task) {
     const container = document.getElementById('xterm-container');
     TerminalControls.clearMessage();
+    const terminalId = TerminalTabs.show(`/api/tasks/${task.id}`, () => {
+      disposeTerminalInstance(task.id);
+      connectTerminal(task);
+    });
 
     if (termInstances.has(task.id)) {
       const inst = termInstances.get(task.id);
-      if (inst.ws && inst.ws.readyState === WebSocket.OPEN) {
+      if (inst.terminalId === terminalId && inst.ws && inst.ws.readyState === WebSocket.OPEN) {
         termInstances.forEach((i, id) => i.el.style.display = id === task.id ? '' : 'none');
         term = inst.term;
         fitAddon = inst.fitAddon;
@@ -236,6 +245,7 @@ const Tasks = (() => {
 
     const inst = {
       clipboard,
+      terminalId,
       term: t,
       fitAddon: fa,
       ws: null,
@@ -270,9 +280,10 @@ const Tasks = (() => {
 
     connectWebSocket(task, inst);
 
-    window.addEventListener('resize', () => {
+    inst.onWindowResize = () => {
       if (activeTab === 'shell' && termTaskId === task.id) fa.fit();
-    });
+    };
+    window.addEventListener('resize', inst.onWindowResize);
   }
 
   function selectedTerminalTask() {
@@ -292,7 +303,7 @@ const Tasks = (() => {
     const task = selectedTerminalTask();
     disposeTerminalInstance(task.id);
     try {
-      await API.post(`/api/tasks/${task.id}/terminal/control`, { action });
+      await API.post(`/api/tasks/${task.id}/terminal/control`, { action, terminal_id: TerminalTabs.current(`/api/tasks/${task.id}`) });
     } catch (error) {
       // 控制请求失败时恢复到原服务端会话，避免留下不可见的运行进程。
       connectTerminal(task);
@@ -1688,6 +1699,7 @@ const Tasks = (() => {
       if (task) selectTask(task.id);
       else showEmpty();
     },
+    newTerminal: () => TerminalTabs.create(),
     reopenTerminal,
     closeTerminal,
     restartTerminalFromWorkDir,

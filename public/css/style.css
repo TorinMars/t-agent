@@ -1528,3 +1528,7 @@ body {
   font-family: monospace;
   word-break: break-all;
 }
+
+.terminal-tabs { display: flex; flex: 0 0 auto; gap: 4px; padding: 6px 8px; overflow-x: auto; background: #252526; }
+.terminal-tabs .terminal-tab { flex: 0 0 auto; white-space: nowrap; }
+.terminal-tabs .terminal-tab.active { color: #fff; background: #444; box-shadow: inset 0 -2px #70a5ff; }

@@ -111,6 +111,7 @@ function updateTask(principalId, id, input = {}) {
 }
 
 function deleteTask(principalId, id) {
+  if (ownedTask(principalId, id)) require('../routes/terminal').closeTaskTerminals(id);
   const result = db.prepare('DELETE FROM tasks WHERE id = ? AND user_id = ?').run(id, principalId);
   if (!result.changes) throw Object.assign(new Error('TASK_NOT_FOUND'), { statusCode: 404 });
 }

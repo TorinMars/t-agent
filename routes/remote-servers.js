@@ -3,7 +3,7 @@ const db = require('../db');
 const config = require('../config');
 const requireAuth = require('../middleware/auth');
 const { decryptToken, encryptToken } = require('../lib/token-crypto');
-const { normalizeBaseUrl, request } = require('../services/remote-client');
+const { normalizeBaseUrl, request, assertRemoteTerminal } = require('../services/remote-client');
 const { inspectRemoteAddress, persistRemoteServerEdit } = require('../services/remote-server-settings');
 const remoteUpdates = require('../services/remote-engine-updates');
 
@@ -220,10 +220,25 @@ router.post('/:id/tasks', async (req, res) => {
   } catch (error) { res.status(error.statusCode || 502).json({ error: safeError(error) }); }
 });
 
+for (const method of ['get', 'post']) {
+  router[method]('/:id/tasks/:taskId/terminals', async (req, res) => {
+    const row = getServer(req);
+    if (!row) return res.status(404).json({ error: 'REMOTE_NOT_FOUND' });
+    try {
+      const result = await request(row.base_url,
+        `/v1/tasks/${encodeURIComponent(req.params.taskId)}/terminals`,
+        decryptToken(row.token_cipher, config.sessionSecret),
+        { method: method.toUpperCase(), ...(method === 'post' ? { body: {} } : {}) });
+      res.status(method === 'post' ? 201 : 200).json(result);
+    } catch (error) { res.status(error.statusCode || 502).json({ error: safeError(error) }); }
+  });
+}
+
 router.post('/:id/tasks/:taskId/terminal/control', async (req, res) => {
   const row = getServer(req);
   if (!row) return res.status(404).json({ error: 'REMOTE_NOT_FOUND' });
   try {
+    await assertRemoteTerminal(row.base_url, decryptToken(row.token_cipher, config.sessionSecret), req.params.taskId, req.body && req.body.terminal_id);
     res.json(await request(
       row.base_url,
       `/v1/terminal-sessions/${encodeURIComponent(req.params.taskId)}/control`,

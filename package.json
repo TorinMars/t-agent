@@ -1,6 +1,6 @@
 {
   "name": "torin-x-web",
-  "version": "2.8.3",
+  "version": "2.9.0",
   "description": "Componentized task client and remote execution engine",
   "main": "server.js",
   "scripts": {

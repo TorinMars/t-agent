@@ -5,21 +5,61 @@ const db = require('../db');
 const { prepareTerminalHistoryBuffer } = require('../lib/terminal-history');
 const { repairSpawnHelperPermissions } = require('../lib/node-pty-runtime');
 
-// per-task sessions: Map<taskId, { pty, buffer, ws, flushTimer, pendingSince }>
+// Sessions are keyed by task ID and terminal ID; omitted IDs use the legacy shell.
 const sessions = new Map();
 
 const MAX_BUFFER = 5 * 1024 * 1024;   // 5MB
 const FLUSH_INTERVAL = 5000;           // 5s
 const FLUSH_SIZE = 50 * 1024;          // 50KB
 
+function terminalId(value) {
+  const id = value == null ? 'default' : value;
+  if (typeof id !== 'string' || !/^[a-zA-Z0-9_-]{1,64}$/.test(id)) {
+    throw Object.assign(new Error('INVALID_TERMINAL_ID'), { statusCode: 400 });
+  }
+  return id;
+}
+
+function sessionKey(taskId, id = 'default') { return `${Number(taskId)}:${id}`; }
+
+function assertTerminal(taskId, value) {
+  const id = terminalId(value);
+  if (id !== 'default' && !db.prepare('SELECT 1 FROM task_terminals WHERE task_id = ? AND terminal_id = ?').get(taskId, id)) {
+    throw Object.assign(new Error('TERMINAL_NOT_FOUND'), { statusCode: 404 });
+  }
+  return id;
+}
+
+function listTerminals(taskId) {
+  return [{ terminal_id: 'default', title: '终端 1' }, ...db.prepare(
+    'SELECT terminal_id, title FROM task_terminals WHERE task_id = ? ORDER BY rowid'
+  ).all(taskId)];
+}
+
+function createTerminal(taskId) {
+  const id = require('crypto').randomUUID();
+  const title = `终端 ${listTerminals(taskId).length + 1}`;
+  db.prepare('INSERT INTO task_terminals (task_id, terminal_id, title) VALUES (?, ?, ?)').run(taskId, id, title);
+  return { terminal_id: id, title };
+}
+
+function clearBuffer(taskId, id) {
+  if (id === 'default') db.prepare('DELETE FROM terminal_logs WHERE task_id = ?').run(taskId);
+  else db.prepare("UPDATE task_terminals SET buffer = '', updated_at = CURRENT_TIMESTAMP WHERE task_id = ? AND terminal_id = ?").run(taskId, id);
+}
+
 function flushToDB(taskId) {
   const s = sessions.get(taskId);
   if (!s) return;
-  persistBuffer(taskId, s.buffer);
+  persistBuffer(s.taskId, s.buffer, s.terminalId);
   s.pendingSince = 0;
 }
 
-function persistBuffer(taskId, buffer) {
+function persistBuffer(taskId, buffer, id = 'default') {
+  if (id !== 'default') {
+    db.prepare('UPDATE task_terminals SET buffer = ?, updated_at = CURRENT_TIMESTAMP WHERE task_id = ? AND terminal_id = ?').run(buffer || '', taskId, id);
+    return;
+  }
   db.prepare(`
     INSERT INTO terminal_logs (task_id, buffer, updated_at)
     VALUES (?, ?, CURRENT_TIMESTAMP)
@@ -44,11 +84,14 @@ function appendBuffer(taskId, data) {
   }
 }
 
-function getOrCreateSession(taskId, workDir, dirWarning) {
+function getOrCreateSession(ownerTaskId, workDir, dirWarning, id = 'default') {
+  const taskId = sessionKey(ownerTaskId, id);
   if (sessions.has(taskId)) return sessions.get(taskId);
 
   // 从 DB 恢复历史 buffer
-  const row = db.prepare('SELECT buffer FROM terminal_logs WHERE task_id = ?').get(taskId);
+  const row = id === 'default'
+    ? db.prepare('SELECT buffer FROM terminal_logs WHERE task_id = ?').get(ownerTaskId)
+    : db.prepare('SELECT buffer FROM task_terminals WHERE task_id = ? AND terminal_id = ?').get(ownerTaskId, id);
   const savedBuffer = (dirWarning || '') + (row ? row.buffer : '');
 
   let pty;
@@ -93,6 +136,8 @@ function getOrCreateSession(taskId, workDir, dirWarning) {
   }
 
   const s = {
+    taskId: ownerTaskId,
+    terminalId: id,
     pty,
     buffer: savedBuffer,
     ws: null,
@@ -102,6 +147,7 @@ function getOrCreateSession(taskId, workDir, dirWarning) {
   sessions.set(taskId, s);
 
   pty.onData(data => {
+    if (sessions.get(taskId) !== s) return;
     appendBuffer(taskId, data);
     if (s.ws && s.ws.readyState === 1) {
       s.ws.send(data);
@@ -113,7 +159,7 @@ function getOrCreateSession(taskId, workDir, dirWarning) {
     // 只允许当前 Map 中的同一个实例清理状态。
     if (sessions.get(taskId) !== s) return;
     clearInterval(s.flushTimer);
-    persistBuffer(taskId, s.buffer);
+    persistBuffer(s.taskId, s.buffer, s.terminalId);
     sessions.delete(taskId);
     const activeWs = s.ws;
     s.ws = null;
@@ -127,7 +173,7 @@ function getOrCreateSession(taskId, workDir, dirWarning) {
  * 终止任务的服务端 PTY。restart-workdir 同时清空旧历史，下一次连接会从
  * 任务 work_dir 创建全新 Shell；close 保留历史，方便之后重新查看。
  */
-function controlSession(taskId, action) {
+function controlSession(taskId, action, requestedTerminalId) {
   const id = Number.parseInt(taskId, 10);
   if (!id || !['close', 'restart-workdir'].includes(action)) {
     const error = new Error('INVALID_TERMINAL_ACTION');
@@ -135,13 +181,15 @@ function controlSession(taskId, action) {
     throw error;
   }
 
-  const session = sessions.get(id);
+  const selectedId = assertTerminal(id, requestedTerminalId);
+  const key = sessionKey(id, selectedId);
+  const session = sessions.get(key);
   const clearHistory = action === 'restart-workdir';
   if (session) {
-    sessions.delete(id);
+    sessions.delete(key);
     clearInterval(session.flushTimer);
-    if (clearHistory) db.prepare('DELETE FROM terminal_logs WHERE task_id = ?').run(id);
-    else persistBuffer(id, session.buffer);
+    if (clearHistory) clearBuffer(id, selectedId);
+    else persistBuffer(id, session.buffer, selectedId);
     session.pendingSince = 0;
 
     const activeWs = session.ws;
@@ -149,7 +197,7 @@ function controlSession(taskId, action) {
     try { session.pty.kill(); } catch {}
     if (activeWs && activeWs.readyState === 1) activeWs.close(1000, `terminal ${action}`);
   } else if (clearHistory) {
-    db.prepare('DELETE FROM terminal_logs WHERE task_id = ?').run(id);
+    clearBuffer(id, selectedId);
   }
 
   return { success: true, action, had_session: Boolean(session) };
@@ -159,7 +207,7 @@ function controlSession(taskId, action) {
  * Handle WebSocket upgrade for /terminal/ws?taskId=:id
  * Called from server.js with (ws, req, sessionData)
  */
-function handleWs(ws, req, sessionUser, requestedTaskId = null) {
+function handleWs(ws, req, sessionUser, requestedTaskId = null, requestedTerminalId = null) {
   const taskId = parseInt(requestedTaskId || new URL(req.url, 'http://x').searchParams.get('taskId'));
   if (!taskId) { ws.close(1008, 'missing taskId'); return; }
 
@@ -171,6 +219,14 @@ function handleWs(ws, req, sessionUser, requestedTaskId = null) {
     return;
   }
 
+  let selectedId;
+  try {
+    selectedId = assertTerminal(taskId, requestedTerminalId ?? new URL(req.url, 'http://x').searchParams.get('terminalId'));
+  } catch (error) {
+    ws.close(1008, error.message);
+    return;
+  }
+  const key = sessionKey(taskId, selectedId);
   const workDir = task.work_dir || os.homedir();
   // 检查目录是否存在，不存在时回退到 $HOME 并记录告警
   let actualDir = workDir;
@@ -179,7 +235,7 @@ function handleWs(ws, req, sessionUser, requestedTaskId = null) {
     actualDir = os.homedir();
     dirWarning = `\r\n\x1b[33m[⚠ 工作目录不存在: ${workDir}]\x1b[0m\r\n\x1b[33m[已回退到 ${actualDir}，请编辑任务更新工作路径]\x1b[0m\r\n\r\n`;
   }
-  const s = getOrCreateSession(taskId, actualDir, dirWarning);
+  const s = getOrCreateSession(taskId, actualDir, dirWarning, selectedId);
   if (s.startupError) {
     const details = String(s.startupError.message || '未知错误')
       .replace(/[\x00-\x1f\x7f]/g, ' ')
@@ -205,7 +261,7 @@ function handleWs(ws, req, sessionUser, requestedTaskId = null) {
   }
 
   ws.on('message', (msg) => {
-    if (ws.readyState !== 1) return;
+    if (ws.readyState !== 1 || sessions.get(key) !== s || s.ws !== ws) return;
     if (req.sessionID && !require('../services/client-auth').getClientAuth().sessionActive(req.sessionID)) {
       ws.close(1008, 'Authentication required');
       return;
@@ -230,8 +286,8 @@ function handleWs(ws, req, sessionUser, requestedTaskId = null) {
       s.ws = null;
       // 立即 flush 到 DB
       clearInterval(s.flushTimer);
-      flushToDB(taskId);
-      s.flushTimer = setInterval(() => flushToDB(taskId), FLUSH_INTERVAL);
+      flushToDB(key);
+      s.flushTimer = setInterval(() => flushToDB(key), FLUSH_INTERVAL);
     }
   });
 
@@ -240,4 +296,8 @@ function handleWs(ws, req, sessionUser, requestedTaskId = null) {
   });
 }
 
-module.exports = { controlSession, handleWs };
+function closeTaskTerminals(taskId) {
+  for (const item of listTerminals(taskId)) controlSession(taskId, 'close', item.terminal_id);
+}
+
+module.exports = { controlSession, handleWs, listTerminals, createTerminal, assertTerminal, closeTaskTerminals };

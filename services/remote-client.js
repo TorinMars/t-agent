@@ -64,4 +64,12 @@ function request(baseUrl, pathname, token, { expectText = false, method = 'GET',
   });
 }
 
-module.exports = { normalizeBaseUrl, request };
+async function assertRemoteTerminal(baseUrl, token, taskId, terminalId) {
+  if (terminalId == null || terminalId === 'default') return;
+  const rows = await request(baseUrl, `/v1/tasks/${encodeURIComponent(taskId)}/terminals`, token);
+  if (!Array.isArray(rows) || !rows.some(row => row.terminal_id === terminalId)) {
+    throw Object.assign(new Error('TERMINAL_NOT_FOUND'), { statusCode: 404 });
+  }
+}
+
+module.exports = { normalizeBaseUrl, request, assertRemoteTerminal };

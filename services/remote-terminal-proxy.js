@@ -3,7 +3,7 @@ const db = require('../db');
 const config = require('../config');
 const { decryptToken } = require('../lib/token-crypto');
 const { closeWebSocket } = require('../lib/websocket-close');
-const { request } = require('./remote-client');
+const { request, assertRemoteTerminal } = require('./remote-client');
 
 function rejectUpgrade(socket, status, message) {
   if (!socket.destroyed) {
@@ -31,9 +31,10 @@ async function handleRemoteTerminalUpgrade(req, socket, head, wss, user) {
 
   try {
     const token = decryptToken(server.token_cipher, config.sessionSecret);
+    await assertRemoteTerminal(server.base_url, token, taskId, url.searchParams.get('terminalId'));
     const terminalSession = await request(server.base_url, '/v1/terminal-sessions', token, {
       method: 'POST',
-      body: { task_id: taskId },
+      body: { task_id: taskId, terminal_id: url.searchParams.get('terminalId') || 'default' },
     });
     const upstreamUrl = new URL(terminalSession.websocket_path, `${server.base_url}/`);
     upstreamUrl.protocol = upstreamUrl.protocol === 'https:' ? 'wss:' : 'ws:';

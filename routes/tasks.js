@@ -166,12 +166,24 @@ router.put('/:id', (req, res) => {
   res.json(db.prepare('SELECT * FROM tasks WHERE id = ?').get(id));
 });
 
+router.get('/:id/terminals', (req, res) => {
+  const task = db.prepare('SELECT id FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, ownerFilter(req));
+  if (!task) return res.status(404).json({ error: 'TASK_NOT_FOUND' });
+  res.status(200).json(terminal.listTerminals(task.id));
+});
+
+router.post('/:id/terminals', (req, res) => {
+  const task = db.prepare('SELECT id FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, ownerFilter(req));
+  if (!task) return res.status(404).json({ error: 'TASK_NOT_FOUND' });
+  res.status(201).json(terminal.createTerminal(task.id));
+});
+
 router.post('/:id/terminal/control', (req, res) => {
   const uid = ownerFilter(req);
   const task = db.prepare('SELECT id FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, uid);
   if (!task) return res.status(404).json({ error: 'TASK_NOT_FOUND' });
   try {
-    res.json(terminal.controlSession(task.id, req.body && req.body.action));
+    res.json(terminal.controlSession(task.id, req.body && req.body.action, req.body && req.body.terminal_id));
   } catch (error) {
     res.status(error.statusCode || 400).json({ error: error.message || 'TERMINAL_CONTROL_FAILED' });
   }
@@ -181,6 +193,7 @@ router.delete('/:id', (req, res) => {
   const uid = ownerFilter(req);
   const task = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, uid);
   if (!task) return res.status(404).json({ error: 'Task not found' });
+  terminal.closeTaskTerminals(task.id);
   db.prepare('DELETE FROM tasks WHERE id = ?').run(req.params.id);
   res.json({ success: true });
 });

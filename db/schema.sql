@@ -118,3 +118,13 @@ CREATE TABLE IF NOT EXISTS engine_identity (
   value      TEXT NOT NULL,
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Additional terminals retain the original terminal_logs table for the default shell.
+CREATE TABLE IF NOT EXISTS task_terminals (
+  task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  terminal_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  buffer TEXT NOT NULL DEFAULT '',
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (task_id, terminal_id)
+);

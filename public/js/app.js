@@ -64,9 +64,11 @@ const TerminalControls = {
   },
 
   async run(method, confirmation = '') {
+    if (this.busy) return;
     const controller = this.controller();
     if (!controller || typeof controller[method] !== 'function') return;
     if (confirmation && !confirm(confirmation)) return;
+    this.busy = true;
     const buttons = document.querySelectorAll('.terminal-toolbar-btn');
     buttons.forEach(button => { button.disabled = true; });
     try {
@@ -74,10 +76,15 @@ const TerminalControls = {
     } catch (error) {
       alert(`终端操作失败：${error.message}`);
     } finally {
-      buttons.forEach(button => { button.disabled = false; });
+      this.busy = false;
+      document.querySelectorAll('.terminal-toolbar-btn').forEach(button => { button.disabled = false; });
     }
   },
 };
+
+document.getElementById('btn-terminal-new').addEventListener('click', () => {
+  TerminalControls.run('newTerminal');
+});
 
 document.getElementById('btn-terminal-reopen').addEventListener('click', () => {
   TerminalControls.run('reopenTerminal');

@@ -354,7 +354,7 @@ server.on('upgrade', (req, socket, head) => {
       return;
     }
     wss.handleUpgrade(req, socket, head, ws => {
-      terminal.handleWs(ws, req, { login: authorization.principalId }, authorization.taskId);
+      terminal.handleWs(ws, req, { login: authorization.principalId }, authorization.taskId, authorization.terminalId);
     });
     return;
   }

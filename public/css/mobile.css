@@ -156,7 +156,9 @@ body.mobile-client {
 #mobile-terminal-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
 .mobile-client #xterm-container .xterm-viewport { overscroll-behavior: contain; }
 .mobile-client .terminal-toolbar, .mobile-client .terminal-tabs, .mobile-client .mobile-terminal-keys { overscroll-behavior: contain; }
-.mobile-client .terminal-toolbar { overflow-x: auto; flex-wrap: nowrap; gap: 4px; padding: 3px 6px; }
+.mobile-client .terminal-toolbar { overflow-x: auto; overflow-y: hidden; flex-wrap: nowrap; gap: 4px; padding: 3px 6px; height: 40px; min-height: 40px; flex: 0 0 40px; }
+.mobile-client .terminal-copy-status { flex: 0 0 auto; white-space: nowrap; line-height: 20px; }
+.mobile-client .terminal-copy-status.terminal-copy-hint { display: none; }
 .mobile-client .terminal-toolbar-btn { min-height: 32px; font-size: 13px; flex-shrink: 0; white-space: nowrap; }
 .mobile-client .terminal-tabs { padding: 3px 6px; }
 .mobile-client #xterm-container > .xterm-host { bottom: 2px; }

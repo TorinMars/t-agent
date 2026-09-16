@@ -26,11 +26,20 @@ const TerminalClipboard = (() => {
   }
   function render() {
     const item = active();
-    if (shown !== item) { status.textContent = hint; shown = item; }
+    if (shown !== item) {
+      status.textContent = hint;
+      status.classList.add('terminal-copy-hint');
+      shown = item;
+    }
     copy.disabled = !item;
     request.hidden = !item?.pending;
   }
-  function message(item, text) { if (active() === item) status.textContent = text; }
+  function message(item, text) {
+    if (active() === item) {
+      status.classList.remove('terminal-copy-hint');
+      status.textContent = text;
+    }
+  }
 
   async function writeText(text) {
     if (navigator.clipboard?.writeText && window.isSecureContext) {
@@ -49,7 +58,12 @@ const TerminalClipboard = (() => {
 
   async function copySelection(item) {
     const text = item.term.getSelection();
-    if (!text) { message(item, `没有客户端选区；${hint}，或查看程序复制请求`); return; }
+    if (!text) {
+      message(item, document.body.classList.contains('mobile-client')
+        ? '未选中文字，可查看程序复制请求'
+        : `没有客户端选区；${hint}，或查看程序复制请求`);
+      return;
+    }
     try { await writeText(text); message(item, '已复制'); }
     catch { message(item, '复制失败：浏览器拒绝写入剪贴板，请检查权限'); }
   }

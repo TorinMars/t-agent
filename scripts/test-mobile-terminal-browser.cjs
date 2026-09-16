@@ -19,6 +19,7 @@ const root = path.resolve(__dirname, '..');
       await page.addStyleTag({ content: fs.readFileSync(path.join(root, 'public/css', file), 'utf8') });
     }
     await page.addScriptTag({ content: fs.readFileSync(path.join(root, 'public/js/mobile.js'), 'utf8') });
+    await page.addScriptTag({ content: fs.readFileSync(path.join(root, 'public/js/terminal-clipboard.js'), 'utf8') });
     await page.evaluate(() => {
       ClientMobile.finishStartup();
       ClientMobile.showDetails('Mobile terminal test');
@@ -36,6 +37,18 @@ const root = path.resolve(__dirname, '..');
       assert.equal(Math.round(bounds.height), height);
       assert.equal(Math.round(bounds.y), 0);
       assert.ok(await page.locator('#mobile-terminal-dialog #terminal-pane').count());
+      await page.evaluate(() => {
+        const status = document.querySelector('.terminal-copy-status');
+        status.classList.add('terminal-copy-hint');
+        status.textContent = '按住 Shift 拖选，再复制';
+      });
+      assert.equal(await page.locator('.terminal-copy-status').isVisible(), false);
+      await page.evaluate(() => {
+        const status = document.querySelector('.terminal-copy-status');
+        status.classList.remove('terminal-copy-hint');
+        status.textContent = '复制失败：浏览器拒绝写入剪贴板，请检查权限';
+      });
+      assert.equal(Math.round((await page.locator('.terminal-toolbar').boundingBox()).height), 40);
       await page.evaluate(() => document.getElementById('btn-settings').focus());
       assert.notEqual(await page.evaluate(() => document.activeElement.id), 'btn-settings');
       await page.keyboard.press('Escape');

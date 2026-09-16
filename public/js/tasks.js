@@ -461,6 +461,20 @@ const Tasks = (() => {
       const applyTransform = () => {
         canvas.style.transform = `translate(${tx}px,${ty}px) scale(${scale})`;
       };
+      const zoomAt = (nextScale, clientX, clientY) => {
+        // Keep the point under the pointer/fingers stationary while zooming.
+        // There is intentionally no upper clamp: Mermaid SVG stays vector-sharp
+        // and users can keep zooming into dense sequence diagrams.
+        nextScale = Math.max(0.2, nextScale);
+        if (!Number.isFinite(nextScale)) return;
+        const rect = viewport.getBoundingClientRect();
+        const pointerX = clientX - (rect.left + rect.width / 2);
+        const pointerY = clientY - (rect.top + rect.height / 2);
+        const ratio = nextScale / scale;
+        tx = pointerX - (pointerX - tx) * ratio;
+        ty = pointerY - (pointerY - ty) * ratio;
+        scale = nextScale;
+      };
       const reset = () => {
         fitScale = mermaidModal._fitScale || 1;
         scale = fitScale; tx = 0; ty = 0;
@@ -471,8 +485,8 @@ const Tasks = (() => {
         e.preventDefault();
         if (e.ctrlKey || e.metaKey) {
           // 触控板双指捏合 → 缩放
-          const delta = e.deltaY < 0 ? 0.1 : -0.1;
-          scale = Math.min(8, Math.max(0.2, +(scale + delta).toFixed(2)));
+          const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+          zoomAt(scale * factor, e.clientX, e.clientY);
         } else {
           // 触控板双指平移 → 移动
           tx -= e.deltaX;
@@ -522,7 +536,7 @@ const Tasks = (() => {
           const midY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
           // 缩放
           if (lastTouchDist) {
-            scale = Math.min(8, Math.max(0.2, +(scale * dist / lastTouchDist).toFixed(3)));
+            zoomAt(scale * dist / lastTouchDist, lastTouchMidX, lastTouchMidY);
           }
           // 平移：用当前帧与上一帧中心点的差值增量累加
           tx += midX - lastTouchMidX;

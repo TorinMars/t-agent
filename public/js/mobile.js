@@ -68,11 +68,34 @@
   media.addEventListener('change', updateMode);
   listButton.addEventListener('click', () => setView('tasks'));
   detailsButton.addEventListener('click', () => setView('details'));
+  const terminalPane = document.getElementById('terminal-pane');
+  const terminalDialog = document.getElementById('mobile-terminal-dialog');
+  const terminalHome = terminalPane.parentElement;
+  function syncTerminalPanel() {
+    const shouldOpen = body.classList.contains('mobile-client') &&
+      body.dataset.mobileView === 'details' && terminalPane.style.display !== 'none';
+    if (shouldOpen && !terminalDialog.open) {
+      terminalDialog.appendChild(terminalPane);
+      terminalDialog.showModal();
+      window.dispatchEvent(new Event('resize'));
+    } else if (!shouldOpen && terminalDialog.open) {
+      terminalDialog.close();
+      terminalHome.appendChild(terminalPane);
+      window.dispatchEvent(new Event('resize'));
+    }
+  }
+  // Both local and remote controllers use this pane's display state.
+  const panelObserver = new MutationObserver(syncTerminalPanel);
+  panelObserver.observe(terminalPane, { attributes: true, attributeFilter: ['style'] });
+  panelObserver.observe(body, { attributes: true, attributeFilter: ['class', 'data-mobile-view'] });
+  terminalDialog.addEventListener('cancel', event => event.preventDefault());
+  syncTerminalPanel();
   document.getElementById('mobile-terminal-back').addEventListener('click', () => {
     // Use the normal tab lifecycle; hiding the panel must not terminate the shell.
     document.activeElement?.blur();
     const documentTab = document.querySelector('.tab-btn[data-tab="doc"]');
     documentTab.click();
+    syncTerminalPanel();
     documentTab.focus();
   });
 

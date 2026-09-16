@@ -15,6 +15,7 @@ function start({ route = '/h5', narrow = true, viewport = null } = {}) {
   const body = { style: { setProperty(key, value) { styles[key] = value; } }, dataset: {}, classList: { contains: name => classes.has(name), toggle(name, enabled) { enabled ? classes.add(name) : classes.delete(name); } } };
   const document = { listeners: {}, addEventListener(type, listener) { this.listeners[type] = listener; }, body, createElement: element, getElementById(id) { if (!elements.has(id)) elements.set(id, element()); return elements.get(id); }, querySelectorAll(selector) { return selector === '[data-terminal-key]' ? [key] : []; } };
   document.querySelector = selector => selector === '.tab-btn[data-tab="doc"]' ? document.getElementById('doc-tab') : null;
+  document.getElementById('terminal-pane').style = { display: 'none' };
   const sent = [];
   const media = { matches: narrow, addEventListener() {} };
   const window = { visualViewport: viewport, innerHeight: 800, addEventListener() {}, requestAnimationFrame: fn => fn(), matchMedia: () => media, dispatchEvent() {}, Tasks: { sendTerminalInput: data => sent.push(data) } };

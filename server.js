@@ -283,6 +283,8 @@ function sendClientPage(req, res) {
       .replace('  <script src="/vendor/monaco/monaco.js"></script>\n', '')
       .replace('  <link rel="stylesheet" href="/vendor/monaco/monaco.css">\n', '');
   }
+  const assetVersion = encodeURIComponent(JSON.parse(fs.readFileSync(path.join(__dirname, 'VERSION.json'), 'utf8')).app_version);
+  html = html.replace(/(src|href)="(\/(?:js|css|vendor)\/[^"?]+\.(?:js|css))"/g, `$1="$2?v=${assetVersion}"`);
   res.type('html').send(html);
 }
 

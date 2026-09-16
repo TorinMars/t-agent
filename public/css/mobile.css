@@ -1,4 +1,4 @@
-.mobile-navigation, .mobile-terminal-keys, .mobile-more { display: none; }
+.mobile-navigation, .mobile-terminal-keys, .mobile-more, .mobile-terminal-header { display: none; }
 #btn-client-mode { text-decoration: none; }
 
 body.mobile-client {
@@ -96,9 +96,43 @@ body.mobile-client {
 .mobile-client .context-menu { max-width: calc(100vw - 24px); max-height: 60dvh; overflow-y: auto; }
 .mobile-client .context-menu li:not(.separator) { min-height: 44px; font-size: 14px; padding: 12px 16px; }
 .mobile-client .terminal-pane {
+  position: fixed;
+  top: var(--mobile-viewport-top, 0px);
+  left: 0;
+  width: 100%;
+  height: var(--mobile-viewport-height, 100dvh);
+  z-index: 150;
+  overscroll-behavior: none;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
   padding-left: env(safe-area-inset-left, 0px);
   padding-right: env(safe-area-inset-right, 0px);
 }
+.mobile-client.mobile-keyboard-open .terminal-pane { padding-bottom: 0; }
+.mobile-client .mobile-terminal-header {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 10px;
+  padding: 2px 8px;
+  border-bottom: 1px solid #3a3a3a;
+  background: #252526;
+  color: #d4d4d4;
+}
+.mobile-terminal-header button {
+  flex-shrink: 0;
+  min-height: 40px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  font-size: 14px;
+  touch-action: manipulation;
+}
+#mobile-terminal-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+.mobile-client #xterm-container .xterm-viewport { overscroll-behavior: contain; }
+.mobile-client .terminal-toolbar, .mobile-client .terminal-tabs, .mobile-client .mobile-terminal-keys { overscroll-behavior: contain; }
 .mobile-client .terminal-toolbar { overflow-x: auto; flex-wrap: nowrap; gap: 4px; padding: 3px 6px; }
 .mobile-client .terminal-toolbar-btn { min-height: 32px; font-size: 13px; flex-shrink: 0; white-space: nowrap; }
 .mobile-client .terminal-tabs { padding: 3px 6px; }

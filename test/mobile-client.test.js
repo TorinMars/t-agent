@@ -8,12 +8,13 @@ function start({ route = '/h5', narrow = true, viewport = null } = {}) {
   const classes = new Set(route === '/h5' ? ['h5-client'] : []);
   const elements = new Map();
   function element() {
-    return { attributes: {}, listeners: {}, children: [], setAttribute(key, value) { this.attributes[key] = value; }, addEventListener(type, listener) { this.listeners[type] = listener; }, appendChild(child) { this.children.push(child); }, focus() {}, remove() {} };
+    return { attributes: {}, listeners: {}, children: [], setAttribute(key, value) { this.attributes[key] = value; }, addEventListener(type, listener) { this.listeners[type] = listener; }, appendChild(child) { this.children.push(child); }, click() { this.clicked = true; }, focus() { this.focused = true; }, remove() {} };
   }
   const key = element(); key.dataset = { terminalKey: 'interrupt' };
   const styles = {};
   const body = { style: { setProperty(key, value) { styles[key] = value; } }, dataset: {}, classList: { contains: name => classes.has(name), toggle(name, enabled) { enabled ? classes.add(name) : classes.delete(name); } } };
   const document = { listeners: {}, addEventListener(type, listener) { this.listeners[type] = listener; }, body, createElement: element, getElementById(id) { if (!elements.has(id)) elements.set(id, element()); return elements.get(id); }, querySelectorAll(selector) { return selector === '[data-terminal-key]' ? [key] : []; } };
+  document.querySelector = selector => selector === '.tab-btn[data-tab="doc"]' ? document.getElementById('doc-tab') : null;
   const sent = [];
   const media = { matches: narrow, addEventListener() {} };
   const window = { visualViewport: viewport, innerHeight: 800, addEventListener() {}, requestAnimationFrame: fn => fn(), matchMedia: () => media, dispatchEvent() {}, Tasks: { sendTerminalInput: data => sent.push(data) } };
@@ -76,6 +77,19 @@ test('mobile terminal shortcut sends control input only to the active controller
   const app = start();
   app.key.listeners.click();
   assert.deepEqual(app.sent, ['\x03']);
+});
+
+test('terminal panel returns through the shared tab control without sending shell input', () => {
+  const app = start();
+  app.window.ClientMobile.showDetails('终端任务');
+  assert.equal(app.elements.get('mobile-terminal-title').textContent, '终端任务');
+  let blurred = false;
+  app.document.activeElement = { blur() { blurred = true; } };
+  app.elements.get('mobile-terminal-back').listeners.click();
+  assert.ok(blurred);
+  assert.ok(app.elements.get('doc-tab').clicked);
+  assert.ok(app.elements.get('doc-tab').focused);
+  assert.deepEqual(app.sent, []);
 });
 
 test('mobile Markdown editor preserves content and emits changes without Monaco', () => {

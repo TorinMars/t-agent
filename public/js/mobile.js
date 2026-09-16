@@ -35,6 +35,7 @@
   window.ClientMobile = {
     showDetails(title) {
       document.getElementById('mobile-task-title').textContent = title;
+      document.getElementById('mobile-terminal-title').textContent = title;
       if (ready && body.classList.contains('mobile-client')) setView('details');
     },
     finishStartup() { ready = true; },
@@ -67,6 +68,13 @@
   media.addEventListener('change', updateMode);
   listButton.addEventListener('click', () => setView('tasks'));
   detailsButton.addEventListener('click', () => setView('details'));
+  document.getElementById('mobile-terminal-back').addEventListener('click', () => {
+    // Use the normal tab lifecycle; hiding the panel must not terminate the shell.
+    document.activeElement?.blur();
+    const documentTab = document.querySelector('.tab-btn[data-tab="doc"]');
+    documentTab.click();
+    documentTab.focus();
+  });
 
   function addMoreControls() {
     document.querySelectorAll('.task-nav-item, .task-group-header[data-mobile-menu="true"], .engine-tab[data-engine-key]:not([data-engine-key="local"])').forEach(element => {

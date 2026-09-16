@@ -1,7 +1,8 @@
 const fs = require('fs');
 const path = require('path');
 const https = require('https');
-const { execFile, execFileSync } = require('child_process');
+const { execFileSync } = require('child_process');
+const { logUpdate, runUpdateCommand } = require('../lib/update-command');
 const db = require('../db');
 const config = require('../config');
 const {
@@ -61,6 +62,8 @@ let applyPromise = null;
 let timer = null;
 
 function saveState(patch) {
+  if (patch.stage && patch.stage !== state.stage) logUpdate(patch.stage, patch.message || patch.status);
+  if (patch.error) logUpdate('failed', `${patch.error}: ${patch.error_details || patch.message || ''}`);
   state = { ...state, ...patch, updated_at: new Date().toISOString() };
   db.prepare(`
     INSERT INTO system_state (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
@@ -219,40 +222,22 @@ async function check(options) {
 }
 
 function execGit(args, timeout = 60_000) {
-  return new Promise((resolve, reject) => {
-    execFile('git', args, {
-      cwd: projectRoot,
-      env: { ...process.env, PATH: executablePath() },
-      timeout,
-      maxBuffer: 1024 * 1024,
-    }, (error, stdout, stderr) => {
-      if (error) {
-        const wrapped = new Error(`GIT_${String(args[0]).toUpperCase()}_FAILED`);
-        wrapped.details = String(stderr || stdout || '').trim().slice(0, 1000);
-        return reject(wrapped);
-      }
-      resolve(String(stdout).trim());
-    });
-  });
+  return runUpdateCommand('git', args, {
+    cwd: projectRoot,
+    env: { ...process.env, PATH: executablePath() },
+    timeout,
+    maxBuffer: 1024 * 1024,
+  }, { stage: `git:${args[0]}`, errorCode: `GIT_${String(args[0]).toUpperCase()}_FAILED` });
 }
 
 function execNpm(args, stage) {
   saveState({ status: 'updating', stage, message: stage === 'installing' ? '正在安装依赖' : '正在构建前端资源' });
-  return new Promise((resolve, reject) => {
-    execFile(process.platform === 'win32' ? 'npm.cmd' : 'npm', args, {
-      cwd: projectRoot,
-      env: { ...process.env, PATH: executablePath() },
-      timeout: 10 * 60_000,
-      maxBuffer: 2 * 1024 * 1024,
-    }, (error, stdout, stderr) => {
-      if (error) {
-        const wrapped = new Error(`NPM_${stage.toUpperCase()}_FAILED`);
-        wrapped.details = String(stderr || stdout || '').trim().slice(-2000);
-        return reject(wrapped);
-      }
-      resolve();
-    });
-  });
+  return runUpdateCommand(process.platform === 'win32' ? 'npm.cmd' : 'npm', args, {
+    cwd: projectRoot,
+    env: { ...process.env, PATH: executablePath() },
+    timeout: 10 * 60_000,
+    maxBuffer: 2 * 1024 * 1024,
+  }, { stage, errorCode: `NPM_${stage.toUpperCase()}_FAILED`, streamOutput: true });
 }
 
 async function runApply({ force = false } = {}) {
@@ -274,19 +259,12 @@ async function runApply({ force = false } = {}) {
 }
 
 function verifyNodePty() {
-  return new Promise((resolve, reject) => {
-    execFile(process.execPath, [path.join(projectRoot, 'scripts', 'verify-node-pty.js')], {
-      cwd: projectRoot,
-      env: { ...process.env, PATH: executablePath() },
-      timeout: 30_000,
-      maxBuffer: 1024 * 1024,
-    }, (error, stdout, stderr) => {
-      if (!error) return resolve();
-      const wrapped = new Error('NODE_PTY_LOAD_FAILED');
-      wrapped.details = String(stderr || stdout || error.message || '').trim().slice(-2000);
-      reject(wrapped);
-    });
-  });
+  return runUpdateCommand(process.execPath, [path.join(projectRoot, 'scripts', 'verify-node-pty.js')], {
+    cwd: projectRoot,
+    env: { ...process.env, PATH: executablePath() },
+    timeout: 30_000,
+    maxBuffer: 1024 * 1024,
+  }, { stage: 'verifying_terminal', errorCode: 'NODE_PTY_LOAD_FAILED', streamOutput: true });
 }
 
 async function backupDatabase(metadata = {}) {
@@ -300,7 +278,9 @@ async function backupDatabase(metadata = {}) {
     backup_path: backupPath,
     ...metadata,
   });
+  const started = Date.now();
   await db.backup(backupPath);
+  logUpdate('backing_up', `备份完成，耗时 ${Date.now() - started}ms：${backupPath}`);
   return backupPath;
 }
 

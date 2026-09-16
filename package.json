@@ -1,6 +1,6 @@
 {
   "name": "torin-x-web",
-  "version": "2.9.2",
+  "version": "2.9.3",
   "description": "Componentized task client and remote execution engine",
   "main": "server.js",
   "scripts": {
@@ -16,6 +16,7 @@
     "axios": "^1.7.2",
     "better-sqlite3": "^12.11.1",
     "dotenv": "^16.0.0",
+    "esbuild": "^0.25.9",
     "express": "^4.19.2",
     "express-session": "^1.18.0",
     "highlight.js": "11.11.1",
@@ -25,7 +26,6 @@
     "ws": "^8.21.1"
   },
   "devDependencies": {
-    "esbuild": "^0.25.9",
     "linkedom": "0.18.12",
     "nodemon": "^3.1.4"
   }

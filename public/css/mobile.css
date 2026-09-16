@@ -1,7 +1,24 @@
 .mobile-navigation, .mobile-terminal-keys, .mobile-more { display: none; }
 #btn-client-mode { text-decoration: none; }
 
-body.mobile-client { font-size: 16px; padding-top: env(safe-area-inset-top, 0px); }
+body.mobile-client {
+  position: fixed;
+  top: var(--mobile-viewport-top, 0px);
+  left: 0;
+  width: 100%;
+  height: var(--mobile-viewport-height, 100dvh);
+  font-size: 16px;
+  padding-top: env(safe-area-inset-top, 0px);
+}
+.mobile-client.mobile-keyboard-open { padding-bottom: 0; }
+.mobile-client.mobile-terminal-input { padding-top: 0; }
+.mobile-client.mobile-terminal-input .header,
+.mobile-client.mobile-terminal-input .quicklinks-bar,
+.mobile-client.mobile-terminal-input .engine-tabs-bar,
+.mobile-client.mobile-terminal-input .content-toolbar { display: none !important; }
+.mobile-client.mobile-terminal-input .mobile-navigation { padding-top: 2px; padding-bottom: 2px; }
+.mobile-client.mobile-terminal-input .mobile-navigation button,
+.mobile-client.mobile-terminal-input .tab-btn { min-height: 32px; padding-top: 4px; padding-bottom: 4px; }
 .mobile-client .header { padding: 0 12px; min-height: 56px; gap: 8px; }
 .mobile-client .header-right { gap: 6px; }
 .mobile-client .btn-logout { font-size: 14px; padding: 8px; min-height: 40px; display: inline-flex; align-items: center; white-space: nowrap; }
@@ -60,8 +77,11 @@ body.mobile-client { font-size: 16px; padding-top: env(safe-area-inset-top, 0px)
   padding-left: env(safe-area-inset-left, 0px);
   padding-right: env(safe-area-inset-right, 0px);
 }
-.mobile-client .terminal-toolbar { overflow-x: auto; flex-wrap: nowrap; }
-.mobile-client .terminal-toolbar-btn { min-height: 44px; font-size: 14px; flex-shrink: 0; }
-.mobile-client .mobile-terminal-keys { display: flex; gap: 4px; overflow-x: auto; padding: 6px 8px; background: var(--bg-secondary); border-top: 1px solid var(--border); flex-shrink: 0; }
-.mobile-terminal-keys button { min-height: 44px; min-width: 44px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font-size: 14px; flex-shrink: 0; }
+.mobile-client .terminal-toolbar { overflow-x: auto; flex-wrap: nowrap; gap: 4px; padding: 3px 6px; }
+.mobile-client .terminal-toolbar-btn { min-height: 32px; font-size: 13px; flex-shrink: 0; white-space: nowrap; }
+.mobile-client .terminal-tabs { padding: 3px 6px; }
+.mobile-client #xterm-container > .xterm-host { bottom: 2px; }
+.mobile-client #xterm-container .xterm-helper-textarea { min-height: 0; }
+.mobile-client .mobile-terminal-keys { display: flex; gap: 4px; overflow-x: auto; padding: 3px 6px; background: var(--bg-secondary); border-top: 1px solid var(--border); flex-shrink: 0; }
+.mobile-terminal-keys button { min-height: 36px; min-width: 40px; padding: 2px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font-size: 14px; flex-shrink: 0; touch-action: manipulation; }
 .mobile-client button:focus-visible, .mobile-client [role="button"]:focus-visible { outline: 2px solid var(--text-link); outline-offset: 2px; }

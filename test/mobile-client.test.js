@@ -4,21 +4,51 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
-function start({ route = '/h5', narrow = true } = {}) {
+function start({ route = '/h5', narrow = true, viewport = null } = {}) {
   const classes = new Set(route === '/h5' ? ['h5-client'] : []);
   const elements = new Map();
   function element() {
     return { attributes: {}, listeners: {}, children: [], setAttribute(key, value) { this.attributes[key] = value; }, addEventListener(type, listener) { this.listeners[type] = listener; }, appendChild(child) { this.children.push(child); }, focus() {}, remove() {} };
   }
   const key = element(); key.dataset = { terminalKey: 'interrupt' };
-  const body = { dataset: {}, classList: { contains: name => classes.has(name), toggle(name, enabled) { enabled ? classes.add(name) : classes.delete(name); } } };
-  const document = { body, createElement: element, getElementById(id) { if (!elements.has(id)) elements.set(id, element()); return elements.get(id); }, querySelectorAll(selector) { return selector === '[data-terminal-key]' ? [key] : []; } };
+  const styles = {};
+  const body = { style: { setProperty(key, value) { styles[key] = value; } }, dataset: {}, classList: { contains: name => classes.has(name), toggle(name, enabled) { enabled ? classes.add(name) : classes.delete(name); } } };
+  const document = { listeners: {}, addEventListener(type, listener) { this.listeners[type] = listener; }, body, createElement: element, getElementById(id) { if (!elements.has(id)) elements.set(id, element()); return elements.get(id); }, querySelectorAll(selector) { return selector === '[data-terminal-key]' ? [key] : []; } };
   const sent = [];
   const media = { matches: narrow, addEventListener() {} };
-  const window = { matchMedia: () => media, dispatchEvent() {}, Tasks: { sendTerminalInput: data => sent.push(data) } };
+  const window = { visualViewport: viewport, innerHeight: 800, addEventListener() {}, requestAnimationFrame: fn => fn(), matchMedia: () => media, dispatchEvent() {}, Tasks: { sendTerminalInput: data => sent.push(data) } };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'mobile.js'), 'utf8'), { window, document, location: { pathname: route }, Event: class {}, MutationObserver: class { observe() {} } });
-  return { classes, elements, body, window, key, sent };
+  return { classes, elements, body, window, key, sent, document, styles };
 }
+
+test('H5 follows keyboard height and viewport pan, then restores on dismissal', () => {
+  const viewport = { height: 800, offsetTop: 0, scale: 1, listeners: {}, addEventListener(type, fn) { this.listeners[type] = fn; } };
+  const app = start({ viewport });
+  app.document.activeElement = { closest: selector => selector === '#terminal-pane' };
+  viewport.height = 440;
+  viewport.listeners.resize();
+  assert.equal(app.styles['--mobile-viewport-height'], '440px');
+  assert.ok(app.classes.has('mobile-terminal-input'));
+  viewport.offsetTop = 35;
+  viewport.listeners.scroll();
+  assert.equal(app.styles['--mobile-viewport-top'], '35px');
+  let prevented = false;
+  app.key.listeners.pointerdown({ preventDefault() { prevented = true; } });
+  assert.ok(prevented);
+  viewport.scale = 2;
+  viewport.height = 220;
+  viewport.listeners.resize();
+  assert.equal(app.styles['--mobile-viewport-height'], '440px');
+  viewport.scale = 1;
+  viewport.height = 800;
+  viewport.offsetTop = 0;
+  viewport.listeners.resize();
+  assert.equal(app.styles['--mobile-viewport-height'], '800px');
+  assert.equal(app.classes.has('mobile-keyboard-open'), false);
+  assert.equal(app.classes.has('mobile-terminal-input'), false);
+  const desktop = start({ route: '/web', viewport });
+  assert.deepEqual(desktop.styles, {});
+});
 
 test('H5 opens the list, then switches to selected task details with touch navigation', () => {
   const app = start();

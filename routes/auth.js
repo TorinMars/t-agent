@@ -5,7 +5,7 @@ const QRCode = require('qrcode');
 const db = require('../db');
 const { ensureSingleUser } = require('../services/single-user');
 const requireAuth = require('../middleware/auth');
-const { getClientAuth, safeReturnTo, SESSION_TTL } = require('../services/client-auth');
+const { getClientAuth, safeReturnTo, isLocalInitialization, SESSION_TTL } = require('../services/client-auth');
 
 const router = express.Router();
 router.use(require('../middleware/client-origin'));
@@ -16,6 +16,7 @@ function saveLogin(req, auth, callback) {
     req.session.clientAuth = auth;
     req.session.user = ensureSingleUser();
     req.session.cookie.maxAge = SESSION_TTL;
+    req.session.cookie.secure = req.secure || (process.env.NODE_ENV === 'production' && !isLocalInitialization(req));
     req.session.save(callback);
   });
 }
@@ -25,7 +26,7 @@ function errorResponse(res, error) {
   res.status(error.status || 500).json({ error: error.status ? error.message : 'AUTH_OPERATION_FAILED' });
 }
 
-router.get('/status', (req, res) => res.json(getClientAuth().status(req.session)));
+router.get('/status', (req, res) => res.json({ ...getClientAuth().status(req.session), local_setup_allowed: isLocalInitialization(req) }));
 for (const route of ['/login', '/setup']) {
   router.get(route, (req, res) => {
     res.set('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
@@ -36,7 +37,7 @@ for (const route of ['/login', '/setup']) {
 
 router.post('/setup/start', async (req, res) => {
   try {
-    const setup = getClientAuth().beginSetup(req.session, req.body.initialization_code, req.ip);
+    const setup = getClientAuth().beginSetup(req.session, isLocalInitialization(req), req.ip);
     const qr = await QRCode.toDataURL(setup.uri, { width: 256, margin: 2, errorCorrectionLevel: 'M' });
     req.session.save(error => {
       if (error) return errorResponse(res, error);
@@ -47,7 +48,7 @@ router.post('/setup/start', async (req, res) => {
 
 router.post('/setup/confirm', (req, res) => {
   try {
-    const { auth, recoveryCodes } = getClientAuth().confirmSetup(req.session, req.body.code, req.ip);
+    const { auth, recoveryCodes } = getClientAuth().confirmSetup(req.session, req.body.code, req.ip, isLocalInitialization(req));
     if (req.app.locals.disconnectAllClientSessions) req.app.locals.disconnectAllClientSessions();
     saveLogin(req, auth, error => {
       if (error) return errorResponse(res, error);

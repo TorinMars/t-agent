@@ -51,6 +51,16 @@ function hash(value) { return crypto.createHash('sha256').update(value).digest('
 function fail(code, status = 400) { const error = new Error(code); error.status = status; throw error; }
 function safeReturnTo(value) { return ['/', '/web', '/h5'].includes(value) ? value : '/'; }
 
+// Do not trust req.ip: reverse proxies and forwarded headers can make a remote
+// request appear local. First enrollment requires a direct loopback connection
+// and a loopback Host (also preventing DNS rebinding).
+function isLocalInitialization(req) {
+  const headers = req.headers || {};
+  if (['forwarded', 'x-forwarded-for', 'x-forwarded-host', 'x-forwarded-proto', 'x-real-ip'].some(name => headers[name] !== undefined)) return false;
+  return ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket && req.socket.remoteAddress)
+    && /^(localhost|127\.0\.0\.1|\[::1\])(?::\d{1,5})?$/i.test(headers.host || '');
+}
+
 function createClientAuth(database, { sessionSecret, ownerId, now = Date.now } = {}) {
   database.exec(`
     CREATE TABLE IF NOT EXISTS client_auth (
@@ -64,8 +74,6 @@ function createClientAuth(database, { sessionSecret, ownerId, now = Date.now } =
   `);
   database.prepare('INSERT OR IGNORE INTO client_auth (owner_id, version) VALUES (?, ?)').run(ownerId, crypto.randomUUID());
   const key = crypto.scryptSync(sessionSecret, 't-agent-client-auth-v1', 32);
-  const bootstrapCode = crypto.randomBytes(24).toString('base64url');
-  const bootstrapExpiresAt = now() + ATTEMPT_WINDOW;
   const read = () => database.prepare('SELECT * FROM client_auth WHERE owner_id = ?').get(ownerId);
 
   function encrypt(value) {
@@ -127,7 +135,7 @@ function createClientAuth(database, { sessionSecret, ownerId, now = Date.now } =
     database.prepare('DELETE FROM client_auth_attempts WHERE attempt_key = ?').run(hash(`ip:${ip}`));
     return { ...sessionGrant(row.version), recovery };
   }
-  function beginSetup(session, code, ip) {
+  function beginSetup(session, localInitialization, ip) {
     secureConfiguration();
     const row = read();
     const replacing = Boolean(row.secret_cipher);
@@ -136,18 +144,19 @@ function createClientAuth(database, { sessionSecret, ownerId, now = Date.now } =
       if (now() - session.clientAuth.authenticatedAt > 5 * 60 * 1000) fail('AUTH_RECENT_VERIFICATION_REQUIRED', 401);
     } else {
       attempt(ip);
-      if (now() >= bootstrapExpiresAt || typeof code !== 'string' || hash(code) !== hash(bootstrapCode)) fail('INITIALIZATION_CODE_INVALID_OR_EXPIRED', 403);
+      if (localInitialization !== true) fail('AUTH_INITIALIZATION_LOCAL_ONLY', 403);
     }
     const secret = base32(crypto.randomBytes(20));
     session.authSetup = { cipher: encrypt(secret), version: row.version, replacing, expiresAt: now() + SETUP_TTL };
     const uri = `otpauth://totp/${encodeURIComponent(`T-Agent:${ownerId}`)}?secret=${secret}&issuer=T-Agent&algorithm=SHA1&digits=6&period=30`;
     return { secret, uri, replacing };
   }
-  function confirmSetup(session, code, ip) {
+  function confirmSetup(session, code, ip, localInitialization = false) {
     secureConfiguration();
     attempt(ip);
     const pending = session.authSetup;
     if (!pending || pending.expiresAt <= now()) fail('AUTH_SETUP_EXPIRED');
+    if (!pending.replacing && localInitialization !== true) fail('AUTH_INITIALIZATION_LOCAL_ONLY', 403);
     if (pending.replacing && !authenticated(session)) fail('AUTH_REQUIRED', 401);
     const step = matchStep(decrypt(pending.cipher), code, now());
     if (step === null) fail('AUTH_CODE_INVALID', 401);
@@ -166,7 +175,7 @@ function createClientAuth(database, { sessionSecret, ownerId, now = Date.now } =
     return { auth: sessionGrant(version), recoveryCodes };
   }
   return {
-    bootstrapCode, authenticated, authenticate, beginSetup, confirmSetup,
+    authenticated, authenticate, beginSetup, confirmSetup,
     sessionActive(sid) {
       const row = database.prepare('SELECT sess, expired FROM sessions WHERE sid = ?').get(sid);
       try { return Boolean(row && row.expired > now() && authenticated(JSON.parse(row.sess))); } catch { return false; }
@@ -184,4 +193,4 @@ function getClientAuth() {
   }
   return singleton;
 }
-module.exports = { createClientAuth, getClientAuth, totp, base32, matchStep, safeReturnTo, SESSION_TTL };
+module.exports = { createClientAuth, getClientAuth, totp, base32, matchStep, safeReturnTo, isLocalInitialization, SESSION_TTL };

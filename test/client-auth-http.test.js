@@ -3,15 +3,16 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const http = require('node:http');
 const { spawn } = require('child_process');
 const WebSocket = require('ws');
 const { totp } = require('../services/client-auth');
 
-test('Web/H5 HTTP and WebSocket authentication cannot be bypassed', { timeout: 20000 }, async t => {
+for (const environment of ['test', 'production']) test(`Web/H5 HTTP and WebSocket authentication cannot be bypassed (${environment})`, { timeout: 20000 }, async t => {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 't-agent-client-auth-test-'));
   const child = spawn(process.execPath, ['server.js'], {
     cwd: path.resolve(__dirname, '..'),
-    env: { ...process.env, HOST: '127.0.0.1', PORT: '0', NODE_ENV: 'test', SESSION_SECRET: 'integration-test-secret-'.repeat(3), T_AGENT_DATA_DIR: temp, T_AGENT_DB_PATH: path.join(temp, 'db.sqlite'), TASKS_BASE_DIR: path.join(temp, 'tasks'), SINGLE_USER_ID: 'local', UPDATE_CHECK_ENABLED: 'false' },
+    env: { ...process.env, HOST: '127.0.0.1', PORT: '0', NODE_ENV: environment, SESSION_SECRET: 'integration-test-secret-'.repeat(3), T_AGENT_DATA_DIR: temp, T_AGENT_DB_PATH: path.join(temp, 'db.sqlite'), TASKS_BASE_DIR: path.join(temp, 'tasks'), SINGLE_USER_ID: 'local', UPDATE_CHECK_ENABLED: 'false' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   t.after(async () => {
@@ -27,13 +28,24 @@ test('Web/H5 HTTP and WebSocket authentication cannot be bypassed', { timeout: 2
     child.stdout.on('data', chunk => {
       output += chunk.toString();
       const port = output.match(/Server running at http:\/\/localhost:(\d+)/);
-      const code = output.match(/初始化码[^：]*：([A-Za-z0-9_-]+)/);
-      if (port && code) { clearTimeout(timer); resolve({ port: Number(port[1]), code: code[1] }); }
+      if (port) { clearTimeout(timer); resolve({ port: Number(port[1]) }); }
     });
   });
   const base = `http://127.0.0.1:${startup.port}`;
   async function call(route, { cookie, body, headers = {}, method } = {}) {
-    return fetch(base + route, { redirect: 'manual', method: method || (body ? 'POST' : 'GET'), headers: { ...(cookie ? { Cookie: cookie } : {}), ...(body ? { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' } : {}), ...headers }, ...(body ? { body: JSON.stringify(body) } : {}) });
+    const options = { method: method || (body ? 'POST' : 'GET'), headers: { ...(cookie ? { Cookie: cookie } : {}), ...(body ? { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' } : {}), ...headers } };
+    // Fetch normalizes Host; raw HTTP is needed to test DNS rebinding and proxies.
+    if (headers.Host) return new Promise((resolve, reject) => {
+      const request = http.request(base + route, options, response => {
+        const chunks = [];
+        response.on('data', chunk => chunks.push(chunk));
+        response.on('error', reject);
+        response.on('end', () => resolve(new Response(Buffer.concat(chunks), { status: response.statusCode, headers: response.headers })));
+      });
+      request.on('error', reject);
+      request.end(body ? JSON.stringify(body) : undefined);
+    });
+    return fetch(base + route, { redirect: 'manual', ...options, ...(body ? { body: JSON.stringify(body) } : {}) });
   }
   function cookieOf(response) { return response.headers.get('set-cookie').split(';')[0]; }
   async function rejectWs(route, origin, expected) {
@@ -56,7 +68,14 @@ test('Web/H5 HTTP and WebSocket authentication cannot be bypassed', { timeout: 2
     assert.equal((await response.json()).error, 'AUTHENTICATOR_BINDING_REQUIRED');
   }
   assert.equal((await call('/auth/login', { body: { username: 'local', password: '' } })).status, 403);
-  assert.equal((await call('/auth/setup/start', { body: { initialization_code: startup.code }, headers: { Origin: 'https://attacker.test' } })).status, 403);
+  assert.equal((await call('/auth/setup/start', { body: {}, headers: { Origin: 'https://attacker.test' } })).status, 403);
+  assert.deepEqual(await (await call('/auth/status')).json(), { bound: false, authenticated: false, local_setup_allowed: true });
+  for (const headers of [{ Host: 'client.example.test' }, { 'X-Forwarded-For': '127.0.0.1' }, { 'X-Real-IP': '127.0.0.1' }, { Forwarded: 'for=127.0.0.1' }]) {
+    assert.equal((await (await call('/auth/status', { headers })).json()).local_setup_allowed, false);
+    const response = await call('/auth/setup/start', { body: { local_setup_allowed: true, initialization_code: 'anything' }, headers });
+    assert.equal(response.status, 403);
+    assert.equal((await response.json()).error, 'AUTH_INITIALIZATION_LOCAL_ONLY');
+  }
   await rejectWs('/terminal/ws?taskId=1', base, 401);
   await rejectWs('/api/remote-servers/1/terminal/ws?taskId=1', base, 401);
   await rejectWs('/terminal/ws?taskId=1', 'https://attacker.test', 403);
@@ -64,14 +83,19 @@ test('Web/H5 HTTP and WebSocket authentication cannot be bypassed', { timeout: 2
   assert.equal((await protocol.json()).error, 'REMOTE_TOKEN_REQUIRED');
   assert.equal((await call('/v1/info')).status, 401);
 
-  const startResponse = await call('/auth/setup/start', { body: { initialization_code: startup.code } });
+  const startResponse = await call('/auth/setup/start', { body: {} });
   assert.equal(startResponse.status, 200);
   const setupCookie = cookieOf(startResponse);
   const setup = await startResponse.json();
   assert.match(setup.qr, /^data:image\/png;base64,/);
+  const remoteConfirm = await call('/auth/setup/confirm', { cookie: setupCookie, headers: { Host: 'client.example.test' }, body: { code: totp(setup.secret, Math.floor(Date.now() / 30000)) } });
+  assert.equal(remoteConfirm.status, 403);
+  assert.equal((await remoteConfirm.json()).error, 'AUTH_INITIALIZATION_LOCAL_ONLY');
+  assert.equal((await (await call('/auth/status')).json()).bound, false);
   const confirmResponse = await call('/auth/setup/confirm', { cookie: setupCookie, body: { code: totp(setup.secret, Math.floor(Date.now() / 30000)), return_to: '/h5' } });
   assert.equal(confirmResponse.status, 200);
   assert.match(confirmResponse.headers.get('set-cookie'), /SameSite=Strict/);
+  assert.doesNotMatch(confirmResponse.headers.get('set-cookie'), /; Secure/);
   const boundCookie = cookieOf(confirmResponse);
   assert.notEqual(boundCookie, setupCookie);
   const confirmed = await confirmResponse.json();
@@ -103,6 +127,15 @@ test('Web/H5 HTTP and WebSocket authentication cannot be bypassed', { timeout: 2
   const replacementConfirmed = await call('/auth/setup/confirm', { cookie: recoveryCookie, body: { code: totp(replacement.secret, Math.floor(Date.now() / 30000)) } });
   assert.equal(replacementConfirmed.status, 200);
   const newCookie = cookieOf(replacementConfirmed);
+  const replacementResult = await replacementConfirmed.json();
+  const httpsLogin = await call('/auth/login', { body: { code: replacementResult.recovery_codes[0] }, headers: { Host: 'client.example.test', 'X-Forwarded-Proto': 'https' } });
+  assert.equal(httpsLogin.status, 200);
+  assert.match(httpsLogin.headers.get('set-cookie'), /; Secure/);
+  if (environment === 'production') {
+    const httpLogin = await call('/auth/login', { body: { code: replacementResult.recovery_codes[1] }, headers: { Host: 'client.example.test' } });
+    assert.equal(httpLogin.status, 200);
+    assert.equal(httpLogin.headers.get('set-cookie'), null);
+  }
   assert.equal((await call('/auth/me', { cookie: boundCookie })).status, 401);
   assert.equal((await call('/auth/logout', { cookie: newCookie, body: {} })).status, 200);
   assert.equal((await call('/auth/me', { cookie: newCookie })).status, 401);

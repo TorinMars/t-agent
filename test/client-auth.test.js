@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const Database = require('better-sqlite3');
-const { createClientAuth, base32, totp, matchStep, safeReturnTo, SESSION_TTL } = require('../services/client-auth');
+const { createClientAuth, base32, totp, matchStep, safeReturnTo, isLocalInitialization, SESSION_TTL } = require('../services/client-auth');
 
 function fixture() {
   const database = new Database(':memory:');
@@ -12,8 +12,8 @@ function fixture() {
 }
 function bind(f) {
   const session = {};
-  const setup = f.auth.beginSetup(session, f.auth.bootstrapCode, 'owner');
-  const result = f.auth.confirmSetup(session, totp(setup.secret, Math.floor(f.now() / 30000)), 'owner');
+  const setup = f.auth.beginSetup(session, true, 'owner');
+  const result = f.auth.confirmSetup(session, totp(setup.secret, Math.floor(f.now() / 30000)), 'owner', true);
   session.clientAuth = result.auth;
   return { session, setup, result };
 }
@@ -29,7 +29,7 @@ test('TOTP matches all RFC 6238 SHA-1 test vectors', () => {
 test('unbound initialization persists and old auto-login sessions never authorize', t => {
   const f = fixture(); t.after(() => f.database.close());
   assert.deepEqual(f.auth.status({ user: { login: 'local' } }), { bound: false, authenticated: false });
-  assert.throws(() => f.auth.beginSetup({}, 'wrong', 'attacker'), /INITIALIZATION_CODE_INVALID/);
+  for (const local of [false, undefined, 'true', 1]) assert.throws(() => f.auth.beginSetup({}, local, 'attacker'), /AUTH_INITIALIZATION_LOCAL_ONLY/);
   const { session, setup } = bind(f);
   assert.equal(f.auth.authenticated(session), true);
   assert.equal(f.auth.authenticated({ user: { login: 'local' } }), false);
@@ -37,7 +37,7 @@ test('unbound initialization persists and old auto-login sessions never authoriz
   assert.equal(row.secret_cipher.includes(setup.secret), false);
   const restarted = createClientAuth(f.database, f.options);
   assert.equal(restarted.authenticated(session), true);
-  assert.throws(() => restarted.beginSetup({}, restarted.bootstrapCode, 'attacker'), /AUTH_REQUIRED/);
+  assert.throws(() => restarted.beginSetup({}, true, 'attacker'), /AUTH_REQUIRED/);
   f.advance(SESSION_TTL);
   assert.equal(restarted.authenticated(session), false);
 });
@@ -45,19 +45,22 @@ test('unbound initialization persists and old auto-login sessions never authoriz
 test('binding requires proof, is expiring and cannot race another first binding', t => {
   const f = fixture(); t.after(() => f.database.close());
   const first = {}, second = {};
-  const a = f.auth.beginSetup(first, f.auth.bootstrapCode, 'a');
-  const b = f.auth.beginSetup(second, f.auth.bootstrapCode, 'b');
-  assert.throws(() => f.auth.confirmSetup(first, 'invalid', 'a'), /AUTH_CODE_INVALID/);
+  const a = f.auth.beginSetup(first, true, 'a');
+  const b = f.auth.beginSetup(second, true, 'b');
+  assert.throws(() => f.auth.confirmSetup(first, 'invalid', 'a', true), /AUTH_CODE_INVALID/);
   assert.equal(f.auth.status().bound, false);
-  f.auth.confirmSetup(first, totp(a.secret, Math.floor(f.now() / 30000)), 'a');
-  assert.throws(() => f.auth.confirmSetup(second, totp(b.secret, Math.floor(f.now() / 30000)), 'b'), /AUTH_SETUP_CHANGED/);
+  const code = totp(a.secret, Math.floor(f.now() / 30000));
+  assert.throws(() => f.auth.confirmSetup(first, code, 'remote'), /AUTH_INITIALIZATION_LOCAL_ONLY/);
+  assert.equal(f.auth.status().bound, false);
+  f.auth.confirmSetup(first, code, 'a', true);
+  assert.throws(() => f.auth.confirmSetup(second, totp(b.secret, Math.floor(f.now() / 30000)), 'b', true), /AUTH_SETUP_CHANGED/);
   const other = fixture(); t.after(() => other.database.close());
   const pending = {};
-  const setup = other.auth.beginSetup(pending, other.auth.bootstrapCode, 'owner');
+  const setup = other.auth.beginSetup(pending, true, 'owner');
   other.advance(10 * 60 * 1000);
-  assert.throws(() => other.auth.confirmSetup(pending, totp(setup.secret, Math.floor(other.now() / 30000)), 'owner'), /AUTH_SETUP_EXPIRED/);
+  assert.throws(() => other.auth.confirmSetup(pending, totp(setup.secret, Math.floor(other.now() / 30000)), 'owner', true), /AUTH_SETUP_EXPIRED/);
   other.advance(5 * 60 * 1000);
-  assert.throws(() => other.auth.beginSetup({}, other.auth.bootstrapCode, 'owner'), /INITIALIZATION_CODE_INVALID_OR_EXPIRED/);
+  assert.doesNotThrow(() => other.auth.beginSetup({}, true, 'owner'));
 });
 
 test('TOTP and recovery codes are one-use; rebinding revokes sessions and old recovery codes', t => {
@@ -85,14 +88,28 @@ test('TOTP and recovery codes are one-use; rebinding revokes sessions and old re
 
 test('rate limits survive restart, expire, and weak session secrets cannot enroll', t => {
   const f = fixture(); t.after(() => f.database.close());
-  for (let i = 0; i < 10; i++) assert.throws(() => f.auth.beginSetup({}, 'wrong', 'attacker'), /INITIALIZATION_CODE_INVALID/);
+  for (let i = 0; i < 10; i++) assert.throws(() => f.auth.beginSetup({}, false, 'attacker'), /AUTH_INITIALIZATION_LOCAL_ONLY/);
   const restarted = createClientAuth(f.database, f.options);
-  assert.throws(() => restarted.beginSetup({}, restarted.bootstrapCode, 'attacker'), /AUTH_RATE_LIMITED/);
+  assert.throws(() => restarted.beginSetup({}, true, 'attacker'), /AUTH_RATE_LIMITED/);
   f.advance(15 * 60 * 1000);
   const again = createClientAuth(f.database, f.options);
-  assert.doesNotThrow(() => again.beginSetup({}, again.bootstrapCode, 'attacker'));
+  assert.doesNotThrow(() => again.beginSetup({}, true, 'attacker'));
   const weak = createClientAuth(f.database, { ...f.options, sessionSecret: 'dev-secret-change-me' });
-  assert.throws(() => weak.beginSetup({}, weak.bootstrapCode, 'owner'), /SESSION_SECRET_TOO_WEAK/);
+  assert.throws(() => weak.beginSetup({}, true, 'owner'), /SESSION_SECRET_TOO_WEAK/);
+});
+
+test('first enrollment requires a direct loopback peer and Host, never forwarded IPs', () => {
+  const request = (peer, host, headers = {}) => ({ socket: { remoteAddress: peer }, headers: { host, ...headers } });
+  for (const peer of ['127.0.0.1', '::1', '::ffff:127.0.0.1']) {
+    for (const host of ['localhost', 'localhost:3000', '127.0.0.1:3000', '[::1]:3000']) assert.equal(isLocalInitialization(request(peer, host)), true);
+  }
+  for (const peer of ['192.168.1.1', '203.0.113.1', undefined]) assert.equal(isLocalInitialization(request(peer, 'localhost')), false);
+  for (const host of ['client.example.test', 'localhost.attacker.test', '192.168.1.1:3000', '127.0.0.1@attacker.test', undefined]) assert.equal(isLocalInitialization(request('127.0.0.1', host)), false);
+  for (const header of ['forwarded', 'x-forwarded-for', 'x-forwarded-host', 'x-forwarded-proto', 'x-real-ip']) {
+    assert.equal(isLocalInitialization(request('127.0.0.1', 'localhost', { [header]: '127.0.0.1' })), false);
+    assert.equal(isLocalInitialization(request('127.0.0.1', 'localhost', { [header]: '' })), false);
+  }
+  assert.equal(isLocalInitialization({ ip: '127.0.0.1', headers: { host: 'localhost' } }), false);
 });
 
 test('return targets are restricted to actual Client pages', () => {

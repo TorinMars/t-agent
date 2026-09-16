@@ -8,7 +8,7 @@
   const messages = {
     AUTH_CODE_INVALID: '验证码无效或已使用，请等待下一组验证码；也可使用未使用过的恢复码。',
     AUTHENTICATOR_BINDING_REQUIRED: '必须先绑定身份验证器才能使用。',
-    INITIALIZATION_CODE_INVALID_OR_EXPIRED: '初始化码无效或已过期，请从 Client 服务启动日志获取；重启服务可重新生成。',
+    AUTH_INITIALIZATION_LOCAL_ONLY: '首次绑定只能在安装 Client 的电脑上操作，请通过本机 localhost 地址打开客户端。',
     AUTH_RATE_LIMITED: '验证尝试次数过多，请 15 分钟后再试。',
     SESSION_SECRET_TOO_WEAK: '服务配置不安全：请先将 SESSION_SECRET 设置为至少 32 个字符的随机密钥并重启服务。',
     AUTH_SETUP_EXPIRED: '绑定信息已过期，请刷新页面后重新生成。',
@@ -80,9 +80,9 @@
     document.getElementById('continue').addEventListener('click', () => location.replace(data.redirect));
   }
 
-  async function startSetup(initializationCode) {
+  async function startSetup() {
     let data;
-    try { data = await request('/auth/setup/start', { initialization_code: initializationCode }); }
+    try { data = await request('/auth/setup/start', {}); }
     catch (error) {
       if (error.message === 'AUTH_RECENT_VERIFICATION_REQUIRED') { showLogin(true); return; }
       throw error;
@@ -105,10 +105,9 @@
       const status = await request('/auth/status');
       if (!status.bound) {
         title.textContent = '必须绑定身份验证器';
-        description.textContent = 'Client 已初始化，但尚未绑定身份验证器。Web 和手机 H5 必须完成绑定后才能使用。请输入 Client 服务启动日志中的初始化码。';
-        content.innerHTML = `<form id="initialization-form"><label for="initialization-code">初始化码</label><input id="initialization-code" name="initialization_code" autocomplete="off" autocapitalize="none" spellcheck="false" required><p class="hint">初始化码 15 分钟有效。过期后重启 Client 服务获取新的初始化码。</p><button type="submit">生成绑定二维码</button></form>`;
-        const form = document.getElementById('initialization-form');
-        form.addEventListener('submit', event => { event.preventDefault(); run(form, () => startSetup(document.getElementById('initialization-code').value.trim())); });
+        description.textContent = '首次绑定只能在安装 Client 的电脑上操作。请打开本机客户端（localhost 地址），用手机身份验证器扫码绑定；完成后手机 H5 和远程 Web 即可使用。无需初始密码或初始化码。';
+        content.innerHTML = '';
+        if (status.local_setup_allowed) await startSetup();
       } else if (location.pathname === '/auth/setup' && status.authenticated) {
         title.textContent = '更换身份验证器';
         description.textContent = '新绑定完成后，原身份验证器和所有旧恢复码立即失效，其他设备需要重新登录。';

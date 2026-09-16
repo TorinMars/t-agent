@@ -14,7 +14,7 @@ const updates = require('./services/update-manager');
 const { consumeTerminalTicket, pruneExpiredTickets } = require('./services/terminal-tickets');
 const { handleRemoteTerminalUpgrade } = require('./services/remote-terminal-proxy');
 const { ensureSingleUser } = require('./services/single-user');
-const { getClientAuth, safeReturnTo } = require('./services/client-auth');
+const { getClientAuth, safeReturnTo, isLocalInitialization } = require('./services/client-auth');
 const requireAuth = require('./middleware/auth');
 const clientOrigin = require('./middleware/client-origin');
 
@@ -51,6 +51,12 @@ const sessionMiddleware = session({
 });
 
 app.use(sessionMiddleware);
+app.use((req, res, next) => {
+  // Local enrollment also works in production over direct loopback HTTP.
+  // All remote production requests still require Secure cookies.
+  req.session.cookie.secure = req.secure || (process.env.NODE_ENV === 'production' && !isLocalInitialization(req));
+  next();
+});
 
 // Only browser-facing APIs require the Client session; the legacy /api/remote/v1
 // and standard /v1 Engine APIs retain independent Bearer-token authentication.
@@ -379,7 +385,7 @@ server.listen(config.port, config.host, () => {
   const clientAuth = getClientAuth();
   if (!clientAuth.status().bound) {
     console.log('Client 身份验证器未绑定，必须绑定后才能使用 Web / H5。');
-    console.log(`初始化码（15 分钟有效，重启可重新生成）：${clientAuth.bootstrapCode}`);
+    console.log(`请在本机打开 http://127.0.0.1:${listeningPort}/auth/setup 扫码绑定，无需初始密码或初始化码。`);
   }
   updates.start();
 });

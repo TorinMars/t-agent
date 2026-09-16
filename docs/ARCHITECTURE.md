@@ -12,7 +12,7 @@ Client 通过标准 `/v1` API 连接远程 Engine。远程 Token 使用 `SESSION
 
 Engine 是任务、Todo、Markdown 文档、工作目录和终端执行的权威数据源。独立 Engine 固定监听 `0.0.0.0`，不需要用户名密码，仅使用可撤销的 Bearer Token。Client 保持单用户数据归属，Web `/web` 和手机 H5 `/h5` 使用同一 TOTP 身份验证器鉴权，默认只监听 `127.0.0.1`。手机访问可显式配置 `HOST=0.0.0.0`，或通过 HTTPS 反向代理访问。
 
-Client 初始化和旧版本升级均默认未绑定身份验证器。未绑定时所有业务页面、浏览器 API 和终端 WebSocket 均拒绝访问并引导绑定。首次绑定需要服务启动日志中的 15 分钟初始化码，扫码或手动添加密钥并校验 6 位验证码后，才持久化启用绑定。绑定密钥与待确认密钥使用 `SESSION_SECRET` 派生的 AES-256-GCM 密钥加密；恢复码仅保存 SHA-256 哈希。会话为 12 小时绝对有效期的 SQLite Session，并使用 HttpOnly/SameSite=Strict Cookie，HTTPS 生产环境另设 Secure。旧免登录会话不授予权限。验证码与恢复码均防重放，认证限流持久化到 SQLite。
+Client 初始化和旧版本升级均默认未绑定身份验证器。未绑定时所有业务页面、浏览器 API 和终端 WebSocket 均拒绝访问并引导绑定。首次绑定无需初始密码或初始化码，只允许直连本机：实际 socket 对端必须为 loopback、Host 必须为 localhost/127.0.0.1/[::1]，且不得携带代理转发头。生成二维码和确认绑定均检查此限制，不信任可伪造的 req.ip；远程页面只提示先在本机绑定。扫码或手动添加密钥并校验 6 位验证码后，才持久化启用绑定。已登录用户可在近期验证后远程更换验证器。绑定密钥与待确认密钥使用 `SESSION_SECRET` 派生的 AES-256-GCM 密钥加密；恢复码仅保存 SHA-256 哈希。会话为 12 小时绝对有效期的 SQLite Session，并使用 HttpOnly/SameSite=Strict Cookie；仅直连本机 HTTP 可不设 Secure，远程生产环境和 HTTPS 均设置 Secure，确保生产模式也能在本机绑定。旧免登录会话不授予权限。验证码与恢复码均防重放，认证限流持久化到 SQLite。
 
 更换身份验证器需要五分钟内的再次验证，完成后撤销旧会话、旧恢复码并关闭浏览器终端连接。退出也立即关闭当前会话的终端连接，不终止 PTY 及其中正在执行的程序。`/v1` 与旧 `/api/remote/v1` 保留 Engine 的 Bearer Token 边界，明确创建的只读 `/share/:token` 链接仍按分享 Token 授权。
 

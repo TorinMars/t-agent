@@ -205,6 +205,11 @@ function handleWs(ws, req, sessionUser, requestedTaskId = null) {
   }
 
   ws.on('message', (msg) => {
+    if (ws.readyState !== 1) return;
+    if (req.sessionID && !require('../services/client-auth').getClientAuth().sessionActive(req.sessionID)) {
+      ws.close(1008, 'Authentication required');
+      return;
+    }
     const str = msg.toString();
     // 只有以 '{' 开头的消息才尝试作为控制指令解析（如 resize）
     // 数字字符（0-9）是合法 JSON，若不做此判断会被 parse 后静默丢弃

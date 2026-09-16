@@ -2,12 +2,21 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <meta http-equiv="refresh" content="0;url=/">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>T-Agent</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="referrer" content="no-referrer">
+  <title>T-Agent · 身份验证</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/css/auth.css">
+  <script src="/js/auth.js" defer></script>
 </head>
 <body>
-  <p>Client 已改为单用户免登录模式，正在进入……</p>
-  <script>location.replace('/');</script>
+  <main class="auth-card" aria-labelledby="auth-title">
+    <a class="brand" href="/">T-Agent</a>
+    <h1 id="auth-title">身份验证</h1>
+    <p id="auth-description">正在检查绑定状态…</p>
+    <div id="auth-content" aria-live="polite"></div>
+    <p id="auth-error" role="alert" hidden></p>
+    <p class="security-note">Web 和手机 H5 使用同一身份验证器。请勿分享绑定密钥、验证码或恢复码。</p>
+  </main>
 </body>
 </html>

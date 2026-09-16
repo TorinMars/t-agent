@@ -265,6 +265,7 @@ const RemoteTasks = (() => {
 
     const header = document.createElement('div');
     header.className = 'task-group-header';
+    header.dataset.mobileMenu = group.is_system || !group.id ? 'false' : 'true';
     const toggle = document.createElement('span');
     toggle.className = `task-group-toggle${collapsedGroups[collapseKey] ? ' collapsed' : ''}`;
     toggle.textContent = '▾';
@@ -322,6 +323,7 @@ const RemoteTasks = (() => {
     localStorage.setItem('active-engine-key', activeEngineKey);
     localStorage.setItem(`remote-selected-task-${server.id}`, task.id);
     selected = { serverId: server.id, server, task };
+    if (window.ClientMobile) window.ClientMobile.showDetails(task.title);
     activeTab = localStorage.getItem(`remote-task-tab-${server.id}-${task.id}`) || 'doc';
     render();
     contentTabs.style.display = 'flex';
@@ -920,6 +922,11 @@ const RemoteTasks = (() => {
     reopenTerminal,
     closeTerminal,
     restartTerminalFromWorkDir,
+    sendTerminalInput(data) {
+      if (!remoteTerminal || !remoteTerminal.ws || remoteTerminal.ws.readyState !== WebSocket.OPEN || activeTab !== 'shell') return;
+      remoteTerminal.ws.send(data);
+      remoteTerminal.term.focus();
+    },
   };
 })();
 

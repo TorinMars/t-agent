@@ -33,7 +33,7 @@ usage() {
   --no-service         只安装依赖和配置，不注册开机服务
   -h, --help           显示帮助
 
-Client 是单用户应用，安装后直接打开，不使用用户名和密码。
+Client 是单用户应用，Web 和手机 H5 必须先绑定身份验证器，之后使用动态验证码登录。
 Engine 模式不创建账号，而是生成一个只显示一次的访问 Token。
 EOF
 }
@@ -270,8 +270,8 @@ else
   fi
   update_env_value T_AGENT_MODE "$MODE"
   if [ "$MODE" != "engine" ]; then
-    # Client 免登录后必须默认仅供本机访问。
-    update_env_value HOST 127.0.0.1
+    # 默认仅监听本机；保留用户为手机访问配置的局域网监听地址。
+    ensure_env_value HOST 127.0.0.1
   fi
 fi
 

@@ -18,7 +18,7 @@ function positiveInteger(value, fallback) {
 
 module.exports = {
   port:          parseInt(process.env.PORT || '3000', 10),
-  // Client 不使用网页登录，默认只能从本机访问。
+  // 默认仅监听本机；手机访问可显式配置 HOST=0.0.0.0。
   host:          process.env.HOST || '127.0.0.1',
   sessionSecret: process.env.SESSION_SECRET || 'dev-secret-change-me',
   // AUTH_USERS 格式: "user1:salt:hash,user2:salt:hash"

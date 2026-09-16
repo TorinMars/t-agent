@@ -14,6 +14,9 @@ const updates = require('./services/update-manager');
 const { consumeTerminalTicket, pruneExpiredTickets } = require('./services/terminal-tickets');
 const { handleRemoteTerminalUpgrade } = require('./services/remote-terminal-proxy');
 const { ensureSingleUser } = require('./services/single-user');
+const { getClientAuth, safeReturnTo } = require('./services/client-auth');
+const requireAuth = require('./middleware/auth');
+const clientOrigin = require('./middleware/client-origin');
 
 const app = express();
 
@@ -41,12 +44,20 @@ const sessionMiddleware = session({
   saveUninitialized: false,
   cookie: {
     httpOnly: true,
+    sameSite: 'strict',
     secure: process.env.NODE_ENV === 'production',
     maxAge: 7 * 24 * 60 * 60 * 1000,
   },
 });
 
 app.use(sessionMiddleware);
+
+// Only browser-facing APIs require the Client session; the legacy /api/remote/v1
+// and standard /v1 Engine APIs retain independent Bearer-token authentication.
+app.use('/api', (req, res, next) => {
+  if (req.path === '/remote/v1' || req.path.startsWith('/remote/v1/')) return next();
+  clientOrigin(req, res, () => requireAuth(req, res, next));
+});
 
 app.get('/api/local-ip', (req, res) => {
   res.json({ ip: getLocalIP(), port: config.port });
@@ -252,19 +263,79 @@ app.get('/share/:token/file', (req, res) => {
   sendSharedMarkdown(res, task, req.params.token, file.content, file.relativePath);
 });
 
-app.get('/', (req, res) => {
+function sendClientPage(req, res) {
+  res.set('Cache-Control', 'no-store');
+  const auth = getClientAuth().status(req.session);
+  const returnTo = safeReturnTo(req.path);
+  if (!auth.bound) return res.redirect(`/auth/setup?return_to=${encodeURIComponent(returnTo)}`);
+  if (!auth.authenticated) return res.redirect(`/auth/login?return_to=${encodeURIComponent(returnTo)}`);
+  if (req.path === '/' && /Android|iPhone|iPod|Mobile/i.test(req.get('user-agent') || '')) return res.redirect('/h5');
   req.session.user = ensureSingleUser();
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  let html = fs.readFileSync(path.join(__dirname, 'public', 'index.html'), 'utf8');
+  if (req.path === '/h5') {
+    html = html.replace('<body>', '<body class="h5-client">')
+      .replace('  <script src="/vendor/monaco/monaco.js"></script>\n', '')
+      .replace('  <link rel="stylesheet" href="/vendor/monaco/monaco.css">\n', '');
+  }
+  res.type('html').send(html);
+}
+
+app.get(['/', '/web', '/h5'], sendClientPage);
+app.get(['/index.html', '/h5.html'], (req, res) => res.redirect(req.path === '/h5.html' ? '/h5' : '/web'));
+app.get('/login.html', (req, res) => res.redirect('/auth/login'));
+
+// Static middleware decodes paths: encoded /index%2ehtml must not evade the
+// explicit page routes above. Do not allow implicit directory index documents.
+app.use((req, res, next) => {
+  let pathname;
+  try { pathname = decodeURIComponent(req.path); } catch { return res.sendStatus(400); }
+  if (path.extname(pathname).toLowerCase() !== '.html') return next();
+  const auth = getClientAuth().status(req.session);
+  res.set('Cache-Control', 'no-store');
+  if (!auth.bound) return res.redirect('/auth/setup');
+  if (!auth.authenticated) return res.redirect('/auth/login');
+  next();
 });
-
-app.get('/login.html', (req, res) => res.redirect('/'));
-
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(__dirname, 'public'), { index: false }));
 
 // HTTP server + WebSocket server
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ noServer: true });
+app.locals.disconnectClientSession = sid => {
+  for (const ws of wss.clients) if (ws.clientSessionId === sid) ws.close(1008, 'Authentication required');
+};
+app.locals.disconnectAllClientSessions = () => {
+  for (const ws of wss.clients) if (ws.clientSessionId) ws.close(1008, 'Authenticator changed');
+};
 
+// Open browser terminals must not outlive logout or the authentication session.
+setInterval(() => {
+  for (const ws of wss.clients) {
+    if (!ws.clientSessionId) continue;
+    const row = db.prepare('SELECT sess, expired FROM sessions WHERE sid = ?').get(ws.clientSessionId);
+    let valid = false;
+    try { valid = row && row.expired > Date.now() && getClientAuth().authenticated(JSON.parse(row.sess)); } catch {}
+    if (!valid) ws.close(1008, 'Authentication required');
+  }
+}, 30000).unref();
+
+function browserUpgrade(req, socket, head, callback) {
+  const origin = req.headers.origin;
+  const allowedOrigins = [`http://${req.headers.host}`, `https://${req.headers.host}`];
+  if (!origin || !allowedOrigins.includes(origin)) {
+    socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
+    return socket.destroy();
+  }
+  const fakeRes = { getHeader: () => {}, setHeader: () => {}, end: () => {} };
+  sessionMiddleware(req, fakeRes, () => {
+    if (!getClientAuth().authenticated(req.session)) {
+      socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+      return socket.destroy();
+    }
+    req.session.user = ensureSingleUser();
+    callback(req.session.user);
+  });
+}
 server.on('upgrade', (req, socket, head) => {
   const engineUrl = new URL(req.url, 'http://engine.local');
   const engineMatch = engineUrl.pathname.match(/^\/v1\/terminal-sessions\/(\d+)\/stream$/);
@@ -282,31 +353,33 @@ server.on('upgrade', (req, socket, head) => {
     return;
   }
   if (engineUrl.pathname.match(/^\/api\/remote-servers\/\d+\/terminal\/ws$/)) {
-    const fakeRes = { getHeader: () => {}, setHeader: () => {}, end: () => {} };
-    sessionMiddleware(req, fakeRes, () => {
-      const user = (req.session && req.session.user) || ensureSingleUser();
+    browserUpgrade(req, socket, head, user => {
       handleRemoteTerminalUpgrade(req, socket, head, wss, user).catch(() => {
         if (!socket.destroyed) socket.destroy();
       });
     });
     return;
   }
-  if (!req.url.startsWith('/terminal/ws')) {
+  if (engineUrl.pathname !== '/terminal/ws') {
     socket.destroy();
     return;
   }
-  // 复用 express session 中间件解析 session cookie
-  const fakeRes = { getHeader: () => {}, setHeader: () => {}, end: () => {} };
-  sessionMiddleware(req, fakeRes, () => {
-    const user = (req.session && req.session.user) || ensureSingleUser();
+  browserUpgrade(req, socket, head, user => {
     wss.handleUpgrade(req, socket, head, (ws) => {
+      ws.clientSessionId = req.sessionID;
       terminal.handleWs(ws, req, user);
     });
   });
 });
 
 server.listen(config.port, config.host, () => {
-  console.log(`Server running at http://localhost:${config.port}`);
-  console.log(`             LAN: http://${getLocalIP()}:${config.port}`);
+  const listeningPort = server.address().port;
+  console.log(`Server running at http://localhost:${listeningPort}`);
+  console.log(`             LAN: http://${getLocalIP()}:${listeningPort}`);
+  const clientAuth = getClientAuth();
+  if (!clientAuth.status().bound) {
+    console.log('Client 身份验证器未绑定，必须绑定后才能使用 Web / H5。');
+    console.log(`初始化码（15 分钟有效，重启可重新生成）：${clientAuth.bootstrapCode}`);
+  }
   updates.start();
 });

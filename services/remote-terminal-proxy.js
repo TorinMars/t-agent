@@ -42,12 +42,25 @@ async function handleRemoteTerminalUpgrade(req, socket, head, wss, user) {
     let settled = false;
     upstream.once('open', () => {
       settled = true;
+      // Recheck after the asynchronous Engine connection, in case the user
+      // logged out or replaced the authenticator during the upstream handshake.
+      if (req.sessionID && !require('./client-auth').getClientAuth().sessionActive(req.sessionID)) {
+        closeWebSocket(upstream, 1008, 'Authentication required');
+        rejectUpgrade(socket, 401, 'Unauthorized');
+        return;
+      }
       wss.handleUpgrade(req, socket, head, downstream => {
+        if (req.sessionID) downstream.clientSessionId = req.sessionID;
         const closeBoth = (code = 1000, reason = '') => {
           closeWebSocket(downstream, code, reason);
           closeWebSocket(upstream, code, reason);
         };
         downstream.on('message', (data, binary) => {
+          if (downstream.readyState !== WebSocket.OPEN) return;
+          if (req.sessionID && !require('./client-auth').getClientAuth().sessionActive(req.sessionID)) {
+            closeBoth(1008, 'Authentication required');
+            return;
+          }
           if (upstream.readyState === WebSocket.OPEN) upstream.send(data, { binary });
         });
         upstream.on('message', (data, binary) => {

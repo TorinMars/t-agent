@@ -1,6 +1,6 @@
 {
   "name": "torin-x-web",
-  "version": "2.7.5",
+  "version": "2.8.0",
   "description": "Componentized task client and remote execution engine",
   "main": "server.js",
   "scripts": {
@@ -21,6 +21,7 @@
     "highlight.js": "11.11.1",
     "monaco-editor": "^0.56.0",
     "node-pty": "^1.1.0",
+    "qrcode": "^1.5.4",
     "ws": "^8.21.1"
   },
   "devDependencies": {

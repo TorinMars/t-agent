@@ -858,6 +858,7 @@ const Tasks = (() => {
     }
     const task = tasks.find(t => t.id === id);
     if (task) {
+      if (window.ClientMobile) window.ClientMobile.showDetails(task.title);
       if (tab === 'shell') {
         connectTerminal(task);
         const inst = termInstances.get(task.id);
@@ -942,8 +943,9 @@ const Tasks = (() => {
   }
 
   async function openDocumentEditor(task, tab) {
-    if (editorState || typeof monaco === 'undefined') {
-      if (typeof monaco === 'undefined') alert('编辑器资源加载失败，请刷新页面');
+    const mobileEditor = document.body.classList.contains('mobile-client') && window.ClientMobile;
+    if (editorState || (!mobileEditor && typeof monaco === 'undefined')) {
+      if (!mobileEditor && typeof monaco === 'undefined') alert('编辑器资源加载失败，请刷新页面');
       return;
     }
     stopWatcher();
@@ -972,35 +974,40 @@ const Tasks = (() => {
           </div>
           <div class="md-editor-host" id="md-editor-host"></div>
         </div>`;
-      const modelUri = monaco.Uri.parse(`inmemory://task/${task.id}/${kind}.md`);
-      const existingModel = monaco.editor.getModel(modelUri);
-      if (existingModel) existingModel.dispose();
-      const model = monaco.editor.createModel(source, 'markdown', modelUri);
-      const editor = monaco.editor.create(document.getElementById('md-editor-host'), {
-        model,
-        theme: 'vs',
-        lineNumbers: true,
-        wordWrap: 'on',
-        automaticLayout: true,
-        fontFamily: 'Menlo, Monaco, Consolas, "Courier New", monospace',
-        fontSize: 13,
-        lineHeight: 22,
-        tabSize: 2,
-        insertSpaces: true,
-        autoClosingBrackets: 'always',
-        autoClosingQuotes: 'always',
-        multiCursorModifier: 'alt',
-        minimap: { enabled: false },
-        scrollBeyondLastLine: false,
-        renderWhitespace: 'selection',
-        find: {
-          addExtraSpaceOnTop: false,
-          autoFindInSelection: 'multiline',
-          seedSearchStringFromSelection: 'selection',
-        },
-      });
+      let model, editor;
+      if (mobileEditor) {
+        ({ model, editor } = mobileEditor.createDocumentEditor(document.getElementById('md-editor-host'), source));
+      } else {
+        const modelUri = monaco.Uri.parse(`inmemory://task/${task.id}/${kind}.md`);
+        const existingModel = monaco.editor.getModel(modelUri);
+        if (existingModel) existingModel.dispose();
+        model = monaco.editor.createModel(source, 'markdown', modelUri);
+        editor = monaco.editor.create(document.getElementById('md-editor-host'), {
+          model,
+          theme: 'vs',
+          lineNumbers: true,
+          wordWrap: 'on',
+          automaticLayout: true,
+          fontFamily: 'Menlo, Monaco, Consolas, "Courier New", monospace',
+          fontSize: 13,
+          lineHeight: 22,
+          tabSize: 2,
+          insertSpaces: true,
+          autoClosingBrackets: 'always',
+          autoClosingQuotes: 'always',
+          multiCursorModifier: 'alt',
+          minimap: { enabled: false },
+          scrollBeyondLastLine: false,
+          renderWhitespace: 'selection',
+          find: {
+            addExtraSpaceOnTop: false,
+            autoFindInSelection: 'multiline',
+            seedSearchStringFromSelection: 'selection',
+          },
+        });
+        editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, saveDocumentEditor);
+      }
       editorState = { task, tab, kind, editor, model, source, dirty: false, saving: false };
-      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, saveDocumentEditor);
       editor.onDidChangeModelContent(() => {
         if (!editorState) return;
         editorState.dirty = model.getValue() !== source;
@@ -1670,6 +1677,12 @@ const Tasks = (() => {
     reopenTerminal,
     closeTerminal,
     restartTerminalFromWorkDir,
+    sendTerminalInput(data) {
+      const instance = termInstances.get(selectedId);
+      if (!instance || !instance.ws || instance.ws.readyState !== WebSocket.OPEN || activeTab !== 'shell') return;
+      instance.ws.send(data);
+      instance.term.focus();
+    },
   };
 })();
 

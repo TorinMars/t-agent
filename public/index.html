@@ -10,6 +10,7 @@
   <meta name="theme-color" content="#f6f8fa">
   <link rel="stylesheet" href="/css/style.css">
   <link rel="stylesheet" href="/css/markdown.css">
+  <link rel="stylesheet" href="/css/mobile.css">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5/css/xterm.css">
   <link rel="stylesheet" href="/vendor/monaco/monaco.css">
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
@@ -24,7 +25,9 @@
       <span class="header-logo">📋 Tasks</span>
     </div>
     <div class="header-right">
+      <a class="btn-logout" id="btn-client-mode" href="/h5">手机版</a>
       <button class="btn-logout settings-button" id="btn-settings" style="margin-right:2px">⚙ 设置<span class="update-dot" id="update-dot" style="display:none"></span></button>
+      <button class="btn-logout" id="btn-logout" type="button">退出</button>
     </div>
   </header>
 
@@ -38,6 +41,12 @@
   <nav class="engine-tabs-bar" aria-label="Engine 切换">
     <div class="engine-tabs" id="engine-tabs"></div>
     <button class="engine-connect-remote" id="btn-connect-remote" type="button" title="连接远程服务" aria-label="连接远程服务">＋</button>
+  </nav>
+
+  <nav class="mobile-navigation" aria-label="手机页面切换">
+    <button type="button" id="mobile-show-tasks" aria-pressed="true">任务列表</button>
+    <button type="button" id="mobile-show-details" aria-pressed="false">任务详情</button>
+    <span id="mobile-task-title">请选择任务</span>
   </nav>
 
   <div class="layout">
@@ -99,6 +108,15 @@
           </div>
           <div class="terminal-empty" id="terminal-empty" style="display:none"></div>
           <div id="xterm-container"></div>
+          <div class="mobile-terminal-keys" role="toolbar" aria-label="终端快捷键">
+            <button type="button" data-terminal-key="escape">Esc</button>
+            <button type="button" data-terminal-key="tab">Tab</button>
+            <button type="button" data-terminal-key="interrupt">Ctrl+C</button>
+            <button type="button" data-terminal-key="up">↑</button>
+            <button type="button" data-terminal-key="down">↓</button>
+            <button type="button" data-terminal-key="left">←</button>
+            <button type="button" data-terminal-key="right">→</button>
+          </div>
         </div>
       </div>
     </div>
@@ -119,11 +137,13 @@
   </div>
 
   <script src="/js/markdown-view.js"></script>
+  <script src="/js/client-auth.js"></script>
   <script src="/js/app.js"></script>
   <script src="/js/terminal-clipboard.js"></script>
   <script src="/js/bookmarks.js"></script>
   <script src="/js/tasks.js"></script>
   <script src="/js/remote-tasks.js"></script>
+  <script src="/js/mobile.js"></script>
   <script>
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('/sw.js').catch(() => {});

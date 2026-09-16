@@ -76,14 +76,22 @@ body.mobile-client {
   margin: auto;
 }
 .mobile-client .modal-header { flex-shrink: 0; }
+.mobile-client .settings-modal {
+  height: calc(var(--mobile-viewport-height, 100dvh) - max(12px, env(safe-area-inset-top, 0px)) - max(12px, env(safe-area-inset-bottom, 0px)));
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
 .mobile-client .modal-body {
+  flex: 1 1 auto;
   min-height: 0;
   padding: 16px;
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior-y: contain;
   -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
 }
+.mobile-client .modal-footer { padding: 10px 16px; }
 .mobile-client .form-input, .mobile-client .form-select, .mobile-client textarea { font-size: 16px; min-height: 44px; max-width: 100%; }
 .mobile-client .form-row { flex-wrap: wrap; }
 .mobile-client .form-row > * { min-width: 0; }

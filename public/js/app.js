@@ -35,12 +35,25 @@ const API = {
 const Modal = {
   show(title, bodyHtml) {
     document.getElementById('modal-title').textContent = title;
-    document.getElementById('modal-body').innerHTML = bodyHtml;
+    const content = document.getElementById('modal-body');
+    const footer = document.getElementById('modal-footer');
+    footer.replaceChildren();
+    footer.hidden = true;
+    content.innerHTML = bodyHtml;
+    const settingsActions = content.querySelector('#settings-save')?.closest('.form-actions');
+    document.getElementById('modal').classList.toggle('settings-modal', Boolean(settingsActions));
+    if (settingsActions) {
+      footer.appendChild(settingsActions);
+      footer.hidden = false;
+    }
+    content.scrollTop = 0;
     document.getElementById('modal-overlay').style.display = 'flex';
   },
   hide() {
     document.getElementById('modal-overlay').style.display = 'none';
     document.getElementById('modal-body').innerHTML = '';
+    document.getElementById('modal-footer').replaceChildren();
+    document.getElementById('modal-footer').hidden = true;
   },
 };
 

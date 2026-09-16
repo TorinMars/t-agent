@@ -56,6 +56,10 @@ body.mobile-client { font-size: 16px; padding-top: env(safe-area-inset-top, 0px)
 .mobile-client .form-actions, .mobile-client .settings-inline-actions { flex-wrap: wrap; }
 .mobile-client .context-menu { max-width: calc(100vw - 24px); max-height: 60dvh; overflow-y: auto; }
 .mobile-client .context-menu li:not(.separator) { min-height: 44px; font-size: 14px; padding: 12px 16px; }
+.mobile-client .terminal-pane {
+  padding-left: env(safe-area-inset-left, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
+}
 .mobile-client .terminal-toolbar { overflow-x: auto; flex-wrap: nowrap; }
 .mobile-client .terminal-toolbar-btn { min-height: 44px; font-size: 14px; flex-shrink: 0; }
 .mobile-client .mobile-terminal-keys { display: flex; gap: 4px; overflow-x: auto; padding: 6px 8px; background: var(--bg-secondary); border-top: 1px solid var(--border); flex-shrink: 0; }

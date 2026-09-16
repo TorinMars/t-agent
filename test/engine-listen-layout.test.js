@@ -22,6 +22,11 @@ test('安装应用中的终端使用动态 Flex 高度并跟随容器重新适�
   assert.match(css, /body\s*\{[^}]*display:\s*flex[^}]*height:\s*100dvh/s);
   assert.match(css, /\.layout\s*\{[^}]*flex:\s*1 1 auto[^}]*min-height:\s*0/s);
   assert.match(css, /#xterm-container > \.xterm-host\s*\{[^}]*inset:\s*4px 4px 8px/s);
+  assert.match(css, /#xterm-container \.xterm-viewport\s*\{[^}]*overflow-y:\s*scroll !important[^}]*scrollbar-gutter:\s*stable/s);
+  assert.doesNotMatch(css, /#xterm-container \.xterm-viewport\s*\{[^}]*overflow-y:\s*auto/s);
+
+  const mobileCss = fs.readFileSync(path.join(root, 'public', 'css', 'mobile.css'), 'utf8');
+  assert.match(mobileCss, /\.mobile-client \.terminal-pane\s*\{[^}]*safe-area-inset-left[^}]*safe-area-inset-right/s);
 
   for (const source of [localTerminal, remoteTerminal]) {
     assert.match(source, /el\.className = 'xterm-host'/);

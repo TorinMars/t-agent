@@ -1514,7 +1514,11 @@ body {
   height: 100%;
 }
 #xterm-container .xterm-viewport {
-  overflow-y: auto !important;
+  /* Keep the scrollbar width stable. With `auto`, FitAddon can calculate the
+     columns before a scrollbar exists; once output starts scrolling, the
+     newly occupied gutter clips the terminal's rightmost column(s). */
+  overflow-y: scroll !important;
+  scrollbar-gutter: stable;
 }
 
 /* task-info-path: work_dir 展示 */

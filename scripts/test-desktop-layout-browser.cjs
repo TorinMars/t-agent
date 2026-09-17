@@ -14,7 +14,7 @@ const root = path.resolve(__dirname, '..');
       await page.setContent(fs.readFileSync(path.join(root, 'public/index.html'), 'utf8')
         .replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '').replace(/<link\b[^>]*>/g, ''));
       await page.addStyleTag({ content: fs.readFileSync(path.join(root, 'public/css/style.css'), 'utf8') });
-      assert.equal(Math.round((await page.locator('body').boundingBox()).width), 1280);
+      assert.equal(Math.round((await page.locator('body').boundingBox()).width), mobile ? 1280 : 1440);
       assert.ok(await page.locator('.sidebar').isVisible());
       assert.ok(await page.locator('.content-area').isVisible());
       assert.equal(await page.locator('.mobile-navigation, #btn-client-mode, #mobile-terminal-dialog').count(), 0);
@@ -28,6 +28,8 @@ const root = path.resolve(__dirname, '..');
         await cdp.send('Emulation.setPageScaleFactor', { pageScaleFactor: initial });
         await page.screenshot({ path: '/private/tmp/t-agent-desktop-on-phone.png' });
       } else {
+        await page.setViewportSize({ width: 1920, height: 1080 });
+        assert.equal(Math.round((await page.locator('body').boundingBox()).width), 1920);
         await page.setViewportSize({ width: 900, height: 360 });
         assert.equal(Math.round((await page.locator('body').boundingBox()).width), 1280);
         assert.ok(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth));
@@ -54,6 +56,6 @@ const root = path.resolve(__dirname, '..');
       assert.deepEqual(errors, []);
       await page.close();
     }
-    console.log('Unified 1280px desktop layout, phone viewport zoom, horizontal overflow and settings save passed.');
+    console.log('Minimum 1280px layout fills 1440px/1920px screens; phone zoom, narrow-window overflow and settings save passed.');
   } finally { await browser.close(); }
 })();

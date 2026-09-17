@@ -54,7 +54,7 @@ body {
 
 /* Installed apps and fullscreen windows use all available vertical space. */
 @media (display-mode: standalone), (display-mode: window-controls-overlay), (display-mode: fullscreen) {
-  body { max-height: none; }
+  body { min-width: 0; max-height: none; }
 }
 
 /* Header */

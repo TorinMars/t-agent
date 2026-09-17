@@ -7,7 +7,7 @@ const root = path.resolve(__dirname, '..');
   const browser = await chromium.launch({ headless: true,
     ...(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {}) });
   try {
-    for (const width of [1280, 1920]) {
+    for (const width of [1200, 1240, 1280, 1920]) {
       const page = await browser.newPage({ viewport: { width, height: 800 } });
       const errors = [];
       page.on('pageerror', error => errors.push(error.message));
@@ -15,6 +15,15 @@ const root = path.resolve(__dirname, '..');
         .replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '').replace(/<link\b[^>]*>/g, ''));
       await page.addStyleTag({ path: path.join(root, 'public/css/style.css') });
       await page.addStyleTag({ path: require.resolve('@xterm/xterm/css/xterm.css') });
+      if (width < 1280) {
+        // Headless Chrome cannot emulate display-mode; activate the actual app CSS rule.
+        await page.evaluate(() => {
+          for (const sheet of document.styleSheets) for (const rule of sheet.cssRules) {
+            if (rule.media?.mediaText.includes('display-mode: standalone')) rule.media.mediaText = 'all';
+          }
+        });
+      }
+
       for (const file of [require.resolve('@xterm/xterm'), require.resolve('@xterm/addon-fit'), path.join(root, 'public/js/terminal-viewport.js'), path.join(root, 'public/js/terminal-clipboard.js')]) {
         await page.addScriptTag({ path: file });
       }
@@ -42,13 +51,18 @@ const root = path.resolve(__dirname, '..');
       assert.ok(before.screen > before.viewport, 'cached scrollbar width overestimates columns after scrollbar changes');
       await page.evaluate(() => { window.observer = TerminalViewport.observe(term, fit, host); });
       await page.waitForFunction(() => host.querySelector('.xterm-screen').clientWidth + 2 <= host.querySelector('.xterm-viewport').clientWidth);
+      const bounds = await page.evaluate(() => ({
+        screenRight: host.querySelector('.xterm-screen').getBoundingClientRect().right,
+        windowRight: innerWidth,
+      }));
+      assert.ok(bounds.screenRight <= bounds.windowRight, 'terminal right edge must remain inside the app window');
       const row = await page.evaluate(async () => {
         term.reset();
-        await new Promise(done => term.write('x'.repeat(term.cols - 8) + '我的世界\r\nnext', done));
+        await new Promise(done => term.write('x'.repeat(term.cols - 8) + '模式但完\r\n播已选中连接卡后必须固定使用连接卡 ID', done));
         return { text: term.buffer.active.getLine(0).translateToString(true), lastCharacter: term.buffer.active.getLine(0).getCell(term.cols - 2).getChars() };
       });
-      assert.ok(row.text.endsWith('我的世界'));
-      assert.equal(row.lastCharacter, '界');
+      assert.ok(row.text.endsWith('模式但完'));
+      assert.equal(row.lastCharacter, '完');
       const tabs = await page.locator('#terminal-tabs').boundingBox();
       const toolbar = await page.locator('.terminal-toolbar').boundingBox();
       const controls = await page.locator('.terminal-controls').boundingBox();
@@ -60,6 +74,6 @@ const root = path.resolve(__dirname, '..');
       assert.deepEqual(errors, []);
       await page.close();
     }
-    console.log('Right-edge clipping reproduced and fixed; final Chinese character visible; tabs left/actions right on one row at 1280px and 1920px.');
+    console.log('Right-edge Chinese text visible in 1200px/1240px app windows and 1280px/1920px browsers; scrollbar changes and toolbar layout passed.');
   } finally { await browser.close(); }
 })();

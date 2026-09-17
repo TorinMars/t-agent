@@ -1656,3 +1656,18 @@ body {
 .terminal-keys button:hover { background: #444; }
 .terminal-keys button[aria-pressed="true"] { background: #245997; border-color: #70a5ff; color: #fff; }
 .terminal-keys button:focus-visible { outline: 2px solid #70a5ff; outline-offset: -2px; }
+
+.task-menu-button {
+  flex: 0 0 24px;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  font: 20px/1 sans-serif;
+  cursor: pointer;
+}
+.task-menu-button:hover { background: var(--border); color: var(--text); }
+.task-menu-button:focus-visible { outline: 2px solid var(--text-link); outline-offset: -2px; }

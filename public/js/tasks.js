@@ -818,9 +818,8 @@ const Tasks = (() => {
     }
 
     item.addEventListener('click', () => selectTask(task.id));
-    item.addEventListener('contextmenu', (e) => {
-      e.preventDefault();
-      ContextMenu.show(e.clientX, e.clientY, [
+    function showTaskMenu(x, y) {
+      ContextMenu.show(x, y, [
         { label: '标记为进行中', action: () => setStatus(task.id, 'doing') },
         { label: '标记为待办', action: () => setStatus(task.id, 'todo') },
         { label: '标记为已完成', action: () => setStatus(task.id, 'done') },
@@ -829,7 +828,26 @@ const Tasks = (() => {
         { label: '编辑', action: () => showEditModal(task) },
         { label: '删除', danger: true, action: () => deleteTask(task.id) },
       ]);
+    }
+    item.addEventListener('contextmenu', event => {
+      event.preventDefault();
+      event.stopPropagation();
+      showTaskMenu(event.clientX, event.clientY);
     });
+    const menuButton = document.createElement('button');
+    menuButton.type = 'button';
+    menuButton.className = 'task-menu-button';
+    menuButton.textContent = '⋯';
+    menuButton.title = '任务菜单';
+    menuButton.setAttribute('aria-label', `${task.title} 的任务菜单`);
+    menuButton.setAttribute('aria-haspopup', 'menu');
+    menuButton.addEventListener('click', event => {
+      event.stopPropagation();
+      const bounds = menuButton.getBoundingClientRect();
+      showTaskMenu(bounds.left, bounds.bottom);
+    });
+    menuButton.addEventListener('dragstart', event => { event.preventDefault(); event.stopPropagation(); });
+    item.appendChild(menuButton);
 
     return item;
   }

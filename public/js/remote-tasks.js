@@ -326,14 +326,31 @@ const RemoteTasks = (() => {
     item.className = `task-nav-item remote-task-item${selected && selected.serverId === server.id && selected.task.id === task.id ? ' active' : ''}`;
     item.innerHTML = `<span class="task-status-btn ${escapeHtml(task.status)}"></span><span class="task-nav-title${task.status === 'done' ? ' done' : ''}">${escapeHtml(task.title)}</span>`;
     item.addEventListener('click', () => select(server, task));
-    item.addEventListener('contextmenu', event => {
-      event.preventDefault();
-      event.stopPropagation();
-      ContextMenu.show(event.clientX, event.clientY, [{ label: '编辑文档路径', action: () => editDocumentPaths(server, task) }, ...groups.map(group => ({
+    function showTaskMenu(x, y) {
+      ContextMenu.show(x, y, [{ label: '编辑文档路径', action: () => editDocumentPaths(server, task) }, ...groups.map(group => ({
         label: `${task.status === group.key ? '✓ ' : ''}移到「${group.name}」`,
         action: () => moveTask(server.id, task.id, group.key),
       }))]);
+    }
+    item.addEventListener('contextmenu', event => {
+      event.preventDefault();
+      event.stopPropagation();
+      showTaskMenu(event.clientX, event.clientY);
     });
+    const menuButton = document.createElement('button');
+    menuButton.type = 'button';
+    menuButton.className = 'task-menu-button';
+    menuButton.textContent = '⋯';
+    menuButton.title = '任务菜单';
+    menuButton.setAttribute('aria-label', `${task.title} 的任务菜单`);
+    menuButton.setAttribute('aria-haspopup', 'menu');
+    menuButton.addEventListener('click', event => {
+      event.stopPropagation();
+      const bounds = menuButton.getBoundingClientRect();
+      showTaskMenu(bounds.left, bounds.bottom);
+    });
+    menuButton.addEventListener('dragstart', event => { event.preventDefault(); event.stopPropagation(); });
+    item.appendChild(menuButton);
     return item;
   }
 

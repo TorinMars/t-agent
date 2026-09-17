@@ -105,6 +105,21 @@
           </div>
           <div class="terminal-empty" id="terminal-empty" style="display:none"></div>
           <div id="xterm-container"></div>
+          <div class="terminal-keys" id="terminal-keys" role="toolbar" aria-label="终端功能键">
+            <button type="button" data-key="Escape">Esc</button>
+            <button type="button" data-key="Tab">Tab</button>
+            <button type="button" data-modifier="ctrl" aria-pressed="false" title="点击选中，再按其他键组合；发送一次后释放">Ctrl</button>
+            <button type="button" data-modifier="meta" aria-pressed="false" title="Command 组合键需终端程序支持扩展键盘协议">Command ⌘</button>
+            <button type="button" data-modifier="alt" aria-pressed="false" title="点击选中，再按其他键组合；发送一次后释放">Option ⌥</button>
+            <button type="button" data-modifier="shift" aria-pressed="false" title="点击选中，再按其他键组合；发送一次后释放">Shift</button>
+            <button type="button" data-key="ArrowLeft" aria-label="ArrowLeft">←</button>
+            <button type="button" data-key="ArrowDown" aria-label="ArrowDown">↓</button>
+            <button type="button" data-key="ArrowUp" aria-label="ArrowUp">↑</button>
+            <button type="button" data-key="ArrowRight" aria-label="ArrowRight">→</button>
+            <button type="button" data-key="Enter" aria-label="Enter">Enter</button>
+            <button type="button" data-key="Backspace" aria-label="Backspace">⌫</button>
+            <button type="button" data-shortcut="option-up" title="发送 Option + 上方向键">Option + ↑</button>
+          </div>
         </div>
       </div>
     </div>
@@ -134,6 +149,7 @@
   <script src="/js/terminal-viewport.js"></script>
   <script src="/js/tasks.js"></script>
   <script src="/js/remote-tasks.js"></script>
+  <script src="/js/terminal-keys.js"></script>
   <script>
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('/sw.js').catch(() => {});

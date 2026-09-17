@@ -1,5 +1,5 @@
-// A shared tab strip for local and remote tasks. Switching only disconnects the
-// browser view; the Engine keeps each independent shell and its history alive.
+// A shared tab strip for local and remote tasks. Controllers cache each
+// terminal view and connection independently; switching tabs only changes visibility.
 const TerminalTabs = (() => {
   const states = new Map();
   let mounted = null;

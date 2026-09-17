@@ -72,14 +72,17 @@ const Tasks = (() => {
       if (task) {
         connectTerminal(task);
         // connectTerminal 是异步的（onopen），已有实例直接 focus
-        const inst = termInstances.get(task.id);
-        if (inst) setTimeout(() => inst.term.focus(), 0);
+        const inst = termInstances.get(terminalKey(task.id));
+        if (inst) setTimeout(() => { if (!inst.disposed && term === inst.term && selectedId === task.id && activeTab === 'shell') inst.term.focus(); }, 0);
       }
     }
   });
 
-  // ── xterm.js 终端：每个任务独立 Terminal 实例，切换时销毁旧的 ──
-  const termInstances = new Map(); // taskId -> { term, fitAddon, ws, container }
+  // ── 每个任务的每个终端独立缓存；切换标签只隐藏视图 ──
+  const termInstances = new Map(); // [taskId, terminalId] -> live terminal instance
+  function terminalKey(taskId, terminalId = TerminalTabs.current(`/api/tasks/${taskId}`)) {
+    return JSON.stringify([taskId, terminalId]);
+  }
 
   // 终端状态：'idle' | 'running' | 'done'
   const termState = new Map();       // taskId -> state
@@ -125,8 +128,9 @@ const Tasks = (() => {
     termDoneTimers.set(taskId, timer);
   }
 
-  function disposeTerminalInstance(taskId) {
-    const inst = termInstances.get(taskId);
+  function disposeTerminalInstance(taskId, terminalId) {
+    const key = terminalKey(taskId, terminalId);
+    const inst = termInstances.get(key);
     if (!inst) return;
     inst.disposed = true;
     if (inst.reconnectTimer) clearTimeout(inst.reconnectTimer);
@@ -136,8 +140,8 @@ const Tasks = (() => {
     inst.clipboard.dispose();
     inst.term.dispose();
     inst.el.remove();
-    termInstances.delete(taskId);
-    if (termTaskId === taskId) {
+    termInstances.delete(key);
+    if (term === inst.term) {
       term = null;
       fitAddon = null;
       termWs = null;
@@ -146,12 +150,12 @@ const Tasks = (() => {
   }
 
   function scheduleReconnect(task, inst) {
-    if (inst.disposed || termInstances.get(task.id) !== inst || inst.reconnectTimer) return;
+    if (inst.disposed || termInstances.get(terminalKey(task.id, inst.terminalId)) !== inst || inst.reconnectTimer) return;
     const delay = Math.min(1000 * (2 ** inst.reconnectAttempts), 30000);
     inst.reconnectAttempts += 1;
     inst.reconnectTimer = setTimeout(() => {
       inst.reconnectTimer = null;
-      if (!inst.disposed && termInstances.get(task.id) === inst) connectWebSocket(task, inst);
+      if (!inst.disposed && termInstances.get(terminalKey(task.id, inst.terminalId)) === inst) connectWebSocket(task, inst);
     }, delay);
     inst.term.write(`\r\n\x1b[33m[连接已断开，${Math.ceil(delay / 1000)}s 后自动重连...]\x1b[0m\r\n`);
   }
@@ -161,7 +165,7 @@ const Tasks = (() => {
     const ws = new WebSocket(`${proto}://${location.host}/terminal/ws?taskId=${task.id}&terminalId=${encodeURIComponent(inst.terminalId)}`);
     ws.binaryType = 'arraybuffer';
     inst.ws = ws;
-    termWs = ws;
+    if (term === inst.term) termWs = ws;
 
     ws.onopen = () => {
       const reconnecting = inst.reconnectAttempts > 0;
@@ -171,7 +175,7 @@ const Tasks = (() => {
       }
       inst.reconnectAttempts = 0;
       TerminalViewport.fit(inst.term, inst.fitAddon, inst.el);
-      if (!reconnecting) inst.term.focus();
+      if (!reconnecting && term === inst.term && activeTab === 'shell' && selectedId === task.id) inst.term.focus();
       ws.send(JSON.stringify({ type: 'resize', cols: inst.term.cols, rows: inst.term.rows }));
     };
 
@@ -197,7 +201,7 @@ const Tasks = (() => {
     };
 
     ws.onclose = (event) => {
-      if (inst.ws !== ws || inst.disposed || termInstances.get(task.id) !== inst) return;
+      if (inst.ws !== ws || inst.disposed || termInstances.get(terminalKey(task.id, inst.terminalId)) !== inst) return;
       inst.ws = null;
       if (event.code === 1000 || event.code === 1008) {
         inst.term.write('\r\n[终端已断开，点击“重新打开”可再次连接]\r\n');
@@ -212,26 +216,24 @@ const Tasks = (() => {
   function connectTerminal(task) {
     const container = document.getElementById('xterm-container');
     TerminalControls.clearMessage();
-    const terminalId = TerminalTabs.show(`/api/tasks/${task.id}`, () => {
-      disposeTerminalInstance(task.id);
-      connectTerminal(task);
-    });
+    const terminalId = TerminalTabs.show(`/api/tasks/${task.id}`, () => connectTerminal(task));
+    const key = terminalKey(task.id, terminalId);
 
-    if (termInstances.has(task.id)) {
-      const inst = termInstances.get(task.id);
-      if (inst.terminalId === terminalId && inst.ws && inst.ws.readyState === WebSocket.OPEN) {
-        termInstances.forEach((i, id) => i.el.style.display = id === task.id ? '' : 'none');
+    if (termInstances.has(key)) {
+      const inst = termInstances.get(key);
+      if ((inst.ws && [WebSocket.CONNECTING, WebSocket.OPEN].includes(inst.ws.readyState)) || inst.reconnectTimer) {
+        Array.from(container.children).forEach(el => { el.style.display = el === inst.el ? '' : 'none'; });
         term = inst.term;
         fitAddon = inst.fitAddon;
         termWs = inst.ws;
         termTaskId = task.id;
-        setTimeout(() => { TerminalViewport.fit(inst.term, inst.fitAddon, inst.el); inst.term.focus(); }, 0);
+        setTimeout(() => { if (term !== inst.term || inst.disposed || activeTab !== 'shell') return; TerminalViewport.fit(inst.term, inst.fitAddon, inst.el); inst.term.focus(); }, 0);
         return;
       }
       disposeTerminalInstance(task.id);
     }
 
-    termInstances.forEach(i => i.el.style.display = 'none');
+    Array.from(container.children).forEach(el => { el.style.display = 'none'; });
 
     const el = document.createElement('div');
     el.className = 'xterm-host';
@@ -263,7 +265,7 @@ const Tasks = (() => {
       resizeObserver: null,
     };
     inst.resizeObserver = TerminalViewport.observe(t, fa, el);
-    termInstances.set(task.id, inst);
+    termInstances.set(key, inst);
     termTaskId = task.id;
     term = t;
     fitAddon = fa;
@@ -282,7 +284,7 @@ const Tasks = (() => {
     connectWebSocket(task, inst);
 
     inst.onWindowResize = () => {
-      if (activeTab === 'shell' && termTaskId === task.id) TerminalViewport.fit(t, fa, el);
+      if (activeTab === 'shell' && term === inst.term) TerminalViewport.fit(t, fa, el);
     };
     window.addEventListener('resize', inst.onWindowResize);
   }
@@ -886,8 +888,8 @@ const Tasks = (() => {
     if (task) {
       if (tab === 'shell') {
         connectTerminal(task);
-        const inst = termInstances.get(task.id);
-        if (inst) setTimeout(() => inst.term.focus(), 0);
+        const inst = termInstances.get(terminalKey(task.id));
+        if (inst) setTimeout(() => { if (!inst.disposed && term === inst.term && selectedId === task.id && activeTab === 'shell') inst.term.focus(); }, 0);
       } else {
         renderPreview(task);
       }
@@ -1699,7 +1701,7 @@ const Tasks = (() => {
     closeTerminal,
     restartTerminalFromWorkDir,
     sendTerminalInput(data) {
-      const instance = termInstances.get(selectedId);
+      const instance = termInstances.get(terminalKey(selectedId));
       if (!instance || !instance.ws || instance.ws.readyState !== WebSocket.OPEN || activeTab !== 'shell') return;
       instance.ws.send(data);
       instance.term.focus();

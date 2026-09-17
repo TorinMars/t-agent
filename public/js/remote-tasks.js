@@ -398,8 +398,8 @@ const RemoteTasks = (() => {
     }
   }, true);
 
-  function terminalKey(serverId, taskId) {
-    return `${serverId}:${taskId}`;
+  function terminalKey(serverId, taskId, terminalId) {
+    return JSON.stringify([serverId, taskId, terminalId]);
   }
 
   function hideRemoteTerminal() {
@@ -415,7 +415,7 @@ const RemoteTasks = (() => {
     instance.clipboard.dispose();
     instance.term.dispose();
     instance.el.remove();
-    remoteTerminals.delete(terminalKey(instance.serverId, instance.taskId));
+    remoteTerminals.delete(terminalKey(instance.serverId, instance.taskId, instance.terminalId));
     if (remoteTerminal === instance) remoteTerminal = null;
   }
 
@@ -430,11 +430,8 @@ const RemoteTasks = (() => {
     TerminalControls.clearMessage();
     const serverId = selected.serverId;
     const taskId = selected.task.id;
-    const key = terminalKey(serverId, taskId);
-    const terminalId = TerminalTabs.show(`/api/remote-servers/${serverId}/tasks/${taskId}`, () => {
-      disposeRemoteTerminal(remoteTerminals.get(key));
-      renderRemoteTerminal();
-    });
+    const terminalId = TerminalTabs.show(`/api/remote-servers/${serverId}/tasks/${taskId}`, renderRemoteTerminal);
+    const key = terminalKey(serverId, taskId, terminalId);
     hideRemoteTerminal();
     previewPane.style.display = 'none';
     document.getElementById('toc-pane').style.display = 'none';
@@ -499,7 +496,7 @@ const RemoteTasks = (() => {
     });
     ws.onopen = () => {
       TerminalViewport.fit(term, fitAddon, el);
-      term.focus();
+      if (remoteTerminal === instance && activeTab === 'shell') term.focus();
       ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
     };
     ws.onmessage = event => {
@@ -533,7 +530,7 @@ const RemoteTasks = (() => {
     return {
       serverId: selected.serverId,
       taskId: selected.task.id,
-      key: terminalKey(selected.serverId, selected.task.id),
+      key: terminalKey(selected.serverId, selected.task.id, TerminalTabs.current(`/api/remote-servers/${selected.serverId}/tasks/${selected.task.id}`)),
     };
   }
 

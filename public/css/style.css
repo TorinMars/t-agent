@@ -26,7 +26,6 @@
   --toc-width: 220px;
   --header-height: 48px;
   --quicklinks-height: 36px;
-  --engine-tabs-height: 39px;
 }
 
 html, body {
@@ -357,11 +356,13 @@ body {
 }
 
 .engine-tabs-bar {
-  min-height: 39px;
+  width: 176px;
+  min-height: 0;
   display: flex;
-  align-items: flex-end;
-  padding: 0 14px;
-  border-bottom: 1px solid var(--border);
+  flex-direction: column;
+  padding: 8px;
+  gap: 8px;
+  border-right: 1px solid var(--border);
   background: var(--bg-secondary);
   flex-shrink: 0;
   overflow: hidden;
@@ -369,33 +370,29 @@ body {
 
 .engine-tabs {
   display: flex;
-  flex: 0 1 auto;
-  align-items: flex-end;
-  gap: 2px;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 0;
   min-width: 0;
-  max-width: calc(100% - 40px);
-  overflow-x: auto;
-  scrollbar-width: none;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 
-.engine-tabs::-webkit-scrollbar { display: none; }
-
 .engine-connect-remote {
-  width: 30px;
-  height: 30px;
-  display: inline-flex;
+  min-height: 32px;
+  display: flex;
   align-items: center;
   justify-content: center;
-  margin: 0 0 4px 6px;
-  padding: 0;
+  padding: 4px 8px;
   flex-shrink: 0;
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--bg);
   color: var(--text-muted);
   font: inherit;
-  font-size: 20px;
-  line-height: 1;
+  font-size: 12px;
   white-space: nowrap;
   cursor: pointer;
 }
@@ -406,19 +403,27 @@ body {
 }
 
 .engine-tab {
-  height: 38px;
-  display: inline-flex;
+  display: grid;
+  grid-template-columns: 7px minmax(0, 1fr);
   align-items: center;
-  gap: 7px;
-  padding: 0 15px;
+  gap: 3px 7px;
+  flex-shrink: 0;
+  padding: 8px;
   border: 0;
-  border-bottom: 2px solid transparent;
+  border-left: 2px solid transparent;
+  border-radius: 4px;
   background: transparent;
   color: var(--text-muted);
   font: inherit;
   font-size: 12px;
-  white-space: nowrap;
+  text-align: left;
   cursor: pointer;
+}
+
+.engine-tab > span:nth-child(2) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .engine-tab:hover {
@@ -428,7 +433,8 @@ body {
 
 .engine-tab.active {
   color: var(--accent);
-  border-bottom-color: var(--accent);
+  border-left-color: var(--accent);
+  background: var(--bg-tertiary);
   font-weight: 600;
 }
 
@@ -446,6 +452,12 @@ body {
 .engine-tab-status.unauthorized { background: #cf222e; }
 
 .engine-tab-version {
+  grid-column: 2;
+  justify-self: start;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   padding: 1px 5px;
   border-radius: 999px;
   background: var(--bg-tertiary);

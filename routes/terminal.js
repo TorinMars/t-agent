@@ -171,20 +171,23 @@ function getOrCreateSession(ownerTaskId, workDir, dirWarning, id = 'default') {
 
 /**
  * 终止任务的服务端 PTY。restart-workdir 同时清空旧历史，下一次连接会从
- * 任务 work_dir 创建全新 Shell；close 保留历史，方便之后重新查看。
+ * 任务 work_dir 创建全新 Shell；close 保留历史，delete 同时删除额外终端记录。
  */
 function controlSession(taskId, action, requestedTerminalId) {
   const id = Number.parseInt(taskId, 10);
-  if (!id || !['close', 'restart-workdir'].includes(action)) {
+  if (!id || !['close', 'restart-workdir', 'delete'].includes(action)) {
     const error = new Error('INVALID_TERMINAL_ACTION');
     error.statusCode = 400;
     throw error;
   }
 
   const selectedId = assertTerminal(id, requestedTerminalId);
+  if (action === 'delete' && selectedId === 'default') {
+    throw Object.assign(new Error('DEFAULT_TERMINAL_CANNOT_DELETE'), { statusCode: 400 });
+  }
   const key = sessionKey(id, selectedId);
   const session = sessions.get(key);
-  const clearHistory = action === 'restart-workdir';
+  const clearHistory = action === 'restart-workdir' || action === 'delete';
   if (session) {
     sessions.delete(key);
     clearInterval(session.flushTimer);
@@ -200,6 +203,9 @@ function controlSession(taskId, action, requestedTerminalId) {
     clearBuffer(id, selectedId);
   }
 
+  if (action === 'delete') {
+    db.prepare('DELETE FROM task_terminals WHERE task_id = ? AND terminal_id = ?').run(id, selectedId);
+  }
   return { success: true, action, had_session: Boolean(session) };
 }
 

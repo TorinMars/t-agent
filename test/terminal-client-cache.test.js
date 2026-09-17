@@ -84,3 +84,29 @@ test('remote cache isolates equal task and terminal IDs on different servers', a
   assert.equal(app.sockets.length, 2);
   assert.ok(app.sockets.every(socket => !socket.closed));
 });
+
+for (const remote of [false, true]) {
+  test(`${remote ? 'remote' : 'local'} deleting a terminal removes its tab and cached connection; failure preserves it`, async () => {
+    const app = setup(remote);
+    app.controller._open();
+    await Promise.resolve();
+    await app.controller.newTerminal();
+    const added = app.terminals.at(-1);
+    const socket = app.sockets.at(-1);
+    const calls = [];
+    app.context.API.post = async (url, body) => { calls.push({ url, body }); throw new Error('offline'); };
+    await assert.rejects(app.controller.deleteTerminal(), /offline/);
+    assert.equal(added.disposed, undefined);
+    assert.equal(app.document.querySelectorAll('.terminal-tab').length, 2);
+    app.context.API.post = async (url, body) => { calls.push({ url, body }); return { success: true }; };
+    await app.controller.deleteTerminal();
+    assert.equal(calls.at(-1).body.action, 'delete');
+    assert.equal(calls.at(-1).body.terminal_id, 'second');
+    assert.equal(added.disposed, true);
+    assert.equal(socket.closed, true);
+    assert.equal(app.document.querySelectorAll('.terminal-tab').length, 1);
+    assert.equal(app.document.querySelector('.terminal-tab').getAttribute('aria-selected'), 'true');
+    assert.equal(app.terminals[0].disposed, undefined);
+    await assert.rejects(app.controller.deleteTerminal(), /默认终端不能删除/);
+  });
+}

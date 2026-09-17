@@ -321,6 +321,16 @@ const Tasks = (() => {
     }
   }
 
+  async function deleteTerminal() {
+    const task = selectedTerminalTask();
+    const scope = `/api/tasks/${task.id}`;
+    const terminalId = TerminalTabs.current(scope);
+    if (terminalId === 'default') throw new Error('默认终端不能删除，可使用关闭或从工作目录重新打开');
+    await API.post(`${scope}/terminal/control`, { action: 'delete', terminal_id: terminalId });
+    disposeTerminalInstance(task.id, terminalId);
+    TerminalTabs.remove(scope, terminalId);
+  }
+
   function closeTerminal() {
     return controlTerminal('close');
   }
@@ -1726,6 +1736,7 @@ const Tasks = (() => {
     newTerminal: () => TerminalTabs.create(),
     reopenTerminal,
     closeTerminal,
+    deleteTerminal,
     restartTerminalFromWorkDir,
     sendTerminalInput(data) {
       const instance = termInstances.get(terminalKey(selectedId));

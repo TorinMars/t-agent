@@ -43,6 +43,14 @@ test('Engine terminal API enforces ownership and scopes, persists tabs and binds
     assert.equal(consumeTerminalTicket(ticket).terminalId, added.terminal_id);
     assert.equal((await request('/v1/terminal-sessions', owner, { task_id: task.id, terminal_id: 'unknown' })).status, 404);
     assert.equal((await request(`/v1/terminal-sessions/${task.id}/control`, owner, { action: 'close', terminal_id: added.terminal_id })).status, 200);
+    const controlUrl = `/v1/terminal-sessions/${task.id}/control`;
+    const deletion = { action: 'delete', terminal_id: added.terminal_id };
+    assert.equal((await request(controlUrl, reader, deletion)).status, 403);
+    assert.equal((await request(controlUrl, stranger, deletion)).status, 404);
+    assert.equal((await request(controlUrl, owner, deletion)).status, 200);
+    assert.equal((await (await request(url)).json()).length, 1);
+    assert.equal((await request('/v1/terminal-sessions', owner, { task_id: task.id, terminal_id: added.terminal_id })).status, 404);
+    assert.equal((await request(controlUrl, owner, { action: 'delete', terminal_id: 'default' })).status, 400);
     tasks.deleteTask('owner', task.id);
     assert.equal(db.prepare('SELECT COUNT(*) AS n FROM task_terminals').get().n, 0);
   } finally {

@@ -105,6 +105,9 @@ document.getElementById('btn-terminal-reopen').addEventListener('click', () => {
 document.getElementById('btn-terminal-close').addEventListener('click', () => {
   TerminalControls.run('closeTerminal', '关闭当前终端会终止其中正在运行的程序，确认继续吗？');
 });
+document.getElementById('btn-terminal-delete').addEventListener('click', () => {
+  TerminalControls.run('deleteTerminal', '删除后会终止当前终端中的程序，并永久移除该终端标签和历史记录，确认删除吗？');
+});
 document.getElementById('btn-terminal-restart-workdir').addEventListener('click', () => {
   TerminalControls.run('restartTerminalFromWorkDir', '这会终止当前终端并清除终端历史，然后从任务工作目录重新打开，确认继续吗？');
 });

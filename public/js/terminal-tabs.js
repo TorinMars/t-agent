@@ -17,6 +17,8 @@ const TerminalTabs = (() => {
     if (!mounted) return;
     const { scope, select } = mounted;
     const current = state(scope);
+    const deleteButton = document.getElementById('btn-terminal-delete');
+    if (deleteButton) deleteButton.hidden = current.active === 'default';
     for (const row of current.rows) {
       const button = document.createElement('button');
       button.type = 'button';
@@ -72,5 +74,16 @@ const TerminalTabs = (() => {
     }
   }
 
-  return { show, create, current: scope => state(scope).active };
+  function remove(scope, terminalId) {
+    const current = state(scope);
+    current.revision++;
+    current.rows = current.rows.filter(row => row.terminal_id !== terminalId);
+    if (current.active === terminalId) current.active = 'default';
+    if (mounted && mounted.scope === scope) {
+      render();
+      mounted.select();
+    }
+  }
+
+  return { show, create, remove, current: scope => state(scope).active };
 })();

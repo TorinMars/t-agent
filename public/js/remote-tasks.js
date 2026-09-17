@@ -625,6 +625,23 @@ const RemoteTasks = (() => {
     }
   }
 
+  async function deleteTerminal() {
+    const target = selectedRemoteTerminal();
+    const scope = `/api/remote-servers/${target.serverId}/tasks/${target.taskId}`;
+    const terminalId = TerminalTabs.current(scope);
+    if (terminalId === 'default') throw new Error('默认终端不能删除，可使用关闭或从工作目录重新打开');
+    try {
+      await API.post(`${scope}/terminal/control`, { action: 'delete', terminal_id: terminalId });
+    } catch (error) {
+      if (/INVALID_TERMINAL_ACTION|ENGINE_ROUTE_NOT_FOUND|REMOTE_HTTP_404/.test(error.message)) {
+        throw new Error('远程 Engine 暂不支持删除终端，请先升级该 Engine');
+      }
+      throw error;
+    }
+    disposeRemoteTerminal(remoteTerminals.get(target.key));
+    TerminalTabs.remove(scope, terminalId);
+  }
+
   function closeTerminal() {
     return controlTerminal('close');
   }
@@ -983,6 +1000,7 @@ const RemoteTasks = (() => {
     newTerminal: () => TerminalTabs.create(),
     reopenTerminal,
     closeTerminal,
+    deleteTerminal,
     restartTerminalFromWorkDir,
     sendTerminalInput(data) {
       if (!remoteTerminal || !remoteTerminal.ws || remoteTerminal.ws.readyState !== WebSocket.OPEN || activeTab !== 'shell') return;

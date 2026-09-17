@@ -97,3 +97,23 @@ test('terminal IDs cannot address other tasks or bypass ownership', () => {
   assert.equal(shells.length, count);
   assert.equal(terminal.listTerminals(task.id).length, 2);
 });
+
+test('deleting an extra terminal stops its shell and permanently removes its history and tab', () => {
+  const added = terminal.createTerminal(task.id);
+  const ws = connect(added.terminal_id);
+  const shell = shells.at(-1);
+  shell.data('history to delete');
+  terminal.controlSession(task.id, 'delete', added.terminal_id);
+  assert.equal(shell.killed, true);
+  assert.equal(ws.readyState, 3);
+  assert.equal(db.prepare('SELECT * FROM task_terminals WHERE task_id = ? AND terminal_id = ?').get(task.id, added.terminal_id), undefined);
+  shell.data('late output');
+  shell.exit();
+  assert.equal(terminal.listTerminals(task.id).some(row => row.terminal_id === added.terminal_id), false);
+  assert.equal(connect(added.terminal_id).code, 1008);
+  assert.throws(() => terminal.controlSession(task.id, 'delete', 'default'), /DEFAULT_TERMINAL_CANNOT_DELETE/);
+  const closed = terminal.createTerminal(task.id);
+  terminal.controlSession(task.id, 'close', closed.terminal_id);
+  terminal.controlSession(task.id, 'delete', closed.terminal_id);
+  assert.throws(() => terminal.assertTerminal(task.id, closed.terminal_id), /TERMINAL_NOT_FOUND/);
+});

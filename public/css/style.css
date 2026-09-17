@@ -124,13 +124,10 @@ body {
     -webkit-app-region: no-drag;
   }
   /* layout 顶部内缩，避免被 fixed header 遮住 */
-  body > .quicklinks-bar {
+  body > .layout {
     margin-top: env(titlebar-area-height, var(--header-height));
   }
-  body > .layout {
-    margin-top: 0;
-  }
-  /* fixed header 不参与 Flex 布局，由 quicklinks 的 margin 补回标题栏高度。 */
+  /* fixed header 不参与 Flex 布局，由主区域的 margin 补回标题栏高度。 */
   .layout {
     height: auto;
   }
@@ -138,6 +135,7 @@ body {
 
 
 /* Quicklinks bar */
+.quicklinks-bar[hidden] { display: none; }
 .quicklinks-bar {
   display: flex;
   align-items: center;

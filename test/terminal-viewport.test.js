@@ -11,7 +11,8 @@ function setup(y = 100) {
   const term = { buffer: { active: buffer }, cols: 80, rows: 24,
     scrollToBottom() { buffer.viewportY = buffer.baseY; }, scrollToLine(y) { buffer.viewportY = y; }, registerMarker() { return marker; } };
   let fits = 0;
-  const addon = { proposeDimensions: () => ({ cols: 80, rows: 12 }), fit() { fits++; buffer.baseY = 112; buffer.viewportY = 0; marker.line += 3; } };
+  term.resize = (cols, rows) => { fits++; term.cols = cols; term.rows = rows; buffer.baseY = 112; buffer.viewportY = 0; marker.line += 3; };
+  const addon = { proposeDimensions: () => ({ cols: 80, rows: 12 }) };
   return { term, addon, marker, buffer, fits: () => fits };
 }
 test('keyboard resize keeps bottom followers at the live output', () => {
@@ -35,4 +36,12 @@ test('history replay restores reading distance and leaves alternate screens alon
   viewport.restore(s.term, saved); assert.equal(s.buffer.viewportY, 140);
   s.buffer.type = 'alternate'; viewport.restore(s.term, { bottom: true });
   assert.equal(s.buffer.viewportY, 140);
+});
+
+test('actual viewport width clamps columns when cached scrollbar width is stale', () => {
+  const s = setup();
+  viewport.fit(s.term, s.addon, { clientWidth: 160, clientHeight: 200,
+    querySelector: selector => ({ clientWidth: selector === '.xterm-screen' ? 160 : 120 }) });
+  assert.equal(s.term.cols, 59);
+  assert.equal(s.term.rows, 12);
 });

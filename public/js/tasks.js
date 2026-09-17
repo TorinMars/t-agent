@@ -262,12 +262,7 @@ const Tasks = (() => {
       reconnectAttempts: 0,
       resizeObserver: null,
     };
-    if (typeof ResizeObserver !== 'undefined') {
-      inst.resizeObserver = new ResizeObserver(() => {
-        if (!inst.disposed && el.clientWidth > 0 && el.clientHeight > 0) TerminalViewport.fit(t, fa, el);
-      });
-      inst.resizeObserver.observe(el);
-    }
+    inst.resizeObserver = TerminalViewport.observe(t, fa, el);
     termInstances.set(task.id, inst);
     termTaskId = task.id;
     term = t;

@@ -18,6 +18,7 @@ const TerminalClipboard = (() => {
   const pane = document.getElementById('terminal-pane');
   const container = document.getElementById('xterm-container');
   const hint = /Mac|iPhone|iPad/.test(navigator.platform) ? '按住 Option 拖选，再复制' : '按住 Shift 拖选，再复制';
+  copy.title = hint;
   let shown = null;
 
   function active() {

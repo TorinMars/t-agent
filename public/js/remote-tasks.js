@@ -489,12 +489,7 @@ const RemoteTasks = (() => {
     };
     remoteTerminals.set(key, remoteTerminal);
     const instance = remoteTerminal;
-    if (typeof ResizeObserver !== 'undefined') {
-      instance.resizeObserver = new ResizeObserver(() => {
-        if (!instance.disposed && el.clientWidth > 0 && el.clientHeight > 0) TerminalViewport.fit(term, fitAddon, el);
-      });
-      instance.resizeObserver.observe(el);
-    }
+    instance.resizeObserver = TerminalViewport.observe(term, fitAddon, el);
     term.onData(data => {
       if (instance.paused) return;
       if (ws.readyState === WebSocket.OPEN) ws.send(data);

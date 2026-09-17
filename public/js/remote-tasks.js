@@ -187,7 +187,7 @@ const RemoteTasks = (() => {
       tabs.appendChild(button);
     }
 
-    appendTab('local', '本地', 'local', '本地 Engine', null, localEngineVersion);
+    appendTab('local', '默认', 'local', '默认 Engine', null, localEngineVersion);
     servers.forEach(server => appendTab(
       `remote:${server.id}`,
       server.name,

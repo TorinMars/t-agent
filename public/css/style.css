@@ -48,8 +48,13 @@ body {
   min-height: 0;
   height: 100vh;
   height: 100dvh;
-  max-height: 900px;
+  max-height: 1200px;
   padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* Installed apps and fullscreen windows use all available vertical space. */
+@media (display-mode: standalone), (display-mode: window-controls-overlay), (display-mode: fullscreen) {
+  body { max-height: none; }
 }
 
 /* Header */

@@ -15,7 +15,7 @@ const root = path.resolve(__dirname, '..');
         .replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '').replace(/<link\b[^>]*>/g, ''));
       await page.addStyleTag({ content: fs.readFileSync(path.join(root, 'public/css/style.css'), 'utf8') });
       assert.equal(Math.round((await page.locator('body').boundingBox()).width), mobile ? 1280 : 1440);
-      assert.equal(Math.round((await page.locator('body').boundingBox()).height), mobile ? 900 : 800);
+      assert.equal(Math.round((await page.locator('body').boundingBox()).height), mobile ? 1200 : 800);
       assert.ok(await page.locator('.sidebar').isVisible());
       assert.ok(await page.locator('.content-area').isVisible());
       assert.equal(await page.locator('.mobile-navigation, #btn-client-mode, #mobile-terminal-dialog').count(), 0);
@@ -31,7 +31,7 @@ const root = path.resolve(__dirname, '..');
       } else {
         await page.setViewportSize({ width: 1920, height: 1080 });
         assert.equal(Math.round((await page.locator('body').boundingBox()).width), 1920);
-        assert.equal(Math.round((await page.locator('body').boundingBox()).height), 900);
+        assert.equal(Math.round((await page.locator('body').boundingBox()).height), 1080);
         await page.setViewportSize({ width: 900, height: 360 });
         assert.equal(Math.round((await page.locator('body').boundingBox()).width), 1280);
         assert.equal(Math.round((await page.locator('body').boundingBox()).height), 360);

@@ -4,7 +4,7 @@
   const description = document.getElementById('auth-description');
   const errorNode = document.getElementById('auth-error');
   const requested = new URLSearchParams(location.search).get('return_to');
-  const returnTo = ['/', '/web', '/h5'].includes(requested) ? requested : (/Android|iPhone|Mobile/i.test(navigator.userAgent) ? '/h5' : '/web');
+  const returnTo = ['/', '/web'].includes(requested) ? requested : '/web';
   const messages = {
     AUTH_CODE_INVALID: '验证码无效或已使用，请等待下一组验证码；也可使用未使用过的恢复码。',
     AUTHENTICATOR_BINDING_REQUIRED: '必须先绑定身份验证器才能使用。',
@@ -105,7 +105,7 @@
       const status = await request('/auth/status');
       if (!status.bound) {
         title.textContent = '必须绑定身份验证器';
-        description.textContent = '首次绑定只能在安装 Client 的电脑上操作。请打开本机客户端（localhost 地址），用手机身份验证器扫码绑定；完成后手机 H5 和远程 Web 即可使用。无需初始密码或初始化码。';
+        description.textContent = '首次绑定只能在安装 Client 的电脑上操作。请打开本机客户端（localhost 地址），用手机身份验证器扫码绑定；完成后手机和远程浏览器即可使用。无需初始密码或初始化码。';
         content.innerHTML = '';
         if (status.local_setup_allowed) await startSetup();
       } else if (location.pathname === '/auth/setup' && status.authenticated) {

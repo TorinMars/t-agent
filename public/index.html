@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="viewport" content="width=1280, user-scalable=yes, viewport-fit=cover">
   <title>Torin's Tasks</title>
   <link rel="icon" href="/favicon.ico" type="image/x-icon">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
@@ -10,7 +10,6 @@
   <meta name="theme-color" content="#f6f8fa">
   <link rel="stylesheet" href="/css/style.css">
   <link rel="stylesheet" href="/css/markdown.css">
-  <link rel="stylesheet" href="/css/mobile.css">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5/css/xterm.css">
   <link rel="stylesheet" href="/vendor/monaco/monaco.css">
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
@@ -25,7 +24,6 @@
       <span class="header-logo">📋 Tasks</span>
     </div>
     <div class="header-right">
-      <a class="btn-logout" id="btn-client-mode" href="/h5">手机版</a>
       <button class="btn-logout settings-button" id="btn-settings" style="margin-right:2px">⚙ 设置<span class="update-dot" id="update-dot" style="display:none"></span></button>
       <button class="btn-logout" id="btn-logout" type="button">退出</button>
     </div>
@@ -41,12 +39,6 @@
   <nav class="engine-tabs-bar" aria-label="Engine 切换">
     <div class="engine-tabs" id="engine-tabs"></div>
     <button class="engine-connect-remote" id="btn-connect-remote" type="button" title="连接远程服务" aria-label="连接远程服务">＋</button>
-  </nav>
-
-  <nav class="mobile-navigation" aria-label="手机页面切换">
-    <button type="button" id="mobile-show-tasks" aria-pressed="true">任务列表</button>
-    <button type="button" id="mobile-show-details" aria-pressed="false">任务详情</button>
-    <span id="mobile-task-title">请选择任务</span>
   </nav>
 
   <div class="layout">
@@ -101,10 +93,6 @@
 
         <!-- 终端面板 -->
         <div class="terminal-pane" id="terminal-pane" style="display:none">
-          <div class="mobile-terminal-header">
-            <button type="button" id="mobile-terminal-back" aria-label="收起终端，返回任务详情">‹ 返回</button>
-            <span id="mobile-terminal-title">终端</span>
-          </div>
           <div id="terminal-tabs" class="terminal-tabs" role="tablist" aria-label="任务终端"></div>
           <div class="terminal-toolbar" role="toolbar" aria-label="终端操作">
             <button type="button" class="terminal-toolbar-btn" id="btn-terminal-new" title="在任务工作目录中新建独立 Shell">＋ 新开终端</button>
@@ -114,21 +102,10 @@
           </div>
           <div class="terminal-empty" id="terminal-empty" style="display:none"></div>
           <div id="xterm-container"></div>
-          <div class="mobile-terminal-keys" role="toolbar" aria-label="终端快捷键">
-            <button type="button" data-terminal-key="escape">Esc</button>
-            <button type="button" data-terminal-key="tab">Tab</button>
-            <button type="button" data-terminal-key="interrupt">Ctrl+C</button>
-            <button type="button" data-terminal-key="up">↑</button>
-            <button type="button" data-terminal-key="down">↓</button>
-            <button type="button" data-terminal-key="left">←</button>
-            <button type="button" data-terminal-key="right">→</button>
-          </div>
         </div>
       </div>
     </div>
   </div>
-
-  <dialog id="mobile-terminal-dialog" aria-label="任务终端"></dialog>
 
   <div class="modal-overlay" id="modal-overlay" style="display:none">
     <div class="modal" id="modal">
@@ -154,7 +131,6 @@
   <script src="/js/terminal-viewport.js"></script>
   <script src="/js/tasks.js"></script>
   <script src="/js/remote-tasks.js"></script>
-  <script src="/js/mobile.js"></script>
   <script>
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('/sw.js').catch(() => {});

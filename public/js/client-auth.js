@@ -10,7 +10,7 @@
       if (['AUTH_REQUIRED', 'AUTHENTICATOR_BINDING_REQUIRED'].includes(data.error)) {
         redirecting = true;
         const target = data.error === 'AUTHENTICATOR_BINDING_REQUIRED' ? '/auth/setup' : '/auth/login';
-        const returnTo = location.pathname === '/h5' ? '/h5' : '/web';
+        const returnTo = '/web';
         location.replace(`${target}?return_to=${encodeURIComponent(returnTo)}`);
       }
     }

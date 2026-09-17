@@ -8,7 +8,7 @@ const { spawn } = require('child_process');
 const WebSocket = require('ws');
 const { totp, SESSION_TTL } = require('../services/client-auth');
 
-for (const environment of ['test', 'production']) test(`Web/H5 HTTP and WebSocket authentication cannot be bypassed (${environment})`, { timeout: 20000 }, async t => {
+for (const environment of ['test', 'production']) test(`Desktop HTTP and WebSocket authentication cannot be bypassed (${environment})`, { timeout: 20000 }, async t => {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 't-agent-client-auth-test-'));
   const child = spawn(process.execPath, ['server.js'], {
     cwd: path.resolve(__dirname, '..'),
@@ -56,7 +56,7 @@ for (const environment of ['test', 'production']) test(`Web/H5 HTTP and WebSocke
       ws.on('unexpected-response', (_, response) => { assert.equal(response.statusCode, expected); response.resume(); ws.terminate(); resolve(); });
     });
   }
-  for (const route of ['/', '/web', '/h5']) {
+  for (const route of ['/', '/web']) {
     const response = await call(route);
     assert.equal(response.status, 302);
     assert.match(response.headers.get('location'), /^\/auth\/setup\?/);
@@ -100,7 +100,7 @@ for (const environment of ['test', 'production']) test(`Web/H5 HTTP and WebSocke
   assert.notEqual(boundCookie, setupCookie);
   const confirmed = await confirmResponse.json();
   assert.equal(confirmed.recovery_codes.length, 8);
-  assert.equal(confirmed.redirect, '/h5');
+  assert.equal(confirmed.redirect, '/web');
   assert.equal((await call('/api/tasks')).status, 401);
   assert.equal((await call('/api/tasks', { cookie: setupCookie })).status, 401);
   const meResponse = await call('/auth/me', { cookie: boundCookie });
@@ -109,16 +109,20 @@ for (const environment of ['test', 'production']) test(`Web/H5 HTTP and WebSocke
   assert.ok(refreshedCookie, 'active HTTP request reissues the rolling cookie');
   const expiry = Date.parse(refreshedCookie.match(/Expires=([^;]+)/)[1]);
   assert.ok(Math.abs(expiry - Date.now() - SESSION_TTL) < 5000, 'cookie lasts 30 days from this request');
-  const h5 = await call('/h5', { cookie: boundCookie });
-  assert.equal(h5.status, 200);
-  const h5Html = await h5.text();
-  assert.match(h5Html, /<body class="h5-client">/);
-  assert.doesNotMatch(h5Html, /src="\/vendor\/monaco\/monaco.js"/);
-  assert.equal(h5.headers.get('cache-control'), 'no-store');
+  for (const route of ['/h5', '/h5.html']) {
+    const legacy = await call(route, { cookie: boundCookie });
+    assert.equal(legacy.status, 302);
+    assert.equal(legacy.headers.get('location'), '/web');
+  }
   const web = await call('/web', { cookie: boundCookie });
-  assert.doesNotMatch(await web.text(), /<body class="h5-client">/);
+  const webHtml = await web.text();
+  assert.match(webHtml, /width=1280, user-scalable=yes/);
+  assert.doesNotMatch(webHtml, /mobile-client|h5-client|mobile\.js|mobile\.css/);
+  assert.match(webHtml, /src="\/vendor\/monaco\/monaco.js/);
+  assert.equal(web.headers.get('cache-control'), 'no-store');
   const phone = await call('/', { cookie: boundCookie, headers: { 'User-Agent': 'iPhone Mobile' } });
-  assert.equal(phone.headers.get('location'), '/h5');
+  assert.equal(phone.status, 200);
+  assert.match(await phone.text(), /width=1280, user-scalable=yes/);
   assert.equal((await call('/index.html')).headers.get('location'), '/web');
   assert.equal((await call('/auth/settings', { cookie: boundCookie, body: { work_dir: null }, method: 'PUT', headers: { Origin: 'https://attacker.test' } })).status, 403);
 

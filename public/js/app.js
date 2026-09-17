@@ -388,7 +388,7 @@ document.getElementById('modal-overlay').addEventListener('click', e => {
 async function init() {
   document.getElementById('btn-logout').addEventListener('click', async () => {
     if (!confirm('退出后，本机和远程终端连接将断开，但服务端正在运行的任务不会停止。确认退出吗？')) return;
-    try { await API.post('/auth/logout', {}); location.replace(`/auth/login?return_to=${location.pathname === '/h5' ? '/h5' : '/web'}`); }
+    try { await API.post('/auth/logout', {}); location.replace('/auth/login?return_to=/web'); }
     catch { alert('退出失败，请稍后重试。'); }
   });
   document.getElementById('btn-settings').addEventListener('click', async () => {
@@ -402,7 +402,7 @@ async function init() {
         <div class="form-hint">新建任务时 md 文件的根目录，目录不存在会自动创建</div>
       </div>
       <div class="settings-section"><div class="settings-section-title">远程服务</div><div class="form-hint">管理允许其他 T-Agent Client 访问本地 Engine 的 Token。</div><div class="settings-inline-actions"><button class="btn-cancel" id="settings-remote-tokens">管理访问 Token</button></div></div>
-      <div class="settings-section"><div class="settings-section-title">身份验证器 · 已绑定</div><div class="form-hint">Web 和手机 H5 共用绑定信息，登录有效期 30 天，使用期间自动续期；连续 30 天未使用需重新验证。更换后旧验证器、恢复码和其他设备登录立即失效。</div><a class="toolbar-btn" href="/auth/setup?return_to=${location.pathname === '/h5' ? '/h5' : '/web'}">更换身份验证器</a></div>
+      <div class="settings-section"><div class="settings-section-title">身份验证器 · 已绑定</div><div class="form-hint">电脑和手机共用同一页面及绑定信息，登录有效期 30 天，使用期间自动续期；连续 30 天未使用需重新验证。更换后旧验证器、恢复码和其他设备登录立即失效。</div><a class="toolbar-btn" href="/auth/setup?return_to=/web">更换身份验证器</a></div>
       ${updateStatus ? Updates.renderSettings(updateStatus) : ''}
       <div class="form-actions">
         <button class="btn-cancel" id="settings-cancel">取消</button>
@@ -428,7 +428,6 @@ async function init() {
     Tasks.load(),
     RemoteTasks.load(),
   ]);
-  if (window.ClientMobile) window.ClientMobile.finishStartup();
   Updates.start();
 }
 

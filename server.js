@@ -277,21 +277,16 @@ function sendClientPage(req, res) {
   const returnTo = safeReturnTo(req.path);
   if (!auth.bound) return res.redirect(`/auth/setup?return_to=${encodeURIComponent(returnTo)}`);
   if (!auth.authenticated) return res.redirect(`/auth/login?return_to=${encodeURIComponent(returnTo)}`);
-  if (req.path === '/' && /Android|iPhone|iPod|Mobile/i.test(req.get('user-agent') || '')) return res.redirect('/h5');
   req.session.user = ensureSingleUser();
   let html = fs.readFileSync(path.join(__dirname, 'public', 'index.html'), 'utf8');
-  if (req.path === '/h5') {
-    html = html.replace('<body>', '<body class="h5-client">')
-      .replace('  <script src="/vendor/monaco/monaco.js"></script>\n', '')
-      .replace('  <link rel="stylesheet" href="/vendor/monaco/monaco.css">\n', '');
-  }
   const assetVersion = encodeURIComponent(JSON.parse(fs.readFileSync(path.join(__dirname, 'VERSION.json'), 'utf8')).app_version);
   html = html.replace(/(src|href)="(\/(?:js|css|vendor)\/[^"?]+\.(?:js|css))"/g, `$1="$2?v=${assetVersion}"`);
   res.type('html').send(html);
 }
 
-app.get(['/', '/web', '/h5'], sendClientPage);
-app.get(['/index.html', '/h5.html'], (req, res) => res.redirect(req.path === '/h5.html' ? '/h5' : '/web'));
+app.get(['/', '/web'], sendClientPage);
+app.get('/h5', (req, res) => res.redirect('/web'));
+app.get(['/index.html', '/h5.html'], (req, res) => res.redirect('/web'));
 app.get('/login.html', (req, res) => res.redirect('/auth/login'));
 
 // Static middleware decodes paths: encoded /index%2ehtml must not evade the

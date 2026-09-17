@@ -323,7 +323,6 @@ const RemoteTasks = (() => {
     localStorage.setItem('active-engine-key', activeEngineKey);
     localStorage.setItem(`remote-selected-task-${server.id}`, task.id);
     selected = { serverId: server.id, server, task };
-    if (window.ClientMobile) window.ClientMobile.showDetails(task.title);
     activeTab = localStorage.getItem(`remote-task-tab-${server.id}-${task.id}`) || 'doc';
     render();
     contentTabs.style.display = 'flex';

@@ -59,7 +59,7 @@ const TerminalClipboard = (() => {
   async function copySelection(item) {
     const text = item.term.getSelection();
     if (!text) {
-      message(item, document.body.classList.contains('mobile-client')
+      message(item, window.matchMedia?.('(pointer: coarse)').matches
         ? '未选中文字，可查看程序复制请求'
         : `没有客户端选区；${hint}，或查看程序复制请求`);
       return;

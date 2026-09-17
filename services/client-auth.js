@@ -49,7 +49,7 @@ function matchStep(secret, code, now = Date.now()) {
 
 function hash(value) { return crypto.createHash('sha256').update(value).digest('hex'); }
 function fail(code, status = 400) { const error = new Error(code); error.status = status; throw error; }
-function safeReturnTo(value) { return ['/', '/web', '/h5'].includes(value) ? value : '/'; }
+function safeReturnTo(value) { return value === '/h5' ? '/web' : ['/', '/web'].includes(value) ? value : '/'; }
 
 // Do not trust req.ip: reverse proxies and forwarded headers can make a remote
 // request appear local. First enrollment requires a direct loopback connection

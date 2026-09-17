@@ -105,6 +105,15 @@ for (const environment of ['test', 'production']) test(`Desktop HTTP and WebSock
   assert.equal((await call('/api/tasks', { cookie: setupCookie })).status, 401);
   const meResponse = await call('/auth/me', { cookie: boundCookie });
   assert.equal(meResponse.status, 200);
+  assert.equal((await meResponse.json()).effective_work_dir, path.join(temp, 'tasks'));
+  const customWorkDir = path.join(temp, 'custom-tasks');
+  assert.equal((await call('/auth/settings', { cookie: boundCookie, method: 'PUT', body: { work_dir: customWorkDir } })).status, 200);
+  const customSettings = await (await call('/auth/me', { cookie: boundCookie })).json();
+  assert.equal(customSettings.work_dir, customWorkDir);
+  assert.equal(customSettings.effective_work_dir, customWorkDir);
+  assert.equal((await call('/auth/settings', { cookie: boundCookie, method: 'PUT', body: { work_dir: null } })).status, 200);
+  assert.equal((await (await call('/auth/me', { cookie: boundCookie })).json()).effective_work_dir, path.join(temp, 'tasks'));
+
   const refreshedCookie = meResponse.headers.get('set-cookie');
   assert.ok(refreshedCookie, 'active HTTP request reissues the rolling cookie');
   const expiry = Date.parse(refreshedCookie.match(/Expires=([^;]+)/)[1]);

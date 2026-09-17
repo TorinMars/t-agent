@@ -445,13 +445,15 @@ async function init() {
   });
   document.getElementById('btn-settings').addEventListener('click', async () => {
     let user = {};
-    try { user = await API.get('/auth/me'); } catch(e) {}
+    try { user = await API.get('/auth/me'); }
+    catch(e) { alert('加载设置失败: ' + e.message); return; }
+    const initialWorkDir = user.work_dir || user.effective_work_dir || '';
     const updateStatus = await Updates.load({ notify: false });
     Modal.show('设置', `
       <div class="form-group">
         <label class="form-label">工作目录</label>
-        <input class="form-input" id="settings-work-dir" value="${escapeHtml(user.work_dir || '')}" placeholder="例如 /Users/yourname/tasks">
-        <div class="form-hint">新建任务时 md 文件的根目录，目录不存在会自动创建</div>
+        <input class="form-input" id="settings-work-dir" value="${escapeHtml(initialWorkDir)}" placeholder="例如 /Users/yourname/tasks">
+        <div class="form-hint">新建任务时 md 文件的根目录，目录不存在会自动创建；清空恢复默认目录</div>
       </div>
       <div class="settings-section"><div class="settings-section-title">远程服务</div><div class="form-hint">管理允许其他 T-Agent Client 访问本地 Engine 的 Token。</div><div class="settings-inline-actions"><button class="btn-cancel" id="settings-remote-tokens">管理访问 Token</button></div></div>
       <div class="settings-section"><div class="settings-section-title">身份验证器 · 已绑定</div><div class="form-hint">电脑和手机共用同一页面及绑定信息，登录有效期 30 天，使用期间自动续期；连续 30 天未使用需重新验证。更换后旧验证器、恢复码和其他设备登录立即失效。</div><a class="toolbar-btn" href="/auth/setup?return_to=/web">更换身份验证器</a></div>
@@ -465,7 +467,8 @@ async function init() {
     document.getElementById('settings-remote-tokens').addEventListener('click', () => RemoteTasks.showTokens());
     if (updateStatus) Updates.bindSettings(updateStatus);
     document.getElementById('settings-save').addEventListener('click', async () => {
-      const work_dir = document.getElementById('settings-work-dir').value.trim() || null;
+      const value = document.getElementById('settings-work-dir').value.trim();
+      const work_dir = value === initialWorkDir ? user.work_dir || null : value || null;
       try {
         await API.put('/auth/settings', { work_dir });
         Modal.hide();

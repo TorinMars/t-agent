@@ -357,14 +357,20 @@ const RemoteTasks = (() => {
   function editDocumentPaths(server, task) {
     const fields = [['technical_path', '技术方案', 'DESIGN.md'], ['readme_path', 'README', 'README.md'], ['agent_path', 'AGENT', 'AGENT.md']];
     Modal.show('编辑文档路径', fields.map(([field, label, name]) => {
-      const value = task[field] || (field === 'technical_path' && task.md_path && !task.md_path.endsWith('/DESIGN.md') ? task.md_path : '');
-      return `<div class="form-group"><label class="form-label">${label} 路径</label><input class="form-input" id="remote-${field}" value="${escapeHtml(value)}" placeholder="留空使用工作目录下的 ${name}"></div>`;
+      const override = task[field] || (field === 'technical_path' && task.md_path && !task.md_path.endsWith('/DESIGN.md') ? task.md_path : '');
+      const root = task.work_dir || (task.md_path ? task.md_path.slice(0, task.md_path.lastIndexOf('/')) || '/' : '');
+      const value = override || (root ? `${root.replace(/\/$/, '')}/${name}` : '');
+      return `<div class="form-group"><label class="form-label">${label} 路径</label><input class="form-input" id="remote-${field}" value="${escapeHtml(value)}" data-path-override="${escapeHtml(override)}" data-initial-value="${escapeHtml(value)}" placeholder="留空使用工作目录下的 ${name}"></div>`;
     }).join('') + '<div class="form-hint">填写远程 Engine 上的绝对 Markdown 路径。已有文件不覆盖，缺失时创建；清空恢复默认。</div><div class="form-actions"><button class="btn-cancel" id="remote-path-cancel">取消</button><button class="btn-submit" id="remote-path-save">保存</button></div>');
     document.getElementById('remote-path-cancel').addEventListener('click', Modal.hide);
     document.getElementById('remote-path-save').addEventListener('click', async event => {
       const button = event.currentTarget;
       const payload = { md_path: null };
-      fields.forEach(([field]) => { payload[field] = document.getElementById(`remote-${field}`).value.trim() || null; });
+      fields.forEach(([field]) => {
+        const input = document.getElementById(`remote-${field}`);
+        payload[field] = (input.value === input.dataset.initialValue
+          ? input.dataset.pathOverride : input.value).trim() || null;
+      });
       button.disabled = true;
       try {
         const updated = await API.put(`/api/remote-servers/${server.id}/tasks/${task.id}`, payload);

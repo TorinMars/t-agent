@@ -28,4 +28,19 @@ for (const remote of [false,true]) test(`${remote?'remote':'local'} task form su
  open();ids.forEach(id=>document.getElementById(id).value='');
  document.getElementById(remote?'remote-path-save':'f-submit').dispatchEvent(new Event('click'));
  assert.equal(calls[1].body.technical_path,null);assert.equal(calls[1].body.readme_path,null);assert.equal(calls[1].body.agent_path,null);
+ // Default paths are visible, but saving unrelated edits keeps them inherited.
+ task.technical_path=null;task.readme_path=null;task.agent_path=null;
+ open();
+ assert.deepEqual(ids.map(id=>document.getElementById(id).value),['/project/DESIGN.md','/project/README.md','/project/AGENT.md']);
+ if(!remote) document.getElementById('f-work-dir').value='/moved';
+ document.getElementById(remote?'remote-path-save':'f-submit').dispatchEvent(new Event('click'));
+ for(const field of ['technical_path','readme_path','agent_path']) assert.equal(calls[2].body[field],null);
+ if(!remote) assert.equal(calls[2].body.work_dir,'/moved');
+ // Existing legacy paths also remain visible and survive saving.
+ task.md_path='/legacy/spec.md';
+ open();
+ assert.equal(document.getElementById(ids[0]).value,'/legacy/spec.md');
+ document.getElementById(remote?'remote-path-save':'f-submit').dispatchEvent(new Event('click'));
+ assert.equal(calls[3].body.technical_path,'/legacy/spec.md');
+
 });

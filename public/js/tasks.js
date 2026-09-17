@@ -1519,12 +1519,13 @@ const Tasks = (() => {
         <label class="form-label">标题</label>
         <input class="form-input" id="f-title" type="text" value="${escapeHtml(task.title || '')}" placeholder="任务标题（可由 MD 文件名自动填充）">
       </div>
-      <div class="form-group">
-        <label class="form-label">技术方案路径</label>
-        <input class="form-input" id="f-md-path" type="text" value="${escapeHtml(task.technical_path || (task.md_path && !task.md_path.endsWith('/DESIGN.md') ? task.md_path : ''))}" placeholder="留空使用工作目录下的 DESIGN.md">
-        <div class="form-hint" id="f-md-hint"></div>
-      </div>
-      ${[['readme_path', 'README.md'], ['agent_path', 'AGENT.md']].map(([field, name]) => `<div class="form-group"><label class="form-label">${name} 路径</label><input class="form-input" id="f-${field}" value="${escapeHtml(task[field] || '')}" placeholder="留空使用工作目录下的 ${name}"></div>`).join('')}
+      ${[['technical_path', '技术方案', 'DESIGN.md'], ['readme_path', 'README.md', 'README.md'], ['agent_path', 'AGENT.md', 'AGENT.md']].map(([field, label, name]) => {
+        const override = task[field] || (field === 'technical_path' && task.md_path && !task.md_path.endsWith('/DESIGN.md') ? task.md_path : '');
+        const root = task.work_dir || (task.md_path ? task.md_path.slice(0, task.md_path.lastIndexOf('/')) || '/' : '');
+        const value = override || (task.id && root ? `${root.replace(/\/$/, '')}/${name}` : '');
+        const id = field === 'technical_path' ? 'f-md-path' : `f-${field}`;
+        return `<div class="form-group"><label class="form-label">${label}路径</label><input class="form-input" id="${id}" type="text" value="${escapeHtml(value)}" data-path-override="${escapeHtml(override)}" data-initial-value="${escapeHtml(value)}" placeholder="留空使用工作目录下的 ${name}">${field === 'technical_path' ? '<div class="form-hint" id="f-md-hint"></div>' : ''}</div>`;
+      }).join('')}
       <div class="form-hint">三个路径均可填写绝对 Markdown 文件路径；已有文件直接使用，缺失时创建。清空后恢复工作目录下的默认文件。</div>
       <div class="form-group">
         <label class="form-label" id="f-work-dir-label">${initialRemoteTarget ? '远程工作目录' : '工作目录'}</label>
@@ -1637,10 +1638,13 @@ const Tasks = (() => {
 
     document.getElementById('f-submit').addEventListener('click', async () => {
       const title = titleInput.value.trim();
-      const technical_path = mdInput.value.trim() || null;
+      // Unchanged default paths continue to follow the working directory.
+      const pathValue = input => (input.value === input.dataset.initialValue
+        ? input.dataset.pathOverride : input.value).trim() || null;
+      const technical_path = pathValue(mdInput);
       const md_path = null;
-      const readme_path = document.getElementById('f-readme_path').value.trim() || null;
-      const agent_path = document.getElementById('f-agent_path').value.trim() || null;
+      const readme_path = pathValue(document.getElementById('f-readme_path'));
+      const agent_path = pathValue(document.getElementById('f-agent_path'));
       const work_dir = workDirInput.value.trim() || null;
       const priority = document.querySelector('input[name="priority"]:checked')?.value || 'normal';
       const due_date = document.getElementById('f-due-date').value || null;

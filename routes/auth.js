@@ -1,6 +1,7 @@
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const QRCode = require('qrcode');
 const db = require('../db');
 const { ensureSingleUser } = require('../services/single-user');
@@ -100,7 +101,11 @@ router.post('/logout', (req, res) => {
 
 // GET /auth/me
 router.get('/me', requireAuth, (req, res) => {
-  res.json({ ...req.session.user, authenticator_bound: true });
+  res.json({
+    ...req.session.user,
+    effective_work_dir: req.session.user.work_dir || process.env.TASKS_BASE_DIR || path.join(os.homedir(), 'tasks'),
+    authenticator_bound: true,
+  });
 });
 
 module.exports = router;

@@ -6,6 +6,7 @@ const { randomUUID } = require('crypto');
 const db = require('../db');
 const requireAuth = require('../middleware/auth');
 const terminal = require('./terminal');
+const documents = require('../services/task-documents');
 
 const router = express.Router();
 
@@ -22,7 +23,7 @@ router.get('/', (req, res) => {
   } else {
     tasks = db.prepare('SELECT * FROM tasks WHERE user_id = ? ORDER BY sort_order ASC, created_at DESC').all(uid);
   }
-  res.json(tasks);
+  res.json(tasks.map(documents.resolveTask));
 });
 
 // 将任务标题转换为合法的目录/文件名
@@ -37,32 +38,6 @@ function titleToSlug(title) {
 // 优先用用户自己的 work_dir，其次读环境变量 TASKS_BASE_DIR，最后回退 ~/tasks
 const os = require('os');
 const DEFAULT_BASE = process.env.TASKS_BASE_DIR || path.join(os.homedir(), 'tasks');
-
-function autoCreateTaskFiles(title, userWorkDir) {
-  const slug = titleToSlug(title);
-  const base = userWorkDir || DEFAULT_BASE;
-  const dir = path.join(base, slug);
-  const mdFile = path.join(dir, 'DESIGN.md');
-  fs.mkdirSync(dir, { recursive: true });
-  if (!fs.existsSync(mdFile)) {
-    fs.writeFileSync(mdFile, `# ${title}\n`, 'utf8');
-  }
-  ensureTaskCompanionDocuments(title, dir);
-  return { work_dir: dir, md_path: mdFile };
-}
-
-// 在当前任务目录补齐固定文档；已有文件保持原样，不做覆盖。
-function ensureTaskCompanionDocuments(title, taskDir) {
-  fs.mkdirSync(taskDir, { recursive: true });
-  const readmeFile = path.join(taskDir, 'README.md');
-  const agentFile = path.join(taskDir, 'AGENT.md');
-  if (!fs.existsSync(readmeFile)) {
-    fs.writeFileSync(readmeFile, `# ${title}\n\n## 项目说明\n\n`, 'utf8');
-  }
-  if (!fs.existsSync(agentFile)) {
-    fs.writeFileSync(agentFile, '# AGENT.md\n\n## 工作约定\n\n', 'utf8');
-  }
-}
 
 router.post('/', (req, res) => {
   const uid = ownerFilter(req);
@@ -81,26 +56,14 @@ router.post('/', (req, res) => {
 
   if (!title) return res.status(400).json({ error: 'title is required' });
 
-  // 只填了标题、未指定 md_path 时，自动创建目录和 md 文件
-  if (!md_path) {
-    try {
-      const created = autoCreateTaskFiles(title, req.session.user.work_dir || null);
-      md_path = created.md_path;
-      if (!work_dir) work_dir = created.work_dir;
-    } catch (err) {
-      console.error('[tasks] autoCreateTaskFiles error:', err.message);
-    }
-  } else {
-    // 手动指定技术方案时，也在当前 Task 目录自动补齐 README 与 AGENT.md。
-    try {
-      ensureTaskCompanionDocuments(title, work_dir || path.dirname(md_path));
-      if (!fs.existsSync(md_path)) {
-        fs.mkdirSync(path.dirname(md_path), { recursive: true });
-        fs.writeFileSync(md_path, `# ${title}\n`, 'utf8');
-      }
-    } catch (err) {
-      return res.status(500).json({ error: `Failed to create task documents: ${err.message}` });
-    }
+  if (work_dir && !path.isAbsolute(work_dir)) return res.status(400).json({ error: 'work_dir must be an absolute path' });
+  if (!work_dir) work_dir = path.join(req.session.user.work_dir || DEFAULT_BASE, titleToSlug(title));
+  if (!md_path) md_path = path.join(work_dir, 'DESIGN.md');
+  md_path = documents.documentPath({ work_dir, md_path }, 'technical');
+  try {
+    documents.ensureDocuments({ title, work_dir, md_path });
+  } catch (err) {
+    return res.status(500).json({ error: `Failed to create task documents: ${err.message}` });
   }
 
   const info = db.prepare(`
@@ -124,7 +87,7 @@ router.put('/reorder', (req, res) => {
 router.put('/:id', (req, res) => {
   const uid = ownerFilter(req);
   const { id } = req.params;
-  const task = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(id, uid);
+  const task = documents.resolveTask(db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(id, uid));
   if (!task) return res.status(404).json({ error: 'Task not found' });
 
   let { title, status, priority, due_date, md_path, work_dir, sort_order } = req.body;
@@ -136,6 +99,15 @@ router.put('/:id', (req, res) => {
     if (!md_path.endsWith('.md')) return res.status(400).json({ error: 'md_path must end with .md' });
     // 更新了 md_path 但未传 work_dir，自动推导
     if (work_dir === undefined) work_dir = path.dirname(md_path);
+  }
+
+  if (work_dir && !path.isAbsolute(work_dir)) return res.status(400).json({ error: 'work_dir must be an absolute path' });
+  if (work_dir !== undefined || md_path !== undefined) {
+    const root = work_dir || task.work_dir || (md_path && path.dirname(md_path));
+    md_path = documents.updatedTechnicalPath(task, root, md_path === undefined ? task.md_path : md_path);
+    work_dir = root;
+    try { documents.ensureDocuments({ title: title || task.title, work_dir, md_path }); }
+    catch (err) { return res.status(500).json({ error: `Failed to create task documents: ${err.message}` }); }
   }
 
   db.prepare(`
@@ -191,7 +163,7 @@ router.post('/:id/terminal/control', (req, res) => {
 
 router.delete('/:id', (req, res) => {
   const uid = ownerFilter(req);
-  const task = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, uid);
+  const task = documents.resolveTask(db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, uid));
   if (!task) return res.status(404).json({ error: 'Task not found' });
   terminal.closeTaskTerminals(task.id);
   db.prepare('DELETE FROM tasks WHERE id = ?').run(req.params.id);
@@ -200,32 +172,28 @@ router.delete('/:id', (req, res) => {
 
 router.get('/:id/md', (req, res) => {
   const uid = ownerFilter(req);
-  const task = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, uid);
+  const task = documents.resolveTask(db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, uid));
   if (!task) return res.status(404).json({ error: 'Task not found' });
+  task.md_path = getTaskDocumentPath(task, 'technical');
   if (!task.md_path || !task.md_path.endsWith('.md')) return res.status(404).json({ error: 'No md_path' });
   try {
+    documents.ensureDocument(task, 'technical');
     res.type('text/plain').send(fs.readFileSync(task.md_path, 'utf8'));
   } catch (err) {
     res.status(err.code === 'ENOENT' ? 404 : 500).json({ error: 'Failed to read file' });
   }
 });
 
-function getTaskDocumentPath(task, kind) {
-  if (kind === 'technical') return task.md_path || null;
-  const rootDir = task.work_dir || (task.md_path ? path.dirname(task.md_path) : null);
-  if (!rootDir) return null;
-  if (kind === 'readme') return path.join(rootDir, 'README.md');
-  if (kind === 'agent') return path.join(rootDir, 'AGENT.md');
-  return null;
-}
+const getTaskDocumentPath = documents.documentPath;
 
 router.get('/:id/document/:kind', (req, res) => {
   const uid = ownerFilter(req);
-  const task = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, uid);
+  const task = documents.resolveTask(db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, uid));
   if (!task) return res.status(404).json({ error: 'Task not found' });
   const filePath = getTaskDocumentPath(task, req.params.kind);
   if (!filePath) return res.status(404).json({ error: 'Document path is not configured' });
   try {
+    documents.ensureDocument(task, req.params.kind);
     res.type('text/plain').send(fs.readFileSync(filePath, 'utf8'));
   } catch (err) {
     res.status(err.code === 'ENOENT' ? 404 : 500).json({ error: err.code === 'ENOENT' ? 'Document not found' : 'Failed to read document' });
@@ -234,7 +202,7 @@ router.get('/:id/document/:kind', (req, res) => {
 
 router.put('/:id/document/:kind', (req, res) => {
   const uid = ownerFilter(req);
-  const task = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, uid);
+  const task = documents.resolveTask(db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, uid));
   if (!task) return res.status(404).json({ error: 'Task not found' });
   if (!['technical', 'readme', 'agent'].includes(req.params.kind)) {
     return res.status(400).json({ error: 'Invalid document kind' });
@@ -257,18 +225,16 @@ router.put('/:id/document/:kind', (req, res) => {
 
 router.post('/:id/document/:kind', (req, res) => {
   const uid = ownerFilter(req);
-  const task = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, uid);
+  const task = documents.resolveTask(db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, uid));
   if (!task) return res.status(404).json({ error: 'Task not found' });
   if (!['readme', 'agent'].includes(req.params.kind)) {
     return res.status(400).json({ error: 'Only README.md and AGENT.md can be created here' });
   }
   const filePath = getTaskDocumentPath(task, req.params.kind);
   if (!filePath) return res.status(400).json({ error: 'Task work directory is not configured' });
-  const title = req.params.kind === 'readme' ? task.title : 'AGENT.md';
-  const section = req.params.kind === 'readme' ? '项目说明' : '工作约定';
   try {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    if (!fs.existsSync(filePath)) fs.writeFileSync(filePath, `# ${title}\n\n## ${section}\n\n`, 'utf8');
+    documents.ensureDocument(task, req.params.kind);
     res.status(201).json({ success: true });
   } catch (err) {
     res.status(500).json({ error: 'Failed to create document' });
@@ -341,7 +307,7 @@ router.delete('/:id/todos/:todoId', (req, res) => {
 
 router.get('/:id/file', (req, res) => {
   const uid = ownerFilter(req);
-  const task = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, uid);
+  const task = documents.resolveTask(db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, uid));
   if (!task || !task.md_path) return res.status(404).json({ error: 'No md_path' });
   const rel = req.query.path;
   if (!rel || rel.includes('..')) return res.status(400).json({ error: 'Invalid path' });
@@ -352,7 +318,7 @@ router.get('/:id/file', (req, res) => {
 
 router.post('/:id/share', (req, res) => {
   const uid = ownerFilter(req);
-  const task = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, uid);
+  const task = documents.resolveTask(db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, uid));
   if (!task) return res.status(404).json({ error: 'Task not found' });
   if (!task.md_path) return res.status(400).json({ error: 'Task has no md file' });
 
@@ -366,7 +332,7 @@ router.post('/:id/share', (req, res) => {
 
 router.post('/:id/reveal', (req, res) => {
   const uid = ownerFilter(req);
-  const task = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, uid);
+  const task = documents.resolveTask(db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, uid));
   if (!task || !task.md_path) return res.status(404).json({ error: 'No md_path' });
   exec(`open -R "${task.md_path}"`, (err) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -376,7 +342,7 @@ router.post('/:id/reveal', (req, res) => {
 
 router.post('/:id/vscode', (req, res) => {
   const uid = ownerFilter(req);
-  const task = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, uid);
+  const task = documents.resolveTask(db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, uid));
   if (!task || !task.md_path) return res.status(404).json({ error: 'No md_path' });
   // 硬编码常见安装路径，兼容 LaunchAgent 精简 PATH 环境
   const codeBin = [
@@ -393,7 +359,7 @@ router.post('/:id/vscode', (req, res) => {
 
 router.get('/:id/md/watch', (req, res) => {
   const uid = ownerFilter(req);
-  const task = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, uid);
+  const task = documents.resolveTask(db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, uid));
   if (!task || !task.md_path || !task.md_path.endsWith('.md')) return res.status(404).end();
 
   res.setHeader('Content-Type', 'text/event-stream');
@@ -417,7 +383,7 @@ router.get('/:id/md/watch', (req, res) => {
 
 router.get('/:id/document/:kind/watch', (req, res) => {
   const uid = ownerFilter(req);
-  const task = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, uid);
+  const task = documents.resolveTask(db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, uid));
   if (!task) return res.status(404).end();
   const filePath = getTaskDocumentPath(task, req.params.kind);
   if (!filePath) return res.status(404).end();

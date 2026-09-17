@@ -12,14 +12,7 @@ function ownedTask(req) {
   return db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, req.remoteAuth.userId);
 }
 
-function documentPath(task, kind) {
-  if (kind === 'technical') return task.md_path || null;
-  const root = task.work_dir || (task.md_path ? path.dirname(task.md_path) : null);
-  if (!root) return null;
-  if (kind === 'readme') return path.join(root, 'README.md');
-  if (kind === 'agent') return path.join(root, 'AGENT.md');
-  return null;
-}
+const { documentPath } = require('../services/task-documents');
 
 router.get('/capabilities', (req, res) => {
   let version = {};
@@ -35,7 +28,7 @@ router.get('/capabilities', (req, res) => {
 router.get('/tasks', (req, res) => {
   const tasks = db.prepare(`
     SELECT id, title, status, priority, due_date, sort_order, created_at, updated_at,
-           CASE WHEN md_path IS NULL THEN 0 ELSE 1 END AS has_technical,
+           CASE WHEN md_path IS NULL AND work_dir IS NULL THEN 0 ELSE 1 END AS has_technical,
            CASE WHEN work_dir IS NULL AND md_path IS NULL THEN 0 ELSE 1 END AS has_document_root
     FROM tasks WHERE user_id = ? ORDER BY sort_order ASC, created_at DESC
   `).all(req.remoteAuth.userId);

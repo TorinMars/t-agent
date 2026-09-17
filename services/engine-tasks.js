@@ -3,12 +3,13 @@ const os = require('os');
 const path = require('path');
 const db = require('../db');
 const taskGroups = require('./task-groups');
+const documents = require('./task-documents');
 
 const DEFAULT_BASE = path.resolve(process.env.TASKS_BASE_DIR || path.join(os.homedir(), 'tasks'));
 
 function publicTask(task) {
   if (!task) return null;
-  const { user_id, share_token, ...result } = task;
+  const { user_id, share_token, ...result } = documents.resolveTask(task);
   return result;
 }
 
@@ -29,20 +30,8 @@ function titleToSlug(title) {
     .replace(/^-+|-+$/g, '') || 'task';
 }
 
-function ensureDocuments(title, taskDir, technicalPath) {
-  fs.mkdirSync(taskDir, { recursive: true });
-  const documents = [
-    [technicalPath, `# ${title}\n`],
-    [path.join(taskDir, 'README.md'), `# ${title}\n\n## 项目说明\n\n`],
-    [path.join(taskDir, 'AGENT.md'), '# AGENT.md\n\n## 工作约定\n\n'],
-  ];
-  for (const [file, initial] of documents) {
-    if (!fs.existsSync(file)) fs.writeFileSync(file, initial, 'utf8');
-  }
-}
-
 function ownedTask(principalId, id) {
-  return db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(id, principalId);
+  return documents.resolveTask(db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(id, principalId));
 }
 
 function listTasks(principalId, status) {
@@ -67,8 +56,8 @@ function createTask(principalId, input = {}) {
   if (!workDir && mdPath) workDir = path.dirname(mdPath);
   if (!workDir) workDir = assertWorkspacePath(path.join(DEFAULT_BASE, titleToSlug(title)));
   if (!mdPath) mdPath = path.join(workDir, 'DESIGN.md');
-  mdPath = assertWorkspacePath(mdPath);
-  ensureDocuments(title, workDir, mdPath);
+  mdPath = assertWorkspacePath(documents.documentPath({ work_dir: workDir, md_path: mdPath }, 'technical'));
+  documents.ensureDocuments({ title, work_dir: workDir, md_path: mdPath });
 
   const result = db.prepare(`INSERT INTO tasks
     (title, status, priority, due_date, md_path, work_dir, sort_order, user_id)
@@ -104,6 +93,11 @@ function updateTask(principalId, id, input = {}) {
   if (values.md_path && path.extname(values.md_path).toLowerCase() !== '.md') {
     throw Object.assign(new Error('MD_PATH_INVALID'), { statusCode: 400 });
   }
+  if (input.work_dir !== undefined || input.md_path !== undefined) {
+    values.work_dir = values.work_dir || (values.md_path && path.dirname(values.md_path));
+    values.md_path = documents.updatedTechnicalPath(task, values.work_dir, values.md_path);
+    documents.ensureDocuments(values);
+  }
   db.prepare(`UPDATE tasks SET title=@title, status=@status, priority=@priority,
     due_date=@due_date, md_path=@md_path, work_dir=@work_dir, sort_order=@sort_order,
     updated_at=CURRENT_TIMESTAMP WHERE id=@id AND user_id=@user_id`).run(values);
@@ -116,14 +110,7 @@ function deleteTask(principalId, id) {
   if (!result.changes) throw Object.assign(new Error('TASK_NOT_FOUND'), { statusCode: 404 });
 }
 
-function documentPath(task, kind) {
-  if (kind === 'technical') return task.md_path;
-  const root = task.work_dir || (task.md_path && path.dirname(task.md_path));
-  if (!root) return null;
-  if (kind === 'readme') return path.join(root, 'README.md');
-  if (kind === 'agent') return path.join(root, 'AGENT.md');
-  return null;
-}
+const documentPath = documents.documentPath;
 
 function readDocument(principalId, id, kind) {
   const task = ownedTask(principalId, id);
@@ -131,7 +118,7 @@ function readDocument(principalId, id, kind) {
   const file = documentPath(task, kind);
   if (!file) throw Object.assign(new Error('DOCUMENT_NOT_FOUND'), { statusCode: 404 });
   assertWorkspacePath(file);
-  try { return fs.readFileSync(file, 'utf8'); }
+  try { documents.ensureDocument(task, kind); return fs.readFileSync(file, 'utf8'); }
   catch { throw Object.assign(new Error('DOCUMENT_NOT_FOUND'), { statusCode: 404 }); }
 }
 

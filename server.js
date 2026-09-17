@@ -99,7 +99,7 @@ function toSafeJson(value) {
 }
 
 function getSharedTask(token) {
-  return db.prepare('SELECT * FROM tasks WHERE share_token = ?').get(token);
+  return require('./services/task-documents').resolveTask(db.prepare('SELECT * FROM tasks WHERE share_token = ?').get(token));
 }
 
 // Resolve a shared document relative to the task's root Markdown directory.

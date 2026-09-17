@@ -18,6 +18,24 @@ const RemoteTasks = (() => {
   const contentTabs = document.getElementById('content-tabs');
   const terminalPane = document.getElementById('terminal-pane');
 
+  const engineBar = document.querySelector('.engine-tabs-bar');
+  const engineToggle = document.getElementById('btn-toggle-engines');
+  if (engineBar && engineToggle) {
+    function setEngineBarCollapsed(collapsed) {
+      engineBar.classList.toggle('collapsed', collapsed);
+      engineToggle.setAttribute('aria-expanded', String(!collapsed));
+      engineToggle.title = collapsed ? '展开引擎栏' : '收起引擎栏';
+      engineToggle.setAttribute('aria-label', engineToggle.title);
+      engineToggle.textContent = collapsed ? '»' : '«';
+    }
+    setEngineBarCollapsed(localStorage.getItem('engine-nav-collapsed') === '1');
+    engineToggle.addEventListener('click', () => {
+      const collapsed = !engineBar.classList.contains('collapsed');
+      setEngineBarCollapsed(collapsed);
+      localStorage.setItem('engine-nav-collapsed', collapsed ? '1' : '0');
+    });
+  }
+
   function errorLabel(code) {
     return ({
       INVALID_REMOTE_URL: 'URL 格式不正确', INVALID_REMOTE_PORT: '端口不正确', TOKEN_REQUIRED: '请输入 Token',
@@ -146,6 +164,8 @@ const RemoteTasks = (() => {
       button.type = 'button';
       button.className = `engine-tab${activeEngineKey === key ? ' active' : ''}`;
       button.dataset.engineKey = key;
+      button.dataset.shortLabel = Array.from(label.trim())[0] || "?";
+      button.setAttribute("aria-label", label);
       const versionLabel = version ? (String(version).startsWith('v') ? String(version) : `v${version}`) : '版本未知';
       button.title = `${title || label} · ${versionLabel}`;
       const dot = document.createElement('span');

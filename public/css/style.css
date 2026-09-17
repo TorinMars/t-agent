@@ -366,6 +366,34 @@ body {
   overflow: hidden;
 }
 
+.engine-nav-toggle {
+  height: 28px;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text-muted);
+  font: 20px/1 sans-serif;
+  cursor: pointer;
+}
+.engine-nav-toggle:hover { background: var(--bg-tertiary); color: var(--text); }
+.engine-tabs-bar.collapsed { width: 52px; padding: 8px 4px; }
+.engine-tabs-bar.collapsed .engine-tabs { scrollbar-gutter: auto; }
+.engine-tabs-bar.collapsed .engine-tab {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 36px;
+  padding: 4px;
+}
+.engine-tabs-bar.collapsed .engine-tab::before { content: attr(data-short-label); }
+.engine-tabs-bar.collapsed .engine-tab > span:nth-child(2),
+.engine-tabs-bar.collapsed .engine-tab-version,
+.engine-tabs-bar.collapsed .engine-connect-label { display: none; }
+.engine-tabs-bar.collapsed .engine-tab-status { position: absolute; right: 2px; bottom: 3px; width: 5px; height: 5px; }
+.engine-tabs-bar.collapsed .engine-connect-remote { padding: 4px; }
+
 .engine-tabs {
   display: flex;
   flex: 1;
@@ -379,6 +407,7 @@ body {
 }
 
 .engine-connect-remote {
+  gap: 4px;
   min-height: 32px;
   display: flex;
   align-items: center;

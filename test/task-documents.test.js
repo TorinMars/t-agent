@@ -55,3 +55,33 @@ test('legacy default DESIGN path resolves to current workspace without modifying
  const listed=await request('/tasks','GET');assert.equal(listed.find(t=>t.id===id).md_path,path.join(dir,'DESIGN.md'));
  assert.equal(fs.readFileSync(path.join(old,'DESIGN.md'),'utf8'),'old document');
 });
+
+test('local task edits all three explicit paths, including external DESIGN.md, and can reset them',async()=>{
+ const dir=populated('editable');const target=populated('explicit');
+ const task=await request('/tasks','POST',{title:'editable',work_dir:dir});
+ const overrides={technical_path:path.join(target,'DESIGN.md'),readme_path:path.join(target,'README.md'),agent_path:path.join(target,'instructions','custom.md')};
+ await request(`/tasks/${task.id}`,'PUT',overrides);
+ for(const [kind,field] of [['technical','technical_path'],['readme','readme_path'],['agent','agent_path']]){
+  assert.equal(db.prepare('SELECT * FROM tasks WHERE id=?').get(task.id)[field],overrides[field]);
+  assert.equal(await (await fetch(`${base}/tasks/${task.id}/document/${kind}`)).text(),fs.readFileSync(overrides[field],'utf8'));
+ }
+ await request(`/tasks/${task.id}/document/technical`,'PUT',{content:'edited external design'});
+ assert.equal(fs.readFileSync(path.join(dir,'DESIGN.md'),'utf8'),'existing DESIGN.md');
+ assert.equal(fs.readFileSync(overrides.technical_path,'utf8'),'edited external design');
+ await request(`/tasks/${task.id}`,'PUT',{technical_path:null,readme_path:null,agent_path:null,md_path:null});
+ assert.equal(await (await fetch(`${base}/tasks/${task.id}/md`)).text(),'existing DESIGN.md');
+ const invalid=await fetch(`${base}/tasks/${task.id}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({agent_path:'relative.md'})});
+ assert.equal(invalid.status,400);
+});
+test('engine overrides persist across workspace changes and reset independently',()=>{
+ const dir=populated('engine-overrides');const external=populated('engine-files');
+ const task=engine.createTask('owner',{title:'paths',work_dir:dir,technical_path:path.join(external,'DESIGN.md'),readme_path:path.join(external,'README.md'),agent_path:path.join(external,'AGENT.md')});
+ const moved=engine.updateTask('owner',task.id,{work_dir:path.join(root,'moved-workspace')});
+ assert.equal(moved.md_path,path.join(external,'DESIGN.md'));
+ engine.writeDocument('owner',task.id,'agent','custom instructions');
+ assert.equal(fs.readFileSync(path.join(external,'AGENT.md'),'utf8'),'custom instructions');
+ const reset=engine.updateTask('owner',task.id,{technical_path:null});
+ assert.equal(reset.md_path,path.join(root,'moved-workspace','DESIGN.md'));
+ assert.equal(reset.agent_path,path.join(external,'AGENT.md'));
+ assert.throws(()=>engine.updateTask('owner',task.id,{readme_path:'/tmp/not-markdown.txt'}),/absolute Markdown path/);
+});

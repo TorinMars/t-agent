@@ -32,6 +32,10 @@ if (!existing.includes('user_id'))     db.exec('ALTER TABLE tasks ADD COLUMN use
 if (!existing.includes('share_token')) db.exec('ALTER TABLE tasks ADD COLUMN share_token TEXT');
 if (!existing.includes('work_dir'))    db.exec('ALTER TABLE tasks ADD COLUMN work_dir TEXT');
 
+for (const column of ['technical_path', 'readme_path', 'agent_path']) {
+  if (!existing.includes(column)) db.exec(`ALTER TABLE tasks ADD COLUMN ${column} TEXT`);
+}
+
 const pairingColumns = db.prepare('PRAGMA table_info(engine_pairing_codes)').all().map(column => column.name);
 if (!pairingColumns.includes('principal_id')) {
   db.exec("ALTER TABLE engine_pairing_codes ADD COLUMN principal_id TEXT NOT NULL DEFAULT 'engine'");

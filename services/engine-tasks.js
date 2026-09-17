@@ -31,7 +31,7 @@ function titleToSlug(title) {
 }
 
 function ownedTask(principalId, id) {
-  return documents.resolveTask(db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(id, principalId));
+  return db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(id, principalId);
 }
 
 function listTasks(principalId, status) {
@@ -44,6 +44,7 @@ function listTasks(principalId, status) {
 }
 
 function createTask(principalId, input = {}) {
+  const overrides = documents.pathOverrides(input);
   let title = typeof input.title === 'string' ? input.title.trim() : '';
   let mdPath = input.md_path ? assertWorkspacePath(input.md_path) : null;
   let workDir = input.work_dir ? assertWorkspacePath(input.work_dir) : null;
@@ -57,11 +58,12 @@ function createTask(principalId, input = {}) {
   if (!workDir) workDir = assertWorkspacePath(path.join(DEFAULT_BASE, titleToSlug(title)));
   if (!mdPath) mdPath = path.join(workDir, 'DESIGN.md');
   mdPath = assertWorkspacePath(documents.documentPath({ work_dir: workDir, md_path: mdPath }, 'technical'));
-  documents.ensureDocuments({ title, work_dir: workDir, md_path: mdPath });
+  documents.ensureDocuments({ title, work_dir: workDir, md_path: mdPath, ...overrides });
 
   const result = db.prepare(`INSERT INTO tasks
-    (title, status, priority, due_date, md_path, work_dir, sort_order, user_id)
-    VALUES (@title, @status, @priority, @due_date, @md_path, @work_dir, @sort_order, @user_id)`).run({
+    (title, status, priority, due_date, md_path, work_dir, sort_order, user_id, technical_path, readme_path, agent_path)
+    VALUES (@title, @status, @priority, @due_date, @md_path, @work_dir, @sort_order, @user_id, @technical_path, @readme_path, @agent_path)`).run({
+    ...overrides,
     title,
     status,
     priority: input.priority || 'normal',
@@ -78,6 +80,7 @@ function updateTask(principalId, id, input = {}) {
   const task = ownedTask(principalId, id);
   if (!task) throw Object.assign(new Error('TASK_NOT_FOUND'), { statusCode: 404 });
   const values = {
+    ...documents.pathOverrides(input, task),
     title: input.title === undefined ? task.title : String(input.title).trim(),
     status: input.status === undefined ? task.status : input.status,
     priority: input.priority === undefined ? task.priority : input.priority,
@@ -93,12 +96,13 @@ function updateTask(principalId, id, input = {}) {
   if (values.md_path && path.extname(values.md_path).toLowerCase() !== '.md') {
     throw Object.assign(new Error('MD_PATH_INVALID'), { statusCode: 400 });
   }
-  if (input.work_dir !== undefined || input.md_path !== undefined) {
+  if (['work_dir', 'md_path', 'technical_path', 'readme_path', 'agent_path'].some(key => input[key] !== undefined)) {
     values.work_dir = values.work_dir || (values.md_path && path.dirname(values.md_path));
     values.md_path = documents.updatedTechnicalPath(task, values.work_dir, values.md_path);
     documents.ensureDocuments(values);
   }
   db.prepare(`UPDATE tasks SET title=@title, status=@status, priority=@priority,
+    technical_path=@technical_path, readme_path=@readme_path, agent_path=@agent_path,
     due_date=@due_date, md_path=@md_path, work_dir=@work_dir, sort_order=@sort_order,
     updated_at=CURRENT_TIMESTAMP WHERE id=@id AND user_id=@user_id`).run(values);
   return publicTask(ownedTask(principalId, id));

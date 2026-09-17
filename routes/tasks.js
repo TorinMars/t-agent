@@ -42,6 +42,9 @@ const DEFAULT_BASE = process.env.TASKS_BASE_DIR || path.join(os.homedir(), 'task
 router.post('/', (req, res) => {
   const uid = ownerFilter(req);
   let { title, md_path, work_dir, status, priority, due_date, sort_order } = req.body;
+  let overrides;
+  try { overrides = documents.pathOverrides(req.body); }
+  catch (error) { return res.status(400).json({ error: error.message }); }
 
   if (md_path) {
     if (!md_path.startsWith('/') && !(/^[A-Za-z]:\\/.test(md_path))) {
@@ -61,15 +64,15 @@ router.post('/', (req, res) => {
   if (!md_path) md_path = path.join(work_dir, 'DESIGN.md');
   md_path = documents.documentPath({ work_dir, md_path }, 'technical');
   try {
-    documents.ensureDocuments({ title, work_dir, md_path });
+    documents.ensureDocuments({ title, work_dir, md_path, ...overrides });
   } catch (err) {
     return res.status(500).json({ error: `Failed to create task documents: ${err.message}` });
   }
 
   const info = db.prepare(`
-    INSERT INTO tasks (title, status, priority, due_date, md_path, work_dir, sort_order, user_id)
-    VALUES (@title, @status, @priority, @due_date, @md_path, @work_dir, @sort_order, @user_id)
-  `).run({ title, status: status || 'todo', priority: priority || 'normal', due_date: due_date || null, md_path: md_path || null, work_dir: work_dir || null, sort_order: sort_order || 0, user_id: uid });
+    INSERT INTO tasks (title, status, priority, due_date, md_path, work_dir, sort_order, user_id, technical_path, readme_path, agent_path)
+    VALUES (@title, @status, @priority, @due_date, @md_path, @work_dir, @sort_order, @user_id, @technical_path, @readme_path, @agent_path)
+  `).run({ ...overrides, title, status: status || 'todo', priority: priority || 'normal', due_date: due_date || null, md_path: md_path || null, work_dir: work_dir || null, sort_order: sort_order || 0, user_id: uid });
 
   res.status(201).json(db.prepare('SELECT * FROM tasks WHERE id = ?').get(info.lastInsertRowid));
 });
@@ -87,10 +90,13 @@ router.put('/reorder', (req, res) => {
 router.put('/:id', (req, res) => {
   const uid = ownerFilter(req);
   const { id } = req.params;
-  const task = documents.resolveTask(db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(id, uid));
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(id, uid);
   if (!task) return res.status(404).json({ error: 'Task not found' });
 
   let { title, status, priority, due_date, md_path, work_dir, sort_order } = req.body;
+  let overrides;
+  try { overrides = documents.pathOverrides(req.body, task); }
+  catch (error) { return res.status(400).json({ error: error.message }); }
 
   if (md_path !== undefined && md_path !== null) {
     if (!md_path.startsWith('/') && !(/^[A-Za-z]:\\/.test(md_path))) {
@@ -102,16 +108,17 @@ router.put('/:id', (req, res) => {
   }
 
   if (work_dir && !path.isAbsolute(work_dir)) return res.status(400).json({ error: 'work_dir must be an absolute path' });
-  if (work_dir !== undefined || md_path !== undefined) {
+  if (work_dir !== undefined || md_path !== undefined || ['technical_path', 'readme_path', 'agent_path'].some(key => req.body[key] !== undefined)) {
     const root = work_dir || task.work_dir || (md_path && path.dirname(md_path));
     md_path = documents.updatedTechnicalPath(task, root, md_path === undefined ? task.md_path : md_path);
     work_dir = root;
-    try { documents.ensureDocuments({ title: title || task.title, work_dir, md_path }); }
+    try { documents.ensureDocuments({ title: title || task.title, work_dir, md_path, ...overrides }); }
     catch (err) { return res.status(500).json({ error: `Failed to create task documents: ${err.message}` }); }
   }
 
   db.prepare(`
     UPDATE tasks SET
+      technical_path = @technical_path, readme_path = @readme_path, agent_path = @agent_path,
       title      = COALESCE(@title, title),
       status     = COALESCE(@status, status),
       priority   = COALESCE(@priority, priority),
@@ -122,7 +129,7 @@ router.put('/:id', (req, res) => {
       updated_at = CURRENT_TIMESTAMP
     WHERE id = @id AND user_id = @user_id
   `).run({
-    id, user_id: uid,
+    ...overrides, id, user_id: uid,
     title: title !== undefined ? title : null,
     status: status !== undefined ? status : null,
     priority: priority !== undefined ? priority : null,

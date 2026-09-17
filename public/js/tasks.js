@@ -1502,10 +1502,12 @@ const Tasks = (() => {
         <input class="form-input" id="f-title" type="text" value="${escapeHtml(task.title || '')}" placeholder="任务标题（可由 MD 文件名自动填充）">
       </div>
       <div class="form-group">
-        <label class="form-label">MD 文件路径</label>
-        <input class="form-input" id="f-md-path" type="text" value="${escapeHtml(task.md_path || '')}" placeholder="留空使用工作目录下的 DESIGN.md">
+        <label class="form-label">技术方案路径</label>
+        <input class="form-input" id="f-md-path" type="text" value="${escapeHtml(task.technical_path || (task.md_path && !task.md_path.endsWith('/DESIGN.md') ? task.md_path : ''))}" placeholder="留空使用工作目录下的 DESIGN.md">
         <div class="form-hint" id="f-md-hint"></div>
       </div>
+      ${[['readme_path', 'README.md'], ['agent_path', 'AGENT.md']].map(([field, name]) => `<div class="form-group"><label class="form-label">${name} 路径</label><input class="form-input" id="f-${field}" value="${escapeHtml(task[field] || '')}" placeholder="留空使用工作目录下的 ${name}"></div>`).join('')}
+      <div class="form-hint">三个路径均可填写绝对 Markdown 文件路径；已有文件直接使用，缺失时创建。清空后恢复工作目录下的默认文件。</div>
       <div class="form-group">
         <label class="form-label" id="f-work-dir-label">${initialRemoteTarget ? '远程工作目录' : '工作目录'}</label>
         <input class="form-input" id="f-work-dir" type="text" value="${escapeHtml(task.work_dir || '')}" placeholder="${initialRemoteTarget ? '/home/user/projects/example' : '自动取 MD 文件所在目录'}" autocomplete="off">
@@ -1617,13 +1619,16 @@ const Tasks = (() => {
 
     document.getElementById('f-submit').addEventListener('click', async () => {
       const title = titleInput.value.trim();
-      const md_path = mdInput.value.trim() || null;
+      const technical_path = mdInput.value.trim() || null;
+      const md_path = null;
+      const readme_path = document.getElementById('f-readme_path').value.trim() || null;
+      const agent_path = document.getElementById('f-agent_path').value.trim() || null;
       const work_dir = workDirInput.value.trim() || null;
       const priority = document.querySelector('input[name="priority"]:checked')?.value || 'normal';
       const due_date = document.getElementById('f-due-date').value || null;
       const status = groupInput?.value || 'todo';
 
-      if (!title && !md_path) {
+      if (!title && !technical_path) {
         titleInput.classList.add('error');
         return;
       }
@@ -1631,7 +1636,7 @@ const Tasks = (() => {
 
       try {
         if (existingTask.id) {
-          await API.put(`/api/tasks/${existingTask.id}`, { title: title || undefined, md_path, work_dir, priority, due_date, status });
+          await API.put(`/api/tasks/${existingTask.id}`, { title: title || (technical_path ? technical_path.split('/').pop().replace(/\.md$/i, '') : undefined), md_path, technical_path, readme_path, agent_path, work_dir, priority, due_date, status });
           Modal.hide();
           await Tasks.load();
           if (selectedId === existingTask.id) {
@@ -1639,7 +1644,7 @@ const Tasks = (() => {
             if (updated) renderPreview(updated);
           }
         } else {
-          const payload = { title: title || undefined, md_path, work_dir, priority, due_date, status };
+          const payload = { title: title || (technical_path ? technical_path.split('/').pop().replace(/\.md$/i, '') : undefined), md_path, technical_path, readme_path, agent_path, work_dir, priority, due_date, status };
           if (isRemoteTarget()) {
             const serverId = Number(engineInput.value.slice('remote:'.length));
             await RemoteTasks.createTask(serverId, payload);

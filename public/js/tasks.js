@@ -341,6 +341,27 @@ const Tasks = (() => {
 
 
 
+  async function openFileBrowser() {
+    const task = tasks.find(item => item.id === selectedId);
+    if (!task || !confirmDiscardEditor()) return;
+    stopWatcher();
+    if (activeTab !== 'shell') contentTabs.querySelector('[data-tab="shell"]').click();
+    if (activeTab !== 'shell') return;
+    return FilePanel.open({ key: `local:${task.id}`, baseUrl: `/api/tasks/${task.id}/files`, title: task.title, root: task.work_dir });
+  }
+
+  document.querySelector('.content-area')?.addEventListener('file-panel:layout', event => {
+    document.getElementById('btn-file-browser')?.setAttribute('aria-expanded', String(Boolean(event.detail.open)));
+  });
+
+  document.getElementById('btn-file-browser')?.addEventListener('click', async () => {
+    try {
+      if (FilePanel.isOpen()) { await FilePanel.close(); return; }
+      if (window.RemoteTasks?.isSelected()) await RemoteTasks.openFileBrowser();
+      else await openFileBrowser();
+    } catch (error) { alert('文件浏览器打开失败：' + error.message); }
+  });
+
   document.getElementById('btn-reveal-folder').addEventListener('click', async () => {
     if (!selectedId) return;
     await API.post(`/api/tasks/${selectedId}/reveal`, {});
@@ -868,6 +889,7 @@ const Tasks = (() => {
   }
 
   async function deleteTask(id) {
+    if (selectedId === id && window.FilePanel?.isOpen() && !await FilePanel.beforeContextChange()) return;
     if (!confirm('确认删除该任务？')) return;
     await API.delete(`/api/tasks/${id}`);
     if (selectedId === id) {
@@ -878,6 +900,10 @@ const Tasks = (() => {
   }
 
   function selectTask(id) {
+    if (window.FilePanel?.isOpen()) {
+      if (selectedId === id) return;
+      return FilePanel.beforeContextChange().then(allowed => allowed && selectTask(id));
+    }
     if (selectedId !== id && !confirmDiscardEditor()) return;
     // 离开旧任务的 shell tab 时补设 done
     if (selectedId && selectedId !== id && activeTab === 'shell') {
@@ -1647,6 +1673,7 @@ const Tasks = (() => {
     });
 
     document.getElementById('f-submit').addEventListener('click', async () => {
+      if (window.FilePanel?.isOpen() && !await FilePanel.beforeContextChange()) return;
       const title = titleInput.value.trim();
       // Unchanged default paths continue to follow the working directory.
       const pathValue = input => (input.value === input.dataset.initialValue
@@ -1716,6 +1743,7 @@ const Tasks = (() => {
       renderSidebar();
       const localActive = !window.RemoteTasks || RemoteTasks.getActiveEngineKey() === 'local';
       if (!localActive) return;
+      if (window.FilePanel?.isOpen()) return;
       if (selectedId) {
         const task = tasks.find(t => t.id === selectedId);
         if (task) renderPreview(task);
@@ -1730,9 +1758,11 @@ const Tasks = (() => {
     activateLocal() {
       const cached = parseInt(localStorage.getItem('selectedTaskId'));
       const task = tasks.find(item => item.id === cached) || tasks[0];
-      if (task) selectTask(task.id);
+      if (task) return selectTask(task.id);
       else showEmpty();
     },
+    openFileBrowser,
+    confirmDiscardEditor,
     newTerminal: () => TerminalTabs.create(),
     reopenTerminal,
     closeTerminal,

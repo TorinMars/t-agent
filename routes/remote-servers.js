@@ -40,6 +40,46 @@ async function checkServer(row) {
   }
 }
 
+async function assertFilesSupported(row, token) {
+  let info;
+  try { info = await request(row.base_url, '/v1/info', token); }
+  catch (error) {
+    if (error.statusCode === 404) throw Object.assign(new Error('FILES_UNSUPPORTED'), { statusCode: 501 });
+    throw error;
+  }
+  if (!info || !Array.isArray(info.capabilities) || !info.capabilities.includes('files:read')) {
+    throw Object.assign(new Error('FILES_UNSUPPORTED'), { statusCode: 501 });
+  }
+}
+
+function remoteFilesPath(req, suffix = '') {
+  const query = new URLSearchParams();
+  for (const key of ['path', 'offset', 'hidden']) {
+    if (req.query[key] !== undefined) query.set(key, String(req.query[key]));
+  }
+  const search = query.toString();
+  return `/v1/tasks/${encodeURIComponent(req.params.taskId)}/files${suffix}${search ? `?${search}` : ''}`;
+}
+
+function proxyFiles(method, suffix = '') {
+  return async (req, res) => {
+    const row = getServer(req);
+    if (!row) return res.status(404).json({ error: 'REMOTE_NOT_FOUND' });
+    const token = decryptToken(row.token_cipher, config.sessionSecret);
+    try {
+      await assertFilesSupported(row, token);
+      const result = await request(row.base_url, remoteFilesPath(req, suffix), token, {
+        method,
+        maxBytes: 32 * 1024 * 1024,
+        ...(method === 'GET' ? {} : { body: req.body || {} }),
+      });
+      res.status(method === 'POST' ? 201 : 200).json(result);
+    } catch (error) {
+      res.status(error.statusCode || 502).json({ error: safeError(error) });
+    }
+  };
+}
+
 router.get('/', (req, res) => {
   res.json(db.prepare('SELECT * FROM remote_servers WHERE owner_id = ? ORDER BY created_at ASC').all(owner(req)).map(publicServer));
 });
@@ -203,6 +243,13 @@ router.get('/:id/tasks/:taskId/document/:kind', async (req, res) => {
     res.type('text/plain').send(text);
   } catch (error) { res.status(error.statusCode === 404 ? 404 : 502).json({ error: safeError(error) }); }
 });
+
+router.get('/:id/tasks/:taskId/files/content', proxyFiles('GET', '/content'));
+router.put('/:id/tasks/:taskId/files/content', proxyFiles('PUT', '/content'));
+router.get('/:id/tasks/:taskId/files', proxyFiles('GET'));
+router.post('/:id/tasks/:taskId/files', proxyFiles('POST'));
+router.patch('/:id/tasks/:taskId/files', proxyFiles('PATCH'));
+router.delete('/:id/tasks/:taskId/files', proxyFiles('DELETE'));
 
 router.get('/:id/tasks/:taskId/todos', async (req, res) => {
   const row = getServer(req);

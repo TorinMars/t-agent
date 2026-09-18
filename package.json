@@ -1,6 +1,6 @@
 {
   "name": "torin-x-web",
-  "version": "2.10.16",
+  "version": "2.11.0",
   "description": "Componentized task client and remote execution engine",
   "main": "server.js",
   "scripts": {
@@ -10,7 +10,7 @@
     "dev": "nodemon server.js",
     "test": "node --test",
     "build:markdown": "esbuild scripts/markdown-view-entry.js --bundle --minify --format=iife --global-name=MarkdownView --outfile=public/js/markdown-view.js",
-    "build:monaco": "esbuild scripts/monaco-entry.js --bundle --minify --format=iife --global-name=MonacoBundle --loader:.ttf=file --asset-names=[name]-[hash] --outfile=public/vendor/monaco/monaco.js && esbuild node_modules/monaco-editor/esm/vs/editor/editor.worker.js --bundle --minify --format=iife --outfile=public/vendor/monaco/editor.worker.js"
+    "build:monaco": "esbuild scripts/monaco-entry.js --bundle --minify --supported:template-literal=false --format=iife --global-name=MonacoBundle --loader:.ttf=file --asset-names=[name]-[hash] --outfile=public/vendor/monaco/monaco.js && esbuild node_modules/monaco-editor/esm/vs/editor/editor.worker.js --bundle --minify --format=iife --outfile=public/vendor/monaco/editor.worker.js && esbuild node_modules/monaco-editor/esm/vs/languages/features/json/json.worker.js --bundle --minify --supported:template-literal=false --format=iife --outfile=public/vendor/monaco/json.worker.js"
   },
   "dependencies": {
     "axios": "^1.7.2",

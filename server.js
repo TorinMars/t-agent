@@ -34,7 +34,7 @@ function getLocalIP() {
   return 'localhost';
 }
 
-app.use(express.json({ limit: '6mb' }));
+app.use(express.json({ limit: '32mb' }));
 app.use(express.urlencoded({ extended: true }));
 
 const sessionMiddleware = session({

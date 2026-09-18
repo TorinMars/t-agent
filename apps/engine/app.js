@@ -5,7 +5,7 @@ function createEngineApp() {
   const app = express();
   app.disable('x-powered-by');
   app.set('trust proxy', 1);
-  app.use(express.json({ limit: '6mb' }));
+  app.use(express.json({ limit: '32mb' }));
   app.use(express.urlencoded({ extended: true }));
   app.use('/v1', engineV1);
   app.get('/health', (req, res) => res.redirect(307, '/v1/health'));

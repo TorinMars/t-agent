@@ -9,6 +9,7 @@
   <link rel="manifest" href="/manifest.json">
   <meta name="theme-color" content="#f6f8fa">
   <link rel="stylesheet" href="/css/style.css">
+  <link rel="stylesheet" href="/css/file-panel.css">
   <link rel="stylesheet" href="/css/markdown.css">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5/css/xterm.css">
   <link rel="stylesheet" href="/vendor/monaco/monaco.css">
@@ -53,6 +54,7 @@
 
     <div class="content-area">
       <div class="content-toolbar" id="content-toolbar" style="display:none">
+        <button class="toolbar-btn" id="btn-file-browser" type="button" aria-expanded="false" aria-controls="file-panel">文件浏览器</button>
         <button class="toolbar-btn" id="btn-reveal-folder" title="在 Finder 中显示">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M1 3.5A1.5 1.5 0 0 1 2.5 2h2.764c.958 0 1.76.56 2.311 1.184C7.985 3.648 8.48 4 9 4h4.5A1.5 1.5 0 0 1 15 5.5v7a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 1 12.5z"/></svg>
           打开文件夹
@@ -149,6 +151,7 @@
   <script src="/js/bookmarks.js"></script>
   <script src="/js/terminal-tabs.js"></script>
   <script src="/js/terminal-viewport.js"></script>
+  <script src="/js/file-panel.js"></script>
   <script src="/js/tasks.js"></script>
   <script src="/js/remote-tasks.js"></script>
   <script src="/js/terminal-keys.js"></script>

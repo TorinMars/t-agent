@@ -1824,4 +1824,16 @@ npm run build:monaco
 
 ### 测试环境与现行布局校验
 
-全量测试包含真实 Chromium 回归；Playwright、xterm 5.5 和 Fit 0.10 作为开发依赖锁定安装，使用 `npm ci --include=dev` 后安装 Chromium。五个浏览器脚本均支持 `CHROME_PATH`。布局回归检查现行共享 `style.css` 的安全区和安装应用窗口适配规则，不再引用已移除的 `mobile.css`。
+全量测试包含真实 Chromium 回归；Playwright、xterm 5.5 和 Fit 0.10 作为开发依赖锁定安装，使用 `npm ci --include=dev` 后安装 Chromium。浏览器脚本均支持 `CHROME_PATH`。布局回归检查现行共享 `style.css` 的安全区和安装应用窗口适配规则，不再引用已移除的 `mobile.css`。
+
+### 任务文件面板（v2.11.0）
+
+在内容工具栏增加“文件浏览器”，自动选择任务终端后向下展开。默认占工具栏下方可用高度的 85%，底边可调整至 20%～90%，窄高度下优先保留终端可用空间；不使用可拖动浮窗或模态遮罩。原内容标签暂时隐藏，终端真实缩放到余下区域，底部功能键在紧凑模式隐藏，Shell 和连接保持不变。目录树与 Monaco 文件标签是独立模块，使用任务/Engine/path 组合隔离模型，切换上下文先处理未保存内容。
+
+文件服务共用于本地 `/api/tasks/:id/files`、Engine `/v1/tasks/:id/files` 和 Client 对应远程代理。GET 根接口分页列出目录，GET/PUT `/content` 读取和保存，POST 创建，PATCH 重命名，DELETE 删除。保存携带文件 revision，冲突为 HTTP 409；客户端显式确认后才发送 force。路径仅接受相对工作目录的路径，根目录禁止修改，符号链接禁止跟随。UTF-8 文本限 5 MiB，保留 BOM、换行和权限。
+
+文件访问会复核目录链的 inode、realpath 和打开文件的身份，保存使用同目录临时文件再替换。它不是隔离恶意本机进程的安全沙箱：Node 的路径式创建、重命名和删除操作仍存在最终系统调用前的竞态间隙，不能抵御同一系统用户持续替换父目录。
+
+Engine 广告并校验 `files:read`、`files:write`；现有标准角色凭证兼容新增能力，自定义受限 scopes 不自动扩权。接口为兼容新增，不变更数据库 schema 或 API 主版本。目录按需展开，每页 200 条；所有异步结果校验当前上下文，保存失败和冲突保留草稿。文件和目录删除前确认，重命名/删除同步更新已打开文件。
+
+回归包括服务与本地/Engine/代理接口测试、真实 Monaco 文件编辑、终端同时输入、面板尺寸调整、任务切换保护，以及常见语言注册。构建 Monaco 时一并生成 JSON worker。

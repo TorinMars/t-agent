@@ -236,6 +236,11 @@ const RemoteTasks = (() => {
   }
 
   function setActiveEngine(key, { selectContent = true } = {}) {
+    if (window.FilePanel?.isOpen()) {
+      if (key === activeEngineKey) return;
+      return FilePanel.beforeContextChange().then(allowed => allowed && setActiveEngine(key, { selectContent }));
+    }
+    if (key !== activeEngineKey && window.Tasks?.confirmDiscardEditor && !Tasks.confirmDiscardEditor()) return;
     activeEngineKey = key;
     normalizeActiveEngine();
     localStorage.setItem('active-engine-key', activeEngineKey);
@@ -244,7 +249,7 @@ const RemoteTasks = (() => {
     if (!selectContent) return;
 
     if (activeEngineKey === 'local') {
-      clearSelection();
+      RemoteTasks.clearSelection();
       if (window.Tasks) Tasks.activateLocal();
       return;
     }
@@ -365,6 +370,7 @@ const RemoteTasks = (() => {
     document.getElementById('remote-path-cancel').addEventListener('click', Modal.hide);
     document.getElementById('remote-path-save').addEventListener('click', async event => {
       const button = event.currentTarget;
+      if (window.FilePanel?.isOpen() && !await FilePanel.beforeContextChange()) return;
       const payload = { md_path: null };
       fields.forEach(([field]) => {
         const input = document.getElementById(`remote-${field}`);
@@ -382,6 +388,11 @@ const RemoteTasks = (() => {
   }
 
   function select(server, task) {
+    if (window.FilePanel?.isOpen()) {
+      if (selected?.serverId === server.id && selected.task.id === task.id) return;
+      return FilePanel.beforeContextChange().then(allowed => allowed && select(server, task));
+    }
+    if (window.Tasks?.confirmDiscardEditor && !Tasks.confirmDiscardEditor()) return;
     if (window.Tasks) Tasks.clearSelection();
     activeEngineKey = `remote:${server.id}`;
     localStorage.setItem('active-engine-key', activeEngineKey);
@@ -403,6 +414,13 @@ const RemoteTasks = (() => {
       previewPane.style.display = '';
       renderSelected();
     }
+  }
+
+  async function openFileBrowser() {
+    if (!selected) return;
+    const { serverId, task } = selected;
+    if (activeTab !== 'shell') contentTabs.querySelector('[data-tab="shell"]').click();
+    return FilePanel.open({ key: `remote:${serverId}:${task.id}`, baseUrl: `/api/remote-servers/${serverId}/tasks/${task.id}/files`, title: task.title, root: task.work_dir });
   }
 
   function showRemoteToolbar() {
@@ -855,6 +873,7 @@ const RemoteTasks = (() => {
   }
 
   async function removeServer(id) {
+    if (selected?.serverId === id && window.FilePanel?.isOpen() && !await FilePanel.beforeContextChange()) return;
     if (!confirm('确认移除这个远程连接？远程数据不会被删除。')) return;
     disposeServerTerminals(id);
     await API.delete(`/api/remote-servers/${id}`);
@@ -932,6 +951,7 @@ const RemoteTasks = (() => {
       }
     });
     document.getElementById('remote-edit-save').addEventListener('click', async event => {
+      if (window.FilePanel?.isOpen() && !await FilePanel.beforeContextChange()) return;
       event.target.disabled = true;
       try {
         await API.put(`/api/remote-servers/${server.id}`, values());
@@ -985,6 +1005,7 @@ const RemoteTasks = (() => {
     load,
     render,
     setActiveEngine,
+    openFileBrowser,
     getActiveEngineKey: () => activeEngineKey,
     getServers: () => servers.map(server => ({ ...server })),
     getGroups: serverId => (groupsByServer.get(Number(serverId)) || fallbackGroups()).map(group => ({ ...group })),

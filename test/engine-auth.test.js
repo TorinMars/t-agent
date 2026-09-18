@@ -65,3 +65,31 @@ test('owner Token 具有所有 scope', () => {
   assert.equal(hasScope(authenticated.scopes, 'future:capability'), true);
   db.close();
 });
+
+test('new role tokens include file scopes and legacy role tokens gain only their matching file scopes', () => {
+  const db = testDb();
+  const reader = createPairingCode(db, { role: 'readonly', principalId: 'reader' });
+  const readerToken = exchangePairingCode(db, reader.code).token;
+  assert.equal(hasScope(authenticateAccessToken(db, readerToken).scopes, 'files:read'), true);
+  assert.equal(hasScope(authenticateAccessToken(db, readerToken).scopes, 'files:write'), false);
+
+  const legacy = 'tae_legacy';
+  db.prepare(`INSERT INTO engine_access_tokens
+    (principal_id, name, token_hash, token_prefix, role, scopes)
+    VALUES (?, ?, ?, ?, ?, ?)`).run(
+    'operator', 'legacy', require('../services/engine-auth').hashSecret(legacy), 'tae_legacy', 'operator',
+    'tasks:read,tasks:write,documents:read,documents:write,todos:read,todos:write,terminal:execute,runs:execute',
+  );
+  assert.equal(hasScope(authenticateAccessToken(db, legacy).scopes, 'files:write'), true);
+
+  const restricted = 'tae_restricted';
+  db.prepare(`INSERT INTO engine_access_tokens
+    (principal_id, name, token_hash, token_prefix, role, scopes)
+    VALUES (?, ?, ?, ?, ?, ?)`).run(
+    'operator', 'restricted', require('../services/engine-auth').hashSecret(restricted), 'tae_restr', 'operator', 'tasks:read',
+  );
+  const restrictedAuth = authenticateAccessToken(db, restricted);
+  assert.equal(hasScope(restrictedAuth.scopes, 'files:read'), false);
+  assert.equal(hasScope(restrictedAuth.scopes, 'files:write'), false);
+  db.close();
+});

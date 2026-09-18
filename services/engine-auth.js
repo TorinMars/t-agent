@@ -1,6 +1,6 @@
 const crypto = require('crypto');
 
-const ROLE_SCOPES = Object.freeze({
+const LEGACY_ROLE_SCOPES = Object.freeze({
   readonly: ['tasks:read', 'documents:read', 'todos:read'],
   operator: [
     'tasks:read', 'tasks:write',
@@ -8,6 +8,11 @@ const ROLE_SCOPES = Object.freeze({
     'todos:read', 'todos:write',
     'terminal:execute', 'runs:execute',
   ],
+});
+
+const ROLE_SCOPES = Object.freeze({
+  readonly: [...LEGACY_ROLE_SCOPES.readonly, 'files:read'],
+  operator: [...LEGACY_ROLE_SCOPES.operator, 'files:read', 'files:write'],
   owner: ['*'],
 });
 
@@ -109,7 +114,12 @@ function authenticateAccessToken(db, token) {
     WHERE token_hash = ? AND revoked_at IS NULL`).get(hashSecret(value));
   if (!row) return null;
   db.prepare('UPDATE engine_access_tokens SET last_used_at = CURRENT_TIMESTAMP WHERE id = ?').run(row.id);
-  return { ...row, scopes: new Set(String(row.scopes).split(',').map(item => item.trim()).filter(Boolean)) };
+  const scopes = new Set(String(row.scopes).split(',').map(item => item.trim()).filter(Boolean));
+  const legacyScopes = LEGACY_ROLE_SCOPES[row.role];
+  if (legacyScopes && scopes.size === legacyScopes.length && legacyScopes.every(scope => scopes.has(scope))) {
+    for (const scope of ROLE_SCOPES[row.role]) scopes.add(scope);
+  }
+  return { ...row, scopes };
 }
 
 module.exports = {

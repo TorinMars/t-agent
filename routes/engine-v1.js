@@ -4,11 +4,12 @@ const config = require('../config');
 const requireEngineAuth = require('../middleware/engine-auth');
 const tasks = require('../services/engine-tasks');
 const taskGroups = require('../services/task-groups');
-const { exchangePairingCode, createAccessToken } = require('../services/engine-auth');
+const { exchangePairingCode, createAccessToken, hasScope } = require('../services/engine-auth');
 const { getEngineIdentity } = require('../services/engine-identity');
 const { createTerminalTicket } = require('../services/terminal-tickets');
 const updates = require('../services/update-manager');
 const terminal = require('./terminal');
+const { createTaskFilesRouter } = require('./task-files');
 
 const router = express.Router();
 const pairingAttempts = new Map();
@@ -63,6 +64,7 @@ function infoHandler(req, res) {
       'tasks:read', 'tasks:write',
       'task-groups:read', 'task-groups:write',
       'documents:read', 'documents:write',
+      'files:read', 'files:write',
       'todos:read', 'todos:write',
       'terminal:interactive', 'terminal:control', 'terminal:multiple', 'token:pairing',
       'engine:update',
@@ -97,6 +99,12 @@ router.get('/tasks', requireEngineAuth('tasks:read'), (req, res) => {
   try { res.json(tasks.listTasks(principal(req), req.query.status)); }
   catch (error) { errorResponse(res, error); }
 });
+
+router.use('/tasks/:id/files', requireEngineAuth(), createTaskFilesRouter({
+  getTask: req => tasks.ownedTask(principal(req), req.params.id),
+  canRead: req => hasScope(req.engineAuth.scopes, 'files:read'),
+  canWrite: req => hasScope(req.engineAuth.scopes, 'files:write'),
+}));
 
 router.get('/task-groups', requireEngineAuth('tasks:read'), (req, res) => {
   try { res.json(taskGroups.listGroups(db, principal(req))); }

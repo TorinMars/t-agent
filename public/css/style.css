@@ -1671,3 +1671,12 @@ body {
 }
 .task-menu-button:hover { background: var(--border); color: var(--text); }
 .task-menu-button:focus-visible { outline: 2px solid var(--text-link); outline-offset: -2px; }
+
+/* The file drawer leaves a real, interactive terminal viewport below it. */
+.content-area.file-panel-open .terminal-controls { min-height: 24px; }
+.content-area.file-panel-open .terminal-toolbar { min-height: 24px; padding: 0; }
+.content-area.file-panel-open .terminal-toolbar-btn { padding-top: 1px; padding-bottom: 1px; font-size: 11px; }
+.content-area.file-panel-open .terminal-keys { display: none; }
+.content-area.file-panel-open #xterm-container > .xterm-host { inset: 2px 4px; }
+
+#btn-file-browser[aria-expanded="true"] { color: var(--accent); border-color: var(--accent); background: var(--bg-tertiary); }

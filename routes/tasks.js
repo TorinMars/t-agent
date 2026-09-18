@@ -7,12 +7,17 @@ const db = require('../db');
 const requireAuth = require('../middleware/auth');
 const terminal = require('./terminal');
 const documents = require('../services/task-documents');
+const { createTaskFilesRouter } = require('./task-files');
 
 const router = express.Router();
 
 router.use(requireAuth);
 
 const ownerFilter = (req) => req.session.user.login;
+
+router.use('/:id/files', createTaskFilesRouter({
+  getTask: req => db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, ownerFilter(req)),
+}));
 
 router.get('/', (req, res) => {
   const uid = ownerFilter(req);

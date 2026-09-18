@@ -18,7 +18,7 @@ function normalizeBaseUrl(urlValue, port) {
   return url.toString().replace(/\/$/, '');
 }
 
-function request(baseUrl, pathname, token, { expectText = false, method = 'GET', body, timeoutMs = 10_000 } = {}) {
+function request(baseUrl, pathname, token, { expectText = false, method = 'GET', body, timeoutMs = 10_000, maxBytes = MAX_BYTES } = {}) {
   const target = new URL(pathname, `${baseUrl}/`);
   const client = target.protocol === 'https:' ? https : http;
   return new Promise((resolve, reject) => {
@@ -38,7 +38,7 @@ function request(baseUrl, pathname, token, { expectText = false, method = 'GET',
       let length = 0;
       res.on('data', chunk => {
         length += chunk.length;
-        if (length > MAX_BYTES) return req.destroy(new Error('REMOTE_RESPONSE_TOO_LARGE'));
+        if (length > maxBytes) return req.destroy(new Error('REMOTE_RESPONSE_TOO_LARGE'));
         chunks.push(chunk);
       });
       res.on('end', () => {

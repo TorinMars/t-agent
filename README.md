@@ -141,6 +141,19 @@ curl -fsSL https://raw.githubusercontent.com/TorinMars/t-agent/main/bootstrap.sh
 
 Linux 会注册 `t-agent-engine.service`。独立 Engine 固定监听 `0.0.0.0`，以便外部 Client 连接；请同时配置防火墙、访问 Token，并优先通过 HTTPS/WSS 对外提供服务。
 
+### 使用 Docker 启动 Client
+
+远程服务器可通过 Client 镜像和 HTTPS 域名访问网页与终端：
+
+```bash
+cp docker/client.env.example docker/client.env
+mkdir -p "$HOME/.torin/t-agent-client/data" "$HOME/.torin/t-agent-client/tasks"
+./scripts/docker-client-copy-codex.sh "$HOME/.torin/t-agent-client/codex"
+docker compose --env-file docker/client.env -f compose.client.yml up -d client
+```
+
+Client 镜像默认包含 Codex，首次部署复制宿主机 `~/.codex` 到 Client 专用副本，后续更新保留副本，不与宿主机或 Engine 共用原目录。配置 HTTPS 反向代理后，运行 `docker compose --env-file docker/client.env -f compose.client.yml exec client node scripts/client-auth-setup.js` 完成首次绑定，再通过域名登录。完整命令、Nginx 示例、持久化与更新步骤见 [Docker Client 部署](docs/DOCKER_CLIENT.md)。
+
 ### 使用 Docker 安装独立 Engine
 
 Docker 方式只需要 Docker Engine 与 Docker Compose v2，默认从 GHCR 拉取已构建镜像：

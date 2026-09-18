@@ -1,0 +1,29 @@
+name: t-agent-client
+
+services:
+  client:
+    image: ${T_AGENT_CLIENT_IMAGE:-ghcr.io/torinmars/t-agent-client:latest}
+    build:
+      context: .
+      target: client
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      T_AGENT_MODE: client
+      T_AGENT_INSTALL_TYPE: docker
+      T_AGENT_DATA_DIR: /var/lib/t-agent
+      TASKS_BASE_DIR: /workspace
+      HOST: 0.0.0.0
+      PORT: 3000
+      GITHUB_VERSION_URL: https://api.github.com/repos/TorinMars/t-agent/contents/VERSION.json?ref=main
+      UPDATE_GITHUB_REPOSITORY: TorinMars/t-agent
+      UPDATE_GITHUB_REF: main
+      UPDATE_CHECK_ENABLED: "true"
+      TZ: ${TZ:-Asia/Shanghai}
+    ports:
+      - "127.0.0.1:${T_AGENT_CLIENT_PORT:-3000}:3000"
+    volumes:
+      - "${T_AGENT_CLIENT_STORAGE_DIR:?Set T_AGENT_CLIENT_STORAGE_DIR in docker/client.env}/data:/var/lib/t-agent"
+      - "${T_AGENT_CLIENT_STORAGE_DIR:?Set T_AGENT_CLIENT_STORAGE_DIR in docker/client.env}/tasks:/workspace"
+      - "${T_AGENT_CLIENT_STORAGE_DIR:?Set T_AGENT_CLIENT_STORAGE_DIR in docker/client.env}/codex:/root/.codex"
+    stop_grace_period: 15s

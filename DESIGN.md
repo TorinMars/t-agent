@@ -1837,3 +1837,9 @@ npm run build:monaco
 Engine 广告并校验 `files:read`、`files:write`；现有标准角色凭证兼容新增能力，自定义受限 scopes 不自动扩权。接口为兼容新增，不变更数据库 schema 或 API 主版本。目录按需展开，每页 200 条；所有异步结果校验当前上下文，保存失败和冲突保留草稿。文件和目录删除前确认，重命名/删除同步更新已打开文件。
 
 回归包括服务与本地/Engine/代理接口测试、真实 Monaco 文件编辑、终端同时输入、面板尺寸调整、任务切换保护，以及常见语言注册。构建 Monaco 时一并生成 JSON worker。
+
+### Docker Client
+
+Dockerfile 共享运行时并提供 client/engine 两个目标，默认目标保持 engine。Client 运行 server.js，生产模式在容器内监听 0.0.0.0:3000，Compose 只发布宿主机回环端口，通过 HTTPS/WSS 反向代理提供访问。首次绑定命令走容器回环 HTTP API，保留现有首次绑定来源检查、验证码和 Secure Cookie 行为。Client 启动前创建并复用数据卷中的私有会话密钥，已有密钥损坏或显式配置冲突时拒绝启动。
+
+Client 与 Engine 数据目录分离。镜像内置 Codex，首次部署从宿主机 ~/.codex 复制到 Client 专用副本，已有副本不覆盖；容器挂载副本而非宿主机原目录。数据库、任务、会话密钥和 Codex 副本在镜像更新后保持，宿主机负责镜像更新；镜像重建会结束容器内终端进程。GitHub Actions 分别构建发布两个目标。部署细节见 docs/DOCKER_CLIENT.md。

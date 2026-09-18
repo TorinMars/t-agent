@@ -1,4 +1,4 @@
-name: Publish Engine image
+name: Publish Client and Engine images
 
 on:
   push:
@@ -12,6 +12,10 @@ permissions:
 
 jobs:
   publish:
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [client, engine]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -34,7 +38,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/torinmars/t-agent-engine
+          images: ghcr.io/torinmars/t-agent-${{ matrix.target }}
           tags: |
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
             type=semver,pattern={{version}}
@@ -44,11 +48,11 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          target: engine
+          target: ${{ matrix.target }}
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=${{ matrix.target }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.target }}
 

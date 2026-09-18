@@ -1,0 +1,30 @@
+# Include in Nginx's http context. Replace agent.example.com and certificate paths.
+map $http_upgrade $t_agent_connection {
+    default upgrade;
+    '' close;
+}
+server {
+    listen 80;
+    server_name agent.example.com;
+    return 301 https://agent.example.com$request_uri;
+}
+server {
+    listen 443 ssl;
+    server_name agent.example.com;
+    ssl_certificate /etc/letsencrypt/live/agent.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/agent.example.com/privkey.pem;
+    client_max_body_size 32m;
+
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $t_agent_connection;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        proxy_buffering off;
+    }
+}

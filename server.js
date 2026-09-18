@@ -384,7 +384,11 @@ server.listen(config.port, config.host, () => {
   const clientAuth = getClientAuth();
   if (!clientAuth.status().bound) {
     console.log('Client 身份验证器未绑定，必须绑定后才能使用 Web / H5。');
-    console.log(`请在本机打开 http://127.0.0.1:${listeningPort}/auth/setup 扫码绑定，无需初始密码或初始化码。`);
+    if (process.env.T_AGENT_INSTALL_TYPE === 'docker') {
+      console.log('请在容器内执行 node scripts/client-auth-setup.js 完成首次绑定，再通过 HTTPS 域名登录。');
+    } else {
+      console.log(`请在本机打开 http://127.0.0.1:${listeningPort}/auth/setup 扫码绑定，无需初始密码或初始化码。`);
+    }
   }
   updates.start();
 });

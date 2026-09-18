@@ -1,6 +1,6 @@
 # Docker Engine 部署
 
-Docker 部署只面向独立 Engine。Client 仍建议原生安装，以便直接使用 Finder、VS Code 和本机终端。
+本文介绍独立 Engine。Client 也支持 Docker 部署，见 [Docker Client 部署](DOCKER_CLIENT.md)；需要直接使用 Finder、VS Code 和本机终端时可继续原生安装。
 
 镜像使用 Node.js 22，并在 Debian Bookworm 构建阶段编译 `better-sqlite3` 和 `node-pty`。镜像同时通过 OpenAI 官方 npm 包安装 Codex CLI。宿主机不再需要 Node.js、npm、Python、C++ 编译器或单独安装 Codex，只需要 Docker Engine 与 Docker Compose v2。
 

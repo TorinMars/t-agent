@@ -10,3 +10,5 @@ tasks
 docker/engine.env
 npm-debug.log*
 .DS_Store
+
+docker/client.env

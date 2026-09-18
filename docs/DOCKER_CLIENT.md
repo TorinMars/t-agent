@@ -2,6 +2,18 @@
 
 Client 镜像包含网页、本地 Engine、终端及 Codex CLI。容器中的“本地任务”运行在容器内；也可以添加独立远程 Engine。默认只向服务器的 `127.0.0.1:3000` 发布端口，通过 Nginx 的 HTTPS/WSS 域名访问。
 
+## 一键启动
+
+服务器已安装 Docker Engine、Docker Compose v2 和 Git 后，执行（替换为自己的域名）：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/TorinMars/t-agent/main/docker-client.sh | bash -s -- --domain agent.example.com
+```
+
+脚本自动下载源码、准备独立数据目录、首次复制宿主机 Codex 配置、拉取镜像并等待容器健康。结束时显示域名 URL、代理上游及首次身份验证器绑定命令。HTTPS 证书及反向代理按下文配置；`--domain` 仅指定访问提示，不会自动签发证书或修改 Nginx。
+
+已有源码可运行 `./docker-client.sh --domain agent.example.com`。可选参数：`--port 13500`、`--data-dir /srv/t-agent-client`、`--codex-source /path/to/.codex`、`--build`（改为本机构建）。配置写入 `docker/client.env`，再次执行保留已有配置及 Codex 副本；显式参数只更新对应字段。源码默认存放在 `~/.torin/t-agent-client-app`，可通过 `T_AGENT_CLIENT_APP_DIR` 修改。启动超时或镜像拉取失败会返回失败并显示原因。
+
 ## 首次部署
 
 服务器需要 Docker Engine、Docker Compose v2、Git，以及已指向服务器的域名和有效 TLS 证书。

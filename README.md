@@ -143,7 +143,15 @@ Linux 会注册 `t-agent-engine.service`。独立 Engine 固定监听 `0.0.0.0`�
 
 ### 使用 Docker 启动 Client
 
-远程服务器可通过 Client 镜像和 HTTPS 域名访问网页与终端：
+远程服务器一键启动（替换域名，提前安装 Docker Engine、Docker Compose v2 和 Git）：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/TorinMars/t-agent/main/docker-client.sh | bash -s -- --domain agent.example.com
+```
+
+脚本准备独立 Codex 副本并等待 Client 健康，结束后显示访问地址及首次绑定命令；HTTPS 反向代理需按部署文档配置。
+
+也可按以下步骤手动启动：
 
 ```bash
 cp docker/client.env.example docker/client.env

@@ -12,6 +12,7 @@ ENV_FILE="$APP_DIR/.env"
 PORT=""
 TASKS_DIR=""
 INSTALL_SERVICE=1
+SERVICE_STARTED=0
 MODE="client"
 CREATED_ENGINE_TOKEN=""
 UPDATE_REPOSITORY="${T_AGENT_REPOSITORY:-TorinMars/t-agent}"
@@ -350,6 +351,7 @@ EOF
   fi
   launchctl bootstrap "gui/$UID" "$PLIST_FILE"
   launchctl kickstart -k "gui/$UID/$LAUNCH_LABEL"
+  SERVICE_STARTED=1
   SERVICE_HINT="launchctl kickstart -k gui/$UID/$LAUNCH_LABEL"
 elif [ "$INSTALL_SERVICE" -eq 1 ] && [ "$PLATFORM" = "Linux" ] && systemd_is_available; then
   SERVICE_USER="${SUDO_USER:-$USER}"
@@ -372,6 +374,7 @@ WantedBy=multi-user.target
   printf '%s' "$SERVICE_CONTENT" | run_as_root tee "$SERVICE_FILE" >/dev/null
   run_as_root systemctl daemon-reload
   run_as_root systemctl enable --now "$SERVICE_BASENAME.service"
+  SERVICE_STARTED=1
   SERVICE_HINT="systemctl status $SERVICE_BASENAME.service"
 elif [ "$INSTALL_SERVICE" -eq 1 ] && [ "$PLATFORM" = "Linux" ]; then
   printf '提示：当前 Linux 环境没有运行 systemd，未注册开机服务；请使用以下命令启动，或交给容器/进程管理器托管。\n' >&2
@@ -396,13 +399,32 @@ NODE
   fi
 fi
 
-ACTIVE_PORT="$(sed -n 's/^PORT=//p' "$ENV_FILE" | tail -n 1)"
-if [ "$MODE" = "engine" ]; then
-  ACCESS_HINT="http://<服务器IP>:${ACTIVE_PORT:-3100}"
+# Installation summary.
+ACCESS_HINT="$(node - "$APP_DIR" "$ENV_FILE" "$MODE" <<'NODE'
+const fs = require('fs');
+const path = require('path');
+const [appDir, envFile, mode] = process.argv.slice(2);
+const env = require(path.join(appDir, 'node_modules/dotenv')).parse(fs.readFileSync(envFile));
+const port = parseInt(env.PORT || (mode === 'engine' ? '3100' : '3000'), 10);
+let host = mode === 'engine' ? '<服务器IP>' : (env.HOST || '127.0.0.1');
+if (host === '0.0.0.0') host = '127.0.0.1';
+if (host === '::') host = '::1';
+if (host.includes(':') && !host.startsWith('[')) host = `[${host}]`;
+process.stdout.write(`http://${host}:${port}`);
+NODE
+)"
+printf '\n%s 安装完成。\n' "$MODE"
+if [ "$SERVICE_STARTED" -eq 1 ]; then
+  printf '服务检查：%s\n' "$SERVICE_HINT"
 else
-  ACCESS_HINT="http://127.0.0.1:${ACTIVE_PORT:-3000}"
+  printf '服务尚未启动，请先执行：\n启动命令：%s\n' "$MANUAL_START"
 fi
-printf '\n%s 安装完成。\n访问地址：%s\n服务检查：%s\n' "$MODE" "$ACCESS_HINT" "$SERVICE_HINT"
+if [ "$MODE" = "client" ]; then
+  [ "$SERVICE_STARTED" -eq 1 ] || printf '\n启动后，'
+  printf '请在浏览器打开：%s\n' "$ACCESS_HINT"
+else
+  printf '引擎连接地址：%s\n' "$ACCESS_HINT"
+fi
 if [ -n "$CREATED_ENGINE_TOKEN" ]; then
   printf '\nEngine 访问 Token（只显示这一次）：\n%s\n' "$CREATED_ENGINE_TOKEN"
   printf '在 Client 中填写引擎地址和此 Token 即可完成连接。\n'

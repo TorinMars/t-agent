@@ -36,6 +36,21 @@ for (const column of ['technical_path', 'readme_path', 'agent_path']) {
   if (!existing.includes(column)) db.exec(`ALTER TABLE tasks ADD COLUMN ${column} TEXT`);
 }
 
+// Migrate documents on each host, including Engine workspaces. Missing/offline
+// workspaces are left alone and retried on the next startup.
+const documents = require('../services/task-documents');
+for (const task of db.prepare('SELECT * FROM tasks').all()) {
+  const root = task.work_dir || (task.md_path && path.dirname(task.md_path));
+  if (!root || !fs.existsSync(root)) continue;
+  try {
+    documents.ensureDocument(task, 'agent');
+    const agentPath = documents.resolveTask(task).agent_path;
+    if (agentPath !== task.agent_path) db.prepare('UPDATE tasks SET agent_path = ? WHERE id = ?').run(agentPath, task.id);
+  } catch (error) {
+    console.warn(`Task ${task.id} instruction migration failed: ${error.message}`);
+  }
+}
+
 const pairingColumns = db.prepare('PRAGMA table_info(engine_pairing_codes)').all().map(column => column.name);
 if (!pairingColumns.includes('principal_id')) {
   db.exec("ALTER TABLE engine_pairing_codes ADD COLUMN principal_id TEXT NOT NULL DEFAULT 'engine'");

@@ -30,7 +30,7 @@ test('远程 Engine 可在默认根目录外使用指定工作目录，并默认
   assert.equal(created.md_path, path.join(requestedDir, 'DESIGN.md'));
   assert.equal(fs.existsSync(path.join(requestedDir, 'DESIGN.md')), true);
   assert.equal(fs.existsSync(path.join(requestedDir, 'README.md')), true);
-  assert.equal(fs.existsSync(path.join(requestedDir, 'AGENT.md')), true);
+  assert.equal(fs.existsSync(path.join(requestedDir, 'AGENTS.md')), true);
 });
 
 test('远程 Engine 拒绝相对工作目录', () => {

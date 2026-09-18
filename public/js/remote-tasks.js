@@ -355,7 +355,7 @@ const RemoteTasks = (() => {
   }
 
   function editDocumentPaths(server, task) {
-    const fields = [['technical_path', '技术方案', 'DESIGN.md'], ['readme_path', 'README', 'README.md'], ['agent_path', 'AGENT', 'AGENT.md']];
+    const fields = [['technical_path', '技术方案', 'DESIGN.md'], ['readme_path', 'README', 'README.md'], ['agent_path', 'AGENT', 'AGENTS.md']];
     Modal.show('编辑文档路径', fields.map(([field, label, name]) => {
       const override = task[field] || (field === 'technical_path' && task.md_path && !task.md_path.endsWith('/DESIGN.md') ? task.md_path : '');
       const root = task.work_dir || (task.md_path ? task.md_path.slice(0, task.md_path.lastIndexOf('/')) || '/' : '');

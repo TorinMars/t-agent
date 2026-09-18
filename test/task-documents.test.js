@@ -17,11 +17,11 @@ let server, base;
 test.before(async()=>{server=app.listen(0,'127.0.0.1');await new Promise(resolve=>server.once('listening',resolve));base=`http://127.0.0.1:${server.address().port}`;});
 test.after(async()=>{await new Promise(resolve=>server.close(resolve));db.close();fs.rmSync(root,{recursive:true,force:true});});
 async function request(url, method, body){const res=await fetch(base+url,{method,headers:{'Content-Type':'application/json'},body:body&&JSON.stringify(body)});assert.ok(res.ok,await res.clone().text());return res.json();}
-function populated(name){const dir=path.join(root,name);fs.mkdirSync(dir,{recursive:true});for(const name of ['DESIGN.md','README.md','AGENT.md'])fs.writeFileSync(path.join(dir,name),`existing ${name}`);return dir;}
+function populated(name){const dir=path.join(root,name);fs.mkdirSync(dir,{recursive:true});for(const name of ['DESIGN.md','README.md','AGENTS.md'])fs.writeFileSync(path.join(dir,name),`existing ${name}`);return dir;}
 test('local task uses exact workspace and never overwrites its three documents',async()=>{
  const dir=populated('local');const task=await request('/tasks','POST',{title:'local task',work_dir:dir});
  assert.equal(task.md_path,path.join(dir,'DESIGN.md'));
- for(const [kind,name] of [['technical','DESIGN.md'],['readme','README.md'],['agent','AGENT.md']]){
+ for(const [kind,name] of [['technical','DESIGN.md'],['readme','README.md'],['agent','AGENTS.md']]){
   assert.equal(await (await fetch(`${base}/tasks/${task.id}/document/${kind}`)).text(),`existing ${name}`);
  }
  assert.equal(fs.existsSync(path.join(root,'default','local-task')),false);
@@ -33,16 +33,16 @@ test('local task uses exact workspace and never overwrites its three documents',
 });
 test('engine uses existing files and follows changed workspace for default technical document',()=>{
  const dir=populated('engine');const task=engine.createTask('owner',{title:'remote task',work_dir:dir});
- for(const [kind,name] of [['technical','DESIGN.md'],['readme','README.md'],['agent','AGENT.md']])assert.equal(engine.readDocument('owner',task.id,kind),`existing ${name}`);
+ for(const [kind,name] of [['technical','DESIGN.md'],['readme','README.md'],['agent','AGENTS.md']])assert.equal(engine.readDocument('owner',task.id,kind),`existing ${name}`);
  const next=path.join(root,'engine-next');const updated=engine.updateTask('owner',task.id,{work_dir:next});
  assert.equal(updated.md_path,path.join(next,'DESIGN.md'));
- for(const file of ['DESIGN.md','README.md','AGENT.md'])assert.ok(fs.existsSync(path.join(next,file)));
+ for(const file of ['DESIGN.md','README.md','AGENTS.md'])assert.ok(fs.existsSync(path.join(next,file)));
  fs.writeFileSync(path.join(next,'DESIGN.md'),'edited');documents.ensureDocuments(updated);assert.equal(engine.readDocument('owner',task.id,'technical'),'edited');
 });
 test('custom technical path remains explicit while companion documents use workspace',async()=>{
  const custom=path.join(root,'custom','plan.md');const dir=path.join(root,'custom-workspace');
  const task=await request('/tasks','POST',{title:'custom',work_dir:dir,md_path:custom});
- assert.equal(task.md_path,custom);assert.ok(fs.existsSync(custom));assert.ok(fs.existsSync(path.join(dir,'AGENT.md')));
+ assert.equal(task.md_path,custom);assert.ok(fs.existsSync(custom));assert.ok(fs.existsSync(path.join(dir,'AGENTS.md')));
  const updated=await request(`/tasks/${task.id}`,'PUT',{work_dir:path.join(root,'custom-next')});assert.equal(updated.md_path,custom);
 });
 
@@ -75,13 +75,50 @@ test('local task edits all three explicit paths, including external DESIGN.md, a
 });
 test('engine overrides persist across workspace changes and reset independently',()=>{
  const dir=populated('engine-overrides');const external=populated('engine-files');
- const task=engine.createTask('owner',{title:'paths',work_dir:dir,technical_path:path.join(external,'DESIGN.md'),readme_path:path.join(external,'README.md'),agent_path:path.join(external,'AGENT.md')});
+ const task=engine.createTask('owner',{title:'paths',work_dir:dir,technical_path:path.join(external,'DESIGN.md'),readme_path:path.join(external,'README.md'),agent_path:path.join(external,'AGENTS.md')});
  const moved=engine.updateTask('owner',task.id,{work_dir:path.join(root,'moved-workspace')});
  assert.equal(moved.md_path,path.join(external,'DESIGN.md'));
  engine.writeDocument('owner',task.id,'agent','custom instructions');
- assert.equal(fs.readFileSync(path.join(external,'AGENT.md'),'utf8'),'custom instructions');
+ assert.equal(fs.readFileSync(path.join(external,'AGENTS.md'),'utf8'),'custom instructions');
  const reset=engine.updateTask('owner',task.id,{technical_path:null});
  assert.equal(reset.md_path,path.join(root,'moved-workspace','DESIGN.md'));
- assert.equal(reset.agent_path,path.join(external,'AGENT.md'));
+ assert.equal(reset.agent_path,path.join(external,'AGENTS.md'));
  assert.throws(()=>engine.updateTask('owner',task.id,{readme_path:'/tmp/not-markdown.txt'}),/absolute Markdown path/);
+});
+
+test('legacy instructions migrate without loss and Claude import is idempotent', async()=>{
+ const dir=path.join(root,'legacy-agent');fs.mkdirSync(dir);
+ fs.writeFileSync(path.join(dir,'AGENT.md'),'legacy rules');
+ fs.writeFileSync(path.join(dir,'CLAUDE.md'),'# Claude specific\nkeep me\n');
+ const task=await request('/tasks','POST',{title:'legacy agent',work_dir:dir,agent_path:path.join(dir,'AGENT.md')});
+ assert.equal(task.agent_path,path.join(dir,'AGENTS.md'));
+ assert.equal(fs.readFileSync(task.agent_path,'utf8'),'legacy rules');
+ assert.equal(fs.existsSync(path.join(dir,'AGENT.md')),false);
+ documents.ensureDocuments(task);
+ assert.equal(fs.readFileSync(path.join(dir,'CLAUDE.md'),'utf8'),'# Claude specific\nkeep me\n\n@AGENTS.md\n');
+});
+test('existing AGENTS wins over legacy file and new Engine tasks get Claude entry',()=>{
+ const dir=populated('both-agent-files');fs.writeFileSync(path.join(dir,'AGENT.md'),'obsolete');
+ const task=engine.createTask('owner',{title:'both',work_dir:dir});
+ assert.equal(engine.readDocument('owner',task.id,'agent'),'existing AGENTS.md');
+ assert.equal(fs.existsSync(path.join(dir,'AGENT.md')),false);
+ assert.equal(fs.readFileSync(path.join(dir,'CLAUDE.md'),'utf8'),'@AGENTS.md\n');
+ const fresh=engine.createTask('owner',{title:'fresh agent files'});
+ assert.ok(fs.existsSync(path.join(fresh.work_dir,'AGENTS.md')));
+ assert.equal(fs.existsSync(path.join(fresh.work_dir,'AGENT.md')),false);
+ assert.equal(fs.readFileSync(path.join(fresh.work_dir,'CLAUDE.md'),'utf8'),'@AGENTS.md\n');
+});
+test('startup migrates existing task paths and skips missing workspaces',()=>{
+ const {spawnSync}=require('node:child_process');
+ const dir=path.join(root,'startup-agent');fs.mkdirSync(dir);
+ fs.writeFileSync(path.join(dir,'AGENT.md'),'startup rules');
+ const id=db.prepare('INSERT INTO tasks (title,user_id,work_dir,agent_path) VALUES (?,?,?,?)').run('startup','owner',dir,path.join(dir,'AGENT.md')).lastInsertRowid;
+ const missing=path.join(root,'offline-workspace');
+ db.prepare('INSERT INTO tasks (title,user_id,work_dir) VALUES (?,?,?)').run('offline','owner',missing);
+ const child=spawnSync(process.execPath,['-e',"require('./db').close()"],{cwd:path.join(__dirname,'..'),encoding:'utf8'});
+ assert.equal(child.status,0,child.stderr);
+ assert.equal(db.prepare('SELECT agent_path FROM tasks WHERE id=?').get(id).agent_path,path.join(dir,'AGENTS.md'));
+ assert.equal(fs.readFileSync(path.join(dir,'AGENTS.md'),'utf8'),'startup rules');
+ assert.equal(fs.existsSync(path.join(dir,'AGENT.md')),false);
+ assert.equal(fs.existsSync(missing),false);
 });

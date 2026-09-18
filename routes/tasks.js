@@ -235,7 +235,7 @@ router.post('/:id/document/:kind', (req, res) => {
   const task = documents.resolveTask(db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, uid));
   if (!task) return res.status(404).json({ error: 'Task not found' });
   if (!['readme', 'agent'].includes(req.params.kind)) {
-    return res.status(400).json({ error: 'Only README.md and AGENT.md can be created here' });
+    return res.status(400).json({ error: 'Only README.md and AGENTS.md can be created here' });
   }
   const filePath = getTaskDocumentPath(task, req.params.kind);
   if (!filePath) return res.status(400).json({ error: 'Task work directory is not configured' });

@@ -31,7 +31,7 @@ for (const remote of [false,true]) test(`${remote?'remote':'local'} task form su
  // Default paths are visible, but saving unrelated edits keeps them inherited.
  task.technical_path=null;task.readme_path=null;task.agent_path=null;
  open();
- assert.deepEqual(ids.map(id=>document.getElementById(id).value),['/project/DESIGN.md','/project/README.md','/project/AGENT.md']);
+ assert.deepEqual(ids.map(id=>document.getElementById(id).value),['/project/DESIGN.md','/project/README.md','/project/AGENTS.md']);
  if(!remote) document.getElementById('f-work-dir').value='/moved';
  document.getElementById(remote?'remote-path-save':'f-submit').dispatchEvent(new Event('click'));
  for(const field of ['technical_path','readme_path','agent_path']) assert.equal(calls[2].body[field],null);

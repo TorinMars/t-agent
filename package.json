@@ -1,6 +1,6 @@
 {
   "name": "torin-x-web",
-  "version": "2.10.15",
+  "version": "2.10.16",
   "description": "Componentized task client and remote execution engine",
   "main": "server.js",
   "scripts": {
@@ -26,7 +26,10 @@
     "ws": "^8.21.1"
   },
   "devDependencies": {
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/xterm": "^5.5.0",
     "linkedom": "0.18.12",
-    "nodemon": "^3.1.4"
+    "nodemon": "^3.1.4",
+    "playwright": "1.58.2"
   }
 }

@@ -1215,7 +1215,7 @@ ws.open(OPEN)  ── onclose ──►  scheduleReconnect(delay)
 ### 目标
 
 - 将原「文档」标签改名为「技术方案」
-- 增加 `README` 与 `AGENT.md` Markdown 预览标签
+- 增加 `README` 与 `AGENTS.md` Markdown 预览标签
 - 增加按任务隔离、由 SQLite 持久化的「待办」页面
 - 保留现有终端标签及每个任务的标签记忆能力
 
@@ -1225,13 +1225,13 @@ ws.open(OPEN)  ── onclose ──►  scheduleReconnect(delay)
 |------|----------|
 | 技术方案 | `task.md_path` |
 | README | `task.work_dir/README.md`，无 `work_dir` 时取技术方案所在目录 |
-| AGENT.md | `task.work_dir/AGENT.md`，无 `work_dir` 时取技术方案所在目录 |
+| AGENTS.md | `task.work_dir/AGENTS.md`，无 `work_dir` 时取技术方案所在目录 |
 | 待办 | SQLite `task_todos` 表 |
 | 终端 | 现有 WebSocket PTY 会话 |
 
 待办标签沿用完整文档工具栏，保留「打开文件夹 / VSCode 打开 / 分享」按钮与工具栏高度，避免切换标签时内容区上下跳动。
 
-新建任务时始终保证三份文档存在：技术方案 `DESIGN.md`（`task.md_path`）、`README.md` 和 `AGENT.md`。只填标题时会创建任务目录及这三份标准文档；手动指定技术方案路径时，会保留用户指定的文件名，并在当前 Task 目录补齐缺失的 `README.md` 和 `AGENT.md`。已有文件一律保留，不做覆盖。已有任务的文件不存在时仍由页面提供显式创建按钮。
+新建任务时始终保证四份文档存在：技术方案 `DESIGN.md`（`task.md_path`）、`README.md`、`AGENTS.md` 和 `CLAUDE.md`。只填标题时会创建任务目录及这四份标准文档；手动指定技术方案路径时，会保留用户指定的文件名，并在当前 Task 目录补齐缺失的 `README.md`、`AGENTS.md` 和引用主规则的 `CLAUDE.md`。已有文件一律保留，不做覆盖。已有任务的文件不存在时仍由页面提供显式创建按钮。
 
 ### 数据模型
 
@@ -1253,7 +1253,7 @@ CREATE TABLE IF NOT EXISTS task_todos (
 | Method | Path | 说明 |
 |--------|------|------|
 | GET | `/api/tasks/:id/document/:kind` | 读取 `technical/readme/agent` 文档 |
-| POST | `/api/tasks/:id/document/:kind` | 创建缺失的 `README.md` 或 `AGENT.md` |
+| POST | `/api/tasks/:id/document/:kind` | 创建缺失的 `README.md` 或 `AGENTS.md` |
 | PUT | `/api/tasks/:id/document/:kind` | 保存 `technical/readme/agent` Markdown 内容 |
 | GET | `/api/tasks/:id/todos` | 获取任务待办 |
 | POST | `/api/tasks/:id/todos` | 新增待办 |
@@ -1262,7 +1262,7 @@ CREATE TABLE IF NOT EXISTS task_todos (
 
 ### Markdown 在线编辑
 
-- 技术方案、`README.md` 和 `AGENT.md` 工具栏增加「编辑」按钮
+- 技术方案、`README.md` 和 `AGENTS.md` 工具栏增加「编辑」按钮
 - 使用 Microsoft 官方 Monaco Editor（VS Code 同源编辑器），采用 VS Code 明亮主题、Markdown 语法高亮、行号、自动补全括号和软换行
 - 使用 Monaco 原生 VS Code 快捷键、搜索/替换面板、多光标和列选择，仅额外绑定 `Cmd/Ctrl+S` 到应用的 Markdown 保存接口
 - Monaco 0.56.0 以 ESM 包为源，通过 esbuild 构建后本地托管主线程与 worker 资源，避免 CDN 与 worker 跨域问题
@@ -1292,7 +1292,7 @@ CREATE TABLE IF NOT EXISTS task_todos (
 #### 本期设计范围
 
 - 通过 URL、端口和 Token 配置多个对等服务实例，支持连接测试、启用/停用和移除
-- 远程任务列表、技术方案、README、AGENT.md 和待办清单
+- 远程任务列表、技术方案、README、AGENTS.md 和待办清单
 - 远程任务的新建、编辑、状态流转和删除
 - 定时查询 GitHub 版本链接、手动立即检查、新版弹窗与经确认后更新本地服务
 
@@ -1817,3 +1817,11 @@ npm run build:monaco
 | Terminal | 远程 WebSocket 代理与权限隔离（Phase 3） |
 | Release | `VERSION.json`、app/api/schema 版本、Git remote/branch 规范、migration、守护重启约定 |
 | Tests | 版本文件 schema/SemVer、本地/远程版本比较、协议契约、SSRF/Token 泄漏、Git behind/ahead/diverged、脏工作区、pipeline 失败与重启 |
+
+### Agent 规则文件兼容
+
+新任务默认创建 `AGENTS.md` 和 `CLAUDE.md`，后者通过 `@AGENTS.md` 引用主规则。已有 `CLAUDE.md` 保留内容并补齐引用。启动时迁移已有任务：仅有 `AGENT.md` 时改为 `AGENTS.md`；两者并存时保留 `AGENTS.md` 并删除 `AGENT.md`。旧的显式 `AGENT.md` 路径也同步迁移，其他自定义规则路径保持原样，工作目录仍补齐标准规则入口。不可访问的工作目录记录错误并在下次启动重试，不会重建不存在的旧目录。远程项目在对应 Engine 更新并启动后迁移。
+
+### 测试环境与现行布局校验
+
+全量测试包含真实 Chromium 回归；Playwright、xterm 5.5 和 Fit 0.10 作为开发依赖锁定安装，使用 `npm ci --include=dev` 后安装 Chromium。五个浏览器脚本均支持 `CHROME_PATH`。布局回归检查现行共享 `style.css` 的安全区和安装应用窗口适配规则，不再引用已移除的 `mobile.css`。

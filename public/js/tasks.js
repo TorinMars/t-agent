@@ -137,6 +137,7 @@ const Tasks = (() => {
     if (inst.resizeObserver) inst.resizeObserver.disconnect();
     if (inst.onWindowResize) window.removeEventListener('resize', inst.onWindowResize);
     if (inst.ws) inst.ws.close();
+    inst.images.dispose();
     inst.clipboard.dispose();
     inst.term.dispose();
     inst.el.remove();
@@ -264,6 +265,7 @@ const Tasks = (() => {
       reconnectAttempts: 0,
       resizeObserver: null,
     };
+    inst.images = TerminalImages.attach(t, el, () => !inst.disposed && !inst.paused ? inst.ws : null);
     inst.resizeObserver = TerminalViewport.observe(t, fa, el);
     termInstances.set(key, inst);
     termTaskId = task.id;
@@ -271,7 +273,7 @@ const Tasks = (() => {
     fitAddon = fa;
 
     t.onData(data => {
-      if (inst.paused) return;
+      if (inst.paused || TerminalImages.busy) return;
       if (inst.ws && inst.ws.readyState === WebSocket.OPEN) inst.ws.send(data);
     });
 
@@ -1769,6 +1771,7 @@ const Tasks = (() => {
     deleteTerminal,
     restartTerminalFromWorkDir,
     sendTerminalInput(data) {
+      if (TerminalImages.busy) return;
       const instance = termInstances.get(terminalKey(selectedId));
       if (!instance || !instance.ws || instance.ws.readyState !== WebSocket.OPEN || activeTab !== 'shell') return;
       instance.ws.send(data);

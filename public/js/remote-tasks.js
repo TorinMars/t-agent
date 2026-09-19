@@ -494,6 +494,7 @@ const RemoteTasks = (() => {
     instance.disposed = true;
     if (instance.resizeObserver) instance.resizeObserver.disconnect();
     if (instance.ws) instance.ws.close();
+    instance.images.dispose();
     instance.clipboard.dispose();
     instance.term.dispose();
     instance.el.remove();
@@ -568,9 +569,10 @@ const RemoteTasks = (() => {
     };
     remoteTerminals.set(key, remoteTerminal);
     const instance = remoteTerminal;
+    instance.images = TerminalImages.attach(term, el, () => !instance.disposed && !instance.paused ? instance.ws : null);
     instance.resizeObserver = TerminalViewport.observe(term, fitAddon, el);
     term.onData(data => {
-      if (instance.paused) return;
+      if (instance.paused || TerminalImages.busy) return;
       if (ws.readyState === WebSocket.OPEN) ws.send(data);
     });
     term.onResize(({ cols, rows }) => {
@@ -1024,6 +1026,7 @@ const RemoteTasks = (() => {
     deleteTerminal,
     restartTerminalFromWorkDir,
     sendTerminalInput(data) {
+      if (TerminalImages.busy) return;
       if (!remoteTerminal || !remoteTerminal.ws || remoteTerminal.ws.readyState !== WebSocket.OPEN || activeTab !== 'shell') return;
       remoteTerminal.ws.send(data);
       remoteTerminal.term.focus();

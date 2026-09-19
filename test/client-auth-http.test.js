@@ -62,7 +62,7 @@ for (const environment of ['test', 'production']) test(`Desktop HTTP and WebSock
     assert.match(response.headers.get('location'), /^\/auth\/setup\?/);
   }
   assert.equal((await call('/index%2ehtml')).status, 302);
-  for (const route of ['/api/tasks', '/api/local-ip', '/api/system/version', '/auth/me']) {
+  for (const route of ['/api/tasks', '/api/local-ip', '/api/system/version', '/api/oss/config', '/auth/me']) {
     const response = await call(route);
     assert.equal(response.status, 403);
     assert.equal((await response.json()).error, 'AUTHENTICATOR_BINDING_REQUIRED');
@@ -102,6 +102,8 @@ for (const environment of ['test', 'production']) test(`Desktop HTTP and WebSock
   assert.equal(confirmed.recovery_codes.length, 8);
   assert.equal(confirmed.redirect, '/web');
   assert.equal((await call('/api/tasks')).status, 401);
+  assert.equal((await call('/api/oss/config')).status, 401);
+  assert.equal((await call('/api/oss/images', { body: {} })).status, 401);
   assert.equal((await call('/api/tasks', { cookie: setupCookie })).status, 401);
   const meResponse = await call('/auth/me', { cookie: boundCookie });
   assert.equal(meResponse.status, 200);

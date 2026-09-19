@@ -1,0 +1,9 @@
+# Client OSS terminal image upload
+
+User specification: configured Aliyun OSS enables pasting images into local/remote terminals and a bottom upload button on both desktop and mobile (adapted for phone touch use). Upload must block page interaction with a full-page overlay and progress bar, then insert the URL without submitting terminal input.
+
+1. Backend: owner-scoped encrypted OSS configuration in system_state; authenticated same-origin GET/PUT/DELETE /api/oss/config; POST /api/oss/images raw image upload <=10 MiB, verified PNG/JPEG/GIF/WebP; ali-oss over HTTPS, unique keys, private signed download URL (24 hours) by default, optional public HTTPS base URL. No credentials in responses/errors/logs. Tests cover persistence, validation, authentication, upload and failure behavior.
+2. Frontend: settings editor preserving stored secrets when blank; shared local/remote terminal image paste controller; desktop/mobile bottom picker; full-page interaction lock including keyboard/focus and progress bar via XHR upload progress, processing state until OSS completion, finally unlock. Preserve text paste and no automatic Enter. Capture originating terminal and validate before inserting; retain URL for copy if disconnected. Regression tests.
+3. Integration: review both tasks, browser verification, README/DESIGN, full tests, version release per AGENTS.md.
+
+Interface: GET/PUT /api/oss/config returns {enabled, region, bucket, accessKeyId, hasAccessKeySecret, prefix, publicBaseUrl}; PUT accepts matching fields plus accessKeySecret (blank preserves); DELETE clears config. POST /api/oss/images accepts image bytes with Content-Type and returns {url, expiresAt} (expiresAt null for public URL). Error JSON {error: human readable message}. Credentials encrypted using sessionSecret. Frontend visibility uses enabled.

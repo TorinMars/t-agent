@@ -24,6 +24,7 @@ function setup(remote) {
     location: { protocol: 'http:', host: 'localhost' }, mermaid: { initialize() {} },
     WebSocket: Socket, Terminal, FitAddon: { FitAddon: class {} },
     TerminalViewport: { fit() {}, observe: () => ({ disconnect() {} }), capture: () => null, restore() {} },
+    TerminalImages: { busy: false, attach: () => ({ dispose() {} }) },
     TerminalClipboard: { attach: term => ({ dispose() {}, writeHistory: (data, done) => term.write(data, done) }) },
     TerminalControls: { clearMessage() {}, showMessage() {} },
     API: { get: async () => [{ terminal_id: 'default', title: '终端 1' }], post: async () => ({ terminal_id: 'second', title: '终端 2' }) },
@@ -108,5 +109,18 @@ for (const remote of [false, true]) {
     assert.equal(app.document.querySelector('.terminal-tab').getAttribute('aria-selected'), 'true');
     assert.equal(app.terminals[0].disposed, undefined);
     await assert.rejects(app.controller.deleteTerminal(), /默认终端不能删除/);
+  });
+}
+
+for (const remote of [false, true]) {
+  test(`${remote ? 'remote' : 'local'} input controls cannot bypass image upload lock`, () => {
+    const app = setup(remote); app.controller._open(); app.sockets[0].open();
+    app.sockets[0].sent.length = 0;
+    app.context.TerminalImages.busy = true;
+    app.controller.sendTerminalInput('unexpected\r');
+    assert.deepEqual(app.sockets[0].sent, []);
+    app.context.TerminalImages.busy = false;
+    app.controller.sendTerminalInput('allowed');
+    assert.deepEqual(app.sockets[0].sent, ['allowed']);
   });
 }

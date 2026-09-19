@@ -37,6 +37,7 @@ const root = path.resolve(__dirname, '..');
         assert.equal(Math.round((await page.locator('body').boundingBox()).height), 360);
         assert.ok(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth));
         await page.evaluate(() => {
+          window.TerminalImages = { load: async () => {}, showSettings() {} };
           window.Bookmarks = window.Tasks = window.RemoteTasks = { load: async () => {} };
           window.requests = [];
           window.fetch = async (url, options = {}) => {

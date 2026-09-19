@@ -1,6 +1,6 @@
 {
   "name": "torin-x-web",
-  "version": "2.12.3",
+  "version": "2.13.0",
   "description": "Componentized task client and remote execution engine",
   "main": "server.js",
   "scripts": {
@@ -13,6 +13,7 @@
     "build:monaco": "esbuild scripts/monaco-entry.js --bundle --minify --supported:template-literal=false --format=iife --global-name=MonacoBundle --loader:.ttf=file --asset-names=[name]-[hash] --outfile=public/vendor/monaco/monaco.js && esbuild node_modules/monaco-editor/esm/vs/editor/editor.worker.js --bundle --minify --format=iife --outfile=public/vendor/monaco/editor.worker.js && esbuild node_modules/monaco-editor/esm/vs/languages/features/json/json.worker.js --bundle --minify --supported:template-literal=false --format=iife --outfile=public/vendor/monaco/json.worker.js"
   },
   "dependencies": {
+    "ali-oss": "^6.23.0",
     "axios": "^1.7.2",
     "better-sqlite3": "^12.11.1",
     "dotenv": "^16.0.0",

@@ -174,9 +174,51 @@ if ! "${compose[@]}" up -d --no-build --pull never --wait --wait-timeout 120 cli
 fi
 printf '\nClient 已启动并通过健康检查。\n数据目录：%s\n反向代理上游：http://127.0.0.1:%s\n' "$STORAGE_DIR" "${CLIENT_PORT:-3000}"
 printf 'Nginx HTTPS/WSS 配置示例：%s\n' "$PROJECT_DIR/docker/client.nginx.conf.example"
-printf '\n首次使用请执行身份验证器绑定：\n'
-printf '%q ' "${compose[@]}" exec client node scripts/client-auth-setup.js
-printf '\n\n'
+print_binding_command() {
+  printf '%q ' "${compose[@]}" exec client node scripts/client-auth-setup.js
+  printf '\n'
+}
+get_auth_status() {
+  "${compose[@]}" exec -T client node -e '
+fetch("http://127.0.0.1:" + (process.env.PORT || 3000) + "/auth/status", {signal: AbortSignal.timeout(10000)})
+  .then(async response => {
+    if (!response.ok) throw new Error("HTTP_" + response.status);
+    const status = await response.json();
+    if (typeof status.bound !== "boolean") throw new Error("INVALID_AUTH_STATUS");
+    console.log(status.bound ? "bound" : "unbound");
+  }).catch(error => { console.error(error.message); process.exitCode = 1; });
+' </dev/null
+}
+AUTH_STATUS="$(get_auth_status)" || fail '无法检查身份验证器绑定状态，请检查容器后重试'
+case "$AUTH_STATUS" in
+  bound) printf '\n身份验证器已绑定，保留现有绑定。\n' ;;
+  unbound)
+    if [ "$NON_INTERACTIVE" -eq 1 ]; then
+      printf '\n身份验证器尚未绑定，自动化模式不读取验证码。使用前请执行：\n'
+      print_binding_command
+    else
+      AUTH_TERMINAL=0
+      if [ -t 0 ]; then exec 9<&0; AUTH_TERMINAL=1
+      elif { exec 9<>/dev/tty; } 2>/dev/null; then AUTH_TERMINAL=1; fi
+      if [ "$AUTH_TERMINAL" -eq 0 ]; then
+        printf '\n身份验证器尚未绑定。请在交互终端重跑安装脚本，或执行：\n'
+        print_binding_command
+        fail '绑定未完成：没有可用的交互终端'
+      fi
+      printf '\n开始绑定身份验证器：请用手机扫码并输入验证码，完成后保存恢复码。\n'
+      if ! "${compose[@]}" exec -T client node scripts/client-auth-setup.js <&9; then
+        exec 9<&-
+        printf '\n重新绑定命令：\n'
+        print_binding_command
+        fail '绑定未完成；容器保持运行，可以重试，不会重置已有绑定'
+      fi
+      exec 9<&-
+      AUTH_STATUS="$(get_auth_status)" || fail '绑定后状态检查失败，请检查容器后重试'
+      [ "$AUTH_STATUS" = bound ] || fail '绑定未完成，请重跑脚本继续绑定'
+    fi ;;
+  *) fail '容器返回了无效的身份验证器绑定状态' ;;
+esac
+printf '\n'
 if [ -n "$DOMAIN" ]; then
   printf '配置 HTTPS 反向代理后，请在浏览器打开：https://%s\n' "$DOMAIN"
 else

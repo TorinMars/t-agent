@@ -17,6 +17,16 @@ case "$*" in
  *'config --environment'*)
    printf 'T_AGENT_CLIENT_STORAGE_DIR=%s\\nT_AGENT_CLIENT_PORT=%s\\nT_AGENT_CLIENT_DOMAIN=agent.example.com\\n' "$TEST_STORAGE" "\${T_AGENT_CLIENT_PORT:-13500}"
    printf 'T_AGENT_CLIENT_WORKSPACE_DIR=%s\\nT_AGENT_CLIENT_BIND=%s\\n' "\${T_AGENT_CLIENT_WORKSPACE_DIR:-}" "\${T_AGENT_CLIENT_BIND:-127.0.0.1}" ;;
+ *'client-auth-setup.js'*)
+   printf '输入身份验证器的 6 位验证码：'
+   read -r code
+   [ "$code" = 123456 ] || exit 1
+   [ "\${TEST_AUTH_EXIT:-0}" = 0 ] || exit 1
+   [ "\${TEST_AUTH_UNFINISHED:-0}" != 1 ] || exit 0
+   touch "$TEST_LOG.bound"
+   printf '绑定完成。恢复码：test-recovery\\n' ;;
+ *'exec -T client node -e'*)
+   if [ -f "$TEST_LOG.bound" ]; then printf 'bound\\n'; else printf '%s\\n' "\${TEST_AUTH_STATUS:-bound}"; fi ;;
  *'pull client'*) exit "\${TEST_PULL_EXIT:-0}" ;;
  *'up -d'*) exit "\${TEST_UP_EXIT:-0}" ;;
 esac
@@ -30,7 +40,7 @@ test('one command prepares an independent Codex copy and waits for Client health
   const result = f.run('--domain', 'agent.example.com', '--port', '13500');
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /https:\/\/agent.example.com/);
-  assert.match(result.stdout, /client-auth-setup.js/);
+  assert.match(result.stdout, /已绑定/);
   assert.equal(fs.readFileSync(path.join(f.env.TEST_STORAGE, 'codex/auth.json'), 'utf8'), 'host credentials');
   const calls = fs.readFileSync(f.env.TEST_LOG, 'utf8');
   assert.match(calls, /up -d.*--wait/);
@@ -75,16 +85,17 @@ test('workspace and remote access options persist and appear in the summary', t 
   assert.match(result.stdout, /HTTPS/);
 });
 
-async function interactive(f, answers) {
+async function interactive(f, answers, piped = false) {
   const pty = require('node-pty');
   return new Promise((resolve, reject) => {
-    const terminal = pty.spawn('/bin/bash', [path.join(f.dir, 'docker-client.sh'), '--configure', '--codex-source', path.join(f.dir, 'host-codex')], { env: f.env, cols: 140, rows: 35 });
+    const args = [path.join(f.dir, 'docker-client.sh'), '--configure', '--codex-source', path.join(f.dir, 'host-codex')];
+    const terminal = pty.spawn('/bin/bash', piped ? ['-c', 'cat "$1" | bash -s -- "${@:2}"', '_', ...args] : args, { env: { ...f.env, T_AGENT_CLIENT_APP_DIR: f.dir }, cols: 140, rows: 35 });
     let output = '', index = 0;
-    const prompts = ['default 恢复默认：', '宿主机端口 [13500]：', '允许远程连接此端口？'];
+    const prompts = ['default 恢复默认：', '宿主机端口 [13500]：', '允许远程连接此端口？', '输入身份验证器的 6 位验证码：'];
     const timeout = setTimeout(() => { terminal.kill(); reject(new Error('Installer prompt timed out: ' + output)); }, 10000);
     terminal.onData(data => {
       output += data;
-      if (index < prompts.length && output.includes(prompts[index])) { terminal.write(answers[index] + '\r'); index++; }
+      if (index < answers.length && output.includes(prompts[index])) { terminal.write(answers[index] + '\r'); index++; }
     });
     terminal.onExit(({ exitCode }) => { clearTimeout(timeout); resolve({ exitCode, output }); });
   });
@@ -109,4 +120,39 @@ test('accepting displayed default workspace keeps inheritance instead of fixing 
   const config = fs.readFileSync(path.join(f.dir, 'docker/client.env'), 'utf8');
   assert.match(config, /^T_AGENT_CLIENT_WORKSPACE_DIR=$/m);
   assert.match(result.output, /127\.0\.0\.1:13500/);
+});
+
+
+test('installation binds the authenticator immediately when unbound', async t => {
+  const f = fixture(t); f.env.TEST_AUTH_STATUS = 'unbound';
+  const result = await interactive(f, ['', '', '', '123456']);
+  assert.equal(result.exitCode, 0, result.output);
+  assert.match(result.output, /绑定完成/);
+  assert.match(result.output, /test-recovery/);
+  assert.match(fs.readFileSync(f.env.TEST_LOG, 'utf8'), /exec -T client node scripts\/client-auth-setup.js/);
+});
+test('failed enrollment fails installation and noninteractive mode reports pending binding', async t => {
+  const f = fixture(t); f.env.TEST_AUTH_STATUS = 'unbound'; f.env.TEST_AUTH_EXIT = '1';
+  const result = await interactive(f, ['', '', '', '123456']);
+  assert.notEqual(result.exitCode, 0);
+  assert.match(result.output, /绑定未完成/);
+  const unattended = f.run('--non-interactive');
+  assert.equal(unattended.status, 0, unattended.stderr);
+  assert.match(unattended.stdout, /尚未绑定/);
+  assert.match(unattended.stdout, /client-auth-setup.js/);
+});
+
+
+test('streamed installation reads the verification code from the controlling terminal', async t => {
+  const f = fixture(t); f.env.TEST_AUTH_STATUS = 'unbound';
+  const result = await interactive(f, ['', '', '', '123456'], true);
+  assert.equal(result.exitCode, 0, result.output);
+  assert.match(result.output, /绑定完成/);
+});
+
+test('successful command exit without actual binding is not treated as completion', async t => {
+  const f = fixture(t); f.env.TEST_AUTH_STATUS = 'unbound'; f.env.TEST_AUTH_UNFINISHED = '1';
+  const result = await interactive(f, ['', '', '', '123456']);
+  assert.notEqual(result.exitCode, 0);
+  assert.match(result.output, /绑定未完成/);
 });

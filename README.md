@@ -149,7 +149,7 @@ Linux 会注册 `t-agent-engine.service`。独立 Engine 固定监听 `0.0.0.0`�
 curl -fsSL https://raw.githubusercontent.com/TorinMars/t-agent/main/docker-client.sh | bash -s -- --domain agent.example.com
 ```
 
-脚本准备独立 Codex 副本并等待 Client 健康，结束后显示访问地址及首次绑定命令；HTTPS 反向代理需按部署文档配置。
+首次安装会提示任务工作目录、宿主机端口及是否允许远程连接；已有安装可加 `--configure` 重新选择。脚本准备独立 Codex 副本并等待 Client 健康，结束后显示访问地址及首次绑定命令；HTTPS 反向代理需按部署文档配置。
 
 也可按以下步骤手动启动：
 

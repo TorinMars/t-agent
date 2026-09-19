@@ -15,7 +15,8 @@ function fixture(t) {
 printf '%s\\n' "$*" >> "$TEST_LOG"
 case "$*" in
  *'config --environment'*)
-   printf 'T_AGENT_CLIENT_STORAGE_DIR=%s\\nT_AGENT_CLIENT_PORT=13500\\nT_AGENT_CLIENT_DOMAIN=agent.example.com\\n' "$TEST_STORAGE" ;;
+   printf 'T_AGENT_CLIENT_STORAGE_DIR=%s\\nT_AGENT_CLIENT_PORT=%s\\nT_AGENT_CLIENT_DOMAIN=agent.example.com\\n' "$TEST_STORAGE" "\${T_AGENT_CLIENT_PORT:-13500}"
+   printf 'T_AGENT_CLIENT_WORKSPACE_DIR=%s\\nT_AGENT_CLIENT_BIND=%s\\n' "\${T_AGENT_CLIENT_WORKSPACE_DIR:-}" "\${T_AGENT_CLIENT_BIND:-127.0.0.1}" ;;
  *'pull client'*) exit "\${TEST_PULL_EXIT:-0}" ;;
  *'up -d'*) exit "\${TEST_UP_EXIT:-0}" ;;
 esac
@@ -59,4 +60,53 @@ test('curl-style stdin execution delegates to an existing checkout and preserves
   });
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /https:\/\/agent.example.com/);
+});
+
+test('workspace and remote access options persist and appear in the summary', t => {
+  const f = fixture(t);
+  const workspace = path.join(f.dir, 'project files');
+  const result = f.run('--work-dir', workspace, '--remote-access', 'yes', '--non-interactive');
+  assert.equal(result.status, 0, result.stderr);
+  const config = fs.readFileSync(path.join(f.dir, 'docker/client.env'), 'utf8');
+  assert.ok(config.includes(`T_AGENT_CLIENT_WORKSPACE_DIR="${workspace}"`));
+  assert.match(config, /T_AGENT_CLIENT_BIND="0.0.0.0"/);
+  assert.ok(result.stdout.includes(workspace));
+  assert.match(result.stdout, /0\.0\.0\.0:13500/);
+  assert.match(result.stdout, /HTTPS/);
+});
+
+async function interactive(f, answers) {
+  const pty = require('node-pty');
+  return new Promise((resolve, reject) => {
+    const terminal = pty.spawn('/bin/bash', [path.join(f.dir, 'docker-client.sh'), '--configure', '--codex-source', path.join(f.dir, 'host-codex')], { env: f.env, cols: 140, rows: 35 });
+    let output = '', index = 0;
+    const prompts = ['default 恢复默认：', '宿主机端口 [13500]：', '允许远程连接此端口？'];
+    const timeout = setTimeout(() => { terminal.kill(); reject(new Error('Installer prompt timed out: ' + output)); }, 10000);
+    terminal.onData(data => {
+      output += data;
+      if (index < prompts.length && output.includes(prompts[index])) { terminal.write(answers[index] + '\r'); index++; }
+    });
+    terminal.onExit(({ exitCode }) => { clearTimeout(timeout); resolve({ exitCode, output }); });
+  });
+}
+
+test('interactive install asks for workspace, host port and remote access', async t => {
+  const f = fixture(t);
+  const workspace = path.join(f.dir, 'interactive workspace');
+  const result = await interactive(f, [workspace, '18080', 'yes']);
+  assert.equal(result.exitCode, 0, result.output);
+  assert.ok(result.output.includes(workspace + ' → /workspace'));
+  assert.match(result.output, /0\.0\.0\.0:18080/);
+  const config = fs.readFileSync(path.join(f.dir, 'docker/client.env'), 'utf8');
+  assert.match(config, /T_AGENT_CLIENT_PORT="18080"/);
+  assert.match(config, /T_AGENT_CLIENT_BIND="0.0.0.0"/);
+});
+
+test('accepting displayed default workspace keeps inheritance instead of fixing its path', async t => {
+  const f = fixture(t);
+  const result = await interactive(f, ['', '', '']);
+  assert.equal(result.exitCode, 0, result.output);
+  const config = fs.readFileSync(path.join(f.dir, 'docker/client.env'), 'utf8');
+  assert.match(config, /^T_AGENT_CLIENT_WORKSPACE_DIR=$/m);
+  assert.match(result.output, /127\.0\.0\.1:13500/);
 });

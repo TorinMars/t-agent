@@ -1843,3 +1843,5 @@ Engine 广告并校验 `files:read`、`files:write`；现有标准角色凭证�
 Dockerfile 共享运行时并提供 client/engine 两个目标，默认目标保持 engine。Client 运行 server.js，生产模式在容器内监听 0.0.0.0:3000，Compose 只发布宿主机回环端口，通过 HTTPS/WSS 反向代理提供访问。首次绑定命令走容器回环 HTTP API，保留现有首次绑定来源检查、验证码和 Secure Cookie 行为。Client 启动前创建并复用数据卷中的私有会话密钥，已有密钥损坏或显式配置冲突时拒绝启动。
 
 Client 与 Engine 数据目录分离。镜像内置 Codex，首次部署从宿主机 ~/.codex 复制到 Client 专用副本，已有副本不覆盖；容器挂载副本而非宿主机原目录。数据库、任务、会话密钥和 Codex 副本在镜像更新后保持，宿主机负责镜像更新；镜像重建会结束容器内终端进程。GitHub Actions 分别构建发布两个目标。部署细节见 docs/DOCKER_CLIENT.md。
+
+Docker Client 安装脚本首次交互选择宿主机任务目录、发布端口和远程连接范围，已有配置通过 --configure 重新选择。工作目录留空继承数据根目录/tasks，回显默认路径不将其固定为自定义配置。容器内目录及端口保持 /workspace 和 3000，远程选项只改变宿主机端口绑定，不放宽 HTTPS 登录要求；无交互自动化可用对应参数及 --non-interactive。

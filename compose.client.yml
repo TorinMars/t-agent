@@ -21,9 +21,9 @@ services:
       UPDATE_CHECK_ENABLED: "true"
       TZ: ${TZ:-Asia/Shanghai}
     ports:
-      - "127.0.0.1:${T_AGENT_CLIENT_PORT:-3000}:3000"
+      - "${T_AGENT_CLIENT_BIND:-127.0.0.1}:${T_AGENT_CLIENT_PORT:-3000}:3000"
     volumes:
       - "${T_AGENT_CLIENT_STORAGE_DIR:?Set T_AGENT_CLIENT_STORAGE_DIR in docker/client.env}/data:/var/lib/t-agent"
-      - "${T_AGENT_CLIENT_STORAGE_DIR:?Set T_AGENT_CLIENT_STORAGE_DIR in docker/client.env}/tasks:/workspace"
+      - "${T_AGENT_CLIENT_WORKSPACE_DIR:-${T_AGENT_CLIENT_STORAGE_DIR:?Set T_AGENT_CLIENT_STORAGE_DIR in docker/client.env}/tasks}:/workspace"
       - "${T_AGENT_CLIENT_STORAGE_DIR:?Set T_AGENT_CLIENT_STORAGE_DIR in docker/client.env}/codex:/root/.codex"
     stop_grace_period: 15s

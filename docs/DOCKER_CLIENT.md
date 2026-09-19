@@ -10,9 +10,9 @@ Client 镜像包含网页、本地 Engine、终端及 Codex CLI。容器中的�
 curl -fsSL https://raw.githubusercontent.com/TorinMars/t-agent/main/docker-client.sh | bash -s -- --domain agent.example.com
 ```
 
-脚本自动下载源码、准备独立数据目录、首次复制宿主机 Codex 配置、拉取镜像并等待容器健康。结束时显示域名 URL、代理上游及首次身份验证器绑定命令。HTTPS 证书及反向代理按下文配置；`--domain` 仅指定访问提示，不会自动签发证书或修改 Nginx。
+首次运行时，脚本依次提示：任务工作目录（宿主机路径，映射到容器 `/workspace`）、宿主机端口（默认 `3000`）、是否允许远程连接（默认 `no`，仅本机；选择 `yes` 监听 `0.0.0.0`）。回车保留显示值；工作目录输入 `default` 恢复继承数据目录下的 `tasks`。随后下载/构建镜像、首次复制独立 Codex 配置并等待容器健康。结束时显示域名 URL、代理上游及首次身份验证器绑定命令。HTTPS 证书及反向代理按下文配置；`--domain` 仅指定访问提示，不会自动签发证书或修改 Nginx。
 
-已有源码可运行 `./docker-client.sh --domain agent.example.com`。可选参数：`--port 13500`、`--data-dir /srv/t-agent-client`、`--codex-source /path/to/.codex`、`--build`（改为本机构建）。配置写入 `docker/client.env`，再次执行保留已有配置及 Codex 副本；显式参数只更新对应字段。源码默认存放在 `~/.torin/t-agent-client-app`，可通过 `T_AGENT_CLIENT_APP_DIR` 修改。启动超时或镜像拉取失败会返回失败并显示原因。
+已有源码可运行 `./docker-client.sh --domain agent.example.com`。可选参数：`--work-dir /srv/projects`、`--port 13500`、`--remote-access yes|no`、`--data-dir /srv/t-agent-client`、`--codex-source /path/to/.codex`、`--build`（改为本机构建）。已有安装可加 `--configure` 重新交互配置。自动化使用 `--non-interactive`；未提供的参数沿用现有配置或默认值。配置写入 `docker/client.env`，再次执行保留已有配置及 Codex 副本；显式参数只更新对应字段。源码默认存放在 `~/.torin/t-agent-client-app`，可通过 `T_AGENT_CLIENT_APP_DIR` 修改。启动超时或镜像拉取失败会返回失败并显示原因。
 
 ## 首次部署
 
@@ -31,7 +31,7 @@ docker compose --env-file docker/client.env -f compose.client.yml pull client
 docker compose --env-file docker/client.env -f compose.client.yml up -d client
 ```
 
-若修改 `T_AGENT_CLIENT_STORAGE_DIR`，上述目录和复制目标也要同步修改。已有副本不会再次复制或覆盖。可以用第二个参数指定源 Codex 目录；源目录不存在时创建空的专用目录，之后在容器中登录。此脚本只复制文件，不读取宿主机操作系统的钥匙串；源登录必须保存在可复制的 Codex 文件中。
+若修改 `T_AGENT_CLIENT_STORAGE_DIR`，上述目录和复制目标也要同步修改。`T_AGENT_CLIENT_WORKSPACE_DIR` 可单独指定宿主机任务工作目录；留空时继承 `${T_AGENT_CLIENT_STORAGE_DIR}/tasks`，容器路径仍为 `/workspace`。`T_AGENT_CLIENT_PORT` 是宿主机端口，容器内部保持 `3000`。已有副本不会再次复制或覆盖。可以用第二个参数指定源 Codex 目录；源目录不存在时创建空的专用目录，之后在容器中登录。此脚本只复制文件，不读取宿主机操作系统的钥匙串；源登录必须保存在可复制的 Codex 文件中。
 
 镜像未发布或不能拉取时，可在服务器构建：
 
@@ -44,7 +44,7 @@ docker compose --env-file docker/client.env -f compose.client.yml up -d --pull n
 
 将 [Nginx 示例](../docker/client.nginx.conf.example) 放入 Nginx 的 `http` 配置上下文，替换 `agent.example.com` 和证书路径，再执行 `nginx -t` 并重载 Nginx。若修改宿主机发布端口，同时修改 `proxy_pass`。示例同时支持普通 HTTP 请求、文件保存和终端 WebSocket。
 
-Compose 将端口固定发布到服务器回环地址；Nginx 示例假设代理运行在宿主机。若代理也在容器中，应让代理和 Client 加入同一个 Docker 网络，并把上游改为 `http://client:3000`，不要把容器里的 `127.0.0.1` 当作宿主机。保留正确的 Host、X-Forwarded-Proto 和 WebSocket Upgrade 请求头。容器化 Nginx 会缓存上游地址，Client 容器重建后应重新加载或重启代理，使其重新解析 `client`；宿主机 Nginx 使用固定回环端口不受此影响。
+Compose 默认将端口发布到服务器回环地址；选择允许远程连接后会发布到所有网卡，仍受宿主机防火墙/安全组限制。开放端口不代表已提供 HTTPS，网页生产登录仍须通过 HTTPS 代理访问。Nginx 示例假设代理运行在宿主机。若代理也在容器中，应让代理和 Client 加入同一个 Docker 网络，并把上游改为 `http://client:3000`，不要把容器里的 `127.0.0.1` 当作宿主机。保留正确的 Host、X-Forwarded-Proto 和 WebSocket Upgrade 请求头。容器化 Nginx 会缓存上游地址，Client 容器重建后应重新加载或重启代理，使其重新解析 `client`；宿主机 Nginx 使用固定回环端口不受此影响。
 
 生产会话仍要求 Secure Cookie。直接通过普通 HTTP 域名不能正常登录，不应通过关闭验证绕过 HTTPS。默认回环发布方式遵循 [Docker 端口发布说明](https://docs.docker.com/engine/network/port-publishing/)。
 

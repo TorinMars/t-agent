@@ -61,6 +61,12 @@ function isLocalInitialization(req) {
     && /^(localhost|127\.0\.0\.1|\[::1\])(?::\d{1,5})?$/i.test(headers.host || '');
 }
 
+// Shared by rolling sessions and regenerated login/enrollment sessions.
+function isSecureClientCookie(req) {
+  return Boolean(req.secure || (process.env.NODE_ENV === 'production'
+    && !isLocalInitialization(req) && !require('../config').clientAllowHttp));
+}
+
 function createClientAuth(database, { sessionSecret, ownerId, now = Date.now } = {}) {
   database.exec(`
     CREATE TABLE IF NOT EXISTS client_auth (
@@ -200,4 +206,4 @@ function getClientAuth() {
   }
   return singleton;
 }
-module.exports = { createClientAuth, getClientAuth, totp, base32, matchStep, safeReturnTo, isLocalInitialization, SESSION_TTL };
+module.exports = { createClientAuth, getClientAuth, totp, base32, matchStep, safeReturnTo, isLocalInitialization, isSecureClientCookie, SESSION_TTL };

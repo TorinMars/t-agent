@@ -9,6 +9,7 @@ STORAGE_DIR=""
 WORK_DIR=""
 WORK_DIR_SET=0
 REMOTE_ACCESS=""
+ALLOW_HTTP=""
 CONFIGURE=0
 NON_INTERACTIVE=0
 CODEX_SOURCE="${HOME}/.codex"
@@ -16,7 +17,7 @@ BUILD=0
 fail() { printf '错误：%s\n' "$*" >&2; exit 1; }
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --domain|--port|--data-dir|--codex-source|--work-dir|--remote-access)
+    --domain|--port|--data-dir|--codex-source|--work-dir|--remote-access|--allow-http)
       [ "$#" -ge 2 ] || fail "$1 需要参数"
       [ -n "$2" ] || [ "$1" = "--work-dir" ] || fail "$1 需要参数"
       case "$1" in
@@ -26,14 +27,15 @@ while [ "$#" -gt 0 ]; do
         --codex-source) CODEX_SOURCE="$2" ;;
         --work-dir) WORK_DIR="$2"; WORK_DIR_SET=1 ;;
         --remote-access) REMOTE_ACCESS="$2" ;;
+        --allow-http) ALLOW_HTTP="$2" ;;
       esac
       shift 2 ;;
     --build) BUILD=1; shift ;;
     --configure) CONFIGURE=1; shift ;;
     --non-interactive) NON_INTERACTIVE=1; shift ;;
     -h|--help)
-      printf '%s\n' '用法：docker-client.sh [--domain 域名] [--port 3000] [--data-dir 绝对路径] [--work-dir 宿主机路径] [--remote-access yes|no] [--configure] [--non-interactive] [--codex-source 路径] [--build]' \
-        '首次安装交互选择任务工作目录、宿主机端口及是否开放远程连接；--configure 可重新配置。' \
+      printf '%s\n' '用法：docker-client.sh [--domain 域名] [--port 3000] [--data-dir 绝对路径] [--work-dir 宿主机路径] [--remote-access yes|no] [--allow-http yes|no] [--configure] [--non-interactive] [--codex-source 路径] [--build]' \
+        '首次安装交互选择任务工作目录、宿主机端口、远程连接及内网 HTTP 登录；--configure 可重新配置。' \
         '默认拉取镜像；--build 改为本机构建。已有配置和 Codex 副本保留，显式参数更新对应配置。' \
         'curl 执行时下载源码至 ~/.torin/t-agent-client-app，可通过 T_AGENT_CLIENT_APP_DIR 指定。'
       exit 0 ;;
@@ -53,6 +55,7 @@ if [ -n "$WORK_DIR" ]; then
   [[ "$WORK_DIR" = /* && "$WORK_DIR" != *$'\n'* && "$WORK_DIR" != *$'\r'* ]] || fail '任务工作目录必须是绝对路径且不能包含换行'
 fi
 [ -z "$REMOTE_ACCESS" ] || [ "$REMOTE_ACCESS" = yes ] || [ "$REMOTE_ACCESS" = no ] || fail '--remote-access 只能是 yes 或 no'
+[ -z "$ALLOW_HTTP" ] || [ "$ALLOW_HTTP" = yes ] || [ "$ALLOW_HTTP" = no ] || fail '--allow-http 只能是 yes 或 no'
 command -v docker >/dev/null 2>&1 || fail '请先安装 Docker Engine 和 Docker Compose v2'
 docker compose version >/dev/null 2>&1 || fail '需要 Docker Compose v2'
 docker info >/dev/null 2>&1 || fail '无法连接 Docker，请启动 Docker 并确认当前用户有访问权限'
@@ -94,6 +97,10 @@ if [ -n "$REMOTE_ACCESS" ]; then
   if [ "$REMOTE_ACCESS" = yes ]; then BIND=0.0.0.0; else BIND=127.0.0.1; fi
   save_setting T_AGENT_CLIENT_BIND "$BIND"; export T_AGENT_CLIENT_BIND="$BIND"
 fi
+if [ -n "$ALLOW_HTTP" ]; then
+  HTTP_ENABLED=false; [ "$ALLOW_HTTP" != yes ] || HTTP_ENABLED=true
+  save_setting T_AGENT_CLIENT_ALLOW_HTTP "$HTTP_ENABLED"; export T_AGENT_CLIENT_ALLOW_HTTP="$HTTP_ENABLED"
+fi
 PORT_EXPLICIT="$CLIENT_PORT"
 compose=(docker compose --env-file "$ENV_FILE" -f "$PROJECT_DIR/compose.client.yml")
 # Let Compose parse quotes, ${HOME} and caller overrides instead of sourcing .env.
@@ -108,6 +115,9 @@ read_configuration() {
   BIND="$(printf '%s\n' "$resolved" | sed -n 's/^T_AGENT_CLIENT_BIND=//p')"
   BIND="${BIND:-127.0.0.1}"
   CLIENT_PORT="${CLIENT_PORT:-3000}"
+  HTTP_ENABLED="$(printf '%s\n' "$resolved" | sed -n 's/^T_AGENT_CLIENT_ALLOW_HTTP=//p')"
+  HTTP_ENABLED="${HTTP_ENABLED:-false}"
+  [ "$HTTP_ENABLED" = true ] || [ "$HTTP_ENABLED" = false ] || fail 'T_AGENT_CLIENT_ALLOW_HTTP 只能是 true 或 false'
 }
 read_configuration
 if [ "$NON_INTERACTIVE" -eq 0 ] && { [ "$FIRST_INSTALL" -eq 1 ] || [ "$CONFIGURE" -eq 1 ]; }; then
@@ -146,6 +156,19 @@ if [ "$NON_INTERACTIVE" -eq 0 ] && { [ "$FIRST_INSTALL" -eq 1 ] || [ "$CONFIGURE
         save_setting T_AGENT_CLIENT_BIND "$BIND"; export T_AGENT_CLIENT_BIND="$BIND"
       fi
     fi
+    if [ -z "$ALLOW_HTTP" ]; then
+      default_http=no; [ "$HTTP_ENABLED" != true ] || default_http=yes
+      printf '允许可信内网 HTTP 登录？yes=明文 HTTP，no=要求 HTTPS [%s]：' "$default_http"
+      IFS= read -r answer <&9 || fail '安装已取消'
+      if [ -n "$answer" ]; then
+        case "$answer" in
+          y|Y|yes|YES) HTTP_ENABLED=true ;;
+          n|N|no|NO) HTTP_ENABLED=false ;;
+          *) fail '请填写 yes 或 no' ;;
+        esac
+        save_setting T_AGENT_CLIENT_ALLOW_HTTP "$HTTP_ENABLED"; export T_AGENT_CLIENT_ALLOW_HTTP="$HTTP_ENABLED"
+      fi
+    fi
     exec 9<&-
     read_configuration
   elif [ "$CONFIGURE" -eq 1 ]; then
@@ -157,9 +180,14 @@ fi
 [[ "$STORAGE_DIR" = /* && "$WORK_DIR" = /* ]] || fail '数据目录和任务工作目录必须是绝对路径'
 printf '\n任务工作目录：%s → /workspace\n端口映射：%s:%s → 容器 3000\n' "$WORK_DIR" "$BIND" "$CLIENT_PORT"
 if [ "$BIND" != 127.0.0.1 ]; then
-  printf '已允许远程连接（仍受防火墙限制）；当前网页登录仍需 HTTPS，开放端口不会自动配置 TLS。\n'
+  printf '已允许远程连接（仍受防火墙限制）。\n'
 else
   printf '仅允许服务器本机连接；远程浏览器通过 HTTPS 反向代理访问。\n'
+fi
+if [ "$HTTP_ENABLED" = true ]; then
+  printf '已允许 HTTP 登录：仅用于可信内网，验证码和会话通过明文传输；请用防火墙限制访问范围。\n'
+else
+  printf '网页登录要求 HTTPS；开放端口不会自动配置 TLS。\n'
 fi
 mkdir -p "$STORAGE_DIR/data" "$WORK_DIR"
 bash "$PROJECT_DIR/scripts/docker-client-copy-codex.sh" "$STORAGE_DIR/codex" "$CODEX_SOURCE"
@@ -219,7 +247,15 @@ case "$AUTH_STATUS" in
   *) fail '容器返回了无效的身份验证器绑定状态' ;;
 esac
 printf '\n'
-if [ -n "$DOMAIN" ]; then
+if [ "$HTTP_ENABLED" = true ]; then
+  if [ -n "$DOMAIN" ]; then
+    printf '请在浏览器打开：http://%s:%s/auth/login\n' "$DOMAIN" "$CLIENT_PORT"
+  elif [ "$BIND" = 127.0.0.1 ]; then
+    printf '请在服务器本机浏览器打开：http://127.0.0.1:%s/auth/login\n' "$CLIENT_PORT"
+  else
+    printf '请在浏览器打开：http://<服务器IP>:%s/auth/login（将 <服务器IP> 替换为实际内网 IP 或主机名）\n' "$CLIENT_PORT"
+  fi
+elif [ -n "$DOMAIN" ]; then
   printf '配置 HTTPS 反向代理后，请在浏览器打开：https://%s\n' "$DOMAIN"
 else
   printf '配置 HTTPS 反向代理后，请在浏览器打开你的 HTTPS 地址（域名或 IP）。可通过 --domain 指定域名提示。\n'

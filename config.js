@@ -20,6 +20,8 @@ module.exports = {
   port:          parseInt(process.env.PORT || '3000', 10),
   // 默认仅监听本机；手机访问可显式配置 HOST=0.0.0.0。
   host:          process.env.HOST || '127.0.0.1',
+  // Explicit opt-in for trusted intranet HTTP; HTTPS cookies remain Secure.
+  clientAllowHttp: process.env.CLIENT_ALLOW_HTTP === 'true',
   sessionSecret: process.env.SESSION_SECRET || 'dev-secret-change-me',
   // AUTH_USERS 格式: "user1:salt:hash,user2:salt:hash"
   authUsers,

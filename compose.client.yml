@@ -9,6 +9,7 @@ services:
     restart: unless-stopped
     environment:
       NODE_ENV: production
+      CLIENT_ALLOW_HTTP: "${T_AGENT_CLIENT_ALLOW_HTTP:-false}"
       T_AGENT_MODE: client
       T_AGENT_INSTALL_TYPE: docker
       T_AGENT_DATA_DIR: /var/lib/t-agent

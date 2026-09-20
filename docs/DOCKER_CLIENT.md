@@ -1,4 +1,4 @@
-# Docker Client：远程服务器与 HTTPS 域名
+# Docker Client：远程服务器部署
 
 Client 镜像包含网页、本地 Engine、终端及 Codex CLI。容器中的“本地任务”运行在容器内；也可以添加独立远程 Engine。默认只向服务器的 `127.0.0.1:3000` 发布端口，通过 Nginx 的 HTTPS/WSS 域名访问。
 
@@ -10,13 +10,13 @@ Client 镜像包含网页、本地 Engine、终端及 Codex CLI。容器中的�
 curl -fsSL https://raw.githubusercontent.com/TorinMars/t-agent/main/docker-client.sh | bash -s -- --domain agent.example.com
 ```
 
-首次运行时，脚本依次提示：任务工作目录（宿主机路径，映射到容器 `/workspace`）、宿主机端口（默认 `3000`）、是否允许远程连接（默认 `no`，仅本机；选择 `yes` 监听 `0.0.0.0`）。回车保留显示值；工作目录输入 `default` 恢复继承数据目录下的 `tasks`。随后下载/构建镜像、首次复制独立 Codex 配置并等待容器健康。容器就绪后自动检查身份验证器：未绑定时直接在安装终端显示二维码并等待验证码，绑定后显示一次性恢复码；已绑定时保留并跳过。结束时显示域名 URL 和代理上游。HTTPS 证书及反向代理按下文配置；`--domain` 仅指定访问提示，不会自动签发证书或修改 Nginx。
+首次运行时，脚本依次提示：任务工作目录（宿主机路径，映射到容器 `/workspace`）、宿主机端口（默认 `3000`）、是否允许远程连接（默认 `no`，仅本机；选择 `yes` 监听 `0.0.0.0`）、是否允许可信内网 HTTP 登录（默认 `no`）。回车保留显示值；工作目录输入 `default` 恢复继承数据目录下的 `tasks`。随后下载/构建镜像、首次复制独立 Codex 配置并等待容器健康。容器就绪后自动检查身份验证器：未绑定时直接在安装终端显示二维码并等待验证码，绑定后显示一次性恢复码；已绑定时保留并跳过。结束时显示域名 URL 和代理上游。HTTPS 证书及反向代理按下文配置；`--domain` 仅指定访问提示，不会自动签发证书或修改 Nginx。
 
-已有源码可运行 `./docker-client.sh --domain agent.example.com`。可选参数：`--work-dir /srv/projects`、`--port 13500`、`--remote-access yes|no`、`--data-dir /srv/t-agent-client`、`--codex-source /path/to/.codex`、`--build`（改为本机构建）。已有安装可加 `--configure` 重新交互配置。自动化使用 `--non-interactive`；未提供的参数沿用现有配置或默认值。该模式不读取验证码，尚未绑定时会显示补绑命令；正常交互安装若绑定失败或中断，不会报告绑定完成，可重跑脚本继续。配置写入 `docker/client.env`，再次执行保留已有配置及 Codex 副本；显式参数只更新对应字段。源码默认存放在 `~/.torin/t-agent-client-app`，可通过 `T_AGENT_CLIENT_APP_DIR` 修改。启动超时或镜像拉取失败会返回失败并显示原因。
+已有源码可运行 `./docker-client.sh --domain agent.example.com`。可选参数：`--work-dir /srv/projects`、`--port 13500`、`--remote-access yes|no`、`--allow-http yes|no`、`--data-dir /srv/t-agent-client`、`--codex-source /path/to/.codex`、`--build`（改为本机构建）。已有安装可加 `--configure` 重新交互配置。自动化使用 `--non-interactive`；未提供的参数沿用现有配置或默认值。该模式不读取验证码，尚未绑定时会显示补绑命令；正常交互安装若绑定失败或中断，不会报告绑定完成，可重跑脚本继续。配置写入 `docker/client.env`，再次执行保留已有配置及 Codex 副本；显式参数只更新对应字段。源码默认存放在 `~/.torin/t-agent-client-app`，可通过 `T_AGENT_CLIENT_APP_DIR` 修改。启动超时或镜像拉取失败会返回失败并显示原因。
 
 ## 首次部署
 
-服务器需要 Docker Engine、Docker Compose v2、Git，以及已指向服务器的域名和有效 TLS 证书。
+服务器需要 Docker Engine、Docker Compose v2 和 Git。默认 HTTPS 部署还需域名和有效 TLS 证书；可信内网也可按下文显式开启 HTTP，用 IP 或主机名加端口访问。
 
 ```bash
 git clone https://github.com/TorinMars/t-agent.git
@@ -44,9 +44,9 @@ docker compose --env-file docker/client.env -f compose.client.yml up -d --pull n
 
 将 [Nginx 示例](../docker/client.nginx.conf.example) 放入 Nginx 的 `http` 配置上下文，替换 `agent.example.com` 和证书路径，再执行 `nginx -t` 并重载 Nginx。若修改宿主机发布端口，同时修改 `proxy_pass`。示例同时支持普通 HTTP 请求、文件保存和终端 WebSocket。
 
-Compose 默认将端口发布到服务器回环地址；选择允许远程连接后会发布到所有网卡，仍受宿主机防火墙/安全组限制。开放端口不代表已提供 HTTPS，网页生产登录仍须通过 HTTPS 代理访问。Nginx 示例假设代理运行在宿主机。若代理也在容器中，应让代理和 Client 加入同一个 Docker 网络，并把上游改为 `http://client:3000`，不要把容器里的 `127.0.0.1` 当作宿主机。保留正确的 Host、X-Forwarded-Proto 和 WebSocket Upgrade 请求头。容器化 Nginx 会缓存上游地址，Client 容器重建后应重新加载或重启代理，使其重新解析 `client`；宿主机 Nginx 使用固定回环端口不受此影响。
+Compose 默认将端口发布到服务器回环地址；选择允许远程连接后会发布到所有网卡，仍受宿主机防火墙/安全组限制。开放端口不代表已提供 HTTPS；默认生产登录仍须通过 HTTPS 代理访问，可信内网可显式开启下述 HTTP 登录。Nginx 示例假设代理运行在宿主机。若代理也在容器中，应让代理和 Client 加入同一个 Docker 网络，并把上游改为 `http://client:3000`，不要把容器里的 `127.0.0.1` 当作宿主机。保留正确的 Host、X-Forwarded-Proto 和 WebSocket Upgrade 请求头。容器化 Nginx 会缓存上游地址，Client 容器重建后应重新加载或重启代理，使其重新解析 `client`；宿主机 Nginx 使用固定回环端口不受此影响。
 
-生产会话仍要求 Secure Cookie。直接通过普通 HTTP 域名不能正常登录，不应通过关闭验证绕过 HTTPS。默认回环发布方式遵循 [Docker 端口发布说明](https://docs.docker.com/engine/network/port-publishing/)。
+默认生产会话要求 Secure Cookie。启用内网 HTTP 后，HTTP 会话可正常保存，HTTPS 会话仍使用 Secure Cookie，身份验证器和接口鉴权保持不变。默认回环发布方式遵循 [Docker 端口发布说明](https://docs.docker.com/engine/network/port-publishing/)。
 
 ## 首次绑定身份验证器
 
@@ -109,3 +109,17 @@ docker compose --env-file docker/client.env -f compose.client.yml logs --tail=10
 更新会重建容器，正在运行的终端进程会停止；数据库、任务和 Codex 登录副本保留。网页可以检查版本，但 Docker 安装由宿主机更新镜像，不在容器内更新应用代码。再次运行首次复制脚本也不会覆盖现有副本。
 
 `main` 推送分别构建 `ghcr.io/torinmars/t-agent-client:latest` 和 Engine 镜像，并生成 `sha-<commit>` 标签。首次使用前确认镜像构建成功及 GHCR 读取权限。
+
+## 可信内网 HTTP 登录
+
+已有容器安装可更新安装脚本并使用远程镜像开启 HTTP，无需本地构建：
+
+```bash
+cd ~/.torin/t-agent-client-app
+git pull --ff-only
+./docker-client.sh --remote-access yes --allow-http yes
+```
+
+然后访问 `http://服务器IP:端口/auth/login`（也可用内网主机名），用已有身份验证器登录，无需重新绑定。默认端口 3000；脚本沿用已有端口、数据目录和绑定。重建容器会中断正在运行的终端进程。首次安装和 `--configure` 会询问是否允许内网 HTTP，默认 `no`；已有配置保留，`--allow-http no` 可恢复 HTTPS 要求。
+
+开关写入 `docker/client.env` 的 `T_AGENT_CLIENT_ALLOW_HTTP=true`，Compose 传入 `CLIENT_ALLOW_HTTP=true`。原生 Client 也可在 `.env` 配置 `CLIENT_ALLOW_HTTP=true` 并重启。只有精确的 `true` 会启用。HTTP 会明文传输验证码和会话，仅适用于可信内网；该开关不自动判断来源 IP，访问范围仍需由端口绑定、防火墙或安全组限制。首次绑定仍通过服务器安装命令完成，不允许远程未登录用户重新绑定。浏览器要求安全上下文的能力（如 PWA 安装及部分剪贴板 API）仍受 HTTP 限制。

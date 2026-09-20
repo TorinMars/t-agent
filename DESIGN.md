@@ -1853,3 +1853,7 @@ Docker 交互安装在容器健康后通过回环 API 检查身份验证器状�
 Client 保存按用户隔离的 OSS 配置，复用 `system_state` 与基于 `SESSION_SECRET` 的 AES-GCM 加密，不改变数据库结构。`/api/oss/config` 提供配置读写与删除，读取不返回 Secret；`/api/oss/images` 接收最大 10 MiB 的二进制图片，检查实际文件类型后通过 HTTPS 上传到 OSS，随机生成对象名。接口沿用 Client 身份验证和同源保护，不在 Engine 暴露配置或凭据。默认签名读取 URL 有效期 24 小时，可选公共 HTTPS 地址。
 
 本地、远程 xterm 实例复用图片上传控制器；普通文字粘贴保持原行为。图片粘贴及底部选择按钮进入同一上传流程，全页蒙版锁定指针、键盘与焦点操作；进度反映浏览器向 Client 传输，服务端写入 OSS 期间保持处理状态，只有成功响应后才解除锁定并填入 URL。填入不触发回车，异步完成时仍校验原实例状态，不能写入其他终端；失败及超时恢复页面操作。
+
+### 显式内网 HTTP 会话
+
+Client 使用统一 Cookie 策略，默认保持生产环境远程访问要求 HTTPS；仅 `CLIENT_ALLOW_HTTP=true` 显式允许 HTTP 保存登录会话，HTTPS 请求始终使用 Secure Cookie。该配置不改变验证器、同源检查、任务权限、WebSocket 鉴权或本机首次绑定限制，也不自动根据来源 IP 选择信任。Docker 使用持久化配置 `T_AGENT_CLIENT_ALLOW_HTTP`，安装脚本提供 `--allow-http yes|no` 与交互选择，重复安装保留设置及原有密钥和绑定。

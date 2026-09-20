@@ -33,6 +33,7 @@ test('Docker Client deployment keeps enrollment private and supports both image 
   assert.match(compose, /127\.0\.0\.1.*3000/);
   assert.match(compose, /HOST: 0\.0\.0\.0/);
   assert.match(compose, /NODE_ENV: production/);
+  assert.ok(compose.includes('CLIENT_ALLOW_HTTP: "${T_AGENT_CLIENT_ALLOW_HTTP:-false}"'));
   for (const mount of ['data:/var/lib/t-agent', 'tasks}:/workspace', 'codex:/root/.codex']) assert.ok(compose.includes(mount));
   assert.doesNotMatch(compose, /docker\.sock|privileged:/);
   const nginx = read('docker/client.nginx.conf.example');

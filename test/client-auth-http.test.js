@@ -4,15 +4,25 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const http = require('node:http');
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 const WebSocket = require('ws');
 const { totp, SESSION_TTL } = require('../services/client-auth');
 
-for (const environment of ['test', 'production']) test(`Desktop HTTP and WebSocket authentication cannot be bypassed (${environment})`, { timeout: 20000 }, async t => {
+test('Client HTTP opt-in requires the exact true environment value', () => {
+  for (const value of ['', 'false', 'TRUE', '1', 'true']) {
+    const result = spawnSync(process.execPath, ['-e', "process.stdout.write(String(require('./config').clientAllowHttp))"], {
+      cwd: path.resolve(__dirname, '..'), env: { ...process.env, CLIENT_ALLOW_HTTP: value }, encoding: 'utf8',
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, String(value === 'true'));
+  }
+});
+
+for (const [environment, allowHttp] of [['test', 'false'], ['production', 'false'], ['production', 'true']]) test(`Desktop HTTP and WebSocket authentication cannot be bypassed (${environment}, HTTP ${allowHttp})`, { timeout: 20000 }, async t => {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 't-agent-client-auth-test-'));
   const child = spawn(process.execPath, ['server.js'], {
     cwd: path.resolve(__dirname, '..'),
-    env: { ...process.env, HOST: '127.0.0.1', PORT: '0', NODE_ENV: environment, SESSION_SECRET: 'integration-test-secret-'.repeat(3), T_AGENT_DATA_DIR: temp, T_AGENT_DB_PATH: path.join(temp, 'db.sqlite'), TASKS_BASE_DIR: path.join(temp, 'tasks'), SINGLE_USER_ID: 'local', UPDATE_CHECK_ENABLED: 'false' },
+    env: { ...process.env, HOST: '127.0.0.1', PORT: '0', NODE_ENV: environment, CLIENT_ALLOW_HTTP: allowHttp, SESSION_SECRET: 'integration-test-secret-'.repeat(3), T_AGENT_DATA_DIR: temp, T_AGENT_DB_PATH: path.join(temp, 'db.sqlite'), TASKS_BASE_DIR: path.join(temp, 'tasks'), SINGLE_USER_ID: 'local', UPDATE_CHECK_ENABLED: 'false' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   t.after(async () => {
@@ -23,8 +33,8 @@ for (const environment of ['test', 'production']) test(`Desktop HTTP and WebSock
     let output = '';
     const timer = setTimeout(() => reject(new Error('Client startup timed out')), 8000);
     child.once('error', reject);
-    child.once('exit', () => { clearTimeout(timer); reject(new Error('Client exited before becoming ready')); });
-    child.stderr.on('data', () => {});
+    child.once('exit', () => { clearTimeout(timer); reject(new Error(`Client exited before becoming ready: ${output}`)); });
+    child.stderr.on('data', chunk => { output += chunk.toString(); });
     child.stdout.on('data', chunk => {
       output += chunk.toString();
       const port = output.match(/Server running at http:\/\/localhost:(\d+)/);
@@ -137,21 +147,51 @@ for (const environment of ['test', 'production']) test(`Desktop HTTP and WebSock
   assert.equal((await call('/index.html')).headers.get('location'), '/web');
   assert.equal((await call('/auth/settings', { cookie: boundCookie, body: { work_dir: null }, method: 'PUT', headers: { Origin: 'https://attacker.test' } })).status, 403);
 
-  const loginResponse = await call('/auth/login', { body: { code: confirmed.recovery_codes[0], return_to: '/h5' } });
+  const loginHeaders = allowHttp === 'true' ? { Host: 'client.example.test', Origin: 'http://client.example.test' } : {};
+  const loginResponse = await call('/auth/login', { headers: loginHeaders, body: { code: confirmed.recovery_codes[0], return_to: '/h5' } });
   assert.equal(loginResponse.status, 200);
+  assert.match(loginResponse.headers.get('set-cookie'), /HttpOnly/);
+  assert.match(loginResponse.headers.get('set-cookie'), /SameSite=Strict/);
+  assert.doesNotMatch(loginResponse.headers.get('set-cookie'), /; Secure/);
   const recoveryCookie = cookieOf(loginResponse);
+  if (allowHttp === 'true') {
+    // A browser can store this cookie on a non-loopback HTTP origin and reuse it.
+    for (const route of ['/auth/me', '/api/tasks', '/web']) {
+      const response = await call(route, { cookie: recoveryCookie, headers: loginHeaders });
+      assert.equal(response.status, 200);
+      assert.ok(response.headers.get('set-cookie'), 'rolling HTTP cookie remains usable');
+      assert.doesNotMatch(response.headers.get('set-cookie'), /; Secure/);
+    }
+    assert.equal((await call('/auth/settings', { cookie: recoveryCookie, method: 'PUT', body: { work_dir: null }, headers: { ...loginHeaders, Origin: 'http://attacker.test' } })).status, 403);
+    await new Promise((resolve, reject) => {
+      const ws = new WebSocket(base.replace('http:', 'ws:') + '/terminal/ws', {
+        origin: loginHeaders.Origin, headers: { Host: loginHeaders.Host, Cookie: recoveryCookie },
+      });
+      ws.on('error', reject);
+      ws.on('unexpected-response', (_, response) => { response.resume(); ws.terminate(); reject(new Error(`Authenticated WebSocket rejected: ${response.statusCode}`)); });
+      // No task requested: reaching the terminal handler proves session authentication.
+      ws.on('close', (code, reason) => { assert.equal(code, 1008); assert.equal(reason.toString(), 'missing taskId'); resolve(); });
+    });
+    await rejectWs('/v1/terminal-sessions/1/stream?ticket=invalid', loginHeaders.Origin, 401);
+  }
   assert.equal((await call('/auth/login', { body: { code: confirmed.recovery_codes[0] } })).status, 401);
-  const replacementResponse = await call('/auth/setup/start', { cookie: recoveryCookie, body: {} });
+  const replacementResponse = await call('/auth/setup/start', { cookie: recoveryCookie, headers: loginHeaders, body: {} });
+  assert.equal(replacementResponse.status, 200);
+  assert.ok(replacementResponse.headers.get('set-cookie'));
+  assert.doesNotMatch(replacementResponse.headers.get('set-cookie'), /; Secure/);
   const replacement = await replacementResponse.json();
   assert.equal(replacement.replacing, true);
-  const replacementConfirmed = await call('/auth/setup/confirm', { cookie: recoveryCookie, body: { code: totp(replacement.secret, Math.floor(Date.now() / 30000)) } });
+  const replacementConfirmed = await call('/auth/setup/confirm', { cookie: recoveryCookie, headers: loginHeaders, body: { code: totp(replacement.secret, Math.floor(Date.now() / 30000)) } });
   assert.equal(replacementConfirmed.status, 200);
+  assert.ok(replacementConfirmed.headers.get('set-cookie'));
+  assert.doesNotMatch(replacementConfirmed.headers.get('set-cookie'), /; Secure/);
   const newCookie = cookieOf(replacementConfirmed);
+  assert.equal((await call('/auth/me', { cookie: newCookie, headers: loginHeaders })).status, 200);
   const replacementResult = await replacementConfirmed.json();
   const httpsLogin = await call('/auth/login', { body: { code: replacementResult.recovery_codes[0] }, headers: { Host: 'client.example.test', 'X-Forwarded-Proto': 'https' } });
   assert.equal(httpsLogin.status, 200);
   assert.match(httpsLogin.headers.get('set-cookie'), /; Secure/);
-  if (environment === 'production') {
+  if (environment === 'production' && allowHttp !== 'true') {
     const httpLogin = await call('/auth/login', { body: { code: replacementResult.recovery_codes[1] }, headers: { Host: 'client.example.test' } });
     assert.equal(httpLogin.status, 200);
     assert.equal(httpLogin.headers.get('set-cookie'), null);

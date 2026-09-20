@@ -14,7 +14,7 @@ const updates = require('./services/update-manager');
 const { consumeTerminalTicket, pruneExpiredTickets } = require('./services/terminal-tickets');
 const { handleRemoteTerminalUpgrade } = require('./services/remote-terminal-proxy');
 const { ensureSingleUser } = require('./services/single-user');
-const { getClientAuth, safeReturnTo, isLocalInitialization, SESSION_TTL } = require('./services/client-auth');
+const { getClientAuth, safeReturnTo, isSecureClientCookie, SESSION_TTL } = require('./services/client-auth');
 const requireAuth = require('./middleware/auth');
 const clientOrigin = require('./middleware/client-origin');
 
@@ -54,8 +54,8 @@ const sessionMiddleware = session({
 app.use(sessionMiddleware);
 app.use((req, res, next) => {
   // Local enrollment also works in production over direct loopback HTTP.
-  // All remote production requests still require Secure cookies.
-  req.session.cookie.secure = req.secure || (process.env.NODE_ENV === 'production' && !isLocalInitialization(req));
+  // Remote HTTP requires an explicit opt-in; HTTPS always keeps Secure cookies.
+  req.session.cookie.secure = isSecureClientCookie(req);
   getClientAuth().renew(req.session);
   next();
 });

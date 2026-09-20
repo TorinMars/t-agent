@@ -6,7 +6,7 @@ const QRCode = require('qrcode');
 const db = require('../db');
 const { ensureSingleUser } = require('../services/single-user');
 const requireAuth = require('../middleware/auth');
-const { getClientAuth, safeReturnTo, isLocalInitialization, SESSION_TTL } = require('../services/client-auth');
+const { getClientAuth, safeReturnTo, isLocalInitialization, isSecureClientCookie, SESSION_TTL } = require('../services/client-auth');
 
 const router = express.Router();
 router.use(require('../middleware/client-origin'));
@@ -17,7 +17,7 @@ function saveLogin(req, auth, callback) {
     req.session.clientAuth = auth;
     req.session.user = ensureSingleUser();
     req.session.cookie.maxAge = SESSION_TTL;
-    req.session.cookie.secure = req.secure || (process.env.NODE_ENV === 'production' && !isLocalInitialization(req));
+    req.session.cookie.secure = isSecureClientCookie(req);
     req.session.save(callback);
   });
 }

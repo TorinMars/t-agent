@@ -125,7 +125,7 @@ macOS 会注册 `com.tagent.client` LaunchAgent，Linux 会注册 `t-agent.servi
 3. 下载并安全保存页面显示的 8 组一次性恢复码。恢复码只显示一次、每组只能使用一次。验证码已使用时，需等待下一组再登录另一设备。
 4. 手机与 Client 在同一局域网时，将 Client `.env` 的 `HOST` 改为 `0.0.0.0` 并重启服务。手机浏览器打开 `http://电脑的局域网IP:3000/web`（端口以实际配置为准），与电脑使用相同页面。手机可双指放大缩小、拖动查看，首页 `/` 不再按设备跳转。
 
-生产或公网使用必须通过 HTTPS/WSS 反向代理，并用防火墙限制来源；不要将 HTTP 原始端口直接暴露公网。身份验证器登录会话 30 天有效，使用期间自动续期，连续 30 天未使用才过期，新设备、会话过期或主动退出后需要重新验证。登录设置中可更换身份验证器；丢失验证器时使用恢复码登录并重新绑定，更换后旧验证器、旧恢复码和其他设备会话立即失效。退出登录只断开网页终端连接，不终止服务端正在运行的程序。
+默认生产部署要求 HTTPS/WSS；可信内网可显式开启 `CLIENT_ALLOW_HTTP=true`。公网使用 HTTPS/WSS 反向代理，并用防火墙限制来源。身份验证器登录会话 30 天有效，使用期间自动续期，连续 30 天未使用才过期，新设备、会话过期或主动退出后需要重新验证。登录设置中可更换身份验证器；丢失验证器时使用恢复码登录并重新绑定，更换后旧验证器、旧恢复码和其他设备会话立即失效。退出登录只断开网页终端连接，不终止服务端正在运行的程序。
 
 `SESSION_SECRET` 必须是至少 32 个字符的随机密钥，并在重启与升级间保持不变。安装脚本会自动生成；弱密钥会拒绝绑定。请随数据库安全备份该密钥，否则无法解密已有绑定及远程连接 Token。
 
@@ -149,7 +149,7 @@ Linux 会注册 `t-agent-engine.service`。独立 Engine 固定监听 `0.0.0.0`�
 curl -fsSL https://raw.githubusercontent.com/TorinMars/t-agent/main/docker-client.sh | bash -s -- --domain agent.example.com
 ```
 
-首次安装会提示任务工作目录、宿主机端口及是否允许远程连接；已有安装可加 `--configure` 重新选择。脚本准备独立 Codex 副本并等待 Client 健康，容器就绪后直接引导扫码绑定身份验证器，已有绑定则跳过，结束后显示访问地址；HTTPS 反向代理需按部署文档配置。
+首次安装会提示任务工作目录、宿主机端口及是否允许远程连接；已有安装可加 `--configure` 重新选择；可信内网可加 `--allow-http yes` 启用 HTTP 登录（默认关闭）。脚本准备独立 Codex 副本并等待 Client 健康，容器就绪后直接引导扫码绑定身份验证器，已有绑定则跳过，结束后显示访问地址；HTTPS 反向代理需按部署文档配置。
 
 也可按以下步骤手动启动：
 
@@ -721,3 +721,7 @@ t-agent/
 填写 Bucket、Region（例如 `oss-cn-hangzhou`）、AccessKey ID、AccessKey Secret 和对象前缀。建议为专用 RAM 用户授予该前缀的 `oss:PutObject` 与 `oss:GetObject` 权限。图片由 Client 服务端上传，不需要向浏览器或远程 Engine 提供 OSS 密钥，也不需要配置浏览器直传 CORS。密钥加密保存在 Client 数据库，修改配置时密钥留空会保留已保存的值；备份数据库时请同时保留 `SESSION_SECRET`。Docker 更新保留 Client 数据目录及该密钥即可沿用配置。
 
 默认返回有效期 24 小时的私有对象签名链接。需要长期有效的链接时，可填写已配置公开读取的 HTTPS 访问地址（如自己的 CDN 地址）；程序不会修改 Bucket 的访问权限。签名链接在有效期内可被持有者读取，过期后需重新取得链接；图片对象不会自动删除，可在 OSS 中配置生命周期规则。服务端反向代理需允许至少 10 MiB 的请求体（Nginx 可设 `client_max_body_size 12m;`）。
+
+### 可信内网直接访问 Client
+
+Docker 安装可在更新源码后执行 `./docker-client.sh --remote-access yes --allow-http yes`，使用远程镜像重建并保留验证器及数据，然后通过 `http://内网IP:端口/auth/login` 登录。首次安装或 `--configure` 也会询问此选项，默认要求 HTTPS。原生安装对应 `CLIENT_ALLOW_HTTP=true`。HTTP 不加密验证码和会话，需自行限制访问来源；详细步骤见 [内网 HTTP 登录](docs/DOCKER_CLIENT.md#可信内网-http-登录)。

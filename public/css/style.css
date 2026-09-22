@@ -1690,3 +1690,19 @@ body {
 .terminal-image-result { position: fixed; bottom: max(12px, env(safe-area-inset-bottom)); left: 5vw; width: 90vw; box-sizing: border-box; z-index: 10000; padding: 16px; color: #fff; background: #252526; border: 1px solid #58a6ff; border-radius: 8px; }
 .terminal-image-result input { display: block; width: 100%; box-sizing: border-box; margin: 8px 0; padding: 8px; }
 @media (pointer: coarse) { .terminal-image-actions button { min-height: 40px; padding: 6px 16px; } }
+
+.terminal-history-dialog {
+  width: min(960px, 94vw); max-width: 94vw; max-height: 90dvh;
+  padding: 20px; border: 1px solid #555; border-radius: 8px;
+  background: #1e1e1e; color: #eee;
+}
+.terminal-history-dialog::backdrop { background: #0009; }
+.terminal-history-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.terminal-history-heading h2 { margin: 0; font-size: 18px; }
+.terminal-history-dialog p { font-size: 13px; color: #bbb; }
+#terminal-history-status { margin-left: 12px; font-size: 13px; }
+#terminal-history-text {
+  height: min(60dvh, 650px); overflow: auto; white-space: pre;
+  padding: 12px; background: #151515; color: #eee; border: 1px solid #444;
+  font: 13px/1.5 Menlo, Monaco, "Courier New", monospace; tab-size: 8;
+}

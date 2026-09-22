@@ -485,6 +485,7 @@ const RemoteTasks = (() => {
   }
 
   function hideRemoteTerminal() {
+    TerminalHistory.activate(null);
     if (remoteTerminal) remoteTerminal.el.style.display = 'none';
     remoteTerminal = null;
   }
@@ -494,6 +495,7 @@ const RemoteTasks = (() => {
     instance.disposed = true;
     if (instance.resizeObserver) instance.resizeObserver.disconnect();
     if (instance.ws) instance.ws.close();
+    instance.history.dispose();
     instance.images.dispose();
     instance.clipboard.dispose();
     instance.term.dispose();
@@ -526,6 +528,7 @@ const RemoteTasks = (() => {
     const existing = remoteTerminals.get(key);
     if (existing && existing.terminalId === terminalId && (existing.ws.readyState === WebSocket.CONNECTING || existing.ws.readyState === WebSocket.OPEN)) {
       remoteTerminal = existing;
+      TerminalHistory.activate(existing);
       existing.el.style.display = '';
       setTimeout(() => {
         if (remoteTerminal !== existing) return;
@@ -569,6 +572,9 @@ const RemoteTasks = (() => {
     };
     remoteTerminals.set(key, remoteTerminal);
     const instance = remoteTerminal;
+    instance.history = TerminalHistory.attach(instance);
+    instance.history.bind(ws);
+    TerminalHistory.activate(instance);
     instance.images = TerminalImages.attach(term, el, () => !instance.disposed && !instance.paused ? instance.ws : null);
     instance.resizeObserver = TerminalViewport.observe(term, fitAddon, el);
     term.onData(data => {
@@ -576,6 +582,7 @@ const RemoteTasks = (() => {
       if (ws.readyState === WebSocket.OPEN) ws.send(data);
     });
     term.onResize(({ cols, rows }) => {
+      if (instance.restoringHistory) return;
       if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'resize', cols, rows }));
     });
     ws.onopen = () => {
@@ -584,23 +591,13 @@ const RemoteTasks = (() => {
       ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
     };
     ws.onmessage = event => {
-      if (typeof event.data === 'string' && event.data.startsWith('{"type":"history"')) {
-        try {
-          const message = JSON.parse(event.data);
-          instance.paused = true;
-          instance.clipboard.writeHistory(message.data, () => {
-            TerminalViewport.restore(term, { bottom: true });
-            requestAnimationFrame(() => requestAnimationFrame(() => { instance.paused = false; }));
-          });
-        } catch {
-          term.write(event.data);
-        }
-        return;
-      }
+      if (instance.disposed || instance.ws !== ws) return;
+      if (instance.history.handle(event.data, ws)) return;
       if (event.data instanceof ArrayBuffer) term.write(new Uint8Array(event.data));
       else term.write(event.data);
     };
     ws.onclose = () => {
+      instance.history.disconnect(ws);
       if (!instance.disposed) {
         term.write('\r\n\x1b[33m[远程终端连接已断开，重新点击当前任务可重连]\x1b[0m\r\n');
       }
@@ -1027,7 +1024,7 @@ const RemoteTasks = (() => {
     restartTerminalFromWorkDir,
     sendTerminalInput(data) {
       if (TerminalImages.busy) return;
-      if (!remoteTerminal || !remoteTerminal.ws || remoteTerminal.ws.readyState !== WebSocket.OPEN || activeTab !== 'shell') return;
+      if (!remoteTerminal || remoteTerminal.paused || !remoteTerminal.ws || remoteTerminal.ws.readyState !== WebSocket.OPEN || activeTab !== 'shell') return;
       remoteTerminal.ws.send(data);
       remoteTerminal.term.focus();
     },

@@ -2,7 +2,7 @@ const os = require('os');
 const fs = require('fs');
 const path = require('path');
 const db = require('../db');
-const { prepareTerminalHistoryBuffer } = require('../lib/terminal-history');
+const { TerminalSnapshot, createHistoryArchive } = require('../lib/terminal-snapshot');
 const { repairSpawnHelperPermissions } = require('../lib/node-pty-runtime');
 
 // Sessions are keyed by task ID and terminal ID; omitted IDs use the legacy shell.
@@ -141,29 +141,36 @@ function getOrCreateSession(ownerTaskId, workDir, dirWarning, id = 'default') {
     pty,
     buffer: savedBuffer,
     ws: null,
+    snapshot: new TerminalSnapshot(),
+    ready: false,
     flushTimer: setInterval(() => flushToDB(taskId), FLUSH_INTERVAL),
     pendingSince: 0,
   };
   sessions.set(taskId, s);
+  s.snapshot.write(savedBuffer);
 
   pty.onData(data => {
     if (sessions.get(taskId) !== s) return;
     appendBuffer(taskId, data);
-    if (s.ws && s.ws.readyState === 1) {
-      s.ws.send(data);
-    }
+    s.snapshot.write(data, () => {
+      if (s.ready && s.ws && s.authorized && s.authorized()) s.ws.send(data);
+    });
   });
 
   pty.onExit(() => {
-    // 被控制接口主动关闭的旧 PTY 可能在新会话建立后才触发 onExit，
-    // 只允许当前 Map 中的同一个实例清理状态。
-    if (sessions.get(taskId) !== s) return;
-    clearInterval(s.flushTimer);
-    persistBuffer(s.taskId, s.buffer, s.terminalId);
-    sessions.delete(taskId);
-    const activeWs = s.ws;
-    s.ws = null;
-    if (activeWs && activeWs.readyState === 1) activeWs.close(1000, 'terminal exited');
+    // The parser queue also owns live delivery. Drain its last bytes before
+    // closing a naturally exited shell; explicit control remains immediate.
+    s.exiting = true;
+    s.snapshot.enqueue(() => {
+      if (sessions.get(taskId) !== s) return;
+      clearInterval(s.flushTimer);
+      persistBuffer(s.taskId, s.buffer, s.terminalId);
+      sessions.delete(taskId);
+      s.snapshot.dispose();
+      const activeWs = s.ws;
+      s.ws = null;
+      if (activeWs && activeWs.readyState === 1) activeWs.close(1000, 'terminal exited');
+    });
   });
 
   return s;
@@ -190,6 +197,7 @@ function controlSession(taskId, action, requestedTerminalId) {
   const clearHistory = action === 'restart-workdir' || action === 'delete';
   if (session) {
     sessions.delete(key);
+    session.snapshot.dispose();
     clearInterval(session.flushTimer);
     if (clearHistory) clearBuffer(id, selectedId);
     else persistBuffer(id, session.buffer, selectedId);
@@ -257,34 +265,51 @@ function handleWs(ws, req, sessionUser, requestedTaskId = null, requestedTermina
   }
   s.ws = ws;
 
-  // 原样恢复终端状态，只剥离会触发 xterm 响应的 DA/DSR 查询。
-  // 不可追加换行或移除 h/l 模式指令，否则全屏 TUI 的光标与备用屏幕会错位。
-  if (s.buffer) {
-    ws.send(JSON.stringify({
-      type: 'history',
-      data: prepareTerminalHistoryBuffer(s.buffer),
-    }));
-  }
-
-  ws.on('message', (msg) => {
-    if (ws.readyState !== 1 || sessions.get(key) !== s || s.ws !== ws) return;
+  s.ready = false;
+  const archive = createHistoryArchive(s.buffer);
+  const authorized = () => {
+    if (ws.readyState !== 1 || sessions.get(key) !== s || s.ws !== ws) return false;
     if (req.sessionID && !require('../services/client-auth').getClientAuth().sessionActive(req.sessionID)) {
       ws.close(1008, 'Authentication required');
-      return;
+      return false;
     }
+    if (!db.prepare('SELECT 1 FROM tasks WHERE id = ? AND user_id = ?').get(taskId, sessionUser.login)) {
+      ws.close(1008, 'task not found');
+      return false;
+    }
+    return true;
+  };
+  s.authorized = authorized;
+  s.snapshot.snapshot(snapshot => {
+    if (!authorized()) return;
+    ws.send(JSON.stringify({ type: 'history', ...snapshot, archive: archive.metadata() }));
+    s.ready = true;
+  });
+
+  ws.on('message', (msg) => {
+    if (!authorized()) return;
     const str = msg.toString();
     // 只有以 '{' 开头的消息才尝试作为控制指令解析（如 resize）
     // 数字字符（0-9）是合法 JSON，若不做此判断会被 parse 后静默丢弃
-    if (str.charCodeAt(0) === 123 /* '{' */) {
+    if (/^\s*\{/.test(str)) {
       try {
         const data = JSON.parse(str);
-        if (data.type === 'resize') {
-          s.pty.resize(Math.max(1, data.cols), Math.max(1, data.rows));
+        if (typeof data.type === 'string' && data.type.startsWith('history')) {
+          if (data.type === 'history-page') ws.send(JSON.stringify(archive.page(data)));
           return;
         }
-      } catch { /* 非合法 JSON，fall through 写入 PTY */ }
+        if (data.type === 'resize') {
+          if (!Number.isInteger(data.cols) || !Number.isInteger(data.rows) || data.cols < 1 || data.rows < 1 || data.cols > 1000 || data.rows > 1000) return;
+          s.pty.resize(data.cols, data.rows);
+          s.snapshot.resize(data.cols, data.rows);
+          return;
+        }
+      } catch {
+        // Malformed history controls must never become shell input.
+        if (/\"type\"\s*:\s*\"history/.test(str)) return;
+      }
     }
-    s.pty.write(str);
+    if (!s.exiting) s.pty.write(str);
   });
 
   ws.on('close', () => {

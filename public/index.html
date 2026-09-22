@@ -100,6 +100,7 @@
           <div class="terminal-controls">
             <div id="terminal-tabs" class="terminal-tabs" role="tablist" aria-label="任务终端"></div>
             <div class="terminal-toolbar" role="toolbar" aria-label="终端操作">
+              <button type="button" class="terminal-toolbar-btn" id="btn-terminal-history" disabled>历史记录</button>
               <button type="button" class="terminal-toolbar-btn" id="btn-terminal-new" title="在任务工作目录中新建独立 Shell">＋ 新开终端</button>
               <button type="button" class="terminal-toolbar-btn" id="btn-terminal-reopen" title="重新建立与当前终端会话的连接">↻ 重新打开</button>
               <button type="button" class="terminal-toolbar-btn danger" id="btn-terminal-close" title="终止当前 Shell 及其中运行的程序">× 关闭当前终端</button>
@@ -153,6 +154,7 @@
   <script src="/js/terminal-tabs.js"></script>
   <script src="/js/terminal-viewport.js"></script>
   <script src="/js/file-panel.js"></script>
+  <script src="/js/terminal-history.js"></script>
   <script src="/js/tasks.js"></script>
   <script src="/js/remote-tasks.js"></script>
   <script src="/js/terminal-keys.js"></script>

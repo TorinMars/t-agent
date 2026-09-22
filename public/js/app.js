@@ -91,6 +91,7 @@ const TerminalControls = {
     } finally {
       this.busy = false;
       document.querySelectorAll('.terminal-toolbar-btn').forEach(button => { button.disabled = false; });
+      if (typeof TerminalHistory !== 'undefined') TerminalHistory.refresh();
     }
   },
 };

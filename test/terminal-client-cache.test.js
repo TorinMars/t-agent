@@ -34,6 +34,7 @@ function setup(remote) {
   context.window = context;
   vm.createContext(context);
   vm.runInContext(fs.readFileSync(require.resolve('../public/js/terminal-tabs.js'), 'utf8'), context);
+  vm.runInContext(fs.readFileSync(require.resolve('../public/js/terminal-history.js'), 'utf8'), context);
   let source = fs.readFileSync(require.resolve(remote ? '../public/js/remote-tasks.js' : '../public/js/tasks.js'), 'utf8');
   // Expose only task selection to the fixture; switching uses the real tabs,
   // controller cache, connection and explicit reopen implementations.
@@ -120,6 +121,42 @@ for (const remote of [false, true]) {
     app.controller.sendTerminalInput('unexpected\r');
     assert.deepEqual(app.sockets[0].sent, []);
     app.context.TerminalImages.busy = false;
+    app.controller.sendTerminalInput('allowed');
+    assert.deepEqual(app.sockets[0].sent, ['allowed']);
+  });
+}
+
+for (const remote of [false, true]) {
+  test(`${remote ? 'remote' : 'local'} history pages stay out of live terminal and task switches discard stale pages`, async () => {
+    const app = setup(remote); app.controller._open(); app.sockets[0].open();
+    const socket = app.sockets[0];
+    socket.onmessage({ data: JSON.stringify({ type: 'history', data: 'recent', archive: { id: 'archive', before: 100, hasMore: true, limit: 500 } }) });
+    socket.onmessage({ data: '-live' });
+    app.document.getElementById('btn-terminal-history').dispatchEvent(new app.Event('click'));
+    const request = socket.sent.map(data => { try { return JSON.parse(data); } catch { return {}; } }).find(data => data.type === 'history-page');
+    assert.equal(request.before, 100);
+    socket.onmessage({ data: JSON.stringify({ ...request, before: 40, hasMore: true, data: 'archive-only' }) });
+    assert.equal(app.document.getElementById('terminal-history-text').textContent, 'archive-only');
+    assert.equal(app.terminals[0].output, 'recent-live');
+    await app.controller.newTerminal();
+    assert.equal(app.document.querySelector('.terminal-history-dialog'), null);
+    socket.onmessage({ data: JSON.stringify({ ...request, before: 0, hasMore: false, data: 'stale-page' }) });
+    assert.equal(app.terminals[0].output, 'recent-live');
+    assert.equal(app.terminals[1].output, '');
+  });
+}
+
+for (const remote of [false, true]) {
+  test(`${remote ? 'remote' : 'local'} input toolbar obeys the snapshot replay pause`, () => {
+    const app = setup(remote);
+    let finish;
+    app.context.TerminalClipboard.attach = term => ({ dispose() {}, writeHistory(data, done) { term.write(data); finish = done; } });
+    app.controller._open(); app.sockets[0].open();
+    app.sockets[0].onmessage({ data: JSON.stringify({ type: 'history', data: 'replay' }) });
+    app.sockets[0].sent.length = 0;
+    app.controller.sendTerminalInput('must-not-send');
+    assert.deepEqual(app.sockets[0].sent, []);
+    finish(); app.sockets[0].sent.length = 0;
     app.controller.sendTerminalInput('allowed');
     assert.deepEqual(app.sockets[0].sent, ['allowed']);
   });

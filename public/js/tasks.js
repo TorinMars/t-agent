@@ -54,6 +54,7 @@ const Tasks = (() => {
     if (tab !== 'shell') {
       if (selectedId && previousTab === 'shell') onLeaveShellTab(selectedId);
       previewPane.style.display = '';
+      TerminalHistory.activate(null);
       terminalPane.style.display = 'none';
       const task = tasks.find(t => t.id === selectedId);
       if (task) renderPreview(task);
@@ -137,6 +138,7 @@ const Tasks = (() => {
     if (inst.resizeObserver) inst.resizeObserver.disconnect();
     if (inst.onWindowResize) window.removeEventListener('resize', inst.onWindowResize);
     if (inst.ws) inst.ws.close();
+    inst.history.dispose();
     inst.images.dispose();
     inst.clipboard.dispose();
     inst.term.dispose();
@@ -166,6 +168,7 @@ const Tasks = (() => {
     const ws = new WebSocket(`${proto}://${location.host}/terminal/ws?taskId=${task.id}&terminalId=${encodeURIComponent(inst.terminalId)}`);
     ws.binaryType = 'arraybuffer';
     inst.ws = ws;
+    inst.history.bind(ws);
     if (term === inst.term) termWs = ws;
 
     ws.onopen = () => {
@@ -181,18 +184,8 @@ const Tasks = (() => {
     };
 
     ws.onmessage = (e) => {
-      if (typeof e.data === 'string' && e.data.startsWith('{"type":"history"')) {
-        try {
-          const msg = JSON.parse(e.data);
-          inst.paused = true;
-          inst.clipboard.writeHistory(msg.data, () => {
-            TerminalViewport.restore(inst.term, inst.reconnectScroll || { bottom: true });
-            inst.reconnectScroll = null;
-            requestAnimationFrame(() => requestAnimationFrame(() => { inst.paused = false; }));
-          });
-        } catch { inst.term.write(e.data); }
-        return;
-      }
+      if (inst.disposed || inst.ws !== ws) return;
+      if (inst.history.handle(e.data, ws)) return;
       if (e.data instanceof ArrayBuffer) {
         inst.term.write(new Uint8Array(e.data));
       } else {
@@ -203,6 +196,7 @@ const Tasks = (() => {
 
     ws.onclose = (event) => {
       if (inst.ws !== ws || inst.disposed || termInstances.get(terminalKey(task.id, inst.terminalId)) !== inst) return;
+      inst.history.disconnect(ws);
       inst.ws = null;
       if (event.code === 1000 || event.code === 1008) {
         inst.term.write('\r\n[终端已断开，点击“重新打开”可再次连接]\r\n');
@@ -224,6 +218,7 @@ const Tasks = (() => {
       const inst = termInstances.get(key);
       if ((inst.ws && [WebSocket.CONNECTING, WebSocket.OPEN].includes(inst.ws.readyState)) || inst.reconnectTimer) {
         Array.from(container.children).forEach(el => { el.style.display = el === inst.el ? '' : 'none'; });
+        TerminalHistory.activate(inst);
         term = inst.term;
         fitAddon = inst.fitAddon;
         termWs = inst.ws;
@@ -265,6 +260,8 @@ const Tasks = (() => {
       reconnectAttempts: 0,
       resizeObserver: null,
     };
+    inst.history = TerminalHistory.attach(inst);
+    TerminalHistory.activate(inst);
     inst.images = TerminalImages.attach(t, el, () => !inst.disposed && !inst.paused ? inst.ws : null);
     inst.resizeObserver = TerminalViewport.observe(t, fa, el);
     termInstances.set(key, inst);
@@ -278,6 +275,7 @@ const Tasks = (() => {
     });
 
     t.onResize(({ cols, rows }) => {
+      if (inst.restoringHistory) return;
       if (inst.ws && inst.ws.readyState === WebSocket.OPEN) {
         inst.ws.send(JSON.stringify({ type: 'resize', cols, rows }));
       }
@@ -938,6 +936,7 @@ const Tasks = (() => {
       if (termState.get(id) === 'done') updateTermDot(id, 'idle');
     } else {
       previewPane.style.display = '';
+      TerminalHistory.activate(null);
       terminalPane.style.display = 'none';
     }
     const task = tasks.find(t => t.id === id);
@@ -1528,6 +1527,7 @@ const Tasks = (() => {
     document.getElementById('preview-content').style.display = 'none';
     contentToolbar.style.display = 'none';
     contentTabs.style.display = 'none';
+    TerminalHistory.activate(null);
     terminalPane.style.display = 'none';
     previewPane.style.display = '';
     hideToc();
@@ -1773,7 +1773,7 @@ const Tasks = (() => {
     sendTerminalInput(data) {
       if (TerminalImages.busy) return;
       const instance = termInstances.get(terminalKey(selectedId));
-      if (!instance || !instance.ws || instance.ws.readyState !== WebSocket.OPEN || activeTab !== 'shell') return;
+      if (!instance || instance.paused || !instance.ws || instance.ws.readyState !== WebSocket.OPEN || activeTab !== 'shell') return;
       instance.ws.send(data);
       instance.term.focus();
     },

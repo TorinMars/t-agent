@@ -12,6 +12,7 @@ function setup(remote=false) {
  FilePanel:{isOpen:()=>true,beforeContextChange:async()=>false,close:async()=>false,open:async c=>calls.push(c)},
  };
  context.window=context; vm.createContext(context);
+ vm.runInContext(fs.readFileSync('public/js/terminal-history.js','utf8'),context);
  vm.runInContext(fs.readFileSync(remote?'public/js/remote-tasks.js':'public/js/tasks.js','utf8'),context);
  return {context,document,calls,Event};
 }

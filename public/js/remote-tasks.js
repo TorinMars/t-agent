@@ -4,6 +4,7 @@ const RemoteTasks = (() => {
   let groupsByServer = new Map();
   let selected = null;
   let activeTab = 'doc';
+  let previewRevision = 0;
   let remoteTerminal = null;
   const remoteTerminals = new Map();
   let activeEngineKey = localStorage.getItem('active-engine-key') || 'local';
@@ -435,7 +436,10 @@ const RemoteTasks = (() => {
   }
 
   async function renderSelected() {
-    if (!selected) return;
+    if (!selected || activeTab === 'shell') return;
+    const target = selected, tab = activeTab, revision = ++previewRevision;
+    const isCurrent = () => selected === target && activeTab === tab && revision === previewRevision
+      && previewPane.style.display !== 'none';
     const content = document.getElementById('preview-content');
     document.getElementById('preview-empty').style.display = 'none';
     content.style.display = 'block';
@@ -445,20 +449,25 @@ const RemoteTasks = (() => {
     try {
       if (activeTab === 'todos') {
         const todos = await API.get(`/api/remote-servers/${selected.serverId}/tasks/${selected.task.id}/todos`);
+        if (!isCurrent()) return;
         content.innerHTML = `<section class="todo-page remote-readonly"><div class="todo-heading"><div><h2>待办清单</h2><p>远程只读</p></div></div><div class="todo-list">${todos.length ? todos.map(todo => `<div class="todo-item${todo.completed ? ' completed' : ''}"><label class="todo-check-wrap"><input type="checkbox" ${todo.completed ? 'checked' : ''} disabled><span class="todo-checkmark"></span></label><span class="todo-content">${escapeHtml(todo.content)}</span></div>`).join('') : '<div class="todo-empty">还没有待办事项</div>'}</div></section>`;
         return;
       }
       const kind = activeTab === 'readme' ? 'readme' : activeTab === 'agent' ? 'agent' : 'technical';
       const response = await fetch(`/api/remote-servers/${selected.serverId}/tasks/${selected.task.id}/document/${kind}`, { headers: { 'X-Requested-With': 'XMLHttpRequest' } });
+      if (!isCurrent()) return;
       if (response.status === 404) { content.innerHTML = '<div class="document-empty">远程文档不存在</div>'; return; }
       if (!response.ok) throw new Error('REMOTE_DOCUMENT_FAILED');
       const source = await response.text();
+      if (!isCurrent()) return;
       content.innerHTML = `<div class="remote-readonly-banner">${escapeHtml(selected.server.name)} · 只读</div>${marked.parse(source)}`;
       MarkdownView.enhance(content);
       for (const node of content.querySelectorAll('.mermaid')) {
+        if (!isCurrent()) return;
         try { await mermaid.run({ nodes: [node] }); } catch {}
       }
     } catch (error) {
+      if (!isCurrent()) return;
       content.innerHTML = `<div class="preview-loading">远程内容加载失败：${escapeHtml(errorLabel(error.message))}</div>`;
     }
   }
@@ -970,8 +979,8 @@ const RemoteTasks = (() => {
 
   async function showTokens() {
     const tokens = await API.get('/api/remote-tokens');
-    Modal.show('Engine 访问凭证', `
-      <div class="form-hint">为其他 Client 创建配对码。配对码 10 分钟内有效且只能使用一次。</div>
+    Modal.show('允许其他客户端连接本机', `
+      <div class="form-hint">在另一客户端选择“连接远程”，填写本客户端的地址和配对码。无需另装 Engine；仅开放本机任务，不转发已连接的其他引擎。配对码 10 分钟内有效且只能使用一次。<br>连接地址：<code>${escapeHtml(location.origin)}</code><br>若地址为 localhost 或 127.0.0.1，请换成其他客户端可访问的 IP 或域名，并确保已开启远程访问。</div>
       <div class="remote-token-list">${tokens.length ? tokens.map(token => `<div class="remote-token-row"><div><strong>${escapeHtml(token.name)}</strong><small>${escapeHtml(token.token_prefix)}… · ${escapeHtml(token.scopes)}</small></div><button class="remote-token-revoke" data-id="${token.id}">撤销</button></div>`).join('') : '<div class="remote-empty">尚未创建 Token</div>'}</div>
       <div class="form-actions"><button class="btn-cancel" id="remote-token-close">关闭</button><button class="btn-submit" id="remote-token-create">生成配对码</button></div>
     `);
@@ -982,7 +991,7 @@ const RemoteTasks = (() => {
 
   async function createToken() {
     const created = await API.post('/api/remote-tokens/pairing', { role: 'operator' });
-    Modal.show('配对码已创建', `<div class="form-hint">10 分钟内有效，只能使用一次。在另一个 Client 中输入当前 Engine 地址和此配对码。</div><div class="created-token"><code>${escapeHtml(created.code)}</code><button class="btn-cancel" id="copy-created-token">复制</button></div><div class="form-actions"><button class="btn-submit" id="created-token-done">完成</button></div>`);
+    Modal.show('配对码已创建', `<div class="form-hint">10 分钟内有效，只能使用一次。在另一客户端的“连接远程”中填写地址 <code>${escapeHtml(location.origin)}</code> 和此配对码。本机回环地址需替换为可访问的 IP 或域名。</div><div class="created-token"><code>${escapeHtml(created.code)}</code><button class="btn-cancel" id="copy-created-token">复制</button></div><div class="form-actions"><button class="btn-submit" id="created-token-done">完成</button></div>`);
     document.getElementById('copy-created-token').addEventListener('click', async event => { await navigator.clipboard.writeText(created.code); event.target.textContent = '已复制'; });
     document.getElementById('created-token-done').addEventListener('click', Modal.hide);
   }

@@ -460,7 +460,7 @@ async function init() {
         <div class="form-hint">新建任务时 md 文件的根目录，目录不存在会自动创建；清空恢复默认目录</div>
       </div>
       <div class="settings-section"><div class="settings-section-title">图片上传</div><div class="form-hint">配置 Client 阿里云 OSS 后，可在本地及远程终端粘贴图片，或使用终端底部的上传图片按钮。</div><div class="settings-inline-actions"><button class="btn-cancel" id="settings-oss">配置阿里云 OSS</button></div></div>
-      <div class="settings-section"><div class="settings-section-title">远程服务</div><div class="form-hint">管理允许其他 T-Agent Client 访问本地 Engine 的 Token。</div><div class="settings-inline-actions"><button class="btn-cancel" id="settings-remote-tokens">管理访问 Token</button></div></div>
+      <div class="settings-section"><div class="settings-section-title">远程服务</div><div class="form-hint">当前客户端也可作为引擎，供其他客户端访问本机任务、文件和终端。</div><div class="settings-inline-actions"><button class="btn-cancel" id="settings-remote-tokens">作为引擎供其他客户端连接</button></div></div>
       <div class="settings-section"><div class="settings-section-title">身份验证器 · 已绑定</div><div class="form-hint">电脑和手机共用同一页面及绑定信息，登录有效期 30 天，使用期间自动续期；连续 30 天未使用需重新验证。更换后旧验证器、恢复码和其他设备登录立即失效。</div><a class="toolbar-btn" href="/auth/setup?return_to=/web">更换身份验证器</a></div>
       ${updateStatus ? Updates.renderSettings(updateStatus) : ''}
       <div class="form-actions">

@@ -14,6 +14,7 @@ const Tasks = (() => {
   const collapsedGroups = {};
   let tocObserver = null;
   let mdWatcher = null;
+  let mdRenderRevision = 0;
   let editorState = null;
 
   // ── Tab & Terminal state ──
@@ -66,7 +67,8 @@ const Tasks = (() => {
       document.getElementById('btn-share-md').style.display = task && task.md_path ? '' : 'none';
       setEditButtonState(false);
       previewPane.style.display = 'none';
-      document.getElementById('toc-pane').style.display = 'none';
+      hideToc();
+      stopWatcher();
       terminalPane.style.display = 'flex';
       // 切到终端时清除"执行完成待查看"状态
       if (selectedId && termState.get(selectedId) === 'done') updateTermDot(selectedId, 'idle');
@@ -930,7 +932,8 @@ const Tasks = (() => {
       document.getElementById('btn-share-md').style.display = task && task.md_path ? '' : 'none';
       setEditButtonState(false);
       previewPane.style.display = 'none';
-      document.getElementById('toc-pane').style.display = 'none';
+      hideToc();
+      stopWatcher();
       terminalPane.style.display = 'flex';
       // 切到终端时清除"执行完成待查看"状态
       if (termState.get(id) === 'done') updateTermDot(id, 'idle');
@@ -999,8 +1002,9 @@ const Tasks = (() => {
       return;
     }
 
-    await loadMdContent(task, activeTab);
-    startWatcher(task, activeTab);
+    const tab = activeTab;
+    await loadMdContent(task, tab);
+    startWatcher(task, tab);
   }
 
   function setEditButtonState(enabled) {
@@ -1261,20 +1265,26 @@ const Tasks = (() => {
     return tab === 'readme' ? 'README.md' : tab === 'agent' ? 'AGENTS.md' : '技术方案';
   }
 
+  function isLocalPreview(task, tab) {
+    return selectedId === task.id && activeTab === tab && ['doc', 'readme', 'agent'].includes(tab)
+      && !editorState && previewPane.style.display !== 'none' && !window.RemoteTasks?.isSelected()
+      && (!window.RemoteTasks?.getActiveEngineKey || RemoteTasks.getActiveEngineKey() === 'local');
+  }
+
   async function loadMdContent(task, tab = activeTab) {
     const content = document.getElementById('preview-content');
     const savedScroll = parseInt(localStorage.getItem(`mdScroll_${task.id}_${tab}`)) || 0;
     const scrollTop = previewPane.scrollTop || savedScroll;
     // 记录本次渲染时的目标任务，异步回来后校验是否仍是当前任务/tab，防止竞态更新 UI
-    const renderForId = task.id;
-    const renderForTab = tab;
+    const revision = ++mdRenderRevision;
+    const isCurrent = () => revision === mdRenderRevision && isLocalPreview(task, tab);
 
     try {
       const kind = documentKind(tab);
       const res = await fetch(`/api/tasks/${task.id}/document/${kind}`, {
         headers: { 'X-Requested-With': 'XMLHttpRequest' },
       });
-      if (selectedId !== renderForId || activeTab !== renderForTab) return;
+      if (!isCurrent()) return;
       if (res.status === 404) {
         setEditButtonState(false);
         const canCreate = tab === 'readme' || tab === 'agent';
@@ -1299,10 +1309,11 @@ const Tasks = (() => {
       }
       if (!res.ok) throw new Error('Failed');
       const text = await res.text();
-      if (selectedId !== renderForId || activeTab !== renderForTab) return;
+      if (!isCurrent()) return;
       content.innerHTML = renderMd(text, task.id);
       MarkdownView.enhance(content);
       for (const script of Array.from(content.querySelectorAll('script'))) {
+        if (!isCurrent()) return;
         if (script.src) {
           await new Promise(resolve => {
             const s = document.createElement('script');
@@ -1317,29 +1328,34 @@ const Tasks = (() => {
       }
       // 逐个渲染 mermaid，单个失败不影响整体
       for (const node of content.querySelectorAll('.mermaid')) {
+        if (!isCurrent()) return;
         try {
           await mermaid.run({ nodes: [node] });
         } catch (e) {
+          if (!isCurrent()) return;
           node.innerHTML = `<pre style="color:#c0392b;font-size:12px;white-space:pre-wrap">⚠️ Mermaid 渲染失败：${e.message || e.str || '语法错误'}</pre>`;
         }
       }
+      if (!isCurrent()) return;
       wrapMermaidDiagrams(content);
       addHeadingIds(content);
       buildToc(content);
       setupScrollSpy(content);
       previewPane.scrollTop = scrollTop;
     } catch (e) {
+      if (!isCurrent()) return;
       console.error('[loadMdContent] error:', e);
       content.innerHTML = '<div class="preview-loading">加载失败，请检查文件路径是否有效</div>';
     }
   }
 
   function startWatcher(task, tab = activeTab) {
+    if (!isLocalPreview(task, tab)) return;
     stopWatcher();
     const watchedTab = tab;
     mdWatcher = new EventSource(`/api/tasks/${task.id}/document/${documentKind(tab)}/watch`);
     mdWatcher.onmessage = (e) => {
-      if (e.data === 'changed' && activeTab === watchedTab) loadMdContent(task, watchedTab);
+      if (e.data === 'changed' && isLocalPreview(task, watchedTab)) loadMdContent(task, watchedTab);
     };
     mdWatcher.onerror = () => stopWatcher();
   }
@@ -1482,6 +1498,7 @@ const Tasks = (() => {
   }
 
   function hideToc() {
+    mdRenderRevision++;
     document.getElementById('toc-pane').style.display = 'none';
     document.getElementById('toc-list').innerHTML = '';
     if (tocObserver) { tocObserver.disconnect(); tocObserver = null; }

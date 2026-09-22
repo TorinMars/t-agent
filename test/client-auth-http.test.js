@@ -126,6 +126,30 @@ for (const [environment, allowHttp] of [['test', 'false'], ['production', 'false
   assert.equal((await call('/auth/settings', { cookie: boundCookie, method: 'PUT', body: { work_dir: null } })).status, 200);
   assert.equal((await (await call('/auth/me', { cookie: boundCookie })).json()).effective_work_dir, path.join(temp, 'tasks'));
 
+  // A full Client also serves the standard Engine protocol on the same port.
+  const pairingResponse = await call('/api/remote-tokens/pairing', { cookie: boundCookie, body: { role: 'operator' } });
+  assert.equal(pairingResponse.status, 201);
+  const pairing = await pairingResponse.json();
+  const exchange = await call('/v1/pair', { body: { code: pairing.code, client_name: 'Another Client' } });
+  assert.equal(exchange.status, 201);
+  const access = await exchange.json();
+  const engineHeaders = { Authorization: `Bearer ${access.access_token}` };
+  assert.equal((await call('/v1/pair', { body: { code: pairing.code } })).status, 400);
+  const engineInfo = await call('/v1/info', { headers: engineHeaders });
+  assert.equal(engineInfo.status, 200);
+  assert.equal((await engineInfo.json()).role, 'operator');
+  const createdResponse = await call('/v1/tasks', { headers: engineHeaders, body: { title: 'Created by another Client', work_dir: path.join(temp, 'remote-created') } });
+  assert.equal(createdResponse.status, 201);
+  const created = await createdResponse.json();
+  const localTasks = await (await call('/api/tasks', { cookie: boundCookie })).json();
+  assert.ok(localTasks.some(task => task.id === created.id), 'Engine and Client share the local task owner');
+  assert.equal((await call(`/v1/tasks/${created.id}`, { method: 'DELETE', headers: engineHeaders })).status, 200);
+  const tokens = await (await call('/api/remote-tokens', { cookie: boundCookie })).json();
+  const token = tokens.find(item => item.name === 'Another Client');
+  assert.ok(token);
+  assert.equal((await call(`/api/remote-tokens/${token.id}`, { method: 'DELETE', cookie: boundCookie, headers: { 'X-Requested-With': 'XMLHttpRequest' } })).status, 200);
+  assert.equal((await call('/v1/info', { headers: engineHeaders })).status, 401);
+
   const refreshedCookie = meResponse.headers.get('set-cookie');
   assert.ok(refreshedCookie, 'active HTTP request reissues the rolling cookie');
   const expiry = Date.parse(refreshedCookie.match(/Expires=([^;]+)/)[1]);

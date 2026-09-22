@@ -1591,6 +1591,11 @@ body {
 /* xterm canvas 自适应填满 */
 #xterm-container .xterm {
   height: 100%;
+  /* Keep glyph measurement and rendering on the same fixed cell grid.
+     Chrome's contextual CJK punctuation trimming breaks xterm's repeated
+     glyph width measurement and causes cumulative selection drift. */
+  text-spacing-trim: space-all;
+  text-autospace: no-autospace;
 }
 #xterm-container .xterm-viewport {
   /* Keep the scrollbar width stable. With `auto`, FitAddon can calculate the

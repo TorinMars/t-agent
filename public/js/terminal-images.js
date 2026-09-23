@@ -2,6 +2,7 @@
 const TerminalImages = (() => {
   const instances = new Set();
   let enabled = false;
+  let configRevision = 0;
   let busy = false;
   let uploadCard = null;
   const pane = document.getElementById('terminal-pane');
@@ -23,13 +24,28 @@ const TerminalImages = (() => {
     const scale = view.scale || 1;
     uploadCard.style.cssText = `position:absolute;left:${view.offsetLeft + view.width / 2}px;top:${view.offsetTop + view.height / 2}px;width:${Math.min(380, view.width * scale * .85)}px;transform:translate(-50%,-50%) scale(${1 / scale})`;
   }
-  function render() { bar.hidden = !enabled || !active(); button.disabled = busy; }
+  function render() { bar.hidden = !active(); button.disabled = busy; }
   window.visualViewport?.addEventListener('resize', layoutUploadCard);
   window.visualViewport?.addEventListener('scroll', layoutUploadCard);
   async function load() {
-    try { const config = await API.get('/api/oss/config'); enabled = Boolean(config.enabled); render(); return config; }
-    catch (error) { enabled = false; render(); throw error; }
+    const revision = ++configRevision;
+    let timer;
+    try {
+      const config = await Promise.race([
+        API.get('/api/oss/config'),
+        new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('读取 OSS 设置超时')), 15000); }),
+      ]);
+      if (revision === configRevision) { enabled = Boolean(config.enabled); render(); }
+      return config;
+    } finally { clearTimeout(timer); }
   }
+  // Installed app windows can stay alive while another window changes settings.
+  const refreshConfig = () => { if (!busy) void load().catch(() => {}); };
+  window.addEventListener('focus', refreshConfig);
+  window.addEventListener('pageshow', refreshConfig);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') refreshConfig();
+  });
   function lockPage() {
     busy = true; render();
     const previous = document.activeElement;
@@ -102,12 +118,22 @@ const TerminalImages = (() => {
   }
   async function upload(item, file, socket = item?.connection()) {
     if (busy || !file || !item) return;
-    if (!enabled) { alert('请先在设置中启用阿里云 OSS 图片上传'); return; }
     if (!/^image\/(png|jpeg|gif|webp)$/.test(file.type) || file.size <= 0 || file.size > 10 * 1024 * 1024) { alert('请选择不超过 10 MiB 的 PNG、JPEG、GIF 或 WebP 图片'); return; }
     if (active() !== item || !socket || socket.readyState !== 1 || item.connection() !== socket) { alert('原终端未连接，请连接后重试'); return; }
     const ui = lockPage();
     let result; let error;
-    try { result = await transfer(file, ui); } catch (failure) { error = failure; } finally { ui.unlock(); }
+    try {
+      if (!enabled) {
+        ui.status.textContent = '正在读取 OSS 配置…';
+        try { await load(); }
+        catch { throw new Error('读取 OSS 设置失败，请检查连接后重试'); }
+        if (!enabled) throw new Error('请先在当前客户端的设置中启用阿里云 OSS 图片上传');
+        if (!instances.has(item) || active() !== item || item.connection() !== socket || socket.readyState !== 1) {
+          throw new Error('原终端已切换或断开，请连接后重试');
+        }
+      }
+      result = await transfer(file, ui);
+    } catch (failure) { error = failure; } finally { ui.unlock(); }
     if (error) { alert(error.message); return; }
     if (instances.has(item) && active() === item && item.connection() === socket && socket.readyState === 1) {
       // xterm's paste keeps bracketed-paste semantics and never adds Enter.
@@ -139,9 +165,19 @@ const TerminalImages = (() => {
     const save = document.getElementById('oss-save'); const clear = document.getElementById('oss-clear'); const feedback = document.getElementById('oss-feedback');
     async function persist(remove) {
       save.disabled = clear.disabled = true;
+      configRevision++;
       const payload = { enabled: document.getElementById('oss-enabled').checked };
       for (const [key] of fields) payload[key] = document.getElementById('oss-' + key).value.trim();
-      try { const saved = remove ? await API.delete('/api/oss/config') : await API.put('/api/oss/config', payload); enabled = Boolean(saved.enabled); render(); Modal.hide(); }
+      try {
+        const saved = remove ? await API.delete('/api/oss/config') : await API.put('/api/oss/config', payload);
+        configRevision++; enabled = Boolean(saved.enabled); render();
+        if (!remove && !enabled) {
+          feedback.textContent = '配置已保存，但图片上传尚未启用。请勾选上方“启用图片上传”后再次保存。';
+          save.disabled = clear.disabled = false;
+          return;
+        }
+        Modal.hide();
+      }
       catch (error) { feedback.textContent = '保存失败：' + error.message; save.disabled = clear.disabled = false; }
     }
     save.addEventListener('click', () => void persist(false)); clear.addEventListener('click', () => void persist(true));

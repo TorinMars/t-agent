@@ -14,13 +14,23 @@ const server = http.createServer((req, res) => {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const browser = await chromium.launch({ headless: true, ...(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {}) });
   try {
-    for (const mobile of [false, true]) {
+    for (const mode of ['desktop', 'standalone', 'mobile']) {
+      const mobile = mode === 'mobile';
       const context = await browser.newContext(mobile ? { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true } : { viewport: { width: 1400, height: 900 } });
       const page = await context.newPage(); const errors = [];
       page.on('pageerror', error => errors.push(error.message)); page.on('dialog', dialog => dialog.dismiss());
       await page.goto(`http://127.0.0.1:${server.address().port}`);
       await page.addStyleTag({ path: path.join(root, 'public/css/style.css') });
       await page.addStyleTag({ path: require.resolve('@xterm/xterm/css/xterm.css') });
+      if (mode === 'standalone') {
+        // Activate the installed-app stylesheet rules in headless Chrome.
+        await page.evaluate(() => {
+          for (const sheet of document.styleSheets) for (const rule of sheet.cssRules) {
+            if (rule.media?.mediaText.includes('display-mode: standalone')) rule.media.mediaText = 'all';
+          }
+        });
+      }
+
       await page.evaluate(() => {
         window.API = { get: async () => ({ enabled: true }) }; window.sent = []; window.clicks = 0; window.keys = 0;
         document.getElementById('btn-settings').addEventListener('click', () => clicks++);
@@ -78,6 +88,6 @@ const server = http.createServer((req, res) => {
       assert.deepEqual(await page.evaluate(() => sent), ['https://images.example/picture.png', 'x']);
       assert.deepEqual(errors, []); await context.close();
     }
-    console.log('PASS: real xterm text/image paste, upload processing lock, keyboard/pointer/focus block, no Enter, failure unlock, stale socket retained URL, phone bottom picker.');
+    console.log('PASS: real xterm text/image paste, upload processing lock, keyboard/pointer/focus block, no Enter, failure unlock, stale socket retained URL, desktop/installed-app layouts and phone bottom picker.');
   } finally { await browser.close(); server.close(); }
 })().catch(error => { console.error(error); for (const res of pending) res.destroy(); server.close(); process.exitCode = 1; });

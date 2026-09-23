@@ -732,6 +732,8 @@ t-agent/
 
 默认返回有效期 24 小时的私有对象签名链接。需要长期有效的链接时，可填写已配置公开读取的 HTTPS 访问地址（如自己的 CDN 地址）；程序不会修改 Bucket 的访问权限。签名链接在有效期内可被持有者读取，过期后需重新取得链接；图片对象不会自动删除，可在 OSS 中配置生命周期规则。服务端反向代理需允许至少 10 MiB 的请求体（Nginx 可设 `client_max_body_size 12m;`）。
 
+安装版应用与网页使用同一套 OSS 设置。保存凭据后需勾选“启用图片上传”；未启用时保存页面会明确提示。应用重新获得焦点或回到前台时刷新配置，首次读取失败可在上传时重试，终端上传按钮不会因配置读取失败而隐藏。不同 Client 的 OSS 配置仍各自独立。
+
 ### 可信内网直接访问 Client
 
 Docker 安装可在更新源码后执行 `./docker-client.sh --remote-access yes --allow-http yes`，使用远程镜像重建并保留验证器及数据，然后通过 `http://内网IP:端口/auth/login` 登录。首次安装或 `--configure` 也会询问此选项，默认要求 HTTPS。原生安装对应 `CLIENT_ALLOW_HTTP=true`。HTTP 不加密验证码和会话，需自行限制访问来源；详细步骤见 [内网 HTTP 登录](docs/DOCKER_CLIENT.md#可信内网-http-登录)。

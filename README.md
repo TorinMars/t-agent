@@ -765,3 +765,15 @@ Docker 安装可在更新源码后执行 `./docker-client.sh --remote-access yes
 点击终端工具栏的“历史记录”按需查看保留日志，继续加载更早内容。历史窗口是独立的只读文本，不会把旧输出及其清屏、光标控制指令写回正在使用的终端。首次打开从这次连接时的日志末尾开始，因此会包含最近内容；连接后的新输出仍显示在主终端。每页最多 500 行并限制传输大小，服务器继续沿用现有约 5 MB 日志保留上限。
 
 本地和远程终端使用同一套流程。远程 Engine 也需要升级；旧 Engine 仍按原方式恢复历史，Client 不会向不支持分页的 Engine 发送历史请求。
+
+## 开发环境安装脚本
+
+页面顶部“实用工具”标签复制的命令会运行 `scripts/install-claude-code.sh`，适用于 macOS 和 Linux，全部装在当前用户目录，不使用 Homebrew、不执行 `sudo`：
+
+1. 检查系统、架构、`curl`/`wget`、`tar`、`git`、能否访问 `claude.ai` 与 `github.com`。
+2. 安装 Claude Code（官方原生安装器）；已安装则跳过。
+3. 安装 Codex：优先下载 GitHub 发布页的预编译二进制，失败时回退到 `npm install -g --prefix ~/.local @openai/codex`。
+4. 没有 SSH 密钥时生成 `ed25519` 密钥（默认无密码短语）并只显示公钥；已有任何密钥都不会覆盖。
+5. 把 `~/.local/bin` 追加到 shell 配置文件（只追加一次），最后汇总每一项的结果；任一项失败时退出码为 1。
+
+参数：`--check`（只检查）、`--upgrade`、`--no-modify-path`、`--passphrase`、`--skip claude|codex|ssh`，例如 `curl -fsSL <脚本地址> | bash -s -- --check`。

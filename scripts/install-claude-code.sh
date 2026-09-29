@@ -11,6 +11,8 @@
 #   --no-modify-path    不修改 shell 配置文件中的 PATH
 #   --passphrase        生成 SSH 密钥时交互设置密码短语（需要终端）
 #   --skip NAME         跳过某一项，NAME 为 claude、codex 或 ssh，可重复使用
+#   --with-apps         同时安装 Mac 桌面应用：Maccy、Snipaste、Clash Verge（仅 macOS）
+#   --apps-dir DIR      桌面应用的安装目录（默认 /Applications，不可写时用 ~/Applications）
 #   -h, --help          显示帮助
 #
 # 不使用 Homebrew、不执行 sudo、不修改系统级配置；所有内容装在当前用户目录。
@@ -20,7 +22,8 @@ main() {
   set -uo pipefail
 
   local CHECK_ONLY=0 UPGRADE=0 MODIFY_PATH=1 PASSPHRASE=0
-  local SKIP_CLAUDE=0 SKIP_CODEX=0 SKIP_SSH=0
+  local SKIP_CLAUDE=0 SKIP_CODEX=0 SKIP_SSH=0 WITH_APPS=0 APPS_DIR=""
+  local STEP_NO=0 STEP_TOTAL=5
   local BIN_DIR="$HOME/.local/bin"
   local OS="" ARCH="" FETCH=""
   local SUMMARY="" FAILED=0
@@ -31,7 +34,7 @@ main() {
     C_RESET=$'\033[0m'; C_GREEN=$'\033[32m'; C_YELLOW=$'\033[33m'; C_RED=$'\033[31m'; C_BOLD=$'\033[1m'
   fi
   info() { printf '%s\n' "$*"; }
-  step() { printf '\n%s[%s]%s %s\n' "$C_BOLD" "$1" "$C_RESET" "$2"; }
+  step() { STEP_NO=$((STEP_NO + 1)); printf '\n%s[%s/%s]%s %s\n' "$C_BOLD" "$STEP_NO" "$STEP_TOTAL" "$C_RESET" "$1"; }
   ok()   { printf '  %s✓%s %s\n' "$C_GREEN" "$C_RESET" "$*"; }
   warn() { printf '  %s!%s %s\n' "$C_YELLOW" "$C_RESET" "$*" >&2; }
   fail() { printf '  %s✗%s %s\n' "$C_RED" "$C_RESET" "$*" >&2; }
@@ -50,6 +53,8 @@ main() {
   --no-modify-path    不修改 shell 配置文件中的 PATH
   --passphrase        生成 SSH 密钥时交互设置密码短语（需要终端）
   --skip NAME         跳过某一项：claude、codex 或 ssh，可重复使用
+  --with-apps         同时安装 Mac 桌面应用：Maccy、Snipaste、Clash Verge（仅 macOS）
+  --apps-dir DIR      桌面应用的安装目录（默认 /Applications，不可写时用 ~/Applications）
   -h, --help          显示帮助
 USAGE
   }
@@ -74,6 +79,11 @@ USAGE
           ssh) SKIP_SSH=1 ;;
           *) fail "--skip 只支持 claude、codex、ssh"; return 2 ;;
         esac ;;
+      --with-apps) WITH_APPS=1; STEP_TOTAL=6 ;;
+      --apps-dir)
+        shift
+        if [ -z "${1:-}" ]; then fail "--apps-dir 需要指定目录"; return 2; fi
+        APPS_DIR="$1" ;;
       -h|--help) usage; return 0 ;;
       *) fail "未知参数：$1（使用 --help 查看用法）"; return 2 ;;
     esac
@@ -130,7 +140,7 @@ USAGE
 
   # ---------- 步骤 1：环境检查 ----------
   check_environment() {
-    step "1/5" "检查环境"
+    step "检查环境"
     case "$(uname -s)" in
       Darwin) OS="macos" ;;
       Linux) OS="linux" ;;
@@ -175,13 +185,13 @@ USAGE
     line='export PATH="$HOME/.local/bin:$PATH"'
     if [ -f "$rc" ] && grep -Fq '.local/bin' "$rc"; then return 0; fi
     printf '\n# 由 install-claude-code.sh 添加\n%s\n' "$line" >> "$rc" \
-      && ok "已把 ~/.local/bin 写入 $rc（新开的终端生效）" \
-      || warn "无法写入 $rc，请手动添加：$line"
+      && ok "已把 ~/.local/bin 写入 ${rc}（新开的终端生效）" \
+      || warn "无法写入 ${rc}，请手动添加：$line"
   }
 
   # ---------- 步骤 2：Claude Code ----------
   install_claude() {
-    step "2/5" "Claude Code"
+    step "Claude Code"
     if [ "$SKIP_CLAUDE" -eq 1 ]; then record "Claude Code" "跳过" "使用了 --skip claude"; return; fi
     if have claude && [ "$UPGRADE" -eq 0 ]; then
       ok "已安装：$(claude --version 2>/dev/null | head -n1)"
@@ -231,7 +241,7 @@ USAGE
   }
 
   install_codex() {
-    step "3/5" "Codex"
+    step "Codex"
     if [ "$SKIP_CODEX" -eq 1 ]; then record "Codex" "跳过" "使用了 --skip codex"; return; fi
     if have codex && [ "$UPGRADE" -eq 0 ]; then
       ok "已安装：$(codex --version 2>/dev/null | head -n1)"
@@ -269,7 +279,7 @@ USAGE
   }
 
   setup_ssh_key() {
-    step "4/5" "SSH 密钥"
+    step "SSH 密钥"
     if [ "$SKIP_SSH" -eq 1 ]; then record "SSH 密钥" "跳过" "使用了 --skip ssh"; return; fi
     local existing
     if existing="$(existing_ssh_key)"; then
@@ -332,9 +342,144 @@ USAGE
     record "SSH 密钥" "已生成" "$key.pub（请添加到 GitHub）"
   }
 
-  # ---------- 步骤 5：汇总 ----------
+
+  # ---------- Mac 桌面应用 ----------
+  apps_target_dir() {
+    if [ -n "$APPS_DIR" ]; then printf '%s\n' "$APPS_DIR"
+    elif [ -w /Applications ]; then printf '/Applications\n'
+    else printf '%s\n' "$HOME/Applications"; fi
+  }
+
+  # 已安装的应用路径；指定了 --apps-dir 时只看该目录
+  app_installed() {
+    local dir
+    if [ -n "$APPS_DIR" ]; then
+      [ -d "$APPS_DIR/$1" ] && { printf '%s\n' "$APPS_DIR/$1"; return 0; }
+      return 1
+    fi
+    for dir in /Applications "$HOME/Applications"; do
+      [ -d "$dir/$1" ] && { printf '%s\n' "$dir/$1"; return 0; }
+    done
+    return 1
+  }
+
+  # $1 >= $2（按 主.次.修订 比较）
+  ver_ge() {
+    local IFS=.
+    local -a a b
+    local i x y
+    a=($1); b=($2)
+    for i in 0 1 2; do
+      x="${a[i]:-0}"; y="${b[i]:-0}"
+      [ "$x" -gt "$y" ] && return 0
+      [ "$x" -lt "$y" ] && return 1
+    done
+    return 0
+  }
+
+  latest_github_tag() {
+    local url
+    url="$(curl -fsSL --connect-timeout 15 -o /dev/null -w '%{url_effective}' "https://github.com/$1/releases/latest" </dev/null)" || return 1
+    printf '%s\n' "${url##*/}"
+  }
+
+  # 把下载的 zip/dmg 中的应用解出到临时目录，成功后 STAGED 为应用路径
+  STAGED=""
+  stage_app() {
+    local label="$1" app="$2" kind="$3" file="$4" work mnt
+    work="$TMP_DIR/stage-$label"; rm -rf "$work"; mkdir -p "$work"
+    STAGED=""
+    case "$kind" in
+      zip)
+        ditto -x -k "$file" "$work" || return 1 ;;
+      dmg)
+        mnt="$TMP_DIR/mnt-$label"; mkdir -p "$mnt"
+        hdiutil attach -nobrowse -readonly -noverify -mountpoint "$mnt" "$file" >/dev/null 2>&1 || return 1
+        if [ -d "$mnt/$app" ]; then ditto "$mnt/$app" "$work/$app"; fi
+        hdiutil detach "$mnt" >/dev/null 2>&1 || hdiutil detach -force "$mnt" >/dev/null 2>&1 || true ;;
+    esac
+    [ -d "$work/$app" ] || return 1
+    STAGED="$work/$app"
+  }
+
+  # install_mac_app 显示名 应用文件名 zip|dmg 下载地址
+  install_mac_app() {
+    local label="$1" app="$2" kind="$3" url="$4"
+    local existing dest_dir file minver sysver
+    if existing="$(app_installed "$app")"; then
+      if [ "$UPGRADE" -eq 0 ]; then
+        ok "$label 已安装：$existing"; record "$label" "已安装" "$existing"; return
+      fi
+      if pgrep -f "$existing/Contents/MacOS" >/dev/null 2>&1; then
+        warn "$label 正在运行，请先退出后再升级"; record "$label" "跳过" "正在运行，未升级"; return
+      fi
+    fi
+    if [ "$CHECK_ONLY" -eq 1 ]; then
+      warn "$label 未安装"; record "$label" "未安装" "--check 模式不安装"; return
+    fi
+    dest_dir="$(apps_target_dir)"
+    if ! mkdir -p "$dest_dir" 2>/dev/null || [ ! -w "$dest_dir" ]; then
+      fail "${label}：目录不可写 $dest_dir"; record "$label" "失败" "目录不可写：$dest_dir"; return
+    fi
+    file="$TMP_DIR/$label.$kind"
+    info "  正在下载 $label …"
+    if ! download "$url" "$file"; then
+      fail "$label 下载失败"; record "$label" "失败" "无法下载 $url"; return
+    fi
+    if ! stage_app "$label" "$app" "$kind" "$file"; then
+      fail "$label 解包失败"; record "$label" "失败" "安装包中找不到 $app"; return
+    fi
+    minver="$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$STAGED/Contents/Info.plist" 2>/dev/null || true)"
+    sysver="$(sw_vers -productVersion 2>/dev/null || true)"
+    if [ -n "$minver" ] && [ -n "$sysver" ] && ! ver_ge "$sysver" "$minver"; then
+      fail "$label 需要 macOS $minver 或更高（当前 ${sysver}）"; record "$label" "失败" "系统版本过低，需要 macOS $minver+"; return
+    fi
+    if ! codesign --verify --deep --strict "$STAGED" >/dev/null 2>&1; then
+      fail "$label 签名校验失败，已放弃安装"; record "$label" "失败" "代码签名校验失败"; return
+    fi
+    rm -rf "${dest_dir:?}/$app"
+    if ! ditto "$STAGED" "$dest_dir/$app"; then
+      fail "$label 复制到 $dest_dir 失败"; record "$label" "失败" "复制到 $dest_dir 失败"; return
+    fi
+    APPS_INSTALLED="${APPS_INSTALLED}${label} "
+    ok "$label 已安装到 $dest_dir/$app"
+    record "$label" "已安装" "$dest_dir/$app"
+  }
+
+  APPS_INSTALLED=""
+  install_mac_apps() {
+    step "Mac 应用"
+    if [ "$OS" != "macos" ]; then
+      warn "桌面应用只支持 macOS，已跳过"; record "Mac 应用" "跳过" "仅支持 macOS"; return
+    fi
+    if [ -n "${SSH_CONNECTION:-}" ] && [ -z "$APPS_DIR" ]; then
+      warn "当前是 SSH 远程登录，没有桌面会话，已跳过桌面应用"; record "Mac 应用" "跳过" "SSH 会话"; return
+    fi
+    if [ "$FETCH" != "curl" ]; then
+      fail "需要 curl"; record "Mac 应用" "失败" "缺少 curl"; return
+    fi
+    install_mac_app "Maccy" "Maccy.app" zip "https://github.com/p0deje/Maccy/releases/latest/download/Maccy.app.zip"
+    install_mac_app "Snipaste" "Snipaste.app" dmg "https://dl.snipaste.com/mac"
+    local tag arch
+    case "$ARCH" in aarch64) arch="aarch64" ;; *) arch="x64" ;; esac
+    if tag="$(latest_github_tag clash-verge-rev/clash-verge-rev)" && [ -n "$tag" ]; then
+      install_mac_app "Clash Verge" "Clash Verge.app" dmg \
+        "https://github.com/clash-verge-rev/clash-verge-rev/releases/download/$tag/Clash.Verge_${tag#v}_${arch}.dmg"
+    else
+      fail "无法获取 Clash Verge 的最新版本"; record "Clash Verge" "失败" "无法获取最新版本号"
+    fi
+    case "$APPS_INSTALLED" in
+      *Maccy*|*Snipaste*)
+        info ""
+        info "  首次打开需要在 系统设置 → 隐私与安全性 中授权（脚本无法代为点击）："
+        case "$APPS_INSTALLED" in *Maccy*) info "    Maccy：辅助功能（用于自动粘贴）" ;; esac
+        case "$APPS_INSTALLED" in *Snipaste*) info "    Snipaste：屏幕录制、辅助功能（用于截图和贴图）" ;; esac ;;
+    esac
+  }
+
+  # ---------- 最后一步：汇总 ----------
   print_summary() {
-    step "5/5" "汇总"
+    step "汇总"
     local line name status note
     while IFS='|' read -r name status note; do
       [ -n "$name" ] || continue
@@ -360,6 +505,7 @@ EOF
   install_claude
   install_codex
   setup_ssh_key
+  if [ "$WITH_APPS" -eq 1 ]; then install_mac_apps; fi
   print_summary
   return "$FAILED"
 }

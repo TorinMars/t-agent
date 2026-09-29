@@ -17,3 +17,10 @@ test('安装脚本拒绝未知参数和不支持的 --skip 项', () => {
   assert.equal(run(['--bogus']).status, 2);
   assert.equal(run(['--skip', 'homebrew']).status, 2);
 });
+
+test('安装脚本中变量名后不能直接紧跟中文字符（UTF-8 下会被当作变量名的一部分）', () => {
+  const source = require('node:fs').readFileSync(script, 'utf8');
+  const offenders = source.split('\n').map((line, index) => [index + 1, line])
+    .filter(([, line]) => /\$[A-Za-z_][A-Za-z0-9_]*[^\x00-\x7f]/.test(line));
+  assert.deepEqual(offenders, []);
+});

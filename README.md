@@ -774,6 +774,7 @@ Docker 安装可在更新源码后执行 `./docker-client.sh --remote-access yes
 2. 安装 Claude Code（官方原生安装器）；已安装则跳过。
 3. 安装 Codex：优先下载 GitHub 发布页的预编译二进制，失败时回退到 `npm install -g --prefix ~/.local @openai/codex`。
 4. 没有 SSH 密钥时生成 `ed25519` 密钥（默认无密码短语）并只显示公钥；已有任何密钥都不会覆盖。
-5. 把 `~/.local/bin` 追加到 shell 配置文件（只追加一次），最后汇总每一项的结果；任一项失败时退出码为 1。
+5. 加 `--with-apps`（仅 macOS 本机桌面会话）时，下载并安装 Maccy、Snipaste、Clash Verge Rev：均为 Apple 公证的官方包，安装前校验代码签名和系统版本要求，默认装到 `/Applications`（不可写时用 `~/Applications`，也可用 `--apps-dir` 指定）；已安装的跳过，SSH 远程登录时自动跳过。首次打开所需的“辅助功能”“屏幕录制”授权需要手动完成。
+6. 把 `~/.local/bin` 追加到 shell 配置文件（只追加一次），最后汇总每一项的结果；任一项失败时退出码为 1。
 
-参数：`--check`（只检查）、`--upgrade`、`--no-modify-path`、`--passphrase`、`--skip claude|codex|ssh`，例如 `curl -fsSL <脚本地址> | bash -s -- --check`。
+参数：`--check`（只检查）、`--upgrade`、`--no-modify-path`、`--passphrase`、`--skip claude|codex|ssh`、`--with-apps`、`--apps-dir DIR`，例如 `curl -fsSL <脚本地址> | bash -s -- --check`。

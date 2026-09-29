@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const { parseHTML } = require('linkedom');
 function setup() {
-  const { document, Event } = parseHTML('<html><body><main id="app"></main><div id="terminal-pane"><div id="xterm-container"><div id="host"></div></div></div><div id="modal-body"></div></body></html>');
+  const { document, Event } = parseHTML('<html><body><main id="app"></main><div id="terminal-pane"><div id="terminal-keys"></div><div id="xterm-container"><div id="host"></div></div></div><div id="modal-body"></div></body></html>');
   const listeners = new Map(); const requests = []; const sent = []; const notices = [];
   const window = { addEventListener(type, fn) { listeners.set(type, fn); }, removeEventListener(type) { listeners.delete(type); } };
   class XHR {
@@ -92,7 +92,7 @@ test('upload entry remains available and paste retries configuration after start
   const s = setup();
   s.context.API.get = async () => { throw new Error('offline'); };
   await assert.rejects(s.context.images.load(), /offline/);
-  assert.equal(s.document.querySelector('.terminal-image-actions').hidden, false);
+  assert.equal(s.document.querySelector('#terminal-keys .terminal-image-upload').hidden, false);
   s.context.API.get = async () => ({ enabled: true });
   s.paste(); await tick();
   assert.equal(s.requests.length, 1);

@@ -7,13 +7,12 @@ const TerminalImages = (() => {
   let uploadCard = null;
   const pane = document.getElementById('terminal-pane');
   const container = document.getElementById('xterm-container');
-  const bar = document.createElement('div');
-  bar.className = 'terminal-image-actions';
+  const keys = document.getElementById('terminal-keys');
   const button = document.createElement('button');
-  button.type = 'button'; button.className = 'terminal-toolbar-btn'; button.textContent = '上传图片';
+  button.type = 'button'; button.className = 'terminal-image-upload'; button.textContent = '上传图片';
   const picker = document.createElement('input');
   picker.type = 'file'; picker.accept = 'image/png,image/jpeg,image/gif,image/webp'; picker.hidden = true;
-  bar.append(button, picker); pane.append(bar);
+  keys.append(button, picker);
   function active() {
     if (pane.style.display === 'none' || container.style.display === 'none') return null;
     return [...instances].find(item => item.el.isConnected && item.el.style.display !== 'none') || null;
@@ -24,7 +23,7 @@ const TerminalImages = (() => {
     const scale = view.scale || 1;
     uploadCard.style.cssText = `position:absolute;left:${view.offsetLeft + view.width / 2}px;top:${view.offsetTop + view.height / 2}px;width:${Math.min(380, view.width * scale * .85)}px;transform:translate(-50%,-50%) scale(${1 / scale})`;
   }
-  function render() { bar.hidden = !active(); button.disabled = busy; }
+  function render() { button.hidden = !active(); button.disabled = busy; }
   window.visualViewport?.addEventListener('resize', layoutUploadCard);
   window.visualViewport?.addEventListener('scroll', layoutUploadCard);
   async function load() {

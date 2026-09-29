@@ -44,3 +44,16 @@ test('代理脚本中变量名后不能直接紧跟中文字符，也不会把�
   const printsUrl = source.split('\n').filter(line => /^\s*(info|ok|warn|fail|echo|printf)\b.*\$\{?SUB_URL\}?(?!\w)/.test(line) && !/#\{SUB_URL\}/.test(line) && !/printf 'url = /.test(line));
   assert.deepEqual(printsUrl, []);
 });
+
+test('向导启动脚本语法正确并给出帮助，向导服务可编译', () => {
+  const wizardScript = path.join(__dirname, '../scripts/setup-wizard.sh');
+  assert.equal(spawnSync('bash', ['-n', wizardScript]).status, 0);
+  const help = spawnSync('bash', [wizardScript, '--help'], { encoding: 'utf8' });
+  assert.equal(help.status, 0);
+  assert.match(help.stdout, /--port/);
+  const source = require('node:fs').readFileSync(wizardScript, 'utf8');
+  assert.deepEqual(source.split('\n').filter(line => /\$[A-Za-z_][A-Za-z0-9_]*[^\x00-\x7f]/.test(line)), []);
+  if (spawnSync('python3', ['--version']).status === 0) {
+    assert.equal(spawnSync('python3', ['-c', 'import ast,sys; ast.parse(open(sys.argv[1], encoding="utf8").read())', path.join(__dirname, '../scripts/setup-wizard.py')]).status, 0);
+  }
+});

@@ -787,3 +787,14 @@ Docker 安装可在更新源码后执行 `./docker-client.sh --remote-access yes
 - **Linux / macOS 加 `--core`**：下载最新 mihomo 内核到 `~/.local/bin`，拉取订阅到 `~/.config/mihomo/config.yaml`，强制只在本机监听（混合端口默认 7890、控制接口默认 127.0.0.1:9090，可用 `--port`、`--controller-port` 修改），校验配置后以 `systemd --user` 服务运行；没有 systemd 用户服务时退回后台进程。同时生成 `~/.config/mihomo/proxy-env.sh`，`source` 后用 `proxy_on` / `proxy_off` 切换当前终端的代理环境变量。
 - **订阅链接**：只从终端隐藏输入（无终端时读取 `T_AGENT_PROXY_SUB_URL`），保存到权限 600 的文件，不打印、不出现在进程参数或日志里。订阅内容必须是 Clash/mihomo 格式，否则会给出提示。
 - 其他参数：`--update`（用已保存的订阅重新拉取并重启）、`--status`、`--reconfigure`、`--upgrade`、`--no-service`。
+
+## 本地安装向导
+
+“实用工具”页的“复制向导启动命令”运行 `scripts/setup-wizard.sh`：下载 `setup-wizard.py`、`setup-wizard.html` 和两个安装脚本到临时目录（退出后删除），启动一个网页向导，可以勾选开发环境、Mac 应用，填写订阅链接并实时查看输出。需要 Python 3.6+（只用标准库），参数：`--port N`（默认 8765）、`--no-browser`、`--idle-timeout 秒`。
+
+安全约束：
+- 只监听 `127.0.0.1`。远程服务器上运行时，按终端提示在自己的电脑上执行 `ssh -L 8765:127.0.0.1:8765 <用户名>@<服务器>`，再用浏览器打开打印出的地址。
+- 每次启动生成随机令牌，页面加载后从地址栏抹掉；所有接口都校验令牌、`Host` 和 `Origin`，POST 只接受 JSON，不写访问日志。
+- 只能运行两个安装脚本，参数由白名单构造，页面不能提交任意命令；同一时间只运行一个任务。
+- 订阅链接只经环境变量交给子进程，输出中自动替换为 `***`，服务端不保存；页面提交后立即清空输入框。
+- 30 分钟无操作（且没有任务在运行）自动退出，页面上也可以点“退出向导”。

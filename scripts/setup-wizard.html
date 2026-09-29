@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>安装向导</title>
+<style>
+  :root {
+    --bg: #f6f8fa; --card: #ffffff; --text: #1f2328; --muted: #656d76; --line: #d0d7de;
+    --accent: #0969da; --ok: #1a7f37; --warn: #9a6700; --err: #cf222e; --log-bg: #0d1117; --log-text: #e6edf3;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0d1117; --card: #161b22; --text: #e6edf3; --muted: #8b949e; --line: #30363d;
+      --accent: #58a6ff; --ok: #3fb950; --warn: #d29922; --err: #f85149; --log-bg: #010409; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.6 -apple-system, "PingFang SC", "Segoe UI", sans-serif; }
+  main { max-width: 860px; margin: 0 auto; padding: 24px 16px 48px; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+  h1 { margin: 0; font-size: 20px; }
+  h2 { margin: 0 0 4px; font-size: 16px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 16px 18px; margin-bottom: 14px; }
+  .hint { color: var(--muted); font-size: 13px; margin: 0 0 10px; }
+  .row { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 8px 0; }
+  label.check { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+  .badge { font-size: 12px; padding: 0 6px; border-radius: 10px; border: 1px solid var(--line); color: var(--muted); }
+  .badge.on { color: var(--ok); border-color: var(--ok); }
+  input[type=password], input[type=text], input[type=number] { width: 100%; padding: 7px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; }
+  input[type=number] { width: 110px; }
+  .fields { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: end; margin-top: 8px; }
+  .fields label { display: flex; flex-direction: column; gap: 3px; font-size: 13px; color: var(--muted); }
+  button { font: inherit; padding: 6px 14px; border-radius: 6px; border: 1px solid var(--line); background: var(--card); color: var(--text); cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+  details { margin-top: 8px; }
+  summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+  #log { background: var(--log-bg); color: var(--log-text); border-radius: 6px; padding: 12px; min-height: 160px; max-height: 420px; overflow: auto; margin: 8px 0 0; font: 12px/1.55 ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; word-break: break-all; }
+  #status { font-size: 13px; color: var(--muted); }
+  #status.ok { color: var(--ok); } #status.err { color: var(--err); }
+  .error { color: var(--err); font-size: 13px; min-height: 1.4em; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>安装向导</h1>
+    <div><span id="platform" class="badge"></span> <button id="quit" type="button">退出向导</button></div>
+  </header>
+
+  <section class="card" id="dev-card">
+    <h2>开发环境</h2>
+    <p class="hint">安装 Claude Code、Codex，并在没有 SSH 密钥时生成（已有的不会覆盖，已安装的自动跳过）。</p>
+    <div class="row">
+      <label class="check"><input type="checkbox" id="dev-claude" checked> Claude Code <span class="badge" data-installed="claude"></span></label>
+      <label class="check"><input type="checkbox" id="dev-codex" checked> Codex <span class="badge" data-installed="codex"></span></label>
+      <label class="check"><input type="checkbox" id="dev-ssh" checked> SSH 密钥 <span class="badge" data-installed="ssh_key"></span></label>
+    </div>
+    <div class="row" id="apps-row" hidden>
+      <label class="check"><input type="checkbox" id="dev-apps"> 同时安装 Mac 应用：Maccy <span class="badge" data-installed="maccy"></span>、Snipaste <span class="badge" data-installed="snipaste"></span>、Clash Verge <span class="badge" data-installed="clash_verge"></span></label>
+    </div>
+    <details>
+      <summary>更多选项</summary>
+      <div class="row">
+        <label class="check"><input type="checkbox" id="dev-upgrade"> 已安装的也升级到最新版本</label>
+      </div>
+    </details>
+    <div class="actions">
+      <button class="primary" type="button" id="dev-run">开始安装</button>
+      <button type="button" id="dev-check">只检查，不安装</button>
+    </div>
+  </section>
+
+  <section class="card" id="proxy-card">
+    <h2>代理与订阅</h2>
+    <p class="hint" id="proxy-hint"></p>
+    <div class="fields" style="display:block">
+      <label>订阅链接（输入时不显示；只交给脚本使用，不会显示在日志里）
+        <input type="password" id="sub-url" autocomplete="off" spellcheck="false" placeholder="https://…">
+      </label>
+    </div>
+    <div class="error" id="proxy-error"></div>
+    <details>
+      <summary>更多选项</summary>
+      <div class="fields">
+        <label>代理端口<input type="number" id="port" min="1024" max="65535" placeholder="7890"></label>
+        <label>控制端口<input type="number" id="controller-port" min="1024" max="65535" placeholder="9090"></label>
+      </div>
+      <div class="row" id="core-row" hidden>
+        <label class="check"><input type="checkbox" id="use-core"> 使用 mihomo 内核，而不是 Clash Verge</label>
+      </div>
+      <div class="row">
+        <label class="check"><input type="checkbox" id="no-service"> 不创建系统服务，只在后台启动进程</label>
+      </div>
+    </details>
+    <div class="actions">
+      <button class="primary" type="button" id="proxy-run">安装并配置订阅</button>
+      <button type="button" id="proxy-update">用已保存的订阅更新</button>
+      <button type="button" id="proxy-status">查看状态</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>运行输出 <span id="status"></span></h2>
+    <pre id="log">等待操作…</pre>
+  </section>
+</main>
+
+<script>
+(() => {
+  const TOKEN = '__TOKEN__';
+  history.replaceState(null, '', '/');
+  const $ = id => document.getElementById(id);
+  let state = null, offset = 0, polling = null, busy = false;
+
+  async function api(path, body) {
+    const options = { headers: { 'X-Wizard-Token': TOKEN } };
+    if (body !== undefined) {
+      options.method = 'POST';
+      options.headers['Content-Type'] = 'application/json';
+      options.body = JSON.stringify(body);
+    }
+    const response = await fetch(path, options);
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || ('请求失败 ' + response.status));
+    return data;
+  }
+
+  function setBusy(value) {
+    busy = value;
+    document.querySelectorAll('button.primary, #dev-check, #proxy-update, #proxy-status').forEach(button => { button.disabled = value; });
+  }
+
+  function renderState() {
+    const mac = state.platform === 'macos';
+    $('platform').textContent = (mac ? 'macOS' : state.platform === 'linux' ? 'Linux' : state.platform) + ' · ' + state.arch;
+    $('apps-row').hidden = !mac;
+    $('core-row').hidden = !mac;
+    document.querySelectorAll('[data-installed]').forEach(node => {
+      const on = state.installed[node.dataset.installed];
+      node.textContent = on ? '已安装' : '未安装';
+      node.classList.toggle('on', on);
+    });
+    if (mac) {
+      $('proxy-hint').textContent = 'macOS：把订阅导入已安装的 Clash Verge（未安装请先在上面勾选“Mac 应用”）。导入后需要在 Clash Verge 里手动打开“系统代理”。';
+    } else {
+      $('proxy-hint').textContent = 'Linux：安装 mihomo 内核，用订阅生成配置，以用户级服务运行，只监听本机。之后在终端用 source ~/.config/mihomo/proxy-env.sh && proxy_on 启用。' +
+        (state.installed.proxy_subscription_saved ? '（已保存过订阅，可直接点“用已保存的订阅更新”。）' : '');
+    }
+    if (state.ssh_session) $('platform').title = 'SSH 会话';
+    if (!state.scripts_ready) $('log').textContent = '缺少安装脚本，请重新运行启动命令。';
+    setBusy(state.busy);
+  }
+
+  async function refreshState() {
+    state = await api('/api/state');
+    renderState();
+  }
+
+  function setStatus(text, cls) {
+    $('status').textContent = text ? '· ' + text : '';
+    $('status').className = cls || '';
+  }
+
+  function appendLog(lines) {
+    if (!lines.length) return;
+    const log = $('log');
+    const stick = log.scrollTop + log.clientHeight >= log.scrollHeight - 30;
+    log.textContent += lines.join('\n') + '\n';
+    if (stick) log.scrollTop = log.scrollHeight;
+  }
+
+  async function poll() {
+    try {
+      const job = await api('/api/job?since=' + offset);
+      offset = job.next;
+      appendLog(job.lines);
+      if (job.done) {
+        clearInterval(polling); polling = null;
+        setBusy(false);
+        setStatus(job.code === 0 ? '完成' : '结束（退出码 ' + job.code + '）', job.code === 0 ? 'ok' : 'err');
+        refreshState().catch(() => {});
+      }
+    } catch (error) {
+      clearInterval(polling); polling = null;
+      setStatus('与向导的连接已断开', 'err');
+    }
+  }
+
+  async function run(payload, title) {
+    if (busy) return;
+    $('log').textContent = '$ ' + title + '\n';
+    offset = 0;
+    setBusy(true); setStatus('运行中…');
+    try {
+      await api('/api/run', payload);
+    } catch (error) {
+      setBusy(false); setStatus('');
+      appendLog(['✗ ' + error.message]);
+      return false;
+    }
+    polling = setInterval(poll, 700);
+    poll();
+    return true;
+  }
+
+  function devPayload(check) {
+    const skip = [];
+    if (!$('dev-claude').checked) skip.push('claude');
+    if (!$('dev-codex').checked) skip.push('codex');
+    if (!$('dev-ssh').checked) skip.push('ssh');
+    return { action: 'dev-env', skip, check, upgrade: $('dev-upgrade').checked,
+      with_apps: !$('apps-row').hidden && $('dev-apps').checked };
+  }
+
+  function proxyPayload(mode) {
+    const payload = { action: 'proxy', mode, core: $('use-core').checked && !$('core-row').hidden,
+      no_service: $('no-service').checked };
+    if ($('port').value) payload.port = $('port').value;
+    if ($('controller-port').value) payload.controller_port = $('controller-port').value;
+    return payload;
+  }
+
+  $('dev-run').addEventListener('click', () => run(devPayload(false), '安装开发环境'));
+  $('dev-check').addEventListener('click', () => run(devPayload(true), '检查开发环境'));
+
+  $('proxy-run').addEventListener('click', async () => {
+    const url = $('sub-url').value.trim();
+    $('proxy-error').textContent = '';
+    if (!/^https?:\/\/[^\s"'\\]+$/.test(url)) {
+      $('proxy-error').textContent = '请填写以 http:// 或 https:// 开头的订阅链接（不能包含空白或引号）。';
+      return;
+    }
+    const payload = proxyPayload('install');
+    payload.subscription = url;
+    const started = await run(payload, '安装并配置代理');
+    if (started !== false) $('sub-url').value = '';
+  });
+  $('proxy-update').addEventListener('click', () => run(proxyPayload('update'), '更新订阅'));
+  $('proxy-status').addEventListener('click', () => run(proxyPayload('status'), '代理状态'));
+
+  $('quit').addEventListener('click', async () => {
+    if (busy && !confirm('任务还在运行，确定退出向导吗？')) return;
+    try { await api('/api/shutdown', {}); } catch (error) { /* 已退出 */ }
+    document.body.innerHTML = '<main><div class="card"><h2>向导已退出</h2><p class="hint">可以关闭这个页面。</p></div></main>';
+  });
+
+  refreshState().then(() => api('/api/job?since=0')).then(job => {
+    if (job.name && !job.done) { setBusy(true); polling = setInterval(poll, 700); }
+  }).catch(error => { $('log').textContent = '✗ ' + error.message; });
+})();
+</script>
+</body>
+</html>

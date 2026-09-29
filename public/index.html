@@ -60,6 +60,14 @@
         <span class="tool-copy-status" role="status"></span>
       </div>
     </div>
+    <div class="tool-card">
+      <div class="tool-card-title">本地安装向导（网页操作）</div>
+      <div class="form-hint">不想记命令行参数时使用：在目标机器上运行后会启动一个只监听本机的网页向导，勾选要安装的内容、在页面里填写订阅链接并查看实时输出。需要 Python 3；在远程服务器上运行时，按提示用 SSH 端口转发（<code>ssh -L 8765:127.0.0.1:8765</code>）再从本机浏览器打开。</div>
+      <div class="tool-card-actions">
+        <button type="button" class="btn-logout tool-copy-btn" data-script="setup-wizard.sh">复制向导启动命令</button>
+        <span class="tool-copy-status" role="status"></span>
+      </div>
+    </div>
   </section>
 
   <div class="layout">

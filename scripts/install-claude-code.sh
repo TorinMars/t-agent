@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 开发环境安装脚本（macOS / Linux）：Claude Code、Codex、SSH 密钥，用户级规则与默认配置的远程同步，以及统一命令 ta。
+# 开发环境安装脚本（macOS / Linux）：Claude Code、Codex、SSH 密钥，用户级规则与默认配置的远程同步，统一命令 ta，以及 PM2（缺少 Node.js 时装到用户目录）。
 #
 # 用法：
 #   curl -fsSL <脚本地址> | bash
@@ -10,7 +10,7 @@
 #   --upgrade           已安装的工具也重新安装为最新版本
 #   --no-modify-path    不修改 shell 配置文件（不写 PATH，也不写 claude/codex 同步函数）
 #   --passphrase        生成 SSH 密钥时交互设置密码短语（需要终端）
-#   --skip NAME         跳过某一项，NAME 为 claude、codex、ssh、sync 或 ta，可重复使用
+#   --skip NAME         跳过某一项，NAME 为 claude、codex、ssh、sync、ta 或 pm2，可重复使用
 #   --with-apps         同时安装 Mac 桌面应用：Maccy、Snipaste、Clash Verge（仅 macOS）
 #   --apps-dir DIR      桌面应用的安装目录（默认 /Applications，不可写时用 ~/Applications）
 #   -h, --help          显示帮助
@@ -22,8 +22,8 @@ main() {
   set -uo pipefail
 
   local CHECK_ONLY=0 UPGRADE=0 MODIFY_PATH=1 PASSPHRASE=0
-  local SKIP_CLAUDE=0 SKIP_CODEX=0 SKIP_SSH=0 SKIP_SYNC=0 SKIP_TA=0 WITH_APPS=0 APPS_DIR=""
-  local STEP_NO=0 STEP_TOTAL=7
+  local SKIP_CLAUDE=0 SKIP_CODEX=0 SKIP_SSH=0 SKIP_SYNC=0 SKIP_TA=0 SKIP_PM2=0 WITH_APPS=0 APPS_DIR=""
+  local STEP_NO=0 STEP_TOTAL=8
   local SCRIPTS_BASE="${T_AGENT_SCRIPTS_BASE:-https://raw.githubusercontent.com/TorinMars/t-agent/main/scripts}"
   local BIN_DIR="$HOME/.local/bin"
   local OS="" ARCH="" FETCH=""
@@ -53,7 +53,7 @@ main() {
   --upgrade           已安装的工具也重新安装为最新版本
   --no-modify-path    不修改 shell 配置文件（不写 PATH，也不写 claude/codex 同步函数）
   --passphrase        生成 SSH 密钥时交互设置密码短语（需要终端）
-  --skip NAME         跳过某一项：claude、codex、ssh、sync 或 ta，可重复使用
+  --skip NAME         跳过某一项：claude、codex、ssh、sync、ta 或 pm2，可重复使用
   --with-apps         同时安装 Mac 桌面应用：Maccy、Snipaste、Clash Verge（仅 macOS）
   --apps-dir DIR      桌面应用的安装目录（默认 /Applications，不可写时用 ~/Applications）
   -h, --help          显示帮助
@@ -80,9 +80,10 @@ USAGE
           ssh) SKIP_SSH=1 ;;
           sync) SKIP_SYNC=1 ;;
           ta) SKIP_TA=1 ;;
-          *) fail "--skip 只支持 claude、codex、ssh、sync、ta"; return 2 ;;
+          pm2) SKIP_PM2=1 ;;
+          *) fail "--skip 只支持 claude、codex、ssh、sync、ta、pm2"; return 2 ;;
         esac ;;
-      --with-apps) WITH_APPS=1; STEP_TOTAL=8 ;;
+      --with-apps) WITH_APPS=1; STEP_TOTAL=9 ;;
       --apps-dir)
         shift
         if [ -z "${1:-}" ]; then fail "--apps-dir 需要指定目录"; return 2; fi
@@ -451,6 +452,100 @@ HOOK
     record "统一命令 ta" "已安装" "${target}；默认 claude，ta x 为 codex"
   }
 
+
+  # ---------- 步骤：PM2（缺少 Node.js 时先装到用户目录） ----------
+  NODE_HOME="$HOME/.local/node"
+  NODE_MAJOR="22"
+
+  # 把 ~/.local/node/bin 写进 shell 配置（只追加一次）
+  ensure_node_path() {
+    case ":$PATH:" in *":$NODE_HOME/bin:"*) ;; *) export PATH="$NODE_HOME/bin:$PATH" ;; esac
+    [ "$MODIFY_PATH" -eq 1 ] || return 0
+    local rc
+    rc="$(shell_rc_file)"
+    if [ -f "$rc" ] && grep -Fq '.local/node/bin' "$rc"; then return 0; fi
+    printf '\n# 由 install-claude-code.sh 添加（Node.js）\nexport PATH="$HOME/.local/node/bin:$PATH"\n' >> "$rc" \
+      && ok "已把 ~/.local/node/bin 写入 ${rc}（新开的终端生效）" \
+      || warn "无法写入 ${rc}，请手动添加：export PATH=\"\$HOME/.local/node/bin:\$PATH\""
+  }
+
+  sha256_of() {
+    if have shasum; then shasum -a 256 "$1" | cut -d' ' -f1
+    elif have sha256sum; then sha256sum "$1" | cut -d' ' -f1
+    else return 1; fi
+  }
+
+  # 下载官方预编译的 Node.js LTS 到 ~/.local/node，并用官方 SHASUMS256.txt 校验
+  install_node() {
+    if [ "$OS" = "linux" ] && { ldd --version 2>&1 | grep -qi musl || [ -e /lib/ld-musl-x86_64.so.1 ] || [ -e /lib/ld-musl-aarch64.so.1 ]; }; then
+      fail "当前是 musl 系统（如 Alpine），官方预编译的 Node.js 不适用；请先运行：sudo apk add nodejs npm"
+      return 1
+    fi
+    local node_os node_arch mirror index line sum file archive
+    [ "$OS" = "macos" ] && node_os="darwin" || node_os="linux"
+    [ "$ARCH" = "aarch64" ] && node_arch="arm64" || node_arch="x64"
+    mirror="${T_AGENT_NODE_MIRROR:-https://nodejs.org/dist}"
+    index="$TMP_DIR/node-shasums.txt"
+    info "  未检测到 Node.js，正在安装 Node ${NODE_MAJOR} LTS 到 ${NODE_HOME} …"
+    if ! download "$mirror/latest-v${NODE_MAJOR}.x/SHASUMS256.txt" "$index"; then
+      fail "无法获取 Node.js 版本信息（能否访问 ${mirror}？国内可设置 T_AGENT_NODE_MIRROR=https://npmmirror.com/mirrors/node）"
+      return 1
+    fi
+    line="$(grep -E " node-v${NODE_MAJOR}\.[0-9.]+-${node_os}-${node_arch}\.tar\.gz\$" "$index" | head -n1)"
+    sum="${line%% *}"; file="${line##* }"
+    if [ -z "$line" ] || [ -z "$sum" ] || [ -z "$file" ]; then
+      fail "在 SHASUMS256.txt 中找不到 ${node_os}-${node_arch} 的安装包"; return 1
+    fi
+    archive="$TMP_DIR/$file"
+    if ! download "$mirror/latest-v${NODE_MAJOR}.x/$file" "$archive"; then fail "下载 Node.js 失败"; return 1; fi
+    if [ "$(sha256_of "$archive" 2>/dev/null)" != "$sum" ]; then
+      fail "Node.js 安装包校验失败（SHA-256 不一致），已放弃安装"; return 1
+    fi
+    rm -rf "$TMP_DIR/node-extract" && mkdir -p "$TMP_DIR/node-extract"
+    if ! tar -xzf "$archive" -C "$TMP_DIR/node-extract" --strip-components 1; then fail "解压 Node.js 失败"; return 1; fi
+    [ -x "$TMP_DIR/node-extract/bin/node" ] || { fail "安装包里没有 node 可执行文件"; return 1; }
+    mkdir -p "$(dirname "$NODE_HOME")"
+    rm -rf "$NODE_HOME" && mv "$TMP_DIR/node-extract" "$NODE_HOME" || { fail "无法写入 $NODE_HOME"; return 1; }
+    ensure_node_path
+    ok "Node.js 已安装：$("$NODE_HOME/bin/node" --version 2>/dev/null)"
+  }
+
+  install_pm2() {
+    step "PM2"
+    if [ "$SKIP_PM2" -eq 1 ]; then record "PM2" "跳过" "使用了 --skip pm2"; return; fi
+    case ":$PATH:" in *":$NODE_HOME/bin:"*) ;; *) [ -x "$NODE_HOME/bin/node" ] && export PATH="$NODE_HOME/bin:$PATH" ;; esac
+    if have pm2 && [ "$UPGRADE" -eq 0 ]; then
+      ok "已安装：pm2 $(pm2 --version 2>/dev/null | tail -n1)"
+      record "PM2" "已安装" "pm2 $(pm2 --version 2>/dev/null | tail -n1)"; return
+    fi
+    if [ "$CHECK_ONLY" -eq 1 ]; then
+      have node && ok "Node.js：$(node --version 2>/dev/null)" || warn "未安装 Node.js（安装时会自动装到 ~/.local/node）"
+      warn "pm2 未安装"; record "PM2" "未安装" "--check 模式不安装"; return
+    fi
+    if ! have node || ! have npm; then
+      if ! install_node; then record "PM2" "失败" "无法安装 Node.js"; return; fi
+    else
+      ok "Node.js：$(node --version 2>/dev/null)"
+    fi
+    have npm || { fail "找不到 npm"; record "PM2" "失败" "没有 npm"; return; }
+    # 全局目录可写就装到默认位置（nvm、~/.local/node 都属于此类），否则装到 ~/.local
+    local prefix
+    prefix="$(npm config get prefix 2>/dev/null)"
+    if [ -n "$prefix" ] && [ -w "$prefix" ]; then
+      npm install -g pm2 </dev/null >"$TMP_DIR/npm-pm2.log" 2>&1
+    else
+      ensure_path
+      npm install -g --prefix "$HOME/.local" pm2 </dev/null >"$TMP_DIR/npm-pm2.log" 2>&1
+    fi
+    if ! have pm2; then
+      tail -n 5 "$TMP_DIR/npm-pm2.log" | sed 's/^/    /' >&2
+      fail "安装 pm2 失败"; record "PM2" "失败" "npm install -g pm2 失败"; return
+    fi
+    ok "pm2 已安装：$(pm2 --version 2>/dev/null | tail -n1)"
+    info "  开机自启需要你自己执行（其中的 sudo 命令由 pm2 打印）：pm2 startup ；启动服务后执行：pm2 save"
+    record "PM2" "已安装" "pm2 $(pm2 --version 2>/dev/null | tail -n1)；开机自启请运行 pm2 startup"
+  }
+
   # ---------- Mac 桌面应用 ----------
   apps_target_dir() {
     if [ -n "$APPS_DIR" ]; then printf '%s\n' "$APPS_DIR"
@@ -615,6 +710,7 @@ EOF
   setup_ssh_key
   setup_agent_sync
   install_ta
+  install_pm2
   if [ "$WITH_APPS" -eq 1 ]; then install_mac_apps; fi
   print_summary
   return "$FAILED"

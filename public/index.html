@@ -44,8 +44,8 @@
 
   <section class="tools-panel" id="tools-panel" hidden aria-label="实用工具">
     <div class="tool-card">
-      <div class="tool-card-title">安装开发环境（Claude Code / Codex / SSH 密钥 / 规则同步）</div>
-      <div class="form-hint">复制 GitHub 安装脚本命令，在目标机器的终端中粘贴执行（macOS / Linux）。已安装的工具会跳过，已有 SSH 密钥不会被覆盖；还会配置每次启动 <code>claude</code> / <code>codex</code> 前同步仓库 <code>rules/</code> 里的用户级规则和默认配置（<code>--skip sync</code> 可跳过）；加 <code>bash -s -- --check</code> 可只检查不安装，加 <code>--with-apps</code> 可在 Mac 上同时安装 Maccy、Snipaste、Clash Verge。</div>
+      <div class="tool-card-title">安装开发环境（Claude Code / Codex / SSH 密钥 / 规则同步 / ta / PM2）</div>
+      <div class="form-hint">复制 GitHub 安装脚本命令，在目标机器的终端中粘贴执行（macOS / Linux）。已安装的工具会跳过，已有 SSH 密钥不会被覆盖；还会配置每次启动 <code>claude</code> / <code>codex</code> 前同步仓库 <code>rules/</code> 里的用户级规则和默认配置（<code>--skip sync</code> 可跳过）；还会安装统一命令 <code>ta</code> 和 PM2（没有 Node.js 时先装到 <code>~/.local/node</code>，<code>--skip pm2</code> 可跳过）；加 <code>bash -s -- --check</code> 可只检查不安装，加 <code>--with-apps</code> 可在 Mac 上同时安装 Maccy、Snipaste、Clash Verge。</div>
       <div class="tool-card-actions">
         <button type="button" class="btn-logout tool-copy-btn" data-script="install-claude-code.sh">复制安装命令</button>
         <button type="button" class="btn-logout tool-copy-btn" data-script="install-claude-code.sh" data-args="--with-apps">复制安装命令（含 Mac 应用）</button>
@@ -58,6 +58,29 @@
       <div class="tool-card-actions">
         <button type="button" class="btn-logout tool-copy-btn" data-script="install-proxy.sh">复制代理配置命令</button>
         <span class="tool-copy-status" role="status"></span>
+      </div>
+    </div>
+    <div class="tool-card tool-card-wide" id="pm2-card">
+      <div class="tool-card-title">PM2 进程管理</div>
+      <div class="form-hint" id="pm2-hint">管理运行 Client 的这台机器上的 PM2 进程（远程 Engine 所在机器不在此列）。可以启动、停止、重启、reload 和查看日志；停止或重启前会确认。</div>
+      <div class="pm2-table-wrap">
+        <table class="pm2-table" id="pm2-table" hidden>
+          <thead><tr><th>名称</th><th>状态</th><th>CPU</th><th>内存</th><th>运行时长</th><th>重启</th><th>操作</th></tr></thead>
+          <tbody id="pm2-body"></tbody>
+        </table>
+      </div>
+      <div class="tool-card-actions">
+        <button type="button" class="btn-logout" id="pm2-refresh">刷新</button>
+        <span class="tool-copy-status" id="pm2-status" role="status"></span>
+      </div>
+      <div class="pm2-logs" id="pm2-logs" hidden>
+        <div class="pm2-logs-bar">
+          <strong id="pm2-logs-title"></strong>
+          <select id="pm2-logs-stream" aria-label="日志类型"><option value="out">标准输出</option><option value="err">错误输出</option></select>
+          <select id="pm2-logs-lines" aria-label="行数"><option value="100">最近 100 行</option><option value="300" selected>最近 300 行</option><option value="1000">最近 1000 行</option></select>
+          <button type="button" class="btn-logout" id="pm2-logs-close">关闭</button>
+        </div>
+        <pre id="pm2-log-text"></pre>
       </div>
     </div>
     <div class="tool-card">

@@ -84,6 +84,7 @@ app.use('/api/task-groups', require('./routes/task-groups'));
 app.use('/api/bookmarks', require('./routes/bookmarks'));
 app.use('/api/system', require('./routes/system'));
 app.use('/api/oss', require('./routes/oss').createOssRouter());
+app.use('/api/pm2', require('./routes/pm2').createPm2Router());
 app.use('/api/remote-servers', require('./routes/remote-servers'));
 app.use('/api/remote-tokens', require('./routes/remote-tokens'));
 app.use('/api/remote/v1', require('./routes/remote-api'));

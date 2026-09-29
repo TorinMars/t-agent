@@ -87,6 +87,23 @@ body {
 .tool-card-actions { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
 .tool-copy-status { font-size: 12px; color: var(--text-muted); }
 body.tools-open .layout, body.tools-open .quicklinks-bar { display: none; }
+.tools-panel .tool-card + .tool-card { margin-top: 14px; }
+.tool-card-wide { max-width: 980px; }
+.pm2-table-wrap { overflow-x: auto; margin-top: 8px; }
+.pm2-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.pm2-table th, .pm2-table td { padding: 6px 10px; text-align: left; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.pm2-table th { color: var(--text-muted); font-weight: 500; }
+.pm2-table .pm2-name small { display: block; color: var(--text-muted); font-size: 11px; max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
+.pm2-badge { display: inline-block; padding: 0 8px; border-radius: 10px; font-size: 12px; border: 1px solid var(--border); color: var(--text-muted); }
+.pm2-badge.online { color: #1a7f37; border-color: #1a7f37; }
+.pm2-badge.errored { color: #cf222e; border-color: #cf222e; }
+.pm2-badge.launching, .pm2-badge.stopping, .pm2-badge.waiting { color: #9a6700; border-color: #9a6700; }
+.pm2-actions { display: flex; gap: 6px; }
+.pm2-actions button { padding: 2px 8px; font-size: 12px; }
+.pm2-logs { margin-top: 12px; }
+.pm2-logs-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+.pm2-logs-bar strong { margin-right: auto; }
+#pm2-log-text { margin: 0; padding: 10px; max-height: 360px; overflow: auto; background: #0d1117; color: #e6edf3; border-radius: 6px; font: 12px/1.5 ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; word-break: break-all; }
 
 .header-right {
   display: flex;

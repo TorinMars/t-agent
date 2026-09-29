@@ -16,7 +16,7 @@ test('安装脚本语法正确，帮助信息列出全部参数', () => {
 test('安装脚本拒绝未知参数和不支持的 --skip 项', () => {
   assert.equal(run(['--bogus']).status, 2);
   assert.equal(run(['--skip', 'homebrew']).status, 2);
-  assert.match(run(['--help']).stdout, /claude、codex、ssh、sync 或 ta/);
+  assert.match(run(['--help']).stdout, /sync、ta 或 pm2/);
 });
 
 test('安装脚本中变量名后不能直接紧跟中文字符（UTF-8 下会被当作变量名的一部分）', () => {
@@ -73,7 +73,7 @@ test('codex -c / --continue 继续最近会话，codex -c key=value 仍是配置
     T_AGENT_RULES_BASE: `file://${path.join(__dirname, '../rules')}`,
     T_AGENT_SYNC_CACHE: path.join(home, 'cache'),
   };
-  const install = spawnSync('bash', [script, '--skip', 'ssh'], { encoding: 'utf8', env, input: '' });
+  const install = spawnSync('bash', [script, '--skip', 'ssh', '--skip', 'pm2'], { encoding: 'utf8', env, input: '' });
   assert.equal(install.status, 0, install.stdout + install.stderr);
   const rcFile = path.join(home, process.platform === 'darwin' ? '.bash_profile' : '.bashrc');
   const rc = fs.readFileSync(rcFile, 'utf8');
@@ -116,4 +116,92 @@ test('ta 把统一的 -c / -p / -m 翻译成 claude 和 codex 各自的写法，
   assert.equal(plan('-p').status, 2);
   assert.equal(spawnSync('bash', [ta, '--set-default', 'nope'], { encoding: 'utf8' }).status, 2);
   assert.equal(spawnSync('bash', ['-n', ta]).status, 0);
+});
+
+// ---- PM2 / Node.js 安装步骤：用本地 file:// 假镜像，不联网 ----
+function pm2Sandbox({ wrongChecksum = false, withPm2 = false } = {}) {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const crypto = require('node:crypto');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pm2-install-'));
+  const home = path.join(root, 'home');
+  fs.mkdirSync(path.join(home, '.local/bin'), { recursive: true });
+  const nodeOs = process.platform === 'darwin' ? 'darwin' : 'linux';
+  const nodeArch = process.arch === 'arm64' ? 'arm64' : 'x64';
+  const name = `node-v22.9.9-${nodeOs}-${nodeArch}`;
+  const pkg = path.join(root, 'pkg', name, 'bin');
+  fs.mkdirSync(pkg, { recursive: true });
+  fs.writeFileSync(path.join(pkg, 'node'), '#!/bin/sh\necho v22.9.9\n', { mode: 0o755 });
+  fs.writeFileSync(path.join(pkg, 'npm'), `#!/bin/sh
+here="$(cd "$(dirname "$0")/.." && pwd)"
+case "$1 $2 $3" in
+  "config get prefix") echo "$here"; exit 0 ;;
+esac
+prefix="$here"; [ "$3" = "--prefix" ] && prefix="$4"
+mkdir -p "$prefix/bin" && printf '#!/bin/sh\\necho 7.0.0-fake\\n' > "$prefix/bin/pm2" && chmod +x "$prefix/bin/pm2"
+`, { mode: 0o755 });
+  const mirror = path.join(root, 'mirror/latest-v22.x');
+  fs.mkdirSync(mirror, { recursive: true });
+  const tarball = `${name}.tar.gz`;
+  spawnSync('tar', ['-czf', path.join(mirror, tarball), '-C', path.join(root, 'pkg'), name]);
+  const sum = wrongChecksum ? '0'.repeat(64) : crypto.createHash('sha256').update(fs.readFileSync(path.join(mirror, tarball))).digest('hex');
+  fs.writeFileSync(path.join(mirror, 'SHASUMS256.txt'), `${sum}  ${tarball}\n`);
+  if (withPm2) fs.writeFileSync(path.join(home, '.local/bin/pm2'), '#!/bin/sh\necho 6.0.0-existing\n', { mode: 0o755 });
+  const run = extra => spawnSync('bash', [script, '--skip', 'claude', '--skip', 'codex', '--skip', 'ssh', '--skip', 'sync', '--skip', 'ta', ...extra], {
+    encoding: 'utf8', input: '',
+    env: { HOME: home, SHELL: '/bin/bash', PATH: `${home}/.local/bin:/usr/bin:/bin:/usr/sbin:/sbin`,
+      T_AGENT_NODE_MIRROR: withPm2 ? 'file:///nonexistent' : `file://${path.join(root, 'mirror')}` },
+  });
+  return { root, home, run, cleanup: () => fs.rmSync(root, { recursive: true, force: true }) };
+}
+const systemHasNode = ['/usr/bin/node', '/bin/node', '/usr/sbin/node', '/sbin/node'].some(p => require('node:fs').existsSync(p));
+
+test('没有 Node.js 时下载官方包到用户目录、校验 SHA-256，再安装 PM2', { skip: systemHasNode }, () => {
+  const box = pm2Sandbox();
+  try {
+    const result = box.run([]);
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.match(result.stdout, /Node\.js 已安装：v22\.9\.9/);
+    assert.match(result.stdout, /PM2\s+已安装\s+pm2 7\.0\.0-fake/);
+    const fs = require('node:fs');
+    assert.ok(fs.existsSync(path.join(box.home, '.local/node/bin/node')));
+    assert.ok(fs.existsSync(path.join(box.home, '.local/node/bin/pm2')));
+    const rc = fs.readFileSync(path.join(box.home, process.platform === 'darwin' ? '.bash_profile' : '.bashrc'), 'utf8');
+    assert.equal(rc.split('.local/node/bin').length - 1, 1, 'PATH 只写入一次');
+    const again = box.run([]);
+    assert.equal(again.status, 0);
+    assert.doesNotMatch(again.stdout, /正在安装 Node/);
+    assert.match(again.stdout, /PM2\s+已安装/);
+  } finally { box.cleanup(); }
+});
+
+test('Node.js 安装包校验和不一致时拒绝安装', { skip: systemHasNode }, () => {
+  const box = pm2Sandbox({ wrongChecksum: true });
+  try {
+    const result = box.run([]);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /校验失败/);
+    assert.match(result.stdout, /PM2\s+失败/);
+    assert.ok(!require('node:fs').existsSync(path.join(box.home, '.local/node')));
+  } finally { box.cleanup(); }
+});
+
+test('已安装 PM2 时不下载任何东西；--skip pm2 和 --check 不安装', () => {
+  const box = pm2Sandbox({ withPm2: true });
+  try {
+    const result = box.run([]);
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.match(result.stdout, /PM2\s+已安装\s+pm2 6\.0\.0-existing/);
+    assert.ok(!require('node:fs').existsSync(path.join(box.home, '.local/node')));
+    assert.match(box.run(['--skip', 'pm2']).stdout, /PM2\s+跳过/);
+  } finally { box.cleanup(); }
+  if (!systemHasNode) {
+    const bare = pm2Sandbox();
+    try {
+      const check = bare.run(['--check']);
+      assert.equal(check.status, 0);
+      assert.match(check.stdout, /PM2\s+未安装/);
+      assert.ok(!require('node:fs').existsSync(path.join(bare.home, '.local/node')));
+    } finally { bare.cleanup(); }
+  }
 });

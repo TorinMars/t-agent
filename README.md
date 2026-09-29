@@ -776,10 +776,11 @@ Docker 安装可在更新源码后执行 `./docker-client.sh --remote-access yes
 4. 没有 SSH 密钥时生成 `ed25519` 密钥（默认无密码短语）并只显示公钥；已有任何密钥都不会覆盖。
 5. 安装同步程序到 `~/.local/share/t-agent/agent-sync.py`，先同步一次，并在 shell 配置里写入 `claude` / `codex` 包装函数（详见下节“用户级规则与默认配置同步”）；`--skip sync` 跳过，`--no-modify-path` 时只同步一次、不写包装函数。
 6. 安装统一命令 `ta` 到 `~/.local/bin/ta`（详见下节“统一命令 ta”）；`--skip ta` 跳过，已有的其他同名程序不会被覆盖。
-7. 加 `--with-apps`（仅 macOS 本机桌面会话）时，下载并安装 Maccy、Snipaste、Clash Verge Rev：均为 Apple 公证的官方包，安装前校验代码签名和系统版本要求，默认装到 `/Applications`（不可写时用 `~/Applications`，也可用 `--apps-dir` 指定）；已安装的跳过，SSH 远程登录时自动跳过。首次打开所需的“辅助功能”“屏幕录制”授权需要手动完成。
-8. 把 `~/.local/bin` 追加到 shell 配置文件（只追加一次），最后汇总每一项的结果；任一项失败时退出码为 1。
+7. 安装 PM2（详见下节“PM2 进程管理”）；`--skip pm2` 跳过。
+8. 加 `--with-apps`（仅 macOS 本机桌面会话）时，下载并安装 Maccy、Snipaste、Clash Verge Rev：均为 Apple 公证的官方包，安装前校验代码签名和系统版本要求，默认装到 `/Applications`（不可写时用 `~/Applications`，也可用 `--apps-dir` 指定）；已安装的跳过，SSH 远程登录时自动跳过。首次打开所需的“辅助功能”“屏幕录制”授权需要手动完成。
+9. 把 `~/.local/bin` 追加到 shell 配置文件（只追加一次），最后汇总每一项的结果；任一项失败时退出码为 1。
 
-参数：`--check`（只检查）、`--upgrade`、`--no-modify-path`、`--passphrase`、`--skip claude|codex|ssh|sync|ta`、`--with-apps`、`--apps-dir DIR`，例如 `curl -fsSL <脚本地址> | bash -s -- --check`。
+参数：`--check`（只检查）、`--upgrade`、`--no-modify-path`、`--passphrase`、`--skip claude|codex|ssh|sync|ta|pm2`、`--with-apps`、`--apps-dir DIR`，例如 `curl -fsSL <脚本地址> | bash -s -- --check`。
 
 ## 代理安装与订阅配置
 
@@ -835,3 +836,16 @@ Docker 安装可在更新源码后执行 `./docker-client.sh --remote-access yes
 - 只有 `-c/--continue`、`-p/--prompt`、`-m/--model` 会被翻译，其余参数原样透传；两边同名但含义不同的参数（如 codex 的 `-p` 是 `--profile`）写在 `--` 之后：`ta x -- -p 名称`。
 - `ta --dry-run …` 只打印将要执行的命令。启动前同样会同步远程规则与配置（失败或没有 Python 不影响启动）。
 - 原来的 `claude` / `codex` 命令保持可用。
+
+## PM2 进程管理
+
+**安装**：`install-claude-code.sh` 的 PM2 步骤在 `pm2` 已存在时直接跳过。没有 Node.js 时，下载官方 Node 22 LTS 预编译包（`https://nodejs.org/dist/latest-v22.x/`）到 `~/.local/node`，用官方 `SHASUMS256.txt` 校验 SHA-256（不一致则拒绝安装），并把 `~/.local/node/bin` 写入 shell 配置；国内网络可设置 `T_AGENT_NODE_MIRROR=https://npmmirror.com/mirrors/node`。随后 `npm install -g pm2`（全局目录不可写时改装到 `~/.local`）。不使用 sudo；Alpine 等 musl 系统不适用官方包，会提示改用系统包。开机自启需要你自己执行 `pm2 startup`（其中的 sudo 命令由 pm2 打印）和 `pm2 save`。
+
+**网页管理**：t-agent 的“实用工具”页有“PM2 进程管理”面板，列出运行 Client 的这台机器上的 PM2 进程（名称、状态、CPU、内存、运行时长、重启次数），支持启动、停止、重启、reload 和查看/自动刷新日志。接口是 `/api/pm2/*`，和其他 `/api/*` 一样需要登录并校验来源。
+
+安全约束：
+- 只允许 `start`、`stop`、`restart`、`reload` 四个动作，不能删除进程、不能启动任意命令；进程编号必须存在于 `pm2 jlist` 中。
+- 返回字段是白名单，**不返回进程的环境变量和命令行参数**；日志路径只取自 pm2 自己的记录，不接受请求传入的路径，最多读取尾部 256 KiB / 1000 行。
+- 停止任意进程、重启或停止当前页面所在的 t-agent 自身都会二次确认。
+- PM2 守护进程没有运行时只显示提示，不会因为查询而把它拉起来。
+- 管理范围只有运行 Client 的这台机器，远程 Engine 所在机器上的 PM2 不在其中。

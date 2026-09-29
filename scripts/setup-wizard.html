@@ -58,6 +58,7 @@
       <label class="check"><input type="checkbox" id="dev-ssh" checked> SSH 密钥 <span class="badge" data-installed="ssh_key"></span></label>
       <label class="check"><input type="checkbox" id="dev-sync" checked> Claude / Codex 规则与默认配置同步 <span class="badge" data-installed="sync"></span></label>
       <label class="check"><input type="checkbox" id="dev-ta" checked> 统一命令 ta（一个命令启动 Claude / Codex） <span class="badge" data-installed="ta"></span></label>
+      <label class="check"><input type="checkbox" id="dev-pm2" checked> PM2 进程管理（缺少 Node.js 时装到用户目录） <span class="badge" data-installed="pm2"></span></label>
     </div>
     <div class="row" id="apps-row" hidden>
       <label class="check"><input type="checkbox" id="dev-apps"> 同时安装 Mac 应用：Maccy <span class="badge" data-installed="maccy"></span>、Snipaste <span class="badge" data-installed="snipaste"></span>、Clash Verge <span class="badge" data-installed="clash_verge"></span></label>
@@ -214,6 +215,7 @@
     if (!$('dev-ssh').checked) skip.push('ssh');
     if (!$('dev-sync').checked) skip.push('sync');
     if (!$('dev-ta').checked) skip.push('ta');
+    if (!$('dev-pm2').checked) skip.push('pm2');
     return { action: 'dev-env', skip, check, upgrade: $('dev-upgrade').checked,
       with_apps: !$('apps-row').hidden && $('dev-apps').checked };
   }

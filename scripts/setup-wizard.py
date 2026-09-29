@@ -29,7 +29,7 @@ from urllib.parse import parse_qs, urlparse
 LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 MAX_BODY = 64 * 1024
 IDLE_TIMEOUT = 30 * 60
-DEV_SKIPS = ("claude", "codex", "ssh", "sync", "ta")
+DEV_SKIPS = ("claude", "codex", "ssh", "sync", "ta", "pm2")
 HOME = os.path.expanduser("~")
 
 
@@ -56,7 +56,7 @@ def build_job(payload, scripts_dir, system):
         argv = ["bash", os.path.join(scripts_dir, "install-claude-code.sh")]
         skip = payload.get("skip") or []
         if not isinstance(skip, list) or any(item not in DEV_SKIPS for item in skip):
-            raise ValueError("skip 只支持 claude、codex、ssh、sync、ta")
+            raise ValueError("skip 只支持 claude、codex、ssh、sync、ta、pm2")
         for item in skip:
             argv += ["--skip", item]
         if payload.get("check"):
@@ -99,7 +99,7 @@ def build_job(payload, scripts_dir, system):
 
 
 def which_in_user_path(name):
-    path = os.pathsep.join([os.path.join(HOME, ".local", "bin"), os.environ.get("PATH", "")])
+    path = os.pathsep.join([os.path.join(HOME, ".local", "bin"), os.path.join(HOME, ".local", "node", "bin"), os.environ.get("PATH", "")])
     return shutil.which(name, path=path)
 
 
@@ -117,6 +117,7 @@ def collect_state(scripts_dir):
             "claude": bool(which_in_user_path("claude")),
             "codex": bool(which_in_user_path("codex")),
             "ssh_key": bool(ssh_keys),
+            "pm2": bool(which_in_user_path("pm2")),
             "ta": os.path.isfile(os.path.join(HOME, ".local", "bin", "ta")),
             "sync": os.path.isfile(os.path.join(HOME, ".local", "share", "t-agent", "agent-sync.py")),
             "maccy": app("Maccy.app"),

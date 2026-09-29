@@ -1,10 +1,7 @@
 // Utility tools live beside Tasks; switching only toggles visibility so terminals stay connected.
 const Tools = (() => {
-  const CLAUDE_INSTALL_SCRIPT = `#!/usr/bin/env bash
-set -euo pipefail
-curl -fsSL https://claude.ai/install.sh | bash
-claude --version
-`;
+  const CLAUDE_INSTALL_SCRIPT_URL = 'https://raw.githubusercontent.com/TorinMars/t-agent/main/scripts/install-claude-code.sh';
+  const CLAUDE_INSTALL_COMMAND = `curl -fsSL ${CLAUDE_INSTALL_SCRIPT_URL} | bash`;
   const tabTasks = document.getElementById('tab-tasks');
   const tabTools = document.getElementById('tab-tools');
   const panel = document.getElementById('tools-panel');
@@ -29,8 +26,8 @@ claude --version
   tabTasks.addEventListener('click', () => show(false));
   tabTools.addEventListener('click', () => show(true));
   copyButton.addEventListener('click', async () => {
-    status.textContent = (await copy(CLAUDE_INSTALL_SCRIPT)) ? '已复制' : '复制失败，请检查浏览器剪贴板权限';
+    status.textContent = (await copy(CLAUDE_INSTALL_COMMAND)) ? '已复制' : '复制失败，请检查浏览器剪贴板权限';
     clearTimeout(timer); timer = setTimeout(() => { status.textContent = ''; }, 2500);
   });
-  return { show, script: CLAUDE_INSTALL_SCRIPT };
+  return { show, command: CLAUDE_INSTALL_COMMAND };
 })();

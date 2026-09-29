@@ -778,3 +778,12 @@ Docker 安装可在更新源码后执行 `./docker-client.sh --remote-access yes
 6. 把 `~/.local/bin` 追加到 shell 配置文件（只追加一次），最后汇总每一项的结果；任一项失败时退出码为 1。
 
 参数：`--check`（只检查）、`--upgrade`、`--no-modify-path`、`--passphrase`、`--skip claude|codex|ssh`、`--with-apps`、`--apps-dir DIR`，例如 `curl -fsSL <脚本地址> | bash -s -- --check`。
+
+## 代理安装与订阅配置
+
+“实用工具”页的“配置代理”命令运行 `scripts/install-proxy.sh`，只提示输入订阅链接，不需要 `sudo`：
+
+- **macOS（默认）**：检查已安装 Clash Verge（可先用 `install-claude-code.sh --with-apps` 安装），用 `clash://install-config` 深链接把订阅导入 Clash Verge；“系统代理”开关需要在应用里手动打开。
+- **Linux / macOS 加 `--core`**：下载最新 mihomo 内核到 `~/.local/bin`，拉取订阅到 `~/.config/mihomo/config.yaml`，强制只在本机监听（混合端口默认 7890、控制接口默认 127.0.0.1:9090，可用 `--port`、`--controller-port` 修改），校验配置后以 `systemd --user` 服务运行；没有 systemd 用户服务时退回后台进程。同时生成 `~/.config/mihomo/proxy-env.sh`，`source` 后用 `proxy_on` / `proxy_off` 切换当前终端的代理环境变量。
+- **订阅链接**：只从终端隐藏输入（无终端时读取 `T_AGENT_PROXY_SUB_URL`），保存到权限 600 的文件，不打印、不出现在进程参数或日志里。订阅内容必须是 Clash/mihomo 格式，否则会给出提示。
+- 其他参数：`--update`（用已保存的订阅重新拉取并重启）、`--status`、`--reconfigure`、`--upgrade`、`--no-service`。

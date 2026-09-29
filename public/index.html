@@ -47,8 +47,17 @@
       <div class="tool-card-title">安装开发环境（Claude Code / Codex / SSH 密钥）</div>
       <div class="form-hint">复制 GitHub 安装脚本命令，在目标机器的终端中粘贴执行（macOS / Linux）。已安装的工具会跳过，已有 SSH 密钥不会被覆盖；加 <code>bash -s -- --check</code> 可只检查不安装，加 <code>--with-apps</code> 可在 Mac 上同时安装 Maccy、Snipaste、Clash Verge。</div>
       <div class="tool-card-actions">
-        <button type="button" class="btn-logout" id="btn-copy-claude-install">复制安装命令</button>
-        <span class="tool-copy-status" id="tool-copy-status" role="status"></span>
+        <button type="button" class="btn-logout tool-copy-btn" data-script="install-claude-code.sh">复制安装命令</button>
+        <button type="button" class="btn-logout tool-copy-btn" data-script="install-claude-code.sh" data-args="--with-apps">复制安装命令（含 Mac 应用）</button>
+        <span class="tool-copy-status" role="status"></span>
+      </div>
+    </div>
+    <div class="tool-card">
+      <div class="tool-card-title">配置代理（订阅）</div>
+      <div class="form-hint">macOS：把订阅导入已安装的 Clash Verge；Linux：安装 mihomo 内核并以用户级服务运行。运行后按提示粘贴订阅链接（输入时不显示，不会被打印或写入日志）；之后用 <code>bash -s -- --update</code> 更新订阅，<code>--status</code> 查看状态。</div>
+      <div class="tool-card-actions">
+        <button type="button" class="btn-logout tool-copy-btn" data-script="install-proxy.sh">复制代理配置命令</button>
+        <span class="tool-copy-status" role="status"></span>
       </div>
     </div>
   </section>

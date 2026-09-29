@@ -1,13 +1,14 @@
 // Utility tools live beside Tasks; switching only toggles visibility so terminals stay connected.
 const Tools = (() => {
-  const CLAUDE_INSTALL_SCRIPT_URL = 'https://raw.githubusercontent.com/TorinMars/t-agent/main/scripts/install-claude-code.sh';
-  const CLAUDE_INSTALL_COMMAND = `curl -fsSL ${CLAUDE_INSTALL_SCRIPT_URL} | bash`;
+  const SCRIPT_BASE_URL = 'https://raw.githubusercontent.com/TorinMars/t-agent/main/scripts/';
+  const commandFor = button => {
+    const args = button.dataset.args;
+    return `curl -fsSL ${SCRIPT_BASE_URL}${button.dataset.script} | bash${args ? ` -s -- ${args}` : ''}`;
+  };
   const tabTasks = document.getElementById('tab-tasks');
   const tabTools = document.getElementById('tab-tools');
   const panel = document.getElementById('tools-panel');
-  const copyButton = document.getElementById('btn-copy-claude-install');
-  const status = document.getElementById('tool-copy-status');
-  let timer;
+  const timers = new WeakMap();
 
   function show(tools) {
     document.body.classList.toggle('tools-open', tools);
@@ -25,9 +26,12 @@ const Tools = (() => {
   }
   tabTasks.addEventListener('click', () => show(false));
   tabTools.addEventListener('click', () => show(true));
-  copyButton.addEventListener('click', async () => {
-    status.textContent = (await copy(CLAUDE_INSTALL_COMMAND)) ? '已复制' : '复制失败，请检查浏览器剪贴板权限';
-    clearTimeout(timer); timer = setTimeout(() => { status.textContent = ''; }, 2500);
+  document.querySelectorAll('.tool-copy-btn').forEach(button => {
+    button.addEventListener('click', async () => {
+      const status = button.closest('.tool-card-actions').querySelector('.tool-copy-status');
+      status.textContent = (await copy(commandFor(button))) ? '已复制' : '复制失败，请检查浏览器剪贴板权限';
+      clearTimeout(timers.get(status)); timers.set(status, setTimeout(() => { status.textContent = ''; }, 2500));
+    });
   });
-  return { show, command: CLAUDE_INSTALL_COMMAND };
+  return { show, commandFor };
 })();

@@ -24,3 +24,23 @@ test('安装脚本中变量名后不能直接紧跟中文字符（UTF-8 下会�
     .filter(([, line]) => /\$[A-Za-z_][A-Za-z0-9_]*[^\x00-\x7f]/.test(line));
   assert.deepEqual(offenders, []);
 });
+
+const proxyScript = path.join(__dirname, '../scripts/install-proxy.sh');
+const runProxy = args => spawnSync('bash', [proxyScript, ...args], { encoding: 'utf8', input: '' });
+
+test('代理脚本语法正确，帮助信息列出全部参数，拒绝错误参数', () => {
+  assert.equal(spawnSync('bash', ['-n', proxyScript]).status, 0);
+  const help = runProxy(['--help']);
+  assert.equal(help.status, 0);
+  for (const flag of ['--update', '--status', '--core', '--reconfigure', '--upgrade', '--port', '--controller-port', '--no-service']) assert.match(help.stdout, new RegExp(flag));
+  assert.equal(runProxy(['--bogus']).status, 2);
+  assert.equal(runProxy(['--port', 'abc']).status, 2);
+  assert.equal(runProxy(['--port', '80']).status, 2);
+});
+
+test('代理脚本中变量名后不能直接紧跟中文字符，也不会把订阅链接写入输出', () => {
+  const source = require('node:fs').readFileSync(proxyScript, 'utf8');
+  assert.deepEqual(source.split('\n').filter(line => /\$[A-Za-z_][A-Za-z0-9_]*[^\x00-\x7f]/.test(line)), []);
+  const printsUrl = source.split('\n').filter(line => /^\s*(info|ok|warn|fail|echo|printf)\b.*\$\{?SUB_URL\}?(?!\w)/.test(line) && !/#\{SUB_URL\}/.test(line) && !/printf 'url = /.test(line));
+  assert.deepEqual(printsUrl, []);
+});

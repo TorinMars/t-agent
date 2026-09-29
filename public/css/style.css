@@ -76,6 +76,18 @@ body {
   color: var(--text);
 }
 
+.header-tabs { display: flex; gap: 4px; }
+.header-tab { padding: 4px 12px; border: 0; border-radius: 6px; background: transparent; color: var(--text-muted); font: inherit; font-size: 15px; font-weight: 600; cursor: pointer; }
+.header-tab:hover { color: var(--text); }
+.header-tab.active { color: var(--text); background: var(--bg-tertiary); }
+.tools-panel { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 20px; }
+.tools-panel[hidden] { display: none; }
+.tool-card { max-width: 560px; padding: 16px 20px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-secondary); }
+.tool-card-title { font-weight: 600; margin-bottom: 6px; }
+.tool-card-actions { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
+.tool-copy-status { font-size: 12px; color: var(--text-muted); }
+body.tools-open .layout, body.tools-open .quicklinks-bar { display: none; }
+
 .header-right {
   display: flex;
   align-items: center;

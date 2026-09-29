@@ -22,7 +22,10 @@
 <body>
   <header class="header">
     <div class="header-left">
-      <span class="header-logo">📋 Tasks</span>
+      <nav class="header-tabs" aria-label="主导航">
+        <button type="button" class="header-tab active" id="tab-tasks" aria-pressed="true">📋 Tasks</button>
+        <button type="button" class="header-tab" id="tab-tools" aria-pressed="false">🧰 实用工具</button>
+      </nav>
     </div>
     <div class="header-right">
       <a class="btn-logout" href="/clients" target="_blank" rel="noopener">Client 切换</a>
@@ -38,6 +41,17 @@
     <button class="quicklinks-add" id="btn-add-link" title="添加链接">+</button>
     <button class="quicklinks-toggle" id="btn-toggle-links" title="展开/折叠">▾</button>
   </div>
+
+  <section class="tools-panel" id="tools-panel" hidden aria-label="实用工具">
+    <div class="tool-card">
+      <div class="tool-card-title">安装 Claude Code CLI</div>
+      <div class="form-hint">复制安装脚本，在目标机器的终端中粘贴执行（macOS / Linux）。</div>
+      <div class="tool-card-actions">
+        <button type="button" class="btn-logout" id="btn-copy-claude-install">复制安装脚本</button>
+        <span class="tool-copy-status" id="tool-copy-status" role="status"></span>
+      </div>
+    </div>
+  </section>
 
   <div class="layout">
     <nav class="engine-tabs-bar" aria-label="Engine 切换">
@@ -160,6 +174,7 @@
   <script src="/js/tasks.js"></script>
   <script src="/js/remote-tasks.js"></script>
   <script src="/js/terminal-keys.js"></script>
+  <script src="/js/tools.js"></script>
   <script>
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('/sw.js').catch(() => {});

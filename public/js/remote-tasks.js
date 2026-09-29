@@ -1,5 +1,7 @@
 const RemoteTasks = (() => {
   let servers = [];
+  // 服务器列表返回前不能校正 Engine，否则刷新时会把已保存的远程 Engine 误重置为本地。
+  let serversLoaded = false;
   let tasksByServer = new Map();
   let groupsByServer = new Map();
   let selected = null;
@@ -88,6 +90,7 @@ const RemoteTasks = (() => {
     } catch (error) {
       console.error('[remote-tasks] 加载远程 Engine 列表失败', error);
       servers = [];
+      serversLoaded = true;
       localEngineVersion = await localVersionRequest;
       activeEngineKey = 'local';
       render();
@@ -97,6 +100,7 @@ const RemoteTasks = (() => {
 
     localEngineVersion = await localVersionRequest;
     servers = loadedServers;
+    serversLoaded = true;
     tasksByServer = new Map(servers.map(server => [server.id, tasksByServer.get(server.id) || []]));
     groupsByServer = new Map(servers.map(server => [server.id, groupsByServer.get(server.id) || fallbackGroups()]));
 
@@ -147,7 +151,7 @@ const RemoteTasks = (() => {
   }
 
   function normalizeActiveEngine() {
-    if (activeEngineKey === 'local') return;
+    if (!serversLoaded || activeEngineKey === 'local') return;
     const id = Number(activeEngineKey.slice('remote:'.length));
     if (!activeEngineKey.startsWith('remote:') || !servers.some(server => server.id === id)) {
       activeEngineKey = 'local';

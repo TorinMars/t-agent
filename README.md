@@ -775,10 +775,11 @@ Docker 安装可在更新源码后执行 `./docker-client.sh --remote-access yes
 3. 安装 Codex：优先下载 GitHub 发布页的预编译二进制，失败时回退到 `npm install -g --prefix ~/.local @openai/codex`。
 4. 没有 SSH 密钥时生成 `ed25519` 密钥（默认无密码短语）并只显示公钥；已有任何密钥都不会覆盖。
 5. 安装同步程序到 `~/.local/share/t-agent/agent-sync.py`，先同步一次，并在 shell 配置里写入 `claude` / `codex` 包装函数（详见下节“用户级规则与默认配置同步”）；`--skip sync` 跳过，`--no-modify-path` 时只同步一次、不写包装函数。
-6. 加 `--with-apps`（仅 macOS 本机桌面会话）时，下载并安装 Maccy、Snipaste、Clash Verge Rev：均为 Apple 公证的官方包，安装前校验代码签名和系统版本要求，默认装到 `/Applications`（不可写时用 `~/Applications`，也可用 `--apps-dir` 指定）；已安装的跳过，SSH 远程登录时自动跳过。首次打开所需的“辅助功能”“屏幕录制”授权需要手动完成。
-7. 把 `~/.local/bin` 追加到 shell 配置文件（只追加一次），最后汇总每一项的结果；任一项失败时退出码为 1。
+6. 安装统一命令 `ta` 到 `~/.local/bin/ta`（详见下节“统一命令 ta”）；`--skip ta` 跳过，已有的其他同名程序不会被覆盖。
+7. 加 `--with-apps`（仅 macOS 本机桌面会话）时，下载并安装 Maccy、Snipaste、Clash Verge Rev：均为 Apple 公证的官方包，安装前校验代码签名和系统版本要求，默认装到 `/Applications`（不可写时用 `~/Applications`，也可用 `--apps-dir` 指定）；已安装的跳过，SSH 远程登录时自动跳过。首次打开所需的“辅助功能”“屏幕录制”授权需要手动完成。
+8. 把 `~/.local/bin` 追加到 shell 配置文件（只追加一次），最后汇总每一项的结果；任一项失败时退出码为 1。
 
-参数：`--check`（只检查）、`--upgrade`、`--no-modify-path`、`--passphrase`、`--skip claude|codex|ssh|sync`、`--with-apps`、`--apps-dir DIR`，例如 `curl -fsSL <脚本地址> | bash -s -- --check`。
+参数：`--check`（只检查）、`--upgrade`、`--no-modify-path`、`--passphrase`、`--skip claude|codex|ssh|sync|ta`、`--with-apps`、`--apps-dir DIR`，例如 `curl -fsSL <脚本地址> | bash -s -- --check`。
 
 ## 代理安装与订阅配置
 
@@ -814,3 +815,23 @@ Docker 安装可在更新源码后执行 `./docker-client.sh --remote-access yes
 - 想让某台机器的某些键固定为不同的值：在该机器创建 `~/.config/t-agent/overrides/claude/settings.json` 或 `codex/config.toml`（格式同远程文件，只写要固定的键），覆盖优先于远程，详见 `rules/README.md`。
 - 本机文件损坏（无法解析）时不覆盖，只提示。远程改动推送到 `main` 后，各机器下次启动工具时生效。
 - 撤销：删除 shell 配置里 `# >>> t-agent agent-sync >>>` 到 `# <<< t-agent agent-sync <<<` 之间的内容即可。
+
+## 统一命令 ta
+
+`ta` 是一个不依赖 shell 配置的独立脚本（`scripts/ta.sh`，安装到 `~/.local/bin/ta`），只用记这一个命令：
+
+| 命令 | 实际执行 |
+|---|---|
+| `ta` | `claude`（默认工具） |
+| `ta x` / `ta codex` | `codex` |
+| `ta -c` | `claude -c`（继续当前目录最近会话） |
+| `ta x -c` | `codex resume --last` |
+| `ta -p "提示词"` | `claude -p "提示词"`（非交互执行） |
+| `ta x -p "提示词"` | `codex exec "提示词"` |
+| `ta x -c -p "提示词"` | `codex exec resume --last "提示词"` |
+| `ta -m opus` / `ta x -m gpt-6-sol` | `claude --model opus` / `codex -m gpt-6-sol` |
+
+- 工具名可写 `claude`（`c`）或 `codex`（`x`）；不写时用默认工具，`ta --set-default codex` 修改（保存在 `~/.config/t-agent/default-tool`，环境变量 `TA_DEFAULT_TOOL` 优先）。
+- 只有 `-c/--continue`、`-p/--prompt`、`-m/--model` 会被翻译，其余参数原样透传；两边同名但含义不同的参数（如 codex 的 `-p` 是 `--profile`）写在 `--` 之后：`ta x -- -p 名称`。
+- `ta --dry-run …` 只打印将要执行的命令。启动前同样会同步远程规则与配置（失败或没有 Python 不影响启动）。
+- 原来的 `claude` / `codex` 命令保持可用。

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 开发环境安装脚本（macOS / Linux）：Claude Code、Codex、SSH 密钥，以及用户级规则与默认配置的远程同步。
+# 开发环境安装脚本（macOS / Linux）：Claude Code、Codex、SSH 密钥，用户级规则与默认配置的远程同步，以及统一命令 ta。
 #
 # 用法：
 #   curl -fsSL <脚本地址> | bash
@@ -10,7 +10,7 @@
 #   --upgrade           已安装的工具也重新安装为最新版本
 #   --no-modify-path    不修改 shell 配置文件（不写 PATH，也不写 claude/codex 同步函数）
 #   --passphrase        生成 SSH 密钥时交互设置密码短语（需要终端）
-#   --skip NAME         跳过某一项，NAME 为 claude、codex、ssh 或 sync，可重复使用
+#   --skip NAME         跳过某一项，NAME 为 claude、codex、ssh、sync 或 ta，可重复使用
 #   --with-apps         同时安装 Mac 桌面应用：Maccy、Snipaste、Clash Verge（仅 macOS）
 #   --apps-dir DIR      桌面应用的安装目录（默认 /Applications，不可写时用 ~/Applications）
 #   -h, --help          显示帮助
@@ -22,8 +22,8 @@ main() {
   set -uo pipefail
 
   local CHECK_ONLY=0 UPGRADE=0 MODIFY_PATH=1 PASSPHRASE=0
-  local SKIP_CLAUDE=0 SKIP_CODEX=0 SKIP_SSH=0 SKIP_SYNC=0 WITH_APPS=0 APPS_DIR=""
-  local STEP_NO=0 STEP_TOTAL=6
+  local SKIP_CLAUDE=0 SKIP_CODEX=0 SKIP_SSH=0 SKIP_SYNC=0 SKIP_TA=0 WITH_APPS=0 APPS_DIR=""
+  local STEP_NO=0 STEP_TOTAL=7
   local SCRIPTS_BASE="${T_AGENT_SCRIPTS_BASE:-https://raw.githubusercontent.com/TorinMars/t-agent/main/scripts}"
   local BIN_DIR="$HOME/.local/bin"
   local OS="" ARCH="" FETCH=""
@@ -53,7 +53,7 @@ main() {
   --upgrade           已安装的工具也重新安装为最新版本
   --no-modify-path    不修改 shell 配置文件（不写 PATH，也不写 claude/codex 同步函数）
   --passphrase        生成 SSH 密钥时交互设置密码短语（需要终端）
-  --skip NAME         跳过某一项：claude、codex、ssh 或 sync，可重复使用
+  --skip NAME         跳过某一项：claude、codex、ssh、sync 或 ta，可重复使用
   --with-apps         同时安装 Mac 桌面应用：Maccy、Snipaste、Clash Verge（仅 macOS）
   --apps-dir DIR      桌面应用的安装目录（默认 /Applications，不可写时用 ~/Applications）
   -h, --help          显示帮助
@@ -79,9 +79,10 @@ USAGE
           codex) SKIP_CODEX=1 ;;
           ssh) SKIP_SSH=1 ;;
           sync) SKIP_SYNC=1 ;;
-          *) fail "--skip 只支持 claude、codex、ssh、sync"; return 2 ;;
+          ta) SKIP_TA=1 ;;
+          *) fail "--skip 只支持 claude、codex、ssh、sync、ta"; return 2 ;;
         esac ;;
-      --with-apps) WITH_APPS=1; STEP_TOTAL=7 ;;
+      --with-apps) WITH_APPS=1; STEP_TOTAL=8 ;;
       --apps-dir)
         shift
         if [ -z "${1:-}" ]; then fail "--apps-dir 需要指定目录"; return 2; fi
@@ -421,6 +422,35 @@ HOOK
     fi
   }
 
+
+  # ---------- 步骤：统一命令 ta ----------
+  install_ta() {
+    step "统一命令 ta"
+    if [ "$SKIP_TA" -eq 1 ]; then record "统一命令 ta" "跳过" "使用了 --skip ta"; return; fi
+    local target="$BIN_DIR/ta" other
+    if [ -e "$target" ] && ! grep -q '^# t-agent:ta' "$target" 2>/dev/null; then
+      warn "$target 已存在且不是本脚本安装的，未覆盖"
+      record "统一命令 ta" "跳过" "$target 已被其他程序占用"; return
+    fi
+    other="$(command -v ta 2>/dev/null || true)"
+    if [ -n "$other" ] && [ "$other" != "$target" ] && ! grep -q '^# t-agent:ta' "$other" 2>/dev/null; then
+      warn "PATH 中已有另一个 ta（${other}），可能优先于本脚本安装的版本"
+    fi
+    if [ "$CHECK_ONLY" -eq 1 ]; then
+      if [ -x "$target" ]; then ok "已安装：$target"; record "统一命令 ta" "已安装" "$target"
+      else warn "未安装"; record "统一命令 ta" "未安装" "--check 模式不安装"; fi
+      return
+    fi
+    mkdir -p "$BIN_DIR"
+    if ! download "$SCRIPTS_BASE/ta.sh" "$target.new"; then
+      fail "下载 ta 失败"; record "统一命令 ta" "失败" "无法下载 ta.sh"; return
+    fi
+    chmod 755 "$target.new" && mv "$target.new" "$target"
+    ensure_path
+    ok "已安装：${target}（用法：ta 进入 Claude，ta x 进入 Codex，ta -h 查看全部）"
+    record "统一命令 ta" "已安装" "${target}；默认 claude，ta x 为 codex"
+  }
+
   # ---------- Mac 桌面应用 ----------
   apps_target_dir() {
     if [ -n "$APPS_DIR" ]; then printf '%s\n' "$APPS_DIR"
@@ -584,6 +614,7 @@ EOF
   install_codex
   setup_ssh_key
   setup_agent_sync
+  install_ta
   if [ "$WITH_APPS" -eq 1 ]; then install_mac_apps; fi
   print_summary
   return "$FAILED"

@@ -16,7 +16,7 @@ test('安装脚本语法正确，帮助信息列出全部参数', () => {
 test('安装脚本拒绝未知参数和不支持的 --skip 项', () => {
   assert.equal(run(['--bogus']).status, 2);
   assert.equal(run(['--skip', 'homebrew']).status, 2);
-  assert.match(run(['--help']).stdout, /claude、codex、ssh 或 sync/);
+  assert.match(run(['--help']).stdout, /claude、codex、ssh、sync 或 ta/);
 });
 
 test('安装脚本中变量名后不能直接紧跟中文字符（UTF-8 下会被当作变量名的一部分）', () => {
@@ -87,4 +87,33 @@ test('codex -c / --continue 继续最近会话，codex -c key=value 仍是配置
   assert.deepEqual(shell('codex exec x'), ['CODEX: exec x']);
   assert.deepEqual(shell('claude -c'), ['CLAUDE: -c']);
   fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('ta 把统一的 -c / -p / -m 翻译成 claude 和 codex 各自的写法，其余参数原样透传', () => {
+  const ta = path.join(__dirname, '../scripts/ta.sh');
+  const plan = (...args) => spawnSync('bash', [ta, '--dry-run', ...args], { encoding: 'utf8', env: { PATH: process.env.PATH, HOME: '/nonexistent', LC_ALL: 'en_US.UTF-8' } });
+  const cases = [
+    [[], 'claude'],
+    [['-c'], 'claude -c'],
+    [['-c', '-m', 'opus'], 'claude -c --model opus'],
+    [['-p', '总结'], "claude -p '总结'"],
+    [['x'], 'codex'],
+    [['x', '-c'], 'codex resume --last'],
+    [['codex', '--continue'], 'codex resume --last'],
+    [['x', '-c', '-m', 'gpt-6-sol'], 'codex resume --last -m gpt-6-sol'],
+    [['x', '-p', '总结'], "codex exec '总结'"],
+    [['x', '-c', '-p', '接着做'], "codex exec resume --last '接着做'"],
+    [['c', '--resume', 'abc'], 'claude --resume abc'],
+    [['x', '--full-auto', '-m', 'gpt-5.5'], 'codex -m gpt-5.5 --full-auto'],
+    [['x', '--', '-p', 'work'], 'codex -p work'],
+    [['-p', "it's"], "claude -p 'it'\\''s'"],
+  ];
+  for (const [args, expected] of cases) {
+    const result = plan(...args);
+    assert.equal(result.status, 0, `${args.join(' ')}: ${result.stderr}`);
+    assert.equal(result.stdout.trim(), expected, `ta ${args.join(' ')}`);
+  }
+  assert.equal(plan('-p').status, 2);
+  assert.equal(spawnSync('bash', [ta, '--set-default', 'nope'], { encoding: 'utf8' }).status, 2);
+  assert.equal(spawnSync('bash', ['-n', ta]).status, 0);
 });

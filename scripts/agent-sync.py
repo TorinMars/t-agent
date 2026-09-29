@@ -11,6 +11,9 @@
 设计约束：
   - 启动前调用，所以必须快：带 ETag 的条件请求、总时限约 5 秒、失败后 10 分钟内不再联网；
     联网失败时改用上次缓存的内容，绝不阻止工具启动（退出码始终为 0，除非参数错误）。
+  - 本机覆盖：~/.config/t-agent/overrides/claude/settings.json、codex/config.toml（可用环境变量
+    T_AGENT_OVERRIDES_DIR 改目录）。先把远程配置和覆盖文件合并（覆盖优先），再写入工具的配置，
+    所以远程改动其他键照常生效，只有在这里写了的键固定为本机的值。
   - 本机文件损坏（JSON/TOML 无法解析）时不覆盖，只提示。
   - 内容没有变化时不写文件；第一次修改前保留 .t-agent.bak 备份。
   - 只使用 Python 3.6+ 标准库。
@@ -36,6 +39,10 @@ NOTICE = "<!-- 由 t-agent 从远程同步，请勿手动修改此区块；区�
 
 HOME = os.path.expanduser("~")
 CACHE_DIR = os.environ.get("T_AGENT_SYNC_CACHE") or os.path.join(HOME, ".cache", "t-agent-sync")
+
+
+def overrides_dir():
+    return os.environ.get("T_AGENT_OVERRIDES_DIR") or os.path.join(HOME, ".config", "t-agent", "overrides")
 
 
 def tool_paths(tool):
@@ -279,13 +286,24 @@ def sync_tool(tool, remote_files, dry_run):
             changed.append(os.path.basename(rules_path))
 
     remote_config = remote_files.get(config_rel)
-    if remote_config is not None:
+    override_path = os.path.join(overrides_dir(), config_rel)
+    override_text = read_text(override_path)
+    has_override = override_text is not None and override_text.strip() != ""
+    if remote_config is not None or has_override:
         local = read_text(config_path)
         try:
             if kind == "json":
-                remote_obj = json.loads(remote_config)
+                remote_obj = json.loads(remote_config) if remote_config and remote_config.strip() else {}
                 if not isinstance(remote_obj, dict):
                     raise ValueError("远程 settings.json 必须是 JSON 对象")
+                if has_override:
+                    try:
+                        override_obj = json.loads(override_text)
+                    except ValueError as error:
+                        raise ValueError("本机覆盖 %s 不是合法 JSON（%s），本次未同步配置" % (override_path, error))
+                    if not isinstance(override_obj, dict):
+                        raise ValueError("本机覆盖 %s 必须是 JSON 对象，本次未同步配置" % override_path)
+                    remote_obj = merge_json(remote_obj, override_obj)
                 local_obj = json.loads(local) if local and local.strip() else {}
                 if not isinstance(local_obj, dict):
                     raise ValueError("本机 settings.json 不是 JSON 对象，已跳过")
@@ -296,6 +314,11 @@ def sync_tool(tool, remote_files, dry_run):
                         write_text(config_path, json.dumps(merged_obj, indent=2, ensure_ascii=False) + "\n")
                     changed.append(os.path.basename(config_path))
             else:
+                if has_override:
+                    try:
+                        remote_config = merge_toml(remote_config or "", override_text)
+                    except ValueError as error:
+                        raise ValueError("本机覆盖 %s：%s，本次未同步配置" % (override_path, str(error).replace("远程 config.toml ", "")))
                 merged = merge_toml(local, remote_config)
                 if (local or "") != merged:
                     error = validate_toml(merged)

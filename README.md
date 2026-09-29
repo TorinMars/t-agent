@@ -811,5 +811,6 @@ Docker 安装可在更新源码后执行 `./docker-client.sh --remote-access yes
 - 规则文件只替换 `<!-- t-agent:managed:begin/end -->` 区块，区块外的本机规则保留；配置只覆盖远程列出的键，本机其他键、注释、`[表]` 保留；第一次修改前留 `.t-agent.bak` 备份。
 - 触发方式是 shell 函数：`claude() { …同步…; command claude "$@"; }`，`codex` 同理。t-agent 网页终端启动的是交互式 shell，同样生效；不经过 shell 直接执行二进制则不会触发。
 - 联网带 ETag 条件请求、总时限约 5 秒；失败后 10 分钟内不再联网，改用上次缓存，永远不会阻止工具启动。GitHub 不可达时，每 10 分钟最多有一次约 3 秒的延迟。
+- 想让某台机器的某些键固定为不同的值：在该机器创建 `~/.config/t-agent/overrides/claude/settings.json` 或 `codex/config.toml`（格式同远程文件，只写要固定的键），覆盖优先于远程，详见 `rules/README.md`。
 - 本机文件损坏（无法解析）时不覆盖，只提示。远程改动推送到 `main` 后，各机器下次启动工具时生效。
 - 撤销：删除 shell 配置里 `# >>> t-agent agent-sync >>>` 到 `# <<< t-agent agent-sync <<<` 之间的内容即可。

@@ -108,3 +108,59 @@ test('远程缺少某个文件时不动本机；远程不可达时使用缓存�
   assert.ok(Date.now() - start < 4000, '远程不可达时不能长时间阻塞');
   assert.ok(cached.read('.claude/CLAUDE.md').includes('- 规则一'), '联网失败时用缓存补回规则');
 });
+
+function writeOverride(m, rel, text) {
+  const target = path.join(m.home, '.config/t-agent/overrides', rel);
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(target, text);
+}
+
+test('本机覆盖优先于远程，未覆盖的键仍随远程更新', { skip: !python }, () => {
+  const m = machine(REMOTE);
+  writeOverride(m, 'claude/settings.json', JSON.stringify({ model: 'opus', permissions: { allow: ['Bash(npm test)'] } }));
+  writeOverride(m, 'codex/config.toml', 'model = "gpt-5.5"\nmodel_reasoning_effort = "high"\n\n[tui]\nnotifications = true\n');
+  assert.equal(m.sync().status, 0);
+
+  let settings = JSON.parse(m.read('.claude/settings.json'));
+  assert.equal(settings.model, 'opus', '覆盖优先于远程的 sonnet');
+  assert.equal(settings.permissions.defaultMode, 'auto', '未覆盖的键仍来自远程');
+  assert.deepEqual(settings.permissions.allow, ['Bash(ls)', 'Bash(npm test)']);
+  let toml = m.read('.codex/config.toml');
+  assert.match(toml, /^model = "gpt-5\.5"$/m);
+  assert.match(toml, /^approvals_reviewer = "auto_review"$/m);
+  assert.match(toml, /^model_reasoning_effort = "high"$/m);
+  assert.match(toml, /\[tui\]\nnotifications = true/);
+
+  // 远程之后改了未覆盖的键：生效；被覆盖的键：仍然是本机值
+  fs.writeFileSync(path.join(m.rules, 'claude/settings.json'), JSON.stringify({ model: 'haiku', permissions: { defaultMode: 'plan' } }));
+  fs.writeFileSync(path.join(m.rules, 'codex/config.toml'), 'model = "gpt-6-sol"\nsandbox_mode = "read-only"\n');
+  assert.equal(m.sync().status, 0);
+  settings = JSON.parse(m.read('.claude/settings.json'));
+  assert.equal(settings.model, 'opus');
+  assert.equal(settings.permissions.defaultMode, 'plan');
+  toml = m.read('.codex/config.toml');
+  assert.match(toml, /^model = "gpt-5\.5"$/m);
+  assert.match(toml, /^sandbox_mode = "read-only"$/m);
+});
+
+test('远程没有配置文件时也会应用本机覆盖', { skip: !python }, () => {
+  const m = machine({ 'claude/CLAUDE.md': '## 规则\n' });
+  writeOverride(m, 'claude/settings.json', '{"model":"opus"}');
+  assert.equal(m.sync().status, 0);
+  assert.deepEqual(JSON.parse(m.read('.claude/settings.json')), { model: 'opus' });
+});
+
+test('覆盖文件写错时不同步该工具的配置，也不动本机配置', { skip: !python }, () => {
+  const m = machine(REMOTE);
+  fs.writeFileSync(m.file('.claude/settings.json'), '{"model":"local"}');
+  fs.writeFileSync(m.file('.codex/config.toml'), 'model = "local"\n');
+  writeOverride(m, 'claude/settings.json', '{ 写坏了');
+  writeOverride(m, 'codex/config.toml', 'notes = """\nmulti\n"""\n');
+  const result = m.sync();
+  assert.equal(result.status, 0);
+  assert.match(result.stderr, /本机覆盖.*不是合法 JSON/);
+  assert.match(result.stderr, /本机覆盖.*只支持单行 key = value/);
+  assert.equal(m.read('.claude/settings.json'), '{"model":"local"}');
+  assert.equal(m.read('.codex/config.toml'), 'model = "local"\n');
+  assert.ok(m.read('.claude/CLAUDE.md').includes('- 规则一'), '规则同步不受影响');
+});

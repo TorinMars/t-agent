@@ -141,7 +141,8 @@ body.tools-open .layout, body.tools-open .quicklinks-bar { display: none; }
     -webkit-app-region: no-drag;
   }
   /* layout 顶部内缩，避免被 fixed header 遮住 */
-  body > .layout {
+  body > .layout,
+  body > .tools-panel {
     margin-top: env(titlebar-area-height, var(--header-height));
   }
   /* fixed header 不参与 Flex 布局，由主区域的 margin 补回标题栏高度。 */

@@ -370,7 +370,15 @@ USAGE
       cat <<'HOOK'
 # 启动 claude / codex 前同步远程的用户级规则与默认配置（失败或超时不影响启动）
 claude() { [ -f "$HOME/.local/share/t-agent/agent-sync.py" ] && command -v python3 >/dev/null 2>&1 && python3 "$HOME/.local/share/t-agent/agent-sync.py" claude; command claude "$@"; }
-codex() { [ -f "$HOME/.local/share/t-agent/agent-sync.py" ] && command -v python3 >/dev/null 2>&1 && python3 "$HOME/.local/share/t-agent/agent-sync.py" codex; command codex "$@"; }
+codex() {
+  [ -f "$HOME/.local/share/t-agent/agent-sync.py" ] && command -v python3 >/dev/null 2>&1 && python3 "$HOME/.local/share/t-agent/agent-sync.py" codex
+  # 和 claude 一致：codex -c / --continue 继续当前目录最近一次会话。codex -c key=value 仍是配置覆盖。
+  case "${1:-}" in
+    --continue) shift; command codex resume --last "$@"; return ;;
+    -c) case "${2:-}" in *=*) ;; *) shift; command codex resume --last "$@"; return ;; esac ;;
+  esac
+  command codex "$@"
+}
 HOOK
       printf '%s\n' "$SYNC_END"
     } > "$work.out" && cat "$work.out" > "$rc"

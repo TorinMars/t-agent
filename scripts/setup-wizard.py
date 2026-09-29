@@ -29,7 +29,7 @@ from urllib.parse import parse_qs, urlparse
 LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 MAX_BODY = 64 * 1024
 IDLE_TIMEOUT = 30 * 60
-DEV_SKIPS = ("claude", "codex", "ssh")
+DEV_SKIPS = ("claude", "codex", "ssh", "sync")
 HOME = os.path.expanduser("~")
 
 
@@ -56,7 +56,7 @@ def build_job(payload, scripts_dir, system):
         argv = ["bash", os.path.join(scripts_dir, "install-claude-code.sh")]
         skip = payload.get("skip") or []
         if not isinstance(skip, list) or any(item not in DEV_SKIPS for item in skip):
-            raise ValueError("skip 只支持 claude、codex、ssh")
+            raise ValueError("skip 只支持 claude、codex、ssh、sync")
         for item in skip:
             argv += ["--skip", item]
         if payload.get("check"):
@@ -117,6 +117,7 @@ def collect_state(scripts_dir):
             "claude": bool(which_in_user_path("claude")),
             "codex": bool(which_in_user_path("codex")),
             "ssh_key": bool(ssh_keys),
+            "sync": os.path.isfile(os.path.join(HOME, ".local", "share", "t-agent", "agent-sync.py")),
             "maccy": app("Maccy.app"),
             "snipaste": app("Snipaste.app"),
             "clash_verge": app("Clash Verge.app"),

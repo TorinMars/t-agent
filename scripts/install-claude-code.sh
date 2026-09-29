@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 开发环境安装脚本（macOS / Linux）：Claude Code、Codex、SSH 密钥。
+# 开发环境安装脚本（macOS / Linux）：Claude Code、Codex、SSH 密钥，以及用户级规则与默认配置的远程同步。
 #
 # 用法：
 #   curl -fsSL <脚本地址> | bash
@@ -8,9 +8,9 @@
 # 参数：
 #   --check             只检查环境和已安装状态，不安装、不生成密钥
 #   --upgrade           已安装的工具也重新安装为最新版本
-#   --no-modify-path    不修改 shell 配置文件中的 PATH
+#   --no-modify-path    不修改 shell 配置文件（不写 PATH，也不写 claude/codex 同步函数）
 #   --passphrase        生成 SSH 密钥时交互设置密码短语（需要终端）
-#   --skip NAME         跳过某一项，NAME 为 claude、codex 或 ssh，可重复使用
+#   --skip NAME         跳过某一项，NAME 为 claude、codex、ssh 或 sync，可重复使用
 #   --with-apps         同时安装 Mac 桌面应用：Maccy、Snipaste、Clash Verge（仅 macOS）
 #   --apps-dir DIR      桌面应用的安装目录（默认 /Applications，不可写时用 ~/Applications）
 #   -h, --help          显示帮助
@@ -22,8 +22,9 @@ main() {
   set -uo pipefail
 
   local CHECK_ONLY=0 UPGRADE=0 MODIFY_PATH=1 PASSPHRASE=0
-  local SKIP_CLAUDE=0 SKIP_CODEX=0 SKIP_SSH=0 WITH_APPS=0 APPS_DIR=""
-  local STEP_NO=0 STEP_TOTAL=5
+  local SKIP_CLAUDE=0 SKIP_CODEX=0 SKIP_SSH=0 SKIP_SYNC=0 WITH_APPS=0 APPS_DIR=""
+  local STEP_NO=0 STEP_TOTAL=6
+  local SCRIPTS_BASE="${T_AGENT_SCRIPTS_BASE:-https://raw.githubusercontent.com/TorinMars/t-agent/main/scripts}"
   local BIN_DIR="$HOME/.local/bin"
   local OS="" ARCH="" FETCH=""
   local SUMMARY="" FAILED=0
@@ -50,9 +51,9 @@ main() {
 用法：curl -fsSL <脚本地址> | bash -s -- [参数]
   --check             只检查环境和已安装状态，不安装、不生成密钥
   --upgrade           已安装的工具也重新安装为最新版本
-  --no-modify-path    不修改 shell 配置文件中的 PATH
+  --no-modify-path    不修改 shell 配置文件（不写 PATH，也不写 claude/codex 同步函数）
   --passphrase        生成 SSH 密钥时交互设置密码短语（需要终端）
-  --skip NAME         跳过某一项：claude、codex 或 ssh，可重复使用
+  --skip NAME         跳过某一项：claude、codex、ssh 或 sync，可重复使用
   --with-apps         同时安装 Mac 桌面应用：Maccy、Snipaste、Clash Verge（仅 macOS）
   --apps-dir DIR      桌面应用的安装目录（默认 /Applications，不可写时用 ~/Applications）
   -h, --help          显示帮助
@@ -77,9 +78,10 @@ USAGE
           claude) SKIP_CLAUDE=1 ;;
           codex) SKIP_CODEX=1 ;;
           ssh) SKIP_SSH=1 ;;
-          *) fail "--skip 只支持 claude、codex、ssh"; return 2 ;;
+          sync) SKIP_SYNC=1 ;;
+          *) fail "--skip 只支持 claude、codex、ssh、sync"; return 2 ;;
         esac ;;
-      --with-apps) WITH_APPS=1; STEP_TOTAL=6 ;;
+      --with-apps) WITH_APPS=1; STEP_TOTAL=7 ;;
       --apps-dir)
         shift
         if [ -z "${1:-}" ]; then fail "--apps-dir 需要指定目录"; return 2; fi
@@ -343,6 +345,74 @@ USAGE
   }
 
 
+
+  # ---------- 步骤：Claude / Codex 用户级规则与配置同步 ----------
+  SYNC_DIR="$HOME/.local/share/t-agent"
+  SYNC_SCRIPT="$SYNC_DIR/agent-sync.py"
+  SYNC_BEGIN="# >>> t-agent agent-sync >>>"
+  SYNC_END="# <<< t-agent agent-sync <<<"
+
+  python_ok() {
+    have python3 && python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 6) else 1)' 2>/dev/null
+  }
+
+  # 在 shell 配置里写入 claude / codex 包装函数：启动前先同步，失败或超时都不影响启动
+  write_sync_hook() {
+    local rc="$1" work="$TMP_DIR/rc.work"
+    if [ -f "$rc" ]; then
+      awk -v b="$SYNC_BEGIN" -v e="$SYNC_END" '$0==b{skip=1} !skip{print} $0==e{skip=0}' "$rc" > "$work" || return 1
+    else
+      : > "$work"
+    fi
+    {
+      cat "$work"
+      printf '\n%s\n' "$SYNC_BEGIN"
+      cat <<'HOOK'
+# 启动 claude / codex 前同步远程的用户级规则与默认配置（失败或超时不影响启动）
+claude() { [ -f "$HOME/.local/share/t-agent/agent-sync.py" ] && command -v python3 >/dev/null 2>&1 && python3 "$HOME/.local/share/t-agent/agent-sync.py" claude; command claude "$@"; }
+codex() { [ -f "$HOME/.local/share/t-agent/agent-sync.py" ] && command -v python3 >/dev/null 2>&1 && python3 "$HOME/.local/share/t-agent/agent-sync.py" codex; command codex "$@"; }
+HOOK
+      printf '%s\n' "$SYNC_END"
+    } > "$work.out" && cat "$work.out" > "$rc"
+  }
+
+  setup_agent_sync() {
+    step "规则与配置同步"
+    if [ "$SKIP_SYNC" -eq 1 ]; then record "规则同步" "跳过" "使用了 --skip sync"; return; fi
+    if ! python_ok; then
+      warn "需要 python3（3.6+）才能同步；$(install_hint python3)"
+      record "规则同步" "跳过" "缺少 python3"; return
+    fi
+    local rc
+    rc="$(shell_rc_file)"
+    if [ "$CHECK_ONLY" -eq 1 ]; then
+      if [ -f "$SYNC_SCRIPT" ] && grep -Fq "$SYNC_BEGIN" "$rc" 2>/dev/null; then
+        ok "已配置：启动 claude / codex 前自动同步"; record "规则同步" "已安装" "$SYNC_SCRIPT"
+      else
+        warn "尚未配置"; record "规则同步" "未安装" "--check 模式不安装"
+      fi
+      return
+    fi
+    mkdir -p "$SYNC_DIR"
+    if ! download "$SCRIPTS_BASE/agent-sync.py" "$SYNC_DIR/agent-sync.py.new"; then
+      fail "下载同步程序失败"; record "规则同步" "失败" "无法下载 agent-sync.py"; return
+    fi
+    chmod 755 "$SYNC_DIR/agent-sync.py.new" && mv "$SYNC_DIR/agent-sync.py.new" "$SYNC_SCRIPT"
+    ok "同步程序：$SYNC_SCRIPT"
+    python3 "$SYNC_SCRIPT" all --verbose </dev/null 2>&1 | sed 's/^/  /'
+    if [ "$MODIFY_PATH" -eq 1 ]; then
+      if write_sync_hook "$rc"; then
+        ok "已在 $rc 写入 claude / codex 启动前同步（新开的终端生效）"
+        record "规则同步" "已安装" "启动 claude / codex 前自动同步；配置见仓库 rules/"
+      else
+        fail "无法写入 $rc"; record "规则同步" "失败" "无法写入 $rc"
+      fi
+    else
+      warn "使用了 --no-modify-path，未写入启动前同步；可手动运行：python3 $SYNC_SCRIPT all"
+      record "规则同步" "已安装" "已同步一次，未写入 shell 配置"
+    fi
+  }
+
   # ---------- Mac 桌面应用 ----------
   apps_target_dir() {
     if [ -n "$APPS_DIR" ]; then printf '%s\n' "$APPS_DIR"
@@ -505,6 +575,7 @@ EOF
   install_claude
   install_codex
   setup_ssh_key
+  setup_agent_sync
   if [ "$WITH_APPS" -eq 1 ]; then install_mac_apps; fi
   print_summary
   return "$FAILED"

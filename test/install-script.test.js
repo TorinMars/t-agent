@@ -16,6 +16,7 @@ test('安装脚本语法正确，帮助信息列出全部参数', () => {
 test('安装脚本拒绝未知参数和不支持的 --skip 项', () => {
   assert.equal(run(['--bogus']).status, 2);
   assert.equal(run(['--skip', 'homebrew']).status, 2);
+  assert.match(run(['--help']).stdout, /claude、codex、ssh 或 sync/);
 });
 
 test('安装脚本中变量名后不能直接紧跟中文字符（UTF-8 下会被当作变量名的一部分）', () => {

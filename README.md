@@ -774,10 +774,11 @@ Docker 安装可在更新源码后执行 `./docker-client.sh --remote-access yes
 2. 安装 Claude Code（官方原生安装器）；已安装则跳过。
 3. 安装 Codex：优先下载 GitHub 发布页的预编译二进制，失败时回退到 `npm install -g --prefix ~/.local @openai/codex`。
 4. 没有 SSH 密钥时生成 `ed25519` 密钥（默认无密码短语）并只显示公钥；已有任何密钥都不会覆盖。
-5. 加 `--with-apps`（仅 macOS 本机桌面会话）时，下载并安装 Maccy、Snipaste、Clash Verge Rev：均为 Apple 公证的官方包，安装前校验代码签名和系统版本要求，默认装到 `/Applications`（不可写时用 `~/Applications`，也可用 `--apps-dir` 指定）；已安装的跳过，SSH 远程登录时自动跳过。首次打开所需的“辅助功能”“屏幕录制”授权需要手动完成。
-6. 把 `~/.local/bin` 追加到 shell 配置文件（只追加一次），最后汇总每一项的结果；任一项失败时退出码为 1。
+5. 安装同步程序到 `~/.local/share/t-agent/agent-sync.py`，先同步一次，并在 shell 配置里写入 `claude` / `codex` 包装函数（详见下节“用户级规则与默认配置同步”）；`--skip sync` 跳过，`--no-modify-path` 时只同步一次、不写包装函数。
+6. 加 `--with-apps`（仅 macOS 本机桌面会话）时，下载并安装 Maccy、Snipaste、Clash Verge Rev：均为 Apple 公证的官方包，安装前校验代码签名和系统版本要求，默认装到 `/Applications`（不可写时用 `~/Applications`，也可用 `--apps-dir` 指定）；已安装的跳过，SSH 远程登录时自动跳过。首次打开所需的“辅助功能”“屏幕录制”授权需要手动完成。
+7. 把 `~/.local/bin` 追加到 shell 配置文件（只追加一次），最后汇总每一项的结果；任一项失败时退出码为 1。
 
-参数：`--check`（只检查）、`--upgrade`、`--no-modify-path`、`--passphrase`、`--skip claude|codex|ssh`、`--with-apps`、`--apps-dir DIR`，例如 `curl -fsSL <脚本地址> | bash -s -- --check`。
+参数：`--check`（只检查）、`--upgrade`、`--no-modify-path`、`--passphrase`、`--skip claude|codex|ssh|sync`、`--with-apps`、`--apps-dir DIR`，例如 `curl -fsSL <脚本地址> | bash -s -- --check`。
 
 ## 代理安装与订阅配置
 
@@ -798,3 +799,17 @@ Docker 安装可在更新源码后执行 `./docker-client.sh --remote-access yes
 - 只能运行两个安装脚本，参数由白名单构造，页面不能提交任意命令；同一时间只运行一个任务。
 - 订阅链接只经环境变量交给子进程，输出中自动替换为 `***`，服务端不保存；页面提交后立即清空输入框。
 - 30 分钟无操作（且没有任务在运行）自动退出，页面上也可以点“退出向导”。
+
+## 用户级规则与默认配置同步
+
+`scripts/agent-sync.py`（安装脚本会装到 `~/.local/share/t-agent/`）在每次启动 `claude` / `codex` 前，从本仓库 `rules/` 目录拉取用户级规则和默认配置并合并到本机，详见 `rules/README.md`。当前默认值：
+
+- Claude Code：模型 `sonnet`，`permissions.defaultMode = auto`（自动审核权限请求）。
+- Codex：模型 `gpt-6-sol`，`approval_policy = on-request`、`approvals_reviewer = auto_review`、`sandbox_mode = workspace-write`（等价于 `--approve-for-me`）。
+
+要点：
+- 规则文件只替换 `<!-- t-agent:managed:begin/end -->` 区块，区块外的本机规则保留；配置只覆盖远程列出的键，本机其他键、注释、`[表]` 保留；第一次修改前留 `.t-agent.bak` 备份。
+- 触发方式是 shell 函数：`claude() { …同步…; command claude "$@"; }`，`codex` 同理。t-agent 网页终端启动的是交互式 shell，同样生效；不经过 shell 直接执行二进制则不会触发。
+- 联网带 ETag 条件请求、总时限约 5 秒；失败后 10 分钟内不再联网，改用上次缓存，永远不会阻止工具启动。GitHub 不可达时，每 10 分钟最多有一次约 3 秒的延迟。
+- 本机文件损坏（无法解析）时不覆盖，只提示。远程改动推送到 `main` 后，各机器下次启动工具时生效。
+- 撤销：删除 shell 配置里 `# >>> t-agent agent-sync >>>` 到 `# <<< t-agent agent-sync <<<` 之间的内容即可。

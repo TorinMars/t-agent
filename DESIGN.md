@@ -2,6 +2,8 @@
 
 > 日期：2026-07-15
 
+> v2.14.0 多 Client：新增 `/clients` 工作台，浏览器保存 Client 名称、地址及选中项，以独立 iframe 切换并保留已打开页面。Client 之间不共享会话或代理凭证；登录和绑定在独立窗口完成。目标 Client 通过 `CLIENT_FRAME_ORIGINS` 显式允许工作台 origin，页面统一限制 CSP frame-ancestors；已配置的 HTTPS 会话使用 SameSite=None + Secure，HTTP 保持 Strict，浏览器 API 与 WebSocket 的同源校验继续生效。跨站内嵌受第三方 Cookie 策略约束。Client 鉴权实际使用 TOTP，当前会话为 30 天滚动有效期；下文 OAuth 部分为历史方案。
+
 > v2.7.5 终端复制：本地与远程终端共用选区复制模块，显式启用 Mac Option 强制选区；OSC 52 写请求经大小限制、UTF-8 校验和用户预览确认后才写入剪贴板。拒绝读取请求，忽略隐藏实例与历史回放，释放实例时清理挂起请求；Ctrl+C 保持中断语义。
 
 > v2.7.3 更新保护：Git 更新支持显式勾选强制更新，将未提交修改备份到 Git stash 后再快进。保留被忽略的运行数据，禁止合并覆盖忽略文件，拒绝已提交分叉及被 Git 跟踪的运行数据；切换更新分支时显式获取远程跟踪引用。

@@ -8,11 +8,17 @@ Client 负责用户界面、Engine 注册、凭证加密保存和多 Engine 数�
 
 Client 通过标准 `/v1` API 连接远程 Engine。远程 Token 使用 `SESSION_SECRET` 加密后才写入 Client 数据库，不会返回浏览器。
 
+## 多 Client 页面
+
+`/clients` 是独立的浏览器工作台，可在登录前访问，仅在 localStorage 保存名称、地址与选中项。每个 Client 使用独立 iframe，首次选中时加载；切换仅隐藏旧页面，刷新、编辑地址或移除时才释放对应页面。工作台不代理业务请求、不共享凭证，只接受来自已配置 origin 和对应 iframe window 的加载状态消息。
+
+目标 Client 通过 `CLIENT_FRAME_ORIGINS` 配置可内嵌的工作台 origin；默认 CSP frame-ancestors 只允许同源。登录和绑定页面始终禁止内嵌。配置内嵌后，HTTPS 会话 Cookie 使用 SameSite=None + Secure，HTTP 保持 Strict；浏览器 API 与终端 Origin 校验不放宽。跨站使用依赖浏览器允许第三方 Cookie。同一主机不同端口的 Client 可用不同 `CLIENT_SESSION_COOKIE_NAME` 隔离会话，默认名称仍为 connect.sid。
+
 ## Engine
 
 Engine 是任务、Todo、Markdown 文档、工作目录和终端执行的权威数据源。独立 Engine 固定监听 `0.0.0.0`，不需要用户名密码，仅使用可撤销的 Bearer Token。Client 保持单用户数据归属，Web `/web` 和手机 H5 `/h5` 使用同一 TOTP 身份验证器鉴权，默认只监听 `127.0.0.1`。手机访问可显式配置 `HOST=0.0.0.0`，或通过 HTTPS 反向代理访问。
 
-Client 初始化和旧版本升级均默认未绑定身份验证器。未绑定时所有业务页面、浏览器 API 和终端 WebSocket 均拒绝访问并引导绑定。首次绑定无需初始密码或初始化码，只允许直连本机：实际 socket 对端必须为 loopback、Host 必须为 localhost/127.0.0.1/[::1]，且不得携带代理转发头。生成二维码和确认绑定均检查此限制，不信任可伪造的 req.ip；远程页面只提示先在本机绑定。扫码或手动添加密钥并校验 6 位验证码后，才持久化启用绑定。已登录用户可在近期验证后远程更换验证器。绑定密钥与待确认密钥使用 `SESSION_SECRET` 派生的 AES-256-GCM 密钥加密；恢复码仅保存 SHA-256 哈希。会话为 12 小时绝对有效期的 SQLite Session，并使用 HttpOnly/SameSite=Strict Cookie；仅直连本机 HTTP 可不设 Secure，远程生产环境和 HTTPS 均设置 Secure，确保生产模式也能在本机绑定。旧免登录会话不授予权限。验证码与恢复码均防重放，认证限流持久化到 SQLite。
+Client 初始化和旧版本升级均默认未绑定身份验证器。未绑定时所有业务页面、浏览器 API 和终端 WebSocket 均拒绝访问并引导绑定。首次绑定无需初始密码或初始化码，只允许直连本机：实际 socket 对端必须为 loopback、Host 必须为 localhost/127.0.0.1/[::1]，且不得携带代理转发头。生成二维码和确认绑定均检查此限制，不信任可伪造的 req.ip；远程页面只提示先在本机绑定。扫码或手动添加密钥并校验 6 位验证码后，才持久化启用绑定。已登录用户可在近期验证后远程更换验证器。绑定密钥与待确认密钥使用 `SESSION_SECRET` 派生的 AES-256-GCM 密钥加密；恢复码仅保存 SHA-256 哈希。会话为 30 天滚动有效期的 SQLite Session，并默认使用 HttpOnly/SameSite=Strict Cookie；仅直连本机 HTTP 可不设 Secure，远程生产环境和 HTTPS 均设置 Secure，确保生产模式也能在本机绑定。旧免登录会话不授予权限。验证码与恢复码均防重放，认证限流持久化到 SQLite。
 
 更换身份验证器需要五分钟内的再次验证，完成后撤销旧会话、旧恢复码并关闭浏览器终端连接。退出也立即关闭当前会话的终端连接，不终止 PTY 及其中正在执行的程序。`/v1` 与旧 `/api/remote/v1` 保留 Engine 的 Bearer Token 边界，明确创建的只读 `/share/:token` 链接仍按分享 Token 授权。
 

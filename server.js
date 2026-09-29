@@ -17,6 +17,7 @@ const { ensureSingleUser } = require('./services/single-user');
 const { getClientAuth, safeReturnTo, isSecureClientCookie, SESSION_TTL } = require('./services/client-auth');
 const requireAuth = require('./middleware/auth');
 const clientOrigin = require('./middleware/client-origin');
+const { frameAncestors, clientCookieSameSite } = require('./lib/client-embedding');
 
 const app = express();
 
@@ -24,6 +25,10 @@ const app = express();
 // X-Forwarded-Proto 传递原始协议。信任一层代理，确保安全会话 Cookie
 // 能在 HTTPS 域名访问时被正确写入。
 app.set('trust proxy', 1);
+app.use((req, res, next) => {
+  res.set('Content-Security-Policy', frameAncestors(config.clientFrameOrigins));
+  next();
+});
 
 function getLocalIP() {
   for (const ifaces of Object.values(os.networkInterfaces())) {
@@ -38,6 +43,7 @@ app.use(express.json({ limit: '32mb' }));
 app.use(express.urlencoded({ extended: true }));
 
 const sessionMiddleware = session({
+  name: config.clientSessionCookieName,
   store: new SqliteStore(db),
   secret: config.sessionSecret,
   resave: false,
@@ -56,6 +62,7 @@ app.use((req, res, next) => {
   // Local enrollment also works in production over direct loopback HTTP.
   // Remote HTTP requires an explicit opt-in; HTTPS always keeps Secure cookies.
   req.session.cookie.secure = isSecureClientCookie(req);
+  req.session.cookie.sameSite = clientCookieSameSite(req, config.clientFrameOrigins);
   getClientAuth().renew(req.session);
   next();
 });
@@ -276,6 +283,9 @@ function sendClientPage(req, res) {
   res.set('Cache-Control', 'no-store');
   const auth = getClientAuth().status(req.session);
   const returnTo = safeReturnTo(req.path);
+  if ((!auth.bound || !auth.authenticated) && req.get('sec-fetch-dest') === 'iframe') {
+    return res.sendFile(path.join(__dirname, 'public', 'client-frame-auth.html'));
+  }
   if (!auth.bound) return res.redirect(`/auth/setup?return_to=${encodeURIComponent(returnTo)}`);
   if (!auth.authenticated) return res.redirect(`/auth/login?return_to=${encodeURIComponent(returnTo)}`);
   req.session.user = ensureSingleUser();
@@ -289,6 +299,13 @@ app.get(['/', '/web'], sendClientPage);
 app.get('/h5', (req, res) => res.redirect('/web'));
 app.get(['/index.html', '/h5.html'], (req, res) => res.redirect('/web'));
 app.get('/login.html', (req, res) => res.redirect('/auth/login'));
+// The switcher stores only browser-local names and addresses, and exposes no
+// Client business data. It is available before login to open other Clients.
+app.get(['/clients', '/clients.html'], (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.set('Content-Security-Policy', "default-src 'self'; frame-src http: https:; script-src 'self'; style-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
+  res.sendFile(path.join(__dirname, 'public', 'clients.html'));
+});
 
 // Static middleware decodes paths: encoded /index%2ehtml must not evade the
 // explicit page routes above. Do not allow implicit directory index documents.

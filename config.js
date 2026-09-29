@@ -10,6 +10,8 @@ const authUsers = (process.env.AUTH_USERS || '')
     return acc;
   }, {});
 const singleUserId = process.env.SINGLE_USER_ID || '';
+const clientSessionCookieName = process.env.CLIENT_SESSION_COOKIE_NAME || 'connect.sid';
+if (!/^[A-Za-z0-9_.-]+$/.test(clientSessionCookieName)) throw new Error('INVALID_CLIENT_SESSION_COOKIE_NAME');
 
 function positiveInteger(value, fallback) {
   const parsed = Number.parseInt(value, 10);
@@ -22,6 +24,8 @@ module.exports = {
   host:          process.env.HOST || '127.0.0.1',
   // Explicit opt-in for trusted intranet HTTP; HTTPS cookies remain Secure.
   clientAllowHttp: process.env.CLIENT_ALLOW_HTTP === 'true',
+  clientFrameOrigins: require('./lib/client-embedding').parseFrameOrigins(process.env.CLIENT_FRAME_ORIGINS),
+  clientSessionCookieName,
   sessionSecret: process.env.SESSION_SECRET || 'dev-secret-change-me',
   // AUTH_USERS 格式: "user1:salt:hash,user2:salt:hash"
   authUsers,

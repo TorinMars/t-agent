@@ -7,6 +7,7 @@ const db = require('../db');
 const { ensureSingleUser } = require('../services/single-user');
 const requireAuth = require('../middleware/auth');
 const { getClientAuth, safeReturnTo, isLocalInitialization, isSecureClientCookie, SESSION_TTL } = require('../services/client-auth');
+const { clientCookieSameSite } = require('../lib/client-embedding');
 
 const router = express.Router();
 router.use(require('../middleware/client-origin'));
@@ -18,6 +19,7 @@ function saveLogin(req, auth, callback) {
     req.session.user = ensureSingleUser();
     req.session.cookie.maxAge = SESSION_TTL;
     req.session.cookie.secure = isSecureClientCookie(req);
+    req.session.cookie.sameSite = clientCookieSameSite(req, require('../config').clientFrameOrigins);
     req.session.save(callback);
   });
 }
@@ -94,7 +96,7 @@ router.post('/logout', (req, res) => {
   req.session.destroy(error => {
     if (error) return errorResponse(res, error);
     if (req.app.locals.disconnectClientSession) req.app.locals.disconnectClientSession(sid);
-    res.clearCookie('connect.sid', { path: '/' });
+    res.clearCookie(require('../config').clientSessionCookieName, { path: '/' });
     res.json({ success: true });
   });
 });

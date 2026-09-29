@@ -10,6 +10,8 @@ services:
     environment:
       NODE_ENV: production
       CLIENT_ALLOW_HTTP: "${T_AGENT_CLIENT_ALLOW_HTTP:-false}"
+      CLIENT_FRAME_ORIGINS: "${T_AGENT_CLIENT_FRAME_ORIGINS:-}"
+      CLIENT_SESSION_COOKIE_NAME: "${T_AGENT_CLIENT_SESSION_COOKIE_NAME:-connect.sid}"
       T_AGENT_MODE: client
       T_AGENT_INSTALL_TYPE: docker
       T_AGENT_DATA_DIR: /var/lib/t-agent

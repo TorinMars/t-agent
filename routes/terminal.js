@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const db = require('../db');
 const { TerminalSnapshot, createHistoryArchive } = require('../lib/terminal-snapshot');
+const { RESET_INPUT_MODES, watchShellReturn } = require('../lib/terminal-input-modes');
 const { repairSpawnHelperPermissions } = require('../lib/node-pty-runtime');
 
 // Sessions are keyed by task ID and terminal ID; omitted IDs use the legacy shell.
@@ -95,6 +96,7 @@ function getOrCreateSession(ownerTaskId, workDir, dirWarning, id = 'default') {
   const savedBuffer = (dirWarning || '') + (row ? row.buffer : '');
 
   let pty;
+  let shell;
   try {
     repairSpawnHelperPermissions(path.resolve(__dirname, '..'));
     const nodePty = require('node-pty');
@@ -111,7 +113,7 @@ function getOrCreateSession(ownerTaskId, workDir, dirWarning, id = 'default') {
     ].filter(Boolean).join(':');
     // macOS 通常使用 zsh，而 Linux 服务器常只有 bash/sh。选择实际存在的
     // shell，避免 node-pty 因固定的 /bin/zsh 路径不存在而启动失败。
-    const shell = ['/bin/zsh', '/bin/bash', '/bin/sh'].find(candidate => fs.existsSync(candidate));
+    shell = ['/bin/zsh', '/bin/bash', '/bin/sh'].find(candidate => fs.existsSync(candidate));
     if (!shell) throw new Error('未找到可用的 shell（/bin/zsh、/bin/bash、/bin/sh）');
 
     pty = nodePty.spawn(shell, [], {
@@ -149,18 +151,22 @@ function getOrCreateSession(ownerTaskId, workDir, dirWarning, id = 'default') {
   sessions.set(taskId, s);
   s.snapshot.write(savedBuffer);
 
-  pty.onData(data => {
+  const emit = data => {
     if (sessions.get(taskId) !== s) return;
     appendBuffer(taskId, data);
     s.snapshot.write(data, () => {
       if (s.ready && s.ws && s.authorized && s.authorized()) s.ws.send(data);
     });
-  });
+  };
+  pty.onData(emit);
+  // Also goes through the history buffer so replays do not re-enable mouse reporting.
+  s.stopShellWatch = watchShellReturn(pty, shell, () => emit(RESET_INPUT_MODES));
 
   pty.onExit(() => {
     // The parser queue also owns live delivery. Drain its last bytes before
     // closing a naturally exited shell; explicit control remains immediate.
     s.exiting = true;
+    s.stopShellWatch();
     s.snapshot.enqueue(() => {
       if (sessions.get(taskId) !== s) return;
       clearInterval(s.flushTimer);
@@ -199,6 +205,7 @@ function controlSession(taskId, action, requestedTerminalId) {
     sessions.delete(key);
     session.snapshot.dispose();
     clearInterval(session.flushTimer);
+    session.stopShellWatch?.();
     if (clearHistory) clearBuffer(id, selectedId);
     else persistBuffer(id, session.buffer, selectedId);
     session.pendingSince = 0;

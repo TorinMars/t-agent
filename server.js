@@ -406,7 +406,8 @@ server.listen(config.port, config.host, () => {
     if (process.env.T_AGENT_INSTALL_TYPE === 'docker') {
       console.log('请在容器内执行 node scripts/client-auth-setup.js 完成首次绑定，再通过 HTTPS 域名登录。');
     } else {
-      console.log(`请在本机打开 http://127.0.0.1:${listeningPort}/auth/setup 扫码绑定，无需初始密码或初始化码。`);
+      console.log('请在服务器终端执行 node scripts/client-auth-setup.js 完成首次绑定（可通过 SSH 远程执行），无需初始密码或初始化码。');
+      console.log(`也可在本机打开 http://127.0.0.1:${listeningPort}/auth/setup 扫码绑定。`);
     }
   }
   updates.start();

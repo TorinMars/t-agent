@@ -57,7 +57,7 @@ docker compose --env-file docker/client.env -f compose.client.yml \
   exec client node scripts/client-auth-setup.js
 ```
 
-扫描终端二维码（或手动添加显示的密钥），输入验证码，并保存只显示一次的恢复码。此命令通过容器内回环地址调用现有绑定 API，不放宽远程绑定限制；已有绑定时会拒绝重置。然后在浏览器打开自己的 HTTPS 域名，例如 `https://agent.example.com`，等待身份验证器生成下一组验证码后登录。
+扫描终端二维码（或手动添加显示的密钥），输入验证码，并保存只显示一次的恢复码。此命令通过容器内回环地址调用现有绑定 API，不放宽网页端远程绑定限制，因此无需本机浏览器访问；已有绑定时会拒绝重置。然后在浏览器打开自己的 HTTPS 域名，例如 `https://agent.example.com`，等待身份验证器生成下一组验证码后登录。
 
 首次启动会生成权限为 `0600` 的 `data/client-session-secret`。容器重建继续读取同一密钥，数据库里的身份验证器、远程 Token 和登录会话保持可用。不要删除或替换这个文件。
 

@@ -36,7 +36,7 @@ test('unbound local page directly shows a QR code without an initialization pass
 test('unbound remote page only asks for local binding and never requests a secret', async () => {
   const app = await start({ bound: false, authenticated: false, local_setup_allowed: false });
   assert.deepEqual(app.requests.map(request => request.url), ['/auth/status']);
-  assert.match(app.elements.get('auth-description').textContent, /本机客户端/);
+  assert.match(app.elements.get('auth-description').textContent, /client-auth-setup\.js/);
   assert.equal(app.elements.get('auth-content').innerHTML, '');
 });
 

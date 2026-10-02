@@ -1,7 +1,7 @@
 const QRCode = require('qrcode');
 
-// Run inside the Client container: the existing HTTP API enforces loopback
-// enrollment and issues a normal session. No special remote bypass is added.
+// Run on the Client host or inside its container: calls the local HTTP API
+// over loopback and issues a normal session.
 async function enroll({ baseUrl = `http://127.0.0.1:${process.env.PORT || 3000}`, ask, write = console.log,
   qr = uri => QRCode.toString(uri, { type: 'terminal', small: true }) } = {}) {
   let cookie = '';

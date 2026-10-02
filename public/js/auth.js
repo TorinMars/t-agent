@@ -8,7 +8,6 @@
   const messages = {
     AUTH_CODE_INVALID: '验证码无效或已使用，请等待下一组验证码；也可使用未使用过的恢复码。',
     AUTHENTICATOR_BINDING_REQUIRED: '必须先绑定身份验证器才能使用。',
-    AUTH_INITIALIZATION_LOCAL_ONLY: '首次绑定请在 Client 所在服务器执行 node scripts/client-auth-setup.js（Docker 在容器内执行），无需通过本机 localhost 访问。',
     AUTH_RATE_LIMITED: '验证尝试次数过多，请 15 分钟后再试。',
     SESSION_SECRET_TOO_WEAK: '服务配置不安全：请先将 SESSION_SECRET 设置为至少 32 个字符的随机密钥并重启服务。',
     AUTH_SETUP_EXPIRED: '绑定信息已过期，请刷新页面后重新生成。',
@@ -105,9 +104,9 @@
       const status = await request('/auth/status');
       if (!status.bound) {
         title.textContent = '必须绑定身份验证器';
-        description.textContent = '请在 Client 所在服务器的终端执行命令 node scripts/client-auth-setup.js（Docker 请在容器内执行），用身份验证器扫码绑定，无需本机 localhost 访问；也可直接打开本机 localhost 地址扫码。完成后手机和远程浏览器即可使用。无需初始密码或初始化码。';
+        description.textContent = '请用身份验证器扫描下方二维码完成首次绑定；也可在 Client 所在服务器终端执行 node scripts/client-auth-setup.js（Docker 在容器内执行）。本机或远程访问均可，无需初始密码或初始化码。';
         content.innerHTML = '';
-        if (status.local_setup_allowed) await startSetup();
+        await startSetup();
       } else if (location.pathname === '/auth/setup' && status.authenticated) {
         title.textContent = '更换身份验证器';
         description.textContent = '新绑定完成后，原身份验证器和所有旧恢复码立即失效，其他设备需要重新登录。';

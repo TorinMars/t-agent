@@ -1858,7 +1858,7 @@ Client 保存按用户隔离的 OSS 配置，复用 `system_state` 与基于 `SE
 
 ### 显式内网 HTTP 会话
 
-Client 使用统一 Cookie 策略，默认保持生产环境远程访问要求 HTTPS；仅 `CLIENT_ALLOW_HTTP=true` 显式允许 HTTP 保存登录会话，HTTPS 请求始终使用 Secure Cookie。该配置不改变验证器、同源检查、任务权限、WebSocket 鉴权或本机首次绑定限制，也不自动根据来源 IP 选择信任。Docker 使用持久化配置 `T_AGENT_CLIENT_ALLOW_HTTP`，安装脚本提供 `--allow-http yes|no` 与交互选择，重复安装保留设置及原有密钥和绑定。
+Client 使用统一 Cookie 策略，默认保持生产环境远程访问要求 HTTPS；仅 `CLIENT_ALLOW_HTTP=true` 显式允许 HTTP 保存登录会话，HTTPS 请求始终使用 Secure Cookie。该配置不改变验证器、同源检查、任务权限、WebSocket 鉴权，也不自动根据来源 IP 选择信任。Docker 使用持久化配置 `T_AGENT_CLIENT_ALLOW_HTTP`，安装脚本提供 `--allow-http yes|no` 与交互选择，重复安装保留设置及原有密钥和绑定。
 
 ### 有界终端恢复与按需历史
 

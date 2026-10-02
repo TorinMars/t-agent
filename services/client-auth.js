@@ -52,8 +52,8 @@ function fail(code, status = 400) { const error = new Error(code); error.status 
 function safeReturnTo(value) { return value === '/h5' ? '/web' : ['/', '/web'].includes(value) ? value : '/'; }
 
 // Do not trust req.ip: reverse proxies and forwarded headers can make a remote
-// request appear local. First enrollment requires a direct loopback connection
-// and a loopback Host (also preventing DNS rebinding).
+// request appear local. Used only to decide cookie security for direct loopback
+// access; first enrollment is allowed from any address.
 function isLocalInitialization(req) {
   const headers = req.headers || {};
   if (['forwarded', 'x-forwarded-for', 'x-forwarded-host', 'x-forwarded-proto', 'x-real-ip'].some(name => headers[name] !== undefined)) return false;
@@ -148,7 +148,7 @@ function createClientAuth(database, { sessionSecret, ownerId, now = Date.now } =
     database.prepare('DELETE FROM client_auth_attempts WHERE attempt_key = ?').run(hash(`ip:${ip}`));
     return { ...sessionGrant(row.version), recovery };
   }
-  function beginSetup(session, localInitialization, ip) {
+  function beginSetup(session, ip) {
     secureConfiguration();
     const row = read();
     const replacing = Boolean(row.secret_cipher);
@@ -157,19 +157,17 @@ function createClientAuth(database, { sessionSecret, ownerId, now = Date.now } =
       if (now() - session.clientAuth.authenticatedAt > 5 * 60 * 1000) fail('AUTH_RECENT_VERIFICATION_REQUIRED', 401);
     } else {
       attempt(ip);
-      if (localInitialization !== true) fail('AUTH_INITIALIZATION_LOCAL_ONLY', 403);
     }
     const secret = base32(crypto.randomBytes(20));
     session.authSetup = { cipher: encrypt(secret), version: row.version, replacing, expiresAt: now() + SETUP_TTL };
     const uri = `otpauth://totp/${encodeURIComponent(`T-Agent:${ownerId}`)}?secret=${secret}&issuer=T-Agent&algorithm=SHA1&digits=6&period=30`;
     return { secret, uri, replacing };
   }
-  function confirmSetup(session, code, ip, localInitialization = false) {
+  function confirmSetup(session, code, ip) {
     secureConfiguration();
     attempt(ip);
     const pending = session.authSetup;
     if (!pending || pending.expiresAt <= now()) fail('AUTH_SETUP_EXPIRED');
-    if (!pending.replacing && localInitialization !== true) fail('AUTH_INITIALIZATION_LOCAL_ONLY', 403);
     if (pending.replacing && !authenticated(session)) fail('AUTH_REQUIRED', 401);
     const step = matchStep(decrypt(pending.cipher), code, now());
     if (step === null) fail('AUTH_CODE_INVALID', 401);

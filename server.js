@@ -407,7 +407,7 @@ server.listen(config.port, config.host, () => {
       console.log('请在容器内执行 node scripts/client-auth-setup.js 完成首次绑定，再通过 HTTPS 域名登录。');
     } else {
       console.log('请在服务器终端执行 node scripts/client-auth-setup.js 完成首次绑定（可通过 SSH 远程执行），无需初始密码或初始化码。');
-      console.log(`也可在本机打开 http://127.0.0.1:${listeningPort}/auth/setup 扫码绑定。`);
+      console.log(`也可直接打开 http://127.0.0.1:${listeningPort}/auth/setup（本机或远程地址均可）扫码绑定。`);
     }
   }
   updates.start();

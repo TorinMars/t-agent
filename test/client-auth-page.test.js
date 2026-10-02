@@ -24,8 +24,8 @@ async function start(status) {
   return { elements, requests };
 }
 
-test('unbound local page directly shows a QR code without an initialization password', async () => {
-  const app = await start({ bound: false, authenticated: false, local_setup_allowed: true });
+test('unbound page directly shows a QR code without an initialization password', async () => {
+  const app = await start({ bound: false, authenticated: false });
   assert.deepEqual(app.requests.map(request => request.url), ['/auth/status', '/auth/setup/start']);
   assert.equal(app.requests[1].options.body, '{}');
   assert.match(app.elements.get('auth-content').innerHTML, /binding-qr/);
@@ -33,15 +33,8 @@ test('unbound local page directly shows a QR code without an initialization pass
   assert.equal(app.elements.get('binding-qr').src, 'data:image/png;base64,TEST');
 });
 
-test('unbound remote page only asks for local binding and never requests a secret', async () => {
-  const app = await start({ bound: false, authenticated: false, local_setup_allowed: false });
-  assert.deepEqual(app.requests.map(request => request.url), ['/auth/status']);
-  assert.match(app.elements.get('auth-description').textContent, /client-auth-setup\.js/);
-  assert.equal(app.elements.get('auth-content').innerHTML, '');
-});
-
 test('bound remote pages still require the authenticator login', async () => {
-  const app = await start({ bound: true, authenticated: false, local_setup_allowed: false });
+  const app = await start({ bound: true, authenticated: false });
   assert.deepEqual(app.requests.map(request => request.url), ['/auth/status']);
   assert.match(app.elements.get('auth-content').innerHTML, /login-form/);
 });

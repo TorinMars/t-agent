@@ -2,6 +2,8 @@
 
 > 日期：2026-07-15
 
+> v2.28.0 移除 Engine：删除独立 Engine（`apps/engine`、`/v1` 接口、配对码与访问 Token、终端 ticket）和 Client 的远程服务器功能（`/api/remote-servers`、`/api/remote-tokens`、`/api/remote/v1`、前端引擎栏与远程任务界面、远程 Engine 更新），只保留单用户 Client；需要多台机器时各装一个 Client，用 `/clients` 工作台切换。安装脚本不再支持 `--mode engine`，Docker 只发布 client 镜像。新数据库不再创建 `remote_servers`、`remote_access_tokens`、`engine_*` 表；已有数据库中的这些表保留不动，不再被读取。`VERSION.json` 的 API/schema 版本字段保持不变，以便旧客户端继续识别更新。以下章节中关于 Engine 与远程服务器的描述均为历史记录。
+
 > v2.27.0 Agent Hook 上报：终端 PTY 注入 `TA_HOOK_URL` / `TA_HOOK_TOKEN`（token 为任务+终端的 HMAC，仅存在于该 PTY 环境），Claude Code 与 Codex 的 hook（`UserPromptSubmit`→开始、`Stop`→完成、权限确认类事件→等待确认、`SessionEnd`→结束）通过 `POST /hooks/terminal-activity` 上报，收到过 hook 后以 hook 为准；Esc/Ctrl+C 中断不触发 Stop，静默 20 秒后自动视为完成；没有 hook 的 Agent 仍按输出判定。hook 配置放在 `rules/claude/settings.json` 与新增的 `rules/codex/hooks.json`，由 `agent-sync.py` 在启动 `ta` 时合并到本机（保留本机已有 hook，重复同步不产生重复项）。Codex 需要在 `/hooks` 中信任一次。
 
 > v2.26.1 终端状态修正：Claude Code、Codex 等 Agent 以及 ssh、tmux、vim 等交互程序会一直占据前台，只看前台进程会永远显示执行中。对这类程序改按输出判定：约 1.5 秒内连续 4 次以上输出才算执行中，静默约 3 秒视为在等待用户，转为完成待确认；用户键入回显和调整窗口后的重绘不计入。make、npm test 等普通命令仍按前台进程判定，命令静默时保持执行中。

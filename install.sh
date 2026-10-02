@@ -2,7 +2,6 @@
 # 一键安装脚本：兼容 macOS（LaunchAgent）和 Linux（systemd 或手动启动）。
 # 示例：
 #   ./install.sh
-#   ./install.sh --mode engine --port 3100 --tasks-dir /srv/t-agent-tasks
 #   ./install.sh --port 13148 --tasks-dir /srv/t-agent-tasks
 
 set -euo pipefail
@@ -14,7 +13,6 @@ TASKS_DIR=""
 INSTALL_SERVICE=1
 SERVICE_STARTED=0
 MODE="client"
-CREATED_ENGINE_TOKEN=""
 UPDATE_REPOSITORY="${T_AGENT_REPOSITORY:-TorinMars/t-agent}"
 DETECTED_UPDATE_REF="main"
 if command -v git >/dev/null 2>&1 && git -C "$APP_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
@@ -28,14 +26,12 @@ usage() {
 用法：./install.sh [选项]
 
 选项：
-  --mode MODE          安装模式：client（默认，内含本地 Engine）或 engine
   --port PORT          服务端口（默认 3000）
   --tasks-dir PATH     任务 Markdown 文件保存目录（默认：项目目录/tasks）
   --no-service         只安装依赖和配置，不注册开机服务
   -h, --help           显示帮助
 
 Client 是单用户应用，Web 和手机 H5 必须先绑定身份验证器，之后使用动态验证码登录。
-Engine 模式不创建账号，而是生成一个只显示一次的访问 Token。
 EOF
 }
 
@@ -46,7 +42,7 @@ fail() {
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --mode) MODE="${2:-}"; shift 2 ;;
+    --mode) MODE="${2:-}"; shift 2 ;; # 兼容旧自动化参数；Engine 模式已移除。
     --port) PORT="${2:-}"; shift 2 ;;
     --username|--password) shift 2 ;; # 兼容旧自动化参数，单用户模式不再使用。
     --tasks-dir) TASKS_DIR="${2:-}"; shift 2 ;;
@@ -56,7 +52,7 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-[ "$MODE" = "client" ] || [ "$MODE" = "engine" ] || fail "--mode 只能是 client 或 engine"
+[ "$MODE" = "client" ] || fail "Engine 模式已移除，只支持 client"
 [[ "$UPDATE_REPOSITORY" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] && [[ "$UPDATE_REPOSITORY" != ../* ]] && [[ "$UPDATE_REPOSITORY" != */.. ]] || fail "T_AGENT_REPOSITORY 格式不正确"
 [[ "$UPDATE_REF" =~ ^[A-Za-z0-9._/-]+$ ]] && [[ "$UPDATE_REF" != *..* ]] || fail "T_AGENT_REF 格式不正确"
 
@@ -239,9 +235,7 @@ ensure_env_value() {
 }
 
 if [ ! -f "$ENV_FILE" ]; then
-  if [ -z "$PORT" ]; then
-    [ "$MODE" = "engine" ] && PORT=3100 || PORT=3000
-  fi
+  [ -n "$PORT" ] || PORT=3000
   [ -n "$TASKS_DIR" ] || TASKS_DIR="$APP_DIR/tasks"
 
   SESSION_SECRET="$(node -e "process.stdout.write(require('crypto').randomBytes(32).toString('hex'))")"
@@ -250,10 +244,9 @@ if [ ! -f "$ENV_FILE" ]; then
 PORT=$PORT
 T_AGENT_MODE=$MODE
 SESSION_SECRET=$SESSION_SECRET
-SINGLE_USER_ID=$([ "$MODE" = "client" ] && printf 'local' || printf '')
+SINGLE_USER_ID=local
 AUTH_USERS=
 TASKS_BASE_DIR=$TASKS_DIR
-ENGINE_OWNER_ID=$([ "$MODE" = "client" ] && printf 'local' || printf 'engine')
 HOST=127.0.0.1
 GITHUB_VERSION_URL=https://api.github.com/repos/$UPDATE_REPOSITORY/contents/VERSION.json?ref=$UPDATE_REF
 UPDATE_GITHUB_REPOSITORY=$UPDATE_REPOSITORY
@@ -270,10 +263,8 @@ else
     update_env_value TASKS_BASE_DIR "$TASKS_DIR"
   fi
   update_env_value T_AGENT_MODE "$MODE"
-  if [ "$MODE" != "engine" ]; then
-    # 默认仅监听本机；保留用户为手机访问配置的局域网监听地址。
-    ensure_env_value HOST 127.0.0.1
-  fi
+  # 默认仅监听本机；保留用户为手机访问配置的局域网监听地址。
+  ensure_env_value HOST 127.0.0.1
 fi
 
 # 旧版压缩包安装没有 Git 元数据；补齐更新来源后也能自动检查和按钮升级。
@@ -314,19 +305,11 @@ fi
 
 NODE_BIN="$(command -v node)"
 SERVICE_PATH="$(dirname "$NODE_BIN"):/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-if [ "$MODE" = "engine" ]; then
-  ENTRY_SCRIPT="$APP_DIR/apps/engine/server.js"
-  SERVICE_BASENAME="t-agent-engine"
-  SERVICE_DESCRIPTION="T-Agent Engine"
-  LAUNCH_LABEL="com.tagent.engine"
-  MANUAL_START="cd $APP_DIR && npm run start:engine"
-else
-  ENTRY_SCRIPT="$APP_DIR/server.js"
-  SERVICE_BASENAME="t-agent"
-  SERVICE_DESCRIPTION="T-Agent Client with embedded Engine"
-  LAUNCH_LABEL="com.tagent.client"
-  MANUAL_START="cd $APP_DIR && npm start"
-fi
+ENTRY_SCRIPT="$APP_DIR/server.js"
+SERVICE_BASENAME="t-agent"
+SERVICE_DESCRIPTION="T-Agent Client"
+LAUNCH_LABEL="com.tagent.client"
+MANUAL_START="cd $APP_DIR && npm start"
 if [ "$INSTALL_SERVICE" -eq 1 ] && [ "$PLATFORM" = "macOS" ]; then
   [ "${EUID}" -ne 0 ] || fail "macOS 请以实际登录用户运行本脚本，不能以 root 运行 LaunchAgent"
   PLIST_DIR="$HOME/Library/LaunchAgents"
@@ -383,30 +366,14 @@ else
   SERVICE_HINT="$MANUAL_START"
 fi
 
-if [ "$MODE" = "engine" ]; then
-  # 在可能失败的服务注册完成后再生成 Token，避免脚本中断导致首次 Token 无法看到。
-  # 若首次 npm 安装失败但 .env 已存在，只要数据库从未生成过 Token，重试后仍会补发。
-  ENGINE_TOKEN_COUNT="$(node - "$APP_DIR" <<'NODE'
-const path = require('path');
-const appDir = process.argv[2];
-const db = require(path.join(appDir, 'db'));
-const row = db.prepare('SELECT COUNT(*) count FROM engine_access_tokens').get();
-process.stdout.write(String(row.count));
-NODE
-)"
-  if [ "$ENGINE_TOKEN_COUNT" = "0" ]; then
-    CREATED_ENGINE_TOKEN="$(node "$APP_DIR/scripts/create-engine-token.js" owner 'Initial Client')"
-  fi
-fi
-
 # Installation summary.
 ACCESS_HINT="$(node - "$APP_DIR" "$ENV_FILE" "$MODE" <<'NODE'
 const fs = require('fs');
 const path = require('path');
 const [appDir, envFile, mode] = process.argv.slice(2);
 const env = require(path.join(appDir, 'node_modules/dotenv')).parse(fs.readFileSync(envFile));
-const port = parseInt(env.PORT || (mode === 'engine' ? '3100' : '3000'), 10);
-let host = mode === 'engine' ? '<服务器IP>' : (env.HOST || '127.0.0.1');
+const port = parseInt(env.PORT || '3000', 10);
+let host = env.HOST || '127.0.0.1';
 if (host === '0.0.0.0') host = '127.0.0.1';
 if (host === '::') host = '::1';
 if (host.includes(':') && !host.startsWith('[')) host = `[${host}]`;
@@ -419,13 +386,5 @@ if [ "$SERVICE_STARTED" -eq 1 ]; then
 else
   printf '服务尚未启动，请先执行：\n启动命令：%s\n' "$MANUAL_START"
 fi
-if [ "$MODE" = "client" ]; then
-  [ "$SERVICE_STARTED" -eq 1 ] || printf '\n启动后，'
-  printf '请在浏览器打开：%s\n' "$ACCESS_HINT"
-else
-  printf '引擎连接地址：%s\n' "$ACCESS_HINT"
-fi
-if [ -n "$CREATED_ENGINE_TOKEN" ]; then
-  printf '\nEngine 访问 Token（只显示这一次）：\n%s\n' "$CREATED_ENGINE_TOKEN"
-  printf '在 Client 中填写引擎地址和此 Token 即可完成连接。\n'
-fi
+[ "$SERVICE_STARTED" -eq 1 ] || printf '\n启动后，'
+printf '请在浏览器打开：%s\n' "$ACCESS_HINT"

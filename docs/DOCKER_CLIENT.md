@@ -1,6 +1,6 @@
 # Docker Client：远程服务器部署
 
-Client 镜像包含网页、本地 Engine、终端及 Codex CLI。容器中的“本地任务”运行在容器内；也可以添加独立远程 Engine。默认只向服务器的 `127.0.0.1:3000` 发布端口，通过 Nginx 的 HTTPS/WSS 域名访问。
+Client 镜像包含网页、终端及 Codex CLI。容器中的任务和终端都运行在容器内。默认只向服务器的 `127.0.0.1:3000` 发布端口，通过 Nginx 的 HTTPS/WSS 域名访问。
 
 ## 一键启动
 
@@ -59,11 +59,11 @@ docker compose --env-file docker/client.env -f compose.client.yml \
 
 扫描终端二维码（或手动添加显示的密钥），输入验证码，并保存只显示一次的恢复码。此命令通过容器内回环地址调用绑定 API；也可直接通过 HTTPS 域名打开 `/auth/setup` 绑定，两种方式均不限制本机或远程；已有绑定时会拒绝重置。然后在浏览器打开自己的 HTTPS 域名，例如 `https://agent.example.com`，等待身份验证器生成下一组验证码后登录。
 
-首次启动会生成权限为 `0600` 的 `data/client-session-secret`。容器重建继续读取同一密钥，数据库里的身份验证器、远程 Token 和登录会话保持可用。不要删除或替换这个文件。
+首次启动会生成权限为 `0600` 的 `data/client-session-secret`。容器重建继续读取同一密钥，数据库里的身份验证器和登录会话保持可用。不要删除或替换这个文件。
 
 ## Codex 登录与数据隔离
 
-镜像默认安装 Codex。首次部署将宿主机 `~/.codex` 复制到 Client 专用目录，容器仅挂载这个副本。宿主机、Client、独立 Engine 三者不共用同一目录；容器产生的新配置、登录刷新和会话不会写回宿主机原始 `~/.codex`。
+镜像默认安装 Codex。首次部署将宿主机 `~/.codex` 复制到 Client 专用目录，容器仅挂载这个副本。宿主机与 Client 不共用同一目录；容器产生的新配置、登录刷新和会话不会写回宿主机原始 `~/.codex`。
 
 ```bash
 docker compose --env-file docker/client.env -f compose.client.yml exec client codex --version
@@ -76,15 +76,15 @@ docker compose --env-file docker/client.env -f compose.client.yml exec client co
 
 | 宿主机默认路径 | 容器路径 | 内容 |
 | --- | --- | --- |
-| `~/.torin/t-agent-client/data` | `/var/lib/t-agent` | SQLite、身份验证器、会话密钥、远程连接、终端历史 |
+| `~/.torin/t-agent-client/data` | `/var/lib/t-agent` | SQLite、身份验证器、会话密钥、终端历史 |
 | `~/.torin/t-agent-client/tasks` | `/workspace` | 任务文件 |
 | `~/.torin/t-agent-client/codex` | `/root/.codex` | 宿主机首次复制的独立 Codex 副本 |
 
-更新会继续使用这些目录。备份时先停止容器，再一起备份三个目录；恢复时也要一起恢复。不要把 Client 与 Engine 指向同一个数据根目录。
+更新会继续使用这些目录。备份时先停止容器，再一起备份三个目录；恢复时也要一起恢复。不要让多个 Client 指向同一个数据根目录。
 
 已有原生 Client 迁移前先停止原服务，复制其数据库和任务，并将原 `.env` 中的 `SESSION_SECRET` 原样写入 `data/client-session-secret`（权限 `0600`）；不能为已有加密数据生成新密钥。旧任务的绝对路径需要在 Compose 中增加相同路径的挂载，或按实际新目录调整配置。
 
-容器只能访问镜像和挂载目录。Finder/本机 VS Code 打开功能不能操作浏览器所在电脑；使用网页文件面板或自己的远程开发工具。若要连接宿主机 Engine，不能在容器中使用 `127.0.0.1`，应使用容器可达的服务器地址或相同 Docker 网络的服务名。
+容器只能访问镜像和挂载目录。Finder/本机 VS Code 打开功能不能操作浏览器所在电脑；使用网页文件面板或自己的远程开发工具。
 
 ## 更新、状态和日志
 
@@ -108,7 +108,7 @@ docker compose --env-file docker/client.env -f compose.client.yml logs --tail=10
 
 更新会重建容器，正在运行的终端进程会停止；数据库、任务和 Codex 登录副本保留。网页可以检查版本，但 Docker 安装由宿主机更新镜像，不在容器内更新应用代码。再次运行首次复制脚本也不会覆盖现有副本。
 
-`main` 推送分别构建 `ghcr.io/torinmars/t-agent-client:latest` 和 Engine 镜像，并生成 `sha-<commit>` 标签。首次使用前确认镜像构建成功及 GHCR 读取权限。
+`main` 推送构建 `ghcr.io/torinmars/t-agent-client:latest`，并生成 `sha-<commit>` 标签。首次使用前确认镜像构建成功及 GHCR 读取权限。
 
 ## 可信内网 HTTP 登录
 

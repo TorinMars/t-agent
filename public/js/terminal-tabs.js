@@ -1,4 +1,4 @@
-// A shared tab strip for local and remote tasks. Controllers cache each
+// A tab strip for a task's terminals. The controller caches each
 // terminal view and connection independently; switching tabs only changes visibility.
 const TerminalTabs = (() => {
   const states = new Map();
@@ -58,7 +58,7 @@ const TerminalTabs = (() => {
         if (state(scope).revision !== revision) return;
         state(scope).rows = rows;
         if (mounted && mounted.scope === scope) render();
-      }).catch(() => { /* Legacy Engines still support the default terminal. */ });
+      }).catch(() => { /* The default terminal stays usable without the list. */ });
     }
     return state(scope).active;
   }
@@ -66,21 +66,14 @@ const TerminalTabs = (() => {
   async function create() {
     if (!mounted) return;
     const target = mounted;
-    try {
-      const row = await API.post(`${target.scope}/terminals`, {});
-      const current = state(target.scope);
-      current.revision++;
-      current.rows.push(row);
-      current.active = row.terminal_id;
-      if (mounted && mounted.scope === target.scope) {
-        render();
-        target.select();
-      }
-    } catch (error) {
-      if (/ENGINE_ROUTE_NOT_FOUND|REMOTE_HTTP_404/.test(error.message)) {
-        throw new Error('远程 Engine 暂不支持新开终端，请先升级该 Engine');
-      }
-      throw error;
+    const row = await API.post(`${target.scope}/terminals`, {});
+    const current = state(target.scope);
+    current.revision++;
+    current.rows.push(row);
+    current.active = row.terminal_id;
+    if (mounted && mounted.scope === target.scope) {
+      render();
+      target.select();
     }
   }
 

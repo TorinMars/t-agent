@@ -2,7 +2,7 @@ const express = require('express');
 const clientOrigin = require('../middleware/client-origin');
 const { createPm2Manager, Pm2Error } = require('../services/pm2-manager');
 
-// 管理运行 Client 的这台机器上的 PM2 进程（远程 Engine 所在机器不在范围内）。
+// 管理运行 Client 的这台机器上的 PM2 进程。
 function createPm2Router(options = {}) {
   const manager = options.manager || createPm2Manager();
   const router = express.Router();

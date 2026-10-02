@@ -1,24 +1,22 @@
 #!/usr/bin/env bash
-# 将现有安装包 Client 或 Engine 无损迁移为 Git 工作副本。
+# 将现有安装包 Client 无损迁移为 Git 工作副本。
 
 set -Eeuo pipefail
 
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 ENV_FILE="$APP_DIR/.env"
-REQUESTED_MODE=""
 
 usage() {
   cat <<'EOF'
-用法：./scripts/migrate-to-git.sh [--mode client|engine]
+用法：./scripts/migrate-to-git.sh
 
-默认从 .env 的 T_AGENT_MODE 自动识别组件类型。迁移会保留 .env、data、logs、tasks，
+迁移会保留 .env、data、logs、tasks，
 并将原安装完整备份到项目同级目录。
 EOF
 }
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --mode) REQUESTED_MODE="${2:-}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) printf '错误：未知参数 %s\n' "$1" >&2; usage >&2; exit 1 ;;
   esac
@@ -29,13 +27,7 @@ done
 command -v git >/dev/null 2>&1 || { printf '错误：请先安装 Git。\n' >&2; exit 1; }
 
 INSTALLED_MODE="$(sed -n 's/^T_AGENT_MODE=//p' "$ENV_FILE" | tail -n 1)"
-MODE="${REQUESTED_MODE:-${T_AGENT_MODE:-$INSTALLED_MODE}}"
-MODE="${MODE:-client}"
-[ "$MODE" = "client" ] || [ "$MODE" = "engine" ] || { printf '错误：模式只能是 client 或 engine。\n' >&2; exit 1; }
-if [ -n "$INSTALLED_MODE" ] && [ "$INSTALLED_MODE" != "$MODE" ]; then
-  printf '错误：.env 中的组件模式是 %s，不能按 %s 迁移。\n' "$INSTALLED_MODE" "$MODE" >&2
-  exit 1
-fi
+[ -z "$INSTALLED_MODE" ] || [ "$INSTALLED_MODE" = "client" ] || { printf '错误：Engine 模式已移除，.env 中的组件模式是 %s，无法迁移。\n' "$INSTALLED_MODE" >&2; exit 1; }
 
 REPOSITORY="${T_AGENT_REPOSITORY:-$(sed -n 's/^UPDATE_GITHUB_REPOSITORY=//p' "$ENV_FILE" | tail -n 1)}"
 REF="${T_AGENT_REF:-$(sed -n 's/^UPDATE_GIT_BRANCH=//p' "$ENV_FILE" | tail -n 1)}"
@@ -55,15 +47,9 @@ cleanup() {
 }
 trap cleanup EXIT
 
-if [ "$MODE" = "engine" ]; then
-  SERVICE_NAME="t-agent-engine.service"
-  LAUNCH_LABEL="com.tagent.engine"
-  PROCESS_PATTERN='[n]ode .*apps/engine/server\.js'
-else
-  SERVICE_NAME="t-agent.service"
-  LAUNCH_LABEL="com.tagent.client"
-  PROCESS_PATTERN='[n]ode .*/server\.js'
-fi
+SERVICE_NAME="t-agent.service"
+LAUNCH_LABEL="com.tagent.client"
+PROCESS_PATTERN='[n]ode .*/server\.js'
 
 SYSTEMD_AVAILABLE=0
 if [ "$(uname -s)" = "Linux" ] && command -v systemctl >/dev/null 2>&1 \
@@ -89,7 +75,7 @@ case "$(uname -s)" in
     if [ "$SYSTEMD_AVAILABLE" -eq 1 ]; then
       run_as_root systemctl stop "$SERVICE_NAME" || true
     elif pgrep -f "$PROCESS_PATTERN" >/dev/null 2>&1; then
-      printf '错误：检测到仍在运行的 %s 进程。请先停止进程后重新执行迁移。\n' "$MODE" >&2
+      printf '错误：检测到仍在运行的 %s 进程。请先停止进程后重新执行迁移。\n' client >&2
       exit 1
     fi
     ;;
@@ -106,8 +92,8 @@ for entry in .env data logs tasks; do
   fi
 done
 
-T_AGENT_REPOSITORY="$REPOSITORY" T_AGENT_REF="$REF" "$APP_DIR/install.sh" --mode "$MODE"
+T_AGENT_REPOSITORY="$REPOSITORY" T_AGENT_REF="$REF" "$APP_DIR/install.sh" --mode client
 
-printf '\n迁移完成。组件：%s\nGit 分支：%s\n' "$MODE" "$(git -C "$APP_DIR" branch --show-current)"
+printf '\n迁移完成。\nGit 分支：%s\n' "$(git -C "$APP_DIR" branch --show-current)"
 printf '原安装完整保留在：%s\n' "$BACKUP_DIR"
-printf '确认配置、任务和远程连接正常后，再自行处理该备份。\n'
+printf '确认配置和任务正常后，再自行处理该备份。\n'

@@ -39,7 +39,7 @@ test('Docker Client deployment keeps enrollment private and supports both image 
   const nginx = read('docker/client.nginx.conf.example');
   assert.match(nginx, /X-Forwarded-Proto \$scheme/);
   assert.match(nginx, /Upgrade \$http_upgrade/);
-  assert.match(read('.github/workflows/docker-engine.yml'), /target: \$\{\{ matrix.target \}\}/);
+  assert.match(read('.github/workflows/docker-client.yml'), /target: client/);
 });
 
 test('Docker Client refuses to generate a replacement key for an existing database', t => {

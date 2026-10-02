@@ -38,7 +38,7 @@ const root = path.resolve(__dirname, '..');
         assert.ok(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth));
         await page.evaluate(() => {
           window.TerminalImages = { load: async () => {}, showSettings() {} };
-          window.Bookmarks = window.Tasks = window.RemoteTasks = { load: async () => {} };
+          window.Bookmarks = window.Tasks = { load: async () => {} };
           window.requests = [];
           window.fetch = async (url, options = {}) => {
             requests.push({ url, ...options });

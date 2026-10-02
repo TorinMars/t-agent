@@ -9,7 +9,6 @@ const {
   validateVersionManifest,
 } = require('../lib/version-utils');
 const { decryptToken, encryptToken } = require('../lib/token-crypto');
-const { normalizeBaseUrl } = require('../services/remote-client');
 
 test('compares stable and prerelease SemVer values', () => {
   assert.equal(compareSemver('1.2.0', '1.1.9'), 1);
@@ -55,11 +54,4 @@ test('encrypts stored remote tokens with authenticated encryption', () => {
   assert.notEqual(encrypted, 'txw_secret-value');
   assert.equal(decryptToken(encrypted, 'session-secret'), 'txw_secret-value');
   assert.throws(() => decryptToken(encrypted, 'wrong-secret'));
-});
-
-test('normalizes URL and port from the three-field remote form', () => {
-  assert.equal(normalizeBaseUrl('http://192.168.1.20', '14002'), 'http://192.168.1.20:14002');
-  assert.equal(normalizeBaseUrl('https://example.com', ''), 'https://example.com');
-  assert.throws(() => normalizeBaseUrl('file:///tmp/tasks', ''));
-  assert.throws(() => normalizeBaseUrl('https://example.com/path', ''));
 });

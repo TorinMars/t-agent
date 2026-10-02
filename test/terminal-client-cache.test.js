@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const { parseHTML } = require('linkedom');
 
-function setup(remote) {
+function setup() {
   const { document, Event } = parseHTML(fs.readFileSync(require.resolve('../public/index.html'), 'utf8'));
   const sockets = [], terminals = [], timers = [];
   class Socket {
@@ -36,129 +36,110 @@ function setup(remote) {
   vm.runInContext(fs.readFileSync(require.resolve('../public/js/terminal-activity.js'), 'utf8'), context);
   vm.runInContext(fs.readFileSync(require.resolve('../public/js/terminal-tabs.js'), 'utf8'), context);
   vm.runInContext(fs.readFileSync(require.resolve('../public/js/terminal-history.js'), 'utf8'), context);
-  let source = fs.readFileSync(require.resolve(remote ? '../public/js/remote-tasks.js' : '../public/js/tasks.js'), 'utf8');
+  let source = fs.readFileSync(require.resolve('../public/js/tasks.js'), 'utf8');
   // Expose only task selection to the fixture; switching uses the real tabs,
   // controller cache, connection and explicit reopen implementations.
-  const marker = remote ? '  return {\n    load,' : '  return {\n    async load()';
-  const open = remote
-    ? "_open(serverId = 1) { selected = { serverId, task: { id: 7 } }; activeTab = 'shell'; renderRemoteTerminal(); },"
-    : "_open() { const task = { id: 7 }; tasks = [task]; selectedId = 7; activeTab = 'shell'; connectTerminal(task); },";
+  const marker = '  return {\n    async load()';
+  const open = "_open() { const task = { id: 7 }; tasks = [task]; selectedId = 7; activeTab = 'shell'; connectTerminal(task); },";
   source = source.replace(marker, marker.replace('  return {\n', `  return {\n    ${open}\n`));
   vm.runInContext(source, context);
-  return { controller: remote ? context.RemoteTasks : context.Tasks, context, document, Event, sockets, terminals,
+  return { controller: context.Tasks, context, document, Event, sockets, terminals,
     flush: () => { for (const timer of timers.splice(0)) if (timer.delay === 0) timer.fn(); } };
 }
 
-for (const remote of [false, true]) {
-  test(`${remote ? 'remote' : 'local'} tab switching caches live and connecting terminals`, async () => {
-    const app = setup(remote);
-    app.controller._open();
-    await Promise.resolve();
-    app.terminals[0].write('cached output');
-    await app.controller.newTerminal();
-    assert.equal(app.sockets.length, 2);
-    const select = index => app.document.querySelectorAll('.terminal-tab')[index].dispatchEvent(new app.Event('click'));
-    select(0); select(1); select(0);
-    assert.equal(app.sockets.length, 2, 'CONNECTING sockets must also be cached');
-    assert.ok(app.sockets.every(socket => !socket.closed));
-    app.flush();
-    const hiddenFocus = app.terminals[1].focused || 0;
-    app.sockets[1].open();
-    assert.equal(app.terminals[1].focused || 0, hiddenFocus, 'background connection cannot steal focus');
-    app.sockets[0].open();
-    select(1); select(0); app.flush();
-    assert.equal(app.terminals.length, 2);
-    assert.equal(app.terminals[0].output, 'cached output');
-    assert.equal(app.terminals[0].scrollPosition, 37);
-    assert.equal(app.terminals[0].el.style.display, '');
-    assert.equal(app.terminals[1].el.style.display, 'none');
-    await app.controller.reopenTerminal();
-    assert.equal(app.sockets.length, 3);
-    assert.ok(app.sockets[0].closed);
-    assert.ok(!app.sockets[1].closed, 'explicit reopen only replaces the active terminal');
-    select(1);
-    assert.equal(app.sockets.length, 3);
-  });
-}
-
-test('remote cache isolates equal task and terminal IDs on different servers', async () => {
-  const app = setup(true);
-  app.controller._open(1); app.controller._open(2); app.controller._open(1);
+test(`tab switching caches live and connecting terminals`, async () => {
+  const app = setup();
+  app.controller._open();
+  await Promise.resolve();
+  app.terminals[0].write('cached output');
+  await app.controller.newTerminal();
   assert.equal(app.sockets.length, 2);
+  const select = index => app.document.querySelectorAll('.terminal-tab')[index].dispatchEvent(new app.Event('click'));
+  select(0); select(1); select(0);
+  assert.equal(app.sockets.length, 2, 'CONNECTING sockets must also be cached');
   assert.ok(app.sockets.every(socket => !socket.closed));
+  app.flush();
+  const hiddenFocus = app.terminals[1].focused || 0;
+  app.sockets[1].open();
+  assert.equal(app.terminals[1].focused || 0, hiddenFocus, 'background connection cannot steal focus');
+  app.sockets[0].open();
+  select(1); select(0); app.flush();
+  assert.equal(app.terminals.length, 2);
+  assert.equal(app.terminals[0].output, 'cached output');
+  assert.equal(app.terminals[0].scrollPosition, 37);
+  assert.equal(app.terminals[0].el.style.display, '');
+  assert.equal(app.terminals[1].el.style.display, 'none');
+  await app.controller.reopenTerminal();
+  assert.equal(app.sockets.length, 3);
+  assert.ok(app.sockets[0].closed);
+  assert.ok(!app.sockets[1].closed, 'explicit reopen only replaces the active terminal');
+  select(1);
+  assert.equal(app.sockets.length, 3);
 });
 
-for (const remote of [false, true]) {
-  test(`${remote ? 'remote' : 'local'} deleting a terminal removes its tab and cached connection; failure preserves it`, async () => {
-    const app = setup(remote);
-    app.controller._open();
-    await Promise.resolve();
-    await app.controller.newTerminal();
-    const added = app.terminals.at(-1);
-    const socket = app.sockets.at(-1);
-    const calls = [];
-    app.context.API.post = async (url, body) => { calls.push({ url, body }); throw new Error('offline'); };
-    await assert.rejects(app.controller.deleteTerminal(), /offline/);
-    assert.equal(added.disposed, undefined);
-    assert.equal(app.document.querySelectorAll('.terminal-tab').length, 2);
-    app.context.API.post = async (url, body) => { calls.push({ url, body }); return { success: true }; };
-    await app.controller.deleteTerminal();
-    assert.equal(calls.at(-1).body.action, 'delete');
-    assert.equal(calls.at(-1).body.terminal_id, 'second');
-    assert.equal(added.disposed, true);
-    assert.equal(socket.closed, true);
-    assert.equal(app.document.querySelectorAll('.terminal-tab').length, 1);
-    assert.equal(app.document.querySelector('.terminal-tab').getAttribute('aria-selected'), 'true');
-    assert.equal(app.terminals[0].disposed, undefined);
-    await assert.rejects(app.controller.deleteTerminal(), /默认终端不能删除/);
-  });
-}
+test(`deleting a terminal removes its tab and cached connection; failure preserves it`, async () => {
+  const app = setup();
+  app.controller._open();
+  await Promise.resolve();
+  await app.controller.newTerminal();
+  const added = app.terminals.at(-1);
+  const socket = app.sockets.at(-1);
+  const calls = [];
+  app.context.API.post = async (url, body) => { calls.push({ url, body }); throw new Error('offline'); };
+  await assert.rejects(app.controller.deleteTerminal(), /offline/);
+  assert.equal(added.disposed, undefined);
+  assert.equal(app.document.querySelectorAll('.terminal-tab').length, 2);
+  app.context.API.post = async (url, body) => { calls.push({ url, body }); return { success: true }; };
+  await app.controller.deleteTerminal();
+  assert.equal(calls.at(-1).body.action, 'delete');
+  assert.equal(calls.at(-1).body.terminal_id, 'second');
+  assert.equal(added.disposed, true);
+  assert.equal(socket.closed, true);
+  assert.equal(app.document.querySelectorAll('.terminal-tab').length, 1);
+  assert.equal(app.document.querySelector('.terminal-tab').getAttribute('aria-selected'), 'true');
+  assert.equal(app.terminals[0].disposed, undefined);
+  await assert.rejects(app.controller.deleteTerminal(), /默认终端不能删除/);
+});
 
-for (const remote of [false, true]) {
-  test(`${remote ? 'remote' : 'local'} input controls cannot bypass image upload lock`, () => {
-    const app = setup(remote); app.controller._open(); app.sockets[0].open();
-    app.sockets[0].sent.length = 0;
-    app.context.TerminalImages.busy = true;
-    app.controller.sendTerminalInput('unexpected\r');
-    assert.deepEqual(app.sockets[0].sent, []);
-    app.context.TerminalImages.busy = false;
-    app.controller.sendTerminalInput('allowed');
-    assert.deepEqual(app.sockets[0].sent, ['allowed']);
-  });
-}
+test(`input controls cannot bypass image upload lock`, () => {
+  const app = setup(); app.controller._open(); app.sockets[0].open();
+  app.sockets[0].sent.length = 0;
+  app.context.TerminalImages.busy = true;
+  app.controller.sendTerminalInput('unexpected\r');
+  assert.deepEqual(app.sockets[0].sent, []);
+  app.context.TerminalImages.busy = false;
+  app.controller.sendTerminalInput('allowed');
+  assert.deepEqual(app.sockets[0].sent, ['allowed']);
+});
 
-for (const remote of [false, true]) {
-  test(`${remote ? 'remote' : 'local'} history pages stay out of live terminal and task switches discard stale pages`, async () => {
-    const app = setup(remote); app.controller._open(); app.sockets[0].open();
-    const socket = app.sockets[0];
-    socket.onmessage({ data: JSON.stringify({ type: 'history', data: 'recent', archive: { id: 'archive', before: 100, hasMore: true, limit: 500 } }) });
-    socket.onmessage({ data: '-live' });
-    app.document.getElementById('btn-terminal-history').dispatchEvent(new app.Event('click'));
-    const request = socket.sent.map(data => { try { return JSON.parse(data); } catch { return {}; } }).find(data => data.type === 'history-page');
-    assert.equal(request.before, 100);
-    socket.onmessage({ data: JSON.stringify({ ...request, before: 40, hasMore: true, data: 'archive-only' }) });
-    assert.equal(app.document.getElementById('terminal-history-text').textContent, 'archive-only');
-    assert.equal(app.terminals[0].output, 'recent-live');
-    await app.controller.newTerminal();
-    assert.equal(app.document.querySelector('.terminal-history-dialog'), null);
-    socket.onmessage({ data: JSON.stringify({ ...request, before: 0, hasMore: false, data: 'stale-page' }) });
-    assert.equal(app.terminals[0].output, 'recent-live');
-    assert.equal(app.terminals[1].output, '');
-  });
-}
+test(`history pages stay out of live terminal and task switches discard stale pages`, async () => {
+  const app = setup(); app.controller._open(); app.sockets[0].open();
+  const socket = app.sockets[0];
+  socket.onmessage({ data: JSON.stringify({ type: 'history', data: 'recent', archive: { id: 'archive', before: 100, hasMore: true, limit: 500 } }) });
+  socket.onmessage({ data: '-live' });
+  app.document.getElementById('btn-terminal-history').dispatchEvent(new app.Event('click'));
+  const request = socket.sent.map(data => { try { return JSON.parse(data); } catch { return {}; } }).find(data => data.type === 'history-page');
+  assert.equal(request.before, 100);
+  socket.onmessage({ data: JSON.stringify({ ...request, before: 40, hasMore: true, data: 'archive-only' }) });
+  assert.equal(app.document.getElementById('terminal-history-text').textContent, 'archive-only');
+  assert.equal(app.terminals[0].output, 'recent-live');
+  await app.controller.newTerminal();
+  assert.equal(app.document.querySelector('.terminal-history-dialog'), null);
+  socket.onmessage({ data: JSON.stringify({ ...request, before: 0, hasMore: false, data: 'stale-page' }) });
+  assert.equal(app.terminals[0].output, 'recent-live');
+  assert.equal(app.terminals[1].output, '');
+});
 
-for (const remote of [false, true]) {
-  test(`${remote ? 'remote' : 'local'} input toolbar obeys the snapshot replay pause`, () => {
-    const app = setup(remote);
-    let finish;
-    app.context.TerminalClipboard.attach = term => ({ dispose() {}, writeHistory(data, done) { term.write(data); finish = done; } });
-    app.controller._open(); app.sockets[0].open();
-    app.sockets[0].onmessage({ data: JSON.stringify({ type: 'history', data: 'replay' }) });
-    app.sockets[0].sent.length = 0;
-    app.controller.sendTerminalInput('must-not-send');
-    assert.deepEqual(app.sockets[0].sent, []);
-    finish(); app.sockets[0].sent.length = 0;
-    app.controller.sendTerminalInput('allowed');
-    assert.deepEqual(app.sockets[0].sent, ['allowed']);
-  });
-}
+test(`input toolbar obeys the snapshot replay pause`, () => {
+  const app = setup();
+  let finish;
+  app.context.TerminalClipboard.attach = term => ({ dispose() {}, writeHistory(data, done) { term.write(data); finish = done; } });
+  app.controller._open(); app.sockets[0].open();
+  app.sockets[0].onmessage({ data: JSON.stringify({ type: 'history', data: 'replay' }) });
+  app.sockets[0].sent.length = 0;
+  app.controller.sendTerminalInput('must-not-send');
+  assert.deepEqual(app.sockets[0].sent, []);
+  finish(); app.sockets[0].sent.length = 0;
+  app.controller.sendTerminalInput('allowed');
+  assert.deepEqual(app.sockets[0].sent, ['allowed']);
+});

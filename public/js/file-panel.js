@@ -88,7 +88,7 @@
 
   function errorMessage(code, status) {
     const messages = {
-      FILES_UNSUPPORTED: '当前 Engine 版本不支持文件浏览，请更新后重试。',
+      FILES_UNSUPPORTED: '当前版本不支持文件浏览，请更新后重试。',
       FILE_UNSUPPORTED: '该文件是二进制文件或使用了不支持的编码，无法编辑。',
       FILE_TOO_LARGE: '文件过大，无法在页面中编辑。',
       FILE_CONFLICT: '文件已在其他位置修改，请重新加载或确认强制保存。',

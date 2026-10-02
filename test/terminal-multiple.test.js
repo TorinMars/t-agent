@@ -10,7 +10,12 @@ const root = fs.mkdtempSync(path.join(os.tmpdir(), 't-agent-multiple-'));
 process.env.T_AGENT_DATA_DIR = root;
 process.env.TASKS_BASE_DIR = path.join(root, 'tasks');
 const db = require('../db');
-const tasks = require('../services/engine-tasks');
+const tasks = {
+  createTask(owner, { title }) {
+    const result = db.prepare('INSERT INTO tasks (title, user_id, work_dir) VALUES (?, ?, ?)').run(title, owner, root);
+    return { id: Number(result.lastInsertRowid), work_dir: root };
+  },
+};
 const shells = [];
 const terminalPath = path.resolve(__dirname, '../routes/terminal.js');
 const mod = { exports: {} };

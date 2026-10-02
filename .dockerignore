@@ -7,7 +7,6 @@ node_modules
 data
 logs
 tasks
-docker/engine.env
 npm-debug.log*
 .DS_Store
 

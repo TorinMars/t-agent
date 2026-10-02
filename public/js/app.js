@@ -59,7 +59,6 @@ const Modal = {
 
 const TerminalControls = {
   controller() {
-    if (window.RemoteTasks && window.RemoteTasks.isSelected()) return window.RemoteTasks;
     return window.Tasks || null;
   },
 
@@ -459,8 +458,7 @@ async function init() {
         <input class="form-input" id="settings-work-dir" value="${escapeHtml(initialWorkDir)}" placeholder="例如 /Users/yourname/tasks">
         <div class="form-hint">新建任务时 md 文件的根目录，目录不存在会自动创建；清空恢复默认目录</div>
       </div>
-      <div class="settings-section"><div class="settings-section-title">图片上传</div><div class="form-hint">配置 Client 阿里云 OSS 后，可在本地及远程终端粘贴图片，或使用终端底部的上传图片按钮。</div><div class="settings-inline-actions"><button class="btn-cancel" id="settings-oss">配置阿里云 OSS</button></div></div>
-      <div class="settings-section"><div class="settings-section-title">远程服务</div><div class="form-hint">当前客户端也可作为引擎，供其他客户端访问本机任务、文件和终端。</div><div class="settings-inline-actions"><button class="btn-cancel" id="settings-remote-tokens">作为引擎供其他客户端连接</button></div></div>
+      <div class="settings-section"><div class="settings-section-title">图片上传</div><div class="form-hint">配置 Client 阿里云 OSS 后，可在终端粘贴图片，或使用终端底部的上传图片按钮。</div><div class="settings-inline-actions"><button class="btn-cancel" id="settings-oss">配置阿里云 OSS</button></div></div>
       <div class="settings-section"><div class="settings-section-title">身份验证器 · 已绑定</div><div class="form-hint">电脑和手机共用同一页面及绑定信息，登录有效期 30 天，使用期间自动续期；连续 30 天未使用需重新验证。更换后旧验证器、恢复码和其他设备登录立即失效。</div><a class="toolbar-btn" href="/auth/setup?return_to=/web">更换身份验证器</a></div>
       ${updateStatus ? Updates.renderSettings(updateStatus) : ''}
       <div class="form-actions">
@@ -470,7 +468,6 @@ async function init() {
     `);
     document.getElementById('settings-cancel').addEventListener('click', Modal.hide);
     document.getElementById('settings-oss').addEventListener('click', () => TerminalImages.showSettings());
-    document.getElementById('settings-remote-tokens').addEventListener('click', () => RemoteTasks.showTokens());
     if (updateStatus) Updates.bindSettings(updateStatus);
     document.getElementById('settings-save').addEventListener('click', async () => {
       const value = document.getElementById('settings-work-dir').value.trim();
@@ -488,13 +485,12 @@ async function init() {
     TerminalImages.load().catch(() => {}),
     Bookmarks.load(),
     Tasks.load(),
-    RemoteTasks.load(),
   ]);
   Updates.start();
 }
 
 // app.js 在其他业务脚本之前加载，以便提供 API、Modal、ContextMenu 等公共对象。
-// 等 DOMContentLoaded 再启动，确保后续的 bookmarks.js、tasks.js、remote-tasks.js
+// 等 DOMContentLoaded 再启动，确保后续的 bookmarks.js、tasks.js
 // 已经完成声明。单用户模式移除登录请求后，不能再依赖异步请求隐式让出执行时机。
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', init, { once: true });

@@ -3,6 +3,5 @@ data/
 logs/
 node_modules/
 tasks/
-docker/engine.env
 
 docker/client.env

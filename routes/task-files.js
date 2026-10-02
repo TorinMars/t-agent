@@ -6,7 +6,7 @@ function errorResponse(res, error) {
   res.status(error.statusCode || 500).json({ error: code });
 }
 
-function createTaskFilesRouter({ getTask, canRead = () => true, canWrite = () => true } = {}) {
+function createTaskFilesRouter({ getTask } = {}) {
   if (typeof getTask !== 'function') throw new TypeError('getTask is required');
   const router = express.Router({ mergeParams: true });
 
@@ -19,21 +19,14 @@ function createTaskFilesRouter({ getTask, canRead = () => true, canWrite = () =>
     return task;
   }
 
-  function requireScope(scope, predicate) {
-    return (req, res, next) => {
-      if (!predicate(req)) return res.status(403).json({ error: 'ENGINE_SCOPE_REQUIRED', required_scope: scope });
-      next();
-    };
-  }
-
-  router.get('/content', requireScope('files:read', canRead), (req, res) => {
+  router.get('/content', (req, res) => {
     const task = taskFor(req, res);
     if (!task) return;
     try { res.json(files.read(task, req.query.path)); }
     catch (error) { errorResponse(res, error); }
   });
 
-  router.put('/content', requireScope('files:write', canWrite), (req, res) => {
+  router.put('/content', (req, res) => {
     const task = taskFor(req, res);
     if (!task) return;
     const body = req.body || {};
@@ -41,7 +34,7 @@ function createTaskFilesRouter({ getTask, canRead = () => true, canWrite = () =>
     catch (error) { errorResponse(res, error); }
   });
 
-  router.get('/', requireScope('files:read', canRead), (req, res) => {
+  router.get('/', (req, res) => {
     const task = taskFor(req, res);
     if (!task) return;
     try {
@@ -49,12 +42,12 @@ function createTaskFilesRouter({ getTask, canRead = () => true, canWrite = () =>
         path: req.query.path,
         offset: req.query.offset,
         hidden: req.query.hidden,
-        writable: canWrite(req),
+        writable: true,
       }));
     } catch (error) { errorResponse(res, error); }
   });
 
-  router.post('/', requireScope('files:write', canWrite), (req, res) => {
+  router.post('/', (req, res) => {
     const task = taskFor(req, res);
     if (!task) return;
     const body = req.body || {};
@@ -62,7 +55,7 @@ function createTaskFilesRouter({ getTask, canRead = () => true, canWrite = () =>
     catch (error) { errorResponse(res, error); }
   });
 
-  router.patch('/', requireScope('files:write', canWrite), (req, res) => {
+  router.patch('/', (req, res) => {
     const task = taskFor(req, res);
     if (!task) return;
     const body = req.body || {};
@@ -70,7 +63,7 @@ function createTaskFilesRouter({ getTask, canRead = () => true, canWrite = () =>
     catch (error) { errorResponse(res, error); }
   });
 
-  router.delete('/', requireScope('files:write', canWrite), (req, res) => {
+  router.delete('/', (req, res) => {
     const task = taskFor(req, res);
     if (!task) return;
     const body = req.body || {};

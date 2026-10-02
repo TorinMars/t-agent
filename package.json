@@ -1,12 +1,11 @@
 {
   "name": "torin-x-web",
-  "version": "2.27.0",
-  "description": "Componentized task client and remote execution engine",
+  "version": "2.28.0",
+  "description": "T-Agent task client with browser terminals",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "start:client": "node server.js",
-    "start:engine": "node apps/engine/server.js",
     "dev": "nodemon server.js",
     "test": "node --test",
     "build:markdown": "esbuild scripts/markdown-view-entry.js --bundle --minify --format=iife --global-name=MarkdownView --outfile=public/js/markdown-view.js",

@@ -1,5 +1,4 @@
-// Browser-session mutations need same-origin proof. Engine Bearer APIs remain
-// separate so machine-to-machine clients keep their existing authentication.
+// Browser-session mutations need same-origin proof.
 module.exports = function clientOrigin(req, res, next) {
   const origin = req.get('origin');
   const expected = `${req.protocol}://${req.get('host')}`;

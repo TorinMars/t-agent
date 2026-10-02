@@ -21,12 +21,6 @@ db.pragma('foreign_keys = ON');
 const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
 db.exec(schema);
 
-const { randomUUID } = require('crypto');
-const identity = db.prepare("SELECT value FROM engine_identity WHERE key = 'instance_id'").get();
-if (!identity) {
-  db.prepare("INSERT INTO engine_identity (key, value) VALUES ('instance_id', ?)").run(randomUUID());
-}
-
 const existing = db.prepare('PRAGMA table_info(tasks)').all().map(c => c.name);
 if (!existing.includes('user_id'))     db.exec('ALTER TABLE tasks ADD COLUMN user_id TEXT');
 if (!existing.includes('share_token')) db.exec('ALTER TABLE tasks ADD COLUMN share_token TEXT');
@@ -36,8 +30,8 @@ for (const column of ['technical_path', 'readme_path', 'agent_path']) {
   if (!existing.includes(column)) db.exec(`ALTER TABLE tasks ADD COLUMN ${column} TEXT`);
 }
 
-// Migrate documents on each host, including Engine workspaces. Missing/offline
-// workspaces are left alone and retried on the next startup.
+// Migrate task documents. Missing/offline workspaces are left alone and
+// retried on the next startup.
 const documents = require('../services/task-documents');
 for (const task of db.prepare('SELECT * FROM tasks').all()) {
   const root = task.work_dir || (task.md_path && path.dirname(task.md_path));
@@ -49,11 +43,6 @@ for (const task of db.prepare('SELECT * FROM tasks').all()) {
   } catch (error) {
     console.warn(`Task ${task.id} instruction migration failed: ${error.message}`);
   }
-}
-
-const pairingColumns = db.prepare('PRAGMA table_info(engine_pairing_codes)').all().map(column => column.name);
-if (!pairingColumns.includes('principal_id')) {
-  db.exec("ALTER TABLE engine_pairing_codes ADD COLUMN principal_id TEXT NOT NULL DEFAULT 'engine'");
 }
 
 // terminal output history

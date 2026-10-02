@@ -43,11 +43,6 @@ esac
 if [ -f "$APP_DIR/.env" ]; then
   APP_PORT="$(sed -n 's/^PORT=//p' "$APP_DIR/.env" | tail -n 1)"
   TASKS_PATH="$(sed -n 's/^TASKS_BASE_DIR=//p' "$APP_DIR/.env" | tail -n 1)"
-  INSTALL_MODE="$(sed -n 's/^T_AGENT_MODE=//p' "$APP_DIR/.env" | tail -n 1)"
-  if [ "$INSTALL_MODE" = "engine" ]; then
-    SERVICE_NAME='t-agent-engine.service'
-    LAUNCH_LABEL='com.tagent.engine'
-  fi
 fi
 LAUNCH_PLIST="$HOME/Library/LaunchAgents/$LAUNCH_LABEL.plist"
 

@@ -53,10 +53,10 @@ test('switching terminals cancels pending pages and rejects stale sockets and re
 });
 test('legacy, timeout, error and disconnect states do not request or render unwanted pages', () => {
   const app = setup(), item = app.instance(); app.History.activate(item.inst); initial(item, undefined);
-  // Explicitly omit archive for a legacy Engine.
+  // Explicitly omit archive for a legacy server.
   item.inst.history.handle(JSON.stringify({ type: 'history', data: '' }), item.inst.ws);
   app.click('btn-terminal-history'); assert.equal(item.sent.length, 0);
-  assert.match(app.document.getElementById('btn-terminal-history').title, /升级/);
+  assert.match(app.document.getElementById('btn-terminal-history').title, /不支持/);
   initial(item); app.click('btn-terminal-history'); const request = item.sent[0];
   for (const fn of [...app.timers.values()]) fn();
   assert.match(app.document.getElementById('terminal-history-status').textContent, /超时/);

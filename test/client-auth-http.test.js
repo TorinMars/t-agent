@@ -81,11 +81,7 @@ for (const [environment, allowHttp] of [['test', 'false'], ['production', 'false
   assert.equal((await call('/auth/setup/start', { body: {}, headers: { Origin: 'https://attacker.test' } })).status, 403);
   assert.deepEqual(await (await call('/auth/status')).json(), { bound: false, authenticated: false });
   await rejectWs('/terminal/ws?taskId=1', base, 401);
-  await rejectWs('/api/remote-servers/1/terminal/ws?taskId=1', base, 401);
   await rejectWs('/terminal/ws?taskId=1', 'https://attacker.test', 403);
-  const protocol = await call('/api/remote/v1/capabilities');
-  assert.equal((await protocol.json()).error, 'REMOTE_TOKEN_REQUIRED');
-  assert.equal((await call('/v1/info')).status, 401);
 
   const startResponse = await call('/auth/setup/start', { body: {} });
   assert.equal(startResponse.status, 200);
@@ -116,29 +112,12 @@ for (const [environment, allowHttp] of [['test', 'false'], ['production', 'false
   assert.equal((await call('/auth/settings', { cookie: boundCookie, method: 'PUT', body: { work_dir: null } })).status, 200);
   assert.equal((await (await call('/auth/me', { cookie: boundCookie })).json()).effective_work_dir, path.join(temp, 'tasks'));
 
-  // A full Client also serves the standard Engine protocol on the same port.
-  const pairingResponse = await call('/api/remote-tokens/pairing', { cookie: boundCookie, body: { role: 'operator' } });
-  assert.equal(pairingResponse.status, 201);
-  const pairing = await pairingResponse.json();
-  const exchange = await call('/v1/pair', { body: { code: pairing.code, client_name: 'Another Client' } });
-  assert.equal(exchange.status, 201);
-  const access = await exchange.json();
-  const engineHeaders = { Authorization: `Bearer ${access.access_token}` };
-  assert.equal((await call('/v1/pair', { body: { code: pairing.code } })).status, 400);
-  const engineInfo = await call('/v1/info', { headers: engineHeaders });
-  assert.equal(engineInfo.status, 200);
-  assert.equal((await engineInfo.json()).role, 'operator');
-  const createdResponse = await call('/v1/tasks', { headers: engineHeaders, body: { title: 'Created by another Client', work_dir: path.join(temp, 'remote-created') } });
-  assert.equal(createdResponse.status, 201);
-  const created = await createdResponse.json();
-  const localTasks = await (await call('/api/tasks', { cookie: boundCookie })).json();
-  assert.ok(localTasks.some(task => task.id === created.id), 'Engine and Client share the local task owner');
-  assert.equal((await call(`/v1/tasks/${created.id}`, { method: 'DELETE', headers: engineHeaders })).status, 200);
-  const tokens = await (await call('/api/remote-tokens', { cookie: boundCookie })).json();
-  const token = tokens.find(item => item.name === 'Another Client');
-  assert.ok(token);
-  assert.equal((await call(`/api/remote-tokens/${token.id}`, { method: 'DELETE', cookie: boundCookie, headers: { 'X-Requested-With': 'XMLHttpRequest' } })).status, 200);
-  assert.equal((await call('/v1/info', { headers: engineHeaders })).status, 401);
+  // The Engine protocol and remote token APIs no longer exist.
+  for (const route of ['/v1/info', '/api/remote-tokens', '/api/remote-servers', '/api/remote/v1/capabilities']) {
+    const response = await call(route, { cookie: boundCookie });
+    assert.notEqual(response.status, 200, route);
+    assert.ok(response.status === 404 || response.status === 302, `${route} -> ${response.status}`);
+  }
 
   const refreshedCookie = meResponse.headers.get('set-cookie');
   assert.ok(refreshedCookie, 'active HTTP request reissues the rolling cookie');
@@ -186,7 +165,6 @@ for (const [environment, allowHttp] of [['test', 'false'], ['production', 'false
       // No task requested: reaching the terminal handler proves session authentication.
       ws.on('close', (code, reason) => { assert.equal(code, 1008); assert.equal(reason.toString(), 'missing taskId'); resolve(); });
     });
-    await rejectWs('/v1/terminal-sessions/1/stream?ticket=invalid', loginHeaders.Origin, 401);
   }
   assert.equal((await call('/auth/login', { body: { code: confirmed.recovery_codes[0] } })).status, 401);
   const replacementResponse = await call('/auth/setup/start', { cookie: recoveryCookie, headers: loginHeaders, body: {} });

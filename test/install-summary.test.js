@@ -19,7 +19,7 @@ function output(config, overrides = {}) {
       encoding: 'utf8',
       env: { ...process.env, APP_DIR: appDir, ENV_FILE: envFile, MODE: 'client',
         SERVICE_STARTED: '1', SERVICE_HINT: 'service status', MANUAL_START: 'npm start',
-        CREATED_ENGINE_TOKEN: '', ...overrides },
+        ...overrides },
     });
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 }
@@ -37,10 +37,4 @@ test('wildcard listeners use a reachable loopback URL and IPv6 is bracketed', ()
 });
 test('manual installation tells the user to start before browsing', () => {
   assert.match(output('', { SERVICE_STARTED: '0' }), /尚未启动.*\n启动命令：npm start[\s\S]*启动后.*请在浏览器打开/);
-});
-test('engine summary retains its connection address and token', () => {
-  const text = output('PORT="3200"\n', { MODE: 'engine', CREATED_ENGINE_TOKEN: 'test-token' });
-  assert.match(text, /http:\/\/<服务器IP>:3200/);
-  assert.match(text, /test-token/);
-  assert.doesNotMatch(text, /请在浏览器打开/);
 });

@@ -53,7 +53,6 @@ const Tasks = (() => {
     if (selectedId) saveTaskTab(selectedId, tab);
     contentTabs.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
     if (tab !== 'shell') {
-      if (selectedId && previousTab === 'shell') onLeaveShellTab(selectedId);
       previewPane.style.display = '';
       TerminalHistory.activate(null);
       terminalPane.style.display = 'none';
@@ -71,7 +70,7 @@ const Tasks = (() => {
       stopWatcher();
       terminalPane.style.display = 'flex';
       // 切到终端时清除"执行完成待查看"状态
-      if (selectedId && termState.get(selectedId) === 'done') updateTermDot(selectedId, 'idle');
+      acknowledgeCurrentTerminal();
       if (task) {
         connectTerminal(task);
         // connectTerminal 是异步的（onopen），已有实例直接 focus
@@ -87,49 +86,33 @@ const Tasks = (() => {
     return JSON.stringify([taskId, terminalId]);
   }
 
-  // 终端状态：'idle' | 'running' | 'done'
-  const termState = new Map();       // taskId -> state
-  let termDoneTimers = new Map();    // taskId -> setTimeout handle
-  const termLastActivity = new Map(); // taskId -> timestamp（最后收到 PTY 输出的时间）
-
-  // 更新左侧任务项的圆点
-  function updateTermDot(taskId, state) {
-    termState.set(taskId, state);
-    const dot = document.querySelector(`.task-nav-item[data-id="${taskId}"] .term-dot`);
-    if (!dot) return;
-    dot.className = 'term-dot';
-    if (state === 'running') dot.classList.add('running');
-    else if (state === 'done') dot.classList.add('done');
+  // 终端状态由服务端按 PTY 前台进程判定（running / done），这里只负责展示。
+  // 左侧任务项取该任务所有终端的汇总状态；终端 tab 各自显示自己的状态。
+  function applyTermState(item, state) {
+    item.classList.toggle('term-running', state === 'running');
+    item.classList.toggle('term-done', state === 'done');
   }
 
-  // 切离某个 task 的 shell tab 时调用：若最近 30s 内有活动，补设 done
-  function onLeaveShellTab(taskId) {
-    const last = termLastActivity.get(taskId);
-    if (!last) return;
-    if (Date.now() - last < 30000 && termState.get(taskId) !== 'running') {
-      updateTermDot(taskId, 'done');
-    }
+  function refreshTermIndicators() {
+    document.querySelectorAll('.task-nav-item[data-id]').forEach(item => {
+      applyTermState(item, TerminalActivity.taskState(Number(item.dataset.id)));
+    });
+    TerminalTabs.refresh();
   }
 
-  // PTY 有输出 → running；输出静止 2s → done
-  function onTermData(taskId) {
-    termLastActivity.set(taskId, Date.now());
-    if (termDoneTimers.has(taskId)) {
-      clearTimeout(termDoneTimers.get(taskId));
-      termDoneTimers.delete(taskId);
-    }
-    if (termState.get(taskId) !== 'running') updateTermDot(taskId, 'running');
-
-    const timer = setTimeout(() => {
-      termDoneTimers.delete(taskId);
-      // 无论用户是否在看，先设 done；若当前正在看则再立即清掉
-      updateTermDot(taskId, 'done');
-      if (selectedId === taskId && activeTab === 'shell') {
-        updateTermDot(taskId, 'idle');
-      }
-    }, 2000);
-    termDoneTimers.set(taskId, timer);
+  // 用户正在看某个任务当前终端时，视为已确认完成
+  function viewingTerminal(taskId) {
+    return selectedId === taskId && activeTab === 'shell' && !document.hidden;
   }
+
+  function acknowledgeCurrentTerminal() {
+    if (!selectedId || activeTab !== 'shell') return;
+    TerminalActivity.acknowledge(selectedId, TerminalTabs.current(`/api/tasks/${selectedId}`));
+  }
+
+  TerminalActivity.onChange(refreshTermIndicators);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) acknowledgeCurrentTerminal(); });
+  TerminalActivity.start();
 
   function disposeTerminalInstance(taskId, terminalId) {
     const key = terminalKey(taskId, terminalId);
@@ -192,7 +175,6 @@ const Tasks = (() => {
         inst.term.write(new Uint8Array(e.data));
       } else {
         inst.term.write(e.data);
-        onTermData(task.id, e.data);
       }
     };
 
@@ -213,7 +195,10 @@ const Tasks = (() => {
   function connectTerminal(task) {
     const container = document.getElementById('xterm-container');
     TerminalControls.clearMessage();
-    const terminalId = TerminalTabs.show(`/api/tasks/${task.id}`, () => connectTerminal(task));
+    const terminalId = TerminalTabs.show(`/api/tasks/${task.id}`, () => connectTerminal(task), {
+      taskId: task.id,
+      viewing: () => viewingTerminal(task.id),
+    });
     const key = terminalKey(task.id, terminalId);
 
     if (termInstances.has(key)) {
@@ -314,7 +299,7 @@ const Tasks = (() => {
       connectTerminal(task);
       throw error;
     }
-    updateTermDot(task.id, 'idle');
+    TerminalActivity.refresh();
     if (action === 'restart-workdir') {
       TerminalControls.clearMessage();
       connectTerminal(task);
@@ -834,13 +819,7 @@ const Tasks = (() => {
     item.appendChild(iconEl);
     item.appendChild(titleEl);
 
-    // 终端状态圆点
-    const dotEl = document.createElement('span');
-    dotEl.className = 'term-dot';
-    const state = termState.get(task.id);
-    if (state === 'running') dotEl.classList.add('running');
-    else if (state === 'done') dotEl.classList.add('done');
-    item.appendChild(dotEl);
+    applyTermState(item, TerminalActivity.taskState(task.id));
 
     const due = formatDue(task.due_date);
     if (due) {
@@ -907,10 +886,6 @@ const Tasks = (() => {
       return FilePanel.beforeContextChange().then(allowed => allowed && selectTask(id));
     }
     if (selectedId !== id && !confirmDiscardEditor()) return;
-    // 离开旧任务的 shell tab 时补设 done
-    if (selectedId && selectedId !== id && activeTab === 'shell') {
-      onLeaveShellTab(selectedId);
-    }
     selectedId = id;
     if (window.RemoteTasks) {
       window.RemoteTasks.setActiveEngine('local', { selectContent: false });
@@ -936,7 +911,7 @@ const Tasks = (() => {
       stopWatcher();
       terminalPane.style.display = 'flex';
       // 切到终端时清除"执行完成待查看"状态
-      if (termState.get(id) === 'done') updateTermDot(id, 'idle');
+      acknowledgeCurrentTerminal();
     } else {
       previewPane.style.display = '';
       TerminalHistory.activate(null);

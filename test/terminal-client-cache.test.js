@@ -28,11 +28,12 @@ function setup(remote) {
     TerminalClipboard: { attach: term => ({ dispose() {}, writeHistory: (data, done) => term.write(data, done) }) },
     TerminalControls: { clearMessage() {}, showMessage() {} },
     API: { get: async () => [{ terminal_id: 'default', title: '终端 1' }], post: async () => ({ terminal_id: 'second', title: '终端 2' }) },
-    setTimeout: (fn, delay) => { timers.push({ fn, delay }); return timers.length; }, clearTimeout() {},
+    setTimeout: (fn, delay) => { timers.push({ fn, delay }); return timers.length; }, clearTimeout() {}, setInterval() { return 0; },
     requestAnimationFrame: fn => fn(), addEventListener() {}, removeEventListener() {}, console,
   };
   context.window = context;
   vm.createContext(context);
+  vm.runInContext(fs.readFileSync(require.resolve('../public/js/terminal-activity.js'), 'utf8'), context);
   vm.runInContext(fs.readFileSync(require.resolve('../public/js/terminal-tabs.js'), 'utf8'), context);
   vm.runInContext(fs.readFileSync(require.resolve('../public/js/terminal-history.js'), 'utf8'), context);
   let source = fs.readFileSync(require.resolve(remote ? '../public/js/remote-tasks.js' : '../public/js/tasks.js'), 'utf8');

@@ -4,6 +4,7 @@ const path = require('path');
 const db = require('../db');
 const { TerminalSnapshot, createHistoryArchive } = require('../lib/terminal-snapshot');
 const { RESET_INPUT_MODES, watchShellReturn } = require('../lib/terminal-input-modes');
+const { createActivityTracker } = require('../lib/terminal-activity');
 const { repairSpawnHelperPermissions } = require('../lib/node-pty-runtime');
 
 // Sessions are keyed by task ID and terminal ID; omitted IDs use the legacy shell.
@@ -161,12 +162,14 @@ function getOrCreateSession(ownerTaskId, workDir, dirWarning, id = 'default') {
   pty.onData(emit);
   // Also goes through the history buffer so replays do not re-enable mouse reporting.
   s.stopShellWatch = watchShellReturn(pty, shell, () => emit(RESET_INPUT_MODES));
+  s.activity = createActivityTracker(pty, shell);
 
   pty.onExit(() => {
     // The parser queue also owns live delivery. Drain its last bytes before
     // closing a naturally exited shell; explicit control remains immediate.
     s.exiting = true;
     s.stopShellWatch();
+    s.activity.stop();
     s.snapshot.enqueue(() => {
       if (sessions.get(taskId) !== s) return;
       clearInterval(s.flushTimer);
@@ -206,6 +209,7 @@ function controlSession(taskId, action, requestedTerminalId) {
     session.snapshot.dispose();
     clearInterval(session.flushTimer);
     session.stopShellWatch?.();
+    session.activity?.stop();
     if (clearHistory) clearBuffer(id, selectedId);
     else persistBuffer(id, session.buffer, selectedId);
     session.pendingSince = 0;
@@ -334,8 +338,29 @@ function handleWs(ws, req, sessionUser, requestedTaskId = null, requestedTermina
   });
 }
 
+/** Activity of every live terminal of the given tasks: { [taskId]: { [terminalId]: state } }. */
+function activitySnapshot(taskIds) {
+  const result = {};
+  for (const taskId of taskIds) {
+    for (const item of listTerminals(taskId)) {
+      const session = sessions.get(sessionKey(taskId, item.terminal_id));
+      const state = session && session.activity ? session.activity.state() : 'idle';
+      if (state === 'idle') continue;
+      (result[taskId] ||= {})[item.terminal_id] = state;
+    }
+  }
+  return result;
+}
+
+function acknowledgeActivity(taskId, requestedTerminalId) {
+  const id = assertTerminal(taskId, requestedTerminalId);
+  const session = sessions.get(sessionKey(taskId, id));
+  if (session && session.activity) session.activity.acknowledge();
+  return { success: true };
+}
+
 function closeTaskTerminals(taskId) {
   for (const item of listTerminals(taskId)) controlSession(taskId, 'close', item.terminal_id);
 }
 
-module.exports = { controlSession, handleWs, listTerminals, createTerminal, assertTerminal, closeTaskTerminals };
+module.exports = { activitySnapshot, acknowledgeActivity, controlSession, handleWs, listTerminals, createTerminal, assertTerminal, closeTaskTerminals };

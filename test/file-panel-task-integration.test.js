@@ -8,7 +8,7 @@ function setup(remote=false) {
  const calls=[];
  const context={document,console,localStorage:{getItem:key=>key === 'active-engine-key' ? 'remote:42' : null,setItem(){},removeItem(){}},
  mermaid:{initialize(){}},escapeHtml:String,alert(){},confirm:()=>true,addEventListener(){},
- API:{get:async()=>[]},setTimeout(){},clearTimeout(){},
+ TerminalActivity:{onChange(){},start(){},refresh(){},acknowledge(){},stateOf:()=>'idle',taskState:()=>'idle'},API:{get:async()=>[]},setTimeout(){},clearTimeout(){},
  FilePanel:{isOpen:()=>true,beforeContextChange:async()=>false,close:async()=>false,open:async c=>calls.push(c)},
  };
  context.window=context; vm.createContext(context);

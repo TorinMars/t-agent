@@ -746,29 +746,56 @@ body.tools-open .layout, body.tools-open .quicklinks-bar { display: none; }
   color: var(--priority-high);
 }
 
-/* 终端状态圆点 */
-.term-dot {
-  flex-shrink: 0;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  margin-left: 4px;
-  display: none;
+/* 终端状态：执行中=外圈跑马灯，完成待确认=呼吸灯。左侧任务项与终端 tab 共用。 */
+@property --term-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
 }
-.term-dot.running {
-  display: block;
-  background: #f0a500;
-  box-shadow: 0 0 4px #f0a500aa;
-  animation: term-dot-pulse 1.2s ease-in-out infinite;
+.task-nav-item.term-running,
+.task-nav-item.term-done,
+.terminal-tab.term-running,
+.terminal-tab.term-done {
+  position: relative;
+  opacity: 1;
 }
-.term-dot.done {
-  display: block;
-  background: #3fb950;
-  box-shadow: 0 0 4px #3fb95088;
+.task-nav-item.term-running::after,
+.terminal-tab.term-running::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  padding: 2px;
+  border-radius: inherit;
+  pointer-events: none;
+  background: conic-gradient(from var(--term-angle), transparent 0 55%, #f0a500 80%, #ffd666 100%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+  filter: drop-shadow(0 0 3px #f0a500aa);
+  animation: term-marquee 1.6s linear infinite;
 }
-@keyframes term-dot-pulse {
-  0%, 100% { opacity: 1; }
-  50%       { opacity: 0.35; }
+.task-nav-item.term-done::after,
+.terminal-tab.term-done::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  border: 2px solid #3fb950;
+  animation: term-breathe 2s ease-in-out infinite;
+}
+@keyframes term-marquee {
+  to { --term-angle: 360deg; }
+}
+@keyframes term-breathe {
+  0%, 100% { opacity: 0.25; box-shadow: 0 0 0 0 #3fb95000, inset 0 0 0 0 #3fb95000; }
+  50%      { opacity: 1;    box-shadow: 0 0 10px 1px #3fb950aa, inset 0 0 8px #3fb95055; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .task-nav-item.term-running::after,
+  .terminal-tab.term-running::after { animation: none; background: #f0a500; }
+  .task-nav-item.term-done::after,
+  .terminal-tab.term-done::after { animation: none; }
 }
 
 /* Preview pane */

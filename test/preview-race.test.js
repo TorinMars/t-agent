@@ -14,7 +14,7 @@ function setup(remote = false) {
     fetch: async () => ({ ok: true, text: async () => '<h1>Current document</h1>' }),
     EventSource: class { constructor() { watchers.push(this); } close() { this.closed = true; } },
     IntersectionObserver: class { observe() {} disconnect() {} },
-    RemoteTasks: { isSelected: () => false }, addEventListener() {}, setTimeout() {}, clearTimeout() {},
+    TerminalActivity:{onChange(){},start(){},refresh(){},acknowledge(){},stateOf:()=>'idle',taskState:()=>'idle'},RemoteTasks: { isSelected: () => false }, addEventListener() {}, setTimeout() {}, clearTimeout() {},
   };
   context.window = context; vm.createContext(context);
   const file = remote ? 'public/js/remote-tasks.js' : 'public/js/tasks.js';

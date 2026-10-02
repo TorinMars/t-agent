@@ -9,7 +9,7 @@ for (const remote of [false,true]) test(`${remote?'remote':'local'} task form su
  const context={document,console,localStorage:{getItem:()=>null,setItem(){}},addEventListener(){},
   escapeHtml:v=>String(v),mermaid:{initialize(){}},alert:message=>{throw new Error(message)},
   Modal:{show(title,body){document.getElementById('modal-body').innerHTML=body},hide(){}},
-  API:{put:(url,body)=>{calls.push({url,body});return new Promise(()=>{})},get:async()=>[]},
+  TerminalActivity:{onChange(){},start(){},refresh(){},acknowledge(){},stateOf:()=>'idle',taskState:()=>'idle'},API:{put:(url,body)=>{calls.push({url,body});return new Promise(()=>{})},get:async()=>[]},
  };
  context.window=context;vm.createContext(context);
  let source=fs.readFileSync(remote?'public/js/remote-tasks.js':'public/js/tasks.js','utf8');

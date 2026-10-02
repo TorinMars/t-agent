@@ -159,7 +159,10 @@ function getOrCreateSession(ownerTaskId, workDir, dirWarning, id = 'default') {
       if (s.ready && s.ws && s.authorized && s.authorized()) s.ws.send(data);
     });
   };
-  pty.onData(emit);
+  pty.onData(data => {
+    s.activity?.noteOutput();
+    emit(data);
+  });
   // Also goes through the history buffer so replays do not re-enable mouse reporting.
   s.stopShellWatch = watchShellReturn(pty, shell, () => emit(RESET_INPUT_MODES));
   s.activity = createActivityTracker(pty, shell);
@@ -311,6 +314,7 @@ function handleWs(ws, req, sessionUser, requestedTaskId = null, requestedTermina
         }
         if (data.type === 'resize') {
           if (!Number.isInteger(data.cols) || !Number.isInteger(data.rows) || data.cols < 1 || data.rows < 1 || data.cols > 1000 || data.rows > 1000) return;
+          s.activity?.noteInput();
           s.pty.resize(data.cols, data.rows);
           s.snapshot.resize(data.cols, data.rows);
           return;
@@ -320,7 +324,10 @@ function handleWs(ws, req, sessionUser, requestedTaskId = null, requestedTermina
         if (/\"type\"\s*:\s*\"history/.test(str)) return;
       }
     }
-    if (!s.exiting) s.pty.write(str);
+    if (!s.exiting) {
+      s.activity?.noteInput();
+      s.pty.write(str);
+    }
   });
 
   ws.on('close', () => {

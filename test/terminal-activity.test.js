@@ -9,7 +9,7 @@ test('running while a non-shell process owns the foreground, done after it retur
   const seen = [];
   const tracker = createActivityTracker(pty, '/bin/bash', state => seen.push(state), 10);
   try {
-    pty.process = 'claude';
+    pty.process = 'make';
     await tick(60);
     assert.equal(tracker.state(), 'running');
     await tick(80); // silent for a long time: still running
@@ -41,5 +41,54 @@ test('acknowledge is ignored while running', async () => {
     await tick(60);
     tracker.acknowledge();
     assert.equal(tracker.state(), 'running');
+  } finally { tracker.stop(); }
+});
+
+const FAST = { pollMs: 10, burstMs: 200, quietMs: 80, echoMs: 20 };
+
+test('agent in the foreground: running while it streams output, done once it goes quiet', async () => {
+  const pty = { process: 'claude' };
+  const seen = [];
+  const tracker = createActivityTracker(pty, '/bin/bash', state => seen.push(state), FAST);
+  try {
+    await tick(60);
+    assert.equal(tracker.state(), 'idle'); // foreground alone does not mean working
+    const spinner = setInterval(() => tracker.noteOutput(), 10);
+    await tick(100);
+    assert.equal(tracker.state(), 'running');
+    clearInterval(spinner);
+    await tick(200); // waiting for the user
+    assert.equal(tracker.state(), 'done');
+    tracker.acknowledge();
+    assert.deepEqual(seen, ['running', 'done', 'idle']);
+  } finally { tracker.stop(); }
+});
+
+test('typing echo and resize redraws do not make an agent look busy', async () => {
+  const pty = { process: 'codex' };
+  const tracker = createActivityTracker(pty, '/bin/bash', () => {}, { ...FAST, echoMs: 30 });
+  try {
+    for (let i = 0; i < 10; i++) {
+      tracker.noteInput();
+      tracker.noteOutput();
+      await tick(10);
+    }
+    assert.equal(tracker.state(), 'idle');
+  } finally { tracker.stop(); }
+});
+
+test('agent starts working again after a done acknowledgement', async () => {
+  const pty = { process: 'claude' };
+  const tracker = createActivityTracker(pty, '/bin/bash', () => {}, FAST);
+  try {
+    for (let round = 0; round < 2; round++) {
+      const spinner = setInterval(() => tracker.noteOutput(), 10);
+      await tick(100);
+      clearInterval(spinner);
+      assert.equal(tracker.state(), 'running');
+      await tick(200);
+      assert.equal(tracker.state(), 'done');
+      tracker.acknowledge();
+    }
   } finally { tracker.stop(); }
 });

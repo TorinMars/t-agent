@@ -61,7 +61,7 @@
     </div>
     <div class="tool-card tool-card-wide" id="pm2-card">
       <div class="tool-card-title">PM2 进程管理</div>
-      <div class="form-hint" id="pm2-hint">管理运行 Client 的这台机器上的 PM2 进程。可以启动、停止、重启、reload 和查看日志；停止或重启前会确认。</div>
+      <div class="form-hint" id="pm2-hint">管理运行 Client 的这台机器上的 PM2 进程（远程 Engine 所在机器不在此列）。可以启动、停止、重启、reload 和查看日志；停止或重启前会确认。</div>
       <div class="pm2-table-wrap">
         <table class="pm2-table" id="pm2-table" hidden>
           <thead><tr><th>名称</th><th>状态</th><th>CPU</th><th>内存</th><th>运行时长</th><th>重启</th><th>操作</th></tr></thead>
@@ -93,6 +93,12 @@
   </section>
 
   <div class="layout">
+    <nav class="engine-tabs-bar" aria-label="Engine 切换">
+      <button class="engine-nav-toggle" id="btn-toggle-engines" type="button" aria-controls="engine-tabs" aria-expanded="true" title="收起引擎栏" aria-label="收起引擎栏">«</button>
+      <div class="engine-tabs" id="engine-tabs"></div>
+      <button class="engine-connect-remote" id="btn-connect-remote" type="button" title="连接远程服务" aria-label="连接远程服务"><span aria-hidden="true">＋</span><span class="engine-connect-label">连接远程</span></button>
+    </nav>
+
     <aside class="sidebar" id="sidebar">
       <div class="sidebar-toolbar">
         <button class="btn-new-task" id="btn-new-task">+ 新建任务</button>
@@ -206,6 +212,7 @@
   <script src="/js/file-panel.js"></script>
   <script src="/js/terminal-history.js"></script>
   <script src="/js/tasks.js"></script>
+  <script src="/js/remote-tasks.js"></script>
   <script src="/js/terminal-keys.js"></script>
   <script src="/js/tools.js"></script>
   <script>

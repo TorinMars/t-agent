@@ -12,7 +12,7 @@ TARGET_DIR="${T_AGENT_DIR:-$PWD/t-agent}"
 command -v curl >/dev/null 2>&1 || { printf '错误：请先安装 curl。\n' >&2; exit 1; }
 [ -n "$REPOSITORY" ] && [[ "$REPOSITORY" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] && [[ "$REPOSITORY" != ../* ]] && [[ "$REPOSITORY" != */.. ]] || { printf '错误：T_AGENT_REPOSITORY 格式不正确。\n' >&2; exit 1; }
 [ -n "$REPOSITORY_REF" ] && [[ "$REPOSITORY_REF" =~ ^[A-Za-z0-9._/-]+$ ]] && [[ "$REPOSITORY_REF" != *..* ]] || { printf '错误：T_AGENT_REF 格式不正确。\n' >&2; exit 1; }
-[ "${T_AGENT_MODE:-client}" = "client" ] || { printf '错误：Engine 模式已移除，只支持 client。\n' >&2; exit 1; }
+[ "${T_AGENT_MODE:-client}" = "client" ] || { printf '错误：独立 Engine 安装已移除，只支持 client（Client 已内置 Engine）。\n' >&2; exit 1; }
 [ -r /dev/tty ] || { printf '错误：需要可交互终端来设置安装参数。\n' >&2; exit 1; }
 
 if [ -e "$TARGET_DIR" ]; then

@@ -61,6 +61,67 @@ CREATE TABLE IF NOT EXISTS system_state (
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS remote_access_tokens (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id     TEXT NOT NULL,
+  name        TEXT NOT NULL,
+  token_hash  TEXT NOT NULL UNIQUE,
+  token_prefix TEXT NOT NULL,
+  scopes      TEXT NOT NULL DEFAULT 'tasks:read',
+  last_used_at DATETIME,
+  created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  revoked_at  DATETIME
+);
+
+CREATE TABLE IF NOT EXISTS remote_servers (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  owner_id      TEXT NOT NULL,
+  name          TEXT NOT NULL,
+  base_url      TEXT NOT NULL,
+  token_cipher  TEXT NOT NULL,
+  enabled       INTEGER NOT NULL DEFAULT 1,
+  status        TEXT NOT NULL DEFAULT 'unknown',
+  remote_version TEXT,
+  last_checked_at DATETIME,
+  last_error    TEXT,
+  created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(owner_id, base_url)
+);
+
+CREATE INDEX IF NOT EXISTS idx_remote_servers_owner ON remote_servers(owner_id, created_at);
+
+-- Engine 授权与配对数据。Engine 只保存 Token 哈希，明文只在创建时返回一次。
+CREATE TABLE IF NOT EXISTS engine_access_tokens (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  principal_id TEXT    NOT NULL DEFAULT 'engine',
+  name         TEXT    NOT NULL,
+  token_hash   TEXT    NOT NULL UNIQUE,
+  token_prefix TEXT    NOT NULL,
+  role         TEXT    NOT NULL DEFAULT 'operator',
+  scopes       TEXT    NOT NULL,
+  last_used_at DATETIME,
+  created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  revoked_at   DATETIME
+);
+
+CREATE TABLE IF NOT EXISTS engine_pairing_codes (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  principal_id TEXT    NOT NULL DEFAULT 'engine',
+  code_hash    TEXT    NOT NULL UNIQUE,
+  code_prefix  TEXT    NOT NULL,
+  role         TEXT    NOT NULL DEFAULT 'operator',
+  expires_at   DATETIME NOT NULL,
+  created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  consumed_at  DATETIME
+);
+
+CREATE TABLE IF NOT EXISTS engine_identity (
+  key        TEXT PRIMARY KEY,
+  value      TEXT NOT NULL,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Additional terminals retain the original terminal_logs table for the default shell.
 CREATE TABLE IF NOT EXISTS task_terminals (
   task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,

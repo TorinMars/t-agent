@@ -27,7 +27,7 @@ done
 command -v git >/dev/null 2>&1 || { printf '错误：请先安装 Git。\n' >&2; exit 1; }
 
 INSTALLED_MODE="$(sed -n 's/^T_AGENT_MODE=//p' "$ENV_FILE" | tail -n 1)"
-[ -z "$INSTALLED_MODE" ] || [ "$INSTALLED_MODE" = "client" ] || { printf '错误：Engine 模式已移除，.env 中的组件模式是 %s，无法迁移。\n' "$INSTALLED_MODE" >&2; exit 1; }
+[ -z "$INSTALLED_MODE" ] || [ "$INSTALLED_MODE" = "client" ] || { printf '错误：独立 Engine 已移除，.env 中的组件模式是 %s，无法迁移。\n' "$INSTALLED_MODE" >&2; exit 1; }
 
 REPOSITORY="${T_AGENT_REPOSITORY:-$(sed -n 's/^UPDATE_GITHUB_REPOSITORY=//p' "$ENV_FILE" | tail -n 1)}"
 REF="${T_AGENT_REF:-$(sed -n 's/^UPDATE_GIT_BRANCH=//p' "$ENV_FILE" | tail -n 1)}"
@@ -96,4 +96,4 @@ T_AGENT_REPOSITORY="$REPOSITORY" T_AGENT_REF="$REF" "$APP_DIR/install.sh" --mode
 
 printf '\n迁移完成。\nGit 分支：%s\n' "$(git -C "$APP_DIR" branch --show-current)"
 printf '原安装完整保留在：%s\n' "$BACKUP_DIR"
-printf '确认配置和任务正常后，再自行处理该备份。\n'
+printf '确认配置、任务和远程连接正常后，再自行处理该备份。\n'

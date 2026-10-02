@@ -1,4 +1,4 @@
-// Images are uploaded by this Client.
+// Images are uploaded by this Client, regardless of the terminal's Engine.
 const TerminalImages = (() => {
   const instances = new Set();
   let enabled = false;

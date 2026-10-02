@@ -7,7 +7,7 @@ const { createRequire } = require('node:module');
 const filename = require.resolve('../services/update-manager');
 const realRequire = createRequire(filename);
 
-for (const changed of ['public/js/mobile.js', 'services/task-groups.js']) {
+for (const changed of ['public/js/mobile.js', 'services/engine-tasks.js']) {
   test(`update execution chooses restart correctly for ${changed}`, async () => {
     const commands = [], timers = [];
     let backups = 0;

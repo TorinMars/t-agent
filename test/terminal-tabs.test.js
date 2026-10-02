@@ -5,7 +5,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const { parseHTML } = require('linkedom');
 
-test('new terminal tabs switch independently and keep terminal state separate per task', async () => {
+test('new terminal tabs switch independently and keep local and remote task state separate', async () => {
   const { document } = parseHTML('<div id="terminal-tabs"></div>');
   const calls = [];
   const context = vm.createContext({ document, API: {
@@ -27,9 +27,9 @@ test('new terminal tabs switch independently and keep terminal state separate pe
   buttons[0].click();
   assert.equal(tabs.current('/api/tasks/1'), 'default');
   assert.equal(switches, 2);
-  tabs.show('/api/tasks/2', () => {});
+  tabs.show('/api/remote-servers/2/tasks/1', () => {});
   await Promise.resolve();
   await tabs.create();
   assert.equal(tabs.current('/api/tasks/1'), 'default');
-  assert.equal(tabs.current('/api/tasks/2'), 'second');
+  assert.equal(tabs.current('/api/remote-servers/2/tasks/1'), 'second');
 });

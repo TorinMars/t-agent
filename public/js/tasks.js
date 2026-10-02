@@ -42,6 +42,7 @@ const Tasks = (() => {
 
   // ── Tab 切换 ──
   contentTabs.addEventListener('click', (e) => {
+    if (window.RemoteTasks && window.RemoteTasks.isSelected()) return;
     const btn = e.target.closest('.tab-btn');
     if (!btn) return;
     const tab = btn.dataset.tab;
@@ -343,7 +344,8 @@ const Tasks = (() => {
   document.getElementById('btn-file-browser')?.addEventListener('click', async () => {
     try {
       if (FilePanel.isOpen()) { await FilePanel.close(); return; }
-      await openFileBrowser();
+      if (window.RemoteTasks?.isSelected()) await RemoteTasks.openFileBrowser();
+      else await openFileBrowser();
     } catch (error) { alert('文件浏览器打开失败：' + error.message); }
   });
 
@@ -652,11 +654,12 @@ const Tasks = (() => {
 
     const localSection = document.createElement('div');
     localSection.className = 'local-sidebar-section';
+    localSection.dataset.engineKey = 'local';
     nav.appendChild(localSection);
 
     const localHeading = document.createElement('div');
     localHeading.className = 'sidebar-section-heading';
-    localHeading.innerHTML = '<span>任务</span><span class="sidebar-section-count">' + tasks.length + '</span>';
+    localHeading.innerHTML = '<span>本地任务</span><span class="sidebar-section-count">' + tasks.length + '</span>';
     localSection.appendChild(localHeading);
 
     const grouped = {};
@@ -740,6 +743,7 @@ const Tasks = (() => {
     });
 
     nav.scrollTop = scrollTop;
+    if (window.RemoteTasks) window.RemoteTasks.render();
   }
 
   function getDragAfterElement(container, y) {
@@ -883,6 +887,10 @@ const Tasks = (() => {
     }
     if (selectedId !== id && !confirmDiscardEditor()) return;
     selectedId = id;
+    if (window.RemoteTasks) {
+      window.RemoteTasks.setActiveEngine('local', { selectContent: false });
+      window.RemoteTasks.clearSelection();
+    }
     localStorage.setItem('selectedTaskId', id);
     document.querySelectorAll('.task-nav-item').forEach(el => {
       el.classList.toggle('active', parseInt(el.dataset.id) === id);
@@ -1234,7 +1242,8 @@ const Tasks = (() => {
 
   function isLocalPreview(task, tab) {
     return selectedId === task.id && activeTab === tab && ['doc', 'readme', 'agent'].includes(tab)
-      && !editorState && previewPane.style.display !== 'none';
+      && !editorState && previewPane.style.display !== 'none' && !window.RemoteTasks?.isSelected()
+      && (!window.RemoteTasks?.getActiveEngineKey || RemoteTasks.getActiveEngineKey() === 'local');
   }
 
   async function loadMdContent(task, tab = activeTab) {
@@ -1518,9 +1527,24 @@ const Tasks = (() => {
   }
 
   function buildTaskForm(task = {}) {
-    const initialGroups = DEFAULT_FORM_GROUPS;
+    const remoteServers = !task.id && window.RemoteTasks ? RemoteTasks.getServers() : [];
+    const activeEngineKey = !task.id && window.RemoteTasks ? RemoteTasks.getActiveEngineKey() : 'local';
+    const initialGroups = activeEngineKey.startsWith('remote:') && window.RemoteTasks
+      ? RemoteTasks.getGroups(Number(activeEngineKey.slice('remote:'.length)))
+      : DEFAULT_FORM_GROUPS;
+    const initialRemoteTarget = !task.id && activeEngineKey.startsWith('remote:');
     const selectedGroup = task.status || 'todo';
+    const enginePicker = task.id ? '' : `
+      <div class="form-group">
+        <label class="form-label">所属 Engine</label>
+        <select class="form-input" id="f-engine">
+          <option value="local" ${activeEngineKey === 'local' ? 'selected' : ''}>本地 Engine</option>
+          ${remoteServers.map(server => `<option value="remote:${server.id}" ${activeEngineKey === `remote:${server.id}` && server.status === 'online' ? 'selected' : ''} ${server.status !== 'online' ? 'disabled' : ''}>${escapeHtml(server.name)}${server.status === 'online' ? '' : '（离线）'}</option>`).join('')}
+        </select>
+        <div class="form-hint" id="f-engine-hint">任务和工作目录将保存在所选 Engine 上</div>
+      </div>`;
     return `
+      ${enginePicker}
       <div class="form-group">
         <label class="form-label">标题</label>
         <input class="form-input" id="f-title" type="text" value="${escapeHtml(task.title || '')}" placeholder="任务标题（可由 MD 文件名自动填充）">
@@ -1534,9 +1558,9 @@ const Tasks = (() => {
       }).join('')}
       <div class="form-hint">三个路径均可填写绝对 Markdown 文件路径；已有文件直接使用，缺失时创建。清空后恢复工作目录下的默认文件。</div>
       <div class="form-group">
-        <label class="form-label">工作目录</label>
-        <input class="form-input" id="f-work-dir" type="text" value="${escapeHtml(task.work_dir || '')}" placeholder="自动取 MD 文件所在目录" autocomplete="off">
-        <div class="form-hint">文档和终端均使用此目录；优先读取已有 DESIGN.md、README.md、AGENTS.md，缺失时创建</div>
+        <label class="form-label" id="f-work-dir-label">${initialRemoteTarget ? '远程工作目录' : '工作目录'}</label>
+        <input class="form-input" id="f-work-dir" type="text" value="${escapeHtml(task.work_dir || '')}" placeholder="${initialRemoteTarget ? '/home/user/projects/example' : '自动取 MD 文件所在目录'}" autocomplete="off">
+        <div class="form-hint" id="f-work-dir-hint">${initialRemoteTarget ? '填写远程 Engine 上的绝对路径；目录不存在时会自动创建，技术方案默认为该目录下的 DESIGN.md' : '文档和终端均使用此目录；优先读取已有 DESIGN.md、README.md、AGENTS.md，缺失时创建'}</div>
       </div>
       <div class="form-group">
         <label class="form-label">优先级</label>
@@ -1569,11 +1593,60 @@ const Tasks = (() => {
     const mdHint = document.getElementById('f-md-hint');
     const titleInput = document.getElementById('f-title');
     const workDirInput = document.getElementById('f-work-dir');
+    const workDirLabel = document.getElementById('f-work-dir-label');
+    const workDirHint = document.getElementById('f-work-dir-hint');
+    const engineInput = document.getElementById('f-engine');
+    const engineHint = document.getElementById('f-engine-hint');
     const groupInput = document.getElementById('f-task-group');
+
+    function updateGroupOptions() {
+      if (!groupInput || !engineInput) return;
+      const previous = groupInput.value;
+      const groups = engineInput.value.startsWith('remote:') && window.RemoteTasks
+        ? RemoteTasks.getGroups(Number(engineInput.value.slice('remote:'.length)))
+        : DEFAULT_FORM_GROUPS;
+      groupInput.innerHTML = groups.map(group => `<option value="${escapeHtml(group.key)}">${escapeHtml(group.name)}</option>`).join('');
+      groupInput.value = groups.some(group => group.key === previous) ? previous : 'todo';
+    }
+
+    function isRemoteTarget() {
+      return engineInput && engineInput.value.startsWith('remote:');
+    }
+
+    function updateEnginePathFields() {
+      const remote = isRemoteTarget();
+      if (engineHint) {
+        engineHint.textContent = remote
+          ? '任务和目录将创建在远程 Engine 上'
+          : '任务和工作目录将保存在本地 Engine 上';
+      }
+      workDirLabel.textContent = remote ? '远程工作目录' : '工作目录';
+      workDirInput.placeholder = remote ? '/home/user/projects/example' : '自动取 MD 文件所在目录';
+      workDirHint.textContent = remote
+        ? '填写远程 Engine 上的绝对路径；目录不存在时会自动创建，技术方案默认为该目录下的 DESIGN.md'
+        : '文档和终端均使用此目录；优先读取已有 DESIGN.md、README.md、AGENTS.md，缺失时创建';
+      mdHint.textContent = remote && mdInput.value.trim() ? '路径将在远程 Engine 创建时校验' : '';
+      mdHint.className = 'form-hint';
+      mdInput.classList.remove('error');
+    }
+
+    if (engineInput) {
+      engineInput.addEventListener('change', () => {
+        updateEnginePathFields();
+        updateGroupOptions();
+      });
+    }
+    updateEnginePathFields();
 
     mdInput.addEventListener('blur', async () => {
       const val = mdInput.value.trim();
       if (!val) { mdHint.textContent = ''; mdHint.className = 'form-hint'; return; }
+      if (isRemoteTarget()) {
+        mdHint.textContent = '路径将在远程 Engine 创建时校验';
+        mdHint.className = 'form-hint';
+        mdInput.classList.remove('error');
+        return;
+      }
       try {
         const result = await API.post('/api/tasks/validate-path', { md_path: val });
         if (result.valid) {
@@ -1625,12 +1698,18 @@ const Tasks = (() => {
           }
         } else {
           const payload = { title: title || (technical_path ? technical_path.split('/').pop().replace(/\.md$/i, '') : undefined), md_path, technical_path, readme_path, agent_path, work_dir, priority, due_date, status };
-          const newTask = await API.post('/api/tasks', payload);
-          Modal.hide();
-          tasks = await API.get('/api/tasks');
-          renderSidebar();
-          // 自动选中新建的任务，会正确触发 renderPreview，处理 TOC 显隐
-          selectTask(newTask.id);
+          if (isRemoteTarget()) {
+            const serverId = Number(engineInput.value.slice('remote:'.length));
+            await RemoteTasks.createTask(serverId, payload);
+            Modal.hide();
+          } else {
+            const newTask = await API.post('/api/tasks', payload);
+            Modal.hide();
+            tasks = await API.get('/api/tasks');
+            renderSidebar();
+            // 自动选中新建的任务，会正确触发 renderPreview，处理 TOC 显隐
+            selectTask(newTask.id);
+          }
         }
       } catch (e) {
         alert('操作失败: ' + e.message);
@@ -1656,12 +1735,25 @@ const Tasks = (() => {
         selectedId = cached;
       }
       renderSidebar();
+      const localActive = !window.RemoteTasks || RemoteTasks.getActiveEngineKey() === 'local';
+      if (!localActive) return;
       if (window.FilePanel?.isOpen()) return;
       if (selectedId) {
         const task = tasks.find(t => t.id === selectedId);
         if (task) renderPreview(task);
         else { selectedId = null; localStorage.removeItem('selectedTaskId'); showEmpty(); }
       }
+    },
+    clearSelection() {
+      selectedId = null;
+      stopWatcher();
+      document.querySelectorAll('.task-nav-item').forEach(el => el.classList.remove('active'));
+    },
+    activateLocal() {
+      const cached = parseInt(localStorage.getItem('selectedTaskId'));
+      const task = tasks.find(item => item.id === cached) || tasks[0];
+      if (task) return selectTask(task.id);
+      else showEmpty();
     },
     openFileBrowser,
     confirmDiscardEditor,

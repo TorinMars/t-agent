@@ -13,12 +13,7 @@ process.env.TASKS_BASE_DIR=path.join(scratch,'tasks');
 const auth=require.resolve('../middleware/auth');
 require.cache[auth]={id:auth,filename:auth,loaded:true,exports:(req,res,next)=>{req.session={user:{login:'owner'}};next();}};
 const db=require('../db');
-const engine={createTask(owner,{title}){
-  const work_dir=path.join(scratch,'workspaces',title.replace(/\W+/g,'-'));
-  fs.mkdirSync(work_dir,{recursive:true});
-  const id=Number(db.prepare('INSERT INTO tasks (title, user_id, work_dir) VALUES (?, ?, ?)').run(title,owner,work_dir).lastInsertRowid);
-  return {id,work_dir};
-}};
+const engine=require('../services/engine-tasks');
 const terminal=require('../routes/terminal');
 const task=engine.createTask('owner',{title:'Panel fixture'});
 fs.writeFileSync(path.join(task.work_dir,'hello.js'),'const hello = "world";\n');

@@ -16,7 +16,7 @@ FROM node:22-bookworm-slim AS runtime
 ARG CODEX_VERSION=latest
 
 LABEL org.opencontainers.image.source="https://github.com/TorinMars/t-agent" \
-      org.opencontainers.image.description="T-Agent Client"
+      org.opencontainers.image.description="T-Agent Client with embedded Engine"
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends bash ca-certificates curl git openssh-client tini \

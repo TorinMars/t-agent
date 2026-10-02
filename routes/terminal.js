@@ -269,9 +269,8 @@ function controlSession(taskId, action, requestedTerminalId) {
  * Handle WebSocket upgrade for /terminal/ws?taskId=:id
  * Called from server.js with (ws, req, sessionData)
  */
-function handleWs(ws, req, sessionUser) {
-  const query = new URL(req.url, 'http://x').searchParams;
-  const taskId = parseInt(query.get('taskId'));
+function handleWs(ws, req, sessionUser, requestedTaskId = null, requestedTerminalId = null) {
+  const taskId = parseInt(requestedTaskId || new URL(req.url, 'http://x').searchParams.get('taskId'));
   if (!taskId) { ws.close(1008, 'missing taskId'); return; }
 
   const task = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(taskId, sessionUser.login);
@@ -284,7 +283,7 @@ function handleWs(ws, req, sessionUser) {
 
   let selectedId;
   try {
-    selectedId = assertTerminal(taskId, query.get('terminalId'));
+    selectedId = assertTerminal(taskId, requestedTerminalId ?? new URL(req.url, 'http://x').searchParams.get('terminalId'));
   } catch (error) {
     ws.close(1008, error.message);
     return;

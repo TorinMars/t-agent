@@ -11,6 +11,8 @@ const db = require('./db');
 const SqliteStore = require('./db/session-store');
 const terminal = require('./routes/terminal');
 const updates = require('./services/update-manager');
+const { consumeTerminalTicket, pruneExpiredTickets } = require('./services/terminal-tickets');
+const { handleRemoteTerminalUpgrade } = require('./services/remote-terminal-proxy');
 const { ensureSingleUser } = require('./services/single-user');
 const { getClientAuth, safeReturnTo, isSecureClientCookie, SESSION_TTL } = require('./services/client-auth');
 const requireAuth = require('./middleware/auth');
@@ -72,8 +74,10 @@ app.use((req, res, next) => {
   next();
 });
 
-// Every /api route requires the Client session.
+// Only browser-facing APIs require the Client session; the legacy /api/remote/v1
+// and standard /v1 Engine APIs retain independent Bearer-token authentication.
 app.use('/api', (req, res, next) => {
+  if (req.path === '/remote/v1' || req.path.startsWith('/remote/v1/')) return next();
   clientOrigin(req, res, () => requireAuth(req, res, next));
 });
 
@@ -88,6 +92,11 @@ app.use('/api/bookmarks', require('./routes/bookmarks'));
 app.use('/api/system', require('./routes/system'));
 app.use('/api/oss', require('./routes/oss').createOssRouter());
 app.use('/api/pm2', require('./routes/pm2').createPm2Router());
+app.use('/api/remote-servers', require('./routes/remote-servers'));
+app.use('/api/remote-tokens', require('./routes/remote-tokens'));
+app.use('/api/remote/v1', require('./routes/remote-api'));
+// 标准 Engine API。Client 安装包默认内置并暴露与独立 Engine 相同的协议。
+app.use('/v1', require('./routes/engine-v1'));
 
 app.get('/health', (req, res) => {
   res.json({ ok: true });
@@ -359,7 +368,30 @@ function browserUpgrade(req, socket, head, callback) {
   });
 }
 server.on('upgrade', (req, socket, head) => {
-  if (new URL(req.url, 'http://client.local').pathname !== '/terminal/ws') {
+  const engineUrl = new URL(req.url, 'http://engine.local');
+  const engineMatch = engineUrl.pathname.match(/^\/v1\/terminal-sessions\/(\d+)\/stream$/);
+  if (engineMatch) {
+    pruneExpiredTickets();
+    const authorization = consumeTerminalTicket(engineUrl.searchParams.get('ticket'));
+    if (!authorization || Number(engineMatch[1]) !== authorization.taskId) {
+      socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+      socket.destroy();
+      return;
+    }
+    wss.handleUpgrade(req, socket, head, ws => {
+      terminal.handleWs(ws, req, { login: authorization.principalId }, authorization.taskId, authorization.terminalId);
+    });
+    return;
+  }
+  if (engineUrl.pathname.match(/^\/api\/remote-servers\/\d+\/terminal\/ws$/)) {
+    browserUpgrade(req, socket, head, user => {
+      handleRemoteTerminalUpgrade(req, socket, head, wss, user).catch(() => {
+        if (!socket.destroyed) socket.destroy();
+      });
+    });
+    return;
+  }
+  if (engineUrl.pathname !== '/terminal/ws') {
     socket.destroy();
     return;
   }

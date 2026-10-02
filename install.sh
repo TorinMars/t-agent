@@ -42,7 +42,7 @@ fail() {
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --mode) MODE="${2:-}"; shift 2 ;; # 兼容旧自动化参数；Engine 模式已移除。
+    --mode) MODE="${2:-}"; shift 2 ;; # 兼容旧自动化参数；独立 Engine 已移除。
     --port) PORT="${2:-}"; shift 2 ;;
     --username|--password) shift 2 ;; # 兼容旧自动化参数，单用户模式不再使用。
     --tasks-dir) TASKS_DIR="${2:-}"; shift 2 ;;
@@ -52,7 +52,7 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-[ "$MODE" = "client" ] || fail "Engine 模式已移除，只支持 client"
+[ "$MODE" = "client" ] || fail "独立 Engine 安装已移除，只支持 client（Client 已内置 Engine）"
 [[ "$UPDATE_REPOSITORY" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] && [[ "$UPDATE_REPOSITORY" != ../* ]] && [[ "$UPDATE_REPOSITORY" != */.. ]] || fail "T_AGENT_REPOSITORY 格式不正确"
 [[ "$UPDATE_REF" =~ ^[A-Za-z0-9._/-]+$ ]] && [[ "$UPDATE_REF" != *..* ]] || fail "T_AGENT_REF 格式不正确"
 
@@ -247,6 +247,7 @@ SESSION_SECRET=$SESSION_SECRET
 SINGLE_USER_ID=local
 AUTH_USERS=
 TASKS_BASE_DIR=$TASKS_DIR
+ENGINE_OWNER_ID=local
 HOST=127.0.0.1
 GITHUB_VERSION_URL=https://api.github.com/repos/$UPDATE_REPOSITORY/contents/VERSION.json?ref=$UPDATE_REF
 UPDATE_GITHUB_REPOSITORY=$UPDATE_REPOSITORY
@@ -307,7 +308,7 @@ NODE_BIN="$(command -v node)"
 SERVICE_PATH="$(dirname "$NODE_BIN"):/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 ENTRY_SCRIPT="$APP_DIR/server.js"
 SERVICE_BASENAME="t-agent"
-SERVICE_DESCRIPTION="T-Agent Client"
+SERVICE_DESCRIPTION="T-Agent Client with embedded Engine"
 LAUNCH_LABEL="com.tagent.client"
 MANUAL_START="cd $APP_DIR && npm start"
 if [ "$INSTALL_SERVICE" -eq 1 ] && [ "$PLATFORM" = "macOS" ]; then

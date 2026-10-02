@@ -7,7 +7,7 @@ const TerminalHistory = (() => {
   function refresh() {
     if (!button) return;
     button.disabled = (typeof TerminalControls !== 'undefined' && !!TerminalControls.busy) || !active || !active.available();
-    button.title = active?.legacy ? '当前终端不支持分页历史' : '查看已保存的终端历史记录';
+    button.title = active?.legacy ? '此 Engine 不支持分页历史，请升级 Engine' : '查看已保存的终端历史记录';
   }
   function close() {
     if (!viewer) return;

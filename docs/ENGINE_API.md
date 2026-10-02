@@ -1,0 +1,81 @@
+# Engine API v1
+
+除健康检查和配对接口外，请求使用：
+
+```http
+Authorization: Bearer tae_xxx
+```
+
+## 系统与配对
+
+- `GET /v1/health`
+- `POST /v1/pair`
+- `GET /v1/info`
+- `GET /v1/capabilities`
+
+## 任务和文档
+
+- `GET /v1/task-groups`
+- `POST /v1/task-groups`
+- `PUT /v1/task-groups/:id`
+- `DELETE /v1/task-groups/:id`
+- `GET /v1/tasks`
+- `POST /v1/tasks`
+- `PATCH /v1/tasks/:id`
+- `DELETE /v1/tasks/:id`
+- `GET /v1/tasks/:id/documents/:kind`
+- `PUT /v1/tasks/:id/documents/:kind`
+- `GET /v1/tasks/:id/todos`
+- `POST /v1/tasks/:id/todos`
+- `PATCH /v1/tasks/:id/todos/:todoId`
+- `DELETE /v1/tasks/:id/todos/:todoId`
+
+`kind` 支持 `technical`、`readme` 和 `agent`。
+
+任务的 `status` 保存分组返回的 `key`。`doing`、`todo`、`done` 是系统分组，不能重命名或删除；其他分组可以重命名，且只能在没有任务时删除。
+
+## 终端
+
+- `GET /v1/tasks/:id/terminals`：列出终端（包含兼容旧版本的 `default`）。
+- `POST /v1/tasks/:id/terminals`：创建终端记录，返回 `{terminal_id, title}`；首次 WebSocket 连接时启动 Shell。
+- `POST /v1/terminal-sessions`
+- `WS /v1/terminal-sessions/:sessionId/stream?ticket=...`
+- `POST /v1/terminal-sessions/:taskId/control`
+
+列表和创建需要 `terminal:execute` scope。`/v1/info` 返回 `terminal:multiple` 能力标记。
+
+创建 ticket 的请求体为 `{ "task_id": 1, "terminal_id": "终端 ID" }`。ticket 同时绑定任务和终端，WebSocket URL 无法更改目标。省略 `terminal_id` 使用 `default`，兼容原有接口和历史。
+
+终端控制请求体也接受可选的 `terminal_id`，只控制对应 Shell。终端的历史分别持久化；切换、断线不会终止 Shell。
+
+终端控制请求体支持：
+
+```json
+{ "action": "close" }
+```
+
+或：
+
+```json
+{ "action": "restart-workdir" }
+```
+
+`close` 终止当前 PTY 并保留历史；`restart-workdir` 终止 PTY、清空历史，下一次连接将从任务的 `work_dir` 创建新 Shell。两个操作都需要 `terminal:execute` scope。
+
+## Token 管理
+
+Token 列表、创建和撤销需要 `owner` 角色：
+
+- `GET /v1/tokens`
+- `POST /v1/tokens`
+- `DELETE /v1/tokens/:id`
+
+## Engine 更新
+
+检查和应用更新需要 `owner` 角色（`engine:admin` scope）：
+
+- `GET /v1/update/status`
+- `POST /v1/update/check`
+- `POST /v1/update/apply`，请求体必须为 `{ "confirm": true }`
+
+应用接口接受请求后返回 `202`。Client 应轮询状态接口；Engine 进入 `restarting` 阶段后会退出，并依赖 systemd、launchd 或其他进程管理器自动重启。

@@ -56,6 +56,14 @@ def tool_paths(tool):
             "codex/config.toml", os.path.join(root, "config.toml"), "toml")
 
 
+def extra_json_configs(tool):
+    """除主配置外，还按 JSON 递归合并的文件：[(远程路径, 本机路径)]。Codex 的 hooks 不能写进只支持单行键值的 config.toml，放在 hooks.json。"""
+    if tool == "codex":
+        root = os.environ.get("CODEX_HOME") or os.path.join(HOME, ".codex")
+        return [("codex/hooks.json", os.path.join(root, "hooks.json"))]
+    return []
+
+
 # ---------- 获取远程文件 ----------
 class Fetcher(object):
     def __init__(self, base, offline=False):
@@ -272,6 +280,32 @@ def validate_toml(text):
 
 
 # ---------- 同步一个工具 ----------
+def sync_json(remote_config, override_text, override_path, config_path, dry_run):
+    """把远程 JSON（再叠加本机覆盖）递归合并进本机文件；有变化返回 True。格式不合法抛 ValueError。"""
+    remote_obj = json.loads(remote_config) if remote_config and remote_config.strip() else {}
+    if not isinstance(remote_obj, dict):
+        raise ValueError("远程 %s 必须是 JSON 对象" % os.path.basename(config_path))
+    if override_text is not None:
+        try:
+            override_obj = json.loads(override_text)
+        except ValueError as error:
+            raise ValueError("本机覆盖 %s 不是合法 JSON（%s），本次未同步配置" % (override_path, error))
+        if not isinstance(override_obj, dict):
+            raise ValueError("本机覆盖 %s 必须是 JSON 对象，本次未同步配置" % override_path)
+        remote_obj = merge_json(remote_obj, override_obj)
+    local = read_text(config_path)
+    local_obj = json.loads(local) if local and local.strip() else {}
+    if not isinstance(local_obj, dict):
+        raise ValueError("本机 %s 不是 JSON 对象，已跳过" % os.path.basename(config_path))
+    before = json.dumps(local_obj, sort_keys=True)
+    merged_obj = merge_json(local_obj, remote_obj)
+    if json.dumps(merged_obj, sort_keys=True) == before and local:
+        return False
+    if not dry_run:
+        write_text(config_path, json.dumps(merged_obj, indent=2, ensure_ascii=False) + "\n")
+    return True
+
+
 def sync_tool(tool, remote_files, dry_run):
     rules_rel, rules_path, config_rel, config_path, kind = tool_paths(tool)
     changed, problems = [], []
@@ -293,25 +327,7 @@ def sync_tool(tool, remote_files, dry_run):
         local = read_text(config_path)
         try:
             if kind == "json":
-                remote_obj = json.loads(remote_config) if remote_config and remote_config.strip() else {}
-                if not isinstance(remote_obj, dict):
-                    raise ValueError("远程 settings.json 必须是 JSON 对象")
-                if has_override:
-                    try:
-                        override_obj = json.loads(override_text)
-                    except ValueError as error:
-                        raise ValueError("本机覆盖 %s 不是合法 JSON（%s），本次未同步配置" % (override_path, error))
-                    if not isinstance(override_obj, dict):
-                        raise ValueError("本机覆盖 %s 必须是 JSON 对象，本次未同步配置" % override_path)
-                    remote_obj = merge_json(remote_obj, override_obj)
-                local_obj = json.loads(local) if local and local.strip() else {}
-                if not isinstance(local_obj, dict):
-                    raise ValueError("本机 settings.json 不是 JSON 对象，已跳过")
-                before = json.dumps(local_obj, sort_keys=True)
-                merged_obj = merge_json(local_obj, remote_obj)
-                if json.dumps(merged_obj, sort_keys=True) != before or not local:
-                    if not dry_run:
-                        write_text(config_path, json.dumps(merged_obj, indent=2, ensure_ascii=False) + "\n")
+                if sync_json(remote_config, override_text if has_override else None, override_path, config_path, dry_run):
                     changed.append(os.path.basename(config_path))
             else:
                 if has_override:
@@ -329,6 +345,19 @@ def sync_tool(tool, remote_files, dry_run):
                     changed.append(os.path.basename(config_path))
         except ValueError as error:
             problems.append("%s：%s" % (os.path.basename(config_path), error))
+
+    for extra_rel, extra_path in extra_json_configs(tool):
+        remote_extra = remote_files.get(extra_rel)
+        extra_override = read_text(os.path.join(overrides_dir(), extra_rel))
+        has_extra_override = bool(extra_override and extra_override.strip())
+        if remote_extra is None and not has_extra_override:
+            continue
+        try:
+            if sync_json(remote_extra, extra_override if has_extra_override else None,
+                         os.path.join(overrides_dir(), extra_rel), extra_path, dry_run):
+                changed.append(os.path.basename(extra_path))
+        except ValueError as error:
+            problems.append("%s：%s" % (os.path.basename(extra_path), error))
     return changed, problems
 
 
@@ -345,7 +374,7 @@ def main():
     wanted = []
     for tool in tools:
         paths = tool_paths(tool)
-        wanted += [paths[0], paths[2]]
+        wanted += [paths[0], paths[2]] + [rel for rel, _ in extra_json_configs(tool)]
     fetcher = Fetcher(args.base, offline=args.offline)
     remote_files = fetcher.fetch_all(wanted)
 

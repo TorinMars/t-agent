@@ -39,6 +39,13 @@ function getLocalIP() {
   return 'localhost';
 }
 
+// Agent hooks inside a terminal report activity here; authenticated by the
+// per-terminal token in the PTY environment, so it sits outside the session/API auth.
+app.post('/hooks/terminal-activity', (req, res) => {
+  const status = terminal.reportHook(Number(req.query.task), req.query.terminal, req.get('x-ta-token'), String(req.query.event || ''));
+  res.status(status).end();
+});
+
 app.use(express.json({ limit: '32mb' }));
 app.use(express.urlencoded({ extended: true }));
 
@@ -398,6 +405,8 @@ server.on('upgrade', (req, socket, head) => {
 
 server.listen(config.port, config.host, () => {
   const listeningPort = server.address().port;
+  const anyHost = ['0.0.0.0', '::', '', 'localhost'].includes(config.host);
+  terminal.setHookEndpoint(`http://${anyHost ? '127.0.0.1' : config.host}:${listeningPort}/hooks/terminal-activity`);
   console.log(`Server running at http://localhost:${listeningPort}`);
   console.log(`             LAN: http://${getLocalIP()}:${listeningPort}`);
   const clientAuth = getClientAuth();

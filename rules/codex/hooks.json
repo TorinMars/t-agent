@@ -1,8 +1,4 @@
 {
-  "model": "sonnet",
-  "permissions": {
-    "defaultMode": "auto"
-  },
   "hooks": {
     "UserPromptSubmit": [
       {
@@ -24,9 +20,8 @@
         ]
       }
     ],
-    "Notification": [
+    "PermissionRequest": [
       {
-        "matcher": "permission_prompt|elicitation_dialog|agent_needs_input",
         "hooks": [
           {
             "type": "command",

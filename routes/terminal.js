@@ -1,4 +1,5 @@
 const os = require('os');
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const db = require('../db');
@@ -13,6 +14,38 @@ const sessions = new Map();
 const MAX_BUFFER = 5 * 1024 * 1024;   // 5MB
 const FLUSH_INTERVAL = 5000;           // 5s
 const FLUSH_SIZE = 50 * 1024;          // 50KB
+
+// Agent hooks (Claude Code / Codex) report activity back through this endpoint.
+// The token is an HMAC of task + terminal, so it needs no storage and is only
+// ever present in the environment of that terminal's PTY.
+const hookSecret = crypto.randomBytes(32);
+let hookEndpoint = null;
+
+function setHookEndpoint(url) { hookEndpoint = url; }
+
+function hookToken(taskId, id) {
+  return crypto.createHmac('sha256', hookSecret).update(`${Number(taskId)}:${id}`).digest('hex');
+}
+
+function hookEnv(taskId, id) {
+  if (!hookEndpoint) return {};
+  return {
+    TA_HOOK_URL: `${hookEndpoint}?task=${Number(taskId)}&terminal=${encodeURIComponent(id)}`,
+    TA_HOOK_TOKEN: hookToken(taskId, id),
+  };
+}
+
+/** Handles one hook report; returns an HTTP status code. */
+function reportHook(taskId, requestedTerminalId, token, event) {
+  let id;
+  try { id = terminalId(requestedTerminalId); } catch { return 400; }
+  const expected = Buffer.from(hookToken(taskId, id));
+  const given = Buffer.from(String(token || ''));
+  if (given.length !== expected.length || !crypto.timingSafeEqual(given, expected)) return 403;
+  const session = sessions.get(sessionKey(taskId, id));
+  if (!session || !session.activity) return 404;
+  return session.activity.report(event) ? 204 : 400;
+}
 
 function terminalId(value) {
   const id = value == null ? 'default' : value;
@@ -131,6 +164,7 @@ function getOrCreateSession(ownerTaskId, workDir, dirWarning, id = 'default') {
         LANG: 'C.UTF-8',
         LC_ALL: 'C.UTF-8',
         LC_CTYPE: 'C.UTF-8',
+        ...hookEnv(ownerTaskId, id),
       },
     });
   } catch (e) {
@@ -370,4 +404,4 @@ function closeTaskTerminals(taskId) {
   for (const item of listTerminals(taskId)) controlSession(taskId, 'close', item.terminal_id);
 }
 
-module.exports = { activitySnapshot, acknowledgeActivity, controlSession, handleWs, listTerminals, createTerminal, assertTerminal, closeTaskTerminals };
+module.exports = { setHookEndpoint, reportHook, activitySnapshot, acknowledgeActivity, controlSession, handleWs, listTerminals, createTerminal, assertTerminal, closeTaskTerminals };

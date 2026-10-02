@@ -32,6 +32,7 @@ const REMOTE = {
   'claude/CLAUDE.md': '## 远程规则\n- 规则一\n',
   'claude/settings.json': JSON.stringify({ model: 'sonnet', permissions: { defaultMode: 'auto', allow: ['Bash(ls)'] } }),
   'codex/AGENTS.md': '## 远程规则\n- 规则二\n',
+  'codex/hooks.json': JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: 'command', command: 'remote-stop' }] }] } }),
   'codex/config.toml': 'model = "gpt-6-sol"\napproval_policy = "on-request"\napprovals_reviewer = "auto_review"\nsandbox_mode = "workspace-write"\n',
 };
 
@@ -163,4 +164,32 @@ test('覆盖文件写错时不同步该工具的配置，也不动本机配置',
   assert.equal(m.read('.claude/settings.json'), '{"model":"local"}');
   assert.equal(m.read('.codex/config.toml'), 'model = "local"\n');
   assert.ok(m.read('.claude/CLAUDE.md').includes('- 规则一'), '规则同步不受影响');
+});
+
+test('Codex hooks.json 与本机已有 hook 合并，重复同步不产生重复项', { skip: !python }, () => {
+  const m = machine(REMOTE);
+  const mine = { type: 'command', command: 'my-own-hook' };
+  fs.writeFileSync(m.file('.codex/hooks.json'), JSON.stringify({ hooks: { Stop: [{ hooks: [mine] }], PreToolUse: [{ matcher: 'Bash', hooks: [mine] }] } }));
+  const first = m.sync();
+  assert.equal(first.status, 0, first.stderr);
+  const merged = JSON.parse(m.read('.codex/hooks.json'));
+  assert.equal(merged.hooks.Stop.length, 2, '本机原有 hook 保留，远程 hook 追加');
+  assert.deepEqual(merged.hooks.Stop[0].hooks[0], mine);
+  assert.equal(merged.hooks.Stop[1].hooks[0].command, 'remote-stop');
+  assert.ok(merged.hooks.PreToolUse, '本机独有的事件保留');
+
+  const before = fs.statSync(m.file('.codex/hooks.json')).mtimeMs;
+  const second = m.sync();
+  assert.match(second.stderr, /Codex 已是最新/);
+  assert.equal(fs.statSync(m.file('.codex/hooks.json')).mtimeMs, before);
+  assert.equal(JSON.parse(m.read('.codex/hooks.json')).hooks.Stop.length, 2);
+});
+
+test('本机 hooks.json 损坏时不覆盖并提示', { skip: !python }, () => {
+  const m = machine(REMOTE);
+  fs.writeFileSync(m.file('.codex/hooks.json'), '{broken');
+  const result = m.sync();
+  assert.equal(result.status, 0);
+  assert.equal(m.read('.codex/hooks.json'), '{broken');
+  assert.match(result.stderr, /hooks\.json/);
 });

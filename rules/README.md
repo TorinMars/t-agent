@@ -1,12 +1,13 @@
 # 用户级规则与默认配置（远程源）
 
-`scripts/agent-sync.py` 在每次启动 `claude` / `codex` 前从本目录拉取下面四个文件，合并到本机：
+`scripts/agent-sync.py` 在每次启动 `claude` / `codex` 前从本目录拉取下面五个文件，合并到本机：
 
 | 远程文件 | 本机目标 | 合并方式 |
 |---|---|---|
 | `claude/CLAUDE.md` | `~/.claude/CLAUDE.md` | 只替换文件中由 `<!-- t-agent:managed:begin/end -->` 圈出的区块，区块之外的本机规则原样保留 |
 | `claude/settings.json` | `~/.claude/settings.json` | 递归合并：远程有的键以远程为准，本机独有的键保留；数组取并集 |
 | `codex/AGENTS.md` | `~/.codex/AGENTS.md` | 同 `CLAUDE.md` |
+| `codex/hooks.json` | `~/.codex/hooks.json` | 同 `claude/settings.json` 的 JSON 递归合并：本机已有 hook 保留，远程 hook 追加，重复同步不产生重复项。用于向 t-agent 上报终端状态；Codex 首次需在 `/hooks` 中信任 |
 | `codex/config.toml` | `~/.codex/config.toml` | 只覆盖远程列出的键（支持顶层键和 `[表]` 下的单行键值），其余内容和注释保留 |
 
 **注意**

@@ -92,3 +92,78 @@ test('agent starts working again after a done acknowledgement', async () => {
     }
   } finally { tracker.stop(); }
 });
+
+const HOOKED = { pollMs: 10, burstMs: 200, quietMs: 40, echoMs: 20, staleMs: 120 };
+
+test('hook events drive the state, and output cadence no longer does once hooked', async () => {
+  const pty = { process: 'claude' };
+  const seen = [];
+  const tracker = createActivityTracker(pty, '/bin/bash', state => seen.push(state), HOOKED);
+  try {
+    assert.equal(tracker.report('start'), true);
+    assert.equal(tracker.state(), 'running');
+    const keepAlive = setInterval(() => tracker.noteOutput(), 10);
+    await tick(100);
+    clearInterval(keepAlive);
+    await tick(60); // quiet for longer than quietMs, but under staleMs: still running
+    assert.equal(tracker.state(), 'running');
+    tracker.report('stop');
+    assert.equal(tracker.state(), 'done');
+    const chatter = setInterval(() => tracker.noteOutput(), 10);
+    await tick(100); // status-bar redraws after Stop must not restart it
+    clearInterval(chatter);
+    assert.equal(tracker.state(), 'done');
+    tracker.acknowledge();
+    assert.deepEqual(seen, ['running', 'done', 'idle']);
+  } finally { tracker.stop(); }
+});
+
+test('hooked agent that was interrupted (no Stop hook) finishes after staleMs of silence', async () => {
+  const pty = { process: 'codex' };
+  const tracker = createActivityTracker(pty, '/bin/bash', () => {}, HOOKED);
+  try {
+    tracker.report('start');
+    await tick(60);
+    assert.equal(tracker.state(), 'running');
+    await tick(150);
+    assert.equal(tracker.state(), 'done');
+  } finally { tracker.stop(); }
+});
+
+test('permission prompt reports done, and resumes running once the agent works again', async () => {
+  const pty = { process: 'claude' };
+  const tracker = createActivityTracker(pty, '/bin/bash', () => {}, HOOKED);
+  try {
+    tracker.report('start');
+    tracker.report('attention');
+    assert.equal(tracker.state(), 'done');
+    const spinner = setInterval(() => tracker.noteOutput(), 10);
+    await tick(100);
+    clearInterval(spinner);
+    assert.equal(tracker.state(), 'running');
+    tracker.report('stop');
+    assert.equal(tracker.state(), 'done');
+  } finally { tracker.stop(); }
+});
+
+test('returning to the shell ends hook mode so a hookless agent is detected by output again', async () => {
+  const pty = { process: 'claude' };
+  const tracker = createActivityTracker(pty, '/bin/bash', () => {}, HOOKED);
+  try {
+    tracker.report('start');
+    tracker.report('stop');
+    tracker.acknowledge();
+    pty.process = 'bash';
+    await tick(40);
+    pty.process = 'gemini';
+    const spinner = setInterval(() => tracker.noteOutput(), 10);
+    await tick(100);
+    clearInterval(spinner);
+    assert.equal(tracker.state(), 'running');
+  } finally { tracker.stop(); }
+});
+
+test('unknown hook events are rejected', () => {
+  const tracker = createActivityTracker({ process: 'bash' }, '/bin/bash', () => {}, HOOKED);
+  try { assert.equal(tracker.report('bogus'), false); } finally { tracker.stop(); }
+});

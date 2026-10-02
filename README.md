@@ -29,6 +29,7 @@ flowchart LR
 - 本地和分享页面采用统一的 Markdown 阅读样式：舒适的正文宽度、清晰的标题层级、可横向滚动的表格，以及带语言标识和复制按钮的深色语法高亮代码块。未标注或不支持的代码语言按纯文本展示。修改高亮模块后运行 `npm run build:markdown` 生成随应用分发的本地脚本。
 - 管理任务待办事项、优先级、截止日期及工作目录。
 - 每个任务支持多个独立终端，点击“新开终端”创建 Shell，并通过终端标签切换；各终端从任务工作目录启动，分别保存输出历史。
+- 终端运行状态直接显示在左侧任务项和终端标签上：执行中为外圈跑马灯，完成后绿色呼吸灯等待你打开确认，详见下文“终端运行状态”。
 - 从 Finder/文件管理器或 VS Code 打开本地任务目录，生成只读分享链接。
 - 快捷链接栏默认隐藏，保留已有链接数据；支持 PWA 安装；电脑和手机统一使用 `/web` 的 最小宽度 1280px、大屏横向铺满、普通浏览器最大高度 1200px、安装的 Chrome 应用及全屏模式宽高随实际窗口铺满，避免窄窗口裁切终端 的桌面页面，支持浏览器缩放和手机双指缩放；旧 `/h5` 地址跳转到 `/web`。
 - 自动检查更新，在设置中提示并由用户点击执行更新。
@@ -494,6 +495,31 @@ Docker 安装可在更新源码后执行 `./docker-client.sh --remote-access yes
 点击终端工具栏的“历史记录”按需查看保留日志，继续加载更早内容。历史窗口是独立的只读文本，不会把旧输出及其清屏、光标控制指令写回正在使用的终端。首次打开从这次连接时的日志末尾开始，因此会包含最近内容；连接后的新输出仍显示在主终端。每页最多 500 行并限制传输大小，服务器继续沿用现有约 5 MB 日志保留上限。
 
 
+### 终端运行状态
+
+服务端为每个终端判定 `idle` / `running` / `done` 三种状态，浏览器每 1.5 秒轮询 `GET /api/tasks/terminal-activity`，刷新页面后状态不会丢失：
+
+- **执行中（running）**：左侧任务项和对应终端标签的外圈出现跑马灯。左侧任务项汇总该任务所有终端，任一终端执行中即显示。
+- **完成待确认（done）**：绿色呼吸灯，一直保持到你打开该终端。正在查看该终端、切到它所在的标签或切回浏览器窗口，都算确认（`POST /api/tasks/:id/terminal/ack`）。后台终端完成后不会被其他终端的确认吞掉。
+- 系统设置了“减少动态效果”时，两种效果都不再动画。
+
+判定方式按前台进程区分：
+
+| 前台程序 | 判定依据 |
+| --- | --- |
+| 普通命令（`make`、`npm test` 等） | 占据 PTY 前台即执行中，静默也保持；回到 shell 提示符即完成。约 1 秒内结束的命令不显示 |
+| Claude Code、Codex 等 Agent | 优先使用它们的 hook 上报：提交提示为开始、一轮结束为完成、需要权限确认时显示完成待确认，你回应后继续工作会自动回到执行中 |
+| 没有 hook 的 Agent，以及 `ssh`、`tmux`、`vim` 等交互程序 | 按输出判断：1.5 秒内连续多次输出为执行中，静默约 3 秒视为在等你；你自己的按键回显和调整窗口后的重绘不计入 |
+
+Agent 中途按 Esc 或 Ctrl+C 中断时不会触发结束 hook，此时执行中且静默超过 20 秒会自动视为完成。
+
+**Hook 上报**：终端 PTY 的环境里有 `TA_HOOK_URL` 和 `TA_HOOK_TOKEN`（token 按任务和终端用 HMAC 计算，只存在于那个 PTY 中），hook 命令只在 `TA_HOOK_URL` 存在时才用 `curl` 上报到 `POST /hooks/terminal-activity`；在普通终端里运行同一份配置不会有任何动作，服务不可达时也不会阻塞 Agent。hook 配置在 `rules/claude/settings.json` 和 `rules/codex/hooks.json`，由下文的“用户级规则与默认配置同步”合并到本机，本机已有的 hook 保留。
+
+- 在目标机器上运行一次 `ta`（或带同步函数的 `claude` / `codex`），配置才会写入 `~/.claude/settings.json` 和 `~/.codex/hooks.json`。
+- Codex 要求审核并信任 hook：首次进入 Codex 后输入 `/hooks` 批准，未批准前 Codex 不会执行。
+- 通过 ssh 进入远程机器再运行 Agent 时，环境变量不会带过去，这种情况按输出判断。
+- 依赖 `curl`；Docker Client 镜像已包含。
+
 ## 开发环境安装脚本
 
 页面顶部“实用工具”标签复制的命令会运行 `scripts/install-claude-code.sh`，适用于 macOS 和 Linux，全部装在当前用户目录，不使用 Homebrew、不执行 `sudo`：
@@ -534,8 +560,8 @@ Docker 安装可在更新源码后执行 `./docker-client.sh --remote-access yes
 
 `scripts/agent-sync.py`（安装脚本会装到 `~/.local/share/t-agent/`）在每次启动 `claude` / `codex` 前，从本仓库 `rules/` 目录拉取用户级规则和默认配置并合并到本机，详见 `rules/README.md`。当前默认值：
 
-- Claude Code：模型 `sonnet`，`permissions.defaultMode = auto`（自动审核权限请求）。
-- Codex：模型 `gpt-6-sol`，`approval_policy = on-request`、`approvals_reviewer = auto_review`、`sandbox_mode = workspace-write`（等价于 `--approve-for-me`）。
+- Claude Code：模型 `sonnet`，`permissions.defaultMode = auto`（自动审核权限请求），以及终端状态上报 hook。
+- Codex：模型 `gpt-6-sol`，`approval_policy = on-request`、`approvals_reviewer = auto_review`、`sandbox_mode = workspace-write`（等价于 `--approve-for-me`）；另有 `~/.codex/hooks.json` 中的终端状态上报 hook（JSON 递归合并，需在 Codex `/hooks` 中信任一次）。
 
 要点：
 - 规则文件只替换 `<!-- t-agent:managed:begin/end -->` 区块，区块外的本机规则保留；配置只覆盖远程列出的键，本机其他键、注释、`[表]` 保留；第一次修改前留 `.t-agent.bak` 备份。

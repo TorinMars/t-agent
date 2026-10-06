@@ -43,7 +43,7 @@
    - 本地任务：切换任务、编辑文档、待办增删改、拖拽排序、新建/编辑/删除、终端、文件浏览器、分组新建/重命名/删除。
    - 切到远程 Engine：同上，另确认 Finder / VS Code / 分享按钮已隐藏、引擎标签的跑马灯/呼吸灯、`readonly` Token 的只读表现、离线时的提示页。
 2. ~~全量测试~~ 已在 v2.29.0 上验证：`test/` 265 个、13 个浏览器脚本全部通过（2026-10-07）。
-3. **Codex 交互式（TUI）hook 不触发（2026-10-07 实测）**：`codex exec` 下 UserPromptSubmit/Stop/SessionEnd 正常上报；交互式会话 4 次实测 0 个事件，疑似 hook 由常驻的 `codex app-server --managed-daemon` 执行，其环境没有 `TA_HOOK_URL`，命令里的 `[ -n "$TA_HOOK_URL" ]` 使其静默无操作，尚未解决。原记录：**Codex hook 在真实会话里没触发过**：`rules/codex/hooks.json` 里的事件名（`SessionEnd`、`PermissionRequest` 等）按官方文档写，`codex exec` 加载未报错，但需要用户在 Codex 里 `/hooks` 信任后才会真正执行，未验证。
+3. **Codex 交互式（TUI）hook 不触发——已决定不处理（2026-10-07）**：`codex exec` 下 hook 正常，交互式会话实测 0 个事件，疑似 hook 由常驻的 `codex app-server --managed-daemon` 执行、其环境没有 `TA_HOOK_URL`（未证实）。用户决定 Codex 只靠输出判断状态（v2.29.3 起 macOS 也能识别前台 `codex`），不再排查 hook；Claude Code 的 hook 不受影响。
 
 ## 已知限制 / 遗留事项
 

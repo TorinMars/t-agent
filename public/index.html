@@ -22,9 +22,9 @@
 <body>
   <header class="header">
     <div class="header-left">
-      <nav class="header-tabs" aria-label="主导航">
-        <button type="button" class="header-tab active" id="tab-tasks" aria-pressed="true">📋 Tasks</button>
-        <button type="button" class="header-tab" id="tab-tools" aria-pressed="false">🧰 实用工具</button>
+      <nav class="engine-tabs-bar" aria-label="Engine 切换">
+        <div class="engine-tabs" id="engine-tabs"></div>
+        <button class="engine-connect-remote" id="btn-connect-remote" type="button" title="连接远程服务" aria-label="连接远程服务"><span aria-hidden="true">＋</span><span class="engine-connect-label">连接远程</span></button>
       </nav>
     </div>
     <div class="header-right">
@@ -41,62 +41,11 @@
     <button class="quicklinks-toggle" id="btn-toggle-links" title="展开/折叠">▾</button>
   </div>
 
-  <section class="tools-panel" id="tools-panel" hidden aria-label="实用工具">
-    <div class="tool-card">
-      <div class="tool-card-title">安装开发环境（Claude Code / Codex / SSH 密钥 / 规则同步 / ta / PM2）</div>
-      <div class="form-hint">复制 GitHub 安装脚本命令，在目标机器的终端中粘贴执行（macOS / Linux）。已安装的工具会跳过，已有 SSH 密钥不会被覆盖；还会配置每次启动 <code>claude</code> / <code>codex</code> 前同步仓库 <code>rules/</code> 里的用户级规则和默认配置（<code>--skip sync</code> 可跳过）；还会安装统一命令 <code>ta</code> 和 PM2（没有 Node.js 时先装到 <code>~/.local/node</code>，<code>--skip pm2</code> 可跳过）；加 <code>bash -s -- --check</code> 可只检查不安装，加 <code>--with-apps</code> 可在 Mac 上同时安装 Maccy、Snipaste、Clash Verge。</div>
-      <div class="tool-card-actions">
-        <button type="button" class="btn-logout tool-copy-btn" data-script="install-claude-code.sh">复制安装命令</button>
-        <button type="button" class="btn-logout tool-copy-btn" data-script="install-claude-code.sh" data-args="--with-apps">复制安装命令（含 Mac 应用）</button>
-        <span class="tool-copy-status" role="status"></span>
-      </div>
-    </div>
-    <div class="tool-card">
-      <div class="tool-card-title">配置代理（订阅）</div>
-      <div class="form-hint">macOS：把订阅导入已安装的 Clash Verge；Linux：安装 mihomo 内核并以用户级服务运行。运行后按提示粘贴订阅链接（输入时不显示，不会被打印或写入日志）；之后用 <code>bash -s -- --update</code> 更新订阅，<code>--status</code> 查看状态。</div>
-      <div class="tool-card-actions">
-        <button type="button" class="btn-logout tool-copy-btn" data-script="install-proxy.sh">复制代理配置命令</button>
-        <span class="tool-copy-status" role="status"></span>
-      </div>
-    </div>
-    <div class="tool-card tool-card-wide" id="pm2-card">
-      <div class="tool-card-title">PM2 进程管理</div>
-      <div class="form-hint" id="pm2-hint">管理运行 Client 的这台机器上的 PM2 进程（远程 Engine 所在机器不在此列）。可以启动、停止、重启、reload 和查看日志；停止或重启前会确认。</div>
-      <div class="pm2-table-wrap">
-        <table class="pm2-table" id="pm2-table" hidden>
-          <thead><tr><th>名称</th><th>状态</th><th>CPU</th><th>内存</th><th>运行时长</th><th>重启</th><th>操作</th></tr></thead>
-          <tbody id="pm2-body"></tbody>
-        </table>
-      </div>
-      <div class="tool-card-actions">
-        <button type="button" class="btn-logout" id="pm2-refresh">刷新</button>
-        <span class="tool-copy-status" id="pm2-status" role="status"></span>
-      </div>
-      <div class="pm2-logs" id="pm2-logs" hidden>
-        <div class="pm2-logs-bar">
-          <strong id="pm2-logs-title"></strong>
-          <select id="pm2-logs-stream" aria-label="日志类型"><option value="out">标准输出</option><option value="err">错误输出</option></select>
-          <select id="pm2-logs-lines" aria-label="行数"><option value="100">最近 100 行</option><option value="300" selected>最近 300 行</option><option value="1000">最近 1000 行</option></select>
-          <button type="button" class="btn-logout" id="pm2-logs-close">关闭</button>
-        </div>
-        <pre id="pm2-log-text"></pre>
-      </div>
-    </div>
-    <div class="tool-card">
-      <div class="tool-card-title">本地安装向导（网页操作）</div>
-      <div class="form-hint">不想记命令行参数时使用：在目标机器上运行后会启动一个只监听本机的网页向导，勾选要安装的内容、在页面里填写订阅链接并查看实时输出。需要 Python 3；在远程服务器上运行时，按提示用 SSH 端口转发（<code>ssh -L 8765:127.0.0.1:8765</code>）再从本机浏览器打开。</div>
-      <div class="tool-card-actions">
-        <button type="button" class="btn-logout tool-copy-btn" data-script="setup-wizard.sh">复制向导启动命令</button>
-        <span class="tool-copy-status" role="status"></span>
-      </div>
-    </div>
-  </section>
 
   <div class="layout">
-    <nav class="engine-tabs-bar" aria-label="Engine 切换">
-      <button class="engine-nav-toggle" id="btn-toggle-engines" type="button" aria-controls="engine-tabs" aria-expanded="true" title="收起引擎栏" aria-label="收起引擎栏">«</button>
-      <div class="engine-tabs" id="engine-tabs"></div>
-      <button class="engine-connect-remote" id="btn-connect-remote" type="button" title="连接远程服务" aria-label="连接远程服务"><span aria-hidden="true">＋</span><span class="engine-connect-label">连接远程</span></button>
+    <nav class="main-nav" aria-label="主导航">
+      <button type="button" class="main-nav-item active" id="tab-tasks" aria-pressed="true"><span class="main-nav-icon" aria-hidden="true">📋</span><span class="main-nav-label">Tasks</span></button>
+      <button type="button" class="main-nav-item" id="tab-tools" aria-pressed="false"><span class="main-nav-icon" aria-hidden="true">🧰</span><span class="main-nav-label">实用工具</span></button>
     </nav>
 
     <aside class="sidebar" id="sidebar">
@@ -182,6 +131,57 @@
         </div>
       </div>
     </div>
+    <section class="tools-panel" id="tools-panel" hidden aria-label="实用工具">
+      <div class="tools-engine" id="tools-engine" role="status"></div>
+      <div class="tool-card">
+        <div class="tool-card-title">安装开发环境（Claude Code / Codex / SSH 密钥 / 规则同步 / ta / PM2）</div>
+        <div class="form-hint">复制 GitHub 安装脚本命令，在目标机器的终端中粘贴执行（macOS / Linux）。已安装的工具会跳过，已有 SSH 密钥不会被覆盖；还会配置每次启动 <code>claude</code> / <code>codex</code> 前同步仓库 <code>rules/</code> 里的用户级规则和默认配置（<code>--skip sync</code> 可跳过）；还会安装统一命令 <code>ta</code> 和 PM2（没有 Node.js 时先装到 <code>~/.local/node</code>，<code>--skip pm2</code> 可跳过）；加 <code>bash -s -- --check</code> 可只检查不安装，加 <code>--with-apps</code> 可在 Mac 上同时安装 Maccy、Snipaste、Clash Verge。</div>
+        <div class="tool-card-actions">
+          <button type="button" class="btn-logout tool-copy-btn" data-script="install-claude-code.sh">复制安装命令</button>
+          <button type="button" class="btn-logout tool-copy-btn" data-script="install-claude-code.sh" data-args="--with-apps">复制安装命令（含 Mac 应用）</button>
+          <span class="tool-copy-status" role="status"></span>
+        </div>
+      </div>
+      <div class="tool-card">
+        <div class="tool-card-title">配置代理（订阅）</div>
+        <div class="form-hint">macOS：把订阅导入已安装的 Clash Verge；Linux：安装 mihomo 内核并以用户级服务运行。运行后按提示粘贴订阅链接（输入时不显示，不会被打印或写入日志）；之后用 <code>bash -s -- --update</code> 更新订阅，<code>--status</code> 查看状态。</div>
+        <div class="tool-card-actions">
+          <button type="button" class="btn-logout tool-copy-btn" data-script="install-proxy.sh">复制代理配置命令</button>
+          <span class="tool-copy-status" role="status"></span>
+        </div>
+      </div>
+      <div class="tool-card tool-card-wide" id="pm2-card">
+        <div class="tool-card-title">PM2 进程管理</div>
+        <div class="form-hint" id="pm2-hint">管理运行 Client 的这台机器上的 PM2 进程。可以启动、停止、重启、reload 和查看日志；停止或重启前会确认。</div>
+        <div class="pm2-table-wrap">
+          <table class="pm2-table" id="pm2-table" hidden>
+            <thead><tr><th>名称</th><th>状态</th><th>CPU</th><th>内存</th><th>运行时长</th><th>重启</th><th>操作</th></tr></thead>
+            <tbody id="pm2-body"></tbody>
+          </table>
+        </div>
+        <div class="tool-card-actions">
+          <button type="button" class="btn-logout" id="pm2-refresh">刷新</button>
+          <span class="tool-copy-status" id="pm2-status" role="status"></span>
+        </div>
+        <div class="pm2-logs" id="pm2-logs" hidden>
+          <div class="pm2-logs-bar">
+            <strong id="pm2-logs-title"></strong>
+            <select id="pm2-logs-stream" aria-label="日志类型"><option value="out">标准输出</option><option value="err">错误输出</option></select>
+            <select id="pm2-logs-lines" aria-label="行数"><option value="100">最近 100 行</option><option value="300" selected>最近 300 行</option><option value="1000">最近 1000 行</option></select>
+            <button type="button" class="btn-logout" id="pm2-logs-close">关闭</button>
+          </div>
+          <pre id="pm2-log-text"></pre>
+        </div>
+      </div>
+      <div class="tool-card">
+        <div class="tool-card-title">本地安装向导（网页操作）</div>
+        <div class="form-hint">不想记命令行参数时使用：在目标机器上运行后会启动一个只监听本机的网页向导，勾选要安装的内容、在页面里填写订阅链接并查看实时输出。需要 Python 3；在远程服务器上运行时，按提示用 SSH 端口转发（<code>ssh -L 8765:127.0.0.1:8765</code>）再从本机浏览器打开。</div>
+        <div class="tool-card-actions">
+          <button type="button" class="btn-logout tool-copy-btn" data-script="setup-wizard.sh">复制向导启动命令</button>
+          <span class="tool-copy-status" role="status"></span>
+        </div>
+      </div>
+    </section>
   </div>
 
   <div class="modal-overlay" id="modal-overlay" style="display:none">

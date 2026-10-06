@@ -1204,6 +1204,7 @@ const Tasks = (() => {
       TerminalActivity.unregisterSource(key);
     }
     if (src === source) { renderSidebar(); syncSourceControls(); }
+    notifySourceChange(); // 工具面板按角色和能力决定 PM2 是否可用
   }
 
   function removeSource(key) {

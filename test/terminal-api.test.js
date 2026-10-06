@@ -19,13 +19,12 @@ const { consumeTerminalTicket } = require('../services/terminal-tickets');
 const { assertRemoteTerminal } = require('../services/remote-client');
 const tasks = require('../services/engine-tasks');
 
-test('Engine terminal API enforces ownership and scopes, persists tabs and binds tickets', async () => {
+test('Engine terminal API enforces ownership, persists tabs and binds tickets', async () => {
   const server = createEngineApp().listen(0, '127.0.0.1');
   await new Promise((resolve, reject) => { server.once('listening', resolve); server.once('error', reject); });
   try {
     const base = `http://127.0.0.1:${server.address().port}`;
     const owner = createAccessToken(db, { role: 'operator', principalId: 'owner' }).token;
-    const reader = createAccessToken(db, { role: 'readonly', principalId: 'owner' }).token;
     const stranger = createAccessToken(db, { role: 'operator', principalId: 'stranger' }).token;
     const task = tasks.createTask('owner', { title: 'API task' });
     const url = `/v1/tasks/${task.id}/terminals`;
@@ -33,7 +32,6 @@ test('Engine terminal API enforces ownership and scopes, persists tabs and binds
       method: body ? 'POST' : 'GET', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       ...(body ? { body: JSON.stringify(body) } : {}),
     });
-    assert.equal((await request(url, reader, {})).status, 403);
     assert.equal((await request(url, stranger, {})).status, 404);
     assert.equal((await request(url, 'invalid')).status, 401);
     const response = await request(url, owner, {});
@@ -51,7 +49,6 @@ test('Engine terminal API enforces ownership and scopes, persists tabs and binds
     assert.equal((await request(`/v1/terminal-sessions/${task.id}/control`, owner, { action: 'close', terminal_id: added.terminal_id })).status, 200);
     const controlUrl = `/v1/terminal-sessions/${task.id}/control`;
     const deletion = { action: 'delete', terminal_id: added.terminal_id };
-    assert.equal((await request(controlUrl, reader, deletion)).status, 403);
     assert.equal((await request(controlUrl, stranger, deletion)).status, 404);
     assert.equal((await request(controlUrl, owner, deletion)).status, 200);
     assert.equal((await (await request(url)).json()).length, 1);

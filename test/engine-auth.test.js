@@ -37,9 +37,9 @@ function testDb() {
   return db;
 }
 
-test('配对码只能换取一次访问 Token', () => {
+test('配对码只能换取一次访问 Token，且它就是管理权限', () => {
   const db = testDb();
-  const pairing = createPairingCode(db, { role: 'operator', principalId: 'owner' });
+  const pairing = createPairingCode(db, { principalId: 'owner' });
   assert.match(pairing.code, /^TA-[A-Z2-9]{4}-[A-Z2-9]{4}-[A-Z2-9]{4}$/);
 
   const access = exchangePairingCode(db, pairing.code, { clientName: 'test' });
@@ -47,7 +47,8 @@ test('配对码只能换取一次访问 Token', () => {
   const authenticated = authenticateAccessToken(db, access.token);
   assert.equal(authenticated.principal_id, 'owner');
   assert.equal(hasScope(authenticated.scopes, 'tasks:write'), true);
-  assert.equal(hasScope(authenticated.scopes, 'engine:admin'), false);
+  assert.equal(hasScope(authenticated.scopes, 'engine:admin'), true);
+  assert.equal(authenticated.role, 'owner');
 
   assert.throws(
     () => exchangePairingCode(db, pairing.code, { clientName: 'again' }),
@@ -66,30 +67,26 @@ test('owner Token 具有所有 scope', () => {
   db.close();
 });
 
-test('new role tokens include file scopes and legacy role tokens gain only their matching file scopes', () => {
+test('requested roles are ignored: every token, including previously issued restricted ones, is an administrator', () => {
   const db = testDb();
   const reader = createPairingCode(db, { role: 'readonly', principalId: 'reader' });
-  const readerToken = exchangePairingCode(db, reader.code).token;
-  assert.equal(hasScope(authenticateAccessToken(db, readerToken).scopes, 'files:read'), true);
-  assert.equal(hasScope(authenticateAccessToken(db, readerToken).scopes, 'files:write'), false);
+  assert.equal(reader.role, 'owner');
+  const readerAuth = authenticateAccessToken(db, exchangePairingCode(db, reader.code).token);
+  assert.equal(readerAuth.role, 'owner');
+  for (const scope of ['files:read', 'files:write', 'engine:admin', 'pm2:manage']) assert.equal(hasScope(readerAuth.scopes, scope), true, scope);
 
-  const legacy = 'tae_legacy';
-  db.prepare(`INSERT INTO engine_access_tokens
-    (principal_id, name, token_hash, token_prefix, role, scopes)
-    VALUES (?, ?, ?, ?, ?, ?)`).run(
-    'operator', 'legacy', require('../services/engine-auth').hashSecret(legacy), 'tae_legacy', 'operator',
-    'tasks:read,tasks:write,documents:read,documents:write,todos:read,todos:write,terminal:execute,runs:execute',
-  );
-  assert.equal(hasScope(authenticateAccessToken(db, legacy).scopes, 'files:write'), true);
-
-  const restricted = 'tae_restricted';
-  db.prepare(`INSERT INTO engine_access_tokens
-    (principal_id, name, token_hash, token_prefix, role, scopes)
-    VALUES (?, ?, ?, ?, ?, ?)`).run(
-    'operator', 'restricted', require('../services/engine-auth').hashSecret(restricted), 'tae_restr', 'operator', 'tasks:read',
-  );
-  const restrictedAuth = authenticateAccessToken(db, restricted);
-  assert.equal(hasScope(restrictedAuth.scopes, 'files:read'), false);
-  assert.equal(hasScope(restrictedAuth.scopes, 'files:write'), false);
+  // 以前签发、数据库里仍是受限角色的令牌同样按管理权限处理（不改库）。
+  const hashSecret = require('../services/engine-auth').hashSecret;
+  const insert = db.prepare(`INSERT INTO engine_access_tokens
+    (principal_id, name, token_hash, token_prefix, role, scopes) VALUES (?, ?, ?, ?, ?, ?)`);
+  insert.run('operator', 'legacy', hashSecret('tae_legacy'), 'tae_legacy', 'operator', 'tasks:read,tasks:write');
+  insert.run('operator', 'restricted', hashSecret('tae_restricted'), 'tae_restr', 'readonly', 'tasks:read');
+  for (const token of ['tae_legacy', 'tae_restricted']) {
+    const auth = authenticateAccessToken(db, token);
+    assert.equal(auth.role, 'owner', token);
+    assert.equal(hasScope(auth.scopes, 'files:write'), true, token);
+    assert.equal(hasScope(auth.scopes, 'engine:admin'), true, token);
+  }
+  assert.equal(db.prepare("SELECT role FROM engine_access_tokens WHERE token_prefix = 'tae_restr'").get().role, 'readonly', 'stored data is left untouched');
   db.close();
 });

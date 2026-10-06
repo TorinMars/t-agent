@@ -28,11 +28,24 @@ else { const p = state.find(x => String(x.pm_id) === id); p.pm2_env.status = { s
 process.env.PM2_HOME = path.join(dir, 'home');
 
 const index = fs.readFileSync(path.join(root, 'public/index.html'), 'utf8');
-const nav = index.match(/<nav class="header-tabs"[\s\S]*?<\/nav>/)[0];
+const nav = index.match(/<nav class="main-nav"[\s\S]*?<\/nav>/)[0];
 const panel = index.match(/<section class="tools-panel"[\s\S]*?<\/section>/)[0];
-const page = `<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="/style.css"><body><header class="header"><div class="header-left">${nav}</div></header>${panel}
+// 引擎切换由 Tasks 提供：这里用桩，让“当前引擎”可以在本地、支持 PM2 的远程引擎和旧版远程引擎之间切换。
+const tasksStub = `<script>const Tasks = (() => {
+  const listeners = new Set();
+  const sources = {
+    local: { key: 'local', label: '默认', local: true },
+    'remote:7': { key: 'remote:7', label: '远程机', local: false, id: 7, role: 'owner', caps: new Set(['pm2:manage']) },
+    'remote:8': { key: 'remote:8', label: '旧引擎', local: false, id: 8, role: 'owner', caps: new Set(['tasks:read']) },
+  };
+  let active = 'local';
+  return { getActiveKey: () => active, getSource: key => sources[key], problemOf: () => null, onSourceChange: fn => listeners.add(fn),
+    switchTo(key) { active = key; listeners.forEach(fn => fn()); } };
+})();</script>`;
+const page = `<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="/style.css"><body><header class="header"><div class="header-left"></div></header><div class="layout">${nav}${panel}</div>
 <script>const API = { async get(u) { const r = await fetch(u, { headers: { 'X-Requested-With': 'XMLHttpRequest' } }); if (!r.ok) throw new Error(await r.text()); return r.json(); },
 async post(u, d) { const r = await fetch(u, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }, body: JSON.stringify(d) }); if (!r.ok) throw new Error(await r.text()); return r.json(); } };</script>
+${tasksStub}
 <script src="/tools.js"></script>`;
 
 function serve(manager) {
@@ -41,8 +54,13 @@ function serve(manager) {
   app.get('/', (req, res) => res.type('html').send(page));
   app.get('/style.css', (req, res) => res.type('css').sendFile(path.join(root, 'public/css/style.css')));
   app.get('/tools.js', (req, res) => res.type('js').sendFile(path.join(root, 'public/js/tools.js')));
-  app.use('/api/pm2', createPm2Router({ manager, requireAuth: (req, res, next) => next() }));
-  return new Promise(resolve => { const server = app.listen(0, '127.0.0.1', () => resolve(server)); });
+  const seen = [];
+  const router = () => createPm2Router({ manager, requireAuth: (req, res, next) => next() });
+  app.use('/api/pm2', (req, res, next) => { seen.push(`local ${req.method} ${req.path}`); next(); }, router());
+  // 远程引擎经 Client 代理访问同一套接口；旧版引擎（8）不应收到任何请求。
+  app.use('/api/remote-servers/7/pm2', (req, res, next) => { seen.push(`remote7 ${req.method} ${req.path}`); next(); }, router());
+  app.use('/api/remote-servers/8', (req, res) => { seen.push(`remote8 ${req.method} ${req.path}`); res.status(404).end(); });
+  return new Promise(resolve => { const server = app.listen(0, '127.0.0.1', () => { server.seen = seen; resolve(server); }); });
 }
 
 (async () => {
@@ -76,6 +94,24 @@ function serve(manager) {
     await page.selectOption('#pm2-logs-lines', '100');
     await page.click('#pm2-logs-close');
     assert.equal(await page.isVisible('#pm2-logs'), false);
+
+    // 工具跟随当前引擎：切到远程引擎后改走该引擎的接口，旧版引擎只提示不请求，切回本地恢复。
+    assert.match(await page.textContent('#tools-engine'), /当前引擎：默认/);
+    await page.evaluate(() => Tasks.switchTo('remote:7'));
+    await page.waitForFunction(() => document.getElementById('tools-engine').textContent.includes('远程机'));
+    await page.waitForFunction(() => document.querySelectorAll('#pm2-body tr').length === 2);
+    assert.ok(running.seen.some(entry => entry === 'remote7 GET /status'), '远程引擎的进程列表走代理接口');
+    assert.match(await page.textContent('#pm2-hint'), /引擎「远程机」所在机器/);
+    await page.evaluate(() => Tasks.switchTo('remote:8'));
+    await page.waitForFunction(() => document.getElementById('pm2-hint').textContent.includes('版本过旧'));
+    assert.equal(await page.isVisible('#pm2-table'), false);
+    assert.equal(await page.isDisabled('#pm2-refresh'), true);
+    await page.waitForTimeout(300);
+    assert.ok(!running.seen.some(entry => entry.startsWith('remote8')), '旧版引擎不会收到 PM2 请求');
+    await page.evaluate(() => Tasks.switchTo('local'));
+    await page.waitForFunction(() => document.querySelectorAll('#pm2-body tr').length === 2);
+    assert.match(await page.textContent('#tools-engine'), /当前引擎：默认/);
+    assert.equal(await page.isDisabled('#pm2-refresh'), false);
 
     const dialogs = [];
     page.on('dialog', async d => { dialogs.push(d.message()); await d.accept(); });

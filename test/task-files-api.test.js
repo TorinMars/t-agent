@@ -114,28 +114,22 @@ test('local task file endpoints expose the locked contract and structured errors
   assert.equal((await jsonRequest(localBase, '/api/tasks/999999/files')).response.status, 404);
 });
 
-test('Engine advertises file capabilities and enforces read and write scopes', async () => {
+test('Engine advertises file capabilities and every token can read and write files', async () => {
   const info = await jsonRequest(engineBase, '/v1/info', { token: reader });
   assert.equal(info.payload.capabilities.includes('files:read'), true);
   assert.equal(info.payload.capabilities.includes('files:write'), true);
 
-  const readerList = await jsonRequest(engineBase, `/v1/tasks/${task.id}/files`, { token: reader });
-  assert.equal(readerList.response.status, 200);
-  assert.equal(readerList.payload.writable, false);
-  const denied = await jsonRequest(engineBase, `/v1/tasks/${task.id}/files`, {
-    method: 'POST', token: reader, body: { path: 'denied.txt', type: 'file' },
-  });
-  assert.equal(denied.response.status, 403);
-  assert.equal(denied.payload.error, 'ENGINE_SCOPE_REQUIRED');
-  assert.equal(denied.payload.required_scope, 'files:write');
-
-  const operatorList = await jsonRequest(engineBase, `/v1/tasks/${task.id}/files`, { token: operator });
-  assert.equal(operatorList.payload.writable, true);
-  const created = await jsonRequest(engineBase, `/v1/tasks/${task.id}/files`, {
-    method: 'POST', token: operator, body: { path: 'created.txt', type: 'file' },
-  });
-  assert.equal(created.response.status, 201);
-  assert.deepEqual(created.payload, { path: 'created.txt' });
+  // 所有连接都是管理权限：即使以 readonly 请求的令牌也可以写文件。
+  for (const [name, token] of [['reader', reader], ['operator', operator]]) {
+    const list = await jsonRequest(engineBase, `/v1/tasks/${task.id}/files`, { token });
+    assert.equal(list.payload.writable, true, name);
+    const created = await jsonRequest(engineBase, `/v1/tasks/${task.id}/files`, {
+      method: 'POST', token, body: { path: `created-by-${name}.txt`, type: 'file' },
+    });
+    assert.equal(created.response.status, 201, name);
+    assert.deepEqual(created.payload, { path: `created-by-${name}.txt` });
+  }
+  assert.equal((await jsonRequest(engineBase, `/v1/tasks/${task.id}/files`)).response.status, 401);
 });
 
 test('remote proxy forwards supported file APIs and returns FILES_UNSUPPORTED for old Engines', async () => {

@@ -117,7 +117,7 @@ for (const [environment, allowHttp] of [['test', 'false'], ['production', 'false
   assert.equal((await (await call('/auth/me', { cookie: boundCookie })).json()).effective_work_dir, path.join(temp, 'tasks'));
 
   // A full Client also serves the standard Engine protocol on the same port.
-  const pairingResponse = await call('/api/remote-tokens/pairing', { cookie: boundCookie, body: { role: 'operator' } });
+  const pairingResponse = await call('/api/remote-tokens/pairing', { cookie: boundCookie, body: {} });
   assert.equal(pairingResponse.status, 201);
   const pairing = await pairingResponse.json();
   const exchange = await call('/v1/pair', { body: { code: pairing.code, client_name: 'Another Client' } });
@@ -127,7 +127,7 @@ for (const [environment, allowHttp] of [['test', 'false'], ['production', 'false
   assert.equal((await call('/v1/pair', { body: { code: pairing.code } })).status, 400);
   const engineInfo = await call('/v1/info', { headers: engineHeaders });
   assert.equal(engineInfo.status, 200);
-  assert.equal((await engineInfo.json()).role, 'operator');
+  assert.equal((await engineInfo.json()).role, 'owner'); // 所有连接都是管理权限
   const createdResponse = await call('/v1/tasks', { headers: engineHeaders, body: { title: 'Created by another Client', work_dir: path.join(temp, 'remote-created') } });
   assert.equal(createdResponse.status, 201);
   const created = await createdResponse.json();

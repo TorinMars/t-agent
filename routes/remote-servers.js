@@ -196,6 +196,31 @@ router.post('/:id/apply-update', async (req, res) => {
   }
 });
 
+// ── PM2：管理该 Engine 所在机器上的进程，透传到 Engine 的 /v1/pm2（仅 owner Token 可用） ──
+async function proxyPm2(req, res, pathname, options) {
+  const row = getServer(req);
+  if (!row) return res.status(404).json({ error: 'REMOTE_NOT_FOUND' });
+  try {
+    res.json(await request(row.base_url, pathname, decryptToken(row.token_cipher, config.sessionSecret), options));
+  } catch (error) {
+    // 旧版 Engine 没有 /v1/pm2：路由不存在时返回通用的 404，需要与“未安装 PM2”（PM2_NOT_INSTALLED）区分。
+    if (error.message === 'REMOTE_HTTP_404') return res.status(501).json({ error: 'PM2_UNSUPPORTED' });
+    res.status(error.statusCode || 502).json({ error: safeError(error) });
+  }
+}
+
+router.get('/:id/pm2/status', (req, res) => proxyPm2(req, res, '/v1/pm2/status'));
+router.get('/:id/pm2/:pid/logs', (req, res) => {
+  const query = new URLSearchParams();
+  for (const key of ['stream', 'lines']) {
+    if (req.query[key] !== undefined) query.set(key, String(req.query[key]));
+  }
+  proxyPm2(req, res, `/v1/pm2/${encodeURIComponent(req.params.pid)}/logs?${query}`);
+});
+router.post('/:id/pm2/:pid/:action', (req, res) => (
+  proxyPm2(req, res, `/v1/pm2/${encodeURIComponent(req.params.pid)}/${encodeURIComponent(req.params.action)}`, { method: 'POST', body: {} })
+));
+
 // ── 与本地 /api/tasks 对齐的透传接口：Engine 的能力与 Client 一致 ──
 // 返回 { row, token }；找不到连接时已经响应 404。
 function remoteTarget(req, res) {

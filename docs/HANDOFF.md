@@ -1,10 +1,10 @@
-# 交接说明（2026-10 · 截至 v2.29.4）
+# 交接说明（2026-10 · 截至 v2.30.0）
 
 给接手的 Claude / 开发者：先读 `AGENTS.md`（开发与发布规则）和本文件，再动手。
 
 ## 当前状态
 
-- 分支 `main`，最新发布 **v2.29.4**，已推送到 `origin/main`，工作区干净。
+- 分支 `main`，最新发布 **v2.30.0**，已推送到 `origin/main`，工作区干净。
 - 用户通过客户端检测 `main` 上的 `VERSION.json` 更新，代码改动完成并验证后按 `AGENTS.md` 升版本、提交、推送（用户已授权自动发布）。
 - 开发机已换成性能正常的 macOS，可以跑全量测试和浏览器脚本（先 `npm ci`、`npx playwright install chromium`）。`npm test` 并发时 pty 用例偶发 `posix_spawnp failed`，单独跑或 `node --test test/` 均通过。
 
@@ -22,6 +22,7 @@
 | 2.29.2 | 终端状态跑马灯改为沿边框路径（`offset-path`）按距离匀速移动，取代按角度旋转的 `conic-gradient`（后者在矩形四边的线速度忽快忽慢） |
 | 2.29.3 | macOS 没有 `/proc`，前台进程只能拿到 `node`，没有 hook 时的输出兜底判定失效、Codex/Claude 跑马灯一直转；改为用 `ps -t <tty>` 读取前台进程组命令行（`lib/terminal-activity.js`） |
 | 2.29.4 | 修复终端 tab 在“正在查看的终端完成”时整组翻倍：`TerminalActivity.acknowledge` 同步通知监听器并重入 `TerminalTabs.render()`，改为先画完再确认（`test/terminal-tabs.test.js`）；跑马灯亮点缩短变细、被元素裁剪并加淡色轨道 |
+| 2.30.0 | ① 布局对调：引擎切换栏在顶部（`#engine-tabs`），主导航（Tasks / 实用工具，`.main-nav`）在左侧，工具面板放进 `.layout`，工具页左侧导航保持可见；移除引擎栏收起功能。② 实用工具跟随引擎：`public/js/tools.js` 按当前引擎改用 `/api/pm2` 或 `/api/remote-servers/:id/pm2`；Engine 新增 `/v1/pm2/*` 与能力 `pm2:manage`，Client 代理旧版 Engine 返回 `501 PM2_UNSUPPORTED`。③ **所有 Engine 连接统一为管理权限**：`services/engine-auth.js` 忽略请求角色、鉴权一律 owner（含此前签发的只读/操作令牌，库中记录未改），配对 UI 与 CLI 不再选角色 |
 
 ## 架构要点（改代码前必读）
 

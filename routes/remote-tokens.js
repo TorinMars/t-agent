@@ -16,7 +16,6 @@ router.post('/', (req, res) => {
   const name = typeof req.body.name === 'string' && req.body.name.trim() ? req.body.name.trim().slice(0, 80) : '远程连接';
   const created = createAccessToken(db, {
     name,
-    role: req.body.role || 'operator',
     principalId: req.session.user.login,
   });
   res.status(201).json({ ...created, name });
@@ -24,7 +23,6 @@ router.post('/', (req, res) => {
 
 router.post('/pairing', (req, res) => {
   res.status(201).json(createPairingCode(db, {
-    role: req.body.role || 'operator',
     principalId: req.session.user.login,
   }));
 });

@@ -64,7 +64,8 @@ Authorization: Bearer tae_xxx
 
 ## Token 管理
 
-Token 列表、创建和撤销需要 `owner` 角色：
+所有 Token 都是管理权限；Token 列表、创建和撤销需要 `engine:admin` scope：
+
 
 - `GET /v1/tokens`
 - `POST /v1/tokens`
@@ -72,10 +73,20 @@ Token 列表、创建和撤销需要 `owner` 角色：
 
 ## Engine 更新
 
-检查和应用更新需要 `owner` 角色（`engine:admin` scope）：
+检查和应用更新需要 `engine:admin` scope：
 
 - `GET /v1/update/status`
 - `POST /v1/update/check`
 - `POST /v1/update/apply`，请求体必须为 `{ "confirm": true }`
 
 应用接口接受请求后返回 `202`。Client 应轮询状态接口；Engine 进入 `restarting` 阶段后会退出，并依赖 systemd、launchd 或其他进程管理器自动重启。
+
+## PM2 管理
+
+管理这台 Engine 所在机器上的 PM2 进程，能力名 `pm2:manage`，需要 `engine:admin` scope。错误只返回错误码（例如 `PM2_NOT_INSTALLED`、`PM2_NOT_RUNNING`、`PM2_BAD_ACTION`、`PM2_COMMAND_FAILED`）：
+
+- `GET /v1/pm2/status`：返回 `installed`、`running` 和进程白名单字段，不含环境变量与命令行参数。
+- `GET /v1/pm2/:id/logs?stream=out|err&lines=N`：读取日志尾部，最多 256 KiB / 1000 行。
+- `POST /v1/pm2/:id/:action`：`start`、`stop`、`restart`、`reload`。
+
+Client 的代理为 `/api/remote-servers/:id/pm2/...`；旧版 Engine 没有这些路由时代理返回 `501 PM2_UNSUPPORTED`。

@@ -1,31 +1,20 @@
 const crypto = require('crypto');
 
-const LEGACY_ROLE_SCOPES = Object.freeze({
-  readonly: ['tasks:read', 'documents:read', 'todos:read'],
-  operator: [
-    'tasks:read', 'tasks:write',
-    'documents:read', 'documents:write',
-    'todos:read', 'todos:write',
-    'terminal:execute', 'runs:execute',
-  ],
-});
-
-const ROLE_SCOPES = Object.freeze({
-  readonly: [...LEGACY_ROLE_SCOPES.readonly, 'files:read'],
-  operator: [...LEGACY_ROLE_SCOPES.operator, 'files:read', 'files:write'],
-  owner: ['*'],
-});
+// 所有 Engine 连接统一为管理权限（owner），不再区分查看 / 操作 / 管理。
+// 数据库里的 role、scopes 列保留（旧令牌、旧配对码仍存在），但鉴权时一律按管理权限处理。
+const ROLE_SCOPES = Object.freeze({ owner: ['*'] });
 
 function hashSecret(value) {
   return crypto.createHash('sha256').update(String(value)).digest('hex');
 }
 
-function normalizeRole(role) {
-  return Object.hasOwn(ROLE_SCOPES, role) ? role : 'operator';
+// 忽略请求的角色：任何令牌、配对码都是 owner。
+function normalizeRole() {
+  return 'owner';
 }
 
-function roleScopes(role) {
-  return [...ROLE_SCOPES[normalizeRole(role)]];
+function roleScopes() {
+  return [...ROLE_SCOPES.owner];
 }
 
 function hasScope(scopes, required) {
@@ -34,8 +23,8 @@ function hasScope(scopes, required) {
   return values.has('*') || values.has(required);
 }
 
-function createAccessToken(db, { name = '客户端', role = 'operator', principalId = 'engine' } = {}) {
-  const normalizedRole = normalizeRole(role);
+function createAccessToken(db, { name = '客户端', principalId = 'engine' } = {}) {
+  const normalizedRole = normalizeRole();
   const token = `tae_${crypto.randomBytes(32).toString('base64url')}`;
   const scopes = roleScopes(normalizedRole).join(',');
   const result = db.prepare(`
@@ -67,8 +56,8 @@ function randomPairingCode() {
   return `TA-${parts.join('-')}`;
 }
 
-function createPairingCode(db, { role = 'operator', ttlMinutes = 10, principalId = 'engine' } = {}) {
-  const normalizedRole = normalizeRole(role);
+function createPairingCode(db, { ttlMinutes = 10, principalId = 'engine' } = {}) {
+  const normalizedRole = normalizeRole();
   const safeTtl = Math.min(60, Math.max(1, Number.parseInt(ttlMinutes, 10) || 10));
   db.prepare(`DELETE FROM engine_pairing_codes
     WHERE consumed_at IS NOT NULL OR expires_at <= CURRENT_TIMESTAMP`).run();
@@ -103,7 +92,7 @@ function exchangePairingCode(db, code, { clientName = '客户端', principalId }
     const updated = db.prepare(`UPDATE engine_pairing_codes SET consumed_at = CURRENT_TIMESTAMP
       WHERE id = ? AND consumed_at IS NULL`).run(row.id);
     if (!updated.changes) throw new Error('PAIRING_CODE_ALREADY_USED');
-    return createAccessToken(db, { name: clientName, role: row.role, principalId: principalId || row.principal_id });
+    return createAccessToken(db, { name: clientName, principalId: principalId || row.principal_id });
   })();
 }
 
@@ -114,12 +103,9 @@ function authenticateAccessToken(db, token) {
     WHERE token_hash = ? AND revoked_at IS NULL`).get(hashSecret(value));
   if (!row) return null;
   db.prepare('UPDATE engine_access_tokens SET last_used_at = CURRENT_TIMESTAMP WHERE id = ?').run(row.id);
-  const scopes = new Set(String(row.scopes).split(',').map(item => item.trim()).filter(Boolean));
-  const legacyScopes = LEGACY_ROLE_SCOPES[row.role];
-  if (legacyScopes && scopes.size === legacyScopes.length && legacyScopes.every(scope => scopes.has(scope))) {
-    for (const scope of ROLE_SCOPES[row.role]) scopes.add(scope);
-  }
-  return { ...row, scopes };
+  // 以前签发的只读 / 操作令牌同样按管理权限处理。
+  const scopes = new Set(ROLE_SCOPES.owner);
+  return { ...row, role: 'owner', scopes };
 }
 
 module.exports = {

@@ -201,7 +201,7 @@ test('Engine info advertises the parity capabilities and the proxy relays them',
   }
   const relayed = await (await fetch(`${proxy}/api/remote-servers/${remoteId}/info`)).json();
   assert.deepEqual(relayed.capabilities, direct.capabilities);
-  assert.equal(relayed.role, 'operator');
+  assert.equal(relayed.role, 'owner');
 });
 
 test('terminal activity is exposed by the local routes, the Engine and the proxy', async () => {
@@ -215,16 +215,16 @@ test('terminal activity is exposed by the local routes, the Engine and the proxy
   assert.equal((await fetch(`${engine}/v1/tasks/${task.id}/terminal/ack`, { method: 'POST', headers: { Authorization: 'Bearer nope', 'Content-Type': 'application/json' }, body: '{}' })).status, 401);
 });
 
-test('a read-only Engine token cannot edit through the proxy', async () => {
-  const readerToken = createAccessToken(db, { role: 'readonly', principalId: 'owner' }).token;
-  const readerId = db.prepare('INSERT INTO remote_servers (owner_id, name, base_url, token_cipher) VALUES (?, ?, ?, ?)')
-    .run('owner', 'reader', engine.replace('127.0.0.1', 'localhost'), encryptToken(readerToken, process.env.SESSION_SECRET)).lastInsertRowid;
-  const task = await createTask(backends()[1], 'readonly-check');
-  const base = `${proxy}/api/remote-servers/${readerId}/tasks/${task.id}`;
+test('every Engine token can edit through the proxy, whatever role was requested', async () => {
+  const requestedReadonly = createAccessToken(db, { role: 'readonly', principalId: 'owner' }).token;
+  const id = db.prepare('INSERT INTO remote_servers (owner_id, name, base_url, token_cipher) VALUES (?, ?, ?, ?)')
+    .run('owner', 'reader', engine.replace('127.0.0.1', 'localhost'), encryptToken(requestedReadonly, process.env.SESSION_SECRET)).lastInsertRowid;
+  const task = await createTask(backends()[1], 'admin-check');
+  const base = `${proxy}/api/remote-servers/${id}/tasks/${task.id}`;
   const put = await fetch(`${base}/document/technical`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content: 'x' }) });
-  assert.equal(put.status, 403);
+  assert.equal(put.status, 200);
   const todo = await fetch(`${base}/todos`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content: 'x' }) });
-  assert.equal(todo.status, 403);
-  const info = await (await fetch(`${proxy}/api/remote-servers/${readerId}/info`)).json();
-  assert.equal(info.role, 'readonly');
+  assert.equal(todo.status, 201);
+  const info = await (await fetch(`${proxy}/api/remote-servers/${id}/info`)).json();
+  assert.equal(info.role, 'owner');
 });

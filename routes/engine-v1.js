@@ -13,6 +13,8 @@ const { createTaskFilesRouter } = require('./task-files');
 const documents = require('../services/task-documents');
 const { resolveAsset, validateMdPath } = require('../services/task-assets');
 const { serveFileWatch } = require('../lib/file-watch-sse');
+const { createPm2Handlers } = require('./pm2');
+const { Pm2Error } = require('../services/pm2-manager');
 
 const router = express.Router();
 const pairingAttempts = new Map();
@@ -72,7 +74,7 @@ function infoHandler(req, res) {
       'tasks:reorder', 'documents:create', 'documents:watch', 'files:assets', 'paths:validate', 'terminal:activity',
       'todos:read', 'todos:write',
       'terminal:interactive', 'terminal:control', 'terminal:multiple', 'token:pairing',
-      'engine:update',
+      'engine:update', 'pm2:manage',
     ],
   });
 }
@@ -99,6 +101,20 @@ router.post('/update/apply', requireEngineAuth('engine:admin'), (req, res) => {
   updates.apply().catch(error => console.error('[engine-apply-update]', error.message));
   res.status(202).json({ accepted: true, status: updates.publicState() });
 });
+
+// PM2 管理这台 Engine 所在机器上的进程，同样属于主机管理操作，只允许 owner Token。
+// 错误只返回错误码（Client 代理按码显示中文），不暴露 pm2 的原始输出。
+const pm2 = createPm2Handlers();
+const pm2Route = handler => async (req, res) => {
+  try { res.json(await handler(req)); }
+  catch (error) {
+    if (error instanceof Pm2Error) return res.status(error.statusCode).json({ error: error.code });
+    res.status(500).json({ error: 'PM2_UNAVAILABLE' });
+  }
+};
+router.get('/pm2/status', requireEngineAuth('engine:admin'), pm2Route(pm2.status));
+router.get('/pm2/:id/logs', requireEngineAuth('engine:admin'), pm2Route(pm2.logs));
+router.post('/pm2/:id/:action', requireEngineAuth('engine:admin'), pm2Route(pm2.control));
 
 router.get('/tasks', requireEngineAuth('tasks:read'), (req, res) => {
   try { res.json(tasks.listTasks(principal(req), req.query.status)); }
@@ -286,7 +302,6 @@ router.get('/tokens', requireEngineAuth('engine:admin'), (req, res) => {
 router.post('/tokens', requireEngineAuth('engine:admin'), (req, res) => {
   const created = createAccessToken(db, {
     name: req.body.name,
-    role: req.body.role,
     principalId: config.engineOwnerId,
   });
   res.status(201).json(created);

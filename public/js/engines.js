@@ -8,25 +8,6 @@ const Engines = (() => {
 
   const previewPane = document.getElementById('preview-pane');
 
-  const engineBar = document.querySelector('.engine-tabs-bar');
-  const engineToggle = document.getElementById('btn-toggle-engines');
-  if (engineBar && engineToggle) {
-    function setEngineBarCollapsed(collapsed) {
-      engineBar.classList.toggle('collapsed', collapsed);
-      engineToggle.setAttribute('aria-expanded', String(!collapsed));
-      engineToggle.title = collapsed ? '展开引擎栏' : '收起引擎栏';
-      engineToggle.setAttribute('aria-label', engineToggle.title);
-      engineToggle.textContent = collapsed ? '»' : '«';
-    }
-    setEngineBarCollapsed(localStorage.getItem('engine-nav-collapsed') === '1');
-    engineToggle.addEventListener('click', () => {
-      const collapsed = !engineBar.classList.contains('collapsed');
-      setEngineBarCollapsed(collapsed);
-      localStorage.setItem('engine-nav-collapsed', collapsed ? '1' : '0');
-    });
-  }
-
-
   function errorLabel(code) {
     return ({
       INVALID_REMOTE_URL: 'URL 格式不正确', INVALID_REMOTE_PORT: '端口不正确', TOKEN_REQUIRED: '请输入 Token',
@@ -107,7 +88,6 @@ const Engines = (() => {
       button.type = 'button';
       button.className = `engine-tab${activeKey === key ? ' active' : ''}`;
       button.dataset.engineKey = key;
-      button.dataset.shortLabel = Array.from(label.trim())[0] || "?";
       button.setAttribute("aria-label", label);
       const versionLabel = version ? (String(version).startsWith('v') ? String(version) : `v${version}`) : '版本未知';
       button.title = `${title || label} · ${versionLabel}`;
@@ -444,7 +424,7 @@ const Engines = (() => {
   }
 
   async function createToken() {
-    const created = await API.post('/api/remote-tokens/pairing', { role: 'operator' });
+    const created = await API.post('/api/remote-tokens/pairing', {});
     Modal.show('配对码已创建', `<div class="form-hint">10 分钟内有效，只能使用一次。在另一客户端的“连接远程”中填写地址 <code>${escapeHtml(location.origin)}</code> 和此配对码。本机回环地址需替换为可访问的 IP 或域名。</div><div class="created-token"><code>${escapeHtml(created.code)}</code><button class="btn-cancel" id="copy-created-token">复制</button></div><div class="form-actions"><button class="btn-submit" id="created-token-done">完成</button></div>`);
     document.getElementById('copy-created-token').addEventListener('click', async event => { await navigator.clipboard.writeText(created.code); event.target.textContent = '已复制'; });
     document.getElementById('created-token-done').addEventListener('click', Modal.hide);

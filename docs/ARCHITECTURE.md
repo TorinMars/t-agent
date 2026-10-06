@@ -30,9 +30,9 @@ Client 初始化和旧版本升级均默认未绑定身份验证器。未绑定�
 - 访问 Token：`tae_...`，只在创建时显示明文，Engine 只保存 SHA-256 哈希。
 - 终端 ticket：`tat_...`，30 秒失效且只能使用一次。
 
-Token 角色分为 `readonly`、`operator` 和 `owner`。对外协议使用细粒度 scope，界面只向用户展示三种角色。
+所有 Engine 连接都是管理权限（`owner`，scope 为 `*`），不再区分只读 / 操作 / 管理；请求里的角色参数被忽略，以前签发的受限 Token 也按管理权限处理。
 
-Engine 的检查更新、应用更新接口要求 `engine:admin` scope，只有 `owner` Token 可以调用。Client 浏览器只请求本机代理接口；Client 服务端解密已保存的 Token 后调用 Engine，Token 不会进入浏览器。更新完成后 Engine 以非零状态退出，由 systemd、launchd 或等效进程管理器重新拉起。
+Engine 的检查更新、应用更新接口要求 `engine:admin` scope，所有 Token 都可以调用。Client 浏览器只请求本机代理接口；Client 服务端解密已保存的 Token 后调用 Engine，Token 不会进入浏览器。更新完成后 Engine 以非零状态退出，由 systemd、launchd 或等效进程管理器重新拉起。
 
 本项目不再提供 Docker 部署与镜像构建。若连接的远程 Engine 是用 Docker 部署的旧版本，它仍会上报 `install_type: docker`：Client 只展示版本，不触发更新，需在该 Engine 的宿主机上自行更新镜像。
 

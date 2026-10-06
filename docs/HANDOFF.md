@@ -1,10 +1,10 @@
-# 交接说明（2026-10 · 截至 v2.29.2）
+# 交接说明（2026-10 · 截至 v2.29.3）
 
 给接手的 Claude / 开发者：先读 `AGENTS.md`（开发与发布规则）和本文件，再动手。
 
 ## 当前状态
 
-- 分支 `main`，最新发布 **v2.29.2**，已推送到 `origin/main`，工作区干净。
+- 分支 `main`，最新发布 **v2.29.3**，已推送到 `origin/main`，工作区干净。
 - 用户通过客户端检测 `main` 上的 `VERSION.json` 更新，代码改动完成并验证后按 `AGENTS.md` 升版本、提交、推送（用户已授权自动发布）。
 - 开发机已换成性能正常的 macOS，可以跑全量测试和浏览器脚本（先 `npm ci`、`npx playwright install chromium`）。`npm test` 并发时 pty 用例偶发 `posix_spawnp failed`，单独跑或 `node --test test/` 均通过。
 
@@ -20,6 +20,7 @@
 | 2.29.0 | 远程 Engine 与本地功能一致：前端改成“数据源”模式，见下文 |
 | 2.29.1 | **移除全部 Docker 部署与镜像构建**：删除 `Dockerfile`、`compose.client.yml`、`docker-client.sh`、`docker/`、`.github/workflows/docker-client.yml`、相关脚本、测试和 `docs/DOCKER_CLIENT.md`；`update-manager` 不再有 `docker` 安装类型。`public/js/engines.js` 仍保留对**远程** Engine 上报 `install_type: docker` 的展示处理（旧 Docker Engine 仍可能存在） |
 | 2.29.2 | 终端状态跑马灯改为沿边框路径（`offset-path`）按距离匀速移动，取代按角度旋转的 `conic-gradient`（后者在矩形四边的线速度忽快忽慢） |
+| 2.29.3 | macOS 没有 `/proc`，前台进程只能拿到 `node`，没有 hook 时的输出兜底判定失效、Codex/Claude 跑马灯一直转；改为用 `ps -t <tty>` 读取前台进程组命令行（`lib/terminal-activity.js`） |
 
 ## 架构要点（改代码前必读）
 
@@ -42,7 +43,7 @@
    - 本地任务：切换任务、编辑文档、待办增删改、拖拽排序、新建/编辑/删除、终端、文件浏览器、分组新建/重命名/删除。
    - 切到远程 Engine：同上，另确认 Finder / VS Code / 分享按钮已隐藏、引擎标签的跑马灯/呼吸灯、`readonly` Token 的只读表现、离线时的提示页。
 2. ~~全量测试~~ 已在 v2.29.0 上验证：`test/` 265 个、13 个浏览器脚本全部通过（2026-10-07）。
-3. **Codex hook 在真实会话里没触发过**：`rules/codex/hooks.json` 里的事件名（`SessionEnd`、`PermissionRequest` 等）按官方文档写，`codex exec` 加载未报错，但需要用户在 Codex 里 `/hooks` 信任后才会真正执行，未验证。
+3. **Codex 交互式（TUI）hook 不触发（2026-10-07 实测）**：`codex exec` 下 UserPromptSubmit/Stop/SessionEnd 正常上报；交互式会话 4 次实测 0 个事件，疑似 hook 由常驻的 `codex app-server --managed-daemon` 执行，其环境没有 `TA_HOOK_URL`，命令里的 `[ -n "$TA_HOOK_URL" ]` 使其静默无操作，尚未解决。原记录：**Codex hook 在真实会话里没触发过**：`rules/codex/hooks.json` 里的事件名（`SessionEnd`、`PermissionRequest` 等）按官方文档写，`codex exec` 加载未报错，但需要用户在 Codex 里 `/hooks` 信任后才会真正执行，未验证。
 
 ## 已知限制 / 遗留事项
 

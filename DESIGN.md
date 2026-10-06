@@ -2,6 +2,8 @@
 
 > 日期：2026-07-15
 
+> v2.28.3 Engine 连接失败处理：远程 Engine 离线、认证失效或任务加载失败时，不再显示任务列表、文档和终端等操作页面，改为显示“无法连接”提示（失败原因、服务地址、检查服务状态的步骤）以及重试/编辑/移除连接按钮；认证失效时提示重新配对。侧栏该 Engine 下只显示“服务不可用，请检查服务状态”。
+
 > v2.28.2 修正 v2.28.0 的过度删除：v2.28.0 误把 Client 连接其他 Engine 的功能（`/api/remote-servers`、`/api/remote-tokens`、`/v1` 接口、前端引擎栏与远程任务界面、远程 Engine 更新）一并删除，现已全部恢复；Client A 可继续连接 Client B，每个 Client 仍内置并暴露同一套 Engine 接口。真正移除的只有独立运行的 Engine 服务：`apps/engine`、`compose.engine.yml`、Engine 更新脚本与环境文件、`install.sh`/`bootstrap.sh` 的 `--mode engine`、`start:engine`、Docker engine 镜像目标及对应发布流程。`--mode engine` 现在会明确报错。
 
 > v2.28.1 页面头部移除“Client 切换”入口按钮，`/clients` 工作台页面与路由保留，可直接输入地址访问。

@@ -10,6 +10,8 @@ const RemoteTasks = (() => {
   let remoteTerminal = null;
   const remoteTerminals = new Map();
   let activeEngineKey = localStorage.getItem('active-engine-key') || 'local';
+  // 本次加载任务失败的 Engine：serverId -> 错误码。连接失败时只显示检查服务状态的提示，不显示操作页面。
+  const loadFailures = new Map();
   let localEngineVersion = null;
   let lastVersionRefreshAt = 0;
   const collapsedGroups = {};
@@ -119,6 +121,7 @@ const RemoteTasks = (() => {
         : Promise.resolve();
       try {
         const remoteTasks = await API.get(`/api/remote-servers/${server.id}/tasks`);
+        loadFailures.delete(server.id);
         tasksByServer.set(server.id, remoteTasks);
         try {
           groupsByServer.set(server.id, await API.get(`/api/remote-servers/${server.id}/task-groups`));
@@ -128,6 +131,7 @@ const RemoteTasks = (() => {
           console.warn(`[remote-tasks] 加载 ${server.name} 的分组失败`, error);
         }
       } catch (error) {
+        loadFailures.set(server.id, /^[A-Z0-9_]+$/.test(error.message || '') ? error.message : 'REMOTE_CONNECTION_FAILED');
         tasksByServer.set(server.id, []);
         groupsByServer.set(server.id, fallbackGroups());
         console.warn(`[remote-tasks] 加载 ${server.name} 的任务失败`, error);
@@ -226,7 +230,70 @@ const RemoteTasks = (() => {
     });
   }
 
+  // 连接失败的 Engine：认证失效、服务离线，或本次加载任务失败。
+  function serverProblem(server) {
+    if (server.status === 'unauthorized') return { code: 'REMOTE_HTTP_401', unauthorized: true };
+    const failure = loadFailures.get(server.id);
+    if (server.status === 'offline' || failure) {
+      return { code: failure || server.last_error || 'REMOTE_CONNECTION_FAILED', unauthorized: failure === 'REMOTE_HTTP_401' };
+    }
+    return null;
+  }
+
+  function hideEngineUnavailable() {
+    document.getElementById('engine-unavailable')?.remove();
+  }
+
+  // 连接失败时不显示任务、文档和终端，只提示检查服务状态。
+  function showEngineUnavailable(server, problem) {
+    hideRemoteTerminal();
+    selected = null;
+    if (window.Tasks) Tasks.clearSelection();
+    document.getElementById('preview-empty').style.display = 'none';
+    document.getElementById('preview-content').style.display = 'none';
+    contentToolbar.style.display = 'none';
+    contentTabs.style.display = 'none';
+    terminalPane.style.display = 'none';
+    document.getElementById('toc-pane').style.display = 'none';
+    previewPane.style.display = '';
+    hideEngineUnavailable();
+
+    const panel = document.createElement('div');
+    panel.id = 'engine-unavailable';
+    panel.className = 'engine-unavailable';
+    const add = (tag, text, className) => {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      node.textContent = text;
+      panel.appendChild(node);
+      return node;
+    };
+    add('h3', `无法连接「${server.name}」`);
+    add('p', `${problem.unauthorized ? '认证失效' : '服务无响应'}：${errorLabel(problem.code)}`, 'engine-unavailable-reason');
+    add('p', `地址：${server.base_url}${server.last_checked_at ? ` · 上次检查 ${server.last_checked_at}` : ''}`, 'engine-unavailable-address');
+    add('p', '请检查服务状态：');
+    const list = document.createElement('ul');
+    const steps = problem.unauthorized
+      ? ['连接使用的 Token 已失效或被撤销，请在目标 Client 的“设置”中重新生成配对码', '然后点击“编辑连接”，填入新的配对码或 Token']
+      : ['目标 Client / Engine 服务是否正在运行', '地址和端口是否正确，防火墙、安全组或反向代理是否放行', '在目标机器上确认服务可访问，例如：curl ' + server.base_url + '/v1/health'];
+    steps.forEach(text => { const li = document.createElement('li'); li.textContent = text; list.appendChild(li); });
+    panel.appendChild(list);
+    const actions = document.createElement('div');
+    actions.className = 'engine-unavailable-actions';
+    [['重试连接', () => refreshServer(server.id)], ['编辑连接', () => showEdit(server.id)], ['移除连接', () => removeServer(server.id)]].forEach(([label, action]) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'document-create-btn';
+      button.textContent = label;
+      button.addEventListener('click', action);
+      actions.appendChild(button);
+    });
+    panel.appendChild(actions);
+    previewPane.appendChild(panel);
+  }
+
   function showRemoteEmpty(server) {
+    hideEngineUnavailable();
     hideRemoteTerminal();
     selected = null;
     const empty = document.getElementById('preview-empty');
@@ -246,6 +313,7 @@ const RemoteTasks = (() => {
       return FilePanel.beforeContextChange().then(allowed => allowed && setActiveEngine(key, { selectContent }));
     }
     if (key !== activeEngineKey && window.Tasks?.confirmDiscardEditor && !Tasks.confirmDiscardEditor()) return;
+    hideEngineUnavailable();
     activeEngineKey = key;
     normalizeActiveEngine();
     localStorage.setItem('active-engine-key', activeEngineKey);
@@ -262,6 +330,8 @@ const RemoteTasks = (() => {
     const serverId = Number(activeEngineKey.slice('remote:'.length));
     const server = servers.find(item => item.id === serverId);
     if (!server) return;
+    const problem = serverProblem(server);
+    if (problem) { showEngineUnavailable(server, problem); return; }
     const serverTasks = tasksByServer.get(server.id) || [];
     const cachedId = Number(localStorage.getItem(`remote-selected-task-${server.id}`));
     const task = serverTasks.find(item => item.id === cachedId) || serverTasks[0];
@@ -280,7 +350,14 @@ const RemoteTasks = (() => {
       section.dataset.engineKey = `remote:${server.id}`;
       const serverTasks = tasksByServer.get(server.id) || [];
       const groups = groupsByServer.get(server.id) || fallbackGroups(serverTasks);
-      groups.forEach(group => section.appendChild(buildRemoteGroup(server, group, groups, serverTasks)));
+      if (serverProblem(server)) {
+        const note = document.createElement('div');
+        note.className = 'remote-empty';
+        note.textContent = '服务不可用，请检查服务状态';
+        section.appendChild(note);
+      } else {
+        groups.forEach(group => section.appendChild(buildRemoteGroup(server, group, groups, serverTasks)));
+      }
       nav.appendChild(section);
     });
     renderEngineTabs();
@@ -399,6 +476,7 @@ const RemoteTasks = (() => {
     }
     if (window.Tasks?.confirmDiscardEditor && !Tasks.confirmDiscardEditor()) return;
     if (window.Tasks) Tasks.clearSelection();
+    hideEngineUnavailable();
     activeEngineKey = `remote:${server.id}`;
     localStorage.setItem('active-engine-key', activeEngineKey);
     localStorage.setItem(`remote-selected-task-${server.id}`, task.id);

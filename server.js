@@ -1,5 +1,6 @@
 require('dotenv').config();
 const express = require('express');
+const compression = require('compression');
 const session = require('express-session');
 const path = require('path');
 const fs = require('fs');
@@ -145,8 +146,7 @@ function sendSharedMarkdown(res, task, token, content, currentPath = '') {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>${safeTitle}</title>
-  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+  <script src="/vendor/marked/marked-15.0.12.min.js"></script>
   <style>
     *{box-sizing:border-box;margin:0;padding:0}
     body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#fff;color:#1f2328;line-height:1.7;height:100vh;display:flex;flex-direction:column;overflow:hidden}
@@ -195,7 +195,16 @@ function sendSharedMarkdown(res, task, token, content, currentPath = '') {
     </div>
   </div>
   <script>
-    mermaid.initialize({startOnLoad:false,theme:'default'});
+    // mermaid 约 5 MB，页面里有图表时才加载。
+    function ensureMermaid(){
+      if (window.mermaid) return Promise.resolve();
+      return new Promise(function(resolve,reject){
+        var script=document.createElement('script');
+        script.src='/vendor/mermaid/mermaid-12.1.0.min.js';
+        script.onload=resolve; script.onerror=reject;
+        document.head.appendChild(script);
+      });
+    }
     var shareToken = ${toSafeJson(token)};
     var currentPath = ${toSafeJson(currentPath)};
     function resolveRelativePath(href) {
@@ -227,7 +236,11 @@ function sendSharedMarkdown(res, task, token, content, currentPath = '') {
     var preview = document.getElementById('preview');
     preview.innerHTML = marked.parse(${escaped});
     MarkdownView.enhance(preview);
-    mermaid.run({nodes:preview.querySelectorAll('.mermaid')});
+    var diagrams = preview.querySelectorAll('.mermaid');
+    if (diagrams.length) ensureMermaid().then(function(){
+      mermaid.initialize({startOnLoad:false,theme:'default'});
+      return mermaid.run({nodes:diagrams});
+    });
 
     // assign heading ids
     var counts = {};
@@ -327,6 +340,14 @@ app.use((req, res, next) => {
   if (!auth.authenticated) return res.redirect('/auth/login');
   next();
 });
+// 第三方库文件名带版本号、内容固定：长期缓存；并对 /vendor 启用 gzip（mermaid 约 5 MB）。
+// 压缩只限 /vendor，避免缓冲 SSE 等流式接口。
+app.use('/vendor', compression(), express.static(path.join(__dirname, 'public', 'vendor'), {
+  index: false,
+  setHeaders(res, file) {
+    if (/-\d+\.\d+\.\d+(?:\.min)?\.(?:js|css)$/.test(file)) res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+  },
+}));
 app.use(express.static(path.join(__dirname, 'public'), { index: false }));
 
 // HTTP server + WebSocket server

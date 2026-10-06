@@ -20,16 +20,8 @@ fs.writeFileSync(path.join(task.work_dir,'hello.js'),'const hello = "world";\n')
 const second=engine.createTask('owner',{title:'Other fixture'});
 const app=express();app.use(express.json({limit:'32mb'}));
 app.use('/api/tasks',require('../routes/tasks'));
-app.get('/fixture-xterm.js',(req,res)=>res.sendFile(require.resolve('@xterm/xterm')));
-app.get('/fixture-fit.js',(req,res)=>res.sendFile(require.resolve('@xterm/addon-fit')));
-app.get('/fixture-xterm.css',(req,res)=>res.sendFile(require.resolve('@xterm/xterm/css/xterm.css')));
 app.get('/js/app.js',(req,res)=>res.type('js').send(fs.readFileSync(path.join(root,'public/js/app.js'),'utf8').split('// app.js 在其他业务脚本之前加载')[0]));
-app.get('/',(req,res)=>res.type('html').send(fs.readFileSync(path.join(root,'public/index.html'),'utf8')
- .replace(/<script src="https:[^"]*marked[^\n]+/,'<script>window.marked={parse:s=>s};window.mermaid={initialize(){},run:async()=>{}};</script>')
- .replace(/<script src="https:[^"]*mermaid[^\n]+/,'')
- .replace(/https:\/\/cdn.jsdelivr.net\/npm\/@xterm\/xterm@5\/lib\/xterm.js/g,'/fixture-xterm.js')
- .replace(/https:\/\/cdn.jsdelivr.net\/npm\/@xterm\/addon-fit@0.10\/lib\/addon-fit.js/g,'/fixture-fit.js')
- .replace(/https:\/\/cdn.jsdelivr.net\/npm\/@xterm\/xterm@5\/css\/xterm.css/g,'/fixture-xterm.css')));
+app.get('/',(req,res)=>res.type('html').sendFile(path.join(root,'public/index.html')));
 app.use(express.static(path.join(root,'public')));
 let server,browser,wss,connections=0;
 (async()=>{

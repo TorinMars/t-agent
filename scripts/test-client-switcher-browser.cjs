@@ -80,17 +80,7 @@ async function startProxy(tls) {
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, serviceWorkers: 'block', ignoreHTTPSErrors: true });
   browserContext = context;
   // Real HTTPS proxies preserve browser Cookie, Fetch Metadata and Origin headers.
-  // Only unrelated CDN libraries are replaced by local assets/minimal stubs.
-  await context.route('https://cdn.jsdelivr.net/**', async route => {
-    const url = new URL(route.request().url());
-    if (url.pathname.includes('mermaid')) return route.fulfill({ contentType: 'text/javascript', body: 'window.mermaid={initialize(){},async run(){}};' });
-    if (url.pathname.includes('marked')) return route.fulfill({ contentType: 'text/javascript', body: 'window.marked={};' });
-    const asset = url.pathname.includes('addon-fit') ? require.resolve('@xterm/addon-fit')
-      : url.pathname.endsWith('xterm.js') ? require.resolve('@xterm/xterm')
-        : url.pathname.endsWith('xterm.css') ? require.resolve('@xterm/xterm/css/xterm.css') : null;
-    if (asset) return route.fulfill({ contentType: asset.endsWith('.css') ? 'text/css' : 'text/javascript', body: fs.readFileSync(asset) });
-    return route.abort();
-  });
+  // 第三方库已自托管在 /vendor，不再需要拦截 CDN。
   const page = await context.newPage();
   inspectedPage = page;
   const errors = [];

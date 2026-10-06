@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { createActivityTracker } = require('../lib/terminal-activity');
+const { createActivityTracker, parsePs } = require('../lib/terminal-activity');
 
 const tick = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -166,4 +166,19 @@ test('returning to the shell ends hook mode so a hookless agent is detected by o
 test('unknown hook events are rejected', () => {
   const tracker = createActivityTracker({ process: 'bash' }, '/bin/bash', () => {}, HOOKED);
   try { assert.equal(tracker.report('bogus'), false); } finally { tracker.stop(); }
+});
+
+test('parsePs groups the foreground process of every terminal and ignores background ones', () => {
+  const output = [
+    'ttys001   1907  9304 /bin/zsh',
+    'ttys001   9304  9304 node /Users/me/.npm-global/bin/codex --flag',
+    'ttys001   9304  9304 /vendor/codex',
+    'ttys002   500   500  -zsh',
+    '??        1     1    /sbin/launchd',
+    '',
+  ].join('\n');
+  const result = parsePs(output);
+  assert.deepEqual(result.get('ttys001'), ['node', 'codex', 'codex'], 'foreground group only, first two argv entries');
+  assert.deepEqual(result.get('ttys002'), ['zsh']);
+  assert.equal(result.has('ttys999'), false);
 });

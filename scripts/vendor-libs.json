@@ -1,0 +1,39 @@
+{
+  "libs": [
+    {
+      "name": "marked",
+      "version": "15.0.12",
+      "file": "public/vendor/marked/marked-15.0.12.min.js",
+      "url": "https://cdn.jsdelivr.net/npm/marked@15.0.12/marked.min.js",
+      "sha256": "3e7e7d7feb3e5d58cb6c804f68ab5c24cc7e5eb6270fd6e5cbb9124739217d0c"
+    },
+    {
+      "name": "mermaid",
+      "version": "12.1.0",
+      "file": "public/vendor/mermaid/mermaid-12.1.0.min.js",
+      "url": "https://cdn.jsdelivr.net/npm/mermaid@12.1.0/dist/mermaid.min.js",
+      "sha256": "6484afc32872a3aa16cac9a76ba1816a1ed4cc870a6593cc2e17757750f518b2"
+    },
+    {
+      "name": "@xterm/xterm",
+      "version": "5.5.0",
+      "file": "public/vendor/xterm/xterm-5.5.0.js",
+      "url": "https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.js",
+      "sha256": "1f991ac3b4b283ebf96e60ae23a00a52765dd3a2e46fa6fdda9f1aab032f7495"
+    },
+    {
+      "name": "@xterm/xterm (css)",
+      "version": "5.5.0",
+      "file": "public/vendor/xterm/xterm-5.5.0.css",
+      "url": "https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.css",
+      "sha256": "ba8e6985669488981ccf40c0cefe3aba80722cb6c92de7ad628b0bd717faf2b6"
+    },
+    {
+      "name": "@xterm/addon-fit",
+      "version": "0.10.0",
+      "file": "public/vendor/xterm/addon-fit-0.10.0.js",
+      "url": "https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.js",
+      "sha256": "bdaefa370b1bfc42ee88d46fe6072400902a4d4b2d45cd93438dda9b23c97089"
+    }
+  ]
+}

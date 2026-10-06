@@ -76,7 +76,24 @@ const Tasks = (() => {
   let termWs = null;
   let termTaskId = null;   // 当前终端绑定的 taskId
 
-  mermaid.initialize({ startOnLoad: false, theme: 'default', gantt: { useWidth: undefined }, locale: 'zh-CN' });
+  // mermaid 约 5 MB，首次渲染图表时才加载；加载失败会清除缓存，下次渲染重试。
+  const MERMAID_SRC = '/vendor/mermaid/mermaid-12.1.0.min.js';
+  let mermaidReady = null;
+  function ensureMermaid() {
+    if (!mermaidReady) {
+      const loaded = typeof mermaid !== 'undefined' ? Promise.resolve() : new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = MERMAID_SRC;
+        script.onload = resolve;
+        script.onerror = () => reject(new Error('Mermaid 加载失败'));
+        document.head.appendChild(script);
+      });
+      mermaidReady = loaded
+        .then(() => mermaid.initialize({ startOnLoad: false, theme: 'default', gantt: { useWidth: undefined }, locale: 'zh-CN' }))
+        .catch(error => { mermaidReady = null; throw error; });
+    }
+    return mermaidReady;
+  }
 
   const previewPane = document.getElementById('preview-pane');
   const contentToolbar = document.getElementById('content-toolbar');
@@ -1659,6 +1676,7 @@ const Tasks = (() => {
       for (const node of content.querySelectorAll('.mermaid')) {
         if (!isCurrent()) return;
         try {
+          await ensureMermaid();
           await mermaid.run({ nodes: [node] });
         } catch (e) {
           if (!isCurrent()) return;

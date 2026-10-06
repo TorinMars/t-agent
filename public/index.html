@@ -11,12 +11,12 @@
   <link rel="stylesheet" href="/css/style.css">
   <link rel="stylesheet" href="/css/file-panel.css">
   <link rel="stylesheet" href="/css/markdown.css">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5/css/xterm.css">
+  <link rel="stylesheet" href="/vendor/xterm/xterm-5.5.0.css">
   <link rel="stylesheet" href="/vendor/monaco/monaco.css">
-  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5/lib/xterm.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10/lib/addon-fit.js"></script>
+  <!-- 第三方库固定版本并自托管（见 scripts/vendor-libs.json）；mermaid 约 5 MB，首次渲染图表时才由 tasks.js 加载 -->
+  <script src="/vendor/marked/marked-15.0.12.min.js"></script>
+  <script src="/vendor/xterm/xterm-5.5.0.js"></script>
+  <script src="/vendor/xterm/addon-fit-0.10.0.js"></script>
   <script src="/vendor/monaco/monaco.js"></script>
 </head>
 <body>

@@ -154,8 +154,9 @@ body.tools-open .sidebar, body.tools-open .content-area, body.tools-open .quickl
   .header > *,
   .header button,
   .header a,
-  .header img {
-    -webkit-app-region: no-drag;
+  .header img,
+  .context-menu {
+    -webkit-app-region: no-drag; /* 顶部栏是系统拖动区域，菜单盖在它上面时也要能点击 */
   }
   /* layout 顶部内缩，避免被 fixed header 遮住 */
   body > .layout {
@@ -1254,7 +1255,7 @@ body.tools-open .sidebar, body.tools-open .content-area, body.tools-open .quickl
   border: 1px solid var(--border);
   border-radius: 8px;
   box-shadow: 0 8px 24px rgba(0,0,0,0.5);
-  z-index: 300;
+  z-index: 1100; /* 高于“已安装应用”模式下 z-index 1000 的顶部栏：引擎标签在顶部栏里，菜单会在它的范围内弹出 */
   min-width: 150px;
   overflow: hidden;
 }

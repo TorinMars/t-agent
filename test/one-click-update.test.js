@@ -23,8 +23,8 @@ test('one click checks then applies without confirmation or force',async()=>{
   assert.equal(ctx.Updates.busy,false);
   assert.equal(ctx.document.getElementById('modal-title').textContent,'更新完成');
 });
-test('current, blocked, docker and non-admin results never apply',async()=>{
-  for(const status of [{status:'current'},{status:'blocked',error:'WORKTREE_DIRTY'}, {status:'available',install_type:'docker',is_update_admin:true}, {status:'available',install_type:'git',is_update_admin:false}]){
+test('current, blocked and non-admin results never apply',async()=>{
+  for(const status of [{status:'current'},{status:'blocked',error:'WORKTREE_DIRTY'}, {status:'available',install_type:'git',is_update_admin:false}]){
     const ctx=setup(status);await ctx.Updates.oneClick();assert.equal(ctx.calls.length,1);assert.equal(ctx.Updates.busy,false);
   }
 });

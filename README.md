@@ -6,7 +6,7 @@ Git 更新遇到本地未提交修改时，可在更新确认框勾选“强制�
 
 T-Agent 是一个面向开发任务的组件化工作台。一个 Client 可以同时管理本机以及其他 Client 上的 Engine；每个 Engine 独立保存任务、Markdown 文档、待办事项和终端会话。
 
-每个 Client 都内置 Engine，因此个人电脑只需安装一次；没有桌面界面的 Linux 服务器同样安装 Client（可只使用命令行绑定，或通过 Docker 部署），再使用一次性配对码或访问 Token 让其他 Client 接入。不再单独提供独立 Engine 服务。
+每个 Client 都内置 Engine，因此个人电脑只需安装一次；没有桌面界面的 Linux 服务器同样安装 Client（可只使用命令行绑定），再使用一次性配对码或访问 Token 让其他 Client 接入。不再单独提供独立 Engine 服务。
 
 ## 项目架构
 
@@ -60,9 +60,9 @@ flowchart LR
 CLIENT_FRAME_ORIGINS=https://hub.example.com,http://127.0.0.1:3000
 ```
 
-多个入口用英文逗号分隔，不支持通配符。Docker 在 `docker/client.env` 中设置 `T_AGENT_CLIENT_FRAME_ORIGINS` 后重新执行 Compose 创建容器。目标 Client 需要升级到 v2.14.0 或更新版本，反向代理的 CSP / X-Frame-Options 也必须允许该入口。
+多个入口用英文逗号分隔，不支持通配符。目标 Client 需要升级到 v2.14.0 或更新版本，反向代理的 CSP / X-Frame-Options 也必须允许该入口。
 
-同一主机名下运行不同端口的多个 Client 时，Cookie 不按端口隔离。请给各 Client 分别设置不同的 `CLIENT_SESSION_COOKIE_NAME`（例如 `client-one.sid` 和 `client-two.sid`；Docker 使用 `T_AGENT_CLIENT_SESSION_COOKIE_NAME`），避免登录互相覆盖。默认仍为 `connect.sid`，更改名称后需重新登录。
+同一主机名下运行不同端口的多个 Client 时，Cookie 不按端口隔离。请给各 Client 分别设置不同的 `CLIENT_SESSION_COOKIE_NAME`（例如 `client-one.sid` 和 `client-two.sid`），避免登录互相覆盖。默认仍为 `connect.sid`，更改名称后需重新登录。
 
 同站地址可继续使用原有 Cookie；跨站内嵌要求目标 Client 使用 HTTPS，显式配置后 HTTPS 会话 Cookie 使用 `SameSite=None; Secure`，HTTP 仍使用 `SameSite=Strict`。浏览器需允许该 Client 的第三方 Cookie；HTTPS 工作台不能内嵌 HTTP Client。登录与绑定页面始终禁止内嵌，浏览器 API 和终端仍校验目标 Client 自己的 Origin。此入口不会代理 Client 请求或合并各 Client 的身份。
 
@@ -82,7 +82,7 @@ CLIENT_FRAME_ORIGINS=https://hub.example.com,http://127.0.0.1:3000
 ### 安全边界
 
 - Client 不使用用户名密码，电脑和手机浏览器必须先绑定身份验证器，再以 6 位 TOTP 动态验证码登录；未绑定不能使用业务页面或浏览器接口。
-- 首次绑定可在服务器终端执行 `node scripts/client-auth-setup.js` 完成（可通过 SSH 远程执行，Docker 在容器内执行），也可直接在网页 `/auth/setup` 扫码，本机、手机、局域网或反向代理访问均可，无需初始密码或初始化码；未绑定期间任何能访问该地址的人都可抢先绑定，请在开放网络前先完成绑定。绑定密钥加密保存，恢复码仅保存哈希；会话有效期 30 天，使用期间自动续期，支持主动退出、验证码防重放和认证限流。
+- 首次绑定可在服务器终端执行 `node scripts/client-auth-setup.js` 完成（可通过 SSH 远程执行），也可直接在网页 `/auth/setup` 扫码，本机、手机、局域网或反向代理访问均可，无需初始密码或初始化码；未绑定期间任何能访问该地址的人都可抢先绑定，请在开放网络前先完成绑定。绑定密钥加密保存，恢复码仅保存哈希；会话有效期 30 天，使用期间自动续期，支持主动退出、验证码防重放和认证限流。
 - Client 默认只监听 `127.0.0.1`；手机访问需显式开放局域网监听或配置 HTTPS 反向代理。
 - 供其他 Client 连接的 `/v1` 接口不使用网页登录，只接受 Bearer Token。
 - Engine 只保存 Token 的 SHA-256 哈希，Token 明文只在创建时显示一次。
@@ -147,27 +147,6 @@ macOS 会注册 `com.tagent.client` LaunchAgent，Linux 会注册 `t-agent.servi
 默认生产部署要求 HTTPS/WSS；可信内网可显式开启 `CLIENT_ALLOW_HTTP=true`。公网使用 HTTPS/WSS 反向代理，并用防火墙限制来源。身份验证器登录会话 30 天有效，使用期间自动续期，连续 30 天未使用才过期，新设备、会话过期或主动退出后需要重新验证。登录设置中可更换身份验证器；丢失验证器时使用恢复码登录并重新绑定，更换后旧验证器、旧恢复码和其他设备会话立即失效。退出登录只断开网页终端连接，不终止服务端正在运行的程序。
 
 `SESSION_SECRET` 必须是至少 32 个字符的随机密钥，并在重启与升级间保持不变。安装脚本会自动生成；弱密钥会拒绝绑定。请随数据库安全备份该密钥，否则无法解密已有绑定及远程连接 Token。
-
-### 使用 Docker 启动 Client
-
-远程服务器一键启动（替换域名，提前安装 Docker Engine、Docker Compose v2 和 Git）：
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/TorinMars/t-agent/main/docker-client.sh | bash -s -- --domain agent.example.com
-```
-
-首次安装会提示任务工作目录、宿主机端口及是否允许远程连接；已有安装可加 `--configure` 重新选择；可信内网可加 `--allow-http yes` 启用 HTTP 登录（默认关闭）。脚本准备独立 Codex 副本并等待 Client 健康，容器就绪后直接引导扫码绑定身份验证器，已有绑定则跳过，结束后显示访问地址；HTTPS 反向代理需按部署文档配置。
-
-也可按以下步骤手动启动：
-
-```bash
-cp docker/client.env.example docker/client.env
-mkdir -p "$HOME/.torin/t-agent-client/data" "$HOME/.torin/t-agent-client/tasks"
-./scripts/docker-client-copy-codex.sh "$HOME/.torin/t-agent-client/codex"
-docker compose --env-file docker/client.env -f compose.client.yml up -d client
-```
-
-Client 镜像默认包含 Codex，首次部署复制宿主机 `~/.codex` 到 Client 专用副本，后续更新保留副本，不与宿主机共用原目录。配置 HTTPS 反向代理后，运行 `docker compose --env-file docker/client.env -f compose.client.yml exec client node scripts/client-auth-setup.js` 完成首次绑定，再通过域名登录。完整命令、Nginx 示例、持久化与更新步骤见 [Docker Client 部署](docs/DOCKER_CLIENT.md)。
 
 ### 指定安装目录或分支
 
@@ -242,7 +221,7 @@ Client 已内置标准 Engine 服务，使用同一个端口，无需另外安�
 2. 在另一个 Client 点击“＋ 连接远程”，填写被连接 Client 的可达 IP/域名、实际端口及配对码；URL 不包含 `/v1` 或页面路径。
 3. 连接后可管理该 Client 的本机任务、文件和终端，不会转发它已连接的其他远程 Engine。配对默认授予 operator 权限，可在被连接 Client 的同一设置入口撤销。
 
-被连接 Client 必须允许远程访问。Docker 安装可用 `./docker-client.sh --remote-access yes` 调整，可信内网 HTTP 另加 `--allow-http yes`；外部连接使用宿主机映射端口（例如 `3001`）。访问者通过一次性配对码换取独立 Token，不需要共享浏览器登录会话或身份验证器。
+被连接 Client 必须允许远程访问。可在 `.env` 中设置 `HOST=0.0.0.0` 放开监听，可信内网 HTTP 另设 `CLIENT_ALLOW_HTTP=true`。访问者通过一次性配对码换取独立 Token，不需要共享浏览器登录会话或身份验证器。
 
 ### 3. 创建远程任务
 
@@ -492,7 +471,7 @@ cd /path/to/t-agent
 npm start
 ```
 
-生产环境可以使用 [Docker Client 部署](docs/DOCKER_CLIENT.md)，或者把上面的命令交给已有的进程管理器托管。临时后台运行可以使用：
+生产环境可以把上面的命令交给已有的进程管理器托管。临时后台运行可以使用：
 
 ```bash
 cd /path/to/t-agent
@@ -648,7 +627,7 @@ curl -fsSL https://raw.githubusercontent.com/TorinMars/t-agent/main/uninstall.sh
 ```text
 t-agent/
 ├── db/               # SQLite Schema 和会话存储
-├── docs/             # 架构及 Engine API、Docker 部署文档
+├── docs/             # 架构及 Engine API 文档
 ├── lib/              # Token、终端历史等基础组件
 ├── middleware/       # Session 与 Engine Token 鉴权
 ├── public/           # Client 前端静态资源
@@ -686,7 +665,7 @@ t-agent/
 
 在 Client 的设置中配置阿里云 OSS 并启用后，可在本地或远程任务终端直接粘贴图片，电脑和手机也都可使用终端底部的“上传图片”按钮选择图片（手机可从相册选择）。支持 PNG、JPEG、GIF、WebP，单张不超过 10 MiB。上传期间全页显示蒙版和进度条，禁止终端输入、切换任务等操作；上传完成后自动把图片 URL 填入原终端，不自动回车。失败后解除蒙版并显示原因。
 
-填写 Bucket、Region（例如 `oss-cn-hangzhou`）、AccessKey ID、AccessKey Secret 和对象前缀。建议为专用 RAM 用户授予该前缀的 `oss:PutObject` 与 `oss:GetObject` 权限。图片由 Client 服务端上传，不需要向浏览器或远程 Engine 提供 OSS 密钥，也不需要配置浏览器直传 CORS。密钥加密保存在 Client 数据库，修改配置时密钥留空会保留已保存的值；备份数据库时请同时保留 `SESSION_SECRET`。Docker 更新保留 Client 数据目录及该密钥即可沿用配置。
+填写 Bucket、Region（例如 `oss-cn-hangzhou`）、AccessKey ID、AccessKey Secret 和对象前缀。建议为专用 RAM 用户授予该前缀的 `oss:PutObject` 与 `oss:GetObject` 权限。图片由 Client 服务端上传，不需要向浏览器或远程 Engine 提供 OSS 密钥，也不需要配置浏览器直传 CORS。密钥加密保存在 Client 数据库，修改配置时密钥留空会保留已保存的值；备份数据库时请同时保留 `SESSION_SECRET`。
 
 默认返回有效期 24 小时的私有对象签名链接。需要长期有效的链接时，可填写已配置公开读取的 HTTPS 访问地址（如自己的 CDN 地址）；程序不会修改 Bucket 的访问权限。签名链接在有效期内可被持有者读取，过期后需重新取得链接；图片对象不会自动删除，可在 OSS 中配置生命周期规则。服务端反向代理需允许至少 10 MiB 的请求体（Nginx 可设 `client_max_body_size 12m;`）。
 
@@ -694,7 +673,7 @@ t-agent/
 
 ### 可信内网直接访问 Client
 
-Docker 安装可在更新源码后执行 `./docker-client.sh --remote-access yes --allow-http yes`，使用远程镜像重建并保留验证器及数据，然后通过 `http://内网IP:端口/auth/login` 登录。首次安装或 `--configure` 也会询问此选项，默认要求 HTTPS。原生安装对应 `CLIENT_ALLOW_HTTP=true`。HTTP 不加密验证码和会话，需自行限制访问来源；详细步骤见 [内网 HTTP 登录](docs/DOCKER_CLIENT.md#可信内网-http-登录)。
+在 `.env` 中设置 `HOST=0.0.0.0` 和 `CLIENT_ALLOW_HTTP=true` 并重启，然后通过 `http://内网IP:端口/auth/login` 登录；默认要求 HTTPS。HTTP 不加密验证码和会话，需自行限制访问来源。
 
 ### 终端历史按需恢复
 
@@ -727,7 +706,7 @@ Agent 中途按 Esc 或 Ctrl+C 中断时不会触发结束 hook，此时执行�
 - 在目标机器上运行一次 `ta`（或带同步函数的 `claude` / `codex`），配置才会写入 `~/.claude/settings.json` 和 `~/.codex/hooks.json`。
 - Codex 要求审核并信任 hook：首次进入 Codex 后输入 `/hooks` 批准，未批准前 Codex 不会执行。
 - 通过 ssh 进入远程机器再运行 Agent 时，环境变量不会带过去，这种情况按输出判断。
-- 依赖 `curl`；Docker Client 镜像已包含。
+- 依赖 `curl`。
 
 ## 开发环境安装脚本
 

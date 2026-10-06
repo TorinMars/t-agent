@@ -41,7 +41,7 @@
       <p class="form-hint">填写 Client 的访问地址，每个 Client 分别登录。名称和地址仅保存在当前浏览器。</p>
       <details class="embed-help">
         <summary>跨域内嵌配置与登录说明</summary>
-        <p>在目标 Client 的 .env 中设置下面的入口地址并重启；Docker 使用 T_AGENT_CLIENT_FRAME_ORIGINS：</p>
+        <p>在目标 Client 的 .env 中设置下面的入口地址并重启：</p>
         <code id="frame-origin-example"></code>
         <p>跨站内嵌需要目标 Client 使用 HTTPS，且浏览器允许第三方 Cookie；同站地址可沿用原有登录设置。HTTPS 入口不能内嵌 HTTP Client。反向代理也需允许此入口内嵌。</p>
         <p>同一主机不同端口的 Client 需分别设置不同 CLIENT_SESSION_COOKIE_NAME，避免登录互相覆盖。</p>

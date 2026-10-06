@@ -104,7 +104,7 @@
       const status = await request('/auth/status');
       if (!status.bound) {
         title.textContent = '必须绑定身份验证器';
-        description.textContent = '请用身份验证器扫描下方二维码完成首次绑定；也可在 Client 所在服务器终端执行 node scripts/client-auth-setup.js（Docker 在容器内执行）。本机或远程访问均可，无需初始密码或初始化码。';
+        description.textContent = '请用身份验证器扫描下方二维码完成首次绑定；也可在 Client 所在服务器终端执行 node scripts/client-auth-setup.js。本机或远程访问均可，无需初始密码或初始化码。';
         content.innerHTML = '';
         await startSetup();
       } else if (location.pathname === '/auth/setup' && status.authenticated) {

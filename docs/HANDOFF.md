@@ -1,12 +1,12 @@
-# 交接说明（2026-10 · 截至 v2.29.0，提交 ab93e17）
+# 交接说明（2026-10 · 截至 v2.29.1）
 
 给接手的 Claude / 开发者：先读 `AGENTS.md`（开发与发布规则）和本文件，再动手。
 
 ## 当前状态
 
-- 分支 `main`，最新发布 **v2.29.0**，已推送到 `origin/main`，工作区干净。
+- 分支 `main`，最新发布 **v2.29.1**，已推送到 `origin/main`，工作区干净。
 - 用户通过客户端检测 `main` 上的 `VERSION.json` 更新，代码改动完成并验证后按 `AGENTS.md` 升版本、提交、推送（用户已授权自动发布）。
-- 这台服务器性能很差：**不要跑全量 `npm test`、不要装依赖、不要起浏览器**。需要验证时一次只跑一个测试文件，例如 `nice -n 19 node --max-old-space-size=256 --test test/<文件>.test.js`。
+- 开发机已换成性能正常的 macOS，可以跑全量测试和浏览器脚本（先 `npm ci`、`npx playwright install chromium`）。`npm test` 并发时 pty 用例偶发 `posix_spawnp failed`，单独跑或 `node --test test/` 均通过。
 
 ## 这一轮完成的工作（按时间）
 
@@ -18,6 +18,7 @@
 | 2.28.1 | 页面头部去掉“Client 切换”按钮（`/clients` 页面与路由保留） |
 | 2.28.3 | 远程 Engine 连接失败时只显示“检查服务状态”提示，不显示任务/终端等操作页面 |
 | 2.29.0 | 远程 Engine 与本地功能一致：前端改成“数据源”模式，见下文 |
+| 2.29.1 | **移除全部 Docker 部署与镜像构建**：删除 `Dockerfile`、`compose.client.yml`、`docker-client.sh`、`docker/`、`.github/workflows/docker-client.yml`、相关脚本、测试和 `docs/DOCKER_CLIENT.md`；`update-manager` 不再有 `docker` 安装类型。`public/js/engines.js` 仍保留对**远程** Engine 上报 `install_type: docker` 的展示处理（旧 Docker Engine 仍可能存在） |
 
 ## 架构要点（改代码前必读）
 
@@ -39,9 +40,8 @@
 1. **没有在真实浏览器里看过 v2.29.0 的前端效果**。重构改动面大（`tasks.js` 约 2100 行），只靠单元测试夹具验证。请在能开浏览器的电脑上手动过一遍：
    - 本地任务：切换任务、编辑文档、待办增删改、拖拽排序、新建/编辑/删除、终端、文件浏览器、分组新建/重命名/删除。
    - 切到远程 Engine：同上，另确认 Finder / VS Code / 分享按钮已隐藏、引擎标签的跑马灯/呼吸灯、`readonly` Token 的只读表现、离线时的提示页。
-2. **全量 `npm test` 没跑过**（服务器扛不住）。在性能正常的机器上跑一次。已知基线：约 13 个 `scripts/test-*-browser.cjs` 需要浏览器和系统共享库（`libnss3` 等），本服务器上跑不起来，与代码无关。浏览器脚本里涉及远程引用的 3 个已更新但从未运行过：`test-file-panel-navigation-browser.cjs`、`test-terminal-keys-browser.cjs`、`test-desktop-layout-browser.cjs`。
-3. **Docker 镜像构建结果没核实**：推送 `main` 会触发 `.github/workflows/docker-client.yml`（只构建 client 镜像），每次都没看构建是否成功。
-4. **Codex hook 在真实会话里没触发过**：`rules/codex/hooks.json` 里的事件名（`SessionEnd`、`PermissionRequest` 等）按官方文档写，`codex exec` 加载未报错，但需要用户在 Codex 里 `/hooks` 信任后才会真正执行，未验证。
+2. ~~全量测试~~ 已在 v2.29.0 上验证：`test/` 265 个、13 个浏览器脚本全部通过（2026-10-07）。
+3. **Codex hook 在真实会话里没触发过**：`rules/codex/hooks.json` 里的事件名（`SessionEnd`、`PermissionRequest` 等）按官方文档写，`codex exec` 加载未报错，但需要用户在 Codex 里 `/hooks` 信任后才会真正执行，未验证。
 
 ## 已知限制 / 遗留事项
 

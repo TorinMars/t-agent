@@ -106,7 +106,6 @@ function configuredVersionUrl() {
 }
 
 function installationType() {
-  if (process.env.T_AGENT_INSTALL_TYPE === 'docker') return 'docker';
   return fs.existsSync(path.join(projectRoot, '.git')) ? 'git' : 'archive';
 }
 
@@ -249,7 +248,6 @@ function execNpm(args, stage) {
 }
 
 async function runApply({ force = false } = {}) {
-  if (installationType() === 'docker') throw new Error('DOCKER_MANAGED_UPDATE');
   saveState({ status: 'updating', stage: 'refreshing_version', error: null, message: '正在确认远程版本' });
   const checked = await runCheck({ force: true });
   if (checked.status !== 'available') throw new Error('NO_UPDATE_AVAILABLE');

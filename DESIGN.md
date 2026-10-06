@@ -2,6 +2,8 @@
 
 > 日期：2026-07-15
 
+> v2.29.1 移除全部 Docker 部署与镜像构建（Dockerfile、Compose、`docker-client.sh`、GitHub Actions 镜像发布及相关测试文档），仅保留原生、Git 和压缩包安装；远程 Engine 若上报 Docker 安装类型，Client 仍只展示、不触发更新。
+
 > v2.29.0 远程 Engine 与本地功能一致：Client 前端改为“数据源”模式，本地与每个远程 Engine 共用同一套任务界面（`tasks.js`），连接管理拆为 `engines.js`（取代 `remote-tasks.js`）。远程任务现在支持页面内编辑文档、待办增删改、目录大纲、相对路径图片、文档变更自动刷新、完整的任务编辑与删除、拖拽排序、分组管理和终端运行状态；Finder / VS Code / 分享链接因依赖本机文件系统对远程任务隐藏。Engine 新增 `/v1` 接口：`PUT /tasks/reorder`、`GET /tasks/:id/file`、`GET /tasks/:id/document/:kind/watch`（SSE）、`POST /tasks/:id/document/:kind`、`POST /tasks/validate-path`、`GET /terminal-activity`、`POST /tasks/:id/terminal/ack`，并在 `/v1/info` 的 `capabilities` 中声明（`tasks:reorder`、`documents:create`、`documents:watch`、`files:assets`、`paths:validate`、`terminal:activity`），API 版本仍为 1；Client 代理新增对应转发（含不缓冲的流式转发和 `GET /api/remote-servers/:id/info`），远程文件响应带 `Content-Security-Policy: sandbox`。前端按角色与能力启用功能，`readonly` 连接和旧版 Engine 自动降级。
 
 > v2.28.3 Engine 连接失败处理：远程 Engine 离线、认证失效或任务加载失败时，不再显示任务列表、文档和终端等操作页面，改为显示“无法连接”提示（失败原因、服务地址、检查服务状态的步骤）以及重试/编辑/移除连接按钮；认证失效时提示重新配对。侧栏该 Engine 下只显示“服务不可用，请检查服务状态”。
@@ -1854,16 +1856,6 @@ Engine 广告并校验 `files:read`、`files:write`；现有标准角色凭证�
 
 回归包括服务与本地/Engine/代理接口测试、真实 Monaco 文件编辑、终端同时输入、面板尺寸调整、任务切换保护，以及常见语言注册。构建 Monaco 时一并生成 JSON worker。
 
-### Docker Client
-
-Dockerfile 共享运行时并提供 client/engine 两个目标，默认目标保持 engine。Client 运行 server.js，生产模式在容器内监听 0.0.0.0:3000，Compose 只发布宿主机回环端口，通过 HTTPS/WSS 反向代理提供访问。首次绑定命令走容器回环 HTTP API，保留现有首次绑定来源检查、验证码和 Secure Cookie 行为。Client 启动前创建并复用数据卷中的私有会话密钥，已有密钥损坏或显式配置冲突时拒绝启动。
-
-Client 与 Engine 数据目录分离。镜像内置 Codex，首次部署从宿主机 ~/.codex 复制到 Client 专用副本，已有副本不覆盖；容器挂载副本而非宿主机原目录。数据库、任务、会话密钥和 Codex 副本在镜像更新后保持，宿主机负责镜像更新；镜像重建会结束容器内终端进程。GitHub Actions 分别构建发布两个目标。部署细节见 docs/DOCKER_CLIENT.md。
-
-Docker Client 安装脚本首次交互选择宿主机任务目录、发布端口和远程连接范围，已有配置通过 --configure 重新选择。工作目录留空继承数据根目录/tasks，回显默认路径不将其固定为自定义配置。容器内目录及端口保持 /workspace 和 3000，远程选项只改变宿主机端口绑定，不放宽 HTTPS 登录要求；无交互自动化可用对应参数及 --non-interactive。
-
-Docker 交互安装在容器健康后通过回环 API 检查身份验证器状态，未绑定则复用容器内绑定命令并从控制终端读取验证码，完成后再次检查绑定状态。已有绑定不重置；非交互模式明确提示待绑定及手动命令，绑定失败时保留容器并返回失败。
-
 ## Client OSS 终端图片上传
 
 Client 保存按用户隔离的 OSS 配置，复用 `system_state` 与基于 `SESSION_SECRET` 的 AES-GCM 加密，不改变数据库结构。`/api/oss/config` 提供配置读写与删除，读取不返回 Secret；`/api/oss/images` 接收最大 10 MiB 的二进制图片，检查实际文件类型后通过 HTTPS 上传到 OSS，随机生成对象名。接口沿用 Client 身份验证和同源保护，不在 Engine 暴露配置或凭据。默认签名读取 URL 有效期 24 小时，可选公共 HTTPS 地址。
@@ -1872,7 +1864,7 @@ Client 保存按用户隔离的 OSS 配置，复用 `system_state` 与基于 `SE
 
 ### 显式内网 HTTP 会话
 
-Client 使用统一 Cookie 策略，默认保持生产环境远程访问要求 HTTPS；仅 `CLIENT_ALLOW_HTTP=true` 显式允许 HTTP 保存登录会话，HTTPS 请求始终使用 Secure Cookie。该配置不改变验证器、同源检查、任务权限、WebSocket 鉴权，也不自动根据来源 IP 选择信任。Docker 使用持久化配置 `T_AGENT_CLIENT_ALLOW_HTTP`，安装脚本提供 `--allow-http yes|no` 与交互选择，重复安装保留设置及原有密钥和绑定。
+Client 使用统一 Cookie 策略，默认保持生产环境远程访问要求 HTTPS；仅 `CLIENT_ALLOW_HTTP=true` 显式允许 HTTP 保存登录会话，HTTPS 请求始终使用 Secure Cookie。该配置不改变验证器、同源检查、任务权限、WebSocket 鉴权，也不自动根据来源 IP 选择信任。
 
 ### 有界终端恢复与按需历史
 

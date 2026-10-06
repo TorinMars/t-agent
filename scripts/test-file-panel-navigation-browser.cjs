@@ -16,17 +16,22 @@ const root=path.resolve(__dirname,'..');
    window.FilePanel={isOpen:()=>true,beforeContextChange:()=>new Promise(resolve=>setTimeout(()=>resolve(window.allow),10))};
    window.API={get:async()=>[],put:(url,body)=>{calls.push({url,body});return new Promise(()=>{});}};
   });
-  const source=fs.readFileSync(path.join(root,'public/js/remote-tasks.js'),'utf8').replace('  return {\n    load,','  return {\n    _editPaths: editDocumentPaths, _editServer: server => { servers = [server]; showEdit(server.id); },\n    load,');
+  // Engine connection editing must respect the dirty-file guard of the file panel.
+  await page.evaluate(()=>{
+    window.Tasks={getActiveKey:()=>'local',onSourceChange(){},disposeSourceTerminals(){},syncSources(){},restoreActiveSource(){}};
+    window.TerminalActivity={sourceState:()=>'idle'};
+  });
+  const source=fs.readFileSync(path.join(root,'public/js/engines.js'),'utf8').replace('  return {\n    load,','  return {\n    _editServer: server => { servers = [server]; showEdit(server.id); },\n    load,');
   const errors=[];page.on('pageerror',e=>errors.push(e.message));
   await page.addScriptTag({content:source});
-  await page.evaluate(()=>RemoteTasks._editServer({id:9,name:'test',base_url:'http://example.test:14002'}));
+  await page.evaluate(()=>Engines._editServer({id:9,name:'test',base_url:'http://example.test:14002'}));
   await page.locator('#remote-edit-save').click();
   await page.waitForTimeout(40);
   assert.equal(await page.evaluate(()=>calls.length),0,'cancelled dirty-file guard must not change server target');
-  await page.evaluate(()=>{allow=true;RemoteTasks._editPaths({id:9},{id:4,work_dir:'/tasks/demo'});});
-  await page.locator('#remote-path-save').click();
+  await page.evaluate(()=>{allow=true;});
+  await page.locator('#remote-edit-save').click();
   await page.waitForFunction(()=>calls.length===1);
-  assert.equal(await page.evaluate(()=>calls[0].url),'/api/remote-servers/9/tasks/4');
+  assert.equal(await page.evaluate(()=>calls[0].url),'/api/remote-servers/9');
   assert.deepEqual(errors,[]);
  }finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

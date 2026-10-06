@@ -108,6 +108,17 @@ function updateTask(principalId, id, input = {}) {
   return publicTask(ownedTask(principalId, id));
 }
 
+function reorderTasks(principalId, items) {
+  if (!Array.isArray(items)) throw Object.assign(new Error('BODY_MUST_BE_ARRAY'), { statusCode: 400 });
+  const stmt = db.prepare('UPDATE tasks SET sort_order = ? WHERE id = ? AND user_id = ?');
+  db.transaction(() => {
+    for (const { id, sort_order } of items) {
+      if (!Number.isInteger(sort_order)) throw Object.assign(new Error('SORT_ORDER_INVALID'), { statusCode: 400 });
+      stmt.run(sort_order, id, principalId);
+    }
+  })();
+}
+
 function deleteTask(principalId, id) {
   if (ownedTask(principalId, id)) require('../routes/terminal').closeTaskTerminals(id);
   const result = db.prepare('DELETE FROM tasks WHERE id = ? AND user_id = ?').run(id, principalId);
@@ -138,6 +149,18 @@ function writeDocument(principalId, id, kind, content) {
   assertWorkspacePath(file);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, content, 'utf8');
+}
+
+// Create a missing README.md / AGENTS.md (the technical document is created with the task).
+function createDocument(principalId, id, kind) {
+  if (!['readme', 'agent'].includes(kind)) throw Object.assign(new Error('DOCUMENT_KIND_NOT_CREATABLE'), { statusCode: 400 });
+  const task = ownedTask(principalId, id);
+  if (!task) throw Object.assign(new Error('TASK_NOT_FOUND'), { statusCode: 404 });
+  const file = documentPath(task, kind);
+  if (!file) throw Object.assign(new Error('WORKDIR_NOT_CONFIGURED'), { statusCode: 400 });
+  assertWorkspacePath(file);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  documents.ensureDocument(task, kind);
 }
 
 function listTodos(principalId, taskId) {
@@ -187,6 +210,8 @@ module.exports = {
   createTask,
   updateTask,
   deleteTask,
+  reorderTasks,
+  createDocument,
   readDocument,
   writeDocument,
   listTodos,

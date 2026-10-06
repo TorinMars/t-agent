@@ -35,9 +35,7 @@ const TerminalKeys = (() => {
     function send(key, override) {
       const data = encode(key, override || mods);
       if (data === null) return false;
-      const target = window.RemoteTasks?.getActiveEngineKey() !== 'local' && window.RemoteTasks
-        ? window.RemoteTasks : window.Tasks;
-      target?.sendTerminalInput(data);
+      window.Tasks?.sendTerminalInput(data);
       clear();
       return true;
     }

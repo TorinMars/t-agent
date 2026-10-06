@@ -10,6 +10,9 @@ const { createTerminalTicket } = require('../services/terminal-tickets');
 const updates = require('../services/update-manager');
 const terminal = require('./terminal');
 const { createTaskFilesRouter } = require('./task-files');
+const documents = require('../services/task-documents');
+const { resolveAsset, validateMdPath } = require('../services/task-assets');
+const { serveFileWatch } = require('../lib/file-watch-sse');
 
 const router = express.Router();
 const pairingAttempts = new Map();
@@ -65,6 +68,8 @@ function infoHandler(req, res) {
       'task-groups:read', 'task-groups:write',
       'documents:read', 'documents:write',
       'files:read', 'files:write',
+      // Parity with the Client's own task routes; older Engines simply lack these.
+      'tasks:reorder', 'documents:create', 'documents:watch', 'files:assets', 'paths:validate', 'terminal:activity',
       'todos:read', 'todos:write',
       'terminal:interactive', 'terminal:control', 'terminal:multiple', 'token:pairing',
       'engine:update',
@@ -126,6 +131,18 @@ router.delete('/task-groups/:id', requireEngineAuth('tasks:write'), (req, res) =
   catch (error) { errorResponse(res, error); }
 });
 
+// Declared before /tasks/:id so "reorder" and "validate-path" are not read as task ids.
+router.put('/tasks/reorder', requireEngineAuth('tasks:write'), (req, res) => {
+  try { tasks.reorderTasks(principal(req), req.body); res.json({ success: true }); }
+  catch (error) { errorResponse(res, error); }
+});
+
+router.post('/tasks/validate-path', requireEngineAuth('tasks:read'), (req, res) => {
+  const result = validateMdPath(req.body && req.body.md_path);
+  if (result.status) return res.status(result.status).json({ error: result.error });
+  res.json(result);
+});
+
 router.post('/tasks', requireEngineAuth('tasks:write'), (req, res) => {
   try { res.status(201).json(tasks.createTask(principal(req), req.body)); }
   catch (error) { errorResponse(res, error); }
@@ -167,6 +184,29 @@ router.put('/tasks/:id/document/:kind', requireEngineAuth('documents:write'), (r
   catch (error) { errorResponse(res, error); }
 });
 
+router.post('/tasks/:id/document/:kind', requireEngineAuth('documents:write'), (req, res) => {
+  try { tasks.createDocument(principal(req), req.params.id, req.params.kind); res.status(201).json({ success: true }); }
+  catch (error) { errorResponse(res, error); }
+});
+
+router.get('/tasks/:id/document/:kind/watch', requireEngineAuth('documents:read'), (req, res) => {
+  const row = tasks.ownedTask(principal(req), req.params.id);
+  const file = row && documents.documentPath(documents.resolveTask(row), req.params.kind);
+  if (!file) return res.status(404).end();
+  serveFileWatch(req, res, file);
+});
+
+router.get('/tasks/:id/file', requireEngineAuth('documents:read'), (req, res) => {
+  const row = tasks.ownedTask(principal(req), req.params.id);
+  if (!row) return res.status(404).json({ error: 'TASK_NOT_FOUND' });
+  const result = resolveAsset(documents.resolveTask(row), req.query.path);
+  if (result.error) return res.status(result.status).json({ error: result.error });
+  // Never let a task file run script in the Engine's or Client's origin.
+  res.setHeader('Content-Security-Policy', 'sandbox');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.sendFile(result.file);
+});
+
 router.get('/tasks/:id/todos', requireEngineAuth('todos:read'), (req, res) => {
   try { res.json(tasks.listTodos(principal(req), req.params.id)); }
   catch (error) { errorResponse(res, error); }
@@ -202,6 +242,18 @@ router.post('/tasks/:id/terminals', requireEngineAuth('terminal:execute'), (req,
   const task = tasks.ownedTask(principal(req), req.params.id);
   if (!task) return res.status(404).json({ error: 'TASK_NOT_FOUND' });
   res.status(201).json(terminal.createTerminal(task.id));
+});
+
+router.get('/terminal-activity', requireEngineAuth('terminal:execute'), (req, res) => {
+  const ids = db.prepare('SELECT id FROM tasks WHERE user_id = ?').all(principal(req)).map(row => row.id);
+  res.json(terminal.activitySnapshot(ids));
+});
+
+router.post('/tasks/:id/terminal/ack', requireEngineAuth('terminal:execute'), (req, res) => {
+  const task = tasks.ownedTask(principal(req), req.params.id);
+  if (!task) return res.status(404).json({ error: 'TASK_NOT_FOUND' });
+  try { res.json(terminal.acknowledgeActivity(task.id, req.body && req.body.terminal_id)); }
+  catch (error) { errorResponse(res, error); }
 });
 
 router.post('/terminal-sessions', requireEngineAuth('terminal:execute'), (req, res) => {

@@ -1,15 +1,58 @@
 const Tasks = (() => {
-  let tasks = [];
-  let selectedId = null;
-  const STATUS_ORDER = ['personal', 'doing', 'todo', 'done'];
+  // ── 数据源 ──
+  // 本地 Client 与每个远程 Engine 是一个"数据源"，共用同一套界面；只有请求的基础路径、
+  // 终端地址和能力不同。侧栏一次只显示当前数据源的任务。
   const STATUS_LABEL = { doing: '进行中', todo: '待办', done: '已完成', personal: '个人任务' };
   const STATUS_NEXT = { todo: 'doing', doing: 'done', done: 'personal', personal: 'todo' };
-  const DEFAULT_FORM_GROUPS = [
-    { key: 'personal', name: '个人任务' },
-    { key: 'doing', name: '进行中' },
-    { key: 'todo', name: '待办' },
-    { key: 'done', name: '已完成' },
+  const DEFAULT_GROUPS = [
+    { id: null, key: 'personal', name: '个人任务', sort_order: 0, is_system: false },
+    { id: null, key: 'doing', name: '进行中', sort_order: 1000, is_system: true },
+    { id: null, key: 'todo', name: '待办', sort_order: 2000, is_system: true },
+    { id: null, key: 'done', name: '已完成', sort_order: 3000, is_system: true },
   ];
+  const sources = new Map();
+  const sourceListeners = new Set();
+
+  function makeSource(desc) {
+    return {
+      key: 'local', label: '默认', local: false, tasksBase: '/api/tasks', groupsBase: '/api/task-groups',
+      wsPath: '/terminal/ws', activityUrl: null,
+      caps: null,        // null = 全部可用（本地）；否则为 Engine 声明的能力集合
+      role: null, problem: null, loaded: false,
+      tasks: [], groups: DEFAULT_GROUPS.map(group => ({ ...group })), selectedId: null,
+      ...desc,
+    };
+  }
+  sources.set('local', makeSource({ local: true }));
+  let source = sources.get('local');
+  let tasks = [];       // 当前数据源的任务（与 source.tasks 同步）
+  let selectedId = null; // 当前数据源选中的任务
+
+  const can = capability => source.caps === null || source.caps.has(capability);
+  const taskUrl = (id, suffix = '') => `${source.tasksBase}/${id}${suffix}`;
+  // localStorage 键：本地沿用原键名，远程加上数据源前缀，避免不同 Engine 上的同号任务冲突。
+  const storageId = (id, src = source) => (src.local ? String(id) : `${src.key}:${id}`);
+  const selectedStorageKey = (src = source) => (src.local ? 'selectedTaskId' : `remote-selected-task-${src.id}`);
+  const terminalScope = (taskId, src = source) => `${src.tasksBase}/${taskId}`;
+  const activeKeyPreference = () => localStorage.getItem('active-engine-key') || 'local';
+  const notifySourceChange = () => sourceListeners.forEach(listener => { try { listener(); } catch {} });
+
+  function groupsFor(src, list) {
+    return Array.isArray(list) && list.length ? list : fallbackGroups(src.tasks);
+  }
+
+  // Engine 不返回分组（旧版本）时，按任务出现的状态补全。
+  function fallbackGroups(taskList = []) {
+    const groups = DEFAULT_GROUPS.map(group => ({ ...group }));
+    const known = new Set(groups.map(group => group.key));
+    taskList.forEach(task => {
+      if (!known.has(task.status)) {
+        known.add(task.status);
+        groups.splice(groups.length - 3, 0, { id: null, key: task.status, name: task.status, sort_order: 500, is_system: false });
+      }
+    });
+    return groups;
+  }
   const PRIORITY_LABEL = { high: '高', normal: '中', low: '低' };
   const collapsedGroups = {};
   let tocObserver = null;
@@ -22,11 +65,11 @@ const Tasks = (() => {
   let activeTab = 'doc';
 
   function getTaskTab(id) {
-    const tab = localStorage.getItem(`task-tab-${id}`) || 'doc';
+    const tab = localStorage.getItem(`task-tab-${storageId(id)}`) || 'doc';
     return VALID_TABS.includes(tab) ? tab : 'doc';
   }
   function saveTaskTab(id, tab) {
-    localStorage.setItem(`task-tab-${id}`, tab);
+    localStorage.setItem(`task-tab-${storageId(id)}`, tab);
   }
   let term = null;
   let fitAddon = null;
@@ -42,7 +85,6 @@ const Tasks = (() => {
 
   // ── Tab 切换 ──
   contentTabs.addEventListener('click', (e) => {
-    if (window.RemoteTasks && window.RemoteTasks.isSelected()) return;
     const btn = e.target.closest('.tab-btn');
     if (!btn) return;
     const tab = btn.dataset.tab;
@@ -81,9 +123,10 @@ const Tasks = (() => {
   });
 
   // ── 每个任务的每个终端独立缓存；切换标签只隐藏视图 ──
-  const termInstances = new Map(); // [taskId, terminalId] -> live terminal instance
-  function terminalKey(taskId, terminalId = TerminalTabs.current(`/api/tasks/${taskId}`)) {
-    return JSON.stringify([taskId, terminalId]);
+  const termInstances = new Map(); // [sourceKey, taskId, terminalId] -> live terminal instance
+  function terminalKey(taskId, terminalId, sourceKey = source.key) {
+    const src = sources.get(sourceKey) || source;
+    return JSON.stringify([sourceKey, taskId, terminalId ?? TerminalTabs.current(terminalScope(taskId, src))]);
   }
 
   // 终端状态由服务端按 PTY 前台进程判定（running / done），这里只负责展示。
@@ -95,9 +138,10 @@ const Tasks = (() => {
 
   function refreshTermIndicators() {
     document.querySelectorAll('.task-nav-item[data-id]').forEach(item => {
-      applyTermState(item, TerminalActivity.taskState(Number(item.dataset.id)));
+      applyTermState(item, TerminalActivity.taskState(Number(item.dataset.id), source.key));
     });
     TerminalTabs.refresh();
+    notifySourceChange(); // 引擎标签汇总各自的终端状态
   }
 
   // 用户正在看某个任务当前终端时，视为已确认完成
@@ -107,15 +151,15 @@ const Tasks = (() => {
 
   function acknowledgeCurrentTerminal() {
     if (!selectedId || activeTab !== 'shell') return;
-    TerminalActivity.acknowledge(selectedId, TerminalTabs.current(`/api/tasks/${selectedId}`));
+    TerminalActivity.acknowledge(selectedId, TerminalTabs.current(terminalScope(selectedId)), source.key);
   }
 
   TerminalActivity.onChange(refreshTermIndicators);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) acknowledgeCurrentTerminal(); });
   TerminalActivity.start();
 
-  function disposeTerminalInstance(taskId, terminalId) {
-    const key = terminalKey(taskId, terminalId);
+  function disposeTerminalInstance(taskId, terminalId, sourceKey = source.key) {
+    const key = terminalKey(taskId, terminalId, sourceKey);
     const inst = termInstances.get(key);
     if (!inst) return;
     inst.disposed = true;
@@ -138,19 +182,19 @@ const Tasks = (() => {
   }
 
   function scheduleReconnect(task, inst) {
-    if (inst.disposed || termInstances.get(terminalKey(task.id, inst.terminalId)) !== inst || inst.reconnectTimer) return;
+    if (inst.disposed || termInstances.get(terminalKey(task.id, inst.terminalId, inst.sourceKey)) !== inst || inst.reconnectTimer) return;
     const delay = Math.min(1000 * (2 ** inst.reconnectAttempts), 30000);
     inst.reconnectAttempts += 1;
     inst.reconnectTimer = setTimeout(() => {
       inst.reconnectTimer = null;
-      if (!inst.disposed && termInstances.get(terminalKey(task.id, inst.terminalId)) === inst) connectWebSocket(task, inst);
+      if (!inst.disposed && termInstances.get(terminalKey(task.id, inst.terminalId, inst.sourceKey)) === inst) connectWebSocket(task, inst);
     }, delay);
     inst.term.write(`\r\n\x1b[33m[连接已断开，${Math.ceil(delay / 1000)}s 后自动重连...]\x1b[0m\r\n`);
   }
 
   function connectWebSocket(task, inst) {
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    const ws = new WebSocket(`${proto}://${location.host}/terminal/ws?taskId=${task.id}&terminalId=${encodeURIComponent(inst.terminalId)}`);
+    const ws = new WebSocket(`${proto}://${location.host}${inst.wsPath}?taskId=${task.id}&terminalId=${encodeURIComponent(inst.terminalId)}`);
     ws.binaryType = 'arraybuffer';
     inst.ws = ws;
     inst.history.bind(ws);
@@ -164,7 +208,7 @@ const Tasks = (() => {
       }
       inst.reconnectAttempts = 0;
       TerminalViewport.fit(inst.term, inst.fitAddon, inst.el);
-      if (!reconnecting && term === inst.term && activeTab === 'shell' && selectedId === task.id) inst.term.focus();
+      if (!reconnecting && term === inst.term && activeTab === 'shell' && selectedId === task.id && source.key === inst.sourceKey) inst.term.focus();
       ws.send(JSON.stringify({ type: 'resize', cols: inst.term.cols, rows: inst.term.rows }));
     };
 
@@ -179,7 +223,7 @@ const Tasks = (() => {
     };
 
     ws.onclose = (event) => {
-      if (inst.ws !== ws || inst.disposed || termInstances.get(terminalKey(task.id, inst.terminalId)) !== inst) return;
+      if (inst.ws !== ws || inst.disposed || termInstances.get(terminalKey(task.id, inst.terminalId, inst.sourceKey)) !== inst) return;
       inst.history.disconnect(ws);
       inst.ws = null;
       if (event.code === 1000 || event.code === 1008) {
@@ -195,8 +239,9 @@ const Tasks = (() => {
   function connectTerminal(task) {
     const container = document.getElementById('xterm-container');
     TerminalControls.clearMessage();
-    const terminalId = TerminalTabs.show(`/api/tasks/${task.id}`, () => connectTerminal(task), {
+    const terminalId = TerminalTabs.show(terminalScope(task.id), () => connectTerminal(task), {
       taskId: task.id,
+      sourceKey: source.key,
       viewing: () => viewingTerminal(task.id),
     });
     const key = terminalKey(task.id, terminalId);
@@ -236,6 +281,9 @@ const Tasks = (() => {
 
     const inst = {
       clipboard,
+      sourceKey: source.key,
+      wsPath: source.wsPath,
+      taskId: task.id,
       terminalId,
       term: t,
       fitAddon: fa,
@@ -293,13 +341,13 @@ const Tasks = (() => {
     const task = selectedTerminalTask();
     disposeTerminalInstance(task.id);
     try {
-      await API.post(`/api/tasks/${task.id}/terminal/control`, { action, terminal_id: TerminalTabs.current(`/api/tasks/${task.id}`) });
+      await API.post(`${terminalScope(task.id)}/terminal/control`, { action, terminal_id: TerminalTabs.current(terminalScope(task.id)) });
     } catch (error) {
       // 控制请求失败时恢复到原服务端会话，避免留下不可见的运行进程。
       connectTerminal(task);
       throw error;
     }
-    TerminalActivity.refresh();
+    TerminalActivity.refresh(source.key);
     if (action === 'restart-workdir') {
       TerminalControls.clearMessage();
       connectTerminal(task);
@@ -310,7 +358,7 @@ const Tasks = (() => {
 
   async function deleteTerminal() {
     const task = selectedTerminalTask();
-    const scope = `/api/tasks/${task.id}`;
+    const scope = terminalScope(task.id);
     const terminalId = TerminalTabs.current(scope);
     if (terminalId === 'default') throw new Error('默认终端不能删除，可使用关闭或从工作目录重新打开');
     await API.post(`${scope}/terminal/control`, { action: 'delete', terminal_id: terminalId });
@@ -334,7 +382,7 @@ const Tasks = (() => {
     stopWatcher();
     if (activeTab !== 'shell') contentTabs.querySelector('[data-tab="shell"]').click();
     if (activeTab !== 'shell') return;
-    return FilePanel.open({ key: `local:${task.id}`, baseUrl: `/api/tasks/${task.id}/files`, title: task.title, root: task.work_dir });
+    return FilePanel.open({ key: `${source.key}:${task.id}`, baseUrl: taskUrl(task.id, '/files'), title: task.title, root: task.work_dir });
   }
 
   document.querySelector('.content-area')?.addEventListener('file-panel:layout', event => {
@@ -344,23 +392,23 @@ const Tasks = (() => {
   document.getElementById('btn-file-browser')?.addEventListener('click', async () => {
     try {
       if (FilePanel.isOpen()) { await FilePanel.close(); return; }
-      if (window.RemoteTasks?.isSelected()) await RemoteTasks.openFileBrowser();
-      else await openFileBrowser();
+      await openFileBrowser();
     } catch (error) { alert('文件浏览器打开失败：' + error.message); }
   });
 
+  // 在 Finder / VS Code 中打开、生成分享链接依赖本机文件系统，远程任务不提供。
   document.getElementById('btn-reveal-folder').addEventListener('click', async () => {
-    if (!selectedId) return;
+    if (!selectedId || !source.local) return;
     await API.post(`/api/tasks/${selectedId}/reveal`, {});
   });
 
   document.getElementById('btn-open-vscode').addEventListener('click', async () => {
-    if (!selectedId) return;
+    if (!selectedId || !source.local) return;
     await API.post(`/api/tasks/${selectedId}/vscode`, {});
   });
 
   document.getElementById('btn-share-md').addEventListener('click', async () => {
-    if (!selectedId) return;
+    if (!selectedId || !source.local) return;
     try {
       const { url } = await API.post(`/api/tasks/${selectedId}/share`, {});
       let base = location.origin;
@@ -394,7 +442,7 @@ const Tasks = (() => {
     clearTimeout(scrollSaveTimer);
     scrollSaveTimer = setTimeout(() => {
       if (['doc', 'readme', 'agent'].includes(activeTab)) {
-        localStorage.setItem(`mdScroll_${selectedId}_${activeTab}`, previewPane.scrollTop);
+        localStorage.setItem(`mdScroll_${storageId(selectedId)}_${activeTab}`, previewPane.scrollTop);
       }
     }, 150);
   });
@@ -402,6 +450,9 @@ const Tasks = (() => {
   // 基础 renderer（不含相对路径重写，需运行时传入 taskId）
   function makeRenderer(taskId) {
     const isRelativeSrc = src => src && !src.startsWith('http') && !src.startsWith('/') && !src.startsWith('data:');
+    // 相对路径的图片/链接经当前数据源读取；Engine 不支持时保持原样。
+    const fileUrl = href => `${taskUrl(taskId, '/file')}?path=${encodeURIComponent(href)}`;
+    const rewrites = Boolean(taskId) && can('files:assets');
     const renderer = {
       code({ text, lang }) {
         if (lang === 'mermaid') {
@@ -411,17 +462,15 @@ const Tasks = (() => {
       },
       link({ href, title, text }) {
         const t = title ? ` title="${escapeHtml(title)}"` : '';
-        if (taskId && isRelativeSrc(href) && !href.startsWith('#') && !href.startsWith('mailto:')) {
-          return `<a href="/api/tasks/${taskId}/file?path=${encodeURIComponent(href)}"${t} target="_blank" rel="noopener noreferrer">${text}</a>`;
+        if (rewrites && isRelativeSrc(href) && !href.startsWith('#') && !href.startsWith('mailto:')) {
+          return `<a href="${fileUrl(href)}"${t} target="_blank" rel="noopener noreferrer">${text}</a>`;
         }
         return `<a href="${href}"${t} target="_blank" rel="noopener noreferrer">${text}</a>`;
       },
       image({ href, title, text }) {
         const t = title ? ` title="${escapeHtml(title)}"` : '';
         const alt = text ? ` alt="${escapeHtml(text)}"` : '';
-        const src = (taskId && isRelativeSrc(href))
-          ? `/api/tasks/${taskId}/file?path=${encodeURIComponent(href)}`
-          : href;
+        const src = (rewrites && isRelativeSrc(href)) ? fileUrl(href) : href;
         return `<img src="${src}"${alt}${t} style="max-width:100%">`;
       },
     };
@@ -647,58 +696,101 @@ const Tasks = (() => {
     return { text: dateStr, overdue: false };
   }
 
+  // 无法连接的 Engine：认证失效、服务离线，或本次加载任务失败。
+  function problemOf(src) {
+    if (src.local) return null;
+    const server = src.server || {};
+    if (server.status === 'unauthorized') return { code: 'REMOTE_HTTP_401', unauthorized: true };
+    if (server.status === 'offline' || src.loadError) {
+      return { code: src.loadError || server.last_error || 'REMOTE_CONNECTION_FAILED', unauthorized: src.loadError === 'REMOTE_HTTP_401' };
+    }
+    return null;
+  }
+
   function renderSidebar() {
     const nav = document.getElementById('task-nav');
     const scrollTop = nav.scrollTop;
     nav.innerHTML = '';
 
-    const localSection = document.createElement('div');
-    localSection.className = 'local-sidebar-section';
-    localSection.dataset.engineKey = 'local';
-    nav.appendChild(localSection);
+    const section = document.createElement('div');
+    section.className = 'task-sidebar-section';
+    section.dataset.engineKey = source.key;
+    nav.appendChild(section);
 
-    const localHeading = document.createElement('div');
-    localHeading.className = 'sidebar-section-heading';
-    localHeading.innerHTML = '<span>本地任务</span><span class="sidebar-section-count">' + tasks.length + '</span>';
-    localSection.appendChild(localHeading);
+    if (problemOf(source)) {
+      const note = document.createElement('div');
+      note.className = 'remote-empty';
+      note.textContent = '服务不可用，请检查服务状态';
+      section.appendChild(note);
+      nav.scrollTop = scrollTop;
+      return;
+    }
 
-    const grouped = {};
-    STATUS_ORDER.forEach(s => grouped[s] = []);
-    tasks.forEach(t => { if (grouped[t.status]) grouped[t.status].push(t); });
+    const writable = can('tasks:write');
+    const heading = document.createElement('div');
+    heading.className = 'sidebar-section-heading';
+    const title = document.createElement('span');
+    title.textContent = source.local ? '本地任务' : source.label;
+    const count = document.createElement('span');
+    count.className = 'sidebar-section-count';
+    count.textContent = tasks.length;
+    const tools = document.createElement('span');
+    tools.className = 'sidebar-section-tools';
+    tools.appendChild(count);
+    if (writable) {
+      const add = document.createElement('button');
+      add.type = 'button';
+      add.className = 'sidebar-section-add';
+      add.title = '新建任务分组';
+      add.setAttribute('aria-label', '新建任务分组');
+      add.textContent = '＋';
+      add.addEventListener('click', () => showCreateGroup());
+      tools.appendChild(add);
+    }
+    heading.append(title, tools);
+    section.appendChild(heading);
 
-    STATUS_ORDER.forEach(status => {
-      const group = grouped[status];
+    const groups = source.groups;
+    groups.forEach(group => section.appendChild(buildGroup(group, groups, writable)));
+    nav.scrollTop = scrollTop;
+  }
 
-      const groupEl = document.createElement('div');
-      groupEl.className = 'task-group';
-      groupEl.dataset.status = status;
+  function buildGroup(group, groups, writable) {
+    const status = group.key;
+    const collapseKey = `${source.key}:${status}`;
+    const groupEl = document.createElement('div');
+    groupEl.className = 'task-group';
+    groupEl.dataset.status = status;
 
-      const headerEl = document.createElement('div');
-      headerEl.className = 'task-group-header';
+    const headerEl = document.createElement('div');
+    headerEl.className = 'task-group-header';
+    headerEl.dataset.mobileMenu = group.is_system || !group.id ? 'false' : 'true';
+    headerEl.title = group.is_system || !group.id ? '默认分组' : '右键管理分组';
 
-      const toggleEl = document.createElement('span');
-      toggleEl.className = `task-group-toggle${collapsedGroups[status] ? ' collapsed' : ''}`;
-      toggleEl.textContent = '▾';
+    const toggleEl = document.createElement('span');
+    toggleEl.className = `task-group-toggle${collapsedGroups[collapseKey] ? ' collapsed' : ''}`;
+    toggleEl.textContent = '▾';
+    const labelEl = document.createElement('span');
+    labelEl.className = 'task-group-label';
+    labelEl.textContent = group.name;
+    const groupTasks = tasks.filter(task => task.status === status);
+    const countEl = document.createElement('span');
+    countEl.className = 'task-group-count';
+    countEl.textContent = groupTasks.length;
+    headerEl.append(toggleEl, labelEl, countEl);
 
-      const labelEl = document.createElement('span');
-      labelEl.textContent = STATUS_LABEL[status];
+    const itemsEl = document.createElement('div');
+    itemsEl.className = `task-group-items${collapsedGroups[collapseKey] ? ' collapsed' : ''}`;
+    itemsEl.dataset.status = status;
+    groupTasks.forEach(task => itemsEl.appendChild(buildNavItem(task, groups, writable)));
 
-      headerEl.appendChild(toggleEl);
-      headerEl.appendChild(labelEl);
-
-      const itemsEl = document.createElement('div');
-      itemsEl.className = `task-group-items${collapsedGroups[status] ? ' collapsed' : ''}`;
-      itemsEl.dataset.status = status;
-
-      group.forEach(task => itemsEl.appendChild(buildNavItem(task)));
-
+    if (writable) {
       // 拖拽放置到组（空组也能接收）
       itemsEl.addEventListener('dragover', e => {
         e.preventDefault();
         e.dataTransfer.dropEffect = 'move';
         const draggingEl = document.querySelector('.task-nav-item.dragging');
         if (!draggingEl) return;
-        // 确保 placeholder 存在
         let placeholder = document.getElementById('drag-placeholder');
         if (!placeholder) {
           placeholder = document.createElement('div');
@@ -722,28 +814,32 @@ const Tasks = (() => {
         e.preventDefault();
         const id = parseInt(e.dataTransfer.getData('text/plain'));
         const placeholder = document.getElementById('drag-placeholder');
-        const targetStatus = itemsEl.dataset.status;
         const items = [...itemsEl.querySelectorAll('.task-nav-item')];
         const afterEl = placeholder ? placeholder.nextElementSibling : null;
         let newIndex = afterEl ? items.indexOf(afterEl) : items.length;
         if (newIndex < 0) newIndex = items.length;
         placeholder && placeholder.remove();
-        onDrop(id, targetStatus, newIndex);
+        onDrop(id, itemsEl.dataset.status, newIndex);
       });
+    }
 
-      headerEl.addEventListener('click', () => {
-        const c = itemsEl.classList.toggle('collapsed');
-        toggleEl.classList.toggle('collapsed', c);
-        collapsedGroups[status] = c;
-      });
-
-      groupEl.appendChild(headerEl);
-      groupEl.appendChild(itemsEl);
-      localSection.appendChild(groupEl);
+    headerEl.addEventListener('click', () => {
+      const collapsed = itemsEl.classList.toggle('collapsed');
+      toggleEl.classList.toggle('collapsed', collapsed);
+      collapsedGroups[collapseKey] = collapsed;
+    });
+    headerEl.addEventListener('contextmenu', event => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!writable || group.is_system || !group.id) return;
+      ContextMenu.show(event.clientX, event.clientY, [
+        { label: '重命名分组', action: () => showRenameGroup(group) },
+        { label: '删除分组', danger: true, action: () => removeGroup(group) },
+      ]);
     });
 
-    nav.scrollTop = scrollTop;
-    if (window.RemoteTasks) window.RemoteTasks.render();
+    groupEl.append(headerEl, itemsEl);
+    return groupEl;
   }
 
   function getDragAfterElement(container, y) {
@@ -758,29 +854,31 @@ const Tasks = (() => {
 
   async function onDrop(id, targetStatus, newIndex) {
     const task = tasks.find(t => t.id === id);
-    if (!task) return;
-
-    // 更新 status
-    if (task.status !== targetStatus) {
-      await API.put(`/api/tasks/${id}`, { status: targetStatus });
+    if (!task || !can('tasks:write')) return;
+    try {
+      // 更新 status
+      if (task.status !== targetStatus) {
+        await API.put(taskUrl(id), { status: targetStatus });
+      }
+      // 重新计算目标组内的 sort_order（旧版 Engine 不支持排序，只改分组）
+      if (can('tasks:reorder')) {
+        const groupTasks = tasks
+          .filter(t => t.id !== id && t.status === targetStatus)
+          .sort((a, b) => a.sort_order - b.sort_order);
+        groupTasks.splice(newIndex, 0, { ...task, status: targetStatus });
+        await API.put(`${source.tasksBase}/reorder`, groupTasks.map((t, i) => ({ id: t.id, sort_order: i })));
+      }
+    } catch (error) {
+      alert('移动任务失败: ' + error.message);
     }
-
-    // 重新计算目标组内的 sort_order
-    const groupTasks = tasks
-      .filter(t => t.id !== id && t.status === targetStatus)
-      .sort((a, b) => a.sort_order - b.sort_order);
-    groupTasks.splice(newIndex, 0, { ...task, status: targetStatus });
-    const reorderBody = groupTasks.map((t, i) => ({ id: t.id, sort_order: i }));
-    await API.put('/api/tasks/reorder', reorderBody);
-
-    await Tasks.load();
+    await refreshActive();
   }
 
-  function buildNavItem(task) {
+  function buildNavItem(task, groups, writable) {
     const item = document.createElement('div');
     item.className = `task-nav-item${task.id === selectedId ? ' active' : ''}`;
     item.dataset.id = task.id;
-    item.draggable = true;
+    item.draggable = writable;
 
     item.addEventListener('dragstart', e => {
       e.dataTransfer.setData('text/plain', task.id);
@@ -794,16 +892,17 @@ const Tasks = (() => {
       document.getElementById('drag-placeholder')?.remove();
     });
 
+    const statusLabel = (groups.find(group => group.key === task.status) || {}).name || STATUS_LABEL[task.status] || task.status;
     const statusBtn = document.createElement('button');
     statusBtn.className = `task-status-btn ${task.status}`;
     if (task.status === 'doing') statusBtn.textContent = '●';
     else if (task.status === 'done') statusBtn.textContent = '✓';
     else if (task.status === 'personal') statusBtn.textContent = '★';
-    statusBtn.title = `点击切换状态（当前：${STATUS_LABEL[task.status]}）`;
+    statusBtn.title = writable ? `点击切换状态（当前：${statusLabel}）` : `当前：${statusLabel}`;
     statusBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
-      await API.put(`/api/tasks/${task.id}`, { status: STATUS_NEXT[task.status] });
-      await Tasks.load();
+      if (!writable) return;
+      await setStatus(task.id, STATUS_NEXT[task.status] || 'todo');
     });
 
     const iconEl = document.createElement('span');
@@ -819,7 +918,7 @@ const Tasks = (() => {
     item.appendChild(iconEl);
     item.appendChild(titleEl);
 
-    applyTermState(item, TerminalActivity.taskState(task.id));
+    applyTermState(item, TerminalActivity.taskState(task.id, source.key));
 
     const due = formatDue(task.due_date);
     if (due) {
@@ -830,12 +929,14 @@ const Tasks = (() => {
     }
 
     item.addEventListener('click', () => selectTask(task.id));
+    if (!writable) return item;
+
     function showTaskMenu(x, y) {
       ContextMenu.show(x, y, [
-        { label: '标记为进行中', action: () => setStatus(task.id, 'doing') },
-        { label: '标记为待办', action: () => setStatus(task.id, 'todo') },
-        { label: '标记为已完成', action: () => setStatus(task.id, 'done') },
-        { label: '标记为个人任务', action: () => setStatus(task.id, 'personal') },
+        ...groups.map(group => ({
+          label: `${task.status === group.key ? '✓ ' : ''}移到「${group.name}」`,
+          action: () => setStatus(task.id, group.key),
+        })),
         { separator: true },
         { label: '编辑', action: () => showEditModal(task) },
         { label: '删除', danger: true, action: () => deleteTask(task.id) },
@@ -865,19 +966,266 @@ const Tasks = (() => {
   }
 
   async function setStatus(id, status) {
-    await API.put(`/api/tasks/${id}`, { status });
-    await Tasks.load();
+    try { await API.put(taskUrl(id), { status }); }
+    catch (error) { alert('更新任务失败: ' + error.message); }
+    await refreshActive();
   }
 
   async function deleteTask(id) {
     if (selectedId === id && window.FilePanel?.isOpen() && !await FilePanel.beforeContextChange()) return;
     if (!confirm('确认删除该任务？')) return;
-    await API.delete(`/api/tasks/${id}`);
+    try { await API.delete(taskUrl(id)); }
+    catch (error) { alert('删除任务失败: ' + error.message); return; }
     if (selectedId === id) {
+      disposeTerminalsOf(source.key, id);
       selectedId = null;
+      source.selectedId = null;
       showEmpty();
     }
-    await Tasks.load();
+    await refreshActive();
+  }
+
+  // ── 任务分组（本地与远程相同） ──
+  function groupNameDialog(title, initial, onSubmit) {
+    Modal.show(title, `
+      <div class="form-group"><label class="form-label">分组名称</label><input class="form-input" id="group-name" maxlength="40" value="${escapeHtml(initial)}" autocomplete="off"></div>
+      <div class="form-hint error" id="group-name-error"></div>
+      <div class="form-actions"><button class="btn-cancel" id="group-name-cancel">取消</button><button class="btn-submit" id="group-name-save">保存</button></div>`);
+    document.getElementById('group-name-cancel').addEventListener('click', Modal.hide);
+    const input = document.getElementById('group-name');
+    input.focus();
+    document.getElementById('group-name-save').addEventListener('click', async event => {
+      event.target.disabled = true;
+      try { await onSubmit(input.value.trim()); Modal.hide(); await refreshActive(); }
+      catch (error) {
+        document.getElementById('group-name-error').textContent = groupErrorLabel(error.message);
+        event.target.disabled = false;
+      }
+    });
+  }
+
+  function groupErrorLabel(code) {
+    return ({
+      GROUP_NAME_REQUIRED: '请输入分组名称', GROUP_NAME_TOO_LONG: '分组名称不能超过 40 个字符',
+      GROUP_NAME_ALREADY_EXISTS: '已有同名分组', TASK_GROUP_NOT_FOUND: '任务分组不存在',
+      SYSTEM_GROUP_IMMUTABLE: '默认分组不能修改或删除', TASK_GROUP_NOT_EMPTY: '分组内还有任务，不能删除',
+    })[code] || code;
+  }
+
+  function showCreateGroup() {
+    groupNameDialog('新建任务分组', '', name => API.post(source.groupsBase, { name }));
+  }
+
+  function showRenameGroup(group) {
+    groupNameDialog('重命名分组', group.name, name => API.put(`${source.groupsBase}/${group.id}`, { name }));
+  }
+
+  async function removeGroup(group) {
+    if (!confirm(`确认删除分组“${group.name}”？分组内必须没有任务。`)) return;
+    try { await API.delete(`${source.groupsBase}/${group.id}`); await refreshActive(); }
+    catch (error) { alert('删除分组失败: ' + groupErrorLabel(error.message)); }
+  }
+
+  // ── 数据源：加载、切换、同步 ──
+  function errorCode(error) {
+    const message = String((error && error.message) || '');
+    try { const parsed = JSON.parse(message); if (parsed && typeof parsed.error === 'string') return parsed.error; } catch {}
+    return /^[A-Z0-9_]+$/.test(message) ? message : 'REMOTE_CONNECTION_FAILED';
+  }
+
+  // 重新读取一个数据源的任务与分组；远程失败时只记录连接问题，不抛出。
+  async function reloadSource(key) {
+    const src = sources.get(key);
+    if (!src) return;
+    let list;
+    try {
+      list = await API.get(src.tasksBase);
+      if (!Array.isArray(list)) throw new Error('INVALID_TASKS_RESPONSE');
+    } catch (error) {
+      if (src.local) throw error;
+      src.loadError = errorCode(error);
+      src.tasks = [];
+      src.groups = fallbackGroups();
+      src.loaded = true;
+      if (src === source) tasks = src.tasks;
+      return;
+    }
+    src.loadError = null;
+    src.tasks = list;
+    // 旧版 Engine 没有分组接口时，按任务状态补全。
+    let groups = null;
+    try { groups = await API.get(src.groupsBase); } catch {}
+    src.groups = groupsFor(src, groups);
+    src.loaded = true;
+    if (src === source) tasks = src.tasks;
+  }
+
+  function showSourceLoading() {
+    const empty = document.getElementById('preview-empty');
+    empty.style.display = 'flex';
+    empty.querySelector('span').textContent = `正在加载 ${source.label}…`;
+    document.getElementById('preview-content').style.display = 'none';
+    contentToolbar.style.display = 'none';
+    contentTabs.style.display = 'none';
+    terminalPane.style.display = 'none';
+    previewPane.style.display = '';
+  }
+
+  // 清空内容区（切换到不可用的 Engine、移除连接时使用）。
+  function clearView() {
+    selectedId = null;
+    source.selectedId = null;
+    TerminalHistory.activate(null);
+    hideToc();
+    stopWatcher();
+    document.getElementById('preview-empty').style.display = 'none';
+    document.getElementById('preview-content').style.display = 'none';
+    contentToolbar.style.display = 'none';
+    contentTabs.style.display = 'none';
+    terminalPane.style.display = 'none';
+    previewPane.style.display = '';
+    document.querySelectorAll('.task-nav-item').forEach(el => el.classList.remove('active'));
+  }
+
+  function syncSourceControls() {
+    // Finder / VS Code 依赖本机文件系统，远程任务不显示。
+    for (const id of ['btn-reveal-folder', 'btn-open-vscode']) {
+      const button = document.getElementById(id);
+      if (button) button.style.display = source.local ? '' : 'none';
+    }
+  }
+
+  function activateSource(key, options = {}) {
+    const next = sources.get(key) || sources.get('local');
+    if (next !== source && !options.confirmed) {
+      if (window.FilePanel?.isOpen()) {
+        // 面板确认一次后继续切换，不再重复检查。
+        return FilePanel.beforeContextChange().then(allowed => allowed && activateSource(key, { ...options, confirmed: true }));
+      }
+      if (!confirmDiscardEditor()) return;
+    }
+    source.tasks = tasks;
+    source.selectedId = selectedId;
+    source = next;
+    tasks = source.tasks;
+    selectedId = source.selectedId;
+    localStorage.setItem('active-engine-key', source.key);
+    hideToc();          // 同时让上一个数据源里未完成的渲染作废
+    stopWatcher();
+    TerminalActivity.setActive(source.key);
+    syncSourceControls();
+    renderSidebar();
+    notifySourceChange();
+
+    if (problemOf(source)) {
+      clearView();
+      if (window.Engines) Engines.showUnavailable(source);
+      return;
+    }
+    if (window.Engines) Engines.hideUnavailable();
+    if (!source.loaded) { showSourceLoading(); return; }
+    if (window.FilePanel?.isOpen()) return;
+
+    const cached = parseInt(localStorage.getItem(selectedStorageKey()));
+    const task = tasks.find(t => t.id === selectedId) || tasks.find(t => t.id === cached) || tasks[0];
+    if (task) return selectTask(task.id);
+    selectedId = null;
+    showEmpty();
+  }
+
+  // 启动或 Engine 列表刷新后，回到用户上次使用的数据源。
+  let enginesSynced = false;
+  function restoreActiveSource() {
+    const wanted = activeKeyPreference();
+    if (wanted === 'local') {
+      if (sources.get('local').loaded) activateSource('local');
+    } else if (sources.has(wanted)) {
+      activateSource(wanted);
+    } else if (enginesSynced) {
+      activateSource('local');  // 保存的 Engine 已被移除
+    }
+  }
+
+  // 重新读取当前数据源并刷新界面。
+  async function refreshActive() {
+    const current = source;
+    await reloadSource(current.key);
+    if (current !== source) return;
+    tasks = current.tasks;
+    renderSidebar();
+    if (window.FilePanel?.isOpen()) return;
+    if (problemOf(current)) {
+      clearView();
+      if (window.Engines) Engines.showUnavailable(current);
+      return;
+    }
+    if (window.Engines) Engines.hideUnavailable();
+    if (selectedId) {
+      const task = tasks.find(t => t.id === selectedId);
+      if (task) renderPreview(task);
+      else { selectedId = null; current.selectedId = null; localStorage.removeItem(selectedStorageKey(current)); showEmpty(); }
+    }
+  }
+
+  // Engines 模块同步远程连接列表：新增、更新或移除数据源，保留已有的任务缓存。
+  function syncSources(servers) {
+    const seen = new Set();
+    for (const server of servers) {
+      const key = `remote:${server.id}`;
+      seen.add(key);
+      const existing = sources.get(key);
+      const desc = {
+        key, id: server.id, label: server.name, server,
+        tasksBase: `/api/remote-servers/${server.id}/tasks`,
+        groupsBase: `/api/remote-servers/${server.id}/task-groups`,
+        wsPath: `/api/remote-servers/${server.id}/terminal/ws`,
+      };
+      if (existing) Object.assign(existing, desc);
+      else sources.set(key, makeSource({ ...desc, caps: new Set() }));
+    }
+    for (const key of [...sources.keys()]) {
+      if (key !== 'local' && !seen.has(key)) removeSource(key);
+    }
+    enginesSynced = true;
+    notifySourceChange();
+  }
+
+  // 声明 Engine 的角色与能力；只读角色去掉所有写入类能力。
+  function setSourceAccess(key, info) {
+    const src = sources.get(key);
+    if (!src || src.local) return;
+    const capabilities = Array.isArray(info && info.capabilities) ? info.capabilities : [];
+    const readOnly = info && info.role === 'readonly';
+    src.role = (info && info.role) || null;
+    src.caps = new Set(capabilities.filter(capability => !(readOnly && /:(write|create|reorder)$/.test(capability))));
+    if (capabilities.includes('terminal:activity')) {
+      TerminalActivity.registerSource(key, { activityUrl: `/api/remote-servers/${src.id}/terminal-activity`, tasksBase: src.tasksBase });
+    } else {
+      TerminalActivity.unregisterSource(key);
+    }
+    if (src === source) { renderSidebar(); syncSourceControls(); }
+  }
+
+  function removeSource(key) {
+    const src = sources.get(key);
+    if (!src || src.local) return;
+    disposeTerminalsOf(key);
+    TerminalActivity.unregisterSource(key);
+    sources.delete(key);
+    if (src === source) {
+      source.tasks = tasks;
+      source = sources.get('local');
+      tasks = source.tasks;
+      selectedId = source.selectedId;
+    }
+  }
+
+  function disposeTerminalsOf(sourceKey, taskId) {
+    for (const inst of [...termInstances.values()]) {
+      if (inst.sourceKey === sourceKey && (taskId === undefined || inst.taskId === taskId)) {
+        disposeTerminalInstance(inst.taskId, inst.terminalId, sourceKey);
+      }
+    }
   }
 
   function selectTask(id) {
@@ -887,24 +1235,25 @@ const Tasks = (() => {
     }
     if (selectedId !== id && !confirmDiscardEditor()) return;
     selectedId = id;
-    if (window.RemoteTasks) {
-      window.RemoteTasks.setActiveEngine('local', { selectContent: false });
-      window.RemoteTasks.clearSelection();
-    }
-    localStorage.setItem('selectedTaskId', id);
+    source.selectedId = id;
+    localStorage.setItem(selectedStorageKey(), id);
     document.querySelectorAll('.task-nav-item').forEach(el => {
       el.classList.toggle('active', parseInt(el.dataset.id) === id);
     });
     // 恢复该任务上次停留的 tab
     const tab = getTaskTab(id);
     activeTab = tab;
-    contentTabs.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+    contentTabs.querySelectorAll('.tab-btn').forEach(b => {
+      b.classList.toggle('active', b.dataset.tab === tab);
+      b.disabled = false;
+      b.title = '';
+    });
     if (tab === 'shell') {
       const task = tasks.find(t => t.id === id);
       contentToolbar.style.visibility = 'visible';
       contentToolbar.style.pointerEvents = '';
       contentToolbar.style.display = task ? 'flex' : 'none';
-      document.getElementById('btn-share-md').style.display = task && task.md_path ? '' : 'none';
+      document.getElementById('btn-share-md').style.display = source.local && task && task.md_path ? '' : 'none';
       setEditButtonState(false);
       previewPane.style.display = 'none';
       hideToc();
@@ -945,7 +1294,7 @@ const Tasks = (() => {
       contentToolbar.style.display = 'flex';
       contentToolbar.style.visibility = 'visible';
       contentToolbar.style.pointerEvents = '';
-      document.getElementById('btn-share-md').style.display = task.md_path ? '' : 'none';
+      document.getElementById('btn-share-md').style.display = source.local && task.md_path ? '' : 'none';
       setEditButtonState(false);
       await renderTodos(task);
       return;
@@ -956,7 +1305,7 @@ const Tasks = (() => {
     const isTechnical = activeTab === 'doc';
     const hasDocumentRoot = isTechnical ? Boolean(task.md_path) : Boolean(task.work_dir || task.md_path);
     contentToolbar.style.display = hasDocumentRoot ? 'flex' : 'none';
-    document.getElementById('btn-share-md').style.display = isTechnical && task.md_path ? '' : 'none';
+    document.getElementById('btn-share-md').style.display = source.local && isTechnical && task.md_path ? '' : 'none';
     setEditButtonState(hasDocumentRoot);
 
     if (isTechnical && !task.md_path) {
@@ -984,8 +1333,10 @@ const Tasks = (() => {
 
   function setEditButtonState(enabled) {
     const button = document.getElementById('btn-edit-md');
-    button.disabled = !enabled;
-    button.title = enabled ? '在页面中编辑当前 Markdown' : '当前页面不是可编辑的 Markdown';
+    const writable = can('documents:write');
+    button.disabled = !enabled || !writable;
+    button.title = !writable ? '当前连接为只读，无法编辑'
+      : enabled ? '在页面中编辑当前 Markdown' : '当前页面不是可编辑的 Markdown';
   }
 
   function confirmDiscardEditor() {
@@ -1016,12 +1367,13 @@ const Tasks = (() => {
     content.innerHTML = '<div class="preview-loading">正在打开编辑器...</div>';
     try {
       const kind = documentKind(tab);
-      const res = await fetch(`/api/tasks/${task.id}/document/${kind}`, {
+      const sourceKey = source.key;
+      const res = await fetch(taskUrl(task.id, `/document/${kind}`), {
         headers: { 'X-Requested-With': 'XMLHttpRequest' },
       });
       if (!res.ok) throw new Error('文档读取失败');
-      const source = await res.text();
-      if (selectedId !== task.id || activeTab !== tab) return;
+      const text = await res.text();
+      if (selectedId !== task.id || activeTab !== tab || source.key !== sourceKey) return;
       content.classList.add('editor-active');
       content.innerHTML = `
         <div class="md-editor-shell">
@@ -1035,10 +1387,10 @@ const Tasks = (() => {
           <div class="md-editor-host" id="md-editor-host"></div>
         </div>`;
       let model, editor;
-      const modelUri = monaco.Uri.parse(`inmemory://task/${task.id}/${kind}.md`);
+      const modelUri = monaco.Uri.parse(`inmemory://task/${encodeURIComponent(source.key)}/${task.id}/${kind}.md`);
       const existingModel = monaco.editor.getModel(modelUri);
       if (existingModel) existingModel.dispose();
-      model = monaco.editor.createModel(source, 'markdown', modelUri);
+      model = monaco.editor.createModel(text, 'markdown', modelUri);
       editor = monaco.editor.create(document.getElementById('md-editor-host'), {
         model,
         theme: 'vs',
@@ -1063,10 +1415,10 @@ const Tasks = (() => {
         },
       });
       editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, saveDocumentEditor);
-      editorState = { task, tab, kind, editor, model, source, dirty: false, saving: false };
+      editorState = { task, tab, kind, editor, model, source: text, sourceKey, dirty: false, saving: false };
       editor.onDidChangeModelContent(() => {
         if (!editorState) return;
-        editorState.dirty = model.getValue() !== source;
+        editorState.dirty = model.getValue() !== text;
         document.getElementById('md-editor-status').textContent = editorState.dirty ? '未保存' : '未修改';
       });
       document.getElementById('md-editor-save').addEventListener('click', saveDocumentEditor);
@@ -1091,7 +1443,7 @@ const Tasks = (() => {
     saveButton.disabled = true;
     status.textContent = '保存中...';
     try {
-      await API.put(`/api/tasks/${state.task.id}/document/${state.kind}`, { content: state.model.getValue() });
+      await API.put(`${sources.get(state.sourceKey).tasksBase}/${state.task.id}/document/${state.kind}`, { content: state.model.getValue() });
       disposeDocumentEditor(state);
       editorState = null;
       document.getElementById('preview-content').classList.remove('editor-active');
@@ -1123,34 +1475,36 @@ const Tasks = (() => {
     const renderForId = task.id;
     content.innerHTML = '<div class="preview-loading">正在加载待办...</div>';
     try {
-      const todos = await API.get(`/api/tasks/${task.id}/todos`);
+      const todos = await API.get(taskUrl(task.id, '/todos'));
       if (selectedId !== renderForId || activeTab !== 'todos') return;
+      const writable = can('todos:write');
       const completedCount = todos.filter(todo => todo.completed).length;
       content.innerHTML = `
-        <section class="todo-page">
+        <section class="todo-page${writable ? '' : ' remote-readonly'}">
           <div class="todo-heading">
             <div>
               <h2>待办清单</h2>
-              <p>${todos.length ? `已完成 ${completedCount} / ${todos.length}` : '记录这个任务接下来要做的事情'}</p>
+              <p>${writable ? (todos.length ? `已完成 ${completedCount} / ${todos.length}` : '记录这个任务接下来要做的事情') : '当前连接为只读'}</p>
             </div>
           </div>
-          <form class="todo-add-form" id="todo-add-form">
+          ${writable ? `<form class="todo-add-form" id="todo-add-form">
             <input id="todo-new-content" type="text" maxlength="500" autocomplete="off" placeholder="添加一项待办，按 Enter 保存">
             <button type="submit">添加</button>
-          </form>
+          </form>` : ''}
           <div class="todo-list" id="todo-list">
             ${todos.length ? todos.map(todo => `
               <div class="todo-item${todo.completed ? ' completed' : ''}" data-todo-id="${todo.id}">
                 <label class="todo-check-wrap" title="${todo.completed ? '标记为未完成' : '标记为已完成'}">
-                  <input class="todo-check" type="checkbox" ${todo.completed ? 'checked' : ''}>
+                  <input class="todo-check" type="checkbox" ${todo.completed ? 'checked' : ''} ${writable ? '' : 'disabled'}>
                   <span class="todo-checkmark"></span>
                 </label>
-                <span class="todo-content" title="双击编辑">${escapeHtml(todo.content)}</span>
-                <button class="todo-delete" type="button" title="删除待办">×</button>
+                <span class="todo-content" ${writable ? 'title="双击编辑"' : ''}>${escapeHtml(todo.content)}</span>
+                ${writable ? '<button class="todo-delete" type="button" title="删除待办">×</button>' : ''}
               </div>`).join('') : '<div class="todo-empty">还没有待办事项</div>'}
           </div>
         </section>`;
 
+      if (!writable) return;
       const form = document.getElementById('todo-add-form');
       const input = document.getElementById('todo-new-content');
       form.addEventListener('submit', async event => {
@@ -1159,7 +1513,7 @@ const Tasks = (() => {
         if (!value) return;
         input.disabled = true;
         try {
-          await API.post(`/api/tasks/${task.id}/todos`, { content: value });
+          await API.post(taskUrl(task.id, '/todos'), { content: value });
           await renderTodos(task);
         } catch (e) {
           input.disabled = false;
@@ -1173,7 +1527,7 @@ const Tasks = (() => {
         const label = item.querySelector('.todo-content');
         checkbox.addEventListener('change', async () => {
           try {
-            await API.put(`/api/tasks/${task.id}/todos/${todoId}`, { completed: checkbox.checked });
+            await API.put(taskUrl(task.id, `/todos/${todoId}`), { completed: checkbox.checked });
             await renderTodos(task);
           } catch (e) {
             checkbox.checked = !checkbox.checked;
@@ -1183,7 +1537,7 @@ const Tasks = (() => {
         label.addEventListener('dblclick', () => editTodoInline(task, todoId, label));
         item.querySelector('.todo-delete').addEventListener('click', async () => {
           try {
-            await API.delete(`/api/tasks/${task.id}/todos/${todoId}`);
+            await API.delete(taskUrl(task.id, `/todos/${todoId}`));
             await renderTodos(task);
           } catch (e) {
             alert('删除待办失败: ' + e.message);
@@ -1216,7 +1570,7 @@ const Tasks = (() => {
         return;
       }
       try {
-        await API.put(`/api/tasks/${task.id}/todos/${todoId}`, { content });
+        await API.put(taskUrl(task.id, `/todos/${todoId}`), { content });
       } catch (e) {
         alert('更新待办失败: ' + e.message);
       }
@@ -1240,29 +1594,28 @@ const Tasks = (() => {
     return tab === 'readme' ? 'README.md' : tab === 'agent' ? 'AGENTS.md' : '技术方案';
   }
 
-  function isLocalPreview(task, tab) {
+  function isCurrentPreview(task, tab) {
     return selectedId === task.id && activeTab === tab && ['doc', 'readme', 'agent'].includes(tab)
-      && !editorState && previewPane.style.display !== 'none' && !window.RemoteTasks?.isSelected()
-      && (!window.RemoteTasks?.getActiveEngineKey || RemoteTasks.getActiveEngineKey() === 'local');
+      && !editorState && previewPane.style.display !== 'none';
   }
 
   async function loadMdContent(task, tab = activeTab) {
     const content = document.getElementById('preview-content');
-    const savedScroll = parseInt(localStorage.getItem(`mdScroll_${task.id}_${tab}`)) || 0;
+    const savedScroll = parseInt(localStorage.getItem(`mdScroll_${storageId(task.id)}_${tab}`)) || 0;
     const scrollTop = previewPane.scrollTop || savedScroll;
     // 记录本次渲染时的目标任务，异步回来后校验是否仍是当前任务/tab，防止竞态更新 UI
     const revision = ++mdRenderRevision;
-    const isCurrent = () => revision === mdRenderRevision && isLocalPreview(task, tab);
+    const isCurrent = () => revision === mdRenderRevision && isCurrentPreview(task, tab);
 
     try {
       const kind = documentKind(tab);
-      const res = await fetch(`/api/tasks/${task.id}/document/${kind}`, {
+      const res = await fetch(taskUrl(task.id, `/document/${kind}`), {
         headers: { 'X-Requested-With': 'XMLHttpRequest' },
       });
       if (!isCurrent()) return;
       if (res.status === 404) {
         setEditButtonState(false);
-        const canCreate = tab === 'readme' || tab === 'agent';
+        const canCreate = (tab === 'readme' || tab === 'agent') && can('documents:create');
         content.innerHTML = `
           <div class="document-empty">
             <p>${escapeHtml(documentLabel(tab))} 不存在</p>
@@ -1271,7 +1624,7 @@ const Tasks = (() => {
         if (canCreate) {
           document.getElementById('document-create-btn').addEventListener('click', async () => {
             try {
-              await API.post(`/api/tasks/${task.id}/document/${documentKind(tab)}`, {});
+              await API.post(taskUrl(task.id, `/document/${documentKind(tab)}`), {});
               setEditButtonState(true);
               await loadMdContent(task, tab);
               startWatcher(task, tab);
@@ -1285,7 +1638,7 @@ const Tasks = (() => {
       if (!res.ok) throw new Error('Failed');
       const text = await res.text();
       if (!isCurrent()) return;
-      content.innerHTML = renderMd(text, task.id);
+      content.innerHTML = (can('documents:write') ? '' : `<div class="remote-readonly-banner">${escapeHtml(source.label)} · 只读连接</div>`) + renderMd(text, task.id);
       MarkdownView.enhance(content);
       for (const script of Array.from(content.querySelectorAll('script'))) {
         if (!isCurrent()) return;
@@ -1325,12 +1678,12 @@ const Tasks = (() => {
   }
 
   function startWatcher(task, tab = activeTab) {
-    if (!isLocalPreview(task, tab)) return;
+    if (!isCurrentPreview(task, tab) || !can('documents:watch')) return;
     stopWatcher();
     const watchedTab = tab;
-    mdWatcher = new EventSource(`/api/tasks/${task.id}/document/${documentKind(tab)}/watch`);
+    mdWatcher = new EventSource(taskUrl(task.id, `/document/${documentKind(tab)}/watch`));
     mdWatcher.onmessage = (e) => {
-      if (e.data === 'changed' && isLocalPreview(task, watchedTab)) loadMdContent(task, watchedTab);
+      if (e.data === 'changed' && isCurrentPreview(task, watchedTab)) loadMdContent(task, watchedTab);
     };
     mdWatcher.onerror = () => stopWatcher();
   }
@@ -1346,14 +1699,14 @@ const Tasks = (() => {
     const isRelative = href => href && !href.startsWith('http') && !href.startsWith('/') && !href.startsWith('#') && !href.startsWith('mailto:');
     container.querySelectorAll('a[href]').forEach(a => {
       if (isRelative(a.getAttribute('href'))) {
-        a.href = `/api/tasks/${taskId}/file?path=${encodeURIComponent(a.getAttribute('href'))}`;
+        a.href = `${taskUrl(taskId, '/file')}?path=${encodeURIComponent(a.getAttribute('href'))}`;
         a.target = '_blank';
         a.rel = 'noopener noreferrer';
       }
     });
     container.querySelectorAll('img[src]').forEach(img => {
       if (isRelative(img.getAttribute('src'))) {
-        img.src = `/api/tasks/${taskId}/file?path=${encodeURIComponent(img.getAttribute('src'))}`;
+        img.src = `${taskUrl(taskId, '/file')}?path=${encodeURIComponent(img.getAttribute('src'))}`;
       }
     });
   }
@@ -1375,7 +1728,7 @@ const Tasks = (() => {
     tocList.innerHTML = '';
 
     // 加载折叠状态持久化
-    const storageKey = `toc-collapsed-${selectedId}`;
+    const storageKey = `toc-collapsed-${storageId(selectedId)}`;
     let collapsed = new Set();
     try { collapsed = new Set(JSON.parse(localStorage.getItem(storageKey)) || []); } catch(e) {}
 
@@ -1515,7 +1868,7 @@ const Tasks = (() => {
   function showEmpty() {
     const empty = document.getElementById('preview-empty');
     empty.style.display = 'flex';
-    empty.querySelector('span').textContent = '← 选择左侧任务查看详情';
+    empty.querySelector('span').textContent = source.local || tasks.length ? '← 选择左侧任务查看详情' : `${source.label} 暂无任务`;
     document.getElementById('preview-content').style.display = 'none';
     contentToolbar.style.display = 'none';
     contentTabs.style.display = 'none';
@@ -1526,23 +1879,31 @@ const Tasks = (() => {
     stopWatcher();
   }
 
+  // 新建任务可选的目标：本地 Engine 和可连接且可写的远程 Engine。
+  function targetLabel(src) {
+    if (src.local) return '本地 Engine';
+    return `${src.label}${problemOf(src) ? '（离线）' : ''}`;
+  }
+
+  function targetUsable(src) {
+    return !problemOf(src) && (src.caps === null || src.caps.has('tasks:write'));
+  }
+
   function buildTaskForm(task = {}) {
-    const remoteServers = !task.id && window.RemoteTasks ? RemoteTasks.getServers() : [];
-    const activeEngineKey = !task.id && window.RemoteTasks ? RemoteTasks.getActiveEngineKey() : 'local';
-    const initialGroups = activeEngineKey.startsWith('remote:') && window.RemoteTasks
-      ? RemoteTasks.getGroups(Number(activeEngineKey.slice('remote:'.length)))
-      : DEFAULT_FORM_GROUPS;
-    const initialRemoteTarget = !task.id && activeEngineKey.startsWith('remote:');
+    const creating = !task.id;
+    const preferred = sources.get(source.key);
+    const initialTarget = creating ? (targetUsable(preferred) ? preferred : sources.get('local')) : source;
+    const initialRemote = !initialTarget.local;
+    const initialGroups = initialTarget.groups;
     const selectedGroup = task.status || 'todo';
-    const enginePicker = task.id ? '' : `
+    const enginePicker = creating ? `
       <div class="form-group">
         <label class="form-label">所属 Engine</label>
         <select class="form-input" id="f-engine">
-          <option value="local" ${activeEngineKey === 'local' ? 'selected' : ''}>本地 Engine</option>
-          ${remoteServers.map(server => `<option value="remote:${server.id}" ${activeEngineKey === `remote:${server.id}` && server.status === 'online' ? 'selected' : ''} ${server.status !== 'online' ? 'disabled' : ''}>${escapeHtml(server.name)}${server.status === 'online' ? '' : '（离线）'}</option>`).join('')}
+          ${[...sources.values()].map(src => `<option value="${escapeHtml(src.key)}" ${src === initialTarget ? 'selected' : ''} ${targetUsable(src) ? '' : 'disabled'}>${escapeHtml(targetLabel(src))}</option>`).join('')}
         </select>
         <div class="form-hint" id="f-engine-hint">任务和工作目录将保存在所选 Engine 上</div>
-      </div>`;
+      </div>` : '';
     return `
       ${enginePicker}
       <div class="form-group">
@@ -1558,9 +1919,9 @@ const Tasks = (() => {
       }).join('')}
       <div class="form-hint">三个路径均可填写绝对 Markdown 文件路径；已有文件直接使用，缺失时创建。清空后恢复工作目录下的默认文件。</div>
       <div class="form-group">
-        <label class="form-label" id="f-work-dir-label">${initialRemoteTarget ? '远程工作目录' : '工作目录'}</label>
-        <input class="form-input" id="f-work-dir" type="text" value="${escapeHtml(task.work_dir || '')}" placeholder="${initialRemoteTarget ? '/home/user/projects/example' : '自动取 MD 文件所在目录'}" autocomplete="off">
-        <div class="form-hint" id="f-work-dir-hint">${initialRemoteTarget ? '填写远程 Engine 上的绝对路径；目录不存在时会自动创建，技术方案默认为该目录下的 DESIGN.md' : '文档和终端均使用此目录；优先读取已有 DESIGN.md、README.md、AGENTS.md，缺失时创建'}</div>
+        <label class="form-label" id="f-work-dir-label">${initialRemote ? '远程工作目录' : '工作目录'}</label>
+        <input class="form-input" id="f-work-dir" type="text" value="${escapeHtml(task.work_dir || '')}" placeholder="${initialRemote ? '/home/user/projects/example' : '自动取 MD 文件所在目录'}" autocomplete="off">
+        <div class="form-hint" id="f-work-dir-hint">${initialRemote ? '填写远程 Engine 上的绝对路径；目录不存在时会自动创建，技术方案默认为该目录下的 DESIGN.md' : '文档和终端均使用此目录；优先读取已有 DESIGN.md、README.md、AGENTS.md，缺失时创建'}</div>
       </div>
       <div class="form-group">
         <label class="form-label">优先级</label>
@@ -1599,33 +1960,28 @@ const Tasks = (() => {
     const engineHint = document.getElementById('f-engine-hint');
     const groupInput = document.getElementById('f-task-group');
 
+    // 创建时由“所属 Engine”决定目标；编辑时就是当前数据源。
+    const target = () => (engineInput ? sources.get(engineInput.value) : source) || source;
+
     function updateGroupOptions() {
       if (!groupInput || !engineInput) return;
       const previous = groupInput.value;
-      const groups = engineInput.value.startsWith('remote:') && window.RemoteTasks
-        ? RemoteTasks.getGroups(Number(engineInput.value.slice('remote:'.length)))
-        : DEFAULT_FORM_GROUPS;
+      const groups = target().groups;
       groupInput.innerHTML = groups.map(group => `<option value="${escapeHtml(group.key)}">${escapeHtml(group.name)}</option>`).join('');
       groupInput.value = groups.some(group => group.key === previous) ? previous : 'todo';
     }
 
-    function isRemoteTarget() {
-      return engineInput && engineInput.value.startsWith('remote:');
-    }
-
     function updateEnginePathFields() {
-      const remote = isRemoteTarget();
+      const remote = !target().local;
       if (engineHint) {
-        engineHint.textContent = remote
-          ? '任务和目录将创建在远程 Engine 上'
-          : '任务和工作目录将保存在本地 Engine 上';
+        engineHint.textContent = remote ? '任务和目录将创建在远程 Engine 上' : '任务和工作目录将保存在本地 Engine 上';
       }
       workDirLabel.textContent = remote ? '远程工作目录' : '工作目录';
       workDirInput.placeholder = remote ? '/home/user/projects/example' : '自动取 MD 文件所在目录';
       workDirHint.textContent = remote
         ? '填写远程 Engine 上的绝对路径；目录不存在时会自动创建，技术方案默认为该目录下的 DESIGN.md'
         : '文档和终端均使用此目录；优先读取已有 DESIGN.md、README.md、AGENTS.md，缺失时创建';
-      mdHint.textContent = remote && mdInput.value.trim() ? '路径将在远程 Engine 创建时校验' : '';
+      mdHint.textContent = '';
       mdHint.className = 'form-hint';
       mdInput.classList.remove('error');
     }
@@ -1641,14 +1997,16 @@ const Tasks = (() => {
     mdInput.addEventListener('blur', async () => {
       const val = mdInput.value.trim();
       if (!val) { mdHint.textContent = ''; mdHint.className = 'form-hint'; return; }
-      if (isRemoteTarget()) {
+      const dest = target();
+      if (dest.caps !== null && !dest.caps.has('paths:validate')) {
+        // 旧版 Engine 没有路径校验接口，创建时再校验。
         mdHint.textContent = '路径将在远程 Engine 创建时校验';
         mdHint.className = 'form-hint';
         mdInput.classList.remove('error');
         return;
       }
       try {
-        const result = await API.post('/api/tasks/validate-path', { md_path: val });
+        const result = await API.post(`${dest.tasksBase}/validate-path`, { md_path: val });
         if (result.valid) {
           mdHint.textContent = '✓ 文件存在';
           mdHint.className = 'form-hint ok';
@@ -1688,33 +2046,35 @@ const Tasks = (() => {
       titleInput.classList.remove('error');
 
       try {
+        const dest = target();
+        const payload = { title: title || (technical_path ? technical_path.split('/').pop().replace(/\.md$/i, '') : undefined), md_path, technical_path, readme_path, agent_path, work_dir, priority, due_date, status };
         if (existingTask.id) {
-          await API.put(`/api/tasks/${existingTask.id}`, { title: title || (technical_path ? technical_path.split('/').pop().replace(/\.md$/i, '') : undefined), md_path, technical_path, readme_path, agent_path, work_dir, priority, due_date, status });
+          await API.put(taskUrl(existingTask.id), payload);
           Modal.hide();
-          await Tasks.load();
-          if (selectedId === existingTask.id) {
-            const updated = tasks.find(t => t.id === existingTask.id);
-            if (updated) renderPreview(updated);
-          }
+          await refreshActive();
         } else {
-          const payload = { title: title || (technical_path ? technical_path.split('/').pop().replace(/\.md$/i, '') : undefined), md_path, technical_path, readme_path, agent_path, work_dir, priority, due_date, status };
-          if (isRemoteTarget()) {
-            const serverId = Number(engineInput.value.slice('remote:'.length));
-            await RemoteTasks.createTask(serverId, payload);
-            Modal.hide();
-          } else {
-            const newTask = await API.post('/api/tasks', payload);
-            Modal.hide();
-            tasks = await API.get('/api/tasks');
-            renderSidebar();
-            // 自动选中新建的任务，会正确触发 renderPreview，处理 TOC 显隐
-            selectTask(newTask.id);
-          }
+          const created = await API.post(dest.tasksBase, payload);
+          Modal.hide();
+          await showCreatedTask(dest, created);
         }
       } catch (e) {
         alert('操作失败: ' + e.message);
       }
     });
+  }
+
+  // 新建后切换到目标 Engine 并选中新任务。
+  async function showCreatedTask(dest, created) {
+    await reloadSource(dest.key);
+    dest.selectedId = created.id;
+    if (dest === source) {
+      tasks = source.tasks;
+      renderSidebar();
+      selectedId = null;       // 强制走完整的选中流程，处理 TOC 显隐
+      selectTask(created.id);
+    } else {
+      activateSource(dest.key);
+    }
   }
 
   function showEditModal(task) {
@@ -1727,34 +2087,27 @@ const Tasks = (() => {
     setupFormEvents();
   });
 
+  // load 读取本地任务；随后回到上次使用的数据源（远程 Engine 由 Engines 模块注册后再恢复）。
   return {
     async load() {
-      tasks = await API.get('/api/tasks');
-      const cached = parseInt(localStorage.getItem('selectedTaskId'));
-      if (cached && tasks.find(t => t.id === cached)) {
-        selectedId = cached;
-      }
-      renderSidebar();
-      const localActive = !window.RemoteTasks || RemoteTasks.getActiveEngineKey() === 'local';
-      if (!localActive) return;
-      if (window.FilePanel?.isOpen()) return;
-      if (selectedId) {
-        const task = tasks.find(t => t.id === selectedId);
-        if (task) renderPreview(task);
-        else { selectedId = null; localStorage.removeItem('selectedTaskId'); showEmpty(); }
-      }
+      await reloadSource('local');
+      restoreActiveSource();
     },
-    clearSelection() {
-      selectedId = null;
-      stopWatcher();
-      document.querySelectorAll('.task-nav-item').forEach(el => el.classList.remove('active'));
-    },
-    activateLocal() {
-      const cached = parseInt(localStorage.getItem('selectedTaskId'));
-      const task = tasks.find(item => item.id === cached) || tasks[0];
-      if (task) return selectTask(task.id);
-      else showEmpty();
-    },
+    refresh: refreshActive,
+    activateSource,
+    restoreActiveSource,
+    syncSources,
+    setSourceAccess,
+    reloadSource,
+    removeSource,
+    clearView,
+    problemOf: key => { const src = sources.get(key); return src ? problemOf(src) : null; },
+    getActiveKey: () => source.key,
+    getSource: key => sources.get(key) || null,
+    getSources: () => [...sources.values()],
+    onSourceChange: listener => sourceListeners.add(listener),
+    disposeSourceTerminals: key => disposeTerminalsOf(key),
+    showCreateGroup,
     openFileBrowser,
     confirmDiscardEditor,
     newTerminal: () => TerminalTabs.create(),

@@ -29,11 +29,11 @@ const TerminalTabs = (() => {
       button.setAttribute('aria-selected', String(row.terminal_id === current.active));
       button.textContent = row.title;
       if (typeof TerminalActivity !== 'undefined' && mounted.taskId != null) {
-        const activity = TerminalActivity.stateOf(mounted.taskId, row.terminal_id);
+        const activity = TerminalActivity.stateOf(mounted.taskId, row.terminal_id, mounted.sourceKey);
         if (activity !== 'idle') button.classList.add(`term-${activity}`);
         // Viewing a finished terminal counts as confirming it.
         if (activity === 'done' && row.terminal_id === current.active && mounted.viewing && mounted.viewing()) {
-          TerminalActivity.acknowledge(mounted.taskId, row.terminal_id);
+          TerminalActivity.acknowledge(mounted.taskId, row.terminal_id, mounted.sourceKey);
         }
       }
       button.addEventListener('click', () => {
@@ -46,11 +46,11 @@ const TerminalTabs = (() => {
     }
   }
 
-  // options.taskId enables activity indicators (local tasks only);
+  // options.taskId and options.sourceKey enable activity indicators for that Engine;
   // options.viewing() tells whether the active terminal is actually on screen.
   function show(scope, select, options = {}) {
     const changed = !mounted || mounted.scope !== scope;
-    mounted = { scope, select, taskId: options.taskId ?? null, viewing: options.viewing };
+    mounted = { scope, select, taskId: options.taskId ?? null, sourceKey: options.sourceKey || 'local', viewing: options.viewing };
     render();
     if (changed) {
       const revision = state(scope).revision;

@@ -2,6 +2,8 @@
 
 > 日期：2026-07-15
 
+> v2.29.0 远程 Engine 与本地功能一致：Client 前端改为“数据源”模式，本地与每个远程 Engine 共用同一套任务界面（`tasks.js`），连接管理拆为 `engines.js`（取代 `remote-tasks.js`）。远程任务现在支持页面内编辑文档、待办增删改、目录大纲、相对路径图片、文档变更自动刷新、完整的任务编辑与删除、拖拽排序、分组管理和终端运行状态；Finder / VS Code / 分享链接因依赖本机文件系统对远程任务隐藏。Engine 新增 `/v1` 接口：`PUT /tasks/reorder`、`GET /tasks/:id/file`、`GET /tasks/:id/document/:kind/watch`（SSE）、`POST /tasks/:id/document/:kind`、`POST /tasks/validate-path`、`GET /terminal-activity`、`POST /tasks/:id/terminal/ack`，并在 `/v1/info` 的 `capabilities` 中声明（`tasks:reorder`、`documents:create`、`documents:watch`、`files:assets`、`paths:validate`、`terminal:activity`），API 版本仍为 1；Client 代理新增对应转发（含不缓冲的流式转发和 `GET /api/remote-servers/:id/info`），远程文件响应带 `Content-Security-Policy: sandbox`。前端按角色与能力启用功能，`readonly` 连接和旧版 Engine 自动降级。
+
 > v2.28.3 Engine 连接失败处理：远程 Engine 离线、认证失效或任务加载失败时，不再显示任务列表、文档和终端等操作页面，改为显示“无法连接”提示（失败原因、服务地址、检查服务状态的步骤）以及重试/编辑/移除连接按钮；认证失效时提示重新配对。侧栏该 Engine 下只显示“服务不可用，请检查服务状态”。
 
 > v2.28.2 修正 v2.28.0 的过度删除：v2.28.0 误把 Client 连接其他 Engine 的功能（`/api/remote-servers`、`/api/remote-tokens`、`/v1` 接口、前端引擎栏与远程任务界面、远程 Engine 更新）一并删除，现已全部恢复；Client A 可继续连接 Client B，每个 Client 仍内置并暴露同一套 Engine 接口。真正移除的只有独立运行的 Engine 服务：`apps/engine`、`compose.engine.yml`、Engine 更新脚本与环境文件、`install.sh`/`bootstrap.sh` 的 `--mode engine`、`start:engine`、Docker engine 镜像目标及对应发布流程。`--mode engine` 现在会明确报错。

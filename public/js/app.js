@@ -59,7 +59,6 @@ const Modal = {
 
 const TerminalControls = {
   controller() {
-    if (window.RemoteTasks && window.RemoteTasks.isSelected()) return window.RemoteTasks;
     return window.Tasks || null;
   },
 
@@ -470,7 +469,7 @@ async function init() {
     `);
     document.getElementById('settings-cancel').addEventListener('click', Modal.hide);
     document.getElementById('settings-oss').addEventListener('click', () => TerminalImages.showSettings());
-    document.getElementById('settings-remote-tokens').addEventListener('click', () => RemoteTasks.showTokens());
+    document.getElementById('settings-remote-tokens').addEventListener('click', () => Engines.showTokens());
     if (updateStatus) Updates.bindSettings(updateStatus);
     document.getElementById('settings-save').addEventListener('click', async () => {
       const value = document.getElementById('settings-work-dir').value.trim();
@@ -488,13 +487,13 @@ async function init() {
     TerminalImages.load().catch(() => {}),
     Bookmarks.load(),
     Tasks.load(),
-    RemoteTasks.load(),
+    Engines.load(),
   ]);
   Updates.start();
 }
 
 // app.js 在其他业务脚本之前加载，以便提供 API、Modal、ContextMenu 等公共对象。
-// 等 DOMContentLoaded 再启动，确保后续的 bookmarks.js、tasks.js、remote-tasks.js
+// 等 DOMContentLoaded 再启动，确保后续的 bookmarks.js、tasks.js、engines.js
 // 已经完成声明。单用户模式移除登录请求后，不能再依赖异步请求隐式让出执行时机。
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', init, { once: true });

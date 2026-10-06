@@ -7,8 +7,7 @@ const root = path.resolve(__dirname, '..');
 
 test('安装应用中的终端使用动态 Flex 高度并跟随容器重新适配', () => {
   const css = fs.readFileSync(path.join(root, 'public', 'css', 'style.css'), 'utf8');
-  const localTerminal = fs.readFileSync(path.join(root, 'public', 'js', 'tasks.js'), 'utf8');
-  const remoteTerminal = fs.readFileSync(path.join(root, 'public', 'js', 'remote-tasks.js'), 'utf8');
+  const terminalSource = fs.readFileSync(path.join(root, 'public', 'js', 'tasks.js'), 'utf8');
   const viewport = fs.readFileSync(path.join(root, 'public', 'js', 'terminal-viewport.js'), 'utf8');
 
   assert.match(css, /body\s*\{[^}]*display:\s*flex[^}]*height:\s*100dvh/s);
@@ -21,10 +20,9 @@ test('安装应用中的终端使用动态 Flex 高度并跟随容器重新适�
   assert.match(css, /body\s*\{[^}]*padding-bottom:\s*env\(safe-area-inset-bottom, 0px\)/s);
   assert.match(css, /@media\s*\(display-mode: standalone\)[^{]*\{\s*body\s*\{[^}]*min-width:\s*0;[^}]*max-height:\s*none/s);
 
-  for (const source of [localTerminal, remoteTerminal]) {
-    assert.match(source, /el\.className = 'xterm-host'/);
-    assert.match(source, /TerminalViewport\.observe\(/);
-    assert.doesNotMatch(source, /el\.style\.cssText = 'width:100%;height:100%'/);
-  }
+  // Local and remote terminals share one implementation.
+  assert.match(terminalSource, /el\.className = 'xterm-host'/);
+  assert.match(terminalSource, /TerminalViewport\.observe\(/);
+  assert.doesNotMatch(terminalSource, /el\.style\.cssText = 'width:100%;height:100%'/);
   assert.match(viewport, /new ResizeObserver/);
 });

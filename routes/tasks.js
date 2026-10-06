@@ -5,6 +5,8 @@ const { exec } = require('child_process');
 const { randomUUID } = require('crypto');
 const db = require('../db');
 const requireAuth = require('../middleware/auth');
+const { serveFileWatch } = require('../lib/file-watch-sse');
+const { resolveAsset, validateMdPath } = require('../services/task-assets');
 const terminal = require('./terminal');
 const documents = require('../services/task-documents');
 const { createTaskFilesRouter } = require('./task-files');
@@ -336,11 +338,9 @@ router.get('/:id/file', (req, res) => {
   const uid = ownerFilter(req);
   const task = documents.resolveTask(db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, uid));
   if (!task || !task.md_path) return res.status(404).json({ error: 'No md_path' });
-  const rel = req.query.path;
-  if (!rel || rel.includes('..')) return res.status(400).json({ error: 'Invalid path' });
-  const filePath = path.join(path.dirname(task.md_path), rel);
-  if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found' });
-  res.sendFile(filePath);
+  const asset = resolveAsset(task, req.query.path);
+  if (asset.error) return res.status(asset.status).json({ error: asset.error });
+  res.sendFile(asset.file);
 });
 
 router.post('/:id/share', (req, res) => {
@@ -389,23 +389,7 @@ router.get('/:id/md/watch', (req, res) => {
   const task = documents.resolveTask(db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, uid));
   if (!task || !task.md_path || !task.md_path.endsWith('.md')) return res.status(404).end();
 
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-  res.flushHeaders();
-
-  let watcher;
-  try {
-    watcher = fs.watch(task.md_path, { persistent: false }, (event) => {
-      if (event === 'change') res.write('data: changed\n\n');
-    });
-  } catch (e) {
-    res.write('data: error\n\n');
-    return res.end();
-  }
-
-  const heartbeat = setInterval(() => res.write(': ping\n\n'), 20000);
-  req.on('close', () => { clearInterval(heartbeat); watcher.close(); });
+  serveFileWatch(req, res, task.md_path);
 });
 
 router.get('/:id/document/:kind/watch', (req, res) => {
@@ -415,31 +399,13 @@ router.get('/:id/document/:kind/watch', (req, res) => {
   const filePath = getTaskDocumentPath(task, req.params.kind);
   if (!filePath) return res.status(404).end();
 
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-  res.flushHeaders();
-
-  let watcher;
-  try {
-    watcher = fs.watch(filePath, { persistent: false }, event => {
-      if (event === 'change') res.write('data: changed\n\n');
-    });
-  } catch (e) {
-    res.write('data: error\n\n');
-    return res.end();
-  }
-  const heartbeat = setInterval(() => res.write(': ping\n\n'), 20000);
-  req.on('close', () => { clearInterval(heartbeat); watcher.close(); });
+  serveFileWatch(req, res, filePath);
 });
 
 router.post('/validate-path', (req, res) => {
-  const { md_path } = req.body;
-  if (!md_path) return res.status(400).json({ error: 'md_path is required' });
-  if (!md_path.startsWith('/') && !(/^[A-Za-z]:\\/.test(md_path))) return res.json({ valid: false, error: 'Must be an absolute path' });
-  if (!md_path.endsWith('.md')) return res.json({ valid: false, error: 'Must end with .md' });
-  if (!fs.existsSync(md_path)) return res.json({ valid: false, error: 'File does not exist' });
-  res.json({ valid: true, filename: path.basename(md_path, '.md'), work_dir: path.dirname(md_path) });
+  const result = validateMdPath(req.body.md_path);
+  if (result.status) return res.status(result.status).json({ error: result.error });
+  res.json(result);
 });
 
 module.exports = router;

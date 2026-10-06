@@ -6,6 +6,7 @@ const { decryptToken, encryptToken } = require('../lib/token-crypto');
 const { normalizeBaseUrl, request, assertRemoteTerminal } = require('../services/remote-client');
 const { inspectRemoteAddress, persistRemoteServerEdit } = require('../services/remote-server-settings');
 const remoteUpdates = require('../services/remote-engine-updates');
+const { streamRemote } = require('../services/remote-stream');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -193,6 +194,63 @@ router.post('/:id/apply-update', async (req, res) => {
   } catch (error) {
     res.status(error.statusCode || 502).json({ error: safeError(error) });
   }
+});
+
+// ── 与本地 /api/tasks 对齐的透传接口：Engine 的能力与 Client 一致 ──
+// 返回 { row, token }；找不到连接时已经响应 404。
+function remoteTarget(req, res) {
+  const row = getServer(req);
+  if (!row) { res.status(404).json({ error: 'REMOTE_NOT_FOUND' }); return null; }
+  return { row, token: decryptToken(row.token_cipher, config.sessionSecret) };
+}
+
+// 把 JSON 请求原样转给 Engine；upstream 由已校验的路径参数拼出。
+function forwardJson(method, upstream, { success = 200 } = {}) {
+  return async (req, res) => {
+    const target = remoteTarget(req, res);
+    if (!target) return;
+    try {
+      const body = ['GET', 'DELETE'].includes(method) ? undefined : (req.body ?? {});
+      const result = await request(target.row.base_url, upstream(req), target.token, { method, ...(body === undefined ? {} : { body }) });
+      res.status(success).json(result);
+    } catch (error) { res.status(error.statusCode || 502).json({ error: safeError(error) }); }
+  };
+}
+
+const taskPath = req => `/v1/tasks/${encodeURIComponent(req.params.taskId)}`;
+const documentKindOk = (req, res, next) => (['technical', 'readme', 'agent'].includes(req.params.kind)
+  ? next() : res.status(400).json({ error: 'INVALID_DOCUMENT_KIND' }));
+
+// 连接的能力与角色，前端据此启用/禁用功能（旧版 Engine 没有的能力会被禁用）。
+router.get('/:id/info', forwardJson('GET', () => '/v1/info'));
+
+// "reorder" 与 "validate-path" 必须先于 /:id/tasks/:taskId 注册。
+router.put('/:id/tasks/reorder', forwardJson('PUT', () => '/v1/tasks/reorder'));
+router.post('/:id/tasks/validate-path', forwardJson('POST', () => '/v1/tasks/validate-path'));
+
+router.post('/:id/tasks/:taskId/document/:kind', documentKindOk,
+  forwardJson('POST', req => `${taskPath(req)}/document/${req.params.kind}`, { success: 201 }));
+
+router.post('/:id/tasks/:taskId/todos', forwardJson('POST', req => `${taskPath(req)}/todos`, { success: 201 }));
+router.put('/:id/tasks/:taskId/todos/:todoId', forwardJson('PUT', req => `${taskPath(req)}/todos/${encodeURIComponent(req.params.todoId)}`));
+router.delete('/:id/tasks/:taskId/todos/:todoId', forwardJson('DELETE', req => `${taskPath(req)}/todos/${encodeURIComponent(req.params.todoId)}`));
+
+router.get('/:id/terminal-activity', forwardJson('GET', () => '/v1/terminal-activity'));
+router.post('/:id/tasks/:taskId/terminal/ack', forwardJson('POST', req => `${taskPath(req)}/terminal/ack`));
+
+// 文档里引用的相对文件（图片等）与文档变更事件流：不缓冲，直接转发。
+router.get('/:id/tasks/:taskId/file', (req, res) => {
+  const target = remoteTarget(req, res);
+  if (!target) return;
+  const query = new URLSearchParams();
+  if (req.query.path !== undefined) query.set('path', String(req.query.path));
+  streamRemote(req, res, target.row.base_url, target.token, `${taskPath(req)}/file?${query}`, { sandbox: true });
+});
+
+router.get('/:id/tasks/:taskId/document/:kind/watch', documentKindOk, (req, res) => {
+  const target = remoteTarget(req, res);
+  if (!target) return;
+  streamRemote(req, res, target.row.base_url, target.token, `${taskPath(req)}/document/${req.params.kind}/watch`, { sse: true });
 });
 
 router.get('/:id/tasks', async (req, res) => {

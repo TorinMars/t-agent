@@ -1,10 +1,10 @@
-# 交接说明（2026-10 · 截至 v2.29.3）
+# 交接说明（2026-10 · 截至 v2.29.4）
 
 给接手的 Claude / 开发者：先读 `AGENTS.md`（开发与发布规则）和本文件，再动手。
 
 ## 当前状态
 
-- 分支 `main`，最新发布 **v2.29.3**，已推送到 `origin/main`，工作区干净。
+- 分支 `main`，最新发布 **v2.29.4**，已推送到 `origin/main`，工作区干净。
 - 用户通过客户端检测 `main` 上的 `VERSION.json` 更新，代码改动完成并验证后按 `AGENTS.md` 升版本、提交、推送（用户已授权自动发布）。
 - 开发机已换成性能正常的 macOS，可以跑全量测试和浏览器脚本（先 `npm ci`、`npx playwright install chromium`）。`npm test` 并发时 pty 用例偶发 `posix_spawnp failed`，单独跑或 `node --test test/` 均通过。
 
@@ -21,6 +21,7 @@
 | 2.29.1 | **移除全部 Docker 部署与镜像构建**：删除 `Dockerfile`、`compose.client.yml`、`docker-client.sh`、`docker/`、`.github/workflows/docker-client.yml`、相关脚本、测试和 `docs/DOCKER_CLIENT.md`；`update-manager` 不再有 `docker` 安装类型。`public/js/engines.js` 仍保留对**远程** Engine 上报 `install_type: docker` 的展示处理（旧 Docker Engine 仍可能存在） |
 | 2.29.2 | 终端状态跑马灯改为沿边框路径（`offset-path`）按距离匀速移动，取代按角度旋转的 `conic-gradient`（后者在矩形四边的线速度忽快忽慢） |
 | 2.29.3 | macOS 没有 `/proc`，前台进程只能拿到 `node`，没有 hook 时的输出兜底判定失效、Codex/Claude 跑马灯一直转；改为用 `ps -t <tty>` 读取前台进程组命令行（`lib/terminal-activity.js`） |
+| 2.29.4 | 修复终端 tab 在“正在查看的终端完成”时整组翻倍：`TerminalActivity.acknowledge` 同步通知监听器并重入 `TerminalTabs.render()`，改为先画完再确认（`test/terminal-tabs.test.js`）；跑马灯亮点缩短变细、被元素裁剪并加淡色轨道 |
 
 ## 架构要点（改代码前必读）
 

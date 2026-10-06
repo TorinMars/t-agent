@@ -764,6 +764,15 @@ body.tools-open .layout, body.tools-open .quicklinks-bar { display: none; }
 }
 .task-nav-item.term-running,
 .task-nav-item.term-done { --term-r: 0px; }
+.task-nav-item.term-running,
+.engine-tab.term-running,
+.terminal-tab.term-running {
+  overflow: hidden; /* 亮点转角时不超出元素边界 */
+}
+/* 淡色轨道，让亮点看起来是沿边框在跑 */
+.engine-tab.term-running,
+.terminal-tab.term-running { box-shadow: inset 0 0 0 1px #f0a50040; }
+.terminal-tabs .terminal-tab.active.term-running { box-shadow: inset 0 0 0 1px #f0a50040, inset 0 -2px #70a5ff; }
 .task-nav-item.term-running::after,
 .engine-tab.term-running::after,
 .terminal-tab.term-running::after {
@@ -771,12 +780,12 @@ body.tools-open .layout, body.tools-open .quicklinks-bar { display: none; }
   position: absolute;
   top: 0;
   left: 0;
-  width: 36px;
+  width: 22px;
   height: 3px;
   border-radius: 2px;
   pointer-events: none;
-  background: linear-gradient(90deg, transparent, #f0a500 65%, #ffd666);
-  box-shadow: 0 0 6px 1px #f0a500aa;
+  background: linear-gradient(90deg, #f0a50000, #f0a500 60%, #ffd666);
+  box-shadow: 0 0 3px #f0a500aa;
   offset-path: inset(2px round var(--term-r));
   offset-rotate: auto;
   offset-anchor: 50% 50%;

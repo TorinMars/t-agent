@@ -19,6 +19,8 @@ const TerminalTabs = (() => {
     const current = state(scope);
     const deleteButton = document.getElementById('btn-terminal-delete');
     if (deleteButton) deleteButton.hidden = current.active === 'default';
+    const buttons = [];
+    const acknowledgements = [];
     for (const row of current.rows) {
       const button = document.createElement('button');
       button.type = 'button';
@@ -33,7 +35,7 @@ const TerminalTabs = (() => {
         if (activity !== 'idle') button.classList.add(`term-${activity}`);
         // Viewing a finished terminal counts as confirming it.
         if (activity === 'done' && row.terminal_id === current.active && mounted.viewing && mounted.viewing()) {
-          TerminalActivity.acknowledge(mounted.taskId, row.terminal_id, mounted.sourceKey);
+          acknowledgements.push([mounted.taskId, row.terminal_id, mounted.sourceKey]);
         }
       }
       button.addEventListener('click', () => {
@@ -42,8 +44,12 @@ const TerminalTabs = (() => {
         render();
         select();
       });
-      strip.appendChild(button);
+      buttons.push(button);
     }
+    strip.replaceChildren(...buttons);
+    // acknowledge() notifies listeners synchronously and they call render() again, so it
+    // must run after the strip is complete; re-entering mid-loop duplicated every tab.
+    for (const args of acknowledgements) TerminalActivity.acknowledge(...args);
   }
 
   // options.taskId and options.sourceKey enable activity indicators for that Engine;

@@ -2,6 +2,8 @@
 
 > 日期：2026-07-15
 
+> v2.29.4 修复终端 tab 在当前终端状态变为完成时整组重复渲染（确认完成会同步触发重绘，现改为先完成渲染再确认）；跑马灯亮点更短更细，由 tab 裁剪并带淡色轨道。
+
 > v2.29.2 终端状态跑马灯改为沿边框路径（`offset-path`）按距离匀速移动的亮点，转角与长短边速度一致，不再使用按角度旋转的 `conic-gradient`。
 
 > v2.29.1 移除全部 Docker 部署与镜像构建（Dockerfile、Compose、`docker-client.sh`、GitHub Actions 镜像发布及相关测试文档），仅保留原生、Git 和压缩包安装；远程 Engine 若上报 Docker 安装类型，Client 仍只展示、不触发更新。

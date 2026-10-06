@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const https = require('https');
 const { execFileSync } = require('child_process');
-const { logUpdate, runUpdateCommand } = require('../lib/update-command');
+const { logUpdate, runUpdateCommand, runWithProgress } = require('../lib/update-command');
 const { requiresRestart } = require('../lib/update-impact');
 const db = require('../db');
 const config = require('../config');
@@ -237,14 +237,34 @@ function execGit(args, timeout = 60_000) {
   }, { stage: `git:${args[0]}`, errorCode: `GIT_${String(args[0]).toUpperCase()}_FAILED` });
 }
 
+// 更新里的 npm 网络请求：重试少、超时短，网络不通时一两分钟内报错，而不是等满 10 分钟。
+// 用户已经在环境里设置过的值不覆盖。http 日志级别让每次下载都有一行输出，界面才看得出还在动。
+const NPM_UPDATE_ENV = {
+  npm_config_fetch_retries: '1',
+  npm_config_fetch_retry_mintimeout: '2000',
+  npm_config_fetch_retry_maxtimeout: '10000',
+  npm_config_fetch_timeout: '60000',
+  npm_config_loglevel: 'http',
+};
+
+function npmEnv() {
+  const env = { ...process.env, PATH: executablePath() };
+  for (const [key, value] of Object.entries(NPM_UPDATE_ENV)) if (env[key] === undefined) env[key] = value;
+  return env;
+}
+
 function execNpm(args, stage) {
-  saveState({ status: 'updating', stage, message: stage === 'installing' ? '正在安装依赖' : '正在构建前端资源' });
-  return runUpdateCommand(process.platform === 'win32' ? 'npm.cmd' : 'npm', args, {
-    cwd: projectRoot,
-    env: { ...process.env, PATH: executablePath() },
-    timeout: 10 * 60_000,
-    maxBuffer: 2 * 1024 * 1024,
-  }, { stage, errorCode: `NPM_${stage.toUpperCase()}_FAILED`, streamOutput: true });
+  const label = stage === 'installing' ? '正在安装依赖' : '正在构建前端资源';
+  return runWithProgress(
+    label,
+    onOutput => runUpdateCommand(process.platform === 'win32' ? 'npm.cmd' : 'npm', args, {
+      cwd: projectRoot,
+      env: npmEnv(),
+      timeout: 10 * 60_000,
+      maxBuffer: 2 * 1024 * 1024,
+    }, { stage, errorCode: `NPM_${stage.toUpperCase()}_FAILED`, streamOutput: true, onOutput }),
+    message => saveState({ status: 'updating', stage, message }),
+  );
 }
 
 async function runApply({ force = false } = {}) {
@@ -385,4 +405,4 @@ function start() {
   timer.unref();
 }
 
-module.exports = { apply, check, markNotified, publicState, readLocalManifest, start };
+module.exports = { apply, check, markNotified, publicState, readLocalManifest, start, npmEnv };

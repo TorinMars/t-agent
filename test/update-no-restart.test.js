@@ -25,7 +25,9 @@ for (const changed of ['public/js/mobile.js', 'services/engine-tasks.js']) {
         if (args[0] === 'rev-list') return '0 1';
         if (args[0] === 'rev-parse') return 'running';
         return '';
-      } },
+      },
+      // 进度汇报与本测试无关：直接执行命令。
+      runWithProgress: (label, run) => run(() => {}) },
       '../lib/git-update-workspace': { prepareWorkspace: async () => null },
     };
     const context = { require: name => mocks[name] || realRequire(name), module: { exports: {} },

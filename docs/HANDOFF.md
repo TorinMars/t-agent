@@ -1,10 +1,10 @@
-# 交接说明（2026-10 · 截至 v2.30.2）
+# 交接说明（2026-10 · 截至 v2.30.3）
 
 给接手的 Claude / 开发者：先读 `AGENTS.md`（开发与发布规则）和本文件，再动手。
 
 ## 当前状态
 
-- 分支 `main`，最新发布 **v2.30.2**，已推送到 `origin/main`，工作区干净。
+- 分支 `main`，最新发布 **v2.30.3**，已推送到 `origin/main`，工作区干净。
 - 用户通过客户端检测 `main` 上的 `VERSION.json` 更新，代码改动完成并验证后按 `AGENTS.md` 升版本、提交、推送（用户已授权自动发布）。
 - 开发机已换成性能正常的 macOS，可以跑全量测试和浏览器脚本（先 `npm ci`、`npx playwright install chromium`）。`npm test` 并发时 pty 用例偶发 `posix_spawnp failed`，单独跑或 `node --test test/` 均通过。
 
@@ -25,6 +25,7 @@
 | 2.30.0 | ① 布局对调：引擎切换栏在顶部（`#engine-tabs`），主导航（Tasks / 实用工具，`.main-nav`）在左侧，工具面板放进 `.layout`，工具页左侧导航保持可见；移除引擎栏收起功能。② 实用工具跟随引擎：`public/js/tools.js` 按当前引擎改用 `/api/pm2` 或 `/api/remote-servers/:id/pm2`；Engine 新增 `/v1/pm2/*` 与能力 `pm2:manage`，Client 代理旧版 Engine 返回 `501 PM2_UNSUPPORTED`。③ **所有 Engine 连接统一为管理权限**：`services/engine-auth.js` 忽略请求角色、鉴权一律 owner（含此前签发的只读/操作令牌，库中记录未改），配对 UI 与 CLI 不再选角色 |
 | 2.30.1 | ① 第三方前端库自托管：marked 15.0.12、mermaid 12.1.0、xterm 5.5.0、addon-fit 0.10.0 固定版本放在 `public/vendor`（`scripts/vendor-libs.json` 记录地址与 SHA-256，`scripts/fetch-vendor.js` 下载校验），主页面与分享页不再访问 CDN；mermaid 懒加载；`/vendor` 单独启用 gzip（新增依赖 `compression`）并对带版本号的文件长期缓存。注意：原来不带版本的 marked 地址实际返回的是 15.0.12 而不是最新的 18.x，这里固定的就是它。② macOS 前台进程识别改为全局共享的异步 `ps`（原先每个终端每 0.5 秒同步执行一次）。③ 新增 `.github/workflows/test.yml`，推送时只跑 `node --test test/`（Linux 上首次运行结果尚未确认） |
 | 2.30.2 | 修复右键菜单（`#context-menu`）被顶部栏盖住：引擎标签移到顶部栏后，菜单在顶部栏范围内弹出，而“已安装应用”（window-controls-overlay）模式下顶部栏是 `z-index: 1000` 的系统拖动区域；菜单提到 `z-index: 1100` 并声明 `-webkit-app-region: no-drag`（`scripts/test-context-menu-browser.cjs`）。其它弹层（普通 modal 等）在该模式下仍低于顶部栏，属原有行为。另：修复 CI 的 `npm ci` 失败——本机 npm 配的是公司内部镜像，v2.30.1 新增 `compression` 时把 `npm.corp.kuaishou.com` 地址写进了 `package-lock.json`，已改回 registry.npmjs.org，并新增 `test/lockfile.test.js` 防止再次混入；**以后在本机装依赖请加 `--registry=https://registry.npmjs.org`** |
+| 2.30.3 | 修复“引擎更新停在安装依赖、界面不再变动”：更新里的 `npm ci` 原先用 npm 默认的重试/超时（对一个不可达地址实测 70.5 秒才报错，v2.30.1 的锁文件里有 3 个这样的内网地址），且界面只显示固定文字。现在 `lib/update-command.js` 的 `runWithProgress` 每 2 秒把“已用时间 + npm 最近一行输出”写进更新状态（本机与远程 Engine 界面都直接显示 `status.message`），30 秒无输出提示可能网络不通；`services/update-manager.js` 的 `npmEnv()` 设置 `fetch-retries=1`、`fetch-timeout=60s`、`loglevel=http`（同样的不可达地址 2.4 秒报错，已设置的环境值不覆盖） |
 
 ## 架构要点（改代码前必读）
 

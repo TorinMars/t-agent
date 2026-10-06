@@ -2,6 +2,8 @@
 
 > 日期：2026-07-15
 
+> v2.29.2 终端状态跑马灯改为沿边框路径（`offset-path`）按距离匀速移动的亮点，转角与长短边速度一致，不再使用按角度旋转的 `conic-gradient`。
+
 > v2.29.1 移除全部 Docker 部署与镜像构建（Dockerfile、Compose、`docker-client.sh`、GitHub Actions 镜像发布及相关测试文档），仅保留原生、Git 和压缩包安装；远程 Engine 若上报 Docker 安装类型，Client 仍只展示、不触发更新。
 
 > v2.29.0 远程 Engine 与本地功能一致：Client 前端改为“数据源”模式，本地与每个远程 Engine 共用同一套任务界面（`tasks.js`），连接管理拆为 `engines.js`（取代 `remote-tasks.js`）。远程任务现在支持页面内编辑文档、待办增删改、目录大纲、相对路径图片、文档变更自动刷新、完整的任务编辑与删除、拖拽排序、分组管理和终端运行状态；Finder / VS Code / 分享链接因依赖本机文件系统对远程任务隐藏。Engine 新增 `/v1` 接口：`PUT /tasks/reorder`、`GET /tasks/:id/file`、`GET /tasks/:id/document/:kind/watch`（SSE）、`POST /tasks/:id/document/:kind`、`POST /tasks/validate-path`、`GET /terminal-activity`、`POST /tasks/:id/terminal/ack`，并在 `/v1/info` 的 `capabilities` 中声明（`tasks:reorder`、`documents:create`、`documents:watch`、`files:assets`、`paths:validate`、`terminal:activity`），API 版本仍为 1；Client 代理新增对应转发（含不缓冲的流式转发和 `GET /api/remote-servers/:id/info`），远程文件响应带 `Content-Security-Policy: sandbox`。前端按角色与能力启用功能，`readonly` 连接和旧版 Engine 自动降级。

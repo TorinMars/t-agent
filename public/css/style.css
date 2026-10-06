@@ -749,12 +749,9 @@ body.tools-open .layout, body.tools-open .quicklinks-bar { display: none; }
   color: var(--priority-high);
 }
 
-/* 终端状态：执行中=外圈跑马灯，完成待确认=呼吸灯。左侧任务项与终端 tab 共用。 */
-@property --term-angle {
-  syntax: '<angle>';
-  initial-value: 0deg;
-  inherits: false;
-}
+/* 终端状态：执行中=外圈跑马灯，完成待确认=呼吸灯。左侧任务项与终端 tab 共用。
+   跑马灯是沿边框路径移动的亮点（offset-path），按路径距离匀速运动，转角和长短边速度一致；
+   不使用角度旋转的 conic-gradient，否则矩形四边的线速度会忽快忽慢。 */
 .task-nav-item.term-running,
 .task-nav-item.term-done,
 .engine-tab.term-running,
@@ -763,22 +760,27 @@ body.tools-open .layout, body.tools-open .quicklinks-bar { display: none; }
 .terminal-tab.term-done {
   position: relative;
   opacity: 1;
+  --term-r: 4px;
 }
+.task-nav-item.term-running,
+.task-nav-item.term-done { --term-r: 0px; }
 .task-nav-item.term-running::after,
 .engine-tab.term-running::after,
 .terminal-tab.term-running::after {
   content: '';
   position: absolute;
-  inset: 0;
-  padding: 2px;
-  border-radius: inherit;
+  top: 0;
+  left: 0;
+  width: 36px;
+  height: 3px;
+  border-radius: 2px;
   pointer-events: none;
-  background: conic-gradient(from var(--term-angle), transparent 0 55%, #f0a500 80%, #ffd666 100%);
-  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor;
-  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
-  filter: drop-shadow(0 0 3px #f0a500aa);
-  animation: term-marquee 1.6s linear infinite;
+  background: linear-gradient(90deg, transparent, #f0a500 65%, #ffd666);
+  box-shadow: 0 0 6px 1px #f0a500aa;
+  offset-path: inset(2px round var(--term-r));
+  offset-rotate: auto;
+  offset-anchor: 50% 50%;
+  animation: term-marquee 2.4s linear infinite;
 }
 .task-nav-item.term-done::after,
 .engine-tab.term-done::after,
@@ -792,7 +794,8 @@ body.tools-open .layout, body.tools-open .quicklinks-bar { display: none; }
   animation: term-breathe 2s ease-in-out infinite;
 }
 @keyframes term-marquee {
-  to { --term-angle: 360deg; }
+  from { offset-distance: 0%; }
+  to   { offset-distance: 100%; }
 }
 @keyframes term-breathe {
   0%, 100% { opacity: 0.25; box-shadow: 0 0 0 0 #3fb95000, inset 0 0 0 0 #3fb95000; }
@@ -801,7 +804,10 @@ body.tools-open .layout, body.tools-open .quicklinks-bar { display: none; }
 @media (prefers-reduced-motion: reduce) {
   .task-nav-item.term-running::after,
   .engine-tab.term-running::after,
-  .terminal-tab.term-running::after { animation: none; background: #f0a500; }
+  .terminal-tab.term-running::after {
+    animation: none; offset-path: none; inset: 0; width: auto; height: auto;
+    background: none; border: 2px solid #f0a500; border-radius: inherit; box-shadow: none;
+  }
   .task-nav-item.term-done::after,
   .engine-tab.term-done::after,
   .terminal-tab.term-done::after { animation: none; }

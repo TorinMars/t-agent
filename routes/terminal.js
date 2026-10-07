@@ -127,7 +127,11 @@ function getOrCreateSession(ownerTaskId, workDir, dirWarning, id = 'default') {
   const row = id === 'default'
     ? db.prepare('SELECT buffer FROM terminal_logs WHERE task_id = ?').get(ownerTaskId)
     : db.prepare('SELECT buffer FROM task_terminals WHERE task_id = ? AND terminal_id = ?').get(ownerTaskId, id);
-  const savedBuffer = (dirWarning || '') + (row ? row.buffer : '');
+  // 恢复的历史来自一个已经不存在的 PTY（服务重启、崩溃、手动关闭）。被杀掉的程序来不及关闭它打开的
+  // 鼠标/焦点上报模式，若原样回放，浏览器终端会继续把鼠标移动当成输入灌进新的 shell，
+  // 表现为提示符后不断出现 35;39;58M 之类的字符。所以恢复时统一复位这些输入模式。
+  const staleModes = row && row.buffer ? RESET_INPUT_MODES : '';
+  const savedBuffer = (dirWarning || '') + (row ? row.buffer : '') + staleModes;
 
   let pty;
   let shell;

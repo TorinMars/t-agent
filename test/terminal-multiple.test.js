@@ -182,3 +182,21 @@ test('natural PTY exit drains final live bytes and snapshot before closing', asy
   assert.equal(db.prepare('SELECT buffer FROM task_terminals WHERE task_id = ? AND terminal_id = ?').get(task.id, added.terminal_id).buffer, 'last-line');
   terminal.controlSession(task.id, 'delete', added.terminal_id);
 });
+
+test('restoring history from a dead PTY switches off the mouse modes it left enabled', async () => {
+  const other = tasks.createTask('owner', { title: 'killed program' });
+  // A TUI (e.g. Claude Code) was killed by a service restart before it could disable mouse reporting.
+  db.prepare('INSERT INTO terminal_logs (task_id, buffer) VALUES (?, ?)')
+    .run(other.id, 'tui output\x1b[?1003h\x1b[?1006h\x1b[?1000h\x1b[?1002h');
+  const ws = new Socket();
+  terminal.handleWs(ws, { url: `/terminal/ws?taskId=${other.id}&terminalId=default` }, { login: 'owner' });
+  await ws.waitFor(1);
+  const replay = JSON.parse(ws.sent[0]).data;
+  assert.match(replay, /tui output/);
+  for (const mode of ['1000h', '1002h', '1003h', '1006h']) {
+    assert.ok(!replay.includes(`\x1b[?${mode}`), `replay must not re-enable ?${mode}`);
+  }
+  terminal.closeTaskTerminals(other.id);
+  const persisted = db.prepare('SELECT buffer FROM terminal_logs WHERE task_id = ?').get(other.id).buffer;
+  assert.ok(persisted.endsWith('\x1b[?1003l\x1b[?1004l\x1b[?1005l\x1b[?1006l\x1b[?1015l\x1b[?1016l\x1b[?25h'), 'the reset is stored so later replays stay clean');
+});

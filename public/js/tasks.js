@@ -1255,6 +1255,9 @@ const Tasks = (() => {
     selectedId = id;
     source.selectedId = id;
     localStorage.setItem(selectedStorageKey(), id);
+    // 标签栏（技术方案 / README / AGENTS.md / 待办 / 终端）必须随选中任务显示；
+    // 上次停在“终端”标签时不会渲染文档，不能指望 renderPreview 来显示它。
+    contentTabs.style.display = 'flex';
     document.querySelectorAll('.task-nav-item').forEach(el => {
       el.classList.toggle('active', parseInt(el.dataset.id) === id);
     });

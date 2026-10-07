@@ -40,7 +40,7 @@ function setup() {
   // Expose only task selection to the fixture; switching uses the real tabs,
   // controller cache, connection and explicit reopen implementations.
   const marker = '  return {\n    async load()';
-  const open = "_open() { const task = { id: 7 }; tasks = [task]; selectedId = 7; activeTab = 'shell'; connectTerminal(task); }, _openRemote(id = 1) { const key = 'remote:' + id; if (!sources.has(key)) syncSources([1, 2].map(n => ({ id: n, name: 'Engine ' + n, base_url: 'http://engine' }))); const other = sources.get(key); source.tasks = tasks; source.selectedId = selectedId; source = other; tasks = other.tasks = [{ id: 7 }]; selectedId = 7; activeTab = 'shell'; connectTerminal(tasks[0]); },";
+  const open = "_select(task) { tasks = [task]; selectedId = null; selectTask(task.id); }, _open() { const task = { id: 7 }; tasks = [task]; selectedId = 7; activeTab = 'shell'; connectTerminal(task); }, _openRemote(id = 1) { const key = 'remote:' + id; if (!sources.has(key)) syncSources([1, 2].map(n => ({ id: n, name: 'Engine ' + n, base_url: 'http://engine' }))); const other = sources.get(key); source.tasks = tasks; source.selectedId = selectedId; source = other; tasks = other.tasks = [{ id: 7 }]; selectedId = 7; activeTab = 'shell'; connectTerminal(tasks[0]); },";
   source = source.replace(marker, marker.replace('  return {\n', `  return {\n    ${open}\n`));
   vm.runInContext(source, context);
   return { controller: context.Tasks, context, document, Event, sockets, terminals,
@@ -151,4 +151,16 @@ test(`input toolbar obeys the snapshot replay pause`, () => {
   finish(); app.sockets[0].sent.length = 0;
   app.controller.sendTerminalInput('allowed');
   assert.deepEqual(app.sockets[0].sent, ['allowed']);
+});
+
+test('the content tabs stay visible when a task opens straight into its terminal tab', async () => {
+  const app = setup();
+  app.context.localStorage.getItem = key => (key === 'task-tab-7' ? 'shell' : null);
+  // e.g. hidden earlier by the empty state / loading state of another Engine
+  app.document.getElementById('content-tabs').style.display = 'none';
+  app.controller._select({ id: 7 });
+  await Promise.resolve();
+  assert.equal(app.document.getElementById('content-tabs').style.display, 'flex');
+  assert.equal(app.document.getElementById('terminal-pane').style.display, 'flex');
+  assert.equal(app.sockets.length, 1, 'the terminal still connects');
 });

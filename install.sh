@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 一键安装脚本：兼容 macOS（LaunchAgent）和 Linux（systemd 或手动启动）。
+# 一键安装脚本：服务默认由 PM2 管理；已注册 macOS LaunchAgent / Linux systemd 的老安装继续沿用（--pm2 可迁移）。
 # 示例：
 #   ./install.sh
 #   ./install.sh --port 13148 --tasks-dir /srv/t-agent-tasks
@@ -11,6 +11,8 @@ ENV_FILE="$APP_DIR/.env"
 PORT=""
 TASKS_DIR=""
 INSTALL_SERVICE=1
+SERVICE_MANAGER=""
+PM2_EXPLICIT=0
 SERVICE_STARTED=0
 MODE="client"
 UPDATE_REPOSITORY="${T_AGENT_REPOSITORY:-TorinMars/t-agent}"
@@ -28,7 +30,9 @@ usage() {
 选项：
   --port PORT          服务端口（默认 3000）
   --tasks-dir PATH     任务 Markdown 文件保存目录（默认：项目目录/tasks）
-  --no-service         只安装依赖和配置，不注册开机服务
+  --pm2                用 PM2 管理服务（默认方式；已注册系统服务的老安装用它改为 PM2）
+  --system-service     沿用系统服务（macOS LaunchAgent / Linux systemd）而不是 PM2
+  --no-service         只安装依赖和配置，不启动服务
   -h, --help           显示帮助
 
 Client 是单用户应用，Web 和手机 H5 必须先绑定身份验证器，之后使用动态验证码登录。
@@ -46,6 +50,8 @@ while [ "$#" -gt 0 ]; do
     --port) PORT="${2:-}"; shift 2 ;;
     --username|--password) shift 2 ;; # 兼容旧自动化参数，单用户模式不再使用。
     --tasks-dir) TASKS_DIR="${2:-}"; shift 2 ;;
+    --pm2) SERVICE_MANAGER="pm2"; PM2_EXPLICIT=1; shift ;;
+    --system-service) SERVICE_MANAGER="system"; shift ;;
     --no-service) INSTALL_SERVICE=0; shift ;;
     -h|--help) usage; exit 0 ;;
     *) fail "未知选项：$1（使用 --help 查看用法）" ;;
@@ -311,7 +317,77 @@ SERVICE_BASENAME="t-agent"
 SERVICE_DESCRIPTION="T-Agent Client with embedded Engine"
 LAUNCH_LABEL="com.tagent.client"
 MANUAL_START="cd $APP_DIR && npm start"
-if [ "$INSTALL_SERVICE" -eq 1 ] && [ "$PLATFORM" = "macOS" ]; then
+legacy_client_service_present() {
+  if [ "$PLATFORM" = "macOS" ]; then
+    [ -f "$HOME/Library/LaunchAgents/com.tagent.client.plist" ] || [ -f "$HOME/Library/LaunchAgents/com.tagent.web.plist" ]
+  else
+    [ -f /etc/systemd/system/t-agent.service ]
+  fi
+}
+
+# 显式改用 PM2 时，先停用并移除旧的系统服务，避免两个实例抢同一个端口。
+migrate_legacy_client_service() {
+  printf '正在停用旧的系统服务，改由 PM2 管理……\n'
+  if [ "$PLATFORM" = "macOS" ]; then
+    launchctl bootout "gui/$UID" "$HOME/Library/LaunchAgents/com.tagent.client.plist" 2>/dev/null || true
+    launchctl bootout "gui/$UID" "$HOME/Library/LaunchAgents/com.tagent.web.plist" 2>/dev/null || true
+    rm -f "$HOME/Library/LaunchAgents/com.tagent.client.plist" "$HOME/Library/LaunchAgents/com.tagent.web.plist"
+  else
+    run_as_root systemctl disable --now t-agent.service 2>/dev/null || true
+    run_as_root rm -f /etc/systemd/system/t-agent.service
+    run_as_root systemctl daemon-reload || true
+  fi
+}
+
+ensure_pm2() {
+  local prefix
+  export PATH="$HOME/.local/bin:$PATH"
+  command -v pm2 >/dev/null 2>&1 && return 0
+  printf '正在安装 PM2……\n'
+  prefix="$(npm config get prefix 2>/dev/null || true)"
+  if [ -n "$prefix" ] && [ -w "$prefix" ]; then
+    npm install -g pm2 || return 1
+  else
+    npm install -g --prefix "$HOME/.local" pm2 || return 1
+  fi
+  command -v pm2 >/dev/null 2>&1
+}
+
+port_in_use() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
+
+# 默认由 PM2 管理；已经注册了系统服务（LaunchAgent / systemd）的老安装继续沿用，避免悄悄切换造成两个实例抢端口。
+if [ -z "$SERVICE_MANAGER" ]; then
+  if legacy_client_service_present; then
+    SERVICE_MANAGER="system"
+    printf '提示：检测到已注册的系统服务，继续沿用它；需要改用 PM2 管理请加 --pm2 重新运行。\n'
+  else
+    SERVICE_MANAGER="pm2"
+  fi
+fi
+
+if [ "$INSTALL_SERVICE" -eq 1 ] && [ "$SERVICE_MANAGER" = "pm2" ]; then
+  if [ "$PM2_EXPLICIT" -eq 1 ] && legacy_client_service_present; then
+    migrate_legacy_client_service
+  fi
+  APP_PORT="$(sed -n 's/^PORT=//p' "$ENV_FILE" | tail -n 1 | tr -d "\"' ")"
+  APP_PORT="${APP_PORT:-3000}"
+  if ! ensure_pm2; then
+    printf '警告：无法安装或找到 PM2，未启动服务。请手动安装 PM2 后执行：pm2 start %s --name %s --cwd %s\n' "$ENTRY_SCRIPT" "$SERVICE_BASENAME" "$APP_DIR" >&2
+    SERVICE_HINT="$MANUAL_START"
+  elif ! pm2 describe "$SERVICE_BASENAME" >/dev/null 2>&1 && port_in_use "$APP_PORT"; then
+    printf '警告：端口 %s 已被其他进程占用，未启动服务。请换端口（编辑 .env 的 PORT）或停掉占用者后执行：pm2 start %s --name %s --cwd %s\n' "$APP_PORT" "$ENTRY_SCRIPT" "$SERVICE_BASENAME" "$APP_DIR" >&2
+    SERVICE_HINT="$MANUAL_START"
+  else
+    if pm2 describe "$SERVICE_BASENAME" >/dev/null 2>&1; then
+      pm2 restart "$SERVICE_BASENAME" --update-env
+    else
+      pm2 start "$ENTRY_SCRIPT" --name "$SERVICE_BASENAME" --cwd "$APP_DIR"
+    fi
+    pm2 save >/dev/null 2>&1 || true
+    SERVICE_STARTED=1
+    SERVICE_HINT="pm2 status $SERVICE_BASENAME（日志：pm2 logs $SERVICE_BASENAME；开机自启请执行 pm2 startup，按提示运行后再 pm2 save）"
+  fi
+elif [ "$INSTALL_SERVICE" -eq 1 ] && [ "$PLATFORM" = "macOS" ]; then
   [ "${EUID}" -ne 0 ] || fail "macOS 请以实际登录用户运行本脚本，不能以 root 运行 LaunchAgent"
   PLIST_DIR="$HOME/Library/LaunchAgents"
   PLIST_FILE="$PLIST_DIR/$LAUNCH_LABEL.plist"

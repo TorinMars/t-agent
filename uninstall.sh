@@ -50,9 +50,15 @@ printf '\n将完全卸载 T-Agent。以下内容会永久删除：\n'
 printf '  - 项目目录：%s\n' "$APP_DIR"
 printf '  - 数据库、日志、配置和项目内任务文件\n'
 [ -n "$TASKS_PATH" ] && printf '  - 任务工作目录：%s\n' "$TASKS_PATH"
-printf '  - macOS LaunchAgent 或 Linux systemd 开机启动项\n\n'
+printf '  - PM2 中名为 t-agent 的进程，以及 macOS LaunchAgent 或 Linux systemd 开机启动项\n\n'
 read -r -p '输入 UNINSTALL 以确认永久删除：' CONFIRMATION </dev/tty
 [ "$CONFIRMATION" = 'UNINSTALL' ] || { printf '已取消卸载。\n'; exit 0; }
+
+# Client 默认由 PM2 管理：删除对应进程并保存列表，避免之后 pm2 resurrect 又把它拉起来。
+if command -v pm2 >/dev/null 2>&1 && pm2 describe t-agent >/dev/null 2>&1; then
+  pm2 delete t-agent >/dev/null 2>&1 || true
+  pm2 save >/dev/null 2>&1 || true
+fi
 
 case "$(uname -s)" in
   Darwin)

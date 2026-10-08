@@ -114,7 +114,7 @@ Ubuntu 20.04 默认的 GCC 9 不识别依赖使用的 `-std=c++20` 参数；安�
 
 ## 快速安装
 
-安装脚本会询问端口和任务目录，安装依赖后注册开机自启服务。默认安装目录是当前目录下的 `t-agent`。
+安装脚本会询问端口和任务目录，安装依赖后用 **PM2** 启动服务（进程名 `t-agent`）。默认安装目录是当前目录下的 `t-agent`。
 
 ### 安装 Client
 
@@ -131,7 +131,9 @@ curl -fsSL https://raw.githubusercontent.com/TorinMars/t-agent/main/bootstrap.sh
 http://127.0.0.1:3000
 ```
 
-macOS 会注册 `com.tagent.client` LaunchAgent，Linux 会注册 `t-agent.service`。
+Client 默认由 **PM2** 管理：没有 PM2 时脚本会用 `npm install -g pm2` 安装（全局目录不可写时装到 `~/.local`），然后 `pm2 start server.js --name t-agent --cwd <项目目录>` 并 `pm2 save`（工作目录必须是项目目录，`.env` 才能被读到）。端口已被占用时不会启动，会给出提示。**开机自启**需要你执行一次 `pm2 startup`（按它打印的命令运行，其中的 sudo 由你执行）再 `pm2 save`。应用内的“检查更新/一键更新”完成后进程以退出码 75 退出，由 PM2 自动拉起；更新后若服务还没重启，检查更新会提示“需要重启服务”（`pm2 restart t-agent`）。服务启动后会自动出现在“应用列表”里。
+
+已经注册了系统服务（macOS `com.tagent.client` LaunchAgent 或 Linux `t-agent.service`）的老安装，重新运行 `install.sh` 时**继续沿用原来的系统服务**，不会悄悄切换以免两个实例抢端口。要改用 PM2：加 `--pm2` 重新运行（会先停用并移除旧服务，再用 PM2 启动）；要继续使用系统服务：加 `--system-service`。
 
 安装完成后，终端末尾会显示“请在浏览器打开”及访问 URL（默认 `http://127.0.0.1:3000`，以安装配置为准）。使用 `--no-service` 或系统不支持自动注册服务时，会先提示手动启动命令，启动后再访问该地址。
 
@@ -428,6 +430,18 @@ T_AGENT_REF=main ./scripts/migrate-to-git.sh
 旧安装包中还没有通用脚本时，可以先从目标分支下载脚本到当前项目的 `scripts/` 目录。迁移期间 systemd 或 launchd 服务会自动停止并重新注册；没有 systemd 的 Linux 环境需要先手动停止当前进程。确认新安装的配置和任务正常后，再自行处理备份。
 
 ## 服务管理
+
+### PM2（Client 默认）
+
+```bash
+pm2 status t-agent          # 状态
+pm2 logs t-agent            # 日志
+pm2 restart t-agent         # 重启
+pm2 stop t-agent            # 停止
+pm2 startup && pm2 save     # 开机自启：按 pm2 startup 打印的命令执行，再保存进程列表
+```
+
+网页里的“实用工具 → PM2 进程管理”和“应用列表”都可以查看状态、重启、停止和看日志；注意停止或重启 t-agent 自己会中断当前页面（界面会二次确认）。从旧的 LaunchAgent/systemd 迁移：`./install.sh --pm2`。下面的 macOS / Linux 小节适用于沿用系统服务的老安装。
 
 ### macOS
 

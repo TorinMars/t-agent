@@ -36,6 +36,8 @@
 
 > v2.7.5 终端复制：本地与远程终端共用选区复制模块，显式启用 Mac Option 强制选区；OSC 52 写请求经大小限制、UTF-8 校验和用户预览确认后才写入剪贴板。拒绝读取请求，忽略隐藏实例与历史回放，释放实例时清理挂起请求；Ctrl+C 保持中断语义。
 
+> v2.33.0 移除“实用工具”页里独立的 PM2 进程管理面板：PM2 的状态、启动/停止/重启/reload 和日志统一放在“应用列表”里。后端 `/api/pm2`、Engine `/v1/pm2` 和 `pm2:manage` 能力保留（应用列表的 PM2 操作使用它们）；`tools.js` 只保留页面切换和应用列表的引擎适配。
+
 > v2.32.0 服务管理：`install.sh` 新安装默认由 PM2 管理 Client（`ensure_pm2` 缺失时用 npm 安装；端口被占用不启动；`pm2 describe t-agent` 存在则 `restart --update-env`，否则 `start`）。检测到已有 LaunchAgent / `t-agent.service` 时沿用，避免两个实例抢端口；`--pm2` 先停用并移除旧服务再迁移；`uninstall.sh` 会删除 PM2 里的 `t-agent` 并 `pm2 save`。
 
 > v2.31.1 更新检查：增加 `restart_pending` 状态。`services/update-manager.js` 在进程启动时记下 `runningVersion`（并沿用已有的 `runningCommit`），检查更新时若远程版本等于磁盘版本、但“启动提交 → HEAD”之间有需要重启的改动（`lib/update-impact.js` 的规则）或安装包方式启动版本不等于磁盘版本，就返回 `restart_pending` 而不是 `current`；有更高远程版本时仍是 `available`。附带字段 `restart_pending`、`running_version`；持久化的该状态在进程重启时清除。

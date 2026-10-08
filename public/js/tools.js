@@ -1,184 +1,3 @@
-// PM2 进程管理：管理“当前引擎”所在机器上的进程（本地走 /api/pm2，远程 Engine 经 Client 代理走 /api/remote-servers/:id/pm2）。
-// 只在“实用工具”页可见时轮询；所有文本都用 textContent 写入，避免注入。
-const pm2 = (() => {
-  const table = document.getElementById('pm2-table');
-  const body = document.getElementById('pm2-body');
-  const hint = document.getElementById('pm2-hint');
-  const statusText = document.getElementById('pm2-status');
-  const logsBox = document.getElementById('pm2-logs');
-  const logText = document.getElementById('pm2-log-text');
-  const logStream = document.getElementById('pm2-logs-stream');
-  const logLines = document.getElementById('pm2-logs-lines');
-  const defaultHintFor = place => `管理${place}上的 PM2 进程。可以启动、停止、重启、reload 和查看日志；停止或重启前会确认。`;
-  let active = false, listTimer = null, logTimer = null, logTarget = null, busy = false;
-  let base = '/api/pm2', where = '运行 Client 的这台机器', blocked = null, generation = 0;
-
-  // 远程请求只返回错误码，这里转成中文；本机路由本身返回中文。
-  const CODE_MESSAGES = {
-    PM2_NOT_INSTALLED: '未检测到 pm2', PM2_NOT_RUNNING: 'PM2 守护进程没有运行',
-    PM2_UNSUPPORTED: '该引擎版本过旧，暂不支持 PM2 管理，请先升级该引擎',
-    PM2_COMMAND_FAILED: 'pm2 命令执行失败', PM2_UNAVAILABLE: 'PM2 管理服务暂时不可用',
-    REMOTE_NOT_FOUND: '这个远程连接已不存在', REMOTE_HTTP_401: '该引擎的认证已失效',
-    REMOTE_CONNECTION_FAILED: '无法连接该引擎', REMOTE_TIMEOUT: '连接该引擎超时',
-  };
-  const errorMessage = error => {
-    let message = error.message;
-    try { message = JSON.parse(error.message).error || error.message; } catch { /* 不是 JSON */ }
-    return CODE_MESSAGES[message] || message;
-  };
-  const formatMemory = bytes => (bytes >= 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` : `${Math.round(bytes / 1024)} KB`);
-  function formatUptime(startedAt) {
-    if (!startedAt) return '-';
-    const seconds = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
-    if (seconds < 60) return `${seconds} 秒`;
-    if (seconds < 3600) return `${Math.floor(seconds / 60)} 分钟`;
-    if (seconds < 86400) return `${Math.floor(seconds / 3600)} 小时 ${Math.floor(seconds % 3600 / 60)} 分`;
-    return `${Math.floor(seconds / 86400)} 天 ${Math.floor(seconds % 86400 / 3600)} 小时`;
-  }
-  const cell = (row, text) => { const td = document.createElement('td'); td.textContent = text; row.append(td); return td; };
-
-  function button(label, handler) {
-    const b = document.createElement('button');
-    b.type = 'button'; b.className = 'btn-logout'; b.textContent = label;
-    b.addEventListener('click', handler);
-    return b;
-  }
-
-  async function act(proc, action) {
-    const label = { start: '启动', stop: '停止', restart: '重启', reload: 'reload' }[action];
-    let question = null;
-    if (action === 'stop') question = `确定停止 ${proc.name}？`;
-    if (proc.self && action !== 'start') question = `${proc.name} 就是当前正在提供本页面的 t-agent。${label}后页面会中断${action === 'stop' ? '，并且需要在这台机器上手动启动才能恢复' : '几秒'}。继续吗？`;
-    if (question && !confirm(question)) return;
-    statusText.textContent = `正在${label} ${proc.name}…`;
-    try {
-      await API.post(`${base}/${proc.id}/${action}`, {});
-      statusText.textContent = `已${label} ${proc.name}`;
-    } catch (error) {
-      statusText.textContent = proc.self ? '请求已发出，页面可能会短暂断开' : `${label}失败：${errorMessage(error)}`;
-    }
-    await refresh();
-  }
-
-  function render(data) {
-    body.textContent = '';
-    if (!data.installed) {
-      table.hidden = true;
-      hint.textContent = `${where}上未检测到 PM2。在该机器上运行下方“安装开发环境”的安装命令即可安装（需要 Node.js，缺少时会自动安装到用户目录）。`;
-      return;
-    }
-    if (!data.running) {
-      table.hidden = true;
-      hint.textContent = 'PM2 已安装，但守护进程没有运行（还没有启动过任何进程）。用 pm2 start 启动第一个服务后这里会显示。';
-      return;
-    }
-    hint.textContent = defaultHintFor(where);
-    table.hidden = data.processes.length === 0;
-    if (data.processes.length === 0) hint.textContent = 'PM2 正在运行，但当前没有任何进程。';
-    for (const proc of data.processes) {
-      const row = document.createElement('tr');
-      const name = cell(row, `${proc.name}`);
-      name.className = 'pm2-name';
-      const detail = document.createElement('small');
-      detail.textContent = `#${proc.id} · ${proc.script || '-'}${proc.self ? ' · 当前页面所在服务' : ''}`;
-      detail.title = proc.cwd || '';
-      name.append(detail);
-      const badgeCell = document.createElement('td');
-      const badge = document.createElement('span');
-      badge.className = `pm2-badge ${proc.status}`; badge.textContent = proc.status;
-      badgeCell.append(badge); row.append(badgeCell);
-      cell(row, `${proc.cpu}%`);
-      cell(row, proc.status === 'online' ? formatMemory(proc.memory) : '-');
-      cell(row, formatUptime(proc.startedAt));
-      cell(row, proc.unstableRestarts ? `${proc.restarts}（不稳定 ${proc.unstableRestarts}）` : String(proc.restarts));
-      const actions = document.createElement('td');
-      const group = document.createElement('div'); group.className = 'pm2-actions';
-      if (proc.status !== 'online') group.append(button('启动', () => act(proc, 'start')));
-      if (proc.status === 'online') {
-        group.append(button('重启', () => act(proc, 'restart')), button('Reload', () => act(proc, 'reload')), button('停止', () => act(proc, 'stop')));
-      }
-      group.append(button('日志', () => openLogs(proc)));
-      actions.append(group); row.append(actions);
-      body.append(row);
-    }
-  }
-
-  async function refresh() {
-    if (busy || blocked) return;
-    busy = true;
-    const mine = generation;
-    try {
-      const data = await API.get(`${base}/status`);
-      if (mine !== generation) return; // 已切换到别的引擎，丢弃过期结果
-      render(data);
-      if (!statusText.textContent.startsWith('正在')) statusText.textContent = `更新于 ${new Date().toLocaleTimeString()}`;
-    } catch (error) {
-      if (mine === generation) statusText.textContent = `读取失败：${errorMessage(error)}`;
-    } finally { busy = false; }
-  }
-
-  async function loadLogs() {
-    if (!logTarget) return;
-    const mine = generation;
-    try {
-      const data = await API.get(`${base}/${logTarget.id}/logs?stream=${logStream.value}&lines=${logLines.value}`);
-      if (mine !== generation) return;
-      const stick = logText.scrollTop + logText.clientHeight >= logText.scrollHeight - 30;
-      logText.textContent = data.lines.length ? data.lines.join('\n') : '（暂无日志）';
-      if (stick) logText.scrollTop = logText.scrollHeight;
-    } catch (error) {
-      logText.textContent = `读取日志失败：${errorMessage(error)}`;
-    }
-  }
-  function openLogs(proc) {
-    logTarget = proc;
-    document.getElementById('pm2-logs-title').textContent = `${proc.name} 的日志`;
-    logsBox.hidden = false;
-    logText.textContent = '加载中…';
-    loadLogs().then(() => { logText.scrollTop = logText.scrollHeight; });
-    clearInterval(logTimer);
-    logTimer = setInterval(() => { if (active && !document.hidden) loadLogs(); }, 2000);
-  }
-  function closeLogs() {
-    logTarget = null; logsBox.hidden = true; clearInterval(logTimer); logTimer = null;
-  }
-
-  function setActive(value) {
-    active = value;
-    clearInterval(listTimer); listTimer = null;
-    if (active) {
-      refresh();
-      listTimer = setInterval(() => { if (!document.hidden) refresh(); }, 5000);
-    } else {
-      closeLogs();
-    }
-  }
-
-  // 切换引擎：换请求地址，清掉上一个引擎的进程表和日志。blocked 非空时说明当前引擎不能用 PM2，只显示原因。
-  function setEngine({ endpoint = '/api/pm2', label = '', local = true, unavailable = null } = {}) {
-    const changed = endpoint !== base || unavailable !== blocked;
-    base = endpoint;
-    where = local ? '运行 Client 的这台机器' : `引擎「${label}」所在机器`;
-    blocked = unavailable;
-    if (!changed) return;
-    generation += 1;
-    busy = false;
-    closeLogs();
-    body.textContent = '';
-    table.hidden = true;
-    statusText.textContent = '';
-    document.getElementById('pm2-refresh').disabled = Boolean(blocked);
-    hint.textContent = blocked || defaultHintFor(where);
-    if (active && !blocked) refresh();
-  }
-
-  document.getElementById('pm2-refresh').addEventListener('click', () => { statusText.textContent = ''; refresh(); });
-  document.getElementById('pm2-logs-close').addEventListener('click', closeLogs);
-  logStream.addEventListener('change', loadLogs);
-  logLines.addEventListener('change', loadLogs);
-  return { setActive, setEngine };
-})();
-
 // 实用工具和应用列表都和“任务”并列，切换只是显示/隐藏，终端连接保持不断。
 const Tools = (() => {
   const SCRIPT_BASE_URL = 'https://raw.githubusercontent.com/TorinMars/t-agent/main/scripts/';
@@ -189,12 +8,13 @@ const Tools = (() => {
   const tabs = { tasks: document.getElementById('tab-tasks'), tools: document.getElementById('tab-tools'), apps: document.getElementById('tab-apps') };
   const toolsPanel = document.getElementById('tools-panel');
   const appsPanel = document.getElementById('apps-panel');
-  const engineLabels = [document.getElementById('tools-engine'), document.getElementById('apps-engine')];
+  const appsEngineLabel = document.getElementById('apps-engine');
   const timers = new WeakMap();
   let page = 'tasks';
 
-  // 工具属于当前引擎：本地引擎用 Client 自己的接口，远程引擎经代理访问其 /v1 接口。
+  // 应用列表属于当前引擎：本地引擎用 Client 自己的接口，远程引擎经代理访问其 /v1 接口。
   // 所有引擎连接都是管理权限，所以远程引擎只看是否声明了对应能力（旧版 Engine 没有）。
+  // pm2 只用于应用列表里的 PM2 操作（启动/停止/重启/reload/日志），不再有单独的面板。
   const FEATURES = {
     pm2: { capability: 'pm2:manage', local: '/api/pm2', suffix: 'pm2', missing: '该引擎版本过旧，暂不支持 PM2 管理，请先升级该引擎。' },
     apps: { capability: 'apps:manage', local: '/api/apps', suffix: 'apps', missing: '该引擎版本过旧，暂不支持应用列表，请先升级该引擎。' },
@@ -225,8 +45,7 @@ const Tools = (() => {
   function applyEngine() {
     const pm2State = engineState(FEATURES.pm2);
     const appsState = engineState(FEATURES.apps);
-    for (const node of engineLabels) describeEngine(node, pm2State);
-    pm2.setEngine(pm2State);
+    describeEngine(appsEngineLabel, appsState);
     Apps.setEngine({
       endpoint: appsState.endpoint,
       // 应用列表里的 PM2 操作沿用 PM2 接口；该引擎不支持 PM2 时只隐藏这些按钮。
@@ -239,7 +58,6 @@ const Tools = (() => {
   function showPage(name) {
     page = name;
     if (name !== 'tasks') applyEngine();
-    pm2.setActive(name === 'tools');
     Apps.setActive(name === 'apps');
     document.body.classList.toggle('tools-open', name === 'tools');
     document.body.classList.toggle('apps-open', name === 'apps');

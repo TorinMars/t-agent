@@ -159,7 +159,7 @@ const Apps = (() => {
     } finally { busy = false; }
   }
 
-  // ── PM2 操作（沿用 PM2 面板同样的接口） ──
+  // ── PM2 操作（调用当前引擎的 /pm2 接口：启动、停止、重启、reload、日志） ──
   async function pm2Action(app, action) {
     const proc = app.pm2;
     const label = { start: '启动', stop: '停止', restart: '重启', reload: 'reload' }[action];

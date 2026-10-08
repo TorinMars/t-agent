@@ -99,10 +99,8 @@ body.apps-open .sidebar, body.apps-open .content-area, body.apps-open .quicklink
 .pm2-badge.launching, .pm2-badge.stopping, .pm2-badge.waiting { color: #9a6700; border-color: #9a6700; }
 .pm2-actions { display: flex; gap: 6px; }
 .pm2-actions button { padding: 2px 8px; font-size: 12px; }
-.pm2-logs { margin-top: 12px; }
 .pm2-logs-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
 .pm2-logs-bar strong { margin-right: auto; }
-#pm2-log-text { margin: 0; padding: 10px; max-height: 360px; overflow: auto; background: #0d1117; color: #e6edf3; border-radius: 6px; font: 12px/1.5 ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; word-break: break-all; }
 
 .header-left { display: flex; align-items: center; flex: 1 1 auto; min-width: 0; margin-right: 16px; }
 .header-right {

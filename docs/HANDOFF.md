@@ -1,10 +1,10 @@
-# 交接说明（2026-10 · 截至 v2.32.0）
+# 交接说明（2026-10 · 截至 v2.33.0）
 
 给接手的 Claude / 开发者：先读 `AGENTS.md`（开发与发布规则）和本文件，再动手。
 
 ## 当前状态
 
-- 分支 `main`，最新发布 **v2.32.0**，已推送到 `origin/main`，工作区干净。
+- 分支 `main`，最新发布 **v2.33.0**，已推送到 `origin/main`，工作区干净。
 - 用户通过客户端检测 `main` 上的 `VERSION.json` 更新，代码改动完成并验证后按 `AGENTS.md` 升版本、提交、推送（用户已授权自动发布）。
 - 开发机已换成性能正常的 macOS，可以跑全量测试和浏览器脚本（先 `npm ci`、`npx playwright install chromium`）。`npm test` 并发时 pty 用例偶发 `posix_spawnp failed`，单独跑或 `node --test test/` 均通过。
 
@@ -32,6 +32,7 @@
 | 2.31.0 | **应用列表**（主导航与“实用工具”并列，跟随当前引擎）：新增 `apps` 表和 `/api/apps`、`/v1/apps`（能力 `apps:manage`）、远程代理 `/api/remote-servers/:id/apps`。PM2 进程自动登记（用户删除仍在运行的会“隐藏”而不是删除，避免被同步回来），也支持手动新增和程序 `POST /v1/apps/register` 自注册（按名称/`pm2_name` 幂等）。端口用 `lsof`/`ss` 对 PM2 进程树检测并区分仅本机监听；`url`/`domain` 只接受 http(s) 且不含账号密码；编辑框只回显已保存的值，自动检测值只做占位符。前端 `public/js/apps.js`，`tools.js` 泛化为“任务/工具/应用”三页切换并按功能（`pm2:manage`/`apps:manage`）判断引擎能力。测试：`test/apps-*.test.js`、`test/port-detector.test.js`、`scripts/test-apps-ui-browser.cjs`；`scripts/test-pm2-ui-browser.cjs` 的夹具因 `tools.js` 依赖应用面板而同步更新。**未验证**：Linux 上 `ss` 分支只有解析单测，没有真机；远程引擎代理只在本机用两个本地服务模拟过。 |
 | 2.31.1 | **修复“磁盘代码已更新但服务没重启时，检查更新却显示已是最新”**：检查更新拿远程版本和磁盘 `VERSION.json` 比较，手动 `git pull`、强制恢复仓库或上次更新中途失败后，磁盘比内存里运行的新，却报 `current`（日志里 `restart_required: true` 已经算出来了但界面没用）。现在新增状态 `restart_pending`（“需要重启服务”）：Git 安装用 `requiresRestart(runningCommit, HEAD)`，安装包方式比较启动时版本号；有更高远程版本时仍是 `available`；红点、一键检查的结果框和设置里都会提示并列出 PM2 / launchd / systemd 的重启命令；重启后持久化的旧状态被清除。测试：`test/update-restart-pending.test.js`（含变异验证）、`test/one-click-update.test.js`，并用真实 git 仓库复现过“旧提交启动 → 磁盘换成新提交 → restart_pending → 重启后 current”。注意：**只有这台服务重启并加载 v2.31.1 之后才有这个提示**，已经在跑旧代码的进程仍然会报“已是最新” |
 | 2.32.0 | **Client 安装脚本默认改由 PM2 管理**（补上之前被我遗漏的需求）：`install.sh` 新增 `--pm2` / `--system-service`，默认 `pm2 start server.js --name t-agent --cwd <项目目录>` 并 `pm2 save`；没有 PM2 时 `npm install -g pm2`；端口被占用不启动并提示；重复运行改为 `pm2 restart t-agent --update-env`。**已注册 LaunchAgent / systemd 的老安装默认继续沿用**，只有加 `--pm2` 才迁移（先停用并移除旧服务）。`uninstall.sh` 同步删除 PM2 里的进程。这样 t-agent 自己也会出现在“应用列表”和“PM2 进程管理”里。测试：`test/install-project.test.js`（沙箱里用桩替换 npm/pm2/launchctl，仅 macOS 运行，沙箱 PATH 里不放真实 pm2）。**注意**：这台 Mac 上 t-agent 目前仍由 launchd（`com.tagent.client`）管理，需要用户自己运行 `./install.sh --pm2` 才会迁移——迁移会重启服务并中断所有终端会话。**没做**：之前搁置的“数据目录与项目目录分离”（用户说不需要）；完整改动保存在嵌套克隆 `tasks/t-agent/t-agent` 的 `stash@{0}` 里 |
+| 2.33.0 | **移除“实用工具”页里的“PM2 进程管理”面板**（用户要求；PM2 的操作都在“应用列表”里）。删除：`index.html` 的 PM2 卡片和实用工具页的“当前引擎”提示、`tools.js` 里的 `pm2` 面板模块、面板专用样式（`.pm2-logs`、`#pm2-log-text`）、`scripts/test-pm2-ui-browser.cjs`。**保留**（应用列表在用）：后端 `/api/pm2/*`、Engine `/v1/pm2/*`、远程代理、能力 `pm2:manage`，以及样式 `pm2-table`/`pm2-badge`/`pm2-actions`/`pm2-logs-bar`；后端测试 `test/pm2-manager.test.js`、`test/pm2-engine.test.js` 不变。`/api/pm2/status` 现在界面不再调用，但接口保留以兼容旧版 Client。PM2 操作的界面覆盖由 `scripts/test-apps-ui-browser.cjs` 承担 |
 
 ## 架构要点（改代码前必读）
 

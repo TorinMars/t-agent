@@ -28,7 +28,7 @@ for (const changed of ['public/js/mobile.js', 'services/engine-tasks.js']) {
       },
       // 进度汇报与本测试无关：直接执行命令。
       runWithProgress: (label, run) => run(() => {}) },
-      '../lib/git-update-workspace': { prepareWorkspace: async () => null },
+      '../lib/git-update-workspace': { prepareWorkspace: async () => null, trackedChanges: async () => [], dirtyError: changes => Object.assign(new Error('WORKTREE_DIRTY'), { details: changes.join(',') }) },
     };
     const context = { require: name => mocks[name] || realRequire(name), module: { exports: {} },
       __dirname: path.dirname(filename), process: { env: {}, platform: process.platform, execPath: process.execPath },

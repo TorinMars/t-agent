@@ -14,7 +14,7 @@ const {
   validateVersionManifest,
 } = require('../lib/version-utils');
 const { copyRelease, stageGithubArchive } = require('./archive-updater');
-const { prepareWorkspace } = require('../lib/git-update-workspace');
+const { prepareWorkspace, trackedChanges, dirtyError } = require('../lib/git-update-workspace');
 
 const projectRoot = path.resolve(__dirname, '..');
 const runningCommit = (() => {
@@ -320,8 +320,8 @@ async function backupDatabase(metadata = {}) {
 
 async function applyGitUpdate(checked, force = false) {
   saveState({ status: 'updating', stage: 'checking_workspace', message: '正在检查 Git 工作区' });
-  const dirty = await execGit(['status', '--porcelain']);
-  if (dirty && !force) throw new Error('WORKTREE_DIRTY');
+  const changes = await trackedChanges(execGit);
+  if (changes.length && !force) throw dirtyError(changes);
 
   saveState({ status: 'updating', stage: 'fetching', message: '正在获取 Git 更新' });
   await execGit(['fetch', config.gitRemote, `refs/heads/${config.gitBranch}:refs/remotes/${config.gitRemote}/${config.gitBranch}`]);

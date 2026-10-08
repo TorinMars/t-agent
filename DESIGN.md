@@ -1725,7 +1725,7 @@ npm run build:monaco
 强制预检规则：
 
 - fetch 后必须校验 `<remote>/<branch>` 中的 `VERSION.json.app_version` 等于刚从 GitHub 链接取得的版本；不一致时阻断更新，避免缓存、分支或版本链接配置错误。
-- `git status --porcelain` 非空时禁止更新，弹窗提示「本地有未提交修改」，不自动 stash、reset 或丢弃文件。
+- 被 Git 跟踪的文件有修改（`git status --porcelain --untracked-files=no` 非空）时禁止更新，弹窗提示「本地有未提交修改」并在详情里列出文件名（`lib/git-update-workspace.js` 的 `trackedChanges` / `dirtyError`），不自动 stash、reset 或丢弃文件。未跟踪文件不阻止更新，由 `git merge --ff-only --no-overwrite-ignore` 在同名冲突时自行拒绝；强制更新仍会把未跟踪文件一并备份到 stash。
 - 当前分支 ahead 或 diverged 时禁止更新，不自动 rebase/merge。
 - 更新过程不允许并行写 DB schema，需要维护状态和全局锁。
 - npm/build/migration/self-check 任一失败时不自动启动新版；保留 `previous_commit` 与日志，向用户显示恢复指引。
@@ -1770,7 +1770,7 @@ npm run build:monaco
 | 远程 PTY 滥用 | 独立 scope、全局开关、会话限制与审计日志 |
 | 恶意版本链接或响应 | URL 由服务端固定；仅允许 HTTPS 与受信 GitHub 域名；重定向复检；限制超时/大小；严格校验 JSON schema |
 | 恶意 Git 更新 | remote/branch 由服务端固定；只允许 fast-forward；更新需人工确认；可选校验签名 commit/tag |
-| 更新覆盖本地修改 | 工作区非空立即阻断，不自动 stash/reset/rebase |
+| 更新覆盖本地修改 | 被跟踪文件有修改时立即阻断并列出文件；未跟踪文件交给 git 合并时的同名保护；不自动 stash/reset/rebase |
 | 更新后无法启动 | 依赖/构建/迁移/自检分阶段状态；SQLite 备份；记录 previous commit；守护进程负责重启 |
 
 ### 16. 性能与可观测性

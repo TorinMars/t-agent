@@ -1,10 +1,10 @@
-# 交接说明（2026-10 · 截至 v2.31.0）
+# 交接说明（2026-10 · 截至 v2.31.1）
 
 给接手的 Claude / 开发者：先读 `AGENTS.md`（开发与发布规则）和本文件，再动手。
 
 ## 当前状态
 
-- 分支 `main`，最新发布 **v2.31.0**，已推送到 `origin/main`，工作区干净。
+- 分支 `main`，最新发布 **v2.31.1**，已推送到 `origin/main`，工作区干净。
 - 用户通过客户端检测 `main` 上的 `VERSION.json` 更新，代码改动完成并验证后按 `AGENTS.md` 升版本、提交、推送（用户已授权自动发布）。
 - 开发机已换成性能正常的 macOS，可以跑全量测试和浏览器脚本（先 `npm ci`、`npx playwright install chromium`）。`npm test` 并发时 pty 用例偶发 `posix_spawnp failed`，单独跑或 `node --test test/` 均通过。
 
@@ -30,6 +30,7 @@
 | 2.30.5 | 选中任务时始终显示内容标签页（提交 `73672c4`） |
 | 2.30.6 | **修复“一键安装的服务无法在线更新，提示有未提交修改”**：更新原先用 `git status --porcelain` 判定，未被跟踪也未被忽略的杂文件（`.DS_Store`、`nohup.out`、编辑器或 Agent 创建的 `.claude/` 等）也会让更新被拦住，而且提示不说是哪些文件。现在 `lib/git-update-workspace.js` 的 `trackedChanges` 只统计**被跟踪文件**的修改（`--untracked-files=no`），未跟踪文件放行，由 `git merge --ff-only --no-overwrite-ignore` 在同名冲突时自行拒绝（`test/git-update-workspace.test.js` 用真实 git 验证了文件不会被覆盖）；被跟踪文件有修改时 `error_details` 列出文件名（最多 8 个），界面原本就会显示。强制更新行为不变（仍备份未跟踪文件）。**没能复现用户服务器上具体是哪些文件触发的**——全新克隆后 `npm ci`、启动服务、`build:monaco` 工作区都是干净的；如果升级后仍被拦，请让用户在安装目录运行 `git status --porcelain` 并把输出发来 |
 | 2.31.0 | **应用列表**（主导航与“实用工具”并列，跟随当前引擎）：新增 `apps` 表和 `/api/apps`、`/v1/apps`（能力 `apps:manage`）、远程代理 `/api/remote-servers/:id/apps`。PM2 进程自动登记（用户删除仍在运行的会“隐藏”而不是删除，避免被同步回来），也支持手动新增和程序 `POST /v1/apps/register` 自注册（按名称/`pm2_name` 幂等）。端口用 `lsof`/`ss` 对 PM2 进程树检测并区分仅本机监听；`url`/`domain` 只接受 http(s) 且不含账号密码；编辑框只回显已保存的值，自动检测值只做占位符。前端 `public/js/apps.js`，`tools.js` 泛化为“任务/工具/应用”三页切换并按功能（`pm2:manage`/`apps:manage`）判断引擎能力。测试：`test/apps-*.test.js`、`test/port-detector.test.js`、`scripts/test-apps-ui-browser.cjs`；`scripts/test-pm2-ui-browser.cjs` 的夹具因 `tools.js` 依赖应用面板而同步更新。**未验证**：Linux 上 `ss` 分支只有解析单测，没有真机；远程引擎代理只在本机用两个本地服务模拟过。 |
+| 2.31.1 | **修复“磁盘代码已更新但服务没重启时，检查更新却显示已是最新”**：检查更新拿远程版本和磁盘 `VERSION.json` 比较，手动 `git pull`、强制恢复仓库或上次更新中途失败后，磁盘比内存里运行的新，却报 `current`（日志里 `restart_required: true` 已经算出来了但界面没用）。现在新增状态 `restart_pending`（“需要重启服务”）：Git 安装用 `requiresRestart(runningCommit, HEAD)`，安装包方式比较启动时版本号；有更高远程版本时仍是 `available`；红点、一键检查的结果框和设置里都会提示并列出 PM2 / launchd / systemd 的重启命令；重启后持久化的旧状态被清除。测试：`test/update-restart-pending.test.js`（含变异验证）、`test/one-click-update.test.js`，并用真实 git 仓库复现过“旧提交启动 → 磁盘换成新提交 → restart_pending → 重启后 current”。注意：**只有这台服务重启并加载 v2.31.1 之后才有这个提示**，已经在跑旧代码的进程仍然会报“已是最新” |
 
 ## 架构要点（改代码前必读）
 

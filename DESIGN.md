@@ -36,6 +36,8 @@
 
 > v2.7.5 终端复制：本地与远程终端共用选区复制模块，显式启用 Mac Option 强制选区；OSC 52 写请求经大小限制、UTF-8 校验和用户预览确认后才写入剪贴板。拒绝读取请求，忽略隐藏实例与历史回放，释放实例时清理挂起请求；Ctrl+C 保持中断语义。
 
+> v2.31.1 更新检查：增加 `restart_pending` 状态。`services/update-manager.js` 在进程启动时记下 `runningVersion`（并沿用已有的 `runningCommit`），检查更新时若远程版本等于磁盘版本、但“启动提交 → HEAD”之间有需要重启的改动（`lib/update-impact.js` 的规则）或安装包方式启动版本不等于磁盘版本，就返回 `restart_pending` 而不是 `current`；有更高远程版本时仍是 `available`。附带字段 `restart_pending`、`running_version`；持久化的该状态在进程重启时清除。
+
 > v2.31.0 应用列表：引擎自己的 SQLite 新增 `apps` 表（`db/schema.sql`），`services/apps-registry.js` 负责校验与幂等注册，`services/port-detector.js` 对 PM2 进程树检测监听端口，`services/apps-service.js` 自动登记 PM2 进程并合并运行状态与访问地址；本机 `/api/apps`、Engine `/v1/apps`（能力 `apps:manage`，程序自注册走 `POST /v1/apps/register`）、Client 对远程引擎的代理共用 `routes/apps.js`，前端 `public/js/apps.js` 由 `Tools` 按当前引擎调度。
 
 > v2.7.3 更新保护：Git 更新支持显式勾选强制更新，将未提交修改备份到 Git stash 后再快进。保留被忽略的运行数据，禁止合并覆盖忽略文件，拒绝已提交分叉及被 Git 跟踪的运行数据；切换更新分支时显式获取远程跟踪引用。

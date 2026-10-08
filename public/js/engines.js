@@ -186,6 +186,7 @@ const Engines = (() => {
     return ({
       idle: '尚未检查', checking: '正在检查', current: '已是最新', available: '发现新版本',
       local_newer: '当前版本较新', updating: '正在更新', blocked: '更新被阻断', failed: '更新失败',
+      restart_pending: '需要重启服务',
     })[status] || status || '未知';
   }
 

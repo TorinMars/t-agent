@@ -1125,6 +1125,8 @@ body.apps-open .sidebar, body.apps-open .content-area, body.apps-open .quicklink
 .update-detail-row a, .update-release-link { color: var(--text-link); text-decoration: none; }
 .update-url-row { align-items: flex-start; padding: 7px 0; }
 .update-status.available { color: #0969da; }
+.update-status.restart_pending { color: #9a6700; }
+.update-restart-hint { margin-top: 8px; color: #9a6700; line-height: 1.6; }
 .update-status.failed, .update-status.blocked, .update-error { color: var(--danger); }
 .update-hero { display: flex; align-items: center; justify-content: center; gap: 14px; padding: 12px 0 18px; }
 .update-version { padding: 7px 12px; border-radius: 7px; background: var(--bg-tertiary); font: 600 14px ui-monospace, SFMono-Regular, Menlo, monospace; }

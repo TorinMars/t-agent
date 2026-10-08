@@ -36,3 +36,25 @@ test('pending update prevents duplicate requests and failures unlock the button'
   await failed.Updates.oneClick();assert.equal(failed.Updates.busy,false);
   assert.match(failed.document.getElementById('update-progress-error').textContent,/依赖安装失败/);
 });
+test('代码已更新但服务还没重启：不报“已是最新”，不触发更新，显示重启方式并亮红点', async () => {
+  const message = '代码已更新到 2.31.0，但服务仍在运行 2.30.5 的代码，需要重启服务才会生效';
+  const ctx = setup({ status: 'restart_pending', message, is_update_admin: true, install_type: 'git' });
+  await ctx.Updates.oneClick();
+  assert.equal(ctx.calls.length, 1, '只检查，不会去执行更新');
+  assert.equal(ctx.document.getElementById('modal-title').textContent, '需要重启服务');
+  const shown = ctx.document.querySelector('.update-message').textContent;
+  assert.ok(shown.includes(message));
+  assert.match(shown, /pm2 restart t-agent/);
+  assert.match(shown, /launchctl kickstart/);
+  assert.match(shown, /systemctl restart t-agent/);
+  assert.doesNotMatch(shown, /已是最新/);
+  assert.equal(ctx.document.getElementById('update-dot').style.display, 'block');
+  assert.equal(ctx.Updates.busy, false);
+
+  const current = setup({ status: 'current', message: '已是最新版本' });
+  await current.Updates.oneClick();
+  assert.equal(current.document.getElementById('update-dot').style.display, 'none');
+  assert.equal(current.Updates.needsAttention({ status: 'available' }), true);
+  assert.equal(current.Updates.needsAttention({ status: 'restart_pending' }), true);
+  assert.equal(current.Updates.needsAttention({ status: 'current' }), false);
+});

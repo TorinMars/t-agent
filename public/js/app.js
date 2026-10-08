@@ -140,7 +140,7 @@ const Updates = {
     try {
       const status = await API.post('/api/system/check-update', {});
       this.latestStatus = status;
-      document.getElementById('update-dot').style.display = status.status === 'available' ? 'block' : 'none';
+      document.getElementById('update-dot').style.display = this.needsAttention(status) ? 'block' : 'none';
       if (status.status === 'updating') {
         Modal.show('正在更新', '<div class="update-progress"><span class="update-spinner"></span><span id="update-progress-message">正在读取更新进度…</span></div><div class="form-hint" id="update-progress-error"></div>');
         this.monitorApply();
@@ -148,9 +148,10 @@ const Updates = {
         if (!status.is_update_admin) this.showResult('更新未执行', this.errorLabel('UPDATE_ADMIN_REQUIRED'));
         else await this.apply();
       } else {
+        const restartHint = status.status === 'restart_pending' ? `。按安装方式重启：${this.restartHelp}。重启会中断终端里正在运行的程序。` : '';
         this.showResult(this.statusLabel(status.status), status.error
           ? `${this.errorLabel(status.error)}${status.error_details ? `：${status.error_details}` : ''}`
-          : status.message || this.statusLabel(status.status));
+          : `${status.message || this.statusLabel(status.status)}${restartHint}`);
       }
     } catch (error) {
       this.showResult('检查更新失败', error.message || '请稍后重试');
@@ -161,8 +162,17 @@ const Updates = {
     return ({
       idle: '尚未检查', checking: '正在检查', current: '已是最新', available: '发现新版本',
       local_newer: '本地版本较新', blocked: '更新被阻断', updating: '正在更新', failed: '检查失败',
+      restart_pending: '需要重启服务',
     })[status] || status || '未知';
   },
+
+  // 有新版本，或代码已经更新但服务还在运行旧代码（需要重启才生效）。
+  needsAttention(status) {
+    return status.status === 'available' || status.status === 'restart_pending';
+  },
+
+  restartHelp: 'PM2：pm2 restart t-agent；macOS 开机服务：launchctl kickstart -k gui/$(id -u)/com.tagent.client；Linux systemd：sudo systemctl restart t-agent',
+
 
   formatTime(value) {
     if (!value) return '尚未检查';
@@ -192,7 +202,7 @@ const Updates = {
       const status = await API.get('/api/system/update-status');
       this.latestStatus = status;
       const hasUnread = status.status === 'available' && status.remote_version !== status.notice_version;
-      document.getElementById('update-dot').style.display = status.status === 'available' ? 'block' : 'none';
+      document.getElementById('update-dot').style.display = this.needsAttention(status) ? 'block' : 'none';
       if (notify && hasUnread && !this.busy) this.showAvailable(status);
       return status;
     } catch {
@@ -338,6 +348,7 @@ const Updates = {
         <div class="update-detail-row"><span>安装方式</span><span>${({ archive: '安装包更新', git: 'Git 快进更新' })[status.install_type] || '未知'}</span></div>
         <div class="update-detail-row update-url-row"><span>GitHub 版本源</span><code title="${escapeHtml(status.version_url || '')}">${escapeHtml(status.version_url || '未配置')}</code></div>
         ${remote.release_url ? `<div class="update-detail-row"><span>发布说明</span><a href="${escapeHtml(remote.release_url)}" target="_blank" rel="noopener noreferrer">GitHub Release ↗</a></div>` : ''}
+        ${status.status === 'restart_pending' ? `<div class="form-hint update-restart-hint"><strong>${escapeHtml(status.message || '代码已更新，需要重启服务才会生效')}</strong><br>按安装方式重启：${escapeHtml(this.restartHelp)}。重启会中断终端里正在运行的程序。</div>` : ''}
         ${status.error ? `<div class="form-hint error update-error">${escapeHtml(this.errorLabel(status.error))}${status.error_details ? `：${escapeHtml(status.error_details)}` : ''}</div>` : ''}
         <div class="settings-inline-actions">
           <button class="btn-cancel" id="settings-check-update">立即检查</button>
@@ -377,7 +388,7 @@ const Updates = {
       try {
         const next = await API.post('/api/system/check-update', {});
         this.latestStatus = next;
-        document.getElementById('update-dot').style.display = next.status === 'available' ? 'block' : 'none';
+        document.getElementById('update-dot').style.display = this.needsAttention(next) ? 'block' : 'none';
         if (!this.busy && next.status === 'available' && next.remote_version !== next.notice_version) this.showAvailable(next);
       } catch {}
     }

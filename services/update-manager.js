@@ -41,6 +41,8 @@ function defaultState() {
     remote_manifest: null,
     stage: null,
     message: null,
+    restart_pending: false,
+    running_version: null,
     updated_at: new Date().toISOString(),
   };
 }
@@ -55,6 +57,11 @@ function readPersistedState() {
       persisted.message = persisted.stage === 'restarting' ? '更新完成' : '上次更新意外中断';
       persisted.error = persisted.stage === 'restarting' ? null : 'UPDATE_INTERRUPTED';
       persisted.stage = null;
+    }
+    if (persisted.status === 'restart_pending') {
+      persisted.status = 'current';
+      persisted.restart_pending = false;
+      persisted.message = '已是最新版本';
     }
     return { ...defaultState(), ...persisted };
   }
@@ -81,6 +88,13 @@ function readLocalManifest() {
   const manifest = JSON.parse(fs.readFileSync(versionPath, 'utf8'));
   return validateVersionManifest(manifest);
 }
+
+// 进程启动时磁盘上的版本号，也就是当前这个进程实际在运行的版本。
+// 检查更新是拿远程版本和“磁盘上的 VERSION.json”比较的：手动 git pull 或上次更新中途失败后，磁盘代码会比内存里的新，
+// 此时必须单独提示“需要重启”，不能报“已是最新”。
+const runningVersion = (() => {
+  try { return readLocalManifest().app_version; } catch { return null; }
+})();
 
 function configuredVersionUrl() {
   if (config.githubVersionUrl) {
@@ -182,13 +196,20 @@ async function runCheck({ force = false } = {}) {
   saveState({ status: 'checking', stage: gitInstall ? 'fetching' : 'checking_version', error: null, error_details: null, local_version: local.app_version, message: null });
   let result;
   let restartRequired = true;
+  let restartPending = false;
   if (gitInstall) {
     await execGit(['fetch', config.gitRemote, `refs/heads/${config.gitBranch}:refs/remotes/${config.gitRemote}/${config.gitBranch}`], 120_000);
     const target = `${config.gitRemote}/${config.gitBranch}`;
     const manifestText = await execGit(['show', `${target}:VERSION.json`]);
     result = { manifest: validateVersionManifest(JSON.parse(manifestText)) };
     restartRequired = await requiresRestart(execGit, runningCommit, target);
+    // 工作区的代码是否已经比运行中的进程新（且改动需要重启才生效）。辅助信息，失败不影响检查本身。
+    if (runningCommit) {
+      try { restartPending = await requiresRestart(execGit, runningCommit, 'HEAD'); }
+      catch (error) { logUpdate('checking', `无法判断是否需要重启：${error.message}`); }
+    }
   } else {
+    restartPending = Boolean(runningVersion) && runningVersion !== local.app_version;
     const headers = {};
     if (!force && state.manifest_etag) headers['If-None-Match'] = state.manifest_etag;
     if (!force && state.manifest_last_modified) headers['If-Modified-Since'] = state.manifest_last_modified;
@@ -200,13 +221,16 @@ async function runCheck({ force = false } = {}) {
   if (!remote) throw new Error('VERSION_CACHE_EMPTY');
   validateVersionManifest(remote);
   const comparison = compareSemver(remote.app_version, local.app_version);
-  const status = comparison > 0 ? 'available' : comparison < 0 ? 'local_newer' : 'current';
+  // 有更新时仍是 available；版本一致但运行中的代码比磁盘旧时是 restart_pending，而不是“已是最新”。
+  const status = comparison > 0 ? 'available' : comparison < 0 ? 'local_newer' : (restartPending ? 'restart_pending' : 'current');
   return saveState({
     status,
     stage: null,
     local_version: local.app_version,
     remote_version: remote.app_version,
     restart_required: restartRequired,
+    restart_pending: restartPending,
+    running_version: runningVersion,
     remote_manifest: remote,
     manifest_etag: gitInstall ? null : result.etag || state.manifest_etag,
     manifest_last_modified: gitInstall ? null : result.lastModified || state.manifest_last_modified,
@@ -214,7 +238,9 @@ async function runCheck({ force = false } = {}) {
     error: null,
     error_details: null,
     version_url: url || `${config.gitRemote}/${config.gitBranch}:VERSION.json`,
-    message: status === 'available' ? '发现新版本' : status === 'current' ? '已是最新版本' : '本地版本较新',
+    message: status === 'available' ? '发现新版本'
+      : status === 'restart_pending' ? `代码已更新到 ${local.app_version}，但服务仍在运行${runningVersion && runningVersion !== local.app_version ? ` ${runningVersion} 的` : '旧'}代码，需要重启服务才会生效`
+        : status === 'current' ? '已是最新版本' : '本地版本较新',
   });
 }
 

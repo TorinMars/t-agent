@@ -46,6 +46,7 @@
     <nav class="main-nav" aria-label="主导航">
       <button type="button" class="main-nav-item active" id="tab-tasks" aria-pressed="true"><span class="main-nav-icon" aria-hidden="true">📋</span><span class="main-nav-label">Tasks</span></button>
       <button type="button" class="main-nav-item" id="tab-tools" aria-pressed="false"><span class="main-nav-icon" aria-hidden="true">🧰</span><span class="main-nav-label">实用工具</span></button>
+      <button type="button" class="main-nav-item" id="tab-apps" aria-pressed="false"><span class="main-nav-icon" aria-hidden="true">🧩</span><span class="main-nav-label">应用列表</span></button>
     </nav>
 
     <aside class="sidebar" id="sidebar">
@@ -131,6 +132,31 @@
         </div>
       </div>
     </div>
+    <section class="apps-panel" id="apps-panel" hidden aria-label="应用列表">
+      <div class="tools-engine" id="apps-engine" role="status"></div>
+      <div class="tool-card tool-card-wide">
+        <div class="tool-card-title">应用列表</div>
+        <div class="form-hint" id="apps-hint"></div>
+        <div class="tool-card-actions">
+          <button type="button" class="btn-submit" id="apps-add">新增应用</button>
+          <button type="button" class="btn-logout" id="apps-refresh">刷新</button>
+          <button type="button" class="btn-logout" id="apps-restore" hidden></button>
+          <span class="tool-copy-status" id="apps-status" role="status"></span>
+        </div>
+        <div class="pm2-table-wrap">
+          <table class="pm2-table apps-table" id="apps-table" hidden>
+            <thead><tr><th>名称</th><th>状态</th><th>端口</th><th>访问地址（点击跳转）</th><th>操作</th></tr></thead>
+            <tbody id="apps-body"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="tool-card tool-card-wide">
+        <div class="tool-card-title">让程序自己注册</div>
+        <div class="form-hint">服务启动时调用下面的接口，就会出现在这里；按名称幂等更新，重复启动不会产生重复记录，没传的字段保持原值。需要一个访问令牌：在运行 Client 的机器上，进入项目目录执行 <code>node scripts/create-engine-token.js owner 服务名</code>（令牌只显示一次）。可传字段：<code>name</code>（必填）、<code>port</code>、<code>host</code>（IP）、<code>domain</code>、<code>scheme</code>、<code>path</code>、<code>url</code>、<code>description</code>、<code>pm2_name</code>。</div>
+        <pre class="apps-example" id="apps-register-example"></pre>
+        <div class="tool-card-actions"><button type="button" class="btn-logout" id="apps-register-copy">复制示例命令</button></div>
+      </div>
+    </section>
     <section class="tools-panel" id="tools-panel" hidden aria-label="实用工具">
       <div class="tools-engine" id="tools-engine" role="status"></div>
       <div class="tool-card">
@@ -214,6 +240,7 @@
   <script src="/js/tasks.js"></script>
   <script src="/js/engines.js"></script>
   <script src="/js/terminal-keys.js"></script>
+  <script src="/js/apps.js"></script>
   <script src="/js/tools.js"></script>
   <script>
     if ('serviceWorker' in navigator) {

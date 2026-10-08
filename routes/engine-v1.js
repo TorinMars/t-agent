@@ -15,6 +15,7 @@ const { resolveAsset, validateMdPath } = require('../services/task-assets');
 const { serveFileWatch } = require('../lib/file-watch-sse');
 const { createPm2Handlers } = require('./pm2');
 const { Pm2Error } = require('../services/pm2-manager');
+const { createAppsHandlers, mountAppsRoutes, defaultService: defaultAppsService } = require('./apps');
 
 const router = express.Router();
 const pairingAttempts = new Map();
@@ -74,7 +75,7 @@ function infoHandler(req, res) {
       'tasks:reorder', 'documents:create', 'documents:watch', 'files:assets', 'paths:validate', 'terminal:activity',
       'todos:read', 'todos:write',
       'terminal:interactive', 'terminal:control', 'terminal:multiple', 'token:pairing',
-      'engine:update', 'pm2:manage',
+      'engine:update', 'pm2:manage', 'apps:manage',
     ],
   });
 }
@@ -116,6 +117,11 @@ router.get('/pm2/status', requireEngineAuth('engine:admin'), pm2Route(pm2.status
 router.get('/pm2/:id/logs', requireEngineAuth('engine:admin'), pm2Route(pm2.logs));
 router.post('/pm2/:id/:action', requireEngineAuth('engine:admin'), pm2Route(pm2.control));
 
+// 应用列表（服务注册表）：Token 可以让程序启动时自注册（POST /v1/apps/register，按名称幂等更新）。
+// 同样属于主机管理能力，只允许 owner Token；错误只返回错误码和中文说明。
+const appsRouter = express.Router();
+mountAppsRoutes(appsRouter, createAppsHandlers(defaultAppsService()), requireEngineAuth('engine:admin'));
+router.use('/apps', appsRouter);
 router.get('/tasks', requireEngineAuth('tasks:read'), (req, res) => {
   try { res.json(tasks.listTasks(principal(req), req.query.status)); }
   catch (error) { errorResponse(res, error); }

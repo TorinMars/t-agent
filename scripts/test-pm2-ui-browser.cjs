@@ -30,6 +30,7 @@ process.env.PM2_HOME = path.join(dir, 'home');
 const index = fs.readFileSync(path.join(root, 'public/index.html'), 'utf8');
 const nav = index.match(/<nav class="main-nav"[\s\S]*?<\/nav>/)[0];
 const panel = index.match(/<section class="tools-panel"[\s\S]*?<\/section>/)[0];
+const appsPanel = index.match(/<section class="apps-panel"[\s\S]*?<\/section>/)[0];
 // 引擎切换由 Tasks 提供：这里用桩，让“当前引擎”可以在本地、支持 PM2 的远程引擎和旧版远程引擎之间切换。
 const tasksStub = `<script>const Tasks = (() => {
   const listeners = new Set();
@@ -42,10 +43,12 @@ const tasksStub = `<script>const Tasks = (() => {
   return { getActiveKey: () => active, getSource: key => sources[key], problemOf: () => null, onSourceChange: fn => listeners.add(fn),
     switchTo(key) { active = key; listeners.forEach(fn => fn()); } };
 })();</script>`;
-const page = `<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="/style.css"><body><header class="header"><div class="header-left"></div></header><div class="layout">${nav}${panel}</div>
+const page = `<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="/style.css"><body><header class="header"><div class="header-left"></div></header><div class="layout">${nav}${appsPanel}${panel}</div>
 <script>const API = { async get(u) { const r = await fetch(u, { headers: { 'X-Requested-With': 'XMLHttpRequest' } }); if (!r.ok) throw new Error(await r.text()); return r.json(); },
 async post(u, d) { const r = await fetch(u, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }, body: JSON.stringify(d) }); if (!r.ok) throw new Error(await r.text()); return r.json(); } };</script>
 ${tasksStub}
+<script>const Modal = { show() {}, hide() {} };</script>
+<script src="/apps.js"></script>
 <script src="/tools.js"></script>`;
 
 function serve(manager) {
@@ -54,6 +57,7 @@ function serve(manager) {
   app.get('/', (req, res) => res.type('html').send(page));
   app.get('/style.css', (req, res) => res.type('css').sendFile(path.join(root, 'public/css/style.css')));
   app.get('/tools.js', (req, res) => res.type('js').sendFile(path.join(root, 'public/js/tools.js')));
+  app.get('/apps.js', (req, res) => res.type('js').sendFile(path.join(root, 'public/js/apps.js')));
   const seen = [];
   const router = () => createPm2Router({ manager, requireAuth: (req, res, next) => next() });
   app.use('/api/pm2', (req, res, next) => { seen.push(`local ${req.method} ${req.path}`); next(); }, router());

@@ -76,16 +76,17 @@ body {
   color: var(--text);
 }
 
-.tools-panel { flex: 1 1 auto; min-width: 0; min-height: 0; overflow: auto; padding: 20px; }
-.tools-panel[hidden] { display: none; }
+.tools-panel, .apps-panel { flex: 1 1 auto; min-width: 0; min-height: 0; overflow: auto; padding: 20px; }
+.tools-panel[hidden], .apps-panel[hidden] { display: none; }
 .tool-card { max-width: 560px; padding: 16px 20px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-secondary); }
 .tool-card-title { font-weight: 600; margin-bottom: 6px; }
 .tool-card-actions { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
 .tool-copy-status { font-size: 12px; color: var(--text-muted); }
-body.tools-open .sidebar, body.tools-open .content-area, body.tools-open .quicklinks-bar { display: none; }
+body.tools-open .sidebar, body.tools-open .content-area, body.tools-open .quicklinks-bar,
+body.apps-open .sidebar, body.apps-open .content-area, body.apps-open .quicklinks-bar { display: none; }
 .tools-engine { max-width: 980px; margin-bottom: 14px; color: var(--text-muted); font-size: 13px; }
 .tools-engine strong { color: var(--text); }
-.tools-panel .tool-card + .tool-card { margin-top: 14px; }
+.tools-panel .tool-card + .tool-card, .apps-panel .tool-card + .tool-card { margin-top: 14px; }
 .tool-card-wide { max-width: 980px; }
 .pm2-table-wrap { overflow-x: auto; margin-top: 8px; }
 .pm2-table { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -1793,3 +1794,16 @@ body.tools-open .sidebar, body.tools-open .content-area, body.tools-open .quickl
   padding: 12px; background: #151515; color: #eee; border: 1px solid #444;
   font: 13px/1.5 Menlo, Monaco, "Courier New", monospace; tab-size: 8;
 }
+
+/* 应用列表 */
+.apps-table td { white-space: normal; vertical-align: top; }
+.apps-table .apps-name small, .apps-table .apps-sub { display: block; color: var(--text-muted); font-size: 11px; margin-top: 2px; }
+.apps-table .apps-name strong, .apps-table .apps-name a { font-weight: 600; }
+.apps-link { color: var(--accent); text-decoration: none; word-break: break-all; }
+.apps-link:hover { text-decoration: underline; }
+.apps-links div + div { margin-top: 3px; }
+.apps-tag, .apps-source { display: inline-block; padding: 0 6px; border-radius: 8px; font-size: 11px; line-height: 16px; border: 1px solid var(--border); color: var(--text-muted); white-space: nowrap; }
+.apps-source-pm2 { color: var(--accent); border-color: var(--accent); }
+.apps-table .pm2-actions { flex-wrap: wrap; }
+.apps-example { margin: 8px 0 0; padding: 10px; overflow: auto; background: #0d1117; color: #e6edf3; border-radius: 6px; font: 12px/1.5 ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; word-break: break-all; }
+.apps-log { margin: 0; padding: 10px; max-height: 60vh; overflow: auto; background: #0d1117; color: #e6edf3; border-radius: 6px; font: 12px/1.5 ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; word-break: break-all; }

@@ -90,3 +90,24 @@ Authorization: Bearer tae_xxx
 - `POST /v1/pm2/:id/:action`：`start`、`stop`、`restart`、`reload`。
 
 Client 的代理为 `/api/remote-servers/:id/pm2/...`；旧版 Engine 没有这些路由时代理返回 `501 PM2_UNSUPPORTED`。
+
+## 应用列表（服务注册表）
+
+登记这台 Engine 所在机器上的服务：名称、端口、IP、域名、访问路径、说明，以及关联的 PM2 进程。能力名 `apps:manage`，需要 `engine:admin` scope（所有 Token 均满足）。错误统一返回 `{ "error": "<错误码>", "message": "<中文说明>" }`，错误码如 `APP_NAME_TAKEN`（409）、`APP_NOT_FOUND`（404）、`APP_URL_INVALID`、`APP_PORT_INVALID`、`APP_DOMAIN_INVALID`、`APP_FIELD_REQUIRED`（400）。
+
+- `GET /v1/apps`：返回 `{ pm2: { installed, running, error }, host_ips, hidden_count, apps }`。**每次调用都会把 PM2 里还没登记的进程自动登记**（已被用户隐藏的不会再登记）。每个应用包含已保存的字段，以及运行时合并出的 `pm2`（运行状态，无关联或进程不存在时为 `null`）、`pm2_state`（`unlinked`/`online`/`stopped`/`errored`/`missing`/`unavailable` 等）、`ports`（对 PM2 进程及其子进程检测到的监听端口，`local_only` 表示只监听回环地址）、`effective_port` 和 `links`（`ip`、`domain`、`custom`、`primary`，点击跳转用 `primary`）。
+- `POST /v1/apps`：手动新增，返回 `201 { app }`。
+- `PUT /v1/apps/:id`：局部修改，没传的字段保持原值，传空字符串清空。
+- `DELETE /v1/apps/:id`：删除。自动登记且仍在 PM2 里的服务只是隐藏，返回 `{ deleted: false, hidden: true }`；其余真正删除 `{ deleted: true, hidden: false }`。
+- `POST /v1/apps/restore-hidden`：恢复全部已隐藏的应用，返回 `{ restored }`。
+- `POST /v1/apps/register`：**程序启动时自注册**。按 `pm2_name`（有则优先）或 `name`（不区分大小写）幂等更新：新建返回 `201 { app, created: true }`，已存在返回 `200 { app, created: false }`，没传的可选字段保持原值，不会清掉手填的域名。
+
+可传字段：`name`（必填，≤64）、`port`（1-65535）、`host`（IP）、`domain`（裸域名或 http(s) 地址）、`scheme`（`http`/`https`）、`path`（以 `/` 开头）、`url`（完整 http(s) 地址，优先用于点击跳转）、`description`（≤500）、`pm2_name`。`url`/`domain` 只接受不含账号密码的 http(s)，因为它们会在界面里变成可点击的链接。
+
+```bash
+curl -X POST http://127.0.0.1:3000/v1/apps/register \
+  -H "Authorization: Bearer tae_xxx" -H "Content-Type: application/json" \
+  -d '{"name":"my-service","port":8080,"domain":"my.example.com","description":"服务说明"}'
+```
+
+Client 的代理为 `/api/remote-servers/:id/apps/...`（只代理界面用到的列表、新增、修改、删除、恢复）；旧版 Engine 没有这些路由时代理返回 `501 APPS_UNSUPPORTED`。本机界面使用 `/api/apps/...`（登录会话 + 来源校验，路由与上面一致）。

@@ -36,6 +36,8 @@
 
 > v2.7.5 终端复制：本地与远程终端共用选区复制模块，显式启用 Mac Option 强制选区；OSC 52 写请求经大小限制、UTF-8 校验和用户预览确认后才写入剪贴板。拒绝读取请求，忽略隐藏实例与历史回放，释放实例时清理挂起请求；Ctrl+C 保持中断语义。
 
+> v2.31.0 应用列表：引擎自己的 SQLite 新增 `apps` 表（`db/schema.sql`），`services/apps-registry.js` 负责校验与幂等注册，`services/port-detector.js` 对 PM2 进程树检测监听端口，`services/apps-service.js` 自动登记 PM2 进程并合并运行状态与访问地址；本机 `/api/apps`、Engine `/v1/apps`（能力 `apps:manage`，程序自注册走 `POST /v1/apps/register`）、Client 对远程引擎的代理共用 `routes/apps.js`，前端 `public/js/apps.js` 由 `Tools` 按当前引擎调度。
+
 > v2.7.3 更新保护：Git 更新支持显式勾选强制更新，将未提交修改备份到 Git stash 后再快进。保留被忽略的运行数据，禁止合并覆盖忽略文件，拒绝已提交分叉及被 Git 跟踪的运行数据；切换更新分支时显式获取远程跟踪引用。
 
 > v2.7.2 阅读体验：本地文档、远程只读文档和分享页统一使用隔离的 Markdown 样式与本地打包的 Highlight.js 语法高亮。代码块保留原始空白，提供语言标签与复制按钮；未知语言按纯文本显示，Mermaid 继续使用图表渲染。终端及 Monaco 编辑器不受该样式影响。

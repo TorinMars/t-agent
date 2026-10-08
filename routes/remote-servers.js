@@ -221,6 +221,26 @@ router.post('/:id/pm2/:pid/:action', (req, res) => (
   proxyPm2(req, res, `/v1/pm2/${encodeURIComponent(req.params.pid)}/${encodeURIComponent(req.params.action)}`, { method: 'POST', body: {} })
 ));
 
+// ── 应用列表：透传到 Engine 的 /v1/apps（仅 owner Token 可用） ──
+async function proxyApps(req, res, pathname, options) {
+  const row = getServer(req);
+  if (!row) return res.status(404).json({ error: 'REMOTE_NOT_FOUND' });
+  try {
+    res.json(await request(row.base_url, pathname, decryptToken(row.token_cipher, config.sessionSecret), options));
+  } catch (error) {
+    // 旧版 Engine 没有 /v1/apps：路由不存在时是通用 404，与“找不到这个应用”（APP_NOT_FOUND）区分。
+    if (error.message === 'REMOTE_HTTP_404') return res.status(501).json({ error: 'APPS_UNSUPPORTED' });
+    res.status(error.statusCode || 502).json({ error: safeError(error) });
+  }
+}
+
+const appPath = req => `/v1/apps/${encodeURIComponent(req.params.appId)}`;
+router.get('/:id/apps', (req, res) => proxyApps(req, res, '/v1/apps'));
+router.post('/:id/apps', (req, res) => proxyApps(req, res, '/v1/apps', { method: 'POST', body: req.body || {} }));
+router.post('/:id/apps/restore-hidden', (req, res) => proxyApps(req, res, '/v1/apps/restore-hidden', { method: 'POST', body: {} }));
+router.put('/:id/apps/:appId', (req, res) => proxyApps(req, res, appPath(req), { method: 'PUT', body: req.body || {} }));
+router.delete('/:id/apps/:appId', (req, res) => proxyApps(req, res, appPath(req), { method: 'DELETE' }));
+
 // ── 与本地 /api/tasks 对齐的透传接口：Engine 的能力与 Client 一致 ──
 // 返回 { row, token }；找不到连接时已经响应 404。
 function remoteTarget(req, res) {

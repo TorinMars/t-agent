@@ -131,3 +131,22 @@ CREATE TABLE IF NOT EXISTS task_terminals (
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (task_id, terminal_id)
 );
+
+-- 应用列表：手动登记、程序自注册（API）和自动登记的 PM2 进程。
+-- pm2_name 关联 PM2 进程名；source=pm2 的行被用户删除时只隐藏（hidden=1），避免下次同步又自动登记回来。
+CREATE TABLE IF NOT EXISTS apps (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+  source TEXT NOT NULL DEFAULT 'manual',
+  pm2_name TEXT UNIQUE,
+  port INTEGER,
+  host TEXT,
+  domain TEXT,
+  scheme TEXT NOT NULL DEFAULT 'http',
+  path TEXT NOT NULL DEFAULT '/',
+  url TEXT,
+  description TEXT,
+  hidden INTEGER NOT NULL DEFAULT 0,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);

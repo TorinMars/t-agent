@@ -19,7 +19,7 @@ test('embedding requires explicit origins; wildcards, credentials and CSP inject
   assert.equal(clientCookieSameSite({ secure: true }, ['https://hub.example.com']), 'none');
 });
 
-test('switcher is public, embedded Clients still authenticate and HTTPS cookies honor explicit opt-in', { timeout: 20000 }, async t => {
+test('hidden login entrance, embedded Clients still authenticate and HTTPS cookies honor explicit opt-in', { timeout: 20000 }, async t => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'client-embedding-'));
   const child = spawn(process.execPath, ['server.js'], {
     cwd: path.resolve(__dirname, '..'),
@@ -46,26 +46,20 @@ test('switcher is public, embedded Clients still authenticate and HTTPS cookies 
   async function call(route, { body, cookie, headers = {} } = {}) {
     return fetch(base + route, { redirect: 'manual', method: body ? 'POST' : 'GET', headers: { ...(cookie ? { Cookie: cookie } : {}), ...(body ? { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' } : {}), ...headers }, ...(body ? { body: JSON.stringify(body) } : {}) });
   }
-  for (const route of ['/clients', '/clients.html']) {
-    const response = await call(route);
-    assert.equal(response.status, 200);
-    assert.match(response.headers.get('content-security-policy'), /frame-ancestors 'none'/);
-    assert.equal(response.headers.get('cache-control'), 'no-store');
-    assert.match(await response.text(), /client-workspace/);
+  const LOGIN = '/torin/hide/login';
+  // 未登录：除隐藏登录入口外全部 404，包括旧的登录地址、工作台页面和已删除的 /clients。
+  for (const route of ['/web', '/', '/clients', '/auth/login', '/auth/status', '/api/tasks', '/login.html']) {
+    assert.equal((await call(route)).status, 404, route);
   }
-  const embedded = await call('/web', { headers: { 'Sec-Fetch-Dest': 'iframe', 'Sec-Fetch-Site': 'cross-site' } });
-  assert.equal(embedded.status, 200);
-  assert.equal(embedded.headers.get('content-security-policy'), "frame-ancestors 'self' https://hub.example.com");
-  assert.match(await embedded.text(), /data-client-frame="auth-required"/);
-  assert.equal((await call('/web')).status, 302);
-  assert.equal((await call('/api/tasks')).status, 403);
-  const authPage = await call('/auth/login');
+  assert.equal((await call('/web', { headers: { 'Sec-Fetch-Dest': 'iframe', 'Sec-Fetch-Site': 'cross-site' } })).status, 404);
+  const authPage = await call(LOGIN);
+  assert.equal(authPage.status, 200);
   assert.match(authPage.headers.get('content-security-policy'), /frame-ancestors 'none'/);
 
-  const start = await call('/auth/setup/start', { body: {} });
+  const start = await call(`${LOGIN}/setup/start`, { body: {} });
   assert.equal(start.status, 200);
   const setup = await start.json();
-  const confirmation = await call('/auth/setup/confirm', { cookie: start.headers.get('set-cookie').split(';')[0], body: { code: totp(setup.secret, Math.floor(Date.now() / 30000)) } });
+  const confirmation = await call(`${LOGIN}/setup/confirm`, { cookie: start.headers.get('set-cookie').split(';')[0], body: { code: totp(setup.secret, Math.floor(Date.now() / 30000)) } });
   assert.equal(confirmation.status, 200);
   const recovery = (await confirmation.json()).recovery_codes[0];
   assert.match(confirmation.headers.get('set-cookie'), /SameSite=Strict/);
@@ -73,10 +67,10 @@ test('switcher is public, embedded Clients still authenticate and HTTPS cookies 
   const cookie = confirmation.headers.get('set-cookie').split(';')[0];
   const ready = await call('/web', { cookie, headers: { 'Sec-Fetch-Dest': 'iframe', 'X-Forwarded-Proto': 'https' } });
   assert.equal(ready.status, 200);
-  assert.match(await ready.text(), /\/js\/client-frame.js\?v=/);
+  assert.match(await ready.text(), /name="t-agent-login-path" content="\/torin\/hide\/login"/);
   assert.match(ready.headers.get('set-cookie'), /SameSite=None/);
   assert.match(ready.headers.get('set-cookie'), /; Secure/);
-  const login = await call('/auth/login', { body: { code: recovery }, headers: { 'X-Forwarded-Proto': 'https' } });
+  const login = await call(`${LOGIN}/login`, { body: { code: recovery }, headers: { 'X-Forwarded-Proto': 'https' } });
   assert.equal(login.status, 200);
   assert.match(login.headers.get('set-cookie'), /SameSite=None/);
   assert.match(login.headers.get('set-cookie'), /; Secure/);
@@ -89,5 +83,5 @@ test('switcher is public, embedded Clients still authenticate and HTTPS cookies 
   const logout = await call('/auth/logout', { cookie, body: {} });
   assert.equal(logout.status, 200);
   assert.match(logout.headers.get('set-cookie'), /^embedding-client\.sid=;/);
-  assert.equal((await call('/api/tasks', { cookie })).status, 401);
+  assert.equal((await call('/api/tasks', { cookie })).status, 404);
 });

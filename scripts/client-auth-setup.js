@@ -2,7 +2,8 @@ const QRCode = require('qrcode');
 
 // Run on the Client host or inside its container: calls the local HTTP API
 // over loopback and issues a normal session.
-async function enroll({ baseUrl = `http://127.0.0.1:${process.env.PORT || 3000}`, ask, write = console.log,
+// authBase：未登录时只有隐藏登录入口可用（见 lib/login-gate.js），命令行入口会传入它。
+async function enroll({ baseUrl = `http://127.0.0.1:${process.env.PORT || 3000}`, authBase = '/auth', ask, write = console.log,
   qr = uri => QRCode.toString(uri, { type: 'terminal', small: true }) } = {}) {
   let cookie = '';
   async function request(route, body) {
@@ -19,15 +20,15 @@ async function enroll({ baseUrl = `http://127.0.0.1:${process.env.PORT || 3000}`
     if (setCookie) cookie = setCookie.split(';')[0];
     return result;
   }
-  if ((await request('/auth/status')).bound) throw new Error('AUTHENTICATOR_ALREADY_BOUND：已绑定，请在网页设置中更换；此命令不会重置现有绑定。');
-  const setup = await request('/auth/setup/start', {});
+  if ((await request(`${authBase}/status`)).bound) throw new Error('AUTHENTICATOR_ALREADY_BOUND：已绑定，请在网页设置中更换；此命令不会重置现有绑定。');
+  const setup = await request(`${authBase}/setup/start`, {});
   write(await qr(setup.uri));
   write(`请用身份验证器扫描上方二维码，或手动添加密钥：${setup.secret}`);
   write('类型：基于时间（TOTP），6 位，30 秒。请勿分享此密钥。');
   for (let attempt = 0; attempt < 3; attempt++) {
     const code = (await ask('输入身份验证器的 6 位验证码：')).trim();
     try {
-      const result = await request('/auth/setup/confirm', { code });
+      const result = await request(`${authBase}/setup/confirm`, { code });
       write('绑定完成。请立即保存以下一次性恢复码（仅显示一次）：');
       for (const recovery of result.recovery_codes) write(recovery);
       write('请打开配置的 HTTPS 域名登录；等待身份验证器生成下一组验证码。');
@@ -42,7 +43,9 @@ async function enroll({ baseUrl = `http://127.0.0.1:${process.env.PORT || 3000}`
 if (require.main === module) {
   const readline = require('node:readline/promises');
   const terminal = readline.createInterface({ input: process.stdin, output: process.stdout });
-  enroll({ ask: question => terminal.question(question) })
+  require('dotenv').config({ path: require('node:path').join(__dirname, '..', '.env'), quiet: true });
+  const { resolveLoginPath } = require('../lib/login-gate');
+  enroll({ authBase: resolveLoginPath(process.env.CLIENT_LOGIN_PATH), ask: question => terminal.question(question) })
     .catch(error => { console.error(`绑定失败：${error.message}`); process.exitCode = 1; })
     .finally(() => terminal.close());
 }

@@ -48,23 +48,19 @@ flowchart LR
 - 快捷链接栏默认隐藏，保留已有链接数据；支持 PWA 安装；电脑和手机统一使用 `/web` 的 最小宽度 1280px、大屏横向铺满、普通浏览器最大高度 1200px、安装的 Chrome 应用及全屏模式宽高随实际窗口铺满，避免窄窗口裁切终端 的桌面页面，支持浏览器缩放和手机双指缩放；旧 `/h5` 地址跳转到 `/web`。
 - 自动检查更新，在设置中提示并由用户点击执行更新。
 
-### 多 Client 工作台
+### 登录入口
 
-打开任意 Client 的 `/clients`（例如 `http://127.0.0.1:3000/clients`），即可添加多个 Client 的名称和访问地址，在同一页面通过标签切换。地址可填写根地址或 `/web`，支持编辑、移除、单独刷新和新窗口打开。首次默认加入当前 Client，列表及最后选中的 Client 仅保存在当前浏览器，不同步到其他设备。页面本身可在登录前访问，不提供任务数据或共享登录凭证。
+未登录时，除下面的例外，**所有地址都返回 404**（与不存在的地址响应完全一致，不跳转、不提示登录），只有隐藏的登录入口可以打开，默认是：
 
-每个 Client 独立登录；先点击“打开并登录”，完成身份验证后返回工作台刷新。已打开的 Client 页面在切换时保留，任务选择、编辑内容和终端连接不会因切换而重新加载。刷新、修改地址或移除 Client 会关闭相应页面连接，服务端终端程序继续运行。
-
-默认只允许同源内嵌。使用其他域名或端口的工作台时，在**目标 Client** 的 `.env` 中指定允许内嵌的工作台 origin（协议、主机及端口，不含路径），然后重启：
-
-```dotenv
-CLIENT_FRAME_ORIGINS=https://hub.example.com,http://127.0.0.1:3000
+```
+http://127.0.0.1:3000/torin/hide/login
 ```
 
-多个入口用英文逗号分隔，不支持通配符。目标 Client 需要升级到 v2.14.0 或更新版本，反向代理的 CSP / X-Frame-Options 也必须允许该入口。
-
-同一主机名下运行不同端口的多个 Client 时，Cookie 不按端口隔离。请给各 Client 分别设置不同的 `CLIENT_SESSION_COOKIE_NAME`（例如 `client-one.sid` 和 `client-two.sid`），避免登录互相覆盖。默认仍为 `connect.sid`，更改名称后需重新登录。
-
-同站地址可继续使用原有 Cookie；跨站内嵌要求目标 Client 使用 HTTPS，显式配置后 HTTPS 会话 Cookie 使用 `SameSite=None; Secure`，HTTP 仍使用 `SameSite=Strict`。浏览器需允许该 Client 的第三方 Cookie；HTTPS 工作台不能内嵌 HTTP Client。登录与绑定页面始终禁止内嵌，浏览器 API 和终端仍校验目标 Client 自己的 Origin。此入口不会代理 Client 请求或合并各 Client 的身份。
+- 首次绑定身份验证器、登录、更换验证器都从这个入口进入；登录成功后才能访问 `/web` 和各项功能。会话过期后页面会自动跳回该入口。
+- 在 `.env` 中用 `CLIENT_LOGIN_PATH` 改入口（以 `/` 开头、至少 6 个字符，只含字母数字和 `-._~`，可多级，不能占用 `/api`、`/auth`、`/web`、`/v1` 等内置路径），改后重启。无效值会提示并回退到默认值。
+- 未登录仍可访问的例外：Bearer 令牌的机器接口 `/v1`、`/api/remote/v1`（用于多台 t-agent 互连，没有令牌仍返回各自的错误）、`/health`、公开分享页 `/share/*` 及它依赖的脚本样式。
+- 已安装为应用（PWA）的设备：登录有效期内正常使用；会话过期后冷启动应用会看到 404，需要先在浏览器打开登录入口重新登录。
+- 旧的 `/auth/login`、`/auth/setup` 页面地址和多 Client 工作台 `/clients` 已移除（未登录一律 404）。`CLIENT_FRAME_ORIGINS` 仍可用于允许其他站点内嵌本 Client 的页面。
 
 ### 多 Engine
 
@@ -82,7 +78,7 @@ CLIENT_FRAME_ORIGINS=https://hub.example.com,http://127.0.0.1:3000
 ### 安全边界
 
 - Client 不使用用户名密码，电脑和手机浏览器必须先绑定身份验证器，再以 6 位 TOTP 动态验证码登录；未绑定不能使用业务页面或浏览器接口。
-- 首次绑定可在服务器终端执行 `node scripts/client-auth-setup.js` 完成（可通过 SSH 远程执行），也可直接在网页 `/auth/setup` 扫码，本机、手机、局域网或反向代理访问均可，无需初始密码或初始化码；未绑定期间任何能访问该地址的人都可抢先绑定，请在开放网络前先完成绑定。绑定密钥加密保存，恢复码仅保存哈希；会话有效期 30 天，使用期间自动续期，支持主动退出、验证码防重放和认证限流。
+- 首次绑定可在服务器终端执行 `node scripts/client-auth-setup.js` 完成（可通过 SSH 远程执行），也可直接在网页登录入口（见“登录入口”）扫码，本机、手机、局域网或反向代理访问均可，无需初始密码或初始化码；未绑定期间任何能访问该地址的人都可抢先绑定，请在开放网络前先完成绑定。绑定密钥加密保存，恢复码仅保存哈希；会话有效期 30 天，使用期间自动续期，支持主动退出、验证码防重放和认证限流。
 - Client 默认只监听 `127.0.0.1`；手机访问需显式开放局域网监听或配置 HTTPS 反向代理。
 - 供其他 Client 连接的 `/v1` 接口不使用网页登录，只接受 Bearer Token。
 - Engine 只保存 Token 的 SHA-256 哈希，Token 明文只在创建时显示一次。
@@ -141,7 +137,7 @@ Client 默认由 **PM2** 管理：没有 PM2 时脚本会用 `npm install -g pm2
 
 新安装和旧版本升级初始都没有身份验证器绑定。再次打开客户端页面时会提示“必须绑定身份验证器”，未绑定不能访问任务、设置或终端；没有跳过绑定的免登录入口。
 
-1. 在 Client 所在服务器终端执行 `node scripts/client-auth-setup.js`（可 SSH 登录后执行，不要求在本机操作；端口读取 `PORT`），扫描终端二维码并输入验证码；或直接打开 `/auth/setup`（本机 `http://127.0.0.1:3000/auth/setup`，或手机、局域网、反向代理地址）扫码。无需初始密码或初始化码，不限制本机或远程。已绑定后重启不会取消绑定。
+1. 在 Client 所在服务器终端执行 `node scripts/client-auth-setup.js`（可 SSH 登录后执行，不要求在本机操作；端口读取 `PORT`），扫描终端二维码并输入验证码；或直接打开登录入口（本机 `http://127.0.0.1:3000/torin/hide/login`，或手机、局域网、反向代理地址）扫码。无需初始密码或初始化码，不限制本机或远程。已绑定后重启不会取消绑定。
 2. 使用 Google Authenticator、Microsoft Authenticator 或兼容应用扫码；同一手机可点击“在身份验证器中打开”，也可手动添加密钥（基于时间、6 位、30 秒）。输入验证器生成的验证码完成绑定。
 3. 下载并安全保存页面显示的 8 组一次性恢复码。恢复码只显示一次、每组只能使用一次。验证码已使用时，需等待下一组再登录另一设备。
 4. 手机与 Client 在同一局域网时，将 Client `.env` 的 `HOST` 改为 `0.0.0.0` 并重启服务。手机浏览器打开 `http://电脑的局域网IP:3000/web`（端口以实际配置为准），与电脑使用相同页面。手机可双指放大缩小、拖动查看，首页 `/` 不再按设备跳转。
@@ -509,9 +505,8 @@ npx playwright install chromium
 npm test
 ```
 
-Playwright 固定为兼容 macOS 13 的 1.58.2。全量测试包含真实 Chromium 浏览器回归，开发依赖包含 Playwright、xterm 及 Fit 插件。多 Client 回归使用 OpenSSL 生成临时自签名证书，并启动本地 HTTPS 代理验证跨站 Cookie 和同主机不同端口的会话隔离；测试结束后删除临时证书和数据。Linux CI 可使用 `npx playwright install --with-deps chromium` 安装系统依赖；也可通过 `CHROME_PATH` 指定现有 Chromium 可执行文件。
+Playwright 固定为兼容 macOS 13 的 1.58.2。全量测试包含真实 Chromium 浏览器回归，开发依赖包含 Playwright、xterm 及 Fit 插件。Linux CI 可使用 `npx playwright install --with-deps chromium` 安装系统依赖；也可通过 `CHROME_PATH` 指定现有 Chromium 可执行文件。
 
-多 Client 浏览器回归单独运行 `node scripts/test-client-switcher-browser.cjs`。本机 Chrome 151.0.7922.72 的无界面模式存在内嵌窗口底部点击的自动化差异；Playwright 对应 Chromium 145 和同版 Chrome 实际窗口回归均通过。使用该系统 Chrome 复核时可设置 `HEADFUL=true CHROME_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"` 运行脚本。
 
 默认访问地址为 `http://127.0.0.1:3000`。
 
@@ -681,7 +676,7 @@ t-agent/
 
 ### 可信内网直接访问 Client
 
-在 `.env` 中设置 `HOST=0.0.0.0` 和 `CLIENT_ALLOW_HTTP=true` 并重启，然后通过 `http://内网IP:端口/auth/login` 登录；默认要求 HTTPS。HTTP 不加密验证码和会话，需自行限制访问来源。
+在 `.env` 中设置 `HOST=0.0.0.0` 和 `CLIENT_ALLOW_HTTP=true` 并重启，然后通过 `http://内网IP:端口/torin/hide/login` 登录；默认要求 HTTPS。HTTP 不加密验证码和会话，需自行限制访问来源。
 
 ### 终端历史按需恢复
 

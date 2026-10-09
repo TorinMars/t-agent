@@ -1,17 +1,34 @@
 (() => {
   const originalFetch = window.fetch.bind(window);
+  const meta = document.querySelector('meta[name="t-agent-login-path"]');
+  const loginPath = (meta && meta.content) || '/auth/login';
+  window.TAgentLoginPath = loginPath;
   let redirecting = false;
+  // 未登录时服务端对所有受保护地址返回 404（不暴露 401），所以 404 要先向登录入口确认会话是否已失效，
+  // 避免把真正的“资源不存在”误判为掉线。
+  async function sessionLost() {
+    try {
+      const response = await originalFetch(`${loginPath}/status`, { cache: 'no-store', credentials: 'same-origin' });
+      if (!response.ok) return false;
+      const status = await response.json();
+      return status.authenticated === false;
+    } catch { return false; }
+  }
   window.fetch = async (...args) => {
     const response = await originalFetch(...args);
     const input = args[0];
     const url = new URL(typeof input === 'string' ? input : input.url || String(input), location.href);
-    if (!redirecting && url.origin === location.origin && (url.pathname.startsWith('/api/') || ['/auth/me', '/auth/settings'].includes(url.pathname)) && [401, 403].includes(response.status)) {
-      const data = await response.clone().json().catch(() => ({}));
-      if (['AUTH_REQUIRED', 'AUTHENTICATOR_BINDING_REQUIRED'].includes(data.error)) {
+    const guarded = url.origin === location.origin && (url.pathname.startsWith('/api/') || ['/auth/me', '/auth/settings'].includes(url.pathname));
+    if (!redirecting && guarded && [401, 403, 404].includes(response.status)) {
+      let lost = false;
+      if (response.status === 404) lost = await sessionLost();
+      else {
+        const data = await response.clone().json().catch(() => ({}));
+        lost = ['AUTH_REQUIRED', 'AUTHENTICATOR_BINDING_REQUIRED'].includes(data.error);
+      }
+      if (lost && !redirecting) {
         redirecting = true;
-        const target = data.error === 'AUTHENTICATOR_BINDING_REQUIRED' ? '/auth/setup' : '/auth/login';
-        const returnTo = '/web';
-        location.replace(`${target}?return_to=${encodeURIComponent(returnTo)}`);
+        location.replace(`${loginPath}?return_to=${encodeURIComponent('/web')}`);
       }
     }
     return response;

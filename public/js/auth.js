@@ -1,4 +1,7 @@
 (() => {
+  // 登录页可能在 /auth 或隐藏的登录入口下，接口与页面同一前缀。
+  const base = location.pathname.replace(/\/+$/, '').replace(/\/setup$/, '').replace(/^\/auth\/login$/, '/auth');
+  const isSetupPage = /\/setup\/?$/.test(location.pathname);
   const content = document.getElementById('auth-content');
   const title = document.getElementById('auth-title');
   const description = document.getElementById('auth-description');
@@ -55,7 +58,7 @@
     form.addEventListener('submit', event => {
       event.preventDefault();
       run(form, async () => {
-        const data = await request('/auth/login', { code: document.getElementById('login-code').value.trim(), return_to: returnTo });
+        const data = await request(base + '/login', { code: document.getElementById('login-code').value.trim(), return_to: returnTo });
         if (reauthenticate) await startSetup();
         else location.replace(data.redirect);
       });
@@ -81,7 +84,7 @@
 
   async function startSetup() {
     let data;
-    try { data = await request('/auth/setup/start', {}); }
+    try { data = await request(base + '/setup/start', {}); }
     catch (error) {
       if (error.message === 'AUTH_RECENT_VERIFICATION_REQUIRED') { showLogin(true); return; }
       throw error;
@@ -95,26 +98,26 @@
     const form = document.getElementById('binding-form');
     form.addEventListener('submit', event => {
       event.preventDefault();
-      run(form, async () => showRecovery(await request('/auth/setup/confirm', { code: document.getElementById('binding-code').value.trim(), return_to: returnTo })));
+      run(form, async () => showRecovery(await request(base + '/setup/confirm', { code: document.getElementById('binding-code').value.trim(), return_to: returnTo })));
     });
   }
 
   async function init() {
     try {
-      const status = await request('/auth/status');
+      const status = await request(base + '/status');
       if (!status.bound) {
         title.textContent = '必须绑定身份验证器';
         description.textContent = '请用身份验证器扫描下方二维码完成首次绑定；也可在 Client 所在服务器终端执行 node scripts/client-auth-setup.js。本机或远程访问均可，无需初始密码或初始化码。';
         content.innerHTML = '';
         await startSetup();
-      } else if (location.pathname === '/auth/setup' && status.authenticated) {
+      } else if (isSetupPage && status.authenticated) {
         title.textContent = '更换身份验证器';
         description.textContent = '新绑定完成后，原身份验证器和所有旧恢复码立即失效，其他设备需要重新登录。';
         content.innerHTML = '<button type="button" id="replace-authenticator">开始绑定新验证器</button><a id="cancel-setup" class="auth-link">返回工作台</a>';
         document.getElementById('cancel-setup').href = returnTo;
         document.getElementById('replace-authenticator').addEventListener('click', () => run(content, () => startSetup()));
       } else if (status.authenticated) location.replace(returnTo);
-      else showLogin(location.pathname === '/auth/setup');
+      else showLogin(isSetupPage);
     } catch (error) { errorNode.textContent = messages[error.message] || '无法检查绑定状态，请刷新页面重试。'; errorNode.hidden = false; }
   }
   init();

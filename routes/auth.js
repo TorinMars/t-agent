@@ -30,7 +30,7 @@ function errorResponse(res, error) {
 }
 
 router.get('/status', (req, res) => res.json({ ...getClientAuth().status(req.session) }));
-for (const route of ['/login', '/setup']) {
+for (const route of ['/', '/login', '/setup']) {
   router.get(route, (req, res) => {
     res.set('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
     res.set('Referrer-Policy', 'no-referrer');
@@ -65,7 +65,7 @@ router.post('/login', (req, res) => {
     const auth = getClientAuth().authenticate(req.body.code, req.ip);
     saveLogin(req, auth, error => {
       if (error) return errorResponse(res, error);
-      res.json({ success: true, redirect: auth.recovery ? `/auth/setup?return_to=${encodeURIComponent(safeReturnTo(req.body.return_to))}` : safeReturnTo(req.body.return_to) });
+      res.json({ success: true, redirect: auth.recovery ? `${req.baseUrl}/setup?return_to=${encodeURIComponent(safeReturnTo(req.body.return_to))}` : safeReturnTo(req.body.return_to) });
     });
   } catch (error) { errorResponse(res, error); }
 });

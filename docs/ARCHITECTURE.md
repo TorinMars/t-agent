@@ -8,9 +8,9 @@ Client 负责用户界面、Engine 注册、凭证加密保存和多 Engine 数�
 
 Client 通过标准 `/v1` API 连接远程 Engine。远程 Token 使用 `SESSION_SECRET` 加密后才写入 Client 数据库，不会返回浏览器。
 
-## 多 Client 页面
+## 多 Client 页面（已移除）
 
-`/clients` 是独立的浏览器工作台，可在登录前访问，仅在 localStorage 保存名称、地址与选中项。每个 Client 使用独立 iframe，首次选中时加载；切换仅隐藏旧页面，刷新、编辑地址或移除时才释放对应页面。工作台不代理业务请求、不共享凭证，只接受来自已配置 origin 和对应 iframe window 的加载状态消息。
+v2.34.0 起移除了多 Client 工作台 `/clients`，未登录时只有隐藏登录入口可见。
 
 目标 Client 通过 `CLIENT_FRAME_ORIGINS` 配置可内嵌的工作台 origin；默认 CSP frame-ancestors 只允许同源。登录和绑定页面始终禁止内嵌。配置内嵌后，HTTPS 会话 Cookie 使用 SameSite=None + Secure，HTTP 保持 Strict；浏览器 API 与终端 Origin 校验不放宽。跨站使用依赖浏览器允许第三方 Cookie。同一主机不同端口的 Client 可用不同 `CLIENT_SESSION_COOKIE_NAME` 隔离会话，默认名称仍为 connect.sid。
 
@@ -18,7 +18,7 @@ Client 通过标准 `/v1` API 连接远程 Engine。远程 Token 使用 `SESSION
 
 Engine 是任务、Todo、Markdown 文档、工作目录和终端执行的权威数据源。Engine 接口（`/v1`）不需要用户名密码，仅使用可撤销的 Bearer Token；每个 Client 都内置并暴露同一套 Engine 接口，不再提供独立运行的 Engine 服务。Client 保持单用户数据归属，Web `/web` 和手机 H5 `/h5` 使用同一 TOTP 身份验证器鉴权，默认只监听 `127.0.0.1`。手机访问可显式配置 `HOST=0.0.0.0`，或通过 HTTPS 反向代理访问。
 
-Client 初始化和旧版本升级均默认未绑定身份验证器。未绑定时所有业务页面、浏览器 API 和终端 WebSocket 均拒绝访问并引导绑定。首次绑定无需初始密码或初始化码，不限制本机或远程：网页 `/auth/setup` 与终端 `node scripts/client-auth-setup.js` 均可完成，二者共用同一绑定 API，并受认证限流与二次校验码确认保护。扫码或手动添加密钥并校验 6 位验证码后，才持久化启用绑定。已登录用户可在近期验证后远程更换验证器。绑定密钥与待确认密钥使用 `SESSION_SECRET` 派生的 AES-256-GCM 密钥加密；恢复码仅保存 SHA-256 哈希。会话为 30 天滚动有效期的 SQLite Session，并默认使用 HttpOnly/SameSite=Strict Cookie；仅直连本机 HTTP 可不设 Secure，远程生产环境和 HTTPS 均设置 Secure，确保生产模式也能在本机绑定。旧免登录会话不授予权限。验证码与恢复码均防重放，认证限流持久化到 SQLite。
+Client 初始化和旧版本升级均默认未绑定身份验证器。未登录（含未绑定）时，除隐藏登录入口、Bearer 令牌的机器接口（`/v1`、`/api/remote/v1`）、`/health` 和公开分享页外，所有地址、浏览器 API 和终端 WebSocket 都返回与不存在地址相同的 404（`lib/login-gate.js`），不跳转也不暴露 401/403；会话过期后前端向登录入口的 `/status` 确认再跳转。首次绑定无需初始密码或初始化码，不限制本机或远程：网页登录入口（`CLIENT_LOGIN_PATH`，默认 `/torin/hide/login`）与终端 `node scripts/client-auth-setup.js` 均可完成，二者共用同一绑定 API，并受认证限流与二次校验码确认保护。扫码或手动添加密钥并校验 6 位验证码后，才持久化启用绑定。已登录用户可在近期验证后远程更换验证器。绑定密钥与待确认密钥使用 `SESSION_SECRET` 派生的 AES-256-GCM 密钥加密；恢复码仅保存 SHA-256 哈希。会话为 30 天滚动有效期的 SQLite Session，并默认使用 HttpOnly/SameSite=Strict Cookie；仅直连本机 HTTP 可不设 Secure，远程生产环境和 HTTPS 均设置 Secure，确保生产模式也能在本机绑定。旧免登录会话不授予权限。验证码与恢复码均防重放，认证限流持久化到 SQLite。
 
 更换身份验证器需要五分钟内的再次验证，完成后撤销旧会话、旧恢复码并关闭浏览器终端连接。退出也立即关闭当前会话的终端连接，不终止 PTY 及其中正在执行的程序。`/v1` 与旧 `/api/remote/v1` 保留 Engine 的 Bearer Token 边界，明确创建的只读 `/share/:token` 链接仍按分享 Token 授权。
 

@@ -25,6 +25,8 @@ module.exports = {
   // Explicit opt-in for trusted intranet HTTP; HTTPS cookies remain Secure.
   clientAllowHttp: process.env.CLIENT_ALLOW_HTTP === 'true',
   clientFrameOrigins: require('./lib/client-embedding').parseFrameOrigins(process.env.CLIENT_FRAME_ORIGINS),
+  // 未登录时唯一可见的登录入口；其余地址一律 404。
+  loginPath: require('./lib/login-gate').resolveLoginPath(process.env.CLIENT_LOGIN_PATH, message => console.warn(message)),
   clientSessionCookieName,
   sessionSecret: process.env.SESSION_SECRET || 'dev-secret-change-me',
   // AUTH_USERS 格式: "user1:salt:hash,user2:salt:hash"

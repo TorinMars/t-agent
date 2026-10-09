@@ -32,7 +32,7 @@
 
 > v2.26.0 终端运行状态：服务端按 PTY 前台进程判定每个终端的状态（前台不是 shell 且持续约 1 秒为 running，回到 shell 为 done，用户打开该终端确认后回到 idle），不再依赖输出节奏，命令静默时仍保持执行中，刷新页面不丢失。`GET /api/tasks/terminal-activity` 返回各任务终端状态，`POST /api/tasks/:id/terminal/ack` 确认完成；前端 1.5 秒轮询。左侧任务项汇总该任务所有终端，终端 tab 各自显示：执行中为外圈跑马灯，完成待确认为绿色呼吸灯，取代原圆点角标。远程 Engine 任务暂未接入。
 
-> v2.14.0 多 Client：新增 `/clients` 工作台，浏览器保存 Client 名称、地址及选中项，以独立 iframe 切换并保留已打开页面。Client 之间不共享会话或代理凭证；登录和绑定在独立窗口完成。目标 Client 通过 `CLIENT_FRAME_ORIGINS` 显式允许工作台 origin，页面统一限制 CSP frame-ancestors；已配置的 HTTPS 会话使用 SameSite=None + Secure，HTTP 保持 Strict，浏览器 API 与 WebSocket 的同源校验继续生效。跨站内嵌受第三方 Cookie 策略约束。Client 鉴权实际使用 TOTP，当前会话为 30 天滚动有效期；下文 OAuth 部分为历史方案。
+> v2.14.0 多 Client：（该工作台 `/clients` 已在 v2.34.0 移除）新增 `/clients` 工作台，浏览器保存 Client 名称、地址及选中项，以独立 iframe 切换并保留已打开页面。Client 之间不共享会话或代理凭证；登录和绑定在独立窗口完成。目标 Client 通过 `CLIENT_FRAME_ORIGINS` 显式允许工作台 origin，页面统一限制 CSP frame-ancestors；已配置的 HTTPS 会话使用 SameSite=None + Secure，HTTP 保持 Strict，浏览器 API 与 WebSocket 的同源校验继续生效。跨站内嵌受第三方 Cookie 策略约束。Client 鉴权实际使用 TOTP，当前会话为 30 天滚动有效期；下文 OAuth 部分为历史方案。
 
 > v2.7.5 终端复制：本地与远程终端共用选区复制模块，显式启用 Mac Option 强制选区；OSC 52 写请求经大小限制、UTF-8 校验和用户预览确认后才写入剪贴板。拒绝读取请求，忽略隐藏实例与历史回放，释放实例时清理挂起请求；Ctrl+C 保持中断语义。
 

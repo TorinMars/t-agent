@@ -66,33 +66,38 @@ for (const [environment, allowHttp] of [['test', 'false'], ['production', 'false
       ws.on('unexpected-response', (_, response) => { assert.equal(response.statusCode, expected); response.resume(); ws.terminate(); resolve(); });
     });
   }
-  for (const route of ['/', '/web']) {
+  const LOGIN = '/torin/hide/login';
+  // 未登录（含尚未绑定）：除隐藏登录入口和机器接口外，所有地址都是 404，且不跳转。
+  for (const route of ['/', '/web', '/index.html', '/index%2ehtml', '/login.html', '/clients', '/auth/login', '/auth/setup', '/auth/status', '/auth/me', '/js/app.js', '/css/style.css', '/manifest.json', '/sw.js', '/nonexistent']) {
     const response = await call(route);
-    assert.equal(response.status, 302);
-    assert.match(response.headers.get('location'), /^\/auth\/setup\?/);
+    assert.equal(response.status, 404, route);
+    assert.equal(response.headers.get('location'), null, route);
   }
-  assert.equal((await call('/index%2ehtml')).status, 302);
-  for (const route of ['/api/tasks', '/api/local-ip', '/api/system/version', '/api/oss/config', '/auth/me']) {
-    const response = await call(route);
-    assert.equal(response.status, 403);
-    assert.equal((await response.json()).error, 'AUTHENTICATOR_BINDING_REQUIRED');
+  const unknown = await (await call('/nonexistent')).text();
+  assert.equal(await (await call('/web')).text(), unknown.replace('/nonexistent', '/web'), '受保护地址与不存在的地址响应一致');
+  for (const route of ['/api/tasks', '/api/local-ip', '/api/system/version', '/api/oss/config']) {
+    assert.equal((await call(route)).status, 404, route);
   }
-  assert.equal((await call('/auth/login', { body: { username: 'local', password: '' } })).status, 403);
-  assert.equal((await call('/auth/setup/start', { body: {}, headers: { Origin: 'https://attacker.test' } })).status, 403);
-  assert.deepEqual(await (await call('/auth/status')).json(), { bound: false, authenticated: false });
-  await rejectWs('/terminal/ws?taskId=1', base, 401);
-  await rejectWs('/api/remote-servers/1/terminal/ws?taskId=1', base, 401);
+  assert.equal((await call('/auth/login', { body: { code: '000000' } })).status, 404);
+  assert.equal((await call(LOGIN)).status, 200);
+  assert.equal((await call(`${LOGIN}/`)).status, 200);
+  assert.equal((await call('/js/auth.js')).status, 200);
+  assert.equal((await call(`${LOGIN}/login`, { body: { username: 'local', password: '' } })).status, 403);
+  assert.equal((await call(`${LOGIN}/setup/start`, { body: {}, headers: { Origin: 'https://attacker.test' } })).status, 403);
+  assert.deepEqual(await (await call(`${LOGIN}/status`)).json(), { bound: false, authenticated: false });
+  await rejectWs('/terminal/ws?taskId=1', base, 404);
+  await rejectWs('/api/remote-servers/1/terminal/ws?taskId=1', base, 404);
   await rejectWs('/terminal/ws?taskId=1', 'https://attacker.test', 403);
   const protocol = await call('/api/remote/v1/capabilities');
   assert.equal((await protocol.json()).error, 'REMOTE_TOKEN_REQUIRED');
   assert.equal((await call('/v1/info')).status, 401);
 
-  const startResponse = await call('/auth/setup/start', { body: {} });
+  const startResponse = await call(`${LOGIN}/setup/start`, { body: {} });
   assert.equal(startResponse.status, 200);
   const setupCookie = cookieOf(startResponse);
   const setup = await startResponse.json();
   assert.match(setup.qr, /^data:image\/png;base64,/);
-  const confirmResponse = await call('/auth/setup/confirm', { cookie: setupCookie, body: { code: totp(setup.secret, Math.floor(Date.now() / 30000)), return_to: '/h5' } });
+  const confirmResponse = await call(`${LOGIN}/setup/confirm`, { cookie: setupCookie, body: { code: totp(setup.secret, Math.floor(Date.now() / 30000)), return_to: '/h5' } });
   assert.equal(confirmResponse.status, 200);
   assert.match(confirmResponse.headers.get('set-cookie'), /SameSite=Strict/);
   assert.doesNotMatch(confirmResponse.headers.get('set-cookie'), /; Secure/);
@@ -101,10 +106,10 @@ for (const [environment, allowHttp] of [['test', 'false'], ['production', 'false
   const confirmed = await confirmResponse.json();
   assert.equal(confirmed.recovery_codes.length, 8);
   assert.equal(confirmed.redirect, '/web');
-  assert.equal((await call('/api/tasks')).status, 401);
-  assert.equal((await call('/api/oss/config')).status, 401);
-  assert.equal((await call('/api/oss/images', { body: {} })).status, 401);
-  assert.equal((await call('/api/tasks', { cookie: setupCookie })).status, 401);
+  assert.equal((await call('/api/tasks')).status, 404);
+  assert.equal((await call('/api/oss/config')).status, 404);
+  assert.equal((await call('/api/oss/images', { body: {} })).status, 404);
+  assert.equal((await call('/api/tasks', { cookie: setupCookie })).status, 404);
   const meResponse = await call('/auth/me', { cookie: boundCookie });
   assert.equal(meResponse.status, 200);
   assert.equal((await meResponse.json()).effective_work_dir, path.join(temp, 'tasks'));
@@ -158,11 +163,11 @@ for (const [environment, allowHttp] of [['test', 'false'], ['production', 'false
   const phone = await call('/', { cookie: boundCookie, headers: { 'User-Agent': 'iPhone Mobile' } });
   assert.equal(phone.status, 200);
   assert.match(await phone.text(), /width=1280, user-scalable=yes/);
-  assert.equal((await call('/index.html')).headers.get('location'), '/web');
+  assert.equal((await call('/index.html', { cookie: boundCookie })).headers.get('location'), '/web');
   assert.equal((await call('/auth/settings', { cookie: boundCookie, body: { work_dir: null }, method: 'PUT', headers: { Origin: 'https://attacker.test' } })).status, 403);
 
   const loginHeaders = allowHttp === 'true' ? { Host: 'client.example.test', Origin: 'http://client.example.test' } : {};
-  const loginResponse = await call('/auth/login', { headers: loginHeaders, body: { code: confirmed.recovery_codes[0], return_to: '/h5' } });
+  const loginResponse = await call(`${LOGIN}/login`, { headers: loginHeaders, body: { code: confirmed.recovery_codes[0], return_to: '/h5' } });
   assert.equal(loginResponse.status, 200);
   assert.match(loginResponse.headers.get('set-cookie'), /HttpOnly/);
   assert.match(loginResponse.headers.get('set-cookie'), /SameSite=Strict/);
@@ -188,29 +193,29 @@ for (const [environment, allowHttp] of [['test', 'false'], ['production', 'false
     });
     await rejectWs('/v1/terminal-sessions/1/stream?ticket=invalid', loginHeaders.Origin, 401);
   }
-  assert.equal((await call('/auth/login', { body: { code: confirmed.recovery_codes[0] } })).status, 401);
-  const replacementResponse = await call('/auth/setup/start', { cookie: recoveryCookie, headers: loginHeaders, body: {} });
+  assert.equal((await call(`${LOGIN}/login`, { body: { code: confirmed.recovery_codes[0] } })).status, 401);
+  const replacementResponse = await call(`${LOGIN}/setup/start`, { cookie: recoveryCookie, headers: loginHeaders, body: {} });
   assert.equal(replacementResponse.status, 200);
   assert.ok(replacementResponse.headers.get('set-cookie'));
   assert.doesNotMatch(replacementResponse.headers.get('set-cookie'), /; Secure/);
   const replacement = await replacementResponse.json();
   assert.equal(replacement.replacing, true);
-  const replacementConfirmed = await call('/auth/setup/confirm', { cookie: recoveryCookie, headers: loginHeaders, body: { code: totp(replacement.secret, Math.floor(Date.now() / 30000)) } });
+  const replacementConfirmed = await call(`${LOGIN}/setup/confirm`, { cookie: recoveryCookie, headers: loginHeaders, body: { code: totp(replacement.secret, Math.floor(Date.now() / 30000)) } });
   assert.equal(replacementConfirmed.status, 200);
   assert.ok(replacementConfirmed.headers.get('set-cookie'));
   assert.doesNotMatch(replacementConfirmed.headers.get('set-cookie'), /; Secure/);
   const newCookie = cookieOf(replacementConfirmed);
   assert.equal((await call('/auth/me', { cookie: newCookie, headers: loginHeaders })).status, 200);
   const replacementResult = await replacementConfirmed.json();
-  const httpsLogin = await call('/auth/login', { body: { code: replacementResult.recovery_codes[0] }, headers: { Host: 'client.example.test', 'X-Forwarded-Proto': 'https' } });
+  const httpsLogin = await call(`${LOGIN}/login`, { body: { code: replacementResult.recovery_codes[0] }, headers: { Host: 'client.example.test', 'X-Forwarded-Proto': 'https' } });
   assert.equal(httpsLogin.status, 200);
   assert.match(httpsLogin.headers.get('set-cookie'), /; Secure/);
   if (environment === 'production' && allowHttp !== 'true') {
-    const httpLogin = await call('/auth/login', { body: { code: replacementResult.recovery_codes[1] }, headers: { Host: 'client.example.test' } });
+    const httpLogin = await call(`${LOGIN}/login`, { body: { code: replacementResult.recovery_codes[1] }, headers: { Host: 'client.example.test' } });
     assert.equal(httpLogin.status, 200);
     assert.equal(httpLogin.headers.get('set-cookie'), null);
   }
-  assert.equal((await call('/auth/me', { cookie: boundCookie })).status, 401);
+  assert.equal((await call('/auth/me', { cookie: boundCookie })).status, 404);
   assert.equal((await call('/auth/logout', { cookie: newCookie, body: {} })).status, 200);
-  assert.equal((await call('/auth/me', { cookie: newCookie })).status, 401);
+  assert.equal((await call('/auth/me', { cookie: newCookie })).status, 404);
 });

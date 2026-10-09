@@ -451,7 +451,7 @@ document.getElementById('modal-overlay').addEventListener('click', e => {
 async function init() {
   document.getElementById('btn-logout').addEventListener('click', async () => {
     if (!confirm('退出后，本机和远程终端连接将断开，但服务端正在运行的任务不会停止。确认退出吗？')) return;
-    try { await API.post('/auth/logout', {}); location.replace('/auth/login?return_to=/web'); }
+    try { await API.post('/auth/logout', {}); location.replace(`${window.TAgentLoginPath || '/auth/login'}?return_to=/web`); }
     catch { alert('退出失败，请稍后重试。'); }
   });
   document.getElementById('btn-settings').addEventListener('click', async () => {

@@ -19,6 +19,7 @@ const { getClientAuth, safeReturnTo, isSecureClientCookie, SESSION_TTL } = requi
 const requireAuth = require('./middleware/auth');
 const clientOrigin = require('./middleware/client-origin');
 const { frameAncestors, clientCookieSameSite } = require('./lib/client-embedding');
+const { createLoginGate } = require('./lib/login-gate');
 
 const app = express();
 
@@ -74,6 +75,8 @@ app.use((req, res, next) => {
   getClientAuth().renew(req.session);
   next();
 });
+// 未登录时只开放登录入口和机器接口，其余一律 404。
+app.use(createLoginGate({ loginPath: config.loginPath, isAuthenticated: session => getClientAuth().authenticated(session) }));
 
 // Only browser-facing APIs require the Client session; the legacy /api/remote/v1
 // and standard /v1 Engine APIs retain independent Bearer-token authentication.
@@ -86,7 +89,9 @@ app.get('/api/local-ip', (req, res) => {
   res.json({ ip: getLocalIP(), port: config.port });
 });
 
-app.use('/auth', require('./routes/auth'));
+const authRouter = require('./routes/auth');
+app.use('/auth', authRouter);
+app.use(config.loginPath, authRouter);
 app.use('/api/tasks', require('./routes/tasks'));
 app.use('/api/task-groups', require('./routes/task-groups'));
 app.use('/api/bookmarks', require('./routes/bookmarks'));
@@ -305,30 +310,20 @@ function sendClientPage(req, res) {
   res.set('Cache-Control', 'no-store');
   const auth = getClientAuth().status(req.session);
   const returnTo = safeReturnTo(req.path);
-  if ((!auth.bound || !auth.authenticated) && req.get('sec-fetch-dest') === 'iframe') {
-    return res.sendFile(path.join(__dirname, 'public', 'client-frame-auth.html'));
-  }
-  if (!auth.bound) return res.redirect(`/auth/setup?return_to=${encodeURIComponent(returnTo)}`);
-  if (!auth.authenticated) return res.redirect(`/auth/login?return_to=${encodeURIComponent(returnTo)}`);
+  if (!auth.bound) return res.redirect(`${config.loginPath}/setup?return_to=${encodeURIComponent(returnTo)}`);
+  if (!auth.authenticated) return res.redirect(`${config.loginPath}?return_to=${encodeURIComponent(returnTo)}`);
   req.session.user = ensureSingleUser();
   let html = fs.readFileSync(path.join(__dirname, 'public', 'index.html'), 'utf8');
   const assetVersion = encodeURIComponent(JSON.parse(fs.readFileSync(path.join(__dirname, 'VERSION.json'), 'utf8')).app_version);
   html = html.replace(/(src|href)="(\/(?:js|css|vendor)\/[^"?]+\.(?:js|css))"/g, `$1="$2?v=${assetVersion}"`);
+  html = html.replace('</head>', `<meta name="t-agent-login-path" content="${escapeHtml(config.loginPath)}">\n</head>`);
   res.type('html').send(html);
 }
 
 app.get(['/', '/web'], sendClientPage);
 app.get('/h5', (req, res) => res.redirect('/web'));
 app.get(['/index.html', '/h5.html'], (req, res) => res.redirect('/web'));
-app.get('/login.html', (req, res) => res.redirect('/auth/login'));
-// The switcher stores only browser-local names and addresses, and exposes no
-// Client business data. It is available before login to open other Clients.
-app.get(['/clients', '/clients.html'], (req, res) => {
-  res.set('Cache-Control', 'no-store');
-  res.set('Content-Security-Policy', "default-src 'self'; frame-src http: https:; script-src 'self'; style-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
-  res.sendFile(path.join(__dirname, 'public', 'clients.html'));
-});
-
+app.get('/login.html', (req, res) => res.redirect(config.loginPath));
 // Static middleware decodes paths: encoded /index%2ehtml must not evade the
 // explicit page routes above. Do not allow implicit directory index documents.
 app.use((req, res, next) => {
@@ -337,8 +332,8 @@ app.use((req, res, next) => {
   if (path.extname(pathname).toLowerCase() !== '.html') return next();
   const auth = getClientAuth().status(req.session);
   res.set('Cache-Control', 'no-store');
-  if (!auth.bound) return res.redirect('/auth/setup');
-  if (!auth.authenticated) return res.redirect('/auth/login');
+  if (!auth.bound) return res.redirect(`${config.loginPath}/setup`);
+  if (!auth.authenticated) return res.redirect(config.loginPath);
   next();
 });
 // 第三方库文件名带版本号、内容固定：长期缓存；并对 /vendor 启用 gzip（mermaid 约 5 MB）。
@@ -382,7 +377,7 @@ function browserUpgrade(req, socket, head, callback) {
   const fakeRes = { getHeader: () => {}, setHeader: () => {}, end: () => {} };
   sessionMiddleware(req, fakeRes, () => {
     if (!getClientAuth().authenticated(req.session)) {
-      socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+      socket.write('HTTP/1.1 404 Not Found\r\n\r\n');
       return socket.destroy();
     }
     req.session.user = ensureSingleUser();

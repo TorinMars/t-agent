@@ -44,6 +44,7 @@ const index = fs.readFileSync(path.join(root, 'public/index.html'), 'utf8');
 const nav = index.match(/<nav class="main-nav"[\s\S]*?<\/nav>/)[0];
 const panel = index.match(/<section class="tools-panel"[\s\S]*?<\/section>/)[0];
 const appsPanel = index.match(/<section class="apps-panel"[\s\S]*?<\/section>/)[0];
+const fileSyncPanel = index.match(/<section class="file-sync-panel"[\s\S]*?<\/section>/)[0];
 const modalHtml = '<div id="modal-overlay" style="display:none"><div id="modal"><div id="modal-title"></div><div id="modal-body"></div><div id="modal-footer" hidden></div></div></div>';
 const tasksStub = `<script>const Tasks = (() => {
   const listeners = new Set();
@@ -62,8 +63,8 @@ const modalStub = `<script>const Modal = {
   hide() { document.getElementById('modal-overlay').style.display = 'none'; document.getElementById('modal-body').innerHTML = ''; } };</script>`;
 const apiStub = `<script>const call = async (method, u, d) => { const r = await fetch(u, { method, headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }, body: d === undefined ? undefined : JSON.stringify(d) }); if (!r.ok) throw new Error(await r.text()); return r.json(); };
 const API = { get: u => call('GET', u), post: (u, d) => call('POST', u, d), put: (u, d) => call('PUT', u, d), delete: u => call('DELETE', u) };</script>`;
-const page = `<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="/style.css"><body><header class="header"><div class="header-left"></div></header><div class="layout">${nav}${appsPanel}${panel}</div>${modalHtml}
-${apiStub}${tasksStub}${modalStub}<script src="/apps.js"></script><script src="/tools.js"></script>`;
+const page = `<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="/style.css"><body><header class="header"><div class="header-left"></div></header><div class="layout">${nav}${appsPanel}${fileSyncPanel}${panel}</div>${modalHtml}
+${apiStub}${tasksStub}${modalStub}<script>const FileSyncUI = { setEngine() {}, setActive() {} };</script><script src="/apps.js"></script><script src="/tools.js"></script>`;
 
 function serve() {
   const app = express();

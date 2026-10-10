@@ -18,6 +18,7 @@ const { Pm2Error } = require('../services/pm2-manager');
 const { createAppsHandlers, mountAppsRoutes, defaultService: defaultAppsService } = require('./apps');
 
 const router = express.Router();
+router.use('/file-sync', require('./file-sync').engine);
 const pairingAttempts = new Map();
 
 function errorResponse(res, error) {
@@ -75,7 +76,7 @@ function infoHandler(req, res) {
       'tasks:reorder', 'documents:create', 'documents:watch', 'files:assets', 'paths:validate', 'terminal:activity',
       'todos:read', 'todos:write',
       'terminal:interactive', 'terminal:control', 'terminal:multiple', 'token:pairing',
-      'engine:update', 'pm2:manage', 'apps:manage',
+      'engine:update', 'pm2:manage', 'apps:manage', 'file-sync:manage',
     ],
   });
 }

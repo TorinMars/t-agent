@@ -85,6 +85,25 @@ router.get('/', (req, res) => {
   res.json(db.prepare('SELECT * FROM remote_servers WHERE owner_id = ? ORDER BY created_at ASC').all(owner(req)).map(publicServer));
 });
 
+// 当前远程节点上的文件同步服务。路径固定，避免转发任意地址。
+router.all('/:id/file-sync', (req, res) => proxyFileSync(req, res, ''));
+router.all('/:id/file-sync/:action', (req, res) => proxyFileSync(req, res, req.params.action));
+async function proxyFileSync(req, res, action) {
+  const row = getServer(req);
+  if (!row) return res.status(404).json({ error: 'REMOTE_NOT_FOUND' });
+  if (action && !['servers', 'run', 'files', 'connect', 'disconnect', 'resolve'].includes(action)) return res.status(404).json({ error: 'SYNC_ROUTE_NOT_FOUND' });
+  try {
+    const result = await request(row.base_url, `/v1/file-sync${action ? `/${action}` : ''}`, decryptToken(row.token_cipher, config.sessionSecret), {
+      method: req.method,
+      ...(req.method === 'GET' ? {} : { body: req.body || {} }),
+      maxBytes: 8 * 1024 * 1024,
+    });
+    res.json(result);
+  } catch (error) {
+    res.status(error.statusCode || 502).json({ error: safeError(error) });
+  }
+}
+
 router.post('/test', async (req, res) => {
   try {
     const baseUrl = normalizeBaseUrl(req.body.url, req.body.port);

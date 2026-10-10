@@ -47,6 +47,7 @@
       <button type="button" class="main-nav-item active" id="tab-tasks" aria-pressed="true"><span class="main-nav-icon" aria-hidden="true">📋</span><span class="main-nav-label">Tasks</span></button>
       <button type="button" class="main-nav-item" id="tab-tools" aria-pressed="false"><span class="main-nav-icon" aria-hidden="true">🧰</span><span class="main-nav-label">实用工具</span></button>
       <button type="button" class="main-nav-item" id="tab-apps" aria-pressed="false"><span class="main-nav-icon" aria-hidden="true">🧩</span><span class="main-nav-label">应用列表</span></button>
+      <button type="button" class="main-nav-item" id="tab-file-sync" aria-pressed="false"><span class="main-nav-icon" aria-hidden="true">🔄</span><span class="main-nav-label">文件同步</span></button>
     </nav>
 
     <aside class="sidebar" id="sidebar">
@@ -157,6 +158,30 @@
         <div class="tool-card-actions"><button type="button" class="btn-logout" id="apps-register-copy">复制示例命令</button></div>
       </div>
     </section>
+    <section class="file-sync-panel" id="file-sync-panel" hidden aria-label="文件同步">
+      <div class="tools-engine" id="file-sync-engine"></div>
+      <div class="tool-card tool-card-wide">
+        <div class="tool-card-title">文件同步</div>
+        <div class="form-hint">当前节点默认是主服务器。选择一个已连接的节点作为主服务器后，本节点成为附属服务器，并下载主服务器配置的文件。两侧修改会自动同步；文件清单只能在主服务器修改。用户目录路径可写为 <code>~/.claude/settings.json</code> 或 <code>用户目录/.claude/settings.json</code>，也支持绝对路径。</div>
+        <p id="file-sync-role"></p>
+        <div class="tool-card-actions">
+          <select id="file-sync-master" aria-label="选择主服务器"></select>
+          <button type="button" class="btn-submit" id="file-sync-connect">连接并作为附属服务器</button>
+          <button type="button" class="btn-logout" id="file-sync-disconnect" hidden>恢复为主服务器</button>
+          <button type="button" class="btn-logout" id="file-sync-run">立即同步</button>
+          <span class="tool-copy-status" id="file-sync-status" role="status"></span>
+        </div>
+        <div class="tool-card-actions" id="file-sync-master-actions">
+          <button type="button" class="btn-submit" id="file-sync-add">添加文件</button>
+        </div>
+        <div class="pm2-table-wrap">
+          <table class="pm2-table" id="file-sync-table">
+            <thead><tr><th>同步路径</th><th>本机实际路径</th><th>状态</th><th>版本</th><th>操作</th></tr></thead>
+            <tbody id="file-sync-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
     <section class="tools-panel" id="tools-panel" hidden aria-label="实用工具">
       <div class="tool-card">
         <div class="tool-card-title">安装开发环境（Claude Code / Codex / SSH 密钥 / 规则同步 / ta / PM2）</div>
@@ -216,6 +241,7 @@
   <script src="/js/engines.js"></script>
   <script src="/js/terminal-keys.js"></script>
   <script src="/js/apps.js"></script>
+  <script src="/js/file-sync.js"></script>
   <script src="/js/tools.js"></script>
   <script>
     if ('serviceWorker' in navigator) {

@@ -25,6 +25,8 @@ function mount(router, auth, browser = false) {
   if (!browser) {
     router.get('/manifest', auth, handler(() => service.manifest()));
     router.put('/file', auth, handler(req => service.receive(req.body)));
+    router.post('/heartbeat', auth, handler(req => service.registerChild(req.body)));
+    router.delete('/heartbeat', auth, handler(req => service.unregisterChild(req.body)));
   }
 }
 const browser = express.Router();

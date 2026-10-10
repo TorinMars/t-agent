@@ -42,6 +42,12 @@ test('Engine 鉴权、主节点清单与已有连接代理', async t => {
   const manifest = await (await requestJson(`${engine}/v1/file-sync/manifest`, token)).json();
   assert.equal(manifest.files[0].path, file);
   assert.equal(Buffer.from(manifest.files[0].content, 'base64').toString(), '{"setting":true}\n');
+  const heartbeat = { instance_id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', name: '配置节点', generation: manifest.generation, last_sync_at: new Date().toISOString() };
+  assert.equal((await requestJson(`${engine}/v1/file-sync/heartbeat`, null, 'POST', heartbeat)).status, 401);
+  assert.equal((await requestJson(`${engine}/v1/file-sync/heartbeat`, token, 'POST', heartbeat)).status, 200);
+  const roster = await (await requestJson(`${engine}/v1/file-sync`, token)).json();
+  assert.equal(roster.children[0].name, '配置节点');
+  assert.equal(roster.children[0].online, true);
 
   const id = db.prepare('INSERT INTO remote_servers (owner_id,name,base_url,token_cipher) VALUES (?,?,?,?)')
     .run('owner', 'peer', engine, encryptToken(token, process.env.SESSION_SECRET)).lastInsertRowid;
@@ -51,4 +57,6 @@ test('Engine 鉴权、主节点清单与已有连接代理', async t => {
   assert.equal(response.status, 200);
   assert.equal((await response.json()).role, 'master');
   assert.equal((await requestJson(`${proxy}/api/remote-servers/${id}/file-sync/servers`)).status, 200);
+  assert.equal((await requestJson(`${engine}/v1/file-sync/heartbeat`, token, 'DELETE', heartbeat)).status, 200);
+  assert.deepEqual((await (await requestJson(`${engine}/v1/file-sync`, token)).json()).children, []);
 });

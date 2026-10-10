@@ -89,6 +89,7 @@ body.file-sync-open .sidebar, body.file-sync-open .content-area, body.file-sync-
 .tools-engine strong { color: var(--text); }
 .tools-panel .tool-card + .tool-card, .apps-panel .tool-card + .tool-card, .file-sync-panel .tool-card + .tool-card { margin-top: 14px; }
 .tool-card-wide { max-width: 980px; }
+.file-sync-children { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); }
 .pm2-table-wrap { overflow-x: auto; margin-top: 8px; }
 .pm2-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .pm2-table th, .pm2-table td { padding: 6px 10px; text-align: left; border-bottom: 1px solid var(--border); white-space: nowrap; }

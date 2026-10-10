@@ -36,6 +36,28 @@ const FileSyncUI = (() => {
       $('file-sync-disconnect').hidden = master;
       $('file-sync-master-actions').hidden = !master;
       $('file-sync-role').textContent = master ? '当前角色：主服务器' : `当前角色：附属服务器 · 主服务器连接 #${next.master_id}`;
+      $('file-sync-children').hidden = !master;
+      const children = Array.isArray(next.children) ? next.children : [];
+      $('file-sync-children-hint').textContent = !Array.isArray(next.children)
+        ? '当前引擎需要升级后才能显示附属服务器。'
+        : children.length ? `已登记 ${children.length} 台附属服务器；超过约 15 秒没有心跳会显示离线。` : '暂无已登记的附属服务器。附属节点完成连接或下一轮同步后会显示在这里。';
+      $('file-sync-children-table').hidden = !children.length;
+      const childrenBody = $('file-sync-children-body');
+      childrenBody.replaceChildren();
+      for (const child of children) {
+        const tr = document.createElement('tr');
+        const values = [`${child.name} · ${child.id.slice(0, 8)}`, child.online ? '在线' : '离线',
+          child.last_sync_at ? new Date(child.last_sync_at).toLocaleString() : '尚未同步',
+          child.last_seen_at ? new Date(child.last_seen_at).toLocaleString() : '未知',
+          child.error || '—'];
+        values.forEach((value, index) => {
+          const td = document.createElement('td');
+          td.textContent = value;
+          if (index === 0) td.title = child.id;
+          tr.append(td);
+        });
+        childrenBody.append(tr);
+      }
       const body = $('file-sync-body');
       body.replaceChildren();
       for (const file of next.files) {
@@ -54,7 +76,7 @@ const FileSyncUI = (() => {
         }
         tr.append(action); body.append(tr);
       }
-      message(next.error ? `同步错误：${next.error}` : next.last_sync_at ? `上次同步：${new Date(next.last_sync_at).toLocaleString()}` : '等待首次同步');
+      message(next.error ? `同步错误：${next.error}` : next.registration_error ? `主服务器节点登记失败：${next.registration_error}` : next.last_sync_at ? `上次同步：${new Date(next.last_sync_at).toLocaleString()}` : '等待首次同步');
       const conflict = next.error?.startsWith('SYNC_CONFLICT:') ? next.error.slice('SYNC_CONFLICT:'.length) : null;
       if (conflict) {
         const button = document.createElement('button');

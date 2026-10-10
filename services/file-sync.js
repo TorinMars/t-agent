@@ -6,6 +6,8 @@ const { request } = require('./remote-client');
 const { decryptToken } = require('../lib/token-crypto');
 
 const MAX_FILE = 1024 * 1024;
+const CHILD_ONLINE_MS = 15_000;
+const INSTANCE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const STATE_KEY = 'file_sync_v1';
 const sha = data => crypto.createHash('sha256').update(data).digest('hex');
 const fault = (code, statusCode = 400) => Object.assign(new Error(code), { statusCode });
@@ -71,10 +73,62 @@ class FileSync {
     this.db.prepare(`INSERT INTO system_state (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP`).run(STATE_KEY, JSON.stringify(this.state));
   }
   isMaster() { return this.state.masterId == null; }
+  identity() { return this.db.prepare("SELECT value FROM engine_identity WHERE key = 'instance_id'").get()?.value; }
   status() {
     return { role: this.isMaster() ? 'master' : 'child', master_id: this.state.masterId,
       files: this.state.files.map(spec => ({ path: spec, local_path: resolveSpec(spec, this.home), version: this.state.versions[spec]?.revision || this.state.observed[spec]?.revision || 0, exists: Boolean(readFile(spec, this.home)), backup: this.state.backups?.[spec] || null })),
-      error: this.state.error, last_sync_at: this.state.lastSyncAt || null };
+      children: this.isMaster() ? Object.entries(this.state.children || {}).map(([id, child]) => ({
+        id, name: child.name, last_seen_at: child.lastSeenAt, last_sync_at: child.lastSyncAt || null,
+        error: child.error || null, online: Date.now() - Date.parse(child.lastSeenAt) < CHILD_ONLINE_MS,
+      })).sort((a, b) => a.name.localeCompare(b.name)) : [],
+      error: this.state.error, registration_error: this.state.registrationError || null,
+      last_sync_at: this.state.lastSyncAt || null };
+  }
+  registerChild({ instance_id: id, name, generation, last_sync_at: lastSyncAt, error }) {
+    if (!this.isMaster()) throw fault('SYNC_NOT_MASTER', 409);
+    if (generation !== this.state.generation) throw fault('SYNC_CONFLICT', 409);
+    if (typeof id !== 'string' || !INSTANCE_ID.test(id) || id === this.identity()) throw fault('SYNC_CHILD_INVALID');
+    if (typeof name !== 'string' || !name.trim() || name.length > 80) throw fault('SYNC_CHILD_INVALID');
+    this.state.children ||= {};
+    this.state.children[id] = {
+      name: name.trim(), lastSeenAt: new Date().toISOString(),
+      lastSyncAt: typeof lastSyncAt === 'string' && !Number.isNaN(Date.parse(lastSyncAt)) ? lastSyncAt : null,
+      error: typeof error === 'string' ? error.slice(0, 200) : null,
+    };
+    this.save();
+    return { registered: true };
+  }
+  unregisterChild({ instance_id: id, generation }) {
+    if (!this.isMaster()) throw fault('SYNC_NOT_MASTER', 409);
+    if (generation !== this.state.generation) throw fault('SYNC_CONFLICT', 409);
+    if (typeof id !== 'string' || !INSTANCE_ID.test(id)) throw fault('SYNC_CHILD_INVALID');
+    if (this.state.children) delete this.state.children[id];
+    this.save();
+    return { removed: true };
+  }
+  async heartbeat() {
+    if (this.isMaster()) return;
+    const { url, token } = this.remote();
+    try {
+      await this.remoteRequest(url, '/v1/file-sync/heartbeat', token, {
+        method: 'POST', timeoutMs: 3000,
+        body: { instance_id: this.identity(), name: os.hostname().slice(0, 80), generation: this.state.masterGeneration,
+          last_sync_at: this.state.lastSyncAt || null, error: this.state.error || null },
+      });
+      this.state.registrationError = null;
+    } catch (error) {
+      // A 2.35.0 master can still synchronize files, but has no child roster endpoint.
+      this.state.registrationError = error.statusCode === 404 ? null : error.message;
+    }
+    this.save();
+  }
+  async unregisterFrom(row, generation) {
+    if (!row) return;
+    try {
+      await this.remoteRequest(row.base_url, '/v1/file-sync/heartbeat', decryptToken(row.token_cipher, this.secret), {
+        method: 'DELETE', timeoutMs: 2000, body: { instance_id: this.identity(), generation },
+      });
+    } catch { /* 离线时主服务器会把最后一次心跳标为离线。 */ }
   }
   scanMaster() {
     if (!this.isMaster()) throw fault('SYNC_NOT_MASTER', 409);
@@ -88,7 +142,7 @@ class FileSync {
   }
   manifest() {
     this.scanMaster();
-    return { instance_id: this.db.prepare("SELECT value FROM engine_identity WHERE key = 'instance_id'").get()?.value,
+    return { instance_id: this.identity(),
       generation: this.state.generation,
       files: this.state.files.map(spec => ({ path: spec, revision: this.state.versions[spec]?.revision || 0, ...readFile(spec, this.home) })) };
   }
@@ -128,6 +182,7 @@ class FileSync {
     if (!Array.isArray(manifest.files) || typeof manifest.generation !== 'string') throw fault('SYNC_MANIFEST_INVALID', 502);
     if (manifest.instance_id && manifest.instance_id === this.db.prepare("SELECT value FROM engine_identity WHERE key = 'instance_id'").get()?.value) throw fault('SYNC_SELF_CONNECTION');
     const old = structuredClone(this.state);
+    const oldMaster = old.masterId == null ? null : this.db.prepare('SELECT * FROM remote_servers WHERE id = ?').get(old.masterId);
     this.state.masterId = Number(id);
     this.state.files = [];
     this.state.versions = {};
@@ -135,11 +190,19 @@ class FileSync {
     this.state.masterGeneration = manifest.generation;
     try { await this.applyManifest(manifest, true); }
     catch (error) { this.state = old; this.save(); throw error; }
+    this.state.lastSyncAt = new Date().toISOString();
+    this.save();
+    await this.heartbeat();
+    if (oldMaster && oldMaster.id !== Number(id)) await this.unregisterFrom(oldMaster, old.masterGeneration);
     return this.status();
   }
-  disconnect() {
-    this.state = { masterId: null, files: [], versions: {}, observed: {}, backups: this.state.backups || {}, generation: crypto.randomUUID(), clock: 0, error: null };
+  async disconnect() {
+    const oldMaster = this.isMaster() ? null : this.db.prepare('SELECT * FROM remote_servers WHERE id = ?').get(this.state.masterId);
+    const oldGeneration = this.state.masterGeneration;
+    const children = this.isMaster() ? this.state.children : {};
+    this.state = { masterId: null, files: [], versions: {}, observed: {}, backups: this.state.backups || {}, children, generation: crypto.randomUUID(), clock: 0, error: null };
     this.save();
+    await this.unregisterFrom(oldMaster, oldGeneration);
     return this.status();
   }
   backup(spec, current) {
@@ -179,6 +242,7 @@ class FileSync {
       }
       this.state.lastSyncAt = new Date().toISOString();
       this.save();
+      if (!this.isMaster()) await this.heartbeat();
     } catch (error) { this.state.error = error.message; this.save(); throw error; }
     finally { this.busy = false; }
   }

@@ -39,14 +39,17 @@ test('主节点文件清单、首次下载、双向更新及冲突', async t => 
   fs.mkdirSync(path.join(bHome, '.claude'), { recursive: true });
   fs.writeFileSync(path.join(aHome, '.claude/settings.json'), '{"a":1}\n');
   fs.writeFileSync(path.join(bHome, '.claude/settings.json'), '{"old":true}\n');
-  const aDb = database('a');
-  const bDb = database('b');
-  const cDb = database('c');
+  const childId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+  const aDb = database('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+  const bDb = database(childId);
+  const cDb = database('cccccccc-cccc-4ccc-8ccc-cccccccccccc');
   const master = new FileSync({ db: aDb, secret: 'secret', home: aHome, intervalMs: 0 });
   const remoteRequest = async (base, url, token, options = {}) => {
     assert.equal(token, 'token');
     if (url.endsWith('/manifest')) return master.manifest();
     if (url.endsWith('/file')) return master.receive(options.body);
+    if (url.endsWith('/heartbeat')) return options.method === 'DELETE'
+      ? master.unregisterChild(options.body) : master.registerChild(options.body);
     throw new Error(url);
   };
   const child = new FileSync({ db: bDb, secret: 'secret', home: bHome, intervalMs: 0, remoteRequest });
@@ -58,6 +61,8 @@ test('主节点文件清单、首次下载、双向更新及冲突', async t => 
   master.setFiles(['~/.claude/settings.json']);
   await child.connect(1);
   await sibling.connect(1);
+  assert.equal(master.status().children.length, 2);
+  assert.ok(master.status().children.every(node => node.online));
   assert.equal(child.status().role, 'child');
   assert.equal(fs.readFileSync(path.join(bHome, '.claude/settings.json'), 'utf8'), '{"a":1}\n');
   assert.equal(fs.readFileSync(child.status().files[0].backup, 'utf8'), '{"old":true}\n');
@@ -66,6 +71,7 @@ test('主节点文件清单、首次下载、双向更新及冲突', async t => 
   fs.writeFileSync(path.join(bHome, '.claude/settings.json'), '{"b":2}\n');
   await child.tick();
   assert.equal(fs.readFileSync(path.join(aHome, '.claude/settings.json'), 'utf8'), '{"b":2}\n');
+  assert.ok(master.status().children.find(node => node.id === childId).last_sync_at);
   await sibling.tick();
   assert.equal(fs.readFileSync(path.join(cHome, '.claude/settings.json'), 'utf8'), '{"b":2}\n');
 
@@ -82,7 +88,11 @@ test('主节点文件清单、首次下载、双向更新及冲突', async t => 
   await child.resolveConflict('~/.claude/settings.json');
   assert.equal(fs.readFileSync(path.join(bHome, '.claude/settings.json'), 'utf8'), '{"master":4}\n');
   assert.equal(fs.readFileSync(child.status().files[0].backup, 'utf8'), '{"child":4}\n');
-  master.disconnect();
+  master.state.children[childId].lastSeenAt = new Date(Date.now() - 20_000).toISOString();
+  assert.equal(master.status().children.find(node => node.id === childId).online, false);
+  await sibling.disconnect();
+  assert.equal(master.status().children.length, 1);
+  await master.disconnect();
   master.setFiles(['~/.claude/settings.json']);
   fs.writeFileSync(path.join(bHome, '.claude/settings.json'), '{"stale":true}\n');
   await child.tick();

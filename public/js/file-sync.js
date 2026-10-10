@@ -1,12 +1,13 @@
 // 节点文件同步：当前引擎拥有自己的主/附属角色与文件清单。
 const FileSyncUI = (() => {
   const $ = id => document.getElementById(id);
+  const escapeHtml = value => String(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
   let endpoint = '/api/file-sync', active = false, timer = null, generation = 0, state = null, blocked = null;
   const errorText = error => {
     let code = error.message;
     try { code = JSON.parse(code).error || code; } catch {}
     return ({ SYNC_NOT_MASTER: '只有主服务器能修改文件清单', SYNC_MASTER_NOT_FOUND: '找不到主服务器连接',
-      SYNC_PATH_INVALID: '请输入用户目录下的路径或绝对路径', SYNC_PATH_DUPLICATE: '这个路径已经存在',
+      SYNC_PATH_INVALID: '请输入用户目录下的路径或绝对路径', SYNC_PATH_DUPLICATE: '这个本地路径已经被其他同步文件使用',
       SYNC_CONFLICT: '文件版本冲突，请检查两端内容', SYNC_FILE_INVALID: '文件不是普通文件或超过 1 MB',
       SYNC_CONTENT_INVALID: '文件内容无效', REMOTE_HTTP_404: '目标节点版本过旧，请先更新',
       REMOTE_TIMEOUT: '连接主服务器超时' })[code] || code;
@@ -62,7 +63,7 @@ const FileSyncUI = (() => {
       body.replaceChildren();
       for (const file of next.files) {
         const tr = document.createElement('tr');
-        for (const value of [file.path, file.local_path, file.backup ? `已存在 · 原文件备份：${file.backup}` : file.exists ? '已存在' : '缺失', String(file.version)]) {
+        for (const value of [file.path, file.local_path, file.path_required ? '需要设置本地路径' : file.backup ? `已存在 · 原文件备份：${file.backup}` : file.exists ? '已存在' : '缺失', String(file.version)]) {
           const td = document.createElement('td'); td.textContent = value; tr.append(td);
         }
         const action = document.createElement('td');
@@ -73,10 +74,23 @@ const FileSyncUI = (() => {
             await run(() => API.put(`${endpoint}/files`, { files: state.files.filter(item => item.path !== file.path).map(item => item.path) }));
           });
           action.append(remove);
+        } else {
+          const edit = document.createElement('button'); edit.className = 'btn-logout'; edit.textContent = '修改本地路径';
+          edit.addEventListener('click', () => {
+            Modal.show('修改本地路径', `<label>本地路径<input id="sync-local-path" type="text" autocomplete="off"></label><div class="form-hint">主服务器路径：${escapeHtml(file.path)}。留空恢复默认路径；默认路径在本节点为 ${escapeHtml(file.default_path)}。切换路径后，首次下载会备份目标位置已有的不同内容。</div><div class="form-actions"><button type="button" class="btn-submit" id="sync-local-save">保存</button></div>`);
+            const input = $('sync-local-path');
+            input.value = file.path_override || file.default_path;
+            $('sync-local-save').addEventListener('click', async () => {
+              const value = input.value.trim();
+              Modal.hide();
+              await run(() => API.put(`${endpoint}/path`, { path: file.path, local_path: value === file.default_path ? '' : value }));
+            });
+          });
+          action.append(edit);
         }
         tr.append(action); body.append(tr);
       }
-      message(next.error ? `同步错误：${next.error}` : next.registration_error ? `主服务器节点登记失败：${next.registration_error}` : next.last_sync_at ? `上次同步：${new Date(next.last_sync_at).toLocaleString()}` : '等待首次同步');
+      message(next.error ? `同步错误：${next.error}` : next.registration_error ? `主服务器节点登记失败：${next.registration_error}` : next.last_sync_at ? `上次检查：${new Date(next.last_sync_at).toLocaleString()}` : '等待首次检查');
       const conflict = next.error?.startsWith('SYNC_CONFLICT:') ? next.error.slice('SYNC_CONFLICT:'.length) : null;
       if (conflict) {
         const button = document.createElement('button');

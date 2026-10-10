@@ -99,3 +99,70 @@ test('主节点文件清单、首次下载、双向更新及冲突', async t => 
   assert.match(child.status().error, /^SYNC_CONFLICT:/);
   assert.equal(fs.readFileSync(path.join(aHome, '.claude/settings.json'), 'utf8'), '{"master":4}\n');
 });
+
+test('子节点把 Mac 绝对路径映射到本机路径，备份旧文件并可恢复默认', async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'file-sync-map-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const masterHome = path.join(root, 'mac');
+  const childHome = path.join(root, 'server');
+  fs.mkdirSync(masterHome);
+  fs.mkdirSync(childHome);
+  const source = path.join(masterHome, 'config.toml');
+  const target = path.join(childHome, '.codex', 'config.toml');
+  fs.writeFileSync(source, 'model = "master"\n');
+  fs.mkdirSync(path.dirname(target));
+  fs.writeFileSync(target, 'model = "local"\n');
+  const master = new FileSync({ db: database('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'), secret: 'secret', home: masterHome, intervalMs: 0 });
+  master.setFiles([source]);
+  const childDb = database('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb');
+  childDb.servers.set(1, { id: 1, base_url: 'http://master', token_cipher: encryptToken('token', 'secret') });
+  const child = new FileSync({ db: childDb, secret: 'secret', home: childHome, intervalMs: 0, remoteRequest: async (_base, url, _token, options) => {
+    if (url.endsWith('/manifest')) return master.manifest();
+    if (url.endsWith('/heartbeat')) return { registered: true };
+    if (url.endsWith('/file')) return master.receive(options.body);
+    throw new Error(url);
+  } });
+  await child.connect(1);
+  assert.equal(child.status().files[0].default_path, source);
+  assert.equal(child.status().files[0].path_override, null);
+  assert.equal(child.status().files[0].local_path, source);
+  child.setPath({ path: source, local_path: '~/.codex/config.toml' });
+  assert.equal(child.status().files[0].local_path, target);
+  assert.equal(child.status().files[0].path_override, '~/.codex/config.toml');
+  await child.tick();
+  assert.equal(fs.readFileSync(target, 'utf8'), 'model = "master"\n');
+  assert.equal(fs.readFileSync(child.status().files[0].backup, 'utf8'), 'model = "local"\n');
+  assert.ok(fs.existsSync(target + '.t-agent-file-sync-managed'));
+  fs.writeFileSync(target, 'model = "child"\n');
+  await child.tick();
+  assert.equal(fs.readFileSync(source, 'utf8'), 'model = "child"\n');
+  child.setPath({ path: source, local_path: child.status().files[0].default_path });
+  assert.equal(child.status().files[0].path_override, null);
+  assert.ok(!fs.existsSync(target + '.t-agent-file-sync-managed'));
+  child.setPath({ path: source, local_path: '~/.codex/config.toml' });
+  child.setPath({ path: source, local_path: '' });
+  assert.equal(child.status().files[0].local_path, source);
+});
+
+test('首次连接时不在服务器创建主节点独有的绝对路径', async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'file-sync-foreign-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const foreign = path.join(root, 'mac', 'Users', 'name', '.codex', 'config.toml');
+  const home = path.join(root, 'linux');
+  fs.mkdirSync(home);
+  const db = database('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb');
+  db.servers.set(1, { id: 1, base_url: 'http://master', token_cipher: encryptToken('token', 'secret') });
+  const content = Buffer.from('model = "master"\n').toString('base64');
+  const hash = require('node:crypto').createHash('sha256').update(Buffer.from(content, 'base64')).digest('hex');
+  const manifest = { generation: 'generation', files: [{ path: foreign, revision: 1, content, hash }] };
+  const child = new FileSync({ db, secret: 'secret', home, intervalMs: 0, remoteRequest: async (_base, url) => {
+    if (url.endsWith('/manifest')) return manifest;
+    return { registered: true };
+  } });
+  await child.connect(1);
+  assert.equal(child.status().files[0].path_required, true);
+  assert.equal(fs.existsSync(foreign), false);
+  child.setPath({ path: foreign, local_path: '~/.codex/config.toml' });
+  await child.tick();
+  assert.equal(fs.readFileSync(path.join(home, '.codex/config.toml'), 'utf8'), 'model = "master"\n');
+});

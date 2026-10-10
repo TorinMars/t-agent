@@ -19,6 +19,7 @@ function mount(router, auth, browser = false) {
   router.get('/servers', auth, handler(() => db.prepare('SELECT id, name, base_url FROM remote_servers WHERE enabled = 1 ORDER BY name').all()));
   router.post('/run', auth, handler(async () => { await service.tick(); return service.status(); }));
   router.put('/files', auth, handler(req => service.setFiles(req.body.files)));
+  router.put('/path', auth, handler(req => service.setPath(req.body)));
   router.post('/connect', auth, handler(req => service.connect(req.body.server_id)));
   router.post('/disconnect', auth, handler(() => service.disconnect()));
   router.post('/resolve', auth, handler(req => service.resolveConflict(req.body.path)));

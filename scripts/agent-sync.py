@@ -33,6 +33,8 @@ DEFAULT_BASE = "https://raw.githubusercontent.com/TorinMars/t-agent/main/rules"
 FETCH_TIMEOUT = 3
 TOTAL_DEADLINE = 5
 BACKOFF_SECONDS = 600
+FILE_SYNC_MARKER_SUFFIX = ".t-agent-file-sync-managed"
+FILE_SYNC_MARKER_TTL = 60
 BEGIN = "<!-- t-agent:managed:begin -->"
 END = "<!-- t-agent:managed:end -->"
 NOTICE = "<!-- 由 t-agent 从远程同步，请勿手动修改此区块；区块之外的内容会保留 -->"
@@ -62,6 +64,18 @@ def extra_json_configs(tool):
         root = os.environ.get("CODEX_HOME") or os.path.join(HOME, ".codex")
         return [("codex/hooks.json", os.path.join(root, "hooks.json"))]
     return []
+
+
+def managed_by_file_sync(config_path):
+    """节点文件同步仍在管理此文件时，启动脚本不要再次改写配置。"""
+    marker = config_path + FILE_SYNC_MARKER_SUFFIX
+    try:
+        with open(marker, encoding="utf-8") as handle:
+            if handle.read() != "t-agent-file-sync\n":
+                return False
+        return time.time() - os.path.getmtime(marker) < FILE_SYNC_MARKER_TTL
+    except OSError:
+        return False
 
 
 # ---------- 获取远程文件 ----------
@@ -323,7 +337,7 @@ def sync_tool(tool, remote_files, dry_run):
     override_path = os.path.join(overrides_dir(), config_rel)
     override_text = read_text(override_path)
     has_override = override_text is not None and override_text.strip() != ""
-    if remote_config is not None or has_override:
+    if (remote_config is not None or has_override) and not managed_by_file_sync(config_path):
         local = read_text(config_path)
         try:
             if kind == "json":
@@ -351,6 +365,8 @@ def sync_tool(tool, remote_files, dry_run):
         extra_override = read_text(os.path.join(overrides_dir(), extra_rel))
         has_extra_override = bool(extra_override and extra_override.strip())
         if remote_extra is None and not has_extra_override:
+            continue
+        if managed_by_file_sync(extra_path):
             continue
         try:
             if sync_json(remote_extra, extra_override if has_extra_override else None,

@@ -116,11 +116,12 @@ Client 的代理为 `/api/remote-servers/:id/apps/...`（只代理界面用到�
 
 能力 `file-sync:manage`，所有 `/v1/file-sync/*` 接口需要 Engine owner Token。浏览器本机接口为 `/api/file-sync/*`，远程引擎由 Client 代理到 `/api/remote-servers/:id/file-sync/*`。文件内容用 Base64 编码，单文件最多 1 MiB。
 
-- `GET /v1/file-sync`：节点角色、主服务器连接 ID、文件路径/本机实际路径/版本/备份路径、最近同步时间与错误。
+- `GET /v1/file-sync`：节点角色、主服务器连接 ID、文件路径/本机实际路径/默认路径/本机路径覆盖值/版本/备份路径、最近检查时间与错误；文件的 `path_required` 表示需要先指定本地路径。
 - 主服务器的 `GET /v1/file-sync` 另返回 `children`（`id`、`name`、`online`、`last_seen_at`、`last_sync_at`、`error`）；15 秒无心跳标记离线。
 - `GET /v1/file-sync/servers`：本节点已有的远程连接（仅 ID、名称和地址）。
 - `PUT /v1/file-sync/files`：主服务器设置完整文件路径清单，参数 `{ "files": ["~/.claude/settings.json"] }`。
-- `POST /v1/file-sync/connect`：连接已有远程节点并改为附属服务器，参数 `{ "server_id": 1 }`；首次下载按主服务器文件清单覆盖，覆盖前保存本地备份。
+- `PUT /v1/file-sync/path`：附属节点设置本机路径映射，参数 `{ "path": "/Users/name/.codex/config.toml", "local_path": "~/.codex/config.toml" }`；清空 `local_path` 恢复默认。
+- `POST /v1/file-sync/connect`：连接已有远程节点并改为附属服务器，参数 `{ "server_id": 1 }`；首次下载按主服务器文件清单覆盖，覆盖前保存本地备份。主节点绝对路径在本机不存在时，等待本地路径映射。
 - `POST /v1/file-sync/disconnect`：恢复默认主服务器角色，清空同步清单，保留本地文件和备份。
 - `POST /v1/file-sync/run`：立即执行一轮扫描或同步。
 - `POST /v1/file-sync/resolve`：附属服务器明确选用主服务器的版本，参数 `{ "path": "~/.claude/settings.json" }`，先备份本地文件。

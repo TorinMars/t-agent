@@ -91,7 +91,7 @@ router.all('/:id/file-sync/:action', (req, res) => proxyFileSync(req, res, req.p
 async function proxyFileSync(req, res, action) {
   const row = getServer(req);
   if (!row) return res.status(404).json({ error: 'REMOTE_NOT_FOUND' });
-  if (action && !['servers', 'run', 'files', 'connect', 'disconnect', 'resolve'].includes(action)) return res.status(404).json({ error: 'SYNC_ROUTE_NOT_FOUND' });
+  if (action && !['servers', 'run', 'files', 'path', 'connect', 'disconnect', 'resolve'].includes(action)) return res.status(404).json({ error: 'SYNC_ROUTE_NOT_FOUND' });
   try {
     const result = await request(row.base_url, `/v1/file-sync${action ? `/${action}` : ''}`, decryptToken(row.token_cipher, config.sessionSecret), {
       method: req.method,

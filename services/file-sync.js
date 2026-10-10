@@ -9,6 +9,7 @@ const MAX_FILE = 1024 * 1024;
 const CHILD_ONLINE_MS = 15_000;
 const INSTANCE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const STATE_KEY = 'file_sync_v1';
+const MANAGED_SUFFIX = '.t-agent-file-sync-managed';
 const sha = data => crypto.createHash('sha256').update(data).digest('hex');
 const fault = (code, statusCode = 400) => Object.assign(new Error(code), { statusCode });
 
@@ -73,10 +74,36 @@ class FileSync {
     this.db.prepare(`INSERT INTO system_state (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP`).run(STATE_KEY, JSON.stringify(this.state));
   }
   isMaster() { return this.state.masterId == null; }
+  localSpec(spec) { return this.isMaster() ? spec : this.state.pathOverrides?.[spec] || spec; }
+  localPath(spec) { return resolveSpec(this.localSpec(spec), this.home); }
+  removeMarker(file) {
+    const marker = file + MANAGED_SUFFIX;
+    try { if (fs.readFileSync(marker, 'utf8') === 't-agent-file-sync\n') fs.unlinkSync(marker); }
+    catch (error) { if (error.code !== 'ENOENT') throw error; }
+  }
+  refreshMarkers() {
+    for (const spec of this.state.files) {
+      const file = this.localPath(spec);
+      const marker = file + MANAGED_SUFFIX;
+      try {
+        if (!fs.lstatSync(file).isFile()) continue;
+        const temp = `${marker}.${crypto.randomBytes(6).toString('hex')}`;
+        try {
+          fs.writeFileSync(temp, 't-agent-file-sync\n', { flag: 'wx', mode: 0o600 });
+          fs.renameSync(temp, marker);
+        } finally { try { fs.unlinkSync(temp); } catch {} }
+      } catch (error) { if (error.code !== 'ENOENT') throw error; }
+    }
+  }
   identity() { return this.db.prepare("SELECT value FROM engine_identity WHERE key = 'instance_id'").get()?.value; }
   status() {
     return { role: this.isMaster() ? 'master' : 'child', master_id: this.state.masterId,
-      files: this.state.files.map(spec => ({ path: spec, local_path: resolveSpec(spec, this.home), version: this.state.versions[spec]?.revision || this.state.observed[spec]?.revision || 0, exists: Boolean(readFile(spec, this.home)), backup: this.state.backups?.[spec] || null })),
+      files: this.state.files.map(spec => {
+        const exists = Boolean(readFile(this.localSpec(spec), this.home));
+        return { path: spec, local_path: this.localPath(spec), default_path: resolveSpec(spec, this.home), path_override: this.state.pathOverrides?.[spec] || null,
+          path_required: !this.isMaster() && path.isAbsolute(spec) && !this.state.pathOverrides?.[spec] && !this.state.observed[spec] && !exists,
+          version: this.state.versions[spec]?.revision || this.state.observed[spec]?.revision || 0, exists, backup: this.state.backups?.[spec] || null };
+      }),
       children: this.isMaster() ? Object.entries(this.state.children || {}).map(([id, child]) => ({
         id, name: child.name, last_seen_at: child.lastSeenAt, last_sync_at: child.lastSyncAt || null,
         error: child.error || null, online: Date.now() - Date.parse(child.lastSeenAt) < CHILD_ONLINE_MS,
@@ -151,9 +178,30 @@ class FileSync {
     if (!Array.isArray(paths) || paths.length > 100) throw fault('SYNC_FILES_INVALID');
     const files = paths.map(normalizeSpec);
     if (new Set(files.map(spec => resolveSpec(spec, this.home))).size !== files.length) throw fault('SYNC_PATH_DUPLICATE');
+    for (const spec of this.state.files) if (!files.includes(spec)) this.removeMarker(this.localPath(spec));
     this.state.files = files;
     for (const spec of Object.keys(this.state.versions)) if (!files.includes(spec)) delete this.state.versions[spec];
     this.scanMaster();
+    this.refreshMarkers();
+    return this.status();
+  }
+  setPath({ path: input, local_path: inputPath }) {
+    if (this.isMaster()) throw fault('SYNC_NOT_CHILD', 409);
+    const spec = normalizeSpec(input);
+    if (!this.state.files.includes(spec)) throw fault('SYNC_PATH_NOT_CONFIGURED', 404);
+    const override = inputPath == null || inputPath === '' ? null : normalizeSpec(inputPath);
+    const effective = override && resolveSpec(override, this.home) !== resolveSpec(spec, this.home) ? override : null;
+    const target = resolveSpec(effective || spec, this.home);
+    if (this.state.files.some(other => other !== spec && this.localPath(other) === target)) throw fault('SYNC_PATH_DUPLICATE');
+    if (this.localPath(spec) !== target) {
+      this.removeMarker(this.localPath(spec));
+      delete this.state.observed[spec];
+      this.state.error = null;
+    }
+    this.state.pathOverrides ||= {};
+    if (effective) this.state.pathOverrides[spec] = effective;
+    else delete this.state.pathOverrides[spec];
+    this.save();
     return this.status();
   }
   receive({ path: input, base_revision: base, generation, content }) {
@@ -182,26 +230,32 @@ class FileSync {
     if (!Array.isArray(manifest.files) || typeof manifest.generation !== 'string') throw fault('SYNC_MANIFEST_INVALID', 502);
     if (manifest.instance_id && manifest.instance_id === this.db.prepare("SELECT value FROM engine_identity WHERE key = 'instance_id'").get()?.value) throw fault('SYNC_SELF_CONNECTION');
     const old = structuredClone(this.state);
+    const oldPaths = this.state.files.map(spec => this.localPath(spec));
     const oldMaster = old.masterId == null ? null : this.db.prepare('SELECT * FROM remote_servers WHERE id = ?').get(old.masterId);
     this.state.masterId = Number(id);
     this.state.files = [];
     this.state.versions = {};
     this.state.observed = {};
+    this.state.pathOverrides = {};
     this.state.masterGeneration = manifest.generation;
     try { await this.applyManifest(manifest, true); }
     catch (error) { this.state = old; this.save(); throw error; }
     this.state.lastSyncAt = new Date().toISOString();
     this.save();
+    for (const file of oldPaths) if (!this.state.files.some(spec => this.localPath(spec) === file)) this.removeMarker(file);
+    this.refreshMarkers();
     await this.heartbeat();
     if (oldMaster && oldMaster.id !== Number(id)) await this.unregisterFrom(oldMaster, old.masterGeneration);
     return this.status();
   }
   async disconnect() {
+    const oldPaths = this.state.files.map(spec => this.localPath(spec));
     const oldMaster = this.isMaster() ? null : this.db.prepare('SELECT * FROM remote_servers WHERE id = ?').get(this.state.masterId);
     const oldGeneration = this.state.masterGeneration;
     const children = this.isMaster() ? this.state.children : {};
-    this.state = { masterId: null, files: [], versions: {}, observed: {}, backups: this.state.backups || {}, children, generation: crypto.randomUUID(), clock: 0, error: null };
+    this.state = { masterId: null, files: [], versions: {}, observed: {}, pathOverrides: {}, backups: this.state.backups || {}, children, generation: crypto.randomUUID(), clock: 0, error: null };
     this.save();
+    for (const file of oldPaths) this.removeMarker(file);
     await this.unregisterFrom(oldMaster, oldGeneration);
     return this.status();
   }
@@ -223,8 +277,8 @@ class FileSync {
     const item = manifest.files?.find(file => file.path === spec);
     if (!item || item.content == null) throw fault('SYNC_REMOTE_FILE_MISSING', 404);
     if (sha(Buffer.from(item.content, 'base64')) !== item.hash) throw fault('SYNC_MANIFEST_INVALID', 502);
-    this.backup(spec, readFile(spec, this.home));
-    writeFile(spec, item.content, this.home);
+    this.backup(spec, readFile(this.localSpec(spec), this.home));
+    writeFile(this.localSpec(spec), item.content, this.home);
     this.state.observed[spec] = { hash: item.hash, revision: item.revision, generation: manifest.generation };
     this.state.error = null;
     this.save();
@@ -242,6 +296,7 @@ class FileSync {
       }
       this.state.lastSyncAt = new Date().toISOString();
       this.save();
+      this.refreshMarkers();
       if (!this.isMaster()) await this.heartbeat();
     } catch (error) { this.state.error = error.message; this.save(); throw error; }
     finally { this.busy = false; }
@@ -249,10 +304,11 @@ class FileSync {
   async applyManifest(manifest, initial = false) {
     if (!Array.isArray(manifest.files) || manifest.files.length > 100 || typeof manifest.generation !== 'string') throw fault('SYNC_MANIFEST_INVALID', 502);
     const { url, token } = this.remote();
+    const oldPaths = this.state.files.map(spec => this.localPath(spec));
     const files = [], seen = new Set();
     for (const item of manifest.files) {
       const spec = normalizeSpec(item.path);
-      const localPath = resolveSpec(spec, this.home);
+      const localPath = this.localPath(spec);
       if (seen.has(localPath) || !Number.isInteger(item.revision) || item.revision < 0) throw fault('SYNC_MANIFEST_INVALID', 502);
       seen.add(localPath);
       if (item.content != null) {
@@ -265,8 +321,11 @@ class FileSync {
       files.push(spec);
       if (item.content == null) continue;
       const remoteHash = sha(Buffer.from(item.content, 'base64'));
-      const local = readFile(spec, this.home);
+      const local = readFile(this.localSpec(spec), this.home);
       const observed = this.state.observed[spec];
+      // An absolute path from another OS may point nowhere here. Wait for a local mapping
+      // instead of creating, for example, /Users/name on a Linux server.
+      if (path.isAbsolute(spec) && !this.state.pathOverrides?.[spec] && !observed && !local) continue;
       if (local?.hash === remoteHash) {
         this.state.observed[spec] = { hash: remoteHash, revision: item.revision, generation: manifest.generation };
         continue;
@@ -287,11 +346,13 @@ class FileSync {
         this.state.error = `SYNC_CONFLICT:${spec}`;
         continue;
       }
-      if (initial && local && local.hash !== remoteHash) this.backup(spec, local);
-      if (!local || local.hash !== remoteHash) writeFile(spec, item.content, this.home);
+      if ((!observed || initial) && local && local.hash !== remoteHash) this.backup(spec, local);
+      if (!local || local.hash !== remoteHash) writeFile(this.localSpec(spec), item.content, this.home);
       this.state.observed[spec] = { hash: remoteHash, revision: item.revision, generation: manifest.generation };
     }
     this.state.files = files;
+    for (const spec of Object.keys(this.state.pathOverrides || {})) if (!files.includes(spec)) delete this.state.pathOverrides[spec];
+    for (const file of oldPaths) if (!files.some(spec => this.localPath(spec) === file)) this.removeMarker(file);
     this.state.masterGeneration = manifest.generation;
     for (const spec of Object.keys(this.state.observed)) if (!files.includes(spec)) delete this.state.observed[spec];
     this.save();

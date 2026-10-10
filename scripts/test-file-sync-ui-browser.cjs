@@ -20,7 +20,11 @@ const panel = index.match(/<section class="file-sync-panel"[\s\S]*?<\/section>/)
       const servers = [{ id: 7, name: '远程节点', base_url: 'https://node.example' }];
       const API = {
         get: async url => url.endsWith('/servers') ? servers : syncState,
-        put: async (_url, body) => { syncState = { ...syncState, files: body.files.map(path => ({ path, local_path: '/home/test/' + path.slice(2), exists: true, version: 1 })) }; return syncState; },
+        put: async (url, body) => {
+          if (url.endsWith('/path')) syncState = { ...syncState, files: syncState.files.map(file => file.path === body.path ? { ...file, path_override: body.local_path || null, local_path: body.local_path || file.default_path } : file) };
+          else syncState = { ...syncState, files: body.files.map(path => ({ path, local_path: '/home/test/' + path.slice(2), default_path: '/home/test/' + path.slice(2), path_override: null, exists: true, version: 1 })) };
+          return syncState;
+        },
         post: async (url, body) => { if (url.endsWith('/connect')) syncState = { ...syncState, role: 'child', master_id: body.server_id }; return syncState; },
       };
       const Modal = { show(title, html) { document.getElementById('modal-title').textContent = title; document.getElementById('modal-body').innerHTML = html; }, hide() { document.getElementById('modal-body').replaceChildren(); } };
@@ -38,6 +42,16 @@ const panel = index.match(/<section class="file-sync-panel"[\s\S]*?<\/section>/)
     await page.waitForFunction(() => document.getElementById('file-sync-role').textContent.includes('附属服务器'));
     assert.equal(await page.locator('#file-sync-add').isVisible(), false);
     assert.equal(await page.locator('#file-sync-children').isVisible(), false);
+    await page.click('button:text("修改本地路径")');
+    assert.equal(await page.locator('#sync-local-path').inputValue(), '/home/test/.claude/settings.json');
+    await page.fill('#sync-local-path', '/srv/claude/settings.json');
+    await page.click('#sync-local-save');
+    await page.waitForFunction(() => document.getElementById('file-sync-body').textContent.includes('/srv/claude/settings.json'));
+    await page.click('button:text("修改本地路径")');
+    assert.equal(await page.locator('#sync-local-path').inputValue(), '/srv/claude/settings.json');
+    await page.fill('#sync-local-path', '');
+    await page.click('#sync-local-save');
+    await page.waitForFunction(() => document.getElementById('file-sync-body').textContent.includes('/home/test/.claude/settings.json'));
     assert.deepEqual(errors, []);
     console.log('File sync UI browser test passed');
   } finally { await browser.close(); }

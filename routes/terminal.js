@@ -7,6 +7,7 @@ const { TerminalSnapshot, createHistoryArchive } = require('../lib/terminal-snap
 const { RESET_INPUT_MODES, watchShellReturn } = require('../lib/terminal-input-modes');
 const { createActivityTracker } = require('../lib/terminal-activity');
 const { repairSpawnHelperPermissions } = require('../lib/node-pty-runtime');
+const { resolveTerminalUser, userCanEnter, terminalEnvFor } = require('../lib/terminal-user');
 
 // Sessions are keyed by task ID and terminal ID; omitted IDs use the legacy shell.
 const sessions = new Map();
@@ -154,13 +155,25 @@ function getOrCreateSession(ownerTaskId, workDir, dirWarning, id = 'default') {
     shell = ['/bin/zsh', '/bin/bash', '/bin/sh'].find(candidate => fs.existsSync(candidate));
     if (!shell) throw new Error('未找到可用的 shell（/bin/zsh、/bin/bash、/bin/sh）');
 
+    // 服务以 root 运行时降权到 TERMINAL_USER（默认 dev），否则 Claude Code 拒绝跳过权限确认的模式。
+    const dropped = resolveTerminalUser();
+    if (!dropped.user && (dropped.reason === 'missing-explicit' || dropped.reason === 'missing-default')) {
+      console.warn(`[terminal] 终端用户 ${dropped.name} 不存在，终端仍以服务用户（root）运行；创建该用户或在 .env 设置 TERMINAL_USER= 可消除此提示`);
+    }
+    const runAs = dropped.user;
+    let cwd = workDir || os.homedir();
+    if (runAs && !userCanEnter(cwd, runAs)) {
+      console.warn(`[terminal] 用户 ${runAs.name} 无权进入 ${cwd}，终端改从其家目录 ${runAs.home} 启动；请调整该目录的属主或权限`);
+      cwd = runAs.home;
+    }
     pty = nodePty.spawn(shell, [], {
       name: 'xterm-256color',
       cols: 220,
       rows: 50,
-      cwd: workDir || os.homedir(),
+      cwd,
+      ...(runAs ? { uid: runAs.uid, gid: runAs.gid } : {}),
       env: {
-        ...process.env,
+        ...(runAs ? { ...terminalEnvFor(runAs, process.env), SHELL: shell } : process.env),
         TERM: 'xterm-256color',
         PATH: fullPath,
         // 使用服务器实际可用的 UTF-8 locale。部分 Linux 最小安装没有

@@ -1,10 +1,10 @@
-# 交接说明（2026-10 · 截至 v2.34.0）
+# 交接说明（2026-10 · 截至 v2.37.0）
 
 给接手的 Claude / 开发者：先读 `AGENTS.md`（开发与发布规则）和本文件，再动手。
 
 ## 当前状态
 
-- 分支 `main`，最新发布 **v2.34.0**，已推送到 `origin/main`，工作区干净。
+- 分支 `main`，最新发布 **v2.37.0**，已推送到 `origin/main`，工作区干净。
 - 用户通过客户端检测 `main` 上的 `VERSION.json` 更新，代码改动完成并验证后按 `AGENTS.md` 升版本、提交、推送（用户已授权自动发布）。
 - 开发机已换成性能正常的 macOS，可以跑全量测试和浏览器脚本（先 `npm ci`、`npx playwright install chromium`）。`npm test` 并发时 pty 用例偶发 `posix_spawnp failed`，单独跑或 `node --test test/` 均通过。
 
@@ -34,6 +34,7 @@
 | 2.32.0 | **Client 安装脚本默认改由 PM2 管理**（补上之前被我遗漏的需求）：`install.sh` 新增 `--pm2` / `--system-service`，默认 `pm2 start server.js --name t-agent --cwd <项目目录>` 并 `pm2 save`；没有 PM2 时 `npm install -g pm2`；端口被占用不启动并提示；重复运行改为 `pm2 restart t-agent --update-env`。**已注册 LaunchAgent / systemd 的老安装默认继续沿用**，只有加 `--pm2` 才迁移（先停用并移除旧服务）。`uninstall.sh` 同步删除 PM2 里的进程。这样 t-agent 自己也会出现在“应用列表”和“PM2 进程管理”里。测试：`test/install-project.test.js`（沙箱里用桩替换 npm/pm2/launchctl，仅 macOS 运行，沙箱 PATH 里不放真实 pm2）。**注意**：这台 Mac 上 t-agent 目前仍由 launchd（`com.tagent.client`）管理，需要用户自己运行 `./install.sh --pm2` 才会迁移——迁移会重启服务并中断所有终端会话。**没做**：之前搁置的“数据目录与项目目录分离”（用户说不需要）；完整改动保存在嵌套克隆 `tasks/t-agent/t-agent` 的 `stash@{0}` 里 |
 | 2.33.0 | **移除“实用工具”页里的“PM2 进程管理”面板**（用户要求；PM2 的操作都在“应用列表”里）。删除：`index.html` 的 PM2 卡片和实用工具页的“当前引擎”提示、`tools.js` 里的 `pm2` 面板模块、面板专用样式（`.pm2-logs`、`#pm2-log-text`）、`scripts/test-pm2-ui-browser.cjs`。**保留**（应用列表在用）：后端 `/api/pm2/*`、Engine `/v1/pm2/*`、远程代理、能力 `pm2:manage`，以及样式 `pm2-table`/`pm2-badge`/`pm2-actions`/`pm2-logs-bar`；后端测试 `test/pm2-manager.test.js`、`test/pm2-engine.test.js` 不变。`/api/pm2/status` 现在界面不再调用，但接口保留以兼容旧版 Client。PM2 操作的界面覆盖由 `scripts/test-apps-ui-browser.cjs` 承担 |
 | 2.34.0 | **隐藏登录入口：未登录时除登录入口外全部 404**（用户要求登录地址为 `/torin/hide/login`）。新增 `lib/login-gate.js`：`CLIENT_LOGIN_PATH`（默认 `/torin/hide/login`）校验、全局门禁（session 之后、`/api` 之前）、与 Express 默认 404 页一致的响应。未登录仍开放：登录入口及其接口（`routes/auth.js` 同时挂在 `/auth` 和登录入口下，页面加了 `/` 路由）、`/v1`、`/api/remote/v1`、`/health`、`/share/*` 及其脚本样式、登录页静态文件；`/hooks/terminal-activity` 在门禁之前不受影响。终端 WebSocket 未登录改回 404。前端：`index.html` 注入 `t-agent-login-path` meta；`client-auth.js` 遇到 `/api` 404 时先请求登录入口 `/status` 确认掉线再跳转，避免把真 404 当掉线；`auth.js` 的接口前缀按页面路径推导；`scripts/client-auth-setup.js` 通过 `authBase` 走登录入口。**删除多 Client 工作台**（用户确认不再使用）：`public/clients.html`、`js/clients.js`、`js/client-frame.js`、`css/clients.css`、`client-frame-auth.html`、`/clients` 路由、iframe 登录提示分支、`test/client-switcher.test.js`、`scripts/test-client-switcher-browser.cjs`；`CLIENT_FRAME_ORIGINS` 的 CSP 内嵌能力保留。已知限制：PWA 会话过期后冷启动会看到 404，需先在浏览器登录；旧书签 `/auth/login`、`/web` 未登录时是 404 |
+| 2.37.0 | **网页终端降权：服务是 root 时终端改用 `TERMINAL_USER`（默认 `dev`）**（Claude Code 在 root 下拒绝 `--dangerously-skip-permissions`）。新增 `lib/terminal-user.js`（只在 Linux 且 `uid===0` 时生效；`TERMINAL_USER=` 留空不降权；默认用户不存在则沿用 root 并 `console.warn`；读 `/etc/passwd` 解析 uid/gid/home）；`routes/terminal.js` 给 `node-pty.spawn` 传 `uid/gid`，环境去掉 `SESSION_SECRET`、改 `HOME/USER/LOGNAME/SHELL`，无权进入的工作目录回退到家目录。`install.sh` 的 `setup_terminal_user()`：Linux 且 root 时 `useradd -m dev`、写 `TERMINAL_USER`、仅对安装目录内的任务目录 `chown -R`（已在 Linux 容器里实跑：创建、幂等、留空三种路径）。**未验证**：真实服务器上 node-pty 的 uid/gid 降权（Mac 无法测，需在服务器更新后开终端 `id` 确认）；附加组不处理；降权后终端读不到 `/root` 下的工具，需 dev 自己装 Claude Code |
 
 ## 架构要点（改代码前必读）
 

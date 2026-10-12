@@ -62,6 +62,15 @@ http://127.0.0.1:3000/torin/hide/login
 - 已安装为应用（PWA）的设备：登录有效期内正常使用；会话过期后冷启动应用会看到 404，需要先在浏览器打开登录入口重新登录。
 - 旧的 `/auth/login`、`/auth/setup` 页面地址和多 Client 工作台 `/clients` 已移除（未登录一律 404）。`CLIENT_FRAME_ORIGINS` 仍可用于允许其他站点内嵌本 Client 的页面。
 
+### 终端运行用户
+
+Linux 服务器上如果 t-agent 以 root 运行，网页终端里的 Claude Code 会拒绝“跳过权限确认”模式。因此**服务是 root 时，终端自动降权为普通用户**（默认 `dev`）：
+
+- `install.sh` 以 root 安装时会创建 `dev`（家目录 `/home/dev`、无密码），把 `TERMINAL_USER=dev` 写入 `.env`，并把安装目录内的任务目录交给它；自定义的任务目录不擅自改属主，请自行 `chown -R dev <目录>`。
+- 可在 `.env` 用 `TERMINAL_USER=用户名` 换用户，`TERMINAL_USER=` 留空表示不降权（终端仍是 root）。未配置且 `dev` 不存在时沿用 root，并在服务日志里提示。
+- 降权后终端不带 `SESSION_SECRET`，`HOME`/`USER` 为目标用户；该用户无权进入的任务目录会改从它的家目录启动并在日志提示。需要 root 操作请另开 root 会话（如 SSH）。该用户要自己安装 Claude Code（`install-claude-code.sh`）。
+- 服务本来就是普通用户、或在 macOS 上时，此功能不生效，终端就是服务用户。
+
 ### 多 Engine
 
 - 一个 Client 可保存并切换多台远程 Engine。

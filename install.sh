@@ -293,6 +293,41 @@ fi
 TASKS_DIR="$(sed -n 's/^TASKS_BASE_DIR=//p' "$ENV_FILE" | tail -n 1)"
 [ -n "$TASKS_DIR" ] && mkdir -p "$TASKS_DIR"
 
+# Linux 上服务以 root 运行时，网页终端降权到普通用户（默认 dev）：Claude Code 在 root 下拒绝“跳过权限确认”的模式。
+# 已在 .env 配置 TERMINAL_USER 的沿用原值（留空表示不降权）；macOS 或非 root 安装不处理。
+setup_terminal_user() {
+  [ "$PLATFORM" = "Linux" ] && [ "${EUID}" -eq 0 ] || return 0
+  local user
+  if grep -q '^TERMINAL_USER=' "$ENV_FILE" 2>/dev/null; then
+    user="$(sed -n 's/^TERMINAL_USER=//p' "$ENV_FILE" | tail -n 1)"
+  else
+    user=dev
+    update_env_value TERMINAL_USER "$user"
+  fi
+  if [ -z "$user" ] || [ "$user" = "root" ]; then
+    printf '终端用户：不降权，网页终端以 root 运行（Claude Code 在 root 下无法使用跳过权限确认的模式）。\n'
+    return 0
+  fi
+  if ! id "$user" >/dev/null 2>&1; then
+    if command -v useradd >/dev/null 2>&1; then
+      useradd -m -s "$(command -v bash || echo /bin/sh)" "$user" || { printf '警告：无法创建用户 %s，网页终端将以 root 运行。\n' "$user" >&2; return 0; }
+      printf '已创建终端用户：%s（家目录 /home/%s，无密码）。\n' "$user" "$user"
+    else
+      printf '警告：没有 useradd，无法创建用户 %s，网页终端将以 root 运行。\n' "$user" >&2
+      return 0
+    fi
+  fi
+  # 终端要在任务目录里读写；只处理位于安装目录内的默认任务目录，自定义目录不擅自改属主。
+  if [ -n "$TASKS_DIR" ]; then
+    case "$TASKS_DIR" in
+      "$APP_DIR"/*) chown -R "$user" "$TASKS_DIR" && printf '已把任务目录 %s 交给 %s。\n' "$TASKS_DIR" "$user" ;;
+      *) printf '提示：任务目录 %s 不在安装目录内，未改属主；请确保 %s 能读写它，例如：chown -R %s %s\n' "$TASKS_DIR" "$user" "$user" "$TASKS_DIR" ;;
+    esac
+  fi
+  printf '网页终端将以 %s 身份运行；需要 root 操作请另开 root 会话。\n' "$user"
+}
+setup_terminal_user
+
 printf '安装 Node.js 依赖……\n'
 if [ -f "$APP_DIR/package-lock.json" ]; then
   npm ci --omit=dev --ignore-scripts=false --prefix "$APP_DIR"

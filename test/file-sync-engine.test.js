@@ -57,6 +57,20 @@ test('Engine 鉴权、主节点清单与已有连接代理', async t => {
   assert.equal(response.status, 200);
   assert.equal((await response.json()).role, 'master');
   assert.equal((await requestJson(`${proxy}/api/remote-servers/${id}/file-sync/servers`)).status, 200);
+
+  // 配对码：主服务器生成，另一端用它换令牌；join 走真实的 /v1/pair 往返，加入自己会被拒绝。
+  assert.equal((await requestJson(`${engine}/v1/file-sync/pairing`, null, 'POST', {})).status, 401);
+  const pairing = await (await requestJson(`${engine}/v1/file-sync/pairing`, token, 'POST', {})).json();
+  assert.match(pairing.code, /^TA-[A-Z2-9]{4}-[A-Z2-9]{4}-[A-Z2-9]{4}$/);
+  const exchanged = await requestJson(`${engine}/v1/pair`, null, 'POST', { code: pairing.code });
+  assert.equal(exchanged.status, 201);
+  assert.equal((await requestJson(`${engine}/v1/file-sync/manifest`, (await exchanged.json()).access_token)).status, 200);
+  assert.equal((await requestJson(`${engine}/v1/pair`, null, 'POST', { code: pairing.code })).status, 400, '配对码只能使用一次');
+  const selfPairing = await (await requestJson(`${engine}/v1/file-sync/pairing`, token, 'POST', {})).json();
+  const selfJoin = await requestJson(`${engine}/v1/file-sync/join`, token, 'POST', { url: engine, code: selfPairing.code });
+  assert.equal(selfJoin.status, 400);
+  assert.equal((await selfJoin.json()).error, 'SYNC_SELF_CONNECTION');
+  assert.equal((await requestJson(`${engine}/v1/file-sync/join`, token, 'POST', { url: engine, code: 'bad' })).status, 400);
   assert.equal((await requestJson(`${engine}/v1/file-sync/heartbeat`, token, 'DELETE', heartbeat)).status, 200);
   assert.deepEqual((await (await requestJson(`${engine}/v1/file-sync`, token)).json()).children, []);
 });

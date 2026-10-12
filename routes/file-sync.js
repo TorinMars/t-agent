@@ -3,6 +3,10 @@ const service = require('../services/file-sync-instance');
 const db = require('../db');
 const requireAuth = require('../middleware/auth');
 const requireEngineAuth = require('../middleware/engine-auth');
+const { createPairingCode } = require('../services/engine-auth');
+
+// 引擎接口用令牌的主体，浏览器接口用登录用户。
+const ownerOf = req => req.engineAuth?.principalId || req.session?.user?.login || 'local';
 
 function reply(res, error) {
   const code = /^[A-Z0-9_]+$/.test(error.message || '') ? error.message : 'SYNC_FAILED';
@@ -20,6 +24,8 @@ function mount(router, auth, browser = false) {
   router.post('/run', auth, handler(async () => { await service.tick(); return service.status(); }));
   router.put('/files', auth, handler(req => service.setFiles(req.body.files)));
   router.put('/path', auth, handler(req => service.setPath(req.body)));
+  router.post('/pairing', auth, handler(req => createPairingCode(db, { principalId: ownerOf(req) })));
+  router.post('/join', auth, handler(req => service.join({ url: req.body.url, code: req.body.code, ownerId: ownerOf(req) })));
   router.post('/connect', auth, handler(req => service.connect(req.body.server_id)));
   router.post('/disconnect', auth, handler(() => service.disconnect()));
   router.post('/resolve', auth, handler(req => service.resolveConflict(req.body.path)));

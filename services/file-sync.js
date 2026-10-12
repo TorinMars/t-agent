@@ -2,8 +2,8 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
-const { request } = require('./remote-client');
-const { decryptToken } = require('../lib/token-crypto');
+const { request, normalizeBaseUrl } = require('./remote-client');
+const { decryptToken, encryptToken } = require('../lib/token-crypto');
 
 const MAX_FILE = 1024 * 1024;
 const CHILD_ONLINE_MS = 15_000;
@@ -11,6 +11,14 @@ const INSTANCE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{1
 const STATE_KEY = 'file_sync_v1';
 const MANAGED_SUFFIX = '.t-agent-file-sync-managed';
 const sha = data => crypto.createHash('sha256').update(data).digest('hex');
+// 用户可能粘贴 192.168.1.5:3000 或带 /web 的完整地址，统一成 协议://主机:端口。
+function masterBaseUrl(input) {
+  let text = String(input || '').trim();
+  if (!text) throw Object.assign(new Error('SYNC_MASTER_URL_INVALID'), { statusCode: 400 });
+  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(text)) text = `http://${text}`;
+  try { return normalizeBaseUrl(new URL(text).origin); }
+  catch { throw Object.assign(new Error('SYNC_MASTER_URL_INVALID'), { statusCode: 400 }); }
+}
 const fault = (code, statusCode = 400) => Object.assign(new Error(code), { statusCode });
 
 function normalizeSpec(input) {
@@ -220,6 +228,27 @@ class FileSync {
     const row = this.db.prepare('SELECT * FROM remote_servers WHERE id = ?').get(this.state.masterId);
     if (!row) throw fault('SYNC_MASTER_NOT_FOUND', 404);
     return { url: row.base_url, token: decryptToken(row.token_cipher, this.secret) };
+  }
+  // 一步完成配对：用主服务器生成的配对码换取访问令牌，保存为一条远程连接，然后立即连接并同步。
+  async join({ url, code, ownerId }) {
+    const pairing = String(code || '').trim().toUpperCase();
+    if (!/^TA-[A-Z2-9]{4}-[A-Z2-9]{4}-[A-Z2-9]{4}$/.test(pairing)) throw fault('SYNC_PAIRING_CODE_INVALID');
+    const baseUrl = masterBaseUrl(url);
+    const paired = await this.remoteRequest(baseUrl, '/v1/pair', null, { method: 'POST', body: { code: pairing, client_name: 'T-Agent 文件同步' } });
+    const token = paired && paired.access_token;
+    if (typeof token !== 'string' || !token) throw fault('SYNC_PAIRING_FAILED', 502);
+    const cipher = encryptToken(token, this.secret);
+    const owner = String(ownerId || 'local');
+    const existing = this.db.prepare('SELECT id FROM remote_servers WHERE owner_id = ? AND base_url = ?').get(owner, baseUrl);
+    let id;
+    if (existing) {
+      this.db.prepare("UPDATE remote_servers SET token_cipher = ?, enabled = 1, status = 'online', last_error = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(cipher, existing.id);
+      id = existing.id;
+    } else {
+      const name = new URL(baseUrl).hostname.slice(0, 80);
+      id = Number(this.db.prepare("INSERT INTO remote_servers (owner_id, name, base_url, token_cipher, status, last_checked_at) VALUES (?, ?, ?, ?, 'online', CURRENT_TIMESTAMP)").run(owner, name, baseUrl, cipher).lastInsertRowid);
+    }
+    return this.connect(id);
   }
   async connect(id) {
     if (!Number.isSafeInteger(Number(id)) || Number(id) < 1) throw fault('SYNC_MASTER_NOT_FOUND', 404);

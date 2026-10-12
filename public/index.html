@@ -162,11 +162,11 @@
       <div class="tools-engine" id="file-sync-engine"></div>
       <div class="tool-card tool-card-wide">
         <div class="tool-card-title">文件同步</div>
-        <div class="form-hint">当前节点默认是主服务器。选择一个已连接的节点作为主服务器后，本节点成为附属服务器，并下载主服务器配置的文件。两侧修改会自动同步；文件清单只能在主服务器修改。用户目录路径可写为 <code>~/.claude/settings.json</code> 或 <code>用户目录/.claude/settings.json</code>，也支持绝对路径。</div>
+        <div class="form-hint">当前节点默认是主服务器。在主服务器点“生成配对码”，到另一台服务器的文件同步页点“加入主服务器”，填入主服务器地址和配对码即可配对，之后该服务器成为附属服务器并下载主服务器配置的文件；两侧修改会自动同步，文件清单只能在主服务器修改。用户目录路径可写为 <code>~/.claude/settings.json</code> 或 <code>用户目录/.claude/settings.json</code>，也支持绝对路径。</div>
         <p id="file-sync-role"></p>
         <div class="tool-card-actions">
-          <select id="file-sync-master" aria-label="选择主服务器"></select>
-          <button type="button" class="btn-submit" id="file-sync-connect">连接并作为附属服务器</button>
+          <button type="button" class="btn-submit" id="file-sync-pair">生成配对码</button>
+          <button type="button" class="btn-submit" id="file-sync-join">加入主服务器</button>
           <button type="button" class="btn-logout" id="file-sync-disconnect" hidden>恢复为主服务器</button>
           <button type="button" class="btn-logout" id="file-sync-run">立即同步</button>
           <span class="tool-copy-status" id="file-sync-status" role="status"></span>

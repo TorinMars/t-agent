@@ -25,7 +25,11 @@ const panel = index.match(/<section class="file-sync-panel"[\s\S]*?<\/section>/)
           else syncState = { ...syncState, files: body.files.map(path => ({ path, local_path: '/home/test/' + path.slice(2), default_path: '/home/test/' + path.slice(2), path_override: null, exists: true, version: 1 })) };
           return syncState;
         },
-        post: async (url, body) => { if (url.endsWith('/connect')) syncState = { ...syncState, role: 'child', master_id: body.server_id }; return syncState; },
+        post: async (url, body) => {
+          if (url.endsWith('/pairing')) return { code: 'TA-ABCD-EFGH-JKMN', expires_in_seconds: 600 };
+          if (url.endsWith('/join')) { window.joined = body; syncState = { ...syncState, role: 'child', master_id: 7 }; }
+          return syncState;
+        },
       };
       const Modal = { show(title, html) { document.getElementById('modal-title').textContent = title; document.getElementById('modal-body').innerHTML = html; }, hide() { document.getElementById('modal-body').replaceChildren(); } };
     ` });
@@ -38,8 +42,16 @@ const panel = index.match(/<section class="file-sync-panel"[\s\S]*?<\/section>/)
     await page.click('#sync-new-save');
     await page.waitForFunction(() => document.querySelectorAll('#file-sync-body tr').length === 1);
     assert.match(await page.locator('#file-sync-body').textContent(), /\/home\/test\/\.claude\/settings.json/);
-    await page.click('#file-sync-connect');
+    await page.click('#file-sync-pair');
+    await page.waitForFunction(() => document.getElementById('sync-pair-code'));
+    assert.equal(await page.locator('#sync-pair-code').inputValue(), 'TA-ABCD-EFGH-JKMN');
+    await page.click('#file-sync-join');
+    await page.fill('#sync-join-url', '192.168.1.5:3000');
+    await page.fill('#sync-join-code', 'TA-ABCD-EFGH-JKMN');
+    await page.click('#sync-join-save');
     await page.waitForFunction(() => document.getElementById('file-sync-role').textContent.includes('附属服务器'));
+    assert.deepEqual(await page.evaluate(() => window.joined), { url: '192.168.1.5:3000', code: 'TA-ABCD-EFGH-JKMN' });
+    assert.equal(await page.locator('#file-sync-pair').isVisible(), false);
     assert.equal(await page.locator('#file-sync-add').isVisible(), false);
     assert.equal(await page.locator('#file-sync-children').isVisible(), false);
     await page.click('button:text("修改本地路径")');

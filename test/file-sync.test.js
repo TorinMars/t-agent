@@ -14,6 +14,9 @@ function database(identity) {
     prepare(sql) {
       if (sql.includes('FROM system_state')) return { get: key => values.has(key) ? { value: values.get(key) } : undefined };
       if (sql.includes('INTO system_state')) return { run: (key, value) => values.set(key, value) };
+      if (sql.includes('FROM remote_servers WHERE owner_id')) return { get: (owner, url) => [...servers.values()].find(row => row.owner_id === owner && row.base_url === url) };
+      if (sql.includes('INSERT INTO remote_servers')) return { run: (owner, name, url, cipher) => { const id = servers.size + 1; servers.set(id, { id, owner_id: owner, name, base_url: url, token_cipher: cipher }); return { lastInsertRowid: id }; } };
+      if (sql.includes('UPDATE remote_servers')) return { run: (cipher, id) => { servers.get(id).token_cipher = cipher; } };
       if (sql.includes('FROM remote_servers')) return { get: id => servers.get(Number(id)) };
       if (sql.includes('FROM engine_identity')) return { get: () => ({ value: identity }) };
       throw new Error(sql);
@@ -165,4 +168,51 @@ test('首次连接时不在服务器创建主节点独有的绝对路径', async
   child.setPath({ path: foreign, local_path: '~/.codex/config.toml' });
   await child.tick();
   assert.equal(fs.readFileSync(path.join(home, '.codex/config.toml'), 'utf8'), 'model = "master"\n');
+});
+
+test('配对码一步加入主服务器：换令牌、保存连接、立即同步；重复加入复用连接', async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'file-sync-join-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const aHome = path.join(root, 'a');
+  const bHome = path.join(root, 'b');
+  fs.mkdirSync(path.join(aHome, '.claude'), { recursive: true });
+  fs.mkdirSync(bHome, { recursive: true });
+  fs.writeFileSync(path.join(aHome, '.claude/settings.json'), '{"a":1}\n');
+  const aDb = database('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+  const bDb = database('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb');
+  const master = new FileSync({ db: aDb, secret: 'secret', home: aHome, intervalMs: 0 });
+  const seen = [];
+  let issued = 0;
+  const remoteRequest = async (base, url, token, options = {}) => {
+    seen.push({ base, url, token, method: options.method });
+    if (url === '/v1/pair') {
+      assert.equal(token, null);
+      assert.equal(options.body.code, 'TA-ABCD-EFGH-JKMN');
+      return { access_token: `tae_token${++issued}` };
+    }
+    assert.match(token, /^tae_token\d$/);
+    if (url.endsWith('/manifest')) return master.manifest();
+    if (url.endsWith('/file')) return master.receive(options.body);
+    if (url.endsWith('/heartbeat')) return options.method === 'DELETE' ? master.unregisterChild(options.body) : master.registerChild(options.body);
+    throw new Error(url);
+  };
+  const child = new FileSync({ db: bDb, secret: 'secret', home: bHome, intervalMs: 0, remoteRequest });
+  master.setFiles(['~/.claude/settings.json']);
+
+  await assert.rejects(child.join({ url: 'http://master:3000', code: 'wrong', ownerId: 'local' }), /SYNC_PAIRING_CODE_INVALID/);
+  await assert.rejects(child.join({ url: '', code: 'TA-ABCD-EFGH-JKMN', ownerId: 'local' }), /SYNC_MASTER_URL_INVALID/);
+  assert.equal(seen.length, 0, '格式错误不会发出请求');
+
+  const status = await child.join({ url: 'master.lan:3000/web', code: 'ta-abcd-efgh-jkmn', ownerId: 'local' });
+  assert.equal(status.role, 'child');
+  assert.equal(seen[0].base, 'http://master.lan:3000');
+  assert.equal(fs.readFileSync(path.join(bHome, '.claude/settings.json'), 'utf8'), '{"a":1}\n');
+  assert.equal(bDb.servers.size, 1);
+  assert.equal(bDb.servers.get(1).name, 'master.lan');
+  assert.notEqual(bDb.servers.get(1).token_cipher, 'tae_token1', '令牌加密保存');
+
+  await child.disconnect();
+  await child.join({ url: 'http://master.lan:3000', code: 'TA-ABCD-EFGH-JKMN', ownerId: 'local' });
+  assert.equal(bDb.servers.size, 1, '同一地址复用连接，只更新令牌');
+  assert.equal(child.status().role, 'child');
 });

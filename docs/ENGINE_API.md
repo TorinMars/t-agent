@@ -121,6 +121,8 @@ Client 的代理为 `/api/remote-servers/:id/apps/...`（只代理界面用到�
 - `GET /v1/file-sync/servers`：本节点已有的远程连接（仅 ID、名称和地址）。
 - `PUT /v1/file-sync/files`：主服务器设置完整文件路径清单，参数 `{ "files": ["~/.claude/settings.json"] }`。
 - `PUT /v1/file-sync/path`：附属节点设置本机路径映射，参数 `{ "path": "/Users/name/.codex/config.toml", "local_path": "~/.codex/config.toml" }`；清空 `local_path` 恢复默认。
+- `POST /v1/file-sync/pairing`：主服务器生成一次性配对码（`TA-XXXX-XXXX-XXXX`，10 分钟有效），返回 `{ code, expires_in_seconds }`。
+- `POST /v1/file-sync/join`：用主服务器的地址和配对码一步加入，参数 `{ "url": "192.168.1.5:3000", "code": "TA-..." }`；调用主服务器 `/v1/pair` 换令牌，保存（同地址复用）远程连接后立即 `connect`。错误：`SYNC_PAIRING_CODE_INVALID`、`SYNC_MASTER_URL_INVALID`、`PAIRING_CODE_INVALID_OR_EXPIRED`、`SYNC_SELF_CONNECTION`。
 - `POST /v1/file-sync/connect`：连接已有远程节点并改为附属服务器，参数 `{ "server_id": 1 }`；首次下载按主服务器文件清单覆盖，覆盖前保存本地备份。主节点绝对路径在本机不存在时，等待本地路径映射。
 - `POST /v1/file-sync/disconnect`：恢复默认主服务器角色，清空同步清单，保留本地文件和备份。
 - `POST /v1/file-sync/run`：立即执行一轮扫描或同步。

@@ -10,33 +10,25 @@ const FileSyncUI = (() => {
       SYNC_PATH_INVALID: '请输入用户目录下的路径或绝对路径', SYNC_PATH_DUPLICATE: '这个本地路径已经被其他同步文件使用',
       SYNC_CONFLICT: '文件版本冲突，请检查两端内容', SYNC_FILE_INVALID: '文件不是普通文件或超过 1 MB',
       SYNC_CONTENT_INVALID: '文件内容无效', REMOTE_HTTP_404: '目标节点版本过旧，请先更新',
-      REMOTE_TIMEOUT: '连接主服务器超时' })[code] || code;
+      REMOTE_TIMEOUT: '连接主服务器超时', REMOTE_CONNECTION_FAILED: '连不上主服务器，请检查地址和网络',
+      SYNC_PAIRING_CODE_INVALID: '配对码格式不对，应为 TA-XXXX-XXXX-XXXX', SYNC_MASTER_URL_INVALID: '主服务器地址不正确',
+      PAIRING_CODE_INVALID_OR_EXPIRED: '配对码无效或已过期（10 分钟内有效，只能使用一次）', PAIRING_CODE_ALREADY_USED: '配对码已被使用，请重新生成',
+      REMOTE_HTTP_429: '尝试过于频繁，请稍后再试', SYNC_SELF_CONNECTION: '不能加入自己' })[code] || code;
   };
   function message(text) { $('file-sync-status').textContent = text || ''; }
   async function refresh() {
     if (blocked) { message(blocked); return; }
     const current = ++generation;
     try {
-      const [next, servers] = await Promise.all([API.get(endpoint), API.get(`${endpoint}/servers`)]);
+      const next = await API.get(endpoint);
       if (current !== generation) return;
       state = next;
-      const select = $('file-sync-master');
-      const chosen = select.value;
-      select.replaceChildren();
-      for (const server of servers) {
-        const option = document.createElement('option');
-        option.value = server.id;
-        option.textContent = `${server.name} (${server.base_url})`;
-        select.append(option);
-      }
-      if (servers.some(server => String(server.id) === chosen)) select.value = chosen;
       const master = next.role === 'master';
-      select.hidden = !master;
-      $('file-sync-connect').hidden = !master;
-      $('file-sync-connect').disabled = !servers.length;
+      $('file-sync-pair').hidden = !master;
+      $('file-sync-join').hidden = !master;
       $('file-sync-disconnect').hidden = master;
       $('file-sync-master-actions').hidden = !master;
-      $('file-sync-role').textContent = master ? '当前角色：主服务器' : `当前角色：附属服务器 · 主服务器连接 #${next.master_id}`;
+      $('file-sync-role').textContent = master ? '当前角色：主服务器' : `当前角色：附属服务器（主服务器连接 #${next.master_id}）`;
       $('file-sync-children').hidden = !master;
       const children = Array.isArray(next.children) ? next.children : [];
       $('file-sync-children-hint').textContent = !Array.isArray(next.children)
@@ -113,7 +105,7 @@ const FileSyncUI = (() => {
     endpoint = base;
     blocked = unavailable;
     $('file-sync-engine').textContent = `当前引擎：${label}${unavailable ? ` · ${unavailable}` : ''}`;
-    for (const id of ['file-sync-master', 'file-sync-connect', 'file-sync-disconnect', 'file-sync-run', 'file-sync-add']) {
+    for (const id of ['file-sync-pair', 'file-sync-join', 'file-sync-disconnect', 'file-sync-run', 'file-sync-add']) {
       $(id).disabled = Boolean(unavailable);
     }
     generation++;
@@ -125,10 +117,23 @@ const FileSyncUI = (() => {
     if (active) { refresh(); timer = setInterval(refresh, 5000); }
   }
   $('file-sync-run').addEventListener('click', () => run(() => API.post(`${endpoint}/run`, {})));
-  $('file-sync-connect').addEventListener('click', () => {
-    const server_id = Number($('file-sync-master').value);
-    if (!server_id || !confirm('连接后，本节点现有同步清单由目标主服务器的清单替换，并下载其文件内容。继续吗？')) return;
-    run(() => API.post(`${endpoint}/connect`, { server_id }));
+  $('file-sync-pair').addEventListener('click', async () => {
+    try {
+      const paired = await API.post(`${endpoint}/pairing`, {});
+      const address = endpoint === '/api/file-sync' ? location.origin : '';
+      Modal.show('配对码', `<div class="form-hint">在要加入的服务器上打开“文件同步”→“加入主服务器”，填入下面的信息。配对码 ${Math.round(paired.expires_in_seconds / 60)} 分钟内有效，只能使用一次。</div>${address ? `<label>主服务器地址<input type="text" readonly value="${escapeHtml(address)}"></label>` : ''}<label>配对码<input id="sync-pair-code" type="text" readonly value="${escapeHtml(paired.code)}"></label><div class="form-hint">地址以对方服务器能访问到的为准（局域网 IP、域名或隧道地址）。配对码相当于一次性的管理权限，请只发给自己的服务器。</div>`);
+      $('sync-pair-code').select();
+    } catch (error) { message(`生成失败：${errorText(error)}`); }
+  });
+  $('file-sync-join').addEventListener('click', () => {
+    Modal.show('加入主服务器', `<label>主服务器地址<input id="sync-join-url" type="text" placeholder="http://192.168.1.5:3000" autocomplete="off"></label><label>配对码<input id="sync-join-code" type="text" placeholder="TA-XXXX-XXXX-XXXX" autocomplete="off"></label><div class="form-hint">加入后，本节点现有同步清单由主服务器的清单替换，并下载其文件内容；与本地不同的文件会先备份。</div><div class="form-actions"><button type="button" class="btn-submit" id="sync-join-save">加入</button></div>`);
+    $('sync-join-save').addEventListener('click', async () => {
+      const url = $('sync-join-url').value.trim();
+      const code = $('sync-join-code').value.trim();
+      if (!url || !code) return;
+      Modal.hide();
+      await run(() => API.post(`${endpoint}/join`, { url, code }));
+    });
   });
   $('file-sync-disconnect').addEventListener('click', () => {
     if (confirm('恢复为主服务器？同步清单会清空，本地文件保留。')) run(() => API.post(`${endpoint}/disconnect`, {}));

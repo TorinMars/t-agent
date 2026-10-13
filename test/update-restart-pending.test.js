@@ -39,7 +39,7 @@ function load({ gitInstall = true, runningCommit = 'running-commit', diffs = {},
     } },
     '../db': { prepare: () => ({ get: () => (persisted ? { value: JSON.stringify(persisted) } : undefined), run() {} }) },
     '../config': { gitRemote: 'origin', gitBranch: 'main', updateCheckIntervalMs: 1000, githubVersionUrl: '', githubToken: '', updateRepository: 'TorinMars/t-agent', updateRef: 'main' },
-    '../lib/update-command': { logUpdate() {}, runUpdateCommand: async (file, args) => {
+    '../lib/update-command': { logUpdate() {}, recentLog: () => [], clearLog() {}, runUpdateCommand: async (file, args) => {
       if (file !== 'git') return '';
       if (args[0] === 'show') return JSON.stringify(manifest(remoteVersion));
       if (args[0] === 'diff') {

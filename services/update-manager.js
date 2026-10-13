@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const https = require('https');
 const { execFileSync } = require('child_process');
-const { logUpdate, runUpdateCommand, runWithProgress } = require('../lib/update-command');
+const { logUpdate, recentLog, clearLog, runUpdateCommand, runWithProgress } = require('../lib/update-command');
 const { requiresRestart } = require('../lib/update-impact');
 const db = require('../db');
 const config = require('../config');
@@ -294,6 +294,7 @@ function execNpm(args, stage) {
 }
 
 async function runApply({ force = false } = {}) {
+  clearLog();
   saveState({ status: 'updating', stage: 'refreshing_version', error: null, message: '正在确认远程版本' });
   const checked = await runCheck({ force: true });
   if (checked.status !== 'available') throw new Error('NO_UPDATE_AVAILABLE');
@@ -415,6 +416,7 @@ function publicState() {
     update_repository: config.updateRepository,
     update_ref: config.updateRef,
     check_interval_seconds: config.updateCheckIntervalMs / 1000,
+    log: recentLog(),
   };
 }
 

@@ -139,7 +139,7 @@ const Updates = {
       this.latestStatus = status;
       document.getElementById('update-dot').style.display = this.needsAttention(status) ? 'block' : 'none';
       if (status.status === 'updating') {
-        Modal.show('正在更新', '<div class="update-progress"><span class="update-spinner"></span><span id="update-progress-message">正在读取更新进度…</span></div><div class="form-hint" id="update-progress-error"></div>');
+        Modal.show('正在更新', UpdateLog.markup('update-progress-message', 'update-progress-error', '正在读取更新进度…'));
         this.monitorApply();
       } else if (status.status === 'available') {
         if (!status.is_update_admin) this.showResult('更新未执行', this.errorLabel('UPDATE_ADMIN_REQUIRED'));
@@ -254,7 +254,7 @@ const Updates = {
 
   async apply(force = false) {
     this.setBusy(true);
-    Modal.show('正在更新', '<div class="update-progress"><span class="update-spinner"></span><span id="update-progress-message">正在启动更新流程…</span></div><div class="form-hint" id="update-progress-error"></div>');
+    Modal.show('正在更新', UpdateLog.markup('update-progress-message', 'update-progress-error'));
     try {
       const status = await API.post('/api/system/apply-update', { confirm: true, force });
       if (status.stage === 'completed') { this.showCompleted(status); return; }
@@ -283,7 +283,8 @@ const Updates = {
       let status;
       try { status = await API.get('/api/system/update-status'); } catch { return; }
       const message = document.getElementById('update-progress-message');
-      if (message && status.message) message.textContent = status.message;
+      if (message && status.message) message.textContent = Array.isArray(status.log) && status.log.length ? UpdateLog.headline(status.message) : status.message;
+      UpdateLog.render(document.getElementById('update-progress-message-log'), status.log);
       if (status.status === 'blocked' || status.status === 'failed') {
         this.setBusy(false);
         clearInterval(this.restartTimer);
@@ -315,8 +316,19 @@ const Updates = {
   showCompleted(status) {
     this.setBusy(false);
     document.getElementById('update-dot').style.display = 'none';
-    Modal.show('更新完成', `<div class="update-message">${escapeHtml(status.message || '更新完成，服务未重启。可稍后手动刷新页面。')}</div><div class="form-actions"><button class="btn-submit" id="update-completed-close">继续使用</button></div>`);
-    document.getElementById('update-completed-close').addEventListener('click', Modal.hide);
+    const message = document.getElementById('update-progress-message');
+    if (message) {
+      // 保留终端日志，提示后自动刷新页面加载新界面。
+      message.textContent = '更新完成，正在刷新页面…';
+      const title = document.getElementById('modal-title');
+      if (title) title.textContent = '更新完成';
+      const spinner = document.querySelector('.update-spinner');
+      if (spinner) spinner.remove();
+      UpdateLog.render(document.getElementById('update-progress-message-log'), status.log);
+    } else {
+      Modal.show('更新完成', '<div class="update-message">更新完成，正在刷新页面…</div>');
+    }
+    setTimeout(() => window.location.reload(), 1500);
   },
 
   waitForRestart(targetVersion) {

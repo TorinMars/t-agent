@@ -17,7 +17,7 @@ for (const changed of ['public/js/mobile.js', 'services/engine-tasks.js']) {
       child_process: { execFileSync: () => 'running' },
       '../db': { prepare: () => ({ get() {}, run() {} }), backup: async () => { backups++; } },
       '../config': { gitRemote: 'origin', gitBranch: 'main', updateCheckIntervalMs: 1000 },
-      '../lib/update-command': { logUpdate() {}, runUpdateCommand: async (file, args) => {
+      '../lib/update-command': { logUpdate() {}, recentLog: () => [], clearLog() {}, runUpdateCommand: async (file, args) => {
         commands.push([file, ...args]);
         if (file !== 'git') return '';
         if (args[0] === 'show') return JSON.stringify(remote);

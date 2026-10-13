@@ -1188,6 +1188,8 @@ body.agent-config-open .sidebar, body.agent-config-open .content-area, body.agen
 .update-progress { display: flex; align-items: center; gap: 10px; padding: 16px 0; font-size: 13px; }
 .update-spinner { width: 16px; height: 16px; border: 2px solid var(--border); border-top-color: #0969da; border-radius: 50%; animation: update-spin .8s linear infinite; }
 @keyframes update-spin { to { transform: rotate(360deg); } }
+.update-log { margin: 0; height: 260px; overflow: auto; padding: 10px 12px; border-radius: 6px; background: #14161a; color: #d4d8de; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.update-log:empty::before { content: '等待输出…'; color: #7b8290; }
 
 .modal-header {
   flex-shrink: 0;

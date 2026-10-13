@@ -6,11 +6,14 @@ const { parseHTML } = require('linkedom');
 function setup(status, applyStatus = {stage:'completed',message:'完成'}) {
   const {document} = parseHTML(fs.readFileSync('public/index.html','utf8'));
   const calls=[];
-  const context={document, calls, console, clearInterval(){}, setInterval(){return 1;},
+  const reloads=[];
+  const context={document, calls, console, clearInterval(){}, setInterval(){return 1;}, setTimeout(fn){reloads.push(fn);return 1;}, window:{location:{reload(){context.reloaded=true;}}},
     escapeHtml:value=>String(value).replaceAll('<','&lt;'),
     Modal:{show(title,body){document.getElementById('modal-title').textContent=title;document.getElementById('modal-body').innerHTML=body;},hide(){}},
     API:{post:async(url,body)=>{calls.push({url,body});if(url.endsWith('check-update'))return status; if(applyStatus instanceof Error)throw applyStatus; return applyStatus;},get:async()=>({error:'NPM_INSTALLING_FAILED'})}};
   vm.createContext(context);
+  vm.runInContext(fs.readFileSync('public/js/update-log.js','utf8')+'\nthis.UpdateLog=UpdateLog;',context);
+  context.reloads=reloads;
   const source=fs.readFileSync('public/js/app.js','utf8');
   vm.runInContext(source.slice(source.indexOf('const Updates ='),source.indexOf('const ContextMenu ='))+'\nthis.Updates=Updates;',context);
   return context;
@@ -22,6 +25,9 @@ test('one click checks then applies without confirmation or force',async()=>{
   assert.equal(ctx.calls[1].body.confirm,true);assert.equal(ctx.calls[1].body.force,false);
   assert.equal(ctx.Updates.busy,false);
   assert.equal(ctx.document.getElementById('modal-title').textContent,'更新完成');
+  assert.equal(ctx.reloaded,undefined);
+  ctx.reloads.forEach(fn=>fn());
+  assert.equal(ctx.reloaded,true);
 });
 test('current, blocked and non-admin results never apply',async()=>{
   for(const status of [{status:'current'},{status:'blocked',error:'WORKTREE_DIRTY'}, {status:'available',install_type:'git',is_update_admin:false}]){

@@ -257,7 +257,7 @@ const Engines = (() => {
   }
 
   async function applyEngineUpdate(server, targetVersion) {
-    Modal.show(`正在更新 ${server.name}`, '<div class="update-progress"><span class="update-spinner"></span><span id="remote-update-progress">正在启动远程更新流程…</span></div><div class="form-hint" id="remote-update-error"></div>');
+    Modal.show(`正在更新 ${server.name}`, UpdateLog.markup('remote-update-progress', 'remote-update-error', '正在启动远程更新流程…'));
     try {
       await API.post(`/api/remote-servers/${server.id}/apply-update`, {});
     } catch (error) {
@@ -289,14 +289,16 @@ const Engines = (() => {
           }
           return;
         }
+        UpdateLog.render(document.getElementById('remote-update-progress-log'), status.log);
         if (updateVersion(status) === targetVersion && status.status !== 'updating') {
           Tasks.disposeSourceTerminals(`remote:${server.id}`);
-          await load();
-          Modal.show('Engine 更新完成', `<div class="update-message">${escapeHtml(server.name)} 已升级到 ${escapeHtml(targetVersion)} 并恢复连接。</div><div class="form-actions"><button class="btn-submit" id="remote-update-done">完成</button></div>`);
-          document.getElementById('remote-update-done').addEventListener('click', Modal.hide);
+          if (message) message.textContent = `${server.name} 已升级到 ${targetVersion}，正在刷新页面…`;
+          const spinner = document.querySelector('.update-spinner');
+          if (spinner) spinner.remove();
+          setTimeout(() => window.location.reload(), 1500);
           return;
         }
-        if (message) message.textContent = status.message || (status.stage === 'restarting' ? 'Engine 正在重启…' : 'Engine 正在更新…');
+        if (message) message.textContent = status.message ? (Array.isArray(status.log) && status.log.length ? UpdateLog.headline(status.message) : status.message) : (status.stage === 'restarting' ? 'Engine 正在重启…' : 'Engine 正在更新…');
       } catch {
         if (message) message.textContent = 'Engine 暂时离线，正在等待重启…';
       }

@@ -769,15 +769,15 @@ body.file-sync-open .sidebar, body.file-sync-open .content-area, body.file-sync-
   border: 2px solid transparent;
   /* 蓝色边框环 + 无色（白色渐隐）光柱沿左右往返扫过；mask 只保留边框环 */
   background:
-    linear-gradient(90deg, transparent, #ffffffee, transparent) no-repeat,
+    linear-gradient(90deg, #ffffff00, #ffffff 35%, #ffffff 65%, #ffffff00) no-repeat,
     #3b82f6;
-  background-size: 28% 100%, 100% 100%;
+  background-size: 45% 100%, 100% 100%;
   background-origin: border-box;
   background-clip: border-box;
   -webkit-mask: linear-gradient(#000 0 0) padding-box, linear-gradient(#000 0 0);
   -webkit-mask-composite: xor;
   mask: linear-gradient(#000 0 0) padding-box exclude, linear-gradient(#000 0 0);
-  animation: term-sweep 2s ease-in-out infinite alternate;
+  animation: term-sweep 2s ease-in-out infinite alternate, term-glow 2s ease-in-out infinite;
 }
 .task-nav-item.term-done::after,
 .engine-tab.term-done::after,
@@ -791,8 +791,13 @@ body.file-sync-open .sidebar, body.file-sync-open .content-area, body.file-sync-
   animation: term-breathe 2s ease-in-out infinite;
 }
 @keyframes term-sweep {
-  from { background-position: -10% 0, 0 0; }
-  to   { background-position: 110% 0, 0 0; }
+  from { background-position: -5% 0, 0 0; }
+  to   { background-position: 105% 0, 0 0; }
+}
+/* 与完成态一致的呼吸发光（蓝色）；filter 作用在 mask 之后，光晕沿边框环外扩 */
+@keyframes term-glow {
+  0%, 100% { filter: drop-shadow(0 0 0 #3b82f600); }
+  50%      { filter: drop-shadow(0 0 5px #3b82f6) drop-shadow(0 0 2px #3b82f6); }
 }
 @keyframes term-breathe {
   0%, 100% { opacity: 0.25; box-shadow: 0 0 0 0 #3fb95000, inset 0 0 0 0 #3fb95000; }

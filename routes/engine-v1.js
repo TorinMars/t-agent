@@ -268,7 +268,7 @@ router.post('/tasks/:id/terminals', requireEngineAuth('terminal:execute'), (req,
 });
 
 router.get('/terminal-activity', requireEngineAuth('terminal:execute'), (req, res) => {
-  const ids = tasks.listTasks(principal(req)).map(row => row.id);
+  const ids = db.prepare('SELECT id FROM tasks WHERE user_id = ?').all(principal(req)).map(row => row.id);
   res.json(terminal.activitySnapshot(ids));
 });
 

@@ -32,6 +32,7 @@ test('Engine terminal API enforces ownership, persists tabs and binds tickets', 
       method: body ? 'POST' : 'GET', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       ...(body ? { body: JSON.stringify(body) } : {}),
     });
+    assert.equal((await request(url, stranger, {})).status, 404);
     assert.equal((await request(url, 'invalid')).status, 401);
     const response = await request(url, owner, {});
     assert.equal(response.status, 201);
@@ -48,6 +49,7 @@ test('Engine terminal API enforces ownership, persists tabs and binds tickets', 
     assert.equal((await request(`/v1/terminal-sessions/${task.id}/control`, owner, { action: 'close', terminal_id: added.terminal_id })).status, 200);
     const controlUrl = `/v1/terminal-sessions/${task.id}/control`;
     const deletion = { action: 'delete', terminal_id: added.terminal_id };
+    assert.equal((await request(controlUrl, stranger, deletion)).status, 404);
     assert.equal((await request(controlUrl, owner, deletion)).status, 200);
     assert.equal((await (await request(url)).json()).length, 1);
     assert.equal((await request('/v1/terminal-sessions', owner, { task_id: task.id, terminal_id: added.terminal_id })).status, 404);

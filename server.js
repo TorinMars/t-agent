@@ -15,13 +15,6 @@ const updates = require('./services/update-manager');
 const { consumeTerminalTicket, pruneExpiredTickets } = require('./services/terminal-tickets');
 const { handleRemoteTerminalUpgrade } = require('./services/remote-terminal-proxy');
 const { ensureSingleUser } = require('./services/single-user');
-
-// 任务改为文件存储：启动时把旧数据库里的任务一次性写成各目录下的元信息文件。
-try {
-  for (const result of require('./services/task-store').migrateAll(db)) {
-    if (!result.already) console.log(`[tasks] 已迁移 ${result.migrated} 个任务到 ${result.root}（跳过 ${result.skipped} 个目录不存在的任务）`);
-  }
-} catch (error) { console.error('[tasks] 迁移旧任务失败：', error.message); }
 const { getClientAuth, safeReturnTo, isSecureClientCookie, SESSION_TTL } = require('./services/client-auth');
 const requireAuth = require('./middleware/auth');
 const clientOrigin = require('./middleware/client-origin');
@@ -130,11 +123,7 @@ function toSafeJson(value) {
 }
 
 function getSharedTask(token) {
-  for (const store of require('./services/task-store').allStores(db)) {
-    const task = store.findByShareToken(token);
-    if (task) return require('./services/task-documents').resolveTask(task);
-  }
-  return undefined;
+  return require('./services/task-documents').resolveTask(db.prepare('SELECT * FROM tasks WHERE share_token = ?').get(token));
 }
 
 // Resolve a shared document relative to the task's root Markdown directory.

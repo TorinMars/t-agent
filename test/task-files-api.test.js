@@ -61,8 +61,8 @@ test.before(async () => {
   const workspace = path.join(root, 'workspace');
   fs.mkdirSync(workspace, { recursive: true });
   fs.writeFileSync(path.join(workspace, 'notes.txt'), 'one\n');
-  const id = require('../services/task-store').forOwner(db, 'owner')
-    .createTask({ title: 'files', work_dir: workspace, md_path: path.join(workspace, 'DESIGN.md') }).id;
+  const id = db.prepare('INSERT INTO tasks (title, user_id, work_dir, md_path) VALUES (?, ?, ?, ?)')
+    .run('files', 'owner', workspace, path.join(workspace, 'DESIGN.md')).lastInsertRowid;
   task = { id, workspace };
   operator = createAccessToken(db, { role: 'operator', principalId: 'owner' }).token;
   reader = createAccessToken(db, { role: 'readonly', principalId: 'owner' }).token;

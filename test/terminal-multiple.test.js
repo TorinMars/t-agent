@@ -43,14 +43,6 @@ class Socket extends EventEmitter {
   close(code, reason) { this.readyState = 3; this.code = code; this.reason = reason; this.emit('close'); }
 }
 const task = tasks.createTask('owner', { title: 'multiple' });
-// 任务被移除（元信息里 deleted）后，终端不应再能连上。
-function setTaskDeleted(target, deleted) {
-  const file = path.join(target.work_dir, '.t-agent', 'task.json');
-  const meta = JSON.parse(fs.readFileSync(file, 'utf8'));
-  if (deleted) meta.deleted = true; else delete meta.deleted;
-  fs.writeFileSync(file, JSON.stringify(meta));
-  require('../services/task-store').storeFor(process.env.TASKS_BASE_DIR).invalidate();
-}
 function connect(id, owner = 'owner') {
   const ws = new Socket();
   terminal.handleWs(ws, { url: `/terminal/ws?taskId=${task.id}&terminalId=${id}` }, { login: owner });
@@ -113,6 +105,7 @@ test('terminal IDs cannot address other tasks or bypass ownership', () => {
   assert.throws(() => terminal.assertTerminal(task.id, '../escape'), /INVALID_TERMINAL_ID/);
   const count = shells.length;
   assert.equal(connect(foreign.terminal_id).code, 1008);
+  assert.equal(connect('default', 'stranger').code, 1008);
   assert.equal(shells.length, count);
   assert.equal(terminal.listTerminals(task.id).length, 2);
 });
@@ -167,11 +160,11 @@ test('history controls are scoped, bounded and never passed to PTY; snapshot pre
   assert.equal(next.sent.length, before);
   next.emit('message', JSON.stringify(request));
   assert.equal(JSON.parse(next.sent.at(-1)).error, 'INVALID_HISTORY_REQUEST');
-  setTaskDeleted(task, true);
+  db.prepare('UPDATE tasks SET user_id = ? WHERE id = ?').run('other-owner', task.id);
   next.emit('message', JSON.stringify(request));
   assert.equal(next.code, 1008);
   assert.deepEqual(shell.input, []);
-  setTaskDeleted(task, false);
+  db.prepare('UPDATE tasks SET user_id = ? WHERE id = ?').run('owner', task.id);
   terminal.controlSession(task.id, 'delete', added.terminal_id);
 });
 

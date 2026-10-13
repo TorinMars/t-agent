@@ -1,12 +1,11 @@
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const db = require('../db');
 const taskGroups = require('./task-groups');
 const documents = require('./task-documents');
 
-const taskStore = require('./task-store');
-
-const storeOf = principalId => taskStore.forOwner(db, principalId);
+const DEFAULT_BASE = path.resolve(process.env.TASKS_BASE_DIR || path.join(os.homedir(), 'tasks'));
 
 function publicTask(task) {
   if (!task) return null;
@@ -32,12 +31,16 @@ function titleToSlug(title) {
 }
 
 function ownedTask(principalId, id) {
-  const task = storeOf(principalId).getTask(id);
-  return task ? { ...task, user_id: principalId } : null;
+  return db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(id, principalId);
 }
 
 function listTasks(principalId, status) {
-  return storeOf(principalId).listTasks(status || undefined).map(task => publicTask({ ...task, user_id: principalId }));
+  if (status) {
+    return db.prepare(`SELECT * FROM tasks WHERE user_id = ? AND status = ?
+      ORDER BY sort_order ASC, created_at DESC`).all(principalId, status).map(publicTask);
+  }
+  return db.prepare(`SELECT * FROM tasks WHERE user_id = ?
+    ORDER BY sort_order ASC, created_at DESC`).all(principalId).map(publicTask);
 }
 
 function createTask(principalId, input = {}) {
@@ -50,21 +53,16 @@ function createTask(principalId, input = {}) {
   if (!title) throw Object.assign(new Error('TITLE_REQUIRED'), { statusCode: 400 });
   const status = input.status || 'todo';
   taskGroups.assertGroupKey(db, principalId, status);
-  const store = storeOf(principalId);
 
   if (!workDir && mdPath) workDir = path.dirname(mdPath);
-  if (!workDir) {
-    // 自动生成的目录不能撞上已有任务，否则会悄悄接管别的任务。
-    const base = titleToSlug(title);
-    let candidate = path.join(store.root, base);
-    for (let index = 2; fs.existsSync(path.join(candidate, '.t-agent', 'task.json')); index += 1) candidate = path.join(store.root, `${base}-${index}`);
-    workDir = assertWorkspacePath(candidate);
-  }
+  if (!workDir) workDir = assertWorkspacePath(path.join(DEFAULT_BASE, titleToSlug(title)));
   if (!mdPath) mdPath = path.join(workDir, 'DESIGN.md');
   mdPath = assertWorkspacePath(documents.documentPath({ work_dir: workDir, md_path: mdPath }, 'technical'));
   documents.ensureDocuments({ title, work_dir: workDir, md_path: mdPath, ...overrides });
 
-  const created = store.createTask({
+  const result = db.prepare(`INSERT INTO tasks
+    (title, status, priority, due_date, md_path, work_dir, sort_order, user_id, technical_path, readme_path, agent_path)
+    VALUES (@title, @status, @priority, @due_date, @md_path, @work_dir, @sort_order, @user_id, @technical_path, @readme_path, @agent_path)`).run({
     ...overrides,
     title,
     status,
@@ -73,8 +71,9 @@ function createTask(principalId, input = {}) {
     md_path: mdPath,
     work_dir: workDir,
     sort_order: Number.isFinite(input.sort_order) ? input.sort_order : 0,
+    user_id: principalId,
   });
-  return publicTask({ ...created, user_id: principalId });
+  return publicTask(ownedTask(principalId, result.lastInsertRowid));
 }
 
 function updateTask(principalId, id, input = {}) {
@@ -102,23 +101,28 @@ function updateTask(principalId, id, input = {}) {
     values.md_path = documents.updatedTechnicalPath(task, values.work_dir, values.md_path);
     documents.ensureDocuments(values);
   }
-  const updated = storeOf(principalId).updateTask(task.id, values);
-  return publicTask({ ...updated, user_id: principalId });
+  db.prepare(`UPDATE tasks SET title=@title, status=@status, priority=@priority,
+    technical_path=@technical_path, readme_path=@readme_path, agent_path=@agent_path,
+    due_date=@due_date, md_path=@md_path, work_dir=@work_dir, sort_order=@sort_order,
+    updated_at=CURRENT_TIMESTAMP WHERE id=@id AND user_id=@user_id`).run(values);
+  return publicTask(ownedTask(principalId, id));
 }
 
 function reorderTasks(principalId, items) {
   if (!Array.isArray(items)) throw Object.assign(new Error('BODY_MUST_BE_ARRAY'), { statusCode: 400 });
-  for (const { sort_order } of items) {
-    if (!Number.isInteger(sort_order)) throw Object.assign(new Error('SORT_ORDER_INVALID'), { statusCode: 400 });
-  }
-  storeOf(principalId).reorder(items);
+  const stmt = db.prepare('UPDATE tasks SET sort_order = ? WHERE id = ? AND user_id = ?');
+  db.transaction(() => {
+    for (const { id, sort_order } of items) {
+      if (!Number.isInteger(sort_order)) throw Object.assign(new Error('SORT_ORDER_INVALID'), { statusCode: 400 });
+      stmt.run(sort_order, id, principalId);
+    }
+  })();
 }
 
 function deleteTask(principalId, id) {
-  const task = ownedTask(principalId, id);
-  if (!task) throw Object.assign(new Error('TASK_NOT_FOUND'), { statusCode: 404 });
-  require('../routes/terminal').closeTaskTerminals(task.id);
-  storeOf(principalId).removeTask(task.id);
+  if (ownedTask(principalId, id)) require('../routes/terminal').closeTaskTerminals(id);
+  const result = db.prepare('DELETE FROM tasks WHERE id = ? AND user_id = ?').run(id, principalId);
+  if (!result.changes) throw Object.assign(new Error('TASK_NOT_FOUND'), { statusCode: 404 });
 }
 
 const documentPath = documents.documentPath;
@@ -160,33 +164,43 @@ function createDocument(principalId, id, kind) {
 }
 
 function listTodos(principalId, taskId) {
-  const todos = storeOf(principalId).listTodos(taskId);
-  if (!todos) throw Object.assign(new Error('TASK_NOT_FOUND'), { statusCode: 404 });
-  return todos;
+  const task = ownedTask(principalId, taskId);
+  if (!task) throw Object.assign(new Error('TASK_NOT_FOUND'), { statusCode: 404 });
+  return db.prepare(`SELECT * FROM task_todos WHERE task_id = ?
+    ORDER BY completed ASC, sort_order ASC, created_at ASC`).all(task.id)
+    .map(todo => ({ ...todo, completed: Boolean(todo.completed) }));
 }
 
 function createTodo(principalId, taskId, input = {}) {
-  if (!ownedTask(principalId, taskId)) throw Object.assign(new Error('TASK_NOT_FOUND'), { statusCode: 404 });
+  const task = ownedTask(principalId, taskId);
+  if (!task) throw Object.assign(new Error('TASK_NOT_FOUND'), { statusCode: 404 });
   const content = typeof input.content === 'string' ? input.content.trim() : '';
   if (!content) throw Object.assign(new Error('CONTENT_REQUIRED'), { statusCode: 400 });
-  return storeOf(principalId).createTodo(taskId, content);
+  const order = db.prepare('SELECT COALESCE(MAX(sort_order), -1) + 1 value FROM task_todos WHERE task_id = ?').get(task.id).value;
+  const result = db.prepare('INSERT INTO task_todos (task_id, content, sort_order) VALUES (?, ?, ?)').run(task.id, content, order);
+  const todo = db.prepare('SELECT * FROM task_todos WHERE id = ?').get(result.lastInsertRowid);
+  return { ...todo, completed: Boolean(todo.completed) };
 }
 
 function updateTodo(principalId, taskId, todoId, input = {}) {
-  const store = storeOf(principalId);
-  const todos = store.listTodos(taskId);
-  if (!todos) throw Object.assign(new Error('TASK_NOT_FOUND'), { statusCode: 404 });
-  const todo = todos.find(item => item.id === Number(todoId));
+  const task = ownedTask(principalId, taskId);
+  if (!task) throw Object.assign(new Error('TASK_NOT_FOUND'), { statusCode: 404 });
+  const todo = db.prepare('SELECT * FROM task_todos WHERE id = ? AND task_id = ?').get(todoId, task.id);
   if (!todo) throw Object.assign(new Error('TODO_NOT_FOUND'), { statusCode: 404 });
   const content = input.content === undefined ? todo.content : String(input.content).trim();
   if (!content) throw Object.assign(new Error('CONTENT_REQUIRED'), { statusCode: 400 });
-  return store.updateTodo(taskId, todoId, { content, completed: input.completed === undefined ? todo.completed : Boolean(input.completed) });
+  const completed = input.completed === undefined ? todo.completed : (input.completed ? 1 : 0);
+  db.prepare(`UPDATE task_todos SET content = ?, completed = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?`).run(content, completed, todo.id);
+  const updated = db.prepare('SELECT * FROM task_todos WHERE id = ?').get(todo.id);
+  return { ...updated, completed: Boolean(updated.completed) };
 }
 
 function deleteTodo(principalId, taskId, todoId) {
-  const store = storeOf(principalId);
-  if (!store.getTask(taskId)) throw Object.assign(new Error('TASK_NOT_FOUND'), { statusCode: 404 });
-  if (!store.deleteTodo(taskId, todoId)) throw Object.assign(new Error('TODO_NOT_FOUND'), { statusCode: 404 });
+  const task = ownedTask(principalId, taskId);
+  if (!task) throw Object.assign(new Error('TASK_NOT_FOUND'), { statusCode: 404 });
+  const result = db.prepare('DELETE FROM task_todos WHERE id = ? AND task_id = ?').run(todoId, task.id);
+  if (!result.changes) throw Object.assign(new Error('TODO_NOT_FOUND'), { statusCode: 404 });
 }
 
 module.exports = {

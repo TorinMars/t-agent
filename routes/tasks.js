@@ -33,6 +33,37 @@ router.get('/', (req, res) => {
   res.json(tasks.map(documents.resolveTask));
 });
 
+// 工作目录工具：导入未管理的目录、清理不用的代码目录。
+const workspaceTools = require('../services/workspace-tools');
+const toolWorkDir = req => req.session.user.work_dir || DEFAULT_BASE;
+const toolError = (res, error) => res.status(error.statusCode || 500).json({ error: error.message, ...(error.reason ? { reason: error.reason } : {}), ...(error.path ? { path: error.path } : {}) });
+
+router.get('/workspace/unmanaged', (req, res) => {
+  try { res.json(workspaceTools.listUnmanaged(db, ownerFilter(req), toolWorkDir(req))); }
+  catch (error) { toolError(res, error); }
+});
+
+router.post('/workspace/import', (req, res) => {
+  try { res.status(201).json(workspaceTools.importDirs(db, ownerFilter(req), toolWorkDir(req), req.body && req.body.paths)); }
+  catch (error) { toolError(res, error); }
+});
+
+router.get('/workspace/cleanup', async (req, res) => {
+  try { res.json(await workspaceTools.cleanupOverview(db, ownerFilter(req), toolWorkDir(req))); }
+  catch (error) { toolError(res, error); }
+});
+
+router.post('/workspace/cleanup', async (req, res) => {
+  if (!req.body || req.body.confirm !== true) return res.status(400).json({ error: 'CONFIRM_REQUIRED' });
+  try { res.json(await workspaceTools.cleanupTasks(db, ownerFilter(req), toolWorkDir(req), req.body.task_ids, id => terminal.closeTaskTerminals(id))); }
+  catch (error) { toolError(res, error); }
+});
+
+router.post('/workspace/restore', async (req, res) => {
+  try { res.json(await workspaceTools.restoreTask(db, ownerFilter(req), req.body && req.body.task_id)); }
+  catch (error) { toolError(res, error); }
+});
+
 // 将任务标题转换为合法的目录/文件名
 function titleToSlug(title) {
   return title

@@ -150,3 +150,14 @@ CREATE TABLE IF NOT EXISTS apps (
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+-- 清理本地代码目录的档案：任务保留，目录被删除后凭仓库地址、分支、提交可以恢复。
+CREATE TABLE IF NOT EXISTS task_cleanups (
+  task_id    INTEGER PRIMARY KEY,
+  path       TEXT NOT NULL,
+  remote     TEXT NOT NULL,
+  branch     TEXT NOT NULL,
+  commit_sha TEXT NOT NULL,
+  size_bytes INTEGER NOT NULL DEFAULT 0,
+  cleaned_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);

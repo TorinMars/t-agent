@@ -21,8 +21,6 @@ try {
   for (const result of require('./services/task-store').migrateAll(db)) {
     if (!result.already) console.log(`[tasks] 已迁移 ${result.migrated} 个任务到 ${result.root}（跳过 ${result.skipped} 个目录不存在的任务）`);
   }
-  // 启动时扫描一次：给还没有元信息文件的目录完成首次初始化。
-  for (const store of require('./services/task-store').allStores(db)) store.scan();
 } catch (error) { console.error('[tasks] 迁移旧任务失败：', error.message); }
 const { getClientAuth, safeReturnTo, isSecureClientCookie, SESSION_TTL } = require('./services/client-auth');
 const requireAuth = require('./middleware/auth');

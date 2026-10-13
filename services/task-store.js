@@ -68,22 +68,16 @@ function isDirectory(target) {
 }
 
 const stores = new Map();
-// 每个工作目录一个版本号：任何一个视图写入后，其他视图的缓存一并失效。
-const generations = new Map();
-
-// viewer：只看得到“无归属”或归属于自己的任务；不传则看到全部（分享链接、迁移用）。
-function createStore(rootInput, viewer = null) {
+function createStore(rootInput) {
   const root = path.resolve(rootInput);
   const stateFile = path.join(root, META_DIR, 'state.json');
   const groupsFile = path.join(root, META_DIR, 'groups.json');
   const projectsFile = path.join(root, META_DIR, 'projects.json');
   let cache = null;
-  const generation = () => generations.get(root) || 0;
-  const visible = meta => !viewer || !meta.owner || meta.owner === viewer;
 
   const readState = () => ({ next_task_id: 1, ...readJson(stateFile, {}) });
   const writeState = state => writeJson(stateFile, state);
-  const invalidate = () => { cache = null; generations.set(root, generation() + 1); };
+  const invalidate = () => { cache = null; };
 
   // ---------- 额外项目路径 ----------
   function listProjectPaths() {
@@ -157,7 +151,7 @@ function createStore(rootInput, viewer = null) {
   }
 
   function scan() {
-    if (cache && cache.generation === generation() && Date.now() - cache.at < CACHE_MS) return cache.entries;
+    if (cache && Date.now() - cache.at < CACHE_MS) return cache.entries;
     fs.mkdirSync(root, { recursive: true });
     const state = readState();
     const startNext = state.next_task_id;
@@ -176,16 +170,11 @@ function createStore(rootInput, viewer = null) {
     const entries = [];
     for (const dir of dirs) {
       const loaded = loadDir(dir, state, seen);
-      if (loaded && visible(loaded.meta)) entries.push(loaded);
+      if (loaded) entries.push(loaded);
     }
     if (state.next_task_id !== startNext) writeState(state);
-    cache = { at: Date.now(), generation: generation(), entries };
+    cache = { at: Date.now(), entries };
     return entries;
-  }
-
-  // 不受归属过滤的全部条目（保留 ID 用）。
-  function allEntries() {
-    return storeFor(root).scan();
   }
 
   function entryById(id) {
@@ -225,7 +214,6 @@ function createStore(rootInput, viewer = null) {
     const state = readState();
     const file = metaPath(dir);
     const existing = readJson(file, null);
-    if (existing && existing.owner && viewer && existing.owner !== viewer && !existing.deleted) throw serviceError('WORK_DIR_BELONGS_TO_ANOTHER_USER', 403);
     const stamp = now();
     const meta = existing && typeof existing === 'object' ? existing : { version: 1, created_at: stamp };
     const adopted = Boolean(existing) && !meta.deleted;
@@ -238,10 +226,9 @@ function createStore(rootInput, viewer = null) {
     for (const field of ['md_path', 'technical_path', 'readme_path', 'agent_path']) {
       if (input[field] !== undefined) meta[field] = input[field] || null;
     }
-    const seen = new Set(allEntries().map(entry => entry.meta.id));
+    const seen = new Set(scan().map(entry => entry.meta.id));
     if (!Number.isInteger(meta.id) || meta.id < 1 || seen.has(meta.id)) meta.id = nextId(state);
     else if (meta.id >= state.next_task_id) state.next_task_id = meta.id + 1;
-    if (viewer && !meta.owner) meta.owner = viewer;
     meta.updated_at = stamp;
     writeJson(file, meta);
     writeState(state);
@@ -442,7 +429,6 @@ function createStore(rootInput, viewer = null) {
         const meta = existing && typeof existing === 'object' && !existing.deleted ? existing : {
           version: 1,
           id: row.id,
-          owner: row.user_id || undefined,
           title: row.title,
           status: row.status || 'todo',
           priority: row.priority || 'normal',
@@ -493,15 +479,15 @@ function createStore(rootInput, viewer = null) {
   };
 }
 
-function storeFor(root, viewer = null) {
-  const key = `${path.resolve(root)}\0${viewer || ''}`;
-  if (!stores.has(key)) stores.set(key, createStore(path.resolve(root), viewer));
+function storeFor(root) {
+  const key = path.resolve(root);
+  if (!stores.has(key)) stores.set(key, createStore(key));
   return stores.get(key);
 }
 
 // 当前账号的任务存储；数据库只用来查账号设置的工作目录和一次性迁移。
 function forOwner(database, owner) {
-  return storeFor(rootFor(database, owner), owner);
+  return storeFor(rootFor(database, owner));
 }
 
 // 所有已知工作目录（各账号的设置 + 默认值），用于分享链接这类不带账号的查询。

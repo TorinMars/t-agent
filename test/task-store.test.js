@@ -147,16 +147,3 @@ test('旧数据库迁移：写入元信息、保留 ID/分享令牌/待办/分�
   assert.equal(store.migrateFromDatabase(database).already, true);
   database.close();
 });
-
-test('不同账号只能看到自己创建的任务，目录自动发现的任务对所有账号可见', () => {
-  const root = workspace();
-  process.env.TASKS_BASE_DIR = root;
-  const mine = taskStore.forOwner(null, 'alice').createTask({ title: 'alice 的', work_dir: path.join(root, 'a') });
-  fs.mkdirSync(path.join(root, 'shared'));
-  const alice = taskStore.forOwner(null, 'alice');
-  const bob = taskStore.forOwner(null, 'bob');
-  alice.invalidate();
-  assert.deepEqual(alice.listTasks().map(task => task.title).sort(), ['alice 的', 'shared']);
-  assert.deepEqual(bob.listTasks().map(task => task.title), ['shared']);
-  assert.equal(bob.getTask(mine.id), null);
-});

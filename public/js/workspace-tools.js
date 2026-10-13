@@ -70,29 +70,42 @@ const WorkspaceTools = (() => {
   }
 
   function renderCleanup(data) {
-    const rows = data.items.map(item => `
-      <li><label class="wt-row${item.safe ? '' : ' wt-blocked'}">
-        <input type="checkbox" class="wt-clean-item" data-id="${item.task_id}" ${item.safe ? '' : 'disabled'}>
-        <span class="wt-grow"><strong>${escapeHtml(item.title)}</strong>
-          ${item.safe ? '' : `<span class="wt-reason">${escapeHtml(item.reason)}</span>`}<br><code>${escapeHtml(item.path)}</code></span>
-        <span class="wt-meta">${formatSize(item.size_bytes)}<br>${item.idle_days == null ? '' : `${item.idle_days} 天没动`}</span></label></li>`).join('');
+    // 按任务分组，任务按其下仓库的总占用从大到小排；任务目录本身通常不是仓库，这里列的是它里面的仓库。
+    const groups = new Map();
+    for (const item of data.items) {
+      if (!groups.has(item.task_id)) groups.set(item.task_id, { title: item.title, path: item.task_path, items: [], total: 0 });
+      const group = groups.get(item.task_id);
+      group.items.push(item);
+      group.total += item.size_bytes;
+    }
+    const ordered = [...groups.entries()].sort((a, b) => b[1].total - a[1].total);
+    const rows = ordered.map(([taskId, group]) => `
+      <li class="wt-group"><div class="wt-group-head"><strong>${escapeHtml(group.title)}</strong>
+        <span class="wt-muted">${group.items.length} 个仓库 · ${formatSize(group.total)}</span><br><code>${escapeHtml(group.path)}</code></div>
+        <ul class="wt-list wt-nested">${group.items.map(item => `
+          <li><label class="wt-row${item.safe ? '' : ' wt-blocked'}">
+            <input type="checkbox" class="wt-clean-item" data-task="${taskId}" data-path="${escapeHtml(item.path)}" ${item.safe ? '' : 'disabled'}>
+            <span class="wt-grow"><strong>${escapeHtml(item.name)}</strong>
+              ${item.safe ? '' : `<span class="wt-reason">${escapeHtml(item.reason)}</span>`}</span>
+            <span class="wt-meta">${formatSize(item.size_bytes)}<br>${item.idle_days == null ? '' : `${item.idle_days} 天没动`}</span></label></li>`).join('')}
+        </ul></li>`).join('');
     const archived = data.archived.map(item => `
-      <li class="wt-row"><span class="wt-grow"><strong>${escapeHtml(item.title)}</strong>
+      <li class="wt-row"><span class="wt-grow"><strong>${escapeHtml(item.title)}</strong> / ${escapeHtml(item.path.split('/').pop())}
         <span class="wt-muted">已于 ${escapeHtml(String(item.cleaned_at).slice(0, 10))} 清理，释放 ${formatSize(item.size_bytes)}</span><br><code>${escapeHtml(item.restore)}</code></span>
-        <button class="toolbar-btn" data-restore="${item.task_id}" type="button">从仓库恢复</button></li>`).join('');
+        <button class="toolbar-btn" data-restore="${item.id}" type="button">从仓库恢复</button></li>`).join('');
     Modal.show('清理代码目录', `
-      <p class="wt-intro">只删除本地文件，任务、待办保留。只有目录是 Git 仓库根、没有未提交修改、没有未推送提交时才能勾选，删除后可凭仓库地址恢复。按占用空间从大到小排列，超过 ${data.idle_days_threshold} 天没动的建议优先清理。</p>
+      <p class="wt-intro">任务目录一般不是 Git 仓库，这里列出每个任务目录里（最多 3 层内）的所有仓库，勾选后批量删除本地的仓库目录，任务目录里的其他文件、任务和待办都保留。只有该仓库没有未提交修改、没有未推送提交、没有 stash 时才能勾选，删除后可凭仓库地址恢复。按占用从大到小排列；超过 ${data.idle_days_threshold} 天没动的建议优先清理。</p>
       ${data.items.length ? `<label class="wt-row wt-all"><input type="checkbox" id="wt-clean-all"> <strong>全选可清理的</strong> <span class="wt-muted" id="wt-clean-sum"></span></label>
       <ul class="wt-list">${rows}</ul>
-      <div class="wt-actions"><button class="btn-submit" id="wt-clean-run" type="button">清理所选</button></div>` : '<p>没有带目录的任务。</p>'}
+      <div class="wt-actions"><button class="btn-submit" id="wt-clean-run" type="button">清理所选</button></div>` : '<p>任务目录里没有找到 Git 仓库。</p>'}
       ${archived ? `<h4>已清理，可恢复</h4><ul class="wt-list">${archived}</ul>` : ''}
       <p class="wt-error" id="wt-error" role="alert"></p>`);
     const boxes = [...document.querySelectorAll('.wt-clean-item')];
-    const sizeOf = id => (data.items.find(item => item.task_id === id) || {}).size_bytes || 0;
+    const itemOf = el => data.items.find(item => item.path === el.dataset.path);
     const update = () => {
       const chosen = boxes.filter(el => el.checked);
       const sum = document.getElementById('wt-clean-sum');
-      if (sum) sum.textContent = chosen.length ? `已选 ${chosen.length} 个，预计释放 ${formatSize(chosen.reduce((total, el) => total + sizeOf(Number(el.dataset.id)), 0))}` : '';
+      if (sum) sum.textContent = chosen.length ? `已选 ${chosen.length} 个，预计释放 ${formatSize(chosen.reduce((total, el) => total + itemOf(el).size_bytes, 0))}` : '';
       const run = document.getElementById('wt-clean-run');
       if (run) run.disabled = !chosen.length;
     };
@@ -103,16 +116,15 @@ const WorkspaceTools = (() => {
     const fail = text => { document.getElementById('wt-error').textContent = text; };
     const run = document.getElementById('wt-clean-run');
     if (run) run.addEventListener('click', async () => {
-      const chosen = boxes.filter(el => el.checked).map(el => data.items.find(item => item.task_id === Number(el.dataset.id)));
+      const chosen = boxes.filter(el => el.checked).map(itemOf);
       const total = chosen.reduce((sum, item) => sum + item.size_bytes, 0);
-      if (!confirm(`确认删除 ${chosen.length} 个目录的本地文件，释放约 ${formatSize(total)}？\n\n${chosen.map(item => item.path).join('\n')}\n\n任务会保留，内容在远程仓库里，之后可以恢复。`)) return;
+      if (!confirm(`确认删除 ${chosen.length} 个仓库的本地目录，释放约 ${formatSize(total)}？\n\n${chosen.map(item => item.path).join('\n')}\n\n内容在远程仓库里，之后可以恢复。`)) return;
       run.disabled = true; run.textContent = '清理中…';
       try {
-        const results = await API.post('/api/tasks/workspace/cleanup', { task_ids: chosen.map(item => item.task_id), confirm: true });
+        const results = await API.post('/api/tasks/workspace/cleanup', { repos: chosen.map(item => ({ task_id: item.task_id, path: item.path })), confirm: true });
         const failed = results.filter(item => !item.ok);
         await refreshTasks();
-        data = await API.get('/api/tasks/workspace/cleanup');
-        renderCleanup(data);
+        renderCleanup(await API.get('/api/tasks/workspace/cleanup'));
         const freed = results.filter(item => item.ok).reduce((sum, item) => sum + item.freed_bytes, 0);
         fail(`已清理 ${results.length - failed.length} 个，释放 ${formatSize(freed)}${failed.length ? `；${failed.length} 个失败：${failed.map(item => item.reason || item.error).join('；')}` : ''}`);
       } catch (error) { run.disabled = false; run.textContent = '清理所选'; fail(errorText(error)); }
@@ -120,7 +132,7 @@ const WorkspaceTools = (() => {
     document.querySelectorAll('[data-restore]').forEach(el => el.addEventListener('click', async () => {
       el.disabled = true; el.textContent = '恢复中…';
       try {
-        await API.post('/api/tasks/workspace/restore', { task_id: Number(el.dataset.restore) });
+        await API.post('/api/tasks/workspace/restore', { id: Number(el.dataset.restore) });
         await refreshTasks();
         renderCleanup(await API.get('/api/tasks/workspace/cleanup'));
       } catch (error) { el.disabled = false; el.textContent = '从仓库恢复'; fail(errorText(error)); }

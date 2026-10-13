@@ -1,8 +1,9 @@
 // 工作目录工具（任务仍只保存在数据库）：
 //  1. 列出工作目录下还没有被任务管理的子目录，支持批量导入；
-//  2. 列出任务的代码目录及占用空间，批量清理不用的目录。清理只删本地文件，
-//     且仅当 Git 状态确认安全（无未提交、无未推送、无 stash）时才允许，
-//     清理前把仓库地址、分支、提交记入 task_cleanups，之后可以从仓库恢复。
+//  2. 任务目录本身通常不是 Git 仓库，里面（几层子目录内）有多个仓库。列出每个任务下的所有仓库
+//     及占用空间，批量清理不用的仓库目录。清理只删本地的仓库目录（任务目录和其他文件保留），
+//     且仅当该仓库 Git 状态确认安全（无未提交、无未推送、无 stash）时才允许，
+//     清理前把仓库地址、分支、提交记入 repo_cleanups，之后可以从仓库恢复。
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -96,15 +97,36 @@ function mtime(file) {
   try { return fs.statSync(file).mtimeMs; } catch { return 0; }
 }
 
-async function lastActivity(task) {
-  const gitDir = path.join(task.work_dir, '.git');
-  const times = [Date.parse(String(task.updated_at).includes('T') ? task.updated_at : `${task.updated_at}Z`) || 0,
-    ...['HEAD', 'index', 'FETCH_HEAD', path.join('logs', 'HEAD')].map(name => mtime(path.join(gitDir, name)))];
-  try { times.push(Number(await git(task.work_dir, ['log', '-1', '--format=%ct'])) * 1000 || 0); } catch { /* 没有提交 */ }
+async function lastActivity(dir) {
+  const gitDir = path.join(dir, '.git');
+  const times = ['HEAD', 'index', 'FETCH_HEAD', path.join('logs', 'HEAD')].map(name => mtime(path.join(gitDir, name)));
+  try { times.push(Number(await git(dir, ['log', '-1', '--format=%ct'])) * 1000 || 0); } catch { /* 没有提交 */ }
   return Math.max(...times);
 }
 
-// 目录本身不能是这些：系统根、家目录、工作目录、包含工作目录或本程序的目录、含有其他任务目录的目录。
+// 在任务目录里找 Git 仓库：任务目录自己是仓库就只算它；否则向下找，最多 MAX_DEPTH 层，
+// 不进入仓库内部、隐藏目录和 node_modules。
+const MAX_DEPTH = 3;
+function findRepos(taskDir) {
+  const root = path.resolve(taskDir);
+  if (!isDirectory(root)) return [];
+  if (fs.existsSync(path.join(root, '.git'))) return [root];
+  const repos = [];
+  const walk = (dir, depth) => {
+    let entries;
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const entry of entries) {
+      if (!entry.isDirectory() || entry.name.startsWith('.') || SKIP_DIRS.has(entry.name)) continue;
+      const full = path.join(dir, entry.name);
+      if (fs.existsSync(path.join(full, '.git'))) repos.push(full);
+      else if (depth < MAX_DEPTH) walk(full, depth + 1);
+    }
+  };
+  walk(root, 1);
+  return repos.sort();
+}
+
+// 仓库目录不能是这些：系统根、家目录、工作目录、包含工作目录或本程序的目录、含有其他任务目录的目录。
 function protectedReason(dir, { root, others }) {
   const home = os.homedir();
   const app = path.resolve(__dirname, '..');
@@ -152,67 +174,70 @@ async function mapLimit(items, limit, worker) {
 async function cleanupOverview(database, owner, workDir) {
   const root = workRoot(workDir);
   const tasks = database.prepare('SELECT * FROM tasks WHERE user_id = ? AND work_dir IS NOT NULL ORDER BY id').all(owner);
-  const cleaned = new Map(database.prepare('SELECT * FROM task_cleanups').all().map(row => [row.task_id, row]));
   const others = tasks.map(task => path.resolve(task.work_dir));
-  const live = tasks.filter(task => !cleaned.has(task.id));
-  const items = await mapLimit(live, 4, async task => {
-    const dir = path.resolve(task.work_dir);
-    const exists = isDirectory(dir);
-    const base = { task_id: task.id, title: task.title, status: task.status, path: dir, exists };
-    if (!exists) return { ...base, safe: false, reason: '目录不存在', size_bytes: 0, idle_days: null };
-    const [size, last] = await Promise.all([directorySize(dir), lastActivity({ ...task, work_dir: dir })]);
-    const guard = protectedReason(dir, { root, others });
-    const repo = guard ? { safe: false, reason: guard } : await inspectRepository(dir);
-    return { ...base, size_bytes: size, idle_days: last ? Math.floor((Date.now() - last) / DAY) : null, ...repo };
+  const cleaned = database.prepare('SELECT * FROM repo_cleanups ORDER BY cleaned_at DESC, id DESC').all();
+  const cleanedPaths = new Set(cleaned.map(row => row.path));
+  const jobs = [];
+  for (const task of tasks) for (const repo of findRepos(task.work_dir)) if (!cleanedPaths.has(repo)) jobs.push({ task, repo });
+  const items = await mapLimit(jobs, 4, async ({ task, repo }) => {
+    const taskDir = path.resolve(task.work_dir);
+    const base = { task_id: task.id, title: task.title, task_path: taskDir, path: repo, name: path.relative(taskDir, repo) || path.basename(repo) };
+    const [size, last] = await Promise.all([directorySize(repo), lastActivity(repo)]);
+    const guard = protectedReason(repo, { root, others });
+    const inspected = guard ? { safe: false, reason: guard } : await inspectRepository(repo);
+    return { ...base, size_bytes: size, idle_days: last ? Math.floor((Date.now() - last) / DAY) : null, ...inspected };
   });
   items.sort((a, b) => b.size_bytes - a.size_bytes);
-  const archived = tasks.filter(task => cleaned.has(task.id)).map(task => {
-    const row = cleaned.get(task.id);
-    return { task_id: task.id, title: task.title, path: row.path, remote: row.remote, branch: row.branch, size_bytes: row.size_bytes, cleaned_at: row.cleaned_at, restore: `git clone -b ${row.branch} ${row.remote} ${row.path}` };
-  });
+  const titles = new Map(tasks.map(task => [task.id, task.title]));
+  const archived = cleaned.filter(row => titles.has(row.task_id)).map(row => ({
+    id: row.id, task_id: row.task_id, title: titles.get(row.task_id), path: row.path, remote: row.remote, branch: row.branch,
+    size_bytes: row.size_bytes, cleaned_at: row.cleaned_at, restore: `git clone -b ${row.branch} ${row.remote} ${row.path}`,
+  }));
   return { idle_days_threshold: idleDays(), items, archived };
 }
 
-// 逐个清理，一个失败不影响其他。服务端重新检查，不信任前端传来的“安全”判断。
-async function cleanupTasks(database, owner, workDir, taskIds, closeTerminals = () => {}) {
-  if (!Array.isArray(taskIds) || !taskIds.length) throw serviceError('TASK_IDS_REQUIRED');
+// 逐个仓库清理，一个失败不影响其他。服务端重新检查，不信任前端传来的“安全”判断；
+// 只接受确实位于该任务目录内、且被识别为仓库的路径。
+async function cleanupRepos(database, owner, workDir, requests, closeTerminals = () => {}) {
+  if (!Array.isArray(requests) || !requests.length) throw serviceError('REPOS_REQUIRED');
   const root = workRoot(workDir);
   const all = database.prepare('SELECT * FROM tasks WHERE user_id = ? AND work_dir IS NOT NULL').all(owner);
   const others = all.map(task => path.resolve(task.work_dir));
   const results = [];
-  for (const id of taskIds) {
-    const task = all.find(item => item.id === Number(id));
-    if (!task) { results.push({ task_id: Number(id), ok: false, error: 'TASK_NOT_FOUND' }); continue; }
-    const dir = path.resolve(task.work_dir);
-    const guard = protectedReason(dir, { root, others });
-    const repo = guard ? { safe: false, reason: guard } : await inspectRepository(dir);
-    if (!repo.safe) { results.push({ task_id: task.id, ok: false, error: 'NOT_SAFE_TO_DELETE', reason: repo.reason }); continue; }
-    const size = await directorySize(dir);
+  for (const request of requests) {
+    const taskId = Number(request && request.task_id);
+    const target = path.resolve(String((request && request.path) || ''));
+    const task = all.find(item => item.id === taskId);
+    if (!task) { results.push({ task_id: taskId, path: target, ok: false, error: 'TASK_NOT_FOUND' }); continue; }
+    if (!findRepos(task.work_dir).includes(target)) { results.push({ task_id: taskId, path: target, ok: false, error: 'NOT_A_REPOSITORY_OF_TASK' }); continue; }
+    const guard = protectedReason(target, { root, others });
+    const repo = guard ? { safe: false, reason: guard } : await inspectRepository(target);
+    if (!repo.safe) { results.push({ task_id: taskId, path: target, ok: false, error: 'NOT_SAFE_TO_DELETE', reason: repo.reason }); continue; }
+    const size = await directorySize(target);
+    let recordId;
     try {
-      database.prepare(`INSERT INTO task_cleanups (task_id, path, remote, branch, commit_sha, size_bytes)
-        VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(task_id) DO UPDATE SET path = excluded.path, remote = excluded.remote,
-        branch = excluded.branch, commit_sha = excluded.commit_sha, size_bytes = excluded.size_bytes, cleaned_at = CURRENT_TIMESTAMP`)
-        .run(task.id, dir, repo.remote, repo.branch, repo.commit, size);
-      closeTerminals(task.id);
-      fs.rmSync(dir, { recursive: true, force: true });
-      results.push({ task_id: task.id, ok: true, freed_bytes: size });
+      recordId = database.prepare(`INSERT INTO repo_cleanups (task_id, path, remote, branch, commit_sha, size_bytes) VALUES (?, ?, ?, ?, ?, ?)`)
+        .run(taskId, target, repo.remote, repo.branch, repo.commit, size).lastInsertRowid;
+      closeTerminals(taskId);
+      fs.rmSync(target, { recursive: true, force: true });
+      results.push({ task_id: taskId, path: target, ok: true, freed_bytes: size });
     } catch (error) {
-      database.prepare('DELETE FROM task_cleanups WHERE task_id = ?').run(task.id);
-      results.push({ task_id: task.id, ok: false, error: 'DELETE_FAILED', reason: error.message });
+      if (recordId) database.prepare('DELETE FROM repo_cleanups WHERE id = ?').run(recordId);
+      results.push({ task_id: taskId, path: target, ok: false, error: 'DELETE_FAILED', reason: error.message });
     }
   }
   return results;
 }
 
-async function restoreTask(database, owner, taskId) {
-  const task = database.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(taskId, owner);
-  const row = task && database.prepare('SELECT * FROM task_cleanups WHERE task_id = ?').get(task.id);
-  if (!row) throw serviceError('CLEANUP_RECORD_NOT_FOUND', 404);
+async function restoreRepo(database, owner, cleanupId) {
+  const row = database.prepare('SELECT * FROM repo_cleanups WHERE id = ?').get(cleanupId);
+  const task = row && database.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(row.task_id, owner);
+  if (!task) throw serviceError('CLEANUP_RECORD_NOT_FOUND', 404);
   if (fs.existsSync(row.path)) throw serviceError('RESTORE_PATH_EXISTS', 409);
   fs.mkdirSync(path.dirname(row.path), { recursive: true });
   await run('git', ['clone', '-b', row.branch, row.remote, row.path], { timeout: 10 * 60 * 1000, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } });
-  database.prepare('DELETE FROM task_cleanups WHERE task_id = ?').run(task.id);
+  database.prepare('DELETE FROM repo_cleanups WHERE id = ?').run(row.id);
   return task;
 }
 
-module.exports = { idleDays, listUnmanaged, importDirs, inspectRepository, cleanupOverview, cleanupTasks, restoreTask };
+module.exports = { idleDays, listUnmanaged, importDirs, findRepos, inspectRepository, cleanupOverview, cleanupRepos, restoreRepo };

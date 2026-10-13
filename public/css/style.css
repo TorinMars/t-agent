@@ -603,6 +603,9 @@ body.file-sync-open .sidebar, body.file-sync-open .content-area, body.file-sync-
 .wt-blocked { opacity: .6; cursor: default; }
 .wt-reason { color: #c77700; font-size: 11px; margin-left: 6px; }
 .wt-tag { font-size: 10px; padding: 0 5px; border: 1px solid var(--border); border-radius: 4px; color: var(--text-muted); }
+.wt-group-head { padding: 8px 11px 2px; }
+.wt-group-head code { font-size: 11px; color: var(--text-muted); overflow-wrap: anywhere; }
+.wt-nested { margin: 4px 11px 8px; max-height: none; overflow: visible; }
 .wt-actions { display: flex; justify-content: flex-end; }
 .wt-error { color: var(--danger); font-size: 12px; min-height: 1em; }
 

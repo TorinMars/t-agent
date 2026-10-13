@@ -55,12 +55,12 @@ router.get('/workspace/cleanup', async (req, res) => {
 
 router.post('/workspace/cleanup', async (req, res) => {
   if (!req.body || req.body.confirm !== true) return res.status(400).json({ error: 'CONFIRM_REQUIRED' });
-  try { res.json(await workspaceTools.cleanupTasks(db, ownerFilter(req), toolWorkDir(req), req.body.task_ids, id => terminal.closeTaskTerminals(id))); }
+  try { res.json(await workspaceTools.cleanupRepos(db, ownerFilter(req), toolWorkDir(req), req.body.repos, id => terminal.closeTaskTerminals(id))); }
   catch (error) { toolError(res, error); }
 });
 
 router.post('/workspace/restore', async (req, res) => {
-  try { res.json(await workspaceTools.restoreTask(db, ownerFilter(req), req.body && req.body.task_id)); }
+  try { res.json(await workspaceTools.restoreRepo(db, ownerFilter(req), req.body && req.body.id)); }
   catch (error) { toolError(res, error); }
 });
 

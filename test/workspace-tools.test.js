@@ -21,8 +21,8 @@ function testDb() {
     CREATE TABLE tasks (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'todo',
       priority TEXT NOT NULL DEFAULT 'normal', due_date TEXT, md_path TEXT, work_dir TEXT, sort_order INTEGER NOT NULL DEFAULT 0,
       user_id TEXT, updated_at TEXT DEFAULT CURRENT_TIMESTAMP);
-    CREATE TABLE task_cleanups (task_id INTEGER PRIMARY KEY, path TEXT NOT NULL, remote TEXT NOT NULL, branch TEXT NOT NULL,
-      commit_sha TEXT NOT NULL, size_bytes INTEGER NOT NULL DEFAULT 0, cleaned_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP);
+    CREATE TABLE repo_cleanups (id INTEGER PRIMARY KEY AUTOINCREMENT, task_id INTEGER NOT NULL, path TEXT NOT NULL UNIQUE, remote TEXT NOT NULL,
+      branch TEXT NOT NULL, commit_sha TEXT NOT NULL, size_bytes INTEGER NOT NULL DEFAULT 0, cleaned_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP);
   `);
   return database;
 }
@@ -76,60 +76,91 @@ test('批量导入只登记任务，不在目录里生成文件；不在列表�
   assert.throws(() => tools.importDirs(database, 'u', root, []), /PATHS_REQUIRED/);
 });
 
-test('清理列表标出能否安全删除，批量清理只处理安全的并记档案', async () => {
+test('任务目录本身不是仓库：找出其中（3 层内）的多个仓库，不进入仓库内部和 node_modules', () => {
+  const task = temp();
+  repoIn(task, 'api');
+  fs.mkdirSync(path.join(task, 'group'));
+  repoIn(path.join(task, 'group'), 'web');
+  fs.mkdirSync(path.join(task, 'a', 'b', 'c', 'too-deep'), { recursive: true });
+  execFileSync('git', ['init', '-q', path.join(task, 'a', 'b', 'c', 'too-deep')]);
+  fs.mkdirSync(path.join(task, 'node_modules', 'pkg'), { recursive: true });
+  execFileSync('git', ['init', '-q', path.join(task, 'node_modules', 'pkg')]);
+  fs.mkdirSync(path.join(task, 'api', 'vendor', 'inner'), { recursive: true });
+  execFileSync('git', ['init', '-q', path.join(task, 'api', 'vendor', 'inner')]);
+  fs.mkdirSync(path.join(task, 'docs'));
+  assert.deepEqual(tools.findRepos(task), [path.join(task, 'api'), path.join(task, 'group', 'web')]);
+  // 任务目录自己就是仓库时只算它自己
+  assert.deepEqual(tools.findRepos(path.join(task, 'api')), [path.join(task, 'api')]);
+});
+
+test('按任务下的仓库列出和批量清理：只删安全的仓库目录，任务目录和其他文件保留，可恢复', async () => {
   const root = temp();
+  const task = path.join(root, 'task-one');
+  fs.mkdirSync(path.join(task, 'sub'), { recursive: true });
+  fs.writeFileSync(path.join(task, 'notes.md'), 'keep me');
   const database = testDb();
-  const clean = repoIn(root, 'clean');
-  const dirty = repoIn(root, 'dirty');
+  const taskId = database.prepare('INSERT INTO tasks (title, work_dir, user_id) VALUES (?, ?, ?)').run('多仓库任务', task, 'u').lastInsertRowid;
+  const clean = repoIn(task, 'clean');
+  const dirty = repoIn(path.join(task, 'sub'), 'dirty');
   fs.writeFileSync(path.join(dirty.dir, 'wip.txt'), 'uncommitted');
-  const plain = path.join(root, 'plain');
-  fs.mkdirSync(plain);
-  fs.writeFileSync(path.join(plain, 'f.txt'), 'not a repo');
-  const add = (title, dir) => database.prepare('INSERT INTO tasks (title, work_dir, user_id) VALUES (?, ?, ?)').run(title, dir, 'u').lastInsertRowid;
-  const cleanId = add('clean', clean.dir);
-  const dirtyId = add('dirty', dirty.dir);
-  const plainId = add('plain', plain);
+  const unpushed = repoIn(task, 'unpushed');
+  fs.writeFileSync(path.join(unpushed.dir, 'b.txt'), 'b');
+  git(unpushed.dir, 'add', '.');
+  git(unpushed.dir, 'commit', '-m', 'local only');
 
   const overview = await tools.cleanupOverview(database, 'u', root);
-  const byId = Object.fromEntries(overview.items.map(item => [item.task_id, item]));
-  assert.equal(byId[cleanId].safe, true);
-  assert.equal(byId[cleanId].remote, clean.remote);
-  assert.ok(byId[cleanId].size_bytes > 0);
-  assert.equal(byId[dirtyId].safe, false);
-  assert.match(byId[dirtyId].reason, /未提交/);
-  assert.match(byId[plainId].reason, /不是 Git 仓库/);
+  const byName = Object.fromEntries(overview.items.map(item => [item.name, item]));
+  assert.deepEqual(Object.keys(byName).sort(), ['clean', path.join('sub', 'dirty'), 'unpushed']);
+  assert.ok(overview.items.every(item => item.task_id === taskId && item.title === '多仓库任务'));
+  assert.equal(byName.clean.safe, true);
+  assert.equal(byName.clean.remote, clean.remote);
+  assert.ok(byName.clean.size_bytes > 0);
+  assert.match(byName[path.join('sub', 'dirty')].reason, /未提交/);
+  assert.match(byName.unpushed.reason, /未推送/);
 
+  const outsider = repoIn(root, 'outsider');
   const closed = [];
-  const results = await tools.cleanupTasks(database, 'u', root, [cleanId, dirtyId, plainId, 999], id => closed.push(id));
-  assert.deepEqual(results.map(item => [item.task_id, item.ok]), [[cleanId, true], [dirtyId, false], [plainId, false], [999, false]]);
+  const results = await tools.cleanupRepos(database, 'u', root, [
+    { task_id: taskId, path: clean.dir },
+    { task_id: taskId, path: dirty.dir },
+    { task_id: taskId, path: unpushed.dir },
+    { task_id: taskId, path: outsider.dir },
+    { task_id: 999, path: clean.dir },
+  ], id => closed.push(id));
+  assert.deepEqual(results.map(item => item.ok), [true, false, false, false, false]);
+  assert.equal(results[3].error, 'NOT_A_REPOSITORY_OF_TASK');
   assert.equal(fs.existsSync(clean.dir), false);
   assert.equal(fs.existsSync(path.join(dirty.dir, 'wip.txt')), true);
-  assert.equal(fs.existsSync(path.join(plain, 'f.txt')), true);
-  assert.deepEqual(closed, [cleanId]);
-  assert.equal(database.prepare('SELECT COUNT(*) c FROM tasks').get().c, 3);
+  assert.equal(fs.existsSync(unpushed.dir), true);
+  assert.equal(fs.existsSync(outsider.dir), true);
+  assert.equal(fs.readFileSync(path.join(task, 'notes.md'), 'utf8'), 'keep me');
+  assert.equal(database.prepare('SELECT COUNT(*) c FROM tasks').get().c, 1);
+  assert.deepEqual(closed, [taskId]);
 
   const after = await tools.cleanupOverview(database, 'u', root);
-  assert.equal(after.items.some(item => item.task_id === cleanId), false);
-  assert.equal(after.archived[0].task_id, cleanId);
+  assert.equal(after.items.some(item => item.name === 'clean'), false);
   assert.match(after.archived[0].restore, /^git clone -b main /);
-
-  await tools.restoreTask(database, 'u', cleanId);
+  await tools.restoreRepo(database, 'u', after.archived[0].id);
   assert.equal(fs.readFileSync(path.join(clean.dir, 'a.txt'), 'utf8'), 'hello');
   assert.equal((await tools.cleanupOverview(database, 'u', root)).archived.length, 0);
 });
 
-test('受保护的目录（工作目录本身、包含其他任务的目录、本程序所在目录）不能被清理', async () => {
+test('受保护的目录（工作目录本身、包含其他任务的仓库、本程序所在目录）不能被清理', async () => {
   const root = temp();
   const database = testDb();
   const outer = repoIn(root, 'outer');
   fs.mkdirSync(path.join(outer.dir, 'nested'));
   const add = (title, dir) => database.prepare('INSERT INTO tasks (title, work_dir, user_id) VALUES (?, ?, ?)').run(title, dir, 'u').lastInsertRowid;
+  // 任务目录自己就是仓库，且里面还有另一个任务的目录
   const outerId = add('outer', outer.dir);
   add('inner', path.join(outer.dir, 'nested'));
   const appId = add('app', path.resolve(__dirname, '..'));
-  const rootId = add('root', root);
 
-  const results = await tools.cleanupTasks(database, 'u', root, [outerId, appId, rootId]);
-  assert.ok(results.every(item => item.ok === false && item.error === 'NOT_SAFE_TO_DELETE'));
+  const results = await tools.cleanupRepos(database, 'u', root, [
+    { task_id: outerId, path: outer.dir },
+    { task_id: appId, path: path.resolve(__dirname, '..') },
+  ]);
+  assert.ok(results.every(item => item.ok === false));
+  assert.equal(results[0].error, 'NOT_SAFE_TO_DELETE');
   assert.equal(fs.existsSync(outer.dir), true);
 });

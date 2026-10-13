@@ -1,10 +1,10 @@
-# 交接说明（2026-10 · 截至 v2.44.0）
+# 交接说明（2026-10 · 截至 v2.45.0）
 
 给接手的 Claude / 开发者：先读 `AGENTS.md`（开发与发布规则）和本文件，再动手。
 
 ## 当前状态
 
-- 分支 `main`，最新发布 **v2.44.0**，已推送到 `origin/main`，工作区干净。
+- 分支 `main`，最新发布 **v2.45.0**，已推送到 `origin/main`，工作区干净。
 - 用户通过客户端检测 `main` 上的 `VERSION.json` 更新，代码改动完成并验证后按 `AGENTS.md` 升版本、提交、推送（用户已授权自动发布）。
 - 开发机已换成性能正常的 macOS，可以跑全量测试和浏览器脚本（先 `npm ci`、`npx playwright install chromium`）。`npm test` 并发时 pty 用例偶发 `posix_spawnp failed`，单独跑或 `node --test test/` 均通过。
 
@@ -56,6 +56,7 @@
 | 2.43.3 | 执行中流光蓝色加深：渐变改为 `#2563eb`（两端 20%/33% 透明、中心 60%/80%），描边 `#1d4ed8`；其余同 2.43.2 |
 | 2.43.4 | 终端 UTF-8 locale 自适应：启动时用 `locale -a` 在 C.UTF-8 / en_US / zh_CN 等已安装项中挑选（兼容 utf8 写法，`locale` 不可用时 macOS 用 en_US.UTF-8、其他用 C.UTF-8），避免 zsh 在无 C.UTF-8 的机器上把中文目录名显示成 `\M-^` 乱码；新增 `lib/terminal-locale.js` |
 | 2.44.0 | **彻底删除文件同步功能**：移除主导航“文件同步”页、`/api/file-sync`、`/v1/file-sync/*`、远程代理 `/api/remote-servers/:id/file-sync`、`file-sync:manage` 能力、`services/file-sync*.js`、前端与样式及相关测试；`agent-sync.py` 不再检查 `.t-agent-file-sync-managed` 标记，启动脚本恢复独立合并 Claude/Codex 配置。保留的：`agent-sync.py` 规则同步、配对码 `/v1/pair`。旧库里的 `system_state.file_sync_v1` 与各节点 `~/.t-agent/file-sync-backups/` 不再使用，留着不影响，可手工删除 |
+| 2.45.0 | **Agent 配置**（主导航新页，多服务器）：全局默认 + 单台覆盖，推送到本机和各远程 Engine；Claude（默认权限、模型、思考强度、状态栏命令、语言、默认思考、会话保留天数、Co-Authored-By）和 Codex（审批、沙箱、模型、思考强度、状态栏项目、推理摘要、网页搜索）。新增 `services/agent-config.js`、`routes/agent-config.js`、`public/js/agent-config.js`、`/api/agent-config`、`/v1/agent-config`、能力 `agent-config:manage`；推送同时写本机覆盖文件以免被 agent-sync 覆盖。另修复 2.44.0 误删“应用列表/实用工具页隐藏侧栏”CSS 选择器的回归 |
 
 ## 架构要点（改代码前必读）
 

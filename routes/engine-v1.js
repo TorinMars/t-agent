@@ -75,7 +75,7 @@ function infoHandler(req, res) {
       'tasks:reorder', 'documents:create', 'documents:watch', 'files:assets', 'paths:validate', 'terminal:activity',
       'todos:read', 'todos:write',
       'terminal:interactive', 'terminal:control', 'terminal:multiple', 'token:pairing',
-      'engine:update', 'pm2:manage', 'apps:manage',
+      'engine:update', 'pm2:manage', 'apps:manage', 'agent-config:manage',
     ],
   });
 }
@@ -122,6 +122,9 @@ router.post('/pm2/:id/:action', requireEngineAuth('engine:admin'), pm2Route(pm2.
 const appsRouter = express.Router();
 mountAppsRoutes(appsRouter, createAppsHandlers(defaultAppsService()), requireEngineAuth('engine:admin'));
 router.use('/apps', appsRouter);
+
+// Agent（Claude / Codex）默认配置：由 Client 的“Agent 配置”页推送，只允许 owner Token。
+router.use('/agent-config', require('./agent-config').createEngineRouter({ guard: requireEngineAuth('engine:admin') }));
 router.get('/tasks', requireEngineAuth('tasks:read'), (req, res) => {
   try { res.json(tasks.listTasks(principal(req), req.query.status)); }
   catch (error) { errorResponse(res, error); }

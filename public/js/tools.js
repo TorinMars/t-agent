@@ -5,9 +5,10 @@ const Tools = (() => {
     const args = button.dataset.args;
     return `curl -fsSL ${SCRIPT_BASE_URL}${button.dataset.script} | bash${args ? ` -s -- ${args}` : ''}`;
   };
-  const tabs = { tasks: document.getElementById('tab-tasks'), tools: document.getElementById('tab-tools'), apps: document.getElementById('tab-apps') };
+  const tabs = { tasks: document.getElementById('tab-tasks'), tools: document.getElementById('tab-tools'), apps: document.getElementById('tab-apps'), 'agent-config': document.getElementById('tab-agent-config') };
   const toolsPanel = document.getElementById('tools-panel');
   const appsPanel = document.getElementById('apps-panel');
+  const agentConfigPanel = document.getElementById('agent-config-panel');
   const appsEngineLabel = document.getElementById('apps-engine');
   const timers = new WeakMap();
   let page = 'tasks';
@@ -59,10 +60,13 @@ const Tools = (() => {
     page = name;
     if (name !== 'tasks') applyEngine();
     Apps.setActive(name === 'apps');
+    AgentConfig.setActive(name === 'agent-config');
     document.body.classList.toggle('tools-open', name === 'tools');
     document.body.classList.toggle('apps-open', name === 'apps');
+    document.body.classList.toggle('agent-config-open', name === 'agent-config');
     toolsPanel.hidden = name !== 'tools';
     appsPanel.hidden = name !== 'apps';
+    agentConfigPanel.hidden = name !== 'agent-config';
     for (const [key, tab] of Object.entries(tabs)) {
       tab.classList.toggle('active', key === name);
       tab.setAttribute('aria-pressed', String(key === name));

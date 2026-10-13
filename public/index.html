@@ -47,6 +47,7 @@
       <button type="button" class="main-nav-item active" id="tab-tasks" aria-pressed="true"><span class="main-nav-icon" aria-hidden="true">📋</span><span class="main-nav-label">Tasks</span></button>
       <button type="button" class="main-nav-item" id="tab-tools" aria-pressed="false"><span class="main-nav-icon" aria-hidden="true">🧰</span><span class="main-nav-label">实用工具</span></button>
       <button type="button" class="main-nav-item" id="tab-apps" aria-pressed="false"><span class="main-nav-icon" aria-hidden="true">🧩</span><span class="main-nav-label">应用列表</span></button>
+      <button type="button" class="main-nav-item" id="tab-agent-config" aria-pressed="false"><span class="main-nav-icon" aria-hidden="true">⚙️</span><span class="main-nav-label">Agent 配置</span></button>
     </nav>
 
     <aside class="sidebar" id="sidebar">
@@ -160,6 +161,32 @@
         <div class="tool-card-actions"><button type="button" class="btn-logout" id="apps-register-copy">复制示例命令</button></div>
       </div>
     </section>
+    <section class="agent-config-panel" id="agent-config-panel" hidden aria-label="Agent 配置">
+      <div class="tool-card tool-card-wide">
+        <div class="tool-card-title">Agent 配置</div>
+        <div class="form-hint">为 Claude Code 和 Codex 设置通用默认值，一次推送到本机和所有已连接的服务器。每台服务器可以单独覆盖；没填的项保持该机器上的原值，不会被改动。推送需要对方 Engine 升级到支持“Agent 配置”的版本。</div>
+        <div class="agent-config-tabs" role="tablist" aria-label="工具">
+          <button type="button" class="agent-config-tab active" data-tool="claude" role="tab" aria-selected="true">Claude Code</button>
+          <button type="button" class="agent-config-tab" data-tool="codex" role="tab" aria-selected="false">Codex</button>
+        </div>
+        <div id="agent-config-defaults"></div>
+        <div class="tool-card-actions">
+          <button type="button" class="btn-submit" id="agent-config-save">保存全局默认</button>
+          <button type="button" class="btn-submit" id="agent-config-push-all">保存并推送到全部服务器</button>
+          <span class="tool-copy-status" id="agent-config-status" role="status"></span>
+        </div>
+      </div>
+      <div class="tool-card tool-card-wide">
+        <div class="tool-card-title">服务器</div>
+        <div class="form-hint">“覆盖”是只对这台服务器生效的值，优先于全局默认。“查看当前”读取这台机器上现在的实际配置。</div>
+        <div class="pm2-table-wrap">
+          <table class="pm2-table" id="agent-config-table">
+            <thead><tr><th>服务器</th><th>上次推送</th><th>覆盖项</th><th>操作</th></tr></thead>
+            <tbody id="agent-config-servers"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
     <section class="tools-panel" id="tools-panel" hidden aria-label="实用工具">
       <div class="tool-card">
         <div class="tool-card-title">安装开发环境（Claude Code / Codex / SSH 密钥 / 规则同步 / ta / PM2）</div>
@@ -220,6 +247,7 @@
   <script src="/js/engines.js"></script>
   <script src="/js/terminal-keys.js"></script>
   <script src="/js/apps.js"></script>
+  <script src="/js/agent-config.js"></script>
   <script src="/js/tools.js"></script>
   <script>
     if ('serviceWorker' in navigator) {

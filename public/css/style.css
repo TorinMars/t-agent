@@ -766,24 +766,17 @@ body.file-sync-open .sidebar, body.file-sync-open .content-area, body.file-sync-
   inset: 0;
   border-radius: inherit;
   pointer-events: none;
-  border: 2px solid #3b82f6;
-  box-shadow: 0 0 6px #3b82f688, inset 0 0 4px #3b82f633;
-}
-/* 无色光柱：只在边框环上显示，沿左右方向往返扫过 */
-.task-nav-item.term-running::before,
-.engine-tab.term-running::before,
-.terminal-tab.term-running::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  padding: 2px;
-  pointer-events: none;
-  background: linear-gradient(90deg, transparent, #ffffffee, transparent) no-repeat;
-  background-size: 28% 100%;
-  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  border: 2px solid transparent;
+  /* 蓝色边框环 + 无色（白色渐隐）光柱沿左右往返扫过；mask 只保留边框环 */
+  background:
+    linear-gradient(90deg, transparent, #ffffffee, transparent) no-repeat,
+    #3b82f6;
+  background-size: 28% 100%, 100% 100%;
+  background-origin: border-box;
+  background-clip: border-box;
+  -webkit-mask: linear-gradient(#000 0 0) padding-box, linear-gradient(#000 0 0);
   -webkit-mask-composite: xor;
-  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+  mask: linear-gradient(#000 0 0) padding-box exclude, linear-gradient(#000 0 0);
   animation: term-sweep 2s ease-in-out infinite alternate;
 }
 .task-nav-item.term-done::after,
@@ -798,8 +791,8 @@ body.file-sync-open .sidebar, body.file-sync-open .content-area, body.file-sync-
   animation: term-breathe 2s ease-in-out infinite;
 }
 @keyframes term-sweep {
-  from { background-position: -10% 0; }
-  to   { background-position: 110% 0; }
+  from { background-position: -10% 0, 0 0; }
+  to   { background-position: 110% 0, 0 0; }
 }
 @keyframes term-breathe {
   0%, 100% { opacity: 0.25; box-shadow: 0 0 0 0 #3fb95000, inset 0 0 0 0 #3fb95000; }
@@ -808,12 +801,7 @@ body.file-sync-open .sidebar, body.file-sync-open .content-area, body.file-sync-
 @media (prefers-reduced-motion: reduce) {
   .task-nav-item.term-running::after,
   .engine-tab.term-running::after,
-  .terminal-tab.term-running::after {
-    animation: none;
-  }
-  .task-nav-item.term-running::before,
-  .engine-tab.term-running::before,
-  .terminal-tab.term-running::before,
+  .terminal-tab.term-running::after,
   .task-nav-item.term-done::after,
   .engine-tab.term-done::after,
   .terminal-tab.term-done::after { animation: none; }

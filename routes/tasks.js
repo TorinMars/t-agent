@@ -225,9 +225,16 @@ router.delete('/:id', (req, res) => {
   const uid = ownerFilter(req);
   const task = documents.resolveTask(db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, uid));
   if (!task) return res.status(404).json({ error: 'Task not found' });
+  const deleteDirectory = req.query.delete_directory === '1';
+  if (deleteDirectory) {
+    const reason = workspaceTools.taskDirectoryGuard(db, uid, task, toolWorkDir(req));
+    if (reason) return res.status(409).json({ error: 'DIRECTORY_NOT_SAFE_TO_DELETE', reason });
+  }
   terminal.closeTaskTerminals(task.id);
   db.prepare('DELETE FROM tasks WHERE id = ?').run(req.params.id);
-  res.json({ success: true });
+  if (!deleteDirectory) return res.json({ success: true });
+  try { res.json({ success: true, directory_deleted: workspaceTools.removeTaskDirectory(task) }); }
+  catch (error) { res.json({ success: true, directory_deleted: false, directory_error: error.message }); }
 });
 
 router.get('/:id/md', (req, res) => {

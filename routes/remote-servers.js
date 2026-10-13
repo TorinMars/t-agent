@@ -437,7 +437,7 @@ router.delete('/:id/tasks/:taskId', async (req, res) => {
   const row = getServer(req);
   if (!row) return res.status(404).json({ error: 'REMOTE_NOT_FOUND' });
   try {
-    res.json(await request(row.base_url, `/v1/tasks/${encodeURIComponent(req.params.taskId)}`, decryptToken(row.token_cipher, config.sessionSecret), { method: 'DELETE' }));
+    res.json(await request(row.base_url, `/v1/tasks/${encodeURIComponent(req.params.taskId)}${req.query.delete_directory === '1' ? '?delete_directory=1' : ''}`, decryptToken(row.token_cipher, config.sessionSecret), { method: 'DELETE' }));
   } catch (error) { res.status(error.statusCode || 502).json({ error: safeError(error) }); }
 });
 

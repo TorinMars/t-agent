@@ -620,6 +620,10 @@ body.file-sync-open .sidebar, body.file-sync-open .content-area, body.file-sync-
 .sidebar-action:last-child::after { left: auto; right: 0; transform: none; }
 .sidebar-action:hover::after,
 .sidebar-action:focus-visible::after { opacity: 1; transition-delay: 0.2s; }
+.delete-dir-option { display: flex; align-items: center; gap: 8px; margin: 12px 0 6px; cursor: pointer; }
+.delete-dir-path { margin: 6px 0 12px; padding: 8px 10px; border: 1px solid var(--danger); border-radius: 6px; color: var(--danger); font-size: 12px; }
+.delete-dir-path code { color: var(--text); overflow-wrap: anywhere; }
+.btn-danger-confirm { background: var(--danger); }
 .wt-intro, .wt-muted { color: var(--text-muted); font-size: 12px; }
 .wt-list { list-style: none; margin: 6px 0 12px; padding: 0; border: 1px solid var(--border); border-radius: 7px; max-height: 50vh; overflow-y: auto; }
 .wt-list li { border-bottom: 1px solid var(--border); }

@@ -80,6 +80,24 @@ function importDirs(database, owner, workDir, paths, status = 'todo') {
   return created;
 }
 
+// ---------- 删除任务时一并删除目录 ----------
+// 返回不能删除的原因，可以删除则返回 null。目录删除不可恢复，所以对受保护目录、被其他任务共用的目录一律拒绝。
+function taskDirectoryGuard(database, owner, task, workDir) {
+  if (!task.work_dir) return '任务没有工作目录';
+  const dir = path.resolve(task.work_dir);
+  const root = workRoot(workDir);
+  const others = database.prepare('SELECT work_dir FROM tasks WHERE user_id = ? AND id != ? AND work_dir IS NOT NULL').all(owner, task.id).map(row => path.resolve(row.work_dir));
+  if (others.includes(dir)) return '其他任务也在使用这个目录';
+  const reason = protectedReason(dir, { root, others });
+  return reason;
+}
+
+function removeTaskDirectory(task) {
+  if (!task.work_dir || !isDirectory(task.work_dir)) return false;
+  fs.rmSync(path.resolve(task.work_dir), { recursive: true, force: true });
+  return true;
+}
+
 // ---------- 清理 ----------
 async function git(dir, args, timeout = GIT_TIMEOUT) {
   const { stdout } = await run('git', ['-C', dir, ...args], { timeout, maxBuffer: 8 * 1024 * 1024, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } });
@@ -240,4 +258,4 @@ async function restoreRepo(database, owner, cleanupId) {
   return task;
 }
 
-module.exports = { idleDays, listUnmanaged, importDirs, findRepos, inspectRepository, cleanupOverview, cleanupRepos, restoreRepo };
+module.exports = { taskDirectoryGuard, removeTaskDirectory, idleDays, listUnmanaged, importDirs, findRepos, inspectRepository, cleanupOverview, cleanupRepos, restoreRepo };

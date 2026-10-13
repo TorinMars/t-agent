@@ -4,6 +4,7 @@ const path = require('path');
 const db = require('../db');
 const taskGroups = require('./task-groups');
 const documents = require('./task-documents');
+const workspaceTools = require('./workspace-tools');
 
 const DEFAULT_BASE = path.resolve(process.env.TASKS_BASE_DIR || path.join(os.homedir(), 'tasks'));
 
@@ -119,10 +120,18 @@ function reorderTasks(principalId, items) {
   })();
 }
 
-function deleteTask(principalId, id) {
-  if (ownedTask(principalId, id)) require('../routes/terminal').closeTaskTerminals(id);
+function deleteTask(principalId, id, { deleteDirectory = false } = {}) {
+  const task = ownedTask(principalId, id);
+  if (task && deleteDirectory) {
+    const reason = workspaceTools.taskDirectoryGuard(db, principalId, task, DEFAULT_BASE);
+    if (reason) throw Object.assign(new Error('DIRECTORY_NOT_SAFE_TO_DELETE'), { statusCode: 409, reason });
+  }
+  if (task) require('../routes/terminal').closeTaskTerminals(id);
   const result = db.prepare('DELETE FROM tasks WHERE id = ? AND user_id = ?').run(id, principalId);
   if (!result.changes) throw Object.assign(new Error('TASK_NOT_FOUND'), { statusCode: 404 });
+  if (!deleteDirectory) return { success: true };
+  try { return { success: true, directory_deleted: workspaceTools.removeTaskDirectory(task) }; }
+  catch (error) { return { success: true, directory_deleted: false, directory_error: error.message }; }
 }
 
 const documentPath = documents.documentPath;

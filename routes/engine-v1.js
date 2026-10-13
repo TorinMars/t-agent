@@ -23,7 +23,7 @@ const pairingAttempts = new Map();
 
 function errorResponse(res, error) {
   const code = /^[A-Z0-9_]+$/.test(error.message || '') ? error.message : 'ENGINE_REQUEST_FAILED';
-  res.status(error.statusCode || 400).json({ error: code });
+  res.status(error.statusCode || 400).json({ error: code, ...(error.reason ? { reason: error.reason } : {}) });
 }
 
 function principal(req) {
@@ -182,7 +182,7 @@ router.put('/tasks/:id', requireEngineAuth('tasks:write'), (req, res) => {
 });
 
 router.delete('/tasks/:id', requireEngineAuth('tasks:write'), (req, res) => {
-  try { tasks.deleteTask(principal(req), req.params.id); res.json({ success: true }); }
+  try { res.json(tasks.deleteTask(principal(req), req.params.id, { deleteDirectory: req.query.delete_directory === '1' })); }
   catch (error) { errorResponse(res, error); }
 });
 

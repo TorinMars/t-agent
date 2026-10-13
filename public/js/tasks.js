@@ -988,11 +988,45 @@ const Tasks = (() => {
     await refreshActive();
   }
 
+  // 删除确认弹窗：可勾选“同时删除目录”，默认不勾选。返回 { deleteDirectory } 或 null（取消）。
+  function confirmDeleteTask(task) {
+    return new Promise(resolve => {
+      const hasDir = Boolean(task && task.work_dir);
+      Modal.show('删除任务', `
+        <p>确认删除任务「${escapeHtml(task ? task.title : '')}」？任务记录和待办会被删除。</p>
+        ${hasDir ? `<label class="delete-dir-option"><input type="checkbox" id="delete-task-dir"> 同时删除目录</label>
+        <div class="delete-dir-path" id="delete-task-dir-path" hidden><code>${escapeHtml(task.work_dir)}</code><br>目录及里面的所有文件会被永久删除，不可恢复。</div>` : '<div class="form-hint">这个任务没有工作目录，不涉及目录删除。</div>'}
+        <div class="form-actions"><button class="btn-cancel" id="delete-task-cancel" type="button">取消</button><button class="btn-submit btn-danger-confirm" id="delete-task-ok" type="button">删除</button></div>`);
+      const box = document.getElementById('delete-task-dir');
+      if (box) box.addEventListener('change', () => { document.getElementById('delete-task-dir-path').hidden = !box.checked; });
+      let settled = false;
+      const finish = value => { if (settled) return; settled = true; Modal.hide(); resolve(value); };
+      document.getElementById('delete-task-cancel').addEventListener('click', () => finish(null));
+      document.getElementById('delete-task-ok').addEventListener('click', () => finish({ deleteDirectory: Boolean(box && box.checked) }));
+    });
+  }
+
+  const deleteErrorLabel = code => ({
+    DIRECTORY_NOT_SAFE_TO_DELETE: '这个目录不能删除（受保护，或被其他任务共用），任务没有被删除',
+  })[code] || code;
+
   async function deleteTask(id) {
     if (selectedId === id && window.FilePanel?.isOpen() && !await FilePanel.beforeContextChange()) return;
-    if (!confirm('确认删除该任务？')) return;
-    try { await API.delete(taskUrl(id)); }
-    catch (error) { alert('删除任务失败: ' + error.message); return; }
+    const task = tasks.find(item => item.id === id);
+    const choice = await confirmDeleteTask(task);
+    if (!choice) return;
+    let result;
+    try { result = await API.delete(`${taskUrl(id)}${choice.deleteDirectory ? '?delete_directory=1' : ''}`); }
+    catch (error) {
+      let text = error.message;
+      try { const data = JSON.parse(text); text = data.reason ? `${deleteErrorLabel(data.error)}：${data.reason}` : deleteErrorLabel(data.error); } catch { /* 保持原文 */ }
+      alert('删除任务失败: ' + text);
+      return;
+    }
+    if (choice.deleteDirectory) {
+      if (result && result.directory_error) alert(`任务已删除，但目录删除失败：${result.directory_error}`);
+      else if (result && result.directory_deleted === undefined) alert('任务已删除，但对方服务版本较旧，没有删除目录。');
+    }
     if (selectedId === id) {
       disposeTerminalsOf(source.key, id);
       selectedId = null;

@@ -830,13 +830,13 @@ body.file-sync-open .sidebar, body.file-sync-open .content-area, body.file-sync-
 .task-nav-item.term-running,
 .engine-tab.term-running {
   box-shadow: inset 0 0 0 1px #3b82f6aa;
-  background-image: linear-gradient(90deg, color-mix(in srgb, var(--text) 7%, transparent) 33%, color-mix(in srgb, var(--text) 20%, transparent) 50%, color-mix(in srgb, var(--text) 7%, transparent) 66%);
+  background-image: linear-gradient(90deg, #3b82f61a 33%, #3b82f65c 50%, #3b82f61a 66%);
   background-size: 300% 100%;
   animation: term-shimmer 1.2s infinite linear;
 }
 .terminal-tab.term-running {
   box-shadow: inset 0 0 0 1px #3b82f6aa;
-  background-image: linear-gradient(90deg, #ffffff12 33%, #ffffff3a 50%, #ffffff12 66%);
+  background-image: linear-gradient(90deg, #60a5fa24 33%, #60a5fa66 50%, #60a5fa24 66%);
   background-size: 300% 100%;
   animation: term-shimmer 1.2s infinite linear;
 }

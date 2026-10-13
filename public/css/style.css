@@ -1935,5 +1935,4 @@ body.file-sync-open .sidebar, body.file-sync-open .content-area, body.file-sync-
 .file-sync-role-row { display: flex; align-items: center; gap: 10px; margin: 12px 0 6px; }
 .file-sync-role-row .form-input { width: auto; min-width: 140px; }
 .file-sync-code-box { margin: 8px 0 12px; }
-.file-sync-code-row { display: flex; gap: 8px; align-items: center; max-width: 520px; }
-.file-sync-code-row .form-input { font-family: Menlo, Monaco, "Courier New", monospace; font-size: 16px; letter-spacing: 1px; }
+.file-sync-code-box textarea, #sync-invite-string { font-family: Menlo, Monaco, "Courier New", monospace; font-size: 12px; max-width: 640px; word-break: break-all; }

@@ -57,7 +57,7 @@ test('Engine 鉴权、主节点清单与已有连接代理', async t => {
   assert.equal(response.status, 200);
   assert.equal((await response.json()).role, 'master');
   // 文件同步不再借用引擎连接：这些接口已移除。
-  for (const [method, route] of [['GET', 'servers'], ['POST', 'pairing'], ['POST', 'join'], ['POST', 'connect']]) {
+  for (const [method, route] of [['GET', 'servers'], ['POST', 'pairing'], ['POST', 'connect']]) {
     assert.equal((await requestJson(`${engine}/v1/file-sync/${route}`, token, method, method === 'POST' ? {} : undefined)).status, 404, route);
   }
 
@@ -76,7 +76,18 @@ test('Engine 鉴权、主节点清单与已有连接代理', async t => {
   assert.equal((await requestJson(`${engine}/v1/info`, syncToken)).status, 401, '也不能访问引擎其他接口');
   assert.equal((await requestJson(`${engine}/v1/file-sync/pair`, null, 'POST', { code })).status, 400, '配对码只能使用一次');
   assert.equal((await requestJson(`${engine}/v1/file-sync/pair`, null, 'POST', { code: 'bad' })).status, 400);
-  assert.equal((await requestJson(`${engine}/v1/file-sync/adopt`, null, 'POST', { code: 'TA-AAAA-AAAA-AAAA', master_url: engine, master_code: code })).status, 409, '主服务器不接受被关联');
+  // 主服务器生成连接字符串（需要管理令牌，同步令牌不行）；字符串里的配对码可以换同步令牌。
+  assert.equal((await requestJson(`${engine}/v1/file-sync/invite`, null, 'POST', { master_url: engine })).status, 401);
+  assert.equal((await requestJson(`${engine}/v1/file-sync/invite`, syncToken, 'POST', { master_url: engine })).status, 401);
+  assert.equal((await requestJson(`${engine}/v1/file-sync/invite`, token, 'POST', { master_url: '' })).status, 400);
+  const invite = await (await requestJson(`${engine}/v1/file-sync/invite`, token, 'POST', { master_url: engine })).json();
+  assert.match(invite.connection_string, /^TAFS1:/);
+  const inviteCode = JSON.parse(Buffer.from(invite.connection_string.slice(6), 'base64url').toString()).c;
+  assert.equal((await requestJson(`${engine}/v1/file-sync/join`, token, 'POST', { connection_string: invite.connection_string })).status, 409, '主服务器不能用字符串连接');
+  assert.equal((await requestJson(`${engine}/v1/file-sync/pair`, null, 'POST', { code: inviteCode })).status, 200);
+  for (const route of ['adopt', 'associate', 'refresh-code']) {
+    assert.equal((await requestJson(`${engine}/v1/file-sync/${route}`, token, 'POST', {})).status, 404, route);
+  }
   assert.equal((await requestJson(`${engine}/v1/file-sync/heartbeat`, syncToken, 'DELETE', heartbeat)).status, 200);
   assert.equal((await requestJson(`${engine}/v1/file-sync/manifest`, syncToken)).status, 401, '从服务器注销后令牌被吊销');
   assert.equal((await requestJson(`${engine}/v1/file-sync/heartbeat`, token, 'DELETE', heartbeat)).status, 200);

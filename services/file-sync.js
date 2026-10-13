@@ -21,8 +21,8 @@ function masterBaseUrl(input) {
 }
 const fault = (code, statusCode = 400) => Object.assign(new Error(code), { statusCode });
 const PAIRING_CODE = /^TA-[A-Z2-9]{4}-[A-Z2-9]{4}-[A-Z2-9]{4}$/;
-const SLAVE_CODE_TTL_MS = 10 * 60 * 1000;
-const SLAVE_CODE_MAX_FAILS = 5;
+const INVITE_TTL_MS = 10 * 60 * 1000;
+const INVITE_PREFIX = 'TAFS1:';
 const TOKEN_PREFIX = 'tfs_';
 function newPairingCode() {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -85,7 +85,6 @@ class FileSync {
     this.state.clock ||= Math.max(0, ...Object.values(this.state.versions || {}).map(value => value.revision || 0));
     // 旧数据没有 mode：已连接主服务器的是从服务器，否则是主服务器。
     this.state.mode ||= this.state.masterId == null ? 'master' : 'slave';
-    this.codeInfo = null;
     this.masterCodes = new Map();
     this.busy = false;
     this.timer = intervalMs ? setInterval(() => this.tick().catch(error => { this.state.error = error.message; }), intervalMs) : null;
@@ -105,11 +104,12 @@ class FileSync {
     return row ? { url: row.base_url, token: decryptToken(row.token_cipher, this.secret) } : null;
   }
   // 主服务器：生成一次性同步配对码，从服务器用它换取只能访问文件同步接口的令牌（与引擎连接、引擎令牌无关）。
+  // 主服务器有固定的外网地址而从服务器通常在内网，所以总是从服务器主动连主服务器。
   createSyncCode() {
     const now = Date.now();
     for (const [hash, expires] of this.masterCodes) if (expires <= now) this.masterCodes.delete(hash);
     const code = newPairingCode();
-    this.masterCodes.set(sha(code), now + SLAVE_CODE_TTL_MS);
+    this.masterCodes.set(sha(code), now + INVITE_TTL_MS);
     return code;
   }
   exchangeSyncCode({ code, name, instance_id: instanceId }) {
@@ -130,15 +130,6 @@ class FileSync {
   }
   verifyToken(token) {
     return this.isMaster() && typeof token === 'string' && token.startsWith(TOKEN_PREFIX) && Boolean(this.state.tokens?.[sha(token)]);
-  }
-  // 从服务器未关联时一直显示一个配对码；过期或被猜错太多次就换新的。码只放内存，重启后重新生成。
-  pairingCode(renew = false) {
-    if (!this.awaitingPairing()) { this.codeInfo = null; return null; }
-    const now = Date.now();
-    if (renew || !this.codeInfo || this.codeInfo.expiresAt <= now || this.codeInfo.fails >= SLAVE_CODE_MAX_FAILS) {
-      this.codeInfo = { code: newPairingCode(), expiresAt: now + SLAVE_CODE_TTL_MS, fails: 0 };
-    }
-    return { code: this.codeInfo.code, expires_at: new Date(this.codeInfo.expiresAt).toISOString() };
   }
   localSpec(spec) { return this.isMaster() ? spec : this.state.pathOverrides?.[spec] || spec; }
   localPath(spec) { return resolveSpec(this.localSpec(spec), this.home); }
@@ -163,7 +154,7 @@ class FileSync {
   }
   identity() { return this.db.prepare("SELECT value FROM engine_identity WHERE key = 'instance_id'").get()?.value; }
   status() {
-    return { role: this.isMaster() ? 'master' : 'child', master_id: this.state.masterId, master_url: this.paired() ? (this.masterLink()?.url ?? null) : null, pairing: this.pairingCode(),
+    return { role: this.isMaster() ? 'master' : 'child', master_id: this.state.masterId, master_url: this.paired() ? (this.masterLink()?.url ?? null) : null,
       files: this.state.files.map(spec => {
         const exists = Boolean(readFile(this.localSpec(spec), this.home));
         return { path: spec, local_path: this.localPath(spec), default_path: resolveSpec(spec, this.home), path_override: this.state.pathOverrides?.[spec] || null,
@@ -331,7 +322,6 @@ class FileSync {
     const children = this.isMaster() ? this.state.children : {};
     const tokens = this.isMaster() ? this.state.tokens : {};
     this.state = { mode: 'master', masterId: null, files: [], versions: {}, observed: {}, pathOverrides: {}, backups: this.state.backups || {}, children, tokens, generation: crypto.randomUUID(), clock: 0, error: null };
-    this.codeInfo = null;
     this.save();
     for (const file of oldPaths) this.removeMarker(file);
     await this.unregisterFrom(oldMaster, oldGeneration);
@@ -353,32 +343,27 @@ class FileSync {
     this.save();
     return this.status();
   }
-  // 主服务器根据从服务器界面显示的配对码关联它：把主服务器地址和一次性配对码交给从服务器，
-  // 从服务器用它走“加入主服务器”流程，之后仍由从服务器轮询主服务器。
-  async associate({ slaveUrl, slaveCode, masterUrl }) {
+  // 主服务器：生成连接字符串，包含主服务器地址和一次性配对码；从服务器粘贴它即可连接。
+  createInvite(masterUrl) {
     if (!this.isMaster()) throw fault('SYNC_NOT_MASTER', 409);
-    const code = String(slaveCode || '').trim().toUpperCase();
-    if (!PAIRING_CODE.test(code)) throw fault('SYNC_PAIRING_CODE_INVALID');
-    const slave = masterBaseUrl(slaveUrl);
-    const master = masterBaseUrl(masterUrl);
-    await this.remoteRequest(slave, '/v1/file-sync/adopt', null, {
-      method: 'POST', timeoutMs: 30_000,
-      body: { code, master_url: master, master_code: this.createSyncCode() },
-    });
-    return this.status();
+    const url = masterBaseUrl(masterUrl);
+    const code = this.createSyncCode();
+    const payload = Buffer.from(JSON.stringify({ v: 1, u: url, c: code })).toString('base64url');
+    return { connection_string: INVITE_PREFIX + payload, expires_at: new Date(Date.now() + INVITE_TTL_MS).toISOString(), expires_in_seconds: INVITE_TTL_MS / 1000 };
   }
-  // 从服务器侧：凭自己显示的配对码接受主服务器的关联。配对码只能用一次。
-  async adopt({ code, masterUrl, masterCode }) {
-    const current = this.pairingCode();
-    if (!current) throw fault('SYNC_NOT_AWAITING_PAIRING', 409);
-    const given = Buffer.from(String(code || '').trim().toUpperCase());
-    const expected = Buffer.from(this.codeInfo.code);
-    if (given.length !== expected.length || !crypto.timingSafeEqual(given, expected)) {
-      this.codeInfo.fails += 1;
-      throw fault('PAIRING_CODE_INVALID_OR_EXPIRED', 403);
-    }
-    this.codeInfo = null;
-    return this.join({ url: masterUrl, code: masterCode });
+  parseInvite(input) {
+    const text = String(input || '').replace(/\s+/g, '');
+    if (!text.startsWith(INVITE_PREFIX)) throw fault('SYNC_CONNECTION_STRING_INVALID');
+    let data;
+    try { data = JSON.parse(Buffer.from(text.slice(INVITE_PREFIX.length), 'base64url').toString('utf8')); }
+    catch { throw fault('SYNC_CONNECTION_STRING_INVALID'); }
+    if (!data || data.v !== 1 || typeof data.u !== 'string' || typeof data.c !== 'string' || !PAIRING_CODE.test(data.c)) throw fault('SYNC_CONNECTION_STRING_INVALID');
+    return { url: masterBaseUrl(data.u), code: data.c };
+  }
+  // 从服务器：用主服务器生成的连接字符串连接；之后由本节点轮询主服务器。
+  async joinInvite(input) {
+    if (this.isMaster()) throw fault('SYNC_NOT_CHILD', 409);
+    return this.join(this.parseInvite(input));
   }
   backup(spec, current) {
     if (!current) return;
@@ -410,7 +395,7 @@ class FileSync {
     this.busy = true;
     try {
       this.state.error = null;
-      if (this.awaitingPairing()) { this.pairingCode(); return; }
+      if (this.awaitingPairing()) return;
       if (this.isMaster()) this.scanMaster();
       else {
         const { url, token } = this.remote();

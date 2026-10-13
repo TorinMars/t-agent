@@ -212,8 +212,8 @@ test('同步配对码一步加入主服务器：换同步令牌、保存在文�
   assert.equal(bDb.servers.size, 0);
 });
 
-test('从服务器显示配对码，主服务器凭码关联；角色可切换、可解除，码只能用一次', async t => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'file-sync-adopt-'));
+test('主服务器生成连接字符串，内网从服务器粘贴后主动连接；角色可切换、可解除，字符串只能用一次', async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'file-sync-invite-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const aHome = path.join(root, 'a');
   const bHome = path.join(root, 'b');
@@ -222,69 +222,70 @@ test('从服务器显示配对码，主服务器凭码关联；角色可切换�
   fs.writeFileSync(path.join(aHome, '.claude/settings.json'), '{"a":1}\n');
   const aDb = database('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
   const bDb = database('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb');
+  const master = new FileSync({ db: aDb, secret: 'secret', home: aHome, intervalMs: 0 });
   const sent = [];
-  let slave;
-  // 主服务器发出的请求直接交给从服务器的 adopt；从服务器发出的请求交给主服务器。
-  const masterRequest = async (base, url, token, options = {}) => {
-    sent.push({ base, url, token });
-    assert.equal(url, '/v1/file-sync/adopt');
-    assert.equal(token, null, '关联请求不带令牌，只凭配对码');
-    return slave.adopt({ code: options.body.code, masterUrl: options.body.master_url, masterCode: options.body.master_code });
-  };
-  const master = new FileSync({ db: aDb, secret: 'secret', home: aHome, intervalMs: 0, remoteRequest: masterRequest });
+  // 只有从服务器向主服务器发请求；主服务器从不连接从服务器。
   const slaveRequest = async (base, url, token, options = {}) => {
+    sent.push({ base, url, token });
     if (url === '/v1/file-sync/pair') return master.exchangeSyncCode(options.body);
     if (url.endsWith('/manifest')) return master.manifest();
     if (url.endsWith('/heartbeat')) return options.method === 'DELETE' ? master.unregisterChild(options.body) : master.registerChild(options.body);
     throw new Error(url);
   };
-  slave = new FileSync({ db: bDb, secret: 'secret', home: bHome, intervalMs: 0, remoteRequest: slaveRequest });
+  const slave = new FileSync({ db: bDb, secret: 'secret', home: bHome, intervalMs: 0, remoteRequest: slaveRequest });
   master.setFiles(['~/.claude/settings.json']);
 
-  assert.equal(slave.status().pairing, null, '主服务器不显示配对码');
   await assert.rejects(slave.setRole('boss'), /SYNC_ROLE_INVALID/);
+  await assert.rejects(slave.joinInvite('x'), /SYNC_NOT_CHILD/, '主服务器不能当从服务器连接');
   const waiting = await slave.setRole('slave');
   assert.equal(waiting.role, 'child');
   assert.equal(waiting.master_id, null);
-  assert.match(waiting.pairing.code, /^TA-[A-Z2-9]{4}-[A-Z2-9]{4}-[A-Z2-9]{4}$/);
-  assert.equal(slave.status().pairing.code, waiting.pairing.code, '未使用时码保持不变');
+  assert.equal(waiting.master_url, null);
   await slave.tick();
-  assert.equal(slave.status().error, null, '等待关联时轮询不报错');
+  assert.equal(slave.status().error, null, '尚未连接时轮询不报错');
+  assert.throws(() => slave.createInvite('master.lan:3000'), /SYNC_NOT_MASTER/);
 
-  await assert.rejects(slave.setRole('slave').then(() => master.associate({ slaveUrl: 'slave:3000', slaveCode: 'bad', masterUrl: 'master:3000' })), /SYNC_PAIRING_CODE_INVALID/);
-  assert.equal(sent.length, 0, '格式错误不会发出请求');
-  await assert.rejects(slave.associate({ slaveUrl: 'x:1', slaveCode: waiting.pairing.code, masterUrl: 'y:1' }), /SYNC_NOT_MASTER/);
+  assert.throws(() => master.createInvite(''), /SYNC_MASTER_URL_INVALID/);
+  const invite = master.createInvite('master.lan:3000/web');
+  assert.match(invite.connection_string, /^TAFS1:[A-Za-z0-9_-]+$/);
+  assert.equal(invite.expires_in_seconds, 600);
+  const decoded = JSON.parse(Buffer.from(invite.connection_string.slice(6), 'base64url').toString());
+  assert.deepEqual({ v: decoded.v, u: decoded.u }, { v: 1, u: 'http://master.lan:3000' }, '字符串里是规范化后的主服务器地址');
+  assert.match(decoded.c, /^TA-[A-Z2-9]{4}-[A-Z2-9]{4}-[A-Z2-9]{4}$/);
 
-  const wrong = 'TA-AAAA-AAAA-AAAA';
-  for (let i = 0; i < 5; i += 1) {
-    await assert.rejects(master.associate({ slaveUrl: 'slave.lan:3000', slaveCode: wrong, masterUrl: 'master.lan:3000/web' }), /PAIRING_CODE_INVALID_OR_EXPIRED/);
+  for (const bad of ['', 'TAFS1:', 'TAFS1:!!!', 'hello', `TAFS1:${Buffer.from('{"v":2}').toString('base64url')}`,
+    `TAFS1:${Buffer.from(JSON.stringify({ v: 1, u: 'http://m', c: 'bad' })).toString('base64url')}`]) {
+    await assert.rejects(slave.joinInvite(bad), /SYNC_CONNECTION_STRING_INVALID/, JSON.stringify(bad));
   }
-  const renewed = slave.status().pairing.code;
-  assert.notEqual(renewed, waiting.pairing.code, '猜错 5 次后配对码作废并换新');
+  assert.equal(sent.length, 0, '字符串不正确不会发出请求');
 
-  const status = await master.associate({ slaveUrl: 'slave.lan:3000', slaveCode: renewed.toLowerCase(), masterUrl: 'master.lan:3000/web' });
-  assert.equal(sent.at(-1).base, 'http://slave.lan:3000');
-  assert.equal(status.children.length, 1, '从服务器完成同步后已向主服务器登记');
-  assert.equal(slave.status().role, 'child');
-  assert.equal(slave.status().master_id, null, '不再使用引擎连接的 id');
-  assert.equal(slave.status().pairing, null, '关联后不再显示配对码');
+  // 粘贴时常带换行或空白。
+  const wrapped = invite.connection_string.replace(/(.{20})/g, '$1\n  ');
+  const status = await slave.joinInvite(wrapped);
+  assert.equal(status.role, 'child');
+  assert.equal(status.master_url, 'http://master.lan:3000');
+  assert.equal(sent[0].base, 'http://master.lan:3000');
+  assert.equal(status.children.length, 0, '从服务器的清单里没有子节点');
+  assert.equal(master.status().children.length, 1, '从服务器连接后已向主服务器登记');
   assert.equal(fs.readFileSync(path.join(bHome, '.claude/settings.json'), 'utf8'), '{"a":1}\n');
   assert.equal(bDb.servers.size, 0, '不写入引擎连接（remote_servers）');
-  assert.match(slave.status().master_url, /^http:\/\/master\.lan:3000$/);
-  await assert.rejects(master.associate({ slaveUrl: 'slave.lan:3000', slaveCode: renewed, masterUrl: 'master.lan:3000' }), /SYNC_NOT_AWAITING_PAIRING/);
+  assert.equal(slave.status().master_id, null, '不再使用引擎连接的 id');
+  const second = new FileSync({ db: database('eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee'), secret: 'secret', home: bHome, intervalMs: 0, remoteRequest: slaveRequest });
+  await second.setRole('slave');
+  await assert.rejects(second.joinInvite(invite.connection_string), /PAIRING_CODE_INVALID_OR_EXPIRED/, '字符串只能使用一次');
 
   const issuedToken = Object.keys(master.state.tokens)[0];
   assert.equal(Object.keys(master.state.tokens).length, 1);
+  assert.ok(issuedToken);
   const unpaired = await slave.unpair();
   assert.equal(Object.keys(master.state.tokens).length, 0, '解除关联时主服务器吊销该从服务器的令牌');
-  assert.ok(issuedToken);
   assert.equal(unpaired.role, 'child');
-  assert.equal(unpaired.master_id, null);
+  assert.equal(unpaired.master_url, null);
   assert.equal(unpaired.files.length, 0);
-  assert.notEqual(unpaired.pairing.code, renewed, '解除关联后生成新配对码');
   await assert.rejects(master.unpair(), /SYNC_NOT_CHILD/);
+  await slave.joinInvite(master.createInvite('http://master.lan:3000').connection_string);
+  assert.equal(slave.status().master_url, 'http://master.lan:3000', '解除后可用新的字符串重新连接');
   assert.equal((await slave.setRole('master')).role, 'master');
-  assert.equal(slave.status().pairing, null);
 });
 
 test('旧版本保存的状态没有 mode：已连接主服务器的是从服务器，否则是主服务器', () => {

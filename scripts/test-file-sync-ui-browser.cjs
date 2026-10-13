@@ -16,23 +16,24 @@ const panel = index.match(/<section class="file-sync-panel"[\s\S]*?<\/section>/)
     await page.setContent(`<body>${panel}<div id="modal-title"></div><div id="modal-body"></div></body>`);
     await page.addScriptTag({ content: `
       const files = path => ({ path, local_path: '/home/test/' + path.slice(2), default_path: '/home/test/' + path.slice(2), path_override: null, exists: true, version: 1 });
-      let syncState = { role: 'master', master_id: null, master_url: null, pairing: null, files: [], error: null,
+      let syncState = { role: 'master', master_id: null, master_url: null, files: [], error: null,
         children: [{ id: 'node-123456', name: '从服务器节点', online: true, last_sync_at: '2026-10-10T07:00:00Z', last_seen_at: '2026-10-10T07:00:01Z', error: null }] };
       const calls = window.calls = [];
-      const waitingState = code => ({ role: 'child', master_id: null, master_url: null, pairing: { code, expires_at: new Date(Date.now() + 600000).toISOString() }, files: [], children: [], error: null });
+      const waitingState = { role: 'child', master_id: null, master_url: null, files: [], children: [], error: null };
       const API = {
         get: async () => syncState,
         put: async (url, body) => {
           calls.push(['PUT', url, body]);
-          if (url.endsWith('/role')) syncState = body.role === 'slave' ? waitingState('TA-ABCD-EFGH-JKMN') : { ...syncState, role: 'master', children: [], pairing: null };
+          if (url.endsWith('/role')) syncState = body.role === 'slave' ? waitingState : { ...syncState, role: 'master', children: [] };
           else if (url.endsWith('/path')) syncState = { ...syncState, files: syncState.files.map(file => file.path === body.path ? { ...file, path_override: body.local_path || null, local_path: body.local_path || file.default_path } : file) };
           else syncState = { ...syncState, files: body.files.map(files) };
           return syncState;
         },
         post: async (url, body) => {
           calls.push(['POST', url, body]);
-          if (url.endsWith('/refresh-code')) syncState = waitingState('TA-QRST-UVWX-YZ23');
-          if (url.endsWith('/unpair')) syncState = waitingState('TA-NEW2-CODE-3456');
+          if (url.endsWith('/invite')) return { connection_string: 'TAFS1:eyJ2IjoxfQ', expires_at: new Date(Date.now() + 600000).toISOString(), expires_in_seconds: 600 };
+          if (url.endsWith('/join')) syncState = { role: 'child', master_id: null, master_url: 'http://203.0.113.9:3000', children: [], error: null, files: [files('~/.claude/settings.json')] };
+          if (url.endsWith('/unpair')) syncState = waitingState;
           return syncState;
         },
       };
@@ -42,7 +43,7 @@ const panel = index.match(/<section class="file-sync-panel"[\s\S]*?<\/section>/)
     await page.evaluate(() => { document.getElementById('file-sync-panel').hidden = false; FileSyncUI.setEngine({ base: '/api/file-sync', label: '默认', unavailable: null }); FileSyncUI.setActive(true); });
     await page.waitForFunction(() => document.getElementById('file-sync-role').textContent.includes('主服务器'));
     assert.equal(await page.locator('#file-sync-role-select').inputValue(), 'master');
-    assert.equal(await page.locator('#file-sync-code-box').isVisible(), false);
+    assert.equal(await page.locator('#file-sync-join-box').isVisible(), false);
     assert.match(await page.locator('#file-sync-children-body').textContent(), /从服务器节点.*在线/);
     await page.click('#file-sync-add');
     await page.fill('#sync-new-path', '~/.claude/settings.json');
@@ -50,38 +51,36 @@ const panel = index.match(/<section class="file-sync-panel"[\s\S]*?<\/section>/)
     await page.waitForFunction(() => document.querySelectorAll('#file-sync-body tr').length === 1);
     assert.match(await page.locator('#file-sync-body').textContent(), /\/home\/test\/\.claude\/settings.json/);
 
-    // 主服务器：填入从服务器地址和它显示的配对码来关联。
-    assert.equal(await page.locator('#file-sync-associate').isVisible(), true);
-    await page.click('#file-sync-associate');
-    await page.fill('#sync-slave-url', '192.168.1.8:3000');
-    await page.fill('#sync-slave-code', 'TA-ABCD-EFGH-JKMN');
-    await page.fill('#sync-master-url', 'http://192.168.1.5:3000');
-    await page.click('#sync-associate-save');
-    await page.waitForFunction(() => window.calls.some(call => call[1].endsWith('/associate')));
-    assert.deepEqual(await page.evaluate(() => window.calls.find(call => call[1].endsWith('/associate'))[2]),
-      { slave_url: '192.168.1.8:3000', code: 'TA-ABCD-EFGH-JKMN', master_url: 'http://192.168.1.5:3000' });
+    // 主服务器：填写自己的外网地址，生成包含全部连接信息的字符串。
+    assert.equal(await page.locator('#file-sync-invite').isVisible(), true);
+    await page.click('#file-sync-invite');
+    assert.equal(await page.locator('#sync-invite-result').isVisible(), false);
+    await page.fill('#sync-invite-url', 'http://203.0.113.9:3000');
+    await page.click('#sync-invite-make');
+    await page.waitForFunction(() => !document.getElementById('sync-invite-result').hidden);
+    assert.equal(await page.locator('#sync-invite-string').inputValue(), 'TAFS1:eyJ2IjoxfQ');
+    assert.deepEqual(await page.evaluate(() => window.calls.find(call => call[1].endsWith('/invite'))[2]), { master_url: 'http://203.0.113.9:3000' });
 
-    // 切换为从服务器：自动显示配对码，没有主服务器才有的操作。
+    // 切换为从服务器：出现粘贴框，没有主服务器才有的操作。
     await page.selectOption('#file-sync-role-select', 'slave');
     await page.waitForFunction(() => document.getElementById('file-sync-role').textContent.includes('尚未关联'));
-    assert.equal(await page.locator('#file-sync-code').inputValue(), 'TA-ABCD-EFGH-JKMN');
-    assert.equal(await page.locator('#file-sync-code-box').isVisible(), true);
-    assert.equal(await page.locator('#file-sync-associate').isVisible(), false);
+    assert.equal(await page.locator('#file-sync-join-box').isVisible(), true);
+    assert.equal(await page.locator('#file-sync-invite').isVisible(), false);
     assert.equal(await page.locator('#file-sync-add').isVisible(), false);
     assert.equal(await page.locator('#file-sync-children').isVisible(), false);
     assert.equal(await page.locator('#file-sync-disconnect').isVisible(), false);
     assert.deepEqual(await page.evaluate(() => window.calls.find(call => call[1].endsWith('/role'))[2]), { role: 'slave' });
-    await page.click('#file-sync-code-refresh');
-    await page.waitForFunction(() => document.getElementById('file-sync-code').value === 'TA-QRST-UVWX-YZ23');
 
-    // 主服务器关联后：从服务器显示主服务器地址，可解除关联，可修改本地路径。
-    await page.evaluate(() => {
-      syncState = { role: 'child', master_id: null, master_url: 'http://192.168.1.5:3000', pairing: null, children: [], error: null, files: [files('~/.claude/settings.json')] };
-      FileSyncUI.setActive(true);
-    });
-    await page.waitForFunction(() => document.getElementById('file-sync-role').textContent.includes('http://192.168.1.5:3000'));
-    assert.equal(await page.locator('#file-sync-code-box').isVisible(), false);
+    // 粘贴连接字符串并连接（带换行和空白也原样交给服务端处理）。
+    await page.click('#file-sync-connect');
+    assert.equal(await page.evaluate(() => window.calls.some(call => call[1].endsWith('/join'))), false, '没有内容时不发请求');
+    await page.fill('#file-sync-join-input', '  TAFS1:eyJ2IjoxfQ\n');
+    await page.click('#file-sync-connect');
+    await page.waitForFunction(() => document.getElementById('file-sync-role').textContent.includes('http://203.0.113.9:3000'));
+    assert.deepEqual(await page.evaluate(() => window.calls.find(call => call[1].endsWith('/join'))[2]), { connection_string: 'TAFS1:eyJ2IjoxfQ' });
+    assert.equal(await page.locator('#file-sync-join-box').isVisible(), false);
     assert.equal(await page.locator('#file-sync-disconnect').isVisible(), true);
+
     await page.click('button:text("修改本地路径")');
     assert.equal(await page.locator('#sync-local-path').inputValue(), '/home/test/.claude/settings.json');
     await page.fill('#sync-local-path', '/srv/claude/settings.json');
@@ -92,12 +91,14 @@ const panel = index.match(/<section class="file-sync-panel"[\s\S]*?<\/section>/)
     await page.fill('#sync-local-path', '');
     await page.click('#sync-local-save');
     await page.waitForFunction(() => document.getElementById('file-sync-body').textContent.includes('/home/test/.claude/settings.json'));
+
+    // 解除关联后回到粘贴框；再切回主服务器。
     await page.click('#file-sync-disconnect');
-    await page.waitForFunction(() => document.getElementById('file-sync-code').value === 'TA-NEW2-CODE-3456');
+    await page.waitForFunction(() => !document.getElementById('file-sync-join-box').hidden);
     assert.equal(await page.locator('#file-sync-disconnect').isVisible(), false);
     await page.selectOption('#file-sync-role-select', 'master');
     await page.waitForFunction(() => document.getElementById('file-sync-role').textContent.includes('主服务器'));
-    assert.equal(await page.locator('#file-sync-associate').isVisible(), true);
+    assert.equal(await page.locator('#file-sync-invite').isVisible(), true);
     assert.deepEqual(errors, []);
     console.log('File sync UI browser test passed');
   } finally { await browser.close(); }

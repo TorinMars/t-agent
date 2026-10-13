@@ -1,10 +1,10 @@
-# 交接说明（2026-10 · 截至 v2.46.0）
+# 交接说明（2026-10 · 截至 v2.47.0）
 
 给接手的 Claude / 开发者：先读 `AGENTS.md`（开发与发布规则）和本文件，再动手。
 
 ## 当前状态
 
-- 分支 `main`，最新发布 **v2.46.0**，已推送到 `origin/main`，工作区干净。
+- 分支 `main`，最新发布 **v2.47.0**，已推送到 `origin/main`，工作区干净。
 - 用户通过客户端检测 `main` 上的 `VERSION.json` 更新，代码改动完成并验证后按 `AGENTS.md` 升版本、提交、推送（用户已授权自动发布）。
 - 开发机已换成性能正常的 macOS，可以跑全量测试和浏览器脚本（先 `npm ci`、`npx playwright install chromium`）。`npm test` 并发时 pty 用例偶发 `posix_spawnp failed`，单独跑或 `node --test test/` 均通过。
 
@@ -59,6 +59,7 @@
 | 2.45.0 | **Agent 配置**（主导航新页，多服务器）：全局默认 + 单台覆盖，推送到本机和各远程 Engine；Claude（默认权限、模型、思考强度、状态栏命令、语言、默认思考、会话保留天数、Co-Authored-By）和 Codex（审批、沙箱、模型、思考强度、状态栏项目、推理摘要、网页搜索）。新增 `services/agent-config.js`、`routes/agent-config.js`、`public/js/agent-config.js`、`/api/agent-config`、`/v1/agent-config`、能力 `agent-config:manage`；推送同时写本机覆盖文件以免被 agent-sync 覆盖。另修复 2.44.0 误删“应用列表/实用工具页隐藏侧栏”CSS 选择器的回归 |
 | 2.45.1 | **更新弹窗像终端一样打印日志，完成后自动刷新页面**：`lib/update-command.js` 的 `logUpdate` 同时写入内存环形缓冲（300 行，`recentLog()`/`clearLog()`，每次 `runApply` 开始时清空），`publicState()` 增加 `log` 字段（本机与远程 Engine 的 `update-status` 都带上）；新增 `public/js/update-log.js`（`UpdateLog.markup/render/headline`，贴底才自动滚动），本机和远程更新弹窗上方显示“阶段 · 已用时间”，下方黑底日志区；完成后 1.5 秒自动 `location.reload()`（本机无需重启的前端更新、远程 Engine 更新完成都会刷新，重启类更新原本就会刷新）。旧版 Engine 没有 `log`，退回只显示进度文字。**未验证**：真实更新过程中的显示（只用渲染截图和单测验证） |
 | 2.46.0 | **恢复文件同步功能**（用户要求拉回 2.44.0 删除的内容）：对 2.44.0 提交 `61e7823` 做反向恢复，保留 2.45.x 的 Agent 配置页，两个页面并存。恢复了主导航“文件同步”页、`/api/file-sync`、`/v1/file-sync/*`、远程代理 `/api/remote-servers/:id/file-sync`、`file-sync:manage` 能力、`services/file-sync*.js`、前端样式、`agent-sync.py` 对 `.t-agent-file-sync-managed` 标记的检查及相关测试与 README/DESIGN 说明。冲突处（`server.js`、`routes/engine-v1.js`、`public/js/tools.js`、`public/css/style.css`、`public/index.html`、`scripts/test-apps-ui-browser.cjs`）均为两个功能同时保留。`npm test` 350 项通过。**未验证**：浏览器里“文件同步”页与“Agent 配置”页切换的实际显示，以及 `scripts/test-file-sync-ui-browser.cjs` 和 `scripts/test-apps-ui-browser.cjs`（需要 Playwright，本次没有运行） |
+| 2.47.0 | **文件同步改成从服务器发起配对，并且不再借用引擎连接**（用户要求）：页面可显式设置本节点为主/从；从服务器自动显示配对码，主服务器填从服务器地址+配对码“关联从服务器”；文件同步自己保存主服务器地址和令牌（`state.link`），自己签发 `tfs_` 同步令牌（只能访问 manifest/file/heartbeat，不是引擎 owner 令牌），不写 `remote_servers`。新增 `PUT /role`、`POST /unpair`、`POST /refresh-code`、`POST /associate` 以及无 Token 限流的 `POST /v1/file-sync/adopt`、`/pair`；移除 `/pairing`、`/join`、`/connect`、`/servers`。兼容：旧状态按 `masterId` 推断角色，旧引擎令牌仍被主服务器接受。`npm test` 352 项通过，两个浏览器脚本通过。**未验证**：两台真实机器之间的完整关联（只用假请求和同进程接口测过）。**已知限制**：关联需要主服务器能访问到从服务器地址，之后从服务器要能访问主服务器地址；主服务器离线期间解除关联不会吊销令牌 |
 
 ## 架构要点（改代码前必读）
 

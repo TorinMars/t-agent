@@ -192,12 +192,26 @@
       <div class="tools-engine" id="file-sync-engine"></div>
       <div class="tool-card tool-card-wide">
         <div class="tool-card-title">文件同步</div>
-        <div class="form-hint">当前节点默认是主服务器。在主服务器点“生成配对码”，到另一台服务器的文件同步页点“加入主服务器”，填入主服务器地址和配对码即可配对，之后该服务器成为附属服务器并下载主服务器配置的文件；两侧修改会自动同步，文件清单只能在主服务器修改。用户目录路径可写为 <code>~/.claude/settings.json</code> 或 <code>用户目录/.claude/settings.json</code>，也支持绝对路径。</div>
+        <div class="form-hint">文件同步是主从结构：先在这里选择本节点是<b>主服务器</b>还是<b>从服务器</b>。从服务器会自动生成配对码并显示在下面；在主服务器点“关联从服务器”，填入从服务器的地址和配对码即可完成关联，之后从服务器下载并同步主服务器配置的文件，两侧修改会自动同步，文件清单只能在主服务器修改。用户目录路径可写为 <code>~/.claude/settings.json</code> 或 <code>用户目录/.claude/settings.json</code>，也支持绝对路径。</div>
+        <div class="file-sync-role-row">
+          <label class="form-label" for="file-sync-role-select">本节点角色</label>
+          <select class="form-input" id="file-sync-role-select">
+            <option value="master">主服务器</option>
+            <option value="slave">从服务器</option>
+          </select>
+        </div>
         <p id="file-sync-role"></p>
+        <div class="file-sync-code-box" id="file-sync-code-box" hidden>
+          <div class="form-hint" id="file-sync-code-hint"></div>
+          <div class="file-sync-code-row">
+            <input class="form-input" id="file-sync-code" type="text" readonly aria-label="配对码">
+            <button type="button" class="btn-logout" id="file-sync-code-copy">复制</button>
+            <button type="button" class="btn-logout" id="file-sync-code-refresh">换一个</button>
+          </div>
+        </div>
         <div class="tool-card-actions">
-          <button type="button" class="btn-submit" id="file-sync-pair">生成配对码</button>
-          <button type="button" class="btn-submit" id="file-sync-join">加入主服务器</button>
-          <button type="button" class="btn-logout" id="file-sync-disconnect" hidden>恢复为主服务器</button>
+          <button type="button" class="btn-submit" id="file-sync-associate">关联从服务器</button>
+          <button type="button" class="btn-logout" id="file-sync-disconnect" hidden>解除关联</button>
           <button type="button" class="btn-logout" id="file-sync-run">立即同步</button>
           <span class="tool-copy-status" id="file-sync-status" role="status"></span>
         </div>
@@ -211,7 +225,7 @@
           </table>
         </div>
         <div id="file-sync-children" class="file-sync-children">
-          <div class="tool-card-title">附属服务器</div>
+          <div class="tool-card-title">从服务器</div>
           <div class="form-hint" id="file-sync-children-hint"></div>
           <div class="pm2-table-wrap">
             <table class="pm2-table" id="file-sync-children-table" hidden>

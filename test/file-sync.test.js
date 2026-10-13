@@ -57,13 +57,11 @@ test('主节点文件清单、首次下载、双向更新及冲突', async t => 
   };
   const child = new FileSync({ db: bDb, secret: 'secret', home: bHome, intervalMs: 0, remoteRequest });
   const sibling = new FileSync({ db: cDb, secret: 'secret', home: cHome, intervalMs: 0, remoteRequest });
-  bDb.servers.set(1, { id: 1, base_url: 'http://master', token_cipher: encryptToken('token', 'secret') });
-  cDb.servers.set(1, { id: 1, base_url: 'http://master', token_cipher: encryptToken('token', 'secret') });
   assert.equal(master.status().role, 'master');
   assert.deepEqual(master.status().files, []);
   master.setFiles(['~/.claude/settings.json']);
-  await child.connect(1);
-  await sibling.connect(1);
+  await child.connect({ url: 'http://master', token: 'token' });
+  await sibling.connect({ url: 'http://master', token: 'token' });
   assert.equal(master.status().children.length, 2);
   assert.ok(master.status().children.every(node => node.online));
   assert.equal(child.status().role, 'child');
@@ -118,14 +116,13 @@ test('子节点把 Mac 绝对路径映射到本机路径，备份旧文件并可
   const master = new FileSync({ db: database('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'), secret: 'secret', home: masterHome, intervalMs: 0 });
   master.setFiles([source]);
   const childDb = database('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb');
-  childDb.servers.set(1, { id: 1, base_url: 'http://master', token_cipher: encryptToken('token', 'secret') });
   const child = new FileSync({ db: childDb, secret: 'secret', home: childHome, intervalMs: 0, remoteRequest: async (_base, url, _token, options) => {
     if (url.endsWith('/manifest')) return master.manifest();
     if (url.endsWith('/heartbeat')) return { registered: true };
     if (url.endsWith('/file')) return master.receive(options.body);
     throw new Error(url);
   } });
-  await child.connect(1);
+  await child.connect({ url: 'http://master', token: 'token' });
   assert.equal(child.status().files[0].default_path, source);
   assert.equal(child.status().files[0].path_override, null);
   assert.equal(child.status().files[0].local_path, source);
@@ -154,7 +151,6 @@ test('首次连接时不在服务器创建主节点独有的绝对路径', async
   const home = path.join(root, 'linux');
   fs.mkdirSync(home);
   const db = database('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb');
-  db.servers.set(1, { id: 1, base_url: 'http://master', token_cipher: encryptToken('token', 'secret') });
   const content = Buffer.from('model = "master"\n').toString('base64');
   const hash = require('node:crypto').createHash('sha256').update(Buffer.from(content, 'base64')).digest('hex');
   const manifest = { generation: 'generation', files: [{ path: foreign, revision: 1, content, hash }] };
@@ -162,7 +158,7 @@ test('首次连接时不在服务器创建主节点独有的绝对路径', async
     if (url.endsWith('/manifest')) return manifest;
     return { registered: true };
   } });
-  await child.connect(1);
+  await child.connect({ url: 'http://master', token: 'token' });
   assert.equal(child.status().files[0].path_required, true);
   assert.equal(fs.existsSync(foreign), false);
   child.setPath({ path: foreign, local_path: '~/.codex/config.toml' });
@@ -170,7 +166,7 @@ test('首次连接时不在服务器创建主节点独有的绝对路径', async
   assert.equal(fs.readFileSync(path.join(home, '.codex/config.toml'), 'utf8'), 'model = "master"\n');
 });
 
-test('配对码一步加入主服务器：换令牌、保存连接、立即同步；重复加入复用连接', async t => {
+test('同步配对码一步加入主服务器：换同步令牌、保存在文件同步自己的状态里、立即同步，不借用引擎连接', async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'file-sync-join-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const aHome = path.join(root, 'a');
@@ -182,15 +178,10 @@ test('配对码一步加入主服务器：换令牌、保存连接、立即同�
   const bDb = database('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb');
   const master = new FileSync({ db: aDb, secret: 'secret', home: aHome, intervalMs: 0 });
   const seen = [];
-  let issued = 0;
   const remoteRequest = async (base, url, token, options = {}) => {
     seen.push({ base, url, token, method: options.method });
-    if (url === '/v1/pair') {
-      assert.equal(token, null);
-      assert.equal(options.body.code, 'TA-ABCD-EFGH-JKMN');
-      return { access_token: `tae_token${++issued}` };
-    }
-    assert.match(token, /^tae_token\d$/);
+    if (url === '/v1/file-sync/pair') { assert.equal(token, null); return master.exchangeSyncCode(options.body); }
+    assert.ok(master.verifyToken(token), '同步接口使用文件同步令牌');
     if (url.endsWith('/manifest')) return master.manifest();
     if (url.endsWith('/file')) return master.receive(options.body);
     if (url.endsWith('/heartbeat')) return options.method === 'DELETE' ? master.unregisterChild(options.body) : master.registerChild(options.body);
@@ -198,21 +189,113 @@ test('配对码一步加入主服务器：换令牌、保存连接、立即同�
   };
   const child = new FileSync({ db: bDb, secret: 'secret', home: bHome, intervalMs: 0, remoteRequest });
   master.setFiles(['~/.claude/settings.json']);
+  const code = master.createSyncCode();
+  assert.match(code, /^TA-[A-Z2-9]{4}-[A-Z2-9]{4}-[A-Z2-9]{4}$/);
 
-  await assert.rejects(child.join({ url: 'http://master:3000', code: 'wrong', ownerId: 'local' }), /SYNC_PAIRING_CODE_INVALID/);
-  await assert.rejects(child.join({ url: '', code: 'TA-ABCD-EFGH-JKMN', ownerId: 'local' }), /SYNC_MASTER_URL_INVALID/);
+  await assert.rejects(child.join({ url: 'http://master:3000', code: 'wrong' }), /SYNC_PAIRING_CODE_INVALID/);
+  await assert.rejects(child.join({ url: '', code }), /SYNC_MASTER_URL_INVALID/);
   assert.equal(seen.length, 0, '格式错误不会发出请求');
 
-  const status = await child.join({ url: 'master.lan:3000/web', code: 'ta-abcd-efgh-jkmn', ownerId: 'local' });
+  const status = await child.join({ url: 'master.lan:3000/web', code: code.toLowerCase() });
   assert.equal(status.role, 'child');
+  assert.equal(status.master_url, 'http://master.lan:3000');
   assert.equal(seen[0].base, 'http://master.lan:3000');
   assert.equal(fs.readFileSync(path.join(bHome, '.claude/settings.json'), 'utf8'), '{"a":1}\n');
-  assert.equal(bDb.servers.size, 1);
-  assert.equal(bDb.servers.get(1).name, 'master.lan');
-  assert.notEqual(bDb.servers.get(1).token_cipher, 'tae_token1', '令牌加密保存');
+  assert.equal(bDb.servers.size, 0, '不写入引擎连接（remote_servers）');
+  assert.ok(!JSON.stringify(bDb.prepare('SELECT value FROM system_state').get('file_sync_v1')).includes(seen[1].token), '令牌加密保存');
+  await assert.rejects(new FileSync({ db: database('eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee'), secret: 'secret', home: bHome, intervalMs: 0, remoteRequest }).join({ url: 'http://master.lan:3000', code }), /PAIRING_CODE_INVALID_OR_EXPIRED/, '配对码只能使用一次');
 
   await child.disconnect();
-  await child.join({ url: 'http://master.lan:3000', code: 'TA-ABCD-EFGH-JKMN', ownerId: 'local' });
-  assert.equal(bDb.servers.size, 1, '同一地址复用连接，只更新令牌');
+  assert.equal(master.verifyToken(seen[1].token), false, '断开时主服务器吊销该令牌');
+  await child.join({ url: 'http://master.lan:3000', code: master.createSyncCode() });
   assert.equal(child.status().role, 'child');
+  assert.equal(bDb.servers.size, 0);
+});
+
+test('从服务器显示配对码，主服务器凭码关联；角色可切换、可解除，码只能用一次', async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'file-sync-adopt-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const aHome = path.join(root, 'a');
+  const bHome = path.join(root, 'b');
+  fs.mkdirSync(path.join(aHome, '.claude'), { recursive: true });
+  fs.mkdirSync(bHome, { recursive: true });
+  fs.writeFileSync(path.join(aHome, '.claude/settings.json'), '{"a":1}\n');
+  const aDb = database('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+  const bDb = database('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb');
+  const sent = [];
+  let slave;
+  // 主服务器发出的请求直接交给从服务器的 adopt；从服务器发出的请求交给主服务器。
+  const masterRequest = async (base, url, token, options = {}) => {
+    sent.push({ base, url, token });
+    assert.equal(url, '/v1/file-sync/adopt');
+    assert.equal(token, null, '关联请求不带令牌，只凭配对码');
+    return slave.adopt({ code: options.body.code, masterUrl: options.body.master_url, masterCode: options.body.master_code });
+  };
+  const master = new FileSync({ db: aDb, secret: 'secret', home: aHome, intervalMs: 0, remoteRequest: masterRequest });
+  const slaveRequest = async (base, url, token, options = {}) => {
+    if (url === '/v1/file-sync/pair') return master.exchangeSyncCode(options.body);
+    if (url.endsWith('/manifest')) return master.manifest();
+    if (url.endsWith('/heartbeat')) return options.method === 'DELETE' ? master.unregisterChild(options.body) : master.registerChild(options.body);
+    throw new Error(url);
+  };
+  slave = new FileSync({ db: bDb, secret: 'secret', home: bHome, intervalMs: 0, remoteRequest: slaveRequest });
+  master.setFiles(['~/.claude/settings.json']);
+
+  assert.equal(slave.status().pairing, null, '主服务器不显示配对码');
+  await assert.rejects(slave.setRole('boss'), /SYNC_ROLE_INVALID/);
+  const waiting = await slave.setRole('slave');
+  assert.equal(waiting.role, 'child');
+  assert.equal(waiting.master_id, null);
+  assert.match(waiting.pairing.code, /^TA-[A-Z2-9]{4}-[A-Z2-9]{4}-[A-Z2-9]{4}$/);
+  assert.equal(slave.status().pairing.code, waiting.pairing.code, '未使用时码保持不变');
+  await slave.tick();
+  assert.equal(slave.status().error, null, '等待关联时轮询不报错');
+
+  await assert.rejects(slave.setRole('slave').then(() => master.associate({ slaveUrl: 'slave:3000', slaveCode: 'bad', masterUrl: 'master:3000' })), /SYNC_PAIRING_CODE_INVALID/);
+  assert.equal(sent.length, 0, '格式错误不会发出请求');
+  await assert.rejects(slave.associate({ slaveUrl: 'x:1', slaveCode: waiting.pairing.code, masterUrl: 'y:1' }), /SYNC_NOT_MASTER/);
+
+  const wrong = 'TA-AAAA-AAAA-AAAA';
+  for (let i = 0; i < 5; i += 1) {
+    await assert.rejects(master.associate({ slaveUrl: 'slave.lan:3000', slaveCode: wrong, masterUrl: 'master.lan:3000/web' }), /PAIRING_CODE_INVALID_OR_EXPIRED/);
+  }
+  const renewed = slave.status().pairing.code;
+  assert.notEqual(renewed, waiting.pairing.code, '猜错 5 次后配对码作废并换新');
+
+  const status = await master.associate({ slaveUrl: 'slave.lan:3000', slaveCode: renewed.toLowerCase(), masterUrl: 'master.lan:3000/web' });
+  assert.equal(sent.at(-1).base, 'http://slave.lan:3000');
+  assert.equal(status.children.length, 1, '从服务器完成同步后已向主服务器登记');
+  assert.equal(slave.status().role, 'child');
+  assert.equal(slave.status().master_id, null, '不再使用引擎连接的 id');
+  assert.equal(slave.status().pairing, null, '关联后不再显示配对码');
+  assert.equal(fs.readFileSync(path.join(bHome, '.claude/settings.json'), 'utf8'), '{"a":1}\n');
+  assert.equal(bDb.servers.size, 0, '不写入引擎连接（remote_servers）');
+  assert.match(slave.status().master_url, /^http:\/\/master\.lan:3000$/);
+  await assert.rejects(master.associate({ slaveUrl: 'slave.lan:3000', slaveCode: renewed, masterUrl: 'master.lan:3000' }), /SYNC_NOT_AWAITING_PAIRING/);
+
+  const issuedToken = Object.keys(master.state.tokens)[0];
+  assert.equal(Object.keys(master.state.tokens).length, 1);
+  const unpaired = await slave.unpair();
+  assert.equal(Object.keys(master.state.tokens).length, 0, '解除关联时主服务器吊销该从服务器的令牌');
+  assert.ok(issuedToken);
+  assert.equal(unpaired.role, 'child');
+  assert.equal(unpaired.master_id, null);
+  assert.equal(unpaired.files.length, 0);
+  assert.notEqual(unpaired.pairing.code, renewed, '解除关联后生成新配对码');
+  await assert.rejects(master.unpair(), /SYNC_NOT_CHILD/);
+  assert.equal((await slave.setRole('master')).role, 'master');
+  assert.equal(slave.status().pairing, null);
+});
+
+test('旧版本保存的状态没有 mode：已连接主服务器的是从服务器，否则是主服务器', () => {
+  const key = 'file_sync_v1';
+  const base = { files: [], versions: {}, observed: {}, backups: {}, error: null };
+  const old = database('cccccccc-cccc-4ccc-8ccc-cccccccccccc');
+  old.prepare('INSERT INTO system_state').run(key, JSON.stringify({ ...base, masterId: 5 }));
+  old.servers.set(5, { id: 5, base_url: 'http://legacy-master:3000', token_cipher: encryptToken('legacy', 's') });
+  const legacy = new FileSync({ db: old, secret: 's', intervalMs: 0 });
+  assert.equal(legacy.status().role, 'child');
+  assert.equal(legacy.status().master_url, 'http://legacy-master:3000', '旧版本通过 remote_servers 建立的连接继续可用');
+  assert.equal(legacy.remote().token, 'legacy');
+  assert.equal(new FileSync({ db: database('dddddddd-dddd-4ddd-8ddd-dddddddddddd'), secret: 's', intervalMs: 0 }).status().role, 'master');
 });

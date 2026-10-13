@@ -20,6 +20,15 @@ function masterBaseUrl(input) {
   catch { throw Object.assign(new Error('SYNC_MASTER_URL_INVALID'), { statusCode: 400 }); }
 }
 const fault = (code, statusCode = 400) => Object.assign(new Error(code), { statusCode });
+const PAIRING_CODE = /^TA-[A-Z2-9]{4}-[A-Z2-9]{4}-[A-Z2-9]{4}$/;
+const SLAVE_CODE_TTL_MS = 10 * 60 * 1000;
+const SLAVE_CODE_MAX_FAILS = 5;
+const TOKEN_PREFIX = 'tfs_';
+function newPairingCode() {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const group = () => Array.from({ length: 4 }, () => alphabet[crypto.randomInt(alphabet.length)]).join('');
+  return `TA-${group()}-${group()}-${group()}`;
+}
 
 function normalizeSpec(input) {
   if (typeof input !== 'string') throw fault('SYNC_PATH_INVALID');
@@ -74,6 +83,10 @@ class FileSync {
     this.state = row ? JSON.parse(row.value) : { masterId: null, files: [], versions: {}, observed: {}, backups: {}, error: null };
     this.state.generation ||= crypto.randomUUID();
     this.state.clock ||= Math.max(0, ...Object.values(this.state.versions || {}).map(value => value.revision || 0));
+    // 旧数据没有 mode：已连接主服务器的是从服务器，否则是主服务器。
+    this.state.mode ||= this.state.masterId == null ? 'master' : 'slave';
+    this.codeInfo = null;
+    this.masterCodes = new Map();
     this.busy = false;
     this.timer = intervalMs ? setInterval(() => this.tick().catch(error => { this.state.error = error.message; }), intervalMs) : null;
     this.timer?.unref();
@@ -81,7 +94,52 @@ class FileSync {
   save() {
     this.db.prepare(`INSERT INTO system_state (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP`).run(STATE_KEY, JSON.stringify(this.state));
   }
-  isMaster() { return this.state.masterId == null; }
+  isMaster() { return this.state.mode === 'master'; }
+  paired() { return Boolean(this.state.link) || this.state.masterId != null; }
+  awaitingPairing() { return this.state.mode === 'slave' && !this.paired(); }
+  // 主服务器的地址和令牌：文件同步自己保存在 state.link；旧版本留下的数字 masterId 仍从 remote_servers 读取。
+  masterLink(state = this.state) {
+    if (state.link) return { url: state.link.url, token: decryptToken(state.link.tokenCipher, this.secret) };
+    if (state.masterId == null) return null;
+    const row = this.db.prepare('SELECT * FROM remote_servers WHERE id = ?').get(state.masterId);
+    return row ? { url: row.base_url, token: decryptToken(row.token_cipher, this.secret) } : null;
+  }
+  // 主服务器：生成一次性同步配对码，从服务器用它换取只能访问文件同步接口的令牌（与引擎连接、引擎令牌无关）。
+  createSyncCode() {
+    const now = Date.now();
+    for (const [hash, expires] of this.masterCodes) if (expires <= now) this.masterCodes.delete(hash);
+    const code = newPairingCode();
+    this.masterCodes.set(sha(code), now + SLAVE_CODE_TTL_MS);
+    return code;
+  }
+  exchangeSyncCode({ code, name, instance_id: instanceId }) {
+    if (!this.isMaster()) throw fault('SYNC_NOT_MASTER', 409);
+    const hash = sha(String(code || '').trim().toUpperCase());
+    const expires = this.masterCodes.get(hash);
+    this.masterCodes.delete(hash);
+    if (!expires || expires <= Date.now()) throw fault('PAIRING_CODE_INVALID_OR_EXPIRED');
+    const token = TOKEN_PREFIX + crypto.randomBytes(24).toString('hex');
+    this.state.tokens ||= {};
+    this.state.tokens[sha(token)] = {
+      name: typeof name === 'string' ? name.slice(0, 80) : '',
+      instanceId: typeof instanceId === 'string' && INSTANCE_ID.test(instanceId) ? instanceId : null,
+      createdAt: new Date().toISOString(),
+    };
+    this.save();
+    return { access_token: token, token_type: 'Bearer', instance_id: this.identity() };
+  }
+  verifyToken(token) {
+    return this.isMaster() && typeof token === 'string' && token.startsWith(TOKEN_PREFIX) && Boolean(this.state.tokens?.[sha(token)]);
+  }
+  // 从服务器未关联时一直显示一个配对码；过期或被猜错太多次就换新的。码只放内存，重启后重新生成。
+  pairingCode(renew = false) {
+    if (!this.awaitingPairing()) { this.codeInfo = null; return null; }
+    const now = Date.now();
+    if (renew || !this.codeInfo || this.codeInfo.expiresAt <= now || this.codeInfo.fails >= SLAVE_CODE_MAX_FAILS) {
+      this.codeInfo = { code: newPairingCode(), expiresAt: now + SLAVE_CODE_TTL_MS, fails: 0 };
+    }
+    return { code: this.codeInfo.code, expires_at: new Date(this.codeInfo.expiresAt).toISOString() };
+  }
   localSpec(spec) { return this.isMaster() ? spec : this.state.pathOverrides?.[spec] || spec; }
   localPath(spec) { return resolveSpec(this.localSpec(spec), this.home); }
   removeMarker(file) {
@@ -105,7 +163,7 @@ class FileSync {
   }
   identity() { return this.db.prepare("SELECT value FROM engine_identity WHERE key = 'instance_id'").get()?.value; }
   status() {
-    return { role: this.isMaster() ? 'master' : 'child', master_id: this.state.masterId,
+    return { role: this.isMaster() ? 'master' : 'child', master_id: this.state.masterId, master_url: this.paired() ? (this.masterLink()?.url ?? null) : null, pairing: this.pairingCode(),
       files: this.state.files.map(spec => {
         const exists = Boolean(readFile(this.localSpec(spec), this.home));
         return { path: spec, local_path: this.localPath(spec), default_path: resolveSpec(spec, this.home), path_override: this.state.pathOverrides?.[spec] || null,
@@ -138,11 +196,12 @@ class FileSync {
     if (generation !== this.state.generation) throw fault('SYNC_CONFLICT', 409);
     if (typeof id !== 'string' || !INSTANCE_ID.test(id)) throw fault('SYNC_CHILD_INVALID');
     if (this.state.children) delete this.state.children[id];
+    for (const [hash, record] of Object.entries(this.state.tokens || {})) if (record.instanceId === id) delete this.state.tokens[hash];
     this.save();
     return { removed: true };
   }
   async heartbeat() {
-    if (this.isMaster()) return;
+    if (this.isMaster() || !this.paired()) return;
     const { url, token } = this.remote();
     try {
       await this.remoteRequest(url, '/v1/file-sync/heartbeat', token, {
@@ -157,10 +216,10 @@ class FileSync {
     }
     this.save();
   }
-  async unregisterFrom(row, generation) {
-    if (!row) return;
+  async unregisterFrom(link, generation) {
+    if (!link) return;
     try {
-      await this.remoteRequest(row.base_url, '/v1/file-sync/heartbeat', decryptToken(row.token_cipher, this.secret), {
+      await this.remoteRequest(link.url, '/v1/file-sync/heartbeat', link.token, {
         method: 'DELETE', timeoutMs: 2000, body: { instance_id: this.identity(), generation },
       });
     } catch { /* 离线时主服务器会把最后一次心跳标为离线。 */ }
@@ -225,43 +284,31 @@ class FileSync {
     return { revision: this.state.clock, hash: written.hash };
   }
   remote() {
-    const row = this.db.prepare('SELECT * FROM remote_servers WHERE id = ?').get(this.state.masterId);
-    if (!row) throw fault('SYNC_MASTER_NOT_FOUND', 404);
-    return { url: row.base_url, token: decryptToken(row.token_cipher, this.secret) };
+    const link = this.masterLink();
+    if (!link) throw fault('SYNC_MASTER_NOT_FOUND', 404);
+    return link;
   }
-  // 一步完成配对：用主服务器生成的配对码换取访问令牌，保存为一条远程连接，然后立即连接并同步。
-  async join({ url, code, ownerId }) {
+  // 凭主服务器的同步配对码换取文件同步令牌，保存在本模块自己的状态里，然后立即连接并同步。
+  async join({ url, code }) {
     const pairing = String(code || '').trim().toUpperCase();
-    if (!/^TA-[A-Z2-9]{4}-[A-Z2-9]{4}-[A-Z2-9]{4}$/.test(pairing)) throw fault('SYNC_PAIRING_CODE_INVALID');
+    if (!PAIRING_CODE.test(pairing)) throw fault('SYNC_PAIRING_CODE_INVALID');
     const baseUrl = masterBaseUrl(url);
-    const paired = await this.remoteRequest(baseUrl, '/v1/pair', null, { method: 'POST', body: { code: pairing, client_name: 'T-Agent 文件同步' } });
+    const paired = await this.remoteRequest(baseUrl, '/v1/file-sync/pair', null, { method: 'POST',
+      body: { code: pairing, name: os.hostname().slice(0, 80), instance_id: this.identity() } });
     const token = paired && paired.access_token;
     if (typeof token !== 'string' || !token) throw fault('SYNC_PAIRING_FAILED', 502);
-    const cipher = encryptToken(token, this.secret);
-    const owner = String(ownerId || 'local');
-    const existing = this.db.prepare('SELECT id FROM remote_servers WHERE owner_id = ? AND base_url = ?').get(owner, baseUrl);
-    let id;
-    if (existing) {
-      this.db.prepare("UPDATE remote_servers SET token_cipher = ?, enabled = 1, status = 'online', last_error = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(cipher, existing.id);
-      id = existing.id;
-    } else {
-      const name = new URL(baseUrl).hostname.slice(0, 80);
-      id = Number(this.db.prepare("INSERT INTO remote_servers (owner_id, name, base_url, token_cipher, status, last_checked_at) VALUES (?, ?, ?, ?, 'online', CURRENT_TIMESTAMP)").run(owner, name, baseUrl, cipher).lastInsertRowid);
-    }
-    return this.connect(id);
+    return this.connect({ url: baseUrl, token });
   }
-  async connect(id) {
-    if (!Number.isSafeInteger(Number(id)) || Number(id) < 1) throw fault('SYNC_MASTER_NOT_FOUND', 404);
-    const row = this.db.prepare('SELECT * FROM remote_servers WHERE id = ?').get(Number(id));
-    if (!row) throw fault('SYNC_MASTER_NOT_FOUND', 404);
-    const token = decryptToken(row.token_cipher, this.secret);
-    const manifest = await this.remoteRequest(row.base_url, '/v1/file-sync/manifest', token, { maxBytes: 160 * 1024 * 1024 });
+  async connect({ url, token }) {
+    const manifest = await this.remoteRequest(url, '/v1/file-sync/manifest', token, { maxBytes: 160 * 1024 * 1024 });
     if (!Array.isArray(manifest.files) || typeof manifest.generation !== 'string') throw fault('SYNC_MANIFEST_INVALID', 502);
-    if (manifest.instance_id && manifest.instance_id === this.db.prepare("SELECT value FROM engine_identity WHERE key = 'instance_id'").get()?.value) throw fault('SYNC_SELF_CONNECTION');
+    if (manifest.instance_id && manifest.instance_id === this.identity()) throw fault('SYNC_SELF_CONNECTION');
     const old = structuredClone(this.state);
     const oldPaths = this.state.files.map(spec => this.localPath(spec));
-    const oldMaster = old.masterId == null ? null : this.db.prepare('SELECT * FROM remote_servers WHERE id = ?').get(old.masterId);
-    this.state.masterId = Number(id);
+    const oldMaster = old.mode === 'master' ? null : this.masterLink(old);
+    this.state.link = { url, tokenCipher: encryptToken(token, this.secret) };
+    this.state.masterId = null;
+    this.state.mode = 'slave';
     this.state.files = [];
     this.state.versions = {};
     this.state.observed = {};
@@ -274,19 +321,64 @@ class FileSync {
     for (const file of oldPaths) if (!this.state.files.some(spec => this.localPath(spec) === file)) this.removeMarker(file);
     this.refreshMarkers();
     await this.heartbeat();
-    if (oldMaster && oldMaster.id !== Number(id)) await this.unregisterFrom(oldMaster, old.masterGeneration);
+    if (oldMaster && oldMaster.url !== url) await this.unregisterFrom(oldMaster, old.masterGeneration);
     return this.status();
   }
   async disconnect() {
     const oldPaths = this.state.files.map(spec => this.localPath(spec));
-    const oldMaster = this.isMaster() ? null : this.db.prepare('SELECT * FROM remote_servers WHERE id = ?').get(this.state.masterId);
+    const oldMaster = this.isMaster() ? null : this.masterLink();
     const oldGeneration = this.state.masterGeneration;
     const children = this.isMaster() ? this.state.children : {};
-    this.state = { masterId: null, files: [], versions: {}, observed: {}, pathOverrides: {}, backups: this.state.backups || {}, children, generation: crypto.randomUUID(), clock: 0, error: null };
+    const tokens = this.isMaster() ? this.state.tokens : {};
+    this.state = { mode: 'master', masterId: null, files: [], versions: {}, observed: {}, pathOverrides: {}, backups: this.state.backups || {}, children, tokens, generation: crypto.randomUUID(), clock: 0, error: null };
+    this.codeInfo = null;
     this.save();
     for (const file of oldPaths) this.removeMarker(file);
     await this.unregisterFrom(oldMaster, oldGeneration);
     return this.status();
+  }
+  // 显式设置本节点是主服务器还是从服务器。切换会清空同步清单（本地文件保留）。
+  async setRole(role) {
+    if (role !== 'master' && role !== 'slave') throw fault('SYNC_ROLE_INVALID');
+    if ((role === 'master') === this.isMaster()) return this.status();
+    await this.disconnect();
+    if (role === 'slave') { this.state.mode = 'slave'; this.state.children = {}; this.state.tokens = {}; this.save(); }
+    return this.status();
+  }
+  // 从服务器解除与主服务器的关联，仍是从服务器，并生成新的配对码等待重新关联。
+  async unpair() {
+    if (this.isMaster()) throw fault('SYNC_NOT_CHILD', 409);
+    await this.disconnect();
+    this.state.mode = 'slave'; this.state.children = {};
+    this.save();
+    return this.status();
+  }
+  // 主服务器根据从服务器界面显示的配对码关联它：把主服务器地址和一次性配对码交给从服务器，
+  // 从服务器用它走“加入主服务器”流程，之后仍由从服务器轮询主服务器。
+  async associate({ slaveUrl, slaveCode, masterUrl }) {
+    if (!this.isMaster()) throw fault('SYNC_NOT_MASTER', 409);
+    const code = String(slaveCode || '').trim().toUpperCase();
+    if (!PAIRING_CODE.test(code)) throw fault('SYNC_PAIRING_CODE_INVALID');
+    const slave = masterBaseUrl(slaveUrl);
+    const master = masterBaseUrl(masterUrl);
+    await this.remoteRequest(slave, '/v1/file-sync/adopt', null, {
+      method: 'POST', timeoutMs: 30_000,
+      body: { code, master_url: master, master_code: this.createSyncCode() },
+    });
+    return this.status();
+  }
+  // 从服务器侧：凭自己显示的配对码接受主服务器的关联。配对码只能用一次。
+  async adopt({ code, masterUrl, masterCode }) {
+    const current = this.pairingCode();
+    if (!current) throw fault('SYNC_NOT_AWAITING_PAIRING', 409);
+    const given = Buffer.from(String(code || '').trim().toUpperCase());
+    const expected = Buffer.from(this.codeInfo.code);
+    if (given.length !== expected.length || !crypto.timingSafeEqual(given, expected)) {
+      this.codeInfo.fails += 1;
+      throw fault('PAIRING_CODE_INVALID_OR_EXPIRED', 403);
+    }
+    this.codeInfo = null;
+    return this.join({ url: masterUrl, code: masterCode });
   }
   backup(spec, current) {
     if (!current) return;
@@ -318,6 +410,7 @@ class FileSync {
     this.busy = true;
     try {
       this.state.error = null;
+      if (this.awaitingPairing()) { this.pairingCode(); return; }
       if (this.isMaster()) this.scanMaster();
       else {
         const { url, token } = this.remote();

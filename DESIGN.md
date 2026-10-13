@@ -4,6 +4,8 @@
 
 > v2.45.0 Agent 配置：主导航新增“Agent 配置”页，面向多服务器。Client 在 `system_state`（`agent-config:<owner>`）保存全局默认和每台服务器的覆盖（覆盖里出现的键，含空串，优先于默认；空串表示该台不管）。字段表在 `services/agent-config.js` 的 `SCHEMA`，值一律为字符串并按枚举/数字/列表校验。`POST /api/agent-config/push` 对本机直接写文件，对远程 Engine 调 `PUT /v1/agent-config`（`engine:admin`，能力 `agent-config:manage`）。写入只改填了的键：Claude 用 JSON 递归设值，Codex 用单行 TOML 键值编辑（保留注释和其他表，顶层键写在第一个表之前）；配置文件不合法时不写。同时写入本机覆盖文件，避免被 `agent-sync.py` 的远程默认值盖回去。
 
+> v2.47.0 文件同步改为从服务器发起配对、不再借用引擎连接：`state.mode`（`master`/`slave`，旧数据按是否已连接主服务器推断）显式记录角色，`PUT /file-sync/role` 切换（会清空清单），`POST /file-sync/unpair` 解除关联。从服务器未关联时 `status().pairing` 返回内存中的配对码（10 分钟，猜错 5 次作废，重启重新生成）。主服务器 `POST /file-sync/associate`（从服务器地址、配对码、本机地址）调用从服务器无 Token 的 `POST /v1/file-sync/adopt`；从服务器据此用主服务器的一次性同步配对码调用主服务器无 Token 的 `POST /v1/file-sync/pair` 换取 `tfs_` 令牌（主服务器只存哈希于 `state.tokens`，按实例 ID 在注销心跳时吊销）。主服务器地址和令牌密文存在 `state.link`，不再写 `remote_servers`，也不用引擎令牌；`manifest/file/heartbeat` 接受同步令牌，也兼容旧引擎令牌；旧 `masterId` 仍从 `remote_servers` 读取。移除 `/pairing`、`/join`、`/connect`、`/servers`。
+
 > v2.35.1 文件同步节点可见性：附属节点首次连接后和每轮同步后，使用已有 Engine Token 向主节点 `POST /v1/file-sync/heartbeat` 登记稳定实例 ID、名称、最近同步时间和错误；主节点在 `file_sync_v1.children` 中保存最近心跳，超过 15 秒显示离线。正常断开用 `DELETE /v1/file-sync/heartbeat` 注销。主节点状态接口返回附属节点列表，页面显示在线状态与时间；旧节点升级后无需重新连接，会在下一轮同步自动登记。
 
 > v2.36.0 节点路径映射：主节点继续独占文件清单；附属节点的 `pathOverrides` 按主节点路径保存本机路径。`PUT /v1/file-sync/path` 只更改本机映射，目标路径与其他同步文件冲突时拒绝，恢复默认时删除覆盖值。切换映射清除该文件的已观察版本，首次写入目标已有文件前备份。状态同时返回默认路径、实际路径和覆盖路径。同步文件旁写入短期有效的 `.t-agent-file-sync-managed` 标记供新版 `agent-sync.py` 识别，避免启动脚本和节点同步重复改写 Claude/Codex 配置；标记随 3 秒轮询刷新，断开或路径变更时清理，进程异常停止后 60 秒过期。状态页的时间改称“上次检查”，避免把周期检查误认为内容更改。

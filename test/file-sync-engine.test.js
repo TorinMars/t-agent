@@ -56,21 +56,29 @@ test('Engine 鉴权、主节点清单与已有连接代理', async t => {
   const response = await requestJson(`${proxy}/api/remote-servers/${id}/file-sync`);
   assert.equal(response.status, 200);
   assert.equal((await response.json()).role, 'master');
-  assert.equal((await requestJson(`${proxy}/api/remote-servers/${id}/file-sync/servers`)).status, 200);
+  // 文件同步不再借用引擎连接：这些接口已移除。
+  for (const [method, route] of [['GET', 'servers'], ['POST', 'pairing'], ['POST', 'join'], ['POST', 'connect']]) {
+    assert.equal((await requestJson(`${engine}/v1/file-sync/${route}`, token, method, method === 'POST' ? {} : undefined)).status, 404, route);
+  }
 
-  // 配对码：主服务器生成，另一端用它换令牌；join 走真实的 /v1/pair 往返，加入自己会被拒绝。
-  assert.equal((await requestJson(`${engine}/v1/file-sync/pairing`, null, 'POST', {})).status, 401);
-  const pairing = await (await requestJson(`${engine}/v1/file-sync/pairing`, token, 'POST', {})).json();
-  assert.match(pairing.code, /^TA-[A-Z2-9]{4}-[A-Z2-9]{4}-[A-Z2-9]{4}$/);
-  const exchanged = await requestJson(`${engine}/v1/pair`, null, 'POST', { code: pairing.code });
-  assert.equal(exchanged.status, 201);
-  assert.equal((await requestJson(`${engine}/v1/file-sync/manifest`, (await exchanged.json()).access_token)).status, 200);
-  assert.equal((await requestJson(`${engine}/v1/pair`, null, 'POST', { code: pairing.code })).status, 400, '配对码只能使用一次');
-  const selfPairing = await (await requestJson(`${engine}/v1/file-sync/pairing`, token, 'POST', {})).json();
-  const selfJoin = await requestJson(`${engine}/v1/file-sync/join`, token, 'POST', { url: engine, code: selfPairing.code });
-  assert.equal(selfJoin.status, 400);
-  assert.equal((await selfJoin.json()).error, 'SYNC_SELF_CONNECTION');
-  assert.equal((await requestJson(`${engine}/v1/file-sync/join`, token, 'POST', { url: engine, code: 'bad' })).status, 400);
+  // 同步配对码：主服务器生成，从服务器用它换取只能访问同步接口的令牌，不是引擎令牌。
+  const service = require('../services/file-sync-instance');
+  const code = service.createSyncCode();
+  assert.match(code, /^TA-[A-Z2-9]{4}-[A-Z2-9]{4}-[A-Z2-9]{4}$/);
+  const exchanged = await requestJson(`${engine}/v1/file-sync/pair`, null, 'POST', { code, name: '从服务器', instance_id: heartbeat.instance_id });
+  assert.equal(exchanged.status, 200);
+  const syncToken = (await exchanged.json()).access_token;
+  assert.match(syncToken, /^tfs_/);
+  assert.equal((await requestJson(`${engine}/v1/file-sync/manifest`, syncToken)).status, 200);
+  assert.equal((await requestJson(`${engine}/v1/file-sync/heartbeat`, syncToken, 'POST', heartbeat)).status, 200);
+  assert.equal((await requestJson(`${engine}/v1/file-sync`, syncToken)).status, 401, '同步令牌不能管理清单和角色');
+  assert.equal((await requestJson(`${engine}/v1/file-sync/files`, syncToken, 'PUT', { files: [] })).status, 401);
+  assert.equal((await requestJson(`${engine}/v1/info`, syncToken)).status, 401, '也不能访问引擎其他接口');
+  assert.equal((await requestJson(`${engine}/v1/file-sync/pair`, null, 'POST', { code })).status, 400, '配对码只能使用一次');
+  assert.equal((await requestJson(`${engine}/v1/file-sync/pair`, null, 'POST', { code: 'bad' })).status, 400);
+  assert.equal((await requestJson(`${engine}/v1/file-sync/adopt`, null, 'POST', { code: 'TA-AAAA-AAAA-AAAA', master_url: engine, master_code: code })).status, 409, '主服务器不接受被关联');
+  assert.equal((await requestJson(`${engine}/v1/file-sync/heartbeat`, syncToken, 'DELETE', heartbeat)).status, 200);
+  assert.equal((await requestJson(`${engine}/v1/file-sync/manifest`, syncToken)).status, 401, '从服务器注销后令牌被吊销');
   assert.equal((await requestJson(`${engine}/v1/file-sync/heartbeat`, token, 'DELETE', heartbeat)).status, 200);
   assert.deepEqual((await (await requestJson(`${engine}/v1/file-sync`, token)).json()).children, []);
 });

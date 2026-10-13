@@ -1262,6 +1262,25 @@ body.agent-config-open .sidebar, body.agent-config-open .content-area, body.agen
   font-size: 13px;
 }
 
+.form-advanced { margin-bottom: 12px; }
+.form-advanced-toggle {
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+}
+.form-advanced-toggle::-webkit-details-marker { display: none; }
+.form-advanced-toggle::before {
+  content: '▸';
+  display: inline-block;
+  width: 14px;
+  transition: transform .15s;
+}
+.form-advanced[open] > .form-advanced-toggle::before { transform: rotate(90deg); }
+.form-advanced-toggle:hover { color: var(--text); }
+
 .form-hint {
   font-size: 11px;
   color: var(--text-muted);

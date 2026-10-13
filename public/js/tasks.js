@@ -1966,6 +1966,8 @@ const Tasks = (() => {
         <label class="form-label">标题</label>
         <input class="form-input" id="f-title" type="text" value="${escapeHtml(task.title || '')}" placeholder="任务标题（可由 MD 文件名自动填充）">
       </div>
+      <details class="form-advanced" id="f-advanced" ${creating ? '' : 'open'}>
+        <summary class="form-advanced-toggle">高级设置</summary>
       ${[['technical_path', '技术方案', 'DESIGN.md'], ['readme_path', 'README.md', 'README.md'], ['agent_path', 'AGENTS.md', 'AGENTS.md']].map(([field, label, name]) => {
         const override = task[field] || (field === 'technical_path' && task.md_path && !task.md_path.endsWith('/DESIGN.md') ? task.md_path : '');
         const root = task.work_dir || (task.md_path ? task.md_path.slice(0, task.md_path.lastIndexOf('/')) || '/' : '');
@@ -1997,6 +1999,7 @@ const Tasks = (() => {
         <label class="form-label">截止日期</label>
         <input class="form-input" id="f-due-date" type="date" value="${task.due_date || ''}">
       </div>
+      </details>
       <div class="form-actions">
         <button class="btn-cancel" id="f-cancel">取消</button>
         <button class="btn-submit" id="f-submit">${task.id ? '保存' : '创建'}</button>

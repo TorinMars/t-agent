@@ -1,10 +1,10 @@
-# 交接说明（2026-10 · 截至 v2.42.2）
+# 交接说明（2026-10 · 截至 v2.43.0）
 
 给接手的 Claude / 开发者：先读 `AGENTS.md`（开发与发布规则）和本文件，再动手。
 
 ## 当前状态
 
-- 分支 `main`，最新发布 **v2.42.2**，已推送到 `origin/main`，工作区干净。
+- 分支 `main`，最新发布 **v2.43.0**，已推送到 `origin/main`，工作区干净。
 - 用户通过客户端检测 `main` 上的 `VERSION.json` 更新，代码改动完成并验证后按 `AGENTS.md` 升版本、提交、推送（用户已授权自动发布）。
 - 开发机已换成性能正常的 macOS，可以跑全量测试和浏览器脚本（先 `npm ci`、`npx playwright install chromium`）。`npm test` 并发时 pty 用例偶发 `posix_spawnp failed`，单独跑或 `node --test test/` 均通过。
 
@@ -50,6 +50,7 @@
 | 2.42.0 | 删除任务的确认改为弹窗，带“同时删除目录”复选框（默认不勾选）。接口 `DELETE .../tasks/:id?delete_directory=1`（本地、Engine `/v1`、远程代理都转发）；`workspace-tools.taskDirectoryGuard` 拒绝受保护目录和被其他任务共用的目录（409 `DIRECTORY_NOT_SAFE_TO_DELETE`，此时任务不删）；目录删除失败时任务已删，返回 `directory_error`。旧版 Engine 会忽略该参数，响应里没有 `directory_deleted`，前端据此提示。**不检查 Git 状态**（直接 rm -rf）。已测接口；**未测**弹窗的真实点击 |
 | 2.42.1 | 终端工具栏按钮改为只显示图标（🕘 历史、＋ 新开、↻ 重新打开、✕ 关闭、🗑 删除、⌂ 从工作目录重新打开、⧉ 复制、📨 程序复制请求），鼠标进入 0.2 秒后在下方显示详细说明（`data-tip` + `::after`，不再用 `title`，避免原生提示叠加）；工具栏去掉横向滚动。历史按钮的“请升级 Engine”提示改写到 `dataset.tip`，相关测试改按 `aria-label` 查找。已用 playwright 渲染截图确认，真实页面未截图 |
 | 2.42.2 | 修复 2.42.1 在终端标签栏多出一个纵向滚动条：终端标签页也用 `.terminal-toolbar-btn` 类，悬浮提示的绝对定位 `::after` 撑大了标签栏（`overflow-x:auto` 连带纵向滚动）的滚动高度。提示和图标按钮的样式改为只作用于 `.terminal-toolbar > .terminal-toolbar-btn`，标签页恢复原样。已用 playwright 复现（旧 CSS 标签栏 scrollHeight 46 > 33）并验证修复（33 = 33） |
+| 2.43.0 | 删除终端的能力移到终端标签里：非默认标签右侧带 ×（`.terminal-tab-close`，字符用 CSS `::before` 画，不进 `textContent`），点击或在标签上按 Delete 键触发原有确认流程；工具栏的 🗑 按钮和 `btn-terminal-delete` 已移除。`TerminalControls.run(method, confirm, ...args)` 支持传参，`deleteTerminal(id)` 可删除指定终端（不再只能删当前的）；`TerminalTabs.remove` 删除非当前标签时不再重新连接当前终端。远程 Engine 沿用原接口。已测：标签单测、playwright 渲染确认样式和点击传参；未在真实页面里点 |
 
 ## 架构要点（改代码前必读）
 

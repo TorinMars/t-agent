@@ -373,10 +373,10 @@ const Tasks = (() => {
     }
   }
 
-  async function deleteTerminal() {
+  async function deleteTerminal(requestedId) {
     const task = selectedTerminalTask();
     const scope = terminalScope(task.id);
-    const terminalId = TerminalTabs.current(scope);
+    const terminalId = requestedId || TerminalTabs.current(scope);
     if (terminalId === 'default') throw new Error('默认终端不能删除，可使用关闭或从工作目录重新打开');
     await API.post(`${scope}/terminal/control`, { action: 'delete', terminal_id: terminalId });
     disposeTerminalInstance(task.id, terminalId);

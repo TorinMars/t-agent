@@ -17,8 +17,6 @@ const TerminalTabs = (() => {
     if (!mounted) return;
     const { scope, select } = mounted;
     const current = state(scope);
-    const deleteButton = document.getElementById('btn-terminal-delete');
-    if (deleteButton) deleteButton.hidden = current.active === 'default';
     const buttons = [];
     const acknowledgements = [];
     for (const row of current.rows) {
@@ -30,6 +28,21 @@ const TerminalTabs = (() => {
       button.setAttribute('role', 'tab');
       button.setAttribute('aria-selected', String(row.terminal_id === current.active));
       button.textContent = row.title;
+      // 删除终端的入口在标签页里：默认终端不能删除，其余标签带一个 ×（也可在标签上按 Delete 键）。
+      if (row.terminal_id !== 'default') {
+        const remove = () => {
+          if (typeof TerminalControls === 'undefined') return;
+          TerminalControls.run('deleteTerminal', `删除“${row.title}”会终止其中的程序，并永久移除该终端标签和历史记录，确认删除吗？`, row.terminal_id);
+        };
+        const close = document.createElement('span');
+        close.className = 'terminal-tab-close';
+        close.setAttribute('role', 'button');
+        close.setAttribute('aria-label', `删除${row.title}`);
+        close.dataset.tip = `删除${row.title}`;
+        close.addEventListener('click', event => { event.stopPropagation(); remove(); });
+        button.append(close);
+        button.addEventListener('keydown', event => { if (event.key === 'Delete') { event.preventDefault(); remove(); } });
+      }
       if (typeof TerminalActivity !== 'undefined' && mounted.taskId != null) {
         const activity = TerminalActivity.stateOf(mounted.taskId, row.terminal_id, mounted.sourceKey);
         if (activity !== 'idle') button.classList.add(`term-${activity}`);
@@ -94,10 +107,12 @@ const TerminalTabs = (() => {
     const current = state(scope);
     current.revision++;
     current.rows = current.rows.filter(row => row.terminal_id !== terminalId);
-    if (current.active === terminalId) current.active = 'default';
+    const wasActive = current.active === terminalId;
+    if (wasActive) current.active = 'default';
     if (mounted && mounted.scope === scope) {
       render();
-      mounted.select();
+      // 删除的不是当前标签时，当前终端不用重新连接。
+      if (wasActive) mounted.select();
     }
   }
 

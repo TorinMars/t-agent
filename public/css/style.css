@@ -745,10 +745,7 @@ body.file-sync-open .sidebar, body.file-sync-open .content-area, body.file-sync-
   color: var(--priority-high);
 }
 
-/* 终端状态设计（动效只用来表达状态，克制但一眼可辨）：
-   执行中 = 蓝色细边框 + 一颗带拖尾的彗星沿边框匀速绕行 + 一道很淡的蓝色流光横扫整行（“正在流动”）。
-   完成待确认 = 绿色呼吸灯（“请你来看”）。两种状态色相不同、运动方式不同：绕行 vs 呼吸。
-   彗星沿路径移动（offset-path），转角和长短边速度一致；不用 conic-gradient，否则矩形四边线速度不均。 */
+/* 终端状态：执行中=蓝色边框加无色光柱左右扫动，完成待确认=绿色呼吸灯。左侧任务项与终端 tab 共用。 */
 .task-nav-item.term-running,
 .task-nav-item.term-done,
 .engine-tab.term-running,
@@ -761,33 +758,26 @@ body.file-sync-open .sidebar, body.file-sync-open .content-area, body.file-sync-
 }
 .task-nav-item.term-running,
 .task-nav-item.term-done { --term-r: 0px; }
-.task-nav-item.term-running,
-.engine-tab.term-running,
-.terminal-tab.term-running {
-  box-shadow: inset 0 0 0 1px #3b82f666;
-  background-image: linear-gradient(100deg, transparent 0, #60a5fa2e 50%, transparent 100%);
-  background-size: 45% 100%;
-  background-repeat: no-repeat;
-  animation: term-shimmer 2.4s linear infinite;
-}
-.terminal-tabs .terminal-tab.active.term-running { box-shadow: inset 0 0 0 1px #3b82f666, inset 0 -2px #70a5ff; }
 .task-nav-item.term-running::after,
 .engine-tab.term-running::after,
 .terminal-tab.term-running::after {
   content: '';
   position: absolute;
-  top: 0;
-  left: 0;
-  width: 64px;
-  height: 2px;
-  border-radius: 2px;
+  inset: 0;
+  border-radius: inherit;
   pointer-events: none;
-  background: linear-gradient(90deg, #3b82f600, #3b82f6 55%, #fff);
-  box-shadow: 0 0 6px 1px #60a5facc;
-  offset-path: inset(1px round var(--term-r));
-  offset-rotate: auto;
-  offset-anchor: 100% 50%;
-  animation: term-comet 2.4s linear infinite;
+  border: 2px solid transparent;
+  /* 蓝色边框环 + 无色（白色渐隐）光柱沿左右往返扫过；mask 只保留边框环 */
+  background:
+    linear-gradient(90deg, #ffffff00, #ffffff 35%, #ffffff 65%, #ffffff00) no-repeat,
+    #3b82f6;
+  background-size: 45% 100%, 100% 100%;
+  background-origin: border-box;
+  background-clip: border-box;
+  -webkit-mask: linear-gradient(#000 0 0) padding-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) padding-box exclude, linear-gradient(#000 0 0);
+  animation: term-sweep 2s ease-in-out infinite alternate, term-glow 2s ease-in-out infinite;
 }
 .task-nav-item.term-done::after,
 .engine-tab.term-done::after,
@@ -800,28 +790,26 @@ body.file-sync-open .sidebar, body.file-sync-open .content-area, body.file-sync-
   border: 2px solid #3fb950;
   animation: term-breathe 2s ease-in-out infinite;
 }
-@keyframes term-comet {
-  to { offset-distance: 100%; }
+@keyframes term-sweep {
+  from { background-position: -5% 0, 0 0; }
+  to   { background-position: 105% 0, 0 0; }
 }
-@keyframes term-shimmer {
-  from { background-position: -50% 0; }
-  to   { background-position: 150% 0; }
+/* 与完成态一致的呼吸发光（蓝色）；filter 作用在 mask 之后，光晕沿边框环外扩 */
+@keyframes term-glow {
+  0%, 100% { filter: drop-shadow(0 0 0 #3b82f600); }
+  50%      { filter: drop-shadow(0 0 5px #3b82f6) drop-shadow(0 0 2px #3b82f6); }
 }
 @keyframes term-breathe {
   0%, 100% { opacity: 0.25; box-shadow: 0 0 0 0 #3fb95000, inset 0 0 0 0 #3fb95000; }
   50%      { opacity: 1;    box-shadow: 0 0 10px 1px #3fb950aa, inset 0 0 8px #3fb95055; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .task-nav-item.term-running,
-  .engine-tab.term-running,
-  .terminal-tab.term-running { animation: none; background-image: none; }
   .task-nav-item.term-running::after,
   .engine-tab.term-running::after,
-  .terminal-tab.term-running::after { display: none; }
+  .terminal-tab.term-running::after,
   .task-nav-item.term-done::after,
   .engine-tab.term-done::after,
   .terminal-tab.term-done::after { animation: none; }
-}
 }
 
 /* Preview pane */

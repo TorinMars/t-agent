@@ -109,12 +109,12 @@
           <div class="terminal-controls">
             <div id="terminal-tabs" class="terminal-tabs" role="tablist" aria-label="任务终端"></div>
             <div class="terminal-toolbar" role="toolbar" aria-label="终端操作">
-              <button type="button" class="terminal-toolbar-btn" id="btn-terminal-history" disabled>历史记录</button>
-              <button type="button" class="terminal-toolbar-btn" id="btn-terminal-new" title="在任务工作目录中新建独立 Shell">＋ 新开终端</button>
-              <button type="button" class="terminal-toolbar-btn" id="btn-terminal-reopen" title="重新建立与当前终端会话的连接">↻ 重新打开</button>
-              <button type="button" class="terminal-toolbar-btn danger" id="btn-terminal-close" title="终止当前 Shell 及其中运行的程序">× 关闭当前终端</button>
-              <button type="button" class="terminal-toolbar-btn danger" id="btn-terminal-delete" hidden title="删除新建终端的标签、Shell 和历史记录；默认终端保留">删除当前终端</button>
-              <button type="button" class="terminal-toolbar-btn" id="btn-terminal-restart-workdir" title="终止当前 Shell，并从任务配置的工作目录启动新 Shell">⌂ 从工作目录重新打开</button>
+              <button type="button" class="terminal-toolbar-btn" id="btn-terminal-history" disabled aria-label="历史记录" data-tip="历史记录：查看已保存的终端历史">🕘</button>
+              <button type="button" class="terminal-toolbar-btn" id="btn-terminal-new" aria-label="新开终端" data-tip="新开终端：在任务工作目录中新建独立 Shell">＋</button>
+              <button type="button" class="terminal-toolbar-btn" id="btn-terminal-reopen" aria-label="重新打开" data-tip="重新打开：重新建立与当前终端会话的连接">↻</button>
+              <button type="button" class="terminal-toolbar-btn danger" id="btn-terminal-close" aria-label="关闭当前终端" data-tip="关闭当前终端：终止当前 Shell 及其中运行的程序">✕</button>
+              <button type="button" class="terminal-toolbar-btn danger" id="btn-terminal-delete" hidden aria-label="删除当前终端" data-tip="删除当前终端：删除标签、Shell 和历史记录；默认终端保留">🗑</button>
+              <button type="button" class="terminal-toolbar-btn" id="btn-terminal-restart-workdir" aria-label="从工作目录重新打开" data-tip="从工作目录重新打开：终止当前 Shell，并从任务配置的工作目录启动新 Shell">⌂</button>
             </div>
           </div>
           <div class="terminal-empty" id="terminal-empty" style="display:none"></div>

@@ -1,10 +1,10 @@
-# 交接说明（2026-10 · 截至 v2.42.0）
+# 交接说明（2026-10 · 截至 v2.42.1）
 
 给接手的 Claude / 开发者：先读 `AGENTS.md`（开发与发布规则）和本文件，再动手。
 
 ## 当前状态
 
-- 分支 `main`，最新发布 **v2.42.0**，已推送到 `origin/main`，工作区干净。
+- 分支 `main`，最新发布 **v2.42.1**，已推送到 `origin/main`，工作区干净。
 - 用户通过客户端检测 `main` 上的 `VERSION.json` 更新，代码改动完成并验证后按 `AGENTS.md` 升版本、提交、推送（用户已授权自动发布）。
 - 开发机已换成性能正常的 macOS，可以跑全量测试和浏览器脚本（先 `npm ci`、`npx playwright install chromium`）。`npm test` 并发时 pty 用例偶发 `posix_spawnp failed`，单独跑或 `node --test test/` 均通过。
 
@@ -48,6 +48,7 @@
 | 2.41.1 | 清理改为**按任务目录下的仓库**（用户的任务目录一般不是 Git，里面有多个仓库）：`findRepos` 向下找 3 层内的仓库（不进仓库内部/隐藏目录/node_modules，任务目录自己是仓库则只算它），逐仓库检查并清理，只删仓库目录；档案表改为 `repo_cleanups`（按仓库路径，2.41.0 的 `task_cleanups` 表弃用，从未在线上使用）；接口 `POST /workspace/cleanup` 参数改为 `repos:[{task_id,path}]`，`POST /workspace/restore` 参数改为 `{id}`；弹窗按任务分组。**未测**：真实大目录耗时、联网核对远程 |
 | 2.41.2 | 侧栏顶部“新建任务 / 导入 / 清理”改成同一行三个只放图标的按钮，悬浮 0.2 秒后显示文字提示（`data-tip` + `::after`，不用 `title`）；导入按钮有未管理目录时高亮并在右上角显示数量，没有时点开提示“没有未被管理的目录”。已用 playwright 渲染截图确认布局，真实页面未截图 |
 | 2.42.0 | 删除任务的确认改为弹窗，带“同时删除目录”复选框（默认不勾选）。接口 `DELETE .../tasks/:id?delete_directory=1`（本地、Engine `/v1`、远程代理都转发）；`workspace-tools.taskDirectoryGuard` 拒绝受保护目录和被其他任务共用的目录（409 `DIRECTORY_NOT_SAFE_TO_DELETE`，此时任务不删）；目录删除失败时任务已删，返回 `directory_error`。旧版 Engine 会忽略该参数，响应里没有 `directory_deleted`，前端据此提示。**不检查 Git 状态**（直接 rm -rf）。已测接口；**未测**弹窗的真实点击 |
+| 2.42.1 | 终端工具栏按钮改为只显示图标（🕘 历史、＋ 新开、↻ 重新打开、✕ 关闭、🗑 删除、⌂ 从工作目录重新打开、⧉ 复制、📨 程序复制请求），鼠标进入 0.2 秒后在下方显示详细说明（`data-tip` + `::after`，不再用 `title`，避免原生提示叠加）；工具栏去掉横向滚动。历史按钮的“请升级 Engine”提示改写到 `dataset.tip`，相关测试改按 `aria-label` 查找。已用 playwright 渲染截图确认，真实页面未截图 |
 
 ## 架构要点（改代码前必读）
 

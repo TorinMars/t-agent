@@ -5,11 +5,14 @@ const TerminalClipboard = (() => {
   const copy = document.createElement('button');
   copy.type = 'button';
   copy.className = 'terminal-toolbar-btn';
-  copy.textContent = '复制选中内容';
+  copy.textContent = '⧉';
+  copy.setAttribute('aria-label', '复制选中内容');
   const request = document.createElement('button');
   request.type = 'button';
   request.className = 'terminal-toolbar-btn';
-  request.textContent = '查看程序复制请求';
+  request.textContent = '📨';
+  request.setAttribute('aria-label', '查看程序复制请求');
+  request.dataset.tip = '查看程序复制请求：程序通过终端请求写入剪贴板，需要你确认';
   request.hidden = true;
   const status = document.createElement('span');
   status.className = 'terminal-copy-status';
@@ -18,7 +21,7 @@ const TerminalClipboard = (() => {
   const pane = document.getElementById('terminal-pane');
   const container = document.getElementById('xterm-container');
   const hint = /Mac|iPhone|iPad/.test(navigator.platform) ? '按住 Option 拖选，再复制' : '按住 Shift 拖选，再复制';
-  copy.title = hint;
+  copy.dataset.tip = `复制选中内容：${hint}`;
   let shown = null;
 
   function active() {

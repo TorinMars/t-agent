@@ -1687,14 +1687,15 @@ body.file-sync-open .sidebar, body.file-sync-open .content-area, body.file-sync-
   min-width: 0;
   max-width: calc(100% - 108px);
   margin-left: auto;
-  overflow-x: auto;
-  overflow-y: hidden;
+  overflow: visible; /* 按钮只放图标后不再需要横向滚动；悬浮提示要能伸出工具栏 */
 }
 .terminal-toolbar-btn {
+  position: relative;
   flex-shrink: 0;
   white-space: nowrap;
+  min-width: 28px;
   min-height: 25px;
-  padding: 2px 9px;
+  padding: 2px 7px;
   border: 1px solid #4b4b4b;
   border-radius: 5px;
   background: #2d2d2d;
@@ -1707,6 +1708,31 @@ body.file-sync-open .sidebar, body.file-sync-open .content-area, body.file-sync-
 .terminal-toolbar-btn:hover { background: #3a3a3a; color: #fff; }
 .terminal-toolbar-btn.danger:hover { border-color: #cf222e; color: #ff7b72; }
 .terminal-toolbar-btn:disabled { cursor: wait; opacity: .55; }
+/* 只显示图标，鼠标进入时显示详细说明 */
+.terminal-toolbar-btn::after {
+  content: attr(data-tip);
+  position: absolute;
+  top: calc(100% + 6px);
+  right: -2px;
+  padding: 5px 9px;
+  border: 1px solid #4b4b4b;
+  border-radius: 5px;
+  background: #1b1b1c;
+  color: #f0f0f0;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+  white-space: normal;
+  width: max-content;
+  max-width: 260px;
+  text-align: left;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .12s;
+  z-index: 60;
+}
+.terminal-toolbar-btn[data-tip]:hover::after,
+.terminal-toolbar-btn[data-tip]:focus-visible::after { opacity: 1; transition-delay: .2s; }
 .terminal-copy-status { color: #c7ccd4; font-size: 12px; }
 .terminal-toolbar .terminal-copy-status { flex-shrink: 0; white-space: nowrap; }
 .terminal-copy-hint { display: none; }

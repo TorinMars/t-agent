@@ -36,6 +36,19 @@ const REMOTE = {
   'codex/config.toml': 'model = "gpt-6-sol"\napproval_policy = "on-request"\napprovals_reviewer = "auto_review"\nsandbox_mode = "workspace-write"\n',
 };
 
+test('节点文件同步管理配置时启动脚本跳过配置，仍同步规则', { skip: !python }, () => {
+  const m = machine(REMOTE);
+  fs.writeFileSync(m.file('.codex/config.toml'), 'model = "node"\n');
+  fs.writeFileSync(m.file('.codex/config.toml.t-agent-file-sync-managed'), 't-agent-file-sync\n');
+  const result = m.sync();
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(m.read('.codex/config.toml'), 'model = "node"\n');
+  assert.match(m.read('.codex/AGENTS.md'), /规则二/);
+  fs.utimesSync(m.file('.codex/config.toml.t-agent-file-sync-managed'), new Date(0), new Date(0));
+  m.sync();
+  assert.match(m.read('.codex/config.toml'), /gpt-6-sol/);
+});
+
 test('规则写入受管区块并保留本机内容，配置递归合并', { skip: !python }, () => {
   const m = machine(REMOTE);
   fs.writeFileSync(m.file('.claude/CLAUDE.md'), '# 我的规则\n- 本机独有\n');

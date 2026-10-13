@@ -100,6 +100,7 @@ app.use('/api/oss', require('./routes/oss').createOssRouter());
 app.use('/api/pm2', require('./routes/pm2').createPm2Router());
 app.use('/api/apps', require('./routes/apps').createAppsRouter());
 app.use('/api/agent-config', require('./routes/agent-config').createClientRouter({ db: require('./db'), sessionSecret: require('./config').sessionSecret }));
+app.use('/api/file-sync', require('./routes/file-sync').browser);
 app.use('/api/remote-servers', require('./routes/remote-servers'));
 app.use('/api/remote-tokens', require('./routes/remote-tokens'));
 app.use('/api/remote/v1', require('./routes/remote-api'));

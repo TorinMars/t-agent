@@ -5,10 +5,11 @@ const Tools = (() => {
     const args = button.dataset.args;
     return `curl -fsSL ${SCRIPT_BASE_URL}${button.dataset.script} | bash${args ? ` -s -- ${args}` : ''}`;
   };
-  const tabs = { tasks: document.getElementById('tab-tasks'), tools: document.getElementById('tab-tools'), apps: document.getElementById('tab-apps'), 'agent-config': document.getElementById('tab-agent-config') };
+  const tabs = { tasks: document.getElementById('tab-tasks'), tools: document.getElementById('tab-tools'), apps: document.getElementById('tab-apps'), 'agent-config': document.getElementById('tab-agent-config'), 'file-sync': document.getElementById('tab-file-sync') };
   const toolsPanel = document.getElementById('tools-panel');
   const appsPanel = document.getElementById('apps-panel');
   const agentConfigPanel = document.getElementById('agent-config-panel');
+  const fileSyncPanel = document.getElementById('file-sync-panel');
   const appsEngineLabel = document.getElementById('apps-engine');
   const timers = new WeakMap();
   let page = 'tasks';
@@ -19,6 +20,7 @@ const Tools = (() => {
   const FEATURES = {
     pm2: { capability: 'pm2:manage', local: '/api/pm2', suffix: 'pm2', missing: '该引擎版本过旧，暂不支持 PM2 管理，请先升级该引擎。' },
     apps: { capability: 'apps:manage', local: '/api/apps', suffix: 'apps', missing: '该引擎版本过旧，暂不支持应用列表，请先升级该引擎。' },
+    fileSync: { capability: 'file-sync:manage', local: '/api/file-sync', suffix: 'file-sync', missing: '该引擎版本过旧，暂不支持文件同步，请先升级该引擎。' },
   };
   function engineState(feature) {
     const tasks = typeof Tasks === 'undefined' ? null : Tasks;
@@ -54,6 +56,8 @@ const Tools = (() => {
       unavailable: appsState.unavailable,
       example: appsState.local ? registerExample() : null,
     });
+    const syncState = engineState(FEATURES.fileSync);
+    FileSyncUI.setEngine({ base: syncState.endpoint, label: syncState.label, unavailable: syncState.unavailable });
   }
 
   function showPage(name) {
@@ -61,12 +65,15 @@ const Tools = (() => {
     if (name !== 'tasks') applyEngine();
     Apps.setActive(name === 'apps');
     AgentConfig.setActive(name === 'agent-config');
+    FileSyncUI.setActive(name === 'file-sync');
     document.body.classList.toggle('tools-open', name === 'tools');
     document.body.classList.toggle('apps-open', name === 'apps');
     document.body.classList.toggle('agent-config-open', name === 'agent-config');
+    document.body.classList.toggle('file-sync-open', name === 'file-sync');
     toolsPanel.hidden = name !== 'tools';
     appsPanel.hidden = name !== 'apps';
     agentConfigPanel.hidden = name !== 'agent-config';
+    fileSyncPanel.hidden = name !== 'file-sync';
     for (const [key, tab] of Object.entries(tabs)) {
       tab.classList.toggle('active', key === name);
       tab.setAttribute('aria-pressed', String(key === name));

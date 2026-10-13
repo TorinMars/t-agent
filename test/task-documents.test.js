@@ -48,8 +48,7 @@ test('custom technical path remains explicit while companion documents use works
 
 test('legacy default DESIGN path resolves to current workspace without modifying old file',async()=>{
  const dir=populated('legacy-current');const old=populated('legacy-old');
- const result=db.prepare('INSERT INTO tasks (title,user_id,md_path,work_dir) VALUES (?,?,?,?)').run('legacy','owner',path.join(old,'DESIGN.md'),dir);
- const id=result.lastInsertRowid;fs.writeFileSync(path.join(old,'DESIGN.md'),'old document');
+ const id=require('../services/task-store').forOwner(db,'owner').createTask({title:'legacy',md_path:path.join(old,'DESIGN.md'),work_dir:dir}).id;fs.writeFileSync(path.join(old,'DESIGN.md'),'old document');
  assert.equal(await (await fetch(`${base}/tasks/${id}/md`)).text(),'existing DESIGN.md');
  assert.equal(engine.readDocument('owner',id,'technical'),'existing DESIGN.md');
  const listed=await request('/tasks','GET');assert.equal(listed.find(t=>t.id===id).md_path,path.join(dir,'DESIGN.md'));
@@ -62,7 +61,7 @@ test('local task edits all three explicit paths, including external DESIGN.md, a
  const overrides={technical_path:path.join(target,'DESIGN.md'),readme_path:path.join(target,'README.md'),agent_path:path.join(target,'instructions','custom.md')};
  await request(`/tasks/${task.id}`,'PUT',overrides);
  for(const [kind,field] of [['technical','technical_path'],['readme','readme_path'],['agent','agent_path']]){
-  assert.equal(db.prepare('SELECT * FROM tasks WHERE id=?').get(task.id)[field],overrides[field]);
+  assert.equal(require('../services/task-store').forOwner(db,'owner').getTask(task.id)[field],overrides[field]);
   assert.equal(await (await fetch(`${base}/tasks/${task.id}/document/${kind}`)).text(),fs.readFileSync(overrides[field],'utf8'));
  }
  await request(`/tasks/${task.id}/document/technical`,'PUT',{content:'edited external design'});

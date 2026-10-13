@@ -10,26 +10,24 @@ const { resolveAsset, validateMdPath } = require('../services/task-assets');
 const terminal = require('./terminal');
 const documents = require('../services/task-documents');
 const { createTaskFilesRouter } = require('./task-files');
+const taskStore = require('../services/task-store');
+const engineTasks = require('../services/engine-tasks');
 
 const router = express.Router();
 
 router.use(requireAuth);
 
 const ownerFilter = (req) => req.session.user.login;
+const storeOf = (req) => taskStore.forOwner(db, ownerFilter(req));
+const taskOf = (req) => engineTasks.ownedTask(ownerFilter(req), req.params.id);
 
 router.use('/:id/files', createTaskFilesRouter({
-  getTask: req => db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, ownerFilter(req)),
+  getTask: req => taskOf(req),
 }));
 
 router.get('/', (req, res) => {
   const uid = ownerFilter(req);
-  const { status } = req.query;
-  let tasks;
-  if (status) {
-    tasks = db.prepare('SELECT * FROM tasks WHERE user_id = ? AND status = ? ORDER BY sort_order ASC, created_at DESC').all(uid, status);
-  } else {
-    tasks = db.prepare('SELECT * FROM tasks WHERE user_id = ? ORDER BY sort_order ASC, created_at DESC').all(uid);
-  }
+  const tasks = storeOf(req).listTasks(req.query.status || undefined).map(task => ({ ...task, user_id: uid }));
   res.json(tasks.map(documents.resolveTask));
 });
 
@@ -67,7 +65,7 @@ router.post('/', (req, res) => {
   if (!title) return res.status(400).json({ error: 'title is required' });
 
   if (work_dir && !path.isAbsolute(work_dir)) return res.status(400).json({ error: 'work_dir must be an absolute path' });
-  if (!work_dir) work_dir = path.join(req.session.user.work_dir || DEFAULT_BASE, titleToSlug(title));
+  if (!work_dir) work_dir = path.join(storeOf(req).root, titleToSlug(title));
   if (!md_path) md_path = path.join(work_dir, 'DESIGN.md');
   md_path = documents.documentPath({ work_dir, md_path }, 'technical');
   try {
@@ -76,28 +74,25 @@ router.post('/', (req, res) => {
     return res.status(500).json({ error: `Failed to create task documents: ${err.message}` });
   }
 
-  const info = db.prepare(`
-    INSERT INTO tasks (title, status, priority, due_date, md_path, work_dir, sort_order, user_id, technical_path, readme_path, agent_path)
-    VALUES (@title, @status, @priority, @due_date, @md_path, @work_dir, @sort_order, @user_id, @technical_path, @readme_path, @agent_path)
-  `).run({ ...overrides, title, status: status || 'todo', priority: priority || 'normal', due_date: due_date || null, md_path: md_path || null, work_dir: work_dir || null, sort_order: sort_order || 0, user_id: uid });
-
-  res.status(201).json(db.prepare('SELECT * FROM tasks WHERE id = ?').get(info.lastInsertRowid));
+  const created = storeOf(req).createTask({
+    ...overrides, title, status: status || 'todo', priority: priority || 'normal', due_date: due_date || null,
+    md_path: md_path || null, work_dir, sort_order: sort_order || 0,
+  });
+  res.status(201).json({ ...created, user_id: uid });
 });
 
 router.put('/reorder', (req, res) => {
   const uid = ownerFilter(req);
   const items = req.body; // [{ id, sort_order }]
   if (!Array.isArray(items)) return res.status(400).json({ error: 'body must be array' });
-  const stmt = db.prepare('UPDATE tasks SET sort_order = ? WHERE id = ? AND user_id = ?');
-  const update = db.transaction(() => items.forEach(({ id, sort_order }) => stmt.run(sort_order, id, uid)));
-  update();
+  storeOf(req).reorder(items);
   res.json({ success: true });
 });
 
 router.put('/:id', (req, res) => {
   const uid = ownerFilter(req);
   const { id } = req.params;
-  const task = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(id, uid);
+  const task = taskOf(req);
   if (!task) return res.status(404).json({ error: 'Task not found' });
 
   let { title, status, priority, due_date, md_path, work_dir, sort_order } = req.body;
@@ -123,42 +118,26 @@ router.put('/:id', (req, res) => {
     catch (err) { return res.status(500).json({ error: `Failed to create task documents: ${err.message}` }); }
   }
 
-  db.prepare(`
-    UPDATE tasks SET
-      technical_path = @technical_path, readme_path = @readme_path, agent_path = @agent_path,
-      title      = COALESCE(@title, title),
-      status     = COALESCE(@status, status),
-      priority   = COALESCE(@priority, priority),
-      due_date   = CASE WHEN @due_date_set = 1 THEN @due_date ELSE due_date END,
-      md_path    = CASE WHEN @md_path_set = 1 THEN @md_path ELSE md_path END,
-      work_dir   = CASE WHEN @work_dir_set = 1 THEN @work_dir ELSE work_dir END,
-      sort_order = COALESCE(@sort_order, sort_order),
-      updated_at = CURRENT_TIMESTAMP
-    WHERE id = @id AND user_id = @user_id
-  `).run({
-    ...overrides, id, user_id: uid,
-    title: title !== undefined ? title : null,
-    status: status !== undefined ? status : null,
-    priority: priority !== undefined ? priority : null,
-    due_date: due_date !== undefined ? due_date : null,
-    due_date_set: due_date !== undefined ? 1 : 0,
-    md_path: md_path !== undefined ? md_path : null,
-    md_path_set: md_path !== undefined ? 1 : 0,
-    work_dir: work_dir !== undefined ? work_dir : null,
-    work_dir_set: work_dir !== undefined ? 1 : 0,
-    sort_order: sort_order !== undefined ? sort_order : null,
+  const updated = storeOf(req).updateTask(task.id, {
+    ...overrides,
+    ...(title !== undefined ? { title } : {}),
+    ...(status !== undefined ? { status } : {}),
+    ...(priority !== undefined ? { priority } : {}),
+    ...(due_date !== undefined ? { due_date } : {}),
+    ...(md_path !== undefined ? { md_path } : {}),
+    ...(work_dir !== undefined ? { work_dir } : {}),
+    ...(sort_order !== undefined ? { sort_order } : {}),
   });
-
-  res.json(db.prepare('SELECT * FROM tasks WHERE id = ?').get(id));
+  res.json({ ...updated, user_id: uid });
 });
 
 router.get('/terminal-activity', (req, res) => {
-  const ids = db.prepare('SELECT id FROM tasks WHERE user_id = ?').all(ownerFilter(req)).map(row => row.id);
+  const ids = storeOf(req).listTasks().map(row => row.id);
   res.json(terminal.activitySnapshot(ids));
 });
 
 router.post('/:id/terminal/ack', (req, res) => {
-  const task = db.prepare('SELECT id FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, ownerFilter(req));
+  const task = taskOf(req);
   if (!task) return res.status(404).json({ error: 'TASK_NOT_FOUND' });
   try {
     res.json(terminal.acknowledgeActivity(task.id, req.body && req.body.terminal_id));
@@ -168,20 +147,20 @@ router.post('/:id/terminal/ack', (req, res) => {
 });
 
 router.get('/:id/terminals', (req, res) => {
-  const task = db.prepare('SELECT id FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, ownerFilter(req));
+  const task = taskOf(req);
   if (!task) return res.status(404).json({ error: 'TASK_NOT_FOUND' });
   res.status(200).json(terminal.listTerminals(task.id));
 });
 
 router.post('/:id/terminals', (req, res) => {
-  const task = db.prepare('SELECT id FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, ownerFilter(req));
+  const task = taskOf(req);
   if (!task) return res.status(404).json({ error: 'TASK_NOT_FOUND' });
   res.status(201).json(terminal.createTerminal(task.id));
 });
 
 router.post('/:id/terminal/control', (req, res) => {
   const uid = ownerFilter(req);
-  const task = db.prepare('SELECT id FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, uid);
+  const task = taskOf(req);
   if (!task) return res.status(404).json({ error: 'TASK_NOT_FOUND' });
   try {
     res.json(terminal.controlSession(task.id, req.body && req.body.action, req.body && req.body.terminal_id));
@@ -192,16 +171,16 @@ router.post('/:id/terminal/control', (req, res) => {
 
 router.delete('/:id', (req, res) => {
   const uid = ownerFilter(req);
-  const task = documents.resolveTask(db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, uid));
+  const task = documents.resolveTask(taskOf(req));
   if (!task) return res.status(404).json({ error: 'Task not found' });
   terminal.closeTaskTerminals(task.id);
-  db.prepare('DELETE FROM tasks WHERE id = ?').run(req.params.id);
+  storeOf(req).removeTask(task.id);
   res.json({ success: true });
 });
 
 router.get('/:id/md', (req, res) => {
   const uid = ownerFilter(req);
-  const task = documents.resolveTask(db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, uid));
+  const task = documents.resolveTask(taskOf(req));
   if (!task) return res.status(404).json({ error: 'Task not found' });
   task.md_path = getTaskDocumentPath(task, 'technical');
   if (!task.md_path || !task.md_path.endsWith('.md')) return res.status(404).json({ error: 'No md_path' });
@@ -217,7 +196,7 @@ const getTaskDocumentPath = documents.documentPath;
 
 router.get('/:id/document/:kind', (req, res) => {
   const uid = ownerFilter(req);
-  const task = documents.resolveTask(db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, uid));
+  const task = documents.resolveTask(taskOf(req));
   if (!task) return res.status(404).json({ error: 'Task not found' });
   const filePath = getTaskDocumentPath(task, req.params.kind);
   if (!filePath) return res.status(404).json({ error: 'Document path is not configured' });
@@ -231,7 +210,7 @@ router.get('/:id/document/:kind', (req, res) => {
 
 router.put('/:id/document/:kind', (req, res) => {
   const uid = ownerFilter(req);
-  const task = documents.resolveTask(db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, uid));
+  const task = documents.resolveTask(taskOf(req));
   if (!task) return res.status(404).json({ error: 'Task not found' });
   if (!['technical', 'readme', 'agent'].includes(req.params.kind)) {
     return res.status(400).json({ error: 'Invalid document kind' });
@@ -254,7 +233,7 @@ router.put('/:id/document/:kind', (req, res) => {
 
 router.post('/:id/document/:kind', (req, res) => {
   const uid = ownerFilter(req);
-  const task = documents.resolveTask(db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, uid));
+  const task = documents.resolveTask(taskOf(req));
   if (!task) return res.status(404).json({ error: 'Task not found' });
   if (!['readme', 'agent'].includes(req.params.kind)) {
     return res.status(400).json({ error: 'Only README.md and AGENTS.md can be created here' });
@@ -271,72 +250,39 @@ router.post('/:id/document/:kind', (req, res) => {
 });
 
 router.get('/:id/todos', (req, res) => {
-  const uid = ownerFilter(req);
-  const task = db.prepare('SELECT id FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, uid);
-  if (!task) return res.status(404).json({ error: 'Task not found' });
-  const todos = db.prepare(`
-    SELECT * FROM task_todos WHERE task_id = ?
-    ORDER BY completed ASC, sort_order ASC, created_at ASC
-  `).all(task.id);
-  res.json(todos.map(todo => ({ ...todo, completed: Boolean(todo.completed) })));
+  const todos = storeOf(req).listTodos(req.params.id);
+  if (!todos) return res.status(404).json({ error: 'Task not found' });
+  res.json(todos);
 });
 
 router.post('/:id/todos', (req, res) => {
-  const uid = ownerFilter(req);
-  const task = db.prepare('SELECT id FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, uid);
-  if (!task) return res.status(404).json({ error: 'Task not found' });
+  if (!taskOf(req)) return res.status(404).json({ error: 'Task not found' });
   const content = typeof req.body.content === 'string' ? req.body.content.trim() : '';
   if (!content) return res.status(400).json({ error: 'content is required' });
-  const nextOrder = db.prepare('SELECT COALESCE(MAX(sort_order), -1) + 1 AS value FROM task_todos WHERE task_id = ?').get(task.id).value;
-  const info = db.prepare('INSERT INTO task_todos (task_id, content, sort_order) VALUES (?, ?, ?)').run(task.id, content, nextOrder);
-  const todo = db.prepare('SELECT * FROM task_todos WHERE id = ?').get(info.lastInsertRowid);
-  res.status(201).json({ ...todo, completed: Boolean(todo.completed) });
+  res.status(201).json(storeOf(req).createTodo(req.params.id, content));
 });
 
 router.put('/:id/todos/:todoId', (req, res) => {
-  const uid = ownerFilter(req);
-  const todo = db.prepare(`
-    SELECT td.* FROM task_todos td
-    JOIN tasks t ON t.id = td.task_id
-    WHERE td.id = ? AND td.task_id = ? AND t.user_id = ?
-  `).get(req.params.todoId, req.params.id, uid);
+  const store = storeOf(req);
+  const todo = (store.listTodos(req.params.id) || []).find(item => item.id === Number(req.params.todoId));
   if (!todo) return res.status(404).json({ error: 'Todo not found' });
   const contentSet = req.body.content !== undefined;
   const content = contentSet && typeof req.body.content === 'string' ? req.body.content.trim() : null;
   if (contentSet && !content) return res.status(400).json({ error: 'content is required' });
-  const completedSet = req.body.completed !== undefined;
-  db.prepare(`
-    UPDATE task_todos SET
-      content = CASE WHEN @content_set = 1 THEN @content ELSE content END,
-      completed = CASE WHEN @completed_set = 1 THEN @completed ELSE completed END,
-      updated_at = CURRENT_TIMESTAMP
-    WHERE id = @id
-  `).run({
-    id: todo.id,
-    content_set: contentSet ? 1 : 0,
-    content,
-    completed_set: completedSet ? 1 : 0,
-    completed: req.body.completed ? 1 : 0,
-  });
-  const updated = db.prepare('SELECT * FROM task_todos WHERE id = ?').get(todo.id);
-  res.json({ ...updated, completed: Boolean(updated.completed) });
+  res.json(store.updateTodo(req.params.id, todo.id, {
+    ...(contentSet ? { content } : {}),
+    ...(req.body.completed !== undefined ? { completed: Boolean(req.body.completed) } : {}),
+  }));
 });
 
 router.delete('/:id/todos/:todoId', (req, res) => {
-  const uid = ownerFilter(req);
-  const todo = db.prepare(`
-    SELECT td.id FROM task_todos td
-    JOIN tasks t ON t.id = td.task_id
-    WHERE td.id = ? AND td.task_id = ? AND t.user_id = ?
-  `).get(req.params.todoId, req.params.id, uid);
-  if (!todo) return res.status(404).json({ error: 'Todo not found' });
-  db.prepare('DELETE FROM task_todos WHERE id = ?').run(todo.id);
+  if (!storeOf(req).deleteTodo(req.params.id, req.params.todoId)) return res.status(404).json({ error: 'Todo not found' });
   res.json({ success: true });
 });
 
 router.get('/:id/file', (req, res) => {
   const uid = ownerFilter(req);
-  const task = documents.resolveTask(db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, uid));
+  const task = documents.resolveTask(taskOf(req));
   if (!task || !task.md_path) return res.status(404).json({ error: 'No md_path' });
   const asset = resolveAsset(task, req.query.path);
   if (asset.error) return res.status(asset.status).json({ error: asset.error });
@@ -345,21 +291,21 @@ router.get('/:id/file', (req, res) => {
 
 router.post('/:id/share', (req, res) => {
   const uid = ownerFilter(req);
-  const task = documents.resolveTask(db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, uid));
+  const task = documents.resolveTask(taskOf(req));
   if (!task) return res.status(404).json({ error: 'Task not found' });
   if (!task.md_path) return res.status(400).json({ error: 'Task has no md file' });
 
   let token = task.share_token;
   if (!token) {
     token = randomUUID();
-    db.prepare('UPDATE tasks SET share_token = ? WHERE id = ?').run(token, task.id);
+    storeOf(req).setShareToken(task.id, token);
   }
   res.json({ token, url: `/share/${token}` });
 });
 
 router.post('/:id/reveal', (req, res) => {
   const uid = ownerFilter(req);
-  const task = documents.resolveTask(db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, uid));
+  const task = documents.resolveTask(taskOf(req));
   if (!task || !task.md_path) return res.status(404).json({ error: 'No md_path' });
   exec(`open -R "${task.md_path}"`, (err) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -369,7 +315,7 @@ router.post('/:id/reveal', (req, res) => {
 
 router.post('/:id/vscode', (req, res) => {
   const uid = ownerFilter(req);
-  const task = documents.resolveTask(db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, uid));
+  const task = documents.resolveTask(taskOf(req));
   if (!task || !task.md_path) return res.status(404).json({ error: 'No md_path' });
   // 硬编码常见安装路径，兼容 LaunchAgent 精简 PATH 环境
   const codeBin = [
@@ -386,7 +332,7 @@ router.post('/:id/vscode', (req, res) => {
 
 router.get('/:id/md/watch', (req, res) => {
   const uid = ownerFilter(req);
-  const task = documents.resolveTask(db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, uid));
+  const task = documents.resolveTask(taskOf(req));
   if (!task || !task.md_path || !task.md_path.endsWith('.md')) return res.status(404).end();
 
   serveFileWatch(req, res, task.md_path);
@@ -394,7 +340,7 @@ router.get('/:id/md/watch', (req, res) => {
 
 router.get('/:id/document/:kind/watch', (req, res) => {
   const uid = ownerFilter(req);
-  const task = documents.resolveTask(db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, uid));
+  const task = documents.resolveTask(taskOf(req));
   if (!task) return res.status(404).end();
   const filePath = getTaskDocumentPath(task, req.params.kind);
   if (!filePath) return res.status(404).end();

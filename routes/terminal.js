@@ -290,7 +290,7 @@ function handleWs(ws, req, sessionUser, requestedTaskId = null, requestedTermina
   const taskId = parseInt(requestedTaskId || new URL(req.url, 'http://x').searchParams.get('taskId'));
   if (!taskId) { ws.close(1008, 'missing taskId'); return; }
 
-  const task = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(taskId, sessionUser.login);
+  const task = require('../services/engine-tasks').ownedTask(sessionUser.login, taskId);
   if (!task) {
     console.error('[terminal] task not found, taskId:', taskId, 'user:', sessionUser.login);
     ws.send('\r\n\x1b[31m[任务不存在或无权限]\x1b[0m\r\n');
@@ -338,7 +338,7 @@ function handleWs(ws, req, sessionUser, requestedTaskId = null, requestedTermina
       ws.close(1008, 'Authentication required');
       return false;
     }
-    if (!db.prepare('SELECT 1 FROM tasks WHERE id = ? AND user_id = ?').get(taskId, sessionUser.login)) {
+    if (!require('../services/engine-tasks').ownedTask(sessionUser.login, taskId)) {
       ws.close(1008, 'task not found');
       return false;
     }

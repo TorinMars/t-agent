@@ -43,6 +43,14 @@ class Socket extends EventEmitter {
   close(code, reason) { this.readyState = 3; this.code = code; this.reason = reason; this.emit('close'); }
 }
 const task = tasks.createTask('owner', { title: 'multiple' });
+// 任务归属保存在目录的元信息文件里。
+function setTaskOwner(target, owner) {
+  const file = path.join(target.work_dir, '.t-agent', 'task.json');
+  const meta = JSON.parse(fs.readFileSync(file, 'utf8'));
+  meta.owner = owner;
+  fs.writeFileSync(file, JSON.stringify(meta));
+  require('../services/task-store').storeFor(process.env.TASKS_BASE_DIR).invalidate();
+}
 function connect(id, owner = 'owner') {
   const ws = new Socket();
   terminal.handleWs(ws, { url: `/terminal/ws?taskId=${task.id}&terminalId=${id}` }, { login: owner });
@@ -160,11 +168,11 @@ test('history controls are scoped, bounded and never passed to PTY; snapshot pre
   assert.equal(next.sent.length, before);
   next.emit('message', JSON.stringify(request));
   assert.equal(JSON.parse(next.sent.at(-1)).error, 'INVALID_HISTORY_REQUEST');
-  db.prepare('UPDATE tasks SET user_id = ? WHERE id = ?').run('other-owner', task.id);
+  setTaskOwner(task, 'other-owner');
   next.emit('message', JSON.stringify(request));
   assert.equal(next.code, 1008);
   assert.deepEqual(shell.input, []);
-  db.prepare('UPDATE tasks SET user_id = ? WHERE id = ?').run('owner', task.id);
+  setTaskOwner(task, 'owner');
   terminal.controlSession(task.id, 'delete', added.terminal_id);
 });
 

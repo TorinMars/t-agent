@@ -8,8 +8,10 @@ const updates = require('../services/update-manager');
 const router = express.Router();
 router.use(requireRemoteAuth('tasks:read'));
 
+const taskStore = require('../services/task-store');
+const storeOf = req => taskStore.forOwner(db, req.remoteAuth.userId);
 function ownedTask(req) {
-  return db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, req.remoteAuth.userId);
+  return storeOf(req).getTask(req.params.id);
 }
 
 const { documentPath } = require('../services/task-documents');
@@ -26,13 +28,11 @@ router.get('/capabilities', (req, res) => {
 });
 
 router.get('/tasks', (req, res) => {
-  const tasks = db.prepare(`
-    SELECT id, title, status, priority, due_date, sort_order, created_at, updated_at,
-           CASE WHEN md_path IS NULL AND work_dir IS NULL THEN 0 ELSE 1 END AS has_technical,
-           CASE WHEN work_dir IS NULL AND md_path IS NULL THEN 0 ELSE 1 END AS has_document_root
-    FROM tasks WHERE user_id = ? ORDER BY sort_order ASC, created_at DESC
-  `).all(req.remoteAuth.userId);
-  res.json(tasks);
+  res.json(storeOf(req).listTasks().map(task => ({
+    id: task.id, title: task.title, status: task.status, priority: task.priority, due_date: task.due_date,
+    sort_order: task.sort_order, created_at: task.created_at, updated_at: task.updated_at,
+    has_technical: 1, has_document_root: 1,
+  })));
 });
 
 router.get('/tasks/:id/document/:kind', (req, res) => {
@@ -47,9 +47,7 @@ router.get('/tasks/:id/document/:kind', (req, res) => {
 router.get('/tasks/:id/todos', (req, res) => {
   const task = ownedTask(req);
   if (!task) return res.status(404).json({ error: 'TASK_NOT_FOUND' });
-  const todos = db.prepare(`SELECT id, content, completed, sort_order, created_at, updated_at
-    FROM task_todos WHERE task_id = ? ORDER BY completed ASC, sort_order ASC, created_at ASC`).all(task.id);
-  res.json(todos.map(todo => ({ ...todo, completed: Boolean(todo.completed) })));
+  res.json(storeOf(req).listTodos(task.id).map(({ task_id, ...todo }) => todo));
 });
 
 module.exports = router;

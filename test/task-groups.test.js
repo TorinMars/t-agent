@@ -1,32 +1,21 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const Database = require('better-sqlite3');
 const groups = require('../services/task-groups');
 
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const taskStore = require('../services/task-store');
+
+const roots = [];
+// 分组与任务都保存在工作目录的文件里，每个用例用独立的临时工作目录。
 function testDb() {
-  const database = new Database(':memory:');
-  database.exec(`
-    CREATE TABLE tasks (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      title TEXT NOT NULL,
-      status TEXT NOT NULL,
-      user_id TEXT
-    );
-    CREATE TABLE task_groups (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      owner_id TEXT NOT NULL,
-      group_key TEXT NOT NULL,
-      name TEXT NOT NULL,
-      sort_order INTEGER NOT NULL DEFAULT 0,
-      is_system INTEGER NOT NULL DEFAULT 0,
-      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE(owner_id, group_key),
-      UNIQUE(owner_id, name)
-    );
-  `);
-  return database;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 't-agent-groups-'));
+  roots.push(root);
+  process.env.TASKS_BASE_DIR = root;
+  return { root, close() {} };
 }
+test.after(() => { for (const root of roots) fs.rmSync(root, { recursive: true, force: true }); });
 
 test('首次读取会建立四个兼容分组，三个状态分组不可修改', () => {
   const database = testDb();
@@ -57,14 +46,21 @@ test('自定义分组支持新建、重命名和空分组删除', () => {
 test('有任务的自定义分组不能删除', () => {
   const database = testDb();
   const created = groups.createGroup(database, 'owner', { name: '有任务' });
-  database.prepare('INSERT INTO tasks (title, status, user_id) VALUES (?, ?, ?)')
-    .run('测试任务', created.key, 'owner');
+  const taskDir = path.join(database.root, 'a-task');
+  taskStore.forOwner(null, 'owner').createTask({ title: '测试任务', status: created.key, work_dir: taskDir });
 
   const listed = groups.listGroups(database, 'owner').find(group => group.id === created.id);
   assert.equal(listed.task_count, 1);
   assert.throws(() => groups.deleteGroup(database, 'owner', created.id), /TASK_GROUP_NOT_EMPTY/);
 
-  database.prepare('DELETE FROM tasks WHERE user_id = ? AND status = ?').run('owner', created.key);
+  taskStore.forOwner(null, 'owner').updateTask(taskStore.forOwner(null, 'owner').listTasks()[0].id, { status: 'todo' });
   groups.deleteGroup(database, 'owner', created.id);
   database.close();
+});
+
+test('分组保存在工作目录的 .t-agent/groups.json，重新加载仍然存在', () => {
+  const database = testDb();
+  const created = groups.createGroup(database, 'owner', { name: '持久化' });
+  assert.ok(fs.existsSync(path.join(database.root, '.t-agent', 'groups.json')));
+  assert.equal(groups.listGroups(database, 'owner').some(group => group.key === created.key), true);
 });

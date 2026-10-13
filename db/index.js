@@ -16,7 +16,8 @@ fs.mkdirSync(path.dirname(dbPath), { recursive: true });
 const db = new Database(dbPath);
 
 db.pragma('journal_mode = WAL');
-db.pragma('foreign_keys = ON');
+// 任务已改为文件存储，tasks 表不再有数据；终端标签等表对它的外键必须关闭。
+db.pragma('foreign_keys = OFF');
 
 const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
 db.exec(schema);

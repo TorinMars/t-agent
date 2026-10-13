@@ -812,7 +812,7 @@ body.file-sync-open .sidebar, body.file-sync-open .content-area, body.file-sync-
   color: var(--priority-high);
 }
 
-/* 终端状态：执行中=蓝色边框加无色光柱左右扫动，完成待确认=绿色呼吸灯。左侧任务项与终端 tab 共用。 */
+/* 终端状态：执行中=蓝色描边加流光（骨架屏式），完成待确认=绿色呼吸灯。左侧任务项与终端 tab 共用。 */
 .task-nav-item.term-running,
 .task-nav-item.term-done,
 .engine-tab.term-running,
@@ -825,27 +825,22 @@ body.file-sync-open .sidebar, body.file-sync-open .content-area, body.file-sync-
 }
 .task-nav-item.term-running,
 .task-nav-item.term-done { --term-r: 0px; }
-.task-nav-item.term-running::after,
-.engine-tab.term-running::after,
-.terminal-tab.term-running::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  pointer-events: none;
-  border: 2px solid transparent;
-  /* 蓝色边框环 + 无色（白色渐隐）光柱沿左右往返扫过；mask 只保留边框环 */
-  background:
-    linear-gradient(90deg, #cfd5de00, #cfd5de 35%, #cfd5de 65%, #cfd5de00) no-repeat,
-    #3b82f6;
-  background-size: 45% 100%, 100% 100%;
-  background-origin: border-box;
-  background-clip: border-box;
-  -webkit-mask: linear-gradient(#000 0 0) padding-box, linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor;
-  mask: linear-gradient(#000 0 0) padding-box exclude, linear-gradient(#000 0 0);
-  animation: term-sweep 2s ease-in-out infinite alternate, term-glow 2s ease-in-out infinite;
+/* 执行中：骨架屏式流光。三段半透明渐变放大到 300% 宽，从右向左匀速滑过整个标签（background-position 动画），
+   只改背景图，不盖文字；再加一圈细蓝色内描边，和完成态的绿色区分。 */
+.task-nav-item.term-running,
+.engine-tab.term-running {
+  box-shadow: inset 0 0 0 1px #3b82f6aa;
+  background-image: linear-gradient(90deg, color-mix(in srgb, var(--text) 7%, transparent) 33%, color-mix(in srgb, var(--text) 20%, transparent) 50%, color-mix(in srgb, var(--text) 7%, transparent) 66%);
+  background-size: 300% 100%;
+  animation: term-shimmer 1.2s infinite linear;
 }
+.terminal-tab.term-running {
+  box-shadow: inset 0 0 0 1px #3b82f6aa;
+  background-image: linear-gradient(90deg, #ffffff12 33%, #ffffff3a 50%, #ffffff12 66%);
+  background-size: 300% 100%;
+  animation: term-shimmer 1.2s infinite linear;
+}
+.terminal-tabs .terminal-tab.active.term-running { box-shadow: inset 0 0 0 1px #3b82f6aa, inset 0 -2px #70a5ff; }
 .task-nav-item.term-done::after,
 .engine-tab.term-done::after,
 .terminal-tab.term-done::after {
@@ -857,23 +852,18 @@ body.file-sync-open .sidebar, body.file-sync-open .content-area, body.file-sync-
   border: 2px solid #3fb950;
   animation: term-breathe 2s ease-in-out infinite;
 }
-@keyframes term-sweep {
-  from { background-position: -5% 0, 0 0; }
-  to   { background-position: 105% 0, 0 0; }
-}
-/* 与完成态一致的呼吸发光（蓝色）；filter 作用在 mask 之后，光晕沿边框环外扩 */
-@keyframes term-glow {
-  0%, 100% { filter: drop-shadow(0 0 0 #3b82f600); }
-  50%      { filter: drop-shadow(0 0 5px #3b82f6) drop-shadow(0 0 2px #3b82f6); }
+@keyframes term-shimmer {
+  from { background-position: 100% 0; }
+  to   { background-position: 0 0; }
 }
 @keyframes term-breathe {
   0%, 100% { opacity: 0.25; box-shadow: 0 0 0 0 #3fb95000, inset 0 0 0 0 #3fb95000; }
   50%      { opacity: 1;    box-shadow: 0 0 10px 1px #3fb950aa, inset 0 0 8px #3fb95055; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .task-nav-item.term-running::after,
-  .engine-tab.term-running::after,
-  .terminal-tab.term-running::after,
+  .task-nav-item.term-running,
+  .engine-tab.term-running,
+  .terminal-tab.term-running { animation: none; background-image: none; }
   .task-nav-item.term-done::after,
   .engine-tab.term-done::after,
   .terminal-tab.term-done::after { animation: none; }

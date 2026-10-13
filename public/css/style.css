@@ -558,39 +558,68 @@ body.file-sync-open .sidebar, body.file-sync-open .content-area, body.file-sync-
 .created-token { display: flex; gap: 8px; align-items: center; margin-top: 12px; }
 .created-token code { flex: 1; padding: 8px; border: 1px solid var(--border); border-radius: 6px; overflow-wrap: anywhere; user-select: all; }
 
-.btn-new-task {
-  width: 100%;
-  padding: 7px 12px;
-  background: var(--accent);
-  border: none;
-  border-radius: 6px;
-  color: #fff;
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: background 0.15s;
-  text-align: left;
+.sidebar-actions {
+  display: flex;
+  gap: 8px;
 }
-.btn-new-task:hover {
-  background: var(--accent-hover);
-}
-
-.btn-workspace-import,
-.btn-workspace-cleanup {
-  width: 100%;
-  margin-top: 8px;
-  padding: 6px 10px;
+.sidebar-action {
+  position: relative;
+  flex: 1;
+  height: 32px;
+  padding: 0;
   border: 1px solid var(--border);
   border-radius: 6px;
   background: transparent;
   color: var(--text-muted);
-  font-size: 12px;
-  text-align: left;
+  font-size: 16px;
+  line-height: 1;
   cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
 }
-.btn-workspace-import { border-color: #d9a441; background: color-mix(in srgb, #d9a441 14%, transparent); color: var(--text); }
-.btn-workspace-import[hidden] { display: none; }
-.btn-workspace-cleanup:hover { color: var(--text); background: var(--bg-tertiary); }
+.sidebar-action:hover { background: var(--bg-tertiary); color: var(--text); }
+.sidebar-action.btn-new-task { border-color: transparent; background: var(--accent); color: #fff; font-size: 20px; font-weight: 500; }
+.sidebar-action.btn-new-task:hover { background: var(--accent-hover); }
+/* 有未管理目录时导入按钮高亮，右上角显示数量 */
+.sidebar-action.btn-workspace-import.has-items { border-color: #d9a441; background: color-mix(in srgb, #d9a441 14%, transparent); color: var(--text); }
+.sidebar-action-badge {
+  position: absolute;
+  top: -6px;
+  right: -4px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: #d9a441;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 16px;
+  box-sizing: border-box;
+}
+.sidebar-action-badge[hidden] { display: none; }
+/* 悬浮显示文字提示（按钮只放图标） */
+.sidebar-action::after {
+  content: attr(data-tip);
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 4px 8px;
+  border-radius: 5px;
+  background: #24292f;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 400;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s;
+  z-index: 50;
+}
+.sidebar-action:first-child::after { left: 0; transform: none; }
+.sidebar-action:last-child::after { left: auto; right: 0; transform: none; }
+.sidebar-action:hover::after,
+.sidebar-action:focus-visible::after { opacity: 1; transition-delay: 0.2s; }
 .wt-intro, .wt-muted { color: var(--text-muted); font-size: 12px; }
 .wt-list { list-style: none; margin: 6px 0 12px; padding: 0; border: 1px solid var(--border); border-radius: 7px; max-height: 50vh; overflow-y: auto; }
 .wt-list li { border-bottom: 1px solid var(--border); }

@@ -21,8 +21,12 @@ const WorkspaceTools = (() => {
   async function loadUnmanaged() {
     try { unmanaged = (await API.get('/api/tasks/workspace/unmanaged')).items; } catch { unmanaged = []; }
     if (importButton) {
-      importButton.hidden = !unmanaged.length;
-      importButton.textContent = `📁 工作目录下有 ${unmanaged.length} 个目录未被管理 · 导入`;
+      const badge = document.getElementById('workspace-import-badge');
+      importButton.classList.toggle('has-items', unmanaged.length > 0);
+      importButton.dataset.tip = unmanaged.length ? `导入工作目录下 ${unmanaged.length} 个未管理的目录` : '导入工作目录下的目录（暂无未管理的目录）';
+      importButton.setAttribute('aria-label', importButton.dataset.tip);
+      badge.hidden = !unmanaged.length;
+      badge.textContent = unmanaged.length > 99 ? '99+' : String(unmanaged.length);
     }
     return unmanaged;
   }
@@ -139,7 +143,11 @@ const WorkspaceTools = (() => {
     }));
   }
 
-  if (importButton) importButton.addEventListener('click', async () => { await loadUnmanaged(); if (unmanaged.length) renderImport(); });
+  if (importButton) importButton.addEventListener('click', async () => {
+    await loadUnmanaged();
+    if (unmanaged.length) renderImport();
+    else Modal.show('导入工作目录下的目录', '<p>工作目录下没有未被任务管理的目录。</p>');
+  });
   if (cleanupButton) cleanupButton.addEventListener('click', openCleanup);
   // 页面加载后稍等再检查，避免和任务列表抢启动资源。
   setTimeout(loadUnmanaged, 1500);

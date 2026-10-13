@@ -52,9 +52,11 @@
 
     <aside class="sidebar" id="sidebar">
       <div class="sidebar-toolbar">
-        <button class="btn-new-task" id="btn-new-task">+ 新建任务</button>
-        <button class="btn-workspace-import" id="btn-workspace-import" type="button" hidden></button>
-        <button class="btn-workspace-cleanup" id="btn-workspace-cleanup" type="button">🧹 清理代码目录</button>
+        <div class="sidebar-actions">
+          <button class="sidebar-action btn-new-task" id="btn-new-task" type="button" aria-label="新建任务" data-tip="新建任务">＋</button>
+          <button class="sidebar-action btn-workspace-import" id="btn-workspace-import" type="button" aria-label="导入工作目录下的目录" data-tip="导入工作目录下的目录">📁<span class="sidebar-action-badge" id="workspace-import-badge" hidden></span></button>
+          <button class="sidebar-action btn-workspace-cleanup" id="btn-workspace-cleanup" type="button" aria-label="清理代码目录" data-tip="清理代码目录">🧹</button>
+        </div>
       </div>
       <div class="task-nav" id="task-nav"></div>
     </aside>

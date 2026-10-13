@@ -7,6 +7,7 @@ const { TerminalSnapshot, createHistoryArchive } = require('../lib/terminal-snap
 const { RESET_INPUT_MODES, watchShellReturn } = require('../lib/terminal-input-modes');
 const { createActivityTracker } = require('../lib/terminal-activity');
 const { repairSpawnHelperPermissions } = require('../lib/node-pty-runtime');
+const { utf8LocaleEnv } = require('../lib/terminal-locale');
 const { resolveTerminalUser, userCanEnter, terminalEnvFor } = require('../lib/terminal-user');
 
 // Sessions are keyed by task ID and terminal ID; omitted IDs use the legacy shell.
@@ -176,11 +177,9 @@ function getOrCreateSession(ownerTaskId, workDir, dirWarning, id = 'default') {
         ...(runAs ? { ...terminalEnvFor(runAs, process.env), SHELL: shell } : process.env),
         TERM: 'xterm-256color',
         PATH: fullPath,
-        // 使用服务器实际可用的 UTF-8 locale。部分 Linux 最小安装没有
-        // zh_CN.UTF-8，强制设置会导致 bash 报错并让中文路径显示乱码。
-        LANG: 'C.UTF-8',
-        LC_ALL: 'C.UTF-8',
-        LC_CTYPE: 'C.UTF-8',
+        // 按本机实际安装的 locale 选择 UTF-8（C.UTF-8 / en_US / zh_CN ...），
+        // 否则 zsh 会把中文目录名显示成 \M-^ 乱码。
+        ...utf8LocaleEnv(process.env),
         ...hookEnv(ownerTaskId, id),
       },
     });

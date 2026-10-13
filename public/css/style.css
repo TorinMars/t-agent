@@ -829,18 +829,18 @@ body.file-sync-open .sidebar, body.file-sync-open .content-area, body.file-sync-
    只改背景图，不盖文字；再加一圈细蓝色内描边，和完成态的绿色区分。 */
 .task-nav-item.term-running,
 .engine-tab.term-running {
-  box-shadow: inset 0 0 0 1px #3b82f6aa;
-  background-image: linear-gradient(90deg, #3b82f61a 33%, #3b82f65c 50%, #3b82f61a 66%);
+  box-shadow: inset 0 0 0 1px #1d4ed8;
+  background-image: linear-gradient(90deg, #2563eb33 33%, #2563eb99 50%, #2563eb33 66%);
   background-size: 300% 100%;
   animation: term-shimmer 1.2s infinite linear;
 }
 .terminal-tab.term-running {
-  box-shadow: inset 0 0 0 1px #3b82f6aa;
-  background-image: linear-gradient(90deg, #60a5fa24 33%, #60a5fa66 50%, #60a5fa24 66%);
+  box-shadow: inset 0 0 0 1px #1d4ed8;
+  background-image: linear-gradient(90deg, #2563eb55 33%, #2563ebcc 50%, #2563eb55 66%);
   background-size: 300% 100%;
   animation: term-shimmer 1.2s infinite linear;
 }
-.terminal-tabs .terminal-tab.active.term-running { box-shadow: inset 0 0 0 1px #3b82f6aa, inset 0 -2px #70a5ff; }
+.terminal-tabs .terminal-tab.active.term-running { box-shadow: inset 0 0 0 1px #1d4ed8, inset 0 -2px #70a5ff; }
 .task-nav-item.term-done::after,
 .engine-tab.term-done::after,
 .terminal-tab.term-done::after {

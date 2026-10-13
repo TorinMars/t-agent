@@ -31,6 +31,36 @@ router.get('/', (req, res) => {
   res.json(tasks.map(documents.resolveTask));
 });
 
+// 工作目录体检：不合法内容提示 + 长期闲置且已推送到远程的项目清理建议。
+const workspaceHealth = require('../services/workspace-health');
+const healthError = (res, error) => res.status(error.statusCode || 500).json({ error: error.message, ...(error.reason ? { reason: error.reason } : {}) });
+
+router.get('/workspace/health', async (req, res) => {
+  try { res.json(await workspaceHealth.health(storeOf(req))); }
+  catch (error) { healthError(res, error); }
+});
+
+router.post('/workspace/remove-repository', async (req, res) => {
+  if (!req.body || req.body.confirm !== true) return res.status(400).json({ error: 'CONFIRM_REQUIRED' });
+  try { res.json(await workspaceHealth.removeLocalRepository(storeOf(req), req.body.task_id, id => terminal.closeTaskTerminals(id))); }
+  catch (error) { healthError(res, error); }
+});
+
+router.post('/workspace/restore', async (req, res) => {
+  try { res.json(await workspaceHealth.restoreRepository(storeOf(req), req.body && req.body.id)); }
+  catch (error) { healthError(res, error); }
+});
+
+router.post('/workspace/projects/remove', (req, res) => {
+  const target = req.body && req.body.path;
+  const store = storeOf(req);
+  const known = store.getIssues().some(issue => issue.type === 'missing-project' && issue.path === target);
+  if (!known) return res.status(400).json({ error: 'NOT_A_MISSING_PROJECT' });
+  store.unregisterProject(target);
+  store.invalidate();
+  res.json({ success: true });
+});
+
 // 将任务标题转换为合法的目录/文件名
 function titleToSlug(title) {
   return title

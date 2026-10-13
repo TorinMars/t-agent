@@ -1,10 +1,10 @@
-# 交接说明（2026-10 · 截至 v2.39.1）
+# 交接说明（2026-10 · 截至 v2.40.0）
 
 给接手的 Claude / 开发者：先读 `AGENTS.md`（开发与发布规则）和本文件，再动手。
 
 ## 当前状态
 
-- 分支 `main`，最新发布 **v2.39.1**，已推送到 `origin/main`，工作区干净。
+- 分支 `main`，最新发布 **v2.40.0**，已推送到 `origin/main`，工作区干净。
 - 用户通过客户端检测 `main` 上的 `VERSION.json` 更新，代码改动完成并验证后按 `AGENTS.md` 升版本、提交、推送（用户已授权自动发布）。
 - 开发机已换成性能正常的 macOS，可以跑全量测试和浏览器脚本（先 `npm ci`、`npx playwright install chromium`）。`npm test` 并发时 pty 用例偶发 `posix_spawnp failed`，单独跑或 `node --test test/` 均通过。
 
@@ -45,6 +45,7 @@
 | 2.38.7 | 执行中光柱由纯白改为灰白（`#cfd5de`）：页面底色是白色，白色光柱看不出来 |
 | 2.39.0 | **任务/待办/分组改为文件存储**（`services/task-store.js`）：每个任务目录下 `.t-agent/task.json` 保存元信息，工作目录下 `.t-agent/{groups,projects,state}.json`；工作目录根下子目录自动成为任务，也可指定任意路径加载（记入 `projects.json`）；没有元信息的目录在启动/首次扫描时初始化；启动时一次性迁移旧数据库任务（保留 ID、分享令牌、待办、分组，不存在的目录跳过），数据库表保留不删。移除任务=打 `deleted` 标记。`db/index.js` 关闭了外键（终端标签表原来外键引用 tasks）。**行为变化**：任务不再有所属账号（去掉 user_id/owner），同一工作目录的任务对所有账号一致可见，不同工作目录才相互隔离；没有单独的启动初始化，扫描时发现缺少 `task.json` 就地初始化。**未验证**：用真实旧数据库做迁移（只用测试库验证）、两个账号共用工作目录、大量目录下的扫描性能（带 1.5 秒缓存）、前端界面实际点击 |
 | 2.39.1 | 去掉任务所属账号和启动时的单独初始化（见 2.39.0 行的行为变化）；对应的账号隔离测试已删除 |
+| 2.40.0 | **工作目录体检与闲置清理**：`task-store.scan` 同时产出问题列表（根下文件/无效链接/`node_modules`、损坏的 `task.json`（不再被覆盖，`createTask` 对其返回 409）、失效的项目路径）；`services/workspace-health.js` 检查长期闲置且 Git 全部已推送的项目，提供“删除本地文件”（先写 `.t-agent/archive.json`）和“从仓库恢复”；接口 `GET /api/tasks/workspace/health`、`POST .../remove-repository|restore|projects/remove`；侧栏按钮和弹窗在 `public/js/workspace-health.js`。`TASK_IDLE_DAYS` 默认 30。**仅本地 Client**，远程 Engine 没有这些入口。已测：真实 git 仓库（脏目录、未推送、清理、恢复保留 ID/待办）和前端弹窗渲染；**未测**：真实大目录、联网核对远程、在浏览器里点击完整流程 |
 
 ## 架构要点（改代码前必读）
 

@@ -56,6 +56,18 @@ function writeJson(file, value) {
   fs.renameSync(temp, file);
 }
 
+// 区分“不存在”（需要初始化）和“存在但读不了/不合法”（不能覆盖，要提示用户处理）。
+function readMeta(file) {
+  let text;
+  try { text = fs.readFileSync(file, 'utf8'); }
+  catch (error) { return error.code === 'ENOENT' ? { missing: true } : { invalid: `无法读取：${error.code || error.message}` }; }
+  try {
+    const value = JSON.parse(text);
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return { invalid: '内容不是 JSON 对象' };
+    return { meta: value };
+  } catch (error) { return { invalid: `JSON 解析失败：${error.message}` }; }
+}
+
 const now = () => new Date().toISOString();
 const metaPath = dir => path.join(dir, META_DIR, META_FILE);
 
@@ -128,12 +140,17 @@ function createStore(rootInput) {
   }
 
   // 读取一个目录的元信息，没有则初始化。返回 null 表示目录不可用或已被移除。
-  function loadDir(dir, state, seen) {
+  function loadDir(dir, state, seen, issues) {
     if (!isDirectory(dir)) return null;
     const file = metaPath(dir);
-    let meta = readJson(file, null);
+    const read = readMeta(file);
+    if (read.invalid) {
+      issues.push({ type: 'invalid-meta', path: dir, name: path.basename(dir), message: `任务元信息文件不可用（${read.invalid}）`, suggestion: `修复或删除 ${file} 后会重新初始化；这个目录暂不显示为任务` });
+      return null;
+    }
+    let meta = read.meta;
     let dirty = false;
-    if (!meta || typeof meta !== 'object') {
+    if (!meta) {
       const stamp = now();
       meta = { version: 1, title: path.basename(dir), status: 'todo', priority: 'normal', created_at: stamp, updated_at: stamp };
       dirty = true;
@@ -156,25 +173,47 @@ function createStore(rootInput) {
     const state = readState();
     const startNext = state.next_task_id;
     const dirs = [];
+    const issues = [];
     try {
       for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
-        if (entry.name.startsWith('.') || SKIP_DIRS.has(entry.name)) continue;
+        if (entry.name.startsWith('.')) continue;
         const full = path.join(root, entry.name);
-        if (entry.isDirectory() || (entry.isSymbolicLink() && isDirectory(full))) dirs.push(full);
+        if (entry.isDirectory() || (entry.isSymbolicLink() && isDirectory(full))) {
+          if (SKIP_DIRS.has(entry.name)) {
+            issues.push({ type: 'unexpected-entry', path: full, name: entry.name, message: '工作目录根下只应放任务目录，这个目录不是任务', suggestion: '建议移出工作目录或删除' });
+          } else dirs.push(full);
+        } else if (entry.isSymbolicLink()) {
+          issues.push({ type: 'invalid-entry', path: full, name: entry.name, message: '符号链接已失效或不指向目录', suggestion: '建议删除这个链接' });
+        } else {
+          issues.push({ type: 'unexpected-file', path: full, name: entry.name, message: '工作目录根下只应放任务目录，这是一个文件', suggestion: '建议移走或删除这个文件' });
+        }
       }
-    } catch { /* 工作目录不可读时只显示额外项目 */ }
+    } catch (error) { issues.push({ type: 'unreadable-root', path: root, name: path.basename(root), message: `工作目录无法读取（${error.code || error.message}）`, suggestion: '检查目录是否存在、当前运行账号是否有读取权限' }); }
     dirs.sort();
-    for (const extra of listProjectPaths()) if (!dirs.includes(extra)) dirs.push(extra);
+    for (const extra of listProjectPaths()) {
+      if (dirs.includes(extra)) continue;
+      if (!isDirectory(extra)) {
+        issues.push({ type: 'missing-project', path: extra, name: path.basename(extra), message: '指定加载的项目路径已不存在', suggestion: '如果已经删除了，可以从列表中移除这条记录' });
+        continue;
+      }
+      dirs.push(extra);
+    }
 
     const seen = new Set();
     const entries = [];
     for (const dir of dirs) {
-      const loaded = loadDir(dir, state, seen);
+      const loaded = loadDir(dir, state, seen, issues);
       if (loaded) entries.push(loaded);
     }
     if (state.next_task_id !== startNext) writeState(state);
-    cache = { at: Date.now(), entries };
+    cache = { at: Date.now(), entries, issues };
     return entries;
+  }
+
+  // 工作目录里发现的不合法内容（随扫描一起得出，不额外读盘）。
+  function getIssues() {
+    scan();
+    return cache ? cache.issues : [];
   }
 
   function entryById(id) {
@@ -213,7 +252,9 @@ function createStore(rootInput) {
     fs.mkdirSync(dir, { recursive: true });
     const state = readState();
     const file = metaPath(dir);
-    const existing = readJson(file, null);
+    const read = readMeta(file);
+    if (read.invalid) throw serviceError('TASK_META_INVALID', 409);
+    const existing = read.meta || null;
     const stamp = now();
     const meta = existing && typeof existing === 'object' ? existing : { version: 1, created_at: stamp };
     const adopted = Boolean(existing) && !meta.deleted;
@@ -471,7 +512,7 @@ function createStore(rootInput) {
 
   return {
     root, scan, invalidate,
-    listProjectPaths,
+    listProjectPaths, getIssues, unregisterProject, registerProject,
     listTasks, getTask, findByShareToken, createTask, updateTask, setShareToken, reorder, removeTask,
     listTodos, createTodo, updateTodo, deleteTodo,
     listGroups, assertGroupKey, createGroup, updateGroup, deleteGroup,

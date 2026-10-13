@@ -575,6 +575,27 @@ body.file-sync-open .sidebar, body.file-sync-open .content-area, body.file-sync-
   background: var(--accent-hover);
 }
 
+.btn-workspace-health {
+  width: 100%;
+  margin-top: 8px;
+  padding: 6px 10px;
+  border: 1px solid #d9a441;
+  border-radius: 6px;
+  background: color-mix(in srgb, #d9a441 14%, transparent);
+  color: var(--text);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.btn-workspace-health[hidden] { display: none; }
+.wh-intro, .wh-hint, .wh-msg { color: var(--text-muted); font-size: 12px; }
+.wh-list { list-style: none; margin: 6px 0 14px; padding: 0; border: 1px solid var(--border); border-radius: 7px; }
+.wh-item { padding: 9px 11px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+.wh-item:last-child { border-bottom: 0; }
+.wh-item code { font-size: 11px; overflow-wrap: anywhere; user-select: all; }
+.wh-danger { color: var(--danger); }
+.wh-error { color: var(--danger); font-size: 12px; min-height: 1em; }
+
 .task-nav {
   flex: 1;
   overflow-y: auto;

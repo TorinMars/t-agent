@@ -1,10 +1,10 @@
-# 交接说明（2026-10 · 截至 v2.38.0）
+# 交接说明（2026-10 · 截至 v2.38.1）
 
 给接手的 Claude / 开发者：先读 `AGENTS.md`（开发与发布规则）和本文件，再动手。
 
 ## 当前状态
 
-- 分支 `main`，最新发布 **v2.38.0**，已推送到 `origin/main`，工作区干净。
+- 分支 `main`，最新发布 **v2.38.1**，已推送到 `origin/main`，工作区干净。
 - 用户通过客户端检测 `main` 上的 `VERSION.json` 更新，代码改动完成并验证后按 `AGENTS.md` 升版本、提交、推送（用户已授权自动发布）。
 - 开发机已换成性能正常的 macOS，可以跑全量测试和浏览器脚本（先 `npm ci`、`npx playwright install chromium`）。`npm test` 并发时 pty 用例偶发 `posix_spawnp failed`，单独跑或 `node --test test/` 均通过。
 
@@ -36,6 +36,7 @@
 | 2.34.0 | **隐藏登录入口：未登录时除登录入口外全部 404**（用户要求登录地址为 `/torin/hide/login`）。新增 `lib/login-gate.js`：`CLIENT_LOGIN_PATH`（默认 `/torin/hide/login`）校验、全局门禁（session 之后、`/api` 之前）、与 Express 默认 404 页一致的响应。未登录仍开放：登录入口及其接口（`routes/auth.js` 同时挂在 `/auth` 和登录入口下，页面加了 `/` 路由）、`/v1`、`/api/remote/v1`、`/health`、`/share/*` 及其脚本样式、登录页静态文件；`/hooks/terminal-activity` 在门禁之前不受影响。终端 WebSocket 未登录改回 404。前端：`index.html` 注入 `t-agent-login-path` meta；`client-auth.js` 遇到 `/api` 404 时先请求登录入口 `/status` 确认掉线再跳转，避免把真 404 当掉线；`auth.js` 的接口前缀按页面路径推导；`scripts/client-auth-setup.js` 通过 `authBase` 走登录入口。**删除多 Client 工作台**（用户确认不再使用）：`public/clients.html`、`js/clients.js`、`js/client-frame.js`、`css/clients.css`、`client-frame-auth.html`、`/clients` 路由、iframe 登录提示分支、`test/client-switcher.test.js`、`scripts/test-client-switcher-browser.cjs`；`CLIENT_FRAME_ORIGINS` 的 CSP 内嵌能力保留。已知限制：PWA 会话过期后冷启动会看到 404，需先在浏览器登录；旧书签 `/auth/login`、`/web` 未登录时是 404 |
 | 2.37.0 | **网页终端降权：服务是 root 时终端改用 `TERMINAL_USER`（默认 `dev`）**（Claude Code 在 root 下拒绝 `--dangerously-skip-permissions`）。新增 `lib/terminal-user.js`（只在 Linux 且 `uid===0` 时生效；`TERMINAL_USER=` 留空不降权；默认用户不存在则沿用 root 并 `console.warn`；读 `/etc/passwd` 解析 uid/gid/home）；`routes/terminal.js` 给 `node-pty.spawn` 传 `uid/gid`，环境去掉 `SESSION_SECRET`、改 `HOME/USER/LOGNAME/SHELL`，无权进入的工作目录回退到家目录。`install.sh` 的 `setup_terminal_user()`：Linux 且 root 时 `useradd -m dev`、写 `TERMINAL_USER`、仅对安装目录内的任务目录 `chown -R`（已在 Linux 容器里实跑：创建、幂等、留空三种路径）。**未验证**：真实服务器上 node-pty 的 uid/gid 降权（Mac 无法测，需在服务器更新后开终端 `id` 确认）；附加组不处理；降权后终端读不到 `/root` 下的工具，需 dev 自己装 Claude Code |
 | 2.38.0 | **文件同步改成配对码一步加入**（用户觉得“先连接远程再选主服务器”太复杂）。主服务器 `POST /v1/file-sync/pairing` 生成 `TA-` 配对码（复用 `createPairingCode`）；附属端 `POST /v1/file-sync/join {url, code}`：`FileSync.join` 调主服务器 `/v1/pair` 换令牌 → 按 (owner, base_url) 复用/新增 `remote_servers` 行 → `connect`。页面去掉主服务器下拉，改为“生成配对码 / 加入主服务器”两个按钮；地址宽松输入（无协议、带路径都行）。`/servers`、`/connect` 接口保留兼容。**注意**：加入后“连接远程”里会多一条该主服务器的连接（令牌是完整 owner 权限，与手动配对一致）；加入失败（如主服务器版本过旧）时这条连接会保留。已测：服务/路由/引擎往返（含配对码只能用一次、加入自己被拒）和浏览器 UI；**未测**：两台真实机器跨网络加入 |
+| 2.38.1 | 执行中的终端状态由橙色流动亮点改为**绿色发光边框**（`term-glow` 脉动，样式在 `public/css/style.css`）；完成待确认仍是绿色呼吸灯，两者颜色相近，靠亮度/脉动区分，如嫌混淆可把完成态改色。纯 CSS，未做浏览器截图对比 |
 
 ## 架构要点（改代码前必读）
 

@@ -769,7 +769,7 @@ body.file-sync-open .sidebar, body.file-sync-open .content-area, body.file-sync-
   border: 2px solid transparent;
   /* 蓝色边框环 + 无色（白色渐隐）光柱沿左右往返扫过；mask 只保留边框环 */
   background:
-    linear-gradient(90deg, #ffffff00, #ffffff 35%, #ffffff 65%, #ffffff00) no-repeat,
+    linear-gradient(90deg, #cfd5de00, #cfd5de 35%, #cfd5de 65%, #cfd5de00) no-repeat,
     #3b82f6;
   background-size: 45% 100%, 100% 100%;
   background-origin: border-box;

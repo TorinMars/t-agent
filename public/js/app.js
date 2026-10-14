@@ -309,6 +309,10 @@ const Updates = {
       } else if (status.stage === 'restarting') {
         clearInterval(this.restartTimer);
         this.waitForRestart(status.remote_version);
+      } else if (status.status !== 'updating') {
+        // 服务在两次轮询之间已重启完成：新进程里状态不再是 updating，直接刷新加载新界面。
+        clearInterval(this.restartTimer);
+        this.showCompleted(status);
       }
     }, 1000);
   },

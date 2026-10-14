@@ -1,0 +1,136 @@
+/* 主题：浅色是 style.css 里的默认值；这里用 html[data-theme] 覆盖变量与少量写死的颜色。最后加载。 */
+
+/* ---------- 主题选择器（所有主题共用） ---------- */
+.theme-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 12px; }
+.theme-card { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-secondary); color: var(--text); cursor: pointer; text-align: left; font: inherit; }
+.theme-card:hover { border-color: var(--text-muted); }
+.theme-card.active { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent); }
+.theme-hint { font-size: 11px; color: var(--text-muted); }
+.theme-swatch { display: flex; width: 100%; height: 44px; border-radius: 6px; overflow: hidden; border: 1px solid #8884; }
+.theme-swatch i { flex: 1; }
+.theme-swatch-light i:nth-child(1) { background: #ffffff; } .theme-swatch-light i:nth-child(2) { background: #f6f8fa; } .theme-swatch-light i:nth-child(3) { background: #1a7f37; }
+.theme-swatch-dark i:nth-child(1) { background: #0d1117; } .theme-swatch-dark i:nth-child(2) { background: #161b22; } .theme-swatch-dark i:nth-child(3) { background: #3fb950; }
+.theme-swatch-tech i:nth-child(1) { background: #050b1a; } .theme-swatch-tech i:nth-child(2) { background: #0a1630; } .theme-swatch-tech i:nth-child(3) { background: #00e5ff; box-shadow: 0 0 10px #00e5ff; }
+
+/* ---------- 深色 + 未来科技共用的暗色基础 ---------- */
+:root[data-theme="dark"], :root[data-theme="tech"] {
+  color-scheme: dark;
+  --bg: #0d1117;
+  --bg-secondary: #161b22;
+  --bg-tertiary: #21262d;
+  --bg-hover: #21262d;
+  --border: #30363d;
+  --border-muted: #21262d;
+  --text: #e6edf3;
+  --text-muted: #8b949e;
+  --text-link: #58a6ff;
+  --accent: #238636;
+  --accent-hover: #2ea043;
+  --danger: #f85149;
+  --danger-hover: #ff7b72;
+  --priority-high: #f85149;
+  --priority-normal: #58a6ff;
+  --priority-low: #8b949e;
+  --status-doing: #d29922;
+  --status-done: #3fb950;
+}
+
+:root[data-theme="dark"] .markdown-body.markdown-body,
+:root[data-theme="tech"] .markdown-body.markdown-body { color: var(--text); }
+:root[data-theme="dark"] .markdown-body.markdown-body :is(h1, h2, h3, h4, h5, h6),
+:root[data-theme="tech"] .markdown-body.markdown-body :is(h1, h2, h3, h4, h5, h6) { color: #f0f6fc; }
+:root[data-theme="dark"] .markdown-body.markdown-body :is(h1, h2),
+:root[data-theme="tech"] .markdown-body.markdown-body :is(h1, h2) { border-bottom-color: var(--border); }
+:root[data-theme="dark"] .markdown-body.markdown-body a,
+:root[data-theme="tech"] .markdown-body.markdown-body a { color: var(--text-link); }
+:root[data-theme="dark"] .markdown-body.markdown-body blockquote,
+:root[data-theme="tech"] .markdown-body.markdown-body blockquote { background: var(--bg-secondary); color: var(--text-muted); border-left-color: #388bfd; }
+:root[data-theme="dark"] .markdown-body.markdown-body code,
+:root[data-theme="tech"] .markdown-body.markdown-body code { background: #6e768166; color: #ffa8c5; }
+:root[data-theme="dark"] .markdown-body.markdown-body th,
+:root[data-theme="tech"] .markdown-body.markdown-body th { background: var(--bg-tertiary); color: var(--text); }
+:root[data-theme="dark"] .markdown-body.markdown-body :is(th, td, hr),
+:root[data-theme="tech"] .markdown-body.markdown-body :is(th, td, hr) { border-color: var(--border); }
+:root[data-theme="dark"] .markdown-body.markdown-body tbody tr:nth-child(even),
+:root[data-theme="tech"] .markdown-body.markdown-body tbody tr:nth-child(even) { background: var(--bg-secondary); }
+
+/* Markdown 编辑器与文件面板里写死的白底 */
+:root[data-theme="dark"] .md-editor-shell, :root[data-theme="tech"] .md-editor-shell,
+:root[data-theme="dark"] .md-editor-host, :root[data-theme="tech"] .md-editor-host { background: var(--bg); }
+:root[data-theme="dark"] .md-editor-header, :root[data-theme="tech"] .md-editor-header { background: var(--bg-secondary); border-bottom-color: var(--border); color: var(--text-muted); }
+:root[data-theme="dark"] .md-editor-file, :root[data-theme="tech"] .md-editor-file { color: var(--text); }
+:root[data-theme="dark"] .md-editor-status, :root[data-theme="tech"] .md-editor-status,
+:root[data-theme="dark"] .md-editor-shortcuts, :root[data-theme="tech"] .md-editor-shortcuts { color: var(--text-muted); }
+:root[data-theme="dark"] .md-editor-action, :root[data-theme="tech"] .md-editor-action { background: var(--bg-tertiary); border-color: var(--border); color: var(--text); }
+:root[data-theme="dark"] .md-editor-action:hover, :root[data-theme="tech"] .md-editor-action:hover { background: var(--border); }
+:root[data-theme="dark"] .md-editor-action.primary, :root[data-theme="tech"] .md-editor-action.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+:root[data-theme="dark"] .file-editor-tab.is-active, :root[data-theme="tech"] .file-editor-tab.is-active { background: var(--bg); }
+:root[data-theme="dark"] .update-warning, :root[data-theme="tech"] .update-warning { background: rgba(56,139,253,.12); }
+:root[data-theme="dark"] .update-version.new, :root[data-theme="tech"] .update-version.new { background: rgba(56,139,253,.15); color: var(--text-link); }
+:root[data-theme="dark"] .update-status.available, :root[data-theme="tech"] .update-status.available { color: var(--text-link); }
+
+/* ---------- 未来科技 ---------- */
+:root[data-theme="tech"] {
+  --bg: #050b1a;
+  --bg-secondary: #0a1630;
+  --bg-tertiary: #102349;
+  --bg-hover: #102349;
+  --border: #17356b;
+  --border-muted: #0f2550;
+  --text: #d6e6ff;
+  --text-muted: #6f8fc4;
+  --text-link: #00e5ff;
+  --accent: #00b8d4;
+  --accent-hover: #00e5ff;
+  --danger: #ff4d6d;
+  --danger-hover: #ff7a93;
+  --priority-high: #ff4d6d;
+  --priority-normal: #00e5ff;
+  --priority-low: #6f8fc4;
+  --status-doing: #ffc857;
+  --status-done: #3dffb0;
+  --glow: 0 0 12px rgba(0, 229, 255, .35);
+}
+:root[data-theme="tech"] body {
+  background:
+    radial-gradient(ellipse at 15% -10%, rgba(0, 229, 255, .12), transparent 55%),
+    radial-gradient(ellipse at 100% 110%, rgba(138, 77, 255, .14), transparent 55%),
+    linear-gradient(rgba(0, 229, 255, .035) 1px, transparent 1px) 0 0 / 32px 32px,
+    linear-gradient(90deg, rgba(0, 229, 255, .035) 1px, transparent 1px) 0 0 / 32px 32px,
+    var(--bg);
+  font-family: 'Rajdhani', 'Orbitron', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+}
+:root[data-theme="tech"] .header { background: linear-gradient(90deg, #07122b, #0a1a3d 60%, #0b1030); border-bottom: 1px solid #00e5ff55; box-shadow: 0 1px 14px rgba(0, 229, 255, .18); }
+:root[data-theme="tech"] .header-logo { color: #00e5ff; letter-spacing: .06em; text-shadow: 0 0 10px rgba(0, 229, 255, .65); }
+:root[data-theme="tech"] .sidebar, :root[data-theme="tech"] .main-nav { background: rgba(7, 18, 43, .82); border-color: #17356b; }
+:root[data-theme="tech"] .btn-logout, :root[data-theme="tech"] .toolbar-btn, :root[data-theme="tech"] .sidebar-action {
+  background: rgba(0, 229, 255, .06); border-color: #00e5ff55; color: #bfeaff;
+}
+:root[data-theme="tech"] .btn-logout:hover, :root[data-theme="tech"] .toolbar-btn:hover, :root[data-theme="tech"] .sidebar-action:hover {
+  background: rgba(0, 229, 255, .16); border-color: #00e5ff; color: #fff; box-shadow: var(--glow);
+}
+:root[data-theme="tech"] .sidebar-action.btn-new-task, :root[data-theme="tech"] .btn-submit {
+  background: linear-gradient(135deg, #00b8d4, #3b82f6); color: #021024; border-color: transparent; font-weight: 700; box-shadow: var(--glow);
+}
+:root[data-theme="tech"] .sidebar-action.btn-new-task:hover, :root[data-theme="tech"] .btn-submit:hover { background: linear-gradient(135deg, #00e5ff, #6aa5ff); }
+:root[data-theme="tech"] .tool-card, :root[data-theme="tech"] .modal, :root[data-theme="tech"] #context-menu, :root[data-theme="tech"] .theme-card {
+  background: rgba(10, 22, 48, .92); border-color: #00e5ff44; box-shadow: 0 0 0 1px #00e5ff14, 0 8px 28px rgba(0, 0, 0, .55);
+}
+:root[data-theme="tech"] .theme-card.active { border-color: #00e5ff; box-shadow: var(--glow); }
+:root[data-theme="tech"] .task-nav-item.active, :root[data-theme="tech"] .main-nav-item.active, :root[data-theme="tech"] .main-nav-item[aria-pressed="true"], :root[data-theme="tech"] .engine-tab.active {
+  background: linear-gradient(90deg, rgba(0, 229, 255, .18), rgba(0, 229, 255, .03)); box-shadow: inset 2px 0 #00e5ff; color: #fff;
+}
+:root[data-theme="tech"] input, :root[data-theme="tech"] select, :root[data-theme="tech"] textarea { background: #07112a; border-color: #17356b; color: var(--text); }
+:root[data-theme="tech"] input:focus, :root[data-theme="tech"] select:focus, :root[data-theme="tech"] textarea:focus { outline: none; border-color: #00e5ff; box-shadow: var(--glow); }
+:root[data-theme="tech"] .markdown-body.markdown-body h1 { color: #00e5ff; text-shadow: 0 0 14px rgba(0, 229, 255, .45); border-bottom-color: #00e5ff55; }
+:root[data-theme="tech"] .markdown-body.markdown-body :is(h2, h3) { color: #9fe9ff; }
+:root[data-theme="tech"] .markdown-body .md-code-block { border-color: #00e5ff44; background: #040a18; box-shadow: 0 0 14px rgba(0, 229, 255, .1); }
+:root[data-theme="tech"] .markdown-body .md-code-toolbar { background: #0a1630; }
+:root[data-theme="tech"] .markdown-body.markdown-body pre { background: #040a18; }
+:root[data-theme="tech"] .terminal-tabs, :root[data-theme="tech"] .terminal-tabs .terminal-tab.active { box-shadow: none; }
+:root[data-theme="tech"] .terminal-tabs .terminal-tab.active { box-shadow: inset 0 -2px #00e5ff; }
+:root[data-theme="tech"] ::-webkit-scrollbar { width: 10px; height: 10px; }
+:root[data-theme="tech"] ::-webkit-scrollbar-track { background: #050b1a; }
+:root[data-theme="tech"] ::-webkit-scrollbar-thumb { background: #17356b; border-radius: 6px; }
+:root[data-theme="tech"] ::-webkit-scrollbar-thumb:hover { background: #00b8d4; }
+:root[data-theme="tech"] ::selection { background: #00e5ff44; color: #fff; }

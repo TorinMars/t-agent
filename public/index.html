@@ -11,6 +11,8 @@
   <link rel="stylesheet" href="/css/style.css">
   <link rel="stylesheet" href="/css/file-panel.css">
   <link rel="stylesheet" href="/css/markdown.css">
+  <link rel="stylesheet" href="/css/themes.css">
+  <script src="/js/theme.js"></script>
   <link rel="stylesheet" href="/vendor/xterm/xterm-5.5.0.css">
   <link rel="stylesheet" href="/vendor/monaco/monaco.css">
   <!-- 第三方库固定版本并自托管（见 scripts/vendor-libs.json）；mermaid 约 5 MB，首次渲染图表时才由 tasks.js 加载 -->
@@ -29,6 +31,7 @@
     </div>
     <div class="header-right">
       <button class="btn-logout" id="btn-one-click-update" type="button" title="检查并更新当前客户端">↻ 一键更新</button>
+      <button class="btn-logout" id="btn-theme" type="button" title="切换主题" aria-haspopup="dialog">🎨 主题</button>
       <button class="btn-logout settings-button" id="btn-settings" style="margin-right:2px">⚙ 设置<span class="update-dot" id="update-dot" style="display:none"></span></button>
       <button class="btn-logout" id="btn-logout" type="button">退出</button>
     </div>

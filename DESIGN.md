@@ -4,6 +4,8 @@
 
 > v2.45.0 Agent 配置：主导航新增“Agent 配置”页，面向多服务器。Client 在 `system_state`（`agent-config:<owner>`）保存全局默认和每台服务器的覆盖（覆盖里出现的键，含空串，优先于默认；空串表示该台不管）。字段表在 `services/agent-config.js` 的 `SCHEMA`，值一律为字符串并按枚举/数字/列表校验。`POST /api/agent-config/push` 对本机直接写文件，对远程 Engine 调 `PUT /v1/agent-config`（`engine:admin`，能力 `agent-config:manage`）。写入只改填了的键：Claude 用 JSON 递归设值，Codex 用单行 TOML 键值编辑（保留注释和其他表，顶层键写在第一个表之前）；配置文件不合法时不写。同时写入本机覆盖文件，避免被 `agent-sync.py` 的远程默认值盖回去。
 
+> v2.51.0 主题切换：顶部栏新增“🎨 主题”，可选浅色 / 深色 / 未来科技（深空蓝底、霓虹青光晕、网格背景）。`public/js/theme.js` 在 `<head>` 同步执行，把选择（`localStorage` 键 `ta-theme`，只在当前浏览器生效）写到 `<html data-theme>` 避免闪烁，并同步 Monaco（`vs` / `vs-dark` / 自定义 `ta-tech`）、mermaid（之后渲染的图表）和 `theme-color`；`public/css/themes.css` 最后加载，用变量覆盖加少量写死颜色的覆盖实现暗色主题，浅色仍是 `style.css` 默认值。终端本来就是深色，未改动。无后端改动。验证：`scripts/test-theme-browser.cjs`（真实 Chromium，设置 `THEME_SHOT_DIR` 可保存截图）。已知限制：已渲染的流程图要重新打开文档才换主题；分享页和登录页不跟随主题；只对主界面空态做过截图对比，各子页面（工具、应用、文件同步、Agent 配置）的暗色细节未逐一检查。
+
 > v2.50.0 侧栏新增“一键更新全部”按钮（⬆️，`public/js/batch-update.js`）：确认后并行检查并升级所有已连接的远程引擎（复用 `/api/remote-servers/:id/check-update|apply-update|update-status`，逐项显示结果，等待重启后版本到位，最长 5 分钟），最后才更新本机 Client（本机更新会重启服务并自动刷新页面，故放最后，交给 `Updates.apply()`）。已是最新、被阻断或失败的项只汇总不更新；需重启的 `restart_pending` 提示手动重启。无后端改动。测试 `test/batch-update.test.js`。
 
 > v2.49.0 侧栏“导入工作目录下的目录”（📁）与“清理代码目录”（🧹）跟随当前引擎：此前选中远程 Engine 时仍操作本机。Engine 新增 `GET /v1/workspace/unmanaged`、`POST /v1/workspace/import`、`GET|POST /v1/workspace/cleanup`、`POST /v1/workspace/restore`（能力 `workspace:manage`，复用 `services/workspace-tools`，目录基准为该 Engine 的 `TASKS_BASE_DIR`，令牌主体为所有者），Client 代理 `/api/remote-servers/:id/workspace/*`，旧版 Engine 返回 `501 WORKSPACE_UNSUPPORTED`，前端提示先更新该引擎；切换引擎时重新检查未管理目录与角标。测试 `test/workspace-engine.test.js`。

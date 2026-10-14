@@ -404,7 +404,7 @@
     if (!state.editor) {
       state.editor = monaco.editor.create(host, {
         model,
-        theme: 'vs',
+        theme: typeof Theme === 'undefined' ? 'vs' : Theme.monacoTheme(),
         automaticLayout: true,
         fontFamily: 'Menlo, Monaco, Consolas, "Courier New", monospace',
         fontSize: 13,

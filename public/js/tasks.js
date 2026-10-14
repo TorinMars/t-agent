@@ -89,7 +89,7 @@ const Tasks = (() => {
         document.head.appendChild(script);
       });
       mermaidReady = loaded
-        .then(() => mermaid.initialize({ startOnLoad: false, theme: 'default', gantt: { useWidth: undefined }, locale: 'zh-CN' }))
+        .then(() => mermaid.initialize({ startOnLoad: false, theme: typeof Theme === 'undefined' ? 'default' : Theme.mermaidTheme(), gantt: { useWidth: undefined }, locale: 'zh-CN' }))
         .catch(error => { mermaidReady = null; throw error; });
     }
     return mermaidReady;
@@ -1448,7 +1448,7 @@ const Tasks = (() => {
       model = monaco.editor.createModel(text, 'markdown', modelUri);
       editor = monaco.editor.create(document.getElementById('md-editor-host'), {
         model,
-        theme: 'vs',
+        theme: typeof Theme === 'undefined' ? 'vs' : Theme.monacoTheme(),
         lineNumbers: true,
         wordWrap: 'on',
         automaticLayout: true,

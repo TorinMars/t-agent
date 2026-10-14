@@ -411,6 +411,26 @@ const Updates = {
 
 document.getElementById('btn-one-click-update')?.addEventListener('click', () => Updates.oneClick());
 
+// 主题选择：点选即时生效并记住（浏览器本地）。
+function showThemePicker() {
+  const cards = Theme.list().map(theme => `
+    <button type="button" class="theme-card${theme.id === Theme.get() ? ' active' : ''}" data-theme-id="${theme.id}" role="radio" aria-checked="${theme.id === Theme.get()}">
+      <span class="theme-swatch theme-swatch-${theme.id}" aria-hidden="true"><i></i><i></i><i></i></span>
+      <strong>${escapeHtml(theme.label)}</strong><span class="theme-hint">${escapeHtml(theme.hint)}</span>
+    </button>`).join('');
+  Modal.show('切换主题', `<div class="theme-grid" role="radiogroup" aria-label="主题">${cards}</div>
+    <div class="form-hint">设置保存在当前浏览器里；已渲染的流程图在重新打开文档后使用新主题。</div>`);
+  document.querySelectorAll('.theme-card').forEach(card => card.addEventListener('click', () => {
+    Theme.set(card.dataset.themeId);
+    document.querySelectorAll('.theme-card').forEach(item => {
+      const active = item === card;
+      item.classList.toggle('active', active);
+      item.setAttribute('aria-checked', String(active));
+    });
+  }));
+}
+document.getElementById('btn-theme')?.addEventListener('click', showThemePicker);
+
 const ContextMenu = {
   show(x, y, items) {
     const menu = document.getElementById('context-menu');

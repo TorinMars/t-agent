@@ -500,6 +500,22 @@ const Tasks = (() => {
     return m.parse(content);
   }
 
+  // 主题切换后用新主题重画已显示的流程图（源码保存在 data-mermaid-source）。
+  async function rerenderMermaid() {
+    const nodes = [...document.querySelectorAll('.mermaid[data-mermaid-source]')];
+    if (!nodes.length || typeof mermaid === 'undefined') return;
+    for (const node of nodes) {
+      node.textContent = node.dataset.mermaidSource;
+      node.removeAttribute('data-processed');
+      try {
+        await mermaid.run({ nodes: [node] });
+        const svg = node.querySelector('svg');
+        if (svg) { svg.style.width = '100%'; svg.style.height = 'auto'; }
+      } catch { /* 保留源码文本，下次打开文档会重新渲染 */ }
+    }
+  }
+  if (typeof Theme !== 'undefined') Theme.onChange(() => { rerenderMermaid(); });
+
   // 给已渲染的 mermaid SVG 加放大按钮，点击弹出 modal
   function wrapMermaidDiagrams(container) {
     container.querySelectorAll('.mermaid').forEach(el => {
@@ -1714,6 +1730,7 @@ const Tasks = (() => {
         if (!isCurrent()) return;
         try {
           await ensureMermaid();
+          node.dataset.mermaidSource = node.textContent; // 切换主题时据此重新渲染
           await mermaid.run({ nodes: [node] });
         } catch (e) {
           if (!isCurrent()) return;

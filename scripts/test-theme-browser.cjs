@@ -44,6 +44,18 @@ const read = file => fs.readFileSync(path.join(root, file), 'utf8');
     assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), 'dark');
     assert.equal(await page.locator('.theme-card.active').getAttribute('data-theme-id'), 'dark');
     assert.deepEqual(errors, []);
+
+    // 图源里写死的浅黄 rect 高亮块在深色主题下必须被压暗，否则浅色文字落在浅黄底上看不见。
+    await page.addScriptTag({ path: path.join(root, 'public/vendor/mermaid/mermaid-12.1.0.min.js') });
+    await page.evaluate(async () => {
+      document.body.insertAdjacentHTML('beforeend', '<div class="mermaid" id="mm">sequenceDiagram\n A->>B: x\n rect rgb(255,249,153)\n B->>A: y\n end</div>');
+      mermaid.initialize({ startOnLoad: false, theme: 'dark' });
+      await mermaid.run({ nodes: [document.getElementById('mm')] });
+    });
+    const fill = theme => page.evaluate(id => { Theme.set(id); return getComputedStyle(document.querySelector('#mm rect.rect')).fill; }, theme);
+    assert.equal(await fill('light'), 'rgb(255, 249, 153)');
+    for (const id of ['dark', 'tech']) assert.match(await fill(id), /^rgba\(\d+, \d+, \d+, 0\.\d+\)$/, `${id}: highlight block must be a translucent dark tint`);
+    assert.deepEqual(errors, []);
     console.log('theme browser test passed');
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exit(1); });

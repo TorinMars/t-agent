@@ -69,6 +69,10 @@
 :root[data-theme="dark"] .update-version.new, :root[data-theme="tech"] .update-version.new { background: rgba(56,139,253,.15); color: var(--text-link); }
 :root[data-theme="dark"] .update-status.available, :root[data-theme="tech"] .update-status.available { color: var(--text-link); }
 
+/* 流程图里 rect 高亮块的颜色写在图源里（常是浅黄），深色下文字和线条会淡到看不见，改成半透明的深色调。 */
+:root[data-theme="dark"] .mermaid svg rect.rect { fill: rgba(88, 166, 255, .12); stroke: rgba(88, 166, 255, .4); }
+:root[data-theme="tech"] .mermaid svg rect.rect { fill: rgba(0, 229, 255, .08); stroke: rgba(0, 229, 255, .45); }
+
 /* ---------- 未来科技 ---------- */
 :root[data-theme="tech"] {
   --bg: #050b1a;

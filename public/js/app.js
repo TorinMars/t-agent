@@ -419,7 +419,7 @@ function showThemePicker() {
       <strong>${escapeHtml(theme.label)}</strong><span class="theme-hint">${escapeHtml(theme.hint)}</span>
     </button>`).join('');
   Modal.show('切换主题', `<div class="theme-grid" role="radiogroup" aria-label="主题">${cards}</div>
-    <div class="form-hint">设置保存在当前浏览器里；已渲染的流程图在重新打开文档后使用新主题。</div>`);
+    <div class="form-hint">设置保存在当前浏览器里。</div>`);
   document.querySelectorAll('.theme-card').forEach(card => card.addEventListener('click', () => {
     Theme.set(card.dataset.themeId);
     document.querySelectorAll('.theme-card').forEach(item => {

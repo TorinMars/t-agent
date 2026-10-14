@@ -290,6 +290,14 @@ const Tasks = (() => {
       fontFamily: 'Menlo, Monaco, "Courier New", monospace',
       theme: { background: '#1e1e1e' },
       scrollback: 5000,
+      // 程序用 OSC 8 输出的超链接（Claude Code 等，显示文字可以和真实地址不同）：同样要按住 Cmd/Ctrl 点击，
+      // 并先确认真实地址，且只打开 http(s)。xterm 默认是单击就弹确认框。
+      linkHandler: {
+        activate(event, uri) {
+          if (!(event.metaKey || event.ctrlKey) || !/^https?:\/\//i.test(uri)) return;
+          if (confirm(`打开链接？\n\n${uri}`)) window.open(uri, '_blank', 'noopener,noreferrer');
+        },
+      },
     });
     const fa = new FitAddon.FitAddon();
     t.loadAddon(fa);

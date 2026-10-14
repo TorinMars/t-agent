@@ -15,15 +15,17 @@ const root = path.resolve(__dirname, '..');
     for (const file of ['xterm/xterm-5.5.0.js', 'xterm/addon-web-links-0.11.0.js']) await page.addScriptTag({ path: path.join(root, 'public/vendor', file) });
     await page.addStyleTag({ path: path.join(root, 'public/vendor/xterm/xterm-5.5.0.css') });
     // 复制 tasks.js 里的注册代码，保证两处一致。
+    const handler = fs.readFileSync(path.join(root, 'public/js/tasks.js'), 'utf8').match(/linkHandler: \{[\s\S]*?\n      \},/)[0];
     const registration = fs.readFileSync(path.join(root, 'public/js/tasks.js'), 'utf8').match(/t\.loadAddon\(new WebLinksAddon[\s\S]*?\}\)\);/)[0];
-    await page.evaluate(async code => {
+    await page.evaluate(async ({ code, handlerCode }) => {
       window.opened = [];
       window.open = (...args) => { window.opened.push(args); return null; };
-      const t = new Terminal({ fontSize: 13 });
+      window.confirm = () => true;
+      const t = new Terminal(new Function(`return { fontSize: 13, ${handlerCode} }`)());
       t.open(document.getElementById('t'));
       new Function('t', code)(t);
-      await new Promise(resolve => t.write('see https://example.com/docs?a=1 ok\r\n', resolve));
-    }, registration);
+      await new Promise(resolve => t.write('see https://example.com/docs?a=1 ok\r\nopen \u001b]8;;https://example.com/pr/1\u0007this PR\u001b]8;;\u0007 end\r\n', resolve));
+    }, { code: registration, handlerCode: handler });
     await page.waitForTimeout(200);
     // “see ” 占 4 列，链接从第 5 列开始；取链接中间位置。
     const box = await page.locator('.xterm-screen').boundingBox();
@@ -40,6 +42,15 @@ const root = path.resolve(__dirname, '..');
     assert.equal(opened.length, 1, 'Cmd+click opens the link');
     assert.equal(opened[0][0], 'https://example.com/docs?a=1');
     assert.match(opened[0][2], /noopener/);
+
+    // OSC 8 超链接（显示文字 “this PR” 在第 2 行第 6 列起）：同样只有 Cmd/Ctrl + 点击才打开。
+    const row = { x: box.x + cell * 8, y: box.y + 6 + (box.height / (await page.evaluate(() => document.querySelectorAll('.xterm-rows > div').length))) };
+    await page.evaluate(() => { window.opened.length = 0; });
+    await page.mouse.move(row.x, row.y); await page.waitForTimeout(200);
+    await page.mouse.click(row.x, row.y);
+    assert.deepEqual(await page.evaluate(() => window.opened), [], 'plain click on an OSC 8 link must not open it');
+    await page.keyboard.down('Meta'); await page.mouse.click(row.x, row.y); await page.keyboard.up('Meta');
+    assert.equal((await page.evaluate(() => window.opened.map(call => call[0])))[0], 'https://example.com/pr/1');
     assert.deepEqual(errors, []);
     console.log('terminal links browser test passed');
   } finally { await browser.close(); }

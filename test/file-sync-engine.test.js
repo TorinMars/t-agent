@@ -79,7 +79,8 @@ test('Engine 鉴权、主节点清单与已有连接代理', async t => {
   // 主服务器生成连接字符串（需要管理令牌，同步令牌不行）；字符串里的配对码可以换同步令牌。
   assert.equal((await requestJson(`${engine}/v1/file-sync/invite`, null, 'POST', { master_url: engine })).status, 401);
   assert.equal((await requestJson(`${engine}/v1/file-sync/invite`, syncToken, 'POST', { master_url: engine })).status, 401);
-  assert.equal((await requestJson(`${engine}/v1/file-sync/invite`, token, 'POST', { master_url: '' })).status, 400);
+  const derived = await (await requestJson(`${engine}/v1/file-sync/invite`, token, 'POST', {})).json();
+  assert.equal(JSON.parse(Buffer.from(derived.connection_string.slice(6), 'base64url').toString()).u, engine, '不填地址时按收到请求的地址生成');
   const invite = await (await requestJson(`${engine}/v1/file-sync/invite`, token, 'POST', { master_url: engine })).json();
   assert.match(invite.connection_string, /^TAFS1:/);
   const inviteCode = JSON.parse(Buffer.from(invite.connection_string.slice(6), 'base64url').toString()).c;

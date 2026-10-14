@@ -32,7 +32,7 @@ function mount(router, auth, browser = false) {
   router.put('/role', auth, handler(req => service.setRole(req.body.role)));
   router.post('/unpair', auth, handler(() => service.unpair()));
   // 主服务器生成连接字符串；从服务器粘贴它来连接（主服务器在外网，从服务器主动连过去）。
-  router.post('/invite', auth, handler(req => service.createInvite(req.body.master_url)));
+  router.post('/invite', auth, handler(req => service.createInvite(req.body.master_url || `${req.protocol}://${req.get('host')}`)));
   router.post('/join', auth, handler(req => service.joinInvite(req.body.connection_string)));
   router.post('/resolve', auth, handler(req => service.resolveConflict(req.body.path)));
   if (!browser) {

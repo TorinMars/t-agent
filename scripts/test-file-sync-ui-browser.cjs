@@ -54,12 +54,8 @@ const panel = index.match(/<section class="file-sync-panel"[\s\S]*?<\/section>/)
     // 主服务器：填写自己的外网地址，生成包含全部连接信息的字符串。
     assert.equal(await page.locator('#file-sync-invite').isVisible(), true);
     await page.click('#file-sync-invite');
-    assert.equal(await page.locator('#sync-invite-result').isVisible(), false);
-    await page.fill('#sync-invite-url', 'http://203.0.113.9:3000');
-    await page.click('#sync-invite-make');
-    await page.waitForFunction(() => !document.getElementById('sync-invite-result').hidden);
-    assert.equal(await page.locator('#sync-invite-string').inputValue(), 'TAFS1:eyJ2IjoxfQ');
-    assert.deepEqual(await page.evaluate(() => window.calls.find(call => call[1].endsWith('/invite'))[2]), { master_url: 'http://203.0.113.9:3000' });
+    await page.waitForFunction(() => document.getElementById('sync-invite-string')?.value === 'TAFS1:eyJ2IjoxfQ');
+    assert.deepEqual(await page.evaluate(() => ({ sent: window.calls.find(call => call[1].endsWith('/invite'))[2], origin: location.origin })).then(r => r.sent), { master_url: await page.evaluate(() => location.origin) }, '点一下就生成，默认用当前地址');
 
     // 切换为从服务器：出现粘贴框，没有主服务器才有的操作。
     await page.selectOption('#file-sync-role-select', 'slave');

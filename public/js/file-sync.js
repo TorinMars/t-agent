@@ -137,21 +137,21 @@ const FileSyncUI = (() => {
     catch { message('请手动复制选中的内容'); }
   }
   $('file-sync-invite').addEventListener('click', () => {
-    const local = endpoint === '/api/file-sync';
-    Modal.show('生成连接字符串', `<label>主服务器地址（从服务器用它来连接）<input id="sync-invite-url" type="text" placeholder="http://主服务器公网地址:3000" autocomplete="off"></label><div class="form-hint">填写从服务器能访问到的本主服务器地址（公网 IP、域名或隧道地址，带 <code>/web</code> 也行）。连接字符串包含这个地址和一个 10 分钟内有效、只能使用一次的配对码；每台从服务器各生成一个。字符串相当于一次性的访问凭据，只发给自己的服务器，跨公网请使用 HTTPS 地址。</div><div class="form-actions"><button type="button" class="btn-submit" id="sync-invite-make">生成</button></div><div id="sync-invite-result" hidden><label>连接字符串<textarea class="form-input" id="sync-invite-string" rows="4" readonly spellcheck="false"></textarea></label><div class="form-hint" id="sync-invite-hint"></div><div class="form-actions"><button type="button" class="btn-submit" id="sync-invite-copy">复制</button></div></div>`);
-    if (local) $('sync-invite-url').value = location.origin;
-    $('sync-invite-make').addEventListener('click', async () => {
+    Modal.show('生成连接字符串', `<label>连接字符串<textarea class="form-input" id="sync-invite-string" rows="4" readonly spellcheck="false"></textarea></label><div class="form-hint" id="sync-invite-hint"></div><div class="form-actions"><button type="button" class="btn-submit" id="sync-invite-copy">复制</button></div><details class="form-advanced"><summary>高级：修改主服务器地址</summary><label>从服务器用它来连接<input id="sync-invite-url" type="text" placeholder="默认使用当前访问的地址，例如 https://主服务器域名" autocomplete="off"></label><div class="form-actions"><button type="button" class="btn-cancel" id="sync-invite-make">按此地址重新生成</button></div></details><div class="form-hint">字符串含一个 10 分钟内有效、只能使用一次的配对码，每台从服务器各生成一个，只发给自己的服务器，跨公网请使用 HTTPS 地址。</div>`);
+    const make = async () => {
       const master_url = $('sync-invite-url').value.trim();
-      if (!master_url) return;
       try {
-        const invite = await API.post(`${endpoint}/invite`, { master_url });
+        const invite = await API.post(`${endpoint}/invite`, master_url ? { master_url } : {});
         $('sync-invite-string').value = invite.connection_string;
         $('sync-invite-hint').textContent = `到 ${new Date(invite.expires_at).toLocaleTimeString()} 过期，只能使用一次。`;
-        $('sync-invite-result').hidden = false;
         $('sync-invite-string').select();
       } catch (error) { message(`生成失败：${errorText(error)}`); }
-    });
+    };
+    $('sync-invite-make').addEventListener('click', make);
     $('sync-invite-copy').addEventListener('click', () => copyText($('sync-invite-string'), '连接字符串已复制'));
+    // 本地主服务器用浏览器当前访问的地址；远程引擎由对方服务按收到请求的地址生成。
+    if (endpoint === '/api/file-sync') $('sync-invite-url').value = location.origin;
+    make();
   });
   $('file-sync-connect').addEventListener('click', async () => {
     const connection_string = $('file-sync-join-input').value.trim();

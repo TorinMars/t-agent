@@ -909,7 +909,7 @@ const Tasks = (() => {
 
   function buildNavItem(task, groups, writable) {
     const item = document.createElement('div');
-    item.className = `task-nav-item${task.status === 'doing' ? ' is-doing' : ''}${task.id === selectedId ? ' active' : ''}`;
+    item.className = `task-nav-item${task.id === selectedId ? ' active' : ''}`;
     item.dataset.id = task.id;
     item.draggable = writable;
 

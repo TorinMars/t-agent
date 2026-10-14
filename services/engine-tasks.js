@@ -213,6 +213,7 @@ function deleteTodo(principalId, taskId, todoId) {
 }
 
 module.exports = {
+  DEFAULT_BASE,
   assertWorkspacePath,
   ownedTask,
   listTasks,

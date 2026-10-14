@@ -299,6 +299,24 @@ router.post('/:id/tasks/:taskId/todos', forwardJson('POST', req => `${taskPath(r
 router.put('/:id/tasks/:taskId/todos/:todoId', forwardJson('PUT', req => `${taskPath(req)}/todos/${encodeURIComponent(req.params.todoId)}`));
 router.delete('/:id/tasks/:taskId/todos/:todoId', forwardJson('DELETE', req => `${taskPath(req)}/todos/${encodeURIComponent(req.params.todoId)}`));
 
+// 工作目录工具（导入未管理目录、清理代码目录）：旧版 Engine 没有这些接口时返回 501。
+async function proxyWorkspace(req, res, pathname, method = 'GET', success = 200) {
+  const target = remoteTarget(req, res);
+  if (!target) return;
+  try {
+    const options = method === 'GET' ? { method } : { method, body: req.body ?? {} };
+    res.status(success).json(await request(target.row.base_url, pathname, target.token, options));
+  } catch (error) {
+    if (error.message === 'REMOTE_HTTP_404') return res.status(501).json({ error: 'WORKSPACE_UNSUPPORTED' });
+    res.status(error.statusCode || 502).json({ error: safeError(error) });
+  }
+}
+router.get('/:id/workspace/unmanaged', (req, res) => proxyWorkspace(req, res, '/v1/workspace/unmanaged'));
+router.post('/:id/workspace/import', (req, res) => proxyWorkspace(req, res, '/v1/workspace/import', 'POST', 201));
+router.get('/:id/workspace/cleanup', (req, res) => proxyWorkspace(req, res, '/v1/workspace/cleanup'));
+router.post('/:id/workspace/cleanup', (req, res) => proxyWorkspace(req, res, '/v1/workspace/cleanup', 'POST'));
+router.post('/:id/workspace/restore', (req, res) => proxyWorkspace(req, res, '/v1/workspace/restore', 'POST'));
+
 router.get('/:id/terminal-activity', forwardJson('GET', () => '/v1/terminal-activity'));
 router.post('/:id/tasks/:taskId/terminal/ack', forwardJson('POST', req => `${taskPath(req)}/terminal/ack`));
 

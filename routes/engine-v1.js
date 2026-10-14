@@ -76,7 +76,7 @@ function infoHandler(req, res) {
       'tasks:reorder', 'documents:create', 'documents:watch', 'files:assets', 'paths:validate', 'terminal:activity',
       'todos:read', 'todos:write',
       'terminal:interactive', 'terminal:control', 'terminal:multiple', 'token:pairing',
-      'engine:update', 'pm2:manage', 'apps:manage', 'agent-config:manage', 'file-sync:manage',
+      'engine:update', 'pm2:manage', 'apps:manage', 'agent-config:manage', 'file-sync:manage', 'workspace:manage',
     ],
   });
 }
@@ -126,6 +126,34 @@ router.use('/apps', appsRouter);
 
 // Agent（Claude / Codex）默认配置：由 Client 的“Agent 配置”页推送，只允许 owner Token。
 router.use('/agent-config', require('./agent-config').createEngineRouter({ guard: requireEngineAuth('engine:admin') }));
+// 工作目录工具（导入未管理目录、清理代码目录）：与本地 /api/tasks/workspace/* 共用 services/workspace-tools。
+const workspaceTools = require('../services/workspace-tools');
+const workspaceError = (res, error) => res.status(error.statusCode || 500).json({
+  error: error.message, ...(error.reason ? { reason: error.reason } : {}), ...(error.path ? { path: error.path } : {}),
+});
+const workspaceWrite = requireEngineAuth('tasks:write');
+router.get('/workspace/unmanaged', requireEngineAuth('tasks:read'), (req, res) => {
+  try { res.json(workspaceTools.listUnmanaged(db, principal(req), tasks.DEFAULT_BASE)); }
+  catch (error) { workspaceError(res, error); }
+});
+router.post('/workspace/import', workspaceWrite, (req, res) => {
+  try { res.status(201).json(workspaceTools.importDirs(db, principal(req), tasks.DEFAULT_BASE, req.body && req.body.paths)); }
+  catch (error) { workspaceError(res, error); }
+});
+router.get('/workspace/cleanup', requireEngineAuth('tasks:read'), async (req, res) => {
+  try { res.json(await workspaceTools.cleanupOverview(db, principal(req), tasks.DEFAULT_BASE)); }
+  catch (error) { workspaceError(res, error); }
+});
+router.post('/workspace/cleanup', workspaceWrite, async (req, res) => {
+  if (!req.body || req.body.confirm !== true) return res.status(400).json({ error: 'CONFIRM_REQUIRED' });
+  try { res.json(await workspaceTools.cleanupRepos(db, principal(req), tasks.DEFAULT_BASE, req.body.repos, id => terminal.closeTaskTerminals(id))); }
+  catch (error) { workspaceError(res, error); }
+});
+router.post('/workspace/restore', workspaceWrite, async (req, res) => {
+  try { res.json(await workspaceTools.restoreRepo(db, principal(req), req.body && req.body.id)); }
+  catch (error) { workspaceError(res, error); }
+});
+
 router.get('/tasks', requireEngineAuth('tasks:read'), (req, res) => {
   try { res.json(tasks.listTasks(principal(req), req.query.status)); }
   catch (error) { errorResponse(res, error); }

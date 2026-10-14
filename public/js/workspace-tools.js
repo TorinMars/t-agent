@@ -15,11 +15,20 @@ const WorkspaceTools = (() => {
     try { const data = JSON.parse(text); text = data.reason ? `${data.error}：${data.reason}` : data.error; } catch { /* 保持原文 */ }
     return text;
   };
+  // 跟随当前引擎：本地走 /api/tasks/workspace，远程 Engine 经代理走 /api/remote-servers/:id/workspace。
+  const activeSource = () => (window.Tasks && Tasks.getSource(Tasks.getActiveKey())) || { local: true };
+  const base = () => { const src = activeSource(); return src.local ? '/api/tasks/workspace' : `/api/remote-servers/${src.id}/workspace`; };
+  const supported = () => { const src = activeSource(); return src.local || (src.caps && src.caps.has('workspace:manage')); };
+  const UNSUPPORTED = '<p>当前引擎版本较旧，不支持导入或清理工作目录，请先更新该引擎。</p>';
   const refreshTasks = async () => { if (window.Tasks) await Tasks.refresh(); };
 
   // ---------- 导入 ----------
   async function loadUnmanaged() {
-    try { unmanaged = (await API.get('/api/tasks/workspace/unmanaged')).items; } catch { unmanaged = []; }
+    const key = Tasks.getActiveKey();
+    let items = [];
+    if (supported()) { try { items = (await API.get(`${base()}/unmanaged`)).items; } catch { items = []; } }
+    if (key !== Tasks.getActiveKey()) return unmanaged; // 加载期间已切换引擎，丢弃过期结果
+    unmanaged = items;
     if (importButton) {
       const badge = document.getElementById('workspace-import-badge');
       importButton.classList.toggle('has-items', unmanaged.length > 0);
@@ -56,7 +65,7 @@ const WorkspaceTools = (() => {
       const paths = items.filter(el => el.checked).map(el => unmanaged[Number(el.dataset.index)].path);
       event.currentTarget.disabled = true;
       try {
-        await API.post('/api/tasks/workspace/import', { paths });
+        await API.post(`${base()}/import`, { paths });
         await refreshTasks();
         await loadUnmanaged();
         if (unmanaged.length) renderImport(); else Modal.hide();
@@ -66,9 +75,10 @@ const WorkspaceTools = (() => {
 
   // ---------- 清理 ----------
   async function openCleanup() {
+    if (!supported()) { Modal.show('清理代码目录', UNSUPPORTED); return; }
     Modal.show('清理代码目录', '<p class="wt-intro">正在扫描各任务的目录大小和 Git 状态，目录多时可能要几十秒…</p>');
     let data;
-    try { data = await API.get('/api/tasks/workspace/cleanup'); }
+    try { data = await API.get(`${base()}/cleanup`); }
     catch (error) { Modal.show('清理代码目录', `<p class="wt-error">${escapeHtml(errorText(error))}</p>`); return; }
     renderCleanup(data);
   }
@@ -125,10 +135,10 @@ const WorkspaceTools = (() => {
       if (!confirm(`确认删除 ${chosen.length} 个仓库的本地目录，释放约 ${formatSize(total)}？\n\n${chosen.map(item => item.path).join('\n')}\n\n内容在远程仓库里，之后可以恢复。`)) return;
       run.disabled = true; run.textContent = '清理中…';
       try {
-        const results = await API.post('/api/tasks/workspace/cleanup', { repos: chosen.map(item => ({ task_id: item.task_id, path: item.path })), confirm: true });
+        const results = await API.post(`${base()}/cleanup`, { repos: chosen.map(item => ({ task_id: item.task_id, path: item.path })), confirm: true });
         const failed = results.filter(item => !item.ok);
         await refreshTasks();
-        renderCleanup(await API.get('/api/tasks/workspace/cleanup'));
+        renderCleanup(await API.get(`${base()}/cleanup`));
         const freed = results.filter(item => item.ok).reduce((sum, item) => sum + item.freed_bytes, 0);
         fail(`已清理 ${results.length - failed.length} 个，释放 ${formatSize(freed)}${failed.length ? `；${failed.length} 个失败：${failed.map(item => item.reason || item.error).join('；')}` : ''}`);
       } catch (error) { run.disabled = false; run.textContent = '清理所选'; fail(errorText(error)); }
@@ -136,21 +146,31 @@ const WorkspaceTools = (() => {
     document.querySelectorAll('[data-restore]').forEach(el => el.addEventListener('click', async () => {
       el.disabled = true; el.textContent = '恢复中…';
       try {
-        await API.post('/api/tasks/workspace/restore', { id: Number(el.dataset.restore) });
+        await API.post(`${base()}/restore`, { id: Number(el.dataset.restore) });
         await refreshTasks();
-        renderCleanup(await API.get('/api/tasks/workspace/cleanup'));
+        renderCleanup(await API.get(`${base()}/cleanup`));
       } catch (error) { el.disabled = false; el.textContent = '从仓库恢复'; fail(errorText(error)); }
     }));
   }
 
   if (importButton) importButton.addEventListener('click', async () => {
     await loadUnmanaged();
-    if (unmanaged.length) renderImport();
+    if (!supported()) Modal.show('导入工作目录下的目录', UNSUPPORTED);
+    else if (unmanaged.length) renderImport();
     else Modal.show('导入工作目录下的目录', '<p>工作目录下没有未被任务管理的目录。</p>');
   });
   if (cleanupButton) cleanupButton.addEventListener('click', openCleanup);
   // 页面加载后稍等再检查，避免和任务列表抢启动资源。
   setTimeout(loadUnmanaged, 1500);
+  // 切换引擎或引擎能力就绪后重新检查对应机器上未管理的目录。
+  let seen = '';
+  Tasks.onSourceChange(() => {
+    const mark = `${Tasks.getActiveKey()}:${supported() ? 1 : 0}`;
+    if (mark === seen) return;
+    seen = mark;
+    unmanaged = [];
+    loadUnmanaged();
+  });
   return { loadUnmanaged, openCleanup };
 })();
 

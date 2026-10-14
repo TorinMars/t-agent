@@ -36,7 +36,8 @@ const read = file => fs.readFileSync(path.join(root, file), 'utf8');
     assert.deepEqual(await page.evaluate(() => window.sent), ['EN(修复登录页面的 bug)', '\r']);
     assert.deepEqual(await page.evaluate(() => window.apiCalls), [['/api/translate', { text: '修复登录页面的 bug' }]]);
     assert.equal(await input.inputValue(), '', 'input is cleared after sending');
-    assert.match(await page.locator('#terminal-translate-status').textContent(), /已发送：EN\(/);
+    assert.equal(await page.locator('#terminal-translate-status').textContent(), '', 'no "sent" echo of the translation after success');
+    assert.equal(await page.locator('#terminal-translate-status').isVisible(), false);
 
     // 控制字符不会进入终端
     await page.evaluate(() => { window.sent.length = 0; window.nextResult = () => ({ text: 'ok\u001b[31m\nnext', translated: true }); });

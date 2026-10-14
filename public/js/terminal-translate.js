@@ -19,15 +19,9 @@ const TerminalTranslate = (() => {
   const settingsButton = document.getElementById('terminal-translate-settings');
   let busy = false;
 
-  function say(message, isError = false, translated = '') {
+  function say(message, isError = false) {
     status.className = `terminal-translate-status${isError ? ' error' : ''}`;
-    status.textContent = '';
-    if (translated) {
-      status.append('已发送：');
-      const code = document.createElement('code');
-      code.textContent = translated;
-      status.append(code);
-    } else status.textContent = message;
+    status.textContent = message;
   }
   function setBusy(value) {
     busy = value;
@@ -46,7 +40,7 @@ const TerminalTranslate = (() => {
       if (!text) throw new Error('翻译结果为空');
       if (!window.Tasks || !Tasks.sendTerminalInput(text)) throw new Error('终端未连接，译文未发送');
       setTimeout(() => { Tasks.sendTerminalInput('\r'); input.focus(); }, SUBMIT_DELAY_MS);
-      say('', false, text);
+      say(''); // 成功时不显示译文，终端里已经能看到
       input.value = '';
     } catch (error) {
       const message = errorText(error);

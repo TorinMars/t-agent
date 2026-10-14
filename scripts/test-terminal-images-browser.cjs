@@ -61,8 +61,8 @@ const server = http.createServer((req, res) => {
       assert.deepEqual(await page.evaluate(() => ({ sent, clicks, keys, locked: term.options.disableStdin, focused: document.activeElement.className })), { sent: [], clicks: 0, keys: 0, locked: true, focused: 'terminal-image-upload-overlay' });
       pending.shift().end(JSON.stringify({ url: 'https://images.example/picture.png' }));
       await page.waitForFunction(() => !TerminalImages.busy);
-      assert.deepEqual(await page.evaluate(() => sent), ['https://images.example/picture.png']);
-      await page.keyboard.type('x'); assert.deepEqual(await page.evaluate(() => sent), ['https://images.example/picture.png', 'x']);
+      assert.deepEqual(await page.evaluate(() => sent), ['https://images.example/picture.png ']);
+      await page.keyboard.type('x'); assert.deepEqual(await page.evaluate(() => sent), ['https://images.example/picture.png ', 'x']);
       assert.equal(await page.getByRole('button', { name: '上传图片', exact: true }).isVisible(), true);
       if (mobile) {
         await page.screenshot({ path: '/private/tmp/t-agent-oss-mobile.png' });
@@ -85,7 +85,7 @@ const server = http.createServer((req, res) => {
       pending.shift().end(JSON.stringify({ url: 'https://images.example/retained.png' }));
       await page.waitForFunction(() => !TerminalImages.busy);
       assert.equal(await page.locator('.terminal-image-result input').inputValue(), 'https://images.example/retained.png');
-      assert.deepEqual(await page.evaluate(() => sent), ['https://images.example/picture.png', 'x']);
+      assert.deepEqual(await page.evaluate(() => sent), ['https://images.example/picture.png ', 'x']);
       assert.deepEqual(errors, []); await context.close();
     }
     console.log('PASS: real xterm text/image paste, upload processing lock, keyboard/pointer/focus block, no Enter, failure unlock, stale socket retained URL, desktop/installed-app layouts and phone bottom picker.');

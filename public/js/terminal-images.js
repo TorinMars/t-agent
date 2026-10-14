@@ -136,7 +136,8 @@ const TerminalImages = (() => {
     if (error) { alert(error.message); return; }
     if (instances.has(item) && active() === item && item.connection() === socket && socket.readyState === 1) {
       // xterm's paste keeps bracketed-paste semantics and never adds Enter.
-      item.term.paste(result.url); item.term.focus();
+      // 链接后补一个空格，方便紧接着继续输入文字；不加回车。
+      item.term.paste(`${result.url} `); item.term.focus();
     } else retain(result.url);
   }
   let picked = null;

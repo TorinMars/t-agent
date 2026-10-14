@@ -46,7 +46,7 @@ test('image paste locks the whole page, reports transfer then processing, and in
   assert.match(s.document.querySelector('.terminal-image-upload-status').textContent, /OSS/);
   assert.deepEqual(s.sent, []);
   xhr.finish(200, { url: 'https://images.example/a.png', expiresAt: null }); await tick();
-  assert.deepEqual(s.sent, ['https://images.example/a.png']);
+  assert.deepEqual(s.sent, ['https://images.example/a.png ']); // 链接后补一个空格，不加回车
   assert.equal(s.document.querySelector('.terminal-image-upload-overlay'), null);
   assert.equal(Boolean(s.term.options.disableStdin), false);
   assert.equal(Boolean(s.document.getElementById('app').inert), false);
@@ -98,7 +98,7 @@ test('upload entry remains available and paste retries configuration after start
   assert.equal(s.requests.length, 1);
   assert.equal(s.notices.length, 0);
   s.requests[0].finish(200, { url: 'https://images.example/retried.png' }); await tick();
-  assert.deepEqual(s.sent, ['https://images.example/retried.png']);
+  assert.deepEqual(s.sent, ['https://images.example/retried.png ']);
 });
 test('returning to an installed window refreshes config saved in another window', async () => {
   const s = setup(); s.context.API.get = async () => ({ enabled: false });

@@ -64,3 +64,21 @@ test('同一界面显示不同 Engine 的任务，切换后侧栏内容随之变
   await context.Tasks.activateSource('local');
   assert.equal(document.getElementById('btn-reveal-folder').style.display, '');
 });
+
+test('刷新时本地分组接口较慢，期间已切到远程 Engine，切回本地后任务不会丢失', async () => {
+  // 本地任务列表先返回、分组接口较慢；这段时间 Engines 已把界面切到保存的远程 Engine，
+  // 切换会把当时的 tasks 写回本地数据源，不能把刚收到的本地任务覆盖成空列表。
+  const saved = new Map([['active-engine-key', 'remote:2']]);
+  const { context, document } = setup(saved, [{ id: 2, name: 'Engine 2', base_url: 'http://engine', status: 'online' }]);
+  const original = context.API.get;
+  context.API.get = async path => {
+    if (path === '/api/task-groups') await new Promise(resolve => setTimeout(resolve, 40));
+    return original.call(context.API, path);
+  };
+  await Promise.all([context.Tasks.load(), context.Engines.load()]);
+  assert.equal(context.Tasks.getActiveKey(), 'remote:2');
+  assert.match(document.getElementById('task-nav').textContent, /Remote task/);
+  await context.Tasks.activateSource('local');
+  assert.match(document.getElementById('task-nav').textContent, /Local task/, '切回本地后应显示本地任务');
+  assert.equal(context.Tasks.getSource('local').tasks.length, 1);
+});

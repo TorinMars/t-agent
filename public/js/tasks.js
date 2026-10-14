@@ -1131,6 +1131,9 @@ const Tasks = (() => {
     }
     src.loadError = null;
     src.tasks = list;
+    // 同步更新当前视图的 tasks：下面等待分组接口期间如果切换了数据源，activateSource 会把 tasks 写回旧数据源，
+    // 这里不同步就会把刚拿到的任务列表覆盖成旧的空数组（刷新后切回本地任务消失）。
+    if (src === source) tasks = list;
     // 旧版 Engine 没有分组接口时，按任务状态补全。
     let groups = null;
     try { groups = await API.get(src.groupsBase); } catch {}

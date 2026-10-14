@@ -293,6 +293,10 @@ const Tasks = (() => {
     });
     const fa = new FitAddon.FitAddon();
     t.loadAddon(fa);
+    // Cmd（macOS）/ Ctrl 加点击在新标签页打开终端里的链接；不按修饰键时只是普通选中，避免误触。
+    t.loadAddon(new WebLinksAddon.WebLinksAddon((event, uri) => {
+      if (event.metaKey || event.ctrlKey) window.open(uri, '_blank', 'noopener,noreferrer');
+    }));
     t.open(el);
     const clipboard = TerminalClipboard.attach(t, el);
 

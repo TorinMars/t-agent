@@ -34,6 +34,13 @@
       "file": "public/vendor/xterm/addon-fit-0.10.0.js",
       "url": "https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.js",
       "sha256": "bdaefa370b1bfc42ee88d46fe6072400902a4d4b2d45cd93438dda9b23c97089"
+    },
+    {
+      "name": "@xterm/addon-web-links",
+      "version": "0.11.0",
+      "file": "public/vendor/xterm/addon-web-links-0.11.0.js",
+      "url": "https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/lib/addon-web-links.js",
+      "sha256": "f230a6c8211ce4614dda5441f27b603c7c1ca95151a655bc0efac6377ee643f0"
     }
   ]
 }

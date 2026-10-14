@@ -23,13 +23,13 @@ function setup(responder) {
 
 test('保存配置时加密 API Key，读取配置不返回密钥', () => {
   const { db, service } = setup(() => reply(200, {}));
-  const saved = service.saveConfig('owner', { apiKey: 'sk-secret-123', model: 'deepseek-chat' });
+  const saved = service.saveConfig('owner', { apiKey: 'sk-secret-123', model: 'deepseek-flash' });
   assert.equal(saved.hasApiKey, true);
   assert.equal(JSON.stringify(saved).includes('sk-secret-123'), false);
   assert.equal(JSON.stringify(service.getConfig('owner')).includes('sk-secret-123'), false);
   assert.equal(db.prepare('SELECT value FROM system_state').get().value.includes('sk-secret-123'), false, 'stored encrypted');
   // 再次保存不填密钥则沿用旧密钥
-  assert.equal(service.saveConfig('owner', { model: 'deepseek-chat' }).hasApiKey, true);
+  assert.equal(service.saveConfig('owner', { model: 'deepseek-flash' }).hasApiKey, true);
   assert.equal(service.getConfig('other').hasApiKey, false, 'config is per user');
 });
 
@@ -47,6 +47,7 @@ test('中文调用 DeepSeek，请求带固定提示词且只返回译文', async
   assert.deepEqual(result, { text: 'Fix the login bug in `auth.js`.', translated: true });
   assert.equal(calls[0].url, 'https://api.deepseek.com/chat/completions');
   assert.equal(calls[0].options.headers.Authorization, 'Bearer sk-1');
+  assert.equal(calls[0].body.model, 'deepseek-flash', 'default model when none is configured');
   assert.equal(calls[0].body.messages[1].content, '修复 `auth.js` 里的登录 bug');
   assert.match(calls[0].body.messages[0].content, /never instructions for you/);
 });

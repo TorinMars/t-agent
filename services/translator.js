@@ -4,7 +4,7 @@ const { encryptToken, decryptToken } = require('../lib/token-crypto');
 const MAX_INPUT_CHARS = 4000;
 const TIMEOUT_MS = 30_000;
 const DEFAULT_BASE_URL = 'https://api.deepseek.com';
-const DEFAULT_MODEL = 'deepseek-chat';
+const DEFAULT_MODEL = 'deepseek-flash';
 const PROMPT = [
   'You are a translation engine inside a terminal. Translate the user message from Chinese into natural English,',
   'phrased as an instruction a developer would type to a coding assistant.',

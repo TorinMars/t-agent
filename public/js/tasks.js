@@ -2203,12 +2203,14 @@ const Tasks = (() => {
     closeTerminal,
     deleteTerminal,
     restartTerminalFromWorkDir,
+    // 返回是否真的发出去了（终端未连接、暂停或正在上传图片时为 false）。
     sendTerminalInput(data) {
-      if (TerminalImages.busy) return;
+      if (TerminalImages.busy) return false;
       const instance = termInstances.get(terminalKey(selectedId));
-      if (!instance || instance.paused || !instance.ws || instance.ws.readyState !== WebSocket.OPEN || activeTab !== 'shell') return;
+      if (!instance || instance.paused || !instance.ws || instance.ws.readyState !== WebSocket.OPEN || activeTab !== 'shell') return false;
       instance.ws.send(data);
       instance.term.focus();
+      return true;
     },
   };
 })();

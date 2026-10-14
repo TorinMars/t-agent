@@ -1873,7 +1873,7 @@ body.file-sync-open .sidebar, body.file-sync-open .content-area, body.file-sync-
 .content-area.file-panel-open .terminal-controls { min-height: 24px; }
 .content-area.file-panel-open .terminal-toolbar { min-height: 24px; padding: 0; }
 .content-area.file-panel-open .terminal-toolbar-btn { padding-top: 1px; padding-bottom: 1px; font-size: 11px; }
-.content-area.file-panel-open .terminal-keys { display: none; }
+.content-area.file-panel-open .terminal-keys, .content-area.file-panel-open .terminal-translate { display: none; }
 .content-area.file-panel-open #xterm-container > .xterm-host { inset: 2px 4px; }
 
 #btn-file-browser[aria-expanded="true"] { color: var(--accent); border-color: var(--accent); background: var(--bg-tertiary); }
@@ -1938,3 +1938,16 @@ body.file-sync-open .sidebar, body.file-sync-open .content-area, body.file-sync-
 .file-sync-role-row .form-input { width: auto; min-width: 140px; }
 .file-sync-code-box { margin: 8px 0 12px; }
 .file-sync-code-box textarea, #sync-invite-string { font-family: Menlo, Monaco, "Courier New", monospace; font-size: 12px; max-width: 640px; word-break: break-all; }
+
+/* 终端底部的中译英输入框：输入中文，翻译成英文后键入终端并回车 */
+.terminal-translate { display: flex; flex: 0 0 auto; flex-wrap: wrap; align-items: center; gap: 6px; padding: 5px 8px; background: #252526; border-top: 1px solid #3a3a3a; }
+.terminal-translate-input { flex: 1 1 240px; min-width: 0; height: 28px; padding: 0 10px; border: 1px solid #555; border-radius: 5px; background: #1b1b1c; color: #f0f0f0; font: 13px/1 inherit; }
+.terminal-translate-input:focus { outline: none; border-color: #70a5ff; }
+.terminal-translate-input:disabled { opacity: .6; }
+.terminal-translate button { flex: 0 0 auto; height: 28px; padding: 0 10px; border: 1px solid #555; border-radius: 5px; background: #333; color: #ddd; font-size: 12px; cursor: pointer; }
+.terminal-translate button:hover:not(:disabled) { background: #444; }
+.terminal-translate button:disabled { opacity: .6; cursor: wait; }
+.terminal-translate-status { flex: 1 0 100%; min-height: 0; font-size: 12px; color: #9aa4b2; overflow-wrap: anywhere; }
+.terminal-translate-status:empty { display: none; }
+.terminal-translate-status.error { color: #ff7b72; }
+.terminal-translate-status code { color: #7dffcf; font: inherit; }

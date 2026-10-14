@@ -97,6 +97,7 @@ app.use('/api/task-groups', require('./routes/task-groups'));
 app.use('/api/bookmarks', require('./routes/bookmarks'));
 app.use('/api/system', require('./routes/system'));
 app.use('/api/oss', require('./routes/oss').createOssRouter());
+app.use('/api/translate', require('./routes/translate').createTranslateRouter());
 app.use('/api/pm2', require('./routes/pm2').createPm2Router());
 app.use('/api/apps', require('./routes/apps').createAppsRouter());
 app.use('/api/agent-config', require('./routes/agent-config').createClientRouter({ db: require('./db'), sessionSecret: require('./config').sessionSecret }));

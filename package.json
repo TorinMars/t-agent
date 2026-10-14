@@ -1,6 +1,6 @@
 {
   "name": "torin-x-web",
-  "version": "2.52.1",
+  "version": "2.53.0",
   "description": "T-Agent task client with browser terminals",
   "main": "server.js",
   "scripts": {

@@ -156,3 +156,10 @@
 @media (prefers-reduced-motion: reduce) {
   :root[data-theme] .task-nav-item.term-running, :root[data-theme] .engine-tab.term-running, :root[data-theme] .terminal-tab.term-running { background-image: none; }
 }
+
+/* 终端中译英输入框“翻译中”的呼吸动画：科技主题用青色 */
+:root[data-theme="tech"] .terminal-translate-input.translating { border-color: #00e5ff; animation-name: translate-breathe-tech; }
+@keyframes translate-breathe-tech {
+  0%, 100% { border-color: #0b5f73; box-shadow: 0 0 0 0 rgba(0, 229, 255, 0); }
+  50%      { border-color: #00e5ff; box-shadow: 0 0 12px 1px rgba(0, 229, 255, .75), inset 0 0 8px rgba(0, 229, 255, .3); }
+}

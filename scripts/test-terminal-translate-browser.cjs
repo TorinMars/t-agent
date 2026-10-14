@@ -39,8 +39,21 @@ const read = file => fs.readFileSync(path.join(root, file), 'utf8');
     assert.equal(await page.locator('#terminal-translate-status').textContent(), '', 'no "sent" echo of the translation after success');
     assert.equal(await page.locator('#terminal-translate-status').isVisible(), false);
 
+    // 翻译进行中：输入框呼吸闪烁，同一行没有额外文字；完成后恢复。
+    await page.evaluate(() => { window.releaseTranslation = null; window.API.post = body => new Promise(resolve => { window.releaseTranslation = () => resolve({ text: 'EN-slow', translated: true }); }); });
+    await input.fill('慢一点'); await input.press('Enter');
+    await page.waitForFunction(() => document.getElementById('terminal-translate-input').classList.contains('translating'));
+    assert.equal(await input.evaluate(el => getComputedStyle(el).animationName), 'translate-breathe');
+    assert.equal(await input.evaluate(el => el.readOnly), true);
+    assert.equal(await page.locator('#terminal-translate-status').textContent(), '', 'no separate "translating" text line');
+    assert.equal(await page.locator('#terminal-translate-send').isDisabled(), true);
+    await page.evaluate(() => window.releaseTranslation());
+    await page.waitForFunction(() => !document.getElementById('terminal-translate-input').classList.contains('translating'));
+    assert.equal(await input.evaluate(el => getComputedStyle(el).animationName), 'none');
+    await page.waitForFunction(() => window.sent.length >= 4);
+    await page.evaluate(() => { window.sent.length = 0; window.API.post = async (url, body) => ({ text: 'ok\u001b[31m\nnext', translated: true }); });
+
     // 控制字符不会进入终端
-    await page.evaluate(() => { window.sent.length = 0; window.nextResult = () => ({ text: 'ok\u001b[31m\nnext', translated: true }); });
     await input.fill('测试'); await input.press('Enter');
     await page.waitForFunction(() => window.sent.length === 2);
     assert.equal((await page.evaluate(() => window.sent))[0], 'ok [31m next');

@@ -25,15 +25,17 @@ const TerminalTranslate = (() => {
   }
   function setBusy(value) {
     busy = value;
-    input.disabled = send.disabled = value;
-    send.textContent = value ? '翻译中…' : '翻译并发送';
+    // 翻译中：输入框只读（保持焦点）并呼吸闪烁，指示就在输入框这一行，不再另起一行文字。
+    input.readOnly = send.disabled = value;
+    input.classList.toggle('translating', value);
+    input.setAttribute('aria-busy', String(value));
   }
 
   async function submit() {
     const source = input.value.trim();
     if (busy || !source) return;
     setBusy(true);
-    say('正在翻译…');
+    say('');
     try {
       const result = await API.post('/api/translate', { text: source });
       const text = sanitize(result.text);

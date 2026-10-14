@@ -4,6 +4,8 @@
 
 > v2.45.0 Agent 配置：主导航新增“Agent 配置”页，面向多服务器。Client 在 `system_state`（`agent-config:<owner>`）保存全局默认和每台服务器的覆盖（覆盖里出现的键，含空串，优先于默认；空串表示该台不管）。字段表在 `services/agent-config.js` 的 `SCHEMA`，值一律为字符串并按枚举/数字/列表校验。`POST /api/agent-config/push` 对本机直接写文件，对远程 Engine 调 `PUT /v1/agent-config`（`engine:admin`，能力 `agent-config:manage`）。写入只改填了的键：Claude 用 JSON 递归设值，Codex 用单行 TOML 键值编辑（保留注释和其他表，顶层键写在第一个表之前）；配置文件不合法时不写。同时写入本机覆盖文件，避免被 `agent-sync.py` 的远程默认值盖回去。
 
+> v2.50.0 侧栏新增“一键更新全部”按钮（⬆️，`public/js/batch-update.js`）：确认后并行检查并升级所有已连接的远程引擎（复用 `/api/remote-servers/:id/check-update|apply-update|update-status`，逐项显示结果，等待重启后版本到位，最长 5 分钟），最后才更新本机 Client（本机更新会重启服务并自动刷新页面，故放最后，交给 `Updates.apply()`）。已是最新、被阻断或失败的项只汇总不更新；需重启的 `restart_pending` 提示手动重启。无后端改动。测试 `test/batch-update.test.js`。
+
 > v2.49.0 侧栏“导入工作目录下的目录”（📁）与“清理代码目录”（🧹）跟随当前引擎：此前选中远程 Engine 时仍操作本机。Engine 新增 `GET /v1/workspace/unmanaged`、`POST /v1/workspace/import`、`GET|POST /v1/workspace/cleanup`、`POST /v1/workspace/restore`（能力 `workspace:manage`，复用 `services/workspace-tools`，目录基准为该 Engine 的 `TASKS_BASE_DIR`，令牌主体为所有者），Client 代理 `/api/remote-servers/:id/workspace/*`，旧版 Engine 返回 `501 WORKSPACE_UNSUPPORTED`，前端提示先更新该引擎；切换引擎时重新检查未管理目录与角标。测试 `test/workspace-engine.test.js`。
 
 > v2.48.0 文件同步改为主服务器生成连接字符串、从服务器主动连接（取代 v2.47.0 的“从服务器显示配对码、主服务器去关联”：主服务器是外网固定 IP、从服务器常在内网，主服务器连不到从服务器）：`POST /file-sync/invite`（`master_url`）在主服务器生成一次性同步配对码（内存，10 分钟，只能用一次），返回 `TAFS1:` + base64url(`{v:1,u:<规范化主服务器地址>,c:<配对码>}`)；从服务器 `POST /file-sync/join`（`connection_string`，粘贴时的空白会被去掉）解析后向主服务器无 Token 限流的 `POST /v1/file-sync/pair` 换取 `tfs_` 令牌，只在 `mode=slave` 时允许。移除 v2.47.0 的 `adopt`、`associate`、`refresh-code` 和 `status().pairing`；保留 v2.47.0 的角色 `mode`、`state.link`、`state.tokens`、同步令牌范围与旧引擎令牌兼容。

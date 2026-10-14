@@ -598,6 +598,8 @@ body.file-sync-open .sidebar, body.file-sync-open .content-area, body.file-sync-
   box-sizing: border-box;
 }
 .sidebar-action-badge[hidden] { display: none; }
+.update-detail-row strong.ok { color: var(--accent-hover); }
+.update-detail-row strong.error { color: var(--danger); }
 /* 悬浮显示文字提示（按钮只放图标） */
 .sidebar-action::after {
   content: attr(data-tip);

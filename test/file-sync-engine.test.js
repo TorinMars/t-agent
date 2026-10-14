@@ -56,6 +56,11 @@ test('Engine 鉴权、主节点清单与已有连接代理', async t => {
   const response = await requestJson(`${proxy}/api/remote-servers/${id}/file-sync`);
   assert.equal(response.status, 200);
   assert.equal((await response.json()).role, 'master');
+  // 客户端 A 经代理操作引擎 B：生成连接字符串（地址按 B 收到请求的地址）；旧动作已不存在。
+  const proxied = await requestJson(`${proxy}/api/remote-servers/${id}/file-sync/invite`, null, 'POST', {});
+  assert.equal(proxied.status, 200);
+  assert.equal(JSON.parse(Buffer.from((await proxied.json()).connection_string.slice(6), 'base64url').toString()).u, engine);
+  assert.equal((await requestJson(`${proxy}/api/remote-servers/${id}/file-sync/connect`, null, 'POST', {})).status, 404);
   // 文件同步不再借用引擎连接：这些接口已移除。
   for (const [method, route] of [['GET', 'servers'], ['POST', 'pairing'], ['POST', 'connect']]) {
     assert.equal((await requestJson(`${engine}/v1/file-sync/${route}`, token, method, method === 'POST' ? {} : undefined)).status, 404, route);

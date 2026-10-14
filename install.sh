@@ -11,6 +11,7 @@ ENV_FILE="$APP_DIR/.env"
 PORT=""
 TASKS_DIR=""
 INSTALL_SERVICE=1
+ACCESS_MODE_ARG=
 SERVICE_MANAGER=""
 PM2_EXPLICIT=0
 SERVICE_STARTED=0
@@ -33,9 +34,11 @@ usage() {
   --pm2                用 PM2 管理服务（默认方式；已注册系统服务的老安装用它改为 PM2）
   --system-service     沿用系统服务（macOS LaunchAgent / Linux systemd）而不是 PM2
   --no-service         只安装依赖和配置，不启动服务
+  --access-mode MODE   访问方式：remote = 身份验证器 + 允许外网访问；local = 仅本机访问、无需验证。
+                       不指定时，安装后第一次在本机浏览器打开页面再选择；之后可在 设置 → 访问模式 切换
   -h, --help           显示帮助
 
-Client 是单用户应用，Web 和手机 H5 必须先绑定身份验证器，之后使用动态验证码登录。
+Client 是单用户应用。访问方式二选一：身份验证器登录并允许外网访问，或仅本机访问且无需验证。
 EOF
 }
 
@@ -53,6 +56,7 @@ while [ "$#" -gt 0 ]; do
     --pm2) SERVICE_MANAGER="pm2"; PM2_EXPLICIT=1; shift ;;
     --system-service) SERVICE_MANAGER="system"; shift ;;
     --no-service) INSTALL_SERVICE=0; shift ;;
+    --access-mode) ACCESS_MODE_ARG="${2:-}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) fail "未知选项：$1（使用 --help 查看用法）" ;;
   esac
@@ -61,6 +65,11 @@ done
 [ "$MODE" = "client" ] || fail "独立 Engine 安装已移除，只支持 client（Client 已内置 Engine）"
 [[ "$UPDATE_REPOSITORY" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] && [[ "$UPDATE_REPOSITORY" != ../* ]] && [[ "$UPDATE_REPOSITORY" != */.. ]] || fail "T_AGENT_REPOSITORY 格式不正确"
 [[ "$UPDATE_REF" =~ ^[A-Za-z0-9._/-]+$ ]] && [[ "$UPDATE_REF" != *..* ]] || fail "T_AGENT_REF 格式不正确"
+
+case "$ACCESS_MODE_ARG" in
+  ""|local|remote) ;;
+  *) fail "--access-mode 只能是 local 或 remote" ;;
+esac
 
 if [ -n "$PORT" ] && ! [[ "$PORT" =~ ^[1-9][0-9]{0,4}$ ]] || { [ -n "$PORT" ] && [ "$PORT" -gt 65535 ]; }; then
   fail "端口必须是 1-65535 的整数"
@@ -244,6 +253,9 @@ if [ ! -f "$ENV_FILE" ]; then
   [ -n "$PORT" ] || PORT=3000
   [ -n "$TASKS_DIR" ] || TASKS_DIR="$APP_DIR/tasks"
 
+  # 监听地址：选择“仅本机访问”时只监听回环地址；否则监听所有网卡，是否允许外部访问由应用内的访问模式决定
+  # （未选择或仅本机模式下，应用会拒绝非本机请求），这样首次选择和之后在设置里切换都不需要改配置、重启。
+  if [ "$ACCESS_MODE_ARG" = "local" ]; then NEW_HOST=127.0.0.1; else NEW_HOST=0.0.0.0; fi
   SESSION_SECRET="$(node -e "process.stdout.write(require('crypto').randomBytes(32).toString('hex'))")"
   umask 077
   cat > "$ENV_FILE" <<EOF
@@ -254,7 +266,8 @@ SINGLE_USER_ID=local
 AUTH_USERS=
 TASKS_BASE_DIR=$TASKS_DIR
 ENGINE_OWNER_ID=local
-HOST=127.0.0.1
+HOST=$NEW_HOST
+ACCESS_MODE=$ACCESS_MODE_ARG
 GITHUB_VERSION_URL=https://api.github.com/repos/$UPDATE_REPOSITORY/contents/VERSION.json?ref=$UPDATE_REF
 UPDATE_GITHUB_REPOSITORY=$UPDATE_REPOSITORY
 UPDATE_GITHUB_REF=$UPDATE_REF
@@ -270,6 +283,7 @@ else
     update_env_value TASKS_BASE_DIR "$TASKS_DIR"
   fi
   update_env_value T_AGENT_MODE "$MODE"
+  [ -n "$ACCESS_MODE_ARG" ] && update_env_value ACCESS_MODE "$ACCESS_MODE_ARG"
   # 默认仅监听本机；保留用户为手机访问配置的局域网监听地址。
   ensure_env_value HOST 127.0.0.1
 fi
@@ -493,6 +507,11 @@ process.stdout.write(`http://${host}:${port}`);
 NODE
 )"
 printf '\n%s 安装完成。\n' "$MODE"
+case "${ACCESS_MODE_ARG:-}" in
+  local) printf '访问方式：仅本机访问，无需验证。之后可在 设置 → 访问模式 改为身份验证器 + 允许外网访问。\n' ;;
+  remote) printf '访问方式：身份验证器 + 允许外网访问。第一次打开页面时绑定身份验证器；之后可在 设置 → 访问模式 改为仅本机访问。\n' ;;
+  *) printf '访问方式：第一次在本机浏览器打开页面时选择——身份验证器 + 允许外网访问，或仅本机访问（无需验证）；之后可在 设置 → 访问模式 切换。\n' ;;
+esac
 if [ "$SERVICE_STARTED" -eq 1 ]; then
   printf '服务检查：%s\n' "$SERVICE_HINT"
 else

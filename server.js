@@ -20,6 +20,7 @@ const requireAuth = require('./middleware/auth');
 const clientOrigin = require('./middleware/client-origin');
 const { frameAncestors, clientCookieSameSite } = require('./lib/client-embedding');
 const { createLoginGate } = require('./lib/login-gate');
+const { createAccessGate, upgradeAllowed } = require('./lib/access-gate');
 
 const app = express();
 
@@ -75,6 +76,8 @@ app.use((req, res, next) => {
   getClientAuth().renew(req.session);
   next();
 });
+// 仅本机 / 未选择访问模式时，非本机请求一律 404；仅本机模式下本机会话自动可信。
+app.use(createAccessGate({ getMode: () => getClientAuth().accessMode() }));
 // 未登录时只开放登录入口和机器接口，其余一律 404。
 app.use(createLoginGate({ loginPath: config.loginPath, isAuthenticated: session => getClientAuth().authenticated(session) }));
 
@@ -311,10 +314,10 @@ app.get('/share/:token/file', (req, res) => {
 
 function sendClientPage(req, res) {
   res.set('Cache-Control', 'no-store');
-  const auth = getClientAuth().status(req.session);
+  const auth = getClientAuth().ready(req.session);
   const returnTo = safeReturnTo(req.path);
-  if (!auth.bound) return res.redirect(`${config.loginPath}/setup?return_to=${encodeURIComponent(returnTo)}`);
-  if (!auth.authenticated) return res.redirect(`${config.loginPath}?return_to=${encodeURIComponent(returnTo)}`);
+  if (auth.setupRequired) return res.redirect(`${config.loginPath}/setup?return_to=${encodeURIComponent(returnTo)}`);
+  if (auth.loginRequired) return res.redirect(`${config.loginPath}?return_to=${encodeURIComponent(returnTo)}`);
   req.session.user = ensureSingleUser();
   let html = fs.readFileSync(path.join(__dirname, 'public', 'index.html'), 'utf8');
   const assetVersion = encodeURIComponent(JSON.parse(fs.readFileSync(path.join(__dirname, 'VERSION.json'), 'utf8')).app_version);
@@ -333,10 +336,10 @@ app.use((req, res, next) => {
   let pathname;
   try { pathname = decodeURIComponent(req.path); } catch { return res.sendStatus(400); }
   if (path.extname(pathname).toLowerCase() !== '.html') return next();
-  const auth = getClientAuth().status(req.session);
+  const auth = getClientAuth().ready(req.session);
   res.set('Cache-Control', 'no-store');
-  if (!auth.bound) return res.redirect(`${config.loginPath}/setup`);
-  if (!auth.authenticated) return res.redirect(config.loginPath);
+  if (auth.setupRequired) return res.redirect(`${config.loginPath}/setup`);
+  if (auth.loginRequired) return res.redirect(config.loginPath);
   next();
 });
 // 第三方库文件名带版本号、内容固定：长期缓存；并对 /vendor 启用 gzip（mermaid 约 5 MB）。
@@ -388,6 +391,10 @@ function browserUpgrade(req, socket, head, callback) {
   });
 }
 server.on('upgrade', (req, socket, head) => {
+  if (!upgradeAllowed(req, getClientAuth().accessMode())) {
+    socket.write('HTTP/1.1 404 Not Found\r\n\r\n');
+    return socket.destroy();
+  }
   const engineUrl = new URL(req.url, 'http://engine.local');
   const engineMatch = engineUrl.pathname.match(/^\/v1\/terminal-sessions\/(\d+)\/stream$/);
   if (engineMatch) {
@@ -430,7 +437,12 @@ server.listen(config.port, config.host, () => {
   console.log(`Server running at http://localhost:${listeningPort}`);
   console.log(`             LAN: http://${getLocalIP()}:${listeningPort}`);
   const clientAuth = getClientAuth();
-  if (!clientAuth.status().bound) {
+  if (clientAuth.accessMode() === 'local') {
+    console.log('访问模式：仅本机访问（无需验证）。可在 设置 → 访问模式 中改为身份验证器 + 允许外网访问。');
+  } else if (clientAuth.accessMode() === 'unset') {
+    console.log(`尚未选择访问模式：请在本机浏览器打开 http://127.0.0.1:${listeningPort}/ 选择“身份验证器 + 允许外网访问”或“仅本机访问”。`);
+    console.log('无法打开本机浏览器时（如远程服务器），可在服务器终端执行 node scripts/client-auth-setup.js 绑定身份验证器并启用外网访问。');
+  } else if (!clientAuth.status().bound) {
     console.log('Client 身份验证器未绑定，必须绑定后才能使用 Web / H5。');
     console.log('请在服务器终端执行 node scripts/client-auth-setup.js 完成首次绑定（可通过 SSH 远程执行），无需初始密码或初始化码。');
     console.log(`也可直接打开 http://127.0.0.1:${listeningPort}/auth/setup（本机或远程地址均可）扫码绑定。`);

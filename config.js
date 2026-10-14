@@ -22,6 +22,8 @@ module.exports = {
   port:          parseInt(process.env.PORT || '3000', 10),
   // 默认仅监听本机；手机访问可显式配置 HOST=0.0.0.0。
   host:          process.env.HOST || '127.0.0.1',
+  // 全新安装时的初始访问模式（local / remote）；留空则首次打开页面时选择。已经保存过的选择优先。
+  accessMode:    ['local', 'remote'].includes(process.env.ACCESS_MODE) ? process.env.ACCESS_MODE : '',
   // Explicit opt-in for trusted intranet HTTP; HTTPS cookies remain Secure.
   clientAllowHttp: process.env.CLIENT_ALLOW_HTTP === 'true',
   clientFrameOrigins: require('./lib/client-embedding').parseFrameOrigins(process.env.CLIENT_FRAME_ORIGINS),

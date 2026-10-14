@@ -84,7 +84,7 @@ for (const [environment, allowHttp] of [['test', 'false'], ['production', 'false
   assert.equal((await call('/js/auth.js')).status, 200);
   assert.equal((await call(`${LOGIN}/login`, { body: { username: 'local', password: '' } })).status, 403);
   assert.equal((await call(`${LOGIN}/setup/start`, { body: {}, headers: { Origin: 'https://attacker.test' } })).status, 403);
-  assert.deepEqual(await (await call(`${LOGIN}/status`)).json(), { bound: false, authenticated: false });
+  assert.deepEqual(await (await call(`${LOGIN}/status`)).json(), { bound: false, authenticated: false, mode: 'unset' });
   await rejectWs('/terminal/ws?taskId=1', base, 404);
   await rejectWs('/api/remote-servers/1/terminal/ws?taskId=1', base, 404);
   await rejectWs('/terminal/ws?taskId=1', 'https://attacker.test', 403);

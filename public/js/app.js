@@ -481,6 +481,43 @@ document.getElementById('modal-overlay').addEventListener('click', e => {
   if (e.target === document.getElementById('modal-overlay')) Modal.hide();
 });
 
+// ---- 访问模式：身份验证器 + 允许外网访问 / 仅本机访问（无需验证） ----
+function accessModeSection(user) {
+  const local = user.access_mode === 'local';
+  const loopbackOnly = ['127.0.0.1', '::1', 'localhost'].includes(user.listen_host);
+  return `<div class="settings-section"><div class="settings-section-title">访问模式 · ${local ? '仅本机访问' : '身份验证器 + 允许外网访问'}</div>
+    <div class="form-hint">${local
+      ? '当前只接受这台机器上的访问，不需要验证码；其他设备和远程客户端连不上这个 Client。'
+      : '当前需要身份验证器登录，允许手机、其他电脑和远程客户端连接。'}${!local && loopbackOnly ? ` 注意：服务现在只监听 ${escapeHtml(user.listen_host)}，要让其他设备连上，需在 .env 设置 HOST=0.0.0.0 并重启服务。` : ''}</div>
+    ${local && user.authenticator_bound ? '<div class="form-group"><label class="form-label" for="settings-mode-code">身份验证器的 6 位验证码（切回外网访问时验证）</label><input class="form-input" id="settings-mode-code" inputmode="numeric" maxlength="6" autocomplete="one-time-code"></div>' : ''}
+    <div class="settings-inline-actions"><button class="btn-cancel" id="settings-mode-switch">${local ? '改为：身份验证器 + 允许外网访问' : '改为：仅本机访问（无需验证）'}</button></div>
+    <p class="form-hint" id="settings-mode-feedback" role="status"></p></div>`;
+}
+
+function bindAccessMode(user) {
+  const button = document.getElementById('settings-mode-switch');
+  const feedback = document.getElementById('settings-mode-feedback');
+  const local = user.access_mode === 'local';
+  button.addEventListener('click', async () => {
+    const loginPath = window.TAgentLoginPath || '/auth/login';
+    if (!local && !confirm('改为“仅本机访问”后，不再需要验证码，且手机、其他电脑和远程客户端都将无法连接这个 Client（包括把它当作引擎的连接）。\n\n其他设备上的会话会立即断开。确认切换吗？')) return;
+    button.disabled = true;
+    feedback.textContent = '';
+    try {
+      const body = local ? { mode: 'remote', code: (document.getElementById('settings-mode-code')?.value || '').trim() } : { mode: 'local' };
+      const result = await API.post('/auth/mode', body);
+      if (result.locked_out) { feedback.textContent = '已切换为仅本机访问。当前设备不在本机，将无法再访问；请回到这台服务器的本机浏览器使用。'; return; }
+      location.replace(result.redirect || '/web');
+    } catch (error) {
+      let code = error.message;
+      try { code = JSON.parse(error.message); } catch { /* 保持原文 */ }
+      const data = code && typeof code === 'object' ? code : { error: String(code) };
+      if (data.error === 'AUTHENTICATOR_BINDING_REQUIRED') { location.href = data.redirect || `${loginPath}/setup?return_to=/web`; return; }
+      feedback.textContent = ({ AUTH_CODE_INVALID: '验证码无效或已使用，请等待下一组验证码。', AUTH_RATE_LIMITED: '验证尝试次数过多，请 15 分钟后再试。' })[data.error] || `切换失败：${data.error}`;
+    } finally { button.disabled = false; }
+  });
+}
+
 async function init() {
   document.getElementById('btn-logout').addEventListener('click', async () => {
     if (!confirm('退出后，本机和远程终端连接将断开，但服务端正在运行的任务不会停止。确认退出吗？')) return;
@@ -501,6 +538,7 @@ async function init() {
       </div>
       <div class="settings-section"><div class="settings-section-title">图片上传</div><div class="form-hint">配置 Client 阿里云 OSS 后，可在本地及远程终端粘贴图片，或使用终端底部的上传图片按钮。</div><div class="settings-inline-actions"><button class="btn-cancel" id="settings-oss">配置阿里云 OSS</button></div></div>
       <div class="settings-section"><div class="settings-section-title">远程服务</div><div class="form-hint">当前客户端也可作为引擎，供其他客户端访问本机任务、文件和终端。</div><div class="settings-inline-actions"><button class="btn-cancel" id="settings-remote-tokens">作为引擎供其他客户端连接</button></div></div>
+      ${accessModeSection(user)}
       <div class="settings-section"><div class="settings-section-title">身份验证器 · 已绑定</div><div class="form-hint">电脑和手机共用同一页面及绑定信息，登录有效期 30 天，使用期间自动续期；连续 30 天未使用需重新验证。更换后旧验证器、恢复码和其他设备登录立即失效。</div><a class="toolbar-btn" href="/auth/setup?return_to=/web">更换身份验证器</a></div>
       ${updateStatus ? Updates.renderSettings(updateStatus) : ''}
       <div class="form-actions">
@@ -511,6 +549,7 @@ async function init() {
     document.getElementById('settings-cancel').addEventListener('click', Modal.hide);
     document.getElementById('settings-oss').addEventListener('click', () => TerminalImages.showSettings());
     document.getElementById('settings-remote-tokens').addEventListener('click', () => Engines.showTokens());
+    bindAccessMode(user);
     if (updateStatus) Updates.bindSettings(updateStatus);
     document.getElementById('settings-save').addEventListener('click', async () => {
       const value = document.getElementById('settings-work-dir').value.trim();

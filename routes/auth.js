@@ -6,8 +6,9 @@ const QRCode = require('qrcode');
 const db = require('../db');
 const { ensureSingleUser } = require('../services/single-user');
 const requireAuth = require('../middleware/auth');
-const { getClientAuth, safeReturnTo, isSecureClientCookie, SESSION_TTL } = require('../services/client-auth');
+const { getClientAuth, safeReturnTo, isSecureClientCookie, isLocalInitialization, SESSION_TTL } = require('../services/client-auth');
 const { clientCookieSameSite } = require('../lib/client-embedding');
+const config = require('../config');
 
 const router = express.Router();
 router.use(require('../middleware/client-origin'));
@@ -29,7 +30,41 @@ function errorResponse(res, error) {
   res.status(error.status || 500).json({ error: error.status ? error.message : 'AUTH_OPERATION_FAILED' });
 }
 
-router.get('/status', (req, res) => res.json({ ...getClientAuth().status(req.session) }));
+router.get('/status', (req, res) => res.json({ ...getClientAuth().status(req.session), mode: getClientAuth().accessMode() }));
+
+// 访问模式：local = 仅本机访问、无需验证；remote = 身份验证器 + 允许外网访问。
+//  · 首次（未选择）：选 local 必须来自本机；选 remote 只是进入绑定流程，绑定成功才生效。
+//  · 已选择：必须已登录。remote→local 立即生效并断开其他设备；local→remote 需要先绑定身份验证器（已绑定过则验证一次动态验证码）。
+router.post('/mode', (req, res) => {
+  const auth = getClientAuth();
+  const mode = req.body && req.body.mode;
+  const current = auth.accessMode();
+  const fail = (status, code, extra = {}) => res.status(status).json({ error: code, ...extra });
+  if (!['local', 'remote'].includes(mode)) return fail(400, 'INVALID_ACCESS_MODE');
+  if (current === 'unset') {
+    if (mode === 'remote') return res.json({ mode: 'unset', redirect: `${req.baseUrl}/setup` });
+    if (!isLocalInitialization(req)) return fail(403, 'LOCAL_ACCESS_REQUIRED');
+    auth.setAccessMode('local');
+    req.session.localTrusted = true;
+    return req.session.save(error => (error ? errorResponse(res, error) : res.json({ mode: 'local', redirect: '/web' })));
+  }
+  if (!auth.authenticated(req.session)) return fail(401, 'AUTH_REQUIRED');
+  if (mode === current) return res.json({ mode, redirect: '/web' });
+  if (mode === 'local') {
+    auth.setAccessMode('local');
+    if (req.app.locals.disconnectAllClientSessions) req.app.locals.disconnectAllClientSessions();
+    const local = isLocalInitialization(req);
+    if (local) req.session.localTrusted = true;
+    return req.session.save(error => (error ? errorResponse(res, error) : res.json({ mode: 'local', redirect: local ? '/web' : null, locked_out: !local })));
+  }
+  // local → remote
+  if (!auth.status(req.session).bound) return fail(409, 'AUTHENTICATOR_BINDING_REQUIRED', { redirect: `${config.loginPath}/setup?return_to=/web` });
+  try {
+    const grant = auth.authenticate(req.body.code, req.ip);
+    auth.setAccessMode('remote');
+    saveLogin(req, grant, error => (error ? errorResponse(res, error) : res.json({ mode: 'remote', redirect: '/web' })));
+  } catch (error) { errorResponse(res, error); }
+});
 for (const route of ['/', '/login', '/setup']) {
   router.get(route, (req, res) => {
     res.set('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
@@ -106,7 +141,9 @@ router.get('/me', requireAuth, (req, res) => {
   res.json({
     ...req.session.user,
     effective_work_dir: req.session.user.work_dir || process.env.TASKS_BASE_DIR || path.join(os.homedir(), 'tasks'),
-    authenticator_bound: true,
+    authenticator_bound: getClientAuth().status(req.session).bound,
+    access_mode: getClientAuth().accessMode(),
+    listen_host: config.host,
   });
 });
 

@@ -67,13 +67,16 @@ function isSecureClientCookie(req) {
     && !isLocalInitialization(req) && !require('../config').clientAllowHttp));
 }
 
-function createClientAuth(database, { sessionSecret, ownerId, now = Date.now } = {}) {
+const ACCESS_MODES = ['local', 'remote'];
+
+function createClientAuth(database, { sessionSecret, ownerId, now = Date.now, initialMode = '' } = {}) {
   database.exec(`
     CREATE TABLE IF NOT EXISTS client_auth (
       owner_id TEXT PRIMARY KEY, secret_cipher TEXT, version TEXT NOT NULL,
       last_step INTEGER NOT NULL DEFAULT -1,
       recovery_hashes TEXT NOT NULL DEFAULT '[]', bound_at TEXT
     );
+    CREATE TABLE IF NOT EXISTS client_access_mode (owner_id TEXT PRIMARY KEY, mode TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS client_auth_attempts (
       attempt_key TEXT PRIMARY KEY, count INTEGER NOT NULL, expires_at INTEGER NOT NULL
     );
@@ -110,7 +113,23 @@ function createClientAuth(database, { sessionSecret, ownerId, now = Date.now } =
       }
     })();
   }
+  // 访问模式：local = 仅本机访问、无需验证；remote = 身份验证器登录、允许外网访问；
+  // unset = 全新安装、尚未选择。已经绑定过身份验证器的老安装视为 remote。
+  function accessMode() {
+    const row = database.prepare('SELECT mode FROM client_access_mode WHERE owner_id = ?').get(ownerId);
+    if (row && ACCESS_MODES.includes(row.mode)) return row.mode;
+    if (read().secret_cipher) return 'remote';
+    return ACCESS_MODES.includes(initialMode) ? initialMode : 'unset';
+  }
+  function setAccessMode(mode) {
+    if (!ACCESS_MODES.includes(mode)) fail('INVALID_ACCESS_MODE');
+    database.prepare(`INSERT INTO client_access_mode (owner_id, mode) VALUES (?, ?)
+      ON CONFLICT(owner_id) DO UPDATE SET mode = excluded.mode`).run(ownerId, mode);
+    return mode;
+  }
+  // 仅本机模式下，来自本机的会话由访问门禁标记为可信；切回 remote 后这个标记不再被承认。
   function authenticated(session) {
+    if (accessMode() === 'local') return Boolean(session && session.localTrusted === true);
     const auth = session && session.clientAuth;
     const row = read();
     return Boolean(auth && row.secret_cipher && auth.ownerId === ownerId && auth.version === row.version && auth.expiresAt > now());
@@ -119,6 +138,7 @@ function createClientAuth(database, { sessionSecret, ownerId, now = Date.now } =
   function renew(session) {
     // Never revive expired or revoked sessions, or reset recent-verification time.
     if (!authenticated(session)) return false;
+    if (accessMode() === 'local') { if (session.cookie) session.cookie.maxAge = SESSION_TTL; return true; }
     session.clientAuth.expiresAt = now() + SESSION_TTL;
     if (session.cookie) session.cookie.maxAge = SESSION_TTL;
     return true;
@@ -182,6 +202,7 @@ function createClientAuth(database, { sessionSecret, ownerId, now = Date.now } =
     );
     if (!result.changes) fail('AUTH_SETUP_CHANGED', 409);
     delete session.authSetup;
+    setAccessMode('remote'); // 绑定身份验证器即启用“身份验证器 + 允许外网访问”
     database.prepare('DELETE FROM client_auth_attempts WHERE attempt_key = ?').run(hash(`ip:${ip}`));
     return { auth: sessionGrant(version), recoveryCodes };
   }
@@ -192,6 +213,14 @@ function createClientAuth(database, { sessionSecret, ownerId, now = Date.now } =
       try { return Boolean(row && row.expired > now() && authenticated(JSON.parse(row.sess))); } catch { return false; }
     },
     status(session) { return { bound: Boolean(read().secret_cipher), authenticated: authenticated(session) }; },
+    accessMode,
+    setAccessMode,
+    // 页面和接口据此决定下一步：需要先绑定 / 需要登录 / 可以进入。仅本机模式不需要绑定。
+    ready(session) {
+      const mode = accessMode();
+      if (mode === 'local') return { mode, setupRequired: false, loginRequired: !authenticated(session) };
+      return { mode, setupRequired: !read().secret_cipher, loginRequired: !authenticated(session) };
+    },
   };
 }
 
@@ -200,7 +229,7 @@ function getClientAuth() {
   if (!singleton) {
     const database = require('../db');
     const config = require('../config');
-    singleton = createClientAuth(database, { sessionSecret: config.sessionSecret, ownerId: require('./single-user').ensureSingleUser(database).login });
+    singleton = createClientAuth(database, { sessionSecret: config.sessionSecret, ownerId: require('./single-user').ensureSingleUser(database).login, initialMode: config.accessMode });
   }
   return singleton;
 }

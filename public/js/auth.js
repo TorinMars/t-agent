@@ -16,6 +16,7 @@
     AUTH_SETUP_EXPIRED: '绑定信息已过期，请刷新页面后重新生成。',
     AUTH_SETUP_CHANGED: '绑定状态已变化，请刷新页面重新验证。',
     AUTH_REQUIRED: '请先使用现有身份验证器登录。',
+    LOCAL_ACCESS_REQUIRED: '“仅本机访问”只能在服务器本机选择：请在这台机器的浏览器打开 http://127.0.0.1:端口/ 后再选。',
     AUTH_RECENT_VERIFICATION_REQUIRED: '更换身份验证器前，请重新验证当前验证码或恢复码。',
   };
 
@@ -102,10 +103,28 @@
     });
   }
 
+  // 全新安装的第一次打开：选择访问模式。
+  function showModeChoice() {
+    title.textContent = '选择访问方式';
+    description.textContent = '安装已完成。请选择 T-Agent 的访问方式，之后可以在 设置 → 访问模式 中随时切换。';
+    content.innerHTML = `<div class="mode-options">
+      <button type="button" class="mode-option" id="mode-remote"><strong>身份验证器 + 允许外网访问</strong><span>用身份验证器的动态验证码登录，手机、其他电脑和远程客户端都能连接。需要先绑定身份验证器。</span></button>
+      <button type="button" class="mode-option" id="mode-local"><strong>仅本机访问 · 无需验证</strong><span>只接受这台机器上的访问（127.0.0.1），不需要验证码；其他设备和远程客户端无法连接。</span></button>
+    </div>`;
+    const choose = mode => run(content, async () => {
+      const data = await request(base + '/mode', { mode });
+      if (mode === 'remote') await startSetup();
+      else location.replace(data.redirect || '/web');
+    });
+    document.getElementById('mode-remote').addEventListener('click', () => choose('remote'));
+    document.getElementById('mode-local').addEventListener('click', () => choose('local'));
+  }
+
   async function init() {
     try {
       const status = await request(base + '/status');
-      if (!status.bound) {
+      if (status.mode === 'unset') showModeChoice();
+      else if (!status.bound) {
         title.textContent = '必须绑定身份验证器';
         description.textContent = '请用身份验证器扫描下方二维码完成首次绑定；也可在 Client 所在服务器终端执行 node scripts/client-auth-setup.js。本机或远程访问均可，无需初始密码或初始化码。';
         content.innerHTML = '';

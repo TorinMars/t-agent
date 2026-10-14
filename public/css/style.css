@@ -740,7 +740,7 @@ body.file-sync-open .sidebar, body.file-sync-open .content-area, body.file-sync-
 }
 
 /* 进行中的任务要一眼能看到：不淡化、带状态色左边条和淡底色，状态圆点实心 */
-.task-nav-item.is-doing:not(.active) { opacity: 1; background: color-mix(in srgb, var(--status-doing) 9%, transparent); }
+.task-nav-item.is-doing:not(.active) { opacity: 1; background-color: color-mix(in srgb, var(--status-doing) 9%, transparent); }
 .task-nav-item.is-doing:not(.active)::before {
   content: '';
   position: absolute;

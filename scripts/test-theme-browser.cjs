@@ -55,6 +55,17 @@ const read = file => fs.readFileSync(path.join(root, file), 'utf8');
     const fill = theme => page.evaluate(id => { Theme.set(id); return getComputedStyle(document.querySelector('#mm rect.rect')).fill; }, theme);
     assert.equal(await fill('light'), 'rgb(255, 249, 153)');
     for (const id of ['dark', 'tech']) assert.match(await fill(id), /^rgba\(\d+, \d+, \d+, 0\.\d+\)$/, `${id}: highlight block must be a translucent dark tint`);
+
+    // “执行中”流光是 background-image 动画：选中项、进行中项在任何主题下都不能把它清掉。
+    await page.evaluate(() => document.body.insertAdjacentHTML('beforeend', '<div class="task-nav-item term-running active" id="t1"></div><div class="task-nav-item term-running is-doing" id="t2"></div>'));
+    for (const id of ['light', 'dark', 'tech']) {
+      await page.evaluate(theme => Theme.set(theme), id);
+      for (const el of ['#t1', '#t2']) {
+        const style = await page.evaluate(selector => { const cs = getComputedStyle(document.querySelector(selector)); return { image: cs.backgroundImage, animation: cs.animationName }; }, el);
+        assert.match(style.image, /linear-gradient/, `${id} ${el}: running beam must stay visible`);
+        assert.equal(style.animation, 'term-shimmer');
+      }
+    }
     assert.deepEqual(errors, []);
     console.log('theme browser test passed');
   } finally { await browser.close(); }

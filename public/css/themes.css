@@ -138,3 +138,21 @@
 :root[data-theme="tech"] ::-webkit-scrollbar-thumb { background: #17356b; border-radius: 6px; }
 :root[data-theme="tech"] ::-webkit-scrollbar-thumb:hover { background: #00b8d4; }
 :root[data-theme="tech"] ::selection { background: #00e5ff44; color: #fff; }
+
+/* ---------- 终端“执行中”流光：深色底上原来的深蓝光束太淡，且选中项的 background 简写会把光束清掉 ---------- */
+:root[data-theme="dark"] .task-nav-item.term-running,
+:root[data-theme="dark"] .engine-tab.term-running,
+:root[data-theme="dark"] .terminal-tab.term-running {
+  box-shadow: inset 0 0 0 1px #388bfd;
+  background-image: linear-gradient(90deg, rgba(56, 139, 253, .12) 30%, rgba(121, 192, 255, .7) 50%, rgba(56, 139, 253, .12) 70%);
+}
+:root[data-theme="tech"] .task-nav-item.term-running,
+:root[data-theme="tech"] .engine-tab.term-running,
+:root[data-theme="tech"] .terminal-tab.term-running {
+  box-shadow: inset 0 0 0 1px #00e5ff, 0 0 12px rgba(0, 229, 255, .45);
+  background-image: linear-gradient(90deg, rgba(0, 229, 255, .08) 30%, rgba(0, 229, 255, .75) 50%, rgba(0, 229, 255, .08) 70%);
+  background-size: 300% 100%;
+}
+@media (prefers-reduced-motion: reduce) {
+  :root[data-theme] .task-nav-item.term-running, :root[data-theme] .engine-tab.term-running, :root[data-theme] .terminal-tab.term-running { background-image: none; }
+}

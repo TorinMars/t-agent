@@ -8,7 +8,7 @@ const Frp = (() => {
     FRP_DOMAIN_INVALID: '域名格式不正确，例如 app.example.com', FRP_LOCAL_PORT_INVALID: '本地端口必须是 1-65535 的整数',
     FRP_TOKEN_INVALID: 'Token 含有不允许的字符', FRP_PORT_RANGE_INVALID: '随机端口范围不正确',
     FRP_ALREADY_RUNNING: '隧道已经在运行', FRP_START_FAILED: '无法启动 frpc', FRP_BODY_INVALID: '请求内容不正确',
-    FRP_REMOTE_PORT_INVALID: '远程端口必须是 1-65535 的整数', FRP_INSTALL_RUNNING: '正在安装 frpc', FRP_ALREADY_INSTALLED: '已经安装了 frpc',
+    FRP_REMOTE_PORT_INVALID: '远程端口必须是 1-65535 的整数', FRP_VERSION_UNSUPPORTED: 'frpc 版本过旧，需要 0.52 及以上', FRP_INSTALL_RUNNING: '正在安装 frpc', FRP_ALREADY_INSTALLED: '已经安装了 frpc',
     FRP_UNAVAILABLE: '内网穿透服务暂时不可用',
   };
   const STATUS_LABELS = { stopped: '已停止', starting: '启动中…', running: '运行中', failed: '失败' };
@@ -36,6 +36,17 @@ const Frp = (() => {
     if (extra.length) line.append(document.createTextNode(extra.join(' · ')));
   }
 
+  function renderFrpc(data) {
+    const info = $('frp-frpc-info');
+    if (!data.installed) { info.textContent = '未检测到 frpc（已查找 PATH、Homebrew 和 Client 的 data/bin）'; return; }
+    const frpc = data.frpc;
+    const parts = [`frpc：${frpc.path}`];
+    if (frpc.version) parts.push(`版本 ${frpc.version}`);
+    if (!frpc.supported) parts.push('版本过旧，需要 0.52 及以上');
+    if (frpc.error) parts.push(frpc.error);
+    info.textContent = parts.join(' · ');
+  }
+
   function renderRemoteHint(config) {
     $('frp-remote-port-label').textContent = config.remotePortManual ? '远程端口（手动）' : '远程端口（自动随机）';
     $('frp-remote-hint').textContent = config.remotePortManual
@@ -60,6 +71,7 @@ const Frp = (() => {
   function render(data, { form = true } = {}) {
     last = data;
     renderStatus(data);
+    renderFrpc(data);
     $('frp-install-row').hidden = data.installed;
     $('frp-install').disabled = Boolean(data.installing);
     $('frp-install').textContent = data.installing ? '正在安装…' : '安装 frpc';
@@ -169,6 +181,15 @@ const Frp = (() => {
     }));
     status.textContent = ok ? '已复制' : '复制失败，请检查浏览器剪贴板权限';
     setTimeout(() => { status.textContent = ''; }, 2500);
+  });
+  $('frp-detect').addEventListener('click', async () => {
+    busy = true;
+    say('正在检测…');
+    try {
+      const data = await API.post('/api/frp/detect', {});
+      render(data, { form: false });
+      say(data.installed ? '已检测到 frpc' : '仍未检测到 frpc', !data.installed);
+    } catch (error) { say(`检测失败：${errorText(error)}`, true); } finally { busy = false; }
   });
   $('frp-stop').addEventListener('click', async () => {
     busy = true;

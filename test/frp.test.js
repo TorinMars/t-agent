@@ -282,3 +282,61 @@ test('frps 提示词：带服务端口、Token 和放行范围；没有 Token �
   assert.match(outside, /\{ single = 8080 \}/);
   assert.match(outside, /20000-60000 以及 8080/);
 });
+
+// ── frpc 检测 ──
+const { findFrpc, homebrewDirs } = require('../services/frp');
+
+function fakeBrew(t, { version = '0.71.0', linked = true } = {}) {
+  const prefix = fs.mkdtempSync(path.join(os.tmpdir(), 'frp-brew-'));
+  t.after(() => fs.rmSync(prefix, { recursive: true, force: true }));
+  const keg = path.join(prefix, 'Cellar', 'frpc', version, 'bin');
+  fs.mkdirSync(keg, { recursive: true });
+  const real = path.join(keg, 'frpc');
+  fs.writeFileSync(real, `#!/bin/sh\necho "${version}"\n`, { mode: 0o755 });
+  fs.mkdirSync(path.join(prefix, 'opt'), { recursive: true });
+  fs.symlinkSync(path.join('..', 'Cellar', 'frpc', version), path.join(prefix, 'opt', 'frpc'));
+  if (linked) { fs.mkdirSync(path.join(prefix, 'bin')); fs.symlinkSync(real, path.join(prefix, 'bin', 'frpc')); }
+  return { prefix, real };
+}
+
+test('Homebrew：即使没链接进 PATH，也能从 opt/ 和 Cellar/ 找到 frpc（取最新版本）', t => {
+  const { prefix } = fakeBrew(t, { linked: false });
+  const old = path.join(prefix, 'Cellar', 'frpc', '0.9.0', 'bin');
+  fs.mkdirSync(old, { recursive: true });
+  fs.writeFileSync(path.join(old, 'frpc'), '#!/bin/sh\n', { mode: 0o755 });
+  const dirs = homebrewDirs({ HOMEBREW_PREFIX: prefix });
+  const found = findFrpc({ dirs });
+  assert.ok(found.startsWith(path.join(prefix, 'opt', 'frpc', 'bin')), found);
+  fs.rmSync(path.join(prefix, 'opt', 'frpc'));
+  assert.equal(findFrpc({ dirs }), path.join(prefix, 'Cellar', 'frpc', '0.71.0', 'bin', 'frpc'));
+});
+
+test('空的 Homebrew keg（没有 frpc 可执行文件）不会被当成已安装', t => {
+  const prefix = fs.mkdtempSync(path.join(os.tmpdir(), 'frp-brew-empty-'));
+  t.after(() => fs.rmSync(prefix, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(prefix, 'Cellar', 'frpc', '0.71.0', 'bin'), { recursive: true });
+  assert.equal(findFrpc({ dirs: homebrewDirs({ HOMEBREW_PREFIX: prefix }).filter(dir => dir.startsWith(prefix)) }), null);
+});
+
+test('版本探测：显示版本；低于 0.52 拒绝启动；重新检测会读取新装的 frpc', async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'frp-detect-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const db = new Database(':memory:');
+  db.exec('CREATE TABLE system_state (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)');
+  t.after(() => db.close());
+  const binFile = path.join(dir, 'frpc');
+  const write = version => fs.writeFileSync(binFile, `#!/bin/sh\necho "frpc version ${version}"\n`, { mode: 0o755 });
+  const service = createFrpService({ db, secret: SECRET, dataDir: dir, localPort: 3000, bin: binFile });
+  write('0.71.0');
+  assert.equal(service.view().frpc.version, '0.71.0');
+  assert.equal(service.view().frpc.error, '');
+  write('0.51.3');
+  assert.equal(service.detect().frpc.version, '0.51.3');
+  assert.equal(service.view().frpc.supported, false);
+  service.update({ serverAddr: '1.2.3.4' });
+  assert.throws(() => service.start(), e => e.code === 'FRP_VERSION_UNSUPPORTED');
+  write('0.71.0');
+  const view = service.detect();
+  assert.equal(view.frpc.version, '0.71.0');
+  assert.equal(view.frpc.supported, true);
+});

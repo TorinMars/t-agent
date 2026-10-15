@@ -1,9 +1,10 @@
-const { spawn } = require('node:child_process');
+const { spawn, execFileSync } = require('node:child_process');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const net = require('node:net');
 const path = require('node:path');
 const { candidateBinDirs } = require('./pm2-manager');
+const os = require('node:os');
 const { decryptToken, encryptToken } = require('../lib/token-crypto');
 const { installFrpc, platformTarget, FrpInstallError, FRP_VERSION } = require('./frp-install');
 
@@ -15,6 +16,8 @@ const MAX_LOG_LINES = 200;
 const PORT_RETRY_WINDOW_MS = 15_000;
 const MAX_PORT_RETRIES = 3;
 const PORT_CONFLICT = /port already used|port not allowed|port unavailable/i;
+// TOML 配置从 frp 0.52 开始支持。
+const MIN_FRPC = [0, 52, 0];
 const START_OK = /start proxy success/i;
 const LOGIN_FAILED = /login to server failed|token in login doesn't match|authorization failed/i;
 
@@ -66,17 +69,53 @@ function renderToml({ serverAddr, serverPort, token, proxyName, localIP, localPo
   return lines.join('\n');
 }
 
+// Homebrew 的 frpc 有时没有链接进 PATH（或服务以精简的 PATH 启动），所以直接找 opt/ 和 Cellar/ 下的真实位置。
+function homebrewDirs(env = process.env) {
+  const prefixes = [...new Set([env.HOMEBREW_PREFIX, '/opt/homebrew', '/usr/local', '/home/linuxbrew/.linuxbrew', path.join(os.homedir(), '.linuxbrew')].filter(Boolean))];
+  const dirs = [];
+  for (const prefix of prefixes) {
+    dirs.push(path.join(prefix, 'bin'));
+    for (const formula of ['frpc', 'frp']) {
+      dirs.push(path.join(prefix, 'opt', formula, 'bin'));
+      try {
+        const versions = fs.readdirSync(path.join(prefix, 'Cellar', formula)).sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
+        for (const version of versions) dirs.push(path.join(prefix, 'Cellar', formula, version, 'bin'));
+      } catch { /* 没装这个 formula */ }
+    }
+  }
+  return dirs;
+}
+
 function findFrpc(options = {}) {
   if (options.bin) return options.bin;
   if (process.env.T_AGENT_FRPC_BIN) return process.env.T_AGENT_FRPC_BIN;
-  for (const dir of options.dirs || candidateBinDirs()) {
+  for (const dir of options.dirs || [...candidateBinDirs(), ...homebrewDirs()]) {
     const candidate = path.join(dir, 'frpc');
     try {
       fs.accessSync(candidate, fs.constants.X_OK);
+      if (!fs.statSync(candidate).isFile()) continue;
       return candidate;
     } catch { /* 继续找 */ }
   }
   return null;
+}
+
+const versionAtLeast = (version, min) => {
+  for (let i = 0; i < 3; i += 1) if (version[i] !== min[i]) return version[i] > min[i];
+  return true;
+};
+
+// 运行 frpc --version（带超时）。返回 { version, supported, error }。
+function probeFrpc(file) {
+  try {
+    const output = execFileSync(file, ['--version'], { timeout: 5000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+    const match = /(\d+)\.(\d+)\.(\d+)/.exec(output);
+    if (!match) return { version: '', supported: true, error: '无法识别 frpc 的版本号' };
+    const parts = match.slice(1).map(Number);
+    return { version: parts.join('.'), supported: versionAtLeast(parts, MIN_FRPC), error: '' };
+  } catch {
+    return { version: '', supported: true, error: '找到了 frpc，但无法运行它（可能已损坏或未链接完整）' };
+  }
 }
 
 function createFrpService({
@@ -84,7 +123,16 @@ function createFrpService({
   bin, spawnProcess = spawn, random = crypto.randomInt, now = Date.now, installer = installFrpc,
 }) {
   const binDir = path.join(dataDir, 'bin');
-  const locate = () => bin || findFrpc({ dirs: [binDir, ...candidateBinDirs()] });
+  const locate = () => bin || findFrpc({ dirs: [binDir, ...candidateBinDirs(), ...homebrewDirs()] });
+  const probes = new Map();
+  // 以路径 + 修改时间缓存 --version 的结果；“重新检测”会清空缓存。
+  function probe(file) {
+    if (!file) return { version: '', supported: true, error: '' };
+    let key = file;
+    try { key = `${file}:${fs.statSync(file).mtimeMs}`; } catch { return { version: '', supported: true, error: '找到了 frpc，但无法运行它（可能已损坏或未链接完整）' }; }
+    if (!probes.has(key)) probes.set(key, probeFrpc(file));
+    return probes.get(key);
+  }
   let installing = false;
   let installError = '';
   const configFile = path.join(dataDir, 'frpc.toml');
@@ -130,8 +178,11 @@ function createFrpService({
   }
 
   function view() {
+    const frpc = locate();
+    const info = probe(frpc);
     return {
-      installed: Boolean(locate()),
+      installed: Boolean(frpc),
+      frpc: frpc ? { path: frpc, version: info.version, supported: info.supported, error: info.error } : null,
       installing,
       installError,
       status,
@@ -218,6 +269,7 @@ function createFrpService({
 
   function launch() {
     const frpc = locate();
+    if (frpc && !probe(frpc).supported) throw new FrpError('FRP_VERSION_UNSUPPORTED', `frpc ${probe(frpc).version} 版本过旧，需要 0.52 及以上（支持 TOML 配置）。请升级，例如 brew upgrade frpc`, 412);
     if (!frpc) throw new FrpError('FRP_NOT_INSTALLED', '未找到 frpc：请点击“安装 frpc”，或手动安装 frp 后用环境变量 T_AGENT_FRPC_BIN 指定路径', 412);
     const config = load();
     if (!config.serverAddr) throw new FrpError('FRP_SERVER_REQUIRED', '请先填写服务器 IP 或域名', 412);
@@ -311,13 +363,19 @@ function createFrpService({
     return view();
   }
 
+  // 重新扫描 frpc 的位置并重新读取版本（用户在页面外装好 frpc 后点“重新检测”）。
+  function detect() {
+    probes.clear();
+    return view();
+  }
+
   function autoStart() {
     const config = load();
     if (!config.autoStart || !config.serverAddr || !locate()) return;
     try { launch(); } catch (error) { console.warn('[frp] auto start failed:', error.message); }
   }
 
-  return { view, update, start, stop, regenerate, install, autoStart, load };
+  return { view, update, start, stop, regenerate, install, detect, autoStart, load };
 }
 
-module.exports = { createFrpService, FrpError, renderToml, findFrpc, randomPort, DEFAULT_PORT_MIN, DEFAULT_PORT_MAX };
+module.exports = { createFrpService, FrpError, renderToml, findFrpc, homebrewDirs, probeFrpc, randomPort, DEFAULT_PORT_MIN, DEFAULT_PORT_MAX };

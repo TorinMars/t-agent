@@ -205,9 +205,13 @@
         <div class="tool-card-title">内网穿透（frp）</div>
         <div class="form-hint">用 frpc 把这台机器上的 Client 端口映射到你的 frps 服务器。远程端口自动随机生成并保持稳定（可重新生成）；这是 TCP 隧道，域名需要自己解析到 frps 服务器的 IP，再用反向代理（如 Nginx，终结 HTTPS）转发到 <code>服务器IP:远程端口</code>。对外暴露 Client 前请确认已绑定身份验证器。本机没有 frpc 时页面会提供“安装 frpc”按钮；也可自行安装（0.52 及以上）并用环境变量 <code>T_AGENT_FRPC_BIN</code> 指定路径。</div>
         <div class="frp-status" id="frp-status-line" role="status"></div>
+        <div class="frp-detect" id="frp-detect-row">
+          <span id="frp-frpc-info"></span>
+          <button type="button" class="btn-logout" id="frp-detect">重新检测 frpc</button>
+        </div>
         <div class="tool-card-actions" id="frp-install-row" hidden>
           <button type="button" class="btn-submit" id="frp-install">安装 frpc</button>
-          <span class="form-hint">点击后可选择：复制提示词让 Agent 安装，或由 Client 直接下载（官方发布包 + SHA-256 校验，只把 frpc 放到 data/bin；无法访问 GitHub 时设置 <code>T_AGENT_FRP_DOWNLOAD_BASE</code> 指向镜像）。</span>
+          <span class="form-hint">点击后可选择：复制提示词让 Agent 安装，或由 Client 直接下载（官方发布包 + SHA-256 校验，只把 frpc 放到 data/bin；无法访问 GitHub 时设置 <code>T_AGENT_FRP_DOWNLOAD_BASE</code> 指向镜像）。已用 Homebrew（<code>brew install frpc</code>）或手动装好时，点上面的“重新检测 frpc”。</span>
         </div>
         <form class="frp-form" id="frp-form" autocomplete="off">
           <label class="form-label" for="frp-domain">域名（可选）</label>

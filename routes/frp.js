@@ -22,6 +22,7 @@ function createFrpRouter(options = {}) {
   router.get('/', wrap(() => service.view()));
   router.put('/config', wrap(req => service.update(req.body)));
   router.post('/start', wrap(() => service.start()));
+  router.post('/install', wrap(() => service.install()));
   router.post('/stop', wrap(() => service.stop()));
   router.post('/regenerate-port', wrap(() => service.regenerate()));
 

@@ -154,3 +154,76 @@ test('路由：需要登录，配置更新和状态不泄露 Token', async t => 
   assert.equal(bad.status, 400);
   assert.equal((await bad.json()).error, 'FRP_SERVER_PORT_INVALID');
 });
+
+// ── frpc 安装 ──
+const crypto = require('node:crypto');
+const { execFileSync } = require('node:child_process');
+const { installFrpc } = require('../services/frp-install');
+
+function releaseFixture(t, { tamper = false } = {}) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'frp-release-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const name = 'frp_0.61.1_linux_amd64';
+  fs.mkdirSync(path.join(dir, name));
+  fs.writeFileSync(path.join(dir, name, 'frpc'), '#!/bin/sh\necho frpc\n');
+  fs.writeFileSync(path.join(dir, name, 'frps'), 'x');
+  execFileSync('tar', ['-czf', path.join(dir, `${name}.tar.gz`), '-C', dir, name]);
+  const archive = fs.readFileSync(path.join(dir, `${name}.tar.gz`));
+  const sum = crypto.createHash('sha256').update(tamper ? Buffer.from('other') : archive).digest('hex');
+  const urls = [];
+  const download = async url => {
+    urls.push(url);
+    if (url.endsWith('frp_sha256_checksums.txt')) return `${sum}  ${name}.tar.gz\n`;
+    return archive;
+  };
+  return { download, urls };
+}
+
+test('安装 frpc：校验通过后只把可执行的 frpc 放进 binDir', async t => {
+  const { download, urls } = releaseFixture(t);
+  const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'frp-bin-'));
+  t.after(() => fs.rmSync(binDir, { recursive: true, force: true }));
+  const result = await installFrpc({ binDir, platform: 'linux', arch: 'x64', base: 'https://mirror.test/frp/', download });
+  assert.equal(result.path, path.join(binDir, 'frpc'));
+  assert.equal(fs.statSync(result.path).mode & 0o111, 0o111);
+  assert.deepEqual(fs.readdirSync(binDir), ['frpc']);
+  assert.ok(urls.every(url => url.startsWith('https://mirror.test/frp/v0.61.1/')));
+});
+
+test('安装 frpc：校验和不符或平台不支持时拒绝，且不留下文件', async t => {
+  const { download } = releaseFixture(t, { tamper: true });
+  const binDir = path.join(os.tmpdir(), `frp-bin-${process.pid}-bad`);
+  await assert.rejects(installFrpc({ binDir, platform: 'linux', arch: 'x64', download }), e => e.code === 'FRP_INSTALL_CHECKSUM_FAILED');
+  assert.equal(fs.existsSync(binDir), false);
+  await assert.rejects(installFrpc({ binDir, platform: 'win32', arch: 'x64', download }), e => e.code === 'FRP_INSTALL_UNSUPPORTED');
+  await assert.rejects(installFrpc({ binDir, platform: 'linux', arch: 'x64', download: async () => { throw new Error('net'); } }), e => e.code === 'FRP_INSTALL_DOWNLOAD_FAILED');
+});
+
+test('服务：安装完成后识别到 frpc；失败时给出原因；重复安装被拒绝', async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'frp-svc-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const db = new Database(':memory:');
+  db.exec('CREATE TABLE system_state (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)');
+  t.after(() => db.close());
+  const original = process.env.T_AGENT_FRPC_BIN;
+  process.env.T_AGENT_FRPC_BIN = '';
+  t.after(() => { if (original === undefined) delete process.env.T_AGENT_FRPC_BIN; else process.env.T_AGENT_FRPC_BIN = original; });
+  let fail = true;
+  const installer = async ({ binDir }) => {
+    if (fail) { const { FrpInstallError } = require('../services/frp-install'); throw new FrpInstallError('X', '下载 frp 失败'); }
+    fs.mkdirSync(binDir, { recursive: true });
+    fs.writeFileSync(path.join(binDir, 'frpc'), '#!/bin/sh\n', { mode: 0o755 });
+  };
+  const service = createFrpService({ db, secret: SECRET, dataDir: dir, localPort: 3000, installer });
+  assert.equal(service.view().installed, false);
+  service.install();
+  assert.equal(service.view().installing, true);
+  assert.throws(() => service.install(), e => e.code === 'FRP_INSTALL_RUNNING');
+  await until(() => !service.view().installing);
+  assert.equal(service.view().installError, '下载 frp 失败');
+  fail = false;
+  service.install();
+  await until(() => service.view().installed && !service.view().installing);
+  assert.equal(service.view().installError, '');
+  assert.throws(() => service.install(), e => e.code === 'FRP_ALREADY_INSTALLED');
+});

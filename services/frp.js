@@ -5,6 +5,7 @@ const net = require('node:net');
 const path = require('node:path');
 const { candidateBinDirs } = require('./pm2-manager');
 const { decryptToken, encryptToken } = require('../lib/token-crypto');
+const { installFrpc, FrpInstallError } = require('./frp-install');
 
 const STATE_KEY = 'frp_config';
 const DEFAULT_PORT_MIN = 20000;
@@ -80,8 +81,12 @@ function findFrpc(options = {}) {
 
 function createFrpService({
   db, secret, dataDir, localPort, localHost = '127.0.0.1',
-  bin, spawnProcess = spawn, random = crypto.randomInt, now = Date.now,
+  bin, spawnProcess = spawn, random = crypto.randomInt, now = Date.now, installer = installFrpc,
 }) {
+  const binDir = path.join(dataDir, 'bin');
+  const locate = () => bin || findFrpc({ dirs: [binDir, ...candidateBinDirs()] });
+  let installing = false;
+  let installError = '';
   const configFile = path.join(dataDir, 'frpc.toml');
   let child = null;
   let status = 'stopped'; // stopped | starting | running | failed
@@ -124,9 +129,10 @@ function createFrpService({
   }
 
   function view() {
-    const frpc = bin || findFrpc();
     return {
-      installed: Boolean(frpc),
+      installed: Boolean(locate()),
+      installing,
+      installError,
       status,
       error: failure,
       startedAt,
@@ -201,8 +207,8 @@ function createFrpService({
   }
 
   function launch() {
-    const frpc = bin || findFrpc();
-    if (!frpc) throw new FrpError('FRP_NOT_INSTALLED', '未找到 frpc：请先安装 frp（https://github.com/fatedier/frp/releases），或用环境变量 T_AGENT_FRPC_BIN 指定路径', 412);
+    const frpc = locate();
+    if (!frpc) throw new FrpError('FRP_NOT_INSTALLED', '未找到 frpc：请点击“安装 frpc”，或手动安装 frp 后用环境变量 T_AGENT_FRPC_BIN 指定路径', 412);
     const config = load();
     if (!config.serverAddr) throw new FrpError('FRP_SERVER_REQUIRED', '请先填写服务器 IP 或域名', 412);
     writeConfig(config);
@@ -282,13 +288,26 @@ function createFrpService({
     return view();
   }
 
+  // 下载 frpc 到 <dataDir>/bin。异步执行，页面轮询 view().installing / installError 获取结果。
+  function install() {
+    if (installing) throw new FrpError('FRP_INSTALL_RUNNING', '正在安装 frpc', 409);
+    if (locate()) throw new FrpError('FRP_ALREADY_INSTALLED', '已经安装了 frpc', 409);
+    installing = true;
+    installError = '';
+    installer({ binDir }).catch(error => {
+      installError = error instanceof FrpInstallError ? error.message : '安装 frpc 失败';
+      if (!(error instanceof FrpInstallError)) console.warn('[frp] install failed:', error && error.message);
+    }).finally(() => { installing = false; });
+    return view();
+  }
+
   function autoStart() {
     const config = load();
-    if (!config.autoStart || !config.serverAddr || !(bin || findFrpc())) return;
+    if (!config.autoStart || !config.serverAddr || !locate()) return;
     try { launch(); } catch (error) { console.warn('[frp] auto start failed:', error.message); }
   }
 
-  return { view, update, start, stop, regenerate, autoStart, load };
+  return { view, update, start, stop, regenerate, install, autoStart, load };
 }
 
 module.exports = { createFrpService, FrpError, renderToml, findFrpc, randomPort, DEFAULT_PORT_MIN, DEFAULT_PORT_MAX };

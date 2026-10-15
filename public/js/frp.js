@@ -8,6 +8,7 @@ const Frp = (() => {
     FRP_DOMAIN_INVALID: '域名格式不正确，例如 app.example.com', FRP_LOCAL_PORT_INVALID: '本地端口必须是 1-65535 的整数',
     FRP_TOKEN_INVALID: 'Token 含有不允许的字符', FRP_PORT_RANGE_INVALID: '随机端口范围不正确',
     FRP_ALREADY_RUNNING: '隧道已经在运行', FRP_START_FAILED: '无法启动 frpc', FRP_BODY_INVALID: '请求内容不正确',
+    FRP_INSTALL_RUNNING: '正在安装 frpc', FRP_ALREADY_INSTALLED: '已经安装了 frpc',
     FRP_UNAVAILABLE: '内网穿透服务暂时不可用',
   };
   const STATUS_LABELS = { stopped: '已停止', starting: '启动中…', running: '运行中', failed: '失败' };
@@ -28,7 +29,8 @@ const Frp = (() => {
     badge.textContent = STATUS_LABELS[data.status] || data.status;
     line.append(badge);
     const extra = [];
-    if (!data.installed) extra.push('未检测到 frpc');
+    if (!data.installed) extra.push(data.installing ? '正在安装 frpc…' : '未检测到 frpc');
+    if (data.installError) extra.push(data.installError);
     if (data.error) extra.push(data.error);
     if (data.config.publicAddress) extra.push(`公网地址 ${data.config.publicAddress}（反向代理到 ${data.config.serverAddr}:${data.config.remotePort}）`);
     if (extra.length) line.append(document.createTextNode(extra.join(' · ')));
@@ -49,6 +51,9 @@ const Frp = (() => {
   function render(data, { form = true } = {}) {
     last = data;
     renderStatus(data);
+    $('frp-install-row').hidden = data.installed;
+    $('frp-install').disabled = Boolean(data.installing);
+    $('frp-install').textContent = data.installing ? '正在安装…' : '安装 frpc';
     if (form && !editing) fillForm(data.config);
     else $('frp-remote-port').value = data.config.remotePort || '';
     const log = $('frp-log');
@@ -93,6 +98,10 @@ const Frp = (() => {
   $('frp-form').addEventListener('submit', event => { event.preventDefault(); run(null, '保存'); });
   $('frp-start').addEventListener('click', () => run('start', '启动'));
   $('frp-form').addEventListener('input', () => { editing = true; });
+  $('frp-install').addEventListener('click', async () => {
+    busy = true;
+    try { render(await API.post('/api/frp/install', {}), { form: false }); say('开始安装 frpc，请稍候'); } catch (error) { say(`安装失败：${errorText(error)}`, true); } finally { busy = false; }
+  });
   $('frp-stop').addEventListener('click', async () => {
     busy = true;
     try { render(await API.post('/api/frp/stop', {}), { form: false }); say('已停止'); } catch (error) { say(`停止失败：${errorText(error)}`, true); } finally { busy = false; }

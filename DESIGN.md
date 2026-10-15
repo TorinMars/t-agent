@@ -1940,4 +1940,5 @@ OSS 前端配置在窗口获得焦点、页面恢复及回到前台时重新读�
 - 配置存 `system_state.frp_config`（JSON）；Token 用 `lib/token-crypto` 以 `SESSION_SECRET` 加密。frpc 配置写入 `data/frpc.toml`（0600）。
 - 固定为 `type = "tcp"` 代理：`localIP/localPort` 指向本 Client，`remotePort` 为 `[portMin, portMax]` 内的随机值，仅在缺失或越界时生成，其余保持稳定。启动后 15 秒内因端口占用退出会重新随机并重试，最多 3 次。
 - 域名仅用于展示 `publicAddress`，不进入 frpc 配置。进程随 Client 退出而终止，`autoStart` 为真时在 Client 启动后拉起。
-- 限制：仅本机；无 frpc 时报 `FRP_NOT_INSTALLED`，不自动下载。
+- frpc 查找顺序：`T_AGENT_FRPC_BIN` → `data/bin/` → PATH 及常见目录。`POST /api/frp/install` 异步安装（`services/frp-install.js`）：下载固定版本发布包和 `frp_sha256_checksums.txt`，SHA-256 不符即放弃，用系统 `tar` 只解出 frpc，写临时文件后改名；页面轮询 `installing` / `installError`。
+- 限制：仅本机；自动安装仅 macOS / Linux（amd64、arm64、arm）。

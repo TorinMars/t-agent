@@ -55,7 +55,7 @@ flowchart LR
 - 必填：frps 服务器 IP/域名、frps 服务端口（默认 7000）；frps 设置了 Token 时再填 Token（加密保存，不回显）。
 - 远程端口自动随机生成（默认范围 20000-60000），生成后保持稳定；可点“重新生成”，运行中会重启隧道。启动时若端口被 frps 占用，会自动换端口重试最多 3 次。
 - 域名可选，只用于显示公网地址 `域名:远程端口`，不会写入 frpc 配置。域名解析和反向代理（如 Nginx 终结 HTTPS）自行配置，转发到 `服务器IP:远程端口`；不配域名时可直接访问 `http://服务器IP:远程端口`（需放行该端口）。
-- 需要本机已安装 frpc（0.52 及以上，TOML 配置）；位置不在 PATH 时用环境变量 `T_AGENT_FRPC_BIN` 指定。可勾选“Client 启动时自动开启隧道”。
+- 需要本机有 frpc（0.52 及以上，TOML 配置）。没检测到时页面显示“安装 frpc”按钮：下载固定版本（0.61.1）的官方发布包，校验 SHA-256 后只把 frpc 放到 `data/bin/`；无法访问 GitHub 时用 `T_AGENT_FRP_DOWNLOAD_BASE` 指向镜像（目录结构同 GitHub releases，含 `v0.61.1/frp_sha256_checksums.txt`）。也可自行安装，位置不在 PATH 时用 `T_AGENT_FRPC_BIN` 指定。自动安装仅支持 macOS / Linux。可勾选“Client 启动时自动开启隧道”。
 - 只管理运行 Client 的这台机器，不经 Engine 代理。对外暴露前请确认已绑定身份验证器。
 
 ### 登录入口

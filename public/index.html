@@ -203,8 +203,12 @@
     <section class="frp-panel" id="frp-panel" hidden aria-label="内网穿透">
       <div class="tool-card tool-card-wide">
         <div class="tool-card-title">内网穿透（frp）</div>
-        <div class="form-hint">用 frpc 把这台机器上的 Client 端口映射到你的 frps 服务器。远程端口自动随机生成并保持稳定（可重新生成）；这是 TCP 隧道，域名需要自己解析到 frps 服务器的 IP，再用反向代理（如 Nginx，终结 HTTPS）转发到 <code>服务器IP:远程端口</code>。对外暴露 Client 前请确认已绑定身份验证器。需要先在本机安装 frpc（0.52 及以上），或用环境变量 <code>T_AGENT_FRPC_BIN</code> 指定路径。</div>
+        <div class="form-hint">用 frpc 把这台机器上的 Client 端口映射到你的 frps 服务器。远程端口自动随机生成并保持稳定（可重新生成）；这是 TCP 隧道，域名需要自己解析到 frps 服务器的 IP，再用反向代理（如 Nginx，终结 HTTPS）转发到 <code>服务器IP:远程端口</code>。对外暴露 Client 前请确认已绑定身份验证器。本机没有 frpc 时页面会提供“安装 frpc”按钮；也可自行安装（0.52 及以上）并用环境变量 <code>T_AGENT_FRPC_BIN</code> 指定路径。</div>
         <div class="frp-status" id="frp-status-line" role="status"></div>
+        <div class="tool-card-actions" id="frp-install-row" hidden>
+          <button type="button" class="btn-submit" id="frp-install">安装 frpc</button>
+          <span class="form-hint">从 GitHub 下载 frp 官方发布包并校验 SHA-256，只把 frpc 放到 Client 的 data/bin 目录。无法访问 GitHub 时可设置环境变量 <code>T_AGENT_FRP_DOWNLOAD_BASE</code> 指向镜像。</span>
+        </div>
         <form class="frp-form" id="frp-form" autocomplete="off">
           <label class="form-label" for="frp-domain">域名（可选）</label>
           <input class="form-input" id="frp-domain" type="text" placeholder="app.example.com" spellcheck="false">

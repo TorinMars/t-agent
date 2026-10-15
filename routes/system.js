@@ -11,7 +11,7 @@ function isAdmin(req) {
 }
 
 router.get('/version', (req, res) => {
-  try { res.json({ ...updates.readLocalManifest(), is_update_admin: isAdmin(req) }); }
+  try { res.json({ ...updates.readLocalManifest(), boot_id: updates.bootId, is_update_admin: isAdmin(req) }); }
   catch { res.status(500).json({ error: 'INVALID_LOCAL_VERSION' }); }
 });
 

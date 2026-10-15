@@ -1,4 +1,5 @@
 const fs = require('fs');
+const crypto = require('crypto');
 const path = require('path');
 const https = require('https');
 const { execFileSync } = require('child_process');
@@ -92,6 +93,9 @@ function readLocalManifest() {
 // 进程启动时磁盘上的版本号，也就是当前这个进程实际在运行的版本。
 // 检查更新是拿远程版本和“磁盘上的 VERSION.json”比较的：手动 git pull 或上次更新中途失败后，磁盘代码会比内存里的新，
 // 此时必须单独提示“需要重启”，不能报“已是最新”。
+// 每个进程启动时生成一次。页面据此区分“旧进程还没退出”和“新进程已经起来”：磁盘上的版本号在重启前就已经是新的，不能用来判断。
+const bootId = crypto.randomUUID();
+
 const runningVersion = (() => {
   try { return readLocalManifest().app_version; } catch { return null; }
 })();
@@ -411,6 +415,7 @@ function publicState() {
     // 更新文件落盘后以及重启恢复时，以实际清单版本为准，避免状态缓存仍显示旧版本。
     local_version: (localManifest && localManifest.app_version) || state.local_version,
     local_manifest: localManifest,
+    boot_id: bootId,
     version_url: state.version_url || (() => { try { return configuredVersionUrl(); } catch { return null; } })(),
     install_type: installationType(),
     update_repository: config.updateRepository,
@@ -433,4 +438,4 @@ function start() {
   timer.unref();
 }
 
-module.exports = { apply, check, markNotified, publicState, readLocalManifest, start, npmEnv };
+module.exports = { apply, check, markNotified, publicState, readLocalManifest, start, npmEnv, bootId };

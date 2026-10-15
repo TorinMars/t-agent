@@ -256,7 +256,9 @@ const Updates = {
     this.setBusy(true);
     Modal.show('正在更新', UpdateLog.markup('update-progress-message', 'update-progress-error'));
     try {
+      this.updateServerDown = false;
       const status = await API.post('/api/system/apply-update', { confirm: true, force });
+      this.updateBootId = status.boot_id || null;
       if (status.stage === 'completed') { this.showCompleted(status); return; }
       this.monitorApply();
     } catch (error) {
@@ -281,7 +283,7 @@ const Updates = {
     clearInterval(this.restartTimer);
     this.restartTimer = setInterval(async () => {
       let status;
-      try { status = await API.get('/api/system/update-status'); } catch { return; }
+      try { status = await API.get('/api/system/update-status'); } catch { this.updateServerDown = true; return; }
       const message = document.getElementById('update-progress-message');
       if (message && status.message) message.textContent = Array.isArray(status.log) && status.log.length ? UpdateLog.headline(status.message) : status.message;
       UpdateLog.render(document.getElementById('update-progress-message-log'), status.log);
@@ -309,8 +311,9 @@ const Updates = {
       } else if (status.stage === 'restarting') {
         clearInterval(this.restartTimer);
         this.waitForRestart(status.remote_version);
-      } else if (status.status !== 'updating') {
+      } else if (status.status !== 'updating' && this.isNewProcess(status.boot_id)) {
         // 服务在两次轮询之间已重启完成：新进程里状态不再是 updating，直接刷新加载新界面。
+        // 必须确认是新进程；旧进程在退出前状态也可能不是 updating，此时刷新只会拿到旧界面。
         clearInterval(this.restartTimer);
         this.showCompleted(status);
       }
@@ -335,16 +338,23 @@ const Updates = {
     setTimeout(() => window.location.reload(), 1500);
   },
 
+  // 磁盘上的版本号在重启前就已是新版本，所以不能靠版本号判断重启完成；用进程启动 ID 确认已经换成新进程。
+  // 拿不到更新前的进程 ID（旧版本服务）时，退而要求先观察到服务中断过。
+  isNewProcess(bootId) {
+    if (this.updateBootId) return Boolean(bootId) && bootId !== this.updateBootId;
+    return Boolean(this.updateServerDown);
+  },
+
   waitForRestart(targetVersion) {
     document.getElementById('update-progress-message').textContent = '服务正在重启，恢复后页面会自动刷新…';
     clearInterval(this.restartTimer);
     this.restartTimer = setInterval(async () => {
       try {
         const res = await fetch('/api/system/version', { cache: 'no-store', headers: { 'X-Requested-With': 'XMLHttpRequest' } });
-        if (!res.ok) return;
+        if (!res.ok) { this.updateServerDown = true; return; }
         const version = await res.json();
-        if (!targetVersion || version.app_version === targetVersion) window.location.reload();
-      } catch {}
+        if ((!targetVersion || version.app_version === targetVersion) && this.isNewProcess(version.boot_id)) window.location.reload();
+      } catch { this.updateServerDown = true; }
     }, 1500);
   },
 

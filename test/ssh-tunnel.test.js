@@ -57,6 +57,8 @@ test('参数：私钥为空走 ssh 默认逻辑（不带 -i），填写后使用
   assert.deepEqual(plain.slice(-3), ['-R', '28000:127.0.0.1:3000', 'deploy@1.2.3.4']);
   assert.equal(plain[plain.indexOf('-p') + 1], '2222');
   assert.ok(plain.includes('BatchMode=yes') && plain.includes('ExitOnForwardFailure=yes'));
+  // 不能复用用户 ssh 配置里的共享连接（ControlMaster auto 会让 ssh 交出转发请求后立刻退出）。
+  for (const option of ['ControlMaster=no', 'ControlPath=none', 'ControlPersist=no']) assert.ok(plain.includes(option), option);
   const keyed = buildArgs({ ...config, keyPath: '/home/me/.ssh/tunnel_key', bindAll: true }, options);
   assert.equal(keyed[keyed.indexOf('-i') + 1], '/home/me/.ssh/tunnel_key');
   assert.ok(keyed.includes('IdentitiesOnly=yes'));

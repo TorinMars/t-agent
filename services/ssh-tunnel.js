@@ -40,11 +40,16 @@ function findSsh() {
 }
 
 // 只用参数数组启动 ssh（不经 shell）。BatchMode 保证不会卡在密码提示上；私钥留空时完全交给 ssh 的默认逻辑。
+// 连接复用必须关掉：用户的 ~/.ssh/config 常有 ControlMaster auto / ControlPersist，ssh 会把转发请求交给已有的共享连接后立刻退出
+// （退出码 0，隧道其实不归本进程管），页面就会显示失败，而且停止按钮也关不掉那条转发。
 function buildArgs(config, { localIP, localPort }) {
   const bind = config.bindAll ? '0.0.0.0:' : '';
   const args = [
     '-N', '-T', '-v',
     '-o', 'BatchMode=yes',
+    '-o', 'ControlMaster=no',
+    '-o', 'ControlPath=none',
+    '-o', 'ControlPersist=no',
     '-o', 'ExitOnForwardFailure=yes',
     '-o', 'ServerAliveInterval=30',
     '-o', 'ServerAliveCountMax=3',

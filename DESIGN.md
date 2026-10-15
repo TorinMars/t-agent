@@ -1949,7 +1949,7 @@ OSS 前端配置在窗口获得焦点、页面恢复及回到前台时重新读�
 
 - 服务：`services/ssh-tunnel.js`，路由：`routes/ssh-tunnel.js`（`/api/ssh-tunnel`，需登录 + 同源校验），页面：`public/js/ssh-tunnel.js`；与 frp 共用「内网穿透」页，顶部单选切换（选择存 `localStorage`），两种方式的配置和进程互相独立。
 - 配置存 `system_state.ssh_tunnel_config`。不保存任何密钥内容，只保存私钥**路径**；从不读取私钥文件。
-- 进程：`ssh -N -T -v -o BatchMode=yes -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new -p <端口> [-i <私钥> -o IdentitiesOnly=yes] -R [0.0.0.0:]<远程端口>:<本机IP>:<本机端口> <用户>@<主机>`。只用参数数组启动（不经 shell）；主机和用户名在保存时校验，不允许以 `-` 开头。私钥路径为空则不加 `-i`，完全走 ssh 默认逻辑；非空时启动前检查文件存在。
+- 进程：`ssh -N -T -v -o BatchMode=yes -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new -p <端口> [-i <私钥> -o IdentitiesOnly=yes] -R [0.0.0.0:]<远程端口>:<本机IP>:<本机端口> <用户>@<主机>`。只用参数数组启动（不经 shell）；固定加 `ControlMaster=no`、`ControlPath=none`、`ControlPersist=no`：用户 `~/.ssh/config` 里常见的 `ControlMaster auto` 会让 ssh 把转发请求交给已有的共享连接后立刻以 0 退出（隧道不归本进程管，页面误报失败，停止也关不掉），所以隧道始终使用独立连接；主机和用户名在保存时校验，不允许以 `-` 开头。私钥路径为空则不加 `-i`，完全走 ssh 默认逻辑；非空时启动前检查文件存在。
 - 状态：从 `-v` 输出的 `remote forward success` 判定为运行中；日志只保留和连接、认证、转发有关的行。`remote port forwarding failed` 在自动端口下换端口重试（15 秒内最多 3 次），手动端口直接报错。认证失败、DNS、拒绝连接、超时、私钥不可用、主机密钥变更都映射成中文原因。
 - 已连通后意外退出：5 秒后自动重连，连续最多 5 次；`stop` 会取消待重连。随 Client 退出而终止；`autoStart` 为真时在启动后拉起。
 - 限制：仅本机；仅支持免密登录；首次连接信任主机密钥（TOFU）。

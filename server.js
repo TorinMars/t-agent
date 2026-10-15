@@ -105,6 +105,8 @@ app.use('/api/pm2', require('./routes/pm2').createPm2Router());
 app.use('/api/apps', require('./routes/apps').createAppsRouter());
 const frpRouter = require('./routes/frp').createFrpRouter();
 app.use('/api/frp', frpRouter);
+const sshTunnelRouter = require('./routes/ssh-tunnel').createSshTunnelRouter();
+app.use('/api/ssh-tunnel', sshTunnelRouter);
 app.use('/api/agent-config', require('./routes/agent-config').createClientRouter({ db: require('./db'), sessionSecret: require('./config').sessionSecret }));
 app.use('/api/file-sync', require('./routes/file-sync').browser);
 app.use('/api/remote-servers', require('./routes/remote-servers'));
@@ -438,6 +440,7 @@ server.listen(config.port, config.host, () => {
   terminal.setHookEndpoint(`http://${anyHost ? '127.0.0.1' : config.host}:${listeningPort}/hooks/terminal-activity`);
   console.log(`Server running at http://localhost:${listeningPort}`);
   frpRouter.service.autoStart();
+  sshTunnelRouter.service.autoStart();
   console.log(`             LAN: http://${getLocalIP()}:${listeningPort}`);
   const clientAuth = getClientAuth();
   if (clientAuth.accessMode() === 'local') {
@@ -454,5 +457,5 @@ server.listen(config.port, config.host, () => {
 });
 
 // 不让 frpc 在 Client 退出后变成孤儿进程。
-process.on('exit', () => frpRouter.service.stop());
+process.on('exit', () => { frpRouter.service.stop(); sshTunnelRouter.service.stop(); });
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => process.exit(0));

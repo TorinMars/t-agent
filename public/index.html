@@ -202,6 +202,14 @@
     </section>
     <section class="frp-panel" id="frp-panel" hidden aria-label="内网穿透">
       <div class="tool-card tool-card-wide">
+        <div class="tool-card-title">穿透方式</div>
+        <div class="frp-methods" role="radiogroup" aria-label="穿透方式">
+          <label class="frp-check"><input type="radio" name="frp-method" value="frp" checked> frp（需要公网服务器上运行 frps）</label>
+          <label class="frp-check"><input type="radio" name="frp-method" value="ssh"> SSH 反向隧道（只需要服务器的 SSH 登录，无需安装额外软件）</label>
+        </div>
+      </div>
+      <div id="frp-method-frp">
+      <div class="tool-card tool-card-wide">
         <div class="tool-card-title">内网穿透（frp）</div>
         <div class="form-hint">用 frpc 把这台机器上的 Client 端口映射到你的 frps 服务器。远程端口自动随机生成并保持稳定（可重新生成）；这是 TCP 隧道，域名需要自己解析到 frps 服务器的 IP，再用反向代理（如 Nginx，终结 HTTPS）转发到 <code>服务器IP:远程端口</code>。对外暴露 Client 前请确认已绑定身份验证器。本机没有 frpc 时页面会提供“安装 frpc”按钮；也可自行安装（0.52 及以上）并用环境变量 <code>T_AGENT_FRPC_BIN</code> 指定路径。</div>
         <div class="frp-status" id="frp-status-line" role="status"></div>
@@ -248,6 +256,42 @@
       <div class="tool-card tool-card-wide">
         <div class="tool-card-title">frpc 日志</div>
         <pre class="apps-log" id="frp-log">（暂无日志）</pre>
+      </div>
+
+      </div>
+      <div id="frp-method-ssh" hidden>
+        <div class="tool-card tool-card-wide">
+          <div class="tool-card-title">SSH 反向隧道</div>
+          <div class="form-hint">用 <code>ssh -R</code> 在服务器上绑定一个端口，指向本机 Client 的端口。服务器端口默认自动随机并保持稳定，也可手动填写。必须能免密登录（不会弹出密码输入）；首次连接会自动信任并记录服务器主机密钥。默认只绑定服务器的 <code>127.0.0.1</code>，请在服务器上用反向代理（如 Nginx）转发到该端口；勾选“绑定所有网卡”还需要服务器 sshd 开启 <code>GatewayPorts yes</code>（或 <code>clientspecified</code>）。对外暴露前请确认已绑定身份验证器。</div>
+          <div class="frp-status" id="ssh-status-line" role="status"></div>
+          <form class="frp-form" id="ssh-form" autocomplete="off">
+            <label class="form-label" for="ssh-host">服务器 IP / 域名</label>
+            <input class="form-input" id="ssh-host" type="text" placeholder="1.2.3.4" spellcheck="false" required>
+            <label class="form-label" for="ssh-user">用户名</label>
+            <input class="form-input" id="ssh-user" type="text" placeholder="root" spellcheck="false" required>
+            <label class="form-label" for="ssh-key">私钥路径（可选）</label>
+            <input class="form-input" id="ssh-key" type="text" placeholder="留空：使用 ssh 默认逻辑（ssh-agent、~/.ssh/id_*、~/.ssh/config）" spellcheck="false">
+            <label class="form-label" for="ssh-remote-port" id="ssh-remote-port-label">远程端口</label>
+            <div class="frp-remote-row"><input class="form-input" id="ssh-remote-port" type="number" min="1" max="65535" placeholder="留空自动随机"><button type="button" class="btn-logout" id="ssh-regenerate">重新生成</button></div>
+            <div class="form-hint" id="ssh-remote-hint"></div>
+            <label class="form-label" for="ssh-port">SSH 端口</label>
+            <input class="form-input" id="ssh-port" type="number" min="1" max="65535" value="22">
+            <label class="form-label" for="ssh-bind-all">绑定地址</label>
+            <label class="frp-check"><input id="ssh-bind-all" type="checkbox"> 绑定服务器所有网卡（0.0.0.0）</label>
+            <label class="form-label" for="ssh-auto-start">开机自启</label>
+            <label class="frp-check"><input id="ssh-auto-start" type="checkbox"> Client 启动时自动开启隧道</label>
+            <div class="tool-card-actions">
+              <button type="submit" class="btn-submit" id="ssh-save">保存</button>
+              <button type="button" class="btn-submit" id="ssh-start">保存并启动</button>
+              <button type="button" class="btn-logout" id="ssh-stop">停止</button>
+              <span class="tool-copy-status" id="ssh-message" role="status"></span>
+            </div>
+          </form>
+        </div>
+        <div class="tool-card tool-card-wide">
+          <div class="tool-card-title">ssh 日志</div>
+          <pre class="apps-log" id="ssh-log">（暂无日志）</pre>
+        </div>
       </div>
     </section>
     <section class="file-sync-panel" id="file-sync-panel" hidden aria-label="文件同步">
@@ -360,6 +404,7 @@
   <script src="/js/apps.js"></script>
   <script src="/js/agent-config.js"></script>
   <script src="/js/frp-prompts.js"></script>
+  <script src="/js/ssh-tunnel.js"></script>
   <script src="/js/frp.js"></script>
   <script src="/js/file-sync.js"></script>
   <script src="/js/tools.js"></script>

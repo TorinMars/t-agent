@@ -203,15 +203,41 @@ const Frp = (() => {
     try { render(await API.post('/api/frp/regenerate-port', {}), { form: false }); say('已生成新的远程端口'); } catch (error) { say(`操作失败：${errorText(error)}`, true); } finally { busy = false; }
   });
 
-  function setActive(value) {
-    active = value;
+  // 穿透方式：frp 或 SSH。两种方式的配置和进程互相独立，选择只决定页面显示哪一个、轮询哪一个。
+  const METHOD_KEY = 'tAgentTunnelMethod';
+  let method = 'frp';
+  try { method = localStorage.getItem(METHOD_KEY) === 'ssh' ? 'ssh' : 'frp'; } catch { /* 浏览器不允许存储 */ }
+
+  function restartPolling() {
     clearInterval(timer);
     timer = null;
-    if (!active) return;
+    if (typeof SshTunnel !== 'undefined') SshTunnel.setActive(active && method === 'ssh');
+    if (!active || method !== 'frp') return;
     editing = false;
     say('');
     refresh();
     timer = setInterval(refresh, 3000);
+  }
+
+  function applyMethod() {
+    $('frp-method-frp').hidden = method !== 'frp';
+    $('frp-method-ssh').hidden = method !== 'ssh';
+    for (const radio of document.querySelectorAll('input[name="frp-method"]')) radio.checked = radio.value === method;
+    restartPolling();
+  }
+
+  for (const radio of document.querySelectorAll('input[name="frp-method"]')) {
+    radio.addEventListener('change', () => {
+      if (!radio.checked) return;
+      method = radio.value;
+      try { localStorage.setItem(METHOD_KEY, method); } catch { /* 浏览器不允许存储 */ }
+      applyMethod();
+    });
+  }
+
+  function setActive(value) {
+    active = value;
+    applyMethod();
   }
   return { setActive };
 })();

@@ -1964,3 +1964,6 @@ body.file-sync-open .sidebar, body.file-sync-open .content-area, body.file-sync-
 .frp-check { display: flex; align-items: center; gap: 6px; }
 .frp-status { margin-top: 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .frp-detect { margin-top: 8px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.frp-panel > * + * { margin-top: 14px; }
+#frp-method-frp > * + *, #frp-method-ssh > * + * { margin-top: 14px; }
+.frp-methods { display: grid; gap: 8px; margin-top: 8px; }

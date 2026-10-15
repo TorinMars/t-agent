@@ -378,4 +378,4 @@ function createFrpService({
   return { view, update, start, stop, regenerate, install, detect, autoStart, load };
 }
 
-module.exports = { createFrpService, FrpError, renderToml, findFrpc, homebrewDirs, probeFrpc, randomPort, DEFAULT_PORT_MIN, DEFAULT_PORT_MAX };
+module.exports = { createFrpService, FrpError, HOSTNAME, parsePort, cleanText, renderToml, findFrpc, homebrewDirs, probeFrpc, randomPort, DEFAULT_PORT_MIN, DEFAULT_PORT_MAX };

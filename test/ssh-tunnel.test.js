@@ -172,3 +172,20 @@ test('路由：需要登录，状态里没有多余信息，非法输入返回�
   assert.equal(bad.status, 400);
   assert.equal((await bad.json()).error, 'SSH_PORT_INVALID');
 });
+
+test('日志过滤：ssh -v 里关于 SSH_SK_PROVIDER 的无害提示不进日志，真实的转发信息保留', async t => {
+  const { dir, service } = setup(t);
+  fs.writeFileSync(path.join(dir, 'ssh'), `#!/usr/bin/env node
+console.error('debug1: Authenticator provider $SSH_SK_PROVIDER did not resolve; disabling');
+console.error('debug1: Requesting forwarding of remote forward 0.0.0.0:48346 -> 127.0.0.1:13500');
+console.error('debug1: remote forward success for: listen 48346, connect 127.0.0.1:13500');
+setInterval(() => {}, 1000);
+`, { mode: 0o755 });
+  service.update(BASE);
+  service.start();
+  await until(() => service.view().status === 'running');
+  const logs = service.view().logs.join('\n');
+  assert.ok(!/SSH_SK_PROVIDER/.test(logs));
+  assert.match(logs, /Requesting forwarding of remote forward 0\.0\.0\.0:48346/);
+  assert.match(logs, /remote forward success/);
+});

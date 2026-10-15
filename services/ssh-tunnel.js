@@ -16,7 +16,9 @@ const PORT_RETRY_WINDOW_MS = 15_000;
 const RECONNECT_DELAY_MS = 5000;
 const MAX_RECONNECTS = 5;
 // ssh -v 的输出很吵，只保留和连接、认证、端口转发有关的行。
-const KEEP_LINE = /remote forward|Authenticated|Permission denied|Warning|error|failed|refused|timed out|resolve|Identity file|Host key|closed|disconnect|bind|forwarding/i;
+const KEEP_LINE = /remote forward|Authenticated|Permission denied|Warning|error|failed|refused|timed out|resolve hostname|Identity file|Host key|closed|disconnect|bind|forwarding/i;
+// ssh -v 的无害提示：没设置 FIDO 安全密钥的 provider 环境变量时的说明，看起来像错误但不是。
+const NOISE = /SSH_SK_PROVIDER|Authenticator provider/i;
 const FORWARD_OK = /remote forward success/i;
 const FORWARD_FAILED = /remote port forwarding failed|forwarding failed for listen port|Error: remote port forwarding failed/i;
 
@@ -154,7 +156,7 @@ function createSshTunnelService({
   function pushLog(text) {
     for (const line of String(text).split(/\r?\n/)) {
       const clean = line.replace(/^debug\d:\s*/, '').trim();
-      if (clean && KEEP_LINE.test(clean)) logs.push(clean);
+      if (clean && KEEP_LINE.test(clean) && !NOISE.test(clean)) logs.push(clean);
     }
     if (logs.length > MAX_LOG_LINES) logs = logs.slice(-MAX_LOG_LINES);
   }

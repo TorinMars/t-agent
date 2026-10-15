@@ -1,5 +1,5 @@
-// 锁文件里的下载地址必须是公开的 npm 源：本机配置了公司内部镜像时，npm install 会把内网地址写进锁文件，
-// 导致 GitHub Actions 等外部环境 npm ci 失败（ENOTFOUND）。
+// Download addresses in the lockfile must be the public npm registry: when a company-internal mirror is configured on this machine, npm install writes intranet addresses into the lockfile,
+// which makes npm ci fail in external environments such as GitHub Actions (ENOTFOUND).
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -10,5 +10,5 @@ test('package-lock.json only resolves packages from the public npm registry', ()
   const offenders = Object.entries(lock.packages)
     .filter(([, info]) => info.resolved && !info.resolved.startsWith('https://registry.npmjs.org/'))
     .map(([name, info]) => `${name} -> ${info.resolved}`);
-  assert.deepEqual(offenders, [], '用 npm install --registry=https://registry.npmjs.org 安装，或把 resolved 改回 registry.npmjs.org');
+  assert.deepEqual(offenders, [], 'Use npm install --registry=https://install from registry.npmjs.org, or change resolved back to registry.npmjs.org');
 });

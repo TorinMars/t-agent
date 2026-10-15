@@ -2,7 +2,7 @@ const QRCode = require('qrcode');
 
 // Run on the Client host or inside its container: calls the local HTTP API
 // over loopback and issues a normal session.
-// authBase：未登录时只有隐藏登录入口可用（见 lib/login-gate.js），命令行入口会传入它。
+// authBase: when logged out only the hidden login entrance is usable (see lib/login-gate.js); the command-line entry passes it in.
 async function enroll({ baseUrl = `http://127.0.0.1:${process.env.PORT || 3000}`, authBase = '/auth', ask, write = console.log,
   qr = uri => QRCode.toString(uri, { type: 'terminal', small: true }) } = {}) {
   let cookie = '';
@@ -20,22 +20,22 @@ async function enroll({ baseUrl = `http://127.0.0.1:${process.env.PORT || 3000}`
     if (setCookie) cookie = setCookie.split(';')[0];
     return result;
   }
-  if ((await request(`${authBase}/status`)).bound) throw new Error('AUTHENTICATOR_ALREADY_BOUND：已绑定，请在网页设置中更换；此命令不会重置现有绑定。');
+  if ((await request(`${authBase}/status`)).bound) throw new Error('AUTHENTICATOR_ALREADY_BOUND: already bound; replace it in the web settings. This command does not reset an existing binding.');
   const setup = await request(`${authBase}/setup/start`, {});
   write(await qr(setup.uri));
-  write(`请用身份验证器扫描上方二维码，或手动添加密钥：${setup.secret}`);
-  write('类型：基于时间（TOTP），6 位，30 秒。请勿分享此密钥。');
+  write(`Scan the QR code above with your authenticator, or add the key manually: ${setup.secret}`);
+  write('Type: time-based (TOTP), 6 digits, 30 seconds. Do not share this key.');
   for (let attempt = 0; attempt < 3; attempt++) {
-    const code = (await ask('输入身份验证器的 6 位验证码：')).trim();
+    const code = (await ask('Enter the 6-digit code from your authenticator:')).trim();
     try {
       const result = await request(`${authBase}/setup/confirm`, { code });
-      write('绑定完成。请立即保存以下一次性恢复码（仅显示一次）：');
+      write('Binding complete. Save the following one-time recovery codes now (shown only once):');
       for (const recovery of result.recovery_codes) write(recovery);
-      write('请打开配置的 HTTPS 域名登录；等待身份验证器生成下一组验证码。');
+      write('Open the configured HTTPS domain to log in; wait for the authenticator to generate the next code.');
       return;
     } catch (error) {
       if (error.message !== 'AUTH_CODE_INVALID' || attempt === 2) throw error;
-      write('验证码不正确，请重试。');
+      write('The code is incorrect; try again.');
     }
   }
 }
@@ -46,7 +46,7 @@ if (require.main === module) {
   require('dotenv').config({ path: require('node:path').join(__dirname, '..', '.env'), quiet: true });
   const { resolveLoginPath } = require('../lib/login-gate');
   enroll({ authBase: resolveLoginPath(process.env.CLIENT_LOGIN_PATH), ask: question => terminal.question(question) })
-    .catch(error => { console.error(`绑定失败：${error.message}`); process.exitCode = 1; })
+    .catch(error => { console.error(`Binding failed: ${error.message}`); process.exitCode = 1; })
     .finally(() => terminal.close());
 }
 module.exports = { enroll };

@@ -7,7 +7,7 @@ const TerminalTabs = (() => {
 
   function state(scope) {
     if (!states.has(scope)) states.set(scope, {
-      active: 'default', revision: 0, rows: [{ terminal_id: 'default', title: '终端 1' }],
+      active: 'default', revision: 0, rows: [{ terminal_id: 'default', title: 'Terminal 1' }],
     });
     return states.get(scope);
   }
@@ -28,17 +28,17 @@ const TerminalTabs = (() => {
       button.setAttribute('role', 'tab');
       button.setAttribute('aria-selected', String(row.terminal_id === current.active));
       button.textContent = row.title;
-      // 删除终端的入口在标签页里：默认终端不能删除，其余标签带一个 ×（也可在标签上按 Delete 键）。
+      // Deleting a terminal happens from its tab: the default terminal cannot be deleted, the others get a × (or press Delete on the tab).
       if (row.terminal_id !== 'default') {
         const remove = () => {
           if (typeof TerminalControls === 'undefined') return;
-          TerminalControls.run('deleteTerminal', `删除“${row.title}”会终止其中的程序，并永久移除该终端标签和历史记录，确认删除吗？`, row.terminal_id);
+          TerminalControls.run('deleteTerminal', `Deleting “${row.title}” ends the programs in it and permanently removes the terminal tab and its history. Continue?`, row.terminal_id);
         };
         const close = document.createElement('span');
         close.className = 'terminal-tab-close';
         close.setAttribute('role', 'button');
-        close.setAttribute('aria-label', `删除${row.title}`);
-        close.dataset.tip = `删除${row.title}`;
+        close.setAttribute('aria-label', `Delete ${row.title}`);
+        close.dataset.tip = `Delete ${row.title}`;
         close.addEventListener('click', event => { event.stopPropagation(); remove(); });
         button.append(close);
         button.addEventListener('keydown', event => { if (event.key === 'Delete') { event.preventDefault(); remove(); } });
@@ -97,7 +97,7 @@ const TerminalTabs = (() => {
       }
     } catch (error) {
       if (/ENGINE_ROUTE_NOT_FOUND|REMOTE_HTTP_404/.test(error.message)) {
-        throw new Error('远程 Engine 暂不支持新开终端，请先升级该 Engine');
+        throw new Error('This remote engine does not support new terminals yet. Please upgrade it');
       }
       throw error;
     }
@@ -111,7 +111,7 @@ const TerminalTabs = (() => {
     if (wasActive) current.active = 'default';
     if (mounted && mounted.scope === scope) {
       render();
-      // 删除的不是当前标签时，当前终端不用重新连接。
+      // When the deleted tab is not the current one, the current terminal does not need to reconnect.
       if (wasActive) mounted.select();
     }
   }

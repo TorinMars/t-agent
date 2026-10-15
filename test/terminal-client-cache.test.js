@@ -27,7 +27,7 @@ function setup() {
     TerminalImages: { busy: false, attach: () => ({ dispose() {} }) },
     TerminalClipboard: { attach: term => ({ dispose() {}, writeHistory: (data, done) => term.write(data, done) }) },
     TerminalControls: { clearMessage() {}, showMessage() {} },
-    API: { get: async () => [{ terminal_id: 'default', title: '终端 1' }], post: async () => ({ terminal_id: 'second', title: '终端 2' }) },
+    API: { get: async () => [{ terminal_id: 'default', title: 'Terminal 1' }], post: async () => ({ terminal_id: 'second', title: 'Terminal 2' }) },
     setTimeout: (fn, delay) => { timers.push({ fn, delay }); return timers.length; }, clearTimeout() {}, setInterval() { return 0; },
     requestAnimationFrame: fn => fn(), addEventListener() {}, removeEventListener() {}, console,
   };
@@ -107,7 +107,7 @@ test(`deleting a terminal removes its tab and cached connection; failure preserv
   assert.equal(app.document.querySelectorAll('.terminal-tab').length, 1);
   assert.equal(app.document.querySelector('.terminal-tab').getAttribute('aria-selected'), 'true');
   assert.equal(app.terminals[0].disposed, undefined);
-  await assert.rejects(app.controller.deleteTerminal(), /默认终端不能删除/);
+  await assert.rejects(app.controller.deleteTerminal(), /The default terminal cannot be deleted/);
 });
 
 test(`input controls cannot bypass image upload lock`, () => {

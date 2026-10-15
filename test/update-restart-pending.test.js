@@ -1,5 +1,5 @@
-// 检查更新是拿远程版本和“磁盘上的 VERSION.json”比较的。磁盘代码比运行中的进程新（手动 git pull、上次更新中途失败、
-// 强制恢复仓库……）时，必须报“需要重启”，而不是“已是最新版本”。
+// The update check compares the remote version with the on-disk VERSION.json. When the on-disk code is newer than the running process (manual git pull, an update that failed halfway,
+// a forced repository restore ...) it must report "restart needed", not "already up to date".
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -22,7 +22,7 @@ function load({ gitInstall = true, runningCommit = 'running-commit', diffs = {},
       ...fs,
       mkdirSync() {},
       existsSync: target => (String(target).endsWith(`${path.sep}.git`) ? gitInstall : fs.existsSync(target)),
-      // 模块加载时（进程启动）读到的版本号可以和现在磁盘上的不同。
+      // The version read when the module loads (process start) may differ from the one on disk now.
       readFileSync: (target, ...rest) => {
         if (target === versionPath && startupVersion && versionReads++ === 0) return JSON.stringify(manifest(startupVersion));
         return fs.readFileSync(target, ...rest);
@@ -59,50 +59,50 @@ function load({ gitInstall = true, runningCommit = 'running-commit', diffs = {},
 
 const RESTART_FILE = 'services/apps-service.js\0';
 
-test('Git 安装：版本一致但磁盘代码比运行中的进程新且需要重启 → restart_pending，而不是已是最新', async () => {
+test('Git install: same version but the on-disk code is newer than the running process and needs a restart → restart_pending, not up to date', async () => {
   const updates = load({ diffs: { HEAD: RESTART_FILE, 'origin/main': RESTART_FILE } });
   const state = await updates.check({ force: true });
   assert.equal(state.status, 'restart_pending');
   assert.equal(state.restart_pending, true);
   assert.equal(state.local_version, current.app_version);
   assert.equal(state.remote_version, current.app_version);
-  assert.match(state.message, /需要重启服务才会生效/);
+  assert.match(state.message, /restart the service for it to take effect/);
   assert.ok(state.message.includes(current.app_version));
-  assert.notEqual(state.message, '已是最新版本');
+  assert.notEqual(state.message, 'Already up to date');
 });
 
-test('只改了前端等热更新文件时不需要重启 → 仍是 current', async () => {
+test('When only hot-updatable files such as the frontend changed no restart is needed → still current', async () => {
   const hot = 'public/js/app.js\0README.md\0docs/HANDOFF.md\0';
   const state = await load({ diffs: { HEAD: hot, 'origin/main': hot } }).check({ force: true });
   assert.equal(state.status, 'current');
   assert.equal(state.restart_pending, false);
-  assert.equal(state.message, '已是最新版本');
+  assert.equal(state.message, 'Already up to date');
 });
 
-test('磁盘上的代码和运行中的完全一致 → current', async () => {
+test('The on-disk code is identical to the running code → current', async () => {
   const state = await load().check({ force: true });
   assert.equal(state.status, 'current');
   assert.equal(state.restart_pending, false);
 });
 
-test('远程有更高版本时仍是 available（并标出运行中的代码已经落后于磁盘）', async () => {
+test('When the remote has a higher version it is still available (and flags that the running code is behind the disk)', async () => {
   const state = await load({ remoteVersion: '99.0.0', diffs: { HEAD: RESTART_FILE, 'origin/main': RESTART_FILE } }).check({ force: true });
   assert.equal(state.status, 'available');
   assert.equal(state.restart_pending, true);
   assert.equal(state.remote_version, '99.0.0');
 });
 
-test('拿不到启动提交，或判断是否需要重启时 git 出错，都不影响检查结果', async () => {
+test('If the start commit cannot be obtained, or git errors while deciding whether a restart is needed, the check result is unaffected', async () => {
   const noCommit = await load({ runningCommit: null }).check({ force: true });
   assert.equal(noCommit.status, 'current');
   assert.equal(noCommit.restart_pending, false);
 
   const failing = await load({ diffError: new Error('bad object'), diffs: { 'origin/main': '' } }).check({ force: true });
-  assert.equal(failing.status, 'current', '辅助判断失败时不能让整个检查失败');
+  assert.equal(failing.status, 'current', 'A failure of the auxiliary check must not fail the whole check');
   assert.equal(failing.error, null);
 });
 
-test('安装包方式：启动时的版本号和磁盘上不同 → restart_pending；相同 → current', async () => {
+test('Package install: version at start differs from disk → restart_pending; same → current', async () => {
   const pending = await load({ gitInstall: false, startupVersion: '1.0.0' }).check({ force: true });
   assert.equal(pending.status, 'restart_pending');
   assert.equal(pending.running_version, '1.0.0');
@@ -113,10 +113,10 @@ test('安装包方式：启动时的版本号和磁盘上不同 → restart_pend
   assert.equal(same.running_version, current.app_version);
 });
 
-test('服务重启后，上次保存的“需要重启”状态会被清掉，等下一次检查再判断', () => {
-  const stale = { status: 'restart_pending', restart_pending: true, message: '需要重启', local_version: current.app_version, remote_version: current.app_version };
+test('After the service restarts, the previously saved “restart needed” state is cleared and decided again at the next check', () => {
+  const stale = { status: 'restart_pending', restart_pending: true, message: 'restart needed', local_version: current.app_version, remote_version: current.app_version };
   const state = load({ persisted: stale }).publicState();
   assert.equal(state.status, 'current');
   assert.equal(state.restart_pending, false);
-  assert.equal(state.message, '已是最新版本');
+  assert.equal(state.message, 'Already up to date');
 });

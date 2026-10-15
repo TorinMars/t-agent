@@ -1,5 +1,5 @@
-// 右键菜单必须显示在顶部栏之上。引擎标签在顶部栏里，菜单会在顶部栏范围内弹出；
-// “已安装应用”模式下顶部栏是 fixed 且 z-index 更高，菜单曾被它盖住上半截。
+// The context menu must be shown above the top bar. The engine tabs are in the top bar and the menu pops up inside its range;
+// in "installed app" mode the top bar is fixed with a higher z-index, and the menu used to be covered by its upper half.
 const { chromium } = require('playwright');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -24,12 +24,12 @@ const root = path.resolve(__dirname, '..');
           }
         });
       }
-      // 只需要菜单本身：直接复用 app.js 里的 ContextMenu（它在全局作用域里是 const，所以重新取源码执行）。
+      // Only the menu itself is needed: reuse ContextMenu from app.js directly (it is a const in global scope, so fetch the source again and run it).
       await page.evaluate(src => { new Function(`${src}; window.ContextMenu = ContextMenu;`)(); },
         fs.readFileSync(path.join(root, 'public/js/app.js'), 'utf8').match(/const ContextMenu = \{[\s\S]*?\n\};/)[0]);
 
-      // 在顶部栏内（右键引擎标签的位置）弹出菜单。
-      await page.evaluate(() => ContextMenu.show(240, 24, [{ label: '刷新', action() {} }, { label: '检查更新', action() {} }, { label: '移除连接', danger: true, action() {} }]));
+      // Pop the menu up inside the top bar (where an engine tab would be right-clicked).
+      await page.evaluate(() => ContextMenu.show(240, 24, [{ label: 'Refresh', action() {} }, { label: 'Check for updates', action() {} }, { label: 'Remove connection', danger: true, action() {} }]));
       await page.waitForTimeout(100);
       const box = await page.locator('#context-menu').boundingBox();
       assert.ok(box.y < 48, `menu overlaps the header area (y=${box.y})`);

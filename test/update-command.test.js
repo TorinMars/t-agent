@@ -11,7 +11,7 @@ test('update commands print output, redact credentials and record completion', a
   assert.equal(result, 'installed');
   assert.ok(lines.some(line => line.includes('stdout: installed')));
   assert.ok(lines.some(line => line.includes('stderr: https://[redacted]@example.com token=[redacted]')));
-  assert.ok(lines.at(-1).includes('完成，耗时'));
+  assert.ok(lines.at(-1).includes('Finished in'));
   assert.ok(lines.every(line => !line.includes('secret') && !line.includes('private')));
 });
 
@@ -26,7 +26,7 @@ test('failed commands preserve exit code and diagnostic output', async t => {
     assert.match(error.details, /esbuild: command not found/);
     return true;
   });
-  assert.ok(lines.at(-1).includes('失败，耗时'));
+  assert.ok(lines.at(-1).includes('Failed after'));
 });
 
 test('missing executable reports ENOENT even without stdout or stderr', async t => {
@@ -46,22 +46,22 @@ test('onOutput receives every redacted output line from stdout and stderr', asyn
 });
 
 test('formatProgress shows elapsed time and the last line, and warns when the command goes quiet', () => {
-  assert.equal(formatProgress('正在安装依赖', 5_000, '', 5_000), '正在安装依赖 · 已用 5 秒 · 等待输出');
-  assert.equal(formatProgress('正在安装依赖', 83_000, 'http fetch GET 200 x', 2_000), '正在安装依赖 · 已用 1 分 23 秒 · http fetch GET 200 x');
-  const quiet = formatProgress('正在安装依赖', 95_000, 'http fetch GET 200 x', 45_000);
-  assert.match(quiet, /已 45 秒无输出，可能是网络不通/);
+  assert.equal(formatProgress('Installing dependencies', 5_000, '', 5_000), 'Installing dependencies · elapsed 5s · waiting for output');
+  assert.equal(formatProgress('Installing dependencies', 83_000, 'http fetch GET 200 x', 2_000), 'Installing dependencies · elapsed 1 min 23s · http fetch GET 200 x');
+  const quiet = formatProgress('Installing dependencies', 95_000, 'http fetch GET 200 x', 45_000);
+  assert.match(quiet, /no output for 45s; the network may be down/);
   assert.equal(formatProgress('x', 1000, 'a'.repeat(300), 0).length < 140, true, 'long lines are truncated');
 });
 
 test('runWithProgress reports progress while the command runs and stops after it finishes or fails', async () => {
   const messages = [];
   let emit;
-  const done = runWithProgress('正在安装依赖', onOutput => new Promise(resolve => { emit = onOutput; setTimeout(resolve, 120); }),
+  const done = runWithProgress('Installing dependencies', onOutput => new Promise(resolve => { emit = onOutput; setTimeout(resolve, 120); }),
     message => messages.push(message), { intervalMs: 20 });
   await new Promise(resolve => setTimeout(resolve, 50));
   emit('http fetch GET 200 pkg');
   await done;
-  assert.match(messages[0], /^正在安装依赖 · 已用 0 秒 · 等待输出$/);
+  assert.match(messages[0], /^Installing dependencies · elapsed 0s · waiting for output$/);
   assert.ok(messages.length >= 3, 'ticks while running');
   assert.ok(messages.some(message => message.endsWith('http fetch GET 200 pkg')), 'last output line is shown');
   const count = messages.length;

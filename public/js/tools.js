@@ -1,4 +1,4 @@
-// 实用工具和应用列表都和“任务”并列，切换只是显示/隐藏，终端连接保持不断。
+// Utilities and the app list sit alongside "Tasks"; switching only shows/hides them, so terminal connections stay up.
 const Tools = (() => {
   const SCRIPT_BASE_URL = 'https://raw.githubusercontent.com/TorinMars/t-agent/main/scripts/';
   const commandFor = button => {
@@ -15,35 +15,35 @@ const Tools = (() => {
   const timers = new WeakMap();
   let page = 'tasks';
 
-  // 应用列表属于当前引擎：本地引擎用 Client 自己的接口，远程引擎经代理访问其 /v1 接口。
-  // 所有引擎连接都是管理权限，所以远程引擎只看是否声明了对应能力（旧版 Engine 没有）。
-  // pm2 只用于应用列表里的 PM2 操作（启动/停止/重启/reload/日志），不再有单独的面板。
+  // The app list belongs to the current engine: a local engine uses the Client's own endpoints, a remote engine goes through the proxy to its /v1 endpoints.
+  // Every engine connection has admin rights, so for a remote engine we only check whether it declares the capability (old Engines do not).
+  // pm2 is only used for the PM2 actions in the app list (start/stop/restart/reload/logs); there is no separate panel any more.
   const FEATURES = {
-    pm2: { capability: 'pm2:manage', local: '/api/pm2', suffix: 'pm2', missing: '该引擎版本过旧，暂不支持 PM2 管理，请先升级该引擎。' },
-    apps: { capability: 'apps:manage', local: '/api/apps', suffix: 'apps', missing: '该引擎版本过旧，暂不支持应用列表，请先升级该引擎。' },
-    fileSync: { capability: 'file-sync:manage', local: '/api/file-sync', suffix: 'file-sync', missing: '该引擎版本过旧，暂不支持文件同步，请先升级该引擎。' },
+    pm2: { capability: 'pm2:manage', local: '/api/pm2', suffix: 'pm2', missing: 'This engine is too old to support PM2 management. Please upgrade it.' },
+    apps: { capability: 'apps:manage', local: '/api/apps', suffix: 'apps', missing: 'This engine is too old to support the app list. Please upgrade it.' },
+    fileSync: { capability: 'file-sync:manage', local: '/api/file-sync', suffix: 'file-sync', missing: 'This engine is too old to support file sync. Please upgrade it.' },
   };
   function engineState(feature) {
     const tasks = typeof Tasks === 'undefined' ? null : Tasks;
     const src = tasks && tasks.getSource(tasks.getActiveKey());
-    if (!src || src.local) return { label: src ? src.label : '默认', local: true, endpoint: feature.local, unavailable: null };
+    if (!src || src.local) return { label: src ? src.label : 'Default', local: true, endpoint: feature.local, unavailable: null };
     const state = { label: src.label, local: false, endpoint: `/api/remote-servers/${src.id}/${feature.suffix}`, unavailable: null };
-    if (tasks.problemOf(src.key)) state.unavailable = '该引擎当前无法连接，请先在顶部引擎栏处理连接问题。';
-    else if (!src.role) state.unavailable = '正在读取该引擎的能力…';
+    if (tasks.problemOf(src.key)) state.unavailable = 'This engine cannot be reached right now. Fix the connection in the engine bar at the top first.';
+    else if (!src.role) state.unavailable = 'Reading this engine’s capabilities…';
     else if (!src.caps || !src.caps.has(feature.capability)) state.unavailable = feature.missing;
     return state;
   }
   function describeEngine(node, state) {
-    node.replaceChildren('当前引擎：');
+    node.replaceChildren('Current engine: ');
     const name = document.createElement('strong');
     name.textContent = state.label;
-    node.append(name, state.local ? '（运行 Client 的这台机器）' : '（远程引擎所在机器）');
+    node.append(name, state.local ? '(the machine running the Client)' : '(the machine running the remote engine)');
   }
   const registerExample = () => [
     `curl -X POST ${location.origin}/v1/apps/register \\`,
-    '  -H "Authorization: Bearer <访问令牌>" \\',
+    '  -H "Authorization: Bearer <access-token>" \\',
     '  -H "Content-Type: application/json" \\',
-    '  -d \'{"name":"my-service","port":8080,"domain":"my.example.com","description":"服务说明"}\'',
+    '  -d \'{"name":"my-service","port":8080,"domain":"my.example.com","description":"service description"}\'',
   ].join('\n');
 
   function applyEngine() {
@@ -52,7 +52,7 @@ const Tools = (() => {
     describeEngine(appsEngineLabel, appsState);
     Apps.setEngine({
       endpoint: appsState.endpoint,
-      // 应用列表里的 PM2 操作沿用 PM2 接口；该引擎不支持 PM2 时只隐藏这些按钮。
+      // PM2 actions in the app list reuse the PM2 endpoints; if the engine does not support PM2 only those buttons are hidden.
       pm2Endpoint: pm2State.unavailable ? null : pm2State.endpoint,
       unavailable: appsState.unavailable,
       example: appsState.local ? registerExample() : null,
@@ -98,7 +98,7 @@ const Tools = (() => {
   document.querySelectorAll('.tool-copy-btn').forEach(button => {
     button.addEventListener('click', async () => {
       const status = button.closest('.tool-card-actions').querySelector('.tool-copy-status');
-      status.textContent = (await copy(commandFor(button))) ? '已复制' : '复制失败，请检查浏览器剪贴板权限';
+      status.textContent = (await copy(commandFor(button))) ? 'Copied' : 'Copy failed. Check the browser clipboard permission';
       clearTimeout(timers.get(status)); timers.set(status, setTimeout(() => { status.textContent = ''; }, 2500));
     });
   });

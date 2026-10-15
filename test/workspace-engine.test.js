@@ -1,4 +1,4 @@
-// 导入/清理工作目录跟随引擎：Engine 的 /v1/workspace/*、Client 对远程引擎的代理，旧版 Engine 返回 501。
+// Workspace import/cleanup follows the engine: the Engine's /v1/workspace/*, the Client's proxy to remote engines, and an old Engine returns 501.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -52,13 +52,13 @@ test.after(async () => {
 const auth = { Authorization: `Bearer ${token}` };
 const names = data => data.items.map(item => item.name);
 
-test('Engine 声明能力，未授权不能访问', async () => {
+test('The Engine declares the capability, and access without authorization fails', async () => {
   const info = await (await fetch(`${engine}/v1/info`, { headers: { Authorization: `Bearer ${token}` } })).json();
   assert.ok(info.capabilities.includes('workspace:manage'));
   assert.equal((await fetch(`${engine}/v1/workspace/unmanaged`)).status, 401);
 });
 
-test('Engine 列出并导入它自己工作目录里未管理的目录', async () => {
+test('The Engine lists and imports the unmanaged directories in its own working directory', async () => {
   const listed = await (await fetch(`${engine}/v1/workspace/unmanaged`, { headers: { Authorization: `Bearer ${token}` } })).json();
   assert.deepEqual(names(listed), ['remote-only']);
   const imported = await fetch(`${engine}/v1/workspace/import`, {
@@ -70,7 +70,7 @@ test('Engine 列出并导入它自己工作目录里未管理的目录', async (
   assert.deepEqual(names(after), []);
 });
 
-test('清理接口必须带 confirm，经代理也一样', async () => {
+test('The cleanup endpoint requires confirm, also through the proxy', async () => {
   const overview = await fetch(`${proxy}/api/remote-servers/${remoteId}/workspace/cleanup`);
   assert.equal(overview.status, 200);
   assert.ok(Array.isArray((await overview.json()).items));
@@ -81,7 +81,7 @@ test('清理接口必须带 confirm，经代理也一样', async () => {
   assert.equal((await refused.json()).error, 'CONFIRM_REQUIRED');
 });
 
-test('代理转发到远程 Engine，旧版 Engine 返回 501', async () => {
+test('The proxy forwards to the remote Engine, and an old Engine returns 501', async () => {
   fs.mkdirSync(path.join(root, 'tasks', 'second'));
   const viaProxy = await (await fetch(`${proxy}/api/remote-servers/${remoteId}/workspace/unmanaged`)).json();
   assert.deepEqual(names(viaProxy), ['second']);

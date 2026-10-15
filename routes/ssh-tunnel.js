@@ -8,7 +8,7 @@ function defaultService() {
   return createSshTunnelService({ db: require('../db'), localPort: config.port, localHost: config.host });
 }
 
-// 管理运行 Client 的这台机器上的 ssh 反向隧道进程。只支持本机。
+// Manages the ssh reverse tunnel process on the machine running the Client. Local only.
 function createSshTunnelRouter(options = {}) {
   const service = options.service || defaultService();
   const router = express.Router();
@@ -28,7 +28,7 @@ function createSshTunnelRouter(options = {}) {
     if (res.headersSent) return next(error);
     if (error instanceof FrpError) return res.status(error.statusCode).json({ error: error.code, message: error.message });
     console.error('[ssh-tunnel]', error && error.message);
-    return res.status(500).json({ error: 'SSH_UNAVAILABLE', message: 'SSH 隧道服务暂时不可用' });
+    return res.status(500).json({ error: 'SSH_UNAVAILABLE', message: 'The SSH tunnel service is temporarily unavailable' });
   });
   router.service = service;
   return router;

@@ -29,37 +29,37 @@ function machine(remote) {
 }
 
 const REMOTE = {
-  'claude/CLAUDE.md': '## 远程规则\n- 规则一\n',
+  'claude/CLAUDE.md': '## Remote rules\n- Rule one\n',
   'claude/settings.json': JSON.stringify({ model: 'sonnet', permissions: { defaultMode: 'auto', allow: ['Bash(ls)'] } }),
-  'codex/AGENTS.md': '## 远程规则\n- 规则二\n',
+  'codex/AGENTS.md': '## Remote rules\n- Rule two\n',
   'codex/hooks.json': JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: 'command', command: 'remote-stop' }] }] } }),
   'codex/config.toml': 'model = "gpt-6-sol"\napproval_policy = "on-request"\napprovals_reviewer = "auto_review"\nsandbox_mode = "workspace-write"\n',
 };
 
-test('节点文件同步管理配置时启动脚本跳过配置，仍同步规则', { skip: !python }, () => {
+test('When node file sync manages the config the startup script skips the config but still syncs the rules', { skip: !python }, () => {
   const m = machine(REMOTE);
   fs.writeFileSync(m.file('.codex/config.toml'), 'model = "node"\n');
   fs.writeFileSync(m.file('.codex/config.toml.t-agent-file-sync-managed'), 't-agent-file-sync\n');
   const result = m.sync();
   assert.equal(result.status, 0, result.stderr);
   assert.equal(m.read('.codex/config.toml'), 'model = "node"\n');
-  assert.match(m.read('.codex/AGENTS.md'), /规则二/);
+  assert.match(m.read('.codex/AGENTS.md'), /Rule two/);
   fs.utimesSync(m.file('.codex/config.toml.t-agent-file-sync-managed'), new Date(0), new Date(0));
   m.sync();
   assert.match(m.read('.codex/config.toml'), /gpt-6-sol/);
 });
 
-test('规则写入受管区块并保留本机内容，配置递归合并', { skip: !python }, () => {
+test('Rules are written into the managed block and local content is kept; the config is merged recursively', { skip: !python }, () => {
   const m = machine(REMOTE);
-  fs.writeFileSync(m.file('.claude/CLAUDE.md'), '# 我的规则\n- 本机独有\n');
+  fs.writeFileSync(m.file('.claude/CLAUDE.md'), '# My rules\n- Local only\n');
   fs.writeFileSync(m.file('.claude/settings.json'), JSON.stringify({ theme: 'dark', model: 'opus', permissions: { allow: ['Bash(git status)'], defaultMode: 'manual' }, statusLine: { type: 'command' } }));
-  fs.writeFileSync(m.file('.codex/config.toml'), '# 备注\nmodel = "gpt-5.5"\nmodel_reasoning_effort = "medium"\n\n[tui]\nscreen_reader_detection_done = true\n\n[projects."/x"]\ntrust_level = "trusted"\n');
+  fs.writeFileSync(m.file('.codex/config.toml'), '# Notes\nmodel = "gpt-5.5"\nmodel_reasoning_effort = "medium"\n\n[tui]\nscreen_reader_detection_done = true\n\n[projects."/x"]\ntrust_level = "trusted"\n');
   const result = m.sync();
   assert.equal(result.status, 0, result.stderr);
 
   const claudeRules = m.read('.claude/CLAUDE.md');
-  assert.ok(claudeRules.startsWith('# 我的规则\n- 本机独有\n'));
-  assert.ok(claudeRules.includes(BEGIN) && claudeRules.includes('- 规则一'));
+  assert.ok(claudeRules.startsWith('# My rules\n- Local only\n'));
+  assert.ok(claudeRules.includes(BEGIN) && claudeRules.includes('- Rule one'));
 
   const settings = JSON.parse(m.read('.claude/settings.json'));
   assert.equal(settings.model, 'sonnet');
@@ -69,44 +69,44 @@ test('规则写入受管区块并保留本机内容，配置递归合并', { ski
   assert.deepEqual(settings.statusLine, { type: 'command' });
 
   const toml = m.read('.codex/config.toml');
-  assert.ok(toml.startsWith('# 备注\nmodel = "gpt-6-sol"\nmodel_reasoning_effort = "medium"\n'));
-  assert.ok(toml.indexOf('approvals_reviewer = "auto_review"') < toml.indexOf('[tui]'), '新键插入顶层而不是 [tui] 里');
+  assert.ok(toml.startsWith('# Notes\nmodel = "gpt-6-sol"\nmodel_reasoning_effort = "medium"\n'));
+  assert.ok(toml.indexOf('approvals_reviewer = "auto_review"') < toml.indexOf('[tui]'), 'A new key is inserted at the top level, not inside [tui] ');
   assert.ok(toml.includes('[tui]\nscreen_reader_detection_done = true') && toml.includes('[projects."/x"]\ntrust_level = "trusted"'));
-  assert.equal(fs.readFileSync(m.file('.codex/config.toml.t-agent.bak'), 'utf8').includes('gpt-5.5'), true, '首次修改前备份');
+  assert.equal(fs.readFileSync(m.file('.codex/config.toml.t-agent.bak'), 'utf8').includes('gpt-5.5'), true, 'A backup is made before the first modification');
 });
 
-test('内容没有变化时不重写文件，远程更新只替换受管区块', { skip: !python }, () => {
+test('The file is not rewritten when nothing changed, and a remote update only replaces the managed block', { skip: !python }, () => {
   const m = machine(REMOTE);
   m.sync();
   const before = ['.claude/CLAUDE.md', '.claude/settings.json', '.codex/config.toml', '.codex/AGENTS.md'].map(f => fs.statSync(m.file(f)).mtimeMs);
   const second = m.sync();
-  assert.match(second.stderr, /Claude 已是最新/);
+  assert.match(second.stderr, /Claude is already up to date/);
   assert.deepEqual(['.claude/CLAUDE.md', '.claude/settings.json', '.codex/config.toml', '.codex/AGENTS.md'].map(f => fs.statSync(m.file(f)).mtimeMs), before);
 
-  fs.writeFileSync(m.file('.claude/CLAUDE.md'), `# 顶部本机规则\n\n${m.read('.claude/CLAUDE.md')}\n# 底部本机规则\n`);
-  fs.writeFileSync(path.join(m.rules, 'claude/CLAUDE.md'), `## 远程规则 v2\n- 新规则\n${BEGIN}\n`);
+  fs.writeFileSync(m.file('.claude/CLAUDE.md'), `# Top local rules\n\n${m.read('.claude/CLAUDE.md')}\n# Bottom local rules\n`);
+  fs.writeFileSync(path.join(m.rules, 'claude/CLAUDE.md'), `## Remote rules v2\n- New rule\n${BEGIN}\n`);
   const third = m.sync();
   assert.equal(third.status, 0, third.stderr);
   const text = m.read('.claude/CLAUDE.md');
-  assert.ok(text.startsWith('# 顶部本机规则') && text.trimEnd().endsWith('# 底部本机规则'));
-  assert.ok(text.includes('- 新规则') && !text.includes('- 规则一'));
-  assert.equal(text.split(BEGIN).length - 1, 1, '远程内容里的标记被剔除，区块不会重复');
+  assert.ok(text.startsWith('# Top local rules') && text.trimEnd().endsWith('# Bottom local rules'));
+  assert.ok(text.includes('- New rule') && !text.includes('- Rule one'));
+  assert.equal(text.split(BEGIN).length - 1, 1, 'Markers inside the remote content are stripped, so the block is not duplicated');
 });
 
-test('本机或远程文件有问题时不覆盖，也不影响退出码', { skip: !python }, () => {
+test('Nothing is overwritten when the local or remote file has a problem, and the exit code is unaffected', { skip: !python }, () => {
   const m = machine({ ...REMOTE, 'codex/config.toml': 'model = "a"\nnotes = """\nmulti\n"""\n' });
-  fs.writeFileSync(m.file('.claude/settings.json'), '{ 这不是合法 JSON');
+  fs.writeFileSync(m.file('.claude/settings.json'), '{ { this is not valid JSON');
   fs.writeFileSync(m.file('.codex/config.toml'), 'model = "local"\n');
   const result = m.sync();
   assert.equal(result.status, 0);
   assert.match(result.stderr, /settings\.json/);
-  assert.match(result.stderr, /只支持单行 key = value/);
-  assert.equal(m.read('.claude/settings.json'), '{ 这不是合法 JSON');
+  assert.match(result.stderr, /only single-line key = value is supported/);
+  assert.equal(m.read('.claude/settings.json'), '{ { this is not valid JSON');
   assert.equal(m.read('.codex/config.toml'), 'model = "local"\n');
 });
 
-test('远程缺少某个文件时不动本机；远程不可达时使用缓存并快速返回', { skip: !python }, () => {
-  const m = machine({ 'claude/CLAUDE.md': '## 只有规则\n' });
+test('A missing remote file leaves the local one alone; an unreachable remote uses the cache and returns quickly', { skip: !python }, () => {
+  const m = machine({ 'claude/CLAUDE.md': '## Rules only\n' });
   fs.writeFileSync(m.file('.claude/settings.json'), '{"theme":"dark"}');
   const first = m.sync();
   assert.equal(first.status, 0, first.stderr);
@@ -119,8 +119,8 @@ test('远程缺少某个文件时不动本机；远程不可达时使用缓存�
   const start = Date.now();
   const offline = cached.sync([], { T_AGENT_RULES_BASE: 'http://127.0.0.1:1' });
   assert.equal(offline.status, 0);
-  assert.ok(Date.now() - start < 4000, '远程不可达时不能长时间阻塞');
-  assert.ok(cached.read('.claude/CLAUDE.md').includes('- 规则一'), '联网失败时用缓存补回规则');
+  assert.ok(Date.now() - start < 4000, 'An unreachable remote must not block for long');
+  assert.ok(cached.read('.claude/CLAUDE.md').includes('- Rule one'), 'When the network fails the cache restores the rules');
 });
 
 function writeOverride(m, rel, text) {
@@ -129,15 +129,15 @@ function writeOverride(m, rel, text) {
   fs.writeFileSync(target, text);
 }
 
-test('本机覆盖优先于远程，未覆盖的键仍随远程更新', { skip: !python }, () => {
+test('A local override wins over the remote, while keys without an override still follow remote updates', { skip: !python }, () => {
   const m = machine(REMOTE);
   writeOverride(m, 'claude/settings.json', JSON.stringify({ model: 'opus', permissions: { allow: ['Bash(npm test)'] } }));
   writeOverride(m, 'codex/config.toml', 'model = "gpt-5.5"\nmodel_reasoning_effort = "high"\n\n[tui]\nnotifications = true\n');
   assert.equal(m.sync().status, 0);
 
   let settings = JSON.parse(m.read('.claude/settings.json'));
-  assert.equal(settings.model, 'opus', '覆盖优先于远程的 sonnet');
-  assert.equal(settings.permissions.defaultMode, 'auto', '未覆盖的键仍来自远程');
+  assert.equal(settings.model, 'opus', 'sonnet, which wins over the remote');
+  assert.equal(settings.permissions.defaultMode, 'auto', 'Keys without an override still come from the remote');
   assert.deepEqual(settings.permissions.allow, ['Bash(ls)', 'Bash(npm test)']);
   let toml = m.read('.codex/config.toml');
   assert.match(toml, /^model = "gpt-5\.5"$/m);
@@ -145,7 +145,7 @@ test('本机覆盖优先于远程，未覆盖的键仍随远程更新', { skip: 
   assert.match(toml, /^model_reasoning_effort = "high"$/m);
   assert.match(toml, /\[tui\]\nnotifications = true/);
 
-  // 远程之后改了未覆盖的键：生效；被覆盖的键：仍然是本机值
+  // After the remote later changes a key without an override: it takes effect; a key with an override: still the local value
   fs.writeFileSync(path.join(m.rules, 'claude/settings.json'), JSON.stringify({ model: 'haiku', permissions: { defaultMode: 'plan' } }));
   fs.writeFileSync(path.join(m.rules, 'codex/config.toml'), 'model = "gpt-6-sol"\nsandbox_mode = "read-only"\n');
   assert.equal(m.sync().status, 0);
@@ -157,48 +157,48 @@ test('本机覆盖优先于远程，未覆盖的键仍随远程更新', { skip: 
   assert.match(toml, /^sandbox_mode = "read-only"$/m);
 });
 
-test('远程没有配置文件时也会应用本机覆盖', { skip: !python }, () => {
-  const m = machine({ 'claude/CLAUDE.md': '## 规则\n' });
+test('Local overrides are applied even when the remote has no config file', { skip: !python }, () => {
+  const m = machine({ 'claude/CLAUDE.md': '## Rules\n' });
   writeOverride(m, 'claude/settings.json', '{"model":"opus"}');
   assert.equal(m.sync().status, 0);
   assert.deepEqual(JSON.parse(m.read('.claude/settings.json')), { model: 'opus' });
 });
 
-test('覆盖文件写错时不同步该工具的配置，也不动本机配置', { skip: !python }, () => {
+test('A broken override file stops that tool’s config from syncing and leaves the local config alone', { skip: !python }, () => {
   const m = machine(REMOTE);
   fs.writeFileSync(m.file('.claude/settings.json'), '{"model":"local"}');
   fs.writeFileSync(m.file('.codex/config.toml'), 'model = "local"\n');
-  writeOverride(m, 'claude/settings.json', '{ 写坏了');
+  writeOverride(m, 'claude/settings.json', '{ { broken');
   writeOverride(m, 'codex/config.toml', 'notes = """\nmulti\n"""\n');
   const result = m.sync();
   assert.equal(result.status, 0);
-  assert.match(result.stderr, /本机覆盖.*不是合法 JSON/);
-  assert.match(result.stderr, /本机覆盖.*只支持单行 key = value/);
+  assert.match(result.stderr, /local override.*is not valid JSON/);
+  assert.match(result.stderr, /local override.*only single-line key = value is supported/);
   assert.equal(m.read('.claude/settings.json'), '{"model":"local"}');
   assert.equal(m.read('.codex/config.toml'), 'model = "local"\n');
-  assert.ok(m.read('.claude/CLAUDE.md').includes('- 规则一'), '规则同步不受影响');
+  assert.ok(m.read('.claude/CLAUDE.md').includes('- Rule one'), 'Rule sync is unaffected');
 });
 
-test('Codex hooks.json 与本机已有 hook 合并，重复同步不产生重复项', { skip: !python }, () => {
+test('Codex hooks.json merges with the hooks already on this machine, and syncing again produces no duplicates', { skip: !python }, () => {
   const m = machine(REMOTE);
   const mine = { type: 'command', command: 'my-own-hook' };
   fs.writeFileSync(m.file('.codex/hooks.json'), JSON.stringify({ hooks: { Stop: [{ hooks: [mine] }], PreToolUse: [{ matcher: 'Bash', hooks: [mine] }] } }));
   const first = m.sync();
   assert.equal(first.status, 0, first.stderr);
   const merged = JSON.parse(m.read('.codex/hooks.json'));
-  assert.equal(merged.hooks.Stop.length, 2, '本机原有 hook 保留，远程 hook 追加');
+  assert.equal(merged.hooks.Stop.length, 2, 'Existing local hooks are kept and remote hooks are appended');
   assert.deepEqual(merged.hooks.Stop[0].hooks[0], mine);
   assert.equal(merged.hooks.Stop[1].hooks[0].command, 'remote-stop');
-  assert.ok(merged.hooks.PreToolUse, '本机独有的事件保留');
+  assert.ok(merged.hooks.PreToolUse, 'Events that exist only locally are kept');
 
   const before = fs.statSync(m.file('.codex/hooks.json')).mtimeMs;
   const second = m.sync();
-  assert.match(second.stderr, /Codex 已是最新/);
+  assert.match(second.stderr, /Codex is already up to date/);
   assert.equal(fs.statSync(m.file('.codex/hooks.json')).mtimeMs, before);
   assert.equal(JSON.parse(m.read('.codex/hooks.json')).hooks.Stop.length, 2);
 });
 
-test('本机 hooks.json 损坏时不覆盖并提示', { skip: !python }, () => {
+test('A corrupted local hooks.json is not overwritten and is reported', { skip: !python }, () => {
   const m = machine(REMOTE);
   fs.writeFileSync(m.file('.codex/hooks.json'), '{broken');
   const result = m.sync();

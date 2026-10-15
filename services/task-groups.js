@@ -1,10 +1,10 @@
 const { randomUUID } = require('crypto');
 
 const INITIAL_GROUPS = Object.freeze([
-  { key: 'personal', name: '个人任务', sortOrder: 0, isSystem: false },
-  { key: 'doing', name: '进行中', sortOrder: 1000, isSystem: true },
-  { key: 'todo', name: '待办', sortOrder: 2000, isSystem: true },
-  { key: 'done', name: '已完成', sortOrder: 3000, isSystem: true },
+  { key: 'personal', name: 'Personal tasks', sortOrder: 0, isSystem: false },
+  { key: 'doing', name: 'In progress', sortOrder: 1000, isSystem: true },
+  { key: 'todo', name: 'To do', sortOrder: 2000, isSystem: true },
+  { key: 'done', name: 'Done', sortOrder: 3000, isSystem: true },
 ]);
 const SYSTEM_GROUPS = INITIAL_GROUPS.filter(group => group.isSystem);
 

@@ -47,7 +47,7 @@ async function startWizard() {
 
 const json = (token, extra = {}) => ({ 'X-Wizard-Token': token, 'Content-Type': 'application/json', ...extra });
 
-test('向导拒绝没有令牌、错误令牌和非本机 Host 的请求', { skip: !python }, async () => {
+test('The wizard rejects requests without a token, with a wrong token, and with a non-local Host', { skip: !python }, async () => {
   const wizard = await startWizard();
   try {
     assert.equal((await request(wizard.port)).status, 403);
@@ -61,11 +61,11 @@ test('向导拒绝没有令牌、错误令牌和非本机 Host 的请求', { ski
     const state = await request(wizard.port, { url: '/api/state', headers: { 'X-Wizard-Token': wizard.token } });
     assert.equal(state.status, 200);
     assert.ok(['macos', 'linux'].includes(state.json().platform));
-    assert.ok(!wizard.output().includes('GET /'), '不写包含令牌的访问日志');
+    assert.ok(!wizard.output().includes('GET /'), 'No access log containing the token is written');
   } finally { wizard.child.kill(); }
 });
 
-test('向导只接受白名单参数，拒绝跨站和非 JSON 请求', { skip: !python }, async () => {
+test('The wizard only accepts allowlisted arguments and rejects cross-site and non-JSON requests', { skip: !python }, async () => {
   const wizard = await startWizard();
   const post = (payload, headers = {}) => request(wizard.port, { method: 'POST', url: '/api/run', headers: json(wizard.token, headers), body: JSON.stringify(payload) });
   try {
@@ -76,17 +76,17 @@ test('向导只接受白名单参数，拒绝跨站和非 JSON 请求', { skip: 
       assert.equal(response.status, 400, response.text);
       assert.match(response.json().error, message);
     };
-    await rejected({ action: 'rm -rf /' }, /未知操作/);
-    await rejected({ action: 'dev-env', skip: ['claude; touch /tmp/x'] }, /skip 只支持/);
-    await rejected({ action: 'proxy', port: '7890; id' }, /必须是数字/);
-    await rejected({ action: 'proxy', port: '80' }, /1024-65535/);
-    await rejected({ action: 'proxy', mode: 'install', subscription: 'ftp://x' }, /http:\/\/ 或 https:\/\//);
-    await rejected({ action: 'proxy', mode: 'install', subscription: 'https://a.example/x y' }, /http:\/\/ 或 https:\/\//);
+    await rejected({ action: 'rm -rf /' }, /Unknown action/);
+    await rejected({ action: 'dev-env', skip: ['claude; touch /tmp/x'] }, /skip only supports/);
+    await rejected({ action: 'proxy', port: '7890; id' }, /must be a number/);
+    await rejected({ action: 'proxy', port: '80' }, /between 1024 and 65535/);
+    await rejected({ action: 'proxy', mode: 'install', subscription: 'ftp://x' }, /http:\/\/ or https:\/\//);
+    await rejected({ action: 'proxy', mode: 'install', subscription: 'https://a.example/x y' }, /http:\/\/ or https:\/\//);
     assert.equal((await request(wizard.port, { method: 'POST', url: '/api/run', headers: json(wizard.token), body: 'not json' })).status, 400);
   } finally { wizard.child.kill(); }
 });
 
-test('订阅链接只通过环境变量传递，输出中被打码，运行中不能重复启动，可关闭', { skip: !python }, async () => {
+test('The subscription link is only passed through the environment, masked in the output, cannot be started twice while running, and can be closed', { skip: !python }, async () => {
   const wizard = await startWizard();
   const secret = 'https://sub.example.com/api/v1/client/subscribe?token=SUPERSECRET123';
   const post = (url, payload) => request(wizard.port, { method: 'POST', url, headers: json(wizard.token), body: JSON.stringify(payload) });

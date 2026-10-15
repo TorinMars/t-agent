@@ -1,12 +1,12 @@
 #!/usr/bin/env node
-// 用法: node scripts/gen-password.js <username> <password>
-// 输出一行可直接粘贴到 .env AUTH_USERS 的字符串
+// Usage: node scripts/gen-password.js <username> <password>
+// Prints one line that can be pasted directly into AUTH_USERS in .env
 
 const crypto = require('crypto');
 const [,, username, password] = process.argv;
 
 if (!username || !password) {
-  console.error('用法: node scripts/gen-password.js <username> <password>');
+  console.error('Usage: node scripts/gen-password.js <username> <password>');
   process.exit(1);
 }
 

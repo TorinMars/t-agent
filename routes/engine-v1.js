@@ -47,7 +47,7 @@ router.get('/health', (req, res) => {
 router.post('/pair', rateLimitPairing, (req, res) => {
   try {
     const created = exchangePairingCode(db, req.body.code, {
-      clientName: req.body.client_name || '客户端',
+      clientName: req.body.client_name || 'Client',
     });
     res.status(201).json({
       access_token: created.token,
@@ -84,7 +84,7 @@ function infoHandler(req, res) {
 router.get('/info', requireEngineAuth(), infoHandler);
 router.get('/capabilities', requireEngineAuth(), infoHandler);
 
-// Engine 自更新属于主机管理操作，只允许 owner（* / engine:admin）Token。
+// Engine self-update is a host administration operation and only allowed for owner (* / engine:admin) tokens.
 router.get('/update/status', requireEngineAuth('engine:admin'), (req, res) => {
   res.json(updates.publicState());
 });
@@ -104,8 +104,8 @@ router.post('/update/apply', requireEngineAuth('engine:admin'), (req, res) => {
   res.status(202).json({ accepted: true, status: updates.publicState() });
 });
 
-// PM2 管理这台 Engine 所在机器上的进程，同样属于主机管理操作，只允许 owner Token。
-// 错误只返回错误码（Client 代理按码显示中文），不暴露 pm2 的原始输出。
+// PM2 manages processes on the machine this Engine runs on; it is also a host administration operation and only allowed for owner tokens.
+// Errors only return an error code (the Client proxy shows the message for it) and never expose pm2's raw output.
 const pm2 = createPm2Handlers();
 const pm2Route = handler => async (req, res) => {
   try { res.json(await handler(req)); }
@@ -118,15 +118,15 @@ router.get('/pm2/status', requireEngineAuth('engine:admin'), pm2Route(pm2.status
 router.get('/pm2/:id/logs', requireEngineAuth('engine:admin'), pm2Route(pm2.logs));
 router.post('/pm2/:id/:action', requireEngineAuth('engine:admin'), pm2Route(pm2.control));
 
-// 应用列表（服务注册表）：Token 可以让程序启动时自注册（POST /v1/apps/register，按名称幂等更新）。
-// 同样属于主机管理能力，只允许 owner Token；错误只返回错误码和中文说明。
+// App list (service registry): a token lets a program self-register at startup (POST /v1/apps/register, idempotent by name).
+// Also a host administration capability, owner tokens only; errors only return an error code and a message.
 const appsRouter = express.Router();
 mountAppsRoutes(appsRouter, createAppsHandlers(defaultAppsService()), requireEngineAuth('engine:admin'));
 router.use('/apps', appsRouter);
 
-// Agent（Claude / Codex）默认配置：由 Client 的“Agent 配置”页推送，只允许 owner Token。
+// Agent (Claude / Codex) default configuration: pushed from the Client's "Agent config" page, owner tokens only.
 router.use('/agent-config', require('./agent-config').createEngineRouter({ guard: requireEngineAuth('engine:admin') }));
-// 工作目录工具（导入未管理目录、清理代码目录）：与本地 /api/tasks/workspace/* 共用 services/workspace-tools。
+// Workspace tools (import unmanaged directories, clean up code directories): shared with the local /api/tasks/workspace/* via services/workspace-tools.
 const workspaceTools = require('../services/workspace-tools');
 const workspaceError = (res, error) => res.status(error.statusCode || 500).json({
   error: error.message, ...(error.reason ? { reason: error.reason } : {}), ...(error.path ? { path: error.path } : {}),
@@ -222,7 +222,7 @@ router.get('/tasks/:id/documents/:kind', requireEngineAuth('documents:read'), (r
   catch (error) { errorResponse(res, error); }
 });
 
-// 兼容现有客户端的 document 单数路径。
+// Singular "document" path kept for compatibility with existing clients.
 router.get('/tasks/:id/document/:kind', requireEngineAuth('documents:read'), (req, res) => {
   try { res.type('text/plain').send(tasks.readDocument(principal(req), req.params.id, req.params.kind)); }
   catch (error) { errorResponse(res, error); }

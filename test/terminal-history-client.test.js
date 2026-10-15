@@ -56,18 +56,18 @@ test('legacy, timeout, error and disconnect states do not request or render unwa
   // Explicitly omit archive for a legacy Engine.
   item.inst.history.handle(JSON.stringify({ type: 'history', data: '' }), item.inst.ws);
   app.click('btn-terminal-history'); assert.equal(item.sent.length, 0);
-  assert.match(app.document.getElementById('btn-terminal-history').dataset.tip, /升级/);
+  assert.match(app.document.getElementById('btn-terminal-history').dataset.tip, /upgrade/);
   initial(item); app.click('btn-terminal-history'); const request = item.sent[0];
   for (const fn of [...app.timers.values()]) fn();
-  assert.match(app.document.getElementById('terminal-history-status').textContent, /超时/);
+  assert.match(app.document.getElementById('terminal-history-status').textContent, /timed out/);
   item.inst.history.handle(JSON.stringify({ ...request, data: 'late', before: 0, hasMore: false }), item.inst.ws);
   assert.equal(app.document.getElementById('terminal-history-text').textContent, '');
   app.click('terminal-history-earlier');
   item.inst.history.handle(JSON.stringify({ ...item.sent[1], error: 'STALE_HISTORY' }), item.inst.ws);
-  assert.match(app.document.getElementById('terminal-history-status').textContent, /失败/);
+  assert.match(app.document.getElementById('terminal-history-status').textContent, /failed/);
   item.inst.history.disconnect(item.inst.ws);
   assert.equal(app.document.getElementById('btn-terminal-history').disabled, true);
-  assert.match(app.document.getElementById('terminal-history-status').textContent, /断开/);
+  assert.match(app.document.getElementById('terminal-history-status').textContent, /Disconnected/);
 });
 test('closing and reopening restarts snapshot and timeout retry keeps the same cursor', () => {
   const app = setup(), item = app.instance(); app.History.activate(item.inst); initial(item);

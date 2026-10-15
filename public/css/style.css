@@ -141,9 +141,9 @@ body.file-sync-open .sidebar, body.file-sync-open .content-area, body.file-sync-
   box-shadow: 0 0 0 2px var(--bg-secondary);
 }
 
-/* ── Window Controls Overlay 模式 ── */
+/* ── Window Controls Overlay mode ── */
 @media (display-mode: window-controls-overlay) {
-  /* 默认（overlay 模式）：header 融入系统标题栏 */
+  /* Default (overlay mode): the header blends into the system title bar */
   .header {
     position: fixed;
     top: env(titlebar-area-y, 0);
@@ -159,13 +159,13 @@ body.file-sync-open .sidebar, body.file-sync-open .content-area, body.file-sync-
   .header a,
   .header img,
   .context-menu {
-    -webkit-app-region: no-drag; /* 顶部栏是系统拖动区域，菜单盖在它上面时也要能点击 */
+    -webkit-app-region: no-drag; /* the top bar is a system drag region; menus covering it must still be clickable */
   }
-  /* layout 顶部内缩，避免被 fixed header 遮住 */
+  /* inset the layout from the top so the fixed header does not cover it */
   body > .layout {
     margin-top: env(titlebar-area-height, var(--header-height));
   }
-  /* fixed header 不参与 Flex 布局，由主区域的 margin 补回标题栏高度。 */
+  /* the fixed header takes no part in the flex layout; the main area's margin gives back the title bar height. */
   .layout {
     height: auto;
   }
@@ -391,7 +391,7 @@ body.file-sync-open .sidebar, body.file-sync-open .content-area, body.file-sync-
   overflow: hidden;
 }
 
-/* 左侧主导航：在当前引擎内切换 Tasks / 实用工具 */
+/* Left main navigation: switch between Tasks / Utilities within the current engine */
 .main-nav {
   display: flex;
   flex-direction: column;
@@ -581,7 +581,7 @@ body.file-sync-open .sidebar, body.file-sync-open .content-area, body.file-sync-
 .sidebar-action:hover { background: var(--bg-tertiary); color: var(--text); }
 .sidebar-action.btn-new-task { border-color: transparent; background: var(--accent); color: #fff; font-size: 20px; font-weight: 500; }
 .sidebar-action.btn-new-task:hover { background: var(--accent-hover); }
-/* 有未管理目录时导入按钮高亮，右上角显示数量 */
+/* When there are unmanaged directories the import button is highlighted and shows a count at its top right */
 .sidebar-action.btn-workspace-import.has-items { border-color: #d9a441; background: color-mix(in srgb, #d9a441 14%, transparent); color: var(--text); }
 .sidebar-action-badge {
   position: absolute;
@@ -601,7 +601,7 @@ body.file-sync-open .sidebar, body.file-sync-open .content-area, body.file-sync-
 .sidebar-action-badge[hidden] { display: none; }
 .update-detail-row strong.ok { color: var(--accent-hover); }
 .update-detail-row strong.error { color: var(--danger); }
-/* 悬浮显示文字提示（按钮只放图标） */
+/* Hover tooltip text (buttons only carry icons) */
 .sidebar-action::after {
   content: attr(data-tip);
   position: absolute;
@@ -773,7 +773,7 @@ body.file-sync-open .sidebar, body.file-sync-open .content-area, body.file-sync-
   color: var(--text);
 }
 
-/* 拖拽 */
+/* Drag and drop */
 .task-nav-item.drag-ghost {
   opacity: 0.35;
 }
@@ -816,7 +816,7 @@ body.file-sync-open .sidebar, body.file-sync-open .content-area, body.file-sync-
   color: var(--priority-high);
 }
 
-/* 终端状态：执行中=蓝色描边加流光（骨架屏式），完成待确认=绿色呼吸灯。左侧任务项与终端 tab 共用。 */
+/* Terminal state: running = blue outline with a flowing glow (skeleton-screen style), done awaiting review = green breathing light. Shared by the task item on the left and the terminal tab. */
 .task-nav-item.term-running,
 .task-nav-item.term-done,
 .engine-tab.term-running,
@@ -829,8 +829,8 @@ body.file-sync-open .sidebar, body.file-sync-open .content-area, body.file-sync-
 }
 .task-nav-item.term-running,
 .task-nav-item.term-done { --term-r: 0px; }
-/* 执行中：骨架屏式流光。三段半透明渐变放大到 300% 宽，从右向左匀速滑过整个标签（background-position 动画），
-   只改背景图，不盖文字；再加一圈细蓝色内描边，和完成态的绿色区分。 */
+/* Running: skeleton-screen glow. A three-stop translucent gradient scaled to 300% width slides right to left across the whole label (background-position animation),
+   only touching the background image, never covering the text; plus a thin blue inner outline to tell it apart from the green done state. */
 .task-nav-item.term-running,
 .engine-tab.term-running {
   box-shadow: inset 0 0 0 1px #1d4ed8;
@@ -1194,7 +1194,8 @@ body.file-sync-open .sidebar, body.file-sync-open .content-area, body.file-sync-
 .update-spinner { width: 16px; height: 16px; border: 2px solid var(--border); border-top-color: #0969da; border-radius: 50%; animation: update-spin .8s linear infinite; }
 @keyframes update-spin { to { transform: rotate(360deg); } }
 .update-log { margin: 0; height: 260px; overflow: auto; padding: 10px 12px; border-radius: 6px; background: #14161a; color: #d4d8de; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
-.update-log:empty::before { content: '等待输出…'; color: #7b8290; }
+.update-log:empty::before { content: 'Waiting for output…'; color: #7b8290; }
+html[lang="zh-CN"] .update-log:empty::before { content: '\7B49\5F85\8F93\51FA\2026'; } /* Chinese UI text, escaped so the stylesheet stays ASCII */
 
 .modal-header {
   flex-shrink: 0;
@@ -1334,7 +1335,7 @@ body.file-sync-open .sidebar, body.file-sync-open .content-area, body.file-sync-
   border: 1px solid var(--border);
   border-radius: 8px;
   box-shadow: 0 8px 24px rgba(0,0,0,0.5);
-  z-index: 1100; /* 高于“已安装应用”模式下 z-index 1000 的顶部栏：引擎标签在顶部栏里，菜单会在它的范围内弹出 */
+  z-index: 1100; /* higher than the top bar's z-index 1000 in "installed app" mode: the engine tabs live in the top bar, so the menu pops up inside its range */
   min-width: 150px;
   overflow: hidden;
 }
@@ -1366,7 +1367,7 @@ body.file-sync-open .sidebar, body.file-sync-open .content-area, body.file-sync-
   font-size: 13px;
 }
 
-/* Mermaid 放大按钮 */
+/* Mermaid zoom button */
 .mermaid-wrap {
   position: relative;
   display: block;
@@ -1702,7 +1703,7 @@ body.file-sync-open .sidebar, body.file-sync-open .content-area, body.file-sync-
   min-width: 0;
   max-width: calc(100% - 108px);
   margin-left: auto;
-  overflow: visible; /* 按钮只放图标后不再需要横向滚动；悬浮提示要能伸出工具栏 */
+  overflow: visible; /* With icon-only buttons horizontal scrolling is no longer needed; tooltips must be able to extend outside the toolbar */
 }
 .terminal-toolbar-btn {
   flex-shrink: 0;
@@ -1721,8 +1722,8 @@ body.file-sync-open .sidebar, body.file-sync-open .content-area, body.file-sync-
 .terminal-toolbar-btn:hover { background: #3a3a3a; color: #fff; }
 .terminal-toolbar-btn.danger:hover { border-color: #cf222e; color: #ff7b72; }
 .terminal-toolbar-btn:disabled { cursor: wait; opacity: .55; }
-/* 只显示图标，鼠标进入时显示详细说明。只作用于工具栏里的操作按钮：终端标签页也用 .terminal-toolbar-btn，
-   给它们加绝对定位的提示会撑大标签栏的滚动区域，出现多余的滚动条。 */
+/* Show only the icon and reveal the detailed text on hover. Applies only to action buttons in the toolbar: terminal tabs also use .terminal-toolbar-btn,
+   and giving them an absolutely positioned tooltip would enlarge the tab bar's scroll area and cause extra scrollbars. */
 .terminal-toolbar > .terminal-toolbar-btn { position: relative; min-width: 28px; padding-left: 7px; padding-right: 7px; }
 .terminal-toolbar > .terminal-toolbar-btn::after {
   content: attr(data-tip);
@@ -1773,7 +1774,7 @@ body.file-sync-open .sidebar, body.file-sync-open .content-area, body.file-sync-
   min-width: 0;
   min-height: 0;
 }
-/* xterm canvas 自适应填满 */
+/* xterm canvas adapts to fill the space */
 #xterm-container .xterm {
   height: 100%;
   /* Keep glyph measurement and rendering on the same fixed cell grid.
@@ -1804,7 +1805,7 @@ body.file-sync-open .sidebar, body.file-sync-open .content-area, body.file-sync-
   #xterm-container .xterm-viewport { scrollbar-width: auto; scrollbar-color: #707780 #252526; }
 }
 
-/* task-info-path: work_dir 展示 */
+/* task-info-path: display of work_dir */
 .task-info-path {
   font-size: 12px;
   color: var(--text-muted);
@@ -1902,7 +1903,7 @@ body.file-sync-open .sidebar, body.file-sync-open .content-area, body.file-sync-
   font: 13px/1.5 Menlo, Monaco, "Courier New", monospace; tab-size: 8;
 }
 
-/* 应用列表 */
+/* App list */
 .apps-table td { white-space: normal; vertical-align: top; }
 .apps-table .apps-name small, .apps-table .apps-sub { display: block; color: var(--text-muted); font-size: 11px; margin-top: 2px; }
 .apps-table .apps-name strong, .apps-table .apps-name a { font-weight: 600; }
@@ -1915,7 +1916,7 @@ body.file-sync-open .sidebar, body.file-sync-open .content-area, body.file-sync-
 .apps-example { margin: 8px 0 0; padding: 10px; overflow: auto; background: #0d1117; color: #e6edf3; border-radius: 6px; font: 12px/1.5 ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; word-break: break-all; }
 .apps-log { margin: 0; padding: 10px; max-height: 60vh; overflow: auto; background: #0d1117; color: #e6edf3; border-radius: 6px; font: 12px/1.5 ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; word-break: break-all; }
 
-/* Agent 配置页 */
+/* Agent config page */
 .agent-config-tabs { display: flex; gap: 6px; margin: 12px 0; }
 .agent-config-tab { padding: 5px 14px; border: 1px solid var(--border); border-radius: 6px; background: transparent; color: var(--text); cursor: pointer; font-size: 13px; }
 .agent-config-tab.active { background: var(--accent); border-color: var(--accent); color: #fff; }
@@ -1937,7 +1938,7 @@ body.file-sync-open .sidebar, body.file-sync-open .content-area, body.file-sync-
 .file-sync-code-box { margin: 8px 0 12px; }
 .file-sync-code-box textarea, #sync-invite-string { font-family: Menlo, Monaco, "Courier New", monospace; font-size: 12px; max-width: 640px; word-break: break-all; }
 
-/* 终端底部的中译英输入框：输入中文，翻译成英文后键入终端并回车 */
+/* Chinese-to-English input at the bottom of the terminal: type Chinese, it is translated to English, typed into the terminal and submitted */
 .terminal-translate { display: flex; flex: 0 0 auto; flex-wrap: wrap; align-items: center; gap: 6px; padding: 5px 8px; background: #252526; border-top: 1px solid #3a3a3a; }
 .terminal-translate-input { flex: 1 1 240px; min-width: 0; height: 28px; padding: 0 10px; border: 1px solid #555; border-radius: 5px; background: #1b1b1c; color: #f0f0f0; font: 13px/1 inherit; }
 .terminal-translate-input:focus { outline: none; border-color: #70a5ff; }
@@ -1962,7 +1963,7 @@ body.file-sync-open .sidebar, body.file-sync-open .content-area, body.file-sync-
 #frp-method-frp > * + *, #frp-method-ssh > * + * { margin-top: 14px; }
 .frp-methods { display: grid; gap: 8px; margin-top: 8px; }
 
-/* 悬浮提示：固定在页面顶部居中，不参与布局，所以不会改变任何工具栏的高度。 */
+/* Floating notice: fixed at the top centre of the page and outside the layout, so it never changes the height of any toolbar. */
 .toast-stack { position: fixed; top: 16px; left: 50%; transform: translateX(-50%); z-index: 2147483646; display: flex; flex-direction: column; align-items: center; gap: 8px; width: min(440px, calc(100vw - 24px)); pointer-events: none; }
 .toast { box-sizing: border-box; max-width: 100%; padding: 10px 14px; border-radius: 8px; border-left: 4px solid #70a5ff; background: #2d2d30; color: #f0f0f0; font-size: 13px; line-height: 1.45; overflow-wrap: anywhere; box-shadow: 0 6px 20px rgba(0, 0, 0, .35); cursor: pointer; pointer-events: auto; animation: toast-in .16s ease-out; }
 .toast-success { border-left-color: #3fb950; }

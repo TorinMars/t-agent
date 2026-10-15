@@ -1,4 +1,4 @@
-// 终端中译英输入框的翻译后端：配置加密保存、不回传密钥、英文不调用接口、DeepSeek 错误转成中文提示。
+// Backend of the terminal's Chinese-to-English input: configuration is stored encrypted, the key is not sent back, English does not call the endpoint, DeepSeek errors become readable messages.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
@@ -21,26 +21,26 @@ function setup(responder) {
   return { db, service, calls };
 }
 
-test('保存配置时加密 API Key，读取配置不返回密钥', () => {
+test('The API key is encrypted when saving the configuration, and reading the configuration does not return the key', () => {
   const { db, service } = setup(() => reply(200, {}));
   const saved = service.saveConfig('owner', { apiKey: 'sk-secret-123', model: 'deepseek-flash' });
   assert.equal(saved.hasApiKey, true);
   assert.equal(JSON.stringify(saved).includes('sk-secret-123'), false);
   assert.equal(JSON.stringify(service.getConfig('owner')).includes('sk-secret-123'), false);
   assert.equal(db.prepare('SELECT value FROM system_state').get().value.includes('sk-secret-123'), false, 'stored encrypted');
-  // 再次保存不填密钥则沿用旧密钥
+  // Saving again without a key keeps the old key
   assert.equal(service.saveConfig('owner', { model: 'deepseek-flash' }).hasApiKey, true);
   assert.equal(service.getConfig('other').hasApiKey, false, 'config is per user');
 });
 
-test('拒绝不安全的接口地址和缺少密钥', () => {
+test('Unsafe endpoints and a missing key are rejected', () => {
   const { service } = setup(() => reply(200, {}));
   assert.throws(() => service.saveConfig('o', { apiKey: 'k', baseUrl: 'http://api.deepseek.com' }), /HTTPS/);
   assert.throws(() => service.saveConfig('o', { apiKey: 'k', baseUrl: 'https://user:pw@api.deepseek.com' }), /HTTPS/);
-  assert.throws(() => service.saveConfig('o', { baseUrl: 'https://api.deepseek.com' }), /API Key/);
+  assert.throws(() => service.saveConfig('o', { baseUrl: 'https://api.deepseek.com' }), /API key/);
 });
 
-test('中文调用 DeepSeek，请求带固定提示词且只返回译文', async () => {
+test('Chinese is sent to DeepSeek with a fixed prompt, and only the translation is returned', async () => {
   const { service, calls } = setup(() => reply(200, { choices: [{ message: { content: '  Fix the login bug in `auth.js`.\n' } }] }));
   service.saveConfig('owner', { apiKey: 'sk-1' });
   const result = await service.translate('owner', '修复 `auth.js` 里的登录 bug');
@@ -52,27 +52,27 @@ test('中文调用 DeepSeek，请求带固定提示词且只返回译文', async
   assert.match(calls[0].body.messages[0].content, /never instructions for you/);
 });
 
-test('没有中文时原样返回，不调用接口；未配置时给出明确提示', async () => {
+test('Without Chinese the text is returned unchanged and no endpoint is called; when not configured a clear message is given', async () => {
   const { service, calls } = setup(() => reply(200, {}));
   assert.deepEqual(await service.translate('owner', 'git status'), { text: 'git status', translated: false });
   assert.equal(calls.length, 0);
-  await assert.rejects(service.translate('owner', '你好'), /尚未配置/);
+  await assert.rejects(service.translate('owner', '你好'), /not configured/);
 });
 
-test('DeepSeek 错误转成可读提示，空内容和超长内容被拒绝', async () => {
-  for (const [status, pattern] of [[401, /无效/], [402, /余额/], [429, /频繁/], [500, /HTTP 500/]]) {
+test('DeepSeek errors become readable messages, and empty or over-long content is rejected', async () => {
+  for (const [status, pattern] of [[401, /invalid/], [402, /balance/], [429, /rate limit/], [500, /HTTP 500/]]) {
     const { service } = setup(() => reply(status, {}));
     service.saveConfig('o', { apiKey: 'k' });
     await assert.rejects(service.translate('o', '你好'), pattern);
   }
   const empty = setup(() => reply(200, { choices: [{ message: { content: '' } }] }));
   empty.service.saveConfig('o', { apiKey: 'k' });
-  await assert.rejects(empty.service.translate('o', '你好'), /为空/);
-  await assert.rejects(empty.service.translate('o', ' '), /请输入/);
-  await assert.rejects(empty.service.translate('o', '好'.repeat(4001)), /不能超过/);
+  await assert.rejects(empty.service.translate('o', '你好'), /is empty/);
+  await assert.rejects(empty.service.translate('o', ' '), /Enter/);
+  await assert.rejects(empty.service.translate('o', '好'.repeat(4001)), /cannot exceed/);
 });
 
-test('HTTP 路由：配置读写与翻译，密钥不出现在响应里', async () => {
+test('HTTP routes: reading and writing config and translating, with no key in the responses', async () => {
   const { service } = setup(() => reply(200, { choices: [{ message: { content: 'Hello' } }] }));
   const app = express();
   app.use(express.json());
@@ -92,7 +92,7 @@ test('HTTP 路由：配置读写与翻译，密钥不出现在响应里', async 
   } finally { server.close(); }
 });
 
-test('多服务商：切换到 GLM 不会丢失 DeepSeek 已保存的 Key，GLM 走自己的地址和 Key', async () => {
+test('Multiple providers: switching to GLM does not lose the key saved for DeepSeek, and GLM uses its own address and key', async () => {
   const { service, calls } = setup(() => reply(200, { choices: [{ message: { content: 'Hi' } }] }));
   service.saveConfig('o', { provider: 'deepseek', apiKey: 'sk-deepseek' });
   const glm = service.saveConfig('o', { provider: 'glm', apiKey: 'glm-key' });
@@ -104,45 +104,45 @@ test('多服务商：切换到 GLM 不会丢失 DeepSeek 已保存的 Key，GLM 
   assert.equal(calls[0].url, 'https://open.bigmodel.cn/api/paas/v4/chat/completions');
   assert.equal(calls[0].options.headers.Authorization, 'Bearer glm-key');
   assert.equal(calls[0].body.model, 'glm-5.3-flash');
-  assert.equal(calls[0].body.reasoning_effort, 'low', 'glm-5.3 始终思考、不能关闭（thinking:disabled 会 400），用低档推理');
+  assert.equal(calls[0].body.reasoning_effort, 'low', 'glm-5.3 always thinks and cannot turn it off (thinking:disabled gives 400), so low-effort reasoning is used');
   assert.equal('thinking' in calls[0].body, false);
-  // 切回 DeepSeek：不填 Key，沿用之前保存的
+  // Switch back to DeepSeek: no key given, the previously saved one is kept
   assert.equal(service.saveConfig('o', { provider: 'deepseek' }).provider, 'deepseek');
   await service.translate('o', '你好');
   assert.equal(calls[1].url, 'https://api.deepseek.com/chat/completions');
   assert.equal(calls[1].options.headers.Authorization, 'Bearer sk-deepseek');
-  // 切到没保存过 Key 的服务商要报错，且不影响已有配置
+  // Switching to a provider that has no saved key must error, without affecting the existing configuration
   const fresh = setup(() => reply(200, {}));
   fresh.service.saveConfig('o', { provider: 'deepseek', apiKey: 'k' });
-  assert.throws(() => fresh.service.saveConfig('o', { provider: 'glm' }), /智谱 GLM API Key/);
+  assert.throws(() => fresh.service.saveConfig('o', { provider: 'glm' }), /Zhipu GLM API key/);
   assert.equal(fresh.service.getConfig('o').provider, 'deepseek');
-  assert.throws(() => fresh.service.saveConfig('o', { provider: 'nope', apiKey: 'k' }), /不支持/);
+  assert.throws(() => fresh.service.saveConfig('o', { provider: 'nope', apiKey: 'k' }), /Unsupported/);
 });
 
-test('服务商返回的错误原因（如 GLM 1113 余额不足）原样报出，而不是笼统的状态码文案', async () => {
-  const { service } = setup(() => reply(429, { error: { code: '1113', message: '余额不足或无可用资源包,请充值。' } }));
+test('The error reason returned by the provider (such as GLM 1113 insufficient balance) is reported as-is instead of a generic status-code message', async () => {
+  const { service } = setup(() => reply(429, { error: { code: '1113', message: 'Insufficient balance or no available resource package,Please top up.' } }));
   service.saveConfig('o', { provider: 'glm', apiKey: 'k' });
-  await assert.rejects(service.translate('o', '你好'), /智谱 GLM 返回错误：余额不足或无可用资源包,请充值。（HTTP 429，错误码 1113）/);
+  await assert.rejects(service.translate('o', '你好'), /Zhipu GLM returned an error: Insufficient balance or no available resource package,Please top up\. \(HTTP 429, error code 1113\)/);
 });
 
-test('错误响应体不是标准 error.message 格式时，把原始响应片段报出来', async () => {
-  const flat = setup(() => reply(400, { code: '1210', msg: '参数有误' }));
+test('When the error body is not the standard error.message shape, a snippet of the raw response is reported', async () => {
+  const flat = setup(() => reply(400, { code: '1210', msg: 'Invalid parameters' }));
   flat.service.saveConfig('o', { provider: 'glm', apiKey: 'k' });
-  await assert.rejects(flat.service.translate('o', '你好'), /参数有误（HTTP 400，错误码 1210）/);
+  await assert.rejects(flat.service.translate('o', '你好'), /Invalid parameters \(HTTP 400, error code 1210\)/);
   const plain = setup(() => reply(400, 'Bad Request: temperature out of range'));
   plain.service.saveConfig('o', { provider: 'glm', apiKey: 'k' });
-  await assert.rejects(plain.service.translate('o', '你好'), /智谱 GLM 返回错误（HTTP 400）：Bad Request: temperature out of range/);
+  await assert.rejects(plain.service.translate('o', '你好'), /Zhipu GLM returned an error \(HTTP 400\): Bad Request: temperature out of range/);
 });
 
-test('GLM-4.5～5.2 关闭深度思考，错误提示带服务商名称', async () => {
+test('GLM-4.5 to 5.2 turn deep thinking off, and error messages carry the provider name', async () => {
   const { service, calls } = setup(status => (status === 1 ? reply(200, { choices: [{ message: { content: 'Hi' } }] }) : reply(401, {})));
   service.saveConfig('o', { provider: 'glm', apiKey: 'k', model: 'glm-4.5-air' });
   await service.translate('o', '你好');
   assert.deepEqual(calls[0].body.thinking, { type: 'disabled' });
-  await assert.rejects(service.translate('o', '你好'), /智谱 GLM API Key 无效/);
+  await assert.rejects(service.translate('o', '你好'), /Zhipu GLM API key is invalid/);
 });
 
-test('旧版扁平 DeepSeek 配置自动迁移，已保存的 Key 不丢', async () => {
+test('An old flat DeepSeek configuration is migrated automatically, and the saved key is not lost', async () => {
   const { db, service, calls } = setup(() => reply(200, { choices: [{ message: { content: 'Hi' } }] }));
   const { encryptToken } = require('../lib/token-crypto');
   db.prepare('INSERT INTO system_state (key, value) VALUES (?, ?)').run('translator:o', encryptToken(JSON.stringify({ enabled: true, apiKey: 'sk-old', baseUrl: 'https://api.deepseek.com', model: 'deepseek-chat' }), SECRET));

@@ -24,15 +24,16 @@ function database(identity) {
   };
 }
 
-test('用户目录和绝对路径规范化，拒绝路径穿越', () => {
-  assert.equal(normalizeSpec('用户目录/.claude/settings.json'), '~/.claude/settings.json');
+test('Home-directory and absolute paths are normalized, and path traversal is rejected', () => {
+  assert.equal(normalizeSpec('home/.claude/settings.json'), '~/.claude/settings.json');
+  assert.equal(normalizeSpec('\u7528\u6237\u76ee\u5f55/.claude/settings.json'), '~/.claude/settings.json', 'the prefix written by earlier versions still works');
   assert.equal(normalizeSpec('$HOME/.codex/config.toml'), '~/.codex/config.toml');
   assert.equal(normalizeSpec('/tmp/config.toml'), '/tmp/config.toml');
   assert.throws(() => normalizeSpec('~/../secret'), /SYNC_PATH_INVALID/);
   assert.throws(() => normalizeSpec('relative/path'), /SYNC_PATH_INVALID/);
 });
 
-test('主节点文件清单、首次下载、双向更新及冲突', async t => {
+test('Master node file list, first download, two-way updates and conflicts', async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'file-sync-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const aHome = path.join(root, 'a');
@@ -101,7 +102,7 @@ test('主节点文件清单、首次下载、双向更新及冲突', async t => 
   assert.equal(fs.readFileSync(path.join(aHome, '.claude/settings.json'), 'utf8'), '{"master":4}\n');
 });
 
-test('子节点把 Mac 绝对路径映射到本机路径，备份旧文件并可恢复默认', async t => {
+test('A child node maps Mac absolute paths to local paths, backs up the old file and can restore the default', async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'file-sync-map-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const masterHome = path.join(root, 'mac');
@@ -144,7 +145,7 @@ test('子节点把 Mac 绝对路径映射到本机路径，备份旧文件并可
   assert.equal(child.status().files[0].local_path, source);
 });
 
-test('首次连接时不在服务器创建主节点独有的绝对路径', async t => {
+test('On first connection, absolute paths that exist only on the master node are not created on the server', async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'file-sync-foreign-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const foreign = path.join(root, 'mac', 'Users', 'name', '.codex', 'config.toml');
@@ -166,7 +167,7 @@ test('首次连接时不在服务器创建主节点独有的绝对路径', async
   assert.equal(fs.readFileSync(path.join(home, '.codex/config.toml'), 'utf8'), 'model = "master"\n');
 });
 
-test('同步配对码一步加入主服务器：换同步令牌、保存在文件同步自己的状态里、立即同步，不借用引擎连接', async t => {
+test('One-step join of the master by sync pairing code: exchange for a sync token, store it in file sync’s own state, sync immediately, without borrowing an engine connection', async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'file-sync-join-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const aHome = path.join(root, 'a');
@@ -181,7 +182,7 @@ test('同步配对码一步加入主服务器：换同步令牌、保存在文�
   const remoteRequest = async (base, url, token, options = {}) => {
     seen.push({ base, url, token, method: options.method });
     if (url === '/v1/file-sync/pair') { assert.equal(token, null); return master.exchangeSyncCode(options.body); }
-    assert.ok(master.verifyToken(token), '同步接口使用文件同步令牌');
+    assert.ok(master.verifyToken(token), 'Sync endpoints use the file-sync token');
     if (url.endsWith('/manifest')) return master.manifest();
     if (url.endsWith('/file')) return master.receive(options.body);
     if (url.endsWith('/heartbeat')) return options.method === 'DELETE' ? master.unregisterChild(options.body) : master.registerChild(options.body);
@@ -194,25 +195,25 @@ test('同步配对码一步加入主服务器：换同步令牌、保存在文�
 
   await assert.rejects(child.join({ url: 'http://master:3000', code: 'wrong' }), /SYNC_PAIRING_CODE_INVALID/);
   await assert.rejects(child.join({ url: '', code }), /SYNC_MASTER_URL_INVALID/);
-  assert.equal(seen.length, 0, '格式错误不会发出请求');
+  assert.equal(seen.length, 0, 'A malformed value sends no request');
 
   const status = await child.join({ url: 'master.lan:3000/web', code: code.toLowerCase() });
   assert.equal(status.role, 'child');
   assert.equal(status.master_url, 'http://master.lan:3000');
   assert.equal(seen[0].base, 'http://master.lan:3000');
   assert.equal(fs.readFileSync(path.join(bHome, '.claude/settings.json'), 'utf8'), '{"a":1}\n');
-  assert.equal(bDb.servers.size, 0, '不写入引擎连接（remote_servers）');
-  assert.ok(!JSON.stringify(bDb.prepare('SELECT value FROM system_state').get('file_sync_v1')).includes(seen[1].token), '令牌加密保存');
-  await assert.rejects(new FileSync({ db: database('eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee'), secret: 'secret', home: bHome, intervalMs: 0, remoteRequest }).join({ url: 'http://master.lan:3000', code }), /PAIRING_CODE_INVALID_OR_EXPIRED/, '配对码只能使用一次');
+  assert.equal(bDb.servers.size, 0, 'Nothing is written to engine connections (remote_servers)');
+  assert.ok(!JSON.stringify(bDb.prepare('SELECT value FROM system_state').get('file_sync_v1')).includes(seen[1].token), 'The token is stored encrypted');
+  await assert.rejects(new FileSync({ db: database('eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee'), secret: 'secret', home: bHome, intervalMs: 0, remoteRequest }).join({ url: 'http://master.lan:3000', code }), /PAIRING_CODE_INVALID_OR_EXPIRED/, 'A pairing code can only be used once');
 
   await child.disconnect();
-  assert.equal(master.verifyToken(seen[1].token), false, '断开时主服务器吊销该令牌');
+  assert.equal(master.verifyToken(seen[1].token), false, 'When disconnecting, the master revokes that token');
   await child.join({ url: 'http://master.lan:3000', code: master.createSyncCode() });
   assert.equal(child.status().role, 'child');
   assert.equal(bDb.servers.size, 0);
 });
 
-test('主服务器生成连接字符串，内网从服务器粘贴后主动连接；角色可切换、可解除，字符串只能用一次', async t => {
+test('The master generates a connection string, an internal-network slave pastes it and connects out; the role can be switched or unlinked, and the string works only once', async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'file-sync-invite-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const aHome = path.join(root, 'a');
@@ -224,7 +225,7 @@ test('主服务器生成连接字符串，内网从服务器粘贴后主动连�
   const bDb = database('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb');
   const master = new FileSync({ db: aDb, secret: 'secret', home: aHome, intervalMs: 0 });
   const sent = [];
-  // 只有从服务器向主服务器发请求；主服务器从不连接从服务器。
+  // Only the slave sends requests to the master; the master never connects to the slave.
   const slaveRequest = async (base, url, token, options = {}) => {
     sent.push({ base, url, token });
     if (url === '/v1/file-sync/pair') return master.exchangeSyncCode(options.body);
@@ -236,13 +237,13 @@ test('主服务器生成连接字符串，内网从服务器粘贴后主动连�
   master.setFiles(['~/.claude/settings.json']);
 
   await assert.rejects(slave.setRole('boss'), /SYNC_ROLE_INVALID/);
-  await assert.rejects(slave.joinInvite('x'), /SYNC_NOT_CHILD/, '主服务器不能当从服务器连接');
+  await assert.rejects(slave.joinInvite('x'), /SYNC_NOT_CHILD/, 'A master cannot connect as a slave');
   const waiting = await slave.setRole('slave');
   assert.equal(waiting.role, 'child');
   assert.equal(waiting.master_id, null);
   assert.equal(waiting.master_url, null);
   await slave.tick();
-  assert.equal(slave.status().error, null, '尚未连接时轮询不报错');
+  assert.equal(slave.status().error, null, 'Polling does not error before connecting');
   assert.throws(() => slave.createInvite('master.lan:3000'), /SYNC_NOT_MASTER/);
 
   assert.throws(() => master.createInvite(''), /SYNC_MASTER_URL_INVALID/);
@@ -250,45 +251,45 @@ test('主服务器生成连接字符串，内网从服务器粘贴后主动连�
   assert.match(invite.connection_string, /^TAFS1:[A-Za-z0-9_-]+$/);
   assert.equal(invite.expires_in_seconds, 600);
   const decoded = JSON.parse(Buffer.from(invite.connection_string.slice(6), 'base64url').toString());
-  assert.deepEqual({ v: decoded.v, u: decoded.u }, { v: 1, u: 'http://master.lan:3000' }, '字符串里是规范化后的主服务器地址');
+  assert.deepEqual({ v: decoded.v, u: decoded.u }, { v: 1, u: 'http://master.lan:3000' }, 'The string holds the normalized master address');
   assert.match(decoded.c, /^TA-[A-Z2-9]{4}-[A-Z2-9]{4}-[A-Z2-9]{4}$/);
 
   for (const bad of ['', 'TAFS1:', 'TAFS1:!!!', 'hello', `TAFS1:${Buffer.from('{"v":2}').toString('base64url')}`,
     `TAFS1:${Buffer.from(JSON.stringify({ v: 1, u: 'http://m', c: 'bad' })).toString('base64url')}`]) {
     await assert.rejects(slave.joinInvite(bad), /SYNC_CONNECTION_STRING_INVALID/, JSON.stringify(bad));
   }
-  assert.equal(sent.length, 0, '字符串不正确不会发出请求');
+  assert.equal(sent.length, 0, 'An incorrect string sends no request');
 
-  // 粘贴时常带换行或空白。
+  // Pasting often brings line breaks or whitespace.
   const wrapped = invite.connection_string.replace(/(.{20})/g, '$1\n  ');
   const status = await slave.joinInvite(wrapped);
   assert.equal(status.role, 'child');
   assert.equal(status.master_url, 'http://master.lan:3000');
   assert.equal(sent[0].base, 'http://master.lan:3000');
-  assert.equal(status.children.length, 0, '从服务器的清单里没有子节点');
-  assert.equal(master.status().children.length, 1, '从服务器连接后已向主服务器登记');
+  assert.equal(status.children.length, 0, 'A slave’s list has no child nodes');
+  assert.equal(master.status().children.length, 1, 'After a slave connects it has registered with the master');
   assert.equal(fs.readFileSync(path.join(bHome, '.claude/settings.json'), 'utf8'), '{"a":1}\n');
-  assert.equal(bDb.servers.size, 0, '不写入引擎连接（remote_servers）');
-  assert.equal(slave.status().master_id, null, '不再使用引擎连接的 id');
+  assert.equal(bDb.servers.size, 0, 'Nothing is written to engine connections (remote_servers)');
+  assert.equal(slave.status().master_id, null, 'The engine connection id is no longer used');
   const second = new FileSync({ db: database('eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee'), secret: 'secret', home: bHome, intervalMs: 0, remoteRequest: slaveRequest });
   await second.setRole('slave');
-  await assert.rejects(second.joinInvite(invite.connection_string), /PAIRING_CODE_INVALID_OR_EXPIRED/, '字符串只能使用一次');
+  await assert.rejects(second.joinInvite(invite.connection_string), /PAIRING_CODE_INVALID_OR_EXPIRED/, 'The string can be used only once');
 
   const issuedToken = Object.keys(master.state.tokens)[0];
   assert.equal(Object.keys(master.state.tokens).length, 1);
   assert.ok(issuedToken);
   const unpaired = await slave.unpair();
-  assert.equal(Object.keys(master.state.tokens).length, 0, '解除关联时主服务器吊销该从服务器的令牌');
+  assert.equal(Object.keys(master.state.tokens).length, 0, 'When unlinking, the master revokes that slave’s token');
   assert.equal(unpaired.role, 'child');
   assert.equal(unpaired.master_url, null);
   assert.equal(unpaired.files.length, 0);
   await assert.rejects(master.unpair(), /SYNC_NOT_CHILD/);
   await slave.joinInvite(master.createInvite('http://master.lan:3000').connection_string);
-  assert.equal(slave.status().master_url, 'http://master.lan:3000', '解除后可用新的字符串重新连接');
+  assert.equal(slave.status().master_url, 'http://master.lan:3000', 'After unlinking, a new string can be used to reconnect');
   assert.equal((await slave.setRole('master')).role, 'master');
 });
 
-test('旧版本保存的状态没有 mode：已连接主服务器的是从服务器，否则是主服务器', () => {
+test('State saved by an old version has no mode: a node connected to a master is a slave, otherwise a master', () => {
   const key = 'file_sync_v1';
   const base = { files: [], versions: {}, observed: {}, backups: {}, error: null };
   const old = database('cccccccc-cccc-4ccc-8ccc-cccccccccccc');
@@ -296,7 +297,7 @@ test('旧版本保存的状态没有 mode：已连接主服务器的是从服务
   old.servers.set(5, { id: 5, base_url: 'http://legacy-master:3000', token_cipher: encryptToken('legacy', 's') });
   const legacy = new FileSync({ db: old, secret: 's', intervalMs: 0 });
   assert.equal(legacy.status().role, 'child');
-  assert.equal(legacy.status().master_url, 'http://legacy-master:3000', '旧版本通过 remote_servers 建立的连接继续可用');
+  assert.equal(legacy.status().master_url, 'http://legacy-master:3000', 'Connections made through remote_servers by old versions keep working');
   assert.equal(legacy.remote().token, 'legacy');
   assert.equal(new FileSync({ db: database('dddddddd-dddd-4ddd-8ddd-dddddddddddd'), secret: 's', intervalMs: 0 }).status().role, 'master');
 });

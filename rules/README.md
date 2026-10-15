@@ -1,33 +1,33 @@
-# 用户级规则与默认配置（远程源）
+# User-level rules and default configuration (remote source)
 
-`scripts/agent-sync.py` 在每次启动 `claude` / `codex` 前从本目录拉取下面五个文件，合并到本机：
+Before every start of `claude` / `codex`, `scripts/agent-sync.py` pulls the following five files from this directory and merges them into the machine:
 
-| 远程文件 | 本机目标 | 合并方式 |
+| Remote file | Local target | How it is merged |
 |---|---|---|
-| `claude/CLAUDE.md` | `~/.claude/CLAUDE.md` | 只替换文件中由 `<!-- t-agent:managed:begin/end -->` 圈出的区块，区块之外的本机规则原样保留 |
-| `claude/settings.json` | `~/.claude/settings.json` | 递归合并：远程有的键以远程为准，本机独有的键保留；数组取并集 |
-| `codex/AGENTS.md` | `~/.codex/AGENTS.md` | 同 `CLAUDE.md` |
-| `codex/hooks.json` | `~/.codex/hooks.json` | 同 `claude/settings.json` 的 JSON 递归合并：本机已有 hook 保留，远程 hook 追加，重复同步不产生重复项。用于向 t-agent 上报终端状态；Codex 首次需在 `/hooks` 中信任 |
-| `codex/config.toml` | `~/.codex/config.toml` | 只覆盖远程列出的键（支持顶层键和 `[表]` 下的单行键值），其余内容和注释保留 |
+| `claude/CLAUDE.md` | `~/.claude/CLAUDE.md` | Only the block enclosed by `<!-- t-agent:managed:begin/end -->` is replaced; local rules outside the block are kept as they are |
+| `claude/settings.json` | `~/.claude/settings.json` | Recursive merge: for keys the remote has, the remote wins; keys that exist only locally are kept; arrays are unioned |
+| `codex/AGENTS.md` | `~/.codex/AGENTS.md` | Same as `CLAUDE.md` |
+| `codex/hooks.json` | `~/.codex/hooks.json` | Recursive JSON merge like `claude/settings.json`: hooks that already exist locally are kept, remote hooks are appended, and syncing again produces no duplicates. It is used to report terminal status to t-agent; Codex must trust it once in `/hooks` |
+| `codex/config.toml` | `~/.codex/config.toml` | Only the keys listed remotely are overwritten (top-level keys and single-line key/values under a `[table]` are supported); everything else, including comments, is kept |
 
-**注意**
+**Notes**
 
-- 本仓库是公开的，这里不能写任何密钥、令牌或内部信息。
-- 修改这些文件并推送到 `main` 后，各机器下次启动 `claude` / `codex` 时生效（GitHub 缓存通常有几分钟延迟）。
-- 远程列出的键每次都会覆盖本机同名键；只想在某台机器上临时改动请用命令行参数（如 `claude --model opus`），想让这台机器长期不同请用下面的“本机覆盖”。
-- 从远程删除某个键或某条数组项不会同步删除本机已有的内容。
-- `codex/config.toml` 的值必须是单行；`claude/settings.json` 必须是合法 JSON。
+- This repository is public, so no secret, token or internal information may be written here.
+- After these files are changed and pushed to `main`, each machine picks them up the next time it starts `claude` / `codex` (the GitHub cache usually adds a delay of a few minutes).
+- Keys listed remotely overwrite the same-named keys on the machine every time; to change something temporarily on one machine use command-line arguments (such as `claude --model opus`), and to make one machine different for good use the "Local overrides" below.
+- Deleting a key or an array item from the remote does not delete what already exists on the machine.
+- Values in `codex/config.toml` must be single-line; `claude/settings.json` must be valid JSON.
 
-## 本机覆盖（只改某一台机器）
+## Local overrides (change only one machine)
 
-在那台机器上创建覆盖文件，格式和上面的远程文件完全一样，只写你想固定的键：
+Create an override file on that machine. Its format is exactly the same as the remote file above, and you write only the keys you want to pin:
 
-| 覆盖文件 | 作用于 |
+| Override file | Applies to |
 |---|---|
 | `~/.config/t-agent/overrides/claude/settings.json` | `~/.claude/settings.json` |
 | `~/.config/t-agent/overrides/codex/config.toml` | `~/.codex/config.toml` |
 
-同步时先把远程配置和覆盖文件合并（**覆盖优先**），再写入工具的配置。所以远程改了别的键照常生效，只有你在覆盖文件里写的键固定为本机的值。例如：
+When syncing, the remote configuration and the override file are merged first (**the override wins**) and the result is then written to the tool's configuration. So remote changes to other keys still take effect, and only the keys you write in the override file stay fixed at the local value. For example:
 
 ```json
 { "model": "opus" }
@@ -37,7 +37,7 @@
 model = "gpt-5.5"
 ```
 
-- 目录可用环境变量 `T_AGENT_OVERRIDES_DIR` 更换。
-- 覆盖文件写错（JSON 不合法、TOML 有多行值）时，该工具的配置本次不同步、本机配置不动，并提示原因；规则同步不受影响。
-- 覆盖文件不能“删除”远程的键或数组项；数组是并集，只能追加。
-- 删除覆盖文件后，下次同步恢复为远程的值。
+- The directory can be changed with the environment variable `T_AGENT_OVERRIDES_DIR`.
+- When the override file is wrong (invalid JSON, a multi-line value in TOML), that tool's configuration is not synced this time and the local configuration is left alone, with the reason shown; rule syncing is unaffected.
+- An override file cannot "delete" a remote key or array item; arrays are a union and can only be appended to.
+- After the override file is deleted, the next sync restores the remote values.

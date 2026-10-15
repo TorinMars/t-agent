@@ -38,27 +38,27 @@ const server = http.createServer((req,res) => {
     await page.keyboard.up('Alt');
     const mouseSelected=await page.evaluate(()=>term.getSelection());
     assert.ok(mouseSelected.includes('Mouse mode'),JSON.stringify(mouseSelected));
-    await page.getByRole('button',{name:'复制选中内容',exact:true}).click();
+    await page.getByRole('button',{name:'Copy selection',exact:true}).click();
     assert.equal(await page.evaluate(()=>navigator.clipboard.readText()),mouseSelected);
     // OSC 52 split over delayed writes must not write until explicit approval.
-    const payload=Buffer.from('远程程序\nhello ✓').toString('base64');
+    const payload=Buffer.from('Remote program\nhello ✓').toString('base64');
     await page.evaluate(async payload=>{
       await new Promise(r=>term.write('\x1b]52;c;'+payload.slice(0,5),r));
       await new Promise(r=>setTimeout(r,250));
       await new Promise(r=>term.write(payload.slice(5)+'\x07',r));
     },payload);
     assert.equal(await page.evaluate(()=>navigator.clipboard.readText()),mouseSelected);
-    await page.getByRole('button',{name:'查看程序复制请求'}).click();
-    assert.equal(await page.locator('dialog textarea').inputValue(),'远程程序\nhello ✓');
+    await page.getByRole('button',{name:'Review program copy request'}).click();
+    assert.equal(await page.locator('dialog textarea').inputValue(),'Remote program\nhello ✓');
     // A second request cannot replace the contents already presented for approval.
     await page.evaluate(()=>new Promise(r=>term.write('\x1b]52;c;ZXZpbA==\x07',r)));
-    assert.equal(await page.locator('dialog textarea').inputValue(),'远程程序\nhello ✓');
-    await page.getByRole('button',{name:'确认复制',exact:true}).click();
+    assert.equal(await page.locator('dialog textarea').inputValue(),'Remote program\nhello ✓');
+    await page.getByRole('button',{name:'Confirm copy',exact:true}).click();
     await page.waitForFunction(()=>!document.querySelector('dialog'));
-    assert.equal(await page.evaluate(()=>navigator.clipboard.readText()),'远程程序\nhello ✓');
+    assert.equal(await page.evaluate(()=>navigator.clipboard.readText()),'Remote program\nhello ✓');
     // A replayed request must not reappear.
     await page.evaluate(payload=>new Promise(r=>handle.writeHistory('\x1b]52;c;'+payload+'\x07',r)),payload);
-    assert.equal(await page.getByRole('button',{name:'查看程序复制请求'}).isVisible(),false);
+    assert.equal(await page.getByRole('button',{name:'Review program copy request'}).isVisible(),false);
     assert.deepEqual(errors,[]);
     console.log('PASS: real Chromium + xterm: Cmd+C, Ctrl+C, macOS Option selection in mouse/alternate mode, toolbar copy, delayed split OSC 52 approval, immutable preview, history suppression.');
   } finally {await browser.close();server.close();}

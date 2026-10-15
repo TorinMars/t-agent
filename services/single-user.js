@@ -51,8 +51,8 @@ function ensureSingleUser(database, preferredId) {
   const savedId = normalizeId(saved && saved.value);
   const dataOwner = normalizeId(discoverDataOwner(activeDatabase));
 
-  // 升级时 .env 可能已经写入默认 local，或首次启动曾保存过 local。
-  // 如果它名下没有数据，应回到真正拥有旧任务/远程连接的账号，避免数据被查询条件隐藏。
+  // On upgrade .env may already contain the default local, or local may have been saved on first start.
+  // If that account owns no data, go back to the account that really owns the old tasks/remote connections, so the data is not hidden by the query condition.
   const id = (ownsVisibleData(activeDatabase, preferred) && preferred)
     || (ownsVisibleData(activeDatabase, savedId) && savedId)
     || dataOwner
@@ -74,7 +74,7 @@ function ensureSingleUser(database, preferredId) {
   const user = activeDatabase.prepare('SELECT username, work_dir FROM users WHERE username = ?').get(id);
   return {
     login: user.username,
-    name: '本地用户',
+    name: 'Local user',
     avatar_url: '',
     work_dir: user.work_dir || null,
   };

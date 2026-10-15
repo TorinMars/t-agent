@@ -4,7 +4,7 @@ const { createPm2Manager, Pm2Error } = require('../services/pm2-manager');
 
 const parseId = value => (/^\d{1,9}$/.test(String(value)) ? Number(value) : NaN);
 
-// 本机路由与 Engine 的 /v1/pm2 共用：只做 PM2 操作，鉴权由调用方的中间件负责。
+// Shared by the local routes and the Engine's /v1/pm2: PM2 operations only; authentication is the caller's middleware's job.
 function createPm2Handlers(manager = createPm2Manager()) {
   return {
     status: () => manager.status(),
@@ -13,7 +13,7 @@ function createPm2Handlers(manager = createPm2Manager()) {
   };
 }
 
-// 管理运行 Client 的这台机器上的 PM2 进程；远程 Engine 所在机器通过 Engine 接口（/v1/pm2）管理。
+// Manages PM2 processes on the machine running the Client; the machine of a remote Engine is managed through the Engine endpoint (/v1/pm2).
 function createPm2Router(options = {}) {
   const handlers = createPm2Handlers(options.manager);
   const router = express.Router();
@@ -31,7 +31,7 @@ function createPm2Router(options = {}) {
   router.use((error, req, res, next) => {
     if (res.headersSent) return next(error);
     if (error instanceof Pm2Error) return res.status(error.statusCode).json({ error: error.message, code: error.code });
-    return res.status(500).json({ error: 'PM2 管理服务暂时不可用' });
+    return res.status(500).json({ error: 'PM2 management is temporarily unavailable' });
   });
   return router;
 }

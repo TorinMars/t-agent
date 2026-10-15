@@ -1,4 +1,4 @@
-// 悬浮提示：不占用页面布局（不会撑高工具栏），自动消失，点击可立即关闭。文本一律用 textContent 写入。
+// Floating notice: takes no layout space (never makes a toolbar taller), disappears on its own and can be dismissed by clicking. Text is always written with textContent.
 const Toast = (() => {
   const MAX_VISIBLE = 4;
   const DURATIONS = { info: 3500, success: 2500, error: 6000 };
@@ -20,18 +20,18 @@ const Toast = (() => {
     node.remove();
   }
 
-  // type: info | success | error。相同文字已经在显示时只重新计时，不重复堆叠。
+  // type: info | success | error. If the same text is already shown, only the timer restarts; notices are not stacked.
   function show(message, { type = 'info', duration } = {}) {
-    const raw = String(message === undefined || message === null ? '' : message).trim();
-    const text = typeof I18n !== 'undefined' ? I18n.t(raw) : raw;
+    const text = String(message === undefined || message === null ? '' : message).trim();
     if (!text) return null;
     const kind = DURATIONS[type] ? type : 'info';
     const host = container();
-    const existing = [...host.children].find(node => node.textContent === text && node.dataset.type === kind);
+    const existing = [...host.children].find(node => node.dataset.message === text && node.dataset.type === kind);
     const node = existing || document.createElement('div');
     if (!existing) {
       node.className = `toast toast-${kind}`;
       node.dataset.type = kind;
+      node.dataset.message = text; // compared against the source text, because the displayed text may be translated
       node.textContent = text;
       node.addEventListener('click', () => dismiss(node));
       host.append(node);
@@ -45,7 +45,7 @@ const Toast = (() => {
   return { show, success: (message, options) => show(message, { ...options, type: 'success' }), error: (message, options) => show(message, { ...options, type: 'error' }) };
 })();
 
-// 没有加载 toast.js 的环境（测试页）退回到 alert，保证消息不会丢。
+// Where toast.js is not loaded (test pages) fall back to alert so the message is never lost.
 function notify(message, type = 'info') {
   if (typeof Toast !== 'undefined') return Toast.show(message, { type });
   if (typeof alert === 'function') alert(message);

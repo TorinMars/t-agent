@@ -6,12 +6,12 @@ const { AppsError } = require('../services/apps-registry');
 
 const parseId = value => (/^\d{1,9}$/.test(String(value)) ? Number(value) : NaN);
 
-// 本机路由（/api/apps）和 Engine 路由（/v1/apps）共用：只做业务，鉴权由调用方的中间件负责。
-// 每个处理函数返回 { status, body }。
+// Shared by the local routes (/api/apps) and the Engine routes (/v1/apps): business logic only; authentication is the caller's middleware's job.
+// Every handler returns { status, body }.
 function createAppsHandlers(service) {
   const idOf = req => {
     const id = parseId(req.params.id);
-    if (!Number.isInteger(id)) throw new AppsError('APP_NOT_FOUND', '找不到这个应用', 404);
+    if (!Number.isInteger(id)) throw new AppsError('APP_NOT_FOUND', 'App not found', 404);
     return id;
   };
   return {
@@ -27,11 +27,11 @@ function createAppsHandlers(service) {
   };
 }
 
-// 错误只返回稳定的错误码和中文说明，不暴露内部细节。
+// Errors only return a stable error code and a message, never internal details.
 function sendError(res, error) {
   if (error instanceof AppsError) return res.status(error.statusCode).json({ error: error.code, message: error.message });
   console.error('[apps]', error && error.message);
-  return res.status(500).json({ error: 'APPS_UNAVAILABLE', message: '应用列表服务暂时不可用' });
+  return res.status(500).json({ error: 'APPS_UNAVAILABLE', message: 'The app list service is temporarily unavailable' });
 }
 
 function route(handler) {
@@ -47,11 +47,11 @@ function defaultService() {
   return createAppsService({ db: require('../db'), pm2Manager: createPm2Manager() });
 }
 
-// 在任意 router 上挂载应用接口（本机路由和 Engine 路由复用）。guard 是每条路由前的鉴权中间件。
+// Mount the app endpoints on any router (reused by the local routes and the Engine routes). guard is the authentication middleware in front of every route.
 function mountAppsRoutes(router, handlers, ...guard) {
   router.get('/', ...guard, route(handlers.list));
   router.post('/', ...guard, route(handlers.create));
-  // 固定路径要放在 /:id 之前
+  // fixed paths must come before /:id
   router.post('/register', ...guard, route(handlers.register));
   router.post('/restore-hidden', ...guard, route(handlers.restoreHidden));
   router.put('/:id', ...guard, route(handlers.update));

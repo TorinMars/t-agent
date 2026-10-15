@@ -1,4 +1,4 @@
-// 访问模式：身份验证器 + 允许外网访问（remote）/ 仅本机访问、无需验证（local）；全新安装第一次选择，之后可在设置里切换。
+// Access mode: authenticator + external access allowed (remote) / local access only, no verification (local); a fresh install chooses the first time and can switch later in settings.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -17,7 +17,7 @@ function fixture(options = {}) {
 }
 const loopbackRequest = (extra = {}) => ({ headers: { host: '127.0.0.1:3000' }, socket: { remoteAddress: '127.0.0.1' }, session: {}, method: 'GET', path: '/', ...extra });
 
-test('访问模式的判定：全新为 unset，绑定过为 remote，保存的选择优先，ACCESS_MODE 只做初始值', t => {
+test('Access-mode detection: unset on a fresh install, remote once bound, the saved choice wins, ACCESS_MODE is only the initial value', t => {
   const fresh = fixture(); t.after(() => fresh.database.close());
   assert.equal(fresh.auth.accessMode(), 'unset');
   assert.deepEqual(fresh.auth.ready({}), { mode: 'unset', setupRequired: true, loginRequired: true });
@@ -34,7 +34,7 @@ test('访问模式的判定：全新为 unset，绑定过为 remote，保存的�
   assert.equal(fresh.auth.accessMode(), 'local', 'a saved choice wins over the bound-implies-remote default');
 });
 
-test('仅本机模式：不需要绑定，只有被标记可信的本机会话视为已登录，切回 remote 后标记失效', t => {
+test('Local-only mode: no binding needed, only the trusted local session counts as logged in, and the mark is void after switching back to remote', t => {
   const { database, auth } = fixture(); t.after(() => database.close());
   auth.setAccessMode('local');
   assert.deepEqual(auth.ready({}), { mode: 'local', setupRequired: false, loginRequired: true });
@@ -52,7 +52,7 @@ test('仅本机模式：不需要绑定，只有被标记可信的本机会话�
   assert.equal(auth.sessionActive('live'), false, 'and open terminals are dropped by the periodic check');
 });
 
-test('门禁：remote 放行所有请求；local / unset 只放行本机直连，转发、隧道和非回环 Host 都是 404', () => {
+test('Gate: remote lets every request through; local / unset only allows direct local access, while forwarded, tunnel and non-loopback Host requests get 404', () => {
   let mode = 'remote';
   const gate = createAccessGate({ getMode: () => mode });
   const run = req => { const out = { next: false, status: null }; const res = { status(code) { out.status = code; return this; }, set() { return this; }, type() { return this; }, send() {} }; gate(req, res, () => { out.next = true; }); return out; };
@@ -76,7 +76,7 @@ test('门禁：remote 放行所有请求；local / unset 只放行本机直连�
   assert.equal(upgradeAllowed(remote, 'remote'), true);
 });
 
-// ---- 真实服务：首次选择、仅本机模式、切换 ----
+// ---- Real service: first choice, local-only mode, switching ----
 async function startServer(t, extraEnv = {}) {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 't-agent-access-mode-'));
   const child = spawn(process.execPath, ['server.js'], {
@@ -113,13 +113,13 @@ async function startServer(t, extraEnv = {}) {
 }
 const LOGIN = '/torin/hide/login';
 
-test('全新安装：非本机一律 404；本机选“仅本机访问”后无需验证即可使用', { timeout: 30000 }, async t => {
+test('Fresh install: anything not local gets 404; after choosing “local access only” on this machine it works without verification', { timeout: 30000 }, async t => {
   const { raw } = await startServer(t);
   assert.equal((await raw(`${LOGIN}/status`)).json.mode, 'unset');
   for (const route of ['/', '/web', `${LOGIN}/status`, '/api/tasks', '/v1/info', '/health']) {
     assert.equal((await raw(route, { host: 'client.example.test' })).status, 404, `uninitialized, non-local: ${route}`);
   }
-  // 非本机不能替用户选择；本机选择生效。
+  // A non-local request cannot choose for the user; a choice made locally takes effect.
   const attacker = await raw(`${LOGIN}/mode`, { body: { mode: 'local' }, host: 'client.example.test' });
   assert.equal(attacker.status, 404);
   assert.equal((await raw(`${LOGIN}/mode`, { body: { mode: 'bogus' } })).json.error, 'INVALID_ACCESS_MODE');
@@ -129,19 +129,19 @@ test('全新安装：非本机一律 404；本机选“仅本机访问”后无�
   const cookie = chosen.cookie;
   assert.ok(cookie);
 
-  // 无需验证：页面、接口、设置信息都可用。
+  // No verification needed: pages, endpoints and settings are all usable.
   assert.equal((await raw('/web', { cookie })).status, 200);
   assert.equal((await raw('/api/tasks', { cookie })).status, 200);
   const me = (await raw('/auth/me', { cookie })).json;
   assert.equal(me.access_mode, 'local');
   assert.equal(me.authenticator_bound, false);
-  // 即使本机，Host 不是回环名（DNS rebinding）或经代理转发也不行。
+  // Even locally, a Host that is not a loopback name (DNS rebinding) or a request forwarded by a proxy is refused.
   assert.equal((await raw('/web', { cookie, host: 'client.example.test' })).status, 404);
   assert.equal((await raw('/api/tasks', { cookie, host: 'evil.test:3000' })).status, 404);
   assert.equal((await raw('/v1/info', { host: 'client.example.test' })).status, 404);
 });
 
-test('仅本机 → 身份验证器 + 外网：先绑定，绑定成功才开放外网；再切回仅本机会立即断开', { timeout: 40000 }, async t => {
+test('Local only → authenticator + external: bind first, external access opens only after binding succeeds; switching back to local only disconnects immediately', { timeout: 40000 }, async t => {
   const { raw } = await startServer(t, { ACCESS_MODE: 'local' });
   const first = await raw('/web');
   assert.equal(first.status, 200, 'seeded local mode needs no choice and no login');
@@ -159,14 +159,14 @@ test('仅本机 → 身份验证器 + 外网：先绑定，绑定成功才开放
   assert.equal(confirm.status, 200);
   const remoteCookie = confirm.cookie;
 
-  // 现在是 remote：外网 Host 能到达登录页，但没登录仍看不到任何功能。
+  // Now remote: an external Host can reach the login page, but without logging in no feature is visible.
   assert.equal((await raw(`${LOGIN}/status`, { host: 'client.example.test' })).json.mode, 'remote');
   assert.equal((await raw('/api/tasks', { host: 'client.example.test' })).status, 404);
   assert.equal((await raw('/api/tasks', { cookie: remoteCookie, host: 'client.example.test' })).status, 200);
-  // 旧的“本机可信”会话在 remote 下不再有效。
+  // The old "trusted local" session is no longer valid under remote.
   assert.equal((await raw('/api/tasks', { cookie, host: 'client.example.test' })).status, 404);
 
-  // remote → local：需要已登录；切换后外网立即 404。
+  // remote → local: requires being logged in; after switching, external access gets 404 immediately.
   assert.equal((await raw('/auth/mode', { body: { mode: 'local' } })).status, 404, 'login gate hides it from anonymous visitors');
   const back = await raw('/auth/mode', { cookie: remoteCookie, body: { mode: 'local' }, host: 'client.example.test' });
   assert.equal(back.status, 200);

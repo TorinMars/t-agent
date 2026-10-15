@@ -1,16 +1,16 @@
-// 更新过程的终端式日志：弹窗上方是当前进度，下方滚动显示更新命令的输出。所有文本都用 textContent 写入。
+// Terminal-style log of an update: current progress on top, the output of the update commands scrolling below. All text is written with textContent.
 const UpdateLog = (() => {
   const pad = value => String(value).padStart(2, '0');
   const timeOf = at => { const date = new Date(at); return Number.isNaN(date.getTime()) ? '' : `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`; };
 
-  // 进度区 + 日志区。ids 里的 message / error 沿用各弹窗原有的元素 id，日志区 id 为 `${message}-log`。
-  function markup(messageId, errorId, text = '正在启动更新流程…') {
+  // Progress area + log area. The message / error ids reuse each dialog's existing element ids; the log area id is `${message}-log`.
+  function markup(messageId, errorId, text = 'Starting the update…') {
     return `<div class="update-progress"><span class="update-spinner"></span><span id="${messageId}">${text}</span></div>`
-      + `<pre class="update-log" id="${messageId}-log" aria-label="更新日志" aria-live="off"></pre>`
+      + `<pre class="update-log" id="${messageId}-log" aria-label="Update log" aria-live="off"></pre>`
       + `<div class="form-hint" id="${errorId}"></div>`;
   }
 
-  // 用最新日志刷新终端区；用户向上滚动查看历史时不强行拉到底部。
+  // Refresh the terminal area with the latest log; if the user scrolled up to read history, do not force it to the bottom.
   function render(node, lines) {
     if (!node || !Array.isArray(lines)) return;
     const key = `${lines.length}:${lines.length ? lines[lines.length - 1].at + lines[lines.length - 1].text : ''}`;
@@ -21,7 +21,7 @@ const UpdateLog = (() => {
     if (stuck) node.scrollTop = node.scrollHeight;
   }
 
-  // 顶部进度行只保留“阶段 · 已用时间”，最近一行输出已经在日志里。
+  // The top progress line only keeps "stage · elapsed time"; the latest output line is already in the log.
   const headline = message => String(message || '').split(' · ').slice(0, 2).join(' · ');
 
   return { markup, render, headline };

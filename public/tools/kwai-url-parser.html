@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Kwai URL 解析工具</title>
+  <title>Kwai URL parser</title>
   <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
   <style>
     * {
@@ -313,35 +313,37 @@
       background: #718096;
     }
   </style>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/i18n-zh-ui.js"></script>
 </head>
 <body>
 
 <header>
-  <h1>🔗 Kwai URL 解析工具</h1>
-  <div class="share-link" id="share-link" title="点击复制局域网链接">
-    <span class="share-link-url" id="share-link-url">获取中...</span>
-    <button class="share-link-btn" id="share-link-btn">复制链接</button>
+  <h1>🔗 Kwai URL parser</h1>
+  <div class="share-link" id="share-link" title="Click to copy the LAN link">
+    <span class="share-link-url" id="share-link-url">Loading...</span>
+    <button class="share-link-btn" id="share-link-btn">Copy link</button>
   </div>
 </header>
 
 <div class="url-bar">
-  <label>快链：</label>
+  <label>Deep link:</label>
   <input
     type="text"
     id="url-input"
-    placeholder="输入 kwai:// 快链，例如 kwai://chat/session?sessionId=123&extraInfo=..."
+    placeholder="Enter a kwai:// deep link, e.g. kwai://chat/session?sessionId=123&extraInfo=..."
     autocomplete="off"
     spellcheck="false"
   />
-  <button class="clear-btn" id="clear-btn">清空</button>
+  <button class="clear-btn" id="clear-btn">Clear</button>
 </div>
 
 <div class="main">
   <!-- Left: QR Code -->
   <div class="qr-panel">
-    <div class="panel-title">二维码</div>
+    <div class="panel-title">QR code</div>
     <div id="qrcode">
-      <div class="qr-placeholder">在上方输入<br>快链即可生成</div>
+      <div class="qr-placeholder">Enter a deep link above<br>to generate one</div>
     </div>
     <div class="qr-hint" id="qr-hint"></div>
   </div>
@@ -349,12 +351,12 @@
   <!-- Right: JSON -->
   <div class="json-panel">
     <div class="json-panel-header">
-      <div class="panel-title">解析结果 (JSON)</div>
-      <button class="copy-btn" id="copy-btn">复制 JSON</button>
+      <div class="panel-title">Parsed result (JSON)</div>
+      <button class="copy-btn" id="copy-btn">Copy JSON</button>
     </div>
     <textarea
       id="json-editor"
-      placeholder="解析结果将显示在这里，您也可以直接编辑 JSON 来反向同步快链..."
+      placeholder="The parsed result appears here; you can also edit the JSON directly to sync back to the deep link..."
       spellcheck="false"
     ></textarea>
   </div>
@@ -362,7 +364,7 @@
 
 <div class="status-bar">
   <div class="status-dot" id="status-dot"></div>
-  <div class="status-text" id="status-text">就绪</div>
+  <div class="status-text" id="status-text">Ready</div>
 </div>
 
 <script>
@@ -388,10 +390,10 @@
 
     const copy = () => {
       navigator.clipboard.writeText(shareUrl).then(() => {
-        btn.textContent = '已复制 ✓';
+        btn.textContent = 'Copied ✓';
         btn.classList.add('copied');
         setTimeout(() => {
-          btn.textContent = '复制链接';
+          btn.textContent = 'Copy link';
           btn.classList.remove('copied');
         }, 1800);
       });
@@ -483,7 +485,7 @@
     qrHint.textContent = '';
 
     if (!text) {
-      qrDiv.innerHTML = '<div class="qr-placeholder">在上方输入<br>快链即可生成</div>';
+      qrDiv.innerHTML = '<div class="qr-placeholder">Enter a deep link above<br>to generate one</div>';
       return;
     }
 
@@ -498,7 +500,7 @@
       });
       qrHint.textContent = text.length > 60 ? text.slice(0, 60) + '…' : text;
     } catch (e) {
-      qrDiv.innerHTML = '<div class="qr-placeholder" style="color:#fc8181">二维码生成失败</div>';
+      qrDiv.innerHTML = '<div class="qr-placeholder" style="color:#fc8181">QR code generation failed</div>';
     }
   }
 
@@ -521,7 +523,7 @@
     if (!raw) {
       jsonEditor.value = '';
       renderQR('');
-      setStatus(true, '就绪');
+      setStatus(true, 'Ready');
       _updating = false;
       return;
     }
@@ -529,14 +531,14 @@
     const parsed = parseUrl(raw);
     if (!parsed) {
       urlInput.classList.add('error');
-      setStatus(false, '快链格式错误，无法解析');
+      setStatus(false, 'Invalid deep link format; cannot parse');
       _updating = false;
       return;
     }
 
     jsonEditor.value = JSON.stringify(parsed, null, 2);
     renderQR(raw);
-    setStatus(true, '解析成功');
+    setStatus(true, 'Parsed successfully');
 
     _updating = false;
   }
@@ -554,7 +556,7 @@
     if (!raw) {
       urlInput.value = '';
       renderQR('');
-      setStatus(true, '就绪');
+      setStatus(true, 'Ready');
       _updating = false;
       return;
     }
@@ -564,7 +566,7 @@
       obj = JSON.parse(raw);
     } catch {
       jsonEditor.classList.add('error');
-      setStatus(false, 'JSON 格式错误，无法同步');
+      setStatus(false, 'Invalid JSON; cannot sync');
       _updating = false;
       return;
     }
@@ -572,14 +574,14 @@
     const url = buildUrl(obj);
     if (!url) {
       jsonEditor.classList.add('error');
-      setStatus(false, 'JSON 缺少必要字段 (scheme / host)');
+      setStatus(false, 'The JSON is missing required fields (scheme / host)');
       _updating = false;
       return;
     }
 
     urlInput.value = url;
     renderQR(url);
-    setStatus(true, '已从 JSON 反向生成快链');
+    setStatus(true, 'Deep link regenerated from the JSON');
 
     _updating = false;
   }
@@ -589,10 +591,10 @@
     const text = jsonEditor.value;
     if (!text) return;
     navigator.clipboard.writeText(text).then(() => {
-      copyBtn.textContent = '已复制 ✓';
+      copyBtn.textContent = 'Copied ✓';
       copyBtn.classList.add('copied');
       setTimeout(() => {
-        copyBtn.textContent = '复制 JSON';
+        copyBtn.textContent = 'Copy JSON';
         copyBtn.classList.remove('copied');
       }, 1800);
     });
@@ -605,7 +607,7 @@
     urlInput.classList.remove('error');
     jsonEditor.classList.remove('error');
     renderQR('');
-    setStatus(true, '已清空');
+    setStatus(true, 'Cleared');
   });
 
   // ─── Event Listeners ─────────────────────────────────────

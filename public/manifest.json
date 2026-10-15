@@ -1,7 +1,7 @@
 {
   "name": "Torin's Tasks",
   "short_name": "Tasks",
-  "description": "个人任务管理 & MD 文档预览",
+  "description": "Personal task management & Markdown document preview",
   "start_url": "/",
   "display": "standalone",
   "display_override": ["window-controls-overlay", "standalone"],

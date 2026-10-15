@@ -8,7 +8,7 @@ const { Pm2Error } = require('../services/pm2-manager');
 
 const base = { scheme: 'http', path: '/', port: null, host: null, domain: null, url: null };
 
-test('本机 IP：只取可对外访问的 IPv4，排除回环、链路本地和 IPv6', () => {
+test('Local IP: only externally reachable IPv4, excluding loopback, link-local and IPv6', () => {
   const interfaces = {
     lo0: [{ family: 'IPv4', address: '127.0.0.1', internal: true }],
     en0: [{ family: 'IPv6', address: 'fe80::1', internal: false }, { family: 'IPv4', address: '192.168.1.8', internal: false }],
@@ -19,7 +19,7 @@ test('本机 IP：只取可对外访问的 IPv4，排除回环、链路本地和
   assert.deepEqual(localIps({}), []);
 });
 
-test('本机 IP：排除 Docker/虚拟网卡，物理网卡优先于其他网卡', () => {
+test('Local IP: excludes Docker/virtual NICs; physical NICs come before other NICs', () => {
   const ip = address => [{ family: 'IPv4', address, internal: false }];
   const interfaces = {
     docker0: ip('172.17.0.1'), 'br-1a2b3c': ip('172.18.0.1'), veth9f: ip('172.19.0.1'), virbr0: ip('192.168.122.1'),
@@ -29,36 +29,36 @@ test('本机 IP：排除 Docker/虚拟网卡，物理网卡优先于其他网卡
   assert.deepEqual(localIps({ vmnet8: ip('172.16.5.1'), bridge100: ip('192.168.64.1'), utun3: ip('10.8.0.2') }), []);
 });
 
-test('访问地址：自定义地址 > 域名 > IP:端口，仅本机监听时只给 127.0.0.1', () => {
+test('Address: custom address > Domain > IP:port; when only listening locally just 127.0.0.1 is given', () => {
   const ips = ['192.168.1.8', '10.0.0.3'];
-  // 只检测到端口：用第一个局域网 IP
+  // Only a port detected: use the first LAN IP
   let links = buildLinks({ ...base }, [{ port: 3000, local_only: false }], ips);
   assert.equal(links.ip.url, 'http://192.168.1.8:3000/');
   assert.equal(links.primary, links.ip.url);
   assert.equal(links.domain, null);
 
-  // 仅本机监听：不要给一个别人打不开的局域网地址
+  // Local-only listening: do not give a LAN address that others cannot open
   links = buildLinks({ ...base }, [{ port: 5173, local_only: true }], ips);
   assert.equal(links.ip.url, 'http://127.0.0.1:5173/');
   assert.equal(links.ip.local_only, true);
 
-  // 手填端口、IP、协议、路径优先；手填 IP 不再算“仅本机”
+  // A hand-entered port, IP, protocol and path win; a hand-entered IP no longer counts as "local only"
   links = buildLinks({ ...base, port: 8443, host: '10.9.9.9', scheme: 'https', path: '/admin' }, [{ port: 3000, local_only: true }], ips);
   assert.equal(links.ip.url, 'https://10.9.9.9:8443/admin');
   assert.equal(links.ip.local_only, false);
 
-  // 域名：裸域名用协议字段，完整地址原样使用；没写路径时补上应用路径；域名优先于 IP
+  // Domain: a bare domain uses the protocol field, a full address is used as-is; when there is no path the app path is appended; the domain wins over the IP
   assert.equal(buildLinks({ ...base, port: 80, domain: 'app.example.com', scheme: 'https' }, [], ips).primary, 'https://app.example.com');
   assert.equal(buildLinks({ ...base, domain: 'https://app.example.com/base', path: '/x' }, [], ips).domain.url, 'https://app.example.com/base');
   assert.equal(buildLinks({ ...base, domain: 'https://app.example.com', path: '/x' }, [], ips).domain.url, 'https://app.example.com/x');
   assert.equal(buildLinks({ ...base, domain: 'app.example.com:8443', scheme: 'https' }, [], ips).domain.url, 'https://app.example.com:8443');
   assert.equal(buildLinks({ ...base, port: 80, domain: 'a.example.com' }, [], ips).primary, 'http://a.example.com');
 
-  // 自定义完整地址最优先
+  // A custom full address wins above all
   links = buildLinks({ ...base, port: 80, domain: 'a.example.com', url: 'http://10.0.0.1:9000/dash' }, [], ips);
   assert.equal(links.primary, 'http://10.0.0.1:9000/dash');
 
-  // 没有任何线索时没有链接；IPv6 地址要加方括号；没有任何局域网 IP 时退回 127.0.0.1
+  // With no clue there is no link; an IPv6 address needs brackets; with no LAN IP at all fall back to 127.0.0.1
   assert.deepEqual(buildLinks({ ...base }, [], ips), { ip: null, domain: null, custom: null, primary: null });
   assert.equal(buildLinks({ ...base, port: 80, host: 'fd00::1' }, [], ips).ip.url, 'http://[fd00::1]:80/');
   assert.equal(buildLinks({ ...base, port: 80 }, [], []).ip.url, 'http://127.0.0.1:80/');
@@ -76,7 +76,7 @@ function setup(t, { processes, installed = true, running = true, pm2Error = null
 }
 const proc = (id, name, pid, status = 'online') => ({ id, name, pid, status, cpu: 1, memory: 1024, restarts: 0, startedAt: Date.now(), self: false });
 
-test('列表会自动登记 PM2 的全部进程，关联运行状态和检测到的端口，并生成访问地址', async t => {
+test('The list auto-registers all PM2 processes, links run status and detected ports, and builds the access address', async t => {
   const { service, detected } = setup(t, {
     processes: [proc(0, 'web', 100), proc(1, 'worker', 0, 'stopped'), proc(2, 'dev', 200)],
     ports: new Map([[100, [{ port: 3000, local_only: false }]], [200, [{ port: 5173, local_only: true }]]]),
@@ -85,7 +85,7 @@ test('列表会自动登记 PM2 的全部进程，关联运行状态和检测到
 
   const result = await service.list();
   assert.deepEqual(result.apps.map(app => app.name), ['blog', 'dev', 'web', 'worker']);
-  assert.deepEqual(detected, [[100, 200]], '只对在线且有 pid 的进程检测端口');
+  assert.deepEqual(detected, [[100, 200]], 'Ports are only detected for online processes that have a pid');
   assert.deepEqual(result.host_ips, ['192.168.1.8']);
 
   const web = result.apps.find(app => app.name === 'web');
@@ -106,7 +106,7 @@ test('列表会自动登记 PM2 的全部进程，关联运行状态和检测到
   assert.equal(result.pm2.installed, true);
 });
 
-test('PM2 里消失的进程保留记录并标为 missing；PM2 不可用时不影响列表', async t => {
+test('A process that disappears from PM2 keeps its record and is marked missing; PM2 being unavailable does not affect the list', async t => {
   const first = setup(t, { processes: [proc(0, 'web', 100)] });
   await first.service.list();
   const gone = createAppsService({ db: first.db, pm2Manager: { status: async () => ({ installed: true, running: true, processes: [] }) }, portDetector: { detect: async () => new Map() }, interfaces: () => ({}) });
@@ -126,12 +126,12 @@ test('PM2 里消失的进程保留记录并标为 missing；PM2 不可用时不�
   assert.equal(result.apps[0].pm2_state, 'unavailable');
 });
 
-test('删除仍在 PM2 里的自动登记服务只是隐藏，下次列表不会再出现；可以恢复', async t => {
+test('Deleting an auto-registered service still in PM2 only hides it, it no longer appears in the next list, and it can be restored', async t => {
   const { service } = setup(t, { processes: [proc(0, 'web', 100)] });
   const web = (await service.list()).apps[0];
   assert.deepEqual(await service.remove(web.id), { deleted: false, hidden: true });
   const after = await service.list();
-  assert.equal(after.apps.length, 0, '同步不会把隐藏的服务登记回来');
+  assert.equal(after.apps.length, 0, 'Syncing does not register hidden services again');
   assert.equal(after.hidden_count, 1);
   service.registry.restoreHidden();
   assert.equal((await service.list()).apps.length, 1);

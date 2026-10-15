@@ -26,7 +26,7 @@ for (const changed of ['public/js/mobile.js', 'services/engine-tasks.js']) {
         if (args[0] === 'rev-parse') return 'running';
         return '';
       },
-      // 进度汇报与本测试无关：直接执行命令。
+      // Progress reporting is irrelevant to this test: run the command directly.
       runWithProgress: (label, run) => run(() => {}) },
       '../lib/git-update-workspace': { prepareWorkspace: async () => null, trackedChanges: async () => [], dirtyError: changes => Object.assign(new Error('WORKTREE_DIRTY'), { details: changes.join(',') }) },
     };

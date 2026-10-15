@@ -7,14 +7,14 @@ const path = require('node:path');
 const { spawn, spawnSync } = require('node:child_process');
 
 const repo = path.resolve(__dirname, '..');
-// install.sh 在 Linux 上可能通过 sudo 安装编译工具，所以沙箱测试只在 macOS 上运行。
+// install.sh on Linux may install build tools through sudo, so the sandbox test only runs on macOS.
 const enabled = process.platform === 'darwin';
 
-// 每个用例都用自己的空闲端口，避免和本机正在运行的服务（如 3000）冲突。
+// Every case uses its own free port so it does not collide with a service running on this machine (such as 3000).
 let nextPort = 43000 + Math.floor(Math.random() * 15000);
 const freePort = () => String(nextPort++);
 
-// 把真实的 install.sh 放进临时项目目录，用桩替换 npm / pm2 / launchctl。
+// Put the real install.sh into a temporary project directory and replace npm / pm2 / launchctl with stubs.
 function sandbox({ withPm2 = true, npmInstallsPm2 = true } = {}) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'install-project-')));
   const app = path.join(root, 'proj');
@@ -40,7 +40,7 @@ ${npmInstallsPm2 ? `if [ "$1 $2" = "install -g" ]; then printf '#!/bin/sh\\n${pm
 exit 0`);
   stub('launchctl', `echo "launchctl $*" >> "${calls}"\nexit 0`);
   if (withPm2) stub('pm2', pm2Body);
-  // node 所在目录（如 nvm）里通常有真实的 npm/pm2；沙箱里只放 node 的链接，其余全部用桩，避免测试误用真实的 PM2。
+  // The directory containing node (for example nvm) usually has a real npm/pm2; in the sandbox only a link to node is put in and everything else is stubbed, so the test never uses a real PM2.
   const nodeBin = path.join(root, 'nodebin');
   fs.mkdirSync(nodeBin);
   fs.symlinkSync(process.execPath, path.join(nodeBin, 'node'));
@@ -50,26 +50,26 @@ exit 0`);
   return { root, app, home, stubs, env, run, log, plistDir: path.join(home, 'Library/LaunchAgents'), cleanup: () => fs.rmSync(root, { recursive: true, force: true }) };
 }
 
-test('新安装默认由 PM2 管理：以项目目录为工作目录启动并保存，不再注册 LaunchAgent；重复运行改为重启', { skip: !enabled }, () => {
+test('A fresh install is managed by PM2: it starts and saves with the project directory as the working directory, no longer registers a LaunchAgent, and running again restarts', { skip: !enabled }, () => {
   const box = sandbox();
   try {
     const result = box.run(['--port', freePort()]);
     assert.equal(result.status, 0, result.stdout + result.stderr);
     assert.ok(box.log().includes(`pm2 start ${box.app}/server.js --name t-agent --cwd ${box.app}`), box.log());
     assert.ok(box.log().includes('pm2 save'));
-    assert.match(result.stdout, /服务检查：pm2 status t-agent/);
+    assert.match(result.stdout, /Service check: pm2 status t-agent/);
     assert.match(result.stdout, /pm2 startup/);
-    assert.ok(!fs.existsSync(box.plistDir), '不再注册 LaunchAgent');
+    assert.ok(!fs.existsSync(box.plistDir), 'no longer registers a LaunchAgent');
 
     const again = box.run([]);
     assert.equal(again.status, 0, again.stdout + again.stderr);
-    assert.match(again.stdout, /保留现有/);
-    assert.ok(box.log().includes('pm2 restart t-agent --update-env'), '第二次运行重启而不是重复启动');
+    assert.match(again.stdout, /Keeping the existing/);
+    assert.ok(box.log().includes('pm2 restart t-agent --update-env'), 'The second run restarts instead of starting again');
     assert.equal(box.log().split('pm2 start').length - 1, 1);
   } finally { box.cleanup(); }
 });
 
-test('--no-service 不启动；--system-service 仍然注册 LaunchAgent', { skip: !enabled }, () => {
+test('--no-service does not start; --system-service still registers a LaunchAgent', { skip: !enabled }, () => {
   const box = sandbox();
   try {
     assert.equal(box.run(['--no-service', '--port', freePort()]).status, 0);
@@ -81,7 +81,7 @@ test('--no-service 不启动；--system-service 仍然注册 LaunchAgent', { ski
   } finally { box.cleanup(); }
 });
 
-test('已注册系统服务的老安装默认继续沿用，加 --pm2 才迁移到 PM2', { skip: !enabled }, () => {
+test('Old installs with a registered system service keep using it by default; add --pm2 to migrate to PM2', { skip: !enabled }, () => {
   const box = sandbox();
   try {
     const plist = path.join(box.plistDir, 'com.tagent.client.plist');
@@ -89,21 +89,21 @@ test('已注册系统服务的老安装默认继续沿用，加 --pm2 才迁移�
     fs.writeFileSync(plist, '<plist/>');
     const kept = box.run(['--port', freePort()]);
     assert.equal(kept.status, 0, kept.stdout + kept.stderr);
-    assert.match(kept.stdout, /继续沿用它/);
-    assert.ok(!box.log().includes('pm2 start'), '不会悄悄切换到 PM2');
+    assert.match(kept.stdout, /will keep being used/);
+    assert.ok(!box.log().includes('pm2 start'), 'does not silently switch to PM2');
     assert.ok(fs.existsSync(plist));
 
     fs.writeFileSync(plist, '<plist/>');
     const migrated = box.run(['--pm2', '--port', freePort()]);
     assert.equal(migrated.status, 0, migrated.stdout + migrated.stderr);
-    assert.match(migrated.stdout, /改由 PM2 管理/);
+    assert.match(migrated.stdout, /PM2 will manage it instead/);
     assert.ok(box.log().includes('launchctl bootout'));
-    assert.ok(!fs.existsSync(plist), '旧的 LaunchAgent 已移除');
+    assert.ok(!fs.existsSync(plist), 'The old LaunchAgent was removed');
     assert.ok(box.log().includes('pm2 start'));
   } finally { box.cleanup(); }
 });
 
-test('没有 PM2 时自动用 npm 安装；安装失败只警告并给出手动启动命令，不让整个安装失败', { skip: !enabled }, () => {
+test('PM2 is installed with npm when missing; if that fails it only warns and prints the manual start command, without failing the whole install', { skip: !enabled }, () => {
   const auto = sandbox({ withPm2: false });
   try {
     const result = auto.run(['--port', freePort()]);
@@ -116,13 +116,13 @@ test('没有 PM2 时自动用 npm 安装；安装失败只警告并给出手动�
   try {
     const result = failing.run(['--port', freePort()]);
     assert.equal(result.status, 0, result.stdout + result.stderr);
-    assert.match(result.stderr, /无法安装或找到 PM2/);
-    assert.match(result.stdout, /服务尚未启动/);
+    assert.match(result.stderr, /cannot install or find PM2/);
+    assert.match(result.stdout, /The service is not running yet/);
     assert.ok(!failing.log().includes('pm2 start'));
   } finally { failing.cleanup(); }
 });
 
-test('端口已被占用时不启动服务并给出提示', { skip: !enabled }, async () => {
+test('When the port is already taken the service is not started and a hint is given', { skip: !enabled }, async () => {
   const box = sandbox();
   const server = net.createServer().listen(0, '127.0.0.1');
   await new Promise(resolve => server.once('listening', resolve));
@@ -134,7 +134,7 @@ test('端口已被占用时不启动服务并给出提示', { skip: !enabled }, 
       child.stdin.end(); child.on('close', code => resolve({ code, out }));
     });
     assert.equal(result.code, 0, result.out);
-    assert.match(result.out, new RegExp(`端口 ${port} 已被其他进程占用`));
+    assert.match(result.out, new RegExp(`port ${port} is used by another process`));
     assert.ok(!box.log().includes('pm2 start'));
   } finally { server.close(); box.cleanup(); }
 });

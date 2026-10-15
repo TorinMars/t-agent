@@ -46,7 +46,7 @@ test('image paste locks the whole page, reports transfer then processing, and in
   assert.match(s.document.querySelector('.terminal-image-upload-status').textContent, /OSS/);
   assert.deepEqual(s.sent, []);
   xhr.finish(200, { url: 'https://images.example/a.png', expiresAt: null }); await tick();
-  assert.deepEqual(s.sent, ['https://images.example/a.png ']); // 链接后补一个空格，不加回车
+  assert.deepEqual(s.sent, ['https://images.example/a.png ']); // add a space after the link, no Enter
   assert.equal(s.document.querySelector('.terminal-image-upload-overlay'), null);
   assert.equal(Boolean(s.term.options.disableStdin), false);
   assert.equal(Boolean(s.document.getElementById('app').inert), false);
@@ -112,7 +112,7 @@ test('configuration read errors are not reported as missing settings and always 
   const s = setup(); s.context.API.get = async () => { throw new Error('offline'); };
   s.paste(); await tick();
   assert.equal(s.requests.length, 0);
-  assert.match(s.notices[0], /读取 OSS 设置失败/);
+  assert.match(s.notices[0], /Could not read OSS settings/);
   assert.equal(s.context.images.busy, false);
   assert.equal(s.document.querySelector('.terminal-image-upload-overlay'), null);
 });
@@ -121,7 +121,7 @@ test('terminal switch during config retry never uploads into a different session
   s.context.API.get = () => new Promise(done => { resolve = done; });
   s.paste(); s.switchSocket(); resolve({ enabled: true }); await tick();
   assert.equal(s.requests.length, 0);
-  assert.match(s.notices[0], /切换或断开/);
+  assert.match(s.notices[0], /switched or disconnected/);
   assert.equal(s.context.images.busy, false);
 });
 test('older config reads cannot overwrite settings saved in this window', async () => {
@@ -139,7 +139,7 @@ test('saving disabled credentials explicitly explains that uploading is not enab
   const s = setup(); await s.context.images.showSettings();
   s.document.getElementById('oss-enabled').checked = false;
   s.document.getElementById('oss-save').click(); await tick();
-  assert.match(s.document.getElementById('oss-feedback').textContent, /配置已保存.*尚未启用/);
+  assert.match(s.document.getElementById('oss-feedback').textContent, /Settings saved.*not enabled/);
   assert.equal(s.document.getElementById('oss-save').disabled, false);
 });
 
@@ -151,5 +151,5 @@ test('stalled configuration request times out and releases the upload lock', asy
   s.paste(); timeout(); await tick();
   assert.equal(s.context.images.busy, false);
   assert.equal(s.requests.length, 0);
-  assert.match(s.notices[0], /读取 OSS 设置失败/);
+  assert.match(s.notices[0], /Could not read OSS settings/);
 });

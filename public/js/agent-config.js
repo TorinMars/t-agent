@@ -1,40 +1,40 @@
-// Agent 配置：为 Claude Code / Codex 维护一份全局默认，并推送到本机和所有已连接的服务器；每台服务器可单独覆盖。
-// 页面本身不属于某个引擎：服务器列表就是“本机 + 连接远程里的全部引擎”。文本都经 escapeHtml 或 textContent 写入。
+// Agent config: maintain one global default for Claude Code / Codex, push it to this machine and every connected server; each server can override it.
+// The page does not belong to a single engine: the server list is "this machine + every engine under Connect remote". All text is written through escapeHtml or textContent.
 const AgentConfig = (() => {
   const $ = id => document.getElementById(id);
   const TOOL_NAMES = { claude: 'Claude Code', codex: 'Codex' };
   const SKIP = '__skip';
   const CODE_MESSAGES = {
-    AGENT_CONFIG_UNSUPPORTED: '该服务器的 Engine 版本过旧，请先升级',
-    CONFIG_INVALID: '该机器上的配置文件格式不对，已跳过',
-    REMOTE_TIMEOUT: '连接超时', REMOTE_CONNECTION_FAILED: '无法连接', REMOTE_HTTP_401: '令牌无效或已被撤销',
+    AGENT_CONFIG_UNSUPPORTED: 'This server’s engine is too old. Please upgrade it first',
+    CONFIG_INVALID: 'The configuration file on that machine has an invalid format; skipped',
+    REMOTE_TIMEOUT: 'Connection timed out', REMOTE_CONNECTION_FAILED: 'Cannot connect', REMOTE_HTTP_401: 'Token is invalid or has been revoked',
   };
   let data = null, tool = 'claude', draft = { claude: {}, codex: {} }, active = false, busy = false;
 
   const errorText = error => {
-    let text = error.message || '操作失败';
-    try { const parsed = JSON.parse(text); text = parsed.message || parsed.error || text; } catch { /* 保持原文 */ }
+    let text = error.message || 'Operation failed';
+    try { const parsed = JSON.parse(text); text = parsed.message || parsed.error || text; } catch { /* keep the original text */ }
     return CODE_MESSAGES[text] || text;
   };
   const say = (text, bad) => { const node = $('agent-config-status'); node.textContent = text || ''; node.className = `tool-copy-status${bad ? ' ac-bad' : ''}`; };
 
-  // ---------- 表单 ----------
-  // mode: 'default' 填全局默认；'override' 填某台服务器的覆盖（空 = 跟随全局默认，SKIP = 这台不管）。
+  // ---------- Form ----------
+  // mode: 'default' edits the global default; 'override' edits one server's override (empty = follow the global default, SKIP = leave this server alone).
   function fieldHtml(field, value, mode) {
     const override = mode === 'override';
     const id = `ac-${mode}-${field.key}`;
     let control;
     if (field.type === 'enum') {
       const head = override
-        ? `<option value="">跟随全局默认</option><option value="${SKIP}">这台不管</option>`
-        : '<option value="">不设置（保持原样）</option>';
+        ? `<option value="">Follow global default</option><option value="${SKIP}">Leave unmanaged on this server</option>`
+        : '<option value="">Not set (keep as is)</option>';
       const options = field.options.map(([option, label]) => `<option value="${escapeHtml(option)}">${escapeHtml(label)}</option>`).join('');
       control = `<select id="${id}" data-key="${field.key}">${head}${options}</select>`;
     } else {
       const presets = (field.presets || []).length
-        ? `<div class="ac-presets">常用：${field.presets.map(([label, preset]) => `<button type="button" class="ac-preset" data-preset-for="${field.key}" data-preset="${escapeHtml(preset)}">${escapeHtml(label)}</button>`).join('')}</div>` : '';
-      const skip = override ? `<label class="ac-skip"><input type="checkbox" data-skip="${field.key}"> 这台不管</label>` : '';
-      control = `<input type="text" id="${id}" data-key="${field.key}" autocomplete="off" spellcheck="false" placeholder="${escapeHtml(field.placeholder || (override ? '留空 = 跟随全局默认' : '留空 = 不设置'))}">${presets}${skip}`;
+        ? `<div class="ac-presets">Common: ${field.presets.map(([label, preset]) => `<button type="button" class="ac-preset" data-preset-for="${field.key}" data-preset="${escapeHtml(preset)}">${escapeHtml(label)}</button>`).join('')}</div>` : '';
+      const skip = override ? `<label class="ac-skip"><input type="checkbox" data-skip="${field.key}"> Leave unmanaged on this server</label>` : '';
+      control = `<input type="text" id="${id}" data-key="${field.key}" autocomplete="off" spellcheck="false" placeholder="${escapeHtml(field.placeholder || (override ? 'Empty = follow global default' : 'Empty = not set'))}">${presets}${skip}`;
     }
     const hint = field.hint ? `<div class="ac-hint">${escapeHtml(field.hint)}</div>` : '';
     return `<div class="ac-field"><label class="ac-label" for="${id}">${escapeHtml(field.label)}</label><div class="ac-control">${control}${hint}</div></div>`;
@@ -86,7 +86,7 @@ const AgentConfig = (() => {
     }));
   }
 
-  // ---------- 全局默认 ----------
+  // ---------- Global defaults ----------
   function renderDefaults() {
     const root = $('agent-config-defaults');
     root.innerHTML = formHtml(tool, 'default');
@@ -100,29 +100,29 @@ const AgentConfig = (() => {
   }
   const captureDraft = () => { draft[tool] = readForm($('agent-config-defaults'), tool, 'default'); };
 
-  // ---------- 服务器列表 ----------
+  // ---------- Server list ----------
   function renderServers() {
     const body = $('agent-config-servers');
     body.replaceChildren();
     for (const server of data.servers) {
       const row = document.createElement('tr');
-      const name = document.createElement('td'); name.textContent = server.local ? '本机（运行 Client 的这台）' : server.name;
+      const name = document.createElement('td'); name.textContent = server.local ? 'This machine (running the Client)' : server.name;
       const status = document.createElement('td');
       const last = data.status[server.key];
-      if (!last) status.textContent = '尚未推送';
+      if (!last) status.textContent = 'Not pushed yet';
       else {
         const time = new Date(last.at).toLocaleString();
-        status.textContent = last.ok ? `${time} · 成功` : `${time} · 失败：${CODE_MESSAGES[last.error] || last.error || ''}`;
+        status.textContent = last.ok ? `${time} · succeeded` : `${time} · failed: ${CODE_MESSAGES[last.error] || last.error || ''}`;
         status.className = last.ok ? 'ac-ok' : 'ac-bad';
       }
       const overrides = document.createElement('td');
       const own = data.overrides[server.key] || {};
       const count = Object.values(own).reduce((sum, values) => sum + Object.keys(values || {}).length, 0);
-      overrides.textContent = count ? `${count} 项` : '—';
+      overrides.textContent = count ? `${count} item(s)` : '—';
       const actions = document.createElement('td');
       actions.className = 'tool-card-actions';
       actions.style.margin = '0';
-      for (const [label, handler] of [['覆盖', () => editOverride(server)], ['查看当前', () => showCurrent(server)], ['推送', () => push([server.key])]]) {
+      for (const [label, handler] of [['Override', () => editOverride(server)], ['View current', () => showCurrent(server)], ['Push', () => push([server.key])]]) {
         const button = document.createElement('button');
         button.type = 'button'; button.className = 'btn-logout'; button.textContent = label;
         button.addEventListener('click', handler);
@@ -134,11 +134,11 @@ const AgentConfig = (() => {
   }
 
   function editOverride(server) {
-    const title = `${server.local ? '本机' : server.name} 的覆盖`;
+    const title = `${server.local ? 'This machine' : server.name} override`;
     const toolButtons = ['claude', 'codex'].map((name, index) => `<button type="button" class="agent-config-tab${index ? '' : ' active'}" data-ovr-tool="${name}">${TOOL_NAMES[name]}</button>`).join('');
-    Modal.show(title, `<div class="form-hint">只填这台服务器需要不同的项；留空的项沿用全局默认。选“这台不管”表示推送时不改这台的该项。</div>
+    Modal.show(title, `<div class="form-hint">Only fill in items that should differ on this server; empty items use the global default. “Leave unmanaged” means that item is not changed on this server when pushing.</div>
       <div class="agent-config-tabs">${toolButtons}</div><div id="ac-override-form"></div>
-      <div class="form-actions"><button class="btn-submit" id="ac-override-save">保存覆盖</button><button class="btn-logout" id="ac-override-cancel">取消</button></div>`);
+      <div class="form-actions"><button class="btn-submit" id="ac-override-save">Save override</button><button class="btn-logout" id="ac-override-cancel">Cancel</button></div>`);
     const holder = document.getElementById('ac-override-form');
     const edits = { claude: { ...(data.overrides[server.key] || {}).claude }, codex: { ...(data.overrides[server.key] || {}).codex } };
     let current = 'claude';
@@ -161,26 +161,26 @@ const AgentConfig = (() => {
         for (const name of ['claude', 'codex']) await API.put(`/api/agent-config/servers/${encodeURIComponent(server.key)}`, { tool: name, values: edits[name] });
         Modal.hide();
         await load();
-        say('覆盖已保存，推送后生效');
+        say('Override saved; it takes effect after pushing');
       } catch (error) { say(errorText(error), true); }
     });
   }
 
   async function showCurrent(server) {
-    Modal.show(`${server.local ? '本机' : server.name} 的当前配置`, '<p>正在读取…</p>');
+    Modal.show(`${server.local ? 'This machine' : server.name} current configuration`, '<p>Reading…</p>');
     let current;
     try { current = await API.get(`/api/agent-config/servers/${encodeURIComponent(server.key)}/current`); }
-    catch (error) { Modal.show(`${server.local ? '本机' : server.name} 的当前配置`, `<p class="ac-bad">${escapeHtml(errorText(error))}</p>`); return; }
+    catch (error) { Modal.show(`${server.local ? 'This machine' : server.name} current configuration`, `<p class="ac-bad">${escapeHtml(errorText(error))}</p>`); return; }
     const sections = ['claude', 'codex'].map(name => {
       if (current.errors && current.errors[name]) return `<h4>${TOOL_NAMES[name]}</h4><p class="ac-bad">${escapeHtml(CODE_MESSAGES[current.errors[name]] || current.errors[name])}</p>`;
       const rows = data.schema[name].map(field => `<tr><td>${escapeHtml(field.label)}</td><td>${escapeHtml((current[name] || {})[field.key] || '—')}</td></tr>`).join('');
       return `<h4>${TOOL_NAMES[name]}</h4><div class="form-hint">${escapeHtml((current.paths || {})[name] || '')}</div><div class="pm2-table-wrap"><table class="pm2-table ac-current"><tbody>${rows}</tbody></table></div>`;
     }).join('');
-    Modal.show(`${server.local ? '本机' : server.name} 的当前配置`, `${sections}<div class="form-actions"><button class="btn-logout" id="ac-current-close">关闭</button></div>`);
+    Modal.show(`${server.local ? 'This machine' : server.name} current configuration`, `${sections}<div class="form-actions"><button class="btn-logout" id="ac-current-close">Close</button></div>`);
     document.getElementById('ac-current-close').addEventListener('click', Modal.hide);
   }
 
-  // ---------- 保存 / 推送 ----------
+  // ---------- Save / push ----------
   async function saveDefaults() {
     captureDraft();
     for (const name of ['claude', 'codex']) await API.put('/api/agent-config/defaults', { tool: name, values: draft[name] });
@@ -188,13 +188,13 @@ const AgentConfig = (() => {
   }
   async function push(servers) {
     if (busy) return;
-    busy = true; say('正在推送…');
+    busy = true; say('Pushing…');
     try {
       if (!servers) await saveDefaults();
       const { results } = await API.post('/api/agent-config/push', servers ? { servers } : {});
       await load();
       const failed = results.filter(item => !item.ok);
-      say(failed.length ? `已推送 ${results.length - failed.length} 台，${failed.length} 台失败（见列表）` : `已推送到 ${results.length} 台服务器`, failed.length > 0);
+      say(failed.length ? `Pushed to ${results.length - failed.length} server(s), ${failed.length} failed (see the list)` : `Pushed to ${results.length} server(s)`, failed.length > 0);
     } catch (error) { say(errorText(error), true); }
     finally { busy = false; }
   }
@@ -212,7 +212,7 @@ const AgentConfig = (() => {
   }));
   $('agent-config-save').addEventListener('click', async () => {
     if (!data) return;
-    try { await saveDefaults(); say('全局默认已保存，推送后才会写到各服务器'); } catch (error) { say(errorText(error), true); }
+    try { await saveDefaults(); say('Global defaults saved; they reach each server only after pushing'); } catch (error) { say(errorText(error), true); }
   });
   $('agent-config-push-all').addEventListener('click', () => { if (data) push(null); });
 

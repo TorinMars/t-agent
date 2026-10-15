@@ -119,7 +119,7 @@ test('Engine advertises file capabilities and every token can read and write fil
   assert.equal(info.payload.capabilities.includes('files:read'), true);
   assert.equal(info.payload.capabilities.includes('files:write'), true);
 
-  // 所有连接都是管理权限：即使以 readonly 请求的令牌也可以写文件。
+  // every connection has admin rights: even a token requested as readonly can write files.
   for (const [name, token] of [['reader', reader], ['operator', operator]]) {
     const list = await jsonRequest(engineBase, `/v1/tasks/${task.id}/files`, { token });
     assert.equal(list.payload.writable, true, name);

@@ -11,7 +11,7 @@ const { createFrpRouter } = require('../routes/frp');
 const SECRET = 'session-secret';
 const TOKEN = 'frps-super-token';
 
-// 假的 frpc：按 mode 打印 frp 的典型日志。conflict 模式在远程端口等于 FAIL_PORT 时报端口被占用。
+// A fake frpc: prints typical frp logs depending on mode. The conflict mode reports "port in use" when the remote port equals FAIL_PORT.
 function fakeFrpc(dir, mode = 'ok') {
   const bin = path.join(dir, 'frpc');
   fs.writeFileSync(bin, `#!/usr/bin/env node
@@ -39,17 +39,17 @@ function setup(t, { mode = 'ok', random } = {}) {
 const until = async (check, ms = 4000) => {
   const end = Date.now() + ms;
   while (Date.now() < end) { if (check()) return; await new Promise(resolve => setTimeout(resolve, 20)); }
-  assert.fail('等待超时');
+  assert.fail('Wait timed out');
 };
 
-test('随机远程端口在范围内，生成一次后保持稳定', t => {
+test('The random remote port is within range and stays stable once generated', t => {
   const { service } = setup(t);
   const first = service.update({ serverAddr: '1.2.3.4', portMin: 30000, portMax: 30010 }).config.remotePort;
   assert.ok(first >= 30000 && first <= 30010);
   for (let i = 0; i < 5; i += 1) assert.equal(service.update({ domain: 'a.example.com' }).config.remotePort, first);
 });
 
-test('重新生成端口会换新值并保持在范围内', t => {
+test('Regenerating the port gives a new value that stays within range', t => {
   let n = 0;
   const { service } = setup(t, { random: (min, max) => min + (n++ % (max - min + 1)) });
   const first = service.update({ serverAddr: '1.2.3.4', portMin: 40000, portMax: 40100 }).config.remotePort;
@@ -58,7 +58,7 @@ test('重新生成端口会换新值并保持在范围内', t => {
   assert.ok(next >= 40000 && next <= 40100);
 });
 
-test('配置校验：非法服务器地址、端口、域名、范围都被拒绝', t => {
+test('Config validation: invalid server address, port, domain and range are all rejected', t => {
   const { service } = setup(t);
   for (const bad of [
     { serverAddr: 'a b' }, { serverAddr: 'x"y' }, { serverPort: 0 }, { serverPort: 70000 }, { serverPort: 'abc' },
@@ -66,18 +66,18 @@ test('配置校验：非法服务器地址、端口、域名、范围都被拒�
   ]) assert.throws(() => service.update(bad), e => e.code && e.code.startsWith('FRP_'), JSON.stringify(bad));
 });
 
-test('Token 加密保存，视图和数据库里都没有明文', t => {
+test('The token is stored encrypted; there is no plaintext in the view or the database', t => {
   const { service, db } = setup(t);
   const view = service.update({ serverAddr: '1.2.3.4', token: TOKEN });
   assert.equal(view.config.hasToken, true);
   assert.ok(!JSON.stringify(view).includes(TOKEN));
   assert.ok(!db.prepare('SELECT value FROM system_state').get().value.includes(TOKEN));
-  // 不传 token 保持不变；传空字符串清除
+  // A token that is not passed stays unchanged; an empty string clears it
   assert.equal(service.update({ domain: 'a.example.com' }).config.hasToken, true);
   assert.equal(service.update({ token: '' }).config.hasToken, false);
 });
 
-test('渲染 TOML：正确转义，tcp 代理指向本地端口和随机远程端口', () => {
+test('Render TOML: correct escaping, the tcp proxy points at the local port and the random remote port', () => {
   const toml = renderToml({ serverAddr: '1.2.3.4', serverPort: 7000, token: 'a"b', proxyName: 'p', localIP: '127.0.0.1', localPort: 3000, remotePort: 28888 });
   assert.match(toml, /serverAddr = "1\.2\.3\.4"/);
   assert.match(toml, /auth\.token = "a\\"b"/);
@@ -86,7 +86,7 @@ test('渲染 TOML：正确转义，tcp 代理指向本地端口和随机远程�
   assert.match(toml, /remotePort = 28888/);
 });
 
-test('启动：写入 0600 配置，日志出现 start proxy success 后为运行中，停止后为已停止', async t => {
+test('Start: writes a 0600 config, running once the log shows start proxy success, stopped after stopping', async t => {
   const { service, dir } = setup(t);
   service.update({ serverAddr: '1.2.3.4', serverPort: 7100, token: TOKEN, domain: 'app.example.com' });
   service.start();
@@ -104,7 +104,7 @@ test('启动：写入 0600 配置，日志出现 start proxy success 后为运�
   assert.equal(service.view().status, 'stopped');
 });
 
-test('端口被占用时自动换端口重试', async t => {
+test('When the port is taken it retries with another port automatically', async t => {
   const ports = [25000, 26000];
   const { service } = setup(t, { mode: 'conflict', random: () => ports.shift() ?? 27000 });
   service.update({ serverAddr: '1.2.3.4' });
@@ -112,32 +112,32 @@ test('端口被占用时自动换端口重试', async t => {
   service.start();
   await until(() => service.view().status === 'running');
   assert.equal(service.view().config.remotePort, 26000);
-  assert.ok(service.view().logs.some(line => line.includes('已换成 26000')));
+  assert.ok(service.view().logs.some(line => line.includes('retrying with 26000')));
 });
 
-test('登录 frps 失败时给出明确原因', async t => {
+test('A clear reason is given when logging in to frps fails', async t => {
   const { service } = setup(t, { mode: 'login' });
   service.update({ serverAddr: '1.2.3.4' });
   service.start();
   await until(() => service.view().status === 'failed');
-  assert.match(service.view().error, /登录 frps 失败/);
+  assert.match(service.view().error, /Logging in to frps failed/);
 });
 
-test('未填服务器地址时拒绝启动', t => {
+test('Starting is refused when no server address is filled in', t => {
   const { service } = setup(t);
   assert.throws(() => service.start(), e => e.code === 'FRP_SERVER_REQUIRED');
 });
 
-test('frpc 路径无效时标记失败而不是崩溃', async t => {
+test('An invalid frpc path marks failure instead of crashing', async t => {
   const { db, dir } = setup(t);
   const service = createFrpService({ db, secret: SECRET, dataDir: dir, localPort: 3000, bin: path.join(dir, 'missing-frpc') });
   service.update({ serverAddr: '1.2.3.4' });
   service.start();
   await until(() => service.view().status === 'failed');
-  assert.match(service.view().error, /无法启动 frpc/);
+  assert.match(service.view().error, /Cannot start frpc/);
 });
 
-test('路由：需要登录，配置更新和状态不泄露 Token', async t => {
+test('Routes: login required, config updates and status do not leak the Token', async t => {
   const { service } = setup(t);
   const app = express();
   app.use(express.json());
@@ -155,7 +155,7 @@ test('路由：需要登录，配置更新和状态不泄露 Token', async t => 
   assert.equal((await bad.json()).error, 'FRP_SERVER_PORT_INVALID');
 });
 
-// ── frpc 安装 ──
+// ── frpc install ──
 const crypto = require('node:crypto');
 const { execFileSync } = require('node:child_process');
 const { installFrpc } = require('../services/frp-install');
@@ -179,7 +179,7 @@ function releaseFixture(t, { tamper = false } = {}) {
   return { download, urls };
 }
 
-test('安装 frpc：校验通过后只把可执行的 frpc 放进 binDir', async t => {
+test('Install frpc: after verification only the executable frpc is put into binDir', async t => {
   const { download, urls } = releaseFixture(t);
   const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'frp-bin-'));
   t.after(() => fs.rmSync(binDir, { recursive: true, force: true }));
@@ -190,7 +190,7 @@ test('安装 frpc：校验通过后只把可执行的 frpc 放进 binDir', async
   assert.ok(urls.every(url => url.startsWith('https://mirror.test/frp/v0.61.1/')));
 });
 
-test('安装 frpc：校验和不符或平台不支持时拒绝，且不留下文件', async t => {
+test('Install frpc: refused when the checksum mismatches or the platform is unsupported, leaving no files behind', async t => {
   const { download } = releaseFixture(t, { tamper: true });
   const binDir = path.join(os.tmpdir(), `frp-bin-${process.pid}-bad`);
   await assert.rejects(installFrpc({ binDir, platform: 'linux', arch: 'x64', download }), e => e.code === 'FRP_INSTALL_CHECKSUM_FAILED');
@@ -199,7 +199,7 @@ test('安装 frpc：校验和不符或平台不支持时拒绝，且不留下文
   await assert.rejects(installFrpc({ binDir, platform: 'linux', arch: 'x64', download: async () => { throw new Error('net'); } }), e => e.code === 'FRP_INSTALL_DOWNLOAD_FAILED');
 });
 
-test('服务：安装完成后识别到 frpc；失败时给出原因；重复安装被拒绝', async t => {
+test('Service: frpc is detected after installation; a reason is given on failure; installing twice is refused', async t => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'frp-svc-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const db = new Database(':memory:');
@@ -210,7 +210,7 @@ test('服务：安装完成后识别到 frpc；失败时给出原因；重复安
   t.after(() => { if (original === undefined) delete process.env.T_AGENT_FRPC_BIN; else process.env.T_AGENT_FRPC_BIN = original; });
   let fail = true;
   const installer = async ({ binDir }) => {
-    if (fail) { const { FrpInstallError } = require('../services/frp-install'); throw new FrpInstallError('X', '下载 frp 失败'); }
+    if (fail) { const { FrpInstallError } = require('../services/frp-install'); throw new FrpInstallError('X', 'Downloading frp failed'); }
     fs.mkdirSync(binDir, { recursive: true });
     fs.writeFileSync(path.join(binDir, 'frpc'), '#!/bin/sh\n', { mode: 0o755 });
   };
@@ -220,7 +220,7 @@ test('服务：安装完成后识别到 frpc；失败时给出原因；重复安
   assert.equal(service.view().installing, true);
   assert.throws(() => service.install(), e => e.code === 'FRP_INSTALL_RUNNING');
   await until(() => !service.view().installing);
-  assert.equal(service.view().installError, '下载 frp 失败');
+  assert.equal(service.view().installError, 'Downloading frp failed');
   fail = false;
   service.install();
   await until(() => service.view().installed && !service.view().installing);
@@ -228,8 +228,8 @@ test('服务：安装完成后识别到 frpc；失败时给出原因；重复安
   assert.throws(() => service.install(), e => e.code === 'FRP_ALREADY_INSTALLED');
 });
 
-// ── 手动远程端口 ──
-test('手动指定远程端口：固定使用，可在随机范围之外，改范围不会变；清空后恢复随机', t => {
+// ── Manual remote port ──
+test('Manual remote port: used as-is, can be outside the random range, a range change does not alter it; clearing it restores random', t => {
   const { service } = setup(t);
   service.update({ serverAddr: '1.2.3.4', portMin: 30000, portMax: 30010 });
   const manual = service.update({ remotePort: '8080' }).config;
@@ -245,29 +245,29 @@ test('手动指定远程端口：固定使用，可在随机范围之外，改�
   for (const bad of ['abc', 0.5, 70000, -1, '1e3']) assert.throws(() => service.update({ remotePort: bad }), e => e.code === 'FRP_REMOTE_PORT_INVALID', String(bad));
 });
 
-test('手动端口被占用时不自动换端口，并提示换一个', async t => {
+test('A manual port that is taken is not changed automatically, and a hint to choose another is shown', async t => {
   const { service } = setup(t, { mode: 'conflict' });
   service.update({ serverAddr: '1.2.3.4', remotePort: 25000 });
   service.start();
   await until(() => service.view().status === 'failed');
   assert.equal(service.view().config.remotePort, 25000);
-  assert.match(service.view().error, /换一个端口/);
+  assert.match(service.view().error, /choose another port/);
 });
 
-// ── Agent 提示词 ──
+// ── Agent prompts ──
 const FrpPrompts = require('../public/js/frp-prompts.js');
 
-test('frpc 提示词：带校验和、安装目录、版本和禁止项', () => {
+test('frpc prompt: carries checksum, install directory, version and prohibitions', () => {
   const text = FrpPrompts.frpc({ binDir: '/srv/t-agent/data/bin', version: '0.61.1', target: { os: 'linux', arch: 'amd64' } });
   assert.match(text, /frp_0\.61\.1_linux_amd64\.tar\.gz/);
   assert.match(text, /frp_sha256_checksums\.txt/);
   assert.match(text, /\/srv\/t-agent\/data\/bin\/frpc/);
   assert.match(text, /--version.*0\.61\.1/);
-  assert.match(text, /不要使用 sudo/);
-  assert.match(FrpPrompts.frpc({ binDir: '/x', version: '0.61.1', target: null }), /确认系统和架构/);
+  assert.match(text, /do not use sudo/);
+  assert.match(FrpPrompts.frpc({ binDir: '/x', version: '0.61.1', target: null }), /confirm the system and architecture/);
 });
 
-test('frps 提示词：带服务端口、Token 和放行范围；没有 Token 时让 Agent 随机生成', () => {
+test('frps prompt: carries server port, Token and allowed range; without a Token the Agent is told to generate one at random', () => {
   const base = { version: '0.61.1', serverPort: 7001, portMin: 20000, portMax: 60000, remotePort: 28000 };
   const withToken = FrpPrompts.frps({ ...base, token: 'tok"en' });
   assert.match(withToken, /bindPort = 7001/);
@@ -275,15 +275,15 @@ test('frps 提示词：带服务端口、Token 和放行范围；没有 Token �
   assert.match(withToken, /allowPorts = \[\{ start = 20000, end = 60000 \}\]/);
   assert.match(withToken, /TCP 7001/);
   assert.match(withToken, /TCP 20000-60000/);
-  assert.match(withToken, /安全组/);
+  assert.match(withToken, /security group/);
   const noToken = FrpPrompts.frps({ ...base, token: '' });
-  assert.match(noToken, /随机生成的 32 位 Token/);
+  assert.match(noToken, /random 32-character token/);
   const outside = FrpPrompts.frps({ ...base, token: '', remotePort: 8080 });
   assert.match(outside, /\{ single = 8080 \}/);
-  assert.match(outside, /20000-60000 以及 8080/);
+  assert.match(outside, /20000-60000 and 8080/);
 });
 
-// ── frpc 检测 ──
+// ── frpc detection ──
 const { findFrpc, homebrewDirs } = require('../services/frp');
 
 function fakeBrew(t, { version = '0.71.0', linked = true } = {}) {
@@ -299,7 +299,7 @@ function fakeBrew(t, { version = '0.71.0', linked = true } = {}) {
   return { prefix, real };
 }
 
-test('Homebrew：即使没链接进 PATH，也能从 opt/ 和 Cellar/ 找到 frpc（取最新版本）', t => {
+test('Homebrew: even when not linked into PATH, it can be found from opt/ and Cellar/ Finds frpc (takes the newest version)', t => {
   const { prefix } = fakeBrew(t, { linked: false });
   const old = path.join(prefix, 'Cellar', 'frpc', '0.9.0', 'bin');
   fs.mkdirSync(old, { recursive: true });
@@ -311,14 +311,14 @@ test('Homebrew：即使没链接进 PATH，也能从 opt/ 和 Cellar/ 找到 frp
   assert.equal(findFrpc({ dirs }), path.join(prefix, 'Cellar', 'frpc', '0.71.0', 'bin', 'frpc'));
 });
 
-test('空的 Homebrew keg（没有 frpc 可执行文件）不会被当成已安装', t => {
+test('An empty Homebrew keg (no frpc executable) is not counted as installed', t => {
   const prefix = fs.mkdtempSync(path.join(os.tmpdir(), 'frp-brew-empty-'));
   t.after(() => fs.rmSync(prefix, { recursive: true, force: true }));
   fs.mkdirSync(path.join(prefix, 'Cellar', 'frpc', '0.71.0', 'bin'), { recursive: true });
   assert.equal(findFrpc({ dirs: homebrewDirs({ HOMEBREW_PREFIX: prefix }).filter(dir => dir.startsWith(prefix)) }), null);
 });
 
-test('版本探测：显示版本；低于 0.52 拒绝启动；重新检测会读取新装的 frpc', async t => {
+test('Version probe: shows the version; below 0.52 refuses to start; re-detect reads a newly installed frpc', async t => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'frp-detect-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const db = new Database(':memory:');

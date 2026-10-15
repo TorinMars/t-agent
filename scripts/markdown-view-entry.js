@@ -32,8 +32,8 @@ export function enhance(root) {
     label.textContent = language;
     const copy = document.createElement('button');
     copy.type = 'button';
-    copy.textContent = '复制代码';
-    copy.setAttribute('aria-label', '复制代码');
+    copy.textContent = 'Copy code';
+    copy.setAttribute('aria-label', 'Copy code');
     copy.setAttribute('aria-live', 'polite');
     copy.addEventListener('click', async () => {
       try {
@@ -48,9 +48,9 @@ export function enhance(root) {
           try { if (!document.execCommand('copy')) throw new Error('Copy failed'); }
           finally { field.remove(); copy.focus(); }
         }
-        copy.textContent = '已复制';
-      } catch { copy.textContent = '复制失败，请手动选择'; }
-      setTimeout(() => { copy.textContent = '复制代码'; }, 2000);
+        copy.textContent = 'Copied';
+      } catch { copy.textContent = 'Copy failed; select it manually'; }
+      setTimeout(() => { copy.textContent = 'Copy code'; }, 2000);
     });
     bar.append(label, copy);
     pre.replaceWith(card);

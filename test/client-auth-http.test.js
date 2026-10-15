@@ -67,14 +67,14 @@ for (const [environment, allowHttp] of [['test', 'false'], ['production', 'false
     });
   }
   const LOGIN = '/torin/hide/login';
-  // 未登录（含尚未绑定）：除隐藏登录入口和机器接口外，所有地址都是 404，且不跳转。
+  // Logged out (including not yet bound): every address except the hidden login entrance and machine endpoints is 404, with no redirect.
   for (const route of ['/', '/web', '/index.html', '/index%2ehtml', '/login.html', '/clients', '/auth/login', '/auth/setup', '/auth/status', '/auth/me', '/js/app.js', '/css/style.css', '/manifest.json', '/sw.js', '/nonexistent']) {
     const response = await call(route);
     assert.equal(response.status, 404, route);
     assert.equal(response.headers.get('location'), null, route);
   }
   const unknown = await (await call('/nonexistent')).text();
-  assert.equal(await (await call('/web')).text(), unknown.replace('/nonexistent', '/web'), '受保护地址与不存在的地址响应一致');
+  assert.equal(await (await call('/web')).text(), unknown.replace('/nonexistent', '/web'), 'A protected address answers the same as a non-existent one');
   for (const route of ['/api/tasks', '/api/local-ip', '/api/system/version', '/api/oss/config']) {
     assert.equal((await call(route)).status, 404, route);
   }
@@ -132,7 +132,7 @@ for (const [environment, allowHttp] of [['test', 'false'], ['production', 'false
   assert.equal((await call('/v1/pair', { body: { code: pairing.code } })).status, 400);
   const engineInfo = await call('/v1/info', { headers: engineHeaders });
   assert.equal(engineInfo.status, 200);
-  assert.equal((await engineInfo.json()).role, 'owner'); // 所有连接都是管理权限
+  assert.equal((await engineInfo.json()).role, 'owner'); // every connection has admin rights
   const createdResponse = await call('/v1/tasks', { headers: engineHeaders, body: { title: 'Created by another Client', work_dir: path.join(temp, 'remote-created') } });
   assert.equal(createdResponse.status, 201);
   const created = await createdResponse.json();

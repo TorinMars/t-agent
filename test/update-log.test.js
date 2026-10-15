@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const { logUpdate, recentLog, clearLog } = require('../lib/update-command');
 
-test('更新日志：按行记录、隐藏凭据、只保留最近的行，开始新一轮前可清空', () => {
+test('Update log: records by line, hides credentials, keeps only the latest lines, and can be cleared before a new round starts', () => {
   const original = console.log;
   console.log = () => {};
   try {
@@ -24,7 +24,7 @@ test('更新日志：按行记录、隐藏凭据、只保留最近的行，开�
   } finally { console.log = original; }
 });
 
-test('终端式日志：渲染时间和文本，内容没变不重绘，贴底时跟随滚动，向上翻看时不拉回底部', () => {
+test('Terminal-style log: renders time and text, does not redraw when content is unchanged, follows scrolling when at the bottom and does not pull back when the user scrolls up', () => {
   const context = {};
   vm.createContext(context);
   vm.runInContext(`${fs.readFileSync('public/js/update-log.js', 'utf8')}\nthis.UpdateLog = UpdateLog;`, context);
@@ -42,7 +42,7 @@ test('终端式日志：渲染时间和文本，内容没变不重绘，贴底�
   context.UpdateLog.render(node, [...lines, { at: '2026-10-13T08:00:02.000Z', text: 'done' }]);
   assert.equal(writes, 2);
   assert.equal(node.scrollTop, 0);
-  assert.equal(context.UpdateLog.headline('正在安装依赖 · 已用 4 秒 · npm warn deprecated'), '正在安装依赖 · 已用 4 秒');
+  assert.equal(context.UpdateLog.headline('Installing dependencies · elapsed 4 s · npm warn deprecated'), 'Installing dependencies · elapsed 4 s');
   context.UpdateLog.render(null, lines);
   context.UpdateLog.render(node, undefined);
 });

@@ -6,7 +6,7 @@ const vm = require('node:vm');
 const { parseHTML } = require('linkedom');
 
 const source = fs.readFileSync(path.join(__dirname, '../public/js/terminal-tabs.js'), 'utf8');
-const rowsOnServer = [{ terminal_id: 'default', title: '终端 1' }, { terminal_id: 'second', title: '终端 2' }];
+const rowsOnServer = [{ terminal_id: 'default', title: 'Terminal 1' }, { terminal_id: 'second', title: 'Terminal 2' }];
 
 // Mirrors TerminalActivity.acknowledge: it clears the state and notifies listeners
 // synchronously, and a listener refreshes the tab strip while it may still be rendering.
@@ -37,7 +37,7 @@ test('a finished active terminal is acknowledged without duplicating the tabs', 
   const { TerminalTabs, strip } = load(states);
   TerminalTabs.show('/api/tasks/1', () => {}, { taskId: 1, sourceKey: 'local', viewing: () => true });
   await tick();
-  assert.deepEqual(titles(strip), ['终端 1', '终端 2']);
+  assert.deepEqual(titles(strip), ['Terminal 1', 'Terminal 2']);
   assert.equal(strip.querySelectorAll('.term-done').length, 0, 'the acknowledged terminal is no longer done');
   assert.equal(strip.querySelectorAll('.term-running').length, 1);
 });
@@ -51,7 +51,7 @@ test('a terminal that finishes while it is on screen keeps one set of tabs', asy
   TerminalTabs.refresh();
   states.default = 'done'; // running -> done while the user is looking at it
   TerminalTabs.refresh();
-  assert.deepEqual(titles(strip), ['终端 1', '终端 2']);
+  assert.deepEqual(titles(strip), ['Terminal 1', 'Terminal 2']);
 });
 
 test('a finished terminal that is not on screen stays done and is not acknowledged', async () => {
@@ -59,11 +59,11 @@ test('a finished terminal that is not on screen stays done and is not acknowledg
   const { TerminalTabs, strip } = load(states);
   TerminalTabs.show('/api/tasks/1', () => {}, { taskId: 1, sourceKey: 'local', viewing: () => false });
   await tick();
-  assert.deepEqual(titles(strip), ['终端 1', '终端 2']);
+  assert.deepEqual(titles(strip), ['Terminal 1', 'Terminal 2']);
   assert.equal(strip.querySelectorAll('.term-done').length, 1);
 });
 
-test('删除终端的入口在标签页里：默认终端没有，其他标签带 ×，点 × 只删除该标签且不切换', async () => {
+test('The entry to delete a terminal is in the tab: the default terminal has none, other tabs carry a ×, and clicking × deletes only that tab without switching', async () => {
   const { TerminalTabs, strip, controls } = load({});
   let selected = 0;
   TerminalTabs.show('/api/tasks/1', () => { selected += 1; }, { taskId: 1, sourceKey: 'local', viewing: () => false });
@@ -72,17 +72,17 @@ test('删除终端的入口在标签页里：默认终端没有，其他标签�
   assert.equal(first.querySelector('.terminal-tab-close'), null);
   const close = second.querySelector('.terminal-tab-close');
   assert.ok(close);
-  assert.equal(close.getAttribute('aria-label'), '删除终端 2');
+  assert.equal(close.getAttribute('aria-label'), 'Delete Terminal 2');
   let stopped = false;
   close.dispatchEvent(Object.assign(new (require('linkedom').parseHTML('').Event)('click'), { stopPropagation() { stopped = true; } }));
   assert.equal(stopped, true);
   assert.equal(controls.calls.length, 1);
   assert.equal(controls.calls[0][0], 'deleteTerminal');
-  assert.match(controls.calls[0][1], /终端 2/);
+  assert.match(controls.calls[0][1], /Terminal 2/);
   assert.equal(controls.calls[0][2], 'second');
-  assert.equal(TerminalTabs.current('/api/tasks/1'), 'default', '点 × 不会切换到该标签');
+  assert.equal(TerminalTabs.current('/api/tasks/1'), 'default', 'Clicking × does not switch to that tab');
   const before = selected;
   TerminalTabs.remove('/api/tasks/1', 'second');
-  assert.equal(selected, before, '删除的不是当前标签时不重新连接当前终端');
-  assert.deepEqual(titles(strip), ['终端 1']);
+  assert.equal(selected, before, 'When the deleted tab is not the current one, the current terminal is not reconnected');
+  assert.deepEqual(titles(strip), ['Terminal 1']);
 });

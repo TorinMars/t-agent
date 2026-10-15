@@ -5,7 +5,7 @@ const path = require('path');
 
 const root = path.resolve(__dirname, '..');
 
-test('安装应用中的终端使用动态 Flex 高度并跟随容器重新适配', () => {
+test('The terminal in an installed app uses a dynamic flex height and refits with its container', () => {
   const css = fs.readFileSync(path.join(root, 'public', 'css', 'style.css'), 'utf8');
   const terminalSource = fs.readFileSync(path.join(root, 'public', 'js', 'tasks.js'), 'utf8');
   const viewport = fs.readFileSync(path.join(root, 'public', 'js', 'terminal-viewport.js'), 'utf8');

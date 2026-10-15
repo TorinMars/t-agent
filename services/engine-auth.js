@@ -1,14 +1,14 @@
 const crypto = require('crypto');
 
-// 所有 Engine 连接统一为管理权限（owner），不再区分查看 / 操作 / 管理。
-// 数据库里的 role、scopes 列保留（旧令牌、旧配对码仍存在），但鉴权时一律按管理权限处理。
+// All Engine connections are unified as admin rights (owner); view / operate / manage are no longer distinguished.
+// The role and scopes columns stay in the database (old tokens and pairing codes still exist) but authorization always treats them as admin.
 const ROLE_SCOPES = Object.freeze({ owner: ['*'] });
 
 function hashSecret(value) {
   return crypto.createHash('sha256').update(String(value)).digest('hex');
 }
 
-// 忽略请求的角色：任何令牌、配对码都是 owner。
+// Ignore the requested role: every token and pairing code is owner.
 function normalizeRole() {
   return 'owner';
 }
@@ -23,7 +23,7 @@ function hasScope(scopes, required) {
   return values.has('*') || values.has(required);
 }
 
-function createAccessToken(db, { name = '客户端', principalId = 'engine' } = {}) {
+function createAccessToken(db, { name = 'Client', principalId = 'engine' } = {}) {
   const normalizedRole = normalizeRole();
   const token = `tae_${crypto.randomBytes(32).toString('base64url')}`;
   const scopes = roleScopes(normalizedRole).join(',');
@@ -33,7 +33,7 @@ function createAccessToken(db, { name = '客户端', principalId = 'engine' } = 
     VALUES (?, ?, ?, ?, ?, ?)
   `).run(
     String(principalId || 'engine'),
-    String(name || '客户端').trim().slice(0, 80),
+    String(name || 'Client').trim().slice(0, 80),
     hashSecret(token),
     token.slice(0, 12),
     normalizedRole,
@@ -77,7 +77,7 @@ function createPairingCode(db, { ttlMinutes = 10, principalId = 'engine' } = {})
   throw new Error('PAIRING_CODE_GENERATION_FAILED');
 }
 
-function exchangePairingCode(db, code, { clientName = '客户端', principalId } = {}) {
+function exchangePairingCode(db, code, { clientName = 'Client', principalId } = {}) {
   const value = String(code || '').trim().toUpperCase();
   if (!/^TA-[A-Z2-9]{4}-[A-Z2-9]{4}-[A-Z2-9]{4}$/.test(value)) {
     throw new Error('PAIRING_CODE_INVALID');
@@ -103,7 +103,7 @@ function authenticateAccessToken(db, token) {
     WHERE token_hash = ? AND revoked_at IS NULL`).get(hashSecret(value));
   if (!row) return null;
   db.prepare('UPDATE engine_access_tokens SET last_used_at = CURRENT_TIMESTAMP WHERE id = ?').run(row.id);
-  // 以前签发的只读 / 操作令牌同样按管理权限处理。
+  // Read-only / operate tokens issued earlier are also treated as admin.
   const scopes = new Set(ROLE_SCOPES.owner);
   return { ...row, role: 'owner', scopes };
 }

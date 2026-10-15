@@ -4,21 +4,21 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="referrer" content="no-referrer">
-  <title>T-Agent · 身份验证</title>
+  <title>T-Agent · Authentication</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/css/auth.css">
   <script src="/js/i18n.js"></script>
-  <script src="/js/i18n-en-shell.js"></script>
+  <script src="/js/i18n-zh-ui.js"></script>
   <script src="/js/auth.js" defer></script>
 </head>
 <body>
   <main class="auth-card" aria-labelledby="auth-title">
     <span class="brand">T-Agent</span>
-    <h1 id="auth-title">身份验证</h1>
-    <p id="auth-description">正在检查绑定状态…</p>
+    <h1 id="auth-title">Authentication</h1>
+    <p id="auth-description">Checking binding status…</p>
     <div id="auth-content" aria-live="polite"></div>
     <p id="auth-error" role="alert" hidden></p>
-    <p class="security-note">Web 和手机 H5 使用同一身份验证器。请勿分享绑定密钥、验证码或恢复码。</p>
+    <p class="security-note">Web and mobile H5 share the same authenticator. Never share the binding key, codes or recovery codes.</p>
     <button type="button" class="secondary" data-lang-toggle data-lang-icon="🌐 " translate="no"></button>
   </main>
 </body>

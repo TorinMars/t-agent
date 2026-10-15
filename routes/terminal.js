@@ -68,14 +68,14 @@ function assertTerminal(taskId, value) {
 }
 
 function listTerminals(taskId) {
-  return [{ terminal_id: 'default', title: '终端 1' }, ...db.prepare(
+  return [{ terminal_id: 'default', title: 'Terminal 1' }, ...db.prepare(
     'SELECT terminal_id, title FROM task_terminals WHERE task_id = ? ORDER BY rowid'
   ).all(taskId)];
 }
 
 function createTerminal(taskId) {
   const id = require('crypto').randomUUID();
-  const title = `终端 ${listTerminals(taskId).length + 1}`;
+  const title = `Terminal ${listTerminals(taskId).length + 1}`;
   db.prepare('INSERT INTO task_terminals (task_id, terminal_id, title) VALUES (?, ?, ?)').run(taskId, id, title);
   return { terminal_id: id, title };
 }
@@ -108,12 +108,12 @@ function appendBuffer(taskId, data) {
   const s = sessions.get(taskId);
   if (!s) return;
   s.buffer += data;
-  // 超限时截断保留后 5MB
+  // when over the limit, truncate and keep the last 5MB
   if (s.buffer.length > MAX_BUFFER) {
     s.buffer = s.buffer.slice(s.buffer.length - MAX_BUFFER);
   }
   s.pendingSince += data.length;
-  // 累积超 50KB 立即 flush
+  // flush immediately once more than 50KB has accumulated
   if (s.pendingSince >= FLUSH_SIZE) {
     clearInterval(s.flushTimer);
     flushToDB(taskId);
@@ -125,13 +125,13 @@ function getOrCreateSession(ownerTaskId, workDir, dirWarning, id = 'default') {
   const taskId = sessionKey(ownerTaskId, id);
   if (sessions.has(taskId)) return sessions.get(taskId);
 
-  // 从 DB 恢复历史 buffer
+  // restore the history buffer from the DB
   const row = id === 'default'
     ? db.prepare('SELECT buffer FROM terminal_logs WHERE task_id = ?').get(ownerTaskId)
     : db.prepare('SELECT buffer FROM task_terminals WHERE task_id = ? AND terminal_id = ?').get(ownerTaskId, id);
-  // 恢复的历史来自一个已经不存在的 PTY（服务重启、崩溃、手动关闭）。被杀掉的程序来不及关闭它打开的
-  // 鼠标/焦点上报模式，若原样回放，浏览器终端会继续把鼠标移动当成输入灌进新的 shell，
-  // 表现为提示符后不断出现 35;39;58M 之类的字符。所以恢复时统一复位这些输入模式。
+  // The restored history comes from a PTY that no longer exists (service restart, crash, manual close). The killed program had no chance to turn off the
+  // mouse/focus reporting modes it had enabled; if replayed unchanged, the browser terminal keeps feeding mouse movement into the new shell as input,
+  // which shows up as characters like 35;39;58M after the prompt. So these input modes are always reset when restoring.
   const staleModes = row && row.buffer ? RESET_INPUT_MODES : '';
   const savedBuffer = (dirWarning || '') + (row ? row.buffer : '') + staleModes;
 
@@ -140,7 +140,7 @@ function getOrCreateSession(ownerTaskId, workDir, dirWarning, id = 'default') {
   try {
     repairSpawnHelperPermissions(path.resolve(__dirname, '..'));
     const nodePty = require('node-pty');
-    // LaunchAgent 启动时 PATH 很精简，手动补全常用路径确保 node/brew/工具可用
+    // A LaunchAgent starts with a slim PATH, so add the common paths by hand to make sure node/brew/tools are available
     const fullPath = [
       '/usr/local/bin',
       '/opt/homebrew/bin',
@@ -151,20 +151,20 @@ function getOrCreateSession(ownerTaskId, workDir, dirWarning, id = 'default') {
       '/sbin',
       process.env.PATH,
     ].filter(Boolean).join(':');
-    // macOS 通常使用 zsh，而 Linux 服务器常只有 bash/sh。选择实际存在的
-    // shell，避免 node-pty 因固定的 /bin/zsh 路径不存在而启动失败。
+    // macOS usually uses zsh while Linux servers often only have bash/sh. Pick the shell that
+    // actually exists, so node-pty does not fail to start because the fixed /bin/zsh path is missing.
     shell = ['/bin/zsh', '/bin/bash', '/bin/sh'].find(candidate => fs.existsSync(candidate));
-    if (!shell) throw new Error('未找到可用的 shell（/bin/zsh、/bin/bash、/bin/sh）');
+    if (!shell) throw new Error('No usable shell found (/bin/zsh, /bin/bash, /bin/sh)');
 
-    // 服务以 root 运行时降权到 TERMINAL_USER（默认 dev），否则 Claude Code 拒绝跳过权限确认的模式。
+    // When the service runs as root, drop to TERMINAL_USER (default dev), otherwise Claude Code refuses the mode that skips permission prompts.
     const dropped = resolveTerminalUser();
     if (!dropped.user && (dropped.reason === 'missing-explicit' || dropped.reason === 'missing-default')) {
-      console.warn(`[terminal] 终端用户 ${dropped.name} 不存在，终端仍以服务用户（root）运行；创建该用户或在 .env 设置 TERMINAL_USER= 可消除此提示`);
+      console.warn(`[terminal] terminal user ${dropped.name} does not exist; the terminal still runs as the service user (root). Create that user or set TERMINAL_USER= in .env to silence this message`);
     }
     const runAs = dropped.user;
     let cwd = workDir || os.homedir();
     if (runAs && !userCanEnter(cwd, runAs)) {
-      console.warn(`[terminal] 用户 ${runAs.name} 无权进入 ${cwd}，终端改从其家目录 ${runAs.home} 启动；请调整该目录的属主或权限`);
+      console.warn(`[terminal] user ${runAs.name} cannot enter ${cwd}; the terminal starts from its home directory ${runAs.home} instead. Adjust the owner or permissions of that directory`);
       cwd = runAs.home;
     }
     pty = nodePty.spawn(shell, [], {
@@ -177,8 +177,8 @@ function getOrCreateSession(ownerTaskId, workDir, dirWarning, id = 'default') {
         ...(runAs ? { ...terminalEnvFor(runAs, process.env), SHELL: shell } : process.env),
         TERM: 'xterm-256color',
         PATH: fullPath,
-        // 按本机实际安装的 locale 选择 UTF-8（C.UTF-8 / en_US / zh_CN ...），
-        // 否则 zsh 会把中文目录名显示成 \M-^ 乱码。
+        // Pick UTF-8 from the locales actually installed on this machine (C.UTF-8 / en_US / zh_CN ...),
+        // otherwise zsh shows Chinese directory names as \M-^ garbage.
         ...utf8LocaleEnv(process.env),
         ...hookEnv(ownerTaskId, id),
       },
@@ -239,8 +239,8 @@ function getOrCreateSession(ownerTaskId, workDir, dirWarning, id = 'default') {
 }
 
 /**
- * 终止任务的服务端 PTY。restart-workdir 同时清空旧历史，下一次连接会从
- * 任务 work_dir 创建全新 Shell；close 保留历史，delete 同时删除额外终端记录。
+ * Terminate the task's server-side PTY. restart-workdir also clears the old history and the next connection creates a brand-new shell from the
+ * task work_dir; close keeps the history; delete also removes the extra terminal record.
  */
 function controlSession(taskId, action, requestedTerminalId) {
   const id = Number.parseInt(taskId, 10);
@@ -292,7 +292,7 @@ function handleWs(ws, req, sessionUser, requestedTaskId = null, requestedTermina
   const task = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(taskId, sessionUser.login);
   if (!task) {
     console.error('[terminal] task not found, taskId:', taskId, 'user:', sessionUser.login);
-    ws.send('\r\n\x1b[31m[任务不存在或无权限]\x1b[0m\r\n');
+    ws.send('\r\n\x1b[31m[Task does not exist or access denied]\x1b[0m\r\n');
     ws.close(1008, 'task not found');
     return;
   }
@@ -306,24 +306,24 @@ function handleWs(ws, req, sessionUser, requestedTaskId = null, requestedTermina
   }
   const key = sessionKey(taskId, selectedId);
   const workDir = task.work_dir || os.homedir();
-  // 检查目录是否存在，不存在时回退到 $HOME 并记录告警
+  // Check that the directory exists; if not, fall back to $HOME and log a warning
   let actualDir = workDir;
   let dirWarning = null;
   if (!fs.existsSync(workDir)) {
     actualDir = os.homedir();
-    dirWarning = `\r\n\x1b[33m[⚠ 工作目录不存在: ${workDir}]\x1b[0m\r\n\x1b[33m[已回退到 ${actualDir}，请编辑任务更新工作路径]\x1b[0m\r\n\r\n`;
+    dirWarning = `\r\n\x1b[33m[⚠ Working directory does not exist: ${workDir}]\x1b[0m\r\n\x1b[33m[Fell back to ${actualDir}; edit the task to update the working path]\x1b[0m\r\n\r\n`;
   }
   const s = getOrCreateSession(taskId, actualDir, dirWarning, selectedId);
   if (s.startupError) {
-    const details = String(s.startupError.message || '未知错误')
+    const details = String(s.startupError.message || 'unknown error')
       .replace(/[\x00-\x1f\x7f]/g, ' ')
       .slice(0, 500);
-    ws.send(`\r\n\x1b[31m[终端启动失败]\x1b[0m\r\n${details}\r\n`);
+    ws.send(`\r\n\x1b[31m[Terminal failed to start]\x1b[0m\r\n${details}\r\n`);
     ws.close();
     return;
   }
 
-  // 断开旧连接（同 task 的旧 ws）
+  // Disconnect the old connection (the old ws of the same task)
   if (s.ws && s.ws.readyState === 1) {
     s.ws.close(1000, 'replaced by new connection');
   }
@@ -353,8 +353,8 @@ function handleWs(ws, req, sessionUser, requestedTaskId = null, requestedTermina
   ws.on('message', (msg) => {
     if (!authorized()) return;
     const str = msg.toString();
-    // 只有以 '{' 开头的消息才尝试作为控制指令解析（如 resize）
-    // 数字字符（0-9）是合法 JSON，若不做此判断会被 parse 后静默丢弃
+    // Only try to parse messages starting with '{' as control commands (such as resize)
+    // digit characters (0-9) are valid JSON and would be parsed and silently dropped without this check
     if (/^\s*\{/.test(str)) {
       try {
         const data = JSON.parse(str);
@@ -383,7 +383,7 @@ function handleWs(ws, req, sessionUser, requestedTaskId = null, requestedTermina
   ws.on('close', () => {
     if (s.ws === ws) {
       s.ws = null;
-      // 立即 flush 到 DB
+      // flush to the DB immediately
       clearInterval(s.flushTimer);
       flushToDB(key);
       s.flushTimer = setInterval(() => flushToDB(key), FLUSH_INTERVAL);

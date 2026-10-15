@@ -29,7 +29,7 @@ function testDb() {
 
 const git = (cwd, ...args) => execFileSync('git', ['-C', cwd, '-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { encoding: 'utf8' }).trim();
 
-// 远程仓库 + 克隆到工作目录的代码目录
+// A remote repository + a code directory cloned into the workspace
 function repoIn(root, name) {
   const remote = path.join(temp(), `${name}.git`);
   execFileSync('git', ['init', '--bare', '-b', 'main', remote]);
@@ -45,7 +45,7 @@ function repoIn(root, name) {
   return { dir, remote };
 }
 
-test('列出工作目录下未被任务管理的子目录，忽略隐藏目录、文件和已管理的目录', () => {
+test('List sub-directories of the workspace not managed by a task, ignoring hidden directories, files and managed directories', () => {
   const root = temp();
   const database = testDb();
   for (const name of ['managed', 'free-a', 'free-b', '.hidden', 'node_modules']) fs.mkdirSync(path.join(root, name));
@@ -59,7 +59,7 @@ test('列出工作目录下未被任务管理的子目录，忽略隐藏目录�
   assert.deepEqual(result.items.map(item => item.name), ['free-a', 'free-b']);
 });
 
-test('批量导入只登记任务，不在目录里生成文件；不在列表里的路径被拒绝', () => {
+test('Bulk import only registers tasks and creates no files in the directories; paths not in the list are rejected', () => {
   const root = temp();
   const database = testDb();
   fs.mkdirSync(path.join(root, 'one'));
@@ -76,7 +76,7 @@ test('批量导入只登记任务，不在目录里生成文件；不在列表�
   assert.throws(() => tools.importDirs(database, 'u', root, []), /PATHS_REQUIRED/);
 });
 
-test('任务目录本身不是仓库：找出其中（3 层内）的多个仓库，不进入仓库内部和 node_modules', () => {
+test('A task directory itself is not a repo: find the several repos inside it (within 3 levels), without entering repos or node_modules', () => {
   const task = temp();
   repoIn(task, 'api');
   fs.mkdirSync(path.join(task, 'group'));
@@ -89,17 +89,17 @@ test('任务目录本身不是仓库：找出其中（3 层内）的多个仓库
   execFileSync('git', ['init', '-q', path.join(task, 'api', 'vendor', 'inner')]);
   fs.mkdirSync(path.join(task, 'docs'));
   assert.deepEqual(tools.findRepos(task), [path.join(task, 'api'), path.join(task, 'group', 'web')]);
-  // 任务目录自己就是仓库时只算它自己
+  // When the task directory is itself a repo only it counts
   assert.deepEqual(tools.findRepos(path.join(task, 'api')), [path.join(task, 'api')]);
 });
 
-test('按任务下的仓库列出和批量清理：只删安全的仓库目录，任务目录和其他文件保留，可恢复', async () => {
+test('List and clean up repos per task in bulk: only safe repo directories are deleted, the task directory and other files are kept, and they can be restored', async () => {
   const root = temp();
   const task = path.join(root, 'task-one');
   fs.mkdirSync(path.join(task, 'sub'), { recursive: true });
   fs.writeFileSync(path.join(task, 'notes.md'), 'keep me');
   const database = testDb();
-  const taskId = database.prepare('INSERT INTO tasks (title, work_dir, user_id) VALUES (?, ?, ?)').run('多仓库任务', task, 'u').lastInsertRowid;
+  const taskId = database.prepare('INSERT INTO tasks (title, work_dir, user_id) VALUES (?, ?, ?)').run('Multi-repo task', task, 'u').lastInsertRowid;
   const clean = repoIn(task, 'clean');
   const dirty = repoIn(path.join(task, 'sub'), 'dirty');
   fs.writeFileSync(path.join(dirty.dir, 'wip.txt'), 'uncommitted');
@@ -111,12 +111,12 @@ test('按任务下的仓库列出和批量清理：只删安全的仓库目录�
   const overview = await tools.cleanupOverview(database, 'u', root);
   const byName = Object.fromEntries(overview.items.map(item => [item.name, item]));
   assert.deepEqual(Object.keys(byName).sort(), ['clean', path.join('sub', 'dirty'), 'unpushed']);
-  assert.ok(overview.items.every(item => item.task_id === taskId && item.title === '多仓库任务'));
+  assert.ok(overview.items.every(item => item.task_id === taskId && item.title === 'Multi-repo task'));
   assert.equal(byName.clean.safe, true);
   assert.equal(byName.clean.remote, clean.remote);
   assert.ok(byName.clean.size_bytes > 0);
-  assert.match(byName[path.join('sub', 'dirty')].reason, /未提交/);
-  assert.match(byName.unpushed.reason, /未推送/);
+  assert.match(byName[path.join('sub', 'dirty')].reason, /uncommitted/);
+  assert.match(byName.unpushed.reason, /unpushed/);
 
   const outsider = repoIn(root, 'outsider');
   const closed = [];
@@ -145,13 +145,13 @@ test('按任务下的仓库列出和批量清理：只删安全的仓库目录�
   assert.equal((await tools.cleanupOverview(database, 'u', root)).archived.length, 0);
 });
 
-test('受保护的目录（工作目录本身、包含其他任务的仓库、本程序所在目录）不能被清理', async () => {
+test('Protected directories (the working directory itself, a repo containing other tasks, the directory of this program) cannot be cleaned up', async () => {
   const root = temp();
   const database = testDb();
   const outer = repoIn(root, 'outer');
   fs.mkdirSync(path.join(outer.dir, 'nested'));
   const add = (title, dir) => database.prepare('INSERT INTO tasks (title, work_dir, user_id) VALUES (?, ?, ?)').run(title, dir, 'u').lastInsertRowid;
-  // 任务目录自己就是仓库，且里面还有另一个任务的目录
+  // The task directory is itself a repo and also contains another task's directory
   const outerId = add('outer', outer.dir);
   add('inner', path.join(outer.dir, 'nested'));
   const appId = add('app', path.resolve(__dirname, '..'));

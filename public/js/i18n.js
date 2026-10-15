@@ -1,88 +1,90 @@
-// 界面语言切换：英文（默认）/ 中文。源码里的界面文字保持中文，英文模式下由本模块翻译：
-//   1. 用 MutationObserver 翻译 DOM 里的文本节点和 title / placeholder / aria-label 等属性（静态 HTML 与 JS 动态渲染的内容都覆盖）；
-//   2. 包装 alert / confirm / prompt；
-//   3. 暴露 I18n.t() 给直接写入终端等非 DOM 输出使用。
-// 词典见 i18n-en-*.js（I18n.add({ 中文: 'English' })）。未收录的文字原样显示。切换语言会刷新页面，保证所有动态内容按新语言重新渲染。
-// 用户内容（Markdown 文档、终端、编辑器、任务/文件名等）不翻译：放在 SKIP 选择器或 translate="no" 里。
+// UI language switch: English (default) / Chinese.
+// All source text is English. When Chinese is selected, this module translates it:
+//   1. a MutationObserver translates DOM text nodes and title / placeholder / aria-label ... attributes
+//      (static HTML, content rendered later by JS, and toasts are all covered);
+//   2. alert / confirm / prompt are wrapped;
+//   3. I18n.t() is available for text that does not go through the DOM (terminal output, downloads).
+// Dictionaries live in i18n-zh-*.js as I18n.add({ 'English text': '<Chinese text>' }). A key may contain {1}, {2} ... placeholders
+// for the variable parts of a sentence; the same placeholders appear in the Chinese value and may be reordered.
+// Text without an entry is shown unchanged. Switching the language reloads the page so everything is rendered again.
+// User content (Markdown documents, terminals, the editor, task / file names ...) is never translated: it is excluded by
+// the SKIP selector below or by translate="no".
 (() => {
   const KEY = 'ta-lang';
   const LANGS = ['en', 'zh'];
   const HAS_DOM = typeof document !== 'undefined';
-  const HAN = /[一-鿿]/;
+  const LETTER = /[A-Za-z]/;
   const readStored = () => { try { return localStorage.getItem(KEY); } catch { return null; } };
   let lang = LANGS.includes(readStored()) ? readStored() : 'en';
 
-  const dict = new Map();
-  const patterns = [];
-  let phraseRegex = null;
+  const exact = new Map();
+  const templates = []; // { regex, slots, value, weight }
   const cache = new Map();
+  const norm = text => text.replace(/\s+/g, ' ');
+  const escapeRegex = value => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
   function add(entries) {
-    for (const [zh, en] of Object.entries(entries)) dict.set(zh, en);
-    phraseRegex = null;
+    for (const [source, target] of Object.entries(entries)) {
+      const key = norm(source).trim();
+      if (!/\{\d+\}/.test(key)) { exact.set(key, target); continue; }
+      const slots = [];
+      const parts = key.split(/(\{\d+\})/);
+      // A template with almost no fixed text (such as "{1}s" for a duration) must only match numbers, otherwise it would
+      // also match unrelated words ("docs" -> "doc" + "s").
+      const weight = parts.reduce((sum, part) => sum + (/^\{\d+\}$/.test(part) ? 0 : part.trim().length), 0);
+      const capture = weight < 4 ? '(\\d+(?:\\.\\d+)?)' : '([\\s\\S]*?)';
+      const pattern = parts.map(part => {
+        const slot = /^\{(\d+)\}$/.exec(part);
+        if (slot) { slots.push(slot[1]); return capture; }
+        return escapeRegex(part);
+      }).join('');
+      templates.push({ regex: new RegExp(`^${pattern}$`), slots, value: target, weight });
+    }
+    templates.sort((a, b) => b.weight - a.weight);
     cache.clear();
   }
-  // 需要调整语序的模板句：regex 命中整句时用 render(match) 生成英文
-  function addPattern(regex, render) { patterns.push([regex, render]); cache.clear(); }
 
-  const escapeRegex = value => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  function getPhraseRegex() {
-    if (!phraseRegex) {
-      const keys = [...dict.keys()].filter(key => key.length > 1 && HAN.test(key)).sort((a, b) => b.length - a.length);
-      phraseRegex = keys.length ? new RegExp(keys.map(escapeRegex).join('|'), 'g') : /(?!)/g;
+  function translateCore(core, depth) {
+    const hit = exact.get(core);
+    if (hit !== undefined) return hit;
+    if (depth > 2) return core;
+    for (const template of templates) {
+      const match = template.regex.exec(core);
+      if (!match) continue;
+      return template.value.replace(/\{(\d+)\}/g, (all, number) => {
+        const index = template.slots.indexOf(number);
+        return index < 0 ? all : translateCore(match[index + 1].trim(), depth + 1);
+      });
     }
-    return phraseRegex;
-  }
-
-  const PUNCT = { '，': ', ', '。': '. ', '：': ': ', '；': '; ', '、': ', ', '？': '? ', '！': '! ', '（': ' (', '）': ') ', '“': '"', '”': '"', '「': '"', '」': '"', '‘': "'", '’': "'", '《': '"', '》': '"' };
-
-  function translatePhrases(core) {
-    let replaced = false;
-    let out = core.replace(getPhraseRegex(), (match, offset, whole) => {
-      replaced = true;
-      let value = dict.get(match);
-      const before = whole[offset - 1];
-      // 句中的词不保留首字母大写（句首、冒号/句号/换行之后保留）
-      const lead = whole.slice(0, offset).replace(/[ \t]+$/, '');
-      if (/^[A-Z][a-z]/.test(value) && lead && !/[：。！？:.!?\n>]$/.test(lead)) value = value[0].toLowerCase() + value.slice(1);
-      const after = whole[offset + match.length];
-      if (value && before && /[\w一-鿿)\]%]/.test(before)) value = ` ${value}`;
-      if (value && after && /[\w一-鿿(\[]/.test(after)) value = `${value} `;
-      return value;
-    });
-    if (!replaced) return core;
-    out = out.replace(/[，。：；、？！（）“”「」‘’《》]/g, ch => PUNCT[ch]);
-    return out.replace(/ {2,}/g, ' ').replace(/\( +/g, '(').replace(/ +([,.;:?!)])/g, '$1').replace(/([,.;:?!]) +$/g, '$1');
-  }
-
-  function translateCore(core) {
-    if (dict.has(core)) return dict.get(core);
-    for (const [regex, render] of patterns) {
-      const match = regex.exec(core);
-      if (match) { const result = render(match, translateCore); if (typeof result === 'string') return result; }
+    // "A · B · C" is assembled from separately translatable parts (status lines, version labels ...).
+    if (core.includes(' \u00b7 ')) {
+      const parts = core.split(' \u00b7 ');
+      const translated = parts.map(part => translateCore(part, depth + 1));
+      if (translated.some((part, index) => part !== parts[index])) return translated.join(' \u00b7 ');
     }
-    return translatePhrases(core);
+    return core;
   }
 
   function t(text) {
-    if (lang !== 'en' || typeof text !== 'string' || !HAN.test(text)) return text;
+    if (lang !== 'zh' || typeof text !== 'string' || !LETTER.test(text)) return text;
     const cached = cache.get(text);
     if (cached !== undefined) return cached;
     const [, lead, core, tail] = /^(\s*)([\s\S]*?)(\s*)$/.exec(text);
-    const result = lead + translateCore(core) + tail;
-    if (cache.size > 2000) cache.clear();
+    const translated = translateCore(norm(core), 0);
+    const result = translated === norm(core) ? text : lead + translated + tail;
+    if (cache.size > 3000) cache.clear();
     cache.set(text, result);
     return result;
   }
 
   function set(next) {
     if (!LANGS.includes(next) || next === lang) return;
-    try { localStorage.setItem(KEY, next); } catch { /* 隐私模式下无法记住，刷新后回到默认英文 */ }
+    try { localStorage.setItem(KEY, next); } catch { /* private mode: not remembered, the next load falls back to English */ }
     if (HAS_DOM) location.reload();
     lang = next;
   }
 
-  const api = { t, add, addPattern, set, get: () => lang, toggle: () => set(lang === 'en' ? 'zh' : 'en'), languages: () => LANGS.slice() };
+  const api = { t, add, set, get: () => lang, toggle: () => set(lang === 'en' ? 'zh' : 'en'), languages: () => LANGS.slice() };
 
   if (HAS_DOM) {
     const ATTRS = ['title', 'placeholder', 'aria-label', 'data-tip', 'alt'];
@@ -91,7 +93,7 @@
 
     const fixText = node => {
       const value = node.nodeValue;
-      if (!value || !HAN.test(value) || node.parentNode.nodeName === 'TEXTAREA' || skipped(node.parentElement)) return;
+      if (!value || !LETTER.test(value) || node.parentNode.nodeName === 'TEXTAREA' || skipped(node.parentElement)) return;
       const next = t(value);
       if (next !== value) node.nodeValue = next;
     };
@@ -99,7 +101,7 @@
       if (!el.getAttribute || skipped(el)) return;
       for (const name of ATTRS) {
         const value = el.getAttribute(name);
-        if (value && HAN.test(value)) { const next = t(value); if (next !== value) el.setAttribute(name, next); }
+        if (value && LETTER.test(value)) { const next = t(value); if (next !== value) el.setAttribute(name, next); }
       }
     };
     const walk = root => {
@@ -114,21 +116,20 @@
       }
     };
 
-    // 切换按钮：显示"另一种语言"的名字（名字本身不翻译）
+    // Toggle buttons show the name of the OTHER language (the names themselves are never translated).
     const wireToggles = () => {
       document.querySelectorAll('[data-lang-toggle]').forEach(button => {
         button.setAttribute('translate', 'no');
-        const label = lang === 'en' ? '中文' : 'English';
-        const text = `${button.dataset.langIcon || ''}${label}`;
+        const text = `${button.dataset.langIcon || ''}${lang === 'en' ? '\u4e2d\u6587' : 'English'}`;
         if (button.textContent !== text) button.textContent = text;
-        button.title = lang === 'en' ? 'Switch to Chinese / 切换为中文' : 'Switch to English / 切换为英文';
+        button.title = lang === 'en' ? 'Switch to Chinese' : '\u5207\u6362\u4e3a\u82f1\u6587 (Switch to English)';
         if (!button.dataset.langBound) { button.dataset.langBound = '1'; button.addEventListener('click', () => api.toggle()); }
       });
     };
 
     document.documentElement.lang = lang === 'en' ? 'en' : 'zh-CN';
-    if (lang === 'en') {
-      // 在解析阶段就开始观察，页面第一次绘制前基本已经是英文
+    if (lang === 'zh') {
+      // Observe while the document is still being parsed, so the first paint is already in Chinese.
       const observer = new MutationObserver(records => {
         for (const record of records) {
           if (record.type === 'childList') record.addedNodes.forEach(walk);
@@ -142,7 +143,7 @@
         if (typeof original === 'function') window[fn] = (message, ...rest) => original.call(window, t(String(message === undefined ? '' : message)), ...rest);
       }
     }
-    const ready = () => { if (lang === 'en') walk(document.documentElement); wireToggles(); };
+    const ready = () => { if (lang === 'zh') walk(document.documentElement); wireToggles(); };
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', ready); else ready();
   }
 

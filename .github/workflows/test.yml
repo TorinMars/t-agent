@@ -25,6 +25,6 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # 只跑 test/（单元与集成）。scripts/test-*-browser.cjs 需要 Chromium，在本机手动运行。
+      # Run only test/ (unit and integration). scripts/test-*-browser.cjs needs Chromium and is run manually on a local machine.
       - name: Run tests
         run: node --test test/

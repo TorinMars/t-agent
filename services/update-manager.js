@@ -55,14 +55,14 @@ function readPersistedState() {
     const persisted = JSON.parse(row.value);
     if (persisted.status === 'updating') {
       persisted.status = persisted.stage === 'restarting' ? 'current' : 'failed';
-      persisted.message = persisted.stage === 'restarting' ? '更新完成' : '上次更新意外中断';
+      persisted.message = persisted.stage === 'restarting' ? 'Update complete' : 'The last update was interrupted unexpectedly';
       persisted.error = persisted.stage === 'restarting' ? null : 'UPDATE_INTERRUPTED';
       persisted.stage = null;
     }
     if (persisted.status === 'restart_pending') {
       persisted.status = 'current';
       persisted.restart_pending = false;
-      persisted.message = '已是最新版本';
+      persisted.message = 'Already up to date';
     }
     return { ...defaultState(), ...persisted };
   }
@@ -90,10 +90,10 @@ function readLocalManifest() {
   return validateVersionManifest(manifest);
 }
 
-// 进程启动时磁盘上的版本号，也就是当前这个进程实际在运行的版本。
-// 检查更新是拿远程版本和“磁盘上的 VERSION.json”比较的：手动 git pull 或上次更新中途失败后，磁盘代码会比内存里的新，
-// 此时必须单独提示“需要重启”，不能报“已是最新”。
-// 每个进程启动时生成一次。页面据此区分“旧进程还没退出”和“新进程已经起来”：磁盘上的版本号在重启前就已经是新的，不能用来判断。
+// The version on disk when the process started, i.e. the version this process is actually running.
+// Update checks compare the remote version with the on-disk VERSION.json: after a manual git pull or an update that failed halfway, the on-disk code can be newer than the in-memory one,
+// and then "restart needed" must be reported separately instead of "up to date".
+// Generated once at every process start. The page uses it to tell "the old process has not exited yet" from "the new process is up": the on-disk version is already new before the restart, so it cannot be used for that.
 const bootId = crypto.randomUUID();
 
 const runningVersion = (() => {
@@ -207,10 +207,10 @@ async function runCheck({ force = false } = {}) {
     const manifestText = await execGit(['show', `${target}:VERSION.json`]);
     result = { manifest: validateVersionManifest(JSON.parse(manifestText)) };
     restartRequired = await requiresRestart(execGit, runningCommit, target);
-    // 工作区的代码是否已经比运行中的进程新（且改动需要重启才生效）。辅助信息，失败不影响检查本身。
+    // Whether the workspace code is already newer than the running process (and the change needs a restart to take effect). Auxiliary information; a failure does not affect the check itself.
     if (runningCommit) {
       try { restartPending = await requiresRestart(execGit, runningCommit, 'HEAD'); }
-      catch (error) { logUpdate('checking', `无法判断是否需要重启：${error.message}`); }
+      catch (error) { logUpdate('checking', `Cannot tell whether a restart is needed: ${error.message}`); }
     }
   } else {
     restartPending = Boolean(runningVersion) && runningVersion !== local.app_version;
@@ -225,7 +225,7 @@ async function runCheck({ force = false } = {}) {
   if (!remote) throw new Error('VERSION_CACHE_EMPTY');
   validateVersionManifest(remote);
   const comparison = compareSemver(remote.app_version, local.app_version);
-  // 有更新时仍是 available；版本一致但运行中的代码比磁盘旧时是 restart_pending，而不是“已是最新”。
+  // When an update exists it stays available; when versions match but the running code is older than disk it is restart_pending, not "up to date".
   const status = comparison > 0 ? 'available' : comparison < 0 ? 'local_newer' : (restartPending ? 'restart_pending' : 'current');
   return saveState({
     status,
@@ -242,9 +242,9 @@ async function runCheck({ force = false } = {}) {
     error: null,
     error_details: null,
     version_url: url || `${config.gitRemote}/${config.gitBranch}:VERSION.json`,
-    message: status === 'available' ? '发现新版本'
-      : status === 'restart_pending' ? `代码已更新到 ${local.app_version}，但服务仍在运行${runningVersion && runningVersion !== local.app_version ? ` ${runningVersion} 的` : '旧'}代码，需要重启服务才会生效`
-        : status === 'current' ? '已是最新版本' : '本地版本较新',
+    message: status === 'available' ? 'Update available'
+      : status === 'restart_pending' ? `Code was updated to ${local.app_version}, but the service is still running ${runningVersion && runningVersion !== local.app_version ? ` the ${runningVersion}` : 'old'} code; restart the service for it to take effect`
+        : status === 'current' ? 'Already up to date' : 'Local version is newer',
   });
 }
 
@@ -252,7 +252,7 @@ async function check(options) {
   if (applyPromise) throw new Error('UPDATE_IN_PROGRESS');
   if (checkPromise) return checkPromise;
   checkPromise = runCheck(options).catch(error => {
-    saveState({ status: 'failed', stage: null, error: safeError(error), error_details: error.details || null, last_checked_at: new Date().toISOString(), message: '检查更新失败' });
+    saveState({ status: 'failed', stage: null, error: safeError(error), error_details: error.details || null, last_checked_at: new Date().toISOString(), message: 'Update check failed' });
     throw error;
   }).finally(() => { checkPromise = null; });
   return checkPromise;
@@ -267,8 +267,8 @@ function execGit(args, timeout = 60_000) {
   }, { stage: `git:${args[0]}`, errorCode: `GIT_${String(args[0]).toUpperCase()}_FAILED` });
 }
 
-// 更新里的 npm 网络请求：重试少、超时短，网络不通时一两分钟内报错，而不是等满 10 分钟。
-// 用户已经在环境里设置过的值不覆盖。http 日志级别让每次下载都有一行输出，界面才看得出还在动。
+// npm network requests during an update: few retries and a short timeout, so an unreachable network errors within a minute or two instead of waiting the full 10 minutes.
+// Values the user already set in the environment are not overridden. The http log level prints a line for every download so the UI can see it is still moving.
 const NPM_UPDATE_ENV = {
   npm_config_fetch_retries: '1',
   npm_config_fetch_retry_mintimeout: '2000',
@@ -284,7 +284,7 @@ function npmEnv() {
 }
 
 function execNpm(args, stage) {
-  const label = stage === 'installing' ? '正在安装依赖' : '正在构建前端资源';
+  const label = stage === 'installing' ? 'Installing dependencies' : 'Building frontend assets';
   return runWithProgress(
     label,
     onOutput => runUpdateCommand(process.platform === 'win32' ? 'npm.cmd' : 'npm', args, {
@@ -299,7 +299,7 @@ function execNpm(args, stage) {
 
 async function runApply({ force = false } = {}) {
   clearLog();
-  saveState({ status: 'updating', stage: 'refreshing_version', error: null, message: '正在确认远程版本' });
+  saveState({ status: 'updating', stage: 'refreshing_version', error: null, message: 'Confirming the remote version' });
   const checked = await runCheck({ force: true });
   if (checked.status !== 'available') throw new Error('NO_UPDATE_AVAILABLE');
 
@@ -308,17 +308,17 @@ async function runApply({ force = false } = {}) {
   else restartRequired = await applyGitUpdate(checked, force);
 
   if (!restartRequired) {
-    logUpdate('completed', '前端更新完成，跳过依赖安装、构建和服务重启，保留现有 Shell 连接');
+    logUpdate('completed', 'Frontend update finished; dependency install, build and service restart skipped, existing shell connections kept');
     return saveState({ status: 'current', stage: 'completed', restart_required: false,
       local_version: checked.remote_version, error: null, error_details: null,
-      message: '前端更新完成，服务未重启，现有 Shell 连接保持。可稍后手动刷新页面加载新界面。' });
+      message: 'Frontend update finished; the service was not restarted and existing shell connections stay open. Refresh the page later to load the new UI.' });
   }
 
   await execNpm(['ci', '--ignore-scripts=false'], 'installing');
   await verifyNodePty();
   await execNpm(['run', 'build:monaco'], 'building');
-  saveState({ status: 'updating', stage: 'restarting', message: '更新完成，正在重启服务' });
-  // 非 0 退出码可让 systemd Restart=on-failure 和 macOS KeepAlive 都拉起新版本。
+  saveState({ status: 'updating', stage: 'restarting', message: 'Update finished, restarting the service' });
+  // A non-zero exit code makes both systemd Restart=on-failure and macOS KeepAlive bring the new version up.
   setTimeout(() => process.exit(75), 750).unref();
   return publicState();
 }
@@ -339,22 +339,22 @@ async function backupDatabase(metadata = {}) {
   saveState({
     status: 'updating',
     stage: 'backing_up',
-    message: '正在备份数据库',
+    message: 'Backing up the database',
     backup_path: backupPath,
     ...metadata,
   });
   const started = Date.now();
   await db.backup(backupPath);
-  logUpdate('backing_up', `备份完成，耗时 ${Date.now() - started}ms：${backupPath}`);
+  logUpdate('backing_up', `Backup finished in ${Date.now() - started}ms: ${backupPath}`);
   return backupPath;
 }
 
 async function applyGitUpdate(checked, force = false) {
-  saveState({ status: 'updating', stage: 'checking_workspace', message: '正在检查 Git 工作区' });
+  saveState({ status: 'updating', stage: 'checking_workspace', message: 'Checking the Git workspace' });
   const changes = await trackedChanges(execGit);
   if (changes.length && !force) throw dirtyError(changes);
 
-  saveState({ status: 'updating', stage: 'fetching', message: '正在获取 Git 更新' });
+  saveState({ status: 'updating', stage: 'fetching', message: 'Fetching Git updates' });
   await execGit(['fetch', config.gitRemote, `refs/heads/${config.gitBranch}:refs/remotes/${config.gitRemote}/${config.gitBranch}`]);
   const target = `${config.gitRemote}/${config.gitBranch}`;
   const remoteVersionText = await execGit(['show', `${target}:VERSION.json`]);
@@ -369,15 +369,15 @@ async function applyGitUpdate(checked, force = false) {
   const previousCommit = await execGit(['rev-parse', 'HEAD']);
   await backupDatabase({ previous_commit: previousCommit, install_type: 'git' });
   const codeBackup = await prepareWorkspace(execGit, force);
-  if (codeBackup) saveState({ code_backup: codeBackup, message: '本地修改已备份到 Git stash' });
+  if (codeBackup) saveState({ code_backup: codeBackup, message: 'Local changes were backed up to a Git stash' });
 
-  saveState({ status: 'updating', stage: 'merging', message: '正在快进代码' });
+  saveState({ status: 'updating', stage: 'merging', message: 'Fast-forwarding the code' });
   await execGit(['merge', '--ff-only', '--no-overwrite-ignore', target]);
   return restartRequired;
 }
 
 async function applyArchiveUpdate(checked) {
-  saveState({ status: 'updating', stage: 'downloading', message: '正在下载更新包', install_type: 'archive' });
+  saveState({ status: 'updating', stage: 'downloading', message: 'Downloading the update package', install_type: 'archive' });
   const staged = await stageGithubArchive({
     repository: config.updateRepository,
     ref: config.updateRef,
@@ -385,7 +385,7 @@ async function applyArchiveUpdate(checked) {
   });
   try {
     await backupDatabase({ previous_version: checked.local_version, install_type: 'archive' });
-    saveState({ status: 'updating', stage: 'copying', message: '正在安装更新文件' });
+    saveState({ status: 'updating', stage: 'copying', message: 'Installing the update files' });
     copyRelease(staged.sourceRoot, projectRoot);
   } finally {
     staged.cleanup();
@@ -400,7 +400,7 @@ async function apply(options = {}) {
       stage: null,
       error: safeError(error),
       error_details: error.details || null,
-      message: error.message === 'WORKTREE_DIRTY' ? '本地有未提交修改，无法更新' : '更新已阻断',
+      message: error.message === 'WORKTREE_DIRTY' ? 'Local uncommitted changes prevent updating' : 'Update blocked',
     });
     throw error;
   }).finally(() => { applyPromise = null; });
@@ -412,7 +412,7 @@ function publicState() {
   try { localManifest = readLocalManifest(); } catch {}
   return {
     ...state,
-    // 更新文件落盘后以及重启恢复时，以实际清单版本为准，避免状态缓存仍显示旧版本。
+    // After the update files are written, and when recovering after a restart, use the actual manifest version, so a state cache never keeps showing the old version.
     local_version: (localManifest && localManifest.app_version) || state.local_version,
     local_manifest: localManifest,
     boot_id: bootId,

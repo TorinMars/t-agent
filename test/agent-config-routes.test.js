@@ -31,11 +31,11 @@ async function listen(app) {
   return { call, close: () => server.close() };
 }
 
-test('推送：本机直接写文件；远程按各自的有效值（默认 + 覆盖）调用 Engine；旧 Engine 报不支持；结果记录到状态', async () => {
+test('Push: the local machine writes files directly; remote ones call the Engine with their own effective values (default + override); an old Engine reports unsupported; the result is recorded in the state', async () => {
   const { db, add } = database();
-  const okId = add('me', '服务器A', 'http://a.test');
-  const oldId = add('me', '旧服务器', 'http://old.test');
-  add('someone-else', '别人的', 'http://x.test');
+  const okId = add('me', 'Server A', 'http://a.test');
+  const oldId = add('me', 'Old server', 'http://old.test');
+  add('someone-else', 'Someone else’s', 'http://x.test');
   const calls = [];
   const remoteRequest = async (base, pathname, token, options = {}) => {
     calls.push({ base, pathname, token, method: options.method || 'GET', body: options.body });
@@ -48,7 +48,7 @@ test('推送：本机直接写文件；远程按各自的有效值（默认 + �
   const { call, close } = await listen(app);
   try {
     const overview = await call('GET', '/api/agent-config');
-    assert.deepEqual(overview.body.servers.map(item => item.name), ['本机', '服务器A', '旧服务器']);
+    assert.deepEqual(overview.body.servers.map(item => item.name), ['This machine', 'Server A', 'Old server']);
     assert.equal(overview.body.schema.claude[0].key, 'permission');
 
     assert.equal((await call('PUT', '/api/agent-config/defaults', { tool: 'claude', values: { model: 'sonnet', permission: 'plan' } })).status, 200);
@@ -59,15 +59,15 @@ test('推送：本机直接写文件；远程按各自的有效值（默认 + �
     const pushed = await call('POST', '/api/agent-config/push', {});
     assert.equal(pushed.status, 200);
     const byName = Object.fromEntries(pushed.body.results.map(item => [item.name, item]));
-    assert.equal(byName['本机'].ok, true);
+    assert.equal(byName['This machine'].ok, true);
     assert.equal(JSON.parse(fs.readFileSync(path.join(home, '.claude/settings.json'), 'utf8')).model, 'sonnet');
-    assert.equal(byName['服务器A'].ok, true);
+    assert.equal(byName['Server A'].ok, true);
     assert.deepEqual(calls.find(item => item.base === 'http://a.test').body, { tool: 'claude', values: { model: 'opus', permission: 'plan' } });
-    assert.equal(calls.find(item => item.base === 'http://a.test').token, 'tok-服务器A');
+    assert.equal(calls.find(item => item.base === 'http://a.test').token, 'tok-Server A');
     assert.equal(calls.some(item => item.base === 'http://x.test'), false);
-    assert.equal(byName['旧服务器'].ok, false);
-    assert.equal(byName['旧服务器'].tools.claude.error, 'AGENT_CONFIG_UNSUPPORTED');
-    assert.equal(byName['旧服务器'].tools.codex.skipped, true);
+    assert.equal(byName['Old server'].ok, false);
+    assert.equal(byName['Old server'].tools.claude.error, 'AGENT_CONFIG_UNSUPPORTED');
+    assert.equal(byName['Old server'].tools.codex.skipped, true);
 
     const after = (await call('GET', '/api/agent-config')).body;
     assert.equal(after.status.local.ok, true);
@@ -79,7 +79,7 @@ test('推送：本机直接写文件；远程按各自的有效值（默认 + �
   } finally { close(); }
 });
 
-test('Engine 接口：读取当前值、写入、拒绝非法内容', async () => {
+test('Engine endpoint: read current values, write, reject invalid content', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 't-agent-acr-engine-'));
   const app = express();
   app.use(express.json());

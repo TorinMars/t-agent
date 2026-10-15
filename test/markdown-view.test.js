@@ -22,11 +22,11 @@ test('highlight preserves exact code, whitespace and escaped markup; copy uses o
   doc.querySelector('button').click();
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(copied, source);
-  assert.equal(doc.querySelector('button').textContent, '已复制');
+  assert.equal(doc.querySelector('button').textContent, 'Copied');
 });
 
 test('unknown languages stay plain and Mermaid remains a diagram rather than a code card', () => {
-  const doc = render('<pre><code class="language-custom">&lt;b&gt;hello&lt;/b&gt;</code></pre><pre><code class="language-mermaid">graph TD; A--&gt;B;</code></pre><table><tr><td>内容</td></tr></table>');
+  const doc = render('<pre><code class="language-custom">&lt;b&gt;hello&lt;/b&gt;</code></pre><pre><code class="language-mermaid">graph TD; A--&gt;B;</code></pre><table><tr><td>content</td></tr></table>');
   assert.equal(doc.querySelector('code').textContent, '<b>hello</b>');
   assert.equal(doc.querySelector('code b'), null);
   assert.equal(doc.querySelectorAll('.md-code-block').length, 1);
@@ -38,6 +38,6 @@ test('copy failures are shown without breaking document rendering', async () => 
   const doc = render('<pre><code>example</code></pre>', { async writeText() { throw new Error('denied'); } });
   doc.querySelector('button').click();
   await new Promise(resolve => setImmediate(resolve));
-  assert.equal(doc.querySelector('button').textContent, '复制失败，请手动选择');
+  assert.equal(doc.querySelector('button').textContent, 'Copy failed; select it manually');
   assert.equal(doc.querySelector('code').textContent, 'example');
 });

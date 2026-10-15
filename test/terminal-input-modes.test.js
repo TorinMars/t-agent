@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { RESET_INPUT_MODES, watchShellReturn } = require('../lib/terminal-input-modes');
 
-test('前台程序退回 shell 时关闭残留的鼠标上报模式', async () => {
+test('When the foreground program returns to the shell, leftover mouse reporting modes are turned off', async () => {
   const pty = { process: 'zsh' };
   let resets = 0;
   const stop = watchShellReturn(pty, '/bin/zsh', () => { resets += 1; }, 5);

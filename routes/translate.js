@@ -17,8 +17,8 @@ function createTranslateRouter(options = {}) {
   router.use((error, req, res, next) => {
     if (res.headersSent) return next(error);
     if (error instanceof TranslatorError) return res.status(error.statusCode).json({ error: error.message });
-    if (error.type === 'entity.too.large') return res.status(413).json({ error: '内容过大' });
-    return res.status(500).json({ error: '翻译服务暂时不可用' });
+    if (error.type === 'entity.too.large') return res.status(413).json({ error: 'The content is too large' });
+    return res.status(500).json({ error: 'The translation service is temporarily unavailable' });
   });
   return router;
 }

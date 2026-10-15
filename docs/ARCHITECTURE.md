@@ -1,47 +1,47 @@
-# T-Agent 组件架构
+# T-Agent component architecture
 
-T-Agent 由 Client 和 Engine 两个边界明确的组件构成。
+T-Agent consists of two components with clear boundaries: the Client and the Engine.
 
 ## Client
 
-Client 负责用户界面、Engine 注册、凭证加密保存和多 Engine 数据聚合。Client 安装包默认包含一个本地 Engine，不需要重复安装。
+The Client is responsible for the user interface, Engine registration, encrypted storage of credentials and aggregation of data from several Engines. The Client package includes a local Engine by default, so it does not need to be installed separately.
 
-Client 通过标准 `/v1` API 连接远程 Engine。远程 Token 使用 `SESSION_SECRET` 加密后才写入 Client 数据库，不会返回浏览器。
+The Client connects to remote Engines through the standard `/v1` API. A remote Token is encrypted with `SESSION_SECRET` before it is written to the Client database and is never returned to the browser.
 
-## 多 Client 页面（已移除）
+## Multi-Client page (removed)
 
-v2.34.0 起移除了多 Client 工作台 `/clients`，未登录时只有隐藏登录入口可见。
+The multi-Client workspace `/clients` was removed in v2.34.0; when logged out only the hidden login entrance is visible.
 
-目标 Client 通过 `CLIENT_FRAME_ORIGINS` 配置可内嵌的工作台 origin；默认 CSP frame-ancestors 只允许同源。登录和绑定页面始终禁止内嵌。配置内嵌后，HTTPS 会话 Cookie 使用 SameSite=None + Secure，HTTP 保持 Strict；浏览器 API 与终端 Origin 校验不放宽。跨站使用依赖浏览器允许第三方 Cookie。同一主机不同端口的 Client 可用不同 `CLIENT_SESSION_COOKIE_NAME` 隔离会话，默认名称仍为 connect.sid。
+The target Client configures the workspace origins that may embed it with `CLIENT_FRAME_ORIGINS`; the default CSP frame-ancestors allows the same origin only. The login and binding pages can never be embedded. Once embedding is configured, the HTTPS session cookie uses SameSite=None + Secure and HTTP stays Strict; the browser API and terminal Origin checks are not relaxed. Cross-site use depends on the browser allowing third-party cookies. Clients on the same host with different ports can isolate their sessions with different `CLIENT_SESSION_COOKIE_NAME` values; the default name is still connect.sid.
 
 ## Engine
 
-Engine 是任务、Todo、Markdown 文档、工作目录和终端执行的权威数据源。Engine 接口（`/v1`）不需要用户名密码，仅使用可撤销的 Bearer Token；每个 Client 都内置并暴露同一套 Engine 接口，不再提供独立运行的 Engine 服务。Client 保持单用户数据归属，Web `/web` 和手机 H5 `/h5` 使用同一 TOTP 身份验证器鉴权，默认只监听 `127.0.0.1`。手机访问可显式配置 `HOST=0.0.0.0`，或通过 HTTPS 反向代理访问。
+The Engine is the authoritative source of tasks, to-dos, Markdown documents, working directories and terminal execution. The Engine endpoints (`/v1`) need no username or password and only use revocable Bearer Tokens; every Client includes and exposes the same Engine endpoints, and a separately running Engine service is no longer provided. The Client keeps single-user data ownership, and the web UI at `/web` and the mobile H5 at `/h5` are authenticated by the same TOTP authenticator and listen on `127.0.0.1` only by default. Phone access can be enabled explicitly with `HOST=0.0.0.0` or through an HTTPS reverse proxy.
 
-Client 初始化和旧版本升级均默认未绑定身份验证器。未登录（含未绑定）时，除隐藏登录入口、Bearer 令牌的机器接口（`/v1`、`/api/remote/v1`）、`/health` 和公开分享页外，所有地址、浏览器 API 和终端 WebSocket 都返回与不存在地址相同的 404（`lib/login-gate.js`），不跳转也不暴露 401/403；会话过期后前端向登录入口的 `/status` 确认再跳转。首次绑定无需初始密码或初始化码，不限制本机或远程：网页登录入口（`CLIENT_LOGIN_PATH`，默认 `/torin/hide/login`）与终端 `node scripts/client-auth-setup.js` 均可完成，二者共用同一绑定 API，并受认证限流与二次校验码确认保护。扫码或手动添加密钥并校验 6 位验证码后，才持久化启用绑定。已登录用户可在近期验证后远程更换验证器。绑定密钥与待确认密钥使用 `SESSION_SECRET` 派生的 AES-256-GCM 密钥加密；恢复码仅保存 SHA-256 哈希。会话为 30 天滚动有效期的 SQLite Session，并默认使用 HttpOnly/SameSite=Strict Cookie；仅直连本机 HTTP 可不设 Secure，远程生产环境和 HTTPS 均设置 Secure，确保生产模式也能在本机绑定。旧免登录会话不授予权限。验证码与恢复码均防重放，认证限流持久化到 SQLite。
+Both a fresh Client and an upgrade from an old version start with no authenticator bound. When logged out (including not yet bound), every address, browser API and terminal WebSocket returns the same 404 as a non-existent address (`lib/login-gate.js`), with no redirect and no 401/403, except the hidden login entrance, the Bearer-token machine endpoints (`/v1`, `/api/remote/v1`), `/health` and public share pages; after a session expires the frontend confirms with the login entrance's `/status` before redirecting. The first binding needs no initial password or setup code and is not restricted to local or remote access: both the web login entrance (`CLIENT_LOGIN_PATH`, default `/torin/hide/login`) and the terminal command `node scripts/client-auth-setup.js` can complete it; they share the same binding API and are protected by authentication rate limiting and a second code confirmation. The binding is only persisted after the QR code is scanned or the key is added manually and the 6-digit code is verified. A logged-in user can replace the authenticator remotely after a recent verification. The binding secret and the pending secret are encrypted with an AES-256-GCM key derived from `SESSION_SECRET`; recovery codes are stored only as SHA-256 hashes. Sessions are SQLite sessions with a rolling 30-day lifetime and default to an HttpOnly/SameSite=Strict cookie; Secure may be left off only for direct local HTTP, while remote production and HTTPS always set Secure, so binding on the local machine also works in production mode. Old no-login sessions grant no permission. Codes and recovery codes are replay-protected, and the authentication rate limit is persisted in SQLite.
 
-更换身份验证器需要五分钟内的再次验证，完成后撤销旧会话、旧恢复码并关闭浏览器终端连接。退出也立即关闭当前会话的终端连接，不终止 PTY 及其中正在执行的程序。`/v1` 与旧 `/api/remote/v1` 保留 Engine 的 Bearer Token 边界，明确创建的只读 `/share/:token` 链接仍按分享 Token 授权。
+Replacing the authenticator needs a verification within the last five minutes; once done, the old sessions and old recovery codes are revoked and browser terminal connections are closed. Logging out also closes the terminal connections of the current session immediately, without terminating the PTY or the programs running in it. `/v1` and the old `/api/remote/v1` keep the Engine's Bearer Token boundary, and explicitly created read-only `/share/:token` links are still authorized by the share Token.
 
-每个 Engine 在 SQLite 中保存稳定的 `engine_id`。Client 使用 `(engine_id, task_id)` 区分不同节点上的资源。
+Each Engine keeps a stable `engine_id` in SQLite. The Client uses `(engine_id, task_id)` to tell resources on different nodes apart.
 
-## 授权
+## Authorization
 
-- 配对码：`TA-XXXX-XXXX-XXXX`，默认 10 分钟失效且只能使用一次。
-- 访问 Token：`tae_...`，只在创建时显示明文，Engine 只保存 SHA-256 哈希。
-- 终端 ticket：`tat_...`，30 秒失效且只能使用一次。
+- Pairing code: `TA-XXXX-XXXX-XXXX`, expires after 10 minutes by default and can be used only once.
+- Access Token: `tae_...`, the plaintext is shown only when it is created, and the Engine stores only its SHA-256 hash.
+- Terminal ticket: `tat_...`, expires after 30 seconds and can be used only once.
 
-所有 Engine 连接都是管理权限（`owner`，scope 为 `*`），不再区分只读 / 操作 / 管理；请求里的角色参数被忽略，以前签发的受限 Token 也按管理权限处理。
+Every Engine connection has admin rights (`owner`, scope `*`); view / operate / manage are no longer distinguished. Role parameters in requests are ignored, and restricted Tokens issued earlier are also treated as admin.
 
-Engine 的检查更新、应用更新接口要求 `engine:admin` scope，所有 Token 都可以调用。Client 浏览器只请求本机代理接口；Client 服务端解密已保存的 Token 后调用 Engine，Token 不会进入浏览器。更新完成后 Engine 以非零状态退出，由 systemd、launchd 或等效进程管理器重新拉起。
+The Engine's update-check and apply-update endpoints require the `engine:admin` scope, which every Token has. The Client browser only calls the local proxy endpoints; the Client server decrypts the saved Token and then calls the Engine, so the Token never reaches the browser. After an update the Engine exits with a non-zero status and is started again by systemd, launchd or an equivalent process manager.
 
-本项目不再提供 Docker 部署与镜像构建。若连接的远程 Engine 是用 Docker 部署的旧版本，它仍会上报 `install_type: docker`：Client 只展示版本，不触发更新，需在该 Engine 的宿主机上自行更新镜像。
+This project no longer provides Docker deployment or image builds. If a connected remote Engine is an old version deployed with Docker, it still reports `install_type: docker`: the Client only shows the version and does not trigger an update, and the image must be updated on that Engine's host.
 
-## 文件边界
+## File boundary
 
-任务 API 的 `work_dir` 和 `md_path` 接受 Engine 服务器上的任意绝对路径，不使用目录白名单。每个任务可以单独指定工作目录；未指定 `md_path` 时，技术方案默认使用工作目录下的 `DESIGN.md`。实际读写范围由 Engine 进程的操作系统账号权限决定，因此写权限 Token 只应发给可信 Client，Engine 也应使用权限受限的专用账号运行。
+`work_dir` and `md_path` in the task API accept any absolute path on the Engine server, with no directory allowlist. Each task can have its own working directory; when `md_path` is not specified, the design document defaults to `DESIGN.md` in the working directory. The actual read and write scope is decided by the permissions of the operating-system account that runs the Engine process, so a Token with write permission should only be given to trusted Clients, and the Engine should run under a dedicated account with limited permissions.
 
-## 终端连接
+## Terminal connection
 
-Client 先用 Access Token 请求 `POST /v1/terminal-sessions`，Engine 返回一次性 ticket 和 WebSocket 路径。建立 WebSocket 后 ticket 立即作废。
+The Client first requests `POST /v1/terminal-sessions` with an Access Token, and the Engine returns a one-time ticket and a WebSocket path. The ticket is invalidated as soon as the WebSocket is established.
 
-浏览器重新打开终端时只重建 WebSocket，Engine 中的 PTY 保持运行。关闭或从工作目录重新打开时，Client 使用受认证的 REST 控制接口终止 PTY；后者还会清空旧历史，使下一次连接严格从任务 `work_dir` 创建新 Shell。控制指令不复用终端输入通道，避免被旧 Engine 当作 Shell 输入。
+When the browser reopens a terminal it only rebuilds the WebSocket and the PTY in the Engine keeps running. For close or reopen-from-working-directory, the Client uses an authenticated REST control endpoint to terminate the PTY; the latter also clears the old history, so the next connection creates a new shell strictly from the task's `work_dir`. Control commands do not reuse the terminal input channel, so an old Engine cannot mistake them for shell input.

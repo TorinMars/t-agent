@@ -25,7 +25,7 @@ router.post('/', (req, res) => {
     title,
     url,
     icon: icon || null,
-    group_name: group_name || '默认',
+    group_name: group_name || 'Default',
     sort_order: sort_order || 0,
   });
 

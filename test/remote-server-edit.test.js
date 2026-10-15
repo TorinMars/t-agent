@@ -22,12 +22,12 @@ function testDb() {
   return db;
 }
 
-test('编辑远程连接沿用已保存 Token，验证成功后再更新地址', async () => {
+test('Editing a remote connection reuses the saved token and updates the address only after verification succeeds', async () => {
   const db = testDb();
   const secret = 'remote-edit-test-secret';
   const token = 'tae_saved-token';
   db.prepare(`INSERT INTO remote_servers (owner_id, name, base_url, token_cipher)
-    VALUES (?, ?, ?, ?)`).run('tester', '旧名称', 'http://127.0.0.1:13500', encryptToken(token, secret));
+    VALUES (?, ?, ?, ?)`).run('tester', 'Old name', 'http://127.0.0.1:13500', encryptToken(token, secret));
   const row = db.prepare('SELECT * FROM remote_servers').get();
 
   const requested = [];
@@ -53,11 +53,11 @@ test('编辑远程连接沿用已保存 Token，验证成功后再更新地址',
   db.close();
 });
 
-test('新地址验证失败时不会修改原连接', async () => {
+test('When the new address fails verification the original connection is not modified', async () => {
   const db = testDb();
   const secret = 'remote-edit-test-secret';
   db.prepare(`INSERT INTO remote_servers (owner_id, name, base_url, token_cipher)
-    VALUES (?, ?, ?, ?)`).run('tester', '原连接', 'http://127.0.0.1:13500', encryptToken('tae_token', secret));
+    VALUES (?, ?, ?, ?)`).run('tester', 'Original connection', 'http://127.0.0.1:13500', encryptToken('tae_token', secret));
   const row = db.prepare('SELECT * FROM remote_servers').get();
 
   await assert.rejects(
@@ -68,7 +68,7 @@ test('新地址验证失败时不会修改原连接', async () => {
   );
   assert.deepEqual(
     db.prepare('SELECT name, base_url FROM remote_servers').get(),
-    { name: '原连接', base_url: 'http://127.0.0.1:13500' },
+    { name: 'Original connection', base_url: 'http://127.0.0.1:13500' },
   );
   db.close();
 });

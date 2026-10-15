@@ -19,10 +19,10 @@ test.after(() => {
   fs.rmSync(root, { recursive: true, force: true });
 });
 
-test('远程 Engine 可在默认根目录外使用指定工作目录，并默认创建 DESIGN.md', () => {
+test('A remote Engine can use a specified working directory outside the default root and creates DESIGN.md by default', () => {
   const requestedDir = path.join(root, 'external-projects', 'customer-a', 'project-one');
   const created = tasks.createTask('owner', {
-    title: '指定目录任务',
+    title: 'Specified directory task',
     work_dir: requestedDir,
   });
 
@@ -33,14 +33,14 @@ test('远程 Engine 可在默认根目录外使用指定工作目录，并默认
   assert.equal(fs.existsSync(path.join(requestedDir, 'AGENTS.md')), true);
 });
 
-test('远程 Engine 拒绝相对工作目录', () => {
+test('A remote Engine rejects a relative working directory', () => {
   assert.throws(() => tasks.createTask('owner', {
-    title: '相对目录任务',
+    title: 'Relative directory task',
     work_dir: 'relative/project',
   }), /WORKSPACE_PATH_MUST_BE_ABSOLUTE/);
 });
 
-test('从工作目录重新打开会清除旧终端历史', () => {
+test('Reopening from the working directory clears the old terminal history', () => {
   db.prepare('INSERT INTO terminal_logs (task_id, buffer) VALUES (?, ?)').run(9001, 'old terminal output');
 
   const result = terminal.controlSession(9001, 'restart-workdir');
@@ -49,6 +49,6 @@ test('从工作目录重新打开会清除旧终端历史', () => {
   assert.equal(db.prepare('SELECT buffer FROM terminal_logs WHERE task_id = ?').get(9001), undefined);
 });
 
-test('终端控制拒绝未知操作', () => {
+test('Terminal control rejects unknown actions', () => {
   assert.throws(() => terminal.controlSession(9001, 'destroy-everything'), /INVALID_TERMINAL_ACTION/);
 });

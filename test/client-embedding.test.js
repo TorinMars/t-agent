@@ -47,7 +47,7 @@ test('hidden login entrance, embedded Clients still authenticate and HTTPS cooki
     return fetch(base + route, { redirect: 'manual', method: body ? 'POST' : 'GET', headers: { ...(cookie ? { Cookie: cookie } : {}), ...(body ? { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' } : {}), ...headers }, ...(body ? { body: JSON.stringify(body) } : {}) });
   }
   const LOGIN = '/torin/hide/login';
-  // 未登录：除隐藏登录入口外全部 404，包括旧的登录地址、工作台页面和已删除的 /clients。
+  // Logged out: everything except the hidden login entrance is 404, including the old login address, the workspace page and the removed /clients.
   for (const route of ['/web', '/', '/clients', '/auth/login', '/auth/status', '/api/tasks', '/login.html']) {
     assert.equal((await call(route)).status, 404, route);
   }

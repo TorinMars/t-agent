@@ -1,5 +1,5 @@
 (() => {
-  // 登录页可能在 /auth 或隐藏的登录入口下，接口与页面同一前缀。
+  // The login page may live at /auth or under a hidden login entrance; API and page share the same prefix.
   const base = location.pathname.replace(/\/+$/, '').replace(/\/setup$/, '').replace(/^\/auth\/login$/, '/auth');
   const isSetupPage = /\/setup\/?$/.test(location.pathname);
   const content = document.getElementById('auth-content');
@@ -9,15 +9,15 @@
   const requested = new URLSearchParams(location.search).get('return_to');
   const returnTo = ['/', '/web'].includes(requested) ? requested : '/web';
   const messages = {
-    AUTH_CODE_INVALID: '验证码无效或已使用，请等待下一组验证码；也可使用未使用过的恢复码。',
-    AUTHENTICATOR_BINDING_REQUIRED: '必须先绑定身份验证器才能使用。',
-    AUTH_RATE_LIMITED: '验证尝试次数过多，请 15 分钟后再试。',
-    SESSION_SECRET_TOO_WEAK: '服务配置不安全：请先将 SESSION_SECRET 设置为至少 32 个字符的随机密钥并重启服务。',
-    AUTH_SETUP_EXPIRED: '绑定信息已过期，请刷新页面后重新生成。',
-    AUTH_SETUP_CHANGED: '绑定状态已变化，请刷新页面重新验证。',
-    AUTH_REQUIRED: '请先使用现有身份验证器登录。',
-    LOCAL_ACCESS_REQUIRED: '“仅本机访问”只能在服务器本机选择：请在这台机器的浏览器打开 http://127.0.0.1:端口/ 后再选。',
-    AUTH_RECENT_VERIFICATION_REQUIRED: '更换身份验证器前，请重新验证当前验证码或恢复码。',
+    AUTH_CODE_INVALID: 'The code is invalid or already used. Wait for the next code, or use an unused recovery code.',
+    AUTHENTICATOR_BINDING_REQUIRED: 'You must bind an authenticator before using this.',
+    AUTH_RATE_LIMITED: 'Too many attempts. Try again in 15 minutes.',
+    SESSION_SECRET_TOO_WEAK: 'Insecure configuration: set SESSION_SECRET to a random key of at least 32 characters and restart the service.',
+    AUTH_SETUP_EXPIRED: 'The binding info has expired. Refresh the page to generate it again.',
+    AUTH_SETUP_CHANGED: 'The binding state changed. Refresh the page and verify again.',
+    AUTH_REQUIRED: 'Log in with your current authenticator first.',
+    LOCAL_ACCESS_REQUIRED: '“Local access only” can only be chosen on the server itself: open http://127.0.0.1:PORT/ in a browser on that machine, then choose it.',
+    AUTH_RECENT_VERIFICATION_REQUIRED: 'Before replacing the authenticator, verify with the current code or a recovery code.',
   };
 
   async function request(url, body) {
@@ -35,14 +35,14 @@
     buttons.forEach(button => { button.disabled = true; });
     errorNode.hidden = true;
     try { await action(); }
-    catch (error) { errorNode.textContent = messages[error.message] || '连接失败，请检查网络后重试。'; errorNode.hidden = false; }
+    catch (error) { errorNode.textContent = messages[error.message] || 'Connection failed. Check your network and retry.'; errorNode.hidden = false; }
     finally { buttons.forEach(button => { button.disabled = false; }); }
   }
 
   function showLogin(reauthenticate = false) {
-    title.textContent = reauthenticate ? '验证后更换身份验证器' : '使用身份验证器登录';
-    description.textContent = '输入身份验证器中 T-Agent 的 6 位动态验证码，或一组未使用的恢复码。';
-    content.innerHTML = `<form id="login-form"><label for="login-code" id="login-code-label">6 位动态验证码</label><input id="login-code" name="code" autocomplete="one-time-code" inputmode="numeric" maxlength="6" autocapitalize="none" spellcheck="false" required autofocus><button type="submit">验证并继续</button><button type="button" class="secondary" id="toggle-recovery">使用恢复码</button></form>`;
+    title.textContent = reauthenticate ? 'Verify, then replace the authenticator' : 'Log in with your authenticator';
+    description.textContent = 'Enter the 6-digit code for T-Agent from your authenticator, or an unused recovery code.';
+    content.innerHTML = `<form id="login-form"><label for="login-code" id="login-code-label">6-digit code</label><input id="login-code" name="code" autocomplete="one-time-code" inputmode="numeric" maxlength="6" autocapitalize="none" spellcheck="false" required autofocus><button type="submit">Verify and continue</button><button type="button" class="secondary" id="toggle-recovery">Use recovery code</button></form>`;
     const form = document.getElementById('login-form');
     let recoveryMode = false;
     document.getElementById('toggle-recovery').addEventListener('click', event => {
@@ -52,8 +52,8 @@
       input.maxLength = recoveryMode ? 17 : 6;
       input.setAttribute('inputmode', recoveryMode ? 'text' : 'numeric');
       input.setAttribute('autocomplete', recoveryMode ? 'off' : 'one-time-code');
-      document.getElementById('login-code-label').textContent = recoveryMode ? '一次性恢复码' : '6 位动态验证码';
-      event.target.textContent = recoveryMode ? '使用动态验证码' : '使用恢复码';
+      document.getElementById('login-code-label').textContent = recoveryMode ? 'One-time recovery code' : '6-digit code';
+      event.target.textContent = recoveryMode ? 'Use authenticator code' : 'Use recovery code';
       input.focus();
     });
     form.addEventListener('submit', event => {
@@ -67,12 +67,12 @@
   }
 
   function showRecovery(data) {
-    title.textContent = '绑定成功，请保存恢复码';
-    description.textContent = '恢复码仅在这里显示一次，每组只能使用一次。丢失身份验证器时，可用恢复码登录并重新绑定。';
-    content.innerHTML = `<label for="recovery-codes">一次性恢复码</label><textarea id="recovery-codes" class="recovery-codes" readonly></textarea><button type="button" class="secondary" id="download-codes">下载恢复码</button><label class="saved-check"><input type="checkbox" id="saved-codes">我已将恢复码保存在安全的位置</label><button id="continue" type="button" disabled>进入工作台</button>`;
+    title.textContent = 'Bound. Please save your recovery codes';
+    description.textContent = 'Recovery codes are shown only once and each can be used once. If you lose your authenticator, use a recovery code to log in and bind again.';
+    content.innerHTML = `<label for="recovery-codes">One-time recovery code</label><textarea id="recovery-codes" class="recovery-codes" readonly></textarea><button type="button" class="secondary" id="download-codes">Download recovery codes</button><label class="saved-check"><input type="checkbox" id="saved-codes">I have saved the recovery codes somewhere safe</label><button id="continue" type="button" disabled>Open workspace</button>`;
     document.getElementById('recovery-codes').value = data.recovery_codes.join('\n');
     document.getElementById('download-codes').addEventListener('click', () => {
-      const blob = new Blob([`${typeof I18n !== 'undefined' ? I18n.t('T-Agent 一次性恢复码\n请妥善保管，每组只能使用一次。') : 'T-Agent 一次性恢复码\n请妥善保管，每组只能使用一次。'}\n\n${data.recovery_codes.join('\n')}\n`], { type: 'text/plain;charset=utf-8' });
+      const blob = new Blob([`${typeof I18n !== 'undefined' ? I18n.t('T-Agent one-time recovery codes\nKeep them safe; each code can be used only once.') : 'T-Agent one-time recovery codes\nKeep them safe; each code can be used only once.'}\n\n${data.recovery_codes.join('\n')}\n`], { type: 'text/plain;charset=utf-8' });
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url; link.download = 't-agent-recovery-codes.txt';
@@ -90,9 +90,9 @@
       if (error.message === 'AUTH_RECENT_VERIFICATION_REQUIRED') { showLogin(true); return; }
       throw error;
     }
-    title.textContent = data.replacing ? '绑定新的身份验证器' : '绑定身份验证器';
-    description.textContent = '用 Google Authenticator、Microsoft Authenticator 或其他身份验证器扫描二维码。在同一部手机操作时，可点击打开验证器，或手动输入下方密钥。';
-    content.innerHTML = `<img id="binding-qr" class="qr" alt="身份验证器绑定二维码"><a id="open-authenticator" class="auth-link">在身份验证器中打开</a><label>手动添加密钥（基于时间）</label><code id="binding-secret" class="secret"></code><p class="hint">账号：T-Agent；6 位数字，每 30 秒更新。绑定信息 10 分钟有效。</p><form id="binding-form"><label for="binding-code">身份验证器中的 6 位验证码</label><input id="binding-code" name="code" autocomplete="one-time-code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required><button type="submit">验证并完成绑定</button></form>`;
+    title.textContent = data.replacing ? 'Bind a new authenticator' : 'Bind an authenticator';
+    description.textContent = 'Scan the QR code with Google Authenticator, Microsoft Authenticator or another authenticator. On the same phone, tap to open your authenticator or enter the key below manually.';
+    content.innerHTML = `<img id="binding-qr" class="qr" alt="Authenticator binding QR code"><a id="open-authenticator" class="auth-link">Open in authenticator</a><label>Add key manually (time-based)</label><code id="binding-secret" class="secret"></code><p class="hint">Account: T-Agent; 6 digits, refreshed every 30 seconds. The binding info is valid for 10 minutes.</p><form id="binding-form"><label for="binding-code">6-digit code from your authenticator</label><input id="binding-code" name="code" autocomplete="one-time-code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required><button type="submit">Verify and finish binding</button></form>`;
     document.getElementById('binding-qr').src = data.qr;
     document.getElementById('binding-secret').textContent = data.secret;
     document.getElementById('open-authenticator').href = data.uri;
@@ -103,13 +103,13 @@
     });
   }
 
-  // 全新安装的第一次打开：选择访问模式。
+  // First open after a fresh install: choose the access mode.
   function showModeChoice() {
-    title.textContent = '选择访问方式';
-    description.textContent = '安装已完成。请选择 T-Agent 的访问方式，之后可以在 设置 → 访问模式 中随时切换。';
+    title.textContent = 'Choose an access mode';
+    description.textContent = 'Installation is done. Choose how to access T-Agent; you can change it any time under Settings → Access mode.';
     content.innerHTML = `<div class="mode-options">
-      <button type="button" class="mode-option" id="mode-remote"><strong>身份验证器 + 允许外网访问</strong><span>用身份验证器的动态验证码登录，手机、其他电脑和远程客户端都能连接。需要先绑定身份验证器。</span></button>
-      <button type="button" class="mode-option" id="mode-local"><strong>仅本机访问 · 无需验证</strong><span>只接受这台机器上的访问（127.0.0.1），不需要验证码；其他设备和远程客户端无法连接。</span></button>
+      <button type="button" class="mode-option" id="mode-remote"><strong>Authenticator + allow external access</strong><span>Log in with authenticator codes; phones, other computers and remote clients can connect. Requires binding an authenticator first.</span></button>
+      <button type="button" class="mode-option" id="mode-local"><strong>Local access only · no verification</strong><span>Only accepts access from this machine (127.0.0.1) with no code; other devices and remote clients cannot connect.</span></button>
     </div>`;
     const choose = mode => run(content, async () => {
       const data = await request(base + '/mode', { mode });
@@ -125,19 +125,19 @@
       const status = await request(base + '/status');
       if (status.mode === 'unset') showModeChoice();
       else if (!status.bound) {
-        title.textContent = '必须绑定身份验证器';
-        description.textContent = '请用身份验证器扫描下方二维码完成首次绑定；也可在 Client 所在服务器终端执行 node scripts/client-auth-setup.js。本机或远程访问均可，无需初始密码或初始化码。';
+        title.textContent = 'An authenticator is required';
+        description.textContent = 'Scan the QR code below with your authenticator to bind it for the first time, or run node scripts/client-auth-setup.js in a terminal on the Client server. Works locally or remotely; no initial password or setup code is needed.';
         content.innerHTML = '';
         await startSetup();
       } else if (isSetupPage && status.authenticated) {
-        title.textContent = '更换身份验证器';
-        description.textContent = '新绑定完成后，原身份验证器和所有旧恢复码立即失效，其他设备需要重新登录。';
-        content.innerHTML = '<button type="button" id="replace-authenticator">开始绑定新验证器</button><a id="cancel-setup" class="auth-link">返回工作台</a>';
+        title.textContent = 'Replace authenticator';
+        description.textContent = 'Once the new binding completes, the old authenticator and all old recovery codes stop working, and other devices must log in again.';
+        content.innerHTML = '<button type="button" id="replace-authenticator">Start binding a new authenticator</button><a id="cancel-setup" class="auth-link">Back to workspace</a>';
         document.getElementById('cancel-setup').href = returnTo;
         document.getElementById('replace-authenticator').addEventListener('click', () => run(content, () => startSetup()));
       } else if (status.authenticated) location.replace(returnTo);
       else showLogin(isSetupPage);
-    } catch (error) { errorNode.textContent = messages[error.message] || '无法检查绑定状态，请刷新页面重试。'; errorNode.hidden = false; }
+    } catch (error) { errorNode.textContent = messages[error.message] || 'Could not check the binding status. Refresh and retry.'; errorNode.hidden = false; }
   }
   init();
 })();

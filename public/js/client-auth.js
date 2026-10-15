@@ -4,8 +4,8 @@
   const loginPath = (meta && meta.content) || '/auth/login';
   window.TAgentLoginPath = loginPath;
   let redirecting = false;
-  // 未登录时服务端对所有受保护地址返回 404（不暴露 401），所以 404 要先向登录入口确认会话是否已失效，
-  // 避免把真正的“资源不存在”误判为掉线。
+  // When logged out the server answers 404 for every protected address (it never exposes 401), so a 404 must first be checked against the login entrance to see whether the session has expired,
+  // otherwise a real "resource not found" would be mistaken for being logged out.
   async function sessionLost() {
     try {
       const response = await originalFetch(`${loginPath}/status`, { cache: 'no-store', credentials: 'same-origin' });

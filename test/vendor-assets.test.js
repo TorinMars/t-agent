@@ -1,4 +1,4 @@
-// 第三方前端库固定版本、自托管并校验哈希；页面不再依赖运行时 CDN。
+// Third-party frontend libraries are pinned, self-hosted and hash-verified; the page no longer depends on a runtime CDN.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
@@ -29,7 +29,7 @@ test('pages load libraries from /vendor, every referenced file is in the manifes
       assert.ok(known.has(url), `${file} references ${url}, which is not in scripts/vendor-libs.json`);
     }
   }
-  // 主页面必须同步加载 marked / xterm；mermaid 只能懒加载（约 5 MB）。
+  // The main page must load marked / xterm synchronously; mermaid may only be lazy-loaded (about 5 MB).
   const index = read('public/index.html');
   assert.match(index, /\/vendor\/marked\/marked-[\d.]+\.min\.js/);
   assert.match(index, /\/vendor\/xterm\/xterm-[\d.]+\.js/);

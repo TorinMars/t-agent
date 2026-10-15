@@ -15,7 +15,7 @@ function home() {
 test.after(() => { for (const dir of roots) fs.rmSync(dir, { recursive: true, force: true }); });
 const service = dir => createAgentConfig({ env: {}, home: dir });
 
-test('Claude：写入权限、模型、思考强度和状态栏，保留 settings.json 里的其他内容，重复写入不再改动', () => {
+test('Claude: writes permissions, model, effort and status line, keeps the rest of settings.json, and writing again changes nothing', () => {
   const dir = home();
   fs.mkdirSync(path.join(dir, '.claude'));
   const file = path.join(dir, '.claude', 'settings.json');
@@ -33,13 +33,13 @@ test('Claude：写入权限、模型、思考强度和状态栏，保留 setting
   assert.equal(saved.theme, 'dark');
   assert.equal('language' in saved, false);
   assert.deepEqual(service(dir).apply('claude', values).changed, []);
-  // 同时写入本机覆盖文件，避免被 agent-sync.py 的远程默认值盖回去
+  // Also write the local override file, so it is not overwritten by the remote defaults from agent-sync.py
   const override = JSON.parse(fs.readFileSync(path.join(dir, '.config/t-agent/overrides/claude/settings.json'), 'utf8'));
   assert.equal(override.model, 'opus');
   assert.equal(override.permissions.defaultMode, 'plan');
 });
 
-test('Claude：配置文件不是合法 JSON 时不改动并报错', () => {
+test('Claude: an invalid JSON config file is left unchanged and reported', () => {
   const dir = home();
   fs.mkdirSync(path.join(dir, '.claude'));
   const file = path.join(dir, '.claude', 'settings.json');
@@ -48,29 +48,29 @@ test('Claude：配置文件不是合法 JSON 时不改动并报错', () => {
   assert.equal(fs.readFileSync(file, 'utf8'), '{ broken');
 });
 
-test('Codex：只改指定键，保留注释和其他表，数组状态栏写成单行', () => {
+test('Codex: changes only the given keys, keeps comments and other tables, writes the status line array on one line', () => {
   const dir = home();
   fs.mkdirSync(path.join(dir, '.codex'));
   const file = path.join(dir, '.codex', 'config.toml');
-  fs.writeFileSync(file, '# 我的备注\nmodel = "old"\n\n[tui]\ntheme = "dark"\n\n[projects."/x"]\ntrust_level = "trusted"\n');
+  fs.writeFileSync(file, '# My notes\nmodel = "old"\n\n[tui]\ntheme = "dark"\n\n[projects."/x"]\ntrust_level = "trusted"\n');
   const result = service(dir).apply('codex', { model: 'gpt-5.5', approval: 'on-request', sandbox: 'workspace-write', effort: 'high', statusLine: 'model-with-reasoning, current-dir' });
   assert.equal(result.changed.length, 5);
   const text = fs.readFileSync(file, 'utf8');
-  assert.match(text, /^# 我的备注\nmodel = "gpt-5.5"\n/);
+  assert.match(text, /^# My notes\nmodel = "gpt-5.5"\n/);
   assert.match(text, /^approval_policy = "on-request"$/m);
   assert.match(text, /^sandbox_mode = "workspace-write"$/m);
   assert.match(text, /\[tui\]\ntheme = "dark"\nstatus_line = \["model-with-reasoning", "current-dir"\]\n/);
   assert.match(text, /\[projects\."\/x"\]\ntrust_level = "trusted"/);
-  // 顶层新键必须落在第一个表之前，否则会被当成表里的键
+  // A new top-level key must land before the first table, otherwise it would count as a key inside the table
   assert.ok(text.indexOf('approval_policy') < text.indexOf('[tui]'));
   assert.deepEqual(service(dir).apply('codex', { model: 'gpt-5.5' }).changed, []);
 });
 
-test('读取当前值：把两个工具的现有配置还原成表单值，坏文件只标记该工具', () => {
+test('Read current values: restore each tool’s existing config into form values; a broken file only flags that tool', () => {
   const dir = home();
   fs.mkdirSync(path.join(dir, '.claude')); fs.mkdirSync(path.join(dir, '.codex'));
   fs.writeFileSync(path.join(dir, '.claude', 'settings.json'), JSON.stringify({ model: 'sonnet', statusLine: { type: 'command', command: 'x' }, alwaysThinkingEnabled: false }));
-  fs.writeFileSync(path.join(dir, '.codex', 'config.toml'), 'model = "gpt-6"  # 注释\n[tui]\nstatus_line = ["a", "b"]\n');
+  fs.writeFileSync(path.join(dir, '.codex', 'config.toml'), 'model = "gpt-6"  # Comment\n[tui]\nstatus_line = ["a", "b"]\n');
   const current = service(dir).read();
   assert.equal(current.claude.model, 'sonnet');
   assert.equal(current.claude.statusLine, 'x');
@@ -84,7 +84,7 @@ test('读取当前值：把两个工具的现有配置还原成表单值，坏�
   assert.equal(broken.codex.model, 'gpt-6');
 });
 
-test('校验：未知工具、未知项、枚举外的值、非法数字、换行和非法列表都被拒绝', () => {
+test('Validation: unknown tools, unknown items, values outside the enum, invalid numbers, line breaks and invalid lists are all rejected', () => {
   assert.throws(() => cleanValues('vim', {}), /UNKNOWN_TOOL/);
   assert.throws(() => cleanValues('claude', { hacked: 'x' }), /UNKNOWN_FIELD/);
   assert.throws(() => cleanValues('claude', { permission: 'root' }), /INVALID_VALUE/);
@@ -95,7 +95,7 @@ test('校验：未知工具、未知项、枚举外的值、非法数字、换�
   assert.deepEqual(cleanValues('codex', { model: '  gpt  ', sandbox: '' }), { model: 'gpt', sandbox: '' });
 });
 
-test('TOML 辅助：键在表里、顶层和不存在的表时都放对位置', () => {
+test('TOML helper: keys are placed correctly inside a table, at the top level, and when the table does not exist', () => {
   assert.equal(setTomlKey('', ['model'], '"a"'), 'model = "a"\n');
   assert.equal(setTomlKey('[x]\na = 1\n', ['b'], '2'), 'b = 2\n[x]\na = 1\n');
   assert.equal(getTomlKey('b = 2\n[x]\na = 1\n', ['b']), '2');
@@ -104,7 +104,7 @@ test('TOML 辅助：键在表里、顶层和不存在的表时都放对位置', 
   assert.equal(setTomlKey('a = 1\n', ['t', 'k'], '"v"'), 'a = 1\n\n[t]\nk = "v"\n');
 });
 
-test('Client 保存：覆盖里出现的键（含空串）优先于全局默认', () => {
+test('Client save: keys present in the override (including an empty string) win over the global default', () => {
   const database = new Database(':memory:');
   database.exec('CREATE TABLE system_state (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP)');
   const store = createAgentConfigStore(database);

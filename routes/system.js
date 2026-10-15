@@ -6,7 +6,7 @@ const router = express.Router();
 router.use(requireAuth);
 
 function isAdmin(req) {
-  // Client 是单用户应用，本地用户始终可以执行更新。
+  // The Client is a single-user application, so the local user can always run updates.
   return Boolean(req.session.user);
 }
 

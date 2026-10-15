@@ -1,9 +1,9 @@
-// 工作目录工具（任务仍只保存在数据库）：
-//  1. 列出工作目录下还没有被任务管理的子目录，支持批量导入；
-//  2. 任务目录本身通常不是 Git 仓库，里面（几层子目录内）有多个仓库。列出每个任务下的所有仓库
-//     及占用空间，批量清理不用的仓库目录。清理只删本地的仓库目录（任务目录和其他文件保留），
-//     且仅当该仓库 Git 状态确认安全（无未提交、无未推送、无 stash）时才允许，
-//     清理前把仓库地址、分支、提交记入 repo_cleanups，之后可以从仓库恢复。
+// Workspace tools (tasks are still only stored in the database):
+// 1. List sub-directories of the workspace that are not yet managed by a task, with bulk import;
+// 2. A task directory itself is usually not a Git repo, but contains several repos (a few levels down). List all repos under each task
+// with their disk usage and clean up unused repo directories in bulk. Cleanup only deletes the local repo directory (the task directory and other files are kept),
+// and is only allowed when the repo's Git state is confirmed safe (nothing uncommitted, nothing unpushed, no stash);
+// before cleaning, the repo address, branch and commit are recorded in repo_cleanups so it can be restored from the remote later.
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -32,7 +32,7 @@ function isDirectory(target) {
   try { return fs.statSync(target).isDirectory(); } catch { return false; }
 }
 
-// ---------- 导入 ----------
+// ---------- Import ----------
 function managedDirs(database, owner) {
   return database.prepare('SELECT work_dir FROM tasks WHERE user_id = ? AND work_dir IS NOT NULL').all(owner)
     .map(row => path.resolve(row.work_dir));
@@ -59,7 +59,7 @@ function listUnmanaged(database, owner, workDir) {
   return { root, items };
 }
 
-// 只登记，不在目录里生成任何文件（技术文档等在首次打开时才按需创建）。
+// Only register; no file is created in the directory (the design doc etc. are created on demand when first opened).
 function importDirs(database, owner, workDir, paths, status = 'todo') {
   if (!Array.isArray(paths) || !paths.length) throw serviceError('PATHS_REQUIRED');
   const { items } = listUnmanaged(database, owner, workDir);
@@ -80,14 +80,14 @@ function importDirs(database, owner, workDir, paths, status = 'todo') {
   return created;
 }
 
-// ---------- 删除任务时一并删除目录 ----------
-// 返回不能删除的原因，可以删除则返回 null。目录删除不可恢复，所以对受保护目录、被其他任务共用的目录一律拒绝。
+// ---------- Delete the directory together with the task ----------
+// Returns the reason it cannot be deleted, or null when it can. Deleting a directory is irreversible, so protected directories and directories shared by other tasks are always refused.
 function taskDirectoryGuard(database, owner, task, workDir) {
-  if (!task.work_dir) return '任务没有工作目录';
+  if (!task.work_dir) return 'The task has no working directory';
   const dir = path.resolve(task.work_dir);
   const root = workRoot(workDir);
   const others = database.prepare('SELECT work_dir FROM tasks WHERE user_id = ? AND id != ? AND work_dir IS NOT NULL').all(owner, task.id).map(row => path.resolve(row.work_dir));
-  if (others.includes(dir)) return '其他任务也在使用这个目录';
+  if (others.includes(dir)) return 'Other tasks also use this directory';
   const reason = protectedReason(dir, { root, others });
   return reason;
 }
@@ -98,7 +98,7 @@ function removeTaskDirectory(task) {
   return true;
 }
 
-// ---------- 清理 ----------
+// ---------- Cleanup ----------
 async function git(dir, args, timeout = GIT_TIMEOUT) {
   const { stdout } = await run('git', ['-C', dir, ...args], { timeout, maxBuffer: 8 * 1024 * 1024, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } });
   return stdout.trim();
@@ -118,12 +118,12 @@ function mtime(file) {
 async function lastActivity(dir) {
   const gitDir = path.join(dir, '.git');
   const times = ['HEAD', 'index', 'FETCH_HEAD', path.join('logs', 'HEAD')].map(name => mtime(path.join(gitDir, name)));
-  try { times.push(Number(await git(dir, ['log', '-1', '--format=%ct'])) * 1000 || 0); } catch { /* 没有提交 */ }
+  try { times.push(Number(await git(dir, ['log', '-1', '--format=%ct'])) * 1000 || 0); } catch { /* no commits */ }
   return Math.max(...times);
 }
 
-// 在任务目录里找 Git 仓库：任务目录自己是仓库就只算它；否则向下找，最多 MAX_DEPTH 层，
-// 不进入仓库内部、隐藏目录和 node_modules。
+// Find Git repos inside a task directory: if the task directory is itself a repo only it counts; otherwise search downwards, at most MAX_DEPTH levels,
+// without entering repos, hidden directories or node_modules.
 const MAX_DEPTH = 3;
 function findRepos(taskDir) {
   const root = path.resolve(taskDir);
@@ -144,39 +144,39 @@ function findRepos(taskDir) {
   return repos.sort();
 }
 
-// 仓库目录不能是这些：系统根、家目录、工作目录、包含工作目录或本程序的目录、含有其他任务目录的目录。
+// A repo directory must not be any of these: the filesystem root, the home directory, the workspace, a directory containing the workspace or this program, or a directory that contains other task directories.
 function protectedReason(dir, { root, others }) {
   const home = os.homedir();
   const app = path.resolve(__dirname, '..');
-  if (dir === path.parse(dir).root || dir === home || dir === root) return '受保护的目录';
-  if (root.startsWith(dir + path.sep) || app === dir || app.startsWith(dir + path.sep)) return '包含工作目录或本程序，不能删除';
-  if (others.some(other => other !== dir && other.startsWith(dir + path.sep))) return '里面还有其他任务的目录，不能删除';
+  if (dir === path.parse(dir).root || dir === home || dir === root) return 'Protected directory';
+  if (root.startsWith(dir + path.sep) || app === dir || app.startsWith(dir + path.sep)) return 'Contains the workspace or this program; it cannot be deleted';
+  if (others.some(other => other !== dir && other.startsWith(dir + path.sep))) return 'Contains directories of other tasks; it cannot be deleted';
   return null;
 }
 
 async function inspectRepository(dir) {
   try {
-    if (!isDirectory(dir)) return { safe: false, reason: '目录不存在' };
-    if (!fs.existsSync(path.join(dir, '.git'))) return { safe: false, reason: '不是 Git 仓库，删除后无法恢复' };
+    if (!isDirectory(dir)) return { safe: false, reason: 'Directory does not exist' };
+    if (!fs.existsSync(path.join(dir, '.git'))) return { safe: false, reason: 'Not a Git repository; it cannot be restored after deletion' };
     const top = fs.realpathSync(await git(dir, ['rev-parse', '--show-toplevel']));
-    if (top !== fs.realpathSync(dir)) return { safe: false, reason: '目录只是某个仓库的子目录，不能单独删除' };
-    if (await git(dir, ['status', '--porcelain', '--untracked-files=normal'])) return { safe: false, reason: '有未提交的修改或未跟踪文件' };
-    if (await git(dir, ['stash', 'list'])) return { safe: false, reason: '有 Git stash 暂存内容' };
+    if (top !== fs.realpathSync(dir)) return { safe: false, reason: 'The directory is only a subdirectory of a repository and cannot be deleted on its own' };
+    if (await git(dir, ['status', '--porcelain', '--untracked-files=normal'])) return { safe: false, reason: 'Has uncommitted changes or untracked files' };
+    if (await git(dir, ['stash', 'list'])) return { safe: false, reason: 'Has Git stash entries' };
     const branch = await git(dir, ['rev-parse', '--abbrev-ref', 'HEAD']);
-    if (branch === 'HEAD') return { safe: false, reason: '当前是游离 HEAD，没有分支可以恢复' };
+    if (branch === 'HEAD') return { safe: false, reason: 'Detached HEAD; there is no branch to restore' };
     const remotes = (await git(dir, ['remote'])).split('\n').filter(Boolean);
-    if (!remotes.length) return { safe: false, reason: '没有配置远程仓库' };
+    if (!remotes.length) return { safe: false, reason: 'No remote repository configured' };
     const refs = await git(dir, ['for-each-ref', '--format=%(refname:short)|%(upstream:short)|%(upstream:track)', 'refs/heads']);
     for (const line of refs.split('\n').filter(Boolean)) {
       const [name, upstream, track] = line.split('|');
-      if (!upstream) return { safe: false, reason: `本地分支 ${name} 没有对应的远程分支（未推送）` };
-      if (/ahead/.test(track)) return { safe: false, reason: `本地分支 ${name} 有未推送的提交` };
-      if (/gone/.test(track)) return { safe: false, reason: `本地分支 ${name} 的远程分支已不存在` };
+      if (!upstream) return { safe: false, reason: `Local branch ${name} has no matching remote branch (not pushed)` };
+      if (/ahead/.test(track)) return { safe: false, reason: `Local branch ${name} has unpushed commits` };
+      if (/gone/.test(track)) return { safe: false, reason: `The remote branch of local branch ${name} no longer exists` };
     }
     const remote = await git(dir, ['remote', 'get-url', remotes.includes('origin') ? 'origin' : remotes[0]]);
     return { safe: true, remote, branch, commit: await git(dir, ['rev-parse', 'HEAD']) };
   } catch (error) {
-    return { safe: false, reason: `Git 检查失败：${(error.stderr || error.message || '').toString().trim().split('\n')[0]}` };
+    return { safe: false, reason: `Git check failed: ${(error.stderr || error.message || '').toString().trim().split('\n')[0]}` };
   }
 }
 
@@ -214,8 +214,8 @@ async function cleanupOverview(database, owner, workDir) {
   return { idle_days_threshold: idleDays(), items, archived };
 }
 
-// 逐个仓库清理，一个失败不影响其他。服务端重新检查，不信任前端传来的“安全”判断；
-// 只接受确实位于该任务目录内、且被识别为仓库的路径。
+// Clean repos one by one; one failure does not affect the others. The server re-checks and does not trust the "safe" verdict sent by the frontend;
+// only paths that really lie inside the task directory and are recognized as repos are accepted.
 async function cleanupRepos(database, owner, workDir, requests, closeTerminals = () => {}) {
   if (!Array.isArray(requests) || !requests.length) throw serviceError('REPOS_REQUIRED');
   const root = workRoot(workDir);

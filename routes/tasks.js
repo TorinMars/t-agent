@@ -33,7 +33,7 @@ router.get('/', (req, res) => {
   res.json(tasks.map(documents.resolveTask));
 });
 
-// 工作目录工具：导入未管理的目录、清理不用的代码目录。
+// Workspace tools: import unmanaged directories, clean up unused code directories.
 const workspaceTools = require('../services/workspace-tools');
 const toolWorkDir = req => req.session.user.work_dir || DEFAULT_BASE;
 const toolError = (res, error) => res.status(error.statusCode || 500).json({ error: error.message, ...(error.reason ? { reason: error.reason } : {}), ...(error.path ? { path: error.path } : {}) });
@@ -64,16 +64,16 @@ router.post('/workspace/restore', async (req, res) => {
   catch (error) { toolError(res, error); }
 });
 
-// 将任务标题转换为合法的目录/文件名
+// Turn a task title into a valid directory/file name
 function titleToSlug(title) {
   return title
     .replace(/\s+/g, '-')
-    .replace(/[^a-zA-Z0-9一-鿿\-_\.]/g, '')
+    .replace(/[^a-zA-Z0-9\u4e00-\u9fff\-_\.]/g, '')
     .replace(/^-+|-+$/g, '') || 'task';
 }
 
-// 自动为任务创建目录和 md 文件（仅当未指定 md_path 时调用）
-// 优先用用户自己的 work_dir，其次读环境变量 TASKS_BASE_DIR，最后回退 ~/tasks
+// Automatically create a directory and md file for a task (only called when md_path is not specified)
+// Prefer the user's own work_dir, then the TASKS_BASE_DIR environment variable, and finally fall back to ~/tasks
 const os = require('os');
 const DEFAULT_BASE = process.env.TASKS_BASE_DIR || path.join(os.homedir(), 'tasks');
 
@@ -141,7 +141,7 @@ router.put('/:id', (req, res) => {
       return res.status(400).json({ error: 'md_path must be an absolute path' });
     }
     if (!md_path.endsWith('.md')) return res.status(400).json({ error: 'md_path must end with .md' });
-    // 更新了 md_path 但未传 work_dir，自动推导
+    // md_path was updated without work_dir: derive it automatically
     if (work_dir === undefined) work_dir = path.dirname(md_path);
   }
 
@@ -409,7 +409,7 @@ router.post('/:id/vscode', (req, res) => {
   const uid = ownerFilter(req);
   const task = documents.resolveTask(db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, uid));
   if (!task || !task.md_path) return res.status(404).json({ error: 'No md_path' });
-  // 硬编码常见安装路径，兼容 LaunchAgent 精简 PATH 环境
+  // Hard-code common install paths for compatibility with the slim PATH of a LaunchAgent
   const codeBin = [
     '/opt/homebrew/bin/code',
     '/usr/local/bin/code',

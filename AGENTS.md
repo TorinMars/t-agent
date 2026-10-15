@@ -1,38 +1,45 @@
-# Agent 开发与发布规则
+# Agent development and release rules
 
-## 技术方案文件
+## Design document
 
-- 路径：`DESIGN.md`
-- 交接说明（当前状态、未验证事项、已知限制、注意事项）：`docs/HANDOFF.md`，接手前先读。
+- Path: `DESIGN.md`
+- Handoff notes (current state, unverified items, known limitations, things to watch out for): `docs/HANDOFF.md`. Read it before taking over.
 
-## 开发流程
+## Language
 
-1. 开始前读取本文件和相关技术方案，检查 `git status`、当前分支及已有改动；保留用户未提交的工作，只提交本次任务涉及的文件。
-2. 先确认问题所在的数据流和现有行为，再做必要修改。本地与远程存在同类功能时，一并检查是否需要修复。
-3. 编辑表单应回显已有配置；使用默认路径时应显示实际生效路径。未修改的默认路径继续继承默认规则，清空路径恢复默认，不能因回显而将默认路径保存成固定自定义路径。
-4. 根据影响范围验证修改：涉及逻辑或接口行为的修复补充有意义的回归用例，运行相关 `node --test test/<文件>.test.js`；跨模块修改按需运行 `npm test`。纯文档等低风险改动无需新增测试。
-5. 对修改的 JavaScript 运行 `node --check <文件>`，提交前运行 `git diff --check` 并审阅 diff。只有修改相关构建入口或依赖时才重新构建 Markdown、Monaco 等产物；升级 marked、mermaid、xterm 时按 `scripts/vendor-libs.json` 重新下载（`node scripts/fetch-vendor.js --update`）。
-6. 测试缺少依赖时安装项目声明的依赖，包含测试需要的开发依赖。遇到权限、网络或环境阻塞，应说明实际原因；没有运行或没有通过的检查不能报告为通过。
-7. 完成后简要说明修改结果、验证情况及仍存在的限制。功能、配置或接口发生变化时，同步必要的 `README.md`、`DESIGN.md` 等说明。
+- All source code, comments, documentation, test names, commit messages and agent rules are written in English.
+- User-facing text in the UI, error messages from the server and CLI output are written in English. The Chinese UI is a translation layer: add the Chinese text to `public/js/i18n-zh-ui.js` (client text), `public/js/i18n-zh-server.js` (server messages) or `public/js/i18n-zh-extra.js` (sentences assembled from several pieces), keyed by the exact English text. See "Interface language" in `DESIGN.md`.
+- Chinese characters may appear only in those dictionaries and in test fixtures that exist to prove that Chinese user content (translator input, terminal output, file names) is handled. `test/i18n.test.js` fails when Chinese shows up anywhere else. Where a regular expression needs a CJK range, write it with `\u` escapes.
+- Content created or entered by users (tasks, documents, file names, terminal input) must keep working with Chinese and any other language.
 
-## 版本发布与推送
+## Development workflow
 
-用户已授权自动发布推送：本仓库的开发或修复完成且相关验证通过后，默认继续完成版本更新、提交、推送及结果核实，无需再次询问。用户明确要求暂不发布、仅审查或只保留本地改动时，以当次要求为准；验证失败或发布受阻时如实报告，不强行发布。
+1. Before starting, read this file and the relevant design documents, and check `git status`, the current branch and existing changes. Keep the user's uncommitted work and commit only the files involved in this task.
+2. Confirm the data flow and existing behavior behind the problem first, then make the necessary changes. When the local and remote sides have a similar feature, check whether both need the fix.
+3. Edit forms must echo the existing configuration; when a default path is used, show the path that is actually in effect. A default path that was not modified keeps inheriting the default rule, and clearing a path restores the default. Echoing must never save a default path as a fixed custom path.
+4. Verify changes according to their impact: for fixes that touch logic or endpoint behavior add meaningful regression cases and run the relevant `node --test test/<file>.test.js`; for cross-module changes run `npm test` as needed. Low-risk changes such as pure documentation need no new tests.
+5. Run `node --check <file>` on modified JavaScript, and run `git diff --check` and review the diff before committing. Rebuild Markdown, Monaco and other bundles only when their build entry points or dependencies changed; when upgrading marked, mermaid or xterm, download them again according to `scripts/vendor-libs.json` (`node scripts/fetch-vendor.js --update`).
+6. When tests lack dependencies, install the dependencies declared by the project, including the dev dependencies the tests need. When blocked by permissions, network or the environment, state the actual reason; a check that was not run or did not pass must not be reported as passed.
+7. When done, briefly state the result, how it was verified and the remaining limitations. When features, configuration or interfaces change, update the necessary documentation such as `README.md` and `DESIGN.md`.
 
-1. 发布前检查工作区、当前分支、远程地址、远程目标分支及已有版本，避免覆盖他人提交或重复版本。当前仓库常规发布目标为 `origin/main`；如用户另有指定，以用户要求为准。
-2. 遵循现有版本序列，常规修复提升补丁版本；新增功能或不兼容变更按影响选择版本。发布前同步更新：
-   - `VERSION.json` 的 `app_version`。
-   - `package.json` 的 `version`。
-   - `package-lock.json` 顶层及 `packages[""].version`。
-   - `VERSION.json.published_at`，使用发布时的 UTC ISO 8601 时间。
-3. `VERSION.json` 是运行时版本信息源。仅在协议或数据库结构实际变化时调整 API、schema 和远程兼容版本字段，不能随补丁版本机械递增。
-4. 发布必须包含相关验证结果，并检查版本字段一致、diff 无格式错误且不含密钥、运行数据或无关文件。已通过的相关检查无需因仅更新版本号而重复执行。
-5. 将本次功能或修复和版本文件一起提交，提交信息说明主要变化及版本，例如 `Fix task and settings path prefilling in vX.Y.Z`。使用明确文件列表暂存，避免混入无关改动。
-6. 常规发布通过普通推送更新 `origin/main`，不强制推送。遇到远程领先或分叉，先检查差异并妥善合并，再验证和推送，不覆盖远程历史。
-7. 当前客户端通过 `main` 上的 `VERSION.json` 检测新版，因此可发布代码推送前必须提升应用版本号。常规发布沿用版本提交加分支推送流程；只有用户要求或发布流程需要时才另建版本标签或 GitHub Release。
-8. 推送后确认命令成功、远程分支包含发布提交，并检查工作区状态。向用户报告版本号、提交 SHA、目标分支及验证结果；失败或阻塞时明确说明停在哪一步。
+## Releases and pushing
 
-## 权限与阻塞
+The user has authorized automatic release and push: once development or a fix in this repository is complete and the relevant verification has passed, continue by default with the version bump, commit, push and checking the result, without asking again. When the user explicitly asks not to release yet, to only review, or to keep changes local, follow that request; when verification fails or the release is blocked, report it truthfully and do not force a release.
 
-- 提交、推送或测试如需环境权限，按工具审批流程执行，不绕过拒绝。
-- 自动审批拒绝时，说明被拒绝的操作和返回原因，完成不受影响的工作；需要用户继续授权时明确说明，不能把尚未提交或推送的版本说成已经发布。
+1. Before releasing, check the working tree, current branch, remote address, remote target branch and existing versions, to avoid overwriting someone else's commits or duplicating a version. The regular release target of this repository is `origin/main`; if the user specifies otherwise, follow the user.
+2. Follow the existing version sequence: regular fixes bump the patch version; new features or incompatible changes choose the version by impact. Before releasing, update together:
+   - `app_version` in `VERSION.json`.
+   - `version` in `package.json`.
+   - The top-level `version` and `packages[""].version` in `package-lock.json`.
+   - `VERSION.json.published_at`, using the UTC ISO 8601 time of the release.
+3. `VERSION.json` is the runtime version source. Change the API, schema and remote-compatibility version fields only when the protocol or database structure really changes; they must not be bumped mechanically with each patch version.
+4. A release must include the relevant verification results, and you must check that the version fields agree, that the diff has no formatting errors and contains no secrets, runtime data or unrelated files. Checks that already passed need not be repeated just because only the version number changed.
+5. Commit this feature or fix together with the version files; the commit message states the main change and the version, for example `Fix task and settings path prefilling in vX.Y.Z`. Stage with an explicit file list to avoid mixing in unrelated changes.
+6. A regular release updates `origin/main` with a normal push, never a force push. If the remote is ahead or has diverged, inspect the differences, merge properly, then verify and push, without overwriting remote history.
+7. The current client detects new versions through `VERSION.json` on `main`, so the application version must be raised before pushing releasable code. A regular release keeps the flow of a version commit plus a branch push; create a version tag or GitHub Release separately only when the user asks or the release process needs it.
+8. After pushing, confirm the command succeeded, that the remote branch contains the release commit, and check the working tree state. Report the version, commit SHA, target branch and verification results to the user; when something fails or is blocked, say clearly which step it stopped at.
+
+## Permissions and blockers
+
+- When committing, pushing or testing needs environment permissions, go through the tool approval flow and do not bypass a denial.
+- When automatic approval is denied, state which operation was denied and the reason returned, finish the work that is not affected, and say clearly when the user needs to continue authorizing; a version that has not been committed or pushed must never be described as released.

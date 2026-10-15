@@ -6,20 +6,20 @@ const path = require('node:path');
 const script = path.join(__dirname, '../scripts/install-claude-code.sh');
 const run = args => spawnSync('bash', [script, ...args], { encoding: 'utf8', input: '' });
 
-test('安装脚本语法正确，帮助信息列出全部参数', () => {
+test('The install script has valid syntax and its help lists every option', () => {
   assert.equal(spawnSync('bash', ['-n', script]).status, 0);
   const result = run(['--help']);
   assert.equal(result.status, 0);
   for (const flag of ['--check', '--upgrade', '--no-modify-path', '--passphrase', '--skip']) assert.match(result.stdout, new RegExp(flag));
 });
 
-test('安装脚本拒绝未知参数和不支持的 --skip 项', () => {
+test('The install script rejects unknown options and unsupported --skip items', () => {
   assert.equal(run(['--bogus']).status, 2);
   assert.equal(run(['--skip', 'homebrew']).status, 2);
-  assert.match(run(['--help']).stdout, /sync、ta 或 pm2/);
+  assert.match(run(['--help']).stdout, /sync, ta or pm2/);
 });
 
-test('安装脚本中变量名后不能直接紧跟中文字符（UTF-8 下会被当作变量名的一部分）', () => {
+test('In the install script a variable name must not be directly followed by a CJK character (under UTF-8 it would be read as part of the variable name)', () => {
   const source = require('node:fs').readFileSync(script, 'utf8');
   const offenders = source.split('\n').map((line, index) => [index + 1, line])
     .filter(([, line]) => /\$[A-Za-z_][A-Za-z0-9_]*[^\x00-\x7f]/.test(line));
@@ -29,7 +29,7 @@ test('安装脚本中变量名后不能直接紧跟中文字符（UTF-8 下会�
 const proxyScript = path.join(__dirname, '../scripts/install-proxy.sh');
 const runProxy = args => spawnSync('bash', [proxyScript, ...args], { encoding: 'utf8', input: '' });
 
-test('代理脚本语法正确，帮助信息列出全部参数，拒绝错误参数', () => {
+test('The proxy script has valid syntax, its help lists every option, and it rejects wrong options', () => {
   assert.equal(spawnSync('bash', ['-n', proxyScript]).status, 0);
   const help = runProxy(['--help']);
   assert.equal(help.status, 0);
@@ -39,14 +39,14 @@ test('代理脚本语法正确，帮助信息列出全部参数，拒绝错误�
   assert.equal(runProxy(['--port', '80']).status, 2);
 });
 
-test('代理脚本中变量名后不能直接紧跟中文字符，也不会把订阅链接写入输出', () => {
+test('In the proxy script a variable name must not be directly followed by a CJK character, and the subscription link is never written to the output', () => {
   const source = require('node:fs').readFileSync(proxyScript, 'utf8');
   assert.deepEqual(source.split('\n').filter(line => /\$[A-Za-z_][A-Za-z0-9_]*[^\x00-\x7f]/.test(line)), []);
   const printsUrl = source.split('\n').filter(line => /^\s*(info|ok|warn|fail|echo|printf)\b.*\$\{?SUB_URL\}?(?!\w)/.test(line) && !/#\{SUB_URL\}/.test(line) && !/printf 'url = /.test(line));
   assert.deepEqual(printsUrl, []);
 });
 
-test('向导启动脚本语法正确并给出帮助，向导服务可编译', () => {
+test('The wizard start script has valid syntax and prints help, and the wizard server compiles', () => {
   const wizardScript = path.join(__dirname, '../scripts/setup-wizard.sh');
   assert.equal(spawnSync('bash', ['-n', wizardScript]).status, 0);
   const help = spawnSync('bash', [wizardScript, '--help'], { encoding: 'utf8' });
@@ -59,7 +59,7 @@ test('向导启动脚本语法正确并给出帮助，向导服务可编译', ()
   }
 });
 
-test('codex -c / --continue 继续最近会话，codex -c key=value 仍是配置覆盖', { skip: spawnSync('python3', ['--version']).status !== 0 }, () => {
+test('codex -c / --continue resumes the latest session, while codex -c key=value is still a config override', { skip: spawnSync('python3', ['--version']).status !== 0 }, () => {
   const fs = require('node:fs');
   const os = require('node:os');
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'hook-test-'));
@@ -81,15 +81,15 @@ test('codex -c / --continue 继续最近会话，codex -c key=value 仍是配置
 
   const shell = command => spawnSync('bash', ['--rcfile', rcFile, '-ic', command], { encoding: 'utf8', env }).stdout.split('\n').filter(line => /^(CLAUDE|CODEX):/.test(line));
   assert.deepEqual(shell('codex -c'), ['CODEX: resume --last']);
-  assert.deepEqual(shell('codex --continue "接着做"'), ['CODEX: resume --last 接着做']);
-  assert.deepEqual(shell('codex -c "接着做"'), ['CODEX: resume --last 接着做']);
+  assert.deepEqual(shell('codex --continue "Keep going"'), ['CODEX: resume --last Keep going']);
+  assert.deepEqual(shell('codex -c "Keep going"'), ['CODEX: resume --last Keep going']);
   assert.deepEqual(shell('codex -c model="o3" exec x'), ['CODEX: -c model=o3 exec x']);
   assert.deepEqual(shell('codex exec x'), ['CODEX: exec x']);
   assert.deepEqual(shell('claude -c'), ['CLAUDE: -c']);
   fs.rmSync(home, { recursive: true, force: true });
 });
 
-test('ta 把统一的 -c / -p / -m 翻译成 claude 和 codex 各自的写法，其余参数原样透传', () => {
+test('ta translates the unified -c / -p / -m into the form claude and codex each use, and passes the other arguments through unchanged', () => {
   const ta = path.join(__dirname, '../scripts/ta.sh');
   const plan = (...args) => spawnSync('bash', [ta, '--dry-run', ...args], { encoding: 'utf8', env: { PATH: process.env.PATH, HOME: '/nonexistent', LC_ALL: 'en_US.UTF-8' } });
   const cases = [
@@ -102,7 +102,7 @@ test('ta 把统一的 -c / -p / -m 翻译成 claude 和 codex 各自的写法，
     [['codex', '--continue'], 'codex resume --last'],
     [['x', '-c', '-m', 'gpt-6-sol'], 'codex resume --last -m gpt-6-sol'],
     [['x', '-p', '总结'], "codex exec '总结'"],
-    [['x', '-c', '-p', '接着做'], "codex exec resume --last '接着做'"],
+    [['x', '-c', '-p', 'Keep going'], "codex exec resume --last 'Keep going'"],
     [['c', '--resume', 'abc'], 'claude --resume abc'],
     [['x', '--full-auto', '-m', 'gpt-5.5'], 'codex -m gpt-5.5 --full-auto'],
     [['x', '--', '-p', 'work'], 'codex -p work'],
@@ -118,7 +118,7 @@ test('ta 把统一的 -c / -p / -m 翻译成 claude 和 codex 各自的写法，
   assert.equal(spawnSync('bash', ['-n', ta]).status, 0);
 });
 
-// ---- PM2 / Node.js 安装步骤：用本地 file:// 假镜像，不联网 ----
+// ---- PM2 / Node.js install steps: use a local file:// fake mirror, no network ----
 function pm2Sandbox({ wrongChecksum = false, withPm2 = false } = {}) {
   const fs = require('node:fs');
   const os = require('node:os');
@@ -156,51 +156,51 @@ mkdir -p "$prefix/bin" && printf '#!/bin/sh\\necho 7.0.0-fake\\n' > "$prefix/bin
 }
 const systemHasNode = ['/usr/bin/node', '/bin/node', '/usr/sbin/node', '/sbin/node'].some(p => require('node:fs').existsSync(p));
 
-test('没有 Node.js 时下载官方包到用户目录、校验 SHA-256，再安装 PM2', { skip: systemHasNode }, () => {
+test('Without Node.js the official package is downloaded into the user directory, its SHA-256 is verified, and then PM2 is installed', { skip: systemHasNode }, () => {
   const box = pm2Sandbox();
   try {
     const result = box.run([]);
     assert.equal(result.status, 0, result.stdout + result.stderr);
-    assert.match(result.stdout, /Node\.js 已安装：v22\.9\.9/);
-    assert.match(result.stdout, /PM2\s+已安装\s+pm2 7\.0\.0-fake/);
+    assert.match(result.stdout, /Node\.js installed: v22\.9\.9/);
+    assert.match(result.stdout, /PM2\s+installed\s+pm2 7\.0\.0-fake/);
     const fs = require('node:fs');
     assert.ok(fs.existsSync(path.join(box.home, '.local/node/bin/node')));
     assert.ok(fs.existsSync(path.join(box.home, '.local/node/bin/pm2')));
     const rc = fs.readFileSync(path.join(box.home, process.platform === 'darwin' ? '.bash_profile' : '.bashrc'), 'utf8');
-    assert.equal(rc.split('.local/node/bin').length - 1, 1, 'PATH 只写入一次');
+    assert.equal(rc.split('.local/node/bin').length - 1, 1, 'PATH is written only once');
     const again = box.run([]);
     assert.equal(again.status, 0);
-    assert.doesNotMatch(again.stdout, /正在安装 Node/);
-    assert.match(again.stdout, /PM2\s+已安装/);
+    assert.doesNotMatch(again.stdout, /installing Node/);
+    assert.match(again.stdout, /PM2\s+installed/);
   } finally { box.cleanup(); }
 });
 
-test('Node.js 安装包校验和不一致时拒绝安装', { skip: systemHasNode }, () => {
+test('Installation is refused when the Node.js package checksum does not match', { skip: systemHasNode }, () => {
   const box = pm2Sandbox({ wrongChecksum: true });
   try {
     const result = box.run([]);
     assert.equal(result.status, 1);
-    assert.match(result.stderr, /校验失败/);
-    assert.match(result.stdout, /PM2\s+失败/);
+    assert.match(result.stderr, /failed verification/);
+    assert.match(result.stdout, /PM2\s+failed/);
     assert.ok(!require('node:fs').existsSync(path.join(box.home, '.local/node')));
   } finally { box.cleanup(); }
 });
 
-test('已安装 PM2 时不下载任何东西；--skip pm2 和 --check 不安装', () => {
+test('When PM2 is already installed nothing is downloaded; --skip pm2 and --check do not install', () => {
   const box = pm2Sandbox({ withPm2: true });
   try {
     const result = box.run([]);
     assert.equal(result.status, 0, result.stdout + result.stderr);
-    assert.match(result.stdout, /PM2\s+已安装\s+pm2 6\.0\.0-existing/);
+    assert.match(result.stdout, /PM2\s+installed\s+pm2 6\.0\.0-existing/);
     assert.ok(!require('node:fs').existsSync(path.join(box.home, '.local/node')));
-    assert.match(box.run(['--skip', 'pm2']).stdout, /PM2\s+跳过/);
+    assert.match(box.run(['--skip', 'pm2']).stdout, /PM2\s+skipped/);
   } finally { box.cleanup(); }
   if (!systemHasNode) {
     const bare = pm2Sandbox();
     try {
       const check = bare.run(['--check']);
       assert.equal(check.status, 0);
-      assert.match(check.stdout, /PM2\s+未安装/);
+      assert.match(check.stdout, /PM2\s+not installed/);
       assert.ok(!require('node:fs').existsSync(path.join(bare.home, '.local/node')));
     } finally { bare.cleanup(); }
   }

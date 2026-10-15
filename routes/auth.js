@@ -32,9 +32,9 @@ function errorResponse(res, error) {
 
 router.get('/status', (req, res) => res.json({ ...getClientAuth().status(req.session), mode: getClientAuth().accessMode() }));
 
-// 访问模式：local = 仅本机访问、无需验证；remote = 身份验证器 + 允许外网访问。
-//  · 首次（未选择）：选 local 必须来自本机；选 remote 只是进入绑定流程，绑定成功才生效。
-//  · 已选择：必须已登录。remote→local 立即生效并断开其他设备；local→remote 需要先绑定身份验证器（已绑定过则验证一次动态验证码）。
+// Access mode: local = local access only, no verification; remote = authenticator + external access allowed.
+// · First time (not chosen): choosing local must come from this machine; choosing remote only starts the binding flow and takes effect once binding succeeds.
+// · Already chosen: must be logged in. remote→local takes effect immediately and disconnects other devices; local→remote needs an authenticator bound first (if already bound, verify one code).
 router.post('/mode', (req, res) => {
   const auth = getClientAuth();
   const mode = req.body && req.body.mode;
@@ -105,7 +105,7 @@ router.post('/login', (req, res) => {
   } catch (error) { errorResponse(res, error); }
 });
 
-// PUT /auth/settings — 更新工作路径
+// PUT /auth/settings — update the working path
 router.put('/settings', requireAuth, (req, res) => {
   const { work_dir } = req.body;
   if (work_dir !== null && work_dir !== undefined && typeof work_dir !== 'string') return res.status(400).json({ error: 'INVALID_WORK_DIRECTORY' });
@@ -116,7 +116,7 @@ router.put('/settings', requireAuth, (req, res) => {
     try {
       fs.mkdirSync(finalWorkDir, { recursive: true });
     } catch (e) {
-      return res.status(400).json({ error: `工作目录创建失败: ${e.message}` });
+      return res.status(400).json({ error: `Failed to create the working directory: ${e.message}` });
     }
   }
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# 完整卸载 T-Agent（项目文件、数据库、任务目录和开机启动项）。
-# 用法：curl -fsSL https://raw.githubusercontent.com/TorinMars/t-agent/main/uninstall.sh | bash
+# Completely uninstall T-Agent (project files, database, task directory and startup entries).
+# Usage: curl -fsSL https://raw.githubusercontent.com/TorinMars/t-agent/main/uninstall.sh | bash
 
 set -euo pipefail
 
@@ -12,7 +12,7 @@ TASKS_PATH=""
 APP_PORT=""
 
 fail() {
-  printf '错误：%s\n' "$*" >&2
+  printf 'Error: %s\n' "$*" >&2
   exit 1
 }
 
@@ -22,7 +22,7 @@ run_as_root() {
   elif command -v sudo >/dev/null 2>&1; then
     sudo "$@"
   else
-    fail "需要管理员权限，请以 root 运行或安装 sudo"
+    fail "Administrator rights are required; run as root or install sudo"
   fi
 }
 
@@ -30,14 +30,14 @@ safe_delete_target() {
   local target="$1"
   [ -n "$target" ] || return
   case "$target" in
-    /|"$HOME"|"$PWD") fail "拒绝删除不安全的目标：$target" ;;
+    /|"$HOME"|"$PWD") fail "Refusing to delete an unsafe target: $target" ;;
   esac
   rm -rf "$target"
 }
 
-[ -r /dev/tty ] || fail "需要可交互终端来确认卸载"
+[ -r /dev/tty ] || fail "An interactive terminal is needed to confirm the uninstall"
 case "$APP_DIR" in
-  /|"$HOME"|"$PWD") fail "安装目录不安全：$APP_DIR；请通过 T_AGENT_DIR 指定准确的项目目录" ;;
+  /|"$HOME"|"$PWD") fail "Unsafe install directory: $APP_DIR; set T_AGENT_DIR to the exact project directory" ;;
 esac
 
 if [ -f "$APP_DIR/.env" ]; then
@@ -46,15 +46,15 @@ if [ -f "$APP_DIR/.env" ]; then
 fi
 LAUNCH_PLIST="$HOME/Library/LaunchAgents/$LAUNCH_LABEL.plist"
 
-printf '\n将完全卸载 T-Agent。以下内容会永久删除：\n'
-printf '  - 项目目录：%s\n' "$APP_DIR"
-printf '  - 数据库、日志、配置和项目内任务文件\n'
-[ -n "$TASKS_PATH" ] && printf '  - 任务工作目录：%s\n' "$TASKS_PATH"
-printf '  - PM2 中名为 t-agent 的进程，以及 macOS LaunchAgent 或 Linux systemd 开机启动项\n\n'
-read -r -p '输入 UNINSTALL 以确认永久删除：' CONFIRMATION </dev/tty
-[ "$CONFIRMATION" = 'UNINSTALL' ] || { printf '已取消卸载。\n'; exit 0; }
+printf '\nThis will completely uninstall T-Agent. The following will be permanently deleted:\n'
+printf '  - Project directory: %s\n' "$APP_DIR"
+printf '  - Database, logs, configuration and task files inside the project\n'
+[ -n "$TASKS_PATH" ] && printf '  - Task working directory: %s\n' "$TASKS_PATH"
+printf '  - The PM2 process named t-agent, and the macOS LaunchAgent or Linux systemd startup entry\n\n'
+read -r -p 'Type UNINSTALL to confirm permanent deletion:' CONFIRMATION </dev/tty
+[ "$CONFIRMATION" = 'UNINSTALL' ] || { printf 'Uninstall cancelled.\n'; exit 0; }
 
-# Client 默认由 PM2 管理：删除对应进程并保存列表，避免之后 pm2 resurrect 又把它拉起来。
+# The Client is managed by PM2 by default: delete the process and save the list, so a later pm2 resurrect does not bring it back.
 if command -v pm2 >/dev/null 2>&1 && pm2 describe t-agent >/dev/null 2>&1; then
   pm2 delete t-agent >/dev/null 2>&1 || true
   pm2 save >/dev/null 2>&1 || true
@@ -64,7 +64,7 @@ case "$(uname -s)" in
   Darwin)
     launchctl bootout "gui/$UID" "$LAUNCH_PLIST" 2>/dev/null || true
     rm -f "$LAUNCH_PLIST"
-    # 清理早期版本的 LaunchAgent 名称。
+    # Clean up the LaunchAgent name of early versions.
     launchctl bootout "gui/$UID" "$HOME/Library/LaunchAgents/com.tagent.web.plist" 2>/dev/null || true
     rm -f "$HOME/Library/LaunchAgents/com.tagent.web.plist"
     ;;
@@ -81,10 +81,10 @@ if [[ "$APP_PORT" =~ ^[1-9][0-9]{0,4}$ ]] && [ "$APP_PORT" -le 65535 ] && comman
   run_as_root fuser -k "$APP_PORT/tcp" 2>/dev/null || true
 fi
 
-# TASKS_BASE_DIR 若位于项目目录内，会随项目一起删除；外部路径单独清理。
+# If TASKS_BASE_DIR lies inside the project directory it is removed with the project; an external path is cleaned separately.
 if [ -n "$TASKS_PATH" ] && [ "$TASKS_PATH" != "$APP_DIR" ] && [[ "$TASKS_PATH" != "$APP_DIR/"* ]]; then
   safe_delete_target "$TASKS_PATH"
 fi
 safe_delete_target "$APP_DIR"
 
-printf '\nT-Agent 已完全卸载：启动项、服务进程、项目数据和任务目录均已清除。\n'
+printf '\nT-Agent is completely uninstalled: startup entries, service process, project data and task directory are all removed.\n'

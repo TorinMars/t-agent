@@ -1,5 +1,5 @@
-// 应用列表：登记“有哪些服务、怎么访问”。数据来自当前引擎（本地走 /api/apps，远程 Engine 经 Client 代理走 /api/remote-servers/:id/apps）。
-// 关联了 PM2 的应用可以直接启动/停止/重启/reload 和看日志。所有文本都用 textContent 写入；链接只接受 http(s) 地址。
+// App list: records which services exist and how to reach them. Data comes from the current engine (local uses /api/apps, a remote Engine is proxied by the Client at /api/remote-servers/:id/apps).
+// Apps linked to PM2 can be started/stopped/restarted/reloaded and have their logs viewed directly. All text is written with textContent; links accept http(s) addresses only.
 const Apps = (() => {
   const $ = id => document.getElementById(id);
   const table = $('apps-table');
@@ -7,25 +7,25 @@ const Apps = (() => {
   const hint = $('apps-hint');
   const statusText = $('apps-status');
   const restoreButton = $('apps-restore');
-  const defaultHint = '这台机器上的服务清单。PM2 里的进程会自动登记；其他服务可以手动新增，也可以让程序启动时通过接口自注册（见下方说明）。端口和 IP 尽量自动检测，域名需要手动填写。';
-  let active = false, timer = null, busy = false, generation = 0;
+  const defaultHint = 'Services on this machine. PM2 processes are registered automatically; other services can be added manually or register themselves through the API at startup (see below). Ports and IPs are detected automatically where possible; domains must be entered by hand.';
+  let active = false, timer = null, busy = false, actionPending = false, generation = 0;
   let base = '/api/apps', pm2Base = null, blocked = null, last = null;
 
-  // 错误码 → 中文。本机路由同时返回 message，远程代理只透传错误码。
+  // Error code → message. Local routes also return a message; the remote proxy only passes the error code through.
   const CODE_MESSAGES = {
-    APP_NOT_FOUND: '找不到这个应用', APP_NAME_TAKEN: '已有同名应用', APP_PM2_LINKED: '这个 PM2 进程已经关联了别的应用',
-    APP_FIELD_REQUIRED: '名称不能为空', APP_FIELD_TOO_LONG: '内容太长', APP_FIELD_INVALID: '内容含有不允许的字符',
-    APP_PORT_INVALID: '端口必须是 1-65535 的整数', APP_HOST_INVALID: 'IP 格式不正确', APP_DOMAIN_INVALID: '域名格式不正确，例如 app.example.com',
-    APP_URL_INVALID: '地址只支持不含账号密码的 http:// 或 https://', APP_SCHEME_INVALID: '协议只能是 http 或 https', APP_PATH_INVALID: '路径必须以 / 开头且不含空白',
-    APP_BODY_INVALID: '请求内容不正确', APPS_UNSUPPORTED: '该引擎版本过旧，暂不支持应用列表，请先升级该引擎', APPS_UNAVAILABLE: '应用列表服务暂时不可用',
-    PM2_NOT_INSTALLED: '未检测到 pm2', PM2_NOT_RUNNING: 'PM2 守护进程没有运行', PM2_UNSUPPORTED: '该引擎版本过旧，暂不支持 PM2 管理',
-    PM2_COMMAND_FAILED: 'pm2 命令执行失败', PM2_UNAVAILABLE: 'PM2 管理服务暂时不可用',
-    REMOTE_NOT_FOUND: '这个远程连接已不存在', REMOTE_HTTP_401: '该引擎的认证已失效', REMOTE_CONNECTION_FAILED: '无法连接该引擎', REMOTE_TIMEOUT: '连接该引擎超时',
+    APP_NOT_FOUND: 'App not found', APP_NAME_TAKEN: 'An app with this name already exists', APP_PM2_LINKED: 'This PM2 process is already linked to another app',
+    APP_FIELD_REQUIRED: 'Name cannot be empty', APP_FIELD_TOO_LONG: 'Content is too long', APP_FIELD_INVALID: 'Content contains disallowed characters',
+    APP_PORT_INVALID: 'Port must be an integer between 1 and 65535', APP_HOST_INVALID: 'Invalid IP format', APP_DOMAIN_INVALID: 'Invalid domain format, e.g. app.example.com',
+    APP_URL_INVALID: 'Only http:// or https:// addresses without credentials are supported', APP_SCHEME_INVALID: 'Protocol must be http or https', APP_PATH_INVALID: 'Path must start with / and contain no whitespace',
+    APP_BODY_INVALID: 'Invalid request', APPS_UNSUPPORTED: 'This engine is too old to support the app list. Please upgrade it', APPS_UNAVAILABLE: 'The app list service is temporarily unavailable',
+    PM2_NOT_INSTALLED: 'pm2 not detected', PM2_NOT_RUNNING: 'The PM2 daemon is not running', PM2_UNSUPPORTED: 'This engine is too old to support PM2 management',
+    PM2_COMMAND_FAILED: 'pm2 command failed', PM2_UNAVAILABLE: 'PM2 management is temporarily unavailable',
+    REMOTE_NOT_FOUND: 'This remote connection no longer exists', REMOTE_HTTP_401: 'This engine’s authentication has expired', REMOTE_CONNECTION_FAILED: 'Cannot connect to this engine', REMOTE_TIMEOUT: 'Connecting to this engine timed out',
   };
   function errorMessage(error) {
     let code = error.message;
     let message = null;
-    try { const parsed = JSON.parse(error.message); code = parsed.error || code; message = parsed.message || null; } catch { /* 不是 JSON */ }
+    try { const parsed = JSON.parse(error.message); code = parsed.error || code; message = parsed.message || null; } catch { /* not JSON */ }
     return CODE_MESSAGES[code] || message || code;
   }
 
@@ -34,12 +34,12 @@ const Apps = (() => {
   function formatUptime(startedAt) {
     if (!startedAt) return '-';
     const seconds = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
-    if (seconds < 60) return `${seconds} 秒`;
-    if (seconds < 3600) return `${Math.floor(seconds / 60)} 分钟`;
-    if (seconds < 86400) return `${Math.floor(seconds / 3600)} 小时`;
-    return `${Math.floor(seconds / 86400)} 天`;
+    if (seconds < 60) return `${seconds}s`;
+    if (seconds < 3600) return `${Math.floor(seconds / 60)} min`;
+    if (seconds < 86400) return `${Math.floor(seconds / 3600)} h`;
+    return `${Math.floor(seconds / 86400)} d`;
   }
-  const SOURCE_LABELS = { pm2: 'PM2', manual: '手动', api: '程序注册' };
+  const SOURCE_LABELS = { pm2: 'PM2', manual: 'Manual', api: 'Self-registered' };
 
   function el(tag, className, text) {
     const node = document.createElement(tag);
@@ -57,12 +57,12 @@ const Apps = (() => {
     const href = safeHref(url);
     if (!href) return null;
     const a = el('a', 'apps-link', label || url);
-    a.href = href; a.target = '_blank'; a.rel = 'noopener noreferrer'; a.title = `在新标签页打开 ${url}`;
+    a.href = href; a.target = '_blank'; a.rel = 'noopener noreferrer'; a.title = `Open ${url} in a new tab`;
     if (extra) a.append(' ', el('span', 'apps-tag', extra));
     return a;
   }
 
-  // ── 行渲染 ──
+  // ── Row rendering ──
   function nameCell(app) {
     const td = el('td', 'apps-name');
     const primary = app.links && app.links.primary ? link(app.links.primary, app.name) : null;
@@ -77,14 +77,14 @@ const Apps = (() => {
     if (app.pm2) {
       td.append(el('span', `pm2-badge ${app.pm2.status}`, app.pm2.status));
       if (app.pm2.status === 'online') {
-        td.append(el('small', 'apps-sub', `CPU ${app.pm2.cpu}% · ${formatMemory(app.pm2.memory)} · ${formatUptime(app.pm2.startedAt)} · 重启 ${app.pm2.restarts}`));
+        td.append(el('small', 'apps-sub', `CPU ${app.pm2.cpu}% · ${formatMemory(app.pm2.memory)} · ${formatUptime(app.pm2.startedAt)} · ${app.pm2.restarts} restarts`));
       }
     } else if (app.pm2_state === 'missing') {
-      td.append(el('span', 'pm2-badge errored', '进程不存在'), el('small', 'apps-sub', `PM2 里没有「${app.pm2_name}」`));
+      td.append(el('span', 'pm2-badge errored', 'Process not found'), el('small', 'apps-sub', `PM2 has no process “${app.pm2_name}”`));
     } else if (app.pm2_state === 'unavailable') {
-      td.append(el('span', 'pm2-badge', 'PM2 不可用'));
+      td.append(el('span', 'pm2-badge', 'PM2 unavailable'));
     } else {
-      td.append(el('span', 'apps-sub', '未关联 PM2'));
+      td.append(el('span', 'apps-sub', 'Not linked to PM2'));
     }
     return td;
   }
@@ -93,11 +93,11 @@ const Apps = (() => {
     const td = el('td');
     if (app.effective_port) {
       td.append(String(app.effective_port));
-      if (app.port) td.append(' ', el('span', 'apps-tag', '已设置'));
+      if (app.port) td.append(' ', el('span', 'apps-tag', 'Set'));
       const others = (app.ports || []).filter(item => item.port !== app.effective_port).map(item => item.port);
-      if (others.length) { td.append(el('small', 'apps-sub', `另有 ${others.join('、')}`)); }
+      if (others.length) { td.append(el('small', 'apps-sub', `Also: ${others.join(', ')}`)); }
     } else {
-      td.append(el('span', 'apps-sub', '未检测到'));
+      td.append(el('span', 'apps-sub', 'Not detected'));
     }
     return td;
   }
@@ -106,11 +106,11 @@ const Apps = (() => {
     const td = el('td', 'apps-links');
     const links = app.links || {};
     const nodes = [];
-    if (links.custom) nodes.push(link(links.custom.url, links.custom.url, '自定义'));
-    if (links.domain) nodes.push(link(links.domain.url, links.domain.url, '域名'));
-    if (links.ip) nodes.push(link(links.ip.url, links.ip.url, links.ip.local_only ? 'IP · 仅本机监听' : 'IP'));
+    if (links.custom) nodes.push(link(links.custom.url, links.custom.url, 'Custom'));
+    if (links.domain) nodes.push(link(links.domain.url, links.domain.url, 'Domain'));
+    if (links.ip) nodes.push(link(links.ip.url, links.ip.url, links.ip.local_only ? 'IP · listening on localhost only' : 'IP'));
     const shown = nodes.filter(Boolean);
-    if (!shown.length) td.append(el('span', 'apps-sub', '暂无（可编辑补充端口或域名）'));
+    if (!shown.length) td.append(el('span', 'apps-sub', 'None (edit to add a port or domain)'));
     for (const node of shown) { const line = el('div'); line.append(node); td.append(line); }
     return td;
   }
@@ -120,11 +120,11 @@ const Apps = (() => {
     const group = el('div', 'pm2-actions');
     const proc = app.pm2;
     if (proc && pm2Base) {
-      if (proc.status !== 'online') group.append(button('启动', () => pm2Action(app, 'start')));
-      else group.append(button('重启', () => pm2Action(app, 'restart')), button('Reload', () => pm2Action(app, 'reload')), button('停止', () => pm2Action(app, 'stop')));
-      group.append(button('日志', () => openLogs(app)));
+      if (proc.status !== 'online') group.append(button('Start', () => pm2Action(app, 'start')));
+      else group.append(button('Restart', () => pm2Action(app, 'restart')), button('Reload', () => pm2Action(app, 'reload')), button('Stop', () => pm2Action(app, 'stop')));
+      group.append(button('Logs', () => openLogs(app)));
     }
-    group.append(button('编辑', () => openForm(app)), button('删除', () => remove(app)));
+    group.append(button('Edit', () => openForm(app)), button('Delete', () => remove(app)));
     td.append(group);
     return td;
   }
@@ -133,9 +133,9 @@ const Apps = (() => {
     last = data;
     body.textContent = '';
     restoreButton.hidden = !data.hidden_count;
-    restoreButton.textContent = `恢复已隐藏的 ${data.hidden_count} 个`;
+    restoreButton.textContent = `Restore ${data.hidden_count} hidden`;
     table.hidden = data.apps.length === 0;
-    hint.textContent = data.apps.length === 0 ? '还没有应用。点击“新增应用”手动登记，或让程序通过接口自注册；PM2 里的进程会自动出现在这里。' : defaultHint;
+    hint.textContent = data.apps.length === 0 ? 'No apps yet. Click “Add app” to register one manually, or let programs register themselves through the API; PM2 processes appear here automatically.' : defaultHint;
     for (const app of data.apps) {
       const row = el('tr');
       row.dataset.appId = String(app.id);
@@ -152,68 +152,70 @@ const Apps = (() => {
       const data = await API.get(base);
       if (mine === generation) {
         render(data);
-        if (!statusText.textContent.startsWith('正在')) statusText.textContent = `更新于 ${new Date().toLocaleTimeString()}`;
+        if (!actionPending) statusText.textContent = `Updated at ${new Date().toLocaleTimeString()}`;
       }
     } catch (error) {
-      if (mine === generation) statusText.textContent = `读取失败：${errorMessage(error)}`;
+      if (mine === generation) statusText.textContent = `Read failed: ${errorMessage(error)}`;
     } finally { busy = false; }
   }
 
-  // ── PM2 操作（调用当前引擎的 /pm2 接口：启动、停止、重启、reload、日志） ──
+  // ── PM2 actions (call the current engine's /pm2 endpoint: start, stop, restart, reload, logs) ──
   async function pm2Action(app, action) {
     const proc = app.pm2;
-    const label = { start: '启动', stop: '停止', restart: '重启', reload: 'reload' }[action];
+    const verb = { start: ['Starting', 'Started', 'Start failed'], stop: ['Stopping', 'Stopped', 'Stop failed'], restart: ['Restarting', 'Restarted', 'Restart failed'], reload: ['Reloading', 'Reloaded', 'Reload failed'] }[action];
     let question = null;
-    if (action === 'stop') question = `确定停止 ${app.name}？`;
-    if (proc.self && action !== 'start') question = `${app.name} 就是当前正在提供本页面的 t-agent。${label}后页面会中断${action === 'stop' ? '，并且需要在这台机器上手动启动才能恢复' : '几秒'}。继续吗？`;
+    if (action === 'stop') question = `Stop ${app.name}?`;
+    if (proc.self && action !== 'start') question = `${app.name} is the t-agent currently serving this page. ${verb[0]} it will interrupt the page${action === 'stop' ? ' and you will need to start it manually on this machine to recover' : ' for a few seconds'}. Continue?`;
     if (question && !confirm(question)) return;
-    statusText.textContent = `正在${label} ${app.name}…`;
+    statusText.textContent = `${verb[0]} ${app.name}…`;
+    actionPending = true;
     try {
       await API.post(`${pm2Base}/${proc.id}/${action}`, {});
-      statusText.textContent = `已${label} ${app.name}`;
+      statusText.textContent = `${verb[1]} ${app.name}`;
     } catch (error) {
-      statusText.textContent = proc.self ? '请求已发出，页面可能会短暂断开' : `${label}失败：${errorMessage(error)}`;
+      statusText.textContent = proc.self ? 'Request sent; the page may disconnect briefly' : `${verb[2]}: ${errorMessage(error)}`;
     }
+    actionPending = false;
     await refresh();
   }
 
   function openLogs(app) {
     const proc = app.pm2;
-    Modal.show(`${app.name} 的日志`, '');
+    Modal.show(`${app.name} logs`, '');
     const content = $('modal-body');
     const bar = el('div', 'pm2-logs-bar');
     const stream = el('select');
-    stream.setAttribute('aria-label', '日志类型');
-    for (const [value, text] of [['out', '标准输出'], ['err', '错误输出']]) { const o = el('option', '', text); o.value = value; stream.append(o); }
+    stream.setAttribute('aria-label', 'Log type');
+    for (const [value, text] of [['out', 'Standard output'], ['err', 'Error output']]) { const o = el('option', '', text); o.value = value; stream.append(o); }
     const lines = el('select');
-    lines.setAttribute('aria-label', '行数');
-    for (const [value, text] of [['100', '最近 100 行'], ['300', '最近 300 行'], ['1000', '最近 1000 行']]) { const o = el('option', '', text); o.value = value; if (value === '300') o.selected = true; lines.append(o); }
-    bar.append(stream, lines, button('关闭', Modal.hide));
-    const pre = el('pre', 'apps-log', '加载中…');
+    lines.setAttribute('aria-label', 'Lines');
+    for (const [value, text] of [['100', 'Last 100 lines'], ['300', 'Last 300 lines'], ['1000', 'Last 1000 lines']]) { const o = el('option', '', text); o.value = value; if (value === '300') o.selected = true; lines.append(o); }
+    bar.append(stream, lines, button('Close', Modal.hide));
+    const pre = el('pre', 'apps-log', 'Loading…');
     pre.id = 'apps-log-text';
     content.append(bar, pre);
     const load = async () => {
       try {
         const data = await API.get(`${pm2Base}/${proc.id}/logs?stream=${stream.value}&lines=${lines.value}`);
         const stick = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 30;
-        pre.textContent = data.lines.length ? data.lines.join('\n') : '（暂无日志）';
+        pre.textContent = data.lines.length ? data.lines.join('\n') : '(No logs yet)';
         if (stick) pre.scrollTop = pre.scrollHeight;
-      } catch (error) { pre.textContent = `读取日志失败：${errorMessage(error)}`; }
+      } catch (error) { pre.textContent = `Could not read logs: ${errorMessage(error)}`; }
     };
     stream.addEventListener('change', load); lines.addEventListener('change', load);
     load().then(() => { pre.scrollTop = pre.scrollHeight; });
     const logTimer = setInterval(() => {
-      // 弹窗关闭或被别的内容替换后停止刷新
+      // stop refreshing once the dialog is closed or replaced by other content
       if (!pre.isConnected || $('modal-overlay').style.display === 'none') return clearInterval(logTimer);
       if (!document.hidden) load();
     }, 2000);
   }
 
-  // ── 新增 / 编辑 ──
-  // 表单只回显已保存的值；自动检测到的值只作为占位符显示，不会因为打开编辑框就被保存成固定值。
+  // ── Add / edit ──
+  // The form only echoes saved values; auto-detected values are shown as placeholders only, so merely opening the editor never saves them as fixed values.
   function openForm(app) {
     const editing = Boolean(app);
-    Modal.show(editing ? `编辑应用：${app.name}` : '新增应用', '');
+    Modal.show(editing ? `Edit app: ${app.name}` : 'Add app', '');
     const form = el('form');
     const fields = {};
     const group = (key, label, input, hintText) => {
@@ -233,24 +235,24 @@ const Apps = (() => {
       return group(key, label, input, hintText);
     };
     const a = app || {};
-    const detectedPort = app && !app.port && app.effective_port ? `自动：${app.effective_port}` : '留空则自动检测';
-    const detectedIp = app && app.links && app.links.ip && !app.host ? `自动：${app.links.ip.host}` : '留空则使用本机局域网 IP';
-    text('name', '名称', a.name, '例如 博客', null).maxLength = 64;
-    text('description', '说明', a.description, '这个服务是做什么的（可选）', null).maxLength = 500;
-    text('pm2_name', 'PM2 进程名', a.pm2_name, '关联 PM2 进程（可选）', '填写后可以在这里直接启动、停止、重启和看日志。名称与 PM2 进程同名时会自动关联。');
-    text('port', '端口', a.port, detectedPort, '手动填写会覆盖自动检测到的端口。', 'number');
-    text('host', '访问地址（IP）', a.host, detectedIp, '其他设备访问时用的 IP；IPv6 不要加方括号。');
-    text('domain', '访问地址（域名）', a.domain, 'app.example.com 或 https://app.example.com', '有域名才填；可以直接写完整地址。');
+    const detectedPort = app && !app.port && app.effective_port ? `Auto: ${app.effective_port}` : 'Leave empty to auto-detect';
+    const detectedIp = app && app.links && app.links.ip && !app.host ? `Auto: ${app.links.ip.host}` : 'Leave empty to use this machine’s LAN IP';
+    text('name', 'Name', a.name, 'e.g. Blog', null).maxLength = 64;
+    text('description', 'Description', a.description, 'What this service does (optional)', null).maxLength = 500;
+    text('pm2_name', 'PM2 process name', a.pm2_name, 'Link a PM2 process (optional)', 'Once set, you can start, stop, restart and view logs here. The app is linked automatically when its name matches a PM2 process.');
+    text('port', 'Port', a.port, detectedPort, 'A manual value overrides the auto-detected port.', 'number');
+    text('host', 'Address (IP)', a.host, detectedIp, 'IP used when other devices connect; do not add brackets for IPv6.');
+    text('domain', 'Address (domain)', a.domain, 'app.example.com or https://app.example.com', 'Only if you have a domain; a full address is fine.');
     const scheme = el('select');
     for (const value of ['http', 'https']) { const o = el('option', '', value); o.value = value; scheme.append(o); }
     scheme.value = a.scheme || 'http';
-    group('scheme', '协议', scheme, '用于“IP:端口”访问；域名只写主机名时也用它。域名写成完整地址（如 https://app.example.com）则以写的为准，这样 IP 走 http、域名走 https 也可以。');
-    text('path', '路径', a.path && a.path !== '/' ? a.path : '', '/（默认）', '例如 /admin，点击访问时会带上。');
-    text('url', '自定义完整地址', a.url, 'http://10.0.0.5:9000/dashboard', '填了就优先用它作为点击跳转的地址（可选）。');
+    group('scheme', 'Protocol', scheme, 'Used for “IP:port” access, and also when the domain is just a hostname. If the domain is a full address (such as https://app.example.com), that wins, so IP over http and domain over https works too.');
+    text('path', 'Path', a.path && a.path !== '/' ? a.path : '', '/ (default)', 'e.g. /admin; appended when you click to open.');
+    text('url', 'Custom full address', a.url, 'http://10.0.0.5:9000/dashboard', 'If set, this address is used first when clicking through (optional).');
     const error = el('div', 'form-hint error');
     const actions = el('div', 'form-actions');
-    const cancel = button('取消', Modal.hide, 'btn-cancel');
-    const save = el('button', 'btn-submit', '保存');
+    const cancel = button('Cancel', Modal.hide, 'btn-cancel');
+    const save = el('button', 'btn-submit', 'Save');
     save.type = 'submit';
     actions.append(cancel, save);
     form.append(error, actions);
@@ -267,7 +269,7 @@ const Apps = (() => {
         if (editing) await API.put(`${base}/${app.id}`, payload);
         else await API.post(base, payload);
         Modal.hide();
-        statusText.textContent = editing ? `已保存 ${payload.name}` : `已新增 ${payload.name}`;
+        statusText.textContent = editing ? `Saved ${payload.name}` : `Added ${payload.name}`;
         await refresh();
       } catch (failure) {
         error.textContent = errorMessage(failure);
@@ -277,24 +279,24 @@ const Apps = (() => {
   }
 
   async function remove(app) {
-    const pm2Hint = app.source === 'pm2' && app.pm2 ? '\n（只是从列表里移除，PM2 进程本身不会被停止或删除；之后可以用“恢复已隐藏”找回。）' : '';
-    if (!confirm(`确定删除应用「${app.name}」？${pm2Hint}`)) return;
+    const pm2Hint = app.source === 'pm2' && app.pm2 ? '\n(This only removes it from the list; the PM2 process itself is not stopped or deleted. You can bring it back with “Restore hidden”.)' : '';
+    if (!confirm(`Delete app “${app.name}”? ${pm2Hint}`)) return;
     try {
       const result = await API.delete(`${base}/${app.id}`);
-      statusText.textContent = result.hidden ? `已从列表隐藏 ${app.name}（PM2 进程未受影响）` : `已删除 ${app.name}`;
-    } catch (error) { statusText.textContent = `删除失败：${errorMessage(error)}`; }
+      statusText.textContent = result.hidden ? `Hidden ${app.name} from the list (the PM2 process is unaffected)` : `Deleted ${app.name}`;
+    } catch (error) { statusText.textContent = `Delete failed: ${errorMessage(error)}`; }
     await refresh();
   }
 
   async function restoreHidden() {
     try {
       const result = await API.post(`${base}/restore-hidden`, {});
-      statusText.textContent = `已恢复 ${result.restored} 个`;
-    } catch (error) { statusText.textContent = `恢复失败：${errorMessage(error)}`; }
+      statusText.textContent = `Restored ${result.restored}`;
+    } catch (error) { statusText.textContent = `Restore failed: ${errorMessage(error)}`; }
     await refresh();
   }
 
-  // ── 页面生命周期（由 Tools 调度） ──
+  // ── Page lifecycle (driven by Tools) ──
   function setActive(value) {
     active = value;
     clearInterval(timer); timer = null;
@@ -304,7 +306,7 @@ const Apps = (() => {
     }
   }
 
-  // 切换引擎：换请求地址，清掉上一个引擎的数据。blocked 非空表示当前引擎不能用应用列表，只显示原因。
+  // Switch engine: change the request address and clear the previous engine's data. A non-empty blocked means the current engine cannot use the app list; only the reason is shown.
   function setEngine({ endpoint = '/api/apps', pm2Endpoint = null, unavailable = null, example = null } = {}) {
     const changed = endpoint !== base || unavailable !== blocked || pm2Endpoint !== pm2Base;
     base = endpoint; pm2Base = pm2Endpoint; blocked = unavailable;
@@ -321,10 +323,10 @@ const Apps = (() => {
     if (blocked) { clearInterval(timer); timer = null; }
   }
 
-  // 程序自注册的示例命令：本地引擎知道地址；远程引擎只能提示在那台机器上执行。
+  // Example command for self-registering programs: a local engine knows its address; for a remote engine we can only tell the user to run it on that machine.
   function renderExample(example) {
     const box = $('apps-register-example');
-    box.textContent = example || '（选中远程引擎时，请在该引擎所在机器上，用它自己的地址调用同样的接口）';
+    box.textContent = example || '(With a remote engine selected, call the same endpoint on that engine’s machine using its own address)';
     $('apps-register-copy').disabled = !example;
   }
 
@@ -333,8 +335,8 @@ const Apps = (() => {
   restoreButton.addEventListener('click', restoreHidden);
   $('apps-register-copy').addEventListener('click', async event => {
     const text = $('apps-register-example').textContent;
-    try { await navigator.clipboard.writeText(text); event.target.textContent = '已复制'; } catch { event.target.textContent = '复制失败'; }
-    setTimeout(() => { event.target.textContent = '复制示例命令'; }, 2000);
+    try { await navigator.clipboard.writeText(text); event.target.textContent = 'Copied'; } catch { event.target.textContent = 'Copy failed'; }
+    setTimeout(() => { event.target.textContent = 'Copy example command'; }, 2000);
   });
   return { setActive, setEngine, refresh, errorMessage };
 })();

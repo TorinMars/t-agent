@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const { parseHTML } = require('linkedom');
-function setup(status, applyStatus = {stage:'completed',message:'完成'}) {
+function setup(status, applyStatus = {stage:'completed',message:'Done'}) {
   const {document} = parseHTML(fs.readFileSync('public/index.html','utf8'));
   const calls=[];
   const reloads=[];
@@ -24,7 +24,7 @@ test('one click checks then applies without confirmation or force',async()=>{
   assert.deepEqual(ctx.calls.map(x=>x.url),['/api/system/check-update','/api/system/apply-update']);
   assert.equal(ctx.calls[1].body.confirm,true);assert.equal(ctx.calls[1].body.force,false);
   assert.equal(ctx.Updates.busy,false);
-  assert.equal(ctx.document.getElementById('modal-title').textContent,'更新完成');
+  assert.equal(ctx.document.getElementById('modal-title').textContent,'Update complete');
   assert.equal(ctx.reloaded,undefined);
   ctx.reloads.forEach(fn=>fn());
   assert.equal(ctx.reloaded,true);
@@ -40,24 +40,24 @@ test('pending update prevents duplicate requests and failures unlock the button'
   assert.equal(ctx.calls.length,2);assert.equal(ctx.Updates.busy,true);
   const failed=setup({status:'available',is_update_admin:true,install_type:'git'},new Error('failed'));
   await failed.Updates.oneClick();assert.equal(failed.Updates.busy,false);
-  assert.match(failed.document.getElementById('update-progress-error').textContent,/依赖安装失败/);
+  assert.match(failed.document.getElementById('update-progress-error').textContent,/Dependency install failed/);
 });
-test('代码已更新但服务还没重启：不报“已是最新”，不触发更新，显示重启方式并亮红点', async () => {
-  const message = '代码已更新到 2.31.0，但服务仍在运行 2.30.5 的代码，需要重启服务才会生效';
+test('Code updated but the service not restarted: does not say “up to date”, does not trigger an update, shows how to restart and lights the red dot', async () => {
+  const message = 'Code was updated to 2.31.0, but the service is still running the 2.30.5 code; restart the service for it to take effect';
   const ctx = setup({ status: 'restart_pending', message, is_update_admin: true, install_type: 'git' });
   await ctx.Updates.oneClick();
-  assert.equal(ctx.calls.length, 1, '只检查，不会去执行更新');
-  assert.equal(ctx.document.getElementById('modal-title').textContent, '需要重启服务');
+  assert.equal(ctx.calls.length, 1, 'Only checks, never runs the update');
+  assert.equal(ctx.document.getElementById('modal-title').textContent, 'Service restart needed');
   const shown = ctx.document.querySelector('.update-message').textContent;
   assert.ok(shown.includes(message));
   assert.match(shown, /pm2 restart t-agent/);
   assert.match(shown, /launchctl kickstart/);
   assert.match(shown, /systemctl restart t-agent/);
-  assert.doesNotMatch(shown, /已是最新/);
+  assert.doesNotMatch(shown, /Up to date/);
   assert.equal(ctx.document.getElementById('update-dot').style.display, 'block');
   assert.equal(ctx.Updates.busy, false);
 
-  const current = setup({ status: 'current', message: '已是最新版本' });
+  const current = setup({ status: 'current', message: 'Already up to date' });
   await current.Updates.oneClick();
   assert.equal(current.document.getElementById('update-dot').style.display, 'none');
   assert.equal(current.Updates.needsAttention({ status: 'available' }), true);

@@ -1,22 +1,22 @@
 #!/usr/bin/env bash
-# 开发环境安装脚本（macOS / Linux）：Claude Code、Codex、SSH 密钥，用户级规则与默认配置的远程同步，统一命令 ta，以及 PM2（缺少 Node.js 时装到用户目录）。
+# Dev environment install script (macOS / Linux): Claude Code, Codex, SSH key, remote sync of user-level rules and default config, the unified command ta, and PM2 (installed to the user directory when Node.js is missing).
 #
-# 用法：
-#   curl -fsSL <脚本地址> | bash
-#   curl -fsSL <脚本地址> | bash -s -- --check
+# Usage:
+# curl -fsSL <script-url> | bash
+# curl -fsSL <script-url> | bash -s -- --check
 #
-# 参数：
-#   --check             只检查环境和已安装状态，不安装、不生成密钥
-#   --upgrade           已安装的工具也重新安装为最新版本
-#   --no-modify-path    不修改 shell 配置文件（不写 PATH，也不写 claude/codex 同步函数）
-#   --passphrase        生成 SSH 密钥时交互设置密码短语（需要终端）
-#   --skip NAME         跳过某一项，NAME 为 claude、codex、ssh、sync、ta 或 pm2，可重复使用
-#   --with-apps         同时安装 Mac 桌面应用：Maccy、Snipaste、Clash Verge（仅 macOS）
-#   --apps-dir DIR      桌面应用的安装目录（默认 /Applications，不可写时用 ~/Applications）
-#   -h, --help          显示帮助
+# Options:
+# --check             only check the environment and what is installed; install nothing and generate no keys
+# --upgrade           reinstall already installed tools at their latest versions
+# --no-modify-path    do not modify shell config files (no PATH entry and no claude/codex sync function)
+# --passphrase        set a passphrase interactively when generating the SSH key (needs a terminal)
+# --skip NAME         skip one item; NAME is claude, codex, ssh, sync, ta or pm2; may be repeated
+# --with-apps         also install the Mac desktop apps: Maccy, Snipaste, Clash Verge (macOS only)
+# --apps-dir DIR      install directory for the desktop apps (default /Applications, ~/Applications when not writable)
+# -h, --help          show this help
 #
-# 不使用 Homebrew、不执行 sudo、不修改系统级配置；所有内容装在当前用户目录。
-# 整个脚本包在 main 函数中，保证 curl | bash 时先完整读入再执行。
+# Does not use Homebrew, does not run sudo and does not change system-level config; everything is installed in the current user's directory.
+# The whole script is wrapped in a main function so that with curl | bash it is read completely before it runs.
 
 main() {
   set -uo pipefail
@@ -29,7 +29,7 @@ main() {
   local OS="" ARCH="" FETCH=""
   local SUMMARY="" FAILED=0
 
-  # ---------- 输出 ----------
+  # ---------- Output ----------
   local C_RESET="" C_GREEN="" C_YELLOW="" C_RED="" C_BOLD=""
   if [ -t 1 ]; then
     C_RESET=$'\033[0m'; C_GREEN=$'\033[32m'; C_YELLOW=$'\033[33m'; C_RED=$'\033[31m'; C_BOLD=$'\033[1m'
@@ -39,33 +39,33 @@ main() {
   ok()   { printf '  %s✓%s %s\n' "$C_GREEN" "$C_RESET" "$*"; }
   warn() { printf '  %s!%s %s\n' "$C_YELLOW" "$C_RESET" "$*" >&2; }
   fail() { printf '  %s✗%s %s\n' "$C_RED" "$C_RESET" "$*" >&2; }
-  # 记录每一项的结果，最后统一汇总：record 名称 状态 说明
+  # Record the result of each item and summarize at the end: record name status note
   record() {
     SUMMARY="${SUMMARY}$1|$2|$3"$'\n'
-    [ "$2" = "失败" ] && FAILED=1
+    [ "$2" = "failed" ] && FAILED=1
     return 0
   }
 
   usage() {
     cat <<'USAGE'
-用法：curl -fsSL <脚本地址> | bash -s -- [参数]
-  --check             只检查环境和已安装状态，不安装、不生成密钥
-  --upgrade           已安装的工具也重新安装为最新版本
-  --no-modify-path    不修改 shell 配置文件（不写 PATH，也不写 claude/codex 同步函数）
-  --passphrase        生成 SSH 密钥时交互设置密码短语（需要终端）
-  --skip NAME         跳过某一项：claude、codex、ssh、sync、ta 或 pm2，可重复使用
-  --with-apps         同时安装 Mac 桌面应用：Maccy、Snipaste、Clash Verge（仅 macOS）
-  --apps-dir DIR      桌面应用的安装目录（默认 /Applications，不可写时用 ~/Applications）
-  -h, --help          显示帮助
+Usage: curl -fsSL <script-url> | bash -s -- [options]
+  --check             only check the environment and what is installed; install nothing and generate no keys
+  --upgrade           reinstall already installed tools at their latest versions
+  --no-modify-path    do not modify shell config files (no PATH entry and no claude/codex sync function)
+  --passphrase        set a passphrase interactively when generating the SSH key (needs a terminal)
+  --skip NAME         skip one item: claude, codex, ssh, sync, ta or pm2; may be repeated
+  --with-apps         also install the Mac desktop apps: Maccy, Snipaste, Clash Verge (macOS only)
+  --apps-dir DIR      install directory for the desktop apps (default /Applications, ~/Applications when not writable)
+  -h, --help          show this help
 USAGE
   }
 
-  # EXIT 陷阱在 main 返回后才执行，所以临时目录变量必须是全局的
+  # The EXIT trap only runs after main returns, so the temporary directory variable must be global
   TMP_DIR=""
   cleanup() { [ -n "${TMP_DIR:-}" ] && rm -rf "$TMP_DIR"; return 0; }
   trap cleanup EXIT
 
-  # ---------- 参数 ----------
+  # ---------- Arguments ----------
   while [ $# -gt 0 ]; do
     case "$1" in
       --check) CHECK_ONLY=1 ;;
@@ -81,23 +81,23 @@ USAGE
           sync) SKIP_SYNC=1 ;;
           ta) SKIP_TA=1 ;;
           pm2) SKIP_PM2=1 ;;
-          *) fail "--skip 只支持 claude、codex、ssh、sync、ta、pm2"; return 2 ;;
+          *) fail "--skip only supports claude, codex, ssh, sync, ta, pm2"; return 2 ;;
         esac ;;
       --with-apps) WITH_APPS=1; STEP_TOTAL=9 ;;
       --apps-dir)
         shift
-        if [ -z "${1:-}" ]; then fail "--apps-dir 需要指定目录"; return 2; fi
+        if [ -z "${1:-}" ]; then fail "--apps-dir needs a directory"; return 2; fi
         APPS_DIR="$1" ;;
       -h|--help) usage; return 0 ;;
-      *) fail "未知参数：$1（使用 --help 查看用法）"; return 2 ;;
+      *) fail "Unknown option: $1 (use --help for usage)"; return 2 ;;
     esac
     shift
   done
 
-  # ---------- 通用工具 ----------
+  # ---------- Common helpers ----------
   have() { command -v "$1" >/dev/null 2>&1; }
 
-  # 统一下载：download URL 目标文件。所有子进程不读取标准输入，避免吞掉管道里的脚本。
+  # Unified download: download URL target-file. No child process reads standard input, so none swallows the script coming through the pipe.
   download() {
     case "$FETCH" in
       curl) curl -fsSL --connect-timeout 15 --retry 2 -o "$2" "$1" </dev/null ;;
@@ -114,7 +114,7 @@ USAGE
 
   path_has_bin_dir() { case ":$PATH:" in *":$BIN_DIR:"*) return 0 ;; *) return 1 ;; esac; }
 
-  # 当前 shell 对应的配置文件
+  # The config file for the current shell
   shell_rc_file() {
     case "$(basename "${SHELL:-}")" in
       zsh) printf '%s\n' "$HOME/.zshrc" ;;
@@ -123,13 +123,13 @@ USAGE
     esac
   }
 
-  # 缺少依赖时的安装提示，按系统区分
+  # Install hint when a dependency is missing, per system
   install_hint() {
     local tool="$1"
     if [ "$OS" = "macos" ]; then
       case "$tool" in
-        git|make|tar) printf '运行 xcode-select --install 安装 Xcode 命令行工具' ;;
-        *) printf '请先安装 %s' "$tool" ;;
+        git|make|tar) printf 'Run xcode-select --install to install the Xcode command line tools' ;;
+        *) printf 'Please install %s first' "$tool" ;;
       esac
       return
     fi
@@ -138,48 +138,48 @@ USAGE
     elif have yum; then printf 'sudo yum install -y %s' "$tool"
     elif have apk; then printf 'sudo apk add %s' "$tool"
     elif have pacman; then printf 'sudo pacman -S %s' "$tool"
-    else printf '请使用系统包管理器安装 %s' "$tool"
+    else printf 'Please install %s with your system package manager' "$tool"
     fi
   }
 
-  # ---------- 步骤 1：环境检查 ----------
+  # ---------- Step 1: environment check ----------
   check_environment() {
-    step "检查环境"
+    step "Checking the environment"
     case "$(uname -s)" in
       Darwin) OS="macos" ;;
       Linux) OS="linux" ;;
-      *) fail "不支持的系统：$(uname -s)（仅支持 macOS 和 Linux）"; return 1 ;;
+      *) fail "Unsupported system: $(uname -s) (only macOS and Linux are supported)"; return 1 ;;
     esac
     case "$(uname -m)" in
       arm64|aarch64) ARCH="aarch64" ;;
       x86_64|amd64) ARCH="x86_64" ;;
-      *) fail "不支持的 CPU 架构：$(uname -m)"; return 1 ;;
+      *) fail "Unsupported CPU architecture: $(uname -m)"; return 1 ;;
     esac
-    ok "系统：$OS / $ARCH"
+    ok "System: $OS / $ARCH"
 
     if have curl; then FETCH="curl"
     elif have wget; then FETCH="wget"
     else
-      fail "需要 curl 或 wget。$(install_hint curl)"
+      fail "curl or wget is required. $(install_hint curl)"
       return 1
     fi
-    ok "下载工具：$FETCH"
+    ok "Download tool: $FETCH"
 
-    if have tar; then ok "tar 可用"; else warn "缺少 tar，Codex 二进制无法解压。$(install_hint tar)"; fi
-    if have git; then ok "git 可用"; else warn "未安装 git（Claude Code 和 Codex 在项目中会用到）。$(install_hint git)"; fi
-    if [ "$OS" = "linux" ] && [ ! -w "$HOME" ]; then fail "HOME 目录不可写：$HOME"; return 1; fi
+    if have tar; then ok "tar is available"; else warn "tar is missing, so the Codex binary cannot be extracted. $(install_hint tar)"; fi
+    if have git; then ok "git is available"; else warn "git is not installed (Claude Code and Codex use it in projects). $(install_hint git)"; fi
+    if [ "$OS" = "linux" ] && [ ! -w "$HOME" ]; then fail "HOME directory is not writable: $HOME"; return 1; fi
 
-    if reachable "https://claude.ai/install.sh"; then ok "可访问 claude.ai"
-    else warn "无法访问 claude.ai；如需代理，请先设置 https_proxy 后重新运行"; fi
-    if reachable "https://github.com"; then ok "可访问 github.com"
-    else warn "无法访问 github.com；如需代理，请先设置 https_proxy 后重新运行"; fi
+    if reachable "https://claude.ai/install.sh"; then ok "claude.ai is reachable"
+    else warn "Cannot reach claude.ai; if you need a proxy, set https_proxy and run again"; fi
+    if reachable "https://github.com"; then ok "github.com is reachable"
+    else warn "Cannot reach github.com; if you need a proxy, set https_proxy and run again"; fi
 
-    if path_has_bin_dir; then ok "PATH 已包含 $BIN_DIR"
-    else warn "PATH 尚未包含 $BIN_DIR"; fi
+    if path_has_bin_dir; then ok "PATH already contains $BIN_DIR"
+    else warn "PATH does not contain $BIN_DIR yet"; fi
     return 0
   }
 
-  # 让本次运行和以后的终端都能找到 ~/.local/bin 中的工具
+  # Make tools in ~/.local/bin findable in this run and in future terminals
   ensure_path() {
     mkdir -p "$BIN_DIR"
     if ! path_has_bin_dir; then export PATH="$BIN_DIR:$PATH"; fi
@@ -188,40 +188,40 @@ USAGE
     rc="$(shell_rc_file)"
     line='export PATH="$HOME/.local/bin:$PATH"'
     if [ -f "$rc" ] && grep -Fq '.local/bin' "$rc"; then return 0; fi
-    printf '\n# 由 install-claude-code.sh 添加\n%s\n' "$line" >> "$rc" \
-      && ok "已把 ~/.local/bin 写入 ${rc}（新开的终端生效）" \
-      || warn "无法写入 ${rc}，请手动添加：$line"
+    printf '\n# Added by install-claude-code.sh\n%s\n' "$line" >> "$rc" \
+      && ok "Added ~/.local/bin to ${rc} (takes effect in new terminals)" \
+      || warn "Cannot write ${rc}; add it manually: $line"
   }
 
-  # ---------- 步骤 2：Claude Code ----------
+  # ---------- Step 2: Claude Code ----------
   install_claude() {
     step "Claude Code"
-    if [ "$SKIP_CLAUDE" -eq 1 ]; then record "Claude Code" "跳过" "使用了 --skip claude"; return; fi
+    if [ "$SKIP_CLAUDE" -eq 1 ]; then record "Claude Code" "skipped" "--skip claude was used"; return; fi
     if have claude && [ "$UPGRADE" -eq 0 ]; then
-      ok "已安装：$(claude --version 2>/dev/null | head -n1)"
-      record "Claude Code" "已安装" "$(claude --version 2>/dev/null | head -n1)"
+      ok "Installed: $(claude --version 2>/dev/null | head -n1)"
+      record "Claude Code" "installed" "$(claude --version 2>/dev/null | head -n1)"
       return
     fi
     if [ "$CHECK_ONLY" -eq 1 ]; then
-      warn "未安装"; record "Claude Code" "未安装" "--check 模式不安装"; return
+      warn "not installed"; record "Claude Code" "not installed" "not installed in --check mode"; return
     fi
     local installer="$TMP_DIR/claude-install.sh"
     if ! download "https://claude.ai/install.sh" "$installer"; then
-      fail "下载官方安装器失败"; record "Claude Code" "失败" "无法下载 https://claude.ai/install.sh"; return
+      fail "Failed to download the official installer"; record "Claude Code" "failed" "Cannot download https://claude.ai/install.sh"; return
     fi
     if ! bash "$installer" </dev/null; then
-      fail "官方安装器执行失败"; record "Claude Code" "失败" "官方安装器返回错误"; return
+      fail "The official installer failed"; record "Claude Code" "failed" "The official installer returned an error"; return
     fi
     ensure_path
     if have claude; then
-      ok "安装完成：$(claude --version 2>/dev/null | head -n1)"
-      record "Claude Code" "已安装" "$(claude --version 2>/dev/null | head -n1)"
+      ok "Installed: $(claude --version 2>/dev/null | head -n1)"
+      record "Claude Code" "installed" "$(claude --version 2>/dev/null | head -n1)"
     else
-      fail "安装器已结束，但找不到 claude 命令"; record "Claude Code" "失败" "安装后找不到 claude"
+      fail "The installer finished, but the claude command cannot be found"; record "Claude Code" "failed" "claude not found after installation"
     fi
   }
 
-  # ---------- 步骤 3：Codex ----------
+  # ---------- Step 3: Codex ----------
   codex_target() {
     if [ "$OS" = "macos" ]; then printf '%s-apple-darwin' "$ARCH"
     else printf '%s-unknown-linux-musl' "$ARCH"; fi
@@ -246,34 +246,34 @@ USAGE
 
   install_codex() {
     step "Codex"
-    if [ "$SKIP_CODEX" -eq 1 ]; then record "Codex" "跳过" "使用了 --skip codex"; return; fi
+    if [ "$SKIP_CODEX" -eq 1 ]; then record "Codex" "skipped" "--skip codex was used"; return; fi
     if have codex && [ "$UPGRADE" -eq 0 ]; then
-      ok "已安装：$(codex --version 2>/dev/null | head -n1)"
-      record "Codex" "已安装" "$(codex --version 2>/dev/null | head -n1)"
+      ok "Installed: $(codex --version 2>/dev/null | head -n1)"
+      record "Codex" "installed" "$(codex --version 2>/dev/null | head -n1)"
       return
     fi
     if [ "$CHECK_ONLY" -eq 1 ]; then
-      warn "未安装"; record "Codex" "未安装" "--check 模式不安装"; return
+      warn "not installed"; record "Codex" "not installed" "not installed in --check mode"; return
     fi
     ensure_path
     if install_codex_binary; then
-      info "  已从 GitHub 发布页安装预编译二进制"
+      info "  Installed the prebuilt binary from the GitHub release page"
     elif install_codex_npm; then
-      info "  预编译二进制不可用，已通过 npm 安装到 ~/.local"
+      info "  The prebuilt binary is unavailable; installed through npm into ~/.local"
     else
-      fail "安装失败（GitHub 下载失败，且没有可用的 npm）"
-      record "Codex" "失败" "无法下载预编译二进制，也没有 npm 可回退"
+      fail "Installation failed (GitHub download failed and npm is not available)"
+      record "Codex" "failed" "Cannot download the prebuilt binary and there is no npm to fall back to"
       return
     fi
     if have codex; then
-      ok "安装完成：$(codex --version 2>/dev/null | head -n1)"
-      record "Codex" "已安装" "$(codex --version 2>/dev/null | head -n1)；首次使用请运行 codex 登录"
+      ok "Installed: $(codex --version 2>/dev/null | head -n1)"
+      record "Codex" "installed" "$(codex --version 2>/dev/null | head -n1); run codex to log in on first use"
     else
-      fail "安装已结束，但找不到 codex 命令"; record "Codex" "失败" "安装后找不到 codex"
+      fail "The installation finished, but the codex command cannot be found"; record "Codex" "failed" "codex not found after installation"
     fi
   }
 
-  # ---------- 步骤 4：SSH 密钥 ----------
+  # ---------- Step 4: SSH key ----------
   existing_ssh_key() {
     local name
     for name in id_ed25519 id_rsa id_ecdsa id_dsa; do
@@ -283,20 +283,20 @@ USAGE
   }
 
   setup_ssh_key() {
-    step "SSH 密钥"
-    if [ "$SKIP_SSH" -eq 1 ]; then record "SSH 密钥" "跳过" "使用了 --skip ssh"; return; fi
+    step "SSH key"
+    if [ "$SKIP_SSH" -eq 1 ]; then record "SSH key" "skipped" "--skip ssh was used"; return; fi
     local existing
     if existing="$(existing_ssh_key)"; then
-      ok "已有密钥，不会覆盖：$existing"
-      record "SSH 密钥" "已存在" "$existing"
+      ok "An existing key is kept and not overwritten: $existing"
+      record "SSH key" "Exists" "$existing"
       return
     fi
     if [ "$CHECK_ONLY" -eq 1 ]; then
-      warn "没有 SSH 密钥"; record "SSH 密钥" "未生成" "--check 模式不生成"; return
+      warn "No SSH key"; record "SSH key" "not generated" "not generated in --check mode"; return
     fi
     if ! have ssh-keygen; then
-      fail "找不到 ssh-keygen。$(install_hint openssh-client)"
-      record "SSH 密钥" "失败" "缺少 ssh-keygen"; return
+      fail "ssh-keygen not found. $(install_hint openssh-client)"
+      record "SSH key" "failed" "ssh-keygen is missing"; return
     fi
     local key="$HOME/.ssh/id_ed25519" comment type_args
     comment="$(id -un)@$(hostname 2>/dev/null | cut -d. -f1)"
@@ -304,7 +304,7 @@ USAGE
     type_args=(-t ed25519)
     if [ "$PASSPHRASE" -eq 1 ]; then
       if [ ! -r /dev/tty ]; then
-        warn "没有可交互的终端，无法设置密码短语，改为不设密码短语"
+        warn "No interactive terminal, so a passphrase cannot be set; continuing without a passphrase"
         PASSPHRASE=0
       fi
     fi
@@ -314,7 +314,7 @@ USAGE
       ssh-keygen "${type_args[@]}" -C "$comment" -f "$key" -N "" -q </dev/null
     fi
     if [ ! -f "$key" ]; then
-      # 很旧的 OpenSSH 不支持 ed25519，回退到 RSA
+      # a very old OpenSSH does not support ed25519; fall back to RSA
       key="$HOME/.ssh/id_rsa"
       if [ "$PASSPHRASE" -eq 1 ]; then
         ssh-keygen -t rsa -b 4096 -C "$comment" -f "$key" </dev/tty
@@ -323,32 +323,32 @@ USAGE
       fi
     fi
     if [ ! -f "$key" ]; then
-      fail "生成密钥失败"; record "SSH 密钥" "失败" "ssh-keygen 未生成密钥"; return
+      fail "Failed to generate the key"; record "SSH key" "failed" "ssh-keygen did not produce a key"; return
     fi
     chmod 600 "$key"
-    ok "已生成密钥：$key"
-    # 设置了密码短语时，让 macOS 钥匙串记住它，避免每次输入
+    ok "Generated key: $key"
+    # When a passphrase is set, let the macOS keychain remember it so it is not typed every time
     if [ "$OS" = "macos" ] && [ "$PASSPHRASE" -eq 1 ]; then
       local config="$HOME/.ssh/config"
       if ! grep -Fq 'UseKeychain yes' "$config" 2>/dev/null; then
-        printf '\n# 由 install-claude-code.sh 添加\nHost *\n  AddKeysToAgent yes\n  UseKeychain yes\n  IdentityFile %s\n' "$key" >> "$config"
+        printf '\n# Added by install-claude-code.sh\nHost *\n  AddKeysToAgent yes\n  UseKeychain yes\n  IdentityFile %s\n' "$key" >> "$config"
         chmod 600 "$config"
       fi
       ssh-add --apple-use-keychain "$key" </dev/tty 2>/dev/null || true
     fi
     info ""
-    info "  公钥如下（只显示公钥，请添加到 GitHub：https://github.com/settings/ssh/new）："
+    info "  The public key follows (only the public key is shown; add it to GitHub: https://github.com/settings/ssh/new):"
     info ""
     sed 's/^/    /' "$key.pub"
     if [ "$OS" = "macos" ] && have pbcopy; then
-      pbcopy < "$key.pub" && ok "公钥已复制到剪贴板"
+      pbcopy < "$key.pub" && ok "The public key was copied to the clipboard"
     fi
-    record "SSH 密钥" "已生成" "$key.pub（请添加到 GitHub）"
+    record "SSH key" "generated" "$key.pub (add it to GitHub)"
   }
 
 
 
-  # ---------- 步骤：Claude / Codex 用户级规则与配置同步 ----------
+  # ---------- Step: Claude / Codex user-level rules and config sync ----------
   SYNC_DIR="$HOME/.local/share/t-agent"
   SYNC_SCRIPT="$SYNC_DIR/agent-sync.py"
   SYNC_BEGIN="# >>> t-agent agent-sync >>>"
@@ -358,7 +358,7 @@ USAGE
     have python3 && python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 6) else 1)' 2>/dev/null
   }
 
-  # 在 shell 配置里写入 claude / codex 包装函数：启动前先同步，失败或超时都不影响启动
+  # Write claude / codex wrapper functions into the shell config: sync before starting; a failure or timeout does not block starting
   write_sync_hook() {
     local rc="$1" work="$TMP_DIR/rc.work"
     if [ -f "$rc" ]; then
@@ -370,11 +370,11 @@ USAGE
       cat "$work"
       printf '\n%s\n' "$SYNC_BEGIN"
       cat <<'HOOK'
-# 启动 claude / codex 前同步远程的用户级规则与默认配置（失败或超时不影响启动）
+# Sync the remote user-level rules and default config before claude / codex start (a failure or timeout does not block starting)
 claude() { [ -f "$HOME/.local/share/t-agent/agent-sync.py" ] && command -v python3 >/dev/null 2>&1 && python3 "$HOME/.local/share/t-agent/agent-sync.py" claude; command claude "$@"; }
 codex() {
   [ -f "$HOME/.local/share/t-agent/agent-sync.py" ] && command -v python3 >/dev/null 2>&1 && python3 "$HOME/.local/share/t-agent/agent-sync.py" codex
-  # 和 claude 一致：codex -c / --continue 继续当前目录最近一次会话。codex -c key=value 仍是配置覆盖。
+  # Same as claude: codex -c / --continue resumes the latest session in the current directory. codex -c key=value is still a config override.
   case "${1:-}" in
     --continue) shift; command codex resume --last "$@"; return ;;
     -c) case "${2:-}" in *=*) ;; *) shift; command codex resume --last "$@"; return ;; esac ;;
@@ -387,86 +387,86 @@ HOOK
   }
 
   setup_agent_sync() {
-    step "规则与配置同步"
-    if [ "$SKIP_SYNC" -eq 1 ]; then record "规则同步" "跳过" "使用了 --skip sync"; return; fi
+    step "Rules and config sync"
+    if [ "$SKIP_SYNC" -eq 1 ]; then record "Rule sync" "skipped" "--skip sync was used"; return; fi
     if ! python_ok; then
-      warn "需要 python3（3.6+）才能同步；$(install_hint python3)"
-      record "规则同步" "跳过" "缺少 python3"; return
+      warn "python3 (3.6+) is required for syncing; $(install_hint python3)"
+      record "Rule sync" "skipped" "python3 is missing"; return
     fi
     local rc
     rc="$(shell_rc_file)"
     if [ "$CHECK_ONLY" -eq 1 ]; then
       if [ -f "$SYNC_SCRIPT" ] && grep -Fq "$SYNC_BEGIN" "$rc" 2>/dev/null; then
-        ok "已配置：启动 claude / codex 前自动同步"; record "规则同步" "已安装" "$SYNC_SCRIPT"
+        ok "Configured: sync automatically before starting claude / codex"; record "Rule sync" "installed" "$SYNC_SCRIPT"
       else
-        warn "尚未配置"; record "规则同步" "未安装" "--check 模式不安装"
+        warn "Not configured"; record "Rule sync" "not installed" "not installed in --check mode"
       fi
       return
     fi
     mkdir -p "$SYNC_DIR"
     if ! download "$SCRIPTS_BASE/agent-sync.py" "$SYNC_DIR/agent-sync.py.new"; then
-      fail "下载同步程序失败"; record "规则同步" "失败" "无法下载 agent-sync.py"; return
+      fail "Failed to download the sync program"; record "Rule sync" "failed" "Cannot download agent-sync.py"; return
     fi
     chmod 755 "$SYNC_DIR/agent-sync.py.new" && mv "$SYNC_DIR/agent-sync.py.new" "$SYNC_SCRIPT"
-    ok "同步程序：$SYNC_SCRIPT"
+    ok "Sync program: $SYNC_SCRIPT"
     python3 "$SYNC_SCRIPT" all --verbose </dev/null 2>&1 | sed 's/^/  /'
     if [ "$MODIFY_PATH" -eq 1 ]; then
       if write_sync_hook "$rc"; then
-        ok "已在 $rc 写入 claude / codex 启动前同步（新开的终端生效）"
-        record "规则同步" "已安装" "启动 claude / codex 前自动同步；配置见仓库 rules/"
+        ok "Added a pre-start sync for claude / codex to $rc (takes effect in new terminals)"
+        record "Rule sync" "installed" "Syncs automatically before claude / codex start; configuration is in the repository’s rules/"
       else
-        fail "无法写入 $rc"; record "规则同步" "失败" "无法写入 $rc"
+        fail "Cannot write $rc"; record "Rule sync" "failed" "Cannot write $rc"
       fi
     else
-      warn "使用了 --no-modify-path，未写入启动前同步；可手动运行：python3 $SYNC_SCRIPT all"
-      record "规则同步" "已安装" "已同步一次，未写入 shell 配置"
+      warn "--no-modify-path was used, so the pre-start sync was not written; run it manually: python3 $SYNC_SCRIPT all"
+      record "Rule sync" "installed" "Synced once; the shell config was not modified"
     fi
   }
 
 
-  # ---------- 步骤：统一命令 ta ----------
+  # ---------- Step: unified command ta ----------
   install_ta() {
-    step "统一命令 ta"
-    if [ "$SKIP_TA" -eq 1 ]; then record "统一命令 ta" "跳过" "使用了 --skip ta"; return; fi
+    step "Unified command ta"
+    if [ "$SKIP_TA" -eq 1 ]; then record "Unified command ta" "skipped" "--skip ta was used"; return; fi
     local target="$BIN_DIR/ta" other
     if [ -e "$target" ] && ! grep -q '^# t-agent:ta' "$target" 2>/dev/null; then
-      warn "$target 已存在且不是本脚本安装的，未覆盖"
-      record "统一命令 ta" "跳过" "$target 已被其他程序占用"; return
+      warn "$target already exists and was not installed by this script; not overwritten"
+      record "Unified command ta" "skipped" "$target is already used by another program"; return
     fi
     other="$(command -v ta 2>/dev/null || true)"
     if [ -n "$other" ] && [ "$other" != "$target" ] && ! grep -q '^# t-agent:ta' "$other" 2>/dev/null; then
-      warn "PATH 中已有另一个 ta（${other}），可能优先于本脚本安装的版本"
+      warn "Another ta (${other}) is on PATH and may take precedence over the one installed by this script"
     fi
     if [ "$CHECK_ONLY" -eq 1 ]; then
-      if [ -x "$target" ]; then ok "已安装：$target"; record "统一命令 ta" "已安装" "$target"
-      else warn "未安装"; record "统一命令 ta" "未安装" "--check 模式不安装"; fi
+      if [ -x "$target" ]; then ok "Installed: $target"; record "Unified command ta" "installed" "$target"
+      else warn "not installed"; record "Unified command ta" "not installed" "not installed in --check mode"; fi
       return
     fi
     mkdir -p "$BIN_DIR"
     if ! download "$SCRIPTS_BASE/ta.sh" "$target.new"; then
-      fail "下载 ta 失败"; record "统一命令 ta" "失败" "无法下载 ta.sh"; return
+      fail "Failed to download ta"; record "Unified command ta" "failed" "Cannot download ta.sh"; return
     fi
     chmod 755 "$target.new" && mv "$target.new" "$target"
     ensure_path
-    ok "已安装：${target}（用法：ta 进入 Claude，ta x 进入 Codex，ta -h 查看全部）"
-    record "统一命令 ta" "已安装" "${target}；默认 claude，ta x 为 codex"
+    ok "Installed: ${target} (usage: ta opens Claude, ta x opens Codex, ta -h lists everything)"
+    record "Unified command ta" "installed" "${target}; defaults to claude, ta x is codex"
   }
 
 
-  # ---------- 步骤：PM2（缺少 Node.js 时先装到用户目录） ----------
+  # ---------- Step: PM2 (install Node.js into the user directory first when missing) ----------
   NODE_HOME="$HOME/.local/node"
   NODE_MAJOR="22"
 
-  # 把 ~/.local/node/bin 写进 shell 配置（只追加一次）
+  # Write ~/.local/node/bin into the shell config (appended only once)
   ensure_node_path() {
     case ":$PATH:" in *":$NODE_HOME/bin:"*) ;; *) export PATH="$NODE_HOME/bin:$PATH" ;; esac
     [ "$MODIFY_PATH" -eq 1 ] || return 0
     local rc
     rc="$(shell_rc_file)"
     if [ -f "$rc" ] && grep -Fq '.local/node/bin' "$rc"; then return 0; fi
-    printf '\n# 由 install-claude-code.sh 添加（Node.js）\nexport PATH="$HOME/.local/node/bin:$PATH"\n' >> "$rc" \
-      && ok "已把 ~/.local/node/bin 写入 ${rc}（新开的终端生效）" \
-      || warn "无法写入 ${rc}，请手动添加：export PATH=\"\$HOME/.local/node/bin:\$PATH\""
+    printf '\n# Added by install-claude-code.sh (Node.js)\nexport PATH="$HOME/.local/node/bin:$PATH"\n' >> "$rc" \
+      && ok "Added ~/.local/node/bin to ${rc} (takes effect in new terminals)" \
+      || warn "Cannot write ${rc}; add it manually: export PATH=\"\$HOME/.local/node/bin:\$PATH\""
   }
 
   sha256_of() {
@@ -475,10 +475,10 @@ HOOK
     else return 1; fi
   }
 
-  # 下载官方预编译的 Node.js LTS 到 ~/.local/node，并用官方 SHASUMS256.txt 校验
+  # Download the official prebuilt Node.js LTS to ~/.local/node and verify it with the official SHASUMS256.txt
   install_node() {
     if [ "$OS" = "linux" ] && { ldd --version 2>&1 | grep -qi musl || [ -e /lib/ld-musl-x86_64.so.1 ] || [ -e /lib/ld-musl-aarch64.so.1 ]; }; then
-      fail "当前是 musl 系统（如 Alpine），官方预编译的 Node.js 不适用；请先运行：sudo apk add nodejs npm"
+      fail "This is a musl system (such as Alpine) and the official prebuilt Node.js does not apply; run this first: sudo apk add nodejs npm"
       return 1
     fi
     local node_os node_arch mirror index line sum file archive
@@ -486,49 +486,49 @@ HOOK
     [ "$ARCH" = "aarch64" ] && node_arch="arm64" || node_arch="x64"
     mirror="${T_AGENT_NODE_MIRROR:-https://nodejs.org/dist}"
     index="$TMP_DIR/node-shasums.txt"
-    info "  未检测到 Node.js，正在安装 Node ${NODE_MAJOR} LTS 到 ${NODE_HOME} …"
+    info "  Node.js not found; installing Node ${NODE_MAJOR} LTS to ${NODE_HOME} …"
     if ! download "$mirror/latest-v${NODE_MAJOR}.x/SHASUMS256.txt" "$index"; then
-      fail "无法获取 Node.js 版本信息（能否访问 ${mirror}？国内可设置 T_AGENT_NODE_MIRROR=https://npmmirror.com/mirrors/node）"
+      fail "Cannot get the Node.js version info (is ${mirror} reachable? In China you can set T_AGENT_NODE_MIRROR=https://npmmirror.com/mirrors/node)"
       return 1
     fi
     line="$(grep -E " node-v${NODE_MAJOR}\.[0-9.]+-${node_os}-${node_arch}\.tar\.gz\$" "$index" | head -n1)"
     sum="${line%% *}"; file="${line##* }"
     if [ -z "$line" ] || [ -z "$sum" ] || [ -z "$file" ]; then
-      fail "在 SHASUMS256.txt 中找不到 ${node_os}-${node_arch} 的安装包"; return 1
+      fail "No package for ${node_os}-${node_arch} found in SHASUMS256.txt"; return 1
     fi
     archive="$TMP_DIR/$file"
-    if ! download "$mirror/latest-v${NODE_MAJOR}.x/$file" "$archive"; then fail "下载 Node.js 失败"; return 1; fi
+    if ! download "$mirror/latest-v${NODE_MAJOR}.x/$file" "$archive"; then fail "Failed to download Node.js"; return 1; fi
     if [ "$(sha256_of "$archive" 2>/dev/null)" != "$sum" ]; then
-      fail "Node.js 安装包校验失败（SHA-256 不一致），已放弃安装"; return 1
+      fail "The Node.js package failed verification (SHA-256 mismatch); installation aborted"; return 1
     fi
     rm -rf "$TMP_DIR/node-extract" && mkdir -p "$TMP_DIR/node-extract"
-    if ! tar -xzf "$archive" -C "$TMP_DIR/node-extract" --strip-components 1; then fail "解压 Node.js 失败"; return 1; fi
-    [ -x "$TMP_DIR/node-extract/bin/node" ] || { fail "安装包里没有 node 可执行文件"; return 1; }
+    if ! tar -xzf "$archive" -C "$TMP_DIR/node-extract" --strip-components 1; then fail "Failed to extract Node.js"; return 1; fi
+    [ -x "$TMP_DIR/node-extract/bin/node" ] || { fail "The package contains no node executable"; return 1; }
     mkdir -p "$(dirname "$NODE_HOME")"
-    rm -rf "$NODE_HOME" && mv "$TMP_DIR/node-extract" "$NODE_HOME" || { fail "无法写入 $NODE_HOME"; return 1; }
+    rm -rf "$NODE_HOME" && mv "$TMP_DIR/node-extract" "$NODE_HOME" || { fail "Cannot write $NODE_HOME"; return 1; }
     ensure_node_path
-    ok "Node.js 已安装：$("$NODE_HOME/bin/node" --version 2>/dev/null)"
+    ok "Node.js installed: $("$NODE_HOME/bin/node" --version 2>/dev/null)"
   }
 
   install_pm2() {
     step "PM2"
-    if [ "$SKIP_PM2" -eq 1 ]; then record "PM2" "跳过" "使用了 --skip pm2"; return; fi
+    if [ "$SKIP_PM2" -eq 1 ]; then record "PM2" "skipped" "--skip pm2 was used"; return; fi
     case ":$PATH:" in *":$NODE_HOME/bin:"*) ;; *) [ -x "$NODE_HOME/bin/node" ] && export PATH="$NODE_HOME/bin:$PATH" ;; esac
     if have pm2 && [ "$UPGRADE" -eq 0 ]; then
-      ok "已安装：pm2 $(pm2 --version 2>/dev/null | tail -n1)"
-      record "PM2" "已安装" "pm2 $(pm2 --version 2>/dev/null | tail -n1)"; return
+      ok "Installed: pm2 $(pm2 --version 2>/dev/null | tail -n1)"
+      record "PM2" "installed" "pm2 $(pm2 --version 2>/dev/null | tail -n1)"; return
     fi
     if [ "$CHECK_ONLY" -eq 1 ]; then
-      have node && ok "Node.js：$(node --version 2>/dev/null)" || warn "未安装 Node.js（安装时会自动装到 ~/.local/node）"
-      warn "pm2 未安装"; record "PM2" "未安装" "--check 模式不安装"; return
+      have node && ok "Node.js: $(node --version 2>/dev/null)" || warn "Node.js is not installed (it is installed to ~/.local/node automatically during installation)"
+      warn "pm2 is not installed"; record "PM2" "not installed" "not installed in --check mode"; return
     fi
     if ! have node || ! have npm; then
-      if ! install_node; then record "PM2" "失败" "无法安装 Node.js"; return; fi
+      if ! install_node; then record "PM2" "failed" "Cannot install Node.js"; return; fi
     else
-      ok "Node.js：$(node --version 2>/dev/null)"
+      ok "Node.js: $(node --version 2>/dev/null)"
     fi
-    have npm || { fail "找不到 npm"; record "PM2" "失败" "没有 npm"; return; }
-    # 全局目录可写就装到默认位置（nvm、~/.local/node 都属于此类），否则装到 ~/.local
+    have npm || { fail "npm not found"; record "PM2" "failed" "no npm"; return; }
+    # If the global directory is writable install to the default location (nvm and ~/.local/node both count), otherwise install to ~/.local
     local prefix
     prefix="$(npm config get prefix 2>/dev/null)"
     if [ -n "$prefix" ] && [ -w "$prefix" ]; then
@@ -539,21 +539,21 @@ HOOK
     fi
     if ! have pm2; then
       tail -n 5 "$TMP_DIR/npm-pm2.log" | sed 's/^/    /' >&2
-      fail "安装 pm2 失败"; record "PM2" "失败" "npm install -g pm2 失败"; return
+      fail "Failed to install pm2"; record "PM2" "failed" "npm install -g pm2 failed"; return
     fi
-    ok "pm2 已安装：$(pm2 --version 2>/dev/null | tail -n1)"
-    info "  开机自启需要你自己执行（其中的 sudo 命令由 pm2 打印）：pm2 startup ；启动服务后执行：pm2 save"
-    record "PM2" "已安装" "pm2 $(pm2 --version 2>/dev/null | tail -n1)；开机自启请运行 pm2 startup"
+    ok "pm2 installed: $(pm2 --version 2>/dev/null | tail -n1)"
+    info "  Start on boot is up to you (the sudo command is printed by pm2): pm2 startup ; after starting your services run: pm2 save"
+    record "PM2" "installed" "pm2 $(pm2 --version 2>/dev/null | tail -n1); run pm2 startup to start on boot"
   }
 
-  # ---------- Mac 桌面应用 ----------
+  # ---------- Mac desktop apps ----------
   apps_target_dir() {
     if [ -n "$APPS_DIR" ]; then printf '%s\n' "$APPS_DIR"
     elif [ -w /Applications ]; then printf '/Applications\n'
     else printf '%s\n' "$HOME/Applications"; fi
   }
 
-  # 已安装的应用路径；指定了 --apps-dir 时只看该目录
+  # Path of an installed app; when --apps-dir is given only that directory is looked at
   app_installed() {
     local dir
     if [ -n "$APPS_DIR" ]; then
@@ -566,7 +566,7 @@ HOOK
     return 1
   }
 
-  # $1 >= $2（按 主.次.修订 比较）
+  # $1 >= $2 (compared as major.minor.patch)
   ver_ge() {
     local IFS=.
     local -a a b
@@ -586,7 +586,7 @@ HOOK
     printf '%s\n' "${url##*/}"
   }
 
-  # 把下载的 zip/dmg 中的应用解出到临时目录，成功后 STAGED 为应用路径
+  # Extract the app from the downloaded zip/dmg into a temporary directory; on success STAGED is the app path
   STAGED=""
   stage_app() {
     local label="$1" app="$2" kind="$3" file="$4" work mnt
@@ -605,61 +605,61 @@ HOOK
     STAGED="$work/$app"
   }
 
-  # install_mac_app 显示名 应用文件名 zip|dmg 下载地址
+  # install_mac_app display-name app-file-name zip|dmg download-url
   install_mac_app() {
     local label="$1" app="$2" kind="$3" url="$4"
     local existing dest_dir file minver sysver
     if existing="$(app_installed "$app")"; then
       if [ "$UPGRADE" -eq 0 ]; then
-        ok "$label 已安装：$existing"; record "$label" "已安装" "$existing"; return
+        ok "$label installed: $existing"; record "$label" "installed" "$existing"; return
       fi
       if pgrep -f "$existing/Contents/MacOS" >/dev/null 2>&1; then
-        warn "$label 正在运行，请先退出后再升级"; record "$label" "跳过" "正在运行，未升级"; return
+        warn "$label is running; quit it before upgrading"; record "$label" "skipped" "running, not upgraded"; return
       fi
     fi
     if [ "$CHECK_ONLY" -eq 1 ]; then
-      warn "$label 未安装"; record "$label" "未安装" "--check 模式不安装"; return
+      warn "$label is not installed"; record "$label" "not installed" "not installed in --check mode"; return
     fi
     dest_dir="$(apps_target_dir)"
     if ! mkdir -p "$dest_dir" 2>/dev/null || [ ! -w "$dest_dir" ]; then
-      fail "${label}：目录不可写 $dest_dir"; record "$label" "失败" "目录不可写：$dest_dir"; return
+      fail "${label}: directory not writable $dest_dir"; record "$label" "failed" "directory not writable: $dest_dir"; return
     fi
     file="$TMP_DIR/$label.$kind"
-    info "  正在下载 $label …"
+    info "  Downloading $label …"
     if ! download "$url" "$file"; then
-      fail "$label 下载失败"; record "$label" "失败" "无法下载 $url"; return
+      fail "$label download failed"; record "$label" "failed" "Cannot download $url"; return
     fi
     if ! stage_app "$label" "$app" "$kind" "$file"; then
-      fail "$label 解包失败"; record "$label" "失败" "安装包中找不到 $app"; return
+      fail "$label failed to unpack"; record "$label" "failed" "$app not found in the package"; return
     fi
     minver="$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$STAGED/Contents/Info.plist" 2>/dev/null || true)"
     sysver="$(sw_vers -productVersion 2>/dev/null || true)"
     if [ -n "$minver" ] && [ -n "$sysver" ] && ! ver_ge "$sysver" "$minver"; then
-      fail "$label 需要 macOS $minver 或更高（当前 ${sysver}）"; record "$label" "失败" "系统版本过低，需要 macOS $minver+"; return
+      fail "$label needs macOS $minver or later (current ${sysver})"; record "$label" "failed" "macOS version too old; macOS $minver+ is required"; return
     fi
     if ! codesign --verify --deep --strict "$STAGED" >/dev/null 2>&1; then
-      fail "$label 签名校验失败，已放弃安装"; record "$label" "失败" "代码签名校验失败"; return
+      fail "$label failed signature verification; installation aborted"; record "$label" "failed" "code signature verification failed"; return
     fi
     rm -rf "${dest_dir:?}/$app"
     if ! ditto "$STAGED" "$dest_dir/$app"; then
-      fail "$label 复制到 $dest_dir 失败"; record "$label" "失败" "复制到 $dest_dir 失败"; return
+      fail "Copying $label to $dest_dir failed"; record "$label" "failed" "copying to $dest_dir failed"; return
     fi
     APPS_INSTALLED="${APPS_INSTALLED}${label} "
-    ok "$label 已安装到 $dest_dir/$app"
-    record "$label" "已安装" "$dest_dir/$app"
+    ok "$label installed to $dest_dir/$app"
+    record "$label" "installed" "$dest_dir/$app"
   }
 
   APPS_INSTALLED=""
   install_mac_apps() {
-    step "Mac 应用"
+    step "Mac apps"
     if [ "$OS" != "macos" ]; then
-      warn "桌面应用只支持 macOS，已跳过"; record "Mac 应用" "跳过" "仅支持 macOS"; return
+      warn "Desktop apps are only supported on macOS; skipped"; record "Mac apps" "skipped" "macOS only"; return
     fi
     if [ -n "${SSH_CONNECTION:-}" ] && [ -z "$APPS_DIR" ]; then
-      warn "当前是 SSH 远程登录，没有桌面会话，已跳过桌面应用"; record "Mac 应用" "跳过" "SSH 会话"; return
+      warn "This is a remote SSH login without a desktop session; desktop apps were skipped"; record "Mac apps" "skipped" "SSH session"; return
     fi
     if [ "$FETCH" != "curl" ]; then
-      fail "需要 curl"; record "Mac 应用" "失败" "缺少 curl"; return
+      fail "curl is required"; record "Mac apps" "failed" "curl is missing"; return
     fi
     install_mac_app "Maccy" "Maccy.app" zip "https://github.com/p0deje/Maccy/releases/latest/download/Maccy.app.zip"
     install_mac_app "Snipaste" "Snipaste.app" dmg "https://dl.snipaste.com/mac"
@@ -669,26 +669,26 @@ HOOK
       install_mac_app "Clash Verge" "Clash Verge.app" dmg \
         "https://github.com/clash-verge-rev/clash-verge-rev/releases/download/$tag/Clash.Verge_${tag#v}_${arch}.dmg"
     else
-      fail "无法获取 Clash Verge 的最新版本"; record "Clash Verge" "失败" "无法获取最新版本号"
+      fail "Cannot get the latest Clash Verge version"; record "Clash Verge" "failed" "Cannot get the latest version number"
     fi
     case "$APPS_INSTALLED" in
       *Maccy*|*Snipaste*)
         info ""
-        info "  首次打开需要在 系统设置 → 隐私与安全性 中授权（脚本无法代为点击）："
-        case "$APPS_INSTALLED" in *Maccy*) info "    Maccy：辅助功能（用于自动粘贴）" ;; esac
-        case "$APPS_INSTALLED" in *Snipaste*) info "    Snipaste：屏幕录制、辅助功能（用于截图和贴图）" ;; esac ;;
+        info "  On first launch you must grant permissions under System Settings → Privacy & Security (the script cannot click for you):"
+        case "$APPS_INSTALLED" in *Maccy*) info "    Maccy: Accessibility (for auto-paste)" ;; esac
+        case "$APPS_INSTALLED" in *Snipaste*) info "    Snipaste: Screen Recording and Accessibility (for screenshots and pinning)" ;; esac ;;
     esac
   }
 
-  # ---------- 最后一步：汇总 ----------
+  # ---------- Final step: summary ----------
   print_summary() {
-    step "汇总"
+    step "Summary"
     local line name status note
     while IFS='|' read -r name status note; do
       [ -n "$name" ] || continue
       case "$status" in
-        失败) printf '  %s✗%s %-12s %s  %s\n' "$C_RED" "$C_RESET" "$name" "$status" "$note" ;;
-        未安装|未生成) printf '  %s!%s %-12s %s  %s\n' "$C_YELLOW" "$C_RESET" "$name" "$status" "$note" ;;
+        failed) printf '  %s✗%s %-12s %s  %s\n' "$C_RED" "$C_RESET" "$name" "$status" "$note" ;;
+        "not installed"|"not generated") printf '  %s!%s %-12s %s  %s\n' "$C_YELLOW" "$C_RESET" "$name" "$status" "$note" ;;
         *) printf '  %s✓%s %-12s %s  %s\n' "$C_GREEN" "$C_RESET" "$name" "$status" "$note" ;;
       esac
     done <<EOF
@@ -696,14 +696,14 @@ $SUMMARY
 EOF
     if [ "$CHECK_ONLY" -eq 0 ] && [ "$MODIFY_PATH" -eq 1 ]; then
       info ""
-      info "  提示：新开一个终端，或运行 source $(shell_rc_file)，让 PATH 生效。"
+      info "  Tip: open a new terminal, or run source $(shell_rc_file), so the PATH takes effect."
     fi
   }
 
-  # ---------- 主流程 ----------
+  # ---------- Main flow ----------
   if ! check_environment; then return 1; fi
   TMP_DIR="$(mktemp -d 2>/dev/null || mktemp -d -t install-claude-code)"
-  # --check 不改动任何东西；已有工具也要能被找到
+  # --check changes nothing; existing tools must still be found
   path_has_bin_dir || export PATH="$BIN_DIR:$PATH"
   install_claude
   install_codex

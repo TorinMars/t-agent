@@ -1,10 +1,10 @@
-// 主题切换：浅色 / 深色 / 未来科技。在 <head> 里同步加载，先于样式渲染设置 data-theme，避免闪烁。
+// Theme switch: light / dark / futuristic. Loaded synchronously in <head> so data-theme is set before styles render, avoiding a flash.
 const Theme = (() => {
   const KEY = 'ta-theme';
   const THEMES = [
-    { id: 'light', label: '浅色', hint: '默认，适合白天', color: '#f6f8fa', monaco: 'vs', mermaid: 'default' },
-    { id: 'dark', label: '深色', hint: '低亮度，护眼', color: '#161b22', monaco: 'vs-dark', mermaid: 'dark' },
-    { id: 'tech', label: '未来科技', hint: '深空蓝底、霓虹青与光晕', color: '#050b1a', monaco: 'ta-tech', mermaid: 'dark' },
+    { id: 'light', label: 'Light', hint: 'Default, good for daytime', color: '#f6f8fa', monaco: 'vs', mermaid: 'default' },
+    { id: 'dark', label: 'Dark', hint: 'Low brightness, easy on the eyes', color: '#161b22', monaco: 'vs-dark', mermaid: 'dark' },
+    { id: 'tech', label: 'Futuristic', hint: 'Deep-space blue with neon cyan glow', color: '#050b1a', monaco: 'ta-tech', mermaid: 'dark' },
   ];
   const listeners = new Set();
   const find = id => THEMES.find(theme => theme.id === id);
@@ -31,18 +31,18 @@ const Theme = (() => {
     const meta = document.querySelector('meta[name="theme-color"]');
     if (meta) meta.setAttribute('content', theme.color);
     defineMonaco();
-    if (window.monaco) { try { monaco.editor.setTheme(theme.monaco); } catch { /* 编辑器尚未创建 */ } }
+    if (window.monaco) { try { monaco.editor.setTheme(theme.monaco); } catch { /* the editor has not been created yet */ } }
     if (window.mermaid && typeof mermaid.initialize === 'function') {
-      try { mermaid.initialize({ startOnLoad: false, theme: theme.mermaid, gantt: { useWidth: undefined }, locale: 'zh-CN' }); } catch { /* 之后渲染的图表使用新主题 */ }
+      try { mermaid.initialize({ startOnLoad: false, theme: theme.mermaid, gantt: { useWidth: undefined }, locale: 'zh-CN' }); } catch { /* charts rendered later use the new theme */ }
     }
   }
 
   function set(id) {
     if (!find(id) || id === current) return;
     current = id;
-    try { localStorage.setItem(KEY, id); } catch { /* 隐私模式下只在本次页面生效 */ }
+    try { localStorage.setItem(KEY, id); } catch { /* in private mode it only applies to this page load */ }
     apply();
-    listeners.forEach(listener => { try { listener(id); } catch { /* 忽略监听器错误 */ } });
+    listeners.forEach(listener => { try { listener(id); } catch { /* ignore listener errors */ } });
   }
 
   document.documentElement.dataset.theme = current;

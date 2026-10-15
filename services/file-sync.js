@@ -11,7 +11,7 @@ const INSTANCE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{1
 const STATE_KEY = 'file_sync_v1';
 const MANAGED_SUFFIX = '.t-agent-file-sync-managed';
 const sha = data => crypto.createHash('sha256').update(data).digest('hex');
-// 用户可能粘贴 192.168.1.5:3000 或带 /web 的完整地址，统一成 协议://主机:端口。
+// A user may paste 192.168.1.5:3000 or a full address with /web; normalize it to protocol://host:port.
 function masterBaseUrl(input) {
   let text = String(input || '').trim();
   if (!text) throw Object.assign(new Error('SYNC_MASTER_URL_INVALID'), { statusCode: 400 });
@@ -30,10 +30,14 @@ function newPairingCode() {
   return `TA-${group()}-${group()}-${group()}`;
 }
 
+// Earlier versions wrote home-directory paths with a Chinese prefix (U+7528 U+6237 U+76EE U+5F55 + '/'); keep reading it so saved sync lists still work.
+const LEGACY_HOME_PREFIX = '\u7528\u6237\u76ee\u5f55/';
+
 function normalizeSpec(input) {
   if (typeof input !== 'string') throw fault('SYNC_PATH_INVALID');
   let value = input.trim();
-  if (value.startsWith('用户目录/')) value = `~/${value.slice(5)}`;
+  if (value.startsWith('home/')) value = `~/${value.slice(5)}`;
+  if (value.startsWith(LEGACY_HOME_PREFIX)) value = `~/${value.slice(LEGACY_HOME_PREFIX.length)}`;
   if (value.startsWith('$HOME/')) value = `~/${value.slice(6)}`;
   if (value.startsWith('~/')) {
     const relative = value.slice(2);
@@ -83,7 +87,7 @@ class FileSync {
     this.state = row ? JSON.parse(row.value) : { masterId: null, files: [], versions: {}, observed: {}, backups: {}, error: null };
     this.state.generation ||= crypto.randomUUID();
     this.state.clock ||= Math.max(0, ...Object.values(this.state.versions || {}).map(value => value.revision || 0));
-    // 旧数据没有 mode：已连接主服务器的是从服务器，否则是主服务器。
+    // Old data has no mode: a node connected to a master is a slave, otherwise it is a master.
     this.state.mode ||= this.state.masterId == null ? 'master' : 'slave';
     this.masterCodes = new Map();
     this.busy = false;
@@ -96,15 +100,15 @@ class FileSync {
   isMaster() { return this.state.mode === 'master'; }
   paired() { return Boolean(this.state.link) || this.state.masterId != null; }
   awaitingPairing() { return this.state.mode === 'slave' && !this.paired(); }
-  // 主服务器的地址和令牌：文件同步自己保存在 state.link；旧版本留下的数字 masterId 仍从 remote_servers 读取。
+  // The master's address and token: file sync stores them in state.link itself; the numeric masterId left by old versions is still read from remote_servers.
   masterLink(state = this.state) {
     if (state.link) return { url: state.link.url, token: decryptToken(state.link.tokenCipher, this.secret) };
     if (state.masterId == null) return null;
     const row = this.db.prepare('SELECT * FROM remote_servers WHERE id = ?').get(state.masterId);
     return row ? { url: row.base_url, token: decryptToken(row.token_cipher, this.secret) } : null;
   }
-  // 主服务器：生成一次性同步配对码，从服务器用它换取只能访问文件同步接口的令牌（与引擎连接、引擎令牌无关）。
-  // 主服务器有固定的外网地址而从服务器通常在内网，所以总是从服务器主动连主服务器。
+  // Master: generate a one-time sync pairing code which the slave exchanges for a token that can only reach the file-sync endpoints (unrelated to engine connections and engine tokens).
+  // The master has a fixed public address while slaves are usually on an internal network, so the slave always connects out to the master.
   createSyncCode() {
     const now = Date.now();
     for (const [hash, expires] of this.masterCodes) if (expires <= now) this.masterCodes.delete(hash);
@@ -213,7 +217,7 @@ class FileSync {
       await this.remoteRequest(link.url, '/v1/file-sync/heartbeat', link.token, {
         method: 'DELETE', timeoutMs: 2000, body: { instance_id: this.identity(), generation },
       });
-    } catch { /* 离线时主服务器会把最后一次心跳标为离线。 */ }
+    } catch { /* while offline, the master marks the last heartbeat as offline. */ }
   }
   scanMaster() {
     if (!this.isMaster()) throw fault('SYNC_NOT_MASTER', 409);
@@ -279,7 +283,7 @@ class FileSync {
     if (!link) throw fault('SYNC_MASTER_NOT_FOUND', 404);
     return link;
   }
-  // 凭主服务器的同步配对码换取文件同步令牌，保存在本模块自己的状态里，然后立即连接并同步。
+  // Exchange the master's sync pairing code for a file-sync token, store it in this module's own state, then connect and sync immediately.
   async join({ url, code }) {
     const pairing = String(code || '').trim().toUpperCase();
     if (!PAIRING_CODE.test(pairing)) throw fault('SYNC_PAIRING_CODE_INVALID');
@@ -327,7 +331,7 @@ class FileSync {
     await this.unregisterFrom(oldMaster, oldGeneration);
     return this.status();
   }
-  // 显式设置本节点是主服务器还是从服务器。切换会清空同步清单（本地文件保留）。
+  // Explicitly set whether this node is master or slave. Switching clears the sync list (local files are kept).
   async setRole(role) {
     if (role !== 'master' && role !== 'slave') throw fault('SYNC_ROLE_INVALID');
     if ((role === 'master') === this.isMaster()) return this.status();
@@ -335,7 +339,7 @@ class FileSync {
     if (role === 'slave') { this.state.mode = 'slave'; this.state.children = {}; this.state.tokens = {}; this.save(); }
     return this.status();
   }
-  // 从服务器解除与主服务器的关联，仍是从服务器，并生成新的配对码等待重新关联。
+  // A slave unlinks from the master, stays a slave, and generates a new pairing code to wait for re-linking.
   async unpair() {
     if (this.isMaster()) throw fault('SYNC_NOT_CHILD', 409);
     await this.disconnect();
@@ -343,7 +347,7 @@ class FileSync {
     this.save();
     return this.status();
   }
-  // 主服务器：生成连接字符串，包含主服务器地址和一次性配对码；从服务器粘贴它即可连接。
+  // Master: generate a connection string containing the master address and a one-time pairing code; a slave pastes it to connect.
   createInvite(masterUrl) {
     if (!this.isMaster()) throw fault('SYNC_NOT_MASTER', 409);
     const url = masterBaseUrl(masterUrl);
@@ -360,7 +364,7 @@ class FileSync {
     if (!data || data.v !== 1 || typeof data.u !== 'string' || typeof data.c !== 'string' || !PAIRING_CODE.test(data.c)) throw fault('SYNC_CONNECTION_STRING_INVALID');
     return { url: masterBaseUrl(data.u), code: data.c };
   }
-  // 从服务器：用主服务器生成的连接字符串连接；之后由本节点轮询主服务器。
+  // Slave: connect with the connection string generated by the master; afterwards this node polls the master.
   async joinInvite(input) {
     if (this.isMaster()) throw fault('SYNC_NOT_CHILD', 409);
     return this.join(this.parseInvite(input));

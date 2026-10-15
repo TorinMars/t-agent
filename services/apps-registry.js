@@ -1,4 +1,4 @@
-// 应用注册表：保存“有哪些服务、怎么访问”。PM2 运行状态和端口检测在 apps-service.js 里合并，这里只管数据和校验。
+// App registry: stores "which services exist and how to reach them". PM2 run status and port detection are merged in apps-service.js; this file only handles data and validation.
 class AppsError extends Error {
   constructor(code, message, statusCode = 400) {
     super(message);
@@ -12,28 +12,28 @@ const hasControl = value => [...value].some(char => char.charCodeAt(0) < 32 || c
 
 function text(value, field, { max, required = false } = {}) {
   if (value === undefined || value === null || value === '') {
-    if (required) throw new AppsError('APP_FIELD_REQUIRED', `${field} 不能为空`);
+    if (required) throw new AppsError('APP_FIELD_REQUIRED', `${field} cannot be empty`);
     return null;
   }
-  if (typeof value !== 'string') throw new AppsError('APP_FIELD_INVALID', `${field} 必须是字符串`);
+  if (typeof value !== 'string') throw new AppsError('APP_FIELD_INVALID', `${field} must be a string`);
   const trimmed = value.trim();
   if (!trimmed) {
-    if (required) throw new AppsError('APP_FIELD_REQUIRED', `${field} 不能为空`);
+    if (required) throw new AppsError('APP_FIELD_REQUIRED', `${field} cannot be empty`);
     return null;
   }
-  if (trimmed.length > max) throw new AppsError('APP_FIELD_TOO_LONG', `${field} 不能超过 ${max} 个字符`);
-  if (hasControl(trimmed)) throw new AppsError('APP_FIELD_INVALID', `${field} 含有不允许的控制字符`);
+  if (trimmed.length > max) throw new AppsError('APP_FIELD_TOO_LONG', `${field} cannot exceed ${max} characters`);
+  if (hasControl(trimmed)) throw new AppsError('APP_FIELD_INVALID', `${field} contains disallowed control characters`);
   return trimmed;
 }
 
-// 只接受 http/https，不含账号密码：这些地址会变成界面里可以点击的链接。
+// Only http/https without credentials are accepted: these addresses become clickable links in the UI.
 function httpUrl(value, field) {
   const raw = text(value, field, { max: 500 });
   if (raw === null) return null;
   let parsed;
-  try { parsed = new URL(raw); } catch { throw new AppsError('APP_URL_INVALID', `${field} 不是合法的地址`); }
+  try { parsed = new URL(raw); } catch { throw new AppsError('APP_URL_INVALID', `${field} is not a valid address`); }
   if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password || /\s/.test(raw)) {
-    throw new AppsError('APP_URL_INVALID', `${field} 只支持不含账号密码的 http:// 或 https:// 地址`);
+    throw new AppsError('APP_URL_INVALID', `${field} only supports http:// or https:// addresses without credentials`);
   }
   return raw;
 }
@@ -41,53 +41,53 @@ function httpUrl(value, field) {
 function port(value) {
   if (value === undefined || value === null || value === '') return null;
   const number = typeof value === 'number' ? value : (/^\d{1,5}$/.test(String(value).trim()) ? Number(String(value).trim()) : NaN);
-  if (!Number.isInteger(number) || number < 1 || number > 65535) throw new AppsError('APP_PORT_INVALID', '端口必须是 1-65535 的整数');
+  if (!Number.isInteger(number) || number < 1 || number > 65535) throw new AppsError('APP_PORT_INVALID', 'Port must be an integer between 1 and 65535');
   return number;
 }
 
 function host(value) {
   const raw = text(value, 'IP', { max: 255 });
   if (raw === null) return null;
-  if (!/^[A-Za-z0-9.:-]+$/.test(raw)) throw new AppsError('APP_HOST_INVALID', 'IP 只能包含字母、数字、点、冒号和连字符（IPv6 不要加方括号）');
+  if (!/^[A-Za-z0-9.:-]+$/.test(raw)) throw new AppsError('APP_HOST_INVALID', 'An IP may only contain letters, digits, dots, colons and hyphens (no brackets for IPv6)');
   return raw;
 }
 
-// 域名可以写成裸域名（app.example.com 或 app.example.com:8443），也可以是完整的 http(s):// 地址。
+// A domain may be a bare domain (app.example.com or app.example.com:8443) or a full http(s):// address.
 function domain(value) {
-  const raw = text(value, '域名', { max: 255 });
+  const raw = text(value, 'Domain', { max: 255 });
   if (raw === null) return null;
-  if (/^https?:\/\//i.test(raw)) return httpUrl(raw, '域名');
-  if (!/^[A-Za-z0-9.-]+(:\d{1,5})?$/.test(raw)) throw new AppsError('APP_DOMAIN_INVALID', '域名格式不正确，例如 app.example.com 或 https://app.example.com');
+  if (/^https?:\/\//i.test(raw)) return httpUrl(raw, 'Domain');
+  if (!/^[A-Za-z0-9.-]+(:\d{1,5})?$/.test(raw)) throw new AppsError('APP_DOMAIN_INVALID', 'Invalid domain format, e.g. app.example.com or https://app.example.com');
   return raw;
 }
 
 function scheme(value) {
   if (value === undefined || value === null || value === '') return 'http';
-  if (value !== 'http' && value !== 'https') throw new AppsError('APP_SCHEME_INVALID', '协议只能是 http 或 https');
+  if (value !== 'http' && value !== 'https') throw new AppsError('APP_SCHEME_INVALID', 'Protocol must be http or https');
   return value;
 }
 
 function pathField(value) {
   if (value === undefined || value === null || value === '') return '/';
-  const raw = text(value, '路径', { max: 300 });
+  const raw = text(value, 'Path', { max: 300 });
   if (raw === null) return '/';
-  if (!raw.startsWith('/') || /\s/.test(raw)) throw new AppsError('APP_PATH_INVALID', '路径必须以 / 开头且不含空白');
+  if (!raw.startsWith('/') || /\s/.test(raw)) throw new AppsError('APP_PATH_INVALID', 'Path must start with / and contain no whitespace');
   return raw;
 }
 
 function normalize(input, { partial = false } = {}) {
-  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new AppsError('APP_BODY_INVALID', '请求内容必须是 JSON 对象');
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new AppsError('APP_BODY_INVALID', 'The request body must be a JSON object');
   const out = {};
   const has = field => Object.prototype.hasOwnProperty.call(input, field);
-  if (!partial || has('name')) out.name = text(input.name, '名称', { max: 64, required: true });
+  if (!partial || has('name')) out.name = text(input.name, 'Name', { max: 64, required: true });
   if (!partial || has('port')) out.port = port(input.port);
   if (!partial || has('host')) out.host = host(input.host);
   if (!partial || has('domain')) out.domain = domain(input.domain);
   if (!partial || has('scheme')) out.scheme = scheme(input.scheme);
   if (!partial || has('path')) out.path = pathField(input.path);
-  if (!partial || has('url')) out.url = httpUrl(input.url, '访问地址');
-  if (!partial || has('description')) out.description = text(input.description, '说明', { max: 500 });
-  if (!partial || has('pm2_name')) out.pm2_name = text(input.pm2_name, 'PM2 进程名', { max: 128 });
+  if (!partial || has('url')) out.url = httpUrl(input.url, 'Address');
+  if (!partial || has('description')) out.description = text(input.description, 'Description', { max: 500 });
+  if (!partial || has('pm2_name')) out.pm2_name = text(input.pm2_name, 'PM2 process name', { max: 128 });
   return out;
 }
 
@@ -100,8 +100,8 @@ function createAppsRegistry({ db }) {
   function write(sql, params) {
     try { return db.prepare(sql).run(...params); }
     catch (error) {
-      if (/UNIQUE constraint failed: apps\.name/.test(error.message)) throw new AppsError('APP_NAME_TAKEN', '已有同名应用', 409);
-      if (/UNIQUE constraint failed: apps\.pm2_name/.test(error.message)) throw new AppsError('APP_PM2_LINKED', '这个 PM2 进程已经关联了别的应用', 409);
+      if (/UNIQUE constraint failed: apps\.name/.test(error.message)) throw new AppsError('APP_NAME_TAKEN', 'An app with this name already exists', 409);
+      if (/UNIQUE constraint failed: apps\.pm2_name/.test(error.message)) throw new AppsError('APP_PM2_LINKED', 'This PM2 process is already linked to another app', 409);
       throw error;
     }
   }
@@ -134,17 +134,17 @@ function createAppsRegistry({ db }) {
 
     update(id, input) {
       const current = row(id);
-      if (!current) throw new AppsError('APP_NOT_FOUND', '找不到这个应用', 404);
+      if (!current) throw new AppsError('APP_NOT_FOUND', 'App not found', 404);
       const values = normalize(input, { partial: true });
-      // 隐藏的应用被编辑后视为“又要用了”，重新显示。
+      // A hidden app that gets edited counts as "needed again" and is shown again.
       if (current.hidden) values.hidden = 0;
       return clean(applyUpdate(id, values));
     },
 
-    // 自动登记的 PM2 服务：仍在 PM2 里时只隐藏（否则下次同步会再登记回来），已不在 PM2 里或手动/API 登记的直接删除。
+    // Auto-registered PM2 service: only hidden while still in PM2 (otherwise the next sync would register it again); deleted outright when it is no longer in PM2 or was registered manually/through the API.
     remove(id, { pm2Present = false } = {}) {
       const current = row(id);
-      if (!current) throw new AppsError('APP_NOT_FOUND', '找不到这个应用', 404);
+      if (!current) throw new AppsError('APP_NOT_FOUND', 'App not found', 404);
       if (current.source === 'pm2' && current.pm2_name && pm2Present) {
         db.prepare('UPDATE apps SET hidden = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(id);
         return { deleted: false, hidden: true };
@@ -157,13 +157,13 @@ function createAppsRegistry({ db }) {
       return db.prepare('UPDATE apps SET hidden = 0, updated_at = CURRENT_TIMESTAMP WHERE hidden = 1').run().changes;
     },
 
-    // 程序自注册：按 PM2 进程名（有则优先）或应用名幂等更新，重复启动不会产生重复记录。
+    // Program self-registration: idempotent update by PM2 process name (preferred if present) or app name; restarting never creates duplicate records.
     register(input) {
       const values = normalize(input);
       const existing = (values.pm2_name && byPm2(values.pm2_name)) || byName(values.name);
       if (!existing) return { app: clean(insert(values, 'api')), created: true };
       const update = { ...values };
-      // 没有传的可选字段保持原值，避免程序只上报端口就把手填的域名清空。
+      // Optional fields that are not passed keep their value, so a program that only reports a port does not wipe a hand-entered domain.
       for (const field of FIELDS) {
         if (field !== 'name' && !Object.prototype.hasOwnProperty.call(input, field)) delete update[field];
       }
@@ -172,7 +172,7 @@ function createAppsRegistry({ db }) {
       return { app: clean(applyUpdate(existing.id, update)), created: false };
     },
 
-    // 自动登记 PM2 进程：已有关联就不动；同名的未关联应用直接关联；否则新建。被隐藏的不会再登记。
+    // Auto-register PM2 processes: leave alone if already linked; link an unlinked app of the same name; otherwise create one. Hidden ones are not registered again.
     ensurePm2(name) {
       if (byPm2(name)) return null;
       const sameName = byName(name);

@@ -11,7 +11,7 @@ const SS = [
 ].join('\n');
 const PS = ['    1     0', '  100     1', '  101   100', '  102   101', '  200     1', '  300     1', 'garbage'].join('\n');
 
-test('解析 lsof / ss 的监听输出，区分仅本机监听', () => {
+test('Parse lsof / ss listening output, telling local-only listeners apart', () => {
   assert.deepEqual(parseLsof(LSOF), [
     { pid: 100, port: 3000, local_only: false }, { pid: 100, port: 9229, local_only: true },
     { pid: 200, port: 5173, local_only: true }, { pid: 200, port: 5173, local_only: false },
@@ -25,13 +25,13 @@ test('解析 lsof / ss 的监听输出，区分仅本机监听', () => {
   assert.equal(isLoopback('0.0.0.0') || isLoopback('*') || isLoopback('10.0.0.5'), false);
 });
 
-test('进程树：包含子孙进程，限制数量，忽略无法解析的行', () => {
+test('Process tree: includes descendants, limits the count, ignores lines that cannot be parsed', () => {
   const children = parseChildren(PS);
   assert.deepEqual([...descendants(100, children)].sort((a, b) => a - b), [100, 101, 102]);
   assert.deepEqual([...descendants(999, children)], [999]);
 });
 
-test('检测 PM2 进程及其子进程的端口；同一端口既有回环又有对外监听时算对外', async () => {
+test('Detect the ports of PM2 processes and their children; a port that listens both on loopback and externally counts as external', async () => {
   const calls = [];
   const exec = (file, args, options, callback) => {
     calls.push(file);
@@ -41,13 +41,13 @@ test('检测 PM2 进程及其子进程的端口；同一端口既有回环又有
   };
   const detector = createPortDetector({ exec, cacheMs: 0 });
   const result = await detector.detect([100, 200, 777, 100, 0, -1, 'x']);
-  assert.deepEqual(result.get(100), [{ port: 3000, local_only: false }, { port: 7000, local_only: false }, { port: 9229, local_only: true }], '子孙进程 102 的 7000 端口算在 100 名下');
+  assert.deepEqual(result.get(100), [{ port: 3000, local_only: false }, { port: 7000, local_only: false }, { port: 9229, local_only: true }], 'Port 7000 of descendant process 102 counts under 100');
   assert.deepEqual(result.get(200), [{ port: 5173, local_only: false }]);
   assert.deepEqual(result.get(777), []);
   assert.equal(result.has(0), false);
 });
 
-test('没有 lsof 时改用 ss；两者都不可用时返回空结果而不是报错；结果短时间内缓存', async () => {
+test('Falls back to ss without lsof; returns an empty result instead of an error when neither is available; the result is cached for a short time', async () => {
   const viaSs = createPortDetector({ cacheMs: 0, exec: (file, args, options, callback) => {
     if (file === 'ps') return callback(null, PS);
     if (file === 'ss') return callback(null, SS);
@@ -62,7 +62,7 @@ test('没有 lsof 时改用 ss；两者都不可用时返回空结果而不是�
   const cached = createPortDetector({ cacheMs: 60_000, exec: (file, args, options, callback) => { runs += 1; callback(null, file === 'ps' ? PS : LSOF); } });
   await cached.detect([100]); const afterFirst = runs;
   await cached.detect([100]);
-  assert.equal(runs, afterFirst, '缓存期内不重复执行 ps/lsof');
+  assert.equal(runs, afterFirst, 'ps is not run again within the cache period/lsof');
   await cached.detect([100, 200]);
-  assert.ok(runs > afterFirst, '查询的进程变了就重新检测');
+  assert.ok(runs > afterFirst, 'Detect again when the queried processes change');
 });

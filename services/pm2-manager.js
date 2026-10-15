@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-// 页面只能触发这四个动作；不能启动任意命令，也不能删除进程。
+// The page can only trigger these four actions; it cannot start arbitrary commands or delete processes.
 const ACTIONS = ['start', 'stop', 'restart', 'reload'];
 const STREAMS = { out: 'pm_out_log_path', err: 'pm_err_log_path' };
 const MAX_LOG_BYTES = 256 * 1024;
@@ -17,7 +17,7 @@ class Pm2Error extends Error {
   }
 }
 
-// 服务由 LaunchAgent/systemd 启动时 PATH 很精简，所以额外查找常见的 Node/PM2 安装位置。
+// When the service is started by LaunchAgent/systemd the PATH is slim, so also look in the common Node/PM2 install locations.
 function candidateBinDirs(env = process.env, home = os.homedir()) {
   const dirs = String(env.PATH || '').split(path.delimiter).filter(Boolean);
   dirs.push(path.join(home, '.local', 'bin'), path.join(home, '.local', 'node', 'bin'), '/opt/homebrew/bin', '/usr/local/bin', '/usr/bin');
@@ -25,7 +25,7 @@ function candidateBinDirs(env = process.env, home = os.homedir()) {
   try {
     const versions = fs.readdirSync(nvm).sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
     for (const version of versions) dirs.push(path.join(nvm, version, 'bin'));
-  } catch { /* 没有 nvm */ }
+  } catch { /* no nvm */ }
   return [...new Set(dirs)];
 }
 
@@ -37,12 +37,12 @@ function findPm2(options = {}) {
     try {
       fs.accessSync(candidate, fs.constants.X_OK);
       return candidate;
-    } catch { /* 继续找 */ }
+    } catch { /* keep looking */ }
   }
   return null;
 }
 
-// jlist 前面可能带有 "[PM2] ..." 之类的提示行：取第一个能完整解析成 JSON 数组的行首 "["。
+// jlist output may be preceded by hint lines such as "[PM2] ...": take the first line-start "[" that parses completely into a JSON array.
 function parseJlist(output) {
   const text = String(output || '');
   for (let index = text.indexOf('['); index !== -1; index = text.indexOf('[', index + 1)) {
@@ -50,12 +50,12 @@ function parseJlist(output) {
     try {
       const parsed = JSON.parse(text.slice(index));
       if (Array.isArray(parsed)) return parsed;
-    } catch { /* 继续向后找 */ }
+    } catch { /* keep looking further on */ }
   }
-  throw new Pm2Error('PM2_BAD_OUTPUT', '无法解析 pm2 jlist 的输出', 502);
+  throw new Pm2Error('PM2_BAD_OUTPUT', 'Cannot parse the pm2 jlist output', 502);
 }
 
-// 只挑选展示需要的字段。进程的 env、args 里可能有密钥，绝不返回。
+// Pick only the fields needed for display. A process's env and args may contain secrets, so they are never returned.
 function toSafeProcess(entry, selfPid) {
   const env = entry.pm2_env || {};
   const monit = entry.monit || {};
@@ -88,12 +88,12 @@ function tailFile(file, maxLines) {
     const buffer = Buffer.alloc(length);
     fs.readSync(handle, buffer, 0, length, size - length);
     let lines = buffer.toString('utf8').split('\n');
-    if (size > length) lines = lines.slice(1); // 第一行可能被截断
+    if (size > length) lines = lines.slice(1); // the first line may be truncated
     if (lines[lines.length - 1] === '') lines.pop();
     return { lines: lines.slice(-maxLines), truncated: size > length };
   } catch (error) {
     if (error.code === 'ENOENT') return { lines: [], truncated: false };
-    throw new Pm2Error('PM2_LOG_UNREADABLE', '无法读取日志文件', 500);
+    throw new Pm2Error('PM2_LOG_UNREADABLE', 'Cannot read the log file', 500);
   } finally {
     if (handle !== undefined) fs.closeSync(handle);
   }
@@ -112,7 +112,7 @@ function createPm2Manager(options = {}) {
     return new Promise((resolve, reject) => {
       exec(bin, args, { timeout: timeoutMs, maxBuffer: 10 * 1024 * 1024, env }, (error, stdout, stderr) => {
         if (error) {
-          reject(new Pm2Error('PM2_COMMAND_FAILED', `pm2 ${args[0]} 执行失败：${String(stderr || error.message).trim().split('\n').pop()}`, 502));
+          reject(new Pm2Error('PM2_COMMAND_FAILED', `pm2 ${args[0]} failed: ${String(stderr || error.message).trim().split('\n').pop()}`, 502));
         } else {
           resolve(String(stdout));
         }
@@ -122,11 +122,11 @@ function createPm2Manager(options = {}) {
 
   function requireBin() {
     const bin = findPm2(options);
-    if (!bin) throw new Pm2Error('PM2_NOT_INSTALLED', '未检测到 pm2，请先运行安装脚本', 404);
+    if (!bin) throw new Pm2Error('PM2_NOT_INSTALLED', 'pm2 not detected; run the install script first', 404);
     return bin;
   }
 
-  // 守护进程没在运行时，jlist 会顺带把它拉起来；这里先看 socket，避免查询产生副作用。
+  // When the daemon is not running, jlist starts it as a side effect; check the socket first so a query has no side effects.
   function daemonRunning() {
     return options.assumeRunning || fs.existsSync(path.join(pm2Home(), 'rpc.sock')) || fs.existsSync(path.join(pm2Home(), 'pm2.pid'));
   }
@@ -143,12 +143,12 @@ function createPm2Manager(options = {}) {
   }
 
   async function control(id, action) {
-    if (!ACTIONS.includes(action)) throw new Pm2Error('PM2_BAD_ACTION', '不支持的操作', 400);
-    if (!Number.isInteger(id) || id < 0) throw new Pm2Error('PM2_BAD_ID', '进程编号不合法', 400);
+    if (!ACTIONS.includes(action)) throw new Pm2Error('PM2_BAD_ACTION', 'Unsupported action', 400);
+    if (!Number.isInteger(id) || id < 0) throw new Pm2Error('PM2_BAD_ID', 'Invalid process id', 400);
     const bin = requireBin();
-    if (!daemonRunning()) throw new Pm2Error('PM2_NOT_RUNNING', 'PM2 守护进程没有运行', 409);
+    if (!daemonRunning()) throw new Pm2Error('PM2_NOT_RUNNING', 'The PM2 daemon is not running', 409);
     const before = (await rawList(bin)).find(entry => entry.pm_id === id);
-    if (!before) throw new Pm2Error('PM2_NOT_FOUND', '找不到这个进程', 404);
+    if (!before) throw new Pm2Error('PM2_NOT_FOUND', 'Process not found', 404);
     await run(bin, [action, String(id)]);
     const after = (await rawList(bin)).find(entry => entry.pm_id === id);
     return after ? toSafeProcess(after, selfPid) : null;
@@ -156,14 +156,14 @@ function createPm2Manager(options = {}) {
 
   async function logs(id, stream, lines) {
     const key = STREAMS[stream];
-    if (!key) throw new Pm2Error('PM2_BAD_STREAM', 'stream 只能是 out 或 err', 400);
-    if (!Number.isInteger(id) || id < 0) throw new Pm2Error('PM2_BAD_ID', '进程编号不合法', 400);
+    if (!key) throw new Pm2Error('PM2_BAD_STREAM', 'stream must be out or err', 400);
+    if (!Number.isInteger(id) || id < 0) throw new Pm2Error('PM2_BAD_ID', 'Invalid process id', 400);
     const count = Math.min(Math.max(Number.parseInt(lines, 10) || 200, 1), MAX_LOG_LINES);
     const bin = requireBin();
-    if (!daemonRunning()) throw new Pm2Error('PM2_NOT_RUNNING', 'PM2 守护进程没有运行', 409);
+    if (!daemonRunning()) throw new Pm2Error('PM2_NOT_RUNNING', 'The PM2 daemon is not running', 409);
     const entry = (await rawList(bin)).find(item => item.pm_id === id);
-    if (!entry) throw new Pm2Error('PM2_NOT_FOUND', '找不到这个进程', 404);
-    // 日志路径只来自 pm2 自己的记录，永远不接受请求里传来的路径。
+    if (!entry) throw new Pm2Error('PM2_NOT_FOUND', 'Process not found', 404);
+    // The log path only comes from pm2's own records and is never accepted from the request.
     const file = entry.pm2_env && entry.pm2_env[key];
     if (!file) return { stream, lines: [], truncated: false };
     return { stream, ...tailFile(file, count) };

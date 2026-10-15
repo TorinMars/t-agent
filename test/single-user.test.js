@@ -20,39 +20,39 @@ function testDb() {
   return database;
 }
 
-test('升级为单用户模式时沿用已有的第一个用户及工作目录', () => {
+test('When upgrading to single-user mode the first existing user and working directory are kept', () => {
   const database = testDb();
   database.prepare('INSERT INTO users (username, salt, hash, work_dir) VALUES (?, ?, ?, ?)')
     .run('torin', 'legacy', 'legacy', '/Users/torin/tasks');
 
   const user = ensureSingleUser(database, '');
   assert.deepEqual(user, {
-    login: 'torin', name: '本地用户', avatar_url: '', work_dir: '/Users/torin/tasks',
+    login: 'torin', name: 'Local user', avatar_url: '', work_dir: '/Users/torin/tasks',
   });
   assert.equal(database.prepare("SELECT value FROM system_state WHERE key = 'single_user_id'").get().value, 'torin');
   database.close();
 });
 
-test('全新安装自动建立无需密码的本地身份', () => {
+test('A fresh install creates a local identity that needs no password', () => {
   const database = testDb();
   const user = ensureSingleUser(database, 'local');
   assert.equal(user.login, 'local');
   assert.equal(database.prepare('SELECT hash FROM users WHERE username = ?').get('local').hash, 'password-auth-disabled');
 
-  // 保存后的身份稳定，不受随后出现的其他用户影响。
+  // After saving, the identity is stable and unaffected by other users that appear later.
   database.prepare('INSERT INTO users (username, salt, hash) VALUES (?, ?, ?)').run('other', 'x', 'x');
   assert.equal(ensureSingleUser(database, '').login, 'local');
   database.close();
 });
 
-test('没有用户记录时优先继承已有任务的数据归属', () => {
+test('With no user records, the data ownership of existing tasks is inherited first', () => {
   const database = testDb();
   database.prepare('INSERT INTO tasks (id, user_id) VALUES (1, ?), (2, ?)').run('legacy-owner', 'legacy-owner');
   assert.equal(ensureSingleUser(database, '').login, 'legacy-owner');
   database.close();
 });
 
-test('默认 local 不会遮蔽旧账号的任务和远程连接', () => {
+test('The default local does not hide the tasks and remote connections of the old account', () => {
   const database = testDb();
   database.prepare('INSERT INTO users (username, salt, hash) VALUES (?, ?, ?)').run('local', 'x', 'x');
   database.prepare('INSERT INTO users (username, salt, hash, work_dir) VALUES (?, ?, ?, ?)')
@@ -68,7 +68,7 @@ test('默认 local 不会遮蔽旧账号的任务和远程连接', () => {
   database.close();
 });
 
-test('只有旧远程连接时也继承其账号归属', () => {
+test('With only an old remote connection, its account ownership is inherited too', () => {
   const database = testDb();
   database.prepare("INSERT INTO system_state (key, value) VALUES ('single_user_id', 'local')").run();
   database.prepare('INSERT INTO remote_servers (id, owner_id) VALUES (1, ?)').run('remote-owner');

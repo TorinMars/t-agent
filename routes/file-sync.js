@@ -31,14 +31,14 @@ function mount(router, auth, browser = false) {
   router.post('/disconnect', auth, handler(() => service.disconnect()));
   router.put('/role', auth, handler(req => service.setRole(req.body.role)));
   router.post('/unpair', auth, handler(() => service.unpair()));
-  // 主服务器生成连接字符串；从服务器粘贴它来连接（主服务器在外网，从服务器主动连过去）。
+  // The master generates a connection string; the slave pastes it to connect (the master is on the public network, so the slave always connects out to it).
   router.post('/invite', auth, handler(req => service.createInvite(req.body.master_url || `${req.protocol}://${req.get('host')}`)));
   router.post('/join', auth, handler(req => service.joinInvite(req.body.connection_string)));
   router.post('/resolve', auth, handler(req => service.resolveConflict(req.body.path)));
   if (!browser) {
-    // 从服务器用连接字符串里的一次性同步配对码换取文件同步令牌；凭配对码、不要求 Token，限流。
+    // The slave exchanges the one-time sync pairing code in the connection string for a file-sync token; authenticated by the pairing code, no Token required, rate limited.
     router.post('/pair', rateLimitPair, handler(req => service.exchangeSyncCode(req.body || {})));
-    // 同步接口接受文件同步令牌；2.46.0 之前的从服务器还在用引擎令牌，仍可使用。
+    // Sync endpoints accept the file-sync token; slaves from before 2.46.0 still use an engine token, which keeps working.
     const syncAuth = (req, res, next) => {
       const match = /^Bearer (.+)$/i.exec(req.headers.authorization || '');
       if (match && service.verifyToken(match[1])) return next();

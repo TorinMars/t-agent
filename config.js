@@ -19,19 +19,19 @@ function positiveInteger(value, fallback) {
 }
 
 module.exports = {
-  port:          parseInt(process.env.PORT || '3000', 10),
-  // 默认仅监听本机；手机访问可显式配置 HOST=0.0.0.0。
-  host:          process.env.HOST || '127.0.0.1',
-  // 全新安装时的初始访问模式（local / remote）；留空则首次打开页面时选择。已经保存过的选择优先。
-  accessMode:    ['local', 'remote'].includes(process.env.ACCESS_MODE) ? process.env.ACCESS_MODE : '',
+  port:         parseInt(process.env.PORT || '3000', 10),
+  // Listen on this machine only by default; set HOST=0.0.0.0 explicitly to allow phone access.
+  host:         process.env.HOST || '127.0.0.1',
+  // Initial access mode for a fresh install (local / remote); leave empty to choose on first page load. A choice that was already saved takes precedence.
+  accessMode:   ['local', 'remote'].includes(process.env.ACCESS_MODE) ? process.env.ACCESS_MODE : '',
   // Explicit opt-in for trusted intranet HTTP; HTTPS cookies remain Secure.
   clientAllowHttp: process.env.CLIENT_ALLOW_HTTP === 'true',
   clientFrameOrigins: require('./lib/client-embedding').parseFrameOrigins(process.env.CLIENT_FRAME_ORIGINS),
-  // 未登录时唯一可见的登录入口；其余地址一律 404。
+  // The only login entrance visible when logged out; every other address returns 404.
   loginPath: require('./lib/login-gate').resolveLoginPath(process.env.CLIENT_LOGIN_PATH, message => console.warn(message)),
   clientSessionCookieName,
   sessionSecret: process.env.SESSION_SECRET || 'dev-secret-change-me',
-  // AUTH_USERS 格式: "user1:salt:hash,user2:salt:hash"
+  // AUTH_USERS format: "user1:salt:hash,user2:salt:hash"
   authUsers,
   singleUserId,
   githubVersionUrl: process.env.GITHUB_VERSION_URL || '',

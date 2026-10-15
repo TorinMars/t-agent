@@ -9,7 +9,7 @@ function defaultService() {
   return createFrpService({ db: require('../db'), secret: config.sessionSecret, dataDir, localPort: config.port, localHost: config.host });
 }
 
-// 管理运行 Client 的这台机器上的 frpc 进程。只支持本机，不经 Engine 代理。
+// Manages the frpc process on the machine running the Client. Local only, not proxied through an Engine.
 function createFrpRouter(options = {}) {
   const service = options.service || defaultService();
   const router = express.Router();
@@ -31,7 +31,7 @@ function createFrpRouter(options = {}) {
     if (res.headersSent) return next(error);
     if (error instanceof FrpError) return res.status(error.statusCode).json({ error: error.code, message: error.message });
     console.error('[frp]', error && error.message);
-    return res.status(500).json({ error: 'FRP_UNAVAILABLE', message: '内网穿透服务暂时不可用' });
+    return res.status(500).json({ error: 'FRP_UNAVAILABLE', message: 'The tunnel service is temporarily unavailable' });
   });
   router.service = service;
   return router;

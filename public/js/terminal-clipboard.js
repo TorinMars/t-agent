@@ -1,25 +1,25 @@
 // Clipboard operations stay in the Client. OSC 52 never writes without confirmation.
 const TerminalClipboard = (() => {
-  const tell = (message, type) => (typeof notify === 'function' ? notify(message, type) : (typeof alert === 'function' ? alert(message) : undefined)); // 悬浮提示；没加载 toast.js 的环境退回 alert
+  const tell = (message, type) => (typeof notify === 'function' ? notify(message, type) : (typeof alert === 'function' ? alert(message) : undefined)); // floating notice; falls back to alert where toast.js is not loaded
   const instances = new Map();
   const toolbar = document.querySelector('.terminal-toolbar');
   const copy = document.createElement('button');
   copy.type = 'button';
   copy.className = 'terminal-toolbar-btn';
   copy.textContent = '⧉';
-  copy.setAttribute('aria-label', '复制选中内容');
+  copy.setAttribute('aria-label', 'Copy selection');
   const request = document.createElement('button');
   request.type = 'button';
   request.className = 'terminal-toolbar-btn';
   request.textContent = '📨';
-  request.setAttribute('aria-label', '查看程序复制请求');
-  request.dataset.tip = '查看程序复制请求：程序通过终端请求写入剪贴板，需要你确认';
+  request.setAttribute('aria-label', 'Review program copy request');
+  request.dataset.tip = 'Review program copy request: a program asked to write to your clipboard through the terminal and needs your confirmation';
   request.hidden = true;
   toolbar.append(copy, request);
   const pane = document.getElementById('terminal-pane');
   const container = document.getElementById('xterm-container');
-  const hint = /Mac|iPhone|iPad/.test(navigator.platform) ? '按住 Option 拖选，再复制' : '按住 Shift 拖选，再复制';
-  copy.dataset.tip = `复制选中内容：${hint}`;
+  const hint = /Mac|iPhone|iPad/.test(navigator.platform) ? 'Hold Option while selecting, then copy' : 'Hold Shift while selecting, then copy';
+  copy.dataset.tip = `Copy selection: ${hint}`;
   let shown = null;
 
   function active() {
@@ -32,9 +32,9 @@ const TerminalClipboard = (() => {
     copy.disabled = !item;
     request.hidden = !item?.pending;
   }
-  // 复制结果用悬浮提示显示：不占用终端工具栏的位置。
+  // Copy results use a floating notice so they take no space in the terminal toolbar.
   function message(item, text) {
-    if (active() === item) tell(text, /失败|拒绝|没有|未选中/.test(text) ? 'error' : 'success');
+    if (active() === item) tell(text, /fail|denied|no selection|nothing selected|not selected/i.test(text) ? 'error' : 'success');
   }
 
   async function writeText(text) {
@@ -48,7 +48,7 @@ const TerminalClipboard = (() => {
     document.body.append(field);
     field.select();
     try {
-      if (!document.execCommand('copy')) throw new Error('剪贴板写入被拒绝');
+      if (!document.execCommand('copy')) throw new Error('Clipboard write was denied');
     } finally { field.remove(); previous?.focus({ preventScroll: true }); }
   }
 
@@ -56,12 +56,12 @@ const TerminalClipboard = (() => {
     const text = item.term.getSelection();
     if (!text) {
       message(item, window.matchMedia?.('(pointer: coarse)').matches
-        ? '未选中文字，可查看程序复制请求'
-        : `没有客户端选区；${hint}，或查看程序复制请求`);
+        ? 'Nothing selected. You can review the program copy request'
+        : `No selection in the client; ${hint}, or review the program copy request`);
       return;
     }
-    try { await writeText(text); message(item, '已复制'); }
-    catch { message(item, '复制失败：浏览器拒绝写入剪贴板，请检查权限'); }
+    try { await writeText(text); message(item, 'Copied'); }
+    catch { message(item, 'Copy failed: the browser denied clipboard access. Check permissions'); }
   }
   // Keep the terminal selection/focus while using the toolbar with a mouse.
   copy.addEventListener('mousedown', event => event.preventDefault());
@@ -73,19 +73,19 @@ const TerminalClipboard = (() => {
     const dialog = document.createElement('dialog');
     dialog.className = 'terminal-copy-dialog';
     const title = document.createElement('h3');
-    title.textContent = '程序请求复制以下内容';
+    title.textContent = 'A program asks to copy the following';
     const note = document.createElement('p');
-    note.textContent = '内容来自此终端程序。确认后将覆盖你的剪贴板；取消不会复制。';
+    note.textContent = 'This content comes from a program in this terminal. Confirming overwrites your clipboard; cancelling copies nothing.';
     const preview = document.createElement('textarea');
     preview.readOnly = true;
     preview.value = text;
-    preview.setAttribute('aria-label', '待复制内容');
+    preview.setAttribute('aria-label', 'Content to copy');
     const feedback = document.createElement('p');
     feedback.setAttribute('role', 'status');
     const confirm = document.createElement('button');
-    confirm.type = 'button'; confirm.textContent = '确认复制';
+    confirm.type = 'button'; confirm.textContent = 'Confirm copy';
     const cancel = document.createElement('button');
-    cancel.type = 'button'; cancel.textContent = '取消';
+    cancel.type = 'button'; cancel.textContent = 'Cancel';
     dialog.append(title, note, preview, feedback, confirm, cancel);
     document.body.append(dialog);
     item.dialog = dialog;
@@ -98,8 +98,8 @@ const TerminalClipboard = (() => {
     confirm.addEventListener('click', async () => {
       if (active() !== item || !instances.has(item.term)) { close(); return; }
       confirm.disabled = true;
-      try { await writeText(text); close(); message(item, '已复制程序提供的内容'); }
-      catch { feedback.textContent = '复制失败；可选中上方文本后手动复制。'; confirm.disabled = false; }
+      try { await writeText(text); close(); message(item, 'Copied the content provided by the program'); }
+      catch { feedback.textContent = 'Copy failed; select the text above and copy it manually.'; confirm.disabled = false; }
     });
     dialog.showModal();
     cancel.focus();
@@ -132,14 +132,14 @@ const TerminalClipboard = (() => {
       // Don't intercept selection in dialogs, editors or other DOM text.
       if (active() !== item || !el.contains(event.target) || !term.hasSelection() || !event.clipboardData) return;
       event.clipboardData.setData('text/plain', term.getSelection());
-      event.preventDefault(); event.stopImmediatePropagation(); message(item, '已复制');
+      event.preventDefault(); event.stopImmediatePropagation(); message(item, 'Copied');
     };
     el.addEventListener('copy', onCopy, true);
     const osc = term.parser.registerOscHandler(52, data => {
       const text = decodeOsc52(data);
       if (text && !item.replaying && active() === item && !item.pending) {
         item.pending = text;
-        message(item, '程序请求复制：请点击“查看程序复制请求”确认');
+        message(item, 'A program wants to copy: click “Review program copy request” to confirm');
         item.expiry = setTimeout(() => { item.pending = null; item.dialog?.remove(); item.dialog = null; render(); }, 60000);
         render();
       }

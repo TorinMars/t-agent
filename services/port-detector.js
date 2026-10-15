@@ -1,7 +1,7 @@
 const { execFile } = require('node:child_process');
 
-// 找出一组进程（及其全部子孙进程）正在监听的 TCP 端口。优先用 lsof，没有时用 ss。
-// 任何一步失败都只返回空结果：端口检测是锦上添花，不能影响列表本身。
+// Find the TCP ports listened on by a set of processes (and all their descendants). Prefer lsof, fall back to ss.
+// Any failing step just returns an empty result: port detection is a nice-to-have and must not affect the list itself.
 const isLoopback = address => /^(127\.|\[?::1\]?$|localhost$)/.test(address);
 
 function run(exec, file, args, timeoutMs) {
@@ -10,7 +10,7 @@ function run(exec, file, args, timeoutMs) {
   });
 }
 
-// `ps -A -o pid=,ppid=` → Map(pid → 子进程 pid 列表)
+// `ps -A -o pid=,ppid=` → Map(pid → list of child pids)
 function parseChildren(output) {
   const children = new Map();
   for (const line of String(output || '').split('\n')) {
@@ -34,7 +34,7 @@ function descendants(root, children, limit = 200) {
   return seen;
 }
 
-// lsof -Fpn：先是 "p<pid>"，随后是该进程的若干 "n<地址>:<端口>"。
+// lsof -Fpn: first "p<pid>", then several "n<address>:<port>" lines for that process.
 function parseLsof(output) {
   const listeners = [];
   let pid = null;
@@ -48,7 +48,7 @@ function parseLsof(output) {
   return listeners;
 }
 
-// ss -ltnpH：LISTEN 0 511 0.0.0.0:3000 0.0.0.0:* users:(("node",pid=1234,fd=19))
+// ss -ltnpH: LISTEN 0 511 0.0.0.0:3000 0.0.0.0:* users:(("node",pid=1234,fd=19))
 function parseSs(output) {
   const listeners = [];
   for (const line of String(output || '').split('\n')) {
@@ -64,7 +64,7 @@ function parseSs(output) {
 function createPortDetector({ exec = execFile, timeoutMs = 4000, cacheMs = 4000 } = {}) {
   let cache = { at: 0, key: '', value: null };
 
-  // pids: PM2 进程的主 pid 列表。返回 Map(pid → [{ port, local_only }])，端口升序。
+  // pids: main pids of the PM2 processes. Returns Map(pid → [{ port, local_only }]), ports ascending.
   async function detect(pids) {
     const roots = [...new Set(pids.filter(pid => Number.isInteger(pid) && pid > 0))];
     const key = roots.join(',');
@@ -86,7 +86,7 @@ function createPortDetector({ exec = execFile, timeoutMs = 4000, cacheMs = 4000 
       const tree = descendants(root, children);
       const ports = new Map();
       for (const listener of (listeners || []).filter(item => tree.has(item.pid))) {
-        // 同一端口既有对外监听又有回环监听时，按“可对外访问”处理。
+        // When a port listens both externally and on loopback, treat it as "reachable from outside".
         const known = ports.get(listener.port);
         ports.set(listener.port, { port: listener.port, local_only: known ? known.local_only && listener.local_only : listener.local_only });
       }

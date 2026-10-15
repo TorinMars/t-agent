@@ -24,9 +24,9 @@ const { createAccessGate, upgradeAllowed } = require('./lib/access-gate');
 
 const app = express();
 
-// 宝塔/Nginx 在 HTTPS 终止后转发到本服务时，会通过
-// X-Forwarded-Proto 传递原始协议。信任一层代理，确保安全会话 Cookie
-// 能在 HTTPS 域名访问时被正确写入。
+// When BT Panel/Nginx forwards to this service after terminating HTTPS, it passes the original protocol
+// in X-Forwarded-Proto. Trust one proxy hop so that secure session cookies
+// are written correctly when the site is accessed through an HTTPS domain.
 app.set('trust proxy', 1);
 app.use((req, res, next) => {
   res.set('Content-Security-Policy', frameAncestors(config.clientFrameOrigins));
@@ -76,9 +76,9 @@ app.use((req, res, next) => {
   getClientAuth().renew(req.session);
   next();
 });
-// 仅本机 / 未选择访问模式时，非本机请求一律 404；仅本机模式下本机会话自动可信。
+// In local-only / mode-not-chosen state, non-local requests always get 404; in local-only mode sessions from this machine are trusted automatically.
 app.use(createAccessGate({ getMode: () => getClientAuth().accessMode() }));
-// 未登录时只开放登录入口和机器接口，其余一律 404。
+// When logged out only the login entrance and machine endpoints are open; everything else returns 404.
 app.use(createLoginGate({ loginPath: config.loginPath, isAuthenticated: session => getClientAuth().authenticated(session) }));
 
 // Only browser-facing APIs require the Client session; the legacy /api/remote/v1
@@ -112,7 +112,7 @@ app.use('/api/file-sync', require('./routes/file-sync').browser);
 app.use('/api/remote-servers', require('./routes/remote-servers'));
 app.use('/api/remote-tokens', require('./routes/remote-tokens'));
 app.use('/api/remote/v1', require('./routes/remote-api'));
-// 标准 Engine API。Client 安装包默认内置并暴露与独立 Engine 相同的协议。
+// Standard Engine API. The Client package bundles it by default and exposes the same protocol as a standalone Engine.
 app.use('/v1', require('./routes/engine-v1'));
 
 app.get('/health', (req, res) => {
@@ -198,22 +198,22 @@ function sendSharedMarkdown(res, task, token, content, currentPath = '') {
   <link rel="stylesheet" href="/css/markdown.css">
   <script src="/js/markdown-view.js"></script>
   <script src="/js/i18n.js"></script>
-  <script src="/js/i18n-en-shell.js"></script>
+  <script src="/js/i18n-zh-server.js"></script>
 </head>
 <body>
   <div class="header">
     <h1>${safeTitle}</h1>
-    <span class="badge">只读分享</span>
+    <span class="badge">Read-only share</span>
   </div>
   <div class="layout">
     <div class="preview" id="preview"></div>
     <div class="toc" id="toc" style="display:none">
-      <div class="toc-title">目录</div>
+      <div class="toc-title">Directory</div>
       <div id="toc-list"></div>
     </div>
   </div>
   <script>
-    // mermaid 约 5 MB，页面里有图表时才加载。
+    // mermaid is about 5 MB and is only loaded when the page contains diagrams.
     function ensureMermaid(){
       if (window.mermaid) return Promise.resolve();
       return new Promise(function(resolve,reject){
@@ -302,19 +302,19 @@ function sendSharedMarkdown(res, task, token, content, currentPath = '') {
 
 app.get('/share/:token', (req, res) => {
   const task = getSharedTask(req.params.token);
-  if (!task || !task.md_path) return res.status(404).send('链接无效或已失效');
+  if (!task || !task.md_path) return res.status(404).send('The link is invalid or has expired');
   try {
     sendSharedMarkdown(res, task, req.params.token, fs.readFileSync(task.md_path, 'utf8'));
   } catch (e) {
-    res.status(404).send('文件不存在');
+    res.status(404).send('File does not exist');
   }
 });
 
 app.get('/share/:token/file', (req, res) => {
   const task = getSharedTask(req.params.token);
-  if (!task || !task.md_path) return res.status(404).send('链接无效或已失效');
+  if (!task || !task.md_path) return res.status(404).send('The link is invalid or has expired');
   const file = readSharedMarkdown(task, req.query.path);
-  if (!file) return res.status(404).send('Markdown 文件不存在或无权访问');
+  if (!file) return res.status(404).send('The Markdown file does not exist or is not accessible');
   sendSharedMarkdown(res, task, req.params.token, file.content, file.relativePath);
 });
 
@@ -348,8 +348,8 @@ app.use((req, res, next) => {
   if (auth.loginRequired) return res.redirect(config.loginPath);
   next();
 });
-// 第三方库文件名带版本号、内容固定：长期缓存；并对 /vendor 启用 gzip（mermaid 约 5 MB）。
-// 压缩只限 /vendor，避免缓冲 SSE 等流式接口。
+// Third-party library file names carry a version and their content is fixed: cache them for a long time, and enable gzip for /vendor (mermaid is about 5 MB).
+// Compression is limited to /vendor so streaming endpoints such as SSE are not buffered.
 app.use('/vendor', compression(), express.static(path.join(__dirname, 'public', 'vendor'), {
   index: false,
   setHeaders(res, file) {
@@ -446,18 +446,18 @@ server.listen(config.port, config.host, () => {
   console.log(`             LAN: http://${getLocalIP()}:${listeningPort}`);
   const clientAuth = getClientAuth();
   if (clientAuth.accessMode() === 'local') {
-    console.log('访问模式：仅本机访问（无需验证）。可在 设置 → 访问模式 中改为身份验证器 + 允许外网访问。');
+    console.log('Access mode: local access only (no verification). Change it to authenticator + external access under Settings → Access mode.');
   } else if (clientAuth.accessMode() === 'unset') {
-    console.log(`尚未选择访问模式：请在本机浏览器打开 http://127.0.0.1:${listeningPort}/ 选择“身份验证器 + 允许外网访问”或“仅本机访问”。`);
-    console.log('无法打开本机浏览器时（如远程服务器），可在服务器终端执行 node scripts/client-auth-setup.js 绑定身份验证器并启用外网访问。');
+    console.log(`Access mode not chosen yet: open http://127.0.0.1:${listeningPort}/ in a browser on this machine and choose “Authenticator + external access” or “Local access only”.`);
+    console.log('If you cannot open a browser on this machine (for example on a remote server), run node scripts/client-auth-setup.js in a terminal on the server to bind an authenticator and enable external access.');
   } else if (!clientAuth.status().bound) {
-    console.log('Client 身份验证器未绑定，必须绑定后才能使用 Web / H5。');
-    console.log('请在服务器终端执行 node scripts/client-auth-setup.js 完成首次绑定（可通过 SSH 远程执行），无需初始密码或初始化码。');
-    console.log(`也可直接打开 http://127.0.0.1:${listeningPort}/auth/setup（本机或远程地址均可）扫码绑定。`);
+    console.log('No authenticator is bound to the Client; one must be bound before Web / H5 can be used.');
+    console.log('Run node scripts/client-auth-setup.js in a terminal on the server to complete the first binding (it can be run remotely over SSH); no initial password or setup code is needed.');
+    console.log(`You can also open http://127.0.0.1:${listeningPort}/auth/setup (a local or remote address both work) and scan the QR code to bind.`);
   }
   updates.start();
 });
 
-// 不让 frpc 在 Client 退出后变成孤儿进程。
+// Do not let frpc become an orphan process after the Client exits.
 process.on('exit', () => { frpRouter.service.stop(); sshTunnelRouter.service.stop(); });
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => process.exit(0));

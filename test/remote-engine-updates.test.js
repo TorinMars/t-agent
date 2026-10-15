@@ -4,7 +4,7 @@ const Database = require('better-sqlite3');
 const { encryptToken } = require('../lib/token-crypto');
 const remoteUpdates = require('../services/remote-engine-updates');
 
-test('Client 使用服务端保存的 Token 调用 Engine 更新接口', async () => {
+test('The Client calls the Engine update endpoint with the token saved on the server', async () => {
   const secret = 'remote-update-secret';
   const server = {
     base_url: 'https://engine.example.com',
@@ -27,7 +27,7 @@ test('Client 使用服务端保存的 Token 调用 Engine 更新接口', async (
   ]);
 });
 
-test('Engine 恢复后同步 Client 中记录的远程版本', () => {
+test('After an Engine recovers, the remote version recorded in the Client is synced', () => {
   const database = new Database(':memory:');
   database.exec(`CREATE TABLE remote_servers (
     id INTEGER PRIMARY KEY,

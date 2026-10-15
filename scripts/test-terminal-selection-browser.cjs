@@ -19,7 +19,7 @@ const root = path.resolve(__dirname, '..');
         term.open(document.querySelector('.xterm-host'));
       });
       for (const alternate of [false, true]) {
-        for (const prefix of ['ASCII text '.repeat(8), '中文测试'.repeat(10), '中文，测试。'.repeat(6), '（中文）：测试；'.repeat(5)]) {
+        for (const prefix of ['ASCII text '.repeat(8), '中文测试'.repeat(10), '中文, 测试. '.repeat(6), ' (中文): 测试; '.repeat(5)]) {
           await page.evaluate(async ({ prefix, alternate }) => {
             term.reset();
             await new Promise(done => term.write((alternate ? '\x1b[?1049h' : '') + prefix + '\x1b[36;4mTARGET\x1b[0m tail', done));

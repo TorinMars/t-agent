@@ -106,12 +106,12 @@ test('open mounts a docked panel and loads the first tree page without hidden fi
     });
   });
 
-  await window.FilePanel.open({ key: 'local:7', baseUrl: '/api/tasks/7/files', title: '示例任务' });
+  await window.FilePanel.open({ key: 'local:7', baseUrl: '/api/tasks/7/files', title: 'Example task' });
 
   assert.equal(window.FilePanel.isOpen(), true);
   assert.ok(document.querySelector('.content-area').classList.contains('file-panel-open'));
   assert.equal(document.querySelector('#file-panel').dataset.ratio, '85');
-  assert.equal(document.querySelector('#file-panel-title').textContent, '示例任务');
+  assert.equal(document.querySelector('#file-panel-title').textContent, 'Example task');
   assert.equal(document.querySelector('#file-panel-root').textContent, '/workspace/demo');
   assert.equal(document.querySelectorAll('#file-panel-tree .file-tree-row').length, 2);
   assert.equal(calls[0].url, '/api/tasks/7/files?path=&offset=0&hidden=false');
@@ -131,8 +131,8 @@ test('a stale tree response cannot replace the newly opened task state', async (
     });
   });
 
-  const oldOpen = window.FilePanel.open({ key: 'old', baseUrl: '/old/files', title: '旧任务' });
-  await window.FilePanel.open({ key: 'new', baseUrl: '/new/files', title: '新任务' });
+  const oldOpen = window.FilePanel.open({ key: 'old', baseUrl: '/old/files', title: 'Old task' });
+  await window.FilePanel.open({ key: 'new', baseUrl: '/new/files', title: 'New task' });
   resolveFirst(response(200, {
     entries: [{ name: 'old.txt', path: 'old.txt', type: 'file' }],
     nextOffset: null,
@@ -141,7 +141,7 @@ test('a stale tree response cannot replace the newly opened task state', async (
   }));
   await oldOpen;
 
-  assert.equal(document.querySelector('#file-panel-title').textContent, '新任务');
+  assert.equal(document.querySelector('#file-panel-title').textContent, 'New task');
   assert.equal(document.querySelector('#file-panel-root').textContent, '/new-root');
   assert.equal(document.querySelector('#file-panel-tree').textContent.includes('old.txt'), false);
   assert.equal(document.querySelector('#file-panel-tree').textContent.includes('new.txt'), true);
@@ -166,7 +166,7 @@ test('opening and saving a file keeps revision metadata and emits a saved event'
   });
   let saved;
   document.querySelector('.content-area').addEventListener('file-panel:saved', event => { saved = event.detail; });
-  await window.FilePanel.open({ key: 'task', baseUrl: '/files', title: '任务' });
+  await window.FilePanel.open({ key: 'task', baseUrl: '/files', title: 'Task' });
   document.querySelector('[data-path="src/app.js"]').click();
   await new Promise(resolve => setImmediate(resolve));
   const model = monaco.editor.getModel(monaco.Uri.parse('inmemory://file-panel/task/src/app.js'));
@@ -192,7 +192,7 @@ test('beforeContextChange offers save, discard and cancel and only closes when r
       writable: true,
     });
   });
-  await window.FilePanel.open({ key: 'task', baseUrl: '/files', title: '任务' });
+  await window.FilePanel.open({ key: 'task', baseUrl: '/files', title: 'Task' });
   document.querySelector('[data-path="note.txt"]').click();
   await new Promise(resolve => setImmediate(resolve));
   monaco.editor.getModel(monaco.Uri.parse('inmemory://file-panel/task/note.txt')).setValue('draft');
@@ -222,7 +222,7 @@ test('conflict keeps the draft and requires an explicit reload or force save', a
     if (url.includes('/content')) return response(200, { path: 'a.md', content: '# old', revision: '1', eol: 'lf', bom: false });
     return response(200, { entries: [{ name: 'a.md', path: 'a.md', type: 'file' }], nextOffset: null, root: '/w', writable: true });
   });
-  await window.FilePanel.open({ key: 'task', baseUrl: '/files', title: '任务' });
+  await window.FilePanel.open({ key: 'task', baseUrl: '/files', title: 'Task' });
   document.querySelector('[data-path="a.md"]').click();
   await new Promise(resolve => setImmediate(resolve));
   const model = monaco.editor.getModel(monaco.Uri.parse('inmemory://file-panel/task/a.md'));
@@ -254,7 +254,7 @@ test('renaming a directory rewrites open tabs and cached descendant tree paths',
     }
     return response(200, { entries: [], nextOffset: null, root: '/w', writable: true });
   });
-  await window.FilePanel.open({ key: 'task', baseUrl: '/files', title: '任务' });
+  await window.FilePanel.open({ key: 'task', baseUrl: '/files', title: 'Task' });
   document.querySelector('[data-path="src"]').click();
   await new Promise(resolve => setImmediate(resolve));
   document.querySelector('[data-path="src/app.js"]').click();
@@ -285,7 +285,7 @@ test('typing during an in-flight save preserves the newer draft and blocks conte
     }
     return response(200, { entries: [{ name: 'note.txt', path: 'note.txt', type: 'file' }], nextOffset: null, root: '/w', writable: true });
   });
-  await window.FilePanel.open({ key: 'task', baseUrl: '/files', title: '任务' });
+  await window.FilePanel.open({ key: 'task', baseUrl: '/files', title: 'Task' });
   const row = document.querySelector('[data-path="note.txt"]');
   row.click();
   row.click();
@@ -316,7 +316,7 @@ test('read-only roots configure Monaco as read-only and keyboard save never writ
     if (url.includes('/content')) return response(200, { path: 'readme.txt', content: 'read only', revision: '1', eol: 'lf', bom: false });
     return response(200, { entries: [{ name: 'readme.txt', path: 'readme.txt', type: 'file' }], nextOffset: null, root: '/readonly', writable: false });
   });
-  await window.FilePanel.open({ key: 'readonly', baseUrl: '/files', title: '只读任务' });
+  await window.FilePanel.open({ key: 'readonly', baseUrl: '/files', title: 'Read-only task' });
   document.querySelector('[data-path="readme.txt"]').click();
   await new Promise(resolve => setImmediate(resolve));
 
@@ -355,7 +355,7 @@ test('pointerdown inside the tree context menu does not hide it before the actio
   const { window, document } = setup(async () => response(200, {
     entries: [{ name: 'a.txt', path: 'a.txt', type: 'file' }], nextOffset: null, root: '/w', writable: true,
   }));
-  await window.FilePanel.open({ key: 'task', baseUrl: '/files', title: '任务' });
+  await window.FilePanel.open({ key: 'task', baseUrl: '/files', title: 'Task' });
   const menuEvent = new window.Event('contextmenu', { bubbles: true, cancelable: true });
   menuEvent.clientX = 20;
   menuEvent.clientY = 30;
@@ -379,7 +379,7 @@ test('rename refuses an open-tab destination collision without losing its dirty 
     }
     return response(200, { entries: [{ name: 'a.txt', path: 'a.txt', type: 'file' }, { name: 'b.txt', path: 'b.txt', type: 'file' }], nextOffset: null, root: '/w', writable: true });
   });
-  await window.FilePanel.open({ key: 'task', baseUrl: '/files', title: '任务' });
+  await window.FilePanel.open({ key: 'task', baseUrl: '/files', title: 'Task' });
   document.querySelector('[data-path="b.txt"]').click();
   await new Promise(resolve => setImmediate(resolve));
   const bModel = monaco.editor.getModel(monaco.Uri.parse('inmemory://file-panel/task/b.txt'));
@@ -396,7 +396,7 @@ test('rename refuses an open-tab destination collision without losing its dirty 
   assert.equal(patches, 0);
   assert.equal(bModel.getValue(), 'dirty b');
   assert.equal(document.querySelector('[data-tab-path="b.txt"].is-dirty') !== null, true);
-  assert.match(document.querySelector('.file-dialog-error').textContent, /关闭.*b\.txt/);
+  assert.match(document.querySelector('.file-dialog-error').textContent, /Close.*b\.txt/);
 });
 
 test('context change rechecks all tabs after waiting for save-and-continue', async () => {
@@ -410,7 +410,7 @@ test('context change rechecks all tabs after waiting for save-and-continue', asy
     }
     return response(200, { entries: [{ name: 'a.txt', path: 'a.txt', type: 'file' }, { name: 'b.txt', path: 'b.txt', type: 'file' }], nextOffset: null, root: '/w', writable: true });
   });
-  await window.FilePanel.open({ key: 'task', baseUrl: '/files', title: '任务' });
+  await window.FilePanel.open({ key: 'task', baseUrl: '/files', title: 'Task' });
   document.querySelector('[data-path="a.txt"]').click();
   await new Promise(resolve => setImmediate(resolve));
   document.querySelector('[data-path="b.txt"]').click();
@@ -438,7 +438,7 @@ test('tab close keeps newer edits typed while save-and-continue is pending', asy
     if (url.includes('/content')) return response(200, { path: 'a.txt', content: 'one', revision: '1', eol: 'lf', bom: false });
     return response(200, { entries: [{ name: 'a.txt', path: 'a.txt', type: 'file' }], nextOffset: null, root: '/w', writable: true });
   });
-  await window.FilePanel.open({ key: 'task', baseUrl: '/files', title: '任务' });
+  await window.FilePanel.open({ key: 'task', baseUrl: '/files', title: 'Task' });
   document.querySelector('[data-path="a.txt"]').click();
   await new Promise(resolve => setImmediate(resolve));
   const model = monaco.editor.getModel(monaco.Uri.parse('inmemory://file-panel/task/a.txt'));
@@ -460,7 +460,7 @@ test('tab close discards a dirty draft when discard is explicitly chosen', async
     if (url.includes('/content')) return response(200, { path: 'a.txt', content: 'one', revision: '1', eol: 'lf', bom: false });
     return response(200, { entries: [{ name: 'a.txt', path: 'a.txt', type: 'file' }], nextOffset: null, root: '/w', writable: true });
   });
-  await window.FilePanel.open({ key: 'task', baseUrl: '/files', title: '任务' });
+  await window.FilePanel.open({ key: 'task', baseUrl: '/files', title: 'Task' });
   document.querySelector('[data-path="a.txt"]').click();
   await new Promise(resolve => setImmediate(resolve));
   monaco.editor.getModel(monaco.Uri.parse('inmemory://file-panel/task/a.txt')).setValue('dirty');

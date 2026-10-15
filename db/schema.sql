@@ -13,8 +13,8 @@ CREATE TABLE IF NOT EXISTS tasks (
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- 任务分组。doing/todo/done 是不可修改的系统分组；其他分组由用户管理。
--- tasks.status 保存 group_key，以兼容已有任务数据。
+-- Task groups. doing/todo/done are system groups that cannot be modified; other groups are managed by users.
+-- tasks.status stores the group_key, for compatibility with existing task data.
 CREATE TABLE IF NOT EXISTS task_groups (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   owner_id   TEXT    NOT NULL,
@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS bookmarks (
   title      TEXT    NOT NULL,
   url        TEXT    NOT NULL,
   icon       TEXT,
-  group_name TEXT    NOT NULL DEFAULT '默认',
+  group_name TEXT    NOT NULL DEFAULT 'Default',
   sort_order INTEGER NOT NULL DEFAULT 0,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -91,7 +91,7 @@ CREATE TABLE IF NOT EXISTS remote_servers (
 
 CREATE INDEX IF NOT EXISTS idx_remote_servers_owner ON remote_servers(owner_id, created_at);
 
--- Engine 授权与配对数据。Engine 只保存 Token 哈希，明文只在创建时返回一次。
+-- Engine authorization and pairing data. The Engine only stores token hashes; the plaintext is returned once at creation.
 CREATE TABLE IF NOT EXISTS engine_access_tokens (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
   principal_id TEXT    NOT NULL DEFAULT 'engine',
@@ -132,8 +132,8 @@ CREATE TABLE IF NOT EXISTS task_terminals (
   PRIMARY KEY (task_id, terminal_id)
 );
 
--- 应用列表：手动登记、程序自注册（API）和自动登记的 PM2 进程。
--- pm2_name 关联 PM2 进程名；source=pm2 的行被用户删除时只隐藏（hidden=1），避免下次同步又自动登记回来。
+-- App list: manually registered, self-registered by programs (API), and auto-registered PM2 processes.
+-- pm2_name links to a PM2 process name; when a row with source=pm2 is deleted by the user it is only hidden (hidden=1), so the next sync does not auto-register it again.
 CREATE TABLE IF NOT EXISTS apps (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL UNIQUE COLLATE NOCASE,
@@ -151,8 +151,8 @@ CREATE TABLE IF NOT EXISTS apps (
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- 清理本地仓库目录的档案：任务目录和任务保留，仓库目录被删除后凭仓库地址、分支、提交可以恢复。
--- 一个任务目录下可以有多个仓库，所以按仓库路径记录。
+-- Records of cleaned local repo directories: the task directory and task are kept; after a repo directory is deleted it can be restored from the repo address, branch and commit.
+-- One task directory can hold several repos, so records are keyed by repo path.
 CREATE TABLE IF NOT EXISTS repo_cleanups (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   task_id    INTEGER NOT NULL,

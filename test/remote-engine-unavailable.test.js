@@ -39,42 +39,42 @@ function setup(server, { tasksFail = false } = {}) {
 const panelOf = document => document.getElementById('engine-unavailable');
 const nav = document => document.getElementById('task-nav').textContent;
 
-test('离线 Engine 只显示检查服务状态的提示，不显示任务和操作页面', async () => {
+test('An offline Engine shows only the check-service hint, with no tasks or action pages', async () => {
   const { document, context } = setup({ id: 1, name: 'Engine 1', base_url: 'http://10.0.0.5:3000', status: 'offline', last_error: 'REMOTE_TIMEOUT' });
   await context.Tasks.load();
   await context.Engines.load();
   const panel = panelOf(document);
-  assert.ok(panel, '应显示不可用提示');
-  assert.match(panel.textContent, /无法连接「Engine 1」/);
-  assert.match(panel.textContent, /连接超时/);
-  assert.match(panel.textContent, /请检查服务状态/);
+  assert.ok(panel, 'The unavailable hint should be shown');
+  assert.match(panel.textContent, /Cannot connect to “Engine 1”/);
+  assert.match(panel.textContent, /Connection timed out/);
+  assert.match(panel.textContent, /Check the service status/);
   assert.match(panel.textContent, /http:\/\/10\.0\.0\.5:3000/);
-  assert.deepEqual([...panel.querySelectorAll('button')].map(b => b.textContent), ['重试连接', '编辑连接', '移除连接']);
+  assert.deepEqual([...panel.querySelectorAll('button')].map(b => b.textContent), ['Retry connection', 'Edit connection', 'Remove connection']);
   assert.equal(document.getElementById('content-toolbar').style.display, 'none');
   assert.equal(document.getElementById('content-tabs').style.display, 'none');
   assert.equal(document.getElementById('terminal-pane').style.display, 'none');
   assert.equal(document.getElementById('preview-content').style.display, 'none');
-  assert.equal(document.querySelectorAll('.task-nav-item').length, 0, '侧栏不列出任务');
-  assert.match(nav(document), /服务不可用/);
+  assert.equal(document.querySelectorAll('.task-nav-item').length, 0, 'The sidebar lists no tasks');
+  assert.match(nav(document), /Service unavailable/);
 });
 
-test('认证失效提示重新配对，而不是检查网络', async () => {
+test('Expired authentication tells the user to pair again rather than check the network', async () => {
   const { document, context } = setup({ id: 1, name: 'Engine 1', base_url: 'http://10.0.0.5:3000', status: 'unauthorized' });
   await context.Tasks.load();
   await context.Engines.load();
-  assert.match(panelOf(document).textContent, /认证失效/);
-  assert.match(panelOf(document).textContent, /配对码/);
+  assert.match(panelOf(document).textContent, /Authentication expired/);
+  assert.match(panelOf(document).textContent, /pairing code/);
 });
 
-test('在线但任务接口失败时同样显示提示', async () => {
+test('An online Engine whose task endpoint fails shows the hint as well', async () => {
   const { document, context } = setup({ id: 1, name: 'Engine 1', base_url: 'http://10.0.0.5:3000', status: 'online' }, { tasksFail: true });
   await context.Tasks.load();
   await context.Engines.load();
   assert.ok(panelOf(document));
-  assert.match(panelOf(document).textContent, /远程服务连接失败/);
+  assert.match(panelOf(document).textContent, /Failed to connect to the remote service/);
 });
 
-test('在线的 Engine 不显示提示，切回默认 Engine 时提示消失', async () => {
+test('An online Engine shows no hint, and the hint disappears when switching back to the default Engine', async () => {
   const online = setup({ id: 1, name: 'Engine 1', base_url: 'http://x', status: 'online' });
   await online.context.Tasks.load();
   await online.context.Engines.load();
@@ -90,7 +90,7 @@ test('在线的 Engine 不显示提示，切回默认 Engine 时提示消失', a
   assert.match(nav(down.document), /Local task/);
 });
 
-test('重试连接会重新检查该 Engine', async () => {
+test('Retrying the connection checks that Engine again', async () => {
   const { document, context, calls } = setup({ id: 1, name: 'Engine 1', base_url: 'http://x', status: 'offline' });
   await context.Tasks.load();
   await context.Engines.load();

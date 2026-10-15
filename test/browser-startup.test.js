@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
-test('app.js 在业务模块加载前不会立即执行初始化', () => {
+test('app.js does not run its initialization before the feature modules are loaded', () => {
   const listeners = new Map();
   const element = { addEventListener() {} };
   const document = {
@@ -18,7 +18,7 @@ test('app.js 在业务模块加载前不会立即执行初始化', () => {
     document,
     console,
     window: {},
-    fetch() { throw new Error('初始化不应在脚本解析阶段发起请求'); },
+    fetch() { throw new Error('Initialization must not make requests while the script is being parsed'); },
     requestAnimationFrame() {},
     setInterval() {},
     clearInterval() {},

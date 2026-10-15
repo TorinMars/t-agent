@@ -1,6 +1,6 @@
 // Images are uploaded by this Client, regardless of the terminal's Engine.
 const TerminalImages = (() => {
-  const tell = (message, type) => (typeof notify === 'function' ? notify(message, type) : (typeof alert === 'function' ? alert(message) : undefined)); // 悬浮提示；没加载 toast.js 的环境退回 alert
+  const tell = (message, type) => (typeof notify === 'function' ? notify(message, type) : (typeof alert === 'function' ? alert(message) : undefined)); // floating notice; falls back to alert where toast.js is not loaded
   const instances = new Set();
   let enabled = false;
   let configRevision = 0;
@@ -10,7 +10,7 @@ const TerminalImages = (() => {
   const container = document.getElementById('xterm-container');
   const keys = document.getElementById('terminal-keys');
   const button = document.createElement('button');
-  button.type = 'button'; button.className = 'terminal-image-upload'; button.textContent = '上传图片';
+  button.type = 'button'; button.className = 'terminal-image-upload'; button.textContent = 'Upload image';
   const picker = document.createElement('input');
   picker.type = 'file'; picker.accept = 'image/png,image/jpeg,image/gif,image/webp'; picker.hidden = true;
   keys.append(button, picker);
@@ -33,7 +33,7 @@ const TerminalImages = (() => {
     try {
       const config = await Promise.race([
         API.get('/api/oss/config'),
-        new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('读取 OSS 设置超时')), 15000); }),
+        new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Timed out reading OSS settings')), 15000); }),
       ]);
       if (revision === configRevision) { enabled = Boolean(config.enabled); render(); }
       return config;
@@ -51,11 +51,11 @@ const TerminalImages = (() => {
     const previous = document.activeElement;
     const overlay = document.createElement('div');
     overlay.className = 'terminal-image-upload-overlay'; overlay.tabIndex = -1;
-    overlay.setAttribute('role', 'dialog'); overlay.setAttribute('aria-modal', 'true'); overlay.setAttribute('aria-label', '正在上传图片');
+    overlay.setAttribute('role', 'dialog'); overlay.setAttribute('aria-modal', 'true'); overlay.setAttribute('aria-label', 'Uploading image');
     const card = document.createElement('div'); card.className = 'terminal-image-upload-card';
     const status = document.createElement('p'); status.className = 'terminal-image-upload-status'; status.setAttribute('role', 'status');
-    status.textContent = '正在传送图片到 Client…';
-    const progress = document.createElement('progress'); progress.max = 100; progress.value = 0; progress.setAttribute('aria-label', '浏览器传送进度');
+    status.textContent = 'Sending image to the client…';
+    const progress = document.createElement('progress'); progress.max = 100; progress.value = 0; progress.setAttribute('aria-label', 'Browser transfer progress');
     card.append(status, progress); overlay.append(card);
     const inert = [...document.body.children].map(el => [el, el.inert]);
     for (const [el] of inert) el.inert = true;
@@ -87,49 +87,49 @@ const TerminalImages = (() => {
       xhr.upload.onprogress = event => {
         if (event.lengthComputable) {
           ui.progress.value = Math.min(100, Math.round(event.loaded / event.total * 100));
-          ui.status.textContent = `正在传送图片到 Client：${ui.progress.value}%`;
+          ui.status.textContent = `Sending image to the client: ${ui.progress.value}%`;
         } else ui.progress.removeAttribute('value');
       };
-      xhr.upload.onload = () => { ui.progress.removeAttribute('value'); ui.status.textContent = 'Client 已接收图片，正在上传到 OSS…'; };
+      xhr.upload.onload = () => { ui.progress.removeAttribute('value'); ui.status.textContent = 'Client received the image; uploading to OSS…'; };
       xhr.onload = () => {
         let result;
-        try { result = JSON.parse(xhr.responseText); } catch { reject(new Error('上传失败：服务器返回无效响应')); return; }
-        if (xhr.status < 200 || xhr.status >= 300) { reject(new Error(result.error || '图片上传失败')); return; }
+        try { result = JSON.parse(xhr.responseText); } catch { reject(new Error('Upload failed: invalid response from the server')); return; }
+        if (xhr.status < 200 || xhr.status >= 300) { reject(new Error(result.error || 'Image upload failed')); return; }
         try {
           const url = new URL(result.url);
           if (url.protocol !== 'https:' || /[\s\x00-\x1f\x7f]/.test(result.url)) throw new Error();
           resolve(result);
-        } catch { reject(new Error('上传失败：服务器返回无效图片链接')); }
+        } catch { reject(new Error('Upload failed: the server returned an invalid image link')); }
       };
-      xhr.onerror = () => reject(new Error('图片上传失败，请检查网络后重试'));
-      xhr.ontimeout = () => reject(new Error('图片上传超时，请重试'));
-      xhr.onabort = () => reject(new Error('图片上传已取消'));
+      xhr.onerror = () => reject(new Error('Image upload failed. Check your network and retry'));
+      xhr.ontimeout = () => reject(new Error('Image upload timed out. Please retry'));
+      xhr.onabort = () => reject(new Error('Image upload cancelled'));
       xhr.send(file);
     });
   }
   function retain(url) {
     // A permanent, selectable result survives changing/disconnecting terminals.
     const result = document.createElement('div'); result.className = 'terminal-image-result';
-    const label = document.createElement('label'); label.textContent = '图片已上传；原终端已切换或断开，请手动复制链接：';
-    const field = document.createElement('input'); field.readOnly = true; field.value = url; field.setAttribute('aria-label', '已上传图片链接');
+    const label = document.createElement('label'); label.textContent = 'Image uploaded; the original terminal was switched or disconnected. Copy the link manually: ';
+    const field = document.createElement('input'); field.readOnly = true; field.value = url; field.setAttribute('aria-label', 'Uploaded image link');
     field.addEventListener('click', () => field.select());
-    const close = document.createElement('button'); close.type = 'button'; close.textContent = '关闭'; close.addEventListener('click', () => result.remove());
+    const close = document.createElement('button'); close.type = 'button'; close.textContent = 'Close'; close.addEventListener('click', () => result.remove());
     label.append(field); result.append(label, close); document.body.append(result);
   }
   async function upload(item, file, socket = item?.connection()) {
     if (busy || !file || !item) return;
-    if (!/^image\/(png|jpeg|gif|webp)$/.test(file.type) || file.size <= 0 || file.size > 10 * 1024 * 1024) { tell('请选择不超过 10 MiB 的 PNG、JPEG、GIF 或 WebP 图片', 'error'); return; }
-    if (active() !== item || !socket || socket.readyState !== 1 || item.connection() !== socket) { tell('原终端未连接，请连接后重试', 'error'); return; }
+    if (!/^image\/(png|jpeg|gif|webp)$/.test(file.type) || file.size <= 0 || file.size > 10 * 1024 * 1024) { tell('Choose a PNG, JPEG, GIF or WebP image up to 10 MiB', 'error'); return; }
+    if (active() !== item || !socket || socket.readyState !== 1 || item.connection() !== socket) { tell('The original terminal is not connected. Reconnect and retry', 'error'); return; }
     const ui = lockPage();
     let result; let error;
     try {
       if (!enabled) {
-        ui.status.textContent = '正在读取 OSS 配置…';
+        ui.status.textContent = 'Reading OSS settings…';
         try { await load(); }
-        catch { throw new Error('读取 OSS 设置失败，请检查连接后重试'); }
-        if (!enabled) throw new Error('请先在当前客户端的设置中启用阿里云 OSS 图片上传');
+        catch { throw new Error('Could not read OSS settings. Check the connection and retry'); }
+        if (!enabled) throw new Error('Enable Alibaba Cloud OSS image upload in this client’s settings first');
         if (!instances.has(item) || active() !== item || item.connection() !== socket || socket.readyState !== 1) {
-          throw new Error('原终端已切换或断开，请连接后重试');
+          throw new Error('The original terminal was switched or disconnected. Reconnect and retry');
         }
       }
       result = await transfer(file, ui);
@@ -137,7 +137,7 @@ const TerminalImages = (() => {
     if (error) { tell(error.message, 'error'); return; }
     if (instances.has(item) && active() === item && item.connection() === socket && socket.readyState === 1) {
       // xterm's paste keeps bracketed-paste semantics and never adds Enter.
-      // 链接后补一个空格，方便紧接着继续输入文字；不加回车。
+      // Add a space after the link so typing can continue right away; no Enter is sent.
       item.term.paste(`${result.url} `); item.term.focus();
     } else retain(result.url);
   }
@@ -151,7 +151,7 @@ const TerminalImages = (() => {
       const images = [...(event.clipboardData?.items || [])].filter(entry => entry.kind === 'file' && entry.type.startsWith('image/'));
       if (!images.length) return;
       event.preventDefault(); event.stopImmediatePropagation();
-      if (images.length !== 1) { tell('请一次上传一张图片', 'error'); return; }
+      if (images.length !== 1) { tell('Upload one image at a time', 'error'); return; }
       void upload(item, images[0].getAsFile());
     };
     el.addEventListener('paste', paste, true); render();
@@ -159,9 +159,9 @@ const TerminalImages = (() => {
   }
   async function showSettings() {
     let config;
-    try { config = await load(); } catch (error) { tell('读取 OSS 设置失败：' + error.message, 'error'); return; }
-    const fields = [['region', '地域（例如 oss-cn-hangzhou）'], ['bucket', 'Bucket'], ['accessKeyId', 'AccessKey ID'], ['accessKeySecret', 'AccessKey Secret'], ['prefix', '对象路径前缀'], ['publicBaseUrl', '公开 HTTPS 地址（可选）']];
-    Modal.show('阿里云 OSS 图片上传', `<div class="form-group"><label><input id="oss-enabled" type="checkbox" ${config.enabled ? 'checked' : ''}> 启用图片上传</label></div>${fields.map(([key, label]) => `<div class="form-group"><label class="form-label" for="oss-${key}">${label}</label><input class="form-input" id="oss-${key}" type="${key === 'accessKeySecret' ? 'password' : 'text'}" autocomplete="${key === 'accessKeySecret' ? 'new-password' : 'off'}" value="${key === 'accessKeySecret' ? '' : escapeHtml(config[key] || '')}"></div>`).join('')}<div class="form-hint">${config.hasAccessKeySecret ? '已保存密钥；留空保持原密钥。' : '首次配置需填写密钥。'}默认生成 24 小时有效的私有链接；公开地址仅用于已允许公开读取的 Bucket 或域名。图片最大 10 MiB。</div><p id="oss-feedback" role="status"></p><div class="form-actions"><button class="btn-cancel" id="oss-clear">删除配置</button><button class="btn-cancel" id="oss-cancel">取消</button><button class="btn-submit" id="oss-save">保存</button></div>`);
+    try { config = await load(); } catch (error) { tell('Could not read OSS settings: ' + error.message, 'error'); return; }
+    const fields = [['region', 'Region (e.g. oss-cn-hangzhou)'], ['bucket', 'Bucket'], ['accessKeyId', 'AccessKey ID'], ['accessKeySecret', 'AccessKey Secret'], ['prefix', 'Object path prefix'], ['publicBaseUrl', 'Public HTTPS address (optional)']];
+    Modal.show('Alibaba Cloud OSS image upload', `<div class="form-group"><label><input id="oss-enabled" type="checkbox" ${config.enabled ? 'checked' : ''}> Enable image upload</label></div>${fields.map(([key, label]) => `<div class="form-group"><label class="form-label" for="oss-${key}">${label}</label><input class="form-input" id="oss-${key}" type="${key === 'accessKeySecret' ? 'password' : 'text'}" autocomplete="${key === 'accessKeySecret' ? 'new-password' : 'off'}" value="${key === 'accessKeySecret' ? '' : escapeHtml(config[key] || '')}"></div>`).join('')}<div class="form-hint">${config.hasAccessKeySecret ? 'Secret saved; leave empty to keep it.' : 'The secret is required for first-time setup.'} Private links valid for 24 hours are generated by default; the public address is only for buckets or domains that allow public reads. Images are limited to 10 MiB.</div><p id="oss-feedback" role="status"></p><div class="form-actions"><button class="btn-cancel" id="oss-clear">Delete settings</button><button class="btn-cancel" id="oss-cancel">Cancel</button><button class="btn-submit" id="oss-save">Save</button></div>`);
     document.getElementById('oss-cancel').addEventListener('click', Modal.hide);
     const save = document.getElementById('oss-save'); const clear = document.getElementById('oss-clear'); const feedback = document.getElementById('oss-feedback');
     async function persist(remove) {
@@ -173,13 +173,13 @@ const TerminalImages = (() => {
         const saved = remove ? await API.delete('/api/oss/config') : await API.put('/api/oss/config', payload);
         configRevision++; enabled = Boolean(saved.enabled); render();
         if (!remove && !enabled) {
-          feedback.textContent = '配置已保存，但图片上传尚未启用。请勾选上方“启用图片上传”后再次保存。';
+          feedback.textContent = 'Settings saved, but image upload is not enabled. Tick “Enable image upload” above and save again.';
           save.disabled = clear.disabled = false;
           return;
         }
         Modal.hide();
       }
-      catch (error) { feedback.textContent = '保存失败：' + error.message; save.disabled = clear.disabled = false; }
+      catch (error) { feedback.textContent = 'Save failed: ' + error.message; save.disabled = clear.disabled = false; }
     }
     save.addEventListener('click', () => void persist(false)); clear.addEventListener('click', () => void persist(true));
   }

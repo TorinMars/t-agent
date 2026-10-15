@@ -1,37 +1,37 @@
-## 通用工作规则
+## General working rules
 
-- 默认使用中文回复；代码、命令、标识符保持原样。
-- 开始修改前先检查 `git status` 和当前分支，保留用户未提交的工作，只提交本次任务涉及的文件。
-- 先确认问题所在的数据流和现有行为，再做必要修改，不做无关重构。
-- 修改后运行相关验证；没有运行或没有通过的检查，不能报告为通过。
-- 遇到权限、网络或环境阻塞，如实说明实际原因，不绕过拒绝。
-- 不在代码、日志或提交中写入密钥、令牌等敏感信息。
+- Reply in Chinese by default; keep code, commands and identifiers as they are.
+- Before changing anything, check `git status` and the current branch, keep the user's uncommitted work, and commit only the files involved in the task.
+- Confirm the data flow and existing behavior behind the problem first, then make the necessary changes; do not refactor unrelated code.
+- Run the relevant verification after changing things; a check that was not run or did not pass must not be reported as passed.
+- When blocked by permissions, the network or the environment, state the actual reason truthfully and do not bypass a denial.
+- Never write secrets, tokens or other sensitive information into code, logs or commits.
 
-## 会话交接（HANDOFF.md）
+## Session handoff (HANDOFF.md)
 
-- 仅当项目根目录已经存在 `HANDOFF.md` 时适用；不存在时不要自己创建，除非用户明确要求。
-- 开始工作前先读一遍 `HANDOFF.md`，了解目标、进度和踩过的坑，不要让用户重复解释背景。
-- 完成一个阶段或结束会话前更新它，并保持简短：当前目标、已完成、未完成、踩过的坑、下一步。
-- 只记录进度和结论，不写密钥、令牌、账号密码等敏感信息。
-- 更新 `HANDOFF.md` 本身不需要单独提交；是否随代码一起提交，按项目自己的规则决定。
+- Applies only when a `HANDOFF.md` already exists in the project root; if it does not exist, do not create one unless the user explicitly asks.
+- Read `HANDOFF.md` before starting work to learn the goal, the progress and the pitfalls already hit, so the user does not have to explain the background again.
+- Update it when a phase is finished or before the session ends, and keep it short: current goal, done, not done, pitfalls, next step.
+- Record only progress and conclusions; never write secrets, tokens, account passwords or other sensitive information.
+- Updating `HANDOFF.md` itself does not need a separate commit; whether it is committed together with the code follows the project's own rules.
 
-## 文件修改范围
+## Scope of file changes
 
-- 可以直接新增、删除、修改的位置（无需询问）：
-  1. 当前工作区（项目目录，即当前会话的工作目录及其子目录）；
-  2. 系统临时目录（`/tmp`、`$TMPDIR` 指向的目录等）；
-  3. 用户主目录下以 `.` 开头的文件和目录（如 `~/.claude`、`~/.codex`、`~/.config`、`~/.local`、`~/.zshrc`、`~/.gitconfig`），但 `~/.ssh`、`~/.aws`、`~/.gnupg`、`~/.kube`、`~/.docker`、`~/.config/gh` 除外。
-- 除此之外的其他位置（包括 `~/.ssh`、`~/.aws`、`~/.gnupg`、`~/.kube`、`~/.docker`、`~/.config/gh`、系统目录、主目录下不以 `.` 开头的目录、其他项目）默认不得修改。确实需要改动时，先向用户说明具体路径、要做什么以及原因，得到明确同意后才可以操作；这次授权只对所说明的那次操作有效，不代表长期许可。
-- 通过 shell 命令、脚本、重定向、包管理器全局安装等间接方式修改，同样适用以上规则。
-- 只读访问不受此限制。
-- 修改前先确认目标的真实路径（解析软链接、`..` 和变量展开），不得借助软链接或相对路径越界；指向范围外的软链接一律按范围外处理。
+- Places you may add, delete and modify directly (no need to ask):
+  1. The current workspace (the project directory, i.e. the working directory of the current session and its subdirectories);
+  2. The system temporary directory (`/tmp`, the directory `$TMPDIR` points to, and so on);
+  3. Files and directories whose names start with `.` in the user's home directory (such as `~/.claude`, `~/.codex`, `~/.config`, `~/.local`, `~/.zshrc`, `~/.gitconfig`), except `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.kube`, `~/.docker` and `~/.config/gh`.
+- Everything else (including `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.kube`, `~/.docker`, `~/.config/gh`, system directories, directories in the home directory whose names do not start with `.`, and other projects) must not be modified by default. When a change there is really needed, first tell the user the exact path, what you will do and why, and act only after explicit approval; that approval is valid only for the operation described and is not a standing permission.
+- The same rules apply to indirect changes through shell commands, scripts, redirection, global package installs and the like.
+- Read-only access is not restricted.
+- Before modifying, confirm the real path of the target (resolving symlinks, `..` and variable expansion); never go out of scope through a symlink or a relative path, and a symlink that points outside the scope is treated as outside.
 
-## 后台服务管理（PM2）
+## Background service management (PM2)
 
-- 自建的长期运行的后台服务（如 Web 服务、隧道、队列消费者、常驻脚本）必须用 PM2 启动和管理，不要用 `nohup`、`&`、`screen`、`tmux` 或直接挂在终端里运行。
-- 用 `pm2 start … --name <有意义的名称>` 启动；参数较多或有多个服务时，写成项目里的 `ecosystem.config.js`（或 `.yml`）再启动，并把它提交进项目。
-- 启动前先 `pm2 list`，确认没有同名或占用同一端口的进程，避免重复启动；修改后用 `pm2 restart <名称>`，需要不中断服务时用 `pm2 reload <名称>`。
-- 不要把密钥、令牌写进 ecosystem 文件或命令行参数，使用环境变量文件或项目自己的配置机制。
-- 只管理自己启动的进程；停止、重启或删除不是自己启动的 PM2 进程之前，先征得用户同意。
-- 一次性命令、测试、构建不是后台服务，不需要 PM2。
-- 需要开机自启时，提醒用户执行 `pm2 startup` 和 `pm2 save`（需要 sudo 的部分由用户自己运行）。
+- Long-running background services you set up yourself (such as web services, tunnels, queue consumers and resident scripts) must be started and managed with PM2; do not use `nohup`, `&`, `screen` or `tmux`, or leave them running in a terminal.
+- Start them with `pm2 start … --name <a meaningful name>`; with many arguments or several services, write an `ecosystem.config.js` (or `.yml`) in the project, start from it, and commit it to the project.
+- Before starting, run `pm2 list` to make sure no process has the same name or uses the same port, to avoid starting twice; after changes use `pm2 restart <name>`, and when the service must not be interrupted use `pm2 reload <name>`.
+- Do not put secrets or tokens in the ecosystem file or in command-line arguments; use an environment file or the project's own configuration mechanism.
+- Manage only processes you started yourself; before stopping, restarting or deleting a PM2 process you did not start, get the user's consent.
+- One-off commands, tests and builds are not background services and do not need PM2.
+- When start on boot is needed, remind the user to run `pm2 startup` and `pm2 save` (the part that needs sudo is run by the user).

@@ -58,7 +58,7 @@ function ensureDocument(task, kind) {
   const file = documentPath(task, kind);
   if (!file) return null;
   const initial = kind === 'technical' ? `# ${task.title}\n`
-    : kind === 'readme' ? `# ${task.title}\n\n## 项目说明\n\n` : '# AGENTS.md\n\n## 工作约定\n\n';
+    : kind === 'readme' ? `# ${task.title}\n\n## Project description\n\n` : '# AGENTS.md\n\n## Working conventions\n\n';
   fs.mkdirSync(path.dirname(file), { recursive: true });
   if (kind === 'agent') migrateAgentFile(file);
   // Exclusive creation prevents overwriting a file created concurrently.

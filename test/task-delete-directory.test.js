@@ -25,7 +25,7 @@ const post = async (body) => (await fetch(`${base}/tasks`, { method: 'POST', hea
 const remove = (id, query = '') => fetch(`${base}/tasks/${id}${query}`, { method: 'DELETE' });
 const taskExists = id => Boolean(db.prepare('SELECT 1 FROM tasks WHERE id = ?').get(id));
 
-test('默认只删任务，目录保留', async () => {
+test('By default only the task is deleted and the directory is kept', async () => {
   const dir = path.join(root, 'tasks', 'keep-dir');
   const task = await post({ title: 'keep', work_dir: dir });
   fs.writeFileSync(path.join(dir, 'data.txt'), 'important');
@@ -36,7 +36,7 @@ test('默认只删任务，目录保留', async () => {
   assert.equal(fs.readFileSync(path.join(dir, 'data.txt'), 'utf8'), 'important');
 });
 
-test('勾选同时删除目录：任务和目录一起删除', async () => {
+test('Tick “also delete the directory”: the task and the directory are deleted together', async () => {
   const dir = path.join(root, 'tasks', 'drop-dir');
   const task = await post({ title: 'drop', work_dir: dir });
   fs.writeFileSync(path.join(dir, 'data.txt'), 'bye');
@@ -46,7 +46,7 @@ test('勾选同时删除目录：任务和目录一起删除', async () => {
   assert.equal(fs.existsSync(dir), false);
 });
 
-test('被其他任务共用的目录、受保护目录拒绝删除，任务也不会被删除', async () => {
+test('A directory shared with other tasks or a protected directory refuses deletion, and the task is not deleted either', async () => {
   const shared = path.join(root, 'tasks', 'shared-dir');
   const first = await post({ title: 'first', work_dir: shared });
   const second = await post({ title: 'second', work_dir: shared });
@@ -54,24 +54,24 @@ test('被其他任务共用的目录、受保护目录拒绝删除，任务也�
   assert.equal(res.status, 409);
   const body = await res.json();
   assert.equal(body.error, 'DIRECTORY_NOT_SAFE_TO_DELETE');
-  assert.match(body.reason, /其他任务/);
+  assert.match(body.reason, /Other task/);
   assert.equal(taskExists(first.id), true);
   assert.equal(fs.existsSync(shared), true);
 
-  // 工作目录本身 / 本程序所在目录
+  // The working directory itself / the directory of this program
   const rootTask = await post({ title: 'root', work_dir: path.join(root, 'tasks') });
   assert.equal((await remove(rootTask.id, '?delete_directory=1')).status, 409);
   const appTask = db.prepare("INSERT INTO tasks (title, work_dir, user_id) VALUES ('app', ?, 'owner')").run(path.resolve(__dirname, '..')).lastInsertRowid;
   assert.equal((await remove(appTask, '?delete_directory=1')).status, 409);
   assert.equal(fs.existsSync(path.join(__dirname, '..', 'server.js')), true);
 
-  // 去掉共用后可以删除
+  // Once the sharing is removed it can be deleted
   await remove(second.id);
   assert.equal((await remove(first.id, '?delete_directory=1')).status, 200);
   assert.equal(fs.existsSync(shared), false);
 });
 
-test('Engine 删除同样支持 deleteDirectory 并返回原因', () => {
+test('The Engine supports deleteDirectory as well and returns the reason', () => {
   const dir = path.join(root, 'tasks', 'engine-dir');
   const task = engine.createTask('owner', { title: 'engine', work_dir: dir });
   const result = engine.deleteTask('owner', task.id, { deleteDirectory: true });

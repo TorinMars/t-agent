@@ -13,13 +13,14 @@
   <link rel="stylesheet" href="/css/markdown.css">
   <link rel="stylesheet" href="/css/themes.css">
   <script src="/js/i18n.js"></script>
-  <script src="/js/i18n-en-shell.js"></script>
-  <script src="/js/i18n-en-tools.js"></script>
+  <script src="/js/i18n-zh-ui.js"></script>
+  <script src="/js/i18n-zh-server.js"></script>
+  <script src="/js/i18n-zh-extra.js"></script>
   <script src="/js/theme.js"></script>
   <script src="/js/toast.js"></script>
   <link rel="stylesheet" href="/vendor/xterm/xterm-5.5.0.css">
   <link rel="stylesheet" href="/vendor/monaco/monaco.css">
-  <!-- 第三方库固定版本并自托管（见 scripts/vendor-libs.json）；mermaid 约 5 MB，首次渲染图表时才由 tasks.js 加载 -->
+  <!-- Third-party libraries are pinned and self-hosted (see scripts/vendor-libs.json); mermaid is about 5 MB and is only loaded by tasks.js on the first diagram render -->
   <script src="/vendor/marked/marked-15.0.12.min.js"></script>
   <script src="/vendor/xterm/xterm-5.5.0.js"></script>
   <script src="/vendor/xterm/addon-fit-0.10.0.js"></script>
@@ -29,45 +30,45 @@
 <body>
   <header class="header">
     <div class="header-left">
-      <nav class="engine-tabs-bar" aria-label="Engine 切换">
+      <nav class="engine-tabs-bar" aria-label="Switch engine">
         <div class="engine-tabs" id="engine-tabs"></div>
-        <button class="engine-connect-remote" id="btn-connect-remote" type="button" title="连接远程服务" aria-label="连接远程服务"><span aria-hidden="true">＋</span><span class="engine-connect-label">连接远程</span></button>
+        <button class="engine-connect-remote" id="btn-connect-remote" type="button" title="Connect remote service" aria-label="Connect remote service"><span aria-hidden="true">+</span><span class="engine-connect-label">Connect remote</span></button>
       </nav>
     </div>
     <div class="header-right">
-      <button class="btn-logout" id="btn-one-click-update" type="button" title="检查并更新当前客户端">↻ 一键更新</button>
-      <button class="btn-logout" id="btn-theme" type="button" title="切换主题" aria-haspopup="dialog">🎨 主题</button>
+      <button class="btn-logout" id="btn-one-click-update" type="button" title="Check for and install updates for this client">↻ Update</button>
+      <button class="btn-logout" id="btn-theme" type="button" title="Switch theme" aria-haspopup="dialog">🎨 Theme</button>
       <button class="btn-logout" id="btn-lang" type="button" data-lang-toggle data-lang-icon="🌐 " translate="no"></button>
-      <button class="btn-logout settings-button" id="btn-settings" style="margin-right:2px">⚙ 设置<span class="update-dot" id="update-dot" style="display:none"></span></button>
-      <button class="btn-logout" id="btn-logout" type="button">退出</button>
+      <button class="btn-logout settings-button" id="btn-settings" style="margin-right:2px">⚙ Settings<span class="update-dot" id="update-dot" style="display:none"></span></button>
+      <button class="btn-logout" id="btn-logout" type="button">Log out</button>
     </div>
   </header>
 
   <div class="quicklinks-bar" id="quicklinks-bar" hidden>
     <span class="quicklinks-label">🔗</span>
     <div class="quicklinks-chips" id="quicklinks-chips"></div>
-    <button class="quicklinks-add" id="btn-add-link" title="添加链接">+</button>
-    <button class="quicklinks-toggle" id="btn-toggle-links" title="展开/折叠">▾</button>
+    <button class="quicklinks-add" id="btn-add-link" title="Add link">+</button>
+    <button class="quicklinks-toggle" id="btn-toggle-links" title="Expand / collapse">▾</button>
   </div>
 
 
   <div class="layout">
-    <nav class="main-nav" aria-label="主导航">
+    <nav class="main-nav" aria-label="Main navigation">
       <button type="button" class="main-nav-item active" id="tab-tasks" aria-pressed="true"><span class="main-nav-icon" aria-hidden="true">📋</span><span class="main-nav-label">Tasks</span></button>
-      <button type="button" class="main-nav-item" id="tab-tools" aria-pressed="false"><span class="main-nav-icon" aria-hidden="true">🧰</span><span class="main-nav-label">实用工具</span></button>
-      <button type="button" class="main-nav-item" id="tab-apps" aria-pressed="false"><span class="main-nav-icon" aria-hidden="true">🧩</span><span class="main-nav-label">应用列表</span></button>
-      <button type="button" class="main-nav-item" id="tab-agent-config" aria-pressed="false"><span class="main-nav-icon" aria-hidden="true">⚙️</span><span class="main-nav-label">Agent 配置</span></button>
-      <button type="button" class="main-nav-item" id="tab-frp" aria-pressed="false"><span class="main-nav-icon" aria-hidden="true">🌐</span><span class="main-nav-label">页面增强</span></button>
-      <button type="button" class="main-nav-item" id="tab-file-sync" aria-pressed="false"><span class="main-nav-icon" aria-hidden="true">🔄</span><span class="main-nav-label">文件同步</span></button>
+      <button type="button" class="main-nav-item" id="tab-tools" aria-pressed="false"><span class="main-nav-icon" aria-hidden="true">🧰</span><span class="main-nav-label">Utilities</span></button>
+      <button type="button" class="main-nav-item" id="tab-apps" aria-pressed="false"><span class="main-nav-icon" aria-hidden="true">🧩</span><span class="main-nav-label">Apps</span></button>
+      <button type="button" class="main-nav-item" id="tab-agent-config" aria-pressed="false"><span class="main-nav-icon" aria-hidden="true">⚙️</span><span class="main-nav-label">Agent config</span></button>
+      <button type="button" class="main-nav-item" id="tab-frp" aria-pressed="false"><span class="main-nav-icon" aria-hidden="true">🌐</span><span class="main-nav-label">Page enhancement</span></button>
+      <button type="button" class="main-nav-item" id="tab-file-sync" aria-pressed="false"><span class="main-nav-icon" aria-hidden="true">🔄</span><span class="main-nav-label">File sync</span></button>
     </nav>
 
     <aside class="sidebar" id="sidebar">
       <div class="sidebar-toolbar">
         <div class="sidebar-actions">
-          <button class="sidebar-action btn-new-task" id="btn-new-task" type="button" aria-label="新建任务" data-tip="新建任务">＋</button>
-          <button class="sidebar-action btn-workspace-import" id="btn-workspace-import" type="button" aria-label="导入工作目录下的目录" data-tip="导入工作目录下的目录">📁<span class="sidebar-action-badge" id="workspace-import-badge" hidden></span></button>
-          <button class="sidebar-action btn-workspace-cleanup" id="btn-workspace-cleanup" type="button" aria-label="清理代码目录" data-tip="清理代码目录">🧹</button>
-          <button class="sidebar-action btn-batch-update" id="btn-batch-update" type="button" aria-label="一键更新本机和所有已连接的引擎" data-tip="一键更新本机和所有已连接的引擎">⬆️</button>
+          <button class="sidebar-action btn-new-task" id="btn-new-task" type="button" aria-label="New task" data-tip="New task">+</button>
+          <button class="sidebar-action btn-workspace-import" id="btn-workspace-import" type="button" aria-label="Import directories from the workspace" data-tip="Import directories from the workspace">📁<span class="sidebar-action-badge" id="workspace-import-badge" hidden></span></button>
+          <button class="sidebar-action btn-workspace-cleanup" id="btn-workspace-cleanup" type="button" aria-label="Clean up code directories" data-tip="Clean up code directories">🧹</button>
+          <button class="sidebar-action btn-batch-update" id="btn-batch-update" type="button" aria-label="Update this client and all connected engines" data-tip="Update this client and all connected engines">⬆️</button>
         </div>
       </div>
       <div class="task-nav" id="task-nav"></div>
@@ -75,297 +76,297 @@
 
     <div class="content-area">
       <div class="content-toolbar" id="content-toolbar" style="display:none">
-        <button class="toolbar-btn" id="btn-file-browser" type="button" aria-expanded="false" aria-controls="file-panel">文件浏览器</button>
-        <button class="toolbar-btn" id="btn-reveal-folder" title="在 Finder 中显示">
+        <button class="toolbar-btn" id="btn-file-browser" type="button" aria-expanded="false" aria-controls="file-panel">File browser</button>
+        <button class="toolbar-btn" id="btn-reveal-folder" title="Reveal in Finder">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M1 3.5A1.5 1.5 0 0 1 2.5 2h2.764c.958 0 1.76.56 2.311 1.184C7.985 3.648 8.48 4 9 4h4.5A1.5 1.5 0 0 1 15 5.5v7a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 1 12.5z"/></svg>
-          打开文件夹
+          Open folder
         </button>
-        <button class="toolbar-btn" id="btn-open-vscode" title="用 VSCode 打开">
+        <button class="toolbar-btn" id="btn-open-vscode" title="Open in VSCode">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M2 2.5A.5.5 0 0 1 2.5 2h11a.5.5 0 0 1 .5.5v11a.5.5 0 0 1-.5.5h-11a.5.5 0 0 1-.5-.5zm1 1v9h9v-9z"/><path d="M5.5 7a.5.5 0 0 1 .5-.5h4a.5.5 0 0 1 0 1H6a.5.5 0 0 1-.5-.5m0 2a.5.5 0 0 1 .5-.5h2a.5.5 0 0 1 0 1H6a.5.5 0 0 1-.5-.5M5 4.5a.5.5 0 0 0 0 1h6a.5.5 0 0 0 0-1z"/></svg>
-          VSCode 打开
+          Open in VSCode
         </button>
-        <button class="toolbar-btn" id="btn-share-md" title="生成分享链接">
+        <button class="toolbar-btn" id="btn-share-md" title="Create share link">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M11 2.5a2.5 2.5 0 1 1 .603 1.628l-6.718 3.12a2.499 2.499 0 0 1 0 1.504l6.718 3.12a2.5 2.5 0 1 1-.488.876l-6.718-3.12a2.5 2.5 0 1 1 0-3.256l6.718-3.12A2.5 2.5 0 0 1 11 2.5"/></svg>
-          分享
+          Share
         </button>
-        <button class="toolbar-btn" id="btn-edit-md" title="在页面中编辑当前 Markdown">
+        <button class="toolbar-btn" id="btn-edit-md" title="Edit the current Markdown in the page">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M11.013 1.427a1.75 1.75 0 0 1 2.474 0l1.086 1.086a1.75 1.75 0 0 1 0 2.474l-8.5 8.5a1.75 1.75 0 0 1-.744.44l-3.25.975a.75.75 0 0 1-.93-.93l.975-3.25a1.75 1.75 0 0 1 .44-.744zm1.414 1.06a.25.25 0 0 0-.354 0l-8.5 8.5a.25.25 0 0 0-.063.106l-.588 1.96 1.96-.588a.25.25 0 0 0 .106-.063l8.5-8.5a.25.25 0 0 0 0-.354z"/></svg>
-          编辑
+          Edit
         </button>
       </div>
 
-      <!-- Tab 栏 -->
+      <!-- Tab bar -->
       <div class="content-tabs" id="content-tabs" style="display:none">
-        <button class="tab-btn active" data-tab="doc">📄 技术方案</button>
+        <button class="tab-btn active" data-tab="doc">📄 Design doc</button>
         <button class="tab-btn" data-tab="readme">📘 README</button>
         <button class="tab-btn" data-tab="agent">🤖 AGENTS.md</button>
-        <button class="tab-btn" data-tab="todos">☑ 待办</button>
-        <button class="tab-btn" data-tab="shell">⌨ 终端</button>
+        <button class="tab-btn" data-tab="todos">☑ To-do</button>
+        <button class="tab-btn" data-tab="shell">⌨ Terminal</button>
       </div>
 
       <div class="content-body">
         <main class="preview-pane" id="preview-pane">
           <div class="preview-empty" id="preview-empty">
-            <span>← 选择左侧任务查看详情</span>
+            <span>← Pick a task on the left to see details</span>
           </div>
           <div class="preview-content" id="preview-content" style="display:none"></div>
         </main>
 
         <aside class="toc-pane" id="toc-pane" style="display:none">
-          <div class="toc-title">目录</div>
+          <div class="toc-title">Directory</div>
           <div class="toc-list" id="toc-list"></div>
         </aside>
 
-        <!-- 终端面板 -->
+        <!-- Terminal panel -->
         <div class="terminal-pane" id="terminal-pane" style="display:none">
           <div class="terminal-controls">
-            <div id="terminal-tabs" class="terminal-tabs" role="tablist" aria-label="任务终端"></div>
-            <div class="terminal-toolbar" role="toolbar" aria-label="终端操作">
-              <button type="button" class="terminal-toolbar-btn" id="btn-terminal-history" disabled aria-label="历史记录" data-tip="历史记录：查看已保存的终端历史">🕘</button>
-              <button type="button" class="terminal-toolbar-btn" id="btn-terminal-new" aria-label="新开终端" data-tip="新开终端：在任务工作目录中新建独立 Shell">＋</button>
-              <button type="button" class="terminal-toolbar-btn" id="btn-terminal-reopen" aria-label="重新打开" data-tip="重新打开：重新建立与当前终端会话的连接">↻</button>
-              <button type="button" class="terminal-toolbar-btn danger" id="btn-terminal-close" aria-label="关闭当前终端" data-tip="关闭当前终端：终止当前 Shell 及其中运行的程序">✕</button>
-              <button type="button" class="terminal-toolbar-btn" id="btn-terminal-restart-workdir" aria-label="从工作目录重新打开" data-tip="从工作目录重新打开：终止当前 Shell，并从任务配置的工作目录启动新 Shell">⌂</button>
+            <div id="terminal-tabs" class="terminal-tabs" role="tablist" aria-label="Task terminal"></div>
+            <div class="terminal-toolbar" role="toolbar" aria-label="Terminal actions">
+              <button type="button" class="terminal-toolbar-btn" id="btn-terminal-history" disabled aria-label="History" data-tip="History: view saved terminal history">🕘</button>
+              <button type="button" class="terminal-toolbar-btn" id="btn-terminal-new" aria-label="New terminal" data-tip="New terminal: start a separate shell in the task working directory">+</button>
+              <button type="button" class="terminal-toolbar-btn" id="btn-terminal-reopen" aria-label="Reopen" data-tip="Reopen: reconnect to the current terminal session">↻</button>
+              <button type="button" class="terminal-toolbar-btn danger" id="btn-terminal-close" aria-label="Close current terminal" data-tip="Close current terminal: end the shell and everything running in it">✕</button>
+              <button type="button" class="terminal-toolbar-btn" id="btn-terminal-restart-workdir" aria-label="Reopen from working directory" data-tip="Reopen from working directory: end the current shell and start a new one in the task working directory">⌂</button>
             </div>
           </div>
           <div class="terminal-empty" id="terminal-empty" style="display:none"></div>
           <div id="xterm-container"></div>
           <form class="terminal-translate" id="terminal-translate" autocomplete="off">
-            <input class="terminal-translate-input" id="terminal-translate-input" type="text" maxlength="4000" placeholder="输入中文，回车自动翻译成英文并发送到终端" aria-label="中文输入，翻译成英文后发送到终端" enterkeyhint="send">
-            <button type="submit" class="terminal-translate-send" id="terminal-translate-send">翻译并发送</button>
-            <button type="button" class="terminal-translate-settings" id="terminal-translate-settings" title="翻译服务配置（DeepSeek / GLM）" aria-label="配置翻译服务">⚙</button>
+            <input class="terminal-translate-input" id="terminal-translate-input" type="text" maxlength="4000" placeholder="Type Chinese; Enter translates it to English and sends it to the terminal" aria-label="Chinese input, translated to English and sent to the terminal" enterkeyhint="send">
+            <button type="submit" class="terminal-translate-send" id="terminal-translate-send">Translate & send</button>
+            <button type="button" class="terminal-translate-settings" id="terminal-translate-settings" title="Translation service settings (DeepSeek / GLM)" aria-label="Configure translation service">⚙</button>
           </form>
-          <div class="terminal-keys" id="terminal-keys" role="toolbar" aria-label="终端功能键">
+          <div class="terminal-keys" id="terminal-keys" role="toolbar" aria-label="Terminal function keys">
             <button type="button" data-key="Escape">Esc</button>
             <button type="button" data-key="Tab">Tab</button>
-            <button type="button" data-modifier="ctrl" aria-pressed="false" title="点击选中，再按其他键组合；发送一次后释放">Ctrl</button>
-            <button type="button" data-modifier="meta" aria-pressed="false" title="Command 组合键需终端程序支持扩展键盘协议">Command ⌘</button>
-            <button type="button" data-modifier="alt" aria-pressed="false" title="点击选中，再按其他键组合；发送一次后释放">Option ⌥</button>
-            <button type="button" data-modifier="shift" aria-pressed="false" title="点击选中，再按其他键组合；发送一次后释放">Shift</button>
+            <button type="button" data-modifier="ctrl" aria-pressed="false" title="Click to hold, then press another key; released after one send">Ctrl</button>
+            <button type="button" data-modifier="meta" aria-pressed="false" title="Command combos need a terminal program that supports the extended keyboard protocol">Command ⌘</button>
+            <button type="button" data-modifier="alt" aria-pressed="false" title="Click to hold, then press another key; released after one send">Option ⌥</button>
+            <button type="button" data-modifier="shift" aria-pressed="false" title="Click to hold, then press another key; released after one send">Shift</button>
             <button type="button" data-key="ArrowLeft" aria-label="ArrowLeft">←</button>
             <button type="button" data-key="ArrowDown" aria-label="ArrowDown">↓</button>
             <button type="button" data-key="ArrowUp" aria-label="ArrowUp">↑</button>
             <button type="button" data-key="ArrowRight" aria-label="ArrowRight">→</button>
             <button type="button" data-key="Enter" aria-label="Enter">Enter</button>
             <button type="button" data-key="Backspace" aria-label="Backspace">⌫</button>
-            <button type="button" data-shortcut="option-up" title="发送 Option + 上方向键">Option + ↑</button>
+            <button type="button" data-shortcut="option-up" title="Send Option + Up arrow">Option + ↑</button>
           </div>
         </div>
       </div>
     </div>
-    <section class="apps-panel" id="apps-panel" hidden aria-label="应用列表">
+    <section class="apps-panel" id="apps-panel" hidden aria-label="Apps">
       <div class="tools-engine" id="apps-engine" role="status"></div>
       <div class="tool-card tool-card-wide">
-        <div class="tool-card-title">应用列表</div>
+        <div class="tool-card-title">Apps</div>
         <div class="form-hint" id="apps-hint"></div>
         <div class="tool-card-actions">
-          <button type="button" class="btn-submit" id="apps-add">新增应用</button>
-          <button type="button" class="btn-logout" id="apps-refresh">刷新</button>
+          <button type="button" class="btn-submit" id="apps-add">Add app</button>
+          <button type="button" class="btn-logout" id="apps-refresh">Refresh</button>
           <button type="button" class="btn-logout" id="apps-restore" hidden></button>
           <span class="tool-copy-status" id="apps-status" role="status"></span>
         </div>
         <div class="pm2-table-wrap">
           <table class="pm2-table apps-table" id="apps-table" hidden>
-            <thead><tr><th>名称</th><th>状态</th><th>端口</th><th>访问地址（点击跳转）</th><th>操作</th></tr></thead>
+            <thead><tr><th>Name</th><th>Status</th><th>Port</th><th>Address (click to open)</th><th>Actions</th></tr></thead>
             <tbody id="apps-body"></tbody>
           </table>
         </div>
       </div>
       <div class="tool-card tool-card-wide">
-        <div class="tool-card-title">让程序自己注册</div>
-        <div class="form-hint">服务启动时调用下面的接口，就会出现在这里；按名称幂等更新，重复启动不会产生重复记录，没传的字段保持原值。需要一个访问令牌：在运行 Client 的机器上，进入项目目录执行 <code>node scripts/create-engine-token.js owner 服务名</code>（令牌只显示一次）。可传字段：<code>name</code>（必填）、<code>port</code>、<code>host</code>（IP）、<code>domain</code>、<code>scheme</code>、<code>path</code>、<code>url</code>、<code>description</code>、<code>pm2_name</code>。</div>
+        <div class="tool-card-title">Let programs register themselves</div>
+        <div class="form-hint">Call the endpoint below when your service starts and it shows up here. Updates are idempotent by name, so restarts do not create duplicates, and fields you omit keep their values. You need an access token: on the machine running the Client, go to the project directory and run <code>node scripts/create-engine-token.js owner service-name</code>(the token is shown only once). Accepted fields: <code>name</code> (required), <code>port</code>, <code>host</code> (IP), <code>domain</code>, <code>scheme</code>, <code>path</code>, <code>url</code>, <code>description</code>, <code>pm2_name</code>. </div>
         <pre class="apps-example" id="apps-register-example"></pre>
-        <div class="tool-card-actions"><button type="button" class="btn-logout" id="apps-register-copy">复制示例命令</button></div>
+        <div class="tool-card-actions"><button type="button" class="btn-logout" id="apps-register-copy">Copy example command</button></div>
       </div>
     </section>
-    <section class="agent-config-panel" id="agent-config-panel" hidden aria-label="Agent 配置">
+    <section class="agent-config-panel" id="agent-config-panel" hidden aria-label="Agent config">
       <div class="tool-card tool-card-wide">
-        <div class="tool-card-title">Agent 配置</div>
-        <div class="form-hint">为 Claude Code 和 Codex 设置通用默认值，一次推送到本机和所有已连接的服务器。每台服务器可以单独覆盖；没填的项保持该机器上的原值，不会被改动。推送需要对方 Engine 升级到支持“Agent 配置”的版本。</div>
-        <div class="agent-config-tabs" role="tablist" aria-label="工具">
+        <div class="tool-card-title">Agent config</div>
+        <div class="form-hint">Set shared defaults for Claude Code and Codex and push them to this machine and every connected server at once. Each server can override them individually; blank items keep the machine’s existing values untouched. Pushing requires the remote engine to support “Agent config”.</div>
+        <div class="agent-config-tabs" role="tablist" aria-label="Tools">
           <button type="button" class="agent-config-tab active" data-tool="claude" role="tab" aria-selected="true">Claude Code</button>
           <button type="button" class="agent-config-tab" data-tool="codex" role="tab" aria-selected="false">Codex</button>
         </div>
         <div id="agent-config-defaults"></div>
         <div class="tool-card-actions">
-          <button type="button" class="btn-submit" id="agent-config-save">保存全局默认</button>
-          <button type="button" class="btn-submit" id="agent-config-push-all">保存并推送到全部服务器</button>
+          <button type="button" class="btn-submit" id="agent-config-save">Save global defaults</button>
+          <button type="button" class="btn-submit" id="agent-config-push-all">Save and push to all servers</button>
           <span class="tool-copy-status" id="agent-config-status" role="status"></span>
         </div>
       </div>
       <div class="tool-card tool-card-wide">
-        <div class="tool-card-title">服务器</div>
-        <div class="form-hint">“覆盖”是只对这台服务器生效的值，优先于全局默认。“查看当前”读取这台机器上现在的实际配置。</div>
+        <div class="tool-card-title">Servers</div>
+        <div class="form-hint">“Override” values apply to this server only and take priority over global defaults. “View current” reads the actual configuration on that machine.</div>
         <div class="pm2-table-wrap">
           <table class="pm2-table" id="agent-config-table">
-            <thead><tr><th>服务器</th><th>上次推送</th><th>覆盖项</th><th>操作</th></tr></thead>
+            <thead><tr><th>Servers</th><th>Last push</th><th>Overrides</th><th>Actions</th></tr></thead>
             <tbody id="agent-config-servers"></tbody>
           </table>
         </div>
       </div>
     </section>
-    <section class="frp-panel" id="frp-panel" hidden aria-label="页面增强">
+    <section class="frp-panel" id="frp-panel" hidden aria-label="Page enhancement">
       <div class="tool-card tool-card-wide">
-        <div class="tool-card-title">穿透方式</div>
-        <div class="frp-methods" role="radiogroup" aria-label="穿透方式">
-          <label class="frp-check"><input type="radio" name="frp-method" value="frp" checked> frp（需要公网服务器上运行 frps）</label>
-          <label class="frp-check"><input type="radio" name="frp-method" value="ssh"> SSH 反向隧道（只需要服务器的 SSH 登录，无需安装额外软件）</label>
+        <div class="tool-card-title">Tunnel type</div>
+        <div class="frp-methods" role="radiogroup" aria-label="Tunnel type">
+          <label class="frp-check"><input type="radio" name="frp-method" value="frp" checked> frp (needs frps running on a public server)</label>
+          <label class="frp-check"><input type="radio" name="frp-method" value="ssh"> SSH reverse tunnel (only needs SSH login to a server; no extra software)</label>
         </div>
       </div>
       <div id="frp-method-frp">
       <div class="tool-card tool-card-wide">
-        <div class="tool-card-title">内网穿透（frp）</div>
-        <div class="form-hint">用 frpc 把这台机器上的 Client 端口映射到你的 frps 服务器。远程端口自动随机生成并保持稳定（可重新生成）；这是 TCP 隧道，域名需要自己解析到 frps 服务器的 IP，再用反向代理（如 Nginx，终结 HTTPS）转发到 <code>服务器IP:远程端口</code>。对外暴露 Client 前请确认已绑定身份验证器。本机没有 frpc 时页面会提供“安装 frpc”按钮；也可自行安装（0.52 及以上）并用环境变量 <code>T_AGENT_FRPC_BIN</code> 指定路径。</div>
+        <div class="tool-card-title">Tunnel (frp)</div>
+        <div class="form-hint">Uses frpc to map this machine’s Client port to your frps server. The remote port is generated randomly and stays stable (it can be regenerated). This is a TCP tunnel: point your domain at the frps server’s IP, then forward to <code>server-IP:remote-port</code> with a reverse proxy (such as Nginx, terminating HTTPS). Make sure an authenticator is bound before exposing the Client. If frpc is missing, the page offers an “Install frpc” button; you can also install it yourself (0.52 or later) and set the environment variable <code>T_AGENT_FRPC_BIN</code>  to its path.</div>
         <div class="frp-status" id="frp-status-line" role="status"></div>
         <div class="frp-detect" id="frp-detect-row">
           <span id="frp-frpc-info"></span>
-          <button type="button" class="btn-logout" id="frp-detect">重新检测 frpc</button>
+          <button type="button" class="btn-logout" id="frp-detect">Re-detect frpc</button>
         </div>
         <div class="tool-card-actions" id="frp-install-row" hidden>
-          <button type="button" class="btn-submit" id="frp-install">安装 frpc</button>
-          <span class="form-hint">点击后可选择：复制提示词让 Agent 安装，或由 Client 直接下载（官方发布包 + SHA-256 校验，只把 frpc 放到 data/bin；无法访问 GitHub 时设置 <code>T_AGENT_FRP_DOWNLOAD_BASE</code> 指向镜像）。已用 Homebrew（<code>brew install frpc</code>）或手动装好时，点上面的“重新检测 frpc”。</span>
+          <button type="button" class="btn-submit" id="frp-install">Install frpc</button>
+          <span class="form-hint">Click to choose: copy a prompt for an Agent to install it, or let the Client download it directly (official release + SHA-256 check; frpc is only placed in data/bin; if GitHub is unreachable, set <code>T_AGENT_FRP_DOWNLOAD_BASE</code> to a mirror). If you installed it with Homebrew (<code>brew install frpc</code>) or manually, click “Re-detect frpc” above.</span>
         </div>
         <form class="frp-form" id="frp-form" autocomplete="off">
-          <label class="form-label" for="frp-domain">域名（可选）</label>
+          <label class="form-label" for="frp-domain">Domain (optional)</label>
           <input class="form-input" id="frp-domain" type="text" placeholder="app.example.com" spellcheck="false">
-          <label class="form-label" for="frp-server-addr">frps 服务器 IP / 域名</label>
+          <label class="form-label" for="frp-server-addr">frps server IP / domain</label>
           <input class="form-input" id="frp-server-addr" type="text" placeholder="1.2.3.4" spellcheck="false" required>
-          <label class="form-label" for="frp-server-port">frps 服务端口</label>
+          <label class="form-label" for="frp-server-port">frps server port</label>
           <input class="form-input" id="frp-server-port" type="number" min="1" max="65535" value="7000">
           <label class="form-label" for="frp-token">frps Token</label>
           <input class="form-input" id="frp-token" type="password" placeholder="" autocomplete="new-password">
-          <label class="form-label" for="frp-local-port">本地端口</label>
+          <label class="form-label" for="frp-local-port">Local port</label>
           <input class="form-input" id="frp-local-port" type="number" min="1" max="65535" placeholder="">
-          <label class="form-label" for="frp-remote-port" id="frp-remote-port-label">远程端口</label>
-          <div class="frp-remote-row"><input class="form-input" id="frp-remote-port" type="number" min="1" max="65535" placeholder="留空自动随机"><button type="button" class="btn-logout" id="frp-regenerate">重新生成</button></div>
+          <label class="form-label" for="frp-remote-port" id="frp-remote-port-label">Remote port</label>
+          <div class="frp-remote-row"><input class="form-input" id="frp-remote-port" type="number" min="1" max="65535" placeholder="Leave empty for a random one"><button type="button" class="btn-logout" id="frp-regenerate">Regenerate</button></div>
           <div class="form-hint" id="frp-remote-hint"></div>
-          <label class="form-label" for="frp-auto-start">开机自启</label>
-          <label class="frp-check"><input id="frp-auto-start" type="checkbox"> Client 启动时自动开启隧道</label>
+          <label class="form-label" for="frp-auto-start">Start on boot</label>
+          <label class="frp-check"><input id="frp-auto-start" type="checkbox"> Start the tunnel automatically when the Client starts</label>
           <div class="tool-card-actions">
-            <button type="submit" class="btn-submit" id="frp-save">保存</button>
-            <button type="button" class="btn-submit" id="frp-start">保存并启动</button>
-            <button type="button" class="btn-logout" id="frp-stop">停止</button>
+            <button type="submit" class="btn-submit" id="frp-save">Save</button>
+            <button type="button" class="btn-submit" id="frp-start">Save and start</button>
+            <button type="button" class="btn-logout" id="frp-stop">Stop</button>
             <span class="tool-copy-status" id="frp-message" role="status"></span>
           </div>
         </form>
       </div>
       <div class="tool-card tool-card-wide">
-        <div class="tool-card-title">安装 frps（公网服务器）</div>
-        <div class="form-hint">frps 要装在有公网 IP 的服务器上。复制下面的提示词，粘贴给能操作那台服务器的 Agent（例如在服务器上运行的 Claude Code / Codex）。提示词会带上上面填的服务端口、Token（没填则让 Agent 随机生成并告诉你）和允许的远程端口范围；提示词含 Token，请只发给你信任的 Agent。</div>
+        <div class="tool-card-title">Install frps (public server)</div>
+        <div class="form-hint">frps must be installed on a server with a public IP. Copy the prompt below and paste it to an Agent that can operate that server (for example Claude Code / Codex running there). The prompt includes the server port and token entered above (if the token is blank, the Agent generates one and tells you) and the allowed remote port range. It contains the token, so only send it to an Agent you trust.</div>
         <div class="tool-card-actions">
-          <button type="button" class="btn-submit" id="frp-copy-frps">复制 frps 安装提示词</button>
+          <button type="button" class="btn-submit" id="frp-copy-frps">Copy frps install prompt</button>
           <span class="tool-copy-status" id="frp-frps-message" role="status"></span>
         </div>
       </div>
       <div class="tool-card tool-card-wide">
-        <div class="tool-card-title">frpc 日志</div>
-        <pre class="apps-log" id="frp-log">（暂无日志）</pre>
+        <div class="tool-card-title">frpc log</div>
+        <pre class="apps-log" id="frp-log">(No logs yet)</pre>
       </div>
 
       </div>
       <div id="frp-method-ssh" hidden>
         <div class="tool-card tool-card-wide">
-          <div class="tool-card-title">SSH 反向隧道</div>
-          <div class="form-hint">用 <code>ssh -R</code> 在服务器上绑定一个端口，指向本机 Client 的端口。服务器端口默认自动随机并保持稳定，也可手动填写。必须能免密登录（不会弹出密码输入）；首次连接会自动信任并记录服务器主机密钥。默认只绑定服务器的 <code>127.0.0.1</code>，请在服务器上用反向代理（如 Nginx）转发到该端口；勾选“绑定所有网卡”还需要服务器 sshd 开启 <code>GatewayPorts yes</code>（或 <code>clientspecified</code>）。对外暴露前请确认已绑定身份验证器。</div>
+          <div class="tool-card-title">SSH reverse tunnel</div>
+          <div class="form-hint">Uses  <code>ssh -R</code> to bind a port on the server that points to this machine’s Client port. The server port is random and stable by default, or you can set it manually. Passwordless login is required (no password prompt); the server host key is trusted and recorded on first connect. By default it only binds the server’s <code>127.0.0.1</code>, so use a reverse proxy (such as Nginx) on the server to forward to that port; ticking “Bind all interfaces” also requires sshd on the server to enable <code>GatewayPorts yes</code> (or  <code>clientspecified</code>). Make sure an authenticator is bound before exposing it.</div>
           <div class="frp-status" id="ssh-status-line" role="status"></div>
           <form class="frp-form" id="ssh-form" autocomplete="off">
-            <label class="form-label" for="ssh-host">服务器 IP / 域名</label>
+            <label class="form-label" for="ssh-host">Server IP / domain</label>
             <input class="form-input" id="ssh-host" type="text" placeholder="1.2.3.4" spellcheck="false" required>
-            <label class="form-label" for="ssh-user">用户名</label>
+            <label class="form-label" for="ssh-user">Username</label>
             <input class="form-input" id="ssh-user" type="text" placeholder="root" spellcheck="false" required>
-            <label class="form-label" for="ssh-key">私钥路径（可选）</label>
-            <input class="form-input" id="ssh-key" type="text" placeholder="留空：使用 ssh 默认逻辑（ssh-agent、~/.ssh/id_*、~/.ssh/config）" spellcheck="false">
-            <label class="form-label" for="ssh-remote-port" id="ssh-remote-port-label">远程端口</label>
-            <div class="frp-remote-row"><input class="form-input" id="ssh-remote-port" type="number" min="1" max="65535" placeholder="留空自动随机"><button type="button" class="btn-logout" id="ssh-regenerate">重新生成</button></div>
+            <label class="form-label" for="ssh-key">Private key path (optional)</label>
+            <input class="form-input" id="ssh-key" type="text" placeholder="Empty: use ssh defaults (ssh-agent, ~/.ssh/id_*, ~/.ssh/config)" spellcheck="false">
+            <label class="form-label" for="ssh-remote-port" id="ssh-remote-port-label">Remote port</label>
+            <div class="frp-remote-row"><input class="form-input" id="ssh-remote-port" type="number" min="1" max="65535" placeholder="Leave empty for a random one"><button type="button" class="btn-logout" id="ssh-regenerate">Regenerate</button></div>
             <div class="form-hint" id="ssh-remote-hint"></div>
-            <label class="form-label" for="ssh-port">SSH 端口</label>
+            <label class="form-label" for="ssh-port">SSH port</label>
             <input class="form-input" id="ssh-port" type="number" min="1" max="65535" value="22">
-            <label class="form-label" for="ssh-bind-all">绑定地址</label>
-            <label class="frp-check"><input id="ssh-bind-all" type="checkbox"> 绑定服务器所有网卡（0.0.0.0）</label>
-            <label class="form-label" for="ssh-auto-start">开机自启</label>
-            <label class="frp-check"><input id="ssh-auto-start" type="checkbox"> Client 启动时自动开启隧道</label>
+            <label class="form-label" for="ssh-bind-all">Bind address</label>
+            <label class="frp-check"><input id="ssh-bind-all" type="checkbox"> Bind all server interfaces (0.0.0.0)</label>
+            <label class="form-label" for="ssh-auto-start">Start on boot</label>
+            <label class="frp-check"><input id="ssh-auto-start" type="checkbox"> Start the tunnel automatically when the Client starts</label>
             <div class="tool-card-actions">
-              <button type="submit" class="btn-submit" id="ssh-save">保存</button>
-              <button type="button" class="btn-submit" id="ssh-start">保存并启动</button>
-              <button type="button" class="btn-logout" id="ssh-stop">停止</button>
+              <button type="submit" class="btn-submit" id="ssh-save">Save</button>
+              <button type="button" class="btn-submit" id="ssh-start">Save and start</button>
+              <button type="button" class="btn-logout" id="ssh-stop">Stop</button>
               <span class="tool-copy-status" id="ssh-message" role="status"></span>
             </div>
           </form>
         </div>
         <div class="tool-card tool-card-wide">
-          <div class="tool-card-title">ssh 日志</div>
-          <pre class="apps-log" id="ssh-log">（暂无日志）</pre>
+          <div class="tool-card-title">ssh log</div>
+          <pre class="apps-log" id="ssh-log">(No logs yet)</pre>
         </div>
       </div>
     </section>
-    <section class="file-sync-panel" id="file-sync-panel" hidden aria-label="文件同步">
+    <section class="file-sync-panel" id="file-sync-panel" hidden aria-label="File sync">
       <div class="tools-engine" id="file-sync-engine"></div>
       <div class="tool-card tool-card-wide">
-        <div class="tool-card-title">文件同步</div>
-        <div class="form-hint">文件同步是主从结构。主服务器通常有固定的外网地址，从服务器（可以在内网）主动去连接它：在主服务器点“生成连接字符串”，把字符串复制到从服务器的“文件同步”页（先把角色设为“从服务器”）粘贴并连接即可。连接后从服务器下载并同步主服务器配置的文件，两侧修改会自动同步，文件清单只能在主服务器修改。用户目录路径可写为 <code>~/.claude/settings.json</code> 或 <code>用户目录/.claude/settings.json</code>，也支持绝对路径。</div>
+        <div class="tool-card-title">File sync</div>
+        <div class="form-hint">File sync uses a master/slave layout. The master usually has a fixed public address and slaves (which may be on an internal network) connect to it: on the master click “Generate connection string”, copy it to the slave’s “File sync” page (set its role to “Slave” first), paste and connect. Afterwards the slave downloads and syncs the files configured on the master, changes on either side sync automatically, and the file list can only be edited on the master. Home-directory paths can be written as <code>~/.claude/settings.json</code>  or  <code>home/.claude/settings.json</code>, and absolute paths are supported.</div>
         <div class="file-sync-role-row">
-          <label class="form-label" for="file-sync-role-select">本节点角色</label>
+          <label class="form-label" for="file-sync-role-select">This node’s role</label>
           <select class="form-input" id="file-sync-role-select">
-            <option value="master">主服务器</option>
-            <option value="slave">从服务器</option>
+            <option value="master">Master</option>
+            <option value="slave">Slave</option>
           </select>
         </div>
         <p id="file-sync-role"></p>
         <div class="file-sync-code-box" id="file-sync-join-box" hidden>
-          <div class="form-hint">粘贴主服务器生成的连接字符串（10 分钟内有效、只能使用一次）。连接后，本节点现有的同步清单由主服务器的清单替换，并下载文件内容；与本地不同的文件会先备份。</div>
-          <textarea class="form-input" id="file-sync-join-input" rows="3" placeholder="TAFS1:…" spellcheck="false" autocomplete="off" aria-label="连接字符串"></textarea>
-          <div class="tool-card-actions"><button type="button" class="btn-submit" id="file-sync-connect">连接主服务器</button></div>
+          <div class="form-hint">Paste the connection string generated by the master (valid for 10 minutes, single use). After connecting, this node’s sync list is replaced by the master’s and the files are downloaded; files that differ locally are backed up first.</div>
+          <textarea class="form-input" id="file-sync-join-input" rows="3" placeholder="TAFS1:…" spellcheck="false" autocomplete="off" aria-label="Connection string"></textarea>
+          <div class="tool-card-actions"><button type="button" class="btn-submit" id="file-sync-connect">Connect to master</button></div>
         </div>
         <div class="tool-card-actions">
-          <button type="button" class="btn-submit" id="file-sync-invite">生成连接字符串</button>
-          <button type="button" class="btn-logout" id="file-sync-disconnect" hidden>解除关联</button>
-          <button type="button" class="btn-logout" id="file-sync-run">立即同步</button>
+          <button type="button" class="btn-submit" id="file-sync-invite">Generate connection string</button>
+          <button type="button" class="btn-logout" id="file-sync-disconnect" hidden>Unlink</button>
+          <button type="button" class="btn-logout" id="file-sync-run">Sync now</button>
           <span class="tool-copy-status" id="file-sync-status" role="status"></span>
         </div>
         <div class="tool-card-actions" id="file-sync-master-actions">
-          <button type="button" class="btn-submit" id="file-sync-add">添加文件</button>
+          <button type="button" class="btn-submit" id="file-sync-add">Add file</button>
         </div>
         <div class="pm2-table-wrap">
           <table class="pm2-table" id="file-sync-table">
-            <thead><tr><th>同步路径</th><th>本机实际路径</th><th>状态</th><th>版本</th><th>操作</th></tr></thead>
+            <thead><tr><th>Sync path</th><th>Actual local path</th><th>Status</th><th>Version</th><th>Actions</th></tr></thead>
             <tbody id="file-sync-body"></tbody>
           </table>
         </div>
         <div id="file-sync-children" class="file-sync-children">
-          <div class="tool-card-title">从服务器</div>
+          <div class="tool-card-title">Slave</div>
           <div class="form-hint" id="file-sync-children-hint"></div>
           <div class="pm2-table-wrap">
             <table class="pm2-table" id="file-sync-children-table" hidden>
-              <thead><tr><th>节点</th><th>状态</th><th>最近同步</th><th>最近联系</th><th>同步错误</th></tr></thead>
+              <thead><tr><th>Node</th><th>Status</th><th>Last sync</th><th>Last contact</th><th>Sync error</th></tr></thead>
               <tbody id="file-sync-children-body"></tbody>
             </table>
           </div>
         </div>
       </div>
     </section>
-    <section class="tools-panel" id="tools-panel" hidden aria-label="实用工具">
+    <section class="tools-panel" id="tools-panel" hidden aria-label="Utilities">
       <div class="tool-card">
-        <div class="tool-card-title">安装开发环境（Claude Code / Codex / SSH 密钥 / 规则同步 / ta / PM2）</div>
-        <div class="form-hint">复制 GitHub 安装脚本命令，在目标机器的终端中粘贴执行（macOS / Linux）。已安装的工具会跳过，已有 SSH 密钥不会被覆盖；还会配置每次启动 <code>claude</code> / <code>codex</code> 前同步仓库 <code>rules/</code> 里的用户级规则和默认配置（<code>--skip sync</code> 可跳过）；还会安装统一命令 <code>ta</code> 和 PM2（没有 Node.js 时先装到 <code>~/.local/node</code>，<code>--skip pm2</code> 可跳过）；加 <code>bash -s -- --check</code> 可只检查不安装，加 <code>--with-apps</code> 可在 Mac 上同时安装 Maccy、Snipaste、Clash Verge。</div>
+        <div class="tool-card-title">Install dev environment (Claude Code / Codex / SSH key / rule sync / ta / PM2)</div>
+        <div class="form-hint">Copy the GitHub install script command and paste it into a terminal on the target machine (macOS / Linux). Installed tools are skipped and existing SSH keys are not overwritten. It also configures, on every start, <code>claude</code> / <code>codex</code> a sync of the repository <code>rules/</code> ’s user-level rules and default config (<code>--skip sync</code>  can be skipped); it also installs the unified command <code>ta</code> and PM2 (when Node.js is missing it is installed to <code>~/.local/node</code>, <code>--skip pm2</code>  can be skipped); add <code>bash -s -- --check</code> to only check without installing, add <code>--with-apps</code> to also install Maccy, Snipaste and Clash Verge on a Mac.</div>
         <div class="tool-card-actions">
-          <button type="button" class="btn-logout tool-copy-btn" data-script="install-claude-code.sh">复制安装命令</button>
-          <button type="button" class="btn-logout tool-copy-btn" data-script="install-claude-code.sh" data-args="--with-apps">复制安装命令（含 Mac 应用）</button>
+          <button type="button" class="btn-logout tool-copy-btn" data-script="install-claude-code.sh">Copy install command</button>
+          <button type="button" class="btn-logout tool-copy-btn" data-script="install-claude-code.sh" data-args="--with-apps">Copy install command (with Mac apps)</button>
           <span class="tool-copy-status" role="status"></span>
         </div>
       </div>
       <div class="tool-card">
-        <div class="tool-card-title">配置代理（订阅）</div>
-        <div class="form-hint">macOS：把订阅导入已安装的 Clash Verge；Linux：安装 mihomo 内核并以用户级服务运行。运行后按提示粘贴订阅链接（输入时不显示，不会被打印或写入日志）；之后用 <code>bash -s -- --update</code> 更新订阅，<code>--status</code> 查看状态。</div>
+        <div class="tool-card-title">Configure proxy (subscription)</div>
+        <div class="form-hint">macOS: imports the subscription into an installed Clash Verge; Linux: installs the mihomo core and runs it as a user service. After running, paste the subscription link when prompted (input is hidden and never printed or logged); afterwards use <code>bash -s -- --update</code> to update the subscription and<code>--status</code> to check the status.</div>
         <div class="tool-card-actions">
-          <button type="button" class="btn-logout tool-copy-btn" data-script="install-proxy.sh">复制代理配置命令</button>
+          <button type="button" class="btn-logout tool-copy-btn" data-script="install-proxy.sh">Copy proxy setup command</button>
           <span class="tool-copy-status" role="status"></span>
         </div>
       </div>
       <div class="tool-card">
-        <div class="tool-card-title">本地安装向导（网页操作）</div>
-        <div class="form-hint">不想记命令行参数时使用：在目标机器上运行后会启动一个只监听本机的网页向导，勾选要安装的内容、在页面里填写订阅链接并查看实时输出。需要 Python 3；在远程服务器上运行时，按提示用 SSH 端口转发（<code>ssh -L 8765:127.0.0.1:8765</code>）再从本机浏览器打开。</div>
+        <div class="tool-card-title">Local install wizard (web UI)</div>
+        <div class="form-hint">Use this when you do not want to remember command-line flags: running it on the target machine starts a web wizard that only listens locally, where you tick what to install, enter the subscription link and watch live output. Requires Python 3; on a remote server, use SSH port forwarding as prompted (<code>ssh -L 8765:127.0.0.1:8765</code>) and open it from your local browser.</div>
         <div class="tool-card-actions">
-          <button type="button" class="btn-logout tool-copy-btn" data-script="setup-wizard.sh">复制向导启动命令</button>
+          <button type="button" class="btn-logout tool-copy-btn" data-script="setup-wizard.sh">Copy wizard start command</button>
           <span class="tool-copy-status" role="status"></span>
         </div>
       </div>
@@ -375,7 +376,7 @@
   <div class="modal-overlay" id="modal-overlay" style="display:none">
     <div class="modal" id="modal">
       <div class="modal-header">
-        <span id="modal-title">新建任务</span>
+        <span id="modal-title">New task</span>
         <button class="modal-close" id="modal-close">&times;</button>
       </div>
       <div class="modal-body" id="modal-body"></div>

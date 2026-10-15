@@ -25,10 +25,10 @@ function output(config, overrides = {}) {
 }
 
 test('client summary ends with a browser URL using the default port', () => {
-  assert.match(output(''), /请在浏览器打开：http:\/\/127\.0\.0\.1:3000\s*$/);
+  assert.match(output(''), /open this in a browser: http:\/\/127\.0\.0\.1:3000\s*$/);
 });
 test('client summary parses quoted ports and configured hosts', () => {
-  assert.match(output('PORT="13500" # custom\nHOST=192.168.1.8\n'), /请在浏览器打开：http:\/\/192\.168\.1\.8:13500/);
+  assert.match(output('PORT="13500" # custom\nHOST=192.168.1.8\n'), /open this in a browser: http:\/\/192\.168\.1\.8:13500/);
 });
 test('wildcard listeners use a reachable loopback URL and IPv6 is bracketed', () => {
   assert.match(output('HOST=0.0.0.0\nPORT=3101'), /http:\/\/127\.0\.0\.1:3101/);
@@ -36,5 +36,5 @@ test('wildcard listeners use a reachable loopback URL and IPv6 is bracketed', ()
   assert.match(output('HOST=::1\n'), /http:\/\/\[::1\]:3000/);
 });
 test('manual installation tells the user to start before browsing', () => {
-  assert.match(output('', { SERVICE_STARTED: '0' }), /尚未启动.*\n启动命令：npm start[\s\S]*启动后.*请在浏览器打开/);
+  assert.match(output('', { SERVICE_STARTED: '0' }), /not running yet.*\nStart command: npm start[\s\S]*After it starts.*open this in a browser/);
 });

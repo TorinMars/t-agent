@@ -8,7 +8,7 @@ const Database = require('better-sqlite3');
 const { createSshTunnelService, buildArgs } = require('../services/ssh-tunnel');
 const { createSshTunnelRouter } = require('../routes/ssh-tunnel');
 
-// 假的 ssh：把收到的参数写进 args.log，再按 mode 输出 ssh -v 风格的日志。
+// A fake ssh: writes the arguments it receives to args.log, then prints ssh -v style logs depending on mode.
 function fakeSsh(dir, mode = 'ok') {
   const bin = path.join(dir, 'ssh');
   fs.writeFileSync(bin, `#!/usr/bin/env node
@@ -44,11 +44,11 @@ function setup(t, { mode = 'ok', random, setTimer } = {}) {
 const until = async (check, ms = 4000) => {
   const end = Date.now() + ms;
   while (Date.now() < end) { if (check()) return; await new Promise(resolve => setTimeout(resolve, 20)); }
-  assert.fail('等待超时');
+  assert.fail('Wait timed out');
 };
 const BASE = { host: '1.2.3.4', username: 'deploy' };
 
-test('参数：私钥为空走 ssh 默认逻辑（不带 -i），填写后使用指定私钥', () => {
+test('Arguments: an empty private key follows ssh’s default lookup (no -i), and a given key is used', () => {
   const config = { host: '1.2.3.4', sshPort: 2222, username: 'deploy', keyPath: '', remotePort: 28000, bindAll: false };
   const options = { localIP: '127.0.0.1', localPort: 3000 };
   const plain = buildArgs(config, options);
@@ -57,7 +57,7 @@ test('参数：私钥为空走 ssh 默认逻辑（不带 -i），填写后使用
   assert.deepEqual(plain.slice(-3), ['-R', '28000:127.0.0.1:3000', 'deploy@1.2.3.4']);
   assert.equal(plain[plain.indexOf('-p') + 1], '2222');
   assert.ok(plain.includes('BatchMode=yes') && plain.includes('ExitOnForwardFailure=yes'));
-  // 不能复用用户 ssh 配置里的共享连接（ControlMaster auto 会让 ssh 交出转发请求后立刻退出）。
+  // The shared connection from the user's ssh config must not be reused (ControlMaster auto makes ssh hand over the forward request and exit at once).
   for (const option of ['ControlMaster=no', 'ControlPath=none', 'ControlPersist=no']) assert.ok(plain.includes(option), option);
   const keyed = buildArgs({ ...config, keyPath: '/home/me/.ssh/tunnel_key', bindAll: true }, options);
   assert.equal(keyed[keyed.indexOf('-i') + 1], '/home/me/.ssh/tunnel_key');
@@ -65,7 +65,7 @@ test('参数：私钥为空走 ssh 默认逻辑（不带 -i），填写后使用
   assert.ok(keyed.includes('0.0.0.0:28000:127.0.0.1:3000'));
 });
 
-test('配置校验：非法地址、用户名、端口、私钥路径被拒绝', t => {
+test('Config validation: invalid address, username, port and private key path are rejected', t => {
   const { service } = setup(t);
   for (const bad of [
     { host: 'a b' }, { host: '-oProxyCommand=x' }, { username: '-oProxyCommand=x' }, { username: 'a b' }, { username: 'a@b' },
@@ -73,7 +73,7 @@ test('配置校验：非法地址、用户名、端口、私钥路径被拒绝',
   ]) assert.throws(() => service.update(bad), e => e.code && e.code.startsWith('SSH_'), JSON.stringify(bad));
 });
 
-test('远程端口：默认随机并保持稳定，可手动指定，清空恢复随机', t => {
+test('Remote port: random and stable by default, can be set manually, clearing it restores random', t => {
   const { service } = setup(t);
   const first = service.update(BASE).config.remotePort;
   assert.ok(first >= 20000 && first <= 60000);
@@ -86,7 +86,7 @@ test('远程端口：默认随机并保持稳定，可手动指定，清空恢�
   assert.equal(service.regenerate().config.remotePortManual, false);
 });
 
-test('启动：用指定私钥连接，日志出现 remote forward success 后为运行中；停止后为已停止', async t => {
+test('Start: connects with the given private key, running once the log shows remote forward success, stopped after stopping', async t => {
   const { service, dir, calls } = setup(t);
   const key = path.join(dir, 'id_test');
   fs.writeFileSync(key, 'KEY');
@@ -103,7 +103,7 @@ test('启动：用指定私钥连接，日志出现 remote forward success 后�
   assert.equal(service.view().status, 'stopped');
 });
 
-test('私钥为空时不带 -i；填写了但文件不存在则拒绝启动', async t => {
+test('An empty private key sends no -i; one that is filled in but whose file does not exist refuses to start', async t => {
   const { service, calls } = setup(t);
   service.update(BASE);
   service.start();
@@ -114,22 +114,22 @@ test('私钥为空时不带 -i；填写了但文件不存在则拒绝启动', as
   assert.throws(() => service.start(), e => e.code === 'SSH_KEY_NOT_FOUND');
 });
 
-test('缺少服务器或用户名时拒绝启动', t => {
+test('Starting is refused when the server or username is missing', t => {
   const { service } = setup(t);
   assert.throws(() => service.start(), e => e.code === 'SSH_HOST_REQUIRED');
   service.update({ host: '1.2.3.4' });
   assert.throws(() => service.start(), e => e.code === 'SSH_USER_REQUIRED');
 });
 
-test('认证失败：给出明确原因', async t => {
+test('Authentication failure: a clear reason is given', async t => {
   const { service } = setup(t, { mode: 'denied' });
   service.update(BASE);
   service.start();
   await until(() => service.view().status === 'failed');
-  assert.match(service.view().error, /认证失败/);
+  assert.match(service.view().error, /Authentication failed/);
 });
 
-test('自动端口被占用时换端口重试；手动端口不换', async t => {
+test('A taken automatic port retries with another port; a manual port does not', async t => {
   const ports = [25000, 26000];
   const auto = setup(t, { mode: 'busy', random: () => ports.shift() ?? 27000 });
   auto.service.update(BASE);
@@ -143,10 +143,10 @@ test('自动端口被占用时换端口重试；手动端口不换', async t => 
   manual.service.start();
   await until(() => manual.service.view().status === 'failed');
   assert.equal(manual.service.view().config.remotePort, 25000);
-  assert.match(manual.service.view().error, /换一个端口/);
+  assert.match(manual.service.view().error, /choose another port/);
 });
 
-test('已连通的隧道意外断开后自动重连', async t => {
+test('A tunnel that had connected reconnects automatically after dropping unexpectedly', async t => {
   const timers = [];
   const { service, calls } = setup(t, { mode: 'drop-once', setTimer: fn => { timers.push(fn); return { unref() {} }; } });
   service.update(BASE);
@@ -157,7 +157,7 @@ test('已连通的隧道意外断开后自动重连', async t => {
   await until(() => service.view().status === 'running' && calls().length === 2);
 });
 
-test('路由：需要登录，状态里没有多余信息，非法输入返回错误码', async t => {
+test('Routes: login required, no extra information in the status, invalid input returns an error code', async t => {
   const { service } = setup(t);
   const app = express();
   app.use(express.json());
@@ -175,7 +175,7 @@ test('路由：需要登录，状态里没有多余信息，非法输入返回�
   assert.equal((await bad.json()).error, 'SSH_PORT_INVALID');
 });
 
-test('日志过滤：ssh -v 里关于 SSH_SK_PROVIDER 的无害提示不进日志，真实的转发信息保留', async t => {
+test('Log filtering: the harmless SSH_SK_PROVIDER message in ssh -v stays out of the log while real forwarding information is kept', async t => {
   const { dir, service } = setup(t);
   fs.writeFileSync(path.join(dir, 'ssh'), `#!/usr/bin/env node
 console.error('debug1: Authenticator provider $SSH_SK_PROVIDER did not resolve; disabling');

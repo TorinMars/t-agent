@@ -63,22 +63,22 @@ const server = http.createServer((req, res) => {
       await page.waitForFunction(() => !TerminalImages.busy);
       assert.deepEqual(await page.evaluate(() => sent), ['https://images.example/picture.png ']);
       await page.keyboard.type('x'); assert.deepEqual(await page.evaluate(() => sent), ['https://images.example/picture.png ', 'x']);
-      assert.equal(await page.getByRole('button', { name: '上传图片', exact: true }).isVisible(), true);
+      assert.equal(await page.getByRole('button', { name: 'Upload image', exact: true }).isVisible(), true);
       if (mobile) {
         await page.screenshot({ path: '/private/tmp/t-agent-oss-mobile.png' });
-        const bounds = await page.getByRole('button', { name: '上传图片', exact: true }).boundingBox();
+        const bounds = await page.getByRole('button', { name: 'Upload image', exact: true }).boundingBox();
         const terminal = await page.locator('#terminal-pane').boundingBox();
         assert.ok(bounds.height >= 40, 'coarse pointer target keeps at least 40 CSS pixels');
         assert.ok(bounds.y >= terminal.y && bounds.y + bounds.height <= terminal.y + terminal.height);
         assert.ok(terminal.y + terminal.height - bounds.y - bounds.height < 20, 'same unified terminal bottom placement');
-        const chooser = page.waitForEvent('filechooser'); await page.getByRole('button', { name: '上传图片', exact: true }).tap();
+        const chooser = page.waitForEvent('filechooser'); await page.getByRole('button', { name: 'Upload image', exact: true }).tap();
         await (await chooser).setFiles({ name: 'phone.png', mimeType: 'image/png', buffer: Buffer.from([137,80,78,71]) });
       } else await page.evaluate(() => pasteImage());
       await page.waitForFunction(() => document.querySelector('.terminal-image-upload-status')?.textContent.includes('OSS'));
       pending.shift().writeHead(500, { 'Content-Type': 'application/json' }).end(JSON.stringify({ error: 'simulated OSS failure' }));
       await page.waitForFunction(() => !TerminalImages.busy);
       assert.equal(await page.evaluate(() => term.options.disableStdin), false);
-      await page.getByRole('button', { name: /设置/ }).click();
+      await page.getByRole('button', { name: /Settings/ }).click();
       assert.equal(await page.evaluate(() => clicks), 1);
       await page.evaluate(() => { pasteImage(); currentSocket = { readyState: 1 }; });
       await page.waitForFunction(() => document.querySelector('.terminal-image-upload-status')?.textContent.includes('OSS'));

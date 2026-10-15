@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
 # t-agent:ta
-# ta — 统一启动 Claude Code 和 Codex，只需要记一个命令。
+# ta — start Claude Code and Codex in a unified way, so you only need to remember one command.
 #
-#   ta [工具] [参数…]        工具：claude（c）或 codex（x）；省略时用默认工具（默认 claude）
+# ta [tool] [args…]        tool: claude (c) or codex (x); defaults to the default tool when omitted (claude by default)
 #
-# 统一的常用参数（写在 -- 之前才会被翻译）：
-#   -c, --continue          继续当前目录最近一次会话
-#   -p, --prompt 提示词      非交互执行一次并输出结果
-#   -m, --model 模型         指定模型
-# 其余参数原样透传给底层工具；-- 之后的内容也原样透传（用于两边同名但含义不同的参数，
-# 例如 codex 的 -p 是 --profile：ta codex -- -p 名称）。
+# Unified common options (only translated when written before --):
+# -c, --continue          resume the latest session in the current directory
+# -p, --prompt PROMPT     run once non-interactively and print the result
+# -m, --model MODEL       choose the model
+# All other arguments are passed through to the underlying tool unchanged; what follows -- is also passed through unchanged (for arguments with the same name but different meaning on the two sides,
+# for example codex's -p is --profile: ta codex -- -p NAME).
 #
-#   --dry-run               只打印将要执行的命令，不执行
-#   --set-default 工具       设置默认工具（claude 或 codex）
-#   -h, --help              显示帮助
+# --dry-run               only print the command that would run; do not run it
+# --set-default TOOL      set the default tool (claude or codex)
+# -h, --help              show this help
 #
-# 启动前会先同步远程的用户级规则与默认配置（失败或没有 Python 都不影响启动）。
+# The remote user-level rules and default config are synced before starting (a failure or a missing Python does not block starting).
 
 main() {
   local config_root="${XDG_CONFIG_HOME:-$HOME/.config}/t-agent"
@@ -39,15 +39,15 @@ main() {
     case "$1" in
       --) shift; rest+=("$@"); break ;;
       -c|--continue) cont=1 ;;
-      -p|--prompt) [ $# -ge 2 ] || die "$1 需要提示词"; prompt="$2"; has_prompt=1; shift ;;
-      -m|--model) [ $# -ge 2 ] || die "$1 需要模型名"; model="$2"; shift ;;
+      -p|--prompt) [ $# -ge 2 ] || die "$1 needs a prompt"; prompt="$2"; has_prompt=1; shift ;;
+      -m|--model) [ $# -ge 2 ] || die "$1 needs a model name"; model="$2"; shift ;;
       --dry-run) dry=1 ;;
       --set-default)
         case "${2:-}" in
           claude|codex) ;;
-          *) die "--set-default 只支持 claude 或 codex" ;;
+          *) die "--set-default only supports claude or codex" ;;
         esac
-        mkdir -p "$config_root" && printf '%s\n' "$2" > "$default_file" && printf '默认工具已设为 %s\n' "$2"
+        mkdir -p "$config_root" && printf '%s\n' "$2" > "$default_file" && printf 'Default tool set to %s\n' "$2"
         exit 0 ;;
       -h|--help) usage; exit 0 ;;
       *) rest+=("$1") ;;
@@ -78,7 +78,7 @@ main() {
   fi
 
   if [ "$dry" -eq 1 ]; then
-    # bash 3.2 的 printf %q 会弄坏中文，这里自己加引号，仅用于显示
+    # bash 3.2's printf %q mangles CJK text, so quotes are added by hand here, for display only
     local arg out="" sq="'" rep
     rep="'\\''"
     for arg in "${cmd[@]}"; do
@@ -92,7 +92,7 @@ main() {
   fi
 
   if ! command -v "$tool" >/dev/null 2>&1; then
-    printf 'ta: 未找到 %s，请先运行安装脚本。\n' "$tool" >&2
+    printf 'ta: %s not found; run the install script first.\n' "$tool" >&2
     exit 127
   fi
   if [ -f "$sync_script" ] && command -v python3 >/dev/null 2>&1; then

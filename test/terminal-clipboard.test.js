@@ -32,7 +32,7 @@ test('OSC 52 requests require approval, are bounded, and never answer clipboard 
   assert.equal(context.clipboard.decodeOsc52(payload), '中文\ntext');
   for (const data of ['c;?', 'c;', 'c;%%', 'c;' + 'A'.repeat(90000), 'x;YQ==']) assert.equal(context.clipboard.decodeOsc52(data), null);
   handle.writeHistory(payload);
-  const request = [...document.querySelectorAll('button')].find(b => b.getAttribute('aria-label') === '查看程序复制请求');
+  const request = [...document.querySelectorAll('button')].find(b => b.getAttribute('aria-label') === 'Review program copy request');
   assert.equal(request.hidden, true);
   term.osc(payload);
   assert.equal(request.hidden, false);
@@ -48,5 +48,5 @@ test('hidden terminal cannot handle copy keys or raise remote clipboard requests
   assert.equal(term.key({ key: 'c', type: 'keydown', metaKey: true }), true);
   term.osc('c;' + Buffer.from('hidden').toString('base64'));
   assert.deepEqual(writes, []);
-  assert.equal([...document.querySelectorAll('button')].find(b => b.getAttribute('aria-label') === '查看程序复制请求').hidden, true);
+  assert.equal([...document.querySelectorAll('button')].find(b => b.getAttribute('aria-label') === 'Review program copy request').hidden, true);
 });

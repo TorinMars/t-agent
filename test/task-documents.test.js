@@ -29,7 +29,7 @@ test('local task uses exact workspace and never overwrites its three documents',
  assert.equal(updated.md_path,path.join(next,'DESIGN.md'));
  assert.equal(fs.readFileSync(path.join(dir,'DESIGN.md'),'utf8'),'existing DESIGN.md');
  fs.unlinkSync(path.join(next,'README.md'));
- assert.match(await (await fetch(`${base}/tasks/${task.id}/document/readme`)).text(),/项目说明/);
+ assert.match(await (await fetch(`${base}/tasks/${task.id}/document/readme`)).text(),/Project description/);
 });
 test('engine uses existing files and follows changed workspace for default technical document',()=>{
  const dir=populated('engine');const task=engine.createTask('owner',{title:'remote task',work_dir:dir});

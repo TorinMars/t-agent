@@ -37,7 +37,7 @@ test('Engine terminal API enforces ownership, persists tabs and binds tickets', 
     const response = await request(url, owner, {});
     assert.equal(response.status, 201);
     const added = await response.json();
-    assert.equal(added.title, '终端 2');
+    assert.equal(added.title, 'Terminal 2');
     assert.equal((await (await request(url)).json()).length, 2);
     await assertRemoteTerminal(base, owner, task.id, added.terminal_id);
     await assert.rejects(assertRemoteTerminal(base, owner, task.id, 'unknown'), /TERMINAL_NOT_FOUND/);

@@ -1,23 +1,23 @@
 const Tasks = (() => {
-  // ── 数据源 ──
-  // 本地 Client 与每个远程 Engine 是一个"数据源"，共用同一套界面；只有请求的基础路径、
-  // 终端地址和能力不同。侧栏一次只显示当前数据源的任务。
-  const STATUS_LABEL = { doing: '进行中', todo: '待办', done: '已完成', personal: '个人任务' };
+  // ── Data sources ──
+  // The local Client and each remote Engine is a "data source" sharing one UI; only the request base path,
+  // terminal address and capabilities differ. The sidebar shows the tasks of the current source only.
+  const STATUS_LABEL = { doing: 'In progress', todo: 'To do', done: 'Done', personal: 'Personal tasks' };
   const STATUS_NEXT = { todo: 'doing', doing: 'done', done: 'personal', personal: 'todo' };
   const DEFAULT_GROUPS = [
-    { id: null, key: 'personal', name: '个人任务', sort_order: 0, is_system: false },
-    { id: null, key: 'doing', name: '进行中', sort_order: 1000, is_system: true },
-    { id: null, key: 'todo', name: '待办', sort_order: 2000, is_system: true },
-    { id: null, key: 'done', name: '已完成', sort_order: 3000, is_system: true },
+    { id: null, key: 'personal', name: 'Personal tasks', sort_order: 0, is_system: false },
+    { id: null, key: 'doing', name: 'In progress', sort_order: 1000, is_system: true },
+    { id: null, key: 'todo', name: 'To do', sort_order: 2000, is_system: true },
+    { id: null, key: 'done', name: 'Done', sort_order: 3000, is_system: true },
   ];
   const sources = new Map();
   const sourceListeners = new Set();
 
   function makeSource(desc) {
     return {
-      key: 'local', label: '默认', local: false, tasksBase: '/api/tasks', groupsBase: '/api/task-groups',
+      key: 'local', label: 'Default', local: false, tasksBase: '/api/tasks', groupsBase: '/api/task-groups',
       wsPath: '/terminal/ws', activityUrl: null,
-      caps: null,        // null = 全部可用（本地）；否则为 Engine 声明的能力集合
+      caps: null,       // null = everything available (local); otherwise the capability set declared by the Engine
       role: null, problem: null, loaded: false,
       tasks: [], groups: DEFAULT_GROUPS.map(group => ({ ...group })), selectedId: null,
       ...desc,
@@ -25,12 +25,12 @@ const Tasks = (() => {
   }
   sources.set('local', makeSource({ local: true }));
   let source = sources.get('local');
-  let tasks = [];       // 当前数据源的任务（与 source.tasks 同步）
-  let selectedId = null; // 当前数据源选中的任务
+  let tasks = [];       // tasks of the current source (kept in sync with source.tasks)
+  let selectedId = null; // task selected in the current source
 
   const can = capability => source.caps === null || source.caps.has(capability);
   const taskUrl = (id, suffix = '') => `${source.tasksBase}/${id}${suffix}`;
-  // localStorage 键：本地沿用原键名，远程加上数据源前缀，避免不同 Engine 上的同号任务冲突。
+  // localStorage keys: local keeps the original key names, remote ones get a source prefix so equal task ids on different Engines do not collide.
   const storageId = (id, src = source) => (src.local ? String(id) : `${src.key}:${id}`);
   const selectedStorageKey = (src = source) => (src.local ? 'selectedTaskId' : `remote-selected-task-${src.id}`);
   const terminalScope = (taskId, src = source) => `${src.tasksBase}/${taskId}`;
@@ -41,7 +41,7 @@ const Tasks = (() => {
     return Array.isArray(list) && list.length ? list : fallbackGroups(src.tasks);
   }
 
-  // Engine 不返回分组（旧版本）时，按任务出现的状态补全。
+  // When the Engine returns no groups (old version), derive them from the statuses tasks have.
   function fallbackGroups(taskList = []) {
     const groups = DEFAULT_GROUPS.map(group => ({ ...group }));
     const known = new Set(groups.map(group => group.key));
@@ -53,7 +53,7 @@ const Tasks = (() => {
     });
     return groups;
   }
-  const PRIORITY_LABEL = { high: '高', normal: '中', low: '低' };
+  const PRIORITY_LABEL = { high: 'High', normal: 'Medium', low: 'Low' };
   const collapsedGroups = {};
   let tocObserver = null;
   let mdWatcher = null;
@@ -74,9 +74,9 @@ const Tasks = (() => {
   let term = null;
   let fitAddon = null;
   let termWs = null;
-  let termTaskId = null;   // 当前终端绑定的 taskId
+  let termTaskId = null;   // taskId the current terminal is bound to
 
-  // mermaid 约 5 MB，首次渲染图表时才加载；加载失败会清除缓存，下次渲染重试。
+  // mermaid is about 5 MB and is loaded on the first diagram render; a failed load clears the cache so the next render retries.
   const MERMAID_SRC = '/vendor/mermaid/mermaid-12.1.0.min.js';
   let mermaidReady = null;
   function ensureMermaid() {
@@ -85,7 +85,7 @@ const Tasks = (() => {
         const script = document.createElement('script');
         script.src = MERMAID_SRC;
         script.onload = resolve;
-        script.onerror = () => reject(new Error('Mermaid 加载失败'));
+        script.onerror = () => reject(new Error('Mermaid failed to load'));
         document.head.appendChild(script);
       });
       mermaidReady = loaded
@@ -100,7 +100,7 @@ const Tasks = (() => {
   const contentTabs = document.getElementById('content-tabs');
   const terminalPane = document.getElementById('terminal-pane');
 
-  // ── Tab 切换 ──
+  // ── Tab switching ──
   contentTabs.addEventListener('click', (e) => {
     const btn = e.target.closest('.tab-btn');
     if (!btn) return;
@@ -128,26 +128,26 @@ const Tasks = (() => {
       hideToc();
       stopWatcher();
       terminalPane.style.display = 'flex';
-      // 切到终端时清除"执行完成待查看"状态
+      // clear the "finished, awaiting review" state when switching to the terminal
       acknowledgeCurrentTerminal();
       if (task) {
         connectTerminal(task);
-        // connectTerminal 是异步的（onopen），已有实例直接 focus
+        // connectTerminal is async (onopen); an existing instance is simply focused
         const inst = termInstances.get(terminalKey(task.id));
         if (inst) setTimeout(() => { if (!inst.disposed && term === inst.term && selectedId === task.id && activeTab === 'shell') inst.term.focus(); }, 0);
       }
     }
   });
 
-  // ── 每个任务的每个终端独立缓存；切换标签只隐藏视图 ──
+  // ── Every terminal of every task is cached independently; switching tabs only hides the view ──
   const termInstances = new Map(); // [sourceKey, taskId, terminalId] -> live terminal instance
   function terminalKey(taskId, terminalId, sourceKey = source.key) {
     const src = sources.get(sourceKey) || source;
     return JSON.stringify([sourceKey, taskId, terminalId ?? TerminalTabs.current(terminalScope(taskId, src))]);
   }
 
-  // 终端状态由服务端按 PTY 前台进程判定（running / done），这里只负责展示。
-  // 左侧任务项取该任务所有终端的汇总状态；终端 tab 各自显示自己的状态。
+  // Terminal state is decided by the server from the PTY foreground process (running / done); this code only displays it.
+  // A task item on the left shows the aggregate state of all its terminals; each terminal tab shows its own.
   function applyTermState(item, state) {
     item.classList.toggle('term-running', state === 'running');
     item.classList.toggle('term-done', state === 'done');
@@ -158,10 +158,10 @@ const Tasks = (() => {
       applyTermState(item, TerminalActivity.taskState(Number(item.dataset.id), source.key));
     });
     TerminalTabs.refresh();
-    notifySourceChange(); // 引擎标签汇总各自的终端状态
+    notifySourceChange(); // the engine tab aggregates the terminal states of its tasks
   }
 
-  // 用户正在看某个任务当前终端时，视为已确认完成
+  // If the user is looking at a task's current terminal, treat the completion as acknowledged.
   function viewingTerminal(taskId) {
     return selectedId === taskId && activeTab === 'shell' && !document.hidden;
   }
@@ -206,7 +206,7 @@ const Tasks = (() => {
       inst.reconnectTimer = null;
       if (!inst.disposed && termInstances.get(terminalKey(task.id, inst.terminalId, inst.sourceKey)) === inst) connectWebSocket(task, inst);
     }, delay);
-    inst.term.write(typeof I18n !== 'undefined' ? I18n.t(`\r\n\x1b[33m[连接已断开，${Math.ceil(delay / 1000)}s 后自动重连...]\x1b[0m\r\n`) : `\r\n\x1b[33m[连接已断开，${Math.ceil(delay / 1000)}s 后自动重连...]\x1b[0m\r\n`);
+    inst.term.write(typeof I18n !== 'undefined' ? I18n.t(`\r\n\x1b[33m[Connection lost, reconnecting in ${Math.ceil(delay / 1000)}s...]\x1b[0m\r\n`) : `\r\n\x1b[33m[Connection lost, reconnecting in ${Math.ceil(delay / 1000)}s...]\x1b[0m\r\n`);
   }
 
   function connectWebSocket(task, inst) {
@@ -244,7 +244,7 @@ const Tasks = (() => {
       inst.history.disconnect(ws);
       inst.ws = null;
       if (event.code === 1000 || event.code === 1008) {
-        inst.term.write(typeof I18n !== 'undefined' ? I18n.t('\r\n[终端已断开，点击“重新打开”可再次连接]\r\n') : '\r\n[终端已断开，点击“重新打开”可再次连接]\r\n');
+        inst.term.write(typeof I18n !== 'undefined' ? I18n.t('\r\n[Terminal disconnected. Click “Reopen” to reconnect]\r\n') : '\r\n[Terminal disconnected. Click “Reopen” to reconnect]\r\n');
         return;
       }
       scheduleReconnect(task, inst);
@@ -290,18 +290,18 @@ const Tasks = (() => {
       fontFamily: 'Menlo, Monaco, "Courier New", monospace',
       theme: { background: '#1e1e1e' },
       scrollback: 5000,
-      // 程序用 OSC 8 输出的超链接（Claude Code 等，显示文字可以和真实地址不同）：同样要按住 Cmd/Ctrl 点击，
-      // 并先确认真实地址，且只打开 http(s)。xterm 默认是单击就弹确认框。
+      // Hyperlinks printed by programs with OSC 8 (Claude Code etc.; the visible text may differ from the real address): they also need Cmd/Ctrl-click,
+      // confirm the real address first and only open http(s). xterm's default is a confirm box on a single click.
       linkHandler: {
         activate(event, uri) {
           if (!(event.metaKey || event.ctrlKey) || !/^https?:\/\//i.test(uri)) return;
-          if (confirm(`打开链接？\n\n${uri}`)) window.open(uri, '_blank', 'noopener,noreferrer');
+          if (confirm(`Open link?\n\n${uri}`)) window.open(uri, '_blank', 'noopener,noreferrer');
         },
       },
     });
     const fa = new FitAddon.FitAddon();
     t.loadAddon(fa);
-    // Cmd（macOS）/ Ctrl 加点击在新标签页打开终端里的链接；不按修饰键时只是普通选中，避免误触。
+    // Cmd (macOS) / Ctrl + click opens a link from the terminal in a new tab; without a modifier it is ordinary selection, avoiding accidental clicks.
     t.loadAddon(new WebLinksAddon.WebLinksAddon((event, uri) => {
       if (event.metaKey || event.ctrlKey) window.open(uri, '_blank', 'noopener,noreferrer');
     }));
@@ -355,7 +355,7 @@ const Tasks = (() => {
 
   function selectedTerminalTask() {
     const task = tasks.find(item => item.id === selectedId);
-    if (!task) throw new Error('请先选择任务');
+    if (!task) throw new Error('Select a task first');
     return task;
   }
 
@@ -372,7 +372,7 @@ const Tasks = (() => {
     try {
       await API.post(`${terminalScope(task.id)}/terminal/control`, { action, terminal_id: TerminalTabs.current(terminalScope(task.id)) });
     } catch (error) {
-      // 控制请求失败时恢复到原服务端会话，避免留下不可见的运行进程。
+      // If the control request fails, restore the original server session so no invisible running process is left behind.
       connectTerminal(task);
       throw error;
     }
@@ -381,7 +381,7 @@ const Tasks = (() => {
       TerminalControls.clearMessage();
       connectTerminal(task);
     } else {
-      TerminalControls.showMessage('当前终端已关闭。点击“重新打开”可从任务工作目录启动新终端。');
+      TerminalControls.showMessage('The terminal is closed. Click “Reopen” to start a new one in the task working directory.');
     }
   }
 
@@ -389,7 +389,7 @@ const Tasks = (() => {
     const task = selectedTerminalTask();
     const scope = terminalScope(task.id);
     const terminalId = requestedId || TerminalTabs.current(scope);
-    if (terminalId === 'default') throw new Error('默认终端不能删除，可使用关闭或从工作目录重新打开');
+    if (terminalId === 'default') throw new Error('The default terminal cannot be deleted; close it or reopen it from the working directory');
     await API.post(`${scope}/terminal/control`, { action: 'delete', terminal_id: terminalId });
     disposeTerminalInstance(task.id, terminalId);
     TerminalTabs.remove(scope, terminalId);
@@ -422,10 +422,10 @@ const Tasks = (() => {
     try {
       if (FilePanel.isOpen()) { await FilePanel.close(); return; }
       await openFileBrowser();
-    } catch (error) { alert('文件浏览器打开失败：' + error.message); }
+    } catch (error) { alert('Could not open the file browser: ' + error.message); }
   });
 
-  // 在 Finder / VS Code 中打开、生成分享链接依赖本机文件系统，远程任务不提供。
+  // Opening in Finder / VS Code and creating share links depend on the local file system, so remote tasks do not offer them.
   document.getElementById('btn-reveal-folder').addEventListener('click', async () => {
     if (!selectedId || !source.local) return;
     await API.post(`/api/tasks/${selectedId}/reveal`, {});
@@ -451,11 +451,11 @@ const Tasks = (() => {
       await navigator.clipboard.writeText(fullUrl);
       const btn = document.getElementById('btn-share-md');
       const orig = btn.innerHTML;
-      btn.textContent = '已复制 ✓';
+      btn.textContent = 'Copied ✓';
       btn.style.color = 'var(--accent)';
       setTimeout(() => { btn.innerHTML = orig; btn.style.color = ''; }, 2000);
     } catch (e) {
-      alert('生成分享链接失败: ' + e.message);
+      alert('Could not create share link: ' + e.message);
     }
   });
 
@@ -476,10 +476,10 @@ const Tasks = (() => {
     }, 150);
   });
 
-  // 基础 renderer（不含相对路径重写，需运行时传入 taskId）
+  // Base renderer (without relative-path rewriting; the taskId has to be passed at run time)
   function makeRenderer(taskId) {
     const isRelativeSrc = src => src && !src.startsWith('http') && !src.startsWith('/') && !src.startsWith('data:');
-    // 相对路径的图片/链接经当前数据源读取；Engine 不支持时保持原样。
+    // Relative images/links are read through the current data source; left as-is when the Engine does not support it.
     const fileUrl = href => `${taskUrl(taskId, '/file')}?path=${encodeURIComponent(href)}`;
     const rewrites = Boolean(taskId) && can('files:assets');
     const renderer = {
@@ -507,12 +507,12 @@ const Tasks = (() => {
   }
 
   function renderMd(content, taskId) {
-    // 每次创建独立实例以注入当前 taskId 的 renderer，避免全局状态污染
+    // Create a separate instance each time to inject the renderer for the current taskId, avoiding global state pollution
     const m = new marked.Marked({ renderer: makeRenderer(taskId) });
     return m.parse(content);
   }
 
-  // 主题切换后用新主题重画已显示的流程图（源码保存在 data-mermaid-source）。
+  // After a theme change, redraw the diagrams already shown with the new theme (source kept in data-mermaid-source).
   async function rerenderMermaid() {
     const nodes = [...document.querySelectorAll('.mermaid[data-mermaid-source]')];
     if (!nodes.length || typeof mermaid === 'undefined') return;
@@ -523,12 +523,12 @@ const Tasks = (() => {
         await mermaid.run({ nodes: [node] });
         const svg = node.querySelector('svg');
         if (svg) { svg.style.width = '100%'; svg.style.height = 'auto'; }
-      } catch { /* 保留源码文本，下次打开文档会重新渲染 */ }
+      } catch { /* keep the source text; the next time the document is opened it is rendered again */ }
     }
   }
   if (typeof Theme !== 'undefined') Theme.onChange(() => { rerenderMermaid(); });
 
-  // 给已渲染的 mermaid SVG 加放大按钮，点击弹出 modal
+  // Add a zoom button to rendered mermaid SVGs; clicking it opens a modal
   function wrapMermaidDiagrams(container) {
     container.querySelectorAll('.mermaid').forEach(el => {
       if (el.dataset.zoomBound) return;
@@ -536,7 +536,7 @@ const Tasks = (() => {
 
       const wrap = document.createElement('div');
       wrap.className = 'mermaid-wrap';
-      // actor 每个参与者渲染顶部+底部共2个 g.actor，除以2得实际数量
+      // each actor renders 2 g.actor elements (top + bottom), so divide by 2 for the real count
       const actorCount = el.querySelectorAll('g.actor').length / 2;
       const svg = el.querySelector('svg');
       if (actorCount > 0 && actorCount <= 3) {
@@ -550,7 +550,7 @@ const Tasks = (() => {
 
       const btn = document.createElement('button');
       btn.className = 'mermaid-expand-btn';
-      btn.title = '放大查看';
+      btn.title = 'Zoom';
       btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>';
       wrap.appendChild(btn);
 
@@ -558,7 +558,7 @@ const Tasks = (() => {
     });
   }
 
-  // Modal 放大查看
+  // Modal zoom view
   let mermaidModal = null;
   function openMermaidModal(el) {
     if (!mermaidModal) {
@@ -567,8 +567,8 @@ const Tasks = (() => {
       mermaidModal.innerHTML = `
         <div class="mermaid-modal-backdrop"></div>
         <div class="mermaid-modal-box">
-          <button class="mermaid-modal-close" title="关闭">✕</button>
-          <div class="mermaid-modal-hint">触控板缩放 · 拖拽移动 · 双击重置</div>
+          <button class="mermaid-modal-close" title="Close">✕</button>
+          <div class="mermaid-modal-hint">Pinch to zoom · drag to pan · double-click to reset</div>
           <div class="mermaid-modal-viewport">
             <div class="mermaid-modal-canvas"></div>
           </div>
@@ -581,7 +581,7 @@ const Tasks = (() => {
       const canvas = mermaidModal.querySelector('.mermaid-modal-canvas');
 
       let scale = 1, tx = 0, ty = 0;
-      let fitScale = 1; // 每次打开时计算的适合缩放值
+      let fitScale = 1; // fit scale computed each time the modal opens
       let dragging = false, startX = 0, startY = 0, startTx = 0, startTy = 0;
 
       const applyTransform = () => {
@@ -610,11 +610,11 @@ const Tasks = (() => {
       viewport.addEventListener('wheel', e => {
         e.preventDefault();
         if (e.ctrlKey || e.metaKey) {
-          // 触控板双指捏合 → 缩放
+          // trackpad pinch → zoom
           const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
           zoomAt(scale * factor, e.clientX, e.clientY);
         } else {
-          // 触控板双指平移 → 移动
+          // trackpad two-finger pan → move
           tx -= e.deltaX;
           ty -= e.deltaY;
         }
@@ -635,7 +635,7 @@ const Tasks = (() => {
       });
       window.addEventListener('mouseup', () => { dragging = false; viewport.style.cursor = ''; });
 
-      // 触控：双指开合缩放，双指/单指移动
+      // touch: two-finger pinch zooms, one or two fingers move
       let lastTouchDist = null, lastTouchMidX = 0, lastTouchMidY = 0;
       viewport.addEventListener('touchstart', e => {
         e.preventDefault();
@@ -660,11 +660,11 @@ const Tasks = (() => {
           const dist = Math.hypot(dx, dy);
           const midX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
           const midY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
-          // 缩放
+          // zoom
           if (lastTouchDist) {
             zoomAt(scale * dist / lastTouchDist, lastTouchMidX, lastTouchMidY);
           }
-          // 平移：用当前帧与上一帧中心点的差值增量累加
+          // pan: accumulate the difference between the centre points of the current and previous frame
           tx += midX - lastTouchMidX;
           ty += midY - lastTouchMidY;
           lastTouchDist = dist;
@@ -700,14 +700,14 @@ const Tasks = (() => {
     const viewport = mermaidModal.querySelector('.mermaid-modal-viewport');
     canvas.innerHTML = '';
     const cloned = el.cloneNode(true);
-    // 克隆的 SVG 恢复原始尺寸，由 modal 自己决定缩放
+    // the cloned SVG gets its original size back; the modal decides the scaling itself
     const clonedSvg = cloned.querySelector('svg');
     if (clonedSvg) { clonedSvg.style.width = ''; clonedSvg.style.height = ''; }
     canvas.appendChild(cloned);
     mermaidModal.classList.add('open');
     document.body.style.overflow = 'hidden';
 
-    // 等 modal 显示后计算合适的初始 scale
+    // compute a suitable initial scale after the modal is shown
     requestAnimationFrame(() => {
       const vw = viewport.clientWidth - 48;
       const vh = viewport.clientHeight - 48;
@@ -735,13 +735,13 @@ const Tasks = (() => {
     today.setHours(0, 0, 0, 0);
     const due = new Date(dateStr + 'T00:00:00');
     const diff = Math.floor((due - today) / 86400000);
-    if (diff < 0) return { text: '已逾期', overdue: true };
-    if (diff === 0) return { text: '今天', overdue: false };
-    if (diff === 1) return { text: '明天', overdue: false };
+    if (diff < 0) return { text: 'Overdue', overdue: true };
+    if (diff === 0) return { text: 'Today', overdue: false };
+    if (diff === 1) return { text: 'Tomorrow', overdue: false };
     return { text: dateStr, overdue: false };
   }
 
-  // 无法连接的 Engine：认证失效、服务离线，或本次加载任务失败。
+  // An unreachable Engine: authentication expired, service offline, or loading tasks failed this time.
   function problemOf(src) {
     if (src.local) return null;
     const server = src.server || {};
@@ -765,7 +765,7 @@ const Tasks = (() => {
     if (problemOf(source)) {
       const note = document.createElement('div');
       note.className = 'remote-empty';
-      note.textContent = '服务不可用，请检查服务状态';
+      note.textContent = 'Service unavailable, please check its status';
       section.appendChild(note);
       nav.scrollTop = scrollTop;
       return;
@@ -775,7 +775,7 @@ const Tasks = (() => {
     const heading = document.createElement('div');
     heading.className = 'sidebar-section-heading';
     const title = document.createElement('span');
-    title.textContent = source.local ? '本地任务' : source.label;
+    title.textContent = source.local ? 'Local tasks' : source.label;
     const count = document.createElement('span');
     count.className = 'sidebar-section-count';
     count.textContent = tasks.length;
@@ -786,9 +786,9 @@ const Tasks = (() => {
       const add = document.createElement('button');
       add.type = 'button';
       add.className = 'sidebar-section-add';
-      add.title = '新建任务分组';
-      add.setAttribute('aria-label', '新建任务分组');
-      add.textContent = '＋';
+      add.title = 'New task group';
+      add.setAttribute('aria-label', 'New task group');
+      add.textContent = '+';
       add.addEventListener('click', () => showCreateGroup());
       tools.appendChild(add);
     }
@@ -810,7 +810,7 @@ const Tasks = (() => {
     const headerEl = document.createElement('div');
     headerEl.className = 'task-group-header';
     headerEl.dataset.mobileMenu = group.is_system || !group.id ? 'false' : 'true';
-    headerEl.title = group.is_system || !group.id ? '默认分组' : '右键管理分组';
+    headerEl.title = group.is_system || !group.id ? 'Default group' : 'Right-click to manage groups';
 
     const toggleEl = document.createElement('span');
     toggleEl.className = `task-group-toggle${collapsedGroups[collapseKey] ? ' collapsed' : ''}`;
@@ -830,7 +830,7 @@ const Tasks = (() => {
     groupTasks.forEach(task => itemsEl.appendChild(buildNavItem(task, groups, writable)));
 
     if (writable) {
-      // 拖拽放置到组（空组也能接收）
+      // drop onto a group (an empty group can receive too)
       itemsEl.addEventListener('dragover', e => {
         e.preventDefault();
         e.dataTransfer.dropEffect = 'move';
@@ -848,7 +848,7 @@ const Tasks = (() => {
       });
 
       itemsEl.addEventListener('dragleave', e => {
-        // 只在真正离开整个 itemsEl 时移除 placeholder
+        // only remove the placeholder when truly leaving the whole itemsEl
         if (!itemsEl.contains(e.relatedTarget)) {
           const ph = document.getElementById('drag-placeholder');
           if (ph && ph.parentNode === itemsEl) ph.remove();
@@ -878,8 +878,8 @@ const Tasks = (() => {
       event.stopPropagation();
       if (!writable || group.is_system || !group.id) return;
       ContextMenu.show(event.clientX, event.clientY, [
-        { label: '重命名分组', action: () => showRenameGroup(group) },
-        { label: '删除分组', danger: true, action: () => removeGroup(group) },
+        { label: 'Rename group', action: () => showRenameGroup(group) },
+        { label: 'Delete group', danger: true, action: () => removeGroup(group) },
       ]);
     });
 
@@ -901,11 +901,11 @@ const Tasks = (() => {
     const task = tasks.find(t => t.id === id);
     if (!task || !can('tasks:write')) return;
     try {
-      // 更新 status
+      // update status
       if (task.status !== targetStatus) {
         await API.put(taskUrl(id), { status: targetStatus });
       }
-      // 重新计算目标组内的 sort_order（旧版 Engine 不支持排序，只改分组）
+      // recompute sort_order inside the target group (old Engines do not support ordering, only the group changes)
       if (can('tasks:reorder')) {
         const groupTasks = tasks
           .filter(t => t.id !== id && t.status === targetStatus)
@@ -914,7 +914,7 @@ const Tasks = (() => {
         await API.put(`${source.tasksBase}/reorder`, groupTasks.map((t, i) => ({ id: t.id, sort_order: i })));
       }
     } catch (error) {
-      alert('移动任务失败: ' + error.message);
+      alert('Could not move task: ' + error.message);
     }
     await refreshActive();
   }
@@ -943,7 +943,7 @@ const Tasks = (() => {
     if (task.status === 'doing') statusBtn.textContent = '●';
     else if (task.status === 'done') statusBtn.textContent = '✓';
     else if (task.status === 'personal') statusBtn.textContent = '★';
-    statusBtn.title = writable ? `点击切换状态（当前：${statusLabel}）` : `当前：${statusLabel}`;
+    statusBtn.title = writable ? `Click to change status (current: ${statusLabel})` : `Current: ${statusLabel}`;
     statusBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
       if (!writable) return;
@@ -979,12 +979,12 @@ const Tasks = (() => {
     function showTaskMenu(x, y) {
       ContextMenu.show(x, y, [
         ...groups.map(group => ({
-          label: `${task.status === group.key ? '✓ ' : ''}移到「${group.name}」`,
+          label: `${task.status === group.key ? '✓ ' : ''}Move to “${group.name}”`,
           action: () => setStatus(task.id, group.key),
         })),
         { separator: true },
-        { label: '编辑', action: () => showEditModal(task) },
-        { label: '删除', danger: true, action: () => deleteTask(task.id) },
+        { label: 'Edit', action: () => showEditModal(task) },
+        { label: 'Delete', danger: true, action: () => deleteTask(task.id) },
       ]);
     }
     item.addEventListener('contextmenu', event => {
@@ -996,8 +996,8 @@ const Tasks = (() => {
     menuButton.type = 'button';
     menuButton.className = 'task-menu-button';
     menuButton.textContent = '⋯';
-    menuButton.title = '任务菜单';
-    menuButton.setAttribute('aria-label', `${task.title} 的任务菜单`);
+    menuButton.title = 'Task menu';
+    menuButton.setAttribute('aria-label', `${task.title} task menu`);
     menuButton.setAttribute('aria-haspopup', 'menu');
     menuButton.addEventListener('click', event => {
       event.stopPropagation();
@@ -1012,19 +1012,19 @@ const Tasks = (() => {
 
   async function setStatus(id, status) {
     try { await API.put(taskUrl(id), { status }); }
-    catch (error) { alert('更新任务失败: ' + error.message); }
+    catch (error) { alert('Could not update task: ' + error.message); }
     await refreshActive();
   }
 
-  // 删除确认弹窗：可勾选“同时删除目录”，默认不勾选。返回 { deleteDirectory } 或 null（取消）。
+  // Delete confirmation dialog: "also delete the directory" can be ticked, unticked by default. Returns { deleteDirectory } or null (cancelled).
   function confirmDeleteTask(task) {
     return new Promise(resolve => {
       const hasDir = Boolean(task && task.work_dir);
-      Modal.show('删除任务', `
-        <p>确认删除任务「${escapeHtml(task ? task.title : '')}」？任务记录和待办会被删除。</p>
-        ${hasDir ? `<label class="delete-dir-option"><input type="checkbox" id="delete-task-dir"> 同时删除目录</label>
-        <div class="delete-dir-path" id="delete-task-dir-path" hidden><code>${escapeHtml(task.work_dir)}</code><br>目录及里面的所有文件会被永久删除，不可恢复。</div>` : '<div class="form-hint">这个任务没有工作目录，不涉及目录删除。</div>'}
-        <div class="form-actions"><button class="btn-cancel" id="delete-task-cancel" type="button">取消</button><button class="btn-submit btn-danger-confirm" id="delete-task-ok" type="button">删除</button></div>`);
+      Modal.show('Delete task', `
+        <p>Delete task “${escapeHtml(task ? task.title : '')}”? The task record and its to-dos will be deleted.</p>
+        ${hasDir ? `<label class="delete-dir-option"><input type="checkbox" id="delete-task-dir"> Also delete the directory</label>
+        <div class="delete-dir-path" id="delete-task-dir-path" hidden><code>${escapeHtml(task.work_dir)}</code><br>The directory and everything in it will be permanently deleted and cannot be recovered.</div>` : '<div class="form-hint">This task has no working directory, so no directory will be deleted.</div>'}
+        <div class="form-actions"><button class="btn-cancel" id="delete-task-cancel" type="button">Cancel</button><button class="btn-submit btn-danger-confirm" id="delete-task-ok" type="button">Delete</button></div>`);
       const box = document.getElementById('delete-task-dir');
       if (box) box.addEventListener('change', () => { document.getElementById('delete-task-dir-path').hidden = !box.checked; });
       let settled = false;
@@ -1035,7 +1035,7 @@ const Tasks = (() => {
   }
 
   const deleteErrorLabel = code => ({
-    DIRECTORY_NOT_SAFE_TO_DELETE: '这个目录不能删除（受保护，或被其他任务共用），任务没有被删除',
+    DIRECTORY_NOT_SAFE_TO_DELETE: 'This directory cannot be deleted (protected or shared with other tasks); the task was not deleted',
   })[code] || code;
 
   async function deleteTask(id) {
@@ -1047,13 +1047,13 @@ const Tasks = (() => {
     try { result = await API.delete(`${taskUrl(id)}${choice.deleteDirectory ? '?delete_directory=1' : ''}`); }
     catch (error) {
       let text = error.message;
-      try { const data = JSON.parse(text); text = data.reason ? `${deleteErrorLabel(data.error)}：${data.reason}` : deleteErrorLabel(data.error); } catch { /* 保持原文 */ }
-      alert('删除任务失败: ' + text);
+      try { const data = JSON.parse(text); text = data.reason ? `${deleteErrorLabel(data.error)}: ${data.reason}` : deleteErrorLabel(data.error); } catch { /* keep the original text */ }
+      alert('Could not delete task: ' + text);
       return;
     }
     if (choice.deleteDirectory) {
-      if (result && result.directory_error) alert(`任务已删除，但目录删除失败：${result.directory_error}`);
-      else if (result && result.directory_deleted === undefined) alert('任务已删除，但对方服务版本较旧，没有删除目录。');
+      if (result && result.directory_error) alert(`Task deleted, but deleting the directory failed: ${result.directory_error}`);
+      else if (result && result.directory_deleted === undefined) alert('Task deleted, but the remote service is older and did not delete the directory.');
     }
     if (selectedId === id) {
       disposeTerminalsOf(source.key, id);
@@ -1064,12 +1064,12 @@ const Tasks = (() => {
     await refreshActive();
   }
 
-  // ── 任务分组（本地与远程相同） ──
+  // ── Task groups (same for local and remote) ──
   function groupNameDialog(title, initial, onSubmit) {
     Modal.show(title, `
-      <div class="form-group"><label class="form-label">分组名称</label><input class="form-input" id="group-name" maxlength="40" value="${escapeHtml(initial)}" autocomplete="off"></div>
+      <div class="form-group"><label class="form-label">Group name</label><input class="form-input" id="group-name" maxlength="40" value="${escapeHtml(initial)}" autocomplete="off"></div>
       <div class="form-hint error" id="group-name-error"></div>
-      <div class="form-actions"><button class="btn-cancel" id="group-name-cancel">取消</button><button class="btn-submit" id="group-name-save">保存</button></div>`);
+      <div class="form-actions"><button class="btn-cancel" id="group-name-cancel">Cancel</button><button class="btn-submit" id="group-name-save">Save</button></div>`);
     document.getElementById('group-name-cancel').addEventListener('click', Modal.hide);
     const input = document.getElementById('group-name');
     input.focus();
@@ -1085,34 +1085,34 @@ const Tasks = (() => {
 
   function groupErrorLabel(code) {
     return ({
-      GROUP_NAME_REQUIRED: '请输入分组名称', GROUP_NAME_TOO_LONG: '分组名称不能超过 40 个字符',
-      GROUP_NAME_ALREADY_EXISTS: '已有同名分组', TASK_GROUP_NOT_FOUND: '任务分组不存在',
-      SYSTEM_GROUP_IMMUTABLE: '默认分组不能修改或删除', TASK_GROUP_NOT_EMPTY: '分组内还有任务，不能删除',
+      GROUP_NAME_REQUIRED: 'Enter a group name', GROUP_NAME_TOO_LONG: 'Group name cannot exceed 40 characters',
+      GROUP_NAME_ALREADY_EXISTS: 'A group with this name already exists', TASK_GROUP_NOT_FOUND: 'Task group does not exist',
+      SYSTEM_GROUP_IMMUTABLE: 'The default group cannot be modified or deleted', TASK_GROUP_NOT_EMPTY: 'The group still has tasks and cannot be deleted',
     })[code] || code;
   }
 
   function showCreateGroup() {
-    groupNameDialog('新建任务分组', '', name => API.post(source.groupsBase, { name }));
+    groupNameDialog('New task group', '', name => API.post(source.groupsBase, { name }));
   }
 
   function showRenameGroup(group) {
-    groupNameDialog('重命名分组', group.name, name => API.put(`${source.groupsBase}/${group.id}`, { name }));
+    groupNameDialog('Rename group', group.name, name => API.put(`${source.groupsBase}/${group.id}`, { name }));
   }
 
   async function removeGroup(group) {
-    if (!confirm(`确认删除分组“${group.name}”？分组内必须没有任务。`)) return;
+    if (!confirm(`Delete group “${group.name}”? The group must contain no tasks.`)) return;
     try { await API.delete(`${source.groupsBase}/${group.id}`); await refreshActive(); }
-    catch (error) { alert('删除分组失败: ' + groupErrorLabel(error.message)); }
+    catch (error) { alert('Could not delete group: ' + groupErrorLabel(error.message)); }
   }
 
-  // ── 数据源：加载、切换、同步 ──
+  // ── Data sources: load, switch, sync ──
   function errorCode(error) {
     const message = String((error && error.message) || '');
     try { const parsed = JSON.parse(message); if (parsed && typeof parsed.error === 'string') return parsed.error; } catch {}
     return /^[A-Z0-9_]+$/.test(message) ? message : 'REMOTE_CONNECTION_FAILED';
   }
 
-  // 重新读取一个数据源的任务与分组；远程失败时只记录连接问题，不抛出。
+  // Re-read the tasks and groups of one data source; for a remote one a failure only records the connection problem and does not throw.
   async function reloadSource(key) {
     const src = sources.get(key);
     if (!src) return;
@@ -1131,10 +1131,10 @@ const Tasks = (() => {
     }
     src.loadError = null;
     src.tasks = list;
-    // 同步更新当前视图的 tasks：下面等待分组接口期间如果切换了数据源，activateSource 会把 tasks 写回旧数据源，
-    // 这里不同步就会把刚拿到的任务列表覆盖成旧的空数组（刷新后切回本地任务消失）。
+    // Update the tasks of the current view synchronously: if the data source is switched while we wait for the groups request below, activateSource writes tasks back to the old source,
+    // and without this sync the task list we just fetched would be overwritten with the old empty array (after a refresh, local tasks vanish when switching back).
     if (src === source) tasks = list;
-    // 旧版 Engine 没有分组接口时，按任务状态补全。
+    // When an old Engine has no groups endpoint, derive them from the task statuses.
     let groups = null;
     try { groups = await API.get(src.groupsBase); } catch {}
     src.groups = groupsFor(src, groups);
@@ -1145,7 +1145,7 @@ const Tasks = (() => {
   function showSourceLoading() {
     const empty = document.getElementById('preview-empty');
     empty.style.display = 'flex';
-    empty.querySelector('span').textContent = `正在加载 ${source.label}…`;
+    empty.querySelector('span').textContent = `Loading ${source.label}…`;
     document.getElementById('preview-content').style.display = 'none';
     contentToolbar.style.display = 'none';
     contentTabs.style.display = 'none';
@@ -1153,7 +1153,7 @@ const Tasks = (() => {
     previewPane.style.display = '';
   }
 
-  // 清空内容区（切换到不可用的 Engine、移除连接时使用）。
+  // Clear the content area (used when switching to an unavailable Engine or removing a connection).
   function clearView() {
     selectedId = null;
     source.selectedId = null;
@@ -1170,7 +1170,7 @@ const Tasks = (() => {
   }
 
   function syncSourceControls() {
-    // Finder / VS Code 依赖本机文件系统，远程任务不显示。
+    // Finder / VS Code depend on the local file system and are not shown for remote tasks.
     for (const id of ['btn-reveal-folder', 'btn-open-vscode']) {
       const button = document.getElementById(id);
       if (button) button.style.display = source.local ? '' : 'none';
@@ -1181,7 +1181,7 @@ const Tasks = (() => {
     const next = sources.get(key) || sources.get('local');
     if (next !== source && !options.confirmed) {
       if (window.FilePanel?.isOpen()) {
-        // 面板确认一次后继续切换，不再重复检查。
+        // once the panel has been confirmed, continue switching without checking again
         return FilePanel.beforeContextChange().then(allowed => allowed && activateSource(key, { ...options, confirmed: true }));
       }
       if (!confirmDiscardEditor()) return;
@@ -1192,7 +1192,7 @@ const Tasks = (() => {
     tasks = source.tasks;
     selectedId = source.selectedId;
     localStorage.setItem('active-engine-key', source.key);
-    hideToc();          // 同时让上一个数据源里未完成的渲染作废
+    hideToc();          // also invalidates unfinished rendering from the previous data source
     stopWatcher();
     TerminalActivity.setActive(source.key);
     syncSourceControls();
@@ -1215,7 +1215,7 @@ const Tasks = (() => {
     showEmpty();
   }
 
-  // 启动或 Engine 列表刷新后，回到用户上次使用的数据源。
+  // After startup or an Engine list refresh, return to the data source the user used last.
   let enginesSynced = false;
   function restoreActiveSource() {
     const wanted = activeKeyPreference();
@@ -1224,11 +1224,11 @@ const Tasks = (() => {
     } else if (sources.has(wanted)) {
       activateSource(wanted);
     } else if (enginesSynced) {
-      activateSource('local');  // 保存的 Engine 已被移除
+      activateSource('local');  // the saved Engine has been removed
     }
   }
 
-  // 重新读取当前数据源并刷新界面。
+  // Re-read the current data source and refresh the UI.
   async function refreshActive() {
     const current = source;
     await reloadSource(current.key);
@@ -1249,7 +1249,7 @@ const Tasks = (() => {
     }
   }
 
-  // Engines 模块同步远程连接列表：新增、更新或移除数据源，保留已有的任务缓存。
+  // The Engines module syncs the remote connection list: add, update or remove data sources while keeping existing task caches.
   function syncSources(servers) {
     const seen = new Set();
     for (const server of servers) {
@@ -1272,7 +1272,7 @@ const Tasks = (() => {
     notifySourceChange();
   }
 
-  // 声明 Engine 的角色与能力；只读角色去掉所有写入类能力。
+  // Declare an Engine's role and capabilities; a read-only role loses every write capability.
   function setSourceAccess(key, info) {
     const src = sources.get(key);
     if (!src || src.local) return;
@@ -1286,7 +1286,7 @@ const Tasks = (() => {
       TerminalActivity.unregisterSource(key);
     }
     if (src === source) { renderSidebar(); syncSourceControls(); }
-    notifySourceChange(); // 工具面板按角色和能力决定 PM2 是否可用
+    notifySourceChange(); // the tools panel decides from role and capabilities whether PM2 is available
   }
 
   function removeSource(key) {
@@ -1320,13 +1320,13 @@ const Tasks = (() => {
     selectedId = id;
     source.selectedId = id;
     localStorage.setItem(selectedStorageKey(), id);
-    // 标签栏（技术方案 / README / AGENTS.md / 待办 / 终端）必须随选中任务显示；
-    // 上次停在“终端”标签时不会渲染文档，不能指望 renderPreview 来显示它。
+    // The tab bar (design doc / README / AGENTS.md / to-do / terminal) must follow the selected task;
+    // if the last tab was "terminal" no document is rendered, so we cannot count on renderPreview to show it.
     contentTabs.style.display = 'flex';
     document.querySelectorAll('.task-nav-item').forEach(el => {
       el.classList.toggle('active', parseInt(el.dataset.id) === id);
     });
-    // 恢复该任务上次停留的 tab
+    // restore the tab this task last stayed on
     const tab = getTaskTab(id);
     activeTab = tab;
     contentTabs.querySelectorAll('.tab-btn').forEach(b => {
@@ -1345,7 +1345,7 @@ const Tasks = (() => {
       hideToc();
       stopWatcher();
       terminalPane.style.display = 'flex';
-      // 切到终端时清除"执行完成待查看"状态
+      // clear the "finished, awaiting review" state when switching to the terminal
       acknowledgeCurrentTerminal();
     } else {
       previewPane.style.display = '';
@@ -1376,7 +1376,7 @@ const Tasks = (() => {
     contentTabs.style.display = 'flex';
 
     if (activeTab === 'todos') {
-      // 待办页沿用完整工具栏，避免切换 Tab 时内容区上下跳动。
+      // The to-do page keeps the full toolbar so the content area does not jump up and down when switching tabs.
       contentToolbar.style.display = 'flex';
       contentToolbar.style.visibility = 'visible';
       contentToolbar.style.pointerEvents = '';
@@ -1399,16 +1399,16 @@ const Tasks = (() => {
       content.innerHTML = `
         <div class="task-info-card">
           <div class="task-info-title">${escapeHtml(task.title)}</div>
-          <div class="task-info-row"><span class="task-info-label">状态</span><span class="badge ${task.status}">${STATUS_LABEL[task.status]}</span></div>
-          <div class="task-info-row"><span class="task-info-label">优先级</span><span class="badge ${task.priority}">${PRIORITY_LABEL[task.priority]}</span></div>
-          ${task.due_date ? `<div class="task-info-row"><span class="task-info-label">截止日</span><span class="${due && due.overdue ? 'badge high' : ''}">${task.due_date}</span></div>` : ''}
-          ${task.work_dir ? `<div class="task-info-row"><span class="task-info-label">工作目录</span><span class="task-info-path">${escapeHtml(task.work_dir)}</span></div>` : ''}
+          <div class="task-info-row"><span class="task-info-label">Status</span><span class="badge ${task.status}">${STATUS_LABEL[task.status]}</span></div>
+          <div class="task-info-row"><span class="task-info-label">Priority</span><span class="badge ${task.priority}">${PRIORITY_LABEL[task.priority]}</span></div>
+          ${task.due_date ? `<div class="task-info-row"><span class="task-info-label">Due</span><span class="${due && due.overdue ? 'badge high' : ''}">${task.due_date}</span></div>` : ''}
+          ${task.work_dir ? `<div class="task-info-row"><span class="task-info-label">Working directory</span><span class="task-info-path">${escapeHtml(task.work_dir)}</span></div>` : ''}
         </div>`;
       return;
     }
 
     if (!hasDocumentRoot) {
-      content.innerHTML = '<div class="document-empty">该任务尚未配置工作目录</div>';
+      content.innerHTML = '<div class="document-empty">This task has no working directory yet</div>';
       return;
     }
 
@@ -1421,13 +1421,13 @@ const Tasks = (() => {
     const button = document.getElementById('btn-edit-md');
     const writable = can('documents:write');
     button.disabled = !enabled || !writable;
-    button.title = !writable ? '当前连接为只读，无法编辑'
-      : enabled ? '在页面中编辑当前 Markdown' : '当前页面不是可编辑的 Markdown';
+    button.title = !writable ? 'This connection is read-only and cannot edit'
+      : enabled ? 'Edit the current Markdown in the page' : 'The current page is not editable Markdown';
   }
 
   function confirmDiscardEditor() {
     if (!editorState) return true;
-    if (editorState.dirty && !confirm('当前文档有未保存的修改，确认放弃吗？')) return false;
+    if (editorState.dirty && !confirm('This document has unsaved changes. Discard them?')) return false;
     disposeDocumentEditor(editorState);
     editorState = null;
     document.getElementById('preview-content').classList.remove('editor-active');
@@ -1442,7 +1442,7 @@ const Tasks = (() => {
 
   async function openDocumentEditor(task, tab) {
     if (editorState || typeof monaco === 'undefined') {
-      if (typeof monaco === 'undefined') alert('编辑器资源加载失败，请刷新页面');
+      if (typeof monaco === 'undefined') alert('Editor resources failed to load. Please refresh the page');
       return;
     }
     stopWatcher();
@@ -1450,14 +1450,14 @@ const Tasks = (() => {
     const content = document.getElementById('preview-content');
     const editButton = document.getElementById('btn-edit-md');
     editButton.disabled = true;
-    content.innerHTML = '<div class="preview-loading">正在打开编辑器...</div>';
+    content.innerHTML = '<div class="preview-loading">Opening editor…</div>';
     try {
       const kind = documentKind(tab);
       const sourceKey = source.key;
       const res = await fetch(taskUrl(task.id, `/document/${kind}`), {
         headers: { 'X-Requested-With': 'XMLHttpRequest' },
       });
-      if (!res.ok) throw new Error('文档读取失败');
+      if (!res.ok) throw new Error('Could not read the document');
       const text = await res.text();
       if (selectedId !== task.id || activeTab !== tab || source.key !== sourceKey) return;
       content.classList.add('editor-active');
@@ -1465,10 +1465,10 @@ const Tasks = (() => {
         <div class="md-editor-shell">
           <div class="md-editor-header">
             <span class="md-editor-file">${escapeHtml(documentLabel(tab))}</span>
-            <span class="md-editor-status" id="md-editor-status">未修改</span>
-            <span class="md-editor-shortcuts">VS Code 原生快捷键 · Alt/Option+点击多光标 · Shift+Alt/Option+拖拽列选</span>
-            <button type="button" class="md-editor-action secondary" id="md-editor-cancel">取消</button>
-            <button type="button" class="md-editor-action primary" id="md-editor-save">保存</button>
+            <span class="md-editor-status" id="md-editor-status">Unmodified</span>
+            <span class="md-editor-shortcuts">VS Code shortcuts · Alt/Option+click for multiple cursors · Shift+Alt/Option+drag for column select</span>
+            <button type="button" class="md-editor-action secondary" id="md-editor-cancel">Cancel</button>
+            <button type="button" class="md-editor-action primary" id="md-editor-save">Save</button>
           </div>
           <div class="md-editor-host" id="md-editor-host"></div>
         </div>`;
@@ -1505,7 +1505,7 @@ const Tasks = (() => {
       editor.onDidChangeModelContent(() => {
         if (!editorState) return;
         editorState.dirty = model.getValue() !== text;
-        document.getElementById('md-editor-status').textContent = editorState.dirty ? '未保存' : '未修改';
+        document.getElementById('md-editor-status').textContent = editorState.dirty ? 'Unsaved' : 'Unmodified';
       });
       document.getElementById('md-editor-save').addEventListener('click', saveDocumentEditor);
       document.getElementById('md-editor-cancel').addEventListener('click', cancelDocumentEditor);
@@ -1514,7 +1514,7 @@ const Tasks = (() => {
       content.classList.remove('editor-active');
       editorState = null;
       editButton.disabled = false;
-      alert('打开编辑器失败: ' + e.message);
+      alert('Could not open the editor: ' + e.message);
       await loadMdContent(task, tab);
       startWatcher(task, tab);
     }
@@ -1527,7 +1527,7 @@ const Tasks = (() => {
     const saveButton = document.getElementById('md-editor-save');
     const status = document.getElementById('md-editor-status');
     saveButton.disabled = true;
-    status.textContent = '保存中...';
+    status.textContent = 'Saving…';
     try {
       await API.put(`${sources.get(state.sourceKey).tasksBase}/${state.task.id}/document/${state.kind}`, { content: state.model.getValue() });
       disposeDocumentEditor(state);
@@ -1539,15 +1539,15 @@ const Tasks = (() => {
     } catch (e) {
       state.saving = false;
       saveButton.disabled = false;
-      status.textContent = '保存失败';
-      alert('保存文档失败: ' + e.message);
+      status.textContent = 'Save failed';
+      alert('Could not save the document: ' + e.message);
     }
   }
 
   async function cancelDocumentEditor() {
     const state = editorState;
     if (!state) return;
-    if (state.dirty && !confirm('确认放弃未保存的修改吗？')) return;
+    if (state.dirty && !confirm('Discard unsaved changes?')) return;
     disposeDocumentEditor(state);
     editorState = null;
     document.getElementById('preview-content').classList.remove('editor-active');
@@ -1559,7 +1559,7 @@ const Tasks = (() => {
   async function renderTodos(task) {
     const content = document.getElementById('preview-content');
     const renderForId = task.id;
-    content.innerHTML = '<div class="preview-loading">正在加载待办...</div>';
+    content.innerHTML = '<div class="preview-loading">Loading to-dos…</div>';
     try {
       const todos = await API.get(taskUrl(task.id, '/todos'));
       if (selectedId !== renderForId || activeTab !== 'todos') return;
@@ -1569,24 +1569,24 @@ const Tasks = (() => {
         <section class="todo-page${writable ? '' : ' remote-readonly'}">
           <div class="todo-heading">
             <div>
-              <h2>待办清单</h2>
-              <p>${writable ? (todos.length ? `已完成 ${completedCount} / ${todos.length}` : '记录这个任务接下来要做的事情') : '当前连接为只读'}</p>
+              <h2>To-do list</h2>
+              <p>${writable ? (todos.length ? `${completedCount} / ${todos.length} done` : 'Write down what to do next for this task') : 'This connection is read-only'}</p>
             </div>
           </div>
           ${writable ? `<form class="todo-add-form" id="todo-add-form">
-            <input id="todo-new-content" type="text" maxlength="500" autocomplete="off" placeholder="添加一项待办，按 Enter 保存">
-            <button type="submit">添加</button>
+            <input id="todo-new-content" type="text" maxlength="500" autocomplete="off" placeholder="Add a to-do and press Enter to save">
+            <button type="submit">Add</button>
           </form>` : ''}
           <div class="todo-list" id="todo-list">
             ${todos.length ? todos.map(todo => `
               <div class="todo-item${todo.completed ? ' completed' : ''}" data-todo-id="${todo.id}">
-                <label class="todo-check-wrap" title="${todo.completed ? '标记为未完成' : '标记为已完成'}">
+                <label class="todo-check-wrap" title="${todo.completed ? 'Mark as not done' : 'Mark as done'}">
                   <input class="todo-check" type="checkbox" ${todo.completed ? 'checked' : ''} ${writable ? '' : 'disabled'}>
                   <span class="todo-checkmark"></span>
                 </label>
-                <span class="todo-content" ${writable ? 'title="双击编辑"' : ''}>${escapeHtml(todo.content)}</span>
-                ${writable ? '<button class="todo-delete" type="button" title="删除待办">×</button>' : ''}
-              </div>`).join('') : '<div class="todo-empty">还没有待办事项</div>'}
+                <span class="todo-content" ${writable ? 'title="Double-click to edit"' : ''}>${escapeHtml(todo.content)}</span>
+                ${writable ? '<button class="todo-delete" type="button" title="Delete to-do">×</button>' : ''}
+              </div>`).join('') : '<div class="todo-empty">No to-dos yet</div>'}
           </div>
         </section>`;
 
@@ -1603,7 +1603,7 @@ const Tasks = (() => {
           await renderTodos(task);
         } catch (e) {
           input.disabled = false;
-          alert('添加待办失败: ' + e.message);
+          alert('Could not add to-do: ' + e.message);
         }
       });
 
@@ -1617,7 +1617,7 @@ const Tasks = (() => {
             await renderTodos(task);
           } catch (e) {
             checkbox.checked = !checkbox.checked;
-            alert('更新待办失败: ' + e.message);
+            alert('Could not update to-do: ' + e.message);
           }
         });
         label.addEventListener('dblclick', () => editTodoInline(task, todoId, label));
@@ -1626,14 +1626,14 @@ const Tasks = (() => {
             await API.delete(taskUrl(task.id, `/todos/${todoId}`));
             await renderTodos(task);
           } catch (e) {
-            alert('删除待办失败: ' + e.message);
+            alert('Could not delete to-do: ' + e.message);
           }
         });
       });
       input.focus();
     } catch (e) {
       if (selectedId === renderForId && activeTab === 'todos') {
-        content.innerHTML = '<div class="preview-loading">待办加载失败</div>';
+        content.innerHTML = '<div class="preview-loading">Failed to load to-dos</div>';
       }
     }
   }
@@ -1658,7 +1658,7 @@ const Tasks = (() => {
       try {
         await API.put(taskUrl(task.id, `/todos/${todoId}`), { content });
       } catch (e) {
-        alert('更新待办失败: ' + e.message);
+        alert('Could not update to-do: ' + e.message);
       }
       await renderTodos(task);
     };
@@ -1677,7 +1677,7 @@ const Tasks = (() => {
   }
 
   function documentLabel(tab) {
-    return tab === 'readme' ? 'README.md' : tab === 'agent' ? 'AGENTS.md' : '技术方案';
+    return tab === 'readme' ? 'README.md' : tab === 'agent' ? 'AGENTS.md' : 'Design doc';
   }
 
   function isCurrentPreview(task, tab) {
@@ -1689,7 +1689,7 @@ const Tasks = (() => {
     const content = document.getElementById('preview-content');
     const savedScroll = parseInt(localStorage.getItem(`mdScroll_${storageId(task.id)}_${tab}`)) || 0;
     const scrollTop = previewPane.scrollTop || savedScroll;
-    // 记录本次渲染时的目标任务，异步回来后校验是否仍是当前任务/tab，防止竞态更新 UI
+    // Record the target task at render time and verify after the async return that it is still the current task/tab, preventing racy UI updates
     const revision = ++mdRenderRevision;
     const isCurrent = () => revision === mdRenderRevision && isCurrentPreview(task, tab);
 
@@ -1704,8 +1704,8 @@ const Tasks = (() => {
         const canCreate = (tab === 'readme' || tab === 'agent') && can('documents:create');
         content.innerHTML = `
           <div class="document-empty">
-            <p>${escapeHtml(documentLabel(tab))} 不存在</p>
-            ${canCreate ? `<button class="document-create-btn" id="document-create-btn">创建 ${escapeHtml(documentLabel(tab))}</button>` : ''}
+            <p>${escapeHtml(documentLabel(tab))} does not exist</p>
+            ${canCreate ? `<button class="document-create-btn" id="document-create-btn">Create ${escapeHtml(documentLabel(tab))}</button>` : ''}
           </div>`;
         if (canCreate) {
           document.getElementById('document-create-btn').addEventListener('click', async () => {
@@ -1715,7 +1715,7 @@ const Tasks = (() => {
               await loadMdContent(task, tab);
               startWatcher(task, tab);
             } catch (e) {
-              alert('创建文档失败: ' + e.message);
+              alert('Could not create the document: ' + e.message);
             }
           });
         }
@@ -1724,7 +1724,7 @@ const Tasks = (() => {
       if (!res.ok) throw new Error('Failed');
       const text = await res.text();
       if (!isCurrent()) return;
-      content.innerHTML = (can('documents:write') ? '' : `<div class="remote-readonly-banner">${escapeHtml(source.label)} · 只读连接</div>`) + renderMd(text, task.id);
+      content.innerHTML = (can('documents:write') ? '' : `<div class="remote-readonly-banner">${escapeHtml(source.label)} · read-only connection</div>`) + renderMd(text, task.id);
       MarkdownView.enhance(content);
       for (const script of Array.from(content.querySelectorAll('script'))) {
         if (!isCurrent()) return;
@@ -1740,16 +1740,16 @@ const Tasks = (() => {
           try { new Function(script.textContent)(); } catch (e) { /* inline script parse error, ignored */ }
         }
       }
-      // 逐个渲染 mermaid，单个失败不影响整体
+      // render mermaid diagrams one by one; one failure does not affect the rest
       for (const node of content.querySelectorAll('.mermaid')) {
         if (!isCurrent()) return;
         try {
           await ensureMermaid();
-          node.dataset.mermaidSource = node.textContent; // 切换主题时据此重新渲染
+          node.dataset.mermaidSource = node.textContent; // used to render again when the theme changes
           await mermaid.run({ nodes: [node] });
         } catch (e) {
           if (!isCurrent()) return;
-          node.innerHTML = `<pre style="color:#c0392b;font-size:12px;white-space:pre-wrap">⚠️ Mermaid 渲染失败：${e.message || e.str || '语法错误'}</pre>`;
+          node.innerHTML = `<pre style="color:#c0392b;font-size:12px;white-space:pre-wrap">⚠️ Mermaid rendering failed: ${e.message || e.str || 'Syntax error'}</pre>`;
         }
       }
       if (!isCurrent()) return;
@@ -1761,7 +1761,7 @@ const Tasks = (() => {
     } catch (e) {
       if (!isCurrent()) return;
       console.error('[loadMdContent] error:', e);
-      content.innerHTML = '<div class="preview-loading">加载失败，请检查文件路径是否有效</div>';
+      content.innerHTML = '<div class="preview-loading">Failed to load. Check that the file path is valid</div>';
     }
   }
 
@@ -1815,7 +1815,7 @@ const Tasks = (() => {
     const tocList = document.getElementById('toc-list');
     tocList.innerHTML = '';
 
-    // 加载折叠状态持久化
+    // load the persisted collapsed state
     const storageKey = `toc-collapsed-${storageId(selectedId)}`;
     let collapsed = new Set();
     try { collapsed = new Set(JSON.parse(localStorage.getItem(storageKey)) || []); } catch(e) {}
@@ -1824,15 +1824,15 @@ const Tasks = (() => {
       localStorage.setItem(storageKey, JSON.stringify([...collapsed]));
     }
 
-    // 构建树形结构：每个节点记录其子孙 item 索引
+    // Build the tree: every node records the indexes of its descendant items
     const items = Array.from(headings).map((h, i) => ({
       h,
       level: parseInt(h.tagName[1]),
       index: i,
-      children: [],   // 直接子孙 item index（所有层级）
+      children: [],  // direct and indirect descendant item indexes (all levels)
     }));
 
-    // 计算每个节点的"所有子孙"范围（level 更大的紧跟序列）
+    // Compute each node's "all descendants" range (the following run of larger levels)
     function getDescendants(idx) {
       const level = items[idx].level;
       const result = [];
@@ -1843,12 +1843,12 @@ const Tasks = (() => {
       return result;
     }
 
-    // 判断节点是否有子节点（下一个 level 更大）
+    // Decide whether a node has children (the next level is larger)
     function hasChildren(idx) {
       return idx + 1 < items.length && items[idx + 1].level > items[idx].level;
     }
 
-    // 渲染所有 item，绑定折叠逻辑
+    // Render all items and bind the collapse logic
     const domItems = items.map(({ h, level, index }) => {
       const item = document.createElement('div');
       item.className = 'toc-item';
@@ -1894,7 +1894,7 @@ const Tasks = (() => {
     });
 
     function updateVisibility() {
-      // 对每个 item，检查其所有祖先是否有折叠的
+      // for each item, check whether any of its ancestors is collapsed
       items.forEach((node, i) => {
         let hidden = false;
         for (let a = 0; a < i; a++) {
@@ -1956,7 +1956,7 @@ const Tasks = (() => {
   function showEmpty() {
     const empty = document.getElementById('preview-empty');
     empty.style.display = 'flex';
-    empty.querySelector('span').textContent = source.local || tasks.length ? '← 选择左侧任务查看详情' : `${source.label} 暂无任务`;
+    empty.querySelector('span').textContent = source.local || tasks.length ? '← Pick a task on the left to see details' : `${source.label} has no tasks`;
     document.getElementById('preview-content').style.display = 'none';
     contentToolbar.style.display = 'none';
     contentTabs.style.display = 'none';
@@ -1967,10 +1967,10 @@ const Tasks = (() => {
     stopWatcher();
   }
 
-  // 新建任务可选的目标：本地 Engine 和可连接且可写的远程 Engine。
+  // Targets selectable for a new task: the local Engine and remote Engines that are reachable and writable.
   function targetLabel(src) {
-    if (src.local) return '本地 Engine';
-    return `${src.label}${problemOf(src) ? '（离线）' : ''}`;
+    if (src.local) return 'Local engine';
+    return `${src.label}${problemOf(src) ? '(offline)' : ''}`;
   }
 
   function targetUsable(src) {
@@ -1986,55 +1986,55 @@ const Tasks = (() => {
     const selectedGroup = task.status || 'todo';
     const enginePicker = creating ? `
       <div class="form-group">
-        <label class="form-label">所属 Engine</label>
+        <label class="form-label">Engine</label>
         <select class="form-input" id="f-engine">
           ${[...sources.values()].map(src => `<option value="${escapeHtml(src.key)}" ${src === initialTarget ? 'selected' : ''} ${targetUsable(src) ? '' : 'disabled'}>${escapeHtml(targetLabel(src))}</option>`).join('')}
         </select>
-        <div class="form-hint" id="f-engine-hint">任务和工作目录将保存在所选 Engine 上</div>
+        <div class="form-hint" id="f-engine-hint">The task and working directory are stored on the selected engine</div>
       </div>` : '';
     return `
       ${enginePicker}
       <div class="form-group">
-        <label class="form-label">标题</label>
-        <input class="form-input" id="f-title" type="text" value="${escapeHtml(task.title || '')}" placeholder="任务标题（可由 MD 文件名自动填充）">
+        <label class="form-label">Title</label>
+        <input class="form-input" id="f-title" type="text" value="${escapeHtml(task.title || '')}" placeholder="Task title (can be filled from the MD file name)">
       </div>
       <details class="form-advanced" id="f-advanced" ${creating ? '' : 'open'}>
-        <summary class="form-advanced-toggle">高级设置</summary>
-      ${[['technical_path', '技术方案', 'DESIGN.md'], ['readme_path', 'README.md', 'README.md'], ['agent_path', 'AGENTS.md', 'AGENTS.md']].map(([field, label, name]) => {
+        <summary class="form-advanced-toggle">Advanced settings</summary>
+      ${[['technical_path', 'Design doc', 'DESIGN.md'], ['readme_path', 'README.md', 'README.md'], ['agent_path', 'AGENTS.md', 'AGENTS.md']].map(([field, label, name]) => {
         const override = task[field] || (field === 'technical_path' && task.md_path && !task.md_path.endsWith('/DESIGN.md') ? task.md_path : '');
         const root = task.work_dir || (task.md_path ? task.md_path.slice(0, task.md_path.lastIndexOf('/')) || '/' : '');
         const value = override || (task.id && root ? `${root.replace(/\/$/, '')}/${name}` : '');
         const id = field === 'technical_path' ? 'f-md-path' : `f-${field}`;
-        return `<div class="form-group"><label class="form-label">${label}路径</label><input class="form-input" id="${id}" type="text" value="${escapeHtml(value)}" data-path-override="${escapeHtml(override)}" data-initial-value="${escapeHtml(value)}" placeholder="留空使用工作目录下的 ${name}">${field === 'technical_path' ? '<div class="form-hint" id="f-md-hint"></div>' : ''}</div>`;
+        return `<div class="form-group"><label class="form-label">${label} path</label><input class="form-input" id="${id}" type="text" value="${escapeHtml(value)}" data-path-override="${escapeHtml(override)}" data-initial-value="${escapeHtml(value)}" placeholder="Leave empty to use ${name} in the working directory">${field === 'technical_path' ? '<div class="form-hint" id="f-md-hint"></div>' : ''}</div>`;
       }).join('')}
-      <div class="form-hint">三个路径均可填写绝对 Markdown 文件路径；已有文件直接使用，缺失时创建。清空后恢复工作目录下的默认文件。</div>
+      <div class="form-hint">All three paths accept an absolute Markdown file path; existing files are used as-is and missing ones are created. Clear a field to go back to the default file in the working directory.</div>
       <div class="form-group">
-        <label class="form-label" id="f-work-dir-label">${initialRemote ? '远程工作目录' : '工作目录'}</label>
-        <input class="form-input" id="f-work-dir" type="text" value="${escapeHtml(task.work_dir || '')}" placeholder="${initialRemote ? '/home/user/projects/example' : '自动取 MD 文件所在目录'}" autocomplete="off">
-        <div class="form-hint" id="f-work-dir-hint">${initialRemote ? '填写远程 Engine 上的绝对路径；目录不存在时会自动创建，技术方案默认为该目录下的 DESIGN.md' : '文档和终端均使用此目录；优先读取已有 DESIGN.md、README.md、AGENTS.md，缺失时创建'}</div>
+        <label class="form-label" id="f-work-dir-label">${initialRemote ? 'Remote working directory' : 'Working directory'}</label>
+        <input class="form-input" id="f-work-dir" type="text" value="${escapeHtml(task.work_dir || '')}" placeholder="${initialRemote ? '/home/user/projects/example' : 'Defaults to the MD file directory'}" autocomplete="off">
+        <div class="form-hint" id="f-work-dir-hint">${initialRemote ? 'Absolute path on the remote engine; created if missing. The design doc defaults to DESIGN.md in this directory' : 'Docs and the terminal use this directory; existing DESIGN.md, README.md and AGENTS.md are used first and created if missing'}</div>
       </div>
       <div class="form-group">
-        <label class="form-label">优先级</label>
+        <label class="form-label">Priority</label>
         <div class="form-radio-group">
-          <label><input type="radio" name="priority" value="low" ${task.priority === 'low' ? 'checked' : ''}> 低</label>
-          <label><input type="radio" name="priority" value="normal" ${(!task.priority || task.priority === 'normal') ? 'checked' : ''}> 中</label>
-          <label><input type="radio" name="priority" value="high" ${task.priority === 'high' ? 'checked' : ''}> 高</label>
+          <label><input type="radio" name="priority" value="low" ${task.priority === 'low' ? 'checked' : ''}> Low</label>
+          <label><input type="radio" name="priority" value="normal" ${(!task.priority || task.priority === 'normal') ? 'checked' : ''}> Medium</label>
+          <label><input type="radio" name="priority" value="high" ${task.priority === 'high' ? 'checked' : ''}> High</label>
         </div>
       </div>
       <div class="form-group">
-        <label class="form-label">分组</label>
+        <label class="form-label">Group</label>
         <select class="form-input" id="f-task-group">
           ${initialGroups.map(group => `<option value="${escapeHtml(group.key)}" ${group.key === selectedGroup ? 'selected' : ''}>${escapeHtml(group.name)}</option>`).join('')}
         </select>
       </div>
       <div class="form-group">
-        <label class="form-label">截止日期</label>
+        <label class="form-label">Due date</label>
         <input class="form-input" id="f-due-date" type="date" value="${task.due_date || ''}">
       </div>
       </details>
       <div class="form-actions">
-        <button class="btn-cancel" id="f-cancel">取消</button>
-        <button class="btn-submit" id="f-submit">${task.id ? '保存' : '创建'}</button>
+        <button class="btn-cancel" id="f-cancel">Cancel</button>
+        <button class="btn-submit" id="f-submit">${task.id ? 'Save' : 'Create'}</button>
       </div>`;
   }
 
@@ -2051,7 +2051,7 @@ const Tasks = (() => {
     const engineHint = document.getElementById('f-engine-hint');
     const groupInput = document.getElementById('f-task-group');
 
-    // 创建时由“所属 Engine”决定目标；编辑时就是当前数据源。
+    // When creating, the target comes from "Engine"; when editing it is the current data source.
     const target = () => (engineInput ? sources.get(engineInput.value) : source) || source;
 
     function updateGroupOptions() {
@@ -2065,13 +2065,13 @@ const Tasks = (() => {
     function updateEnginePathFields() {
       const remote = !target().local;
       if (engineHint) {
-        engineHint.textContent = remote ? '任务和目录将创建在远程 Engine 上' : '任务和工作目录将保存在本地 Engine 上';
+        engineHint.textContent = remote ? 'The task and directory will be created on the remote engine' : 'The task and working directory are stored on the local engine';
       }
-      workDirLabel.textContent = remote ? '远程工作目录' : '工作目录';
-      workDirInput.placeholder = remote ? '/home/user/projects/example' : '自动取 MD 文件所在目录';
+      workDirLabel.textContent = remote ? 'Remote working directory' : 'Working directory';
+      workDirInput.placeholder = remote ? '/home/user/projects/example' : 'Defaults to the MD file directory';
       workDirHint.textContent = remote
-        ? '填写远程 Engine 上的绝对路径；目录不存在时会自动创建，技术方案默认为该目录下的 DESIGN.md'
-        : '文档和终端均使用此目录；优先读取已有 DESIGN.md、README.md、AGENTS.md，缺失时创建';
+        ? 'Absolute path on the remote engine; created if missing. The design doc defaults to DESIGN.md in this directory'
+        : 'Docs and the terminal use this directory; existing DESIGN.md, README.md and AGENTS.md are used first and created if missing';
       mdHint.textContent = '';
       mdHint.className = 'form-hint';
       mdInput.classList.remove('error');
@@ -2090,8 +2090,8 @@ const Tasks = (() => {
       if (!val) { mdHint.textContent = ''; mdHint.className = 'form-hint'; return; }
       const dest = target();
       if (dest.caps !== null && !dest.caps.has('paths:validate')) {
-        // 旧版 Engine 没有路径校验接口，创建时再校验。
-        mdHint.textContent = '路径将在远程 Engine 创建时校验';
+        // An old Engine has no path-validation endpoint; validate at creation instead.
+        mdHint.textContent = 'The path is validated when created on the remote engine';
         mdHint.className = 'form-hint';
         mdInput.classList.remove('error');
         return;
@@ -2099,7 +2099,7 @@ const Tasks = (() => {
       try {
         const result = await API.post(`${dest.tasksBase}/validate-path`, { md_path: val });
         if (result.valid) {
-          mdHint.textContent = '✓ 文件存在';
+          mdHint.textContent = '✓ File exists';
           mdHint.className = 'form-hint ok';
           mdInput.classList.remove('error');
           if (!titleInput.value.trim()) titleInput.value = result.filename;
@@ -2110,7 +2110,7 @@ const Tasks = (() => {
           mdInput.classList.add('error');
         }
       } catch (e) {
-        mdHint.textContent = '校验失败';
+        mdHint.textContent = 'Validation failed';
         mdHint.className = 'form-hint error';
       }
     });
@@ -2149,19 +2149,19 @@ const Tasks = (() => {
           await showCreatedTask(dest, created);
         }
       } catch (e) {
-        alert('操作失败: ' + e.message);
+        alert('Operation failed: ' + e.message);
       }
     });
   }
 
-  // 新建后切换到目标 Engine 并选中新任务。
+  // After creating, switch to the target Engine and select the new task.
   async function showCreatedTask(dest, created) {
     await reloadSource(dest.key);
     dest.selectedId = created.id;
     if (dest === source) {
       tasks = source.tasks;
       renderSidebar();
-      selectedId = null;       // 强制走完整的选中流程，处理 TOC 显隐
+      selectedId = null;       // force the full selection flow so the TOC visibility is handled
       selectTask(created.id);
     } else {
       activateSource(dest.key);
@@ -2169,16 +2169,16 @@ const Tasks = (() => {
   }
 
   function showEditModal(task) {
-    Modal.show('编辑任务', buildTaskForm(task));
+    Modal.show('Edit task', buildTaskForm(task));
     setupFormEvents(task);
   }
 
   document.getElementById('btn-new-task').addEventListener('click', () => {
-    Modal.show('新建任务', buildTaskForm());
+    Modal.show('New task', buildTaskForm());
     setupFormEvents();
   });
 
-  // load 读取本地任务；随后回到上次使用的数据源（远程 Engine 由 Engines 模块注册后再恢复）。
+  // load reads the local tasks; then it returns to the last used data source (remote Engines are restored after the Engines module registers them).
   return {
     async load() {
       await reloadSource('local');
@@ -2206,7 +2206,7 @@ const Tasks = (() => {
     closeTerminal,
     deleteTerminal,
     restartTerminalFromWorkDir,
-    // 返回是否真的发出去了（终端未连接、暂停或正在上传图片时为 false）。
+    // Returns whether it was really sent (false while the terminal is disconnected, paused or an image is uploading).
     sendTerminalInput(data) {
       if (TerminalImages.busy) return false;
       const instance = termInstances.get(terminalKey(selectedId));

@@ -13,7 +13,7 @@ async function check(server, secret, requestFn = request) {
   return requestFn(server.base_url, '/v1/update/check', remoteCredential(server, secret), {
     method: 'POST',
     body: {},
-    // Git 安装会先 fetch，允许使用 update-manager 的 120 秒上限。
+    // A Git install fetches first, so allow update-manager's 120 second limit.
     timeoutMs: 150_000,
   });
 }

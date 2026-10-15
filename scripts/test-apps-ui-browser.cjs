@@ -1,4 +1,4 @@
-// 真实浏览器验证“应用列表”页：真实路由/服务/页面脚本，假的 PM2 和端口检测。
+// Verify the "App list" page in a real browser: real routes/services/page scripts, fake PM2 and port detection.
 const { chromium } = require('playwright');
 const express = require('express');
 const Database = require('better-sqlite3');
@@ -37,8 +37,8 @@ const service = createAppsService({
   portDetector: { detect: async pids => new Map(pids.map(pid => [pid, pid === 111 ? [{ port: 3000, local_only: false }, { port: 9229, local_only: true }] : []])) },
   interfaces: () => ({ en0: [{ family: 'IPv4', address: '192.168.1.8', internal: false }] }),
 });
-service.registry.create({ name: 'blog', description: '个人博客', domain: 'https://blog.example.com', port: 8080 });
-service.registry.register({ name: 'billing-api', port: 7001, description: '程序自注册' });
+service.registry.create({ name: 'blog', description: 'Personal blog', domain: 'https://blog.example.com', port: 8080 });
+service.registry.register({ name: 'billing-api', port: 7001, description: 'Self-registered' });
 
 const index = fs.readFileSync(path.join(root, 'public/index.html'), 'utf8');
 const nav = index.match(/<nav class="main-nav"[\s\S]*?<\/nav>/)[0];
@@ -51,15 +51,15 @@ const modalHtml = '<div id="modal-overlay" style="display:none"><div id="modal">
 const tasksStub = `<script>const Tasks = (() => {
   const listeners = new Set();
   const sources = {
-    local: { key: 'local', label: '默认', local: true },
-    'remote:7': { key: 'remote:7', label: '远程机', local: false, id: 7, role: 'owner', caps: new Set(['pm2:manage', 'apps:manage']) },
-    'remote:8': { key: 'remote:8', label: '旧引擎', local: false, id: 8, role: 'owner', caps: new Set(['pm2:manage']) },
+    local: { key: 'local', label: 'Default', local: true },
+    'remote:7': { key: 'remote:7', label: 'Remote machine', local: false, id: 7, role: 'owner', caps: new Set(['pm2:manage', 'apps:manage']) },
+    'remote:8': { key: 'remote:8', label: 'Old engine', local: false, id: 8, role: 'owner', caps: new Set(['pm2:manage']) },
   };
   let active = 'local';
   return { getActiveKey: () => active, getSource: key => sources[key], problemOf: () => null, onSourceChange: fn => listeners.add(fn),
     switchTo(key) { active = key; listeners.forEach(fn => fn()); } };
 })();</script>`;
-// Modal 与 app.js 里的实现等价（只保留这里用到的部分）。
+// Modal is equivalent to the one in app.js (only the parts used here are kept).
 const modalStub = `<script>const Modal = {
   show(title, bodyHtml) { document.getElementById('modal-title').textContent = title; document.getElementById('modal-body').innerHTML = bodyHtml; document.getElementById('modal-overlay').style.display = 'flex'; },
   hide() { document.getElementById('modal-overlay').style.display = 'none'; document.getElementById('modal-body').innerHTML = ''; } };</script>`;
@@ -79,7 +79,7 @@ function serve() {
   const track = label => (req, res, next) => { seen.push(`${label} ${req.method} ${req.path}`); next(); };
   app.use('/api/apps', track('local-apps'), createAppsRouter({ service, requireAuth: auth }));
   app.use('/api/pm2', track('local-pm2'), createPm2Router({ manager: pm2Manager, requireAuth: auth }));
-  // 远程引擎 7 经代理访问同一套服务；旧引擎 8 不应收到任何应用请求。
+  // Remote engine 7 reaches the same services through the proxy; old engine 8 must not receive any app request.
   app.use('/api/remote-servers/7/apps', track('remote7-apps'), createAppsRouter({ service, requireAuth: auth }));
   app.use('/api/remote-servers/7/pm2', track('remote7-pm2'), createPm2Router({ manager: pm2Manager, requireAuth: auth }));
   app.use('/api/remote-servers/8', (req, res) => { seen.push(`remote8 ${req.method} ${req.path}`); res.status(404).end(); });
@@ -99,126 +99,126 @@ function serve() {
     const row = name => page.locator(`#apps-body tr:has(.apps-name:has-text("${name}"))`);
     await page.waitForFunction(() => document.querySelectorAll('#apps-body tr').length === 4);
 
-    // 1. 列表：PM2 自动登记、手动、程序注册；端口与地址
+    // 1. List: PM2 auto-registered, manual, self-registered; ports and addresses
     assert.deepEqual(await page.locator('#apps-body .apps-name').evaluateAll(nodes => nodes.map(n => n.querySelector('a,strong').textContent)), ['billing-api', 'blog', 'web', 'worker']);
     const web = row('web');
     assert.match(await web.textContent(), /online/);
     assert.match(await web.textContent(), /5\.0 MB/);
     assert.match(await web.textContent(), /3000/);
-    assert.match(await web.textContent(), /另有 9229/);
+    assert.match(await web.textContent(), /Also: 9229/);
     const webLink = web.locator('.apps-links a').first();
     assert.equal(await webLink.getAttribute('href'), 'http://192.168.1.8:3000/');
     assert.equal(await webLink.getAttribute('target'), '_blank');
     assert.match(await webLink.getAttribute('rel'), /noopener/);
-    assert.match(await row('blog').textContent(), /手动/);
-    assert.match(await row('blog').textContent(), /个人博客/);
+    assert.match(await row('blog').textContent(), /Manual/);
+    assert.match(await row('blog').textContent(), /Personal blog/);
     const blogLinks = await row('blog').locator('.apps-links a').evaluateAll(nodes => nodes.map(n => n.getAttribute('href')));
-    assert.deepEqual(blogLinks, ['https://blog.example.com', 'http://192.168.1.8:8080/'], '域名在前，IP 在后');
-    assert.match(await row('billing-api').textContent(), /程序注册/);
+    assert.deepEqual(blogLinks, ['https://blog.example.com', 'http://192.168.1.8:8080/'], 'Domain first, IP after');
+    assert.match(await row('billing-api').textContent(), /Self-registered/);
     assert.match(await row('worker').textContent(), /stopped/);
-    assert.equal(await row('blog').getByRole('button', { name: '重启', exact: true }).count(), 0, '没有关联 PM2 的应用没有 PM2 按钮');
-    assert.equal(await web.getByRole('button', { name: '停止', exact: true }).count(), 1);
-    assert.equal(await row('worker').getByRole('button', { name: '启动', exact: true }).count(), 1);
-    assert.ok(!(await page.content()).includes('SECRET'), '页面里不能出现进程环境变量');
+    assert.equal(await row('blog').getByRole('button', { name: 'Restart', exact: true }).count(), 0, 'Apps not linked to PM2 have no PM2 buttons');
+    assert.equal(await web.getByRole('button', { name: 'Stop', exact: true }).count(), 1);
+    assert.equal(await row('worker').getByRole('button', { name: 'Start', exact: true }).count(), 1);
+    assert.ok(!(await page.content()).includes('SECRET'), 'The page must not contain process environment variables');
     assert.match(await page.textContent('#apps-register-example'), /\/v1\/apps\/register/);
     await page.screenshot({ path: process.env.APPS_UI_SHOT || path.join(dir, 'apps-ui.png') });
 
-    // 2. 新增：校验错误留在表单里，成功后出现在列表
+    // 2. Add: validation errors stay in the form, and on success the app appears in the list
     await page.click('#apps-add');
     await page.fill('#app-f-name', 'docs');
     await page.fill('#app-f-port', '9000');
     await page.fill('#app-f-domain', 'docs.example.com');
     await page.fill('#app-f-url', 'javascript:alert(1)');
-    await page.getByRole('button', { name: '保存' }).click();
+    await page.getByRole('button', { name: 'Save' }).click();
     await page.waitForFunction(() => document.querySelector('#modal-body .form-hint.error')?.textContent.length > 0);
-    assert.match(await page.textContent('#modal-body .form-hint.error'), /http:\/\/ 或 https:\/\//);
-    assert.equal(await page.isVisible('#modal-overlay'), true, '校验失败时弹窗保持打开');
+    assert.match(await page.textContent('#modal-body .form-hint.error'), /http:\/\/ or https:\/\//);
+    assert.equal(await page.isVisible('#modal-overlay'), true, 'The dialog stays open when validation fails');
     await page.fill('#app-f-url', '');
     await page.fill('#app-f-name', 'BLOG');
-    await page.getByRole('button', { name: '保存' }).click();
-    await page.waitForFunction(() => /已有同名应用/.test(document.querySelector('#modal-body .form-hint.error')?.textContent || ''));
+    await page.getByRole('button', { name: 'Save' }).click();
+    await page.waitForFunction(() => /An app with this name already exists/.test(document.querySelector('#modal-body .form-hint.error')?.textContent || ''));
     await page.fill('#app-f-name', 'docs');
-    await page.getByRole('button', { name: '保存' }).click();
+    await page.getByRole('button', { name: 'Save' }).click();
     await page.waitForFunction(() => document.querySelectorAll('#apps-body tr').length === 5);
     assert.equal(await page.isVisible('#modal-overlay'), false);
     assert.deepEqual(await row('docs').locator('.apps-links a').evaluateAll(nodes => nodes.map(n => n.getAttribute('href'))), ['http://docs.example.com', 'http://192.168.1.8:9000/']);
 
-    // 3. 编辑：回显已保存的值；自动检测到的值只是占位符，不会被固化保存
-    await row('docs').getByRole('button', { name: '编辑' }).click();
+    // 3. Edit: saved values are echoed; auto-detected values are only placeholders and are not persisted
+    await row('docs').getByRole('button', { name: 'Edit' }).click();
     assert.equal(await page.inputValue('#app-f-port'), '9000');
     assert.equal(await page.inputValue('#app-f-domain'), 'docs.example.com');
     await page.fill('#app-f-port', '9100');
-    await page.fill('#app-f-description', '文档站');
-    await page.getByRole('button', { name: '保存' }).click();
-    await page.waitForFunction(() => document.querySelector('#apps-body')?.textContent.includes('文档站'));
+    await page.fill('#app-f-description', 'Docs site');
+    await page.getByRole('button', { name: 'Save' }).click();
+    await page.waitForFunction(() => document.querySelector('#apps-body')?.textContent.includes('Docs site'));
     assert.match(await row('docs').textContent(), /9100/);
 
-    await web.getByRole('button', { name: '编辑' }).click();
-    assert.equal(await page.inputValue('#app-f-port'), '', '没有手动设置端口时输入框为空');
-    assert.equal(await page.getAttribute('#app-f-port', 'placeholder'), '自动：3000', '实际生效的端口作为占位符显示');
+    await web.getByRole('button', { name: 'Edit' }).click();
+    assert.equal(await page.inputValue('#app-f-port'), '', 'The input is empty when no port was set manually');
+    assert.equal(await page.getAttribute('#app-f-port', 'placeholder'), 'Auto: 3000', 'The effective port is shown as a placeholder');
     await page.fill('#app-f-domain', 'web.example.com');
-    await page.getByRole('button', { name: '保存' }).click();
+    await page.getByRole('button', { name: 'Save' }).click();
     await page.waitForFunction(() => document.querySelector('#apps-body')?.textContent.includes('web.example.com'));
     const stored = (await (await fetch(`http://127.0.0.1:${server.address().port}/api/apps`)).json()).apps.find(app => app.name === 'web');
-    assert.equal(stored.port, null, '保存时没有把自动检测到的端口写成固定值');
+    assert.equal(stored.port, null, 'Saving does not turn the auto-detected port into a fixed value');
     assert.equal(stored.domain, 'web.example.com');
     assert.equal(stored.effective_port, 3000);
 
-    // 4. PM2 操作：重启 / 停止（需确认）/ 启动
-    await web.getByRole('button', { name: '重启', exact: true }).click();
-    await page.waitForFunction(() => /重启 3/.test(document.querySelector('#apps-body tr:has(.apps-name) ')?.parentElement.textContent));
-    await web.getByRole('button', { name: '停止', exact: true }).click();
-    assert.match(page.lastDialog, /确定停止 web/);
+    // 4. PM2 actions: restart / stop (needs confirmation) / start
+    await web.getByRole('button', { name: 'Restart', exact: true }).click();
+    await page.waitForFunction(() => /3 restarts/.test(document.querySelector('#apps-body tr:has(.apps-name) ')?.parentElement.textContent));
+    await web.getByRole('button', { name: 'Stop', exact: true }).click();
+    assert.match(page.lastDialog, /Stop web/);
     await page.waitForFunction(() => [...document.querySelectorAll('#apps-body tr')].find(r => r.textContent.includes('web.example.com') || r.querySelector('.apps-name')?.textContent.startsWith('web'))?.querySelector('.pm2-badge')?.textContent === 'stopped');
-    await row('web').getByRole('button', { name: '启动', exact: true }).click();
+    await row('web').getByRole('button', { name: 'Start', exact: true }).click();
     await page.waitForFunction(() => [...document.querySelectorAll('#apps-body tr')].find(r => r.querySelector('.apps-name')?.textContent.startsWith('web'))?.querySelector('.pm2-badge')?.textContent === 'online');
 
-    // 5. 日志
-    await row('web').getByRole('button', { name: '日志' }).click();
+    // 5. Logs
+    await row('web').getByRole('button', { name: 'Logs' }).click();
     await page.waitForFunction(() => document.getElementById('apps-log-text')?.textContent.includes('line 30'));
-    await page.getByRole('button', { name: '关闭' }).click();
+    await page.getByRole('button', { name: 'Close' }).click();
     assert.equal(await page.isVisible('#modal-overlay'), false);
 
-    // 6. 删除：手动的直接删；PM2 自动登记且仍在 PM2 里的只隐藏，可以恢复
-    await row('docs').getByRole('button', { name: '删除' }).click();
+    // 6. Delete: manual apps are deleted directly; PM2 auto-registered ones still in PM2 are only hidden and can be restored
+    await row('docs').getByRole('button', { name: 'Delete' }).click();
     await page.waitForFunction(() => document.querySelectorAll('#apps-body tr').length === 4);
-    await row('worker').getByRole('button', { name: '删除' }).click();
-    assert.match(page.lastDialog, /PM2 进程本身不会被停止或删除/);
+    await row('worker').getByRole('button', { name: 'Delete' }).click();
+    assert.match(page.lastDialog, /the PM2 process itself is not stopped or deleted/);
     await page.waitForFunction(() => document.querySelectorAll('#apps-body tr').length === 3);
     await page.waitForFunction(() => !document.getElementById('apps-restore').hidden);
-    assert.match(await page.textContent('#apps-restore'), /恢复已隐藏的 1 个/);
+    assert.match(await page.textContent('#apps-restore'), /Restore 1 hidden/);
     await page.waitForTimeout(300);
-    assert.equal(await page.locator('#apps-body tr').count(), 3, '刷新后被隐藏的服务不会自己回来');
+    assert.equal(await page.locator('#apps-body tr').count(), 3, 'A service hidden earlier does not come back after a refresh');
     await page.click('#apps-restore');
     await page.waitForFunction(() => document.querySelectorAll('#apps-body tr').length === 4 && document.getElementById('apps-restore').hidden);
 
-    // 7. 注入防护：名称/说明里的 HTML 只会被当作文字
+    // 7. Injection protection: HTML in the name/description is treated as text only
     service.registry.register({ name: '<img src=x onerror="window.__xss=1">', description: '<script>window.__xss=2</script>', port: 5555 });
     await page.click('#apps-refresh');
     await page.waitForFunction(() => document.querySelectorAll('#apps-body tr').length === 5);
     assert.equal(await page.evaluate(() => window.__xss), undefined);
     assert.match(await page.textContent('#apps-body'), /<img src=x onerror=/);
 
-    // 8. 跟随引擎：远程引擎走代理地址；不支持应用列表的旧引擎只显示原因且不发请求
+    // 8. Follow the engine: a remote engine goes through the proxy address; an old engine without the app list shows only the reason and sends no request
     await page.evaluate(() => Tasks.switchTo('remote:7'));
-    await page.waitForFunction(() => document.getElementById('apps-engine').textContent.includes('远程机'));
+    await page.waitForFunction(() => document.getElementById('apps-engine').textContent.includes('Remote machine'));
     await page.waitForFunction(() => document.querySelectorAll('#apps-body tr').length === 5);
     assert.ok(server.seen.some(item => item.startsWith('remote7-apps GET')));
-    assert.match(await page.textContent('#apps-register-example'), /远程引擎/);
-    await row('web').getByRole('button', { name: '重启', exact: true }).click();
-    await page.waitForFunction(() => /重启 4/.test(document.getElementById('apps-body').textContent));
-    assert.ok(server.seen.some(item => item.startsWith('remote7-pm2 POST')), 'PM2 操作也走该引擎的 PM2 代理');
+    assert.match(await page.textContent('#apps-register-example'), /remote engine/);
+    await row('web').getByRole('button', { name: 'Restart', exact: true }).click();
+    await page.waitForFunction(() => /4 restarts/.test(document.getElementById('apps-body').textContent));
+    assert.ok(server.seen.some(item => item.startsWith('remote7-pm2 POST')), 'PM2 actions also go through that engine’s PM2 proxy');
 
     await page.evaluate(() => Tasks.switchTo('remote:8'));
-    await page.waitForFunction(() => document.getElementById('apps-hint').textContent.includes('暂不支持应用列表'));
+    await page.waitForFunction(() => document.getElementById('apps-hint').textContent.includes('too old to support the app list'));
     assert.equal(await page.isVisible('#apps-table'), false);
     assert.equal(await page.isDisabled('#apps-add'), true);
     await page.waitForTimeout(300);
-    assert.deepEqual(server.seen.filter(item => item.startsWith('remote8')), [], '旧引擎不会收到应用请求');
+    assert.deepEqual(server.seen.filter(item => item.startsWith('remote8')), [], 'An old engine does not receive app requests');
     await page.evaluate(() => Tasks.switchTo('local'));
     await page.waitForFunction(() => document.querySelectorAll('#apps-body tr').length === 5 && !document.getElementById('apps-add').disabled);
 
-    // 9. 页面切换：切回任务页时应用页关闭，实用工具页互不影响
+    // 9. Page switching: the app page closes when switching back to the tasks page, and the utilities page is unaffected
     await page.click('#tab-tools');
     assert.equal(await page.isHidden('#apps-panel'), true);
     assert.equal(await page.isVisible('#tools-panel'), true);

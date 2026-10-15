@@ -85,7 +85,7 @@ router.get('/', (req, res) => {
   res.json(db.prepare('SELECT * FROM remote_servers WHERE owner_id = ? ORDER BY created_at ASC').all(owner(req)).map(publicServer));
 });
 
-// 当前远程节点上的文件同步服务。路径固定，避免转发任意地址。
+// File-sync service on the current remote node. The path is fixed so arbitrary addresses are never forwarded to.
 router.all('/:id/file-sync', (req, res) => proxyFileSync(req, res, ''));
 router.all('/:id/file-sync/:action', (req, res) => proxyFileSync(req, res, req.params.action));
 async function proxyFileSync(req, res, action) {
@@ -158,7 +158,7 @@ router.put('/:id', async (req, res) => {
   const row = getServer(req);
   if (!row) return res.status(404).json({ error: 'REMOTE_NOT_FOUND' });
   try {
-    // 验证新地址时沿用已加密保存的 Token；只有远端认证成功后才落库。
+    // When verifying a new address, reuse the encrypted saved Token; it is only persisted after the remote authenticates successfully.
     const { baseUrl, capabilities } = await inspectRemoteAddress(row, req.body, config.sessionSecret);
     persistRemoteServerEdit(db, row, owner(req), req.body, baseUrl, capabilities);
     res.json(publicServer(db.prepare('SELECT * FROM remote_servers WHERE id = ?').get(row.id)));
@@ -215,14 +215,14 @@ router.post('/:id/apply-update', async (req, res) => {
   }
 });
 
-// ── PM2：管理该 Engine 所在机器上的进程，透传到 Engine 的 /v1/pm2（仅 owner Token 可用） ──
+// ── PM2: manage processes on the machine of this Engine, passed through to the Engine's /v1/pm2 (owner Token only) ──
 async function proxyPm2(req, res, pathname, options) {
   const row = getServer(req);
   if (!row) return res.status(404).json({ error: 'REMOTE_NOT_FOUND' });
   try {
     res.json(await request(row.base_url, pathname, decryptToken(row.token_cipher, config.sessionSecret), options));
   } catch (error) {
-    // 旧版 Engine 没有 /v1/pm2：路由不存在时返回通用的 404，需要与“未安装 PM2”（PM2_NOT_INSTALLED）区分。
+    // An old Engine has no /v1/pm2: a missing route returns a generic 404, which must be told apart from "PM2 not installed" (PM2_NOT_INSTALLED).
     if (error.message === 'REMOTE_HTTP_404') return res.status(501).json({ error: 'PM2_UNSUPPORTED' });
     res.status(error.statusCode || 502).json({ error: safeError(error) });
   }
@@ -240,14 +240,14 @@ router.post('/:id/pm2/:pid/:action', (req, res) => (
   proxyPm2(req, res, `/v1/pm2/${encodeURIComponent(req.params.pid)}/${encodeURIComponent(req.params.action)}`, { method: 'POST', body: {} })
 ));
 
-// ── 应用列表：透传到 Engine 的 /v1/apps（仅 owner Token 可用） ──
+// ── App list: passed through to the Engine's /v1/apps (owner Token only) ──
 async function proxyApps(req, res, pathname, options) {
   const row = getServer(req);
   if (!row) return res.status(404).json({ error: 'REMOTE_NOT_FOUND' });
   try {
     res.json(await request(row.base_url, pathname, decryptToken(row.token_cipher, config.sessionSecret), options));
   } catch (error) {
-    // 旧版 Engine 没有 /v1/apps：路由不存在时是通用 404，与“找不到这个应用”（APP_NOT_FOUND）区分。
+    // An old Engine has no /v1/apps: a missing route returns a generic 404, which is told apart from "app not found" (APP_NOT_FOUND).
     if (error.message === 'REMOTE_HTTP_404') return res.status(501).json({ error: 'APPS_UNSUPPORTED' });
     res.status(error.statusCode || 502).json({ error: safeError(error) });
   }
@@ -260,15 +260,15 @@ router.post('/:id/apps/restore-hidden', (req, res) => proxyApps(req, res, '/v1/a
 router.put('/:id/apps/:appId', (req, res) => proxyApps(req, res, appPath(req), { method: 'PUT', body: req.body || {} }));
 router.delete('/:id/apps/:appId', (req, res) => proxyApps(req, res, appPath(req), { method: 'DELETE' }));
 
-// ── 与本地 /api/tasks 对齐的透传接口：Engine 的能力与 Client 一致 ──
-// 返回 { row, token }；找不到连接时已经响应 404。
+// ── Passthrough endpoints aligned with the local /api/tasks: an Engine's capabilities match the Client's ──
+// Returns { row, token }; if the connection is not found the 404 has already been sent.
 function remoteTarget(req, res) {
   const row = getServer(req);
   if (!row) { res.status(404).json({ error: 'REMOTE_NOT_FOUND' }); return null; }
   return { row, token: decryptToken(row.token_cipher, config.sessionSecret) };
 }
 
-// 把 JSON 请求原样转给 Engine；upstream 由已校验的路径参数拼出。
+// Forward the JSON request to the Engine unchanged; upstream is built from validated path parameters.
 function forwardJson(method, upstream, { success = 200 } = {}) {
   return async (req, res) => {
     const target = remoteTarget(req, res);
@@ -285,10 +285,10 @@ const taskPath = req => `/v1/tasks/${encodeURIComponent(req.params.taskId)}`;
 const documentKindOk = (req, res, next) => (['technical', 'readme', 'agent'].includes(req.params.kind)
   ? next() : res.status(400).json({ error: 'INVALID_DOCUMENT_KIND' }));
 
-// 连接的能力与角色，前端据此启用/禁用功能（旧版 Engine 没有的能力会被禁用）。
+// Capabilities and role of the connection, which the frontend uses to enable/disable features (capabilities missing from an old Engine are disabled).
 router.get('/:id/info', forwardJson('GET', () => '/v1/info'));
 
-// "reorder" 与 "validate-path" 必须先于 /:id/tasks/:taskId 注册。
+// "reorder" and "validate-path" must be registered before /:id/tasks/:taskId.
 router.put('/:id/tasks/reorder', forwardJson('PUT', () => '/v1/tasks/reorder'));
 router.post('/:id/tasks/validate-path', forwardJson('POST', () => '/v1/tasks/validate-path'));
 
@@ -299,7 +299,7 @@ router.post('/:id/tasks/:taskId/todos', forwardJson('POST', req => `${taskPath(r
 router.put('/:id/tasks/:taskId/todos/:todoId', forwardJson('PUT', req => `${taskPath(req)}/todos/${encodeURIComponent(req.params.todoId)}`));
 router.delete('/:id/tasks/:taskId/todos/:todoId', forwardJson('DELETE', req => `${taskPath(req)}/todos/${encodeURIComponent(req.params.todoId)}`));
 
-// 工作目录工具（导入未管理目录、清理代码目录）：旧版 Engine 没有这些接口时返回 501。
+// Workspace tools (import unmanaged directories, clean up code directories): return 501 when an old Engine lacks these endpoints.
 async function proxyWorkspace(req, res, pathname, method = 'GET', success = 200) {
   const target = remoteTarget(req, res);
   if (!target) return;
@@ -320,7 +320,7 @@ router.post('/:id/workspace/restore', (req, res) => proxyWorkspace(req, res, '/v
 router.get('/:id/terminal-activity', forwardJson('GET', () => '/v1/terminal-activity'));
 router.post('/:id/tasks/:taskId/terminal/ack', forwardJson('POST', req => `${taskPath(req)}/terminal/ack`));
 
-// 文档里引用的相对文件（图片等）与文档变更事件流：不缓冲，直接转发。
+// Relative files referenced from documents (images etc.) and the document change event stream: not buffered, forwarded directly.
 router.get('/:id/tasks/:taskId/file', (req, res) => {
   const target = remoteTarget(req, res);
   if (!target) return;

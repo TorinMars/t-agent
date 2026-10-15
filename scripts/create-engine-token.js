@@ -4,7 +4,7 @@ const config = require('../config');
 const { createAccessToken } = require('../services/engine-auth');
 
 if (process.argv.includes('--help') || process.argv.includes('-h')) {
-  process.stdout.write('用法: node scripts/create-engine-token.js [名称]\n所有连接令牌都是管理权限。\n');
+  process.stdout.write('Usage: node scripts/create-engine-token.js [name]\nEvery connection token has admin rights.\n');
   process.exit(0);
 }
 const name = process.argv[2] || 'CLI Client';

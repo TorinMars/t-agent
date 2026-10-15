@@ -1,4 +1,4 @@
-// PM2 管理跟随引擎：Engine 的 /v1/pm2（仅 owner Token）以及 Client 的 /api/remote-servers/:id/pm2 代理。
+// PM2 management follows the engine: the Engine's /v1/pm2 (owner Token only) and the Client's /api/remote-servers/:id/pm2 proxy.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -61,7 +61,7 @@ test.before(async () => {
     .run('owner', name, base, encryptToken(token, process.env.SESSION_SECRET)).lastInsertRowid;
   ownerRemote = add('owner-engine', engine, ownerToken);
 
-  // 旧版 Engine 没有 /v1/pm2：任何未知路径都是通用 404。
+  // An old Engine has no /v1/pm2: any unknown path is a generic 404.
   const legacyApp = express();
   legacyApp.use((req, res) => res.status(404).type('text/plain').send('Not Found'));
   legacyRemote = add('legacy-engine', await listen(legacyApp), ownerToken);
@@ -87,7 +87,7 @@ test('Engine advertises PM2 management', async () => {
 });
 
 test('every Engine token can use the PM2 routes, a missing or invalid token cannot', async () => {
-  // 所有连接都是管理权限：即使以 operator 请求的令牌也可以。
+  // every connection has admin rights: a token requested as operator works too.
   assert.equal((await engineCall(requestedOperatorToken, '/status')).status, 200);
   assert.equal((await engineCall('tae_invalid', '/status')).status, 401);
   assert.equal((await fetch(`${engine}/v1/pm2/status`)).status, 401);

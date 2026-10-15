@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""本地安装向导：在浏览器里勾选并运行开发环境、Mac 应用和代理配置脚本。
+"""Local install wizard: tick and run the dev environment, Mac apps and proxy setup scripts in a browser.
 
-安全边界：
-- 只监听 127.0.0.1；远程服务器请用 SSH 端口转发访问。
-- 每次启动生成随机令牌；页面所有请求都必须携带，并检查 Host 与 Origin，防止其他网页借机调用。
-- 只能运行 --scripts-dir 里的两个安装脚本，参数由白名单构造，不接受页面传来的任意命令。
-- 订阅链接只通过环境变量交给子进程，不放进命令行参数，输出中自动打码，服务端不保留。
-- 一段时间无操作会自动退出。
-仅使用 Python 3.6+ 标准库。
+Security boundaries:
+- Listens on 127.0.0.1 only; for a remote server use SSH port forwarding.
+- A random token is generated at every start; every request from the page must carry it, and Host and Origin are checked so other web pages cannot call it.
+- Only the two install scripts in --scripts-dir can be run; the arguments are built from an allowlist and arbitrary commands from the page are not accepted.
+- The subscription link is only passed to child processes through an environment variable, never on the command line; it is masked in the output and not kept by the server.
+- It exits automatically after a period without activity.
+Uses only the Python 3.6+ standard library.
 """
 import argparse
 import json
@@ -35,7 +35,7 @@ HOME = os.path.expanduser("~")
 
 def bad_subscription_url(url):
     if not isinstance(url, str) or not re.match(r"^https?://[^\s\"'\\]+$", url) or len(url) > 4096:
-        return "订阅链接必须以 http:// 或 https:// 开头，且不能包含空白、引号或反斜杠"
+        return "The subscription link must start with http:// or https:// and must not contain whitespace, quotes or backslashes"
     return None
 
 
@@ -43,20 +43,20 @@ def port_arg(value, name):
     try:
         number = int(value)
     except (TypeError, ValueError):
-        raise ValueError("%s 必须是数字" % name)
+        raise ValueError("%s must be a number" % name)
     if number < 1024 or number > 65535:
-        raise ValueError("%s 必须在 1024-65535 之间" % name)
+        raise ValueError("%s must be between 1024 and 65535" % name)
     return str(number)
 
 
 def build_job(payload, scripts_dir, system):
-    """把页面提交的选项转换成 (显示名, argv, 额外环境变量, 需要打码的字符串)。只允许白名单参数。"""
+    """Convert the options submitted by the page into (display name, argv, extra environment variables, strings to mask). Only allowlisted arguments are permitted."""
     action = payload.get("action")
     if action == "dev-env":
         argv = ["bash", os.path.join(scripts_dir, "install-claude-code.sh")]
         skip = payload.get("skip") or []
         if not isinstance(skip, list) or any(item not in DEV_SKIPS for item in skip):
-            raise ValueError("skip 只支持 claude、codex、ssh、sync、ta、pm2")
+            raise ValueError("skip only supports claude, codex, ssh, sync, ta, pm2")
         for item in skip:
             argv += ["--skip", item]
         if payload.get("check"):
@@ -65,14 +65,14 @@ def build_job(payload, scripts_dir, system):
             argv.append("--upgrade")
         if payload.get("with_apps"):
             if system != "macos":
-                raise ValueError("Mac 应用只支持 macOS")
+                raise ValueError("Mac apps are only supported on macOS")
             argv.append("--with-apps")
-        return "开发环境", argv, {}, []
+        return "Dev environment", argv, {}, []
     if action == "proxy":
         argv = ["bash", os.path.join(scripts_dir, "install-proxy.sh")]
         mode = payload.get("mode", "install")
         if mode not in ("install", "update", "status"):
-            raise ValueError("mode 不合法")
+            raise ValueError("invalid mode")
         if mode == "update":
             argv.append("--update")
         elif mode == "status":
@@ -80,9 +80,9 @@ def build_job(payload, scripts_dir, system):
         if payload.get("core") or system == "linux":
             argv.append("--core")
         if payload.get("port"):
-            argv += ["--port", port_arg(payload["port"], "代理端口")]
+            argv += ["--port", port_arg(payload["port"], "proxy port")]
         if payload.get("controller_port"):
-            argv += ["--controller-port", port_arg(payload["controller_port"], "控制端口")]
+            argv += ["--controller-port", port_arg(payload["controller_port"], "controller port")]
         if payload.get("no_service"):
             argv.append("--no-service")
         env, secrets_list = {}, []
@@ -94,8 +94,8 @@ def build_job(payload, scripts_dir, system):
             env["T_AGENT_PROXY_SUB_URL"] = url
             secrets_list = [url]
             argv.append("--reconfigure")
-        return "代理", argv, env, secrets_list
-    raise ValueError("未知操作")
+        return "Proxy", argv, env, secrets_list
+    raise ValueError("Unknown action")
 
 
 def which_in_user_path(name):
@@ -153,7 +153,7 @@ class Job(object):
             self.proc = subprocess.Popen(self.argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                          stderr=subprocess.STDOUT, env=env)
         except OSError as error:
-            self._append("无法启动：%s" % error)
+            self._append("Cannot start: %s" % error)
             self.done, self.code = True, 127
             return
         threading.Thread(target=self._pump, daemon=True).start()
@@ -182,10 +182,10 @@ class Wizard(object):
         system = "macos" if sys.platform == "darwin" else "linux"
         name, argv, env, secrets_list = build_job(payload, self.scripts_dir, system)
         if not os.path.isfile(argv[1]):
-            raise ValueError("找不到脚本：%s" % os.path.basename(argv[1]))
+            raise ValueError("Script not found: %s" % os.path.basename(argv[1]))
         with self.lock:
             if self.job is not None and not self.job.done:
-                raise RuntimeError("已有任务正在运行，请等它结束")
+                raise RuntimeError("A task is already running; wait for it to finish")
             self.job = Job(name, argv, env, secrets_list)
             self.job.start()
 
@@ -206,7 +206,7 @@ def make_handler(wizard, html):
     class Handler(BaseHTTPRequestHandler):
         server_version = "SetupWizard"
 
-        def log_message(self, *args):  # 请求路径里有令牌，不写访问日志
+        def log_message(self, *args): # the request path contains the token, so no access log is written
             pass
 
         def _send(self, status, body, content_type="application/json; charset=utf-8"):
@@ -228,15 +228,15 @@ def make_handler(wizard, html):
 
         def _api_ok(self):
             if not self._host_ok():
-                self._json(403, {"error": "Host 不合法"})
+                self._json(403, {"error": "Invalid Host"})
                 return False
             supplied = self.headers.get("X-Wizard-Token", "")
             if not secrets.compare_digest(supplied, wizard.token):
-                self._json(403, {"error": "令牌无效，请使用启动时打印的完整地址"})
+                self._json(403, {"error": "Invalid token; use the full address printed at startup"})
                 return False
             origin = self.headers.get("Origin")
             if origin and hostname_of(origin.split("://", 1)[-1]) not in LOOPBACK_HOSTS:
-                self._json(403, {"error": "Origin 不合法"})
+                self._json(403, {"error": "Invalid Origin"})
                 return False
             wizard.last_activity = time.time()
             return True
@@ -246,7 +246,7 @@ def make_handler(wizard, html):
             if parsed.path == "/":
                 token = (parse_qs(parsed.query).get("token") or [""])[0]
                 if not self._host_ok() or not secrets.compare_digest(token, wizard.token):
-                    self._send(403, "403：请使用启动脚本打印的完整地址访问。", "text/plain; charset=utf-8")
+                    self._send(403, "403: use the full address printed by the start script.", "text/plain; charset=utf-8")
                     return
                 wizard.last_activity = time.time()
                 self._send(200, html.replace("__TOKEN__", wizard.token), "text/html; charset=utf-8")
@@ -266,21 +266,21 @@ def make_handler(wizard, html):
             if not self._api_ok():
                 return
             if not (self.headers.get("Content-Type") or "").startswith("application/json"):
-                self._json(415, {"error": "需要 application/json"})
+                self._json(415, {"error": "application/json is required"})
                 return
             try:
                 length = int(self.headers.get("Content-Length") or 0)
             except ValueError:
                 length = -1
             if length < 0 or length > MAX_BODY:
-                self._json(413, {"error": "请求过大"})
+                self._json(413, {"error": "Request too large"})
                 return
             try:
                 payload = json.loads(self.rfile.read(length).decode("utf-8") or "{}")
                 if not isinstance(payload, dict):
-                    raise ValueError("请求格式不正确")
+                    raise ValueError("Malformed request")
             except ValueError:
-                self._json(400, {"error": "请求不是有效的 JSON"})
+                self._json(400, {"error": "The request is not valid JSON"})
                 return
             path = urlparse(self.path).path
             if path == "/api/run":
@@ -314,20 +314,20 @@ def find_port(start):
                 return port
             except OSError:
                 continue
-    raise SystemExit("找不到可用端口（%d-%d）" % (start, start + 19))
+    raise SystemExit("No free port found (%d-%d)" % (start, start + 19))
 
 
 def main():
-    parser = argparse.ArgumentParser(description="本地安装向导")
+    parser = argparse.ArgumentParser(description="Local install wizard")
     parser.add_argument("--scripts-dir", default=os.path.dirname(os.path.abspath(__file__)))
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--no-browser", action="store_true")
-    parser.add_argument("--idle-timeout", type=int, default=IDLE_TIMEOUT, help="无操作自动退出的秒数")
+    parser.add_argument("--idle-timeout", type=int, default=IDLE_TIMEOUT, help="seconds of inactivity before exiting automatically")
     args = parser.parse_args()
 
     html_path = os.path.join(args.scripts_dir, "setup-wizard.html")
     if not os.path.isfile(html_path):
-        sys.exit("缺少页面文件：%s" % html_path)
+        sys.exit("Missing page file: %s" % html_path)
     with open(html_path, encoding="utf-8") as handle:
         html = handle.read()
 
@@ -338,14 +338,14 @@ def main():
     url = "http://127.0.0.1:%d/?token=%s" % (port, token)
 
     print("")
-    print("安装向导已启动（只监听本机 127.0.0.1）：")
+    print("The install wizard has started (listening on 127.0.0.1 only):")
     print("  %s" % url)
     if os.environ.get("SSH_CONNECTION"):
         print("")
-        print("当前是 SSH 登录。请在你自己的电脑上另开一个终端建立端口转发，然后用浏览器打开上面的地址：")
-        print("  ssh -L %d:127.0.0.1:%d <用户名>@<服务器地址>" % (port, port))
+        print("This is an SSH login. On your own computer open another terminal, set up the port forward, then open the address above in a browser:")
+        print("  ssh -L %d:127.0.0.1:%d <Username>@<Server address>" % (port, port))
     print("")
-    print("按 Ctrl+C 或在页面点“退出向导”结束；%d 分钟无操作会自动退出。" % (args.idle_timeout // 60))
+    print("Press Ctrl+C or click “Quit wizard” on the page to finish; it exits automatically after %d minutes without activity." % (args.idle_timeout // 60))
     sys.stdout.flush()
 
     if not args.no_browser and sys.platform == "darwin" and not os.environ.get("SSH_CONNECTION"):
@@ -355,7 +355,7 @@ def main():
         while True:
             time.sleep(5)
             if not wizard.busy() and time.time() - wizard.last_activity > args.idle_timeout:
-                print("长时间无操作，向导自动退出。")
+                print("No activity for a long time; the wizard exited automatically.")
                 wizard.server.shutdown()
                 return
     threading.Thread(target=watchdog, daemon=True).start()
@@ -366,7 +366,7 @@ def main():
         pass
     finally:
         wizard.server.server_close()
-        print("向导已退出。")
+        print("The wizard has exited.")
 
 
 if __name__ == "__main__":

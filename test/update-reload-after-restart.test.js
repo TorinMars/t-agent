@@ -1,12 +1,12 @@
-// 更新后的自动刷新：磁盘上的版本号在重启前就已是新版本，所以旧进程退出前不能刷新，必须等新进程起来；
-// 同时不能依赖某次轮询恰好撞上服务中断，否则页面会一直等下去。
+// Automatic refresh after an update: the on-disk version is already new before the restart, so the page must not refresh before the old process exits and must wait for the new process;
+// it must also not depend on one particular poll hitting the outage, otherwise the page would wait forever.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const { parseHTML } = require('linkedom');
 
-// versionBoot：更新前当前进程的启动 ID（null 表示旧版服务没有）。
+// versionBoot: the start ID of the current process before the update (null means an old service has none).
 function setup({ versionBoot = 'old', statusReplies = [], fetchReplies = [], applyResponse } = {}) {
   const { document } = parseHTML(fs.readFileSync('public/index.html', 'utf8'));
   let tick = null;
@@ -26,7 +26,7 @@ function setup({ versionBoot = 'old', statusReplies = [], fetchReplies = [], app
       return { ok: reply.ok !== false, json: async () => reply };
     },
     API: {
-      // apply-update 的真实返回：202 { accepted, status }
+      // the real result of apply-update: 202 { accepted, status }
       post: async () => applyResponse || { accepted: true, status: { status: 'updating', stage: 'installing', boot_id: versionBoot || undefined, log: [] } },
       get: async url => {
         if (url === '/api/system/version') return { app_version: '1.0.0', boot_id: versionBoot || undefined };
@@ -40,33 +40,33 @@ function setup({ versionBoot = 'old', statusReplies = [], fetchReplies = [], app
   vm.runInContext(fs.readFileSync('public/js/update-log.js', 'utf8') + '\nthis.UpdateLog=UpdateLog;', context);
   const source = fs.readFileSync('public/js/app.js', 'utf8');
   vm.runInContext(source.slice(source.indexOf('const Updates ='), source.indexOf('const ContextMenu =')) + '\nthis.Updates=Updates;', context);
-  context.runTick = async () => { assert.ok(tick, '轮询没有启动'); await tick(); };
+  context.runTick = async () => { assert.ok(tick, 'Polling did not start'); await tick(); };
   context.advance = ms => { clock += ms; };
   return context;
 }
 
 const restarting = bootId => ({ status: 'updating', stage: 'restarting', remote_version: '2.0.0', boot_id: bootId, log: [] });
 
-test('按真实的 202 返回结构记下旧进程 ID；旧进程还在时不刷新，换成新进程后立刻刷新（即使没观察到服务中断、版本号也对不上）', async () => {
+test('Record the old process id from the real 202 response shape; do not refresh while the old process is still there, and refresh immediately once it is replaced by a new one (even if no outage was observed and the version does not match)', async () => {
   const ctx = setup({
     statusReplies: [restarting('old')],
     fetchReplies: [
-      { app_version: '9.9.9', boot_id: 'old' }, // 旧进程，磁盘版本号已是新的
+      { app_version: '9.9.9', boot_id: 'old' }, // old process; the on-disk version is already the new one
       { app_version: '9.9.9', boot_id: 'old' },
-      { app_version: '5.5.5', boot_id: 'new' }, // 新进程；版本号和更新目标不同也照样刷新
+      { app_version: '5.5.5', boot_id: 'new' }, // new process; refresh even when the version differs from the update target
     ],
   });
   await ctx.Updates.apply();
   assert.equal(ctx.Updates.updateBootId, 'old');
-  await ctx.runTick(); // 状态显示 restarting，转入等待重启
+  await ctx.runTick(); // status shows restarting; enter the wait for the restart
   await ctx.runTick();
   await ctx.runTick();
-  assert.equal(ctx.reloaded, false, '旧进程还在时不能刷新');
+  assert.equal(ctx.reloaded, false, 'Must not refresh while the old process is still there');
   await ctx.runTick();
   assert.equal(ctx.reloaded, true);
 });
 
-test('兜底：没有进程 ID、也没撞上服务中断时，看到“正在重启”约 4 秒后的成功响应就刷新，之前不刷新', async () => {
+test('Fallback: with no process id and no outage observed, refresh on a successful response about 4 seconds after seeing “restarting”, and not before', async () => {
   const ctx = setup({
     versionBoot: null,
     statusReplies: [restarting(undefined)],
@@ -76,13 +76,13 @@ test('兜底：没有进程 ID、也没撞上服务中断时，看到“正在�
   await ctx.runTick();
   ctx.advance(1500);
   await ctx.runTick();
-  assert.equal(ctx.reloaded, false, '刚看到“正在重启”时旧进程可能还在');
+  assert.equal(ctx.reloaded, false, 'Right after seeing “restarting” the old process may still be there');
   ctx.advance(3000);
   await ctx.runTick();
   assert.equal(ctx.reloaded, true);
 });
 
-test('旧版服务没有进程 ID：观察到服务中断后，下一次成功响应就刷新', async () => {
+test('An old service has no process id: after an outage is observed, the next successful response refreshes', async () => {
   const ctx = setup({
     versionBoot: null,
     statusReplies: [restarting(undefined)],
@@ -97,7 +97,7 @@ test('旧版服务没有进程 ID：观察到服务中断后，下一次成功�
   assert.equal(ctx.reloaded, true);
 });
 
-test('轮询到的状态不是 updating：同一进程不刷新，新进程才刷新', async () => {
+test('A polled status that is not updating: the same process does not refresh, only a new process does', async () => {
   const ctx = setup({
     statusReplies: [
       { status: 'current', stage: null, boot_id: 'old', log: [] },
@@ -106,14 +106,14 @@ test('轮询到的状态不是 updating：同一进程不刷新，新进程才�
   });
   await ctx.Updates.apply();
   await ctx.runTick();
-  assert.equal(ctx.pendingReload, undefined, '旧进程不能当作更新完成');
+  assert.equal(ctx.pendingReload, undefined, 'The old process must not count as update finished');
   await ctx.runTick();
   assert.equal(typeof ctx.pendingReload, 'function');
   ctx.pendingReload();
   assert.equal(ctx.reloaded, true);
 });
 
-test('等了 20 秒仍没刷新时出现“立即刷新页面”按钮', async () => {
+test('If 20 seconds pass without a refresh, the “Refresh now” button appears', async () => {
   const ctx = setup({ statusReplies: [restarting('old')], fetchReplies: [new Error('down'), new Error('down'), new Error('down')] });
   await ctx.Updates.apply();
   await ctx.runTick();
@@ -121,11 +121,11 @@ test('等了 20 秒仍没刷新时出现“立即刷新页面”按钮', async (
   ctx.advance(21_000);
   await ctx.runTick();
   const button = ctx.document.querySelector('#update-progress-error button');
-  assert.ok(button, '应该出现手动刷新按钮');
-  assert.equal(button.textContent, '立即刷新页面');
+  assert.ok(button, 'The manual refresh button should appear');
+  assert.equal(button.textContent, 'Refresh now');
 });
 
-test('更新提示框被关掉后等待重启也不会抛错', async () => {
+test('Waiting for the restart does not throw even if the update dialog was closed', async () => {
   const ctx = setup({ statusReplies: [restarting('old')], fetchReplies: [{ app_version: '1', boot_id: 'new' }] });
   await ctx.Updates.apply();
   ctx.document.getElementById('update-progress-message').remove();

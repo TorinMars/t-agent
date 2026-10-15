@@ -1,4 +1,4 @@
-// 译文进入终端前必须清掉控制字符并压成一行，否则翻译结果可以注入按键序列或提前提交。
+// The translation must have control characters stripped and be collapsed into one line before entering the terminal, otherwise a translation result could inject key sequences or submit early.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');

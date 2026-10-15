@@ -1,4 +1,4 @@
-// 应用列表跟随引擎：Engine 的 /v1/apps（Bearer 令牌，程序可自注册）、本机 /api/apps，以及 Client 对远程引擎的代理。
+// The app list follows the engine: the Engine's /v1/apps (Bearer token, programs can self-register), the local /api/apps, and the Client's proxy to remote engines.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -87,7 +87,7 @@ const engineCall = (suffix, { method = 'GET', body, token = ownerToken } = {}) =
 const proxyCall = (id, suffix, { method = 'GET', body } = {}) => fetch(`${proxy}/api/remote-servers/${id}/apps${suffix}`, {
   method, headers: body ? json : {}, body: body ? JSON.stringify(body) : undefined });
 
-test('Engine 声明应用列表能力，没有令牌或令牌无效都不能访问', async () => {
+test('The Engine declares the app-list capability, and access fails with no token or an invalid token', async () => {
   const info = await (await fetch(`${engine}/v1/info`, { headers: { Authorization: `Bearer ${ownerToken}` } })).json();
   assert.ok(info.capabilities.includes('apps:manage'));
   assert.equal((await engineCall('', { token: null })).status, 401);
@@ -95,7 +95,7 @@ test('Engine 声明应用列表能力，没有令牌或令牌无效都不能访�
   assert.equal((await engineCall('/register', { method: 'POST', body: { name: 'x' }, token: null })).status, 401);
 });
 
-test('列表自动登记 PM2 进程，且不泄漏进程的环境变量', async () => {
+test('The list auto-registers PM2 processes and does not leak their environment variables', async () => {
   const response = await engineCall('');
   assert.equal(response.status, 200);
   const text = await response.text();
@@ -108,8 +108,8 @@ test('列表自动登记 PM2 进程，且不泄漏进程的环境变量', async 
   assert.ok(Array.isArray(data.host_ips));
 });
 
-test('程序通过令牌自注册：幂等、返回 201/200，非法内容 400 并带错误码', async () => {
-  const first = await engineCall('/register', { method: 'POST', body: { name: 'billing-api', port: 7001, description: '计费服务' } });
+test('Programs self-register with a token: idempotent, returns 201/200, invalid content gets 400 with an error code', async () => {
+  const first = await engineCall('/register', { method: 'POST', body: { name: 'billing-api', port: 7001, description: 'Billing service' } });
   assert.equal(first.status, 201);
   const created = await first.json();
   assert.equal(created.created, true);
@@ -121,7 +121,7 @@ test('程序通过令牌自注册：幂等、返回 201/200，非法内容 400 �
   assert.equal(updated.created, false);
   assert.equal(updated.app.id, created.app.id);
   assert.equal(updated.app.port, 7002);
-  assert.equal(updated.app.description, '计费服务');
+  assert.equal(updated.app.description, 'Billing service');
 
   const evil = await engineCall('/register', { method: 'POST', body: { name: 'evil', url: 'javascript:alert(1)' } });
   assert.equal(evil.status, 400);
@@ -133,7 +133,7 @@ test('程序通过令牌自注册：幂等、返回 201/200，非法内容 400 �
   assert.ok(!listed.apps.some(app => app.name === 'evil'));
 });
 
-test('手动新增、修改、删除；同名 409；找不到 404；删除仍在 PM2 里的服务只是隐藏并可恢复', async () => {
+test('Add, edit and delete manually; same name gives 409; not found gives 404; deleting a service still in PM2 only hides it and it can be restored', async () => {
   const created = await engineCall('', { method: 'POST', body: { name: 'blog', port: 8080, domain: 'blog.example.com', scheme: 'https' } });
   assert.equal(created.status, 201);
   const { app } = await created.json();
@@ -159,7 +159,7 @@ test('手动新增、修改、删除；同名 409；找不到 404；删除仍在
   assert.ok((await (await engineCall('')).json()).apps.some(item => item.name === 'web'));
 });
 
-test('本机 /api/apps：要求来源和登录，增删改查可用，响应不缓存', async () => {
+test('This machine /api/apps: requires origin and login, CRUD works, responses are not cached', async () => {
   const headers = { 'X-Requested-With': 'XMLHttpRequest' };
   assert.equal((await fetch(`${local}/api/apps`, { headers: { ...headers, Origin: 'https://evil.example' } })).status, 403);
   assert.equal((await fetch(`${local}/api/apps`, { headers: { ...headers, Authorization: 'Bearer session-denied' } })).status, 401);
@@ -174,13 +174,13 @@ test('本机 /api/apps：要求来源和登录，增删改查可用，响应不�
   assert.equal(bad.status, 400);
 });
 
-test('Client 代理把应用请求转发给所选引擎，并透传错误码；旧引擎返回 501', async () => {
+test('The Client proxy forwards app requests to the selected engine and passes error codes through; an old engine returns 501', async () => {
   const listed = await proxyCall(ownerRemote, '');
   assert.equal(listed.status, 200);
   assert.ok(Array.isArray((await listed.json()).apps));
 
   const created = await proxyCall(ownerRemote, '', { method: 'POST', body: { name: 'proxied', port: 6000 } });
-  assert.equal(created.status, 200, '代理沿用 res.json，不透传上游的 201');
+  assert.equal(created.status, 200, 'The proxy keeps using res.json and does not pass the upstream 201 through');
   const { app } = await created.json();
   const dup = await proxyCall(ownerRemote, '', { method: 'POST', body: { name: 'proxied' } });
   assert.equal(dup.status, 409);

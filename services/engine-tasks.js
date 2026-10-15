@@ -27,7 +27,7 @@ function assertWorkspacePath(value) {
 function titleToSlug(title) {
   return String(title)
     .replace(/\s+/g, '-')
-    .replace(/[^a-zA-Z0-9一-鿿\-_\.]/g, '')
+    .replace(/[^a-zA-Z0-9\u4e00-\u9fff\-_\.]/g, '')
     .replace(/^-+|-+$/g, '') || 'task';
 }
 

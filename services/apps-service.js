@@ -3,8 +3,8 @@ const { createAppsRegistry, AppsError } = require('./apps-registry');
 const { createPortDetector } = require('./port-detector');
 const { Pm2Error } = require('./pm2-manager');
 
-// 这台机器上可以被其他设备访问的 IPv4 地址（局域网/内网），排除回环、链路本地地址和 Docker/虚拟机之类的虚拟网卡；
-// 物理网卡（en*/eth*/wl* 等）排在前面，因为链接默认用第一个地址。
+// IPv4 addresses of this machine that other devices can reach (LAN/intranet), excluding loopback, link-local addresses and virtual NICs such as Docker/VM ones;
+// physical NICs (en*/eth*/wl* etc.) come first, because links use the first address by default.
 const VIRTUAL_INTERFACE = /^(lo|docker|veth|br-|virbr|vmnet|vboxnet|bridge|utun|awdl|llw|ap\d|gif|stf|anpi)/i;
 const PHYSICAL_INTERFACE = /^(en|eth|wl|wlan|eno|ens|enp|wlp)/i;
 
@@ -18,13 +18,13 @@ function localIps(interfaces = os.networkInterfaces()) {
       }
     }
   }
-  // Array.prototype.sort 是稳定排序，同一优先级保持系统给出的顺序。
+  // Array.prototype.sort is stable, so entries of equal priority keep the order the system gave.
   return [...new Set(found.sort((a, b) => a.rank - b.rank).map(item => item.address))];
 }
 
 const hostForUrl = host => (host.includes(':') && !host.startsWith('[') ? `[${host}]` : host);
 
-// 生成访问链接。优先级：自定义地址 > 域名 > IP:端口。仅本机监听的端口只给 127.0.0.1，并标出来。
+// Build the access link. Priority: custom address > domain > IP:port. A port that only listens locally gets 127.0.0.1 only, and is flagged.
 function buildLinks(app, ports, hostIps) {
   const path = app.path || '/';
   const detected = ports.find(item => item.port === app.port) || ports[0] || null;
@@ -39,7 +39,7 @@ function buildLinks(app, ports, hostIps) {
   let domain = null;
   if (app.domain) {
     const full = /^https?:\/\//i.test(app.domain) ? app.domain : `${app.scheme}://${app.domain}`;
-    // 域名没写路径时补上应用路径。
+    // When the domain has no path, append the app path.
     const hasPath = /^https?:\/\/[^/]+\/./.test(full);
     domain = { url: hasPath || path === '/' ? full : full.replace(/\/$/, '') + path };
   }
@@ -51,7 +51,7 @@ function buildLinks(app, ports, hostIps) {
 function createAppsService({ db, pm2Manager, portDetector = createPortDetector(), interfaces = os.networkInterfaces } = {}) {
   const registry = createAppsRegistry({ db });
 
-  // PM2 不可用（没装、没运行、命令失败）不影响应用列表，只是没有运行状态。
+  // PM2 being unavailable (not installed, not running, command failed) does not affect the app list; there is just no run status.
   async function pm2State() {
     try {
       const status = await pm2Manager.status();
@@ -63,7 +63,7 @@ function createAppsService({ db, pm2Manager, portDetector = createPortDetector()
 
   async function list() {
     const pm2 = await pm2State();
-    // 自动登记：PM2 里的每个进程都有一条应用记录（已被用户隐藏的不会再登记）。
+    // Auto-register: every PM2 process has an app record (ones the user hid are not registered again).
     for (const proc of pm2.processes) registry.ensurePm2(proc.name);
 
     const online = pm2.processes.filter(proc => proc.status === 'online' && proc.pid);
@@ -87,10 +87,10 @@ function createAppsService({ db, pm2Manager, portDetector = createPortDetector()
     };
   }
 
-  // 删除：自动登记的 PM2 服务在 PM2 里还存在时只隐藏。
+  // Delete: an auto-registered PM2 service is only hidden while it still exists in PM2.
   async function remove(id) {
     const app = registry.get(id);
-    if (!app) throw new AppsError('APP_NOT_FOUND', '找不到这个应用', 404);
+    if (!app) throw new AppsError('APP_NOT_FOUND', 'App not found', 404);
     let pm2Present = false;
     if (app.source === 'pm2' && app.pm2_name) {
       const pm2 = await pm2State();

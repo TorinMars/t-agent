@@ -15,7 +15,7 @@ function sendError(res, error) {
   return res.status(error && error.statusCode >= 400 && error.statusCode < 600 ? error.statusCode : 500).json({ error: code });
 }
 
-// Engine 接口（/v1/agent-config）：读写这台机器上的 Claude / Codex 配置。
+// Engine endpoint (/v1/agent-config): read and write this machine's Claude / Codex configuration.
 function createEngineRouter({ service = createAgentConfig(), guard } = {}) {
   const router = express.Router();
   router.get('/', guard, wrap(() => ({ schema_version: 1, ...service.read() })));
@@ -23,7 +23,7 @@ function createEngineRouter({ service = createAgentConfig(), guard } = {}) {
   return router;
 }
 
-// 浏览器接口（/api/agent-config）：管理全局默认、各服务器覆盖，并推送到本机和远程 Engine。
+// Browser endpoint (/api/agent-config): manage global defaults and per-server overrides, and push them to this machine and remote Engines.
 function createClientRouter({ db, sessionSecret, service = createAgentConfig(), requireAuth = require('../middleware/auth'), remoteRequest = request } = {}) {
   const store = createAgentConfigStore(db);
   const router = express.Router();
@@ -31,10 +31,10 @@ function createClientRouter({ db, sessionSecret, service = createAgentConfig(), 
   router.use((req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
   const owner = req => req.session.user.login;
   const remotes = req => db.prepare('SELECT id, name, base_url, token_cipher, enabled FROM remote_servers WHERE owner_id = ? AND enabled = 1 ORDER BY created_at ASC').all(owner(req));
-  const targets = req => [{ key: LOCAL, name: '本机', local: true }, ...remotes(req).map(row => ({ key: String(row.id), name: row.name, local: false, row }))];
+  const targets = req => [{ key: LOCAL, name: 'This machine', local: true }, ...remotes(req).map(row => ({ key: String(row.id), name: row.name, local: false, row }))];
   function target(req, key) {
     const found = targets(req).find(item => item.key === String(key));
-    if (!found) throw new AgentConfigError('SERVER_NOT_FOUND', '找不到这台服务器', 404);
+    if (!found) throw new AgentConfigError('SERVER_NOT_FOUND', 'Server not found', 404);
     return found;
   }
   const remoteCall = (item, options = {}) => remoteRequest(item.row.base_url, '/v1/agent-config', decryptToken(item.row.token_cipher, sessionSecret), { timeoutMs: 15_000, ...options });
@@ -81,7 +81,7 @@ function createClientRouter({ db, sessionSecret, service = createAgentConfig(), 
   router.post('/push', wrap(async req => {
     const wanted = Array.isArray(req.body && req.body.servers) ? req.body.servers.map(String) : null;
     const chosen = targets(req).filter(item => !wanted || wanted.includes(item.key));
-    if (!chosen.length) throw new AgentConfigError('SERVER_NOT_FOUND', '没有可推送的服务器', 404);
+    if (!chosen.length) throw new AgentConfigError('SERVER_NOT_FOUND', 'No servers to push to', 404);
     const state = store.get(owner(req));
     const results = await Promise.all(chosen.map(item => pushTo(item, state)));
     for (const result of results) {

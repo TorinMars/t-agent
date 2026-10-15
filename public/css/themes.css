@@ -1,6 +1,6 @@
-/* 主题：浅色是 style.css 里的默认值；这里用 html[data-theme] 覆盖变量与少量写死的颜色。最后加载。 */
+/* Themes: light is the default in style.css; here html[data-theme] overrides variables and a few hard-coded colors. Loaded last. */
 
-/* ---------- 主题选择器（所有主题共用） ---------- */
+/* ---------- Theme picker (shared by all themes) ---------- */
 .theme-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 12px; }
 .theme-card { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-secondary); color: var(--text); cursor: pointer; text-align: left; font: inherit; }
 .theme-card:hover { border-color: var(--text-muted); }
@@ -12,7 +12,7 @@
 .theme-swatch-dark i:nth-child(1) { background: #0d1117; } .theme-swatch-dark i:nth-child(2) { background: #161b22; } .theme-swatch-dark i:nth-child(3) { background: #3fb950; }
 .theme-swatch-tech i:nth-child(1) { background: #050b1a; } .theme-swatch-tech i:nth-child(2) { background: #0a1630; } .theme-swatch-tech i:nth-child(3) { background: #00e5ff; box-shadow: 0 0 10px #00e5ff; }
 
-/* ---------- 深色 + 未来科技共用的暗色基础 ---------- */
+/* ---------- Dark base shared by dark + futuristic ---------- */
 :root[data-theme="dark"], :root[data-theme="tech"] {
   color-scheme: dark;
   --bg: #0d1117;
@@ -54,7 +54,7 @@
 :root[data-theme="dark"] .markdown-body.markdown-body tbody tr:nth-child(even),
 :root[data-theme="tech"] .markdown-body.markdown-body tbody tr:nth-child(even) { background: var(--bg-secondary); }
 
-/* Markdown 编辑器与文件面板里写死的白底 */
+/* White backgrounds hard-coded in the Markdown editor and file panel */
 :root[data-theme="dark"] .md-editor-shell, :root[data-theme="tech"] .md-editor-shell,
 :root[data-theme="dark"] .md-editor-host, :root[data-theme="tech"] .md-editor-host { background: var(--bg); }
 :root[data-theme="dark"] .md-editor-header, :root[data-theme="tech"] .md-editor-header { background: var(--bg-secondary); border-bottom-color: var(--border); color: var(--text-muted); }
@@ -69,11 +69,11 @@
 :root[data-theme="dark"] .update-version.new, :root[data-theme="tech"] .update-version.new { background: rgba(56,139,253,.15); color: var(--text-link); }
 :root[data-theme="dark"] .update-status.available, :root[data-theme="tech"] .update-status.available { color: var(--text-link); }
 
-/* 流程图里 rect 高亮块的颜色写在图源里（常是浅黄），深色下文字和线条会淡到看不见，改成半透明的深色调。 */
+/* The color of highlighted rect blocks in a diagram is written in the diagram source (often light yellow); on dark themes text and lines would fade out, so use a translucent dark tone instead. */
 :root[data-theme="dark"] .mermaid svg rect.rect { fill: rgba(88, 166, 255, .12); stroke: rgba(88, 166, 255, .4); }
 :root[data-theme="tech"] .mermaid svg rect.rect { fill: rgba(0, 229, 255, .08); stroke: rgba(0, 229, 255, .45); }
 
-/* ---------- 未来科技 ---------- */
+/* ---------- Futuristic ---------- */
 :root[data-theme="tech"] {
   --bg: #050b1a;
   --bg-secondary: #0a1630;
@@ -139,7 +139,7 @@
 :root[data-theme="tech"] ::-webkit-scrollbar-thumb:hover { background: #00b8d4; }
 :root[data-theme="tech"] ::selection { background: #00e5ff44; color: #fff; }
 
-/* ---------- 终端“执行中”流光：深色底上原来的深蓝光束太淡，且选中项的 background 简写会把光束清掉 ---------- */
+/* ---------- Terminal "running" glow: on dark backgrounds the original dark-blue beam is too faint, and the shorthand background of the selected item would clear the beam ---------- */
 :root[data-theme="dark"] .task-nav-item.term-running,
 :root[data-theme="dark"] .engine-tab.term-running,
 :root[data-theme="dark"] .terminal-tab.term-running {
@@ -157,7 +157,7 @@
   :root[data-theme] .task-nav-item.term-running, :root[data-theme] .engine-tab.term-running, :root[data-theme] .terminal-tab.term-running { background-image: none; }
 }
 
-/* 终端中译英输入框“翻译中”的呼吸动画：科技主题用青色 */
+/* "Translating" breathing animation for the Chinese-to-English input: cyan on the futuristic theme */
 :root[data-theme="tech"] .terminal-translate-input.translating { border-color: #00e5ff; animation-name: translate-breathe-tech; }
 @keyframes translate-breathe-tech {
   0%, 100% { border-color: #0b5f73; box-shadow: 0 0 0 0 rgba(0, 229, 255, 0); }

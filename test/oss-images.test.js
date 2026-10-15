@@ -31,9 +31,9 @@ test('config rejects invalid regions and unsafe public URLs without changing sav
   const { service } = setup(t);
   service.saveConfig('a', input);
   for (const publicBaseUrl of ['http://images.example', 'https://user:pass@example.com', 'https://example.com/?x=1', 'https://example.com/#x', 'https://example.com/\nx', 'https://example.com/%0a']) {
-    assert.throws(() => service.saveConfig('a', { ...input, publicBaseUrl }), /公共地址/);
+    assert.throws(() => service.saveConfig('a', { ...input, publicBaseUrl }), /public address/i);
   }
-  assert.throws(() => service.saveConfig('a', { ...input, region: 'https://evil.example' }), /Region/);
+  assert.throws(() => service.saveConfig('a', { ...input, region: 'https://evil.example' }), /region/i);
   assert.equal(service.getConfig('a').bucket, input.bucket);
 });
 test('upload verifies image MIME and size, uses TLS, unique keys and 24 hour signed URLs', async t => {
@@ -58,7 +58,7 @@ test('upload verifies image MIME and size, uses TLS, unique keys and 24 hour sig
     await assert.rejects(service.upload('a', body, mime));
   }
   assert.equal(puts.length, 2);
-  await assert.rejects(service.upload('other', png, 'image/png'), /未启用/);
+  await assert.rejects(service.upload('other', png, 'image/png'), /not enabled/);
 });
 test('public links have no expiry and SDK failures never reveal credentials', async t => {
   const { service } = setup(t, () => ({ put: async () => {}, signatureUrlV4: () => { throw Error('must not sign'); } }));
@@ -68,7 +68,7 @@ test('public links have no expiry and SDK failures never reveal credentials', as
   assert.equal(result.expiresAt, null);
   const failing = createOssImages({ db: setup(t).db, sessionSecret: 'secret', createClient: () => ({ put: async () => { throw Error(input.accessKeySecret); } }) });
   failing.saveConfig('a', input);
-  await assert.rejects(failing.upload('a', png, 'image/png'), error => error.message === 'OSS 图片上传失败，请检查配置和 Bucket 权限');
+  await assert.rejects(failing.upload('a', png, 'image/png'), error => error.message === 'OSS image upload failed; check the configuration and bucket permissions');
 });
 
 test('real OSS SDK creates an HTTPS V4 signature offline', async t => {

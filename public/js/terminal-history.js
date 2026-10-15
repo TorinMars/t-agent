@@ -7,7 +7,7 @@ const TerminalHistory = (() => {
   function refresh() {
     if (!button) return;
     button.disabled = (typeof TerminalControls !== 'undefined' && !!TerminalControls.busy) || !active || !active.available();
-    button.dataset.tip = active?.legacy ? '历史记录：此 Engine 不支持分页历史，请升级 Engine' : '历史记录：查看已保存的终端历史'; // 提示用 CSS 悬浮显示，不用 title
+    button.dataset.tip = active?.legacy ? 'History: this engine does not support paged history. Please upgrade the engine' : 'History: view saved terminal history'; // the tooltip is shown with CSS on hover, not via title
   }
   function close() {
     if (!viewer) return;
@@ -29,7 +29,7 @@ const TerminalHistory = (() => {
     const dialog = document.createElement('dialog');
     dialog.className = 'terminal-history-dialog';
     dialog.setAttribute('aria-labelledby', 'terminal-history-title');
-    dialog.innerHTML = '<div class="terminal-history-heading"><h2 id="terminal-history-title">历史记录</h2><button type="button" id="terminal-history-close">关闭</button></div><p>本次连接前的只读历史记录；新输出请在主终端查看。</p><button type="button" id="terminal-history-earlier">加载更早记录</button><span id="terminal-history-status" role="status"></span><pre id="terminal-history-text" tabindex="0" aria-label="终端历史记录"></pre>';
+    dialog.innerHTML = '<div class="terminal-history-heading"><h2 id="terminal-history-title">History</h2><button type="button" id="terminal-history-close">Close</button></div><p>Read-only history from before this connection; see the main terminal for new output.</p><button type="button" id="terminal-history-earlier">Load earlier history</button><span id="terminal-history-status" role="status"></span><pre id="terminal-history-text" tabindex="0" aria-label="Terminal history"></pre>';
     document.body.appendChild(dialog);
     viewer = { owner, dialog, text: dialog.querySelector('pre'), status: dialog.querySelector('[role="status"]'),
       earlier: dialog.querySelector('#terminal-history-earlier'), before: owner.archive.before, hasMore: owner.archive.hasMore, loaded: false };
@@ -66,7 +66,7 @@ const TerminalHistory = (() => {
       disconnect(ws) {
         if (socket !== ws) return;
         cancel(); generation++; api.archive = null;
-        status('连接已断开，请重新连接后打开历史记录'); refresh();
+        status('Disconnected. Reconnect, then open the history'); refresh();
       },
       dispose() {
         cancel(); generation++; socket = null;
@@ -74,17 +74,17 @@ const TerminalHistory = (() => {
       },
       load() {
         if (viewer?.owner !== api || !api.available() || pending || !viewer.hasMore) {
-          if (viewer?.owner === api && !viewer.hasMore) status('已加载全部保存记录');
+          if (viewer?.owner === api && !viewer.hasMore) status('All saved history loaded');
           return;
         }
-        if (viewer.text.textContent.length >= MAX_TEXT) { viewer.hasMore = false; status('已达到历史显示上限'); return; }
+        if (viewer.text.textContent.length >= MAX_TEXT) { viewer.hasMore = false; status('History display limit reached'); return; }
         const requestId = `history-${++sequence}`;
         pending = { requestId, before: viewer.before, timer: setTimeout(() => {
-          pending = null; status('加载超时，请重试');
+          pending = null; status('Load timed out. Please retry');
         }, 15000) };
-        status('加载中…');
+        status('Loading…');
         try { socket.send(JSON.stringify({ type: 'history-page', id: api.archive.id, before: viewer.before, requestId })); }
-        catch { cancel(); status('加载失败，请重试'); }
+        catch { cancel(); status('Load failed. Please retry'); }
       },
       handle(data, ws) {
         if (typeof data !== 'string' || !data.startsWith('{')) return false;
@@ -124,17 +124,17 @@ const TerminalHistory = (() => {
         const before = pending.before;
         cancel();
         if (message.error || typeof message.data !== 'string' || !Number.isSafeInteger(message.before) || message.before < 0 || message.before >= before) {
-          status('加载失败，请重试或重新打开终端'); return true;
+          status('Load failed. Retry or reopen the terminal'); return true;
         }
         if (message.data.length > 128 * 1024 || viewer.text.textContent.length + message.data.length > MAX_TEXT) {
-          viewer.hasMore = false; status('已达到历史显示上限'); return true;
+          viewer.hasMore = false; status('History display limit reached'); return true;
         }
         const { text } = viewer;
         const height = text.scrollHeight, top = text.scrollTop;
         text.textContent = message.data + text.textContent;
         text.scrollTop = viewer.loaded ? top + text.scrollHeight - height : text.scrollHeight;
         viewer.loaded = true; viewer.before = message.before; viewer.hasMore = Boolean(message.hasMore);
-        status(viewer.hasMore ? '每次加载最多 500 行' : '已加载全部保存记录');
+        status(viewer.hasMore ? 'Up to 500 lines per load' : 'All saved history loaded');
         return true;
       },
     };

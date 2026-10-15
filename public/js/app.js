@@ -86,7 +86,7 @@ const TerminalControls = {
     try {
       await controller[method](...args);
     } catch (error) {
-      alert(`终端操作失败：${error.message}`);
+      alert(`Terminal action failed: ${error.message}`);
     } finally {
       this.busy = false;
       document.querySelectorAll('.terminal-toolbar-btn').forEach(button => { button.disabled = false; });
@@ -103,10 +103,10 @@ document.getElementById('btn-terminal-reopen').addEventListener('click', () => {
   TerminalControls.run('reopenTerminal');
 });
 document.getElementById('btn-terminal-close').addEventListener('click', () => {
-  TerminalControls.run('closeTerminal', '关闭当前终端会终止其中正在运行的程序，确认继续吗？');
+  TerminalControls.run('closeTerminal', 'Closing the terminal ends the programs running in it. Continue?');
 });
 document.getElementById('btn-terminal-restart-workdir').addEventListener('click', () => {
-  TerminalControls.run('restartTerminalFromWorkDir', '这会终止当前终端并清除终端历史，然后从任务工作目录重新打开，确认继续吗？');
+  TerminalControls.run('restartTerminalFromWorkDir', 'This ends the current terminal, clears its history and reopens it from the task working directory. Continue?');
 });
 
 const Updates = {
@@ -120,77 +120,77 @@ const Updates = {
     const button = document.getElementById('btn-one-click-update');
     if (button) {
       button.disabled = busy;
-      button.textContent = busy ? '更新中…' : '↻ 一键更新';
+      button.textContent = busy ? 'Updating…' : '↻ Update';
     }
   },
 
   showResult(title, message) {
     this.setBusy(false);
-    Modal.show(title, `<div class="update-message">${escapeHtml(message)}</div><div class="form-actions"><button class="btn-submit" id="update-result-close">关闭</button></div>`);
+    Modal.show(title, `<div class="update-message">${escapeHtml(message)}</div><div class="form-actions"><button class="btn-submit" id="update-result-close">Close</button></div>`);
     document.getElementById('update-result-close').addEventListener('click', Modal.hide);
   },
 
   async oneClick() {
     if (this.busy) return;
     this.setBusy(true);
-    Modal.show('正在检查更新', '<div class="update-progress"><span class="update-spinner"></span><span>正在检查最新版本…</span></div>');
+    Modal.show('Checking for updates', '<div class="update-progress"><span class="update-spinner"></span><span>Checking for the latest version…</span></div>');
     try {
       const status = await API.post('/api/system/check-update', {});
       this.latestStatus = status;
       document.getElementById('update-dot').style.display = this.needsAttention(status) ? 'block' : 'none';
       if (status.status === 'updating') {
-        Modal.show('正在更新', UpdateLog.markup('update-progress-message', 'update-progress-error', '正在读取更新进度…'));
+        Modal.show('Updating', UpdateLog.markup('update-progress-message', 'update-progress-error', 'Reading update progress…'));
         this.monitorApply();
       } else if (status.status === 'available') {
-        if (!status.is_update_admin) this.showResult('更新未执行', this.errorLabel('UPDATE_ADMIN_REQUIRED'));
+        if (!status.is_update_admin) this.showResult('Update not run', this.errorLabel('UPDATE_ADMIN_REQUIRED'));
         else await this.apply();
       } else {
-        const restartHint = status.status === 'restart_pending' ? `。按安装方式重启：${this.restartHelp}。重启会中断终端里正在运行的程序。` : '';
+        const restartHint = status.status === 'restart_pending' ? `. Restart for your install type: ${this.restartHelp}. Restarting interrupts programs running in terminals.` : '';
         this.showResult(this.statusLabel(status.status), status.error
-          ? `${this.errorLabel(status.error)}${status.error_details ? `：${status.error_details}` : ''}`
+          ? `${this.errorLabel(status.error)}${status.error_details ? `: ${status.error_details}` : ''}`
           : `${status.message || this.statusLabel(status.status)}${restartHint}`);
       }
     } catch (error) {
-      this.showResult('检查更新失败', error.message || '请稍后重试');
+      this.showResult('Update check failed', error.message || 'Please retry later');
     }
   },
 
   statusLabel(status) {
     return ({
-      idle: '尚未检查', checking: '正在检查', current: '已是最新', available: '发现新版本',
-      local_newer: '本地版本较新', blocked: '更新被阻断', updating: '正在更新', failed: '检查失败',
-      restart_pending: '需要重启服务',
-    })[status] || status || '未知';
+      idle: 'Not checked yet', checking: 'Checking', current: 'Up to date', available: 'Update available',
+      local_newer: 'Local version is newer', blocked: 'Update blocked', updating: 'Updating', failed: 'Check failed',
+      restart_pending: 'Service restart needed',
+    })[status] || status || 'Unknown';
   },
 
-  // 有新版本，或代码已经更新但服务还在运行旧代码（需要重启才生效）。
+  // There is a new version, or the code is already updated but the service still runs the old code (a restart is needed).
   needsAttention(status) {
     return status.status === 'available' || status.status === 'restart_pending';
   },
 
-  restartHelp: 'PM2：pm2 restart t-agent；macOS 开机服务：launchctl kickstart -k gui/$(id -u)/com.tagent.client；Linux systemd：sudo systemctl restart t-agent',
+  restartHelp: 'PM2: pm2 restart t-agent; macOS login service: launchctl kickstart -k gui/$(id -u)/com.tagent.client; Linux systemd: sudo systemctl restart t-agent',
 
 
   formatTime(value) {
-    if (!value) return '尚未检查';
+    if (!value) return 'Not checked yet';
     const date = new Date(value);
     return Number.isNaN(date.getTime()) ? value : date.toLocaleString('zh-CN');
   },
 
   errorLabel(code) {
     return ({
-      VERSION_REQUEST_TIMEOUT: '访问 GitHub 超时', VERSION_RESPONSE_TOO_LARGE: '版本文件超过大小限制',
-      INVALID_APP_VERSION: '远程版本号不符合 SemVer', INVALID_MANIFEST: '远程版本文件格式错误',
-      UNTRUSTED_VERSION_URL: '版本链接不受信任', VERSION_URL_NOT_CONFIGURED: '未配置 GitHub 版本链接',
-      WORKTREE_DIRTY: '本地有未提交修改', BRANCH_DIVERGED: '本地分支已分叉',
-      TRACKED_RUNTIME_FILES: '配置或数据文件被 Git 跟踪，为保护数据已停止强制更新',
-      VERSION_SOURCE_MISMATCH: 'GitHub 版本与 Git 分支不一致', UPDATE_ADMIN_REQUIRED: '只有更新管理员可以执行更新',
-      INVALID_UPDATE_REPOSITORY: '更新仓库配置不正确', INVALID_UPDATE_REF: '更新分支配置不正确',
-      INVALID_UPDATE_ARCHIVE: '下载的更新包结构不正确', UNSAFE_UPDATE_ARCHIVE: '更新包包含不安全的文件',
-      ARCHIVE_CURL_FAILED: '更新包下载失败', ARCHIVE_TAR_FAILED: '更新包解压失败',
-      NPM_INSTALLING_FAILED: '依赖安装失败，请检查 Node/npm 环境',
-      NPM_BUILDING_FAILED: '前端资源构建失败',
-      NODE_PTY_LOAD_FAILED: '终端原生模块安装失败',
+      VERSION_REQUEST_TIMEOUT: 'GitHub request timed out', VERSION_RESPONSE_TOO_LARGE: 'Version file exceeds the size limit',
+      INVALID_APP_VERSION: 'Remote version is not valid SemVer', INVALID_MANIFEST: 'Remote version file is malformed',
+      UNTRUSTED_VERSION_URL: 'Version link is not trusted', VERSION_URL_NOT_CONFIGURED: 'No GitHub version link configured',
+      WORKTREE_DIRTY: 'Local uncommitted changes', BRANCH_DIVERGED: 'Local branch has diverged',
+      TRACKED_RUNTIME_FILES: 'Config or data files are tracked by Git; forced update stopped to protect data',
+      VERSION_SOURCE_MISMATCH: 'GitHub version does not match the Git branch', UPDATE_ADMIN_REQUIRED: 'Only the update administrator can run updates',
+      INVALID_UPDATE_REPOSITORY: 'Update repository is misconfigured', INVALID_UPDATE_REF: 'Update branch is misconfigured',
+      INVALID_UPDATE_ARCHIVE: 'Downloaded update package has an invalid structure', UNSAFE_UPDATE_ARCHIVE: 'Update package contains unsafe files',
+      ARCHIVE_CURL_FAILED: 'Update package download failed', ARCHIVE_TAR_FAILED: 'Update package extraction failed',
+      NPM_INSTALLING_FAILED: 'Dependency install failed. Check the Node/npm environment',
+      NPM_BUILDING_FAILED: 'Frontend build failed',
+      NODE_PTY_LOAD_FAILED: 'Terminal native module install failed',
     })[code] || code || '';
   },
 
@@ -215,17 +215,17 @@ const Updates = {
   showAvailable(status) {
     this.markNotified(status);
     const release = status.remote_manifest && status.remote_manifest.release_url;
-    Modal.show('发现新版本', `
+    Modal.show('Update available', `
       <div class="update-hero">
-        <span class="update-version">${escapeHtml(status.local_version || '未知')}</span>
+        <span class="update-version">${escapeHtml(status.local_version || 'Unknown')}</span>
         <span class="update-arrow">→</span>
         <span class="update-version new">${escapeHtml(status.remote_version)}</span>
       </div>
-      <div class="update-message">GitHub 上已有新版本${status.remote_manifest && status.remote_manifest.published_at ? `，发布于 ${escapeHtml(this.formatTime(status.remote_manifest.published_at))}` : ''}。请点击“立即更新”完成升级。</div>
-      ${release ? `<a class="update-release-link" href="${escapeHtml(release)}" target="_blank" rel="noopener noreferrer">查看 GitHub 发布说明 ↗</a>` : ''}
+      <div class="update-message">A new version is available on GitHub${status.remote_manifest && status.remote_manifest.published_at ? `, published ${escapeHtml(this.formatTime(status.remote_manifest.published_at))}` : ''}. Click “Update now” to upgrade.</div>
+      ${release ? `<a class="update-release-link" href="${escapeHtml(release)}" target="_blank" rel="noopener noreferrer">View GitHub release notes ↗</a>` : ''}
       <div class="form-actions">
-        <button class="btn-cancel" id="update-later">稍后提醒</button>
-        ${status.is_update_admin ? '<button class="btn-submit" id="update-apply">立即更新</button>' : '<span class="form-hint">请联系更新管理员执行更新</span>'}
+        <button class="btn-cancel" id="update-later">Remind me later</button>
+        ${status.is_update_admin ? '<button class="btn-submit" id="update-apply">Update now</button>' : '<span class="form-hint">Ask the update administrator to run the update</span>'}
       </div>
     `);
     document.getElementById('update-later').addEventListener('click', Modal.hide);
@@ -236,16 +236,16 @@ const Updates = {
   confirmApply(status) {
     const archiveInstall = status.install_type === 'archive';
     const noRestart = status.restart_required === false;
-    Modal.show('确认更新本地服务', `
-      <div class="update-warning">${noRestart ? '本次仅更新前端资源，服务不会重启，现有 Shell 连接保持；完成后可稍后手动刷新页面。' : `${archiveInstall ? '更新将下载官方安装包' : '更新将检查 Git 工作区并快进代码'}，随后安装依赖并重启服务，现有 Shell 连接会中断。`}</div>
-      <div class="update-detail-row"><span>目标版本</span><strong>${escapeHtml(status.remote_version)}</strong></div>
-      <div class="update-detail-row"><span>安装方式</span><strong>${archiveInstall ? '安装包更新' : 'Git 快进更新'}</strong></div>
-      <div class="update-detail-row"><span>GitHub 版本源</span><code title="${escapeHtml(status.version_url || '')}">${escapeHtml(status.version_url || '未配置')}</code></div>
-      <div class="form-hint">更新前会自动备份 SQLite 数据库；账号、Token、任务和工作目录不会被覆盖。</div>
-      ${archiveInstall ? '' : '<label class="form-hint"><input type="checkbox" id="update-force"> 强制更新：将本地未提交代码及未跟踪文件备份到 Git stash，再使用远程代码；忽略的配置和任务数据保留。备份不会自动恢复，已提交的分叉仍会阻止更新。</label>'}
+    Modal.show('Confirm local service update', `
+      <div class="update-warning">${noRestart ? 'Only frontend assets are updated; the service will not restart and existing shells stay connected. Refresh the page manually afterwards.' : `${archiveInstall ? 'The update downloads the official install package' : 'The update checks the Git workspace and fast-forwards the code'}, then installs dependencies and restarts the service. Existing shell connections will be interrupted.`}</div>
+      <div class="update-detail-row"><span>Target version</span><strong>${escapeHtml(status.remote_version)}</strong></div>
+      <div class="update-detail-row"><span>Install type</span><strong>${archiveInstall ? 'Package update' : 'Git fast-forward update'}</strong></div>
+      <div class="update-detail-row"><span>GitHub version source</span><code title="${escapeHtml(status.version_url || '')}">${escapeHtml(status.version_url || 'Not configured')}</code></div>
+      <div class="form-hint">The SQLite database is backed up before updating; accounts, tokens, tasks and working directories are not overwritten.</div>
+      ${archiveInstall ? '' : '<label class="form-hint"><input type="checkbox" id="update-force"> Force update: back up local uncommitted code and untracked files to a Git stash, then use the remote code; ignored config and task data are kept. The backup is not restored automatically, and committed divergence still blocks the update.</label>'}
       <div class="form-actions">
-        <button class="btn-cancel" id="update-confirm-cancel">取消</button>
-        <button class="btn-submit" id="update-confirm-apply">${noRestart ? '确认更新（不重启）' : '确认更新并重启'}</button>
+        <button class="btn-cancel" id="update-confirm-cancel">Cancel</button>
+        <button class="btn-submit" id="update-confirm-apply">${noRestart ? 'Confirm update (no restart)' : 'Confirm update and restart'}</button>
       </div>
     `);
     document.getElementById('update-confirm-cancel').addEventListener('click', Modal.hide);
@@ -254,14 +254,14 @@ const Updates = {
 
   async apply(force = false) {
     this.setBusy(true);
-    Modal.show('正在更新', UpdateLog.markup('update-progress-message', 'update-progress-error'));
+    Modal.show('Updating', UpdateLog.markup('update-progress-message', 'update-progress-error'));
     try {
       this.updateServerDown = false;
       this.restartSeenAt = null;
-      // 先记下当前进程的启动 ID：重启后换了 ID，才说明新进程已经起来。
+      // Remember the current process start ID first: a changed ID after the restart proves the new process is up.
       this.updateBootId = await this.currentBootId();
       const response = await API.post('/api/system/apply-update', { confirm: true, force });
-      // 接口返回 { accepted, status: {...} }；早期/测试里也可能直接返回状态本身。
+      // The endpoint returns { accepted, status: {...} }; early versions and tests may return the status itself.
       const status = response && typeof response.status === 'object' && response.status ? response.status : response;
       if (!this.updateBootId) this.updateBootId = status.boot_id || null;
       if (status.stage === 'completed') { this.showCompleted(status); return; }
@@ -272,13 +272,13 @@ const Updates = {
       const code = status && status.error;
       this.setBusy(false);
       if (!document.getElementById('update-progress-message')) {
-        this.showResult('更新未执行', `${this.errorLabel(code) || error.message}${status?.error_details ? `：${status.error_details}` : ''}`);
+        this.showResult('Update not run', `${this.errorLabel(code) || error.message}${status?.error_details ? `: ${status.error_details}` : ''}`);
         return;
       }
-      document.getElementById('update-progress-message').textContent = '更新未执行';
+      document.getElementById('update-progress-message').textContent = 'Update not run';
       const errorNode = document.getElementById('update-progress-error');
       errorNode.className = 'form-hint error';
-      errorNode.textContent = `${this.errorLabel(code) || error.message}${status && status.error_details ? `：${status.error_details}` : ''}`;
+      errorNode.textContent = `${this.errorLabel(code) || error.message}${status && status.error_details ? `: ${status.error_details}` : ''}`;
       const spinner = document.querySelector('.update-spinner');
       if (spinner) spinner.remove();
     }
@@ -295,18 +295,18 @@ const Updates = {
       if (status.status === 'blocked' || status.status === 'failed') {
         this.setBusy(false);
         clearInterval(this.restartTimer);
-        if (message) message.textContent = '更新未执行';
+        if (message) message.textContent = 'Update not run';
         const errorNode = document.getElementById('update-progress-error');
         if (errorNode) {
           errorNode.className = 'form-hint error';
-          errorNode.textContent = `${this.errorLabel(status.error) || status.message || '更新失败'}${status.error_details ? `：${status.error_details}` : ''}`;
+          errorNode.textContent = `${this.errorLabel(status.error) || status.message || 'Update failed'}${status.error_details ? `: ${status.error_details}` : ''}`;
         }
         const spinner = document.querySelector('.update-spinner');
         if (spinner) spinner.remove();
         if (status.error === 'WORKTREE_DIRTY' && errorNode) {
           const retry = document.createElement('button');
           retry.className = 'btn-submit';
-          retry.textContent = '选择强制更新…';
+          retry.textContent = 'Choose force update…';
           retry.addEventListener('click', () => this.confirmApply(status));
           errorNode.after(retry);
         }
@@ -317,8 +317,8 @@ const Updates = {
         clearInterval(this.restartTimer);
         this.waitForRestart();
       } else if (status.status !== 'updating' && this.isNewProcess(status.boot_id, { trustUnknown: true })) {
-        // 服务在两次轮询之间已重启完成：新进程里状态不再是 updating，直接刷新加载新界面。
-        // 必须确认是新进程；旧进程在退出前状态也可能不是 updating，此时刷新只会拿到旧界面。
+        // The service finished restarting between two polls: the new process no longer reports updating, so reload to load the new UI.
+        // The new process must be confirmed; the old process may also report a non-updating status before it exits, and reloading then would only fetch the old UI.
         clearInterval(this.restartTimer);
         this.showCompleted(status);
       }
@@ -330,15 +330,15 @@ const Updates = {
     document.getElementById('update-dot').style.display = 'none';
     const message = document.getElementById('update-progress-message');
     if (message) {
-      // 保留终端日志，提示后自动刷新页面加载新界面。
-      message.textContent = '更新完成，正在刷新页面…';
+      // Keep the terminal log, show a notice, then refresh the page to load the new UI.
+      message.textContent = 'Update complete, refreshing the page…';
       const title = document.getElementById('modal-title');
-      if (title) title.textContent = '更新完成';
+      if (title) title.textContent = 'Update complete';
       const spinner = document.querySelector('.update-spinner');
       if (spinner) spinner.remove();
       UpdateLog.render(document.getElementById('update-progress-message-log'), status.log);
     } else {
-      Modal.show('更新完成', '<div class="update-message">更新完成，正在刷新页面…</div>');
+      Modal.show('Update complete', '<div class="update-message">Update complete, refreshing the page…</div>');
     }
     setTimeout(() => window.location.reload(), 1500);
   },
@@ -350,9 +350,9 @@ const Updates = {
     } catch { return null; }
   },
 
-  // 重启完成 = 页面连上的已经是新进程。磁盘上的版本号在重启前就已是新版本，所以不能靠版本号判断，而是看进程启动 ID 是否变了。
-  // 兜底（不依赖任何一次轮询恰好撞上服务中断）：旧进程在写下“正在重启”约 0.75 秒后就会退出，所以看到“正在重启”
-  // RESTART_GRACE_MS 之后能成功响应的，一定是新进程。
+  // Restart finished = the page is talking to the new process. The on-disk version number is already new before the restart, so it cannot be used; check whether the process start ID changed instead.
+  // Fallback (does not depend on any single poll hitting the outage): the old process exits about 0.75 s after writing "restarting", so a request that succeeds
+  // after RESTART_GRACE_MS from seeing "restarting" must come from the new process.
   RESTART_GRACE_MS: 4000,
   restartGraceElapsed() {
     return Boolean(this.restartSeenAt) && Date.now() - this.restartSeenAt > this.RESTART_GRACE_MS;
@@ -367,11 +367,11 @@ const Updates = {
     const note = document.getElementById('update-progress-error');
     if (!note || note.querySelector('button')) return;
     note.className = 'form-hint';
-    note.textContent = '服务恢复后会自动刷新；如果等了很久还没刷新，可以手动刷新：';
+    note.textContent = 'The page refreshes automatically once the service is back; if it takes too long, refresh manually: ';
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'btn-submit';
-    button.textContent = '立即刷新页面';
+    button.textContent = 'Refresh now';
     button.addEventListener('click', () => window.location.reload());
     note.append(button);
   },
@@ -379,7 +379,7 @@ const Updates = {
   waitForRestart() {
     this.restartSeenAt = this.restartSeenAt || Date.now();
     const message = document.getElementById('update-progress-message');
-    if (message) message.textContent = '服务正在重启，恢复后页面会自动刷新…';
+    if (message) message.textContent = 'The service is restarting; the page refreshes automatically when it is back…';
     clearInterval(this.restartTimer);
     const startedAt = Date.now();
     this.restartTimer = setInterval(async () => {
@@ -397,20 +397,20 @@ const Updates = {
     const remote = status.remote_manifest || {};
     return `
       <div class="settings-section">
-        <div class="settings-section-title">检查更新</div>
-        <div class="update-detail-row"><span>状态</span><strong class="update-status ${escapeHtml(status.status)}">${escapeHtml(this.statusLabel(status.status))}</strong></div>
-        <div class="update-detail-row"><span>当前版本</span><strong>${escapeHtml(status.local_version || '未知')}</strong></div>
-        <div class="update-detail-row"><span>远程版本</span><strong>${escapeHtml(status.remote_version || '尚未获取')}</strong></div>
-        <div class="update-detail-row"><span>上次检查</span><span>${escapeHtml(this.formatTime(status.last_checked_at))}</span></div>
-        <div class="update-detail-row"><span>检查间隔</span><span>${escapeHtml(String(status.check_interval_seconds / 60))} 分钟</span></div>
-        <div class="update-detail-row"><span>安装方式</span><span>${({ archive: '安装包更新', git: 'Git 快进更新' })[status.install_type] || '未知'}</span></div>
-        <div class="update-detail-row update-url-row"><span>GitHub 版本源</span><code title="${escapeHtml(status.version_url || '')}">${escapeHtml(status.version_url || '未配置')}</code></div>
-        ${remote.release_url ? `<div class="update-detail-row"><span>发布说明</span><a href="${escapeHtml(remote.release_url)}" target="_blank" rel="noopener noreferrer">GitHub Release ↗</a></div>` : ''}
-        ${status.status === 'restart_pending' ? `<div class="form-hint update-restart-hint"><strong>${escapeHtml(status.message || '代码已更新，需要重启服务才会生效')}</strong><br>按安装方式重启：${escapeHtml(this.restartHelp)}。重启会中断终端里正在运行的程序。</div>` : ''}
-        ${status.error ? `<div class="form-hint error update-error">${escapeHtml(this.errorLabel(status.error))}${status.error_details ? `：${escapeHtml(status.error_details)}` : ''}</div>` : ''}
+        <div class="settings-section-title">Check for updates</div>
+        <div class="update-detail-row"><span>Status</span><strong class="update-status ${escapeHtml(status.status)}">${escapeHtml(this.statusLabel(status.status))}</strong></div>
+        <div class="update-detail-row"><span>Current version</span><strong>${escapeHtml(status.local_version || 'Unknown')}</strong></div>
+        <div class="update-detail-row"><span>Remote version</span><strong>${escapeHtml(status.remote_version || 'Not fetched yet')}</strong></div>
+        <div class="update-detail-row"><span>Last checked</span><span>${escapeHtml(this.formatTime(status.last_checked_at))}</span></div>
+        <div class="update-detail-row"><span>Check interval</span><span>${escapeHtml(String(status.check_interval_seconds / 60))} min</span></div>
+        <div class="update-detail-row"><span>Install type</span><span>${({ archive: 'Package update', git: 'Git fast-forward update' })[status.install_type] || 'Unknown'}</span></div>
+        <div class="update-detail-row update-url-row"><span>GitHub version source</span><code title="${escapeHtml(status.version_url || '')}">${escapeHtml(status.version_url || 'Not configured')}</code></div>
+        ${remote.release_url ? `<div class="update-detail-row"><span>Release notes</span><a href="${escapeHtml(remote.release_url)}" target="_blank" rel="noopener noreferrer">GitHub Release ↗</a></div>` : ''}
+        ${status.status === 'restart_pending' ? `<div class="form-hint update-restart-hint"><strong>${escapeHtml(status.message || 'Code updated; restart the service to apply it')}</strong><br>Restart for your install type: ${escapeHtml(this.restartHelp)}. Restarting interrupts programs running in terminals.</div>` : ''}
+        ${status.error ? `<div class="form-hint error update-error">${escapeHtml(this.errorLabel(status.error))}${status.error_details ? `: ${escapeHtml(status.error_details)}` : ''}</div>` : ''}
         <div class="settings-inline-actions">
-          <button class="btn-cancel" id="settings-check-update">立即检查</button>
-          ${status.status === 'available' && status.is_update_admin ? '<button class="btn-submit" id="settings-apply-update">立即更新</button>' : ''}
+          <button class="btn-cancel" id="settings-check-update">Check now</button>
+          ${status.status === 'available' && status.is_update_admin ? '<button class="btn-submit" id="settings-apply-update">Update now</button>' : ''}
         </div>
       </div>
     `;
@@ -420,7 +420,7 @@ const Updates = {
     const check = document.getElementById('settings-check-update');
     check.addEventListener('click', async () => {
       check.disabled = true;
-      check.textContent = '检查中…';
+      check.textContent = 'Checking…';
       try {
         const next = await API.post('/api/system/check-update', {});
         this.latestStatus = next;
@@ -432,7 +432,7 @@ const Updates = {
         }
       } catch {
         const next = await this.load({ notify: false });
-        alert(next ? this.errorLabel(next.error) : '检查更新失败');
+        alert(next ? this.errorLabel(next.error) : 'Update check failed');
         Modal.hide();
       }
     });
@@ -456,15 +456,15 @@ const Updates = {
 
 document.getElementById('btn-one-click-update')?.addEventListener('click', () => Updates.oneClick());
 
-// 主题选择：点选即时生效并记住（浏览器本地）。
+// Theme picker: a click applies immediately and is remembered (in this browser).
 function showThemePicker() {
   const cards = Theme.list().map(theme => `
     <button type="button" class="theme-card${theme.id === Theme.get() ? ' active' : ''}" data-theme-id="${theme.id}" role="radio" aria-checked="${theme.id === Theme.get()}">
       <span class="theme-swatch theme-swatch-${theme.id}" aria-hidden="true"><i></i><i></i><i></i></span>
       <strong>${escapeHtml(theme.label)}</strong><span class="theme-hint">${escapeHtml(theme.hint)}</span>
     </button>`).join('');
-  Modal.show('切换主题', `<div class="theme-grid" role="radiogroup" aria-label="主题">${cards}</div>
-    <div class="form-hint">设置保存在当前浏览器里。</div>`);
+  Modal.show('Switch theme', `<div class="theme-grid" role="radiogroup" aria-label="Theme">${cards}</div>
+    <div class="form-hint">Saved in this browser.</div>`);
   document.querySelectorAll('.theme-card').forEach(card => card.addEventListener('click', () => {
     Theme.set(card.dataset.themeId);
     document.querySelectorAll('.theme-card').forEach(item => {
@@ -526,16 +526,16 @@ document.getElementById('modal-overlay').addEventListener('click', e => {
   if (e.target === document.getElementById('modal-overlay')) Modal.hide();
 });
 
-// ---- 访问模式：身份验证器 + 允许外网访问 / 仅本机访问（无需验证） ----
+// ---- Access mode: authenticator + allow external access / local access only (no verification) ----
 function accessModeSection(user) {
   const local = user.access_mode === 'local';
   const loopbackOnly = ['127.0.0.1', '::1', 'localhost'].includes(user.listen_host);
-  return `<div class="settings-section"><div class="settings-section-title">访问模式 · ${local ? '仅本机访问' : '身份验证器 + 允许外网访问'}</div>
+  return `<div class="settings-section"><div class="settings-section-title">Access mode · ${local ? 'Local access only' : 'Authenticator + allow external access'}</div>
     <div class="form-hint">${local
-      ? '当前只接受这台机器上的访问，不需要验证码；其他设备和远程客户端连不上这个 Client。'
-      : '当前需要身份验证器登录，允许手机、其他电脑和远程客户端连接。'}${!local && loopbackOnly ? ` 注意：服务现在只监听 ${escapeHtml(user.listen_host)}，要让其他设备连上，需在 .env 设置 HOST=0.0.0.0 并重启服务。` : ''}</div>
-    ${local && user.authenticator_bound ? '<div class="form-group"><label class="form-label" for="settings-mode-code">身份验证器的 6 位验证码（切回外网访问时验证）</label><input class="form-input" id="settings-mode-code" inputmode="numeric" maxlength="6" autocomplete="one-time-code"></div>' : ''}
-    <div class="settings-inline-actions"><button class="btn-cancel" id="settings-mode-switch">${local ? '改为：身份验证器 + 允许外网访问' : '改为：仅本机访问（无需验证）'}</button></div>
+      ? 'Only access from this machine is accepted, with no code; other devices and remote clients cannot reach this client.'
+      : 'An authenticator login is required; phones, other computers and remote clients can connect.'}${!local && loopbackOnly ? ` Note: the service currently listens only on ${escapeHtml(user.listen_host)}. To let other devices connect, set HOST=0.0.0.0 in .env and restart the service.` : ''}</div>
+    ${local && user.authenticator_bound ? '<div class="form-group"><label class="form-label" for="settings-mode-code">6-digit authenticator code (verified when switching back to external access)</label><input class="form-input" id="settings-mode-code" inputmode="numeric" maxlength="6" autocomplete="one-time-code"></div>' : ''}
+    <div class="settings-inline-actions"><button class="btn-cancel" id="settings-mode-switch">${local ? 'Switch to: authenticator + external access' : 'Switch to: local access only (no verification)'}</button></div>
     <p class="form-hint" id="settings-mode-feedback" role="status"></p></div>`;
 }
 
@@ -545,50 +545,50 @@ function bindAccessMode(user) {
   const local = user.access_mode === 'local';
   button.addEventListener('click', async () => {
     const loginPath = window.TAgentLoginPath || '/auth/login';
-    if (!local && !confirm('改为“仅本机访问”后，不再需要验证码，且手机、其他电脑和远程客户端都将无法连接这个 Client（包括把它当作引擎的连接）。\n\n其他设备上的会话会立即断开。确认切换吗？')) return;
+    if (!local && !confirm('After switching to “local access only”, no code is needed, and phones, other computers and remote clients (including connections that use this Client as an engine) can no longer reach it.\n\nSessions on other devices end immediately. Switch?')) return;
     button.disabled = true;
     feedback.textContent = '';
     try {
       const body = local ? { mode: 'remote', code: (document.getElementById('settings-mode-code')?.value || '').trim() } : { mode: 'local' };
       const result = await API.post('/auth/mode', body);
-      if (result.locked_out) { feedback.textContent = '已切换为仅本机访问。当前设备不在本机，将无法再访问；请回到这台服务器的本机浏览器使用。'; return; }
+      if (result.locked_out) { feedback.textContent = 'Switched to local access only. This device is not the local machine and can no longer connect; use the browser on the server itself.'; return; }
       location.replace(result.redirect || '/web');
     } catch (error) {
       let code = error.message;
-      try { code = JSON.parse(error.message); } catch { /* 保持原文 */ }
+      try { code = JSON.parse(error.message); } catch { /* keep the original text */ }
       const data = code && typeof code === 'object' ? code : { error: String(code) };
       if (data.error === 'AUTHENTICATOR_BINDING_REQUIRED') { location.href = data.redirect || `${loginPath}/setup?return_to=/web`; return; }
-      feedback.textContent = ({ AUTH_CODE_INVALID: '验证码无效或已使用，请等待下一组验证码。', AUTH_RATE_LIMITED: '验证尝试次数过多，请 15 分钟后再试。' })[data.error] || `切换失败：${data.error}`;
+      feedback.textContent = ({ AUTH_CODE_INVALID: 'The code is invalid or already used. Wait for the next code.', AUTH_RATE_LIMITED: 'Too many attempts. Try again in 15 minutes.' })[data.error] || `Switch failed: ${data.error}`;
     } finally { button.disabled = false; }
   });
 }
 
 async function init() {
   document.getElementById('btn-logout').addEventListener('click', async () => {
-    if (!confirm('退出后，本机和远程终端连接将断开，但服务端正在运行的任务不会停止。确认退出吗？')) return;
+    if (!confirm('Logging out disconnects local and remote terminals, but tasks running on the server keep running. Log out?')) return;
     try { await API.post('/auth/logout', {}); location.replace(`${window.TAgentLoginPath || '/auth/login'}?return_to=/web`); }
-    catch { alert('退出失败，请稍后重试。'); }
+    catch { alert('Log out failed. Please retry later.'); }
   });
   document.getElementById('btn-settings').addEventListener('click', async () => {
     let user = {};
     try { user = await API.get('/auth/me'); }
-    catch(e) { alert('加载设置失败: ' + e.message); return; }
+    catch(e) { alert('Could not load settings: ' + e.message); return; }
     const initialWorkDir = user.work_dir || user.effective_work_dir || '';
     const updateStatus = await Updates.load({ notify: false });
-    Modal.show('设置', `
+    Modal.show('Settings', `
       <div class="form-group">
-        <label class="form-label">工作目录</label>
-        <input class="form-input" id="settings-work-dir" value="${escapeHtml(initialWorkDir)}" placeholder="例如 /Users/yourname/tasks">
-        <div class="form-hint">新建任务时 md 文件的根目录，目录不存在会自动创建；清空恢复默认目录</div>
+        <label class="form-label">Working directory</label>
+        <input class="form-input" id="settings-work-dir" value="${escapeHtml(initialWorkDir)}" placeholder="e.g. /Users/yourname/tasks">
+        <div class="form-hint">Root directory for md files of new tasks; created if missing. Clear it to restore the default.</div>
       </div>
-      <div class="settings-section"><div class="settings-section-title">图片上传</div><div class="form-hint">配置 Client 阿里云 OSS 后，可在本地及远程终端粘贴图片，或使用终端底部的上传图片按钮。</div><div class="settings-inline-actions"><button class="btn-cancel" id="settings-oss">配置阿里云 OSS</button></div></div>
-      <div class="settings-section"><div class="settings-section-title">远程服务</div><div class="form-hint">当前客户端也可作为引擎，供其他客户端访问本机任务、文件和终端。</div><div class="settings-inline-actions"><button class="btn-cancel" id="settings-remote-tokens">作为引擎供其他客户端连接</button></div></div>
+      <div class="settings-section"><div class="settings-section-title">Image upload</div><div class="form-hint">After configuring Alibaba Cloud OSS on the client, you can paste images into local and remote terminals or use the upload button at the bottom of the terminal.</div><div class="settings-inline-actions"><button class="btn-cancel" id="settings-oss">Configure Alibaba Cloud OSS</button></div></div>
+      <div class="settings-section"><div class="settings-section-title">Remote service</div><div class="form-hint">This client can also act as an engine so other clients can reach its tasks, files and terminals.</div><div class="settings-inline-actions"><button class="btn-cancel" id="settings-remote-tokens">Allow other clients to connect as an engine</button></div></div>
       ${accessModeSection(user)}
-      <div class="settings-section"><div class="settings-section-title">身份验证器 · 已绑定</div><div class="form-hint">电脑和手机共用同一页面及绑定信息，登录有效期 30 天，使用期间自动续期；连续 30 天未使用需重新验证。更换后旧验证器、恢复码和其他设备登录立即失效。</div><a class="toolbar-btn" href="/auth/setup?return_to=/web">更换身份验证器</a></div>
+      <div class="settings-section"><div class="settings-section-title">Authenticator · bound</div><div class="form-hint">Computer and phone share the same page and binding. Logins last 30 days and renew while in use; after 30 days of inactivity you must verify again. After replacing, the old authenticator, recovery codes and other devices’ logins stop working immediately.</div><a class="toolbar-btn" href="/auth/setup?return_to=/web">Replace authenticator</a></div>
       ${updateStatus ? Updates.renderSettings(updateStatus) : ''}
       <div class="form-actions">
-        <button class="btn-cancel" id="settings-cancel">取消</button>
-        <button class="btn-submit" id="settings-save">保存</button>
+        <button class="btn-cancel" id="settings-cancel">Cancel</button>
+        <button class="btn-submit" id="settings-save">Save</button>
       </div>
     `);
     document.getElementById('settings-cancel').addEventListener('click', Modal.hide);
@@ -603,7 +603,7 @@ async function init() {
         await API.put('/auth/settings', { work_dir });
         Modal.hide();
       } catch(e) {
-        alert('保存失败: ' + e.message);
+        alert('Save failed: ' + e.message);
       }
     });
   });
@@ -617,9 +617,9 @@ async function init() {
   Updates.start();
 }
 
-// app.js 在其他业务脚本之前加载，以便提供 API、Modal、ContextMenu 等公共对象。
-// 等 DOMContentLoaded 再启动，确保后续的 bookmarks.js、tasks.js、engines.js
-// 已经完成声明。单用户模式移除登录请求后，不能再依赖异步请求隐式让出执行时机。
+// app.js loads before the other feature scripts so that it can provide shared objects such as API, Modal and ContextMenu.
+// Start on DOMContentLoaded so that bookmarks.js, tasks.js and engines.js (loaded later)
+// have finished declaring. Now that single-user mode no longer makes a login request, we cannot rely on an async request to yield implicitly.
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', init, { once: true });
 } else {

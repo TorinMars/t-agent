@@ -1,4 +1,4 @@
-// 工作目录工具：自动提示未管理的目录并批量导入；弹出任务列表批量清理不用的代码目录。
+// Workspace tools: prompt about unmanaged directories and import them in bulk; open a task list to clean up unused code directories in bulk.
 const WorkspaceTools = (() => {
   const importButton = document.getElementById('btn-workspace-import');
   const cleanupButton = document.getElementById('btn-workspace-cleanup');
@@ -11,28 +11,28 @@ const WorkspaceTools = (() => {
     return `${Math.max(1, Math.round(bytes / 1024))} KB`;
   };
   const errorText = error => {
-    let text = error.message || '操作失败';
-    try { const data = JSON.parse(text); text = data.reason ? `${data.error}：${data.reason}` : data.error; } catch { /* 保持原文 */ }
+    let text = error.message || 'Operation failed';
+    try { const data = JSON.parse(text); text = data.reason ? `${data.error}: ${data.reason}` : data.error; } catch { /* keep the original text */ }
     return text;
   };
-  // 跟随当前引擎：本地走 /api/tasks/workspace，远程 Engine 经代理走 /api/remote-servers/:id/workspace。
+  // Follows the current engine: local uses /api/tasks/workspace, a remote Engine goes through the proxy at /api/remote-servers/:id/workspace.
   const activeSource = () => (window.Tasks && Tasks.getSource(Tasks.getActiveKey())) || { local: true };
   const base = () => { const src = activeSource(); return src.local ? '/api/tasks/workspace' : `/api/remote-servers/${src.id}/workspace`; };
   const supported = () => { const src = activeSource(); return src.local || (src.caps && src.caps.has('workspace:manage')); };
-  const UNSUPPORTED = '<p>当前引擎版本较旧，不支持导入或清理工作目录，请先更新该引擎。</p>';
+  const UNSUPPORTED = '<p>This engine is too old to import or clean up the workspace. Please update it first.</p>';
   const refreshTasks = async () => { if (window.Tasks) await Tasks.refresh(); };
 
-  // ---------- 导入 ----------
+  // ---------- Import ----------
   async function loadUnmanaged() {
     const key = Tasks.getActiveKey();
     let items = [];
     if (supported()) { try { items = (await API.get(`${base()}/unmanaged`)).items; } catch { items = []; } }
-    if (key !== Tasks.getActiveKey()) return unmanaged; // 加载期间已切换引擎，丢弃过期结果
+    if (key !== Tasks.getActiveKey()) return unmanaged; // the engine was switched while loading; discard the stale result
     unmanaged = items;
     if (importButton) {
       const badge = document.getElementById('workspace-import-badge');
       importButton.classList.toggle('has-items', unmanaged.length > 0);
-      importButton.dataset.tip = unmanaged.length ? `导入工作目录下 ${unmanaged.length} 个未管理的目录` : '导入工作目录下的目录（暂无未管理的目录）';
+      importButton.dataset.tip = unmanaged.length ? `Import ${unmanaged.length} unmanaged directories from the workspace` : 'Import directories from the workspace (none unmanaged)';
       importButton.setAttribute('aria-label', importButton.dataset.tip);
       badge.hidden = !unmanaged.length;
       badge.textContent = unmanaged.length > 99 ? '99+' : String(unmanaged.length);
@@ -41,20 +41,20 @@ const WorkspaceTools = (() => {
   }
 
   function renderImport() {
-    Modal.show('导入工作目录下的目录', `
-      <p class="wt-intro">以下目录在工作目录里，但还不是任务。勾选后批量导入，只登记任务，不会在目录里创建文件。</p>
-      <label class="wt-row wt-all"><input type="checkbox" id="wt-import-all" checked> <strong>全选</strong> <span class="wt-muted" id="wt-import-count"></span></label>
+    Modal.show('Import directories from the workspace', `
+      <p class="wt-intro">These directories are in the working directory but are not tasks yet. Tick them to import in bulk; only tasks are registered and no files are created in the directories.</p>
+      <label class="wt-row wt-all"><input type="checkbox" id="wt-import-all" checked> <strong>Select all</strong> <span class="wt-muted" id="wt-import-count"></span></label>
       <ul class="wt-list">${unmanaged.map((item, index) => `
         <li><label class="wt-row"><input type="checkbox" class="wt-import-item" data-index="${index}" checked>
           <span><strong>${escapeHtml(item.name)}</strong>${item.is_git ? ' <span class="wt-tag">Git</span>' : ''}<br><code>${escapeHtml(item.path)}</code></span></label></li>`).join('')}
       </ul>
-      <div class="wt-actions"><button class="btn-submit" id="wt-import-run" type="button">导入所选</button></div>
+      <div class="wt-actions"><button class="btn-submit" id="wt-import-run" type="button">Import selected</button></div>
       <p class="wt-error" id="wt-error" role="alert"></p>`);
     const items = [...document.querySelectorAll('.wt-import-item')];
     const all = document.getElementById('wt-import-all');
     const update = () => {
       const chosen = items.filter(el => el.checked).length;
-      document.getElementById('wt-import-count').textContent = `已选 ${chosen} / ${items.length}`;
+      document.getElementById('wt-import-count').textContent = `Selected ${chosen} / ${items.length}`;
       document.getElementById('wt-import-run').disabled = !chosen;
       all.checked = chosen === items.length;
     };
@@ -73,18 +73,18 @@ const WorkspaceTools = (() => {
     });
   }
 
-  // ---------- 清理 ----------
+  // ---------- Cleanup ----------
   async function openCleanup() {
-    if (!supported()) { Modal.show('清理代码目录', UNSUPPORTED); return; }
-    Modal.show('清理代码目录', '<p class="wt-intro">正在扫描各任务的目录大小和 Git 状态，目录多时可能要几十秒…</p>');
+    if (!supported()) { Modal.show('Clean up code directories', UNSUPPORTED); return; }
+    Modal.show('Clean up code directories', '<p class="wt-intro">Scanning each task directory’s size and Git status; this can take tens of seconds with many directories…</p>');
     let data;
     try { data = await API.get(`${base()}/cleanup`); }
-    catch (error) { Modal.show('清理代码目录', `<p class="wt-error">${escapeHtml(errorText(error))}</p>`); return; }
+    catch (error) { Modal.show('Clean up code directories', `<p class="wt-error">${escapeHtml(errorText(error))}</p>`); return; }
     renderCleanup(data);
   }
 
   function renderCleanup(data) {
-    // 按任务分组，任务按其下仓库的总占用从大到小排；任务目录本身通常不是仓库，这里列的是它里面的仓库。
+    // Group by task, with tasks ordered by the total size of their repos (largest first); a task directory itself is usually not a repo, what is listed are the repos inside it.
     const groups = new Map();
     for (const item of data.items) {
       if (!groups.has(item.task_id)) groups.set(item.task_id, { title: item.title, path: item.task_path, items: [], total: 0 });
@@ -95,31 +95,31 @@ const WorkspaceTools = (() => {
     const ordered = [...groups.entries()].sort((a, b) => b[1].total - a[1].total);
     const rows = ordered.map(([taskId, group]) => `
       <li class="wt-group"><div class="wt-group-head"><strong>${escapeHtml(group.title)}</strong>
-        <span class="wt-muted">${group.items.length} 个仓库 · ${formatSize(group.total)}</span><br><code>${escapeHtml(group.path)}</code></div>
+        <span class="wt-muted">${group.items.length} repos · ${formatSize(group.total)}</span><br><code>${escapeHtml(group.path)}</code></div>
         <ul class="wt-list wt-nested">${group.items.map(item => `
           <li><label class="wt-row${item.safe ? '' : ' wt-blocked'}">
             <input type="checkbox" class="wt-clean-item" data-task="${taskId}" data-path="${escapeHtml(item.path)}" ${item.safe ? '' : 'disabled'}>
             <span class="wt-grow"><strong>${escapeHtml(item.name)}</strong>
               ${item.safe ? '' : `<span class="wt-reason">${escapeHtml(item.reason)}</span>`}</span>
-            <span class="wt-meta">${formatSize(item.size_bytes)}<br>${item.idle_days == null ? '' : `${item.idle_days} 天没动`}</span></label></li>`).join('')}
+            <span class="wt-meta">${formatSize(item.size_bytes)}<br>${item.idle_days == null ? '' : `${item.idle_days} days untouched`}</span></label></li>`).join('')}
         </ul></li>`).join('');
     const archived = data.archived.map(item => `
       <li class="wt-row"><span class="wt-grow"><strong>${escapeHtml(item.title)}</strong> / ${escapeHtml(item.path.split('/').pop())}
-        <span class="wt-muted">已于 ${escapeHtml(String(item.cleaned_at).slice(0, 10))} 清理，释放 ${formatSize(item.size_bytes)}</span><br><code>${escapeHtml(item.restore)}</code></span>
-        <button class="toolbar-btn" data-restore="${item.id}" type="button">从仓库恢复</button></li>`).join('');
-    Modal.show('清理代码目录', `
-      <p class="wt-intro">任务目录一般不是 Git 仓库，这里列出每个任务目录里（最多 3 层内）的所有仓库，勾选后批量删除本地的仓库目录，任务目录里的其他文件、任务和待办都保留。只有该仓库没有未提交修改、没有未推送提交、没有 stash 时才能勾选，删除后可凭仓库地址恢复。按占用从大到小排列；超过 ${data.idle_days_threshold} 天没动的建议优先清理。</p>
-      ${data.items.length ? `<label class="wt-row wt-all"><input type="checkbox" id="wt-clean-all"> <strong>全选可清理的</strong> <span class="wt-muted" id="wt-clean-sum"></span></label>
+        <span class="wt-muted">Cleaned on ${escapeHtml(String(item.cleaned_at).slice(0, 10))}, freed ${formatSize(item.size_bytes)}</span><br><code>${escapeHtml(item.restore)}</code></span>
+        <button class="toolbar-btn" data-restore="${item.id}" type="button">Restore from repo</button></li>`).join('');
+    Modal.show('Clean up code directories', `
+      <p class="wt-intro">Task directories are usually not Git repos. This lists all repos inside each task directory (up to 3 levels deep); tick them to delete the local repo directories in bulk. Other files, tasks and to-dos in the task directory are kept. A repo can only be ticked if it has no uncommitted changes, no unpushed commits and no stash, and it can be restored from its remote address. Sorted by size, largest first; repos untouched for more than ${data.idle_days_threshold} days are suggested for cleanup first.</p>
+      ${data.items.length ? `<label class="wt-row wt-all"><input type="checkbox" id="wt-clean-all"> <strong>Select all cleanable</strong> <span class="wt-muted" id="wt-clean-sum"></span></label>
       <ul class="wt-list">${rows}</ul>
-      <div class="wt-actions"><button class="btn-submit" id="wt-clean-run" type="button">清理所选</button></div>` : '<p>任务目录里没有找到 Git 仓库。</p>'}
-      ${archived ? `<h4>已清理，可恢复</h4><ul class="wt-list">${archived}</ul>` : ''}
+      <div class="wt-actions"><button class="btn-submit" id="wt-clean-run" type="button">Clean selected</button></div>` : '<p>No Git repos were found in the task directories.</p>'}
+      ${archived ? `<h4>Cleaned, restorable</h4><ul class="wt-list">${archived}</ul>` : ''}
       <p class="wt-error" id="wt-error" role="alert"></p>`);
     const boxes = [...document.querySelectorAll('.wt-clean-item')];
     const itemOf = el => data.items.find(item => item.path === el.dataset.path);
     const update = () => {
       const chosen = boxes.filter(el => el.checked);
       const sum = document.getElementById('wt-clean-sum');
-      if (sum) sum.textContent = chosen.length ? `已选 ${chosen.length} 个，预计释放 ${formatSize(chosen.reduce((total, el) => total + itemOf(el).size_bytes, 0))}` : '';
+      if (sum) sum.textContent = chosen.length ? `Selected ${chosen.length}, about ${formatSize(chosen.reduce((total, el) => total + itemOf(el).size_bytes, 0))}` : '';
       const run = document.getElementById('wt-clean-run');
       if (run) run.disabled = !chosen.length;
     };
@@ -132,37 +132,37 @@ const WorkspaceTools = (() => {
     if (run) run.addEventListener('click', async () => {
       const chosen = boxes.filter(el => el.checked).map(itemOf);
       const total = chosen.reduce((sum, item) => sum + item.size_bytes, 0);
-      if (!confirm(`确认删除 ${chosen.length} 个仓库的本地目录，释放约 ${formatSize(total)}？\n\n${chosen.map(item => item.path).join('\n')}\n\n内容在远程仓库里，之后可以恢复。`)) return;
-      run.disabled = true; run.textContent = '清理中…';
+      if (!confirm(`Delete the local directories of ${chosen.length} repo(s), freeing about ${formatSize(total)}?\n\n${chosen.map(item => item.path).join('\n')}\n\nThe content is in the remote repositories and can be restored later.`)) return;
+      run.disabled = true; run.textContent = 'Cleaning…';
       try {
         const results = await API.post(`${base()}/cleanup`, { repos: chosen.map(item => ({ task_id: item.task_id, path: item.path })), confirm: true });
         const failed = results.filter(item => !item.ok);
         await refreshTasks();
         renderCleanup(await API.get(`${base()}/cleanup`));
         const freed = results.filter(item => item.ok).reduce((sum, item) => sum + item.freed_bytes, 0);
-        fail(`已清理 ${results.length - failed.length} 个，释放 ${formatSize(freed)}${failed.length ? `；${failed.length} 个失败：${failed.map(item => item.reason || item.error).join('；')}` : ''}`);
-      } catch (error) { run.disabled = false; run.textContent = '清理所选'; fail(errorText(error)); }
+        fail(`Cleaned ${results.length - failed.length}, freed ${formatSize(freed)}${failed.length ? `; ${failed.length} failed: ${failed.map(item => item.reason || item.error).join('; ')}` : ''}`);
+      } catch (error) { run.disabled = false; run.textContent = 'Clean selected'; fail(errorText(error)); }
     });
     document.querySelectorAll('[data-restore]').forEach(el => el.addEventListener('click', async () => {
-      el.disabled = true; el.textContent = '恢复中…';
+      el.disabled = true; el.textContent = 'Restoring…';
       try {
         await API.post(`${base()}/restore`, { id: Number(el.dataset.restore) });
         await refreshTasks();
         renderCleanup(await API.get(`${base()}/cleanup`));
-      } catch (error) { el.disabled = false; el.textContent = '从仓库恢复'; fail(errorText(error)); }
+      } catch (error) { el.disabled = false; el.textContent = 'Restore from repo'; fail(errorText(error)); }
     }));
   }
 
   if (importButton) importButton.addEventListener('click', async () => {
     await loadUnmanaged();
-    if (!supported()) Modal.show('导入工作目录下的目录', UNSUPPORTED);
+    if (!supported()) Modal.show('Import directories from the workspace', UNSUPPORTED);
     else if (unmanaged.length) renderImport();
-    else Modal.show('导入工作目录下的目录', '<p>工作目录下没有未被任务管理的目录。</p>');
+    else Modal.show('Import directories from the workspace', '<p>There are no directories in the working directory that are not managed by tasks.</p>');
   });
   if (cleanupButton) cleanupButton.addEventListener('click', openCleanup);
-  // 页面加载后稍等再检查，避免和任务列表抢启动资源。
+  // Check shortly after the page loads so it does not compete with the task list for startup resources.
   setTimeout(loadUnmanaged, 1500);
-  // 切换引擎或引擎能力就绪后重新检查对应机器上未管理的目录。
+  // After switching engine, or once engine capabilities are ready, check that machine for unmanaged directories again.
   let seen = '';
   Tasks.onSourceChange(() => {
     const mark = `${Tasks.getActiveKey()}:${supported() ? 1 : 0}`;

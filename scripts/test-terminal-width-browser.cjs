@@ -30,7 +30,7 @@ const root = path.resolve(__dirname, '..');
       await page.evaluate(async () => {
         document.getElementById('preview-pane').style.display = 'none';
         document.getElementById('terminal-pane').style.display = 'flex';
-        document.getElementById('terminal-tabs').innerHTML = '<button class="terminal-toolbar-btn terminal-tab">终端 1</button><button class="terminal-toolbar-btn terminal-tab">终端 2</button>';
+        document.getElementById('terminal-tabs').innerHTML = '<button class="terminal-toolbar-btn terminal-tab">Terminal 1</button><button class="terminal-toolbar-btn terminal-tab">Terminal 2</button>';
         window.host = document.createElement('div'); host.className = 'xterm-host';
         document.getElementById('xterm-container').append(host);
         window.term = new Terminal({ fontSize: 13, fontFamily: 'Menlo, Monaco, "Courier New", monospace', scrollback: 5000 });

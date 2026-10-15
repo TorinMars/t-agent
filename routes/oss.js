@@ -16,10 +16,10 @@ function createOssRouter(options = {}) {
   });
   router.use((error, req, res, next) => {
     if (res.headersSent) return next(error);
-    if (error.type === 'entity.too.large') return res.status(413).json({ error: '图片不能超过 10 MiB' });
+    if (error.type === 'entity.too.large') return res.status(413).json({ error: 'The image cannot exceed 10 MiB' });
     if (error instanceof OssImageError) return res.status(error.statusCode).json({ error: error.message });
-    if (error.type === 'encoding.unsupported') return res.status(415).json({ error: '不支持压缩的图片请求' });
-    return res.status(500).json({ error: 'OSS 图片服务暂时不可用' });
+    if (error.type === 'encoding.unsupported') return res.status(415).json({ error: 'Compressed image requests are not supported' });
+    return res.status(500).json({ error: 'The OSS image service is temporarily unavailable' });
   });
   return router;
 }

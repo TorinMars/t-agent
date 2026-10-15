@@ -1,138 +1,138 @@
-# 个人主页设计文档
+# Personal Home Page Design Document
 
-> 日期：2026-07-15
+> Date: 2026-07-15
 
-> v2.45.0 Agent 配置：主导航新增“Agent 配置”页，面向多服务器。Client 在 `system_state`（`agent-config:<owner>`）保存全局默认和每台服务器的覆盖（覆盖里出现的键，含空串，优先于默认；空串表示该台不管）。字段表在 `services/agent-config.js` 的 `SCHEMA`，值一律为字符串并按枚举/数字/列表校验。`POST /api/agent-config/push` 对本机直接写文件，对远程 Engine 调 `PUT /v1/agent-config`（`engine:admin`，能力 `agent-config:manage`）。写入只改填了的键：Claude 用 JSON 递归设值，Codex 用单行 TOML 键值编辑（保留注释和其他表，顶层键写在第一个表之前）；配置文件不合法时不写。同时写入本机覆盖文件，避免被 `agent-sync.py` 的远程默认值盖回去。
+> v2.45.0 Agent config: the main navigation gained an "Agent config" page for several servers. The Client stores the global default and the per-server overrides in `system_state` (`agent-config:<owner>`; a key present in an override, including an empty string, wins over the default, and an empty string means that server is left alone). The field table is `SCHEMA` in `services/agent-config.js`; values are always strings and are validated as enum / number / list. `POST /api/agent-config/push` writes files directly on this machine and calls `PUT /v1/agent-config` (`engine:admin`, capability `agent-config:manage`) on remote Engines. A write only changes the keys that were filled in: Claude uses recursive JSON value setting, Codex uses single-line TOML key/value editing (comments and other tables are kept, and top-level keys are written before the first table); nothing is written when the config file is invalid. The local override file is also written, so it is not overwritten by the remote defaults from `agent-sync.py`.
 
-> v2.54.0 访问模式：全新安装第一次在本机打开页面选择“身份验证器 + 允许外网访问（remote）”或“仅本机访问、无需验证（local）”，设置 → 访问模式可随时切换。`services/client-auth.js` 新增 `client_access_mode` 表与 `accessMode()`（保存的选择 > 已绑定视为 remote > `ACCESS_MODE` 初始值 > `unset`）、`setAccessMode()`、`ready(session)`（页面/接口据此判断“需绑定 / 需登录”，local 不需要绑定）；local 下 `authenticated()` 只认 `session.localTrusted`，切回 remote 后该标记失效，`sessionActive()` 的 30 秒巡检会断开原有终端。`lib/access-gate.js` 在会话之后、登录门禁之前：local / unset 只放行本机直连（沿用 `isLocalInitialization`：回环地址 + 回环 Host + 无转发头），其余 404（含 `/v1`、`/share`、WebSocket 升级），local 下给本机会话打可信标记。`POST {loginPath|/auth}/mode`：unset 时 local 必须来自本机，remote 只进入绑定流程（`confirmSetup` 成功才写入 remote）；已选择后必须已登录，remote→local 断开所有终端，local→remote 未绑定返回 409 `AUTHENTICATOR_BINDING_REQUIRED`，已绑定则校验一次动态验证码。`GET /auth/me` 新增 `access_mode`、`listen_host`，`/auth/status` 新增 `mode`。`install.sh --access-mode local|remote`（local 写 `HOST=127.0.0.1`，否则新安装 `HOST=0.0.0.0`，已有 `.env` 的 `HOST` 不改）。**行为变化**：尚未绑定也未选择的实例，非本机访问不再能首次绑定（改为 404），远程服务器用 `node scripts/client-auth-setup.js`；新安装默认监听 0.0.0.0。测试：`test/access-mode.test.js`（含起真实服务验证首次选择、仅本机免验证、DNS rebinding/转发 404、绑定后开放外网再切回）、`test/access-mode-page.test.js`。已知限制：仅本机模式下同机其他用户/进程可访问；终端里的 `HOOK` 上报走回环不受影响；未在真实两台机器间验证外网切换。
+> v2.54.0 Access mode: a fresh install lets the user choose, the first time the page is opened on this machine, "Authenticator + allow external access (remote)" or "Local access only, no verification (local)", and Settings → Access mode can switch it at any time. `services/client-auth.js` gained the `client_access_mode` table and `accessMode()` (saved choice > already bound counts as remote > initial `ACCESS_MODE` > `unset`), `setAccessMode()` and `ready(session)` (pages / endpoints use it to decide "must bind / must log in"; local needs no binding); under local, `authenticated()` only recognizes `session.localTrusted`, that mark is void after switching back to remote, and the 30-second sweep of `sessionActive()` disconnects the existing terminals. `lib/access-gate.js` sits after the session and before the login gate: local / unset only let direct local access through (reusing `isLocalInitialization`: loopback address + loopback Host + no forwarding headers) and answer 404 to everything else (including `/v1`, `/share` and WebSocket upgrades), and under local it marks local sessions as trusted. `POST {loginPath|/auth}/mode`: when unset, local must come from this machine and remote only enters the binding flow (remote is written only after `confirmSetup` succeeds); once chosen, the user must be logged in, remote→local disconnects all terminals, local→remote without a binding returns 409 `AUTHENTICATOR_BINDING_REQUIRED`, and when already bound one code is verified. `GET /auth/me` gained `access_mode` and `listen_host`, and `/auth/status` gained `mode`. `install.sh --access-mode local|remote` (local writes `HOST=127.0.0.1`, otherwise a new install writes `HOST=0.0.0.0`; the `HOST` of an existing `.env` is not changed). **Behavior change**: an instance that has neither bound nor chosen yet can no longer be bound for the first time from a non-local address (it gets 404); a remote server uses `node scripts/client-auth-setup.js`; a new install listens on 0.0.0.0 by default. Tests: `test/access-mode.test.js` (including starting a real service to verify the first choice, local-only without verification, 404 for DNS rebinding / forwarding, and opening external access after binding and switching back) and `test/access-mode-page.test.js`. Known limitations: in local-only mode other users / processes on the same machine can reach it; the `HOOK` reports inside the terminal go over loopback and are unaffected; switching to external access was not verified between two real machines.
 
-> v2.53.0 终端中译英输入框：终端下方（功能键行上方）新增输入框，回车 → `POST /api/translate`（`routes/translate.js`、`services/translator.js`，调用 DeepSeek OpenAI 兼容接口 `/chat/completions`，`temperature: 0`，提示词只翻译不执行消息内容）→ `public/js/terminal-translate.js` 把译文经 `Tasks.sendTerminalInput` 键入当前终端，延迟 120 ms 再发 `\r`（避免被 TUI 当成粘贴里的换行）。配置（API Key / 接口地址 / 模型）按用户加密存在 `system_state` 的 `translator:<owner>`，读取接口不返回密钥；接口地址必须是无凭据的 HTTPS。翻译只发生在本机 Client，远程引擎的终端同样可用，Engine 无改动。不含中文的输入不调用接口；译文进入终端前清除全部控制字符（含 ESC）并压成一行，终端未连接时不发送且保留输入，`sendTerminalInput` 现在返回是否发出。文件抽屉打开时与功能键行一起隐藏。测试：`test/translator.test.js`、`test/terminal-translate.test.js`、`scripts/test-terminal-translate-browser.cjs`。v2.53.1 默认模型改为 `deepseek-flash`（此前已保存过模型名的配置保持原值，需在 ⚙ 里手动改）。v2.54.1 发送成功后不再在输入框下显示“已发送：译文”（终端里已经能看到），只显示错误提示。v2.54.2 “翻译中”不再单独占一行文字：输入框自身呼吸闪烁（`.terminal-translate-input.translating`，只读保持焦点；科技主题为青色，减少动态效果时为静态光晕），发送按钮同时禁用。v2.54.3 终端粘贴/上传图片完成后，插入的链接末尾默认补一个空格（仍不加回车），方便接着输入文字；原终端已切换时手动复制的链接不带空格。v2.54.4 修复“刷新后切回本地，任务全没了、再刷新才出现”：`reloadSource` 在拿到任务列表后还要等分组接口，这段时间里 Engines 已把界面切到保存的远程 Engine，`activateSource` 会把当时仍是空数组的 `tasks` 写回本地数据源，覆盖刚收到的列表。现在拿到列表时同步更新当前视图的 `tasks`。回归：`test/remote-active-engine.test.js`（本地分组接口较慢）。v2.55.0 翻译新增智谱 GLM：配置改为 `{enabled, provider, providers:{deepseek,glm}}`，每家各存 `{apiKey, baseUrl, model}`，保存只改所选服务商、`provider` 指向当前使用的一家，切换不会覆盖另一家的 Key；旧版扁平 DeepSeek 配置读取时自动迁移。GLM 走 `https://open.bigmodel.cn/api/paas/v4/chat/completions`，模型 `glm-4.5` 及以上自动带 `thinking: {type:'disabled'}`（翻译不需要深度思考）。`GET /api/translate/config` 增加 `provider`、`providers`（仅 `hasApiKey/baseUrl/model/label`），保留旧的顶层字段表示当前服务商；设置弹窗新增“翻译服务”下拉，切换时保留未保存的输入。回归：`test/translator.test.js`。v2.55.1 GLM 默认模型改为 `glm-5.3-flash`（`glm-4-flash` 返回超时；GLM-5 系列默认开启深度思考，请求自动带 `thinking: disabled`；此前已保存过模型名的配置保持原值，需在 ⚙ 里手动改）。v2.55.2 接口返回非 2xx 时优先显示服务商的 `error.message` 和错误码（如 GLM `1113 余额不足或无可用资源包`），没有时才回退到按状态码的通用提示。v2.55.3/v2.55.4（2.55.3 的 3 个回归用例失败，已在 2.55.4 修复：空 JSON 体仍回退到状态码提示，纯文本才报原文）错误响应体不是 `error.message` 格式（扁平 `{code,msg}` 或纯文本）时也把原因/原始片段（≤200 字）报出来。v2.55.5 修复 GLM 默认模型 `glm-5.3-flash` 报 HTTP 400（1210“该模型始终思考，不支持关闭思考”）：v2.55.1 给它发了 `thinking:{type:'disabled'}`，被拒绝。`glm-5.3` 及以上改发 `reasoning_effort:'low'`（真实接口实测推理 token 为 0、约 0.7 s），`glm-4.5`～`glm-5.2` 仍发 `thinking:disabled`。已知限制：每次含中文的输入都会把原文发给所选服务商；GLM 未对接真实账号验证（按智谱公开的 OpenAI 兼容文档和桩测试）；输入法选词用的回车不会提交，但没有做历史记录或译文预览确认；未对接真实 DeepSeek 账号验证（接口行为按其公开的 OpenAI 兼容文档和桩测试）。
+> v2.53.0 Terminal Chinese-to-English input: below the terminal (above the function-key row) a new input box; Enter → `POST /api/translate` (`routes/translate.js`, `services/translator.js`, calling DeepSeek's OpenAI-compatible endpoint `/chat/completions` with `temperature: 0` and a prompt that only translates and never executes the message content) → `public/js/terminal-translate.js` types the translation into the current terminal through `Tasks.sendTerminalInput`, sending `\r` after a 120 ms delay (so a TUI does not treat it as a newline inside a paste). The configuration (API key / endpoint / model) is stored encrypted per user in `system_state` under `translator:<owner>`; the read endpoint never returns the key; the endpoint must be an HTTPS URL without credentials. Translation happens only on the local Client, so terminals of remote engines work too and the Engine is unchanged. Input without Chinese does not call the endpoint; before the translation enters the terminal all control characters (including ESC) are removed and it is collapsed into one line; when the terminal is not connected nothing is sent and the input is kept, and `sendTerminalInput` now returns whether it was sent. When the file drawer is open it is hidden together with the function-key row. Tests: `test/translator.test.js`, `test/terminal-translate.test.js`, `scripts/test-terminal-translate-browser.cjs`. v2.53.1 changed the default model to `deepseek-flash` (configurations that already saved a model name keep their value and must be changed by hand under ⚙). v2.54.1 no longer shows "Sent: translation" under the input after a successful send (it is already visible in the terminal) and only shows error hints. v2.54.2 "Translating" no longer takes a line of text of its own: the input box itself pulses (`.terminal-translate-input.translating`, read-only while keeping focus; cyan on the futuristic theme, a static glow under reduced motion) and the send button is disabled at the same time. v2.54.3 after pasting / uploading an image in the terminal finishes, a space is added by default after the inserted link (still no Enter) so you can keep typing; a link copied by hand because the original terminal was switched carries no space. v2.54.4 fixed "after a refresh, switching back to local, all tasks are gone and only appear after another refresh": after getting the task list, `reloadSource` still waits for the groups endpoint, and in that time Engines had already switched the UI to the saved remote Engine, so `activateSource` wrote the then still empty `tasks` array back to the local data source and overwrote the list just received. Now the `tasks` of the current view are updated synchronously when the list arrives. Regression: `test/remote-active-engine.test.js` (slow local groups endpoint). v2.55.0 translation gained Zhipu GLM: the configuration became `{enabled, provider, providers:{deepseek,glm}}`, each provider stores its own `{apiKey, baseUrl, model}`, saving only changes the selected provider, `provider` points at the one in use, and switching never overwrites the other provider's key; an old flat DeepSeek configuration is migrated automatically when read. GLM goes to `https://open.bigmodel.cn/api/paas/v4/chat/completions`, and models `glm-4.5` and above automatically carry `thinking: {type:'disabled'}` (translation does not need deep thinking). `GET /api/translate/config` gained `provider` and `providers` (only `hasApiKey/baseUrl/model/label`), keeping the old top-level fields for the current provider; the settings dialog gained a "Translation service" dropdown that keeps unsaved input when switching. Regression: `test/translator.test.js`. v2.55.1 changed the default GLM model to `glm-5.3-flash` (`glm-4-flash` timed out; the GLM-5 series think by default, so the request automatically carries `thinking: disabled`; configurations that already saved a model name keep their value and must be changed by hand under ⚙). v2.55.2 when the endpoint returns a non-2xx status, the provider's `error.message` and error code are shown first (such as GLM `1113 insufficient balance or no available resource package`), falling back to the generic message by status code only when there is none. v2.55.3/v2.55.4 (3 regression cases of 2.55.3 failed and were fixed in 2.55.4: an empty JSON body still falls back to the status-code message, and only plain text reports the raw text) when the error body is not in the `error.message` shape (flat `{code,msg}` or plain text), the reason / a raw snippet (≤200 characters) is reported too. v2.55.5 fixed the default GLM model `glm-5.3-flash` failing with HTTP 400 (1210 "this model always thinks and cannot turn thinking off"): v2.55.1 sent it `thinking:{type:'disabled'}`, which was rejected. `glm-5.3` and above now send `reasoning_effort:'low'` (measured on the real endpoint: 0 reasoning tokens, about 0.7 s), while `glm-4.5` to `glm-5.2` still send `thinking:disabled`. Known limitations: every input containing Chinese sends the original text to the selected provider; GLM was not verified against a real account (it follows Zhipu's public OpenAI-compatible documentation and stub tests); the Enter used to pick an IME candidate does not submit, but there is no history or translation preview confirmation; DeepSeek was not verified against a real account (the endpoint behavior follows its public OpenAI-compatible documentation and stub tests).
 
-> v2.52.0 终端里的链接可以 Cmd（macOS）/ Ctrl + 点击在新标签页打开：此前没有加载 xterm 的链接插件，URL 只是普通文字。新增自托管的 `@xterm/addon-web-links` 0.11.0（`public/vendor/xterm/`，清单与 SHA-256 见 `scripts/vendor-libs.json`），在 `tasks.js` 创建终端时注册，处理函数只在按下 Cmd/Ctrl 时 `window.open(uri, '_blank', 'noopener,noreferrer')`，普通点击仍是选中文字；只识别 http(s) 链接。验证：`scripts/test-terminal-links-browser.cjs`（真实 Chromium）。v2.52.1 程序用 OSC 8 输出的超链接（Claude Code 等，显示文字可与真实地址不同）：xterm 自带支持但默认单击就弹确认框；改用 `linkHandler`，同样只在按住 Cmd/Ctrl 点击时才处理，先弹框确认真实地址，且只打开 http(s)。已知限制：换行被折断的长链接在 xterm 里按软换行才能整体识别；终端里的程序开启鼠标上报时，是否转发点击由该程序决定。
+> v2.52.0 Links in the terminal can be opened in a new tab with Cmd (macOS) / Ctrl + click: before, the xterm links addon was not loaded and a URL was just ordinary text. Added the self-hosted `@xterm/addon-web-links` 0.11.0 (`public/vendor/xterm/`, manifest and SHA-256 in `scripts/vendor-libs.json`), registered in `tasks.js` when the terminal is created; the handler only calls `window.open(uri, '_blank', 'noopener,noreferrer')` when Cmd/Ctrl is held, a plain click is still text selection, and only http(s) links are recognized. Verified by `scripts/test-terminal-links-browser.cjs` (real Chromium). v2.52.1 hyperlinks printed by programs with OSC 8 (Claude Code and others, where the visible text can differ from the real address): xterm supports them itself but pops a confirm box on a single click by default; they now use `linkHandler`, likewise handled only on Cmd/Ctrl-click, which first asks for confirmation of the real address and only opens http(s). Known limitations: a long link broken across lines is only recognized as a whole by xterm when the break is a soft wrap; when a program in the terminal has enabled mouse reporting, whether a click is forwarded is decided by that program.
 
-> v2.51.0 主题切换：顶部栏新增“🎨 主题”，可选浅色 / 深色 / 未来科技（深空蓝底、霓虹青光晕、网格背景）。`public/js/theme.js` 在 `<head>` 同步执行，把选择（`localStorage` 键 `ta-theme`，只在当前浏览器生效）写到 `<html data-theme>` 避免闪烁，并同步 Monaco（`vs` / `vs-dark` / 自定义 `ta-tech`）、mermaid（之后渲染的图表）和 `theme-color`；`public/css/themes.css` 最后加载，用变量覆盖加少量写死颜色的覆盖实现暗色主题，浅色仍是 `style.css` 默认值。终端本来就是深色，未改动。无后端改动。验证：`scripts/test-theme-browser.cjs`（真实 Chromium，设置 `THEME_SHOT_DIR` 可保存截图）。v2.51.1 修复深色主题下的流程图：图源里写死的浅黄 `rect` 高亮块让浅色文字看不见，改为半透明深色调（`themes.css`）；切换主题时已显示的流程图用新主题重画（源码存在 `data-mermaid-source`，`tasks.js` 的 `rerenderMermaid`）。v2.51.3 修复终端“执行中”流光在深色/科技主题上看不见：科技主题选中项用 `background` 简写把 `background-image` 流光清掉；改为在 `themes.css` 为深色（亮蓝）和科技（青色发光）主题加更亮的光束与描边。v2.51.4 撤销 v2.51.2 的“进行中任务高亮”（`is-doing`），任务列表恢复原样。已知限制：分享页和登录页不跟随主题；只对主界面空态做过截图对比，各子页面（工具、应用、文件同步、Agent 配置）的暗色细节未逐一检查。
+> v2.51.0 Theme switch: the top bar gained "🎨 Theme" with Light / Dark / Futuristic (deep-space blue background, neon cyan glow, grid background). `public/js/theme.js` runs synchronously in `<head>`, writes the choice (`localStorage` key `ta-theme`, effective in this browser only) to `<html data-theme>` to avoid a flash, and keeps Monaco (`vs` / `vs-dark` / custom `ta-tech`), mermaid (diagrams rendered later) and `theme-color` in sync; `public/css/themes.css` loads last and implements the dark themes with variable overrides plus a few overrides of hard-coded colors, while light stays the default of `style.css`. The terminal was already dark and is unchanged. No backend change. Verified by `scripts/test-theme-browser.cjs` (real Chromium; set `THEME_SHOT_DIR` to save screenshots). v2.51.1 fixed diagrams on the dark themes: the light-yellow `rect` highlight blocks hard-coded in the diagram source made light text invisible and were changed to a translucent dark tone (`themes.css`); when the theme switches, diagrams already shown are redrawn with the new theme (the source is kept in `data-mermaid-source`, `rerenderMermaid` in `tasks.js`). v2.51.3 fixed the terminal "running" shimmer being invisible on the dark / futuristic themes: the futuristic theme's selected item cleared the `background-image` shimmer with the `background` shorthand; brighter beams and outlines were added for the dark (bright blue) and futuristic (cyan glow) themes in `themes.css`. v2.51.4 reverted the "in-progress task highlight" (`is-doing`) of v2.51.2, and the task list is back to normal. Known limitations: the share page and login page do not follow the theme; screenshot comparison was only done for the empty state of the main UI, and the dark details of the sub-pages (utilities, apps, file sync, Agent config) were not checked one by one.
 
-> v2.50.0 侧栏新增“一键更新全部”按钮（⬆️，`public/js/batch-update.js`）：确认后并行检查并升级所有已连接的远程引擎（复用 `/api/remote-servers/:id/check-update|apply-update|update-status`，逐项显示结果，等待重启后版本到位，最长 5 分钟），最后才更新本机 Client（本机更新会重启服务并自动刷新页面，故放最后，交给 `Updates.apply()`）。已是最新、被阻断或失败的项只汇总不更新；需重启的 `restart_pending` 提示手动重启。无后端改动。测试 `test/batch-update.test.js`。
+> v2.50.0 The sidebar gained an "Update all" button (⬆️, `public/js/batch-update.js`): after confirmation it checks and upgrades all connected remote engines in parallel (reusing `/api/remote-servers/:id/check-update|apply-update|update-status`, showing the result item by item and waiting after the restart until the version is in place, for at most 5 minutes), and updates this machine's Client last (updating it restarts the service and refreshes the page automatically, so it goes last and is handed to `Updates.apply()`). Items that are already up to date, blocked or failed are only summarized and not updated; `restart_pending` items that need a restart hint at restarting by hand. No backend change. Test `test/batch-update.test.js`.
 
-> v2.49.0 侧栏“导入工作目录下的目录”（📁）与“清理代码目录”（🧹）跟随当前引擎：此前选中远程 Engine 时仍操作本机。Engine 新增 `GET /v1/workspace/unmanaged`、`POST /v1/workspace/import`、`GET|POST /v1/workspace/cleanup`、`POST /v1/workspace/restore`（能力 `workspace:manage`，复用 `services/workspace-tools`，目录基准为该 Engine 的 `TASKS_BASE_DIR`，令牌主体为所有者），Client 代理 `/api/remote-servers/:id/workspace/*`，旧版 Engine 返回 `501 WORKSPACE_UNSUPPORTED`，前端提示先更新该引擎；切换引擎时重新检查未管理目录与角标。测试 `test/workspace-engine.test.js`。
+> v2.49.0 The sidebar's "Import directories from the workspace" (📁) and "Clean up code directories" (🧹) follow the current engine: before, they still operated on this machine when a remote Engine was selected. The Engine gained `GET /v1/workspace/unmanaged`, `POST /v1/workspace/import`, `GET|POST /v1/workspace/cleanup` and `POST /v1/workspace/restore` (capability `workspace:manage`, reusing `services/workspace-tools`, with the directory base being that Engine's `TASKS_BASE_DIR` and the token subject being the owner), the Client proxies `/api/remote-servers/:id/workspace/*`, an old Engine returns `501 WORKSPACE_UNSUPPORTED`, and the frontend tells the user to update that engine first; when the engine is switched the unmanaged directories and the badge are checked again. Test `test/workspace-engine.test.js`.
 
-> v2.48.0 文件同步改为主服务器生成连接字符串、从服务器主动连接（取代 v2.47.0 的“从服务器显示配对码、主服务器去关联”：主服务器是外网固定 IP、从服务器常在内网，主服务器连不到从服务器）：`POST /file-sync/invite`（`master_url`）在主服务器生成一次性同步配对码（内存，10 分钟，只能用一次），返回 `TAFS1:` + base64url(`{v:1,u:<规范化主服务器地址>,c:<配对码>}`)；从服务器 `POST /file-sync/join`（`connection_string`，粘贴时的空白会被去掉）解析后向主服务器无 Token 限流的 `POST /v1/file-sync/pair` 换取 `tfs_` 令牌，只在 `mode=slave` 时允许。移除 v2.47.0 的 `adopt`、`associate`、`refresh-code` 和 `status().pairing`；保留 v2.47.0 的角色 `mode`、`state.link`、`state.tokens`、同步令牌范围与旧引擎令牌兼容。
+> v2.48.0 File sync now has the master generate a connection string and the slave connect out (replacing v2.47.0's "the slave shows a pairing code and the master links it": the master has a fixed public IP while slaves are usually on an internal network, so the master cannot reach the slave): `POST /file-sync/invite` (`master_url`) generates a one-time sync pairing code on the master (in memory, 10 minutes, single use) and returns `TAFS1:` + base64url(`{v:1,u:<normalized master address>,c:<pairing code>}`); the slave's `POST /file-sync/join` (`connection_string`; whitespace picked up when pasting is removed) parses it and exchanges it for a `tfs_` token through the master's unauthenticated, rate-limited `POST /v1/file-sync/pair`, and is only allowed when `mode=slave`. Removed v2.47.0's `adopt`, `associate`, `refresh-code` and `status().pairing`; kept v2.47.0's role `mode`, `state.link`, `state.tokens`, the sync token scope and the old engine token compatibility.
 
-> v2.47.0 文件同步改为从服务器发起配对、不再借用引擎连接：`state.mode`（`master`/`slave`，旧数据按是否已连接主服务器推断）显式记录角色，`PUT /file-sync/role` 切换（会清空清单），`POST /file-sync/unpair` 解除关联。从服务器未关联时 `status().pairing` 返回内存中的配对码（10 分钟，猜错 5 次作废，重启重新生成）。主服务器 `POST /file-sync/associate`（从服务器地址、配对码、本机地址）调用从服务器无 Token 的 `POST /v1/file-sync/adopt`；从服务器据此用主服务器的一次性同步配对码调用主服务器无 Token 的 `POST /v1/file-sync/pair` 换取 `tfs_` 令牌（主服务器只存哈希于 `state.tokens`，按实例 ID 在注销心跳时吊销）。主服务器地址和令牌密文存在 `state.link`，不再写 `remote_servers`，也不用引擎令牌；`manifest/file/heartbeat` 接受同步令牌，也兼容旧引擎令牌；旧 `masterId` 仍从 `remote_servers` 读取。移除 `/pairing`、`/join`、`/connect`、`/servers`。
+> v2.47.0 File sync now has the slave initiate pairing and no longer borrows engine connections: `state.mode` (`master`/`slave`; old data infers it from whether a master is connected) records the role explicitly, `PUT /file-sync/role` switches it (which clears the list) and `POST /file-sync/unpair` unlinks. When a slave is not linked, `status().pairing` returns the in-memory pairing code (10 minutes, invalidated after 5 wrong guesses, regenerated on restart). The master's `POST /file-sync/associate` (slave address, pairing code, own address) calls the slave's unauthenticated `POST /v1/file-sync/adopt`; the slave then uses the master's one-time sync pairing code to call the master's unauthenticated `POST /v1/file-sync/pair` and exchange for a `tfs_` token (the master only stores the hash in `state.tokens` and revokes it by instance ID when the heartbeat deregisters). The master address and token are stored as ciphertext in `state.link` and no longer written to `remote_servers`, and no engine token is used; `manifest/file/heartbeat` accept the sync token and also stay compatible with the old engine token; the old `masterId` is still read from `remote_servers`. Removed `/pairing`, `/join`, `/connect` and `/servers`.
 
-> v2.35.1 文件同步节点可见性：附属节点首次连接后和每轮同步后，使用已有 Engine Token 向主节点 `POST /v1/file-sync/heartbeat` 登记稳定实例 ID、名称、最近同步时间和错误；主节点在 `file_sync_v1.children` 中保存最近心跳，超过 15 秒显示离线。正常断开用 `DELETE /v1/file-sync/heartbeat` 注销。主节点状态接口返回附属节点列表，页面显示在线状态与时间；旧节点升级后无需重新连接，会在下一轮同步自动登记。
+> v2.35.1 File sync node visibility: after a slave node connects for the first time and after every sync round, it uses the existing Engine Token to `POST /v1/file-sync/heartbeat` to the master to register its stable instance ID, name, last sync time and error; the master stores the latest heartbeat in `file_sync_v1.children` and shows it offline after 15 seconds. A normal disconnect deregisters with `DELETE /v1/file-sync/heartbeat`. The master's status endpoint returns the slave list and the page shows the online state and times; an old node needs no reconnection after upgrading and registers automatically in the next sync round.
 
-> v2.36.0 节点路径映射：主节点继续独占文件清单；附属节点的 `pathOverrides` 按主节点路径保存本机路径。`PUT /v1/file-sync/path` 只更改本机映射，目标路径与其他同步文件冲突时拒绝，恢复默认时删除覆盖值。切换映射清除该文件的已观察版本，首次写入目标已有文件前备份。状态同时返回默认路径、实际路径和覆盖路径。同步文件旁写入短期有效的 `.t-agent-file-sync-managed` 标记供新版 `agent-sync.py` 识别，避免启动脚本和节点同步重复改写 Claude/Codex 配置；标记随 3 秒轮询刷新，断开或路径变更时清理，进程异常停止后 60 秒过期。状态页的时间改称“上次检查”，避免把周期检查误认为内容更改。
+> v2.36.0 Node path mapping: the master still owns the file list exclusively; a slave's `pathOverrides` stores local paths keyed by the master's path. `PUT /v1/file-sync/path` only changes the local mapping, is refused when the target path conflicts with another synced file, and deletes the override value when the default is restored. Switching a mapping clears that file's observed version, and an existing file at the target is backed up before the first write. The state returns the default path, the actual path and the override path together. A short-lived `.t-agent-file-sync-managed` marker is written next to a synced file for the new `agent-sync.py` to recognize, so the startup script and node sync do not rewrite the Claude/Codex configuration twice; the marker is refreshed with the 3-second poll, cleaned up on disconnect or path change, and expires after 60 seconds if the process stops abnormally. The time on the status page is renamed "Last check", so a periodic check is not mistaken for a content change.
 
-> 文件同步服务：导航与“应用列表”并列，按当前引擎展示。每个节点初始为主服务器且清单为空；选择现有远程连接后，本节点成为附属服务器，主节点独占路径清单。路径支持用户目录别名和绝对路径，分别在每台机器解析；服务在 `system_state.file_sync_v1` 中持久化角色、文件版本、主节点代次、已观察版本和备份路径。主节点每 3 秒扫描文件哈希并提升版本；附属节点轮询 `GET /v1/file-sync/manifest`，本地编辑通过带 `generation` 和 `base_revision` 的 `PUT /v1/file-sync/file` 提交，主节点用比较版本拒绝并发写入。冲突保留本地文件并在界面提示，用户可明确选择备份并拉取主版本。首次覆盖前同样备份原文件。沿用 Engine owner Token 与 Client 远程连接代理，能力声明 `file-sync:manage`；新节点可识别旧节点缺少能力并提示升级。
+> File sync service: its navigation entry sits next to "App list" and is shown per current engine. Every node starts as a master with an empty list; after choosing an existing remote connection, this node becomes a slave and the master node owns the path list exclusively. Paths support a home-directory alias and absolute paths, resolved separately on each machine; the service persists the role, file versions, the master generation, observed versions and backup paths in `system_state.file_sync_v1`. The master scans file hashes every 3 seconds and raises versions; a slave polls `GET /v1/file-sync/manifest`, submits local edits through `PUT /v1/file-sync/file` carrying `generation` and `base_revision`, and the master rejects concurrent writes by comparing versions. On conflict the local file is kept and the UI says so, and the user can explicitly choose to back up and pull the master version. The original file is backed up before the first overwrite as well. It reuses the Engine owner Token and the Client's remote connection proxy, and declares the capability `file-sync:manage`; a new node can recognize that an old node lacks the capability and prompts for an upgrade.
 
-> v2.30.5 修复内容标签栏消失：v2.29.0 重构后，标签栏（技术方案 / README / AGENTS.md / 待办 / 终端）只在渲染文档时才显示；任务上次停留在“终端”标签时启动会直接进入终端、不渲染文档，标签栏保持隐藏，看不到技术方案、AGENTS、待办。现在选中任务时总是显示标签栏。
+> v2.30.5 Fixed the content tab bar disappearing: after the v2.29.0 refactor the tab bar (design doc / README / AGENTS.md / to-do / terminal) was only shown when a document was rendered; when a task last stayed on the "terminal" tab, start-up went straight to the terminal without rendering a document and the tab bar stayed hidden, so the design doc, AGENTS and to-do could not be seen. Now the tab bar is always shown when a task is selected.
 
-> v2.30.4 终端鼠标乱码修复：服务重启、崩溃或手动关闭会杀掉正在运行的 TUI（如 Claude Code），它们来不及关闭鼠标/焦点上报模式，这个“已开启”的状态被保存在输出历史里，新建 shell 回放历史后浏览器终端继续把鼠标移动当输入灌给 shell，提示符后出现 `35;39;58M` 之类字符甚至被当成命令执行。现在从数据库恢复历史创建会话时统一复位输入模式（并写入历史，之后的回放也不再重新开启）。原有的“前台程序退出回到 shell 时复位”机制保留。
+> v2.30.4 Terminal mouse garbage fix: a service restart, crash or manual close kills the running TUI (such as Claude Code), which has no chance to turn off the mouse / focus reporting modes, and this "enabled" state was saved in the output history; after a new shell replayed the history, the browser terminal kept feeding mouse movement to the shell as input, so characters like `35;39;58M` appeared after the prompt and were even run as commands. Now, when a session is created from history restored from the database, the input modes are always reset (and written into the history, so later replays do not turn them on again). The existing mechanism of "reset when the foreground program exits back to the shell" is kept.
 
-> v2.30.3 更新进度可见：安装依赖、构建前端时每 2 秒更新“已用时间 + npm 最近一行输出”，长时间无输出会提示；更新用的 npm 使用较短的重试与超时，网络不通时快速失败。
+> v2.30.3 Update progress is visible: while installing dependencies and building the frontend, "elapsed time + the latest npm output line" is updated every 2 seconds, with a hint after a long time without output; the npm used by the update has short retries and timeouts and fails fast when the network is down.
 
-> v2.30.1 第三方前端库（marked、mermaid、xterm）固定版本自托管于 `public/vendor`，不再依赖运行时 CDN，mermaid 按需加载；macOS 前台进程识别改为共享的异步 `ps`；新增只跑单元测试的 CI。
+> v2.30.1 Third-party frontend libraries (marked, mermaid, xterm) are pinned and self-hosted in `public/vendor`, no longer depend on a runtime CDN, and mermaid is loaded on demand; foreground process detection on macOS uses a shared asynchronous `ps`; added CI that runs only the unit tests.
 
-> v2.30.0 引擎与导航对调：引擎切换在顶部，Tasks / 实用工具在左侧；实用工具属于当前引擎（PM2 经 Engine 的 `/v1/pm2` 管理远程机器，需 `pm2:manage` 能力）；所有引擎连接统一为管理权限，不再区分只读 / 操作 / 管理。
+> v2.30.0 Engine and navigation swapped: the engine switch is at the top and Tasks / Utilities are on the left; Utilities belong to the current engine (PM2 manages the remote machine through the Engine's `/v1/pm2`, which needs the `pm2:manage` capability); all engine connections have admin rights and view / operate / manage are no longer distinguished.
 
-> v2.29.4 修复终端 tab 在当前终端状态变为完成时整组重复渲染（确认完成会同步触发重绘，现改为先完成渲染再确认）；跑马灯亮点更短更细，由 tab 裁剪并带淡色轨道。
+> v2.29.4 Fixed the terminal tab group rendering twice when the state of the current terminal becomes finished (acknowledging completion triggered a redraw synchronously; it now finishes rendering first and then acknowledges); the marquee highlight is shorter and thinner, clipped by the tab and has a faint track.
 
-> v2.29.2 终端状态跑马灯改为沿边框路径（`offset-path`）按距离匀速移动的亮点，转角与长短边速度一致，不再使用按角度旋转的 `conic-gradient`。
+> v2.29.2 The terminal state marquee became a highlight that moves at constant speed along the border path (`offset-path`), with the same speed at corners and on long and short sides, no longer using the angle-rotating `conic-gradient`.
 
-> v2.29.1 移除全部 Docker 部署与镜像构建（Dockerfile、Compose、`docker-client.sh`、GitHub Actions 镜像发布及相关测试文档），仅保留原生、Git 和压缩包安装；远程 Engine 若上报 Docker 安装类型，Client 仍只展示、不触发更新。
+> v2.29.1 Removed all Docker deployment and image builds (Dockerfile, Compose, `docker-client.sh`, the GitHub Actions image release and the related tests and docs), leaving only native, Git and archive installs; if a remote Engine reports a Docker install type, the Client still only shows it and does not trigger an update.
 
-> v2.29.0 远程 Engine 与本地功能一致：Client 前端改为“数据源”模式，本地与每个远程 Engine 共用同一套任务界面（`tasks.js`），连接管理拆为 `engines.js`（取代 `remote-tasks.js`）。远程任务现在支持页面内编辑文档、待办增删改、目录大纲、相对路径图片、文档变更自动刷新、完整的任务编辑与删除、拖拽排序、分组管理和终端运行状态；Finder / VS Code / 分享链接因依赖本机文件系统对远程任务隐藏。Engine 新增 `/v1` 接口：`PUT /tasks/reorder`、`GET /tasks/:id/file`、`GET /tasks/:id/document/:kind/watch`（SSE）、`POST /tasks/:id/document/:kind`、`POST /tasks/validate-path`、`GET /terminal-activity`、`POST /tasks/:id/terminal/ack`，并在 `/v1/info` 的 `capabilities` 中声明（`tasks:reorder`、`documents:create`、`documents:watch`、`files:assets`、`paths:validate`、`terminal:activity`），API 版本仍为 1；Client 代理新增对应转发（含不缓冲的流式转发和 `GET /api/remote-servers/:id/info`），远程文件响应带 `Content-Security-Policy: sandbox`。前端按角色与能力启用功能，`readonly` 连接和旧版 Engine 自动降级。
+> v2.29.0 Remote Engines behave like the local one: the Client frontend became "data source" based, the local Engine and every remote Engine share one task UI (`tasks.js`), and connection management was split into `engines.js` (replacing `remote-tasks.js`). Remote tasks now support in-page document editing, adding / editing / deleting to-dos, the outline, relative-path images, automatic refresh on document changes, full task editing and deletion, drag-and-drop ordering, group management and terminal run state; Finder / VS Code / share links are hidden for remote tasks because they depend on this machine's file system. The Engine gained `/v1` endpoints: `PUT /tasks/reorder`, `GET /tasks/:id/file`, `GET /tasks/:id/document/:kind/watch` (SSE), `POST /tasks/:id/document/:kind`, `POST /tasks/validate-path`, `GET /terminal-activity` and `POST /tasks/:id/terminal/ack`, declared in `capabilities` of `/v1/info` (`tasks:reorder`, `documents:create`, `documents:watch`, `files:assets`, `paths:validate`, `terminal:activity`) with the API version still 1; the Client proxy gained the matching forwarding (including unbuffered streaming forwarding and `GET /api/remote-servers/:id/info`), and remote file responses carry `Content-Security-Policy: sandbox`. The frontend enables features by role and capability, and `readonly` connections and old Engines degrade automatically.
 
-> v2.28.3 Engine 连接失败处理：远程 Engine 离线、认证失效或任务加载失败时，不再显示任务列表、文档和终端等操作页面，改为显示“无法连接”提示（失败原因、服务地址、检查服务状态的步骤）以及重试/编辑/移除连接按钮；认证失效时提示重新配对。侧栏该 Engine 下只显示“服务不可用，请检查服务状态”。
+> v2.28.3 Engine connection failure handling: when a remote Engine is offline, its authentication has expired or loading tasks failed, the task list, documents and terminals are no longer shown; a "cannot connect" hint is shown instead (the reason for the failure, the service address and the steps to check the service status) together with retry / edit / remove connection buttons; when authentication has expired it asks the user to pair again. The sidebar under that Engine only shows "Service unavailable, please check its status".
 
-> v2.28.2 修正 v2.28.0 的过度删除：v2.28.0 误把 Client 连接其他 Engine 的功能（`/api/remote-servers`、`/api/remote-tokens`、`/v1` 接口、前端引擎栏与远程任务界面、远程 Engine 更新）一并删除，现已全部恢复；Client A 可继续连接 Client B，每个 Client 仍内置并暴露同一套 Engine 接口。真正移除的只有独立运行的 Engine 服务：`apps/engine`、`compose.engine.yml`、Engine 更新脚本与环境文件、`install.sh`/`bootstrap.sh` 的 `--mode engine`、`start:engine`、Docker engine 镜像目标及对应发布流程。`--mode engine` 现在会明确报错。
+> v2.28.2 Corrected the over-deletion of v2.28.0: v2.28.0 deleted by mistake the Client's feature of connecting to other Engines (`/api/remote-servers`, `/api/remote-tokens`, the `/v1` endpoints, the frontend engine bar and remote task UI, and remote Engine updates); all of it is now restored, Client A can keep connecting to Client B, and every Client still includes and exposes the same Engine endpoints. What was really removed is only the standalone Engine service: `apps/engine`, `compose.engine.yml`, the Engine update script and environment file, `--mode engine` of `install.sh`/`bootstrap.sh`, `start:engine`, the Docker engine image target and the matching release workflow. `--mode engine` now fails with a clear error.
 
-> v2.28.1 页面头部移除“Client 切换”入口按钮，`/clients` 工作台页面与路由保留，可直接输入地址访问。
+> v2.28.1 Removed the "Client switch" entry button from the page header; the `/clients` workspace page and route were kept and can be opened by typing the address.
 
-> v2.27.0 Agent Hook 上报：终端 PTY 注入 `TA_HOOK_URL` / `TA_HOOK_TOKEN`（token 为任务+终端的 HMAC，仅存在于该 PTY 环境），Claude Code 与 Codex 的 hook（`UserPromptSubmit`→开始、`Stop`→完成、权限确认类事件→等待确认、`SessionEnd`→结束）通过 `POST /hooks/terminal-activity` 上报，收到过 hook 后以 hook 为准；Esc/Ctrl+C 中断不触发 Stop，静默 20 秒后自动视为完成；没有 hook 的 Agent 仍按输出判定。hook 配置放在 `rules/claude/settings.json` 与新增的 `rules/codex/hooks.json`，由 `agent-sync.py` 在启动 `ta` 时合并到本机（保留本机已有 hook，重复同步不产生重复项）。Codex 需要在 `/hooks` 中信任一次。
+> v2.27.0 Agent hook reporting: the terminal PTY gets `TA_HOOK_URL` / `TA_HOOK_TOKEN` injected (the token is an HMAC of task + terminal and only exists in that PTY's environment), and the hooks of Claude Code and Codex (`UserPromptSubmit`→start, `Stop`→finished, permission-confirmation events→waiting for confirmation, `SessionEnd`→end) report through `POST /hooks/terminal-activity`; once a hook has been received, the hook wins; Esc/Ctrl+C interruptions do not trigger Stop and are treated as finished after 20 seconds of silence; an Agent without hooks is still decided by output. The hook configuration lives in `rules/claude/settings.json` and the newly added `rules/codex/hooks.json`, and `agent-sync.py` merges it into the machine when `ta` starts (hooks that already exist locally are kept and syncing again produces no duplicates). Codex must trust it once in `/hooks`.
 
-> v2.26.1 终端状态修正：Claude Code、Codex 等 Agent 以及 ssh、tmux、vim 等交互程序会一直占据前台，只看前台进程会永远显示执行中。对这类程序改按输出判定：约 1.5 秒内连续 4 次以上输出才算执行中，静默约 3 秒视为在等待用户，转为完成待确认；用户键入回显和调整窗口后的重绘不计入。make、npm test 等普通命令仍按前台进程判定，命令静默时保持执行中。
+> v2.26.1 Terminal state fix: Agents such as Claude Code and Codex, and interactive programs such as ssh, tmux and vim, hold the foreground forever, so looking only at the foreground process always showed running. For these programs the decision is now by output: only 4 or more outputs within about 1.5 seconds count as running, and about 3 seconds of silence is treated as waiting for the user and turns into finished-awaiting-review; the echo of the user's own typing and the redraw after a window resize do not count. Ordinary commands such as make and npm test are still decided by the foreground process, and stay running when the command is silent.
 
-> v2.26.0 终端运行状态：服务端按 PTY 前台进程判定每个终端的状态（前台不是 shell 且持续约 1 秒为 running，回到 shell 为 done，用户打开该终端确认后回到 idle），不再依赖输出节奏，命令静默时仍保持执行中，刷新页面不丢失。`GET /api/tasks/terminal-activity` 返回各任务终端状态，`POST /api/tasks/:id/terminal/ack` 确认完成；前端 1.5 秒轮询。左侧任务项汇总该任务所有终端，终端 tab 各自显示：执行中为外圈跑马灯，完成待确认为绿色呼吸灯，取代原圆点角标。远程 Engine 任务暂未接入。
+> v2.26.0 Terminal run state: the server decides each terminal's state from the PTY foreground process (the foreground not being a shell for about 1 second is running, returning to the shell is done, and it goes back to idle after the user opens that terminal to acknowledge), no longer depending on the rhythm of output, so it stays running while a command is silent and is not lost on a page refresh. `GET /api/tasks/terminal-activity` returns the terminal states of the tasks and `POST /api/tasks/:id/terminal/ack` acknowledges completion; the frontend polls every 1.5 seconds. The task item on the left aggregates all terminals of that task, and each terminal tab shows its own: running is an outer-ring marquee and finished-awaiting-review is a green breathing light, replacing the old dot badge. Remote Engine tasks are not wired in yet.
 
-> v2.14.0 多 Client：（该工作台 `/clients` 已在 v2.34.0 移除）新增 `/clients` 工作台，浏览器保存 Client 名称、地址及选中项，以独立 iframe 切换并保留已打开页面。Client 之间不共享会话或代理凭证；登录和绑定在独立窗口完成。目标 Client 通过 `CLIENT_FRAME_ORIGINS` 显式允许工作台 origin，页面统一限制 CSP frame-ancestors；已配置的 HTTPS 会话使用 SameSite=None + Secure，HTTP 保持 Strict，浏览器 API 与 WebSocket 的同源校验继续生效。跨站内嵌受第三方 Cookie 策略约束。Client 鉴权实际使用 TOTP，当前会话为 30 天滚动有效期；下文 OAuth 部分为历史方案。
+> v2.14.0 Multi-Client: (the `/clients` workspace was removed in v2.34.0) added the `/clients` workspace, where the browser stores Client names, addresses and the selected item, and switches between them in independent iframes while keeping the opened pages. Clients do not share sessions or proxy credentials; login and binding are completed in a separate window. The target Client explicitly allows the workspace origin through `CLIENT_FRAME_ORIGINS`, and pages uniformly restrict CSP frame-ancestors; a configured HTTPS session uses SameSite=None + Secure, HTTP stays Strict, and the same-origin checks of the browser API and WebSocket stay in force. Cross-site embedding is subject to the third-party cookie policy. Client authentication actually uses TOTP and the current session has a rolling 30-day lifetime; the OAuth part below is a historical design.
 
-> v2.7.5 终端复制：本地与远程终端共用选区复制模块，显式启用 Mac Option 强制选区；OSC 52 写请求经大小限制、UTF-8 校验和用户预览确认后才写入剪贴板。拒绝读取请求，忽略隐藏实例与历史回放，释放实例时清理挂起请求；Ctrl+C 保持中断语义。
+> v2.7.5 Terminal copy: local and remote terminals share a selection-copy module that explicitly enables the Mac Option forced selection; OSC 52 write requests are written to the clipboard only after a size limit, UTF-8 validation and a user preview confirmation. Read requests are refused, hidden instances and history replays are ignored, pending requests are cleaned up when an instance is released, and Ctrl+C keeps its interrupt meaning.
 
-> v2.33.0 移除“实用工具”页里独立的 PM2 进程管理面板：PM2 的状态、启动/停止/重启/reload 和日志统一放在“应用列表”里。后端 `/api/pm2`、Engine `/v1/pm2` 和 `pm2:manage` 能力保留（应用列表的 PM2 操作使用它们）；`tools.js` 只保留页面切换和应用列表的引擎适配。
+> v2.33.0 Removed the standalone PM2 process management panel from the "Utilities" page: the PM2 status, start / stop / restart / reload and logs are all in the "App list". The backend `/api/pm2`, the Engine `/v1/pm2` and the `pm2:manage` capability are kept (the PM2 actions of the app list use them); `tools.js` only keeps page switching and the app list's engine adaptation.
 
-> v2.32.0 服务管理：`install.sh` 新安装默认由 PM2 管理 Client（`ensure_pm2` 缺失时用 npm 安装；端口被占用不启动；`pm2 describe t-agent` 存在则 `restart --update-env`，否则 `start`）。检测到已有 LaunchAgent / `t-agent.service` 时沿用，避免两个实例抢端口；`--pm2` 先停用并移除旧服务再迁移；`uninstall.sh` 会删除 PM2 里的 `t-agent` 并 `pm2 save`。
+> v2.32.0 Service management: a new install of `install.sh` manages the Client with PM2 by default (`ensure_pm2` installs it with npm when missing; a busy port does not start; if `pm2 describe t-agent` exists it runs `restart --update-env`, otherwise `start`). An existing LaunchAgent / `t-agent.service` is kept to avoid two instances fighting over the port; `--pm2` first stops and removes the old service and then migrates; `uninstall.sh` deletes `t-agent` from PM2 and runs `pm2 save`.
 
-> v2.31.1 更新检查：增加 `restart_pending` 状态。`services/update-manager.js` 在进程启动时记下 `runningVersion`（并沿用已有的 `runningCommit`），检查更新时若远程版本等于磁盘版本、但“启动提交 → HEAD”之间有需要重启的改动（`lib/update-impact.js` 的规则）或安装包方式启动版本不等于磁盘版本，就返回 `restart_pending` 而不是 `current`；有更高远程版本时仍是 `available`。附带字段 `restart_pending`、`running_version`；持久化的该状态在进程重启时清除。
+> v2.31.1 Update check: added the `restart_pending` state. `services/update-manager.js` records `runningVersion` at process start (keeping the existing `runningCommit`), and when checking for updates, if the remote version equals the disk version but there are changes needing a restart between "start commit → HEAD" (the rules of `lib/update-impact.js`), or for a package install the start-up version differs from the disk version, it returns `restart_pending` instead of `current`; with a higher remote version it is still `available`. Extra fields `restart_pending` and `running_version`; the persisted state is cleared when the process restarts.
 
-> v2.31.0 应用列表：引擎自己的 SQLite 新增 `apps` 表（`db/schema.sql`），`services/apps-registry.js` 负责校验与幂等注册，`services/port-detector.js` 对 PM2 进程树检测监听端口，`services/apps-service.js` 自动登记 PM2 进程并合并运行状态与访问地址；本机 `/api/apps`、Engine `/v1/apps`（能力 `apps:manage`，程序自注册走 `POST /v1/apps/register`）、Client 对远程引擎的代理共用 `routes/apps.js`，前端 `public/js/apps.js` 由 `Tools` 按当前引擎调度。
+> v2.31.0 App list: the engine's own SQLite gained an `apps` table (`db/schema.sql`), `services/apps-registry.js` handles validation and idempotent registration, `services/port-detector.js` detects listening ports on the PM2 process tree, and `services/apps-service.js` auto-registers PM2 processes and merges run state and access addresses; the local `/api/apps`, the Engine's `/v1/apps` (capability `apps:manage`, program self-registration goes through `POST /v1/apps/register`) and the Client's proxy to remote engines share `routes/apps.js`, and the frontend `public/js/apps.js` is dispatched by `Tools` for the current engine.
 
-> v2.7.3 更新保护：Git 更新支持显式勾选强制更新，将未提交修改备份到 Git stash 后再快进。保留被忽略的运行数据，禁止合并覆盖忽略文件，拒绝已提交分叉及被 Git 跟踪的运行数据；切换更新分支时显式获取远程跟踪引用。
+> v2.7.3 Update protection: a Git update supports an explicit forced update, which backs uncommitted changes up to a Git stash and then fast-forwards. Ignored runtime data is kept, merging over ignored files is forbidden, committed divergence and Git-tracked runtime data are refused; when switching the update branch the remote tracking refs are fetched explicitly.
 
-> v2.7.2 阅读体验：本地文档、远程只读文档和分享页统一使用隔离的 Markdown 样式与本地打包的 Highlight.js 语法高亮。代码块保留原始空白，提供语言标签与复制按钮；未知语言按纯文本显示，Mermaid 继续使用图表渲染。终端及 Monaco 编辑器不受该样式影响。
+> v2.7.2 Reading experience: local documents, remote read-only documents and the share page uniformly use an isolated Markdown style and locally bundled Highlight.js syntax highlighting. Code blocks keep the original whitespace and offer a language label and a copy button; unknown languages are shown as plain text, and Mermaid keeps using diagram rendering. The terminal and the Monaco editor are unaffected by this style.
 
-> 当前实现说明（v2.7.1）：本文保留了项目早期设计记录；现行架构已经拆分为 Client 与 Engine。Client 按单用户应用运行，启动后自动建立本地用户上下文，不再使用用户名、密码、登录页或退出入口；升级时会优先沿用数据库中已有用户及其任务归属。Client 默认仅监听 `127.0.0.1`。独立 Engine 固定监听 `0.0.0.0`，通过 Bearer Token 对 Client 提供远程 API 与终端连接，允许持有 owner Token 的 Client 触发受控自更新，并提供关闭终端及从任务工作目录重新建立终端的控制接口。任务可使用 Engine 服务器上的任意绝对工作目录，技术方案默认是工作目录中的 `DESIGN.md`。独立 Engine 支持固定 Node/C++ 工具链的 Docker 镜像部署，由宿主机更新镜像，并把数据、任务和独立 Codex 配置统一持久化到 `~/.torin/t-agent-data`；Engine 镜像内置 Codex CLI。安装应用模式采用动态视口与 Flex 高度约束，并在终端容器尺寸变化时自动重新计算终端行列，避免底部输入行被窗口边界裁切。完整现行架构与部署方式以 `README.md` 和 `docs/ARCHITECTURE.md` 为准。
-
----
-
-## 一、目标
-
-构建一个私人任务管理页，功能：
-- **任务列表**（左侧导航栏）：任务的增删改、状态流转
-- **MD 文件预览**（右侧主区域）：点击任务展示关联 `.md` 文件，支持 Mermaid 渲染
-
-通过 GitHub OAuth 鉴权，仅允许配置的 GitHub 用户访问。
+> Current implementation note (v2.7.1): this document keeps the early design record; the current architecture is split into Client and Engine. The Client runs as a single-user application and builds a local user context automatically at start-up, with no username, password, login page or logout entry; on upgrade the existing user in the database and its task ownership are kept first. The Client listens on `127.0.0.1` only by default. A standalone Engine always listens on `0.0.0.0`, serves the remote API and terminal connections to the Client through a Bearer Token, allows a Client holding an owner Token to trigger a controlled self-update, and provides control endpoints to close a terminal and to rebuild one from the task working directory. A task can use any absolute working directory on the Engine server, and the design doc defaults to `DESIGN.md` in the working directory. A standalone Engine supports Docker image deployment with a pinned Node/C++ toolchain, with the host updating the image, and persists data, tasks and the independent Codex configuration under `~/.torin/t-agent-data`; the Engine image includes the Codex CLI. The installed-app mode uses a dynamic viewport and flex height constraints and recomputes the terminal rows and columns automatically when the terminal container changes size, so the bottom input row is not clipped by the window edge. The complete current architecture and deployment are described in `README.md` and `docs/ARCHITECTURE.md`.
 
 ---
 
-## 二、技术栈
+## 1. Goals
 
-| 层次 | 技术 |
+Build a private task management page with:
+- **Task list** (left navigation): add, edit and delete tasks, and move them through statuses
+- **MD file preview** (main area on the right): clicking a task shows its linked `.md` file, with Mermaid rendering
+
+Authentication is by GitHub OAuth, and only configured GitHub users are allowed in.
+
+---
+
+## 2. Technology stack
+
+| Layer | Technology |
 |------|------|
-| 前端 | 纯 HTML + CSS + Vanilla JS（无框架） |
-| 后端 | Node.js + Express |
-| 数据库 | SQLite（better-sqlite3） |
-| 鉴权 | GitHub OAuth 2.0 + Express Session |
-| Session 持久化 | connect-better-sqlite3 |
-| MD 渲染 | marked.js（CDN） |
-| 流程图渲染 | mermaid.js（CDN） |
+| Frontend | Plain HTML + CSS + Vanilla JS (no framework) |
+| Backend | Node.js + Express |
+| Database | SQLite (better-sqlite3) |
+| Authentication | GitHub OAuth 2.0 + Express Session |
+| Session persistence | connect-better-sqlite3 |
+| MD rendering | marked.js (CDN) |
+| Diagram rendering | mermaid.js (CDN) |
 
 ---
 
-## 三、项目结构
+## 3. Project structure
 
 ```
 torin-x-web/
-├── server.js              # 入口，Express 服务
-├── config.js              # 配置（GitHub OAuth, 允许用户名, 端口等）
-├── .env                   # 环境变量（不提交 git）
-├── .env.example           # 环境变量示例
+├── server.js              # Entry point, Express service
+├── config.js              # Configuration (GitHub OAuth, allowed usernames, port and so on)
+├── .env                   # Environment variables (not committed to git)
+├── .env.example           # Example environment variables
 ├── db/
-│   ├── index.js           # SQLite 连接 & 初始化
-│   └── schema.sql         # 建表语句
+│   ├── index.js           # SQLite connection & initialization
+│   └── schema.sql         # Table definitions
 ├── routes/
-│   ├── auth.js            # GitHub OAuth 路由
-│   └── tasks.js           # 任务列表 API
+│   ├── auth.js            # GitHub OAuth routes
+│   └── tasks.js           # Task list API
 ├── middleware/
-│   └── auth.js            # 登录态校验中间件
+│   └── auth.js            # Login-state check middleware
 ├── public/
-│   ├── index.html         # 主页（登录后可见）
-│   ├── login.html         # 登录页
+│   ├── index.html         # Home page (visible after login)
+│   ├── login.html         # Login page
 │   ├── css/
 │   │   └── style.css
 │   └── js/
-│       ├── app.js         # 主页逻辑（任务列表 + MD 预览）
-│       └── tasks.js       # 任务模块
+│       ├── app.js         # Home page logic (task list + MD preview)
+│       └── tasks.js       # Task module
 └── data/
-    └── db.sqlite          # SQLite 数据库文件（不提交 git）
+    └── db.sqlite          # SQLite database file (not committed to git)
 ```
 
 ---
 
-## 四、数据模型
+## 4. Data model
 
-### tasks（任务列表）
+### tasks (task list)
 
 ```sql
 CREATE TABLE tasks (
@@ -141,180 +141,180 @@ CREATE TABLE tasks (
   status     TEXT    DEFAULT 'todo',   -- todo | doing | done
   priority   TEXT    DEFAULT 'normal', -- low | normal | high
   due_date   TEXT,                     -- YYYY-MM-DD
-  md_path    TEXT,                     -- 关联的本地 .md 文件绝对路径（可为 NULL）
-  work_dir   TEXT,                     -- 工作目录，默认取 md_path 所在目录（可为 NULL）
+  md_path    TEXT,                     -- absolute path of the linked local .md file (may be NULL)
+  work_dir   TEXT,                     -- working directory, defaults to the directory of md_path (may be NULL)
   sort_order INTEGER DEFAULT 0,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 ```
 
-**说明：**
-- 创建任务时：可只填 `md_path`，标题自动取文件名（去掉 `.md` 后缀）
-- `md_path` 必须是绝对路径且扩展名为 `.md`，服务端强校验
-- `work_dir` 若未传且有 `md_path`，服务端自动取 `path.dirname(md_path)` 作为默认值
+**Notes:**
+- When creating a task: only `md_path` may be filled in, and the title is taken from the file name (without the `.md` suffix)
+- `md_path` must be an absolute path with the extension `.md`, strictly validated on the server
+- If `work_dir` is not passed and there is an `md_path`, the server uses `path.dirname(md_path)` as the default
 
-### sessions（由 connect-better-sqlite3 自动管理）
+### sessions (managed automatically by connect-better-sqlite3)
 
 ---
 
-## 五、鉴权流程
+## 5. Authentication flow
 
 ```
-用户访问任意页面
+User visits any page
       │
       ▼
-中间件检查 session.user
+Middleware checks session.user
       │
-  未登录 ──► 重定向到 /login
+  Not logged in ──► redirect to /login
       │
-  已登录
+  Logged in
       │
       ▼
-  GitHub username 是否在 ALLOWED_USERS 白名单？
+  Is the GitHub username in the ALLOWED_USERS allowlist?
       │
-    否 ──► 返回 403 页面
+    No ──► return a 403 page
       │
-    是 ──► 放行
+    Yes ──► let through
 ```
 
-**OAuth 回调流程：**
-1. 用户点击「GitHub 登录」→ 跳转 `GET /auth/github`
-2. 重定向到 GitHub 授权页
-3. GitHub 回调 `GET /auth/github/callback?code=xxx`
-4. 后端用 code 换 access_token，再获取用户信息
-5. 校验 `login` 字段是否在白名单，写入 session
-6. 跳转首页
+**OAuth callback flow:**
+1. The user clicks "Log in with GitHub" → redirected to `GET /auth/github`
+2. Redirect to the GitHub authorization page
+3. GitHub calls back `GET /auth/github/callback?code=xxx`
+4. The backend exchanges the code for an access_token and then gets the user information
+5. Check whether the `login` field is on the allowlist and write it to the session
+6. Redirect to the home page
 
 ---
 
-## 六、API 设计
+## 6. API design
 
-所有 API 需要登录态，否则返回 `401`。
+All APIs need a login state, otherwise they return `401`.
 
-### 鉴权
+### Authentication
 
-| Method | Path | 说明 |
+| Method | Path | Description |
 |--------|------|------|
-| GET | `/auth/github` | 跳转 GitHub OAuth |
-| GET | `/auth/github/callback` | OAuth 回调 |
-| POST | `/auth/logout` | 退出登录 |
-| GET | `/auth/me` | 获取当前用户信息 |
+| GET | `/auth/github` | Redirect to GitHub OAuth |
+| GET | `/auth/github/callback` | OAuth callback |
+| POST | `/auth/logout` | Log out |
+| GET | `/auth/me` | Get the current user information |
 
-### 任务
+### Tasks
 
-| Method | Path | 说明 |
+| Method | Path | Description |
 |--------|------|------|
-| GET | `/api/tasks` | 获取所有任务（支持 `?status=todo` 过滤） |
-| POST | `/api/tasks` | 新建任务 |
-| PUT | `/api/tasks/:id` | 更新任务（标题、状态、优先级、due_date） |
-| DELETE | `/api/tasks/:id` | 删除任务 |
-| GET | `/api/tasks/:id/md` | 读取任务关联 `.md` 文件内容（纯文本） |
+| GET | `/api/tasks` | Get all tasks (supports the `?status=todo` filter) |
+| POST | `/api/tasks` | Create a task |
+| PUT | `/api/tasks/:id` | Update a task (title, status, priority, due_date) |
+| DELETE | `/api/tasks/:id` | Delete a task |
+| GET | `/api/tasks/:id/md` | Read the content of the task's linked `.md` file (plain text) |
 
 ---
 
-## 七、页面布局
+## 7. Page layout
 
-### 登录页（`/login.html`）
+### Login page (`/login.html`)
 
-居中卡片，GitHub 图标 + 「使用 GitHub 登录」按钮。
+A centered card with a GitHub icon + a "Log in with GitHub" button.
 
-### 主页（`/`）— 三栏布局
+### Home page (`/`) — three-column layout
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
-│  📋 Tasks                                  [头像] matonglin  [登出]       │
+│  📋 Tasks                                  [avatar] matonglin  [Log out] │
 ├─────────────────┬───────────────────────────────────────┬────────────────┤
 │                 │                                       │                │
-│  [+ 新建任务]   │   # 设计文档                          │  目录          │
+│  [+ New task]   │   # Design document                   │  Outline       │
 │                 │                                       │  ─────────     │
-│  ● 进行中       │   ## 一、目标                         │  # 设计文档    │
-│  ─────────────  │   ...                                 │  ├ 一、目标    │
-│  ▶ design       │                                       │  ├ 二、架构    │
-│  ▶ plan         │   ## 二、架构                         │  │ ├ 流程图    │
-│                 │   ```mermaid                          │  │ └ 模块      │
-│  ○ 待办         │   graph TD                            │  └ 三、部署    │
+│  ● In progress  │   ## 1. Goals                         │  # Design doc  │
+│  ─────────────  │   ...                                 │  ├ 1. Goals    │
+│  ▶ design       │                                       │  ├ 2. Architec │
+│  ▶ plan         │   ## 2. Architecture                  │  │ ├ Diagram   │
+│                 │   ```mermaid                          │  │ └ Modules   │
+│  ○ To do        │   graph TD                            │  └ 3. Deploy   │
 │  ─────────────  │     A --> B                           │                │
 │    task-a       │   ```                                 │                │
-│    task-b       │   [mermaid 渲染结果]                  │                │
+│    task-b       │   [mermaid rendering result]          │                │
 │                 │                                       │                │
-│  ✓ 已完成       │   ## 三、部署                         │                │
+│  ✓ Done         │   ## 3. Deployment                    │                │
 │  ─────────────  │   ...                                 │                │
 │    old-task     │                                       │                │
 │                 │                                       │                │
 └─────────────────┴───────────────────────────────────────┴────────────────┘
 
-左侧（任务导航）：280px 固定
-中间（MD 预览）：flex: 1，自适应，可滚动
-右侧（MD 大纲）：220px 固定，仅当有 md_path 时显示
+Left (task navigation): fixed 280px
+Middle (MD preview): flex: 1, adaptive, scrollable
+Right (MD outline): fixed 220px, shown only when there is an md_path
 ```
 
 ---
 
-## 八、前端交互
+## 8. Frontend interaction
 
-### 左侧导航栏
+### Left navigation bar
 
-- 任务按状态分三组：**进行中 / 待办 / 已完成**，各组可折叠
-- 有 `md_path` 的任务显示 `▶` 箭头图标，无 md 的任务显示普通圆点
-- 点击任务 → 高亮选中，右侧加载 MD 预览
-- 右键任务 → 上下文菜单（修改状态 / 删除）
-- 状态圆圈点击 → 快速切换状态（todo → doing → done → todo）
+- Tasks are grouped by status into three groups: **In progress / To do / Done**, and each group can be collapsed
+- A task with an `md_path` shows a `▶` arrow icon, and a task without md shows an ordinary dot
+- Clicking a task → highlights it as selected and loads the MD preview on the right
+- Right-clicking a task → context menu (change status / delete)
+- Clicking the status circle → quick status switch (todo → doing → done → todo)
 
-### 新建任务弹窗
+### New-task dialog
 
 ```
 ┌─────────────────────────────┐
-│  新建任务                 ✕ │
+│  New task                 ✕ │
 ├─────────────────────────────┤
-│  标题  [___________________] │
-│  MD路径[___________________] │  ← 输入后自动填充标题
-│  优先级 ○低  ●中  ○高        │
-│  截止日 [____-__-__]         │
+│  Title [___________________] │
+│  MD path[__________________] │  ← the title is filled in automatically after entering it
+│  Priority ○Low  ●Medium  ○High │
+│  Due date [____-__-__]       │
 │                             │
-│           [取消]  [创建]     │
+│           [Cancel]  [Create] │
 └─────────────────────────────┘
 ```
 
-- `md_path` 输入框失焦时：
-  1. 校验扩展名是否为 `.md`
-  2. 请求 `POST /api/tasks/validate-path` 验证文件是否存在
-  3. 若合法且标题为空，自动填充文件名作为标题
-- 标题必填（可手动改），路径可选
-- **自动创建模式**：若只填写了标题、未填写 `md_path`，点击创建时：
-  1. 服务端在 `/Users/torin/main-kuaishou/02_agent/<任务标题>/` 目录下自动创建目录
-  2. 创建 `<任务标题>.md` 文件，内容为 `# <任务标题>\n`
-  3. 自动将 `work_dir` 设为该目录，`md_path` 设为该 md 文件路径
-  4. 目录名 / 文件名取 title，非法字符替换为 `-`（替换规则：`/\s+/g → '-'`, `/[^a-zA-Z0-9一-龥\-_\.]/g → ''`）
+- When the `md_path` input loses focus:
+  1. Check that the extension is `.md`
+  2. Request `POST /api/tasks/validate-path` to verify that the file exists
+  3. If valid and the title is empty, fill in the file name as the title automatically
+- The title is required (it can be changed by hand) and the path is optional
+- **Automatic creation mode**: if only the title is filled in and `md_path` is not, clicking Create:
+  1. The server creates a directory under `/Users/torin/main-kuaishou/02_agent/<task title>/`
+  2. It creates the file `<task title>.md` whose content is `# <task title>\n`
+  3. It sets `work_dir` to that directory and `md_path` to the path of that md file
+  4. The directory / file name is taken from the title with illegal characters replaced by `-` (replacement rules: `/\s+/g → '-'`, `/[^a-zA-Z0-9\u4e00-\u9fff\-_\.]/g → ''`)
 
-### 右侧 MD 预览区
+### MD preview area on the right
 
-- 无选中任务时：显示空状态提示「← 选择左侧任务查看详情」
-- 有选中任务但无 `md_path`：显示任务基本信息（标题、状态、优先级、截止日）
-- 有 `md_path`：
-  1. 请求 `GET /api/tasks/:id/md` 获取 markdown 原文
-  2. marked.js 渲染 HTML，mermaid 代码块替换为 `<div class="mermaid">...</div>`
-  3. `mermaid.init()` 触发渲染
-  4. 预览区可滚动
-  5. 渲染完毕后同步生成右侧大纲
+- With no task selected: show the empty-state hint "← Pick a task on the left to see details"
+- With a selected task that has no `md_path`: show the task's basic information (title, status, priority, due date)
+- With an `md_path`:
+  1. Request `GET /api/tasks/:id/md` to get the markdown source
+  2. marked.js renders HTML, and mermaid code blocks are replaced with `<div class="mermaid">...</div>`
+  3. `mermaid.init()` triggers rendering
+  4. The preview area is scrollable
+  5. When rendering finishes, the outline on the right is generated
 
-### 右侧大纲（TOC）
+### Right outline (TOC)
 
-- 仅当当前任务有 `md_path` 时显示，否则隐藏（宽度收起）
-- 解析 marked.js 渲染后 DOM 中的 `h1~h4` 标题元素，生成树形目录
-- 各级标题缩进：`h1` 无缩进，`h2` 缩进 8px，`h3` 缩进 16px，`h4` 缩进 24px
-- 点击大纲条目 → 对应标题滚动到中间预览区可视范围顶部（`scrollIntoView`）
-- 中间预览区滚动时 → 高亮当前可视范围内最顶部的标题对应的大纲条目（滚动监听 + IntersectionObserver）
+- Shown only when the current task has an `md_path`, otherwise hidden (the width collapses)
+- Parses the `h1~h4` heading elements in the DOM rendered by marked.js and builds a tree
+- Heading indentation by level: `h1` none, `h2` 8px, `h3` 16px, `h4` 24px
+- Clicking an outline entry → the matching heading scrolls to the top of the visible range of the middle preview area (`scrollIntoView`)
+- When the middle preview area scrolls → the outline entry of the topmost heading in the visible range is highlighted (scroll listener + IntersectionObserver)
 
 ```html
-<!-- CDN 引入（index.html） -->
+<!-- CDN includes (index.html) -->
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
 ```
 
 ---
 
-## 九、配置（`.env`）
+## 9. Configuration (`.env`)
 
 ```env
 # GitHub OAuth
@@ -322,17 +322,17 @@ GITHUB_CLIENT_ID=xxx
 GITHUB_CLIENT_SECRET=xxx
 GITHUB_CALLBACK_URL=http://localhost:3000/auth/github/callback
 
-# 允许访问的 GitHub 用户名（逗号分隔）
+# GitHub usernames allowed in (comma separated)
 ALLOWED_GITHUB_USERS=matonglin
 
-# 服务
+# Service
 PORT=3000
 SESSION_SECRET=your-random-secret
 ```
 
 ---
 
-## 十、依赖清单
+## 10. Dependency list
 
 ```json
 {
@@ -348,86 +348,86 @@ SESSION_SECRET=your-random-secret
 
 ---
 
-## 十一、安全考量
+## 11. Security considerations
 
-| 风险 | 措施 |
+| Risk | Mitigation |
 |------|------|
-| Session 劫持 | `httpOnly` + `secure`（生产环境）Cookie，Session Secret 随机生成 |
-| CSRF | API 请求带 `X-Requested-With` header，服务端校验 |
-| 越权访问 | 所有 API 过 auth 中间件，校验 session |
-| 敏感配置泄露 | `.env` 加入 `.gitignore`，提供 `.env.example` |
-| username 白名单绕过 | 使用 GitHub API 返回的 `login` 字段精确匹配，不信任前端传参 |
-| 任意文件读取 | `/api/tasks/:id/md` 只读取数据库中已存储的 `md_path`，不接受前端传路径；强校验扩展名为 `.md` |
+| Session hijacking | `httpOnly` + `secure` (production) cookies, randomly generated session secret |
+| CSRF | API requests carry an `X-Requested-With` header that the server checks |
+| Unauthorized access | Every API goes through the auth middleware, which checks the session |
+| Leaking sensitive configuration | `.env` is in `.gitignore`, and `.env.example` is provided |
+| Bypassing the username allowlist | The `login` field returned by the GitHub API is matched exactly; parameters from the frontend are not trusted |
+| Arbitrary file read | `/api/tasks/:id/md` only reads the `md_path` already stored in the database and never accepts a path from the frontend; the extension must be `.md` |
 
 ---
 
-## 十二、启动方式
+## 12. How to start
 
 ```bash
 npm install
-cp .env.example .env   # 填入 GitHub OAuth 配置
-node server.js         # 开发：nodemon server.js
+cp .env.example .env   # fill in the GitHub OAuth settings
+node server.js         # development: nodemon server.js
 ```
 
-| 层次 | 技术 |
+| Layer | Technology |
 |------|------|
-| 前端 | 纯 HTML + CSS + Vanilla JS（无框架） |
-| 后端 | Node.js + Express |
-| 数据库 | SQLite（better-sqlite3） |
-| 鉴权 | GitHub OAuth 2.0 + Express Session |
-| 数据持久化 | Session 存 SQLite（connect-better-sqlite3） |
+| Frontend | Plain HTML + CSS + Vanilla JS (no framework) |
+| Backend | Node.js + Express |
+| Database | SQLite (better-sqlite3) |
+| Authentication | GitHub OAuth 2.0 + Express Session |
+| Data persistence | Sessions are stored in SQLite (connect-better-sqlite3) |
 
 ---
 
-## 三、项目结构
+## 3. Project structure
 
 ```
 torin-x-web/
-├── server.js              # 入口，Express 服务
-├── config.js              # 配置（GitHub OAuth, 允许用户名, 端口等）
-├── .env                   # 环境变量（不提交 git）
-├── .env.example           # 环境变量示例
+├── server.js              # Entry point, Express service
+├── config.js              # Configuration (GitHub OAuth, allowed usernames, port and so on)
+├── .env                   # Environment variables (not committed to git)
+├── .env.example           # Example environment variables
 ├── db/
-│   ├── index.js           # SQLite 连接 & 初始化
-│   └── schema.sql         # 建表语句
+│   ├── index.js           # SQLite connection & initialization
+│   └── schema.sql         # Table definitions
 ├── routes/
-│   ├── auth.js            # GitHub OAuth 路由
-│   ├── bookmarks.js       # 快捷导航 API
-│   └── tasks.js           # 任务列表 API
+│   ├── auth.js            # GitHub OAuth routes
+│   ├── bookmarks.js       # Quick-navigation API
+│   └── tasks.js           # Task list API
 ├── middleware/
-│   └── auth.js            # 登录态校验中间件
+│   └── auth.js            # Login-state check middleware
 ├── public/
-│   ├── index.html         # 主页（登录后可见）
-│   ├── login.html         # 登录页
+│   ├── index.html         # Home page (visible after login)
+│   ├── login.html         # Login page
 │   ├── css/
 │   │   └── style.css
 │   └── js/
-│       ├── app.js         # 主页逻辑
-│       ├── bookmarks.js   # 快捷导航模块
-│       └── tasks.js       # 任务列表模块
+│       ├── app.js         # Home page logic
+│       ├── bookmarks.js   # Quick-navigation module
+│       └── tasks.js       # Task list module
 └── data/
-    └── db.sqlite          # SQLite 数据库文件（不提交 git）
+    └── db.sqlite          # SQLite database file (not committed to git)
 ```
 
 ---
 
-## 四、数据模型
+## 4. Data model
 
-### bookmarks（快捷导航）
+### bookmarks (quick navigation)
 
 ```sql
 CREATE TABLE bookmarks (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   title      TEXT    NOT NULL,
   url        TEXT    NOT NULL,
-  icon       TEXT,              -- favicon URL 或 emoji
-  group_name TEXT    DEFAULT '默认',
+  icon       TEXT,              -- favicon URL or emoji
+  group_name TEXT    DEFAULT 'Default',
   sort_order INTEGER DEFAULT 0,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 ```
 
-### tasks（任务列表）
+### tasks (task list)
 
 ```sql
 CREATE TABLE tasks (
@@ -436,164 +436,164 @@ CREATE TABLE tasks (
   status     TEXT    DEFAULT 'todo',   -- todo | doing | done
   priority   TEXT    DEFAULT 'normal', -- low | normal | high
   due_date   TEXT,                     -- YYYY-MM-DD
-  md_path    TEXT,                     -- 关联的本地 .md 文件绝对路径（可为 NULL）
+  md_path    TEXT,                     -- absolute path of the linked local .md file (may be NULL)
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 ```
 
-**说明：**
-- `md_path` 为可选字段
-- 创建任务时：可只填 `md_path`（标题自动取文件名去掉 `.md` 后缀），也可填标题+路径
-- 路径必须是绝对路径，且文件扩展名必须为 `.md`，服务端做校验
+**Notes:**
+- `md_path` is an optional field
+- When creating a task: only `md_path` may be filled in (the title is taken from the file name without the `.md` suffix), or both a title and a path
+- The path must be absolute and the file extension must be `.md`, validated on the server
 
-### sessions（Session 持久化，由 connect-better-sqlite3 自动管理）
+### sessions (session persistence, managed automatically by connect-better-sqlite3)
 
 ---
 
-## 五、鉴权流程
+## 5. Authentication flow
 
 ```
-用户访问任意页面
+User visits any page
       │
       ▼
-中间件检查 session.user
+Middleware checks session.user
       │
-  未登录 ──► 重定向到 /login
+  Not logged in ──► redirect to /login
       │
-  已登录
+  Logged in
       │
       ▼
-  GitHub username 是否在 ALLOWED_USERS 列表？
+  Is the GitHub username in the ALLOWED_USERS list?
       │
-    否 ──► 返回 403 页面
+    No ──► return a 403 page
       │
-    是 ──► 放行
+    Yes ──► let through
 ```
 
-**OAuth 回调流程：**
-1. 用户点击「GitHub 登录」→ 跳转 `GET /auth/github`
-2. 重定向到 GitHub 授权页
-3. GitHub 回调 `GET /auth/github/callback?code=xxx`
-4. 后端用 code 换 access_token，再获取用户信息
-5. 校验 username 是否在白名单，写入 session
-6. 跳转首页
+**OAuth callback flow:**
+1. The user clicks "Log in with GitHub" → redirected to `GET /auth/github`
+2. Redirect to the GitHub authorization page
+3. GitHub calls back `GET /auth/github/callback?code=xxx`
+4. The backend exchanges the code for an access_token and then gets the user information
+5. Check whether the username is on the allowlist and write it to the session
+6. Redirect to the home page
 
 ---
 
-## 六、API 设计
+## 6. API design
 
-所有 API 需要登录态，否则返回 `401`。
+All APIs need a login state, otherwise they return `401`.
 
-### 鉴权
+### Authentication
 
-| Method | Path | 说明 |
+| Method | Path | Description |
 |--------|------|------|
-| GET | `/auth/github` | 跳转 GitHub OAuth |
-| GET | `/auth/github/callback` | OAuth 回调 |
-| POST | `/auth/logout` | 退出登录 |
-| GET | `/auth/me` | 获取当前用户信息 |
+| GET | `/auth/github` | Redirect to GitHub OAuth |
+| GET | `/auth/github/callback` | OAuth callback |
+| POST | `/auth/logout` | Log out |
+| GET | `/auth/me` | Get the current user information |
 
-### 快捷导航
+### Quick navigation
 
-| Method | Path | 说明 |
+| Method | Path | Description |
 |--------|------|------|
-| GET | `/api/bookmarks` | 获取所有书签（按分组） |
-| POST | `/api/bookmarks` | 新建书签 |
-| PUT | `/api/bookmarks/:id` | 更新书签 |
-| DELETE | `/api/bookmarks/:id` | 删除书签 |
-| PUT | `/api/bookmarks/reorder` | 调整排序 |
+| GET | `/api/bookmarks` | Get all bookmarks (by group) |
+| POST | `/api/bookmarks` | Create a bookmark |
+| PUT | `/api/bookmarks/:id` | Update a bookmark |
+| DELETE | `/api/bookmarks/:id` | Delete a bookmark |
+| PUT | `/api/bookmarks/reorder` | Change the order |
 
-### 任务列表
+### Task list
 
-| Method | Path | 说明 |
+| Method | Path | Description |
 |--------|------|------|
-| GET | `/api/tasks` | 获取所有任务（支持 `?status=todo` 过滤） |
-| POST | `/api/tasks` | 新建任务 |
-| PUT | `/api/tasks/:id` | 更新任务（含状态流转） |
-| DELETE | `/api/tasks/:id` | 删除任务 |
-| GET | `/api/tasks/:id/md` | 读取任务关联的 .md 文件内容（纯文本返回） |
+| GET | `/api/tasks` | Get all tasks (supports the `?status=todo` filter) |
+| POST | `/api/tasks` | Create a task |
+| PUT | `/api/tasks/:id` | Update a task (including status transitions) |
+| DELETE | `/api/tasks/:id` | Delete a task |
+| GET | `/api/tasks/:id/md` | Read the content of the task's linked .md file (returned as plain text) |
 
 ---
 
-## 七、前端页面设计
+## 7. Frontend page design
 
-### 登录页（`/login.html`）
+### Login page (`/login.html`)
 
-- 居中卡片
-- GitHub 图标 + 「使用 GitHub 登录」按钮
-- 简洁，无多余元素
+- A centered card
+- A GitHub icon + a "Log in with GitHub" button
+- Simple, with no extra elements
 
-### 主页（`/`）
+### Home page (`/`)
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│  🏠 Torin's Dashboard          [头像] matonglin  登出 │
+│  🏠 Torin's Dashboard        [avatar] matonglin  Log out │
 ├─────────────────────────────────────────────────────┤
 │                                                     │
-│  快捷导航                              [+ 添加]     │
+│  Quick navigation                       [+ Add]     │
 │  ┌──────────┐ ┌──────────┐ ┌──────────┐            │
-│  │  工作     │ │  工具     │ │  文档     │  ...      │
+│  │  Work    │ │  Tools   │ │  Docs    │  ...       │
 │  │  [icon]  │ │  [icon]  │ │  [icon]  │            │
 │  │  Jira    │ │  ChatGPT │ │  Notion  │            │
 │  └──────────┘ └──────────┘ └──────────┘            │
 │                                                     │
 │  ─────────────────────────────────────────────────  │
 │                                                     │
-│  任务列表                              [+ 添加]     │
+│  Task list                              [+ Add]     │
 │  ┌─────────────────────────────────────────────┐   │
-│  │ ○ [high] 完成个人主页开发          今天      │   │
-│  │ ○ [norm] Review 代码               明天      │   │
+│  │ ○ [high] Finish the home page         Today  │   │
+│  │ ○ [norm] Review code                  Tomorrow │ │
 │  │                                              │   │
-│  │ ▶ [norm] 📄 design.md              今天      │   │  ← 关联 md 文件的任务，点击展开
+│  │ ▶ [norm] 📄 design.md                 Today  │   │  ← a task linked to an md file; click to expand
 │  │   ┌──────────────────────────────────────┐   │   │
-│  │   │  # 设计文档                          │   │   │
-│  │   │  ## 流程图                           │   │   │
-│  │   │  [mermaid 渲染图]                    │   │   │
+│  │   │  # Design document                   │   │   │
+│  │   │  ## Flow chart                       │   │   │
+│  │   │  [mermaid diagram]                   │   │   │
 │  │   └──────────────────────────────────────┘   │   │
 │  │                                              │   │
-│  │ ✓ [low]  更新文档                  已完成    │   │
+│  │ ✓ [low]  Update docs                  Done   │   │
 │  └─────────────────────────────────────────────┘   │
 │                                                     │
 └─────────────────────────────────────────────────────┘
 ```
 
-**交互细节：**
-- 书签卡片：单击打开链接，右键或 hover 显示编辑/删除
-- 书签分组：标签页切换
-- 任务：点击圆圈切换状态（todo → doing → done）
-- 添加书签/任务：inline 弹窗表单，无需跳页
-- 已完成任务默认折叠，可展开查看
+**Interaction details:**
+- Bookmark cards: a click opens the link, and right-click or hover shows edit / delete
+- Bookmark groups: switched by tabs
+- Tasks: click the circle to switch the status (todo → doing → done)
+- Adding a bookmark / task: an inline dialog form, no page jump
+- Done tasks are collapsed by default and can be expanded to view
 
-### 任务 MD 预览交互
+### Task MD preview interaction
 
-**新建任务（关联 md 文件）：**
-1. 点击「+ 添加」→ 弹窗出现输入框
-2. 输入本地 `.md` 文件绝对路径（如 `/Users/torin/docs/design.md`）
-3. 失焦时服务端校验路径合法性（扩展名 `.md`、文件存在）
-4. 标题自动填充为文件名（去掉 `.md`），可手动修改
-5. 提交后任务卡片展示 📄 图标标记
+**Create a task (linked to an md file):**
+1. Click "+ Add" → a dialog with input fields appears
+2. Enter the absolute path of a local `.md` file (such as `/Users/torin/docs/design.md`)
+3. On blur the server validates the path (extension `.md`, file exists)
+4. The title is filled in automatically with the file name (without `.md`) and can be edited by hand
+5. After submitting, the task card shows a 📄 icon marker
 
-**任务展开预览：**
-- 有 `md_path` 的任务，标题左侧有 `▶` 展开箭头
-- 点击标题行 → 展开内嵌预览区（再次点击折叠）
-- 展开时前端请求 `GET /api/tasks/:id/md` 拿 markdown 原文
-- 使用 **marked.js** 渲染 markdown，**mermaid.js** 渲染流程图
-- mermaid 代码块渲染流程：marked 解析时识别 ` ```mermaid ` 代码块 → 替换为 `<div class="mermaid">` → mermaid.js 初始化渲染
-- 预览区最大高度 `500px`，超出滚动
+**Task expand preview:**
+- A task with an `md_path` has a `▶` expand arrow to the left of its title
+- Click the title row → an inline preview area expands (click again to collapse)
+- On expanding, the frontend requests `GET /api/tasks/:id/md` to get the markdown source
+- Use **marked.js** to render markdown and **mermaid.js** to render diagrams
+- Mermaid code block rendering flow: when marked parses, it recognizes ` ```mermaid ` code blocks → replaces them with `<div class="mermaid">` → mermaid.js initializes and renders
+- The preview area has a maximum height of `500px` and scrolls beyond it
 
-### 前端新增依赖（CDN 引入，无构建）
+### New frontend dependencies (included from a CDN, no build)
 
 ```html
-<!-- Markdown 渲染 -->
+<!-- Markdown rendering -->
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-<!-- Mermaid 流程图 -->
+<!-- Mermaid diagrams -->
 <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
 ```
 
 ---
 
-## 八、配置（`.env`）
+## 8. Configuration (`.env`)
 
 ```env
 # GitHub OAuth
@@ -601,17 +601,17 @@ GITHUB_CLIENT_ID=xxx
 GITHUB_CLIENT_SECRET=xxx
 GITHUB_CALLBACK_URL=http://localhost:3000/auth/github/callback
 
-# 允许访问的 GitHub 用户名（逗号分隔）
+# GitHub usernames allowed in (comma separated)
 ALLOWED_GITHUB_USERS=matonglin
 
-# 服务
+# Service
 PORT=3000
 SESSION_SECRET=your-random-secret
 ```
 
 ---
 
-## 九、依赖清单
+## 9. Dependency list
 
 ```json
 {
@@ -625,40 +625,40 @@ SESSION_SECRET=your-random-secret
 }
 ```
 
-无需 passport，GitHub OAuth 手动实现，保持轻量。
+No passport is needed; GitHub OAuth is implemented by hand to stay lightweight.
 
 ---
 
-## 十、安全考量
+## 10. Security considerations
 
-| 风险 | 措施 |
+| Risk | Mitigation |
 |------|------|
-| Session 劫持 | `httpOnly` + `secure`（生产环境） Cookie，Session Secret 随机生成 |
-| CSRF | API 请求带 `X-Requested-With` header，服务端校验 |
-| 越权访问 | 每个 API 请求都过 auth 中间件，校验 session |
-| 敏感配置泄露 | `.env` 加入 `.gitignore`，提供 `.env.example` |
-| username 白名单绕过 | 使用 GitHub API 返回的 `login` 字段做精确匹配，不信任前端传参 |
-| 任意文件读取 | `/api/tasks/:id/md` 只读取数据库中已存储的 `md_path`，不接受前端传路径；服务端强校验扩展名为 `.md` |
+| Session hijacking | `httpOnly` + `secure` (production) cookies, randomly generated session secret |
+| CSRF | API requests carry an `X-Requested-With` header that the server checks |
+| Unauthorized access | Every API request goes through the auth middleware, which checks the session |
+| Leaking sensitive configuration | `.env` is in `.gitignore`, and `.env.example` is provided |
+| Bypassing the username allowlist | The `login` field returned by the GitHub API is matched exactly; parameters from the frontend are not trusted |
+| Arbitrary file read | `/api/tasks/:id/md` only reads the `md_path` already stored in the database and never accepts a path from the frontend; the server strictly validates the extension as `.md` |
 
 ---
 
-## 十一、启动方式
+## 11. How to start
 
 ```bash
 npm install
-cp .env.example .env   # 填入 GitHub OAuth 配置
-node server.js         # 开发：nodemon server.js
+cp .env.example .env   # fill in the GitHub OAuth settings
+node server.js         # development: nodemon server.js
 ```
 
 ---
 
-## 十三、开机自启动
+## 13. Start on boot
 
-> **当前默认（v2.32.0 起）**：`install.sh` 用 **PM2** 管理 Client，进程名 `t-agent`（`pm2 start server.js --name t-agent --cwd <项目目录>` + `pm2 save`），应用内更新以退出码 75 退出，由 PM2 自动拉起；开机自启由用户执行 `pm2 startup` 与 `pm2 save`。已注册系统服务的老安装继续沿用（`--pm2` 迁移，`--system-service` 强制沿用）。以下是早期基于 LaunchAgent 的设计记录。
+> **Current default (since v2.32.0)**: `install.sh` manages the Client with **PM2**, with the process name `t-agent` (`pm2 start server.js --name t-agent --cwd <project directory>` + `pm2 save`); the in-app update exits with code 75 and PM2 starts it again automatically; for start on boot the user runs `pm2 startup` and `pm2 save`. Old installs that already registered a system service keep using it (`--pm2` migrates, `--system-service` forces keeping it). What follows is the earlier LaunchAgent-based design record.
 
-通过 macOS **LaunchAgent** 管理，开机自动启动，进程崩溃自动拉起（`KeepAlive: true`）。
+Managed by a macOS **LaunchAgent**, started automatically at boot, with a crashed process brought back automatically (`KeepAlive: true`).
 
-**plist 路径**：`~/Library/LaunchAgents/com.torin.x-web.plist`
+**plist path**: `~/Library/LaunchAgents/com.torin.x-web.plist`
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -686,25 +686,25 @@ node server.js         # 开发：nodemon server.js
 </plist>
 ```
 
-**常用管理命令**：
+**Common management commands**:
 
 ```bash
-launchctl start  com.torin.x-web   # 启动
-launchctl stop   com.torin.x-web   # 停止（KeepAlive 会自动拉起，需先 unload 才能彻底停止）
-launchctl unload ~/Library/LaunchAgents/com.torin.x-web.plist   # 彻底停止并取消开机启动
-launchctl load   ~/Library/LaunchAgents/com.torin.x-web.plist   # 重新注册并启动
+launchctl start  com.torin.x-web   # start
+launchctl stop   com.torin.x-web   # stop (KeepAlive brings it back, so unload first to stop it completely)
+launchctl unload ~/Library/LaunchAgents/com.torin.x-web.plist   # stop completely and cancel start on boot
+launchctl load   ~/Library/LaunchAgents/com.torin.x-web.plist   # register again and start
 
-# 查看运行状态
+# view the run state
 launchctl list com.torin.x-web
 
-# 查看日志
+# view the logs
 tail -f /Users/torin/main-kuaishou/02_agent/torin-x-web/logs/stdout.log
 tail -f /Users/torin/main-kuaishou/02_agent/torin-x-web/logs/stderr.log
 ```
 
-**Node.js 版本**：`/usr/local/bin/node`（v20.16.0），**不使用** Homebrew 的 node（避免版本冲突导致原生模块编译不兼容）。
+**Node.js version**: `/usr/local/bin/node` (v20.16.0), **not** Homebrew's node (to avoid native-module build incompatibilities caused by version conflicts).
 
-> ⚠️ 升级依赖或 `npm install` 后，若包含原生模块（`better-sqlite3`、`node-pty`），需确保由 `/usr/local/bin/node` 对应的 npm 编译，然后重启服务：
+> ⚠️ After upgrading dependencies or running `npm install`, if native modules are included (`better-sqlite3`, `node-pty`), make sure they are built by the npm that belongs to `/usr/local/bin/node`, then restart the service:
 > ```bash
 > cd /Users/torin/main-kuaishou/02_agent/torin-x-web
 > npm rebuild
@@ -712,58 +712,58 @@ tail -f /Users/torin/main-kuaishou/02_agent/torin-x-web/logs/stderr.log
 > ```
 
 ---
-## 十二、快速链接功能技术方案
+## 12. Quick links technical design
 
-> 日期：2026-07-16
+> Date: 2026-07-16
 
-### 目标
+### Goals
 
-在现有三栏布局中新增「快速链接」区域，支持常用网址的增删改、分组管理，单击直接跳转。
+Add a "Quick links" area to the existing three-column layout, supporting adding, editing and deleting frequently used URLs, group management, and a single click to jump.
 
 ---
 
-### UI 设计
+### UI design
 
-**布局：Header 下方横向链接栏**，不占用左侧任务导航空间。
+**Layout: a horizontal link bar below the header**, which does not take space from the task navigation on the left.
 
 ```
 ┌───────────────────────────────────────────────────────────────────┐
-│  📋 Tasks                              [头像] matonglin  [登出]   │
+│  📋 Tasks                              [avatar] matonglin  [Log out] │
 ├───────────────────────────────────────────────────────────────────┤
-│  🔗  [Jira] [Confluence] [ChatGPT] [KDev] …  [+]  [▾]           │  ← 新增
+│  🔗  [Jira] [Confluence] [ChatGPT] [KDev] …  [+]  [▾]           │  ← new
 ├──────────────────┬─────────────────────────────────┬─────────────┤
 │                  │                                 │             │
-│  [+ 新建任务]    │   MD Preview                    │  TOC        │
+│  [+ New task]    │   MD Preview                    │  TOC        │
 │  ─────────────   │                                 │             │
 │  ▶ design        │                                 │             │
 └──────────────────┴─────────────────────────────────┴─────────────┘
 ```
 
-**链接 chip**：favicon 图标 + 标题，单击新标签打开；右键显示「编辑」「删除」。
+**Link chip**: favicon icon + title; a click opens a new tab, and right-click shows "Edit" and "Delete".
 
-**折叠/展开**：多分组时点击 `▾` 展开，状态持久化到 `localStorage`。
+**Collapse / expand**: with several groups, click `▾` to expand; the state is persisted in `localStorage`.
 
-**新建/编辑弹窗**：
+**Add / edit dialog**:
 
 ```
 ┌──────────────────────────────┐
-│  添加链接               ✕   │
+│  Add link               ✕   │
 ├──────────────────────────────┤
-│  名称   [__________________] │
-│  URL    [__________________] │  ← 失焦自动抓取 favicon & 填充名称
-│  图标   [__________________] │  ← emoji 或图片 URL，留空用 favicon
-│  分组   [__________________] │
-│              [取消]  [添加]  │
+│  Name   [__________________] │
+│  URL    [__________________] │  ← on blur, fetch the favicon & fill in the name automatically
+│  Icon   [__________________] │  ← an emoji or image URL, leave empty to use the favicon
+│  Group  [__________________] │
+│            [Cancel]  [Add]   │
 └──────────────────────────────┘
 ```
 
-URL 失焦时自动从 `{origin}/favicon.ico` 加载预览；名称为空时自动取 hostname。
+When the URL loses focus, a preview is loaded automatically from `{origin}/favicon.ico`; when the name is empty it is taken from the hostname.
 
 ---
 
-### 数据模型
+### Data model
 
-已存在（`db/schema.sql`）：
+Already exists (`db/schema.sql`):
 
 ```sql
 CREATE TABLE IF NOT EXISTS bookmarks (
@@ -771,7 +771,7 @@ CREATE TABLE IF NOT EXISTS bookmarks (
   title      TEXT    NOT NULL,
   url        TEXT    NOT NULL,
   icon       TEXT,
-  group_name TEXT    NOT NULL DEFAULT '默认',
+  group_name TEXT    NOT NULL DEFAULT 'Default',
   sort_order INTEGER NOT NULL DEFAULT 0,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -779,21 +779,21 @@ CREATE TABLE IF NOT EXISTS bookmarks (
 
 ---
 
-### API（已实现，无需新增）
+### API (already implemented, nothing to add)
 
-| Method | Path | 说明 |
+| Method | Path | Description |
 |--------|------|------|
-| GET | `/api/bookmarks` | 获取所有书签 |
-| POST | `/api/bookmarks` | 新建 |
-| PUT | `/api/bookmarks/:id` | 更新 |
-| DELETE | `/api/bookmarks/:id` | 删除 |
-| PUT | `/api/bookmarks/reorder` | 批量排序 |
+| GET | `/api/bookmarks` | Get all bookmarks |
+| POST | `/api/bookmarks` | Create |
+| PUT | `/api/bookmarks/:id` | Update |
+| DELETE | `/api/bookmarks/:id` | Delete |
+| PUT | `/api/bookmarks/reorder` | Bulk ordering |
 
 ---
 
-### 前端实现
+### Frontend implementation
 
-**HTML**（插入 `<header>` 与 `.layout` 之间）：
+**HTML** (inserted between `<header>` and `.layout`):
 
 ```html
 <div class="quicklinks-bar" id="quicklinks-bar">
@@ -804,97 +804,97 @@ CREATE TABLE IF NOT EXISTS bookmarks (
 </div>
 ```
 
-**JS 模块**：`public/js/bookmarks.js`（已有骨架，适配 chip 横向布局）
+**JS module**: `public/js/bookmarks.js` (a skeleton already exists, adapted to the horizontal chip layout)
 
-| 交互 | 行为 |
+| Interaction | Behavior |
 |------|------|
-| 单击 chip | `window.open(url, '_blank')` |
-| 右键 chip | ContextMenu：编辑 / 删除 |
-| 点击 `+` | 打开新建弹窗 |
-| 点击 `▾` | 折叠/展开多分组，写 `localStorage` |
+| Click a chip | `window.open(url, '_blank')` |
+| Right-click a chip | ContextMenu: edit / delete |
+| Click `+` | Open the add dialog |
+| Click `▾` | Collapse / expand several groups, written to `localStorage` |
 
 ---
 
-### 改动文件清单
+### List of changed files
 
-| 文件 | 改动 |
+| File | Change |
 |------|------|
-| `public/index.html` | Header 下方插入 `.quicklinks-bar` |
-| `public/css/style.css` | 新增 `.quicklinks-*` 样式 |
-| `public/js/bookmarks.js` | 重写为 chip 横向布局 |
-| `public/js/app.js` | `init()` 中调用 `Bookmarks.load()` |
-| 后端 | 无需改动 |
+| `public/index.html` | Insert `.quicklinks-bar` below the header |
+| `public/css/style.css` | Add `.quicklinks-*` styles |
+| `public/js/bookmarks.js` | Rewritten into a horizontal chip layout |
+| `public/js/app.js` | `init()` calls `Bookmarks.load()` |
+| Backend | No change needed |
 
 ---
 
-## 十三、已实现变更记录
+## 13. Log of implemented changes
 
-> 日期：2026-07-16
+> Date: 2026-07-16
 
-### 快速链接功能（已实现）
+### Quick links feature (implemented)
 
-按十二章方案实现，实际落地细节：
+Implemented according to the design of chapter 12; the details as actually landed:
 
-- **布局**：`--quicklinks-height: 36px`，`.layout` 高度同步减去该值
-- **chip**：`inline-flex` + `border-radius: 14px`，favicon 自动从 `{origin}/favicon.ico` 加载，失败降级为 🔗
-- **折叠**：单分组时隐藏 `▾` 按钮；多分组展开后每组一行并显示分组标签；状态持久化到 `localStorage('quicklinksExpanded')`
-- **右键菜单**：复用全局 `ContextMenu`，提供编辑 / 删除操作
+- **Layout**: `--quicklinks-height: 36px`, and the height of `.layout` is reduced by the same value
+- **Chip**: `inline-flex` + `border-radius: 14px`; the favicon is loaded automatically from `{origin}/favicon.ico` and degrades to 🔗 on failure
+- **Collapse**: with a single group the `▾` button is hidden; when expanded with several groups each group takes one row and shows its group label; the state is persisted in `localStorage('quicklinksExpanded')`
+- **Context menu**: reuses the global `ContextMenu` and offers edit / delete
 
 ---
 
-### Tools 页面局域网分享链接（已实现）
+### LAN share link on the Tools page (implemented)
 
-**背景**：`public/tools/` 目录下的静态工具页（如 `kwai-url-parser.html`）不做鉴权，需展示可供局域网直接访问的完整 URL。
+**Background**: the static tool pages under `public/tools/` (such as `kwai-url-parser.html`) are not authenticated and need to show a full URL that can be reached directly on the LAN.
 
-**实现方案**：
+**Implementation**:
 
-1. **后端**：`server.js` 新增无鉴权接口：
+1. **Backend**: `server.js` gained an unauthenticated endpoint:
    ```
    GET /api/local-ip  →  { ip: "192.168.x.x", port: 3000 }
    ```
-   使用 `os.networkInterfaces()` 获取第一个非内网 IPv4 地址。
+   It uses `os.networkInterfaces()` to get the first non-internal IPv4 address.
 
-2. **前端**（`kwai-url-parser.html`）：页面加载时请求 `/api/local-ip`，将 `window.location` 的 hostname/port 替换为局域网 IP，展示在 header 右侧。
+2. **Frontend** (`kwai-url-parser.html`): when the page loads it requests `/api/local-ip`, replaces the hostname/port of `window.location` with the LAN IP, and shows it at the right of the header.
 
-3. **UI**：
+3. **UI**:
    ```
    ┌────────────────────────────────────────────────────────────┐
-   │  🔗 Kwai URL 解析工具    http://192.168.1.4:3000/tools/… [复制链接] │
+   │  🔗 Kwai URL parser    http://192.168.1.4:3000/tools/… [Copy link] │
    └────────────────────────────────────────────────────────────┘
    ```
-   点击整行或「复制链接」按钮均触发 `navigator.clipboard.writeText()`，复制后按钮短暂变为「已复制 ✓」。
+   Clicking the whole row or the "Copy link" button both trigger `navigator.clipboard.writeText()`, and after copying the button briefly becomes "Copied ✓".
 
-**改动文件**：
+**Changed files**:
 
-| 文件 | 改动 |
+| File | Change |
 |------|------|
-| `server.js` | 新增 `GET /api/local-ip`，启动日志打印 LAN 地址 |
-| `public/tools/kwai-url-parser.html` | header 右侧插入分享链接组件，JS 动态拼接局域网 URL |
+| `server.js` | Added `GET /api/local-ip`, and the start-up log prints the LAN address |
+| `public/tools/kwai-url-parser.html` | A share-link component is inserted at the right of the header, and JS builds the LAN URL dynamically |
 
 ---
 
-## 十四、任务工作路径 + 内嵌终端
+## 14. Task working path + embedded terminal
 
-> 日期：2026-07-20
+> Date: 2026-07-20
 
-### 目标
+### Goals
 
-1. 每个任务新增 `work_dir`（工作目录）字段，默认取 `md_path` 所在目录
-2. 内容区新增 Tab 切换（**文档** / **终端**），终端使用 xterm.js 打开服务器 Shell
-3. Shell 进程常驻内存，终端输出（含命令 + 返回内容）持久化到 SQLite，支持服务重启后历史恢复
+1. Each task gets a new `work_dir` (working directory) field, defaulting to the directory of `md_path`
+2. The content area gets a tab switch (**Document** / **Terminal**), and the terminal uses xterm.js to open a server shell
+3. The shell process stays resident in memory, and the terminal output (the commands + their results) is persisted in SQLite so history can be restored after a service restart
 
 ---
 
-### 数据模型变更
+### Data model changes
 
-**tasks 表** 新增字段（`ALTER TABLE` 追加）：
+A new column on the **tasks table** (appended with `ALTER TABLE`):
 
 ```sql
 ALTER TABLE tasks ADD COLUMN work_dir TEXT;
--- 工作目录，默认取 md_path 所在目录，可手动修改
+-- working directory, defaults to the directory of md_path and can be changed by hand
 ```
 
-**新增 terminal_logs 表**：
+**New terminal_logs table**:
 
 ```sql
 CREATE TABLE IF NOT EXISTS terminal_logs (
@@ -902,62 +902,62 @@ CREATE TABLE IF NOT EXISTS terminal_logs (
   buffer     TEXT    NOT NULL DEFAULT '',
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
--- buffer：终端全量原始输出（ANSI escape codes），上限 5MB，超出从头截断保留后 5MB
+-- buffer: the full raw terminal output (ANSI escape codes), capped at 5MB; beyond that it is truncated from the start, keeping the last 5MB
 ```
 
 ---
 
-### API 变更
+### API changes
 
-`POST /api/tasks`、`PUT /api/tasks/:id`：新增 `work_dir` 字段，未传时自动取 `path.dirname(md_path)`。
+`POST /api/tasks` and `PUT /api/tasks/:id`: new `work_dir` field; when not passed it is taken automatically as `path.dirname(md_path)`.
 
-`POST /api/tasks/validate-path`：响应追加 `work_dir: path.dirname(md_path)`。
+`POST /api/tasks/validate-path`: the response also carries `work_dir: path.dirname(md_path)`.
 
-**新增 WebSocket 接口**：
+**New WebSocket endpoint**:
 
-| 接口 | 说明 |
+| Endpoint | Description |
 |------|------|
-| `GET /terminal/ws?taskId=:id` | 升级为 WebSocket，连接任务对应的 Shell |
+| `GET /terminal/ws?taskId=:id` | Upgraded to a WebSocket and connected to the task's shell |
 
 ---
 
-### 终端架构
+### Terminal architecture
 
 ```
-前端 xterm.js  ←—— WebSocket ——→  node-pty（per task，常驻内存）
+Frontend xterm.js  ←—— WebSocket ——→  node-pty (per task, resident in memory)
                                        ↓
-                              内存 buffer（5MB 环形）
-                                       ↓  每 5s 或累积 50KB flush
-                              SQLite terminal_logs（持久化）
+                              in-memory buffer (5MB ring)
+                                       ↓  flush every 5s or when 50KB has accumulated
+                              SQLite terminal_logs (persistent)
 ```
 
-**进程生命周期**：pty 随任务首次连接创建，ws 断开不销毁，仅服务重启时消失。服务重启后从 `terminal_logs` 恢复历史 buffer，再 spawn 新 pty。
+**Process lifecycle**: the pty is created at a task's first connection, is not destroyed when the ws disconnects, and only disappears when the service restarts. After a service restart the history buffer is restored from `terminal_logs` and then a new pty is spawned.
 
 ---
 
-### UI 变更
+### UI changes
 
-工具栏下方新增 Tab 栏（仅当选中任务时显示）：
+A tab bar is added below the toolbar (shown only when a task is selected):
 
 ```
-[📄 文档]  [⌨ 终端]
+[📄 Document]  [⌨ Terminal]
 ```
 
-- **文档 tab**：原有 MD 预览 + TOC，行为不变
-- **终端 tab**：全屏 xterm.js 黑色终端，cwd = `work_dir`，连接时自动回放历史 buffer
+- **Document tab**: the original MD preview + TOC, behavior unchanged
+- **Terminal tab**: a full-size black xterm.js terminal with cwd = `work_dir`, which replays the history buffer automatically on connect
 
-新建/编辑任务弹窗新增「工作路径」输入框，md_path 失焦校验通过后自动填充。
+The new / edit task dialog gains a "Working path" input, filled in automatically once the md_path passes validation on blur.
 
 ---
 
-### 新增依赖
+### New dependencies
 
 ```json
 "node-pty": "^1.0.0",
 "ws": "^8.0.0"
 ```
 
-前端 CDN 引入（`index.html`）：
+Frontend CDN includes (`index.html`):
 
 ```html
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm/css/xterm.css">
@@ -967,115 +967,115 @@ CREATE TABLE IF NOT EXISTS terminal_logs (
 
 ---
 
-### 改动文件清单
+### List of changed files
 
-| 文件 | 改动 |
+| File | Change |
 |------|------|
-| `db/index.js` | 追加 work_dir 迁移；新建 terminal_logs 表 |
-| `routes/tasks.js` | POST/PUT 支持 work_dir；validate-path 返回 work_dir |
-| `routes/terminal.js` | 新建：WebSocket PTY，node-pty 常驻，buffer + SQLite 双写 |
-| `server.js` | 挂载 ws server，拦截 `/terminal/ws` upgrade |
-| `package.json` | 新增 node-pty、ws |
-| `public/index.html` | 引入 xterm.js CDN；新增 tab 栏和 terminal-pane 结构 |
-| `public/js/tasks.js` | Tab 切换；xterm 初始化；work_dir 表单字段；WebSocket 转发 |
-| `public/css/style.css` | 新增 tab 栏、terminal-pane、.task-info-path 样式 |
+| `db/index.js` | Append the work_dir migration; create the terminal_logs table |
+| `routes/tasks.js` | POST/PUT support work_dir; validate-path returns work_dir |
+| `routes/terminal.js` | New: WebSocket PTY, node-pty resident, buffer + SQLite dual write |
+| `server.js` | Mount the ws server and intercept the `/terminal/ws` upgrade |
+| `package.json` | Add node-pty and ws |
+| `public/index.html` | Include the xterm.js CDN; add the tab bar and terminal-pane structure |
+| `public/js/tasks.js` | Tab switching; xterm initialization; the work_dir form field; WebSocket forwarding |
+| `public/css/style.css` | Add the tab bar, terminal-pane and .task-info-path styles |
 
 ---
 
-## 十六、任务拖拽排序 + 个人任务分组
+## 16. Task drag-and-drop ordering + personal task group
 
-> 日期：2026-07-27
+> Date: 2026-07-27
 
-### 目标
+### Goals
 
-1. 左侧任务列表支持拖拽排序（同组内调换顺序）
-2. 拖拽到其他状态组 → 修改任务 status
-3. 新增 status 值 `personal`（个人任务），作为第四个分组，与进行中/待办/已完成并列
+1. The task list on the left supports drag-and-drop ordering (reordering within a group)
+2. Dragging to another status group → changes the task's status
+3. A new status value `personal` (personal tasks) as a fourth group alongside In progress / To do / Done
 
 ---
 
-### 侧边栏结构
+### Sidebar structure
 
 ```
-● 进行中
+● In progress
   ▶ design
-○ 待办
+○ To do
   task-a
-✓ 已完成
+✓ Done
   old-task
-★ 个人任务      ← 新增 status='personal' 分组
+★ Personal tasks      ← new status='personal' group
   life-task
 ```
 
 ---
 
-### 拖拽行为
+### Drag behavior
 
-| 拖拽场景 | 结果 |
+| Drag scenario | Result |
 |---------|------|
-| 同 status 组内拖拽 | 更新 sort_order |
-| 拖到不同 status 组 | 更新 status + sort_order |
+| Drag within the same status group | Update sort_order |
+| Drag to a different status group | Update status + sort_order |
 
-- 拖拽时高亮目标插入位置（占位线）
-- 拖拽结束后提交 status 变更 + 批量提交 sort_order
-
----
-
-### 改动范围
-
-**前端**（仅 tasks.js + style.css）：
-- `STATUS_ORDER` 追加 `'personal'`，`STATUS_LABEL` 加 `'个人任务'`
-- STATUS_NEXT 循环中 personal → todo
-- 新建/编辑弹窗状态选项加「个人任务」
-- 侧边栏 HTML5 拖拽逻辑
-
-**后端**：无需改动（status 字段已是 TEXT，`personal` 直接存储）
-
-**DB**：无需改动
+- While dragging, the target insertion position is highlighted (a placeholder line)
+- When the drag ends, the status change is submitted and then sort_order in bulk
 
 ---
 
-### API 变更
+### Scope of changes
 
-新增 `PUT /api/tasks/reorder`：批量更新 sort_order，body: `[{ id, sort_order }]`
+**Frontend** (only tasks.js + style.css):
+- `STATUS_ORDER` gets `'personal'` appended and `STATUS_LABEL` gets `'Personal tasks'`
+- In the STATUS_NEXT cycle personal → todo
+- The status options of the new / edit dialog gain "Personal tasks"
+- HTML5 drag-and-drop logic for the sidebar
+
+**Backend**: no change needed (the status column is already TEXT and `personal` is stored directly)
+
+**DB**: no change needed
 
 ---
 
-### 改动文件清单
+### API changes
 
-| 文件 | 改动 |
+New `PUT /api/tasks/reorder`: bulk update of sort_order, body: `[{ id, sort_order }]`
+
+---
+
+### List of changed files
+
+| File | Change |
 |------|------|
-| `routes/tasks.js` | 新增 PUT /api/tasks/reorder |
-| `public/js/tasks.js` | STATUS_ORDER/LABEL/NEXT 更新；拖拽逻辑；新建弹窗状态选项 |
-| `public/css/style.css` | 新增拖拽占位、高亮样式 |
+| `routes/tasks.js` | Add PUT /api/tasks/reorder |
+| `public/js/tasks.js` | Update STATUS_ORDER/LABEL/NEXT; drag logic; status options of the new dialog |
+| `public/css/style.css` | Add drag placeholder and highlight styles |
 
 ---
 
-## 十五、PWA Window Controls Overlay + Header 显示模式切换
+## 15. PWA Window Controls Overlay + header display mode switch
 
-> 日期：2026-07-21
+> Date: 2026-07-21
 
-### 目标
+### Goals
 
-1. manifest 启用 `window-controls-overlay`，将 Header 内容（Logo + 用户信息）融入系统标题栏，节省 48px 垂直空间
-2. 新增切换按钮，支持在「标题栏模式」和「页面内 Header 模式」之间切换，偏好持久化到 `localStorage`
+1. The manifest enables `window-controls-overlay`, blending the header content (logo + user info) into the system title bar and saving 48px of vertical space
+2. A new toggle button switches between "title bar mode" and "in-page header mode", and the preference is persisted in `localStorage`
 
 ---
 
-### manifest 变更
+### manifest changes
 
 ```json
 "display": "standalone",
 "display_override": ["window-controls-overlay", "standalone"]
 ```
 
-> `display_override` 优先于 `display`，浏览器按序选第一个支持的模式；不支持 overlay 的环境自动降级到 standalone，行为不变。
+> `display_override` takes precedence over `display`, and the browser picks the first supported mode in order; an environment that does not support overlay falls back to standalone automatically, with unchanged behavior.
 
 ---
 
-### CSS 适配（`style.css`）
+### CSS adaptation (`style.css`)
 
-使用 CSS 环境变量读取系统标题栏区域尺寸，仅在 overlay 模式下生效：
+CSS environment variables read the size of the system title bar area and only take effect in overlay mode:
 
 ```css
 @media (display-mode: window-controls-overlay) {
@@ -1085,17 +1085,17 @@ CREATE TABLE IF NOT EXISTS terminal_logs (
     left: env(titlebar-area-x, 0);
     width: env(titlebar-area-width, 100%);
     height: env(titlebar-area-height, 48px);
-    -webkit-app-region: drag;          /* 整个 header 可拖拽 */
+    -webkit-app-region: drag;          /* the whole header can be dragged */
     z-index: 1000;
   }
-  /* 按钮、头像不可拖拽 */
+  /* buttons and avatar cannot be dragged */
   .header button,
   .header a,
   .header img,
   .header-mode-btn {
     -webkit-app-region: no-drag;
   }
-  /* layout 顶部留出 header 高度 */
+  /* leave the header height at the top of the layout */
   .page-wrapper {
     padding-top: env(titlebar-area-height, 48px);
   }
@@ -1104,202 +1104,202 @@ CREATE TABLE IF NOT EXISTS terminal_logs (
 
 ---
 
-### 切换按钮
+### Toggle button
 
-**位置**：Header 右侧，登出按钮旁边
+**Position**: at the right of the header, next to the log out button
 
-**图标**：
-- 标题栏模式（当前是 overlay）：显示 `⊡`（收进标题栏）
-- 页面模式（当前是页面内）：显示 `⊞`（展开到页面）
+**Icon**:
+- Title bar mode (currently overlay): shows `⊡` (tuck into the title bar)
+- Page mode (currently in the page): shows `⊞` (expand into the page)
 
-**逻辑**：
-- 读/写 `localStorage('header-mode')`，值为 `'overlay'` 或 `'page'`
-- `'page'` 模式：`<html>` 加 `class="header-page-mode"`，CSS 覆盖 overlay 媒体查询，强制 header 在页面内正常流布局
-- `'overlay'` 模式：移除该 class，依赖 `@media (display-mode: window-controls-overlay)` 自动生效
-
----
-
-### 改动文件清单
-
-| 文件 | 改动 |
-|------|------|
-| `public/manifest.json` | 新增 `display_override` |
-| `public/css/style.css` | 新增 `@media (display-mode: window-controls-overlay)` 适配；新增 `.header-page-mode` 覆盖样式 |
-| `public/index.html` | header 新增切换按钮 |
-| `public/js/app.js` | 初始化时读取 localStorage，绑定切换按钮逻辑 |
+**Logic**:
+- Read / write `localStorage('header-mode')`, whose value is `'overlay'` or `'page'`
+- `'page'` mode: `<html>` gets `class="header-page-mode"`, the CSS overrides the overlay media query and forces the header into the normal in-page flow layout
+- `'overlay'` mode: remove that class and rely on `@media (display-mode: window-controls-overlay)` taking effect automatically
 
 ---
 
-## 十八、左侧选中任务高亮增强
+### List of changed files
 
-> 日期：2026-08-07
-
-### 目标
-
-增强左侧任务导航中当前选中任务的视觉识别度，不改变任务选择、拖拽和状态切换逻辑。
-
-### 样式方案
-
-- 选中项使用更明显的主题色浅背景，与普通 hover 状态区分
-- 左侧强调条由 3px 增加为 4px，并使用主题链接色
-- 选中项文字颜色提升为主文字色并加粗
-- 增加轻微内阴影，保持现有圆角和列表布局不变
-- 不修改未选中任务、任务状态圆点和交互行为
-
-### 改动文件清单
-
-| 文件 | 改动 |
+| File | Change |
 |------|------|
-| `public/css/style.css` | 增强 `.task-nav-item.active` 背景、文字、强调条和阴影样式 |
+| `public/manifest.json` | Add `display_override` |
+| `public/css/style.css` | Add the `@media (display-mode: window-controls-overlay)` adaptation; add the `.header-page-mode` override styles |
+| `public/index.html` | The header gains a toggle button |
+| `public/js/app.js` | Read localStorage on initialization and bind the toggle button logic |
 
 ---
 
-## 十九、未选中任务灰色蒙层
+## 18. Stronger highlight of the selected task on the left
 
-> 日期：2026-08-07
+> Date: 2026-08-07
 
-### 目标
+### Goals
 
-在左侧任务列表中，对未选中的任务项追加一层透明灰色蒙层，使当前选中任务在视觉上更突出。
+Make the currently selected task in the left task navigation easier to recognize visually, without changing task selection, dragging or status switching logic.
 
-### 样式方案
+### Style plan
 
-- 未选中任务 `.task-nav-item:not(.active)` 整体 `opacity: 0.55`，呈现灰蒙效果
-- hover 时 `opacity: 1` 恢复，保持原有 hover 背景不变
-- 选中项 `.active` 维持上一节增强的高亮样式，不受影响
-- 不改变布局、交互和 DOM 结构
+- The selected item uses a more noticeable light theme-color background, distinct from the ordinary hover state
+- The accent bar on the left grows from 3px to 4px and uses the theme link color
+- The text color of the selected item is raised to the main text color and made bold
+- A light inset shadow is added, keeping the existing rounded corners and list layout
+- Unselected tasks, the task status dots and the interaction behavior are not modified
 
-### 改动文件清单
+### List of changed files
 
-| 文件 | 改动 |
+| File | Change |
 |------|------|
-| `public/css/style.css` | 新增 `.task-nav-item:not(.active)` 透明度规则与 hover 恢复 |
+| `public/css/style.css` | Strengthen the background, text, accent bar and shadow styles of `.task-nav-item.active` |
 
-### 风险与权衡
+---
 
-| 风险 | 处理 |
+## 19. Grey overlay for unselected tasks
+
+> Date: 2026-08-07
+
+### Goals
+
+In the left task list, add a translucent grey overlay to unselected task items, so the currently selected task stands out more visually.
+
+### Style plan
+
+- Unselected tasks `.task-nav-item:not(.active)` get `opacity: 0.55` as a whole, giving a greyed look
+- On hover `opacity: 1` restores it, and the existing hover background is unchanged
+- The selected item `.active` keeps the highlight styles strengthened in the previous section and is unaffected
+- Layout, interaction and DOM structure are unchanged
+
+### List of changed files
+
+| File | Change |
 |------|------|
-| 状态圆点 / 终端角标也被蒙层 | 整体降亮，但未选中状态下用户对状态需求不强；hover 即恢复 |
-| 浅色主题下视觉过淡 | 0.55 在浅色/深色主题下均可读，必要时后续按主题分别调整 |
+| `public/css/style.css` | Add the `.task-nav-item:not(.active)` opacity rule and the hover restore |
+
+### Risks and trade-offs
+
+| Risk | Handling |
+|------|------|
+| Status dots / terminal badges are covered by the overlay too | They are dimmed as a whole, but users do not need the status of unselected items much; hover restores it |
+| Too faint on the light theme | 0.55 stays readable on both light and dark themes, and can be adjusted per theme later if needed |
 
 
 
 ---
 
-## 十七、终端 WebSocket 自动重连
+## 17. Terminal WebSocket automatic reconnect
 
-> 日期：2026-08-05
+> Date: 2026-08-05
 
-### 背景
+### Background
 
-当前终端 WebSocket 断开后，仅在 xterm 中写入 `[连接已断开，切换任务可重新连接]`，需要用户手动「切走再切回」该任务的 shell tab 才能重新连接。在服务重启、网络抖动等场景下体验差。
+Currently, after the terminal WebSocket disconnects, xterm only gets `[Connection lost, switch tasks to reconnect]` written to it, and the user has to switch away from the task's shell tab and back to reconnect. The experience is poor in scenarios such as a service restart or a network blip.
 
-### 目标
+### Goals
 
-- ws 非主动断开时，自动按指数退避策略重连，无需用户干预
-- 重连成功后复用原 xterm 实例，回放服务端历史 buffer（与现有「切换任务重连」体验一致）
-- 用户切走任务 / 实例被显式销毁时，立即取消挂起的重连，避免悬挂 ws
+- When the ws is disconnected not on purpose, reconnect automatically with exponential backoff, without user intervention
+- After a successful reconnect, reuse the original xterm instance and replay the server's history buffer (consistent with the existing "switch task to reconnect" experience)
+- When the user switches away from the task / the instance is explicitly destroyed, cancel the pending reconnect immediately, to avoid a dangling ws
 
-### 重连策略
+### Reconnect strategy
 
-| 元素 | 取值 |
+| Element | Value |
 |------|------|
-| 首次重连延迟 | 1s |
-| 退避方式 | 指数退避 `delay = 1000 * 2^attempts` |
-| 最大延迟 | 30s |
-| 最大尝试次数 | 无上限（持续重试，直到 ws 成功或实例被销毁） |
-| 触发时机 | `ws.onclose` 且实例未被显式销毁 |
-| 取消时机 | 实例从 `termInstances` 中移除（`disposed = true`） |
+| First reconnect delay | 1s |
+| Backoff | Exponential backoff `delay = 1000 * 2^attempts` |
+| Maximum delay | 30s |
+| Maximum attempts | Unlimited (keep retrying until the ws succeeds or the instance is destroyed) |
+| Trigger | `ws.onclose` and the instance was not explicitly destroyed |
+| Cancel | The instance is removed from `termInstances` (`disposed = true`) |
 
-### 状态机
+### State machine
 
 ```
 ws.open(OPEN)  ── onclose ──►  scheduleReconnect(delay)
        ↑                            │
-       │                            ↓ (delay 后)
-       │                       connect() 新建 ws
+       │                            ↓ (after delay)
+       │                       connect() creates a new ws
        │                            │
-       └──── onopen(成功) ──────────┘
+       └──── onopen (success) ──────┘
                                     │
-                              onclose(失败) ──► scheduleReconnect(delay*2)
+                              onclose (failure) ──► scheduleReconnect(delay*2)
 ```
 
-### 实现要点
+### Implementation points
 
-1. **实例字段扩展**：`termInstances.set(task.id, inst)` 中的 `inst` 新增：
-   - `disposed: boolean` — 实例是否已被销毁
-   - `reconnectTimer: number | null` — 挂起的重连定时器
-   - `reconnectAttempts: number` — 已重连尝试次数（onopen 成功后清零）
+1. **Instance field extension**: the `inst` in `termInstances.set(task.id, inst)` gains:
+   - `disposed: boolean` — whether the instance has been destroyed
+   - `reconnectTimer: number | null` — the pending reconnect timer
+   - `reconnectAttempts: number` — the number of reconnect attempts so far (reset to zero after onopen succeeds)
 
-2. **ws 生命周期与 terminal 解耦**：
-   - `t.onData` / `t.onResize` 在 terminal 创建时设置一次，内部读 `inst.ws`，避免每次重连重复注册
-   - `connect()` 只负责 ws 生命周期，可被多次调用
+2. **Decouple the ws lifecycle from the terminal**:
+   - `t.onData` / `t.onResize` are set once when the terminal is created and read `inst.ws` inside, so they are not registered again on every reconnect
+   - `connect()` only handles the ws lifecycle and can be called many times
 
-3. **重连前清屏 + 历史回放**：
-   - `ws.onopen` 触发时若 `reconnectAttempts > 0`（即重连场景），先 `t.reset()` 清空当前内容
-   - 服务端会在新 ws 上发送 `{ type: 'history', data }`，xterm 写入后即恢复历史
-   - 重连成功后追加 `\x1b[32m[重新连接成功]\x1b[0m` 提示
+3. **Clear the screen + replay history before reconnecting**:
+   - When `ws.onopen` fires and `reconnectAttempts > 0` (the reconnect case), first call `t.reset()` to clear the current content
+   - The server sends `{ type: 'history', data }` on the new ws, and writing it into xterm restores the history
+   - After a successful reconnect, append the notice `\x1b[32m[Reconnected]\x1b[0m`
 
-4. **onclose 处理**：
-   - 检查 `inst.disposed` 与 `termInstances.get(task.id) === inst`，避免销毁后的旧 ws 误触发重连
-   - 写入 `\x1b[33m[连接已断开，{N}s 后自动重连...]\x1b[0m`（替换原「切换任务可重新连接」文案）
-   - 计算退避延迟，设置 `reconnectTimer`，到点后调用 `connect()`
+4. **onclose handling**:
+   - Check `inst.disposed` and `termInstances.get(task.id) === inst`, so an old ws of a destroyed instance does not trigger a reconnect by mistake
+   - Write `\x1b[33m[Connection lost, reconnecting in {N}s...]\x1b[0m` (replacing the old "switch tasks to reconnect" text)
+   - Compute the backoff delay, set `reconnectTimer`, and call `connect()` when it fires
 
-5. **onerror 静默化**：原本会写入 `[WebSocket 连接失败]`，现交由 `onclose` 统一处理，避免错误信息与重连提示重复
+5. **Silence onerror**: it used to write `[WebSocket connection failed]`; it is now left to `onclose`, so the error message and the reconnect notice are not duplicated
 
-6. **实例销毁路径**：抽取 `disposeTerminalInstance(taskId)` 辅助函数，统一处理：
+6. **Instance disposal path**: extract the helper `disposeTerminalInstance(taskId)` to handle in one place:
    - `inst.disposed = true`
    - `clearTimeout(inst.reconnectTimer)`
    - `inst.ws.close()`
-   - `inst.term.dispose()`、`inst.el.remove()`
+   - `inst.term.dispose()`, `inst.el.remove()`
    - `termInstances.delete(taskId)`
-   - 若当前 `termTaskId === taskId`，清空全局 `term`/`fitAddon`/`termWs`/`termTaskId`
-   - `connectTerminal` 内的旧实例清理逻辑、未来可能的页面卸载逻辑均复用此函数
+   - If the current `termTaskId === taskId`, clear the global `term`/`fitAddon`/`termWs`/`termTaskId`
+   - The old-instance cleanup inside `connectTerminal` and any future page-unload logic reuse this function
 
-7. **后台任务同样自动重连**：当前未显示的 task ws 断开也会触发重连，用户切回时即可用，无需等待
+7. **Background tasks reconnect automatically too**: a task ws that is not currently displayed also triggers a reconnect when it drops, so it is ready when the user switches back, with no waiting
 
-### 改动文件清单
+### List of changed files
 
-| 文件 | 改动 |
+| File | Change |
 |------|------|
-| `public/js/tasks.js` | `connectTerminal` 重构：抽出 `createTerminalInstance` 与 `disposeTerminalInstance`；ws 生命周期与 terminal 解耦；`onclose` 改为按指数退避调度 `connect()`；`onopen` 在重连场景下先 `t.reset()`；移除「切换任务可重新连接」固定文案 |
+| `public/js/tasks.js` | Refactor `connectTerminal`: extract `createTerminalInstance` and `disposeTerminalInstance`; decouple the ws lifecycle from the terminal; `onclose` now schedules `connect()` with exponential backoff; `onopen` calls `t.reset()` first in the reconnect case; remove the fixed "switch tasks to reconnect" text |
 
-### 风险与权衡
+### Risks and trade-offs
 
-| 风险 | 处理 |
+| Risk | Handling |
 |------|------|
-| Session 失效导致重连失败 | 当前不区分失败原因，会持续按 30s 间隔重试。用户刷新页面即可重新登录。后续可在 ws close code 上区分 401 后停止重连并提示 |
-| 重连时清屏丢失滚动历史 | 与现有「切换任务重连」体验一致（旧实例销毁、新实例回放历史 buffer），用户已习惯 |
-| 后台多任务同时重连可能瞬时打爆服务端 | 退避策略天然分散重连时间；单用户场景下任务数有限，无显著压力 |
+| An expired session makes reconnecting fail | The cause of failure is currently not distinguished, so it keeps retrying at 30s intervals. Refreshing the page lets the user log in again. Later, the ws close code can be used to tell a 401 apart, stop reconnecting and show a hint |
+| Clearing the screen on reconnect loses the scrollback | Consistent with the existing "switch task to reconnect" experience (the old instance is destroyed, the new instance replays the history buffer), which users are used to |
+| Many background tasks reconnecting together may briefly overload the server | The backoff naturally spreads the reconnect times; in the single-user scenario the number of tasks is limited, so there is no significant pressure |
 
 ---
 
-## 二十、任务内容多标签与待办清单
+## 20. Multiple content tabs and the to-do list for a task
 
-> 日期：2026-08-13
+> Date: 2026-08-13
 
-### 目标
+### Goals
 
-- 将原「文档」标签改名为「技术方案」
-- 增加 `README` 与 `AGENTS.md` Markdown 预览标签
-- 增加按任务隔离、由 SQLite 持久化的「待办」页面
-- 保留现有终端标签及每个任务的标签记忆能力
+- Rename the original "Document" tab to "Design doc"
+- Add `README` and `AGENTS.md` Markdown preview tabs
+- Add a "To-do" page that is isolated per task and persisted in SQLite
+- Keep the existing terminal tab and the per-task tab memory
 
-### 标签与文件映射
+### Tab to file mapping
 
-| 标签 | 数据来源 |
+| Tab | Data source |
 |------|----------|
-| 技术方案 | `task.md_path` |
-| README | `task.work_dir/README.md`，无 `work_dir` 时取技术方案所在目录 |
-| AGENTS.md | `task.work_dir/AGENTS.md`，无 `work_dir` 时取技术方案所在目录 |
-| 待办 | SQLite `task_todos` 表 |
-| 终端 | 现有 WebSocket PTY 会话 |
+| Design doc | `task.md_path` |
+| README | `task.work_dir/README.md`, or the directory of the design doc when there is no `work_dir` |
+| AGENTS.md | `task.work_dir/AGENTS.md`, or the directory of the design doc when there is no `work_dir` |
+| To-do | SQLite `task_todos` table |
+| Terminal | The existing WebSocket PTY session |
 
-待办标签沿用完整文档工具栏，保留「打开文件夹 / VSCode 打开 / 分享」按钮与工具栏高度，避免切换标签时内容区上下跳动。
+The to-do tab keeps the full document toolbar, retaining the "Open folder / Open in VSCode / Share" buttons and the toolbar height, so the content area does not jump up and down when switching tabs.
 
-新建任务时始终保证四份文档存在：技术方案 `DESIGN.md`（`task.md_path`）、`README.md`、`AGENTS.md` 和 `CLAUDE.md`。只填标题时会创建任务目录及这四份标准文档；手动指定技术方案路径时，会保留用户指定的文件名，并在当前 Task 目录补齐缺失的 `README.md`、`AGENTS.md` 和引用主规则的 `CLAUDE.md`。已有文件一律保留，不做覆盖。已有任务的文件不存在时仍由页面提供显式创建按钮。
+When a task is created, four documents are always guaranteed to exist: the design doc `DESIGN.md` (`task.md_path`), `README.md`, `AGENTS.md` and `CLAUDE.md`. When only a title is entered, the task directory and these four standard documents are created; when a design path is specified manually, the file name the user specified is kept and the missing `README.md`, `AGENTS.md` and the `CLAUDE.md` that references the main rules are filled in the current Task directory. Existing files are always kept and never overwritten. For an existing task whose file does not exist, the page still offers an explicit create button.
 
-### 数据模型
+### Data model
 
 ```sql
 CREATE TABLE IF NOT EXISTS task_todos (
@@ -1316,154 +1316,154 @@ CREATE TABLE IF NOT EXISTS task_todos (
 
 ### API
 
-| Method | Path | 说明 |
+| Method | Path | Description |
 |--------|------|------|
-| GET | `/api/tasks/:id/document/:kind` | 读取 `technical/readme/agent` 文档 |
-| POST | `/api/tasks/:id/document/:kind` | 创建缺失的 `README.md` 或 `AGENTS.md` |
-| PUT | `/api/tasks/:id/document/:kind` | 保存 `technical/readme/agent` Markdown 内容 |
-| GET | `/api/tasks/:id/todos` | 获取任务待办 |
-| POST | `/api/tasks/:id/todos` | 新增待办 |
-| PUT | `/api/tasks/:id/todos/:todoId` | 更新内容或完成状态 |
-| DELETE | `/api/tasks/:id/todos/:todoId` | 删除待办 |
+| GET | `/api/tasks/:id/document/:kind` | Read a `technical/readme/agent` document |
+| POST | `/api/tasks/:id/document/:kind` | Create a missing `README.md` or `AGENTS.md` |
+| PUT | `/api/tasks/:id/document/:kind` | Save the Markdown content of a `technical/readme/agent` document |
+| GET | `/api/tasks/:id/todos` | Get the task's to-dos |
+| POST | `/api/tasks/:id/todos` | Add a to-do |
+| PUT | `/api/tasks/:id/todos/:todoId` | Update the content or completion state |
+| DELETE | `/api/tasks/:id/todos/:todoId` | Delete a to-do |
 
-### Markdown 在线编辑
+### Online Markdown editing
 
-- 技术方案、`README.md` 和 `AGENTS.md` 工具栏增加「编辑」按钮
-- 使用 Microsoft 官方 Monaco Editor（VS Code 同源编辑器），采用 VS Code 明亮主题、Markdown 语法高亮、行号、自动补全括号和软换行
-- 使用 Monaco 原生 VS Code 快捷键、搜索/替换面板、多光标和列选择，仅额外绑定 `Cmd/Ctrl+S` 到应用的 Markdown 保存接口
-- Monaco 0.56.0 以 ESM 包为源，通过 esbuild 构建后本地托管主线程与 worker 资源，避免 CDN 与 worker 跨域问题
-- 文档修改未保存时，切换任务或标签前会要求确认
-- 新增 `PUT /api/tasks/:id/document/:kind`，经过任务归属校验后写入对应 Markdown，单文档限制 5MB
+- The toolbars of the design doc, `README.md` and `AGENTS.md` gain an "Edit" button
+- Uses Microsoft's official Monaco Editor (the same editor as VS Code), with the VS Code light theme, Markdown syntax highlighting, line numbers, auto-closing brackets and soft wrapping
+- Uses Monaco's native VS Code shortcuts, the find / replace panel, multiple cursors and column selection, and only additionally binds `Cmd/Ctrl+S` to the application's Markdown save endpoint
+- Monaco 0.56.0 uses the ESM package as its source, is built with esbuild, and the main-thread and worker resources are hosted locally, avoiding CDN and worker cross-origin problems
+- When a document has unsaved changes, confirmation is required before switching tasks or tabs
+- New `PUT /api/tasks/:id/document/:kind` writes the corresponding Markdown after the task ownership check, with a limit of 5MB per document
 
-所有接口先按当前登录用户校验任务归属。
+All endpoints first check task ownership against the currently logged-in user.
 
 ---
 
-## 二十一、检查更新与远程服务任务
+## 21. Update check and remote service tasks
 
-> 日期：2026-08-14
-> 状态：仅设计，尚未实现
+> Date: 2026-08-14
+> Status: design only, not implemented yet
 
-### 1. 背景与目标
+### 1. Background and goals
 
-当前应用只管理本机 SQLite 中的任务和本机文件。新方案希望增加：
+The application currently only manages tasks in the local SQLite and files on this machine. The new design wants to add:
 
-1. **GitHub 版本检查**：后台定时读取服务端固定的 GitHub `VERSION.json` 链接，比较本地与远端版本，发现更高版本时弹窗提醒。
-2. **连接对等实例**：每个 torin-x-web 启动后既是本地客户端，也是可被其他实例连接的远程服务端。
-3. **统一任务导航**：左侧栏明确分为「本地任务」和「远程服务」，远程服务下再显示其任务。
-4. **保持数据边界**：本地任务仍使用本地 DB/文件；远程任务的 DB、文档和终端始终由对应远程服务管理。
+1. **GitHub version check**: periodically read a GitHub `VERSION.json` link fixed on the server, compare the local and remote versions, and pop up a reminder when a higher version is found.
+2. **Connect peer instances**: after starting, every torin-x-web instance is both a local client and a remote server that other instances can connect to.
+3. **Unified task navigation**: the left sidebar is clearly divided into "Local tasks" and "Remote services", with the tasks of each remote service shown under it.
+4. **Keep the data boundary**: local tasks still use the local DB / files; the DB, documents and terminals of remote tasks are always managed by the corresponding remote service.
 
-### 2. 范围与非目标
+### 2. Scope and non-goals
 
-#### 本期设计范围
+#### Scope of this design
 
-- 通过 URL、端口和 Token 配置多个对等服务实例，支持连接测试、启用/停用和移除
-- 远程任务列表、技术方案、README、AGENTS.md 和待办清单
-- 远程任务的新建、编辑、状态流转和删除
-- 定时查询 GitHub 版本链接、手动立即检查、新版弹窗与经确认后更新本地服务
+- Configure several peer service instances through URL, port and Token, with connection testing, enabling / disabling and removal
+- The remote task list, design doc, README, AGENTS.md and to-do list
+- Creating, editing, status transitions and deleting of remote tasks
+- Periodic query of the GitHub version link, an immediate manual check, a new-version dialog, and updating the local service after confirmation
 
-#### 暂不纳入首期
+#### Not in the first phase
 
-- 本地与远程任务的自动双向同步或合并
-- 离线修改远程任务后再回传
-- 跨服务器拖拽迁移任务
-- 无人确认的自动更新；每次更新都需用户在弹窗中确认
-- 第三方任务平台（GitHub Issues、Linear、Jira 等）
+- Automatic two-way sync or merging of local and remote tasks
+- Modifying remote tasks offline and uploading them later
+- Dragging tasks across servers to migrate them
+- Updates without human confirmation; every update needs the user to confirm in the dialog
+- Third-party task platforms (GitHub Issues, Linear, Jira and so on)
 
-### 3. 核心原则
+### 3. Core principles
 
-1. **浏览器不直连远程**：所有远程请求都由本地 Express 代理，避免 CORS，也不把远程 Token 暴露给前端。
-2. **不复制为本地任务**：远程任务是实时访问的远程资源，不写入本地 `tasks` 表。
-3. **显式标识来源**：任务标识必须是 `(source, serverId, taskId)`，不能只用数字 `id`。
-4. **Token 决定权限**：连接表单不重复设置权限，实际能力由远程 Token scope 和服务端开关决定。
-5. **查询自动、更新手动**：读取固定 GitHub 版本链接可定时自动执行；Git fetch、修改本地代码、安装依赖、迁移 DB 和重启必须经用户确认。
-6. **对等角色对称**：同一套程序同时挂载本地 Session API 和 Token 鉴权的 remote API，不存在单独的「客户端版」或「服务端版」。
+1. **The browser never connects to the remote directly**: all remote requests are proxied by the local Express, which avoids CORS and does not expose the remote Token to the frontend.
+2. **Never copy as a local task**: a remote task is a remote resource accessed live and is not written into the local `tasks` table.
+3. **Show the source explicitly**: a task identity must be `(source, serverId, taskId)`, not just the numeric `id`.
+4. **The Token decides permissions**: the connection form does not set permissions again; the actual capability is decided by the remote Token scope and the server switches.
+5. **Query automatically, update manually**: reading the fixed GitHub version link may run periodically on its own; Git fetch, changing local code, installing dependencies, migrating the DB and restarting must be confirmed by the user.
+6. **Symmetric peer roles**: the same program mounts both the local Session API and the Token-authenticated remote API, and there is no separate "client edition" or "server edition".
 
-### 4. 左侧栏信息架构
+### 4. Left sidebar information architecture
 
 ```text
-左侧任务栏
-├─ 本地任务                         [ + ]
-│  ├─ 个人任务
-│  ├─ 进行中
-│  ├─ 待办
-│  └─ 已完成
-└─ 远程服务                         [ + 连接 ]
-   ├─ ● 家中 Mac                         [ ⋯ ]
-   │  ├─ 个人任务
-   │  ├─ 进行中
-   │  ├─ 待办
-   │  └─ 已完成
-   └─ ○ 办公室服务器（离线）           [ 重试 ]
+Left task bar
+├─ Local tasks                      [ + ]
+│  ├─ Personal tasks
+│  ├─ In progress
+│  ├─ To do
+│  └─ Done
+└─ Remote services                  [ + Connect ]
+   ├─ ● Home Mac                          [ ⋯ ]
+   │  ├─ Personal tasks
+   │  ├─ In progress
+   │  ├─ To do
+   │  └─ Done
+   └─ ○ Office server (offline)          [ Retry ]
 ```
 
-#### 展示约定
+#### Display conventions
 
-- 一级区域「本地任务」和「远程服务」可折叠，折叠状态按用户保存。
-- 每个远程服务显示连接状态：在线、检测中、离线、认证失效、版本不兼容。
-- 远程任务条目显示云端标识，tooltip 显示服务器名称。
-- 「新建任务」按钮作用于当前选中的任务源；若未选中远程服务，默认在本地创建。
-- 跨本地/远程或跨服务器拖拽在首期禁止，光标显示不可放置。
-- 远程服务暂时不可用时，保留最后一次任务列表快照，但整组置灰并标记「非实时」。
+- The first-level areas "Local tasks" and "Remote services" are collapsible, and the collapsed state is saved per user.
+- Each remote service shows its connection state: online, checking, offline, authentication expired, version incompatible.
+- A remote task entry shows a cloud marker, and a tooltip shows the server name.
+- The "New task" button acts on the currently selected task source; if no remote service is selected, the task is created locally by default.
+- Dragging across local / remote or across servers is forbidden in the first phase, and the cursor shows it cannot be dropped.
+- When a remote service is temporarily unavailable, the last task list snapshot is kept, but the whole group is greyed out and marked "not live".
 
-### 5. 连接远程服务流程
+### 5. Flow for connecting a remote service
 
-#### 连接表单
+#### Connection form
 
-| 字段 | 说明 |
+| Field | Description |
 |------|------|
-| URL | 主机或域名，例如 `https://tasks.example.com` 或 `http://192.168.1.20` |
-| 端口 | 远程 torin-x-web 监听端口，例如 `14002` |
-| Token | 远程实例签发的访问 Token，仅在新增或更换时输入 |
+| URL | Host or domain, for example `https://tasks.example.com` or `http://192.168.1.20` |
+| Port | The listening port of the remote torin-x-web, for example `14002` |
+| Token | The access Token issued by the remote instance, entered only when adding or replacing |
 
-用户只需提供以上三项。服务器显示名称由 `/capabilities` 返回的 `instance_name`、主机名或 URL 自动生成，用户可在连接成功后可选修改别名。可读/可写/终端能力不在表单中单独选择，以 Token scope 为准。
+The user only needs to provide the three items above. The server display name is generated automatically from the `instance_name` returned by `/capabilities`, the hostname or the URL, and the user may optionally change it to an alias after connecting successfully. Read / write / terminal capabilities are not chosen separately in the form and follow the Token scope.
 
-#### 连接测试
+#### Connection test
 
 ```text
-用户填写 URL + 端口 + Token
+The user enters URL + port + Token
     ↓
-本地实例组装并校验 base URL
+The local instance assembles and validates the base URL
     ↓
 GET <remote>/api/remote/v1/capabilities
 Authorization: Bearer <token>
     ↓
-校验服务身份、API 版本、Token scope
+Verify the service identity, API version and Token scope
     ↓
-保存连接 → 首次加载任务快照
+Save the connection → load the task snapshot for the first time
 ```
 
-连接失败时不保存明文 Token，只返回可操作的错误分类：DNS/超时、TLS 失败、401 Token 无效、403 scope 不足、API 版本不兼容。
+When the connection fails the plaintext Token is not saved, and only an actionable error category is returned: DNS/timeout, TLS failure, 401 invalid Token, 403 insufficient scope, API version incompatible.
 
-### 6. 系统架构
+### 6. System architecture
 
-每个运行中的 torin-x-web 实例都同时具备两种角色：
+Every running torin-x-web instance has two roles at once:
 
-- **客户端角色**：用当前浏览器 Session 管理本地任务，并使用保存的 Token 连接其他实例。
-- **远程服务端角色**：监听同一 URL/端口，对其他实例提供 `/api/remote/v1/*` Token API。
+- **Client role**: manages local tasks with the current browser session, and connects to other instances with saved Tokens.
+- **Remote server role**: listens on the same URL/port and offers the `/api/remote/v1/*` Token API to other instances.
 
 ```text
-实例 A（浏览器当前打开）
-  ├─ Web UI + Session API ──► A 的 SQLite / 文件 / PTY
+Instance A (currently open in the browser)
+  ├─ Web UI + Session API ──► A's SQLite / files / PTY
   ├─ Remote Client ── Token ──────────┐
   └─ Remote Server `/api/remote/v1/*`        │
                                                 ▼
-实例 B
-  ├─ Web UI + Session API ──► B 的 SQLite / 文件 / PTY
+Instance B
+  ├─ Web UI + Session API ──► B's SQLite / files / PTY
   ├─ Remote Client
   └─ Remote Server `/api/remote/v1/*` ◄──┘
 ```
 
-A 可连 B，B 也可反向连 A；两个连接的 Token 与权限相互独立。请求不继续级联转发，从 A 访问 B 时只能看到 B 的本地任务，不会再暴露 B 已连接的 C 实例，避免环路与权限扩散。
+A can connect to B, and B can connect back to A; the Tokens and permissions of the two connections are independent. Requests are not forwarded further in a cascade: accessing B from A only shows B's local tasks and does not expose instance C that B has connected, which avoids loops and permission spread.
 
-#### 为什么不让前端直连远程
+#### Why the frontend does not connect to the remote directly
 
-- Token 不进入 `localStorage`、DOM 或浏览器请求日志。
-- 不需要在远程服务开放 CORS。
-- 本地后端可统一实现超时、服务器身份验证和错误脱敏。
-- 前端只处理统一的本地/remote task view model。
+- The Token never enters `localStorage`, the DOM or browser request logs.
+- CORS does not need to be opened on the remote service.
+- The local backend can implement timeouts, server identity verification and error redaction uniformly.
+- The frontend only handles a unified local / remote task view model.
 
-### 7. 本地数据模型
+### 7. Local data model
 
 #### `remote_servers`
 
@@ -1490,7 +1490,7 @@ CREATE TABLE remote_servers (
 );
 ```
 
-Token 使用 AES-256-GCM 加密，密钥从独立的 `REMOTE_CREDENTIALS_KEY` 环境变量获取，不复用 `SESSION_SECRET`。API 返回连接配置时永不返回 Token 或密文字段。
+The Token is encrypted with AES-256-GCM, and the key comes from the separate `REMOTE_CREDENTIALS_KEY` environment variable and does not reuse `SESSION_SECRET`. When the API returns connection settings it never returns the Token or the ciphertext fields.
 
 #### `remote_task_snapshots`
 
@@ -1506,17 +1506,17 @@ CREATE TABLE remote_task_snapshots (
 );
 ```
 
-快照只用于离线展示任务列表，不作为可编辑的离线副本。默认不缓存 Markdown 全文、终端历史和 Token。
+A snapshot is only used to show the task list offline and is not an editable offline copy. By default the full Markdown text, terminal history and Token are not cached.
 
-#### GitHub 版本检查状态
+#### GitHub version check state
 
-更新状态是实例级而不是用户级，因为所有登录用户共享同一份服务代码。状态可存在单例 `system_state` 表或独立 JSON：
+The update state is per instance rather than per user, because all logged-in users share the same service code. The state can live in a singleton `system_state` table or a separate JSON:
 
 ```text
-github_version_url     https URL       # 固定的 GitHub VERSION.json 链接
-git_remote             origin          # 仅在确认更新后使用
-git_branch             main            # 仅在确认更新后使用
-update_check_interval  1800            # 默认 30 分钟
+github_version_url     https URL       # the fixed GitHub VERSION.json link
+git_remote             origin          # only used after an update is confirmed
+git_branch             main            # only used after an update is confirmed
+update_check_interval  1800            # 30 minutes by default
 update_last_checked_at datetime
 update_local_version   semver
 update_remote_version  semver
@@ -1524,37 +1524,37 @@ update_manifest_etag   text
 update_manifest_mtime  text             # GitHub Last-Modified
 update_status          idle | checking | current | available | local_newer | blocked | updating | failed
 update_error           safe error code
-update_notice_version  semver           # 已弹窗的远程版本
+update_notice_version  semver           # the remote version already shown in a dialog
 ```
 
-### 8. 远程服务 API 协议
+### 8. Remote service API protocol
 
-新建独立的版本化命名空间 `/api/remote/v1`，不直接暴露现有 Session API。
+A separate versioned namespace `/api/remote/v1` is created, and the existing Session API is not exposed directly.
 
-#### 接口概览
+#### Endpoint overview
 
-| Method | 路径 | Scope | 说明 |
+| Method | Path | Scope | Description |
 |--------|------|-------|------|
-| GET | `/api/remote/v1/capabilities` | `server:read` | 实例 ID、应用/API 版本、功能与 scope |
-| GET | `/api/remote/v1/tasks` | `tasks:read` | 远程任务列表，支持 `updated_since` |
-| POST | `/api/remote/v1/tasks` | `tasks:write` | 新建远程任务 |
-| GET | `/api/remote/v1/tasks/:id` | `tasks:read` | 任务详情与 revision |
-| PUT | `/api/remote/v1/tasks/:id` | `tasks:write` | 更新任务，需带 revision |
-| DELETE | `/api/remote/v1/tasks/:id` | `tasks:write` | 删除远程任务 |
-| GET/PUT | `/api/remote/v1/tasks/:id/documents/:kind` | `docs:read/write` | `technical/readme/agent` 文档 |
-| GET/POST/PUT/DELETE | `/api/remote/v1/tasks/:id/todos...` | `todos:read/write` | 待办 CRUD |
-| WS | `/api/remote/v1/tasks/:id/terminal` | `terminal` | 远程 PTY，需单独开启 |
+| GET | `/api/remote/v1/capabilities` | `server:read` | Instance ID, app / API versions, features and scopes |
+| GET | `/api/remote/v1/tasks` | `tasks:read` | Remote task list, supports `updated_since` |
+| POST | `/api/remote/v1/tasks` | `tasks:write` | Create a remote task |
+| GET | `/api/remote/v1/tasks/:id` | `tasks:read` | Task details and revision |
+| PUT | `/api/remote/v1/tasks/:id` | `tasks:write` | Update a task, which must carry the revision |
+| DELETE | `/api/remote/v1/tasks/:id` | `tasks:write` | Delete a remote task |
+| GET/PUT | `/api/remote/v1/tasks/:id/documents/:kind` | `docs:read/write` | `technical/readme/agent` documents |
+| GET/POST/PUT/DELETE | `/api/remote/v1/tasks/:id/todos...` | `todos:read/write` | To-do CRUD |
+| WS | `/api/remote/v1/tasks/:id/terminal` | `terminal` | Remote PTY, which must be enabled separately |
 
-#### 任务视图模型
+#### Task view model
 
-前端将本地和远程任务规范化为：
+The frontend normalizes local and remote tasks into:
 
 ```json
 {
   "key": "remote:12:task:87",
   "source": "remote",
   "server_id": 12,
-  "server_name": "家中 Mac",
+  "server_name": "Home Mac",
   "id": "87",
   "title": "Example",
   "status": "doing",
@@ -1571,42 +1571,42 @@ update_notice_version  semver           # 已弹窗的远程版本
 }
 ```
 
-### 9. 本地代理 API
+### 9. Local proxy API
 
-前端只调用本地接口：
+The frontend only calls local endpoints:
 
-| Method | 路径 | 说明 |
+| Method | Path | Description |
 |--------|------|------|
-| GET/POST | `/api/remote-servers` | 列表 / 新增连接 |
-| PUT/DELETE | `/api/remote-servers/:id` | 使用已保存 Token 验证新地址后修改 / 移除连接 |
-| POST | `/api/remote-servers/test` | 保存前测试连接 |
-| POST | `/api/remote-servers/:id/test` | 使用已保存 Token 测试待修改的新地址 |
-| POST | `/api/remote-servers/:id/check` | 重新检查指定服务 |
-| GET | `/api/remote-servers/:id/tasks` | 通过本地代理获取远程任务 |
-| `*` | `/api/remote-servers/:id/tasks/:taskId/...` | 代理任务、文档和待办操作 |
-| GET | `/api/system/version` | 当前 app/API/schema 版本和 Git commit |
-| GET | `/api/system/update-status` | 最近 GitHub 版本检查结果与更新进度 |
-| POST | `/api/system/check-update` | 立即请求固定的 GitHub 版本链接并比较版本 |
-| POST | `/api/system/apply-update` | 确认后更新本地服务，完成后触发受控重启 |
+| GET/POST | `/api/remote-servers` | List / add a connection |
+| PUT/DELETE | `/api/remote-servers/:id` | Verify the new address with the saved Token and then modify / remove the connection |
+| POST | `/api/remote-servers/test` | Test a connection before saving |
+| POST | `/api/remote-servers/:id/test` | Test a new address that is about to be changed, with the saved Token |
+| POST | `/api/remote-servers/:id/check` | Check the given service again |
+| GET | `/api/remote-servers/:id/tasks` | Get remote tasks through the local proxy |
+| `*` | `/api/remote-servers/:id/tasks/:taskId/...` | Proxy task, document and to-do operations |
+| GET | `/api/system/version` | Current app / API / schema versions and the Git commit |
+| GET | `/api/system/update-status` | The latest GitHub version check result and update progress |
+| POST | `/api/system/check-update` | Request the fixed GitHub version link now and compare versions |
+| POST | `/api/system/apply-update` | Update the local service after confirmation and trigger a controlled restart when done |
 
-`check-update` 可对普通已登录用户开放，`apply-update` 必须要求实例管理员权限和二次确认，防止任意注册用户重启整个服务。
+`check-update` can be open to ordinary logged-in users, while `apply-update` must require instance administrator rights and a second confirmation, so that no arbitrary registered user can restart the whole service.
 
-代理必须实现：
+The proxy must implement:
 
-- 只允许请求 DB 中已配置的 `base_url`，禁止前端传入任意目标 URL。
-- 连接与读超时，请求取消，有上限的重试与指数退避。
-- 过滤 hop-by-hop header，不透传 Cookie、本地 Session 和内部错误堆栈。
-- 限制返回体与 Markdown 大小，防止远程服务耗尽内存。
-- 防止 SSRF：解析后地址、重定向目标和 DNS rebinding 都要重新校验；访问私网地址需要用户显式启用。
+- Only requests to the `base_url` configured in the DB are allowed; the frontend must not pass an arbitrary target URL.
+- Connect and read timeouts, request cancellation, and bounded retries with exponential backoff.
+- Filter hop-by-hop headers, and never pass through cookies, the local session or internal error stacks.
+- Limit the response body and Markdown size, so a remote service cannot exhaust memory.
+- Prevent SSRF: the resolved address, redirect targets and DNS rebinding are all checked again; accessing private-network addresses needs the user to enable it explicitly.
 
-### 10. 远程鉴权与 Token 管理
+### 10. Remote authentication and Token management
 
-远程服务不复用浏览器 Session，增加 Personal Access Token：
+The remote service does not reuse the browser session and adds a Personal Access Token:
 
 ```text
-Token 格式：txw_<public-id>_<secret>
-DB 只保存 secret 的 scrypt/Argon2id hash
-Token scope：
+Token format: txw_<public-id>_<secret>
+The DB stores only a scrypt/Argon2id hash of the secret
+Token scope:
   server:read
   tasks:read | tasks:write
   docs:read  | docs:write
@@ -1614,42 +1614,42 @@ Token scope：
   terminal
 ```
 
-管理要求：
+Management requirements:
 
-- Token 只在创建时显示一次，可设过期时间、名称并随时撤销。
-- 每次请求记录 Token ID、用户、scope、目标资源和结果，不记录 secret 或文档全文。
-- 连接名与 Token 所属用户绑定，不允许访问远程其他用户的任务。
-- 终端 scope 默认不授予，并且远程服务器可全局禁用 Remote PTY。
+- A Token is shown only once when it is created, can have an expiry time and a name, and can be revoked at any time.
+- Every request records the Token ID, user, scope, target resource and result, without recording the secret or the full document text.
+- A connection name is bound to the Token's owner, and tasks of other remote users cannot be accessed.
+- The terminal scope is not granted by default, and a remote server can disable Remote PTY globally.
 
-### 11. 并发与冲突处理
+### 11. Concurrency and conflict handling
 
-- 远程 task/document 返回 `revision` 或 `ETag`。
-- 更新时本地代理传递 `If-Match`/revision。
-- 远程内容已变更时返回 `409 Conflict` 或 `412 Precondition Failed`。
-- 前端不直接覆盖，对 Markdown 显示「重新加载 / 复制本地修改 / 查看差异」。
-- 待办按单条 ID 和 `updated_at` 冲突检测。
+- Remote task / document returns a `revision` or `ETag`.
+- On update the local proxy passes `If-Match` / the revision.
+- When the remote content has changed it returns `409 Conflict` or `412 Precondition Failed`.
+- The frontend does not overwrite directly; for Markdown it shows "Reload / Copy local changes / View differences".
+- To-dos are conflict-checked by individual ID and `updated_at`.
 
-### 12. 远程终端方案
+### 12. Remote terminal plan
 
-远程终端的风险高于任务读写，建议放在第三阶段：
+A remote terminal is riskier than reading and writing tasks, so it is suggested for the third phase:
 
 ```text
-浏览器 xterm
-  ↔ 本地 WebSocket /terminal/remote/:serverId/:taskId
-  ↔ 远程 WSS /api/remote/v1/tasks/:id/terminal
-  ↔ 远程 PTY
+Browser xterm
+  ↔ local WebSocket /terminal/remote/:serverId/:taskId
+  ↔ remote WSS /api/remote/v1/tasks/:id/terminal
+  ↔ remote PTY
 ```
 
-- 本地服务仅做双向字节流代理，Token 不下发到浏览器。
-- 不在本地 SQLite 持久化远程终端输出，历史由远程管理。
-- 心跳、消息大小、并发会话数和空闲时间必须限制。
-- 断线重连时需用 `(serverId, taskId)` 区分会话，不与本地任务 ID 混用。
+- The local service only proxies the byte stream in both directions, and the Token is never sent to the browser.
+- Remote terminal output is not persisted in the local SQLite; history is managed by the remote.
+- Heartbeats, message size, the number of concurrent sessions and the idle time must be limited.
+- On reconnect, sessions must be told apart by `(serverId, taskId)` and never mixed with local task IDs.
 
-### 13. 检查更新设计
+### 13. Update check design
 
-#### 版本信息
+#### Version information
 
-仓库根目录新增 `VERSION.json`，作为应用版本和协议兼容性的唯一发布信息源。`package.json.version` 在发布流程中与 `VERSION.json.app_version` 保持一致，但运行时以 `VERSION.json` 为准。
+`VERSION.json` is added in the repository root as the only release information source for the application version and protocol compatibility. `package.json.version` is kept equal to `VERSION.json.app_version` in the release flow, but at run time `VERSION.json` is authoritative.
 
 ```json
 {
@@ -1663,87 +1663,87 @@ Token scope：
 }
 ```
 
-字段说明：
+Field description:
 
-| 版本 | 用途 |
+| Version | Purpose |
 |------|------|
-| `app_version` | 应用发布版本，语义化版本，例如 `1.4.0` |
-| `api_version` | 远程 API 协议版本，例如 `1` |
-| `schema_version` | SQLite 迁移版本，例如 `7` |
-| `min_remote_api_version` | 当前客户端可连接的最低远程 API 版本 |
-| `max_remote_api_version` | 当前客户端可连接的最高远程 API 版本 |
-| `published_at` | 可选，版本发布时间，用于界面展示 |
-| `release_url` | 可选，对应 GitHub Release 页面，用于查看发布说明 |
+| `app_version` | The application release version, semantic versioning, for example `1.4.0` |
+| `api_version` | The remote API protocol version, for example `1` |
+| `schema_version` | The SQLite migration version, for example `7` |
+| `min_remote_api_version` | The lowest remote API version this client can connect to |
+| `max_remote_api_version` | The highest remote API version this client can connect to |
+| `published_at` | Optional, the release time of the version, used for display in the UI |
+| `release_url` | Optional, the matching GitHub Release page, used to view the release notes |
 
-`GET /api/system/version` 返回当前版本、构建 commit、构建时间和支持的 remote API 版本范围。
+`GET /api/system/version` returns the current version, the build commit, the build time and the supported range of remote API versions.
 
-#### 本地与 GitHub 版本比较
+#### Comparing the local and GitHub versions
 
-定时检查不执行 `git fetch`。本地读取部署目录根部的版本文件，远端通过服务端配置的固定 GitHub HTTPS 链接读取：
+The periodic check does not run `git fetch`. The local side reads the version file at the root of the deployment directory, and the remote side is read through a fixed GitHub HTTPS link configured on the server:
 
 ```text
-本地版本：读取工作区根目录 VERSION.json
-远程版本：GET https://raw.githubusercontent.com/<owner>/<repository>/<branch>/VERSION.json
+Local version: read VERSION.json in the workspace root
+Remote version: GET https://raw.githubusercontent.com/<owner>/<repository>/<branch>/VERSION.json
 ```
 
-也允许使用 GitHub Contents API 的固定地址，但同一实例只能配置一个受信版本源。该地址由部署配置或环境变量提供，前端只读展示，任何检查接口都不能接收临时 URL。公开仓库优先使用 Raw 链接；私有仓库如需 GitHub Token，只能从服务端环境读取且日志必须脱敏。
+A fixed GitHub Contents API address may also be used, but one instance can only configure one trusted version source. The address comes from the deployment configuration or an environment variable, is shown read-only by the frontend, and no check endpoint may accept a temporary URL. For a public repository the Raw link is preferred; if a private repository needs a GitHub Token, it can only be read from the server environment and the logs must be redacted.
 
-判定规则：
+Decision rules:
 
-| 条件 | 结果 |
+| Condition | Result |
 |------|------|
-| `remote.app_version > local.app_version` | 有可用更新，弹窗提醒 |
-| `remote.app_version = local.app_version` | 版本已是最新，不弹出更新提醒 |
-| `remote.app_version < local.app_version` | 本地版本较新，不允许降级 |
-| 本地或远端 `VERSION.json` 不存在/无效 | 更新检查失败，不允许更新 |
-| 远程版本更高 | 显示可用版本；用户点击更新后再执行 Git 安全预检 |
+| `remote.app_version > local.app_version` | An update is available, show a reminder dialog |
+| `remote.app_version = local.app_version` | Already up to date, no update reminder is shown |
+| `remote.app_version < local.app_version` | The local version is newer, downgrading is not allowed |
+| The local or remote `VERSION.json` does not exist / is invalid | The update check fails and updating is not allowed |
+| The remote version is higher | Show the available version; after the user clicks update, run the Git safety pre-check |
 
-`app_version` 必须使用严格 SemVer，通过 semver 库比较，不进行字符串比较。`api_version` 和 `schema_version` 不用于判断「是否有新版」，但在更新预检阶段用于兼容性和迁移检查。
+`app_version` must be strict SemVer and compared with a semver library, never as strings. `api_version` and `schema_version` are not used to decide "is there a new version", but are used for compatibility and migration checks in the update pre-check stage.
 
-定时检查只以 GitHub `VERSION.json.app_version` 为准，不尝试发现版本号未提升的提交。因此发布流程必须保证可发布代码合入目标分支前先提升版本号。
+The periodic check relies only on the GitHub `VERSION.json.app_version` and does not try to discover commits whose version number was not raised. So the release flow must make sure the version number is raised before releasable code is merged into the target branch.
 
-#### GitHub 版本源与定时查询
+#### GitHub version source and periodic query
 
-当前实例使用固定的 GitHub `VERSION.json` 链接检查更新。版本链接以及实际更新使用的 Git remote/branch 都由服务端配置，前端不能传入任意 URL、remote、branch 或命令。
+The current instance checks for updates with a fixed GitHub `VERSION.json` link. The version link and the Git remote/branch actually used for updating are both configured on the server, and the frontend cannot pass an arbitrary URL, remote, branch or command.
 
 ```text
-定时器触发（默认每 30 分钟）
+Timer fires (every 30 minutes by default)
     ↓
-读取本地 VERSION.json
+Read the local VERSION.json
     ↓
-携带 If-None-Match / If-Modified-Since
+Send If-None-Match / If-Modified-Since
 GET <configured-github-version-url>
     ↓
-使用 semver 比较 app_version
+Compare app_version with semver
     ↓
-远程版本更高
-  → 通知前端；更新能力待用户确认后预检
-远程版本相同
-  → 无正式更新
+The remote version is higher
+  → notify the frontend; update capability is pre-checked after the user confirms
+The remote version is the same
+  → no formal update
 ```
 
-- 定时检查只发起只读 HTTPS 请求并读取本地版本文件，不调用 Git、不修改工作区。
-- 启动后延迟 30 秒做首次检查，之后默认每 30 分钟一次，可配置为 5 分钟至 24 小时。
-- 同一时刻只能有一个检查进程；手动检查会复用正在执行的任务。
-- HTTP 请求默认 10 秒超时、响应体上限 16 KiB；只允许 HTTPS 和服务端允许列表中的 GitHub 域名，重定向后再次校验目标。
-- 使用 ETag/`If-None-Match` 和 Last-Modified/`If-Modified-Since`，GitHub 返回 `304` 时复用上次校验通过的远端版本。
-- 对响应执行 JSON schema、严格 SemVer 和字段长度校验；错误只保存安全错误码，不记录凭据或完整响应。
-- 记录本地/远程版本、版本链接、发布时间、Release 链接和上次检查时间，不在定时检查阶段计算 commit 差异。
+- The periodic check only sends a read-only HTTPS request and reads the local version file; it does not call Git and does not modify the workspace.
+- The first check runs 30 seconds after start-up, then every 30 minutes by default, configurable from 5 minutes to 24 hours.
+- Only one check can run at a time; a manual check reuses the task that is already running.
+- The HTTP request has a default timeout of 10 seconds and a response body limit of 16 KiB; only HTTPS and the GitHub domains on the server's allowlist are permitted, and the target is checked again after a redirect.
+- ETag/`If-None-Match` and Last-Modified/`If-Modified-Since` are used, and when GitHub returns `304` the remote version that passed validation last time is reused.
+- The response is checked for a JSON schema, strict SemVer and field lengths; on errors only a safe error code is saved, never credentials or the full response.
+- The local / remote versions, the version link, the release time, the Release link and the last check time are recorded; commit differences are not computed during the periodic check.
 
-#### 应用更新流程
+#### Application update flow
 
-用户点击「立即更新」后，服务端按以下流程执行：
+After the user clicks "Update now", the server runs the following flow:
 
 ```text
-获取全局 update lock
+Acquire the global update lock
     ↓
-重新请求 GitHub VERSION.json，确认远程版本仍然更高
+Request the GitHub VERSION.json again and confirm the remote version is still higher
     ↓
 git fetch --prune <configured-remote> <configured-branch>
     ↓
-预检：目标分支 VERSION.json 与 GitHub 检查结果一致、Git 仓库、remote/branch、工作区清洁、只存在 fast-forward 路径
+Pre-check: the target branch's VERSION.json matches the GitHub check result, a Git repository, remote/branch, clean working tree, only a fast-forward path exists
     ↓
-记录 previous_commit
+Record previous_commit
     ↓
 git merge --ff-only <remote>/<branch>
     ↓
@@ -1751,229 +1751,231 @@ npm ci
     ↓
 npm run build:monaco
     ↓
-运行 DB migration 与快速自检
+Run the DB migration and a quick self-check
     ↓
-写入 restart marker，向守护进程请求受控重启
+Write the restart marker and ask the supervisor for a controlled restart
 ```
 
-强制预检规则：
+Mandatory pre-check rules:
 
-- fetch 后必须校验 `<remote>/<branch>` 中的 `VERSION.json.app_version` 等于刚从 GitHub 链接取得的版本；不一致时阻断更新，避免缓存、分支或版本链接配置错误。
-- 被 Git 跟踪的文件有修改（`git status --porcelain --untracked-files=no` 非空）时禁止更新，弹窗提示「本地有未提交修改」并在详情里列出文件名（`lib/git-update-workspace.js` 的 `trackedChanges` / `dirtyError`），不自动 stash、reset 或丢弃文件。未跟踪文件不阻止更新，由 `git merge --ff-only --no-overwrite-ignore` 在同名冲突时自行拒绝；强制更新仍会把未跟踪文件一并备份到 stash。
-- 当前分支 ahead 或 diverged 时禁止更新，不自动 rebase/merge。
-- 更新过程不允许并行写 DB schema，需要维护状态和全局锁。
-- npm/build/migration/self-check 任一失败时不自动启动新版；保留 `previous_commit` 与日志，向用户显示恢复指引。
-- 数据库迁移在更新前创建带时间戳的 SQLite backup；回滚代码不等于自动回滚 DB，因此 schema migration 必须尽量向后兼容。
-- 重启不依赖旧 Node 进程「自己重启自己」，由 LaunchAgent/systemd/PM2 等守护方式重新拉起。
+- After the fetch, the `VERSION.json.app_version` in `<remote>/<branch>` must equal the version just obtained from the GitHub link; if they differ the update is blocked, avoiding caching, branch or version-link misconfiguration.
+- When tracked files have modifications (`git status --porcelain --untracked-files=no` is non-empty) the update is forbidden, the dialog says "Local uncommitted changes" and the details list the file names (`trackedChanges` / `dirtyError` in `lib/git-update-workspace.js`); nothing is stashed, reset or discarded automatically. Untracked files do not block the update: `git merge --ff-only --no-overwrite-ignore` refuses on its own when a same-named file conflicts; a forced update still backs untracked files up to the stash as well.
+- When the current branch is ahead or diverged the update is forbidden, with no automatic rebase/merge.
+- The update process must not write the DB schema in parallel, so it needs a maintenance state and a global lock.
+- When any of npm/build/migration/self-check fails, the new version is not started automatically; `previous_commit` and the logs are kept and recovery guidance is shown to the user.
+- Before a database migration, a timestamped SQLite backup is created; rolling back the code does not roll back the DB automatically, so schema migrations must be backward compatible as far as possible.
+- The restart does not rely on the old Node process "restarting itself" but is brought back up by a supervisor such as LaunchAgent/systemd/PM2.
 
-#### UI 交互
+#### UI interaction
 
-- 设置弹窗增加「检查更新」：只读的 GitHub 版本链接、本地/远程 `app_version`、发布时间、Release 链接、检查间隔、上次检查时间和「立即检查」。
-- 定时查询发现更高的远程 `app_version` 后，对每个远程版本只弹窗一次，同时保留设置按钮小蓝点。
-- 弹窗展示本地→远程版本、发布时间和发布说明入口，按钮为「稍后提醒」和「立即更新」；Git 分支、工作区和 fast-forward 状态在点击「立即更新」后的预检阶段展示。
-- 点击「立即更新」前再次明确确认；更新期间显示阶段与日志摘要，前端轮询 update status。
-- 非管理员用户只收到「有新版本，请联系管理员」提示，不显示「立即更新」按钮。
-- 服务重启期间页面显示「正在重启」并定时请求健康接口；新进程就绪后自动刷新。
-- 结果状态：已是最新、可更新、本地有修改、分支已分叉、检查失败、更新失败、重启中、更新完成。
+- The settings dialog gains "Check for updates": the read-only GitHub version link, the local / remote `app_version`, the release time, the Release link, the check interval, the last check time and "Check now".
+- When the periodic query finds a higher remote `app_version`, a dialog is shown once for each remote version, and the small blue dot on the settings button is kept.
+- The dialog shows local→remote version, the release time and an entry to the release notes, with the buttons "Remind me later" and "Update now"; the Git branch, working tree and fast-forward state are shown in the pre-check stage after "Update now" is clicked.
+- An explicit confirmation is asked again before "Update now"; during the update the stage and a log summary are shown, and the frontend polls the update status.
+- A non-administrator only gets the hint "There is a new version, please contact the administrator" and no "Update now" button is shown.
+- While the service restarts the page shows "Restarting" and requests the health endpoint periodically; once the new process is ready it refreshes automatically.
+- Result states: up to date, update available, local changes, branch diverged, check failed, update failed, restarting, update complete.
 
-#### 版本发布规则
+#### Version release rules
 
-- 每次准备向跟踪分支发布可更新版本时，必须先提升 `VERSION.json.app_version`。
-- 需要改变 remote API 协议时提升 `api_version`，并同步维护最小/最大兼容版本。
-- 包含 SQLite schema 变更时提升 `schema_version`，并提供对应的有序 migration。
-- CI/发布检查验证 `VERSION.json` schema、SemVer 合法性、`package.json.version` 一致性，以及当代码发布时版本号确已提升。
+- Every time a releasable version is about to be published to the tracked branch, `VERSION.json.app_version` must be raised first.
+- When the remote API protocol changes, raise `api_version` and maintain the minimum / maximum compatible versions as well.
+- When a change includes a SQLite schema change, raise `schema_version` and provide the matching ordered migration.
+- CI / the release check verifies the `VERSION.json` schema, SemVer validity, the consistency of `package.json.version`, and that the version number has really been raised when code is released.
 
-### 14. 缓存、刷新与故障降级
+### 14. Caching, refresh and failure degradation
 
-- 展开远程服务时加载任务；已展开服务每 60 秒轻量刷新，页面不可见时暂停。
-- 用户可点击服务器旁的刷新按钮立即重试。
-- 远程返回 429 或 5xx 时指数退避，不对写请求自动重试。
-- 快照 TTL 建议为 7 天；超过 TTL 只显示服务器离线，不再展示旧任务。
-- 选中的远程任务断线时，已加载内容保留为只读，页面顶部显示「连接已断开」。
+- Tasks are loaded when a remote service is expanded; expanded services are refreshed lightly every 60 seconds, paused while the page is not visible.
+- The user can click the refresh button next to a server to retry immediately.
+- On a 429 or 5xx from the remote, back off exponentially; write requests are never retried automatically.
+- The suggested snapshot TTL is 7 days; beyond the TTL only "server offline" is shown and the old tasks are no longer displayed.
+- When a selected remote task goes offline, the content already loaded stays read-only and the top of the page shows "Connection lost".
 
-### 15. 安全要求
+### 15. Security requirements
 
-| 风险 | 设计措施 |
+| Risk | Design measure |
 |------|----------|
-| SSRF | 目标 URL 白名单化；DNS/重定向二次校验；私网需显式开启 |
-| Token 泄漏 | 后端加密保存；不返回前端；日志脱敏 |
-| 中间人 | 生产强制 HTTPS；不提供「忽略 TLS 错误」选项 |
-| 越权 | PAT 绑定用户与 scope；远程再次校验任务归属 |
-| 写冲突 | revision/ETag + `If-Match`，不静默覆盖 |
-| 恶意远程响应 | 大小/超时限制；字段 schema 校验；Markdown 渲染前清洗 |
-| 远程 PTY 滥用 | 独立 scope、全局开关、会话限制与审计日志 |
-| 恶意版本链接或响应 | URL 由服务端固定；仅允许 HTTPS 与受信 GitHub 域名；重定向复检；限制超时/大小；严格校验 JSON schema |
-| 恶意 Git 更新 | remote/branch 由服务端固定；只允许 fast-forward；更新需人工确认；可选校验签名 commit/tag |
-| 更新覆盖本地修改 | 被跟踪文件有修改时立即阻断并列出文件；未跟踪文件交给 git 合并时的同名保护；不自动 stash/reset/rebase |
-| 更新后无法启动 | 依赖/构建/迁移/自检分阶段状态；SQLite 备份；记录 previous commit；守护进程负责重启 |
+| SSRF | Target URL allowlisting; DNS/redirect rechecks; private networks must be enabled explicitly |
+| Token leak | Encrypted storage on the backend; never returned to the frontend; redacted logs |
+| Man in the middle | HTTPS is enforced in production; no "ignore TLS errors" option is offered |
+| Privilege escalation | A PAT is bound to the user and scope; the remote checks task ownership again |
+| Write conflicts | revision/ETag + `If-Match`, never silently overwritten |
+| Malicious remote responses | Size / timeout limits; field schema validation; sanitizing before Markdown rendering |
+| Remote PTY abuse | Separate scope, a global switch, session limits and audit logs |
+| Malicious version link or response | The URL is fixed by the server; only HTTPS and trusted GitHub domains are allowed; redirects are rechecked; timeout / size limits; strict JSON schema validation |
+| Malicious Git update | The remote/branch is fixed by the server; only fast-forward is allowed; updates need human confirmation; signed commits / tags can optionally be verified |
+| An update overwriting local changes | Modified tracked files block immediately and the files are listed; untracked files rely on git's same-name protection when merging; no automatic stash/reset/rebase |
+| Failing to start after an update | Staged state for dependencies / build / migration / self-check; SQLite backup; the previous commit is recorded; the supervisor handles the restart |
 
-### 16. 性能与可观测性
+### 16. Performance and observability
 
-- 单个远程请求默认 8 秒超时，文档请求 15 秒，超时值有安全上限。
-- 服务器状态检查可并行，但设置全局并发上限，避免应用启动时同时压测多个远程。
-- 记录 `server_id`、路由、耗时、状态码和错误分类，不记录 Token、密码、终端内容和 Markdown 全文。
-- 连接管理页显示最近检查时间与上次错误类型，便于自助诊断。
+- A single remote request has a default timeout of 8 seconds and a document request 15 seconds, with a safe upper limit on timeout values.
+- Server status checks may run in parallel, but a global concurrency limit is set so that start-up does not stress several remotes at once.
+- Record `server_id`, the route, duration, status code and error category, but not the Token, passwords, terminal content or the full Markdown text.
+- The connection management page shows the last check time and the last error type, for self-service diagnosis.
 
-### 17. 分阶段实施计划
+### 17. Phased implementation plan
 
-#### Phase 1：对等服务协议与只读远程任务
+#### Phase 1: peer service protocol and read-only remote tasks
 
-1. 引入 app/api/schema 版本和 SQLite 迁移机制。
-2. 实现 PAT 与 `/api/remote/v1/capabilities`。
-3. 使每个实例同时启用 Remote Client/Server，实现 URL + 端口 + Token 连接、加密存储和测试。
-4. 左侧栏增加本地/远程分区。
-5. 只读加载远程任务、三份 Markdown 和待办。
-6. 实现快照与离线降级。
+1. Introduce the app/api/schema versions and a SQLite migration mechanism.
+2. Implement the PAT and `/api/remote/v1/capabilities`.
+3. Enable Remote Client/Server on every instance, and implement URL + port + Token connection, encrypted storage and testing.
+4. Add local / remote sections to the left sidebar.
+5. Load remote tasks, the three Markdown documents and to-dos read-only.
+6. Implement snapshots and offline degradation.
 
-#### Phase 2：GitHub 版本检查与受控更新
+#### Phase 2: GitHub version check and controlled update
 
-1. 新增并校验 `VERSION.json`，定时请求固定 GitHub 链接、比较 SemVer，并实现 ETag 缓存与单例锁。
-2. 新版本弹窗、稍后提醒、手动检查和 update status 轮询。
-3. 工作区/分叉/fast-forward 预检、SQLite 备份和受控更新 pipeline。
-4. 与 LaunchAgent/systemd/PM2 约定重启和新进程健康检查。
+1. Add and validate `VERSION.json`, request the fixed GitHub link periodically, compare SemVer, and implement the ETag cache and a singleton lock.
+2. The new-version dialog, remind-me-later, manual check and update status polling.
+3. Working tree / divergence / fast-forward pre-checks, SQLite backup and a controlled update pipeline.
+4. Agree on restarting and health checks of the new process with LaunchAgent/systemd/PM2.
 
-#### Phase 3：远程写操作与终端
+#### Phase 3: remote write operations and the terminal
 
-1. 任务、Markdown 和待办读写 scope，revision/ETag 冲突处理。
-2. 独立 terminal scope 与服务端总开关。
-3. WebSocket 双向代理、限流、审计、断线重连与端到端测试。
+1. Read / write scopes for tasks, Markdown and to-dos, with revision/ETag conflict handling.
+2. A separate terminal scope and a server-side master switch.
+3. A two-way WebSocket proxy, rate limiting, auditing, reconnection and end-to-end tests.
 
-### 18. 验收标准
+### 18. Acceptance criteria
 
-#### 远程连接
+#### Remote connections
 
-- 可添加多个远程服务，并清晰区分在线、离线、认证失效和不兼容。
-- 浏览器网络、DOM、localStorage 和前端错误中均不出现远程 Token。
-- 左侧栏本地任务行为不受远程服务故障影响。
-- 远程离线时可查看未过期快照，但不能编辑。
-- 不能将本地任务拖入远程，也不能跨远程服务器排序。
+- Several remote services can be added, and online, offline, authentication expired and incompatible are clearly told apart.
+- The remote Token does not appear in browser network traffic, the DOM, localStorage or frontend errors.
+- The behavior of local tasks in the left sidebar is unaffected by remote service failures.
+- When a remote is offline, an unexpired snapshot can be viewed but not edited.
+- A local task cannot be dragged into a remote, and ordering across remote servers is not possible.
 
-#### 检查更新
+#### Update check
 
-- 定时检查通过固定 GitHub 链接读取 `VERSION.json.app_version`，并正确判断已是最新、有新版、本地较新和检查失败。
-- 同一远程版本只弹窗一次，更高版本到达后可再次提醒。
-- GitHub 超时、非受信重定向、超限响应、非法 JSON 或非法 SemVer 均安全失败，不进入更新流程。
-- 用户确认更新后，只有 Git 目标分支版本与 GitHub 版本一致且可 fast-forward 时才继续。
-- 工作区有修改或分支分叉时，更新被阻断且不丢弃任何文件。
-- 用户确认后可完成 fast-forward、依赖、构建、迁移、自检和受控重启。
-- 任一阶段失败都有明确状态和恢复信息，新版未通过自检时不对外提供服务。
+- The periodic check reads `VERSION.json.app_version` through the fixed GitHub link and correctly decides up to date, new version available, local newer and check failed.
+- A dialog is shown only once for the same remote version, and a higher version arriving can remind again.
+- GitHub timeouts, untrusted redirects, oversized responses, illegal JSON or illegal SemVer all fail safely and never enter the update flow.
+- After the user confirms the update, it only continues when the Git target branch version matches the GitHub version and a fast-forward is possible.
+- When the working tree has modifications or the branch has diverged, the update is blocked and no file is discarded.
+- After user confirmation, fast-forward, dependencies, build, migration, self-check and a controlled restart can complete.
+- A failure in any stage has a clear state and recovery information, and a new version that fails the self-check is not served.
 
-### 19. 待确认决策
+### 19. Decisions to confirm
 
-| 决策项 | 推荐默认 | 备选 |
+| Decision | Recommended default | Alternative |
 |--------|----------|------|
-| 远程服务类型 | 只支持 torin-x-web 实例 | 抽象第三方 provider，复杂度显著增加 |
-| 连接表单 | URL + 端口 + Token | 额外显示名、权限选项（不必要） |
-| 首期远程权限 | Token 允许什么就展示什么，Phase 1 UI 仍只读 | 首期直接开放读写 |
-| 远程终端 | Phase 3 单独开发 | 与远程任务首期同时开放 |
-| 版本文件 | 根目录 `VERSION.json`，运行时唯一版本源 | 仅使用 `package.json.version`，无法同时表达 API/schema 兼容性 |
-| 远端版本来源 | 服务端固定的 GitHub Raw `VERSION.json` 链接 | GitHub Contents API 固定链接，适合私有仓库鉴权 |
-| Git 更新目标 | 当前分支跟踪的 `origin/main` | 环境变量配置 remote/branch |
-| 检查间隔 | 启动 30 秒后首次，之后每 30 分钟 | 5 分钟至 24 小时可配置 |
-| 更新行为 | 弹窗确认后执行完整 pipeline 并重启 | 只提示、由用户手动运行命令 |
-| 私网 HTTP | 仅开发模式允许 | 连接配置中经高风险确认启用 |
+| Remote service type | Only torin-x-web instances are supported | Abstract third-party providers, which raises complexity significantly |
+| Connection form | URL + port + Token | Extra display name and permission options (unnecessary) |
+| Remote permissions in the first phase | Show whatever the Token allows, with the Phase 1 UI still read-only | Open read and write directly in the first phase |
+| Remote terminal | Developed separately in Phase 3 | Opened together with remote tasks in the first phase |
+| Version file | `VERSION.json` in the root, the only version source at run time | Use only `package.json.version`, which cannot express API/schema compatibility at the same time |
+| Remote version source | The fixed GitHub Raw `VERSION.json` link on the server | The fixed GitHub Contents API link, suitable for private repository authentication |
+| Git update target | `origin/main` tracked by the current branch | Configure remote/branch through environment variables |
+| Check interval | First check 30 seconds after start-up, then every 30 minutes | Configurable from 5 minutes to 24 hours |
+| Update behavior | Run the full pipeline and restart after confirmation in a dialog | Only prompt and let the user run the commands by hand |
+| Private-network HTTP | Allowed only in development mode | Enabled in the connection settings after a high-risk confirmation |
 
-### 20. 预计改动范围（实施阶段）
+### 20. Expected scope of changes (implementation phase)
 
-| 区域 | 预计改动 |
+| Area | Expected change |
 |------|----------|
-| DB | schema migration、`remote_servers`、`remote_task_snapshots`、PAT 与用户设置 |
-| Server | 每个实例同时启用 remote client/server、本地 proxy、凭据加密、Git scheduler/update pipeline |
-| Frontend | 左侧树形任务源、连接管理、统一 task key、远程错误/冲突 UI |
-| Terminal | 远程 WebSocket 代理与权限隔离（Phase 3） |
-| Release | `VERSION.json`、app/api/schema 版本、Git remote/branch 规范、migration、守护重启约定 |
-| Tests | 版本文件 schema/SemVer、本地/远程版本比较、协议契约、SSRF/Token 泄漏、Git behind/ahead/diverged、脏工作区、pipeline 失败与重启 |
+| DB | Schema migration, `remote_servers`, `remote_task_snapshots`, PATs and user settings |
+| Server | Every instance enables the remote client/server, the local proxy, credential encryption and the Git scheduler / update pipeline |
+| Frontend | A tree of task sources on the left, connection management, a unified task key, remote error / conflict UI |
+| Terminal | Remote WebSocket proxy and permission isolation (Phase 3) |
+| Release | `VERSION.json`, app/api/schema versions, Git remote/branch conventions, migrations, supervisor restart conventions |
+| Tests | Version file schema / SemVer, local / remote version comparison, protocol contract, SSRF / Token leaks, Git behind/ahead/diverged, dirty working tree, pipeline failure and restart |
 
-### Agent 规则文件兼容
+### Agent rule file compatibility
 
-新任务默认创建 `AGENTS.md` 和 `CLAUDE.md`，后者通过 `@AGENTS.md` 引用主规则。已有 `CLAUDE.md` 保留内容并补齐引用。启动时迁移已有任务：仅有 `AGENT.md` 时改为 `AGENTS.md`；两者并存时保留 `AGENTS.md` 并删除 `AGENT.md`。旧的显式 `AGENT.md` 路径也同步迁移，其他自定义规则路径保持原样，工作目录仍补齐标准规则入口。不可访问的工作目录记录错误并在下次启动重试，不会重建不存在的旧目录。远程项目在对应 Engine 更新并启动后迁移。
+New tasks create `AGENTS.md` and `CLAUDE.md` by default, and the latter references the main rules through `@AGENTS.md`. An existing `CLAUDE.md` keeps its content and gets the reference added. Existing tasks are migrated at start-up: when only `AGENT.md` exists it becomes `AGENTS.md`; when both exist `AGENTS.md` is kept and `AGENT.md` is deleted. An old explicit `AGENT.md` path is migrated as well, other custom rule paths are left as they are, and the working directory still gets the standard rule entry points. A working directory that cannot be accessed records an error and is retried at the next start-up, and an old directory that no longer exists is not recreated. Remote projects are migrated after the corresponding Engine is updated and started.
 
-### 测试环境与现行布局校验
+### Test environment and current layout checks
 
-全量测试包含真实 Chromium 回归；Playwright、xterm 5.5 和 Fit 0.10 作为开发依赖锁定安装，使用 `npm ci --include=dev` 后安装 Chromium。浏览器脚本均支持 `CHROME_PATH`。布局回归检查现行共享 `style.css` 的安全区和安装应用窗口适配规则，不再引用已移除的 `mobile.css`。
+The full test run includes real Chromium regressions; Playwright, xterm 5.5 and Fit 0.10 are locked as dev dependencies, and Chromium is installed after `npm ci --include=dev`. The browser scripts all support `CHROME_PATH`. The layout regressions check the safe-area and installed-app window rules of the current shared `style.css` and no longer refer to the removed `mobile.css`.
 
-### 任务文件面板（v2.11.0）
+### Task file panel (v2.11.0)
 
-在内容工具栏增加“文件浏览器”，自动选择任务终端后向下展开。默认占工具栏下方可用高度的 85%，底边可调整至 20%～90%，窄高度下优先保留终端可用空间；不使用可拖动浮窗或模态遮罩。原内容标签暂时隐藏，终端真实缩放到余下区域，底部功能键在紧凑模式隐藏，Shell 和连接保持不变。目录树与 Monaco 文件标签是独立模块，使用任务/Engine/path 组合隔离模型，切换上下文先处理未保存内容。
+A "File browser" was added to the content toolbar; after it automatically selects the task terminal, it unfolds downward. By default it takes 85% of the available height below the toolbar, its bottom edge can be adjusted between 20% and 90%, and on a narrow height it gives priority to keeping the terminal usable; no draggable floating window or modal mask is used. The original content tabs are hidden for now, the terminal is truly resized into the remaining area, the function keys at the bottom are hidden in compact mode, and the shell and connection stay unchanged. The directory tree and the Monaco file tabs are separate modules that isolate models by the task / Engine / path combination, and unsaved content is dealt with first when switching context.
 
-文件服务共用于本地 `/api/tasks/:id/files`、Engine `/v1/tasks/:id/files` 和 Client 对应远程代理。GET 根接口分页列出目录，GET/PUT `/content` 读取和保存，POST 创建，PATCH 重命名，DELETE 删除。保存携带文件 revision，冲突为 HTTP 409；客户端显式确认后才发送 force。路径仅接受相对工作目录的路径，根目录禁止修改，符号链接禁止跟随。UTF-8 文本限 5 MiB，保留 BOM、换行和权限。
+The file service is shared by the local `/api/tasks/:id/files`, the Engine `/v1/tasks/:id/files` and the matching Client remote proxy. The root GET lists directories in pages, GET/PUT `/content` reads and saves, POST creates, PATCH renames and DELETE deletes. A save carries the file revision, a conflict is HTTP 409, and the client sends force only after an explicit confirmation. Paths are only accepted relative to the working directory, the root cannot be modified and symbolic links are never followed. UTF-8 text is limited to 5 MiB, keeping the BOM, line endings and permissions.
 
-文件访问会复核目录链的 inode、realpath 和打开文件的身份，保存使用同目录临时文件再替换。它不是隔离恶意本机进程的安全沙箱：Node 的路径式创建、重命名和删除操作仍存在最终系统调用前的竞态间隙，不能抵御同一系统用户持续替换父目录。
+File access re-checks the inode and realpath of the directory chain and the identity of the opened file, and a save writes a temporary file in the same directory and then replaces. It is not a security sandbox against malicious local processes: Node's path-based create, rename and delete operations still have a race gap before the final system call, and cannot defend against the same system user continuously replacing a parent directory.
 
-Engine 广告并校验 `files:read`、`files:write`；现有标准角色凭证兼容新增能力，自定义受限 scopes 不自动扩权。接口为兼容新增，不变更数据库 schema 或 API 主版本。目录按需展开，每页 200 条；所有异步结果校验当前上下文，保存失败和冲突保留草稿。文件和目录删除前确认，重命名/删除同步更新已打开文件。
+The Engine advertises and validates `files:read` and `files:write`; existing standard-role credentials are compatible with the new capabilities, and custom restricted scopes are not widened automatically. The endpoints are a compatible addition and do not change the database schema or the API major version. Directories are expanded on demand with 200 entries per page; every asynchronous result checks the current context, and a failed save or a conflict keeps the draft. Files and directories are confirmed before deleting, and rename / delete update the opened files accordingly.
 
-回归包括服务与本地/Engine/代理接口测试、真实 Monaco 文件编辑、终端同时输入、面板尺寸调整、任务切换保护，以及常见语言注册。构建 Monaco 时一并生成 JSON worker。
+Regressions include service and local / Engine / proxy endpoint tests, real Monaco file editing, simultaneous terminal input, panel resizing, task-switch protection and the registration of common languages. Building Monaco also generates the JSON worker.
 
-## Client OSS 终端图片上传
+## Client OSS terminal image upload
 
-Client 保存按用户隔离的 OSS 配置，复用 `system_state` 与基于 `SESSION_SECRET` 的 AES-GCM 加密，不改变数据库结构。`/api/oss/config` 提供配置读写与删除，读取不返回 Secret；`/api/oss/images` 接收最大 10 MiB 的二进制图片，检查实际文件类型后通过 HTTPS 上传到 OSS，随机生成对象名。接口沿用 Client 身份验证和同源保护，不在 Engine 暴露配置或凭据。默认签名读取 URL 有效期 24 小时，可选公共 HTTPS 地址。
+The Client stores OSS configuration isolated per user, reusing `system_state` and the AES-GCM encryption based on `SESSION_SECRET`, without changing the database structure. `/api/oss/config` provides reading, writing and deleting the configuration, and a read never returns the Secret; `/api/oss/images` receives binary images up to 10 MiB, checks the actual file type, uploads over HTTPS to OSS with a randomly generated object name. The endpoints keep the Client's authentication and same-origin protection, and no configuration or credential is exposed on the Engine. The default signed read URL is valid for 24 hours, and a public HTTPS address is optional.
 
-本地、远程 xterm 实例复用图片上传控制器；普通文字粘贴保持原行为。图片粘贴及底部选择按钮进入同一上传流程，全页蒙版锁定指针、键盘与焦点操作；进度反映浏览器向 Client 传输，服务端写入 OSS 期间保持处理状态，只有成功响应后才解除锁定并填入 URL。填入不触发回车，异步完成时仍校验原实例状态，不能写入其他终端；失败及超时恢复页面操作。
+Local and remote xterm instances reuse the image upload controller; ordinary text pasting keeps its original behavior. Image pasting and the select button at the bottom enter the same upload flow, a full-page mask locks pointer, keyboard and focus operations; the progress reflects the browser's transfer to the Client, the processing state stays while the server writes to OSS, and the lock is released and the URL filled in only after a successful response. Filling in does not trigger Enter, the state of the original instance is still checked when the async work completes so nothing is written into another terminal, and a failure or timeout restores page operation.
 
-### 显式内网 HTTP 会话
+### Explicit intranet HTTP sessions
 
-Client 使用统一 Cookie 策略，默认保持生产环境远程访问要求 HTTPS；仅 `CLIENT_ALLOW_HTTP=true` 显式允许 HTTP 保存登录会话，HTTPS 请求始终使用 Secure Cookie。该配置不改变验证器、同源检查、任务权限、WebSocket 鉴权，也不自动根据来源 IP 选择信任。
+The Client uses a unified cookie policy and keeps requiring HTTPS for remote access in production by default; only `CLIENT_ALLOW_HTTP=true` explicitly allows HTTP to store the login session, and HTTPS requests always use a Secure cookie. This setting does not change the authenticator, the same-origin check, task permissions or WebSocket authentication, and it does not choose to trust automatically by source IP.
 
-### 有界终端恢复与按需历史
+### Bounded terminal restore and on-demand history
 
-终端服务维护与 PTY 输出/尺寸同步的 headless xterm 状态，以序列化快照恢复当前屏幕、模式和最近 500 行滚动历史。连接时不再向浏览器发送整个持久化 buffer；快照恢复与实时输出按顺序交付，避免异步解析期间丢失或重复数据。磁盘上的原始日志格式和保留上限不变。headless xterm 与序列化插件固定兼容版本；针对插件未覆盖的全屏模式和光标状态补充恢复序列并以真实解析器验证。服务端进程重启时从保留日志重建状态，超过保留上限而已丢弃的控制上下文无法恢复。
+The terminal service maintains a headless xterm state synchronized with the PTY output / size, and uses a serialized snapshot to restore the current screen, modes and the latest 500 lines of scrollback. On connect the entire persisted buffer is no longer sent to the browser; the snapshot restore and the live output are delivered in order, so no data is lost or duplicated during asynchronous parsing. The raw log format on disk and its retention limit are unchanged. The headless xterm and the serialize addon are pinned to compatible versions; for the full-screen modes and cursor state the addon does not cover, restore sequences are added and verified with a real parser. When the server process restarts, the state is rebuilt from the retained log, and control context that was already discarded because it exceeded the retention limit cannot be restored.
 
-初始 WebSocket `history` 帧保留 `data` 字段，附带快照尺寸和可选 `archive` 元数据。归档固定在本次连接的日志快照上，浏览器明确请求 `history-page` 时才返回最多 500 行、128 KiB 的纯文本页。请求绑定连接、归档 ID 和游标，继承终端鉴权；控制帧不得落入 PTY 输入。旧 Client 仍可恢复初始 data，新 Client 不向无 archive 元数据的旧 Engine 请求分页。
+The initial WebSocket `history` frame keeps the `data` field and carries the snapshot size and optional `archive` metadata. The archive is pinned to the log snapshot of this connection, and a plain-text page of at most 500 lines and 128 KiB is returned only when the browser explicitly requests `history-page`. The request is bound to the connection, the archive ID and a cursor, and inherits the terminal authentication; control frames must never fall into the PTY input. An old Client can still restore the initial data, and a new Client does not request paging from an old Engine without archive metadata.
 
-Client 共用历史控制器，保留回放期间输入/OSC52 抑制和滚动位置处理；较早日志显示在独立只读窗口，通过文本节点插入，不重放 ANSI 控制序列。分页不阻塞实时主终端，切换任务、断线及释放实例时清理挂起请求，防止历史混入其他终端。该扩展向后兼容，不变更数据库或 Engine API 主版本。
+The Client shares one history controller, keeping the input / OSC52 suppression and the scroll-position handling during replay; earlier logs are shown in a separate read-only window, inserted through text nodes, without replaying ANSI control sequences. Paging does not block the live main terminal, and pending requests are cleaned up when switching tasks, on disconnect and when releasing an instance, so history cannot mix into another terminal. This extension is backward compatible and changes neither the database nor the Engine API major version.
 
-### 终端中文选区对齐
+### Chinese selection alignment in the terminal
 
-本地和远程终端共用的 `.xterm` 容器禁用中文标点压缩及中西文自动间距，使隐藏字宽测量与可见文字遵循相同的固定列宽。避免 Chrome 的上下文标点压缩影响 xterm DOM 渲染器，造成中文标点之后的文字和鼠标选区累计错位。浏览器回归覆盖中文、标点、英文混排，以及普通/备用屏幕和不同像素密度。
+The `.xterm` container shared by local and remote terminals disables Chinese punctuation compression and the automatic spacing between Chinese and Western text, so the hidden character-width measurement and the visible text follow the same fixed column width. This avoids Chrome's contextual punctuation compression affecting the xterm DOM renderer and causing text after Chinese punctuation and the mouse selection to drift cumulatively. The browser regression covers Chinese, punctuation and English mixed, plus the normal / alternate screen and different pixel densities.
 
-### 预览异步结果的归属校验
+### Ownership checks for asynchronous preview results
 
-本地 Markdown 与远程预览在请求、正文读取及图表渲染等异步步骤后校验当前任务、标签页和渲染序号。切入终端会清理大纲、滚动监听及文档监听；过期预览不得重新显示大纲、覆盖新页面或重启旧文档监听。错误响应也遵循相同规则。
+Local Markdown and remote previews check the current task, tab and render sequence number after asynchronous steps such as the request, reading the body and rendering diagrams. Switching into the terminal cleans up the outline, scroll listeners and the document watcher; an expired preview must not show the outline again, overwrite a new page or restart an old document watcher. Error responses follow the same rule.
 
-### OSS 窗口配置同步
+### OSS window configuration sync
 
-OSS 前端配置在窗口获得焦点、页面恢复及回到前台时重新读取；异步读取用序号避免旧结果覆盖新保存配置。上传入口不依赖缓存启用状态，未启用或尚未读取时在全页锁定内重试读取并重新核对目标终端；读取失败与未启用使用不同提示。保存未启用的配置保留表单并明确反馈。
+The frontend OSS configuration is read again when the window gets focus, when the page is restored and when it returns to the foreground; asynchronous reads use a sequence number so an old result cannot overwrite a newly saved configuration. The upload entry does not depend on the cached enabled state: when it is not enabled or not read yet, the read is retried inside the full-page lock and the target terminal is checked again; a read failure and "not enabled" use different hints. Saving a configuration that is not enabled keeps the form and gives explicit feedback.
 
-## 内网穿透（frp）
+## Tunnel (frp)
 
-- 服务：`services/frp.js`（配置、随机端口、TOML 生成、frpc 进程管理），路由：`routes/frp.js`（`/api/frp`，需登录 + 同源校验），页面：`public/js/frp.js`。
-- 配置存 `system_state.frp_config`（JSON）；Token 用 `lib/token-crypto` 以 `SESSION_SECRET` 加密。frpc 配置写入 `data/frpc.toml`（0600）。
-- 固定为 `type = "tcp"` 代理：`localIP/localPort` 指向本 Client，`remotePort` 为 `[portMin, portMax]` 内的随机值，仅在缺失或越界时生成，其余保持稳定。启动后 15 秒内因端口占用退出会重新随机并重试，最多 3 次。
-- 域名仅用于展示 `publicAddress`，不进入 frpc 配置。进程随 Client 退出而终止，`autoStart` 为真时在 Client 启动后拉起。
-- frpc 查找顺序：`T_AGENT_FRPC_BIN` → `data/bin/` → PATH 及常见目录 → Homebrew（`bin/`、`opt/frpc|frp/bin`、`Cellar/frpc|frp/<版本>/bin`，前缀含 `HOMEBREW_PREFIX`、`/opt/homebrew`、`/usr/local`、Linuxbrew）；只接受可执行的普通文件，空 keg 不算已安装。找到后运行 `frpc --version`（超时 5 秒，按路径+mtime 缓存），低于 0.52 时 `start` 返回 `FRP_VERSION_UNSUPPORTED`。`POST /api/frp/detect` 清缓存并重新扫描。`POST /api/frp/install` 异步安装（`services/frp-install.js`）：下载固定版本发布包和 `frp_sha256_checksums.txt`，SHA-256 不符即放弃，用系统 `tar` 只解出 frpc，写临时文件后改名；页面轮询 `installing` / `installError`。
-- 远程端口：`remotePortManual` 为真时固定使用手动值（允许在 `[portMin, portMax]` 外，范围变化和端口冲突都不改它）；`remotePort` 传空/0 或“重新生成”恢复自动。页面只在输入框被编辑过时才提交 `remotePort`，避免保存时把自动端口误存成手动。
-- Agent 提示词由 `public/js/frp-prompts.js` 纯函数生成（frpc：校验和 + 只放 `data/bin`；frps：systemd、`allowPorts`、防火墙/安全组），“安装 frpc”点击后弹窗询问：是 → 复制提示词，否 → 走 `POST /api/frp/install`。
-- 限制：仅本机；自动安装仅 macOS / Linux（amd64、arm64、arm）。
+- Service: `services/frp.js` (configuration, random port, TOML generation, frpc process management), routes: `routes/frp.js` (`/api/frp`, login + same-origin check required), page: `public/js/frp.js`.
+- The configuration is stored in `system_state.frp_config` (JSON); the Token is encrypted with `SESSION_SECRET` through `lib/token-crypto`. The frpc configuration is written to `data/frpc.toml` (0600).
+- A fixed `type = "tcp"` proxy: `localIP/localPort` points at this Client and `remotePort` is a random value within `[portMin, portMax]`, generated only when missing or out of range and otherwise kept stable. If frpc exits because of a busy port within 15 seconds after start-up, a new random port is chosen and it retries, at most 3 times.
+- The domain is only used to show `publicAddress` and never enters the frpc configuration. The process ends with the Client's exit, and when `autoStart` is true it is started after the Client starts.
+- frpc lookup order: `T_AGENT_FRPC_BIN` → `data/bin/` → PATH and common directories → Homebrew (`bin/`, `opt/frpc|frp/bin`, `Cellar/frpc|frp/<version>/bin`, with prefixes including `HOMEBREW_PREFIX`, `/opt/homebrew`, `/usr/local` and Linuxbrew); only executable regular files are accepted, and an empty keg does not count as installed. After it is found, `frpc --version` is run (5 second timeout, cached by path + mtime), and below 0.52 `start` returns `FRP_VERSION_UNSUPPORTED`. `POST /api/frp/detect` clears the cache and scans again. `POST /api/frp/install` installs asynchronously (`services/frp-install.js`): it downloads the pinned release package and `frp_sha256_checksums.txt`, gives up when the SHA-256 does not match, extracts only frpc with the system `tar`, writes a temporary file and renames it; the page polls `installing` / `installError`.
+- Remote port: when `remotePortManual` is true the manual value is used as-is (it may be outside `[portMin, portMax]`, and neither a range change nor a port conflict alters it); passing an empty / 0 `remotePort` or "Regenerate" restores automatic. The page only submits `remotePort` when the input was edited, so saving never stores an automatic port as a manual one by mistake.
+- Agent prompts are produced by the pure functions in `public/js/frp-prompts.js` (frpc: checksum + only into `data/bin`; frps: systemd, `allowPorts`, firewall / security group), and after "Install frpc" is clicked a dialog asks: yes → copy the prompt, no → go through `POST /api/frp/install`. The prompts are plain text for an Agent and are always English.
+- Limits: local machine only; automatic install only on macOS / Linux (amd64, arm64, arm).
 
-## SSH 反向隧道
+## SSH reverse tunnel
 
-- 服务：`services/ssh-tunnel.js`，路由：`routes/ssh-tunnel.js`（`/api/ssh-tunnel`，需登录 + 同源校验），页面：`public/js/ssh-tunnel.js`；与 frp 共用「页面增强」页（左侧导航名称），顶部单选切换（选择存 `localStorage`），两种方式的配置和进程互相独立。
-- 配置存 `system_state.ssh_tunnel_config`。不保存任何密钥内容，只保存私钥**路径**；从不读取私钥文件。
-- 进程：`ssh -N -T -v -o BatchMode=yes -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new -p <端口> [-i <私钥> -o IdentitiesOnly=yes] -R [0.0.0.0:]<远程端口>:<本机IP>:<本机端口> <用户>@<主机>`。只用参数数组启动（不经 shell）；固定加 `ControlMaster=no`、`ControlPath=none`、`ControlPersist=no`：用户 `~/.ssh/config` 里常见的 `ControlMaster auto` 会让 ssh 把转发请求交给已有的共享连接后立刻以 0 退出（隧道不归本进程管，页面误报失败，停止也关不掉），所以隧道始终使用独立连接；主机和用户名在保存时校验，不允许以 `-` 开头。私钥路径为空则不加 `-i`，完全走 ssh 默认逻辑；非空时启动前检查文件存在。
-- 状态：从 `-v` 输出的 `remote forward success` 判定为运行中；日志只保留和连接、认证、转发有关的行。`remote port forwarding failed` 在自动端口下换端口重试（15 秒内最多 3 次），手动端口直接报错。认证失败、DNS、拒绝连接、超时、私钥不可用、主机密钥变更都映射成中文原因。
-- 已连通后意外退出：5 秒后自动重连，连续最多 5 次；`stop` 会取消待重连。随 Client 退出而终止；`autoStart` 为真时在启动后拉起。
-- 限制：仅本机；仅支持免密登录；首次连接信任主机密钥（TOFU）。
+- Service: `services/ssh-tunnel.js`, routes: `routes/ssh-tunnel.js` (`/api/ssh-tunnel`, login + same-origin check required), page: `public/js/ssh-tunnel.js`; it shares the "Page enhancement" page (the left navigation name) with frp, a radio switch at the top (the choice is stored in `localStorage`), and the configuration and process of the two methods are independent of each other.
+- The configuration is stored in `system_state.ssh_tunnel_config`. No key content is stored, only the private key **path**; the private key file is never read.
+- Process: `ssh -N -T -v -o BatchMode=yes -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new -p <port> [-i <private key> -o IdentitiesOnly=yes] -R [0.0.0.0:]<remote port>:<local IP>:<local port> <user>@<host>`. It is started with an argument array only (no shell); `ControlMaster=no`, `ControlPath=none` and `ControlPersist=no` are always added: the `ControlMaster auto` often found in the user's `~/.ssh/config` makes ssh hand the forward request to an existing shared connection and exit with 0 right away (the tunnel is then not owned by this process, the page wrongly reports a failure and stop cannot close it either), so the tunnel always uses its own connection; the host and username are validated when saved and may not start with `-`. An empty private key path adds no `-i` and follows ssh's default lookup entirely; a non-empty one is checked for existence before starting.
+- State: running is decided by `remote forward success` in the `-v` output; the log keeps only lines about connection, authentication and forwarding. `remote port forwarding failed` retries with another port for automatic ports (at most 3 times within 15 seconds) and reports an error directly for manual ports. Authentication failure, DNS, connection refused, timeout, unusable private key and a changed host key are all mapped to readable reasons.
+- Unexpected exit after having connected: reconnect automatically after 5 seconds, at most 5 times in a row; `stop` cancels a pending reconnect. It ends with the Client's exit; when `autoStart` is true it is started after start-up.
+- Limits: local machine only; passwordless login only; the host key is trusted on first connection (TOFU).
 
-## 更新后自动刷新
+## Automatic refresh after an update
 
-- 磁盘上的 `VERSION.json` 在合并代码时就已是新版本，旧进程退出前 `/api/system/version` 也会返回新版本号，所以不能用版本号判断“重启完成”。
-- 每个服务进程启动时生成一个 `boot_id`（`update-manager.bootId`），随 `/api/system/version` 和 `/api/system/update-status` 返回。页面在点击更新前先读一次当前 `boot_id`（`apply-update` 的返回是 `{ accepted, status }`，也从里面取），重启后读到不同的 `boot_id` 即刷新。
-- 兜底：旧进程写下 `restarting` 约 0.75 秒后就会退出，所以页面看到 `restarting` 超过 4 秒（`RESTART_GRACE_MS`）后任何成功响应都来自新进程，直接刷新，不依赖某次轮询恰好撞上服务中断，也不要求版本号等于目标版本。旧版服务没有 `boot_id` 时，观察到服务中断后的成功响应也视为新进程。
-- 等待超过 20 秒仍未刷新时显示“立即刷新页面”按钮；提示框被关掉不会让轮询中断。
+- The on-disk `VERSION.json` is already the new version when the code is merged, and before the old process exits `/api/system/version` also returns the new version number, so the version number cannot be used to decide that "the restart is done".
+- Every service process generates a `boot_id` at start-up (`update-manager.bootId`), returned with `/api/system/version` and `/api/system/update-status`. Before clicking update the page reads the current `boot_id` once (the return value of `apply-update` is `{ accepted, status }` and it is taken from there as well), and refreshes as soon as a different `boot_id` is read after the restart.
+- Fallback: the old process exits about 0.75 seconds after writing `restarting`, so once the page has seen `restarting` for more than 4 seconds (`RESTART_GRACE_MS`) any successful response comes from the new process and it refreshes directly, without depending on one particular poll hitting the outage and without requiring the version number to equal the target version. An old service without `boot_id` treats a successful response after an observed outage as the new process as well.
+- If it still has not refreshed after waiting for more than 20 seconds, a "Refresh now" button is shown; closing the dialog does not interrupt the polling.
 
-## 悬浮提示（Toast）
+## Floating notices (Toast)
 
-- `public/js/toast.js`：全局 `Toast.show(message, { type: 'info' | 'success' | 'error' })` 和 `notify(message, type)`。容器 `.toast-stack` 固定定位在页面顶部居中，不参与布局，所以任何提示都不会改变终端底部两条工具栏（中译英输入栏、功能键栏）的高度。文字用 `textContent` 写入；相同文字只重新计时；最多同时显示 4 条；成功 2.5 秒、普通 3.5 秒、错误 6 秒后自动消失，点击立即关闭。
-- 已改用悬浮提示的消息：中译英的发送/翻译/配置提示（原来在输入栏里另起一行，会把输入栏撑高）、终端复制结果、终端图片上传和 OSS 设置读取的错误（原来是 `alert`）。各脚本通过本地的 `tell()` 调用 `notify`，没有加载 `toast.js` 的环境（单元测试页）退回 `alert`。
-- 仍保留原样：表单里和按钮并排的操作状态文字（如 frp / SSH 页面、设置弹窗里的反馈）、图片上传进度卡片、需要用户确认的 `confirm`，以及任务、分享、文档编辑等处的 `alert`。
+- `public/js/toast.js`: the global `Toast.show(message, { type: 'info' | 'success' | 'error' })` and `notify(message, type)`. The `.toast-stack` container is positioned fixed at the top centre of the page and takes no part in the layout, so no notice ever changes the height of the two toolbars at the bottom of the terminal (the Chinese-to-English input bar and the function-key bar). Text is written with `textContent`; the same text only restarts the timer; at most 4 are shown at once; they disappear automatically after 2.5 seconds for success, 3.5 seconds for ordinary and 6 seconds for errors, and a click dismisses one immediately.
+- Messages that now use floating notices: the send / translate / configuration hints of the Chinese-to-English input (before, they took a separate line in the input bar and made it taller), terminal copy results, and the errors of terminal image upload and reading the OSS settings (before, `alert`). Each script calls `notify` through a local `tell()`, and an environment that did not load `toast.js` (the unit-test page) falls back to `alert`.
+- Still unchanged: operation status text placed next to buttons inside forms (such as the frp / SSH pages and the feedback in the settings dialog), the image upload progress card, `confirm` dialogs that need the user's confirmation, and the `alert` used for tasks, sharing, document editing and so on.
 
-## 界面语言（中英文切换）
+## Interface language
 
-- 默认英文，可在顶栏 `🌐 中文 / English` 按钮（登录页底部同样有）切换，选择保存在 `localStorage['ta-lang']`；切换会刷新页面，让所有动态内容按新语言重新渲染。
-- 源码里的界面文字仍写中文，不需要给每处文案加 key。英文模式下由 `public/js/i18n.js` 翻译：
-  - `MutationObserver` 翻译 DOM 文本节点和 `title` / `placeholder` / `aria-label` / `data-tip` / `alt`（静态 HTML 和 JS 动态渲染的内容、Toast 都覆盖）；
-  - 包装了 `alert` / `confirm` / `prompt`；
-  - 直接写入终端或剪贴板等不经过 DOM 的文字，用 `I18n.t('中文')`（写成 `typeof I18n !== 'undefined' ? I18n.t(x) : x`，测试环境里没有 `I18n`）。
-- 词典在 `public/js/i18n-en-shell.js`（通用、主界面、登录、设置、更新）和 `i18n-en-tools.js`（应用列表、Agent 配置、穿透、文件同步、引擎、工作目录工具）。`I18n.add({ 中文: 'English' })` 先整句匹配，再按短语替换（长的优先，单字只做整句匹配）；带插值或需要调语序的句子用 `I18n.addPattern(/regex/, (match, t) => '英文')`。没收录的文字原样显示中文。
-- 用户内容不翻译：Markdown 正文（`.markdown-body`）、终端（`.xterm`）、编辑器（`.monaco-editor`）、任务/文件/书签名等放在 `i18n.js` 的 `SKIP` 选择器里；其他需要保持原样的元素加 `translate="no"`。
-- 新增界面文案后，在词典里补英文；`test/i18n.test.js` 会检查 `index.html` 和 `login.html` 的静态文案都有英文。`frp-prompts.js` 的提示词复制给 Agent，按当前语言直接生成中文或英文。
+- The UI text is English and the default language. The 🌐 button in the top bar (and at the bottom of the login page) switches between English and Chinese; the choice is stored in `localStorage['ta-lang']`, and switching reloads the page so all dynamic content is rendered again in the new language.
+- **All source text is English**: UI strings, comments, documentation, test names, server messages and CLI output. There are no translation keys in the code; the English text itself is the key. The Chinese UI is a translation layer in `public/js/i18n.js` plus the dictionaries `i18n-zh-ui.js` (client text), `i18n-zh-server.js` (messages produced by `services/`, `routes/` and `lib/`) and `i18n-zh-extra.js` (sentences JavaScript assembles from several pieces, and verb forms). Only when Chinese is selected, `i18n.js` translates:
+  - a `MutationObserver` translates DOM text nodes and `title` / `placeholder` / `aria-label` / `data-tip` / `alt` (static HTML, content rendered later by JavaScript and Toasts are all covered);
+  - `alert` / `confirm` / `prompt` are wrapped;
+  - text written straight to the terminal or the clipboard, which does not go through the DOM, uses `I18n.t('English text')` (written as `typeof I18n !== 'undefined' ? I18n.t(x) : x`, because the test environment has no `I18n`).
+- Dictionary format: `I18n.add({ 'English text': '<Chinese text>' })`. A whole string is matched first; otherwise `{1}`, `{2}` ... placeholders match the variable parts of a sentence (`'Saved {1}': '<Chinese> {1}'`, and the same placeholders may be reordered in the Chinese value). A captured value is itself translated when it is a known string. A template with almost no fixed text (such as `'{1}s'` for a duration) only matches numbers. A string joined with ` · ` is translated segment by segment. A piece ending with a colon (for example `'Could not save the document:'`) also gets a `'... {1}'` entry, because the message is appended at run time. Text without an entry is shown as English.
+- User content is never translated: Markdown documents (`.markdown-body`), the terminal (`.xterm`), the editor (`.monaco-editor`), task / file / bookmark names and so on are in the `SKIP` selector of `i18n.js`; add `translate="no"` to any other element that must stay as written. Content created or entered by users (tasks, documents, terminal input, file names) must keep working with Chinese and any other language; the terminal Chinese-to-English input is built for exactly that.
+- When adding UI text, write it in English and add its Chinese translation to the dictionary. `test/i18n.test.js` checks that every static label in `index.html`, `login.html` and the Kwai tool page has a Chinese translation, and it fails if Chinese text appears anywhere in the project outside the dictionaries and the CJK-handling test fixtures. Where a regular expression needs a CJK range, write it with `\u` escapes. A stylesheet cannot be translated through the DOM, so the few texts in CSS (for example the empty update log) are English with a Chinese override under `html[lang="zh-CN"]`, written as CSS escapes.
+- The prompts that `frp-prompts.js` copies to an Agent and the CLI output of the install scripts are plain English text and are not translated. The Chinese-to-English input box keeps working as before.
+- Compatibility: home-directory paths in file sync are written `home/...`, and the Chinese prefix written by earlier versions is still read (`LEGACY_HOME_PREFIX` in `services/file-sync.js`). The default bookmark group name in new databases is `Default`; rows saved earlier keep their stored value.

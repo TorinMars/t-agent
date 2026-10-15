@@ -4,7 +4,7 @@ const Bookmarks = (() => {
 
   function groupBy(arr) {
     return arr.reduce((acc, item) => {
-      const g = item.group_name || '默认';
+      const g = item.group_name || 'Default';
       if (!acc[g]) acc[g] = [];
       acc[g].push(item);
       return acc;
@@ -58,8 +58,8 @@ const Bookmarks = (() => {
         chip.addEventListener('contextmenu', (e) => {
           e.preventDefault();
           ContextMenu.show(e.clientX, e.clientY, [
-            { label: '编辑', action: () => showEditModal(bm) },
-            { label: '删除', danger: true, action: () => deleteBookmark(bm) },
+            { label: 'Edit', action: () => showEditModal(bm) },
+            { label: 'Delete', danger: true, action: () => deleteBookmark(bm) },
           ]);
         });
 
@@ -75,7 +75,7 @@ const Bookmarks = (() => {
   }
 
   async function deleteBookmark(bm) {
-    if (!confirm(`确认删除「${bm.title}」？`)) return;
+    if (!confirm(`Delete “${bm.title}”?`)) return;
     await API.delete(`/api/bookmarks/${bm.id}`);
     await Bookmarks.load();
   }
@@ -83,24 +83,24 @@ const Bookmarks = (() => {
   function buildForm(bm = {}) {
     return `
       <div class="form-group">
-        <label class="form-label">名称</label>
-        <input class="form-input" id="bf-title" type="text" value="${escapeHtml(bm.title || '')}" placeholder="自动取 hostname">
+        <label class="form-label">Name</label>
+        <input class="form-input" id="bf-title" type="text" value="${escapeHtml(bm.title || '')}" placeholder="Defaults to the hostname">
       </div>
       <div class="form-group">
         <label class="form-label">URL *</label>
         <input class="form-input" id="bf-url" type="url" value="${escapeHtml(bm.url || '')}" placeholder="https://...">
       </div>
       <div class="form-group">
-        <label class="form-label">图标（emoji 或图片 URL，留空自动用 favicon）</label>
-        <input class="form-input" id="bf-icon" type="text" value="${escapeHtml(bm.icon || '')}" placeholder="🚀 或 https://...">
+        <label class="form-label">Icon (emoji or image URL; leave empty to use the favicon)</label>
+        <input class="form-input" id="bf-icon" type="text" value="${escapeHtml(bm.icon || '')}" placeholder="🚀 or https://...">
       </div>
       <div class="form-group">
-        <label class="form-label">分组</label>
-        <input class="form-input" id="bf-group" type="text" value="${escapeHtml(bm.group_name || '默认')}" placeholder="默认">
+        <label class="form-label">Group</label>
+        <input class="form-input" id="bf-group" type="text" value="${escapeHtml(bm.group_name || 'Default')}" placeholder="Default">
       </div>
       <div class="form-actions">
-        <button class="btn-cancel" id="bf-cancel">取消</button>
-        <button class="btn-submit" id="bf-submit">${bm.id ? '保存' : '添加'}</button>
+        <button class="btn-cancel" id="bf-cancel">Cancel</button>
+        <button class="btn-submit" id="bf-submit">${bm.id ? 'Save' : 'Add'}</button>
       </div>`;
   }
 
@@ -128,7 +128,7 @@ const Bookmarks = (() => {
         try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return url; }
       })();
       const icon = document.getElementById('bf-icon').value.trim() || null;
-      const group_name = document.getElementById('bf-group').value.trim() || '默认';
+      const group_name = document.getElementById('bf-group').value.trim() || 'Default';
 
       try {
         if (existing.id) {
@@ -139,18 +139,18 @@ const Bookmarks = (() => {
         Modal.hide();
         await Bookmarks.load();
       } catch (e) {
-        alert('操作失败: ' + e.message);
+        alert('Operation failed: ' + e.message);
       }
     });
   }
 
   function showEditModal(bm) {
-    Modal.show('编辑链接', buildForm(bm));
+    Modal.show('Edit link', buildForm(bm));
     setupFormEvents(bm);
   }
 
   document.getElementById('btn-add-link').addEventListener('click', () => {
-    Modal.show('添加链接', buildForm());
+    Modal.show('Add link', buildForm());
     setupFormEvents();
   });
 

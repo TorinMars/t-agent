@@ -28,37 +28,37 @@ function testDb() {
   return database;
 }
 
-test('首次读取会建立四个兼容分组，三个状态分组不可修改', () => {
+test('The first read creates four compatible groups, and the three status groups cannot be modified', () => {
   const database = testDb();
   const initial = groups.listGroups(database, 'owner');
   assert.deepEqual(initial.map(group => group.key), ['personal', 'doing', 'todo', 'done']);
   assert.deepEqual(initial.filter(group => group.is_system).map(group => group.key), ['doing', 'todo', 'done']);
 
   const todo = initial.find(group => group.key === 'todo');
-  assert.throws(() => groups.updateGroup(database, 'owner', todo.id, { name: '新的待办' }), /SYSTEM_GROUP_IMMUTABLE/);
+  assert.throws(() => groups.updateGroup(database, 'owner', todo.id, { name: 'New to-do' }), /SYSTEM_GROUP_IMMUTABLE/);
   assert.throws(() => groups.deleteGroup(database, 'owner', todo.id), /SYSTEM_GROUP_IMMUTABLE/);
   database.close();
 });
 
-test('自定义分组支持新建、重命名和空分组删除', () => {
+test('Custom groups support create, rename and deleting an empty group', () => {
   const database = testDb();
-  const created = groups.createGroup(database, 'owner', { name: '客户项目' });
-  assert.equal(created.name, '客户项目');
+  const created = groups.createGroup(database, 'owner', { name: 'Client project' });
+  assert.equal(created.name, 'Client project');
   assert.equal(created.is_system, false);
   assert.match(created.key, /^group_[a-f0-9]{32}$/);
 
-  const renamed = groups.updateGroup(database, 'owner', created.id, { name: '重点客户' });
-  assert.equal(renamed.name, '重点客户');
+  const renamed = groups.updateGroup(database, 'owner', created.id, { name: 'Key client' });
+  assert.equal(renamed.name, 'Key client');
   groups.deleteGroup(database, 'owner', created.id);
   assert.equal(groups.listGroups(database, 'owner').some(group => group.id === created.id), false);
   database.close();
 });
 
-test('有任务的自定义分组不能删除', () => {
+test('A custom group that has tasks cannot be deleted', () => {
   const database = testDb();
-  const created = groups.createGroup(database, 'owner', { name: '有任务' });
+  const created = groups.createGroup(database, 'owner', { name: 'has tasks' });
   database.prepare('INSERT INTO tasks (title, status, user_id) VALUES (?, ?, ?)')
-    .run('测试任务', created.key, 'owner');
+    .run('Test task', created.key, 'owner');
 
   const listed = groups.listGroups(database, 'owner').find(group => group.id === created.id);
   assert.equal(listed.task_count, 1);

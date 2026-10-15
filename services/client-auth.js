@@ -113,8 +113,8 @@ function createClientAuth(database, { sessionSecret, ownerId, now = Date.now, in
       }
     })();
   }
-  // 访问模式：local = 仅本机访问、无需验证；remote = 身份验证器登录、允许外网访问；
-  // unset = 全新安装、尚未选择。已经绑定过身份验证器的老安装视为 remote。
+  // Access mode: local = local access only, no verification; remote = authenticator login, external access allowed;
+  // unset = fresh install, not chosen yet. Old installs that already bound an authenticator count as remote.
   function accessMode() {
     const row = database.prepare('SELECT mode FROM client_access_mode WHERE owner_id = ?').get(ownerId);
     if (row && ACCESS_MODES.includes(row.mode)) return row.mode;
@@ -127,7 +127,7 @@ function createClientAuth(database, { sessionSecret, ownerId, now = Date.now, in
       ON CONFLICT(owner_id) DO UPDATE SET mode = excluded.mode`).run(ownerId, mode);
     return mode;
   }
-  // 仅本机模式下，来自本机的会话由访问门禁标记为可信；切回 remote 后这个标记不再被承认。
+  // In local-only mode, sessions from this machine are marked trusted by the access gate; after switching back to remote that mark is no longer honored.
   function authenticated(session) {
     if (accessMode() === 'local') return Boolean(session && session.localTrusted === true);
     const auth = session && session.clientAuth;
@@ -202,7 +202,7 @@ function createClientAuth(database, { sessionSecret, ownerId, now = Date.now, in
     );
     if (!result.changes) fail('AUTH_SETUP_CHANGED', 409);
     delete session.authSetup;
-    setAccessMode('remote'); // 绑定身份验证器即启用“身份验证器 + 允许外网访问”
+    setAccessMode('remote'); // binding an authenticator enables "authenticator + external access"
     database.prepare('DELETE FROM client_auth_attempts WHERE attempt_key = ?').run(hash(`ip:${ip}`));
     return { auth: sessionGrant(version), recoveryCodes };
   }
@@ -215,7 +215,7 @@ function createClientAuth(database, { sessionSecret, ownerId, now = Date.now, in
     status(session) { return { bound: Boolean(read().secret_cipher), authenticated: authenticated(session) }; },
     accessMode,
     setAccessMode,
-    // 页面和接口据此决定下一步：需要先绑定 / 需要登录 / 可以进入。仅本机模式不需要绑定。
+    // The page and endpoints use this to decide the next step: must bind first / must log in / can enter. Local-only mode needs no binding.
     ready(session) {
       const mode = accessMode();
       if (mode === 'local') return { mode, setupRequired: false, loginRequired: !authenticated(session) };

@@ -4,7 +4,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-test('更新状态返回实际版本而不是数据库中的旧版本', async () => {
+test('The update status returns the actual version instead of the old one in the database', async () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 't-agent-update-state-'));
   process.env.T_AGENT_DB_PATH = path.join(tempDir, 'db.sqlite');
   process.env.T_AGENT_DATA_DIR = tempDir;
@@ -20,7 +20,7 @@ test('更新状态返回实际版本而不是数据库中的旧版本', async ()
   fs.rmSync(tempDir, { recursive: true, force: true });
 });
 
-test('更新用的 npm 使用较短的重试和超时，且不覆盖用户已设置的值', () => {
+test('The npm used for updates has short retries and timeouts and does not override values the user already set', () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 't-agent-update-npm-env-'));
   process.env.T_AGENT_DB_PATH = path.join(tempDir, 'db.sqlite');
   process.env.T_AGENT_DATA_DIR = tempDir;

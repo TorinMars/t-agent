@@ -30,18 +30,18 @@ function setup(saved, servers) {
   return { context, document };
 }
 
-test('刷新时本地数据先返回，不会把已保存的远程 Engine 重置为本地', async () => {
+test('During refresh the local data returns first and a saved remote Engine is not reset to local', async () => {
   const saved = new Map([['active-engine-key', 'remote:2']]);
   const { context } = setup(saved, [{ id: 2, name: 'Engine 2', base_url: 'http://engine', status: 'online' }]);
-  await context.Tasks.load(); // Engine 列表还没注册
-  assert.equal(context.Tasks.getActiveKey(), 'local', '尚未激活任何数据源，保存的偏好保持不变');
+  await context.Tasks.load(); // the Engine list is not registered yet
+  assert.equal(context.Tasks.getActiveKey(), 'local', 'No data source is active yet, so the saved preference stays unchanged');
   assert.equal(saved.get('active-engine-key'), 'remote:2');
   await context.Engines.load();
   assert.equal(context.Tasks.getActiveKey(), 'remote:2');
   assert.equal(saved.get('active-engine-key'), 'remote:2');
 });
 
-test('保存的 Engine 已被移除时回到本地', async () => {
+test('Falls back to local when the saved Engine has been removed', async () => {
   const saved = new Map([['active-engine-key', 'remote:7']]);
   const { context } = setup(saved, []);
   await context.Tasks.load();
@@ -50,7 +50,7 @@ test('保存的 Engine 已被移除时回到本地', async () => {
   assert.equal(saved.get('active-engine-key'), 'local');
 });
 
-test('同一界面显示不同 Engine 的任务，切换后侧栏内容随之变化', async () => {
+test('One UI shows the tasks of different Engines, and the sidebar content follows the switch', async () => {
   const saved = new Map();
   const { context, document } = setup(saved, [{ id: 2, name: 'Engine 2', base_url: 'http://engine', status: 'online' }]);
   await context.Tasks.load();
@@ -59,15 +59,15 @@ test('同一界面显示不同 Engine 的任务，切换后侧栏内容随之变
   await context.Tasks.activateSource('remote:2');
   assert.match(document.getElementById('task-nav').textContent, /Remote task/);
   assert.doesNotMatch(document.getElementById('task-nav').textContent, /Local task/);
-  assert.equal(document.getElementById('btn-reveal-folder').style.display, 'none', '远程任务不提供 Finder 打开');
-  assert.equal(document.getElementById('btn-open-vscode').style.display, 'none', '远程任务不提供 VS Code 打开');
+  assert.equal(document.getElementById('btn-reveal-folder').style.display, 'none', 'Remote tasks do not offer opening in Finder');
+  assert.equal(document.getElementById('btn-open-vscode').style.display, 'none', 'Remote tasks do not offer opening in VS Code');
   await context.Tasks.activateSource('local');
   assert.equal(document.getElementById('btn-reveal-folder').style.display, '');
 });
 
-test('刷新时本地分组接口较慢，期间已切到远程 Engine，切回本地后任务不会丢失', async () => {
-  // 本地任务列表先返回、分组接口较慢；这段时间 Engines 已把界面切到保存的远程 Engine，
-  // 切换会把当时的 tasks 写回本地数据源，不能把刚收到的本地任务覆盖成空列表。
+test('During refresh the local group endpoint is slow and the user has already switched to a remote Engine; after switching back to local the tasks are not lost', async () => {
+  // The local task list returns first while the group endpoint is slow; in the meantime Engines has already switched the UI to the saved remote Engine,
+  // and switching writes the tasks of that moment back to the local data source; the local tasks just received must not be overwritten with an empty list.
   const saved = new Map([['active-engine-key', 'remote:2']]);
   const { context, document } = setup(saved, [{ id: 2, name: 'Engine 2', base_url: 'http://engine', status: 'online' }]);
   const original = context.API.get;
@@ -79,6 +79,6 @@ test('刷新时本地分组接口较慢，期间已切到远程 Engine，切回�
   assert.equal(context.Tasks.getActiveKey(), 'remote:2');
   assert.match(document.getElementById('task-nav').textContent, /Remote task/);
   await context.Tasks.activateSource('local');
-  assert.match(document.getElementById('task-nav').textContent, /Local task/, '切回本地后应显示本地任务');
+  assert.match(document.getElementById('task-nav').textContent, /Local task/, 'After switching back to local, the local tasks should be shown');
   assert.equal(context.Tasks.getSource('local').tasks.length, 1);
 });

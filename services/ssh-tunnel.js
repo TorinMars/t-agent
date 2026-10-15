@@ -15,9 +15,9 @@ const MAX_PORT_RETRIES = 3;
 const PORT_RETRY_WINDOW_MS = 15_000;
 const RECONNECT_DELAY_MS = 5000;
 const MAX_RECONNECTS = 5;
-// ssh -v 的输出很吵，只保留和连接、认证、端口转发有关的行。
+// ssh -v output is noisy; keep only the lines related to connection, authentication and port forwarding.
 const KEEP_LINE = /remote forward|Authenticated|Permission denied|Warning|error|failed|refused|timed out|resolve hostname|Identity file|Host key|closed|disconnect|bind|forwarding/i;
-// ssh -v 的无害提示：没设置 FIDO 安全密钥的 provider 环境变量时的说明，看起来像错误但不是。
+// A harmless ssh -v message: the note printed when the FIDO security key provider variable is not set; it looks like an error but is not.
 const NOISE = /SSH_SK_PROVIDER|Authenticator provider/i;
 const FORWARD_OK = /remote forward success/i;
 const FORWARD_FAILED = /remote port forwarding failed|forwarding failed for listen port|Error: remote port forwarding failed/i;
@@ -34,14 +34,14 @@ function findSsh() {
   if (process.env.T_AGENT_SSH_BIN) return process.env.T_AGENT_SSH_BIN;
   for (const dir of [...candidateBinDirs(), '/usr/bin']) {
     const candidate = path.join(dir, 'ssh');
-    try { fs.accessSync(candidate, fs.constants.X_OK); return candidate; } catch { /* 继续找 */ }
+    try { fs.accessSync(candidate, fs.constants.X_OK); return candidate; } catch { /* keep looking */ }
   }
   return null;
 }
 
-// 只用参数数组启动 ssh（不经 shell）。BatchMode 保证不会卡在密码提示上；私钥留空时完全交给 ssh 的默认逻辑。
-// 连接复用必须关掉：用户的 ~/.ssh/config 常有 ControlMaster auto / ControlPersist，ssh 会把转发请求交给已有的共享连接后立刻退出
-// （退出码 0，隧道其实不归本进程管），页面就会显示失败，而且停止按钮也关不掉那条转发。
+// Start ssh with an argument array only (no shell). BatchMode guarantees it never hangs on a password prompt; when the private key is empty ssh's default lookup is used entirely.
+// Connection multiplexing must be off: the user's ~/.ssh/config often has ControlMaster auto / ControlPersist, and ssh would hand the forward request to an existing shared connection and exit right away
+// (exit code 0, the tunnel is then not owned by this process), so the page would show a failure and the stop button could not close that forward either.
 function buildArgs(config, { localIP, localPort }) {
   const bind = config.bindAll ? '0.0.0.0:' : '';
   const args = [
@@ -63,12 +63,12 @@ function buildArgs(config, { localIP, localPort }) {
 }
 
 function explain(line) {
-  if (/Permission denied/i.test(line)) return '认证失败：请检查用户名、私钥，以及服务器是否允许该私钥登录（需要免密登录）';
-  if (/Could not resolve hostname/i.test(line)) return '无法解析服务器地址';
-  if (/Connection refused/i.test(line)) return 'SSH 连接被拒绝：请检查服务器地址和 SSH 端口';
-  if (/timed out/i.test(line)) return '连接服务器超时';
-  if (/Identity file .* not accessible|no such identity|Load key .*(No such file|invalid format|bad permissions)/i.test(line)) return '私钥文件不可用：请检查路径、格式和权限（应为 600）';
-  if (/REMOTE HOST IDENTIFICATION HAS CHANGED/i.test(line)) return '服务器的主机密钥与 known_hosts 里记录的不一致，已拒绝连接';
+  if (/Permission denied/i.test(line)) return 'Authentication failed: check the username, the private key, and whether the server accepts that key (passwordless login is required)';
+  if (/Could not resolve hostname/i.test(line)) return 'Cannot resolve the server address';
+  if (/Connection refused/i.test(line)) return 'SSH connection refused: check the server address and SSH port';
+  if (/timed out/i.test(line)) return 'Connecting to the server timed out';
+  if (/Identity file .* not accessible|no such identity|Load key .*(No such file|invalid format|bad permissions)/i.test(line)) return 'The private key file is unusable: check the path, format and permissions (should be 600)';
+  if (/REMOTE HOST IDENTIFICATION HAS CHANGED/i.test(line)) return 'The server host key does not match the one recorded in known_hosts; connection refused';
   return '';
 }
 
@@ -111,37 +111,37 @@ function createSshTunnelService({
         host: config.host, sshPort: config.sshPort, username: config.username, keyPath: config.keyPath,
         remotePort: config.remotePort, remotePortManual: Boolean(config.remotePortManual),
         bindAll: Boolean(config.bindAll), autoStart: Boolean(config.autoStart), effectiveLocalPort: localPort,
-        // 默认只绑定服务器的 127.0.0.1，由服务器上的反向代理转发；勾选“绑定所有网卡”还需要 sshd 开启 GatewayPorts。
+        // By default only bind 127.0.0.1 on the server and let a reverse proxy there forward; ticking "bind all interfaces" also needs GatewayPorts enabled in sshd.
         serverAddress: config.remotePort ? `${config.bindAll ? '0.0.0.0' : '127.0.0.1'}:${config.remotePort}` : '',
       },
     };
   }
 
   function update(input) {
-    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new FrpError('SSH_BODY_INVALID', '请求内容不正确');
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new FrpError('SSH_BODY_INVALID', 'Invalid request');
     const next = { ...load() };
     if ('host' in input) {
-      const host = cleanText(input.host, 'SSH_HOST_INVALID', '服务器地址');
-      if (host && !net.isIP(host) && !HOSTNAME.test(host)) throw new FrpError('SSH_HOST_INVALID', '服务器地址必须是 IP 或域名');
+      const host = cleanText(input.host, 'SSH_HOST_INVALID', 'Server address');
+      if (host && !net.isIP(host) && !HOSTNAME.test(host)) throw new FrpError('SSH_HOST_INVALID', 'The server address must be an IP or domain');
       next.host = host;
     }
-    if ('sshPort' in input) next.sshPort = parsePort(input.sshPort, 'SSH_PORT_INVALID', 'SSH 端口');
+    if ('sshPort' in input) next.sshPort = parsePort(input.sshPort, 'SSH_PORT_INVALID', 'SSH port');
     if ('username' in input) {
-      const username = cleanText(input.username, 'SSH_USER_INVALID', '用户名', { max: 64 });
-      if (username && !/^[A-Za-z0-9_][A-Za-z0-9_.-]*$/.test(username)) throw new FrpError('SSH_USER_INVALID', '用户名格式不正确');
+      const username = cleanText(input.username, 'SSH_USER_INVALID', 'Username', { max: 64 });
+      if (username && !/^[A-Za-z0-9_][A-Za-z0-9_.-]*$/.test(username)) throw new FrpError('SSH_USER_INVALID', 'Invalid username format');
       next.username = username;
     }
     if ('keyPath' in input) {
       const raw = input.keyPath === null || input.keyPath === undefined ? '' : input.keyPath;
-      if (typeof raw !== 'string' || raw.length > 1024 || /[\u0000-\u001f\u007f]/.test(raw)) throw new FrpError('SSH_KEY_INVALID', '私钥路径格式不正确');
+      if (typeof raw !== 'string' || raw.length > 1024 || /[\u0000-\u001f\u007f]/.test(raw)) throw new FrpError('SSH_KEY_INVALID', 'Invalid private key path format');
       const keyPath = raw.trim();
-      if (keyPath && !(path.isAbsolute(keyPath) || keyPath === '~' || keyPath.startsWith('~/'))) throw new FrpError('SSH_KEY_INVALID', '私钥路径必须是绝对路径或以 ~/ 开头');
+      if (keyPath && !(path.isAbsolute(keyPath) || keyPath === '~' || keyPath.startsWith('~/'))) throw new FrpError('SSH_KEY_INVALID', 'The private key path must be absolute or start with ~/');
       next.keyPath = keyPath;
     }
     if ('remotePort' in input) {
       const raw = input.remotePort;
       if (raw === '' || raw === null || raw === 0) { next.remotePortManual = false; next.remotePort = 0; }
-      else { next.remotePort = parsePort(raw, 'SSH_REMOTE_PORT_INVALID', '远程端口'); next.remotePortManual = true; }
+      else { next.remotePort = parsePort(raw, 'SSH_REMOTE_PORT_INVALID', 'Remote port'); next.remotePortManual = true; }
     }
     if ('bindAll' in input) next.bindAll = Boolean(input.bindAll);
     if ('autoStart' in input) next.autoStart = Boolean(input.autoStart);
@@ -168,14 +168,14 @@ function createSshTunnelService({
 
   function launch() {
     const bin = locate();
-    if (!bin) throw new FrpError('SSH_NOT_INSTALLED', '未找到 ssh 命令，请先安装 OpenSSH 客户端，或用环境变量 T_AGENT_SSH_BIN 指定路径', 412);
+    if (!bin) throw new FrpError('SSH_NOT_INSTALLED', 'ssh command not found: install the OpenSSH client, or set its path with T_AGENT_SSH_BIN', 412);
     const config = load();
-    if (!config.host) throw new FrpError('SSH_HOST_REQUIRED', '请先填写服务器 IP 或域名', 412);
-    if (!config.username) throw new FrpError('SSH_USER_REQUIRED', '请先填写用户名', 412);
+    if (!config.host) throw new FrpError('SSH_HOST_REQUIRED', 'Enter the server IP or domain first', 412);
+    if (!config.username) throw new FrpError('SSH_USER_REQUIRED', 'Enter a username first', 412);
     if (config.keyPath) {
       let isFile = false;
-      try { isFile = fs.statSync(expandHome(config.keyPath)).isFile(); } catch { /* 不存在 */ }
-      if (!isFile) throw new FrpError('SSH_KEY_NOT_FOUND', '找不到私钥文件，请检查路径；留空则使用 ssh 默认逻辑', 412);
+      try { isFile = fs.statSync(expandHome(config.keyPath)).isFile(); } catch { /* does not exist */ }
+      if (!isFile) throw new FrpError('SSH_KEY_NOT_FOUND', 'Private key file not found. Check the path; leave empty to use ssh defaults', 412);
     }
     const spawnedAt = now();
     status = 'starting';
@@ -187,7 +187,7 @@ function createSshTunnelService({
       proc = spawnProcess(bin, buildArgs(config, { localIP, localPort }), { stdio: ['ignore', 'pipe', 'pipe'] });
     } catch {
       status = 'failed';
-      failure = '无法启动 ssh';
+      failure = 'Cannot start ssh';
       throw new FrpError('SSH_START_FAILED', failure, 500);
     }
     child = proc;
@@ -209,7 +209,7 @@ function createSshTunnelService({
       if (child !== proc) return;
       child = null;
       status = 'failed';
-      failure = `无法启动 ssh：${error.code || error.message}`;
+      failure = `Cannot start ssh: ${error.code || error.message}`;
     });
     proc.on('exit', code => {
       if (child !== proc) return;
@@ -220,17 +220,17 @@ function createSshTunnelService({
         if (!load().remotePortManual && now() - spawnedAt < PORT_RETRY_WINDOW_MS && portRetries < MAX_PORT_RETRIES) {
           portRetries += 1;
           const port = regeneratePort();
-          pushLog(`remote port busy: 已换成 ${port} 重试（${portRetries}/${MAX_PORT_RETRIES}）`);
+          pushLog(`remote port busy: retrying with ${port} (${portRetries}/${MAX_PORT_RETRIES})`);
           try { launch(); return; } catch (error) { failure = error.message; }
         }
-        failure = load().remotePortManual ? '服务器上的远程端口被占用，或 sshd 不允许绑定，请换一个端口' : '服务器上的远程端口被占用，请重新生成端口';
+        failure = load().remotePortManual ? 'The remote port on the server is in use, or sshd does not allow binding it; choose another port' : 'The remote port on the server is in use; regenerate the port';
       }
-      // 已经连通过的隧道意外断开（网络抖动、服务器重启）：稍后自动重连。
+      // A tunnel that had connected dropped unexpectedly (network blip, server restart): reconnect automatically later.
       if (reachedRunning && reconnects < MAX_RECONNECTS) {
         reconnects += 1;
         status = 'starting';
         failure = '';
-        pushLog(`connection closed: ${RECONNECT_DELAY_MS / 1000} 秒后重连（${reconnects}/${MAX_RECONNECTS}）`);
+        pushLog(`connection closed: reconnecting in ${RECONNECT_DELAY_MS / 1000} s (${reconnects}/${MAX_RECONNECTS})`);
         reconnectTimer = setTimer(() => {
           reconnectTimer = null;
           if (stopping || child) return;
@@ -240,12 +240,12 @@ function createSshTunnelService({
         return;
       }
       status = 'failed';
-      failure = failure || `ssh 已退出（代码 ${code}）`;
+      failure = failure || `ssh exited (code ${code})`;
     });
   }
 
   function start() {
-    if (child || reconnectTimer) throw new FrpError('SSH_ALREADY_RUNNING', '隧道已经在运行', 409);
+    if (child || reconnectTimer) throw new FrpError('SSH_ALREADY_RUNNING', 'The tunnel is already running', 409);
     portRetries = 0;
     reconnects = 0;
     logs = [];
@@ -258,8 +258,8 @@ function createSshTunnelService({
     if (reconnectTimer) { clearTimer(reconnectTimer); reconnectTimer = null; }
     if (child) {
       const proc = child;
-      try { proc.kill('SIGTERM'); } catch { /* 已退出 */ }
-      const timer = setTimeout(() => { try { proc.kill('SIGKILL'); } catch { /* 已退出 */ } }, 3000);
+      try { proc.kill('SIGTERM'); } catch { /* already exited */ }
+      const timer = setTimeout(() => { try { proc.kill('SIGKILL'); } catch { /* already exited */ } }, 3000);
       if (timer.unref) timer.unref();
       child = null;
     }

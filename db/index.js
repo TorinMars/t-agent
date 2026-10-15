@@ -63,7 +63,7 @@ db.exec(`CREATE TABLE IF NOT EXISTS terminal_logs (
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 )`);
 
-// 用户表（本地账号）
+// User table (local accounts)
 db.exec(`CREATE TABLE IF NOT EXISTS users (
   id         INTEGER  PRIMARY KEY AUTOINCREMENT,
   username   TEXT     NOT NULL UNIQUE,
@@ -73,7 +73,7 @@ db.exec(`CREATE TABLE IF NOT EXISTS users (
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 )`);
 
-// 迁移：将 .env 中配置的初始账号写入 users 表（仅首次）
+// Migration: write the initial accounts configured in .env into the users table (first time only)
 const config = require('../config');
 for (const [username, cred] of Object.entries(config.authUsers || {})) {
   const exists = db.prepare('SELECT id FROM users WHERE username = ?').get(username);

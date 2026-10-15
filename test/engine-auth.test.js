@@ -37,7 +37,7 @@ function testDb() {
   return db;
 }
 
-test('配对码只能换取一次访问 Token，且它就是管理权限', () => {
+test('A pairing code can be exchanged for an access token only once, and that token has admin rights', () => {
   const db = testDb();
   const pairing = createPairingCode(db, { principalId: 'owner' });
   assert.match(pairing.code, /^TA-[A-Z2-9]{4}-[A-Z2-9]{4}-[A-Z2-9]{4}$/);
@@ -57,7 +57,7 @@ test('配对码只能换取一次访问 Token，且它就是管理权限', () =>
   db.close();
 });
 
-test('owner Token 具有所有 scope', () => {
+test('An owner Token has every scope', () => {
   const db = testDb();
   const pairing = createPairingCode(db, { role: 'owner' });
   const access = exchangePairingCode(db, pairing.code);
@@ -75,7 +75,7 @@ test('requested roles are ignored: every token, including previously issued rest
   assert.equal(readerAuth.role, 'owner');
   for (const scope of ['files:read', 'files:write', 'engine:admin', 'pm2:manage']) assert.equal(hasScope(readerAuth.scopes, scope), true, scope);
 
-  // 以前签发、数据库里仍是受限角色的令牌同样按管理权限处理（不改库）。
+  // A token issued earlier whose database role is still restricted is treated as admin too (the database is not changed).
   const hashSecret = require('../services/engine-auth').hashSecret;
   const insert = db.prepare(`INSERT INTO engine_access_tokens
     (principal_id, name, token_hash, token_prefix, role, scopes) VALUES (?, ?, ?, ?, ?, ?)`);

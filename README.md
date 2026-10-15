@@ -1,347 +1,347 @@
 # T-Agent
 
-终端复制：Mac 在交互式程序启用鼠标模式时，按住 Option 拖选，再用 Cmd+C 或工具栏“复制选中内容”；其他平台使用 Shift 拖选及 Ctrl+Shift+C。Ctrl+C 仍用于中断。程序发出的 OSC 52 请求不会直接写入剪贴板，需点击“查看程序复制请求”、查看内容后确认。请求最多 64 KiB、保留 60 秒，不读取系统剪贴板，也不重复处理历史回放中的请求。
+Terminal copy: on a Mac, when an interactive program has enabled mouse mode, hold Option while selecting, then press Cmd+C or use the toolbar's "Copy selection"; on other platforms use Shift-select and Ctrl+Shift+C. Ctrl+C still interrupts. An OSC 52 request from a program is never written to the clipboard directly: click "Review program copy request", look at the content and confirm. A request is at most 64 KiB and kept for 60 seconds, the system clipboard is never read, and requests in a history replay are not processed again.
 
-Git 更新遇到本地未提交修改时，可在更新确认框勾选“强制更新”。程序先备份数据库，再将代码修改（含未跟踪且未忽略的文件）保存到 Git stash，之后快进更新；不会自动恢复修改。可用 `git stash list` 和 `git stash show -p <备份引用>` 查看备份。被 Git 忽略的配置、任务和数据库保留；已提交的分叉不会强制覆盖。配置或数据被 Git 跟踪时，会拒绝强制更新。
+When a Git update meets local uncommitted changes, tick "Force update" in the update confirmation. The program first backs up the database, then saves the code changes (including untracked, non-ignored files) into a Git stash and fast-forwards; it never restores the changes automatically. Use `git stash list` and `git stash show -p <backup ref>` to inspect the backup. Configuration, tasks and databases ignored by Git are kept; committed divergence is never overwritten by force. When configuration or data is tracked by Git, a forced update is refused.
 
-T-Agent 是一个面向开发任务的组件化工作台。一个 Client 可以同时管理本机以及其他 Client 上的 Engine；每个 Engine 独立保存任务、Markdown 文档、待办事项和终端会话。
+T-Agent is a componentized workbench for development tasks. One Client can manage the Engine on this machine and the Engines on other Clients; each Engine stores its own tasks, Markdown documents, to-dos and terminal sessions.
 
-每个 Client 都内置 Engine，因此个人电脑只需安装一次；没有桌面界面的 Linux 服务器同样安装 Client（可只使用命令行绑定），再使用一次性配对码或访问 Token 让其他 Client 接入。不再单独提供独立 Engine 服务。
+Every Client includes an Engine, so a personal computer only needs one install; a Linux server without a desktop UI also installs the Client (it can be bound from the command line only), and then uses a one-time pairing code or an access Token to let other Clients connect. A standalone Engine service is no longer provided.
 
-## 项目架构
+## Project architecture
 
 ```mermaid
 flowchart LR
-    Browser[浏览器] --> Client[T-Agent Client]
-    Client --> Local[内置本地 Engine]
-    Client -->|HTTPS / WSS + Token| Remote1[远程 Engine 1]
-    Client -->|HTTPS / WSS + Token| Remote2[远程 Engine 2]
-    Local --> LocalDB[(本地 SQLite)]
-    Local --> LocalFiles[本地任务目录]
-    Local --> LocalPTY[本地 PTY]
-    Remote1 --> RemoteDB[(远程 SQLite)]
-    Remote1 --> RemoteFiles[远程任务目录]
-    Remote1 --> RemotePTY[远程 PTY]
+    Browser[Browser] --> Client[T-Agent Client]
+    Client --> Local[Built-in local Engine]
+    Client -->|HTTPS / WSS + Token| Remote1[Remote Engine 1]
+    Client -->|HTTPS / WSS + Token| Remote2[Remote Engine 2]
+    Local --> LocalDB[(Local SQLite)]
+    Local --> LocalFiles[Local task directories]
+    Local --> LocalPTY[Local PTY]
+    Remote1 --> RemoteDB[(Remote SQLite)]
+    Remote1 --> RemoteFiles[Remote task directories]
+    Remote1 --> RemotePTY[Remote PTY]
 ```
 
-| 组件 | 职责 |
+| Component | Responsibility |
 | --- | --- |
-| Client | 单用户界面、本地 Engine、多 Engine 标签切换、远程连接管理、Token 加密保存、更新检查 |
-| Engine | 任务和待办数据、Markdown 文件、工作目录、终端执行、Token 鉴权 |
+| Client | Single-user UI, local Engine, switching between several Engine tabs, remote connection management, encrypted Token storage, update checks |
+| Engine | Task and to-do data, Markdown files, working directories, terminal execution, Token authentication |
 
-浏览器只连接本机 Client，不会直接拿到远程 Token，也不直接请求远程 Engine。远程凭证由 Client 使用 `SESSION_SECRET` 加密后保存在 SQLite 中。
+The browser only talks to the Client on this machine; it never gets a remote Token and never calls a remote Engine directly. Remote credentials are encrypted by the Client with `SESSION_SECRET` and stored in SQLite.
 
-进一步的实现说明见 [组件架构](docs/ARCHITECTURE.md)，接口定义见 [Engine API](docs/ENGINE_API.md)。
+For implementation details see [Component architecture](docs/ARCHITECTURE.md), and for the interface definitions see [Engine API](docs/ENGINE_API.md).
 
-## 当前功能
+## Current features
 
 ### Client
 
-- 顶部是引擎切换栏：在“默认”和多台远程 Engine 之间切换，右键远程标签可刷新、编辑或移除连接；左侧是主导航（Tasks / 实用工具），在当前引擎内切换功能。
-- 新建、编辑和删除本地任务，支持个人任务、进行中、待办、已完成分组和拖拽排序。
-- 为任务管理 `DESIGN.md`、`README.md` 和 `AGENTS.md`，支持 Markdown、Mermaid、目录大纲和页面内编辑。
-- 本地、远程和分享页面采用统一的 Markdown 阅读样式：舒适的正文宽度、清晰的标题层级、可横向滚动的表格，以及带语言标识和复制按钮的深色语法高亮代码块。未标注或不支持的代码语言按纯文本展示。修改高亮模块后运行 `npm run build:markdown` 生成随应用分发的本地脚本。页面用到的 marked、mermaid、xterm 固定版本并自托管在 `public/vendor`（清单与 SHA-256 见 `scripts/vendor-libs.json`），运行时不访问 CDN，离线也能使用；mermaid 约 5 MB，首次渲染图表时才加载，`/vendor` 启用 gzip 且带版本号的文件长期缓存。升级版本时改清单里的版本和地址，运行 `node scripts/fetch-vendor.js --update` 重新下载并写回哈希，再同步页面里的引用路径（`test/vendor-assets.test.js` 会检查两者一致）。
-- 管理任务待办事项、优先级、截止日期及工作目录。
-- 每个任务支持多个独立终端，点击“新开终端”创建 Shell，并通过终端标签切换；各终端从任务工作目录启动，分别保存输出历史。
-- 终端运行状态直接显示在左侧任务项和终端标签上：执行中为外圈跑马灯，完成后绿色呼吸灯等待你打开确认，详见下文“终端运行状态”。
-- 从 Finder/文件管理器或 VS Code 打开本地任务目录，生成只读分享链接。
-- 快捷链接栏默认隐藏，保留已有链接数据；支持 PWA 安装；电脑和手机统一使用 `/web` 的 最小宽度 1280px、大屏横向铺满、普通浏览器最大高度 1200px、安装的 Chrome 应用及全屏模式宽高随实际窗口铺满，避免窄窗口裁切终端 的桌面页面，支持浏览器缩放和手机双指缩放；旧 `/h5` 地址跳转到 `/web`。
-- 自动检查更新，在设置中提示并由用户点击执行更新。
+- The engine switch bar is at the top: switch between "Default" and several remote Engines, and right-click a remote tab to refresh, edit or remove the connection; the main navigation on the left (Tasks / Utilities) switches features inside the current engine.
+- Create, edit and delete local tasks, with the groups Personal tasks, In progress, To do and Done, and drag-and-drop ordering.
+- Manage `DESIGN.md`, `README.md` and `AGENTS.md` for a task, with Markdown, Mermaid, a table-of-contents outline and in-page editing.
+- Local, remote and share pages use one Markdown reading style: a comfortable text width, a clear heading hierarchy, tables that scroll horizontally, and dark syntax-highlighted code blocks with a language label and a copy button. Code with no language or an unsupported one is shown as plain text. After changing the highlighting module run `npm run build:markdown` to generate the local script that ships with the app. The marked, mermaid and xterm versions used by the page are pinned and self-hosted in `public/vendor` (the manifest and SHA-256 values are in `scripts/vendor-libs.json`), so no CDN is used at run time and it works offline; mermaid is about 5 MB and is only loaded when the first diagram is rendered, `/vendor` is gzip-compressed and versioned files are cached for a long time. To upgrade a version, change the version and address in the manifest, run `node scripts/fetch-vendor.js --update` to download again and write the hashes back, then update the reference paths in the pages (`test/vendor-assets.test.js` checks that the two agree).
+- Manage a task's to-dos, priority, due date and working directory.
+- Every task supports several independent terminals: click "New terminal" to create a shell and switch with the terminal tabs; each terminal starts from the task's working directory and keeps its own output history.
+- The terminal run state is shown directly on the task items on the left and on the terminal tabs: running is an outer-ring marquee, and when finished a green breathing light waits for you to open and acknowledge it; see "Terminal run state" below.
+- Open a local task directory from Finder / a file manager or VS Code, and create read-only share links.
+- The quick-links bar is hidden by default and existing link data is kept; PWA installation is supported; computers and phones all use the desktop page at `/web` (minimum width 1280px, stretched horizontally on large screens, maximum height 1200px in a normal browser, and an installed Chrome app or full-screen mode fills the actual window width and height, so a narrow window does not crop the terminal), which supports browser zoom and phone pinch zoom; the old `/h5` address redirects to `/web`.
+- Automatically checks for updates, shows a hint in settings, and the user clicks to run the update.
 
-### 内网穿透（frp）
+### Tunnel (frp)
 
-左侧「页面增强」页用本机的 `frpc` 把 Client 端口映射到你的 frps 服务器（TCP 隧道）。
+The "Page enhancement" page on the left uses this machine's `frpc` to map the Client port to your frps server (a TCP tunnel).
 
-- 必填：frps 服务器 IP/域名、frps 服务端口（默认 7000）；frps 设置了 Token 时再填 Token（加密保存，不回显）。
-- 远程端口默认自动随机生成（范围 20000-60000），生成后保持稳定；可点“重新生成”，运行中会重启隧道。也可以直接填写固定端口（可在随机范围之外，需在 frps 的 `allowPorts` 内）：手动端口被占用时不会自动换，清空后保存恢复自动随机。自动模式下端口被 frps 占用，会自动换端口重试最多 3 次。
-- 域名可选，只用于显示公网地址 `域名:远程端口`，不会写入 frpc 配置。域名解析和反向代理（如 Nginx 终结 HTTPS）自行配置，转发到 `服务器IP:远程端口`；不配域名时可直接访问 `http://服务器IP:远程端口`（需放行该端口）。
-- 需要本机有 frpc（0.52 及以上，TOML 配置）。没检测到时页面显示“安装 frpc”按钮，点击后询问是否让 Agent 安装：选“是”复制安装提示词（粘贴给 Agent 执行），选“否”由 Client 直接下载固定版本（0.61.1）的官方发布包，校验 SHA-256 后只把 frpc 放到 `data/bin/`；无法访问 GitHub 时用 `T_AGENT_FRP_DOWNLOAD_BASE` 指向镜像（目录结构同 GitHub releases，含 `v0.61.1/frp_sha256_checksums.txt`）。也可自行安装（如 Mac 上 `brew install frpc`），装好后点页面上的“重新检测 frpc”：会依次查找 `T_AGENT_FRPC_BIN`、`data/bin/`、PATH 及常见目录、Homebrew 的 `bin/`、`opt/frpc/bin`、`Cellar/frpc/<最新版>/bin`（含 Apple 芯片 `/opt/homebrew`、Intel `/usr/local`、Linuxbrew），并显示 frpc 路径和版本；版本低于 0.52（不支持 TOML 配置）时会提示并拒绝启动。自动安装仅支持 macOS / Linux。可勾选“Client 启动时自动开启隧道”。
-- 页面下方的“安装 frps”卡片可复制 frps 安装提示词，粘贴给能操作公网服务器的 Agent：提示词带上页面里的服务端口、Token（没填则让 Agent 随机生成）和 `allowPorts` 范围，并包含 systemd 自启与防火墙/安全组放行。提示词含 Token，只发给信任的 Agent。
-- 只管理运行 Client 的这台机器，不经 Engine 代理。对外暴露前请确认已绑定身份验证器。
+- Required: the frps server IP/domain and the frps server port (default 7000); fill in the Token as well when frps has one (stored encrypted and never echoed).
+- The remote port is generated randomly by default (range 20000-60000) and then stays stable; click "Regenerate" to change it, which restarts a running tunnel. You can also enter a fixed port (it may be outside the random range and must be within frps `allowPorts`): a manual port that is taken is not changed automatically, and clearing it and saving returns to automatic random. In automatic mode, when the port is taken by frps it is changed automatically and retried up to 3 times.
+- The domain is optional and only used to show the public address `domain:remote-port`; it is not written to the frpc configuration. Domain resolution and the reverse proxy (such as Nginx terminating HTTPS) are configured by you and forward to `server-IP:remote-port`; without a domain you can open `http://server-IP:remote-port` directly (the port must be allowed through).
+- frpc must be available on this machine (0.52 or later, TOML configuration). When it is not detected, the page shows an "Install frpc" button and asks whether an Agent should install it: choose "Yes" to copy an install prompt (paste it to an Agent to run it), or "No" to let the Client download the official release package of a pinned version (0.61.1), verify its SHA-256 and put only frpc into `data/bin/`; when GitHub is unreachable, point `T_AGENT_FRP_DOWNLOAD_BASE` at a mirror (same layout as GitHub releases, including `v0.61.1/frp_sha256_checksums.txt`). You can also install it yourself (for example `brew install frpc` on a Mac) and then click "Re-detect frpc" on the page: it looks in `T_AGENT_FRPC_BIN`, `data/bin/`, PATH and common directories, Homebrew's `bin/`, `opt/frpc/bin` and `Cellar/frpc/<latest version>/bin` (including `/opt/homebrew` on Apple silicon, `/usr/local` on Intel and Linuxbrew), and shows the frpc path and version; a version below 0.52 (no TOML configuration support) is reported and refuses to start. Automatic install only supports macOS / Linux. You can tick "Start the tunnel automatically when the Client starts".
+- The "Install frps" card at the bottom of the page copies an frps install prompt to paste to an Agent that can operate the public server: the prompt carries the server port, the Token (when empty the Agent is asked to generate one at random) and the `allowPorts` range from the page, and includes systemd auto-start and opening the firewall / security group. The prompt contains the Token, so only send it to an Agent you trust.
+- It only manages the machine running the Client and does not go through an Engine proxy. Make sure an authenticator is bound before exposing the Client.
 
-### SSH 反向隧道
+### SSH reverse tunnel
 
-「页面增强」页顶部可切换为 SSH 方式：用 `ssh -R` 在服务器上绑定一个端口，指向本机 Client 的端口。不用在服务器上安装任何东西，只要能用 SSH 登录。
+The top of the "Page enhancement" page can switch to the SSH method: `ssh -R` binds a port on a server that points to the Client port on this machine. Nothing has to be installed on the server; SSH login is enough.
 
-- 必填：服务器 IP/域名、用户名；SSH 端口默认 22。远程端口默认自动随机（20000-60000）并保持稳定，也可手动填写；被占用时自动模式会换端口重试，手动模式不换。
-- 私钥路径可选：**留空走 ssh 默认逻辑**（ssh-agent、`~/.ssh/id_*`、`~/.ssh/config`）；**填写则使用该路径的私钥**（绝对路径或 `~/` 开头，并加 `IdentitiesOnly=yes`）。必须免密登录，使用 `BatchMode`，不会弹出密码输入；首次连接自动信任并记录主机密钥（`StrictHostKeyChecking=accept-new`），主机密钥变更时拒绝连接。
-- 默认只绑定服务器的 `127.0.0.1`，请在服务器上用反向代理转发到该端口；勾选“绑定所有网卡”还需要服务器 sshd 开启 `GatewayPorts yes`（或 `clientspecified`），并允许 `AllowTcpForwarding`。
-- 已连通的隧道意外断开会 5 秒后自动重连（连续最多 5 次）。可勾选“Client 启动时自动开启隧道”。
-- 需要本机有 `ssh` 命令；位置特殊时用 `T_AGENT_SSH_BIN` 指定。只管理运行 Client 的这台机器。
+- Required: the server IP/domain and the username; the SSH port defaults to 22. The remote port is random by default (20000-60000) and stays stable, or can be entered manually; when it is taken the automatic mode retries with another port and the manual mode does not.
+- The private key path is optional: **leave empty to follow ssh's default lookup** (ssh-agent, `~/.ssh/id_*`, `~/.ssh/config`); **enter one to use the key at that path** (an absolute path or one starting with `~/`, with `IdentitiesOnly=yes` added). Passwordless login is required, `BatchMode` is used so no password prompt appears, the host key is trusted and recorded on first connect (`StrictHostKeyChecking=accept-new`), and the connection is refused when the host key changes.
+- By default it only binds the server's `127.0.0.1`, so forward to that port with a reverse proxy on the server; ticking "bind all interfaces" also needs `GatewayPorts yes` (or `clientspecified`) enabled in the server's sshd and `AllowTcpForwarding` allowed.
+- A tunnel that had connected and drops unexpectedly reconnects automatically after 5 seconds (at most 5 times in a row). You can tick "Start the tunnel automatically when the Client starts".
+- The `ssh` command must be available on this machine; use `T_AGENT_SSH_BIN` when it is in an unusual place. It only manages the machine running the Client.
 
-### 登录入口
+### Login entrance
 
-未登录时，除下面的例外，**所有地址都返回 404**（与不存在的地址响应完全一致，不跳转、不提示登录），只有隐藏的登录入口可以打开，默认是：
+When logged out, apart from the exceptions below, **every address returns 404** (exactly like a non-existent address, with no redirect and no login hint); only the hidden login entrance can be opened, which by default is:
 
 ```
 http://127.0.0.1:3000/torin/hide/login
 ```
 
-- 首次绑定身份验证器、登录、更换验证器都从这个入口进入；登录成功后才能访问 `/web` 和各项功能。会话过期后页面会自动跳回该入口。
-- 在 `.env` 中用 `CLIENT_LOGIN_PATH` 改入口（以 `/` 开头、至少 6 个字符，只含字母数字和 `-._~`，可多级，不能占用 `/api`、`/auth`、`/web`、`/v1` 等内置路径），改后重启。无效值会提示并回退到默认值。
-- 未登录仍可访问的例外：Bearer 令牌的机器接口 `/v1`、`/api/remote/v1`（用于多台 t-agent 互连，没有令牌仍返回各自的错误）、`/health`、公开分享页 `/share/*` 及它依赖的脚本样式。
-- 已安装为应用（PWA）的设备：登录有效期内正常使用；会话过期后冷启动应用会看到 404，需要先在浏览器打开登录入口重新登录。
-- 旧的 `/auth/login`、`/auth/setup` 页面地址和多 Client 工作台 `/clients` 已移除（未登录一律 404）。`CLIENT_FRAME_ORIGINS` 仍可用于允许其他站点内嵌本 Client 的页面。
+- Binding an authenticator for the first time, logging in and replacing the authenticator all start from this entrance; `/web` and the features are only accessible after a successful login. After a session expires the page jumps back to this entrance automatically.
+- Change the entrance with `CLIENT_LOGIN_PATH` in `.env` (it starts with `/`, has at least 6 characters, contains only letters, digits and `-._~`, may have several levels, and must not use built-in paths such as `/api`, `/auth`, `/web` or `/v1`), and restart afterwards. An invalid value produces a notice and falls back to the default.
+- Exceptions still reachable when logged out: the Bearer-token machine endpoints `/v1` and `/api/remote/v1` (used to connect several t-agent instances; without a token they still return their own errors), `/health`, public share pages `/share/*` and the scripts and styles they depend on.
+- On a device where it is installed as an app (PWA): it works normally within the login validity; after a session expires a cold start of the app shows a 404, and you must open the login entrance in a browser and log in again first.
+- The old page addresses `/auth/login` and `/auth/setup` and the multi-Client workspace `/clients` have been removed (always 404 when logged out). `CLIENT_FRAME_ORIGINS` can still be used to allow other sites to embed this Client's pages.
 
-### 工作目录工具：导入与清理
+### Workspace tools: import and cleanup
 
-任务仍然只保存在数据库里，下面两个工具在侧栏顶部一行三个图标按钮（＋新建、📁导入、🧹清理，悬浮显示文字；仅本地 Client，远程 Engine 暂无）：
+Tasks are still only stored in the database. The two tools below are three icon buttons in one row at the top of the sidebar (+ new, 📁 import, 🧹 cleanup, with text shown on hover; local Client only, not available for remote Engines yet):
 
-- **导入未管理的目录**：页面加载时自动检查当前工作目录（账号设置的工作目录，或 `TASKS_BASE_DIR`，默认 `~/tasks`）的一级子目录，没有被任何任务管理的会提示“工作目录下有 N 个目录未被管理 · 导入”。点开可勾选、全选、批量导入，只登记任务（标题取目录名，状态“待办”），不在目录里创建文件。以 `.` 开头的目录和 `node_modules` 不显示；已经是某个任务目录（或包含任务目录）的也不显示。
-- **清理代码目录**：任务目录通常不是 Git 仓库，里面有多个仓库。点“清理代码目录”弹出列表，按任务分组列出每个任务目录里（最多 3 层内，不进入仓库内部、隐藏目录和 `node_modules`）的所有仓库，显示占用空间和多少天没动，任务和仓库都按占用从大到小排，可勾选批量清理。只删本地的仓库目录，任务目录里的其他文件、任务和待办保留。任务目录本身就是仓库时只算它自己。每个仓库要同时满足下面条件才能勾选，否则显示原因：没有未提交修改和未跟踪文件；没有 stash；非游离 HEAD；有远程；所有本地分支都有远程分支且没有未推送的提交；仓库目录是仓库根。工作目录本身、家目录、包含其他任务目录的目录和本程序所在目录一律拒绝。服务端删除前会重新检查，并只接受确实位于该任务目录内的仓库，前端还要二次确认。清理前把仓库地址、分支、提交记入数据库 `repo_cleanups`，列表底部“已清理，可恢复”里点“从仓库恢复”会克隆回原路径。
-- **删除任务时可同时删除目录**：右键任务 → 删除，弹窗里有“同时删除目录”复选框，**默认不勾选**（只删任务记录和待办）。勾选后会显示将被永久删除的目录路径。工作目录本身、家目录、包含其他任务目录或本程序的目录、被其他任务共用的目录一律拒绝，此时任务也不会被删除。本地、远程 Engine 都支持；对方版本较旧时只会删任务并提示目录没有删除。目录删除不可恢复，也不会检查 Git 状态，需要保留仓库时请先用“清理代码目录”。
-- 注意：检查依据是本地已知的远程分支状态，不会联网核对；被 `.gitignore` 忽略的文件（依赖目录、`.env` 等）会随目录一起删除，恢复后需要重新生成。`TASK_IDLE_DAYS`（默认 30）只用于列表里的“建议优先清理”提示。
+- **Import unmanaged directories**: when the page loads it automatically checks the first-level subdirectories of the current working directory (the working directory set in the account settings, or `TASKS_BASE_DIR`, default `~/tasks`), and if some are not managed by any task it shows "N directories in the workspace are unmanaged · Import". Opening it lets you tick, select all and import in bulk; only tasks are registered (the title is the directory name, status "To do") and no files are created in the directories. Directories starting with `.` and `node_modules` are not shown; neither are directories that are already a task directory (or contain one).
+- **Clean up code directories**: a task directory is usually not a Git repository and contains several repositories. Click "Clean up code directories" to open a list that groups, by task, all repositories inside each task directory (up to 3 levels deep, not entering repositories, hidden directories or `node_modules`), showing disk usage and how many days they have been untouched; tasks and repositories are both ordered by usage, largest first, and can be ticked for bulk cleanup. Only the local repository directory is deleted; other files in the task directory, the task and its to-dos are kept. When the task directory itself is a repository only it counts. A repository can only be ticked when all of the following hold, otherwise the reason is shown: no uncommitted changes or untracked files; no stash; not a detached HEAD; it has a remote; every local branch has a remote branch and no unpushed commits; the repository directory is the repository root. The workspace itself, the home directory, a directory that contains other task directories and the directory of this program are always refused. The server re-checks before deleting and only accepts repositories that really lie inside that task directory, and the frontend asks for a second confirmation. Before cleaning, the repository address, branch and commit are recorded in the database table `repo_cleanups`, and "Restore from repo" in "Cleaned, restorable" at the bottom of the list clones it back to the original path.
+- **Delete the directory together with a task**: right-click a task → Delete, and the dialog has an "Also delete the directory" checkbox which is **unticked by default** (only the task record and its to-dos are deleted). When ticked, the directory path that will be permanently deleted is shown. The workspace itself, the home directory, a directory containing other task directories or this program, and a directory shared by other tasks are always refused, and then the task is not deleted either. Local and remote Engines both support it; when the other side is older, only the task is deleted and a hint says the directory was not deleted. Directory deletion is irreversible and does not check Git state; when you want to keep a repository, use "Clean up code directories" first.
+- Note: the checks rely on the remote branch state known locally and do not go online to verify it; files ignored by `.gitignore` (dependency directories, `.env` and so on) are deleted with the directory and must be generated again after a restore. `TASK_IDLE_DAYS` (default 30) is only used for the "suggested for cleanup first" hint in the list.
 
-## 终端运行用户
+## Terminal user
 
-Linux 服务器上如果 t-agent 以 root 运行，网页终端里的 Claude Code 会拒绝“跳过权限确认”模式。因此**服务是 root 时，终端自动降权为普通用户**（默认 `dev`）：
+If t-agent runs as root on a Linux server, Claude Code in the web terminal refuses the "skip permission prompts" mode. So **when the service is root, the terminal automatically drops to an ordinary user** (default `dev`):
 
-- `install.sh` 以 root 安装时会创建 `dev`（家目录 `/home/dev`、无密码），把 `TERMINAL_USER=dev` 写入 `.env`，并把安装目录内的任务目录交给它；自定义的任务目录不擅自改属主，请自行 `chown -R dev <目录>`。
-- 可在 `.env` 用 `TERMINAL_USER=用户名` 换用户，`TERMINAL_USER=` 留空表示不降权（终端仍是 root）。未配置且 `dev` 不存在时沿用 root，并在服务日志里提示。
-- 降权后终端不带 `SESSION_SECRET`，`HOME`/`USER` 为目标用户；该用户无权进入的任务目录会改从它的家目录启动并在日志提示。需要 root 操作请另开 root 会话（如 SSH）。该用户要自己安装 Claude Code（`install-claude-code.sh`）。
-- 服务本来就是普通用户、或在 macOS 上时，此功能不生效，终端就是服务用户。
+- When `install.sh` installs as root it creates `dev` (home `/home/dev`, no password), writes `TERMINAL_USER=dev` into `.env`, and gives the task directory inside the install directory to it; the owner of a custom task directory is not changed on our own, so run `chown -R dev <directory>` yourself.
+- Use `TERMINAL_USER=username` in `.env` to use another user; an empty `TERMINAL_USER=` means no drop (the terminal stays root). When it is not configured and `dev` does not exist, root is kept and a hint is written to the service log.
+- After the drop the terminal does not carry `SESSION_SECRET`, and `HOME`/`USER` belong to the target user; a task directory that user cannot enter starts from its home directory and a hint is logged. For operations that need root, open a separate root session (such as SSH). That user installs Claude Code itself (`install-claude-code.sh`).
+- When the service is already an ordinary user, or on macOS, this feature has no effect and the terminal is simply the service user.
 
-### 多 Engine
+### Multiple Engines
 
-- 一个 Client 可保存并切换多台远程 Engine。
-- 使用配对码或访问 Token 建立连接，显示在线、离线和认证失效状态。连接失败（离线、认证失效或任务加载失败）时，该 Engine 不显示任务、文档和终端，只显示“请检查服务状态”的提示、服务地址和失败原因，并提供“重试连接 / 编辑连接 / 移除连接”。
-- 在指定远程 Engine 上创建任务。**远程任务与本地任务使用同一套界面和功能**：技术方案 / README / AGENTS.md 在页面内编辑、待办增删改、目录大纲、相对路径图片、文档变更自动刷新、编辑任务（标题、路径、工作目录、优先级、分组、截止日期）、删除、拖拽排序、文件浏览器与编辑、多终端、终端历史、图片上传，以及终端运行状态（跑马灯 / 呼吸灯，引擎标签上也会汇总显示）。
-- 只有依赖本机文件系统的功能不适用于远程任务：“在 Finder 中显示”“用 VS Code 打开”“生成分享链接”会隐藏。
-- 所有 Engine 连接都是管理权限，不再区分查看 / 操作 / 管理。功能按 Engine 声明的能力启用：旧版 Engine 缺少的能力（排序、文档自动刷新、相对路径图片、路径校验、运行状态等）会自动停用，其余功能照常。需要 Engine 升级到 v2.29.0 或更高才有完整功能。
-- 任务按分组展示，本地与远程都支持新建、重命名、删除自定义分组（侧栏标题旁的“＋”）。
-- “进行中/待办/已完成”是不可修改的系统分组；自定义分组只有在没有任务时才能删除。
-- 通过 Client 代理使用远程交互终端；浏览器不保存 Engine Token。
-- 支持修改远程连接的名称、HTTP/HTTPS 地址和端口，验证成功后才覆盖旧地址。
-- 远程终端的运行状态来自该 Engine 上的 PTY 与 hook：需要在 Engine 所在机器上也运行一次 `ta`，并在 Codex 里 `/hooks` 信任一次，参见“终端运行状态”。
+- One Client can save and switch between several remote Engines.
+- Connect with a pairing code or an access Token; the online, offline and authentication-expired states are shown. When a connection fails (offline, authentication expired or loading tasks failed), that Engine shows no tasks, documents or terminals, only the "Check the service status" hint, the service address and the reason for the failure, with "Retry connection / Edit connection / Remove connection".
+- Create tasks on a specific remote Engine. **A remote task uses the same UI and features as a local task**: editing the design doc / README / AGENTS.md in the page, adding / editing / deleting to-dos, the outline, relative-path images, automatic refresh on document changes, editing the task (title, paths, working directory, priority, group, due date), deleting, drag-and-drop ordering, the file browser and editing, several terminals, terminal history, image upload, and the terminal run state (marquee / breathing light, also summarized on the engine tab).
+- Only features that depend on this machine's file system do not apply to remote tasks: "Reveal in Finder", "Open in VS Code" and "Create share link" are hidden.
+- Every Engine connection has admin rights; view / operate / manage are no longer distinguished. Features are enabled by the capabilities the Engine declares: capabilities an old Engine lacks (ordering, automatic document refresh, relative-path images, path validation, run state and so on) are disabled automatically while the rest works as usual. The Engine must be upgraded to v2.29.0 or later for the full feature set.
+- Tasks are shown by group, and local and remote both support creating, renaming and deleting custom groups (the "+" next to the sidebar title).
+- "In progress / To do / Done" are system groups that cannot be modified; a custom group can only be deleted when it has no tasks.
+- Remote interactive terminals are used through the Client proxy; the browser never stores an Engine Token.
+- The name, HTTP/HTTPS address and port of a remote connection can be changed, and the old address is overwritten only after verification succeeds.
+- The run state of a remote terminal comes from the PTY and hooks on that Engine: run `ta` once on the Engine's machine as well and trust it once with `/hooks` in Codex; see "Terminal run state".
 
-### 安全边界
+### Security boundary
 
-- Client 不使用用户名密码，电脑和手机浏览器必须先绑定身份验证器，再以 6 位 TOTP 动态验证码登录；未绑定不能使用业务页面或浏览器接口。
-- 首次绑定可在服务器终端执行 `node scripts/client-auth-setup.js` 完成（可通过 SSH 远程执行），也可直接在网页登录入口（见“登录入口”）扫码，本机、手机、局域网或反向代理访问均可，无需初始密码或初始化码；未绑定期间任何能访问该地址的人都可抢先绑定，请在开放网络前先完成绑定。绑定密钥加密保存，恢复码仅保存哈希；会话有效期 30 天，使用期间自动续期，支持主动退出、验证码防重放和认证限流。
-- Client 默认只监听 `127.0.0.1`；手机访问需显式开放局域网监听或配置 HTTPS 反向代理。
-- 供其他 Client 连接的 `/v1` 接口不使用网页登录，只接受 Bearer Token。
-- Engine 只保存 Token 的 SHA-256 哈希，Token 明文只在创建时显示一次。
-- 配对码默认 10 分钟有效且只能使用一次。
-- 远程终端使用 30 秒有效、只能消费一次的 WebSocket ticket。
-- Engine 接受任务指定的任意绝对工作目录；持有写权限的 Token 因而具备在 Engine 运行账号权限范围内创建和修改任务文件的能力。
+- The Client uses no username or password: browsers on computers and phones must first bind an authenticator and then log in with a 6-digit TOTP code; business pages and browser APIs cannot be used without binding.
+- The first binding can be done by running `node scripts/client-auth-setup.js` in a terminal on the server (it can be run remotely over SSH), or by scanning the QR code at the web login entrance (see "Login entrance"), from this machine, a phone, the LAN or through a reverse proxy, with no initial password or setup code; until it is bound, anyone who can reach the address can bind first, so finish binding before opening it to a network. The binding secret is stored encrypted and recovery codes only as hashes; a session lasts 30 days and renews while in use, with logout, replay protection for codes and authentication rate limiting.
+- The Client listens on `127.0.0.1` only by default; phone access needs LAN listening to be opened explicitly or an HTTPS reverse proxy.
+- The `/v1` endpoints for other Clients do not use the web login and only accept Bearer Tokens.
+- The Engine stores only the SHA-256 hash of a Token; the plaintext is shown once when it is created.
+- A pairing code is valid for 10 minutes by default and can be used only once.
+- A remote terminal uses a WebSocket ticket that is valid for 30 seconds and can be consumed only once.
+- The Engine accepts any absolute working directory a task specifies; a Token with write permission can therefore create and modify task files within the permissions of the Engine's account.
 
-## 系统要求
+## System requirements
 
-- macOS 或使用主流发行版的 Linux。
-- Node.js 20 或 22+；推荐 Node.js 22 LTS。
-- Client 使用 Git 安装，需要系统已安装 Git。
-- `better-sqlite3` 和 `node-pty` 在无法下载预编译包时需要 Python 3、make 和支持 C++20 的编译器。
+- macOS, or Linux with a mainstream distribution.
+- Node.js 20 or 22+; Node.js 22 LTS is recommended.
+- The Client is installed with Git, so Git must be installed on the system.
+- `better-sqlite3` and `node-pty` need Python 3, make and a C++20-capable compiler when prebuilt packages cannot be downloaded.
 
-macOS 可安装命令行工具：
+On macOS you can install the command line tools:
 
 ```bash
 xcode-select --install
 ```
 
-Debian/Ubuntu 可安装构建依赖：
+On Debian/Ubuntu you can install the build dependencies:
 
 ```bash
 sudo apt update
 sudo apt install -y git curl nodejs npm python3 build-essential clang
 ```
 
-Ubuntu 20.04 默认的 GCC 9 不识别依赖使用的 `-std=c++20` 参数；安装脚本会自动安装并改用 Clang。
+The default GCC 9 on Ubuntu 20.04 does not recognize the `-std=c++20` option the dependencies use; the install script installs Clang automatically and uses it instead.
 
-## 快速安装
+## Quick install
 
-安装脚本会询问端口和任务目录，安装依赖后用 **PM2** 启动服务（进程名 `t-agent`）。默认安装目录是当前目录下的 `t-agent`。
+The install script asks for the port and the task directory, installs the dependencies and then starts the service with **PM2** (process name `t-agent`). The default install directory is `t-agent` in the current directory.
 
-### 安装 Client
+### Install the Client
 
-Client 用于个人电脑或管理节点，内含本地 Engine。默认端口为 `3000`。
-Client 按单用户方式运行，不需要设置用户名或密码；首次打开必须绑定身份验证器。默认仅监听本机地址。
+The Client is for a personal computer or a management node and includes a local Engine. The default port is `3000`.
+The Client runs in single-user mode and needs no username or password; an authenticator must be bound the first time it is opened. By default it listens on the local address only.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/TorinMars/t-agent/main/bootstrap.sh | T_AGENT_MODE=client bash
 ```
 
-安装结束后访问：
+After the install, open:
 
 ```text
 http://127.0.0.1:3000
 ```
 
-Client 默认由 **PM2** 管理：没有 PM2 时脚本会用 `npm install -g pm2` 安装（全局目录不可写时装到 `~/.local`），然后 `pm2 start server.js --name t-agent --cwd <项目目录>` 并 `pm2 save`（工作目录必须是项目目录，`.env` 才能被读到）。端口已被占用时不会启动，会给出提示。**开机自启**需要你执行一次 `pm2 startup`（按它打印的命令运行，其中的 sudo 由你执行）再 `pm2 save`。应用内的“检查更新/一键更新”完成后进程以退出码 75 退出，由 PM2 自动拉起；更新后若服务还没重启，检查更新会提示“需要重启服务”（`pm2 restart t-agent`）。服务启动后会自动出现在“应用列表”里。
+The Client is managed by **PM2** by default: when PM2 is missing the script installs it with `npm install -g pm2` (into `~/.local` when the global directory is not writable), then runs `pm2 start server.js --name t-agent --cwd <project directory>` and `pm2 save` (the working directory must be the project directory so that `.env` can be read). If the port is already in use it does not start and shows a hint. **Start on boot** needs you to run `pm2 startup` once (run the command it prints, with the sudo part executed by you) and then `pm2 save` again. After the in-app "Check for updates / Update" finishes, the process exits with exit code 75 and PM2 starts it again automatically; if the service has not restarted after an update, the update check says "restart the service" (`pm2 restart t-agent`). Once the service is running it shows up in the "App list" automatically.
 
-已经注册了系统服务（macOS `com.tagent.client` LaunchAgent 或 Linux `t-agent.service`）的老安装，重新运行 `install.sh` 时**继续沿用原来的系统服务**，不会悄悄切换以免两个实例抢端口。要改用 PM2：加 `--pm2` 重新运行（会先停用并移除旧服务，再用 PM2 启动）；要继续使用系统服务：加 `--system-service`。
+Old installs that already registered a system service (the macOS `com.tagent.client` LaunchAgent or the Linux `t-agent.service`) **keep using the existing system service** when `install.sh` is run again, and are not silently switched, so two instances do not fight over the port. To switch to PM2, run again with `--pm2` (the old service is stopped and removed first, then PM2 starts it); to keep using the system service, add `--system-service`.
 
-安装完成后，终端末尾会显示“请在浏览器打开”及访问 URL（默认 `http://127.0.0.1:3000`，以安装配置为准）。使用 `--no-service` 或系统不支持自动注册服务时，会先提示手动启动命令，启动后再访问该地址。
+When the install finishes, the end of the terminal output shows "open this in a browser" and the access URL (by default `http://127.0.0.1:3000`, depending on the install configuration). With `--no-service`, or when the system cannot register a service automatically, it first prints the manual start command, and you open the address after starting.
 
-### 访问方式：身份验证器 + 外网，或仅本机
+### Access mode: authenticator + external access, or local only
 
-安装完成后**第一次在本机浏览器打开页面**，先选择访问方式（之后随时可在 设置 → 访问模式 切换）：
+**The first time you open the page in a browser on this machine** after the install, first choose the access mode (you can switch any time later under Settings → Access mode):
 
-- **身份验证器 + 允许外网访问**：见下一节。手机、其他电脑和远程客户端都能连接。
-- **仅本机访问 · 无需验证**：只接受这台机器上的直接访问（`127.0.0.1` / `localhost`），不需要验证码；其他设备、经反向代理或隧道转发的请求、`Host` 不是回环名的请求（防 DNS rebinding）一律返回 404，**包括把本机当作引擎的远程连接（`/v1`）和分享链接**。同一台机器上的其他用户/进程也能访问，请只在个人电脑上使用。
+- **Authenticator + allow external access**: see the next section. Phones, other computers and remote clients can all connect.
+- **Local access only · no verification**: only direct access from this machine (`127.0.0.1` / `localhost`) is accepted, with no code; other devices, requests forwarded by a reverse proxy or tunnel, and requests whose `Host` is not a loopback name (against DNS rebinding) always get 404, **including remote connections that use this machine as an engine (`/v1`) and share links**. Other users / processes on the same machine can also reach it, so use it only on a personal computer.
 
-安装时可以直接指定：`./install.sh --access-mode local`（监听 `127.0.0.1`，免验证）或 `--access-mode remote`（打开页面后绑定身份验证器）。不指定时新安装监听 `0.0.0.0`，由应用按访问模式放行：**未选择访问方式之前，只有本机能打开页面**（远程服务器无法打开本机浏览器时，在服务器终端执行 `node scripts/client-auth-setup.js` 绑定身份验证器即启用外网访问）。
+You can choose at install time: `./install.sh --access-mode local` (listens on `127.0.0.1`, no verification) or `--access-mode remote` (bind an authenticator after opening the page). When not given, a new install listens on `0.0.0.0` and the application lets requests through according to the access mode: **until an access mode is chosen only this machine can open the page** (on a remote server where a local browser cannot be opened, run `node scripts/client-auth-setup.js` in a terminal on the server to bind an authenticator, which enables external access).
 
-切换规则：「仅本机 → 外网」需要先绑定身份验证器（已绑定过的验证一次动态验证码），绑定成功才开放外网；「外网 → 仅本机」需要已登录，立即生效并断开其他设备的会话（若在非本机的浏览器上切换，当前设备也会失去访问）。已经绑定过身份验证器的老安装视为“外网”模式，升级后行为不变；监听地址仍由 `.env` 的 `HOST` 决定，外网模式下 `HOST=127.0.0.1` 时设置页会提示改为 `0.0.0.0`。
+Switching rules: "local only → external" needs an authenticator to be bound first (if already bound, one code is verified), and external access only opens once binding succeeds; "external → local only" needs you to be logged in, takes effect immediately and ends the sessions of other devices (if you switch from a browser that is not on this machine, the current device also loses access). An old install that already bound an authenticator counts as "external" mode and behaves as before after the upgrade; the listen address is still decided by `HOST` in `.env`, and in external mode with `HOST=127.0.0.1` the settings page suggests changing it to `0.0.0.0`.
 
-### 身份验证器与手机访问
+### Authenticator and phone access
 
-新安装和旧版本升级初始都没有身份验证器绑定。再次打开客户端页面时会提示“必须绑定身份验证器”，未绑定不能访问任务、设置或终端；没有跳过绑定的免登录入口。
+A new install and an upgrade from an old version both start with no authenticator bound. Opening the client page again shows "An authenticator is required"; tasks, settings and terminals cannot be reached without binding, and there is no login-free entry that skips binding.
 
-1. 在 Client 所在服务器终端执行 `node scripts/client-auth-setup.js`（可 SSH 登录后执行，不要求在本机操作；端口读取 `PORT`），扫描终端二维码并输入验证码；或直接打开登录入口（本机 `http://127.0.0.1:3000/torin/hide/login`，或手机、局域网、反向代理地址）扫码。无需初始密码或初始化码，不限制本机或远程。已绑定后重启不会取消绑定。
-2. 使用 Google Authenticator、Microsoft Authenticator 或兼容应用扫码；同一手机可点击“在身份验证器中打开”，也可手动添加密钥（基于时间、6 位、30 秒）。输入验证器生成的验证码完成绑定。
-3. 下载并安全保存页面显示的 8 组一次性恢复码。恢复码只显示一次、每组只能使用一次。验证码已使用时，需等待下一组再登录另一设备。
-4. 手机与 Client 在同一局域网时，将 Client `.env` 的 `HOST` 改为 `0.0.0.0` 并重启服务。手机浏览器打开 `http://电脑的局域网IP:3000/web`（端口以实际配置为准），与电脑使用相同页面。手机可双指放大缩小、拖动查看，首页 `/` 不再按设备跳转。
+1. In a terminal on the server running the Client, run `node scripts/client-auth-setup.js` (it can be run after an SSH login and does not have to be on the local machine; the port is read from `PORT`), scan the QR code in the terminal and enter the code; or open the login entrance directly (`http://127.0.0.1:3000/torin/hide/login` locally, or the phone, LAN or reverse-proxy address) and scan the code. No initial password or setup code is needed, and it is not limited to local or remote. Once bound, a restart does not cancel the binding.
+2. Scan with Google Authenticator, Microsoft Authenticator or a compatible app; on the same phone you can tap "Open in authenticator", or add the key manually (time-based, 6 digits, 30 seconds). Enter the code the authenticator generates to finish binding.
+3. Download and keep safe the 8 one-time recovery codes the page shows. Recovery codes are shown only once and each can be used once. If a code was already used, wait for the next one before logging in on another device.
+4. When the phone and the Client are on the same LAN, change `HOST` in the Client's `.env` to `0.0.0.0` and restart the service. Open `http://<computer's LAN IP>:3000/web` in the phone browser (the port depends on the actual configuration); it uses the same page as the computer. The phone can pinch to zoom and drag to look around, and the home page `/` no longer redirects by device.
 
-默认生产部署要求 HTTPS/WSS；可信内网可显式开启 `CLIENT_ALLOW_HTTP=true`。公网使用 HTTPS/WSS 反向代理，并用防火墙限制来源。身份验证器登录会话 30 天有效，使用期间自动续期，连续 30 天未使用才过期，新设备、会话过期或主动退出后需要重新验证。登录设置中可更换身份验证器；丢失验证器时使用恢复码登录并重新绑定，更换后旧验证器、旧恢复码和其他设备会话立即失效。退出登录只断开网页终端连接，不终止服务端正在运行的程序。
+Production deployments require HTTPS/WSS by default; a trusted intranet can enable `CLIENT_ALLOW_HTTP=true` explicitly. For the public network use an HTTPS/WSS reverse proxy and limit the sources with a firewall. An authenticator login session is valid for 30 days and renews while in use; it only expires after 30 days of no use, and a new device, an expired session or an explicit logout needs verification again. The authenticator can be replaced in the login settings; if you lose it, log in with a recovery code and bind again, and after the replacement the old authenticator, the old recovery codes and the sessions of other devices stop working immediately. Logging out only disconnects the web terminal connection and does not terminate the programs running on the server.
 
-`SESSION_SECRET` 必须是至少 32 个字符的随机密钥，并在重启与升级间保持不变。安装脚本会自动生成；弱密钥会拒绝绑定。请随数据库安全备份该密钥，否则无法解密已有绑定及远程连接 Token。
+`SESSION_SECRET` must be a random key of at least 32 characters and must stay the same across restarts and upgrades. The install script generates it automatically; a weak key refuses binding. Back this key up safely together with the database, otherwise the existing binding and the remote connection Tokens cannot be decrypted.
 
-### 指定安装目录或分支
+### Specify the install directory or branch
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/TorinMars/t-agent/main/bootstrap.sh \
   | T_AGENT_MODE=client T_AGENT_DIR=/opt/t-agent T_AGENT_REF=main bash
 ```
 
-### 从已有源码安装
+### Install from existing source
 
 ```bash
 chmod +x install.sh
 ./install.sh --mode client
 ```
 
-非交互安装示例：
+Non-interactive install example:
 
 ```bash
 ./install.sh --port 13500 \
   --tasks-dir /srv/t-agent-tasks
 ```
 
-已有 `.env` 不会被覆盖；显式提供 `--port` 或 `--tasks-dir` 时，只修改相应配置。运行 `./install.sh --help` 可查看全部参数。
+An existing `.env` is not overwritten; when `--port` or `--tasks-dir` is given explicitly, only the corresponding setting is changed. Run `./install.sh --help` to see all options.
 
-## 开始使用
+## Getting started
 
-### 1. 创建本地任务
+### 1. Create a local task
 
-打开 Client 后点击“新建任务”：
+After opening the Client click "New task":
 
-1. “所属 Engine”选择“本地 Engine”。
-2. 填写标题；MD 文件路径和工作路径可以留空。
-3. 设置优先级、分组和截止日期后创建。
+1. For "Engine" choose "Local engine".
+2. Enter a title; the MD file path and working path can be left empty.
+3. Set the priority, group and due date, then create it.
 
-路径留空时，T-Agent 会在 `TASKS_BASE_DIR` 下创建任务目录，并自动生成：
+When the paths are left empty, T-Agent creates the task directory under `TASKS_BASE_DIR` and generates:
 
 ```text
-任务目录/
+task-directory/
 ├── DESIGN.md
 ├── README.md
 ├── AGENTS.md
 └── CLAUDE.md
 ```
 
-任务详情顶部可切换技术方案、README、AGENTS.md、待办和终端。终端会以该任务的工作路径作为当前目录。终端标签可切换同一任务的多个独立 Shell；页面内按任务及终端分别缓存画面、滚动位置和连接，普通切换不重复连接或重放历史，也不会终止后台程序。刷新页面后可再次选择已创建的终端。终端底部提供紧凑功能键栏：Esc、Tab、Ctrl、Command、Option、Shift、方向键、Enter 和退格。点击修饰键后再点击功能键或输入字母可组成组合键，发送一次后自动释放；“Option + ↑”按钮直接发送 Alt+Up（`ESC [ 1 ; 3 A`）。Command 使用扩展键盘协议的 Super 修饰键，需要终端内程序支持，不触发操作系统快捷键。终端顶部提供五个操作：
+The top of the task details switches between the design doc, README, AGENTS.md, to-dos and the terminal. The terminal uses the task's working path as its current directory. The terminal tabs switch between several independent shells of the same task; the page caches the screen, scroll position and connection per task and terminal, so an ordinary switch does not reconnect or replay history and never terminates background programs. After refreshing the page you can select the terminals you already created again. The bottom of the terminal has a compact function-key bar: Esc, Tab, Ctrl, Command, Option, Shift, the arrow keys, Enter and Backspace. Click a modifier key and then a function key or type a letter to form a combination; it is released automatically after being sent once; the "Option + ↑" button sends Alt+Up (`ESC [ 1 ; 3 A`) directly. Command uses the Super modifier of the extended keyboard protocol, needs support from the program in the terminal, and does not trigger operating-system shortcuts. The top of the terminal offers five actions:
 
-- “新开终端”在任务工作目录中新建独立 Shell，保留已有终端。
+- "New terminal" starts a separate shell in the task working directory and keeps the existing terminals.
 
-- “重新打开”只重新建立浏览器连接，保留当前 Shell 进程、所在目录和历史。
-- “关闭当前终端”会终止当前 Shell 及其中运行的程序，并保留标签和已记录的输出历史。
-- 删除终端的入口在终端标签页里：新建终端的标签右侧有 ×（也可在标签上按 Delete 键），点击确认后终止该终端的 Shell，永久删除标签和历史记录；删除的是当前标签时随后切回默认终端，删除其他标签不会切换。默认终端没有 ×，不能删除。远程任务需要 Engine 同时支持此操作。工具栏里原来的“删除当前终端”按钮已移除。
-- “从工作目录重新打开”会终止当前 Shell、清空旧终端历史，并以任务配置的工作目录启动全新 Shell。
+- "Reopen" only rebuilds the browser connection and keeps the current shell process, its directory and history.
+- "Close current terminal" terminates the current shell and the programs running in it, and keeps the tab and the output history already recorded.
+- The entry to delete a terminal is in the terminal tab: the tab of a newly created terminal has a × on its right (you can also press Delete on the tab); after you confirm, the shell of that terminal is terminated and the tab and history are permanently deleted; if the deleted one is the current tab the view then switches back to the default terminal, and deleting another tab does not switch. The default terminal has no × and cannot be deleted. For remote tasks the Engine must support this operation too. The old "Delete current terminal" button in the toolbar has been removed.
+- "Reopen from working directory" terminates the current shell, clears the old terminal history and starts a brand-new shell in the working directory configured for the task.
 
-### 2. 连接远程 Engine
+### 2. Connect a remote Engine
 
-在左侧 Engine 导航底部点击 `＋ 连接远程`：
+At the bottom of the Engine navigation on the left click `+ Connect remote`:
 
-1. 填写 URL，例如 `http://192.168.1.20` 或 `https://engine.example.com`。
-2. 使用默认 HTTP/HTTPS 端口时端口可留空；直接连接自定义端口时填写如 `3100`。
-3. 填入一次性配对码 `TA-XXXX-XXXX-XXXX` 或访问 Token `tae_...`。
-4. 点击“测试连接”，成功后点击“连接”。
+1. Enter the URL, for example `http://192.168.1.20` or `https://engine.example.com`.
+2. The port may be left empty when the default HTTP/HTTPS port is used; when connecting directly to a custom port enter it, such as `3100`.
+3. Enter a one-time pairing code `TA-XXXX-XXXX-XXXX` or an access Token `tae_...`.
+4. Click "Test connection", and after it succeeds click "Connect".
 
-URL 只能填写协议和主机，不要包含 `/v1` 或其他路径。使用 HTTPS 反向代理时通常填写域名，端口留空。
+The URL may only contain the protocol and the host; do not include `/v1` or any other path. When using an HTTPS reverse proxy you usually enter the domain and leave the port empty.
 
-连接成功后，左侧会出现新的 Engine 标签。每个标签会显示该 Engine 的当前版本；Client 启动时会自动探测远程版本，并在一分钟内对重复加载做节流。切换标签即可查看对应服务器的任务。
+After connecting, a new Engine tab appears on the left. Each tab shows that Engine's current version; the Client probes remote versions automatically at start-up and throttles repeated loads within one minute. Switch tabs to look at the tasks of the corresponding server.
 
-### 让另一个 Client 连接当前 Client
+### Let another Client connect to this Client
 
-Client 已内置标准 Engine 服务，使用同一个端口，无需另外安装 Engine：
+The Client already includes a standard Engine service on the same port, so no separate Engine install is needed:
 
-1. 在被连接的 Client 中打开“设置 → 远程服务 → 作为引擎供其他客户端连接”，生成配对码。
-2. 在另一个 Client 点击“＋ 连接远程”，填写被连接 Client 的可达 IP/域名、实际端口及配对码；URL 不包含 `/v1` 或页面路径。
-3. 连接后可管理该 Client 的本机任务、文件和终端，不会转发它已连接的其他远程 Engine。配对得到的连接是管理权限，可在被连接 Client 的同一设置入口撤销。
+1. In the Client to be connected, open "Settings → Remote service → Allow other clients to connect as an engine" and generate a pairing code.
+2. In the other Client click "+ Connect remote" and enter a reachable IP/domain of the Client being connected, the actual port and the pairing code; the URL does not include `/v1` or a page path.
+3. After connecting you can manage that Client's local tasks, files and terminals; the other remote Engines it has connected are not forwarded. A connection obtained by pairing has admin rights and can be revoked from the same settings entry of the connected Client.
 
-被连接 Client 必须允许远程访问。可在 `.env` 中设置 `HOST=0.0.0.0` 放开监听，可信内网 HTTP 另设 `CLIENT_ALLOW_HTTP=true`。访问者通过一次性配对码换取独立 Token，不需要共享浏览器登录会话或身份验证器。
+The connected Client must allow remote access. Set `HOST=0.0.0.0` in `.env` to open listening, and for plain HTTP on a trusted intranet also set `CLIENT_ALLOW_HTTP=true`. A visitor exchanges the one-time pairing code for an independent Token, and no browser login session or authenticator needs to be shared.
 
-### 3. 创建远程任务
+### 3. Create a remote task
 
-点击“新建任务”，在“所属 Engine”中选择目标远程节点，然后可在“远程工作目录”中填写服务器上的绝对路径。任务、文档和工作目录会直接创建在该 Engine 上，不会复制到 Client 本机；指定目录不存在时 Engine 会自动创建。
+Click "New task", choose the target remote node under "Engine", and then enter an absolute path on the server under "Remote working directory". The task, documents and working directory are created directly on that Engine and are not copied to the Client's machine; when the specified directory does not exist the Engine creates it automatically.
 
-每个任务都可以单独指定工作目录，不再受工作区根目录白名单限制。只填写工作目录时，技术方案默认使用该目录下的 `DESIGN.md`；路径留空时，Engine 会在自己的 `TASKS_BASE_DIR` 下自动创建任务目录。远程路径必须是绝对路径，并且 Engine 进程账号需要拥有相应目录的读写权限。
+Every task can have its own working directory, no longer limited by an allowlist of workspace roots. When only the working directory is entered, the design doc defaults to `DESIGN.md` in that directory; when the paths are left empty, the Engine creates the task directory under its own `TASKS_BASE_DIR`. A remote path must be absolute, and the account of the Engine process needs read and write permission on the directory.
 
-远程终端同样支持新开多个独立终端、重新打开、关闭以及从工作目录重新打开。关闭和重新启动仅影响当前终端标签。多终端功能需要 Engine 提供 `terminal:multiple` 能力；旧版 Engine 仍可使用默认终端，新开终端时会提示升级。终端控制接口从 `2.5.0` 开始提供；控制旧 Engine 时，Client 会提示先升级，不会把控制内容写入 Shell。
+Remote terminals likewise support starting several independent terminals, reopening, closing and reopening from the working directory. Closing and restarting only affect the current terminal tab. The multi-terminal feature needs the Engine to provide the `terminal:multiple` capability; an old Engine can still use the default terminal and asks you to upgrade when you start a new terminal. The terminal control endpoint is available from `2.5.0`; when controlling an old Engine the Client asks you to upgrade first and never writes the control content into the shell.
 
-### 4. 管理远程连接与任务分组
+### 4. Manage remote connections and task groups
 
-当服务器 IP、端口或 HTTPS 域名发生变化时：
+When the server IP, the port or the HTTPS domain changes:
 
-1. 在左侧右键对应的远程 Engine 标签。
-2. 选择“编辑连接”。
-3. 修改名称、URL 或端口并测试连接。
-4. 保存。
+1. Right-click the corresponding remote Engine tab on the left.
+2. Choose "Edit connection".
+3. Change the name, URL or port and test the connection.
+4. Save.
 
-Client 会沿用已保存的 Token。只有新地址能够通过 Token 访问 `/v1/info` 时才会保存，因此测试失败不会破坏原连接。
+The Client keeps using the saved Token. The new address is only saved when it can reach `/v1/info` with the Token, so a failed test never damages the original connection.
 
-同一右键菜单可以新建任务分组。自定义分组右键可重命名或删除，任务右键可移动到其他分组。分组中还有任务时，服务端会拒绝删除；“进行中/待办/已完成”三个系统分组不提供编辑和删除操作。
+The same context menu can create a task group. Right-click a custom group to rename or delete it, and right-click a task to move it to another group. The server refuses to delete a group that still has tasks; the three system groups "In progress / To do / Done" offer no edit or delete.
 
-### 5. 由 Client 升级远程 Engine
+### 5. Upgrade a remote Engine from the Client
 
-远程 Engine 标签的右键菜单提供“检查更新”。Client 会在服务端解密已保存的 Token，并代理以下操作，Token 不会发送给浏览器：
+The context menu of a remote Engine tab offers "Check for updates". The Client decrypts the saved Token on the server and proxies the following operations; the Token is never sent to the browser:
 
-1. 让远程 Engine 检查配置分支上的新版本。
-2. 展示当前版本、目标版本、安装方式和检查错误。
-3. 经用户二次确认后触发更新，并等待 Engine 自动重启恢复。
-4. 更新成功后刷新 Client 中记录的 Engine 版本和任务列表。
+1. Ask the remote Engine to check for a new version on its configured branch.
+2. Show the current version, the target version, the install type and any check error.
+3. After a second confirmation by the user, trigger the update and wait for the Engine to restart and recover automatically.
+4. After a successful update, refresh the Engine version and the task list recorded in the Client.
 
-远程升级属于主机管理操作，所有连接都具备该权限。旧版 Engine 尚未提供更新 API，需要先手动升级到 `2.4.0` 或更高版本一次，此后即可由 Client 完成后续升级。Engine 必须由 systemd、launchd 或其他带自动重启能力的进程管理器托管。
+A remote upgrade is a host administration operation and every connection has that permission. An old Engine that has no update API yet must first be upgraded by hand to `2.4.0` or later once, after which the Client can complete later upgrades. The Engine must be hosted by systemd, launchd or another process manager that can restart it automatically.
 
-## Token 与配对
+## Tokens and pairing
 
-### 权限
+### Permissions
 
-所有配对码和访问 Token 都是管理权限（`owner`）：读写任务、文档、待办和文件，使用终端，管理其他 Token，执行远程升级和 PM2 管理。不再区分只读 / 操作 / 管理，请求里的角色参数会被忽略。此前签发的只读或操作 Token 也按管理权限处理（数据库中的记录不改动），不想再让某个连接拥有管理权限时，请在设置的远程服务里撤销它。Token 应妥善保存，尽量避免在不信任的设备之间复制。
+Every pairing code and access Token has admin rights (`owner`): reading and writing tasks, documents, to-dos and files, using terminals, managing other Tokens, running remote upgrades and PM2 management. View / operate / manage are no longer distinguished, and the role parameter in requests is ignored. Read-only or operate Tokens issued earlier are also treated as admin (the records in the database are not changed); when you no longer want a connection to have admin rights, revoke it under Remote service in settings. Keep Tokens safe and avoid copying them between devices you do not trust.
 
-### 创建一次性配对码
+### Create a one-time pairing code
 
-在 Engine 项目目录执行：
+In the Engine project directory run:
 
 ```bash
 node scripts/create-engine-pairing-code.js
 ```
 
-生成的配对码 10 分钟内有效且只能使用一次。Client 使用它完成连接后，会自动换取并加密保存正式访问 Token。
+The generated pairing code is valid for 10 minutes and can be used only once. After the Client uses it to connect, it exchanges for the permanent access Token and stores it encrypted.
 
-### 直接创建访问 Token
+### Create an access Token directly
 
 ```bash
 node scripts/create-engine-token.js "Mac Client"
 ```
 
-### Token 忘记或失效
+### A forgotten or invalid Token
 
-Token 明文无法找回，因为 Engine 只保存哈希：
+The plaintext of a Token cannot be recovered, because the Engine only stores hashes:
 
-1. 在 Engine 目录重新生成配对码或访问 Token。
-2. 如果 Client 中的旧连接还在但已认证失效，移除旧连接。
-3. 使用原 Engine 地址和新凭证重新连接。
+1. In the Engine directory generate a new pairing code or access Token.
+2. If the old connection is still in the Client but authentication has expired, remove the old connection.
+3. Reconnect with the original Engine address and the new credential.
 
-仅修改服务器地址时不需要新 Token，直接使用“编辑连接”即可。
+When only the server address changes, no new Token is needed; just use "Edit connection".
 
-Client 保存的远程 Token 依赖 `.env` 中的 `SESSION_SECRET` 解密。迁移或备份 Client 时必须同时保留 `.env` 和 `data/`。
+The remote Tokens saved by the Client are decrypted with `SESSION_SECRET` from `.env`. When migrating or backing up the Client, keep both `.env` and `data/`.
 
-## HTTPS 与 Nginx 反向代理
+## HTTPS and Nginx reverse proxy
 
-生产环境推荐由 Nginx 为被连接的 Client 提供 HTTPS/WSS。Client 默认监听 `127.0.0.1:3000`，Nginx 通过该地址回源；请用服务器防火墙阻止公网直接访问原始端口。
+In production Nginx is recommended to provide HTTPS/WSS for the Client being connected. The Client listens on `127.0.0.1:3000` by default and Nginx proxies back to that address; use the server firewall to stop direct public access to the original port.
 
-Nginx 的核心代理配置如下：
+The core Nginx proxy configuration is:
 
 ```nginx
 location / {
@@ -365,9 +365,9 @@ location / {
 }
 ```
 
-宝塔用户可在站点的“反向代理”中把目标 URL 设置为 `http://127.0.0.1:3000`，启用 WebSocket，并确认生成的站点配置包含上面的 `Upgrade`、`Connection` 和长超时设置。建议同时启用强制 HTTPS，并只保留 TLS 1.2/1.3。
+BT Panel users can set the target URL to `http://127.0.0.1:3000` under the site's "Reverse proxy", enable WebSocket, and confirm that the generated site configuration contains the `Upgrade`, `Connection` and long-timeout settings above. It is also recommended to enable forced HTTPS and keep only TLS 1.2/1.3.
 
-检查配置和连通性：
+Check the configuration and connectivity:
 
 ```bash
 /www/server/nginx/sbin/nginx -t
@@ -376,47 +376,48 @@ sudo /etc/init.d/nginx reload
 curl -i https://engine.example.com/v1/health
 ```
 
-健康检查应返回：
+The health check should return:
 
 ```json
 {"ok":true}
 ```
 
-随后在 Client 中填写 `https://engine.example.com`，端口留空。
+Then enter `https://engine.example.com` in the Client and leave the port empty.
 
-## 配置说明
+## Configuration
 
-复制示例配置：
+Copy the example configuration:
 
 ```bash
 cp .env.example .env
 ```
 
-常用配置：
+Common settings:
 
 ```env
 PORT=3000
 T_AGENT_MODE=client
-SESSION_SECRET=请替换为足够长的随机字符串
+SESSION_SECRET=replace-with-a-long-random-string
 
-# Client 内部数据归属 ID，不用于登录
+# Internal data ownership ID of the Client, not used for login
 SINGLE_USER_ID=local
-# 监听地址：新安装默认 0.0.0.0（是否允许外部访问由访问模式决定）；--access-mode local 时为 127.0.0.1
+# Listen address: 0.0.0.0 by default for a new install (whether external access is allowed is decided by the access mode); 127.0.0.1 with --access-mode local
 HOST=0.0.0.0
-# 初始访问方式 local / remote（留空则首次打开页面时选择；已保存的选择优先）
+# Initial access mode local / remote (leave empty to choose on first page load; a saved choice wins)
 ACCESS_MODE=
 
-# 自动创建任务文件的根目录
+# Root directory in which task files are created automatically
 TASKS_BASE_DIR=/path/to/tasks
 
-# 本 Client 作为 Engine 供其他 Client 连接时显示的名称与数据归属
+# Name and data ownership shown when this Client is connected to by other Clients as an Engine
 ENGINE_NAME=my-engine
 ENGINE_OWNER_ID=local
 ```
 
-从旧版本升级时无需手动设置 `SINGLE_USER_ID`。程序会沿用原数据库中的首个账号作为唯一数据归属，旧 `.env` 中的 `AUTH_USERS` 可以暂时保留，但不再参与认证。
+When upgrading from an old version there is no need to set `SINGLE_USER_ID` by hand. The program keeps using the first account in the original database as the only data owner, and `AUTH_USERS` in an old `.env` can stay for now but no longer takes part in authentication.
 
-更新相关配置：
+Update-related settings:
+
 
 ```env
 GITHUB_VERSION_URL=https://api.github.com/repos/TorinMars/t-agent/contents/VERSION.json?ref=main
@@ -429,32 +430,32 @@ UPDATE_CHECK_INTERVAL_SECONDS=1800
 UPDATE_CHECK_STARTUP_DELAY_SECONDS=30
 ```
 
-私有仓库可在服务端设置 `GITHUB_TOKEN`。不要把 GitHub Token 或 Engine Token 写入网页代码、Nginx 配置或提交到 Git。
+For a private repository set `GITHUB_TOKEN` on the server. Never put a GitHub Token or an Engine Token into web code or Nginx configuration, or commit it to Git.
 
-## 更新
+## Updates
 
-Client 服务启动后会自动检查更新，之后默认每 30 分钟检查一次。发现新版本后，设置按钮会显示提示点：
+After the Client service starts it checks for updates automatically, and then every 30 minutes by default. When a new version is found, the settings button shows a hint dot:
 
-1. 打开“设置”。
-2. 点击“立即检查”查看版本。
-3. 有新版本时点击更新按钮并二次确认。
+1. Open "Settings".
+2. Click "Check now" to see the version.
+3. When a new version exists, click the update button and confirm a second time.
 
-Client 是单用户实例，设置页面中的本地用户可以执行更新。
+The Client is a single-user instance, and the local user on the settings page can run updates.
 
-- Git Client 会检查工作区、拉取配置分支并只执行 fast-forward 更新。
-- 旧版归档 Client 会下载对应 GitHub 分支的安装包；建议先迁移为 Git 安装。
-- 更新前会备份 SQLite。Git 安装的纯前端、静态资源和文档更新会直接完成，不安装依赖、不重启服务，也不自动刷新页面，保留现有 Shell 连接；用户可稍后刷新加载新界面。
-- 服务端、引擎、依赖、构建脚本或 API/数据库版本变化时，仍安装依赖、校验 `node-pty`、构建前端资源并重启服务。确认界面会说明是否需要重启。归档安装仍使用完整更新流程。
-- 更新范围与当前进程启动时的提交比较，避免上次失败后遗留的服务端变化被误判为无需重启。
-- `.env`、数据库、日志以及任务目录不会被更新覆盖。
+- A Git Client checks the working tree, fetches the configured branch and only performs a fast-forward update.
+- An old archive Client downloads the package of the matching GitHub branch; migrating it to a Git install first is recommended.
+- The SQLite database is backed up before updating. For a Git install, updates that only touch the frontend, static assets and documents complete directly: no dependencies are installed, the service is not restarted and the page is not refreshed automatically, so existing shell connections are kept; the user can refresh later to load the new UI.
+- When the server, engine, dependencies, build scripts or the API/database version change, dependencies are still installed, `node-pty` is verified, frontend assets are built and the service is restarted. The confirmation says whether a restart is needed. An archive install still uses the full update flow.
+- The update scope is compared with the commit the current process started with, so server-side changes left over from a failed earlier update are not mistaken for "no restart needed".
+- `.env`, the database, logs and task directories are never overwritten by an update.
 
-**检查更新会区分“有新版本”和“代码已更新但服务还没重启”**：它拿远程版本和磁盘上的 `VERSION.json` 比较，所以手动 `git pull`、上次更新中途失败或强制恢复仓库之后，磁盘代码会比运行中的进程新。这时状态是 `restart_pending`（“需要重启服务”），提示“代码已更新到 X，但服务仍在运行 Y 的代码，需要重启服务才会生效”并亮红点，同时列出各种安装方式的重启命令（PM2 `pm2 restart t-agent`、macOS `launchctl kickstart -k gui/$(id -u)/com.tagent.client`、Linux `sudo systemctl restart t-agent`），而不是误报“已是最新”。Git 安装按“进程启动时的提交 → 当前 HEAD”之间有没有需要重启的改动来判断（只改了前端等热更新文件时不算），安装包方式比较启动时读到的版本号；服务重启后自动恢复。
+**The update check distinguishes "a new version exists" from "the code was updated but the service has not restarted"**: it compares the remote version with the on-disk `VERSION.json`, so after a manual `git pull`, an update that failed halfway or a forced repository restore the code on disk is newer than the running process. The state is then `restart_pending` ("restart the service"), with the message "Code was updated to X, but the service is still running the Y code; restart the service for it to take effect" and a red dot, and it lists the restart commands for each install type (PM2 `pm2 restart t-agent`, macOS `launchctl kickstart -k gui/$(id -u)/com.tagent.client`, Linux `sudo systemctl restart t-agent`), instead of wrongly reporting "up to date". A Git install decides by whether there are changes needing a restart between "the commit at process start → the current HEAD" (changes only to hot-updatable files such as the frontend do not count), and a package install compares the version read at start-up; it recovers automatically after the service restarts.
 
-Git 工作区中**被跟踪的文件**有未提交修改，或本地分支已经分叉时，网页更新会停止，防止覆盖本地代码；错误提示会列出具体是哪些文件（最多 8 个）。没被跟踪的杂文件（如 `.DS_Store`、`nohup.out`、编辑器或 Agent 创建的 `.claude/` 等）**不会**阻止更新：快进合并时若新版本恰好要写入同名文件，git 会自己拒绝并保留你的文件，不会覆盖。
+When **tracked files** in the Git working tree have uncommitted changes, or the local branch has diverged, the web update stops to avoid overwriting local code; the error lists exactly which files (at most 8). Untracked stray files (such as `.DS_Store`, `nohup.out`, or `.claude/` created by an editor or Agent) do **not** block the update: during the fast-forward merge, if the new version happens to write a file of the same name, git refuses by itself and keeps your file without overwriting it.
 
-更新界面（本机和远程 Engine 相同）会显示安装依赖、构建前端的已用时间和 npm 最近一行输出，超过 30 秒没有输出会提示“可能是网络不通或在编译”；更新用的 npm 使用较短的重试和超时（`fetch-retries=1`、`fetch-timeout=60s`，环境里已设置的值不被覆盖），下载地址不可达时一两分钟内报错而不是等满 10 分钟。更新过程会在服务日志中输出带 `[update]` 前缀的时间、阶段、命令耗时，以及 npm 安装和前端构建的实时输出；失败时记录退出码和错误详情。PM2 部署可用 `pm2 logs t-agent` 查看（使用部署时的 `PM2_HOME`），systemd 部署可查看对应服务的 journal 日志。在线更新需要的 `esbuild` 随正式依赖安装，生产环境省略开发依赖也能完成构建。
+The update UI (the same for this machine and remote Engines) shows the elapsed time of installing dependencies and building the frontend and the latest npm output line, and after 30 seconds without output it hints "the network may be down or it may be compiling"; the npm used for the update has short retries and timeouts (`fetch-retries=1`, `fetch-timeout=60s`, values already set in the environment are not overridden), so an unreachable download address fails within a minute or two instead of waiting the full 10 minutes. The update process writes the time, stage and command duration to the service log with an `[update]` prefix, along with the live output of the npm install and the frontend build; on failure the exit code and error details are recorded. For a PM2 deployment use `pm2 logs t-agent` (with the `PM2_HOME` used at deployment), and for a systemd deployment look at the journal of the corresponding service. The `esbuild` needed by the online update is installed as a regular dependency, so the build also works in production with dev dependencies omitted.
 
-### 手动更新 Git Client
+### Update a Git Client by hand
 
 ```bash
 cd /path/to/t-agent
@@ -464,42 +465,42 @@ npm run build:monaco
 node scripts/verify-node-pty.js
 ```
 
-然后按当前系统重启服务，浏览器使用 `Command/Ctrl + Shift + R` 强制刷新静态资源。
+Then restart the service for the current system, and force-refresh static assets in the browser with `Command/Ctrl + Shift + R`.
 
-### 将安装包迁移为 Git 安装
+### Migrate a package install to a Git install
 
-新版安装目录可直接使用通用迁移脚本。脚本会保留 `.env`、`data/`、`logs/` 和 `tasks/`，并把原安装完整备份到同级目录：
+A newer install directory can use the general migration script directly. The script keeps `.env`, `data/`, `logs/` and `tasks/`, and makes a full backup of the original install in a sibling directory:
 
 ```bash
 # Client
 T_AGENT_REF=main ./scripts/migrate-to-git.sh
 ```
 
-旧安装包中还没有通用脚本时，可以先从目标分支下载脚本到当前项目的 `scripts/` 目录。迁移期间 systemd 或 launchd 服务会自动停止并重新注册；没有 systemd 的 Linux 环境需要先手动停止当前进程。确认新安装的配置和任务正常后，再自行处理备份。
+When an old package does not have the general script yet, first download the script from the target branch into the current project's `scripts/` directory. During migration a systemd or launchd service is stopped and registered again automatically; a Linux environment without systemd needs the current process stopped by hand first. After confirming that the configuration and tasks of the new install are fine, deal with the backup yourself.
 
-## 服务管理
+## Service management
 
-### PM2（Client 默认）
+### PM2 (the Client default)
 
 ```bash
-pm2 status t-agent          # 状态
-pm2 logs t-agent            # 日志
-pm2 restart t-agent         # 重启
-pm2 stop t-agent            # 停止
-pm2 startup && pm2 save     # 开机自启：按 pm2 startup 打印的命令执行，再保存进程列表
+pm2 status t-agent          # status
+pm2 logs t-agent            # logs
+pm2 restart t-agent         # restart
+pm2 stop t-agent            # stop
+pm2 startup && pm2 save     # start on boot: run the command printed by pm2 startup, then save the process list
 ```
 
-网页里的“实用工具 → PM2 进程管理”和“应用列表”都可以查看状态、重启、停止和看日志；注意停止或重启 t-agent 自己会中断当前页面（界面会二次确认）。从旧的 LaunchAgent/systemd 迁移：`./install.sh --pm2`。下面的 macOS / Linux 小节适用于沿用系统服务的老安装。
+"Utilities → PM2 process management" and the "App list" in the web UI can both show status, restart, stop and show logs; note that stopping or restarting t-agent itself interrupts the current page (the UI asks for a second confirmation). To migrate from an old LaunchAgent/systemd: `./install.sh --pm2`. The macOS / Linux sections below apply to old installs that keep using a system service.
 
 ### macOS
 
-macOS 没有 `systemctl`，请使用 `launchctl`：
+macOS has no `systemctl`; use `launchctl`:
 
 ```bash
 launchctl kickstart -k "gui/$UID/com.tagent.client"
 ```
 
-查看日志：
+View the logs:
 
 ```bash
 tail -f logs/stdout.log logs/stderr.log
@@ -512,44 +513,44 @@ sudo systemctl status t-agent
 sudo systemctl restart t-agent
 ```
 
-查看日志：
+View the logs:
 
 ```bash
 sudo journalctl -u t-agent -f
 ```
 
-### Linux 容器或未运行 systemd
+### Linux containers or systems not running systemd
 
-有些 Ubuntu 容器虽然安装了 `systemctl`，但 PID 1 不是 systemd。安装脚本会自动识别这种环境、跳过服务注册，并显示手动启动命令。Client 可以前台运行：
+Some Ubuntu containers have `systemctl` installed although PID 1 is not systemd. The install script recognizes this environment automatically, skips service registration and shows the manual start command. The Client can run in the foreground:
 
 ```bash
 cd /path/to/t-agent
 npm start
 ```
 
-生产环境可以把上面的命令交给已有的进程管理器托管。临时后台运行可以使用：
+In production you can hand the command above to an existing process manager. For a temporary background run you can use:
 
 ```bash
 cd /path/to/t-agent
 nohup npm start >> logs/stdout.log 2>> logs/stderr.log &
 ```
 
-## 手动启动和开发
+## Manual start and development
 
-安装依赖：
+Install the dependencies:
 
 ```bash
 npm install
 ```
 
-启动完整 Client：
+Start the full Client:
 
 ```bash
 npm start
-# 等价于 npm run start:client
+# equivalent to npm run start:client
 ```
 
-运行测试：
+Run the tests:
 
 ```bash
 npm ci --include=dev
@@ -557,66 +558,66 @@ npx playwright install chromium
 npm test
 ```
 
-Playwright 固定为兼容 macOS 13 的 1.58.2。全量测试包含真实 Chromium 浏览器回归，开发依赖包含 Playwright、xterm 及 Fit 插件。Linux CI 可使用 `npx playwright install --with-deps chromium` 安装系统依赖；也可通过 `CHROME_PATH` 指定现有 Chromium 可执行文件。
+Playwright is pinned to 1.58.2, which is compatible with macOS 13. The full test run includes real Chromium browser regressions, and the dev dependencies include Playwright, xterm and the Fit addon. Linux CI can install the system dependencies with `npx playwright install --with-deps chromium`; you can also point `CHROME_PATH` at an existing Chromium executable.
 
 
-默认访问地址为 `http://127.0.0.1:3000`。
+The default address is `http://127.0.0.1:3000`.
 
-## 常见问题
+## FAQ
 
-### 远程 Engine 已添加但没有显示
+### A remote Engine was added but is not shown
 
-先强制刷新浏览器，再检查 Client 是否成功读取远程列表：
+First force-refresh the browser, then check whether the Client read the remote list successfully:
 
 ```text
 GET /api/remote-servers
 ```
 
-如果接口有数据但标签仍未出现，请查看浏览器控制台和 Client 日志。
+If the endpoint returns data but the tab still does not appear, check the browser console and the Client log.
 
-### 远程服务显示离线
+### A remote service shows offline
 
-在 Client 服务器上检查：
+On the Client server check:
 
 ```bash
 curl -i https://engine.example.com/v1/health
 ```
 
-然后检查 Engine 服务和反向代理日志：
+Then check the Engine service and the reverse proxy logs:
 
 ```bash
 sudo journalctl -u t-agent -n 100 --no-pager
 tail -n 100 /www/wwwlogs/engine.example.com.error.log
 ```
 
-HTTP 健康检查正常但终端失败时，通常应检查 Nginx 的 WebSocket 请求头、读超时和防火墙。
+When the HTTP health check is fine but the terminal fails, you should usually check Nginx's WebSocket request headers, the read timeout and the firewall.
 
-### `node-pty 未安装` 或 `posix_spawnp failed`
+### `node-pty is not installed` or `posix_spawnp failed`
 
 ```bash
 npm ci --ignore-scripts=false
 node scripts/verify-node-pty.js
 ```
 
-如果校验仍失败：
+If the verification still fails:
 
 ```bash
 npm rebuild node-pty --ignore-scripts=false --foreground-scripts
 node scripts/verify-node-pty.js
 ```
 
-macOS 请先确保已安装 Xcode Command Line Tools，然后重新运行安装脚本。
+On macOS first make sure the Xcode Command Line Tools are installed, then run the install script again.
 
-### Linux 安装时报 `unrecognized command line option '-std=c++20'`
+### `unrecognized command line option '-std=c++20'` during a Linux install
 
-这表示 npm 未能下载原生模块的预编译包，回退源码编译后发现系统 `g++` 版本过旧。新版安装脚本会在 Debian/Ubuntu 上自动选择 Clang，在 CentOS/RHEL 上尝试安装 GCC Toolset。已有安装目录可以直接重新运行。即使上次失败时已经创建 `.env`，只要数据库从未生成过 Token，安装成功后仍会补发初始 owner Token：
+This means npm could not download the prebuilt package of the native module, fell back to building from source and found the system `g++` too old. The newer install script picks Clang automatically on Debian/Ubuntu and tries to install a GCC Toolset on CentOS/RHEL. An existing install directory can simply be run again. Even if `.env` was already created in the failed run, as long as the database has never produced a Token, the initial owner Token is still issued after a successful install:
 
 ```bash
 cd /path/to/t-agent
 ./install.sh
 ```
 
-Ubuntu 20.04 也可以手动安装 Clang 后重试：
+On Ubuntu 20.04 you can also install Clang by hand and retry:
 
 ```bash
 sudo apt update
@@ -626,7 +627,7 @@ cd /path/to/t-agent
 CC=clang CXX=clang++ ./install.sh
 ```
 
-CentOS/RHEL 8 系统也可以手动安装 GCC Toolset 12 后重试：
+On CentOS/RHEL 8 you can also install GCC Toolset 12 by hand and retry:
 
 ```bash
 sudo dnf install -y gcc-toolset-12-gcc gcc-toolset-12-gcc-c++
@@ -637,263 +638,267 @@ cd /path/to/t-agent
 ./install.sh
 ```
 
-`prebuild-install` 的 deprecated 警告和 npm 新版本提示不是此次编译失败的原因。
+The `prebuild-install` deprecation warning and the notice about a new npm version are not the cause of this build failure.
 
-### 日志反复出现 `VERSION_URL_NOT_CONFIGURED`
+### The log repeatedly shows `VERSION_URL_NOT_CONFIGURED`
 
-在 `.env` 中补充 `GITHUB_VERSION_URL` 和更新仓库配置，或暂时关闭检查：
+Add `GITHUB_VERSION_URL` and the update repository settings to `.env`, or turn the check off for now:
 
 ```env
 UPDATE_CHECK_ENABLED=false
 ```
 
-修改 `.env` 后需要重启服务。
+Restart the service after changing `.env`.
 
-## 数据与备份
+## Data and backups
 
-建议备份：
+Back up:
 
 ```text
-.env             # 单用户 ID、SESSION_SECRET、更新来源
-data/            # SQLite、会话、远程连接和更新状态
-tasks/           # 默认任务工作目录；自定义目录需单独备份
-logs/            # 可选，运行日志
+.env             # single-user ID, SESSION_SECRET, update source
+data/            # SQLite, sessions, remote connections and update state
+tasks/           # default task working directory; custom directories need a separate backup
+logs/            # optional, run logs
 ```
 
-不要只复制 `data/` 而丢失 `.env`，否则 Client 可能无法解密已经保存的远程 Token。
+Do not copy only `data/` and lose `.env`, otherwise the Client may be unable to decrypt the remote Tokens already saved.
 
-## 卸载
+## Uninstall
 
-以下操作会停止服务并永久删除安装目录、配置、数据库、日志和默认任务目录。脚本会先列出目标，并要求输入 `UNINSTALL` 确认：
+The following stops the service and permanently deletes the install directory, configuration, database, logs and the default task directory. The script first lists the targets and asks you to type `UNINSTALL` to confirm:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/TorinMars/t-agent/main/uninstall.sh | bash
 ```
 
-自定义安装目录：
+Custom install directory:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/TorinMars/t-agent/main/uninstall.sh \
   | T_AGENT_DIR=/opt/t-agent bash
 ```
 
-## 目录结构
+## Directory structure
 
 ```text
 t-agent/
-├── db/               # SQLite Schema 和会话存储
-├── docs/             # 架构及 Engine API 文档
-├── lib/              # Token、终端历史等基础组件
-├── middleware/       # Session 与 Engine Token 鉴权
-├── public/           # Client 前端静态资源
-├── routes/           # Client 与 Engine HTTP/WebSocket 路由
-├── scripts/          # Token、迁移、构建和诊断脚本
-├── services/         # Engine、远程连接及更新业务组件
-├── data/             # 运行数据，不提交 Git
-├── logs/             # 服务日志，不提交 Git
-└── tasks/            # 默认任务工作目录，不提交 Git
+├── db/               # SQLite schema and session store
+├── docs/             # Architecture and Engine API documents
+├── lib/              # Base components such as tokens and terminal history
+├── middleware/       # Session and Engine Token authentication
+├── public/           # Static frontend assets of the Client
+├── routes/           # HTTP/WebSocket routes of the Client and the Engine
+├── scripts/          # Token, migration, build and diagnostic scripts
+├── services/         # Engine, remote connection and update business components
+├── data/             # Run-time data, not committed to Git
+├── logs/             # Service logs, not committed to Git
+└── tasks/            # Default task working directory, not committed to Git
 ```
 
 ## License
 
-仓库暂未声明开源许可证。未经授权，请勿假定代码可以被复制、分发或用于商业发布。
+The repository has not declared an open-source license yet. Without authorization, do not assume the code may be copied, distributed or used for commercial release.
 
-设置按钮左侧的“一键更新”会立即检查客户端新版本，并在可更新时直接执行，无需二次确认；更新中禁用重复点击。仅前端变更保持 Shell 连接，需要引擎变更时按更新流程重启。工作区冲突等阻断会显示原因，不自动强制覆盖。更新弹窗上方显示当前阶段和已用时间，下方像终端一样滚动打印更新日志（git、npm 的输出，最近 300 行，凭据已隐藏）；更新完成后页面自动刷新（需要重启服务时则等服务恢复后刷新）。远程 Engine 的更新弹窗同样显示日志并在完成后自动刷新页面，Engine 版本过旧时没有日志，只显示进度文字。
+The "Update" button to the left of the settings button checks for a new client version immediately and, when one can be installed, runs it directly without a second confirmation; repeated clicks are disabled while updating. A frontend-only change keeps shell connections, and a change that needs the engine restarts according to the update flow. Blockers such as working-tree conflicts show the reason and are never overwritten by force automatically. The top of the update dialog shows the current stage and elapsed time, and below it the update log scrolls like a terminal (the output of git and npm, the latest 300 lines, with credentials hidden); after the update completes the page refreshes automatically (when the service must restart, it refreshes once the service is back). The update dialog of a remote Engine likewise shows the log and refreshes the page after completion; an Engine that is too old has no log and shows only the progress text.
 
-任务文档默认使用工作目录下的 `DESIGN.md`、`README.md` 和 `AGENTS.md`，已有文件直接读取，缺失时才创建，绝不覆盖已有内容。默认 `DESIGN.md` 随工作目录变化；旧任务指向其他目录的默认 `DESIGN.md` 也按当前工作目录解析，旧文件保留。手动指定其他文件名的技术方案路径继续使用自定义文件。
+Task documents default to `DESIGN.md`, `README.md` and `AGENTS.md` in the working directory; existing files are read directly and only created when missing, and existing content is never overwritten. The default `DESIGN.md` follows the working directory; the default `DESIGN.md` of an old task that pointed at another directory is also resolved against the current working directory, and the old file is kept. A design path that was set manually to another file name keeps using the custom file.
 
-任务编辑支持分别设置技术方案、README、AGENT 三个文件的绝对路径；远程任务可通过右键菜单“编辑文档路径”设置。显式路径优先于工作目录默认值（包括其他目录中的 DESIGN.md）；清空后恢复默认。切换路径不会移动或覆盖旧文件，目标不存在时创建。远程 Engine 需升级至 v2.10.12 或更高版本。
+Task editing supports setting the absolute paths of the design doc, README and AGENT files separately; for a remote task they can be set from the context menu entry "Edit document paths". An explicit path wins over the working-directory default (including a DESIGN.md in another directory); clearing it restores the default. Changing a path never moves or overwrites the old file, and the target is created when it does not exist. A remote Engine must be upgraded to v2.10.12 or later.
 
-### Agent 规则文件兼容
+### Agent rule file compatibility
 
-新任务默认创建 `AGENTS.md` 和 `CLAUDE.md`，后者通过 `@AGENTS.md` 引用主规则。已有 `CLAUDE.md` 保留内容并补齐引用。启动时迁移已有任务：仅有 `AGENT.md` 时改为 `AGENTS.md`；两者并存时保留 `AGENTS.md` 并删除 `AGENT.md`。旧的显式 `AGENT.md` 路径也同步迁移，其他自定义规则路径保持原样，工作目录仍补齐标准规则入口。不可访问的工作目录记录错误并在下次启动重试，不会重建不存在的旧目录。远程项目在对应 Engine 更新并启动后迁移。
+New tasks create `AGENTS.md` and `CLAUDE.md` by default, and the latter references the main rules through `@AGENTS.md`. An existing `CLAUDE.md` keeps its content and gets the reference added. Existing tasks are migrated at start-up: when only `AGENT.md` exists it becomes `AGENTS.md`; when both exist `AGENTS.md` is kept and `AGENT.md` is deleted. An old explicit `AGENT.md` path is migrated as well, other custom rule paths are left as they are, and the working directory still gets the standard rule entry points. A working directory that cannot be accessed records an error and is retried at the next start-up, and an old directory that no longer exists is not recreated. Remote projects are migrated after the corresponding Engine is updated and started.
 
-### 任务文件浏览器
+### Task file browser
 
-选中任务后，点击顶部“文件浏览器”打开目录树和代码编辑器。页面自动切到终端，文件面板从上向下展开，默认占工具栏下方高度的 85%，底部终端仍可输入；拖动面板底边可调整比例，拖动目录树右边缘可调整树宽度。再次点击按钮或“收起”恢复完整终端，不会关闭 Shell。
+After selecting a task, click "File browser" at the top to open the directory tree and the code editor. The page switches to the terminal automatically and the file panel unfolds from the top, taking 85% of the height below the toolbar by default, while the terminal at the bottom still accepts input; drag the bottom edge of the panel to adjust the ratio and drag the right edge of the tree to adjust its width. Click the button again or "Collapse" to restore the full terminal; this does not close the shell.
 
-面板支持多个文件标签、新建文件和文件夹、重命名、确认删除，以及显示隐藏文件。范围限于当前任务工作目录；符号链接只显示，不展开或操作。仅编辑不超过 5 MiB 的 UTF-8 文本，保留原有 BOM、换行符和权限。文件修改后点击保存或按 Ctrl/Cmd+S；离开未保存文件时可保存、放弃或取消。文件被终端或 Agent 修改后，保存会提示冲突，可重新加载或确认覆盖。
+The panel supports several file tabs, creating files and folders, renaming, confirmed deletion, and showing hidden files. It is limited to the current task working directory; symbolic links are only displayed and are never expanded or operated on. Only UTF-8 text up to 5 MiB is edited, and the original BOM, line endings and permissions are kept. After modifying a file click Save or press Ctrl/Cmd+S; when leaving an unsaved file you can save, discard or cancel. When a file was modified by the terminal or an Agent, saving reports a conflict and you can reload or confirm the overwrite.
 
-本地和远程任务使用相同面板。远程 Engine 需支持 `files:read` / `files:write` 能力；旧版本提示升级。文件请求沿用任务归属检查和服务器代理，不把远程 Token 暴露给浏览器。该版本不提供上传下载、Git 面板和全项目搜索。
+Local and remote tasks use the same panel. A remote Engine must support the `files:read` / `files:write` capabilities; an older version asks you to upgrade. File requests keep the task ownership check and the server proxy and never expose the remote Token to the browser. This version offers no upload / download, Git panel or whole-project search.
 
-### 终端中译英输入框（DeepSeek / 智谱 GLM）
+### Terminal Chinese-to-English input (DeepSeek / Zhipu GLM)
 
-终端下方有一个输入框：输入中文，回车后由 DeepSeek 或智谱 GLM 翻译成英文，自动键入当前终端并回车提交（适合给 Claude Code / Codex 下指令）。首次使用点输入框右侧的 ⚙，在“翻译服务”下拉里选 DeepSeek（接口地址默认 `https://api.deepseek.com`，模型默认 `deepseek-flash`）或智谱 GLM（默认 `https://open.bigmodel.cn/api/paas/v4`，模型默认 `glm-5.3-flash`，自动把思考压到最低档以免超时），填入对应 API Key；每个服务商的 Key 分别保存，切换服务商不会丢失另一家已保存的 Key（保存时 Key 留空即沿用已存的 Key）；密钥加密保存在 Client 上，不会下发给浏览器或远程引擎，翻译在 Client 上进行，所以远程引擎的终端同样可用。纯英文（不含中文）的输入原样发送，不调用接口。译文里的控制字符会被清除并压成一行，终端未连接时不发送、保留输入。
+Below the terminal there is an input box: type Chinese, press Enter, and DeepSeek or Zhipu GLM translates it into English, types it into the current terminal and submits it with Enter (handy for giving instructions to Claude Code / Codex). On first use click the ⚙ on the right of the input, pick DeepSeek in the "Translation service" dropdown (the endpoint defaults to `https://api.deepseek.com` and the model to `deepseek-flash`) or Zhipu GLM (default `https://open.bigmodel.cn/api/paas/v4`, model `glm-5.3-flash`, with thinking pushed to the lowest level to avoid timeouts), and enter the matching API key; each provider's key is stored separately, switching providers never loses the key saved for the other one (leaving the key empty when saving keeps the stored key); keys are stored encrypted on the Client and are never sent to the browser or remote engines, and translation happens on the Client, so terminals of remote engines work too. Input without any Chinese (plain English) is sent as-is and no endpoint is called. Control characters in the translation are removed and the text is collapsed into one line; when the terminal is not connected nothing is sent and the input is kept.
 
-### 终端图片上传（阿里云 OSS）
+### Terminal image upload (Alibaba Cloud OSS)
 
-在 Client 的设置中配置阿里云 OSS 并启用后，可在本地或远程任务终端直接粘贴图片，电脑和手机也都可使用终端底部的“上传图片”按钮选择图片（手机可从相册选择）。支持 PNG、JPEG、GIF、WebP，单张不超过 10 MiB。上传期间全页显示蒙版和进度条，禁止终端输入、切换任务等操作；上传完成后自动把图片 URL 填入原终端，不自动回车。失败后解除蒙版并显示原因。
+After configuring and enabling Alibaba Cloud OSS in the Client settings, you can paste images straight into local or remote task terminals, and on computers and phones alike you can use the "Upload image" button at the bottom of the terminal to choose an image (a phone can pick from the photo library). PNG, JPEG, GIF and WebP are supported, up to 10 MiB each. While uploading, the whole page shows a mask and a progress bar and terminal input, task switching and the like are disabled; when the upload completes the image URL is typed into the original terminal without pressing Enter. After a failure the mask is removed and the reason shown.
 
-填写 Bucket、Region（例如 `oss-cn-hangzhou`）、AccessKey ID、AccessKey Secret 和对象前缀。建议为专用 RAM 用户授予该前缀的 `oss:PutObject` 与 `oss:GetObject` 权限。图片由 Client 服务端上传，不需要向浏览器或远程 Engine 提供 OSS 密钥，也不需要配置浏览器直传 CORS。密钥加密保存在 Client 数据库，修改配置时密钥留空会保留已保存的值；备份数据库时请同时保留 `SESSION_SECRET`。
+Enter the bucket, region (for example `oss-cn-hangzhou`), AccessKey ID, AccessKey Secret and the object prefix. Granting a dedicated RAM user the `oss:PutObject` and `oss:GetObject` permissions on that prefix is recommended. Images are uploaded by the Client server, so no OSS key has to be given to the browser or to remote Engines, and no CORS for direct browser upload is needed. The key is stored encrypted in the Client database, and leaving the key empty when changing the configuration keeps the saved value; when backing up the database also keep `SESSION_SECRET`.
 
-默认返回有效期 24 小时的私有对象签名链接。需要长期有效的链接时，可填写已配置公开读取的 HTTPS 访问地址（如自己的 CDN 地址）；程序不会修改 Bucket 的访问权限。签名链接在有效期内可被持有者读取，过期后需重新取得链接；图片对象不会自动删除，可在 OSS 中配置生命周期规则。服务端反向代理需允许至少 10 MiB 的请求体（Nginx 可设 `client_max_body_size 12m;`）。
+By default a private-object signed link valid for 24 hours is returned. When a long-lived link is needed, enter an HTTPS access address that is configured for public reads (such as your own CDN address); the program never changes the bucket's access permissions. A signed link can be read by anyone holding it during its validity and must be obtained again after it expires; image objects are not deleted automatically and a lifecycle rule can be configured in OSS. The server-side reverse proxy must allow a request body of at least 10 MiB (for Nginx set `client_max_body_size 12m;`).
 
-安装版应用与网页使用同一套 OSS 设置。保存凭据后需勾选“启用图片上传”；未启用时保存页面会明确提示。应用重新获得焦点或回到前台时刷新配置，首次读取失败可在上传时重试，终端上传按钮不会因配置读取失败而隐藏。不同 Client 的 OSS 配置仍各自独立。
+The installed app and the web page share the same OSS settings. After saving the credentials you must tick "Enable image upload"; when it is not enabled the save page says so explicitly. The configuration is refreshed when the app regains focus or returns to the foreground, a first read failure can be retried at upload time, and the terminal upload button is not hidden because reading the configuration failed. The OSS configuration of different Clients is still independent.
 
-### 可信内网直接访问 Client
+### Direct access to the Client on a trusted intranet
 
-在 `.env` 中设置 `HOST=0.0.0.0` 和 `CLIENT_ALLOW_HTTP=true` 并重启，然后通过 `http://内网IP:端口/torin/hide/login` 登录；默认要求 HTTPS。HTTP 不加密验证码和会话，需自行限制访问来源。
+Set `HOST=0.0.0.0` and `CLIENT_ALLOW_HTTP=true` in `.env` and restart, then log in via `http://intranet-IP:port/torin/hide/login`; HTTPS is required by default. HTTP does not encrypt codes and sessions, so restrict the access sources yourself.
 
-### 终端历史按需恢复
+### On-demand terminal history restore
 
-刷新页面或重新连接终端时，先恢复当前画面和最近 500 行滚动历史，不再把完整日志一次性传到浏览器回放。服务端保留终端的光标、颜色和全屏程序状态；实时输出继续正常显示。页面内普通切换任务或终端仍复用已打开的实例。
+When the page is refreshed or the terminal reconnects, the current screen and the latest 500 lines of scrollback are restored first, and the full log is no longer sent to the browser for replay in one go. The server keeps the terminal's cursor, colors and full-screen program state; live output keeps displaying normally. An ordinary switch between tasks or terminals inside the page still reuses the instances that are already open.
 
-点击终端工具栏的“历史记录”按需查看保留日志，继续加载更早内容。历史窗口是独立的只读文本，不会把旧输出及其清屏、光标控制指令写回正在使用的终端。首次打开从这次连接时的日志末尾开始，因此会包含最近内容；连接后的新输出仍显示在主终端。每页最多 500 行并限制传输大小，服务器继续沿用现有约 5 MB 日志保留上限。
+Click "History" in the terminal toolbar to view the retained log on demand and keep loading earlier content. The history window is a separate read-only text and never writes old output and its screen-clearing and cursor-control sequences back into the terminal in use. The first open starts at the end of the log at the time of this connection, so it contains the latest content; new output after connecting is still shown in the main terminal. Each page has at most 500 lines and the transfer size is limited, and the server keeps its existing log retention limit of about 5 MB.
 
-本地和远程终端使用同一套流程。远程 Engine 也需要升级；旧 Engine 仍按原方式恢复历史，Client 不会向不支持分页的 Engine 发送历史请求。
+Local and remote terminals use the same flow. A remote Engine must also be upgraded; an old Engine restores history in the original way, and the Client never sends a history request to an Engine that does not support paging.
 
-### 终端运行状态
+### Terminal run state
 
-服务端为每个终端判定 `idle` / `running` / `done` 三种状态，浏览器每 1.5 秒轮询 `GET /api/tasks/terminal-activity`，刷新页面后状态不会丢失：
+The server decides one of three states, `idle` / `running` / `done`, for every terminal; the browser polls `GET /api/tasks/terminal-activity` every 1.5 seconds, and the state is not lost after a page refresh:
 
-- **执行中（running）**：左侧任务项和对应终端标签的外圈出现跑马灯。左侧任务项汇总该任务所有终端，任一终端执行中即显示。
-- **完成待确认（done）**：绿色呼吸灯，一直保持到你打开该终端。正在查看该终端、切到它所在的标签或切回浏览器窗口，都算确认（`POST /api/tasks/:id/terminal/ack`）。后台终端完成后不会被其他终端的确认吞掉。
-- 系统设置了“减少动态效果”时，两种效果都不再动画。
+- **Running (running)**: an outer-ring marquee appears on the task item on the left and on the matching terminal tab. The task item on the left aggregates all terminals of that task, and it is shown when any terminal is running.
+- **Finished, awaiting review (done)**: a green breathing light that stays until you open that terminal. Looking at the terminal, switching to the tab it lives in, or switching back to the browser window all count as acknowledging it (`POST /api/tasks/:id/terminal/ack`). A background terminal that finished is not swallowed by the acknowledgement of another terminal.
+- When the system has "reduce motion" set, neither effect is animated any more.
 
-判定方式按前台进程区分：
+The decision depends on the foreground process:
 
-| 前台程序 | 判定依据 |
+| Foreground program | How it is decided |
 | --- | --- |
-| 普通命令（`make`、`npm test` 等） | 占据 PTY 前台即执行中，静默也保持；回到 shell 提示符即完成。约 1 秒内结束的命令不显示 |
-| Claude Code、Codex 等 Agent | 优先使用它们的 hook 上报：提交提示为开始、一轮结束为完成、需要权限确认时显示完成待确认，你回应后继续工作会自动回到执行中 |
-| 没有 hook 的 Agent，以及 `ssh`、`tmux`、`vim` 等交互程序 | 按输出判断：1.5 秒内连续多次输出为执行中，静默约 3 秒视为在等你；你自己的按键回显和调整窗口后的重绘不计入 |
+| Ordinary commands (`make`, `npm test` and so on) | Holding the PTY foreground means running, even when silent; returning to the shell prompt means finished. A command that ends within about 1 second is not shown |
+| Agents such as Claude Code and Codex | Their hook reports are preferred: submitting a prompt is the start, the end of a turn is finished, and when a permission confirmation is needed it shows finished-awaiting-review; once you answer and it continues, it automatically returns to running |
+| Agents without hooks, and interactive programs such as `ssh`, `tmux` and `vim` | Decided by output: several outputs within 1.5 seconds means running, and about 3 seconds of silence counts as waiting for you; the echo of your own keystrokes and the redraw after a window resize do not count |
 
-Agent 中途按 Esc 或 Ctrl+C 中断时不会触发结束 hook，此时执行中且静默超过 20 秒会自动视为完成。
+When an Agent is interrupted midway with Esc or Ctrl+C, the end hook is not triggered, and in that case being "running" and silent for more than 20 seconds is automatically treated as finished.
 
-**Hook 上报**：终端 PTY 的环境里有 `TA_HOOK_URL` 和 `TA_HOOK_TOKEN`（token 按任务和终端用 HMAC 计算，只存在于那个 PTY 中），hook 命令只在 `TA_HOOK_URL` 存在时才用 `curl` 上报到 `POST /hooks/terminal-activity`；在普通终端里运行同一份配置不会有任何动作，服务不可达时也不会阻塞 Agent。hook 配置在 `rules/claude/settings.json` 和 `rules/codex/hooks.json`，由下文的“用户级规则与默认配置同步”合并到本机，本机已有的 hook 保留。
+**Hook reports**: the environment of the terminal PTY has `TA_HOOK_URL` and `TA_HOOK_TOKEN` (the token is computed per task and terminal with HMAC and only exists in that PTY), and the hook command only reports with `curl` to `POST /hooks/terminal-activity` when `TA_HOOK_URL` exists; running the same configuration in an ordinary terminal does nothing, and when the service is unreachable it never blocks the Agent. The hook configuration is in `rules/claude/settings.json` and `rules/codex/hooks.json`, and is merged into the machine by the "User-level rules and default configuration sync" below; hooks that already exist locally are kept.
 
-- 在目标机器上运行一次 `ta`（或带同步函数的 `claude` / `codex`），配置才会写入 `~/.claude/settings.json` 和 `~/.codex/hooks.json`。
-- Codex 要求审核并信任 hook：首次进入 Codex 后输入 `/hooks` 批准，未批准前 Codex 不会执行。
-- 通过 ssh 进入远程机器再运行 Agent 时，环境变量不会带过去，这种情况按输出判断。
-- 依赖 `curl`。
+- Run `ta` (or `claude` / `codex` with the sync function) once on the target machine, and only then is the configuration written to `~/.claude/settings.json` and `~/.codex/hooks.json`.
+- Codex requires hooks to be reviewed and trusted: after first entering Codex type `/hooks` to approve; before approval Codex does not run them.
+- When you ssh into a remote machine and then run an Agent, the environment variables are not carried over, and in that case the state is decided by output.
+- Requires `curl`.
 
-## 开发环境安装脚本
+## Dev environment install script
 
-页面顶部“实用工具”标签复制的命令会运行 `scripts/install-claude-code.sh`，适用于 macOS 和 Linux，全部装在当前用户目录，不使用 Homebrew、不执行 `sudo`：
+The command copied by the "Utilities" tab at the top of the page runs `scripts/install-claude-code.sh`. It suits macOS and Linux, installs everything into the current user's directory, and uses neither Homebrew nor `sudo`:
 
-1. 检查系统、架构、`curl`/`wget`、`tar`、`git`、能否访问 `claude.ai` 与 `github.com`。
-2. 安装 Claude Code（官方原生安装器）；已安装则跳过。
-3. 安装 Codex：优先下载 GitHub 发布页的预编译二进制，失败时回退到 `npm install -g --prefix ~/.local @openai/codex`。
-4. 没有 SSH 密钥时生成 `ed25519` 密钥（默认无密码短语）并只显示公钥；已有任何密钥都不会覆盖。
-5. 安装同步程序到 `~/.local/share/t-agent/agent-sync.py`，先同步一次，并在 shell 配置里写入 `claude` / `codex` 包装函数（详见下节“用户级规则与默认配置同步”）；`--skip sync` 跳过，`--no-modify-path` 时只同步一次、不写包装函数。
-6. 安装统一命令 `ta` 到 `~/.local/bin/ta`（详见下节“统一命令 ta”）；`--skip ta` 跳过，已有的其他同名程序不会被覆盖。
-7. 安装 PM2（详见下节“PM2 进程管理”）；`--skip pm2` 跳过。
-8. 加 `--with-apps`（仅 macOS 本机桌面会话）时，下载并安装 Maccy、Snipaste、Clash Verge Rev：均为 Apple 公证的官方包，安装前校验代码签名和系统版本要求，默认装到 `/Applications`（不可写时用 `~/Applications`，也可用 `--apps-dir` 指定）；已安装的跳过，SSH 远程登录时自动跳过。首次打开所需的“辅助功能”“屏幕录制”授权需要手动完成。
-9. 把 `~/.local/bin` 追加到 shell 配置文件（只追加一次），最后汇总每一项的结果；任一项失败时退出码为 1。
+1. Check the system, architecture, `curl`/`wget`, `tar`, `git`, and whether `claude.ai` and `github.com` are reachable.
+2. Install Claude Code (the official native installer); skipped when already installed.
+3. Install Codex: prefer downloading the prebuilt binary from the GitHub release page, and fall back to `npm install -g --prefix ~/.local @openai/codex` on failure.
+4. When there is no SSH key, generate an `ed25519` key (no passphrase by default) and show only the public key; an existing key of any kind is never overwritten.
+5. Install the sync program to `~/.local/share/t-agent/agent-sync.py`, sync once, and write `claude` / `codex` wrapper functions into the shell config (see "User-level rules and default configuration sync" below); `--skip sync` skips it, and with `--no-modify-path` it only syncs once and writes no wrapper functions.
+6. Install the unified command `ta` to `~/.local/bin/ta` (see "Unified command ta" below); `--skip ta` skips it, and an existing program of the same name is never overwritten.
+7. Install PM2 (see "PM2 process management" below); `--skip pm2` skips it.
+8. With `--with-apps` (macOS local desktop session only), download and install Maccy, Snipaste and Clash Verge Rev: all are official Apple-notarized packages whose code signature and system version requirement are verified before installing, installed to `/Applications` by default (`~/Applications` when it is not writable, or choose with `--apps-dir`); installed ones are skipped, and over an SSH login they are skipped automatically. The "Accessibility" and "Screen Recording" permissions needed on first launch must be granted by hand.
+9. Append `~/.local/bin` to the shell config file (only once) and finally summarize the result of each item; if any item fails the exit code is 1.
 
-参数：`--check`（只检查）、`--upgrade`、`--no-modify-path`、`--passphrase`、`--skip claude|codex|ssh|sync|ta|pm2`、`--with-apps`、`--apps-dir DIR`，例如 `curl -fsSL <脚本地址> | bash -s -- --check`。
+Options: `--check` (check only), `--upgrade`, `--no-modify-path`, `--passphrase`, `--skip claude|codex|ssh|sync|ta|pm2`, `--with-apps`, `--apps-dir DIR`, for example `curl -fsSL <script-url> | bash -s -- --check`.
 
-## 代理安装与订阅配置
+## Proxy install and subscription setup
 
-“实用工具”页的“配置代理”命令运行 `scripts/install-proxy.sh`，只提示输入订阅链接，不需要 `sudo`：
+The "Configure proxy" command on the "Utilities" page runs `scripts/install-proxy.sh`, which only prompts for the subscription link and needs no `sudo`:
 
-- **macOS（默认）**：检查已安装 Clash Verge（可先用 `install-claude-code.sh --with-apps` 安装），用 `clash://install-config` 深链接把订阅导入 Clash Verge；“系统代理”开关需要在应用里手动打开。
-- **Linux / macOS 加 `--core`**：下载最新 mihomo 内核到 `~/.local/bin`，拉取订阅到 `~/.config/mihomo/config.yaml`，强制只在本机监听（混合端口默认 7890、控制接口默认 127.0.0.1:9090，可用 `--port`、`--controller-port` 修改），校验配置后以 `systemd --user` 服务运行；没有 systemd 用户服务时退回后台进程。同时生成 `~/.config/mihomo/proxy-env.sh`，`source` 后用 `proxy_on` / `proxy_off` 切换当前终端的代理环境变量。
-- **订阅链接**：只从终端隐藏输入（无终端时读取 `T_AGENT_PROXY_SUB_URL`），保存到权限 600 的文件，不打印、不出现在进程参数或日志里。订阅内容必须是 Clash/mihomo 格式，否则会给出提示。
-- 其他参数：`--update`（用已保存的订阅重新拉取并重启）、`--status`、`--reconfigure`、`--upgrade`、`--no-service`。
+- **macOS (default)**: checks that Clash Verge is installed (install it first with `install-claude-code.sh --with-apps`) and imports the subscription into Clash Verge with a `clash://install-config` deep link; the "System Proxy" switch must be turned on by hand in the app.
+- **Linux / macOS with `--core`**: downloads the latest mihomo core to `~/.local/bin`, fetches the subscription to `~/.config/mihomo/config.yaml`, forces it to listen on this machine only (mixed port 7890 by default and controller 127.0.0.1:9090 by default, changeable with `--port` and `--controller-port`), validates the configuration, and runs it as a `systemd --user` service; without a systemd user service it falls back to a background process. It also generates `~/.config/mihomo/proxy-env.sh`, and after `source` you switch the proxy environment variables of the current terminal with `proxy_on` / `proxy_off`.
+- **Subscription link**: only read as hidden input from the terminal (or from `T_AGENT_PROXY_SUB_URL` when there is no terminal) and saved to a file with mode 600; it is never printed and never appears in process arguments or logs. The subscription content must be in Clash/mihomo format, otherwise a hint is shown.
+- Other options: `--update` (fetch again with the saved subscription and restart), `--status`, `--reconfigure`, `--upgrade`, `--no-service`.
 
-## 本地安装向导
+## Local install wizard
 
-“实用工具”页的“复制向导启动命令”运行 `scripts/setup-wizard.sh`：下载 `setup-wizard.py`、`setup-wizard.html` 和两个安装脚本到临时目录（退出后删除），启动一个网页向导，可以勾选开发环境、Mac 应用，填写订阅链接并实时查看输出。需要 Python 3.6+（只用标准库），参数：`--port N`（默认 8765）、`--no-browser`、`--idle-timeout 秒`。
+The "Copy wizard start command" on the "Utilities" page runs `scripts/setup-wizard.sh`: it downloads `setup-wizard.py`, `setup-wizard.html` and the two install scripts into a temporary directory (deleted on exit) and starts a web wizard where you can tick the dev environment and Mac apps, enter the subscription link and watch the output live. It needs Python 3.6+ (standard library only), with the options `--port N` (default 8765), `--no-browser` and `--idle-timeout seconds`.
 
-安全约束：
-- 只监听 `127.0.0.1`。远程服务器上运行时，按终端提示在自己的电脑上执行 `ssh -L 8765:127.0.0.1:8765 <用户名>@<服务器>`，再用浏览器打开打印出的地址。
-- 每次启动生成随机令牌，页面加载后从地址栏抹掉；所有接口都校验令牌、`Host` 和 `Origin`，POST 只接受 JSON，不写访问日志。
-- 只能运行两个安装脚本，参数由白名单构造，页面不能提交任意命令；同一时间只运行一个任务。
-- 订阅链接只经环境变量交给子进程，输出中自动替换为 `***`，服务端不保存；页面提交后立即清空输入框。
-- 30 分钟无操作（且没有任务在运行）自动退出，页面上也可以点“退出向导”。
+Security constraints:
+- It only listens on `127.0.0.1`. When running on a remote server, follow the terminal prompt and run `ssh -L 8765:127.0.0.1:8765 <username>@<server>` on your own computer, then open the printed address in a browser.
+- A random token is generated at every start and wiped from the address bar after the page loads; every endpoint checks the token, `Host` and `Origin`, POST only accepts JSON, and no access log is written.
+- Only the two install scripts can be run, the arguments are built from an allowlist, the page cannot submit arbitrary commands, and only one task runs at a time.
+- The subscription link is only passed to child processes through an environment variable, is automatically replaced by `***` in the output and is not kept by the server; the input box is cleared right after the page submits it.
+- It exits automatically after 30 minutes without activity (and with no task running), and "Quit wizard" can also be clicked on the page.
 
-## 用户级规则与默认配置同步
+## User-level rules and default configuration sync
 
-`scripts/agent-sync.py`（安装脚本会装到 `~/.local/share/t-agent/`）在每次启动 `claude` / `codex` 前，从本仓库 `rules/` 目录拉取用户级规则和默认配置并合并到本机，详见 `rules/README.md`。当前默认值：
+`scripts/agent-sync.py` (the install script puts it in `~/.local/share/t-agent/`) pulls the user-level rules and default configuration from this repository's `rules/` directory before every start of `claude` / `codex` and merges them into the machine; see `rules/README.md` for details. Current defaults:
 
-- Claude Code：模型 `sonnet`，`permissions.defaultMode = auto`（自动审核权限请求），以及终端状态上报 hook。
-- Codex：模型 `gpt-6-sol`，`approval_policy = on-request`、`approvals_reviewer = auto_review`、`sandbox_mode = workspace-write`（等价于 `--approve-for-me`）；另有 `~/.codex/hooks.json` 中的终端状态上报 hook（JSON 递归合并，需在 Codex `/hooks` 中信任一次）。
+- Claude Code: model `sonnet`, `permissions.defaultMode = auto` (permission requests are reviewed automatically), and the terminal state reporting hook.
+- Codex: model `gpt-6-sol`, `approval_policy = on-request`, `approvals_reviewer = auto_review`, `sandbox_mode = workspace-write` (equivalent to `--approve-for-me`); plus the terminal state reporting hook in `~/.codex/hooks.json` (recursive JSON merge, which must be trusted once in Codex `/hooks`).
 
-要点：
-- 规则文件只替换 `<!-- t-agent:managed:begin/end -->` 区块，区块外的本机规则保留；配置只覆盖远程列出的键，本机其他键、注释、`[表]` 保留；第一次修改前留 `.t-agent.bak` 备份。
-- 触发方式是 shell 函数：`claude() { …同步…; command claude "$@"; }`，`codex` 同理。`codex` 函数还让 `codex -c` / `codex --continue [提示词]` 和 `claude -c` 一样继续当前目录最近一次会话（等价于 `codex resume --last`）；`codex -c key=value` 仍是原来的配置覆盖，其余参数原样透传。t-agent 网页终端启动的是交互式 shell，同样生效；不经过 shell 直接执行二进制则不会触发。
-- 联网带 ETag 条件请求、总时限约 5 秒；失败后 10 分钟内不再联网，改用上次缓存，永远不会阻止工具启动。GitHub 不可达时，每 10 分钟最多有一次约 3 秒的延迟。
-- 想让某台机器的某些键固定为不同的值：在该机器创建 `~/.config/t-agent/overrides/claude/settings.json` 或 `codex/config.toml`（格式同远程文件，只写要固定的键），覆盖优先于远程，详见 `rules/README.md`。
-- 本机文件损坏（无法解析）时不覆盖，只提示。远程改动推送到 `main` 后，各机器下次启动工具时生效。
-- 撤销：删除 shell 配置里 `# >>> t-agent agent-sync >>>` 到 `# <<< t-agent agent-sync <<<` 之间的内容即可。
+Key points:
+- Rule files only replace the `<!-- t-agent:managed:begin/end -->` block and local rules outside the block are kept; the configuration only overwrites the keys listed remotely, and the other local keys, comments and `[tables]` are kept; a `.t-agent.bak` backup is made before the first modification.
+- The trigger is a shell function: `claude() { …sync…; command claude "$@"; }`, and likewise for `codex`. The `codex` function also makes `codex -c` / `codex --continue [prompt]` resume the latest session in the current directory like `claude -c` (equivalent to `codex resume --last`); `codex -c key=value` is still the original config override, and the other arguments are passed through unchanged. The t-agent web terminal starts an interactive shell, so it takes effect there too; running the binary directly without going through the shell does not trigger it.
+- Network access uses ETag conditional requests with a total limit of about 5 seconds; after a failure there is no network access for 10 minutes and the last cache is used, so it never blocks the tool from starting. When GitHub is unreachable there is at most one delay of about 3 seconds every 10 minutes.
+- To pin some keys of one machine to different values: create `~/.config/t-agent/overrides/claude/settings.json` or `codex/config.toml` on that machine (same format as the remote file, writing only the keys to pin); the override wins over the remote, see `rules/README.md`.
+- A corrupted local file (that cannot be parsed) is not overwritten, only reported. After a remote change is pushed to `main`, each machine picks it up the next time it starts the tool.
+- To undo: delete the content between `# >>> t-agent agent-sync >>>` and `# <<< t-agent agent-sync <<<` in the shell config.
 
-## 统一命令 ta
+## Unified command ta
 
-`ta` 是一个不依赖 shell 配置的独立脚本（`scripts/ta.sh`，安装到 `~/.local/bin/ta`），只用记这一个命令：
+`ta` is a standalone script that does not depend on the shell config (`scripts/ta.sh`, installed to `~/.local/bin/ta`), so you only need to remember this one command:
 
-| 命令 | 实际执行 |
+| Command | What actually runs |
 |---|---|
-| `ta` | `claude`（默认工具） |
+| `ta` | `claude` (the default tool) |
 | `ta x` / `ta codex` | `codex` |
-| `ta -c` | `claude -c`（继续当前目录最近会话） |
+| `ta -c` | `claude -c` (resume the latest session in the current directory) |
 | `ta x -c` | `codex resume --last` |
-| `ta -p "提示词"` | `claude -p "提示词"`（非交互执行） |
-| `ta x -p "提示词"` | `codex exec "提示词"` |
-| `ta x -c -p "提示词"` | `codex exec resume --last "提示词"` |
+| `ta -p "prompt"` | `claude -p "prompt"` (non-interactive run) |
+| `ta x -p "prompt"` | `codex exec "prompt"` |
+| `ta x -c -p "prompt"` | `codex exec resume --last "prompt"` |
 | `ta -m opus` / `ta x -m gpt-6-sol` | `claude --model opus` / `codex -m gpt-6-sol` |
 
-- 工具名可写 `claude`（`c`）或 `codex`（`x`）；不写时用默认工具，`ta --set-default codex` 修改（保存在 `~/.config/t-agent/default-tool`，环境变量 `TA_DEFAULT_TOOL` 优先）。
-- 只有 `-c/--continue`、`-p/--prompt`、`-m/--model` 会被翻译，其余参数原样透传；两边同名但含义不同的参数（如 codex 的 `-p` 是 `--profile`）写在 `--` 之后：`ta x -- -p 名称`。
-- `ta --dry-run …` 只打印将要执行的命令。启动前同样会同步远程规则与配置（失败或没有 Python 不影响启动）。
-- 原来的 `claude` / `codex` 命令保持可用。
+- The tool name can be written as `claude` (`c`) or `codex` (`x`); when omitted the default tool is used, changed with `ta --set-default codex` (saved in `~/.config/t-agent/default-tool`, and the environment variable `TA_DEFAULT_TOOL` wins).
+- Only `-c/--continue`, `-p/--prompt` and `-m/--model` are translated and the other arguments are passed through unchanged; for arguments with the same name but different meaning on the two sides (such as codex's `-p`, which is `--profile`), write them after `--`: `ta x -- -p NAME`.
+- `ta --dry-run …` only prints the command that would run. The remote rules and configuration are synced before starting as well (a failure or a missing Python does not block starting).
+- The original `claude` / `codex` commands keep working.
 
-## Agent 配置（多服务器默认设置）
+## Agent config (default settings for several servers)
 
-主导航的“Agent 配置”页（⚙️）为 Claude Code 和 Codex 维护一份**全局默认**，一次推送到本机和“连接远程”里的所有服务器；每台服务器可以单独**覆盖**。页面本身不属于某个引擎，服务器列表就是“本机 + 全部远程引擎”。
+The "Agent config" page (⚙️) in the main navigation maintains one **global default** for Claude Code and Codex and pushes it at once to this machine and all servers under "Connect remote"; each server can **override** it individually. The page itself does not belong to any engine, and the server list is "this machine + all remote engines".
 
-| 配置项 | Claude Code（`~/.claude/settings.json`） | Codex（`~/.codex/config.toml`） |
+| Setting | Claude Code (`~/.claude/settings.json`) | Codex (`~/.codex/config.toml`) |
 |---|---|---|
-| 默认权限 | `permissions.defaultMode` | `approval_policy`（审批策略）+ `sandbox_mode`（沙箱） |
-| 默认模型 | `model` | `model` |
-| 默认思考强度 | `effortLevel` | `model_reasoning_effort` |
-| 状态栏 | `statusLine`（命令，可点常用预设） | `tui.status_line`（项目列表，可点常用预设） |
-| 更多 | 回复语言、默认开启思考、会话保留天数、提交附带 Co-Authored-By | 推理摘要、网页搜索 |
+| Default permissions | `permissions.defaultMode` | `approval_policy` (approval policy) + `sandbox_mode` (sandbox) |
+| Default model | `model` | `model` |
+| Default reasoning effort | `effortLevel` | `model_reasoning_effort` |
+| Status line | `statusLine` (a command, with common presets to click) | `tui.status_line` (a list of items, with common presets to click) |
+| More | reply language, thinking on by default, session retention days, add Co-Authored-By to commits | reasoning summary, web search |
 
-- **留空 = 不管**：没填的项不会改动目标机器上的现有值；推送只写入填了的项，其他内容和注释原样保留。目前不能通过留空把已写入的值删掉。
-- **全局默认 + 单台覆盖**：覆盖里填了的项优先于全局默认；选“这台不管”表示推送时不改这台的该项。“查看当前”读取目标机器上现在的实际配置，可对照确认。
-- **推送**：“保存并推送到全部服务器”，或在服务器行单独点“推送”。结果（时间、成功/失败原因）显示在服务器列表。远程服务器经已有的 Engine 连接（`PUT /v1/agent-config`，能力 `agent-config:manage`，需要 owner 令牌）写入；旧版 Engine 会提示先升级。
-- **与规则同步的关系**：`agent-sync.py` 每次启动 `claude` / `codex` 都会用仓库 `rules/` 里的值覆盖同名键。为了让这里设的值长期有效，推送时除写入工具配置外，还会同步写入该机器的本机覆盖文件（`~/.config/t-agent/overrides/claude/settings.json`、`.../codex/config.toml`，见“用户级规则与默认配置同步”）。
-- **安全**：“跳过所有确认”“完全访问”这类高权限值和状态栏命令会在目标机器上生效，只给可信的服务器推送。配置文件不是合法 JSON 时该工具本次跳过且不改动，并提示原因。全局默认和覆盖保存在 Client 的 `system_state` 表（键 `agent-config:<登录名>`）。
-- 状态栏项目名、思考强度档位以所装的 Claude Code / Codex 版本为准，不认识的值由工具自己忽略或提示。
+- **Empty = leave alone**: items that are not filled in do not change the existing values on the target machine; a push writes only the items that were filled in, and everything else, including comments, is kept as it is. A value that was already written cannot currently be removed by emptying it.
+- **Global default + per-server override**: items filled in the override win over the global default; choosing "Leave unmanaged on this server" means that item is not changed on that server when pushing. "View current" reads the actual configuration on the target machine for comparison.
+- **Push**: "Save and push to all servers", or "Push" on a single server row. The result (time, success / failure reason) is shown in the server list. Remote servers are written through the existing Engine connection (`PUT /v1/agent-config`, capability `agent-config:manage`, which needs an owner token); an old Engine asks you to upgrade first.
+- **Relation to rule sync**: every time `claude` / `codex` starts, `agent-sync.py` overwrites same-named keys with the values in the repository's `rules/`. To make the values set here last, a push writes, besides the tool config, the machine's local override file as well (`~/.config/t-agent/overrides/claude/settings.json`, `.../codex/config.toml`; see "User-level rules and default configuration sync").
+- **Security**: high-privilege values such as "Skip all confirmations" and "Full access", and the status line command, take effect on the target machine, so only push to servers you trust. When a configuration file is not valid JSON, that tool is skipped this time without changes and the reason is shown. Global defaults and overrides are stored in the Client's `system_state` table (key `agent-config:<login name>`).
+- Status line item names and effort levels depend on the installed Claude Code / Codex version, and values they do not recognize are ignored or flagged by the tool itself.
 
-## 应用列表
+## App list
 
-主导航里和“实用工具”并列的“应用列表”页，登记当前引擎所在机器上有哪些服务、怎么访问，点击地址即可在新标签页打开：
+The "App list" page next to "Utilities" in the main navigation records which services exist on the machine of the current engine and how to reach them, and clicking an address opens it in a new tab:
 
-- **来源有三种**：PM2 里的进程**自动登记**（每次打开页面都会同步，之后可以改说明、域名等）；**手动新增**；**程序自注册**（服务启动时调用 `POST /v1/apps/register`，按名称幂等更新，示例命令在页面下方，令牌用 `node scripts/create-engine-token.js owner 服务名` 生成）。同名的手动应用和 PM2 进程会自动合并成一行。
-- **每行信息**：名称/说明、PM2 状态（CPU、内存、运行时长、重启次数）、端口、访问地址。端口对 PM2 进程及其子进程用 `lsof`（没有则 `ss`）自动检测，区分“仅本机监听”（只给 `127.0.0.1` 的链接，不会给别人打不开的局域网地址）；IP 默认取本机局域网地址，也可以手填；域名需要手填（可以写裸域名，也可以写完整的 `https://…` 地址），自定义完整地址优先于域名，域名优先于 IP。
-- **关联 PM2 的应用**可以直接启动、停止、重启、reload 和查看日志，调用当前引擎的 `/pm2` 接口，停止和重启会二次确认（重启或停止 t-agent 自己会中断当前页面）。
-- **编辑框只回显已保存的值**：自动检测到的端口/IP 只作为输入框的占位符显示，不会因为打开编辑再保存就变成固定值；留空即继续自动检测。
-- **删除**：手动和程序注册的直接删除；自动登记且仍在 PM2 里的服务只是**从列表隐藏**（PM2 进程不受影响，避免下次同步又自动登记回来），页面上会出现“恢复已隐藏的 N 个”。
-- **跟随引擎**：和“实用工具”一样属于当前引擎，远程引擎经 Client 代理到它的 `/v1/apps`（能力 `apps:manage`，需要引擎升级到 v2.31.0 或更高，旧版显示“暂不支持”）。数据保存在各引擎自己的数据库 `apps` 表里。接口说明见 `docs/ENGINE_API.md`。
-- **安全**：`url`、`domain` 只接受不含账号密码的 http(s)（它们会变成可点击的链接），页面所有文本都用 `textContent` 渲染；程序注册接口需要有效的访问令牌。
+- **There are three sources**: PM2 processes are **registered automatically** (synced every time the page is opened, after which the description, domain and so on can be edited); **added manually**; **self-registration by programs** (the service calls `POST /v1/apps/register` at startup, an idempotent update by name; an example command is at the bottom of the page and the token is generated with `node scripts/create-engine-token.js owner service-name`). A manual app and a PM2 process with the same name are merged into one row automatically.
+- **Each row shows**: name / description, PM2 status (CPU, memory, uptime, restart count), port and access address. The port is detected automatically for the PM2 process and its children with `lsof` (or `ss` when it is missing), distinguishing "local-only listeners" (only a `127.0.0.1` link is given, never a LAN address that others cannot open); the IP defaults to this machine's LAN address and can be entered by hand; the domain must be entered by hand (a bare domain or a full `https://…` address), a custom full address wins over the domain, and the domain wins over the IP.
+- **Apps linked to PM2** can be started, stopped, restarted, reloaded and have their logs viewed directly, through the current engine's `/pm2` endpoint; stop and restart ask for a second confirmation (restarting or stopping t-agent itself interrupts the current page).
+- **The edit form only echoes saved values**: an auto-detected port/IP is only shown as a placeholder in the input and never becomes a fixed value just because you opened the editor and saved; leave it empty to keep detecting automatically.
+- **Delete**: manual and program-registered apps are deleted outright; an auto-registered service that is still in PM2 is only **hidden from the list** (the PM2 process is unaffected, so the next sync does not register it again), and the page then shows "Restore N hidden".
+- **Follows the engine**: like "Utilities" it belongs to the current engine, and a remote engine is proxied by the Client to its `/v1/apps` (capability `apps:manage`, which needs the engine upgraded to v2.31.0 or later; older ones show "not supported yet"). The data is stored in each engine's own database table `apps`. See `docs/ENGINE_API.md` for the endpoints.
+- **Security**: `url` and `domain` only accept http(s) without credentials (they become clickable links), all text on the page is rendered with `textContent`, and the program registration endpoint needs a valid access token.
 
-## 文件同步
+## File sync
 
-主导航的“文件同步”页属于当前引擎，文件同步是主从结构。页面上方的“本节点角色”可以在**主服务器**和**从服务器**之间切换（默认是主服务器，文件清单为空；切换会清空同步清单，本地文件保留）。在主服务器添加要同步的文件，例如 `~/.claude/settings.json`、`~/.codex/config.toml`、`用户目录/.claude/CLAUDE.md`，也可以填绝对路径。用户目录写法在各节点解析为各自运行 T-Agent 的用户目录，适合 Mac 与 Linux 的家目录不同的情况。主服务器使用绝对路径时，从服务器可在文件表格中选择“修改本地路径”，设置自己的 `~/.codex/config.toml` 或绝对路径；清空输入恢复默认路径。若主服务器的绝对路径在从服务器不存在，首次连接会等待设置本地路径，不会在从服务器创建主服务器原路径。只有主服务器能修改同步文件清单。
+The "File sync" page in the main navigation belongs to the current engine, and file sync uses a master / slave structure. "This node's role" at the top of the page switches between **Master** and **Slave** (the default is master with an empty file list; switching clears the sync list and keeps local files). Add the files to sync on the master, for example `~/.claude/settings.json`, `~/.codex/config.toml`, `home/.claude/CLAUDE.md`, and absolute paths are also accepted. The home-directory form resolves on each node to the home directory of the user running T-Agent there, which suits Macs and Linux machines whose home directories differ. When the master uses an absolute path, the slave can choose "Change local path" in the file table and set its own `~/.codex/config.toml` or an absolute path; clear the input to restore the default path. If an absolute path of the master does not exist on the slave, the first connection waits for a local path to be set and never creates the master's original path on the slave. Only the master can change the sync file list.
 
-连接由从服务器主动发起：主服务器通常有固定的外网地址，从服务器可以在内网，主服务器并不需要连得到从服务器。在主服务器的“文件同步”页点**生成连接字符串**，直接得到一串（地址默认取当前访问主服务器的地址；若从服务器需要用另一个地址，在“高级”里改后重新生成）以 `TAFS1:` 开头的字符串，里面包含主服务器地址和一个一次性配对码（10 分钟内有效、只能用一次，每台从服务器各生成一个）。把它复制到从服务器的“文件同步”页（先把“本节点角色”设为从服务器），粘贴并点**连接主服务器**，从服务器就会用字符串里的配对码向主服务器（`POST /v1/file-sync/pair`，凭配对码、不要求 Token、限流）换取令牌并立即下载文件，此后由从服务器轮询主服务器。字符串相当于一次性的访问凭据，只发给自己的服务器，跨公网请使用 HTTPS 地址。从服务器的“解除关联”会通知主服务器吊销该令牌，之后可粘贴新的字符串重新连接。
+The connection is initiated by the slave: the master usually has a fixed public address and the slave can be on an internal network, so the master does not need to reach the slave. On the master's "File sync" page click **Generate connection string** to get a string starting with `TAFS1:` right away (the address defaults to the one the master is currently accessed with; if the slave needs another address, change it under "Advanced" and generate again), which contains the master's address and a one-time pairing code (valid for 10 minutes, single use, one generated per slave). Copy it to the slave's "File sync" page (first set "This node's role" to slave), paste it and click **Connect to master**; the slave then uses the pairing code in the string to exchange for a token from the master (`POST /v1/file-sync/pair`, authenticated by the pairing code, no Token required, rate limited), downloads the files immediately, and afterwards the slave polls the master. The string is equivalent to a one-time access credential: send it only to your own server, and use an HTTPS address across the public internet. "Unlink" on the slave notifies the master to revoke the token, after which a new string can be pasted to reconnect.
 
-文件同步的连接**不借用引擎连接**：主服务器地址和令牌（加密）保存在文件同步自己的状态里，不会出现在“连接远程”列表，也不使用引擎令牌；同步令牌（前缀 `tfs_`）只能访问文件同步的清单、文件和心跳接口，不能管理清单、角色或访问引擎其他接口。2.46.0 及以前通过引擎连接建立的从服务器继续可用（主服务器仍接受其引擎令牌），重新连接后改用同步令牌。旧的 `/v1/file-sync/pairing`、`/connect`、`/servers` 接口已移除。主服务器独占文件清单的增删，从服务器连接后下载清单及现有文件。主服务器和任一从服务器修改文件后，服务每约 3 秒检查一次；从服务器把本地修改提交给主服务器，其余节点随后拉取新版本。节点离线时保留本地文件，恢复连接后继续检查。
+A file sync connection **does not borrow engine connections**: the master address and token (encrypted) are stored in file sync's own state, do not appear in the "Connect remote" list and do not use an engine token; the sync token (prefix `tfs_`) can only reach the file sync manifest, file and heartbeat endpoints, and cannot manage the list or roles or access other engine endpoints. Slaves built through an engine connection in 2.46.0 and earlier keep working (the master still accepts their engine token) and use a sync token after reconnecting. The old `/v1/file-sync/pairing`, `/connect` and `/servers` endpoints have been removed. Only the master adds and removes files in the list; after connecting, the slave downloads the list and the existing files. After the master or any slave modifies a file, the service checks about every 3 seconds; a slave submits its local change to the master and the other nodes then pull the new version. While a node is offline its local files are kept, and checking continues once the connection is back.
 
-主服务器页面会列出从服务器的名称、实例 ID、在线状态、最近同步与联系时间及同步错误。从服务器在连接成功后立即登记，此后每轮同步发送心跳；约 15 秒没有心跳会显示离线。正常解除关联会从主服务器列表移除；离线时解除无法通知主服务器，旧记录会留在列表中并标为离线，令牌也不会被吊销，直到主服务器切换角色。
+The master page lists the slaves' names, instance IDs, online state, last sync and contact times, and sync errors. A slave registers right after connecting successfully and sends a heartbeat in every sync round afterwards; about 15 seconds without a heartbeat shows it as offline. A normal unlink removes it from the master's list; when unlinking while offline the master cannot be notified, the old record stays in the list marked offline, and the token is not revoked until the master switches roles.
 
-首次下载若覆盖从服务器已有的不同内容，会先备份到该节点的 `~/.t-agent/file-sync-backups/`，备份路径显示在文件表格中。两端在同一版本基础上同时修改时，不自动覆盖从服务器的改动；页面显示冲突，用户可以先手工合并，或选择“备份本地冲突文件并使用主服务器版本”。从清单移除文件、恢复主服务器角色，都不会删除本地文件。单文件最大 1 MiB，目录与符号链接不能作为同步文件。主服务器文件尚不存在时不会创建或删除从服务器的同名文件。
+If the first download would overwrite different content already on the slave, it is backed up first to `~/.t-agent/file-sync-backups/` on that node, and the backup path is shown in the file table. When both sides modify on top of the same version at the same time, the slave's change is not overwritten automatically; the page shows a conflict and the user can merge by hand first, or choose "Back up the conflicting local file and use the master version". Removing a file from the list or restoring the master role never deletes local files. A file can be at most 1 MiB, and directories and symbolic links cannot be synced files. When a master file does not exist yet, a file of the same name on a slave is neither created nor deleted.
 
-“上次检查”会随轮询更新，文件内容只有哈希变化时才增加版本号。旧的 `agent-sync.py` 启动脚本也会合并 Claude/Codex 配置，可能和节点文件同步反复改写同一文件；新版脚本会在节点文件同步管理该配置时跳过配置合并，规则文件仍照常同步。已经安装过启动脚本的节点需要重新运行 `install-claude-code.sh --upgrade` 更新脚本副本。节点文件同步停止超过约一分钟后，启动脚本恢复原有配置合并行为。
+"Last check" updates with every poll, and the version number only increases when the file content hash changes. The old `agent-sync.py` startup script also merges the Claude/Codex configuration and may rewrite the same file back and forth with node file sync; the new script skips the configuration merge while node file sync manages that configuration, and rule files still sync as usual. Nodes that already installed the startup script need to run `install-claude-code.sh --upgrade` again to update their copy of the script. After node file sync has been stopped for more than about a minute, the startup script resumes its original configuration merge behavior.
 
-文件内容会在主、从服务器之间传输，可能包含 Claude/Codex 凭据；跨不可信网络时应使用 HTTPS 地址。旧版节点没有 `file-sync:manage` 能力，需要升级后才能使用。状态与版本保存在各节点的 `system_state` 表中，文件内容仍保存在原路径。
+File content is transferred between master and slaves and may contain Claude/Codex credentials; use an HTTPS address across untrusted networks. Old nodes do not have the `file-sync:manage` capability and must be upgraded before they can use it. State and versions are stored in each node's `system_state` table, and the file content stays at its original path.
 
-## PM2 进程管理
+## PM2 process management
 
-**安装**：`install-claude-code.sh` 的 PM2 步骤在 `pm2` 已存在时直接跳过。没有 Node.js 时，下载官方 Node 22 LTS 预编译包（`https://nodejs.org/dist/latest-v22.x/`）到 `~/.local/node`，用官方 `SHASUMS256.txt` 校验 SHA-256（不一致则拒绝安装），并把 `~/.local/node/bin` 写入 shell 配置；国内网络可设置 `T_AGENT_NODE_MIRROR=https://npmmirror.com/mirrors/node`。随后 `npm install -g pm2`（全局目录不可写时改装到 `~/.local`）。不使用 sudo；Alpine 等 musl 系统不适用官方包，会提示改用系统包。开机自启需要你自己执行 `pm2 startup`（其中的 sudo 命令由 pm2 打印）和 `pm2 save`。
+**Install**: the PM2 step of `install-claude-code.sh` is skipped when `pm2` already exists. Without Node.js, it downloads the official Node 22 LTS prebuilt package (`https://nodejs.org/dist/latest-v22.x/`) to `~/.local/node`, verifies the SHA-256 against the official `SHASUMS256.txt` (installation is refused on a mismatch), and writes `~/.local/node/bin` into the shell config; on networks in China you can set `T_AGENT_NODE_MIRROR=https://npmmirror.com/mirrors/node`. It then runs `npm install -g pm2` (installing into `~/.local` when the global directory is not writable). No sudo is used; the official package does not apply to musl systems such as Alpine, which are told to use system packages instead. Start on boot needs you to run `pm2 startup` (the sudo command in it is printed by pm2) and `pm2 save` yourself.
 
-**网页管理**：PM2 进程的状态、启动、停止、重启、reload 和日志都在“应用列表”页里（见上一节），属于当前引擎；“实用工具”页里原来的“PM2 进程管理”面板已在 v2.33.0 移除。接口 `/api/pm2/*`（远程引擎由 Client 代理到该 Engine 的 `/v1/pm2/*`，能力 `pm2:manage`）保留，应用列表的 PM2 操作用的就是它；接口和其他 `/api/*` 一样需要登录并校验来源。 安装命令、代理配置和安装向导是在目标机器终端里执行的通用命令，不随引擎变化。
+**Web management**: the status, start, stop, restart, reload and logs of PM2 processes are all in the "App list" page (see the previous section) and belong to the current engine; the "PM2 process management" panel that used to be on the "Utilities" page was removed in v2.33.0. The endpoints `/api/pm2/*` (for a remote engine the Client proxies to that Engine's `/v1/pm2/*`, capability `pm2:manage`) are kept, and the PM2 actions of the app list use them; like the other `/api/*` endpoints they need login and an origin check. The install command, the proxy setup and the install wizard are generic commands run in a terminal on the target machine and do not change with the engine.
 
-安全约束：
-- 只允许 `start`、`stop`、`restart`、`reload` 四个动作，不能删除进程、不能启动任意命令；进程编号必须存在于 `pm2 jlist` 中。
-- 返回字段是白名单，**不返回进程的环境变量和命令行参数**；日志路径只取自 pm2 自己的记录，不接受请求传入的路径，最多读取尾部 256 KiB / 1000 行。
-- 停止任意进程、重启或停止当前页面所在的 t-agent 自身都会二次确认。
-- PM2 守护进程没有运行时只显示提示，不会因为查询而把它拉起来。
-- 管理范围是当前选中引擎所在的机器；切换引擎会清空上一个引擎的进程表和日志，并丢弃尚未返回的旧请求。
+Security constraints:
+- Only the four actions `start`, `stop`, `restart` and `reload` are allowed; processes cannot be deleted and no arbitrary command can be started; the process id must exist in `pm2 jlist`.
+- The returned fields are an allowlist and **the environment variables and command-line arguments of a process are not returned**; the log path only comes from pm2's own records and a path from the request is never accepted, and at most the tail of 256 KiB / 1000 lines is read.
+- Stopping any process, and restarting or stopping the t-agent that hosts the current page, ask for a second confirmation.
+- When the PM2 daemon is not running only a hint is shown, and a query never starts it.
+- The management scope is the machine of the currently selected engine; switching the engine clears the previous engine's process table and logs and discards old requests that have not returned yet.
+
+## Interface language
+
+The interface is in English by default. Click the 🌐 button in the header (or at the bottom of the login page) to switch to Chinese; the choice is remembered in the browser and the page reloads. Everything in the source code, the documentation and the server messages is English; the Chinese interface is a translation layer in `public/js/i18n-zh-*.js`. Content you create or enter yourself (task titles, Markdown documents, file names, terminal input, the Chinese-to-English input box) is never translated and works with Chinese and any other language. See "Interface language" in `DESIGN.md` for how to add or change translations.

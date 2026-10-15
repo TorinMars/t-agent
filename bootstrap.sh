@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# 从 GitHub 下载完整项目后调用 install.sh。
-# 用法：curl -fsSL https://raw.githubusercontent.com/TorinMars/t-agent/main/bootstrap.sh | bash
+# Download the full project from GitHub, then call install.sh.
+# Usage: curl -fsSL https://raw.githubusercontent.com/TorinMars/t-agent/main/bootstrap.sh | bash
 
 set -euo pipefail
 
@@ -9,38 +9,38 @@ REPOSITORY_REF="${T_AGENT_REF:-main}"
 REPOSITORY_GIT_URL="https://github.com/$REPOSITORY.git"
 TARGET_DIR="${T_AGENT_DIR:-$PWD/t-agent}"
 
-command -v curl >/dev/null 2>&1 || { printf '错误：请先安装 curl。\n' >&2; exit 1; }
-[ -n "$REPOSITORY" ] && [[ "$REPOSITORY" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] && [[ "$REPOSITORY" != ../* ]] && [[ "$REPOSITORY" != */.. ]] || { printf '错误：T_AGENT_REPOSITORY 格式不正确。\n' >&2; exit 1; }
-[ -n "$REPOSITORY_REF" ] && [[ "$REPOSITORY_REF" =~ ^[A-Za-z0-9._/-]+$ ]] && [[ "$REPOSITORY_REF" != *..* ]] || { printf '错误：T_AGENT_REF 格式不正确。\n' >&2; exit 1; }
-[ "${T_AGENT_MODE:-client}" = "client" ] || { printf '错误：独立 Engine 安装已移除，只支持 client（Client 已内置 Engine）。\n' >&2; exit 1; }
-[ -r /dev/tty ] || { printf '错误：需要可交互终端来设置安装参数。\n' >&2; exit 1; }
+command -v curl >/dev/null 2>&1 || { printf 'Error: please install curl first.\n' >&2; exit 1; }
+[ -n "$REPOSITORY" ] && [[ "$REPOSITORY" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] && [[ "$REPOSITORY" != ../* ]] && [[ "$REPOSITORY" != */.. ]] || { printf 'Error: T_AGENT_REPOSITORY has an invalid format.\n' >&2; exit 1; }
+[ -n "$REPOSITORY_REF" ] && [[ "$REPOSITORY_REF" =~ ^[A-Za-z0-9._/-]+$ ]] && [[ "$REPOSITORY_REF" != *..* ]] || { printf 'Error: T_AGENT_REF has an invalid format.\n' >&2; exit 1; }
+[ "${T_AGENT_MODE:-client}" = "client" ] || { printf 'Error: standalone Engine installation has been removed; only client is supported (the Client includes the Engine).\n' >&2; exit 1; }
+[ -r /dev/tty ] || { printf 'Error: an interactive terminal is needed to set the install options.\n' >&2; exit 1; }
 
 if [ -e "$TARGET_DIR" ]; then
-  printf '错误：安装目录已存在：%s\n' "$TARGET_DIR" >&2
-  printf '请设置 T_AGENT_DIR 指定新目录，或进入现有项目后执行 ./install.sh。\n' >&2
+  printf 'Error: the install directory already exists: %s\n' "$TARGET_DIR" >&2
+  printf 'Set T_AGENT_DIR to choose a new directory, or enter the existing project and run ./install.sh.\n' >&2
   exit 1
 fi
 
-printf '\nT-Agent 将安装到：%s\n' "$TARGET_DIR"
-printf '请勿随意删除此目录；服务、配置、数据库和任务文件都依赖它。\n\n'
+printf '\nT-Agent will be installed to: %s\n' "$TARGET_DIR"
+printf 'Do not delete this directory casually; the service, configuration, database and task files all depend on it.\n\n'
 
 DEFAULT_PORT=3000
-read -r -p "服务端口 [$DEFAULT_PORT]: " SETUP_PORT </dev/tty
+read -r -p "Service port [$DEFAULT_PORT]: " SETUP_PORT </dev/tty
 SETUP_PORT="${SETUP_PORT:-$DEFAULT_PORT}"
 if ! [[ "$SETUP_PORT" =~ ^[1-9][0-9]{0,4}$ ]] || [ "$SETUP_PORT" -gt 65535 ]; then
-  printf '错误：端口必须是 1-65535 的整数。\n' >&2
+  printf 'Error: the port must be an integer between 1 and 65535.\n' >&2
   exit 1
 fi
 
 DEFAULT_TASKS_DIR="$TARGET_DIR/tasks"
-read -r -p "任务工作路径 [$DEFAULT_TASKS_DIR]: " SETUP_TASKS_DIR </dev/tty
+read -r -p "Task working path [$DEFAULT_TASKS_DIR]: " SETUP_TASKS_DIR </dev/tty
 SETUP_TASKS_DIR="${SETUP_TASKS_DIR:-$DEFAULT_TASKS_DIR}"
 
-command -v git >/dev/null 2>&1 || { printf '错误：Client 使用 Git 安装，请先安装 Git。macOS 可运行 xcode-select --install。\n' >&2; exit 1; }
-printf '正在通过 Git 下载 T-Agent Client……\n'
+command -v git >/dev/null 2>&1 || { printf 'Error: the Client is installed with Git, so please install Git first. On macOS you can run xcode-select --install.\n' >&2; exit 1; }
+printf 'Downloading the T-Agent Client with Git……\n'
 git clone --branch "$REPOSITORY_REF" --single-branch "$REPOSITORY_GIT_URL" "$TARGET_DIR"
 
-printf '源码已下载到：%s\n' "$TARGET_DIR"
+printf 'Source downloaded to: %s\n' "$TARGET_DIR"
 INSTALL_ARGS=(
   --mode client
   --port "$SETUP_PORT"

@@ -1953,3 +1953,10 @@ OSS 前端配置在窗口获得焦点、页面恢复及回到前台时重新读�
 - 状态：从 `-v` 输出的 `remote forward success` 判定为运行中；日志只保留和连接、认证、转发有关的行。`remote port forwarding failed` 在自动端口下换端口重试（15 秒内最多 3 次），手动端口直接报错。认证失败、DNS、拒绝连接、超时、私钥不可用、主机密钥变更都映射成中文原因。
 - 已连通后意外退出：5 秒后自动重连，连续最多 5 次；`stop` 会取消待重连。随 Client 退出而终止；`autoStart` 为真时在启动后拉起。
 - 限制：仅本机；仅支持免密登录；首次连接信任主机密钥（TOFU）。
+
+## 更新后自动刷新
+
+- 磁盘上的 `VERSION.json` 在合并代码时就已是新版本，旧进程退出前 `/api/system/version` 也会返回新版本号，所以不能用版本号判断“重启完成”。
+- 每个服务进程启动时生成一个 `boot_id`（`update-manager.bootId`），随 `/api/system/version` 和 `/api/system/update-status` 返回。页面在点击更新前先读一次当前 `boot_id`（`apply-update` 的返回是 `{ accepted, status }`，也从里面取），重启后读到不同的 `boot_id` 即刷新。
+- 兜底：旧进程写下 `restarting` 约 0.75 秒后就会退出，所以页面看到 `restarting` 超过 4 秒（`RESTART_GRACE_MS`）后任何成功响应都来自新进程，直接刷新，不依赖某次轮询恰好撞上服务中断，也不要求版本号等于目标版本。旧版服务没有 `boot_id` 时，观察到服务中断后的成功响应也视为新进程。
+- 等待超过 20 秒仍未刷新时显示“立即刷新页面”按钮；提示框被关掉不会让轮询中断。

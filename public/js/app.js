@@ -257,8 +257,13 @@ const Updates = {
     Modal.show('正在更新', UpdateLog.markup('update-progress-message', 'update-progress-error'));
     try {
       this.updateServerDown = false;
-      const status = await API.post('/api/system/apply-update', { confirm: true, force });
-      this.updateBootId = status.boot_id || null;
+      this.restartSeenAt = null;
+      // 先记下当前进程的启动 ID：重启后换了 ID，才说明新进程已经起来。
+      this.updateBootId = await this.currentBootId();
+      const response = await API.post('/api/system/apply-update', { confirm: true, force });
+      // 接口返回 { accepted, status: {...} }；早期/测试里也可能直接返回状态本身。
+      const status = response && typeof response.status === 'object' && response.status ? response.status : response;
+      if (!this.updateBootId) this.updateBootId = status.boot_id || null;
       if (status.stage === 'completed') { this.showCompleted(status); return; }
       this.monitorApply();
     } catch (error) {
@@ -310,8 +315,8 @@ const Updates = {
         this.showCompleted(status);
       } else if (status.stage === 'restarting') {
         clearInterval(this.restartTimer);
-        this.waitForRestart(status.remote_version);
-      } else if (status.status !== 'updating' && this.isNewProcess(status.boot_id)) {
+        this.waitForRestart();
+      } else if (status.status !== 'updating' && this.isNewProcess(status.boot_id, { trustUnknown: true })) {
         // 服务在两次轮询之间已重启完成：新进程里状态不再是 updating，直接刷新加载新界面。
         // 必须确认是新进程；旧进程在退出前状态也可能不是 updating，此时刷新只会拿到旧界面。
         clearInterval(this.restartTimer);
@@ -338,22 +343,52 @@ const Updates = {
     setTimeout(() => window.location.reload(), 1500);
   },
 
-  // 磁盘上的版本号在重启前就已是新版本，所以不能靠版本号判断重启完成；用进程启动 ID 确认已经换成新进程。
-  // 拿不到更新前的进程 ID（旧版本服务）时，退而要求先观察到服务中断过。
-  isNewProcess(bootId) {
-    if (this.updateBootId) return Boolean(bootId) && bootId !== this.updateBootId;
-    return Boolean(this.updateServerDown);
+  async currentBootId() {
+    try {
+      const version = await API.get('/api/system/version');
+      return (version && version.boot_id) || null;
+    } catch { return null; }
   },
 
-  waitForRestart(targetVersion) {
-    document.getElementById('update-progress-message').textContent = '服务正在重启，恢复后页面会自动刷新…';
+  // 重启完成 = 页面连上的已经是新进程。磁盘上的版本号在重启前就已是新版本，所以不能靠版本号判断，而是看进程启动 ID 是否变了。
+  // 兜底（不依赖任何一次轮询恰好撞上服务中断）：旧进程在写下“正在重启”约 0.75 秒后就会退出，所以看到“正在重启”
+  // RESTART_GRACE_MS 之后能成功响应的，一定是新进程。
+  RESTART_GRACE_MS: 4000,
+  restartGraceElapsed() {
+    return Boolean(this.restartSeenAt) && Date.now() - this.restartSeenAt > this.RESTART_GRACE_MS;
+  },
+  isNewProcess(bootId, { trustUnknown = false } = {}) {
+    if (this.restartGraceElapsed()) return true;
+    if (this.updateBootId) return Boolean(bootId) && bootId !== this.updateBootId;
+    return trustUnknown || Boolean(this.updateServerDown);
+  },
+
+  showManualRefresh() {
+    const note = document.getElementById('update-progress-error');
+    if (!note || note.querySelector('button')) return;
+    note.className = 'form-hint';
+    note.textContent = '服务恢复后会自动刷新；如果等了很久还没刷新，可以手动刷新：';
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'btn-submit';
+    button.textContent = '立即刷新页面';
+    button.addEventListener('click', () => window.location.reload());
+    note.append(button);
+  },
+
+  waitForRestart() {
+    this.restartSeenAt = this.restartSeenAt || Date.now();
+    const message = document.getElementById('update-progress-message');
+    if (message) message.textContent = '服务正在重启，恢复后页面会自动刷新…';
     clearInterval(this.restartTimer);
+    const startedAt = Date.now();
     this.restartTimer = setInterval(async () => {
+      if (Date.now() - startedAt > 20000) this.showManualRefresh();
       try {
         const res = await fetch('/api/system/version', { cache: 'no-store', headers: { 'X-Requested-With': 'XMLHttpRequest' } });
         if (!res.ok) { this.updateServerDown = true; return; }
         const version = await res.json();
-        if ((!targetVersion || version.app_version === targetVersion) && this.isNewProcess(version.boot_id)) window.location.reload();
+        if (this.isNewProcess(version.boot_id)) { clearInterval(this.restartTimer); window.location.reload(); }
       } catch { this.updateServerDown = true; }
     }, 1500);
   },

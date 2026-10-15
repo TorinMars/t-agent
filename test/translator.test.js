@@ -12,7 +12,7 @@ const makeDb = () => {
   db.exec('CREATE TABLE system_state (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP)');
   return db;
 };
-const reply = (status, body) => ({ ok: status >= 200 && status < 300, status, json: async () => body });
+const reply = (status, body) => ({ ok: status >= 200 && status < 300, status, json: async () => body, text: async () => (typeof body === 'string' ? body : JSON.stringify(body)) });
 
 function setup(responder) {
   const calls = [];
@@ -122,6 +122,15 @@ test('服务商返回的错误原因（如 GLM 1113 余额不足）原样报出�
   const { service } = setup(() => reply(429, { error: { code: '1113', message: '余额不足或无可用资源包,请充值。' } }));
   service.saveConfig('o', { provider: 'glm', apiKey: 'k' });
   await assert.rejects(service.translate('o', '你好'), /智谱 GLM 返回错误：余额不足或无可用资源包,请充值。（HTTP 429，错误码 1113）/);
+});
+
+test('错误响应体不是标准 error.message 格式时，把原始响应片段报出来', async () => {
+  const flat = setup(() => reply(400, { code: '1210', msg: '参数有误' }));
+  flat.service.saveConfig('o', { provider: 'glm', apiKey: 'k' });
+  await assert.rejects(flat.service.translate('o', '你好'), /参数有误（HTTP 400，错误码 1210）/);
+  const plain = setup(() => reply(400, 'Bad Request: temperature out of range'));
+  plain.service.saveConfig('o', { provider: 'glm', apiKey: 'k' });
+  await assert.rejects(plain.service.translate('o', '你好'), /智谱 GLM 返回错误（HTTP 400）：Bad Request: temperature out of range/);
 });
 
 test('GLM-4.5 及以上自动关闭深度思考，错误提示带服务商名称', async () => {

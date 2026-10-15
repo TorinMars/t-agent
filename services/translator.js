@@ -123,9 +123,15 @@ function createTranslator({ db, sessionSecret, fetchImpl = (...args) => fetch(..
           signal: controller.signal,
         });
         if (!response.ok) { // 优先原样报出服务商返回的错误（如 GLM 的 1113 余额不足），不被笼统的状态码文案掩盖
-          const detail = await response.json().then(data => data && data.error, () => null).catch(() => null);
-          const reason = detail && text(detail.message || (typeof detail === 'string' ? detail : ''));
-          if (reason) throw new TranslatorError(`${label} 返回错误：${reason.slice(0, 200)}（HTTP ${response.status}${detail.code ? `，错误码 ${detail.code}` : ''}）`, 502);
+          const raw = await response.text().catch(() => '');
+          let detail = null;
+          try { const data = JSON.parse(raw); detail = data && (data.error || data); } catch { /* 非 JSON：直接用原文片段 */ }
+          const reason = detail && typeof detail === 'object'
+            ? text(detail.message || detail.msg || detail.error_description || '')
+            : text(raw).replace(/\s+/g, ' ');
+          const code = detail && typeof detail === 'object' && (detail.code || detail.type);
+          if (reason) throw new TranslatorError(`${label} 返回错误：${reason.slice(0, 200)}（HTTP ${response.status}${code ? `，错误码 ${code}` : ''}）`, 502);
+          if (raw.trim()) throw new TranslatorError(`${label} 返回错误（HTTP ${response.status}）：${text(raw).replace(/\s+/g, ' ').slice(0, 200)}`, 502);
         }
         if (response.status === 401 || response.status === 403) throw new TranslatorError(`${label} API Key 无效或无权限`, 502);
         if (response.status === 402) throw new TranslatorError(`${label} 账户余额不足`, 502);

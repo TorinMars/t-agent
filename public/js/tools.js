@@ -5,10 +5,11 @@ const Tools = (() => {
     const args = button.dataset.args;
     return `curl -fsSL ${SCRIPT_BASE_URL}${button.dataset.script} | bash${args ? ` -s -- ${args}` : ''}`;
   };
-  const tabs = { tasks: document.getElementById('tab-tasks'), tools: document.getElementById('tab-tools'), apps: document.getElementById('tab-apps'), 'agent-config': document.getElementById('tab-agent-config'), 'file-sync': document.getElementById('tab-file-sync') };
+  const tabs = { tasks: document.getElementById('tab-tasks'), tools: document.getElementById('tab-tools'), apps: document.getElementById('tab-apps'), 'agent-config': document.getElementById('tab-agent-config'), frp: document.getElementById('tab-frp'), 'file-sync': document.getElementById('tab-file-sync') };
   const toolsPanel = document.getElementById('tools-panel');
   const appsPanel = document.getElementById('apps-panel');
   const agentConfigPanel = document.getElementById('agent-config-panel');
+  const frpPanel = document.getElementById('frp-panel');
   const fileSyncPanel = document.getElementById('file-sync-panel');
   const appsEngineLabel = document.getElementById('apps-engine');
   const timers = new WeakMap();
@@ -65,14 +66,17 @@ const Tools = (() => {
     if (name !== 'tasks') applyEngine();
     Apps.setActive(name === 'apps');
     AgentConfig.setActive(name === 'agent-config');
+    Frp.setActive(name === 'frp');
     FileSyncUI.setActive(name === 'file-sync');
     document.body.classList.toggle('tools-open', name === 'tools');
     document.body.classList.toggle('apps-open', name === 'apps');
     document.body.classList.toggle('agent-config-open', name === 'agent-config');
+    document.body.classList.toggle('frp-open', name === 'frp');
     document.body.classList.toggle('file-sync-open', name === 'file-sync');
     toolsPanel.hidden = name !== 'tools';
     appsPanel.hidden = name !== 'apps';
     agentConfigPanel.hidden = name !== 'agent-config';
+    frpPanel.hidden = name !== 'frp';
     fileSyncPanel.hidden = name !== 'file-sync';
     for (const [key, tab] of Object.entries(tabs)) {
       tab.classList.toggle('active', key === name);

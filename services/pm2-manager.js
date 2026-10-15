@@ -172,4 +172,4 @@ function createPm2Manager(options = {}) {
   return { status, control, logs };
 }
 
-module.exports = { createPm2Manager, Pm2Error, parseJlist, toSafeProcess, findPm2, ACTIONS, MAX_LOG_LINES };
+module.exports = { createPm2Manager, Pm2Error, parseJlist, toSafeProcess, findPm2, candidateBinDirs, ACTIONS, MAX_LOG_LINES };

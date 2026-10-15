@@ -1933,3 +1933,11 @@ Client 共用历史控制器，保留回放期间输入/OSC52 抑制和滚动位
 ### OSS 窗口配置同步
 
 OSS 前端配置在窗口获得焦点、页面恢复及回到前台时重新读取；异步读取用序号避免旧结果覆盖新保存配置。上传入口不依赖缓存启用状态，未启用或尚未读取时在全页锁定内重试读取并重新核对目标终端；读取失败与未启用使用不同提示。保存未启用的配置保留表单并明确反馈。
+
+## 内网穿透（frp）
+
+- 服务：`services/frp.js`（配置、随机端口、TOML 生成、frpc 进程管理），路由：`routes/frp.js`（`/api/frp`，需登录 + 同源校验），页面：`public/js/frp.js`。
+- 配置存 `system_state.frp_config`（JSON）；Token 用 `lib/token-crypto` 以 `SESSION_SECRET` 加密。frpc 配置写入 `data/frpc.toml`（0600）。
+- 固定为 `type = "tcp"` 代理：`localIP/localPort` 指向本 Client，`remotePort` 为 `[portMin, portMax]` 内的随机值，仅在缺失或越界时生成，其余保持稳定。启动后 15 秒内因端口占用退出会重新随机并重试，最多 3 次。
+- 域名仅用于展示 `publicAddress`，不进入 frpc 配置。进程随 Client 退出而终止，`autoStart` 为真时在 Client 启动后拉起。
+- 限制：仅本机；无 frpc 时报 `FRP_NOT_INSTALLED`，不自动下载。

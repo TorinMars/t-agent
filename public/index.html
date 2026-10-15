@@ -52,6 +52,7 @@
       <button type="button" class="main-nav-item" id="tab-tools" aria-pressed="false"><span class="main-nav-icon" aria-hidden="true">🧰</span><span class="main-nav-label">实用工具</span></button>
       <button type="button" class="main-nav-item" id="tab-apps" aria-pressed="false"><span class="main-nav-icon" aria-hidden="true">🧩</span><span class="main-nav-label">应用列表</span></button>
       <button type="button" class="main-nav-item" id="tab-agent-config" aria-pressed="false"><span class="main-nav-icon" aria-hidden="true">⚙️</span><span class="main-nav-label">Agent 配置</span></button>
+      <button type="button" class="main-nav-item" id="tab-frp" aria-pressed="false"><span class="main-nav-icon" aria-hidden="true">🌐</span><span class="main-nav-label">内网穿透</span></button>
       <button type="button" class="main-nav-item" id="tab-file-sync" aria-pressed="false"><span class="main-nav-icon" aria-hidden="true">🔄</span><span class="main-nav-label">文件同步</span></button>
     </nav>
 
@@ -199,6 +200,39 @@
         </div>
       </div>
     </section>
+    <section class="frp-panel" id="frp-panel" hidden aria-label="内网穿透">
+      <div class="tool-card tool-card-wide">
+        <div class="tool-card-title">内网穿透（frp）</div>
+        <div class="form-hint">用 frpc 把这台机器上的 Client 端口映射到你的 frps 服务器。远程端口自动随机生成并保持稳定（可重新生成）；这是 TCP 隧道，域名需要自己解析到 frps 服务器的 IP，再用反向代理（如 Nginx，终结 HTTPS）转发到 <code>服务器IP:远程端口</code>。对外暴露 Client 前请确认已绑定身份验证器。需要先在本机安装 frpc（0.52 及以上），或用环境变量 <code>T_AGENT_FRPC_BIN</code> 指定路径。</div>
+        <div class="frp-status" id="frp-status-line" role="status"></div>
+        <form class="frp-form" id="frp-form" autocomplete="off">
+          <label class="form-label" for="frp-domain">域名（可选）</label>
+          <input class="form-input" id="frp-domain" type="text" placeholder="app.example.com" spellcheck="false">
+          <label class="form-label" for="frp-server-addr">frps 服务器 IP / 域名</label>
+          <input class="form-input" id="frp-server-addr" type="text" placeholder="1.2.3.4" spellcheck="false" required>
+          <label class="form-label" for="frp-server-port">frps 服务端口</label>
+          <input class="form-input" id="frp-server-port" type="number" min="1" max="65535" value="7000">
+          <label class="form-label" for="frp-token">frps Token</label>
+          <input class="form-input" id="frp-token" type="password" placeholder="" autocomplete="new-password">
+          <label class="form-label" for="frp-local-port">本地端口</label>
+          <input class="form-input" id="frp-local-port" type="number" min="1" max="65535" placeholder="">
+          <label class="form-label" for="frp-remote-port">远程端口（自动随机）</label>
+          <div class="frp-remote-row"><input class="form-input" id="frp-remote-port" type="text" readonly><button type="button" class="btn-logout" id="frp-regenerate">重新生成</button></div>
+          <label class="form-label" for="frp-auto-start">开机自启</label>
+          <label class="frp-check"><input id="frp-auto-start" type="checkbox"> Client 启动时自动开启隧道</label>
+          <div class="tool-card-actions">
+            <button type="submit" class="btn-submit" id="frp-save">保存</button>
+            <button type="button" class="btn-submit" id="frp-start">保存并启动</button>
+            <button type="button" class="btn-logout" id="frp-stop">停止</button>
+            <span class="tool-copy-status" id="frp-message" role="status"></span>
+          </div>
+        </form>
+      </div>
+      <div class="tool-card tool-card-wide">
+        <div class="tool-card-title">frpc 日志</div>
+        <pre class="apps-log" id="frp-log">（暂无日志）</pre>
+      </div>
+    </section>
     <section class="file-sync-panel" id="file-sync-panel" hidden aria-label="文件同步">
       <div class="tools-engine" id="file-sync-engine"></div>
       <div class="tool-card tool-card-wide">
@@ -308,6 +342,7 @@
   <script src="/js/terminal-translate.js"></script>
   <script src="/js/apps.js"></script>
   <script src="/js/agent-config.js"></script>
+  <script src="/js/frp.js"></script>
   <script src="/js/file-sync.js"></script>
   <script src="/js/tools.js"></script>
   <script>

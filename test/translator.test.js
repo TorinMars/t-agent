@@ -104,7 +104,8 @@ test('多服务商：切换到 GLM 不会丢失 DeepSeek 已保存的 Key，GLM 
   assert.equal(calls[0].url, 'https://open.bigmodel.cn/api/paas/v4/chat/completions');
   assert.equal(calls[0].options.headers.Authorization, 'Bearer glm-key');
   assert.equal(calls[0].body.model, 'glm-5.3-flash');
-  assert.deepEqual(calls[0].body.thinking, { type: 'disabled' }, 'GLM-5 默认深度思考，翻译关掉避免超时');
+  assert.equal(calls[0].body.reasoning_effort, 'low', 'glm-5.3 始终思考、不能关闭（thinking:disabled 会 400），用低档推理');
+  assert.equal('thinking' in calls[0].body, false);
   // 切回 DeepSeek：不填 Key，沿用之前保存的
   assert.equal(service.saveConfig('o', { provider: 'deepseek' }).provider, 'deepseek');
   await service.translate('o', '你好');
@@ -133,7 +134,7 @@ test('错误响应体不是标准 error.message 格式时，把原始响应片�
   await assert.rejects(plain.service.translate('o', '你好'), /智谱 GLM 返回错误（HTTP 400）：Bad Request: temperature out of range/);
 });
 
-test('GLM-4.5 及以上自动关闭深度思考，错误提示带服务商名称', async () => {
+test('GLM-4.5～5.2 关闭深度思考，错误提示带服务商名称', async () => {
   const { service, calls } = setup(status => (status === 1 ? reply(200, { choices: [{ message: { content: 'Hi' } }] }) : reply(401, {})));
   service.saveConfig('o', { provider: 'glm', apiKey: 'k', model: 'glm-4.5-air' });
   await service.translate('o', '你好');

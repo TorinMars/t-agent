@@ -697,7 +697,7 @@ t-agent/
 
 ### 终端中译英输入框（DeepSeek / 智谱 GLM）
 
-终端下方有一个输入框：输入中文，回车后由 DeepSeek 或智谱 GLM 翻译成英文，自动键入当前终端并回车提交（适合给 Claude Code / Codex 下指令）。首次使用点输入框右侧的 ⚙，在“翻译服务”下拉里选 DeepSeek（接口地址默认 `https://api.deepseek.com`，模型默认 `deepseek-flash`）或智谱 GLM（默认 `https://open.bigmodel.cn/api/paas/v4`，模型默认 `glm-5.3-flash`，自动关闭深度思考以免超时），填入对应 API Key；每个服务商的 Key 分别保存，切换服务商不会丢失另一家已保存的 Key（保存时 Key 留空即沿用已存的 Key）；密钥加密保存在 Client 上，不会下发给浏览器或远程引擎，翻译在 Client 上进行，所以远程引擎的终端同样可用。纯英文（不含中文）的输入原样发送，不调用接口。译文里的控制字符会被清除并压成一行，终端未连接时不发送、保留输入。
+终端下方有一个输入框：输入中文，回车后由 DeepSeek 或智谱 GLM 翻译成英文，自动键入当前终端并回车提交（适合给 Claude Code / Codex 下指令）。首次使用点输入框右侧的 ⚙，在“翻译服务”下拉里选 DeepSeek（接口地址默认 `https://api.deepseek.com`，模型默认 `deepseek-flash`）或智谱 GLM（默认 `https://open.bigmodel.cn/api/paas/v4`，模型默认 `glm-5.3-flash`，自动把思考压到最低档以免超时），填入对应 API Key；每个服务商的 Key 分别保存，切换服务商不会丢失另一家已保存的 Key（保存时 Key 留空即沿用已存的 Key）；密钥加密保存在 Client 上，不会下发给浏览器或远程引擎，翻译在 Client 上进行，所以远程引擎的终端同样可用。纯英文（不含中文）的输入原样发送，不调用接口。译文里的控制字符会被清除并压成一行，终端未连接时不发送、保留输入。
 
 ### 终端图片上传（阿里云 OSS）
 

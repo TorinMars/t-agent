@@ -6,7 +6,7 @@ const MAX_INPUT_CHARS = 4000;
 const TIMEOUT_MS = 30_000;
 const PROVIDERS = {
   deepseek: { label: 'DeepSeek', baseUrl: 'https://api.deepseek.com', model: 'deepseek-flash' },
-  glm: { label: '智谱 GLM', baseUrl: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-4-flash' },
+  glm: { label: '智谱 GLM', baseUrl: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-5.3-flash' },
 };
 const DEFAULT_PROVIDER = 'deepseek';
 const PROMPT = [

@@ -103,8 +103,8 @@ test('多服务商：切换到 GLM 不会丢失 DeepSeek 已保存的 Key，GLM 
   await service.translate('o', '你好');
   assert.equal(calls[0].url, 'https://open.bigmodel.cn/api/paas/v4/chat/completions');
   assert.equal(calls[0].options.headers.Authorization, 'Bearer glm-key');
-  assert.equal(calls[0].body.model, 'glm-4-flash');
-  assert.equal('thinking' in calls[0].body, false);
+  assert.equal(calls[0].body.model, 'glm-5.3-flash');
+  assert.deepEqual(calls[0].body.thinking, { type: 'disabled' }, 'GLM-5 默认深度思考，翻译关掉避免超时');
   // 切回 DeepSeek：不填 Key，沿用之前保存的
   assert.equal(service.saveConfig('o', { provider: 'deepseek' }).provider, 'deepseek');
   await service.translate('o', '你好');

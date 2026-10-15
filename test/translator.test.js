@@ -118,6 +118,12 @@ test('多服务商：切换到 GLM 不会丢失 DeepSeek 已保存的 Key，GLM 
   assert.throws(() => fresh.service.saveConfig('o', { provider: 'nope', apiKey: 'k' }), /不支持/);
 });
 
+test('服务商返回的错误原因（如 GLM 1113 余额不足）原样报出，而不是笼统的状态码文案', async () => {
+  const { service } = setup(() => reply(429, { error: { code: '1113', message: '余额不足或无可用资源包,请充值。' } }));
+  service.saveConfig('o', { provider: 'glm', apiKey: 'k' });
+  await assert.rejects(service.translate('o', '你好'), /智谱 GLM 返回错误：余额不足或无可用资源包,请充值。（HTTP 429，错误码 1113）/);
+});
+
 test('GLM-4.5 及以上自动关闭深度思考，错误提示带服务商名称', async () => {
   const { service, calls } = setup(status => (status === 1 ? reply(200, { choices: [{ message: { content: 'Hi' } }] }) : reply(401, {})));
   service.saveConfig('o', { provider: 'glm', apiKey: 'k', model: 'glm-4.5-air' });

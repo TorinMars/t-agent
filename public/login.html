@@ -7,6 +7,8 @@
   <title>T-Agent · 身份验证</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/css/auth.css">
+  <script src="/js/i18n.js"></script>
+  <script src="/js/i18n-en-shell.js"></script>
   <script src="/js/auth.js" defer></script>
 </head>
 <body>
@@ -17,6 +19,7 @@
     <div id="auth-content" aria-live="polite"></div>
     <p id="auth-error" role="alert" hidden></p>
     <p class="security-note">Web 和手机 H5 使用同一身份验证器。请勿分享绑定密钥、验证码或恢复码。</p>
+    <button type="button" class="secondary" data-lang-toggle data-lang-icon="🌐 " translate="no"></button>
   </main>
 </body>
 </html>

@@ -1966,3 +1966,14 @@ OSS 前端配置在窗口获得焦点、页面恢复及回到前台时重新读�
 - `public/js/toast.js`：全局 `Toast.show(message, { type: 'info' | 'success' | 'error' })` 和 `notify(message, type)`。容器 `.toast-stack` 固定定位在页面顶部居中，不参与布局，所以任何提示都不会改变终端底部两条工具栏（中译英输入栏、功能键栏）的高度。文字用 `textContent` 写入；相同文字只重新计时；最多同时显示 4 条；成功 2.5 秒、普通 3.5 秒、错误 6 秒后自动消失，点击立即关闭。
 - 已改用悬浮提示的消息：中译英的发送/翻译/配置提示（原来在输入栏里另起一行，会把输入栏撑高）、终端复制结果、终端图片上传和 OSS 设置读取的错误（原来是 `alert`）。各脚本通过本地的 `tell()` 调用 `notify`，没有加载 `toast.js` 的环境（单元测试页）退回 `alert`。
 - 仍保留原样：表单里和按钮并排的操作状态文字（如 frp / SSH 页面、设置弹窗里的反馈）、图片上传进度卡片、需要用户确认的 `confirm`，以及任务、分享、文档编辑等处的 `alert`。
+
+## 界面语言（中英文切换）
+
+- 默认英文，可在顶栏 `🌐 中文 / English` 按钮（登录页底部同样有）切换，选择保存在 `localStorage['ta-lang']`；切换会刷新页面，让所有动态内容按新语言重新渲染。
+- 源码里的界面文字仍写中文，不需要给每处文案加 key。英文模式下由 `public/js/i18n.js` 翻译：
+  - `MutationObserver` 翻译 DOM 文本节点和 `title` / `placeholder` / `aria-label` / `data-tip` / `alt`（静态 HTML 和 JS 动态渲染的内容、Toast 都覆盖）；
+  - 包装了 `alert` / `confirm` / `prompt`；
+  - 直接写入终端或剪贴板等不经过 DOM 的文字，用 `I18n.t('中文')`（写成 `typeof I18n !== 'undefined' ? I18n.t(x) : x`，测试环境里没有 `I18n`）。
+- 词典在 `public/js/i18n-en-shell.js`（通用、主界面、登录、设置、更新）和 `i18n-en-tools.js`（应用列表、Agent 配置、穿透、文件同步、引擎、工作目录工具）。`I18n.add({ 中文: 'English' })` 先整句匹配，再按短语替换（长的优先，单字只做整句匹配）；带插值或需要调语序的句子用 `I18n.addPattern(/regex/, (match, t) => '英文')`。没收录的文字原样显示中文。
+- 用户内容不翻译：Markdown 正文（`.markdown-body`）、终端（`.xterm`）、编辑器（`.monaco-editor`）、任务/文件/书签名等放在 `i18n.js` 的 `SKIP` 选择器里；其他需要保持原样的元素加 `translate="no"`。
+- 新增界面文案后，在词典里补英文；`test/i18n.test.js` 会检查 `index.html` 和 `login.html` 的静态文案都有英文。`frp-prompts.js` 的提示词复制给 Agent，按当前语言直接生成中文或英文。

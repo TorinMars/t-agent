@@ -2,6 +2,9 @@
 const FrpPrompts = (() => {
   const RELEASES = 'https://github.com/fatedier/frp/releases/download';
 
+  // 提示词是复制给 Agent 的纯文本，不经过 DOM，所以按界面语言直接生成。Node 测试里没有 I18n，保持中文。
+  const english = () => typeof I18n !== 'undefined' && I18n.get() === 'en';
+
   function packageName(version, target) {
     return target ? `frp_${version}_${target.os}_${target.arch}` : `frp_${version}_<系统>_<架构>`;
   }
@@ -9,6 +12,19 @@ const FrpPrompts = (() => {
   // 本机安装 frpc：只放到 Client 会自动检测的 data/bin，不启动、不改别的。
   function frpc({ binDir, version, target }) {
     const name = packageName(version, target);
+    if (english()) {
+      return [
+        'Please install frpc (the frp client) on this machine for t-agent\'s tunnel feature. Requirements:',
+        '',
+        `1. Download ${RELEASES}/v${version}/${name}.tar.gz and frp_sha256_checksums.txt from the same directory; if GitHub is unreachable, use a trusted mirror (same layout).${target ? '' : ' This system or architecture is not supported for automatic install; confirm the system and architecture first, then pick the matching release package.'}`,
+        '2. Verify the archive\'s SHA-256 against frp_sha256_checksums.txt; if it does not match, stop and tell me, do not continue.',
+        `3. Put only the frpc binary from the archive at ${binDir}/frpc (create the directory if missing) with mode 755. t-agent detects this location automatically.`,
+        `4. Run ${binDir}/frpc --version and confirm it prints ${version}.`,
+        '5. Do not start frpc, do not use sudo and do not modify other files; delete temporary files when done.',
+        '',
+        'When done, tell me the frpc path and version.',
+      ].join('\n');
+    }
     return [
       '请在这台机器上安装 frpc（frp 客户端），供 t-agent 的“内网穿透”使用。要求：',
       '',
@@ -31,6 +47,26 @@ const FrpPrompts = (() => {
     const allow = [`{ start = ${portMin}, end = ${portMax} }`];
     if (manual) allow.push(`{ single = ${remotePort} }`);
     const ports = manual ? `${portMin}-${portMax} 以及 ${remotePort}` : `${portMin}-${portMax}`;
+    if (english()) {
+      return [
+        'Please install and run frps (the frp server) on my public Linux server so t-agent\'s tunnel can connect. Requirements:',
+        '',
+        `1. First confirm the OS and CPU architecture, then download ${RELEASES}/v${version}/${name}.tar.gz and frp_sha256_checksums.txt; if the server cannot reach GitHub, use a trusted mirror. Verify the SHA-256; if it does not match, stop and tell me.`,
+        '2. Install only frps to /usr/local/bin/frps (mode 755) and keep no other files.',
+        '3. Create /etc/frp/frps.toml (mode 600) with:',
+        '',
+        `bindPort = ${serverPort}`,
+        'auth.method = "token"',
+        token ? `auth.token = ${tomlString(token)}` : 'auth.token = "<random 32-character token; tell me what it is at the end>"',
+        `allowPorts = [${allow.join(', ')}]`,
+        '',
+        '4. Create the systemd service /etc/systemd/system/frps.service: ExecStart=/usr/local/bin/frps -c /etc/frp/frps.toml, Restart=on-failure, WantedBy=multi-user.target; then daemon-reload, enable and start it.',
+        `5. Open the firewall: TCP ${serverPort} (for frpc connections) and TCP ${manual ? `${portMin}-${portMax} and ${remotePort}` : `${portMin}-${portMax}`} (the mapped remote ports). Use whichever of ufw / firewalld / iptables the server actually uses; you cannot change a cloud security group, so clearly remind me to open the same ports in the cloud console.`,
+        `6. Verify: systemctl status frps shows it running, and ss -lntp shows frps listening on ${serverPort}. Do not enable the dashboard.`,
+        '',
+        'When done, tell me: the server\'s public IP, bindPort, the token (if you generated it), allowPorts, and anything I still need to do by hand.',
+      ].join('\n');
+    }
     return [
       '请在我的公网服务器（Linux）上安装并运行 frps（frp 服务端），供 t-agent 的内网穿透连接。要求：',
       '',

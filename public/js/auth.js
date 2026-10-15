@@ -72,7 +72,7 @@
     content.innerHTML = `<label for="recovery-codes">一次性恢复码</label><textarea id="recovery-codes" class="recovery-codes" readonly></textarea><button type="button" class="secondary" id="download-codes">下载恢复码</button><label class="saved-check"><input type="checkbox" id="saved-codes">我已将恢复码保存在安全的位置</label><button id="continue" type="button" disabled>进入工作台</button>`;
     document.getElementById('recovery-codes').value = data.recovery_codes.join('\n');
     document.getElementById('download-codes').addEventListener('click', () => {
-      const blob = new Blob([`T-Agent 一次性恢复码\n请妥善保管，每组只能使用一次。\n\n${data.recovery_codes.join('\n')}\n`], { type: 'text/plain;charset=utf-8' });
+      const blob = new Blob([`${typeof I18n !== 'undefined' ? I18n.t('T-Agent 一次性恢复码\n请妥善保管，每组只能使用一次。') : 'T-Agent 一次性恢复码\n请妥善保管，每组只能使用一次。'}\n\n${data.recovery_codes.join('\n')}\n`], { type: 'text/plain;charset=utf-8' });
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url; link.download = 't-agent-recovery-codes.txt';

@@ -197,6 +197,8 @@ function sendSharedMarkdown(res, task, token, content, currentPath = '') {
   </style>
   <link rel="stylesheet" href="/css/markdown.css">
   <script src="/js/markdown-view.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/i18n-en-shell.js"></script>
 </head>
 <body>
   <div class="header">

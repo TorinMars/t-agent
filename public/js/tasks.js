@@ -206,7 +206,7 @@ const Tasks = (() => {
       inst.reconnectTimer = null;
       if (!inst.disposed && termInstances.get(terminalKey(task.id, inst.terminalId, inst.sourceKey)) === inst) connectWebSocket(task, inst);
     }, delay);
-    inst.term.write(`\r\n\x1b[33m[连接已断开，${Math.ceil(delay / 1000)}s 后自动重连...]\x1b[0m\r\n`);
+    inst.term.write(typeof I18n !== 'undefined' ? I18n.t(`\r\n\x1b[33m[连接已断开，${Math.ceil(delay / 1000)}s 后自动重连...]\x1b[0m\r\n`) : `\r\n\x1b[33m[连接已断开，${Math.ceil(delay / 1000)}s 后自动重连...]\x1b[0m\r\n`);
   }
 
   function connectWebSocket(task, inst) {
@@ -244,7 +244,7 @@ const Tasks = (() => {
       inst.history.disconnect(ws);
       inst.ws = null;
       if (event.code === 1000 || event.code === 1008) {
-        inst.term.write('\r\n[终端已断开，点击“重新打开”可再次连接]\r\n');
+        inst.term.write(typeof I18n !== 'undefined' ? I18n.t('\r\n[终端已断开，点击“重新打开”可再次连接]\r\n') : '\r\n[终端已断开，点击“重新打开”可再次连接]\r\n');
         return;
       }
       scheduleReconnect(task, inst);

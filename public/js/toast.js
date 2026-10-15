@@ -22,7 +22,8 @@ const Toast = (() => {
 
   // type: info | success | error。相同文字已经在显示时只重新计时，不重复堆叠。
   function show(message, { type = 'info', duration } = {}) {
-    const text = String(message === undefined || message === null ? '' : message).trim();
+    const raw = String(message === undefined || message === null ? '' : message).trim();
+    const text = typeof I18n !== 'undefined' ? I18n.t(raw) : raw;
     if (!text) return null;
     const kind = DURATIONS[type] ? type : 'info';
     const host = container();

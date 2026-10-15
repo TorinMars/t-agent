@@ -91,3 +91,50 @@ test('HTTP 路由：配置读写与翻译，密钥不出现在响应里', async 
     assert.equal((await fetch(`${base}/config`, { method: 'PUT', body: '{}', headers: { 'Content-Type': 'application/json' } })).status, 403, 'needs same-origin proof');
   } finally { server.close(); }
 });
+
+test('多服务商：切换到 GLM 不会丢失 DeepSeek 已保存的 Key，GLM 走自己的地址和 Key', async () => {
+  const { service, calls } = setup(() => reply(200, { choices: [{ message: { content: 'Hi' } }] }));
+  service.saveConfig('o', { provider: 'deepseek', apiKey: 'sk-deepseek' });
+  const glm = service.saveConfig('o', { provider: 'glm', apiKey: 'glm-key' });
+  assert.equal(glm.provider, 'glm');
+  assert.equal(glm.providers.deepseek.hasApiKey, true, 'DeepSeek key kept');
+  assert.equal(glm.providers.glm.hasApiKey, true);
+  assert.equal(JSON.stringify(glm).includes('glm-key'), false);
+  await service.translate('o', '你好');
+  assert.equal(calls[0].url, 'https://open.bigmodel.cn/api/paas/v4/chat/completions');
+  assert.equal(calls[0].options.headers.Authorization, 'Bearer glm-key');
+  assert.equal(calls[0].body.model, 'glm-4-flash');
+  assert.equal('thinking' in calls[0].body, false);
+  // 切回 DeepSeek：不填 Key，沿用之前保存的
+  assert.equal(service.saveConfig('o', { provider: 'deepseek' }).provider, 'deepseek');
+  await service.translate('o', '你好');
+  assert.equal(calls[1].url, 'https://api.deepseek.com/chat/completions');
+  assert.equal(calls[1].options.headers.Authorization, 'Bearer sk-deepseek');
+  // 切到没保存过 Key 的服务商要报错，且不影响已有配置
+  const fresh = setup(() => reply(200, {}));
+  fresh.service.saveConfig('o', { provider: 'deepseek', apiKey: 'k' });
+  assert.throws(() => fresh.service.saveConfig('o', { provider: 'glm' }), /智谱 GLM API Key/);
+  assert.equal(fresh.service.getConfig('o').provider, 'deepseek');
+  assert.throws(() => fresh.service.saveConfig('o', { provider: 'nope', apiKey: 'k' }), /不支持/);
+});
+
+test('GLM-4.5 及以上自动关闭深度思考，错误提示带服务商名称', async () => {
+  const { service, calls } = setup(status => (status === 1 ? reply(200, { choices: [{ message: { content: 'Hi' } }] }) : reply(401, {})));
+  service.saveConfig('o', { provider: 'glm', apiKey: 'k', model: 'glm-4.5-air' });
+  await service.translate('o', '你好');
+  assert.deepEqual(calls[0].body.thinking, { type: 'disabled' });
+  await assert.rejects(service.translate('o', '你好'), /智谱 GLM API Key 无效/);
+});
+
+test('旧版扁平 DeepSeek 配置自动迁移，已保存的 Key 不丢', async () => {
+  const { db, service, calls } = setup(() => reply(200, { choices: [{ message: { content: 'Hi' } }] }));
+  const { encryptToken } = require('../lib/token-crypto');
+  db.prepare('INSERT INTO system_state (key, value) VALUES (?, ?)').run('translator:o', encryptToken(JSON.stringify({ enabled: true, apiKey: 'sk-old', baseUrl: 'https://api.deepseek.com', model: 'deepseek-chat' }), SECRET));
+  const config = service.getConfig('o');
+  assert.equal(config.provider, 'deepseek');
+  assert.equal(config.providers.deepseek.hasApiKey, true);
+  assert.equal(config.providers.deepseek.model, 'deepseek-chat');
+  await service.translate('o', '你好');
+  assert.equal(calls[0].options.headers.Authorization, 'Bearer sk-old');
+  assert.equal(service.saveConfig('o', { provider: 'glm', apiKey: 'g' }).providers.deepseek.hasApiKey, true);
+});

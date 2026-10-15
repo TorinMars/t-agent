@@ -73,4 +73,9 @@ async function installFrpc({
   }
 }
 
-module.exports = { installFrpc, FrpInstallError, FRP_VERSION };
+// 发布包名里的系统/架构；不支持自动安装的平台返回 null。
+function platformTarget(platform = process.platform, arch = process.arch) {
+  return OS_NAMES[platform] && ARCH_NAMES[arch] ? { os: OS_NAMES[platform], arch: ARCH_NAMES[arch] } : null;
+}
+
+module.exports = { installFrpc, platformTarget, FrpInstallError, FRP_VERSION, DEFAULT_BASE };

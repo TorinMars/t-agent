@@ -8,11 +8,11 @@ const Frp = (() => {
     FRP_DOMAIN_INVALID: '域名格式不正确，例如 app.example.com', FRP_LOCAL_PORT_INVALID: '本地端口必须是 1-65535 的整数',
     FRP_TOKEN_INVALID: 'Token 含有不允许的字符', FRP_PORT_RANGE_INVALID: '随机端口范围不正确',
     FRP_ALREADY_RUNNING: '隧道已经在运行', FRP_START_FAILED: '无法启动 frpc', FRP_BODY_INVALID: '请求内容不正确',
-    FRP_INSTALL_RUNNING: '正在安装 frpc', FRP_ALREADY_INSTALLED: '已经安装了 frpc',
+    FRP_REMOTE_PORT_INVALID: '远程端口必须是 1-65535 的整数', FRP_INSTALL_RUNNING: '正在安装 frpc', FRP_ALREADY_INSTALLED: '已经安装了 frpc',
     FRP_UNAVAILABLE: '内网穿透服务暂时不可用',
   };
   const STATUS_LABELS = { stopped: '已停止', starting: '启动中…', running: '运行中', failed: '失败' };
-  let active = false, timer = null, busy = false, editing = false, last = null;
+  let active = false, timer = null, busy = false, editing = false, last = null, remotePortEdited = false;
 
   const errorText = error => {
     let code = error.message;
@@ -36,6 +36,13 @@ const Frp = (() => {
     if (extra.length) line.append(document.createTextNode(extra.join(' · ')));
   }
 
+  function renderRemoteHint(config) {
+    $('frp-remote-port-label').textContent = config.remotePortManual ? '远程端口（手动）' : '远程端口（自动随机）';
+    $('frp-remote-hint').textContent = config.remotePortManual
+      ? '已手动指定：被占用时不会自动换端口，且需在 frps 的 allowPorts 内。清空后保存恢复自动随机。'
+      : `自动随机（${config.portMin}-${config.portMax}），生成后保持稳定；也可直接填写固定端口。`;
+  }
+
   function fillForm(config) {
     $('frp-domain').value = config.domain || '';
     $('frp-server-addr').value = config.serverAddr || '';
@@ -45,6 +52,8 @@ const Frp = (() => {
     $('frp-local-port').value = config.localPort || '';
     $('frp-local-port').placeholder = `默认 ${config.effectiveLocalPort}（本 Client 端口）`;
     $('frp-remote-port').value = config.remotePort || '';
+    remotePortEdited = false;
+    renderRemoteHint(config);
     $('frp-auto-start').checked = Boolean(config.autoStart);
   }
 
@@ -54,8 +63,9 @@ const Frp = (() => {
     $('frp-install-row').hidden = data.installed;
     $('frp-install').disabled = Boolean(data.installing);
     $('frp-install').textContent = data.installing ? '正在安装…' : '安装 frpc';
+    $('frp-start').textContent = data.status === 'running' || data.status === 'starting' ? '保存并重启' : '保存并启动';
     if (form && !editing) fillForm(data.config);
-    else $('frp-remote-port').value = data.config.remotePort || '';
+    else if (!remotePortEdited) { $('frp-remote-port').value = data.config.remotePort || ''; renderRemoteHint(data.config); }
     const log = $('frp-log');
     const stick = log.scrollTop + log.clientHeight >= log.scrollHeight - 30;
     log.textContent = data.logs.length ? data.logs.join('\n') : '（暂无日志）';
@@ -78,6 +88,8 @@ const Frp = (() => {
     };
     const token = $('frp-token').value;
     if (token) body.token = token;
+    // 只有改过这个输入框才提交：否则每次保存都会把自动生成的端口变成“手动”。
+    if (remotePortEdited) body.remotePort = $('frp-remote-port').value.trim();
     return body;
   }
 
@@ -88,6 +100,7 @@ const Frp = (() => {
       const saved = await API.put('/api/frp/config', formBody());
       render(saved, { form: false });
       editing = false;
+      if (action === 'start' && saved.status !== 'stopped') render(await API.post('/api/frp/stop', {}), { form: false });
       render(action ? await API.post(`/api/frp/${action}`, {}) : saved);
       say(`已${label}`);
     } catch (error) {
@@ -98,9 +111,64 @@ const Frp = (() => {
   $('frp-form').addEventListener('submit', event => { event.preventDefault(); run(null, '保存'); });
   $('frp-start').addEventListener('click', () => run('start', '启动'));
   $('frp-form').addEventListener('input', () => { editing = true; });
-  $('frp-install').addEventListener('click', async () => {
+  $('frp-remote-port').addEventListener('input', () => { remotePortEdited = true; });
+  async function copyText(text) {
+    try { await navigator.clipboard.writeText(text); return true; } catch { /* 退回 execCommand */ }
+    const area = document.createElement('textarea');
+    area.value = text; area.style.cssText = 'position:fixed;opacity:0';
+    document.body.append(area); area.select();
+    try { return document.execCommand('copy'); } catch { return false; } finally { area.remove(); }
+  }
+
+  async function directInstall() {
     busy = true;
     try { render(await API.post('/api/frp/install', {}), { form: false }); say('开始安装 frpc，请稍候'); } catch (error) { say(`安装失败：${errorText(error)}`, true); } finally { busy = false; }
+  }
+
+  $('frp-install').addEventListener('click', () => {
+    const install = last && last.install;
+    if (!install) return;
+    Modal.show('安装 frpc', '');
+    const body = document.getElementById('modal-body');
+    const question = document.createElement('div');
+    question.className = 'update-message';
+    question.textContent = '是否让 Agent 帮你安装 frpc？选“是”会复制安装提示词，粘贴给 Agent（例如本机终端里的 Claude Code / Codex）即可。';
+    const result = document.createElement('div');
+    result.className = 'form-hint';
+    result.setAttribute('role', 'status');
+    const actions = document.createElement('div');
+    actions.className = 'form-actions';
+    const make = (label, className, handler) => {
+      const button = document.createElement('button');
+      button.type = 'button'; button.className = className; button.textContent = label;
+      button.addEventListener('click', handler);
+      return button;
+    };
+    actions.append(
+      make('取消', 'btn-cancel', Modal.hide),
+      make('否，由 Client 直接下载', 'btn-cancel', () => { Modal.hide(); directInstall(); }),
+      make('是，复制 Agent 提示词', 'btn-submit', async () => {
+        const ok = await copyText(FrpPrompts.frpc(install));
+        result.textContent = ok ? '已复制。粘贴给 Agent 执行，完成后回到本页等待自动检测到 frpc。' : '复制失败，请检查浏览器剪贴板权限';
+      }),
+    );
+    body.append(question, result, actions);
+  });
+
+  $('frp-copy-frps').addEventListener('click', async () => {
+    const install = last && last.install;
+    const config = last && last.config;
+    const status = $('frp-frps-message');
+    if (!install || !config) return;
+    const portText = $('frp-server-port').value.trim();
+    const serverPort = /^\d{1,5}$/.test(portText) && Number(portText) <= 65535 && Number(portText) > 0 ? Number(portText) : config.serverPort;
+    const remoteText = $('frp-remote-port').value.trim();
+    const remotePort = /^\d{1,5}$/.test(remoteText) ? Number(remoteText) : config.remotePort;
+    const ok = await copyText(FrpPrompts.frps({
+      version: install.version, serverPort, token: $('frp-token').value, portMin: config.portMin, portMax: config.portMax, remotePort,
+    }));
+    status.textContent = ok ? '已复制' : '复制失败，请检查浏览器剪贴板权限';
+    setTimeout(() => { status.textContent = ''; }, 2500);
   });
   $('frp-stop').addEventListener('click', async () => {
     busy = true;
@@ -110,6 +178,7 @@ const Frp = (() => {
     const running = last && last.status !== 'stopped';
     if (running && !confirm('重新生成远程端口会重启隧道，之前的反向代理目标需要同步修改。继续吗？')) return;
     busy = true;
+    remotePortEdited = false;
     try { render(await API.post('/api/frp/regenerate-port', {}), { form: false }); say('已生成新的远程端口'); } catch (error) { say(`操作失败：${errorText(error)}`, true); } finally { busy = false; }
   });
 

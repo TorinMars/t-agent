@@ -207,7 +207,7 @@
         <div class="frp-status" id="frp-status-line" role="status"></div>
         <div class="tool-card-actions" id="frp-install-row" hidden>
           <button type="button" class="btn-submit" id="frp-install">安装 frpc</button>
-          <span class="form-hint">从 GitHub 下载 frp 官方发布包并校验 SHA-256，只把 frpc 放到 Client 的 data/bin 目录。无法访问 GitHub 时可设置环境变量 <code>T_AGENT_FRP_DOWNLOAD_BASE</code> 指向镜像。</span>
+          <span class="form-hint">点击后可选择：复制提示词让 Agent 安装，或由 Client 直接下载（官方发布包 + SHA-256 校验，只把 frpc 放到 data/bin；无法访问 GitHub 时设置 <code>T_AGENT_FRP_DOWNLOAD_BASE</code> 指向镜像）。</span>
         </div>
         <form class="frp-form" id="frp-form" autocomplete="off">
           <label class="form-label" for="frp-domain">域名（可选）</label>
@@ -220,8 +220,9 @@
           <input class="form-input" id="frp-token" type="password" placeholder="" autocomplete="new-password">
           <label class="form-label" for="frp-local-port">本地端口</label>
           <input class="form-input" id="frp-local-port" type="number" min="1" max="65535" placeholder="">
-          <label class="form-label" for="frp-remote-port">远程端口（自动随机）</label>
-          <div class="frp-remote-row"><input class="form-input" id="frp-remote-port" type="text" readonly><button type="button" class="btn-logout" id="frp-regenerate">重新生成</button></div>
+          <label class="form-label" for="frp-remote-port" id="frp-remote-port-label">远程端口</label>
+          <div class="frp-remote-row"><input class="form-input" id="frp-remote-port" type="number" min="1" max="65535" placeholder="留空自动随机"><button type="button" class="btn-logout" id="frp-regenerate">重新生成</button></div>
+          <div class="form-hint" id="frp-remote-hint"></div>
           <label class="form-label" for="frp-auto-start">开机自启</label>
           <label class="frp-check"><input id="frp-auto-start" type="checkbox"> Client 启动时自动开启隧道</label>
           <div class="tool-card-actions">
@@ -231,6 +232,14 @@
             <span class="tool-copy-status" id="frp-message" role="status"></span>
           </div>
         </form>
+      </div>
+      <div class="tool-card tool-card-wide">
+        <div class="tool-card-title">安装 frps（公网服务器）</div>
+        <div class="form-hint">frps 要装在有公网 IP 的服务器上。复制下面的提示词，粘贴给能操作那台服务器的 Agent（例如在服务器上运行的 Claude Code / Codex）。提示词会带上上面填的服务端口、Token（没填则让 Agent 随机生成并告诉你）和允许的远程端口范围；提示词含 Token，请只发给你信任的 Agent。</div>
+        <div class="tool-card-actions">
+          <button type="button" class="btn-submit" id="frp-copy-frps">复制 frps 安装提示词</button>
+          <span class="tool-copy-status" id="frp-frps-message" role="status"></span>
+        </div>
       </div>
       <div class="tool-card tool-card-wide">
         <div class="tool-card-title">frpc 日志</div>
@@ -346,6 +355,7 @@
   <script src="/js/terminal-translate.js"></script>
   <script src="/js/apps.js"></script>
   <script src="/js/agent-config.js"></script>
+  <script src="/js/frp-prompts.js"></script>
   <script src="/js/frp.js"></script>
   <script src="/js/file-sync.js"></script>
   <script src="/js/tools.js"></script>

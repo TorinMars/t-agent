@@ -227,3 +227,58 @@ test('服务：安装完成后识别到 frpc；失败时给出原因；重复安
   assert.equal(service.view().installError, '');
   assert.throws(() => service.install(), e => e.code === 'FRP_ALREADY_INSTALLED');
 });
+
+// ── 手动远程端口 ──
+test('手动指定远程端口：固定使用，可在随机范围之外，改范围不会变；清空后恢复随机', t => {
+  const { service } = setup(t);
+  service.update({ serverAddr: '1.2.3.4', portMin: 30000, portMax: 30010 });
+  const manual = service.update({ remotePort: '8080' }).config;
+  assert.equal(manual.remotePort, 8080);
+  assert.equal(manual.remotePortManual, true);
+  assert.equal(service.update({ portMin: 31000, portMax: 31010, domain: 'a.example.com' }).config.remotePort, 8080);
+  assert.equal(service.update({ autoStart: true }).config.remotePortManual, true);
+  const auto = service.update({ remotePort: '' }).config;
+  assert.equal(auto.remotePortManual, false);
+  assert.ok(auto.remotePort >= 31000 && auto.remotePort <= 31010);
+  service.update({ remotePort: 9000 });
+  assert.equal(service.regenerate().config.remotePortManual, false);
+  for (const bad of ['abc', 0.5, 70000, -1, '1e3']) assert.throws(() => service.update({ remotePort: bad }), e => e.code === 'FRP_REMOTE_PORT_INVALID', String(bad));
+});
+
+test('手动端口被占用时不自动换端口，并提示换一个', async t => {
+  const { service } = setup(t, { mode: 'conflict' });
+  service.update({ serverAddr: '1.2.3.4', remotePort: 25000 });
+  service.start();
+  await until(() => service.view().status === 'failed');
+  assert.equal(service.view().config.remotePort, 25000);
+  assert.match(service.view().error, /换一个端口/);
+});
+
+// ── Agent 提示词 ──
+const FrpPrompts = require('../public/js/frp-prompts.js');
+
+test('frpc 提示词：带校验和、安装目录、版本和禁止项', () => {
+  const text = FrpPrompts.frpc({ binDir: '/srv/t-agent/data/bin', version: '0.61.1', target: { os: 'linux', arch: 'amd64' } });
+  assert.match(text, /frp_0\.61\.1_linux_amd64\.tar\.gz/);
+  assert.match(text, /frp_sha256_checksums\.txt/);
+  assert.match(text, /\/srv\/t-agent\/data\/bin\/frpc/);
+  assert.match(text, /--version.*0\.61\.1/);
+  assert.match(text, /不要使用 sudo/);
+  assert.match(FrpPrompts.frpc({ binDir: '/x', version: '0.61.1', target: null }), /确认系统和架构/);
+});
+
+test('frps 提示词：带服务端口、Token 和放行范围；没有 Token 时让 Agent 随机生成', () => {
+  const base = { version: '0.61.1', serverPort: 7001, portMin: 20000, portMax: 60000, remotePort: 28000 };
+  const withToken = FrpPrompts.frps({ ...base, token: 'tok"en' });
+  assert.match(withToken, /bindPort = 7001/);
+  assert.match(withToken, /auth\.token = "tok\\"en"/);
+  assert.match(withToken, /allowPorts = \[\{ start = 20000, end = 60000 \}\]/);
+  assert.match(withToken, /TCP 7001/);
+  assert.match(withToken, /TCP 20000-60000/);
+  assert.match(withToken, /安全组/);
+  const noToken = FrpPrompts.frps({ ...base, token: '' });
+  assert.match(noToken, /随机生成的 32 位 Token/);
+  const outside = FrpPrompts.frps({ ...base, token: '', remotePort: 8080 });
+  assert.match(outside, /\{ single = 8080 \}/);
+  assert.match(outside, /20000-60000 以及 8080/);
+});

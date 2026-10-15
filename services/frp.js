@@ -5,7 +5,7 @@ const net = require('node:net');
 const path = require('node:path');
 const { candidateBinDirs } = require('./pm2-manager');
 const { decryptToken, encryptToken } = require('../lib/token-crypto');
-const { installFrpc, FrpInstallError } = require('./frp-install');
+const { installFrpc, platformTarget, FrpInstallError, FRP_VERSION } = require('./frp-install');
 
 const STATE_KEY = 'frp_config';
 const DEFAULT_PORT_MIN = 20000;
@@ -50,7 +50,7 @@ function randomPort(min, max, random = crypto.randomInt) {
 function emptyConfig() {
   return {
     serverAddr: '', serverPort: 7000, tokenCipher: '', domain: '', localPort: 0,
-    remotePort: 0, portMin: DEFAULT_PORT_MIN, portMax: DEFAULT_PORT_MAX, autoStart: false,
+    remotePort: 0, remotePortManual: false, portMin: DEFAULT_PORT_MIN, portMax: DEFAULT_PORT_MAX, autoStart: false,
   };
 }
 
@@ -120,6 +120,7 @@ function createFrpService({
       localPort: config.localPort,
       effectiveLocalPort: effectiveLocalPort(config),
       remotePort: config.remotePort,
+      remotePortManual: Boolean(config.remotePortManual),
       portMin: config.portMin,
       portMax: config.portMax,
       autoStart: config.autoStart,
@@ -138,6 +139,8 @@ function createFrpService({
       startedAt,
       logs: logs.slice(),
       config: publicConfig(load()),
+      // 页面生成“让 Agent 安装 frpc / frps”的提示词时用到。
+      install: { binDir, version: FRP_VERSION, target: platformTarget() },
     };
   }
 
@@ -177,8 +180,14 @@ function createFrpService({
     if ('portMax' in input) next.portMax = parsePort(input.portMax, 'FRP_PORT_RANGE_INVALID', '随机端口范围');
     if (next.portMin > next.portMax) throw new FrpError('FRP_PORT_RANGE_INVALID', '随机端口范围的起点不能大于终点');
     if ('autoStart' in input) next.autoStart = Boolean(input.autoStart);
-    // 远程端口只在没有或已落在范围外时随机生成一次，之后保持稳定（域名的反向代理要指向它）。
-    if (!next.remotePort || next.remotePort < next.portMin || next.remotePort > next.portMax) {
+    // 手动填写远程端口后固定使用它（可以在随机范围之外）；留空或 0 恢复自动随机。
+    if ('remotePort' in input) {
+      const raw = input.remotePort;
+      if (raw === '' || raw === null || raw === 0) { next.remotePortManual = false; next.remotePort = 0; }
+      else { next.remotePort = parsePort(raw, 'FRP_REMOTE_PORT_INVALID', '远程端口'); next.remotePortManual = true; }
+    }
+    // 自动模式下，远程端口只在没有或已落在范围外时随机生成一次，之后保持稳定（域名的反向代理要指向它）。
+    if (!next.remotePort || (!next.remotePortManual && (next.remotePort < next.portMin || next.remotePort > next.portMax))) {
       next.remotePort = randomPort(next.portMin, next.portMax, random);
     }
     save(next);
@@ -188,6 +197,7 @@ function createFrpService({
   function regeneratePort() {
     const config = load();
     config.remotePort = randomPort(config.portMin, config.portMax, random);
+    config.remotePortManual = false;
     save(config);
     return config.remotePort;
   }
@@ -245,14 +255,14 @@ function createFrpService({
       child = null;
       if (stopping) { status = 'stopped'; return; }
       const tail = logs.slice(-10).join('\n');
-      if (PORT_CONFLICT.test(tail) && now() - spawnedAt < PORT_RETRY_WINDOW_MS && retries < MAX_PORT_RETRIES) {
+      if (PORT_CONFLICT.test(tail) && !load().remotePortManual && now() - spawnedAt < PORT_RETRY_WINDOW_MS && retries < MAX_PORT_RETRIES) {
         retries += 1;
         const port = regeneratePort();
         pushLog(`[t-agent] 远程端口被占用，已换成 ${port} 重试（${retries}/${MAX_PORT_RETRIES}）`);
         try { launch(); return; } catch (error) { failure = error.message; }
       }
       status = 'failed';
-      failure = failure || (PORT_CONFLICT.test(tail) ? '远程端口被占用，请重新生成端口' : `frpc 已退出（代码 ${code}）`);
+      failure = failure || (PORT_CONFLICT.test(tail) ? (load().remotePortManual ? '远程端口被占用或不被 frps 允许，请换一个端口' : '远程端口被占用，请重新生成端口') : `frpc 已退出（代码 ${code}）`);
     });
   }
 

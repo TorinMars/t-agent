@@ -1941,4 +1941,6 @@ OSS 前端配置在窗口获得焦点、页面恢复及回到前台时重新读�
 - 固定为 `type = "tcp"` 代理：`localIP/localPort` 指向本 Client，`remotePort` 为 `[portMin, portMax]` 内的随机值，仅在缺失或越界时生成，其余保持稳定。启动后 15 秒内因端口占用退出会重新随机并重试，最多 3 次。
 - 域名仅用于展示 `publicAddress`，不进入 frpc 配置。进程随 Client 退出而终止，`autoStart` 为真时在 Client 启动后拉起。
 - frpc 查找顺序：`T_AGENT_FRPC_BIN` → `data/bin/` → PATH 及常见目录。`POST /api/frp/install` 异步安装（`services/frp-install.js`）：下载固定版本发布包和 `frp_sha256_checksums.txt`，SHA-256 不符即放弃，用系统 `tar` 只解出 frpc，写临时文件后改名；页面轮询 `installing` / `installError`。
+- 远程端口：`remotePortManual` 为真时固定使用手动值（允许在 `[portMin, portMax]` 外，范围变化和端口冲突都不改它）；`remotePort` 传空/0 或“重新生成”恢复自动。页面只在输入框被编辑过时才提交 `remotePort`，避免保存时把自动端口误存成手动。
+- Agent 提示词由 `public/js/frp-prompts.js` 纯函数生成（frpc：校验和 + 只放 `data/bin`；frps：systemd、`allowPorts`、防火墙/安全组），“安装 frpc”点击后弹窗询问：是 → 复制提示词，否 → 走 `POST /api/frp/install`。
 - 限制：仅本机；自动安装仅 macOS / Linux（amd64、arm64、arm）。

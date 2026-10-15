@@ -1960,3 +1960,9 @@ OSS 前端配置在窗口获得焦点、页面恢复及回到前台时重新读�
 - 每个服务进程启动时生成一个 `boot_id`（`update-manager.bootId`），随 `/api/system/version` 和 `/api/system/update-status` 返回。页面在点击更新前先读一次当前 `boot_id`（`apply-update` 的返回是 `{ accepted, status }`，也从里面取），重启后读到不同的 `boot_id` 即刷新。
 - 兜底：旧进程写下 `restarting` 约 0.75 秒后就会退出，所以页面看到 `restarting` 超过 4 秒（`RESTART_GRACE_MS`）后任何成功响应都来自新进程，直接刷新，不依赖某次轮询恰好撞上服务中断，也不要求版本号等于目标版本。旧版服务没有 `boot_id` 时，观察到服务中断后的成功响应也视为新进程。
 - 等待超过 20 秒仍未刷新时显示“立即刷新页面”按钮；提示框被关掉不会让轮询中断。
+
+## 悬浮提示（Toast）
+
+- `public/js/toast.js`：全局 `Toast.show(message, { type: 'info' | 'success' | 'error' })` 和 `notify(message, type)`。容器 `.toast-stack` 固定定位在页面顶部居中，不参与布局，所以任何提示都不会改变终端底部两条工具栏（中译英输入栏、功能键栏）的高度。文字用 `textContent` 写入；相同文字只重新计时；最多同时显示 4 条；成功 2.5 秒、普通 3.5 秒、错误 6 秒后自动消失，点击立即关闭。
+- 已改用悬浮提示的消息：中译英的发送/翻译/配置提示（原来在输入栏里另起一行，会把输入栏撑高）、终端复制结果、终端图片上传和 OSS 设置读取的错误（原来是 `alert`）。各脚本通过本地的 `tell()` 调用 `notify`，没有加载 `toast.js` 的环境（单元测试页）退回 `alert`。
+- 仍保留原样：表单里和按钮并排的操作状态文字（如 frp / SSH 页面、设置弹窗里的反馈）、图片上传进度卡片、需要用户确认的 `confirm`，以及任务、分享、文档编辑等处的 `alert`。

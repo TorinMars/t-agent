@@ -13,6 +13,7 @@
   <link rel="stylesheet" href="/css/markdown.css">
   <link rel="stylesheet" href="/css/themes.css">
   <script src="/js/theme.js"></script>
+  <script src="/js/toast.js"></script>
   <link rel="stylesheet" href="/vendor/xterm/xterm-5.5.0.css">
   <link rel="stylesheet" href="/vendor/monaco/monaco.css">
   <!-- 第三方库固定版本并自托管（见 scripts/vendor-libs.json）；mermaid 约 5 MB，首次渲染图表时才由 tasks.js 加载 -->
@@ -129,7 +130,6 @@
             <input class="terminal-translate-input" id="terminal-translate-input" type="text" maxlength="4000" placeholder="输入中文，回车自动翻译成英文并发送到终端" aria-label="中文输入，翻译成英文后发送到终端" enterkeyhint="send">
             <button type="submit" class="terminal-translate-send" id="terminal-translate-send">翻译并发送</button>
             <button type="button" class="terminal-translate-settings" id="terminal-translate-settings" title="翻译服务配置（DeepSeek / GLM）" aria-label="配置翻译服务">⚙</button>
-            <div class="terminal-translate-status" id="terminal-translate-status" role="status" aria-live="polite"></div>
           </form>
           <div class="terminal-keys" id="terminal-keys" role="toolbar" aria-label="终端功能键">
             <button type="button" data-key="Escape">Esc</button>

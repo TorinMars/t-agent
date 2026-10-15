@@ -1,5 +1,6 @@
 // 终端底部的中译英输入框：中文 → DeepSeek / 智谱 GLM 翻译成英文 → 键入当前终端并回车。翻译在 Client 上进行，远程终端同样可用。
 const TerminalTranslate = (() => {
+  const tell = (message, type) => (typeof notify === 'function' ? notify(message, type) : (typeof alert === 'function' ? alert(message) : undefined)); // 悬浮提示；没加载 toast.js 的环境退回 alert
   const SUBMIT_DELAY_MS = 120; // 先写入文字，稍等再回车，避免被 TUI 当成粘贴里的换行
 
   // 译文里的控制字符（含 ESC）不能原样送进终端，否则翻译结果可以注入按键序列；多行压成一行，避免提前提交。
@@ -15,13 +16,12 @@ const TerminalTranslate = (() => {
   const form = document.getElementById('terminal-translate');
   const input = document.getElementById('terminal-translate-input');
   const send = document.getElementById('terminal-translate-send');
-  const status = document.getElementById('terminal-translate-status');
   const settingsButton = document.getElementById('terminal-translate-settings');
   let busy = false;
 
+  // 提示一律用悬浮提示显示，不占用工具栏空间；空文字（清除提示）不需要做任何事。
   function say(message, isError = false) {
-    status.className = `terminal-translate-status${isError ? ' error' : ''}`;
-    status.textContent = message;
+    if (message) tell(message, isError ? 'error' : 'info');
   }
   function setBusy(value) {
     busy = value;
@@ -56,7 +56,7 @@ const TerminalTranslate = (() => {
 
   async function showSettings() {
     let config;
-    try { config = await API.get('/api/translate/config'); } catch (error) { alert('读取翻译设置失败：' + errorText(error)); return; }
+    try { config = await API.get('/api/translate/config'); } catch (error) { tell('读取翻译设置失败：' + errorText(error), 'error'); return; }
     const providers = config.providers || {};
     const ids = Object.keys(providers);
     const drafts = {}; // 切换服务商时保留已输入但尚未保存的内容

@@ -1,5 +1,6 @@
 // Images are uploaded by this Client, regardless of the terminal's Engine.
 const TerminalImages = (() => {
+  const tell = (message, type) => (typeof notify === 'function' ? notify(message, type) : (typeof alert === 'function' ? alert(message) : undefined)); // 悬浮提示；没加载 toast.js 的环境退回 alert
   const instances = new Set();
   let enabled = false;
   let configRevision = 0;
@@ -117,8 +118,8 @@ const TerminalImages = (() => {
   }
   async function upload(item, file, socket = item?.connection()) {
     if (busy || !file || !item) return;
-    if (!/^image\/(png|jpeg|gif|webp)$/.test(file.type) || file.size <= 0 || file.size > 10 * 1024 * 1024) { alert('请选择不超过 10 MiB 的 PNG、JPEG、GIF 或 WebP 图片'); return; }
-    if (active() !== item || !socket || socket.readyState !== 1 || item.connection() !== socket) { alert('原终端未连接，请连接后重试'); return; }
+    if (!/^image\/(png|jpeg|gif|webp)$/.test(file.type) || file.size <= 0 || file.size > 10 * 1024 * 1024) { tell('请选择不超过 10 MiB 的 PNG、JPEG、GIF 或 WebP 图片', 'error'); return; }
+    if (active() !== item || !socket || socket.readyState !== 1 || item.connection() !== socket) { tell('原终端未连接，请连接后重试', 'error'); return; }
     const ui = lockPage();
     let result; let error;
     try {
@@ -133,7 +134,7 @@ const TerminalImages = (() => {
       }
       result = await transfer(file, ui);
     } catch (failure) { error = failure; } finally { ui.unlock(); }
-    if (error) { alert(error.message); return; }
+    if (error) { tell(error.message, 'error'); return; }
     if (instances.has(item) && active() === item && item.connection() === socket && socket.readyState === 1) {
       // xterm's paste keeps bracketed-paste semantics and never adds Enter.
       // 链接后补一个空格，方便紧接着继续输入文字；不加回车。
@@ -150,7 +151,7 @@ const TerminalImages = (() => {
       const images = [...(event.clipboardData?.items || [])].filter(entry => entry.kind === 'file' && entry.type.startsWith('image/'));
       if (!images.length) return;
       event.preventDefault(); event.stopImmediatePropagation();
-      if (images.length !== 1) { alert('请一次上传一张图片'); return; }
+      if (images.length !== 1) { tell('请一次上传一张图片', 'error'); return; }
       void upload(item, images[0].getAsFile());
     };
     el.addEventListener('paste', paste, true); render();
@@ -158,7 +159,7 @@ const TerminalImages = (() => {
   }
   async function showSettings() {
     let config;
-    try { config = await load(); } catch (error) { alert('读取 OSS 设置失败：' + error.message); return; }
+    try { config = await load(); } catch (error) { tell('读取 OSS 设置失败：' + error.message, 'error'); return; }
     const fields = [['region', '地域（例如 oss-cn-hangzhou）'], ['bucket', 'Bucket'], ['accessKeyId', 'AccessKey ID'], ['accessKeySecret', 'AccessKey Secret'], ['prefix', '对象路径前缀'], ['publicBaseUrl', '公开 HTTPS 地址（可选）']];
     Modal.show('阿里云 OSS 图片上传', `<div class="form-group"><label><input id="oss-enabled" type="checkbox" ${config.enabled ? 'checked' : ''}> 启用图片上传</label></div>${fields.map(([key, label]) => `<div class="form-group"><label class="form-label" for="oss-${key}">${label}</label><input class="form-input" id="oss-${key}" type="${key === 'accessKeySecret' ? 'password' : 'text'}" autocomplete="${key === 'accessKeySecret' ? 'new-password' : 'off'}" value="${key === 'accessKeySecret' ? '' : escapeHtml(config[key] || '')}"></div>`).join('')}<div class="form-hint">${config.hasAccessKeySecret ? '已保存密钥；留空保持原密钥。' : '首次配置需填写密钥。'}默认生成 24 小时有效的私有链接；公开地址仅用于已允许公开读取的 Bucket 或域名。图片最大 10 MiB。</div><p id="oss-feedback" role="status"></p><div class="form-actions"><button class="btn-cancel" id="oss-clear">删除配置</button><button class="btn-cancel" id="oss-cancel">取消</button><button class="btn-submit" id="oss-save">保存</button></div>`);
     document.getElementById('oss-cancel').addEventListener('click', Modal.hide);

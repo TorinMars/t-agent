@@ -27,7 +27,10 @@ const read = file => fs.readFileSync(path.join(root, file), 'utf8');
     });
     // 终端面板默认隐藏：把输入框及其所有祖先显示出来。
     await page.evaluate(() => { for (let el = document.getElementById('terminal-translate'); el && el !== document.body; el = el.parentElement) { el.hidden = false; if (getComputedStyle(el).display === 'none') el.style.display = 'flex'; } });
+    await page.addScriptTag({ path: path.join(root, 'public/js/toast.js') });
     await page.addScriptTag({ path: path.join(root, 'public/js/terminal-translate.js') });
+    const barHeight = () => page.locator('#terminal-translate').evaluate(el => el.getBoundingClientRect().height);
+    const idleHeight = await barHeight();
 
     const input = page.locator('#terminal-translate-input');
     await input.fill('修复登录页面的 bug');
@@ -36,8 +39,7 @@ const read = file => fs.readFileSync(path.join(root, file), 'utf8');
     assert.deepEqual(await page.evaluate(() => window.sent), ['EN(修复登录页面的 bug)', '\r']);
     assert.deepEqual(await page.evaluate(() => window.apiCalls), [['/api/translate', { text: '修复登录页面的 bug' }]]);
     assert.equal(await input.inputValue(), '', 'input is cleared after sending');
-    assert.equal(await page.locator('#terminal-translate-status').textContent(), '', 'no "sent" echo of the translation after success');
-    assert.equal(await page.locator('#terminal-translate-status').isVisible(), false);
+    assert.equal(await page.locator('.toast').count(), 0, 'no "sent" echo of the translation after success');
 
     // 翻译进行中：输入框呼吸闪烁，同一行没有额外文字；完成后恢复。
     await page.evaluate(() => { window.releaseTranslation = null; window.API.post = body => new Promise(resolve => { window.releaseTranslation = () => resolve({ text: 'EN-slow', translated: true }); }); });
@@ -45,7 +47,8 @@ const read = file => fs.readFileSync(path.join(root, file), 'utf8');
     await page.waitForFunction(() => document.getElementById('terminal-translate-input').classList.contains('translating'));
     assert.equal(await input.evaluate(el => getComputedStyle(el).animationName), 'translate-breathe');
     assert.equal(await input.evaluate(el => el.readOnly), true);
-    assert.equal(await page.locator('#terminal-translate-status').textContent(), '', 'no separate "translating" text line');
+    assert.equal(await page.locator('.toast').count(), 0, 'no separate "translating" message');
+    assert.equal(await barHeight(), idleHeight, 'the bar keeps its height while translating');
     assert.equal(await page.locator('#terminal-translate-send').isDisabled(), true);
     await page.evaluate(() => window.releaseTranslation());
     await page.waitForFunction(() => !document.getElementById('terminal-translate-input').classList.contains('translating'));
@@ -61,15 +64,18 @@ const read = file => fs.readFileSync(path.join(root, file), 'utf8');
     // 终端没连上：不发送、保留输入、提示
     await page.evaluate(() => { window.sent.length = 0; window.terminalUp = false; window.nextResult = body => ({ text: 'EN', translated: true }); });
     await input.fill('你好'); await input.press('Enter');
-    await page.waitForFunction(() => document.getElementById('terminal-translate-status').classList.contains('error'));
+    await page.waitForSelector('.toast.toast-error');
     assert.equal(await input.inputValue(), '你好', 'text is kept when it could not be sent');
-    assert.match(await page.locator('#terminal-translate-status').textContent(), /终端未连接/);
+    assert.match(await page.locator('.toast-error').first().textContent(), /终端未连接/);
+    assert.equal(await barHeight(), idleHeight, 'a message must not change the bar height');
+    assert.equal(await page.locator('.toast-stack').evaluate(el => getComputedStyle(el).position), 'fixed', 'messages float above the page');
 
     // 翻译失败：保留原文；未配置：打开设置
     await page.evaluate(() => { window.terminalUp = true; window.API.post = async () => { throw new Error(JSON.stringify({ error: '尚未配置翻译服务' })); }; });
     await input.press('Enter');
     await page.waitForFunction(() => window.modals.length > 0);
-    assert.match(await page.locator('#terminal-translate-status').textContent(), /尚未配置/);
+    await page.waitForFunction(() => [...document.querySelectorAll('.toast')].some(node => /尚未配置/.test(node.textContent)));
+    assert.equal(await barHeight(), idleHeight);
     assert.equal(await input.inputValue(), '你好');
     assert.equal(await page.locator('#terminal-translate-send').isDisabled(), false, 'controls are re-enabled after a failure');
     assert.deepEqual(errors, []);

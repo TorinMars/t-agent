@@ -1,5 +1,6 @@
 // Clipboard operations stay in the Client. OSC 52 never writes without confirmation.
 const TerminalClipboard = (() => {
+  const tell = (message, type) => (typeof notify === 'function' ? notify(message, type) : (typeof alert === 'function' ? alert(message) : undefined)); // 悬浮提示；没加载 toast.js 的环境退回 alert
   const instances = new Map();
   const toolbar = document.querySelector('.terminal-toolbar');
   const copy = document.createElement('button');
@@ -14,10 +15,7 @@ const TerminalClipboard = (() => {
   request.setAttribute('aria-label', '查看程序复制请求');
   request.dataset.tip = '查看程序复制请求：程序通过终端请求写入剪贴板，需要你确认';
   request.hidden = true;
-  const status = document.createElement('span');
-  status.className = 'terminal-copy-status';
-  status.setAttribute('role', 'status');
-  toolbar.append(copy, request, status);
+  toolbar.append(copy, request);
   const pane = document.getElementById('terminal-pane');
   const container = document.getElementById('xterm-container');
   const hint = /Mac|iPhone|iPad/.test(navigator.platform) ? '按住 Option 拖选，再复制' : '按住 Shift 拖选，再复制';
@@ -30,19 +28,13 @@ const TerminalClipboard = (() => {
   }
   function render() {
     const item = active();
-    if (shown !== item) {
-      status.textContent = hint;
-      status.classList.add('terminal-copy-hint');
-      shown = item;
-    }
+    shown = item;
     copy.disabled = !item;
     request.hidden = !item?.pending;
   }
+  // 复制结果用悬浮提示显示：不占用终端工具栏的位置。
   function message(item, text) {
-    if (active() === item) {
-      status.classList.remove('terminal-copy-hint');
-      status.textContent = text;
-    }
+    if (active() === item) tell(text, /失败|拒绝|没有|未选中/.test(text) ? 'error' : 'success');
   }
 
   async function writeText(text) {

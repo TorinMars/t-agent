@@ -1749,9 +1749,6 @@ body.file-sync-open .sidebar, body.file-sync-open .content-area, body.file-sync-
 
 .terminal-toolbar > .terminal-toolbar-btn[data-tip]:hover::after,
 .terminal-toolbar > .terminal-toolbar-btn[data-tip]:focus-visible::after { opacity: 1; transition-delay: .2s; }
-.terminal-copy-status { color: #c7ccd4; font-size: 12px; }
-.terminal-toolbar .terminal-copy-status { flex-shrink: 0; white-space: nowrap; }
-.terminal-copy-hint { display: none; }
 .terminal-copy-dialog { width: min(640px, 90vw); margin: auto; padding: 24px; border: 1px solid #626b78; border-radius: 10px; }
 .terminal-copy-dialog::backdrop { background: #0008; }
 .terminal-copy-dialog textarea { display: block; width: 100%; height: 240px; margin: 16px 0; font: 14px/1.6 monospace; }
@@ -1953,9 +1950,6 @@ body.file-sync-open .sidebar, body.file-sync-open .content-area, body.file-sync-
 .terminal-translate button { flex: 0 0 auto; height: 28px; padding: 0 10px; border: 1px solid #555; border-radius: 5px; background: #333; color: #ddd; font-size: 12px; cursor: pointer; }
 .terminal-translate button:hover:not(:disabled) { background: #444; }
 .terminal-translate button:disabled { opacity: .6; cursor: wait; }
-.terminal-translate-status { flex: 1 0 100%; min-height: 0; font-size: 12px; color: #9aa4b2; overflow-wrap: anywhere; }
-.terminal-translate-status:empty { display: none; }
-.terminal-translate-status.error { color: #ff7b72; }
 
 .frp-form { display: grid; gap: 6px; max-width: 520px; margin-top: 12px; }
 .frp-form .form-label { margin-top: 8px; }
@@ -1967,3 +1961,11 @@ body.file-sync-open .sidebar, body.file-sync-open .content-area, body.file-sync-
 .frp-panel > * + * { margin-top: 14px; }
 #frp-method-frp > * + *, #frp-method-ssh > * + * { margin-top: 14px; }
 .frp-methods { display: grid; gap: 8px; margin-top: 8px; }
+
+/* 悬浮提示：固定在页面顶部居中，不参与布局，所以不会改变任何工具栏的高度。 */
+.toast-stack { position: fixed; top: 16px; left: 50%; transform: translateX(-50%); z-index: 2147483646; display: flex; flex-direction: column; align-items: center; gap: 8px; width: min(440px, calc(100vw - 24px)); pointer-events: none; }
+.toast { box-sizing: border-box; max-width: 100%; padding: 10px 14px; border-radius: 8px; border-left: 4px solid #70a5ff; background: #2d2d30; color: #f0f0f0; font-size: 13px; line-height: 1.45; overflow-wrap: anywhere; box-shadow: 0 6px 20px rgba(0, 0, 0, .35); cursor: pointer; pointer-events: auto; animation: toast-in .16s ease-out; }
+.toast-success { border-left-color: #3fb950; }
+.toast-error { border-left-color: #ff7b72; }
+@keyframes toast-in { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .toast { animation: none; } }

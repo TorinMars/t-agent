@@ -56,6 +56,9 @@ if (!pairingColumns.includes('principal_id')) {
   db.exec("ALTER TABLE engine_pairing_codes ADD COLUMN principal_id TEXT NOT NULL DEFAULT 'engine'");
 }
 
+// Bookmark groups created before the project became English-first used a Chinese default name.
+db.prepare("UPDATE bookmarks SET group_name = 'Default' WHERE group_name = ?").run('\u9ed8\u8ba4');
+
 // terminal output history
 db.exec(`CREATE TABLE IF NOT EXISTS terminal_logs (
   task_id    INTEGER PRIMARY KEY,

@@ -6,6 +6,13 @@ const INITIAL_GROUPS = Object.freeze([
   { key: 'todo', name: 'To do', sortOrder: 2000, isSystem: true },
   { key: 'done', name: 'Done', sortOrder: 3000, isSystem: true },
 ]);
+// Names written by versions before the project became English-first (escaped to keep the source ASCII).
+const LEGACY_NAMES = Object.freeze({
+  personal: '\u4e2a\u4eba\u4efb\u52a1',
+  doing: '\u8fdb\u884c\u4e2d',
+  todo: '\u5f85\u529e',
+  done: '\u5df2\u5b8c\u6210',
+});
 const SYSTEM_GROUPS = INITIAL_GROUPS.filter(group => group.isSystem);
 
 function serviceError(code, statusCode = 400) {
@@ -37,6 +44,10 @@ function ensureGroups(database, ownerId) {
     const count = database.prepare('SELECT COUNT(*) count FROM task_groups WHERE owner_id = ?').get(owner).count;
     const defaults = count === 0 ? INITIAL_GROUPS : SYSTEM_GROUPS;
     defaults.forEach(group => insertGroup(database, owner, group));
+    // Rename untouched legacy default names; names the user chose themselves are left alone.
+    INITIAL_GROUPS.forEach(group => database.prepare(
+      'UPDATE OR IGNORE task_groups SET name = ? WHERE owner_id = ? AND group_key = ? AND name = ?'
+    ).run(group.name, owner, group.key, LEGACY_NAMES[group.key]));
   })();
   return owner;
 }

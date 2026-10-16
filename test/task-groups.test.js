@@ -68,3 +68,15 @@ test('A custom group that has tasks cannot be deleted', () => {
   groups.deleteGroup(database, 'owner', created.id);
   database.close();
 });
+
+test('Legacy Chinese default group names are renamed to English, custom names are kept', () => {
+  const database = testDb();
+  const insert = database.prepare('INSERT INTO task_groups (owner_id, group_key, name, sort_order, is_system) VALUES (?, ?, ?, ?, ?)');
+  insert.run('owner', 'personal', '\u4e2a\u4eba\u4efb\u52a1', 0, 0);
+  insert.run('owner', 'doing', '\u8fdb\u884c\u4e2d', 1000, 1);
+  insert.run('owner', 'todo', 'My backlog', 2000, 1);
+  insert.run('owner', 'done', '\u5df2\u5b8c\u6210', 3000, 1);
+  const names = Object.fromEntries(groups.listGroups(database, 'owner').map(group => [group.key, group.name]));
+  assert.deepEqual(names, { personal: 'Personal tasks', doing: 'In progress', todo: 'My backlog', done: 'Done' });
+  database.close();
+});

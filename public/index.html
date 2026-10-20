@@ -132,7 +132,7 @@
           <div class="terminal-empty" id="terminal-empty" style="display:none"></div>
           <div id="xterm-container"></div>
           <form class="terminal-translate" id="terminal-translate" autocomplete="off">
-            <textarea class="terminal-translate-input" id="terminal-translate-input" rows="1" maxlength="4000" placeholder="Type Chinese; Enter translates it to English and sends it to the terminal; Shift+Enter for a new line" aria-label="Chinese input, translated to English and sent to the terminal" enterkeyhint="send"></textarea>
+            <div class="terminal-translate-slot"><textarea class="terminal-translate-input" id="terminal-translate-input" rows="1" maxlength="4000" placeholder="Type Chinese; Enter translates it to English and sends it to the terminal; Shift+Enter for a new line" aria-label="Chinese input, translated to English and sent to the terminal" enterkeyhint="send"></textarea></div>
             <button type="submit" class="terminal-translate-send" id="terminal-translate-send">Translate & send</button>
             <button type="button" class="terminal-translate-settings" id="terminal-translate-settings" title="Translation service settings (DeepSeek / GLM)" aria-label="Configure translation service">⚙</button>
           </form>

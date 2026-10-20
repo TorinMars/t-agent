@@ -23,6 +23,11 @@ const TerminalTranslate = (() => {
   function say(message, isError = false) {
     if (message) tell(message, isError ? 'error' : 'info');
   }
+  // The box grows with its content (up to 6 lines, see max-height in the CSS) and shrinks back to one line when cleared.
+  function autosize() {
+    input.style.height = 'auto';
+    input.style.height = (input.value ? input.scrollHeight + 2 : 28) + 'px';
+  }
   function setBusy(value) {
     busy = value;
     // While translating: the input is read-only (keeping focus) and pulses; the indication is on the input row itself instead of an extra line of text.
@@ -44,6 +49,7 @@ const TerminalTranslate = (() => {
       setTimeout(() => { Tasks.sendTerminalInput('\r'); input.focus(); }, SUBMIT_DELAY_MS);
       say(''); // on success the translation is not shown, it is already visible in the terminal
       input.value = '';
+      autosize();
     } catch (error) {
       const message = errorText(error);
       say(message, true);
@@ -103,9 +109,15 @@ const TerminalTranslate = (() => {
   if (form) {
     form.addEventListener('submit', event => { event.preventDefault(); if (!event.isComposing) submit(); });
     // Enter pressed while picking an IME candidate must not count as a submit.
+    // Enter submits, Shift+Enter adds a line. The whole multi-line text is translated; the result is still flattened to one line so it is not submitted early.
     input.addEventListener('keydown', event => {
-      if (event.key === 'Enter' && (event.isComposing || event.keyCode === 229)) event.stopPropagation();
+      if (event.key !== 'Enter') return;
+      if (event.isComposing || event.keyCode === 229) { event.stopPropagation(); return; }
+      if (event.shiftKey) return;
+      event.preventDefault();
+      submit();
     });
+    input.addEventListener('input', autosize);
     settingsButton.addEventListener('click', showSettings);
   }
   return { sanitize, submit, showSettings };

@@ -935,7 +935,7 @@ I18n.add({
   "Translation settings saved": "翻译设置已保存",
   "Tunnel (frp)": "内网穿透（frp）",
   "Tunnel type": "穿透方式",
-  "Type Chinese; Enter translates it to English and sends it to the terminal": "输入中文，回车自动翻译成英文并发送到终端",
+  "Type Chinese; Enter translates it to English and sends it to the terminal; Shift+Enter for a new line": "输入中文，回车翻译成英文并发送到终端；Shift+回车换行",
   "Unknown": "未知",
   "unknown error": "未知错误",
   "Unknown version": "版本未知",

@@ -22,6 +22,15 @@ const API = {
     if (!res.ok) throw new Error(await res.text());
     return res.json();
   },
+  async patch(url, data) {
+    const res = await fetch(url, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  },
   async delete(url) {
     const res = await fetch(url, {
       method: 'DELETE',

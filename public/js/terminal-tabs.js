@@ -1,25 +1,87 @@
 // A shared tab strip for local and remote tasks. Controllers cache each
 // terminal view and connection independently; switching tabs only changes visibility.
 const TerminalTabs = (() => {
+  const MAX_TITLE = 40; // keep in step with MAX_TERMINAL_TITLE in routes/terminal.js
   const states = new Map();
   let mounted = null;
   const strip = document.getElementById('terminal-tabs');
 
   function state(scope) {
     if (!states.has(scope)) states.set(scope, {
-      active: 'default', revision: 0, rows: [{ terminal_id: 'default', title: 'Terminal 1' }],
+      active: 'default', editing: null, draft: '', revision: 0, rows: [{ terminal_id: 'default', title: 'Terminal 1' }],
     });
     return states.get(scope);
   }
 
+  function beginRename(scope, row) {
+    const current = state(scope);
+    current.editing = row.terminal_id;
+    current.draft = row.title;
+    current.selectAll = true;
+    render();
+  }
+
+  function endRename(scope) {
+    const current = state(scope);
+    current.editing = null;
+    current.draft = '';
+    if (mounted && mounted.scope === scope) render();
+  }
+
+  async function commitRename(scope, row, input) {
+    const current = state(scope);
+    const title = input.value.replace(/\s+/g, ' ').trim();
+    if (!title || title === row.title) return endRename(scope);
+    if (title.length > MAX_TITLE) return input.setCustomValidity(`Terminal names are limited to ${MAX_TITLE} characters`), input.reportValidity();
+    try {
+      const saved = await API.patch(`${scope}/terminals/${encodeURIComponent(row.terminal_id)}`, { title });
+      const target = current.rows.find(item => item.terminal_id === row.terminal_id);
+      if (target) target.title = saved.title;
+      current.revision++;
+    } catch (error) {
+      const unsupported = /ENGINE_ROUTE_NOT_FOUND|REMOTE_HTTP_404|Cannot PATCH/.test(error.message);
+      if (typeof Toast !== 'undefined') Toast.error(unsupported ? 'This remote engine does not support renaming terminals yet. Please upgrade it' : 'Could not rename the terminal');
+    }
+    endRename(scope);
+  }
+
+  function editorFor(scope, current, row) {
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'terminal-tab-edit';
+    input.maxLength = MAX_TITLE;
+    input.value = current.draft;
+    input.setAttribute('aria-label', 'Terminal name');
+    input.addEventListener('input', () => { current.draft = input.value; input.setCustomValidity(''); });
+    let done = false;
+    const finish = action => { if (done) return; done = true; action(); };
+    input.addEventListener('keydown', event => {
+      event.stopPropagation();
+      if (event.isComposing || event.keyCode === 229) return;
+      if (event.key === 'Enter') { event.preventDefault(); finish(() => commitRename(scope, row, input)); }
+      else if (event.key === 'Escape') { event.preventDefault(); finish(() => endRename(scope)); }
+    });
+    input.addEventListener('blur', () => { if (!input.dataset.detached) finish(() => commitRename(scope, row, input)); });
+    return input;
+  }
+
   function render() {
+    // Replacing the strip removes a focused editor, which fires blur; flag it so that does not count as "commit".
+    const stale = strip.querySelector('.terminal-tab-edit');
+    if (stale) stale.dataset.detached = '1';
     strip.replaceChildren();
     if (!mounted) return;
     const { scope, select } = mounted;
     const current = state(scope);
     const buttons = [];
     const acknowledgements = [];
+    let editor = null;
     for (const row of current.rows) {
+      if (current.editing === row.terminal_id) {
+        editor = editorFor(scope, current, row);
+        buttons.push(editor);
+        continue;
+      }
       const button = document.createElement('button');
       button.type = 'button';
       button.disabled = typeof TerminalControls !== 'undefined' && Boolean(TerminalControls.busy);
@@ -28,6 +90,10 @@ const TerminalTabs = (() => {
       button.setAttribute('role', 'tab');
       button.setAttribute('aria-selected', String(row.terminal_id === current.active));
       button.textContent = row.title;
+      // Rename: double-click the tab, or press F2 on it.
+      button.title = 'Double-click to rename';
+      button.addEventListener('dblclick', () => beginRename(scope, row));
+      button.addEventListener('keydown', event => { if (event.key === 'F2') { event.preventDefault(); beginRename(scope, row); } });
       // Deleting a terminal happens from its tab: the default terminal cannot be deleted, the others get a × (or press Delete on the tab).
       if (row.terminal_id !== 'default') {
         const remove = () => {
@@ -60,6 +126,13 @@ const TerminalTabs = (() => {
       buttons.push(button);
     }
     strip.replaceChildren(...buttons);
+    if (editor) {
+      const current = state(mounted.scope);
+      editor.focus();
+      // Select the whole name when editing starts; on later re-renders keep typing at the end.
+      if (current.selectAll) { editor.select(); current.selectAll = false; }
+      else editor.setSelectionRange(editor.value.length, editor.value.length);
+    }
     // acknowledge() notifies listeners synchronously and they call render() again, so it
     // must run after the strip is complete; re-entering mid-loop duplicated every tab.
     for (const args of acknowledgements) TerminalActivity.acknowledge(...args);

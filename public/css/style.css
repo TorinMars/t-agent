@@ -1820,6 +1820,9 @@ html[lang="zh-CN"] .update-log:empty::before { content: '\7B49\5F85\8F93\51FA\20
 .terminal-tabs .terminal-tab:hover .terminal-tab-close,
 .terminal-tabs .terminal-tab.active .terminal-tab-close { opacity: 1; }
 .terminal-tabs .terminal-tab-close:hover { background: #cf222e; color: #fff; }
+.terminal-tabs .terminal-tab-edit { flex: 0 0 auto; box-sizing: border-box; width: 150px; height: 28px; padding: 0 8px; border: 1px solid #70a5ff; border-radius: 5px; background: #1b1b1c; color: #f0f0f0; font: inherit; font-size: 13px; }
+.terminal-tabs .terminal-tab-edit:focus { outline: none; }
+.terminal-tabs .terminal-tab-edit:invalid { border-color: #cf222e; }
 .terminal-tabs .terminal-tab.active { color: #fff; background: #444; box-shadow: inset 0 -2px #70a5ff; }
 
 /* Compact terminal keys stay below the viewport without covering output. */

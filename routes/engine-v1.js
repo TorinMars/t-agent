@@ -298,6 +298,13 @@ router.post('/tasks/:id/terminals', requireEngineAuth('terminal:execute'), (req,
   res.status(201).json(terminal.createTerminal(task.id));
 });
 
+router.patch('/tasks/:id/terminals/:terminalId', requireEngineAuth('terminal:execute'), (req, res) => {
+  const task = tasks.ownedTask(principal(req), req.params.id);
+  if (!task) return res.status(404).json({ error: 'TASK_NOT_FOUND' });
+  try { res.json(terminal.renameTerminal(task.id, req.params.terminalId, req.body && req.body.title)); }
+  catch (error) { errorResponse(res, error); }
+});
+
 router.get('/terminal-activity', requireEngineAuth('terminal:execute'), (req, res) => {
   const ids = db.prepare('SELECT id FROM tasks WHERE user_id = ?').all(principal(req)).map(row => row.id);
   res.json(terminal.activitySnapshot(ids));

@@ -210,6 +210,13 @@ router.post('/:id/terminals', (req, res) => {
   res.status(201).json(terminal.createTerminal(task.id));
 });
 
+router.patch('/:id/terminals/:terminalId', (req, res) => {
+  const task = db.prepare('SELECT id FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, ownerFilter(req));
+  if (!task) return res.status(404).json({ error: 'TASK_NOT_FOUND' });
+  try { res.json(terminal.renameTerminal(task.id, req.params.terminalId, req.body && req.body.title)); }
+  catch (error) { res.status(error.statusCode || 400).json({ error: error.message || 'TERMINAL_RENAME_FAILED' }); }
+});
+
 router.post('/:id/terminal/control', (req, res) => {
   const uid = ownerFilter(req);
   const task = db.prepare('SELECT id FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, uid);

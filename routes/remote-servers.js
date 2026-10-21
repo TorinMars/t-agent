@@ -421,6 +421,17 @@ for (const method of ['get', 'post']) {
   });
 }
 
+router.patch('/:id/tasks/:taskId/terminals/:terminalId', async (req, res) => {
+  const row = getServer(req);
+  if (!row) return res.status(404).json({ error: 'REMOTE_NOT_FOUND' });
+  try {
+    res.json(await request(row.base_url,
+      `/v1/tasks/${encodeURIComponent(req.params.taskId)}/terminals/${encodeURIComponent(req.params.terminalId)}`,
+      decryptToken(row.token_cipher, config.sessionSecret),
+      { method: 'PATCH', body: { title: req.body && req.body.title } }));
+  } catch (error) { res.status(error.statusCode || 502).json({ error: safeError(error) }); }
+});
+
 router.post('/:id/tasks/:taskId/terminal/control', async (req, res) => {
   const row = getServer(req);
   if (!row) return res.status(404).json({ error: 'REMOTE_NOT_FOUND' });

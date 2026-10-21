@@ -67,8 +67,11 @@ function assertTerminal(taskId, value) {
   return id;
 }
 
+const MAX_TERMINAL_TITLE = 40;
+
 function listTerminals(taskId) {
-  return [{ terminal_id: 'default', title: 'Terminal 1' }, ...db.prepare(
+  const stored = db.prepare('SELECT title FROM task_default_terminal_titles WHERE task_id = ?').get(taskId);
+  return [{ terminal_id: 'default', title: stored ? stored.title : 'Terminal 1' }, ...db.prepare(
     'SELECT terminal_id, title FROM task_terminals WHERE task_id = ? ORDER BY rowid'
   ).all(taskId)];
 }
@@ -77,6 +80,22 @@ function createTerminal(taskId) {
   const id = require('crypto').randomUUID();
   const title = `Terminal ${listTerminals(taskId).length + 1}`;
   db.prepare('INSERT INTO task_terminals (task_id, terminal_id, title) VALUES (?, ?, ?)').run(taskId, id, title);
+  return { terminal_id: id, title };
+}
+
+function renameTerminal(taskId, value, requestedTitle) {
+  const id = assertTerminal(taskId, value);
+  const title = String(requestedTitle ?? '').replace(/[\x00-\x1f\x7f]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!title) throw Object.assign(new Error('TERMINAL_TITLE_REQUIRED'), { statusCode: 400 });
+  if (title.length > MAX_TERMINAL_TITLE) throw Object.assign(new Error('TERMINAL_TITLE_TOO_LONG'), { statusCode: 400 });
+  if (id === 'default') {
+    db.prepare(`
+      INSERT INTO task_default_terminal_titles (task_id, title) VALUES (?, ?)
+      ON CONFLICT(task_id) DO UPDATE SET title = excluded.title
+    `).run(taskId, title);
+  } else {
+    db.prepare('UPDATE task_terminals SET title = ? WHERE task_id = ? AND terminal_id = ?').run(title, taskId, id);
+  }
   return { terminal_id: id, title };
 }
 
@@ -420,4 +439,4 @@ function closeTaskTerminals(taskId) {
   for (const item of listTerminals(taskId)) controlSession(taskId, 'close', item.terminal_id);
 }
 
-module.exports = { setHookEndpoint, reportHook, activitySnapshot, acknowledgeActivity, controlSession, handleWs, listTerminals, createTerminal, assertTerminal, closeTaskTerminals };
+module.exports = { setHookEndpoint, reportHook, activitySnapshot, acknowledgeActivity, controlSession, handleWs, listTerminals, createTerminal, renameTerminal, assertTerminal, closeTaskTerminals };

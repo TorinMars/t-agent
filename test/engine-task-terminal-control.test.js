@@ -52,3 +52,17 @@ test('Reopening from the working directory clears the old terminal history', () 
 test('Terminal control rejects unknown actions', () => {
   assert.throws(() => terminal.controlSession(9001, 'destroy-everything'), /INVALID_TERMINAL_ACTION/);
 });
+
+test('A terminal can be renamed, including the default one, and the name is validated', () => {
+  const task = tasks.createTask('owner', { title: 'Rename terminals', work_dir: path.join(root, 'rename-terminals') });
+  const extra = terminal.createTerminal(task.id);
+
+  assert.deepEqual(terminal.renameTerminal(task.id, extra.terminal_id, '  Build   server '), { terminal_id: extra.terminal_id, title: 'Build server' });
+  assert.deepEqual(terminal.renameTerminal(task.id, 'default', 'Main shell'), { terminal_id: 'default', title: 'Main shell' });
+  assert.deepEqual(terminal.listTerminals(task.id).map(row => row.title), ['Main shell', 'Build server']);
+
+  assert.throws(() => terminal.renameTerminal(task.id, 'default', '   '), /TERMINAL_TITLE_REQUIRED/);
+  assert.throws(() => terminal.renameTerminal(task.id, 'default', 'x'.repeat(41)), /TERMINAL_TITLE_TOO_LONG/);
+  assert.throws(() => terminal.renameTerminal(task.id, '00000000-0000-4000-8000-000000000000', 'Nope'), /TERMINAL_NOT_FOUND/);
+  assert.equal(terminal.listTerminals(task.id)[0].title, 'Main shell');
+});

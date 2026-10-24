@@ -25,7 +25,7 @@
         <span class="h5-menu-icon" aria-hidden="true">☰</span>
         <span class="h5-task-name" id="h5-task-name">Choose a task</span>
       </button>
-      <button type="button" class="h5-header-button" id="h5-lang" data-lang-toggle translate="no"></button>
+      <button type="button" class="h5-header-button" id="h5-open-settings" aria-haspopup="dialog" aria-controls="h5-settings" aria-label="Settings">⚙</button>
     </header>
     <nav class="h5-terminal-tabs" id="h5-terminal-tabs" role="tablist" aria-label="Phone terminals"></nav>
     <main class="h5-terminal" id="h5-terminal">
@@ -76,6 +76,31 @@
     </form>
     <div class="h5-task-list" id="h5-task-list"></div>
     <a class="h5-desktop-link" href="/web">Desktop version</a>
+   </div>
+  </div>
+
+  <div class="h5-sheet h5-sheet-right" id="h5-settings" role="dialog" aria-modal="true" aria-labelledby="h5-settings-title" aria-hidden="true">
+   <div class="h5-sheet-panel">
+    <div class="h5-sheet-header">
+      <h2 id="h5-settings-title">Settings</h2>
+      <button type="button" class="h5-header-button" id="h5-close-settings" aria-label="Close">✕</button>
+    </div>
+    <div class="h5-settings-body">
+      <div class="h5-setting-row">
+        <span>Language</span>
+        <button type="button" class="h5-header-button" id="h5-lang" data-lang-toggle translate="no"></button>
+      </div>
+      <section class="h5-setting-block">
+        <h3>PC update</h3>
+        <p class="h5-setting-hint" id="h5-update-hint">Check for a new version and update the computer this page is served from.</p>
+        <button type="button" class="h5-setting-action" id="h5-update-check">One-click update</button>
+        <div class="h5-update-confirm" id="h5-update-confirm" hidden>
+          <p id="h5-update-confirm-text"></p>
+          <button type="button" class="h5-setting-action danger" id="h5-update-apply">Update and restart</button>
+        </div>
+        <pre class="h5-update-log" id="h5-update-log" aria-label="Update log" aria-live="off" hidden></pre>
+      </section>
+    </div>
    </div>
   </div>
 

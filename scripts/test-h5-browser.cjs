@@ -49,6 +49,10 @@ async function openPage(browser, { remoteTerminals, viewport } = {}) {
       assert.equal(route.request().headers()['content-type'], 'image/png');
       return json({ url: 'https://img.test/shot.png' });
     }
+    if (url.pathname === '/api/system/check-update') return json({ status: 'available', is_update_admin: true, local_version: '1.0.0', remote_version: '1.0.1' });
+    if (url.pathname === '/api/system/version') return json({ boot_id: 'old' });
+    if (url.pathname === '/api/system/apply-update') { assert.deepEqual(route.request().postDataJSON(), { confirm: true }); return json({ accepted: true }, 202); }
+    if (url.pathname === '/api/system/update-status') return json({ status: 'updating', stage: 'installing', message: 'Installing dependencies', log: [{ at: 1, text: 'npm ci' }], boot_id: 'old' });
     if (url.pathname === '/api/translate') return json({ text: 'Run the tests\u001b[2J' });
     return json({ error: 'not mocked' }, 404);
   });
@@ -68,9 +72,9 @@ async function openPage(browser, { remoteTerminals, viewport } = {}) {
     assert.equal(await page.locator('#h5-task-name').textContent(), 'Fix login');
     // The task panel slides in from the left when the menu button is tapped.
     await page.locator('#h5-open-tasks').tap();
-    const midway = await page.locator('.h5-sheet-panel').evaluate(el => new Promise(resolve => setTimeout(() => resolve(el.getBoundingClientRect().left), 60)));
+    const midway = await page.locator('#h5-tasks .h5-sheet-panel').evaluate(el => new Promise(resolve => setTimeout(() => resolve(el.getBoundingClientRect().left), 60)));
     assert.ok(midway < 0 && midway > -390, `panel is mid-slide from the left (x=${midway})`);
-    await page.waitForFunction(() => document.querySelector('.h5-sheet-panel').getBoundingClientRect().left === 0);
+    await page.waitForFunction(() => document.querySelector('#h5-tasks .h5-sheet-panel').getBoundingClientRect().left === 0);
     await page.locator('#h5-close-tasks').tap();
     await page.locator('#h5-tasks').waitFor({ state: 'hidden' });
     await page.waitForFunction(() => window.sockets.length === 1 && window.sockets[0].readyState === 1);
@@ -171,6 +175,18 @@ async function openPage(browser, { remoteTerminals, viewport } = {}) {
     assert.ok(calls.includes('POST /api/tasks/1/terminals?surface=h5'));
     assert.equal(await page.evaluate(() => new URL(window.sockets[1].url).searchParams.get('terminalId')), 'h5-second');
     assert.equal(await page.evaluate(() => window.sockets[0].readyState), 3);
+
+    // Settings: the header button opens a menu with the language toggle and the PC one-click update.
+    assert.equal(await page.locator('#h5-open-settings').textContent(), '⚙');
+    await page.locator('#h5-open-settings').tap();
+    await page.locator('#h5-settings').waitFor({ state: 'visible' });
+    assert.equal(await page.locator('#h5-settings [data-lang-toggle]').count(), 1);
+    await page.locator('#h5-update-check').tap();
+    await page.locator('#h5-update-confirm').waitFor({ state: 'visible' });
+    assert.match(await page.locator('#h5-update-confirm-text').textContent(), /1\.0\.0 → 1\.0\.1/);
+    await page.locator('#h5-update-apply').tap();
+    await page.waitForFunction(() => document.getElementById('h5-update-log').textContent.includes('npm ci'));
+    assert.ok(calls.includes('POST /api/system/apply-update'));
     await context.close();
 
     // Opened on a computer, the page stays a centred phone-sized column.

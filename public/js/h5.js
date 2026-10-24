@@ -162,6 +162,105 @@
     sheet.setAttribute('aria-hidden', 'true');
   }
 
+  // ── Settings: language and the PC one-click update (same /api/system endpoints as the desktop page) ──
+  const settings = $('h5-settings');
+  const updateButton = $('h5-update-check');
+  const updateHint = $('h5-update-hint');
+  const updateConfirm = $('h5-update-confirm');
+  const updateLog = $('h5-update-log');
+  let updateTimer = null;
+  let updateBusy = false;
+
+  function openSettings() {
+    settings.classList.add('open');
+    settings.setAttribute('aria-hidden', 'false');
+  }
+  function closeSettings() {
+    settings.classList.remove('open');
+    settings.setAttribute('aria-hidden', 'true');
+  }
+  function showUpdate(message, lines) {
+    updateHint.textContent = tr(message);
+    if (Array.isArray(lines) && lines.length) {
+      const stuck = updateLog.scrollHeight - updateLog.scrollTop - updateLog.clientHeight < 24;
+      updateLog.hidden = false;
+      updateLog.textContent = lines.map(line => line.text).join('\n');
+      if (stuck) updateLog.scrollTop = updateLog.scrollHeight;
+    }
+  }
+  function endUpdate() {
+    clearInterval(updateTimer);
+    updateBusy = false;
+    updateButton.disabled = false;
+  }
+  async function checkUpdate() {
+    if (updateBusy) return;
+    updateBusy = true;
+    updateButton.disabled = true;
+    updateConfirm.hidden = true;
+    updateLog.hidden = true;
+    showUpdate('Checking for the latest version…');
+    try {
+      const status = await api('POST', '/api/system/check-update', {});
+      if (status.status === 'updating') { monitorUpdate(); return; }
+      if (status.status === 'available') {
+        if (!status.is_update_admin) { showUpdate('Only the update administrator can run updates'); endUpdate(); return; }
+        showUpdate('Update available');
+        $('h5-update-confirm-text').textContent = `${status.local_version || '?'} → ${status.remote_version}. ${tr('The PC service restarts and terminals running on it are interrupted.')}`;
+        updateConfirm.hidden = false;
+      } else {
+        showUpdate(status.error ? `${status.error}${status.error_details ? `: ${status.error_details}` : ''}` : (status.message || 'Already up to date'));
+      }
+    } catch (error) {
+      showUpdate(error.message || 'Update failed');
+    }
+    endUpdate();
+  }
+  async function applyUpdate() {
+    if (updateBusy) return;
+    updateBusy = true;
+    updateButton.disabled = true;
+    updateConfirm.hidden = true;
+    showUpdate('Updating…');
+    try {
+      let bootId = null;
+      try { bootId = (await api('GET', '/api/system/version')).boot_id || null; } catch { /* the monitor falls back to the restart grace period */ }
+      await api('POST', '/api/system/apply-update', { confirm: true });
+      monitorUpdate(bootId);
+    } catch (error) {
+      showUpdate(error.message || 'Update not run');
+      endUpdate();
+    }
+  }
+  // Poll the update progress; while the PC service restarts the polls fail, and a changed boot id (or the grace period) proves it is back.
+  function monitorUpdate(bootId = null) {
+    clearInterval(updateTimer);
+    updateBusy = true;
+    updateButton.disabled = true;
+    let restartingAt = null;
+    let down = false;
+    updateTimer = setInterval(async () => {
+      let status;
+      try { status = await api('GET', '/api/system/update-status'); } catch { down = true; return; }
+      const restarted = down || (restartingAt && Date.now() - restartingAt > 4000) || (bootId && status.boot_id && status.boot_id !== bootId);
+      if (status.status === 'blocked' || status.status === 'failed') {
+        showUpdate(`${status.error || status.message || 'Update failed'}${status.error_details ? `: ${status.error_details}` : ''}`, status.log);
+        endUpdate();
+      } else if (status.stage === 'completed' || (status.status !== 'updating' && restarted)) {
+        showUpdate('Update complete, reloading…', status.log);
+        endUpdate();
+        setTimeout(() => location.reload(), 1500);
+      } else {
+        if (status.stage === 'restarting' && !restartingAt) restartingAt = Date.now();
+        showUpdate(status.stage === 'restarting' ? 'Restarting the PC service, this page reloads when it is back…' : (status.message || 'Updating…'), status.log);
+      }
+    }, 1000);
+  }
+  $('h5-open-settings').addEventListener('click', openSettings);
+  $('h5-close-settings').addEventListener('click', closeSettings);
+  updateButton.addEventListener('click', () => void checkUpdate());
+  $('h5-update-apply').addEventListener('click', () => void applyUpdate());
+
   $('h5-open-tasks').addEventListener('click', openTasks);
   $('h5-close-tasks').addEventListener('click', closeTasks);
   engineSelect.addEventListener('change', () => {

@@ -151,11 +151,15 @@
   }
 
   function openTasks() {
-    sheet.hidden = false;
+    sheet.classList.add('open');
+    sheet.setAttribute('aria-hidden', 'false');
     renderTasks();
     void loadTasks();
   }
-  function closeTasks() { sheet.hidden = true; }
+  function closeTasks() {
+    sheet.classList.remove('open');
+    sheet.setAttribute('aria-hidden', 'true');
+  }
 
   $('h5-open-tasks').addEventListener('click', openTasks);
   $('h5-close-tasks').addEventListener('click', closeTasks);

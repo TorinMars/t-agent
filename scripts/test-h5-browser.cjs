@@ -64,8 +64,15 @@ async function openPage(browser, { remoteTerminals, viewport } = {}) {
     await page.locator('#h5-tasks').waitFor({ state: 'visible' });
     assert.deepEqual(await page.locator('.h5-group-title').allTextContents(), ['In progress', 'To do']);
     await page.locator('.h5-task-item', { hasText: 'Fix login' }).tap();
-    assert.equal(await page.locator('#h5-tasks').isVisible(), false);
+    await page.locator('#h5-tasks').waitFor({ state: 'hidden' });
     assert.equal(await page.locator('#h5-task-name').textContent(), 'Fix login');
+    // The task panel slides in from the left when the menu button is tapped.
+    await page.locator('#h5-open-tasks').tap();
+    const midway = await page.locator('.h5-sheet-panel').evaluate(el => new Promise(resolve => setTimeout(() => resolve(el.getBoundingClientRect().left), 60)));
+    assert.ok(midway < 0 && midway > -390, `panel is mid-slide from the left (x=${midway})`);
+    await page.waitForFunction(() => document.querySelector('.h5-sheet-panel').getBoundingClientRect().left === 0);
+    await page.locator('#h5-close-tasks').tap();
+    await page.locator('#h5-tasks').waitFor({ state: 'hidden' });
     await page.waitForFunction(() => window.sockets.length === 1 && window.sockets[0].readyState === 1);
     assert.ok(calls.includes('GET /api/tasks/1/terminals?surface=h5'));
     assert.equal(await page.evaluate(() => new URL(window.sockets[0].url).search), '?taskId=1&terminalId=h5-default');

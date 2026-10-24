@@ -56,7 +56,8 @@
     <input type="file" id="h5-image-picker" accept="image/png,image/jpeg,image/gif,image/webp" hidden>
   </div>
 
-  <div class="h5-sheet" id="h5-tasks" role="dialog" aria-modal="true" aria-labelledby="h5-tasks-title" hidden>
+  <div class="h5-sheet" id="h5-tasks" role="dialog" aria-modal="true" aria-labelledby="h5-tasks-title" aria-hidden="true">
+   <div class="h5-sheet-panel">
     <div class="h5-sheet-header">
       <h2 id="h5-tasks-title">Tasks</h2>
       <button type="button" class="h5-header-button" id="h5-close-tasks" aria-label="Close">✕</button>
@@ -71,6 +72,7 @@
     </form>
     <div class="h5-task-list" id="h5-task-list"></div>
     <a class="h5-desktop-link" href="/web">Desktop version</a>
+   </div>
   </div>
 
   <script src="/js/terminal-keys.js"></script>

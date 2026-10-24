@@ -176,6 +176,29 @@ async function openPage(browser, { remoteTerminals, viewport } = {}) {
     assert.equal(await page.evaluate(() => new URL(window.sockets[1].url).searchParams.get('terminalId')), 'h5-second');
     assert.equal(await page.evaluate(() => window.sockets[0].readyState), 3);
 
+    // The on-screen keyboard shrinks the viewport: the terminal keeps its size (no resize, so no redraw) and is shifted up instead.
+    const termInfo = () => page.evaluate(() => {
+      const box = document.getElementById('h5-terminal').getBoundingClientRect();
+      const term = document.querySelector('.h5-xterm').getBoundingClientRect();
+      const resizes = window.sockets[1].sent.filter(item => { try { return JSON.parse(item).type === 'resize'; } catch { return false; } }).length;
+      return { boxTop: box.top, boxBottom: box.bottom, top: term.top, bottom: term.bottom, height: term.height, resizes };
+    });
+    await page.evaluate(() => window.sockets[1].emit(JSON.stringify({ type: 'history', data: '\x1b[?1049hfull screen app', cols: 40, rows: 30 })));
+    await page.waitForTimeout(200);
+    const closed = await termInfo();
+    await page.setViewportSize({ width: 390, height: 844 - 330 });
+    await page.waitForTimeout(300);
+    const open = await termInfo();
+    assert.equal(open.resizes, closed.resizes, 'opening the keyboard sends no resize to the terminal');
+    assert.ok(Math.abs(open.height - closed.height) < 1, 'the terminal keeps its height');
+    assert.ok(open.top < open.boxTop, 'the top rows are shifted out of view');
+    assert.ok(Math.abs(open.bottom - open.boxBottom) <= 3, 'the bottom rows stay visible above the keys');
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.waitForTimeout(300);
+    const back = await termInfo();
+    assert.equal(back.resizes, closed.resizes, 'closing the keyboard sends no resize either');
+    assert.ok(Math.abs(back.top - closed.top) < 1 && Math.abs(back.bottom - closed.bottom) < 1, 'the terminal returns to its place');
+
     // Settings: the header button opens a menu with the language toggle and the PC one-click update.
     assert.equal(await page.locator('#h5-open-settings').textContent(), '⚙');
     await page.locator('#h5-open-settings').tap();

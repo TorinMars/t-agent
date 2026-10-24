@@ -36,7 +36,7 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; c
 .h5-terminal-tabs button { flex: 0 0 auto; height: 32px; padding: 0 12px; border: 1px solid #555; border-radius: 16px; background: var(--h5-key); font-size: 13px; white-space: nowrap; }
 .h5-terminal-tabs button[aria-selected="true"] { background: var(--h5-pressed); border-color: var(--h5-accent); color: #fff; }
 
-.h5-terminal { position: relative; flex: 1 1 auto; min-height: 0; background: var(--h5-bg); }
+.h5-terminal { position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; background: var(--h5-bg); }
 .h5-terminal .h5-xterm { position: absolute; inset: 4px 4px 2px; }
 /* A press-and-hold must not start text selection or the callout menu: dragging always scrolls. */
 .h5-terminal .h5-xterm { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; touch-action: pan-y; }

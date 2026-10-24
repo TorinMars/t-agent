@@ -58,11 +58,38 @@
   const picker = $('h5-image-picker');
 
   // ── Layout: follow the visual viewport so the on-screen keyboard pushes the keys up instead of covering them ──
+  // The terminal itself keeps the size it had before the keyboard opened and is shifted up instead: a smaller terminal would
+  // resize the PTY, and a full-screen program (Claude Code, vim, tmux) redraws its whole screen on every resize.
+  const KEYBOARD_MIN_SHRINK = 8;
+  let fullHeight = 0;
+  let fullWidth = 0;
+  let closedTerminalHeight = 0; // the terminal box height while the keyboard is closed
+  let keyboardOpen = false;
   function fitViewport() {
     const height = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+    if (window.innerWidth !== fullWidth) { fullWidth = window.innerWidth; fullHeight = 0; } // rotated: measure again
+    fullHeight = Math.max(fullHeight, height);
+    keyboardOpen = fullHeight - height > KEYBOARD_MIN_SHRINK;
     document.documentElement.style.setProperty('--h5-height', `${Math.round(height)}px`);
     if (window.scrollY) window.scrollTo(0, 0);
+    holdTerminalSize();
   }
+  // While the keyboard is open the terminal keeps its closed height, aligned to the bottom of the (shorter) box so the cursor stays visible.
+  function holdTerminalSize() {
+    const el = session && session.el;
+    if (!el) return;
+    if (!keyboardOpen || !closedTerminalHeight) {
+      el.style.removeProperty('height');
+      el.style.removeProperty('bottom');
+      el.style.removeProperty('transform');
+      return;
+    }
+    const shift = Math.max(0, closedTerminalHeight - terminalHost.clientHeight);
+    el.style.height = `${closedTerminalHeight - 6}px`; // the terminal sits 4px from the top and 2px from the bottom of its box
+    el.style.bottom = 'auto';
+    el.style.transform = shift ? `translateY(${-shift}px)` : '';
+  }
+  new ResizeObserver(() => { if (!keyboardOpen) closedTerminalHeight = terminalHost.clientHeight; }).observe(terminalHost);
   window.visualViewport?.addEventListener('resize', fitViewport);
   window.addEventListener('resize', fitViewport);
   fitViewport();
@@ -401,6 +428,7 @@
     bindTouchScroll(s);
     s.observer = new ResizeObserver(() => refit(s));
     s.observer.observe(el);
+    holdTerminalSize();
     refit(s);
     open(s);
   }

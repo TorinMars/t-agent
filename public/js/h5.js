@@ -46,7 +46,6 @@
 
   const terminalHost = $('h5-terminal');
   const empty = $('h5-empty');
-  const tabs = $('h5-terminal-tabs');
   const keys = $('h5-keys');
   const scrollButtons = $('h5-scroll');
   const sheet = $('h5-tasks');
@@ -165,6 +164,7 @@
         if (task && task.id === item.id) button.setAttribute('aria-current', 'true');
         button.addEventListener('click', () => selectTask(item));
         nodes.push(button);
+        if (task && task.id === item.id && terminals.length) nodes.push(terminalList());
       }
     }
     taskList.replaceChildren(...nodes);
@@ -348,33 +348,38 @@
     connect();
   }
 
-  function renderTabs() {
-    const nodes = terminals.map(row => {
+  // The terminals of the selected task are a second-level list under it in the task sheet.
+  function terminalList() {
+    const list = document.createElement('div');
+    list.className = 'h5-terminal-list';
+    list.setAttribute('role', 'group');
+    list.setAttribute('aria-label', 'Phone terminals');
+    for (const row of terminals) {
       const button = document.createElement('button');
       button.type = 'button';
-      button.setAttribute('role', 'tab');
-      button.setAttribute('aria-selected', String(row.terminal_id === terminalId));
       button.textContent = row.title;
+      if (row.terminal_id === terminalId) button.setAttribute('aria-current', 'true');
       button.addEventListener('click', () => {
-        // Tapping the current tab reconnects a terminal that was disconnected.
+        closeTasks();
+        // Tapping the current terminal reconnects one that was disconnected.
         if (row.terminal_id === terminalId && session && (session.ws || session.timer)) return;
         terminalId = row.terminal_id;
         store.set(`terminal:${source.key}:${task.id}`, terminalId);
         renderTabs();
         connect();
       });
-      return button;
-    });
-    if (terminals.length) {
-      const add = document.createElement('button');
-      add.type = 'button';
-      add.textContent = '+';
-      add.setAttribute('aria-label', 'New phone terminal');
-      add.addEventListener('click', createTerminal);
-      nodes.push(add);
+      list.append(button);
     }
-    tabs.replaceChildren(...nodes);
+    const add = document.createElement('button');
+    add.type = 'button';
+    add.className = 'h5-terminal-add';
+    add.textContent = '+';
+    add.setAttribute('aria-label', 'New phone terminal');
+    add.addEventListener('click', () => { closeTasks(); void createTerminal(); });
+    list.append(add);
+    return list;
   }
+  function renderTabs() { if (tasks.length) renderTasks(); }
 
   async function createTerminal() {
     if (!task) return;

@@ -30,11 +30,6 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; c
 .h5-task-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
 .h5-header-button { flex: 0 0 auto; height: 36px; min-width: 36px; padding: 0 10px; border: 1px solid #555; border-radius: 8px; background: var(--h5-key); font-size: 13px; }
 
-.h5-terminal-tabs { flex: 0 0 auto; display: flex; gap: 6px; padding: 6px 8px; overflow-x: auto; background: var(--h5-panel); scrollbar-width: none; }
-.h5-terminal-tabs::-webkit-scrollbar { display: none; }
-.h5-terminal-tabs:empty { display: none; }
-.h5-terminal-tabs button { flex: 0 0 auto; height: 32px; padding: 0 12px; border: 1px solid #555; border-radius: 16px; background: var(--h5-key); font-size: 13px; white-space: nowrap; }
-.h5-terminal-tabs button[aria-selected="true"] { background: var(--h5-pressed); border-color: var(--h5-accent); color: #fff; }
 
 .h5-terminal { position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; background: var(--h5-bg); }
 .h5-terminal .h5-xterm { position: absolute; inset: 4px 4px 2px; }
@@ -100,6 +95,12 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; c
 .h5-task-item { display: block; width: 100%; min-height: 48px; margin-bottom: 6px; padding: 10px 12px; border: 1px solid var(--h5-border); border-radius: 10px; background: var(--h5-panel); text-align: left; overflow-wrap: anywhere; }
 .h5-task-item[aria-current="true"] { border-color: var(--h5-accent); box-shadow: inset 3px 0 var(--h5-accent); }
 .h5-task-item:active { background: var(--h5-key); }
+/* The phone terminals of the selected task, nested under it in the task sheet. */
+.h5-terminal-list { display: flex; flex-direction: column; gap: 6px; margin: -2px 0 8px 14px; padding-left: 10px; border-left: 2px solid var(--h5-border); }
+.h5-terminal-list button { min-height: 40px; padding: 0 12px; border: 1px solid var(--h5-border); border-radius: 8px; background: var(--h5-key); text-align: left; font-size: 14px; }
+.h5-terminal-list button[aria-current="true"] { background: var(--h5-pressed); border-color: var(--h5-accent); color: #fff; }
+.h5-terminal-list button:active { background: var(--h5-key-active); }
+.h5-terminal-list .h5-terminal-add { border-style: dashed; color: var(--h5-muted); text-align: center; }
 .h5-list-note { padding: 24px 0; color: var(--h5-muted); text-align: center; }
 .h5-desktop-link { display: block; padding: 12px; color: var(--h5-accent); text-align: center; text-decoration: none; border-top: 1px solid var(--h5-border); }
 

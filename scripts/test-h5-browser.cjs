@@ -170,7 +170,12 @@ async function openPage(browser, { remoteTerminals, viewport } = {}) {
     assert.deepEqual([...new Set(buttons)].sort(), ['64', '65'], 'the up button sends wheel-up and the down button wheel-down reports');
 
     // A new terminal is a phone terminal and gets its own connection.
-    await page.locator('#h5-terminal-tabs [aria-label="New phone terminal"]').tap();
+    await page.locator('#h5-open-tasks').tap();
+    assert.deepEqual(await page.locator('#h5-tasks .h5-terminal-list button').allTextContents(), ['Terminal 1', '+'], 'the selected task lists its terminals under it');
+    assert.equal(await page.locator('#h5-tasks .h5-terminal-list [aria-current="true"]').textContent(), 'Terminal 1');
+    assert.equal(await page.locator('#h5-terminal-tabs').count(), 0, 'there is no tab strip above the terminal any more');
+    await page.locator('#h5-tasks [aria-label="New phone terminal"]').tap();
+    await page.locator('#h5-tasks').waitFor({ state: 'hidden' });
     await page.waitForFunction(() => window.sockets.length === 2);
     assert.ok(calls.includes('POST /api/tasks/1/terminals?surface=h5'));
     assert.equal(await page.evaluate(() => new URL(window.sockets[1].url).searchParams.get('terminalId')), 'h5-second');

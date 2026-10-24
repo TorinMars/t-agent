@@ -48,6 +48,7 @@
   const empty = $('h5-empty');
   const tabs = $('h5-terminal-tabs');
   const keys = $('h5-keys');
+  const scrollButtons = $('h5-scroll');
   const sheet = $('h5-tasks');
   const taskList = $('h5-task-list');
   const engineSelect = $('h5-engine');
@@ -307,12 +308,18 @@
   // xterm only reacts to the mouse wheel. In the normal buffer the browser scrolls the history natively, but a full-screen
   // program (alternate buffer: Claude Code, Codex, vim, tmux ...) has no scrollback, so a drag is turned into wheel events and
   // xterm forwards them the way a desktop wheel would (mouse reports, or arrow keys when the program has no mouse mode).
+  function lineHeight(s) {
+    const screen = s.el.querySelector('.xterm-screen');
+    return screen && s.term.rows ? Math.max(8, screen.clientHeight / s.term.rows) : 16;
+  }
+  function wheel(s, lines, x, y) {
+    const target = s.el.querySelector('.xterm-screen') || s.el;
+    for (let i = 0; i < Math.min(Math.abs(lines), 10); i++) {
+      target.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaMode: 1, deltaY: Math.sign(lines), clientX: x, clientY: y }));
+    }
+  }
   function bindTouchScroll(s) {
     let touch = null;
-    const lineHeight = () => {
-      const screen = s.el.querySelector('.xterm-screen');
-      return screen && s.term.rows ? Math.max(8, screen.clientHeight / s.term.rows) : 16;
-    };
     s.el.addEventListener('touchstart', event => {
       touch = event.touches.length === 1 ? { y: event.touches[0].clientY, rest: 0 } : null;
     }, { passive: true });
@@ -321,15 +328,12 @@
       const point = event.touches[0];
       touch.rest += touch.y - point.clientY;
       touch.y = point.clientY;
-      const height = lineHeight();
+      const height = lineHeight(s);
       const lines = Math.trunc(touch.rest / height);
       event.preventDefault();
       if (!lines) return;
       touch.rest -= lines * height;
-      const target = s.el.querySelector('.xterm-screen') || s.el;
-      for (let i = 0; i < Math.min(Math.abs(lines), 10); i++) {
-        target.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaMode: 1, deltaY: Math.sign(lines), clientX: point.clientX, clientY: point.clientY }));
-      }
+      wheel(s, lines, point.clientX, point.clientY);
     }, { passive: false });
     s.el.addEventListener('touchend', () => { touch = null; }, { passive: true });
     s.el.addEventListener('touchcancel', () => { touch = null; }, { passive: true });
@@ -445,6 +449,21 @@
     if (uploading || !connected(session)) { tell('The terminal is not connected', 'error'); return; }
     session.term.paste(text);
   }
+
+  // The floating buttons move about a page per click: scrollback in the normal buffer, wheel events in a full-screen program.
+  scrollButtons.addEventListener('mousedown', event => event.preventDefault());
+  scrollButtons.addEventListener('click', event => {
+    const button = event.target.closest('button');
+    const s = session;
+    if (!button || !s || s.disposed) return;
+    const direction = Number(button.dataset.scroll);
+    if (s.term.buffer.active.type === 'alternate') {
+      const rect = (s.el.querySelector('.xterm-screen') || s.el).getBoundingClientRect();
+      wheel(s, direction * 5, rect.left + rect.width / 2, rect.top + rect.height / 2);
+    } else {
+      s.term.scrollLines(direction * Math.max(1, s.term.rows - 2));
+    }
+  });
 
   // Keep focus where it is, so tapping keys does not open or close the on-screen keyboard.
   keys.addEventListener('mousedown', event => event.preventDefault());

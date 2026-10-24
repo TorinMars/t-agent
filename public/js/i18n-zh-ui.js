@@ -1035,6 +1035,8 @@ I18n.add({
   "Send Ctrl+C": "发送 Ctrl+C",
   "Set up the translation service on the desktop page": "请在电脑版页面配置翻译服务",
   "Show or hide the on-screen keyboard": "显示或收起屏幕键盘",
+  "Scroll up": "向上滚动",
+  "Scroll down": "向下滚动",
   "The clipboard is empty": "剪贴板是空的",
   "The terminal is not connected": "终端未连接",
   "This engine does not support phone terminals yet. Please upgrade it": "该 Engine 暂不支持手机终端，请先升级",

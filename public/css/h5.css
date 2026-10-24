@@ -40,6 +40,10 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; c
 .h5-terminal .h5-xterm { position: absolute; inset: 4px 4px 2px; }
 /* A press-and-hold must not start text selection or the callout menu: dragging always scrolls. */
 .h5-terminal .h5-xterm { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; touch-action: pan-y; }
+/* Floating scroll buttons: a click moves the terminal, so scrolling does not depend on a drag. */
+.h5-scroll { position: absolute; right: 10px; bottom: 12px; z-index: 2; display: flex; flex-direction: column; gap: 10px; }
+.h5-scroll button { width: 44px; height: 44px; padding: 0; border: 1px solid #555; border-radius: 50%; background: rgba(51, 51, 51, 0.85); color: var(--h5-text); font-size: 16px; line-height: 1; }
+.h5-scroll button:active { background: var(--h5-pressed); border-color: var(--h5-accent); }
 .h5-empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 24px; color: var(--h5-muted); text-align: center; }
 
 .h5-translate { flex: 0 0 auto; display: flex; align-items: flex-end; gap: 6px; padding: 6px 8px 0; background: var(--h5-panel); border-top: 1px solid var(--h5-border); }

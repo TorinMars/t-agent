@@ -158,6 +158,13 @@ async function openPage(browser, { remoteTerminals, viewport } = {}) {
     const up = (await wheels()).slice(before + down.length);
     assert.ok(up.length >= 5 && up.every(code => code === '65'), 'dragging up sends wheel-down reports');
 
+    // The floating buttons scroll by click, without a drag.
+    const clicked = (await wheels()).length;
+    await page.locator('[data-scroll="-1"]').tap();
+    await page.locator('[data-scroll="1"]').tap();
+    const buttons = (await wheels()).slice(clicked);
+    assert.deepEqual([...new Set(buttons)].sort(), ['64', '65'], 'the up button sends wheel-up and the down button wheel-down reports');
+
     // A new terminal is a phone terminal and gets its own connection.
     await page.locator('#h5-terminal-tabs [aria-label="New phone terminal"]').tap();
     await page.waitForFunction(() => window.sockets.length === 2);

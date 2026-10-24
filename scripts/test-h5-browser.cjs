@@ -99,7 +99,7 @@ async function openPage(browser, { remoteTerminals, viewport } = {}) {
     assert.deepEqual(rows[0].map(cell => cell.text), ['Esc', 'Tab', 'Ctrl', '↑', 'Shift', '⌨']);
     assert.deepEqual(rows[1].map(cell => cell.text), ['Alt', 'Paste', '←', '↓', '→', 'Enter']);
     assert.deepEqual(rows[2].map(cell => cell.text), ['⌫', '^C', 'Upload image', 'Translate']);
-    assert.ok(rows.flat().every(cell => cell.height >= 40 && cell.right <= 390));
+    assert.ok(rows.flat().every(cell => cell.height >= 32 && cell.right <= 390));
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
 
     const sent = () => page.evaluate(() => window.sockets[0].sent.filter(item => !item.startsWith('{')));

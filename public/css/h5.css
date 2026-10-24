@@ -55,17 +55,17 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; c
 @keyframes h5-pulse { 50% { box-shadow: 0 0 8px 1px rgba(112, 165, 255, .6); } }
 
 /* Key grid: the first two rows follow the common mobile terminal layout. */
-.h5-keys { flex: 0 0 auto; display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px;
+.h5-keys { flex: 0 0 auto; display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 4px;
   padding: 6px 8px max(6px, env(safe-area-inset-bottom)); background: var(--h5-panel); border-top: 1px solid var(--h5-border);
   user-select: none; -webkit-user-select: none; }
 .h5-translate:not([hidden]) + .h5-keys { border-top: 0; }
-.h5-keys button { height: 42px; min-width: 0; padding: 0 2px; border: 1px solid #4a4a4a; border-radius: 8px; background: var(--h5-key);
-  font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.h5-keys button { height: 34px; min-width: 0; padding: 0 2px; border: 1px solid #4a4a4a; border-radius: 8px; background: var(--h5-key);
+  font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .h5-keys button:active { background: var(--h5-key-active); }
 .h5-keys button[aria-pressed="true"] { background: var(--h5-pressed); border-color: var(--h5-accent); color: #fff; }
 .h5-keys button:disabled { opacity: .45; }
-.h5-keys .h5-wide { grid-column: span 2; font-size: 14px; }
-.h5-keys [data-action="keyboard"] { font-size: 24px; }
+.h5-keys .h5-wide { grid-column: span 2; font-size: 13px; }
+.h5-keys [data-action="keyboard"] { font-size: 20px; }
 
 /* Task sheet */
 .h5-sheet { position: fixed; inset: 0; z-index: 100; width: 100%; max-width: var(--h5-max-width); margin: 0 auto; overflow: hidden; visibility: hidden; pointer-events: none; transition: visibility 0s linear .25s; }

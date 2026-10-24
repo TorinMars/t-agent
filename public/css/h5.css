@@ -10,16 +10,17 @@
   --h5-accent: #70a5ff;
   --h5-pressed: #245997;
   --h5-danger: #ff7b72;
+  --h5-max-width: 480px; /* keeps phone portrait proportions when the page is opened on a computer */
 }
 * { box-sizing: border-box; }
-html, body { margin: 0; height: 100%; background: var(--h5-bg); color: var(--h5-text); overflow: hidden; overscroll-behavior: none; }
+html, body { margin: 0; height: 100%; background: #111; color: var(--h5-text); overflow: hidden; overscroll-behavior: none; }
 body { font: 15px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; -webkit-text-size-adjust: 100%; }
 button, input, select, textarea { font: inherit; color: inherit; }
 button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; cursor: pointer; }
 [hidden] { display: none !important; }
 
 /* --h5-height follows the visual viewport so the on-screen keyboard pushes the keys up instead of covering them. */
-.h5-app { position: fixed; inset: 0 0 auto 0; height: var(--h5-height, 100dvh); display: flex; flex-direction: column;
+.h5-app { position: fixed; inset: 0 0 auto 0; width: 100%; max-width: var(--h5-max-width); margin: 0 auto; background: var(--h5-bg); height: var(--h5-height, 100dvh); display: flex; flex-direction: column;
   padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left); }
 
 .h5-header { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; padding: 6px 8px; background: var(--h5-panel); border-bottom: 1px solid var(--h5-border); }
@@ -61,7 +62,7 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; c
 .h5-keys [data-action="keyboard"] { font-size: 24px; }
 
 /* Task sheet */
-.h5-sheet { position: fixed; inset: 0; z-index: 100; display: flex; flex-direction: column; background: var(--h5-bg);
+.h5-sheet { position: fixed; inset: 0; z-index: 100; width: 100%; max-width: var(--h5-max-width); margin: 0 auto; display: flex; flex-direction: column; background: var(--h5-bg);
   padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
 .h5-sheet-header { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; border-bottom: 1px solid var(--h5-border); background: var(--h5-panel); }
 .h5-sheet-header h2 { margin: 0; font-size: 17px; }
@@ -86,9 +87,14 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; c
 .h5-upload-card progress { width: 100%; height: 14px; accent-color: #58a6ff; }
 
 /* Floating notices (toast.js) */
-.toast-stack { position: fixed; top: calc(12px + env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); z-index: 2147483646; display: flex; flex-direction: column; align-items: center; gap: 8px; width: calc(100vw - 24px); pointer-events: none; }
+.toast-stack { position: fixed; top: calc(12px + env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); z-index: 2147483646; display: flex; flex-direction: column; align-items: center; gap: 8px; width: min(var(--h5-max-width), 100vw) ; padding: 0 12px; pointer-events: none; }
 .toast { box-sizing: border-box; max-width: 100%; padding: 10px 14px; border-radius: 8px; border-left: 4px solid var(--h5-accent); background: #2d2d30; color: #f0f0f0; font-size: 14px; line-height: 1.45; overflow-wrap: anywhere; box-shadow: 0 6px 20px rgba(0, 0, 0, .35); pointer-events: auto; }
 .toast-success { border-left-color: #3fb950; }
 .toast-error { border-left-color: var(--h5-danger); }
 
 @media (prefers-reduced-motion: reduce) { .h5-translate-input.translating { animation: none; } }
+
+/* Wider than a phone: show the page as a centred phone-sized column. */
+@media (min-width: 481px) {
+  .h5-app, .h5-sheet { box-shadow: 0 0 0 1px var(--h5-border); }
+}

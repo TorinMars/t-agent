@@ -8,8 +8,8 @@ const root = path.resolve(__dirname, '..');
 const ORIGIN = 'http://h5.test';
 const TYPES = { '.js': 'application/javascript', '.css': 'text/css', '.html': 'text/html' };
 
-async function openPage(browser, { remoteTerminals } = {}) {
-  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+async function openPage(browser, { remoteTerminals, viewport } = {}) {
+  const context = await browser.newContext(viewport ? { viewport } : { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
   const page = await context.newPage();
   const calls = [];
   await page.addInitScript(() => {
@@ -139,6 +139,22 @@ async function openPage(browser, { remoteTerminals } = {}) {
     assert.equal(await page.evaluate(() => new URL(window.sockets[1].url).searchParams.get('terminalId')), 'h5-second');
     assert.equal(await page.evaluate(() => window.sockets[0].readyState), 3);
     await context.close();
+
+    // Opened on a computer, the page stays a centred phone-sized column.
+    const wide = await openPage(browser, { viewport: { width: 1440, height: 900 } });
+    await wide.page.locator('#h5-tasks').waitFor({ state: 'visible' });
+    const sheetBox = await wide.page.locator('#h5-tasks').boundingBox();
+    assert.deepEqual([sheetBox.width, sheetBox.x], [480, 480]);
+    await wide.page.locator('.h5-task-item', { hasText: 'Fix login' }).click();
+    const appBox = await wide.page.locator('#h5-app').boundingBox();
+    assert.deepEqual([appBox.width, appBox.x], [480, 480]);
+    assert.equal(await wide.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    await wide.page.waitForFunction(() => window.sockets.length === 1);
+    await wide.page.evaluate(() => window.sockets[0].emit(JSON.stringify({ type: 'history', data: 'x', cols: 80, rows: 24 })));
+    await wide.page.waitForTimeout(100);
+    const cols = await wide.page.evaluate(() => window.sockets[0].sent.map(item => { try { return JSON.parse(item); } catch { return null; } }).filter(item => item?.type === 'resize').pop().cols);
+    assert.ok(cols < 70, `the terminal fits the 480px column (${cols} columns)`);
+    await wide.context.close();
 
     // An engine that does not know phone terminals is never attached to its desktop terminal.
     const old = await openPage(browser, { remoteTerminals: true });

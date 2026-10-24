@@ -69,6 +69,7 @@
     if (window.innerWidth !== fullWidth) { fullWidth = window.innerWidth; fullHeight = 0; } // rotated: measure again
     fullHeight = Math.max(fullHeight, height);
     keyboardOpen = fullHeight - height > KEYBOARD_MIN_SHRINK;
+    keys.hidden = keyboardOpen; // the on-screen keyboard has its own keys; the function keys come back when it closes
     document.documentElement.style.setProperty('--h5-height', `${Math.round(height)}px`);
     if (window.scrollY) window.scrollTo(0, 0);
     holdTerminalSize();
@@ -163,8 +164,21 @@
         button.textContent = item.title;
         if (task && task.id === item.id) button.setAttribute('aria-current', 'true');
         button.addEventListener('click', () => selectTask(item));
-        nodes.push(button);
-        if (task && task.id === item.id && terminals.length) nodes.push(terminalList());
+        if (task && task.id === item.id && terminals.length) {
+          // The selected task: "+" on the right of its row adds a terminal, and its terminals are listed under it.
+          const row = document.createElement('div');
+          row.className = 'h5-task-row';
+          const add = document.createElement('button');
+          add.type = 'button';
+          add.className = 'h5-task-add';
+          add.textContent = '+';
+          add.setAttribute('aria-label', 'New phone terminal');
+          add.addEventListener('click', () => { closeTasks(); void createTerminal(); });
+          row.append(button, add);
+          nodes.push(row, terminalList());
+        } else {
+          nodes.push(button);
+        }
       }
     }
     taskList.replaceChildren(...nodes);
@@ -348,37 +362,121 @@
     connect();
   }
 
-  // The terminals of the selected task are a second-level list under it in the task sheet.
+  // The terminals of the selected task are a second-level list under it in the task sheet; "⋯" opens the actions of one terminal.
   function terminalList() {
     const list = document.createElement('div');
     list.className = 'h5-terminal-list';
     list.setAttribute('role', 'group');
     list.setAttribute('aria-label', 'Phone terminals');
     for (const row of terminals) {
+      const line = document.createElement('div');
+      line.className = 'h5-terminal-row';
       const button = document.createElement('button');
       button.type = 'button';
+      button.className = 'h5-terminal-main';
       button.textContent = row.title;
       if (row.terminal_id === terminalId) button.setAttribute('aria-current', 'true');
       button.addEventListener('click', () => {
         closeTasks();
         // Tapping the current terminal reconnects one that was disconnected.
         if (row.terminal_id === terminalId && session && (session.ws || session.timer)) return;
-        terminalId = row.terminal_id;
-        store.set(`terminal:${source.key}:${task.id}`, terminalId);
-        renderTabs();
-        connect();
+        switchTerminal(row);
       });
-      list.append(button);
+      const more = document.createElement('button');
+      more.type = 'button';
+      more.className = 'h5-terminal-more';
+      more.textContent = '⋯';
+      more.setAttribute('aria-label', 'Terminal actions');
+      more.addEventListener('click', () => openTerminalMenu(row));
+      line.append(button, more);
+      list.append(line);
     }
-    const add = document.createElement('button');
-    add.type = 'button';
-    add.className = 'h5-terminal-add';
-    add.textContent = '+';
-    add.setAttribute('aria-label', 'New phone terminal');
-    add.addEventListener('click', () => { closeTasks(); void createTerminal(); });
-    list.append(add);
     return list;
   }
+  function switchTerminal(row) {
+    terminalId = row.terminal_id;
+    store.set(`terminal:${source.key}:${task.id}`, terminalId);
+    renderTabs();
+    connect();
+  }
+
+  // ── Terminal actions: rename, reopen, restart in the working directory, delete (same endpoints as the desktop tabs) ──
+  const termMenu = $('h5-term-menu');
+  const termMenuActions = $('h5-term-menu-actions');
+  const renameForm = $('h5-term-rename');
+  const renameInput = $('h5-term-rename-input');
+  let menuRow = null;
+
+  function closeTerminalMenu() {
+    menuRow = null;
+    termMenu.hidden = true;
+    renameForm.hidden = true;
+  }
+  function openTerminalMenu(row) {
+    menuRow = row;
+    $('h5-term-menu-title').textContent = row.title;
+    renameForm.hidden = true;
+    const items = [
+      ['Rename', () => { termMenuActions.hidden = true; renameForm.hidden = false; renameInput.value = row.title; renameInput.focus(); renameInput.select(); }],
+      ['Reopen', () => { closeTerminalMenu(); closeTasks(); switchTerminal(row); }],
+      ['Restart in the working directory', () => void restartTerminal(row), 'danger'],
+    ];
+    if (row.terminal_id !== 'h5-default') items.push(['Delete', () => void deleteTerminal(row), 'danger']);
+    termMenuActions.hidden = false;
+    termMenuActions.replaceChildren(...items.map(([label, run, kind]) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = tr(label);
+      if (kind) button.className = kind;
+      button.addEventListener('click', run);
+      return button;
+    }));
+    termMenu.hidden = false;
+  }
+  async function controlTerminal(row, action) {
+    const current = task;
+    const wasCurrent = row.terminal_id === terminalId;
+    if (wasCurrent) disconnect(); // end the view first, so the server closing the shell is not shown as a lost connection
+    try {
+      await api('POST', `${source.tasksBase}/${current.id}/terminal/control`, { action, terminal_id: row.terminal_id });
+    } catch (error) {
+      if (wasCurrent && current === task) connect();
+      throw error;
+    }
+    return wasCurrent;
+  }
+  async function restartTerminal(row) {
+    if (!window.confirm(tr('This ends the terminal, clears its history and reopens it from the task working directory. Continue?'))) return;
+    closeTerminalMenu();
+    try {
+      await controlTerminal(row, 'restart-workdir');
+      closeTasks();
+      switchTerminal(row);
+    } catch (error) { tell(`Could not restart the terminal: ${error.message}`, 'error'); }
+  }
+  async function deleteTerminal(row) {
+    if (!window.confirm(`${tr('Delete this terminal? It ends the programs in it and removes its history.')}\n${row.title}`)) return;
+    closeTerminalMenu();
+    try {
+      const wasCurrent = await controlTerminal(row, 'delete');
+      terminals = terminals.filter(item => item.terminal_id !== row.terminal_id);
+      if (wasCurrent && terminals.length) { switchTerminal(terminals[0]); closeTasks(); } else renderTabs();
+    } catch (error) { tell(`Could not delete the terminal: ${error.message}`, 'error'); }
+  }
+  renameForm.addEventListener('submit', async event => {
+    event.preventDefault();
+    const row = menuRow;
+    const title = renameInput.value.trim();
+    if (!row || !title) return;
+    try {
+      const renamed = await api('PATCH', `${source.tasksBase}/${task.id}/terminals/${encodeURIComponent(row.terminal_id)}`, { title });
+      row.title = (renamed && renamed.title) || title;
+      closeTerminalMenu();
+      renderTabs();
+    } catch (error) { tell(`Could not rename the terminal: ${error.message}`, 'error'); }
+  });
+  $('h5-term-menu-cancel').addEventListener('click', closeTerminalMenu);
+  termMenu.addEventListener('click', event => { if (event.target === termMenu) closeTerminalMenu(); });
   function renderTabs() { if (tasks.length) renderTasks(); }
 
   async function createTerminal() {
@@ -610,7 +708,6 @@
     } else if (button.dataset.action === 'keyboard') toggleKeyboard();
     else if (button.dataset.action === 'paste') void paste();
     else if (button.dataset.action === 'image') pickImage();
-    else if (button.dataset.action === 'translate') toggleTranslate();
     else if (button.dataset.shortcut === 'ctrl-c') sendKey('c', { ctrl: true });
     else if (button.dataset.key) sendKey(button.dataset.key, mods);
   });
@@ -620,12 +717,6 @@
   function autosize() {
     translateInput.style.height = 'auto';
     if (translateInput.value) translateInput.style.height = `${translateInput.scrollHeight + 2}px`;
-  }
-  function toggleTranslate(show = translateForm.hidden, focus = true) {
-    translateForm.hidden = !show;
-    keys.querySelector('[data-action="translate"]').setAttribute('aria-pressed', String(show));
-    store.set('translate', show ? '1' : null);
-    if (show && focus) translateInput.focus();
   }
   async function translate() {
     const text = translateInput.value.trim();
@@ -781,7 +872,6 @@
 
   // ── Start ──
   (async () => {
-    if (store.get('translate')) toggleTranslate(true, false);
     await loadSources();
     await loadTasks();
     const savedId = Number(store.get(`task:${source.key}`));

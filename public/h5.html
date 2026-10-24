@@ -39,7 +39,7 @@
         <button type="button" data-scroll="1" aria-label="Scroll down">▼</button>
       </div>
     </main>
-    <form class="h5-translate" id="h5-translate" autocomplete="off" hidden>
+    <form class="h5-translate" id="h5-translate" autocomplete="off">
       <textarea class="h5-translate-input" id="h5-translate-input" rows="1" maxlength="4000" placeholder="Chinese → English, then send" aria-label="Chinese input, translated to English and sent to the terminal" enterkeyhint="send"></textarea>
       <button type="submit" class="h5-translate-send" id="h5-translate-send">Send</button>
     </form>
@@ -47,19 +47,18 @@
       <button type="button" data-key="Escape">Esc</button>
       <button type="button" data-key="Tab">Tab</button>
       <button type="button" data-modifier="ctrl" aria-pressed="false">Ctrl</button>
-      <button type="button" data-key="ArrowUp" aria-label="ArrowUp">↑</button>
+      <button type="button" data-modifier="alt" aria-pressed="false">Alt</button>
       <button type="button" data-modifier="shift" aria-pressed="false">Shift</button>
       <button type="button" data-action="keyboard" aria-label="Show or hide the on-screen keyboard">⌨</button>
-      <button type="button" data-modifier="alt" aria-pressed="false">Alt</button>
       <button type="button" data-action="paste">Paste</button>
+      <button type="button" data-action="image" aria-label="Upload image">Image</button>
       <button type="button" data-key="ArrowLeft" aria-label="ArrowLeft">←</button>
       <button type="button" data-key="ArrowDown" aria-label="ArrowDown">↓</button>
+      <button type="button" data-key="ArrowUp" aria-label="ArrowUp">↑</button>
       <button type="button" data-key="ArrowRight" aria-label="ArrowRight">→</button>
-      <button type="button" data-key="Enter">Enter</button>
+      <button type="button" class="h5-wide" data-key="Enter">Enter</button>
       <button type="button" data-key="Backspace" aria-label="Backspace">⌫</button>
       <button type="button" data-shortcut="ctrl-c" aria-label="Send Ctrl+C">^C</button>
-      <button type="button" class="h5-wide" data-action="image">Upload image</button>
-      <button type="button" class="h5-wide" data-action="translate" aria-pressed="false">Translate</button>
     </div>
     <input type="file" id="h5-image-picker" accept="image/png,image/jpeg,image/gif,image/webp" hidden>
   </div>
@@ -80,6 +79,17 @@
     </form>
     <div class="h5-task-list" id="h5-task-list"></div>
     <a class="h5-desktop-link" href="/web">Desktop version</a>
+   </div>
+   <div class="h5-menu" id="h5-term-menu" hidden>
+    <div class="h5-menu-panel" role="dialog" aria-modal="true" aria-labelledby="h5-term-menu-title">
+      <h3 id="h5-term-menu-title"></h3>
+      <form class="h5-menu-rename" id="h5-term-rename" autocomplete="off" hidden>
+        <input id="h5-term-rename-input" maxlength="40" aria-label="Terminal name" enterkeyhint="done">
+        <button type="submit">Save</button>
+      </form>
+      <div class="h5-menu-actions" id="h5-term-menu-actions"></div>
+      <button type="button" class="h5-menu-cancel" id="h5-term-menu-cancel">Cancel</button>
+    </div>
    </div>
   </div>
 

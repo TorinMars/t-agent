@@ -44,6 +44,8 @@ async function openPage(browser, { remoteTerminals, viewport } = {}) {
     if (url.pathname === '/api/remote-servers/7/tasks/9/terminals') return json([{ terminal_id: 'default', title: 'Terminal 1' }]);
     if (url.pathname === '/api/tasks/1/terminals' && method === 'GET') return json([{ terminal_id: 'h5-default', title: 'Terminal 1' }]);
     if (url.pathname === '/api/tasks/1/terminals' && method === 'POST') return json({ terminal_id: 'h5-second', title: 'Terminal 2' }, 201);
+    if (url.pathname === '/api/tasks/1/terminals/h5-second' && method === 'PATCH') return json({ terminal_id: 'h5-second', title: route.request().postDataJSON().title });
+    if (url.pathname === '/api/tasks/1/terminal/control' && method === 'POST') return json({ success: true });
     if (url.pathname === '/api/oss/config') return json({ enabled: true });
     if (url.pathname === '/api/oss/images' && method === 'POST') {
       assert.equal(route.request().headers()['content-type'], 'image/png');
@@ -100,9 +102,10 @@ async function openPage(browser, { remoteTerminals, viewport } = {}) {
       }
       return [...byRow.entries()].sort((a, b) => a[0] - b[0]).map(([, row]) => row.sort((a, b) => a.left - b.left));
     });
-    assert.deepEqual(rows[0].map(cell => cell.text), ['Esc', 'Tab', 'Ctrl', '↑', 'Shift', '⌨']);
-    assert.deepEqual(rows[1].map(cell => cell.text), ['Alt', 'Paste', '←', '↓', '→', 'Enter']);
-    assert.deepEqual(rows[2].map(cell => cell.text), ['⌫', '^C', 'Upload image', 'Translate']);
+    assert.equal(rows.length, 2, 'the function keys fit in two rows');
+    assert.deepEqual(rows[0].map(cell => cell.text), ['Esc', 'Tab', 'Ctrl', 'Alt', 'Shift', '⌨', 'Paste', 'Image']);
+    assert.deepEqual(rows[1].map(cell => cell.text), ['←', '↓', '↑', '→', 'Enter', '⌫', '^C']);
+    assert.equal(await page.locator('#h5-translate').isVisible(), true, 'the translate box is always shown');
     assert.ok(rows.flat().every(cell => cell.height >= 32 && cell.right <= 390));
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
 
@@ -129,7 +132,6 @@ async function openPage(browser, { remoteTerminals, viewport } = {}) {
     assert.equal(await page.evaluate(() => document.querySelector('.h5-xterm').contains(document.activeElement)), true);
 
     // Translate and send: control characters are stripped and Enter follows separately.
-    await page.locator('[data-action="translate"]').tap();
     await page.locator('#h5-translate-input').fill('run the tests');
     await page.locator('#h5-translate-send').tap();
     await page.waitForFunction(() => window.sockets[0].sent.includes('\r'));
@@ -171,10 +173,14 @@ async function openPage(browser, { remoteTerminals, viewport } = {}) {
 
     // A new terminal is a phone terminal and gets its own connection.
     await page.locator('#h5-open-tasks').tap();
-    assert.deepEqual(await page.locator('#h5-tasks .h5-terminal-list button').allTextContents(), ['Terminal 1', '+'], 'the selected task lists its terminals under it');
-    assert.equal(await page.locator('#h5-tasks .h5-terminal-list [aria-current="true"]').textContent(), 'Terminal 1');
+    assert.deepEqual(await page.locator('#h5-tasks .h5-terminal-main').allTextContents(), ['Terminal 1'], 'the selected task lists its terminals under it');
+    assert.equal(await page.locator('#h5-tasks .h5-terminal-main[aria-current="true"]').textContent(), 'Terminal 1');
     assert.equal(await page.locator('#h5-terminal-tabs').count(), 0, 'there is no tab strip above the terminal any more');
-    await page.locator('#h5-tasks [aria-label="New phone terminal"]').tap();
+    assert.equal(await page.locator('#h5-tasks .h5-task-add').count(), 1, 'only the selected task has the "+" button');
+    const rowBox = await page.locator('#h5-tasks .h5-task-row').boundingBox();
+    const addBox = await page.locator('#h5-tasks .h5-task-add').boundingBox();
+    assert.ok(addBox.x + addBox.width > rowBox.x + rowBox.width - 2, 'the "+" sits at the right end of the task row');
+    await page.locator('#h5-tasks .h5-task-add').tap();
     await page.locator('#h5-tasks').waitFor({ state: 'hidden' });
     await page.waitForFunction(() => window.sockets.length === 2);
     assert.ok(calls.includes('POST /api/tasks/1/terminals?surface=h5'));
@@ -193,6 +199,8 @@ async function openPage(browser, { remoteTerminals, viewport } = {}) {
     const closed = await termInfo();
     await page.setViewportSize({ width: 390, height: 844 - 330 });
     await page.waitForTimeout(300);
+    assert.equal(await page.locator('#h5-keys').isVisible(), false, 'the function keys are hidden while the keyboard is open');
+    assert.equal(await page.locator('#h5-translate').isVisible(), true, 'the translate box stays');
     const open = await termInfo();
     assert.equal(open.resizes, closed.resizes, 'opening the keyboard sends no resize to the terminal');
     assert.ok(Math.abs(open.height - closed.height) < 1, 'the terminal keeps its height');
@@ -200,9 +208,43 @@ async function openPage(browser, { remoteTerminals, viewport } = {}) {
     assert.ok(Math.abs(open.bottom - open.boxBottom) <= 3, 'the bottom rows stay visible above the keys');
     await page.setViewportSize({ width: 390, height: 844 });
     await page.waitForTimeout(300);
+    assert.equal(await page.locator('#h5-keys').isVisible(), true, 'the function keys come back when the keyboard closes');
     const back = await termInfo();
     assert.equal(back.resizes, closed.resizes, 'closing the keyboard sends no resize either');
     assert.ok(Math.abs(back.top - closed.top) < 1 && Math.abs(back.bottom - closed.bottom) < 1, 'the terminal returns to its place');
+
+    // Terminal actions: the "⋯" on a terminal row opens rename / reopen / restart / delete.
+    await page.locator('#h5-open-tasks').tap();
+    assert.deepEqual(await page.locator('#h5-tasks .h5-terminal-main').allTextContents(), ['Terminal 1', 'Terminal 2']);
+    const more = page.locator('#h5-tasks .h5-terminal-row').nth(1).locator('.h5-terminal-more');
+    await more.tap();
+    await page.locator('#h5-term-menu').waitFor({ state: 'visible' });
+    assert.deepEqual(await page.locator('#h5-term-menu-actions button').allTextContents(), ['Rename', 'Reopen', 'Restart in the working directory', 'Delete']);
+    await page.locator('#h5-term-menu-actions button', { hasText: 'Rename' }).tap();
+    await page.locator('#h5-term-rename-input').fill('Build logs');
+    await page.locator('#h5-term-rename button').tap();
+    await page.locator('#h5-term-menu').waitFor({ state: 'hidden' });
+    assert.deepEqual(await page.locator('#h5-tasks .h5-terminal-main').allTextContents(), ['Terminal 1', 'Build logs']);
+    assert.ok(calls.includes('PATCH /api/tasks/1/terminals/h5-second'));
+    // The default phone terminal cannot be deleted.
+    await page.locator('#h5-tasks .h5-terminal-row').nth(0).locator('.h5-terminal-more').tap();
+    assert.equal(await page.locator('#h5-term-menu-actions button', { hasText: 'Delete' }).count(), 0);
+    await page.locator('#h5-term-menu-cancel').tap();
+    // Delete the current terminal (after a confirmation): the phone falls back to the remaining one.
+    const sentBodies = [];
+    await page.route(`${ORIGIN}/api/tasks/1/terminal/control`, route => { sentBodies.push(route.request().postDataJSON()); return route.fulfill({ contentType: 'application/json', body: '{"success":true}' }); });
+    page.once('dialog', dialog => dialog.dismiss());
+    await more.tap();
+    await page.locator('#h5-term-menu-actions button', { hasText: 'Delete' }).tap();
+    assert.equal(sentBodies.length, 0, 'declining the confirmation deletes nothing');
+    await page.locator('#h5-term-menu-cancel').tap();
+    await more.tap();
+    page.once('dialog', dialog => dialog.accept());
+    await page.locator('#h5-term-menu-actions button', { hasText: 'Delete' }).tap();
+    await page.waitForFunction(() => document.querySelectorAll('#h5-tasks .h5-terminal-main').length === 1);
+    assert.deepEqual(sentBodies, [{ action: 'delete', terminal_id: 'h5-second' }]);
+    await page.locator('#h5-tasks').waitFor({ state: 'hidden' });
+    assert.equal(await page.evaluate(() => new URL(window.sockets.at(-1).url).searchParams.get('terminalId')), 'h5-default');
 
     // Settings: the header button opens a menu with the language toggle and the PC one-click update.
     assert.equal(await page.locator('#h5-open-settings').textContent(), '⚙');

@@ -283,7 +283,7 @@ function controlSession(taskId, action, requestedTerminalId) {
   }
 
   const selectedId = assertTerminal(id, requestedTerminalId);
-  if (action === 'delete' && selectedId === 'default') {
+  if (action === 'delete' && (selectedId === 'default' || selectedId === PHONE_DEFAULT_TERMINAL)) {
     throw Object.assign(new Error('DEFAULT_TERMINAL_CANNOT_DELETE'), { statusCode: 400 });
   }
   const key = sessionKey(id, selectedId);

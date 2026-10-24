@@ -211,6 +211,7 @@ test('phone terminals are separate shells that never resize or replace desktop t
   };
   assert.deepEqual(JSON.parse(JSON.stringify(terminal.listTerminals(other.id, 'h5'))), [{ terminal_id: 'h5-default', title: 'Terminal 1' }]);
   assert.deepEqual(ids(), ['default']);
+  assert.throws(() => terminal.controlSession(other.id, 'delete', 'h5-default'), /DEFAULT_TERMINAL_CANNOT_DELETE/, 'the phone default terminal would only be recreated, so it cannot be deleted');
   const phoneExtra = terminal.createTerminal(other.id, 'h5');
   const desktopExtra = terminal.createTerminal(other.id);
   assert.match(phoneExtra.terminal_id, /^h5-/);

@@ -41,7 +41,7 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; c
 .h5-scroll button:active { background: var(--h5-pressed); border-color: var(--h5-accent); }
 .h5-empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 24px; color: var(--h5-muted); text-align: center; }
 
-.h5-translate { flex: 0 0 auto; display: flex; align-items: flex-end; gap: 6px; padding: 6px 8px 0; background: var(--h5-panel); border-top: 1px solid var(--h5-border); }
+.h5-translate { flex: 0 0 auto; display: flex; align-items: flex-end; gap: 6px; padding: 6px 8px; background: var(--h5-panel); border-top: 1px solid var(--h5-border); }
 .h5-translate-input { flex: 1 1 auto; min-width: 0; min-height: 40px; max-height: 120px; padding: 9px 10px; border: 1px solid #555; border-radius: 8px; background: #1b1b1c; resize: none; font-size: 16px; line-height: 1.3; }
 .h5-translate-input:focus { outline: none; border-color: var(--h5-accent); }
 .h5-translate-input.translating { border-color: var(--h5-accent); animation: h5-pulse 1.2s ease-in-out infinite; }
@@ -50,16 +50,16 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; c
 @keyframes h5-pulse { 50% { box-shadow: 0 0 8px 1px rgba(112, 165, 255, .6); } }
 
 /* Key grid: the first two rows follow the common mobile terminal layout. */
-.h5-keys { flex: 0 0 auto; display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 4px;
+.h5-keys { flex: 0 0 auto; display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 4px;
   padding: 6px 8px max(6px, env(safe-area-inset-bottom)); background: var(--h5-panel); border-top: 1px solid var(--h5-border);
   user-select: none; -webkit-user-select: none; }
-.h5-translate:not([hidden]) + .h5-keys { border-top: 0; }
+.h5-translate + .h5-keys { border-top: 0; padding-top: 0; }
 .h5-keys button { height: 34px; min-width: 0; padding: 0 2px; border: 1px solid #4a4a4a; border-radius: 8px; background: var(--h5-key);
   font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .h5-keys button:active { background: var(--h5-key-active); }
 .h5-keys button[aria-pressed="true"] { background: var(--h5-pressed); border-color: var(--h5-accent); color: #fff; }
 .h5-keys button:disabled { opacity: .45; }
-.h5-keys .h5-wide { grid-column: span 2; font-size: 13px; }
+.h5-keys .h5-wide { grid-column: span 2; }
 .h5-keys [data-action="keyboard"] { font-size: 20px; }
 
 /* Task sheet */
@@ -95,12 +95,29 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; c
 .h5-task-item { display: block; width: 100%; min-height: 48px; margin-bottom: 6px; padding: 10px 12px; border: 1px solid var(--h5-border); border-radius: 10px; background: var(--h5-panel); text-align: left; overflow-wrap: anywhere; }
 .h5-task-item[aria-current="true"] { border-color: var(--h5-accent); box-shadow: inset 3px 0 var(--h5-accent); }
 .h5-task-item:active { background: var(--h5-key); }
-/* The phone terminals of the selected task, nested under it in the task sheet. */
-.h5-terminal-list { display: flex; flex-direction: column; gap: 6px; margin: -2px 0 8px 14px; padding-left: 10px; border-left: 2px solid var(--h5-border); }
-.h5-terminal-list button { min-height: 40px; padding: 0 12px; border: 1px solid var(--h5-border); border-radius: 8px; background: var(--h5-key); text-align: left; font-size: 14px; }
-.h5-terminal-list button[aria-current="true"] { background: var(--h5-pressed); border-color: var(--h5-accent); color: #fff; }
-.h5-terminal-list button:active { background: var(--h5-key-active); }
-.h5-terminal-list .h5-terminal-add { border-style: dashed; color: var(--h5-muted); text-align: center; }
+/* The selected task row carries a "+" (new terminal) on its right; its phone terminals are nested under it. */
+.h5-task-row { display: flex; gap: 6px; margin-bottom: 6px; }
+.h5-task-row .h5-task-item { flex: 1 1 auto; min-width: 0; margin-bottom: 0; }
+.h5-task-add { flex: 0 0 48px; border: 1px solid var(--h5-border); border-radius: 10px; background: var(--h5-panel); font-size: 24px; line-height: 1; color: var(--h5-muted); }
+.h5-task-add:active { background: var(--h5-key); }
+.h5-terminal-list { display: flex; flex-direction: column; gap: 6px; margin: 0 0 8px 14px; padding-left: 10px; border-left: 2px solid var(--h5-border); }
+.h5-terminal-row { display: flex; gap: 6px; }
+.h5-terminal-row button { min-height: 40px; border: 1px solid var(--h5-border); border-radius: 8px; background: var(--h5-key); font-size: 14px; }
+.h5-terminal-main { flex: 1 1 auto; min-width: 0; padding: 0 12px; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.h5-terminal-more { flex: 0 0 44px; font-size: 18px; line-height: 1; }
+.h5-terminal-row button[aria-current="true"] { background: var(--h5-pressed); border-color: var(--h5-accent); color: #fff; }
+.h5-terminal-row button:active { background: var(--h5-key-active); }
+/* Terminal action menu: a bottom sheet over the task sheet. */
+.h5-menu { position: absolute; inset: 0; z-index: 5; display: flex; align-items: flex-end; background: rgba(0, 0, 0, .55); }
+.h5-menu-panel { width: 100%; padding: 12px 12px max(12px, env(safe-area-inset-bottom)); border-radius: 14px 14px 0 0; background: var(--h5-panel); }
+.h5-menu-panel h3 { margin: 0 0 10px; font-size: 15px; color: var(--h5-muted); overflow-wrap: anywhere; }
+.h5-menu-actions { display: flex; flex-direction: column; gap: 6px; }
+.h5-menu-actions button, .h5-menu-cancel { width: 100%; height: 46px; border: 1px solid var(--h5-border); border-radius: 10px; background: var(--h5-key); font-size: 16px; }
+.h5-menu-actions .danger { color: var(--h5-danger); }
+.h5-menu-cancel { margin-top: 10px; }
+.h5-menu-rename { display: flex; gap: 8px; margin-bottom: 8px; }
+.h5-menu-rename input { flex: 1 1 auto; min-width: 0; height: 44px; padding: 0 10px; border: 1px solid #555; border-radius: 8px; background: #1b1b1c; font-size: 16px; }
+.h5-menu-rename button { padding: 0 16px; border: 0; border-radius: 8px; background: var(--h5-pressed); color: #fff; font-size: 15px; }
 .h5-list-note { padding: 24px 0; color: var(--h5-muted); text-align: center; }
 .h5-desktop-link { display: block; padding: 12px; color: var(--h5-accent); text-align: center; text-decoration: none; border-top: 1px solid var(--h5-border); }
 

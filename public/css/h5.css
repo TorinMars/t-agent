@@ -43,7 +43,8 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; c
 .h5-empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 24px; color: var(--h5-muted); text-align: center; }
 
 .h5-translate { flex: 0 0 auto; display: flex; align-items: flex-end; gap: 6px; padding: 6px 8px; background: var(--h5-panel); border-top: 1px solid var(--h5-border); }
-.h5-translate-input { flex: 1 1 auto; min-width: 0; min-height: 40px; max-height: 120px; padding: 9px 10px; border: 1px solid #555; border-radius: 8px; background: #1b1b1c; resize: none; font-size: 16px; line-height: 1.3; }
+.h5-translate-input { flex: 1 1 auto; min-width: 0; height: 40px; padding: 0 10px; border: 1px solid #555; border-radius: 8px; background: #1b1b1c; resize: none; font-size: 16px; line-height: 38px; overflow: hidden; }
+/* One line is shown: the one with the cursor; the other lines stay inside (see keepCaretLine in h5.js). */
 .h5-translate-input:focus { outline: none; border-color: var(--h5-accent); }
 .h5-translate-input.translating { border-color: var(--h5-accent); animation: h5-pulse 1.2s ease-in-out infinite; }
 .h5-translate-send { flex: 0 0 auto; height: 40px; padding: 0 14px; border: 0; border-radius: 8px; background: var(--h5-pressed); color: #fff; font-weight: 600; }

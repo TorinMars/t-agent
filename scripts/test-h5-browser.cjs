@@ -177,9 +177,14 @@ async function openPage(browser, { remoteTerminals, viewport } = {}) {
     assert.equal(await page.locator('#h5-tasks .h5-terminal-main[aria-current="true"] .h5-terminal-name').textContent(), 'Terminal 1');
     assert.equal(await page.locator('#h5-terminal-tabs').count(), 0, 'there is no tab strip above the terminal any more');
     assert.equal(await page.locator('#h5-tasks .h5-task-add').count(), 1, 'only the selected task has the "+" button');
-    const rowBox = await page.locator('#h5-tasks .h5-task-row').boundingBox();
-    const addBox = await page.locator('#h5-tasks .h5-task-add').boundingBox();
-    assert.ok(addBox.x + addBox.width > rowBox.x + rowBox.width - 2, 'the "+" sits at the right end of the task row');
+    // Measured in one step: the task list re-renders when the sheet opens and would replace the row between two separate reads.
+    await page.locator('#h5-tasks .h5-task-add').waitFor();
+    const atEnd = await page.evaluate(() => {
+      const row = document.querySelector('#h5-tasks .h5-task-row').getBoundingClientRect();
+      const add = document.querySelector('#h5-tasks .h5-task-add').getBoundingClientRect();
+      return add.x + add.width > row.x + row.width - 2;
+    });
+    assert.ok(atEnd, 'the "+" sits at the right end of the task row');
     await page.locator('#h5-tasks .h5-task-add').tap();
     assert.deepEqual(await page.locator('#h5-term-menu-actions button').allTextContents(), ['New Terminal', 'Claude session', 'Codex session'], 'the "+" opens the Session menu');
     await page.locator('#h5-term-menu-actions button', { hasText: 'New Terminal' }).tap();

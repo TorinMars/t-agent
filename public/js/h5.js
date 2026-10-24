@@ -94,8 +94,20 @@
   }
   new ResizeObserver(() => { if (!keyboardOpen) closedTerminalHeight = terminalHost.clientHeight; }).observe(terminalHost);
   window.visualViewport?.addEventListener('resize', fitViewport);
+  window.visualViewport?.addEventListener('scroll', fitViewport);
   window.addEventListener('resize', fitViewport);
   fitViewport();
+  // iOS Safari animates the keyboard and sometimes reports its final height without a last resize event (for example when
+  // focus moves from the terminal to the translate box), which leaves the page shorter than the visible area. Measure again
+  // while focus changes and while the keyboard is up.
+  let settleTimers = [];
+  function settleViewport() {
+    settleTimers.forEach(clearTimeout);
+    settleTimers = [0, 100, 250, 500, 1000].map(delay => setTimeout(fitViewport, delay));
+  }
+  document.addEventListener('focusin', settleViewport);
+  document.addEventListener('focusout', settleViewport);
+  setInterval(() => { if (keyboardOpen) fitViewport(); }, 500);
 
   // ── Tasks ──
   function note(text) {

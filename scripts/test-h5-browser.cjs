@@ -219,6 +219,17 @@ async function openPage(browser, { remoteTerminals, viewport } = {}) {
     assert.equal(back.resizes, closed.resizes, 'closing the keyboard sends no resize either');
     assert.ok(Math.abs(back.top - closed.top) < 1 && Math.abs(back.bottom - closed.bottom) < 1, 'the terminal returns to its place');
 
+    // iOS can miss the last resize event while focus moves to the translate box: the page must still follow the visible height.
+    await page.setViewportSize({ width: 390, height: 844 - 330 });
+    await page.waitForTimeout(300);
+    await page.evaluate(() => document.documentElement.style.setProperty('--h5-height', '300px')); // a stale height, as if the event was missed
+    assert.equal(await page.evaluate(() => document.querySelector('.h5-app').getBoundingClientRect().height), 300);
+    await page.locator('#h5-translate-input').focus();
+    await page.waitForFunction(() => Math.abs(document.querySelector('.h5-app').getBoundingClientRect().height - window.visualViewport.height) <= 1, null, { timeout: 3000 });
+    await page.locator('#h5-translate-input').blur();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.waitForTimeout(300);
+
     // Copy text: the floating button above the scroll buttons shows the terminal text in a selectable overlay.
     const order = await page.evaluate(() => [...document.querySelectorAll('#h5-scroll button')].map(button => button.getBoundingClientRect().top));
     assert.ok(order[0] < order[1] && order[1] < order[2], 'the copy button sits above the scroll buttons');

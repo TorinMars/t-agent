@@ -110,6 +110,14 @@ for (const [environment, allowHttp] of [['test', 'false'], ['production', 'false
   assert.equal((await call('/api/oss/config')).status, 404);
   assert.equal((await call('/api/oss/images', { body: {} })).status, 404);
   assert.equal((await call('/api/tasks', { cookie: setupCookie })).status, 404);
+  // A logged-in browser that opens a wrong page address goes to the home page; APIs, files and logged-out visitors still get 404.
+  const wrongPage = await call('/nonexistent', { cookie: boundCookie, headers: { Accept: 'text/html' } });
+  assert.equal(wrongPage.status, 302);
+  assert.equal(wrongPage.headers.get('location'), '/');
+  assert.equal((await call('/nonexistent', { cookie: boundCookie })).status, 404);
+  assert.equal((await call('/js/missing.js', { cookie: boundCookie, headers: { Accept: 'text/html' } })).status, 404);
+  assert.equal((await call('/api/nothing', { cookie: boundCookie, headers: { Accept: 'text/html' } })).status, 404);
+  assert.equal((await call('/nonexistent', { headers: { Accept: 'text/html' } })).status, 404);
   const meResponse = await call('/auth/me', { cookie: boundCookie });
   assert.equal(meResponse.status, 200);
   assert.equal((await meResponse.json()).effective_work_dir, path.join(temp, 'tasks'));

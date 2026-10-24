@@ -19,7 +19,7 @@ const { getClientAuth, safeReturnTo, isSecureClientCookie, SESSION_TTL } = requi
 const requireAuth = require('./middleware/auth');
 const clientOrigin = require('./middleware/client-origin');
 const { frameAncestors, clientCookieSameSite } = require('./lib/client-embedding');
-const { createLoginGate } = require('./lib/login-gate');
+const { createLoginGate, createUnknownPageRedirect } = require('./lib/login-gate');
 const { createAccessGate, upgradeAllowed } = require('./lib/access-gate');
 
 const app = express();
@@ -362,6 +362,8 @@ app.use('/vendor', compression(), express.static(path.join(__dirname, 'public', 
   },
 }));
 app.use(express.static(path.join(__dirname, 'public'), { index: false }));
+// A logged-in person who opens a wrong page address goes to the home page; everyone else keeps getting 404.
+app.use(createUnknownPageRedirect({ loginPath: config.loginPath, isAuthenticated: session => getClientAuth().authenticated(session) }));
 
 // HTTP server + WebSocket server
 const server = http.createServer(app);

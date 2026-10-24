@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { DEFAULT_LOGIN_PATH, resolveLoginPath, isOpenPath, createLoginGate } = require('../lib/login-gate');
+const { DEFAULT_LOGIN_PATH, resolveLoginPath, isOpenPath, createLoginGate, createUnknownPageRedirect } = require('../lib/login-gate');
 
 test('login path defaults to /torin/hide/login and rejects unsafe values', () => {
   assert.equal(DEFAULT_LOGIN_PATH, '/torin/hide/login');
@@ -38,4 +38,23 @@ test('gate lets an authenticated session through and answers anything else with 
   assert.equal(denied.status, 404);
   assert.match(denied.body, /Cannot GET \/web/);
   assert.equal(run('/%2e%2e/web', { ok: false }).status, 404);
+});
+
+test('a logged-in browser page visit to an unknown address goes to the home page, everything else is left to the 404', () => {
+  const redirect = createUnknownPageRedirect({ loginPath: '/torin/hide/login', isAuthenticated: session => session.ok === true });
+  function run(pathname, { ok = true, method = 'GET', accept = 'text/html,application/xhtml+xml' } = {}) {
+    const result = { next: false };
+    const res = { set() { return this; }, redirect(location) { result.location = location; } };
+    redirect({ path: pathname, method, session: { ok }, headers: { accept } }, res, () => { result.next = true; });
+    return result;
+  }
+  assert.equal(run('/nonexistent').location, '/');
+  assert.equal(run('/a/b/c').location, '/');
+  assert.equal(run('/web/wrong').location, '/');
+  assert.equal(run('/nonexistent', { ok: false }).next, true, 'logged-out requests are never redirected, so the login entrance stays hidden');
+  for (const pathname of ['/api/nothing', '/auth/nothing', '/v1/nothing', '/share/x', '/terminal/ws', '/js/missing.js', '/css/missing.css', '/icons/x.png', '/torin/hide/login/nothing']) {
+    assert.equal(run(pathname).next, true, pathname);
+  }
+  assert.equal(run('/nonexistent', { method: 'POST' }).next, true);
+  assert.equal(run('/nonexistent', { accept: '*/*' }).next, true, 'scripts and tools that do not ask for HTML still get 404');
 });

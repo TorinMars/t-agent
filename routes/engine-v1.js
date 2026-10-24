@@ -295,7 +295,15 @@ router.get('/tasks/:id/terminals', requireEngineAuth('terminal:execute'), (req, 
 router.post('/tasks/:id/terminals', requireEngineAuth('terminal:execute'), (req, res) => {
   const task = tasks.ownedTask(principal(req), req.params.id);
   if (!task) return res.status(404).json({ error: 'TASK_NOT_FOUND' });
-  res.status(201).json(terminal.createTerminal(task.id, req.query.surface));
+  try { res.status(201).json(terminal.createTerminal(task.id, req.query.surface, req.body)); }
+  catch (error) { errorResponse(res, error); }
+});
+
+router.get('/tasks/:id/agent-sessions', requireEngineAuth('terminal:execute'), (req, res) => {
+  const task = tasks.ownedTask(principal(req), req.params.id);
+  if (!task) return res.status(404).json({ error: 'TASK_NOT_FOUND' });
+  try { res.json(terminal.listAgentSessions(task, req.query.agent)); }
+  catch (error) { errorResponse(res, error); }
 });
 
 router.patch('/tasks/:id/terminals/:terminalId', requireEngineAuth('terminal:execute'), (req, res) => {

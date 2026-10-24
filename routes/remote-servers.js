@@ -407,6 +407,24 @@ router.post('/:id/tasks', async (req, res) => {
   } catch (error) { res.status(error.statusCode || 502).json({ error: safeError(error) }); }
 });
 
+// Only the agent kind and session id are forwarded when a terminal is created.
+const terminalOptions = body => {
+  const out = {};
+  if (body && typeof body.agent === 'string') out.agent = body.agent;
+  if (body && typeof body.session_id === 'string') out.session_id = body.session_id;
+  return out;
+};
+
+router.get('/:id/tasks/:taskId/agent-sessions', async (req, res) => {
+  const row = getServer(req);
+  if (!row) return res.status(404).json({ error: 'REMOTE_NOT_FOUND' });
+  try {
+    res.json(await request(row.base_url,
+      `/v1/tasks/${encodeURIComponent(req.params.taskId)}/agent-sessions?agent=${encodeURIComponent(req.query.agent || '')}`,
+      decryptToken(row.token_cipher, config.sessionSecret)));
+  } catch (error) { res.status(error.statusCode || 502).json({ error: safeError(error) }); }
+});
+
 for (const method of ['get', 'post']) {
   router[method]('/:id/tasks/:taskId/terminals', async (req, res) => {
     const row = getServer(req);
@@ -415,7 +433,7 @@ for (const method of ['get', 'post']) {
       const result = await request(row.base_url,
         `/v1/tasks/${encodeURIComponent(req.params.taskId)}/terminals${req.query.surface === 'h5' ? '?surface=h5' : ''}`,
         decryptToken(row.token_cipher, config.sessionSecret),
-        { method: method.toUpperCase(), ...(method === 'post' ? { body: {} } : {}) });
+        { method: method.toUpperCase(), ...(method === 'post' ? { body: terminalOptions(req.body) } : {}) });
       res.status(method === 'post' ? 201 : 200).json(result);
     } catch (error) { res.status(error.statusCode || 502).json({ error: safeError(error) }); }
   });

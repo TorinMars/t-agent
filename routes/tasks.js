@@ -207,7 +207,15 @@ router.get('/:id/terminals', (req, res) => {
 router.post('/:id/terminals', (req, res) => {
   const task = db.prepare('SELECT id FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, ownerFilter(req));
   if (!task) return res.status(404).json({ error: 'TASK_NOT_FOUND' });
-  res.status(201).json(terminal.createTerminal(task.id, req.query.surface));
+  try { res.status(201).json(terminal.createTerminal(task.id, req.query.surface, req.body)); }
+  catch (error) { res.status(error.statusCode || 400).json({ error: error.message || 'TERMINAL_CREATE_FAILED' }); }
+});
+
+router.get('/:id/agent-sessions', (req, res) => {
+  const task = db.prepare('SELECT id, work_dir FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, ownerFilter(req));
+  if (!task) return res.status(404).json({ error: 'TASK_NOT_FOUND' });
+  try { res.json(terminal.listAgentSessions(task, req.query.agent)); }
+  catch (error) { res.status(error.statusCode || 400).json({ error: error.message || 'AGENT_SESSIONS_FAILED' }); }
 });
 
 router.patch('/:id/terminals/:terminalId', (req, res) => {

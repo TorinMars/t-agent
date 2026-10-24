@@ -187,8 +187,8 @@
           add.type = 'button';
           add.className = 'h5-task-add';
           add.textContent = '+';
-          add.setAttribute('aria-label', 'New phone terminal');
-          add.addEventListener('click', () => { closeTasks(); void createTerminal(); });
+          add.setAttribute('aria-label', 'Session');
+          add.addEventListener('click', openSessionMenu);
           row.append(button, add);
           nodes.push(row, terminalList());
         } else {
@@ -494,11 +494,48 @@
   termMenu.addEventListener('click', event => { if (event.target === termMenu) closeTerminalMenu(); });
   function renderTabs() { if (tasks.length) renderTasks(); }
 
-  async function createTerminal() {
+  // ── Session: a plain terminal, or a Claude / Codex session of the task directory (new or resumed) ──
+  const SESSION_KINDS = [['claude', 'Claude session'], ['codex', 'Codex session']];
+  function showSessionMenu(title, items) {
+    $('h5-term-menu-title').textContent = tr(title);
+    renameForm.hidden = true;
+    termMenuActions.hidden = false;
+    termMenuActions.replaceChildren(...items.map(([label, run, kind]) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = kind === 'raw' ? label : tr(label);
+      button.addEventListener('click', run);
+      return button;
+    }));
+    termMenu.hidden = false;
+  }
+  function openSessionMenu() {
+    menuRow = null;
+    showSessionMenu('Session', [
+      ['New Terminal', () => { closeTerminalMenu(); closeTasks(); void createTerminal(); }],
+      ...SESSION_KINDS.map(([agent, label]) => [label, () => void openAgentSessions(agent, label)]),
+    ]);
+  }
+  async function openAgentSessions(agent, label) {
+    const current = task;
+    showSessionMenu(label, [['Loading…', () => {}]]);
+    let rows = [];
+    try { rows = await api('GET', `${source.tasksBase}/${current.id}/agent-sessions?agent=${agent}`); }
+    catch (error) { if (current === task) tell(`Could not load sessions: ${error.message}`, 'error'); }
+    if (current !== task || termMenu.hidden) return;
+    const start = sessionId => () => { closeTerminalMenu(); closeTasks(); void createTerminal({ agent, session_id: sessionId }); };
+    showSessionMenu(label, [
+      [`New ${label}`, start(undefined)],
+      ...(Array.isArray(rows) ? rows : []).map(row => [row.title, start(row.id), 'raw']),
+      ['Back', openSessionMenu],
+    ]);
+  }
+
+  async function createTerminal(options = {}) {
     if (!task) return;
     const current = task;
     try {
-      const row = await api('POST', `${source.tasksBase}/${current.id}/terminals?surface=h5`, {});
+      const row = await api('POST', `${source.tasksBase}/${current.id}/terminals?surface=h5`, options);
       if (!row || !PHONE_TERMINAL.test(row.terminal_id)) throw new Error('This engine does not support phone terminals yet. Please upgrade it');
       if (current !== task) return;
       terminals.push(row);

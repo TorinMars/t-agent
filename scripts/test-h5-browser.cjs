@@ -181,6 +181,8 @@ async function openPage(browser, { remoteTerminals, viewport } = {}) {
     const addBox = await page.locator('#h5-tasks .h5-task-add').boundingBox();
     assert.ok(addBox.x + addBox.width > rowBox.x + rowBox.width - 2, 'the "+" sits at the right end of the task row');
     await page.locator('#h5-tasks .h5-task-add').tap();
+    assert.deepEqual(await page.locator('#h5-term-menu-actions button').allTextContents(), ['New Terminal', 'Claude session', 'Codex session'], 'the "+" opens the Session menu');
+    await page.locator('#h5-term-menu-actions button', { hasText: 'New Terminal' }).tap();
     await page.locator('#h5-tasks').waitFor({ state: 'hidden' });
     await page.waitForFunction(() => window.sockets.length === 2);
     assert.ok(calls.includes('POST /api/tasks/1/terminals?surface=h5'));

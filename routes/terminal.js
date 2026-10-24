@@ -8,6 +8,7 @@ const { RESET_INPUT_MODES, watchShellReturn } = require('../lib/terminal-input-m
 const { createActivityTracker } = require('../lib/terminal-activity');
 const { repairSpawnHelperPermissions } = require('../lib/node-pty-runtime');
 const { utf8LocaleEnv } = require('../lib/terminal-locale');
+const { listSessions, startupCommand } = require('../lib/agent-sessions');
 const { resolveTerminalUser, userCanEnter, terminalEnvFor } = require('../lib/terminal-user');
 
 // Sessions are keyed by task ID and terminal ID; omitted IDs use the legacy shell.
@@ -88,12 +89,25 @@ function listTerminals(taskId, surface = 'web') {
   ).all(taskId)];
 }
 
-function createTerminal(taskId, surface = 'web') {
+// A terminal created for an agent session types its command once, when its shell is first spawned.
+const pendingStartup = new Map();
+const AGENT_LABELS = { claude: 'Claude', codex: 'Codex' };
+
+function createTerminal(taskId, surface = 'web', options = {}) {
   const phone = terminalSurface(surface) === 'h5';
   const id = (phone ? PHONE_TERMINAL_PREFIX : '') + require('crypto').randomUUID();
-  const title = `Terminal ${listTerminals(taskId, surface).length + 1}`;
+  const agent = options && options.agent;
+  const command = startupCommand(agent, options && options.session_id);
+  const count = listTerminals(taskId, surface).length + 1;
+  const title = command ? `${AGENT_LABELS[agent]} ${count}` : `Terminal ${count}`;
+  if (command) pendingStartup.set(sessionKey(taskId, id), command);
   db.prepare('INSERT INTO task_terminals (task_id, terminal_id, title) VALUES (?, ?, ?)').run(taskId, id, title);
   return { terminal_id: id, title };
+}
+
+// Sessions of an agent CLI that were run in the task's working directory (newest first).
+function listAgentSessions(task, agent) {
+  return listSessions(agent, task && task.work_dir);
 }
 
 function renameTerminal(taskId, value, requestedTitle) {
@@ -219,6 +233,10 @@ function getOrCreateSession(ownerTaskId, workDir, dirWarning, id = 'default') {
     console.error('[terminal] node-pty spawn error:', e.message, '\ncwd:', workDir, '\nenv.HOME:', process.env.HOME);
     return { startupError: e };
   }
+
+  const startup = pendingStartup.get(taskId);
+  pendingStartup.delete(taskId);
+  if (startup) pty.write(`${startup}\r`);
 
   const s = {
     taskId: ownerTaskId,
@@ -454,4 +472,4 @@ function closeTaskTerminals(taskId) {
   for (const item of [...listTerminals(taskId), ...phone]) controlSession(taskId, 'close', item.terminal_id);
 }
 
-module.exports = { setHookEndpoint, reportHook, activitySnapshot, acknowledgeActivity, controlSession, handleWs, listTerminals, createTerminal, renameTerminal, assertTerminal, closeTaskTerminals };
+module.exports = { setHookEndpoint, reportHook, activitySnapshot, acknowledgeActivity, controlSession, handleWs, listTerminals, createTerminal, listAgentSessions, renameTerminal, assertTerminal, closeTaskTerminals };

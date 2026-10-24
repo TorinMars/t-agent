@@ -413,7 +413,7 @@
     terminalHost.append(el);
     const term = new Terminal({
       cursorBlink: true,
-      fontSize: 13,
+      fontSize: 11,
       fontFamily: 'Menlo, Monaco, "Courier New", monospace',
       theme: { background: '#1e1e1e' },
       scrollback: 5000,

@@ -194,7 +194,7 @@ async function openPage(browser, { remoteTerminals, viewport } = {}) {
       const resizes = window.sockets[1].sent.filter(item => { try { return JSON.parse(item).type === 'resize'; } catch { return false; } }).length;
       return { boxTop: box.top, boxBottom: box.bottom, top: term.top, bottom: term.bottom, height: term.height, resizes };
     });
-    await page.evaluate(() => window.sockets[1].emit(JSON.stringify({ type: 'history', data: '\x1b[?1049hfull screen app', cols: 40, rows: 30 })));
+    await page.evaluate(() => window.sockets[1].emit(JSON.stringify({ type: 'history', data: '\x1b[?1049hfull screen app\x1b[30;1H', cols: 40, rows: 30 })));
     await page.waitForTimeout(200);
     const closed = await termInfo();
     await page.setViewportSize({ width: 390, height: 844 - 330 });
@@ -206,6 +206,12 @@ async function openPage(browser, { remoteTerminals, viewport } = {}) {
     assert.ok(Math.abs(open.height - closed.height) < 1, 'the terminal keeps its height');
     assert.ok(open.top < open.boxTop, 'the top rows are shifted out of view');
     assert.ok(Math.abs(open.bottom - open.boxBottom) <= 3, 'the bottom rows stay visible above the keys');
+    // A cursor near the top (a shell prompt) must not be pushed out of view: the shift is capped by the cursor row.
+    await page.evaluate(() => window.sockets[1].emit('\x1b[1;1H'));
+    await page.waitForTimeout(200);
+    const prompt = await termInfo();
+    assert.equal(prompt.resizes, closed.resizes, 'moving the cursor sends no resize');
+    assert.ok(prompt.top >= prompt.boxTop - 1, 'the top row with the cursor stays in view');
     await page.setViewportSize({ width: 390, height: 844 });
     await page.waitForTimeout(300);
     assert.equal(await page.locator('#h5-keys').isVisible(), true, 'the function keys come back when the keyboard closes');

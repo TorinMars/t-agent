@@ -84,7 +84,10 @@
       el.style.removeProperty('transform');
       return;
     }
-    const shift = Math.max(0, closedTerminalHeight - terminalHost.clientHeight);
+    // Shift up by the hidden height, but keep the cursor row on screen when it sits near the top (a shell prompt).
+    const hidden = Math.max(0, closedTerminalHeight - terminalHost.clientHeight);
+    const screen = el.querySelector('.xterm-screen');
+    const shift = TerminalViewport.keyboardShift(session.term, screen ? screen.clientHeight : 0, hidden);
     el.style.height = `${closedTerminalHeight - 6}px`; // the terminal sits 4px from the top and 2px from the bottom of its box
     el.style.bottom = 'auto';
     el.style.transform = shift ? `translateY(${-shift}px)` : '';
@@ -528,6 +531,11 @@
     session = s;
     term.onData(data => send(s, withModifiers(data)));
     term.onResize(() => { if (!s.paused) sendResize(s); });
+    let cursorFrame = 0;
+    term.onCursorMove(() => { // the cursor decides how far the terminal is shifted while the keyboard is open
+      if (!keyboardOpen || cursorFrame) return;
+      cursorFrame = requestAnimationFrame(() => { cursorFrame = 0; if (session === s && !s.disposed) holdTerminalSize(); });
+    });
     bindTouchScroll(s);
     s.observer = new ResizeObserver(() => refit(s));
     s.observer.observe(el);

@@ -45,3 +45,14 @@ test('actual viewport width clamps columns when cached scrollbar width is stale'
   assert.equal(s.term.cols, 59);
   assert.equal(s.term.rows, 12);
 });
+
+test('keyboard shift keeps a cursor near the top visible and a bottom cursor fully shifted', () => {
+  const term = { rows: 20, buffer: { active: { cursorY: 0 } } };
+  assert.equal(viewport.keyboardShift(term, 400, 150), 4);
+  term.buffer.active.cursorY = 3;
+  assert.equal(viewport.keyboardShift(term, 400, 150), 64);
+  term.buffer.active.cursorY = 18;
+  assert.equal(viewport.keyboardShift(term, 400, 150), 150);
+  assert.equal(viewport.keyboardShift(term, 400, 0), 0);
+  assert.equal(viewport.keyboardShift(term, 0, 150), 150);
+});

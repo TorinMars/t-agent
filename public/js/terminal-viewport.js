@@ -34,6 +34,14 @@ const TerminalViewport = (() => {
       else restore(term, saved);
     } finally { marker?.dispose(); }
   }
+  // How far to shift a terminal up while the on-screen keyboard covers its bottom: the full amount, but never so far
+  // that the cursor row leaves the top edge (a shell prompt near the top would otherwise be pushed out of sight).
+  function keyboardShift(term, screenHeight, shift, topInset = 4) {
+    if (!(shift > 0)) return 0;
+    if (!(screenHeight > 0) || !(term.rows > 0)) return shift;
+    const cursorTop = topInset + term.buffer.active.cursorY * (screenHeight / term.rows);
+    return Math.max(0, Math.min(shift, Math.floor(cursorTop)));
+  }
   function observe(term, addon, host) {
     if (typeof ResizeObserver === 'undefined') return null;
     let frame = 0, disposed = false;
@@ -48,5 +56,5 @@ const TerminalViewport = (() => {
     document.fonts?.ready.then(schedule);
     return { disconnect() { disposed = true; observer.disconnect(); cancelAnimationFrame(frame); } };
   }
-  return { capture, restore, fit, observe };
+  return { capture, restore, fit, keyboardShift, observe };
 })();

@@ -681,11 +681,58 @@
     session.term.paste(text);
   }
 
+  // ── Copy text: the terminal buffer as plain text in an overlay, so the browser's own selection handles work ──
+  const copyView = $('h5-copy');
+  const copyText = $('h5-copy-text');
+  function bufferText(term) {
+    const buffer = term.buffer.active;
+    const lines = [];
+    for (let i = 0; i < buffer.length; i++) {
+      const line = buffer.getLine(i);
+      if (!line) continue;
+      const text = line.translateToString(true);
+      if (line.isWrapped && lines.length) lines[lines.length - 1] += text; else lines.push(text);
+    }
+    while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
+    return lines.join('\n');
+  }
+  function openCopy() {
+    const text = session && !session.disposed ? bufferText(session.term) : '';
+    if (!text) { tell('Nothing to copy'); return; }
+    copyText.textContent = text;
+    copyView.hidden = false;
+    copyView.setAttribute('aria-hidden', 'false');
+    copyText.scrollTop = copyText.scrollHeight; // the latest output first
+  }
+  function closeCopy() {
+    copyView.hidden = true;
+    copyView.setAttribute('aria-hidden', 'true');
+    copyText.textContent = '';
+  }
+  async function copyAll() {
+    const text = copyText.textContent;
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      // No clipboard API (plain HTTP): select everything and use the legacy copy command.
+      const range = document.createRange();
+      range.selectNodeContents(copyText);
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+      if (!document.execCommand || !document.execCommand('copy')) { tell('Could not copy. Select the text and copy it by hand', 'error'); return; }
+    }
+    tell('Copied', 'success');
+  }
+  $('h5-copy-all').addEventListener('click', () => void copyAll());
+  $('h5-copy-close').addEventListener('click', closeCopy);
+
   // The floating buttons move about a page per click: scrollback in the normal buffer, wheel events in a full-screen program.
   scrollButtons.addEventListener('mousedown', event => event.preventDefault());
   scrollButtons.addEventListener('click', event => {
     const button = event.target.closest('button');
     const s = session;
+    if (button && button.dataset.copy !== undefined) { openCopy(); return; }
     if (!button || !s || s.disposed) return;
     const direction = Number(button.dataset.scroll);
     if (s.term.buffer.active.type === 'alternate') {

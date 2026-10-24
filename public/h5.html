@@ -35,6 +35,7 @@
     <main class="h5-terminal" id="h5-terminal">
       <div class="h5-empty" id="h5-empty">Choose a task to open its phone terminal</div>
       <div class="h5-scroll" id="h5-scroll">
+        <button type="button" data-copy aria-label="Copy text">📋</button>
         <button type="button" data-scroll="-1" aria-label="Scroll up">▲</button>
         <button type="button" data-scroll="1" aria-label="Scroll down">▼</button>
       </div>
@@ -91,6 +92,17 @@
       <button type="button" class="h5-menu-cancel" id="h5-term-menu-cancel">Cancel</button>
     </div>
    </div>
+  </div>
+
+  <div class="h5-copy" id="h5-copy" role="dialog" aria-modal="true" aria-labelledby="h5-copy-title" aria-hidden="true" hidden>
+    <div class="h5-sheet-header">
+      <h2 id="h5-copy-title">Copy text</h2>
+      <div class="h5-copy-actions">
+        <button type="button" class="h5-header-button" id="h5-copy-all">Copy all</button>
+        <button type="button" class="h5-header-button" id="h5-copy-close" aria-label="Close">✕</button>
+      </div>
+    </div>
+    <div class="h5-copy-text" id="h5-copy-text" tabindex="0"></div>
   </div>
 
   <div class="h5-sheet h5-sheet-right" id="h5-settings" role="dialog" aria-modal="true" aria-labelledby="h5-settings-title" aria-hidden="true">

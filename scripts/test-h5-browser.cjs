@@ -213,6 +213,19 @@ async function openPage(browser, { remoteTerminals, viewport } = {}) {
     assert.equal(back.resizes, closed.resizes, 'closing the keyboard sends no resize either');
     assert.ok(Math.abs(back.top - closed.top) < 1 && Math.abs(back.bottom - closed.bottom) < 1, 'the terminal returns to its place');
 
+    // Copy text: the floating button above the scroll buttons shows the terminal text in a selectable overlay.
+    const order = await page.evaluate(() => [...document.querySelectorAll('#h5-scroll button')].map(button => button.getBoundingClientRect().top));
+    assert.ok(order[0] < order[1] && order[1] < order[2], 'the copy button sits above the scroll buttons');
+    await page.evaluate(() => { navigator.clipboard.writeText = async text => { window.copied = text; }; });
+    await page.locator('[data-copy]').tap();
+    await page.locator('#h5-copy').waitFor({ state: 'visible' });
+    assert.match(await page.locator('#h5-copy-text').textContent(), /full screen app/);
+    assert.equal(await page.locator('#h5-copy-text').evaluate(el => getComputedStyle(el).userSelect), 'text');
+    await page.locator('#h5-copy-all').tap();
+    await page.waitForFunction(() => /full screen app/.test(window.copied || ''));
+    await page.locator('#h5-copy-close').tap();
+    await page.locator('#h5-copy').waitFor({ state: 'hidden' });
+
     // Terminal actions: the "⋯" on a terminal row opens rename / reopen / restart / delete.
     await page.locator('#h5-open-tasks').tap();
     assert.deepEqual(await page.locator('#h5-tasks .h5-terminal-main').allTextContents(), ['Terminal 1', 'Terminal 2']);

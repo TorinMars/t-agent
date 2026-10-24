@@ -297,10 +297,42 @@
     session = s;
     term.onData(data => send(s, withModifiers(data)));
     term.onResize(() => { if (!s.paused) sendResize(s); });
+    bindTouchScroll(s);
     s.observer = new ResizeObserver(() => refit(s));
     s.observer.observe(el);
     refit(s);
     open(s);
+  }
+
+  // xterm only reacts to the mouse wheel. In the normal buffer the browser scrolls the history natively, but a full-screen
+  // program (alternate buffer: Claude Code, Codex, vim, tmux ...) has no scrollback, so a drag is turned into wheel events and
+  // xterm forwards them the way a desktop wheel would (mouse reports, or arrow keys when the program has no mouse mode).
+  function bindTouchScroll(s) {
+    let touch = null;
+    const lineHeight = () => {
+      const screen = s.el.querySelector('.xterm-screen');
+      return screen && s.term.rows ? Math.max(8, screen.clientHeight / s.term.rows) : 16;
+    };
+    s.el.addEventListener('touchstart', event => {
+      touch = event.touches.length === 1 ? { y: event.touches[0].clientY, rest: 0 } : null;
+    }, { passive: true });
+    s.el.addEventListener('touchmove', event => {
+      if (!touch || event.touches.length !== 1 || s.term.buffer.active.type !== 'alternate') return;
+      const point = event.touches[0];
+      touch.rest += touch.y - point.clientY;
+      touch.y = point.clientY;
+      const height = lineHeight();
+      const lines = Math.trunc(touch.rest / height);
+      event.preventDefault();
+      if (!lines) return;
+      touch.rest -= lines * height;
+      const target = s.el.querySelector('.xterm-screen') || s.el;
+      for (let i = 0; i < Math.min(Math.abs(lines), 10); i++) {
+        target.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaMode: 1, deltaY: Math.sign(lines), clientX: point.clientX, clientY: point.clientY }));
+      }
+    }, { passive: false });
+    s.el.addEventListener('touchend', () => { touch = null; }, { passive: true });
+    s.el.addEventListener('touchcancel', () => { touch = null; }, { passive: true });
   }
 
   function open(s) {

@@ -38,6 +38,8 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; c
 
 .h5-terminal { position: relative; flex: 1 1 auto; min-height: 0; background: var(--h5-bg); }
 .h5-terminal .h5-xterm { position: absolute; inset: 4px 4px 2px; }
+/* A press-and-hold must not start text selection or the callout menu: dragging always scrolls. */
+.h5-terminal .h5-xterm { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; touch-action: pan-y; }
 .h5-empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 24px; color: var(--h5-muted); text-align: center; }
 
 .h5-translate { flex: 0 0 auto; display: flex; align-items: flex-end; gap: 6px; padding: 6px 8px 0; background: var(--h5-panel); border-top: 1px solid var(--h5-border); }

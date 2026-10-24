@@ -139,6 +139,25 @@ async function openPage(browser, { remoteTerminals, viewport } = {}) {
     assert.equal(await page.locator('.h5-upload-overlay').count(), 0);
     assert.notEqual((await sent()).at(-1), '\r');
 
+    // Dragging scrolls a full-screen program (alternate buffer with mouse reporting) by sending wheel events.
+    await page.evaluate(() => window.sockets[0].emit(JSON.stringify({ type: 'history', data: '\x1b[?1049h\x1b[?1000h\x1b[?1006hfull screen app', cols: 40, rows: 30 })));
+    await page.waitForTimeout(150);
+    const cdp = await context.newCDPSession(page);
+    const drag = async (from, to) => {
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: 200, y: from }] });
+      await page.waitForTimeout(400); // press and hold first
+      for (let y = from; y !== to; y += from < to ? 20 : -20) { await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: 200, y }] }); await page.waitForTimeout(16); }
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    };
+    const wheels = () => page.evaluate(() => window.sockets[0].sent.filter(item => /^\x1b\[<6[45];/.test(item)).map(item => item.slice(3, 5)));
+    const before = (await wheels()).length;
+    await drag(300, 500);
+    const down = (await wheels()).slice(before);
+    assert.ok(down.length >= 5 && down.every(code => code === '64'), 'dragging down sends wheel-up reports');
+    await drag(500, 300);
+    const up = (await wheels()).slice(before + down.length);
+    assert.ok(up.length >= 5 && up.every(code => code === '65'), 'dragging up sends wheel-down reports');
+
     // A new terminal is a phone terminal and gets its own connection.
     await page.locator('#h5-terminal-tabs [aria-label="New phone terminal"]').tap();
     await page.waitForFunction(() => window.sockets.length === 2);

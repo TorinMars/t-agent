@@ -217,8 +217,15 @@ async function openPage(browser, { remoteTerminals, viewport } = {}) {
     const order = await page.evaluate(() => [...document.querySelectorAll('#h5-scroll button')].map(button => button.getBoundingClientRect().top));
     assert.ok(order[0] < order[1] && order[1] < order[2], 'the copy button sits above the scroll buttons');
     await page.evaluate(() => { navigator.clipboard.writeText = async text => { window.copied = text; }; });
+    // A row as wide as the terminal must stay one line in the overlay (same font, no wrapping of its own).
+    const termCols = await page.evaluate(() => window.sockets[1].sent.map(item => { try { return JSON.parse(item); } catch { return null; } }).filter(item => item?.type === 'resize').pop().cols);
+    await page.evaluate(width => window.sockets[1].emit(`\r\n${'x'.repeat(width)}`), termCols);
+    await page.waitForTimeout(150);
     await page.locator('[data-copy]').tap();
     await page.locator('#h5-copy').waitFor({ state: 'visible' });
+    const view = await page.locator('#h5-copy-text').evaluate(el => ({ white: getComputedStyle(el).whiteSpace, size: getComputedStyle(el).fontSize, over: el.scrollWidth - el.clientWidth }));
+    assert.deepEqual({ white: view.white, size: view.size }, { white: 'pre', size: '11px' });
+    assert.ok(view.over <= 0, `a full-width terminal row fits without scrolling sideways (${view.over}px over)`);
     assert.match(await page.locator('#h5-copy-text').textContent(), /full screen app/);
     assert.equal(await page.locator('#h5-copy-text').evaluate(el => getComputedStyle(el).userSelect), 'text');
     await page.locator('#h5-copy-all').tap();

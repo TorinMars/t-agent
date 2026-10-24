@@ -112,7 +112,8 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; c
 .h5-copy { position: fixed; inset: 0; z-index: 110; width: 100%; max-width: var(--h5-max-width); margin: 0 auto; display: flex; flex-direction: column; background: var(--h5-bg);
   padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
 .h5-copy-actions { display: flex; gap: 8px; }
-.h5-copy-text { flex: 1 1 auto; min-height: 0; overflow: auto; -webkit-overflow-scrolling: touch; padding: 10px 12px; font: 12px/1.45 Menlo, Monaco, "Courier New", monospace; white-space: pre-wrap; overflow-wrap: anywhere;
+/* Same font, size and side padding as the terminal and no wrapping of its own: one terminal row is one line, so the layout matches. */
+.h5-copy-text { flex: 1 1 auto; min-height: 0; overflow: auto; -webkit-overflow-scrolling: touch; padding: 4px 4px 8px; font: 11px/1.2 Menlo, Monaco, "Courier New", monospace; -webkit-text-size-adjust: 100%; white-space: pre;
   user-select: text; -webkit-user-select: text; -webkit-touch-callout: default; outline: none; }
 /* Terminal action menu: a bottom sheet over the task sheet. */
 .h5-menu { position: absolute; inset: 0; z-index: 5; display: flex; align-items: flex-end; background: rgba(0, 0, 0, .55); }

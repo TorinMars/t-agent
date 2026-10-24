@@ -289,13 +289,13 @@ router.delete('/tasks/:id/todos/:todoId', requireEngineAuth('todos:write'), (req
 router.get('/tasks/:id/terminals', requireEngineAuth('terminal:execute'), (req, res) => {
   const task = tasks.ownedTask(principal(req), req.params.id);
   if (!task) return res.status(404).json({ error: 'TASK_NOT_FOUND' });
-  res.status(200).json(terminal.listTerminals(task.id));
+  res.status(200).json(terminal.listTerminals(task.id, req.query.surface));
 });
 
 router.post('/tasks/:id/terminals', requireEngineAuth('terminal:execute'), (req, res) => {
   const task = tasks.ownedTask(principal(req), req.params.id);
   if (!task) return res.status(404).json({ error: 'TASK_NOT_FOUND' });
-  res.status(201).json(terminal.createTerminal(task.id));
+  res.status(201).json(terminal.createTerminal(task.id, req.query.surface));
 });
 
 router.patch('/tasks/:id/terminals/:terminalId', requireEngineAuth('terminal:execute'), (req, res) => {

@@ -69,16 +69,29 @@ function assertTerminal(taskId, value) {
 
 const MAX_TERMINAL_TITLE = 40;
 
-function listTerminals(taskId) {
+// Phone (H5) terminals are separate shells whose ids start with "h5-": a phone never resizes,
+// replaces or lists a desktop terminal, and the desktop never sees phone terminals.
+const PHONE_TERMINAL_PREFIX = 'h5-';
+const PHONE_DEFAULT_TERMINAL = 'h5-default';
+const terminalSurface = value => (value === 'h5' ? 'h5' : 'web');
+
+function listTerminals(taskId, surface = 'web') {
+  if (terminalSurface(surface) === 'h5') {
+    db.prepare("INSERT OR IGNORE INTO task_terminals (task_id, terminal_id, title) VALUES (?, ?, 'Terminal 1')").run(taskId, PHONE_DEFAULT_TERMINAL);
+    return db.prepare(
+      "SELECT terminal_id, title FROM task_terminals WHERE task_id = ? AND substr(terminal_id, 1, 3) = 'h5-' ORDER BY rowid"
+    ).all(taskId);
+  }
   const stored = db.prepare('SELECT title FROM task_default_terminal_titles WHERE task_id = ?').get(taskId);
   return [{ terminal_id: 'default', title: stored ? stored.title : 'Terminal 1' }, ...db.prepare(
-    'SELECT terminal_id, title FROM task_terminals WHERE task_id = ? ORDER BY rowid'
+    "SELECT terminal_id, title FROM task_terminals WHERE task_id = ? AND substr(terminal_id, 1, 3) != 'h5-' ORDER BY rowid"
   ).all(taskId)];
 }
 
-function createTerminal(taskId) {
-  const id = require('crypto').randomUUID();
-  const title = `Terminal ${listTerminals(taskId).length + 1}`;
+function createTerminal(taskId, surface = 'web') {
+  const phone = terminalSurface(surface) === 'h5';
+  const id = (phone ? PHONE_TERMINAL_PREFIX : '') + require('crypto').randomUUID();
+  const title = `Terminal ${listTerminals(taskId, surface).length + 1}`;
   db.prepare('INSERT INTO task_terminals (task_id, terminal_id, title) VALUES (?, ?, ?)').run(taskId, id, title);
   return { terminal_id: id, title };
 }
@@ -436,7 +449,9 @@ function acknowledgeActivity(taskId, requestedTerminalId) {
 }
 
 function closeTaskTerminals(taskId) {
-  for (const item of listTerminals(taskId)) controlSession(taskId, 'close', item.terminal_id);
+  // Phone terminals are read directly so closing never creates the default phone terminal.
+  const phone = db.prepare("SELECT terminal_id FROM task_terminals WHERE task_id = ? AND substr(terminal_id, 1, 3) = 'h5-'").all(taskId);
+  for (const item of [...listTerminals(taskId), ...phone]) controlSession(taskId, 'close', item.terminal_id);
 }
 
 module.exports = { setHookEndpoint, reportHook, activitySnapshot, acknowledgeActivity, controlSession, handleWs, listTerminals, createTerminal, renameTerminal, assertTerminal, closeTaskTerminals };

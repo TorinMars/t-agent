@@ -111,8 +111,7 @@ test('loopback detection requires a direct loopback peer and Host, never forward
 
 test('return targets are restricted to actual Client pages', () => {
   for (const value of ['https://attacker.test', '//attacker.test', '/auth/logout', '/h5?x=1', undefined]) assert.equal(safeReturnTo(value), '/');
-  assert.equal(safeReturnTo('/h5'), '/web');
-  for (const value of ['/', '/web']) assert.equal(safeReturnTo(value), value);
+  for (const value of ['/', '/web', '/h5']) assert.equal(safeReturnTo(value), value);
 });
 
 test('active sessions slide by 30 days without granting recent verification', t => {

@@ -67,12 +67,12 @@ test('unknown text is shown unchanged rather than dropped', () => {
   assert.equal(load('zh').t('A sentence that is not in the dictionary'), 'A sentence that is not in the dictionary');
 });
 
-for (const page of ['index.html', 'login.html', path.join('tools', 'kwai-url-parser.html')]) {
+for (const page of ['index.html', 'h5.html', 'login.html', path.join('tools', 'kwai-url-parser.html')]) {
   test(`${page}: every static label has a Chinese translation`, () => {
     const I18n = load('zh');
     const { document } = parseHTML(fs.readFileSync(path.join(ROOT, 'public', page), 'utf8'));
     // Names of keys, products, files and commands are the same in both languages.
-    const SAME = /^(T-Agent|Tasks|Claude Code|Codex|Esc|Tab|Ctrl|Shift|Enter|Backspace|Command ⌘|Option ⌥|Option \+ ↑|Arrow(Left|Right|Up|Down)|\ud83d[\udcd8\udd16].*|root|Torin.s Tasks|https?:\/\/.*|app\.example\.com|frps Token|TAFS1:.*|.*\.md|[a-z_]+)$/;
+    const SAME = /^(T-Agent|Tasks|Claude Code|Codex|Esc|Tab|Ctrl|Shift|Alt|Enter|Backspace|Command ⌘|Option ⌥|Option \+ ↑|Arrow(Left|Right|Up|Down)|\ud83d[\udcd8\udd16].*|root|Torin.s Tasks|https?:\/\/.*|app\.example\.com|frps Token|TAFS1:.*|.*\.md|[a-z_]+)$/;
     const missing = [];
     const check = text => {
       const value = text.replace(/\s+/g, ' ').trim();
@@ -95,6 +95,9 @@ test('pages load the engine before other scripts and expose a language toggle', 
   assert.ok(index.indexOf('/js/i18n-zh-ui.js') < index.indexOf('/js/app.js'));
   assert.match(index, /data-lang-toggle/);
   assert.match(fs.readFileSync(path.join(ROOT, 'public', 'login.html'), 'utf8'), /data-lang-toggle/);
+  const h5 = fs.readFileSync(path.join(ROOT, 'public', 'h5.html'), 'utf8');
+  assert.ok(h5.indexOf('/js/i18n.js') > 0 && h5.indexOf('/js/i18n-zh-ui.js') < h5.indexOf('/js/h5.js'));
+  assert.match(h5, /data-lang-toggle/);
 });
 
 // The project source is English. Chinese text may only appear in the translation dictionaries and in a few fixtures that

@@ -22,7 +22,7 @@ vm.runInNewContext(fs.readFileSync(terminalPath, 'utf8'), {
     if (name === 'node-pty') return { spawn(shell, args, options) {
       const pty = { options, input: [], killed: false,
         onData(fn) { this.data = fn; }, onExit(fn) { this.exit = fn; },
-        write(text) { this.input.push(text); }, resize() {},
+        write(text) { this.input.push(text); }, resize(cols, rows) { this.size = [cols, rows]; },
         kill() { this.killed = true; this.exit(); },
       };
       shells.push(pty);
@@ -199,4 +199,38 @@ test('restoring history from a dead PTY switches off the mouse modes it left ena
   terminal.closeTaskTerminals(other.id);
   const persisted = db.prepare('SELECT buffer FROM terminal_logs WHERE task_id = ?').get(other.id).buffer;
   assert.ok(persisted.endsWith('\x1b[?1003l\x1b[?1004l\x1b[?1005l\x1b[?1006l\x1b[?1015l\x1b[?1016l\x1b[?25h'), 'the reset is stored so later replays stay clean');
+});
+
+test('phone terminals are separate shells that never resize or replace desktop terminals', async () => {
+  const other = tasks.createTask('owner', { title: 'phone and desktop' });
+  const ids = surface => JSON.parse(JSON.stringify(terminal.listTerminals(other.id, surface))).map(row => row.terminal_id);
+  const open = id => {
+    const ws = new Socket();
+    terminal.handleWs(ws, { url: `/terminal/ws?taskId=${other.id}&terminalId=${id}` }, { login: 'owner' });
+    return ws;
+  };
+  assert.deepEqual(JSON.parse(JSON.stringify(terminal.listTerminals(other.id, 'h5'))), [{ terminal_id: 'h5-default', title: 'Terminal 1' }]);
+  assert.deepEqual(ids(), ['default']);
+  const phoneExtra = terminal.createTerminal(other.id, 'h5');
+  const desktopExtra = terminal.createTerminal(other.id);
+  assert.match(phoneExtra.terminal_id, /^h5-/);
+  assert.equal(phoneExtra.title, 'Terminal 2');
+  assert.doesNotMatch(desktopExtra.terminal_id, /^h5-/);
+  assert.deepEqual(ids('h5'), ['h5-default', phoneExtra.terminal_id]);
+  assert.deepEqual(ids(), ['default', desktopExtra.terminal_id]);
+
+  const before = shells.length;
+  const desktop = open('default');
+  const phone = open('h5-default');
+  assert.equal(shells.length, before + 2, 'the phone gets its own PTY');
+  await Promise.all([desktop.waitFor(1), phone.waitFor(1)]);
+  desktop.emit('message', JSON.stringify({ type: 'resize', cols: 160, rows: 48 }));
+  phone.emit('message', JSON.stringify({ type: 'resize', cols: 44, rows: 20 }));
+  phone.emit('message', 'phone command');
+  assert.equal(desktop.readyState, 1, 'opening the phone terminal leaves the desktop connected');
+  assert.deepEqual(Array.from(shells[before].size), [160, 48]);
+  assert.deepEqual(Array.from(shells[before + 1].size), [44, 20]);
+  assert.equal(shells[before].input.length, 0);
+  assert.deepEqual(Array.from(shells[before + 1].input), ['phone command']);
+  terminal.closeTaskTerminals(other.id);
 });

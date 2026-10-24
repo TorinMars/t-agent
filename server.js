@@ -318,23 +318,28 @@ app.get('/share/:token/file', (req, res) => {
   sendSharedMarkdown(res, task, req.params.token, file.content, file.relativePath);
 });
 
-function sendClientPage(req, res) {
+// Phones and computers get two separate pages: /h5 (tasks, phone terminals, image upload, translate and send) and /web.
+const PHONE_USER_AGENT = /iPhone|iPod|Android.+Mobile|Windows Phone|HarmonyOS.+Mobile|Mobile Safari/i;
+
+function sendClientPage(req, res, page = 'index.html') {
   res.set('Cache-Control', 'no-store');
   const auth = getClientAuth().ready(req.session);
   const returnTo = safeReturnTo(req.path);
   if (auth.setupRequired) return res.redirect(`${config.loginPath}/setup?return_to=${encodeURIComponent(returnTo)}`);
   if (auth.loginRequired) return res.redirect(`${config.loginPath}?return_to=${encodeURIComponent(returnTo)}`);
   req.session.user = ensureSingleUser();
-  let html = fs.readFileSync(path.join(__dirname, 'public', 'index.html'), 'utf8');
+  let html = fs.readFileSync(path.join(__dirname, 'public', page), 'utf8');
   const assetVersion = encodeURIComponent(JSON.parse(fs.readFileSync(path.join(__dirname, 'VERSION.json'), 'utf8')).app_version);
   html = html.replace(/(src|href)="(\/(?:js|css|vendor)\/[^"?]+\.(?:js|css))"/g, `$1="$2?v=${assetVersion}"`);
   html = html.replace('</head>', `<meta name="t-agent-login-path" content="${escapeHtml(config.loginPath)}">\n</head>`);
   res.type('html').send(html);
 }
 
-app.get(['/', '/web'], sendClientPage);
-app.get('/h5', (req, res) => res.redirect('/web'));
-app.get(['/index.html', '/h5.html'], (req, res) => res.redirect('/web'));
+app.get('/', (req, res) => (PHONE_USER_AGENT.test(req.get('User-Agent') || '') ? res.redirect('/h5') : sendClientPage(req, res)));
+app.get('/web', (req, res) => sendClientPage(req, res));
+app.get('/h5', (req, res) => sendClientPage(req, res, 'h5.html'));
+app.get('/index.html', (req, res) => res.redirect('/web'));
+app.get('/h5.html', (req, res) => res.redirect('/h5'));
 app.get('/login.html', (req, res) => res.redirect(config.loginPath));
 // Static middleware decodes paths: encoded /index%2ehtml must not evade the
 // explicit page routes above. Do not allow implicit directory index documents.

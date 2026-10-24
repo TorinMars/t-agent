@@ -7,7 +7,7 @@
   const description = document.getElementById('auth-description');
   const errorNode = document.getElementById('auth-error');
   const requested = new URLSearchParams(location.search).get('return_to');
-  const returnTo = ['/', '/web'].includes(requested) ? requested : '/web';
+  const returnTo = ['/', '/web', '/h5'].includes(requested) ? requested : '/'; // "/" picks the phone or desktop page
   const messages = {
     AUTH_CODE_INVALID: 'The code is invalid or already used. Wait for the next code, or use an unused recovery code.',
     AUTHENTICATOR_BINDING_REQUIRED: 'You must bind an authenticator before using this.',
@@ -114,7 +114,7 @@
     const choose = mode => run(content, async () => {
       const data = await request(base + '/mode', { mode });
       if (mode === 'remote') await startSetup();
-      else location.replace(data.redirect || '/web');
+      else location.replace(data.redirect || '/');
     });
     document.getElementById('mode-remote').addEventListener('click', () => choose('remote'));
     document.getElementById('mode-local').addEventListener('click', () => choose('local'));

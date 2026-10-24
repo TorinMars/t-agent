@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+  <title>Torin's Tasks</title>
+  <link rel="icon" href="/favicon.ico" type="image/x-icon">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="manifest" href="/manifest.json">
+  <meta name="theme-color" content="#1e1e1e">
+  <link rel="stylesheet" href="/vendor/xterm/xterm-5.5.0.css">
+  <link rel="stylesheet" href="/css/h5.css">
+  <script src="/js/i18n.js"></script>
+  <script src="/js/i18n-zh-ui.js"></script>
+  <script src="/js/i18n-zh-server.js"></script>
+  <script src="/js/i18n-zh-extra.js"></script>
+  <script src="/js/toast.js"></script>
+  <script src="/vendor/xterm/xterm-5.5.0.js"></script>
+  <script src="/vendor/xterm/addon-fit-0.10.0.js"></script>
+</head>
+<body>
+  <div class="h5-app" id="h5-app">
+    <header class="h5-header">
+      <button type="button" class="h5-task-button" id="h5-open-tasks" aria-haspopup="dialog" aria-controls="h5-tasks">
+        <span class="h5-menu-icon" aria-hidden="true">☰</span>
+        <span class="h5-task-name" id="h5-task-name">Choose a task</span>
+      </button>
+      <button type="button" class="h5-header-button" id="h5-lang" data-lang-toggle translate="no"></button>
+    </header>
+    <nav class="h5-terminal-tabs" id="h5-terminal-tabs" role="tablist" aria-label="Phone terminals"></nav>
+    <main class="h5-terminal" id="h5-terminal">
+      <div class="h5-empty" id="h5-empty">Choose a task to open its phone terminal</div>
+    </main>
+    <form class="h5-translate" id="h5-translate" autocomplete="off" hidden>
+      <textarea class="h5-translate-input" id="h5-translate-input" rows="1" maxlength="4000" placeholder="Chinese → English, then send" aria-label="Chinese input, translated to English and sent to the terminal" enterkeyhint="send"></textarea>
+      <button type="submit" class="h5-translate-send" id="h5-translate-send">Send</button>
+    </form>
+    <div class="h5-keys" id="h5-keys" role="toolbar" aria-label="Terminal keys">
+      <button type="button" data-key="Escape">Esc</button>
+      <button type="button" data-key="Tab">Tab</button>
+      <button type="button" data-modifier="ctrl" aria-pressed="false">Ctrl</button>
+      <button type="button" data-key="ArrowUp" aria-label="ArrowUp">↑</button>
+      <button type="button" data-modifier="shift" aria-pressed="false">Shift</button>
+      <button type="button" data-action="keyboard" aria-label="Show or hide the on-screen keyboard">⌨</button>
+      <button type="button" data-modifier="alt" aria-pressed="false">Alt</button>
+      <button type="button" data-action="paste">Paste</button>
+      <button type="button" data-key="ArrowLeft" aria-label="ArrowLeft">←</button>
+      <button type="button" data-key="ArrowDown" aria-label="ArrowDown">↓</button>
+      <button type="button" data-key="ArrowRight" aria-label="ArrowRight">→</button>
+      <button type="button" data-key="Enter">Enter</button>
+      <button type="button" data-key="Backspace" aria-label="Backspace">⌫</button>
+      <button type="button" data-shortcut="ctrl-c" aria-label="Send Ctrl+C">^C</button>
+      <button type="button" class="h5-wide" data-action="image">Upload image</button>
+      <button type="button" class="h5-wide" data-action="translate" aria-pressed="false">Translate</button>
+    </div>
+    <input type="file" id="h5-image-picker" accept="image/png,image/jpeg,image/gif,image/webp" hidden>
+  </div>
+
+  <div class="h5-sheet" id="h5-tasks" role="dialog" aria-modal="true" aria-labelledby="h5-tasks-title" hidden>
+    <div class="h5-sheet-header">
+      <h2 id="h5-tasks-title">Tasks</h2>
+      <button type="button" class="h5-header-button" id="h5-close-tasks" aria-label="Close">✕</button>
+    </div>
+    <label class="h5-engine" id="h5-engine-row" hidden>
+      <span>Engine</span>
+      <select id="h5-engine" aria-label="Engine"></select>
+    </label>
+    <form class="h5-new-task" id="h5-new-task" autocomplete="off">
+      <input id="h5-new-task-title" maxlength="200" placeholder="New task title" aria-label="New task title" enterkeyhint="done">
+      <button type="submit">Create</button>
+    </form>
+    <div class="h5-task-list" id="h5-task-list"></div>
+    <a class="h5-desktop-link" href="/web">Desktop version</a>
+  </div>
+
+  <script src="/js/terminal-keys.js"></script>
+  <script src="/js/terminal-translate.js"></script>
+  <script src="/js/terminal-viewport.js"></script>
+  <script src="/js/h5.js"></script>
+</body>
+</html>

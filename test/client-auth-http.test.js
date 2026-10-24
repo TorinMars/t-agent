@@ -105,7 +105,7 @@ for (const [environment, allowHttp] of [['test', 'false'], ['production', 'false
   assert.notEqual(boundCookie, setupCookie);
   const confirmed = await confirmResponse.json();
   assert.equal(confirmed.recovery_codes.length, 8);
-  assert.equal(confirmed.redirect, '/web');
+  assert.equal(confirmed.redirect, '/h5');
   assert.equal((await call('/api/tasks')).status, 404);
   assert.equal((await call('/api/oss/config')).status, 404);
   assert.equal((await call('/api/oss/images', { body: {} })).status, 404);
@@ -149,20 +149,25 @@ for (const [environment, allowHttp] of [['test', 'false'], ['production', 'false
   assert.ok(refreshedCookie, 'active HTTP request reissues the rolling cookie');
   const expiry = Date.parse(refreshedCookie.match(/Expires=([^;]+)/)[1]);
   assert.ok(Math.abs(expiry - Date.now() - SESSION_TTL) < 5000, 'cookie lasts 30 days from this request');
-  for (const route of ['/h5', '/h5.html']) {
-    const legacy = await call(route, { cookie: boundCookie });
-    assert.equal(legacy.status, 302);
-    assert.equal(legacy.headers.get('location'), '/web');
-  }
+  const h5 = await call('/h5', { cookie: boundCookie });
+  assert.equal(h5.status, 200);
+  const h5Html = await h5.text();
+  assert.match(h5Html, /width=device-width/);
+  assert.match(h5Html, /src="\/js\/h5.js\?v=/);
+  assert.doesNotMatch(h5Html, /monaco|style\.css/);
+  assert.equal((await call('/h5.html', { cookie: boundCookie })).headers.get('location'), '/h5');
   const web = await call('/web', { cookie: boundCookie });
   const webHtml = await web.text();
   assert.match(webHtml, /width=1280, user-scalable=yes/);
   assert.doesNotMatch(webHtml, /mobile-client|h5-client|mobile\.js|mobile\.css/);
   assert.match(webHtml, /src="\/vendor\/monaco\/monaco.js/);
   assert.equal(web.headers.get('cache-control'), 'no-store');
-  const phone = await call('/', { cookie: boundCookie, headers: { 'User-Agent': 'iPhone Mobile' } });
-  assert.equal(phone.status, 200);
-  assert.match(await phone.text(), /width=1280, user-scalable=yes/);
+  const phone = await call('/', { cookie: boundCookie, headers: { 'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) Mobile/15E148' } });
+  assert.equal(phone.status, 302);
+  assert.equal(phone.headers.get('location'), '/h5');
+  const tablet = await call('/', { cookie: boundCookie, headers: { 'User-Agent': 'Mozilla/5.0 (iPad; CPU OS 18_0 like Mac OS X)' } });
+  assert.equal(tablet.status, 200);
+  assert.match(await tablet.text(), /width=1280, user-scalable=yes/);
   assert.equal((await call('/index.html', { cookie: boundCookie })).headers.get('location'), '/web');
   assert.equal((await call('/auth/settings', { cookie: boundCookie, body: { work_dir: null }, method: 'PUT', headers: { Origin: 'https://attacker.test' } })).status, 403);
 

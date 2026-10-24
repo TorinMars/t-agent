@@ -8,7 +8,7 @@ const { RESET_INPUT_MODES, watchShellReturn } = require('../lib/terminal-input-m
 const { createActivityTracker } = require('../lib/terminal-activity');
 const { repairSpawnHelperPermissions } = require('../lib/node-pty-runtime');
 const { utf8LocaleEnv } = require('../lib/terminal-locale');
-const { listSessions, startupCommand } = require('../lib/agent-sessions');
+const { listSessions, startupCommand, newClaudeCommand } = require('../lib/agent-sessions');
 const { resolveTerminalUser, userCanEnter, terminalEnvFor } = require('../lib/terminal-user');
 
 // Sessions are keyed by task ID and terminal ID; omitted IDs use the legacy shell.
@@ -76,17 +76,45 @@ const PHONE_TERMINAL_PREFIX = 'h5-';
 const PHONE_DEFAULT_TERMINAL = 'h5-default';
 const terminalSurface = value => (value === 'h5' ? 'h5' : 'web');
 
+// Agent terminals show the name of their session, read from the agent's own files on every listing so a rename done inside Claude / Codex follows.
+// A Codex session only gets an id once it has a first message, so it is bound here: the oldest unbound Codex terminal takes the oldest unclaimed
+// session of the task directory that started after the terminal did.
+function withAgentSessions(taskId, rows) {
+  const meta = db.prepare("SELECT terminal_id, agent, agent_session_id, agent_started_at FROM task_terminals WHERE task_id = ? AND agent IS NOT NULL ORDER BY rowid").all(taskId);
+  if (!meta.length) return rows;
+  const task = db.prepare('SELECT work_dir FROM tasks WHERE id = ?').get(taskId);
+  const dir = task && task.work_dir;
+  const byAgent = {};
+  const sessionsOf = agent => (byAgent[agent] ||= listSessions(agent, dir, undefined, 200));
+  const claimed = new Set(meta.map(item => item.agent_session_id).filter(Boolean));
+  const info = new Map(meta.map(item => [item.terminal_id, item]));
+  for (const item of meta) {
+    if (item.agent_session_id || item.agent !== 'codex') continue;
+    const found = sessionsOf('codex').filter(row => !claimed.has(row.id) && row.started_at >= item.agent_started_at - 2000).sort((x, y) => x.started_at - y.started_at)[0];
+    if (!found) continue;
+    claimed.add(found.id);
+    item.agent_session_id = found.id;
+    db.prepare('UPDATE task_terminals SET agent_session_id = ? WHERE task_id = ? AND terminal_id = ?').run(found.id, taskId, item.terminal_id);
+  }
+  return rows.map(row => {
+    const item = info.get(row.terminal_id);
+    if (!item) return row;
+    const session = item.agent_session_id && sessionsOf(item.agent).find(entry => entry.id === item.agent_session_id);
+    return { ...row, agent: item.agent, title: session ? session.title : row.title };
+  });
+}
+
 function listTerminals(taskId, surface = 'web') {
   if (terminalSurface(surface) === 'h5') {
     db.prepare("INSERT OR IGNORE INTO task_terminals (task_id, terminal_id, title) VALUES (?, ?, 'Terminal 1')").run(taskId, PHONE_DEFAULT_TERMINAL);
-    return db.prepare(
+    return withAgentSessions(taskId, db.prepare(
       "SELECT terminal_id, title FROM task_terminals WHERE task_id = ? AND substr(terminal_id, 1, 3) = 'h5-' ORDER BY rowid"
-    ).all(taskId);
+    ).all(taskId));
   }
   const stored = db.prepare('SELECT title FROM task_default_terminal_titles WHERE task_id = ?').get(taskId);
-  return [{ terminal_id: 'default', title: stored ? stored.title : 'Terminal 1' }, ...db.prepare(
+  return withAgentSessions(taskId, [{ terminal_id: 'default', title: stored ? stored.title : 'Terminal 1' }, ...db.prepare(
     "SELECT terminal_id, title FROM task_terminals WHERE task_id = ? AND substr(terminal_id, 1, 3) != 'h5-' ORDER BY rowid"
-  ).all(taskId)];
+  ).all(taskId)]);
 }
 
 // A terminal created for an agent session types its command once, when its shell is first spawned.
@@ -97,12 +125,34 @@ function createTerminal(taskId, surface = 'web', options = {}) {
   const phone = terminalSurface(surface) === 'h5';
   const id = (phone ? PHONE_TERMINAL_PREFIX : '') + require('crypto').randomUUID();
   const agent = options && options.agent;
-  const command = startupCommand(agent, options && options.session_id);
+  let sessionId = options && options.session_id ? String(options.session_id) : null;
+  let command = startupCommand(agent, sessionId);
+  if (command && !sessionId && agent === 'claude') {
+    sessionId = crypto.randomUUID();
+    command = newClaudeCommand(sessionId);
+  }
   const count = listTerminals(taskId, surface).length + 1;
   const title = command ? `${AGENT_LABELS[agent]} ${count}` : `Terminal ${count}`;
   if (command) pendingStartup.set(sessionKey(taskId, id), command);
-  db.prepare('INSERT INTO task_terminals (task_id, terminal_id, title) VALUES (?, ?, ?)').run(taskId, id, title);
-  return { terminal_id: id, title };
+  db.prepare('INSERT INTO task_terminals (task_id, terminal_id, title, agent, agent_session_id, agent_started_at) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(taskId, id, title, command ? agent : null, sessionId, command ? Date.now() : null);
+  return { terminal_id: id, title, agent: command ? agent : null };
+}
+
+// A new shell for an agent terminal that was closed or restarted resumes the session it is bound to.
+// A Claude session that never got a message has no file to resume, and a Codex session that was never bound starts fresh.
+function reopenCommand(taskId, id, workDir) {
+  const row = id === 'default' ? null : db.prepare('SELECT agent, agent_session_id FROM task_terminals WHERE task_id = ? AND terminal_id = ?').get(taskId, id);
+  if (!row || !row.agent) return null;
+  if (!row.agent_session_id) {
+    withAgentSessions(taskId, [{ terminal_id: id, title: '' }]); // binds a Codex session that has appeared since
+    const bound = db.prepare('SELECT agent_session_id FROM task_terminals WHERE task_id = ? AND terminal_id = ?').get(taskId, id);
+    row.agent_session_id = bound && bound.agent_session_id;
+  }
+  if (!row.agent_session_id) return startupCommand(row.agent);
+  const exists = listSessions(row.agent, workDir, undefined, 200).some(entry => entry.id === row.agent_session_id);
+  if (exists) return startupCommand(row.agent, row.agent_session_id);
+  return row.agent === 'claude' ? newClaudeCommand(row.agent_session_id) : startupCommand(row.agent);
 }
 
 // Sessions of an agent CLI that were run in the task's working directory (newest first).
@@ -234,7 +284,7 @@ function getOrCreateSession(ownerTaskId, workDir, dirWarning, id = 'default') {
     return { startupError: e };
   }
 
-  const startup = pendingStartup.get(taskId);
+  const startup = pendingStartup.get(taskId) || reopenCommand(ownerTaskId, id, workDir);
   pendingStartup.delete(taskId);
   if (startup) pty.write(`${startup}\r`);
 
@@ -472,4 +522,4 @@ function closeTaskTerminals(taskId) {
   for (const item of [...listTerminals(taskId), ...phone]) controlSession(taskId, 'close', item.terminal_id);
 }
 
-module.exports = { setHookEndpoint, reportHook, activitySnapshot, acknowledgeActivity, controlSession, handleWs, listTerminals, createTerminal, listAgentSessions, renameTerminal, assertTerminal, closeTaskTerminals };
+module.exports = { setHookEndpoint, reportHook, activitySnapshot, acknowledgeActivity, controlSession, handleWs, listTerminals, createTerminal, listAgentSessions, reopenCommand, renameTerminal, assertTerminal, closeTaskTerminals };

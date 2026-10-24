@@ -173,8 +173,8 @@ async function openPage(browser, { remoteTerminals, viewport } = {}) {
 
     // A new terminal is a phone terminal and gets its own connection.
     await page.locator('#h5-open-tasks').tap();
-    assert.deepEqual(await page.locator('#h5-tasks .h5-terminal-main').allTextContents(), ['Terminal 1'], 'the selected task lists its terminals under it');
-    assert.equal(await page.locator('#h5-tasks .h5-terminal-main[aria-current="true"]').textContent(), 'Terminal 1');
+    assert.deepEqual(await page.locator('#h5-tasks .h5-terminal-main .h5-terminal-name').allTextContents(), ['Terminal 1'], 'the selected task lists its terminals under it');
+    assert.equal(await page.locator('#h5-tasks .h5-terminal-main[aria-current="true"] .h5-terminal-name').textContent(), 'Terminal 1');
     assert.equal(await page.locator('#h5-terminal-tabs').count(), 0, 'there is no tab strip above the terminal any more');
     assert.equal(await page.locator('#h5-tasks .h5-task-add').count(), 1, 'only the selected task has the "+" button');
     const rowBox = await page.locator('#h5-tasks .h5-task-row').boundingBox();
@@ -254,7 +254,7 @@ async function openPage(browser, { remoteTerminals, viewport } = {}) {
 
     // Terminal actions: the "⋯" on a terminal row opens rename / reopen / restart / delete.
     await page.locator('#h5-open-tasks').tap();
-    assert.deepEqual(await page.locator('#h5-tasks .h5-terminal-main').allTextContents(), ['Terminal 1', 'Terminal 2']);
+    assert.deepEqual(await page.locator('#h5-tasks .h5-terminal-main .h5-terminal-name').allTextContents(), ['Terminal 1', 'Terminal 2']);
     const more = page.locator('#h5-tasks .h5-terminal-row').nth(1).locator('.h5-terminal-more');
     await more.tap();
     await page.locator('#h5-term-menu').waitFor({ state: 'visible' });
@@ -263,7 +263,7 @@ async function openPage(browser, { remoteTerminals, viewport } = {}) {
     await page.locator('#h5-term-rename-input').fill('Build logs');
     await page.locator('#h5-term-rename button').tap();
     await page.locator('#h5-term-menu').waitFor({ state: 'hidden' });
-    assert.deepEqual(await page.locator('#h5-tasks .h5-terminal-main').allTextContents(), ['Terminal 1', 'Build logs']);
+    assert.deepEqual(await page.locator('#h5-tasks .h5-terminal-main .h5-terminal-name').allTextContents(), ['Terminal 1', 'Build logs']);
     assert.ok(calls.includes('PATCH /api/tasks/1/terminals/h5-second'));
     // The default phone terminal cannot be deleted.
     await page.locator('#h5-tasks .h5-terminal-row').nth(0).locator('.h5-terminal-more').tap();

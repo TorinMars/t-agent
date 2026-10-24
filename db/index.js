@@ -56,6 +56,12 @@ if (!pairingColumns.includes('principal_id')) {
   db.exec("ALTER TABLE engine_pairing_codes ADD COLUMN principal_id TEXT NOT NULL DEFAULT 'engine'");
 }
 
+// Terminals started as a Claude / Codex session remember the agent, its session id (bound later for Codex) and when they were created.
+const terminalColumns = db.prepare('PRAGMA table_info(task_terminals)').all().map(column => column.name);
+for (const [column, type] of [['agent', 'TEXT'], ['agent_session_id', 'TEXT'], ['agent_started_at', 'INTEGER']]) {
+  if (!terminalColumns.includes(column)) db.exec(`ALTER TABLE task_terminals ADD COLUMN ${column} ${type}`);
+}
+
 // Bookmark groups created before the project became English-first used a Chinese default name.
 db.prepare("UPDATE bookmarks SET group_name = 'Default' WHERE group_name = ?").run('\u9ed8\u8ba4');
 

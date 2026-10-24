@@ -212,8 +212,28 @@
     sheet.setAttribute('aria-hidden', 'false');
     renderTasks();
     void loadTasks();
+    void refreshTerminals();
+    clearInterval(namesTimer);
+    namesTimer = setInterval(() => void refreshTerminals(), 8000);
+  }
+  // Claude / Codex terminals are named after their session, which can change inside the agent (rename, first prompt): refresh while the list is open.
+  let namesTimer = null;
+  async function refreshTerminals() {
+    const current = task;
+    if (!current || !terminals.some(row => row.agent)) return;
+    let rows;
+    try { rows = await api('GET', `${source.tasksBase}/${current.id}/terminals?surface=h5`); } catch { return; }
+    if (current !== task || !Array.isArray(rows)) return;
+    const fresh = new Map(rows.map(row => [row.terminal_id, row]));
+    let changed = false;
+    for (const row of terminals) {
+      const next = fresh.get(row.terminal_id);
+      if (next && (next.title !== row.title || next.agent !== row.agent)) { row.title = next.title; row.agent = next.agent; changed = true; }
+    }
+    if (changed) renderTasks();
   }
   function closeTasks() {
+    clearInterval(namesTimer);
     sheet.classList.remove('open');
     sheet.setAttribute('aria-hidden', 'true');
   }
@@ -378,6 +398,7 @@
   }
 
   // The terminals of the selected task are a second-level list under it in the task sheet; "⋯" opens the actions of one terminal.
+  const TERMINAL_ICONS = { shell: '>_', claude: '\u2733', codex: '\u25ce' };
   function terminalList() {
     const list = document.createElement('div');
     list.className = 'h5-terminal-list';
@@ -389,7 +410,14 @@
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'h5-terminal-main';
-      button.textContent = row.title;
+      const icon = document.createElement('span');
+      icon.className = `h5-terminal-icon ${row.agent || 'shell'}`;
+      icon.textContent = TERMINAL_ICONS[row.agent] || TERMINAL_ICONS.shell;
+      icon.setAttribute('aria-hidden', 'true');
+      const name = document.createElement('span');
+      name.className = 'h5-terminal-name';
+      name.textContent = row.title;
+      button.append(icon, name);
       if (row.terminal_id === terminalId) button.setAttribute('aria-current', 'true');
       button.addEventListener('click', () => {
         closeTasks();
@@ -432,7 +460,7 @@
     $('h5-term-menu-title').textContent = row.title;
     renameForm.hidden = true;
     const items = [
-      ['Rename', () => { termMenuActions.hidden = true; renameForm.hidden = false; renameInput.value = row.title; renameInput.focus(); renameInput.select(); }],
+      ...(row.agent ? [] : [['Rename', () => { termMenuActions.hidden = true; renameForm.hidden = false; renameInput.value = row.title; renameInput.focus(); renameInput.select(); }]]),
       ['Reopen', () => { closeTerminalMenu(); closeTasks(); switchTerminal(row); }],
       ['Restart in the working directory', () => void restartTerminal(row), 'danger'],
     ];

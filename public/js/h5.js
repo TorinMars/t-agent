@@ -181,6 +181,7 @@
   }
   function showUpdate(message, lines) {
     updateHint.textContent = tr(message);
+    updateHint.hidden = false;
     if (Array.isArray(lines) && lines.length) {
       const stuck = updateLog.scrollHeight - updateLog.scrollTop - updateLog.clientHeight < 24;
       updateLog.hidden = false;

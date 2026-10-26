@@ -61,7 +61,12 @@
 .ac-request-actions { display: flex; gap: 8px; }
 .ac-request-actions button { flex: 1 1 0; height: 40px; border: 1px solid var(--ac-border); border-radius: 8px; background: var(--ac-key); color: inherit; font-size: 15px; cursor: pointer; }
 .ac-request-actions .ac-allow { background: var(--ac-accent); border-color: var(--ac-accent); color: #fff; font-weight: 600; }
+.ac-request-actions { flex-wrap: wrap; }
+.ac-request-actions .ac-remember { background: var(--ac-key); border-color: var(--ac-accent); color: inherit; font-weight: 400; }
 .ac-request-actions button:disabled { opacity: .55; }
+.ac-question { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
+.ac-question-text { font-size: 13px; opacity: .85; }
+.ac-question-input { min-height: 36px; padding: 6px 8px; border: 1px solid var(--ac-border); border-radius: 8px; background: var(--ac-bg); color: inherit; font: inherit; font-size: 16px; }
 
 .ac-composer { flex: 0 0 auto; padding: 6px 8px max(8px, env(safe-area-inset-bottom)); background: var(--ac-panel); border-top: 1px solid var(--ac-border); }
 .ac-attachments { display: flex; flex-wrap: wrap; gap: 4px; padding-bottom: 6px; }

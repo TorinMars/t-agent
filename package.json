@@ -1,6 +1,6 @@
 {
   "name": "torin-x-web",
-  "version": "2.72.0",
+  "version": "2.73.0",
   "description": "T-Agent task client with browser terminals",
   "main": "server.js",
   "scripts": {
@@ -14,7 +14,6 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.310",
-    "@openai/codex-sdk": "^0.164.0",
     "@xterm/addon-serialize": "0.13.0",
     "@xterm/headless": "5.5.0",
     "ali-oss": "^6.23.0",

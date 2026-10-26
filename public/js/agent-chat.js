@@ -175,6 +175,7 @@ const AgentChat = (() => {
     let retry = null;
     let disposed = false;
     let attachments = [];
+    let canSteer = false; // the agent takes input while it works (Codex): Send stays available during a turn
 
     const root = el('section', 'agent-chat');
     root.setAttribute('aria-label', `${agent.label} chat`);
@@ -243,9 +244,10 @@ const AgentChat = (() => {
       status = next;
       const running = next === 'running';
       working.hidden = !running;
-      send.hidden = running;
+      send.hidden = running && !canSteer;
       stop.hidden = !running;
       input.readOnly = false;
+      input.placeholder = running && canSteer ? `Add to what ${agent.label} is doing` : `Message ${agent.label}`;
     }
 
     function upsert(item) {
@@ -275,22 +277,73 @@ const AgentChat = (() => {
       const card = el('div', 'ac-request');
       card.dataset.id = request.id;
       card.append(el('div', 'ac-request-title', request.title || `Allow ${request.tool}?`));
-      const detail = el('pre', 'ac-request-detail');
-      detail.translate = false;
-      detail.textContent = request.description || prettyInput(request.input);
       const answer = el('div', 'ac-request-actions');
-      const allow = el('button', 'ac-allow', 'Allow');
-      const deny = el('button', 'ac-deny', 'Deny');
-      allow.type = deny.type = 'button';
-      const respond = value => async () => {
-        allow.disabled = deny.disabled = true;
-        try { await api.post(`${base}/conversations/${conversation.id}/permissions/${request.id}`, { allow: value }); }
-        catch (error) { allow.disabled = deny.disabled = false; notify(`Could not answer: ${error.message}`); }
+      const buttons = [];
+      const reply = body => async () => {
+        buttons.forEach(button => { button.disabled = true; });
+        try { await api.post(`${base}/conversations/${conversation.id}/permissions/${request.id}`, body()); }
+        catch (error) { buttons.forEach(button => { button.disabled = false; }); notify(`Could not answer: ${error.message}`); }
       };
-      allow.addEventListener('click', respond(true));
-      deny.addEventListener('click', respond(false));
-      answer.append(allow, deny);
-      card.append(detail, answer);
+      const action = (className, label, body) => {
+        const button = el('button', className, label);
+        button.type = 'button';
+        button.addEventListener('click', reply(body));
+        buttons.push(button);
+        answer.append(button);
+      };
+      if (request.kind === 'question' && request.questions && request.questions.length) {
+        const fields = request.questions.map(question => {
+          const box = el('label', 'ac-question');
+          box.append(el('span', 'ac-question-text', question.question || question.header));
+          let control;
+          if (question.options && question.options.length) {
+            control = el('select', 'ac-question-input');
+            for (const option of question.options) {
+              const node = el('option', '', option.label);
+              node.value = option.label;
+              if (option.description) node.title = option.description;
+              control.append(node);
+            }
+            if (question.isOther) {
+              const other = el('option', '', 'Other…');
+              other.value = '';
+              control.append(other);
+            }
+          } else {
+            control = el('input', 'ac-question-input');
+            control.type = question.isSecret ? 'password' : 'text';
+          }
+          control.translate = false;
+          box.append(control);
+          return [question, box, control];
+        });
+        // Choosing "Other…" turns the choice into a text answer.
+        const typed = fields.map(([question, box, control]) => {
+          if (control.tagName !== 'SELECT' || !question.isOther) return null;
+          const text = el('input', 'ac-question-input');
+          text.hidden = true;
+          text.placeholder = 'Your answer';
+          text.translate = false;
+          control.addEventListener('change', () => { text.hidden = control.value !== ''; if (!text.hidden) text.focus(); });
+          box.append(text);
+          return text;
+        });
+        card.append(...fields.map(([, box]) => box));
+        action('ac-allow', 'Submit', () => ({
+          allow: true,
+          answers: Object.fromEntries(fields.map(([question, , control], index) => [question.id, typed[index] && control.value === '' ? typed[index].value : control.value])),
+        }));
+        action('ac-deny', 'Skip', () => ({ allow: false }));
+      } else {
+        const detail = el('pre', 'ac-request-detail');
+        detail.translate = false;
+        detail.textContent = request.description || prettyInput(request.input);
+        card.append(detail);
+        action('ac-allow', 'Allow', () => ({ allow: true }));
+        if (request.canRemember) action('ac-allow ac-remember', 'Allow for this session', () => ({ allow: true, remember: true }));
+        action('ac-deny', 'Deny', () => ({ allow: false }));
+      }
+      card.append(answer);
       keepBottom(() => requests.append(card));
     }
 
@@ -330,6 +383,7 @@ const AgentChat = (() => {
         items.clear();
         for (const item of state.items) upsert(item);
         for (const request of state.pending) permission(request);
+        canSteer = Boolean(state.capabilities && state.capabilities.steer);
         seq = state.seq;
         setStatus(state.status);
         toBottom();
@@ -390,7 +444,7 @@ const AgentChat = (() => {
     form.addEventListener('submit', async event => {
       event.preventDefault();
       const text = input.value.trim();
-      if (status === 'running' || (!text && !attachments.length)) return;
+      if ((status === 'running' && !canSteer) || (!text && !attachments.length)) return;
       const body = {
         text,
         images: attachments.filter(file => file.kind === 'image').map(({ name, type, data }) => ({ name, type, data })),

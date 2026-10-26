@@ -77,7 +77,11 @@ function createAgentChat({ db, adapters = ADAPTERS }) {
     if (!row) throw fail('CONVERSATION_NOT_FOUND', 404);
     const rt = runtimeFor(row, task);
     await loadHistory(rt);
-    return { conversation: publicRow(db.prepare('SELECT * FROM agent_conversations WHERE id = ?').get(id), rt), items: [...rt.items.values()], pending: pendingList(rt), status: rt.status, seq: rt.seq };
+    return {
+      conversation: publicRow(db.prepare('SELECT * FROM agent_conversations WHERE id = ?').get(id), rt),
+      items: [...rt.items.values()], pending: pendingList(rt), status: rt.status, seq: rt.seq,
+      capabilities: adapters[rt.agent].CAPABILITIES || {},
+    };
   }
 
   // Calls `send` for every event after `after`; returns the unsubscribe function, or null when events were dropped and the client must reload.
@@ -167,6 +171,8 @@ function createAgentChat({ db, adapters = ADAPTERS }) {
         emit(rt, { op: 'append', id, text });
       },
       getItem: id => rt.items.get(id),
+      // What the running turn offers while it runs: `steer(prompt)` adds the person's input to it.
+      setControl(control) { rt.control = control || null; },
       setSession(sessionId) {
         if (!sessionId || sessionId === rt.sessionId) return;
         rt.sessionId = sessionId;
@@ -176,9 +182,14 @@ function createAgentChat({ db, adapters = ADAPTERS }) {
     };
   }
 
+  // A request from the agent: an approval (allow / deny, optionally "for the session"), or `kind: 'question'` with `questions`
+  // ({ id, header, question, options: [{ label, description }] | null, isOther, isSecret }) that the person answers.
   function requestPermission(rt) {
     return request => new Promise(resolve => {
-      const full = { id: randomUUID(), tool: request.tool, input: request.input, title: request.title, description: request.description };
+      const full = {
+        id: randomUUID(), kind: request.kind === 'question' ? 'question' : 'approval', tool: request.tool, input: request.input,
+        title: request.title, description: request.description, canRemember: Boolean(request.canRemember), questions: request.questions,
+      };
       rt.pending.set(full.id, { request: full, resolve });
       emit(rt, { op: 'permission', request: full });
     });
@@ -192,15 +203,25 @@ function createAgentChat({ db, adapters = ADAPTERS }) {
     rt.pending.clear();
   }
 
+  // A message sent while the agent works goes into the running turn (the agent decides when to take it into account).
+  async function steer(rt, ctx, prompt) {
+    const control = rt.control;
+    try { await control.steer(prompt); }
+    catch (error) { throw fail(rt.status === 'running' ? 'STEER_FAILED' : 'CONVERSATION_BUSY', 409); }
+    ctx.upsert({ id: `u${Date.now().toString(36)}${rt.counter++}`, kind: 'user', text: prompt.display, attachments: prompt.names });
+    return { success: true, steered: true };
+  }
+
   async function sendMessage(task, id, body, deps = {}) {
     const row = rowOf(task.id, id);
     if (!row) throw fail('CONVERSATION_NOT_FOUND', 404);
     const rt = runtimeFor(row, task);
-    if (rt.status === 'running') throw fail('CONVERSATION_BUSY', 409);
+    if (rt.status === 'running' && !(rt.control && rt.control.steer)) throw fail('CONVERSATION_BUSY', 409);
     if (!task.work_dir || !fs.existsSync(task.work_dir)) throw fail('WORKING_DIRECTORY_MISSING');
     const prompt = buildPrompt(body);
     await loadHistory(rt);
     const ctx = turnContext(rt);
+    if (rt.status === 'running') return steer(rt, ctx, prompt);
     const userItem = { id: `u${Date.now().toString(36)}${rt.counter++}`, kind: 'user', text: prompt.display, attachments: prompt.names };
     ctx.upsert(userItem);
     if (rt.title === DEFAULT_TITLE && prompt.display) {
@@ -225,6 +246,7 @@ function createAgentChat({ db, adapters = ADAPTERS }) {
       }
       settlePending(rt, false, 'The turn ended');
       rt.abort = null;
+      rt.control = null;
       rt.status = 'idle';
       if (controller.signal.aborted) ctx.upsert({ id: `n${rt.counter++}`, kind: 'notice', text: 'Stopped' });
       else if (outcome && outcome.error) ctx.upsert({ id: `e${rt.counter++}`, kind: 'error', text: outcome.error });
@@ -244,14 +266,29 @@ function createAgentChat({ db, adapters = ADAPTERS }) {
     return { success: true, running: true };
   }
 
-  function answerPermission(task, id, requestId, { allow, message } = {}) {
+  // `answers` of a question: { [question id]: string | string[] }, bounded so a client cannot park large payloads in the runtime.
+  function cleanAnswers(answers) {
+    const out = {};
+    if (!answers || typeof answers !== 'object') return out;
+    for (const [key, value] of Object.entries(answers).slice(0, 20)) {
+      const list = [].concat(value).filter(entry => ['string', 'number', 'boolean'].includes(typeof entry)).slice(0, 20).map(entry => clip(String(entry), 2000));
+      out[clip(key, 80)] = Array.isArray(value) ? list : list[0] === undefined ? '' : list[0];
+    }
+    return out;
+  }
+
+  function answerPermission(task, id, requestId, { allow, message, remember, answers } = {}) {
     const row = rowOf(task.id, id);
     if (!row) throw fail('CONVERSATION_NOT_FOUND', 404);
     const rt = runtimes.get(id);
     const entry = rt && rt.pending.get(requestId);
     if (!entry) throw fail('REQUEST_NOT_FOUND', 404);
     rt.pending.delete(requestId);
-    entry.resolve({ allow: allow === true, message: typeof message === 'string' ? message.slice(0, 500) : undefined });
+    entry.resolve({
+      allow: allow === true, remember: allow === true && remember === true && entry.request.canRemember,
+      message: typeof message === 'string' ? message.slice(0, 500) : undefined,
+      answers: entry.request.kind === 'question' && allow === true ? cleanAnswers(answers) : undefined,
+    });
     emit(rt, { op: 'permission_done', id: requestId, allow: allow === true });
     return { success: true };
   }

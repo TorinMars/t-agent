@@ -38,7 +38,24 @@ const adapter = {
     return { ok: true };
   },
 };
-const chat = createAgentChat({ db, adapters: { claude: adapter } });
+// Codex: asks a question, then for a command (which can be allowed for the session), and takes input while it works.
+const codexSeen = { answers: [], approvals: [], steers: [] };
+const codexAdapter = {
+  MODES: { readonly: {}, write: {}, full: {} }, DEFAULT_MODE: 'write', CAPABILITIES: { steer: true },
+  loadHistory: async () => [],
+  async runTurn({ ctx, requestPermission }) {
+    let release;
+    const steered = new Promise(resolve => { release = resolve; });
+    ctx.setControl({ steer: async prompt => { codexSeen.steers.push(prompt.text); release(); } });
+    ctx.upsert({ id: 'c1', kind: 'text', text: 'Working on it' });
+    codexSeen.answers.push(await requestPermission({ kind: 'question', tool: 'Question', title: 'Codex has a question', input: {},
+      questions: [{ id: 'color', header: 'Color', question: 'Which color?', options: [{ label: 'red', description: '' }, { label: 'blue', description: '' }], isOther: true, isSecret: false }] }));
+    codexSeen.approvals.push(await requestPermission({ tool: 'Shell', input: { command: 'touch x' }, title: 'Run touch x', description: 'touch x', canRemember: true }));
+    await steered;
+    return { ok: true };
+  },
+};
+const chat = createAgentChat({ db, adapters: { claude: adapter, codex: codexAdapter } });
 const app = express();
 app.use(express.json());
 app.use('/api/tasks/:id/agent', createAgentChatRouter({ service: chat, authenticate: (req, res, next) => { req.session = { user: { login: 'owner' } }; next(); } }));
@@ -131,7 +148,34 @@ const server = http.createServer(app);
     const choices = await page.evaluate(() => AgentChat.choices(api, base, 'claude'));
     assert.equal(choices.length, 1);
     assert.equal(choices[0].conversation.title, 'clean the build');
-    console.log('Agent chat view: streaming, permissions, stop, access level, attachments and reopen passed.');
+    // Codex: a question with an "Other…" answer, "Allow for this session", and input sent while the turn runs.
+    await page.evaluate(() => { view.destroy(); return openChat('codex', null); });
+    assert.equal(await page.locator('.ac-badge').textContent(), '◎');
+    assert.deepEqual(await page.locator('.ac-mode option').allTextContents(), ['Read-only', 'Workspace write', 'Full access']);
+    await page.fill('.ac-input', 'start');
+    await page.click('.ac-send');
+    await page.waitForSelector('.ac-question');
+    assert.equal(await page.locator('.ac-request-title').textContent(), 'Codex has a question');
+    assert.deepEqual(await page.locator('.ac-question select option').allTextContents(), ['red', 'blue', 'Other…']);
+    await page.selectOption('.ac-question select', '');
+    await page.fill('.ac-question input', 'green');
+    await page.click('.ac-request .ac-allow');
+    await page.waitForFunction(() => document.querySelector('.ac-request-title') && document.querySelector('.ac-request-title').textContent === 'Run touch x');
+    assert.deepEqual(codexSeen.answers.map(answer => [answer.allow, answer.answers]), [[true, { color: 'green' }]]);
+    assert.deepEqual(await page.locator('.ac-request-actions button').allTextContents(), ['Allow', 'Allow for this session', 'Deny']);
+    await page.click('.ac-remember');
+    await page.waitForFunction(() => !document.querySelector('.ac-request'));
+    assert.deepEqual(codexSeen.approvals.map(answer => [answer.allow, answer.remember]), [[true, true]]);
+    assert.equal(await page.locator('.ac-send').isVisible(), true, 'Send stays available while Codex works');
+    assert.equal(await page.locator('.ac-stop').isVisible(), true);
+    assert.equal(await page.locator('.ac-input').getAttribute('placeholder'), 'Add to what Codex is doing');
+    await page.fill('.ac-input', 'one more thing');
+    await page.click('.ac-send');
+    await page.waitForFunction(() => document.querySelectorAll('.ac-user').length === 2);
+    assert.deepEqual(codexSeen.steers, ['one more thing']);
+    await page.waitForFunction(() => document.querySelector('.ac-stop').hidden);
+    assert.equal(await page.locator('.ac-input').getAttribute('placeholder'), 'Message Codex');
+    console.log('Agent chat view: streaming, permissions, stop, access level, attachments, reopen, and Codex questions and steering passed.');
   } finally {
     await browser.close();
     server.closeAllConnections();

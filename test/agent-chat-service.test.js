@@ -173,30 +173,6 @@ test('Claude runTurn passes the mode, resume id and permission callback to the S
   assert.deepEqual([captured.options.permissionMode, captured.options.allowDangerouslySkipPermissions, captured.prompt], ['bypassPermissions', true, 'x']);
 });
 
-test('Codex events become items, and a turn resumes a thread with the chosen sandbox', async () => {
-  const ctx = collector();
-  const normalizer = codex.createNormalizer(ctx);
-  normalizer.handle({ type: 'thread.started', thread_id: 't-1' });
-  normalizer.handle({ type: 'item.started', item: { id: 'i1', type: 'command_execution', command: 'echo ok', aggregated_output: '', status: 'in_progress' } });
-  normalizer.handle({ type: 'item.completed', item: { id: 'i1', type: 'command_execution', command: 'echo ok', aggregated_output: 'ok\n', exit_code: 0, status: 'completed' } });
-  normalizer.handle({ type: 'item.completed', item: { id: 'i2', type: 'agent_message', text: 'done' } });
-  normalizer.handle({ type: 'item.completed', item: { id: 'i3', type: 'command_execution', command: 'false', aggregated_output: '', exit_code: 1, status: 'completed' } });
-  assert.deepEqual([ctx.items.get('i1').status, ctx.items.get('i1').output, ctx.items.get('i2').text, ctx.items.get('i3').status], ['done', 'ok\n', 'done', 'error']);
-  assert.equal(normalizer.handle({ type: 'turn.failed', error: { message: 'boom' } }).error, 'boom');
-
-  const started = [];
-  class Codex {
-    startThread(options) { started.push(['start', options]); return this.thread(null); }
-    resumeThread(id, options) { started.push(['resume', id, options]); return this.thread(id); }
-    thread(id) { return { id, runStreamed: async input => { started.push(['input', input]); return { events: (async function* () { yield { type: 'turn.completed', usage: { input_tokens: 1, output_tokens: 2 } }; }()) }; } }; }
-  }
-  const outcome = await codex.runTurn({ cwd: '/w', sessionId: 't-old', mode: 'readonly', prompt: { text: 'go', images: [{ mediaType: 'image/png', data: 'iVBORw0KGgo=' }] }, signal: new AbortController().signal, ctx: collector(), deps: { loadSdk: async () => ({ Codex }) } });
-  assert.equal(outcome.ok, true);
-  assert.deepEqual(started[0], ['resume', 't-old', { workingDirectory: '/w', skipGitRepoCheck: true, approvalPolicy: 'never', sandboxMode: 'read-only' }]);
-  assert.equal(started[1][1][1].type, 'local_image');
-  assert.equal(fs.existsSync(started[1][1][1].path), false, 'the temporary image is removed after the turn');
-});
-
 test('Codex history is read from the rollout file', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 't-agent-codex-'));
   const day = path.join(home, '.codex', 'sessions', '2026', '10', '26');
@@ -213,4 +189,90 @@ test('Codex history is read from the rollout file', () => {
   const items = codex.historyFromRollout(codex.findRollout('thread-abcdef12', home));
   assert.deepEqual(items.map(item => [item.kind, item.name || item.text, item.output || '']), [['user', 'list files', ''], ['tool', 'Shell', 'a.txt'], ['text', 'one file', '']]);
   fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('a message sent while the agent works steers the running turn when the agent supports it', async () => {
+  const steered = [];
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const adapter = {
+    ...fakeAdapter(async ({ ctx }) => {
+      ctx.setControl({ steer: async prompt => { steered.push(prompt.text); } });
+      await gate;
+      return { ok: true };
+    }),
+    CAPABILITIES: { steer: true },
+  };
+  const chat = createAgentChat({ db, adapters: { codex: adapter } });
+  const conversation = chat.create(task, { agent: 'codex' });
+  assert.deepEqual((await chat.snapshot(task, conversation.id)).capabilities, { steer: true });
+  await chat.sendMessage(task, conversation.id, { text: 'start' });
+  await wait(() => adapter.calls.length === 1);
+  const result = await chat.sendMessage(task, conversation.id, { text: 'and also this' });
+  assert.deepEqual([result.steered, steered], [true, ['and also this']]);
+  const state = await chat.snapshot(task, conversation.id);
+  assert.deepEqual(state.items.filter(item => item.kind === 'user').map(item => item.text), ['start', 'and also this']);
+  assert.equal(adapter.calls.length, 1, 'steering does not start another turn');
+  release();
+  await wait(() => chat.list(task.id).find(row => row.id === conversation.id).running === false);
+});
+
+test('a message to a running turn that cannot be steered is refused, and a failed steer is not shown', async () => {
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const plain = fakeAdapter(async () => { await gate; return { ok: true }; });
+  const chat = createAgentChat({ db, adapters: { claude: plain, codex: { ...plain, CAPABILITIES: { steer: true } } } });
+  const busy = chat.create(task, { agent: 'claude' });
+  await chat.sendMessage(task, busy.id, { text: 'go' });
+  await assert.rejects(chat.sendMessage(task, busy.id, { text: 'more' }), error => error.message === 'CONVERSATION_BUSY' && error.statusCode === 409);
+
+  const failing = fakeAdapter(async ({ ctx }) => { ctx.setControl({ steer: async () => { throw new Error('turn is over'); } }); await gate; return { ok: true }; });
+  const chat2 = createAgentChat({ db, adapters: { codex: { ...failing, CAPABILITIES: { steer: true } } } });
+  const conversation = chat2.create(task, { agent: 'codex' });
+  await chat2.sendMessage(task, conversation.id, { text: 'go' });
+  await wait(() => failing.calls.length === 1);
+  await assert.rejects(chat2.sendMessage(task, conversation.id, { text: 'more' }), error => error.message === 'STEER_FAILED');
+  assert.deepEqual((await chat2.snapshot(task, conversation.id)).items.filter(item => item.kind === 'user').map(item => item.text), ['go']);
+  release();
+});
+
+test('questions carry their fields to the client and the answers are cleaned; "remember" only applies where offered', async () => {
+  const received = [];
+  const adapter = fakeAdapter(async ({ requestPermission }) => {
+    received.push(await requestPermission({ kind: 'question', tool: 'Question', input: {}, title: 'Q', questions: [{ id: 'a', question: 'Which?', options: null, isOther: true }] }));
+    received.push(await requestPermission({ tool: 'Shell', input: {}, canRemember: true }));
+    received.push(await requestPermission({ tool: 'Edit files', input: {} }));
+    return { ok: true };
+  });
+  const chat = createAgentChat({ db, adapters: { codex: adapter } });
+  const conversation = chat.create(task, { agent: 'codex' });
+  await chat.sendMessage(task, conversation.id, { text: 'go' });
+  await wait(() => chat.list(task.id).length && adapter.calls.length === 1);
+  // The oldest request that is waiting for an answer.
+  const nextPending = async () => {
+    for (let i = 0; i < 200; i++) {
+      const [request] = (await chat.snapshot(task, conversation.id)).pending;
+      if (request) return request;
+      await new Promise(resolve => setTimeout(resolve, 5));
+    }
+    throw new Error('no request arrived');
+  };
+  let question = await nextPending();
+  assert.deepEqual([question.kind, question.questions[0].id], ['question', 'a']);
+  chat.answerPermission(task, conversation.id, question.id, { allow: true, remember: true, answers: { a: 'x'.repeat(5000), b: ['one', { nested: 1 }, 2] } });
+  await wait(() => received.length === 1);
+  assert.equal(received[0].answers.a.length, 2000);
+  assert.deepEqual(received[0].answers.b, ['one', '2']);
+  assert.equal(received[0].remember, false, 'a question has nothing to remember');
+
+  question = await nextPending();
+  assert.equal(question.canRemember, true);
+  chat.answerPermission(task, conversation.id, question.id, { allow: true, remember: true, answers: { ignored: 'x' } });
+  await wait(() => received.length === 2);
+  assert.deepEqual([received[1].allow, received[1].remember, received[1].answers], [true, true, undefined]);
+
+  const last = await nextPending();
+  chat.answerPermission(task, conversation.id, last.id, { allow: true, remember: true });
+  await wait(() => received.length === 3);
+  assert.equal(received[2].remember, false, 'a request that does not offer "remember" never remembers');
 });

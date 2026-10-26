@@ -200,11 +200,14 @@
   }
 
   function selectTask(item) {
+    // A chat open over another task is put away (but not forgotten: it comes back with its task).
+    if (agentChat && agentFor && (!item || agentFor.taskId !== item.id || agentFor.source !== source.key)) hideAgent();
     task = item;
     store.set(`task:${source.key}`, item ? item.id : null);
     $('h5-task-name').textContent = item ? item.title : 'Choose a task';
     closeTasks();
     void loadTerminals();
+    if (item) void restoreAgent(item);
   }
 
   function openTasks() {
@@ -558,15 +561,25 @@
     agentView.style.height = `${viewport.height}px`;
     agentView.style.top = `${viewport.offsetTop}px`;
   }
-  function closeAgent() {
+  // Which chat of which task is shown, and the chat that is remembered for a task (so a refresh brings it back).
+  let agentFor = null;
+  const agentKey = item => `agent:${source.key}:${item.id}`;
+  // Takes the chat view away without forgetting the chat.
+  function hideAgent() {
     if (agentChat) agentChat.destroy();
     agentChat = null;
+    agentFor = null;
     agentView.hidden = true;
     agentView.style.height = agentView.style.top = '';
     if (window.visualViewport) {
       window.visualViewport.removeEventListener('resize', fitAgentView);
       window.visualViewport.removeEventListener('scroll', fitAgentView);
     }
+  }
+  // Closing it with the back button is the person saying they are done with it.
+  function closeAgent() {
+    if (agentFor) store.set(`agent:${agentFor.source}:${agentFor.taskId}`, null);
+    hideAgent();
   }
   function mountAgent(conversation) {
     if (agentChat) agentChat.destroy();
@@ -577,6 +590,22 @@
       fitAgentView();
     }
     agentChat = AgentChat.mount(agentView, { api: chatApi, base: `${source.tasksBase}/${task.id}/agent`, conversation, onClose: closeAgent, notify: message => tell(message, 'error') });
+    agentFor = { source: source.key, taskId: task.id, conversation: conversation.id };
+    store.set(agentKey(task), conversation.id);
+  }
+  // Opens again the chat that was open on this task when the page was left (chats exist for this machine only).
+  async function restoreAgent(item) {
+    if (source.key !== 'local' || agentChat) return;
+    const id = store.get(agentKey(item));
+    if (!id) return;
+    const current = source.key;
+    let rows;
+    try { rows = await chatApi.get(`${source.tasksBase}/${item.id}/agent/conversations`); }
+    catch { return; } // it stays remembered for the next time
+    if (task !== item || source.key !== current || agentChat) return;
+    const row = (Array.isArray(rows) ? rows : []).find(entry => entry.id === id);
+    if (row) mountAgent(row);
+    else store.set(agentKey(item), null); // the chat was deleted
   }
   async function openAgentChats(agent, label) {
     const current = task;

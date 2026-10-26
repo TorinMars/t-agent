@@ -9,6 +9,10 @@ const ORIGIN = 'http://h5.test';
 const TYPES = { '.js': 'application/javascript', '.css': 'text/css', '.html': 'text/html' };
 
 const ossUploads = [];
+// The conversations the page's server knows; a test can make the list unreadable.
+const chats = [];
+let chatListFails = false;
+
 async function openPage(browser, { remoteTerminals, viewport } = {}) {
   const context = await browser.newContext(viewport ? { viewport } : { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
   const page = await context.newPage();
@@ -48,9 +52,13 @@ async function openPage(browser, { remoteTerminals, viewport } = {}) {
     if (url.pathname === '/api/tasks/1/terminals/h5-second' && method === 'PATCH') return json({ terminal_id: 'h5-second', title: route.request().postDataJSON().title });
     if (url.pathname === '/api/tasks/1/terminal/control' && method === 'POST') return json({ success: true });
     // Chat-style agents: the conversation list, the sessions of the task directory, one empty conversation and an idle event stream.
-    if (url.pathname === '/api/tasks/1/agent/conversations' && method === 'GET') return json([]);
+    if (url.pathname === '/api/tasks/1/agent/conversations' && method === 'GET') return chatListFails ? json({ error: 'down' }, 500) : json(chats);
     if (url.pathname === '/api/tasks/1/agent/sessions') return json([{ id: 'session-old-1234', title: 'Old chat' }]);
-    if (url.pathname === '/api/tasks/1/agent/conversations' && method === 'POST') return json({ id: 'c1', agent: route.request().postDataJSON().agent, session_id: null, title: 'New chat', mode: 'ask', running: false });
+    if (url.pathname === '/api/tasks/1/agent/conversations' && method === 'POST') {
+      const row = { id: 'c1', agent: route.request().postDataJSON().agent, session_id: null, title: 'New chat', mode: 'ask', running: false };
+      chats.push(row);
+      return json(row);
+    }
     if (url.pathname === '/api/tasks/1/agent/conversations/c1') return json({ conversation: { id: 'c1' }, items: [{ id: 'u1', kind: 'user', text: 'hello agent' }, { id: 't1', kind: 'text', text: 'Hi **there**' }], pending: [], status: 'idle', seq: 0 });
     if (url.pathname === '/api/tasks/1/agent/conversations/c1/events') return route.fulfill({ contentType: 'text/event-stream', body: ': ok\n\n' });
     if (url.pathname === '/api/oss/config') return json({ enabled: true });
@@ -216,8 +224,36 @@ async function openPage(browser, { remoteTerminals, viewport } = {}) {
     await page.locator('#h5-agent .ac-bubble', { hasText: 'hello agent' }).waitFor();
     assert.equal(await page.locator('#h5-agent .ac-text strong').textContent(), 'there');
     assert.ok(calls.includes('POST /api/tasks/1/agent/conversations'));
+    // The open chat is remembered: a refresh brings it back, and the back button means the person is done with it.
+    const remembered = () => page.evaluate(() => localStorage.getItem('h5-agent:local:1'));
+    assert.equal(await remembered(), 'c1');
+    await page.reload();
+    await page.locator('#h5-agent .agent-chat').waitFor();
+    await page.locator('#h5-agent .ac-bubble', { hasText: 'hello agent' }).waitFor();
     await page.locator('#h5-agent .ac-back').tap();
     await page.locator('#h5-agent').waitFor({ state: 'hidden' });
+    assert.equal(await remembered(), null);
+    await page.reload();
+    await page.locator('#h5-task-name', { hasText: 'Fix login' }).waitFor();
+    await page.waitForTimeout(400);
+    assert.equal(await page.locator('#h5-agent').isHidden(), true, 'a chat that was closed does not come back');
+    // A list that cannot be read keeps the chat remembered for the next time; a chat that no longer exists is forgotten.
+    await page.evaluate(() => localStorage.setItem('h5-agent:local:1', 'c1'));
+    chatListFails = true;
+    await page.reload();
+    await page.locator('#h5-task-name', { hasText: 'Fix login' }).waitFor();
+    await page.waitForTimeout(400);
+    assert.equal(await page.locator('#h5-agent').isHidden(), true);
+    assert.equal(await remembered(), 'c1');
+    chatListFails = false;
+    await page.reload();
+    await page.locator('#h5-agent .agent-chat').waitFor();
+    chats.length = 0;
+    await page.reload();
+    await page.locator('#h5-task-name', { hasText: 'Fix login' }).waitFor();
+    await page.waitForTimeout(400);
+    assert.equal(await page.locator('#h5-agent').isHidden(), true);
+    assert.equal(await remembered(), null, 'a deleted chat is forgotten');
     await page.locator('#h5-open-tasks').tap();
     await page.locator('#h5-tasks .h5-task-add').tap();
     await page.locator('#h5-term-menu-actions button', { hasText: 'New Terminal' }).tap();

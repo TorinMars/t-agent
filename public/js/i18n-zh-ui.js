@@ -1180,6 +1180,7 @@ I18n.add({
   "{1} · Node {2} · {3} · user {4} · checked {5}": "{1} · Node {2} · {3} · 用户 {4} · 检查于 {5}",
   "Voice input": "语音输入",
   "Voice input: click to start speaking": "语音输入：点击开始说话",
+  "Voice input: hold to speak, release to stop": "语音输入：按住说话，松开结束",
   "Voice input: click to stop": "语音输入：点击结束",
   "Voice input settings (Alibaba Cloud)": "语音输入设置（阿里云）",
   "Configure voice input": "配置语音输入",

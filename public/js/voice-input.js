@@ -8,6 +8,7 @@ const VoiceInput = (() => {
   const MAX_PENDING_BYTES = TARGET_RATE * 2 * 10; // audio kept while the task is starting: at most 10 seconds
   const FINISH_TIMEOUT_MS = 8000;
   const STOP_TIMEOUT_MS = 10000;
+  const HOLD_MS = 350; // a press shorter than this is a tap, not a long press
   const WORKLET = 'registerProcessor("pcm-capture", class extends AudioWorkletProcessor { process(inputs) { const channel = inputs[0] && inputs[0][0]; if (channel) this.port.postMessage(channel.slice()); return true; } });';
 
   // Converts a stream of Float32 microphone blocks at inRate into Int16 samples at outRate (linear interpolation); the tail of a block is kept for the next call.
@@ -139,7 +140,7 @@ const VoiceInput = (() => {
   };
 
   // textarea: the box to fill; button: the microphone toggle; onNotConfigured: called when the server has no speech key yet.
-  function attach({ textarea, button, onNotConfigured }) {
+  function attach({ textarea, button, onNotConfigured, hold = false }) {
     let state = 'idle'; // idle → connecting → listening → stopping → idle
     let recognizer, stream, context, node, silent, resampler, stopTimer, limitTimer;
     let base = '', committed = '', partial = '';
@@ -152,7 +153,8 @@ const VoiceInput = (() => {
       button.classList.toggle('listening', active);
       button.setAttribute('aria-pressed', String(active));
       button.disabled = state === 'stopping';
-      button.title = state === 'idle' ? 'Voice input: click to start speaking' : 'Voice input: click to stop';
+      if (hold) button.title = 'Voice input: hold to speak, release to stop';
+      else button.title = state === 'idle' ? 'Voice input: click to start speaking' : 'Voice input: click to stop';
     }
     function show() {
       textarea.value = compose(base, committed, partial);
@@ -257,7 +259,30 @@ const VoiceInput = (() => {
       stopTimer = setTimeout(() => { finishText(); reset(); }, STOP_TIMEOUT_MS); // the service did not answer: keep what was recognized so far
     }
 
-    button.addEventListener('click', () => { if (state === 'idle') void start(); else stop(); });
+    if (hold) {
+      // Hold to speak: pressing starts the recording (inside the touch, so iOS lets the audio context run) and letting go ends the
+      // recognition, keeping the text. A tap shorter than HOLD_MS is not a long press and is discarded. Keyboard activation
+      // (click without a pointer, detail 0) still toggles, because a keyboard cannot hold a button.
+      let pressedAt = 0;
+      button.addEventListener('pointerdown', event => {
+        if (event.button || state !== 'idle') return;
+        pressedAt = Date.now();
+        if (button.setPointerCapture) { try { button.setPointerCapture(event.pointerId); } catch { /* pointer already gone */ } }
+        void start();
+      });
+      const release = () => {
+        if (!pressedAt) return;
+        const held = Date.now() - pressedAt;
+        pressedAt = 0;
+        if (held < HOLD_MS) { if (state === 'connecting' || state === 'listening') reset(); } else stop();
+      };
+      button.addEventListener('pointerup', release);
+      button.addEventListener('pointercancel', release);
+      button.addEventListener('contextmenu', event => event.preventDefault());
+      button.addEventListener('click', event => { if (event.detail === 0) { if (state === 'idle') void start(); else stop(); } });
+    } else {
+      button.addEventListener('click', () => { if (state === 'idle') void start(); else stop(); });
+    }
     render();
     return { start, stop, get state() { return state; } };
   }
@@ -314,7 +339,7 @@ const VoiceInput = (() => {
   // Phone page: settings live on the desktop page, like the translation settings.
   const h5Input = document.getElementById('h5-translate-input');
   const h5Mic = document.getElementById('h5-voice');
-  if (h5Input && h5Mic) attach({ textarea: h5Input, button: h5Mic, onNotConfigured: () => tell('Set up voice input on the desktop page', 'info') });
+  if (h5Input && h5Mic) attach({ textarea: h5Input, button: h5Mic, onNotConfigured: () => tell('Set up voice input on the desktop page', 'info'), hold: true });
 
   return { attach, showSettings, createResampler, createRecognizer, compose };
 })();

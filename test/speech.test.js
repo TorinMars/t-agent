@@ -252,8 +252,8 @@ test('Recording starts on a page that has no API helper or Modal (the phone page
   sandbox.window = sandbox;
   sandbox.AudioContext = FakeContext;
   vm.runInNewContext(source, sandbox);
-  assert.equal(typeof handlers.click, 'function', 'the phone microphone button is wired');
-  handlers.click();
+  assert.equal(typeof handlers.pointerdown, 'function', 'the phone microphone button is wired for hold to speak');
+  handlers.pointerdown({ button: 0, pointerId: 1 });
   for (let i = 0; i < 10; i += 1) await new Promise(resolve => setImmediate(resolve));
   assert.deepEqual(notices, [], 'no error notice');
   assert.equal(fetches.length, 1);
@@ -265,10 +265,53 @@ test('Recording starts on a page that has no API helper or Modal (the phone page
   socket.onopen();
   socket.receive(header('task-started'));
   assert.equal(classes.has('listening'), true);
-  handlers.click(); // stop
+  await new Promise(resolve => setTimeout(resolve, 400)); // a real long press
+  handlers.pointerup(); // release stops the recognition
   assert.equal(JSON.parse(socket.sent.at(-1)).header.action, 'finish-task');
   socket.receive({ ...header('result-generated'), payload: { output: { sentence: { text: 'done.', sentence_id: 1, sentence_end: true } } } });
   socket.receive(header('task-finished'));
   assert.equal(textarea.value, 'done.');
+  assert.equal(classes.has('listening'), false);
+});
+
+test('Phone microphone: a tap shorter than a long press is discarded, and keyboard activation still toggles', async () => {
+  const vm = require('vm');
+  const fs = require('fs');
+  const path = require('path');
+  const source = fs.readFileSync(path.join(__dirname, '../public/js/voice-input.js'), 'utf8');
+  const handlers = {};
+  const classes = new Set();
+  const button = { addEventListener: (type, fn) => { handlers[type] = fn; }, classList: { toggle: (name, on) => (on ? classes.add(name) : classes.delete(name)) }, setAttribute() {} };
+  const textarea = { value: '', dispatchEvent() {}, focus() {} };
+  const elements = { 'h5-translate-input': textarea, 'h5-voice': button };
+  class FakeContext {
+    constructor() { this.sampleRate = 48000; this.state = 'running'; this.destination = {}; this.audioWorklet = { addModule: async () => {} }; }
+    resume() { return Promise.resolve(); }
+    close() { this.state = 'closed'; return Promise.resolve(); }
+    createGain() { return { gain: {}, connect() {}, disconnect() {} }; }
+    createMediaStreamSource() { return { connect() {} }; }
+  }
+  const sandbox = {
+    document: { getElementById: id => elements[id] || null },
+    navigator: { mediaDevices: { getUserMedia: async () => ({ getTracks: () => [] }) } },
+    fetch: async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ url: 'wss://speech.example/x', token: 't', model: 'm', language: 'zh' }) }),
+    WebSocket: FakeSocket,
+    AudioWorkletNode: class { constructor() { this.port = {}; } connect() {} disconnect() {} },
+    Blob: class {}, URL: { createObjectURL: () => 'blob:x' }, Event: class {},
+    crypto: require('crypto').webcrypto, console, setTimeout, clearTimeout,
+    notify() {},
+  };
+  sandbox.window = sandbox;
+  sandbox.AudioContext = FakeContext;
+  vm.runInNewContext(source, sandbox);
+  handlers.pointerdown({ button: 0, pointerId: 1 });
+  assert.equal(classes.has('listening'), true, 'pressing starts at once');
+  handlers.pointerup(); // released right away
+  assert.equal(classes.has('listening'), false, 'a short tap cancels');
+  handlers.click({ detail: 1 }); // the click that follows a pointer press is ignored
+  assert.equal(classes.has('listening'), false);
+  handlers.click({ detail: 0 }); // keyboard
+  assert.equal(classes.has('listening'), true);
+  handlers.click({ detail: 0 });
   assert.equal(classes.has('listening'), false);
 });

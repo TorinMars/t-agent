@@ -2011,7 +2011,9 @@ html[lang="zh-CN"] .update-log:empty::before { content: '\7B49\5F85\8F93\51FA\20
 .terminal-tabs .agent-tab-badge.claude { color: #d97757; }
 .terminal-tabs .agent-tab-badge.codex { color: inherit; }
 .terminal-tabs .agent-tab-badge .agent-logo { width: 14px; height: 14px; }
-.terminal-tabs .agent-tab { max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+.terminal-tabs .agent-tab { display: inline-flex; align-items: center; max-width: 220px; }
+.terminal-tabs .agent-tab-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.terminal-tabs .agent-tab .terminal-tab-close, .terminal-tabs .agent-tab-badge { flex: none; }
 .agent-pane[hidden] { display: none; }
 
 /* Environment page: features with their checks; the ones with a problem come first and are open */

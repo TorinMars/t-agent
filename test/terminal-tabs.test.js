@@ -107,3 +107,17 @@ test('agent chats are tabs after the terminals; selecting one deactivates the te
   TerminalTabs.setChats('/api/tasks/1', null);
   assert.equal(strip.children.length, 2);
 });
+
+test('a long agent chat title is truncated in its own label so the close button stays visible', async () => {
+  const { TerminalTabs, strip } = load({});
+  TerminalTabs.show('/api/tasks/1', () => {}, { taskId: 1, sourceKey: 'local' });
+  await tick();
+  const chats = { rows: [{ id: 'c1', agent: 'codex', title: 'A very long chat title that does not fit in the tab at all' }], active: null, select: () => {}, close: () => {}, leave: () => {} };
+  TerminalTabs.setChats('/api/tasks/1', chats);
+  const tab = strip.children[2];
+  assert.ok(tab.querySelector('.agent-tab-label'), 'the title has its own element to truncate');
+  assert.ok(tab.querySelector('.terminal-tab-close'));
+  const css = fs.readFileSync(path.join(__dirname, '../public/css/style.css'), 'utf8');
+  assert.match(css, /\.terminal-tabs \.agent-tab-label \{[^}]*text-overflow: ellipsis/);
+  assert.doesNotMatch(css, /\.terminal-tabs \.agent-tab \{[^}]*overflow: hidden/, 'clipping the whole tab hides the close button');
+});

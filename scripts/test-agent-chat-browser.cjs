@@ -104,6 +104,11 @@ const server = http.createServer(app);
   const browser = await chromium.launch({ headless: true, ...(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {}) });
   try {
     const page = await browser.newPage({ viewport: { width: 390, height: 780 } });
+    // A stand-in recognizer that records what the page does to it.
+    await page.addInitScript(() => {
+      window.dictation = { started: 0, aborted: 0 };
+      window.SpeechRecognition = class { start() { window.dictation.started += 1; } abort() { window.dictation.aborted += 1; if (this.onend) this.onend(); } stop() { if (this.onend) this.onend(); } };
+    });
     page.on('pageerror', error => { throw error; });
     await page.goto(`${origin}/harness`);
     await page.evaluate(() => openChat('claude', null));
@@ -328,6 +333,20 @@ const server = http.createServer(app);
     assert.equal(await page.locator('.ac-toolgroup > summary').textContent(), 'Ran 2 commands· 1 failed');
     assert.equal(await page.locator('.ac-failed').textContent(), '· 1 failed');
     assert.equal(await page.locator('.ac-steps .ac-step-icon.error').count(), 1);
+    // Dictation: a quick tap does nothing, holding records, and letting go cancels the recognition.
+    const mic = page.locator('.ac-mic');
+    const box = await mic.boundingBox();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.up();
+    await page.waitForTimeout(500);
+    assert.deepEqual(await page.evaluate(() => window.dictation), { started: 0, aborted: 0 }, 'a tap does not record');
+    await page.mouse.down();
+    await page.waitForSelector('.ac-mic.on');
+    assert.equal(await page.evaluate(() => window.dictation.started), 1, 'holding starts the recognizer');
+    await page.mouse.up();
+    await page.waitForSelector('.ac-mic:not(.on)');
+    assert.equal(await page.evaluate(() => window.dictation.aborted), 1, 'letting go cancels the recognition');
     console.log('Agent chat view: streaming, permissions, stop, access level, attachments, reopen, Codex questions and steering, tool steps, choices and reviews passed.');
   } finally {
     await browser.close();

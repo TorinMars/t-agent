@@ -305,14 +305,17 @@ function Working({ since }) {
   );
 }
 
-// Speech to text with the browser's recognizer; the button only exists where the browser has one.
+// Speech to text with the browser's recognizer; the button only exists where the browser has one. Holding the button records, and letting go
+// cancels the recognition. A keyboard cannot hold a button, so Enter / Space still start and stop it.
+const HOLD_MS = 350;
 function Mic({ onText, notify }) {
   const [on, setOn] = useState(false);
   const recognizer = useRef(null);
-  useEffect(() => () => { if (recognizer.current) recognizer.current.abort(); }, []);
-  if (!SpeechRecognition || coarse()) return null; // phones dictate through their keyboard
-  const toggle = () => {
-    if (recognizer.current) { recognizer.current.stop(); return; }
+  const timer = useRef(0);
+  useEffect(() => () => { clearTimeout(timer.current); if (recognizer.current) recognizer.current.abort(); }, []);
+  if (!SpeechRecognition) return null;
+  const start = () => {
+    if (recognizer.current) return;
     const next = new SpeechRecognition();
     next.lang = document.documentElement.lang || navigator.language || 'en-US';
     next.continuous = true;
@@ -323,13 +326,27 @@ function Mic({ onText, notify }) {
       }
     };
     next.onerror = event => { if (event.error && event.error !== 'no-speech' && event.error !== 'aborted') notify(`Dictation failed: ${event.error}`); };
-    next.onend = () => { recognizer.current = null; setOn(false); };
+    next.onend = () => { if (recognizer.current === next) recognizer.current = null; setOn(false); };
     recognizer.current = next;
     setOn(true);
     try { next.start(); } catch { recognizer.current = null; setOn(false); }
   };
+  const press = event => {
+    if (event.button) return;
+    clearTimeout(timer.current);
+    timer.current = setTimeout(start, HOLD_MS);
+  };
+  const release = () => {
+    clearTimeout(timer.current);
+    if (recognizer.current) { const current = recognizer.current; recognizer.current = null; current.abort(); }
+    setOn(false);
+  };
   return (
-    <button type="button" className={`ac-mic${on ? ' on' : ''}`} aria-pressed={on} aria-label={t(on ? 'Stop dictation' : 'Dictate')} onClick={toggle}><Icon d={ICONS.mic} /></button>
+    <button
+      type="button" className={`ac-mic${on ? ' on' : ''}`} aria-pressed={on} aria-label={t('Hold to dictate')} title={t('Hold to dictate')}
+      onPointerDown={press} onPointerUp={release} onPointerCancel={release} onPointerLeave={release} onContextMenu={event => event.preventDefault()}
+      onClick={event => { if (event.detail === 0) { if (recognizer.current) release(); else start(); } }}
+    ><Icon d={ICONS.mic} /></button>
   );
 }
 

@@ -32,6 +32,23 @@ const AgentChat = (() => {
     return svg;
   }
 
+  // The mark of a chat in a list of terminals and chats: the agent's mark with a small speech bubble, so it differs from a terminal that runs
+  // the same agent (which shows the plain mark).
+  const BUBBLE = 'M20 2H4a2 2 0 0 0-2 2v18l4-4h14a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2z';
+  function chatIcon(agent) {
+    const mark = document.createElement('span');
+    mark.className = 'agent-chat-mark';
+    mark.setAttribute('aria-hidden', 'true');
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('class', 'agent-chat-bubble');
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', BUBBLE);
+    svg.append(path);
+    mark.append(icon(agent), svg);
+    return mark;
+  }
+
   // The choices for "open a chat": the conversations of the task, then sessions of the agent CLI in the task directory that have no conversation yet.
   async function choices(api, base, agent) {
     const [conversations, sessions] = await Promise.all([
@@ -89,5 +106,5 @@ const AgentChat = (() => {
     };
   }
 
-  return { mount, choices, open, icon, AGENTS };
+  return { mount, choices, open, icon, chatIcon, AGENTS };
 })();

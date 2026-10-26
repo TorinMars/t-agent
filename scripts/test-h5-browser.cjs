@@ -289,6 +289,11 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     await page.locator('#h5-open-tasks').tap();
     const chatRow = page.locator('#h5-tasks .h5-terminal-row', { hasText: 'New chat' });
     await chatRow.waitFor();
+    // A chat shows the agent's mark with a speech bubble, so it differs from a terminal that runs the same agent.
+    assert.equal(await chatRow.locator('.agent-chat-mark .agent-chat-bubble').count(), 1);
+    const bubble = await chatRow.locator('.agent-chat-bubble').boundingBox();
+    assert.ok(bubble.width >= 8 && bubble.height >= 8, 'the bubble is drawn');
+    assert.equal(await page.locator('#h5-tasks .h5-terminal-row:has(.h5-terminal-icon.claude, .h5-terminal-icon.codex):not(:has(.agent-chat-mark))').count(), await page.locator('#h5-tasks .h5-terminal-row:has(.h5-terminal-icon.claude, .h5-terminal-icon.codex)').count() - await page.locator('#h5-tasks .h5-terminal-row:has(.agent-chat-mark)').count(), 'only chats have the bubble');
     await chatRow.locator('.h5-terminal-main').tap();
     await page.locator('#h5-agent .agent-chat').waitFor();
     await pollUntil(() => openOnServer() > 0);

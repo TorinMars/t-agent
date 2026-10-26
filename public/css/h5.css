@@ -48,6 +48,11 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; c
 .h5-translate-input.translating { border-color: var(--h5-accent); animation: h5-pulse 1.2s ease-in-out infinite; }
 .h5-translate-send { flex: 0 0 auto; height: 40px; padding: 0 14px; border: 0; border-radius: 8px; background: var(--h5-pressed); color: #fff; font-weight: 600; }
 .h5-translate-send:disabled { opacity: .6; }
+.h5-voice { flex: 0 0 auto; width: 40px; height: 40px; padding: 0; border: 1px solid #555; border-radius: 8px; background: #2a2a2c; color: #fff; font-size: 18px; }
+.h5-voice.listening { border-color: #e5484d; background: #5a2428; animation: h5-voice-pulse 1.2s ease-in-out infinite; }
+.h5-voice:disabled { opacity: .6; }
+@keyframes h5-voice-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(229, 72, 77, 0); } 50% { box-shadow: 0 0 8px 1px rgba(229, 72, 77, .75); } }
+@media (prefers-reduced-motion: reduce) { .h5-voice.listening { animation: none; box-shadow: 0 0 6px 1px rgba(229, 72, 77, .6); } }
 @keyframes h5-pulse { 50% { box-shadow: 0 0 8px 1px rgba(112, 165, 255, .6); } }
 
 /* Key grid: the first two rows follow the common mobile terminal layout. */

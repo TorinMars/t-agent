@@ -103,6 +103,7 @@ app.use('/api/system', require('./routes/system'));
 app.use('/api/oss', require('./routes/oss').createOssRouter());
 app.use('/api/environment', require('./routes/environment').createEnvironmentRouter());
 app.use('/api/translate', require('./routes/translate').createTranslateRouter());
+app.use('/api/speech', require('./routes/speech').createSpeechRouter());
 app.use('/api/pm2', require('./routes/pm2').createPm2Router());
 app.use('/api/apps', require('./routes/apps').createAppsRouter());
 const frpRouter = require('./routes/frp').createFrpRouter();

@@ -1974,6 +1974,16 @@ html[lang="zh-CN"] .update-log:empty::before { content: '\7B49\5F85\8F93\51FA\20
 .terminal-translate button:hover:not(:disabled) { background: #444; }
 .terminal-translate button:disabled { opacity: .6; cursor: wait; }
 
+/* Voice input next to the Chinese input box: the microphone button pulses red while the microphone is open */
+.terminal-translate .terminal-voice { width: 32px; padding: 0; font-size: 14px; }
+.terminal-translate .terminal-voice.listening { border-color: #e5484d; background: #5a2428; animation: voice-pulse 1.2s ease-in-out infinite; }
+.terminal-translate .terminal-voice-settings { padding: 0 6px; font-size: 11px; }
+@keyframes voice-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(229, 72, 77, 0); }
+  50%      { box-shadow: 0 0 8px 1px rgba(229, 72, 77, .75); }
+}
+@media (prefers-reduced-motion: reduce) { .terminal-translate .terminal-voice.listening { animation: none; box-shadow: 0 0 6px 1px rgba(229, 72, 77, .6); } }
+
 .frp-form { display: grid; gap: 6px; max-width: 520px; margin-top: 12px; }
 .frp-form .form-label { margin-top: 8px; }
 .frp-remote-row { display: flex; gap: 8px; }

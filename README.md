@@ -241,7 +241,7 @@ task-directory/
 
 The top of the task details switches between the design doc, README, AGENTS.md, to-dos and the terminal. The terminal uses the task's working path as its current directory. The terminal tabs switch between several independent shells of the same task; the page caches the screen, scroll position and connection per task and terminal, so an ordinary switch does not reconnect or replay history and never terminates background programs. After refreshing the page you can select the terminals you already created again. The bottom of the terminal has a compact function-key bar: Esc, Tab, Ctrl, Command, Option, Shift, the arrow keys, Enter and Backspace. Click a modifier key and then a function key or type a letter to form a combination; it is released automatically after being sent once; the "Option + ↑" button sends Alt+Up (`ESC [ 1 ; 3 A`) directly. Command uses the Super modifier of the extended keyboard protocol, needs support from the program in the terminal, and does not trigger operating-system shortcuts. The top of the terminal offers five actions:
 
-- "New terminal" starts a separate shell in the task working directory and keeps the existing terminals.
+- "+" opens a menu: "New Terminal" starts a separate shell in the task working directory and keeps the existing terminals; "Claude session" / "Codex session" start that agent in a new terminal, either a new session or one of the sessions already run in the working directory (resumed), as on the phone.
 
 - "Reopen" only rebuilds the browser connection and keeps the current shell process, its directory and history.
 - "Close current terminal" terminates the current shell and the programs running in it, and keeps the tab and the output history already recorded.

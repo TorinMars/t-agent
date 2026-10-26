@@ -104,9 +104,74 @@ const TerminalControls = {
   },
 };
 
-document.getElementById('btn-terminal-new').addEventListener('click', () => {
-  TerminalControls.run('newTerminal');
-});
+// "+" opens a menu: a plain terminal, or a Claude / Codex session of the task directory (new or resumed).
+const TerminalNewMenu = (() => {
+  const SESSION_KINDS = [['claude', 'Claude session'], ['codex', 'Codex session']];
+  const button = document.getElementById('btn-terminal-new');
+  let menu = null;
+  let token = 0; // invalidates a session list that finishes loading after the menu was closed or changed
+
+  function close() {
+    token++;
+    if (menu) menu.remove();
+    menu = null;
+  }
+
+  function show(items) {
+    const list = document.createElement('ul');
+    list.setAttribute('role', 'menu');
+    for (const [label, run, raw] of items) {
+      const item = document.createElement('li');
+      item.setAttribute('role', 'menuitem');
+      item.textContent = label;
+      if (raw) { item.translate = false; item.title = label; item.className = 'terminal-new-session'; }
+      item.addEventListener('click', run);
+      list.append(item);
+    }
+    if (!menu) {
+      menu = document.createElement('div');
+      menu.className = 'context-menu terminal-new-menu';
+      document.body.append(menu);
+    }
+    menu.replaceChildren(list);
+    const rect = button.getBoundingClientRect();
+    menu.style.top = `${rect.bottom + 4}px`;
+    menu.style.right = `${Math.max(8, document.documentElement.clientWidth - rect.right)}px`;
+  }
+
+  const start = options => () => { close(); TerminalControls.run('newTerminal', '', options); };
+
+  function root() {
+    show([
+      ['New Terminal', start({})],
+      ...SESSION_KINDS.map(([agent, label]) => [label, () => sessions(agent, label)]),
+    ]);
+  }
+
+  async function sessions(agent, label) {
+    const mine = ++token;
+    show([['Loading…', () => {}]]);
+    let rows = [];
+    try { rows = await TerminalTabs.agentSessions(agent); }
+    catch (error) { if (typeof Toast !== 'undefined') Toast.error(`Could not load sessions: ${error.message}`); }
+    if (mine !== token || !menu) return;
+    show([
+      [`New ${label}`, start({ agent })],
+      ...(Array.isArray(rows) ? rows : []).map(row => [row.title, start({ agent, session_id: row.id }), true]),
+      ['Back', root],
+    ]);
+  }
+
+  button.addEventListener('click', event => {
+    event.stopPropagation();
+    if (TerminalControls.busy) return;
+    if (menu) close(); else root();
+  });
+  // composedPath() is fixed at dispatch: an item that re-renders the menu is detached by the time the click reaches the document.
+  document.addEventListener('click', event => { if (menu && !event.composedPath().includes(menu)) close(); });
+  document.addEventListener('keydown', event => { if (menu && event.key === 'Escape') { close(); button.focus(); } });
+  window.addEventListener('resize', close);
+})();
 
 document.getElementById('btn-terminal-reopen').addEventListener('click', () => {
   TerminalControls.run('reopenTerminal');

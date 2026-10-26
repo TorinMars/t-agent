@@ -2201,7 +2201,7 @@ const Tasks = (() => {
     showCreateGroup,
     openFileBrowser,
     confirmDiscardEditor,
-    newTerminal: () => TerminalTabs.create(),
+    newTerminal: options => TerminalTabs.create(options),
     reopenTerminal,
     closeTerminal,
     deleteTerminal,

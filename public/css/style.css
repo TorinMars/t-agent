@@ -1359,6 +1359,10 @@ html[lang="zh-CN"] .update-log:empty::before { content: '\7B49\5F85\8F93\51FA\20
 }
 .context-menu li.separator:hover { background: none; }
 
+/* Menu under the terminal "+" button: new terminal / Claude session / Codex session */
+.terminal-new-menu { min-width: 170px; max-width: 320px; max-height: 60vh; overflow-y: auto; }
+.terminal-new-menu .terminal-new-session { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 /* Loading */
 .preview-loading {
   padding: 48px;

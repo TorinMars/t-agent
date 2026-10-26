@@ -155,11 +155,12 @@ const TerminalTabs = (() => {
     return state(scope).active;
   }
 
-  async function create() {
+  // options: { agent: 'claude' | 'codex', session_id? } starts that agent in the new terminal (a new session, or the given one resumed).
+  async function create(options = {}) {
     if (!mounted) return;
     const target = mounted;
     try {
-      const row = await API.post(`${target.scope}/terminals`, {});
+      const row = await API.post(`${target.scope}/terminals`, options);
       const current = state(target.scope);
       current.revision++;
       current.rows.push(row);
@@ -176,6 +177,12 @@ const TerminalTabs = (() => {
     }
   }
 
+  // Sessions of an agent CLI that ran in the task working directory, newest first.
+  function agentSessions(agent) {
+    if (!mounted) return Promise.resolve([]);
+    return API.get(`${mounted.scope}/agent-sessions?agent=${encodeURIComponent(agent)}`);
+  }
+
   function remove(scope, terminalId) {
     const current = state(scope);
     current.revision++;
@@ -189,5 +196,5 @@ const TerminalTabs = (() => {
     }
   }
 
-  return { show, create, refresh: render, remove, current: scope => state(scope).active };
+  return { show, create, agentSessions, refresh: render, remove, current: scope => state(scope).active };
 })();

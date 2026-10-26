@@ -122,6 +122,13 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     await page.locator('.h5-task-item', { hasText: 'Fix login' }).tap();
     await page.locator('#h5-tasks').waitFor({ state: 'hidden' });
     assert.equal(await page.locator('#h5-task-name').textContent(), 'Fix login');
+    // The name of the terminal that is shown stands under the task name, in small text.
+    await page.locator('#h5-session-name', { hasText: 'Terminal 1' }).waitFor();
+    const [nameBox, sessionBox] = await Promise.all([page.locator('#h5-task-name').boundingBox(), page.locator('#h5-session-name').boundingBox()]);
+    assert.ok(sessionBox.y >= nameBox.y + nameBox.height - 1, 'the session name is below the task name');
+    assert.ok(await page.locator('#h5-session-name').evaluate(node => parseFloat(getComputedStyle(node).fontSize)) < await page.locator('#h5-task-name').evaluate(node => parseFloat(getComputedStyle(node).fontSize)), 'in smaller text');
+    const headerHeight = () => page.locator('.h5-header').evaluate(node => node.getBoundingClientRect().height);
+    const terminalHeader = await headerHeight();
     // The task panel slides in from the left when the menu button is tapped.
     await page.locator('#h5-open-tasks').tap();
     const midway = await page.locator('#h5-tasks .h5-sheet-panel').evaluate(el => new Promise(resolve => setTimeout(() => resolve(el.getBoundingClientRect().left), 60)));
@@ -297,8 +304,11 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     assert.equal(await page.locator('#h5-tasks .h5-terminal-row:not(:has(.agent-chat-mark)) .agent-chat-bubble').count(), 0, 'only chats have the bubble');
     await chatRow.locator('.h5-terminal-main').tap();
     await page.locator('#h5-agent .agent-chat').waitFor();
+    assert.equal(await page.locator('#h5-session-name').textContent(), 'New chat', 'an open chat shows its own name');
+    assert.equal(await headerHeight(), terminalHeader, 'the header keeps its height whatever the name is');
     await pollUntil(() => openOnServer() > 0);
     await leaveChatByTerminal(page);
+    assert.equal(await page.locator('#h5-session-name').textContent(), 'Terminal 1', 'back on the terminal, its name');
     await page.locator('#h5-agent').waitFor({ state: 'hidden' });
     await pollUntil(() => openOnServer() === null);
     // Only one of a terminal and a chat is current: with a chat open no terminal row is highlighted, and the chat row is.

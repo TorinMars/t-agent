@@ -94,7 +94,8 @@ window.api = { get: u => call('GET', u), post: (u, b) => call('POST', u, b), pat
 window.base = '/api/tasks/${task.id}/agent';
 window.notices = [];
 window.closes = 0;
-window.openChat = async (agent, choice) => { const conversation = await AgentChat.open(window.api, base, agent, choice); window.view = AgentChat.mount(document.getElementById('host'), { api: window.api, base, conversation, onClose: () => { window.closes++; }, notify: m => window.notices.push(m) }); return conversation; };
+window.titles = [];
+window.openChat = async (agent, choice) => { const conversation = await AgentChat.open(window.api, base, agent, choice); window.view = AgentChat.mount(document.getElementById('host'), { api: window.api, base, conversation, onClose: () => { window.closes++; }, onTitle: title => window.titles.push(title), notify: m => window.notices.push(m) }); return conversation; };
 </script>`));
 const server = http.createServer(app);
 
@@ -266,6 +267,7 @@ const server = http.createServer(app);
       await page.getByRole('menuitem', { name: 'Rename…' }).click();
       await page.waitForFunction(expected => document.querySelector('.ac-title').textContent === expected, name);
     }
+    assert.deepEqual((await page.evaluate(() => window.titles)).slice(-2), ['Renamed chat', 'clean the build'], 'the page that holds the chat is told each new title');
 
     // The model and effort in the footer open a list of both; a choice is saved for the next messages.
     await page.click('.ac-picker-button');

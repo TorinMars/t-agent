@@ -598,7 +598,19 @@
   });
   $('h5-term-menu-cancel').addEventListener('click', closeTerminalMenu);
   termMenu.addEventListener('click', event => { if (event.target === termMenu) closeTerminalMenu(); });
-  function renderTabs() { if (tasks.length) renderTasks(); }
+  // The name of what is shown (the chat that is open, otherwise the current terminal) in small text under the task name.
+  function renderSessionName() {
+    let name = '';
+    if (agentChat && agentFor) {
+      const row = chats.find(entry => entry.id === agentFor.conversation);
+      name = (row && row.title) || agentFor.title || '';
+    } else if (terminalId) {
+      const row = terminals.find(entry => entry.terminal_id === terminalId);
+      name = (row && row.title) || '';
+    }
+    $('h5-session-name').textContent = name || '\u00a0'; // a no-break space keeps the line's height
+  }
+  function renderTabs() { if (tasks.length) renderTasks(); renderSessionName(); }
 
   // ── Session: a plain terminal, or a Claude / Codex session of the task directory (new or resumed) ──
   const SESSION_KINDS = [['claude', 'Claude session'], ['codex', 'Codex session']];
@@ -689,8 +701,15 @@
       window.visualViewport.addEventListener('scroll', fitAgentView);
     }
     fitAgentView();
-    agentChat = AgentChat.mount(agentView, { api: chatApi, base: `${source.tasksBase}/${task.id}/agent`, conversation, onClose: closeAgent, notify: message => tell(message, 'error') });
-    agentFor = { source: source.key, taskId: task.id, conversation: conversation.id };
+    agentChat = AgentChat.mount(agentView, { api: chatApi, base: `${source.tasksBase}/${task.id}/agent`, conversation, onClose: closeAgent, notify: message => tell(message, 'error'),
+      onTitle: title => { // a rename or the first message gave the chat a new name
+        if (!agentFor || agentFor.conversation !== conversation.id) return;
+        agentFor.title = title;
+        const row = chats.find(entry => entry.id === conversation.id);
+        if (row) row.title = title;
+        renderTabs();
+      } });
+    agentFor = { source: source.key, taskId: task.id, conversation: conversation.id, title: conversation.title };
     if (remember) setOpened(task.id, conversation.id, true);
     renderTabs();
     void loadChats();

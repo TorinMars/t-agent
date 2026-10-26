@@ -635,6 +635,7 @@ export const Chat = React.forwardRef(function Chat({ store, agent, conversation,
         </ThreadPrimitive.Root>
       </AssistantRuntimeProvider>
       <Composer store={store} state={state} agent={agent} notify={notify} inputRef={inputRef} />
+      <Limits limits={state.limits} />
       <div className="ac-foot">
         <label className="ac-mode-label">
           <span className="ac-mode-text">{t((agent.modes.find(([value]) => value === state.mode) || [state.mode, state.mode])[1])}</span>
@@ -644,7 +645,6 @@ export const Chat = React.forwardRef(function Chat({ store, agent, conversation,
           </select>
         </label>
         <span className="ac-status">
-          <Limits limits={state.limits} />
           <ModelPicker store={store} state={state} />
           <ContextRing context={state.context} />
         </span>

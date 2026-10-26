@@ -142,6 +142,9 @@ const server = http.createServer(app);
     // What is left of the plan windows and when they reset: one unit, decimals allowed.
     assert.deepEqual(await page.locator('.ac-limit').allTextContents(), ['5h 62.5% · 4.2h', '7d 80% · 3.5d']);
     assert.equal(await page.locator('.ac-limit').first().getAttribute('title'), '5h limit: 62.5% left, resets in 4.2h');
+    // The usage is its own row below the input box and above the footer that holds the access level and the model.
+    const [composerBox, limitsBox, footBox] = await Promise.all([page.locator('.ac-composer').boundingBox(), page.locator('.agent-chat > .ac-limits').boundingBox(), page.locator('.ac-foot').boundingBox()]);
+    assert.ok(limitsBox.y >= composerBox.y + composerBox.height - 1 && limitsBox.y + limitsBox.height <= footBox.y + 1, 'usage sits between the input box and the footer');
     assert.equal(await page.locator('.ac-context').getAttribute('class'), 'ac-context');
     assert.equal(await page.locator('.ac-context-value').getAttribute('stroke-dasharray'), `${2 * Math.PI * 8 * 0.21} ${2 * Math.PI * 8}`);
     assert.match(await page.locator('.ac-mode-text').textContent(), /Ask before changes/);

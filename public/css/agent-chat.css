@@ -133,6 +133,7 @@
 .ac-foot { flex-wrap: wrap; row-gap: 2px; }
 .ac-status { position: relative; display: inline-flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 4px 12px; min-width: 0; margin-left: auto; }
 .ac-limits { display: inline-flex; gap: 12px; color: var(--ac-muted); font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.agent-chat > .ac-limits { flex: 0 0 auto; box-sizing: border-box; width: min(100%, calc(var(--ac-width) + 32px)); margin: 0 auto; padding: 4px 24px 0; } /* its own row between the input box and the footer */
 .ac-limit.low { color: var(--ac-danger); }
 .ac-picker-holder { min-width: 0; } /* the list is placed against the whole status area, so it stays inside the page when that wraps */
 .ac-picker-button { display: inline-flex; align-items: center; gap: 4px; padding: 4px 0; border: 0; background: none; font: inherit; cursor: pointer; }

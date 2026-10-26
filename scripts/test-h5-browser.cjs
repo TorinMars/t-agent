@@ -412,11 +412,10 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     await page.locator('#h5-settings').waitFor({ state: 'visible' });
     assert.equal(await page.locator('#h5-settings [data-lang-toggle]').count(), 1);
     await page.locator('#h5-update-check').tap();
-    await page.locator('#h5-update-confirm').waitFor({ state: 'visible' });
-    assert.match(await page.locator('#h5-update-confirm-text').textContent(), /1\.0\.0 → 1\.0\.1/);
-    await page.locator('#h5-update-apply').tap();
+    // One tap checks and starts the update; there is no second confirmation.
     await page.waitForFunction(() => document.getElementById('h5-update-log').textContent.includes('npm ci'));
     assert.ok(calls.includes('POST /api/system/apply-update'));
+    assert.equal(await page.locator('#h5-update-confirm').count(), 0, 'no confirmation step is left');
     await context.close();
 
     // Opened on a computer, the page stays a centred phone-sized column.

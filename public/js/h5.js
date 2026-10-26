@@ -246,7 +246,6 @@
   const settings = $('h5-settings');
   const updateButton = $('h5-update-check');
   const updateHint = $('h5-update-hint');
-  const updateConfirm = $('h5-update-confirm');
   const updateLog = $('h5-update-log');
   let updateTimer = null;
   let updateBusy = false;
@@ -278,7 +277,6 @@
     if (updateBusy) return;
     updateBusy = true;
     updateButton.disabled = true;
-    updateConfirm.hidden = true;
     updateLog.hidden = true;
     showUpdate('Checking for the latest version…');
     try {
@@ -286,9 +284,9 @@
       if (status.status === 'updating') { monitorUpdate(); return; }
       if (status.status === 'available') {
         if (!status.is_update_admin) { showUpdate('Only the update administrator can run updates'); endUpdate(); return; }
-        showUpdate('Update available');
-        $('h5-update-confirm-text').textContent = `${status.local_version || '?'} → ${status.remote_version}. ${tr('The PC service restarts and terminals running on it are interrupted.')}`;
-        updateConfirm.hidden = false;
+        // One tap checks and, when a newer version exists, updates at once.
+        await startUpdate(`${status.local_version || '?'} → ${status.remote_version}`);
+        return;
       } else {
         showUpdate(status.error ? `${status.error}${status.error_details ? `: ${status.error_details}` : ''}` : (status.message || 'Already up to date'));
       }
@@ -297,12 +295,9 @@
     }
     endUpdate();
   }
-  async function applyUpdate() {
-    if (updateBusy) return;
-    updateBusy = true;
-    updateButton.disabled = true;
-    updateConfirm.hidden = true;
-    showUpdate('Updating…');
+  // Called from checkUpdate while it still owns updateBusy.
+  async function startUpdate(versions) {
+    showUpdate(`${tr('Updating…')} ${versions}`);
     try {
       let bootId = null;
       try { bootId = (await api('GET', '/api/system/version')).boot_id || null; } catch { /* the monitor falls back to the restart grace period */ }
@@ -340,7 +335,6 @@
   $('h5-open-settings').addEventListener('click', openSettings);
   $('h5-close-settings').addEventListener('click', closeSettings);
   updateButton.addEventListener('click', () => void checkUpdate());
-  $('h5-update-apply').addEventListener('click', () => void applyUpdate());
 
   $('h5-open-tasks').addEventListener('click', openTasks);
   $('h5-close-tasks').addEventListener('click', closeTasks);

@@ -30,6 +30,8 @@ function createAgentChatRouter({ service = getAgentChat(), authenticate = requir
     if (body.opened !== undefined) result = service.setOpened(task, req.params.cid, { surface: body.surface, opened: body.opened });
     return result;
   }));
+  // The same as PATCH { opened, surface }, for a network path that lets POST through but not PATCH (the phone page tries this first).
+  router.post('/conversations/:cid/opened', handle((task, req) => service.setOpened(task, req.params.cid, { surface: (req.body || {}).surface, opened: (req.body || {}).opened })));
   router.get('/conversations/:cid/models', handle((task, req) => service.listModels(task, req.params.cid)));
   router.delete('/conversations/:cid', handle((task, req) => service.remove(task, req.params.cid)));
   router.post('/conversations/:cid/messages', handle((task, req) => service.sendMessage(task, req.params.cid, req.body || {})));

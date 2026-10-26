@@ -112,3 +112,14 @@ test('a chat is opened and closed on a page with PATCH, and the list says where 
   assert.equal((await call('PATCH', `${url}/conversations/${id}`, { opened: 'yes', surface: 'web' })).body.error, 'INVALID_OPENED');
   assert.equal((await call('PATCH', `/api/tasks/${theirs.id}/agent/conversations/${id}`, { opened: true, surface: 'web' })).status, 404);
 });
+
+test('a chat is also opened and closed on a page with POST .../opened, which the phone page uses first', async () => {
+  const url = `/api/tasks/${mine.id}/agent`;
+  const id = (await call('POST', `${url}/conversations`, { agent: 'claude' })).body.id;
+  const opened = await call('POST', `${url}/conversations/${id}/opened`, { opened: true, surface: 'h5' });
+  assert.deepEqual([opened.status, opened.body.opened.h5 > 0], [200, true]);
+  assert.equal((await call('GET', `${url}/conversations`)).body.find(row => row.id === id).opened.h5 > 0, true);
+  assert.equal((await call('POST', `${url}/conversations/${id}/opened`, { opened: false, surface: 'h5' })).body.opened.h5, null);
+  assert.equal((await call('POST', `${url}/conversations/${id}/opened`, { opened: true, surface: 'tablet' })).body.error, 'INVALID_SURFACE');
+  assert.equal((await call('POST', `/api/tasks/${theirs.id}/agent/conversations/${id}/opened`, { opened: true, surface: 'h5' })).status, 404);
+});

@@ -579,8 +579,12 @@
   let agentFor = null;
   const legacyKey = item => `agent:${source.key}:${item.id}`;
   // Tells the server that a chat is open (or not) on the phone page; a failure is shown, the chat just is not remembered.
+  // POST first, because some network paths (a proxy in front of the Client) let POST through but not PATCH; an older Engine without that route gets the PATCH.
   function setOpened(taskId, id, opened) {
-    chatApi.patch(`${source.tasksBase}/${taskId}/agent/conversations/${id}`, { opened, surface: 'h5' })
+    const url = `${source.tasksBase}/${taskId}/agent/conversations/${id}`;
+    const body = { opened, surface: 'h5' };
+    chatApi.post(`${url}/opened`, body)
+      .catch(() => chatApi.patch(url, body))
       .catch(error => tell(`Could not save which chat is open: ${error.message}`, 'error'));
   }
   // Takes the chat view away without forgetting the chat.

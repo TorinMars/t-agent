@@ -306,14 +306,12 @@ function Working({ since }) {
   );
 }
 
-// Speech to text with the browser's recognizer; the button only exists where the browser has one. Holding the button records, and letting go
-// cancels the recognition. A keyboard cannot hold a button, so Enter / Space still start and stop it.
-const HOLD_MS = 350;
+// Speech to text with the browser's recognizer; the button only exists where the browser has one. A tap starts recording and the next tap
+// stops it: stopping (not aborting) lets the recognizer deliver what it has heard so far before it ends.
 function Mic({ onText, notify }) {
   const [on, setOn] = useState(false);
   const recognizer = useRef(null);
-  const timer = useRef(0);
-  useEffect(() => () => { clearTimeout(timer.current); if (recognizer.current) recognizer.current.abort(); }, []);
+  useEffect(() => () => { if (recognizer.current) recognizer.current.abort(); }, []);
   if (!SpeechRecognition) return null;
   const start = () => {
     if (recognizer.current) return;
@@ -332,22 +330,17 @@ function Mic({ onText, notify }) {
     setOn(true);
     try { next.start(); } catch { recognizer.current = null; setOn(false); }
   };
-  const press = event => {
-    if (event.button) return;
-    clearTimeout(timer.current);
-    timer.current = setTimeout(start, HOLD_MS);
+  const stop = () => {
+    const current = recognizer.current;
+    if (!current) return;
+    setOn(false); // at once; the recognizer may take a moment to end
+    try { current.stop(); } catch { recognizer.current = null; }
   };
-  const release = () => {
-    clearTimeout(timer.current);
-    if (recognizer.current) { const current = recognizer.current; recognizer.current = null; current.abort(); }
-    setOn(false);
-  };
+  const label = t(on ? 'Tap to stop dictation' : 'Tap to dictate');
   return (
-    <button
-      type="button" className={`ac-mic${on ? ' on' : ''}`} aria-pressed={on} aria-label={t('Hold to dictate')} title={t('Hold to dictate')}
-      onPointerDown={press} onPointerUp={release} onPointerCancel={release} onPointerLeave={release} onContextMenu={event => event.preventDefault()}
-      onClick={event => { if (event.detail === 0) { if (recognizer.current) release(); else start(); } }}
-    ><Icon d={ICONS.mic} /></button>
+    <button type="button" className={`ac-mic${on ? ' on' : ''}`} aria-pressed={on} aria-label={label} title={label} onClick={() => (on ? stop() : start())}>
+      <Icon d={ICONS.mic} />
+    </button>
   );
 }
 

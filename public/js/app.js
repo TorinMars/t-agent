@@ -170,7 +170,7 @@ const AgentView = (() => {
     holder.className = 'agent-holder';
     holder.hidden = true; // sync() decides what is shown
     pane.append(holder);
-    const chat = AgentChat.mount(holder, { api, base, conversation, onClose: () => closeChat(scope, conversation.id), notify: message => { if (typeof Toast !== 'undefined') Toast.error(message); } });
+    const chat = AgentChat.mount(holder, { api, base, conversation, onClose: () => closeChat(scope, conversation.id), onOpen: () => void showChat(scope, conversation.id), notify: message => { if (typeof Toast !== 'undefined') Toast.error(message); } });
     row = { id: conversation.id, agent: conversation.agent, title: conversation.title, chat, holder };
     group.rows.push(row);
     return row;
@@ -222,6 +222,33 @@ const AgentView = (() => {
     } : null);
   }
 
+  // Shows a chat of a task (a click on the notification that its turn ended): the task is selected first when another one is shown, and a chat that is
+  // not open on this page (it was closed, or the page was reloaded) is opened. Resolves to whether the chat is shown.
+  async function showChat(scope, id) {
+    if (scopeOf() !== scope) {
+      const match = /^\/api\/tasks\/(\d+)$/.exec(scope);
+      if (!match || !window.Tasks || !Tasks.openTask) return false; // a task of another Engine is not switched to from here
+      await Tasks.openTask(Number(match[1]));
+      for (let wait = 0; wait < 40 && scopeOf() !== scope; wait += 1) await new Promise(resolve => setTimeout(resolve, 50));
+      if (scopeOf() !== scope) return false;
+    }
+    let group = sessions.get(scope);
+    let row = group && group.rows.find(item => item.id === id);
+    if (!row) {
+      let conversation = null;
+      try { conversation = (await api.get(`${scope}/agent/conversations/${encodeURIComponent(id)}`)).conversation; } catch { /* deleted since */ }
+      if (!conversation) return false;
+      row = mountRow(scope, conversation);
+      setOpened(scope, conversation.id, true);
+      group = sessions.get(scope);
+    }
+    group.active = id;
+    save(scope);
+    sync();
+    row.chat.focus();
+    return true;
+  }
+
   function closeChat(scope, id) {
     const group = sessions.get(scope);
     if (!group) return;
@@ -247,6 +274,7 @@ const AgentView = (() => {
       window.Tasks?.onSourceChange?.(sync);
     },
     available: chatsAvailable,
+    openChat: (taskId, id) => showChat(`/api/tasks/${taskId}`, id),
     choices: agent => AgentChat.choices(api, baseOf(), agent),
     async open(agent, choice) {
       const scope = scopeOf();
@@ -862,6 +890,7 @@ async function init() {
   });
 
   AgentView.start();
+  if (typeof AgentChat !== 'undefined' && AgentChat.setOpenHandler) AgentChat.setOpenHandler(data => { if (!data.remote && data.taskId) void AgentView.openChat(data.taskId, data.conversationId); });
   await Promise.all([
     TerminalImages.load().catch(() => {}),
     Bookmarks.load(),
@@ -869,6 +898,9 @@ async function init() {
     Engines.load(),
   ]);
   Updates.start();
+  // The page opened by a click on a notification: ?openChat=<task id>:<conversation id>.
+  const link = /^(\d+):(.+)$/.exec(new URLSearchParams(location.search).get('openChat') || '');
+  if (link && typeof AgentChat !== 'undefined') void AgentView.openChat(Number(link[1]), link[2]);
 }
 
 // app.js loads before the other feature scripts so that it can provide shared objects such as API, Modal and ContextMenu.

@@ -65,6 +65,7 @@ const reset = (opened = {}) => {
           AGENTS: { claude: { label: 'Claude' }, codex: { label: 'Codex' } },
           icon: () => document.createTextNode('*'),
           chatIcon: () => document.createTextNode('*'),
+          setOpenHandler: () => {},
           mount: (holder, { conversation }) => { mounted.push(conversation.id); holder.textContent = `chat ${conversation.id}`; return { focus() {}, destroy() {} }; },
           choices: async () => [], open: async () => ({ id: 'c3', agent: 'codex', title: 'Not open' }),
         };

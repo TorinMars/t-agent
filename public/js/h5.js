@@ -39,6 +39,9 @@
   let task = null;
   let terminals = [];
   let terminalId = null;
+  let expandedId = null; // the task whose sessions are listed in the task sheet (a tap on a task opens and closes its list; it does not open the task)
+  let peek = null; // the sessions of an expanded task that is not the selected one: { source, taskId, status, terminals, chats }
+  let wantedTerminal = null; // the terminal to show when the terminals of the task just selected arrive
   let session = null;
   let mods = {};
   let uploading = false;
@@ -176,10 +179,15 @@
         button.type = 'button';
         button.className = 'h5-task-item';
         button.textContent = item.title;
-        if (task && task.id === item.id) button.setAttribute('aria-current', 'true');
-        button.addEventListener('click', () => selectTask(item));
-        if (task && task.id === item.id && (terminals.length || chats.length)) {
-          // The selected task: "+" on the right of its row adds a terminal, and its terminals are listed under it.
+        const selected = Boolean(task && task.id === item.id);
+        const open = expandedId === item.id;
+        if (selected) button.setAttribute('aria-current', 'true');
+        button.setAttribute('aria-expanded', String(open));
+        // A tap opens or closes the list of sessions under the task. Going to a session is a tap on that session.
+        button.addEventListener('click', () => toggleTask(item));
+        const hasSessions = selected && (terminals.length || chats.length);
+        if (hasSessions) {
+          // The selected task: "+" on the right of its row adds a terminal.
           const row = document.createElement('div');
           row.className = 'h5-task-row';
           const add = document.createElement('button');
@@ -189,28 +197,106 @@
           add.setAttribute('aria-label', 'Session');
           add.addEventListener('click', openSessionMenu);
           row.append(button, add);
-          nodes.push(row, terminalList());
-        } else {
-          nodes.push(button);
+          nodes.push(row);
+        } else nodes.push(button);
+        if (open) {
+          if (selected) { if (hasSessions) nodes.push(terminalList()); } else nodes.push(peekList(item));
         }
       }
     }
     taskList.replaceChildren(...nodes);
   }
 
-  function selectTask(item) {
+  // target: where to go in the task, { terminal: id } or { chat: row }; without one, the task opens as it was left (its terminal, or the chat that was open).
+  function selectTask(item, target = null) {
     // A chat open over another task is put away (but not forgotten: it comes back with its task).
     if (agentChat && agentFor && (!item || agentFor.taskId !== item.id || agentFor.source !== source.key)) hideAgent();
     task = item;
     chats = [];
+    peek = null;
+    expandedId = item ? item.id : null;
+    wantedTerminal = target && target.terminal ? target.terminal : null;
     store.set(`task:${source.key}`, item ? item.id : null);
     $('h5-task-name').textContent = item ? item.title : 'Choose a task';
     closeTasks();
     void loadTerminals();
-    if (item) void restoreAgent(item);
+    if (target && target.chat) mountAgent(target.chat);
+    else if (item && !target) void restoreAgent(item);
+  }
+
+  // Opens or closes the list of sessions under a task, without going anywhere.
+  function toggleTask(item) {
+    if (expandedId === item.id) { expandedId = null; renderTasks(); return; }
+    expandedId = item.id;
+    if (!(task && task.id === item.id)) void loadPeek(item);
+    renderTasks();
+  }
+  // The terminals and chats of a task that is not the selected one, read when its list is opened.
+  async function loadPeek(item) {
+    const current = source;
+    const mine = { source: current, taskId: item.id, status: 'loading', terminals: [], chats: [] };
+    peek = mine;
+    const [rows, chatRows] = await Promise.all([
+      api('GET', `${current.tasksBase}/${item.id}/terminals`).catch(() => null),
+      readChats(item, { peek: true }),
+    ]);
+    if (peek !== mine || source !== current) return;
+    mine.status = Array.isArray(rows) ? 'ready' : 'error';
+    mine.terminals = Array.isArray(rows) ? rows : [];
+    mine.chats = chatRows || [];
+    renderTasks();
+  }
+  // Goes to a session of a task that is not the selected one: the task is selected and that session is shown.
+  function openFromPeek(item, target) {
+    // A chat that was open on the phone for this task is not any more once a terminal is shown, as when going to a terminal inside the task.
+    if (target.terminal && peek && peek.taskId === item.id) for (const row of peek.chats) if (row.opened && row.opened.h5) setOpened(item.id, row.id, false);
+    selectTask(item, target);
+  }
+  // The list under an expanded task that is not selected: its terminals, then its chats, as in the list of the selected task (without the "⋯" actions).
+  function peekList(item) {
+    const list = document.createElement('div');
+    list.className = 'h5-terminal-list';
+    list.setAttribute('role', 'group');
+    list.setAttribute('aria-label', item.title);
+    const say = text => {
+      const line = document.createElement('div');
+      line.className = 'h5-peek-note';
+      line.textContent = tr(text);
+      list.append(line);
+    };
+    if (!peek || peek.taskId !== item.id || peek.source !== source || peek.status === 'loading') { say('Loading…'); return list; }
+    if (peek.status === 'error') { say('Could not load the sessions'); return list; }
+    const add = (iconNode, iconClass, title, open) => {
+      const line = document.createElement('div');
+      line.className = 'h5-terminal-row';
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'h5-terminal-main';
+      const icon = document.createElement('span');
+      icon.className = `h5-terminal-icon ${iconClass}`;
+      icon.append(iconNode);
+      icon.setAttribute('aria-hidden', 'true');
+      const name = document.createElement('span');
+      name.className = 'h5-terminal-name';
+      name.textContent = title;
+      button.append(icon, name);
+      button.addEventListener('click', open);
+      line.append(button);
+      list.append(line);
+    };
+    for (const row of peek.terminals) {
+      const iconNode = row.agent && typeof AgentChat !== 'undefined' ? AgentChat.icon(row.agent) : document.createTextNode(TERMINAL_ICONS[row.agent] || TERMINAL_ICONS.shell);
+      add(iconNode, row.agent || 'shell', row.title, () => openFromPeek(item, { terminal: row.terminal_id }));
+    }
+    for (const row of peek.chats) add(AgentChat.chatIcon(row.agent), row.agent, `${row.running ? '\u25CF ' : ''}${row.title}`, () => openFromPeek(item, { chat: row }));
+    if (!peek.terminals.length && !peek.chats.length) {
+      add(document.createTextNode(TERMINAL_ICONS.shell), 'shell', tr('Open this task'), () => selectTask(item));
+    }
+    return list;
   }
 
   function openTasks() {
+    expandedId = task ? task.id : null; // the sheet opens with the sessions of the task that is shown, as before
     sheet.classList.add('open');
     sheet.setAttribute('aria-hidden', 'false');
     renderTasks();
@@ -344,6 +430,8 @@
     store.set('source', source.key === 'local' ? null : source.key);
     tasks = [];
     task = null;
+    expandedId = null;
+    peek = null;
     $('h5-task-name').textContent = 'Choose a task';
     disconnect();
     terminals = [];
@@ -390,7 +478,10 @@
     terminals = Array.isArray(rows) ? rows : [];
     if (!terminals.length) { showEmpty('This task has no terminal yet'); return; }
     const saved = store.get(`terminal:${source.key}:${current.id}`);
-    terminalId = terminals.some(row => row.terminal_id === saved) ? saved : terminals[0].terminal_id;
+    const wanted = wantedTerminal; // a session that was tapped in the task sheet
+    wantedTerminal = null;
+    terminalId = [wanted, saved].find(id => id && terminals.some(row => row.terminal_id === id)) || terminals[0].terminal_id;
+    if (wanted && terminalId === wanted) store.set(`terminal:${source.key}:${current.id}`, terminalId);
     renderTabs();
     connect();
   }
@@ -715,16 +806,17 @@
     void loadChats();
   }
   // The chats of a task on the selected Engine, or null when the Engine has none to offer, the list cannot be read or the page moved on.
-  async function readChats(item) {
+  async function readChats(item, { peek: forOther = false } = {}) {
     const current = source;
+    const stale = () => source !== current || (!forOther && task !== item); // forOther: the task is not the selected one (its list is opened in the sheet)
     try {
       if (current.key !== 'local') {
         const info = await api('GET', `${current.tasksBase.replace(/\/tasks$/, '')}/info`);
         if (!Array.isArray(info.capabilities) || !info.capabilities.includes('agent-chat:manage')) return null;
-        if (source !== current || task !== item) return null;
+        if (stale()) return null;
       }
       const rows = await chatApi.get(`${current.tasksBase}/${item.id}/agent/conversations`);
-      return task === item && source === current && Array.isArray(rows) ? rows : null;
+      return !stale() && Array.isArray(rows) ? rows : null;
     } catch { return null; } // nothing is lost: the chats stay on the server for the next time
   }
   // Keeps the chats listed under the task in the task sheet up to date.
@@ -1239,10 +1331,30 @@
     else retain(result.url);
   }
 
+  // ── A click on the notification that a chat's turn ended: the task is selected and the chat opens (the chat is shown at once when it is the open one). ──
+  // Resolves to whether it went there. A chat of a remote Engine is not opened from here.
+  async function openChatFromLink({ taskId, conversationId }) {
+    if (source.key !== 'local' || !taskId) return false;
+    if (agentChat && agentFor && agentFor.conversation === conversationId) { closeTasks(); return true; }
+    const item = tasks.find(entry => entry.id === Number(taskId));
+    if (!item) return false;
+    const rows = await readChats(item, { peek: true });
+    const row = rows && rows.find(entry => entry.id === conversationId);
+    if (!row) return false;
+    selectTask(item, { chat: row });
+    return true;
+  }
+  if (typeof AgentChat !== 'undefined' && AgentChat.setOpenHandler) AgentChat.setOpenHandler(data => { if (!data.remote) void openChatFromLink(data); });
+  // The same for the service worker that shows these notifications (the phone shows them only through it).
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+
   // ── Start ──
   (async () => {
     await loadSources();
     await loadTasks();
+    // The page opened by a click on a notification: ?openChat=<task id>:<conversation id>.
+    const link = /^(\d+):(.+)$/.exec(new URLSearchParams(location.search).get('openChat') || '');
+    if (link && await openChatFromLink({ taskId: Number(link[1]), conversationId: link[2] })) return;
     const savedId = Number(store.get(`task:${source.key}`));
     const saved = tasks.find(item => item.id === savedId);
     if (saved) selectTask(saved);

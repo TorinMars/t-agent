@@ -6,11 +6,18 @@ import { flushSync } from 'react-dom';
 import { createChatStore } from './store.mjs';
 import { Chat } from './ui.jsx';
 
-export function mount(container, { api, base, conversation, agent, onClose, onTitle = () => {}, notify = () => {} }) {
+export function mount(container, { api, base, conversation, agent, onClose, onTitle = () => {}, onTurn = () => {}, notify = () => {} }) {
   const store = createChatStore({ api, base, conversation, notify });
   // The page that holds the chat shows its name too (the phone header), so it is told whenever the title changes (a rename, or the first message).
   let title = conversation.title;
-  store.subscribe(() => { const next = store.getState().title; if (next !== title) { title = next; onTitle(next); } });
+  // The host is also told when a turn ends (not when the person stopped it), with the last thing the agent said, so it can notify the person.
+  let turn = null;
+  const lastText = items => { for (let index = items.length - 1; index >= 0; index -= 1) if (items[index].kind === 'text' && items[index].text) return items[index].text; return ''; };
+  store.subscribe(() => {
+    const state = store.getState();
+    if (state.title !== title) { title = state.title; onTitle(title); }
+    if (state.lastTurn && state.lastTurn !== turn) { turn = state.lastTurn; onTurn({ ...turn, title: state.title, summary: lastText(state.items) }); }
+  });
   const host = document.createElement('div');
   host.className = 'agent-chat-host';
   container.replaceChildren(host);

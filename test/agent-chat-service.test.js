@@ -687,3 +687,121 @@ test('each chat keeps its own translation switch: saved, announced to the pages 
   assert.throws(() => chat.setTranslate(own, a.id, 'yes'), error => error.message === 'INVALID_TRANSLATE');
   assert.throws(() => chat.setTranslate(own, 'missing', true), error => error.statusCode === 404);
 });
+
+test('Stop ends a turn whose agent does not end it: after the grace time the chat is idle again, once, and takes the next message', async () => {
+  let calls = 0;
+  let release;
+  const adapter = fakeAdapter(async () => {
+    calls += 1;
+    if (calls > 1) return { ok: true };
+    return new Promise(resolve => { release = resolve; }); // a stuck agent: it ignores the abort signal
+  });
+  const chat = createAgentChat({ db, adapters: { claude: adapter }, stopGraceMs: 30 });
+  const conversation = chat.create(task, { agent: 'claude' });
+  const isRunning = () => chat.list(task.id).find(row => row.id === conversation.id).running;
+  await chat.sendMessage(task, conversation.id, { text: 'hang' });
+  await wait(() => isRunning());
+  const idle = [];
+  chat.subscribe(task, conversation.id, 0, event => { if (event.op === 'status' && event.status === 'idle') idle.push(event); });
+  assert.deepEqual(chat.interrupt(task, conversation.id), { success: true, running: true });
+  assert.equal(isRunning(), true, 'the agent is given the grace time first');
+  await wait(() => !isRunning());
+  assert.equal(idle.length, 1);
+  assert.equal(idle[0].ok, false);
+  assert.ok((await chat.snapshot(task, conversation.id)).items.some(item => item.kind === 'notice' && item.text === 'Stopped'));
+  release({ ok: true }); // the stuck agent finally returns: nothing happens again
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(idle.length, 1, 'a late return does not end the turn twice');
+  await chat.sendMessage(task, conversation.id, { text: 'again' });
+  await wait(() => calls === 2 && !isRunning());
+});
+
+test('Claude: after Stop the query is closed when it does not end by itself, and a query that ends on its own is left alone', async () => {
+  const run = async ({ endsByItself }) => {
+    let closed = 0;
+    let wake;
+    const query = {
+      close: () => { closed += 1; if (wake) wake(); },
+      [Symbol.asyncIterator]() {
+        return { next: () => new Promise(resolve => { wake = () => resolve({ done: true }); if (endsByItself) setTimeout(wake, 5); }) };
+      },
+    };
+    const controller = new AbortController();
+    const turn = claude.runTurn({ cwd: '/tmp', mode: 'ask', prompt: { text: 'x', images: [], files: [] }, signal: controller.signal, ctx: { upsert() {}, append() {}, getItem() {}, setSession() {}, setMeta() {} },
+      requestPermission: async () => ({ allow: true }), deps: { loadSdk: async () => ({ query: () => query }), executable: undefined, interruptGraceMs: 20 } });
+    await new Promise(resolve => setTimeout(resolve, 5));
+    controller.abort();
+    const outcome = await turn;
+    return { closed, outcome };
+  };
+  const stuck = await run({ endsByItself: false });
+  assert.equal(stuck.closed, 1, 'a query that does not end after the grace time is closed');
+  assert.deepEqual(stuck.outcome, { ok: false, error: '' });
+  const fine = await run({ endsByItself: true });
+  assert.equal(fine.closed, 0, 'a query that ends by itself is not closed');
+});
+
+test('the queued messages of a chat are kept with it: replaced as a whole, checked like a sent message, in the snapshot, and still there after a restart', async () => {
+  const own = tasks.createTask('owner', { title: 'queue' });
+  const chat = createAgentChat({ db, adapters: { codex: fakeAdapter(async () => ({ ok: true })) } });
+  const conversation = chat.create(own, { agent: 'codex' });
+  assert.deepEqual((await chat.snapshot(own, conversation.id)).queue, [], 'nothing is queued at first');
+
+  const png = 'iVBORw0KGgo=';
+  const queue = [
+    { id: 1, label: 'first   one', body: { text: 'first one', images: [], files: [] } },
+    { id: 2, label: 'pic', body: { text: '', images: [{ name: 'a.png', type: 'image/png', data: png }], files: [{ name: 'b.txt', text: 'hi' }] } },
+  ];
+  assert.deepEqual(chat.setQueue(own, conversation.id, queue), { success: true, count: 2 });
+  const saved = (await chat.snapshot(own, conversation.id)).queue;
+  assert.deepEqual(saved.map(entry => [entry.id, entry.label]), [[1, 'first one'], [2, 'pic']]);
+  assert.deepEqual(saved[1].body, queue[1].body, 'the attachments are kept as they were');
+  assert.equal('queue' in chat.list(own.id).find(row => row.id === conversation.id), false, 'the list of chats does not carry the queue');
+
+  const restarted = createAgentChat({ db, adapters: { codex: fakeAdapter(async () => ({ ok: true })) } });
+  assert.equal((await restarted.snapshot(own, conversation.id)).queue.length, 2, 'it survives a restart');
+
+  chat.setQueue(own, conversation.id, [queue[1]]);
+  assert.deepEqual((await chat.snapshot(own, conversation.id)).queue.map(entry => entry.id), [2], 'the list is replaced');
+  chat.setQueue(own, conversation.id, []);
+  assert.deepEqual((await chat.snapshot(own, conversation.id)).queue, []);
+
+  const bad = body => assert.throws(() => chat.setQueue(own, conversation.id, body), error => /^[A-Z_]+$/.test(error.message));
+  bad('nope');
+  bad([{ id: 1, body: { text: '' , images: [], files: [] } }]); // empty
+  bad([{ id: 1, body: { text: 'a' } }, { id: 1, body: { text: 'b' } }]); // the same id twice
+  bad([{ id: 'x', body: { text: 'a' } }]);
+  bad([{ id: 1, body: { text: 'a', images: [{ name: 'x', type: 'image/tiff', data: png }] } }]); // an image type that cannot be sent
+  bad(Array.from({ length: 21 }, (_, index) => ({ id: index, body: { text: 'a' } })));
+  assert.throws(() => chat.setQueue(own, 'missing', []), error => error.statusCode === 404);
+});
+
+test('the summary counts the turns running now and the queued messages of the person\'s chats, and nothing of other people', async () => {
+  const mineTask = tasks.createTask('summary-owner', { title: 'summary mine' });
+  const otherTask = tasks.createTask('summary-other', { title: 'summary theirs' });
+  let release;
+  const adapter = fakeAdapter(async () => new Promise(resolve => { release = resolve; }));
+  const chat = createAgentChat({ db, adapters: { claude: adapter } });
+  assert.deepEqual(chat.summary('summary-owner'), { running: 0, queued: 0, submitted: 0 });
+
+  const busy = chat.create(mineTask, { agent: 'claude' });
+  const waiting = chat.create(mineTask, { agent: 'claude' });
+  const theirs = chat.create(otherTask, { agent: 'claude' });
+  chat.setQueue(mineTask, waiting.id, [{ id: 1, body: { text: 'a' } }, { id: 2, body: { text: 'b' } }]);
+  chat.setQueue(otherTask, theirs.id, [{ id: 1, body: { text: 'not mine' } }]);
+  assert.deepEqual(chat.summary('summary-owner'), { running: 0, queued: 2, submitted: 2 }, 'queued messages are submitted');
+
+  await chat.sendMessage(mineTask, busy.id, { text: 'work' });
+  await wait(() => chat.list(mineTask.id).find(row => row.id === busy.id).running);
+  chat.setQueue(mineTask, busy.id, [{ id: 3, body: { text: 'next' } }]);
+  assert.deepEqual(chat.summary('summary-owner'), { running: 1, queued: 3, submitted: 4 }, 'a running turn is submitted too');
+  assert.deepEqual(chat.summary('summary-other'), { running: 0, queued: 1, submitted: 1 }, 'each person sees their own');
+  assert.deepEqual(chat.summary('nobody'), { running: 0, queued: 0, submitted: 0 });
+
+  release({ ok: true });
+  await wait(() => chat.summary('summary-owner').running === 0);
+  assert.deepEqual(chat.summary('summary-owner'), { running: 0, queued: 3, submitted: 3 }, 'a finished turn is no longer counted');
+  chat.setQueue(mineTask, waiting.id, []);
+  chat.setQueue(mineTask, busy.id, []);
+  assert.equal(chat.summary('summary-owner').submitted, 0);
+});

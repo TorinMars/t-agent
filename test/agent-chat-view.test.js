@@ -152,28 +152,61 @@ test('the model, the effort and how long the turn has run come from the snapshot
   assert.ok(Math.abs(store.getState().runningSince - Date.now()) < 1000);
 });
 
-test('queued messages wait for the turn: the next one is sent when it ends normally, and kept after a stop or a failure', async () => {
+test('queued messages wait for the turn: the next one is sent when it ends normally or the person stops it, and kept after a failure', async () => {
   const { createChatStore } = await load();
   const { options, sources, calls } = harness({ snapshot: { items: [], pending: [], status: 'running', seq: 0 } });
   const store = createChatStore(options);
   await store.load();
   store.enqueue({ text: 'first   queued\nmessage', images: [], files: [] });
   store.enqueue({ text: '', images: [{ name: 'a.png' }], files: [{ name: 'b.txt' }] });
-  assert.deepEqual(store.getState().queue.map(entry => entry.label), ['first queued message', 'a.png, b.txt']);
-  assert.equal(calls.some(call => call[0] === 'post'), false, 'nothing is sent while the turn runs');
+  store.enqueue({ text: 'third' });
+  assert.deepEqual(store.getState().queue.map(entry => entry.label), ['first queued message', 'a.png, b.txt', 'third']);
+  const sent = () => calls.filter(call => call[0] === 'post' && /\/messages$/.test(call[1])).map(call => call[2].text);
+  assert.deepEqual(sent(), [], 'nothing is sent while the turn runs');
 
-  sources[0].emit({ seq: 1, op: 'status', status: 'idle', ok: false }); // stopped or failed
+  sources[0].emit({ seq: 1, op: 'status', status: 'idle', ok: false }); // a failure
   await new Promise(resolve => setImmediate(resolve));
-  assert.equal(store.getState().queue.length, 2, 'a stopped turn does not send the queue by itself');
+  assert.equal(store.getState().queue.length, 3, 'a failed turn does not send the queue by itself');
 
-  sources[0].emit({ seq: 2, op: 'status', status: 'idle', ok: true });
+  sources[0].emit({ seq: 2, op: 'status', status: 'running' });
+  await store.stop(); // the person presses Stop
+  assert.ok(calls.some(call => call[0] === 'post' && /\/interrupt$/.test(call[1])));
+  sources[0].emit({ seq: 3, op: 'status', status: 'idle', ok: false }); // the stopped turn ends
   await new Promise(resolve => setImmediate(resolve));
-  assert.deepEqual(calls.filter(call => call[0] === 'post').map(call => call[2].text), ['first   queued\nmessage']);
+  assert.deepEqual(sent(), ['first   queued\nmessage'], 'the turn the person stopped goes on with the queue');
+  assert.equal(store.getState().queue.length, 2);
+
+  sources[0].emit({ seq: 4, op: 'status', status: 'idle', ok: false }); // the next turn fails (without a stop)
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(sent().length, 1, 'the stop was for one turn only');
+
+  sources[0].emit({ seq: 5, op: 'status', status: 'idle', ok: true });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(sent().length, 2);
   assert.equal(store.getState().queue.length, 1);
-  sources[0].emit({ seq: 3, op: 'status', status: 'idle', ok: true });
+  sources[0].emit({ seq: 6, op: 'status', status: 'idle', ok: true });
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(store.getState().queue.length, 0);
-  assert.equal(calls.filter(call => call[0] === 'post').length, 2, 'one queued message per finished turn');
+  assert.equal(sent().length, 3, 'one queued message per finished turn');
+});
+
+test('Stop when nothing runs, or when the server refuses, does not make the next failure send the queue', async () => {
+  const { createChatStore } = await load();
+  const { options, sources, calls, notices } = harness({ snapshot: { items: [], pending: [], status: 'idle', seq: 0 } });
+  options.api.post = async (url, body) => { calls.push(['post', url, body]); if (/interrupt/.test(url)) return { success: true, running: false }; return {}; };
+  const store = createChatStore(options);
+  await store.load();
+  store.enqueue({ text: 'waiting' });
+  await store.stop();
+  sources[0].emit({ seq: 1, op: 'status', status: 'idle', ok: false });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(store.getState().queue.length, 1, 'the stop found nothing to stop');
+  options.api.post = async () => { throw new Error('down'); };
+  await store.stop();
+  assert.ok(notices.some(message => /Could not stop/.test(message)));
+  sources[0].emit({ seq: 2, op: 'status', status: 'idle', ok: false });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(store.getState().queue.length, 1, 'a refused stop does not count');
 });
 
 test('a queued message can be removed or sent now, and one the server refuses stays queued', async () => {
@@ -348,7 +381,7 @@ test('translation prepares only the message text on the Client before remote sen
   store.enqueue(prepared);
   await store.sendQueued(store.getState().queue[0].id);
   assert.deepEqual(h.calls[1], ['post', '/api/remote-servers/7/tasks/2/agent/conversations/c1/messages', prepared]);
-  assert.equal(h.calls.length, 2, 'sending a queued message does not translate it again');
+  assert.equal(h.calls.filter(call => !/\/queue$/.test(call[1])).length, 2, 'sending a queued message does not translate it again (the saves of the queue are not messages)');
   const empty = { text: '', images: body.images };
   assert.equal(await store.prepareMessage(empty, true), empty, 'image-only messages bypass translation');
   store.destroy();
@@ -399,4 +432,133 @@ test('the translation switch comes with the chat, moves at once, is saved, follo
   assert.equal(store.getState().translate, true, 'it goes back');
   assert.ok(notices.some(message => /translation switch/.test(message)));
   store.dispose && store.dispose();
+});
+
+test('the queue is kept on the server: it comes back with the chat, every change is saved in order, and a failure is shown once', async () => {
+  const { createChatStore } = await load();
+  const saved = [];
+  const first = harness({ snapshot: { items: [], pending: [], status: 'running', seq: 0, queue: [{ id: 4, label: 'from before', body: { text: 'from before' } }] } });
+  first.options.api.post = async (url, body) => { first.calls.push(['post', url, body]); if (/\/queue$/.test(url)) saved.push(body.queue.map(entry => entry.id)); return {}; };
+  const store = createChatStore(first.options);
+  await store.load();
+  assert.deepEqual(store.getState().queue.map(entry => entry.label), ['from before'], 'a refresh gets the queue back');
+  store.enqueue({ text: 'next' });
+  assert.deepEqual(store.getState().queue.map(entry => entry.id), [4, 5], 'new ids go on after the saved ones');
+  store.unqueue(4);
+  store.enqueue({ text: 'last' });
+  await new Promise(resolve => setImmediate(resolve));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(saved, [[4, 5], [5], [5, 6]], 'each change saves the whole list, in order');
+  assert.equal(first.calls.filter(call => call[0] === 'post' && /\/queue$/.test(call[1]))[0][2].queue[1].body.text, 'next', 'with the message itself');
+
+  // What this page already changed is newer than what a reload of the chat brings.
+  await store.load();
+  assert.deepEqual(store.getState().queue.map(entry => entry.id), [5, 6]);
+
+  const broken = harness({ snapshot: { items: [], pending: [], status: 'running', seq: 0 } });
+  broken.options.api.post = async () => { throw new Error('down'); };
+  const other = createChatStore(broken.options);
+  await other.load();
+  other.enqueue({ text: 'a' });
+  other.enqueue({ text: 'b' });
+  await new Promise(resolve => setImmediate(resolve));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(broken.notices.filter(message => /queued messages/.test(message)).length, 1, 'shown once');
+  assert.equal(other.getState().queue.length, 2, 'the page keeps the queue anyway');
+});
+
+test('a queued message can be edited (its attachments stay), and cannot be emptied', async () => {
+  const { createChatStore } = await load();
+  const saved = [];
+  const { options } = harness({ snapshot: { items: [], pending: [], status: 'running', seq: 0 } });
+  options.api.post = async (url, body) => { if (/\/queue$/.test(url)) saved.push(body.queue.map(entry => [entry.id, entry.label, entry.body.text])); return {}; };
+  const store = createChatStore(options);
+  await store.load();
+  store.enqueue({ text: 'old', images: [], files: [] });
+  store.enqueue({ text: '', images: [{ name: 'a.png', type: 'image/png', data: 'x' }], files: [] });
+  assert.equal(store.editQueued(1, '  new   text  '), true);
+  assert.deepEqual(store.getState().queue.map(entry => [entry.label, entry.body.text]), [['new text', 'new   text'], ['a.png', '']], 'trimmed, and the label follows');
+  assert.equal(store.editQueued(1, '   '), false, 'a message with nothing left is refused');
+  assert.equal(store.getState().queue[0].body.text, 'new   text', 'and stays as it was');
+  assert.equal(store.editQueued(2, ''), true, 'one with an attachment may lose its text');
+  assert.equal(store.editQueued(2, 'with words'), true);
+  assert.equal(store.getState().queue[1].body.images.length, 1, 'the attachment is kept');
+  assert.equal(store.editQueued(99, 'x'), false, 'an unknown message');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(saved.at(-1), [[1, 'new text', 'new   text'], [2, 'with words', 'with words']], 'the edit is saved with the queue');
+});
+
+test('a queued message can be force-sent: a running agent that cannot take input is stopped and the chosen message goes first; one that can takes it at once', async () => {
+  const { createChatStore } = await load();
+  const posts = calls => calls.filter(call => call[0] === 'post').map(call => (/\/messages$/.test(call[1]) ? `message:${call[2].text}` : /\/interrupt$/.test(call[1]) ? 'interrupt' : null)).filter(Boolean);
+
+  // An agent that cannot take input mid-turn.
+  const plain = harness({ snapshot: { items: [], pending: [], status: 'running', seq: 0 } });
+  const store = createChatStore(plain.options);
+  await store.load();
+  store.enqueue({ text: 'first' });
+  store.enqueue({ text: 'urgent' });
+  assert.equal(await store.forceSend(2), true);
+  assert.deepEqual(posts(plain.calls), ['interrupt'], 'it is stopped first; the message is not sent into the running turn');
+  assert.equal(store.getState().queue.length, 2, 'and stays queued until then');
+  plain.sources[0].emit({ seq: 1, op: 'status', status: 'idle', ok: false });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(posts(plain.calls), ['interrupt', 'message:urgent'], 'the chosen message goes out when the turn has ended, not the head of the queue');
+  assert.deepEqual(store.getState().queue.map(entry => entry.label), ['first'], 'the rest waits');
+  plain.sources[0].emit({ seq: 2, op: 'status', status: 'idle', ok: false });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(posts(plain.calls).length, 2, 'a later failed turn sends nothing: the force was for one message');
+
+  // An agent that can: the message goes into the running turn, nothing is stopped.
+  const steer = harness({ snapshot: { items: [], pending: [], status: 'running', seq: 0, capabilities: { steer: true } } });
+  const steered = createChatStore(steer.options);
+  await steered.load();
+  steered.enqueue({ text: 'now' });
+  assert.equal(await steered.forceSend(1), true);
+  assert.deepEqual(posts(steer.calls), ['message:now']);
+
+  // Nothing is running (the page was behind): it is sent at once.
+  const late = harness({ snapshot: { items: [], pending: [], status: 'running', seq: 0 } });
+  late.options.api.post = async (url, body) => { late.calls.push(['post', url, body]); return /interrupt/.test(url) ? { success: true, running: false } : {}; };
+  const behind = createChatStore(late.options);
+  await behind.load();
+  behind.enqueue({ text: 'go' });
+  assert.equal(await behind.forceSend(1), true);
+  assert.deepEqual(posts(late.calls), ['interrupt', 'message:go'].filter(Boolean));
+
+  // The stop is refused: nothing is sent, and the message stays queued.
+  const refused = harness({ snapshot: { items: [], pending: [], status: 'running', seq: 0 } });
+  refused.options.api.post = async () => { throw new Error('down'); };
+  const failing = createChatStore(refused.options);
+  await failing.load();
+  failing.enqueue({ text: 'stuck' });
+  assert.equal(await failing.forceSend(1), false);
+  assert.equal(failing.getState().queue.length, 1);
+  refused.sources[0].emit({ seq: 1, op: 'status', status: 'idle', ok: false });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(failing.getState().queue.length, 1, 'a refused stop leaves no force behind');
+  assert.equal(await failing.forceSend(42), false, 'an unknown message');
+});
+
+test('the store reports a turn that ended while the page watched, and whether the person stopped it', async () => {
+  const { createChatStore } = await load();
+  const { options, sources } = harness({ snapshot: { items: [{ id: 'm1', kind: 'text', text: 'All done.' }], pending: [], status: 'idle', seq: 0 } });
+  const store = createChatStore(options);
+  await store.load();
+  assert.equal(store.getState().lastTurn, null);
+  sources[0].emit({ seq: 1, op: 'status', status: 'idle', ok: true });
+  assert.equal(store.getState().lastTurn, null, 'idle without a turn running here is not an ended turn');
+
+  sources[0].emit({ seq: 2, op: 'status', status: 'running' });
+  sources[0].emit({ seq: 3, op: 'status', status: 'idle', ok: true });
+  assert.deepEqual(store.getState().lastTurn, { n: 1, ok: true, stopped: false });
+
+  sources[0].emit({ seq: 4, op: 'status', status: 'running' });
+  sources[0].emit({ seq: 5, op: 'status', status: 'idle', ok: false });
+  assert.deepEqual(store.getState().lastTurn, { n: 2, ok: false, stopped: false }, 'a failure');
+
+  sources[0].emit({ seq: 6, op: 'status', status: 'running' });
+  await store.stop();
+  sources[0].emit({ seq: 7, op: 'status', status: 'idle', ok: false });
+  assert.deepEqual(store.getState().lastTurn, { n: 3, ok: false, stopped: true }, 'the person stopped it');
 });

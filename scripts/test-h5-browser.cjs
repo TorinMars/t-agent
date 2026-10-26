@@ -21,6 +21,12 @@ async function leaveChatByTerminal(page) {
   await page.locator('#h5-tasks .h5-terminal-row:not(:has(.h5-terminal-icon.claude, .h5-terminal-icon.codex)) .h5-terminal-main').first().tap();
 }
 
+// A tap on a task only opens the list of its sessions; going to one is a tap on that session.
+async function openTask(page, title, how = 'tap') {
+  await page.locator('.h5-task-item', { hasText: title })[how]();
+  await page.locator(`#h5-tasks .h5-terminal-list[aria-label="${title}"] .h5-terminal-main`).first()[how]();
+}
+
 async function openPage(browser, { remoteTerminals, remoteChat = false, viewport } = {}) {
   const context = await browser.newContext(viewport ? { viewport } : { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
   const page = await context.newPage();
@@ -55,7 +61,10 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     if (url.pathname === '/api/remote-servers/7/task-groups') return json([]);
     if (url.pathname === '/api/remote-servers/7/tasks/9/terminals') return json([{ terminal_id: remoteChat ? 'h5-default' : 'default', title: 'Terminal 1' }]);
     if (url.pathname === '/api/remote-servers/7/info') return json({ capabilities: remoteChat ? ['agent-chat:manage'] : [] });
+    if (url.pathname === '/api/agent-chat/summary') return json({ running: 1, queued: 2, submitted: 3 });
     if (url.pathname === '/api/tasks/1/terminals' && method === 'GET') return json([{ terminal_id: 'h5-default', title: 'Terminal 1' }]);
+    if (url.pathname === '/api/tasks/2/terminals' && method === 'GET') return json([{ terminal_id: 'h5-docs', title: 'Docs terminal' }]);
+    if (url.pathname === '/api/tasks/2/agent/conversations' && method === 'GET') return json([]);
     if (url.pathname === '/api/tasks/1/terminals' && method === 'POST') return json({ terminal_id: 'h5-second', title: 'Terminal 2' }, 201);
     if (url.pathname === '/api/tasks/1/terminals/h5-second' && method === 'PATCH') return json({ terminal_id: 'h5-second', title: route.request().postDataJSON().title });
     if (url.pathname === '/api/tasks/1/terminal/control' && method === 'POST') return json({ success: true });
@@ -119,9 +128,25 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     // Nothing chosen yet: the task sheet opens on its own.
     await page.locator('#h5-tasks').waitFor({ state: 'visible' });
     assert.deepEqual(await page.locator('.h5-group-title').allTextContents(), ['In progress', 'To do']);
+    // A tap on a task does not go anywhere: it opens the list of its sessions, and a tap on a session goes there.
     await page.locator('.h5-task-item', { hasText: 'Fix login' }).tap();
+    await page.locator('#h5-tasks .h5-terminal-list[aria-label="Fix login"] .h5-terminal-main', { hasText: 'Terminal 1' }).waitFor();
+    assert.equal(await page.locator('#h5-tasks').isVisible(), true, 'the sheet stays open');
+    assert.equal(await page.locator('.h5-task-item', { hasText: 'Fix login' }).getAttribute('aria-expanded'), 'true');
+    assert.equal(await page.locator('#h5-task-name').textContent(), 'Choose a task', 'the task is not selected yet');
+    assert.equal(await page.evaluate(() => window.sockets.length), 0, 'no terminal is opened by the tap on the task');
+    await page.locator('.h5-task-item', { hasText: 'Fix login' }).tap();
+    await page.locator('#h5-tasks .h5-terminal-list[aria-label="Fix login"]').waitFor({ state: 'detached' });
+    assert.equal(await page.locator('.h5-task-item', { hasText: 'Fix login' }).getAttribute('aria-expanded'), 'false', 'a second tap closes the list');
+    await openTask(page, 'Fix login');
     await page.locator('#h5-tasks').waitFor({ state: 'hidden' });
     assert.equal(await page.locator('#h5-task-name').textContent(), 'Fix login');
+    // The agent counters stand in the header, right of the task name and left of the settings button.
+    await page.locator('#agent-activity').waitFor({ state: 'visible' });
+    assert.deepEqual(await page.locator('#agent-activity .count').allTextContents(), ['3', '1']);
+    assert.deepEqual(await page.locator('#agent-activity .label').allTextContents(), ['submitted', 'running']);
+    const [activityBox, settingsBox, titleBox] = await Promise.all([page.locator('#agent-activity').boundingBox(), page.locator('#h5-open-settings').boundingBox(), page.locator('#h5-task-name').boundingBox()]);
+    assert.ok(activityBox.x + activityBox.width <= settingsBox.x + 1 && activityBox.x >= titleBox.x, 'between the task name and the settings button');
     // The name of the terminal that is shown stands under the task name, in small text.
     await page.locator('#h5-session-name', { hasText: 'Terminal 1' }).waitFor();
     const [nameBox, sessionBox] = await Promise.all([page.locator('#h5-task-name').boundingBox(), page.locator('#h5-session-name').boundingBox()]);
@@ -474,6 +499,29 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     await page.locator('#h5-tasks').waitFor({ state: 'hidden' });
     assert.equal(await page.evaluate(() => new URL(window.sockets.at(-1).url).searchParams.get('terminalId')), 'h5-default');
 
+    // A session of another task: a tap on that task lists its sessions (the task shown stays), and a tap on a session selects the task and goes there.
+    await page.locator('#h5-open-tasks').tap();
+    assert.equal(await page.locator('.h5-task-item', { hasText: 'Fix login' }).getAttribute('aria-expanded'), 'true', 'the sheet opens with the sessions of the task that is shown');
+    await page.locator('.h5-task-item', { hasText: 'Write docs' }).tap();
+    await page.locator('#h5-tasks .h5-terminal-list[aria-label="Write docs"] .h5-terminal-main', { hasText: 'Docs terminal' }).waitFor();
+    assert.deepEqual(await page.locator('.h5-task-item').evaluateAll(nodes => nodes.map(node => [node.textContent, node.getAttribute('aria-expanded')])), [['Fix login', 'false'], ['Write docs', 'true']], 'one task is open at a time');
+    assert.equal(await page.locator('#h5-task-name').textContent(), 'Fix login', 'still on the same task');
+    await page.locator('#h5-tasks .h5-terminal-list[aria-label="Write docs"] .h5-terminal-main', { hasText: 'Docs terminal' }).tap();
+    await page.locator('#h5-tasks').waitFor({ state: 'hidden' });
+    assert.equal(await page.locator('#h5-task-name').textContent(), 'Write docs');
+    assert.equal(await page.locator('#h5-session-name').textContent(), 'Docs terminal');
+    await page.waitForFunction(() => new URL(window.sockets.at(-1).url).searchParams.get('terminalId') === 'h5-docs');
+    // And a chat of another task: that task is selected and the chat opens over it.
+    chats.length = 0;
+    chats.push({ id: 'c1', agent: 'claude', session_id: null, title: 'Cross chat', mode: 'ask', running: false, opened: { web: null, h5: null } });
+    await page.locator('#h5-open-tasks').tap();
+    await page.locator('.h5-task-item', { hasText: 'Fix login' }).tap();
+    await page.locator('#h5-tasks .h5-terminal-list[aria-label="Fix login"] .h5-terminal-main', { hasText: 'Cross chat' }).tap();
+    await page.locator('#h5-agent .agent-chat').waitFor();
+    assert.equal(await page.locator('#h5-task-name').textContent(), 'Fix login');
+    assert.equal(await page.locator('#h5-session-name').textContent(), 'Cross chat');
+    await pollUntil(() => openOnServer() > 0);
+
     // Settings: the header button opens a menu with the language toggle and the PC one-click update.
     assert.equal(await page.locator('#h5-open-settings').textContent(), '⚙');
     await page.locator('#h5-open-settings').tap();
@@ -491,7 +539,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     await wide.page.locator('#h5-tasks').waitFor({ state: 'visible' });
     const sheetBox = await wide.page.locator('#h5-tasks').boundingBox();
     assert.deepEqual([sheetBox.width, sheetBox.x], [480, 480]);
-    await wide.page.locator('.h5-task-item', { hasText: 'Fix login' }).click();
+    await openTask(wide.page, 'Fix login', 'click');
     const appBox = await wide.page.locator('#h5-app').boundingBox();
     assert.deepEqual([appBox.width, appBox.x], [480, 480]);
     assert.equal(await wide.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
@@ -506,7 +554,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     const old = await openPage(browser, { remoteTerminals: true });
     await old.page.locator('#h5-tasks').waitFor({ state: 'visible' });
     await old.page.locator('#h5-engine').selectOption('remote:7');
-    await old.page.locator('.h5-task-item', { hasText: 'Remote task' }).tap();
+    await openTask(old.page, 'Remote task');
     await old.page.waitForFunction(() => window.sockets.length === 1);
     assert.match(await old.page.evaluate(() => new URL(window.sockets[0].url).search), /terminalId=default&clientId=/);
     await old.context.close();
@@ -516,7 +564,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       const remote = await openPage(browser, { remoteTerminals: true, remoteChat: true });
       if (!supported) await remote.page.route(`${ORIGIN}/api/remote-servers/7/info`, route => route.fulfill({ contentType: 'application/json', body: '{"capabilities":[]}' }));
       await remote.page.locator('#h5-engine').selectOption('remote:7');
-      await remote.page.locator('.h5-task-item', { hasText: 'Remote task' }).tap();
+      await openTask(remote.page, 'Remote task');
       await remote.page.locator('#h5-open-tasks').tap();
       await Promise.all([remote.page.waitForResponse(`${ORIGIN}/api/remote-servers/7/info`), remote.page.locator('.h5-task-add').tap()]);
       if (supported) {

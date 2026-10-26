@@ -14,13 +14,18 @@ const MAX_IMAGES = 6;
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const MAX_FILE_CHARS = 200 * 1024;
 const MAX_TEXT = 100 * 1024;
+const MAX_QUEUE = 20; // messages waiting in one chat
+const MAX_QUEUE_BYTES = 28 * 1024 * 1024; // as saved (JSON); a request is 32 MB at most
 const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
 const DEFAULT_TITLE = 'New chat';
 
 const fail = (code, statusCode = 400) => Object.assign(new Error(code), { statusCode });
 const clip = (text, length) => (text.length > length ? `${text.slice(0, length - 1)}…` : text);
 
-function createAgentChat({ db, adapters = ADAPTERS }) {
+// After Stop the adapter gets this long to end the turn by itself; then the turn is ended here, so a stuck agent cannot leave the chat running for good.
+const STOP_GRACE_MS = 5000;
+
+function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS }) {
   const runtimes = new Map(); // conversation id -> runtime
 
   const rowOf = (taskId, id) => db.prepare('SELECT * FROM agent_conversations WHERE id = ? AND task_id = ?').get(id, taskId);
@@ -144,7 +149,7 @@ function createAgentChat({ db, adapters = ADAPTERS }) {
     void refreshLimits(rt.agent);
     return {
       conversation: publicRow(db.prepare('SELECT * FROM agent_conversations WHERE id = ?').get(id), rt),
-      items: [...rt.items.values()], pending: pendingList(rt), status: rt.status, seq: rt.seq,
+      items: [...rt.items.values()], pending: pendingList(rt), status: rt.status, seq: rt.seq, queue: readQueue(id),
       runningMs: rt.status === 'running' && rt.startedAt ? Date.now() - rt.startedAt : 0,
       capabilities: adapters[rt.agent].CAPABILITIES || {},
     };
@@ -244,6 +249,56 @@ function createAgentChat({ db, adapters = ADAPTERS }) {
     const models = offered.some(model => model.value === '') ? offered : [{ value: '', label: 'Default', description: '', efforts, defaultEffort: '' }, ...offered];
     const rt = runtimeFor(row, task);
     return { models, current: { model: rt.model || '', effort: rt.effort || '' }, chosen: { ...rt.choice } };
+  }
+
+  // The messages the person queued in the chat while the agent works. The page decides when each one goes out; they are kept here so a refresh (or
+  // another page that shows the chat) does not lose them. The page replaces the whole list each time it changes.
+  function readQueue(id) {
+    const row = db.prepare('SELECT queue FROM agent_conversations WHERE id = ?').get(id);
+    if (!row || !row.queue) return [];
+    try { const list = JSON.parse(row.queue); return Array.isArray(list) ? list : []; } catch { return []; }
+  }
+  function setQueue(task, id, queue) {
+    const row = rowOf(task.id, id);
+    if (!row) throw fail('CONVERSATION_NOT_FOUND', 404);
+    if (!Array.isArray(queue)) throw fail('INVALID_QUEUE');
+    if (queue.length > MAX_QUEUE) throw fail('QUEUE_TOO_LONG');
+    const seen = new Set();
+    const clean = queue.map(entry => {
+      const body = entry && entry.body && typeof entry.body === 'object' ? entry.body : null;
+      const key = Number(entry && entry.id);
+      if (!body || !Number.isSafeInteger(key) || seen.has(key)) throw fail('INVALID_QUEUE');
+      seen.add(key);
+      buildPrompt(body); // the same checks as a message that is sent (size, image type, empty): a queued message must be one that can be sent
+      return {
+        id: key,
+        label: clip(String(entry.label || '').replace(/\s+/g, ' '), 80),
+        body: {
+          text: String(body.text || ''),
+          images: (Array.isArray(body.images) ? body.images : []).map(image => ({ name: String(image && image.name || ''), type: String(image && image.type || ''), data: String(image && image.data || '') })),
+          files: (Array.isArray(body.files) ? body.files : []).map(file => ({ name: String(file && file.name || ''), text: String(file && file.text || '') })),
+        },
+      };
+    });
+    const json = JSON.stringify(clean);
+    if (json.length > MAX_QUEUE_BYTES) throw fail('QUEUE_TOO_LARGE');
+    db.prepare('UPDATE agent_conversations SET queue = ? WHERE id = ?').run(clean.length ? json : null, id);
+    return { success: true, count: clean.length };
+  }
+
+  // What the agents of one person are doing, for the status bar of the pages: the turns running now and the messages queued behind them (the queue is kept
+  // here, see setQueue); "submitted" is both, the messages sent to an agent that have not finished. Chats of every task of the person count.
+  function summary(owner) {
+    const rows = db.prepare(`SELECT c.id, CASE WHEN c.queue IS NOT NULL AND json_valid(c.queue) THEN json_array_length(c.queue) ELSE 0 END AS queued
+      FROM agent_conversations c JOIN tasks t ON t.id = c.task_id WHERE t.user_id = ?`).all(owner);
+    let running = 0;
+    let queued = 0;
+    for (const row of rows) {
+      const rt = runtimes.get(row.id);
+      if (rt && rt.status === 'running') running += 1;
+      queued += row.queued;
+    }
+    return { running, queued, submitted: running + queued };
   }
 
   // The state of the chat's translation switch, kept per chat; the other pages that show this chat follow it through a meta event.
@@ -370,7 +425,25 @@ function createAgentChat({ db, adapters = ADAPTERS }) {
     rt.status = 'running';
     rt.startedAt = Date.now();
     emit(rt, { op: 'status', status: 'running', runningMs: 0 });
-    // The turn runs in the background; the request returns once it has started.
+    // The turn runs in the background; the request returns once it has started. It ends once: when the adapter returns, or, after Stop, when the
+    // adapter has not returned within the grace time (finishTurn does nothing the second time).
+    let ended = false;
+    const finishTurn = outcome => {
+      if (ended) return;
+      ended = true;
+      clearTimeout(rt.stopTimer);
+      rt.stopTimer = null;
+      rt.forceEnd = null;
+      settlePending(rt, false, 'The turn ended');
+      rt.abort = null;
+      rt.control = null;
+      rt.status = 'idle';
+      if (controller.signal.aborted) ctx.upsert({ id: `n${rt.counter++}`, kind: 'notice', text: 'Stopped' });
+      else if (outcome && outcome.error) ctx.upsert({ id: `e${rt.counter++}`, kind: 'error', text: outcome.error });
+      touch(rt);
+      emit(rt, { op: 'status', status: 'idle', ok: Boolean(outcome && outcome.ok), usage: outcome && outcome.usage, cost: outcome && outcome.cost });
+    };
+    rt.forceEnd = () => finishTurn({ ok: false, error: '' });
     void (async () => {
       let outcome;
       try {
@@ -382,14 +455,7 @@ function createAgentChat({ db, adapters = ADAPTERS }) {
       } catch (error) {
         outcome = { ok: false, error: controller.signal.aborted ? '' : (error.message || 'The agent failed') };
       }
-      settlePending(rt, false, 'The turn ended');
-      rt.abort = null;
-      rt.control = null;
-      rt.status = 'idle';
-      if (controller.signal.aborted) ctx.upsert({ id: `n${rt.counter++}`, kind: 'notice', text: 'Stopped' });
-      else if (outcome && outcome.error) ctx.upsert({ id: `e${rt.counter++}`, kind: 'error', text: outcome.error });
-      touch(rt);
-      emit(rt, { op: 'status', status: 'idle', ok: Boolean(outcome && outcome.ok), usage: outcome && outcome.usage, cost: outcome && outcome.cost });
+      finishTurn(outcome);
     })();
     return { success: true };
   }
@@ -401,6 +467,8 @@ function createAgentChat({ db, adapters = ADAPTERS }) {
     if (!rt || rt.status !== 'running' || !rt.abort) return { success: true, running: false };
     settlePending(rt, false, 'Stopped by the person');
     rt.abort.abort();
+    // The adapter is asked to end the turn; if it does not (a stuck process), the turn is ended here after the grace time.
+    if (!rt.stopTimer && rt.forceEnd) rt.stopTimer = setTimeout(() => { if (rt.forceEnd) rt.forceEnd(); }, stopGraceMs);
     return { success: true, running: true };
   }
 
@@ -478,7 +546,7 @@ function createAgentChat({ db, adapters = ADAPTERS }) {
     }
   }
 
-  return { list, create, snapshot, subscribe, sendMessage, interrupt, answerPermission, setMode, setPreferences, listModels, setOpened, setTranslate, rename, remove, stopTask, refreshLimits };
+  return { list, create, snapshot, subscribe, sendMessage, interrupt, answerPermission, setMode, setPreferences, listModels, setOpened, setTranslate, setQueue, summary, rename, remove, stopTask, refreshLimits };
 }
 
 let shared = null;

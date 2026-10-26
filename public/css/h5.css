@@ -32,6 +32,10 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; c
    (the chat view is placed under the header once, when it is opened). */
 .h5-task-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; justify-content: center; }
 .h5-session-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; line-height: 1.3; color: var(--h5-muted); }
+/* The agent counters between the task name and the settings button: two small lines. */
+.h5-header .agent-activity { flex: 0 0 auto; flex-direction: column; align-items: flex-end; justify-content: center; gap: 0; margin-right: 0; font-size: 11px; line-height: 1.3; color: var(--h5-muted); }
+.h5-header .agent-activity .count { color: var(--h5-text, #e6e6e6); }
+.h5-header .agent-activity .idle .count { color: var(--h5-muted); }
 .h5-header-button { flex: 0 0 auto; height: 36px; min-width: 36px; padding: 0 10px; border: 1px solid #555; border-radius: 8px; background: var(--h5-key); font-size: 13px; }
 
 
@@ -111,6 +115,7 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; c
 .h5-task-add:active { background: var(--h5-key); }
 .h5-terminal-list { display: flex; flex-direction: column; gap: 6px; margin: 0 0 8px 14px; padding-left: 10px; border-left: 2px solid var(--h5-border); }
 .h5-terminal-row { display: flex; gap: 6px; }
+.h5-peek-note { padding: 8px 4px; color: var(--h5-muted); font-size: 13px; }
 .h5-terminal-row button { min-height: 40px; border: 1px solid var(--h5-border); border-radius: 8px; background: var(--h5-key); font-size: 14px; }
 .h5-terminal-main { flex: 1 1 auto; min-width: 0; padding: 0 12px; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .h5-terminal-main { display: flex; align-items: center; gap: 8px; }

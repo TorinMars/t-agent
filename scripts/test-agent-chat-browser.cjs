@@ -48,6 +48,7 @@ const adapter = {
       limits: [{ id: '5h', label: '5h', usedPercent: 37.5, resetsAt: Date.now() + 4.2 * 3600000 }, { id: '7d', label: '7d', usedPercent: 20, resetsAt: Date.now() + 3.5 * 24 * 3600000 }],
     });
     if (!sessionId) ctx.upsert({ id: 'init:1', kind: 'init', text: 'Initialized session', details: [['Model', 'claude-sonnet-5-5'], ['Session', 'session-abcdef12']] });
+    if (/^queued/.test(prompt.text)) { ctx.upsert({ id: 'q1', kind: 'text', text: 'Got the queued message.' }); return { ok: true }; }
     if (/slow/.test(prompt.text)) {
       ctx.upsert({ id: 's1', kind: 'text', text: 'Thinking about it' });
       await new Promise(resolve => signal.addEventListener('abort', resolve));
@@ -95,7 +96,8 @@ window.base = '/api/tasks/${task.id}/agent';
 window.notices = [];
 window.closes = 0;
 window.titles = [];
-window.openChat = async (agent, choice) => { const conversation = await AgentChat.open(window.api, base, agent, choice); window.view = AgentChat.mount(document.getElementById('host'), { api: window.api, base, conversation, onClose: () => { window.closes++; }, onTitle: title => window.titles.push(title), notify: m => window.notices.push(m) }); return conversation; };
+AgentChat.setOpenHandler(data => window.opened.push(data));
+window.openChat = async (agent, choice) => { const conversation = await AgentChat.open(window.api, base, agent, choice); window.conversation = conversation; window.view = AgentChat.mount(document.getElementById('host'), { api: window.api, base, conversation, onClose: () => { window.closes++; }, onTitle: title => window.titles.push(title), notify: m => window.notices.push(m) }); return conversation; };
 </script>`));
 const server = http.createServer(app);
 
@@ -109,6 +111,12 @@ const server = http.createServer(app);
     await page.addInitScript(() => {
       // The page's speech model (voice-input.js) is replaced by a fake with the same attach() contract: a click toggles the recording, the
       // text goes into the textarea it was given (and an input event), and the button gets the class "listening" while it records.
+      // Notifications: the page is "away" when window.away is set; the notifications the page makes are collected.
+      window.away = false;
+      window.notes = [];
+      window.opened = [];
+      window.Notification = class { static permission = 'granted'; static requestPermission() { return Promise.resolve('granted'); } constructor(title, options) { this.title = title; this.options = options; window.notes.push(this); } close() {} };
+      document.hasFocus = () => !window.away;
       window.voice = { attached: 0, started: 0, stopped: 0, textarea: null, base: '' };
       window.SpeechRecognition = class { start() { window.voice.browser = true; } };
       window.VoiceInput = {
@@ -202,7 +210,7 @@ const server = http.createServer(app);
     await page.fill('.ac-input', 'slow task');
     await page.keyboard.press('Enter');
     await page.waitForSelector('.ac-stop:visible');
-    // Claude cannot take input mid-turn, so Enter and Ctrl+Enter both queue a message; it is not sent and stays after a stop.
+    // Claude cannot take input mid-turn, so Enter and Ctrl+Enter both queue a message; it waits, and goes out when the turn ends or is stopped.
     assert.match(await page.locator('.ac-input').getAttribute('placeholder'), /to queue for later/);
     await page.fill('.ac-input', 'queued one');
     await page.keyboard.press('Control+Enter');
@@ -212,14 +220,84 @@ const server = http.createServer(app);
     assert.equal(await page.locator('.ac-input').inputValue(), '');
     await page.getByLabel('Remove from the queue').nth(1).click();
     assert.deepEqual(await page.locator('.ac-queued > span:first-child').allTextContents(), ['queued one']);
+    // A queued message can be edited: the pencil turns it into an input, Enter keeps the change and Escape drops it.
+    await page.getByLabel('Edit the queued message').click();
+    await page.locator('.ac-queued-input').fill('thrown away');
+    await page.keyboard.press('Escape');
+    assert.deepEqual(await page.locator('.ac-queued > span:first-child').allTextContents(), ['queued one'], 'Escape keeps the old text');
+    await page.getByLabel('Edit the queued message').click();
+    await page.locator('.ac-queued-input').fill('queued edited');
+    await page.keyboard.press('Enter');
+    assert.deepEqual(await page.locator('.ac-queued > span:first-child').allTextContents(), ['queued edited']);
+    assert.equal(await page.locator('.ac-queued .ac-chip-force').count(), 1, 'the agent cannot take input mid-turn, so the send button stops it first');
+    // The queue is kept with the chat: after a refresh the chat is opened again with the same queue, and the turn is still running.
+    await page.waitForFunction(() => api.get(`${base}/conversations/${conversation.id}`).then(snapshot => snapshot.queue.length === 1));
+    const reopened = await page.evaluate(() => conversation);
+    await page.goto(`${origin}/harness`);
+    await page.evaluate(row => openChat('claude', { conversation: row }), reopened);
+    await page.waitForSelector('.ac-queued');
+    assert.deepEqual(await page.locator('.ac-queued > span:first-child').allTextContents(), ['queued edited'], 'the queue, with the edit, is still there after a refresh');
+    await page.waitForSelector('.ac-stop:visible');
     await page.click('.ac-stop');
     await page.waitForSelector('.ac-notice');
     assert.equal(await page.locator('.ac-notice').textContent(), 'Stopped');
+    await page.waitForFunction(() => document.querySelectorAll('.ac-user').length === 3 && !document.querySelector('.ac-queued'));
+    assert.equal(received.at(-1).text, 'queued edited', 'Stop goes on with the queue: the next message is sent');
+    await page.waitForSelector('.ac-stop', { state: 'detached' });
+    // Force send: the running turn is stopped and the chosen message goes out at once, ahead of the one queued before it.
+    await page.fill('.ac-input', 'slow again');
+    await page.keyboard.press('Enter');
+    await page.waitForSelector('.ac-stop:visible');
+    await page.fill('.ac-input', 'queued first');
+    await page.keyboard.press('Enter');
+    await page.fill('.ac-input', 'queued second');
+    await page.keyboard.press('Enter');
+    await page.locator('.ac-queued', { hasText: 'queued second' }).locator('.ac-chip-force').click();
+    // The forced message's turn ends normally, so the queue goes on with the one that was queued first.
+    for (let i = 0; i < 100 && received.at(-1).text !== 'queued first'; i += 1) await page.waitForTimeout(50);
+    assert.deepEqual(received.slice(-2).map(prompt => prompt.text), ['queued second', 'queued first'], 'the chosen message went first');
+    await page.waitForFunction(() => !document.querySelector('.ac-queued') && !document.querySelector('.ac-stop'));
+    // The expanded input box: Enter is a new line there, and only the send button sends (no key does). Collapsed, Enter sends again.
+    const input = page.locator('.ac-input');
+    await page.fill('.ac-input', 'queued one');
+    const smallHeight = (await input.boundingBox()).height;
+    assert.equal(await page.getByLabel('Expand the input box').getAttribute('aria-pressed'), 'false');
+    await page.getByLabel('Expand the input box').click();
+    assert.equal(await page.getByLabel('Collapse the input box').getAttribute('aria-pressed'), 'true');
+    assert.match(await input.getAttribute('placeholder'), /new line; use the send button/);
+    assert.ok((await input.boundingBox()).height >= smallHeight + 60, 'the box is taller');
+    const sentBefore = received.length;
+    await input.press('End');
+    await page.keyboard.press('Enter');
+    await page.keyboard.type('two');
+    assert.equal(await input.inputValue(), 'queued one\ntwo', 'Enter is a new line');
+    await page.keyboard.press('Control+Enter');
+    await page.keyboard.press('Meta+Enter');
     await page.waitForTimeout(300);
-    assert.equal(await page.locator('.ac-queued').count(), 1, 'a stopped turn does not send the queue');
-    assert.equal(await page.locator('.ac-user').count(), 2);
-    await page.getByLabel('Remove from the queue').click();
-    assert.equal(await page.locator('.ac-queued').count(), 0);
+    assert.equal(received.length, sentBefore, 'no key sends from the expanded box');
+    await page.click('.ac-send');
+    for (let i = 0; i < 100 && received.length === sentBefore; i += 1) await page.waitForTimeout(50);
+    assert.equal(received.at(-1).text, 'queued one\ntwo', 'the button sends, line break and all');
+    await page.waitForSelector('.ac-stop', { state: 'detached' });
+    assert.equal(await page.evaluate(() => notes.length), 0, 'no notification while the person is looking at the chat, nor for the turns that were stopped');
+    await page.getByLabel('Collapse the input box').click();
+    assert.equal(await page.getByLabel('Expand the input box').getAttribute('aria-pressed'), 'false');
+    await page.evaluate(() => { window.away = true; }); // the next turn ends while the person is in another window
+    await page.fill('.ac-input', 'queued plain');
+    await page.keyboard.press('Enter');
+    for (let i = 0; i < 100 && received.at(-1).text !== 'queued plain'; i += 1) await page.waitForTimeout(50);
+    assert.equal(received.at(-1).text, 'queued plain', 'collapsed, Enter sends');
+    await page.waitForSelector('.ac-stop', { state: 'detached' });
+    // The notification: the chat, the last thing the agent said, one per chat; a click shows the chat.
+    await page.waitForFunction(() => notes.length === 1);
+    const note = await page.evaluate(() => ({ title: notes[0].title, body: notes[0].options.body, tag: notes[0].options.tag, data: notes[0].options.data }));
+    assert.match(note.title, /^Claude: /);
+    assert.equal(note.body, 'Got the queued message.');
+    assert.match(note.tag, /^agent-chat:/);
+    assert.deepEqual([note.data.taskId, note.data.remote, note.data.page], [task.id, false, '/harness']);
+    await page.evaluate(() => notes[0].onclick());
+    assert.deepEqual(await page.evaluate(() => opened.map(data => data.conversationId)), [note.data.conversationId], 'a click asks the page to show that chat');
+    await page.evaluate(() => { window.away = false; });
     await page.selectOption('.ac-mode', 'edits');
     await page.waitForFunction(() => document.querySelector('.ac-mode').value === 'edits');
     await page.setInputFiles('.agent-chat input[type=file]', [
@@ -249,7 +327,7 @@ const server = http.createServer(app);
     assert.equal(await page.locator('.ac-attachments .ac-chip').count(), 2);
     await page.fill('.ac-input', 'use these');
     await page.click('.ac-send');
-    await page.waitForFunction(() => document.querySelectorAll('.ac-user').length === 3);
+    await page.waitForFunction(() => document.querySelectorAll('.ac-user').length === 9);
     assert.equal(received.at(-1).images.length, 1);
     assert.match(received.at(-1).text, /Attached file notes\.txt:[\s\S]*remember this/);
     // The page clears them when the request returns, which can be after the message arrived over the event stream.
@@ -299,7 +377,7 @@ const server = http.createServer(app);
     await page.evaluate(() => view.destroy());
     await page.evaluate(async id => { const conversation = (await api.get(`${base}/conversations`)).find(row => row.id === id); window.view = AgentChat.mount(document.getElementById('host'), { api, base, conversation, onClose: () => { window.closes++; }, notify: () => {} }); }, state.id);
     await page.waitForSelector('.ac-text');
-    assert.equal(await page.locator('.ac-user').count(), 3);
+    assert.equal(await page.locator('.ac-user').count(), 9);
     await page.click('.ac-back');
     assert.equal(await page.evaluate(() => closes), 1);
 

@@ -2,7 +2,7 @@
 // This file is small and loaded with every page; the view itself (React + assistant-ui, source in scripts/agent-chat/) is the bundle
 // agent-chat-ui.js, fetched when the first chat is mounted.
 //
-//   const chat = AgentChat.mount(element, { api, base, conversation, onClose });
+//   const chat = AgentChat.mount(element, { api, base, conversation, onClose });  (also: onTitle, onTurn, onOpen; see Notifications below)
 //   api:  { get(url), post(url, body), patch(url, body), del(url) }, each returning the parsed JSON (the host adds its own auth headers)
 //   base: `<tasks base>/<task id>/agent`
 // The view loads a snapshot of the conversation, then follows the server-sent events after the snapshot's sequence number. Everything the
@@ -89,22 +89,74 @@ const AgentChat = (() => {
     return bundle;
   }
 
+  // ── Notifications: a turn that ends while the person is elsewhere (another window, another tab of the page, a chat that is not shown) ──
+  // A click on the notification shows that chat: through the opener of the mounted chat (`onOpen`), or, when the chat is not mounted any more (the page
+  // was reloaded), through the page's open handler (`AgentChat.setOpenHandler`), which gets { taskId, conversationId }. The service worker (sw.js)
+  // forwards the click of a notification it showed to the page that is open, or opens the page with `?openChat=<task id>:<conversation id>`.
+  const openers = new Map(); // conversation id -> function that shows that chat
+  let openHandler = null;
+  const tr = text => (typeof I18n !== 'undefined' ? I18n.t(text) : text);
+  const canNotify = () => typeof Notification !== 'undefined';
+  function requestPermission() { // asked on the first touch or key in a chat: browsers want it to follow a gesture
+    if (!canNotify() || Notification.permission !== 'default') return;
+    try { const asked = Notification.requestPermission(); if (asked && asked.catch) asked.catch(() => {}); } catch { /* an old browser: no notifications */ }
+  }
+  function openRequested(data) {
+    const opener = openers.get(data.conversationId);
+    if (opener) opener(data);
+    else if (openHandler) openHandler(data);
+  }
+  if (typeof navigator !== 'undefined' && navigator.serviceWorker) {
+    navigator.serviceWorker.addEventListener('message', event => { if (event.data && event.data.type === 'agent-chat-open' && event.data.data) openRequested(event.data.data); });
+  }
+  // The service worker shows it when there is one (the only way on a phone); otherwise the page does.
+  async function showNotification(title, options, onClick) {
+    if (!canNotify() || Notification.permission !== 'granted') return false;
+    try {
+      const registration = navigator.serviceWorker && navigator.serviceWorker.getRegistration ? await navigator.serviceWorker.getRegistration() : null;
+      if (registration && registration.showNotification) { await registration.showNotification(title, options); return true; }
+      const note = new Notification(title, options);
+      note.onclick = () => { try { window.focus(); note.close(); } catch { /* already gone */ } onClick(); };
+      return true;
+    } catch { return false; }
+  }
+  const idsOf = (base, conversation) => {
+    const match = /^(.*)\/tasks\/(\d+)\/agent$/.exec(base || '');
+    return { conversationId: conversation.id, taskId: match ? Number(match[2]) : null, remote: Boolean(match && /remote-servers/.test(match[1])), page: typeof location !== 'undefined' ? location.pathname : '/' };
+  };
+
   // Returns at once; the view appears when the bundle has loaded. focus() and destroy() work before that too.
   function mount(container, options) {
     let view = null;
     let disposed = false;
     let wantFocus = false;
     const notify = options.notify || (() => {});
+    const ids = idsOf(options.base, options.conversation);
+    if (options.onOpen) openers.set(ids.conversationId, options.onOpen);
+    container.addEventListener('pointerup', requestPermission, { once: true });
+    container.addEventListener('keydown', requestPermission, { once: true });
+    // A turn that ended while the person was not looking at this chat (and that they did not stop themselves).
+    const turnEnded = turn => {
+      if (turn.stopped || (options.onTurn && options.onTurn(turn) === false)) return;
+      const away = (typeof document !== 'undefined' && (document.hidden || !document.hasFocus())) || container.offsetParent === null;
+      if (!away) return;
+      const label = (AGENTS[options.conversation.agent] || AGENTS.claude).label;
+      const summary = String(turn.summary || '').replace(/\s+/g, ' ').trim();
+      void showNotification(`${label}: ${turn.title || options.conversation.title}`, {
+        body: turn.ok ? (summary.length > 140 ? `${summary.slice(0, 139)}…` : summary || tr('Finished')) : tr('The turn did not finish'),
+        tag: `agent-chat:${ids.conversationId}`, icon: '/icons/icon-192.png', data: ids,
+      }, () => openRequested(ids));
+    };
     loadBundle().then(ui => {
       if (disposed) return;
-      view = ui.mount(container, { ...options, agent: AGENTS[options.conversation.agent] || AGENTS.claude });
+      view = ui.mount(container, { ...options, onTurn: turnEnded, agent: AGENTS[options.conversation.agent] || AGENTS.claude });
       if (wantFocus) view.focus();
     }).catch(error => { if (!disposed) notify(error.message); });
     return {
       focus() { wantFocus = true; if (view) view.focus(); },
-      destroy() { disposed = true; if (view) view.destroy(); view = null; },
+      destroy() { disposed = true; openers.delete(ids.conversationId); container.removeEventListener('pointerup', requestPermission); container.removeEventListener('keydown', requestPermission); if (view) view.destroy(); view = null; },
     };
   }
 
-  return { mount, choices, open, icon, chatIcon, AGENTS };
+  return { mount, choices, open, icon, chatIcon, AGENTS, setOpenHandler: handler => { openHandler = handler; } };
 })();

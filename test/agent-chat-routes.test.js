@@ -12,7 +12,7 @@ process.env.TASKS_BASE_DIR = path.join(root, 'tasks');
 const db = require('../db');
 const tasks = require('../services/engine-tasks');
 const { createAgentChat } = require('../services/agent-chat');
-const { createAgentChatRouter } = require('../routes/agent-chat');
+const { createAgentChatRouter, createAgentChatSummaryRouter } = require('../routes/agent-chat');
 
 const mine = tasks.createTask('owner', { title: 'mine' });
 const theirs = tasks.createTask('someone-else', { title: 'theirs' });
@@ -24,7 +24,9 @@ const adapter = {
 };
 const app = express();
 app.use(express.json());
-app.use('/api/tasks/:id/agent', createAgentChatRouter({ service: createAgentChat({ db, adapters: { claude: adapter } }), authenticate: (req, res, next) => { req.session = { user: { login: 'owner' } }; next(); } }));
+const service = createAgentChat({ db, adapters: { claude: adapter } });
+app.use('/api/agent-chat', createAgentChatSummaryRouter({ service, authenticate: (req, res, next) => { req.session = { user: { login: 'owner' } }; next(); } }));
+app.use('/api/tasks/:id/agent', createAgentChatRouter({ service, authenticate: (req, res, next) => { req.session = { user: { login: 'owner' } }; next(); } }));
 const server = http.createServer(app);
 let base;
 test.before(async () => { await new Promise(resolve => server.listen(0, '127.0.0.1', resolve)); base = `http://127.0.0.1:${server.address().port}`; });
@@ -133,4 +135,29 @@ test('the translation switch of a chat is saved with PATCH and comes back with t
   assert.equal((await call('GET', `${url}/conversations/${id}`)).body.conversation.translate, true);
   assert.equal((await call('PATCH', `${url}/conversations/${id}`, { translate: 'on' })).body.error, 'INVALID_TRANSLATE');
   assert.equal((await call('PATCH', `${url}/conversations/${id}`, { translate: false })).body.translate, false);
+});
+
+test('the queue of a chat is saved with POST and comes back with the chat', async () => {
+  const url = `/api/tasks/${mine.id}/agent`;
+  const id = (await call('POST', `${url}/conversations`, { agent: 'claude' })).body.id;
+  assert.deepEqual((await call('GET', `${url}/conversations/${id}`)).body.queue, []);
+  const saved = await call('POST', `${url}/conversations/${id}/queue`, { queue: [{ id: 3, label: 'later', body: { text: 'later' } }] });
+  assert.deepEqual([saved.status, saved.body], [200, { success: true, count: 1 }]);
+  assert.deepEqual((await call('GET', `${url}/conversations/${id}`)).body.queue.map(entry => [entry.id, entry.body.text]), [[3, 'later']]);
+  assert.equal((await call('POST', `${url}/conversations/${id}/queue`, { queue: 'x' })).body.error, 'INVALID_QUEUE');
+  assert.equal((await call('POST', `${url}/conversations/${id}/queue`, {})).body.error, 'INVALID_QUEUE');
+  assert.deepEqual((await call('POST', `${url}/conversations/${id}/queue`, { queue: [] })).body, { success: true, count: 0 });
+});
+
+test('the summary of what the agents are doing is read with GET, for the signed-in person only', async () => {
+  const base0 = (await call('GET', '/api/agent-chat/summary')).body;
+  assert.deepEqual(Object.keys(base0).sort(), ['queued', 'running', 'submitted']);
+  const id = (await call('POST', `/api/tasks/${mine.id}/agent/conversations`, { agent: 'claude' })).body.id;
+  await call('POST', `/api/tasks/${mine.id}/agent/conversations/${id}/queue`, { queue: [{ id: 1, body: { text: 'one' } }, { id: 2, body: { text: 'two' } }] });
+  const other = service.create(theirs, { agent: 'claude' });
+  service.setQueue(theirs, other.id, [{ id: 1, body: { text: 'theirs' } }]);
+  const after = (await call('GET', '/api/agent-chat/summary')).body;
+  assert.equal(after.queued - base0.queued, 2, 'only the signed-in person\'s messages are counted');
+  assert.equal(after.submitted, after.running + after.queued);
+  assert.equal((await fetch(`${base}/api/agent-chat/summary`)).headers.get('cache-control'), 'no-store');
 });

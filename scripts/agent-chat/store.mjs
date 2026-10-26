@@ -4,8 +4,8 @@
 //   upsert { item } | append { id, text } | status { status, ok } | permission { request } | permission_done { id } | meta { title, mode, model, effort, context, limits }
 // `getState()` returns an immutable snapshot that changes identity on every update, so it can feed useSyncExternalStore.
 //
-// Messages the person queues while the agent works ("⌘⏎ to queue for later") are kept here, not on the server: when a turn ends normally the
-// next one is sent; after a stop or a failure they wait until the person sends or removes them.
+// Messages the person queues while the agent works ("⌘⏎ to queue for later") are kept here, not on the server: when a turn ends normally, or the
+// person stops it, the next one is sent; after a failure they wait until the person sends or removes them.
 
 const RETRY_EVENTS_MS = 2000;
 const RETRY_LOAD_MS = 4000;
@@ -17,12 +17,18 @@ export function createChatStore({ api, base, conversation, notify = () => {}, Ev
   let state = {
     items: [], pending: [], status: 'idle', canSteer: false, loaded: false, title: conversation.title, mode: conversation.mode,
     model: conversation.model || '', effort: conversation.effort || '', context: conversation.context || null, limits: conversation.limits || [],
+    lastTurn: null, // the latest turn that ended while this page watched: { n, ok, stopped } (the host page may tell the person)
     translate: conversation.translate === true, // the translation switch of this chat
     runningSince: null, queue: [],
     // What the person picked (the agent reports what it ran with, which can differ: an alias, a default) and the models on offer.
     canChoose: false, choice: { model: '', effort: '' }, models: { status: 'idle', list: [] },
   };
   let queued = 0;
+  let queueTouched = false; // the queue was changed on this page: what the server has is older
+  let queueSaving = Promise.resolve();
+  let queueWarned = false;
+  let forceTarget = null; // a queued message to send as soon as the turn the person stopped for it has ended
+  let stopping = false; // the person pressed Stop and the turn has not ended yet: its end sends the next queued message
   let seq = 0;
   let source = null;
   let retry = null;
@@ -49,11 +55,22 @@ export function createChatStore({ api, base, conversation, notify = () => {}, Ev
         publishItems();
         break;
       }
-      case 'status':
+      case 'status': {
         // `runningMs` is how long the turn has run already; the page counts from its own clock so the two machines need not agree on the time.
+        const wasRunning = state.status === 'running';
+        const byPerson = stopping; // the person pressed Stop for this turn
         publish({ status: event.status, runningSince: event.status === 'running' ? Date.now() - (event.runningMs || 0) : null });
-        if (event.status === 'idle' && event.ok === true) void sendNext();
+        if (event.status === 'idle') {
+          const proceed = event.ok === true || stopping;
+          const target = forceTarget;
+          stopping = false;
+          forceTarget = null;
+          if (wasRunning) publish({ lastTurn: { n: (state.lastTurn ? state.lastTurn.n : 0) + 1, ok: event.ok === true, stopped: byPerson } });
+          if (target !== null) void sendQueued(target); // the message the person chose goes first, not the head of the queue
+          else if (proceed) void sendNext();
+        } else stopping = false;
         break;
+      }
       case 'permission':
         if (!state.pending.some(request => request.id === event.request.id)) publish({ pending: [...state.pending, event.request] });
         break;
@@ -96,7 +113,10 @@ export function createChatStore({ api, base, conversation, notify = () => {}, Ev
         ...(snapshot.conversation && snapshot.conversation.limits ? { limits: snapshot.conversation.limits } : {}),
         ...(snapshot.conversation && typeof snapshot.conversation.translate === 'boolean' ? { translate: snapshot.conversation.translate } : {}),
         canChoose: Boolean(snapshot.capabilities && snapshot.capabilities.models),
+        // The queue kept with the chat (not when this page already changed it: that is newer).
+        ...(!queueTouched && Array.isArray(snapshot.queue) && snapshot.queue.length ? { queue: snapshot.queue.map(entry => ({ id: entry.id, body: entry.body, label: entry.label })) } : {}),
       });
+      for (const entry of state.queue) queued = Math.max(queued, entry.id);
       follow();
     } catch (error) {
       if (!disposed) { notify(`Could not load the chat: ${error.message}`); retry = setTimeout(load, RETRY_LOAD_MS); }
@@ -124,17 +144,55 @@ export function createChatStore({ api, base, conversation, notify = () => {}, Ev
   }
 
   const label = body => (body.text || [...(body.images || []), ...(body.files || [])].map(file => file.name).join(', ')).replace(/\s+/g, ' ').slice(0, 80);
+  // The queue is kept on the server with the chat, so a refresh does not lose it. Every change saves the whole list; the saves go one after the other,
+  // so the last change is the one that stays. A failure is shown once.
+  function saveQueue() {
+    queueTouched = true;
+    const queue = state.queue.map(({ id, body, label: text }) => ({ id, body, label: text }));
+    queueSaving = queueSaving
+      .then(() => api.post(url('/queue'), { queue }))
+      .catch(error => {
+        if (queueWarned) return;
+        queueWarned = true;
+        notify(`Could not keep the queued messages: ${error.message}`);
+      });
+  }
   function enqueue(body) {
     publish({ queue: [...state.queue, { id: ++queued, body, label: label(body) }] });
+    saveQueue();
   }
-  function unqueue(id) { publish({ queue: state.queue.filter(entry => entry.id !== id) }); }
+  function unqueue(id) {
+    publish({ queue: state.queue.filter(entry => entry.id !== id) });
+    saveQueue();
+  }
+  // Changes the text of a queued message (its attachments stay). Resolves to false when nothing would be left of it: the person removes it instead.
+  function editQueued(id, text) {
+    const entry = state.queue.find(item => item.id === id);
+    if (!entry) return false;
+    const body = { ...entry.body, text: String(text).trim() };
+    if (!body.text && !(body.images || []).length && !(body.files || []).length) return false;
+    publish({ queue: state.queue.map(item => (item.id === id ? { ...item, body, label: label(body) } : item)) });
+    saveQueue();
+    return true;
+  }
+  // Sends a queued message now whatever the agent is doing. An agent that takes input mid-turn gets it into the running turn (as "send now"); one that
+  // cannot is stopped first, and the message goes out when the stopped turn has ended, ahead of the rest of the queue.
+  async function forceSend(id) {
+    if (!state.queue.some(item => item.id === id)) return false;
+    if (state.status !== 'running' || state.canSteer) return sendQueued(id);
+    forceTarget = id;
+    const result = await stop();
+    if (result === 'failed') { forceTarget = null; return false; }
+    if (result === 'idle') { forceTarget = null; return sendQueued(id); } // the turn had already ended
+    return true;
+  }
   // Sends one queued message now (the agent takes it into the running turn when it can, otherwise it starts the next one).
   async function sendQueued(id) {
     const entry = state.queue.find(item => item.id === id);
     if (!entry) return false;
     unqueue(id);
     const sent = await send(entry.body);
-    if (!sent) publish({ queue: [entry, ...state.queue] }); // it stays in the list for another try
+    if (!sent) { publish({ queue: [entry, ...state.queue] }); saveQueue(); } // it stays in the list for another try
     return sent;
   }
   async function sendNext() {
@@ -193,8 +251,18 @@ export function createChatStore({ api, base, conversation, notify = () => {}, Ev
     }
   }
 
+  // Resolves to 'stopping' (the turn was asked to end), 'idle' (nothing was running) or 'failed'.
   async function stop() {
-    try { await api.post(url('/interrupt'), {}); } catch (error) { notify(`Could not stop: ${error.message}`); }
+    stopping = true;
+    try {
+      const answer = await api.post(url('/interrupt'), {});
+      if (answer && answer.running === false) { stopping = false; return 'idle'; }
+      return 'stopping';
+    } catch (error) {
+      stopping = false;
+      notify(`Could not stop: ${error.message}`);
+      return 'failed';
+    }
   }
 
   // Resolves to true when answered; on failure the request stays pending so the person can try again.
@@ -223,7 +291,7 @@ export function createChatStore({ api, base, conversation, notify = () => {}, Ev
   return {
     getState: () => state,
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
-    prepareMessage, load, send, stop, answer, setMode, loadModels, choose, setTranslate, rename, enqueue, unqueue, sendQueued, apply,
+    prepareMessage, load, send, stop, answer, setMode, loadModels, choose, setTranslate, rename, enqueue, unqueue, editQueued, forceSend, sendQueued, apply,
     destroy() {
       disposed = true;
       clearTimeout(retry);

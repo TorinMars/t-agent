@@ -37,6 +37,10 @@
       </nav>
     </div>
     <div class="header-right">
+      <span class="agent-activity" id="agent-activity" role="status" hidden title="Messages sent to agents that have not finished (running or queued), and agent turns running now">
+        <span class="agent-activity-submitted"><b class="count">0</b> <span class="label" translate="no">submitted</span></span>
+        <span class="agent-activity-running"><b class="count">0</b> <span class="label" translate="no">running</span></span>
+      </span>
       <button class="btn-logout" id="btn-one-click-update" type="button" title="Check for and install updates for this client">↻ Update</button>
       <button class="btn-logout" id="btn-theme" type="button" title="Switch theme" aria-haspopup="dialog">🎨 Theme</button>
       <button class="btn-logout" id="btn-lang" type="button" data-lang-toggle data-lang-icon="🌐 " translate="no"></button>
@@ -438,6 +442,7 @@
   <script src="/js/file-sync.js"></script>
   <script src="/js/environment-check.js"></script>
   <script src="/js/tools.js"></script>
+  <script src="/js/agent-activity.js"></script>
   <script>
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('/sw.js').catch(() => {});

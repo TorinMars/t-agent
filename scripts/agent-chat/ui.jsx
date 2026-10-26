@@ -25,7 +25,7 @@ const Icon = ({ d, fill }) => (
 );
 const ICONS = {
   plus: 'M12 5v14M5 12h14', chevron: 'M6 9l6 6 6-6', up: 'M12 19V5M5 12l7-7 7 7', stop: 'M6 6h12v12H6z',
-  mic: 'M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3zM5 11a7 7 0 0 0 14 0M12 18v3', close: 'M6 6l12 12M18 6L6 18', enter: 'M20 5v7a3 3 0 0 1-3 3H5m0 0l4-4m-4 4l4 4',
+  mic: 'M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3zM5 11a7 7 0 0 0 14 0M12 18v3', close: 'M6 6l12 12M18 6L6 18', edit: 'M4 20h4L19 9l-4-4L4 16v4zM13.5 6.5l4 4', expand: 'M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7', collapse: 'M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7', enter: 'M20 5v7a3 3 0 0 1-3 3H5m0 0l4-4m-4 4l4 4',
 };
 
 
@@ -349,6 +349,7 @@ function Composer({ store, state, agent, notify, inputRef }) {
   const [text, setText] = useState('');
   const [attachments, setAttachments] = useState([]);
   const [sending, setSending] = useState(false);
+  const [expanded, setExpanded] = useState(false); // the big input box: Enter is a new line, and the message is sent with the button only
   const translate = state.translate; // saved with the chat: each chat keeps its own switch
   const submitting = useRef(false);
   const picker = useRef(null);
@@ -359,14 +360,17 @@ function Composer({ store, state, agent, notify, inputRef }) {
 
   const grow = node => {
     if (!node) return;
+    if (expanded) { node.style.height = ''; return; } // the stylesheet gives the expanded box its height
     node.style.height = 'auto';
     if (!node.value) { node.style.height = ''; return; } // empty: the height the stylesheet gives one row
     node.style.height = `${Math.min(node.scrollHeight + 2, 200)}px`;
   };
-  useEffect(() => grow(inputRef.current), [text]);
+  useEffect(() => grow(inputRef.current), [text, expanded]);
 
   // Enter sends (into the running turn when the agent takes input, otherwise it waits); Cmd/Ctrl+Enter always waits for the turn to end.
-  const placeholder = coarse() ? t(`Message ${agent.label}`)
+  // In the expanded box Enter is a new line, and only the send button sends.
+  const placeholder = expanded ? t('Enter for a new line; use the send button to send')
+    : coarse() ? t(`Message ${agent.label}`)
     : running ? (state.canSteer ? `${mac() ? '⏎ ' : 'Enter '}${t('to send,')} ${key}${mac() ? '⏎' : 'Enter'} ${t('to queue for later')}` : `${mac() ? '⏎ ' : 'Enter '}${t('to queue for later')}`)
       : `${mac() ? '⏎ ' : 'Enter '}${t('to send,')} ${t('Shift+Enter for a new line')}`;
 
@@ -437,18 +441,37 @@ function Composer({ store, state, agent, notify, inputRef }) {
   }
 
   const canNow = entry => !running || state.canSteer;
+  const [editing, setEditing] = useState(null); // a queued message being edited: { id, text }
+  const finishEdit = save => {
+    if (editing && save && !store.editQueued(editing.id, editing.text)) notify('A queued message cannot be empty; remove it instead');
+    setEditing(null);
+  };
   return (
     <>
-    <form ref={form} className="ac-composer" aria-busy={sending} autoComplete="off" onSubmit={event => { event.preventDefault(); void dispatch(false); }}>
+    <form ref={form} className={`ac-composer${expanded ? ' expanded' : ''}`} aria-busy={sending} autoComplete="off" onSubmit={event => { event.preventDefault(); void dispatch(false); }}>
       {state.queue.length ? (
         <div className="ac-queue" aria-label={t('Queued')}>
-          {state.queue.map(entry => (
+          {state.queue.map(entry => (editing && editing.id === entry.id ? (
+            <span className="ac-chip ac-queued ac-queued-editing" key={entry.id}>
+              <input className="ac-queued-input" translate="no" autoFocus value={editing.text} aria-label={t('Edit the queued message')} maxLength={100000}
+                onChange={event => setEditing({ id: entry.id, text: event.target.value })}
+                onBlur={() => finishEdit(true)}
+                onKeyDown={event => {
+                  if (event.nativeEvent.isComposing) return;
+                  if (event.key === 'Enter') { event.preventDefault(); finishEdit(true); }
+                  else if (event.key === 'Escape') { event.preventDefault(); finishEdit(false); }
+                }} />
+            </span>
+          ) : (
             <span className="ac-chip ac-queued" key={entry.id}>
               <span translate="no">{entry.label}</span>
-              {canNow(entry) ? <button type="button" className="ac-chip-remove" aria-label={t('Send now')} onClick={() => void store.sendQueued(entry.id)}><Icon d={ICONS.enter} /></button> : null}
-              <button type="button" className="ac-chip-remove" aria-label={t('Remove from the queue')} onClick={() => store.unqueue(entry.id)}>×</button>
+              <button type="button" className="ac-chip-remove" aria-label={t('Edit the queued message')} title={t('Edit the queued message')} onClick={() => setEditing({ id: entry.id, text: entry.body.text || '' })}><Icon d={ICONS.edit} /></button>
+              {canNow(entry)
+                ? <button type="button" className="ac-chip-remove" aria-label={t('Send now')} title={t('Send now')} onClick={() => void store.sendQueued(entry.id)}><Icon d={ICONS.enter} /></button>
+                : <button type="button" className="ac-chip-remove ac-chip-force" aria-label={t('Stop the agent and send now')} title={t('Stop the agent and send now')} onClick={() => void store.forceSend(entry.id)}><Icon d={ICONS.enter} /></button>}
+              <button type="button" className="ac-chip-remove" aria-label={t('Remove from the queue')} title={t('Remove from the queue')} onClick={() => store.unqueue(entry.id)}>×</button>
             </span>
-          ))}
+          )))}
         </div>
       ) : null}
       {attachments.length ? (
@@ -464,7 +487,7 @@ function Composer({ store, state, agent, notify, inputRef }) {
       <div className="ac-box">
         <button type="button" className="ac-attach" disabled={sending} aria-label={t('Attach an image or text file')} onClick={() => picker.current && picker.current.click()}><Icon d={ICONS.plus} /></button>
         <textarea
-          ref={inputRef} className="ac-input" readOnly={sending} rows={1} maxLength={100000} enterKeyHint="send" value={text}
+          ref={inputRef} className="ac-input" readOnly={sending} rows={1} maxLength={100000} enterKeyHint={expanded ? 'enter' : 'send'} value={text}
           placeholder={placeholder}
           aria-label={t(`Message ${agent.label}`)}
           onChange={event => setText(event.target.value)}
@@ -475,12 +498,13 @@ function Composer({ store, state, agent, notify, inputRef }) {
           }}
           onKeyDown={event => {
             if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return;
-            const later = event.metaKey || event.ctrlKey;
-            if (coarse() && !later) return; // on a phone Enter is a new line; the send button sends
+            if (expanded) return; // a new line: no key sends from the expanded box
             event.preventDefault();
-            void dispatch(later);
+            void dispatch(event.metaKey || event.ctrlKey);
           }}
         />
+        <button type="button" className="ac-expand" aria-pressed={expanded} aria-label={t(expanded ? 'Collapse the input box' : 'Expand the input box')} title={t(expanded ? 'Collapse the input box' : 'Expand the input box')}
+          onClick={() => { setExpanded(value => !value); if (inputRef.current) inputRef.current.focus(); }}><Icon d={expanded ? ICONS.collapse : ICONS.expand} /></button>
         <Mic text={text} setText={value => { if (!submitting.current) setText(value); }} notify={notify} />
         {filled ? <button type="submit" className="ac-send" disabled={sending} aria-label={t(running && !state.canSteer ? 'Queue for later' : 'Send')}><Icon d={ICONS.up} /></button> : null}
         {running ? <button type="button" className="ac-stop" aria-label={t('Stop')} onClick={() => void store.stop()}><Icon d={ICONS.stop} fill /></button> : null}

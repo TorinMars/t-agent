@@ -67,6 +67,10 @@
 .ac-warn { padding: 6px 10px; border-left: 3px solid var(--ac-spark); color: var(--ac-muted); font-size: 13px; text-align: left; overflow-wrap: anywhere; }
 .ac-chips { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; }
 .ac-chip { display: inline-flex; align-items: center; gap: 4px; max-width: 200px; padding: 2px 8px; border-radius: 10px; background: var(--ac-key); color: var(--ac-text); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-chat .ac-chip-remove svg { width: 13px; height: 13px; }
+.ac-chip-force { color: var(--ac-danger); } /* it stops the agent first */
+.ac-queued-editing { flex: 1 1 100%; max-width: none; }
+.ac-queued-input { flex: 1; min-width: 0; padding: 2px 0; border: 0; outline: 0; background: none; color: var(--ac-text); font: inherit; font-size: 13px; }
 .ac-chip-remove { border: 0; background: none; color: var(--ac-muted); font-size: 14px; line-height: 1; cursor: pointer; padding: 0 2px; }
 .ac-init, .ac-toolgroup { color: var(--ac-muted); font-size: 15px; }
 .ac-init summary, .ac-toolgroup > summary { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; list-style: none; }
@@ -117,11 +121,15 @@
 .ac-box:focus-within { border-color: var(--ac-muted); }
 .ac-input { box-sizing: border-box; flex: 1 1 auto; min-width: 0; min-height: 36px; max-height: 200px; padding: 7px 4px; border: 0; background: none; color: inherit; resize: none; font: inherit; font-size: 16px; line-height: 1.4; }
 .ac-input:focus { outline: none; }
+/* The expanded input box: tall, with Enter for a new line; the message goes with the send button only. */
+.ac-composer.expanded .ac-input { height: min(45vh, 360px); max-height: none; overflow-y: auto; }
+.ac-composer.expanded .ac-box { border-radius: 18px; }
+.ac-expand[aria-pressed="true"] { color: var(--ac-accent); }
 /* The themes style every textarea with a rule of higher specificity (:root[data-theme] textarea); in the composer it stays part of the box. */
 .agent-chat .ac-box .ac-input { border: 0; background: transparent; }
 .ac-input::placeholder { color: var(--ac-muted); }
-.ac-attach, .ac-send, .ac-stop, .ac-mic { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; border: 0; border-radius: 50%; background: none; color: var(--ac-muted); cursor: pointer; }
-.ac-attach:hover, .ac-mic:hover { background: var(--ac-key); color: var(--ac-text); }
+.ac-attach, .ac-expand, .ac-send, .ac-stop, .ac-mic { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; border: 0; border-radius: 50%; background: none; color: var(--ac-muted); cursor: pointer; }
+.ac-attach:hover, .ac-expand:hover, .ac-mic:hover { background: var(--ac-key); color: var(--ac-text); }
 .ac-mic.listening { background: var(--ac-danger); color: #fff; }
 .ac-send { background: var(--ac-text); color: var(--ac-bg); }
 .ac-send:disabled { opacity: .5; }

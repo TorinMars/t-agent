@@ -64,7 +64,7 @@ for (const [column, type] of [['agent', 'TEXT'], ['agent_session_id', 'TEXT'], [
 
 // The model and thinking effort chosen for an agent chat (empty: the agent's own default).
 const conversationColumns = db.prepare('PRAGMA table_info(agent_conversations)').all().map(column => column.name);
-for (const column of ['model', 'effort']) {
+for (const column of ['model', 'effort', 'queue']) { // queue: the messages queued in the chat (JSON)
   if (!conversationColumns.includes(column)) db.exec(`ALTER TABLE agent_conversations ADD COLUMN ${column} TEXT`);
 }
 // Where a chat is open (see schema.sql): the time it was opened on the desktop page / the phone page.

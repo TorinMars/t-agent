@@ -34,6 +34,10 @@
           <span class="h5-session-name" id="h5-session-name" translate="no">&nbsp;</span>
         </span>
       </button>
+      <span class="agent-activity" id="agent-activity" role="status" hidden title="Messages sent to agents that have not finished (running or queued), and agent turns running now">
+        <span class="agent-activity-submitted"><b class="count">0</b> <span class="label" translate="no">submitted</span></span>
+        <span class="agent-activity-running"><b class="count">0</b> <span class="label" translate="no">running</span></span>
+      </span>
       <button type="button" class="h5-header-button" id="h5-open-settings" aria-haspopup="dialog" aria-controls="h5-settings" aria-label="Settings">⚙</button>
     </header>
     <main class="h5-terminal" id="h5-terminal">
@@ -141,6 +145,7 @@
   <script src="/js/terminal-viewport.js"></script>
   <script src="/js/oss-direct.js"></script>
   <script src="/js/agent-chat.js"></script>
+  <script src="/js/agent-activity.js"></script>
   <script src="/js/h5.js"></script>
 </body>
 </html>

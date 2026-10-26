@@ -96,6 +96,7 @@ const authRouter = require('./routes/auth');
 app.use('/auth', authRouter);
 app.use(config.loginPath, authRouter);
 app.use('/api/tasks/:id/agent', require('./routes/agent-chat').createAgentChatRouter());
+app.use('/api/agent-chat', require('./routes/agent-chat').createAgentChatSummaryRouter());
 app.use('/api/tasks', require('./routes/tasks'));
 app.use('/api/task-groups', require('./routes/task-groups'));
 app.use('/api/bookmarks', require('./routes/bookmarks'));

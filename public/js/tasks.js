@@ -2214,6 +2214,11 @@ const Tasks = (() => {
     removeSource,
     clearView,
     problemOf: key => { const src = sources.get(key); return src ? problemOf(src) : null; },
+    // Shows a task of the local Engine (a click on a notification of an agent chat); resolves once the switch has been started.
+    async openTask(id) {
+      if (source.key !== 'local') await activateSource('local');
+      if (source.key === 'local') await selectTask(Number(id));
+    },
     getActiveKey: () => source.key,
     getSource: key => sources.get(key) || null,
     getSources: () => [...sources.values()],

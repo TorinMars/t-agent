@@ -33,6 +33,8 @@ function createAgentChatRouter({ service = getAgentChat(), authenticate = requir
   }));
   // The same as PATCH { opened, surface }, for a network path that lets POST through but not PATCH (the phone page tries this first).
   router.post('/conversations/:cid/opened', handle((task, req) => service.setOpened(task, req.params.cid, { surface: (req.body || {}).surface, opened: (req.body || {}).opened })));
+  // The queued messages of the chat, replaced as a whole (POST, because some network paths let POST through but not PUT or PATCH).
+  router.post('/conversations/:cid/queue', handle((task, req) => service.setQueue(task, req.params.cid, (req.body || {}).queue)));
   router.get('/conversations/:cid/models', handle((task, req) => service.listModels(task, req.params.cid)));
   router.delete('/conversations/:cid', handle((task, req) => service.remove(task, req.params.cid)));
   router.post('/conversations/:cid/messages', handle((task, req) => service.sendMessage(task, req.params.cid, req.body || {})));
@@ -65,4 +67,12 @@ function createAgentChatRouter({ service = getAgentChat(), authenticate = requir
   return router;
 }
 
-module.exports = { createAgentChatRouter };
+// /api/agent-chat/summary: what the agents of the signed-in person are doing, over all their tasks (the status bar of the pages shows it).
+function createAgentChatSummaryRouter({ service = getAgentChat(), authenticate = requireAuth, ownerOf = req => req.session.user.login } = {}) {
+  const router = express.Router();
+  router.use(authenticate);
+  router.get('/summary', (req, res) => res.set('Cache-Control', 'no-store').json(service.summary(ownerOf(req))));
+  return router;
+}
+
+module.exports = { createAgentChatRouter, createAgentChatSummaryRouter };

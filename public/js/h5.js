@@ -846,16 +846,10 @@
 
   // ── Translate and send ──
   let translating = false;
-  // The box shows a single line: the one holding the cursor (the visual line, so a wrapped long line also counts). The browser scrolls the
-  // cursor into view; this then snaps the scroll to whole lines so no half of a neighbouring line shows.
-  const INPUT_LINE = 38; // the inner height of the box, so exactly one line fits
-  function keepCaretLine() {
-    const lines = Math.max(0, Math.round(translateInput.scrollHeight / INPUT_LINE) - 1);
-    translateInput.scrollTop = Math.min(lines, Math.max(0, Math.round(translateInput.scrollTop / INPUT_LINE))) * INPUT_LINE;
+  function autosize() {
+    translateInput.style.height = 'auto';
+    if (translateInput.value) translateInput.style.height = `${translateInput.scrollHeight + 2}px`;
   }
-  const autosize = () => requestAnimationFrame(keepCaretLine);
-  for (const type of ['keyup', 'click', 'focus']) translateInput.addEventListener(type, autosize);
-  document.addEventListener('selectionchange', () => { if (document.activeElement === translateInput) autosize(); });
   async function translate() {
     const text = translateInput.value.trim();
     if (translating || !text) return;

@@ -351,11 +351,21 @@ function Mic({ onText, notify }) {
   );
 }
 
+// The images on the clipboard of a paste event. Some browsers list a pasted screenshot in `items` but leave `files` empty.
+function pastedImages(event) {
+  const data = event.clipboardData;
+  if (!data) return [];
+  const files = [...(data.files || [])].filter(file => IMAGE_TYPES.includes(file.type));
+  if (files.length) return files;
+  return [...(data.items || [])].filter(item => item.kind === 'file' && IMAGE_TYPES.includes(item.type)).map(item => item.getAsFile()).filter(Boolean);
+}
+
 function Composer({ store, state, agent, notify, inputRef }) {
   const [text, setText] = useState('');
   const [attachments, setAttachments] = useState([]);
   const [sending, setSending] = useState(false);
   const picker = useRef(null);
+  const form = useRef(null);
   const running = state.status === 'running';
   const filled = Boolean(text.trim() || attachments.length);
   const key = mac() ? '⌘' : 'Ctrl+';
@@ -373,6 +383,25 @@ function Composer({ store, state, agent, notify, inputRef }) {
     : running ? (state.canSteer ? `${mac() ? '⏎ ' : 'Enter '}${t('to send,')} ${key}${mac() ? '⏎' : 'Enter'} ${t('to queue for later')}` : `${mac() ? '⏎ ' : 'Enter '}${t('to queue for later')}`)
       : `${mac() ? '⏎ ' : 'Enter '}${t('to send,')} ${t('Shift+Enter for a new line')}`;
 
+  // Pasting an image works wherever the focus is in this chat (the message list, a button), not only inside the input box.
+  const paste = useRef(null);
+  useEffect(() => {
+    const onPaste = event => {
+      const target = event.target;
+      const node = form.current;
+      if (event.defaultPrevented || !node || node.offsetParent === null || !(target instanceof Element)) return;
+      if (target.closest('input, textarea, select, [contenteditable]')) return; // the input box handles its own paste; other fields keep theirs
+      const chat = node.closest('.agent-chat');
+      const inside = chat && chat.contains(target);
+      const loose = target === document.body && document.querySelectorAll('.agent-chat').length === 1;
+      if (!inside && !loose) return;
+      const files = pastedImages(event);
+      if (files.length) { event.preventDefault(); void paste.current(files); }
+    };
+    document.addEventListener('paste', onPaste);
+    return () => document.removeEventListener('paste', onPaste);
+  }, []);
+
   async function addFiles(files) {
     const added = [];
     for (const file of files) {
@@ -389,6 +418,7 @@ function Composer({ store, state, agent, notify, inputRef }) {
     }
     setAttachments(current => [...current, ...added]);
   }
+  paste.current = addFiles;
 
   async function dispatch(later) {
     const body = text.trim();
@@ -411,7 +441,7 @@ function Composer({ store, state, agent, notify, inputRef }) {
 
   const canNow = entry => !running || state.canSteer;
   return (
-    <form className="ac-composer" autoComplete="off" onSubmit={event => { event.preventDefault(); void dispatch(false); }}>
+    <form ref={form} className="ac-composer" autoComplete="off" onSubmit={event => { event.preventDefault(); void dispatch(false); }}>
       {state.queue.length ? (
         <div className="ac-queue" aria-label={t('Queued')}>
           {state.queue.map(entry => (
@@ -441,7 +471,7 @@ function Composer({ store, state, agent, notify, inputRef }) {
           aria-label={t(`Message ${agent.label}`)}
           onChange={event => setText(event.target.value)}
           onPaste={event => {
-            const files = [...(event.clipboardData ? event.clipboardData.files : [])].filter(file => IMAGE_TYPES.includes(file.type));
+            const files = pastedImages(event);
             if (files.length) { event.preventDefault(); void addFiles(files); }
           }}
           onKeyDown={event => {

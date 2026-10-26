@@ -27,11 +27,11 @@ export function visibleLimits(limits, now) {
   return (Array.isArray(limits) ? limits : []).filter(entry => entry && (entry.resetsAt === null || entry.resetsAt === undefined || entry.resetsAt > now));
 }
 
-// What is left of a window and when it resets: { text: "5h 62% · 4.2h", title: "5h limit: 62% left, resets in 4.2h" }.
+// What is left of a window and when it resets: { text: "62% · 4.2h", title: "5h limit: 62% left, resets in 4.2h" }.
 export function limitText(entry, now) {
   const left = num(Math.max(0, 100 - entry.usedPercent));
   const reset = entry.resetsAt ? duration(entry.resetsAt - now) : '';
-  return { left, reset, text: `${entry.label} ${left}%${reset ? ` · ${reset}` : ''}` };
+  return { left, reset, text: `${left}%${reset ? ` · ${reset}` : ''}` };
 }
 
 // ── Tool calls ──

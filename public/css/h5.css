@@ -10,6 +10,7 @@
   --h5-accent: #70a5ff;
   --h5-pressed: #245997;
   --h5-danger: #ff7b72;
+  --h5-drawer-width: min(78vw, calc(var(--h5-max-width) * .78));
   --h5-max-width: 480px; /* keeps phone portrait proportions when the page is opened on a computer */
 }
 * { box-sizing: border-box; }
@@ -193,3 +194,12 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; c
 .vo-cancel.active { background: #e5484d; color: #fff; }
 .vo-arc { position: absolute; left: -10%; right: -10%; bottom: 0; height: 17vh; display: flex; align-items: flex-start; justify-content: center; padding-top: 26px; border-radius: 50% 50% 0 0 / 38px 38px 0 0; background: #8a8a8d; color: #111; font-size: 17px; transition: background .12s; }
 .vo-overlay:not([data-zone="send"]) .vo-arc { background: #3a3a3c; color: #aaa; }
+
+/* The task drawer reveals the left edge of the conversation as it slides right. Settings stay full width. */
+#h5-tasks > .h5-sheet-panel { position: relative; width: var(--h5-drawer-width); z-index: 1; }
+.h5-task-backdrop { position: absolute; inset: 0 0 0 var(--h5-drawer-width); border: 0; padding: 0; background: rgba(0, 0, 0, .3); }
+.h5-app, .h5-agent { transition: transform .25s ease-out, border-radius .25s ease-out; }
+body.h5-tasks-open .h5-app, body.h5-tasks-open .h5-agent { transform: translateX(var(--h5-drawer-width)); }
+body.h5-tasks-open .h5-app { border-radius: 28px 0 0 28px; overflow: hidden; }
+body.h5-tasks-open .h5-agent { border-bottom-left-radius: 28px; overflow: hidden; }
+@media (prefers-reduced-motion: reduce) { .h5-app, .h5-agent { transition: none; } }

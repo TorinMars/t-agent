@@ -266,9 +266,9 @@ test('durations use a single unit with at most one decimal, and percentages drop
   assert.deepEqual([30000, 0.5 * 60000, 35 * 60000, 59.96 * 60000, 1 * H, 1.5 * H, 4.2 * H, 23.4 * H, 24 * H, 60 * H, 166.9 * H].map(duration), ['<1m', '<1m', '35m', '60m', '1h', '1.5h', '4.2h', '23.4h', '1d', '2.5d', '7d']);
   assert.deepEqual([2, 4.25, 4.2, 62.5, 0, 99.96].map(num), ['2', '4.3', '4.2', '62.5', '0', '100']);
   const now = 1000000;
-  assert.deepEqual(limitText({ label: '5h', usedPercent: 37.5, resetsAt: now + 4.2 * H }, now), { left: '62.5', reset: '4.2h', text: '5h 62.5% · 4.2h' });
-  assert.equal(limitText({ label: '7d', usedPercent: 20, resetsAt: now + 3.5 * 24 * H }, now).text, '7d 80% · 3.5d');
-  assert.equal(limitText({ label: '5h', usedPercent: 120, resetsAt: null }, now).text, '5h 0%', 'over the limit is 0% left, and no reset time is not invented');
+  assert.deepEqual(limitText({ label: '5h', usedPercent: 37.5, resetsAt: now + 4.2 * H }, now), { left: '62.5', reset: '4.2h', text: '62.5% · 4.2h' });
+  assert.equal(limitText({ label: '7d', usedPercent: 20, resetsAt: now + 3.5 * 24 * H }, now).text, '80% · 3.5d');
+  assert.equal(limitText({ label: '5h', usedPercent: 120, resetsAt: null }, now).text, '0%', 'over the limit is 0% left, and no reset time is not invented');
   assert.deepEqual(visibleLimits([{ id: 'a', resetsAt: now - 1 }, { id: 'b', resetsAt: now + 1 }, { id: 'c', resetsAt: null }, { id: 'd' }], now).map(entry => entry.id), ['b', 'c', 'd'], 'a window that has reset is not shown');
   assert.deepEqual(visibleLimits(undefined, now), []);
   assert.deepEqual(['claude-sonnet-5-5', 'claude-opus-4-1-20250805', 'sonnet', 'gpt-6.1-sol', '', undefined].map(modelName), ['Sonnet 5.5', 'Opus 4.1', 'Sonnet', 'gpt-6.1-sol', '', '']);

@@ -301,6 +301,22 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     assert.equal(await page.locator('.h5-header').evaluate(el => el === document.elementFromPoint(el.getBoundingClientRect().x + 20, el.getBoundingClientRect().y + 20) || el.contains(document.elementFromPoint(el.getBoundingClientRect().x + 20, el.getBoundingClientRect().y + 20))), true, 'the header is not covered by the chat');
     assert.equal(await page.locator('#h5-agent .ac-text strong').textContent(), 'there');
     assert.ok(calls.includes('POST /api/tasks/1/agent/conversations'));
+    // The task drawer leaves the conversation visible on the right, without resizing it.
+    await page.locator('#h5-open-tasks').tap();
+    await page.waitForTimeout(300);
+    const drawer = await page.locator('#h5-tasks > .h5-sheet-panel').boundingBox();
+    const shiftedChat = await page.locator('#h5-agent').boundingBox();
+    assert.ok(drawer.width > 390 * .7 && drawer.width < 390 * .85, 'the sidebar leaves room for the conversation');
+    assert.ok(Math.abs(shiftedChat.x - drawer.width) < 1, 'the conversation begins at the sidebar edge');
+    assert.equal(shiftedChat.width, chatBox.width, 'the conversation keeps its original width');
+    assert.equal(await page.locator('#h5-agent').evaluate(node => node.inert), true);
+    await page.screenshot({ path: '/tmp/t-agent-sidebar-open.png' });
+    await page.locator('#h5-task-backdrop').tap();
+    await page.locator('#h5-tasks').waitFor({ state: 'hidden' });
+    assert.equal(await page.locator('#h5-agent').evaluate(node => node.inert), false);
+    assert.equal(await page.locator('#h5-open-tasks').getAttribute('aria-expanded'), 'false');
+    assert.equal(Math.round((await page.locator('#h5-agent').boundingBox()).x), 0);
+
     // The open chat is kept by the server: a refresh brings it back, and the back button means the person is done with it.
     const openOnServer = () => chats[0] && chats[0].opened.h5;
     await pollUntil(() => openOnServer() > 0);
@@ -540,6 +556,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     const sheetBox = await wide.page.locator('#h5-tasks').boundingBox();
     assert.deepEqual([sheetBox.width, sheetBox.x], [480, 480]);
     await openTask(wide.page, 'Fix login', 'click');
+    await wide.page.locator('#h5-tasks').waitFor({ state: 'hidden' });
     const appBox = await wide.page.locator('#h5-app').boundingBox();
     assert.deepEqual([appBox.width, appBox.x], [480, 480]);
     assert.equal(await wide.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);

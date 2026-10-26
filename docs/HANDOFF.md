@@ -123,3 +123,11 @@ For the Claude / developer taking over: read `AGENTS.md` (development and releas
 - Enabled: prepares message text through the Client's existing `/api/translate` before sending, steering or queueing, including remote chats. Disabled: sends the original text. Attachments are unchanged. Translation failures preserve the draft; duplicate submission is locked out, and closing the chat during translation prevents sending.
 - Reuses terminal translation settings and the existing Chinese-to-English service (4,000-character limit); no live provider call was made. Switch state resets when the chat is closed or reloaded.
 - Verification: targeted 46 tests and the chat browser regression passed; desktop and phone layouts inspected. Full regression: `node --test --test-concurrency=2` passed all 582 tests (including browser scripts). Syntax and diff checks passed. Merged with v2.84.18 before release; both features are retained. Post-merge targeted tests (46), chat browser and tabs restoration passed. The phone browser test first hit a transient null bounding box in the existing chat-icon assertion, then passed on an isolated retry.
+
+
+## Usage, notifications and phone sidebar release
+
+- Worktree `t-agent-worktrees/usage-notifications-sidebar`, branch `feat/usage-notifications-sidebar`, based on v2.84.29.
+- Source changes remove visible usage window labels, suppress notifications on visible pages, and reveal part of the main conversation beside the 78%-width phone task drawer. Backdrop, close button and Escape dismiss the drawer.
+- v2.84.30: the user authorized push and upgrade after initially deferring builds. The chat bundle was rebuilt. Full verification (`npm test -- --test-concurrency=2`) passed all 608 tests; syntax and diff checks passed. The live checkout is `/Users/torin/Documents/torin/t-agent`, outside this workspace, and has not been modified.
+- Focused checks: 44 notification, chat-view and i18n tests passed; JavaScript syntax and diff checks passed. The phone browser regression passed, including drawer width, conversation position, backdrop dismissal and the centered desktop-width phone layout. Screenshot inspected at `/tmp/t-agent-sidebar-open.png`. The first run caught an existing layout assertion reading before the closing animation ended; the assertion now waits for the drawer to close.

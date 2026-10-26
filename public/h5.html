@@ -27,7 +27,7 @@
 <body>
   <div class="h5-app" id="h5-app">
     <header class="h5-header">
-      <button type="button" class="h5-task-button" id="h5-open-tasks" aria-haspopup="dialog" aria-controls="h5-tasks">
+      <button type="button" class="h5-task-button" id="h5-open-tasks" aria-expanded="false" aria-haspopup="dialog" aria-controls="h5-tasks">
         <span class="h5-menu-icon" aria-hidden="true">☰</span>
         <span class="h5-task-text">
           <span class="h5-task-name" id="h5-task-name">Choose a task</span>
@@ -74,6 +74,7 @@
   </div>
 
   <div class="h5-sheet" id="h5-tasks" role="dialog" aria-modal="true" aria-labelledby="h5-tasks-title" aria-hidden="true">
+   <button type="button" class="h5-task-backdrop" id="h5-task-backdrop" aria-label="Close" tabindex="-1"></button>
    <div class="h5-sheet-panel">
     <div class="h5-sheet-header">
       <h2 id="h5-tasks-title">Tasks</h2>

@@ -297,8 +297,13 @@
 
   function openTasks() {
     expandedId = task ? task.id : null; // the sheet opens with the sessions of the task that is shown, as before
+    document.body.classList.add('h5-tasks-open');
+    $('h5-open-tasks').setAttribute('aria-expanded', 'true');
+    $('h5-app').inert = true;
+    $('h5-agent').inert = true;
     sheet.classList.add('open');
     sheet.setAttribute('aria-hidden', 'false');
+    $('h5-close-tasks').focus({ preventScroll: true });
     renderTasks();
     void loadTasks();
     void refreshTerminals();
@@ -325,6 +330,11 @@
   function closeTasks() {
     clearInterval(namesTimer);
     sheet.classList.remove('open');
+    document.body.classList.remove('h5-tasks-open');
+    $('h5-open-tasks').setAttribute('aria-expanded', 'false');
+    $('h5-app').inert = false;
+    $('h5-agent').inert = false;
+    if (sheet.contains(document.activeElement)) $('h5-open-tasks').focus({ preventScroll: true });
     sheet.setAttribute('aria-hidden', 'true');
   }
 
@@ -424,6 +434,8 @@
 
   $('h5-open-tasks').addEventListener('click', openTasks);
   $('h5-close-tasks').addEventListener('click', closeTasks);
+  $('h5-task-backdrop').addEventListener('click', closeTasks);
+  sheet.addEventListener('keydown', event => { if (event.key === 'Escape') closeTasks(); });
   engineSelect.addEventListener('change', () => {
     hideAgent();
     source = sources.find(item => item.key === engineSelect.value) || LOCAL;

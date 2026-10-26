@@ -111,11 +111,12 @@ const server = http.createServer(app);
     await page.addInitScript(() => {
       // The page's speech model (voice-input.js) is replaced by a fake with the same attach() contract: a click toggles the recording, the
       // text goes into the textarea it was given (and an input event), and the button gets the class "listening" while it records.
-      // Notifications: the page is "away" when window.away is set; the notifications the page makes are collected.
+      // Notifications: the page is hidden when window.away is set; the notifications the page makes are collected.
       window.away = false;
       window.notes = [];
       window.opened = [];
       window.Notification = class { static permission = 'granted'; static requestPermission() { return Promise.resolve('granted'); } constructor(title, options) { this.title = title; this.options = options; window.notes.push(this); } close() {} };
+      Object.defineProperty(document, 'hidden', { configurable: true, get: () => window.away });
       document.hasFocus = () => !window.away;
       window.voice = { attached: 0, started: 0, stopped: 0, textarea: null, base: '' };
       window.SpeechRecognition = class { start() { window.voice.browser = true; } };
@@ -164,7 +165,7 @@ const server = http.createServer(app);
     // The ring says how much of the context window is used, and changes colour as it fills.
     assert.equal(await page.locator('.ac-context').getAttribute('aria-label'), 'Context: 21% used (42k of 200k tokens)');
     // What is left of the plan windows and when they reset: one unit, decimals allowed.
-    assert.deepEqual(await page.locator('.ac-limit').allTextContents(), ['5h 62.5% · 4.2h', '7d 80% · 3.5d']);
+    assert.deepEqual(await page.locator('.ac-limit').allTextContents(), ['62.5% · 4.2h', '80% · 3.5d']);
     assert.equal(await page.locator('.ac-limit').first().getAttribute('title'), '5h limit: 62.5% left, resets in 4.2h');
     // The composer icons keep a real size (they were specks on an iPhone).
     for (const selector of ['.ac-attach svg', '.ac-mic svg']) {
@@ -282,7 +283,7 @@ const server = http.createServer(app);
     assert.equal(await page.evaluate(() => notes.length), 0, 'no notification while the person is looking at the chat, nor for the turns that were stopped');
     await page.getByLabel('Collapse the input box').click();
     assert.equal(await page.getByLabel('Expand the input box').getAttribute('aria-pressed'), 'false');
-    await page.evaluate(() => { window.away = true; }); // the next turn ends while the person is in another window
+    await page.evaluate(() => { window.away = true; }); // the next turn ends while the app page is hidden
     await page.fill('.ac-input', 'queued plain');
     await page.keyboard.press('Enter');
     for (let i = 0; i < 100 && received.at(-1).text !== 'queued plain'; i += 1) await page.waitForTimeout(50);

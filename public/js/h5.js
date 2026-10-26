@@ -719,6 +719,7 @@
     const s = { term, fit, el, ws: null, timer: null, attempts: 0, paused: false, disposed: false, task, terminalId, source };
     session = s;
     term.onData(data => send(s, withModifiers(data)));
+    TerminalIme.attach(term, data => send(s, withModifiers(data))); // the Apple Chinese keyboard's spaces and punctuation, which xterm drops
     term.onResize(() => { if (!s.paused) sendResize(s); });
     let cursorFrame = 0;
     term.onCursorMove(() => { // the cursor decides how far the terminal is shifted while the keyboard is open

@@ -413,6 +413,16 @@ test('Claude: the chosen model and effort go to the SDK, the model list comes fr
   ]);
   assert.equal(closed, true);
 
+  const usageSdk = usage => ({ query: () => ({ usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: async options => { assert.equal(options.skipBehaviors, true); return usage; }, close() {} }) });
+  assert.deepEqual(await claude.loadLimits({ deps: { loadSdk: async () => usageSdk({ rate_limits_available: true, rate_limits: {
+    five_hour: { utilization: 66, resets_at: '2026-10-26T14:00:00+00:00' }, seven_day: { utilization: 29, resets_at: null }, seven_day_sonnet: { utilization: 5, resets_at: null }, other: { utilization: 1 },
+  } }), executable: undefined } }), [
+    { id: '5h', label: '5h', usedPercent: 66, resetsAt: Date.parse('2026-10-26T14:00:00+00:00') },
+    { id: '7d', label: '7d', usedPercent: 29, resetsAt: null },
+  ], 'the plan windows come as percents with their reset times');
+  assert.deepEqual(await claude.loadLimits({ deps: { loadSdk: async () => usageSdk({ rate_limits_available: false, rate_limits: null }), executable: undefined } }), [], 'an API-key account has no plan limits');
+  assert.deepEqual(await claude.loadLimits({ deps: { loadSdk: async () => ({ query: () => ({ close() {} }) }), executable: undefined } }), [], 'an SDK without the usage call gives none');
+
   const meta = [];
   const normalizer = claude.createNormalizer({ upsert() {}, append() {}, getItem() {}, setSession() {}, setMeta: value => meta.push(value) });
   normalizer.handle({ type: 'rate_limit_event', rate_limit_info: { status: 'allowed', rateLimitType: 'five_hour', utilization: 0.42, resetsAt: 1000 } });

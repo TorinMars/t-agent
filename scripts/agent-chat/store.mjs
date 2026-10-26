@@ -100,6 +100,15 @@ export function createChatStore({ api, base, conversation, notify = () => {}, Ev
     }
   }
 
+  // Translation always uses the Client, including when this conversation belongs to a remote Engine.
+  async function prepareMessage(body, translate) {
+    if (!translate || !body.text) return body;
+    const result = await api.post('/api/translate', { text: body.text });
+    if (disposed) return null;
+    if (typeof result?.text !== 'string' || !result.text.trim()) throw new Error('Translation result is empty');
+    return { ...body, text: result.text };
+  }
+
   // Resolves to true when the server took the message.
   async function send(body) {
     try {
@@ -197,7 +206,7 @@ export function createChatStore({ api, base, conversation, notify = () => {}, Ev
   return {
     getState: () => state,
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
-    load, send, stop, answer, setMode, loadModels, choose, rename, enqueue, unqueue, sendQueued, apply,
+    prepareMessage, load, send, stop, answer, setMode, loadModels, choose, rename, enqueue, unqueue, sendQueued, apply,
     destroy() {
       disposed = true;
       clearTimeout(retry);

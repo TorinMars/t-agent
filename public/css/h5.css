@@ -108,7 +108,8 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; c
 .h5-terminal-main { display: flex; align-items: center; gap: 8px; }
 .h5-terminal-icon { flex: 0 0 22px; text-align: center; font: 600 13px/1 Menlo, Monaco, monospace; color: var(--h5-muted); }
 .h5-terminal-icon.claude { color: #d97757; font-size: 16px; }
-.h5-terminal-icon.codex { color: #6cb6ff; font-size: 16px; }
+.h5-terminal-icon.codex { color: inherit; font-size: 16px; }
+.h5-terminal-icon .agent-logo { width: 16px; height: 16px; margin: 0 auto; }
 .h5-terminal-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .h5-terminal-more { flex: 0 0 44px; font-size: 18px; line-height: 1; }
 .h5-terminal-row button[aria-current="true"] { background: var(--h5-pressed); border-color: var(--h5-accent); color: #fff; }

@@ -150,7 +150,7 @@ const server = http.createServer(app);
     assert.equal(choices[0].conversation.title, 'clean the build');
     // Codex: a question with an "Other…" answer, "Allow for this session", and input sent while the turn runs.
     await page.evaluate(() => { view.destroy(); return openChat('codex', null); });
-    assert.equal(await page.locator('.ac-badge').textContent(), '◎');
+    assert.equal(await page.locator('.ac-badge svg.agent-logo path').count(), 1, 'Codex shows the OpenAI logo');
     assert.deepEqual(await page.locator('.ac-mode option').allTextContents(), ['Read-only', 'Workspace write', 'Full access']);
     await page.fill('.ac-input', 'start');
     await page.click('.ac-send');

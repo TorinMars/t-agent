@@ -238,6 +238,13 @@ function Composer({ store, state, agent, notify, inputRef }) {
   );
 }
 
+// The agent's mark (Claude's glyph, the OpenAI logo for Codex) is drawn by agent-chat.js, which the pages load before this bundle.
+function AgentIcon({ agent }) {
+  const ref = useRef(null);
+  useEffect(() => { if (ref.current && typeof AgentChat !== 'undefined') ref.current.replaceChildren(AgentChat.icon(agent)); }, [agent]);
+  return <span ref={ref} className={`ac-badge ${agent}`} aria-hidden="true" />;
+}
+
 // ── The view ──
 export const Chat = React.forwardRef(function Chat({ store, agent, conversation, onClose, notify }, ref) {
   const state = useSyncExternalStore(store.subscribe, store.getState);
@@ -262,7 +269,7 @@ export const Chat = React.forwardRef(function Chat({ store, agent, conversation,
     <section className="agent-chat" aria-label={t(`${agent.label} chat`)} translate="no">
       <header className="ac-head">
         <button type="button" className="ac-back" aria-label={t('Close chat')} onClick={() => onClose && onClose()}>←</button>
-        <span className={`ac-badge ${conversation.agent}`} aria-hidden="true">{conversation.agent === 'codex' ? '◎' : '✳'}</span>
+        <AgentIcon agent={conversation.agent} />
         <span className="ac-title">{state.title}</span>
         <select className="ac-mode" aria-label={t('Access level')} value={state.mode} onChange={changeMode}>
           {agent.modes.map(([value, label]) => <option key={value} value={value}>{t(label)}</option>)}

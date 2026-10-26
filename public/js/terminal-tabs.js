@@ -143,7 +143,8 @@ const TerminalTabs = (() => {
         const badge = document.createElement('span');
         badge.className = `agent-tab-badge ${chat.agent}`;
         badge.setAttribute('aria-hidden', 'true');
-        badge.textContent = chat.agent === 'codex' ? '◎' : '✳';
+        // AgentChat (agent-chat.js) loads after this script; it draws the agent's logo.
+        badge.append(typeof AgentChat !== 'undefined' ? AgentChat.icon(chat.agent) : document.createTextNode(chat.agent === 'codex' ? 'GPT' : '\u2733'));
         const label = document.createElement('span');
         label.translate = false;
         label.textContent = chat.title;

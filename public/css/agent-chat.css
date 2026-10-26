@@ -112,6 +112,8 @@
 .ac-box:focus-within { border-color: var(--ac-muted); }
 .ac-input { box-sizing: border-box; flex: 1 1 auto; min-width: 0; min-height: 36px; max-height: 200px; padding: 7px 4px; border: 0; background: none; color: inherit; resize: none; font: inherit; font-size: 16px; line-height: 1.4; }
 .ac-input:focus { outline: none; }
+/* The themes style every textarea with a rule of higher specificity (:root[data-theme] textarea); in the composer it stays part of the box. */
+.agent-chat .ac-box .ac-input { border: 0; background: transparent; }
 .ac-input::placeholder { color: var(--ac-muted); }
 .ac-attach, .ac-send, .ac-stop, .ac-mic { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; border: 0; border-radius: 50%; background: none; color: var(--ac-muted); cursor: pointer; }
 .ac-attach:hover, .ac-mic:hover { background: var(--ac-key); color: var(--ac-text); }

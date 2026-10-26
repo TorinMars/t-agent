@@ -85,7 +85,7 @@ app.use(express.json());
 app.use('/api/tasks/:id/agent', createAgentChatRouter({ service: chat, authenticate: (req, res, next) => { req.session = { user: { login: 'owner' } }; next(); } }));
 app.use(express.static(path.join(root, 'public')));
 app.get('/harness', (req, res) => res.type('html').send(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="stylesheet" href="/css/agent-chat.css"><style>html,body,#host{height:100%;margin:0}</style><div id="host"></div>
+<link rel="stylesheet" href="/css/agent-chat.css"><link rel="stylesheet" href="/css/themes.css"><style>html,body,#host{height:100%;margin:0}</style><div id="host"></div>
 <script src="/js/agent-chat.js"></script>
 <script>
 const call = (method, url, body) => fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) })
@@ -108,6 +108,12 @@ const server = http.createServer(app);
     await page.goto(`${origin}/harness`);
     await page.evaluate(() => openChat('claude', null));
     await page.waitForSelector('.agent-chat');
+    // The themes style every textarea (the tech theme gives it a background and a border colour); the one of the composer stays part of the box.
+    for (const theme of ['tech', 'dark']) {
+      await page.evaluate(name => { document.documentElement.dataset.theme = name; }, theme);
+      assert.deepEqual(await page.locator('.ac-input').evaluate(node => { const style = getComputedStyle(node); return [style.backgroundColor, style.borderTopWidth]; }), ['rgba(0, 0, 0, 0)', '0px'], `${theme} theme`);
+    }
+    await page.evaluate(() => { delete document.documentElement.dataset.theme; });
     assert.equal(await page.locator('.ac-badge').textContent(), '✳');
     assert.deepEqual(await page.locator('.ac-mode option').allTextContents(), ['Ask before changes', 'Accept edits', 'Plan only', 'Full access (no prompts)']);
 

@@ -1208,4 +1208,8 @@ I18n.add({
   "Speech recognition did not finish in time": "语音识别未能及时完成",
   "Speech recognition failed:": "语音识别失败：",
   "Speech recognition failed: {1}": "语音识别失败：{1}",
+  "This terminal is in use on another device.": "此终端正在其他设备上使用。",
+  "This terminal is now used by another device.": "此终端已被其他设备接管。",
+  "Use this terminal here": "在此设备使用此终端",
+  "This task has no terminal yet": "此任务还没有终端",
 });

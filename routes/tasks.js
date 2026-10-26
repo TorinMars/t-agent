@@ -201,13 +201,13 @@ router.post('/:id/terminal/ack', (req, res) => {
 router.get('/:id/terminals', (req, res) => {
   const task = db.prepare('SELECT id FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, ownerFilter(req));
   if (!task) return res.status(404).json({ error: 'TASK_NOT_FOUND' });
-  res.status(200).json(terminal.listTerminals(task.id, req.query.surface));
+  res.status(200).json(terminal.listTerminals(task.id));
 });
 
 router.post('/:id/terminals', (req, res) => {
   const task = db.prepare('SELECT id FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, ownerFilter(req));
   if (!task) return res.status(404).json({ error: 'TASK_NOT_FOUND' });
-  try { res.status(201).json(terminal.createTerminal(task.id, req.query.surface, req.body)); }
+  try { res.status(201).json(terminal.createTerminal(task.id, req.body)); }
   catch (error) { res.status(error.statusCode || 400).json({ error: error.message || 'TERMINAL_CREATE_FAILED' }); }
 });
 

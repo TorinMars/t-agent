@@ -1,10 +1,9 @@
-// Phone page (/h5): tasks, phone terminals, image upload and translate-and-send. It shares no state with the desktop page.
-// Phone terminals are separate shells (ids start with "h5-"), so a phone never resizes, replaces or reads a desktop terminal.
+// Phone page (/h5): tasks, terminals, image upload and translate-and-send. It shares the task terminals with the desktop page;
+// only one client at a time is attached to a terminal, and the other one can take it over with a button.
 (() => {
   const $ = id => document.getElementById(id);
   const tell = (message, type = 'info') => notify(message, type);
   const tr = text => (typeof I18n !== 'undefined' ? I18n.t(text) : text);
-  const PHONE_TERMINAL = /^h5-/;
   const SUBMIT_DELAY_MS = 120; // same as the desktop: type the text first, then Enter, so a TUI does not see a pasted newline
   const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
   const DEFAULT_GROUPS = [
@@ -225,7 +224,7 @@
     const current = task;
     if (!current || !terminals.some(row => row.agent)) return;
     let rows;
-    try { rows = await api('GET', `${source.tasksBase}/${current.id}/terminals?surface=h5`); } catch { return; }
+    try { rows = await api('GET', `${source.tasksBase}/${current.id}/terminals`); } catch { return; }
     if (current !== task || !Array.isArray(rows)) return;
     const fresh = new Map(rows.map(row => [row.terminal_id, row]));
     let changed = false;
@@ -389,12 +388,11 @@
     const current = task;
     showEmpty('Loading…');
     let rows;
-    try { rows = await api('GET', `${source.tasksBase}/${current.id}/terminals?surface=h5`); }
+    try { rows = await api('GET', `${source.tasksBase}/${current.id}/terminals`); }
     catch (error) { if (current === task) showEmpty(`Could not load terminals: ${error.message}`); return; }
     if (current !== task) return;
-    // An engine that ignores surface=h5 returns desktop terminals; never attach to those.
-    terminals = (Array.isArray(rows) ? rows : []).filter(row => PHONE_TERMINAL.test(row.terminal_id));
-    if (!terminals.length) { showEmpty('This engine does not support phone terminals yet. Please upgrade it'); return; }
+    terminals = Array.isArray(rows) ? rows : [];
+    if (!terminals.length) { showEmpty('This task has no terminal yet'); return; }
     const saved = store.get(`terminal:${source.key}:${current.id}`);
     terminalId = terminals.some(row => row.terminal_id === saved) ? saved : terminals[0].terminal_id;
     renderTabs();
@@ -675,8 +673,8 @@
     if (!task) return;
     const current = task;
     try {
-      const row = await api('POST', `${source.tasksBase}/${current.id}/terminals?surface=h5`, options);
-      if (!row || !PHONE_TERMINAL.test(row.terminal_id)) throw new Error('This engine does not support phone terminals yet. Please upgrade it');
+      const row = await api('POST', `${source.tasksBase}/${current.id}/terminals`, options);
+      if (!row || !row.terminal_id) throw new Error('The engine returned no terminal');
       if (current !== task) return;
       terminals.push(row);
       terminalId = row.terminal_id;
@@ -768,9 +766,9 @@
     s.el.addEventListener('touchcancel', () => { touch = null; }, { passive: true });
   }
 
-  function open(s) {
+  function open(s, takeover = false) {
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    const ws = new WebSocket(`${proto}://${location.host}${s.source.wsPath}?taskId=${s.task.id}&terminalId=${encodeURIComponent(s.terminalId)}`);
+    const ws = new WebSocket(`${proto}://${location.host}${s.source.wsPath}?taskId=${s.task.id}&terminalId=${encodeURIComponent(s.terminalId)}${TerminalOwner.query(takeover)}`);
     ws.binaryType = 'arraybuffer';
     s.ws = ws;
     ws.onopen = () => {
@@ -792,6 +790,10 @@
     ws.onclose = event => {
       if (s.ws !== ws || s.disposed) return;
       s.ws = null;
+      if (TerminalOwner.isBlocked(event.code)) {
+        TerminalOwner.prompt(s.el.parentElement || s.el, event.code, () => { if (session === s && !s.disposed) open(s, true); });
+        return;
+      }
       if (event.code === 1000 || event.code === 1008) {
         s.term.write(tr('\r\n[Terminal disconnected. Tap the terminal tab to reconnect]\r\n'));
         return;

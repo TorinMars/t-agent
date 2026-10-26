@@ -455,7 +455,7 @@ for (const method of ['get', 'post']) {
     if (!row) return res.status(404).json({ error: 'REMOTE_NOT_FOUND' });
     try {
       const result = await request(row.base_url,
-        `/v1/tasks/${encodeURIComponent(req.params.taskId)}/terminals${req.query.surface === 'h5' ? '?surface=h5' : ''}`,
+        `/v1/tasks/${encodeURIComponent(req.params.taskId)}/terminals`,
         decryptToken(row.token_cipher, config.sessionSecret),
         { method: method.toUpperCase(), ...(method === 'post' ? { body: terminalOptions(req.body) } : {}) });
       res.status(method === 'post' ? 201 : 200).json(result);

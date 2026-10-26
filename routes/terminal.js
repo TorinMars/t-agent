@@ -13,6 +13,9 @@ const { resolveTerminalUser, userCanEnter, terminalEnvFor } = require('../lib/te
 
 // Sessions are keyed by task ID and terminal ID; omitted IDs use the legacy shell.
 const sessions = new Map();
+// Close codes the browser uses to tell "someone else is using this terminal" from a lost connection.
+const TERMINAL_IN_USE_CLOSE = 4009;
+const TERMINAL_TAKEN_CLOSE = 4010;
 
 const MAX_BUFFER = 5 * 1024 * 1024;   // 5MB
 const FLUSH_INTERVAL = 5000;           // 5s
@@ -70,11 +73,8 @@ function assertTerminal(taskId, value) {
 
 const MAX_TERMINAL_TITLE = 40;
 
-// Phone (H5) terminals are separate shells whose ids start with "h5-": a phone never resizes,
-// replaces or lists a desktop terminal, and the desktop never sees phone terminals.
-const PHONE_TERMINAL_PREFIX = 'h5-';
-const PHONE_DEFAULT_TERMINAL = 'h5-default';
-const terminalSurface = value => (value === 'h5' ? 'h5' : 'web');
+// Phone (H5) and desktop share the same terminals; only one client at a time may be attached to each (see handleWs).
+// Terminals whose ids start with "h5-" were phone-only shells from earlier versions: they are no longer listed.
 
 // Agent terminals show the name of their session, read from the agent's own files on every listing so a rename done inside Claude / Codex follows.
 // A Codex session only gets an id once it has a first message, so it is bound here: the oldest unbound Codex terminal takes the oldest unclaimed
@@ -104,13 +104,7 @@ function withAgentSessions(taskId, rows) {
   });
 }
 
-function listTerminals(taskId, surface = 'web') {
-  if (terminalSurface(surface) === 'h5') {
-    db.prepare("INSERT OR IGNORE INTO task_terminals (task_id, terminal_id, title) VALUES (?, ?, 'Terminal 1')").run(taskId, PHONE_DEFAULT_TERMINAL);
-    return withAgentSessions(taskId, db.prepare(
-      "SELECT terminal_id, title FROM task_terminals WHERE task_id = ? AND substr(terminal_id, 1, 3) = 'h5-' ORDER BY rowid"
-    ).all(taskId));
-  }
+function listTerminals(taskId) {
   const stored = db.prepare('SELECT title FROM task_default_terminal_titles WHERE task_id = ?').get(taskId);
   return withAgentSessions(taskId, [{ terminal_id: 'default', title: stored ? stored.title : 'Terminal 1' }, ...db.prepare(
     "SELECT terminal_id, title FROM task_terminals WHERE task_id = ? AND substr(terminal_id, 1, 3) != 'h5-' ORDER BY rowid"
@@ -121,9 +115,8 @@ function listTerminals(taskId, surface = 'web') {
 const pendingStartup = new Map();
 const AGENT_LABELS = { claude: 'Claude', codex: 'Codex' };
 
-function createTerminal(taskId, surface = 'web', options = {}) {
-  const phone = terminalSurface(surface) === 'h5';
-  const id = (phone ? PHONE_TERMINAL_PREFIX : '') + require('crypto').randomUUID();
+function createTerminal(taskId, options = {}) {
+  const id = require('crypto').randomUUID();
   const agent = options && options.agent;
   let sessionId = options && options.session_id ? String(options.session_id) : null;
   let command = startupCommand(agent, sessionId);
@@ -131,7 +124,7 @@ function createTerminal(taskId, surface = 'web', options = {}) {
     sessionId = crypto.randomUUID();
     command = newClaudeCommand(sessionId);
   }
-  const count = listTerminals(taskId, surface).length + 1;
+  const count = listTerminals(taskId).length + 1;
   const title = command ? `${AGENT_LABELS[agent]} ${count}` : `Terminal ${count}`;
   if (command) pendingStartup.set(sessionKey(taskId, id), command);
   db.prepare('INSERT INTO task_terminals (task_id, terminal_id, title, agent, agent_session_id, agent_started_at) VALUES (?, ?, ?, ?, ?, ?)')
@@ -351,7 +344,7 @@ function controlSession(taskId, action, requestedTerminalId) {
   }
 
   const selectedId = assertTerminal(id, requestedTerminalId);
-  if (action === 'delete' && (selectedId === 'default' || selectedId === PHONE_DEFAULT_TERMINAL)) {
+  if (action === 'delete' && selectedId === 'default') {
     throw Object.assign(new Error('DEFAULT_TERMINAL_CANNOT_DELETE'), { statusCode: 400 });
   }
   const key = sessionKey(id, selectedId);
@@ -423,11 +416,21 @@ function handleWs(ws, req, sessionUser, requestedTaskId = null, requestedTermina
     return;
   }
 
-  // Disconnect the old connection (the old ws of the same task)
+  // One client owns a terminal at a time. A different client is refused until it asks to take over;
+  // the same client (page refresh, reconnect after a dropped network) simply replaces its old socket.
+  const query = new URL(req.url, 'http://x').searchParams;
+  const clientId = (query.get('clientId') || '').slice(0, 64);
+  const takeover = query.get('takeover') === '1';
   if (s.ws && s.ws.readyState === 1) {
-    s.ws.close(1000, 'replaced by new connection');
+    const sameClient = Boolean(clientId) && s.wsClientId === clientId;
+    if (!sameClient && !takeover) {
+      ws.close(TERMINAL_IN_USE_CLOSE, 'terminal in use');
+      return;
+    }
+    s.ws.close(sameClient ? 1000 : TERMINAL_TAKEN_CLOSE, sameClient ? 'replaced by new connection' : 'terminal taken over');
   }
   s.ws = ws;
+  s.wsClientId = clientId;
 
   s.ready = false;
   const archive = createHistoryArchive(s.buffer);
@@ -517,7 +520,7 @@ function acknowledgeActivity(taskId, requestedTerminalId) {
 }
 
 function closeTaskTerminals(taskId) {
-  // Phone terminals are read directly so closing never creates the default phone terminal.
+  // Legacy phone-only shells are not listed any more, but one may still be running.
   const phone = db.prepare("SELECT terminal_id FROM task_terminals WHERE task_id = ? AND substr(terminal_id, 1, 3) = 'h5-'").all(taskId);
   for (const item of [...listTerminals(taskId), ...phone]) controlSession(taskId, 'close', item.terminal_id);
 }

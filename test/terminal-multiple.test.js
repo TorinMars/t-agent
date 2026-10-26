@@ -45,7 +45,7 @@ class Socket extends EventEmitter {
 const task = tasks.createTask('owner', { title: 'multiple' });
 function connect(id, owner = 'owner') {
   const ws = new Socket();
-  terminal.handleWs(ws, { url: `/terminal/ws?taskId=${task.id}&terminalId=${id}` }, { login: owner });
+  terminal.handleWs(ws, { url: `/terminal/ws?taskId=${task.id}&terminalId=${id}&clientId=test` }, { login: owner });
   return ws;
 }
 test.after(() => {
@@ -201,37 +201,45 @@ test('restoring history from a dead PTY switches off the mouse modes it left ena
   assert.ok(persisted.endsWith('\x1b[?1003l\x1b[?1004l\x1b[?1005l\x1b[?1006l\x1b[?1015l\x1b[?1016l\x1b[?25h'), 'the reset is stored so later replays stay clean');
 });
 
-test('phone terminals are separate shells that never resize or replace desktop terminals', async () => {
-  const other = tasks.createTask('owner', { title: 'phone and desktop' });
-  const ids = surface => JSON.parse(JSON.stringify(terminal.listTerminals(other.id, surface))).map(row => row.terminal_id);
-  const open = id => {
+test('a second client is refused until it takes over; the same client replaces its own socket', async () => {
+  const other = tasks.createTask('owner', { title: 'single owner' });
+  const open = query => {
     const ws = new Socket();
-    terminal.handleWs(ws, { url: `/terminal/ws?taskId=${other.id}&terminalId=${id}` }, { login: 'owner' });
+    terminal.handleWs(ws, { url: `/terminal/ws?taskId=${other.id}&terminalId=default${query}` }, { login: 'owner' });
     return ws;
   };
-  assert.deepEqual(JSON.parse(JSON.stringify(terminal.listTerminals(other.id, 'h5'))), [{ terminal_id: 'h5-default', title: 'Terminal 1' }]);
-  assert.deepEqual(ids(), ['default']);
-  assert.throws(() => terminal.controlSession(other.id, 'delete', 'h5-default'), /DEFAULT_TERMINAL_CANNOT_DELETE/, 'the phone default terminal would only be recreated, so it cannot be deleted');
-  const phoneExtra = terminal.createTerminal(other.id, 'h5');
-  const desktopExtra = terminal.createTerminal(other.id);
-  assert.match(phoneExtra.terminal_id, /^h5-/);
-  assert.equal(phoneExtra.title, 'Terminal 2');
-  assert.doesNotMatch(desktopExtra.terminal_id, /^h5-/);
-  assert.deepEqual(ids('h5'), ['h5-default', phoneExtra.terminal_id]);
-  assert.deepEqual(ids(), ['default', desktopExtra.terminal_id]);
-
   const before = shells.length;
-  const desktop = open('default');
-  const phone = open('h5-default');
-  assert.equal(shells.length, before + 2, 'the phone gets its own PTY');
-  await Promise.all([desktop.waitFor(1), phone.waitFor(1)]);
-  desktop.emit('message', JSON.stringify({ type: 'resize', cols: 160, rows: 48 }));
-  phone.emit('message', JSON.stringify({ type: 'resize', cols: 44, rows: 20 }));
-  phone.emit('message', 'phone command');
-  assert.equal(desktop.readyState, 1, 'opening the phone terminal leaves the desktop connected');
-  assert.deepEqual(Array.from(shells[before].size), [160, 48]);
-  assert.deepEqual(Array.from(shells[before + 1].size), [44, 20]);
-  assert.equal(shells[before].input.length, 0);
-  assert.deepEqual(Array.from(shells[before + 1].input), ['phone command']);
+  const pc = open('&clientId=pc');
+  await pc.waitFor(1);
+  assert.equal(shells.length, before + 1);
+
+  const phone = open('&clientId=phone');
+  assert.equal(phone.code, 4009, 'a different client is told the terminal is in use');
+  assert.equal(pc.readyState, 1, 'the owner stays connected');
+  assert.deepEqual(phone.sent, [], 'a refused client receives no terminal output');
+  phone.emit('message', 'ignored');
+  assert.deepEqual(shells[before].input, [], 'a refused client cannot type');
+
+  const reload = open('&clientId=pc');
+  assert.equal(pc.code, 1000, 'the same client replaces its old socket');
+  assert.equal(reload.readyState, 1);
+
+  const taken = open('&clientId=phone&takeover=1');
+  assert.equal(reload.code, 4010, 'the previous owner is told it was taken over');
+  await taken.waitFor(1);
+  taken.emit('message', 'phone command');
+  assert.deepEqual(shells[before].input, ['phone command']);
+  assert.equal(shells.length, before + 1, 'taking over keeps the same shell');
+
+  taken.close(1000, 'bye');
+  const again = open('&clientId=pc');
+  assert.equal(again.readyState, 1, 'a free terminal can be opened without taking over');
   terminal.closeTaskTerminals(other.id);
+});
+
+test('desktop and phone list and create the same terminals', () => {
+  const other = tasks.createTask('owner', { title: 'shared list' });
+  const added = terminal.createTerminal(other.id);
+  assert.doesNotMatch(added.terminal_id, /^h5-/);
+  assert.deepEqual(Array.from(terminal.listTerminals(other.id), row => row.terminal_id), ['default', added.terminal_id]);
 });

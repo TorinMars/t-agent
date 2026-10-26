@@ -47,7 +47,6 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     if (url.pathname === '/api/task-groups') return json([{ key: 'doing', name: 'In progress', sort_order: 1 }, { key: 'todo', name: 'To do', sort_order: 2 }]);
     if (url.pathname === '/api/remote-servers/7/tasks') return json([{ id: 9, title: 'Remote task', status: 'doing' }]);
     if (url.pathname === '/api/remote-servers/7/task-groups') return json([]);
-    // An old remote engine ignores surface=h5 and answers with its desktop terminals.
     if (url.pathname === '/api/remote-servers/7/tasks/9/terminals') return json([{ terminal_id: remoteChat ? 'h5-default' : 'default', title: 'Terminal 1' }]);
     if (url.pathname === '/api/remote-servers/7/info') return json({ capabilities: remoteChat ? ['agent-chat:manage'] : [] });
     if (url.pathname === '/api/tasks/1/terminals' && method === 'GET') return json([{ terminal_id: 'h5-default', title: 'Terminal 1' }]);
@@ -118,8 +117,8 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     await page.locator('#h5-close-tasks').tap();
     await page.locator('#h5-tasks').waitFor({ state: 'hidden' });
     await page.waitForFunction(() => window.sockets.length === 1 && window.sockets[0].readyState === 1);
-    assert.ok(calls.includes('GET /api/tasks/1/terminals?surface=h5'));
-    assert.equal(await page.evaluate(() => new URL(window.sockets[0].url).search), '?taskId=1&terminalId=h5-default');
+    assert.ok(calls.includes('GET /api/tasks/1/terminals'));
+    assert.match(await page.evaluate(() => new URL(window.sockets[0].url).search), /^\?taskId=1&terminalId=h5-default&clientId=[\w-]+$/);
     assert.equal(await page.evaluate(() => window.sockets[0].url.startsWith('ws://h5.test/terminal/ws')), true);
 
     // Saved screen first, then live input is allowed.
@@ -284,7 +283,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     await page.locator('#h5-term-menu-actions button', { hasText: 'New Terminal' }).tap();
     await page.locator('#h5-tasks').waitFor({ state: 'hidden' });
     await page.waitForFunction(() => window.sockets.length === 2);
-    assert.ok(calls.includes('POST /api/tasks/1/terminals?surface=h5'));
+    assert.ok(calls.includes('POST /api/tasks/1/terminals'));
     assert.equal(await page.evaluate(() => new URL(window.sockets[1].url).searchParams.get('terminalId')), 'h5-second');
     assert.equal(await page.evaluate(() => window.sockets[0].readyState), 3);
 
@@ -413,13 +412,13 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     assert.ok(cols < 70, `the terminal fits the 480px column (${cols} columns)`);
     await wide.context.close();
 
-    // An engine that does not know phone terminals is never attached to its desktop terminal.
+    // A remote engine's desktop terminal is the phone's terminal too (shared terminals).
     const old = await openPage(browser, { remoteTerminals: true });
     await old.page.locator('#h5-tasks').waitFor({ state: 'visible' });
     await old.page.locator('#h5-engine').selectOption('remote:7');
     await old.page.locator('.h5-task-item', { hasText: 'Remote task' }).tap();
-    await old.page.waitForFunction(() => document.getElementById('h5-empty').textContent.includes('does not support phone terminals'));
-    assert.equal(await old.page.evaluate(() => window.sockets.length), 0);
+    await old.page.waitForFunction(() => window.sockets.length === 1);
+    assert.match(await old.page.evaluate(() => new URL(window.sockets[0].url).search), /terminalId=default&clientId=/);
     await old.context.close();
     // Chat capability controls the phone menu, and opening a remote chat uses only remote URLs.
     for (const supported of [false, true]) {

@@ -96,8 +96,8 @@ const TerminalTabs = (() => {
       button.title = 'Double-click to rename';
       button.addEventListener('dblclick', () => beginRename(scope, row));
       button.addEventListener('keydown', event => { if (event.key === 'F2') { event.preventDefault(); beginRename(scope, row); } });
-      // Deleting a terminal happens from its tab: the default terminal cannot be deleted, the others get a × (or press Delete on the tab).
-      if (row.terminal_id !== 'default') {
+      // Deleting a terminal happens from its tab: every terminal, the default one included, has a × (or press Delete on the tab).
+      {
         const remove = () => {
           if (typeof TerminalControls === 'undefined') return;
           TerminalControls.run('deleteTerminal', `Deleting “${row.title}” ends the programs in it and permanently removes the terminal tab and its history. Continue?`, row.terminal_id);
@@ -185,8 +185,15 @@ const TerminalTabs = (() => {
       const revision = state(scope).revision;
       API.get(`${scope}/terminals`).then(rows => {
         if (state(scope).revision !== revision) return;
-        state(scope).rows = rows;
-        if (mounted && mounted.scope === scope) render();
+        const current = state(scope);
+        current.rows = rows;
+        // The terminal that was assumed (the default one) may no longer exist: fall back to the first one, or to none.
+        const lost = !rows.some(row => row.terminal_id === current.active);
+        if (lost) current.active = rows.length ? rows[0].terminal_id : null;
+        if (mounted && mounted.scope === scope) {
+          render();
+          if (lost && !(current.chats && current.chats.active)) select();
+        }
       }).catch(() => { /* Legacy Engines still support the default terminal. */ });
     }
     return state(scope).active;
@@ -225,7 +232,7 @@ const TerminalTabs = (() => {
     current.revision++;
     current.rows = current.rows.filter(row => row.terminal_id !== terminalId);
     const wasActive = current.active === terminalId;
-    if (wasActive) current.active = 'default';
+    if (wasActive) current.active = current.rows.length ? current.rows[0].terminal_id : null;
     if (mounted && mounted.scope === scope) {
       render();
       // When the deleted tab is not the current one, the current terminal does not need to reconnect.

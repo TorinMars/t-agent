@@ -108,7 +108,11 @@ test(`deleting a terminal removes its tab and cached connection; failure preserv
   assert.equal(app.document.querySelectorAll('.terminal-tab').length, 1);
   assert.equal(app.document.querySelector('.terminal-tab').getAttribute('aria-selected'), 'true');
   assert.equal(app.terminals[0].disposed, undefined);
-  await assert.rejects(app.controller.deleteTerminal(), /The default terminal cannot be deleted/);
+  // The default terminal is deleted like any other; the last one leaves the task with no terminal and a hint.
+  await app.controller.deleteTerminal();
+  assert.equal(calls.at(-1).body.terminal_id, 'default');
+  assert.equal(app.document.querySelectorAll('.terminal-tab').length, 0);
+  await assert.rejects(app.controller.closeTerminal(), /This task has no terminal/);
 });
 
 test(`input controls cannot bypass image upload lock`, () => {

@@ -63,9 +63,16 @@ function terminalId(value) {
 
 function sessionKey(taskId, id = 'default') { return `${Number(taskId)}:${id}`; }
 
+function defaultRemoved(taskId) {
+  return Boolean(db.prepare('SELECT 1 FROM task_default_terminal_removed WHERE task_id = ?').get(taskId));
+}
+
 function assertTerminal(taskId, value) {
   const id = terminalId(value);
-  if (id !== 'default' && !db.prepare('SELECT 1 FROM task_terminals WHERE task_id = ? AND terminal_id = ?').get(taskId, id)) {
+  const exists = id === 'default'
+    ? !defaultRemoved(taskId)
+    : db.prepare('SELECT 1 FROM task_terminals WHERE task_id = ? AND terminal_id = ?').get(taskId, id);
+  if (!exists) {
     throw Object.assign(new Error('TERMINAL_NOT_FOUND'), { statusCode: 404 });
   }
   return id;
@@ -106,7 +113,7 @@ function withAgentSessions(taskId, rows) {
 
 function listTerminals(taskId) {
   const stored = db.prepare('SELECT title FROM task_default_terminal_titles WHERE task_id = ?').get(taskId);
-  return withAgentSessions(taskId, [{ terminal_id: 'default', title: stored ? stored.title : 'Terminal 1' }, ...db.prepare(
+  return withAgentSessions(taskId, [...(defaultRemoved(taskId) ? [] : [{ terminal_id: 'default', title: stored ? stored.title : 'Terminal 1' }]), ...db.prepare(
     "SELECT terminal_id, title FROM task_terminals WHERE task_id = ? AND substr(terminal_id, 1, 3) != 'h5-' ORDER BY rowid"
   ).all(taskId)]);
 }
@@ -333,7 +340,7 @@ function getOrCreateSession(ownerTaskId, workDir, dirWarning, id = 'default') {
 
 /**
  * Terminate the task's server-side PTY. restart-workdir also clears the old history and the next connection creates a brand-new shell from the
- * task work_dir; close keeps the history; delete also removes the extra terminal record.
+ * task work_dir; close keeps the history; delete also removes the terminal record (the default terminal is marked removed instead).
  */
 function controlSession(taskId, action, requestedTerminalId) {
   const id = Number.parseInt(taskId, 10);
@@ -344,9 +351,6 @@ function controlSession(taskId, action, requestedTerminalId) {
   }
 
   const selectedId = assertTerminal(id, requestedTerminalId);
-  if (action === 'delete' && selectedId === 'default') {
-    throw Object.assign(new Error('DEFAULT_TERMINAL_CANNOT_DELETE'), { statusCode: 400 });
-  }
   const key = sessionKey(id, selectedId);
   const session = sessions.get(key);
   const clearHistory = action === 'restart-workdir' || action === 'delete';
@@ -368,7 +372,10 @@ function controlSession(taskId, action, requestedTerminalId) {
     clearBuffer(id, selectedId);
   }
 
-  if (action === 'delete') {
+  if (action === 'delete' && selectedId === 'default') {
+    db.prepare('INSERT OR IGNORE INTO task_default_terminal_removed (task_id) VALUES (?)').run(id);
+    db.prepare('DELETE FROM task_default_terminal_titles WHERE task_id = ?').run(id);
+  } else if (action === 'delete') {
     db.prepare('DELETE FROM task_terminals WHERE task_id = ? AND terminal_id = ?').run(id, selectedId);
   }
   return { success: true, action, had_session: Boolean(session) };

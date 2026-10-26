@@ -363,9 +363,9 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     await page.locator('#h5-term-menu').waitFor({ state: 'hidden' });
     assert.deepEqual(await page.locator('#h5-tasks .h5-terminal-main .h5-terminal-name').allTextContents(), ['Terminal 1', 'Build logs']);
     assert.ok(calls.includes('PATCH /api/tasks/1/terminals/h5-second'));
-    // The default phone terminal cannot be deleted.
+    // The first terminal can be deleted too.
     await page.locator('#h5-tasks .h5-terminal-row').nth(0).locator('.h5-terminal-more').tap();
-    assert.equal(await page.locator('#h5-term-menu-actions button', { hasText: 'Delete' }).count(), 0);
+    assert.equal(await page.locator('#h5-term-menu-actions button', { hasText: 'Delete' }).count(), 1);
     await page.locator('#h5-term-menu-cancel').tap();
     // Delete the current terminal (after a confirmation): the phone falls back to the remaining one.
     const sentBodies = [];

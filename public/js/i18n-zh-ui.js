@@ -823,7 +823,7 @@ I18n.add({
   "The connection string has expired or was already used (valid for 10 minutes, single use). Generate a new one on the master": "连接字符串已过期或已被使用（10 分钟内有效，只能使用一次），请在主服务器重新生成",
   "The current page is not editable Markdown": "当前页面不是可编辑的 Markdown",
   "The default group cannot be modified or deleted": "默认分组不能修改或删除",
-  "The default terminal cannot be deleted; close it or reopen it from the working directory": "默认终端不能删除，可使用关闭或从工作目录重新打开",
+  "This task has no terminal. Click “+” to start one.": "此任务没有终端，点击“+”新建一个。",
   "The directory and everything in it will be permanently deleted and cannot be recovered.": "目录及里面的所有文件会被永久删除，不可恢复。",
   "The file is not a regular file or exceeds 1 MB": "文件不是普通文件或超过 1 MB",
   "The file is too large to edit in the page.": "文件过大，无法在页面中编辑。",

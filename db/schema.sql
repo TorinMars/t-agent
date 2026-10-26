@@ -129,6 +129,11 @@ CREATE TABLE IF NOT EXISTS task_default_terminal_titles (
   title TEXT NOT NULL
 );
 
+-- A task whose default terminal was deleted has a row here; the default terminal is then no longer listed or connectable.
+CREATE TABLE IF NOT EXISTS task_default_terminal_removed (
+  task_id INTEGER PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS task_terminals (
   task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
   terminal_id TEXT NOT NULL,

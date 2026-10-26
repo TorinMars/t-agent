@@ -467,7 +467,7 @@
       ['Reopen', () => { closeTerminalMenu(); closeTasks(); switchTerminal(row); }],
       ['Restart in the working directory', () => void restartTerminal(row), 'danger'],
     ];
-    if (row.terminal_id !== 'h5-default') items.push(['Delete', () => void deleteTerminal(row), 'danger']);
+    items.push(['Delete', () => void deleteTerminal(row), 'danger']);
     termMenuActions.hidden = false;
     termMenuActions.replaceChildren(...items.map(([label, run, kind]) => {
       const button = document.createElement('button');
@@ -506,7 +506,12 @@
     try {
       const wasCurrent = await controlTerminal(row, 'delete');
       terminals = terminals.filter(item => item.terminal_id !== row.terminal_id);
-      if (wasCurrent && terminals.length) { switchTerminal(terminals[0]); closeTasks(); } else renderTabs();
+      if (wasCurrent && terminals.length) { switchTerminal(terminals[0]); closeTasks(); }
+      else {
+        if (wasCurrent) terminalId = null;
+        renderTabs();
+        if (wasCurrent) showEmpty('This task has no terminal yet');
+      }
     } catch (error) { tell(`Could not delete the terminal: ${error.message}`, 'error'); }
   }
   renameForm.addEventListener('submit', async event => {

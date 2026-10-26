@@ -63,13 +63,13 @@ test('a finished terminal that is not on screen stays done and is not acknowledg
   assert.equal(strip.querySelectorAll('.term-done').length, 1);
 });
 
-test('The entry to delete a terminal is in the tab: the default terminal has none, other tabs carry a ×, and clicking × deletes only that tab without switching', async () => {
+test('The entry to delete a terminal is in the tab: every tab, the default one included, carries a ×, and clicking × deletes only that tab without switching', async () => {
   const { TerminalTabs, strip, controls } = load({});
   let selected = 0;
   TerminalTabs.show('/api/tasks/1', () => { selected += 1; }, { taskId: 1, sourceKey: 'local', viewing: () => false });
   await tick();
   const [first, second] = [...strip.children];
-  assert.equal(first.querySelector('.terminal-tab-close'), null);
+  assert.equal(first.querySelector('.terminal-tab-close').getAttribute('aria-label'), 'Delete Terminal 1');
   const close = second.querySelector('.terminal-tab-close');
   assert.ok(close);
   assert.equal(close.getAttribute('aria-label'), 'Delete Terminal 2');
@@ -120,4 +120,19 @@ test('a long agent chat title is truncated in its own label so the close button 
   const css = fs.readFileSync(path.join(__dirname, '../public/css/style.css'), 'utf8');
   assert.match(css, /\.terminal-tabs \.agent-tab-label \{[^}]*text-overflow: ellipsis/);
   assert.doesNotMatch(css, /\.terminal-tabs \.agent-tab \{[^}]*overflow: hidden/, 'clipping the whole tab hides the close button');
+});
+
+test('deleting the current terminal selects the first remaining one, and the last one leaves no terminal selected', async () => {
+  const { TerminalTabs, strip } = load({});
+  let selected = 0;
+  TerminalTabs.show('/api/tasks/1', () => { selected += 1; }, { taskId: 1, sourceKey: 'local' });
+  await tick();
+  TerminalTabs.remove('/api/tasks/1', 'default');
+  assert.equal(TerminalTabs.current('/api/tasks/1'), 'second');
+  assert.deepEqual(titles(strip), ['Terminal 2']);
+  assert.equal(selected, 1);
+  TerminalTabs.remove('/api/tasks/1', 'second');
+  assert.equal(TerminalTabs.current('/api/tasks/1'), null);
+  assert.equal(strip.children.length, 0);
+  assert.equal(selected, 2);
 });

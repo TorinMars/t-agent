@@ -123,7 +123,6 @@ test('deleting an extra terminal stops its shell and permanently removes its his
   shell.exit();
   assert.equal(terminal.listTerminals(task.id).some(row => row.terminal_id === added.terminal_id), false);
   assert.equal(connect(added.terminal_id).code, 1008);
-  assert.throws(() => terminal.controlSession(task.id, 'delete', 'default'), /DEFAULT_TERMINAL_CANNOT_DELETE/);
   const closed = terminal.createTerminal(task.id);
   terminal.controlSession(task.id, 'close', closed.terminal_id);
   terminal.controlSession(task.id, 'delete', closed.terminal_id);
@@ -242,4 +241,25 @@ test('desktop and phone list and create the same terminals', () => {
   const added = terminal.createTerminal(other.id);
   assert.doesNotMatch(added.terminal_id, /^h5-/);
   assert.deepEqual(Array.from(terminal.listTerminals(other.id), row => row.terminal_id), ['default', added.terminal_id]);
+});
+
+test('the default terminal can be deleted: it stops, is no longer listed or connectable, and other terminals are untouched', () => {
+  const own = tasks.createTask('owner', { title: 'default delete' });
+  const other = terminal.createTerminal(own.id);
+  const ws = new Socket();
+  terminal.handleWs(ws, { url: `/terminal/ws?taskId=${own.id}&terminalId=default&clientId=test` }, { login: 'owner' });
+  const shell = shells.at(-1);
+  shell.data('default history');
+  terminal.controlSession(own.id, 'delete', 'default');
+  assert.equal(shell.killed, true);
+  assert.equal(ws.readyState, 3);
+  assert.equal(terminal.listTerminals(own.id).map(row => row.terminal_id).join(), other.terminal_id);
+  assert.throws(() => terminal.assertTerminal(own.id, 'default'), /TERMINAL_NOT_FOUND/);
+  assert.equal(db.prepare('SELECT * FROM terminal_logs WHERE task_id = ?').get(own.id), undefined);
+  const refused = new Socket();
+  terminal.handleWs(refused, { url: `/terminal/ws?taskId=${own.id}&terminalId=default&clientId=test` }, { login: 'owner' });
+  assert.equal(refused.code, 1008);
+  terminal.controlSession(own.id, 'delete', other.terminal_id);
+  assert.equal(terminal.listTerminals(own.id).length, 0, 'a task may have no terminal at all');
+  assert.equal(terminal.createTerminal(own.id).title, 'Terminal 1');
 });

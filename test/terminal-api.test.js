@@ -53,9 +53,13 @@ test('Engine terminal API enforces ownership, persists tabs and binds tickets', 
     assert.equal((await request(controlUrl, owner, deletion)).status, 200);
     assert.equal((await (await request(url)).json()).length, 1);
     assert.equal((await request('/v1/terminal-sessions', owner, { task_id: task.id, terminal_id: added.terminal_id })).status, 404);
-    assert.equal((await request(controlUrl, owner, { action: 'delete', terminal_id: 'default' })).status, 400);
     // Phone and desktop share the same terminals, so the old surface=h5 switch changes nothing.
     assert.deepEqual((await (await request(`${url}?surface=h5`)).json()).map(row => row.terminal_id), ['default']);
+    // The default terminal can be deleted as well; the task is then left with no terminal.
+    assert.equal((await request(controlUrl, stranger, { action: 'delete', terminal_id: 'default' })).status, 404);
+    assert.equal((await request(controlUrl, owner, { action: 'delete', terminal_id: 'default' })).status, 200);
+    assert.equal((await (await request(url)).json()).length, 0);
+    assert.equal((await request('/v1/terminal-sessions', owner, { task_id: task.id, terminal_id: 'default' })).status, 404);
     tasks.deleteTask('owner', task.id);
     assert.equal(db.prepare('SELECT COUNT(*) AS n FROM task_terminals').get().n, 0);
   } finally {

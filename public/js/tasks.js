@@ -265,6 +265,15 @@ const Tasks = (() => {
       sourceKey: source.key,
       viewing: () => viewingTerminal(task.id),
     });
+    if (terminalId == null) {
+      // Every terminal of the task was deleted: show a hint instead of a shell.
+      Array.from(container.children).forEach(el => { el.style.display = 'none'; });
+      term = null;
+      fitAddon = null;
+      termWs = null;
+      TerminalControls.showMessage('This task has no terminal. Click “+” to start one.');
+      return;
+    }
     const key = terminalKey(task.id, terminalId);
 
     if (termInstances.has(key)) {
@@ -363,8 +372,15 @@ const Tasks = (() => {
     return task;
   }
 
+  function currentTerminalId(task) {
+    const id = TerminalTabs.current(terminalScope(task.id));
+    if (id == null) throw new Error('This task has no terminal. Click “+” to start one.');
+    return id;
+  }
+
   async function reopenTerminal() {
     const task = selectedTerminalTask();
+    currentTerminalId(task);
     disposeTerminalInstance(task.id);
     TerminalControls.clearMessage();
     connectTerminal(task);
@@ -372,6 +388,7 @@ const Tasks = (() => {
 
   async function controlTerminal(action) {
     const task = selectedTerminalTask();
+    currentTerminalId(task);
     disposeTerminalInstance(task.id);
     try {
       await API.post(`${terminalScope(task.id)}/terminal/control`, { action, terminal_id: TerminalTabs.current(terminalScope(task.id)) });
@@ -393,7 +410,6 @@ const Tasks = (() => {
     const task = selectedTerminalTask();
     const scope = terminalScope(task.id);
     const terminalId = requestedId || TerminalTabs.current(scope);
-    if (terminalId === 'default') throw new Error('The default terminal cannot be deleted; close it or reopen it from the working directory');
     await API.post(`${scope}/terminal/control`, { action: 'delete', terminal_id: terminalId });
     disposeTerminalInstance(task.id, terminalId);
     TerminalTabs.remove(scope, terminalId);

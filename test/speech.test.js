@@ -315,3 +315,70 @@ test('Phone microphone: a tap shorter than a long press is discarded, and keyboa
   handlers.click({ detail: 0 });
   assert.equal(classes.has('listening'), false);
 });
+
+test('Phone microphone zones: letting go over send keeps the text and sends it, over Convert to Text only keeps it, over Cancel drops it', async () => {
+  const vm = require('vm');
+  const fs = require('fs');
+  const path = require('path');
+  const source = fs.readFileSync(path.join(__dirname, '../public/js/voice-input.js'), 'utf8');
+  const handlers = {};
+  const button = { addEventListener: (type, fn) => { handlers[type] = fn; }, classList: { toggle() {} }, setAttribute() {} };
+  const textarea = { value: '', dispatchEvent() {}, focus() {} };
+  class FakeContext {
+    constructor() { this.sampleRate = 48000; this.state = 'running'; this.destination = {}; this.audioWorklet = { addModule: async () => {} }; }
+    resume() { return Promise.resolve(); }
+    close() { this.state = 'closed'; return Promise.resolve(); }
+    createGain() { return { gain: {}, connect() {}, disconnect() {} }; }
+    createMediaStreamSource() { return { connect() {} }; }
+  }
+  const sandbox = {
+    document: { getElementById: () => null },
+    navigator: { mediaDevices: { getUserMedia: async () => ({ getTracks: () => [] }) } },
+    fetch: async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ url: 'wss://speech.example/x', token: 't', model: 'm', language: 'zh' }) }),
+    WebSocket: FakeSocket,
+    AudioWorkletNode: class { constructor() { this.port = {}; } connect() {} disconnect() {} },
+    Blob: class {}, URL: { createObjectURL: () => 'blob:x' }, Event: class {},
+    crypto: require('crypto').webcrypto, console, setTimeout, clearTimeout,
+    notify() {},
+  };
+  sandbox.window = sandbox;
+  sandbox.AudioContext = FakeContext;
+  vm.runInNewContext(source, sandbox);
+  const shown = [];
+  let zone = 'send';
+  const overlay = { show: () => shown.push('show'), hide: () => shown.push('hide'), level() {}, zone: name => shown.push(`zone:${name}`), zoneAt: () => zone };
+  let sends = 0;
+  sandbox.VoiceInput.attach({ textarea, button, hold: true, overlay, onSend: () => { sends += 1; } });
+  const ticks = async () => { for (let i = 0; i < 10; i += 1) await new Promise(resolve => setImmediate(resolve)); };
+  const hold = async target => {
+    textarea.value = '';
+    zone = 'send';
+    handlers.pointerdown({ button: 0, pointerId: 1 });
+    await ticks();
+    const socket = FakeSocket.last;
+    socket.onopen();
+    socket.receive(header('task-started'));
+    socket.receive({ ...header('result-generated'), payload: { output: { sentence: { text: 'hello', sentence_id: 1, sentence_end: true } } } });
+    zone = target;
+    handlers.pointermove({ clientX: 1, clientY: 1 });
+    await new Promise(resolve => setTimeout(resolve, 400));
+    handlers.pointerup();
+    return socket;
+  };
+  const finish = socket => { socket.receive(header('task-finished')); };
+
+  let socket = await hold('cancel');
+  assert.equal(textarea.value, '', 'cancel drops what was recognized');
+  assert.equal(sends, 0);
+  assert.ok(shown.includes('show') && shown.includes('zone:cancel') && shown.includes('hide'), 'the overlay follows the press, the zone and the release');
+
+  socket = await hold('text');
+  finish(socket);
+  assert.equal(textarea.value, 'hello', 'Convert to Text keeps the text');
+  assert.equal(sends, 0, 'and does not send it');
+
+  socket = await hold('send');
+  finish(socket);
+  assert.equal(textarea.value, 'hello');
+  assert.equal(sends, 1, 'the send zone sends once the recognition has ended');
+});

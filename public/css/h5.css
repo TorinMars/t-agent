@@ -167,3 +167,20 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; c
 .terminal-owner-prompt { position: absolute; inset: 0; z-index: 5; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 16px; text-align: center; background: rgba(0, 0, 0, 0.72); color: #fff; }
 .terminal-owner-prompt p { margin: 0; font-size: 14px; }
 .terminal-owner-prompt button { min-height: 40px; padding: 0 18px; border: 0; border-radius: 8px; background: #3b82f6; color: #fff; font-size: 14px; }
+
+/* Hold-to-talk screen (voice-overlay.js): a dimmed page, a bubble with a level meter, the Cancel / Convert to Text pills and the send arc. */
+.vo-overlay { position: fixed; inset: 0; z-index: 160; pointer-events: none; background: rgba(0, 0, 0, .72); -webkit-user-select: none; user-select: none; }
+.vo-bubble { position: absolute; left: 50%; top: 36%; display: flex; align-items: center; justify-content: center; width: 200px; height: 96px; margin-left: -100px; border-radius: 18px; background: #3eb575; transition: background .12s; }
+.vo-bubble::after { content: ""; position: absolute; left: 50%; bottom: -9px; width: 18px; height: 18px; margin-left: -9px; border-radius: 3px; background: inherit; transform: rotate(45deg); }
+.vo-meter { display: flex; align-items: center; justify-content: center; gap: 3px; height: 36px; }
+.vo-meter i { display: block; width: 3px; height: 4px; border-radius: 2px; background: #14532d; transition: height .08s linear; }
+.vo-overlay[data-zone="cancel"] .vo-bubble { background: #e5484d; }
+.vo-overlay[data-zone="cancel"] .vo-meter i { background: #5a1a1d; }
+.vo-pills { position: absolute; left: 0; right: 0; bottom: 19vh; display: flex; justify-content: space-between; gap: 16px; padding: 0 20px; }
+.vo-pill { flex: 0 1 44%; box-sizing: border-box; padding: 18px 12px; border-radius: 40px; background: #2a2a2c; color: #ddd; font-size: 17px; text-align: center; transition: background .12s, color .12s, transform .12s; }
+.vo-cancel { transform: rotate(-6deg); }
+.vo-text { transform: rotate(6deg); }
+.vo-pill.active { background: #fff; color: #111; transform: scale(1.08); }
+.vo-cancel.active { background: #e5484d; color: #fff; }
+.vo-arc { position: absolute; left: -10%; right: -10%; bottom: 0; height: 17vh; display: flex; align-items: flex-start; justify-content: center; padding-top: 26px; border-radius: 50% 50% 0 0 / 38px 38px 0 0; background: #8a8a8d; color: #111; font-size: 17px; transition: background .12s; }
+.vo-overlay:not([data-zone="send"]) .vo-arc { background: #3a3a3c; color: #aaa; }

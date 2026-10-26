@@ -140,12 +140,13 @@ const VoiceInput = (() => {
   };
 
   // textarea: the box to fill; button: the microphone toggle; onNotConfigured: called when the server has no speech key yet.
-  function attach({ textarea, button, onNotConfigured, hold = false }) {
+  function attach({ textarea, button, onNotConfigured, hold = false, overlay = null, onSend = null }) {
     let state = 'idle'; // idle → connecting → listening → stopping → idle
     let recognizer, stream, context, node, silent, resampler, stopTimer, limitTimer;
     let base = '', committed = '', partial = '';
     let frame = new Int16Array(FRAME_SAMPLES);
     let filled = 0;
+    let afterStop = null; // 'send': when the recognition ends, hand the text to onSend (released over the send zone)
     let run = 0; // identifies the current start; an older start that is still waiting must not touch a newer one
 
     function render() {
@@ -169,6 +170,7 @@ const VoiceInput = (() => {
     }
     function reset() {
       run += 1;
+      afterStop = null;
       clearTimeout(stopTimer);
       clearTimeout(limitTimer);
       release();
@@ -183,6 +185,20 @@ const VoiceInput = (() => {
       if (/not configured/i.test(message) && onNotConfigured) onNotConfigured();
     }
     function finishText() { committed += partial; partial = ''; show(); }
+    // The recognition ended normally: keep the text and, when released over the send zone, send it.
+    function settle() {
+      const wants = afterStop;
+      finishText();
+      reset();
+      if (wants === 'send' && onSend) onSend();
+    }
+    // Throw away what this recording recognized and put the box back as it was.
+    function cancel() {
+      if (state === 'idle') return;
+      committed = ''; partial = '';
+      show();
+      reset();
+    }
     function send(samples) {
       for (let i = 0; i < samples.length; i += 1) {
         frame[filled] = samples[i];
@@ -224,7 +240,7 @@ const VoiceInput = (() => {
               if (result.final) { committed += result.text; partial = ''; } else partial = result.text;
               show();
             },
-            onDone() { if (mine !== run) return; finishText(); reset(); textarea.focus(); },
+            onDone() { if (mine !== run) return; settle(); if (!onSend) textarea.focus(); },
             onError(message) { if (mine === run) fail(message); },
           },
         });
@@ -232,7 +248,14 @@ const VoiceInput = (() => {
         if (mine !== run) { release(); return; }
         resampler = createResampler(context.sampleRate);
         node = new AudioWorkletNode(context, 'pcm-capture');
-        node.port.onmessage = event => send(resampler.push(event.data));
+        node.port.onmessage = event => {
+          if (overlay) {
+            let sum = 0;
+            for (let i = 0; i < event.data.length; i += 1) sum += event.data[i] * event.data[i];
+            overlay.level(Math.sqrt(sum / (event.data.length || 1)));
+          }
+          send(resampler.push(event.data));
+        };
         silent = context.createGain();
         silent.gain.value = 0; // keeps the graph pulled without playing the microphone back
         context.createMediaStreamSource(stream).connect(node);
@@ -256,7 +279,7 @@ const VoiceInput = (() => {
       if (filled) recognizer.sendAudio(frame.slice(0, filled).buffer); // the last partial frame
       filled = 0;
       recognizer.finish();
-      stopTimer = setTimeout(() => { finishText(); reset(); }, STOP_TIMEOUT_MS); // the service did not answer: keep what was recognized so far
+      stopTimer = setTimeout(settle, STOP_TIMEOUT_MS); // the service did not answer: keep what was recognized so far
     }
 
     if (hold) {
@@ -264,17 +287,29 @@ const VoiceInput = (() => {
       // recognition, keeping the text. A tap shorter than HOLD_MS is not a long press and is discarded. Keyboard activation
       // (click without a pointer, detail 0) still toggles, because a keyboard cannot hold a button.
       let pressedAt = 0;
+      let zone = 'send';
       button.addEventListener('pointerdown', event => {
         if (event.button || state !== 'idle') return;
         pressedAt = Date.now();
+        zone = 'send';
         if (button.setPointerCapture) { try { button.setPointerCapture(event.pointerId); } catch { /* pointer already gone */ } }
+        if (overlay) overlay.show();
         void start();
+      });
+      // Sliding onto the Cancel or Convert to Text pill chooses what letting go does.
+      button.addEventListener('pointermove', event => {
+        if (!pressedAt || !overlay) return;
+        const next = overlay.zoneAt(event.clientX, event.clientY);
+        if (next !== zone) { zone = next; overlay.zone(zone); }
       });
       const release = () => {
         if (!pressedAt) return;
         const held = Date.now() - pressedAt;
         pressedAt = 0;
-        if (held < HOLD_MS) { if (state === 'connecting' || state === 'listening') reset(); } else stop();
+        if (overlay) overlay.hide();
+        if (held < HOLD_MS || zone === 'cancel') { cancel(); return; }
+        afterStop = zone === 'send' && onSend ? 'send' : null;
+        stop();
       };
       button.addEventListener('pointerup', release);
       button.addEventListener('pointercancel', release);
@@ -284,7 +319,7 @@ const VoiceInput = (() => {
       button.addEventListener('click', () => { if (state === 'idle') void start(); else stop(); });
     }
     render();
-    return { start, stop, get state() { return state; } };
+    return { start, stop, cancel, get state() { return state; } };
   }
 
   async function showSettings() {
@@ -339,7 +374,9 @@ const VoiceInput = (() => {
   // Phone page: settings live on the desktop page, like the translation settings.
   const h5Input = document.getElementById('h5-translate-input');
   const h5Mic = document.getElementById('h5-voice');
-  if (h5Input && h5Mic) attach({ textarea: h5Input, button: h5Mic, onNotConfigured: () => tell('Set up voice input on the desktop page', 'info'), hold: true });
+  if (h5Input && h5Mic) attach({ textarea: h5Input, button: h5Mic, onNotConfigured: () => tell('Set up voice input on the desktop page', 'info'), hold: true,
+    overlay: typeof VoiceOverlay !== 'undefined' ? VoiceOverlay.create() : null,
+    onSend: () => { const form = document.getElementById('h5-translate'); if (form && form.requestSubmit) form.requestSubmit(); } });
 
   return { attach, showSettings, createResampler, createRecognizer, compose };
 })();

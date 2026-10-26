@@ -19,12 +19,13 @@ function publicUrl(value) {
     return url.href.replace(/\/+$/, '');
   } catch { throw new OssImageError('The public address must be an HTTPS URL without credentials, query parameters or control characters'); }
 }
-function imageType(body) {
-  if (body.length >= 24 && body.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])) && body.toString('ascii', 12, 16) === 'IHDR' && body.readUInt32BE(16) && body.readUInt32BE(20)) return ['image/png', 'png'];
-  if (body.length >= 4 && body[0] === 255 && body[1] === 216 && body[2] === 255 && body[body.length - 2] === 255 && body[body.length - 1] === 217) return ['image/jpeg', 'jpg'];
-  if (body.length >= 14 && /^GIF8[79]a$/.test(body.toString('ascii', 0, 6)) && body.readUInt16LE(6) && body.readUInt16LE(8) && body[body.length - 1] === 59) return ['image/gif', 'gif'];
-  if (body.length >= 20 && body.toString('ascii', 0, 4) === 'RIFF' && body.toString('ascii', 8, 12) === 'WEBP' && ['VP8 ', 'VP8L', 'VP8X'].includes(body.toString('ascii', 12, 16)) && body.readUInt32LE(4) + 8 === body.length) return ['image/webp', 'webp'];
-  throw new OssImageError('Only PNG, JPEG, GIF and WebP images are supported', 415);
+const IMAGE_TYPES = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp' };
+const POLICY_SECONDS = 5 * 60;
+// OSS signature V4 of a POST policy: a chain of HMAC-SHA256 keys derived from the secret, the day, the region and the service.
+function signPolicy(accessKeySecret, day, region, encodedPolicy) {
+  const hmac = (key, data) => crypto.createHmac('sha256', key).update(data).digest();
+  const key = ['oss', 'aliyun_v4_request'].reduce((current, part) => hmac(current, part), hmac(hmac(`aliyun_v4${accessKeySecret}`, day), region));
+  return crypto.createHmac('sha256', key).update(encodedPolicy).digest('hex');
 }
 function createOssImages({ db, sessionSecret, createClient = options => new OSS(options) }) {
   const key = owner => `oss-images:${owner}`;
@@ -59,23 +60,45 @@ function createOssImages({ db, sessionSecret, createClient = options => new OSS(
       db.prepare('DELETE FROM system_state WHERE key = ?').run(key(owner));
       return safe(defaults());
     },
-    async upload(owner, body, contentType) {
+    // The browser uploads the image straight to OSS with a form POST; this only signs what that POST may contain (one object key, one
+    // content type, exactly the announced size, valid for a few minutes), so the AccessKey secret never leaves the server and the image
+    // bytes never pass through it.
+    async signUpload(owner, body) {
       const config = read(owner);
       if (!config.enabled) throw new OssImageError('OSS image upload is not enabled yet');
-      if (!Buffer.isBuffer(body) || !body.length) throw new OssImageError('The image is empty');
-      if (body.length > MAX_IMAGE_BYTES) throw new OssImageError('The image cannot exceed 10 MiB', 413);
-      const [mime, extension] = imageType(body);
-      if (text(contentType).split(';')[0].toLowerCase() !== mime) throw new OssImageError('The image content does not match its type', 415);
-      const objectKey = `${config.prefix}${new Date().toISOString().slice(0, 10)}/${crypto.randomUUID()}.${extension}`;
+      const mime = text(body && body.type).toLowerCase();
+      const size = body && body.size;
+      if (!IMAGE_TYPES[mime]) throw new OssImageError('Only PNG, JPEG, GIF and WebP images are supported', 415);
+      if (!Number.isSafeInteger(size) || size <= 0) throw new OssImageError('The image is empty');
+      if (size > MAX_IMAGE_BYTES) throw new OssImageError('The image cannot exceed 10 MiB', 413);
+      const now = new Date();
+      const stamp = now.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, ''); // 20261026T120000Z
+      const region = config.region.replace(/^oss-/, '');
+      const objectKey = `${config.prefix}${now.toISOString().slice(0, 10)}/${crypto.randomUUID()}.${IMAGE_TYPES[mime]}`;
+      const credential = `${config.accessKeyId}/${stamp.slice(0, 8)}/${region}/oss/aliyun_v4_request`;
+      const policy = {
+        expiration: new Date(now.getTime() + POLICY_SECONDS * 1000).toISOString(),
+        conditions: [
+          { bucket: config.bucket }, { 'x-oss-signature-version': 'OSS4-HMAC-SHA256' }, { 'x-oss-credential': credential }, { 'x-oss-date': stamp },
+          ['eq', '$key', objectKey], ['eq', '$Content-Type', mime], ['eq', '$Content-Disposition', 'inline'], ['eq', '$success_action_status', '200'],
+          ['content-length-range', size, size],
+        ],
+      };
+      const encoded = Buffer.from(JSON.stringify(policy)).toString('base64');
+      const fields = {
+        key: objectKey, 'Content-Type': mime, 'Content-Disposition': 'inline', success_action_status: '200', policy: encoded,
+        'x-oss-signature-version': 'OSS4-HMAC-SHA256', 'x-oss-credential': credential, 'x-oss-date': stamp,
+        'x-oss-signature': signPolicy(config.accessKeySecret, stamp.slice(0, 8), region, encoded),
+      };
+      const host = `https://${config.bucket}.${config.region}.aliyuncs.com`;
       try {
-        const client = createClient({ region: config.region, bucket: config.bucket, accessKeyId: config.accessKeyId, accessKeySecret: config.accessKeySecret, secure: true, authorizationV4: true, timeout: 60000 });
-        await client.put(objectKey, body, { headers: { 'Content-Type': mime, 'Content-Disposition': 'inline' } });
-        if (config.publicBaseUrl) return { url: `${config.publicBaseUrl}/${objectKey}`, expiresAt: null };
+        if (config.publicBaseUrl) return { host, fields, url: `${config.publicBaseUrl}/${objectKey}`, expiresAt: null };
+        const client = createClient({ region: config.region, bucket: config.bucket, accessKeyId: config.accessKeyId, accessKeySecret: config.accessKeySecret, secure: true, authorizationV4: true });
         const url = await client.signatureUrlV4('GET', LINK_SECONDS, {}, objectKey);
         if (new URL(url).protocol !== 'https:' || controls.test(url)) throw Error('Invalid download URL');
-        return { url, expiresAt: new Date(Date.now() + LINK_SECONDS * 1000).toISOString() };
-      } catch { throw new OssImageError('OSS image upload failed; check the configuration and bucket permissions', 502); }
+        return { host, fields, url, expiresAt: new Date(Date.now() + LINK_SECONDS * 1000).toISOString() };
+      } catch { throw new OssImageError('Could not prepare the OSS upload; check the configuration', 502); }
     },
   };
 }
-module.exports = { createOssImages, OssImageError, MAX_IMAGE_BYTES };
+module.exports = { createOssImages, OssImageError, MAX_IMAGE_BYTES, signPolicy };

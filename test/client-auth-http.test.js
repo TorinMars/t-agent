@@ -108,7 +108,7 @@ for (const [environment, allowHttp] of [['test', 'false'], ['production', 'false
   assert.equal(confirmed.redirect, '/h5');
   assert.equal((await call('/api/tasks')).status, 404);
   assert.equal((await call('/api/oss/config')).status, 404);
-  assert.equal((await call('/api/oss/images', { body: {} })).status, 404);
+  assert.equal((await call('/api/oss/upload-policy', { body: {} })).status, 404);
   assert.equal((await call('/api/tasks', { cookie: setupCookie })).status, 404);
   // A logged-in browser that opens a wrong page address goes to the home page; APIs, files and logged-out visitors still get 404.
   const wrongPage = await call('/nonexistent', { cookie: boundCookie, headers: { Accept: 'text/html' } });

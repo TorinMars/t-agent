@@ -973,44 +973,18 @@
     status.textContent = 'Reading OSS settings…';
     const progress = document.createElement('progress');
     progress.max = 100;
-    progress.setAttribute('aria-label', 'Browser transfer progress');
+    progress.setAttribute('aria-label', 'Upload progress');
     card.append(status, progress);
     overlay.append(card);
     document.body.append(overlay);
     return { status, progress, unlock() { overlay.remove(); uploading = false; } };
   }
 
-  function transfer(file, ui) {
-    return new Promise((resolve, reject) => {
-      const xhr = new XMLHttpRequest();
-      xhr.open('POST', '/api/oss/images');
-      xhr.timeout = 120000;
-      xhr.setRequestHeader('Content-Type', file.type);
-      xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
-      ui.status.textContent = 'Sending image to the client…';
-      ui.progress.value = 0;
-      xhr.upload.onprogress = event => {
-        if (!event.lengthComputable) { ui.progress.removeAttribute('value'); return; }
-        ui.progress.value = Math.min(100, Math.round(event.loaded / event.total * 100));
-        ui.status.textContent = tr(`Sending image to the client: ${ui.progress.value}%`);
-      };
-      xhr.upload.onload = () => { ui.progress.removeAttribute('value'); ui.status.textContent = 'Client received the image; uploading to OSS…'; };
-      xhr.onload = () => {
-        let result;
-        try { result = JSON.parse(xhr.responseText); } catch { reject(new Error('Upload failed: invalid response from the server')); return; }
-        if (xhr.status < 200 || xhr.status >= 300) { reject(new Error(result.error || 'Image upload failed')); return; }
-        try {
-          const url = new URL(result.url);
-          if (url.protocol !== 'https:' || /[\s\x00-\x1f\x7f]/.test(result.url)) throw new Error();
-          resolve(result);
-        } catch { reject(new Error('Upload failed: the server returned an invalid image link')); }
-      };
-      xhr.onerror = () => reject(new Error('Image upload failed. Check your network and retry'));
-      xhr.ontimeout = () => reject(new Error('Image upload timed out. Please retry'));
-      xhr.onabort = () => reject(new Error('Image upload cancelled'));
-      xhr.send(file);
-    });
-  }
+  // The image goes from this browser straight to OSS (oss-direct.js); the Client only signs the upload.
+  const transfer = (file, ui) => OssDirect.upload(file, {
+    status: text => { ui.status.textContent = tr(text); },
+    progress: value => { if (value === null) ui.progress.removeAttribute('value'); else ui.progress.value = value; },
+  });
 
   // When the terminal went away during the upload, keep the link on screen so it is not lost.
   function retain(url) {

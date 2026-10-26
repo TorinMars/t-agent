@@ -8,6 +8,7 @@ const root = path.resolve(__dirname, '..');
 const ORIGIN = 'http://h5.test';
 const TYPES = { '.js': 'application/javascript', '.css': 'text/css', '.html': 'text/html' };
 
+const ossUploads = [];
 async function openPage(browser, { remoteTerminals, viewport } = {}) {
   const context = await browser.newContext(viewport ? { viewport } : { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
   const page = await context.newPage();
@@ -53,16 +54,26 @@ async function openPage(browser, { remoteTerminals, viewport } = {}) {
     if (url.pathname === '/api/tasks/1/agent/conversations/c1') return json({ conversation: { id: 'c1' }, items: [{ id: 'u1', kind: 'user', text: 'hello agent' }, { id: 't1', kind: 'text', text: 'Hi **there**' }], pending: [], status: 'idle', seq: 0 });
     if (url.pathname === '/api/tasks/1/agent/conversations/c1/events') return route.fulfill({ contentType: 'text/event-stream', body: ': ok\n\n' });
     if (url.pathname === '/api/oss/config') return json({ enabled: true });
-    if (url.pathname === '/api/oss/images' && method === 'POST') {
-      assert.equal(route.request().headers()['content-type'], 'image/png');
-      return json({ url: 'https://img.test/shot.png' });
+    if (url.pathname === '/api/oss/upload-policy' && method === 'POST') {
+      // The Client only signs the upload; the image itself goes to OSS from the browser.
+      assert.deepEqual(route.request().postDataJSON(), { type: 'image/png', size: 8 });
+      return json({ host: 'https://bucket.oss.test', fields: { key: 'terminal-images/shot.png', policy: 'p', 'x-oss-signature': 's' }, url: 'https://img.test/shot.png', expiresAt: null });
     }
+    if (url.pathname === '/api/oss/images') return json({ error: 'the Client no longer receives images' }, 404);
     if (url.pathname === '/api/system/check-update') return json({ status: 'available', is_update_admin: true, local_version: '1.0.0', remote_version: '1.0.1' });
     if (url.pathname === '/api/system/version') return json({ boot_id: 'old' });
     if (url.pathname === '/api/system/apply-update') { assert.deepEqual(route.request().postDataJSON(), { confirm: true }); return json({ accepted: true }, 202); }
     if (url.pathname === '/api/system/update-status') return json({ status: 'updating', stage: 'installing', message: 'Installing dependencies', log: [{ at: 1, text: 'npm ci' }], boot_id: 'old' });
     if (url.pathname === '/api/translate') return json({ text: 'Run the tests\u001b[2J' });
     return json({ error: 'not mocked' }, 404);
+  });
+  await page.route('https://bucket.oss.test/**', async route => {
+    const request = route.request();
+    const body = request.postDataBuffer().toString('latin1');
+    assert.match(request.headers()['content-type'], /^multipart\/form-data/);
+    assert.ok(body.includes('name="key"') && body.indexOf('name="key"') < body.indexOf('name="file"'), 'the file is the last field');
+    ossUploads.push(body);
+    await route.fulfill({ status: 200, headers: { 'access-control-allow-origin': '*' }, body: '' });
   });
   await page.goto(`${ORIGIN}/h5`);
   return { context, page, calls };
@@ -149,6 +160,8 @@ async function openPage(browser, { remoteTerminals, viewport } = {}) {
     await chooser.setFiles({ name: 'shot.png', mimeType: 'image/png', buffer: Buffer.from('89504e470d0a1a0a', 'hex') });
     await page.waitForFunction(() => window.sockets[0].sent.includes('https://img.test/shot.png '));
     assert.equal(await page.locator('.h5-upload-overlay').count(), 0);
+    assert.equal(ossUploads.length, 1, 'the image went to OSS from the browser');
+    assert.ok(ossUploads[0].includes('\x89PNG'));
     assert.notEqual((await sent()).at(-1), '\r');
 
     // Dragging scrolls a full-screen program (alternate buffer with mouse reporting) by sending wheel events.

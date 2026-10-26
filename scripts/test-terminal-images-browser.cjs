@@ -5,9 +5,21 @@ const path = require('node:path');
 const assert = require('node:assert/strict');
 const root = path.resolve(__dirname, '..');
 const html = fs.readFileSync(path.join(root, 'public/index.html'), 'utf8').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '').replace(/<link\b[^>]*>/g, '');
-const pending = [];
+const pending = []; // form POSTs to OSS that the test has not answered yet
+const posts = []; // what those POSTs carried
+const links = ['https://images.example/picture.png', 'https://images.example/failed.png', 'https://images.example/retained.png'];
+let policies = 0;
+const PNG = [137, 80, 78, 71, 13, 10, 26, 10];
 const server = http.createServer((req, res) => {
-  if (req.url === '/api/oss/images') { req.resume(); req.on('end', () => pending.push(res)); return; }
+  if (req.url === '/api/oss/upload-policy') {
+    let body = ''; req.on('data', chunk => { body += chunk; });
+    req.on('end', () => {
+      assert.deepEqual(JSON.parse(body), { type: 'image/png', size: PNG.length });
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ host: 'https://bucket.oss.test', fields: { key: `terminal-images/${policies}.png`, policy: 'p', 'x-oss-signature': 's' }, url: links[policies++], expiresAt: null }));
+    });
+    return;
+  }
   res.setHeader('Content-Type', 'text/html; charset=utf-8'); res.end(html);
 });
 (async () => {
@@ -16,7 +28,10 @@ const server = http.createServer((req, res) => {
   try {
     for (const mode of ['desktop', 'standalone', 'mobile']) {
       const mobile = mode === 'mobile';
+      policies = 0; posts.length = 0; // the stand-in hands out the same three links in every mode
       const context = await browser.newContext(mobile ? { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true } : { viewport: { width: 1400, height: 900 } });
+      // The image never goes to the Client: it is a form POST to OSS, answered by the test.
+      await context.route('https://bucket.oss.test/**', route => { posts.push(route.request().postDataBuffer()); pending.push(route); });
       const page = await context.newPage(); const errors = [];
       page.on('pageerror', error => errors.push(error.message)); page.on('dialog', dialog => dialog.dismiss());
       await page.goto(`http://127.0.0.1:${server.address().port}`);
@@ -40,13 +55,13 @@ const server = http.createServer((req, res) => {
         document.getElementById('xterm-container').innerHTML = '<div class="xterm-host" id="host"></div>';
         window.socket = { readyState: 1 }; window.currentSocket = socket;
       });
-      for (const file of [require.resolve('@xterm/xterm'), path.join(root, 'public/js/terminal-images.js'), path.join(root, 'public/js/terminal-clipboard.js')]) await page.addScriptTag({ path: file });
+      for (const file of [require.resolve('@xterm/xterm'), path.join(root, 'public/js/oss-direct.js'), path.join(root, 'public/js/terminal-images.js'), path.join(root, 'public/js/terminal-clipboard.js')]) await page.addScriptTag({ path: file });
       await page.evaluate(async () => {
         window.term = new Terminal({ cols: 65, rows: 20 }); term.open(document.getElementById('host'));
         term.onData(data => sent.push(data)); TerminalClipboard.attach(term, document.getElementById('host'));
         window.handle = TerminalImages.attach(term, document.getElementById('host'), () => currentSocket);
         await TerminalImages.load(); term.focus();
-        window.pasteImage = () => { const data = new DataTransfer(); data.items.add(new File([new Uint8Array([137,80,78,71])], 'image.png', { type: 'image/png' })); term.textarea.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true })); };
+        window.pasteImage = () => { const data = new DataTransfer(); data.items.add(new File([new Uint8Array([137,80,78,71,13,10,26,10])], 'image.png', { type: 'image/png' })); term.textarea.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true })); };
       });
       await page.evaluate(() => {
         const data = new DataTransfer(); data.setData('text/plain', 'plain text'); term.textarea.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
@@ -54,12 +69,14 @@ const server = http.createServer((req, res) => {
       assert.deepEqual(await page.evaluate(() => sent), ['plain text']);
       await page.evaluate(() => { sent.length = 0; keys = 0; pasteImage(); });
       await page.waitForFunction(() => document.querySelector('.terminal-image-upload-status')?.textContent.includes('OSS'));
+      await new Promise(resolve => { const wait = () => (pending.length ? resolve() : setTimeout(wait, 10)); wait(); });
       assert.equal(pending.length, 1);
+      assert.ok(posts[0].includes(Buffer.from(PNG)) && posts[0].toString('latin1').indexOf('name="key"') < posts[0].toString('latin1').indexOf('name="file"'), 'the image bytes go to OSS, the file field last');
       if (mobile) await page.screenshot({ path: '/private/tmp/t-agent-oss-upload.png' });
       await page.keyboard.press('Escape'); await page.keyboard.type('should-not-send');
       await page.evaluate(() => { document.getElementById('btn-settings').click(); term.focus(); });
       assert.deepEqual(await page.evaluate(() => ({ sent, clicks, keys, locked: term.options.disableStdin, focused: document.activeElement.className })), { sent: [], clicks: 0, keys: 0, locked: true, focused: 'terminal-image-upload-overlay' });
-      pending.shift().end(JSON.stringify({ url: 'https://images.example/picture.png' }));
+      await pending.shift().fulfill({ status: 200, headers: { 'access-control-allow-origin': '*' }, body: '' });
       await page.waitForFunction(() => !TerminalImages.busy);
       assert.deepEqual(await page.evaluate(() => sent), ['https://images.example/picture.png ']);
       await page.keyboard.type('x'); assert.deepEqual(await page.evaluate(() => sent), ['https://images.example/picture.png ', 'x']);
@@ -72,17 +89,19 @@ const server = http.createServer((req, res) => {
         assert.ok(bounds.y >= terminal.y && bounds.y + bounds.height <= terminal.y + terminal.height);
         assert.ok(terminal.y + terminal.height - bounds.y - bounds.height < 20, 'same unified terminal bottom placement');
         const chooser = page.waitForEvent('filechooser'); await page.getByRole('button', { name: 'Upload image', exact: true }).tap();
-        await (await chooser).setFiles({ name: 'phone.png', mimeType: 'image/png', buffer: Buffer.from([137,80,78,71]) });
+        await (await chooser).setFiles({ name: 'phone.png', mimeType: 'image/png', buffer: Buffer.from(PNG) });
       } else await page.evaluate(() => pasteImage());
       await page.waitForFunction(() => document.querySelector('.terminal-image-upload-status')?.textContent.includes('OSS'));
-      pending.shift().writeHead(500, { 'Content-Type': 'application/json' }).end(JSON.stringify({ error: 'simulated OSS failure' }));
+      await new Promise(resolve => { const wait = () => (pending.length ? resolve() : setTimeout(wait, 10)); wait(); });
+      await pending.shift().fulfill({ status: 403, contentType: 'application/xml', headers: { 'access-control-allow-origin': '*' }, body: '<Error><Code>AccessDenied</Code></Error>' });
       await page.waitForFunction(() => !TerminalImages.busy);
       assert.equal(await page.evaluate(() => term.options.disableStdin), false);
       await page.getByRole('button', { name: /Settings/ }).click();
       assert.equal(await page.evaluate(() => clicks), 1);
       await page.evaluate(() => { pasteImage(); currentSocket = { readyState: 1 }; });
       await page.waitForFunction(() => document.querySelector('.terminal-image-upload-status')?.textContent.includes('OSS'));
-      pending.shift().end(JSON.stringify({ url: 'https://images.example/retained.png' }));
+      await new Promise(resolve => { const wait = () => (pending.length ? resolve() : setTimeout(wait, 10)); wait(); });
+      await pending.shift().fulfill({ status: 200, headers: { 'access-control-allow-origin': '*' }, body: '' });
       await page.waitForFunction(() => !TerminalImages.busy);
       assert.equal(await page.locator('.terminal-image-result input').inputValue(), 'https://images.example/retained.png');
       assert.deepEqual(await page.evaluate(() => sent), ['https://images.example/picture.png ', 'x']);
@@ -90,4 +109,4 @@ const server = http.createServer((req, res) => {
     }
     console.log('PASS: real xterm text/image paste, upload processing lock, keyboard/pointer/focus block, no Enter, failure unlock, stale socket retained URL, desktop/installed-app layouts and phone bottom picker.');
   } finally { await browser.close(); server.close(); }
-})().catch(error => { console.error(error); for (const res of pending) res.destroy(); server.close(); process.exitCode = 1; });
+})().catch(error => { console.error(error); for (const route of pending) route.abort().catch(() => {}); server.close(); process.exitCode = 1; });

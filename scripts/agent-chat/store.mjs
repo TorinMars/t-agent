@@ -17,6 +17,7 @@ export function createChatStore({ api, base, conversation, notify = () => {}, Ev
   let state = {
     items: [], pending: [], status: 'idle', canSteer: false, loaded: false, title: conversation.title, mode: conversation.mode,
     model: conversation.model || '', effort: conversation.effort || '', context: conversation.context || null, limits: conversation.limits || [],
+    translate: conversation.translate === true, // the translation switch of this chat
     runningSince: null, queue: [],
     // What the person picked (the agent reports what it ran with, which can differ: an alias, a default) and the models on offer.
     canChoose: false, choice: { model: '', effort: '' }, models: { status: 'idle', list: [] },
@@ -62,6 +63,7 @@ export function createChatStore({ api, base, conversation, notify = () => {}, Ev
           ...(event.title ? { title: event.title } : {}), ...(event.mode ? { mode: event.mode } : {}),
           ...(event.model !== undefined ? { model: event.model } : {}), ...(event.effort !== undefined ? { effort: event.effort } : {}),
           ...(event.context ? { context: event.context } : {}), ...(event.limits ? { limits: event.limits } : {}),
+          ...(typeof event.translate === 'boolean' ? { translate: event.translate } : {}),
         });
         break;
       default: break;
@@ -92,6 +94,7 @@ export function createChatStore({ api, base, conversation, notify = () => {}, Ev
         ...(snapshot.conversation && snapshot.conversation.effort ? { effort: snapshot.conversation.effort } : {}),
         ...(snapshot.conversation && snapshot.conversation.context ? { context: snapshot.conversation.context } : {}),
         ...(snapshot.conversation && snapshot.conversation.limits ? { limits: snapshot.conversation.limits } : {}),
+        ...(snapshot.conversation && typeof snapshot.conversation.translate === 'boolean' ? { translate: snapshot.conversation.translate } : {}),
         canChoose: Boolean(snapshot.capabilities && snapshot.capabilities.models),
       });
       follow();
@@ -166,6 +169,20 @@ export function createChatStore({ api, base, conversation, notify = () => {}, Ev
     }
   }
 
+  // Turns the translation switch of this chat on or off. The switch moves at once; when the server cannot save it, it goes back.
+  async function setTranslate(value) {
+    const before = state.translate;
+    publish({ translate: value });
+    try {
+      await api.patch(url(''), { translate: value });
+      return true;
+    } catch (error) {
+      publish({ translate: before });
+      notify(`Could not save the translation switch: ${error.message}`);
+      return false;
+    }
+  }
+
   async function rename(title) {
     try {
       await api.patch(url(''), { title });
@@ -206,7 +223,7 @@ export function createChatStore({ api, base, conversation, notify = () => {}, Ev
   return {
     getState: () => state,
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
-    prepareMessage, load, send, stop, answer, setMode, loadModels, choose, rename, enqueue, unqueue, sendQueued, apply,
+    prepareMessage, load, send, stop, answer, setMode, loadModels, choose, setTranslate, rename, enqueue, unqueue, sendQueued, apply,
     destroy() {
       disposed = true;
       clearTimeout(retry);

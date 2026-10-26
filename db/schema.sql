@@ -157,6 +157,8 @@ CREATE TABLE IF NOT EXISTS agent_conversations (
   -- as a tab, the phone one at a time; each page restores its own.
   opened_web INTEGER,
   opened_h5 INTEGER,
+  -- The state of the chat's translation switch (1 = on): each chat keeps its own.
+  translate INTEGER,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

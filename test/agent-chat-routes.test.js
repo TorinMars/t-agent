@@ -123,3 +123,14 @@ test('a chat is also opened and closed on a page with POST .../opened, which the
   assert.equal((await call('POST', `${url}/conversations/${id}/opened`, { opened: true, surface: 'tablet' })).body.error, 'INVALID_SURFACE');
   assert.equal((await call('POST', `/api/tasks/${theirs.id}/agent/conversations/${id}/opened`, { opened: true, surface: 'h5' })).status, 404);
 });
+
+test('the translation switch of a chat is saved with PATCH and comes back with the chat', async () => {
+  const url = `/api/tasks/${mine.id}/agent`;
+  const id = (await call('POST', `${url}/conversations`, { agent: 'claude' })).body.id;
+  assert.equal((await call('GET', `${url}/conversations/${id}`)).body.conversation.translate, false);
+  const on = await call('PATCH', `${url}/conversations/${id}`, { translate: true });
+  assert.deepEqual([on.status, on.body.translate], [200, true]);
+  assert.equal((await call('GET', `${url}/conversations/${id}`)).body.conversation.translate, true);
+  assert.equal((await call('PATCH', `${url}/conversations/${id}`, { translate: 'on' })).body.error, 'INVALID_TRANSLATE');
+  assert.equal((await call('PATCH', `${url}/conversations/${id}`, { translate: false })).body.translate, false);
+});

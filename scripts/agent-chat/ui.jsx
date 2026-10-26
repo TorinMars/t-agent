@@ -349,7 +349,7 @@ function Composer({ store, state, agent, notify, inputRef }) {
   const [text, setText] = useState('');
   const [attachments, setAttachments] = useState([]);
   const [sending, setSending] = useState(false);
-  const [translate, setTranslate] = useState(false);
+  const translate = state.translate; // saved with the chat: each chat keeps its own switch
   const submitting = useRef(false);
   const picker = useRef(null);
   const form = useRef(null);
@@ -490,7 +490,7 @@ function Composer({ store, state, agent, notify, inputRef }) {
     {/* Between the input box and the access level: the translation switch on the left, the plan usage on the right. */}
     <div className="ac-meta">
       <button type="button" role="switch" aria-checked={translate} aria-label={t('Translate to English')}
-        title={t('Translate to English')} className="ac-translate" disabled={sending} onClick={() => setTranslate(value => !value)}>
+        title={t('Translate to English')} className="ac-translate" disabled={sending} onClick={() => void store.setTranslate(!translate)}>
         <span>{t('Translate')}</span><span className="ac-switch-track" aria-hidden="true"><span /></span>
       </button>
       <Limits limits={state.limits} />

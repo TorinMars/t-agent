@@ -26,7 +26,7 @@ function createAgentChat({ db, adapters = ADAPTERS }) {
   const rowOf = (taskId, id) => db.prepare('SELECT * FROM agent_conversations WHERE id = ? AND task_id = ?').get(id, taskId);
   const publicRow = (row, rt) => ({
     id: row.id, agent: row.agent, session_id: row.session_id, title: row.title, mode: row.mode,
-    updated_at: row.updated_at, running: Boolean(rt && rt.status === 'running'),
+    updated_at: row.updated_at, running: Boolean(rt && rt.status === 'running'), translate: row.translate === 1,
     opened: { web: row.opened_web || null, h5: row.opened_h5 || null },
     ...(rt && rt.model ? { model: rt.model } : {}), ...(rt && rt.effort ? { effort: rt.effort } : {}), ...(rt && rt.context ? { context: rt.context } : {}),
     ...(rt && rt.limits ? { limits: rt.limits } : {}),
@@ -244,6 +244,16 @@ function createAgentChat({ db, adapters = ADAPTERS }) {
     const models = offered.some(model => model.value === '') ? offered : [{ value: '', label: 'Default', description: '', efforts, defaultEffort: '' }, ...offered];
     const rt = runtimeFor(row, task);
     return { models, current: { model: rt.model || '', effort: rt.effort || '' }, chosen: { ...rt.choice } };
+  }
+
+  // The state of the chat's translation switch, kept per chat; the other pages that show this chat follow it through a meta event.
+  function setTranslate(task, id, value) {
+    const row = rowOf(task.id, id);
+    if (!row) throw fail('CONVERSATION_NOT_FOUND', 404);
+    if (typeof value !== 'boolean') throw fail('INVALID_TRANSLATE');
+    db.prepare('UPDATE agent_conversations SET translate = ? WHERE id = ?').run(value ? 1 : 0, id);
+    emit(runtimeFor(row, task), { op: 'meta', translate: value });
+    return publicRow(rowOf(task.id, id), runtimes.get(id));
   }
 
   function rename(task, id, title) {
@@ -468,7 +478,7 @@ function createAgentChat({ db, adapters = ADAPTERS }) {
     }
   }
 
-  return { list, create, snapshot, subscribe, sendMessage, interrupt, answerPermission, setMode, setPreferences, listModels, setOpened, rename, remove, stopTask, refreshLimits };
+  return { list, create, snapshot, subscribe, sendMessage, interrupt, answerPermission, setMode, setPreferences, listModels, setOpened, setTranslate, rename, remove, stopTask, refreshLimits };
 }
 
 let shared = null;

@@ -453,6 +453,21 @@ const server = http.createServer(app);
     await page.waitForFunction(() => document.querySelector('.ac-input').value === '');
     assert.equal(messageCalls.at(-1).text, source, 'turning translation off restores direct sending');
     await translation.click();
+    // Each chat keeps its own translation switch: it is saved on the server, a new chat starts with it off, and the chat that had it on has it on again.
+    assert.equal(await translation.getAttribute('aria-checked'), 'true');
+    const rowsWithSwitch = async () => (await page.evaluate(() => api.get(`${base}/conversations`))).filter(row => row.translate);
+    await page.waitForFunction(() => api.get(`${base}/conversations`).then(rows => rows.some(row => row.translate)));
+    const [onRow] = await rowsWithSwitch();
+    assert.equal((await rowsWithSwitch()).length, 1, 'only this chat has the switch on');
+    await page.evaluate(() => { view.destroy(); return openChat('claude', null); });
+    await page.waitForSelector('.ac-translate');
+    assert.equal(await page.getByRole('switch', { name: 'Translate to English' }).getAttribute('aria-checked'), 'false', 'a new chat starts with the switch off');
+    await page.evaluate(row => { view.destroy(); return openChat('claude', { conversation: row }); }, onRow);
+    await page.waitForSelector('.ac-translate');
+    assert.equal(await page.getByRole('switch', { name: 'Translate to English' }).getAttribute('aria-checked'), 'true', 'the chat that had the switch on has it on again');
+    await page.getByRole('switch', { name: 'Translate to English' }).click();
+    await page.waitForFunction(() => api.get(`${base}/conversations`).then(rows => rows.every(row => !row.translate)));
+    assert.equal((await rowsWithSwitch()).length, 0, 'turning it off is saved too');
     for (const width of [390, 1024]) {
       await page.setViewportSize({ width, height: 780 });
       assert.equal(await translation.isVisible(), true);

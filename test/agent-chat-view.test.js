@@ -375,3 +375,28 @@ test('failed, empty or unfinished translation never sends a message', async () =
   resolve({ text: 'translated' });
   assert.equal(await pending, null, 'closing a chat during translation cancels dispatch');
 });
+
+test('the translation switch comes with the chat, moves at once, is saved, follows another page, and goes back when it cannot be saved', async () => {
+  const { createChatStore } = await load();
+  const { options, calls, notices, sources } = harness({ snapshot: { items: [], pending: [], status: 'idle', seq: 0, conversation: { translate: true } } });
+  options.conversation = { ...options.conversation, translate: false };
+  const store = createChatStore(options);
+  assert.equal(store.getState().translate, false, 'the row the chat was opened with');
+  await store.load();
+  assert.equal(store.getState().translate, true, 'the saved state arrives with the snapshot');
+
+  options.api.patch = async (url, body) => { calls.push(['patch', url, body]); return {}; };
+  const turnedOff = store.setTranslate(false);
+  assert.equal(store.getState().translate, false, 'it moves before the server answers');
+  assert.equal(await turnedOff, true);
+  assert.deepEqual(calls.filter(call => call[0] === 'patch').at(-1), ['patch', '/b/conversations/c1', { translate: false }]);
+
+  sources[0].emit({ seq: 1, op: 'meta', translate: true });
+  assert.equal(store.getState().translate, true, 'another page turned it on');
+
+  options.api.patch = async () => { throw new Error('nope'); };
+  assert.equal(await store.setTranslate(false), false);
+  assert.equal(store.getState().translate, true, 'it goes back');
+  assert.ok(notices.some(message => /translation switch/.test(message)));
+  store.dispose && store.dispose();
+});

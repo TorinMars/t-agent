@@ -668,3 +668,22 @@ test('a plan to review reaches the client, and approving it leaves plan mode whi
   assert.equal(db.prepare('SELECT mode FROM agent_conversations WHERE id = ?').get(conversation.id).mode, 'ask');
   assert.ok(seen.some(event => event.op === 'meta' && event.mode === 'ask'), 'the page is told');
 });
+
+test('each chat keeps its own translation switch: saved, announced to the pages that follow the chat, and still there after a restart', async () => {
+  const own = tasks.createTask('owner', { title: 'translate switch' });
+  const chat = createAgentChat({ db, adapters: { codex: fakeAdapter(async () => ({ ok: true })) } });
+  const a = chat.create(own, { agent: 'codex', title: 'A' });
+  const b = chat.create(own, { agent: 'codex', title: 'B' });
+  assert.deepEqual(chat.list(own.id).map(row => row.translate), [false, false], 'off at first');
+  const seen = [];
+  chat.subscribe(own, a.id, 0, event => seen.push(event));
+  const saved = chat.setTranslate(own, a.id, true);
+  assert.equal(saved.translate, true);
+  assert.deepEqual(chat.list(own.id).map(row => [row.title, row.translate]), [['A', true], ['B', false]], 'only that chat');
+  assert.ok(seen.some(event => event.op === 'meta' && event.translate === true), 'the other pages of the chat are told');
+  assert.equal((await chat.snapshot(own, a.id)).conversation.translate, true);
+  assert.equal(createAgentChat({ db, adapters: { codex: fakeAdapter(async () => ({ ok: true })) } }).list(own.id).find(row => row.id === a.id).translate, true, 'it survives a restart');
+  assert.equal(chat.setTranslate(own, a.id, false).translate, false);
+  assert.throws(() => chat.setTranslate(own, a.id, 'yes'), error => error.message === 'INVALID_TRANSLATE');
+  assert.throws(() => chat.setTranslate(own, 'missing', true), error => error.statusCode === 404);
+});

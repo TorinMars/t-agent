@@ -398,7 +398,7 @@
   }
 
   // The terminals of the selected task are a second-level list under it in the task sheet; "⋯" opens the actions of one terminal.
-  const TERMINAL_ICONS = { shell: '>_', claude: '\u2733', codex: '\u25ce' };
+  const TERMINAL_ICONS = { shell: '>_', claude: '\u2733', codex: 'GPT' };
   function terminalList() {
     const list = document.createElement('div');
     list.className = 'h5-terminal-list';
@@ -412,7 +412,8 @@
       button.className = 'h5-terminal-main';
       const icon = document.createElement('span');
       icon.className = `h5-terminal-icon ${row.agent || 'shell'}`;
-      icon.textContent = TERMINAL_ICONS[row.agent] || TERMINAL_ICONS.shell;
+      if (row.agent && typeof AgentChat !== 'undefined') icon.append(AgentChat.icon(row.agent));
+      else icon.textContent = TERMINAL_ICONS[row.agent] || TERMINAL_ICONS.shell;
       icon.setAttribute('aria-hidden', 'true');
       const name = document.createElement('span');
       name.className = 'h5-terminal-name';

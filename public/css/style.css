@@ -1985,8 +1985,9 @@ html[lang="zh-CN"] .update-log:empty::before { content: '\7B49\5F85\8F93\51FA\20
 .agent-pane { position: absolute; inset: 0; z-index: 6; }
 .agent-holder { position: absolute; inset: 0; }
 .agent-holder[hidden] { display: none; }
-.terminal-tabs .agent-tab-badge { margin-right: 6px; }
+.terminal-tabs .agent-tab-badge { display: inline-flex; align-items: center; vertical-align: middle; margin-right: 6px; }
 .terminal-tabs .agent-tab-badge.claude { color: #d97757; }
-.terminal-tabs .agent-tab-badge.codex { color: #70a5ff; }
+.terminal-tabs .agent-tab-badge.codex { color: inherit; }
+.terminal-tabs .agent-tab-badge .agent-logo { width: 14px; height: 14px; }
 .terminal-tabs .agent-tab { max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
 .agent-pane[hidden] { display: none; }

@@ -16,7 +16,9 @@
 .ac-back { flex: 0 0 auto; min-width: 36px; height: 36px; border: 1px solid var(--ac-border); border-radius: 8px; background: var(--ac-key); color: inherit; font-size: 18px; cursor: pointer; }
 .ac-badge { flex: 0 0 auto; font-size: 18px; }
 .ac-badge.claude { color: #d97757; }
-.ac-badge.codex { color: #4a9eff; }
+.ac-badge.codex { color: inherit; }
+.ac-badge { display: inline-flex; align-items: center; }
+.agent-logo { display: block; width: 1em; height: 1em; fill: currentColor; }
 .ac-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
 .ac-mode { flex: 0 1 auto; max-width: 46%; height: 34px; padding: 0 6px; border: 1px solid var(--ac-border); border-radius: 8px; background: var(--ac-key); color: inherit; font-size: 13px; }
 

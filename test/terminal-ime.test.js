@@ -20,11 +20,11 @@ function setup() {
   };
 }
 
-test('a space or punctuation mark that xterm dropped is sent', () => {
+test('a space, punctuation mark or number that xterm dropped is sent', () => {
   const t = setup();
-  for (const data of [' ', '，', '。', ',', '.', '　']) t.input({ inputType: 'insertText', data, isComposing: false });
+  for (const data of [' ', '\uFF0C', '\u3002', ',', '.', '\u3000', '0', '7', '\uFF15']) t.input({ inputType: 'insertText', data, isComposing: false });
   t.settle();
-  assert.deepEqual(t.sent, [' ', '，', '。', ',', '.', '　']);
+  assert.deepEqual(t.sent, [' ', '\uFF0C', '\u3002', ',', '.', '\u3000', '0', '7', '\uFF15']);
 });
 
 test('a character xterm already emitted is not sent twice', () => {
@@ -38,8 +38,8 @@ test('a character xterm already emitted is not sent twice', () => {
 test('letters, composition and other input types are left to xterm', () => {
   const t = setup();
   t.input({ inputType: 'insertText', data: 'a', isComposing: false });
-  t.input({ inputType: 'insertText', data: '，', isComposing: true });
-  t.input({ inputType: 'insertCompositionText', data: '，', isComposing: false });
+  t.input({ inputType: 'insertText', data: '\uFF0C', isComposing: true });
+  t.input({ inputType: 'insertCompositionText', data: '\uFF0C', isComposing: false });
   t.input({ inputType: 'insertText', data: ', ', isComposing: false });
   t.input({ inputType: 'deleteContentBackward', data: null, isComposing: false });
   t.settle();
@@ -56,7 +56,7 @@ test('several characters typed quickly are each checked against what xterm emitt
   const t = setup();
   t.input({ inputType: 'insertText', data: ' ', isComposing: false });
   t.xtermEmits(' ');
-  t.input({ inputType: 'insertText', data: '，', isComposing: false });
+  t.input({ inputType: 'insertText', data: '\uFF0C', isComposing: false });
   t.settle();
-  assert.deepEqual(t.sent, ['，']);
+  assert.deepEqual(t.sent, ['\uFF0C']);
 });

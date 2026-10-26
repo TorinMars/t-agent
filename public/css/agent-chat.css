@@ -15,6 +15,8 @@
   display: flex; flex-direction: column; width: 100%; height: 100%; min-height: 0;
   background: var(--ac-bg); color: var(--ac-text); font-size: 15px; line-height: 1.5;
 }
+/* Icons carry their size in CSS as well as in the width / height attributes: WebKit on iPhone drew the attribute-only ones (attach, microphone, send) as specks inside the flex buttons. */
+.agent-chat svg:not(.agent-logo) { width: 18px; height: 18px; flex: 0 0 auto; }
 .ac-head { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; padding: 8px 16px; background: var(--ac-bg); border-bottom: 1px solid var(--ac-border); }
 .ac-back { flex: 0 0 auto; min-width: 34px; height: 34px; border: 0; border-radius: 8px; background: none; color: inherit; font-size: 20px; cursor: pointer; }
 .ac-badge { flex: 0 0 auto; font-size: 17px; display: inline-flex; align-items: center; }

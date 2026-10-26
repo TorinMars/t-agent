@@ -142,6 +142,11 @@ const server = http.createServer(app);
     // What is left of the plan windows and when they reset: one unit, decimals allowed.
     assert.deepEqual(await page.locator('.ac-limit').allTextContents(), ['5h 62.5% · 4.2h', '7d 80% · 3.5d']);
     assert.equal(await page.locator('.ac-limit').first().getAttribute('title'), '5h limit: 62.5% left, resets in 4.2h');
+    // The composer icons keep a real size (they were specks on an iPhone).
+    for (const selector of ['.ac-attach svg', '.ac-mic svg']) {
+      const box = await page.locator(selector).first().boundingBox();
+      assert.deepEqual([box.width, box.height], [18, 18], `${selector} is 18px`);
+    }
     // The usage is its own row below the input box and above the footer that holds the access level and the model.
     const [composerBox, limitsBox, footBox] = await Promise.all([page.locator('.ac-composer').boundingBox(), page.locator('.agent-chat > .ac-limits').boundingBox(), page.locator('.ac-foot').boundingBox()]);
     assert.ok(limitsBox.y >= composerBox.y + composerBox.height - 1 && limitsBox.y + limitsBox.height <= footBox.y + 1, 'usage sits between the input box and the footer');

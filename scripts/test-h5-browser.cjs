@@ -252,6 +252,16 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     await page.locator('#h5-task-name', { hasText: 'Fix login' }).waitFor();
     await page.waitForTimeout(400);
     assert.equal(await page.locator('#h5-agent').isHidden(), true, 'a chat that was closed does not come back');
+    // A chat that was left is still listed under its task in the task sheet, and tapping it opens it again.
+    await page.locator('#h5-open-tasks').tap();
+    const chatRow = page.locator('#h5-tasks .h5-terminal-row', { hasText: 'New chat' });
+    await chatRow.waitFor();
+    await chatRow.locator('.h5-terminal-main').tap();
+    await page.locator('#h5-agent .agent-chat').waitFor();
+    await pollUntil(() => openOnServer() > 0);
+    await page.locator('#h5-agent .ac-back').tap();
+    await page.locator('#h5-agent').waitFor({ state: 'hidden' });
+    await pollUntil(() => openOnServer() === null);
     // It is the server that remembers: a list that cannot be read opens nothing and forgets nothing; a chat that no longer exists is not shown.
     chats[0].opened.h5 = Date.now();
     chatListFails = true;

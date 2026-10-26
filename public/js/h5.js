@@ -178,7 +178,7 @@
         button.textContent = item.title;
         if (task && task.id === item.id) button.setAttribute('aria-current', 'true');
         button.addEventListener('click', () => selectTask(item));
-        if (task && task.id === item.id && terminals.length) {
+        if (task && task.id === item.id && (terminals.length || chats.length)) {
           // The selected task: "+" on the right of its row adds a terminal, and its terminals are listed under it.
           const row = document.createElement('div');
           row.className = 'h5-task-row';
@@ -202,6 +202,7 @@
     // A chat open over another task is put away (but not forgotten: it comes back with its task).
     if (agentChat && agentFor && (!item || agentFor.taskId !== item.id || agentFor.source !== source.key)) hideAgent();
     task = item;
+    chats = [];
     store.set(`task:${source.key}`, item ? item.id : null);
     $('h5-task-name').textContent = item ? item.title : 'Choose a task';
     closeTasks();
@@ -215,6 +216,7 @@
     renderTasks();
     void loadTasks();
     void refreshTerminals();
+    void loadChats();
     clearInterval(namesTimer);
     namesTimer = setInterval(() => void refreshTerminals(), 8000);
   }
@@ -437,6 +439,26 @@
       line.append(button, more);
       list.append(line);
     }
+    // The agent chats of the task, after its terminals: the only way back into one that was left with the back arrow.
+    for (const row of chats) {
+      const line = document.createElement('div');
+      line.className = 'h5-terminal-row';
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'h5-terminal-main';
+      const icon = document.createElement('span');
+      icon.className = `h5-terminal-icon ${row.agent}`;
+      icon.append(AgentChat.icon(row.agent));
+      icon.setAttribute('aria-hidden', 'true');
+      const name = document.createElement('span');
+      name.className = 'h5-terminal-name';
+      name.textContent = `${row.running ? '\u25CF ' : ''}${row.title}`;
+      button.append(icon, name);
+      if (agentFor && agentFor.conversation === row.id) button.setAttribute('aria-current', 'true');
+      button.addEventListener('click', () => { closeTasks(); mountAgent(row); });
+      line.append(button);
+      list.append(line);
+    }
     return list;
   }
   function switchTerminal(row) {
@@ -577,6 +599,7 @@
   // task on this page), so a refresh, or another phone, brings it back. Earlier versions remembered it in localStorage (`h5-agent:...`);
   // that is moved to the database the first time it is found.
   let agentFor = null;
+  let chats = []; // the agent chats of the selected task, listed under its terminals in the task sheet
   const legacyKey = item => `agent:${source.key}:${item.id}`;
   // Tells the server that a chat is open (or not) on the phone page; a failure is shown, the chat just is not remembered.
   // POST first, because some network paths (a proxy in front of the Client) let POST through but not PATCH; an older Engine without that route gets the PATCH.
@@ -603,6 +626,7 @@
   function closeAgent() {
     if (agentFor && agentFor.source === source.key) setOpened(agentFor.taskId, agentFor.conversation, false);
     hideAgent();
+    void loadChats();
   }
   // `remember`: the person opened it, so the server is told; a chat that is shown again because it was already open is not sent again.
   function mountAgent(conversation, { remember = true } = {}) {
@@ -616,22 +640,38 @@
     agentChat = AgentChat.mount(agentView, { api: chatApi, base: `${source.tasksBase}/${task.id}/agent`, conversation, onClose: closeAgent, notify: message => tell(message, 'error') });
     agentFor = { source: source.key, taskId: task.id, conversation: conversation.id };
     if (remember) setOpened(task.id, conversation.id, true);
+    void loadChats();
+  }
+  // The chats of a task on the selected Engine, or null when the Engine has none to offer, the list cannot be read or the page moved on.
+  async function readChats(item) {
+    const current = source;
+    try {
+      if (current.key !== 'local') {
+        const info = await api('GET', `${current.tasksBase.replace(/\/tasks$/, '')}/info`);
+        if (!Array.isArray(info.capabilities) || !info.capabilities.includes('agent-chat:manage')) return null;
+        if (source !== current || task !== item) return null;
+      }
+      const rows = await chatApi.get(`${current.tasksBase}/${item.id}/agent/conversations`);
+      return task === item && source === current && Array.isArray(rows) ? rows : null;
+    } catch { return null; } // nothing is lost: the chats stay on the server for the next time
+  }
+  // Keeps the chats listed under the task in the task sheet up to date.
+  async function loadChats() {
+    const item = task;
+    if (!item) { chats = []; return; }
+    const rows = await readChats(item);
+    if (!rows || task !== item) return;
+    chats = rows;
+    renderTabs();
   }
   // Opens again the chat saved on this task by the selected Engine.
   async function restoreAgent(item) {
     if (agentChat) return;
     const current = source;
-    let rows;
-    try {
-      if (current.key !== 'local') {
-        const info = await api('GET', `${current.tasksBase.replace(/\/tasks$/, '')}/info`);
-        if (!Array.isArray(info.capabilities) || !info.capabilities.includes('agent-chat:manage')) return;
-        if (source !== current || task !== item) return;
-      }
-      rows = await chatApi.get(`${current.tasksBase}/${item.id}/agent/conversations`);
-    } catch { return; } // nothing is lost: the chat stays open on the server for the next time
-    if (task !== item || source !== current || agentChat) return;
-    const list = Array.isArray(rows) ? rows : [];
+    const list = await readChats(item);
+    if (!list || agentChat) return;
+    chats = list;
+    renderTabs();
     let row = list.filter(entry => entry.opened && entry.opened.h5).sort((x, y) => y.opened.h5 - x.opened.h5)[0];
     const legacy = store.get(legacyKey(item));
     if (legacy) {

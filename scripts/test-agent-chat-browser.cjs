@@ -150,6 +150,9 @@ const server = http.createServer(app);
     // The usage is its own row below the input box and above the footer that holds the access level and the model.
     const [composerBox, limitsBox, footBox] = await Promise.all([page.locator('.ac-composer').boundingBox(), page.locator('.agent-chat > .ac-limits').boundingBox(), page.locator('.ac-foot').boundingBox()]);
     assert.ok(limitsBox.y >= composerBox.y + composerBox.height - 1 && limitsBox.y + limitsBox.height <= footBox.y + 1, 'usage sits between the input box and the footer');
+    // The usage is right-aligned, on the same side as the model: its right edge matches the footer's content edge.
+    const lastLimitBox = await page.locator('.ac-limit').last().boundingBox();
+    assert.ok(Math.abs((lastLimitBox.x + lastLimitBox.width) - (footBox.x + footBox.width - 24)) <= 1, 'usage is right-aligned');
     assert.equal(await page.locator('.ac-context').getAttribute('class'), 'ac-context');
     assert.equal(await page.locator('.ac-context-value').getAttribute('stroke-dasharray'), `${2 * Math.PI * 8 * 0.21} ${2 * Math.PI * 8}`);
     assert.match(await page.locator('.ac-mode-text').textContent(), /Ask before changes/);
@@ -206,6 +209,23 @@ const server = http.createServer(app);
     await page.waitForSelector('.ac-attachments .ac-chip');
     assert.deepEqual(await page.locator('.ac-attachments .ac-chip span:first-child').allTextContents(), ['notes.txt', 'pic.png']);
     assert.ok((await page.evaluate(() => notices)).some(message => /tool\.exe is too large/.test(message)));
+    // An image pasted while the focus is in the message list (not in the input box) is attached too, and so is one that only the clipboard items list.
+    const pasteImage = (selector, viaItems) => page.evaluate(({ selector, viaItems }) => {
+      const bytes = Uint8Array.from(atob('iVBORw0KGgo='), char => char.charCodeAt(0));
+      const file = new File([bytes], 'shot.png', { type: 'image/png' });
+      const data = new DataTransfer();
+      data.items.add(file);
+      const event = new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true });
+      if (viaItems) Object.defineProperty(event.clipboardData, 'files', { value: [] });
+      document.querySelector(selector).dispatchEvent(event);
+      return event.defaultPrevented;
+    }, { selector, viaItems });
+    assert.equal(await pasteImage('.ac-messages', false), true, 'a paste outside the input box is taken');
+    assert.equal(await pasteImage('.ac-input', true), true, 'a paste whose files list is empty is read from the items');
+    await page.waitForFunction(() => document.querySelectorAll('.ac-attachments .ac-chip').length === 4);
+    await page.locator('.ac-attachments .ac-chip').nth(3).locator('.ac-chip-remove').click();
+    await page.locator('.ac-attachments .ac-chip').nth(2).locator('.ac-chip-remove').click();
+    assert.equal(await page.locator('.ac-attachments .ac-chip').count(), 2);
     await page.fill('.ac-input', 'use these');
     await page.click('.ac-send');
     await page.waitForFunction(() => document.querySelectorAll('.ac-user').length === 3);

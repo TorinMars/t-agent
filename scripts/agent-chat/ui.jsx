@@ -600,7 +600,7 @@ function ModelPicker({ store, state }) {
   );
 }
 
-// What is left of the plan windows (5 hours, 7 days) and when each resets, in one unit with decimals: "5h 62.5% · 4.2h".
+// What is left of the plan windows (5 hours, 7 days) and when each resets, in one unit with decimals: "62.5% · 4.2h".
 function Limits({ limits }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 30000); return () => clearInterval(timer); }, []);

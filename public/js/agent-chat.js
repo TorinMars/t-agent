@@ -89,7 +89,7 @@ const AgentChat = (() => {
     return bundle;
   }
 
-  // ── Notifications: a turn that ends while the person is elsewhere (another window, another tab of the page, a chat that is not shown) ──
+  // ── Notifications: a turn that ends while the app page is hidden ──
   // A click on the notification shows that chat: through the opener of the mounted chat (`onOpen`), or, when the chat is not mounted any more (the page
   // was reloaded), through the page's open handler (`AgentChat.setOpenHandler`), which gets { taskId, conversationId }. The service worker (sw.js)
   // forwards the click of a notification it showed to the page that is open, or opens the page with `?openChat=<task id>:<conversation id>`.
@@ -111,9 +111,10 @@ const AgentChat = (() => {
   }
   // The service worker shows it when there is one (the only way on a phone); otherwise the page does.
   async function showNotification(title, options, onClick) {
-    if (!canNotify() || Notification.permission !== 'granted') return false;
+    if (!document.hidden || !canNotify() || Notification.permission !== 'granted') return false;
     try {
       const registration = navigator.serviceWorker && navigator.serviceWorker.getRegistration ? await navigator.serviceWorker.getRegistration() : null;
+      if (!document.hidden) return false; // the person may have returned while the worker was being found
       if (registration && registration.showNotification) { await registration.showNotification(title, options); return true; }
       const note = new Notification(title, options);
       note.onclick = () => { try { window.focus(); note.close(); } catch { /* already gone */ } onClick(); };
@@ -135,11 +136,10 @@ const AgentChat = (() => {
     if (options.onOpen) openers.set(ids.conversationId, options.onOpen);
     container.addEventListener('pointerup', requestPermission, { once: true });
     container.addEventListener('keydown', requestPermission, { once: true });
-    // A turn that ended while the person was not looking at this chat (and that they did not stop themselves).
+    // Visible app pages stay quiet, even when this chat is not selected or the window has no focus.
     const turnEnded = turn => {
       if (turn.stopped || (options.onTurn && options.onTurn(turn) === false)) return;
-      const away = (typeof document !== 'undefined' && (document.hidden || !document.hasFocus())) || container.offsetParent === null;
-      if (!away) return;
+      if (!document.hidden) return;
       const label = (AGENTS[options.conversation.agent] || AGENTS.claude).label;
       const summary = String(turn.summary || '').replace(/\s+/g, ' ').trim();
       void showNotification(`${label}: ${turn.title || options.conversation.title}`, {

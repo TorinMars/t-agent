@@ -209,9 +209,9 @@ const Tasks = (() => {
     inst.term.write(typeof I18n !== 'undefined' ? I18n.t(`\r\n\x1b[33m[Connection lost, reconnecting in ${Math.ceil(delay / 1000)}s...]\x1b[0m\r\n`) : `\r\n\x1b[33m[Connection lost, reconnecting in ${Math.ceil(delay / 1000)}s...]\x1b[0m\r\n`);
   }
 
-  function connectWebSocket(task, inst) {
+  function connectWebSocket(task, inst, takeover = false) {
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    const ws = new WebSocket(`${proto}://${location.host}${inst.wsPath}?taskId=${task.id}&terminalId=${encodeURIComponent(inst.terminalId)}`);
+    const ws = new WebSocket(`${proto}://${location.host}${inst.wsPath}?taskId=${task.id}&terminalId=${encodeURIComponent(inst.terminalId)}${TerminalOwner.query(takeover)}`);
     ws.binaryType = 'arraybuffer';
     inst.ws = ws;
     inst.history.bind(ws);
@@ -243,6 +243,10 @@ const Tasks = (() => {
       if (inst.ws !== ws || inst.disposed || termInstances.get(terminalKey(task.id, inst.terminalId, inst.sourceKey)) !== inst) return;
       inst.history.disconnect(ws);
       inst.ws = null;
+      if (TerminalOwner.isBlocked(event.code)) {
+        TerminalOwner.prompt(inst.el, event.code, () => { inst.reconnectAttempts = 0; connectWebSocket(task, inst, true); });
+        return;
+      }
       if (event.code === 1000 || event.code === 1008) {
         inst.term.write(typeof I18n !== 'undefined' ? I18n.t('\r\n[Terminal disconnected. Click “Reopen” to reconnect]\r\n') : '\r\n[Terminal disconnected. Click “Reopen” to reconnect]\r\n');
         return;

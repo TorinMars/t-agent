@@ -2054,3 +2054,8 @@ html[lang="zh-CN"] .update-log:empty::before { content: '\7B49\5F85\8F93\51FA\20
 .env-impact, .env-fix { margin: 4px 0 0 30px; font-size: 13px; overflow-wrap: anywhere; }
 .env-fix code { padding: 1px 5px; border-radius: 4px; background: var(--bg-tertiary); font: 12px Menlo, Monaco, Consolas, monospace; }
 @media (max-width: 700px) { .env-head { flex-direction: column; } .env-check-detail, .env-impact, .env-fix { margin-left: 0; } }
+
+/* Shown over a terminal that another device is using; the button takes it over. */
+.terminal-owner-prompt { position: absolute; inset: 0; z-index: 5; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 16px; text-align: center; background: rgba(0, 0, 0, 0.72); color: #fff; }
+.terminal-owner-prompt p { margin: 0; font-size: 14px; }
+.terminal-owner-prompt button { min-height: 40px; padding: 0 18px; border: 0; border-radius: 8px; background: #3b82f6; color: #fff; font-size: 14px; }

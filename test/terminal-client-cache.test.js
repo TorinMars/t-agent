@@ -23,6 +23,7 @@ function setup() {
   const context = { document, Event, localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
     location: { protocol: 'http:', host: 'localhost' }, mermaid: { initialize() {} },
     WebSocket: Socket, Terminal, FitAddon: { FitAddon: class {} }, WebLinksAddon: { WebLinksAddon: class {} },
+    TerminalOwner: { query: () => '', isBlocked: () => false, prompt() {} },
     TerminalViewport: { fit() {}, observe: () => ({ disconnect() {} }), capture: () => null, restore() {} },
     TerminalImages: { busy: false, attach: () => ({ dispose() {} }) },
     TerminalClipboard: { attach: term => ({ dispose() {}, writeHistory: (data, done) => term.write(data, done) }) },

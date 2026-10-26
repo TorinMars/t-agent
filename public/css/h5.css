@@ -162,3 +162,8 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; c
 @media (min-width: 481px) {
   .h5-app, .h5-sheet { box-shadow: 0 0 0 1px var(--h5-border); }
 }
+
+/* Shown over a terminal that another device is using; the button takes it over. */
+.terminal-owner-prompt { position: absolute; inset: 0; z-index: 5; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 16px; text-align: center; background: rgba(0, 0, 0, 0.72); color: #fff; }
+.terminal-owner-prompt p { margin: 0; font-size: 14px; }
+.terminal-owner-prompt button { min-height: 40px; padding: 0 18px; border: 0; border-radius: 8px; background: #3b82f6; color: #fff; font-size: 14px; }

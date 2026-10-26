@@ -453,6 +453,7 @@ function Composer({ store, state, agent, notify, inputRef }) {
 
   const canNow = entry => !running || state.canSteer;
   return (
+    <>
     <form ref={form} className="ac-composer" aria-busy={sending} autoComplete="off" onSubmit={event => { event.preventDefault(); void dispatch(false); }}>
       {state.queue.length ? (
         <div className="ac-queue" aria-label={t('Queued')}>
@@ -495,16 +496,21 @@ function Composer({ store, state, agent, notify, inputRef }) {
             void dispatch(later);
           }}
         />
-        <button type="button" role="switch" aria-checked={translate} aria-label={t('Translate to English')}
-          title={t('Translate to English')} className="ac-translate" disabled={sending} onClick={() => setTranslate(value => !value)}>
-          <span>{t('Translate')}</span><span className="ac-switch-track" aria-hidden="true"><span /></span>
-        </button>
         <Mic notify={notify} onText={spoken => !submitting.current && setText(current => `${current}${current && !/\s$/.test(current) ? ' ' : ''}${spoken.trim()}`)} />
         {filled ? <button type="submit" className="ac-send" disabled={sending} aria-label={t(running && !state.canSteer ? 'Queue for later' : 'Send')}><Icon d={ICONS.up} /></button> : null}
         {running ? <button type="button" className="ac-stop" aria-label={t('Stop')} onClick={() => void store.stop()}><Icon d={ICONS.stop} fill /></button> : null}
       </div>
       <input ref={picker} type="file" multiple hidden accept={ACCEPT} onChange={event => { void addFiles([...event.target.files]); event.target.value = ''; }} />
     </form>
+    {/* Between the input box and the access level: the translation switch on the left, the plan usage on the right. */}
+    <div className="ac-meta">
+      <button type="button" role="switch" aria-checked={translate} aria-label={t('Translate to English')}
+        title={t('Translate to English')} className="ac-translate" disabled={sending} onClick={() => setTranslate(value => !value)}>
+        <span>{t('Translate')}</span><span className="ac-switch-track" aria-hidden="true"><span /></span>
+      </button>
+      <Limits limits={state.limits} />
+    </div>
+    </>
   );
 }
 
@@ -682,7 +688,6 @@ export const Chat = React.forwardRef(function Chat({ store, agent, conversation,
         </ThreadPrimitive.Root>
       </AssistantRuntimeProvider>
       <Composer store={store} state={state} agent={agent} notify={notify} inputRef={inputRef} />
-      <Limits limits={state.limits} />
       <div className="ac-foot">
         <label className="ac-mode-label">
           <span className="ac-mode-text">{t((agent.modes.find(([value]) => value === state.mode) || [state.mode, state.mode])[1])}</span>

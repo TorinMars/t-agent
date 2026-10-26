@@ -148,11 +148,16 @@ const server = http.createServer(app);
       assert.deepEqual([box.width, box.height], [18, 18], `${selector} is 18px`);
     }
     // The usage is its own row below the input box and above the footer that holds the access level and the model.
-    const [composerBox, limitsBox, footBox] = await Promise.all([page.locator('.ac-composer').boundingBox(), page.locator('.agent-chat > .ac-limits').boundingBox(), page.locator('.ac-foot').boundingBox()]);
+    const [composerBox, limitsBox, footBox] = await Promise.all([page.locator('.ac-composer').boundingBox(), page.locator('.agent-chat > .ac-meta').boundingBox(), page.locator('.ac-foot').boundingBox()]);
     assert.ok(limitsBox.y >= composerBox.y + composerBox.height - 1 && limitsBox.y + limitsBox.height <= footBox.y + 1, 'usage sits between the input box and the footer');
     // The usage is right-aligned, on the same side as the model: its right edge matches the footer's content edge.
     const lastLimitBox = await page.locator('.ac-limit').last().boundingBox();
     assert.ok(Math.abs((lastLimitBox.x + lastLimitBox.width) - (footBox.x + footBox.width - 24)) <= 1, 'usage is right-aligned');
+    // The translation switch shares that row: on the left edge of the footer content, left of the usage, above the access level.
+    const [switchBox, firstLimitBox, modeBox] = await Promise.all([page.locator('.ac-translate').boundingBox(), page.locator('.ac-limit').first().boundingBox(), page.locator('.ac-mode-label').boundingBox()]);
+    assert.ok(Math.abs(switchBox.x - modeBox.x) <= 1, 'the switch is left-aligned with the access level');
+    assert.ok(switchBox.x + switchBox.width <= firstLimitBox.x, 'the switch is left of the usage');
+    assert.ok(switchBox.y + switchBox.height <= footBox.y + 1 && switchBox.y >= composerBox.y + composerBox.height - 1, 'the switch sits between the input box and the footer');
     assert.equal(await page.locator('.ac-context').getAttribute('class'), 'ac-context');
     assert.equal(await page.locator('.ac-context-value').getAttribute('stroke-dasharray'), `${2 * Math.PI * 8 * 0.21} ${2 * Math.PI * 8}`);
     assert.match(await page.locator('.ac-mode-text').textContent(), /Ask before changes/);

@@ -145,6 +145,9 @@ const server = http.createServer(app);
     // The usage is its own row below the input box and above the footer that holds the access level and the model.
     const [composerBox, limitsBox, footBox] = await Promise.all([page.locator('.ac-composer').boundingBox(), page.locator('.agent-chat > .ac-limits').boundingBox(), page.locator('.ac-foot').boundingBox()]);
     assert.ok(limitsBox.y >= composerBox.y + composerBox.height - 1 && limitsBox.y + limitsBox.height <= footBox.y + 1, 'usage sits between the input box and the footer');
+    // The usage is right-aligned, on the same side as the model: its right edge matches the footer's content edge.
+    const lastLimitBox = await page.locator('.ac-limit').last().boundingBox();
+    assert.ok(Math.abs((lastLimitBox.x + lastLimitBox.width) - (footBox.x + footBox.width - 24)) <= 1, 'usage is right-aligned');
     assert.equal(await page.locator('.ac-context').getAttribute('class'), 'ac-context');
     assert.equal(await page.locator('.ac-context-value').getAttribute('stroke-dasharray'), `${2 * Math.PI * 8 * 0.21} ${2 * Math.PI * 8}`);
     assert.match(await page.locator('.ac-mode-text').textContent(), /Ask before changes/);

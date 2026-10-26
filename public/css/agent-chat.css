@@ -63,12 +63,25 @@
 .ac-chips { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; }
 .ac-chip { display: inline-flex; align-items: center; gap: 4px; max-width: 200px; padding: 2px 8px; border-radius: 10px; background: var(--ac-key); color: var(--ac-text); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ac-chip-remove { border: 0; background: none; color: var(--ac-muted); font-size: 14px; line-height: 1; cursor: pointer; padding: 0 2px; }
-.ac-init { color: var(--ac-muted); font-size: 15px; }
-.ac-init summary { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; list-style: none; }
-.ac-init summary::-webkit-details-marker { display: none; }
-.ac-init summary::after { content: ''; border: 4px solid transparent; border-left: 5px solid currentColor; border-right: 0; transition: transform .15s; }
-.ac-init[open] summary::after { transform: rotate(90deg); }
-.ac-init-body { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 2px 14px; margin: 8px 0 0; font-size: 13px; }
+.ac-init, .ac-toolgroup { color: var(--ac-muted); font-size: 15px; }
+.ac-init summary, .ac-toolgroup > summary { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; list-style: none; }
+.ac-init summary::-webkit-details-marker, .ac-toolgroup > summary::-webkit-details-marker { display: none; }
+.ac-init summary::after, .ac-toolgroup > summary::after { content: ''; border: 4px solid transparent; border-left: 5px solid currentColor; border-right: 0; transition: transform .15s; }
+.ac-init[open] summary::after, .ac-toolgroup[open] > summary::after { transform: rotate(90deg); }
+/* A card of steps: what was initialized, or the calls of a group. */
+.ac-init-body, .ac-steps { margin-top: 8px; padding: 10px 14px; border: 1px solid var(--ac-border); border-radius: 14px; background: var(--ac-bg); }
+.ac-steps { display: flex; flex-direction: column; gap: 4px; }
+.ac-step-icon { flex: 0 0 auto; }
+.ac-step-icon circle, .ac-step-icon path { stroke: currentColor; }
+.ac-step-icon.done { color: var(--ac-ok); }
+.ac-step-icon.error { color: var(--ac-danger); }
+.ac-step-icon.running { color: var(--ac-accent); animation: ac-spin 1s linear infinite; }
+.ac-step-icon.running circle { stroke-dasharray: 28 22; }
+.ac-steps .ac-tool { border: 0; border-radius: 0; background: none; font-size: 14px; }
+.ac-steps .ac-tool summary { padding: 3px 0; color: var(--ac-text); }
+.ac-steps .ac-tool pre, .ac-steps .ac-tool .ac-diff { margin: 4px 0 8px 24px; border: 1px solid var(--ac-border); border-radius: 8px; background: var(--ac-panel); }
+.ac-failed { color: var(--ac-danger); }
+.ac-init-body { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 2px 14px; font-size: 13px; }
 .ac-init-body dt { color: var(--ac-muted); }
 .ac-init-body dd { margin: 0; color: var(--ac-text); overflow-wrap: anywhere; font-family: Menlo, Monaco, Consolas, monospace; font-size: 12px; }
 .ac-working { display: flex; align-items: center; gap: 12px; margin-top: 12px; padding-block: 4px; color: var(--ac-muted); font-size: 15px; }
@@ -141,9 +154,10 @@
 .ac-context-value { stroke: currentColor; stroke-linecap: round; }
 .ac-composer [hidden] { display: none; }
 @media (pointer: coarse) { .agent-chat { font-size: 16px; } }
+@keyframes ac-spin { to { transform: rotate(360deg); } }
 @keyframes ac-dot { 0%, 100% { opacity: .3; transform: scale(.8); } 50% { opacity: 1; transform: scale(1.1); } }
 @keyframes ac-pulse { 50% { opacity: .45; } }
-@media (prefers-reduced-motion: reduce) { .ac-dots i, .ac-tool.running .ac-dot { animation: none; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .ac-dots i, .ac-step-icon.running { animation: none; opacity: 1; } }
 
 /* React view (public/js/agent-chat-ui.js): wrappers around the same ac-* elements. */
 .agent-chat-host { width: 100%; height: 100%; min-height: 0; }
@@ -158,3 +172,27 @@
 .ac-text .hljs-number, .ac-text .hljs-symbol, .ac-text .hljs-attr, .ac-text .hljs-variable { color: #d29922; }
 .ac-text .hljs-title, .ac-text .hljs-section, .ac-text .hljs-built_in { color: #4a9eff; }
 .ac-text .hljs-deletion { color: var(--ac-danger); }
+
+/* Changes to review */
+.ac-diff { margin: 6px 0; padding: 6px 0; max-height: 320px; overflow: auto; border-radius: 8px; background: var(--ac-panel); font: 12px/1.5 Menlo, Monaco, Consolas, monospace; white-space: pre; }
+.ac-diff-line { display: block; padding: 0 10px; }
+.ac-diff-line.file { font-weight: 600; padding-top: 4px; }
+.ac-diff-line.hunk { color: var(--ac-muted); }
+.ac-diff-line.add { background: rgba(46, 160, 67, .16); }
+.ac-diff-line.del { background: rgba(248, 81, 73, .16); }
+
+/* Questions with options to pick, and the plan to review */
+fieldset.ac-question { min-width: 0; margin: 0 0 10px; padding: 0; border: 0; }
+.ac-question-chip { display: inline-block; margin-right: 8px; padding: 1px 8px; border-radius: 10px; background: var(--ac-key); color: var(--ac-muted); font-size: 12px; }
+.ac-question-hint { display: block; margin: 2px 0 4px; color: var(--ac-muted); font-size: 12px; }
+.ac-options { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+.ac-option { display: flex; align-items: flex-start; gap: 10px; padding: 8px 10px; border: 1px solid var(--ac-border); border-radius: 10px; background: var(--ac-bg); cursor: pointer; }
+.ac-option.on { border-color: var(--ac-accent); background: var(--ac-panel); }
+.ac-option input[type="radio"], .ac-option input[type="checkbox"] { flex: 0 0 auto; margin: 4px 0 0; accent-color: var(--ac-accent); }
+.ac-option-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 auto; }
+.ac-option-label { font-weight: 500; }
+.ac-option-desc { color: var(--ac-muted); font-size: 13px; }
+.ac-option-preview { margin: 4px 0 0; max-height: 160px; overflow: auto; padding: 8px; border-radius: 6px; background: var(--ac-key); font: 12px/1.45 Menlo, Monaco, Consolas, monospace; white-space: pre-wrap; }
+.ac-plan { max-height: 50vh; overflow: auto; margin-bottom: 8px; padding: 8px 12px; border: 1px solid var(--ac-border); border-radius: 10px; background: var(--ac-bg); }
+.ac-plan h1, .ac-plan h2, .ac-plan h3 { margin: 0 0 6px; font-size: 1.1em; }
+.ac-plan-feedback { width: 100%; box-sizing: border-box; margin-bottom: 8px; resize: vertical; }

@@ -33,3 +33,69 @@ export function limitText(entry, now) {
   const reset = entry.resetsAt ? duration(entry.resetsAt - now) : '';
   return { left, reset, text: `${entry.label} ${left}%${reset ? ` · ${reset}` : ''}` };
 }
+
+// ── Tool calls ──
+const SHELL = /^(bash|shell|powershell|exec|command)$/i;
+const EDIT = /^(edit|write|multiedit|notebookedit|edit files|apply_patch)$/i;
+const firstLine = value => (typeof value === 'string' ? value.split('\n')[0] : '');
+// What a call is about, in a few words: the command, the file, the pattern ...
+export function callBrief(args) {
+  const value = (args && (args.command || args.file_path || args.path || args.pattern || args.query || args.url || args.description)) || '';
+  return firstLine(value);
+}
+
+// The folded line of a group of calls: { text, failed } in English (the page translates the parts). While one runs it says what it is doing.
+export function groupLabel(calls) {
+  const running = calls.find(call => call.status === 'running');
+  const failed = calls.filter(call => call.status === 'error').length;
+  if (running) return { text: `Running ${[running.name, callBrief(running.args)].filter(Boolean).join(' ')}`.trim(), failed, running: true };
+  const n = calls.length;
+  let text;
+  if (calls.every(call => SHELL.test(call.name))) text = n === 1 ? 'Ran 1 command' : `Ran ${n} commands`;
+  else if (calls.every(call => EDIT.test(call.name))) text = n === 1 ? 'Edited 1 file' : `Edited ${n} files`;
+  else text = n === 1 ? 'Used 1 tool' : `Used ${n} tools`;
+  return { text, failed, running: false };
+}
+
+// ── Changes to review ──
+const MAX_DIFF_LINES = 400;
+const lines = text => String(text === undefined || text === null ? '' : text).replace(/\n$/, '').split('\n');
+const classify = line => (line.startsWith('@@') ? 'hunk' : line.startsWith('+') && !line.startsWith('+++') ? 'add' : line.startsWith('-') && !line.startsWith('---') ? 'del' : 'ctx');
+
+// The edit a tool wants to make as lines to show: { type: 'file' | 'hunk' | 'add' | 'del' | 'ctx', text }, or null when the input is not an edit.
+// Codex sends a unified diff (or the whole new file) for each changed file; Claude's Edit / MultiEdit send the old and new text, Write the new file.
+export function diffLines(input) {
+  if (!input || typeof input !== 'object') return null;
+  const out = [];
+  const file = text => out.push({ type: 'file', text });
+  // old text -> new text: the lines both share at the start and the end are context, the rest is removed / added.
+  const replaced = (oldText, newText) => {
+    const before = oldText === '' ? [] : lines(oldText);
+    const after = newText === '' ? [] : lines(newText);
+    let head = 0;
+    while (head < before.length && head < after.length && before[head] === after[head]) head++;
+    let tail = 0;
+    while (tail < before.length - head && tail < after.length - head && before[before.length - 1 - tail] === after[after.length - 1 - tail]) tail++;
+    for (const line of before.slice(0, head)) out.push({ type: 'ctx', text: line });
+    for (const line of before.slice(head, before.length - tail)) out.push({ type: 'del', text: line });
+    for (const line of after.slice(head, after.length - tail)) out.push({ type: 'add', text: line });
+    for (const line of before.slice(before.length - tail)) out.push({ type: 'ctx', text: line });
+  };
+  if (Array.isArray(input.changes) && input.changes.length && input.changes.every(change => change && typeof change.path === 'string')) {
+    for (const change of input.changes) {
+      file(`${change.path}${change.kind ? ` (${change.kind})` : ''}`);
+      for (const line of lines(change.diff || '')) out.push({ type: change.kind === 'add' && !/^[+@-]/.test(line) ? 'add' : classify(line), text: line.replace(/^[+-](?!\+\+|--)/, '') });
+    }
+  } else if (typeof input.file_path === 'string' && Array.isArray(input.edits)) {
+    file(input.file_path);
+    for (const edit of input.edits) { if (edit && typeof edit.old_string === 'string') { out.push({ type: 'hunk', text: '…' }); replaced(edit.old_string, edit.new_string); } }
+  } else if (typeof input.file_path === 'string' && typeof input.old_string === 'string' && typeof input.new_string === 'string') {
+    file(input.file_path);
+    replaced(input.old_string, input.new_string);
+  } else if (typeof input.file_path === 'string' && typeof input.content === 'string') {
+    file(input.file_path);
+    for (const line of lines(input.content)) out.push({ type: 'add', text: line });
+  } else return null;
+  if (out.length > MAX_DIFF_LINES) { const more = out.length - MAX_DIFF_LINES; out.length = MAX_DIFF_LINES; out.push({ type: 'hunk', text: `… ${more} more lines` }); }
+  return out;
+}

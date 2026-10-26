@@ -8,7 +8,8 @@ import { MarkdownTextPrimitive } from '@assistant-ui/react-markdown';
 import remarkGfm from 'remark-gfm';
 import hljs from 'highlight.js/lib/common';
 import { toMessages } from './convert.mjs';
-import { capitalize, limitText, modelName, tokens, visibleLimits } from './format.mjs';
+import ReactMarkdown from 'react-markdown';
+import { callBrief, capitalize, diffLines, groupLabel, limitText, modelName, tokens, visibleLimits } from './format.mjs';
 
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const MAX_FILE_CHARS = 200 * 1024;
@@ -61,28 +62,64 @@ function Thinking({ text }) {
   );
 }
 
-const toolSummary = input => {
-  const value = (input && (input.command || input.file_path || input.path || input.pattern || input.query || input.url || input.description)) || '';
-  return typeof value === 'string' ? value.split('\n')[0] : '';
-};
 const prettyInput = input => {
   if (!input || typeof input !== 'object') return String(input || '');
   if (typeof input.command === 'string' && Object.keys(input).length <= 2) return input.command;
   try { return JSON.stringify(input, null, 2); } catch { return ''; }
 };
 
-function ToolCard({ toolName, args, result, isError }) {
-  const status = result === undefined ? 'running' : isError ? 'error' : 'done';
-  const input = prettyInput(args);
+// The changes of an edit, for review: removed lines, added lines and the lines around them.
+function DiffView({ lines }) {
   return (
-    <details className={`ac-item ac-tool ${status}`}>
+    <pre className="ac-diff" translate="no">
+      {lines.map((line, index) => (
+        <span key={index} className={`ac-diff-line ${line.type}`}>{line.type === 'file' || line.type === 'hunk' ? line.text : `${line.type === 'add' ? '+' : line.type === 'del' ? '-' : ' '}${line.text}` || ' '}</span>
+      ))}
+    </pre>
+  );
+}
+
+// The state of one step: a ring that turns while it runs, a check when it is done, a cross when it failed.
+function StepIcon({ status }) {
+  return (
+    <svg className={`ac-step-icon ${status}`} viewBox="0 0 20 20" width="16" height="16" aria-hidden="true">
+      <circle cx="10" cy="10" r="8" fill="none" strokeWidth="1.6" />
+      {status === 'done' ? <path d="M6.2 10.4l2.5 2.5 5-5.3" fill="none" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" /> : null}
+      {status === 'error' ? <path d="M7 7l6 6M13 7l-6 6" fill="none" strokeWidth="1.7" strokeLinecap="round" /> : null}
+    </svg>
+  );
+}
+
+// One call of a group: its state and what it is about; opening it shows what was sent and what came back.
+function ToolStep({ call }) {
+  const changes = diffLines(call.args);
+  const input = changes ? '' : prettyInput(call.args);
+  return (
+    <details className={`ac-item ac-tool ${call.status}`}>
       <summary>
-        <span className="ac-dot" />
-        <span className="ac-tool-name">{toolName}</span>
-        <span className="ac-tool-brief">{toolSummary(args)}</span>
+        <StepIcon status={call.status} />
+        <span className="ac-tool-name">{call.name}</span>
+        <span className="ac-tool-brief">{callBrief(call.args)}</span>
       </summary>
+      {changes ? <DiffView lines={changes} /> : null}
       {input ? <pre className="ac-tool-input">{input}</pre> : null}
-      {result ? <pre className="ac-tool-output">{String(result)}</pre> : null}
+      {call.output ? <pre className="ac-tool-output">{String(call.output)}</pre> : null}
+    </details>
+  );
+}
+
+// The tool calls of a turn as one folded line ("Ran 2 commands"); opened, a card with a row per call.
+function ToolGroup({ data }) {
+  const label = groupLabel(data.calls);
+  const what = t(label.text);
+  return (
+    <details className={`ac-item ac-toolgroup${label.running ? ' running' : ''}${label.failed ? ' failed' : ''}`}>
+      <summary>
+        {label.running ? <StepIcon status="running" /> : null}
+        <span translate="no">{what}</span>
+        {label.failed ? <span className="ac-failed" translate="no">{`· ${t(`${label.failed} failed`)}`}</span> : null}
+      </summary>
+      <div className="ac-steps">{data.calls.map(call => <ToolStep key={call.id} call={call} />)}</div>
     </details>
   );
 }
@@ -109,68 +146,136 @@ function Init({ data }) {
   );
 }
 
-const AGENT_PARTS = { Text: AgentText, Reasoning: Thinking, tools: { Fallback: ToolCard }, data: { by_name: { notice: Notice, init: Init } } };
+const AGENT_PARTS = { Text: AgentText, Reasoning: Thinking, data: { by_name: { notice: Notice, init: Init, tools: ToolGroup } } };
 const USER_PARTS = { Text: UserText, data: { by_name: { attachments: Attachments } } };
 
 const AssistantMessage = () => <MessagePrimitive.Root className="ac-assistant"><MessagePrimitive.Parts components={AGENT_PARTS} /></MessagePrimitive.Root>;
 const UserMessage = () => <MessagePrimitive.Root className="ac-item ac-user"><MessagePrimitive.Parts components={USER_PARTS} /></MessagePrimitive.Root>;
 const MESSAGES = { UserMessage, AssistantMessage };
 
-// ── Permission and question cards ──
+// ── Permission, question and plan cards ──
+// One question of the agent: a list of options to pick (one, or several when `multiSelect`), and always another answer of one's own.
+// `value` is what will be sent: a string, or a list of strings when several can be picked.
 function Question({ question, value, onChange }) {
   const options = question.options && question.options.length ? question.options : null;
-  const [typing, setTyping] = useState(false);
+  const multi = Boolean(question.multiSelect);
+  const picked = multi ? value : [value];
+  const labels = options ? options.map(option => option.label) : [];
+  const [writing, setWriting] = useState(false);
+  const [other, setOther] = useState('');
+  const send = (nextPicked, nextOther, nextWriting) => {
+    const extra = nextWriting && nextOther.trim() ? [nextOther.trim()] : [];
+    onChange(multi ? [...nextPicked, ...extra] : (extra[0] || nextPicked[0] || ''));
+  };
+  const toggle = label => {
+    const keep = picked.filter(entry => labels.includes(entry));
+    const next = multi ? (keep.includes(label) ? keep.filter(entry => entry !== label) : [...keep, label]) : [label];
+    if (!multi) setWriting(false);
+    send(next, other, multi ? writing : false);
+  };
+  if (!options) {
+    return (
+      <label className="ac-question">
+        <span className="ac-question-text">{question.question || question.header}</span>
+        <input className="ac-question-input" translate="no" type={question.isSecret ? 'password' : 'text'} value={value || ''} onChange={event => onChange(event.target.value)} />
+      </label>
+    );
+  }
   return (
-    <label className="ac-question">
-      <span className="ac-question-text">{question.question || question.header}</span>
-      {options ? (
-        <>
-          <select className="ac-question-input" translate="no" value={typing ? '' : value} onChange={event => {
-            const other = event.target.value === '';
-            setTyping(other);
-            onChange(other ? '' : event.target.value);
-          }}>
-            {options.map(option => <option key={option.label} value={option.label} title={option.description || undefined}>{option.label}</option>)}
-            {question.isOther ? <option value="">{t('Other…')}</option> : null}
-          </select>
-          {typing ? <input className="ac-question-input" translate="no" autoFocus placeholder={t('Your answer')} value={value} onChange={event => onChange(event.target.value)} /> : null}
-        </>
-      ) : (
-        <input className="ac-question-input" translate="no" type={question.isSecret ? 'password' : 'text'} value={value} onChange={event => onChange(event.target.value)} />
-      )}
-    </label>
+    <fieldset className="ac-question">
+      <legend className="ac-question-text">
+        {question.header ? <span className="ac-question-chip" translate="no">{question.header}</span> : null}
+        <span translate="no">{question.question}</span>
+      </legend>
+      {multi ? <span className="ac-question-hint">{t('Select all that apply')}</span> : null}
+      <div className="ac-options" role={multi ? 'group' : 'radiogroup'}>
+        {options.map(option => {
+          const on = picked.includes(option.label) && !(writing && !multi);
+          return (
+            <label className={`ac-option${on ? ' on' : ''}`} key={option.label}>
+              <input type={multi ? 'checkbox' : 'radio'} name={`q-${question.id}`} checked={on} onChange={() => toggle(option.label)} />
+              <span className="ac-option-body" translate="no">
+                <span className="ac-option-label">{option.label}</span>
+                {option.description ? <span className="ac-option-desc">{option.description}</span> : null}
+                {option.preview ? <pre className="ac-option-preview">{option.preview}</pre> : null}
+              </span>
+            </label>
+          );
+        })}
+        {question.isOther !== false ? (
+          <label className={`ac-option${writing ? ' on' : ''}`}>
+            <input type={multi ? 'checkbox' : 'radio'} name={`q-${question.id}`} checked={writing} onChange={() => {
+              const next = !writing;
+              setWriting(next);
+              send(multi ? picked.filter(entry => labels.includes(entry)) : [], other, next);
+            }} />
+            <span className="ac-option-body">
+              <span className="ac-option-label">{t('Other…')}</span>
+              {writing ? <input className="ac-question-input" translate="no" autoFocus placeholder={t('Your answer')} value={other} onChange={event => {
+                setOther(event.target.value);
+                send(multi ? picked.filter(entry => labels.includes(entry)) : [], event.target.value, true);
+              }} /> : null}
+            </span>
+          </label>
+        ) : null}
+      </div>
+    </fieldset>
   );
 }
 
-function Request({ request, store }) {
+// A question counts as answered when something is picked or written.
+const answered = (question, value) => (question.multiSelect ? Array.isArray(value) && value.length > 0 : typeof value === 'string' && value.trim() !== '');
+
+// The plan the agent proposes, as formatted text, for the person to approve or to send back with comments.
+function PlanReview({ request, reply, busy, agent }) {
+  const [feedback, setFeedback] = useState('');
+  return (
+    <>
+      <div className="ac-plan ac-text"><ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN}>{request.plan || t('The agent did not include the plan text.')}</ReactMarkdown></div>
+      <textarea className="ac-question-input ac-plan-feedback" rows={2} translate="no" placeholder={t(`Tell ${agent.label} what to change (optional)`)} value={feedback} onChange={event => setFeedback(event.target.value)} />
+      <div className="ac-request-actions">
+        <button type="button" className="ac-allow" disabled={busy} onClick={() => reply({ allow: true })}>{t('Approve plan')}</button>
+        <button type="button" className="ac-deny" disabled={busy} onClick={() => reply({ allow: false, message: feedback.trim() || undefined })}>{t('Keep planning')}</button>
+      </div>
+    </>
+  );
+}
+
+function Request({ request, store, agent }) {
   const questions = request.kind === 'question' && request.questions && request.questions.length ? request.questions : null;
-  const [answers, setAnswers] = useState(() => Object.fromEntries((questions || []).map(question => [question.id, question.options && question.options.length ? question.options[0].label : ''])));
+  const [answers, setAnswers] = useState(() => Object.fromEntries((questions || []).map(question => [question.id, question.multiSelect ? [] : ''])));
   const [busy, setBusy] = useState(false);
   const reply = async body => {
     setBusy(true);
     const done = await store.answer(request.id, body);
     if (!done) setBusy(false); // answered requests disappear through permission_done
   };
+  const changes = !questions && request.kind !== 'plan' ? diffLines(request.input) : null;
+  const ready = questions ? questions.every(question => answered(question, answers[question.id])) : true;
   return (
-    <div className="ac-request" data-id={request.id}>
-      <div className="ac-request-title">{request.title || `${t('Allow')} ${request.tool}?`}</div>
-      {questions ? questions.map(question => (
-        <Question key={question.id} question={question} value={answers[question.id] ?? ''} onChange={value => setAnswers(current => ({ ...current, [question.id]: value }))} />
-      )) : <pre className="ac-request-detail" translate="no">{request.description || prettyInput(request.input)}</pre>}
-      <div className="ac-request-actions">
-        {questions ? (
-          <>
-            <button type="button" className="ac-allow" disabled={busy} onClick={() => reply({ allow: true, answers })}>{t('Submit')}</button>
-            <button type="button" className="ac-deny" disabled={busy} onClick={() => reply({ allow: false })}>{t('Skip')}</button>
-          </>
-        ) : (
-          <>
-            <button type="button" className="ac-allow" disabled={busy} onClick={() => reply({ allow: true })}>{t('Allow')}</button>
-            {request.canRemember ? <button type="button" className="ac-allow ac-remember" disabled={busy} onClick={() => reply({ allow: true, remember: true })}>{t('Allow for this session')}</button> : null}
-            <button type="button" className="ac-deny" disabled={busy} onClick={() => reply({ allow: false })}>{t('Deny')}</button>
-          </>
-        )}
-      </div>
+    <div className={`ac-request ${request.kind || 'approval'}`} data-id={request.id}>
+      <div className="ac-request-title">{t(request.title) || `${t('Allow')} ${request.tool}?`}</div>
+      {request.kind === 'plan' ? <PlanReview request={request} reply={reply} busy={busy} agent={agent} /> : (
+        <>
+          {questions ? questions.map(question => (
+            <Question key={question.id} question={question} value={answers[question.id]} onChange={value => setAnswers(current => ({ ...current, [question.id]: value }))} />
+          )) : changes ? <DiffView lines={changes} /> : <pre className="ac-request-detail" translate="no">{request.description || prettyInput(request.input)}</pre>}
+          <div className="ac-request-actions">
+            {questions ? (
+              <>
+                <button type="button" className="ac-allow" disabled={busy || !ready} onClick={() => reply({ allow: true, answers })}>{t('Submit')}</button>
+                <button type="button" className="ac-deny" disabled={busy} onClick={() => reply({ allow: false })}>{t('Skip')}</button>
+              </>
+            ) : (
+              <>
+                <button type="button" className="ac-allow" disabled={busy} onClick={() => reply({ allow: true })}>{t('Allow')}</button>
+                {request.canRemember ? <button type="button" className="ac-allow ac-remember" disabled={busy} onClick={() => reply({ allow: true, remember: true })}>{t('Allow for this session')}</button> : null}
+                <button type="button" className="ac-deny" disabled={busy} onClick={() => reply({ allow: false })}>{t('Deny')}</button>
+              </>
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -506,7 +611,7 @@ export const Chat = React.forwardRef(function Chat({ store, agent, conversation,
         <ThreadPrimitive.Root className="ac-thread">
           <ThreadPrimitive.Viewport className="ac-messages" role="log" aria-live="polite" scrollToBottomOnInitialize>
             <div className="ac-list"><ThreadPrimitive.Messages components={MESSAGES} /></div>
-            <div className="ac-requests">{state.pending.map(request => <Request key={request.id} request={request} store={store} />)}</div>
+            <div className="ac-requests">{state.pending.map(request => <Request key={request.id} request={request} store={store} agent={agent} />)}</div>
             {state.status === 'running' ? <Working since={state.runningSince} /> : null}
           </ThreadPrimitive.Viewport>
         </ThreadPrimitive.Root>

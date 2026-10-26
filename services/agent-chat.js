@@ -310,8 +310,9 @@ function createAgentChat({ db, adapters = ADAPTERS }) {
   function requestPermission(rt) {
     return request => new Promise(resolve => {
       const full = {
-        id: randomUUID(), kind: request.kind === 'question' ? 'question' : 'approval', tool: request.tool, input: request.input,
+        id: randomUUID(), kind: ['question', 'plan'].includes(request.kind) ? request.kind : 'approval', tool: request.tool, input: request.input,
         title: request.title, description: request.description, canRemember: Boolean(request.canRemember), questions: request.questions,
+        ...(request.kind === 'plan' ? { plan: clip(String(request.plan || ''), 60000) } : {}),
       };
       rt.pending.set(full.id, { request: full, resolve });
       emit(rt, { op: 'permission', request: full });
@@ -409,6 +410,12 @@ function createAgentChat({ db, adapters = ADAPTERS }) {
     const entry = rt && rt.pending.get(requestId);
     if (!entry) throw fail('REQUEST_NOT_FOUND', 404);
     rt.pending.delete(requestId);
+    // Approving the plan ends plan mode: the next messages of the chat are no longer "plan only".
+    if (entry.request.kind === 'plan' && allow === true && rt.mode === 'plan') {
+      rt.mode = adapters[rt.agent].DEFAULT_MODE;
+      touch(rt, { mode: rt.mode });
+      emit(rt, { op: 'meta', mode: rt.mode });
+    }
     entry.resolve({
       allow: allow === true, remember: allow === true && remember === true && entry.request.canRemember,
       message: typeof message === 'string' ? message.slice(0, 500) : undefined,

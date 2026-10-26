@@ -18,6 +18,7 @@ const { createAgentChatRouter } = require('../routes/agent-chat');
 
 const task = tasks.createTask('owner', { title: 'chat' });
 const received = [];
+const reviewSeen = [];
 const adapter = {
   MODES: { ask: {}, edits: {}, plan: {}, full: {} }, DEFAULT_MODE: 'ask', CAPABILITIES: { models: true },
   listModels: async () => [
@@ -27,6 +28,20 @@ const adapter = {
   loadHistory: async () => [],
   async runTurn({ prompt, ctx, requestPermission, signal, sessionId }) {
     received.push(prompt);
+    if (/review/.test(prompt.text)) {
+      ctx.upsert({ id: 'r1', kind: 'tool', name: 'Bash', input: { command: 'ls' }, output: 'a', status: 'done' });
+      ctx.upsert({ id: 'r2', kind: 'tool', name: 'Bash', input: { command: 'make' }, output: 'boom', status: 'error' });
+      const ask = request => requestPermission(request).then(answer => { reviewSeen.push(answer); return answer; });
+      await ask({ kind: 'question', tool: 'AskUserQuestion', input: {}, title: 'Claude has a question', questions: [
+        { id: '0', header: 'Features', question: 'Which features?', multiSelect: true, isOther: true, options: [{ label: 'Caching', description: 'Keep results' }, { label: 'Telemetry', description: '' }] },
+        { id: '1', header: 'Library', question: 'Which library?', multiSelect: false, isOther: true, options: [{ label: 'date-fns', description: 'Small' }, { label: 'dayjs', description: 'Familiar', preview: 'dayjs()' }] },
+      ] });
+      await ask({ kind: 'plan', tool: 'ExitPlanMode', input: {}, title: 'Review the plan', plan: '# The plan\n\n- first **step**\n\n| a | b |\n|---|---|\n| 1 | 2 |' });
+      await ask({ kind: 'plan', tool: 'ExitPlanMode', input: {}, title: 'Review the plan', plan: '# The revised plan' });
+      await ask({ tool: 'Edit', input: { file_path: '/work/a.js', old_string: 'const x = 1;\nlog(x);', new_string: 'const x = 2;\nlog(x);' }, title: 'Edit /work/a.js', canRemember: true });
+      ctx.upsert({ id: 'rm', kind: 'text', text: 'Reviewed everything.' });
+      return { ok: true };
+    }
     ctx.setSession('session-abcdef12');
     ctx.setMeta({
       model: 'claude-sonnet-5-5', effort: 'medium', context: { used: 42000, window: 200000 },
@@ -125,10 +140,16 @@ const server = http.createServer(app);
     assert.equal(await page.locator('.ac-text img').count(), 0, 'agent text is never parsed as HTML');
     assert.equal(await page.evaluate(() => window.pwned), undefined);
     assert.equal(await page.locator('.ac-tool.running').count(), 1);
+    assert.equal(await page.locator('.ac-toolgroup > summary').textContent(), 'Running Bash rm -rf build', 'while a call runs the line says which');
+    assert.equal(await page.locator('.ac-toolgroup > summary .ac-step-icon.running').count(), 1);
     await page.click('.ac-allow');
-    await page.waitForSelector('.ac-tool.done');
+    await page.waitForSelector('.ac-tool.done', { state: 'attached' });
     await page.waitForSelector('.ac-stop', { state: 'detached' });
     assert.equal(await page.locator('.ac-request').count(), 0);
+    assert.equal(await page.locator('.ac-toolgroup > summary').textContent(), 'Ran 1 command', 'the calls of a turn are one folded line');
+    assert.equal(await page.locator('.ac-steps').isVisible(), false);
+    await page.locator('.ac-toolgroup > summary').click();
+    assert.equal(await page.locator('.ac-steps .ac-step-icon.done').count(), 1);
     await page.locator('.ac-tool summary').click();
     assert.equal(await page.locator('.ac-tool-output').textContent(), 'removed');
     assert.equal(await page.locator('.ac-text').last().textContent(), 'Done.');
@@ -234,9 +255,9 @@ const server = http.createServer(app);
     await page.click('.ac-send');
     await page.waitForSelector('.ac-question');
     assert.equal(await page.locator('.ac-request-title').textContent(), 'Codex has a question');
-    assert.deepEqual(await page.locator('.ac-question select option').allTextContents(), ['red', 'blue', 'Other…']);
-    await page.selectOption('.ac-question select', '');
-    await page.fill('.ac-question input', 'green');
+    assert.deepEqual(await page.locator('.ac-option-label').allTextContents(), ['red', 'blue', 'Other…']);
+    await page.locator('.ac-option', { hasText: 'Other' }).click();
+    await page.fill('.ac-option input.ac-question-input', 'green');
     await page.click('.ac-request .ac-allow');
     await page.waitForFunction(() => document.querySelector('.ac-request-title') && document.querySelector('.ac-request-title').textContent === 'Run touch x');
     assert.deepEqual(codexSeen.answers.map(answer => [answer.allow, answer.answers]), [[true, { color: 'green' }]]);
@@ -253,7 +274,55 @@ const server = http.createServer(app);
     assert.deepEqual(codexSeen.steers, ['one more thing']);
     await page.waitForFunction(() => !document.querySelector('.ac-stop'));
     assert.match(await page.locator('.ac-input').getAttribute('placeholder'), /to send, Shift\+Enter for a new line/);
-    console.log('Agent chat view: streaming, permissions, stop, access level, attachments, reopen, and Codex questions and steering passed.');
+    // The agent asks the person to choose and to review: options to pick (one or several, or an answer of one's own), a plan to approve or
+    // send back, and the changes of an edit.
+    await page.evaluate(() => { view.destroy(); return openChat('claude', null); });
+    await page.fill('.ac-input', 'please review');
+    await page.click('.ac-send');
+    await page.waitForSelector('.ac-request.question');
+    assert.deepEqual(await page.locator('.ac-question-chip').allTextContents(), ['Features', 'Library']);
+    assert.equal(await page.locator('.ac-question-hint').textContent(), 'Select all that apply');
+    assert.equal(await page.locator('.ac-request .ac-allow').isDisabled(), true, 'nothing is answered yet');
+    assert.equal(await page.locator('.ac-option-preview').textContent(), 'dayjs()');
+    await page.locator('.ac-option', { hasText: 'Caching' }).click();
+    assert.equal(await page.locator('.ac-request .ac-allow').isDisabled(), true, 'one of two questions answered');
+    await page.locator('.ac-option', { hasText: 'Telemetry' }).click();
+    await page.locator('.ac-option', { hasText: 'dayjs' }).click();
+    assert.equal(await page.locator('.ac-request .ac-allow').isDisabled(), false);
+    await page.locator('.ac-option', { hasText: 'date-fns' }).click(); // a single choice replaces the one before
+    assert.deepEqual(await page.locator('.ac-option.on .ac-option-label').allTextContents(), ['Caching', 'Telemetry', 'date-fns']);
+    await page.locator('.ac-option', { hasText: 'Telemetry' }).click(); // and a pick can be taken back
+    await page.locator('.ac-options').nth(1).locator('.ac-option', { hasText: 'Other' }).click();
+    assert.equal(await page.locator('.ac-request .ac-allow').isDisabled(), true, 'writing an answer needs the text');
+    await page.locator('.ac-options').nth(1).locator('input.ac-question-input').fill('luxon');
+    await page.locator('.ac-options').nth(0).locator('.ac-option', { hasText: 'Other' }).click();
+    await page.locator('.ac-options').nth(0).locator('input.ac-question-input').fill('Search');
+    await page.click('.ac-request .ac-allow');
+    await page.waitForSelector('.ac-request.plan');
+    assert.deepEqual(reviewSeen[0], { allow: true, remember: false, message: undefined, answers: { 0: ['Caching', 'Search'], 1: 'luxon' } }, 'the picks, with the written answers, go back');
+
+    assert.equal(await page.locator('.ac-plan h1').textContent(), 'The plan');
+    assert.equal(await page.locator('.ac-plan strong').textContent(), 'step');
+    assert.equal(await page.locator('.ac-plan td').first().textContent(), '1');
+    assert.equal(await page.getByRole('button', { name: 'Approve plan' }).count(), 1);
+    await page.fill('.ac-plan-feedback', 'Also cover the tests');
+    await page.getByRole('button', { name: 'Keep planning' }).click();
+    await page.waitForFunction(() => document.querySelector('.ac-plan h1') && document.querySelector('.ac-plan h1').textContent === 'The revised plan');
+    assert.deepEqual([reviewSeen[1].allow, reviewSeen[1].message], [false, 'Also cover the tests'], 'the comments go back with the refusal');
+    await page.getByRole('button', { name: 'Approve plan' }).click();
+    await page.waitForSelector('.ac-diff');
+    assert.deepEqual([reviewSeen[2].allow, reviewSeen[2].message], [true, undefined]);
+
+    assert.equal(await page.locator('.ac-request-title').textContent(), 'Edit /work/a.js');
+    assert.deepEqual(await page.locator('.ac-request .ac-diff-line').evaluateAll(lines => lines.map(line => [line.className.replace('ac-diff-line ', ''), line.textContent])),
+      [['file', '/work/a.js'], ['del', '-const x = 1;'], ['add', '+const x = 2;'], ['ctx', ' log(x);']], 'the edit is shown as what goes and what comes');
+    await page.click('.ac-request .ac-allow');
+    await page.waitForSelector('.ac-stop', { state: 'detached' });
+    assert.equal(reviewSeen[3].allow, true);
+    assert.equal(await page.locator('.ac-toolgroup > summary').textContent(), 'Ran 2 commands· 1 failed');
+    assert.equal(await page.locator('.ac-failed').textContent(), '· 1 failed');
+    assert.equal(await page.locator('.ac-steps .ac-step-icon.error').count(), 1);
+    console.log('Agent chat view: streaming, permissions, stop, access level, attachments, reopen, Codex questions and steering, tool steps, choices and reviews passed.');
   } finally {
     await browser.close();
     server.closeAllConnections();

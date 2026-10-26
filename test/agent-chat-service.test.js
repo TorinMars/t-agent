@@ -577,3 +577,81 @@ test('which chats are open is saved per page: the desktop keeps every open chat,
   assert.throws(() => chat.setOpened(task, 'missing', { surface: 'web', opened: true }), /CONVERSATION_NOT_FOUND/);
   assert.throws(() => chat.setOpened(other, a.id, { surface: 'web', opened: true }), /CONVERSATION_NOT_FOUND/, 'a chat of another task cannot be opened through this one');
 });
+
+// The canUseTool callback Claude Code calls for every tool, as runTurn hands it to the SDK.
+async function claudeCanUseTool(requestPermission) {
+  let options;
+  const sdk = { query: args => { options = args.options; return (async function* () { yield { type: 'result', subtype: 'success', is_error: false }; }()); } };
+  await claude.runTurn({ cwd: '/w', mode: 'ask', prompt: { text: 'x' }, signal: new AbortController().signal, ctx: { upsert() {}, append() {}, getItem() {}, setSession() {} }, requestPermission, deps: { loadSdk: async () => sdk, executable: undefined } });
+  return options;
+}
+
+test('Claude asks the person to choose: the questions reach the page with their options, and the picked answers go back as the SDK expects', async () => {
+  const seen = [];
+  let reply = { allow: true, answers: { 0: 'Red', 1: ['Caching', 'Dark mode', 'my own'] } };
+  const options = await claudeCanUseTool(async request => { seen.push(request); return reply; });
+  assert.equal('disallowedTools' in options, false, 'the agent may ask now');
+  const input = { questions: [
+    { question: 'Which color?', header: 'Color', multiSelect: false, options: [{ label: 'Red', description: 'warm' }, { label: 'Blue', description: 'cool', preview: 'x'.repeat(5000) }] },
+    { question: 'Which features?', header: 'Features', multiSelect: true, options: [{ label: 'Caching', description: '' }, { label: 'Dark mode', description: '' }] },
+    { question: 'Unanswered?', header: 'Skip', options: [{ label: 'a', description: '' }, { label: 'b', description: '' }] },
+  ] };
+  const allowed = await options.canUseTool('AskUserQuestion', input, {});
+  assert.deepEqual(allowed, { behavior: 'allow', updatedInput: { ...input, answers: { 'Which color?': 'Red', 'Which features?': 'Caching, Dark mode, my own' } } }, 'several picks are joined with ", "; a question without an answer is left out');
+  const request = seen[0];
+  assert.deepEqual([request.kind, request.tool, request.title], ['question', 'AskUserQuestion', 'Claude has a question']);
+  assert.deepEqual(request.questions.map(question => [question.id, question.header, question.multiSelect, question.isOther]), [['0', 'Color', false, true], ['1', 'Features', true, true], ['2', 'Skip', false, true]]);
+  assert.deepEqual(request.questions[0].options.map(option => option.label), ['Red', 'Blue']);
+  assert.equal(request.questions[0].options[1].preview.length, 4000, 'a long preview is cut');
+  assert.equal('preview' in request.questions[0].options[0], false);
+
+  reply = { allow: false };
+  assert.deepEqual(await options.canUseTool('AskUserQuestion', input, {}), { behavior: 'deny', message: 'The person skipped the question' });
+  reply = { allow: true, answers: {} };
+  assert.deepEqual((await options.canUseTool('AskUserQuestion', { questions: [] }, {})).updatedInput.answers, {}, 'no questions, no answers');
+});
+
+test('Claude proposes a plan: the plan text reaches the page, approving ends plan mode and declining sends the comments back', async () => {
+  const seen = [];
+  let reply = { allow: true };
+  const options = await claudeCanUseTool(async request => { seen.push(request); return reply; });
+  const input = { plan: '# Plan\n- step' };
+  assert.deepEqual(await options.canUseTool('ExitPlanMode', input, {}), { behavior: 'allow', updatedInput: input });
+  assert.deepEqual([seen[0].kind, seen[0].tool, seen[0].plan, seen[0].title], ['plan', 'ExitPlanMode', '# Plan\n- step', 'Review the plan']);
+  reply = { allow: false, message: 'Use clang instead' };
+  assert.deepEqual(await options.canUseTool('ExitPlanMode', input, {}), { behavior: 'deny', message: 'Use clang instead' });
+  reply = { allow: false };
+  assert.equal((await options.canUseTool('ExitPlanMode', input, {})).message, 'The person wants the plan revised');
+  assert.equal(await options.canUseTool('ExitPlanMode', {}, {}).then(() => seen.at(-1).plan), '', 'no plan text is passed on as empty');
+  // Other tools still go through the plain permission card.
+  reply = { allow: true };
+  assert.deepEqual(await options.canUseTool('Bash', { command: 'ls' }, { title: 'Run ls' }), { behavior: 'allow', updatedInput: { command: 'ls' } });
+  assert.deepEqual([seen.at(-1).kind, seen.at(-1).tool, seen.at(-1).title], [undefined, 'Bash', 'Run ls']);
+});
+
+test('a plan to review reaches the client, and approving it leaves plan mode while declining does not', async () => {
+  let release;
+  const adapter = { ...fakeAdapter(async ({ requestPermission }) => { release = await requestPermission({ kind: 'plan', tool: 'ExitPlanMode', input: {}, plan: 'p'.repeat(70000), title: 'Review the plan' }); return { ok: true }; }), MODES: { ask: {}, plan: {} }, DEFAULT_MODE: 'ask' };
+  const chat = createAgentChat({ db, adapters: { claude: adapter } });
+  const conversation = chat.create(task, { agent: 'claude', mode: 'plan' });
+  const seen = [];
+  chat.subscribe(task, conversation.id, 0, event => seen.push(event));
+  const pending = async () => { for (let i = 0; i < 200; i++) { const [request] = (await chat.snapshot(task, conversation.id)).pending; if (request) return request; await new Promise(resolve => setTimeout(resolve, 5)); } throw new Error('no request'); };
+
+  await chat.sendMessage(task, conversation.id, { text: 'plan it' });
+  let request = await pending();
+  assert.deepEqual([request.kind, request.tool, request.plan.length], ['plan', 'ExitPlanMode', 60000], 'the plan text is bounded');
+  chat.answerPermission(task, conversation.id, request.id, { allow: false, message: 'more detail' });
+  await wait(() => chat.list(task.id).find(row => row.id === conversation.id).running === false);
+  assert.deepEqual([release.allow, release.message], [false, 'more detail']);
+  assert.equal(chat.list(task.id).find(row => row.id === conversation.id).mode, 'plan', 'declining keeps the chat in plan mode');
+
+  await chat.sendMessage(task, conversation.id, { text: 'again' });
+  request = await pending();
+  chat.answerPermission(task, conversation.id, request.id, { allow: true });
+  await wait(() => chat.list(task.id).find(row => row.id === conversation.id).running === false);
+  assert.equal(release.allow, true);
+  assert.equal(chat.list(task.id).find(row => row.id === conversation.id).mode, 'ask', 'approving ends plan mode for the next messages');
+  assert.equal(db.prepare('SELECT mode FROM agent_conversations WHERE id = ?').get(conversation.id).mode, 'ask');
+  assert.ok(seen.some(event => event.op === 'meta' && event.mode === 'ask'), 'the page is told');
+});

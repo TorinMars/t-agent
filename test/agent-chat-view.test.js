@@ -16,14 +16,30 @@ test('items become one user message per prompt and one assistant message per tur
     { id: 'e1', kind: 'error', text: 'failed' },
     { id: 'u2', kind: 'user', text: 'again' },
   ]);
-  assert.deepEqual(messages.map(message => [message.role, message.content.length]), [['user', 2], ['assistant', 6], ['user', 1]]);
+  assert.deepEqual(messages.map(message => [message.role, message.content.length]), [['user', 2], ['assistant', 4], ['user', 1]]);
   assert.deepEqual(messages[0].content[1], { type: 'data', name: 'attachments', data: ['a.txt'] });
   const parts = messages[1].content;
-  assert.deepEqual(parts.map(part => part.type), ['reasoning', 'tool-call', 'tool-call', 'tool-call', 'text', 'data'], 'an empty thinking block is dropped');
-  assert.equal(parts[1].result, 'x');
-  assert.equal('result' in parts[2], false, 'a running tool has no result yet');
-  assert.deepEqual([parts[3].isError, parts[3].args], [true, { value: 'raw' }], 'a failed call with a plain-text input still has object arguments');
-  assert.deepEqual(parts[5].data, { kind: 'error', text: 'failed' });
+  assert.deepEqual(parts.map(part => part.type), ['reasoning', 'data', 'text', 'data'], 'an empty thinking block is dropped, and the three calls are one group');
+  assert.equal(parts[1].name, 'tools');
+  const calls = parts[1].data.calls;
+  assert.deepEqual(calls.map(call => [call.id, call.status, call.output]), [['t1', 'done', 'x'], ['t2', 'running', ''], ['t3', 'error', 'boom']], 'a running call has no output yet and a failed one keeps its message');
+  assert.deepEqual(calls[2].args, { value: 'raw' }, 'a plain-text input still has object arguments');
+  assert.equal(parts[1].id, 'tools-t1', 'the group keeps the id of its first call while more calls join it');
+  assert.deepEqual(parts[3].data, { kind: 'error', text: 'failed' });
+});
+
+test('calls separated by text are separate groups, and a call that arrives later joins the group it follows', async () => {
+  const { toMessages } = await load();
+  const items = [
+    { id: 'u', kind: 'user', text: 'go' },
+    { id: 'a', kind: 'tool', name: 'Bash', input: {}, output: '', status: 'done' },
+    { id: 'm', kind: 'text', text: 'then' },
+    { id: 'b', kind: 'tool', name: 'Edit', input: {}, output: '', status: 'done' },
+  ];
+  const groups = toMessages(items)[1].content.filter(part => part.name === 'tools');
+  assert.deepEqual(groups.map(group => group.data.calls.map(call => call.id)), [['a'], ['b']]);
+  const more = toMessages([...items, { id: 'c', kind: 'tool', name: 'Edit', input: {}, output: '', status: 'running' }])[1].content.filter(part => part.name === 'tools');
+  assert.deepEqual(more.map(group => group.data.calls.map(call => call.id)), [['a'], ['b', 'c']]);
 });
 
 test('a turn that produced nothing yet has no assistant message', async () => {
@@ -266,4 +282,35 @@ test('a meta event can clear the model and effort, and the plan limits replace t
   assert.deepEqual([store.getState().model, store.getState().effort], ['', ''], 'an event without them leaves them alone');
   sources[0].emit({ seq: 3, op: 'meta', limits: [{ id: '5h', label: '5h', usedPercent: 50, resetsAt: null }, { id: '7d', label: '7d', usedPercent: 5, resetsAt: null }] });
   assert.deepEqual(store.getState().limits.map(entry => [entry.id, entry.usedPercent]), [['5h', 50], ['7d', 5]]);
+});
+
+test('the folded line of a group says what ran, or what is running, and how many failed', async () => {
+  const { groupLabel, callBrief } = await import('../scripts/agent-chat/format.mjs');
+  const call = (name, status = 'done', args = {}) => ({ name, status, args });
+  assert.deepEqual(groupLabel([call('Bash')]), { text: 'Ran 1 command', failed: 0, running: false });
+  assert.equal(groupLabel([call('Bash'), call('Shell'), call('Bash')]).text, 'Ran 3 commands');
+  assert.equal(groupLabel([call('Edit')]).text, 'Edited 1 file');
+  assert.equal(groupLabel([call('Edit'), call('Write')]).text, 'Edited 2 files');
+  assert.equal(groupLabel([call('Read')]).text, 'Used 1 tool');
+  assert.equal(groupLabel([call('Bash'), call('Edit')]).text, 'Used 2 tools', 'a mix is just tools');
+  assert.deepEqual(groupLabel([call('Bash'), call('Bash', 'error'), call('Bash', 'error')]), { text: 'Ran 3 commands', failed: 2, running: false });
+  assert.deepEqual(groupLabel([call('Bash'), call('Bash', 'running', { command: 'make test\nmore' })]), { text: 'Running Bash make test', failed: 0, running: true });
+  assert.equal(callBrief({ file_path: '/a/b.js', old_string: 'x' }), '/a/b.js');
+  assert.equal(callBrief({}), '');
+  assert.equal(callBrief('raw'), '');
+});
+
+test('the changes of an edit are shown as lines to review: Codex diffs, Claude edits and writes', async () => {
+  const { diffLines } = await import('../scripts/agent-chat/format.mjs');
+  const kinds = lines => lines.map(line => `${line.type}:${line.text}`);
+  assert.deepEqual(kinds(diffLines({ file_path: '/a.txt', old_string: 'one\ntwo\nthree', new_string: 'one\n2\nthree' })), ['file:/a.txt', 'ctx:one', 'del:two', 'add:2', 'ctx:three']);
+  assert.deepEqual(kinds(diffLines({ file_path: '/a.txt', old_string: '', new_string: 'new' })), ['file:/a.txt', 'add:new'], 'an insertion has nothing removed');
+  assert.deepEqual(kinds(diffLines({ file_path: '/a.txt', edits: [{ old_string: 'a', new_string: 'b' }, { old_string: 'c', new_string: 'd' }] })), ['file:/a.txt', 'hunk:…', 'del:a', 'add:b', 'hunk:…', 'del:c', 'add:d']);
+  assert.deepEqual(kinds(diffLines({ file_path: '/n.txt', content: 'x\ny\n' })), ['file:/n.txt', 'add:x', 'add:y'], 'a written file is all added');
+  assert.deepEqual(kinds(diffLines({ changes: [{ path: 'x.js', kind: 'update', diff: '@@ -1,2 +1,2 @@\n-old\n+new\n same' }, { path: 'n.js', kind: 'add', diff: 'whole file' }] })),
+    ['file:x.js (update)', 'hunk:@@ -1,2 +1,2 @@', 'del:old', 'add:new', 'ctx: same', 'file:n.js (add)', 'add:whole file']);
+  for (const other of [null, undefined, 'text', {}, { command: 'ls' }, { changes: [] }, { changes: [{ nopath: 1 }] }, { file_path: '/a' }]) assert.equal(diffLines(other), null);
+  const big = diffLines({ file_path: '/big', content: Array.from({ length: 1000 }, (_, index) => `line ${index}`).join('\n') });
+  assert.equal(big.length, 401, 'a long diff is cut, and says how much is left');
+  assert.deepEqual(big.at(-1), { type: 'hunk', text: '… 601 more lines' });
 });

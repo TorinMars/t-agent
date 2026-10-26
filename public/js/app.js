@@ -126,6 +126,13 @@ const AgentView = (() => {
   const scopeOf = () => { const target = TerminalTabs.context(); return target ? target.scope : null; };
   const baseOf = () => { const scope = scopeOf(); return scope ? `${scope}/agent` : null; };
 
+  const chatsAvailable = () => {
+    const target = TerminalTabs.context();
+    if (!target) return false;
+    if (target.sourceKey === 'local') return true;
+    return Boolean(window.Tasks?.getSource?.(target.sourceKey)?.caps?.has('agent-chat:manage'));
+  };
+
   // Which chats are open on the desktop page is kept in the database (the open flag of each conversation), so every desktop browser of the
   // user shows the same tabs and a refresh brings them back. Only the tab that is shown is a matter of this browser (localStorage). Earlier
   // versions kept the whole list in localStorage ({ ids, active }); those tabs are moved to the database the first time they are found.
@@ -200,9 +207,8 @@ const AgentView = (() => {
     for (const [key, group] of sessions) {
       for (const row of group.rows) row.holder.hidden = !(key === scope && group.active === row.id);
     }
-    // Chats exist for the local engine only; the first time a task is mounted its open chats are reopened.
-    const local = (TerminalTabs.context() || {}).sourceKey === 'local';
-    if (scope && local && !restored.has(scope)) { restored.add(scope); void restore(scope); }
+    // Each Engine has its own task scope and open chats.
+    if (scope && chatsAvailable() && !restored.has(scope)) { restored.add(scope); void restore(scope); }
     const group = scope && sessions.get(scope);
     pane.hidden = !(group && group.active);
     pane.style.top = `${controls().offsetHeight}px`;
@@ -236,7 +242,11 @@ const AgentView = (() => {
   return {
     // Chats of other tasks stay open in the background; only the mounted task's chat is shown.
     // Called from init(): terminal-tabs.js loads after this script, so TerminalTabs does not exist while it is parsed.
-    start: () => TerminalTabs.onScopeChange(sync),
+    start: () => {
+      TerminalTabs.onScopeChange(sync);
+      window.Tasks?.onSourceChange?.(sync);
+    },
+    available: chatsAvailable,
     choices: agent => AgentChat.choices(api, baseOf(), agent),
     async open(agent, choice) {
       const scope = scopeOf();
@@ -290,12 +300,10 @@ const TerminalNewMenu = (() => {
   const start = options => () => { close(); TerminalControls.run('newTerminal', '', options); };
 
   function root() {
-    const local = (TerminalTabs.context() || {}).sourceKey === 'local';
     show([
       ['New Terminal', start({})],
       ...SESSION_KINDS.map(([agent, label]) => [label, () => sessions(agent, label)]),
-      // Chat-style agents run on this machine only (the remote engine API does not carry them yet).
-      ...(local ? [['Claude agent', () => chats('claude', 'Claude agent')], ['Codex agent', () => chats('codex', 'Codex agent')]] : []),
+      ...(AgentView.available() ? [['Claude agent', () => chats('claude', 'Claude agent')], ['Codex agent', () => chats('codex', 'Codex agent')]] : []),
     ]);
   }
 

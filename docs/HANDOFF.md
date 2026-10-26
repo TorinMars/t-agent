@@ -107,3 +107,11 @@ For the Claude / developer taking over: read `AGENTS.md` (development and releas
 - All source text is English. The Chinese UI is a translation layer (`public/js/i18n.js` + `i18n-zh-*.js`), selected with the 🌐 button in the header and on the login page and remembered in `localStorage['ta-lang']`; English is the default. See "Interface language" in `DESIGN.md`.
 - The project must stay English: `test/i18n.test.js` fails if Chinese appears outside the dictionaries and the CJK-handling test fixtures. Chinese user content must keep working everywhere.
 - Home-directory paths in file sync are written `home/...`; the Chinese prefix written by earlier versions is still read (`LEGACY_HOME_PREFIX` in `services/file-sync.js`).
+
+## Remote Agent chat (v2.80.0)
+
+- Added `agent-chat:manage`, the shared conversation router at `/v1/tasks/:id/agent` (Engine token principal owns the task), and Client JSON/SSE forwarding. Work, CLI credentials and session files stay on the selected Engine.
+- Desktop and phone menus enable chats only when the Engine advertises the capability. Remote chats also save/restore their open state; switching the phone Engine hides the previous chat. Deleting an Engine task aborts its running chats.
+- Based on v2.79.1; retained the recent database persistence, tool cards and Codex discovery changes. Worktree: `t-agent-worktrees/remote-agent-chat`, branch `feat/remote-agent-chat`.
+- Verification: `node --test --test-concurrency=2` passed all 531 tests (including browser scripts); JavaScript syntax and diff checks passed. Initial unrestricted parallel run had five SSH fixture timeouts; those passed in isolation and in the final full run.
+- Not verified: two physical machines with real Claude/Codex CLI turns. Update both Client and Engine to v2.80.0 or later; older Engines keep terminal sessions and hide chat entries.

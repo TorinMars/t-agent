@@ -15,7 +15,7 @@ const chatPatches = [];
 const pollUntil = async condition => { for (let i = 0; i < 500 && !condition(); i++) await new Promise(resolve => setTimeout(resolve, 20)); assert.ok(condition(), 'timed out waiting for the server'); };
 let chatListFails = false;
 
-async function openPage(browser, { remoteTerminals, viewport } = {}) {
+async function openPage(browser, { remoteTerminals, remoteChat = false, viewport } = {}) {
   const context = await browser.newContext(viewport ? { viewport } : { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
   const page = await context.newPage();
   const calls = [];
@@ -48,20 +48,23 @@ async function openPage(browser, { remoteTerminals, viewport } = {}) {
     if (url.pathname === '/api/remote-servers/7/tasks') return json([{ id: 9, title: 'Remote task', status: 'doing' }]);
     if (url.pathname === '/api/remote-servers/7/task-groups') return json([]);
     // An old remote engine ignores surface=h5 and answers with its desktop terminals.
-    if (url.pathname === '/api/remote-servers/7/tasks/9/terminals') return json([{ terminal_id: 'default', title: 'Terminal 1' }]);
+    if (url.pathname === '/api/remote-servers/7/tasks/9/terminals') return json([{ terminal_id: remoteChat ? 'h5-default' : 'default', title: 'Terminal 1' }]);
+    if (url.pathname === '/api/remote-servers/7/info') return json({ capabilities: remoteChat ? ['agent-chat:manage'] : [] });
     if (url.pathname === '/api/tasks/1/terminals' && method === 'GET') return json([{ terminal_id: 'h5-default', title: 'Terminal 1' }]);
     if (url.pathname === '/api/tasks/1/terminals' && method === 'POST') return json({ terminal_id: 'h5-second', title: 'Terminal 2' }, 201);
     if (url.pathname === '/api/tasks/1/terminals/h5-second' && method === 'PATCH') return json({ terminal_id: 'h5-second', title: route.request().postDataJSON().title });
     if (url.pathname === '/api/tasks/1/terminal/control' && method === 'POST') return json({ success: true });
+    // Both local and remote chats use the same view, with a different task base.
+    const chatPath = url.pathname.replace('/api/remote-servers/7/tasks/9/agent', '/api/tasks/1/agent');
     // Chat-style agents: the conversation list, the sessions of the task directory, one empty conversation and an idle event stream.
-    if (url.pathname === '/api/tasks/1/agent/conversations' && method === 'GET') return chatListFails ? json({ error: 'down' }, 500) : json(chats);
-    if (url.pathname === '/api/tasks/1/agent/sessions') return json([{ id: 'session-old-1234', title: 'Old chat' }]);
-    if (url.pathname === '/api/tasks/1/agent/conversations' && method === 'POST') {
+    if (chatPath === '/api/tasks/1/agent/conversations' && method === 'GET') return chatListFails ? json({ error: 'down' }, 500) : json(chats);
+    if (chatPath === '/api/tasks/1/agent/sessions') return json([{ id: 'session-old-1234', title: 'Old chat' }]);
+    if (chatPath === '/api/tasks/1/agent/conversations' && method === 'POST') {
       const row = { id: 'c1', agent: route.request().postDataJSON().agent, session_id: null, title: 'New chat', mode: 'ask', running: false, opened: { web: null, h5: null } };
       chats.push(row);
       return json(row);
     }
-    if (url.pathname === '/api/tasks/1/agent/conversations/c1' && method === 'PATCH') {
+    if (chatPath === '/api/tasks/1/agent/conversations/c1' && method === 'PATCH') {
       // Which chat is open on the phone page is kept by the server.
       const body = route.request().postDataJSON();
       chatPatches.push(body);
@@ -69,8 +72,8 @@ async function openPage(browser, { remoteTerminals, viewport } = {}) {
       if (row) row.opened[body.surface] = body.opened ? row.opened[body.surface] || Date.now() : null;
       return json(row || {});
     }
-    if (url.pathname === '/api/tasks/1/agent/conversations/c1') return json({ conversation: { id: 'c1' }, items: [{ id: 'u1', kind: 'user', text: 'hello agent' }, { id: 't1', kind: 'text', text: 'Hi **there**' }], pending: [], status: 'idle', seq: 0 });
-    if (url.pathname === '/api/tasks/1/agent/conversations/c1/events') return route.fulfill({ contentType: 'text/event-stream', body: ': ok\n\n' });
+    if (chatPath === '/api/tasks/1/agent/conversations/c1') return json({ conversation: { id: 'c1' }, items: [{ id: 'u1', kind: 'user', text: 'hello agent' }, { id: 't1', kind: 'text', text: 'Hi **there**' }], pending: [], status: 'idle', seq: 0 });
+    if (chatPath === '/api/tasks/1/agent/conversations/c1/events') return route.fulfill({ contentType: 'text/event-stream', body: ': ok\n\n' });
     if (url.pathname === '/api/oss/config') return json({ enabled: true });
     if (url.pathname === '/api/oss/upload-policy' && method === 'POST') {
       // The Client only signs the upload; the image itself goes to OSS from the browser.
@@ -418,6 +421,44 @@ async function openPage(browser, { remoteTerminals, viewport } = {}) {
     await old.page.waitForFunction(() => document.getElementById('h5-empty').textContent.includes('does not support phone terminals'));
     assert.equal(await old.page.evaluate(() => window.sockets.length), 0);
     await old.context.close();
+    // Chat capability controls the phone menu, and opening a remote chat uses only remote URLs.
+    for (const supported of [false, true]) {
+      chats.length = 0;
+      const remote = await openPage(browser, { remoteTerminals: true, remoteChat: true });
+      if (!supported) await remote.page.route(`${ORIGIN}/api/remote-servers/7/info`, route => route.fulfill({ contentType: 'application/json', body: '{"capabilities":[]}' }));
+      await remote.page.locator('#h5-engine').selectOption('remote:7');
+      await remote.page.locator('.h5-task-item', { hasText: 'Remote task' }).tap();
+      await remote.page.locator('#h5-open-tasks').tap();
+      await Promise.all([remote.page.waitForResponse(`${ORIGIN}/api/remote-servers/7/info`), remote.page.locator('.h5-task-add').tap()]);
+      if (supported) {
+        await remote.page.locator('#h5-term-menu-actions button', { hasText: 'Codex agent' }).tap();
+        await remote.page.locator('#h5-term-menu-actions button', { hasText: 'New Codex chat' }).tap();
+        await remote.page.locator('#h5-agent .agent-chat').waitFor();
+        assert.ok(remote.calls.includes('POST /api/remote-servers/7/tasks/9/agent/conversations'));
+        assert.ok(remote.calls.includes('GET /api/remote-servers/7/tasks/9/agent/conversations/c1'));
+        assert.ok(!remote.calls.some(call => call.includes('/api/tasks/1/agent')));
+        await pollUntil(() => chats[0]?.opened.h5 > 0);
+        await remote.page.reload();
+        await remote.page.locator('#h5-agent .agent-chat').waitFor();
+        await remote.page.locator('#h5-agent .ac-back').tap();
+        await pollUntil(() => chats[0]?.opened.h5 === null);
+        await remote.page.locator('#h5-open-tasks').tap();
+        await remote.page.locator('.h5-task-add').tap();
+        await remote.page.locator('#h5-term-menu-actions button', { hasText: 'Codex agent' }).tap();
+        await remote.page.locator('#h5-term-menu-actions button', { hasText: 'New Codex chat' }).tap();
+        await remote.page.locator('#h5-agent .agent-chat').waitFor();
+        // A source change hides the old view without clearing its saved open state.
+        await remote.page.evaluate(() => {
+          const select = document.getElementById('h5-engine');
+          select.value = 'local';
+          select.dispatchEvent(new Event('change'));
+        });
+        await remote.page.locator('#h5-agent').waitFor({ state: 'hidden' });
+      } else {
+        assert.equal(await remote.page.locator('#h5-term-menu-actions button', { hasText: 'Codex agent' }).count(), 0);
+      }
+      await remote.context.close();
+    }
     console.log('Phone page layout, phone terminals, keys, paste, image upload, translate-and-send and old-engine guard passed.');
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

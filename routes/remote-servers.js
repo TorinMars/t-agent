@@ -299,6 +299,30 @@ router.post('/:id/tasks/:taskId/todos', forwardJson('POST', req => `${taskPath(r
 router.put('/:id/tasks/:taskId/todos/:todoId', forwardJson('PUT', req => `${taskPath(req)}/todos/${encodeURIComponent(req.params.todoId)}`));
 router.delete('/:id/tasks/:taskId/todos/:todoId', forwardJson('DELETE', req => `${taskPath(req)}/todos/${encodeURIComponent(req.params.todoId)}`));
 
+// Chat requests execute on the selected Engine; credentials never reach the browser.
+const chatPath = req => `${taskPath(req)}/agent`;
+const conversationPath = req => `${chatPath(req)}/conversations/${encodeURIComponent(req.params.cid)}`;
+for (const [method, suffix, upstream] of [
+  ['get', '/conversations', req => `${chatPath(req)}/conversations`],
+  ['post', '/conversations', req => `${chatPath(req)}/conversations`],
+  ['get', '/sessions', req => `${chatPath(req)}/sessions?${new URLSearchParams({ agent: req.query.agent || '' })}`],
+  ['get', '/conversations/:cid', conversationPath],
+  ['patch', '/conversations/:cid', conversationPath],
+  ['delete', '/conversations/:cid', conversationPath],
+  ['get', '/conversations/:cid/models', req => `${conversationPath(req)}/models`],
+  ['post', '/conversations/:cid/messages', req => `${conversationPath(req)}/messages`],
+  ['post', '/conversations/:cid/interrupt', req => `${conversationPath(req)}/interrupt`],
+  ['post', '/conversations/:cid/permissions/:rid', req => `${conversationPath(req)}/permissions/${encodeURIComponent(req.params.rid)}`],
+]) {
+  router[method](`/:id/tasks/:taskId/agent${suffix}`, forwardJson(method.toUpperCase(), upstream));
+}
+router.get('/:id/tasks/:taskId/agent/conversations/:cid/events', (req, res) => {
+  const target = remoteTarget(req, res);
+  if (!target) return;
+  const query = new URLSearchParams({ after: String(req.query.after || '0') });
+  streamRemote(req, res, target.row.base_url, target.token, `${conversationPath(req)}/events?${query}`, { sse: true });
+});
+
 // Workspace tools (import unmanaged directories, clean up code directories): return 501 when an old Engine lacks these endpoints.
 async function proxyWorkspace(req, res, pathname, method = 'GET', success = 200) {
   const target = remoteTarget(req, res);

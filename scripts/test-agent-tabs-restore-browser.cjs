@@ -34,7 +34,7 @@ const reset = (opened = {}) => {
       const url = new URL(request.url());
       server.requests.push(`${request.method()} ${url.pathname}`);
       if (url.pathname === '/') return route.fulfill({ contentType: 'text/html', body: html });
-      if (url.pathname === `${SCOPE}/agent/conversations` || url.pathname === `/api/remote-servers/9/tasks/7/agent/conversations`) {
+      if (url.pathname.endsWith('/agent/conversations')) {
         return server.listFails ? json(route, { error: 'down' }, 500) : json(route, server.conversations);
       }
       const patch = /\/agent\/conversations\/([^/]+)$/.exec(url.pathname);
@@ -58,7 +58,8 @@ const reset = (opened = {}) => {
         document.querySelector('#terminal-pane').style.display = 'flex';
         window.TerminalImages = { load: async () => {}, showSettings() {} };
         window.Bookmarks = window.Engines = { load: async () => {} };
-        window.Tasks = { load: async () => { window.appReady = true; } }; // init() loads the tasks right after AgentView.start()
+        window.remoteCaps = new Set();
+        window.Tasks = { load: async () => { window.appReady = true; }, getSource: () => ({ caps: remoteCaps }), onSourceChange: listener => { window.sourceChanged = listener; } }; // init() loads the tasks right after AgentView.start()
         window.mounted = [];
         window.AgentChat = {
           AGENTS: { claude: { label: 'Claude' }, codex: { label: 'Codex' } },
@@ -151,6 +152,22 @@ const reset = (opened = {}) => {
     assert.deepEqual(await tabs(), []);
     assert.deepEqual(server.patches, []);
     assert.deepEqual(await stored(), { ids: ['c1'], active: 'c1' }, 'nothing is lost when the list cannot be read');
+    // Capabilities may arrive after the remote task. Its server and local selection use a separate task scope.
+    reset({ c2: 1000 });
+    await boot();
+    const remoteScope = '/api/remote-servers/1/tasks/7';
+    await page.evaluate(scope => {
+      localStorage.setItem(`agent-tabs:${scope}`, JSON.stringify({ active: 'c2' }));
+      TerminalTabs.show(scope, () => {}, { taskId: 7, sourceKey: 'remote:1' });
+    }, remoteScope);
+    assert.equal(await page.evaluate(() => AgentView.available()), false);
+    await page.evaluate(() => { remoteCaps.add('agent-chat:manage'); sourceChanged(); });
+    await page.waitForSelector('.agent-tab');
+    assert.deepEqual(await tabs(), [['Second chat', true]]);
+    assert.ok(server.requests.some(request => request.includes(`${remoteScope}/agent/conversations`)));
+    await page.locator('#btn-terminal-new').click();
+    assert.ok((await page.locator('.terminal-new-menu li').allTextContents()).includes('Claude agent'));
+
     assert.deepEqual(errors, []);
     console.log('Agent chat tabs: saved by the server, restored in order after a refresh and in another browser, old browser records moved over, failures lose nothing.');
   } finally { await browser.close(); }

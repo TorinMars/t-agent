@@ -344,6 +344,7 @@
   $('h5-open-tasks').addEventListener('click', openTasks);
   $('h5-close-tasks').addEventListener('click', closeTasks);
   engineSelect.addEventListener('change', () => {
+    hideAgent();
     source = sources.find(item => item.key === engineSelect.value) || LOCAL;
     store.set('source', source.key === 'local' ? null : source.key);
     tasks = [];
@@ -541,14 +542,22 @@
     }));
     termMenu.hidden = false;
   }
-  function openSessionMenu() {
+  async function openSessionMenu() {
+    const currentSource = source;
+    const currentTask = task;
     menuRow = null;
-    showSessionMenu('Session', [
+    const show = chatsAvailable => showSessionMenu('Session', [
       ['New Terminal', () => { closeTerminalMenu(); closeTasks(); void createTerminal(); }],
       ...SESSION_KINDS.map(([agent, label]) => [label, () => void openAgentSessions(agent, label)]),
-      // Chat-style agents run on this machine only (the remote engine API does not carry them yet).
-      ...(source.key === 'local' ? [['Claude agent', () => void openAgentChats('claude', 'Claude agent')], ['Codex agent', () => void openAgentChats('codex', 'Codex agent')]] : []),
+      ...(chatsAvailable ? [['Claude agent', () => void openAgentChats('claude', 'Claude agent')], ['Codex agent', () => void openAgentChats('codex', 'Codex agent')]] : []),
     ]);
+    show(source.key === 'local');
+    if (source.key === 'local') return;
+    try {
+      const info = await api('GET', `${source.tasksBase.replace(/\/tasks$/, '')}/info`);
+      if (source !== currentSource || task !== currentTask || termMenu.hidden || $('h5-term-menu-title').textContent !== tr('Session')) return;
+      show(Array.isArray(info.capabilities) && info.capabilities.includes('agent-chat:manage'));
+    } catch { /* old or offline Engines keep offering terminals only */ }
   }
 
   // ── Agent chat: the same Claude / Codex sessions as a conversation view instead of a terminal ──
@@ -585,7 +594,7 @@
   }
   // Closing it with the back button is the person saying they are done with it.
   function closeAgent() {
-    if (agentFor && agentFor.source === 'local') setOpened(agentFor.taskId, agentFor.conversation, false);
+    if (agentFor && agentFor.source === source.key) setOpened(agentFor.taskId, agentFor.conversation, false);
     hideAgent();
   }
   // `remember`: the person opened it, so the server is told; a chat that is shown again because it was already open is not sent again.
@@ -599,16 +608,22 @@
     }
     agentChat = AgentChat.mount(agentView, { api: chatApi, base: `${source.tasksBase}/${task.id}/agent`, conversation, onClose: closeAgent, notify: message => tell(message, 'error') });
     agentFor = { source: source.key, taskId: task.id, conversation: conversation.id };
-    if (remember && source.key === 'local') setOpened(task.id, conversation.id, true);
+    if (remember) setOpened(task.id, conversation.id, true);
   }
-  // Opens again the chat that is open on this task (chats exist for this machine only).
+  // Opens again the chat saved on this task by the selected Engine.
   async function restoreAgent(item) {
-    if (source.key !== 'local' || agentChat) return;
-    const current = source.key;
+    if (agentChat) return;
+    const current = source;
     let rows;
-    try { rows = await chatApi.get(`${source.tasksBase}/${item.id}/agent/conversations`); }
-    catch { return; } // nothing is lost: the chat stays open on the server for the next time
-    if (task !== item || source.key !== current || agentChat) return;
+    try {
+      if (current.key !== 'local') {
+        const info = await api('GET', `${current.tasksBase.replace(/\/tasks$/, '')}/info`);
+        if (!Array.isArray(info.capabilities) || !info.capabilities.includes('agent-chat:manage')) return;
+        if (source !== current || task !== item) return;
+      }
+      rows = await chatApi.get(`${current.tasksBase}/${item.id}/agent/conversations`);
+    } catch { return; } // nothing is lost: the chat stays open on the server for the next time
+    if (task !== item || source !== current || agentChat) return;
     const list = Array.isArray(rows) ? rows : [];
     let row = list.filter(entry => entry.opened && entry.opened.h5).sort((x, y) => y.opened.h5 - x.opened.h5)[0];
     const legacy = store.get(legacyKey(item));

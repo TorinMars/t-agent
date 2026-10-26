@@ -126,7 +126,10 @@ function deleteTask(principalId, id, { deleteDirectory = false } = {}) {
     const reason = workspaceTools.taskDirectoryGuard(db, principalId, task, DEFAULT_BASE);
     if (reason) throw Object.assign(new Error('DIRECTORY_NOT_SAFE_TO_DELETE'), { statusCode: 409, reason });
   }
-  if (task) require('../routes/terminal').closeTaskTerminals(id);
+  if (task) {
+    require('../routes/terminal').closeTaskTerminals(id);
+    require('./agent-chat').getAgentChat().stopTask(task.id);
+  }
   const result = db.prepare('DELETE FROM tasks WHERE id = ? AND user_id = ?').run(id, principalId);
   if (!result.changes) throw Object.assign(new Error('TASK_NOT_FOUND'), { statusCode: 404 });
   if (!deleteDirectory) return { success: true };

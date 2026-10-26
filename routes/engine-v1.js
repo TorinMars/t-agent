@@ -76,7 +76,7 @@ function infoHandler(req, res) {
       'tasks:reorder', 'documents:create', 'documents:watch', 'files:assets', 'paths:validate', 'terminal:activity',
       'todos:read', 'todos:write',
       'terminal:interactive', 'terminal:control', 'terminal:multiple', 'token:pairing',
-      'engine:update', 'pm2:manage', 'apps:manage', 'agent-config:manage', 'file-sync:manage', 'workspace:manage',
+      'engine:update', 'pm2:manage', 'apps:manage', 'agent-config:manage', 'file-sync:manage', 'workspace:manage', 'agent-chat:manage',
     ],
   });
 }
@@ -153,6 +153,12 @@ router.post('/workspace/restore', workspaceWrite, async (req, res) => {
   try { res.json(await workspaceTools.restoreRepo(db, principal(req), req.body && req.body.id)); }
   catch (error) { workspaceError(res, error); }
 });
+
+// Reuse the local conversation API with token authentication and the token's task owner.
+router.use('/tasks/:id/agent', require('./agent-chat').createAgentChatRouter({
+  authenticate: requireEngineAuth('terminal:execute'),
+  ownerOf: principal,
+}));
 
 router.get('/tasks', requireEngineAuth('tasks:read'), (req, res) => {
   try { res.json(tasks.listTasks(principal(req), req.query.status)); }

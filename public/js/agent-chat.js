@@ -55,7 +55,7 @@ const AgentChat = (() => {
       api.get(`${base}/conversations`).catch(() => []),
       api.get(`${base}/sessions?agent=${encodeURIComponent(agent)}`).catch(() => []),
     ]);
-    const mine = (Array.isArray(conversations) ? conversations : []).filter(row => row.agent === agent);
+    const mine = (Array.isArray(conversations) ? conversations : []).filter(row => row.agent === agent).sort((a, b) => String(b.updated_at || '').localeCompare(String(a.updated_at || ''))); // the latest first (updated_at is 'YYYY-MM-DD HH:MM:SS')
     const taken = new Set(mine.map(row => row.session_id).filter(Boolean));
     return [
       ...mine.map(row => ({ title: row.title, running: row.running, conversation: row })),

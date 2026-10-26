@@ -535,7 +535,7 @@ test('choosing another model drops the effort the last turn reported, but keeps 
   chat.subscribe(task, conversation.id, 0, event => seen.push(event));
   await chat.sendMessage(task, conversation.id, { text: 'go' });
   await wait(() => chat.list(task.id).find(row => row.id === conversation.id).running === false && adapter.calls.length === 1);
-  assert.deepEqual([chat.list(task.id)[0].model, chat.list(task.id).find(row => row.id === conversation.id).effort], ['gpt-old', 'medium']);
+  assert.deepEqual([chat.list(task.id).find(row => row.id === conversation.id).model, chat.list(task.id).find(row => row.id === conversation.id).effort], ['gpt-old', 'medium']);
 
   const switched = chat.setPreferences(task, conversation.id, { model: 'gpt-new' });
   assert.deepEqual([switched.model, switched.effort], ['gpt-new', undefined], 'the reported effort belonged to the old model');
@@ -556,6 +556,9 @@ test('which chats are open is saved per page: the desktop keeps every open chat,
   assert.deepEqual(chat.list(task.id).map(row => row.opened), Array(3).fill({ web: null, h5: null }), 'nothing is open at first');
   const order = chat.list(task.id).map(row => row.id);
 
+  assert.deepEqual(order, [a.id, b.id, c.id], 'the list is in the order the chats were created');
+  db.prepare('UPDATE agent_conversations SET updated_at = ? WHERE id = ?').run('2999-01-01 00:00:00', a.id);
+  assert.deepEqual(chat.list(task.id).map(row => row.id), order, 'a chat that was updated stays where it is');
   const first = chat.setOpened(task, a.id, { surface: 'web', opened: true });
   assert.ok(first.opened.web > 0 && first.opened.h5 === null);
   await new Promise(resolve => setTimeout(resolve, 5));

@@ -162,8 +162,10 @@ function createAgentChat({ db, adapters = ADAPTERS }) {
     return () => rt.subscribers.delete(send);
   }
 
+  // In the order the chats were created, which never changes: a chat that gets a message does not jump in the lists that show them in this order
+  // (the phone task sheet). A list that wants the latest first sorts by `updated_at`.
   function list(taskId) {
-    return db.prepare('SELECT * FROM agent_conversations WHERE task_id = ? ORDER BY updated_at DESC, rowid DESC').all(taskId)
+    return db.prepare('SELECT * FROM agent_conversations WHERE task_id = ? ORDER BY rowid ASC').all(taskId)
       .map(row => publicRow(row, runtimes.get(row.id)));
   }
 

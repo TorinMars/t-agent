@@ -10,7 +10,8 @@
     "test": "node --test",
     "vendor": "node scripts/fetch-vendor.js",
     "build:markdown": "esbuild scripts/markdown-view-entry.js --bundle --minify --format=iife --global-name=MarkdownView --outfile=public/js/markdown-view.js",
-    "build:monaco": "esbuild scripts/monaco-entry.js --bundle --minify --supported:template-literal=false --format=iife --global-name=MonacoBundle --loader:.ttf=file --asset-names=[name]-[hash] --outfile=public/vendor/monaco/monaco.js && esbuild node_modules/monaco-editor/esm/vs/editor/editor.worker.js --bundle --minify --format=iife --outfile=public/vendor/monaco/editor.worker.js && esbuild node_modules/monaco-editor/esm/vs/languages/features/json/json.worker.js --bundle --minify --supported:template-literal=false --format=iife --outfile=public/vendor/monaco/json.worker.js"
+    "build:monaco": "esbuild scripts/monaco-entry.js --bundle --minify --supported:template-literal=false --format=iife --global-name=MonacoBundle --loader:.ttf=file --asset-names=[name]-[hash] --outfile=public/vendor/monaco/monaco.js && esbuild node_modules/monaco-editor/esm/vs/editor/editor.worker.js --bundle --minify --format=iife --outfile=public/vendor/monaco/editor.worker.js && esbuild node_modules/monaco-editor/esm/vs/languages/features/json/json.worker.js --bundle --minify --supported:template-literal=false --format=iife --outfile=public/vendor/monaco/json.worker.js",
+    "build:agent-chat": "esbuild scripts/agent-chat/entry.jsx --bundle --minify --format=iife --global-name=AgentChatUI --define:process.env.NODE_ENV=\\\"production\\\" --outfile=public/js/agent-chat-ui.js"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.310",
@@ -31,10 +32,15 @@
     "ws": "^8.21.1"
   },
   "devDependencies": {
+    "@assistant-ui/react": "0.15.31",
+    "@assistant-ui/react-markdown": "0.14.24",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/xterm": "^5.5.0",
     "linkedom": "0.18.12",
     "nodemon": "^3.1.4",
-    "playwright": "1.58.2"
+    "playwright": "1.58.2",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "remark-gfm": "4.0.1"
   }
 }

@@ -103,7 +103,7 @@ const server = http.createServer(app);
     assert.equal(await page.locator('.ac-tool.running').count(), 1);
     await page.click('.ac-allow');
     await page.waitForSelector('.ac-tool.done');
-    await page.waitForFunction(() => document.querySelector('.ac-send') && !document.querySelector('.ac-send').hidden);
+    await page.waitForSelector('.ac-send');
     assert.equal(await page.locator('.ac-request').count(), 0);
     await page.locator('.ac-tool summary').click();
     assert.equal(await page.locator('.ac-tool-output').textContent(), 'removed');
@@ -173,7 +173,7 @@ const server = http.createServer(app);
     await page.click('.ac-send');
     await page.waitForFunction(() => document.querySelectorAll('.ac-user').length === 2);
     assert.deepEqual(codexSeen.steers, ['one more thing']);
-    await page.waitForFunction(() => document.querySelector('.ac-stop').hidden);
+    await page.waitForFunction(() => !document.querySelector('.ac-stop'));
     assert.equal(await page.locator('.ac-input').getAttribute('placeholder'), 'Message Codex');
     console.log('Agent chat view: streaming, permissions, stop, access level, attachments, reopen, and Codex questions and steering passed.');
   } finally {

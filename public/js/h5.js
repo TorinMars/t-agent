@@ -443,7 +443,7 @@
       button.className = 'h5-terminal-main';
       const icon = document.createElement('span');
       icon.className = `h5-terminal-icon ${row.agent}`;
-      icon.append(AgentChat.icon(row.agent));
+      icon.append(AgentChat.chatIcon(row.agent));
       icon.setAttribute('aria-hidden', 'true');
       const name = document.createElement('span');
       name.className = 'h5-terminal-name';

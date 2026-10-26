@@ -356,26 +356,20 @@ app.use((req, res, next) => {
   if (auth.loginRequired) return res.redirect(config.loginPath);
   next();
 });
-// Third-party library file names carry a version and their content is fixed: cache them for a long time, and enable gzip for /vendor (mermaid is about 5 MB).
-// Compression is limited to /vendor so streaming endpoints such as SSE are not buffered.
+// Static files are never reused without asking the server first: every response says `no-cache`, so the browser (and any proxy in front of this server,
+// such as a tunnel) revalidates each time with the ETag / Last-Modified that express.static sends. An unchanged file costs a 304 without a body, a changed
+// one arrives at once, so a new release never shows a stale script or style. (`no-cache` still lets the browser keep a copy to validate; `no-store` would
+// download the 5 MB mermaid bundle again on every load.) Scripts and styles are gzipped, and /vendor too (mermaid is about 5 MB); only these prefixes, so
+// streaming endpoints such as SSE are never buffered.
+const noCache = res => res.setHeader('Cache-Control', 'no-cache');
 app.use('/vendor', compression(), express.static(path.join(__dirname, 'public', 'vendor'), {
   index: false,
-  setHeaders(res, file) {
-    if (/-\d+\.\d+\.\d+(?:\.min)?\.(?:js|css)$/.test(file)) res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
-  },
+  setHeaders: noCache,
 }));
-// The page rewrites its own /js and /css URLs with ?v=<app version> (see sendClientPage), so a versioned request names content that cannot change until the
-// next release: it is cached for a year and never revalidated. Unversioned requests keep revalidating. Scripts and styles are gzipped (only these two
-// prefixes, so streaming endpoints such as SSE are never buffered); small static files like the icons and manifest are cached for a day.
-const VERSION_QUERY = /^[\w.-]{1,40}$/;
 app.use(['/js', '/css'], compression());
 app.use(express.static(path.join(__dirname, 'public'), {
   index: false,
-  setHeaders(res, file) {
-    const version = res.req && res.req.query && res.req.query.v;
-    if (/\.(?:js|css)$/.test(file) && typeof version === 'string' && VERSION_QUERY.test(version)) res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
-    else if (/\.(?:png|ico|svg|webmanifest)$|manifest[\w-]*\.json$/.test(file)) res.setHeader('Cache-Control', 'public, max-age=86400');
-  },
+  setHeaders: noCache,
 }));
 // A logged-in person who opens a wrong page address goes to the home page; everyone else keeps getting 404.
 app.use(createUnknownPageRedirect({ loginPath: config.loginPath, isAuthenticated: session => getClientAuth().authenticated(session) }));

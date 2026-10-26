@@ -1,4 +1,4 @@
-// The pages rewrite their /js and /css URLs with ?v=<app version>; a versioned request is cached for a year, everything else keeps revalidating.
+// Static files are never reused without asking the server: every one is served with `no-cache` (revalidate each time with its ETag), versioned or not.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -34,23 +34,32 @@ async function startServer(t) {
   });
 }
 
-test('versioned scripts and styles are cached for a year and gzipped; unversioned ones revalidate', async t => {
+test('scripts, styles, vendor files, icons and manifests are served with no-cache, versioned or not, and still gzipped', async t => {
   const get = await startServer(t);
   const versioned = await get('/js/h5.js?v=1.2.3', { 'Accept-Encoding': 'gzip' });
   assert.equal(versioned.status, 200);
-  assert.equal(versioned.headers['cache-control'], 'public, max-age=31536000, immutable');
+  assert.equal(versioned.headers['cache-control'], 'no-cache', 'a version in the URL does not make it cacheable');
   assert.equal(versioned.headers['content-encoding'], 'gzip');
   assert.ok(versioned.body.length < fs.statSync(path.join(__dirname, '../public/js/h5.js')).size / 2, 'the gzipped body is much smaller');
 
-  assert.equal((await get('/css/h5.css?v=1.2.3')).headers['cache-control'], 'public, max-age=31536000, immutable');
-  assert.equal((await get('/css/h5.css')).headers['cache-control'], 'public, max-age=0', 'no version: keep revalidating');
-  assert.equal((await get('/css/h5.css?v=../../x')).headers['cache-control'], 'public, max-age=0', 'only plain version strings count');
+  for (const route of ['/css/h5.css?v=1.2.3', '/css/h5.css', '/css/h5.css?v=../../x', '/js/voice-input.js', '/icons/icon-192.png', '/manifest-h5.json', '/sw.js']) {
+    const response = await get(route);
+    assert.equal(response.status, 200, route);
+    assert.equal(response.headers['cache-control'], 'no-cache', route);
+  }
+  const vendor = 'marked/marked-15.0.12.min.js'; // a versioned name: it used to be cached for a year
+  assert.ok(fs.existsSync(path.join(__dirname, '../public/vendor', vendor)), 'the vendor file exists');
+  assert.equal((await get(`/vendor/${vendor}`)).headers['cache-control'], 'no-cache', 'vendor files used to be cached for a year');
 });
 
-test('icons and the manifest are cached for a day, and the page itself is never stored', async t => {
+test('an unchanged static file is answered with 304 and no body, and the page itself is still never stored', async t => {
   const get = await startServer(t);
-  assert.equal((await get('/icons/icon-192.png')).headers['cache-control'], 'public, max-age=86400');
-  assert.equal((await get('/manifest-h5.json')).headers['cache-control'], 'public, max-age=86400');
+  const first = await get('/js/h5.js');
+  assert.ok(first.headers.etag, 'the file has an ETag to validate against');
+  const again = await get('/js/h5.js', { 'If-None-Match': first.headers.etag });
+  assert.equal(again.status, 304);
+  assert.equal(again.body.length, 0);
+  assert.equal(again.headers['cache-control'], 'no-cache');
   const page = await get('/h5');
   assert.equal(page.status, 200);
   assert.equal(page.headers['cache-control'], 'no-store');

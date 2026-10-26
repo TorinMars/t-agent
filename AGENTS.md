@@ -24,7 +24,7 @@
 
 ## Releases and pushing
 
-The user has authorized automatic release and push: once development or a fix in this repository is complete and the relevant verification has passed, continue by default with the version bump, commit, push and checking the result, without asking again. When the user explicitly asks not to release yet, to only review, or to keep changes local, follow that request; when verification fails or the release is blocked, report it truthfully and do not force a release.
+The user has authorized automatic release and push: once development or a fix in this repository is complete and the relevant verification has passed, continue by default with the version bump, commit, push and checking the result, without asking again. This includes work done on a feature branch or in a git worktree: merge it into `main` with a merge commit, bump the version and push, every time. When the user explicitly asks not to release yet, to only review, or to keep changes local, follow that request; when verification fails or the release is blocked, report it truthfully and do not force a release.
 
 1. Before releasing, check the working tree, current branch, remote address, remote target branch and existing versions, to avoid overwriting someone else's commits or duplicating a version. The regular release target of this repository is `origin/main`; if the user specifies otherwise, follow the user.
 2. Follow the existing version sequence: regular fixes bump the patch version; new features or incompatible changes choose the version by impact. Before releasing, update together:

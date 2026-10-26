@@ -125,7 +125,8 @@ function ToolGroup({ data }) {
 }
 
 function Notice({ data }) {
-  return <div className={`ac-item ${data.kind === 'error' ? 'ac-error' : 'ac-notice'}`}><span>{data.text}</span></div>;
+  const style = data.kind === 'error' ? 'ac-error' : (data.level === 'warn' ? 'ac-warn' : 'ac-notice');
+  return <div className={`ac-item ${style}`}><span>{data.text}</span></div>;
 }
 
 function Attachments({ data }) {

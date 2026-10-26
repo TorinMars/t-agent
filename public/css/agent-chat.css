@@ -60,6 +60,7 @@
 .ac-tool-input { color: var(--ac-muted); }
 .ac-error { padding: 8px 10px; border-radius: 8px; border: 1px solid var(--ac-danger); color: var(--ac-danger); }
 .ac-notice { color: var(--ac-muted); font-size: 13px; text-align: center; }
+.ac-warn { padding: 6px 10px; border-left: 3px solid var(--ac-spark); color: var(--ac-muted); font-size: 13px; text-align: left; overflow-wrap: anywhere; }
 .ac-chips { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; }
 .ac-chip { display: inline-flex; align-items: center; gap: 4px; max-width: 200px; padding: 2px 8px; border-radius: 10px; background: var(--ac-key); color: var(--ac-text); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ac-chip-remove { border: 0; background: none; color: var(--ac-muted); font-size: 14px; line-height: 1; cursor: pointer; padding: 0 2px; }

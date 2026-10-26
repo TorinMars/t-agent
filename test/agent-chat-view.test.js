@@ -314,3 +314,14 @@ test('the changes of an edit are shown as lines to review: Codex diffs, Claude e
   assert.equal(big.length, 401, 'a long diff is cut, and says how much is left');
   assert.deepEqual(big.at(-1), { type: 'hunk', text: '… 601 more lines' });
 });
+
+test('a warning notice keeps its level so the view can style it apart from a plain notice', async () => {
+  const { toMessages } = await load();
+  const [message] = toMessages([
+    { id: 'w1', kind: 'notice', level: 'warn', text: 'Under-development features enabled' },
+    { id: 'n1', kind: 'notice', text: 'Stopped' },
+  ]);
+  const notices = message.content.filter(part => part.name === 'notice').map(part => part.data);
+  assert.deepEqual(notices.map(data => data.level), ['warn', undefined]);
+  assert.deepEqual(notices.map(data => data.kind), ['notice', 'notice']);
+});

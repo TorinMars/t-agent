@@ -332,6 +332,7 @@
       }
     }, 1000);
   }
+  $('h5-close-chat').addEventListener('click', () => closeAgent());
   $('h5-open-settings').addEventListener('click', openSettings);
   $('h5-close-settings').addEventListener('click', closeSettings);
   updateButton.addEventListener('click', () => void checkUpdate());
@@ -583,11 +584,14 @@
   const agentView = $('h5-agent');
   const chatApi = { get: url => api('GET', url), post: (url, body) => api('POST', url, body), patch: (url, body) => api('PATCH', url, body), del: url => api('DELETE', url) };
   let agentChat = null;
+  // The chat fills the screen below the page header (task name and settings), the same header the terminal has, and follows the
+  // visual viewport so the on-screen keyboard never covers the composer.
   function fitAgentView() {
+    const top = document.querySelector('.h5-header').getBoundingClientRect().bottom;
     const viewport = window.visualViewport;
-    if (!viewport) return;
-    agentView.style.height = `${viewport.height}px`;
-    agentView.style.top = `${viewport.offsetTop}px`;
+    const bottom = viewport ? viewport.offsetTop + viewport.height : window.innerHeight;
+    agentView.style.top = `${top}px`;
+    agentView.style.height = `${Math.max(0, bottom - top)}px`;
   }
   // Which chat of which task is shown. The chat that is open on a task is kept in the database (the open flag of the conversation, one per
   // task on this page), so a refresh, or another phone, brings it back. Earlier versions remembered it in localStorage (`h5-agent:...`);
@@ -610,6 +614,7 @@
     agentChat = null;
     agentFor = null;
     agentView.hidden = true;
+    $('h5-close-chat').hidden = true;
     agentView.style.height = agentView.style.top = '';
     if (window.visualViewport) {
       window.visualViewport.removeEventListener('resize', fitAgentView);
@@ -626,11 +631,12 @@
   function mountAgent(conversation, { remember = true } = {}) {
     if (agentChat) agentChat.destroy();
     agentView.hidden = false;
+    $('h5-close-chat').hidden = false;
     if (window.visualViewport) {
       window.visualViewport.addEventListener('resize', fitAgentView);
       window.visualViewport.addEventListener('scroll', fitAgentView);
-      fitAgentView();
     }
+    fitAgentView();
     agentChat = AgentChat.mount(agentView, { api: chatApi, base: `${source.tasksBase}/${task.id}/agent`, conversation, onClose: closeAgent, notify: message => tell(message, 'error') });
     agentFor = { source: source.key, taskId: task.id, conversation: conversation.id };
     if (remember) setOpened(task.id, conversation.id, true);

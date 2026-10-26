@@ -232,19 +232,24 @@ test('Recording starts on a page that has no API helper or Modal (the phone page
   const button = { addEventListener: (type, fn) => { handlers[type] = fn; }, classList: { toggle: (name, on) => (on ? classes.add(name) : classes.delete(name)) }, setAttribute() {} };
   const textarea = { value: '', dispatchEvent() {}, focus() {} };
   const elements = { 'h5-translate-input': textarea, 'h5-voice': button };
+  const links = [];
+  const filters = [];
+  const constraints = [];
   class FakeContext {
     constructor() { this.sampleRate = 48000; this.state = 'running'; this.destination = {}; this.audioWorklet = { addModule: async () => {} }; }
     resume() { return Promise.resolve(); }
     close() { this.state = 'closed'; return Promise.resolve(); }
     createGain() { return { gain: {}, connect() {}, disconnect() {} }; }
-    createMediaStreamSource() { return { connect() {} }; }
+    createMediaStreamSource() { return { connect: target => links.push(['source', target.kind || 'node']) }; }
+    createBiquadFilter() { const filter = { kind: 'filter', type: '', frequency: {}, connect: target => links.push(['filter', target === workletNode ? 'node' : 'other']) }; filters.push(filter); return filter; }
   }
+  let workletNode = null;
   const sandbox = {
     document: { getElementById: id => elements[id] || null },
-    navigator: { mediaDevices: { getUserMedia: async () => ({ getTracks: () => [] }) } },
+    navigator: { mediaDevices: { getUserMedia: async options => { constraints.push(options); return { getTracks: () => [] }; } } },
     fetch: async (url, options) => { fetches.push({ url, options }); return { ok: true, status: 200, text: async () => JSON.stringify({ url: 'wss://speech.example/api-ws/v1/inference', token: 'st-1', model: 'fun-asr-realtime', language: 'zh' }) }; },
     WebSocket: FakeSocket,
-    AudioWorkletNode: class { constructor() { this.port = {}; } connect() {} disconnect() {} },
+    AudioWorkletNode: class { constructor() { this.port = {}; workletNode = this; } connect() {} disconnect() {} },
     Blob: class {}, URL: { createObjectURL: () => 'blob:x' }, Event: class {},
     crypto: require('crypto').webcrypto, console, setTimeout, clearTimeout,
     notify: (message, type) => notices.push([message, type]),
@@ -262,6 +267,9 @@ test('Recording starts on a page that has no API helper or Modal (the phone page
   assert.equal(fetches[0].options.headers['X-Requested-With'], 'XMLHttpRequest', 'same-origin proof for the server');
   const socket = FakeSocket.last;
   assert.equal(socket.url, 'wss://speech.example/api-ws/v1/inference?api_key=st-1');
+  assert.deepEqual([constraints[0].audio.echoCancellation, constraints[0].audio.noiseSuppression, constraints[0].audio.autoGainControl], [true, true, true], 'the browser cleans the microphone first');
+  assert.deepEqual([filters.length, filters[0].type, filters[0].frequency.value], [1, 'highpass', 100], 'a high-pass filter takes out rumble');
+  assert.deepEqual(links, [['source', 'filter'], ['filter', 'node']], 'microphone -> high-pass filter -> capture');
   socket.onopen();
   socket.receive(header('task-started'));
   assert.equal(classes.has('listening'), true);
@@ -381,4 +389,44 @@ test('Phone microphone zones: letting go over send keeps the text and sends it, 
   finish(socket);
   assert.equal(textarea.value, 'hello');
   assert.equal(sends, 1, 'the send zone sends once the recognition has ended');
+});
+
+test('The noise threshold, hot words and hot word list ID are checked, normalized, kept when another field is saved, and reach the browser only when set', async () => {
+  const { service } = setup();
+  const plain = service.saveConfig('o', { apiKey: 'k' });
+  assert.deepEqual([plain.noiseThreshold, plain.vocabularyId, plain.hotwords], [null, '', ''], 'the service defaults');
+  assert.deepEqual(Object.keys(await service.createToken('o')).sort(), ['language', 'model', 'token', 'url'], 'nothing extra is sent when nothing is set');
+
+  const saved = service.saveConfig('o', { noiseThreshold: '0.34', hotwords: ' Claude Code\nT-Agent, worktree，Claude Code ;', vocabularyId: 'vocab-1.a_b' });
+  assert.deepEqual([saved.noiseThreshold, saved.hotwords, saved.vocabularyId], [0.3, 'Claude Code, T-Agent, worktree', 'vocab-1.a_b'], 'one decimal, one clean list without duplicates');
+  assert.deepEqual(await service.createToken('o'), { url: 'wss://dashscope.aliyuncs.com/api-ws/v1/inference', token: 'st-temp', model: 'fun-asr-realtime', language: 'zh', noiseThreshold: 0.3, vocabularyId: 'vocab-1.a_b', hotwords: 'Claude Code, T-Agent, worktree' });
+
+  const other = service.saveConfig('o', { language: 'en' });
+  assert.deepEqual([other.noiseThreshold, other.hotwords, other.vocabularyId], [0.3, 'Claude Code, T-Agent, worktree', 'vocab-1.a_b'], 'saving another field keeps them');
+  assert.equal(service.saveConfig('o', { noiseThreshold: 0 }).noiseThreshold, 0, 'zero is a value, not "unset"');
+  const cleared = service.saveConfig('o', { noiseThreshold: '', hotwords: '', vocabularyId: '' });
+  assert.deepEqual([cleared.noiseThreshold, cleared.hotwords, cleared.vocabularyId], [null, '', ''], 'empty values go back to the default');
+
+  assert.throws(() => service.saveConfig('o', { noiseThreshold: '1.5' }), /noise threshold/);
+  assert.throws(() => service.saveConfig('o', { noiseThreshold: 'loud' }), /noise threshold/);
+  assert.throws(() => service.saveConfig('o', { vocabularyId: 'bad id!' }), /hot word list/);
+  assert.throws(() => service.saveConfig('o', { hotwords: 'a'.repeat(401) }), /400 characters/);
+});
+
+test('The recognizer sends the noise threshold, the hot word list ID and the hot words only when they are set', () => {
+  const plain = recognizer();
+  plain.socket.onopen();
+  const first = JSON.parse(plain.socket.sent[0]).payload;
+  assert.deepEqual(first.parameters, { format: 'pcm', sample_rate: 16000, language_hints: ['zh'] });
+  assert.deepEqual(first.input, {});
+
+  const tuned = recognizer({ noiseThreshold: 0.4, vocabularyId: 'vocab-1', hotwords: 'Claude Code, T-Agent' });
+  tuned.socket.onopen();
+  const run = JSON.parse(tuned.socket.sent[0]).payload;
+  assert.deepEqual(run.parameters, { format: 'pcm', sample_rate: 16000, language_hints: ['zh'], speech_noise_threshold: 0.4, vocabulary_id: 'vocab-1' });
+  assert.deepEqual(run.input, { context: [{ role: 'user', content: [{ type: 'input_text', text: 'Claude Code, T-Agent' }] }] });
+
+  const zero = recognizer({ noiseThreshold: 0 });
+  zero.socket.onopen();
+  assert.equal(JSON.parse(zero.socket.sent[0]).payload.parameters.speech_noise_threshold, 0, 'a threshold of 0 is sent');
 });

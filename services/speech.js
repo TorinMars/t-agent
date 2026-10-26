@@ -19,7 +19,30 @@ class SpeechError extends Error {
 }
 const controls = /[\x00-\x20\x7f]/;
 const text = value => (typeof value === 'string' ? value.trim() : '');
-const defaults = () => ({ enabled: false, apiKey: '', region: DEFAULT_REGION, endpoint: '', model: DEFAULT_MODEL, language: DEFAULT_LANGUAGE });
+const defaults = () => ({ enabled: false, apiKey: '', region: DEFAULT_REGION, endpoint: '', model: DEFAULT_MODEL, language: DEFAULT_LANGUAGE, noiseThreshold: null, vocabularyId: '', hotwords: '' });
+
+// How sure the service must be that a sound is speech and not noise: -1 to 1, nearer 1 filters more noise (and can cut quiet speech). null = the service default.
+function noiseThreshold(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const number = Number(value);
+  if (!Number.isFinite(number) || number < -1 || number > 1) throw new SpeechError('The noise threshold must be a number from -1 to 1');
+  return Math.round(number * 10) / 10;
+}
+// The ID of a hot word list made in advance on the service.
+function vocabularyId(value) {
+  const raw = text(value);
+  if (raw && !/^[\w.-]{1,80}$/.test(raw)) throw new SpeechError('Invalid hot word list ID');
+  return raw;
+}
+// Words the speech should favor (names, product and code terms), one per line or separated by commas: kept as one clean list. The service reads at most 400 characters.
+const MAX_HOTWORDS = 400;
+function hotwords(value) {
+  const words = [...new Set(text(value).split(/[\n\r,，、;；]+/).map(word => word.trim()).filter(Boolean))];
+  const joined = words.join(', ');
+  if (/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(joined)) throw new SpeechError('Invalid hot words');
+  if (joined.length > MAX_HOTWORDS) throw new SpeechError(`The hot words can be at most ${MAX_HOTWORDS} characters`);
+  return joined;
+}
 
 function endpointUrl(value) {
   const raw = text(value);
@@ -50,6 +73,7 @@ function createSpeech({ db, sessionSecret, env = process.env, fetchImpl = (...ar
   const envKey = () => text(env.DASHSCOPE_API_KEY);
   const safe = config => ({
     enabled: config.enabled, region: config.region, model: config.model, language: config.language,
+    noiseThreshold: config.noiseThreshold === undefined ? null : config.noiseThreshold, vocabularyId: config.vocabularyId || '', hotwords: config.hotwords || '',
     // Echo the custom endpoint (blank = the region default) and also say which address is really in effect.
     endpoint: config.endpoint, effectiveEndpoint: config.endpoint || REGIONS[config.region].endpoint,
     hasApiKey: Boolean(config.apiKey), keySource: config.apiKey ? 'saved' : (envKey() ? 'environment' : 'none'),
@@ -61,7 +85,7 @@ function createSpeech({ db, sessionSecret, env = process.env, fetchImpl = (...ar
     const config = read(owner);
     const apiKey = config.apiKey || envKey();
     if (!apiKey || (!config.enabled && config.apiKey)) return null;
-    return { apiKey, url: config.endpoint || REGIONS[config.region].endpoint, model: config.model, language: config.language };
+    return { apiKey, url: config.endpoint || REGIONS[config.region].endpoint, model: config.model, language: config.language, noiseThreshold: config.noiseThreshold, vocabularyId: config.vocabularyId, hotwords: config.hotwords };
   }
 
   return {
@@ -79,6 +103,9 @@ function createSpeech({ db, sessionSecret, env = process.env, fetchImpl = (...ar
         region, language,
         endpoint: body.endpoint === undefined ? current.endpoint : endpointUrl(body.endpoint),
         model: text(body.model) || DEFAULT_MODEL,
+        noiseThreshold: body.noiseThreshold === undefined ? (current.noiseThreshold === undefined ? null : current.noiseThreshold) : noiseThreshold(body.noiseThreshold),
+        vocabularyId: body.vocabularyId === undefined ? (current.vocabularyId || '') : vocabularyId(body.vocabularyId),
+        hotwords: body.hotwords === undefined ? (current.hotwords || '') : hotwords(body.hotwords),
         enabled: body.enabled !== false,
       };
       if (next.apiKey && (controls.test(next.apiKey) || next.apiKey.length > 512)) throw new SpeechError('Invalid API key');
@@ -106,7 +133,13 @@ function createSpeech({ db, sessionSecret, env = process.env, fetchImpl = (...ar
         const data = await response.json();
         const token = text(data && data.token);
         if (!token) throw new SpeechError('The speech recognition service returned no token', 502);
-        return { url: settings.url, token, model: settings.model, language: settings.language };
+        // Only what was set is sent, so a service default stays a service default.
+        return {
+          url: settings.url, token, model: settings.model, language: settings.language,
+          ...(typeof settings.noiseThreshold === 'number' ? { noiseThreshold: settings.noiseThreshold } : {}),
+          ...(settings.vocabularyId ? { vocabularyId: settings.vocabularyId } : {}),
+          ...(settings.hotwords ? { hotwords: settings.hotwords } : {}),
+        };
       } catch (error) {
         if (error instanceof SpeechError) throw error;
         if (error && error.name === 'AbortError') throw new SpeechError('The speech recognition service timed out; please retry', 504);

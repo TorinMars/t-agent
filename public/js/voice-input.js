@@ -8,6 +8,7 @@ const VoiceInput = (() => {
   const MAX_PENDING_BYTES = TARGET_RATE * 2 * 10; // audio kept while the task is starting: at most 10 seconds
   const FINISH_TIMEOUT_MS = 8000;
   const STOP_TIMEOUT_MS = 10000;
+  const HIGH_PASS_HZ = 100;
   const HOLD_MS = 350; // a press shorter than this is a tap, not a long press
   const WORKLET = 'registerProcessor("pcm-capture", class extends AudioWorkletProcessor { process(inputs) { const channel = inputs[0] && inputs[0][0]; if (channel) this.port.postMessage(channel.slice()); return true; } });';
 
@@ -43,7 +44,7 @@ const VoiceInput = (() => {
 
   // One recognition task on the speech service (run-task → task-started → audio → finish-task → task-finished).
   // callbacks: onReady(), onResult({ text, sentenceId, final }), onDone(), onError(message). Returns { sendAudio, finish, close }.
-  function createRecognizer({ url, token, model, language, WebSocketImpl = WebSocket, callbacks }) {
+  function createRecognizer({ url, token, model, language, noiseThreshold, vocabularyId, hotwords, WebSocketImpl = WebSocket, callbacks }) {
     const taskId = crypto.randomUUID();
     const frame = (action, payload) => JSON.stringify({ header: { action, task_id: taskId, streaming: 'duplex' }, payload });
     let state = 'connecting'; // connecting → starting → ready → finishing → closed
@@ -79,7 +80,11 @@ const VoiceInput = (() => {
       state = 'starting';
       const parameters = { format: 'pcm', sample_rate: TARGET_RATE };
       if (language) parameters.language_hints = [language];
-      ws.send(frame('run-task', { task_group: 'audio', task: 'asr', function: 'recognition', model, parameters, input: {} }));
+      if (typeof noiseThreshold === 'number') parameters.speech_noise_threshold = noiseThreshold; // how sure the service must be that a sound is speech, not noise
+      if (vocabularyId) parameters.vocabulary_id = vocabularyId; // a hot word list made in advance
+      // Words to favor go in as context: a user message of type input_text (the service reads at most 400 characters).
+      const input = hotwords ? { context: [{ role: 'user', content: [{ type: 'input_text', text: hotwords }] }] } : {};
+      ws.send(frame('run-task', { task_group: 'audio', task: 'asr', function: 'recognition', model, parameters, input }));
     };
     ws.onmessage = event => {
       if (typeof event.data !== 'string' || state === 'closed') return;
@@ -226,13 +231,13 @@ const VoiceInput = (() => {
       context = new Context();
       context.resume().catch(() => {});
       try {
-        stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } });
+        stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
         if (mine !== run) { release(); return; }
         // Fetch the token only now: it is valid for a minute, and the permission prompt can take longer than that.
         const grant = await requestToken();
         if (mine !== run) { release(); return; }
         recognizer = createRecognizer({
-          url: grant.url, token: grant.token, model: grant.model, language: grant.language,
+          url: grant.url, token: grant.token, model: grant.model, language: grant.language, noiseThreshold: grant.noiseThreshold, vocabularyId: grant.vocabularyId, hotwords: grant.hotwords,
           callbacks: {
             onReady() { if (mine === run) { state = 'listening'; render(); } },
             onResult(result) {
@@ -258,7 +263,15 @@ const VoiceInput = (() => {
         };
         silent = context.createGain();
         silent.gain.value = 0; // keeps the graph pulled without playing the microphone back
-        context.createMediaStreamSource(stream).connect(node);
+        // A high-pass filter at 100 Hz takes out the rumble of fans, traffic and handling noise, which carries no speech.
+        const source = context.createMediaStreamSource(stream);
+        if (context.createBiquadFilter) {
+          const filter = context.createBiquadFilter();
+          filter.type = 'highpass';
+          filter.frequency.value = HIGH_PASS_HZ;
+          source.connect(filter);
+          filter.connect(node);
+        } else source.connect(node);
         node.connect(silent);
         silent.connect(context.destination);
         limitTimer = setTimeout(stop, MAX_SESSION_MS);
@@ -336,6 +349,13 @@ const VoiceInput = (() => {
         <select class="form-input" id="vi-language">${options(config.languages, config.language)}</select></div>
       <div class="form-group"><label class="form-label" for="vi-model">Model</label>
         <input class="form-input" id="vi-model" value="${escapeHtml(config.model)}"></div>
+      <div class="form-group"><label class="form-label" for="vi-noise">Noise filter (-1 to 1, optional)</label>
+        <input class="form-input" id="vi-noise" type="number" min="-1" max="1" step="0.1" value="${config.noiseThreshold === null ? '' : escapeHtml(String(config.noiseThreshold))}" placeholder="Service default">
+        <div class="form-hint">How sure the service must be that a sound is speech and not noise. Closer to 1 filters more noise (try 0.2 to 0.5 in a noisy room) but can cut quiet speech. It cannot tell your voice from other people talking nearby.</div></div>
+      <div class="form-group"><label class="form-label" for="vi-hotwords">Hot words (optional)</label>
+        <textarea class="form-input" id="vi-hotwords" rows="3" maxlength="400" placeholder="One per line: names, product and code terms">${escapeHtml(config.hotwords)}</textarea></div>
+      <div class="form-group"><label class="form-label" for="vi-vocab">Hot word list ID (optional)</label>
+        <input class="form-input" id="vi-vocab" value="${escapeHtml(config.vocabularyId)}" placeholder="A list made in advance on Alibaba Cloud"></div>
       <div class="form-group"><label class="form-label" for="vi-url">Endpoint (optional)</label>
         <input class="form-input" id="vi-url" value="${escapeHtml(config.endpoint)}"></div>
       <div class="form-hint" id="vi-effective"></div>
@@ -354,7 +374,7 @@ const VoiceInput = (() => {
     const feedback = field('vi-feedback');
     field('vi-save').addEventListener('click', async () => {
       try {
-        await API.put('/api/speech/config', { apiKey: field('vi-key').value.trim(), region: field('vi-region').value, language: field('vi-language').value, model: field('vi-model').value.trim(), endpoint: field('vi-url').value.trim() });
+        await API.put('/api/speech/config', { apiKey: field('vi-key').value.trim(), region: field('vi-region').value, language: field('vi-language').value, model: field('vi-model').value.trim(), endpoint: field('vi-url').value.trim(), noiseThreshold: field('vi-noise').value.trim(), hotwords: field('vi-hotwords').value, vocabularyId: field('vi-vocab').value.trim() });
         Modal.hide();
         tell('Voice input settings saved', 'info');
       } catch (error) { feedback.textContent = 'Save failed: ' + errorText(error); }

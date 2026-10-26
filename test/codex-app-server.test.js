@@ -78,6 +78,7 @@ test('a turn starts a thread with the access level, streams the reply and report
   assert.equal(ctx.items.get('turn-1:m1').text, 'hello');
   const start = requests().find(row => row.method === 'thread/start');
   assert.deepEqual([start.params.sandbox, start.params.approvalPolicy, start.params.approvalsReviewer, start.params.cwd], ['read-only', 'on-request', 'user', os.tmpdir()]);
+  assert.equal(start.params.config.features.default_mode_request_user_input, true, 'questions to the person are enabled in the default collaboration mode');
   assert.equal(ctx.control, null, 'the steering hook is removed when the turn ends');
   // What Codex reports about the thread is kept for the page: the model, the effort and an "Initialized session" entry.
   assert.deepEqual(ctx.meta, { model: 'gpt-fake', effort: 'medium', context: { used: 7, window: 1000 } }, 'what the last request held is the context use');

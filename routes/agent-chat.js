@@ -23,9 +23,13 @@ function createAgentChatRouter({ service = getAgentChat(), authenticate = requir
   router.get('/conversations/:cid', handle((task, req) => service.snapshot(task, req.params.cid)));
   router.patch('/conversations/:cid', handle((task, req) => {
     const body = req.body || {};
+    let result = { success: true };
     if (body.title !== undefined) service.rename(task, req.params.cid, body.title);
-    return body.mode !== undefined ? service.setMode(task, req.params.cid, body.mode) : { success: true };
+    if (body.mode !== undefined) result = service.setMode(task, req.params.cid, body.mode);
+    if (body.model !== undefined || body.effort !== undefined) result = service.setPreferences(task, req.params.cid, { model: body.model, effort: body.effort });
+    return result;
   }));
+  router.get('/conversations/:cid/models', handle((task, req) => service.listModels(task, req.params.cid)));
   router.delete('/conversations/:cid', handle((task, req) => service.remove(task, req.params.cid)));
   router.post('/conversations/:cid/messages', handle((task, req) => service.sendMessage(task, req.params.cid, req.body || {})));
   router.post('/conversations/:cid/interrupt', handle((task, req) => service.interrupt(task, req.params.cid)));

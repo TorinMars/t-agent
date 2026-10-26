@@ -146,6 +146,8 @@ CREATE TABLE IF NOT EXISTS agent_conversations (
   session_id TEXT,
   title TEXT NOT NULL,
   mode TEXT NOT NULL,
+  model TEXT,
+  effort TEXT,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

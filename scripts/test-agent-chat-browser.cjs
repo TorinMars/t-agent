@@ -19,12 +19,19 @@ const { createAgentChatRouter } = require('../routes/agent-chat');
 const task = tasks.createTask('owner', { title: 'chat' });
 const received = [];
 const adapter = {
-  MODES: { ask: {}, edits: {}, plan: {}, full: {} }, DEFAULT_MODE: 'ask',
+  MODES: { ask: {}, edits: {}, plan: {}, full: {} }, DEFAULT_MODE: 'ask', CAPABILITIES: { models: true },
+  listModels: async () => [
+    { value: 'sonnet', label: 'Sonnet 5.5', description: 'Everyday tasks', efforts: ['low', 'high'], defaultEffort: '' },
+    { value: 'opus', label: 'Opus 5.5', description: 'Hardest tasks', efforts: ['high', 'max'], defaultEffort: '' },
+  ],
   loadHistory: async () => [],
   async runTurn({ prompt, ctx, requestPermission, signal, sessionId }) {
     received.push(prompt);
     ctx.setSession('session-abcdef12');
-    ctx.setMeta({ model: 'claude-sonnet-5-5', effort: 'medium' });
+    ctx.setMeta({
+      model: 'claude-sonnet-5-5', effort: 'medium', context: { used: 42000, window: 200000 },
+      limits: [{ id: '5h', label: '5h', usedPercent: 37.5, resetsAt: Date.now() + 4.2 * 3600000 }, { id: '7d', label: '7d', usedPercent: 20, resetsAt: Date.now() + 3.5 * 24 * 3600000 }],
+    });
     if (!sessionId) ctx.upsert({ id: 'init:1', kind: 'init', text: 'Initialized session', details: [['Model', 'claude-sonnet-5-5'], ['Session', 'session-abcdef12']] });
     if (/slow/.test(prompt.text)) {
       ctx.upsert({ id: 's1', kind: 'text', text: 'Thinking about it' });
@@ -43,7 +50,7 @@ const adapter = {
 // Codex: asks a question, then for a command (which can be allowed for the session), and takes input while it works.
 const codexSeen = { answers: [], approvals: [], steers: [] };
 const codexAdapter = {
-  MODES: { readonly: {}, write: {}, full: {} }, DEFAULT_MODE: 'write', CAPABILITIES: { steer: true },
+  MODES: { readonly: {}, write: {}, full: {} }, DEFAULT_MODE: 'write', CAPABILITIES: { steer: true, models: true },
   loadHistory: async () => [],
   async runTurn({ ctx, requestPermission }) {
     let release;
@@ -104,6 +111,13 @@ const server = http.createServer(app);
     await page.locator('.ac-init summary').click();
     assert.deepEqual(await page.locator('.ac-init-body dt').allTextContents(), ['Model', 'Session']);
     assert.equal(await page.locator('.ac-model').textContent(), 'Sonnet 5.5 Medium');
+    // The ring says how much of the context window is used, and changes colour as it fills.
+    assert.equal(await page.locator('.ac-context').getAttribute('aria-label'), 'Context: 21% used (42k of 200k tokens)');
+    // What is left of the plan windows and when they reset: one unit, decimals allowed.
+    assert.deepEqual(await page.locator('.ac-limit').allTextContents(), ['5h 62.5% · 4.2h', '7d 80% · 3.5d']);
+    assert.equal(await page.locator('.ac-limit').first().getAttribute('title'), '5h limit: 62.5% left, resets in 4.2h');
+    assert.equal(await page.locator('.ac-context').getAttribute('class'), 'ac-context');
+    assert.equal(await page.locator('.ac-context-value').getAttribute('stroke-dasharray'), `${2 * Math.PI * 8 * 0.21} ${2 * Math.PI * 8}`);
     assert.match(await page.locator('.ac-mode-text').textContent(), /Ask before changes/);
     assert.equal(await page.locator('.ac-text strong').textContent(), 'bold');
     assert.deepEqual(await page.locator('.ac-text li').allTextContents(), ['one', 'two']);
@@ -157,6 +171,8 @@ const server = http.createServer(app);
     await page.waitForFunction(() => document.querySelectorAll('.ac-user').length === 3);
     assert.equal(received.at(-1).images.length, 1);
     assert.match(received.at(-1).text, /Attached file notes\.txt:[\s\S]*remember this/);
+    // The page clears them when the request returns, which can be after the message arrived over the event stream.
+    await page.waitForSelector('.ac-attachments .ac-chip', { state: 'detached' });
     assert.equal(await page.locator('.ac-attachments .ac-chip').count(), 0, 'attachments are cleared after sending');
 
     // The title opens a menu: rename the chat or close it.
@@ -170,6 +186,30 @@ const server = http.createServer(app);
       await page.getByRole('menuitem', { name: 'Rename…' }).click();
       await page.waitForFunction(expected => document.querySelector('.ac-title').textContent === expected, name);
     }
+
+    // The model and effort in the footer open a list of both; a choice is saved for the next messages.
+    await page.click('.ac-picker-button');
+    await page.waitForSelector('.ac-picker-item');
+    assert.deepEqual(await page.locator('.ac-picker-name').allTextContents(), ['Default', 'Sonnet 5.5', 'Opus 5.5']);
+    assert.equal(await page.locator('.ac-picker-item[aria-checked="true"] .ac-picker-name').textContent(), 'Default');
+    assert.deepEqual(await page.locator('.ac-picker-effort').allTextContents(), ['Default', 'Low', 'High', 'Max']);
+    await page.locator('.ac-picker-item', { hasText: 'Opus 5.5' }).click();
+    await page.waitForFunction(() => document.querySelector('.ac-picker-button').textContent === 'Opus');
+    assert.deepEqual(await page.locator('.ac-picker-effort').allTextContents(), ['Default', 'High', 'Max'], 'only the efforts of the chosen model');
+    await page.locator('.ac-picker-effort', { hasText: 'Max' }).click();
+    await page.waitForFunction(() => document.querySelector('.ac-picker-button').textContent === 'Opus Max');
+    assert.equal(await page.locator('.ac-picker-effort[aria-checked="true"]').textContent(), 'Max');
+    let row = await page.evaluate(async () => (await api.get(`${base}/conversations`))[0]);
+    assert.deepEqual([row.model, row.effort], ['opus', 'max'], 'the choice is saved on the server');
+    await page.locator('.ac-picker-item', { hasText: 'Sonnet 5.5' }).click();
+    await page.waitForFunction(() => document.querySelector('.ac-picker-button').textContent === 'Sonnet');
+    row = await page.evaluate(async () => (await api.get(`${base}/conversations`))[0]);
+    assert.deepEqual([row.model, row.effort], ['sonnet', undefined], 'an effort the new model does not offer is cleared');
+    await page.keyboard.press('Escape');
+    assert.equal(await page.locator('.ac-picker').count(), 0);
+    await page.click('.ac-picker-button');
+    await page.locator('.ac-messages').click({ position: { x: 5, y: 5 } });
+    assert.equal(await page.locator('.ac-picker').count(), 0, 'a click elsewhere closes it');
 
     // Reopening the conversation shows what was said, and closing calls the host.
     const state = await page.evaluate(async () => (await api.get(`${base}/conversations`))[0]);
@@ -189,6 +229,7 @@ const server = http.createServer(app);
     await page.evaluate(() => { view.destroy(); return openChat('codex', null); });
     assert.equal(await page.locator('.ac-badge svg.agent-logo path').count(), 1, 'Codex shows the OpenAI logo');
     assert.deepEqual(await page.locator('.ac-mode option').allTextContents(), ['Read-only', 'Workspace write', 'Full access']);
+    assert.deepEqual([await page.locator('.ac-model').textContent(), await page.locator('.ac-context').count(), await page.locator('.ac-limit').count()], ['Model', 0, 0], 'a choosable model shows its name only once it is known; no ring or limits until reported');
     await page.fill('.ac-input', 'start');
     await page.click('.ac-send');
     await page.waitForSelector('.ac-question');

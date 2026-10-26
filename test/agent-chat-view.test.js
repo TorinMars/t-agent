@@ -189,3 +189,81 @@ test('renaming the chat goes to the server, and a failure is reported', async ()
   assert.equal(await store.rename('x'), false);
   assert.match(notices[0], /Could not rename the chat: nope/);
 });
+
+test('the context use comes from the snapshot and follows meta events; nothing is invented when it is unknown', async () => {
+  const { createChatStore } = await load();
+  const unknown = harness({ snapshot: { items: [], pending: [], status: 'idle', seq: 0, conversation: {} } });
+  const empty = createChatStore(unknown.options);
+  await empty.load();
+  assert.deepEqual([empty.getState().context, empty.getState().model, empty.getState().effort], [null, '', '']);
+
+  const { options, sources } = harness({ snapshot: { items: [], pending: [], status: 'idle', seq: 0, conversation: { model: 'gpt-fake', effort: 'high', context: { used: 10, window: 100 } } } });
+  const store = createChatStore(options);
+  assert.equal(store.getState().context, null);
+  await store.load();
+  assert.deepEqual(store.getState().context, { used: 10, window: 100 });
+  sources[0].emit({ seq: 1, op: 'meta', context: { used: 80, window: 100 } });
+  assert.deepEqual([store.getState().context, store.getState().model, store.getState().effort], [{ used: 80, window: 100 }, 'gpt-fake', 'high'], 'a context update leaves the model and effort alone');
+  sources[0].emit({ seq: 2, op: 'meta', title: 'Renamed' });
+  assert.deepEqual(store.getState().context, { used: 80, window: 100 }, 'an unrelated meta event keeps it');
+
+  const fromRow = createChatStore({ ...options, conversation: { id: 'c1', title: 'T', mode: 'ask', model: 'm', effort: 'e', context: { used: 1, window: 2 } } });
+  assert.deepEqual([fromRow.getState().model, fromRow.getState().context], ['m', { used: 1, window: 2 }], 'a chat row from the list already carries them');
+});
+
+test('durations use a single unit with at most one decimal, and percentages drop a trailing .0', async () => {
+  const { duration, num, limitText, visibleLimits, modelName, tokens } = await import('../scripts/agent-chat/format.mjs');
+  const H = 3600000;
+  assert.deepEqual([30000, 0.5 * 60000, 35 * 60000, 59.96 * 60000, 1 * H, 1.5 * H, 4.2 * H, 23.4 * H, 24 * H, 60 * H, 166.9 * H].map(duration), ['<1m', '<1m', '35m', '60m', '1h', '1.5h', '4.2h', '23.4h', '1d', '2.5d', '7d']);
+  assert.deepEqual([2, 4.25, 4.2, 62.5, 0, 99.96].map(num), ['2', '4.3', '4.2', '62.5', '0', '100']);
+  const now = 1000000;
+  assert.deepEqual(limitText({ label: '5h', usedPercent: 37.5, resetsAt: now + 4.2 * H }, now), { left: '62.5', reset: '4.2h', text: '5h 62.5% · 4.2h' });
+  assert.equal(limitText({ label: '7d', usedPercent: 20, resetsAt: now + 3.5 * 24 * H }, now).text, '7d 80% · 3.5d');
+  assert.equal(limitText({ label: '5h', usedPercent: 120, resetsAt: null }, now).text, '5h 0%', 'over the limit is 0% left, and no reset time is not invented');
+  assert.deepEqual(visibleLimits([{ id: 'a', resetsAt: now - 1 }, { id: 'b', resetsAt: now + 1 }, { id: 'c', resetsAt: null }, { id: 'd' }], now).map(entry => entry.id), ['b', 'c', 'd'], 'a window that has reset is not shown');
+  assert.deepEqual(visibleLimits(undefined, now), []);
+  assert.deepEqual(['claude-sonnet-5-5', 'claude-opus-4-1-20250805', 'sonnet', 'gpt-6.1-sol', '', undefined].map(modelName), ['Sonnet 5.5', 'Opus 4.1', 'Sonnet', 'gpt-6.1-sol', '', '']);
+  assert.deepEqual([999, 1000, 43502, 258400, 1000000, 1450000].map(tokens), ['999', '1k', '44k', '258k', '1M', '1.5M']);
+});
+
+test('the model list is read once per open picker, the choice is saved and shown, and a failure can be retried', async () => {
+  const { createChatStore } = await load();
+  const offered = [{ value: '', label: 'Default', efforts: ['low', 'high'] }, { value: 'a', label: 'A', efforts: ['low'] }];
+  const { options, calls, notices } = harness({ snapshot: { items: [], pending: [], status: 'idle', seq: 0, capabilities: { models: true }, conversation: {} } });
+  let fail = true;
+  options.api.get = async url => { calls.push(['get', url]); if (/\/models$/.test(url)) { if (fail) throw new Error('down'); return { models: offered, chosen: { model: 'a', effort: 'low' } }; } return { items: [], pending: [], status: 'idle', seq: 0, capabilities: { models: true }, conversation: {} }; };
+  options.api.patch = async (url, body) => { calls.push(['patch', url, body]); return { model: body.model || undefined, effort: body.effort || undefined }; };
+  const store = createChatStore(options);
+  await store.load();
+  assert.equal(store.getState().canChoose, true);
+  assert.equal(store.getState().models.status, 'idle');
+  await store.loadModels();
+  assert.equal(store.getState().models.status, 'error', 'the failure is shown, not hidden');
+  fail = false;
+  await store.loadModels();
+  assert.deepEqual([store.getState().models.status, store.getState().models.list.length, store.getState().choice], ['ready', 2, { model: 'a', effort: 'low' }]);
+  await store.loadModels();
+  assert.equal(calls.filter(call => /\/models$/.test(call[1])).length, 2, 'a loaded list is not read again');
+
+  assert.equal(await store.choose({ model: '', effort: 'high' }), true);
+  assert.deepEqual(calls.find(call => call[0] === 'patch'), ['patch', '/b/conversations/c1', { model: '', effort: 'high' }]);
+  assert.deepEqual([store.getState().model, store.getState().effort, store.getState().choice], ['', 'high', { model: '', effort: 'high' }]);
+  options.api.patch = async () => { throw new Error('INVALID_MODEL'); };
+  assert.equal(await store.choose({ model: 'x' }), false);
+  assert.deepEqual(notices.at(-1), 'Could not change the model: INVALID_MODEL');
+  assert.equal(store.getState().choice.model, '', 'a refused choice changes nothing');
+});
+
+test('a meta event can clear the model and effort, and the plan limits replace the old ones', async () => {
+  const { createChatStore } = await load();
+  const { options, sources } = harness({ snapshot: { items: [], pending: [], status: 'idle', seq: 0, conversation: { model: 'm', effort: 'high', limits: [{ id: '5h', label: '5h', usedPercent: 1, resetsAt: null }] } } });
+  const store = createChatStore(options);
+  await store.load();
+  assert.deepEqual([store.getState().model, store.getState().limits.length], ['m', 1]);
+  sources[0].emit({ seq: 1, op: 'meta', model: '', effort: '' });
+  assert.deepEqual([store.getState().model, store.getState().effort], ['', ''], 'an empty value clears it');
+  sources[0].emit({ seq: 2, op: 'meta', context: { used: 1, window: 2 } });
+  assert.deepEqual([store.getState().model, store.getState().effort], ['', ''], 'an event without them leaves them alone');
+  sources[0].emit({ seq: 3, op: 'meta', limits: [{ id: '5h', label: '5h', usedPercent: 50, resetsAt: null }, { id: '7d', label: '7d', usedPercent: 5, resetsAt: null }] });
+  assert.deepEqual(store.getState().limits.map(entry => [entry.id, entry.usedPercent]), [['5h', 50], ['7d', 5]]);
+});

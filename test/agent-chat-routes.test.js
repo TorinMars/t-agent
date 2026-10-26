@@ -20,6 +20,7 @@ const adapter = {
   MODES: { ask: {}, full: {} }, DEFAULT_MODE: 'ask',
   loadHistory: async () => [],
   runTurn: async ({ ctx }) => { ctx.upsert({ id: 'a1', kind: 'text', text: 'pong' }); return { ok: true }; },
+  listModels: async () => [{ value: 'sonnet', label: 'Sonnet 5.5', description: '', efforts: ['low', 'high'], defaultEffort: '' }],
 };
 const app = express();
 app.use(express.json());
@@ -75,4 +76,26 @@ test('another person\'s task is not reachable', async () => {
 test('the event stream of an unknown conversation says so', async () => {
   const text = await (await fetch(`${base}/api/tasks/${mine.id}/agent/conversations/missing/events`)).text();
   assert.match(text, /event: gone/);
+});
+
+test('the model and effort of a chat are chosen with PATCH and the model list is read with GET', async () => {
+  const url = `/api/tasks/${mine.id}/agent`;
+  const id = (await call('POST', `${url}/conversations`, { agent: 'claude' })).body.id;
+  const models = await call('GET', `${url}/conversations/${id}/models`);
+  assert.equal(models.status, 200);
+  assert.deepEqual(models.body.models.map(model => model.value), ['', 'sonnet']);
+  assert.deepEqual(models.body.chosen, { model: '', effort: '' });
+
+  const saved = await call('PATCH', `${url}/conversations/${id}`, { model: 'sonnet', effort: 'high' });
+  assert.deepEqual([saved.status, saved.body.model, saved.body.effort], [200, 'sonnet', 'high']);
+  assert.deepEqual((await call('GET', `${url}/conversations/${id}/models`)).body.chosen, { model: 'sonnet', effort: 'high' });
+  assert.deepEqual((await call('GET', `${url}/conversations/${id}`)).body.conversation.model, 'sonnet');
+  const invalid = await call('PATCH', `${url}/conversations/${id}`, { model: 'not valid!' });
+  assert.deepEqual([invalid.status, invalid.body.error], [400, 'INVALID_MODEL']);
+  assert.equal((await call('PATCH', `${url}/conversations/${id}`, { effort: 'Max!' })).body.error, 'INVALID_EFFORT');
+  const both = await call('PATCH', `${url}/conversations/${id}`, { title: 'Chosen', mode: 'full', model: '' });
+  assert.deepEqual([both.body.title, both.body.mode, both.body.model], ['Chosen', 'full', undefined], 'title, mode and model can change in one request');
+
+  assert.equal((await call('GET', `/api/tasks/${theirs.id}/agent/conversations/${id}/models`)).status, 404, 'a task of someone else');
+  assert.equal((await call('GET', `${url}/conversations/missing/models`)).body.error, 'CONVERSATION_NOT_FOUND');
 });

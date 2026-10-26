@@ -62,6 +62,12 @@ for (const [column, type] of [['agent', 'TEXT'], ['agent_session_id', 'TEXT'], [
   if (!terminalColumns.includes(column)) db.exec(`ALTER TABLE task_terminals ADD COLUMN ${column} ${type}`);
 }
 
+// The model and thinking effort chosen for an agent chat (empty: the agent's own default).
+const conversationColumns = db.prepare('PRAGMA table_info(agent_conversations)').all().map(column => column.name);
+for (const column of ['model', 'effort']) {
+  if (!conversationColumns.includes(column)) db.exec(`ALTER TABLE agent_conversations ADD COLUMN ${column} TEXT`);
+}
+
 // Bookmark groups created before the project became English-first used a Chinese default name.
 db.prepare("UPDATE bookmarks SET group_name = 'Default' WHERE group_name = ?").run('\u9ed8\u8ba4');
 

@@ -24,10 +24,10 @@ function collector() {
   return ctx;
 }
 
-function run(text, { mode = 'write', sessionId, requestPermission = async () => ({ allow: true }), signal = new AbortController().signal, ctx = collector(), images } = {}) {
+function run(text, { mode = 'write', sessionId, requestPermission = async () => ({ allow: true }), signal = new AbortController().signal, ctx = collector(), images, model, effort } = {}) {
   const log = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 't-agent-fake-codex-')), 'log.jsonl');
   process.env.FAKE_CODEX_LOG = log;
-  const promise = codex.runTurn({ cwd: os.tmpdir(), sessionId, mode, prompt: { text, images }, signal, ctx, requestPermission, deps: { executable: FAKE } });
+  const promise = codex.runTurn({ cwd: os.tmpdir(), sessionId, mode, prompt: { text, images }, signal, ctx, requestPermission, model, effort, deps: { executable: FAKE } });
   const requests = () => (fs.existsSync(log) ? fs.readFileSync(log, 'utf8').trim().split('\n').map(line => JSON.parse(line)) : []);
   return { promise, ctx, requests };
 }
@@ -80,7 +80,7 @@ test('a turn starts a thread with the access level, streams the reply and report
   assert.deepEqual([start.params.sandbox, start.params.approvalPolicy, start.params.approvalsReviewer, start.params.cwd], ['read-only', 'on-request', 'user', os.tmpdir()]);
   assert.equal(ctx.control, null, 'the steering hook is removed when the turn ends');
   // What Codex reports about the thread is kept for the page: the model, the effort and an "Initialized session" entry.
-  assert.deepEqual(ctx.meta, { model: 'gpt-fake', effort: 'medium' });
+  assert.deepEqual(ctx.meta, { model: 'gpt-fake', effort: 'medium', context: { used: 7, window: 1000 } }, 'what the last request held is the context use');
   const init = ctx.items.get('init:thread-fake0001');
   assert.deepEqual([init.kind, init.text], ['init', 'Initialized session']);
   assert.deepEqual(init.details.map(([label]) => label), ['Model', 'Reasoning effort', 'Working directory', 'Sandbox', 'Approvals', 'Session']);
@@ -199,4 +199,49 @@ test('the client answers requests, ignores partial lines and fails pending reque
   client.child.kill();
   await assert.rejects(pending.then(() => client.request('again', {})), /stopped|closed|not running/);
   client.close();
+});
+
+test('the chosen model and effort reach the thread and the turn', async () => {
+  const chosen = run('say hi', { model: 'gpt-chosen', effort: 'high' });
+  assert.equal((await chosen.promise).ok, true);
+  assert.equal(chosen.requests().find(row => row.method === 'thread/start').params.model, 'gpt-chosen');
+  assert.deepEqual([chosen.requests().find(row => row.method === 'turn/start').params.model, chosen.requests().find(row => row.method === 'turn/start').params.effort], ['gpt-chosen', 'high']);
+  const resumed = run('again', { model: 'gpt-chosen', sessionId: 'thread-old00001' });
+  await resumed.promise;
+  assert.equal(resumed.requests().find(row => row.method === 'thread/resume').params.model, 'gpt-chosen');
+  const plain = run('say hi');
+  await plain.promise;
+  assert.equal('model' in plain.requests().find(row => row.method === 'turn/start').params, false, 'without a choice the agent decides');
+  assert.equal('effort' in plain.requests().find(row => row.method === 'turn/start').params, false);
+});
+
+test('model list and plan limits come from a short-lived app server', async () => {
+  const asked = [];
+  const answers = {
+    'model/list': { data: [
+      { model: 'gpt-a', displayName: 'GPT-A', description: 'fast', hidden: false, supportedReasoningEfforts: [{ reasoningEffort: 'low' }, { reasoningEffort: 'high' }], defaultReasoningEffort: 'low' },
+      { model: 'gpt-hidden', displayName: 'Hidden', hidden: true, supportedReasoningEfforts: [], defaultReasoningEffort: 'low' },
+    ], nextCursor: null },
+    'account/rateLimits/read': { rateLimits: { primary: { usedPercent: 12.5, windowDurationMins: 300, resetsAt: 1000 }, secondary: { usedPercent: 40, windowDurationMins: 10080, resetsAt: null } } },
+  };
+  let closed = 0;
+  const createClient = () => ({ start: async () => {}, request: async (method, params) => { asked.push([method, params]); return answers[method]; }, close: () => { closed++; } });
+  assert.deepEqual(await codex.listModels({ deps: { createClient } }), [{ value: 'gpt-a', label: 'GPT-A', description: 'fast', efforts: ['low', 'high'], defaultEffort: 'low' }]);
+  assert.deepEqual(await codex.loadLimits({ deps: { createClient } }), [
+    { id: '5h', label: '5h', usedPercent: 12.5, resetsAt: 1000000 },
+    { id: '7d', label: '7d', usedPercent: 40, resetsAt: null },
+  ]);
+  assert.equal(closed, 2, 'the process is closed after each question');
+  assert.deepEqual(asked.map(entry => entry[0]), ['model/list', 'account/rateLimits/read']);
+  await assert.rejects(codex.loadLimits({ deps: { createClient: () => ({ start: async () => {}, request: async () => { throw new Error('offline'); }, close() {} }) } }), /offline/);
+  await assert.rejects(codex.listModels({ deps: { executable: null } }), /not found/);
+  assert.deepEqual(codex.limitsFrom({ primary: { usedPercent: 1, windowDurationMins: 90 }, secondary: { usedPercent: 2, windowDurationMins: 2880 } }).map(entry => entry.label), ['90m', '2d']);
+  assert.deepEqual(codex.limitsFrom(null), []);
+});
+
+test('a plan limits update during a turn reaches the conversation', () => {
+  const ctx = collector();
+  const normalizer = codex.createNormalizer(ctx);
+  normalizer.handle('account/rateLimits/updated', { rateLimits: { primary: { usedPercent: 33, windowDurationMins: 300, resetsAt: 5 } } });
+  assert.deepEqual(ctx.meta.limits, [{ id: '5h', label: '5h', usedPercent: 33, resetsAt: 5000 }]);
 });

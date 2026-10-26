@@ -8,6 +8,7 @@ import { MarkdownTextPrimitive } from '@assistant-ui/react-markdown';
 import remarkGfm from 'remark-gfm';
 import hljs from 'highlight.js/lib/common';
 import { toMessages } from './convert.mjs';
+import { capitalize, limitText, modelName, tokens, visibleLimits } from './format.mjs';
 
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const MAX_FILE_CHARS = 200 * 1024;
@@ -27,12 +28,6 @@ const ICONS = {
   mic: 'M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3zM5 11a7 7 0 0 0 14 0M12 18v3', close: 'M6 6l12 12M18 6L6 18', enter: 'M20 5v7a3 3 0 0 1-3 3H5m0 0l4-4m-4 4l4 4',
 };
 
-// "claude-sonnet-5-5" -> "Sonnet 5.5"; ids of other makers are shown as they are.
-function modelName(id) {
-  const match = /^claude-([a-z]+)-(\d+(?:-\d+)?)(?:-\d{8})?$/.exec(id || '');
-  return match ? `${match[1][0].toUpperCase()}${match[1].slice(1)} ${match[2].replace('-', '.')}` : id || '';
-}
-const capitalize = text => (text ? `${text[0].toUpperCase()}${text.slice(1)}` : '');
 
 // ── Message parts ──
 function Code({ className, children }) {
@@ -350,18 +345,115 @@ function AgentIcon({ agent }) {
   return <span ref={ref} className={`ac-badge ${agent}`} aria-hidden="true" />;
 }
 
-// The title with a menu: rename the chat, or close it.
-function TitleMenu({ title, store, onClose }) {
-  const [open, setOpen] = useState(false);
-  const holder = useRef(null);
+// Closes a popover when the person clicks elsewhere or presses Escape.
+function useDismiss(open, close, ref) {
   useEffect(() => {
     if (!open) return undefined;
-    const away = event => { if (holder.current && !holder.current.contains(event.target)) setOpen(false); };
-    const escape = event => { if (event.key === 'Escape') setOpen(false); };
+    const away = event => { if (ref.current && !ref.current.contains(event.target)) close(); };
+    const escape = event => { if (event.key === 'Escape') close(); };
     document.addEventListener('pointerdown', away);
     document.addEventListener('keydown', escape);
     return () => { document.removeEventListener('pointerdown', away); document.removeEventListener('keydown', escape); };
   }, [open]);
+}
+
+// The model and thinking effort in the footer; it opens a list of both. A choice applies from the next message.
+function ModelPicker({ store, state }) {
+  const [open, setOpen] = useState(false);
+  const holder = useRef(null);
+  useDismiss(open, () => setOpen(false), holder);
+  const shown = [modelName(state.model), capitalize(state.effort)].filter(Boolean).join(' ');
+  if (!state.canChoose) return shown ? <span className="ac-model" translate="no">{shown}</span> : null;
+  const { status, list } = state.models;
+  const selected = list.find(entry => entry.value === state.choice.model) || list[0];
+  const efforts = selected ? selected.efforts : [];
+  const pick = entry => {
+    // An effort the new model does not offer goes back to its default.
+    const keep = !state.choice.effort || entry.efforts.includes(state.choice.effort);
+    void store.choose({ model: entry.value, ...(keep ? {} : { effort: '' }) });
+  };
+  return (
+    <div className="ac-picker-holder" ref={holder}>
+      <button type="button" className="ac-model ac-picker-button" aria-haspopup="menu" aria-expanded={open} translate="no"
+        onClick={() => { setOpen(value => !value); void store.loadModels(); }}>
+        <span>{shown || t('Model')}</span>
+        <Icon d={ICONS.chevron} />
+      </button>
+      {open ? (
+        <div className="ac-picker" role="menu" aria-label={t('Model')}>
+          {status === 'loading' || status === 'idle' ? <p className="ac-picker-note">{t('Loading…')}</p> : null}
+          {status === 'error' ? <p className="ac-picker-note">{t('Could not load the models')} <button type="button" className="ac-link" onClick={() => { void store.loadModels(); }}>{t('Retry')}</button></p> : null}
+          {list.length ? (
+            <>
+              <div className="ac-picker-title">{t('Model')}</div>
+              <div className="ac-picker-list">
+                {list.map(entry => (
+                  <button type="button" role="menuitemradio" aria-checked={entry.value === (selected && selected.value)} key={entry.value || 'default'} className="ac-picker-item" onClick={() => pick(entry)}>
+                    <span className="ac-picker-name">{entry.value ? entry.label : t(entry.label)}</span>
+                    {entry.description ? <span className="ac-picker-desc" translate="no">{entry.description}</span> : null}
+                  </button>
+                ))}
+              </div>
+              {efforts.length ? (
+                <>
+                  <div className="ac-picker-title">{t('Thinking effort')}</div>
+                  <div className="ac-picker-efforts">
+                    {['', ...efforts].map(effort => (
+                      <button type="button" role="menuitemradio" aria-checked={effort === state.choice.effort} key={effort || 'default'} className="ac-picker-effort" onClick={() => void store.choose({ effort })}>
+                        {effort ? t(capitalize(effort)) : t('Default')}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              ) : null}
+              <p className="ac-picker-note">{t('Applies from the next message')}</p>
+            </>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+// What is left of the plan windows (5 hours, 7 days) and when each resets, in one unit with decimals: "5h 62.5% · 4.2h".
+function Limits({ limits }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 30000); return () => clearInterval(timer); }, []);
+  const shown = visibleLimits(limits, now);
+  if (!shown.length) return null;
+  return (
+    <span className="ac-limits" translate="no">
+      {shown.map(entry => {
+        const { left, reset, text } = limitText(entry, now);
+        const title = t(`${entry.label} limit: ${left}% left${reset ? `, resets in ${reset}` : ''}`);
+        return <span className={`ac-limit${100 - entry.usedPercent <= 10 ? ' low' : ''}`} key={entry.id} title={title} aria-label={title}>{text}</span>;
+      })}
+    </span>
+  );
+}
+
+// How much of the model's context window the conversation fills; it turns amber and red as the window runs out.
+function ContextRing({ context }) {
+  if (!context || !context.window) return null;
+  const ratio = Math.min(1, Math.max(0, context.used / context.window));
+  const percent = Math.round(ratio * 100);
+  const circumference = 2 * Math.PI * 8;
+  const label = t(`Context: ${percent}% used (${tokens(context.used)} of ${tokens(context.window)} tokens)`);
+  return (
+    <span className={`ac-context${ratio >= 0.92 ? ' full' : ratio >= 0.8 ? ' high' : ''}`} role="img" aria-label={label} title={label}>
+      <svg viewBox="0 0 22 22" width="18" height="18" aria-hidden="true">
+        <circle className="ac-context-track" cx="11" cy="11" r="8" />
+        <circle className="ac-context-value" cx="11" cy="11" r="8" strokeDasharray={`${circumference * ratio} ${circumference}`} transform="rotate(-90 11 11)" />
+      </svg>
+    </span>
+  );
+}
+
+// The title with a menu: rename the chat, or close it.
+function TitleMenu({ title, store, onClose }) {
+  const [open, setOpen] = useState(false);
+  const holder = useRef(null);
+  useDismiss(open, () => setOpen(false), holder);
   const rename = async () => {
     setOpen(false);
     const next = window.prompt(t('Rename chat'), title);
@@ -402,7 +494,6 @@ export const Chat = React.forwardRef(function Chat({ store, agent, conversation,
     if (next === 'full' && !window.confirm(t('Full access lets the agent act without asking. Continue?'))) return;
     await store.setMode(next);
   };
-  const model = [modelName(state.model), capitalize(state.effort)].filter(Boolean).join(' ');
 
   return (
     <section className={`agent-chat ${conversation.agent}`} aria-label={t(`${agent.label} chat`)} translate="no">
@@ -429,7 +520,11 @@ export const Chat = React.forwardRef(function Chat({ store, agent, conversation,
             {agent.modes.map(([value, label]) => <option key={value} value={value}>{t(label)}</option>)}
           </select>
         </label>
-        {model ? <span className="ac-model" translate="no">{model}</span> : null}
+        <span className="ac-status">
+          <Limits limits={state.limits} />
+          <ModelPicker store={store} state={state} />
+          <ContextRing context={state.context} />
+        </span>
       </div>
     </section>
   );

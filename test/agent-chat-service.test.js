@@ -321,3 +321,216 @@ test('Claude announces a new session once, with what it was started with, and ke
   assert.equal(resumed.items.size, 0, 'a resumed session is not announced again');
   assert.deepEqual(resumed.meta, [{ model: 'claude-sonnet-5-5' }]);
 });
+
+test('Codex: the model, effort and context use of a session come from the end of its rollout file', async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 't-agent-codex-meta-'));
+  const day = path.join(home, '.codex', 'sessions', '2026', '10', '26');
+  fs.mkdirSync(day, { recursive: true });
+  const row = (type, payload) => JSON.stringify({ type, payload });
+  fs.writeFileSync(path.join(day, 'rollout-2026-10-26T01-00-00-thread-meta0001.jsonl'), [
+    row('turn_context', { model: 'old-model', effort: 'low' }),
+    row('event_msg', { type: 'token_count', info: { last_token_usage: { total_tokens: 10 }, model_context_window: 100 } }),
+    row('turn_context', { model: 'gpt-fake', effort: 'high' }),
+    'not json',
+    row('event_msg', { type: 'token_count', info: null }),
+    row('event_msg', { type: 'token_count', info: { last_token_usage: { input_tokens: 1000, output_tokens: 34 }, model_context_window: 258400 } }),
+  ].join('\n'));
+  assert.deepEqual(await codex.loadMeta({ sessionId: 'thread-meta0001', home }), { model: 'gpt-fake', effort: 'high', context: { used: 1034, window: 258400 } });
+  assert.equal(await codex.loadMeta({ sessionId: 'thread-unknown1', home }), null);
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('Claude: context use follows each request, the real window comes with the result, and a later chat reads both from the session', async () => {
+  const meta = [];
+  const items = new Map();
+  const normalizer = claude.createNormalizer({ upsert: item => items.set(item.id, item), append() {}, getItem: id => items.get(id), setSession() {}, setMeta: value => meta.push(value) });
+  normalizer.handle({ type: 'assistant', message: { id: 'm1', model: 'claude-sonnet-5-5', content: [], usage: { input_tokens: 2, cache_read_input_tokens: 40000, cache_creation_input_tokens: 3000, output_tokens: 500 } } });
+  assert.deepEqual(meta.at(-1), { model: 'claude-sonnet-5-5', context: { used: 43502, window: 200000 } });
+  normalizer.handle({ type: 'assistant', message: { id: 'm2', model: 'claude-sonnet-5-5', content: [], usage: { input_tokens: 1, cache_read_input_tokens: 450000, output_tokens: 9 } } });
+  assert.equal(meta.at(-1).context.window, 1000000, 'a request that held more than 200k ran on a larger window');
+  normalizer.handle({ type: 'result', subtype: 'success', is_error: false, modelUsage: { 'claude-sonnet-5-5': { contextWindow: 1000000 }, 'claude-haiku-5-5': { contextWindow: 200000 } } });
+  assert.deepEqual(meta.at(-1), { context: { used: 450010, window: 1000000 } }, 'the largest reported window, with the use of the last request');
+  normalizer.handle({ type: 'assistant', message: { id: 'sub', parent_tool_use_id: 'x', content: [] } }); // no usage: nothing reported
+
+  const sdk = { getSessionMessages: async () => [
+    { type: 'user', message: { content: 'hi' } },
+    { type: 'assistant', message: { model: 'claude-opus-5-5', usage: { input_tokens: 5, cache_read_input_tokens: 995, output_tokens: 100 } } },
+    { type: 'assistant', message: { content: [] } },
+  ] };
+  assert.deepEqual(await claude.loadMeta({ cwd: '/w', sessionId: 's-1', deps: { loadSdk: async () => sdk } }), { model: 'claude-opus-5-5', context: { used: 1100, window: 200000 } });
+  assert.equal(await claude.loadMeta({ cwd: '/w', sessionId: 's-2', deps: { loadSdk: async () => ({ getSessionMessages: async () => [] }) } }), null);
+});
+
+test('a chat opened later gets its model, effort and context from the session, without replacing what a live turn reported', async () => {
+  const adapter = {
+    ...fakeAdapter(async ({ ctx }) => { ctx.setMeta({ context: { used: 50, window: 100 } }); return { ok: true }; }),
+    loadMeta: async () => ({ model: 'from-file', effort: 'low', context: { used: 10, window: 100 } }),
+  };
+  const chat = createAgentChat({ db, adapters: { codex: adapter } });
+  const reopened = chat.create(task, { agent: 'codex', session_id: 'thread-reopen01' });
+  const first = await chat.snapshot(task, reopened.id);
+  assert.deepEqual([first.conversation.model, first.conversation.effort, first.conversation.context], ['from-file', 'low', { used: 10, window: 100 }]);
+  assert.equal(first.seq, 0, 'what is read from the session is not an event');
+
+  const live = chat.create(task, { agent: 'codex', session_id: 'thread-reopen02' });
+  await chat.sendMessage(task, live.id, { text: 'go' });
+  await wait(() => adapter.calls.length === 1 && chat.list(task.id).find(row => row.id === live.id).running === false);
+  const state = await chat.snapshot(task, live.id);
+  assert.deepEqual(state.conversation.context, { used: 50, window: 100 }, 'the live report stays');
+  assert.deepEqual([state.conversation.model, state.conversation.effort], ['from-file', 'low'], 'and what it did not report is filled in');
+
+  const failing = createAgentChat({ db, adapters: { codex: { ...adapter, loadMeta: async () => { throw new Error('unreadable'); } } } });
+  const unreadable = failing.create(task, { agent: 'codex', session_id: 'thread-reopen03' });
+  assert.equal((await failing.snapshot(task, unreadable.id)).conversation.model, undefined, 'an unreadable session just leaves the footer empty');
+  for (const bad of [{ used: -1, window: 100 }, { used: 1, window: 0 }, { used: 'x', window: 5 }, null]) {
+    const rt = createAgentChat({ db, adapters: { codex: fakeAdapter(async ({ ctx }) => { ctx.setMeta({ context: bad }); return { ok: true }; }) } });
+    const chat2 = rt.create(task, { agent: 'codex' });
+    await rt.sendMessage(task, chat2.id, { text: 'x' });
+    await wait(() => rt.list(task.id).find(row => row.id === chat2.id).running === false);
+    assert.equal((await rt.snapshot(task, chat2.id)).conversation.context, undefined);
+  }
+});
+
+test('Claude: the chosen model and effort go to the SDK, the model list comes from a query that runs no turn, and plan windows are reported', async () => {
+  let options;
+  const sdk = { query: args => { options = args.options; return (async function* () { yield { type: 'result', subtype: 'success', is_error: false }; }()); } };
+  const run = extra => claude.runTurn({ cwd: '/w', mode: 'ask', prompt: { text: 'x' }, signal: new AbortController().signal, ctx: { upsert() {}, append() {}, getItem() {}, setSession() {} }, requestPermission: async () => ({ allow: true }), deps: { loadSdk: async () => sdk, executable: undefined }, ...extra });
+  await run({ model: 'sonnet', effort: 'high' });
+  assert.deepEqual([options.model, options.effort], ['sonnet', 'high']);
+  await run({ model: 'opus', effort: 'turbo' });
+  assert.deepEqual([options.model, 'effort' in options], ['opus', false], 'an effort the SDK does not know is not passed on');
+  await run({});
+  assert.equal('model' in options, false);
+
+  let closed = false;
+  const lister = { query: args => { assert.equal(typeof args.prompt.next, 'function', 'the prompt never yields, so no turn runs'); return { supportedModels: async () => [
+    { value: 'default', displayName: 'Default (recommended)', description: 'd', supportsEffort: true, supportedEffortLevels: ['low', 'high'] },
+    { value: 'haiku', displayName: 'Haiku 5.5', description: 'h', supportsEffort: false },
+  ], close: () => { closed = true; } }; } };
+  assert.deepEqual(await claude.listModels({ deps: { loadSdk: async () => lister, executable: undefined } }), [
+    { value: '', label: 'Default (recommended)', description: 'd', efforts: ['low', 'high'], defaultEffort: '' },
+    { value: 'haiku', label: 'Haiku 5.5', description: 'h', efforts: [], defaultEffort: '' },
+  ]);
+  assert.equal(closed, true);
+
+  const meta = [];
+  const normalizer = claude.createNormalizer({ upsert() {}, append() {}, getItem() {}, setSession() {}, setMeta: value => meta.push(value) });
+  normalizer.handle({ type: 'rate_limit_event', rate_limit_info: { status: 'allowed', rateLimitType: 'five_hour', utilization: 0.42, resetsAt: 1000 } });
+  normalizer.handle({ type: 'rate_limit_event', rate_limit_info: { status: 'allowed_warning', rateLimitType: 'seven_day', utilization: 0.9 } });
+  normalizer.handle({ type: 'rate_limit_event', rate_limit_info: { status: 'allowed', rateLimitType: 'overage', utilization: 0.1 } });
+  normalizer.handle({ type: 'rate_limit_event', rate_limit_info: { status: 'allowed', rateLimitType: 'five_hour' } });
+  assert.equal(meta.length, 2, 'other meters and events without a use are ignored');
+  assert.deepEqual(meta[0].limits, [{ id: '5h', label: '5h', usedPercent: 42, resetsAt: 1000000 }]);
+  assert.deepEqual([meta[1].limits[0].label, meta[1].limits[0].usedPercent, meta[1].limits[0].resetsAt], ['7d', 90, null]);
+});
+
+test('the person picks the model and effort of a chat: validated, saved, shown at once, and used by the next turns after a restart', async () => {
+  const adapter = fakeAdapter(async () => ({ ok: true }));
+  const chat = createAgentChat({ db, adapters: { codex: adapter } });
+  const conversation = chat.create(task, { agent: 'codex' });
+  const seen = [];
+  chat.subscribe(task, conversation.id, 0, event => seen.push(event));
+  let row = chat.setPreferences(task, conversation.id, { model: 'gpt-6.1-sol', effort: 'high' });
+  assert.deepEqual([row.model, row.effort], ['gpt-6.1-sol', 'high'], 'the footer shows the choice before a turn reports its own');
+  assert.deepEqual(seen.at(-1), { op: 'meta', model: 'gpt-6.1-sol', effort: 'high', seq: seen.at(-1).seq });
+  assert.deepEqual(db.prepare('SELECT model, effort FROM agent_conversations WHERE id = ?').get(conversation.id), { model: 'gpt-6.1-sol', effort: 'high' });
+  for (const bad of [{ model: 'bad model!' }, { model: '../x' }, { effort: 'Very High' }, { effort: 'x' }, { model: 'm'.repeat(81) }]) {
+    assert.throws(() => chat.setPreferences(task, conversation.id, bad), /INVALID_(MODEL|EFFORT)/);
+  }
+  assert.throws(() => chat.setPreferences(task, 'missing', { model: 'a' }), /CONVERSATION_NOT_FOUND/);
+  chat.setPreferences(task, conversation.id, { effort: 'low' });
+  assert.equal(chat.snapshot && (await chat.snapshot(task, conversation.id)).conversation.model, 'gpt-6.1-sol', 'changing one leaves the other');
+
+  await chat.sendMessage(task, conversation.id, { text: 'go' });
+  await wait(() => adapter.calls.length === 1);
+  assert.deepEqual([adapter.calls[0].model, adapter.calls[0].effort], ['gpt-6.1-sol', 'low']);
+
+  // After a restart (a new service on the same database) the choice is still there.
+  const restarted = createAgentChat({ db, adapters: { codex: adapter } });
+  const state = await restarted.snapshot(task, conversation.id);
+  assert.deepEqual([state.conversation.model, state.conversation.effort], ['gpt-6.1-sol', 'low']);
+  const cleared = restarted.setPreferences(task, conversation.id, { model: '', effort: null });
+  assert.deepEqual([cleared.model, cleared.effort], [undefined, undefined]);
+  assert.deepEqual(db.prepare('SELECT model, effort FROM agent_conversations WHERE id = ?').get(conversation.id), { model: null, effort: null });
+  await wait(() => restarted.list(task.id).find(entry => entry.id === conversation.id).running === false);
+  await restarted.sendMessage(task, conversation.id, { text: 'again' });
+  await wait(() => adapter.calls.length === 2);
+  assert.deepEqual([adapter.calls[1].model, adapter.calls[1].effort], [undefined, undefined], 'cleared: the agent decides');
+});
+
+test('the model list is read from the agent once for a while, starts with "Default", and a failure is reported without being kept', async () => {
+  let reads = 0;
+  let fail = false;
+  const adapter = { ...fakeAdapter(async () => ({ ok: true })), listModels: async () => { reads++; if (fail) throw new Error('boom'); return [{ value: 'a', label: 'A', description: '', efforts: ['low', 'high'], defaultEffort: 'low' }, { value: 'b', label: 'B', description: '', efforts: ['high', 'max'], defaultEffort: 'high' }]; } };
+  const chat = createAgentChat({ db, adapters: { codex: adapter, claude: fakeAdapter(async () => ({ ok: true })) } });
+  const conversation = chat.create(task, { agent: 'codex' });
+  chat.setPreferences(task, conversation.id, { model: 'b' });
+  const [first, second] = await Promise.all([chat.listModels(task, conversation.id), chat.listModels(task, conversation.id)]);
+  assert.equal(reads, 1, 'one read serves both requests, and the next ones');
+  await chat.listModels(task, conversation.id);
+  assert.equal(reads, 1);
+  assert.deepEqual(first.models.map(model => model.value), ['', 'a', 'b']);
+  assert.deepEqual(first.models[0], { value: '', label: 'Default', description: '', efforts: ['low', 'high', 'max'], defaultEffort: '' });
+  assert.deepEqual([first.current.model, first.chosen.model, second.models.length], ['b', 'b', 3]);
+  const plain = chat.create(task, { agent: 'claude' });
+  await assert.rejects(chat.listModels(task, plain.id), /MODELS_UNAVAILABLE/);
+  const other = createAgentChat({ db, adapters: { codex: { ...adapter, listModels: async () => { throw new Error('offline'); } } } });
+  const broken = other.create(task, { agent: 'codex' });
+  await assert.rejects(other.listModels(task, broken.id), error => error.message === 'MODELS_UNAVAILABLE' && error.statusCode === 502);
+  fail = false;
+});
+
+test('plan limits: the last reading is shown at once, an old one is read again in the background, partial updates merge, and a failure waits', async () => {
+  let reads = 0;
+  let reading = [{ id: '5h', label: '5h', usedPercent: 10, resetsAt: Date.now() + 3600000 }, { id: '7d', label: '7d', usedPercent: 20, resetsAt: Date.now() + 86400000 }];
+  const adapter = { ...fakeAdapter(async ({ ctx }) => { ctx.setMeta({ limits: [{ id: '5h', label: '5h', usedPercent: 15.55, resetsAt: Date.now() + 3000000 }, { id: 'x', label: '', usedPercent: 1 }, { id: 'y', label: 'y', usedPercent: -1 }] }); return { ok: true }; }), loadLimits: async () => { reads++; return reading; } };
+  const chat = createAgentChat({ db, adapters: { codex: adapter } });
+  const first = chat.create(task, { agent: 'codex', session_id: 'thread-limits01' });
+  const second = chat.create(task, { agent: 'codex', session_id: 'thread-limits02' });
+  const seen = [];
+  chat.subscribe(task, second.id, 0, event => seen.push(event));
+  const opened = await chat.snapshot(task, first.id);
+  assert.equal(opened.conversation.limits, undefined, 'nothing is known before the first reading');
+  await wait(() => reads === 1);
+  await chat.refreshLimits('codex');
+  assert.equal((await chat.snapshot(task, first.id)).conversation.limits.length, 2);
+  assert.equal(reads, 1, 'a recent reading is not repeated');
+
+  // Another chat opens later and shows what was read; the reading also reached the chat that was already subscribed.
+  await chat.snapshot(task, second.id);
+  assert.deepEqual((await chat.snapshot(task, second.id)).conversation.limits.map(entry => entry.id), ['5h', '7d']);
+  assert.ok(seen.some(event => event.op === 'meta' && event.limits));
+
+  // A turn that reports one window changes only that one; bad entries are dropped and the percentage keeps one decimal.
+  await chat.sendMessage(task, first.id, { text: 'go' });
+  await wait(() => chat.list(task.id).find(entry => entry.id === first.id).running === false && adapter.calls.length >= 1);
+  const limits = (await chat.snapshot(task, first.id)).conversation.limits;
+  assert.deepEqual(limits.map(entry => [entry.id, entry.usedPercent]), [['5h', 15.6], ['7d', 20]]);
+
+  const broken = createAgentChat({ db, adapters: { codex: { ...adapter, loadLimits: async () => { reads++; throw new Error('offline'); } } } });
+  const before = reads;
+  const chat3 = broken.create(task, { agent: 'codex', session_id: 'thread-limits03' });
+  await broken.snapshot(task, chat3.id);
+  await broken.refreshLimits('codex');
+  await broken.snapshot(task, chat3.id);
+  assert.equal(reads - before, 1, 'after a failure it waits before asking again');
+  assert.equal((await broken.snapshot(task, chat3.id)).conversation.limits, undefined);
+});
+
+test('choosing another model drops the effort the last turn reported, but keeps one the person chose', async () => {
+  const adapter = fakeAdapter(async ({ ctx }) => { ctx.setMeta({ model: 'gpt-old', effort: 'medium' }); return { ok: true }; });
+  const chat = createAgentChat({ db, adapters: { codex: adapter } });
+  const conversation = chat.create(task, { agent: 'codex' });
+  const seen = [];
+  chat.subscribe(task, conversation.id, 0, event => seen.push(event));
+  await chat.sendMessage(task, conversation.id, { text: 'go' });
+  await wait(() => chat.list(task.id).find(row => row.id === conversation.id).running === false && adapter.calls.length === 1);
+  assert.deepEqual([chat.list(task.id)[0].model, chat.list(task.id).find(row => row.id === conversation.id).effort], ['gpt-old', 'medium']);
+
+  const switched = chat.setPreferences(task, conversation.id, { model: 'gpt-new' });
+  assert.deepEqual([switched.model, switched.effort], ['gpt-new', undefined], 'the reported effort belonged to the old model');
+  assert.equal(seen.at(-1).effort, '', 'the page is told to clear it');
+  chat.setPreferences(task, conversation.id, { effort: 'high' });
+  const again = chat.setPreferences(task, conversation.id, { model: 'gpt-third' });
+  assert.deepEqual([again.model, again.effort], ['gpt-third', 'high'], 'an effort the person chose stays');
+});

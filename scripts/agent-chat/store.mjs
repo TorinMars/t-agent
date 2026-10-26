@@ -1,7 +1,7 @@
 // State of one agent conversation, kept apart from React so the event handling can be tested without a browser.
 //
 // The server sends a snapshot (`GET <base>/conversations/<id>`), then server-sent events after the snapshot's sequence number:
-//   upsert { item } | append { id, text } | status { status, ok } | permission { request } | permission_done { id } | meta { title, mode, model, effort }
+//   upsert { item } | append { id, text } | status { status, ok } | permission { request } | permission_done { id } | meta { title, mode, model, effort, context, limits }
 // `getState()` returns an immutable snapshot that changes identity on every update, so it can feed useSyncExternalStore.
 //
 // Messages the person queues while the agent works ("⌘⏎ to queue for later") are kept here, not on the server: when a turn ends normally the
@@ -16,7 +16,10 @@ export function createChatStore({ api, base, conversation, notify = () => {}, Ev
   let items = new Map();
   let state = {
     items: [], pending: [], status: 'idle', canSteer: false, loaded: false, title: conversation.title, mode: conversation.mode,
-    model: conversation.model || '', effort: conversation.effort || '', runningSince: null, queue: [],
+    model: conversation.model || '', effort: conversation.effort || '', context: conversation.context || null, limits: conversation.limits || [],
+    runningSince: null, queue: [],
+    // What the person picked (the agent reports what it ran with, which can differ: an alias, a default) and the models on offer.
+    canChoose: false, choice: { model: '', effort: '' }, models: { status: 'idle', list: [] },
   };
   let queued = 0;
   let seq = 0;
@@ -57,7 +60,8 @@ export function createChatStore({ api, base, conversation, notify = () => {}, Ev
       case 'meta':
         publish({
           ...(event.title ? { title: event.title } : {}), ...(event.mode ? { mode: event.mode } : {}),
-          ...(event.model ? { model: event.model } : {}), ...(event.effort ? { effort: event.effort } : {}),
+          ...(event.model !== undefined ? { model: event.model } : {}), ...(event.effort !== undefined ? { effort: event.effort } : {}),
+          ...(event.context ? { context: event.context } : {}), ...(event.limits ? { limits: event.limits } : {}),
         });
         break;
       default: break;
@@ -86,6 +90,9 @@ export function createChatStore({ api, base, conversation, notify = () => {}, Ev
         runningSince: snapshot.status === 'running' ? Date.now() - (snapshot.runningMs || 0) : null,
         ...(snapshot.conversation && snapshot.conversation.model ? { model: snapshot.conversation.model } : {}),
         ...(snapshot.conversation && snapshot.conversation.effort ? { effort: snapshot.conversation.effort } : {}),
+        ...(snapshot.conversation && snapshot.conversation.context ? { context: snapshot.conversation.context } : {}),
+        ...(snapshot.conversation && snapshot.conversation.limits ? { limits: snapshot.conversation.limits } : {}),
+        canChoose: Boolean(snapshot.capabilities && snapshot.capabilities.models),
       });
       follow();
     } catch (error) {
@@ -120,6 +127,34 @@ export function createChatStore({ api, base, conversation, notify = () => {}, Ev
   }
   async function sendNext() {
     if (state.queue.length && !disposed) await sendQueued(state.queue[0].id);
+  }
+
+  // The models the agent offers; read when the picker is opened, and again if the last read failed.
+  async function loadModels() {
+    if (state.models.status === 'loading' || state.models.status === 'ready') return;
+    publish({ models: { status: 'loading', list: [] } });
+    try {
+      const answer = await api.get(url('/models'));
+      if (disposed) return;
+      publish({ models: { status: 'ready', list: answer.models || [] }, choice: { model: (answer.chosen && answer.chosen.model) || '', effort: (answer.chosen && answer.chosen.effort) || '' } });
+    } catch {
+      if (!disposed) publish({ models: { status: 'error', list: [] } });
+    }
+  }
+
+  // Picks the model and / or the effort for the next messages; resolves to true when the server took it.
+  async function choose(next) {
+    try {
+      const row = await api.patch(url(''), next);
+      publish({
+        choice: { ...state.choice, ...(next.model !== undefined ? { model: next.model || '' } : {}), ...(next.effort !== undefined ? { effort: next.effort || '' } : {}) },
+        model: (row && row.model) || '', effort: (row && row.effort) || '',
+      });
+      return true;
+    } catch (error) {
+      notify(`Could not change the model: ${error.message}`);
+      return false;
+    }
   }
 
   async function rename(title) {
@@ -162,7 +197,7 @@ export function createChatStore({ api, base, conversation, notify = () => {}, Ev
   return {
     getState: () => state,
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
-    load, send, stop, answer, setMode, rename, enqueue, unqueue, sendQueued, apply,
+    load, send, stop, answer, setMode, loadModels, choose, rename, enqueue, unqueue, sendQueued, apply,
     destroy() {
       disposed = true;
       clearTimeout(retry);

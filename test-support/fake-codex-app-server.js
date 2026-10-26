@@ -24,7 +24,7 @@ function ask(method, params, then) {
 }
 
 function finish(status = 'completed', error = null) {
-  notify('thread/tokenUsage/updated', { threadId: THREAD, turnId: TURN, tokenUsage: { total: {}, last: { inputTokens: 3, outputTokens: 4 }, modelContextWindow: null } });
+  notify('thread/tokenUsage/updated', { threadId: THREAD, turnId: TURN, tokenUsage: { total: {}, last: { inputTokens: 3, outputTokens: 4, totalTokens: 7 }, modelContextWindow: 1000 } });
   notify('turn/completed', { threadId: THREAD, turn: { id: TURN, items: [], status, error } });
 }
 

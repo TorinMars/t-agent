@@ -27,14 +27,49 @@ function createAgentChat({ db, adapters = ADAPTERS }) {
   const publicRow = (row, rt) => ({
     id: row.id, agent: row.agent, session_id: row.session_id, title: row.title, mode: row.mode,
     updated_at: row.updated_at, running: Boolean(rt && rt.status === 'running'),
-    ...(rt && rt.model ? { model: rt.model } : {}), ...(rt && rt.effort ? { effort: rt.effort } : {}),
+    ...(rt && rt.model ? { model: rt.model } : {}), ...(rt && rt.effort ? { effort: rt.effort } : {}), ...(rt && rt.context ? { context: rt.context } : {}),
+    ...(rt && rt.limits ? { limits: rt.limits } : {}),
   });
+
+  // The plan limits of an account are shared by its chats: the last values seen per agent, and the refresh that is under way.
+  const agentLimits = new Map(); // agent -> { limits, at }
+  const refreshing = new Map(); // agent -> promise
+  const LIMITS_TTL_MS = 60 * 1000;
+  const cleanLimits = list => (Array.isArray(list) ? list : []).slice(0, 8).map(entry => ({
+    id: clip(String(entry && entry.id || ''), 20), label: clip(String(entry && entry.label || ''), 20),
+    usedPercent: Number(entry && entry.usedPercent), resetsAt: Number.isFinite(Number(entry && entry.resetsAt)) && entry.resetsAt !== null ? Math.round(Number(entry.resetsAt)) : null,
+  })).filter(entry => entry.id && entry.label && Number.isFinite(entry.usedPercent) && entry.usedPercent >= 0)
+    .map(entry => ({ ...entry, usedPercent: Math.min(100, Math.round(entry.usedPercent * 10) / 10) }));
+
+  // What the agent says about itself: { model, effort, context: { used, window } } (tokens in the context window and its size).
+  // `keep`: only fill what is not known yet (what the session files say must not replace a live report). Returns what changed.
+  function mergeMeta(rt, meta = {}, { keep = false } = {}) {
+    const changed = {};
+    for (const key of ['model', 'effort']) {
+      const value = typeof meta[key] === 'string' ? clip(meta[key].trim(), 80) : '';
+      if (value && value !== rt[key] && !(keep && rt[key])) { rt[key] = value; changed[key] = value; }
+    }
+    const context = meta.context;
+    if (context && Number.isFinite(context.used) && context.used >= 0 && Number.isFinite(context.window) && context.window > 0 && !(keep && rt.context)) {
+      const next = { used: Math.round(context.used), window: Math.round(context.window) };
+      if (!rt.context || rt.context.used !== next.used || rt.context.window !== next.window) { rt.context = next; changed.context = next; }
+    }
+    if (Array.isArray(meta.limits) && !keep) {
+      // Updates can be partial (one window of two): merge by id.
+      const merged = new Map((rt.limits || []).map(entry => [entry.id, entry]));
+      for (const entry of cleanLimits(meta.limits)) merged.set(entry.id, entry);
+      const next = [...merged.values()];
+      if (JSON.stringify(next) !== JSON.stringify(rt.limits || [])) { rt.limits = next; changed.limits = next; }
+    }
+    return changed;
+  }
 
   function runtimeFor(row, task) {
     let rt = runtimes.get(row.id);
     if (!rt) {
       rt = {
         id: row.id, taskId: row.task_id, agent: row.agent, sessionId: row.session_id, mode: row.mode, title: row.title,
+        choice: { model: row.model || '', effort: row.effort || '' }, model: row.model || undefined, effort: row.effort || undefined,
         items: new Map(), seq: 0, events: [], subscribers: new Set(), status: 'idle', abort: null, pending: new Map(), loaded: false, counter: 0,
       };
       runtimes.set(row.id, rt);
@@ -66,6 +101,10 @@ function createAgentChat({ db, adapters = ADAPTERS }) {
     try {
       const items = await adapters[rt.agent].loadHistory({ cwd: rt.workDir, sessionId: rt.sessionId });
       for (const item of items) rt.items.set(item.id, item);
+      // A chat opened after a restart (or from a session of the terminal) knows its model and context from the session itself.
+      if (adapters[rt.agent].loadMeta) {
+        try { mergeMeta(rt, await adapters[rt.agent].loadMeta({ cwd: rt.workDir, sessionId: rt.sessionId }), { keep: true }); } catch { /* the footer just stays empty */ }
+      }
     } catch (error) {
       rt.items.set('history-error', { id: 'history-error', kind: 'notice', text: `Could not load the earlier messages: ${error.message}` });
     }
@@ -73,11 +112,35 @@ function createAgentChat({ db, adapters = ADAPTERS }) {
 
   function pendingList(rt) { return [...rt.pending.values()].map(entry => entry.request); }
 
+  // Reads the account's plan limits again when the last reading is old; chats of that agent get them as a meta event.
+  function refreshLimits(agent) {
+    const adapter = adapters[agent];
+    const known = agentLimits.get(agent);
+    if (!adapter.loadLimits || refreshing.has(agent) || (known && Date.now() - known.at < LIMITS_TTL_MS)) return refreshing.get(agent) || Promise.resolve();
+    const job = (async () => {
+      try {
+        const limits = await adapter.loadLimits();
+        agentLimits.set(agent, { limits: cleanLimits(limits), at: Date.now() });
+        for (const rt of runtimes.values()) {
+          if (rt.agent !== agent) continue;
+          const changed = mergeMeta(rt, { limits });
+          if (changed.limits) emit(rt, { op: 'meta', limits: changed.limits });
+        }
+      } catch { agentLimits.set(agent, { limits: (known && known.limits) || [], at: Date.now() }); } // try again after the interval
+      finally { refreshing.delete(agent); }
+    })();
+    refreshing.set(agent, job);
+    return job;
+  }
+
   async function snapshot(task, id) {
     const row = rowOf(task.id, id);
     if (!row) throw fail('CONVERSATION_NOT_FOUND', 404);
     const rt = runtimeFor(row, task);
     await loadHistory(rt);
+    const known = agentLimits.get(rt.agent);
+    if (!rt.limits && known && known.limits.length) rt.limits = known.limits;
+    void refreshLimits(rt.agent);
     return {
       conversation: publicRow(db.prepare('SELECT * FROM agent_conversations WHERE id = ?').get(id), rt),
       items: [...rt.items.values()], pending: pendingList(rt), status: rt.status, seq: rt.seq,
@@ -129,6 +192,57 @@ function createAgentChat({ db, adapters = ADAPTERS }) {
     return publicRow(rowOf(task.id, id), rt);
   }
 
+  // The model and thinking effort the person picked for the next turns; '' (or null) goes back to the agent's own default.
+  const MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:/[\]-]{0,79}$/;
+  const EFFORT_ID = /^[a-z]{2,16}$/;
+  function setPreferences(task, id, { model, effort } = {}) {
+    const row = rowOf(task.id, id);
+    if (!row) throw fail('CONVERSATION_NOT_FOUND', 404);
+    const clean = (value, pattern, code) => {
+      if (value === undefined) return undefined;
+      const text = value === null ? '' : String(value).trim();
+      if (text && !pattern.test(text)) throw fail(code);
+      return text;
+    };
+    const nextModel = clean(model, MODEL_ID, 'INVALID_MODEL');
+    const nextEffort = clean(effort, EFFORT_ID, 'INVALID_EFFORT');
+    const rt = runtimeFor(row, task);
+    const fields = {};
+    const event = { op: 'meta' };
+    for (const [key, value] of [['model', nextModel], ['effort', nextEffort]]) {
+      if (value === undefined) continue;
+      rt.choice[key] = value;
+      rt[key] = value || undefined; // the footer shows the choice until a turn reports what it ran with
+      fields[key] = value || null;
+      event[key] = value; // '' clears it on the page
+    }
+    // The effort a turn reported belongs to the model it ran with: a new model starts from the effort chosen for it (or the default).
+    if (nextModel !== undefined && nextEffort === undefined) { rt.effort = rt.choice.effort || undefined; event.effort = rt.choice.effort; }
+    if (Object.keys(fields).length) { touch(rt, fields); emit(rt, event); }
+    return publicRow(rowOf(task.id, id), rt);
+  }
+
+  // The models an agent offers (with the effort levels each supports); the list is read from the agent and kept for a while.
+  const modelLists = new Map(); // agent -> { at, models } | { promise }
+  const MODELS_TTL_MS = 10 * 60 * 1000;
+  async function listModels(task, id) {
+    const row = rowOf(task.id, id);
+    if (!row) throw fail('CONVERSATION_NOT_FOUND', 404);
+    const adapter = adapters[row.agent];
+    if (!adapter.listModels) throw fail('MODELS_UNAVAILABLE', 404);
+    let entry = modelLists.get(row.agent);
+    if (!entry || (entry.models && Date.now() - entry.at > MODELS_TTL_MS)) {
+      entry = { promise: adapter.listModels().then(models => { modelLists.set(row.agent, { at: Date.now(), models }); return models; }, () => { modelLists.delete(row.agent); throw fail('MODELS_UNAVAILABLE', 502); }) };
+      modelLists.set(row.agent, entry);
+    }
+    const offered = entry.models || await entry.promise;
+    // The first entry is always "Default" (no choice): the model the agent would use on its own.
+    const efforts = [...new Set(offered.flatMap(model => model.efforts))];
+    const models = offered.some(model => model.value === '') ? offered : [{ value: '', label: 'Default', description: '', efforts, defaultEffort: '' }, ...offered];
+    const rt = runtimeFor(row, task);
+    return { models, current: { model: rt.model || '', effort: rt.effort || '' }, chosen: { ...rt.choice } };
+  }
+
   function rename(task, id, title) {
     const row = rowOf(task.id, id);
     if (!row) throw fail('CONVERSATION_NOT_FOUND', 404);
@@ -175,13 +289,10 @@ function createAgentChat({ db, adapters = ADAPTERS }) {
       getItem: id => rt.items.get(id),
       // What the running turn offers while it runs: `steer(prompt)` adds the person's input to it.
       setControl(control) { rt.control = control || null; },
-      // What the agent reports about itself: { model, effort }; shown next to the composer.
-      setMeta(meta = {}) {
-        const changed = {};
-        for (const key of ['model', 'effort']) {
-          const value = typeof meta[key] === 'string' ? clip(meta[key].trim(), 80) : '';
-          if (value && value !== rt[key]) { rt[key] = value; changed[key] = value; }
-        }
+      // What the agent reports about itself ({ model, effort, context }); shown under the composer.
+      setMeta(meta) {
+        const changed = mergeMeta(rt, meta);
+        if (changed.limits) agentLimits.set(rt.agent, { limits: rt.limits, at: Date.now() });
         if (Object.keys(changed).length) emit(rt, { op: 'meta', ...changed });
       },
       setSession(sessionId) {
@@ -251,6 +362,7 @@ function createAgentChat({ db, adapters = ADAPTERS }) {
       try {
         outcome = await adapters[rt.agent].runTurn({
           cwd: rt.workDir, sessionId: rt.sessionId, mode: rt.mode, prompt, signal: controller.signal, ctx,
+          model: rt.choice.model || undefined, effort: rt.choice.effort || undefined,
           requestPermission: requestPermission(rt), deps: deps[rt.agent],
         });
       } catch (error) {
@@ -327,7 +439,7 @@ function createAgentChat({ db, adapters = ADAPTERS }) {
     }
   }
 
-  return { list, create, snapshot, subscribe, sendMessage, interrupt, answerPermission, setMode, rename, remove, stopTask };
+  return { list, create, snapshot, subscribe, sendMessage, interrupt, answerPermission, setMode, setPreferences, listModels, rename, remove, stopTask, refreshLimits };
 }
 
 let shared = null;

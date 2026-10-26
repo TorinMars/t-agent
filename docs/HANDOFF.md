@@ -115,3 +115,11 @@ For the Claude / developer taking over: read `AGENTS.md` (development and releas
 - Based on v2.79.1; retained the recent database persistence, tool cards and Codex discovery changes. Worktree: `t-agent-worktrees/remote-agent-chat`, branch `feat/remote-agent-chat`.
 - Verification: `node --test --test-concurrency=2` passed all 531 tests (including browser scripts); JavaScript syntax and diff checks passed. Initial unrestricted parallel run had five SSH fixture timeouts; those passed in isolation and in the final full run.
 - Not verified: two physical machines with real Claude/Codex CLI turns. Update both Client and Engine to v2.80.0 or later; older Engines keep terminal sessions and hide chat entries.
+
+
+## Agent chat translation switch (v2.84.19)
+
+- Worktree: `t-agent-worktrees/agent-translate`, branch `feat/agent-translate`. The composer switch sits before the microphone and defaults off for each mounted chat.
+- Enabled: prepares message text through the Client's existing `/api/translate` before sending, steering or queueing, including remote chats. Disabled: sends the original text. Attachments are unchanged. Translation failures preserve the draft; duplicate submission is locked out, and closing the chat during translation prevents sending.
+- Reuses terminal translation settings and the existing Chinese-to-English service (4,000-character limit); no live provider call was made. Switch state resets when the chat is closed or reloaded.
+- Verification: targeted 46 tests and the chat browser regression passed; desktop and phone layouts inspected. Full regression: `node --test --test-concurrency=2` passed all 582 tests (including browser scripts). Syntax and diff checks passed. Merged with v2.84.18 before release; both features are retained. Post-merge targeted tests (46), chat browser and tabs restoration passed. The phone browser test first hit a transient null bounding box in the existing chat-icon assertion, then passed on an isolated retry.

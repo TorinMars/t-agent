@@ -325,3 +325,53 @@ test('a warning notice keeps its level so the view can style it apart from a pla
   assert.deepEqual(notices.map(data => data.level), ['warn', undefined]);
   assert.deepEqual(notices.map(data => data.kind), ['notice', 'notice']);
 });
+
+
+test('translation prepares only the message text on the Client before remote send or queue', async () => {
+  const { createChatStore } = await load();
+  const h = harness();
+  h.options.base = '/api/remote-servers/7/tasks/2/agent';
+  h.options.api.post = async (url, body) => {
+    h.calls.push(['post', url, body]);
+    return url === '/api/translate' ? { text: 'Fix the issue\nKeep `a.js`.' } : {};
+  };
+  const store = createChatStore(h.options);
+  const body = { text: '\u4fee\u590d\u95ee\u9898', images: [{ name: 'a.png', data: 'raw' }], files: [{ name: 'a.js', text: 'original' }] };
+  assert.equal(await store.prepareMessage(body, false), body);
+  assert.equal(h.calls.length, 0, 'disabled translation makes no request');
+  const prepared = await store.prepareMessage(body, true);
+  assert.deepEqual(h.calls[0], ['post', '/api/translate', { text: body.text }]);
+  assert.equal(prepared.text, 'Fix the issue\nKeep `a.js`.');
+  assert.equal(prepared.images, body.images);
+  assert.equal(prepared.files, body.files);
+  assert.equal(body.text, '\u4fee\u590d\u95ee\u9898', 'the draft is unchanged');
+  store.enqueue(prepared);
+  await store.sendQueued(store.getState().queue[0].id);
+  assert.deepEqual(h.calls[1], ['post', '/api/remote-servers/7/tasks/2/agent/conversations/c1/messages', prepared]);
+  assert.equal(h.calls.length, 2, 'sending a queued message does not translate it again');
+  const empty = { text: '', images: body.images };
+  assert.equal(await store.prepareMessage(empty, true), empty, 'image-only messages bypass translation');
+  store.destroy();
+});
+
+test('failed, empty or unfinished translation never sends a message', async () => {
+  const { createChatStore } = await load();
+  for (const result of [null, { text: '' }, { text: '   ' }, { text: 7 }]) {
+    const h = harness();
+    h.options.api.post = async () => result;
+    const store = createChatStore(h.options);
+    await assert.rejects(store.prepareMessage({ text: 'source' }, true), /Translation result is empty/);
+    assert.equal(h.calls.length, 0);
+    store.destroy();
+  }
+  const h = harness();
+  h.options.api.post = async () => { throw new Error('Translation timed out; please retry'); };
+  const store = createChatStore(h.options);
+  await assert.rejects(store.prepareMessage({ text: 'source' }, true), /Translation timed out/);
+  let resolve;
+  h.options.api.post = () => new Promise(done => { resolve = done; });
+  const pending = store.prepareMessage({ text: 'source' }, true);
+  store.destroy();
+  resolve({ text: 'translated' });
+  assert.equal(await pending, null, 'closing a chat during translation cancels dispatch');
+});

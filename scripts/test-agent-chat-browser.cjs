@@ -375,6 +375,58 @@ const server = http.createServer(app);
     await page.mouse.up();
     await page.waitForSelector('.ac-mic:not(.on)');
     assert.equal(await page.evaluate(() => window.dictation.aborted), 1, 'letting go cancels the recognition');
+    // The translation switch is shared by desktop and phone, before the microphone.
+    const translation = page.getByRole('switch', { name: 'Translate to English' });
+    assert.equal(await translation.getAttribute('aria-checked'), 'false');
+    const translatedCalls = [];
+    const messageCalls = [];
+    let failTranslation = false;
+    await page.route('**/api/translate', async route => {
+      translatedCalls.push(route.request().postDataJSON());
+      await new Promise(resolve => setTimeout(resolve, 150));
+      await route.fulfill({ status: failTranslation ? 502 : 200, contentType: 'application/json',
+        body: JSON.stringify(failTranslation ? { error: 'Translation timed out; please retry' } : { text: 'Fix the issue\nKeep `a.js`.' }) });
+    });
+    await page.route('**/conversations/*/messages', async route => {
+      messageCalls.push(route.request().postDataJSON());
+      await route.fulfill({ contentType: 'application/json', body: '{}' });
+    });
+    const source = '\u4fee\u590d\u95ee\u9898';
+    await page.fill('.ac-input', source);
+    await page.click('.ac-send');
+    await page.waitForFunction(() => document.querySelector('.ac-input').value === '');
+    assert.equal(messageCalls.at(-1).text, source);
+    assert.equal(translatedCalls.length, 0);
+    await translation.click();
+    assert.equal(await translation.getAttribute('aria-checked'), 'true');
+    await page.fill('.ac-input', source);
+    await page.locator('input[type=file]').setInputFiles({ name: 'note.txt', mimeType: 'text/plain', buffer: Buffer.from('original file') });
+    await page.waitForSelector('.ac-attachments .ac-chip');
+    await page.click('.ac-send');
+    await page.waitForSelector('.ac-composer[aria-busy="true"]');
+    assert.equal(await page.locator('.ac-input').getAttribute('readonly'), '');
+    await page.waitForFunction(() => document.querySelector('.ac-input').value === '');
+    assert.equal(messageCalls.at(-1).text, 'Fix the issue\nKeep `a.js`.');
+    assert.equal(messageCalls.at(-1).files[0].text, 'original file');
+    assert.deepEqual(translatedCalls, [{ text: source }]);
+    failTranslation = true;
+    const sentCount = messageCalls.length;
+    await page.fill('.ac-input', source);
+    await page.click('.ac-send');
+    await page.waitForFunction(() => window.notices.includes('Translation timed out; please retry'));
+    assert.equal(await page.inputValue('.ac-input'), source, 'failed translation keeps the draft');
+    assert.equal(messageCalls.length, sentCount, 'failed translation sends nothing');
+    await translation.click();
+    await page.locator('.ac-input').press('Enter');
+    await page.waitForFunction(() => document.querySelector('.ac-input').value === '');
+    assert.equal(messageCalls.at(-1).text, source, 'turning translation off restores direct sending');
+    await translation.click();
+    for (const width of [390, 1024]) {
+      await page.setViewportSize({ width, height: 780 });
+      assert.equal(await translation.isVisible(), true);
+      assert.equal(await page.locator('.ac-box').evaluate(node => node.scrollWidth <= node.clientWidth), true, 'the input row fits');
+      await page.screenshot({ path: `/tmp/t-agent-translate-${width}.png` });
+    }
     console.log('Agent chat view: streaming, permissions, stop, access level, attachments, reopen, Codex questions and steering, tool steps, choices and reviews passed.');
   } finally {
     await browser.close();

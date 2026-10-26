@@ -364,6 +364,8 @@ function Composer({ store, state, agent, notify, inputRef }) {
   const [text, setText] = useState('');
   const [attachments, setAttachments] = useState([]);
   const [sending, setSending] = useState(false);
+  const [translate, setTranslate] = useState(false);
+  const submitting = useRef(false);
   const picker = useRef(null);
   const form = useRef(null);
   const running = state.status === 'running';
@@ -403,6 +405,7 @@ function Composer({ store, state, agent, notify, inputRef }) {
   }, []);
 
   async function addFiles(files) {
+    if (submitting.current) return;
     const added = [];
     for (const file of files) {
       if (IMAGE_TYPES.includes(file.type)) {
@@ -422,26 +425,35 @@ function Composer({ store, state, agent, notify, inputRef }) {
 
   async function dispatch(later) {
     const body = text.trim();
-    if ((!body && !attachments.length) || sending) return;
-    const message = {
-      text: body,
-      images: attachments.filter(file => file.kind === 'image').map(({ name, type, data }) => ({ name, type, data })),
-      files: attachments.filter(file => file.kind === 'file').map(({ name, text: content }) => ({ name, text: content })),
-    };
-    if (running && (later || !state.canSteer)) {
-      store.enqueue(message);
-      setText(''); setAttachments([]);
-      return;
-    }
+    if ((!body && !attachments.length) || submitting.current) return;
+    submitting.current = true;
     setSending(true);
-    const sent = await store.send(message);
-    if (sent) { setText(''); setAttachments([]); }
-    setSending(false);
+    try {
+      const message = await store.prepareMessage({
+        text: body,
+        images: attachments.filter(file => file.kind === 'image').map(({ name, type, data }) => ({ name, type, data })),
+        files: attachments.filter(file => file.kind === 'file').map(({ name, text: content }) => ({ name, text: content })),
+      }, translate);
+      if (!message) return;
+      // Translation can outlast the current turn; use the latest status when deciding whether to queue.
+      const current = store.getState();
+      if (current.status === 'running' && (later || !current.canSteer)) {
+        store.enqueue(message);
+        setText(''); setAttachments([]);
+      } else if (await store.send(message)) {
+        setText(''); setAttachments([]);
+      }
+    } catch (error) {
+      notify(error.message || 'Translation failed');
+    } finally {
+      submitting.current = false;
+      setSending(false);
+    }
   }
 
   const canNow = entry => !running || state.canSteer;
   return (
-    <form ref={form} className="ac-composer" autoComplete="off" onSubmit={event => { event.preventDefault(); void dispatch(false); }}>
+    <form ref={form} className="ac-composer" aria-busy={sending} autoComplete="off" onSubmit={event => { event.preventDefault(); void dispatch(false); }}>
       {state.queue.length ? (
         <div className="ac-queue" aria-label={t('Queued')}>
           {state.queue.map(entry => (
@@ -458,19 +470,20 @@ function Composer({ store, state, agent, notify, inputRef }) {
           {attachments.map((file, index) => (
             <span className="ac-chip" key={index}>
               <span>{file.name}</span>
-              <button type="button" className="ac-chip-remove" aria-label={t(`Remove ${file.name}`)} onClick={() => setAttachments(current => current.filter((_, at) => at !== index))}>×</button>
+              <button type="button" className="ac-chip-remove" aria-label={t(`Remove ${file.name}`)} disabled={sending} onClick={() => setAttachments(current => current.filter((_, at) => at !== index))}>×</button>
             </span>
           ))}
         </div>
       ) : null}
       <div className="ac-box">
-        <button type="button" className="ac-attach" aria-label={t('Attach an image or text file')} onClick={() => picker.current && picker.current.click()}><Icon d={ICONS.plus} /></button>
+        <button type="button" className="ac-attach" disabled={sending} aria-label={t('Attach an image or text file')} onClick={() => picker.current && picker.current.click()}><Icon d={ICONS.plus} /></button>
         <textarea
-          ref={inputRef} className="ac-input" rows={1} maxLength={100000} enterKeyHint="send" value={text}
+          ref={inputRef} className="ac-input" readOnly={sending} rows={1} maxLength={100000} enterKeyHint="send" value={text}
           placeholder={placeholder}
           aria-label={t(`Message ${agent.label}`)}
           onChange={event => setText(event.target.value)}
           onPaste={event => {
+            if (sending) return;
             const files = pastedImages(event);
             if (files.length) { event.preventDefault(); void addFiles(files); }
           }}
@@ -482,7 +495,11 @@ function Composer({ store, state, agent, notify, inputRef }) {
             void dispatch(later);
           }}
         />
-        <Mic notify={notify} onText={spoken => setText(current => `${current}${current && !/\s$/.test(current) ? ' ' : ''}${spoken.trim()}`)} />
+        <button type="button" role="switch" aria-checked={translate} aria-label={t('Translate to English')}
+          title={t('Translate to English')} className="ac-translate" disabled={sending} onClick={() => setTranslate(value => !value)}>
+          <span>{t('Translate')}</span><span className="ac-switch-track" aria-hidden="true"><span /></span>
+        </button>
+        <Mic notify={notify} onText={spoken => !submitting.current && setText(current => `${current}${current && !/\s$/.test(current) ? ' ' : ''}${spoken.trim()}`)} />
         {filled ? <button type="submit" className="ac-send" disabled={sending} aria-label={t(running && !state.canSteer ? 'Queue for later' : 'Send')}><Icon d={ICONS.up} /></button> : null}
         {running ? <button type="button" className="ac-stop" aria-label={t('Stop')} onClick={() => void store.stop()}><Icon d={ICONS.stop} fill /></button> : null}
       </div>

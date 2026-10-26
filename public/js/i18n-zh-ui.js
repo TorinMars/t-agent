@@ -1,6 +1,7 @@
 // Chinese translations of the UI text (public/index.html, public/login.html and public/js/*.js). English text is the key.
 // {1}, {2} ... mark the variable parts of a sentence. This file is data: it is the only place (besides i18n-zh-server.js and i18n-zh-extra.js) with Chinese text.
 I18n.add({
+  "Translate to English": "翻译成英文",
   ", and absolute paths are supported.": "，也支持绝对路径。",
   ", including {1} unsaved draft(s)": "，其中包含 {1} 个未保存草稿",
   ", published {1}": "，发布于 {1}",

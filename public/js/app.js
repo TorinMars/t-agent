@@ -104,11 +104,11 @@ const TerminalControls = {
   },
 };
 
-// Chat-style Claude / Codex view over the terminal pane of the selected task.
+// Chat-style Claude / Codex view over the terminal pane of the selected task. Each open chat is a tab after the task's terminals.
 const AgentView = (() => {
   const pane = document.getElementById('agent-pane');
-  let chat = null;
-  let taskKey = null;
+  const controls = document.querySelector('.terminal-controls');
+  const sessions = new Map(); // terminal scope -> { rows: [{ id, agent, title, chat, holder }], active }
   // The API wrappers throw the raw response text; the chat view wants the server's error code.
   const unwrap = async run => {
     try { return await run(); } catch (error) {
@@ -123,35 +123,67 @@ const AgentView = (() => {
     patch: (url, body) => unwrap(() => API.patch(url, body)),
     del: url => unwrap(() => API.delete(url)),
   };
-  const baseOf = () => { const target = TerminalTabs.context(); return target ? `${target.scope}/agent` : null; };
+  const scopeOf = () => { const target = TerminalTabs.context(); return target ? target.scope : null; };
+  const baseOf = () => { const scope = scopeOf(); return scope ? `${scope}/agent` : null; };
 
-  function close() {
-    if (chat) chat.destroy();
-    chat = null;
-    taskKey = null;
-    pane.hidden = true;
+  // Shows the active chat of the mounted task (if any) below the tab strip and publishes the chat tabs.
+  function sync() {
+    const scope = scopeOf();
+    for (const [key, group] of sessions) {
+      for (const row of group.rows) row.holder.hidden = !(key === scope && group.active === row.id);
+    }
+    const group = scope && sessions.get(scope);
+    pane.hidden = !(group && group.active);
+    pane.style.top = `${controls.offsetHeight}px`;
+    if (!scope) return;
+    TerminalTabs.setChats(scope, group && group.rows.length ? {
+      rows: group.rows.map(({ id, agent, title }) => ({ id, agent, title })),
+      active: group.active,
+      select: id => { group.active = id; sync(); const row = group.rows.find(item => item.id === id); if (row) row.chat.focus(); },
+      close: id => closeChat(scope, id),
+      leave: () => { group.active = null; sync(); },
+    } : null);
   }
-  // A chat belongs to the task it was opened from.
-  let watching = false;
-  function watchScope() {
-    if (watching) return;
-    watching = true;
-    TerminalTabs.onScopeChange(() => { if (chat && baseOf() !== taskKey) close(); });
+
+  function closeChat(scope, id) {
+    const group = sessions.get(scope);
+    if (!group) return;
+    const index = group.rows.findIndex(row => row.id === id);
+    if (index < 0) return;
+    const [row] = group.rows.splice(index, 1);
+    row.chat.destroy();
+    row.holder.remove();
+    if (group.active === id) group.active = null; // fall back to the terminal
+    if (!group.rows.length) sessions.delete(scope);
+    sync();
   }
+
+  // Chats of other tasks stay open in the background; only the mounted task's chat is shown.
+  TerminalTabs.onScopeChange(sync);
+  window.addEventListener('resize', () => { if (!pane.hidden) pane.style.top = `${controls.offsetHeight}px`; });
 
   return {
     choices: agent => AgentChat.choices(api, baseOf(), agent),
     async open(agent, choice) {
+      const scope = scopeOf();
       const base = baseOf();
       const conversation = await AgentChat.open(api, base, agent, choice);
-      watchScope();
-      if (chat) chat.destroy();
-      taskKey = base;
-      pane.hidden = false;
-      chat = AgentChat.mount(pane, { api, base, conversation, onClose: close, notify: message => { if (typeof Toast !== 'undefined') Toast.error(message); } });
-      chat.focus();
+      let group = sessions.get(scope);
+      if (!group) sessions.set(scope, group = { rows: [], active: null });
+      let row = group.rows.find(item => item.id === conversation.id);
+      if (!row) {
+        const holder = document.createElement('div');
+        holder.className = 'agent-holder';
+        pane.append(holder);
+        const chat = AgentChat.mount(holder, { api, base, conversation, onClose: () => closeChat(scope, conversation.id), notify: message => { if (typeof Toast !== 'undefined') Toast.error(message); } });
+        row = { id: conversation.id, agent: conversation.agent, title: conversation.title, chat, holder };
+        group.rows.push(row);
+      }
+      group.active = row.id;
+      sync();
+      row.chat.focus();
     },
-    close,
+    close: () => { const scope = scopeOf(); const group = scope && sessions.get(scope); if (group && group.active) closeChat(scope, group.active); },
   };
 })();
 

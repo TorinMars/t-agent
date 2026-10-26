@@ -9,6 +9,7 @@ const TerminalTabs = (() => {
   function state(scope) {
     if (!states.has(scope)) states.set(scope, {
       active: 'default', editing: null, draft: '', revision: 0, rows: [{ terminal_id: 'default', title: 'Terminal 1' }],
+      chats: null, // { rows: [{ id, agent, title }], active, select(id), close(id), leave() } for the agent chats open on this task
     });
     return states.get(scope);
   }
@@ -86,9 +87,10 @@ const TerminalTabs = (() => {
       button.type = 'button';
       button.disabled = typeof TerminalControls !== 'undefined' && Boolean(TerminalControls.busy);
       button.className = 'terminal-toolbar-btn terminal-tab';
-      button.classList.toggle('active', row.terminal_id === current.active);
+      const shown = row.terminal_id === current.active && !(current.chats && current.chats.active);
+      button.classList.toggle('active', shown);
       button.setAttribute('role', 'tab');
-      button.setAttribute('aria-selected', String(row.terminal_id === current.active));
+      button.setAttribute('aria-selected', String(shown));
       button.textContent = row.title;
       // Rename: double-click the tab, or press F2 on it.
       button.title = 'Double-click to rename';
@@ -118,12 +120,44 @@ const TerminalTabs = (() => {
         }
       }
       button.addEventListener('click', () => {
-        if (current.active === row.terminal_id) return;
+        const chats = current.chats;
+        const leaving = Boolean(chats && chats.active);
+        if (leaving) chats.leave();
+        if (current.active === row.terminal_id && !leaving) return;
         current.active = row.terminal_id;
         render();
         select();
       });
       buttons.push(button);
+    }
+    // Agent chats open on this task sit after the terminals, in the same strip.
+    if (current.chats) {
+      for (const chat of current.chats.rows) {
+        const active = current.chats.active === chat.id;
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'terminal-toolbar-btn terminal-tab agent-tab';
+        button.classList.toggle('active', active);
+        button.setAttribute('role', 'tab');
+        button.setAttribute('aria-selected', String(active));
+        const badge = document.createElement('span');
+        badge.className = `agent-tab-badge ${chat.agent}`;
+        badge.setAttribute('aria-hidden', 'true');
+        badge.textContent = chat.agent === 'codex' ? '◎' : '✳';
+        const label = document.createElement('span');
+        label.translate = false;
+        label.textContent = chat.title;
+        button.title = chat.title;
+        const close = document.createElement('span');
+        close.className = 'terminal-tab-close';
+        close.setAttribute('role', 'button');
+        close.setAttribute('aria-label', `Close ${chat.title}`);
+        close.addEventListener('click', event => { event.stopPropagation(); current.chats.close(chat.id); });
+        button.append(badge, label, close);
+        button.addEventListener('keydown', event => { if (event.key === 'Delete') { event.preventDefault(); current.chats.close(chat.id); } });
+        button.addEventListener('click', () => { if (current.chats.active !== chat.id) current.chats.select(chat.id); });
+        buttons.push(button);
+      }
     }
     strip.replaceChildren(...buttons);
     if (editor) {
@@ -201,8 +235,14 @@ const TerminalTabs = (() => {
   const scopeListeners = [];
   const onScopeChange = listener => { scopeListeners.push(listener); };
 
+  // Agent chats of a task show as tabs after its terminals; null removes them.
+  function setChats(scope, chats) {
+    state(scope).chats = chats;
+    if (mounted && mounted.scope === scope) render();
+  }
+
   // Where the mounted terminal tabs belong: the API scope, the task id and the engine the task lives on.
   const context = () => (mounted ? { scope: mounted.scope, taskId: mounted.taskId, sourceKey: mounted.sourceKey } : null);
 
-  return { show, create, context, onScopeChange, agentSessions, refresh: render, remove, current: scope => state(scope).active };
+  return { show, create, setChats, context, onScopeChange, agentSessions, refresh: render, remove, current: scope => state(scope).active };
 })();

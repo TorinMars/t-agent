@@ -86,3 +86,24 @@ test('The entry to delete a terminal is in the tab: the default terminal has non
   assert.equal(selected, before, 'When the deleted tab is not the current one, the current terminal is not reconnected');
   assert.deepEqual(titles(strip), ['Terminal 1']);
 });
+
+test('agent chats are tabs after the terminals; selecting one deactivates the terminal and a terminal tab leaves the chat', async () => {
+  const { TerminalTabs, strip } = load({});
+  TerminalTabs.show('/api/tasks/1', () => {}, { taskId: 1, sourceKey: 'local' });
+  await tick();
+  const log = [];
+  const chats = { rows: [{ id: 'c1', agent: 'codex', title: 'Fix build' }], active: null, select: id => { chats.active = id; log.push(`select ${id}`); TerminalTabs.setChats('/api/tasks/1', chats); }, close: id => log.push(`close ${id}`), leave: () => { chats.active = null; log.push('leave'); } };
+  TerminalTabs.setChats('/api/tasks/1', chats);
+  assert.equal(strip.children.length, 3);
+  strip.children[2].click();
+  assert.deepEqual(log, ['select c1']);
+  assert.equal(strip.querySelectorAll('.active').length, 1, 'only the chat tab is active');
+  assert.ok(strip.children[2].classList.contains('active'));
+  strip.children[2].querySelector('.terminal-tab-close').click();
+  assert.deepEqual(log, ['select c1', 'close c1']);
+  strip.children[0].click();
+  assert.deepEqual(log, ['select c1', 'close c1', 'leave']);
+  assert.ok(strip.children[0].classList.contains('active'));
+  TerminalTabs.setChats('/api/tasks/1', null);
+  assert.equal(strip.children.length, 2);
+});

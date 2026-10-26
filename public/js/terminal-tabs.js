@@ -145,6 +145,7 @@ const TerminalTabs = (() => {
     mounted = { scope, select, taskId: options.taskId ?? null, sourceKey: options.sourceKey || 'local', viewing: options.viewing };
     render();
     if (changed) {
+      for (const listener of scopeListeners) listener();
       const revision = state(scope).revision;
       API.get(`${scope}/terminals`).then(rows => {
         if (state(scope).revision !== revision) return;
@@ -196,5 +197,12 @@ const TerminalTabs = (() => {
     }
   }
 
-  return { show, create, agentSessions, refresh: render, remove, current: scope => state(scope).active };
+  // Called when the tabs move to another task or engine (the chat view of the previous task closes then).
+  const scopeListeners = [];
+  const onScopeChange = listener => { scopeListeners.push(listener); };
+
+  // Where the mounted terminal tabs belong: the API scope, the task id and the engine the task lives on.
+  const context = () => (mounted ? { scope: mounted.scope, taskId: mounted.taskId, sourceKey: mounted.sourceKey } : null);
+
+  return { show, create, context, onScopeChange, agentSessions, refresh: render, remove, current: scope => state(scope).active };
 })();

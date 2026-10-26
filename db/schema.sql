@@ -138,6 +138,19 @@ CREATE TABLE IF NOT EXISTS task_terminals (
   PRIMARY KEY (task_id, terminal_id)
 );
 
+-- Chat-style Claude / Codex conversations of a task. session_id is the agent's own session (set once the first turn starts, or when an existing one is resumed).
+CREATE TABLE IF NOT EXISTS agent_conversations (
+  id TEXT PRIMARY KEY,
+  task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  agent TEXT NOT NULL,
+  session_id TEXT,
+  title TEXT NOT NULL,
+  mode TEXT NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_agent_conversations_task ON agent_conversations (task_id, updated_at);
+
 -- App list: manually registered, self-registered by programs (API), and auto-registered PM2 processes.
 -- pm2_name links to a PM2 process name; when a row with source=pm2 is deleted by the user it is only hidden (hidden=1), so the next sync does not auto-register it again.
 CREATE TABLE IF NOT EXISTS apps (

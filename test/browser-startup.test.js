@@ -17,7 +17,7 @@ test('app.js does not run its initialization before the feature modules are load
   assert.doesNotThrow(() => vm.runInNewContext(source, {
     document,
     console,
-    window: {},
+    window: { addEventListener() {} },
     fetch() { throw new Error('Initialization must not make requests while the script is being parsed'); },
     requestAnimationFrame() {},
     setInterval() {},

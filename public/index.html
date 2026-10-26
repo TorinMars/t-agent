@@ -12,6 +12,7 @@
   <link rel="stylesheet" href="/css/file-panel.css">
   <link rel="stylesheet" href="/css/markdown.css">
   <link rel="stylesheet" href="/css/themes.css">
+  <link rel="stylesheet" href="/css/agent-chat.css">
   <script src="/js/i18n.js"></script>
   <script src="/js/i18n-zh-ui.js"></script>
   <script src="/js/i18n-zh-server.js"></script>
@@ -129,6 +130,7 @@
               <button type="button" class="terminal-toolbar-btn" id="btn-terminal-restart-workdir" aria-label="Reopen from working directory" data-tip="Reopen from working directory: end the current shell and start a new one in the task working directory">⌂</button>
             </div>
           </div>
+          <div class="agent-pane" id="agent-pane" hidden></div>
           <div class="terminal-empty" id="terminal-empty" style="display:none"></div>
           <div id="xterm-container"></div>
           <form class="terminal-translate" id="terminal-translate" autocomplete="off">
@@ -397,6 +399,7 @@
   <script src="/js/bookmarks.js"></script>
   <script src="/js/terminal-activity.js"></script>
   <script src="/js/terminal-tabs.js"></script>
+  <script src="/js/agent-chat.js"></script>
   <script src="/js/terminal-viewport.js"></script>
   <script src="/js/file-panel.js"></script>
   <script src="/js/terminal-history.js"></script>

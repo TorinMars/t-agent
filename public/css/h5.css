@@ -113,6 +113,10 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; c
 .h5-terminal-more { flex: 0 0 44px; font-size: 18px; line-height: 1; }
 .h5-terminal-row button[aria-current="true"] { background: var(--h5-pressed); border-color: var(--h5-accent); color: #fff; }
 .h5-terminal-row button:active { background: var(--h5-key-active); }
+/* Agent chat: a full-screen view over the terminal; its height follows the visual viewport so the on-screen keyboard never covers the composer. */
+.h5-agent { position: fixed; top: 0; left: 0; right: 0; height: 100dvh; z-index: 108; width: 100%; max-width: var(--h5-max-width); margin: 0 auto; background: var(--h5-bg);
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left); }
+.h5-agent[hidden] { display: none; }
 /* Copy text: a snapshot of the terminal as plain text that the browser can select with its own handles. */
 .h5-copy { position: fixed; inset: 0; z-index: 110; width: 100%; max-width: var(--h5-max-width); margin: 0 auto; display: flex; flex-direction: column; background: var(--h5-bg);
   padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }

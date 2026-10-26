@@ -542,6 +542,61 @@
     showSessionMenu('Session', [
       ['New Terminal', () => { closeTerminalMenu(); closeTasks(); void createTerminal(); }],
       ...SESSION_KINDS.map(([agent, label]) => [label, () => void openAgentSessions(agent, label)]),
+      // Chat-style agents run on this machine only (the remote engine API does not carry them yet).
+      ...(source.key === 'local' ? [['Claude agent', () => void openAgentChats('claude', 'Claude agent')], ['Codex agent', () => void openAgentChats('codex', 'Codex agent')]] : []),
+    ]);
+  }
+
+  // ── Agent chat: the same Claude / Codex sessions as a conversation view instead of a terminal ──
+  const agentView = $('h5-agent');
+  const chatApi = { get: url => api('GET', url), post: (url, body) => api('POST', url, body), patch: (url, body) => api('PATCH', url, body), del: url => api('DELETE', url) };
+  let agentChat = null;
+  function fitAgentView() {
+    const viewport = window.visualViewport;
+    if (!viewport) return;
+    agentView.style.height = `${viewport.height}px`;
+    agentView.style.top = `${viewport.offsetTop}px`;
+  }
+  function closeAgent() {
+    if (agentChat) agentChat.destroy();
+    agentChat = null;
+    agentView.hidden = true;
+    agentView.style.height = agentView.style.top = '';
+    if (window.visualViewport) {
+      window.visualViewport.removeEventListener('resize', fitAgentView);
+      window.visualViewport.removeEventListener('scroll', fitAgentView);
+    }
+  }
+  function mountAgent(conversation) {
+    if (agentChat) agentChat.destroy();
+    agentView.hidden = false;
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', fitAgentView);
+      window.visualViewport.addEventListener('scroll', fitAgentView);
+      fitAgentView();
+    }
+    agentChat = AgentChat.mount(agentView, { api: chatApi, base: `${source.tasksBase}/${task.id}/agent`, conversation, onClose: closeAgent, notify: message => tell(message, 'error') });
+  }
+  async function openAgentChats(agent, label) {
+    const current = task;
+    const base = `${source.tasksBase}/${current.id}/agent`;
+    showSessionMenu(label, [['Loading…', () => {}]]);
+    let rows = [];
+    try { rows = await AgentChat.choices(chatApi, base, agent); }
+    catch (error) { if (current === task) tell(`Could not load sessions: ${error.message}`, 'error'); }
+    if (current !== task || termMenu.hidden) return;
+    const start = choice => async () => {
+      try {
+        const conversation = await AgentChat.open(chatApi, base, agent, choice);
+        closeTerminalMenu();
+        closeTasks();
+        if (current === task) mountAgent(conversation);
+      } catch (error) { tell(`Could not open the chat: ${error.message}`, 'error'); }
+    };
+    showSessionMenu(label, [
+      [`New ${AgentChat.AGENTS[agent].label} chat`, start(null)],
+      ...rows.map(choice => [`${choice.running ? '● ' : ''}${choice.title}`, start(choice), 'raw']),
+      ['Back', openSessionMenu],
     ]);
   }
   async function openAgentSessions(agent, label) {

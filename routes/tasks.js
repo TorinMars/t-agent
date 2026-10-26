@@ -246,6 +246,7 @@ router.delete('/:id', (req, res) => {
     if (reason) return res.status(409).json({ error: 'DIRECTORY_NOT_SAFE_TO_DELETE', reason });
   }
   terminal.closeTaskTerminals(task.id);
+  require('../services/agent-chat').getAgentChat().stopTask(task.id);
   db.prepare('DELETE FROM tasks WHERE id = ?').run(req.params.id);
   if (!deleteDirectory) return res.json({ success: true });
   try { res.json({ success: true, directory_deleted: workspaceTools.removeTaskDirectory(task) }); }

@@ -104,6 +104,57 @@ const TerminalControls = {
   },
 };
 
+// Chat-style Claude / Codex view over the terminal pane of the selected task.
+const AgentView = (() => {
+  const pane = document.getElementById('agent-pane');
+  let chat = null;
+  let taskKey = null;
+  // The API wrappers throw the raw response text; the chat view wants the server's error code.
+  const unwrap = async run => {
+    try { return await run(); } catch (error) {
+      let message = error.message;
+      try { message = JSON.parse(message).error || message; } catch { /* plain text */ }
+      throw new Error(message);
+    }
+  };
+  const api = {
+    get: url => unwrap(() => API.get(url)),
+    post: (url, body) => unwrap(() => API.post(url, body)),
+    patch: (url, body) => unwrap(() => API.patch(url, body)),
+    del: url => unwrap(() => API.delete(url)),
+  };
+  const baseOf = () => { const target = TerminalTabs.context(); return target ? `${target.scope}/agent` : null; };
+
+  function close() {
+    if (chat) chat.destroy();
+    chat = null;
+    taskKey = null;
+    pane.hidden = true;
+  }
+  // A chat belongs to the task it was opened from.
+  let watching = false;
+  function watchScope() {
+    if (watching) return;
+    watching = true;
+    TerminalTabs.onScopeChange(() => { if (chat && baseOf() !== taskKey) close(); });
+  }
+
+  return {
+    choices: agent => AgentChat.choices(api, baseOf(), agent),
+    async open(agent, choice) {
+      const base = baseOf();
+      const conversation = await AgentChat.open(api, base, agent, choice);
+      watchScope();
+      if (chat) chat.destroy();
+      taskKey = base;
+      pane.hidden = false;
+      chat = AgentChat.mount(pane, { api, base, conversation, onClose: close, notify: message => { if (typeof Toast !== 'undefined') Toast.error(message); } });
+      chat.focus();
+    },
+    close,
+  };
+})();
+
 // "+" opens a menu: a plain terminal, or a Claude / Codex session of the task directory (new or resumed).
 const TerminalNewMenu = (() => {
   const SESSION_KINDS = [['claude', 'Claude session'], ['codex', 'Codex session']];
@@ -142,9 +193,32 @@ const TerminalNewMenu = (() => {
   const start = options => () => { close(); TerminalControls.run('newTerminal', '', options); };
 
   function root() {
+    const local = (TerminalTabs.context() || {}).sourceKey === 'local';
     show([
       ['New Terminal', start({})],
       ...SESSION_KINDS.map(([agent, label]) => [label, () => sessions(agent, label)]),
+      // Chat-style agents run on this machine only (the remote engine API does not carry them yet).
+      ...(local ? [['Claude agent', () => chats('claude', 'Claude agent')], ['Codex agent', () => chats('codex', 'Codex agent')]] : []),
+    ]);
+  }
+
+  async function chats(agent, label) {
+    const mine = ++token;
+    show([['Loading…', () => {}]]);
+    const target = TerminalTabs.context();
+    let rows = [];
+    try { rows = await AgentView.choices(agent); }
+    catch (error) { if (typeof Toast !== 'undefined') Toast.error(`Could not load sessions: ${error.message}`); }
+    if (mine !== token || !menu || !target) return;
+    const open = choice => async () => {
+      close();
+      try { await AgentView.open(agent, choice); }
+      catch (error) { if (typeof Toast !== 'undefined') Toast.error(`Could not open the chat: ${error.message}`); }
+    };
+    show([
+      [`New ${AgentChat.AGENTS[agent].label} chat`, open(null)],
+      ...rows.map(choice => [`${choice.running ? '● ' : ''}${choice.title}`, open(choice), true]),
+      ['Back', root],
     ]);
   }
 

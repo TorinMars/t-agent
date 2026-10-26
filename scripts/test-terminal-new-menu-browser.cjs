@@ -14,13 +14,13 @@ const root = path.resolve(__dirname, '..');
       window.created=[];
       window.requested=[];
       window.Tasks={newTerminal:async options=>{created.push(options);}};
-      window.TerminalTabs={agentSessions:async agent=>{requested.push(agent);return [{id:'s-1',title:'Fix the build'},{id:'s-2',title:'Write docs'}];}};
+      window.TerminalTabs={context:()=>({scope:'/api/tasks/1',taskId:1,sourceKey:'local'}),agentSessions:async agent=>{requested.push(agent);return [{id:'s-1',title:'Fix the build'},{id:'s-2',title:'Write docs'}];}};
     });
     await page.addScriptTag({content:fs.readFileSync(path.join(root,'public/js/app.js'),'utf8')});
     const items = () => page.locator('.terminal-new-menu li').allTextContents();
 
     await page.click('#btn-terminal-new');
-    assert.deepEqual(await items(), ['New Terminal','Claude session','Codex session']);
+    assert.deepEqual(await items(), ['New Terminal','Claude session','Codex session','Claude agent','Codex agent']);
     await page.click('#btn-terminal-new');
     assert.equal(await page.locator('.terminal-new-menu').count(), 0, '"+" toggles the menu');
     await page.click('#btn-terminal-new');
@@ -39,7 +39,7 @@ const root = path.resolve(__dirname, '..');
     assert.deepEqual(await items(), ['New Codex session','Fix the build','Write docs','Back']);
     assert.deepEqual(await page.evaluate(() => requested), ['codex']);
     await page.click('.terminal-new-menu li:text-is("Back")');
-    assert.deepEqual(await items(), ['New Terminal','Claude session','Codex session']);
+    assert.deepEqual(await items(), ['New Terminal','Claude session','Codex session','Claude agent','Codex agent']);
 
     await page.click('.terminal-new-menu li:text-is("Claude session")');
     await page.click('.terminal-new-menu li:text-is("Write docs")');

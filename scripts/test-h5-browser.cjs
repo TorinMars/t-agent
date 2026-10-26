@@ -46,6 +46,12 @@ async function openPage(browser, { remoteTerminals, viewport } = {}) {
     if (url.pathname === '/api/tasks/1/terminals' && method === 'POST') return json({ terminal_id: 'h5-second', title: 'Terminal 2' }, 201);
     if (url.pathname === '/api/tasks/1/terminals/h5-second' && method === 'PATCH') return json({ terminal_id: 'h5-second', title: route.request().postDataJSON().title });
     if (url.pathname === '/api/tasks/1/terminal/control' && method === 'POST') return json({ success: true });
+    // Chat-style agents: the conversation list, the sessions of the task directory, one empty conversation and an idle event stream.
+    if (url.pathname === '/api/tasks/1/agent/conversations' && method === 'GET') return json([]);
+    if (url.pathname === '/api/tasks/1/agent/sessions') return json([{ id: 'session-old-1234', title: 'Old chat' }]);
+    if (url.pathname === '/api/tasks/1/agent/conversations' && method === 'POST') return json({ id: 'c1', agent: route.request().postDataJSON().agent, session_id: null, title: 'New chat', mode: 'ask', running: false });
+    if (url.pathname === '/api/tasks/1/agent/conversations/c1') return json({ conversation: { id: 'c1' }, items: [{ id: 'u1', kind: 'user', text: 'hello agent' }, { id: 't1', kind: 'text', text: 'Hi **there**' }], pending: [], status: 'idle', seq: 0 });
+    if (url.pathname === '/api/tasks/1/agent/conversations/c1/events') return route.fulfill({ contentType: 'text/event-stream', body: ': ok\n\n' });
     if (url.pathname === '/api/oss/config') return json({ enabled: true });
     if (url.pathname === '/api/oss/images' && method === 'POST') {
       assert.equal(route.request().headers()['content-type'], 'image/png');
@@ -186,7 +192,21 @@ async function openPage(browser, { remoteTerminals, viewport } = {}) {
     });
     assert.ok(atEnd, 'the "+" sits at the right end of the task row');
     await page.locator('#h5-tasks .h5-task-add').tap();
-    assert.deepEqual(await page.locator('#h5-term-menu-actions button').allTextContents(), ['New Terminal', 'Claude session', 'Codex session'], 'the "+" opens the Session menu');
+    assert.deepEqual(await page.locator('#h5-term-menu-actions button').allTextContents(), ['New Terminal', 'Claude session', 'Codex session', 'Claude agent', 'Codex agent'], 'the "+" opens the Session menu');
+    // A chat-style agent: choose new or an existing session, then a conversation view covers the terminal.
+    await page.locator('#h5-term-menu-actions button', { hasText: 'Claude agent' }).tap();
+    await page.locator('#h5-term-menu-actions button', { hasText: 'Old chat' }).waitFor();
+    assert.deepEqual(await page.locator('#h5-term-menu-actions button').allTextContents(), ['New Claude chat', 'Old chat', 'Back']);
+    await page.locator('#h5-term-menu-actions button', { hasText: 'New Claude chat' }).tap();
+    await page.locator('#h5-agent .agent-chat').waitFor();
+    await page.locator('#h5-tasks').waitFor({ state: 'hidden' }); // opening a chat closes the task sheet
+    await page.locator('#h5-agent .ac-bubble', { hasText: 'hello agent' }).waitFor();
+    assert.equal(await page.locator('#h5-agent .ac-text strong').textContent(), 'there');
+    assert.ok(calls.includes('POST /api/tasks/1/agent/conversations'));
+    await page.locator('#h5-agent .ac-back').tap();
+    await page.locator('#h5-agent').waitFor({ state: 'hidden' });
+    await page.locator('#h5-open-tasks').tap();
+    await page.locator('#h5-tasks .h5-task-add').tap();
     await page.locator('#h5-term-menu-actions button', { hasText: 'New Terminal' }).tap();
     await page.locator('#h5-tasks').waitFor({ state: 'hidden' });
     await page.waitForFunction(() => window.sockets.length === 2);

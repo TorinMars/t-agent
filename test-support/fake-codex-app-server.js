@@ -77,7 +77,7 @@ input.on('line', line => {
   switch (message.method) {
     case 'initialize': send({ id: message.id, result: { userAgent: 'fake', codexHome: '/tmp', platformFamily: 'unix', platformOs: 'macos' } }); break;
     case 'thread/start':
-    case 'thread/resume': send({ id: message.id, result: { thread: { id: THREAD } } }); break;
+    case 'thread/resume': send({ id: message.id, result: { thread: { id: THREAD }, model: 'gpt-fake', reasoningEffort: 'medium', cwd: '/fake/work' } }); break;
     case 'turn/start':
       send({ id: message.id, result: { turn: { id: TURN, items: [], status: 'inProgress' } } });
       setTimeout(() => runScenario(message.params.input[0].text), 5);

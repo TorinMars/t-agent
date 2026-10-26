@@ -31,6 +31,8 @@ export function toMessages(items) {
         ...(item.status === 'running' ? {} : { result: item.output || '' }),
         ...(failed ? { isError: true } : {}),
       });
+    } else if (item.kind === 'init') {
+      add({ id: item.id, type: 'data', name: 'init', data: { text: item.text || '', details: Array.isArray(item.details) ? item.details : [] } });
     } else {
       add({ id: item.id, type: 'data', name: 'notice', data: { kind: item.kind === 'error' ? 'error' : 'notice', text: item.text || '' } });
     }

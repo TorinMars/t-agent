@@ -110,3 +110,82 @@ test('sending maps a busy conversation to a plain notice, and the access level i
   assert.equal(store.getState().mode, 'plan');
   store.destroy();
 });
+
+test('an "Initialized session" item becomes a data part of the assistant message, with its details', async () => {
+  const { toMessages } = await load();
+  const messages = toMessages([{ id: 'u', kind: 'user', text: 'hi' }, { id: 'init:1', kind: 'init', text: 'Initialized session', details: [['Model', 'm']] }, { id: 'm', kind: 'text', text: 'ok' }]);
+  assert.deepEqual(messages[1].content.map(part => part.type), ['data', 'text']);
+  assert.deepEqual(messages[1].content[0].data, { text: 'Initialized session', details: [['Model', 'm']] });
+  assert.deepEqual(toMessages([{ id: 'x', kind: 'init', text: 'Initialized session' }])[0].content[0].data.details, [], 'missing details are an empty list');
+});
+
+test('the model, the effort and how long the turn has run come from the snapshot and the events', async () => {
+  const { createChatStore } = await load();
+  const before = Date.now();
+  const { options, sources } = harness({ snapshot: { items: [], pending: [], status: 'running', seq: 0, runningMs: 5000, conversation: { model: 'claude-sonnet-5-5', effort: 'high' } } });
+  const store = createChatStore(options);
+  await store.load();
+  const state = store.getState();
+  assert.deepEqual([state.model, state.effort], ['claude-sonnet-5-5', 'high']);
+  assert.ok(state.runningSince <= Date.now() - 5000 && state.runningSince >= before - 5000, 'the start is counted back from the server\'s elapsed time');
+  sources[0].emit({ seq: 1, op: 'meta', model: 'gpt-fake' });
+  assert.deepEqual([store.getState().model, store.getState().effort], ['gpt-fake', 'high']);
+  sources[0].emit({ seq: 2, op: 'status', status: 'idle', ok: true });
+  assert.equal(store.getState().runningSince, null);
+  sources[0].emit({ seq: 3, op: 'status', status: 'running', runningMs: 0 });
+  assert.ok(Math.abs(store.getState().runningSince - Date.now()) < 1000);
+});
+
+test('queued messages wait for the turn: the next one is sent when it ends normally, and kept after a stop or a failure', async () => {
+  const { createChatStore } = await load();
+  const { options, sources, calls } = harness({ snapshot: { items: [], pending: [], status: 'running', seq: 0 } });
+  const store = createChatStore(options);
+  await store.load();
+  store.enqueue({ text: 'first   queued\nmessage', images: [], files: [] });
+  store.enqueue({ text: '', images: [{ name: 'a.png' }], files: [{ name: 'b.txt' }] });
+  assert.deepEqual(store.getState().queue.map(entry => entry.label), ['first queued message', 'a.png, b.txt']);
+  assert.equal(calls.some(call => call[0] === 'post'), false, 'nothing is sent while the turn runs');
+
+  sources[0].emit({ seq: 1, op: 'status', status: 'idle', ok: false }); // stopped or failed
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(store.getState().queue.length, 2, 'a stopped turn does not send the queue by itself');
+
+  sources[0].emit({ seq: 2, op: 'status', status: 'idle', ok: true });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(calls.filter(call => call[0] === 'post').map(call => call[2].text), ['first   queued\nmessage']);
+  assert.equal(store.getState().queue.length, 1);
+  sources[0].emit({ seq: 3, op: 'status', status: 'idle', ok: true });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(store.getState().queue.length, 0);
+  assert.equal(calls.filter(call => call[0] === 'post').length, 2, 'one queued message per finished turn');
+});
+
+test('a queued message can be removed or sent now, and one the server refuses stays queued', async () => {
+  const { createChatStore } = await load();
+  const { options, notices } = harness({ snapshot: { items: [], pending: [], status: 'idle', seq: 0 } });
+  let refuse = true;
+  options.api.post = async () => { if (refuse) throw new Error('CONVERSATION_BUSY'); return {}; };
+  const store = createChatStore(options);
+  await store.load();
+  store.enqueue({ text: 'a' });
+  store.enqueue({ text: 'b' });
+  store.unqueue(store.getState().queue[1].id);
+  assert.deepEqual(store.getState().queue.map(entry => entry.label), ['a']);
+  assert.equal(await store.sendQueued(store.getState().queue[0].id), false);
+  assert.deepEqual(store.getState().queue.map(entry => entry.label), ['a'], 'a refused message stays queued');
+  assert.deepEqual(notices, ['The agent is still working']);
+  refuse = false;
+  assert.equal(await store.sendQueued(store.getState().queue[0].id), true);
+  assert.equal(store.getState().queue.length, 0);
+});
+
+test('renaming the chat goes to the server, and a failure is reported', async () => {
+  const { createChatStore } = await load();
+  const { options, calls, notices } = harness({ snapshot: { items: [], pending: [], status: 'idle', seq: 0 } });
+  const store = createChatStore(options);
+  assert.equal(await store.rename('New name'), true);
+  assert.deepEqual(calls.find(call => call[0] === 'patch'), ['patch', '/b/conversations/c1', { title: 'New name' }]);
+  options.api.patch = async () => { throw new Error('nope'); };
+  assert.equal(await store.rename('x'), false);
+  assert.match(notices[0], /Could not rename the chat: nope/);
+});

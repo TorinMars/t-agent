@@ -27,6 +27,7 @@ function createAgentChat({ db, adapters = ADAPTERS }) {
   const publicRow = (row, rt) => ({
     id: row.id, agent: row.agent, session_id: row.session_id, title: row.title, mode: row.mode,
     updated_at: row.updated_at, running: Boolean(rt && rt.status === 'running'),
+    ...(rt && rt.model ? { model: rt.model } : {}), ...(rt && rt.effort ? { effort: rt.effort } : {}),
   });
 
   function runtimeFor(row, task) {
@@ -80,6 +81,7 @@ function createAgentChat({ db, adapters = ADAPTERS }) {
     return {
       conversation: publicRow(db.prepare('SELECT * FROM agent_conversations WHERE id = ?').get(id), rt),
       items: [...rt.items.values()], pending: pendingList(rt), status: rt.status, seq: rt.seq,
+      runningMs: rt.status === 'running' && rt.startedAt ? Date.now() - rt.startedAt : 0,
       capabilities: adapters[rt.agent].CAPABILITIES || {},
     };
   }
@@ -173,6 +175,15 @@ function createAgentChat({ db, adapters = ADAPTERS }) {
       getItem: id => rt.items.get(id),
       // What the running turn offers while it runs: `steer(prompt)` adds the person's input to it.
       setControl(control) { rt.control = control || null; },
+      // What the agent reports about itself: { model, effort }; shown next to the composer.
+      setMeta(meta = {}) {
+        const changed = {};
+        for (const key of ['model', 'effort']) {
+          const value = typeof meta[key] === 'string' ? clip(meta[key].trim(), 80) : '';
+          if (value && value !== rt[key]) { rt[key] = value; changed[key] = value; }
+        }
+        if (Object.keys(changed).length) emit(rt, { op: 'meta', ...changed });
+      },
       setSession(sessionId) {
         if (!sessionId || sessionId === rt.sessionId) return;
         rt.sessionId = sessionId;
@@ -232,7 +243,8 @@ function createAgentChat({ db, adapters = ADAPTERS }) {
     const controller = new AbortController();
     rt.abort = controller;
     rt.status = 'running';
-    emit(rt, { op: 'status', status: 'running' });
+    rt.startedAt = Date.now();
+    emit(rt, { op: 'status', status: 'running', runningMs: 0 });
     // The turn runs in the background; the request returns once it has started.
     void (async () => {
       let outcome;

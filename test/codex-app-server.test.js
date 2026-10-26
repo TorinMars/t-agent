@@ -19,6 +19,7 @@ function collector() {
     getItem: id => items.get(id),
     setSession(id) { ctx.sessions.push(id); },
     setControl(control) { ctx.control = control; },
+    setMeta(meta) { ctx.meta = { ...ctx.meta, ...meta }; },
   };
   return ctx;
 }
@@ -78,11 +79,18 @@ test('a turn starts a thread with the access level, streams the reply and report
   const start = requests().find(row => row.method === 'thread/start');
   assert.deepEqual([start.params.sandbox, start.params.approvalPolicy, start.params.approvalsReviewer, start.params.cwd], ['read-only', 'on-request', 'user', os.tmpdir()]);
   assert.equal(ctx.control, null, 'the steering hook is removed when the turn ends');
+  // What Codex reports about the thread is kept for the page: the model, the effort and an "Initialized session" entry.
+  assert.deepEqual(ctx.meta, { model: 'gpt-fake', effort: 'medium' });
+  const init = ctx.items.get('init:thread-fake0001');
+  assert.deepEqual([init.kind, init.text], ['init', 'Initialized session']);
+  assert.deepEqual(init.details.map(([label]) => label), ['Model', 'Reasoning effort', 'Working directory', 'Sandbox', 'Approvals', 'Session']);
+  assert.deepEqual(init.details.find(([label]) => label === 'Sandbox'), ['Sandbox', 'read-only']);
 });
 
 test('an existing session is resumed, and full access never asks', async () => {
-  const { promise, requests } = run('again', { mode: 'full', sessionId: 'thread-old00001' });
+  const { promise, requests, ctx } = run('again', { mode: 'full', sessionId: 'thread-old00001' });
   assert.equal((await promise).ok, true);
+  assert.equal(ctx.items.has('init:thread-fake0001'), false, 'a resumed thread is not announced again');
   const resume = requests().find(row => row.method === 'thread/resume');
   assert.deepEqual([resume.params.threadId, resume.params.sandbox, resume.params.approvalPolicy], ['thread-old00001', 'danger-full-access', 'never']);
   assert.equal(requests().some(row => row.method === 'thread/start'), false);

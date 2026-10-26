@@ -16,6 +16,23 @@ const ACCEPT = `${IMAGE_TYPES.join(',')},text/*,.md,.json,.js,.ts,.py,.log,.csv,
 
 const t = text => (typeof I18n !== 'undefined' ? I18n.t(text) : text);
 const coarse = () => { try { return window.matchMedia('(pointer: coarse)').matches; } catch { return false; } };
+const mac = () => /Mac|iPhone|iPad/.test(navigator.platform || '');
+const SpeechRecognition = typeof window !== 'undefined' ? window.SpeechRecognition || window.webkitSpeechRecognition : undefined;
+
+const Icon = ({ d, fill }) => (
+  <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill={fill ? 'currentColor' : 'none'} stroke={fill ? 'none' : 'currentColor'} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={d} /></svg>
+);
+const ICONS = {
+  plus: 'M12 5v14M5 12h14', chevron: 'M6 9l6 6 6-6', up: 'M12 19V5M5 12l7-7 7 7', stop: 'M6 6h12v12H6z',
+  mic: 'M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3zM5 11a7 7 0 0 0 14 0M12 18v3', close: 'M6 6l12 12M18 6L6 18', enter: 'M20 5v7a3 3 0 0 1-3 3H5m0 0l4-4m-4 4l4 4',
+};
+
+// "claude-sonnet-5-5" -> "Sonnet 5.5"; ids of other makers are shown as they are.
+function modelName(id) {
+  const match = /^claude-([a-z]+)-(\d+(?:-\d+)?)(?:-\d{8})?$/.exec(id || '');
+  return match ? `${match[1][0].toUpperCase()}${match[1].slice(1)} ${match[2].replace('-', '.')}` : id || '';
+}
+const capitalize = text => (text ? `${text[0].toUpperCase()}${text.slice(1)}` : '');
 
 // ── Message parts ──
 function Code({ className, children }) {
@@ -83,7 +100,21 @@ function Attachments({ data }) {
   return <div className="ac-chips">{data.map((name, index) => <span className="ac-chip" key={index}>{name}</span>)}</div>;
 }
 
-const AGENT_PARTS = { Text: AgentText, Reasoning: Thinking, tools: { Fallback: ToolCard }, data: { by_name: { notice: Notice } } };
+// "Initialized session": what the agent started with, folded away until asked for.
+function Init({ data }) {
+  return (
+    <details className="ac-item ac-init">
+      <summary>{t(data.text)}</summary>
+      <dl className="ac-init-body">
+        {data.details.map(([label, value]) => (
+          <React.Fragment key={label}><dt>{t(label)}</dt><dd translate="no">{value}</dd></React.Fragment>
+        ))}
+      </dl>
+    </details>
+  );
+}
+
+const AGENT_PARTS = { Text: AgentText, Reasoning: Thinking, tools: { Fallback: ToolCard }, data: { by_name: { notice: Notice, init: Init } } };
 const USER_PARTS = { Text: UserText, data: { by_name: { attachments: Attachments } } };
 
 const AssistantMessage = () => <MessagePrimitive.Root className="ac-assistant"><MessagePrimitive.Parts components={AGENT_PARTS} /></MessagePrimitive.Root>;
@@ -157,20 +188,72 @@ const readAs = (file, how) => new Promise((resolve, reject) => {
   reader[how](file);
 });
 
+function formatElapsed(ms) {
+  const seconds = Math.max(0, Math.floor(ms / 1000));
+  return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, '0')}s`;
+}
+
+// The turn is running: animated dots and how long it has been going.
+function Working({ since }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(timer); }, []);
+  return (
+    <div className="ac-working" role="status">
+      <span className="ac-dots" aria-hidden="true"><i /><i /><i /></span>
+      <span className="ac-elapsed">{formatElapsed(since ? now - since : 0)}</span>
+    </div>
+  );
+}
+
+// Speech to text with the browser's recognizer; the button only exists where the browser has one.
+function Mic({ onText, notify }) {
+  const [on, setOn] = useState(false);
+  const recognizer = useRef(null);
+  useEffect(() => () => { if (recognizer.current) recognizer.current.abort(); }, []);
+  if (!SpeechRecognition || coarse()) return null; // phones dictate through their keyboard
+  const toggle = () => {
+    if (recognizer.current) { recognizer.current.stop(); return; }
+    const next = new SpeechRecognition();
+    next.lang = document.documentElement.lang || navigator.language || 'en-US';
+    next.continuous = true;
+    next.interimResults = false;
+    next.onresult = event => {
+      for (let index = event.resultIndex; index < event.results.length; index++) {
+        if (event.results[index].isFinal) onText(event.results[index][0].transcript);
+      }
+    };
+    next.onerror = event => { if (event.error && event.error !== 'no-speech' && event.error !== 'aborted') notify(`Dictation failed: ${event.error}`); };
+    next.onend = () => { recognizer.current = null; setOn(false); };
+    recognizer.current = next;
+    setOn(true);
+    try { next.start(); } catch { recognizer.current = null; setOn(false); }
+  };
+  return (
+    <button type="button" className={`ac-mic${on ? ' on' : ''}`} aria-pressed={on} aria-label={t(on ? 'Stop dictation' : 'Dictate')} onClick={toggle}><Icon d={ICONS.mic} /></button>
+  );
+}
+
 function Composer({ store, state, agent, notify, inputRef }) {
   const [text, setText] = useState('');
   const [attachments, setAttachments] = useState([]);
   const [sending, setSending] = useState(false);
   const picker = useRef(null);
   const running = state.status === 'running';
+  const filled = Boolean(text.trim() || attachments.length);
+  const key = mac() ? '⌘' : 'Ctrl+';
 
   const grow = node => {
     if (!node) return;
     node.style.height = 'auto';
     if (!node.value) { node.style.height = ''; return; } // empty: the height the stylesheet gives one row
-    node.style.height = `${Math.min(node.scrollHeight + 2, 160)}px`;
+    node.style.height = `${Math.min(node.scrollHeight + 2, 200)}px`;
   };
   useEffect(() => grow(inputRef.current), [text]);
+
+  // Enter sends (into the running turn when the agent takes input, otherwise it waits); Cmd/Ctrl+Enter always waits for the turn to end.
+  const placeholder = coarse() ? t(`Message ${agent.label}`)
+    : running ? (state.canSteer ? `${mac() ? '⏎ ' : 'Enter '}${t('to send,')} ${key}${mac() ? '⏎' : 'Enter'} ${t('to queue for later')}` : `${mac() ? '⏎ ' : 'Enter '}${t('to queue for later')}`)
+      : `${mac() ? '⏎ ' : 'Enter '}${t('to send,')} ${t('Shift+Enter for a new line')}`;
 
   async function addFiles(files) {
     const added = [];
@@ -189,22 +272,39 @@ function Composer({ store, state, agent, notify, inputRef }) {
     setAttachments(current => [...current, ...added]);
   }
 
-  async function submit(event) {
-    event.preventDefault();
+  async function dispatch(later) {
     const body = text.trim();
-    if ((running && !state.canSteer) || (!body && !attachments.length) || sending) return;
-    setSending(true);
-    const sent = await store.send({
+    if ((!body && !attachments.length) || sending) return;
+    const message = {
       text: body,
       images: attachments.filter(file => file.kind === 'image').map(({ name, type, data }) => ({ name, type, data })),
       files: attachments.filter(file => file.kind === 'file').map(({ name, text: content }) => ({ name, text: content })),
-    });
+    };
+    if (running && (later || !state.canSteer)) {
+      store.enqueue(message);
+      setText(''); setAttachments([]);
+      return;
+    }
+    setSending(true);
+    const sent = await store.send(message);
     if (sent) { setText(''); setAttachments([]); }
     setSending(false);
   }
 
+  const canNow = entry => !running || state.canSteer;
   return (
-    <form className="ac-composer" autoComplete="off" onSubmit={submit}>
+    <form className="ac-composer" autoComplete="off" onSubmit={event => { event.preventDefault(); void dispatch(false); }}>
+      {state.queue.length ? (
+        <div className="ac-queue" aria-label={t('Queued')}>
+          {state.queue.map(entry => (
+            <span className="ac-chip ac-queued" key={entry.id}>
+              <span translate="no">{entry.label}</span>
+              {canNow(entry) ? <button type="button" className="ac-chip-remove" aria-label={t('Send now')} onClick={() => void store.sendQueued(entry.id)}><Icon d={ICONS.enter} /></button> : null}
+              <button type="button" className="ac-chip-remove" aria-label={t('Remove from the queue')} onClick={() => store.unqueue(entry.id)}>×</button>
+            </span>
+          ))}
+        </div>
+      ) : null}
       {attachments.length ? (
         <div className="ac-attachments">
           {attachments.map((file, index) => (
@@ -215,11 +315,11 @@ function Composer({ store, state, agent, notify, inputRef }) {
           ))}
         </div>
       ) : null}
-      <div className="ac-row">
-        <button type="button" className="ac-attach" aria-label={t('Attach an image or text file')} onClick={() => picker.current && picker.current.click()}>＋</button>
+      <div className="ac-box">
+        <button type="button" className="ac-attach" aria-label={t('Attach an image or text file')} onClick={() => picker.current && picker.current.click()}><Icon d={ICONS.plus} /></button>
         <textarea
           ref={inputRef} className="ac-input" rows={1} maxLength={100000} enterKeyHint="send" value={text}
-          placeholder={running && state.canSteer ? t(`Add to what ${agent.label} is doing`) : t(`Message ${agent.label}`)}
+          placeholder={placeholder}
           aria-label={t(`Message ${agent.label}`)}
           onChange={event => setText(event.target.value)}
           onPaste={event => {
@@ -227,11 +327,16 @@ function Composer({ store, state, agent, notify, inputRef }) {
             if (files.length) { event.preventDefault(); void addFiles(files); }
           }}
           onKeyDown={event => {
-            if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && !coarse()) { event.preventDefault(); event.currentTarget.form.requestSubmit(); }
+            if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return;
+            const later = event.metaKey || event.ctrlKey;
+            if (coarse() && !later) return; // on a phone Enter is a new line; the send button sends
+            event.preventDefault();
+            void dispatch(later);
           }}
         />
-        {!running || state.canSteer ? <button type="submit" className="ac-send" disabled={sending}>{t('Send')}</button> : null}
-        {running ? <button type="button" className="ac-stop" onClick={() => void store.stop()}>{t('Stop')}</button> : null}
+        <Mic notify={notify} onText={spoken => setText(current => `${current}${current && !/\s$/.test(current) ? ' ' : ''}${spoken.trim()}`)} />
+        {filled ? <button type="submit" className="ac-send" disabled={sending} aria-label={t(running && !state.canSteer ? 'Queue for later' : 'Send')}><Icon d={ICONS.up} /></button> : null}
+        {running ? <button type="button" className="ac-stop" aria-label={t('Stop')} onClick={() => void store.stop()}><Icon d={ICONS.stop} fill /></button> : null}
       </div>
       <input ref={picker} type="file" multiple hidden accept={ACCEPT} onChange={event => { void addFiles([...event.target.files]); event.target.value = ''; }} />
     </form>
@@ -243,6 +348,39 @@ function AgentIcon({ agent }) {
   const ref = useRef(null);
   useEffect(() => { if (ref.current && typeof AgentChat !== 'undefined') ref.current.replaceChildren(AgentChat.icon(agent)); }, [agent]);
   return <span ref={ref} className={`ac-badge ${agent}`} aria-hidden="true" />;
+}
+
+// The title with a menu: rename the chat, or close it.
+function TitleMenu({ title, store, onClose }) {
+  const [open, setOpen] = useState(false);
+  const holder = useRef(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const away = event => { if (holder.current && !holder.current.contains(event.target)) setOpen(false); };
+    const escape = event => { if (event.key === 'Escape') setOpen(false); };
+    document.addEventListener('pointerdown', away);
+    document.addEventListener('keydown', escape);
+    return () => { document.removeEventListener('pointerdown', away); document.removeEventListener('keydown', escape); };
+  }, [open]);
+  const rename = async () => {
+    setOpen(false);
+    const next = window.prompt(t('Rename chat'), title);
+    if (next && next.trim() && next.trim() !== title) await store.rename(next.trim());
+  };
+  return (
+    <div className="ac-titlebar" ref={holder}>
+      <button type="button" className="ac-title-button" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(value => !value)}>
+        <span className="ac-title">{title}</span>
+        <Icon d={ICONS.chevron} />
+      </button>
+      {open ? (
+        <div className="ac-menu" role="menu">
+          <button type="button" role="menuitem" onClick={() => void rename()}>{t('Rename…')}</button>
+          <button type="button" role="menuitem" onClick={() => { setOpen(false); if (onClose) onClose(); }}>{t('Close chat')}</button>
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 // ── The view ──
@@ -264,27 +402,35 @@ export const Chat = React.forwardRef(function Chat({ store, agent, conversation,
     if (next === 'full' && !window.confirm(t('Full access lets the agent act without asking. Continue?'))) return;
     await store.setMode(next);
   };
+  const model = [modelName(state.model), capitalize(state.effort)].filter(Boolean).join(' ');
 
   return (
-    <section className="agent-chat" aria-label={t(`${agent.label} chat`)} translate="no">
+    <section className={`agent-chat ${conversation.agent}`} aria-label={t(`${agent.label} chat`)} translate="no">
       <header className="ac-head">
         <button type="button" className="ac-back" aria-label={t('Close chat')} onClick={() => onClose && onClose()}>←</button>
         <AgentIcon agent={conversation.agent} />
-        <span className="ac-title">{state.title}</span>
-        <select className="ac-mode" aria-label={t('Access level')} value={state.mode} onChange={changeMode}>
-          {agent.modes.map(([value, label]) => <option key={value} value={value}>{t(label)}</option>)}
-        </select>
+        <TitleMenu title={state.title} store={store} onClose={onClose} />
       </header>
       <AssistantRuntimeProvider runtime={runtime}>
         <ThreadPrimitive.Root className="ac-thread">
           <ThreadPrimitive.Viewport className="ac-messages" role="log" aria-live="polite" scrollToBottomOnInitialize>
             <div className="ac-list"><ThreadPrimitive.Messages components={MESSAGES} /></div>
             <div className="ac-requests">{state.pending.map(request => <Request key={request.id} request={request} store={store} />)}</div>
-            {state.status === 'running' ? <div className="ac-working">{t('Working…')}</div> : null}
+            {state.status === 'running' ? <Working since={state.runningSince} /> : null}
           </ThreadPrimitive.Viewport>
         </ThreadPrimitive.Root>
       </AssistantRuntimeProvider>
       <Composer store={store} state={state} agent={agent} notify={notify} inputRef={inputRef} />
+      <div className="ac-foot">
+        <label className="ac-mode-label">
+          <span className="ac-mode-text">{t((agent.modes.find(([value]) => value === state.mode) || [state.mode, state.mode])[1])}</span>
+          <Icon d={ICONS.chevron} />
+          <select className="ac-mode" aria-label={t('Access level')} value={state.mode} onChange={changeMode}>
+            {agent.modes.map(([value, label]) => <option key={value} value={value}>{t(label)}</option>)}
+          </select>
+        </label>
+        {model ? <span className="ac-model" translate="no">{model}</span> : null}
+      </div>
     </section>
   );
 });

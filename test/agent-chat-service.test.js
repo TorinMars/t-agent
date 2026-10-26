@@ -276,3 +276,48 @@ test('questions carry their fields to the client and the answers are cleaned; "r
   await wait(() => received.length === 3);
   assert.equal(received[2].remember, false, 'a request that does not offer "remember" never remembers');
 });
+
+test('the model and effort an agent reports reach the page; a running turn tells how long it has run', async () => {
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const adapter = fakeAdapter(async ({ ctx }) => {
+    ctx.setMeta({ model: 'gpt-fake', effort: 'high' });
+    ctx.setMeta({ model: 'gpt-fake', effort: 'high' }); // unchanged: no second event
+    ctx.setMeta({ effort: 42, model: '   ' }); // not strings: ignored
+    await gate;
+    return { ok: true };
+  });
+  const chat = createAgentChat({ db, adapters: { codex: adapter } });
+  const conversation = chat.create(task, { agent: 'codex' });
+  const seen = [];
+  const stop = chat.subscribe(task, conversation.id, 0, event => seen.push(event));
+  await chat.sendMessage(task, conversation.id, { text: 'go' });
+  await wait(() => adapter.calls.length === 1 && seen.some(event => event.model));
+  assert.deepEqual(seen.filter(event => event.model || event.effort).map(({ model, effort }) => [model, effort]), [['gpt-fake', 'high']], 'one event, none for an unchanged or invalid value');
+  assert.equal(seen.find(event => event.op === 'status').runningMs, 0);
+  await new Promise(resolve => setTimeout(resolve, 30));
+  const running = await chat.snapshot(task, conversation.id);
+  assert.deepEqual([running.conversation.model, running.conversation.effort], ['gpt-fake', 'high']);
+  assert.ok(running.runningMs >= 20, 'the snapshot says how long the turn has been running');
+  release();
+  await wait(() => chat.list(task.id).find(row => row.id === conversation.id).running === false);
+  stop();
+  assert.equal((await chat.snapshot(task, conversation.id)).runningMs, 0);
+});
+
+test('Claude announces a new session once, with what it was started with, and keeps its model', () => {
+  const run = announce => {
+    const items = new Map(); const meta = [];
+    const normalizer = claude.createNormalizer({ upsert: item => items.set(item.id, item), append() {}, getItem: id => items.get(id), setSession() {}, setMeta: value => meta.push(value) }, { announce });
+    normalizer.handle({ type: 'system', subtype: 'init', session_id: 'sess-12345678', model: 'claude-sonnet-5-5', cwd: '/w', permissionMode: 'default', tools: ['Bash', 'Read'], mcp_servers: [{ name: 'docs', status: 'connected' }] });
+    return { items, meta };
+  };
+  const fresh = run(true);
+  assert.deepEqual(fresh.meta, [{ model: 'claude-sonnet-5-5' }]);
+  const init = fresh.items.get('init:sess-12345678');
+  assert.deepEqual([init.kind, init.text], ['init', 'Initialized session']);
+  assert.deepEqual(init.details, [['Model', 'claude-sonnet-5-5'], ['Working directory', '/w'], ['Permission mode', 'default'], ['Tools', '2'], ['MCP servers', 'docs (connected)'], ['Session', 'sess-12345678']]);
+  const resumed = run(false);
+  assert.equal(resumed.items.size, 0, 'a resumed session is not announced again');
+  assert.deepEqual(resumed.meta, [{ model: 'claude-sonnet-5-5' }]);
+});

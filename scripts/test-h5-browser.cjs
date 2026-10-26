@@ -184,6 +184,19 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     assert.ok(ossUploads[0].includes('\x89PNG'));
     assert.notEqual((await sent()).at(-1), '\r');
 
+    // A pasted image (paste event on the terminal input) is uploaded the same way; nothing else reaches the shell.
+    const linkCount = () => page.evaluate(() => window.sockets[0].sent.filter(item => item === 'https://img.test/shot.png ').length);
+    const sentBefore = (await sent()).length;
+    await page.evaluate(() => {
+      const data = new DataTransfer();
+      data.items.add(new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])], 'clip.png', { type: 'image/png' }));
+      document.querySelector('.h5-xterm textarea').dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
+    });
+    await page.waitForFunction(() => window.sockets[0].sent.filter(item => item === 'https://img.test/shot.png ').length === 2);
+    assert.equal(await linkCount(), 2);
+    assert.equal(ossUploads.length, 2, 'the pasted image went to OSS from the browser');
+    assert.equal((await sent()).length, sentBefore + 1, 'only the link was typed');
+
     // Dragging scrolls a full-screen program (alternate buffer with mouse reporting) by sending wheel events.
     await page.evaluate(() => window.sockets[0].emit(JSON.stringify({ type: 'history', data: '\x1b[?1049h\x1b[?1000h\x1b[?1006hfull screen app', cols: 40, rows: 30 })));
     await page.waitForTimeout(150);

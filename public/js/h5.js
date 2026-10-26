@@ -765,6 +765,15 @@
     term.open(el);
     const s = { term, fit, el, ws: null, timer: null, attempts: 0, paused: false, disposed: false, task, terminalId, source };
     session = s;
+    // A pasted image (long-press paste in the xterm textarea) is uploaded like a picked one; plain text keeps xterm's own paste.
+    el.addEventListener('paste', event => {
+      const images = [...(event.clipboardData?.items || [])].filter(entry => entry.kind === 'file' && entry.type.startsWith('image/'));
+      if (!images.length) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      if (images.length !== 1) { tell('Upload one image at a time', 'error'); return; }
+      if (!uploading) void upload(s, images[0].getAsFile());
+    }, true);
     term.onData(data => send(s, withModifiers(data)));
     TerminalIme.attach(term, data => send(s, withModifiers(data))); // the Apple Chinese keyboard's spaces and punctuation, which xterm drops
     term.onResize(() => { if (!s.paused) sendResize(s); });
@@ -914,8 +923,25 @@
     if (session.el.contains(document.activeElement)) document.activeElement.blur();
     else session.term.focus();
   }
+  // The first image on the clipboard, or null when there is none or the browser cannot read images.
+  async function clipboardImage() {
+    if (!navigator.clipboard?.read) return null;
+    try {
+      for (const item of await navigator.clipboard.read()) {
+        const type = item.types.find(name => /^image\/(png|jpeg|gif|webp)$/.test(name));
+        if (type) return new File([await item.getType(type)], 'pasted-image', { type });
+      }
+    } catch { /* fall back to reading text */ }
+    return null;
+  }
   async function paste() {
     if (!session) return;
+    const target = session;
+    const image = await clipboardImage();
+    if (image) {
+      if (!uploading) void upload(target, image);
+      return;
+    }
     let text;
     try {
       if (!navigator.clipboard?.readText) throw new Error('unsupported');

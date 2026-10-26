@@ -69,7 +69,7 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; c
 .h5-keys [data-action="keyboard"] { font-size: 20px; }
 
 /* Task sheet */
-.h5-sheet { position: fixed; inset: 0; z-index: 100; width: 100%; max-width: var(--h5-max-width); margin: 0 auto; overflow: hidden; visibility: hidden; pointer-events: none; transition: visibility 0s linear .25s; }
+.h5-sheet { position: fixed; inset: 0; z-index: 109; /* above the agent chat (108), so the task sheet and settings open over it */ width: 100%; max-width: var(--h5-max-width); margin: 0 auto; overflow: hidden; visibility: hidden; pointer-events: none; transition: visibility 0s linear .25s; }
 .h5-sheet.open { visibility: visible; pointer-events: auto; transition-delay: 0s; }
 /* The panel slides in from the left; the host clips it to the phone column so it never spills over the side margins on a computer. */
 .h5-sheet-panel { height: 100%; display: flex; flex-direction: column; background: var(--h5-bg); transform: translateX(-100%); transition: transform .25s ease-out;

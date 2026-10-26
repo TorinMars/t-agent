@@ -332,7 +332,6 @@
       }
     }, 1000);
   }
-  $('h5-close-chat').addEventListener('click', () => closeAgent());
   $('h5-open-settings').addEventListener('click', openSettings);
   $('h5-close-settings').addEventListener('click', closeSettings);
   updateButton.addEventListener('click', () => void checkUpdate());
@@ -421,6 +420,7 @@
       if (row.terminal_id === terminalId) button.setAttribute('aria-current', 'true');
       button.addEventListener('click', () => {
         closeTasks();
+        leaveChat();
         // Tapping the current terminal reconnects one that was disconnected.
         if (row.terminal_id === terminalId && session && (session.ws || session.timer)) return;
         switchTerminal(row);
@@ -434,7 +434,7 @@
       line.append(button, more);
       list.append(line);
     }
-    // The agent chats of the task, after its terminals: the only way back into one that was left with the back arrow.
+    // The agent chats of the task, after its terminals: the way back into one that was left by going to a terminal.
     for (const row of chats) {
       const line = document.createElement('div');
       line.className = 'h5-terminal-row';
@@ -456,7 +456,10 @@
     }
     return list;
   }
+  // Going to a terminal leaves the open chat, like the back arrow used to; the chat stays listed in the task sheet.
+  function leaveChat() { if (agentChat) closeAgent(); }
   function switchTerminal(row) {
+    leaveChat();
     terminalId = row.terminal_id;
     store.set(`terminal:${source.key}:${task.id}`, terminalId);
     renderTabs();
@@ -614,7 +617,6 @@
     agentChat = null;
     agentFor = null;
     agentView.hidden = true;
-    $('h5-close-chat').hidden = true;
     agentView.style.height = agentView.style.top = '';
     if (window.visualViewport) {
       window.visualViewport.removeEventListener('resize', fitAgentView);
@@ -631,7 +633,6 @@
   function mountAgent(conversation, { remember = true } = {}) {
     if (agentChat) agentChat.destroy();
     agentView.hidden = false;
-    $('h5-close-chat').hidden = false;
     if (window.visualViewport) {
       window.visualViewport.addEventListener('resize', fitAgentView);
       window.visualViewport.addEventListener('scroll', fitAgentView);
@@ -721,6 +722,7 @@
   async function createTerminal(options = {}) {
     if (!task) return;
     const current = task;
+    leaveChat();
     try {
       const row = await api('POST', `${source.tasksBase}/${current.id}/terminals`, options);
       if (!row || !row.terminal_id) throw new Error('The engine returned no terminal');

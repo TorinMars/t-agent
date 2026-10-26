@@ -15,6 +15,12 @@ const chatPatches = [];
 const pollUntil = async condition => { for (let i = 0; i < 500 && !condition(); i++) await new Promise(resolve => setTimeout(resolve, 20)); assert.ok(condition(), 'timed out waiting for the server'); };
 let chatListFails = false;
 
+// The chat has no back button; going to a terminal from the task sheet leaves it.
+async function leaveChatByTerminal(page) {
+  await page.locator('#h5-open-tasks').tap();
+  await page.locator('#h5-tasks .h5-terminal-row:not(:has(.h5-terminal-icon.claude, .h5-terminal-icon.codex)) .h5-terminal-main').first().tap();
+}
+
 async function openPage(browser, { remoteTerminals, remoteChat = false, viewport } = {}) {
   const context = await browser.newContext(viewport ? { viewport } : { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
   const page = await context.newPage();
@@ -249,6 +255,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     await page.locator('#h5-agent .ac-bubble', { hasText: 'hello agent' }).waitFor();
     // The chat shows the same header as the terminal (task name and settings) and starts right below it.
     assert.equal(await page.locator('#h5-agent .ac-head').isVisible(), false, 'the chat has no header of its own');
+    assert.equal(await page.locator('#h5-close-chat').count(), 0, 'and no back button');
     assert.equal(await page.locator('.h5-header').isVisible(), true);
     const [headBox, chatBox] = await Promise.all([page.locator('.h5-header').boundingBox(), page.locator('#h5-agent').boundingBox()]);
     assert.equal(Math.round(chatBox.y), Math.round(headBox.y + headBox.height), 'the chat starts below the header');
@@ -263,7 +270,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     await page.reload();
     await page.locator('#h5-agent .agent-chat').waitFor();
     await page.locator('#h5-agent .ac-bubble', { hasText: 'hello agent' }).waitFor();
-    await page.locator('#h5-close-chat').tap();
+    await leaveChatByTerminal(page);
     await page.locator('#h5-agent').waitFor({ state: 'hidden' });
     await pollUntil(() => openOnServer() === null);
     assert.deepEqual(chatPatches.at(-1), { opened: false, surface: 'h5' });
@@ -278,7 +285,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     await chatRow.locator('.h5-terminal-main').tap();
     await page.locator('#h5-agent .agent-chat').waitFor();
     await pollUntil(() => openOnServer() > 0);
-    await page.locator('#h5-close-chat').tap();
+    await leaveChatByTerminal(page);
     await page.locator('#h5-agent').waitFor({ state: 'hidden' });
     await pollUntil(() => openOnServer() === null);
     // It is the server that remembers: a list that cannot be read opens nothing and forgets nothing; a chat that no longer exists is not shown.
@@ -293,7 +300,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     await page.reload();
     await page.locator('#h5-agent .agent-chat').waitFor();
     // What an earlier version kept in the browser moves to the server, once.
-    await page.locator('#h5-close-chat').tap();
+    await leaveChatByTerminal(page);
     await pollUntil(() => openOnServer() === null);
     const patchesBefore = chatPatches.length;
     await page.evaluate(() => localStorage.setItem('h5-agent:local:1', 'c1'));
@@ -467,7 +474,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
         await pollUntil(() => chats[0]?.opened.h5 > 0);
         await remote.page.reload();
         await remote.page.locator('#h5-agent .agent-chat').waitFor();
-        await remote.page.locator('#h5-close-chat').tap();
+        await leaveChatByTerminal(remote.page);
         await pollUntil(() => chats[0]?.opened.h5 === null);
         await remote.page.locator('#h5-open-tasks').tap();
         await remote.page.locator('.h5-task-add').tap();

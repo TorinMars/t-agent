@@ -732,6 +732,19 @@ By default a private-object signed link valid for 24 hours is returned. When a l
 
 The installed app and the web page share the same OSS settings. After saving the credentials you must tick "Enable image upload"; when it is not enabled the save page says so explicitly. The configuration is refreshed when the app regains focus or returns to the foreground, a first read failure can be retried at upload time, and the terminal upload button is not hidden because reading the configuration failed. The OSS configuration of different Clients is still independent.
 
+### Environment check
+
+The **Environment** tab (below "File sync") checks the machine running the Client and says which features will have problems. It is grouped by feature, the ones that will not work come first and are open, and each problem says what stops working and what to do about it:
+
+- **Terminals**: the terminal engine (node-pty) starts, a shell exists, the terminal user, the task folder is writable.
+- **Claude Code / Codex, in terminals and in the chat view**: the `claude` / `codex` command is found (on PATH, in the usual install folders and through your login shell), the chat engine starts, and you are logged in. When `codex` is not found, set `CODEX_PATH` (and `CLAUDE_PATH` for `claude`) in `.env`.
+- **Network**: the Claude, Codex and GitHub servers can be reached from this machine (asked with `curl`, so the proxy variables of the Client are followed; a proxy set only in your own terminal is not), the proxy in use, and whether the clock is right (authenticator codes depend on it).
+- **Image upload (OSS)**, when it is set up: the bucket can be reached and its CORS rule lets this page upload.
+- **Login and remote access**: a strong `SESSION_SECRET`, an authenticator is bound, HTTPS for other devices.
+- **Updates (git)**, the **public tunnel (frpc)**, the **app list (PM2)** and **storage** (the data folder is writable and the disk has room).
+
+The page checks the machine running the Client (not a remote engine), starts when the tab is opened and again with "Check again" (a few seconds, since it starts the agents once). It only reads: it changes nothing, and what it shows holds no account names or secrets.
+
 ### Direct access to the Client on a trusted intranet
 
 Set `HOST=0.0.0.0` and `CLIENT_ALLOW_HTTP=true` in `.env` and restart, then log in via `http://intranet-IP:port/torin/hide/login`; HTTPS is required by default. HTTP does not encrypt codes and sessions, so restrict the access sources yourself.

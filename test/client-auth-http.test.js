@@ -75,7 +75,7 @@ for (const [environment, allowHttp] of [['test', 'false'], ['production', 'false
   }
   const unknown = await (await call('/nonexistent')).text();
   assert.equal(await (await call('/web')).text(), unknown.replace('/nonexistent', '/web'), 'A protected address answers the same as a non-existent one');
-  for (const route of ['/api/tasks', '/api/local-ip', '/api/system/version', '/api/oss/config']) {
+  for (const route of ['/api/tasks', '/api/local-ip', '/api/system/version', '/api/oss/config', '/api/environment/check']) {
     assert.equal((await call(route)).status, 404, route);
   }
   assert.equal((await call('/auth/login', { body: { code: '000000' } })).status, 404);
@@ -109,6 +109,7 @@ for (const [environment, allowHttp] of [['test', 'false'], ['production', 'false
   assert.equal((await call('/api/tasks')).status, 404);
   assert.equal((await call('/api/oss/config')).status, 404);
   assert.equal((await call('/api/oss/upload-policy', { body: {} })).status, 404);
+  assert.equal((await call('/api/environment/check')).status, 404, 'the environment report is not shown to a visitor who is not signed in');
   assert.equal((await call('/api/tasks', { cookie: setupCookie })).status, 404);
   // A logged-in browser that opens a wrong page address goes to the home page; APIs, files and logged-out visitors still get 404.
   const wrongPage = await call('/nonexistent', { cookie: boundCookie, headers: { Accept: 'text/html' } });

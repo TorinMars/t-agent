@@ -61,6 +61,7 @@
       <button type="button" class="main-nav-item" id="tab-agent-config" aria-pressed="false"><span class="main-nav-icon" aria-hidden="true">⚙️</span><span class="main-nav-label">Agent config</span></button>
       <button type="button" class="main-nav-item" id="tab-frp" aria-pressed="false"><span class="main-nav-icon" aria-hidden="true">🌐</span><span class="main-nav-label">Page enhancement</span></button>
       <button type="button" class="main-nav-item" id="tab-file-sync" aria-pressed="false"><span class="main-nav-icon" aria-hidden="true">🔄</span><span class="main-nav-label">File sync</span></button>
+      <button type="button" class="main-nav-item" id="tab-environment" aria-pressed="false"><span class="main-nav-icon" aria-hidden="true">🩺</span><span class="main-nav-label">Environment</span></button>
     </nav>
 
     <aside class="sidebar" id="sidebar">
@@ -346,6 +347,21 @@
         </div>
       </div>
     </section>
+    <section class="environment-panel" id="environment-panel" hidden aria-label="Environment check">
+      <div class="tools-engine" id="env-engine" role="status"></div>
+      <div class="tool-card tool-card-wide">
+        <div class="env-head">
+          <div>
+            <div class="tool-card-title">Environment check</div>
+            <div class="form-hint">Finds what will not work on the machine running the Client, and what to do about it.</div>
+          </div>
+          <button type="button" class="btn-submit" id="env-recheck">Check again</button>
+        </div>
+        <div class="env-summary" id="env-summary" role="status" aria-live="polite"></div>
+        <div class="form-hint" id="env-machine"></div>
+      </div>
+      <div class="env-features" id="env-features"></div>
+    </section>
     <section class="tools-panel" id="tools-panel" hidden aria-label="Utilities">
       <div class="tool-card">
         <div class="tool-card-title">Install dev environment (Claude Code / Codex / SSH key / rule sync / ta / PM2)</div>
@@ -416,6 +432,7 @@
   <script src="/js/ssh-tunnel.js"></script>
   <script src="/js/frp.js"></script>
   <script src="/js/file-sync.js"></script>
+  <script src="/js/environment-check.js"></script>
   <script src="/js/tools.js"></script>
   <script>
     if ('serviceWorker' in navigator) {

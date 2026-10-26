@@ -451,7 +451,13 @@
       button.append(icon, name);
       if (agentFor && agentFor.conversation === row.id) button.setAttribute('aria-current', 'true');
       button.addEventListener('click', () => { closeTasks(); mountAgent(row); });
-      line.append(button);
+      const more = document.createElement('button');
+      more.type = 'button';
+      more.className = 'h5-terminal-more';
+      more.textContent = '⋯';
+      more.setAttribute('aria-label', 'Chat actions');
+      more.addEventListener('click', () => openChatMenu(row));
+      line.append(button, more);
       list.append(line);
     }
     return list;
@@ -473,8 +479,11 @@
   const renameInput = $('h5-term-rename-input');
   let menuRow = null;
 
+  let menuChat = null; // the chat whose actions are open (the same sheet serves terminals and chats)
+
   function closeTerminalMenu() {
     menuRow = null;
+    menuChat = null;
     termMenu.hidden = true;
     renameForm.hidden = true;
   }
@@ -498,6 +507,38 @@
       return button;
     }));
     termMenu.hidden = false;
+  }
+  // Chat actions: the same sheet as a terminal's, with the actions a chat has (rename, open, delete).
+  function openChatMenu(row) {
+    menuRow = null;
+    menuChat = row;
+    $('h5-term-menu-title').textContent = row.title;
+    renameForm.hidden = true;
+    const items = [
+      ['Rename', () => { termMenuActions.hidden = true; renameForm.hidden = false; renameInput.value = row.title; renameInput.focus(); renameInput.select(); }],
+      ['Open', () => { closeTerminalMenu(); closeTasks(); mountAgent(row); }],
+      ['Delete', () => void deleteChat(row), 'danger'],
+    ];
+    termMenuActions.hidden = false;
+    termMenuActions.replaceChildren(...items.map(([label, run, kind]) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = tr(label);
+      if (kind) button.className = kind;
+      button.addEventListener('click', run);
+      return button;
+    }));
+    termMenu.hidden = false;
+  }
+  async function deleteChat(row) {
+    if (!window.confirm(`${tr('Delete this chat? Its messages are removed from this task.')}\n${row.title}`)) return;
+    const current = task;
+    closeTerminalMenu();
+    try {
+      await api('DELETE', `${source.tasksBase}/${current.id}/agent/conversations/${encodeURIComponent(row.id)}`);
+      if (agentFor && agentFor.conversation === row.id) hideAgent();
+      if (current === task) await loadChats();
+    } catch (error) { tell(`Could not delete the chat: ${error.message}`, 'error'); }
   }
   async function controlTerminal(row, action) {
     const current = task;
@@ -538,6 +579,15 @@
     event.preventDefault();
     const row = menuRow;
     const title = renameInput.value.trim();
+    if (menuChat && title) {
+      const chat = menuChat;
+      try {
+        await api('PATCH', `${source.tasksBase}/${task.id}/agent/conversations/${encodeURIComponent(chat.id)}`, { title });
+        closeTerminalMenu();
+        await loadChats();
+      } catch (error) { tell(`Could not rename the chat: ${error.message}`, 'error'); }
+      return;
+    }
     if (!row || !title) return;
     try {
       const renamed = await api('PATCH', `${source.tasksBase}/${task.id}/terminals/${encodeURIComponent(row.terminal_id)}`, { title });

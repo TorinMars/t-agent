@@ -72,10 +72,17 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     if (chatPath === '/api/tasks/1/agent/conversations/c1' && method === 'PATCH') {
       // Which chat is open on the phone page is kept by the server.
       const body = route.request().postDataJSON();
+      if (body.title !== undefined) { const named = chats.find(entry => entry.id === 'c1'); if (named) named.title = body.title; chatPatches.push(body); return json({ success: true }); }
       chatPatches.push(body);
       const row = chats.find(entry => entry.id === 'c1');
       if (row) row.opened[body.surface] = body.opened ? row.opened[body.surface] || Date.now() : null;
       return json(row || {});
+    }
+    if (chatPath.startsWith('/api/tasks/1/agent/conversations/') && method === 'DELETE') {
+      const index = chats.findIndex(entry => chatPath.endsWith(`/${entry.id}`));
+      if (index < 0) return json({ error: 'CONVERSATION_NOT_FOUND' }, 404);
+      chats.splice(index, 1);
+      return json({ success: true });
     }
     if (chatPath === '/api/tasks/1/agent/conversations/c1') return json({ conversation: { id: 'c1' }, items: [{ id: 'u1', kind: 'user', text: 'hello agent' }, { id: 't1', kind: 'text', text: 'Hi **there**' }], pending: [], status: 'idle', seq: 0 });
     if (chatPath === '/api/tasks/1/agent/conversations/c1/events') return route.fulfill({ contentType: 'text/event-stream', body: ': ok\n\n' });
@@ -288,6 +295,27 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     await leaveChatByTerminal(page);
     await page.locator('#h5-agent').waitFor({ state: 'hidden' });
     await pollUntil(() => openOnServer() === null);
+    // Chat actions (the three dots on a chat row): rename, and delete with a confirmation.
+    await page.locator('#h5-open-tasks').tap();
+    await page.locator('#h5-tasks .h5-terminal-row', { hasText: 'New chat' }).locator('.h5-terminal-more').tap();
+    await page.locator('#h5-term-menu-actions button', { hasText: 'Rename' }).tap();
+    await page.locator('#h5-term-rename-input').fill('Renamed chat');
+    await page.locator('#h5-term-rename-input').press('Enter');
+    await page.locator('#h5-tasks .h5-terminal-row', { hasText: 'Renamed chat' }).waitFor();
+    assert.deepEqual(chatPatches.at(-1), { title: 'Renamed chat' });
+    chats.push({ id: 'c2', agent: 'codex', session_id: null, title: 'Spare chat', mode: 'ask', running: false, opened: { web: null, h5: null } });
+    await page.reload();
+    await page.locator('#h5-open-tasks').tap();
+    page.once('dialog', dialog => dialog.dismiss());
+    await page.locator('#h5-tasks .h5-terminal-row', { hasText: 'Spare chat' }).locator('.h5-terminal-more').tap();
+    await page.locator('#h5-term-menu-actions button', { hasText: 'Delete' }).tap();
+    await page.waitForTimeout(200);
+    assert.ok(chats.some(entry => entry.id === 'c2'), 'declining the confirmation keeps the chat');
+    page.once('dialog', dialog => dialog.accept());
+    await page.locator('#h5-term-menu-actions button', { hasText: 'Delete' }).tap(); // the menu stays open after a declined confirmation
+    await pollUntil(() => !chats.some(entry => entry.id === 'c2'));
+    await page.locator('#h5-tasks .h5-terminal-row', { hasText: 'Spare chat' }).waitFor({ state: 'detached' });
+    await page.reload();
     // It is the server that remembers: a list that cannot be read opens nothing and forgets nothing; a chat that no longer exists is not shown.
     chats[0].opened.h5 = Date.now();
     chatListFails = true;

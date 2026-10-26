@@ -219,3 +219,56 @@ test('A failed task and a dropped connection are reported once', () => {
   closed.socket.onclose();
   assert.deepEqual(closed.log.errors, [], 'closing it yourself is not an error');
 });
+
+test('Recording starts on a page that has no API helper or Modal (the phone page does not load app.js)', async () => {
+  const vm = require('vm');
+  const fs = require('fs');
+  const path = require('path');
+  const source = fs.readFileSync(path.join(__dirname, '../public/js/voice-input.js'), 'utf8');
+  const notices = [];
+  const fetches = [];
+  const handlers = {};
+  const classes = new Set();
+  const button = { addEventListener: (type, fn) => { handlers[type] = fn; }, classList: { toggle: (name, on) => (on ? classes.add(name) : classes.delete(name)) }, setAttribute() {} };
+  const textarea = { value: '', dispatchEvent() {}, focus() {} };
+  const elements = { 'h5-translate-input': textarea, 'h5-voice': button };
+  class FakeContext {
+    constructor() { this.sampleRate = 48000; this.state = 'running'; this.destination = {}; this.audioWorklet = { addModule: async () => {} }; }
+    resume() { return Promise.resolve(); }
+    close() { this.state = 'closed'; return Promise.resolve(); }
+    createGain() { return { gain: {}, connect() {}, disconnect() {} }; }
+    createMediaStreamSource() { return { connect() {} }; }
+  }
+  const sandbox = {
+    document: { getElementById: id => elements[id] || null },
+    navigator: { mediaDevices: { getUserMedia: async () => ({ getTracks: () => [] }) } },
+    fetch: async (url, options) => { fetches.push({ url, options }); return { ok: true, status: 200, text: async () => JSON.stringify({ url: 'wss://speech.example/api-ws/v1/inference', token: 'st-1', model: 'fun-asr-realtime', language: 'zh' }) }; },
+    WebSocket: FakeSocket,
+    AudioWorkletNode: class { constructor() { this.port = {}; } connect() {} disconnect() {} },
+    Blob: class {}, URL: { createObjectURL: () => 'blob:x' }, Event: class {},
+    crypto: require('crypto').webcrypto, console, setTimeout, clearTimeout,
+    notify: (message, type) => notices.push([message, type]),
+  };
+  sandbox.window = sandbox;
+  sandbox.AudioContext = FakeContext;
+  vm.runInNewContext(source, sandbox);
+  assert.equal(typeof handlers.click, 'function', 'the phone microphone button is wired');
+  handlers.click();
+  for (let i = 0; i < 10; i += 1) await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(notices, [], 'no error notice');
+  assert.equal(fetches.length, 1);
+  assert.equal(fetches[0].url, '/api/speech/token');
+  assert.equal(fetches[0].options.method, 'POST');
+  assert.equal(fetches[0].options.headers['X-Requested-With'], 'XMLHttpRequest', 'same-origin proof for the server');
+  const socket = FakeSocket.last;
+  assert.equal(socket.url, 'wss://speech.example/api-ws/v1/inference?api_key=st-1');
+  socket.onopen();
+  socket.receive(header('task-started'));
+  assert.equal(classes.has('listening'), true);
+  handlers.click(); // stop
+  assert.equal(JSON.parse(socket.sent.at(-1)).header.action, 'finish-task');
+  socket.receive({ ...header('result-generated'), payload: { output: { sentence: { text: 'done.', sentence_id: 1, sentence_end: true } } } });
+  socket.receive(header('task-finished'));
+  assert.equal(textarea.value, 'done.');
+  assert.equal(classes.has('listening'), false);
+});

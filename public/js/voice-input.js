@@ -123,6 +123,15 @@ const VoiceInput = (() => {
   if (typeof document === 'undefined') return { createResampler, createRecognizer, compose };
 
   const tell = (message, type) => (typeof notify === 'function' ? notify(message, type) : (typeof alert === 'function' ? alert(message) : undefined));
+  // The phone page does not load app.js (where API lives), so the recording asks for its token with its own request.
+  async function requestToken() {
+    const res = await fetch('/api/speech/token', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }, body: '{}' });
+    const body = await res.text();
+    let data = null;
+    try { data = body ? JSON.parse(body) : null; } catch { /* plain-text error */ }
+    if (!res.ok) throw new Error((data && data.error) || body || `HTTP ${res.status}`);
+    return data;
+  }
   const errorText = error => {
     let message = (error && error.message) || 'Voice input failed';
     try { message = JSON.parse(message).error || message; } catch { /* keep the original text */ }
@@ -202,7 +211,7 @@ const VoiceInput = (() => {
         stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } });
         if (mine !== run) { release(); return; }
         // Fetch the token only now: it is valid for a minute, and the permission prompt can take longer than that.
-        const grant = await API.post('/api/speech/token', {});
+        const grant = await requestToken();
         if (mine !== run) { release(); return; }
         recognizer = createRecognizer({
           url: grant.url, token: grant.token, model: grant.model, language: grant.language,

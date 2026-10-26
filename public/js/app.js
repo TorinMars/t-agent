@@ -107,7 +107,7 @@ const TerminalControls = {
 // Chat-style Claude / Codex view over the terminal pane of the selected task. Each open chat is a tab after the task's terminals.
 const AgentView = (() => {
   const pane = document.getElementById('agent-pane');
-  const controls = document.querySelector('.terminal-controls');
+  const controls = () => document.querySelector('.terminal-controls'); // looked up when used: this script loads before the page is complete
   const sessions = new Map(); // terminal scope -> { rows: [{ id, agent, title, chat, holder }], active }
   // The API wrappers throw the raw response text; the chat view wants the server's error code.
   const unwrap = async run => {
@@ -134,7 +134,7 @@ const AgentView = (() => {
     }
     const group = scope && sessions.get(scope);
     pane.hidden = !(group && group.active);
-    pane.style.top = `${controls.offsetHeight}px`;
+    pane.style.top = `${controls().offsetHeight}px`;
     if (!scope) return;
     TerminalTabs.setChats(scope, group && group.rows.length ? {
       rows: group.rows.map(({ id, agent, title }) => ({ id, agent, title })),
@@ -158,11 +158,12 @@ const AgentView = (() => {
     sync();
   }
 
-  // Chats of other tasks stay open in the background; only the mounted task's chat is shown.
-  TerminalTabs.onScopeChange(sync);
-  window.addEventListener('resize', () => { if (!pane.hidden) pane.style.top = `${controls.offsetHeight}px`; });
+  window.addEventListener('resize', () => { if (!pane.hidden) pane.style.top = `${controls().offsetHeight}px`; });
 
   return {
+    // Chats of other tasks stay open in the background; only the mounted task's chat is shown.
+    // Called from init(): terminal-tabs.js loads after this script, so TerminalTabs does not exist while it is parsed.
+    start: () => TerminalTabs.onScopeChange(sync),
     choices: agent => AgentChat.choices(api, baseOf(), agent),
     async open(agent, choice) {
       const scope = scopeOf();
@@ -788,6 +789,7 @@ async function init() {
     });
   });
 
+  AgentView.start();
   await Promise.all([
     TerminalImages.load().catch(() => {}),
     Bookmarks.load(),

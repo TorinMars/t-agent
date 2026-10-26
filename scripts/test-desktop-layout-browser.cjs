@@ -39,6 +39,7 @@ const root = path.resolve(__dirname, '..');
         await page.evaluate(() => {
           window.TerminalImages = { load: async () => {}, showSettings() {} };
           window.Bookmarks = window.Tasks = window.Engines = { load: async () => {} };
+          window.TerminalTabs = { onScopeChange() {}, context: () => null, setChats() {} };
           window.requests = [];
           window.fetch = async (url, options = {}) => {
             requests.push({ url, ...options });

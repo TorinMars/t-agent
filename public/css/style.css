@@ -1981,6 +1981,12 @@ html[lang="zh-CN"] .update-log:empty::before { content: '\7B49\5F85\8F93\51FA\20
 @keyframes toast-in { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .toast { animation: none; } }
 
-/* Agent chat: covers the whole terminal pane (tabs included) while a Claude / Codex chat is open. */
+/* Agent chat: covers the terminal below the tab strip (top is set from the strip height) while a Claude / Codex chat tab is active. */
 .agent-pane { position: absolute; inset: 0; z-index: 6; }
+.agent-holder { position: absolute; inset: 0; }
+.agent-holder[hidden] { display: none; }
+.terminal-tabs .agent-tab-badge { margin-right: 6px; }
+.terminal-tabs .agent-tab-badge.claude { color: #d97757; }
+.terminal-tabs .agent-tab-badge.codex { color: #70a5ff; }
+.terminal-tabs .agent-tab { max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
 .agent-pane[hidden] { display: none; }

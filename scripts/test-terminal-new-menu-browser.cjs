@@ -14,7 +14,7 @@ const root = path.resolve(__dirname, '..');
       window.created=[];
       window.requested=[];
       window.Tasks={newTerminal:async options=>{created.push(options);}};
-      window.TerminalTabs={context:()=>({scope:'/api/tasks/1',taskId:1,sourceKey:'local'}),agentSessions:async agent=>{requested.push(agent);return [{id:'s-1',title:'Fix the build'},{id:'s-2',title:'Write docs'}];}};
+      window.TerminalTabs={onScopeChange(){},setChats(){},context:()=>({scope:'/api/tasks/1',taskId:1,sourceKey:'local'}),agentSessions:async agent=>{requested.push(agent);return [{id:'s-1',title:'Fix the build'},{id:'s-2',title:'Write docs'}];}};
     });
     await page.addScriptTag({content:fs.readFileSync(path.join(root,'public/js/app.js'),'utf8')});
     const items = () => page.locator('.terminal-new-menu li').allTextContents();

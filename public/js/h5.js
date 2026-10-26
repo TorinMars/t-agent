@@ -417,7 +417,7 @@
       name.className = 'h5-terminal-name';
       name.textContent = row.title;
       button.append(icon, name);
-      if (row.terminal_id === terminalId) button.setAttribute('aria-current', 'true');
+      if (row.terminal_id === terminalId && !agentChat) button.setAttribute('aria-current', 'true'); // only one of a terminal and a chat is shown
       button.addEventListener('click', () => {
         closeTasks();
         leaveChat();
@@ -677,6 +677,7 @@
   function closeAgent() {
     if (agentFor && agentFor.source === source.key) setOpened(agentFor.taskId, agentFor.conversation, false);
     hideAgent();
+    renderTabs();
     void loadChats();
   }
   // `remember`: the person opened it, so the server is told; a chat that is shown again because it was already open is not sent again.
@@ -691,6 +692,7 @@
     agentChat = AgentChat.mount(agentView, { api: chatApi, base: `${source.tasksBase}/${task.id}/agent`, conversation, onClose: closeAgent, notify: message => tell(message, 'error') });
     agentFor = { source: source.key, taskId: task.id, conversation: conversation.id };
     if (remember) setOpened(task.id, conversation.id, true);
+    renderTabs();
     void loadChats();
   }
   // The chats of a task on the selected Engine, or null when the Engine has none to offer, the list cannot be read or the page moved on.

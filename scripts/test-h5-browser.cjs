@@ -295,8 +295,19 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     await leaveChatByTerminal(page);
     await page.locator('#h5-agent').waitFor({ state: 'hidden' });
     await pollUntil(() => openOnServer() === null);
-    // Chat actions (the three dots on a chat row): rename, and delete with a confirmation.
+    // Only one of a terminal and a chat is current: with a chat open no terminal row is highlighted, and the chat row is.
     await page.locator('#h5-open-tasks').tap();
+    await page.locator('#h5-tasks .h5-terminal-row', { hasText: 'New chat' }).locator('.h5-terminal-main').tap();
+    await page.locator('#h5-agent .agent-chat').waitFor();
+    await page.locator('#h5-open-tasks').tap();
+    assert.equal(await page.locator('#h5-tasks .h5-terminal-main[aria-current="true"]').count(), 1, 'exactly one row is current');
+    assert.equal(await page.locator('#h5-tasks .h5-terminal-row', { hasText: 'New chat' }).locator('.h5-terminal-main').getAttribute('aria-current'), 'true');
+    await page.locator('#h5-tasks .h5-terminal-row:not(:has(.h5-terminal-icon.claude, .h5-terminal-icon.codex)) .h5-terminal-main').first().tap();
+    await page.locator('#h5-agent').waitFor({ state: 'hidden' });
+    await page.locator('#h5-open-tasks').tap();
+    assert.equal(await page.locator('#h5-tasks .h5-terminal-main[aria-current="true"]').count(), 1);
+    assert.equal(await page.locator('#h5-tasks .h5-terminal-row', { hasText: 'New chat' }).locator('.h5-terminal-main').getAttribute('aria-current'), null);
+    // Chat actions (the three dots on a chat row): rename, and delete with a confirmation; the sheet is still open.
     await page.locator('#h5-tasks .h5-terminal-row', { hasText: 'New chat' }).locator('.h5-terminal-more').tap();
     await page.locator('#h5-term-menu-actions button', { hasText: 'Rename' }).tap();
     await page.locator('#h5-term-rename-input').fill('Renamed chat');

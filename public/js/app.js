@@ -126,24 +126,30 @@ const AgentView = (() => {
   const scopeOf = () => { const target = TerminalTabs.context(); return target ? target.scope : null; };
   const baseOf = () => { const scope = scopeOf(); return scope ? `${scope}/agent` : null; };
 
-  // The conversations live on the server, but which of them are open as tabs (and which one is shown) only lives in this page. It is
-  // kept in localStorage per task so a refresh brings the tabs back; a conversation that no longer exists is simply dropped.
+  // Which chats are open on the desktop page is kept in the database (the open flag of each conversation), so every desktop browser of the
+  // user shows the same tabs and a refresh brings them back. Only the tab that is shown is a matter of this browser (localStorage). Earlier
+  // versions kept the whole list in localStorage ({ ids, active }); those tabs are moved to the database the first time they are found.
   const storeKey = scope => `agent-tabs:${scope}`;
-  const restored = new Set(); // scopes whose stored tabs were already looked at in this page
-  const restoring = new Set(); // scopes being restored: what is open must not overwrite the stored list yet
+  const restored = new Set(); // scopes whose open chats were already looked at in this page
+  const restoring = new Set(); // scopes being restored: the shown tab must not be overwritten before it is read
   function save(scope) {
     if (restoring.has(scope)) return;
     const group = sessions.get(scope);
     try {
-      if (group && group.rows.length) localStorage.setItem(storeKey(scope), JSON.stringify({ ids: group.rows.map(row => row.id), active: group.active }));
+      if (group && group.active) localStorage.setItem(storeKey(scope), JSON.stringify({ active: group.active }));
       else localStorage.removeItem(storeKey(scope));
-    } catch { /* storage is unavailable: the tabs just do not survive a refresh */ }
+    } catch { /* storage is unavailable: the shown tab is just not remembered */ }
   }
   function stored(scope) {
     try {
       const value = JSON.parse(localStorage.getItem(storeKey(scope)));
-      return value && Array.isArray(value.ids) ? value : null;
+      return value && typeof value === 'object' ? value : null;
     } catch { return null; }
+  }
+  // Tells the server that a chat is open (or not) on this page; a failure is shown, the chat just is not remembered.
+  function setOpened(scope, id, opened) {
+    api.patch(`${scope}/agent/conversations/${id}`, { opened, surface: 'web' })
+      .catch(error => { if (typeof Toast !== 'undefined') Toast.error(`Could not save which chats are open: ${error.message}`); });
   }
 
   // Mounts the chat of a conversation as a tab of the task (nothing happens when it is already open).
@@ -164,18 +170,25 @@ const AgentView = (() => {
   }
 
   async function restore(scope) {
-    const wanted = stored(scope);
-    if (!wanted || !wanted.ids.length) return;
+    const legacy = stored(scope);
     restoring.add(scope);
     let loaded = false;
     try {
-      const existing = new Map((await api.get(`${scope}/agent/conversations`)).map(row => [row.id, row]));
-      for (const id of wanted.ids) if (existing.has(id)) mountRow(scope, existing.get(id));
+      const rows = await api.get(`${scope}/agent/conversations`);
+      const byId = new Map((Array.isArray(rows) ? rows : []).map(row => [row.id, row]));
+      const open = [...byId.values()].filter(row => row.opened && row.opened.web).sort((x, y) => x.opened.web - y.opened.web);
+      const known = new Set(open.map(row => row.id));
+      for (const id of Array.isArray(legacy && legacy.ids) ? legacy.ids : []) {
+        if (known.has(id) || !byId.has(id)) continue; // already open on the server, or deleted since
+        open.push(byId.get(id));
+        setOpened(scope, id, true);
+      }
+      for (const row of open) mountRow(scope, row);
       const group = sessions.get(scope);
       // Whatever the person opened meanwhile stays the shown tab.
-      if (group && !group.active && group.rows.some(row => row.id === wanted.active)) group.active = wanted.active;
+      if (group && !group.active && legacy && group.rows.some(row => row.id === legacy.active)) group.active = legacy.active;
       loaded = true;
-    } catch { /* the stored tabs stay for the next load */ }
+    } catch { /* nothing is lost: the chats stay open on the server for the next load */ }
     restoring.delete(scope);
     if (loaded) save(scope);
     sync();
@@ -187,7 +200,7 @@ const AgentView = (() => {
     for (const [key, group] of sessions) {
       for (const row of group.rows) row.holder.hidden = !(key === scope && group.active === row.id);
     }
-    // Chats exist for the local engine only; the first time a task is mounted its stored tabs are reopened.
+    // Chats exist for the local engine only; the first time a task is mounted its open chats are reopened.
     const local = (TerminalTabs.context() || {}).sourceKey === 'local';
     if (scope && local && !restored.has(scope)) { restored.add(scope); void restore(scope); }
     const group = scope && sessions.get(scope);
@@ -213,6 +226,7 @@ const AgentView = (() => {
     row.holder.remove();
     if (group.active === id) group.active = null; // fall back to the terminal
     if (!group.rows.length) sessions.delete(scope);
+    setOpened(scope, id, false);
     save(scope);
     sync();
   }
@@ -229,6 +243,7 @@ const AgentView = (() => {
       const conversation = await AgentChat.open(api, baseOf(), agent, choice);
       const row = mountRow(scope, conversation);
       sessions.get(scope).active = row.id;
+      setOpened(scope, conversation.id, true);
       save(scope);
       sync();
       row.chat.focus();

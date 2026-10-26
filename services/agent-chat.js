@@ -27,6 +27,7 @@ function createAgentChat({ db, adapters = ADAPTERS }) {
   const publicRow = (row, rt) => ({
     id: row.id, agent: row.agent, session_id: row.session_id, title: row.title, mode: row.mode,
     updated_at: row.updated_at, running: Boolean(rt && rt.status === 'running'),
+    opened: { web: row.opened_web || null, h5: row.opened_h5 || null },
     ...(rt && rt.model ? { model: rt.model } : {}), ...(rt && rt.effort ? { effort: rt.effort } : {}), ...(rt && rt.context ? { context: rt.context } : {}),
     ...(rt && rt.limits ? { limits: rt.limits } : {}),
   });
@@ -417,6 +418,25 @@ function createAgentChat({ db, adapters = ADAPTERS }) {
     return { success: true };
   }
 
+  // Marks a chat as open (or not) on a page: 'web' is the desktop page, which shows every open chat as a tab; 'h5' is the phone page, which
+  // shows one at a time, so opening a chat there closes the others of the task. Opening does not change the order of the list.
+  const SURFACES = { web: 'opened_web', h5: 'opened_h5' };
+  function setOpened(task, id, { surface, opened } = {}) {
+    const row = rowOf(task.id, id);
+    if (!row) throw fail('CONVERSATION_NOT_FOUND', 404);
+    const column = SURFACES[surface];
+    if (!column) throw fail('INVALID_SURFACE');
+    if (typeof opened !== 'boolean') throw fail('INVALID_OPENED');
+    if (opened) {
+      if (surface === 'h5') db.prepare(`UPDATE agent_conversations SET ${column} = NULL WHERE task_id = ? AND id != ?`).run(task.id, id);
+      // Opening again keeps the place among the tabs.
+      db.prepare(`UPDATE agent_conversations SET ${column} = COALESCE(${column}, ?) WHERE id = ?`).run(Date.now(), id);
+    } else {
+      db.prepare(`UPDATE agent_conversations SET ${column} = NULL WHERE id = ?`).run(id);
+    }
+    return publicRow(rowOf(task.id, id), runtimes.get(id));
+  }
+
   function remove(task, id) {
     const row = rowOf(task.id, id);
     if (!row) throw fail('CONVERSATION_NOT_FOUND', 404);
@@ -439,7 +459,7 @@ function createAgentChat({ db, adapters = ADAPTERS }) {
     }
   }
 
-  return { list, create, snapshot, subscribe, sendMessage, interrupt, answerPermission, setMode, setPreferences, listModels, rename, remove, stopTask, refreshLimits };
+  return { list, create, snapshot, subscribe, sendMessage, interrupt, answerPermission, setMode, setPreferences, listModels, setOpened, rename, remove, stopTask, refreshLimits };
 }
 
 let shared = null;

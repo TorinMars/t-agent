@@ -534,3 +534,46 @@ test('choosing another model drops the effort the last turn reported, but keeps 
   const again = chat.setPreferences(task, conversation.id, { model: 'gpt-third' });
   assert.deepEqual([again.model, again.effort], ['gpt-third', 'high'], 'an effort the person chose stays');
 });
+
+test('which chats are open is saved per page: the desktop keeps every open chat, the phone one per task, and opening does not reorder the list', async () => {
+  const task = tasks.createTask('owner', { title: 'open flags' }); // its own task: the chats of the other tests are not in this list
+  const chat = createAgentChat({ db, adapters: { codex: fakeAdapter(async () => ({ ok: true })) } });
+  const other = tasks.createTask('owner', { title: 'other task' });
+  const a = chat.create(task, { agent: 'codex', title: 'A' });
+  const b = chat.create(task, { agent: 'codex', title: 'B' });
+  const c = chat.create(task, { agent: 'codex', title: 'C' });
+  const elsewhere = chat.create(other, { agent: 'codex', title: 'Elsewhere' });
+  assert.deepEqual(chat.list(task.id).map(row => row.opened), Array(3).fill({ web: null, h5: null }), 'nothing is open at first');
+  const order = chat.list(task.id).map(row => row.id);
+
+  const first = chat.setOpened(task, a.id, { surface: 'web', opened: true });
+  assert.ok(first.opened.web > 0 && first.opened.h5 === null);
+  await new Promise(resolve => setTimeout(resolve, 5));
+  chat.setOpened(task, b.id, { surface: 'web', opened: true });
+  const again = chat.setOpened(task, a.id, { surface: 'web', opened: true });
+  assert.equal(again.opened.web, first.opened.web, 'opening again keeps the place among the tabs');
+  assert.deepEqual(chat.list(task.id).map(row => row.id), order, 'the list keeps its order');
+  assert.deepEqual(chat.list(task.id).filter(row => row.opened.web).sort((x, y) => x.opened.web - y.opened.web).map(row => row.title), ['A', 'B']);
+
+  // The phone shows one chat at a time: opening one closes the other of the task, but not the desktop's tabs or another task's chat.
+  chat.setOpened(task, a.id, { surface: 'h5', opened: true });
+  chat.setOpened(other, elsewhere.id, { surface: 'h5', opened: true });
+  chat.setOpened(task, c.id, { surface: 'h5', opened: true });
+  const rows = Object.fromEntries(chat.list(task.id).map(row => [row.title, row.opened]));
+  assert.deepEqual([rows.A.h5, rows.B.h5 === null, rows.C.h5 > 0], [null, true, true]);
+  assert.ok(rows.A.web && rows.B.web, 'the desktop tabs are not touched by the phone');
+  assert.ok(chat.list(other.id)[0].opened.h5, 'another task is not touched');
+
+  chat.setOpened(task, a.id, { surface: 'web', opened: false });
+  assert.equal(chat.list(task.id).find(row => row.title === 'A').opened.web, null);
+  // It survives a restart (a new service on the same database).
+  const restarted = createAgentChat({ db, adapters: { codex: fakeAdapter(async () => ({ ok: true })) } });
+  assert.deepEqual(restarted.list(task.id).filter(row => row.opened.web).map(row => row.title), ['B']);
+  assert.deepEqual((await restarted.snapshot(task, c.id)).conversation.opened.h5 > 0, true);
+
+  for (const bad of [{ surface: 'tablet', opened: true }, { surface: 'web', opened: 'yes' }, { surface: 'web' }, {}, undefined]) {
+    assert.throws(() => chat.setOpened(task, a.id, bad), /INVALID_(SURFACE|OPENED)/);
+  }
+  assert.throws(() => chat.setOpened(task, 'missing', { surface: 'web', opened: true }), /CONVERSATION_NOT_FOUND/);
+  assert.throws(() => chat.setOpened(other, a.id, { surface: 'web', opened: true }), /CONVERSATION_NOT_FOUND/, 'a chat of another task cannot be opened through this one');
+});

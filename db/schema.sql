@@ -148,6 +148,10 @@ CREATE TABLE IF NOT EXISTS agent_conversations (
   mode TEXT NOT NULL,
   model TEXT,
   effort TEXT,
+  -- When the chat was opened (ms) on the desktop page / the phone page, NULL when it is not open there. The desktop shows every open chat
+  -- as a tab, the phone one at a time; each page restores its own.
+  opened_web INTEGER,
+  opened_h5 INTEGER,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

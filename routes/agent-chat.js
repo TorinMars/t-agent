@@ -27,6 +27,7 @@ function createAgentChatRouter({ service = getAgentChat(), authenticate = requir
     if (body.title !== undefined) service.rename(task, req.params.cid, body.title);
     if (body.mode !== undefined) result = service.setMode(task, req.params.cid, body.mode);
     if (body.model !== undefined || body.effort !== undefined) result = service.setPreferences(task, req.params.cid, { model: body.model, effort: body.effort });
+    if (body.opened !== undefined) result = service.setOpened(task, req.params.cid, { surface: body.surface, opened: body.opened });
     return result;
   }));
   router.get('/conversations/:cid/models', handle((task, req) => service.listModels(task, req.params.cid)));

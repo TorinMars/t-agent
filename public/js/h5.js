@@ -561,9 +561,16 @@
     agentView.style.height = `${viewport.height}px`;
     agentView.style.top = `${viewport.offsetTop}px`;
   }
-  // Which chat of which task is shown, and the chat that is remembered for a task (so a refresh brings it back).
+  // Which chat of which task is shown. The chat that is open on a task is kept in the database (the open flag of the conversation, one per
+  // task on this page), so a refresh, or another phone, brings it back. Earlier versions remembered it in localStorage (`h5-agent:...`);
+  // that is moved to the database the first time it is found.
   let agentFor = null;
-  const agentKey = item => `agent:${source.key}:${item.id}`;
+  const legacyKey = item => `agent:${source.key}:${item.id}`;
+  // Tells the server that a chat is open (or not) on the phone page; a failure is shown, the chat just is not remembered.
+  function setOpened(taskId, id, opened) {
+    chatApi.patch(`${source.tasksBase}/${taskId}/agent/conversations/${id}`, { opened, surface: 'h5' })
+      .catch(error => tell(`Could not save which chat is open: ${error.message}`, 'error'));
+  }
   // Takes the chat view away without forgetting the chat.
   function hideAgent() {
     if (agentChat) agentChat.destroy();
@@ -578,10 +585,11 @@
   }
   // Closing it with the back button is the person saying they are done with it.
   function closeAgent() {
-    if (agentFor) store.set(`agent:${agentFor.source}:${agentFor.taskId}`, null);
+    if (agentFor && agentFor.source === 'local') setOpened(agentFor.taskId, agentFor.conversation, false);
     hideAgent();
   }
-  function mountAgent(conversation) {
+  // `remember`: the person opened it, so the server is told; a chat that is shown again because it was already open is not sent again.
+  function mountAgent(conversation, { remember = true } = {}) {
     if (agentChat) agentChat.destroy();
     agentView.hidden = false;
     if (window.visualViewport) {
@@ -591,21 +599,25 @@
     }
     agentChat = AgentChat.mount(agentView, { api: chatApi, base: `${source.tasksBase}/${task.id}/agent`, conversation, onClose: closeAgent, notify: message => tell(message, 'error') });
     agentFor = { source: source.key, taskId: task.id, conversation: conversation.id };
-    store.set(agentKey(task), conversation.id);
+    if (remember && source.key === 'local') setOpened(task.id, conversation.id, true);
   }
-  // Opens again the chat that was open on this task when the page was left (chats exist for this machine only).
+  // Opens again the chat that is open on this task (chats exist for this machine only).
   async function restoreAgent(item) {
     if (source.key !== 'local' || agentChat) return;
-    const id = store.get(agentKey(item));
-    if (!id) return;
     const current = source.key;
     let rows;
     try { rows = await chatApi.get(`${source.tasksBase}/${item.id}/agent/conversations`); }
-    catch { return; } // it stays remembered for the next time
+    catch { return; } // nothing is lost: the chat stays open on the server for the next time
     if (task !== item || source.key !== current || agentChat) return;
-    const row = (Array.isArray(rows) ? rows : []).find(entry => entry.id === id);
-    if (row) mountAgent(row);
-    else store.set(agentKey(item), null); // the chat was deleted
+    const list = Array.isArray(rows) ? rows : [];
+    let row = list.filter(entry => entry.opened && entry.opened.h5).sort((x, y) => y.opened.h5 - x.opened.h5)[0];
+    const legacy = store.get(legacyKey(item));
+    if (legacy) {
+      store.set(legacyKey(item), null);
+      const old = list.find(entry => entry.id === legacy);
+      if (!row && old) { row = old; setOpened(item.id, old.id, true); } // moved to the database
+    }
+    if (row) mountAgent(row, { remember: false });
   }
   async function openAgentChats(agent, label) {
     const current = task;

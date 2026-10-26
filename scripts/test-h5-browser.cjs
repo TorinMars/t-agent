@@ -11,6 +11,8 @@ const TYPES = { '.js': 'application/javascript', '.css': 'text/css', '.html': 't
 const ossUploads = [];
 // The conversations the page's server knows; a test can make the list unreadable.
 const chats = [];
+const chatPatches = [];
+const pollUntil = async condition => { for (let i = 0; i < 500 && !condition(); i++) await new Promise(resolve => setTimeout(resolve, 20)); assert.ok(condition(), 'timed out waiting for the server'); };
 let chatListFails = false;
 
 async function openPage(browser, { remoteTerminals, viewport } = {}) {
@@ -55,9 +57,17 @@ async function openPage(browser, { remoteTerminals, viewport } = {}) {
     if (url.pathname === '/api/tasks/1/agent/conversations' && method === 'GET') return chatListFails ? json({ error: 'down' }, 500) : json(chats);
     if (url.pathname === '/api/tasks/1/agent/sessions') return json([{ id: 'session-old-1234', title: 'Old chat' }]);
     if (url.pathname === '/api/tasks/1/agent/conversations' && method === 'POST') {
-      const row = { id: 'c1', agent: route.request().postDataJSON().agent, session_id: null, title: 'New chat', mode: 'ask', running: false };
+      const row = { id: 'c1', agent: route.request().postDataJSON().agent, session_id: null, title: 'New chat', mode: 'ask', running: false, opened: { web: null, h5: null } };
       chats.push(row);
       return json(row);
+    }
+    if (url.pathname === '/api/tasks/1/agent/conversations/c1' && method === 'PATCH') {
+      // Which chat is open on the phone page is kept by the server.
+      const body = route.request().postDataJSON();
+      chatPatches.push(body);
+      const row = chats.find(entry => entry.id === 'c1');
+      if (row) row.opened[body.surface] = body.opened ? row.opened[body.surface] || Date.now() : null;
+      return json(row || {});
     }
     if (url.pathname === '/api/tasks/1/agent/conversations/c1') return json({ conversation: { id: 'c1' }, items: [{ id: 'u1', kind: 'user', text: 'hello agent' }, { id: 't1', kind: 'text', text: 'Hi **there**' }], pending: [], status: 'idle', seq: 0 });
     if (url.pathname === '/api/tasks/1/agent/conversations/c1/events') return route.fulfill({ contentType: 'text/event-stream', body: ': ok\n\n' });
@@ -224,36 +234,48 @@ async function openPage(browser, { remoteTerminals, viewport } = {}) {
     await page.locator('#h5-agent .ac-bubble', { hasText: 'hello agent' }).waitFor();
     assert.equal(await page.locator('#h5-agent .ac-text strong').textContent(), 'there');
     assert.ok(calls.includes('POST /api/tasks/1/agent/conversations'));
-    // The open chat is remembered: a refresh brings it back, and the back button means the person is done with it.
-    const remembered = () => page.evaluate(() => localStorage.getItem('h5-agent:local:1'));
-    assert.equal(await remembered(), 'c1');
+    // The open chat is kept by the server: a refresh brings it back, and the back button means the person is done with it.
+    const openOnServer = () => chats[0] && chats[0].opened.h5;
+    await pollUntil(() => openOnServer() > 0);
+    assert.deepEqual(chatPatches.at(-1), { opened: true, surface: 'h5' });
+    assert.equal(await page.evaluate(() => localStorage.getItem('h5-agent:local:1')), null, 'nothing about it is kept in the browser any more');
     await page.reload();
     await page.locator('#h5-agent .agent-chat').waitFor();
     await page.locator('#h5-agent .ac-bubble', { hasText: 'hello agent' }).waitFor();
     await page.locator('#h5-agent .ac-back').tap();
     await page.locator('#h5-agent').waitFor({ state: 'hidden' });
-    assert.equal(await remembered(), null);
+    await pollUntil(() => openOnServer() === null);
+    assert.deepEqual(chatPatches.at(-1), { opened: false, surface: 'h5' });
     await page.reload();
     await page.locator('#h5-task-name', { hasText: 'Fix login' }).waitFor();
     await page.waitForTimeout(400);
     assert.equal(await page.locator('#h5-agent').isHidden(), true, 'a chat that was closed does not come back');
-    // A list that cannot be read keeps the chat remembered for the next time; a chat that no longer exists is forgotten.
-    await page.evaluate(() => localStorage.setItem('h5-agent:local:1', 'c1'));
+    // It is the server that remembers: a list that cannot be read opens nothing and forgets nothing; a chat that no longer exists is not shown.
+    chats[0].opened.h5 = Date.now();
     chatListFails = true;
     await page.reload();
     await page.locator('#h5-task-name', { hasText: 'Fix login' }).waitFor();
     await page.waitForTimeout(400);
     assert.equal(await page.locator('#h5-agent').isHidden(), true);
-    assert.equal(await remembered(), 'c1');
+    assert.ok(openOnServer() > 0);
     chatListFails = false;
     await page.reload();
     await page.locator('#h5-agent .agent-chat').waitFor();
+    // What an earlier version kept in the browser moves to the server, once.
+    await page.locator('#h5-agent .ac-back').tap();
+    await pollUntil(() => openOnServer() === null);
+    const patchesBefore = chatPatches.length;
+    await page.evaluate(() => localStorage.setItem('h5-agent:local:1', 'c1'));
+    await page.reload();
+    await page.locator('#h5-agent .agent-chat').waitFor();
+    await pollUntil(() => openOnServer() > 0);
+    assert.equal(chatPatches.length, patchesBefore + 1);
+    assert.equal(await page.evaluate(() => localStorage.getItem('h5-agent:local:1')), null, 'the old record is gone');
     chats.length = 0;
     await page.reload();
     await page.locator('#h5-task-name', { hasText: 'Fix login' }).waitFor();
     await page.waitForTimeout(400);
-    assert.equal(await page.locator('#h5-agent').isHidden(), true);
-    assert.equal(await remembered(), null, 'a deleted chat is forgotten');
+    assert.equal(await page.locator('#h5-agent').isHidden(), true, 'a deleted chat is not shown');
     await page.locator('#h5-open-tasks').tap();
     await page.locator('#h5-tasks .h5-task-add').tap();
     await page.locator('#h5-term-menu-actions button', { hasText: 'New Terminal' }).tap();

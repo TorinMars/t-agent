@@ -67,6 +67,10 @@ const conversationColumns = db.prepare('PRAGMA table_info(agent_conversations)')
 for (const column of ['model', 'effort']) {
   if (!conversationColumns.includes(column)) db.exec(`ALTER TABLE agent_conversations ADD COLUMN ${column} TEXT`);
 }
+// Where a chat is open (see schema.sql): the time it was opened on the desktop page / the phone page.
+for (const column of ['opened_web', 'opened_h5']) {
+  if (!conversationColumns.includes(column)) db.exec(`ALTER TABLE agent_conversations ADD COLUMN ${column} INTEGER`);
+}
 
 // Bookmark groups created before the project became English-first used a Chinese default name.
 db.prepare("UPDATE bookmarks SET group_name = 'Default' WHERE group_name = ?").run('\u9ed8\u8ba4');

@@ -99,3 +99,16 @@ test('the model and effort of a chat are chosen with PATCH and the model list is
   assert.equal((await call('GET', `/api/tasks/${theirs.id}/agent/conversations/${id}/models`)).status, 404, 'a task of someone else');
   assert.equal((await call('GET', `${url}/conversations/missing/models`)).body.error, 'CONVERSATION_NOT_FOUND');
 });
+
+test('a chat is opened and closed on a page with PATCH, and the list says where it is open', async () => {
+  const url = `/api/tasks/${mine.id}/agent`;
+  const id = (await call('POST', `${url}/conversations`, { agent: 'claude' })).body.id;
+  assert.deepEqual((await call('GET', `${url}/conversations`)).body.find(row => row.id === id).opened, { web: null, h5: null });
+  const opened = await call('PATCH', `${url}/conversations/${id}`, { opened: true, surface: 'h5' });
+  assert.deepEqual([opened.status, opened.body.opened.web, opened.body.opened.h5 > 0], [200, null, true]);
+  assert.equal((await call('GET', `${url}/conversations`)).body.find(row => row.id === id).opened.h5 > 0, true);
+  assert.equal((await call('PATCH', `${url}/conversations/${id}`, { opened: false, surface: 'h5' })).body.opened.h5, null);
+  assert.equal((await call('PATCH', `${url}/conversations/${id}`, { opened: true, surface: 'tablet' })).body.error, 'INVALID_SURFACE');
+  assert.equal((await call('PATCH', `${url}/conversations/${id}`, { opened: 'yes', surface: 'web' })).body.error, 'INVALID_OPENED');
+  assert.equal((await call('PATCH', `/api/tasks/${theirs.id}/agent/conversations/${id}`, { opened: true, surface: 'web' })).status, 404);
+});

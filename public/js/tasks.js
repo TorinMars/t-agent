@@ -288,7 +288,7 @@ const Tasks = (() => {
       cursorBlink: true,
       fontSize: 13,
       fontFamily: 'Menlo, Monaco, "Courier New", monospace',
-      theme: { background: '#1e1e1e' },
+      theme: typeof Theme === 'undefined' ? { background: '#1e1e1e' } : Theme.terminal(),
       scrollback: 5000,
       // Hyperlinks printed by programs with OSC 8 (Claude Code etc.; the visible text may differ from the real address): they also need Cmd/Ctrl-click,
       // confirm the real address first and only open http(s). xterm's default is a confirm box on a single click.
@@ -526,7 +526,8 @@ const Tasks = (() => {
       } catch { /* keep the source text; the next time the document is opened it is rendered again */ }
     }
   }
-  if (typeof Theme !== 'undefined') Theme.onChange(() => { rerenderMermaid(); });
+  // The terminals follow the theme too: their background is part of the same set of colours as the tabs around them.
+  if (typeof Theme !== 'undefined') Theme.onChange(() => { rerenderMermaid(); for (const inst of termInstances.values()) inst.term.options.theme = Theme.terminal(); });
 
   // Add a zoom button to rendered mermaid SVGs; clicking it opens a modal
   function wrapMermaidDiagrams(container) {

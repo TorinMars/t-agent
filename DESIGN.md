@@ -1969,6 +1969,10 @@ The frontend OSS configuration is read again when the window gets focus, when th
 - Messages that now use floating notices: the send / translate / configuration hints of the Chinese-to-English input (before, they took a separate line in the input bar and made it taller), terminal copy results, and the errors of terminal image upload and reading the OSS settings (before, `alert`). Each script calls `notify` through a local `tell()`, and an environment that did not load `toast.js` (the unit-test page) falls back to `alert`.
 - Still unchanged: operation status text placed next to buttons inside forms (such as the frp / SSH pages and the feedback in the settings dialog), the image upload progress card, `confirm` dialogs that need the user's confirmation, and the `alert` used for tasks, sharing, document editing and so on.
 
+## Terminal colours and themes
+
+The terminal, its tab strip, the buttons, the keys bar, the translate bar and xterm's own background use one set of CSS variables (`--term-bg`, `--term-chrome`, `--term-line`, `--term-btn`, `--term-btn-hover`, `--term-btn-line`, `--term-pop`, `--term-text`, `--term-tab-active`, `--term-accent`). `style.css` holds the neutral grey defaults (the light and dark themes keep the terminal they always had) and `themes.css` replaces the whole set for the futuristic theme with the blue of the page, so the pieces never mix two palettes. xterm takes its background from `Theme.terminal()` (the same variable) when it is created and every open terminal is updated when the theme changes. A new terminal rule must use the variables: `test/terminal-theme-css.test.js` fails when a grey is written into a rule again, and `scripts/test-terminal-theme-browser.cjs` checks the real colours in every theme, including xterm's background.
+
 ## Interface language
 
 - The UI text is English and the default language. The 🌐 button in the top bar (and at the bottom of the login page) switches between English and Chinese; the choice is stored in `localStorage['ta-lang']`, and switching reloads the page so all dynamic content is rendered again in the new language.

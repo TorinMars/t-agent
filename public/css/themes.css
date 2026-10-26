@@ -94,6 +94,17 @@
   --status-doing: #ffc857;
   --status-done: #3dffb0;
   --glow: 0 0 12px rgba(0, 229, 255, .35);
+  /* The terminal and its tabs in the deep-space blue of the page (the other themes keep the neutral grey set in style.css). */
+  --term-bg: #040a18;
+  --term-chrome: #0a1630;
+  --term-line: #17356b;
+  --term-btn: #0c1d42;
+  --term-btn-hover: #14346b;
+  --term-btn-line: #1c3f7d;
+  --term-pop: #07112a;
+  --term-text: #d6e6ff;
+  --term-tab-active: #12295c;
+  --term-accent: #00e5ff;
 }
 :root[data-theme="tech"] body {
   background:

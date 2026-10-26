@@ -52,6 +52,8 @@ const Theme = (() => {
     set,
     apply,
     monacoTheme: () => { defineMonaco(); return find(current).monaco; },
+    // The colours of an xterm terminal: its background is the one of the terminal pane, so the two are never different shades.
+    terminal: () => ({ background: getComputedStyle(document.documentElement).getPropertyValue('--term-bg').trim() || '#1e1e1e' }),
     mermaidTheme: () => find(current).mermaid,
     onChange: listener => listeners.add(listener),
   };

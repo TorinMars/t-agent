@@ -5,6 +5,17 @@
 }
 
 :root {
+  /* The terminal and its tabs: the same colours everywhere; a theme (themes.css) changes them as one set. */
+  --term-bg: #1e1e1e;
+  --term-chrome: #252526;
+  --term-line: #3a3a3a;
+  --term-btn: #2d2d2d;
+  --term-btn-hover: #3a3a3a;
+  --term-btn-line: #4b4b4b;
+  --term-pop: #1b1b1c;
+  --term-text: #d4d4d4;
+  --term-tab-active: #444;
+  --term-accent: #70a5ff;
   --bg: #ffffff;
   --bg-secondary: #f6f8fa;
   --bg-tertiary: #eaeef2;
@@ -845,7 +856,7 @@ body.environment-open .sidebar, body.environment-open .content-area, body.enviro
   background-size: 300% 100%;
   animation: term-shimmer 1.2s infinite linear;
 }
-.terminal-tabs .terminal-tab.active.term-running { box-shadow: inset 0 0 0 1px #1d4ed8, inset 0 -2px #70a5ff; }
+.terminal-tabs .terminal-tab.active.term-running { box-shadow: inset 0 0 0 1px #1d4ed8, inset 0 -2px var(--term-accent); }
 .task-nav-item.term-done::after,
 .engine-tab.term-done::after,
 .terminal-tab.term-done::after {
@@ -1682,7 +1693,7 @@ html[lang="zh-CN"] .update-log:empty::before { content: '\7B49\5F85\8F93\51FA\20
   flex: 1;
   min-width: 0;
   min-height: 0;
-  background: #1e1e1e;
+  background: var(--term-bg);
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -1694,8 +1705,8 @@ html[lang="zh-CN"] .update-log:empty::before { content: '\7B49\5F85\8F93\51FA\20
   min-width: 0;
   gap: 8px;
   padding: 0 8px;
-  background: #252526;
-  border-bottom: 1px solid #3a3a3a;
+  background: var(--term-chrome);
+  border-bottom: 1px solid var(--term-line);
 }
 .terminal-toolbar {
   flex-wrap: nowrap;
@@ -1704,7 +1715,7 @@ html[lang="zh-CN"] .update-log:empty::before { content: '\7B49\5F85\8F93\51FA\20
   align-items: center;
   gap: 6px;
   padding: 4px 0;
-  background: #252526;
+  background: var(--term-chrome);
   flex: 0 1 auto;
   min-width: 0;
   max-width: calc(100% - 108px);
@@ -1716,16 +1727,16 @@ html[lang="zh-CN"] .update-log:empty::before { content: '\7B49\5F85\8F93\51FA\20
   white-space: nowrap;
   min-height: 25px;
   padding: 2px 9px;
-  border: 1px solid #4b4b4b;
+  border: 1px solid var(--term-btn-line);
   border-radius: 5px;
-  background: #2d2d2d;
-  color: #d4d4d4;
+  background: var(--term-btn);
+  color: var(--term-text);
   font: inherit;
   font-size: 12px;
   line-height: 1.4;
   cursor: pointer;
 }
-.terminal-toolbar-btn:hover { background: #3a3a3a; color: #fff; }
+.terminal-toolbar-btn:hover { background: var(--term-btn-hover); color: #fff; }
 .terminal-toolbar-btn.danger:hover { border-color: #cf222e; color: #ff7b72; }
 .terminal-toolbar-btn:disabled { cursor: wait; opacity: .55; }
 /* Show only the icon and reveal the detailed text on hover. Applies only to action buttons in the toolbar: terminal tabs also use .terminal-toolbar-btn,
@@ -1737,9 +1748,9 @@ html[lang="zh-CN"] .update-log:empty::before { content: '\7B49\5F85\8F93\51FA\20
   top: calc(100% + 6px);
   right: -2px;
   padding: 5px 9px;
-  border: 1px solid #4b4b4b;
+  border: 1px solid var(--term-btn-line);
   border-radius: 5px;
-  background: #1b1b1c;
+  background: var(--term-pop);
   color: #f0f0f0;
   font-size: 12px;
   font-weight: 400;
@@ -1800,15 +1811,15 @@ html[lang="zh-CN"] .update-log:empty::before { content: '\7B49\5F85\8F93\51FA\20
   display: block;
   width: 10px;
 }
-#xterm-container .xterm-viewport::-webkit-scrollbar-track { background: #252526; }
+#xterm-container .xterm-viewport::-webkit-scrollbar-track { background: var(--term-chrome); }
 #xterm-container .xterm-viewport::-webkit-scrollbar-thumb {
   background: #707780;
-  border: 2px solid #252526;
+  border: 2px solid var(--term-chrome);
   border-radius: 5px;
 }
 #xterm-container .xterm-viewport::-webkit-scrollbar-thumb:hover { background: #9ba3ad; }
 @supports (-moz-appearance: none) {
-  #xterm-container .xterm-viewport { scrollbar-width: auto; scrollbar-color: #707780 #252526; }
+  #xterm-container .xterm-viewport { scrollbar-width: auto; scrollbar-color: #707780 var(--term-chrome); }
 }
 
 /* task-info-path: display of work_dir */
@@ -1819,17 +1830,17 @@ html[lang="zh-CN"] .update-log:empty::before { content: '\7B49\5F85\8F93\51FA\20
   word-break: break-all;
 }
 
-.terminal-tabs { display: flex; flex: 1 1 0; min-width: 100px; gap: 4px; padding: 4px 0; overflow-x: auto; background: #252526; }
+.terminal-tabs { display: flex; flex: 1 1 0; min-width: 100px; gap: 4px; padding: 4px 0; overflow-x: auto; background: var(--term-chrome); }
 .terminal-tabs .terminal-tab { flex: 0 0 auto; white-space: nowrap; }
 .terminal-tabs .terminal-tab-close { display: inline-block; margin-left: 7px; width: 14px; height: 14px; border-radius: 3px; line-height: 14px; text-align: center; font-size: 12px; color: #9da5b0; opacity: .55; cursor: pointer; }
 .terminal-tabs .terminal-tab-close::before { content: '×'; }
 .terminal-tabs .terminal-tab:hover .terminal-tab-close,
 .terminal-tabs .terminal-tab.active .terminal-tab-close { opacity: 1; }
 .terminal-tabs .terminal-tab-close:hover { background: #cf222e; color: #fff; }
-.terminal-tabs .terminal-tab-edit { flex: 0 0 auto; box-sizing: border-box; width: 150px; height: 28px; padding: 0 8px; border: 1px solid #70a5ff; border-radius: 5px; background: #1b1b1c; color: #f0f0f0; font: inherit; font-size: 13px; }
+.terminal-tabs .terminal-tab-edit { flex: 0 0 auto; box-sizing: border-box; width: 150px; height: 28px; padding: 0 8px; border: 1px solid var(--term-accent); border-radius: 5px; background: var(--term-pop); color: #f0f0f0; font: inherit; font-size: 13px; }
 .terminal-tabs .terminal-tab-edit:focus { outline: none; }
 .terminal-tabs .terminal-tab-edit:invalid { border-color: #cf222e; }
-.terminal-tabs .terminal-tab.active { color: #fff; background: #444; box-shadow: inset 0 -2px #70a5ff; }
+.terminal-tabs .terminal-tab.active { color: #fff; background: var(--term-tab-active); box-shadow: inset 0 -2px var(--term-accent); }
 
 /* Compact terminal keys stay below the viewport without covering output. */
 .terminal-keys {
@@ -1840,8 +1851,8 @@ html[lang="zh-CN"] .update-log:empty::before { content: '\7B49\5F85\8F93\51FA\20
   padding: 4px 8px;
   min-width: 0;
   overflow-x: auto;
-  background: #252526;
-  border-top: 1px solid #3a3a3a;
+  background: var(--term-chrome);
+  border-top: 1px solid var(--term-line);
 }
 .terminal-keys button {
   flex: 0 0 auto;
@@ -1890,16 +1901,16 @@ html[lang="zh-CN"] .update-log:empty::before { content: '\7B49\5F85\8F93\51FA\20
 .terminal-keys .terminal-image-upload { margin-left: auto; }
 .terminal-keys .terminal-image-upload[hidden] { display: none; }
 .terminal-image-upload-overlay { position: fixed; inset: 0; z-index: 2147483647; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,.72); touch-action: none; cursor: wait; outline: none; }
-.terminal-image-upload-card { width: min(380px, 85vw); padding: 24px; border-radius: 12px; background: #252526; color: #fff; box-shadow: 0 8px 40px #0008; }
+.terminal-image-upload-card { width: min(380px, 85vw); padding: 24px; border-radius: 12px; background: var(--term-chrome); color: #fff; box-shadow: 0 8px 40px #0008; }
 .terminal-image-upload-card progress { width: 100%; height: 16px; accent-color: #58a6ff; }
-.terminal-image-result { position: fixed; bottom: max(12px, env(safe-area-inset-bottom)); left: 5vw; width: 90vw; box-sizing: border-box; z-index: 10000; padding: 16px; color: #fff; background: #252526; border: 1px solid #58a6ff; border-radius: 8px; }
+.terminal-image-result { position: fixed; bottom: max(12px, env(safe-area-inset-bottom)); left: 5vw; width: 90vw; box-sizing: border-box; z-index: 10000; padding: 16px; color: #fff; background: var(--term-chrome); border: 1px solid #58a6ff; border-radius: 8px; }
 .terminal-image-result input { display: block; width: 100%; box-sizing: border-box; margin: 8px 0; padding: 8px; }
 @media (pointer: coarse) { .terminal-keys .terminal-image-upload { height: 40px; padding: 0 16px; } }
 
 .terminal-history-dialog {
   width: min(960px, 94vw); max-width: 94vw; max-height: 90dvh;
   padding: 20px; border: 1px solid #555; border-radius: 8px;
-  background: #1e1e1e; color: #eee;
+  background: var(--term-bg); color: #eee;
 }
 .terminal-history-dialog::backdrop { background: #0009; }
 .terminal-history-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
@@ -1948,10 +1959,10 @@ html[lang="zh-CN"] .update-log:empty::before { content: '\7B49\5F85\8F93\51FA\20
 .file-sync-code-box textarea, #sync-invite-string { font-family: Menlo, Monaco, "Courier New", monospace; font-size: 12px; max-width: 640px; word-break: break-all; }
 
 /* Chinese-to-English input at the bottom of the terminal: type Chinese, it is translated to English, typed into the terminal and submitted */
-.terminal-translate { display: flex; flex: 0 0 auto; flex-wrap: wrap; align-items: flex-end; gap: 6px; padding: 5px 8px; background: #252526; border-top: 1px solid #3a3a3a; }
+.terminal-translate { display: flex; flex: 0 0 auto; flex-wrap: wrap; align-items: flex-end; gap: 6px; padding: 5px 8px; background: var(--term-chrome); border-top: 1px solid var(--term-line); }
 /* The slot stays one line tall; the textarea grows upward over the terminal so the terminal is never resized (a resize makes the TUI redraw). */
 .terminal-translate-slot { position: relative; flex: 1 1 240px; min-width: 0; height: 28px; }
-.terminal-translate-input { position: absolute; left: 0; right: 0; bottom: 0; z-index: 5; box-sizing: border-box; height: 28px; max-height: 128px; padding: 4px 10px; border: 1px solid #555; border-radius: 5px; background: #1b1b1c; color: #f0f0f0; font-family: inherit; font-size: 13px; line-height: 18px; resize: none; overflow-y: auto; }
+.terminal-translate-input { position: absolute; left: 0; right: 0; bottom: 0; z-index: 5; box-sizing: border-box; height: 28px; max-height: 128px; padding: 4px 10px; border: 1px solid #555; border-radius: 5px; background: var(--term-pop); color: #f0f0f0; font-family: inherit; font-size: 13px; line-height: 18px; resize: none; overflow-y: auto; }
 .terminal-translate-input:focus { outline: none; border-color: #70a5ff; }
 .terminal-translate-input.translating { border-color: #70a5ff; animation: translate-breathe 1.4s ease-in-out infinite; }
 @keyframes translate-breathe {

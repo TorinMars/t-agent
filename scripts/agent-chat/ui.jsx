@@ -19,7 +19,6 @@ const ACCEPT = `${IMAGE_TYPES.join(',')},text/*,.md,.json,.js,.ts,.py,.log,.csv,
 const t = text => (typeof I18n !== 'undefined' ? I18n.t(text) : text);
 const coarse = () => { try { return window.matchMedia('(pointer: coarse)').matches; } catch { return false; } };
 const mac = () => /Mac|iPhone|iPad/.test(navigator.platform || '');
-const SpeechRecognition = typeof window !== 'undefined' ? window.SpeechRecognition || window.webkitSpeechRecognition : undefined;
 
 const Icon = ({ d, fill }) => (
   <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill={fill ? 'currentColor' : 'none'} stroke={fill ? 'none' : 'currentColor'} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={d} /></svg>
@@ -306,42 +305,35 @@ function Working({ since }) {
   );
 }
 
-// Speech to text with the browser's recognizer; the button only exists where the browser has one. A tap starts recording and the next tap
-// stops it: stopping (not aborting) lets the recognizer deliver what it has heard so far before it ends.
-function Mic({ onText, notify }) {
-  const [on, setOn] = useState(false);
-  const recognizer = useRef(null);
-  useEffect(() => () => { if (recognizer.current) recognizer.current.abort(); }, []);
-  if (!SpeechRecognition) return null;
-  const start = () => {
-    if (recognizer.current) return;
-    const next = new SpeechRecognition();
-    next.lang = document.documentElement.lang || navigator.language || 'en-US';
-    next.continuous = true;
-    next.interimResults = false;
-    next.onresult = event => {
-      for (let index = event.resultIndex; index < event.results.length; index++) {
-        if (event.results[index].isFinal) onText(event.results[index][0].transcript);
-      }
-    };
-    next.onerror = event => { if (event.error && event.error !== 'no-speech' && event.error !== 'aborted') notify(`Dictation failed: ${event.error}`); };
-    next.onend = () => { if (recognizer.current === next) recognizer.current = null; setOn(false); };
-    recognizer.current = next;
-    setOn(true);
-    try { next.start(); } catch { recognizer.current = null; setOn(false); }
-  };
-  const stop = () => {
-    const current = recognizer.current;
-    if (!current) return;
-    setOn(false); // at once; the recognizer may take a moment to end
-    try { current.stop(); } catch { recognizer.current = null; }
-  };
-  const label = t(on ? 'Tap to stop dictation' : 'Tap to dictate');
-  return (
-    <button type="button" className={`ac-mic${on ? ' on' : ''}`} aria-pressed={on} aria-label={label} title={label} onClick={() => (on ? stop() : start())}>
-      <Icon d={ICONS.mic} />
-    </button>
-  );
+// Speech to text with the speech model of the page (VoiceInput in voice-input.js: Fun-ASR, the same as the Chinese input box), not the browser's own
+// recognizer. A tap starts recording, the next tap stops it. VoiceInput writes into a textarea, but React owns the real one (a value set from outside
+// does not reach its state), so VoiceInput gets a detached textarea and every change of that one is copied into the chat text after what was typed
+// before the recording. The button only exists where the page loaded voice-input.js.
+function Mic({ text, setText, notify }) {
+  const button = useRef(null);
+  const latest = useRef(text);
+  latest.current = text;
+  const Voice = typeof window !== 'undefined' ? window.VoiceInput : undefined;
+  useEffect(() => {
+    const node = button.current;
+    if (!node || !Voice || !Voice.attach) return undefined;
+    const proxy = document.createElement('textarea');
+    let typed = '';
+    const controller = Voice.attach({
+      textarea: proxy,
+      button: node,
+      onNotConfigured: () => (typeof API !== 'undefined' && Voice.showSettings ? Voice.showSettings() : notify('Set up voice input on the desktop page')),
+    });
+    // Capturing: this runs before VoiceInput's own click handler on the button, so the text typed so far is the base of a new recording.
+    const begin = () => { if (controller.state === 'idle') { typed = latest.current; proxy.value = ''; } };
+    node.addEventListener('click', begin, true);
+    const copy = () => setText(proxy.value ? `${typed}${typed && !/\s$/.test(typed) ? ' ' : ''}${proxy.value}` : typed);
+    proxy.addEventListener('input', copy);
+    return () => { node.removeEventListener('click', begin, true); proxy.removeEventListener('input', copy); controller.cancel(); };
+  }, [Voice]);
+  if (!Voice) return null;
+  const label = t('Voice input');
+  return <button ref={button} type="button" className="ac-mic" aria-label={label} title={label}><Icon d={ICONS.mic} /></button>;
 }
 
 // The images on the clipboard of a paste event. Some browsers list a pasted screenshot in `items` but leave `files` empty.
@@ -489,7 +481,7 @@ function Composer({ store, state, agent, notify, inputRef }) {
             void dispatch(later);
           }}
         />
-        <Mic notify={notify} onText={spoken => !submitting.current && setText(current => `${current}${current && !/\s$/.test(current) ? ' ' : ''}${spoken.trim()}`)} />
+        <Mic text={text} setText={value => { if (!submitting.current) setText(value); }} notify={notify} />
         {filled ? <button type="submit" className="ac-send" disabled={sending} aria-label={t(running && !state.canSteer ? 'Queue for later' : 'Send')}><Icon d={ICONS.up} /></button> : null}
         {running ? <button type="button" className="ac-stop" aria-label={t('Stop')} onClick={() => void store.stop()}><Icon d={ICONS.stop} fill /></button> : null}
       </div>

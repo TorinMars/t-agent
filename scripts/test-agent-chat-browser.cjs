@@ -106,8 +106,23 @@ const server = http.createServer(app);
     const page = await browser.newPage({ viewport: { width: 390, height: 780 } });
     // A stand-in recognizer that records what the page does to it.
     await page.addInitScript(() => {
-      window.dictation = { started: 0, aborted: 0, stopped: 0 };
-      window.SpeechRecognition = class { start() { window.dictation.started += 1; } abort() { window.dictation.aborted += 1; if (this.onend) this.onend(); } stop() { window.dictation.stopped += 1; if (this.onresult) this.onresult({ resultIndex: 0, results: [Object.assign([{ transcript: 'hello there' }], { isFinal: true })] }); if (this.onend) this.onend(); } };
+      // The page's speech model (voice-input.js) is replaced by a fake with the same attach() contract: a click toggles the recording, the
+      // text goes into the textarea it was given (and an input event), and the button gets the class "listening" while it records.
+      window.voice = { attached: 0, started: 0, stopped: 0, textarea: null, base: '' };
+      window.SpeechRecognition = class { start() { window.voice.browser = true; } };
+      window.VoiceInput = {
+        attach({ textarea, button }) {
+          window.voice.attached += 1;
+          window.voice.textarea = textarea;
+          let state = 'idle';
+          button.addEventListener('click', () => {
+            if (state === 'idle') { state = 'listening'; window.voice.started += 1; window.voice.base = textarea.value; button.classList.add('listening'); }
+            else { state = 'idle'; window.voice.stopped += 1; button.classList.remove('listening'); }
+          });
+          return { cancel() { state = 'idle'; button.classList.remove('listening'); }, get state() { return state; } };
+        },
+        say(text) { const box = window.voice.textarea; box.value = window.voice.base + text; box.dispatchEvent(new Event('input', { bubbles: true })); },
+      };
     });
     page.on('pageerror', error => { throw error; });
     await page.goto(`${origin}/harness`);
@@ -366,19 +381,31 @@ const server = http.createServer(app);
     assert.equal(await page.locator('.ac-toolgroup > summary').textContent(), 'Ran 2 commands· 1 failed');
     assert.equal(await page.locator('.ac-failed').textContent(), '· 1 failed');
     assert.equal(await page.locator('.ac-steps .ac-step-icon.error').count(), 1);
-    // Dictation: a tap starts recording, the next tap stops it, and what the recognizer had heard is kept.
+    // Dictation uses the page's speech model, not the browser's recognizer: a tap starts recording, the next tap stops it, and the recognized
+    // text lands in the chat box after what was typed. The page is told nothing is typed yet, then something is.
     const mic = page.locator('.ac-mic');
-    assert.equal(await mic.getAttribute('aria-label'), 'Tap to dictate');
+    assert.ok(await page.evaluate(() => window.voice.attached) >= 1, 'the button is attached to the speech model');
+    await page.fill('.ac-input', 'before');
     await mic.click();
-    await page.waitForSelector('.ac-mic.on');
-    assert.equal(await page.evaluate(() => window.dictation.started), 1, 'a tap starts the recognizer');
-    assert.equal(await mic.getAttribute('aria-label'), 'Tap to stop dictation');
-    await page.waitForTimeout(500);
-    assert.equal(await page.locator('.ac-mic.on').count(), 1, 'it keeps recording without holding');
+    await page.waitForSelector('.ac-mic.listening');
+    assert.equal(await page.evaluate(() => window.voice.started), 1, 'a tap starts the recording');
+    await page.evaluate(() => window.VoiceInput.say('hello'));
+    assert.equal(await page.inputValue('.ac-input'), 'before hello', 'live text follows what was typed, with a space between');
+    await page.evaluate(() => window.VoiceInput.say('hello there'));
+    assert.equal(await page.inputValue('.ac-input'), 'before hello there', 'the live text is replaced, not appended');
+    await page.waitForTimeout(300);
+    assert.equal(await page.locator('.ac-mic.listening').count(), 1, 'it keeps recording without holding');
     await mic.click();
-    await page.waitForSelector('.ac-mic:not(.on)');
-    assert.deepEqual(await page.evaluate(() => window.dictation), { started: 1, aborted: 0, stopped: 1 }, 'the second tap stops it, without aborting');
-    assert.equal(await page.inputValue('.ac-input'), 'hello there', 'the heard text is inserted');
+    await page.waitForSelector('.ac-mic:not(.listening)');
+    assert.deepEqual(await page.evaluate(() => [window.voice.started, window.voice.stopped, window.voice.browser || false]), [1, 1, false], 'the second tap stops it; the browser recognizer is never used');
+    assert.equal(await page.inputValue('.ac-input'), 'before hello there', 'the text stays after stopping');
+    await mic.click();
+    await page.waitForSelector('.ac-mic.listening');
+    await page.evaluate(() => window.VoiceInput.say('x'));
+    await page.evaluate(() => { window.voice.textarea.value = ''; window.voice.textarea.dispatchEvent(new Event('input', { bubbles: true })); });
+    assert.equal(await page.inputValue('.ac-input'), 'before hello there', 'a cancelled recording puts the box back as it was');
+    await mic.click();
+    await page.waitForSelector('.ac-mic:not(.listening)');
     await page.fill('.ac-input', '');
     // The translation switch is shared by desktop and phone, before the microphone.
     const translation = page.getByRole('switch', { name: 'Translate to English' });

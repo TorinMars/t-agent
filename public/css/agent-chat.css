@@ -122,7 +122,7 @@
 .ac-input::placeholder { color: var(--ac-muted); }
 .ac-attach, .ac-send, .ac-stop, .ac-mic { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; border: 0; border-radius: 50%; background: none; color: var(--ac-muted); cursor: pointer; }
 .ac-attach:hover, .ac-mic:hover { background: var(--ac-key); color: var(--ac-text); }
-.ac-mic.on { background: var(--ac-danger); color: #fff; }
+.ac-mic.listening { background: var(--ac-danger); color: #fff; }
 .ac-send { background: var(--ac-text); color: var(--ac-bg); }
 .ac-send:disabled { opacity: .5; }
 .ac-stop { background: none; color: var(--ac-text); }

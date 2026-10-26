@@ -126,12 +126,70 @@ const AgentView = (() => {
   const scopeOf = () => { const target = TerminalTabs.context(); return target ? target.scope : null; };
   const baseOf = () => { const scope = scopeOf(); return scope ? `${scope}/agent` : null; };
 
+  // The conversations live on the server, but which of them are open as tabs (and which one is shown) only lives in this page. It is
+  // kept in localStorage per task so a refresh brings the tabs back; a conversation that no longer exists is simply dropped.
+  const storeKey = scope => `agent-tabs:${scope}`;
+  const restored = new Set(); // scopes whose stored tabs were already looked at in this page
+  const restoring = new Set(); // scopes being restored: what is open must not overwrite the stored list yet
+  function save(scope) {
+    if (restoring.has(scope)) return;
+    const group = sessions.get(scope);
+    try {
+      if (group && group.rows.length) localStorage.setItem(storeKey(scope), JSON.stringify({ ids: group.rows.map(row => row.id), active: group.active }));
+      else localStorage.removeItem(storeKey(scope));
+    } catch { /* storage is unavailable: the tabs just do not survive a refresh */ }
+  }
+  function stored(scope) {
+    try {
+      const value = JSON.parse(localStorage.getItem(storeKey(scope)));
+      return value && Array.isArray(value.ids) ? value : null;
+    } catch { return null; }
+  }
+
+  // Mounts the chat of a conversation as a tab of the task (nothing happens when it is already open).
+  function mountRow(scope, conversation) {
+    let group = sessions.get(scope);
+    if (!group) sessions.set(scope, group = { rows: [], active: null });
+    let row = group.rows.find(item => item.id === conversation.id);
+    if (row) return row;
+    const base = `${scope}/agent`;
+    const holder = document.createElement('div');
+    holder.className = 'agent-holder';
+    holder.hidden = true; // sync() decides what is shown
+    pane.append(holder);
+    const chat = AgentChat.mount(holder, { api, base, conversation, onClose: () => closeChat(scope, conversation.id), notify: message => { if (typeof Toast !== 'undefined') Toast.error(message); } });
+    row = { id: conversation.id, agent: conversation.agent, title: conversation.title, chat, holder };
+    group.rows.push(row);
+    return row;
+  }
+
+  async function restore(scope) {
+    const wanted = stored(scope);
+    if (!wanted || !wanted.ids.length) return;
+    restoring.add(scope);
+    let loaded = false;
+    try {
+      const existing = new Map((await api.get(`${scope}/agent/conversations`)).map(row => [row.id, row]));
+      for (const id of wanted.ids) if (existing.has(id)) mountRow(scope, existing.get(id));
+      const group = sessions.get(scope);
+      // Whatever the person opened meanwhile stays the shown tab.
+      if (group && !group.active && group.rows.some(row => row.id === wanted.active)) group.active = wanted.active;
+      loaded = true;
+    } catch { /* the stored tabs stay for the next load */ }
+    restoring.delete(scope);
+    if (loaded) save(scope);
+    sync();
+  }
+
   // Shows the active chat of the mounted task (if any) below the tab strip and publishes the chat tabs.
   function sync() {
     const scope = scopeOf();
     for (const [key, group] of sessions) {
       for (const row of group.rows) row.holder.hidden = !(key === scope && group.active === row.id);
     }
+    // Chats exist for the local engine only; the first time a task is mounted its stored tabs are reopened.
+    const local = (TerminalTabs.context() || {}).sourceKey === 'local';
+    if (scope && local && !restored.has(scope)) { restored.add(scope); void restore(scope); }
     const group = scope && sessions.get(scope);
     pane.hidden = !(group && group.active);
     pane.style.top = `${controls().offsetHeight}px`;
@@ -139,9 +197,9 @@ const AgentView = (() => {
     TerminalTabs.setChats(scope, group && group.rows.length ? {
       rows: group.rows.map(({ id, agent, title }) => ({ id, agent, title })),
       active: group.active,
-      select: id => { group.active = id; sync(); const row = group.rows.find(item => item.id === id); if (row) row.chat.focus(); },
+      select: id => { group.active = id; save(scope); sync(); const row = group.rows.find(item => item.id === id); if (row) row.chat.focus(); },
       close: id => closeChat(scope, id),
-      leave: () => { group.active = null; sync(); },
+      leave: () => { group.active = null; save(scope); sync(); },
     } : null);
   }
 
@@ -155,6 +213,7 @@ const AgentView = (() => {
     row.holder.remove();
     if (group.active === id) group.active = null; // fall back to the terminal
     if (!group.rows.length) sessions.delete(scope);
+    save(scope);
     sync();
   }
 
@@ -167,20 +226,10 @@ const AgentView = (() => {
     choices: agent => AgentChat.choices(api, baseOf(), agent),
     async open(agent, choice) {
       const scope = scopeOf();
-      const base = baseOf();
-      const conversation = await AgentChat.open(api, base, agent, choice);
-      let group = sessions.get(scope);
-      if (!group) sessions.set(scope, group = { rows: [], active: null });
-      let row = group.rows.find(item => item.id === conversation.id);
-      if (!row) {
-        const holder = document.createElement('div');
-        holder.className = 'agent-holder';
-        pane.append(holder);
-        const chat = AgentChat.mount(holder, { api, base, conversation, onClose: () => closeChat(scope, conversation.id), notify: message => { if (typeof Toast !== 'undefined') Toast.error(message); } });
-        row = { id: conversation.id, agent: conversation.agent, title: conversation.title, chat, holder };
-        group.rows.push(row);
-      }
-      group.active = row.id;
+      const conversation = await AgentChat.open(api, baseOf(), agent, choice);
+      const row = mountRow(scope, conversation);
+      sessions.get(scope).active = row.id;
+      save(scope);
       sync();
       row.chat.focus();
     },

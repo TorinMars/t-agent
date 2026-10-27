@@ -161,6 +161,8 @@
 .ac-options-list { position: absolute; z-index: 6; left: 0; bottom: calc(100% + 6px); display: flex; flex-direction: column; gap: 2px; box-sizing: border-box; min-width: 220px; padding: 6px; border: 1px solid var(--ac-border); border-radius: 12px; background: var(--ac-bg); box-shadow: 0 8px 24px rgba(0,0,0,.25); }
 .ac-options-list .ac-switch { justify-content: space-between; width: 100%; padding: 0 8px; white-space: nowrap; }
 .ac-options-list .ac-switch:hover { background: var(--ac-key); }
+.ac-limits { border: 0; background: none; padding: 4px 0; font-family: inherit; cursor: pointer; }
+.ac-limits.busy { opacity: .5; cursor: progress; }
 .ac-limit.low { color: var(--ac-danger); }
 .ac-picker-holder { min-width: 0; } /* the list is placed against the whole status area, so it stays inside the page when that wraps */
 .ac-picker-button { display: inline-flex; align-items: center; gap: 4px; padding: 4px 0; border: 0; background: none; font: inherit; cursor: pointer; }

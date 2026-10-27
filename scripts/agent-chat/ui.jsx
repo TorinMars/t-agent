@@ -581,7 +581,7 @@ function Composer({ store, state, agent, notify, inputRef }) {
         <Switch className="ac-translate" label={t('Translate to English')} text={t('Translate')} checked={translate} disabled={sending} onChange={() => void store.setTranslate(!translate)} />
         <Switch className="ac-collapse" label={t('Collapse the keyboard after sending')} text={t('Collapse the keyboard after sending')} checked={collapse} onChange={() => void store.setCollapseKeyboard(!collapse)} />
       </OptionsMenu>
-      <Limits limits={state.limits} />
+      <Limits limits={state.limits} onRefresh={() => store.refreshLimits()} />
     </div>
     </>
   );
@@ -665,19 +665,21 @@ function ModelPicker({ store, state }) {
 }
 
 // What is left of the plan windows (5 hours, 7 days) and when each resets, in one unit with decimals: "62.5% · 4.2h".
-function Limits({ limits }) {
+function Limits({ limits, onRefresh }) {
   const [now, setNow] = useState(() => Date.now());
+  const [busy, setBusy] = useState(false);
   useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 30000); return () => clearInterval(timer); }, []);
   const shown = visibleLimits(limits, now);
   if (!shown.length) return null;
   return (
-    <span className="ac-limits" translate="no">
+    <button type="button" className={`ac-limits${busy ? ' busy' : ''}`} translate="no" disabled={busy} title={t('Click to refresh the usage')}
+      onClick={() => { setBusy(true); Promise.resolve(onRefresh()).finally(() => setBusy(false)); }}>
       {shown.map(entry => {
         const { left, reset, text } = limitText(entry, now);
         const title = t(`${entry.label} limit: ${left}% left${reset ? `, resets in ${reset}` : ''}`);
         return <span className={`ac-limit${100 - entry.usedPercent <= 10 ? ' low' : ''}`} key={entry.id} title={title} aria-label={title}>{text}</span>;
       })}
-    </span>
+    </button>
   );
 }
 

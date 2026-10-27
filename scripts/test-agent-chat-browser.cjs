@@ -177,6 +177,11 @@ const server = http.createServer(app);
     // What is left of the plan windows and when they reset: one unit, decimals allowed.
     assert.deepEqual(await page.locator('.ac-limit').allTextContents(), ['62.5% · 4.2h', '80% · 3.5d']);
     assert.equal(await page.locator('.ac-limit').first().getAttribute('title'), '5h limit: 62.5% left, resets in 4.2h');
+    // A click on the usage asks the server to read it again; it stays shown and usable afterwards.
+    const [refreshRequest] = await Promise.all([page.waitForRequest(request => request.method() === 'POST' && request.url().endsWith('/limits/refresh')), page.click('.ac-limits')]);
+    assert.ok(refreshRequest, 'clicking the usage asks for a fresh reading');
+    await page.waitForFunction(() => !document.querySelector('.ac-limits').disabled);
+    assert.deepEqual(await page.locator('.ac-limit').allTextContents(), ['62.5% · 4.2h', '80% · 3.5d']);
     // The composer icons keep a real size (they were specks on an iPhone).
     for (const selector of ['.ac-attach svg', '.ac-mic svg']) {
       const box = await page.locator(selector).first().boundingBox();

@@ -119,10 +119,11 @@ function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS 
   function pendingList(rt) { return [...rt.pending.values()].map(entry => entry.request); }
 
   // Reads the account's plan limits again when the last reading is old; chats of that agent get them as a meta event.
-  function refreshLimits(agent) {
+  // `force` (a click on the usage) skips the wait; it resolves to false when the reading failed.
+  function refreshLimits(agent, { force = false } = {}) {
     const adapter = adapters[agent];
     const known = agentLimits.get(agent);
-    if (!adapter.loadLimits || refreshing.has(agent) || (known && Date.now() - known.at < LIMITS_TTL_MS)) return refreshing.get(agent) || Promise.resolve();
+    if (!adapter.loadLimits || refreshing.has(agent) || (!force && known && Date.now() - known.at < LIMITS_TTL_MS)) return refreshing.get(agent) || Promise.resolve(true);
     const job = (async () => {
       try {
         const limits = await adapter.loadLimits();
@@ -132,7 +133,8 @@ function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS 
           const changed = mergeMeta(rt, { limits });
           if (changed.limits) emit(rt, { op: 'meta', limits: changed.limits });
         }
-      } catch { agentLimits.set(agent, { limits: (known && known.limits) || [], at: Date.now() }); } // try again after the interval
+        return true;
+      } catch { agentLimits.set(agent, { limits: (known && known.limits) || [], at: Date.now() }); return false; } // try again after the interval
       finally { refreshing.delete(agent); }
     })();
     refreshing.set(agent, job);
@@ -338,6 +340,16 @@ function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS 
     db.prepare('UPDATE agent_conversations SET translate = ? WHERE id = ?').run(value ? 1 : 0, id);
     emit(runtimeFor(row, task), { op: 'meta', translate: value });
     return publicRow(rowOf(task.id, id), runtimes.get(id));
+  }
+
+  // The person clicked the usage: read it again now and answer with the chat as it is after that.
+  async function refreshUsage(task, id) {
+    const row = rowOf(task.id, id);
+    if (!row) throw fail('CONVERSATION_NOT_FOUND', 404);
+    const rt = runtimeFor(row, task);
+    const ok = await refreshLimits(rt.agent, { force: true });
+    if (!ok) throw fail('LIMITS_UNAVAILABLE', 502);
+    return publicRow(rowOf(task.id, id), rt);
   }
 
   // Whether the input box lets go of the keyboard after a message is sent, kept per chat (on unless turned off).
@@ -587,7 +599,7 @@ function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS 
     }
   }
 
-  return { list, create, snapshot, subscribe, sendMessage, interrupt, answerPermission, setMode, setPreferences, listModels, setOpened, setTranslate, setCollapseKeyboard, setQueue, summary, listCommands, rename, remove, stopTask, refreshLimits };
+  return { list, create, snapshot, subscribe, sendMessage, interrupt, answerPermission, setMode, setPreferences, listModels, setOpened, setTranslate, setCollapseKeyboard, refreshUsage, setQueue, summary, listCommands, rename, remove, stopTask, refreshLimits };
 }
 
 let shared = null;

@@ -253,6 +253,18 @@ export function createChatStore({ api, base, conversation, notify = () => {}, Ev
   }
 
   // Turns the translation switch of this chat on or off. The switch moves at once; when the server cannot save it, it goes back.
+  // Reads the plan usage again now (a click on it). The new numbers also arrive as a meta event; false when it could not be read.
+  async function refreshLimits() {
+    try {
+      const row = await api.post(url('/limits/refresh'), {});
+      if (row && Array.isArray(row.limits)) publish({ limits: row.limits });
+      return true;
+    } catch (error) {
+      notify(`Could not refresh the usage: ${error.message}`);
+      return false;
+    }
+  }
+
   async function setCollapseKeyboard(value) {
     const before = state.collapseKeyboard;
     publish({ collapseKeyboard: value });
@@ -329,7 +341,7 @@ export function createChatStore({ api, base, conversation, notify = () => {}, Ev
   return {
     getState: () => state,
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
-    prepareMessage, load, send, stop, answer, setMode, loadModels, choose, loadCommands, setTranslate, setCollapseKeyboard, rename, enqueue, unqueue, editQueued, forceSend, sendQueued, apply,
+    prepareMessage, load, send, stop, answer, setMode, loadModels, choose, loadCommands, setTranslate, setCollapseKeyboard, refreshLimits, rename, enqueue, unqueue, editQueued, forceSend, sendQueued, apply,
     destroy() {
       disposed = true;
       clearTimeout(retry);

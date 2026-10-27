@@ -1183,6 +1183,8 @@ I18n.add({
   "Could not send: {1}": "发送失败：{1}",
   "Could not stop: {1}": "停止失败：{1}",
   "Could not change the access level: {1}": "修改权限级别失败：{1}",
+  "Could not refresh the usage: {1}": "刷新用量失败：{1}",
+  "Click to refresh the usage": "点击刷新用量",
   "Could not open the chat: {1}": "打开对话失败：{1}",
   "Remove {1}": "移除 {1}",
   "Agent chat": "Agent 对话",

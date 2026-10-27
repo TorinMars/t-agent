@@ -903,3 +903,28 @@ test('each chat keeps its own keyboard switch: on by default, saved per chat, an
   assert.throws(() => chat.setCollapseKeyboard(own, a.id, 'no'), error => error.message === 'INVALID_COLLAPSE_KEYBOARD');
   assert.throws(() => chat.setCollapseKeyboard(own, 'missing', true), error => error.statusCode === 404);
 });
+
+test('a click on the usage reads it again at once, skipping the wait, and says so when it fails', async () => {
+  const own = tasks.createTask('owner', { title: 'usage click' });
+  let used = 10;
+  let offline = false;
+  let reads = 0;
+  const adapter = { ...fakeAdapter(async () => ({ ok: true })), loadLimits: async () => {
+    reads++;
+    if (offline) throw new Error('offline');
+    return [{ id: '5h', label: '5h', usedPercent: used, resetsAt: Date.now() + 3600000 }];
+  } };
+  const chat = createAgentChat({ db, adapters: { codex: adapter } });
+  const conversation = chat.create(own, { agent: 'codex', title: 'usage' });
+  const seen = [];
+  chat.subscribe(own, conversation.id, 0, event => seen.push(event));
+  assert.deepEqual((await chat.refreshUsage(own, conversation.id)).limits.map(entry => entry.usedPercent), [10]);
+  used = 40;
+  const again = await chat.refreshUsage(own, conversation.id); // inside the 60 seconds: a snapshot would skip, a click does not
+  assert.deepEqual(again.limits.map(entry => entry.usedPercent), [40]);
+  assert.equal(reads, 2);
+  assert.ok(seen.some(event => event.op === 'meta' && event.limits && event.limits[0].usedPercent === 40), 'the other pages of the chat get the numbers too');
+  offline = true;
+  await assert.rejects(() => chat.refreshUsage(own, conversation.id), error => error.message === 'LIMITS_UNAVAILABLE' && error.statusCode === 502);
+  await assert.rejects(() => chat.refreshUsage(own, 'missing'), error => error.statusCode === 404);
+});

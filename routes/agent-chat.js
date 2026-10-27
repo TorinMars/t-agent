@@ -36,6 +36,7 @@ function createAgentChatRouter({ service = getAgentChat(), authenticate = requir
   router.post('/conversations/:cid/opened', handle((task, req) => service.setOpened(task, req.params.cid, { surface: (req.body || {}).surface, opened: (req.body || {}).opened })));
   // The queued messages of the chat, replaced as a whole (POST, because some network paths let POST through but not PUT or PATCH).
   router.post('/conversations/:cid/queue', handle((task, req) => service.setQueue(task, req.params.cid, (req.body || {}).queue)));
+  router.post('/conversations/:cid/limits/refresh', handle((task, req) => service.refreshUsage(task, req.params.cid)));
   router.get('/conversations/:cid/commands', handle((task, req) => service.listCommands(task, req.params.cid)));
   router.get('/conversations/:cid/models', handle((task, req) => service.listModels(task, req.params.cid)));
   router.delete('/conversations/:cid', handle((task, req) => service.remove(task, req.params.cid)));

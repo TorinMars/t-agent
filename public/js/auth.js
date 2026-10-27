@@ -7,7 +7,16 @@
   const description = document.getElementById('auth-description');
   const errorNode = document.getElementById('auth-error');
   const requested = new URLSearchParams(location.search).get('return_to');
-  const returnTo = ['/', '/web', '/h5'].includes(requested) ? requested : '/'; // "/" picks the phone or desktop page
+  // Where to go after logging in: the page that sent the person here, otherwise the phone page on a phone (also in the home-screen app, and when the
+  // browser asks for the desktop site, which hides the phone from the server) and the desktop page elsewhere.
+  const phone = () => {
+    try {
+      const touch = Number(navigator.maxTouchPoints) > 1 || /iPhone|iPod|Android.+Mobile|Mobile/i.test(navigator.userAgent || '');
+      const small = typeof screen === 'object' && screen ? Math.min(screen.width, screen.height) <= 600 : /iPhone|iPod|Mobile/i.test(navigator.userAgent || '');
+      return touch && small;
+    } catch { return false; }
+  };
+  const returnTo = ['/web', '/h5'].includes(requested) ? requested : (phone() ? '/h5' : '/');
   const messages = {
     AUTH_CODE_INVALID: 'The code is invalid or already used. Wait for the next code, or use an unused recovery code.',
     AUTHENTICATOR_BINDING_REQUIRED: 'You must bind an authenticator before using this.',

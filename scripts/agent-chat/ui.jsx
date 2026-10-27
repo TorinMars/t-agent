@@ -346,11 +346,40 @@ function pastedImages(event) {
   return [...(data.items || [])].filter(item => item.kind === 'file' && IMAGE_TYPES.includes(item.type)).map(item => item.getAsFile()).filter(Boolean);
 }
 
+const COLLAPSE_KEY = 'agent-chat.collapseAfterSend';
+// Whether the input box loses focus (so a phone keyboard folds away) after a message is sent. On by default; kept in this browser.
+const readCollapse = () => { try { return localStorage.getItem(COLLAPSE_KEY) !== '0'; } catch { return true; } };
+const saveCollapse = value => { try { localStorage.setItem(COLLAPSE_KEY, value ? '1' : '0'); } catch { /* storage is blocked: the choice lasts until the page closes */ } };
+
+function Switch({ className, label, text, checked, disabled, onChange }) {
+  return (
+    <button type="button" role="switch" aria-checked={checked} aria-label={label} title={label} className={`ac-switch ${className}`} disabled={disabled} onClick={onChange}>
+      <span>{text}</span><span className="ac-switch-track" aria-hidden="true"><span /></span>
+    </button>
+  );
+}
+
+// A menu group under the input box; the switches live in its list.
+function OptionsMenu({ children }) {
+  const [open, setOpen] = useState(false);
+  const holder = useRef(null);
+  useDismiss(open, () => setOpen(false), holder);
+  return (
+    <div className="ac-options" ref={holder}>
+      <button type="button" className="ac-options-button" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(value => !value)}>
+        <span>{t('Options')}</span><Icon d={ICONS.chevron} />
+      </button>
+      {open ? <div className="ac-options-list" role="group" aria-label={t('Options')}>{children}</div> : null}
+    </div>
+  );
+}
+
 function Composer({ store, state, agent, notify, inputRef }) {
   const [text, setText] = useState('');
   const [attachments, setAttachments] = useState([]);
   const [sending, setSending] = useState(false);
   const [expanded, setExpanded] = useState(false); // the big input box: Enter is a new line, and the message is sent with the button only
+  const [collapse, setCollapse] = useState(readCollapse);
   const translate = state.translate; // saved with the chat: each chat keeps its own switch
 
   // Slash commands: while the first word of the message is being typed (/ and then the name), a menu of the commands that match is shown above the box.
@@ -450,8 +479,10 @@ function Composer({ store, state, agent, notify, inputRef }) {
       if (current.status === 'running' && (later || !current.canSteer)) {
         store.enqueue(message);
         setText(''); setAttachments([]);
+        if (collapse && inputRef.current) inputRef.current.blur();
       } else if (await store.send(message)) {
         setText(''); setAttachments([]);
+        if (collapse && inputRef.current) inputRef.current.blur();
       }
     } catch (error) {
       notify(error.message || 'Translation failed');
@@ -549,12 +580,12 @@ function Composer({ store, state, agent, notify, inputRef }) {
       </div>
       <input ref={picker} type="file" multiple hidden accept={ACCEPT} onChange={event => { void addFiles([...event.target.files]); event.target.value = ''; }} />
     </form>
-    {/* Between the input box and the access level: the translation switch on the left, the plan usage on the right. */}
+    {/* Between the input box and the access level: the options menu on the left, the plan usage on the right. */}
     <div className="ac-meta">
-      <button type="button" role="switch" aria-checked={translate} aria-label={t('Translate to English')}
-        title={t('Translate to English')} className="ac-translate" disabled={sending} onClick={() => void store.setTranslate(!translate)}>
-        <span>{t('Translate')}</span><span className="ac-switch-track" aria-hidden="true"><span /></span>
-      </button>
+      <OptionsMenu>
+        <Switch className="ac-translate" label={t('Translate to English')} text={t('Translate')} checked={translate} disabled={sending} onChange={() => void store.setTranslate(!translate)} />
+        <Switch className="ac-collapse" label={t('Collapse the keyboard after sending')} text={t('Collapse the keyboard after sending')} checked={collapse} onChange={() => { saveCollapse(!collapse); setCollapse(!collapse); }} />
+      </OptionsMenu>
       <Limits limits={state.limits} />
     </div>
     </>

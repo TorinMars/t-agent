@@ -1084,6 +1084,8 @@ I18n.add({
   "The terminal is not connected": "终端未连接",
   "This engine does not support phone terminals yet. Please upgrade it": "该 Engine 暂不支持手机终端，请先升级",
   "Translate": "翻译",
+  "Options": "选项",
+  "Collapse the keyboard after sending": "发送后收起键盘",
   "Chinese → English, then send": "输入中文，翻译成英文后发送",
   "Claude agent": "Claude 对话",
   "Codex agent": "Codex 对话",

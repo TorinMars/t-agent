@@ -155,7 +155,12 @@
 .ac-limits { display: inline-flex; gap: 12px; color: var(--ac-muted); font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .agent-chat > .ac-meta { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 12px; box-sizing: border-box; width: min(100%, calc(var(--ac-width) + 32px)); margin: 0 auto; padding: 0 24px; } /* its own row between the input box and the footer: the translation switch on the left, the usage on the right (above the model) */
 .ac-meta .ac-limits { margin-left: auto; }
-.ac-meta .ac-translate { min-height: 30px; padding: 0; }
+.ac-options { position: relative; }
+.ac-options-button { display: inline-flex; align-items: center; gap: 4px; min-height: 30px; padding: 0; border: 0; background: none; color: var(--ac-muted); font: inherit; font-size: 12px; cursor: pointer; }
+.ac-options-button svg { width: 14px; height: 14px; }
+.ac-options-list { position: absolute; z-index: 6; left: 0; bottom: calc(100% + 6px); display: flex; flex-direction: column; gap: 2px; box-sizing: border-box; min-width: 220px; padding: 6px; border: 1px solid var(--ac-border); border-radius: 12px; background: var(--ac-bg); box-shadow: 0 8px 24px rgba(0,0,0,.25); }
+.ac-options-list .ac-switch { justify-content: space-between; width: 100%; padding: 0 8px; white-space: nowrap; }
+.ac-options-list .ac-switch:hover { background: var(--ac-key); }
 .ac-limit.low { color: var(--ac-danger); }
 .ac-picker-holder { min-width: 0; } /* the list is placed against the whole status area, so it stays inside the page when that wraps */
 .ac-picker-button { display: inline-flex; align-items: center; gap: 4px; padding: 4px 0; border: 0; background: none; font: inherit; cursor: pointer; }
@@ -225,12 +230,12 @@ fieldset.ac-question { min-width: 0; margin: 0 0 10px; padding: 0; border: 0; }
 .ac-plan-feedback { width: 100%; box-sizing: border-box; margin-bottom: 8px; resize: vertical; }
 
 /* Keep the translation switch beside dictation on both desktop and phone. */
-.ac-translate { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 5px; min-height: 36px; padding: 0 5px; border: 0; border-radius: 18px; background: transparent; color: var(--ac-muted); font: inherit; font-size: 12px; cursor: pointer; }
+.ac-switch { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 5px; min-height: 36px; padding: 0 5px; border: 0; border-radius: 18px; background: transparent; color: var(--ac-muted); font: inherit; font-size: 12px; cursor: pointer; }
 .ac-switch-track { display: inline-flex; align-items: center; width: 26px; height: 16px; padding: 2px; box-sizing: border-box; border-radius: 10px; background: var(--ac-border); }
 .ac-switch-track > span { width: 12px; height: 12px; border-radius: 50%; background: var(--ac-muted); transition: transform .15s; }
-.ac-translate[aria-checked="true"] { color: var(--ac-text); }
-.ac-translate[aria-checked="true"] .ac-switch-track { background: #3879db; }
-.ac-translate[aria-checked="true"] .ac-switch-track > span { background: #fff; transform: translateX(10px); }
-.ac-translate:focus-visible { outline: 2px solid #3879db; outline-offset: 2px; }
-.ac-translate:disabled { opacity: .6; cursor: wait; }
+.ac-switch[aria-checked="true"] { color: var(--ac-text); }
+.ac-switch[aria-checked="true"] .ac-switch-track { background: #3879db; }
+.ac-switch[aria-checked="true"] .ac-switch-track > span { background: #fff; transform: translateX(10px); }
+.ac-switch:focus-visible { outline: 2px solid #3879db; outline-offset: 2px; }
+.ac-switch:disabled { opacity: .6; cursor: wait; }
 @media (prefers-reduced-motion: reduce) { .ac-switch-track > span { transition: none; } }

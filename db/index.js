@@ -68,7 +68,7 @@ for (const column of ['model', 'effort', 'queue']) { // queue: the messages queu
   if (!conversationColumns.includes(column)) db.exec(`ALTER TABLE agent_conversations ADD COLUMN ${column} TEXT`);
 }
 // Where a chat is open (see schema.sql): the time it was opened on the desktop page / the phone page.
-for (const column of ['opened_web', 'opened_h5', 'translate']) { // translate: the state of the chat's translation switch
+for (const column of ['opened_web', 'opened_h5', 'translate', 'collapse_keyboard']) { // translate / collapse_keyboard: the chat's switches (collapse_keyboard: NULL is on)
   if (!conversationColumns.includes(column)) db.exec(`ALTER TABLE agent_conversations ADD COLUMN ${column} INTEGER`);
 }
 

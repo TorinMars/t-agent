@@ -346,11 +346,6 @@ function pastedImages(event) {
   return [...(data.items || [])].filter(item => item.kind === 'file' && IMAGE_TYPES.includes(item.type)).map(item => item.getAsFile()).filter(Boolean);
 }
 
-const COLLAPSE_KEY = 'agent-chat.collapseAfterSend';
-// Whether the input box loses focus (so a phone keyboard folds away) after a message is sent. On by default; kept in this browser.
-const readCollapse = () => { try { return localStorage.getItem(COLLAPSE_KEY) !== '0'; } catch { return true; } };
-const saveCollapse = value => { try { localStorage.setItem(COLLAPSE_KEY, value ? '1' : '0'); } catch { /* storage is blocked: the choice lasts until the page closes */ } };
-
 function Switch({ className, label, text, checked, disabled, onChange }) {
   return (
     <button type="button" role="switch" aria-checked={checked} aria-label={label} title={label} className={`ac-switch ${className}`} disabled={disabled} onClick={onChange}>
@@ -379,7 +374,7 @@ function Composer({ store, state, agent, notify, inputRef }) {
   const [attachments, setAttachments] = useState([]);
   const [sending, setSending] = useState(false);
   const [expanded, setExpanded] = useState(false); // the big input box: Enter is a new line, and the message is sent with the button only
-  const [collapse, setCollapse] = useState(readCollapse);
+  const collapse = state.collapseKeyboard; // saved with the chat, like the translation switch
   const translate = state.translate; // saved with the chat: each chat keeps its own switch
 
   // Slash commands: while the first word of the message is being typed (/ and then the name), a menu of the commands that match is shown above the box.
@@ -584,7 +579,7 @@ function Composer({ store, state, agent, notify, inputRef }) {
     <div className="ac-meta">
       <OptionsMenu>
         <Switch className="ac-translate" label={t('Translate to English')} text={t('Translate')} checked={translate} disabled={sending} onChange={() => void store.setTranslate(!translate)} />
-        <Switch className="ac-collapse" label={t('Collapse the keyboard after sending')} text={t('Collapse the keyboard after sending')} checked={collapse} onChange={() => { saveCollapse(!collapse); setCollapse(!collapse); }} />
+        <Switch className="ac-collapse" label={t('Collapse the keyboard after sending')} text={t('Collapse the keyboard after sending')} checked={collapse} onChange={() => void store.setCollapseKeyboard(!collapse)} />
       </OptionsMenu>
       <Limits limits={state.limits} />
     </div>

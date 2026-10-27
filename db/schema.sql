@@ -159,6 +159,7 @@ CREATE TABLE IF NOT EXISTS agent_conversations (
   opened_h5 INTEGER,
   -- The state of the chat's translation switch (1 = on): each chat keeps its own.
   translate INTEGER,
+  collapse_keyboard INTEGER, -- NULL: the default (on)
   -- The messages the person queued while the agent works, as JSON ([{ id, label, body }]), kept so a refresh does not lose them. NULL / empty: none.
   queue TEXT,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,

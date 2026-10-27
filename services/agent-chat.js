@@ -31,7 +31,7 @@ function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS 
   const rowOf = (taskId, id) => db.prepare('SELECT * FROM agent_conversations WHERE id = ? AND task_id = ?').get(id, taskId);
   const publicRow = (row, rt) => ({
     id: row.id, agent: row.agent, session_id: row.session_id, title: row.title, mode: row.mode,
-    updated_at: row.updated_at, running: Boolean(rt && rt.status === 'running'), translate: row.translate === 1,
+    updated_at: row.updated_at, running: Boolean(rt && rt.status === 'running'), translate: row.translate === 1, collapseKeyboard: row.collapse_keyboard !== 0,
     opened: { web: row.opened_web || null, h5: row.opened_h5 || null },
     ...(rt && rt.model ? { model: rt.model } : {}), ...(rt && rt.effort ? { effort: rt.effort } : {}), ...(rt && rt.context ? { context: rt.context } : {}),
     ...(rt && rt.limits ? { limits: rt.limits } : {}),
@@ -340,6 +340,16 @@ function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS 
     return publicRow(rowOf(task.id, id), runtimes.get(id));
   }
 
+  // Whether the input box lets go of the keyboard after a message is sent, kept per chat (on unless turned off).
+  function setCollapseKeyboard(task, id, value) {
+    const row = rowOf(task.id, id);
+    if (!row) throw fail('CONVERSATION_NOT_FOUND', 404);
+    if (typeof value !== 'boolean') throw fail('INVALID_COLLAPSE_KEYBOARD');
+    db.prepare('UPDATE agent_conversations SET collapse_keyboard = ? WHERE id = ?').run(value ? 1 : 0, id);
+    emit(runtimeFor(row, task), { op: 'meta', collapseKeyboard: value });
+    return publicRow(rowOf(task.id, id), runtimes.get(id));
+  }
+
   function rename(task, id, title) {
     const row = rowOf(task.id, id);
     if (!row) throw fail('CONVERSATION_NOT_FOUND', 404);
@@ -577,7 +587,7 @@ function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS 
     }
   }
 
-  return { list, create, snapshot, subscribe, sendMessage, interrupt, answerPermission, setMode, setPreferences, listModels, setOpened, setTranslate, setQueue, summary, listCommands, rename, remove, stopTask, refreshLimits };
+  return { list, create, snapshot, subscribe, sendMessage, interrupt, answerPermission, setMode, setPreferences, listModels, setOpened, setTranslate, setCollapseKeyboard, setQueue, summary, listCommands, rename, remove, stopTask, refreshLimits };
 }
 
 let shared = null;

@@ -887,3 +887,19 @@ test('the commands of a chat are read once per agent and folder and kept for a w
   assert.ok(seen.includes('reset'), 'the pages are told');
   assert.deepEqual((await chat.snapshot(own, a.id)).items.map(item => item.text), ['Started a new session'], 'only the notice is left');
 });
+
+test('each chat keeps its own keyboard switch: on by default, saved per chat, announced and kept after a restart', () => {
+  const own = tasks.createTask('owner', { title: 'keyboard switch' });
+  const chat = createAgentChat({ db, adapters: { codex: fakeAdapter(async () => ({ ok: true })) } });
+  const a = chat.create(own, { agent: 'codex', title: 'A' });
+  chat.create(own, { agent: 'codex', title: 'B' });
+  assert.deepEqual(chat.list(own.id).map(row => row.collapseKeyboard), [true, true], 'on at first');
+  const seen = [];
+  chat.subscribe(own, a.id, 0, event => seen.push(event));
+  assert.equal(chat.setCollapseKeyboard(own, a.id, false).collapseKeyboard, false);
+  assert.deepEqual(chat.list(own.id).map(row => [row.title, row.collapseKeyboard]), [['A', false], ['B', true]], 'only that chat');
+  assert.ok(seen.some(event => event.op === 'meta' && event.collapseKeyboard === false));
+  assert.equal(createAgentChat({ db, adapters: { codex: fakeAdapter(async () => ({ ok: true })) } }).list(own.id).find(row => row.id === a.id).collapseKeyboard, false, 'it survives a restart');
+  assert.throws(() => chat.setCollapseKeyboard(own, a.id, 'no'), error => error.message === 'INVALID_COLLAPSE_KEYBOARD');
+  assert.throws(() => chat.setCollapseKeyboard(own, 'missing', true), error => error.statusCode === 404);
+});

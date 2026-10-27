@@ -22,6 +22,7 @@ export function createChatStore({ api, base, conversation, notify = () => {}, Ev
     model: conversation.model || '', effort: conversation.effort || '', context: conversation.context || null, limits: conversation.limits || [],
     lastTurn: null, // the latest turn that ended while this page watched: { n, ok, stopped } (the host page may tell the person)
     translate: conversation.translate === true, // the translation switch of this chat
+    collapseKeyboard: conversation.collapseKeyboard !== false, // leave the input box after sending (on by default), also per chat
     runningSince: null, queue: [],
     // What the person picked (the agent reports what it ran with, which can differ: an alias, a default) and the models on offer.
     canChoose: false, choice: { model: '', effort: '' }, models: { status: 'idle', list: [] },
@@ -90,6 +91,7 @@ export function createChatStore({ api, base, conversation, notify = () => {}, Ev
           ...(event.model !== undefined ? { model: event.model } : {}), ...(event.effort !== undefined ? { effort: event.effort } : {}),
           ...(event.context ? { context: event.context } : {}), ...(event.limits ? { limits: event.limits } : {}),
           ...(typeof event.translate === 'boolean' ? { translate: event.translate } : {}),
+          ...(typeof event.collapseKeyboard === 'boolean' ? { collapseKeyboard: event.collapseKeyboard } : {}),
         });
         break;
       default: break;
@@ -121,6 +123,7 @@ export function createChatStore({ api, base, conversation, notify = () => {}, Ev
         ...(snapshot.conversation && snapshot.conversation.context ? { context: snapshot.conversation.context } : {}),
         ...(snapshot.conversation && snapshot.conversation.limits ? { limits: snapshot.conversation.limits } : {}),
         ...(snapshot.conversation && typeof snapshot.conversation.translate === 'boolean' ? { translate: snapshot.conversation.translate } : {}),
+        ...(snapshot.conversation && typeof snapshot.conversation.collapseKeyboard === 'boolean' ? { collapseKeyboard: snapshot.conversation.collapseKeyboard } : {}),
         canChoose: Boolean(snapshot.capabilities && snapshot.capabilities.models),
         commandsSupported: Boolean(snapshot.capabilities && snapshot.capabilities.commands),
         // The queue kept with the chat (not when this page already changed it: that is newer).
@@ -250,6 +253,19 @@ export function createChatStore({ api, base, conversation, notify = () => {}, Ev
   }
 
   // Turns the translation switch of this chat on or off. The switch moves at once; when the server cannot save it, it goes back.
+  async function setCollapseKeyboard(value) {
+    const before = state.collapseKeyboard;
+    publish({ collapseKeyboard: value });
+    try {
+      await api.patch(url(''), { collapseKeyboard: value });
+      return true;
+    } catch (error) {
+      publish({ collapseKeyboard: before });
+      notify(`Could not save the keyboard switch: ${error.message}`);
+      return false;
+    }
+  }
+
   async function setTranslate(value) {
     const before = state.translate;
     publish({ translate: value });
@@ -313,7 +329,7 @@ export function createChatStore({ api, base, conversation, notify = () => {}, Ev
   return {
     getState: () => state,
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
-    prepareMessage, load, send, stop, answer, setMode, loadModels, choose, loadCommands, setTranslate, rename, enqueue, unqueue, editQueued, forceSend, sendQueued, apply,
+    prepareMessage, load, send, stop, answer, setMode, loadModels, choose, loadCommands, setTranslate, setCollapseKeyboard, rename, enqueue, unqueue, editQueued, forceSend, sendQueued, apply,
     destroy() {
       disposed = true;
       clearTimeout(retry);

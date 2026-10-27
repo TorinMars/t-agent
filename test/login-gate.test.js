@@ -15,10 +15,10 @@ test('login path defaults to /torin/hide/login and rejects unsafe values', () =>
 
 test('only the login entrance, machine APIs and share assets are open before login', () => {
   const login = '/torin/hide/login';
-  for (const open of [login, `${login}/`, `${login}/status`, `${login}/setup`, '/health', '/v1/info', '/api/remote/v1/capabilities', '/share/abc', '/share/abc/file', '/js/auth.js', '/js/i18n.js', '/js/i18n-zh-ui.js', '/css/auth.css', '/favicon.svg', '/manifest-h5.json', '/icons/icon-192.png', '/icons/icon-512.png', '/vendor/marked/marked-15.0.12.min.js']) {
+  for (const open of [login, `${login}/`, `${login}/status`, `${login}/setup`, '/health', '/v1/info', '/api/remote/v1/capabilities', '/share/abc', '/share/abc/file', '/js/auth.js', '/js/i18n.js', '/js/i18n-zh-ui.js', '/css/auth.css', '/favicon.svg', '/manifest.json', '/manifest-h5.json', '/icons/icon-192.png', '/icons/icon-512.png', '/vendor/marked/marked-15.0.12.min.js']) {
     assert.equal(isOpenPath(open, login), true, open);
   }
-  for (const closed of ['/', '/web', '/api/tasks', '/auth/login', '/auth/status', '/clients', '/js/app.js', '/manifest.json', '/sw.js', '/torin/hide', '/torin/hide/login-x', '/v1x', '/vendor/monaco/monaco.js', '/vendor/marked/../monaco/x.js']) {
+  for (const closed of ['/', '/web', '/api/tasks', '/auth/login', '/auth/status', '/clients', '/js/app.js', '/sw.js', '/torin/hide', '/torin/hide/login-x', '/v1x', '/vendor/monaco/monaco.js', '/vendor/marked/../monaco/x.js']) {
     assert.equal(isOpenPath(closed, login), false, closed);
   }
 });

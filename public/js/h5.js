@@ -441,6 +441,7 @@
     } catch { tell(tr('Log out failed. Please retry later.'), 'error'); }
   });
 
+  $('h5-speaker-settings').addEventListener('click', () => SpeakerFilter.showSettings());
   $('h5-open-tasks').addEventListener('click', openTasks);
   $('h5-close-tasks').addEventListener('click', closeTasks);
   $('h5-task-backdrop').addEventListener('click', closeTasks);

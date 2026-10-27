@@ -2116,3 +2116,4 @@ Usage, notifications and phone sidebar changes:
 > v2.84.38 Remove the iFlytek speaker filter (voiceprint) so recognized text shows live again; click-to-talk recording shows a floating sound wave driven by the microphone level (`createWave` in `voice-input.js`); the chat Stop button sits at the left of the working row and is smaller; the queued message buttons stay visible when the message is long
 > v2.84.39 Add a Multi-task page that shows up to four Claude or Codex chats side by side, each with its own task and session
 > v2.84.40 Keep table columns readable in the agent chat: file name columns no longer break after every letter
+> v2.84.41 Restore the Multi-task sessions after a page refresh

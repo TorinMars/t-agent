@@ -69,7 +69,7 @@ test('after the login the phone goes to the phone page, also from the bare login
   assert.deepEqual(await logIn(iphone), { sent: '/h5', went: '/h5' });
   assert.equal((await logIn({ ...iphone, userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Safari/605.1.15' })).went, '/h5', 'the desktop site on a phone');
   assert.equal((await logIn({ ...iphone, search: '?return_to=/h5' })).went, '/h5');
-  assert.equal((await logIn({ ...iphone, search: '?return_to=/web' })).went, '/web', 'an address that asks for the desktop page keeps it');
+  assert.deepEqual(await logIn({ ...iphone, search: '?return_to=/web' }), { sent: '/h5', went: '/h5' }, 'the desktop page sends return_to=/web when the session ends, but a phone still lands on the phone page');
 });
 
 test('after the login a computer goes to the address that picks its page', async () => {

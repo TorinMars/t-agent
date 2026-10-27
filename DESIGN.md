@@ -2103,3 +2103,4 @@ Usage, notifications and phone sidebar changes:
 > v2.84.33 Agent chat: click the usage to refresh it, bordered stop button; the login page opens as a full-screen home-screen app and phones go to the phone page after login
 > v2.84.34 Phones always return to the phone page after login, even from the desktop page; the phone log out goes to the hidden login address
 > v2.84.35 The login page links the phone manifest, and the manifest and icons open before login, so the home-screen login page stays a full-screen app after the login
+> v2.84.36 Phones and computers always go to the phone page after login; a device that has logged in before reaches the login entrance from the phone page address after logging out, so the installed phone app can log in again; the login page always uses the phone manifest

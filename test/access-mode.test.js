@@ -103,7 +103,7 @@ async function startServer(t, extraEnv = {}) {
       response.on('end', () => {
         const text = Buffer.concat(chunks).toString();
         let json = null; try { json = JSON.parse(text); } catch { /* not JSON */ }
-        resolve({ status: response.statusCode, headers: response.headers, text, json, cookie: (response.headers['set-cookie'] || [])[0]?.split(';')[0] });
+        resolve({ status: response.statusCode, headers: response.headers, text, json, cookie: (response.headers['set-cookie'] || []).map(cookie => cookie.split(';')[0]).find(cookie => !cookie.startsWith('t_agent_known=')) }); // a login also sets the cookie that remembers the device
       });
     });
     request.on('error', reject);

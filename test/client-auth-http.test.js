@@ -68,7 +68,7 @@ for (const [environment, allowHttp] of [['test', 'false'], ['production', 'false
   }
   const LOGIN = '/torin/hide/login';
   // Logged out (including not yet bound): every address except the hidden login entrance and machine endpoints is 404, with no redirect.
-  for (const route of ['/', '/web', '/index.html', '/index%2ehtml', '/login.html', '/clients', '/auth/login', '/auth/setup', '/auth/status', '/auth/me', '/js/app.js', '/css/style.css', '/sw.js', '/nonexistent']) {
+  for (const route of ['/', '/web', '/index.html', '/index%2ehtml', '/login.html', '/clients', '/auth/login', '/auth/setup', '/auth/status', '/auth/me', '/js/app.js', '/css/style.css', '/manifest.json', '/sw.js', '/nonexistent']) {
     const response = await call(route);
     assert.equal(response.status, 404, route);
     assert.equal(response.headers.get('location'), null, route);
@@ -82,8 +82,8 @@ for (const [environment, allowHttp] of [['test', 'false'], ['production', 'false
   assert.equal((await call(LOGIN)).status, 200);
   assert.equal((await call(`${LOGIN}/`)).status, 200);
   assert.equal((await call('/js/auth.js')).status, 200);
-  for (const open of ['/manifest.json', '/manifest-h5.json', '/icons/icon-192.png', '/icons/icon-512.png']) assert.equal((await call(open)).status, 200, `${open} is open for the home-screen app of the login page`);
-  assert.equal((await call('/sw.js')).status, 404, 'other static files stay closed');
+  for (const open of ['/manifest-h5.json', '/icons/icon-192.png', '/icons/icon-512.png']) assert.equal((await call(open)).status, 200, `${open} is open for the home-screen app of the login page`);
+  assert.equal((await call('/manifest.json')).status, 404, 'the desktop manifest stays closed');
   assert.equal((await call(`${LOGIN}/login`, { body: { username: 'local', password: '' } })).status, 403);
   assert.equal((await call(`${LOGIN}/setup/start`, { body: {}, headers: { Origin: 'https://attacker.test' } })).status, 403);
   assert.deepEqual(await (await call(`${LOGIN}/status`)).json(), { bound: false, authenticated: false, mode: 'unset' });

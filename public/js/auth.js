@@ -18,9 +18,6 @@
     } catch { return false; }
   };
   const returnTo = phone() ? '/h5' : (['/web', '/h5'].includes(requested) ? requested : '/');
-  // Added to the home screen or installed: a phone starts at the phone page, a computer at the address that picks the desktop page.
-  const manifest = document.getElementById('app-manifest');
-  if (manifest && phone() && typeof manifest.setAttribute === 'function') manifest.setAttribute('href', '/manifest-h5.json');
   const messages = {
     AUTH_CODE_INVALID: 'The code is invalid or already used. Wait for the next code, or use an unused recovery code.',
     AUTHENTICATOR_BINDING_REQUIRED: 'You must bind an authenticator before using this.',

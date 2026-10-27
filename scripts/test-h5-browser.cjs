@@ -54,6 +54,8 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     if (/^\/(js|css|vendor)\//.test(url.pathname)) {
       return route.fulfill({ contentType: TYPES[path.extname(url.pathname)] || 'text/plain', body: fs.readFileSync(path.join(root, 'public', url.pathname)) });
     }
+    if (url.pathname === '/auth/logout' && method === 'POST') return json({ success: true });
+    if (url.pathname === '/torin/hide/login') return route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>login</title>' });
     if (url.pathname === '/api/remote-servers') return json(remoteTerminals ? [{ id: 7, name: 'Old VPS' }] : []);
     if (url.pathname === '/api/tasks' && method === 'GET') return json([{ id: 1, title: 'Fix login', status: 'doing' }, { id: 2, title: 'Write docs', status: 'todo' }]);
     if (url.pathname === '/api/task-groups') return json([{ key: 'doing', name: 'In progress', sort_order: 1 }, { key: 'todo', name: 'To do', sort_order: 2 }]);
@@ -544,6 +546,15 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     await page.locator('#h5-settings').waitFor({ state: 'visible' });
     assert.equal(await page.locator('#h5-settings [data-lang-toggle]').count(), 1);
     assert.equal(await page.locator('#h5-settings #h5-logout').isVisible(), true, 'the settings have a log out button');
+    // Logging out goes to the hidden login address the server wrote into the page, and comes back to the phone page afterwards.
+    await page.evaluate(() => { const meta = document.createElement('meta'); meta.name = 't-agent-login-path'; meta.content = '/torin/hide/login'; document.head.append(meta); });
+    page.once('dialog', dialog => dialog.accept());
+    await Promise.all([page.waitForURL(`${ORIGIN}/torin/hide/login?return_to=/h5`), page.locator('#h5-logout').tap()]);
+    assert.ok(calls.includes('POST /auth/logout'));
+    await page.goto(`${ORIGIN}/h5`);
+    await page.locator('#h5-open-settings').waitFor();
+    await page.locator('#h5-open-settings').tap();
+    await page.locator('#h5-settings').waitFor({ state: 'visible' });
     await page.locator('#h5-update-check').tap();
     // One tap checks and starts the update; there is no second confirmation.
     await page.waitForFunction(() => document.getElementById('h5-update-log').textContent.includes('npm ci'));

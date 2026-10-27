@@ -435,7 +435,9 @@
     if (!confirm(tr('Logging out disconnects local and remote terminals, but tasks running on the server keep running. Log out?'))) return;
     try {
       await api('POST', '/auth/logout', {});
-      location.replace(`${window.TAgentLoginPath || '/auth/login'}?return_to=/h5`);
+      // The server puts the (hidden) login address of this install into the page; h5.html does not load client-auth.js, which would copy it to window.
+      const meta = document.querySelector('meta[name="t-agent-login-path"]');
+      location.replace(`${(meta && meta.content) || '/auth/login'}?return_to=/h5`);
     } catch { tell(tr('Log out failed. Please retry later.'), 'error'); }
   });
 

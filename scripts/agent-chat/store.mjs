@@ -7,6 +7,9 @@
 // Messages the person queues while the agent works ("⌘⏎ to queue for later") are kept here, not on the server: when a turn ends normally, or the
 // person stops it, the next one is sent; after a failure they wait until the person sends or removes them.
 
+// A message that is a slash command: "/", a name, then nothing or a space.
+const COMMAND = /^\/[A-Za-z][\w:.-]*(\s|$)/;
+
 const RETRY_EVENTS_MS = 2000;
 const RETRY_LOAD_MS = 4000;
 
@@ -22,6 +25,8 @@ export function createChatStore({ api, base, conversation, notify = () => {}, Ev
     runningSince: null, queue: [],
     // What the person picked (the agent reports what it ran with, which can differ: an alias, a default) and the models on offer.
     canChoose: false, choice: { model: '', effort: '' }, models: { status: 'idle', list: [] },
+    // The slash commands of the chat (when the agent has them): the list is read once, in the background, when the chat has loaded.
+    commandsSupported: false, commands: { status: 'idle', list: [] },
   };
   let queued = 0;
   let queueTouched = false; // the queue was changed on this page: what the server has is older
@@ -71,6 +76,10 @@ export function createChatStore({ api, base, conversation, notify = () => {}, Ev
         } else stopping = false;
         break;
       }
+      case 'reset': // /clear: everything said so far is gone
+        items = new Map();
+        publishItems();
+        break;
       case 'permission':
         if (!state.pending.some(request => request.id === event.request.id)) publish({ pending: [...state.pending, event.request] });
         break;
@@ -113,11 +122,13 @@ export function createChatStore({ api, base, conversation, notify = () => {}, Ev
         ...(snapshot.conversation && snapshot.conversation.limits ? { limits: snapshot.conversation.limits } : {}),
         ...(snapshot.conversation && typeof snapshot.conversation.translate === 'boolean' ? { translate: snapshot.conversation.translate } : {}),
         canChoose: Boolean(snapshot.capabilities && snapshot.capabilities.models),
+        commandsSupported: Boolean(snapshot.capabilities && snapshot.capabilities.commands),
         // The queue kept with the chat (not when this page already changed it: that is newer).
         ...(!queueTouched && Array.isArray(snapshot.queue) && snapshot.queue.length ? { queue: snapshot.queue.map(entry => ({ id: entry.id, body: entry.body, label: entry.label })) } : {}),
       });
       for (const entry of state.queue) queued = Math.max(queued, entry.id);
       follow();
+      if (state.commandsSupported) void loadCommands();
     } catch (error) {
       if (!disposed) { notify(`Could not load the chat: ${error.message}`); retry = setTimeout(load, RETRY_LOAD_MS); }
     }
@@ -125,7 +136,7 @@ export function createChatStore({ api, base, conversation, notify = () => {}, Ev
 
   // Translation always uses the Client, including when this conversation belongs to a remote Engine.
   async function prepareMessage(body, translate) {
-    if (!translate || !body.text) return body;
+    if (!translate || !body.text || COMMAND.test(body.text)) return body; // a slash command is not prose: translated, it would stop being one
     const result = await api.post('/api/translate', { text: body.text });
     if (disposed) return null;
     if (typeof result?.text !== 'string' || !result.text.trim()) throw new Error('Translation result is empty');
@@ -199,6 +210,17 @@ export function createChatStore({ api, base, conversation, notify = () => {}, Ev
     if (state.queue.length && !disposed) await sendQueued(state.queue[0].id);
   }
 
+  // The slash commands the agent offers; read once, and again when the last read failed. Starting the agent to ask takes a few seconds.
+  async function loadCommands() {
+    if (state.commands.status === 'loading' || state.commands.status === 'ready') return;
+    publish({ commands: { status: 'loading', list: [] } });
+    try {
+      const answer = await api.get(url('/commands'));
+      if (!disposed) publish({ commands: { status: 'ready', list: Array.isArray(answer.commands) ? answer.commands : [] } });
+    } catch {
+      if (!disposed) publish({ commands: { status: 'error', list: [] } });
+    }
+  }
   // The models the agent offers; read when the picker is opened, and again if the last read failed.
   async function loadModels() {
     if (state.models.status === 'loading' || state.models.status === 'ready') return;
@@ -291,7 +313,7 @@ export function createChatStore({ api, base, conversation, notify = () => {}, Ev
   return {
     getState: () => state,
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
-    prepareMessage, load, send, stop, answer, setMode, loadModels, choose, setTranslate, rename, enqueue, unqueue, editQueued, forceSend, sendQueued, apply,
+    prepareMessage, load, send, stop, answer, setMode, loadModels, choose, loadCommands, setTranslate, rename, enqueue, unqueue, editQueued, forceSend, sendQueued, apply,
     destroy() {
       disposed = true;
       clearTimeout(retry);

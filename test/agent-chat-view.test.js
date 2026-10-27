@@ -562,3 +562,51 @@ test('the store reports a turn that ended while the page watched, and whether th
   sources[0].emit({ seq: 7, op: 'status', status: 'idle', ok: false });
   assert.deepEqual(store.getState().lastTurn, { n: 3, ok: false, stopped: true }, 'the person stopped it');
 });
+
+test('the slash commands are read once in the background when the agent has them, can be retried, and /clear empties the chat', async () => {
+  const { createChatStore } = await load();
+  const reads = [];
+  let fail = true;
+  const withCommands = harness({ snapshot: { items: [{ id: 'm1', kind: 'text', text: 'before' }], pending: [], status: 'idle', seq: 0, capabilities: { commands: true } } });
+  const baseGet = withCommands.options.api.get;
+  withCommands.options.api.get = async url => {
+    if (/\/commands$/.test(url)) { reads.push(url); if (fail) throw new Error('down'); return { supported: true, commands: [{ name: 'clear', description: 'new', argumentHint: '' }] }; }
+    return baseGet(url);
+  };
+  const store = createChatStore(withCommands.options);
+  assert.deepEqual([store.getState().commandsSupported, store.getState().commands.status], [false, 'idle']);
+  await store.load();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(store.getState().commandsSupported, true);
+  assert.equal(store.getState().commands.status, 'error', 'a failure is shown, not hidden');
+  fail = false;
+  await store.loadCommands();
+  assert.deepEqual([store.getState().commands.status, store.getState().commands.list.map(command => command.name)], ['ready', ['clear']]);
+  await store.loadCommands();
+  assert.equal(reads.length, 2, 'a list that is loaded is not read again');
+
+  assert.equal(store.getState().items.length, 1);
+  withCommands.sources[0].emit({ seq: 1, op: 'reset' });
+  assert.equal(store.getState().items.length, 0, 'the chat starts again from nothing');
+  withCommands.sources[0].emit({ seq: 2, op: 'upsert', item: { id: 'n1', kind: 'notice', text: 'Started a new session' } });
+  assert.deepEqual(store.getState().items.map(item => item.text), ['Started a new session']);
+
+  const plain = harness({ snapshot: { items: [], pending: [], status: 'idle', seq: 0 } });
+  const without = createChatStore(plain.options);
+  await without.load();
+  assert.deepEqual([without.getState().commandsSupported, plain.calls.some(call => /commands/.test(call[1] || ''))], [false, false], 'an agent without commands is not asked');
+});
+
+test('a slash command is not translated, other text that starts with a slash is', async () => {
+  const { createChatStore } = await load();
+  const h = harness();
+  h.options.api.post = async (url, body) => { h.calls.push(['post', url, body]); return url === '/api/translate' ? { text: 'translated' } : {}; };
+  const store = createChatStore(h.options);
+  for (const text of ['/clear', '/compact keep the plan', '/code-review --fix', '/fewer-permission-prompts']) {
+    const body = { text };
+    assert.equal(await store.prepareMessage(body, true), body, `${text} is sent as it is`);
+  }
+  assert.equal(h.calls.length, 0, 'nothing was translated');
+  assert.equal((await store.prepareMessage({ text: '/usr/bin is missing' }, true)).text, 'translated', 'a path is prose');
+  assert.equal((await store.prepareMessage({ text: 'run /clear please' }, true)).text, 'translated', 'only a message that starts with the command');
+});

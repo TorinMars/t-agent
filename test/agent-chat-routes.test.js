@@ -161,3 +161,12 @@ test('the summary of what the agents are doing is read with GET, for the signed-
   assert.equal(after.submitted, after.running + after.queued);
   assert.equal((await fetch(`${base}/api/agent-chat/summary`)).headers.get('cache-control'), 'no-store');
 });
+
+test('the slash commands of a chat are read with GET', async () => {
+  const url = `/api/tasks/${mine.id}/agent`;
+  const id = (await call('POST', `${url}/conversations`, { agent: 'claude' })).body.id;
+  const answer = await call('GET', `${url}/conversations/${id}/commands`);
+  assert.equal(answer.status, 200);
+  assert.deepEqual(answer.body, { supported: false, commands: [] }, 'the test agent has no commands');
+  assert.equal((await call('GET', `${url}/conversations/nope/commands`)).status, 404);
+});

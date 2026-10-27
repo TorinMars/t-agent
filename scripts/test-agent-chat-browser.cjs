@@ -20,7 +20,12 @@ const task = tasks.createTask('owner', { title: 'chat' });
 const received = [];
 const reviewSeen = [];
 const adapter = {
-  MODES: { ask: {}, edits: {}, plan: {}, full: {} }, DEFAULT_MODE: 'ask', CAPABILITIES: { models: true },
+  MODES: { ask: {}, edits: {}, plan: {}, full: {} }, DEFAULT_MODE: 'ask', CAPABILITIES: { models: true, commands: true },
+  listCommands: async () => [
+    { name: 'clear', description: 'Start a new session with empty context', argumentHint: '' },
+    { name: 'compact', description: 'Free up context by summarizing the conversation so far', argumentHint: '[instructions]' },
+    { name: 'context', description: 'Show current context usage', argumentHint: '' },
+  ],
   listModels: async () => [
     { value: 'sonnet', label: 'Sonnet 5.5', description: 'Everyday tasks', efforts: ['low', 'high'], defaultEffort: '' },
     { value: 'opus', label: 'Opus 5.5', description: 'Hardest tasks', efforts: ['high', 'max'], defaultEffort: '' },
@@ -48,6 +53,11 @@ const adapter = {
       limits: [{ id: '5h', label: '5h', usedPercent: 37.5, resetsAt: Date.now() + 4.2 * 3600000 }, { id: '7d', label: '7d', usedPercent: 20, resetsAt: Date.now() + 3.5 * 24 * 3600000 }],
     });
     if (!sessionId) ctx.upsert({ id: 'init:1', kind: 'init', text: 'Initialized session', details: [['Model', 'claude-sonnet-5-5'], ['Session', 'session-abcdef12']] });
+    if (prompt.text === '/clear') { // what Claude Code does: the chat is reset, then the new session is announced
+      ctx.resetConversation();
+      ctx.upsert({ id: 'reset:1', kind: 'notice', text: 'Started a new session' });
+      return { ok: true };
+    }
     if (/^queued/.test(prompt.text)) { ctx.upsert({ id: 'q1', kind: 'text', text: 'Got the queued message.' }); return { ok: true }; }
     if (/slow/.test(prompt.text)) {
       ctx.upsert({ id: 's1', kind: 'text', text: 'Thinking about it' });
@@ -387,7 +397,52 @@ const server = http.createServer(app);
     assert.equal(choices.length, 1);
     assert.equal(choices[0].conversation.title, 'clean the build');
     // Codex: a question with an "Other…" answer, "Allow for this session", and input sent while the turn runs.
+    // Slash commands: "/" at the start of a message opens a menu of the commands; the arrows, Tab and Enter choose; /clear starts the chat again.
+    await page.evaluate(() => { view.destroy(); return openChat('claude', null); });
+    await page.waitForSelector('.ac-input');
+    const menuNames = () => page.locator('.ac-command-name').allTextContents();
+    await page.fill('.ac-input', '/');
+    await page.waitForSelector('.ac-command');
+    assert.deepEqual(await menuNames(), ['/clear', '/compact [instructions]', '/context'], 'every command, with its argument hint');
+    assert.match(await page.locator('.ac-command-desc').first().textContent(), /new session/);
+    await page.fill('.ac-input', '/co');
+    assert.deepEqual(await menuNames(), ['/compact [instructions]', '/context'], 'what matches');
+    await page.keyboard.press('ArrowDown');
+    assert.equal(await page.locator('.ac-command.active .ac-command-name').textContent(), '/context');
+    await page.keyboard.press('Tab');
+    assert.equal(await page.inputValue('.ac-input'), '/context ', 'Tab takes the highlighted command');
+    assert.equal(await page.locator('.ac-commands').count(), 0, 'the menu closes once the name is there');
+    await page.fill('.ac-input', '/c');
+    await page.waitForSelector('.ac-command');
+    await page.keyboard.press('Escape');
+    assert.equal(await page.locator('.ac-commands').count(), 0, 'Escape closes the menu');
+    assert.equal(await page.inputValue('.ac-input'), '/c', 'and leaves the text');
+    await page.fill('.ac-input', '/cl');
+    const receivedBeforeMenu = received.length;
+    await page.keyboard.press('Enter');
+    assert.equal(await page.inputValue('.ac-input'), '/clear ', 'Enter takes the highlighted command first');
+    assert.equal(received.length, receivedBeforeMenu, 'it does not send yet');
+    await page.fill('.ac-input', '/');
+    await page.locator('.ac-command', { hasText: '/compact' }).click();
+    assert.equal(await page.inputValue('.ac-input'), '/compact ', 'a click takes it too');
+    await page.fill('.ac-input', 'queued hi');
+    await page.keyboard.press('Enter');
+    await page.waitForSelector('.ac-user');
+    await page.waitForSelector('.ac-stop', { state: 'detached' });
+    await page.fill('.ac-input', '/clear');
+    assert.equal(await page.locator('.ac-command').count(), 1, 'the command typed in full is still listed');
+    await page.keyboard.press('Enter'); // typed in full: Enter sends it
+    await page.waitForFunction(() => !document.querySelector('.ac-user') && document.querySelector('.ac-notice') && document.querySelector('.ac-notice').textContent === 'Started a new session');
+    assert.equal(await page.locator('.ac-user').count(), 0, 'what was said before is gone');
     await page.evaluate(() => { view.destroy(); return openChat('codex', null); });
+    await page.waitForSelector('.ac-input');
+    await page.fill('.ac-input', '/cl');
+    await page.waitForSelector('.ac-commands-note');
+    assert.match(await page.locator('.ac-commands-note').textContent(), /not available in Codex chats/, 'Codex has no slash commands: the person is told, not given a menu');
+    assert.equal(await page.locator('.ac-command').count(), 0);
+    await page.fill('.ac-input', '/usr/bin is missing');
+    assert.equal(await page.locator('.ac-commands').count(), 0, 'a path is not a command');
+    await page.fill('.ac-input', '');
     assert.equal(await page.locator('.ac-badge svg.agent-logo path').count(), 1, 'Codex shows the OpenAI logo');
     assert.deepEqual(await page.locator('.ac-mode option').allTextContents(), ['Read-only', 'Workspace write', 'Full access']);
     assert.deepEqual([await page.locator('.ac-model').textContent(), await page.locator('.ac-context').count(), await page.locator('.ac-limit').count()], ['Model', 0, 0], 'a choosable model shows its name only once it is known; no ring or limits until reported');

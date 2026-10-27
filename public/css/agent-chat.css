@@ -114,9 +114,17 @@
 .ac-question-text { font-size: 13px; opacity: .85; }
 .ac-question-input { min-height: 36px; padding: 6px 8px; border: 1px solid var(--ac-border); border-radius: 8px; background: var(--ac-bg); color: inherit; font: inherit; font-size: 16px; }
 
-.ac-composer { flex: 0 0 auto; box-sizing: border-box; width: min(100%, calc(var(--ac-width) + 32px)); margin: 0 auto; padding: 6px 16px 0; }
+.ac-composer { position: relative; flex: 0 0 auto; box-sizing: border-box; width: min(100%, calc(var(--ac-width) + 32px)); margin: 0 auto; padding: 6px 16px 0; }
 .ac-attachments, .ac-queue { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 4px 8px; }
 .ac-queued { background: var(--ac-panel); border: 1px dashed var(--ac-border); }
+/* The slash command menu: above the input box, over the end of the messages. */
+.ac-commands { position: absolute; z-index: 6; left: 16px; right: 16px; bottom: calc(100% - 4px); max-height: min(40vh, 280px); overflow-y: auto; padding: 4px; border: 1px solid var(--ac-border); border-radius: 12px; background: var(--ac-bg); box-shadow: 0 8px 28px rgba(0,0,0,.18); }
+.ac-command { display: flex; flex-direction: column; gap: 1px; width: 100%; padding: 6px 10px; border: 0; border-radius: 8px; background: none; color: inherit; font: inherit; font-size: 14px; text-align: left; cursor: pointer; }
+.ac-command.active, .ac-command:hover { background: var(--ac-key); }
+.ac-command-name { font-weight: 600; }
+.ac-command-name em { font-weight: 400; font-style: normal; color: var(--ac-muted); }
+.ac-command-desc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ac-muted); font-size: 12px; }
+.ac-commands-note { padding: 8px 10px; color: var(--ac-muted); font-size: 13px; }
 .ac-box { display: flex; align-items: flex-end; gap: 4px; padding: 6px 8px; border: 1px solid var(--ac-border); border-radius: 24px; background: var(--ac-bg); box-shadow: 0 1px 4px rgba(0,0,0,.06); }
 .ac-box:focus-within { border-color: var(--ac-muted); }
 .ac-input { box-sizing: border-box; flex: 1 1 auto; min-width: 0; min-height: 36px; max-height: 200px; padding: 7px 4px; border: 0; background: none; color: inherit; resize: none; font: inherit; font-size: 16px; line-height: 1.4; }

@@ -805,3 +805,85 @@ test('the summary counts the turns running now and the queued messages of the pe
   chat.setQueue(mineTask, busy.id, []);
   assert.equal(chat.summary('summary-owner').submitted, 0);
 });
+
+test('Claude: /clear resets the chat and names the new session, and the output of a command is not taken for the model or the context', () => {
+  const log = [];
+  const meta = [];
+  const ctx = {
+    upsert: item => log.push(['upsert', item.kind, item.text]), append() {}, getItem() {}, setSession: id => log.push(['session', id]),
+    setMeta: value => meta.push(value), resetConversation: () => log.push(['reset']),
+  };
+  const normalizer = claude.createNormalizer(ctx);
+  // The shape the SDK really gave for /context: a made-up model with empty usage, then the result.
+  normalizer.handle({ type: 'assistant', message: { id: 'a1', model: '<synthetic>', usage: { input_tokens: 0, output_tokens: 0 }, content: [{ type: 'text', text: '## Context Usage' }] } });
+  assert.deepEqual(meta, [], 'a command output says nothing about the model or the context');
+  assert.deepEqual(log, [['upsert', 'text', '## Context Usage']], 'but it is shown');
+  normalizer.handle({ type: 'assistant', message: { id: 'a2', model: 'claude-sonnet-5-5', usage: { input_tokens: 1000, output_tokens: 10 }, content: [{ type: 'text', text: 'hi' }] } });
+  assert.equal(meta.length, 1, 'a real answer still does');
+
+  log.length = 0;
+  normalizer.handle({ type: 'conversation_reset', session_id: 'old' });
+  normalizer.handle({ type: 'system', subtype: 'init', session_id: 'new-session', model: 'claude-sonnet-5-5' });
+  assert.deepEqual(log, [['reset'], ['upsert', 'notice', 'Started a new session'], ['session', 'new-session']]);
+  assert.deepEqual(meta.at(-2), { context: { used: 0, window: 200000 } }, 'the context starts again from nothing');
+  assert.equal(claude.CAPABILITIES.commands, true);
+});
+
+test('Claude: the commands of a chat come from the SDK, without the terminal-only ones and the ones the footer replaces', async () => {
+  let options;
+  let closed = false;
+  const sdk = { query: args => { options = args.options; return {
+    supportedCommands: async () => [
+      { name: 'context', description: 'Show context usage', argumentHint: '' }, { name: 'doctor', description: 'terminal' },
+      { name: 'model', description: 'replaced by the footer' }, { name: 'compact', description: 'Free up context', argumentHint: '[instructions]' },
+      { name: 'effort', description: 'replaced by the footer' }, { name: 'clear', description: 'Start a new session' }, null, { description: 'no name' },
+    ], close: () => { closed = true; } }; } };
+  const list = await claude.listCommands({ cwd: '/work/dir', deps: { loadSdk: async () => sdk, executable: undefined } });
+  assert.deepEqual(list, [
+    { name: 'clear', description: 'Start a new session', argumentHint: '' },
+    { name: 'compact', description: 'Free up context', argumentHint: '[instructions]' },
+    { name: 'context', description: 'Show context usage', argumentHint: '' },
+  ]);
+  assert.deepEqual([options.cwd, options.settingSources], ['/work/dir', ['user', 'project', 'local']], 'the commands of the project and the user count');
+  assert.equal(closed, true);
+});
+
+test('the commands of a chat are read once per agent and folder and kept for a while; /clear reaches the pages as a reset', async () => {
+  const own = tasks.createTask('owner', { title: 'commands' });
+  let reads = 0;
+  let fail = false;
+  const adapter = { ...fakeAdapter(async ({ ctx, prompt }) => { if (prompt.text === '/clear') { ctx.resetConversation(); ctx.upsert({ id: 'n1', kind: 'notice', text: 'Started a new session' }); } else ctx.upsert({ id: 'm1', kind: 'text', text: 'hello' }); return { ok: true }; }),
+    CAPABILITIES: { commands: true },
+    listCommands: async ({ cwd }) => { reads += 1; if (fail) throw new Error('down'); return [{ name: 'clear', description: 'new', argumentHint: '', cwd }]; } };
+  const chat = createAgentChat({ db, adapters: { claude: adapter, codex: fakeAdapter(async () => ({ ok: true })) } });
+  const a = chat.create(own, { agent: 'claude' });
+  const [first, second] = await Promise.all([chat.listCommands(own, a.id), chat.listCommands(own, a.id)]);
+  assert.equal(first.supported, true);
+  assert.deepEqual(second.commands.map(command => command.name), ['clear']);
+  assert.equal(reads, 1, 'two asks at once read once');
+  await chat.listCommands(own, a.id);
+  assert.equal(reads, 1, 'a later ask is answered from what is kept');
+  const codexChat = chat.create(own, { agent: 'codex' });
+  assert.deepEqual(await chat.listCommands(own, codexChat.id), { supported: false, commands: [] }, 'an agent without commands');
+  await assert.rejects(chat.listCommands(own, 'missing'), error => error.statusCode === 404);
+
+  // A failed first read is an error the page can retry; it does not poison the next try.
+  const other = tasks.createTask('owner', { title: 'commands elsewhere' });
+  const b = chat.create(other, { agent: 'claude' });
+  const freshChat = createAgentChat({ db, adapters: { claude: adapter } });
+  fail = true;
+  await assert.rejects(freshChat.listCommands(other, b.id), error => error.message === 'COMMANDS_UNAVAILABLE' && error.statusCode === 502);
+  fail = false;
+  assert.equal((await freshChat.listCommands(other, b.id)).commands.length, 1);
+
+  // /clear: the page drops what was said before, and so does a page that comes later.
+  await chat.sendMessage(own, a.id, { text: 'say something' });
+  await wait(() => !chat.list(own.id).find(row => row.id === a.id).running);
+  assert.ok((await chat.snapshot(own, a.id)).items.some(item => item.text === 'hello'));
+  const seen = [];
+  chat.subscribe(own, a.id, 0, event => seen.push(event.op));
+  await chat.sendMessage(own, a.id, { text: '/clear' });
+  await wait(() => !chat.list(own.id).find(row => row.id === a.id).running);
+  assert.ok(seen.includes('reset'), 'the pages are told');
+  assert.deepEqual((await chat.snapshot(own, a.id)).items.map(item => item.text), ['Started a new session'], 'only the notice is left');
+});

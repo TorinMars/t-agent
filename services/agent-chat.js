@@ -139,6 +139,35 @@ function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS 
     return job;
   }
 
+  // The slash commands of a chat. Starting the agent to ask takes a few seconds, so the list is kept per agent and working directory for a while, and an
+  // old one is answered at once while a new one is read.
+  const COMMANDS_TTL_MS = 5 * 60 * 1000;
+  const commandCache = new Map(); // `${agent}:${cwd}` -> { list, at, reading }
+  async function listCommands(task, id) {
+    const row = rowOf(task.id, id);
+    if (!row) throw fail('CONVERSATION_NOT_FOUND', 404);
+    const adapter = adapters[row.agent];
+    if (!adapter.listCommands) return { supported: false, commands: [] };
+    const key = `${row.agent}:${task.work_dir || ''}`;
+    let entry = commandCache.get(key);
+    const read = () => {
+      if (entry && entry.reading) return entry.reading;
+      const reading = adapter.listCommands({ cwd: task.work_dir || undefined })
+        .then(list => { commandCache.set(key, { list, at: Date.now(), reading: null }); return list; })
+        .catch(error => { const kept = commandCache.get(key); if (kept) kept.reading = null; throw error; });
+      entry = entry || { list: null, at: 0, reading: null };
+      entry.reading = reading;
+      commandCache.set(key, entry);
+      return reading;
+    };
+    if (entry && entry.list) {
+      if (Date.now() - entry.at > COMMANDS_TTL_MS) void read().catch(() => {}); // refreshed for the next time
+      return { supported: true, commands: entry.list };
+    }
+    try { return { supported: true, commands: await read() }; }
+    catch { throw fail('COMMANDS_UNAVAILABLE', 502); }
+  }
+
   async function snapshot(task, id) {
     const row = rowOf(task.id, id);
     if (!row) throw fail('CONVERSATION_NOT_FOUND', 404);
@@ -355,6 +384,8 @@ function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS 
         emit(rt, { op: 'append', id, text });
       },
       getItem: id => rt.items.get(id),
+      // /clear: the chat starts again from nothing; the pages (and the ones that come later) drop what was said before.
+      resetConversation() { rt.items.clear(); emit(rt, { op: 'reset' }); },
       // What the running turn offers while it runs: `steer(prompt)` adds the person's input to it.
       setControl(control) { rt.control = control || null; },
       // What the agent reports about itself ({ model, effort, context }); shown under the composer.
@@ -546,7 +577,7 @@ function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS 
     }
   }
 
-  return { list, create, snapshot, subscribe, sendMessage, interrupt, answerPermission, setMode, setPreferences, listModels, setOpened, setTranslate, setQueue, summary, rename, remove, stopTask, refreshLimits };
+  return { list, create, snapshot, subscribe, sendMessage, interrupt, answerPermission, setMode, setPreferences, listModels, setOpened, setTranslate, setQueue, summary, listCommands, rename, remove, stopTask, refreshLimits };
 }
 
 let shared = null;

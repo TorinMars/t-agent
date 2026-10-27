@@ -351,6 +351,26 @@ function Composer({ store, state, agent, notify, inputRef }) {
   const [sending, setSending] = useState(false);
   const [expanded, setExpanded] = useState(false); // the big input box: Enter is a new line, and the message is sent with the button only
   const translate = state.translate; // saved with the chat: each chat keeps its own switch
+
+  // Slash commands: while the first word of the message is being typed (/ and then the name), a menu of the commands that match is shown above the box.
+  const typed = /^\/([A-Za-z][\w:.-]*)?$/.exec(text);
+  const query = typed ? (typed[1] || '').toLowerCase() : null;
+  const [menuIndex, setMenuIndex] = useState(0);
+  const [menuClosedFor, setMenuClosedFor] = useState(null); // the text for which Escape closed the menu
+  const matches = useMemo(() => {
+    if (query === null) return [];
+    const list = state.commands.list;
+    const lower = command => command.name.toLowerCase();
+    return [...list.filter(command => lower(command).startsWith(query)), ...list.filter(command => !lower(command).startsWith(query) && lower(command).includes(query))].slice(0, 8);
+  }, [state.commands.list, query]);
+  useEffect(() => setMenuIndex(0), [query]);
+  const menu = query === null || menuClosedFor === text ? 'none'
+    : !state.commandsSupported ? (state.loaded ? 'unsupported' : 'none')
+      : state.commands.status === 'error' ? 'error'
+        : state.commands.status !== 'ready' ? 'loading'
+          : matches.length ? 'list' : 'none';
+  const chosen = Math.min(menuIndex, Math.max(0, matches.length - 1));
+  const complete = command => { setText(`/${command.name} `); setMenuClosedFor(null); if (inputRef.current) inputRef.current.focus(); };
   const submitting = useRef(false);
   const picker = useRef(null);
   const form = useRef(null);
@@ -449,6 +469,17 @@ function Composer({ store, state, agent, notify, inputRef }) {
   return (
     <>
     <form ref={form} className={`ac-composer${expanded ? ' expanded' : ''}`} aria-busy={sending} autoComplete="off" onSubmit={event => { event.preventDefault(); void dispatch(false); }}>
+      {menu !== 'none' ? (
+        <div className="ac-commands" role={menu === 'list' ? 'listbox' : 'status'} aria-label={t('Slash commands')}>
+          {menu === 'list' ? matches.map((command, index) => (
+            <button type="button" role="option" aria-selected={index === chosen} key={command.name} className={`ac-command${index === chosen ? ' active' : ''}`}
+              onMouseDown={event => event.preventDefault()} onClick={() => complete(command)}>
+              <span className="ac-command-name" translate="no">/{command.name}{command.argumentHint ? <em> {command.argumentHint}</em> : null}</span>
+              <span className="ac-command-desc" translate="no">{command.description}</span>
+            </button>
+          )) : <div className="ac-commands-note">{t(menu === 'loading' ? 'Loading the commands…' : menu === 'error' ? 'Could not load the commands' : `Slash commands are not available in ${agent.label} chats; the text goes to the agent as it is`)}</div>}
+        </div>
+      ) : null}
       {state.queue.length ? (
         <div className="ac-queue" aria-label={t('Queued')}>
           {state.queue.map(entry => (editing && editing.id === entry.id ? (
@@ -497,6 +528,13 @@ function Composer({ store, state, agent, notify, inputRef }) {
             if (files.length) { event.preventDefault(); void addFiles(files); }
           }}
           onKeyDown={event => {
+            if (menu === 'list' && !event.nativeEvent.isComposing) {
+              if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); setMenuIndex(index => (index + (event.key === 'ArrowDown' ? 1 : matches.length - 1)) % matches.length); return; }
+              if (event.key === 'Tab' && !event.shiftKey) { event.preventDefault(); complete(matches[chosen]); return; }
+              if (event.key === 'Escape') { event.preventDefault(); setMenuClosedFor(text); return; }
+              // Enter takes the highlighted command, unless the command is already typed in full: then it sends it.
+              if (event.key === 'Enter' && !event.shiftKey && !expanded && text !== `/${matches[chosen].name}`) { event.preventDefault(); complete(matches[chosen]); return; }
+            }
             if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return;
             if (expanded) return; // a new line: no key sends from the expanded box
             event.preventDefault();

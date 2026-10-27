@@ -431,6 +431,13 @@
   $('h5-open-settings').addEventListener('click', openSettings);
   $('h5-close-settings').addEventListener('click', closeSettings);
   updateButton.addEventListener('click', () => void checkUpdate());
+  $('h5-logout').addEventListener('click', async () => {
+    if (!confirm(tr('Logging out disconnects local and remote terminals, but tasks running on the server keep running. Log out?'))) return;
+    try {
+      await api('POST', '/auth/logout', {});
+      location.replace(`${window.TAgentLoginPath || '/auth/login'}?return_to=/h5`);
+    } catch { tell(tr('Log out failed. Please retry later.'), 'error'); }
+  });
 
   $('h5-open-tasks').addEventListener('click', openTasks);
   $('h5-close-tasks').addEventListener('click', closeTasks);

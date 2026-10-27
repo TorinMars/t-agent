@@ -543,6 +543,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     await page.locator('#h5-open-settings').tap();
     await page.locator('#h5-settings').waitFor({ state: 'visible' });
     assert.equal(await page.locator('#h5-settings [data-lang-toggle]').count(), 1);
+    assert.equal(await page.locator('#h5-settings #h5-logout').isVisible(), true, 'the settings have a log out button');
     await page.locator('#h5-update-check').tap();
     // One tap checks and starts the update; there is no second confirmation.
     await page.waitForFunction(() => document.getElementById('h5-update-log').textContent.includes('npm ci'));

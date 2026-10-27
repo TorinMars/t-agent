@@ -310,7 +310,7 @@ function Working({ since, store }) {
 // recognizer. A tap starts recording, the next tap stops it. VoiceInput writes into a textarea, but React owns the real one (a value set from outside
 // does not reach its state), so VoiceInput gets a detached textarea and every change of that one is copied into the chat text after what was typed
 // before the recording. The button only exists where the page loaded voice-input.js.
-function Mic({ text, setText, notify }) {
+function Mic({ text, setText, notify, voiceRef }) {
   const button = useRef(null);
   const latest = useRef(text);
   latest.current = text;
@@ -323,14 +323,18 @@ function Mic({ text, setText, notify }) {
     const controller = Voice.attach({
       textarea: proxy,
       button: node,
+      readySound: true,
       onNotConfigured: () => (typeof API !== 'undefined' && Voice.showSettings ? Voice.showSettings() : notify('Set up voice input on the desktop page')),
     });
     // Capturing: this runs before VoiceInput's own click handler on the button, so the text typed so far is the base of a new recording.
     const begin = () => { if (controller.state === 'idle') { typed = latest.current; proxy.value = ''; } };
     node.addEventListener('click', begin, true);
-    const copy = () => setText(proxy.value ? `${typed}${typed && !/\s$/.test(typed) ? ' ' : ''}${proxy.value}` : typed);
+    const composed = () => (proxy.value ? `${typed}${typed && !/\s$/.test(typed) ? ' ' : ''}${proxy.value}` : typed);
+    const copy = () => setText(composed());
     proxy.addEventListener('input', copy);
-    return () => { node.removeEventListener('click', begin, true); proxy.removeEventListener('input', copy); controller.cancel(); };
+    // For the send button: end a running recording and hand back the whole text, the part spoken included.
+    if (voiceRef) voiceRef.current = { recording: () => controller.state !== 'idle', finish: async () => { if (controller.finish) await controller.finish(); else controller.stop(); return composed(); } };
+    return () => { node.removeEventListener('click', begin, true); proxy.removeEventListener('input', copy); if (voiceRef) voiceRef.current = null; controller.cancel(); };
   }, [Voice]);
   if (!Voice) return null;
   const label = t('Voice input');
@@ -397,6 +401,7 @@ function Composer({ store, state, agent, notify, inputRef }) {
   const chosen = Math.min(menuIndex, Math.max(0, matches.length - 1));
   const complete = command => { setText(`/${command.name} `); setMenuClosedFor(null); if (inputRef.current) inputRef.current.focus(); };
   const submitting = useRef(false);
+  const voiceRef = useRef(null); // the microphone button: whether it records, and ending the recording to get the whole text
   const picker = useRef(null);
   const form = useRef(null);
   const running = state.status === 'running';
@@ -458,11 +463,16 @@ function Composer({ store, state, agent, notify, inputRef }) {
   paste.current = addFiles;
 
   async function dispatch(later) {
-    const body = text.trim();
-    if ((!body && !attachments.length) || submitting.current) return;
+    const recording = Boolean(voiceRef.current && voiceRef.current.recording());
+    if (submitting.current || (!recording && !text.trim() && !attachments.length)) return;
     submitting.current = true;
     setSending(true);
     try {
+      // Send while recording: the recording ends first, and what was spoken up to then is sent with the rest.
+      let whole = text;
+      if (recording) { whole = await voiceRef.current.finish(); setText(whole); }
+      const body = whole.trim();
+      if (!body && !attachments.length) return;
       const message = await store.prepareMessage({
         text: body,
         images: attachments.filter(file => file.kind === 'image').map(({ name, type, data }) => ({ name, type, data })),
@@ -570,7 +580,7 @@ function Composer({ store, state, agent, notify, inputRef }) {
         />
         <button type="button" className="ac-expand" aria-pressed={expanded} aria-label={t(expanded ? 'Collapse the input box' : 'Expand the input box')} title={t(expanded ? 'Collapse the input box' : 'Expand the input box')}
           onClick={() => { setExpanded(value => !value); if (inputRef.current) inputRef.current.focus(); }}><Icon d={expanded ? ICONS.collapse : ICONS.expand} /></button>
-        <Mic text={text} setText={value => { if (!submitting.current) setText(value); }} notify={notify} />
+        <Mic voiceRef={voiceRef} text={text} setText={value => { if (!submitting.current) setText(value); }} notify={notify} />
         {filled ? <button type="submit" className="ac-send" disabled={sending} aria-label={t(running && !state.canSteer ? 'Queue for later' : 'Send')}><Icon d={ICONS.up} /></button> : null}
       </div>
       <input ref={picker} type="file" multiple hidden accept={ACCEPT} onChange={event => { void addFiles([...event.target.files]); event.target.value = ''; }} />

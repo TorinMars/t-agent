@@ -430,3 +430,81 @@ test('The recognizer sends the noise threshold, the hot word list ID and the hot
   zero.socket.onopen();
   assert.equal(JSON.parse(zero.socket.sent[0]).payload.parameters.speech_noise_threshold, 0, 'a threshold of 0 is sent');
 });
+
+test('Click microphone: a chime plays once when the recording is ready, and finish() ends the recording and waits for the text', async () => {
+  const vm = require('vm');
+  const fs = require('fs');
+  const path = require('path');
+  const source = fs.readFileSync(path.join(__dirname, '../public/js/voice-input.js'), 'utf8');
+  const handlers = {};
+  const classes = new Set();
+  const button = { addEventListener: (type, fn) => { handlers[type] = fn; }, classList: { toggle: (name, on) => (on ? classes.add(name) : classes.delete(name)) }, setAttribute() {} };
+  const textarea = { value: '', dispatchEvent() {}, focus() {} };
+  const chimes = [];
+  const param = () => ({ value: 0, setValueAtTime() {}, exponentialRampToValueAtTime() {} });
+  class FakeContext {
+    constructor() { this.sampleRate = 48000; this.state = 'running'; this.currentTime = 0; this.destination = {}; this.audioWorklet = { addModule: async () => {} }; }
+    resume() { return Promise.resolve(); }
+    close() { this.state = 'closed'; return Promise.resolve(); }
+    createGain() { return { gain: param(), connect() {}, disconnect() {} }; }
+    createOscillator() { const tone = { frequency: param(), connect() {}, start: () => chimes.push('start'), stop() {} }; return tone; }
+    createMediaStreamSource() { return { connect() {} }; }
+  }
+  const build = () => {
+    const sandbox = {
+      document: { getElementById: () => null },
+      navigator: { mediaDevices: { getUserMedia: async () => ({ getTracks: () => [] }) } },
+      fetch: async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ url: 'wss://speech.example/x', token: 't', model: 'm', language: 'zh' }) }),
+      WebSocket: FakeSocket,
+      AudioWorkletNode: class { constructor() { this.port = {}; } connect() {} disconnect() {} },
+      Blob: class {}, URL: { createObjectURL: () => 'blob:x' }, Event: class {},
+      crypto: require('crypto').webcrypto, console, setTimeout, clearTimeout,
+      notify() {},
+    };
+    sandbox.window = sandbox;
+    sandbox.AudioContext = FakeContext;
+    vm.runInNewContext(source, sandbox);
+    return sandbox;
+  };
+  const ticks = async () => { for (let i = 0; i < 10; i += 1) await new Promise(resolve => setImmediate(resolve)); };
+
+  // With the sound on: nothing plays while the speech service is still starting, one chime once it is ready, and none again.
+  const sandbox = build();
+  const controller = sandbox.VoiceInput.attach({ textarea, button, readySound: true });
+  assert.equal(typeof controller.finish, 'function');
+  handlers.click({ detail: 1 });
+  await ticks();
+  assert.equal(chimes.length, 0, 'not yet: the service has not said it is ready');
+  const socket = FakeSocket.last;
+  socket.onopen();
+  socket.receive(header('task-started'));
+  assert.equal(chimes.length, 1, 'one chime when the recording is ready');
+  socket.receive({ ...header('result-generated'), payload: { output: { sentence: { text: 'hello', sentence_id: 1, sentence_end: true } } } });
+  assert.equal(chimes.length, 1, 'only once');
+
+  // finish() ends the recording like a second click and resolves when the final text is in the box.
+  let done = false;
+  const finishing = controller.finish().then(() => { done = true; });
+  assert.equal(JSON.parse(socket.sent.at(-1)).header.action, 'finish-task', 'the recognition is told to finish');
+  await ticks();
+  assert.equal(done, false, 'it waits for the service to deliver the rest');
+  socket.receive({ ...header('result-generated'), payload: { output: { sentence: { text: ' there.', sentence_id: 2, sentence_end: true } } } });
+  socket.receive(header('task-finished'));
+  await finishing;
+  assert.equal(textarea.value, 'hello there.', 'the text that arrived while finishing is in the box');
+  assert.equal(controller.state, 'idle');
+  assert.equal(classes.has('listening'), false);
+  await controller.finish(); // nothing to wait for when idle
+
+  // Without the option (the phone terminal) there is no sound.
+  chimes.length = 0;
+  textarea.value = '';
+  const quiet = build().VoiceInput.attach({ textarea, button });
+  handlers.click({ detail: 1 });
+  await ticks();
+  const second = FakeSocket.last;
+  second.onopen();
+  second.receive(header('task-started'));
+  assert.equal(chimes.length, 0, 'no chime unless asked for');
+  quiet.cancel();
+});

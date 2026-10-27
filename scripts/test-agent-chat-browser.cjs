@@ -139,9 +139,11 @@ const server = http.createServer(app);
             if (state === 'idle') { state = 'listening'; window.voice.started += 1; window.voice.base = textarea.value; button.classList.add('listening'); }
             else { state = 'idle'; window.voice.stopped += 1; button.classList.remove('listening'); }
           });
-          return { cancel() { state = 'idle'; button.classList.remove('listening'); }, get state() { return state; } };
+          // finish(): what the send button calls while recording; the recording ends and the last words arrive a moment later.
+          const finish = async () => { if (state === 'idle') return; state = 'idle'; window.voice.stopped += 1; button.classList.remove('listening'); await new Promise(resolve => setTimeout(resolve, 50)); window.VoiceInput.say(window.voice.said + ' now'); };
+          return { finish, stop() { return finish(); }, cancel() { state = 'idle'; button.classList.remove('listening'); }, get state() { return state; } };
         },
-        say(text) { const box = window.voice.textarea; box.value = window.voice.base + text; box.dispatchEvent(new Event('input', { bubbles: true })); },
+        say(text) { window.voice.said = text.replace(/ now$/, ''); const box = window.voice.textarea; box.value = window.voice.base + text; box.dispatchEvent(new Event('input', { bubbles: true })); },
       };
     });
     page.on('pageerror', error => { throw error; });
@@ -548,6 +550,19 @@ const server = http.createServer(app);
     await mic.click();
     await page.waitForSelector('.ac-mic:not(.listening)');
     await page.fill('.ac-input', '');
+    // The send button while recording: the recording ends first, and everything spoken up to then (the last words included) is sent.
+    const stoppedBefore = await page.evaluate(() => window.voice.stopped);
+    const receivedBefore = received.length;
+    await mic.click();
+    await page.waitForSelector('.ac-mic.listening');
+    await page.evaluate(() => window.VoiceInput.say('queued by voice'));
+    await page.click('.ac-send');
+    await page.waitForSelector('.ac-mic:not(.listening)');
+    await page.waitForFunction(() => document.querySelector('.ac-input').value === '');
+    assert.equal(await page.evaluate(() => window.voice.stopped), stoppedBefore + 1, 'the send button ended the recording');
+    assert.equal(received.length, receivedBefore + 1, 'and sent once');
+    assert.equal(received.at(-1).text, 'queued by voice now', 'with the words that came in while it was ending');
+    await page.waitForSelector('.ac-stop', { state: 'detached' });
     // The translation switch is shared by desktop and phone, before the microphone.
     // The switches live in the options menu under the input box: open it, act, close it again.
     const inMenu = async action => {

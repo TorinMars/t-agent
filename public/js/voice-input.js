@@ -145,7 +145,8 @@ const VoiceInput = (() => {
   };
 
   // textarea: the box to fill; button: the microphone toggle; onNotConfigured: called when the server has no speech key yet.
-  function attach({ textarea, button, onNotConfigured, hold = false, overlay = null, onSend = null }) {
+  // readySound: play a short chime once the recording is ready (the speech service answered and the microphone is connected), so the person knows when to speak.
+  function attach({ textarea, button, onNotConfigured, hold = false, overlay = null, onSend = null, readySound = false }) {
     let state = 'idle'; // idle → connecting → listening → stopping → idle
     let recognizer, stream, context, node, silent, resampler, stopTimer, limitTimer;
     let base = '', committed = '', partial = '';
@@ -153,6 +154,32 @@ const VoiceInput = (() => {
     let filled = 0;
     let afterStop = null; // 'send': when the recognition ends, hand the text to onSend (released over the send zone)
     let run = 0; // identifies the current start; an older start that is still waiting must not touch a newer one
+    let recognizerReady = false, graphReady = false, announced = false, mutedUntil = 0;
+    const waiters = []; // finish() calls that wait for the recording to be over
+    // The chime comes out of the speakers, so the microphone is not listened to while it plays and the chime is not recognized as speech.
+    function chime() {
+      try {
+        const at = context.currentTime;
+        const tone = context.createOscillator();
+        const gain = context.createGain();
+        tone.type = 'sine';
+        tone.frequency.setValueAtTime(880, at);
+        tone.frequency.setValueAtTime(1320, at + 0.09);
+        gain.gain.setValueAtTime(0.0001, at);
+        gain.gain.exponentialRampToValueAtTime(0.25, at + 0.015);
+        gain.gain.exponentialRampToValueAtTime(0.0001, at + 0.2);
+        tone.connect(gain);
+        gain.connect(context.destination);
+        tone.start(at);
+        tone.stop(at + 0.22);
+        mutedUntil = Date.now() + 350;
+      } catch { /* no sound: the recording still works */ }
+    }
+    function announce() {
+      if (!readySound || announced || !recognizerReady || !graphReady || !context) return;
+      announced = true;
+      chime();
+    }
 
     function render() {
       const active = state === 'listening' || state === 'connecting';
@@ -183,6 +210,7 @@ const VoiceInput = (() => {
       recognizer = null;
       state = 'idle';
       render();
+      while (waiters.length) waiters.shift()();
     }
     function fail(message) {
       reset();
@@ -225,6 +253,7 @@ const VoiceInput = (() => {
       const mine = run;
       base = textarea.value; committed = ''; partial = '';
       filled = 0;
+      recognizerReady = graphReady = announced = false; mutedUntil = 0;
       render();
       // Create the audio context inside the click, before any await, so iOS Safari lets it run.
       const Context = window.AudioContext || window.webkitAudioContext;
@@ -239,7 +268,7 @@ const VoiceInput = (() => {
         recognizer = createRecognizer({
           url: grant.url, token: grant.token, model: grant.model, language: grant.language, noiseThreshold: grant.noiseThreshold, vocabularyId: grant.vocabularyId, hotwords: grant.hotwords,
           callbacks: {
-            onReady() { if (mine === run) { state = 'listening'; render(); } },
+            onReady() { if (mine === run) { state = 'listening'; recognizerReady = true; render(); announce(); } },
             onResult(result) {
               if (mine !== run) return;
               if (result.final) { committed += result.text; partial = ''; } else partial = result.text;
@@ -259,6 +288,7 @@ const VoiceInput = (() => {
             for (let i = 0; i < event.data.length; i += 1) sum += event.data[i] * event.data[i];
             overlay.level(Math.sqrt(sum / (event.data.length || 1)));
           }
+          if (Date.now() < mutedUntil) return; // the chime is playing
           send(resampler.push(event.data));
         };
         silent = context.createGain();
@@ -275,6 +305,8 @@ const VoiceInput = (() => {
         node.connect(silent);
         silent.connect(context.destination);
         limitTimer = setTimeout(stop, MAX_SESSION_MS);
+        graphReady = true;
+        announce();
       } catch (error) {
         if (mine !== run) return;
         const denied = error && (error.name === 'NotAllowedError' || error.name === 'SecurityError');
@@ -293,6 +325,15 @@ const VoiceInput = (() => {
       filled = 0;
       recognizer.finish();
       stopTimer = setTimeout(settle, STOP_TIMEOUT_MS); // the service did not answer: keep what was recognized so far
+    }
+
+    // Ends the recording like a second click on the button and resolves when the recognition is over and the text is in the box (at once when idle). Used when
+    // something else needs the final text while the person is still recording, for example the send button.
+    function finish() {
+      if (state === 'idle') return Promise.resolve();
+      const done = new Promise(resolve => waiters.push(resolve));
+      stop();
+      return done;
     }
 
     if (hold) {
@@ -332,7 +373,7 @@ const VoiceInput = (() => {
       button.addEventListener('click', () => { if (state === 'idle') void start(); else stop(); });
     }
     render();
-    return { start, stop, cancel, get state() { return state; } };
+    return { start, stop, finish, cancel, get state() { return state; } };
   }
 
   async function showSettings() {

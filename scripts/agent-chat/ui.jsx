@@ -294,13 +294,14 @@ function formatElapsed(ms) {
 }
 
 // The turn is running: animated dots and how long it has been going.
-function Working({ since }) {
+function Working({ since, store }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(timer); }, []);
   return (
     <div className="ac-working" role="status">
       <span className="ac-dots" aria-hidden="true"><i /><i /><i /></span>
       <span className="ac-elapsed">{formatElapsed(since ? now - since : 0)}</span>
+      <button type="button" className="ac-stop" aria-label={t('Stop')} onClick={() => void store.stop()}><Icon d={ICONS.stop} fill /></button>
     </div>
   );
 }
@@ -545,7 +546,6 @@ function Composer({ store, state, agent, notify, inputRef }) {
           onClick={() => { setExpanded(value => !value); if (inputRef.current) inputRef.current.focus(); }}><Icon d={expanded ? ICONS.collapse : ICONS.expand} /></button>
         <Mic text={text} setText={value => { if (!submitting.current) setText(value); }} notify={notify} />
         {filled ? <button type="submit" className="ac-send" disabled={sending} aria-label={t(running && !state.canSteer ? 'Queue for later' : 'Send')}><Icon d={ICONS.up} /></button> : null}
-        {running ? <button type="button" className="ac-stop" aria-label={t('Stop')} onClick={() => void store.stop()}><Icon d={ICONS.stop} fill /></button> : null}
       </div>
       <input ref={picker} type="file" multiple hidden accept={ACCEPT} onChange={event => { void addFiles([...event.target.files]); event.target.value = ''; }} />
     </form>
@@ -730,7 +730,7 @@ export const Chat = React.forwardRef(function Chat({ store, agent, conversation,
           <ThreadPrimitive.Viewport className="ac-messages" role="log" aria-live="polite" scrollToBottomOnInitialize>
             <div className="ac-list"><ThreadPrimitive.Messages components={MESSAGES} /></div>
             <div className="ac-requests">{state.pending.map(request => <Request key={request.id} request={request} store={store} agent={agent} />)}</div>
-            {state.status === 'running' ? <Working since={state.runningSince} /> : null}
+            {state.status === 'running' ? <Working since={state.runningSince} store={store} /> : null}
           </ThreadPrimitive.Viewport>
         </ThreadPrimitive.Root>
       </AssistantRuntimeProvider>

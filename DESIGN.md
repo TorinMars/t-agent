@@ -2102,3 +2102,4 @@ Usage, notifications and phone sidebar changes:
 > v2.84.32 Agent chat: stop button beside the run time, options menu with per-chat translate and keyboard switches, running tool calls shown as counts; phone settings get a log out button
 > v2.84.33 Agent chat: click the usage to refresh it, bordered stop button; the login page opens as a full-screen home-screen app and phones go to the phone page after login
 > v2.84.34 Phones always return to the phone page after login, even from the desktop page; the phone log out goes to the hidden login address
+> v2.84.35 The login page links the phone manifest, and the manifest and icons open before login, so the home-screen login page stays a full-screen app after the login

@@ -44,11 +44,12 @@ export function callBrief(args) {
   return firstLine(value);
 }
 
-// The folded line of a group of calls: { text, failed } in English (the page translates the parts). While one runs it says what it is doing.
+// The folded line of a group of calls: { text, failed } in English (the page translates the parts). While some run it only counts them
+// ("1 running · 2 finished"): what they are is not shown, so the line is always one line high and the page does not jump.
 export function groupLabel(calls) {
-  const running = calls.find(call => call.status === 'running');
+  const running = calls.filter(call => call.status === 'running').length;
   const failed = calls.filter(call => call.status === 'error').length;
-  if (running) return { text: `Running ${[running.name, callBrief(running.args)].filter(Boolean).join(' ')}`.trim(), failed, running: true };
+  if (running) return { text: `${running} running · ${calls.length - running} finished`, failed, running: true };
   const n = calls.length;
   let text;
   if (calls.every(call => SHELL.test(call.name))) text = n === 1 ? 'Ran 1 command' : `Ran ${n} commands`;

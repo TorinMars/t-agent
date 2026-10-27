@@ -202,7 +202,7 @@ const server = http.createServer(app);
     assert.equal(await page.locator('.ac-text img').count(), 0, 'agent text is never parsed as HTML');
     assert.equal(await page.evaluate(() => window.pwned), undefined);
     assert.equal(await page.locator('.ac-tool.running').count(), 1);
-    assert.equal(await page.locator('.ac-toolgroup > summary').textContent(), 'Running Bash rm -rf build', 'while a call runs the line says which');
+    assert.equal(await page.locator('.ac-toolgroup > summary').textContent(), '1 running · 0 finished', 'while a call runs the line only counts them');
     assert.equal(await page.locator('.ac-toolgroup > summary .ac-step-icon.running').count(), 1);
     await page.click('.ac-allow');
     await page.waitForSelector('.ac-tool.done', { state: 'attached' });

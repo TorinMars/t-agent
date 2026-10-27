@@ -1139,6 +1139,7 @@ I18n.add({
   "Used 1 tool": "使用了 1 个工具",
   "Used {1} tools": "使用了 {1} 个工具",
   "Running {1}": "正在运行 {1}",
+  "{1} running · {2} finished": "{1} 个运行中 · {2} 个已完成",
   "{1} failed": "{1} 个失败",
   "Review the plan": "审阅计划",
   "Approve plan": "批准计划",

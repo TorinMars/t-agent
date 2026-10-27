@@ -327,7 +327,8 @@ test('the folded line of a group says what ran, or what is running, and how many
   assert.equal(groupLabel([call('Read')]).text, 'Used 1 tool');
   assert.equal(groupLabel([call('Bash'), call('Edit')]).text, 'Used 2 tools', 'a mix is just tools');
   assert.deepEqual(groupLabel([call('Bash'), call('Bash', 'error'), call('Bash', 'error')]), { text: 'Ran 3 commands', failed: 2, running: false });
-  assert.deepEqual(groupLabel([call('Bash'), call('Bash', 'running', { command: 'make test\nmore' })]), { text: 'Running Bash make test', failed: 0, running: true });
+  assert.deepEqual(groupLabel([call('Bash'), call('Bash', 'running', { command: 'make test\nmore' })]), { text: '1 running · 1 finished', failed: 0, running: true }, 'only the counts show while a call runs, not the command');
+  assert.equal(groupLabel([call('Bash', 'running'), call('Bash', 'running'), call('Bash')]).text, '2 running · 1 finished');
   assert.equal(callBrief({ file_path: '/a/b.js', old_string: 'x' }), '/a/b.js');
   assert.equal(callBrief({}), '');
   assert.equal(callBrief('raw'), '');

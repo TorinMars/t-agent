@@ -141,7 +141,7 @@
 .ac-mic.listening { background: var(--ac-danger); color: #fff; }
 .ac-send { background: var(--ac-text); color: var(--ac-bg); }
 .ac-send:disabled { opacity: .5; }
-.ac-stop { background: none; color: var(--ac-text); }
+.ac-stop { background: none; color: var(--ac-text); border: 1.5px solid var(--ac-muted); box-sizing: border-box; }
 .ac-working .ac-stop { margin-left: auto; }
 .ac-stop svg { width: 20px; height: 20px; }
 .ac-foot { flex: 0 0 auto; box-sizing: border-box; display: flex; align-items: center; justify-content: space-between; gap: 12px; width: min(100%, calc(var(--ac-width) + 32px)); margin: 0 auto; padding: 4px 24px max(8px, env(safe-area-inset-bottom)); font-size: 14px; }

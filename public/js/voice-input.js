@@ -1,6 +1,6 @@
-// Voice input for the text box above the terminal. The microphone is captured in the browser, resampled to 16 kHz mono 16-bit PCM and streamed over the browser's own WebSocket straight to Alibaba Cloud real-time speech recognition (Fun-ASR), so the audio uses no bandwidth of the Client server.
-// The server only keeps the settings and mints a short-lived token (POST /api/speech/token); the real API key never reaches the browser.
-// The recognized text is typed into the box (live while speaking); the user reads it and presses Enter as usual, so nothing is translated or sent to the terminal without a review.
+// Voice input for the text box above the terminal. The microphone is captured in the browser, resampled to 16 kHz mono 16-bit PCM and streamed over the browser's own WebSocket straight to Alibaba Cloud real-time speech recognition (Fun-ASR), so transcription audio bypasses the Client server; the optional speaker filter sends sentence clips through it to iFlytek.
+// The ASR token service keeps the settings and mints a short-lived token (POST /api/speech/token); the real API key never reaches the browser.
+// The recognized text is typed into the box after each sentence ends and passes the optional speaker check; the user reads it and presses Enter as usual, so nothing is translated or sent to the terminal without a review.
 const VoiceInput = (() => {
   const TARGET_RATE = 16000;
   const FRAME_SAMPLES = 1600; // 100 ms per WebSocket frame
@@ -100,7 +100,10 @@ const VoiceInput = (() => {
       } else if (name === 'result-generated') {
         const sentence = message.payload && message.payload.output && message.payload.output.sentence;
         if (!sentence || sentence.heartbeat || typeof sentence.text !== 'string') return;
-        callbacks.onResult({ text: sentence.text, sentenceId: sentence.sentence_id, final: sentence.sentence_end === true });
+        callbacks.onResult({ text: sentence.text, sentenceId: sentence.sentence_id, final: sentence.sentence_end === true,
+          ...(typeof sentence.begin_time === 'number' ? { beginTime: sentence.begin_time } : {}),
+          ...(typeof sentence.end_time === 'number' ? { endTime: sentence.end_time } : {}),
+        });
       } else if (name === 'task-finished') {
         close();
         callbacks.onDone();
@@ -131,7 +134,7 @@ const VoiceInput = (() => {
   const tell = (message, type) => (typeof notify === 'function' ? notify(message, type) : (typeof alert === 'function' ? alert(message) : undefined));
   // The phone page does not load app.js (where API lives), so the recording asks for its token with its own request.
   async function requestToken() {
-    const res = await fetch('/api/speech/token', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }, body: '{}' });
+    const res = await fetch('/api/speech/token', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }, body: JSON.stringify({ speakerFilterVersion: 1 }) });
     const body = await res.text();
     let data = null;
     try { data = body ? JSON.parse(body) : null; } catch { /* plain-text error */ }
@@ -150,6 +153,7 @@ const VoiceInput = (() => {
     let state = 'idle'; // idle → connecting → listening → stopping → idle
     let recognizer, stream, context, node, silent, resampler, stopTimer, limitTimer;
     let base = '', committed = '', partial = '';
+    let speakerGate = null, completing = false;
     let frame = new Int16Array(FRAME_SAMPLES);
     let filled = 0;
     let afterStop = null; // 'send': when the recognition ends, hand the text to onSend (released over the send zone)
@@ -207,6 +211,8 @@ const VoiceInput = (() => {
       clearTimeout(limitTimer);
       release();
       if (recognizer) recognizer.close();
+      if (speakerGate) speakerGate.close();
+      speakerGate = null;
       recognizer = null;
       state = 'idle';
       render();
@@ -217,13 +223,26 @@ const VoiceInput = (() => {
       tell(message, 'error');
       if (/not configured/i.test(message) && onNotConfigured) onNotConfigured();
     }
-    function finishText() { committed += partial; partial = ''; show(); }
+    function finishText() { if (!speakerGate) committed += partial; partial = ''; show(); }
     // The recognition ended normally: keep the text and, when released over the send zone, send it.
     function settle() {
       const wants = afterStop;
       finishText();
       reset();
       if (wants === 'send' && onSend) onSend();
+    }
+    // End/send waits for every queued speaker check. The timeout never admits unverified partial text.
+    async function complete() {
+      if (completing || state === 'idle') return;
+      completing = true;
+      const mine = run;
+      clearTimeout(stopTimer);
+      release();
+      state = 'stopping'; render();
+      if (speakerGate) await speakerGate.finish();
+      if (mine !== run) return;
+      settle();
+      if (!onSend) textarea.focus();
     }
     // Throw away what this recording recognized and put the box back as it was.
     function cancel() {
@@ -233,6 +252,7 @@ const VoiceInput = (() => {
       reset();
     }
     function send(samples) {
+      if (speakerGate) speakerGate.push(samples);
       for (let i = 0; i < samples.length; i += 1) {
         frame[filled] = samples[i];
         filled += 1;
@@ -252,7 +272,7 @@ const VoiceInput = (() => {
       run += 1;
       const mine = run;
       base = textarea.value; committed = ''; partial = '';
-      filled = 0;
+      filled = 0; completing = false;
       recognizerReady = graphReady = announced = false; mutedUntil = 0;
       render();
       // Create the audio context inside the click, before any await, so iOS Safari lets it run.
@@ -265,16 +285,26 @@ const VoiceInput = (() => {
         // Fetch the token only now: it is valid for a minute, and the permission prompt can take longer than that.
         const grant = await requestToken();
         if (mine !== run) { release(); return; }
+        if (grant.speakerFilter) {
+          if (typeof SpeakerFilter === 'undefined') throw new Error('The speaker filter could not be loaded');
+          let warned = false;
+          speakerGate = SpeakerFilter.createGate({
+            verify: (audio, signal) => SpeakerFilter.request('verify', { method: 'POST', body: { audio }, signal }),
+            onAccepted: value => { if (mine === run) { committed += value; show(); } },
+            onRejected: message => { if (mine === run && !warned) { warned = true; tell(message, 'info'); } },
+            onError: message => { if (mine === run) fail(message); },
+          });
+        }
         recognizer = createRecognizer({
           url: grant.url, token: grant.token, model: grant.model, language: grant.language, noiseThreshold: grant.noiseThreshold, vocabularyId: grant.vocabularyId, hotwords: grant.hotwords,
           callbacks: {
             onReady() { if (mine === run) { state = 'listening'; recognizerReady = true; render(); announce(); } },
             onResult(result) {
               if (mine !== run) return;
-              if (result.final) { committed += result.text; partial = ''; } else partial = result.text;
-              show();
+              if (speakerGate) { speakerGate.enqueue(result); return; }
+              if (result.final) { committed += result.text; partial = ''; show(); } else partial = result.text;
             },
-            onDone() { if (mine !== run) return; settle(); if (!onSend) textarea.focus(); },
+            onDone() { if (mine === run) void complete(); },
             onError(message) { if (mine === run) fail(message); },
           },
         });
@@ -324,7 +354,7 @@ const VoiceInput = (() => {
       if (filled) recognizer.sendAudio(frame.slice(0, filled).buffer); // the last partial frame
       filled = 0;
       recognizer.finish();
-      stopTimer = setTimeout(settle, STOP_TIMEOUT_MS); // the service did not answer: keep what was recognized so far
+      stopTimer = setTimeout(() => { void complete(); }, STOP_TIMEOUT_MS); // the service did not answer: keep what was recognized so far
     }
 
     // Ends the recording like a second click on the button and resolves when the recognition is over and the text is in the box (at once when idle). Used when
@@ -400,7 +430,8 @@ const VoiceInput = (() => {
       <div class="form-group"><label class="form-label" for="vi-url">Endpoint (optional)</label>
         <input class="form-input" id="vi-url" value="${escapeHtml(config.endpoint)}"></div>
       <div class="form-hint" id="vi-effective"></div>
-      <div class="form-hint">The key is stored encrypted on the client. The browser never receives it: it gets a one-minute token and sends the audio straight to Alibaba Cloud Model Studio, so no audio goes through the client server. Keys are specific to a region, so choose the region the key was created in. Leave the endpoint empty to use the region’s address.</div>
+      <div class="form-hint">The Alibaba key is stored encrypted on the Client. The browser uses a temporary token to send audio to Alibaba Cloud. With the speaker filter enabled, sentence audio is also sent through the Client to iFlytek. Keys must match the selected region.</div>
+      <button type="button" class="btn-cancel" id="vi-speaker">Speaker filter settings</button>
       <p id="vi-feedback" role="status"></p>
       <div class="form-actions"><button class="btn-cancel" id="vi-clear" type="button">Delete all settings</button><button class="btn-cancel" id="vi-cancel" type="button">Cancel</button><button class="btn-submit" id="vi-save" type="button">Save</button></div>`);
     const field = id => document.getElementById(id);
@@ -412,6 +443,7 @@ const VoiceInput = (() => {
     field('vi-region').addEventListener('change', effective);
     field('vi-url').addEventListener('input', effective);
     field('vi-cancel').addEventListener('click', Modal.hide);
+    field('vi-speaker').addEventListener('click', () => SpeakerFilter.showSettings());
     const feedback = field('vi-feedback');
     field('vi-save').addEventListener('click', async () => {
       try {

@@ -479,8 +479,15 @@ test('Click microphone: a chime plays once when the recording is ready, and fini
   socket.onopen();
   socket.receive(header('task-started'));
   assert.equal(chimes.length, 1, 'one chime when the recording is ready');
+  socket.receive({ ...header('result-generated'), payload: { output: { sentence: { text: 'hel', sentence_id: 1, sentence_end: false } } } });
+  assert.equal(textarea.value, '', 'interim text stays hidden while the person is speaking');
+  socket.receive({ ...header('result-generated'), payload: { output: { sentence: { text: 'hello?', sentence_id: 1, sentence_end: false } } } });
+  assert.equal(textarea.value, '', 'revised guesses stay hidden too');
   socket.receive({ ...header('result-generated'), payload: { output: { sentence: { text: 'hello', sentence_id: 1, sentence_end: true } } } });
   assert.equal(chimes.length, 1, 'only once');
+  assert.equal(textarea.value, 'hello', 'the completed sentence is shown when speech ends');
+  socket.receive({ ...header('result-generated'), payload: { output: { sentence: { text: ' their', sentence_id: 2, sentence_end: false } } } });
+  assert.equal(textarea.value, 'hello', 'the next unfinished sentence does not change confirmed text');
 
   // finish() ends the recording like a second click and resolves when the final text is in the box.
   let done = false;
@@ -488,6 +495,7 @@ test('Click microphone: a chime plays once when the recording is ready, and fini
   assert.equal(JSON.parse(socket.sent.at(-1)).header.action, 'finish-task', 'the recognition is told to finish');
   await ticks();
   assert.equal(done, false, 'it waits for the service to deliver the rest');
+  assert.equal(textarea.value, 'hello', 'stopping still waits for the last sentence to be confirmed');
   socket.receive({ ...header('result-generated'), payload: { output: { sentence: { text: ' there.', sentence_id: 2, sentence_end: true } } } });
   socket.receive(header('task-finished'));
   await finishing;
@@ -506,5 +514,8 @@ test('Click microphone: a chime plays once when the recording is ready, and fini
   second.onopen();
   second.receive(header('task-started'));
   assert.equal(chimes.length, 0, 'no chime unless asked for');
+  second.receive({ ...header('result-generated'), payload: { output: { sentence: { text: 'unconfirmed', sentence_id: 1, sentence_end: false } } } });
+  assert.equal(textarea.value, '', 'unconfirmed speech is not exposed');
   quiet.cancel();
+  assert.equal(textarea.value, '', 'cancel discards the unconfirmed speech');
 });

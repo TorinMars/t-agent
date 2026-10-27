@@ -342,7 +342,13 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     // A chat shows the agent's mark with a speech bubble, so it differs from a terminal that runs the same agent.
     assert.equal(await chatRow.locator('.agent-chat-mark .agent-chat-bubble').count(), 1);
     await chatRow.locator('.agent-chat-bubble').waitFor({ state: 'visible' }); // the sheet may still be sliding in
-    const bubble = await chatRow.locator('.agent-chat-bubble').boundingBox();
+    // Loading chats can replace the row between visibility and geometry reads. Re-resolve it until drawn.
+    let bubble;
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      bubble = await chatRow.locator('.agent-chat-bubble').boundingBox();
+      if (bubble && bubble.width >= 8 && bubble.height >= 8) break;
+      await page.waitForTimeout(20);
+    }
     assert.ok(bubble && bubble.width >= 8 && bubble.height >= 8, 'the bubble is drawn');
     assert.equal(await page.locator('#h5-tasks .h5-terminal-row:not(:has(.agent-chat-mark)) .agent-chat-bubble').count(), 0, 'only chats have the bubble');
     await chatRow.locator('.h5-terminal-main').tap();

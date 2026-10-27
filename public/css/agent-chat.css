@@ -203,8 +203,9 @@
 .ac-thread { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 .ac-assistant { display: flex; flex-direction: column; gap: 10px; }
 .ac-text table { display: block; max-width: 100%; margin: 0 0 8px; overflow-x: auto; border-collapse: collapse; font-size: 13px; }
-.ac-text th, .ac-text td { padding: 4px 8px; border: 1px solid var(--ac-border); }
-.ac-text th { background: var(--ac-panel); }
+/* .ac-item breaks words anywhere, which makes a column's minimum width one letter: the table then squeezes a file name column to a letter per line. Cells wrap only at word breaks; a wider table scrolls. */
+.ac-text th, .ac-text td { padding: 4px 8px; border: 1px solid var(--ac-border); overflow-wrap: normal; word-break: normal; text-align: left; vertical-align: top; }
+.ac-text th { background: var(--ac-panel); white-space: nowrap; }
 .ac-text .hljs-comment, .ac-text .hljs-quote { color: var(--ac-muted); font-style: italic; }
 .ac-text .hljs-keyword, .ac-text .hljs-selector-tag, .ac-text .hljs-literal { color: #a371f7; }
 .ac-text .hljs-string, .ac-text .hljs-regexp, .ac-text .hljs-addition { color: #2da44e; }

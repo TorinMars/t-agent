@@ -32,7 +32,7 @@ const report = {
     await page.addStyleTag({ content: fs.readFileSync(path.join(root, 'public/css/style.css'), 'utf8') });
     await page.evaluate(report => {
       const quiet = { setActive() {}, setEngine() {} };
-      window.Apps = window.AgentConfig = window.Frp = window.FileSyncUI = quiet;
+      window.Apps = window.AgentConfig = window.Frp = window.FileSyncUI = window.MultiTask = quiet;
       window.fetched = 0;
       window.next = () => Promise.resolve(report);
       window.API = { get: async url => { fetched++; if (url !== '/api/environment/check') throw new Error(`unexpected ${url}`); return next(); } };
@@ -40,7 +40,7 @@ const report = {
     for (const file of ['environment-check.js', 'tools.js']) await page.addScriptTag({ content: fs.readFileSync(path.join(root, 'public/js', file), 'utf8') });
 
     // The tab is right below "File sync" in the navigation.
-    assert.deepEqual(await page.locator('.main-nav-item').evaluateAll(items => items.map(item => item.id)), ['tab-tasks', 'tab-tools', 'tab-apps', 'tab-agent-config', 'tab-frp', 'tab-file-sync', 'tab-environment']);
+    assert.deepEqual(await page.locator('.main-nav-item').evaluateAll(items => items.map(item => item.id)), ['tab-tasks', 'tab-tools', 'tab-apps', 'tab-agent-config', 'tab-frp', 'tab-file-sync', 'tab-environment', 'tab-multi-task']);
     assert.equal(await page.locator('#tab-environment .main-nav-label').textContent(), 'Environment');
     assert.equal(await page.locator('#environment-panel').isHidden(), true);
     assert.equal(await page.evaluate(() => fetched), 0, 'nothing is checked until the page is opened');

@@ -66,6 +66,7 @@
       <button type="button" class="main-nav-item" id="tab-frp" aria-pressed="false"><span class="main-nav-icon" aria-hidden="true">🌐</span><span class="main-nav-label">Page enhancement</span></button>
       <button type="button" class="main-nav-item" id="tab-file-sync" aria-pressed="false"><span class="main-nav-icon" aria-hidden="true">🔄</span><span class="main-nav-label">File sync</span></button>
       <button type="button" class="main-nav-item" id="tab-environment" aria-pressed="false"><span class="main-nav-icon" aria-hidden="true">🩺</span><span class="main-nav-label">Environment</span></button>
+      <button type="button" class="main-nav-item" id="tab-multi-task" aria-pressed="false"><span class="main-nav-icon" aria-hidden="true">🗂️</span><span class="main-nav-label">Multi-task</span></button>
     </nav>
 
     <aside class="sidebar" id="sidebar">
@@ -368,6 +369,19 @@
       </div>
       <div class="env-features" id="env-features"></div>
     </section>
+    <section class="multi-task-panel" id="multi-task-panel" hidden aria-label="Multi-task">
+      <div class="mt-bar">
+        <div class="mt-bar-title">Multi-task</div>
+        <div class="mt-bar-count" id="mt-count" aria-live="polite"></div>
+        <button type="button" class="btn-submit" id="mt-add">+ Add session</button>
+      </div>
+      <div class="mt-grid empty" id="mt-grid">
+        <div class="mt-empty">
+          <div class="form-hint">Open up to 4 Claude or Codex sessions side by side. Each one can use a different task.</div>
+          <button type="button" class="btn-submit" id="mt-empty-add">+ Add session</button>
+        </div>
+      </div>
+    </section>
     <section class="tools-panel" id="tools-panel" hidden aria-label="Utilities">
       <div class="tool-card">
         <div class="tool-card-title">Install dev environment (Claude Code / Codex / SSH key / rule sync / ta / PM2)</div>
@@ -441,6 +455,7 @@
   <script src="/js/frp.js"></script>
   <script src="/js/file-sync.js"></script>
   <script src="/js/environment-check.js"></script>
+  <script src="/js/multi-task.js"></script>
   <script src="/js/tools.js"></script>
   <script src="/js/agent-activity.js"></script>
   <script>

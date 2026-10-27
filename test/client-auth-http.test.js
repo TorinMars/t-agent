@@ -57,7 +57,8 @@ for (const [environment, allowHttp] of [['test', 'false'], ['production', 'false
     });
     return fetch(base + route, { redirect: 'manual', ...options, ...(body ? { body: JSON.stringify(body) } : {}) });
   }
-  function cookieOf(response) { return response.headers.get('set-cookie').split(';')[0]; }
+  // The session cookie (a login also sets the cookie that remembers the device, see lib/login-gate.js; raw HTTP responses join both into one header).
+  function cookieOf(response) { return /(?:^|[,\s])(connect\.sid=[^;]+)/.exec(response.headers.get('set-cookie'))[1]; }
   async function rejectWs(route, origin, expected) {
     await new Promise((resolve, reject) => {
       const ws = new WebSocket(base.replace('http:', 'ws:') + route, { origin });
@@ -187,6 +188,7 @@ for (const [environment, allowHttp] of [['test', 'false'], ['production', 'false
   assert.equal(loginResponse.status, 200);
   assert.match(loginResponse.headers.get('set-cookie'), /HttpOnly/);
   assert.match(loginResponse.headers.get('set-cookie'), /SameSite=Strict/);
+  assert.match(loginResponse.headers.get('set-cookie'), /t_agent_known=1; .*HttpOnly/, 'a login remembers the device');
   assert.doesNotMatch(loginResponse.headers.get('set-cookie'), /; Secure/);
   const recoveryCookie = cookieOf(loginResponse);
   if (allowHttp === 'true') {
@@ -234,4 +236,12 @@ for (const [environment, allowHttp] of [['test', 'false'], ['production', 'false
   assert.equal((await call('/auth/me', { cookie: boundCookie })).status, 404);
   assert.equal((await call('/auth/logout', { cookie: newCookie, body: {} })).status, 200);
   assert.equal((await call('/auth/me', { cookie: newCookie })).status, 404);
+  // The device is still remembered after logging out: the installed phone app starts at /h5 and must reach the login; an unknown device gets a plain 404.
+  const known = `t_agent_known=1`;
+  const phonePage = await call('/h5', { cookie: known });
+  assert.equal(phonePage.status, 302);
+  assert.equal(new URL(phonePage.headers.get('location'), base).pathname, LOGIN);
+  assert.match(phonePage.headers.get('location'), /return_to=%2Fh5$/);
+  assert.equal((await call('/h5')).status, 404, 'an unknown device sees nothing');
+  assert.equal((await call('/web', { cookie: known })).status, 404);
 });

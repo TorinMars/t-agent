@@ -7,13 +7,14 @@ const db = require('../db');
 const { ensureSingleUser } = require('../services/single-user');
 const requireAuth = require('../middleware/auth');
 const { getClientAuth, safeReturnTo, isSecureClientCookie, isLocalInitialization, SESSION_TTL } = require('../services/client-auth');
+const { KNOWN_DEVICE_COOKIE } = require('../lib/login-gate');
 const { clientCookieSameSite } = require('../lib/client-embedding');
 const config = require('../config');
 
 const router = express.Router();
 router.use(require('../middleware/client-origin'));
 
-function saveLogin(req, auth, callback) {
+function saveLogin(req, res, auth, callback) {
   req.session.regenerate(error => {
     if (error) return callback(error);
     req.session.clientAuth = auth;
@@ -21,7 +22,18 @@ function saveLogin(req, auth, callback) {
     req.session.cookie.maxAge = SESSION_TTL;
     req.session.cookie.secure = isSecureClientCookie(req);
     req.session.cookie.sameSite = clientCookieSameSite(req, require('../config').clientFrameOrigins);
-    req.session.save(callback);
+    req.session.save(saveError => {
+      // Remember this device (not removed by logging out): the installed phone app starts at /h5, and that address only reaches the login for such a device.
+      // Like the session cookie, it is not sent where a secure cookie is required but the connection is not secure.
+      const secure = isSecureClientCookie(req);
+      if (!saveError && (!secure || req.secure)) {
+        res.cookie(KNOWN_DEVICE_COOKIE, '1', {
+          httpOnly: true, path: '/', maxAge: 400 * 24 * 3600 * 1000,
+          secure, sameSite: clientCookieSameSite(req, require('../config').clientFrameOrigins),
+        });
+      }
+      callback(saveError);
+    });
   });
 }
 
@@ -62,7 +74,7 @@ router.post('/mode', (req, res) => {
   try {
     const grant = auth.authenticate(req.body.code, req.ip);
     auth.setAccessMode('remote');
-    saveLogin(req, grant, error => (error ? errorResponse(res, error) : res.json({ mode: 'remote', redirect: '/web' })));
+    saveLogin(req, res, grant, error => (error ? errorResponse(res, error) : res.json({ mode: 'remote', redirect: '/web' })));
   } catch (error) { errorResponse(res, error); }
 });
 for (const route of ['/', '/login', '/setup']) {
@@ -88,7 +100,7 @@ router.post('/setup/confirm', (req, res) => {
   try {
     const { auth, recoveryCodes } = getClientAuth().confirmSetup(req.session, req.body.code, req.ip);
     if (req.app.locals.disconnectAllClientSessions) req.app.locals.disconnectAllClientSessions();
-    saveLogin(req, auth, error => {
+    saveLogin(req, res, auth, error => {
       if (error) return errorResponse(res, error);
       res.json({ success: true, recovery_codes: recoveryCodes, redirect: safeReturnTo(req.body.return_to) });
     });
@@ -98,7 +110,7 @@ router.post('/setup/confirm', (req, res) => {
 router.post('/login', (req, res) => {
   try {
     const auth = getClientAuth().authenticate(req.body.code, req.ip);
-    saveLogin(req, auth, error => {
+    saveLogin(req, res, auth, error => {
       if (error) return errorResponse(res, error);
       res.json({ success: true, redirect: auth.recovery ? `${req.baseUrl}/setup?return_to=${encodeURIComponent(safeReturnTo(req.body.return_to))}` : safeReturnTo(req.body.return_to) });
     });

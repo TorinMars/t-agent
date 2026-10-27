@@ -196,6 +196,7 @@ const VoiceInput = (() => {
     let afterStop = null; // 'send': when the recognition ends, hand the text to onSend (released over the send zone)
     let run = 0; // identifies the current start; an older start that is still waiting must not touch a newer one
     const wave = overlay ? null : createWave(button);
+    let early = [], earlyBytes = 0, stopAfterToken = false; // audio recorded before the recognizer exists (the token is still being fetched)
     let recognizerReady = false, graphReady = false, announced = false, mutedUntil = 0;
     const waiters = []; // finish() calls that wait for the recording to be over
     // The chime comes out of the speakers, so the microphone is not listened to while it plays and the chime is not recognized as speech.
@@ -251,6 +252,7 @@ const VoiceInput = (() => {
       release();
       if (recognizer) recognizer.close();
       recognizer = null;
+      early = []; earlyBytes = 0; stopAfterToken = false;
       state = 'idle';
       render();
       while (waiters.length) waiters.shift()();
@@ -275,12 +277,17 @@ const VoiceInput = (() => {
       show();
       reset();
     }
+    // Recording starts at the click; until the token has arrived and the recognizer exists, the audio waits here (at most 10 seconds).
+    function emit(chunk) {
+      if (recognizer) recognizer.sendAudio(chunk);
+      else if (earlyBytes + chunk.byteLength <= MAX_PENDING_BYTES) { early.push(chunk); earlyBytes += chunk.byteLength; }
+    }
     function send(samples) {
       for (let i = 0; i < samples.length; i += 1) {
         frame[filled] = samples[i];
         filled += 1;
         if (filled === FRAME_SAMPLES) {
-          if (recognizer) recognizer.sendAudio(frame.buffer.slice(0));
+          emit(frame.buffer.slice(0));
           filled = 0;
         }
       }
@@ -295,7 +302,7 @@ const VoiceInput = (() => {
       run += 1;
       const mine = run;
       base = textarea.value; committed = ''; partial = '';
-      filled = 0;
+      filled = 0; early = []; earlyBytes = 0; stopAfterToken = false;
       recognizerReady = graphReady = announced = false; mutedUntil = 0;
       render();
       // Create the audio context inside the click, before any await, so iOS Safari lets it run.
@@ -303,25 +310,16 @@ const VoiceInput = (() => {
       context = new Context();
       context.resume().catch(() => {});
       try {
+        // Everything slow runs at the same time: the microphone permission, the audio worklet and the token. The microphone is recording
+        // as soon as the first two are ready, without waiting for the token.
+        let tokenAt = Date.now();
+        const tokenRequest = requestToken();
+        tokenRequest.catch(() => {}); // handled when it is awaited below
+        const moduleLoaded = context.audioWorklet.addModule(URL.createObjectURL(new Blob([WORKLET], { type: 'text/javascript' })));
+        moduleLoaded.catch(() => {});
         stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
         if (mine !== run) { release(); return; }
-        // Fetch the token only now: it is valid for a minute, and the permission prompt can take longer than that.
-        const grant = await requestToken();
-        if (mine !== run) { release(); return; }
-        recognizer = createRecognizer({
-          url: grant.url, token: grant.token, model: grant.model, language: grant.language, noiseThreshold: grant.noiseThreshold, vocabularyId: grant.vocabularyId, hotwords: grant.hotwords,
-          callbacks: {
-            onReady() { if (mine === run) { state = 'listening'; recognizerReady = true; render(); announce(); } },
-            onResult(result) {
-              if (mine !== run) return;
-              if (result.final) { committed += result.text; partial = ''; } else partial = result.text;
-              show();
-            },
-            onDone() { if (mine !== run) return; settle(); if (!onSend) textarea.focus(); },
-            onError(message) { if (mine === run) fail(message); },
-          },
-        });
-        await context.audioWorklet.addModule(URL.createObjectURL(new Blob([WORKLET], { type: 'text/javascript' })));
+        await moduleLoaded;
         if (mine !== run) { release(); return; }
         resampler = createResampler(context.sampleRate);
         node = new AudioWorkletNode(context, 'pcm-capture');
@@ -352,6 +350,25 @@ const VoiceInput = (() => {
         limitTimer = setTimeout(stop, MAX_SESSION_MS);
         graphReady = true;
         announce();
+        // The token is valid for about a minute: when the permission prompt took longer than that, ask for a new one.
+        const grant = Date.now() - tokenAt > 40000 ? await requestToken() : await tokenRequest;
+        if (mine !== run) return;
+        recognizer = createRecognizer({
+          url: grant.url, token: grant.token, model: grant.model, language: grant.language, noiseThreshold: grant.noiseThreshold, vocabularyId: grant.vocabularyId, hotwords: grant.hotwords,
+          callbacks: {
+            onReady() { if (mine === run) { if (state === 'connecting') state = 'listening'; recognizerReady = true; render(); announce(); } },
+            onResult(result) {
+              if (mine !== run) return;
+              if (result.final) { committed += result.text; partial = ''; } else partial = result.text;
+              show();
+            },
+            onDone() { if (mine !== run) return; settle(); if (!onSend) textarea.focus(); },
+            onError(message) { if (mine === run) fail(message); },
+          },
+        });
+        for (const chunk of early) recognizer.sendAudio(chunk);
+        early = []; earlyBytes = 0;
+        if (stopAfterToken) { stopAfterToken = false; recognizer.finish(); }
       } catch (error) {
         if (mine !== run) return;
         const denied = error && (error.name === 'NotAllowedError' || error.name === 'SecurityError');
@@ -361,14 +378,14 @@ const VoiceInput = (() => {
 
     function stop() {
       if (state !== 'listening' && state !== 'connecting') return;
-      if (state === 'connecting' || !recognizer) { reset(); return; }
+      if (!recognizer && !early.length && !filled) { reset(); return; } // nothing was recorded yet
       state = 'stopping';
       clearTimeout(limitTimer);
       render();
       release(); // no more audio after this point
-      if (filled) recognizer.sendAudio(frame.slice(0, filled).buffer); // the last partial frame
+      if (filled) emit(frame.slice(0, filled).buffer); // the last partial frame
       filled = 0;
-      recognizer.finish();
+      if (recognizer) recognizer.finish(); else stopAfterToken = true; // the token has not arrived: finish as soon as the recognizer exists
       stopTimer = setTimeout(settle, STOP_TIMEOUT_MS); // the service did not answer: keep what was recognized so far
     }
 

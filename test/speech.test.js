@@ -555,3 +555,49 @@ test('Click microphone: a sound wave follows the voice level while recording and
   handlers.click(); // stop
   assert.equal(wave.hidden, true, 'the wave hides when the microphone stops');
 });
+
+test('Click microphone: recording starts before the token arrives, and the early audio is sent once the recognizer exists', async () => {
+  const vm = require('vm');
+  const fs = require('fs');
+  const path = require('path');
+  const source = fs.readFileSync(path.join(__dirname, '../public/js/voice-input.js'), 'utf8');
+  const worklets = [];
+  const param = () => ({ value: 0, setValueAtTime() {}, exponentialRampToValueAtTime() {} });
+  class FakeContext {
+    constructor() { this.sampleRate = 16000; this.state = 'running'; this.currentTime = 0; this.destination = {}; this.audioWorklet = { addModule: async () => {} }; }
+    resume() { return Promise.resolve(); }
+    close() { this.state = 'closed'; return Promise.resolve(); }
+    createGain() { return { gain: param(), connect() {}, disconnect() {} }; }
+    createMediaStreamSource() { return { connect() {} }; }
+  }
+  let grantToken;
+  const sandbox = {
+    document: { getElementById: () => null, createElement: () => ({ style: {}, append() {}, setAttribute() {} }), head: { append() {} }, body: { append() {} } },
+    navigator: { mediaDevices: { getUserMedia: async () => ({ getTracks: () => [] }) } },
+    fetch: () => new Promise(resolve => { grantToken = () => resolve({ ok: true, status: 200, text: async () => JSON.stringify({ url: 'wss://speech.example/x', token: 't', model: 'm', language: 'zh' }) }); }),
+    WebSocket: FakeSocket,
+    AudioWorkletNode: class { constructor() { this.port = {}; worklets.push(this); } connect() {} disconnect() {} },
+    Blob: class {}, URL: { createObjectURL: () => 'blob:x' }, Event: class {},
+    crypto: require('crypto').webcrypto, console, setTimeout, clearTimeout, notify() {},
+  };
+  sandbox.window = sandbox; sandbox.innerWidth = 800; sandbox.AudioContext = FakeContext;
+  vm.runInNewContext(source, sandbox);
+  const handlers = {};
+  const button = { addEventListener: (type, fn) => { handlers[type] = fn; }, classList: { toggle() {} }, setAttribute() {}, getBoundingClientRect: () => ({ left: 0, top: 50, width: 30 }) };
+  FakeSocket.last = null;
+  const recording = sandbox.VoiceInput.attach({ textarea: { value: '', dispatchEvent() {}, focus() {} }, button });
+  handlers.click();
+  const ticks = async () => { for (let i = 0; i < 10; i += 1) await new Promise(resolve => setImmediate(resolve)); };
+  await ticks();
+  assert.equal(worklets.length, 1, 'the microphone is already recording while the token is still being fetched');
+  assert.equal(FakeSocket.last, null, 'no connection yet');
+  worklets[0].port.onmessage({ data: new Float32Array(3200).fill(0.1) }); // 200 ms
+  grantToken();
+  await ticks();
+  const socket = FakeSocket.last;
+  assert.ok(socket, 'the recognizer connects once the token arrives');
+  socket.onopen();
+  socket.receive(header('task-started'));
+  assert.ok(socket.sent.some(item => typeof item !== 'string'), 'audio recorded before the token arrived is sent');
+  recording.cancel(); // clears the session timers so the test process can end
+});

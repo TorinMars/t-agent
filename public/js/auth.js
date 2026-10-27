@@ -7,17 +7,9 @@
   const description = document.getElementById('auth-description');
   const errorNode = document.getElementById('auth-error');
   const requested = new URLSearchParams(location.search).get('return_to');
-  // Where to go after logging in: on a phone always the phone page, even when the desktop page ("Desktop version") sent the person here with
-  // return_to=/web, and also in the home-screen app and when the browser asks for the desktop site (which hides the phone from the server). Elsewhere
-  // the page that sent the person here, otherwise the address that picks the page.
-  const phone = () => {
-    try {
-      const touch = Number(navigator.maxTouchPoints) > 1 || /iPhone|iPod|Android.+Mobile|Mobile/i.test(navigator.userAgent || '');
-      const small = typeof screen === 'object' && screen ? Math.min(screen.width, screen.height) <= 600 : /iPhone|iPod|Mobile/i.test(navigator.userAgent || '');
-      return touch && small;
-    } catch { return false; }
-  };
-  const returnTo = phone() ? '/h5' : (['/web', '/h5'].includes(requested) ? requested : '/');
+  // After logging in the page always goes to the phone page (/h5), whatever the device is and whatever address sent the person here (the desktop page asks for
+  // return_to=/web when its session ends, and a browser that asks for the desktop site hides the phone from the server). "Desktop version" on /h5 still opens /web.
+  const returnTo = '/h5';
   const messages = {
     AUTH_CODE_INVALID: 'The code is invalid or already used. Wait for the next code, or use an unused recovery code.',
     AUTHENTICATOR_BINDING_REQUIRED: 'You must bind an authenticator before using this.',

@@ -64,16 +64,12 @@ async function logIn({ search = '', userAgent, maxTouchPoints = 0, screen }) {
   return { sent: requests.find(request => request.url.endsWith('/login')).body.return_to, went };
 }
 
-test('after the login the phone goes to the phone page, also from the bare login address and when the browser asks for the desktop site', async () => {
+test('after the login every device goes to the phone page, whatever address sent it and also when the browser asks for the desktop site', async () => {
   const iphone = { userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148', maxTouchPoints: 5, screen: { width: 390, height: 844 } };
-  assert.deepEqual(await logIn(iphone), { sent: '/h5', went: '/h5' });
-  assert.equal((await logIn({ ...iphone, userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Safari/605.1.15' })).went, '/h5', 'the desktop site on a phone');
-  assert.equal((await logIn({ ...iphone, search: '?return_to=/h5' })).went, '/h5');
-  assert.deepEqual(await logIn({ ...iphone, search: '?return_to=/web' }), { sent: '/h5', went: '/h5' }, 'the desktop page sends return_to=/web when the session ends, but a phone still lands on the phone page');
-});
-
-test('after the login a computer goes to the address that picks its page', async () => {
   const mac = { userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Safari/605.1.15', maxTouchPoints: 0, screen: { width: 1728, height: 1117 } };
-  assert.equal((await logIn(mac)).went, '/');
-  assert.equal((await logIn({ ...mac, search: '?return_to=/web' })).went, '/web');
+  for (const device of [iphone, { ...iphone, userAgent: mac.userAgent }, mac]) {
+    for (const search of ['', '?return_to=/h5', '?return_to=/web', '?return_to=/']) {
+      assert.deepEqual(await logIn({ ...device, search }), { sent: '/h5', went: '/h5' }, `${device.userAgent.slice(0, 30)} ${search}`);
+    }
+  }
 });

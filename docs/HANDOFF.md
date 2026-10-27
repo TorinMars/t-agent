@@ -133,10 +133,6 @@ For the Claude / developer taking over: read `AGENTS.md` (development and releas
 - Focused checks: 44 notification, chat-view and i18n tests passed; JavaScript syntax and diff checks passed. The phone browser regression passed, including drawer width, conversation position, backdrop dismissal and the centered desktop-width phone layout. Screenshot inspected at `/tmp/t-agent-sidebar-open.png`. The first run caught an existing layout assertion reading before the closing animation ended; the assertion now waits for the drawer to close.
 
 
-## iFlytek speaker filter
+## Voice input
 
-- Worktree `t-agent-worktrees/iflytek-speaker-filter`, branch `feat/iflytek-speaker-filter`, based on `bf7e330` (v2.84.36). User explicitly requested implementation, full tests, version upgrade and push.
-- Alibaba remains the ASR provider. Optional iFlytek text-independent voice verification (`s1aa729d0`) gates each completed ASR sentence using its exact PCM timestamp range. Settings on desktop and phone support separate encrypted credentials, 12-second recording/WAV enrollment, explicit enable, adjustable threshold and cloud/local deletion. Profiles are per user; cancellation, malformed responses, missing timestamps and failed verification never admit unverified text. Send waits for pending checks. Old pages must refresh before starting a filtered recording.
-- Includes the earlier sentence-final display request. No React bundle changed; browser files are served directly. No live installation outside the workspace was modified.
-- Focused tests: 43 passed; settings browser regression and phone layout passed. Full suite passed 630 tests after fixing a pre-existing phone chat-icon geometry race. After adding old-page capability negotiation, the final full run also passed all 630 tests. JavaScript syntax and diff checks passed. Release target: v2.84.37 on origin/main.
-- No real vendor credentials or speech samples were used. The user must enable the new iFlytek speaker-recognition service, save its credentials, enroll their own voice and enable the switch. Threshold 0.75 needs real microphone calibration; verification is per sentence and does not separate overlapping speakers.
+- The iFlytek speaker filter was removed. Click-mode recording now shows a live sound wave (voice-input.js).

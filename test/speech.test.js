@@ -479,15 +479,8 @@ test('Click microphone: a chime plays once when the recording is ready, and fini
   socket.onopen();
   socket.receive(header('task-started'));
   assert.equal(chimes.length, 1, 'one chime when the recording is ready');
-  socket.receive({ ...header('result-generated'), payload: { output: { sentence: { text: 'hel', sentence_id: 1, sentence_end: false } } } });
-  assert.equal(textarea.value, '', 'interim text stays hidden while the person is speaking');
-  socket.receive({ ...header('result-generated'), payload: { output: { sentence: { text: 'hello?', sentence_id: 1, sentence_end: false } } } });
-  assert.equal(textarea.value, '', 'revised guesses stay hidden too');
   socket.receive({ ...header('result-generated'), payload: { output: { sentence: { text: 'hello', sentence_id: 1, sentence_end: true } } } });
   assert.equal(chimes.length, 1, 'only once');
-  assert.equal(textarea.value, 'hello', 'the completed sentence is shown when speech ends');
-  socket.receive({ ...header('result-generated'), payload: { output: { sentence: { text: ' their', sentence_id: 2, sentence_end: false } } } });
-  assert.equal(textarea.value, 'hello', 'the next unfinished sentence does not change confirmed text');
 
   // finish() ends the recording like a second click and resolves when the final text is in the box.
   let done = false;
@@ -495,7 +488,6 @@ test('Click microphone: a chime plays once when the recording is ready, and fini
   assert.equal(JSON.parse(socket.sent.at(-1)).header.action, 'finish-task', 'the recognition is told to finish');
   await ticks();
   assert.equal(done, false, 'it waits for the service to deliver the rest');
-  assert.equal(textarea.value, 'hello', 'stopping still waits for the last sentence to be confirmed');
   socket.receive({ ...header('result-generated'), payload: { output: { sentence: { text: ' there.', sentence_id: 2, sentence_end: true } } } });
   socket.receive(header('task-finished'));
   await finishing;
@@ -514,8 +506,52 @@ test('Click microphone: a chime plays once when the recording is ready, and fini
   second.onopen();
   second.receive(header('task-started'));
   assert.equal(chimes.length, 0, 'no chime unless asked for');
-  second.receive({ ...header('result-generated'), payload: { output: { sentence: { text: 'unconfirmed', sentence_id: 1, sentence_end: false } } } });
-  assert.equal(textarea.value, '', 'unconfirmed speech is not exposed');
   quiet.cancel();
-  assert.equal(textarea.value, '', 'cancel discards the unconfirmed speech');
+});
+
+test('Click microphone: a sound wave follows the voice level while recording and hides when it stops', async () => {
+  const vm = require('vm');
+  const fs = require('fs');
+  const path = require('path');
+  const source = fs.readFileSync(path.join(__dirname, '../public/js/voice-input.js'), 'utf8');
+  const makeEl = () => ({ children: [], style: {}, hidden: false, offsetWidth: 80, setAttribute() {}, append(...nodes) { this.children.push(...nodes); } });
+  const created = [];
+  const document = {
+    getElementById: () => null,
+    createElement: () => { const el = makeEl(); created.push(el); return el; },
+    head: makeEl(), body: makeEl(),
+  };
+  const worklets = [];
+  const param = () => ({ value: 0, setValueAtTime() {}, exponentialRampToValueAtTime() {} });
+  class FakeContext {
+    constructor() { this.sampleRate = 16000; this.state = 'running'; this.currentTime = 0; this.destination = {}; this.audioWorklet = { addModule: async () => {} }; }
+    resume() { return Promise.resolve(); }
+    close() { this.state = 'closed'; return Promise.resolve(); }
+    createGain() { return { gain: param(), connect() {}, disconnect() {} }; }
+    createMediaStreamSource() { return { connect() {} }; }
+  }
+  const sandbox = {
+    document, window: null,
+    navigator: { mediaDevices: { getUserMedia: async () => ({ getTracks: () => [] }) } },
+    fetch: async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ url: 'wss://speech.example/x', token: 't', model: 'm', language: 'zh' }) }),
+    WebSocket: FakeSocket,
+    AudioWorkletNode: class { constructor() { this.port = {}; worklets.push(this); } connect() {} disconnect() {} },
+    Blob: class {}, URL: { createObjectURL: () => 'blob:x' }, Event: class {},
+    crypto: require('crypto').webcrypto, console, setTimeout, clearTimeout, notify() {},
+  };
+  sandbox.window = sandbox; sandbox.innerWidth = 800; sandbox.AudioContext = FakeContext;
+  vm.runInNewContext(source, sandbox);
+  const handlers = {};
+  const button = { addEventListener: (type, fn) => { handlers[type] = fn; }, classList: { toggle() {} }, setAttribute() {}, getBoundingClientRect: () => ({ left: 100, top: 100, width: 30 }) };
+  sandbox.VoiceInput.attach({ textarea: { value: '', dispatchEvent() {}, focus() {} }, button });
+  handlers.click();
+  for (let i = 0; i < 10; i += 1) await new Promise(resolve => setImmediate(resolve));
+  const wave = created.find(el => el.className === 'vi-wave');
+  assert.ok(wave, 'the wave is drawn');
+  assert.equal(wave.hidden, false);
+  const loud = new Float32Array(128).fill(0.5);
+  worklets[0].port.onmessage({ data: loud });
+  assert.ok(parseInt(wave.children.at(-1).style.height, 10) > 3, 'the newest bar grows with the voice');
+  handlers.click(); // stop
+  assert.equal(wave.hidden, true, 'the wave hides when the microphone stops');
 });

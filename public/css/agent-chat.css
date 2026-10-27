@@ -69,6 +69,9 @@
 .ac-chip { display: inline-flex; align-items: center; gap: 4px; max-width: 200px; padding: 2px 8px; border-radius: 10px; background: var(--ac-key); color: var(--ac-text); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agent-chat .ac-chip-remove svg { width: 13px; height: 13px; }
 .ac-chip-force { color: var(--ac-danger); } /* it stops the agent first */
+/* A long queued message shortens with an ellipsis; its Edit, Send and Remove buttons always stay visible. */
+.ac-queued > span { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ac-queued .ac-chip-remove { flex: none; }
 .ac-queued-editing { flex: 1 1 100%; max-width: none; }
 .ac-queued-input { flex: 1; min-width: 0; padding: 2px 0; border: 0; outline: 0; background: none; color: var(--ac-text); font: inherit; font-size: 13px; }
 .ac-chip-remove { border: 0; background: none; color: var(--ac-muted); font-size: 14px; line-height: 1; cursor: pointer; padding: 0 2px; }

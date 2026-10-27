@@ -299,9 +299,9 @@ function Working({ since, store }) {
   useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(timer); }, []);
   return (
     <div className="ac-working" role="status">
+      <button type="button" className="ac-stop" aria-label={t('Stop')} onClick={() => void store.stop()}><Icon d={ICONS.stop} fill /></button>
       <span className="ac-dots" aria-hidden="true"><i /><i /><i /></span>
       <span className="ac-elapsed">{formatElapsed(since ? now - since : 0)}</span>
-      <button type="button" className="ac-stop" aria-label={t('Stop')} onClick={() => void store.stop()}><Icon d={ICONS.stop} fill /></button>
     </div>
   );
 }

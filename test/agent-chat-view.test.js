@@ -611,3 +611,30 @@ test('a slash command is not translated, other text that starts with a slash is'
   assert.equal((await store.prepareMessage({ text: '/usr/bin is missing' }, true)).text, 'translated', 'a path is prose');
   assert.equal((await store.prepareMessage({ text: 'run /clear please' }, true)).text, 'translated', 'only a message that starts with the command');
 });
+
+test('the store keeps the suggested next message: from the snapshot, from events, cleared by a send, a running turn or the person', async () => {
+  const { createChatStore } = await load();
+  const { options, sources, calls } = harness({ snapshot: { items: [], pending: [], status: 'idle', seq: 3, suggestion: 'run the tests' } });
+  const store = createChatStore(options);
+  assert.equal(store.getState().suggestion, '', 'nothing before the snapshot has loaded');
+  await store.load();
+  assert.equal(store.getState().suggestion, 'run the tests', 'a page loaded after the turn gets it');
+  sources[0].emit({ seq: 4, op: 'meta', suggestion: 'then deploy' });
+  assert.equal(store.getState().suggestion, 'then deploy');
+  sources[0].emit({ seq: 5, op: 'meta', title: 'Renamed' });
+  assert.equal(store.getState().suggestion, 'then deploy', 'an unrelated meta event keeps it');
+  sources[0].emit({ seq: 6, op: 'meta', suggestion: null });
+  assert.equal(store.getState().suggestion, '', 'the server drops it when the person sends something');
+
+  sources[0].emit({ seq: 7, op: 'meta', suggestion: 'again' });
+  store.dismissSuggestion();
+  assert.equal(store.getState().suggestion, '', 'the person can dismiss it');
+  sources[0].emit({ seq: 8, op: 'meta', suggestion: 'once more' });
+  sources[0].emit({ seq: 9, op: 'status', status: 'running' });
+  assert.equal(store.getState().suggestion, '', 'a running turn drops it');
+  sources[0].emit({ seq: 10, op: 'status', status: 'idle', ok: true });
+  sources[0].emit({ seq: 11, op: 'meta', suggestion: 'last one' });
+  assert.equal(await store.send({ text: 'hi' }), true);
+  assert.equal(store.getState().suggestion, '', 'sending a message drops it');
+  assert.ok(calls.some(call => call[0] === 'post' && /messages$/.test(call[1])));
+});

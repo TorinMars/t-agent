@@ -180,7 +180,7 @@ function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS 
     void refreshLimits(rt.agent);
     return {
       conversation: publicRow(db.prepare('SELECT * FROM agent_conversations WHERE id = ?').get(id), rt),
-      items: [...rt.items.values()], pending: pendingList(rt), status: rt.status, seq: rt.seq, queue: readQueue(id),
+      items: [...rt.items.values()], pending: pendingList(rt), status: rt.status, seq: rt.seq, queue: readQueue(id), suggestion: rt.status === 'running' ? null : rt.suggestion || null,
       runningMs: rt.status === 'running' && rt.startedAt ? Date.now() - rt.startedAt : 0,
       capabilities: adapters[rt.agent].CAPABILITIES || {},
     };
@@ -397,6 +397,7 @@ function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS 
   }
 
   function turnContext(rt) {
+    const turnNo = rt.suggestTurn; // the turn this context belongs to
     return {
       upsert(item) { rt.items.set(item.id, item); emit(rt, { op: 'upsert', item }); },
       append(id, text) {
@@ -410,6 +411,15 @@ function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS 
       resetConversation() { rt.items.clear(); emit(rt, { op: 'reset' }); },
       // What the running turn offers while it runs: `steer(prompt)` adds the person's input to it.
       setControl(control) { rt.control = control || null; },
+      // The agent's guess at what the person says next (after the turn). It is dropped when the person sends something, so a late one from an
+      // earlier turn is ignored; it is kept in memory only (a restart of the Client loses it, which is harmless).
+      suggest(text) {
+        if (rt.suggestTurn !== turnNo || rt.status === 'running') return;
+        const value = clip(String(text || '').replace(/\s+/g, ' ').trim(), 500);
+        if (!value || value === rt.suggestion) return;
+        rt.suggestion = value;
+        emit(rt, { op: 'meta', suggestion: value });
+      },
       // What the agent reports about itself ({ model, effort, context }); shown under the composer.
       setMeta(meta) {
         const changed = mergeMeta(rt, meta);
@@ -464,6 +474,8 @@ function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS 
     if (!task.work_dir || !fs.existsSync(task.work_dir)) throw fail('WORKING_DIRECTORY_MISSING');
     const prompt = buildPrompt(body);
     await loadHistory(rt);
+    if (rt.suggestion) { rt.suggestion = null; emit(rt, { op: 'meta', suggestion: null }); }
+    if (rt.status !== 'running') rt.suggestTurn = (rt.suggestTurn || 0) + 1; // a message steered into the running turn is not a new turn
     const ctx = turnContext(rt);
     if (rt.status === 'running') return steer(rt, ctx, prompt);
     const userItem = { id: `u${Date.now().toString(36)}${rt.counter++}`, kind: 'user', text: prompt.display, attachments: prompt.names };

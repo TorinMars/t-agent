@@ -497,6 +497,25 @@ function Composer({ store, state, agent, notify, inputRef }) {
     }
   }
 
+  // The agent's guess at the next message: shown while the box is empty and the agent is idle. A tap sends it; the pencil puts it in the box to edit (so does Tab).
+  const showSuggestion = Boolean(state.suggestion) && !running && !attachments.length;
+  async function useSuggestion(send) {
+    const value = state.suggestion;
+    if (!value || submitting.current) return;
+    if (!send) { setText(value); store.dismissSuggestion(); if (inputRef.current) inputRef.current.focus(); return; }
+    submitting.current = true;
+    setSending(true);
+    try {
+      const message = await store.prepareMessage({ text: value, images: [], files: [] }, translate);
+      if (message && await store.send(message) && collapse && inputRef.current) inputRef.current.blur();
+    } catch (error) {
+      notify(error.message || 'Translation failed');
+    } finally {
+      submitting.current = false;
+      setSending(false);
+    }
+  }
+
   const canNow = entry => !running || state.canSteer;
   const [editing, setEditing] = useState(null); // a queued message being edited: { id, text }
   const finishEdit = save => {
@@ -515,6 +534,16 @@ function Composer({ store, state, agent, notify, inputRef }) {
               <span className="ac-command-desc" translate="no">{command.description}</span>
             </button>
           )) : <div className="ac-commands-note">{t(menu === 'loading' ? 'Loading the commands…' : menu === 'error' ? 'Could not load the commands' : `Slash commands are not available in ${agent.label} chats; the text goes to the agent as it is`)}</div>}
+        </div>
+      ) : null}
+      {showSuggestion && !text ? (
+        <div className="ac-suggestion" role="group" aria-label={t('Suggested next message')}>
+          <button type="button" className="ac-suggestion-send" disabled={sending} title={t('Send this message')} onClick={() => void useSuggestion(true)}>
+            <span className="ac-suggestion-label">{t('Next')}</span>
+            <span className="ac-suggestion-text" translate="no">{state.suggestion}</span>
+          </button>
+          <button type="button" className="ac-chip-remove" disabled={sending} aria-label={t('Edit before sending')} title={t('Edit before sending (Tab)')} onClick={() => useSuggestion(false)}>✎</button>
+          <button type="button" className="ac-chip-remove" aria-label={t('Dismiss the suggestion')} title={t('Dismiss the suggestion')} onClick={() => store.dismissSuggestion()}>×</button>
         </div>
       ) : null}
       {state.queue.length ? (
@@ -565,6 +594,7 @@ function Composer({ store, state, agent, notify, inputRef }) {
             if (files.length) { event.preventDefault(); void addFiles(files); }
           }}
           onKeyDown={event => {
+            if (event.key === 'Tab' && !event.shiftKey && !event.nativeEvent.isComposing && menu === 'none' && showSuggestion && !text) { event.preventDefault(); useSuggestion(false); return; }
             if (menu === 'list' && !event.nativeEvent.isComposing) {
               if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); setMenuIndex(index => (index + (event.key === 'ArrowDown' ? 1 : matches.length - 1)) % matches.length); return; }
               if (event.key === 'Tab' && !event.shiftKey) { event.preventDefault(); complete(matches[chosen]); return; }

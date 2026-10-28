@@ -247,3 +247,12 @@ fieldset.ac-question { min-width: 0; margin: 0 0 10px; padding: 0; border: 0; }
 .ac-switch:focus-visible { outline: 2px solid #3879db; outline-offset: 2px; }
 .ac-switch:disabled { opacity: .6; cursor: wait; }
 @media (prefers-reduced-motion: reduce) { .ac-switch-track > span { transition: none; } }
+
+/* The agent's suggested next message: one line above the input box; a tap sends it. */
+.ac-suggestion { display: flex; align-items: center; gap: 4px; margin: 0 4px 8px; padding: 2px 4px 2px 2px; border: 1px solid var(--ac-border); border-radius: 12px; background: var(--ac-panel); }
+.ac-suggestion-send { flex: 1 1 auto; min-width: 0; display: flex; align-items: baseline; gap: 8px; padding: 4px 8px; border: 0; border-radius: 10px; background: none; color: var(--ac-text); font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+.ac-suggestion-send:hover:not(:disabled) { background: var(--ac-key); }
+.ac-suggestion-send:disabled { opacity: .6; cursor: default; }
+.ac-suggestion-label { flex: none; color: var(--ac-accent); font-size: 12px; font-weight: 600; }
+.ac-suggestion-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ac-suggestion .ac-chip-remove { flex: none; width: 28px; height: 28px; font-size: 15px; }

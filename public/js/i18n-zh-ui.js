@@ -1286,4 +1286,10 @@ I18n.add({
   "Translation": "翻译",
   "Set up the translation service in Settings": "请在设置里配置翻译服务",
   "Set up voice input in Settings": "请在设置里配置语音输入",
+  "Suggested next message": "推荐的下一句",
+  "Send this message": "发送这句话",
+  "Next": "下一句",
+  "Edit before sending": "编辑后发送",
+  "Edit before sending (Tab)": "编辑后发送（Tab）",
+  "Dismiss the suggestion": "忽略这条推荐",
 });

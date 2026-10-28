@@ -1,7 +1,7 @@
 // State of one agent conversation, kept apart from React so the event handling can be tested without a browser.
 //
 // The server sends a snapshot (`GET <base>/conversations/<id>`), then server-sent events after the snapshot's sequence number:
-//   upsert { item } | append { id, text } | status { status, ok } | permission { request } | permission_done { id } | meta { title, mode, model, effort, context, limits }
+//   upsert { item } | append { id, text } | status { status, ok } | permission { request } | permission_done { id } | meta { title, mode, model, effort, context, limits, suggestion }
 // `getState()` returns an immutable snapshot that changes identity on every update, so it can feed useSyncExternalStore.
 //
 // Messages the person queues while the agent works ("⌘⏎ to queue for later") are kept here, not on the server: when a turn ends normally, or the
@@ -23,7 +23,7 @@ export function createChatStore({ api, base, conversation, notify = () => {}, Ev
     lastTurn: null, // the latest turn that ended while this page watched: { n, ok, stopped } (the host page may tell the person)
     translate: conversation.translate === true, // the translation switch of this chat
     collapseKeyboard: conversation.collapseKeyboard !== false, // leave the input box after sending (on by default), also per chat
-    runningSince: null, queue: [],
+    runningSince: null, queue: [], suggestion: '',
     // What the person picked (the agent reports what it ran with, which can differ: an alias, a default) and the models on offer.
     canChoose: false, choice: { model: '', effort: '' }, models: { status: 'idle', list: [] },
     // The slash commands of the chat (when the agent has them): the list is read once, in the background, when the chat has loaded.
@@ -65,7 +65,7 @@ export function createChatStore({ api, base, conversation, notify = () => {}, Ev
         // `runningMs` is how long the turn has run already; the page counts from its own clock so the two machines need not agree on the time.
         const wasRunning = state.status === 'running';
         const byPerson = stopping; // the person pressed Stop for this turn
-        publish({ status: event.status, runningSince: event.status === 'running' ? Date.now() - (event.runningMs || 0) : null });
+        publish({ status: event.status, runningSince: event.status === 'running' ? Date.now() - (event.runningMs || 0) : null, ...(event.status === 'running' ? { suggestion: '' } : {}) });
         if (event.status === 'idle') {
           const proceed = event.ok === true || stopping;
           const target = forceTarget;
@@ -92,6 +92,7 @@ export function createChatStore({ api, base, conversation, notify = () => {}, Ev
           ...(event.context ? { context: event.context } : {}), ...(event.limits ? { limits: event.limits } : {}),
           ...(typeof event.translate === 'boolean' ? { translate: event.translate } : {}),
           ...(typeof event.collapseKeyboard === 'boolean' ? { collapseKeyboard: event.collapseKeyboard } : {}),
+          ...(event.suggestion !== undefined ? { suggestion: typeof event.suggestion === 'string' ? event.suggestion : '' } : {}),
         });
         break;
       default: break;
@@ -124,6 +125,7 @@ export function createChatStore({ api, base, conversation, notify = () => {}, Ev
         ...(snapshot.conversation && snapshot.conversation.limits ? { limits: snapshot.conversation.limits } : {}),
         ...(snapshot.conversation && typeof snapshot.conversation.translate === 'boolean' ? { translate: snapshot.conversation.translate } : {}),
         ...(snapshot.conversation && typeof snapshot.conversation.collapseKeyboard === 'boolean' ? { collapseKeyboard: snapshot.conversation.collapseKeyboard } : {}),
+        suggestion: typeof snapshot.suggestion === 'string' ? snapshot.suggestion : '',
         canChoose: Boolean(snapshot.capabilities && snapshot.capabilities.models),
         commandsSupported: Boolean(snapshot.capabilities && snapshot.capabilities.commands),
         // The queue kept with the chat (not when this page already changed it: that is newer).
@@ -150,12 +152,15 @@ export function createChatStore({ api, base, conversation, notify = () => {}, Ev
   async function send(body) {
     try {
       await api.post(url('/messages'), body);
+      if (state.suggestion) publish({ suggestion: '' }); // what was suggested is out of date once the person has said something
       return true;
     } catch (error) {
       notify(error.message === 'CONVERSATION_BUSY' ? 'The agent is still working' : `Could not send: ${error.message}`);
       return false;
     }
   }
+
+  const dismissSuggestion = () => { if (state.suggestion) publish({ suggestion: '' }); };
 
   const label = body => (body.text || [...(body.images || []), ...(body.files || [])].map(file => file.name).join(', ')).replace(/\s+/g, ' ').slice(0, 80);
   // The queue is kept on the server with the chat, so a refresh does not lose it. Every change saves the whole list; the saves go one after the other,
@@ -341,7 +346,7 @@ export function createChatStore({ api, base, conversation, notify = () => {}, Ev
   return {
     getState: () => state,
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
-    prepareMessage, load, send, stop, answer, setMode, loadModels, choose, loadCommands, setTranslate, setCollapseKeyboard, refreshLimits, rename, enqueue, unqueue, editQueued, forceSend, sendQueued, apply,
+    prepareMessage, dismissSuggestion, load, send, stop, answer, setMode, loadModels, choose, loadCommands, setTranslate, setCollapseKeyboard, refreshLimits, rename, enqueue, unqueue, editQueued, forceSend, sendQueued, apply,
     destroy() {
       disposed = true;
       clearTimeout(retry);

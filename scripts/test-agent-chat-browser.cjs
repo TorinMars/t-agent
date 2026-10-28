@@ -58,6 +58,11 @@ const adapter = {
       ctx.upsert({ id: 'reset:1', kind: 'notice', text: 'Started a new session' });
       return { ok: true };
     }
+    if (/^suggest/.test(prompt.text)) { // like Claude: the guess at the next message arrives a little after the turn has ended
+      ctx.upsert({ id: `s${received.length}`, kind: 'text', text: 'Finished.' });
+      setTimeout(() => ctx.suggest('queued: run it'), 150);
+      return { ok: true };
+    }
     if (/^queued/.test(prompt.text)) { ctx.upsert({ id: 'q1', kind: 'text', text: 'Got the queued message.' }); return { ok: true }; }
     if (/slow/.test(prompt.text)) {
       ctx.upsert({ id: 's1', kind: 'text', text: 'Thinking about it' });
@@ -649,6 +654,61 @@ const server = http.createServer(app);
       assert.equal(await page.locator('.ac-box').evaluate(node => node.scrollWidth <= node.clientWidth), true, 'the input row fits');
       await page.screenshot({ path: `/tmp/t-agent-translate-${width}.png` });
     }
+    // The suggested next message: shown after the turn, a tap sends it, Tab (or the pencil) puts it in the box to edit, it survives a reload
+    // and goes away when the person sends something else.
+    await page.unroute('**/conversations/*/messages'); // from here the messages reach the server
+    const sent = [];
+    page.on('request', request => { if (request.method() === 'POST' && /\/messages$/.test(request.url())) sent.push(request.postDataJSON()); });
+    await page.setViewportSize({ width: 390, height: 780 });
+    await page.evaluate(() => { view.destroy(); return openChat('claude', null); });
+    await page.waitForSelector('.ac-options-button');
+    assert.equal(await page.locator('.ac-suggestion').count(), 0, 'nothing is suggested in a new chat');
+    await page.fill('.ac-input', 'suggest one');
+    await page.locator('.ac-input').press('Enter');
+    await page.waitForSelector('.ac-suggestion');
+    assert.equal(await page.locator('.ac-suggestion-text').textContent(), 'queued: run it');
+    assert.equal(await page.locator('.ac-suggestion-label').textContent(), 'Next');
+    await page.screenshot({ path: '/tmp/t-agent-suggestion.png' });
+    await page.locator('.ac-input').press('Tab');
+    assert.equal(await page.inputValue('.ac-input'), 'queued: run it', 'Tab takes it into the box');
+    assert.equal(await page.locator('.ac-suggestion').count(), 0, 'it is gone once it is in the box');
+    await page.fill('.ac-input', '');
+    await page.fill('.ac-input', 'suggest two');
+    await page.locator('.ac-input').press('Enter');
+    await page.waitForSelector('.ac-suggestion');
+    await page.locator('.ac-suggestion button[aria-label="Edit before sending"]').click();
+    assert.equal(await page.inputValue('.ac-input'), 'queued: run it', 'the pencil does the same');
+    await page.fill('.ac-input', '');
+    await page.fill('.ac-input', 'suggest three');
+    await page.locator('.ac-input').press('Enter');
+    await page.waitForSelector('.ac-suggestion');
+    const keep = await page.evaluate(() => window.conversation);
+    await page.evaluate(row => { view.destroy(); return openChat('claude', { conversation: row }); }, keep);
+    await page.waitForSelector('.ac-suggestion');
+    assert.equal(await page.locator('.ac-suggestion-text').textContent(), 'queued: run it', 'a reopened chat shows it again');
+    await page.locator('.ac-input').fill('x');
+    assert.equal(await page.locator('.ac-suggestion').count(), 0, 'it makes room while the person types');
+    await page.locator('.ac-input').fill('');
+    await page.waitForSelector('.ac-suggestion');
+    const before = sent.length;
+    await page.locator('.ac-suggestion-send').click();
+    await page.waitForFunction(() => !document.querySelector('.ac-suggestion'));
+    assert.equal(sent.length, before + 1, 'a tap sends it');
+    assert.equal(sent.at(-1).text, 'queued: run it');
+    await page.waitForFunction(() => document.body.textContent.includes('Got the queued message.') && !document.querySelector('.ac-stop'));
+    // The person can also send something else, or dismiss it.
+    await page.fill('.ac-input', 'suggest four');
+    await page.locator('.ac-input').press('Enter');
+    await page.waitForSelector('.ac-suggestion');
+    await page.locator('.ac-suggestion button[aria-label="Dismiss the suggestion"]').click();
+    assert.equal(await page.locator('.ac-suggestion').count(), 0);
+    await page.fill('.ac-input', 'suggest five');
+    await page.locator('.ac-input').press('Enter');
+    await page.waitForSelector('.ac-suggestion');
+    await page.fill('.ac-input', 'something else');
+    await page.locator('.ac-input').press('Enter');
+    await page.waitForFunction(() => !document.querySelector('.ac-suggestion'));
+    assert.equal(await page.locator('.ac-box').evaluate(node => node.scrollWidth <= node.clientWidth), true, 'the input row still fits');
     console.log('Agent chat view: streaming, permissions, stop, access level, attachments, reopen, Codex questions and steering, tool steps, choices and reviews passed.');
   } finally {
     await browser.close();

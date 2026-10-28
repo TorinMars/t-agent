@@ -933,3 +933,69 @@ test('new Claude and Codex chats default to full access', () => {
   assert.equal(require('../lib/agent-chat/claude').DEFAULT_MODE, 'full');
   assert.equal(require('../lib/agent-chat/codex').DEFAULT_MODE, 'full');
 });
+
+// ── The suggested next message ──
+test('Claude: the suggestion is asked for, handed to the chat after the result, and the turn does not wait for it', async () => {
+  let options;
+  const suggested = [];
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const sdk = { query: args => { options = args.options; return (async function* () {
+    yield { type: 'result', subtype: 'success', is_error: false };
+    await gate; // the suggestion is slow
+    yield { type: 'prompt_suggestion', suggestion: '  run the tests  ', uuid: 'u', session_id: 's' };
+  }()); } };
+  const ctx = { upsert() {}, append() {}, getItem() {}, setSession() {}, suggest: text => suggested.push(text) };
+  const outcome = await claude.runTurn({ cwd: '/w', mode: 'full', prompt: { text: 'x' }, signal: new AbortController().signal, ctx, requestPermission: async () => ({ allow: true }), deps: { loadSdk: async () => sdk, executable: undefined } });
+  assert.equal(options.promptSuggestions, true);
+  assert.equal(outcome.ok, true, 'the turn ended at the result, before the suggestion');
+  assert.deepEqual(suggested, []);
+  release();
+  await wait(() => suggested.length === 1);
+  assert.deepEqual(suggested, ['run the tests'], 'trimmed');
+});
+
+test('Claude: an error before the result is still the error of the turn, and one after it is ignored', async () => {
+  const run = sdk => claude.runTurn({ cwd: '/w', mode: 'full', prompt: { text: 'x' }, signal: new AbortController().signal, ctx: { upsert() {}, append() {}, getItem() {}, setSession() {} }, requestPermission: async () => ({ allow: true }), deps: { loadSdk: async () => sdk, executable: undefined } });
+  await assert.rejects(run({ query: () => (async function* () { throw new Error('boom'); }()) }), /boom/);
+  const late = await run({ query: () => (async function* () { yield { type: 'result', subtype: 'success', is_error: false }; throw new Error('late'); }()) });
+  assert.equal(late.ok, true);
+});
+
+test('a suggestion is shown, kept for a reload, dropped by the next message and ignored when it comes late', async () => {
+  let current;
+  const adapter = fakeAdapter(async ({ ctx }) => { current = ctx; ctx.upsert({ id: `t${adapter.calls.length}`, kind: 'text', text: 'done' }); return { ok: true }; });
+  const chat = createAgentChat({ db, adapters: { claude: adapter } });
+  const conversation = chat.create(task, { agent: 'claude' });
+  const seen = [];
+  chat.subscribe(task, conversation.id, 0, event => seen.push(event));
+  const idle = count => seen.filter(event => event.op === 'status' && event.status === 'idle').length >= count;
+  await chat.sendMessage(task, conversation.id, { text: 'first' });
+  await wait(() => idle(1));
+  const first = current;
+  first.suggest('  now add a test \n please ');
+  assert.deepEqual(seen.filter(event => event.op === 'meta' && 'suggestion' in event).map(event => event.suggestion), ['now add a test please'], 'whitespace is flattened');
+  assert.equal((await chat.snapshot(task, conversation.id)).suggestion, 'now add a test please', 'a page that loads later gets it');
+  first.suggest('now add a test please');
+  assert.equal(seen.filter(event => event.op === 'meta' && 'suggestion' in event).length, 1, 'the same suggestion is not announced twice');
+
+  await chat.sendMessage(task, conversation.id, { text: 'second' });
+  await wait(() => idle(2));
+  assert.equal(seen.filter(event => event.op === 'meta' && 'suggestion' in event).pop().suggestion, null, 'the person sending something drops it');
+  assert.equal((await chat.snapshot(task, conversation.id)).suggestion, null);
+  first.suggest('a late one from the first turn');
+  assert.equal((await chat.snapshot(task, conversation.id)).suggestion, null, 'a suggestion of an earlier turn is ignored');
+  current.suggest('and then deploy');
+  assert.equal((await chat.snapshot(task, conversation.id)).suggestion, 'and then deploy');
+});
+
+test('a suggestion is not shown while a turn runs', async () => {
+  let release;
+  const adapter = fakeAdapter(async ({ ctx }) => { ctx.suggest('too early'); await new Promise(resolve => { release = resolve; }); return { ok: true }; });
+  const chat = createAgentChat({ db, adapters: { claude: adapter } });
+  const conversation = chat.create(task, { agent: 'claude' });
+  await chat.sendMessage(task, conversation.id, { text: 'go' });
+  await wait(() => release);
+  assert.equal((await chat.snapshot(task, conversation.id)).suggestion, null);
+  release();
+});

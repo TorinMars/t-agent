@@ -928,3 +928,8 @@ test('a click on the usage reads it again at once, skipping the wait, and says s
   await assert.rejects(() => chat.refreshUsage(own, conversation.id), error => error.message === 'LIMITS_UNAVAILABLE' && error.statusCode === 502);
   await assert.rejects(() => chat.refreshUsage(own, 'missing'), error => error.statusCode === 404);
 });
+
+test('new Claude and Codex chats default to full access', () => {
+  assert.equal(require('../lib/agent-chat/claude').DEFAULT_MODE, 'full');
+  assert.equal(require('../lib/agent-chat/codex').DEFAULT_MODE, 'full');
+});

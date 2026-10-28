@@ -588,7 +588,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     // Settings are a panel on the right with the page dimmed; a click beside the panel closes it.
     await wide.page.locator('#h5-open-settings').click();
     await wide.page.locator('#h5-settings').waitFor({ state: 'visible' });
-    await wide.page.waitForFunction(() => document.querySelector('#h5-settings > .h5-sheet-panel').getBoundingClientRect().right <= innerWidth + 0.5);
+    await wide.page.waitForFunction(() => getComputedStyle(document.querySelector('#h5-settings > .h5-sheet-panel')).transform === 'none'); // the slide-in has finished
     const panelBox = await wide.page.locator('#h5-settings > .h5-sheet-panel').boundingBox();
     assert.deepEqual([panelBox.width, panelBox.x + panelBox.width], [440, 1440]);
     await wide.page.mouse.click(600, 400);

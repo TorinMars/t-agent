@@ -17,7 +17,9 @@ const html = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8').replace(
     await page.addStyleTag({ content: fs.readFileSync(path.join(root, 'public/css/h5.css'), 'utf8') });
     await page.evaluate(() => {
       window.calls = [];
-      window.state = { work_dir: null, mode: 'remote', oss: { enabled: false, region: 'oss-cn-hangzhou', bucket: 'b1', accessKeyId: 'id1', prefix: 'p/', publicBaseUrl: '', hasAccessKeySecret: true } };
+      window.makeTr = () => ({ provider: 'deepseek', providers: { deepseek: { label: 'DeepSeek', hasApiKey: true, baseUrl: 'https://api.deepseek.com', model: 'deepseek-chat' }, glm: { label: 'GLM', hasApiKey: false, baseUrl: 'https://glm.example/v4', model: 'glm-4' } } });
+      window.makeVi = () => ({ keySource: 'none', region: 'cn', regions: { cn: { label: 'China', endpoint: 'wss://cn.example/ws' }, intl: { label: 'International', endpoint: 'wss://intl.example/ws' } }, language: 'zh', languages: { zh: 'Chinese', en: 'English' }, model: 'asr-1', noiseThreshold: null, hotwords: '', vocabularyId: '', endpoint: '' });
+      window.state = { tr: makeTr(), vi: makeVi(), work_dir: null, mode: 'remote', oss: { enabled: false, region: 'oss-cn-hangzhou', bucket: 'b1', accessKeyId: 'id1', prefix: 'p/', publicBaseUrl: '', hasAccessKeySecret: true } };
       window.confirmed = true;
       window.confirm = () => confirmed;
       window.fetch = async (url, options = {}) => {
@@ -30,6 +32,12 @@ const html = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8').replace(
         if (url === '/api/oss/config' && method === 'GET') return reply(state.oss);
         if (url === '/api/oss/config' && method === 'PUT') { state.oss = { ...state.oss, ...body, hasAccessKeySecret: true }; delete state.oss.accessKeySecret; return reply(state.oss); }
         if (url === '/api/oss/config' && method === 'DELETE') { state.oss = { enabled: false, hasAccessKeySecret: false }; return reply(state.oss); }
+        if (url === '/api/translate/config' && method === 'GET') return reply({ provider: state.tr.provider, providers: state.tr.providers });
+        if (url === '/api/translate/config' && method === 'PUT') { state.tr.provider = body.provider; Object.assign(state.tr.providers[body.provider], { baseUrl: body.baseUrl, model: body.model, hasApiKey: state.tr.providers[body.provider].hasApiKey || Boolean(body.apiKey) }); return reply({ ok: true }); }
+        if (url === '/api/translate/config' && method === 'DELETE') { state.tr = makeTr(); return reply({ ok: true }); }
+        if (url === '/api/speech/config' && method === 'GET') return reply(state.vi);
+        if (url === '/api/speech/config' && method === 'PUT') { Object.assign(state.vi, { region: body.region, language: body.language, model: body.model, endpoint: body.endpoint, hotwords: body.hotwords, vocabularyId: body.vocabularyId, noiseThreshold: body.noiseThreshold === '' ? null : Number(body.noiseThreshold), keySource: body.apiKey ? 'saved' : state.vi.keySource }); return reply(state.vi); }
+        if (url === '/api/speech/config' && method === 'DELETE') { state.vi = makeVi(); return reply({ ok: true }); }
         if (url === '/api/remote-tokens' && method === 'GET') return reply(state.tokens || [{ id: 5, name: '<img src=x onerror="window.pwned=1">', token_prefix: 'tok_ab', scopes: 'engine' }]);
         if (url === '/api/remote-tokens/pairing') return reply({ code: 'ABCD-1234' });
         if (url === '/api/remote-tokens/5' && method === 'DELETE') { state.tokens = []; return reply({ ok: true }); }
@@ -41,7 +49,7 @@ const html = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8').replace(
     await page.evaluate(() => document.getElementById('h5-settings').classList.add('open'));
     const calls = () => page.evaluate(() => window.calls);
     assert.equal((await calls()).length, 0, 'nothing is read until a group is opened');
-    assert.deepEqual(await page.locator('.h5-setting-group > summary').allTextContents(), ['Working directory', 'Image upload', 'Remote service', 'Access mode']);
+    assert.deepEqual(await page.locator('.h5-setting-group > summary').allTextContents(), ['Working directory', 'Image upload', 'Translation', 'Voice input', 'Remote service', 'Access mode']);
 
     // Working directory: the effective default is shown; an unchanged default stays inherited, a new path is saved, clearing restores the default.
     await page.locator('#h5-set-workdir > summary').tap();
@@ -72,6 +80,51 @@ const html = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8').replace(
     assert.equal(put.body.accessKeySecret, '');
     await page.click('#h5-oss-clear');
     await page.waitForFunction(() => state.oss.hasAccessKeySecret === false && document.getElementById('h5-oss-bucket').value === '');
+
+    // Translation: one key per provider; unsaved input survives switching providers; the saved key is never shown.
+    await page.locator('#h5-set-translate > summary').tap();
+    await page.waitForFunction(() => document.getElementById('h5-tr-model').value === 'deepseek-chat');
+    assert.deepEqual(await page.locator('#h5-tr-provider option').allTextContents(), ['DeepSeek (Key saved)', 'GLM']);
+    assert.equal(await page.inputValue('#h5-tr-key'), '');
+    assert.equal(await page.getAttribute('#h5-tr-key', 'placeholder'), 'Saved; leave empty to keep it');
+    await page.fill('#h5-tr-model', 'deepseek-reasoner');
+    await page.selectOption('#h5-tr-provider', 'glm');
+    assert.equal(await page.inputValue('#h5-tr-model'), 'glm-4');
+    await page.fill('#h5-tr-key', 'glm-secret');
+    await page.selectOption('#h5-tr-provider', 'deepseek');
+    assert.equal(await page.inputValue('#h5-tr-model'), 'deepseek-reasoner', 'input that is not saved yet is kept');
+    await page.selectOption('#h5-tr-provider', 'glm');
+    assert.equal(await page.inputValue('#h5-tr-key'), 'glm-secret');
+    await page.click('#h5-tr-save');
+    await page.waitForFunction(() => state.tr.provider === 'glm' && state.tr.providers.glm.hasApiKey);
+    const trPut = (await calls()).find(call => call.method === 'PUT' && call.url === '/api/translate/config');
+    assert.deepEqual(trPut.body, { provider: 'glm', apiKey: 'glm-secret', baseUrl: 'https://glm.example/v4', model: 'glm-4' });
+    await page.waitForFunction(() => document.getElementById('h5-tr-key').value === '');
+    assert.equal(await page.locator('#h5-tr-provider').inputValue(), 'glm', 'the provider in use is selected after saving');
+    await page.click('#h5-tr-clear');
+    await page.waitForFunction(() => state.tr.provider === 'deepseek' && !state.tr.providers.glm.hasApiKey);
+
+    // Voice input: the key is never echoed, the address in use follows the region and a custom endpoint, an empty noise filter is the service default.
+    await page.locator('#h5-set-voice > summary').tap();
+    await page.waitForFunction(() => document.getElementById('h5-vi-model').value === 'asr-1');
+    assert.equal(await page.getAttribute('#h5-vi-key', 'placeholder'), 'API Key');
+    assert.equal(await page.locator('#h5-vi-effective').textContent(), 'Address in use: wss://cn.example/ws');
+    await page.selectOption('#h5-vi-region', 'intl');
+    assert.equal(await page.locator('#h5-vi-effective').textContent(), 'Address in use: wss://intl.example/ws');
+    await page.fill('#h5-vi-url', 'wss://mine.example/ws');
+    assert.equal(await page.locator('#h5-vi-effective').textContent(), 'Address in use: wss://mine.example/ws');
+    await page.fill('#h5-vi-key', 'dash-secret');
+    await page.fill('#h5-vi-noise', '0.3');
+    await page.fill('#h5-vi-hotwords', 'Claude\nCodex');
+    await page.selectOption('#h5-vi-language', 'en');
+    await page.click('#h5-vi-save');
+    await page.waitForFunction(() => state.vi.keySource === 'saved');
+    const viPut = (await calls()).find(call => call.method === 'PUT' && call.url === '/api/speech/config');
+    assert.deepEqual(viPut.body, { apiKey: 'dash-secret', region: 'intl', language: 'en', model: 'asr-1', endpoint: 'wss://mine.example/ws', noiseThreshold: '0.3', hotwords: 'Claude\nCodex', vocabularyId: '' });
+    await page.waitForFunction(() => document.getElementById('h5-vi-key').value === '' && document.getElementById('h5-vi-key').placeholder === 'Saved; leave empty to keep it');
+    assert.equal(await page.inputValue('#h5-vi-noise'), '0.3');
+    await page.click('#h5-vi-clear');
+    await page.waitForFunction(() => state.vi.keySource === 'none' && document.getElementById('h5-vi-region').value === 'cn' && document.getElementById('h5-vi-noise').value === '');
 
     // Remote service: tokens are drawn as text, a pairing code can be made, a token can be revoked.
     await page.locator('#h5-set-remote > summary').tap();

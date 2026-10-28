@@ -251,3 +251,6 @@ body.h5-tasks-open .h5-agent { border-bottom-left-radius: 28px; overflow: hidden
   #h5-settings > .h5-sheet-panel { width: min(480px, 100%); margin-left: auto; }
   #h5-settings { background: rgba(0, 0, 0, .45); }
 }
+
+.h5-setting-textarea { height: auto; min-height: 76px; padding: 8px 10px; resize: vertical; line-height: 1.4; }
+select.h5-setting-input { appearance: auto; }

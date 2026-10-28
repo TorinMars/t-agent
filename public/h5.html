@@ -164,6 +164,50 @@
           <p class="h5-setting-hint" id="h5-oss-feedback" role="status" hidden></p>
         </div>
       </details>
+      <details class="h5-setting-group" id="h5-set-translate" data-load="translate">
+        <summary>Translation</summary>
+        <div class="h5-setting-group-body">
+          <label class="h5-setting-label" for="h5-tr-provider">Translation service</label>
+          <select class="h5-setting-input" id="h5-tr-provider"></select>
+          <label class="h5-setting-label" for="h5-tr-key">API Key</label>
+          <input class="h5-setting-input" id="h5-tr-key" type="password" autocomplete="new-password">
+          <label class="h5-setting-label" for="h5-tr-url">Endpoint</label>
+          <input class="h5-setting-input" id="h5-tr-url" type="text" autocomplete="off" autocapitalize="off" spellcheck="false">
+          <label class="h5-setting-label" for="h5-tr-model">Model</label>
+          <input class="h5-setting-input" id="h5-tr-model" type="text" autocomplete="off" autocapitalize="off" spellcheck="false">
+          <p class="h5-setting-hint">Each provider’s key is stored encrypted on the client. Switching providers keeps saved keys, and they are never sent to the browser or remote engines. The selected provider is used after saving. Only input containing Chinese is translated; plain English is sent as-is. Translation runs on the client, so terminals on remote engines work too.</p>
+          <button type="button" class="h5-setting-action" id="h5-tr-save">Save</button>
+          <button type="button" class="h5-setting-action danger" id="h5-tr-clear">Delete all settings</button>
+          <p class="h5-setting-hint" id="h5-tr-feedback" role="status" hidden></p>
+        </div>
+      </details>
+      <details class="h5-setting-group" id="h5-set-voice" data-load="voice">
+        <summary>Voice input</summary>
+        <div class="h5-setting-group-body">
+          <label class="h5-setting-label" for="h5-vi-key">Alibaba Cloud API Key</label>
+          <input class="h5-setting-input" id="h5-vi-key" type="password" autocomplete="new-password">
+          <label class="h5-setting-label" for="h5-vi-region">Region</label>
+          <select class="h5-setting-input" id="h5-vi-region"></select>
+          <label class="h5-setting-label" for="h5-vi-language">Language</label>
+          <select class="h5-setting-input" id="h5-vi-language"></select>
+          <label class="h5-setting-label" for="h5-vi-model">Model</label>
+          <input class="h5-setting-input" id="h5-vi-model" type="text" autocomplete="off" autocapitalize="off" spellcheck="false">
+          <label class="h5-setting-label" for="h5-vi-noise">Noise filter (-1 to 1, optional)</label>
+          <input class="h5-setting-input" id="h5-vi-noise" type="number" inputmode="decimal" min="-1" max="1" step="0.1" placeholder="Service default">
+          <p class="h5-setting-hint">How sure the service must be that a sound is speech and not noise. Closer to 1 filters more noise (try 0.2 to 0.5 in a noisy room) but can cut quiet speech. It cannot tell your voice from other people talking nearby.</p>
+          <label class="h5-setting-label" for="h5-vi-hotwords">Hot words (optional)</label>
+          <textarea class="h5-setting-input h5-setting-textarea" id="h5-vi-hotwords" rows="3" maxlength="400" placeholder="One per line: names, product and code terms"></textarea>
+          <label class="h5-setting-label" for="h5-vi-vocab">Hot word list ID (optional)</label>
+          <input class="h5-setting-input" id="h5-vi-vocab" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="A list made in advance on Alibaba Cloud">
+          <label class="h5-setting-label" for="h5-vi-url">Endpoint (optional)</label>
+          <input class="h5-setting-input" id="h5-vi-url" type="text" autocomplete="off" autocapitalize="off" spellcheck="false">
+          <p class="h5-setting-hint" id="h5-vi-effective"></p>
+          <p class="h5-setting-hint">The key is stored encrypted on the client. The browser never receives it: it gets a one-minute token and sends the audio straight to Alibaba Cloud Model Studio, so no audio goes through the client server. Keys are specific to a region, so choose the region the key was created in. Leave the endpoint empty to use the region’s address.</p>
+          <button type="button" class="h5-setting-action" id="h5-vi-save">Save</button>
+          <button type="button" class="h5-setting-action danger" id="h5-vi-clear">Delete all settings</button>
+          <p class="h5-setting-hint" id="h5-vi-feedback" role="status" hidden></p>
+        </div>
+      </details>
       <details class="h5-setting-group" id="h5-set-remote" data-load="remote">
         <summary>Remote service</summary>
         <div class="h5-setting-group-body">

@@ -1262,7 +1262,7 @@
     } catch (error) {
       const message = error.message || 'Translation failed';
       tell(message, 'error');
-      if (/not configured/i.test(message)) tell('Set up the translation service on the desktop page');
+      if (/not configured/i.test(message)) tell('Set up the translation service in Settings');
     } finally {
       translating = false;
       translateInput.readOnly = translateSend.disabled = false;

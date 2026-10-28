@@ -497,7 +497,7 @@ const VoiceInput = (() => {
   // Phone page: settings live on the desktop page, like the translation settings.
   const h5Input = document.getElementById('h5-translate-input');
   const h5Mic = document.getElementById('h5-voice');
-  if (h5Input && h5Mic) attach({ textarea: h5Input, button: h5Mic, onNotConfigured: () => tell('Set up voice input on the desktop page', 'info'), hold: true,
+  if (h5Input && h5Mic) attach({ textarea: h5Input, button: h5Mic, onNotConfigured: () => tell('Set up voice input in Settings', 'info'), hold: true,
     overlay: typeof VoiceOverlay !== 'undefined' ? VoiceOverlay.create() : null,
     onSend: () => { const form = document.getElementById('h5-translate'); if (form && form.requestSubmit) form.requestSubmit(); } });
 

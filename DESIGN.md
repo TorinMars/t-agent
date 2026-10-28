@@ -2031,10 +2031,12 @@ A conversation view of Claude Code / Codex that replaces the terminal for one se
 
 ## Phone settings (h5)
 
-The settings sheet of `/h5` has the same configuration as the desktop "Settings" dialog, as folding groups (`public/js/h5-settings.js`, markup in `h5.html`, styles at the end of `css/h5.css`). A group reads its data the first time it is opened; the server data is shown with `textContent` / `value`, never as markup.
+The settings sheet of `/h5` has the same configuration as the desktop "Settings" dialog and the desktop translation and voice settings buttons, as folding groups (`public/js/h5-settings.js`, markup in `h5.html`, styles at the end of `css/h5.css`). A group reads its data the first time it is opened; the server data is shown with `textContent` / `value`, never as markup.
 
 - **Working directory**: `GET /auth/me` / `PUT /auth/settings`. The path in effect is shown; an unchanged default is not saved as a fixed path, and clearing the field restores the default (same rule as the desktop).
 - **Image upload**: `GET/PUT/DELETE /api/oss/config`. The secret is never sent back; an empty secret field keeps the saved one.
+- **Translation**: `GET/PUT/DELETE /api/translate/config`. One key per provider (DeepSeek / GLM); input that is not saved yet survives switching providers, saved keys are never sent back, and the provider chosen on save is the one in use.
+- **Voice input**: `GET/PUT/DELETE /api/speech/config` (Alibaba Cloud: key, region, language, model, noise filter, hot words, hot word list ID, endpoint). The key is never echoed; the "Address in use" line follows the region and a custom endpoint. When the translation service or voice input is not set up, the phone page now says to set it up in Settings (it used to point to the desktop page).
 - **Remote service**: `/api/remote-tokens` (list, revoke) and `POST /api/remote-tokens/pairing` (a code valid for 10 minutes, single use).
 - **Access mode and authenticator**: `POST /auth/mode`, with the same confirmation and error texts as the desktop; "Replace authenticator" opens `/auth/setup?return_to=/h5`. Switching to local access only from a phone locks that phone out; the page says so.
 - Tests: `node scripts/test-h5-settings-browser.cjs`.

@@ -1,5 +1,5 @@
-// Phone page settings: the same configuration as the desktop "Settings" dialog (working directory, image upload, remote service,
-// access mode and authenticator), as folding groups in the phone settings sheet. A group loads its data the first time it is opened.
+// Phone page settings: the same configuration as the desktop "Settings" dialog and the desktop settings buttons (working directory, image upload,
+// translation, voice input, remote service, access mode and authenticator), as folding groups in the phone settings sheet. A group loads its data the first time it is opened.
 // Everything the server sends is put in with textContent / value, never as markup.
 (() => {
   const $ = id => document.getElementById(id);
@@ -61,6 +61,90 @@
       await loadOss();
       say('h5-oss-feedback', !remove && !saved.enabled ? 'Settings saved, but image upload is not enabled. Tick “Enable image upload” above and save again.' : remove ? 'Deleted' : 'Saved');
     } catch (error) { say('h5-oss-feedback', failure(error), true); }
+    finally { save.disabled = clear.disabled = false; }
+  }
+
+  // ── Translation (DeepSeek / GLM): one key per provider; the provider chosen on save is the one in use ──
+  let translate = { providers: {}, current: '', drafts: {} };
+  function fillTranslate() {
+    const saved = translate.providers[translate.current] || {};
+    const draft = translate.drafts[translate.current] || {};
+    $('h5-tr-key').value = draft.apiKey || '';
+    $('h5-tr-key').placeholder = saved.hasApiKey ? tr('Saved; leave empty to keep it') : tr('API Key');
+    $('h5-tr-url').value = draft.baseUrl !== undefined ? draft.baseUrl : saved.baseUrl || '';
+    $('h5-tr-model').value = draft.model !== undefined ? draft.model : saved.model || '';
+  }
+  const rememberTranslate = () => { translate.drafts[translate.current] = { apiKey: $('h5-tr-key').value, baseUrl: $('h5-tr-url').value, model: $('h5-tr-model').value }; }; // input not saved yet survives switching providers
+  async function loadTranslate() {
+    const config = await api('GET', '/api/translate/config');
+    const ids = Object.keys(config.providers || {});
+    translate = { providers: config.providers || {}, current: config.provider || ids[0], drafts: {} };
+    const select = $('h5-tr-provider');
+    select.replaceChildren(...ids.map(id => {
+      const option = document.createElement('option');
+      option.value = id;
+      option.textContent = `${translate.providers[id].label}${translate.providers[id].hasApiKey ? ` (${tr('Key saved')})` : ''}`;
+      return option;
+    }));
+    select.value = translate.current;
+    fillTranslate();
+  }
+  async function saveTranslate(remove) {
+    const save = $('h5-tr-save');
+    const clear = $('h5-tr-clear');
+    if (remove && !confirm(tr('Delete all translation settings?'))) return;
+    save.disabled = clear.disabled = true;
+    try {
+      if (remove) await api('DELETE', '/api/translate/config');
+      else await api('PUT', '/api/translate/config', { provider: translate.current, apiKey: $('h5-tr-key').value.trim(), baseUrl: $('h5-tr-url').value.trim(), model: $('h5-tr-model').value.trim() });
+      await loadTranslate();
+      say('h5-tr-feedback', remove ? 'Translation settings deleted' : 'Translation settings saved');
+    } catch (error) { say('h5-tr-feedback', failure(error), true); }
+    finally { save.disabled = clear.disabled = false; }
+  }
+
+  // ── Voice input (Alibaba Cloud): the key stays on the client; the page only gets a one-minute token ──
+  let voice = { regions: {} };
+  const fillSelect = (id, map, selected) => {
+    const select = $(id);
+    select.replaceChildren(...Object.entries(map || {}).map(([key, item]) => {
+      const option = document.createElement('option');
+      option.value = key;
+      option.textContent = typeof item === 'string' ? item : item.label;
+      return option;
+    }));
+    select.value = selected;
+  };
+  function showVoiceAddress() {
+    const custom = $('h5-vi-url').value.trim();
+    const region = voice.regions[$('h5-vi-region').value];
+    $('h5-vi-effective').textContent = `${tr('Address in use:')} ${custom || (region && region.endpoint) || ''}`;
+  }
+  async function loadVoice() {
+    const config = await api('GET', '/api/speech/config');
+    voice = { regions: config.regions || {} };
+    $('h5-vi-key').value = '';
+    $('h5-vi-key').placeholder = tr(config.keySource === 'saved' ? 'Saved; leave empty to keep it' : config.keySource === 'environment' ? 'Using DASHSCOPE_API_KEY from the server; enter a key here to override it' : 'API Key');
+    fillSelect('h5-vi-region', config.regions, config.region);
+    fillSelect('h5-vi-language', config.languages, config.language);
+    $('h5-vi-model').value = config.model || '';
+    $('h5-vi-noise').value = config.noiseThreshold === null || config.noiseThreshold === undefined ? '' : String(config.noiseThreshold);
+    $('h5-vi-hotwords').value = config.hotwords || '';
+    $('h5-vi-vocab').value = config.vocabularyId || '';
+    $('h5-vi-url').value = config.endpoint || '';
+    showVoiceAddress();
+  }
+  async function saveVoice(remove) {
+    const save = $('h5-vi-save');
+    const clear = $('h5-vi-clear');
+    if (remove && !confirm(tr('Delete all voice input settings?'))) return;
+    save.disabled = clear.disabled = true;
+    try {
+      if (remove) await api('DELETE', '/api/speech/config');
+      else await api('PUT', '/api/speech/config', { apiKey: $('h5-vi-key').value.trim(), region: $('h5-vi-region').value, language: $('h5-vi-language').value, model: $('h5-vi-model').value.trim(), endpoint: $('h5-vi-url').value.trim(), noiseThreshold: $('h5-vi-noise').value.trim(), hotwords: $('h5-vi-hotwords').value, vocabularyId: $('h5-vi-vocab').value.trim() });
+      await loadVoice();
+      say('h5-vi-feedback', remove ? 'Voice input settings deleted' : 'Voice input settings saved');
+    } catch (error) { say('h5-vi-feedback', failure(error), true); }
     finally { save.disabled = clear.disabled = false; }
   }
 
@@ -154,8 +238,8 @@
     } finally { button.disabled = false; }
   }
 
-  const loaders = { workdir: loadWorkdir, oss: loadOss, remote: loadRemote, access: loadAccess };
-  const FEEDBACK = { workdir: 'h5-workdir-feedback', oss: 'h5-oss-feedback', remote: 'h5-remote-feedback', access: 'h5-access-feedback' };
+  const loaders = { workdir: loadWorkdir, oss: loadOss, translate: loadTranslate, voice: loadVoice, remote: loadRemote, access: loadAccess };
+  const FEEDBACK = { workdir: 'h5-workdir-feedback', oss: 'h5-oss-feedback', translate: 'h5-tr-feedback', voice: 'h5-vi-feedback', remote: 'h5-remote-feedback', access: 'h5-access-feedback' };
   document.querySelectorAll('.h5-setting-group').forEach(group => {
     group.addEventListener('toggle', async () => {
       if (!group.open) return;
@@ -167,6 +251,13 @@
   $('h5-workdir-save').addEventListener('click', () => void saveWorkdir());
   $('h5-oss-save').addEventListener('click', () => void persistOss(false));
   $('h5-oss-clear').addEventListener('click', () => void persistOss(true));
+  $('h5-tr-provider').addEventListener('change', () => { rememberTranslate(); translate.current = $('h5-tr-provider').value; fillTranslate(); });
+  $('h5-tr-save').addEventListener('click', () => void saveTranslate(false));
+  $('h5-tr-clear').addEventListener('click', () => void saveTranslate(true));
+  $('h5-vi-region').addEventListener('change', showVoiceAddress);
+  $('h5-vi-url').addEventListener('input', showVoiceAddress);
+  $('h5-vi-save').addEventListener('click', () => void saveVoice(false));
+  $('h5-vi-clear').addEventListener('click', () => void saveVoice(true));
   $('h5-token-create').addEventListener('click', () => void createPairing());
   $('h5-token-copy').addEventListener('click', () => void copyPairing());
   $('h5-access-switch').addEventListener('click', () => void switchAccess());

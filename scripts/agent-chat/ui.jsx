@@ -18,6 +18,9 @@ const ACCEPT = `${IMAGE_TYPES.join(',')},text/*,.md,.json,.js,.ts,.py,.log,.csv,
 
 const t = text => (typeof I18n !== 'undefined' ? I18n.t(text) : text);
 const coarse = () => { try { return window.matchMedia('(pointer: coarse)').matches; } catch { return false; } };
+// True for a key press that belongs to an IME composition. WebKit ends the composition before the Enter that picks a candidate,
+// so isComposing is already false there; keyCode 229 still marks the press.
+const imeKey = event => !!(event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229);
 const mac = () => /Mac|iPhone|iPad/.test(navigator.platform || '');
 
 const Icon = ({ d, fill }) => (
@@ -525,7 +528,7 @@ function Composer({ store, state, agent, notify, inputRef }) {
                 onChange={event => setEditing({ id: entry.id, text: event.target.value })}
                 onBlur={() => finishEdit(true)}
                 onKeyDown={event => {
-                  if (event.nativeEvent.isComposing) return;
+                  if (imeKey(event)) return;
                   if (event.key === 'Enter') { event.preventDefault(); finishEdit(true); }
                   else if (event.key === 'Escape') { event.preventDefault(); finishEdit(false); }
                 }} />
@@ -565,14 +568,14 @@ function Composer({ store, state, agent, notify, inputRef }) {
             if (files.length) { event.preventDefault(); void addFiles(files); }
           }}
           onKeyDown={event => {
-            if (menu === 'list' && !event.nativeEvent.isComposing) {
+            if (menu === 'list' && !imeKey(event)) {
               if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); setMenuIndex(index => (index + (event.key === 'ArrowDown' ? 1 : matches.length - 1)) % matches.length); return; }
               if (event.key === 'Tab' && !event.shiftKey) { event.preventDefault(); complete(matches[chosen]); return; }
               if (event.key === 'Escape') { event.preventDefault(); setMenuClosedFor(text); return; }
               // Enter takes the highlighted command, unless the command is already typed in full: then it sends it.
               if (event.key === 'Enter' && !event.shiftKey && !expanded && text !== `/${matches[chosen].name}`) { event.preventDefault(); complete(matches[chosen]); return; }
             }
-            if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return;
+            if (event.key !== 'Enter' || event.shiftKey || imeKey(event)) return;
             if (expanded) return; // a new line: no key sends from the expanded box
             event.preventDefault();
             void dispatch(event.metaKey || event.ctrlKey);

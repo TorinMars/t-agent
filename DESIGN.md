@@ -2117,3 +2117,4 @@ Usage, notifications and phone sidebar changes:
 > v2.84.39 Add a Multi-task page that shows up to four Claude or Codex chats side by side, each with its own task and session
 > v2.84.40 Keep table columns readable in the agent chat: file name columns no longer break after every letter
 > v2.84.41 Restore the Multi-task sessions after a page refresh
+> v2.84.42 Ignore the Enter that confirms an IME candidate in the agent chat input, and type Chinese punctuation in the desktop terminal

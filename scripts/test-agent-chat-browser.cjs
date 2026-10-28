@@ -300,6 +300,17 @@ const server = http.createServer(app);
     assert.equal(await page.evaluate(() => notes.length), 0, 'no notification while the person is looking at the chat, nor for the turns that were stopped');
     await page.getByLabel('Collapse the input box').click();
     assert.equal(await page.getByLabel('Expand the input box').getAttribute('aria-pressed'), 'false');
+    // The Enter that picks an IME candidate must not send: WebKit reports it with isComposing already false and keyCode 229.
+    await page.fill('.ac-input', 'nihao');
+    const sentBeforeIme = received.length;
+    await page.evaluate(() => {
+      const box = document.querySelector('.ac-input');
+      box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', keyCode: 229, isComposing: false, bubbles: true, cancelable: true }));
+      box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', keyCode: 13, isComposing: true, bubbles: true, cancelable: true }));
+    });
+    await page.waitForTimeout(300);
+    assert.equal(received.length, sentBeforeIme, 'an IME Enter does not send');
+    assert.equal(await input.inputValue(), 'nihao', 'and the text stays');
     await page.evaluate(() => { window.away = true; }); // the next turn ends while the app page is hidden
     await page.fill('.ac-input', 'queued plain');
     await page.keyboard.press('Enter');

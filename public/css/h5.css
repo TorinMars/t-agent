@@ -203,3 +203,21 @@ body.h5-tasks-open .h5-app, body.h5-tasks-open .h5-agent { transform: translateX
 body.h5-tasks-open .h5-app { border-radius: 28px 0 0 28px; overflow: hidden; }
 body.h5-tasks-open .h5-agent { border-bottom-left-radius: 28px; overflow: hidden; }
 @media (prefers-reduced-motion: reduce) { .h5-app, .h5-agent { transition: none; } }
+
+/* Settings groups: the desktop settings (working directory, image upload, remote service, access mode) as folding groups */
+.h5-setting-group { border-bottom: 1px solid var(--h5-border); }
+.h5-setting-group > summary { display: flex; align-items: center; justify-content: space-between; min-height: 44px; padding: 8px 0; font-size: 15px; cursor: pointer; list-style: none; }
+.h5-setting-group > summary::-webkit-details-marker { display: none; }
+.h5-setting-group > summary::after { content: '\203A'; color: var(--h5-muted); font-size: 20px; transition: transform .15s; }
+.h5-setting-group[open] > summary::after { transform: rotate(90deg); }
+.h5-setting-group-body { display: flex; flex-direction: column; gap: 8px; padding: 0 0 14px; }
+.h5-setting-group-body .h5-setting-hint { margin: 0 !important; }
+.h5-setting-label { color: var(--h5-muted); font-size: 13px; }
+.h5-setting-input { box-sizing: border-box; width: 100%; height: 42px; padding: 0 10px; border: 1px solid var(--h5-border); border-radius: 8px; background: var(--h5-key); color: var(--h5-text); font-size: 16px; }
+.h5-setting-check { display: flex; align-items: center; gap: 8px; font-size: 15px; }
+.h5-setting-link { display: flex; align-items: center; justify-content: center; box-sizing: border-box; color: inherit; text-decoration: none; }
+.h5-token-list { display: flex; flex-direction: column; gap: 6px; }
+.h5-token-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; border: 1px solid var(--h5-border); border-radius: 8px; }
+.h5-token-row small { display: block; color: var(--h5-muted); overflow-wrap: anywhere; }
+.h5-token-created { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; border: 1px solid var(--h5-border); border-radius: 8px; background: var(--h5-key); }
+.h5-token-created code { font-size: 18px; letter-spacing: 1px; overflow-wrap: anywhere; user-select: all; }

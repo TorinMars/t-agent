@@ -295,15 +295,21 @@
     return list;
   }
 
+  // A wide screen (a computer, a landscape tablet) shows the task sheet as a permanent sidebar next to the terminal: it is never closed,
+  // the page behind it stays usable, and a phone-sized screen keeps the sheet that slides over the page.
+  const wideQuery = window.matchMedia('(min-width: 900px)');
+  const isWide = () => wideQuery.matches;
   function openTasks() {
-    expandedId = task ? task.id : null; // the sheet opens with the sessions of the task that is shown, as before
-    document.body.classList.add('h5-tasks-open');
+    const wide = isWide();
+    if (!wide || !sheet.classList.contains('open')) expandedId = task ? task.id : null; // the sheet opens with the sessions of the task that is shown, as before
+    document.body.classList.toggle('h5-tasks-open', !wide);
     $('h5-open-tasks').setAttribute('aria-expanded', 'true');
-    $('h5-app').inert = true;
-    $('h5-agent').inert = true;
+    $('h5-app').inert = !wide;
+    $('h5-agent').inert = !wide;
+    sheet.setAttribute('aria-modal', String(!wide));
     sheet.classList.add('open');
     sheet.setAttribute('aria-hidden', 'false');
-    $('h5-close-tasks').focus({ preventScroll: true });
+    if (!wide) $('h5-close-tasks').focus({ preventScroll: true });
     renderTasks();
     void loadTasks();
     void refreshTerminals();
@@ -328,6 +334,7 @@
     if (changed) renderTasks();
   }
   function closeTasks() {
+    if (isWide()) return; // the sidebar stays
     clearInterval(namesTimer);
     sheet.classList.remove('open');
     document.body.classList.remove('h5-tasks-open');
@@ -337,6 +344,14 @@
     if (sheet.contains(document.activeElement)) $('h5-open-tasks').focus({ preventScroll: true });
     sheet.setAttribute('aria-hidden', 'true');
   }
+  // Crossing the breakpoint (a window resized, a tablet rotated) turns the sheet into the sidebar or back into a sheet that is closed.
+  function syncLayout() {
+    if (isWide()) openTasks();
+    else if (sheet.classList.contains('open')) closeTasks();
+    fitViewport();
+    if (agentChat) fitAgentView();
+  }
+  wideQuery.addEventListener('change', syncLayout);
 
   // ── Settings: language and the PC one-click update (same /api/system endpoints as the desktop page) ──
   const settings = $('h5-settings');
@@ -430,6 +445,8 @@
   }
   $('h5-open-settings').addEventListener('click', openSettings);
   $('h5-close-settings').addEventListener('click', closeSettings);
+  settings.addEventListener('click', event => { if (event.target === settings) closeSettings(); }); // the dimmed area beside the panel on a wide screen
+  settings.addEventListener('keydown', event => { if (event.key === 'Escape') closeSettings(); });
   updateButton.addEventListener('click', () => void checkUpdate());
   $('h5-logout').addEventListener('click', async () => {
     if (!confirm(tr('Logging out disconnects local and remote terminals, but tasks running on the server keep running. Log out?'))) return;
@@ -1379,6 +1396,6 @@
     const savedId = Number(store.get(`task:${source.key}`));
     const saved = tasks.find(item => item.id === savedId);
     if (saved) selectTask(saved);
-    else openTasks();
+    if (!saved || isWide()) openTasks();
   })();
 })();

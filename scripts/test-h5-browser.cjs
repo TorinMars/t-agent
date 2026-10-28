@@ -568,21 +568,41 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     assert.equal(await page.locator('#h5-update-confirm').count(), 0, 'no confirmation step is left');
     await context.close();
 
-    // Opened on a computer, the page stays a centred phone-sized column.
+    // Opened on a computer, the task sheet is a permanent sidebar and the terminal fills the rest of the window.
     const wide = await openPage(browser, { viewport: { width: 1440, height: 900 } });
     await wide.page.locator('#h5-tasks').waitFor({ state: 'visible' });
     const sheetBox = await wide.page.locator('#h5-tasks').boundingBox();
-    assert.deepEqual([sheetBox.width, sheetBox.x], [480, 480]);
+    assert.deepEqual([sheetBox.width, sheetBox.x], [320, 0]);
     await openTask(wide.page, 'Fix login', 'click');
-    await wide.page.locator('#h5-tasks').waitFor({ state: 'hidden' });
+    assert.equal(await wide.page.locator('#h5-tasks').isVisible(), true, 'the sidebar stays after a task is chosen');
+    assert.equal(await wide.page.locator('#h5-close-tasks').isHidden(), true, 'the sidebar has no close button');
+    assert.equal(await wide.page.evaluate(() => document.getElementById('h5-app').inert), false, 'the page beside the sidebar stays usable');
     const appBox = await wide.page.locator('#h5-app').boundingBox();
-    assert.deepEqual([appBox.width, appBox.x], [480, 480]);
+    assert.deepEqual([appBox.width, appBox.x], [1120, 320]);
     assert.equal(await wide.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
     await wide.page.waitForFunction(() => window.sockets.length === 1);
     await wide.page.evaluate(() => window.sockets[0].emit(JSON.stringify({ type: 'history', data: 'x', cols: 80, rows: 24 })));
     await wide.page.waitForTimeout(100);
     const cols = await wide.page.evaluate(() => window.sockets[0].sent.map(item => { try { return JSON.parse(item); } catch { return null; } }).filter(item => item?.type === 'resize').pop().cols);
-    assert.ok(cols < 70, `the terminal fits the 480px column (${cols} columns)`);
+    assert.ok(cols > 100, `the terminal uses the width beside the sidebar (${cols} columns)`);
+    // Settings are a panel on the right with the page dimmed; a click beside the panel closes it.
+    await wide.page.locator('#h5-open-settings').click();
+    await wide.page.locator('#h5-settings').waitFor({ state: 'visible' });
+    await wide.page.waitForFunction(() => document.querySelector('#h5-settings > .h5-sheet-panel').getBoundingClientRect().right <= innerWidth + 0.5);
+    const panelBox = await wide.page.locator('#h5-settings > .h5-sheet-panel').boundingBox();
+    assert.deepEqual([panelBox.width, panelBox.x + panelBox.width], [440, 1440]);
+    await wide.page.mouse.click(600, 400);
+    await wide.page.waitForFunction(() => !document.getElementById('h5-settings').classList.contains('open'));
+    // Narrowing the window below the breakpoint turns the sidebar back into the sheet that is closed; widening brings it back.
+    await wide.page.setViewportSize({ width: 600, height: 900 });
+    await wide.page.waitForFunction(() => !document.getElementById('h5-tasks').classList.contains('open'));
+    assert.deepEqual(await wide.page.locator('#h5-app').boundingBox().then(box => [box.x, box.width]), [0, 600], 'a tablet-sized window is one full-width column');
+    await wide.page.locator('#h5-open-tasks').click();
+    assert.equal(await wide.page.evaluate(() => document.getElementById('h5-app').inert), true, 'the sheet is modal below the breakpoint');
+    await wide.page.locator('#h5-close-tasks').click();
+    await wide.page.setViewportSize({ width: 1200, height: 900 });
+    await wide.page.waitForFunction(() => document.getElementById('h5-tasks').classList.contains('open') && !document.getElementById('h5-app').inert);
+    assert.equal(await wide.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
     await wide.context.close();
 
     // A remote engine's desktop terminal is the phone's terminal too (shared terminals).

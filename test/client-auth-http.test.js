@@ -68,14 +68,20 @@ for (const [environment, allowHttp] of [['test', 'false'], ['production', 'false
     });
   }
   const LOGIN = '/torin/hide/login';
-  // Logged out (including not yet bound): every address except the hidden login entrance and machine endpoints is 404, with no redirect.
-  for (const route of ['/', '/web', '/index.html', '/index%2ehtml', '/login.html', '/clients', '/auth/login', '/auth/setup', '/auth/status', '/auth/me', '/js/app.js', '/css/style.css', '/manifest.json', '/sw.js', '/nonexistent']) {
+  // Logged out (including not yet bound): the pages (`/`, `/web`, `/h5`) lead to the login entrance; every other address except the login entrance and machine
+  // endpoints is 404, with no redirect.
+  for (const page of ['/', '/web', '/h5']) {
+    const response = await call(page);
+    assert.equal(response.status, 302, page);
+    assert.match(response.headers.get('location'), /^\/torin\/hide\/login\?return_to=/, page);
+  }
+  for (const route of ['/index.html', '/index%2ehtml', '/login.html', '/clients', '/auth/login', '/auth/setup', '/auth/status', '/auth/me', '/js/app.js', '/css/style.css', '/manifest.json', '/sw.js', '/nonexistent']) {
     const response = await call(route);
     assert.equal(response.status, 404, route);
     assert.equal(response.headers.get('location'), null, route);
   }
   const unknown = await (await call('/nonexistent')).text();
-  assert.equal(await (await call('/web')).text(), unknown.replace('/nonexistent', '/web'), 'A protected address answers the same as a non-existent one');
+  assert.equal(await (await call('/clients')).text(), unknown.replace('/nonexistent', '/clients'), 'A protected address answers the same as a non-existent one');
   for (const route of ['/api/tasks', '/api/local-ip', '/api/system/version', '/api/oss/config', '/api/environment/check']) {
     assert.equal((await call(route)).status, 404, route);
   }
@@ -188,7 +194,7 @@ for (const [environment, allowHttp] of [['test', 'false'], ['production', 'false
   assert.equal(loginResponse.status, 200);
   assert.match(loginResponse.headers.get('set-cookie'), /HttpOnly/);
   assert.match(loginResponse.headers.get('set-cookie'), /SameSite=Strict/);
-  assert.match(loginResponse.headers.get('set-cookie'), /t_agent_known=1; .*HttpOnly/, 'a login remembers the device');
+  assert.doesNotMatch(loginResponse.headers.get('set-cookie'), /t_agent_known/, 'no cookie remembers the device any more');
   assert.doesNotMatch(loginResponse.headers.get('set-cookie'), /; Secure/);
   const recoveryCookie = cookieOf(loginResponse);
   if (allowHttp === 'true') {
@@ -236,12 +242,13 @@ for (const [environment, allowHttp] of [['test', 'false'], ['production', 'false
   assert.equal((await call('/auth/me', { cookie: boundCookie })).status, 404);
   assert.equal((await call('/auth/logout', { cookie: newCookie, body: {} })).status, 200);
   assert.equal((await call('/auth/me', { cookie: newCookie })).status, 404);
-  // The device is still remembered after logging out: the installed phone app starts at /h5 and must reach the login; an unknown device gets a plain 404.
-  const known = `t_agent_known=1`;
-  const phonePage = await call('/h5', { cookie: known });
-  assert.equal(phonePage.status, 302);
-  assert.equal(new URL(phonePage.headers.get('location'), base).pathname, LOGIN);
-  assert.match(phonePage.headers.get('location'), /return_to=%2Fh5$/);
-  assert.equal((await call('/h5')).status, 404, 'an unknown device sees nothing');
-  assert.equal((await call('/web', { cookie: known })).status, 404);
+  // Logged out, the pages lead to the login entrance and back, for every device; any other address is a plain 404.
+  for (const [page, back] of [['/h5', '%2Fh5'], ['/web', '%2Fweb'], ['/', '%2F']]) {
+    const response = await call(page);
+    assert.equal(response.status, 302, page);
+    assert.equal(new URL(response.headers.get('location'), base).pathname, LOGIN);
+    assert.match(response.headers.get('location'), new RegExp(`return_to=${back}$`));
+  }
+  assert.equal((await call('/api/tasks')).status, 404, 'an API stays closed');
+  assert.equal((await call('/h5/x')).status, 404);
 });

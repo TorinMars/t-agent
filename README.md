@@ -72,7 +72,7 @@ The top of the "Page enhancement" page can switch to the SSH method: `ssh -R` bi
 
 ### Login entrance
 
-When logged out, apart from the exceptions below, **every address returns 404** (exactly like a non-existent address, with no redirect and no login hint); only the hidden login entrance can be opened, which by default is:
+When logged out, the pages `/`, `/web` and `/h5` **lead to the login entrance** (with `return_to`, so the login brings you back to the page you opened), and apart from the exceptions below **every other address returns 404** (exactly like a non-existent address, with no redirect and no login hint). The login entrance, which anyone who opens a page is taken to, is by default:
 
 ```
 http://127.0.0.1:3000/torin/hide/login
@@ -81,7 +81,7 @@ http://127.0.0.1:3000/torin/hide/login
 - Binding an authenticator for the first time, logging in and replacing the authenticator all start from this entrance; `/web` and the features are only accessible after a successful login. After a session expires the page jumps back to this entrance automatically.
 - Change the entrance with `CLIENT_LOGIN_PATH` in `.env` (it starts with `/`, has at least 6 characters, contains only letters, digits and `-._~`, may have several levels, and must not use built-in paths such as `/api`, `/auth`, `/web` or `/v1`), and restart afterwards. An invalid value produces a notice and falls back to the default.
 - Exceptions still reachable when logged out: the Bearer-token machine endpoints `/v1` and `/api/remote/v1` (used to connect several t-agent instances; without a token they still return their own errors), `/health`, public share pages `/share/*` and the scripts and styles they depend on.
-- On a device where it is installed as an app (PWA): it works normally within the login validity; after a session expires a cold start of the app shows a 404, and you must open the login entrance in a browser and log in again first.
+- On a device where it is installed as an app (PWA): it works normally within the login validity; after a session expires the app opens at the login entrance (the phone page address leads there when logged out).
 - The old page addresses `/auth/login` and `/auth/setup` and the multi-Client workspace `/clients` have been removed (always 404 when logged out). `CLIENT_FRAME_ORIGINS` can still be used to allow other sites to embed this Client's pages.
 
 ### Workspace tools: import and cleanup

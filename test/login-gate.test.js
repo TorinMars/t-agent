@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { KNOWN_DEVICE_COOKIE, DEFAULT_LOGIN_PATH, resolveLoginPath, isOpenPath, createLoginGate, createUnknownPageRedirect } = require('../lib/login-gate');
+const { PAGE_ADDRESSES, DEFAULT_LOGIN_PATH, resolveLoginPath, isOpenPath, createLoginGate, createUnknownPageRedirect } = require('../lib/login-gate');
 
 test('login path defaults to /torin/hide/login and rejects unsafe values', () => {
   assert.equal(DEFAULT_LOGIN_PATH, '/torin/hide/login');
@@ -33,11 +33,11 @@ test('gate lets an authenticated session through and answers anything else with 
   }
   assert.equal(run('/web', { ok: true }).next, true);
   assert.equal(run('/torin/hide/login', { ok: false }).next, true);
-  const denied = run('/web', { ok: false });
+  const denied = run('/api/tasks', { ok: false });
   assert.equal(denied.next, false);
   assert.equal(denied.status, 404);
-  assert.match(denied.body, /Cannot GET \/web/);
-  assert.equal(run('/%2e%2e/web', { ok: false }).status, 404);
+  assert.match(denied.body, /Cannot GET \/api\/tasks/);
+  assert.equal(run('/%2e%2e/api/tasks', { ok: false }).status, 404);
 });
 
 test('a logged-in browser page visit to an unknown address goes to the home page, everything else is left to the 404', () => {
@@ -59,21 +59,22 @@ test('a logged-in browser page visit to an unknown address goes to the home page
   assert.equal(run('/nonexistent', { accept: '*/*' }).next, true, 'scripts and tools that do not ask for HTML still get 404');
 });
 
-test('a device that has logged in before gets from the phone page address to the login entrance, nobody else does', () => {
+test('logged out, the pages lead to the login entrance and come back after the login; nothing else is opened', () => {
   const gate = createLoginGate({ loginPath: '/torin/hide/login', isAuthenticated: session => session.ok === true });
-  function run(pathname, { cookie, method = 'GET', ok = false, rawPath = pathname } = {}) {
+  function run(pathname, { method = 'GET', ok = false, rawPath = pathname } = {}) {
     const result = { next: false };
     const res = { status(code) { result.status = code; return this; }, set() { return this; }, type() { return this; }, send(body) { result.body = body; }, redirect(location) { result.location = location; } };
-    gate({ path: rawPath, method, session: { ok }, headers: cookie ? { cookie } : {} }, res, () => { result.next = true; });
+    gate({ path: rawPath, method, session: { ok }, headers: {} }, res, () => { result.next = true; });
     return result;
   }
-  const known = `${KNOWN_DEVICE_COOKIE}=1`;
-  assert.equal(run('/h5', { cookie: known }).location, '/torin/hide/login?return_to=%2Fh5');
-  assert.equal(run('/h5', { cookie: `a=b; ${known}; c=d` }).location, '/torin/hide/login?return_to=%2Fh5');
-  assert.equal(run('/h5').status, 404, 'a device we do not know sees a plain 404');
-  assert.equal(run('/h5', { cookie: `x${known}` }).status, 404);
-  assert.equal(run('/h5', { cookie: `${KNOWN_DEVICE_COOKIE}=0` }).status, 404);
-  for (const other of ['/web', '/', '/api/tasks', '/h5/x', '/manifest.json']) assert.equal(run(other, { cookie: known }).status, 404, `${other} stays closed`);
-  assert.equal(run('/h5', { cookie: known, method: 'POST' }).status, 404, 'only page visits are sent on');
-  assert.equal(run('/h5', { cookie: known, ok: true }).next, true, 'a logged-in session is let through as before');
+  assert.deepEqual([...PAGE_ADDRESSES].sort(), ['/', '/h5', '/web']);
+  assert.equal(run('/h5').location, '/torin/hide/login?return_to=%2Fh5');
+  assert.equal(run('/web').location, '/torin/hide/login?return_to=%2Fweb');
+  assert.equal(run('/').location, '/torin/hide/login?return_to=%2F');
+  assert.equal(run('/web', { method: 'HEAD' }).location, '/torin/hide/login?return_to=%2Fweb');
+  for (const other of ['/api/tasks', '/h5/x', '/web/x', '/manifest.json', '/js/app.js', '/css/h5.css', '/index.html', '/h5.html']) assert.equal(run(other).status, 404, `${other} stays closed`);
+  assert.equal(run('/h5', { method: 'POST' }).status, 404, 'only page visits are sent on');
+  assert.equal(run('/h5', { rawPath: '/h5/' }).status, 404, 'a look-alike address is not one of the pages');
+  assert.equal(run('/%68%35', { rawPath: '/%68%35' }).status, 404, 'an encoded look-alike is not either');
+  for (const page of ['/h5', '/web', '/']) assert.equal(run(page, { ok: true }).next, true, 'a logged-in session is let through as before');
 });

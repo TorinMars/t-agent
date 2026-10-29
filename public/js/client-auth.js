@@ -28,7 +28,7 @@
       }
       if (lost && !redirecting) {
         redirecting = true;
-        location.replace(`${loginPath}?return_to=${encodeURIComponent('/web')}`);
+        location.replace(`${loginPath}?return_to=${encodeURIComponent(/^\/h5(\/|$)/.test(location.pathname) ? '/h5' : '/web')}`); // back to the page that was open
       }
     }
     return response;

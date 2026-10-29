@@ -7,7 +7,6 @@ const db = require('../db');
 const { ensureSingleUser } = require('../services/single-user');
 const requireAuth = require('../middleware/auth');
 const { getClientAuth, safeReturnTo, isSecureClientCookie, isLocalInitialization, SESSION_TTL } = require('../services/client-auth');
-const { KNOWN_DEVICE_COOKIE } = require('../lib/login-gate');
 const { clientCookieSameSite } = require('../lib/client-embedding');
 const config = require('../config');
 
@@ -22,18 +21,7 @@ function saveLogin(req, res, auth, callback) {
     req.session.cookie.maxAge = SESSION_TTL;
     req.session.cookie.secure = isSecureClientCookie(req);
     req.session.cookie.sameSite = clientCookieSameSite(req, require('../config').clientFrameOrigins);
-    req.session.save(saveError => {
-      // Remember this device (not removed by logging out): the installed phone app starts at /h5, and that address only reaches the login for such a device.
-      // Like the session cookie, it is not sent where a secure cookie is required but the connection is not secure.
-      const secure = isSecureClientCookie(req);
-      if (!saveError && (!secure || req.secure)) {
-        res.cookie(KNOWN_DEVICE_COOKIE, '1', {
-          httpOnly: true, path: '/', maxAge: 400 * 24 * 3600 * 1000,
-          secure, sameSite: clientCookieSameSite(req, require('../config').clientFrameOrigins),
-        });
-      }
-      callback(saveError);
-    });
+    req.session.save(saveError => callback(saveError));
   });
 }
 

@@ -2133,3 +2133,4 @@ Usage, notifications and phone sidebar changes:
 > v2.84.40 Keep table columns readable in the agent chat: file name columns no longer break after every letter
 > v2.84.41 Restore the Multi-task sessions after a page refresh
 > v2.84.42 Ignore the Enter that confirms an IME candidate in the agent chat input, and type Chinese punctuation in the desktop terminal
+> v2.84.43 Responsive phone page with settings, suggested next message, server-side queue and default full access

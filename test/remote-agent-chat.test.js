@@ -114,6 +114,24 @@ test('Engine and proxy support creation, history, model selection, approvals, re
   }
 });
 
+test('the queue operations reach the Engine through the Client proxy too', async () => {
+  const [direct, viaProxy] = targets();
+  for (const target of [direct, viaProxy]) {
+    const base = `/tasks/${mine.id}/agent`;
+    const id = (await call(target, 'POST', `${base}/conversations`, { agent: 'claude' })).body.id;
+    const url = `${base}/conversations/${id}`;
+    assert.equal((await call(target, 'GET', url)).body.capabilities.serverQueue, true);
+    await call(target, 'POST', `${url}/queue`, { queue: [{ id: 1, body: { text: 'one' } }, { id: 2, body: { text: 'two' } }, { id: 3, body: { text: 'three' } }] });
+    assert.deepEqual((await call(target, 'POST', `${url}/queue/1/edit`, { text: 'uno' })).body, { success: true });
+    assert.deepEqual((await call(target, 'POST', `${url}/queue/2/remove`, {})).body, { success: true });
+    assert.deepEqual((await call(target, 'POST', `${url}/queue/add`, { body: { text: 'four' } })).body.success, true);
+    assert.deepEqual((await call(target, 'GET', url)).body.queue.map(entry => [entry.id, entry.body.text]), [[1, 'uno'], [3, 'three'], [4, 'four']]);
+    assert.equal((await call(target, 'POST', `${url}/queue/99/send`, {})).status, 404);
+    await call(target, 'POST', `${url}/queue`, { queue: [] });
+    assert.equal((await call(target, 'DELETE', url)).status, 200);
+  }
+});
+
 test('tokens, connection ownership and task ownership are enforced, including streams', async () => {
   const [direct, proxied] = targets();
   const noToken = await fetch(`${engine}/v1/tasks/${mine.id}/agent/conversations`);

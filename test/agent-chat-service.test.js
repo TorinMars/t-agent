@@ -205,7 +205,7 @@ test('a message sent while the agent works steers the running turn when the agen
   };
   const chat = createAgentChat({ db, adapters: { codex: adapter } });
   const conversation = chat.create(task, { agent: 'codex' });
-  assert.deepEqual((await chat.snapshot(task, conversation.id)).capabilities, { steer: true });
+  assert.deepEqual((await chat.snapshot(task, conversation.id)).capabilities, { steer: true, serverQueue: true });
   await chat.sendMessage(task, conversation.id, { text: 'start' });
   await wait(() => adapter.calls.length === 1);
   const result = await chat.sendMessage(task, conversation.id, { text: 'and also this' });
@@ -799,8 +799,11 @@ test('the summary counts the turns running now and the queued messages of the pe
   assert.deepEqual(chat.summary('nobody'), { running: 0, queued: 0, submitted: 0 });
 
   release({ ok: true });
+  await wait(() => chat.summary('summary-owner').queued === 2); // the finished turn went on with its queued message
+  assert.deepEqual(chat.summary('summary-owner'), { running: 1, queued: 2, submitted: 3 }, 'the finished turn is no longer counted; its next message is the running one');
+  release({ ok: true });
   await wait(() => chat.summary('summary-owner').running === 0);
-  assert.deepEqual(chat.summary('summary-owner'), { running: 0, queued: 3, submitted: 3 }, 'a finished turn is no longer counted');
+  assert.deepEqual(chat.summary('summary-owner'), { running: 0, queued: 2, submitted: 2 }, 'the other chat keeps waiting: only a turn that ends sends its own queue');
   chat.setQueue(mineTask, waiting.id, []);
   chat.setQueue(mineTask, busy.id, []);
   assert.equal(chat.summary('summary-owner').submitted, 0);
@@ -998,4 +1001,160 @@ test('a suggestion is not shown while a turn runs', async () => {
   await wait(() => release);
   assert.equal((await chat.snapshot(task, conversation.id)).suggestion, null);
   release();
+  await wait(() => chat.list(task.id).find(row => row.id === conversation.id).running === false);
+});
+
+// ── The Client sends the queued messages itself ──
+const prompts = adapter => adapter.calls.map(call => call.prompt.display);
+const settle = chat => wait(() => !chat.list(task.id).some(row => row.running)); // no turn is running
+
+test('queue: a turn that ends well sends the next queued message, one after the other, with no page open', async () => {
+  const adapter = fakeAdapter(async ({ ctx, prompt }) => { ctx.upsert({ id: `a${adapter.calls.length}`, kind: 'text', text: `done ${prompt.display}` }); return { ok: true }; });
+  const chat = createAgentChat({ db, adapters: { claude: adapter } });
+  const conversation = chat.create(task, { agent: 'claude' });
+  const events = [];
+  chat.subscribe(task, conversation.id, 0, event => events.push(event));
+  chat.queueAdd(task, conversation.id, { body: { text: 'second' } }); // idle, nothing waiting: it goes at once
+  await wait(() => prompts(adapter).length === 1);
+  await settle(chat);
+  assert.deepEqual(prompts(adapter), ['second']);
+  let release;
+  const slow = fakeAdapter(async ({ prompt }) => { if (prompt.display === 'first') await new Promise(resolve => { release = resolve; }); return { ok: true }; });
+  const chat2 = createAgentChat({ db, adapters: { claude: slow } });
+  const c2 = chat2.create(task, { agent: 'claude' });
+  const seen = [];
+  await chat2.sendMessage(task, c2.id, { text: 'first' });
+  await wait(() => release);
+  chat2.queueAdd(task, c2.id, { body: { text: 'second' } });
+  chat2.queueAdd(task, c2.id, { body: { text: 'third' } });
+  assert.deepEqual(prompts(slow), ['first'], 'a running turn is not interrupted by the queue');
+  chat2.subscribe(task, c2.id, 0, event => seen.push(event));
+  release();
+  await wait(() => prompts(slow).length === 3);
+  await wait(() => !chat2.list(task.id).find(row => row.id === c2.id).running);
+  assert.deepEqual(prompts(slow), ['first', 'second', 'third'], 'in the order they were queued');
+  assert.deepEqual((await chat2.snapshot(task, c2.id)).queue, []);
+  const lists = seen.filter(event => event.op === 'queue').map(event => event.queue.map(entry => entry.id));
+  assert.deepEqual(lists.at(-1), [], 'the pages are told the queue is empty');
+  assert.ok(lists.some(list => list.length === 1), 'and each message that went out');
+});
+
+test('queue: after a failed turn the queue waits; a stopped turn goes on', async () => {
+  let mode = 'fail';
+  const adapter = fakeAdapter(async ({ signal, prompt }) => {
+    if (prompt.display === 'work') {
+      if (mode === 'fail') return { ok: false, error: 'it broke' };
+      await new Promise(resolve => signal.addEventListener('abort', resolve));
+      return { ok: false, error: '' };
+    }
+    return { ok: true };
+  });
+  const chat = createAgentChat({ db, adapters: { claude: adapter } });
+  const failing = chat.create(task, { agent: 'claude' });
+  chat.setQueue(task, failing.id, [{ id: 1, body: { text: 'later' } }]);
+  await chat.sendMessage(task, failing.id, { text: 'work' });
+  await wait(() => !chat.list(task.id).find(row => row.id === failing.id).running);
+  await new Promise(resolve => setTimeout(resolve, 60));
+  assert.deepEqual(prompts(adapter), ['work'], 'a failure does not send the next message');
+  assert.equal((await chat.snapshot(task, failing.id)).queue.length, 1, 'it waits for the person');
+  chat.queueAdd(task, failing.id, { body: { text: 'also' } });
+  await new Promise(resolve => setTimeout(resolve, 60));
+  assert.deepEqual(prompts(adapter), ['work'], 'a message added behind a waiting one does not release them');
+
+  mode = 'stop';
+  const stopped = chat.create(task, { agent: 'claude' });
+  chat.setQueue(task, stopped.id, [{ id: 1, body: { text: 'after stop' } }]);
+  await chat.sendMessage(task, stopped.id, { text: 'work' });
+  await wait(() => chat.list(task.id).find(row => row.id === stopped.id).running);
+  chat.interrupt(task, stopped.id);
+  await wait(() => prompts(adapter).includes('after stop'));
+  assert.deepEqual((await chat.snapshot(task, stopped.id)).queue, []);
+});
+
+test('queue: add, remove and edit are operations on the server; numbers are never used twice; the checks are those of a sent message', async () => {
+  let release;
+  const adapter = fakeAdapter(async () => new Promise(resolve => { release = resolve; }));
+  const chat = createAgentChat({ db, adapters: { claude: adapter } });
+  const conversation = chat.create(task, { agent: 'claude' });
+  await chat.sendMessage(task, conversation.id, { text: 'busy' });
+  await wait(() => release);
+  const ids = [chat.queueAdd(task, conversation.id, { body: { text: 'one' } }).id, chat.queueAdd(task, conversation.id, { body: { text: 'two' } }).id];
+  assert.deepEqual(ids, [1, 2]);
+  chat.queueRemove(task, conversation.id, 2);
+  assert.equal(chat.queueAdd(task, conversation.id, { body: { text: 'three' } }).id, 3, 'a number that was used is not given again');
+  assert.deepEqual(chat.queueRemove(task, conversation.id, 99), { success: true }, 'removing what is gone is not an error');
+  chat.queueEdit(task, conversation.id, 1, '  one, changed  ');
+  const queue = (await chat.snapshot(task, conversation.id)).queue;
+  assert.deepEqual(queue.map(entry => [entry.id, entry.body.text, entry.label]), [[1, 'one, changed', 'one, changed'], [3, 'three', 'three']]);
+  assert.throws(() => chat.queueEdit(task, conversation.id, 1, '   '), /INVALID_QUEUE/, 'nothing left of it');
+  assert.throws(() => chat.queueEdit(task, conversation.id, 42, 'x'), /QUEUE_ENTRY_NOT_FOUND/);
+  assert.throws(() => chat.queueAdd(task, conversation.id, { body: { text: '' } }), /./, 'an empty message cannot be queued');
+  assert.throws(() => chat.queueAdd(task, conversation.id, {}), /INVALID_QUEUE/);
+  for (let i = 0; i < 18; i++) chat.queueAdd(task, conversation.id, { body: { text: `m${i}` } });
+  assert.throws(() => chat.queueAdd(task, conversation.id, { body: { text: 'too many' } }), /QUEUE_TOO_LONG/);
+  release({ ok: false, error: 'stop here' });
+  await settle(chat);
+});
+
+test('queue: "send now" steers a running turn that takes input; otherwise it stops the turn and the message goes first', async () => {
+  const steered = [];
+  let release;
+  const steerable = fakeAdapter(async ({ ctx }) => { ctx.setControl({ steer: async prompt => { steered.push(prompt.display); } }); await new Promise(resolve => { release = resolve; }); return { ok: false, error: 'end' }; });
+  steerable.CAPABILITIES = { steer: true };
+  const chat = createAgentChat({ db, adapters: { claude: steerable } });
+  const a = chat.create(task, { agent: 'claude' });
+  await chat.sendMessage(task, a.id, { text: 'busy' });
+  await wait(() => release);
+  chat.queueAdd(task, a.id, { body: { text: 'now' } });
+  chat.queueAdd(task, a.id, { body: { text: 'later' } });
+  assert.deepEqual(await chat.queueSendNow(task, a.id, 1), { success: true });
+  assert.deepEqual(steered, ['now'], 'it went into the running turn');
+  assert.deepEqual((await chat.snapshot(task, a.id)).queue.map(entry => entry.body.text), ['later'], 'and left the queue');
+  await assert.rejects(chat.queueSendNow(task, a.id, 1), /QUEUE_ENTRY_NOT_FOUND/, 'a second tap finds nothing to send');
+  release();
+  await wait(() => !chat.list(task.id).find(row => row.id === a.id).running);
+
+  const plain = fakeAdapter(async ({ signal, prompt }) => {
+    if (prompt.display === 'busy') { await new Promise(resolve => signal.addEventListener('abort', resolve)); return { ok: false, error: '' }; }
+    return { ok: true };
+  });
+  const chat2 = createAgentChat({ db, adapters: { claude: plain } });
+  const b = chat2.create(task, { agent: 'claude' });
+  await chat2.sendMessage(task, b.id, { text: 'busy' });
+  await wait(() => chat2.list(task.id).find(row => row.id === b.id).running);
+  chat2.queueAdd(task, b.id, { body: { text: 'first in line' } });
+  chat2.queueAdd(task, b.id, { body: { text: 'chosen' } });
+  assert.deepEqual(await chat2.queueSendNow(task, b.id, 2), { success: true, stopping: true });
+  await wait(() => prompts(plain).length === 3);
+  assert.deepEqual(prompts(plain), ['busy', 'chosen', 'first in line'], 'the stopped turn is followed by the chosen message, then the rest');
+  await wait(() => !chat2.list(task.id).find(row => row.id === b.id).running);
+
+  const idle = chat2.create(task, { agent: 'claude' });
+  chat2.setQueue(task, idle.id, [{ id: 7, body: { text: 'on an idle chat' } }]);
+  await chat2.queueSendNow(task, idle.id, 7);
+  await wait(() => prompts(plain).includes('on an idle chat'));
+});
+
+test('queue: a queued message that cannot be sent goes back to the front and the chat says so; it is not tried again by itself', async () => {
+  const gone = tasks.createTask('owner', { title: 'queue missing directory' });
+  let release;
+  const adapter = fakeAdapter(async () => new Promise(resolve => { release = resolve; }));
+  const chat = createAgentChat({ db, adapters: { claude: adapter } });
+  const conversation = chat.create(gone, { agent: 'claude' });
+  await chat.sendMessage(gone, conversation.id, { text: 'go' });
+  await wait(() => release);
+  chat.queueAdd(gone, conversation.id, { body: { text: 'cannot go' } });
+  chat.queueAdd(gone, conversation.id, { body: { text: 'behind it' } });
+  fs.rmSync(gone.work_dir, { recursive: true, force: true }); // the directory is gone when the turn ends
+  release({ ok: true });
+  await wait(() => chat.list(gone.id).find(row => row.id === conversation.id).running === false);
+  const state = () => chat.snapshot(gone, conversation.id);
+  let snapshot = await state();
+  for (let i = 0; i < 200 && !snapshot.items.some(item => item.kind === 'error'); i++) { await new Promise(resolve => setTimeout(resolve, 5)); snapshot = await state(); }
+  assert.deepEqual(snapshot.queue.map(entry => entry.id), [1, 2], 'it is back at the front, in its place');
+  assert.match(snapshot.items.find(item => item.kind === 'error').text, /Could not send the queued message: WORKING_DIRECTORY_MISSING/);
+  await new Promise(resolve => setTimeout(resolve, 80));
+  assert.equal(adapter.calls.length, 1, 'nothing is tried again by itself');
+  await assert.rejects(chat.queueSendNow(gone, conversation.id, 1), /WORKING_DIRECTORY_MISSING/);
+  assert.deepEqual((await state()).queue.map(entry => entry.id), [1, 2], '"send now" that fails leaves it where it was');
 });

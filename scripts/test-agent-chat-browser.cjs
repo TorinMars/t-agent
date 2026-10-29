@@ -280,6 +280,22 @@ const server = http.createServer(app);
     for (let i = 0; i < 100 && received.at(-1).text !== 'queued first'; i += 1) await page.waitForTimeout(50);
     assert.deepEqual(received.slice(-2).map(prompt => prompt.text), ['queued second', 'queued first'], 'the chosen message went first');
     await page.waitForFunction(() => !document.querySelector('.ac-queued') && !document.querySelector('.ac-stop'));
+    // The Client sends the queue itself: with the chat closed in the page (no event stream is open), the queued message still goes out when the turn is
+    // stopped, and a page that opens the chat afterwards finds it done.
+    await page.fill('.ac-input', 'slow background');
+    await page.locator('.ac-input').press('Enter');
+    await page.waitForSelector('.ac-stop:visible');
+    await page.fill('.ac-input', 'queued while away');
+    await page.locator('.ac-input').press('Enter');
+    await page.waitForSelector('.ac-queued');
+    const away = await page.evaluate(() => window.conversation);
+    await page.evaluate(() => { view.destroy(); });
+    await page.evaluate(() => api.post(`${base}/conversations/${window.conversation.id}/interrupt`, {}));
+    for (let i = 0; i < 100 && received.at(-1).text !== 'queued while away'; i += 1) await page.waitForTimeout(50);
+    assert.equal(received.at(-1).text, 'queued while away', 'the message went out with no page showing the chat');
+    await page.evaluate(row => openChat('claude', { conversation: row }), away);
+    await page.waitForFunction(() => document.body.textContent.includes('Got the queued message.') && !document.querySelector('.ac-stop'));
+    assert.equal(await page.locator('.ac-queued').count(), 0, 'and the queue is empty when the chat is opened again');
     // The expanded input box: Enter is a new line there, and only the send button sends (no key does). Collapsed, Enter sends again.
     const input = page.locator('.ac-input');
     await page.fill('.ac-input', 'queued one');
@@ -350,7 +366,7 @@ const server = http.createServer(app);
     assert.equal(await page.locator('.ac-attachments .ac-chip').count(), 2);
     await page.fill('.ac-input', 'use these');
     await page.click('.ac-send');
-    await page.waitForFunction(() => document.querySelectorAll('.ac-user').length === 9);
+    await page.waitForFunction(() => document.querySelectorAll('.ac-user').length === 11);
     assert.equal(received.at(-1).images.length, 1);
     assert.match(received.at(-1).text, /Attached file notes\.txt:[\s\S]*remember this/);
     // The page clears them when the request returns, which can be after the message arrived over the event stream.
@@ -400,7 +416,7 @@ const server = http.createServer(app);
     await page.evaluate(() => view.destroy());
     await page.evaluate(async id => { const conversation = (await api.get(`${base}/conversations`)).find(row => row.id === id); window.view = AgentChat.mount(document.getElementById('host'), { api, base, conversation, onClose: () => { window.closes++; }, notify: () => {} }); }, state.id);
     await page.waitForSelector('.ac-text');
-    assert.equal(await page.locator('.ac-user').count(), 9);
+    assert.equal(await page.locator('.ac-user').count(), 11);
     await page.click('.ac-back');
     assert.equal(await page.evaluate(() => closes), 1);
 

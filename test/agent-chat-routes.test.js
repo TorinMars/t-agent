@@ -149,6 +149,34 @@ test('the queue of a chat is saved with POST and comes back with the chat', asyn
   assert.deepEqual((await call('POST', `${url}/conversations/${id}/queue`, { queue: [] })).body, { success: true, count: 0 });
 });
 
+test('the queue is changed with operations: add, edit, remove and send now, and the chat says the Client sends the queue itself', async () => {
+  const url = `/api/tasks/${mine.id}/agent`;
+  const id = (await call('POST', `${url}/conversations`, { agent: 'claude' })).body.id;
+  assert.equal((await call('GET', `${url}/conversations/${id}`)).body.capabilities.serverQueue, true, 'a page learns it need not send the queue itself');
+  // Nothing is running, so the first message goes out at once and the queue stays empty.
+  const first = await call('POST', `${url}/conversations/${id}/queue/add`, { body: { text: 'goes at once' } });
+  assert.deepEqual([first.status, first.body.success, typeof first.body.id], [200, true, 'number']);
+  for (let i = 0; i < 200 && (await call('GET', `${url}/conversations/${id}`)).body.items.length < 3; i++) await new Promise(resolve => setTimeout(resolve, 5));
+  assert.deepEqual((await call('GET', `${url}/conversations/${id}`)).body.queue, []);
+  // Bad input is refused like a message that is sent.
+  assert.equal((await call('POST', `${url}/conversations/${id}/queue/add`, { body: { text: '' } })).status, 400);
+  assert.equal((await call('POST', `${url}/conversations/${id}/queue/add`, {})).body.error, 'INVALID_QUEUE');
+  // Edit, remove and send now on an entry that is waiting (put there with the whole-list call, which does not send).
+  await call('POST', `${url}/conversations/${id}/queue`, { queue: [{ id: 5, body: { text: 'old text' } }, { id: 6, body: { text: 'other' } }] });
+  assert.deepEqual((await call('POST', `${url}/conversations/${id}/queue/5/edit`, { text: 'new text' })).body, { success: true });
+  assert.equal((await call('POST', `${url}/conversations/${id}/queue/5/edit`, { text: '  ' })).body.error, 'INVALID_QUEUE');
+  assert.equal((await call('POST', `${url}/conversations/${id}/queue/77/edit`, { text: 'x' })).status, 404);
+  assert.deepEqual((await call('GET', `${url}/conversations/${id}`)).body.queue.map(entry => entry.body.text), ['new text', 'other']);
+  assert.deepEqual((await call('POST', `${url}/conversations/${id}/queue/6/remove`, {})).body, { success: true });
+  assert.deepEqual((await call('POST', `${url}/conversations/${id}/queue/5/send`, {})).body, { success: true });
+  assert.equal((await call('POST', `${url}/conversations/${id}/queue/5/send`, {})).status, 404, 'the entry is gone');
+  for (let i = 0; i < 200 && (await call('GET', `${url}/conversations/${id}`)).body.status === 'running'; i++) await new Promise(resolve => setTimeout(resolve, 5));
+  assert.deepEqual((await call('GET', `${url}/conversations/${id}`)).body.queue, []);
+  // Someone else's chat cannot be reached.
+  const other = (await call('POST', `/api/tasks/${theirs.id}/agent/conversations`, { agent: 'claude' })).status;
+  assert.equal(other, 404);
+});
+
 test('the summary of what the agents are doing is read with GET, for the signed-in person only', async () => {
   const base0 = (await call('GET', '/api/agent-chat/summary')).body;
   assert.deepEqual(Object.keys(base0).sort(), ['queued', 'running', 'submitted']);

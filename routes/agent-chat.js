@@ -36,6 +36,11 @@ function createAgentChatRouter({ service = getAgentChat(), authenticate = requir
   router.post('/conversations/:cid/opened', handle((task, req) => service.setOpened(task, req.params.cid, { surface: (req.body || {}).surface, opened: (req.body || {}).opened })));
   // The queued messages of the chat, replaced as a whole (POST, because some network paths let POST through but not PUT or PATCH).
   router.post('/conversations/:cid/queue', handle((task, req) => service.setQueue(task, req.params.cid, (req.body || {}).queue)));
+  // The queue is changed by operations (all POST, for the same reason); the Client sends the queued messages itself when a turn ends.
+  router.post('/conversations/:cid/queue/add', handle((task, req) => service.queueAdd(task, req.params.cid, req.body || {})));
+  router.post('/conversations/:cid/queue/:eid/remove', handle((task, req) => service.queueRemove(task, req.params.cid, req.params.eid)));
+  router.post('/conversations/:cid/queue/:eid/edit', handle((task, req) => service.queueEdit(task, req.params.cid, req.params.eid, (req.body || {}).text)));
+  router.post('/conversations/:cid/queue/:eid/send', handle((task, req) => service.queueSendNow(task, req.params.cid, req.params.eid)));
   router.post('/conversations/:cid/limits/refresh', handle((task, req) => service.refreshUsage(task, req.params.cid)));
   router.get('/conversations/:cid/commands', handle((task, req) => service.listCommands(task, req.params.cid)));
   router.get('/conversations/:cid/models', handle((task, req) => service.listModels(task, req.params.cid)));

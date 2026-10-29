@@ -638,3 +638,62 @@ test('the store keeps the suggested next message: from the snapshot, from events
   assert.equal(store.getState().suggestion, '', 'sending a message drops it');
   assert.ok(calls.some(call => call[0] === 'post' && /messages$/.test(call[1])));
 });
+
+test('with a server that sends the queue, the page only asks for changes and follows the queue event; it never sends the next message itself', async () => {
+  const { createChatStore } = await load();
+  const { options, sources, calls, notices } = harness({ snapshot: { items: [], pending: [], status: 'running', seq: 1, capabilities: { steer: true, serverQueue: true }, queue: [{ id: 4, body: { text: 'first' }, label: 'first' }, { id: 5, body: { text: 'second' }, label: 'second' }] } });
+  const store = createChatStore(options);
+  await store.load();
+  assert.deepEqual(store.getState().queue.map(entry => entry.id), [4, 5], 'the queue of the server is the queue');
+  assert.equal(store.getState().serverQueue, true);
+
+  sources[0].emit({ seq: 2, op: 'queue', queue: [{ id: 5, body: { text: 'second' }, label: 'second' }] });
+  assert.deepEqual(store.getState().queue.map(entry => entry.id), [5], 'a queue event replaces it (the server sent the first one)');
+  sources[0].emit({ seq: 3, op: 'status', status: 'idle', ok: true });
+  assert.equal(calls.filter(call => /messages$/.test(call[1])).length, 0, 'a turn that ends well does not make the page send anything');
+
+  store.enqueue({ text: 'third' });
+  assert.deepEqual(store.getState().queue.map(entry => entry.label), ['second', 'third'], 'shown at once');
+  assert.ok(store.getState().queue[1].id < 0, 'with a number of its own until the server numbers it');
+  assert.deepEqual(calls.at(-1), ['post', '/b/conversations/c1/queue/add', { body: { text: 'third' }, label: 'third' }]);
+  sources[0].emit({ seq: 4, op: 'queue', queue: [{ id: 5, body: { text: 'second' }, label: 'second' }, { id: 6, body: { text: 'third' }, label: 'third' }] });
+  assert.deepEqual(store.getState().queue.map(entry => entry.id), [5, 6], 'the numbered entry takes its place');
+
+  assert.equal(store.editQueued(6, ' third, changed '), true);
+  assert.deepEqual(calls.at(-1), ['post', '/b/conversations/c1/queue/6/edit', { text: 'third, changed' }]);
+  store.unqueue(5);
+  assert.deepEqual(calls.at(-1), ['post', '/b/conversations/c1/queue/5/remove', {}]);
+  assert.deepEqual(store.getState().queue.map(entry => entry.id), [6]);
+  assert.equal(await store.forceSend(6), true);
+  assert.deepEqual(calls.at(-1), ['post', '/b/conversations/c1/queue/6/send', {}], 'sending now is up to the server');
+  assert.equal(await store.sendQueued(6), true);
+  assert.deepEqual(notices, []);
+});
+
+test('with a server that sends the queue, a message that could not be queued is taken back and said so', async () => {
+  const { createChatStore } = await load();
+  const { options, calls, notices } = harness({ snapshot: { items: [], pending: [], status: 'running', seq: 1, capabilities: { serverQueue: true }, queue: [] } });
+  options.api.post = async (url, body) => { calls.push(['post', url, body]); if (/queue\/add$/.test(url)) throw new Error('QUEUE_TOO_LONG'); if (/queue\/9\/send$/.test(url)) throw new Error('QUEUE_ENTRY_NOT_FOUND'); return {}; };
+  const store = createChatStore(options);
+  await store.load();
+  store.enqueue({ text: 'x' });
+  assert.equal(store.getState().queue.length, 1);
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.deepEqual(store.getState().queue, [], 'it is not shown as queued when the server did not take it');
+  assert.deepEqual(notices, ['Could not queue the message: QUEUE_TOO_LONG']);
+  store.destroy();
+});
+
+test('with an older Engine the page still sends the next queued message itself and saves the whole list', async () => {
+  const { createChatStore } = await load();
+  const { options, sources, calls } = harness({ snapshot: { items: [], pending: [], status: 'running', seq: 1, capabilities: {}, queue: [] } });
+  const store = createChatStore(options);
+  await store.load();
+  assert.equal(store.getState().serverQueue, false);
+  store.enqueue({ text: 'later' });
+  await new Promise(resolve => setTimeout(resolve, 10)); // the list is saved after the call that is already going
+  assert.ok(calls.some(call => call[0] === 'post' && call[1] === '/b/conversations/c1/queue' && call[2].queue[0].body.text === 'later'), 'the whole list is saved');
+  sources[0].emit({ seq: 2, op: 'status', status: 'idle', ok: true });
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.ok(calls.some(call => call[0] === 'post' && /messages$/.test(call[1]) && call[2].text === 'later'), 'the page sent it');
+});

@@ -182,7 +182,7 @@ function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS 
       conversation: publicRow(db.prepare('SELECT * FROM agent_conversations WHERE id = ?').get(id), rt),
       items: [...rt.items.values()], pending: pendingList(rt), status: rt.status, seq: rt.seq, queue: readQueue(id), suggestion: rt.status === 'running' ? null : rt.suggestion || null,
       runningMs: rt.status === 'running' && rt.startedAt ? Date.now() - rt.startedAt : 0,
-      capabilities: adapters[rt.agent].CAPABILITIES || {},
+      capabilities: { ...(adapters[rt.agent].CAPABILITIES || {}), serverQueue: true }, // the Client sends the queued messages itself
     };
   }
 
@@ -282,40 +282,119 @@ function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS 
     return { models, current: { model: rt.model || '', effort: rt.effort || '' }, chosen: { ...rt.choice } };
   }
 
-  // The messages the person queued in the chat while the agent works. The page decides when each one goes out; they are kept here so a refresh (or
-  // another page that shows the chat) does not lose them. The page replaces the whole list each time it changes.
+  // The messages the person queued in the chat while the agent works. The Client keeps them and sends them itself: when a turn ends normally, or the person
+  // stops it, the next one goes out (`dispatchQueue`), whether or not any page is open; after a failed turn they wait until the person sends or removes
+  // them. Pages change the queue with operations (add, remove, edit, send now), never by replacing it, so a page that is behind cannot bring back a
+  // message that has been sent. Every change is announced to the pages as a `queue` event. The old whole-list replacement (`setQueue`) stays for older pages.
   function readQueue(id) {
     const row = db.prepare('SELECT queue FROM agent_conversations WHERE id = ?').get(id);
     if (!row || !row.queue) return [];
     try { const list = JSON.parse(row.queue); return Array.isArray(list) ? list : []; } catch { return []; }
   }
-  function setQueue(task, id, queue) {
+  const labelOf = body => String(body.text || [...(body.images || []), ...(body.files || [])].map(file => file.name).join(', ')).replace(/\s+/g, ' ').slice(0, 80);
+  // A queued message as it is kept: the same checks as a message that is sent (size, image type, empty), and only the fields that are used.
+  function cleanEntry(entry, key) {
+    const body = entry && entry.body && typeof entry.body === 'object' ? entry.body : null;
+    if (!body || !Number.isSafeInteger(key)) throw fail('INVALID_QUEUE');
+    buildPrompt(body);
+    const clean = {
+      text: String(body.text || ''),
+      images: (Array.isArray(body.images) ? body.images : []).map(image => ({ name: String(image && image.name || ''), type: String(image && image.type || ''), data: String(image && image.data || '') })),
+      files: (Array.isArray(body.files) ? body.files : []).map(file => ({ name: String(file && file.name || ''), text: String(file && file.text || '') })),
+    };
+    return { id: key, label: clip(String(entry.label || labelOf(clean)).replace(/\s+/g, ' '), 80), body: clean };
+  }
+  // Keeps the list and tells the pages. `restore` is for putting back a message that could not be sent: the list may be one longer than the limit then.
+  function writeQueue(rt, list, { restore = false } = {}) {
+    if (list.length > MAX_QUEUE && !restore) throw fail('QUEUE_TOO_LONG');
+    const json = JSON.stringify(list);
+    if (json.length > MAX_QUEUE_BYTES && !restore) throw fail('QUEUE_TOO_LARGE');
+    db.prepare('UPDATE agent_conversations SET queue = ? WHERE id = ?').run(list.length ? json : null, rt.id);
+    for (const entry of list) rt.queueSeq = Math.max(rt.queueSeq || 0, entry.id);
+    emit(rt, { op: 'queue', queue: list });
+  }
+  function queueRuntime(task, id) {
     const row = rowOf(task.id, id);
     if (!row) throw fail('CONVERSATION_NOT_FOUND', 404);
+    return runtimeFor(row, task);
+  }
+  function setQueue(task, id, queue) {
+    const rt = queueRuntime(task, id);
     if (!Array.isArray(queue)) throw fail('INVALID_QUEUE');
     if (queue.length > MAX_QUEUE) throw fail('QUEUE_TOO_LONG');
     const seen = new Set();
     const clean = queue.map(entry => {
-      const body = entry && entry.body && typeof entry.body === 'object' ? entry.body : null;
       const key = Number(entry && entry.id);
-      if (!body || !Number.isSafeInteger(key) || seen.has(key)) throw fail('INVALID_QUEUE');
+      if (seen.has(key)) throw fail('INVALID_QUEUE');
       seen.add(key);
-      buildPrompt(body); // the same checks as a message that is sent (size, image type, empty): a queued message must be one that can be sent
-      return {
-        id: key,
-        label: clip(String(entry.label || '').replace(/\s+/g, ' '), 80),
-        body: {
-          text: String(body.text || ''),
-          images: (Array.isArray(body.images) ? body.images : []).map(image => ({ name: String(image && image.name || ''), type: String(image && image.type || ''), data: String(image && image.data || '') })),
-          files: (Array.isArray(body.files) ? body.files : []).map(file => ({ name: String(file && file.name || ''), text: String(file && file.text || '') })),
-        },
-      };
+      return cleanEntry(entry, key);
     });
-    const json = JSON.stringify(clean);
-    if (json.length > MAX_QUEUE_BYTES) throw fail('QUEUE_TOO_LARGE');
-    db.prepare('UPDATE agent_conversations SET queue = ? WHERE id = ?').run(clean.length ? json : null, id);
+    writeQueue(rt, clean);
     return { success: true, count: clean.length };
   }
+  // Adds a message behind the others. The id is given here (the pages show the entry once the `queue` event comes).
+  function queueAdd(task, id, entry) {
+    const rt = queueRuntime(task, id);
+    const list = readQueue(id);
+    if (list.length >= MAX_QUEUE) throw fail('QUEUE_TOO_LONG');
+    const key = Math.max(rt.queueSeq || 0, ...list.map(item => item.id)) + 1;
+    writeQueue(rt, [...list, cleanEntry(entry || {}, key)]);
+    // The agent may have finished between the person's click and now: then nothing else would send it (a queue that waits after a failure is left alone).
+    if (rt.status !== 'running' && !list.length) dispatchSoon(rt, task);
+    return { success: true, id: key };
+  }
+  function queueRemove(task, id, entryId) {
+    const rt = queueRuntime(task, id);
+    const list = readQueue(id);
+    const rest = list.filter(item => item.id !== Number(entryId));
+    if (rest.length !== list.length) writeQueue(rt, rest);
+    return { success: true };
+  }
+  // Changes the text of a queued message (its attachments stay); a message with nothing left is refused, the person removes it instead.
+  function queueEdit(task, id, entryId, text) {
+    const rt = queueRuntime(task, id);
+    const list = readQueue(id);
+    const entry = list.find(item => item.id === Number(entryId));
+    if (!entry) throw fail('QUEUE_ENTRY_NOT_FOUND', 404);
+    const body = { ...entry.body, text: String(text === undefined || text === null ? '' : text).trim() };
+    if (!body.text && !(body.images || []).length && !(body.files || []).length) throw fail('INVALID_QUEUE');
+    writeQueue(rt, list.map(item => (item.id === entry.id ? cleanEntry({ body }, entry.id) : item)));
+    return { success: true };
+  }
+  // Sends one queued message now, whatever the agent is doing. An agent that takes input mid-turn gets it into the running turn; one that cannot is
+  // stopped, and the message goes first, as soon as the stopped turn has ended.
+  async function queueSendNow(task, id, entryId) {
+    const rt = queueRuntime(task, id);
+    const list = readQueue(id);
+    const entry = list.find(item => item.id === Number(entryId));
+    if (!entry) throw fail('QUEUE_ENTRY_NOT_FOUND', 404);
+    const rest = list.filter(item => item !== entry);
+    if (rt.status === 'running' && !(rt.control && rt.control.steer)) {
+      writeQueue(rt, [entry, ...rest]);
+      const stopped = interrupt(task, id);
+      if (!stopped.running) dispatchSoon(rt, task); // it had ended already
+      return { success: true, stopping: true };
+    }
+    writeQueue(rt, rest);
+    try { await sendMessage(task, id, entry.body); }
+    catch (error) { writeQueue(rt, [entry, ...readQueue(id)], { restore: true }); throw error; }
+    return { success: true };
+  }
+  // Sends the first queued message, unless the agent is working. A message that cannot be sent goes back to the front of the queue and the chat says so;
+  // nothing is tried again by itself.
+  async function dispatchQueue(rt, task) {
+    if (rt.status === 'running' || rt.dispatching) return;
+    const [head, ...rest] = readQueue(rt.id);
+    if (!head) return;
+    rt.dispatching = true;
+    writeQueue(rt, rest);
+    try { await sendMessage(task, rt.id, head.body); }
+    catch (error) {
+      writeQueue(rt, [head, ...readQueue(rt.id)], { restore: true });
+      turnContext(rt).upsert({ id: `e${rt.counter++}`, kind: 'error', text: `Could not send the queued message: ${error.message}` });
+    } finally { rt.dispatching = false; }
+  }
+  const dispatchSoon = (rt, task) => { if (readQueue(rt.id).length) setImmediate(() => { void dispatchQueue(rt, task); }); };
 
   // What the agents of one person are doing, for the status bar of the pages: the turns running now and the messages queued behind them (the queue is kept
   // here, see setQueue); "submitted" is both, the messages sent to an agent that have not finished. Chats of every task of the person count.
@@ -507,6 +586,8 @@ function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS 
       else if (outcome && outcome.error) ctx.upsert({ id: `e${rt.counter++}`, kind: 'error', text: outcome.error });
       touch(rt);
       emit(rt, { op: 'status', status: 'idle', ok: Boolean(outcome && outcome.ok), usage: outcome && outcome.usage, cost: outcome && outcome.cost });
+      // A turn that ended well, or that the person stopped, goes on with the next queued message; after a failure the queue waits.
+      if ((outcome && outcome.ok) || controller.signal.aborted) dispatchSoon(rt, task);
     };
     rt.forceEnd = () => finishTurn({ ok: false, error: '' });
     void (async () => {
@@ -611,7 +692,7 @@ function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS 
     }
   }
 
-  return { list, create, snapshot, subscribe, sendMessage, interrupt, answerPermission, setMode, setPreferences, listModels, setOpened, setTranslate, setCollapseKeyboard, refreshUsage, setQueue, summary, listCommands, rename, remove, stopTask, refreshLimits };
+  return { list, create, snapshot, subscribe, sendMessage, interrupt, answerPermission, setMode, setPreferences, listModels, setOpened, setTranslate, setCollapseKeyboard, refreshUsage, setQueue, queueAdd, queueRemove, queueEdit, queueSendNow, summary, listCommands, rename, remove, stopTask, refreshLimits };
 }
 
 let shared = null;

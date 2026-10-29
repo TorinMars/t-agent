@@ -47,11 +47,17 @@ test('hidden login entrance, embedded Clients still authenticate and HTTPS cooki
     return fetch(base + route, { redirect: 'manual', method: body ? 'POST' : 'GET', headers: { ...(cookie ? { Cookie: cookie } : {}), ...(body ? { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' } : {}), ...headers }, ...(body ? { body: JSON.stringify(body) } : {}) });
   }
   const LOGIN = '/torin/hide/login';
-  // Logged out: everything except the hidden login entrance is 404, including the old login address, the workspace page and the removed /clients.
-  for (const route of ['/web', '/', '/clients', '/auth/login', '/auth/status', '/api/tasks', '/login.html']) {
+  // Logged out: the pages lead to the login entrance; everything else except the login entrance is 404, including the old login address and the removed /clients.
+  for (const route of ['/clients', '/auth/login', '/auth/status', '/api/tasks', '/login.html']) {
     assert.equal((await call(route)).status, 404, route);
   }
-  assert.equal((await call('/web', { headers: { 'Sec-Fetch-Dest': 'iframe', 'Sec-Fetch-Site': 'cross-site' } })).status, 404);
+  for (const route of ['/web', '/', '/h5']) {
+    const page = await call(route);
+    assert.equal(page.status, 302, route);
+    assert.match(page.headers.get('location'), /^\/torin\/hide\/login\?return_to=/, route);
+  }
+  // An embedding page gets the same redirect, and the login page it leads to refuses to be framed (checked below).
+  assert.equal((await call('/web', { headers: { 'Sec-Fetch-Dest': 'iframe', 'Sec-Fetch-Site': 'cross-site' } })).status, 302);
   const authPage = await call(LOGIN);
   assert.equal(authPage.status, 200);
   assert.match(authPage.headers.get('content-security-policy'), /frame-ancestors 'none'/);

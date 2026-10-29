@@ -1158,3 +1158,81 @@ test('queue: a queued message that cannot be sent goes back to the front and the
   await assert.rejects(chat.queueSendNow(gone, conversation.id, 1), /WORKING_DIRECTORY_MISSING/);
   assert.deepEqual((await state()).queue.map(entry => entry.id), [1, 2], '"send now" that fails leaves it where it was');
 });
+
+// ── The plan usage of an agent that does not push it (Claude) is read again by itself ──
+function usageAdapter({ poll = true } = {}) {
+  let used = 10;
+  const adapter = fakeAdapter(async () => ({ ok: true }));
+  adapter.POLL_LIMITS = poll;
+  adapter.reads = 0;
+  adapter.loadLimits = async () => { adapter.reads += 1; used += 5; return [{ id: '5h', label: '5h', usedPercent: used, resetsAt: Date.now() + 3600000 }]; };
+  return adapter;
+}
+const usageEvents = events => events.filter(event => event.op === 'meta' && event.limits).map(event => event.limits[0].usedPercent);
+
+test('usage: the plan usage is read again when a turn ends, and the pages get it as a meta event', async () => {
+  const adapter = usageAdapter();
+  const chat = createAgentChat({ db, adapters: { claude: adapter }, limitsTurnGapMs: 0, limitsPollMs: 0 });
+  const conversation = chat.create(task, { agent: 'claude' });
+  const events = [];
+  chat.subscribe(task, conversation.id, 0, event => events.push(event));
+  await chat.sendMessage(task, conversation.id, { text: 'use some plan' });
+  await wait(() => usageEvents(events).length === 1);
+  assert.deepEqual(usageEvents(events), [15], 'the number after the turn');
+  assert.equal(adapter.reads, 1);
+  await chat.sendMessage(task, conversation.id, { text: 'and some more' });
+  await wait(() => usageEvents(events).length === 2);
+  assert.deepEqual(usageEvents(events), [15, 20]);
+});
+
+test('usage: readings right after one another are not repeated (the gap after a turn)', async () => {
+  const adapter = usageAdapter();
+  const chat = createAgentChat({ db, adapters: { claude: adapter }, limitsTurnGapMs: 60000, limitsPollMs: 0 });
+  const conversation = chat.create(task, { agent: 'claude' });
+  const events = [];
+  chat.subscribe(task, conversation.id, 0, event => events.push(event));
+  for (const text of ['one', 'two', 'three']) {
+    await chat.sendMessage(task, conversation.id, { text });
+    await wait(() => !chat.list(task.id).find(row => row.id === conversation.id).running);
+  }
+  await wait(() => adapter.reads >= 1);
+  assert.equal(adapter.reads, 1, 'three quick turns are one reading');
+});
+
+test('usage: while a page shows the chat it is read now and then, and with no page nothing is read', async () => {
+  const adapter = usageAdapter();
+  const chat = createAgentChat({ db, adapters: { claude: adapter }, limitsTurnGapMs: 60000, limitsPollMs: 30 });
+  const conversation = chat.create(task, { agent: 'claude' });
+  assert.equal(adapter.reads, 0);
+  await new Promise(resolve => setTimeout(resolve, 100));
+  assert.equal(adapter.reads, 0, 'nobody is looking: no reading');
+  const events = [];
+  const stop = chat.subscribe(task, conversation.id, 0, event => events.push(event));
+  await wait(() => usageEvents(events).length >= 3);
+  assert.deepEqual(usageEvents(events).slice(0, 3), [15, 20, 25], 'the usage keeps coming');
+  stop();
+  await new Promise(resolve => setTimeout(resolve, 100)); // the next tick finds nobody and stops the timer
+  const after = adapter.reads;
+  await new Promise(resolve => setTimeout(resolve, 150));
+  assert.equal(adapter.reads, after, 'it stops when the last page has gone');
+  const again = chat.subscribe(task, conversation.id, 0, () => {});
+  await wait(() => adapter.reads > after);
+  again();
+});
+
+test('usage: an agent that pushes its usage itself (Codex) is not read on a timer or after a turn', async () => {
+  const adapter = usageAdapter({ poll: false });
+  const chat = createAgentChat({ db, adapters: { codex: adapter }, limitsTurnGapMs: 0, limitsPollMs: 20 });
+  const conversation = chat.create(task, { agent: 'codex' });
+  const stop = chat.subscribe(task, conversation.id, 0, () => {});
+  await chat.sendMessage(task, conversation.id, { text: 'work' });
+  await wait(() => !chat.list(task.id).find(row => row.id === conversation.id).running);
+  await new Promise(resolve => setTimeout(resolve, 120));
+  assert.equal(adapter.reads, 0);
+  stop();
+});
+
+test('usage: Claude asks for the usage to be read again, Codex does not', () => {
+  assert.equal(claude.POLL_LIMITS, true);
+  assert.equal(require('../lib/agent-chat/codex').POLL_LIMITS, undefined);
+});

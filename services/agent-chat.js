@@ -14,6 +14,10 @@ const MAX_IMAGES = 6;
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const MAX_FILE_CHARS = 200 * 1024;
 const MAX_TEXT = 100 * 1024;
+// Plan usage of an agent that does not push it (`POLL_LIMITS` on the adapter, Claude): read again this long after the last reading while a page shows a
+// chat of that agent, and soon after each turn ends (a turn is what uses the plan up).
+const LIMITS_POLL_MS = 2 * 60 * 1000;
+const LIMITS_TURN_GAP_MS = 10 * 1000;
 const MAX_QUEUE = 20; // messages waiting in one chat
 const MAX_QUEUE_BYTES = 28 * 1024 * 1024; // as saved (JSON); a request is 32 MB at most
 const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
@@ -25,7 +29,7 @@ const clip = (text, length) => (text.length > length ? `${text.slice(0, length -
 // After Stop the adapter gets this long to end the turn by itself; then the turn is ended here, so a stuck agent cannot leave the chat running for good.
 const STOP_GRACE_MS = 5000;
 
-function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS }) {
+function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS, limitsPollMs = LIMITS_POLL_MS, limitsTurnGapMs = LIMITS_TURN_GAP_MS }) {
   const runtimes = new Map(); // conversation id -> runtime
 
   const rowOf = (taskId, id) => db.prepare('SELECT * FROM agent_conversations WHERE id = ? AND task_id = ?').get(id, taskId);
@@ -120,10 +124,10 @@ function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS 
 
   // Reads the account's plan limits again when the last reading is old; chats of that agent get them as a meta event.
   // `force` (a click on the usage) skips the wait; it resolves to false when the reading failed.
-  function refreshLimits(agent, { force = false } = {}) {
+  function refreshLimits(agent, { force = false, maxAgeMs = LIMITS_TTL_MS } = {}) {
     const adapter = adapters[agent];
     const known = agentLimits.get(agent);
-    if (!adapter.loadLimits || refreshing.has(agent) || (!force && known && Date.now() - known.at < LIMITS_TTL_MS)) return refreshing.get(agent) || Promise.resolve(true);
+    if (!adapter.loadLimits || refreshing.has(agent) || (!force && known && Date.now() - known.at < maxAgeMs)) return refreshing.get(agent) || Promise.resolve(true);
     const job = (async () => {
       try {
         const limits = await adapter.loadLimits();
@@ -170,6 +174,20 @@ function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS 
     catch { throw fail('COMMANDS_UNAVAILABLE', 502); }
   }
 
+  // While a page shows a chat of an agent that does not push its plan usage, the usage is read again now and then; with no such page nothing is read.
+  let limitsTimer = null;
+  function pollLimits() {
+    const agents = new Set();
+    for (const rt of runtimes.values()) if (rt.subscribers.size && adapters[rt.agent] && adapters[rt.agent].POLL_LIMITS) agents.add(rt.agent);
+    if (!agents.size) { clearInterval(limitsTimer); limitsTimer = null; return; }
+    for (const agent of agents) void refreshLimits(agent, { maxAgeMs: Math.floor(limitsPollMs / 2) });
+  }
+  function watchLimits(rt) {
+    if (limitsTimer || !limitsPollMs || !adapters[rt.agent].POLL_LIMITS) return;
+    limitsTimer = setInterval(pollLimits, limitsPollMs);
+    if (limitsTimer.unref) limitsTimer.unref(); // never keeps the process alive
+  }
+
   async function snapshot(task, id) {
     const row = rowOf(task.id, id);
     if (!row) throw fail('CONVERSATION_NOT_FOUND', 404);
@@ -195,6 +213,7 @@ function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS 
     if (after + 1 < oldest && after < rt.seq) return null;
     for (const event of rt.events) if (event.seq > after) send(event);
     rt.subscribers.add(send);
+    watchLimits(rt);
     return () => rt.subscribers.delete(send);
   }
 
@@ -586,6 +605,7 @@ function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS 
       else if (outcome && outcome.error) ctx.upsert({ id: `e${rt.counter++}`, kind: 'error', text: outcome.error });
       touch(rt);
       emit(rt, { op: 'status', status: 'idle', ok: Boolean(outcome && outcome.ok), usage: outcome && outcome.usage, cost: outcome && outcome.cost });
+      if (adapters[rt.agent].POLL_LIMITS) void refreshLimits(rt.agent, { maxAgeMs: limitsTurnGapMs }); // the turn used some of the plan
       // A turn that ended well, or that the person stopped, goes on with the next queued message; after a failure the queue waits.
       if ((outcome && outcome.ok) || controller.signal.aborted) dispatchSoon(rt, task);
     };

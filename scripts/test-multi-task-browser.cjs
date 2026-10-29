@@ -103,6 +103,29 @@ const html = fs.readFileSync(path.join(root, 'public/index.html'), 'utf8').repla
     await page.click('#tab-tasks');
     assert.equal(await page.locator('#multi-task-panel').isHidden(), true);
     assert.equal(await page.locator('.mt-cell').count(), 3, 'the chats stay mounted while the page is hidden');
+
+    // A refresh restores the remembered chats from the stored bases (no doubled "/agent"), and a failed list is not forgotten.
+    const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('multiTaskSessions')));
+    assert.ok(stored.every(item => /\/agent$/.test(item.base)));
+    const source = fs.readFileSync(path.join(root, 'public/js/multi-task.js'), 'utf8').replace('const MultiTask = ', 'window.MultiTask2 = ');
+    const boot = async fail => page.evaluate(async ({ source, stored, fail }) => {
+      document.getElementById('mt-grid').replaceChildren();
+      localStorage.setItem('multiTaskSessions', JSON.stringify(stored));
+      window.requested = [];
+      const get = window.API.get;
+      window.API.get = async url => { requested.push(url); if (fail) throw new Error('down'); return get(url); };
+      (0, eval)(source);
+      MultiTask2.setActive(true);
+      await new Promise(resolve => setTimeout(resolve, 50));
+      window.API.get = get;
+      return { cells: document.querySelectorAll('.mt-cell').length, requested, stored: JSON.parse(localStorage.getItem('multiTaskSessions')) };
+    }, { source, stored, fail });
+    const down = await boot(true);
+    assert.equal(down.cells, 0);
+    assert.equal(down.stored.length, stored.length, 'a failed request keeps the remembered sessions');
+    const restoredPage = await boot(false);
+    assert.ok(restoredPage.requested.every(url => /\/api\/tasks\/\d+\/agent\/conversations$/.test(url)), restoredPage.requested.join());
+    assert.equal(restoredPage.cells, stored.filter(item => item.id === 7).length, 'chats found on the server are mounted again');
     assert.deepEqual(errors, []);
     console.log('multi-task page: ok');
   } finally { await browser.close(); }

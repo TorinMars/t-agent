@@ -350,6 +350,13 @@ const Tasks = (() => {
       if (inst.paused || TerminalImages.busy) return;
       if (inst.ws && inst.ws.readyState === WebSocket.OPEN) inst.ws.send(data);
     });
+    // A Chinese IME on a PC types punctuation (? ! , . and so on) as insertText after a keyCode 229 keydown, which xterm 5.5 drops; send what it dropped.
+    if (typeof TerminalIme !== 'undefined') {
+      TerminalIme.attach(t, data => {
+        if (inst.paused || TerminalImages.busy) return;
+        if (inst.ws && inst.ws.readyState === WebSocket.OPEN) inst.ws.send(data);
+      });
+    }
 
     t.onResize(({ cols, rows }) => {
       if (inst.restoringHistory) return;

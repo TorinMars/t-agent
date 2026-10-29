@@ -30,13 +30,14 @@ const MultiTask = (() => {
   const cells = []; // { id, base, agent, taskTitle, chat, node, titleNode }
   let active = false;
   let restored = false;
+  let retained = []; // stored sessions whose list could not be read yet; kept so a failed request never forgets them
   let picker = null;
 
   const readStore = () => {
     try { const list = JSON.parse(localStorage.getItem(STORE_KEY)); return Array.isArray(list) ? list : []; } catch { return []; }
   };
   const save = () => {
-    try { localStorage.setItem(STORE_KEY, JSON.stringify(cells.map(cell => ({ base: cell.base, id: cell.id, taskTitle: cell.taskTitle })))); } catch { /* storage is full or blocked */ }
+    try { localStorage.setItem(STORE_KEY, JSON.stringify([...cells.map(cell => ({ base: cell.base, id: cell.id, taskTitle: cell.taskTitle })), ...retained.filter(item => !cells.some(cell => cell.base === item.base && cell.id === item.id))])); } catch { /* storage is full or blocked */ }
   };
 
   // The tasks of the engine that is shown on the Tasks page. A remote engine must declare that it supports agent chats.
@@ -104,18 +105,23 @@ const MultiTask = (() => {
     return true;
   }
 
+  // `base` is stored as it was mounted (`<tasks base>/<task id>/agent`), so it is used as is.
   async function restore() {
     restored = true;
     const stored = readStore().filter(item => item && typeof item.base === 'string' && Number.isInteger(item.id)).slice(0, MAX);
     const lists = new Map();
     for (const base of new Set(stored.map(item => item.base))) {
-      lists.set(base, api.get(`${base}/agent/conversations`).catch(() => null));
+      lists.set(base, api.get(`${base}/conversations`).catch(() => null));
     }
+    retained = [];
     for (const item of stored) {
       const rows = await lists.get(item.base);
-      const row = Array.isArray(rows) ? rows.find(candidate => candidate.id === item.id) : null;
-      if (row) addCell(`${item.base}/agent`, row, item.taskTitle || '');
+      if (!Array.isArray(rows)) { retained.push(item); continue; }
+      const row = rows.find(candidate => candidate.id === item.id);
+      if (row) addCell(item.base, row, item.taskTitle || '');
     }
+    if (retained.length) restored = false; // try again on the next visit of the page
+    else save();
   }
 
   // The "Add session" dialog.

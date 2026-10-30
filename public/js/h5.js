@@ -1,7 +1,10 @@
 // Phone page (/h5): tasks, terminals, image upload and translate-and-send. It shares the task terminals with the desktop page;
 // only one client at a time is attached to a terminal, and the other one can take it over with a button.
+// This file is the controller: the tasks, the terminals and their sockets, the chat, the viewport. What the page looks like is the Material UI shell
+// (scripts/h5-shell, js/h5-shell.js): this file writes the state the shell shows (`ui.set`) and registers what a tap does (`ui.actions`).
 (() => {
   const $ = id => document.getElementById(id);
+  const ui = window.H5UI;
   const tell = (message, type = 'info') => notify(message, type);
   const tr = text => (typeof I18n !== 'undefined' ? I18n.t(text) : text);
   const SUBMIT_DELAY_MS = 120; // same as the desktop: type the text first, then Enter, so a TUI does not see a pasted newline
@@ -47,15 +50,8 @@
   let uploading = false;
 
   const terminalHost = $('h5-terminal');
-  const empty = $('h5-empty');
-  const keys = $('h5-keys');
-  const scrollButtons = $('h5-scroll');
-  const sheet = $('h5-tasks');
-  const taskList = $('h5-task-list');
-  const engineSelect = $('h5-engine');
   const translateForm = $('h5-translate');
   const translateInput = $('h5-translate-input');
-  const translateSend = $('h5-translate-send');
   const picker = $('h5-image-picker');
 
   // ── Layout: follow the visual viewport so the on-screen keyboard pushes the keys up instead of covering them ──
@@ -71,7 +67,7 @@
     if (window.innerWidth !== fullWidth) { fullWidth = window.innerWidth; fullHeight = 0; } // rotated: measure again
     fullHeight = Math.max(fullHeight, height);
     keyboardOpen = fullHeight - height > KEYBOARD_MIN_SHRINK;
-    keys.hidden = keyboardOpen; // the on-screen keyboard has its own keys; the function keys come back when it closes
+    if (ui.get().keysHidden !== keyboardOpen) ui.set({ keysHidden: keyboardOpen }); // the on-screen keyboard has its own keys; the function keys come back when it closes
     document.documentElement.style.setProperty('--h5-height', `${Math.round(height)}px`);
     if (window.scrollY) window.scrollTo(0, 0);
     holdTerminalSize();
@@ -112,12 +108,8 @@
   setInterval(() => { if (keyboardOpen) fitViewport(); }, 500);
 
   // ── Tasks ──
-  function note(text) {
-    const node = document.createElement('div');
-    node.className = 'h5-list-note';
-    node.textContent = text;
-    taskList.replaceChildren(node);
-  }
+  // The task list the shell draws: a note (loading, an error, no tasks), or groups of tasks, each with the sessions listed under it when it is open.
+  function note(text) { ui.set({ taskList: { note: text, groups: [] } }); }
 
   async function loadSources() {
     try {
@@ -130,14 +122,7 @@
       }))];
     } catch { sources = [LOCAL]; }
     source = sources.find(item => item.key === store.get('source')) || LOCAL;
-    engineSelect.replaceChildren(...sources.map(item => {
-      const option = document.createElement('option');
-      option.value = item.key;
-      option.textContent = item.label;
-      option.selected = item === source;
-      return option;
-    }));
-    $('h5-engine-row').hidden = sources.length < 2;
+    ui.set({ sources: sources.map(item => ({ key: item.key, label: item.label })), sourceKey: source.key });
   }
 
   async function loadTasks() {
@@ -159,6 +144,29 @@
     }
   }
 
+  // The sessions of the selected task: its terminals, then its chats (the way back into one that was left by going to a terminal); each has "⋯" actions.
+  function ownSessions() {
+    return {
+      label: 'Phone terminals', note: null,
+      rows: [
+        ...terminals.map(row => ({ kind: 'terminal', id: row.terminal_id, title: row.title, agent: row.agent || null, current: row.terminal_id === terminalId && !agentChat, more: true })), // only one of a terminal and a chat is shown
+        ...chats.map(row => ({ kind: 'chat', id: row.id, title: `${row.running ? '\u25CF ' : ''}${row.title}`, agent: row.agent, current: Boolean(agentFor && agentFor.conversation === row.id), more: true })),
+      ],
+    };
+  }
+  // The sessions under an expanded task that is not selected: its terminals, then its chats, as in the list of the selected task (without the "⋯" actions).
+  function peekSessions(item) {
+    const label = item.title;
+    if (!peek || peek.taskId !== item.id || peek.source !== source || peek.status === 'loading') return { label, note: 'Loading…', rows: [] };
+    if (peek.status === 'error') return { label, note: 'Could not load the sessions', rows: [] };
+    const rows = [
+      ...peek.terminals.map(row => ({ kind: 'terminal', id: row.terminal_id, title: row.title, agent: row.agent || null, current: false, more: false })),
+      ...peek.chats.map(row => ({ kind: 'chat', id: row.id, title: `${row.running ? '\u25CF ' : ''}${row.title}`, agent: row.agent, current: false, more: false })),
+    ];
+    if (!rows.length) rows.push({ kind: 'open', id: 'open', title: tr('Open this task'), agent: null, current: false, more: false });
+    return { label, note: null, rows };
+  }
+
   function renderTasks() {
     if (!tasks.length) { note('No tasks yet. Create one above'); return; }
     const ordered = [...groups].sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
@@ -166,45 +174,23 @@
     for (const item of tasks) {
       if (!known.has(item.status)) { known.add(item.status); ordered.push({ key: item.status, name: item.status }); }
     }
-    const nodes = [];
+    const out = [];
     for (const group of ordered) {
       const members = tasks.filter(item => item.status === group.key);
       if (!members.length) continue;
-      const title = document.createElement('h3');
-      title.className = 'h5-group-title';
-      title.textContent = group.name;
-      nodes.push(title);
-      for (const item of members) {
-        const button = document.createElement('button');
-        button.type = 'button';
-        button.className = 'h5-task-item';
-        button.textContent = item.title;
-        const selected = Boolean(task && task.id === item.id);
-        const open = expandedId === item.id;
-        if (selected) button.setAttribute('aria-current', 'true');
-        button.setAttribute('aria-expanded', String(open));
-        // A tap opens or closes the list of sessions under the task. Going to a session is a tap on that session.
-        button.addEventListener('click', () => toggleTask(item));
-        const hasSessions = selected && (terminals.length || chats.length);
-        if (hasSessions) {
+      out.push({
+        key: group.key, name: group.name,
+        tasks: members.map(item => {
+          const selected = Boolean(task && task.id === item.id);
+          const open = expandedId === item.id;
+          // A tap opens or closes the list of sessions under the task. Going to a session is a tap on that session.
+          const hasSessions = Boolean(selected && (terminals.length || chats.length));
           // The selected task: "+" on the right of its row adds a terminal.
-          const row = document.createElement('div');
-          row.className = 'h5-task-row';
-          const add = document.createElement('button');
-          add.type = 'button';
-          add.className = 'h5-task-add';
-          add.textContent = '+';
-          add.setAttribute('aria-label', 'Session');
-          add.addEventListener('click', openSessionMenu);
-          row.append(button, add);
-          nodes.push(row);
-        } else nodes.push(button);
-        if (open) {
-          if (selected) { if (hasSessions) nodes.push(terminalList()); } else nodes.push(peekList(item));
-        }
-      }
+          return { id: item.id, title: item.title, selected, expanded: open, add: hasSessions, sessions: open ? (selected ? (hasSessions ? ownSessions() : null) : peekSessions(item)) : null };
+        }),
+      });
     }
-    taskList.replaceChildren(...nodes);
+    ui.set({ taskList: { note: null, groups: out } });
   }
 
   // target: where to go in the task, { terminal: id } or { chat: row }; without one, the task opens as it was left (its terminal, or the chat that was open).
@@ -217,7 +203,7 @@
     expandedId = item ? item.id : null;
     wantedTerminal = target && target.terminal ? target.terminal : null;
     store.set(`task:${source.key}`, item ? item.id : null);
-    $('h5-task-name').textContent = item ? item.title : 'Choose a task';
+    ui.set({ taskName: item ? item.title : '' });
     closeTasks();
     void loadTerminals();
     if (target && target.chat) mountAgent(target.chat);
@@ -252,64 +238,14 @@
     if (target.terminal && peek && peek.taskId === item.id) for (const row of peek.chats) if (row.opened && row.opened.h5) setOpened(item.id, row.id, false);
     selectTask(item, target);
   }
-  // The list under an expanded task that is not selected: its terminals, then its chats, as in the list of the selected task (without the "⋯" actions).
-  function peekList(item) {
-    const list = document.createElement('div');
-    list.className = 'h5-terminal-list';
-    list.setAttribute('role', 'group');
-    list.setAttribute('aria-label', item.title);
-    const say = text => {
-      const line = document.createElement('div');
-      line.className = 'h5-peek-note';
-      line.textContent = tr(text);
-      list.append(line);
-    };
-    if (!peek || peek.taskId !== item.id || peek.source !== source || peek.status === 'loading') { say('Loading…'); return list; }
-    if (peek.status === 'error') { say('Could not load the sessions'); return list; }
-    const add = (iconNode, iconClass, title, open) => {
-      const line = document.createElement('div');
-      line.className = 'h5-terminal-row';
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = 'h5-terminal-main';
-      const icon = document.createElement('span');
-      icon.className = `h5-terminal-icon ${iconClass}`;
-      icon.append(iconNode);
-      icon.setAttribute('aria-hidden', 'true');
-      const name = document.createElement('span');
-      name.className = 'h5-terminal-name';
-      name.textContent = title;
-      button.append(icon, name);
-      button.addEventListener('click', open);
-      line.append(button);
-      list.append(line);
-    };
-    for (const row of peek.terminals) {
-      const iconNode = row.agent && typeof AgentChat !== 'undefined' ? AgentChat.icon(row.agent) : document.createTextNode(TERMINAL_ICONS[row.agent] || TERMINAL_ICONS.shell);
-      add(iconNode, row.agent || 'shell', row.title, () => openFromPeek(item, { terminal: row.terminal_id }));
-    }
-    for (const row of peek.chats) add(AgentChat.chatIcon(row.agent), row.agent, `${row.running ? '\u25CF ' : ''}${row.title}`, () => openFromPeek(item, { chat: row }));
-    if (!peek.terminals.length && !peek.chats.length) {
-      add(document.createTextNode(TERMINAL_ICONS.shell), 'shell', tr('Open this task'), () => selectTask(item));
-    }
-    return list;
-  }
-
-  // A wide screen (a computer, a landscape tablet) shows the task sheet as a permanent sidebar next to the terminal: it is never closed,
+  // A wide screen (a computer, a landscape tablet) shows the task list as a permanent sidebar next to the terminal: it is never closed,
   // the page behind it stays usable, and a phone-sized screen keeps the sheet that slides over the page.
   const wideQuery = window.matchMedia('(min-width: 900px)');
   const isWide = () => wideQuery.matches;
   function openTasks() {
     const wide = isWide();
-    if (!wide || !sheet.classList.contains('open')) expandedId = task ? task.id : null; // the sheet opens with the sessions of the task that is shown, as before
-    document.body.classList.toggle('h5-tasks-open', !wide);
-    $('h5-open-tasks').setAttribute('aria-expanded', 'true');
-    $('h5-app').inert = !wide;
-    $('h5-agent').inert = !wide;
-    sheet.setAttribute('aria-modal', String(!wide));
-    sheet.classList.add('open');
-    sheet.setAttribute('aria-hidden', 'false');
-    if (!wide) $('h5-close-tasks').focus({ preventScroll: true });
+    if (!wide || !ui.get().tasksOpen) expandedId = task ? task.id : null; // the sheet opens with the sessions of the task that is shown, as before
+    ui.set({ tasksOpen: true, wide });
     renderTasks();
     void loadTasks();
     void refreshTerminals();
@@ -336,171 +272,82 @@
   function closeTasks() {
     if (isWide()) return; // the sidebar stays
     clearInterval(namesTimer);
-    sheet.classList.remove('open');
-    document.body.classList.remove('h5-tasks-open');
-    $('h5-open-tasks').setAttribute('aria-expanded', 'false');
-    $('h5-app').inert = false;
-    $('h5-agent').inert = false;
-    if (sheet.contains(document.activeElement)) $('h5-open-tasks').focus({ preventScroll: true });
-    sheet.setAttribute('aria-hidden', 'true');
+    ui.set({ tasksOpen: false });
   }
   // Crossing the breakpoint (a window resized, a tablet rotated) turns the sheet into the sidebar or back into a sheet that is closed.
   function syncLayout() {
+    ui.set({ wide: isWide() });
     if (isWide()) openTasks();
-    else if (sheet.classList.contains('open')) closeTasks();
+    else if (ui.get().tasksOpen) closeTasks();
     fitViewport();
     if (agentChat) fitAgentView();
   }
   wideQuery.addEventListener('change', syncLayout);
 
-  // ── Settings: language and the PC one-click update (same /api/system endpoints as the desktop page) ──
-  const settings = $('h5-settings');
-  const updateButton = $('h5-update-check');
-  const updateHint = $('h5-update-hint');
-  const updateLog = $('h5-update-log');
-  let updateTimer = null;
-  let updateBusy = false;
-
-  function openSettings() {
-    settings.classList.add('open');
-    settings.setAttribute('aria-hidden', 'false');
-  }
-  function closeSettings() {
-    settings.classList.remove('open');
-    settings.setAttribute('aria-hidden', 'true');
-  }
-  function showUpdate(message, lines) {
-    updateHint.textContent = tr(message);
-    updateHint.hidden = false;
-    if (Array.isArray(lines) && lines.length) {
-      const stuck = updateLog.scrollHeight - updateLog.scrollTop - updateLog.clientHeight < 24;
-      updateLog.hidden = false;
-      updateLog.textContent = lines.map(line => line.text).join('\n');
-      if (stuck) updateLog.scrollTop = updateLog.scrollHeight;
-    }
-  }
-  function endUpdate() {
-    clearInterval(updateTimer);
-    updateBusy = false;
-    updateButton.disabled = false;
-  }
-  async function checkUpdate() {
-    if (updateBusy) return;
-    updateBusy = true;
-    updateButton.disabled = true;
-    updateLog.hidden = true;
-    showUpdate('Checking for the latest version…');
-    try {
-      const status = await api('POST', '/api/system/check-update', {});
-      if (status.status === 'updating') { monitorUpdate(); return; }
-      if (status.status === 'available') {
-        if (!status.is_update_admin) { showUpdate('Only the update administrator can run updates'); endUpdate(); return; }
-        // One tap checks and, when a newer version exists, updates at once.
-        await startUpdate(`${status.local_version || '?'} → ${status.remote_version}`);
-        return;
-      } else {
-        showUpdate(status.error ? `${status.error}${status.error_details ? `: ${status.error_details}` : ''}` : (status.message || 'Already up to date'));
+  ui.actions.openTasks = openTasks;
+  ui.actions.closeTasks = closeTasks;
+  ui.actions.openSettings = () => ui.set({ settingsOpen: true }); // the settings themselves are the shell's (scripts/h5-shell/Settings.jsx)
+  ui.actions.closeSettings = () => ui.set({ settingsOpen: false });
+  ui.actions.toggleTask = id => { const item = tasks.find(entry => entry.id === id); if (item) toggleTask(item); };
+  // A tap on a session row: on the selected task it goes to the terminal or chat; on another task it selects that task and shows the session.
+  ui.actions.openRow = (taskId, row) => {
+    const item = tasks.find(entry => entry.id === taskId);
+    if (!item) return;
+    if (task && task.id === taskId) {
+      if (row.kind === 'terminal') {
+        closeTasks();
+        leaveChat();
+        // Tapping the current terminal reconnects one that was disconnected.
+        if (row.id === terminalId && session && (session.ws || session.timer)) return;
+        const entry = terminals.find(candidate => candidate.terminal_id === row.id);
+        if (entry) switchTerminal(entry);
+      } else if (row.kind === 'chat') {
+        const entry = chats.find(candidate => candidate.id === row.id);
+        if (entry) { closeTasks(); mountAgent(entry); }
       }
-    } catch (error) {
-      showUpdate(error.message || 'Update failed');
+      return;
     }
-    endUpdate();
-  }
-  // Called from checkUpdate while it still owns updateBusy.
-  async function startUpdate(versions) {
-    showUpdate(`${tr('Updating…')} ${versions}`);
-    try {
-      let bootId = null;
-      try { bootId = (await api('GET', '/api/system/version')).boot_id || null; } catch { /* the monitor falls back to the restart grace period */ }
-      await api('POST', '/api/system/apply-update', { confirm: true });
-      monitorUpdate(bootId);
-    } catch (error) {
-      showUpdate(error.message || 'Update not run');
-      endUpdate();
-    }
-  }
-  // Poll the update progress; while the PC service restarts the polls fail, and a changed boot id (or the grace period) proves it is back.
-  function monitorUpdate(bootId = null) {
-    clearInterval(updateTimer);
-    updateBusy = true;
-    updateButton.disabled = true;
-    let restartingAt = null;
-    let down = false;
-    updateTimer = setInterval(async () => {
-      let status;
-      try { status = await api('GET', '/api/system/update-status'); } catch { down = true; return; }
-      const restarted = down || (restartingAt && Date.now() - restartingAt > 4000) || (bootId && status.boot_id && status.boot_id !== bootId);
-      if (status.status === 'blocked' || status.status === 'failed') {
-        showUpdate(`${status.error || status.message || 'Update failed'}${status.error_details ? `: ${status.error_details}` : ''}`, status.log);
-        endUpdate();
-      } else if (status.stage === 'completed' || (status.status !== 'updating' && restarted)) {
-        showUpdate('Update complete, reloading…', status.log);
-        endUpdate();
-        setTimeout(() => location.reload(), 1500);
-      } else {
-        if (status.stage === 'restarting' && !restartingAt) restartingAt = Date.now();
-        showUpdate(status.stage === 'restarting' ? 'Restarting the PC service, this page reloads when it is back…' : (status.message || 'Updating…'), status.log);
-      }
-    }, 1000);
-  }
-  $('h5-open-settings').addEventListener('click', openSettings);
-  $('h5-close-settings').addEventListener('click', closeSettings);
-  settings.addEventListener('click', event => { if (event.target === settings) closeSettings(); }); // the dimmed area beside the panel on a wide screen
-  settings.addEventListener('keydown', event => { if (event.key === 'Escape') closeSettings(); });
-  updateButton.addEventListener('click', () => void checkUpdate());
-  $('h5-logout').addEventListener('click', async () => {
-    if (!confirm(tr('Logging out disconnects local and remote terminals, but tasks running on the server keep running. Log out?'))) return;
-    try {
-      await api('POST', '/auth/logout', {});
-      // The server puts the (hidden) login address of this install into the page; the same address client-auth.js (loaded by h5.html) keeps in window.TAgentLoginPath.
-      const meta = document.querySelector('meta[name="t-agent-login-path"]');
-      location.replace(`${(meta && meta.content) || '/auth/login'}?return_to=/h5`);
-    } catch { tell(tr('Log out failed. Please retry later.'), 'error'); }
-  });
-
-  $('h5-open-tasks').addEventListener('click', openTasks);
-  $('h5-close-tasks').addEventListener('click', closeTasks);
-  $('h5-task-backdrop').addEventListener('click', closeTasks);
-  sheet.addEventListener('keydown', event => { if (event.key === 'Escape') closeTasks(); });
-  engineSelect.addEventListener('change', () => {
+    if (row.kind === 'terminal') openFromPeek(item, { terminal: row.id });
+    else if (row.kind === 'chat') { const entry = peek && peek.chats.find(candidate => candidate.id === row.id); if (entry) openFromPeek(item, { chat: entry }); }
+    else selectTask(item);
+  };
+  ui.actions.rowMore = row => {
+    if (row.kind === 'chat') { const entry = chats.find(candidate => candidate.id === row.id); if (entry) openChatMenu(entry); }
+    else { const entry = terminals.find(candidate => candidate.terminal_id === row.id); if (entry) openTerminalMenu(entry); }
+  };
+  ui.actions.changeEngine = key => {
     hideAgent();
-    source = sources.find(item => item.key === engineSelect.value) || LOCAL;
+    source = sources.find(item => item.key === key) || LOCAL;
     store.set('source', source.key === 'local' ? null : source.key);
     tasks = [];
     task = null;
     expandedId = null;
     peek = null;
-    $('h5-task-name').textContent = 'Choose a task';
+    ui.set({ taskName: '', sourceKey: source.key });
     disconnect();
     terminals = [];
     renderTabs();
     showEmpty('Choose a task to open its phone terminal');
     void loadTasks();
-  });
-  $('h5-new-task').addEventListener('submit', async event => {
-    event.preventDefault();
-    const input = $('h5-new-task-title');
-    const button = event.currentTarget.querySelector('button');
-    const title = input.value.trim();
-    if (!title || button.disabled) return;
-    button.disabled = true;
+  };
+  // Resolves to whether the task was made (the shell then empties its input).
+  ui.actions.createTask = async title => {
     const current = source;
+    ui.set({ creatingTask: true });
     try {
       const created = await api('POST', current.tasksBase, { title });
-      input.value = '';
-      if (current !== source) return;
+      if (current !== source) return true;
       await loadTasks();
       selectTask(tasks.find(item => item.id === created.id) || created);
+      return true;
     } catch (error) {
       tell(`Could not create the task: ${error.message}`, 'error');
-    } finally { button.disabled = false; }
-  });
+      return false;
+    } finally { ui.set({ creatingTask: false }); }
+  };
 
   // ── Phone terminals ──
-  function showEmpty(text) {
-    empty.textContent = text;
-    empty.hidden = false;
-  }
+  function showEmpty(text) { ui.set({ empty: text }); }
 
   async function loadTerminals() {
     disconnect();
@@ -524,73 +371,7 @@
     connect();
   }
 
-  // The terminals of the selected task are a second-level list under it in the task sheet; "⋯" opens the actions of one terminal.
-  const TERMINAL_ICONS = { shell: '>_', claude: '\u2733', codex: 'GPT' };
-  function terminalList() {
-    const list = document.createElement('div');
-    list.className = 'h5-terminal-list';
-    list.setAttribute('role', 'group');
-    list.setAttribute('aria-label', 'Phone terminals');
-    for (const row of terminals) {
-      const line = document.createElement('div');
-      line.className = 'h5-terminal-row';
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = 'h5-terminal-main';
-      const icon = document.createElement('span');
-      icon.className = `h5-terminal-icon ${row.agent || 'shell'}`;
-      if (row.agent && typeof AgentChat !== 'undefined') icon.append(AgentChat.icon(row.agent));
-      else icon.textContent = TERMINAL_ICONS[row.agent] || TERMINAL_ICONS.shell;
-      icon.setAttribute('aria-hidden', 'true');
-      const name = document.createElement('span');
-      name.className = 'h5-terminal-name';
-      name.textContent = row.title;
-      button.append(icon, name);
-      if (row.terminal_id === terminalId && !agentChat) button.setAttribute('aria-current', 'true'); // only one of a terminal and a chat is shown
-      button.addEventListener('click', () => {
-        closeTasks();
-        leaveChat();
-        // Tapping the current terminal reconnects one that was disconnected.
-        if (row.terminal_id === terminalId && session && (session.ws || session.timer)) return;
-        switchTerminal(row);
-      });
-      const more = document.createElement('button');
-      more.type = 'button';
-      more.className = 'h5-terminal-more';
-      more.textContent = '⋯';
-      more.setAttribute('aria-label', 'Terminal actions');
-      more.addEventListener('click', () => openTerminalMenu(row));
-      line.append(button, more);
-      list.append(line);
-    }
-    // The agent chats of the task, after its terminals: the way back into one that was left by going to a terminal.
-    for (const row of chats) {
-      const line = document.createElement('div');
-      line.className = 'h5-terminal-row';
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = 'h5-terminal-main';
-      const icon = document.createElement('span');
-      icon.className = `h5-terminal-icon ${row.agent}`;
-      icon.append(AgentChat.chatIcon(row.agent));
-      icon.setAttribute('aria-hidden', 'true');
-      const name = document.createElement('span');
-      name.className = 'h5-terminal-name';
-      name.textContent = `${row.running ? '\u25CF ' : ''}${row.title}`;
-      button.append(icon, name);
-      if (agentFor && agentFor.conversation === row.id) button.setAttribute('aria-current', 'true');
-      button.addEventListener('click', () => { closeTasks(); mountAgent(row); });
-      const more = document.createElement('button');
-      more.type = 'button';
-      more.className = 'h5-terminal-more';
-      more.textContent = '⋯';
-      more.setAttribute('aria-label', 'Chat actions');
-      more.addEventListener('click', () => openChatMenu(row));
-      line.append(button, more);
-      list.append(line);
-    }
-    return list;
-  }
+  // The terminals of the selected task are a second-level list under it in the task sheet (ownSessions); "⋯" opens the actions of one terminal.
   // Going to a terminal leaves the open chat, like the back arrow used to; the chat stays listed in the task sheet.
   function leaveChat() { if (agentChat) closeAgent(); }
   function switchTerminal(row) {
@@ -602,62 +383,43 @@
   }
 
   // ── Terminal actions: rename, reopen, restart in the working directory, delete (same endpoints as the desktop tabs) ──
-  const termMenu = $('h5-term-menu');
-  const termMenuActions = $('h5-term-menu-actions');
-  const renameForm = $('h5-term-rename');
-  const renameInput = $('h5-term-rename-input');
+  // One sheet (the shell's `menu`) serves the actions of a terminal, the actions of a chat and the "Session" choices of the "+" of a task. Its items are
+  // { label, kind } in the state and their functions are kept here, in the order shown.
+  let menuRuns = [];
   let menuRow = null;
-
-  let menuChat = null; // the chat whose actions are open (the same sheet serves terminals and chats)
+  let menuChat = null; // the chat whose actions are open
 
   function closeTerminalMenu() {
     menuRow = null;
     menuChat = null;
-    termMenu.hidden = true;
-    renameForm.hidden = true;
+    menuRuns = [];
+    ui.set({ menu: null });
   }
+  // items: [label, run, kind]; kind 'danger' is drawn as a warning, 'raw' is a name that is not translated.
+  function showMenu(title, items) {
+    menuRuns = items.map(item => item[1]);
+    ui.set({ menu: { title, items: items.map(([label, , kind]) => ({ label, kind: kind || null })), renaming: false, renameValue: '' } });
+  }
+  const askRename = value => ui.set(state => ({ menu: state.menu && { ...state.menu, renaming: true, renameValue: value } }));
   function openTerminalMenu(row) {
     menuRow = row;
-    $('h5-term-menu-title').textContent = row.title;
-    renameForm.hidden = true;
-    const items = [
-      ...(row.agent ? [] : [['Rename', () => { termMenuActions.hidden = true; renameForm.hidden = false; renameInput.value = row.title; renameInput.focus(); renameInput.select(); }]]),
+    menuChat = null;
+    showMenu(row.title, [
+      ...(row.agent ? [] : [['Rename', () => askRename(row.title)]]),
       ['Reopen', () => { closeTerminalMenu(); closeTasks(); switchTerminal(row); }],
       ['Restart in the working directory', () => void restartTerminal(row), 'danger'],
-    ];
-    items.push(['Delete', () => void deleteTerminal(row), 'danger']);
-    termMenuActions.hidden = false;
-    termMenuActions.replaceChildren(...items.map(([label, run, kind]) => {
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.textContent = tr(label);
-      if (kind) button.className = kind;
-      button.addEventListener('click', run);
-      return button;
-    }));
-    termMenu.hidden = false;
+      ['Delete', () => void deleteTerminal(row), 'danger'],
+    ]);
   }
   // Chat actions: the same sheet as a terminal's, with the actions a chat has (rename, open, delete).
   function openChatMenu(row) {
     menuRow = null;
     menuChat = row;
-    $('h5-term-menu-title').textContent = row.title;
-    renameForm.hidden = true;
-    const items = [
-      ['Rename', () => { termMenuActions.hidden = true; renameForm.hidden = false; renameInput.value = row.title; renameInput.focus(); renameInput.select(); }],
+    showMenu(row.title, [
+      ['Rename', () => askRename(row.title)],
       ['Open', () => { closeTerminalMenu(); closeTasks(); mountAgent(row); }],
       ['Delete', () => void deleteChat(row), 'danger'],
-    ];
-    termMenuActions.hidden = false;
-    termMenuActions.replaceChildren(...items.map(([label, run, kind]) => {
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.textContent = tr(label);
-      if (kind) button.className = kind;
-      button.addEventListener('click', run);
-      return button;
-    }));
-    termMenu.hidden = false;
+    ]);
   }
   async function deleteChat(row) {
     if (!window.confirm(`${tr('Delete this chat? Its messages are removed from this task.')}\n${row.title}`)) return;
@@ -704,10 +466,11 @@
       }
     } catch (error) { tell(`Could not delete the terminal: ${error.message}`, 'error'); }
   }
-  renameForm.addEventListener('submit', async event => {
-    event.preventDefault();
+  ui.actions.menuRun = index => { const run = menuRuns[index]; if (run) run(); };
+  ui.actions.menuCancel = closeTerminalMenu;
+  ui.actions.menuRename = async value => {
     const row = menuRow;
-    const title = renameInput.value.trim();
+    const title = String(value || '').trim();
     if (menuChat && title) {
       const chat = menuChat;
       try {
@@ -724,9 +487,7 @@
       closeTerminalMenu();
       renderTabs();
     } catch (error) { tell(`Could not rename the terminal: ${error.message}`, 'error'); }
-  });
-  $('h5-term-menu-cancel').addEventListener('click', closeTerminalMenu);
-  termMenu.addEventListener('click', event => { if (event.target === termMenu) closeTerminalMenu(); });
+  };
   // The name of what is shown (the chat that is open, otherwise the current terminal) in small text under the task name.
   function renderSessionName() {
     let name = '';
@@ -737,29 +498,18 @@
       const row = terminals.find(entry => entry.terminal_id === terminalId);
       name = (row && row.title) || '';
     }
-    $('h5-session-name').textContent = name || '\u00a0'; // a no-break space keeps the line's height
+    if (ui.get().sessionName !== name) ui.set({ sessionName: name });
   }
   function renderTabs() { if (tasks.length) renderTasks(); renderSessionName(); }
 
   // ── Session: a plain terminal, or a Claude / Codex session of the task directory (new or resumed) ──
   const SESSION_KINDS = [['claude', 'Claude session'], ['codex', 'Codex session']];
-  function showSessionMenu(title, items) {
-    $('h5-term-menu-title').textContent = tr(title);
-    renameForm.hidden = true;
-    termMenuActions.hidden = false;
-    termMenuActions.replaceChildren(...items.map(([label, run, kind]) => {
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.textContent = kind === 'raw' ? label : tr(label);
-      button.addEventListener('click', run);
-      return button;
-    }));
-    termMenu.hidden = false;
-  }
+  function showSessionMenu(title, items) { showMenu(tr(title), items); }
   async function openSessionMenu() {
     const currentSource = source;
     const currentTask = task;
     menuRow = null;
+    menuChat = null;
     const show = chatsAvailable => showSessionMenu('Session', [
       ['New Terminal', () => { closeTerminalMenu(); closeTasks(); void createTerminal(); }],
       ...SESSION_KINDS.map(([agent, label]) => [label, () => void openAgentSessions(agent, label)]),
@@ -769,10 +519,12 @@
     if (source.key === 'local') return;
     try {
       const info = await api('GET', `${source.tasksBase.replace(/\/tasks$/, '')}/info`);
-      if (source !== currentSource || task !== currentTask || termMenu.hidden || $('h5-term-menu-title').textContent !== tr('Session')) return;
+      const menu = ui.get().menu;
+      if (source !== currentSource || task !== currentTask || !menu || menu.title !== tr('Session')) return;
       show(Array.isArray(info.capabilities) && info.capabilities.includes('agent-chat:manage'));
     } catch { /* old or offline Engines keep offering terminals only */ }
   }
+  ui.actions.openSessionMenu = openSessionMenu;
 
   // ── Agent chat: the same Claude / Codex sessions as a conversation view instead of a terminal ──
   const agentView = $('h5-agent');
@@ -890,7 +642,7 @@
     let rows = [];
     try { rows = await AgentChat.choices(chatApi, base, agent); }
     catch (error) { if (current === task) tell(`Could not load sessions: ${error.message}`, 'error'); }
-    if (current !== task || termMenu.hidden) return;
+    if (current !== task || !ui.get().menu) return;
     const start = choice => async () => {
       try {
         const conversation = await AgentChat.open(chatApi, base, agent, choice);
@@ -911,7 +663,7 @@
     let rows = [];
     try { rows = await api('GET', `${source.tasksBase}/${current.id}/agent-sessions?agent=${agent}`); }
     catch (error) { if (current === task) tell(`Could not load sessions: ${error.message}`, 'error'); }
-    if (current !== task || termMenu.hidden) return;
+    if (current !== task || !ui.get().menu) return;
     const start = sessionId => () => { closeTerminalMenu(); closeTasks(); void createTerminal({ agent, session_id: sessionId }); };
     showSessionMenu(label, [
       [`New ${label}`, start(undefined)],
@@ -952,7 +704,7 @@
   function connect() {
     disconnect();
     if (!task || !terminalId) return;
-    empty.hidden = true;
+    ui.set({ empty: null });
     const el = document.createElement('div');
     el.className = 'h5-xterm';
     terminalHost.append(el);
@@ -960,7 +712,7 @@
       cursorBlink: true,
       fontSize: 11,
       fontFamily: 'Menlo, Monaco, "Courier New", monospace',
-      theme: { background: '#1e1e1e' },
+      theme: { background: '#121212' },
       scrollback: 5000,
     });
     const fit = new FitAddon.FitAddon();
@@ -1103,12 +855,8 @@
   });
 
   // ── Keys ──
-  function renderMods() {
-    keys.querySelectorAll('[data-modifier]').forEach(button => {
-      button.setAttribute('aria-pressed', String(Boolean(mods[button.dataset.modifier])));
-    });
-  }
-  function clearMods() { mods = {}; renderMods(); }
+  function renderMods() { ui.set({ mods: { ...mods } }); }
+  function clearMods() { if (Object.values(mods).some(Boolean)) { mods = {}; renderMods(); } else mods = {}; }
   // A latched Ctrl / Alt / Shift also applies to the next character typed on the on-screen keyboard.
   function withModifiers(data) {
     if (!Object.values(mods).some(Boolean) || Array.from(data).length !== 1) return data;
@@ -1160,8 +908,6 @@
   }
 
   // ── Copy text: the terminal buffer as plain text in an overlay, so the browser's own selection handles work ──
-  const copyView = $('h5-copy');
-  const copyText = $('h5-copy-text');
   function bufferText(term) {
     const buffer = term.buffer.active;
     const lines = [];
@@ -1177,22 +923,16 @@
   function openCopy() {
     const text = session && !session.disposed ? bufferText(session.term) : '';
     if (!text) { tell('Nothing to copy'); return; }
-    copyText.textContent = text;
-    copyView.hidden = false;
-    copyView.setAttribute('aria-hidden', 'false');
-    copyText.scrollTop = copyText.scrollHeight; // the latest output first
+    ui.set({ copyText: text });
   }
-  function closeCopy() {
-    copyView.hidden = true;
-    copyView.setAttribute('aria-hidden', 'true');
-    copyText.textContent = '';
-  }
+  function closeCopy() { ui.set({ copyText: null }); }
   async function copyAll() {
-    const text = copyText.textContent;
+    const text = ui.get().copyText || '';
     try {
       await navigator.clipboard.writeText(text);
     } catch {
       // No clipboard API (plain HTTP): select everything and use the legacy copy command.
+      const copyText = $('h5-copy-text');
       const range = document.createRange();
       range.selectNodeContents(copyText);
       const selection = window.getSelection();
@@ -1202,40 +942,33 @@
     }
     tell('Copied', 'success');
   }
-  $('h5-copy-all').addEventListener('click', () => void copyAll());
-  $('h5-copy-close').addEventListener('click', closeCopy);
+  ui.actions.openCopy = openCopy;
+  ui.actions.copyClose = closeCopy;
+  ui.actions.copyAll = () => void copyAll();
 
   // The floating buttons move about a page per click: scrollback in the normal buffer, wheel events in a full-screen program.
-  scrollButtons.addEventListener('mousedown', event => event.preventDefault());
-  scrollButtons.addEventListener('click', event => {
-    const button = event.target.closest('button');
+  ui.actions.scrollPage = direction => {
     const s = session;
-    if (button && button.dataset.copy !== undefined) { openCopy(); return; }
-    if (!button || !s || s.disposed) return;
-    const direction = Number(button.dataset.scroll);
+    if (!s || s.disposed) return;
     if (s.term.buffer.active.type === 'alternate') {
       const rect = (s.el.querySelector('.xterm-screen') || s.el).getBoundingClientRect();
       wheel(s, direction * 5, rect.left + rect.width / 2, rect.top + rect.height / 2);
     } else {
       s.term.scrollLines(direction * Math.max(1, s.term.rows - 2));
     }
-  });
+  };
 
-  // Keep focus where it is, so tapping keys does not open or close the on-screen keyboard.
-  keys.addEventListener('mousedown', event => event.preventDefault());
-  keys.addEventListener('click', event => {
-    const button = event.target.closest('button');
-    if (!button || button.disabled) return;
-    if (button.dataset.modifier) {
-      const name = button.dataset.modifier;
-      mods[name] = !mods[name];
+  // A tap on a key of the key bar (the shell keeps the focus where it is, so tapping keys does not open or close the on-screen keyboard).
+  ui.actions.key = item => {
+    if (item.modifier) {
+      mods[item.modifier] = !mods[item.modifier];
       renderMods();
-    } else if (button.dataset.action === 'keyboard') toggleKeyboard();
-    else if (button.dataset.action === 'paste') void paste();
-    else if (button.dataset.action === 'image') pickImage();
-    else if (button.dataset.shortcut === 'ctrl-c') sendKey('c', { ctrl: true });
-    else if (button.dataset.key) sendKey(button.dataset.key, mods);
-  });
+    } else if (item.action === 'keyboard') toggleKeyboard();
+    else if (item.action === 'paste') void paste();
+    else if (item.action === 'image') pickImage();
+    else if (item.shortcut === 'ctrl-c') sendKey('c', { ctrl: true });
+    else if (item.key) sendKey(item.key, mods);
+  };
 
   // ── Translate and send ──
   let translating = false;
@@ -1249,8 +982,7 @@
     const target = session;
     if (uploading || !connected(target)) { tell('The terminal is not connected', 'error'); return; }
     translating = true;
-    translateInput.readOnly = translateSend.disabled = true;
-    translateInput.classList.add('translating');
+    ui.set({ translating: true });
     try {
       const result = await api('POST', '/api/translate', { text });
       const english = TerminalTranslate.sanitize(result && result.text);
@@ -1265,8 +997,7 @@
       if (/not configured/i.test(message)) tell('Set up the translation service in Settings');
     } finally {
       translating = false;
-      translateInput.readOnly = translateSend.disabled = false;
-      translateInput.classList.remove('translating');
+      ui.set({ translating: false });
     }
   }
   translateForm.addEventListener('submit', event => { event.preventDefault(); void translate(); });
@@ -1298,55 +1029,23 @@
   function lock() {
     uploading = true;
     document.activeElement?.blur();
-    const overlay = document.createElement('div');
-    overlay.className = 'h5-upload-overlay';
-    overlay.setAttribute('role', 'dialog');
-    overlay.setAttribute('aria-modal', 'true');
-    overlay.setAttribute('aria-label', 'Uploading image');
-    const card = document.createElement('div');
-    card.className = 'h5-upload-card';
-    const status = document.createElement('p');
-    status.setAttribute('role', 'status');
-    status.textContent = 'Reading OSS settings…';
-    const progress = document.createElement('progress');
-    progress.max = 100;
-    progress.setAttribute('aria-label', 'Upload progress');
-    card.append(status, progress);
-    overlay.append(card);
-    document.body.append(overlay);
-    return { status, progress, unlock() { overlay.remove(); uploading = false; } };
+    ui.set({ upload: { status: 'Reading OSS settings…', progress: 0 } });
+    return {
+      status: text => ui.set(state => ({ upload: state.upload && { ...state.upload, status: text } })),
+      progress: value => ui.set(state => ({ upload: state.upload && { ...state.upload, progress: value } })),
+      unlock() { ui.set({ upload: null }); uploading = false; },
+    };
   }
 
   // The image goes from this browser straight to OSS (oss-direct.js); the Client only signs the upload.
-  const transfer = (file, ui) => OssDirect.upload(file, {
-    status: text => { ui.status.textContent = tr(text); },
-    progress: value => { if (value === null) ui.progress.removeAttribute('value'); else ui.progress.value = value; },
+  const transfer = (file, ui2) => OssDirect.upload(file, {
+    status: text => ui2.status(text),
+    progress: value => ui2.progress(value),
   });
 
   // When the terminal went away during the upload, keep the link on screen so it is not lost.
-  function retain(url) {
-    const overlay = document.createElement('div');
-    overlay.className = 'h5-upload-overlay';
-    const card = document.createElement('div');
-    card.className = 'h5-upload-card';
-    const label = document.createElement('p');
-    label.textContent = 'Image uploaded; the original terminal was switched or disconnected. Copy the link manually:';
-    const field = document.createElement('input');
-    field.readOnly = true;
-    field.value = url;
-    field.style.width = '100%';
-    field.setAttribute('aria-label', 'Uploaded image link');
-    field.addEventListener('click', () => field.select());
-    const close = document.createElement('button');
-    close.type = 'button';
-    close.className = 'h5-header-button';
-    close.style.marginTop = '12px';
-    close.textContent = 'Close';
-    close.addEventListener('click', () => overlay.remove());
-    card.append(label, field, close);
-    overlay.append(card);
-    document.body.append(overlay);
-  }
+  function retain(url) { ui.set({ retainUrl: url }); }
+  ui.actions.retainClose = () => ui.set({ retainUrl: null });
 
   async function upload(target, file) {
     if (!/^image\/(png|jpeg|gif|webp)$/.test(file.type) || file.size <= 0 || file.size > MAX_IMAGE_BYTES) {

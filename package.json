@@ -1,6 +1,6 @@
 {
   "name": "torin-x-web",
-  "version": "2.84.45",
+  "version": "2.84.46",
   "description": "T-Agent task client with browser terminals",
   "main": "server.js",
   "scripts": {
@@ -13,6 +13,7 @@
     "vendor": "node scripts/fetch-vendor.js",
     "build:markdown": "esbuild scripts/markdown-view-entry.js --bundle --minify --format=iife --global-name=MarkdownView --outfile=public/js/markdown-view.js",
     "build:monaco": "esbuild scripts/monaco-entry.js --bundle --minify --supported:template-literal=false --format=iife --global-name=MonacoBundle --loader:.ttf=file --asset-names=[name]-[hash] --outfile=public/vendor/monaco/monaco.js && esbuild node_modules/monaco-editor/esm/vs/editor/editor.worker.js --bundle --minify --format=iife --outfile=public/vendor/monaco/editor.worker.js && esbuild node_modules/monaco-editor/esm/vs/languages/features/json/json.worker.js --bundle --minify --supported:template-literal=false --format=iife --outfile=public/vendor/monaco/json.worker.js",
+    "build:h5-shell": "esbuild scripts/h5-shell/entry.jsx --bundle --minify --format=iife --jsx=automatic --define:process.env.NODE_ENV=\\\"production\\\" --outfile=public/js/h5-shell.js",
     "build:agent-chat": "esbuild scripts/agent-chat/entry.jsx --bundle --minify --format=iife --global-name=AgentChatUI --define:process.env.NODE_ENV=\\\"production\\\" --outfile=public/js/agent-chat-ui.js"
   },
   "dependencies": {
@@ -36,6 +37,10 @@
   "devDependencies": {
     "@assistant-ui/react": "0.15.31",
     "@assistant-ui/react-markdown": "0.14.24",
+    "@emotion/react": "11.14.0",
+    "@emotion/styled": "11.14.1",
+    "@mui/icons-material": "9.5.0",
+    "@mui/material": "9.5.0",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/xterm": "^5.5.0",
     "linkedom": "0.18.12",

@@ -1,4 +1,5 @@
-// Browser test of the phone settings groups: working directory, image upload, remote service and access mode, on a phone-sized page.
+// Browser test of the phone settings groups (the Material UI shell, scripts/h5-shell/Settings.jsx): working directory, image upload, translation, voice input,
+// remote service and access mode, on a phone-sized page.
 const { chromium } = require('playwright');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -45,14 +46,15 @@ const html = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8').replace(
         throw new Error(`unexpected ${method} ${url}`);
       };
     });
-    await page.addScriptTag({ content: fs.readFileSync(path.join(root, 'public/js/h5-settings.js'), 'utf8') });
-    await page.evaluate(() => document.getElementById('h5-settings').classList.add('open'));
+    await page.addScriptTag({ content: fs.readFileSync(path.join(root, 'public/js/h5-shell.js'), 'utf8') }); // the shell draws the page, and the settings with it
+    await page.evaluate(() => window.H5UI.set({ settingsOpen: true }));
+    await page.locator('#h5-settings').waitFor({ state: 'visible' });
     const calls = () => page.evaluate(() => window.calls);
     assert.equal((await calls()).length, 0, 'nothing is read until a group is opened');
-    assert.deepEqual(await page.locator('.h5-setting-group > summary').allTextContents(), ['Working directory', 'Image upload', 'Translation', 'Voice input', 'Remote service', 'Access mode']);
+    assert.deepEqual(await page.locator('.h5-setting-group .MuiAccordionSummary-content').allTextContents(), ['Working directory', 'Image upload', 'Translation', 'Voice input', 'Remote service', 'Access mode']);
 
     // Working directory: the effective default is shown; an unchanged default stays inherited, a new path is saved, clearing restores the default.
-    await page.locator('#h5-set-workdir > summary').tap();
+    await page.locator('#h5-set-workdir .MuiAccordionSummary-root').tap();
     await page.waitForFunction(() => document.getElementById('h5-workdir').value === '/home/t/tasks');
     await page.click('#h5-workdir-save');
     await page.waitForFunction(() => calls.some(call => call.url === '/auth/settings'));
@@ -67,7 +69,7 @@ const html = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8').replace(
     assert.equal(await page.evaluate(() => state.work_dir), null);
 
     // Image upload: values are echoed, the secret is never shown, and an empty secret is sent so the server keeps the saved one.
-    await page.locator('#h5-set-oss > summary').tap();
+    await page.locator('#h5-set-oss .MuiAccordionSummary-root').tap();
     await page.waitForFunction(() => document.getElementById('h5-oss-bucket').value === 'b1');
     assert.equal(await page.inputValue('#h5-oss-accessKeySecret'), '');
     assert.equal(await page.locator('#h5-oss-secret-hint').textContent(), 'Secret saved; leave empty to keep it.');
@@ -82,7 +84,7 @@ const html = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8').replace(
     await page.waitForFunction(() => state.oss.hasAccessKeySecret === false && document.getElementById('h5-oss-bucket').value === '');
 
     // Translation: one key per provider; unsaved input survives switching providers; the saved key is never shown.
-    await page.locator('#h5-set-translate > summary').tap();
+    await page.locator('#h5-set-translate .MuiAccordionSummary-root').tap();
     await page.waitForFunction(() => document.getElementById('h5-tr-model').value === 'deepseek-chat');
     assert.deepEqual(await page.locator('#h5-tr-provider option').allTextContents(), ['DeepSeek (Key saved)', 'GLM']);
     assert.equal(await page.inputValue('#h5-tr-key'), '');
@@ -105,7 +107,7 @@ const html = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8').replace(
     await page.waitForFunction(() => state.tr.provider === 'deepseek' && !state.tr.providers.glm.hasApiKey);
 
     // Voice input: the key is never echoed, the address in use follows the region and a custom endpoint, an empty noise filter is the service default.
-    await page.locator('#h5-set-voice > summary').tap();
+    await page.locator('#h5-set-voice .MuiAccordionSummary-root').tap();
     await page.waitForFunction(() => document.getElementById('h5-vi-model').value === 'asr-1');
     assert.equal(await page.getAttribute('#h5-vi-key', 'placeholder'), 'API Key');
     assert.equal(await page.locator('#h5-vi-effective').textContent(), 'Address in use: wss://cn.example/ws');
@@ -127,7 +129,7 @@ const html = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8').replace(
     await page.waitForFunction(() => state.vi.keySource === 'none' && document.getElementById('h5-vi-region').value === 'cn' && document.getElementById('h5-vi-noise').value === '');
 
     // Remote service: tokens are drawn as text, a pairing code can be made, a token can be revoked.
-    await page.locator('#h5-set-remote > summary').tap();
+    await page.locator('#h5-set-remote .MuiAccordionSummary-root').tap();
     await page.waitForSelector('.h5-token-row');
     assert.equal(await page.locator('#h5-remote-origin').textContent(), 'http://app.test');
     assert.equal(await page.locator('.h5-token-row img').count(), 0);
@@ -140,7 +142,7 @@ const html = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8').replace(
     assert.equal(await page.locator('#h5-token-list').textContent(), 'No tokens created yet');
 
     // Access mode: external access is on; switching to local access only asks first, and a refused code is explained.
-    await page.locator('#h5-set-access > summary').tap();
+    await page.locator('#h5-set-access .MuiAccordionSummary-root').tap();
     await page.waitForFunction(() => document.getElementById('h5-access-switch').textContent !== '');
     assert.equal(await page.locator('#h5-access-title').textContent(), 'Authenticator + allow external access');
     assert.match(await page.locator('#h5-access-hint').textContent(), /listens only on 127\.0\.0\.1/);

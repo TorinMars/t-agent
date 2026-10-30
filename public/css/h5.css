@@ -1,173 +1,70 @@
-/* Phone page (/h5): a full-screen terminal with large touch keys. Independent of the desktop style.css. */
+/* Phone page (/h5). The page itself is Material UI (scripts/h5-shell, in its dark theme as it comes); this file only holds what Material UI does not draw:
+   the terminal, the chat view, the voice overlay, and the layout of the page. The --h5-* values are the Material UI dark palette, so the chat (agent-chat.css)
+   and the terminal agree with the rest of the page. */
 :root {
-  --h5-bg: #1e1e1e;
-  --h5-panel: #252526;
-  --h5-key: #333;
-  --h5-key-active: #4a4a4a;
-  --h5-border: #3a3a3a;
-  --h5-text: #e6e6e6;
-  --h5-muted: #9da5b0;
-  --h5-accent: #70a5ff;
-  --h5-pressed: #245997;
-  --h5-danger: #ff7b72;
-  --h5-drawer-width: min(78vw, 360px);
-  --h5-max-width: none; /* the page fills the window; from 900px wide the task sheet becomes a sidebar (see the end of this file) */
+  --h5-bg: #121212;
+  --h5-panel: #1e1e1e;
+  --h5-key: #2c2c2c;
+  --h5-key-active: #3a3a3a;
+  --h5-border: rgba(255, 255, 255, .12);
+  --h5-text: #fff;
+  --h5-muted: rgba(255, 255, 255, .7);
+  --h5-accent: #90caf9;
+  --h5-pressed: #1976d2;
+  --h5-danger: #f44336;
   --h5-sidebar-width: 320px;
+  --h5-drawer-width: min(78vw, 360px);
 }
 * { box-sizing: border-box; }
-html, body { margin: 0; height: 100%; background: #111; color: var(--h5-text); overflow: hidden; overscroll-behavior: none; }
-body { font: 15px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; -webkit-text-size-adjust: 100%; }
-button, input, select, textarea { font: inherit; color: inherit; }
-button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; cursor: pointer; }
+html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: none; }
+body { -webkit-text-size-adjust: 100%; }
 [hidden] { display: none !important; }
+.h5-sheet-panel { padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
+.h5-menu-panel { padding-bottom: max(12px, env(safe-area-inset-bottom)) !important; }
 
 /* --h5-height follows the visual viewport so the on-screen keyboard pushes the keys up instead of covering them. */
-.h5-app { position: fixed; inset: 0 0 auto 0; width: 100%; max-width: var(--h5-max-width); margin: 0 auto; background: var(--h5-bg); height: var(--h5-height, 100dvh); display: flex; flex-direction: column;
+.h5-app { position: fixed; inset: 0 0 auto 0; width: 100%; background: var(--h5-bg); height: var(--h5-height, 100dvh); display: flex; flex-direction: column;
   padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left); }
 
-.h5-header { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; padding: 6px 8px; background: var(--h5-panel); border-bottom: 1px solid var(--h5-border); }
-.h5-task-button { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 2px 10px; border: 0; border-radius: 8px; background: transparent; text-align: left; }
-.h5-task-button:active { background: var(--h5-key); }
-.h5-menu-icon { font-size: 20px; color: var(--h5-muted); }
-.h5-task-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
-/* The task name with the name of the terminal or chat that is shown under it, in small text. The line keeps its space when there is no name, so the header never changes height
-   (the chat view is placed under the header once, when it is opened). */
-.h5-task-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; justify-content: center; }
-.h5-session-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; line-height: 1.3; color: var(--h5-muted); }
-/* The agent counters between the task name and the settings button: two small lines. */
-.h5-header .agent-activity { flex: 0 0 auto; flex-direction: column; align-items: flex-end; justify-content: center; gap: 0; margin-right: 0; font-size: 11px; line-height: 1.3; color: var(--h5-muted); }
-.h5-header .agent-activity .count { color: var(--h5-text, #e6e6e6); }
+/* The agent counters between the task name and the settings button: two small lines (agent-activity.js fills them in). */
+.h5-header .agent-activity { flex: 0 0 auto; display: inline-flex; flex-direction: column; align-items: flex-end; justify-content: center; gap: 0; margin-right: 0; font-size: 11px; line-height: 1.3; color: var(--h5-muted); white-space: nowrap; }
+.h5-header .agent-activity[hidden] { display: none; }
+.h5-header .agent-activity .count { color: var(--h5-text); }
 .h5-header .agent-activity .idle .count { color: var(--h5-muted); }
-.h5-header-button { flex: 0 0 auto; height: 36px; min-width: 36px; padding: 0 10px; border: 1px solid #555; border-radius: 8px; background: var(--h5-key); font-size: 13px; }
 
-
+/* The terminal: the xterm element is put in by h5.js. */
 .h5-terminal { position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; background: var(--h5-bg); }
 .h5-terminal .h5-xterm { position: absolute; inset: 4px 4px 2px; }
 /* A press-and-hold must not start text selection or the callout menu: dragging always scrolls. */
 .h5-terminal .h5-xterm { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; touch-action: pan-y; }
 /* Floating scroll buttons: a click moves the terminal, so scrolling does not depend on a drag. */
-.h5-scroll { position: absolute; right: 10px; bottom: 12px; z-index: 2; display: flex; flex-direction: column; gap: 10px; }
-.h5-scroll button { width: 44px; height: 44px; padding: 0; border: 1px solid #555; border-radius: 50%; background: rgba(51, 51, 51, 0.85); color: var(--h5-text); font-size: 16px; line-height: 1; }
-.h5-scroll [data-copy] { font-size: 18px; }
-.h5-scroll button:active { background: var(--h5-pressed); border-color: var(--h5-accent); }
+.h5-scroll { position: absolute; right: 10px; bottom: 12px; z-index: 2; }
 .h5-empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 24px; color: var(--h5-muted); text-align: center; }
 
-.h5-translate { flex: 0 0 auto; display: flex; align-items: flex-end; gap: 6px; padding: 6px 8px; background: var(--h5-panel); border-top: 1px solid var(--h5-border); }
-.h5-translate-input { flex: 1 1 auto; min-width: 0; min-height: 40px; max-height: 120px; padding: 9px 10px; border: 1px solid #555; border-radius: 8px; background: #1b1b1c; resize: none; font-size: 16px; line-height: 1.3; }
-.h5-translate-input:focus { outline: none; border-color: var(--h5-accent); }
-.h5-translate-input.translating { border-color: var(--h5-accent); animation: h5-pulse 1.2s ease-in-out infinite; }
-.h5-translate-send { flex: 0 0 auto; height: 40px; padding: 0 14px; border: 0; border-radius: 8px; background: var(--h5-pressed); color: #fff; font-weight: 600; }
-.h5-translate-send:disabled { opacity: .6; }
-.h5-voice { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; touch-action: none; flex: 0 0 auto; width: 40px; height: 40px; padding: 0; border: 1px solid #555; border-radius: 8px; background: #2a2a2c; color: #fff; font-size: 18px; }
-.h5-voice.listening { border-color: #e5484d; background: #5a2428; animation: h5-voice-pulse 1.2s ease-in-out infinite; }
-.h5-voice:disabled { opacity: .6; }
+/* The translate box and the microphone (the box is a plain textarea that voice-input.js and h5.js write to). */
+.h5-translate-input.translating { animation: h5-pulse 1.2s ease-in-out infinite; }
+.h5-voice { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; touch-action: none; }
+.h5-voice.listening { color: #e5484d; animation: h5-voice-pulse 1.2s ease-in-out infinite; }
 @keyframes h5-voice-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(229, 72, 77, 0); } 50% { box-shadow: 0 0 8px 1px rgba(229, 72, 77, .75); } }
-@media (prefers-reduced-motion: reduce) { .h5-voice.listening { animation: none; box-shadow: 0 0 6px 1px rgba(229, 72, 77, .6); } }
-@keyframes h5-pulse { 50% { box-shadow: 0 0 8px 1px rgba(112, 165, 255, .6); } }
+@media (prefers-reduced-motion: reduce) { .h5-voice.listening { animation: none; box-shadow: 0 0 6px 1px rgba(229, 72, 77, .6); } .h5-translate-input.translating { animation: none; } }
+@keyframes h5-pulse { 50% { box-shadow: 0 0 8px 1px rgba(144, 202, 249, .6); } }
+.h5-keys { user-select: none; -webkit-user-select: none; }
 
-/* Key grid: the first two rows follow the common mobile terminal layout. */
-.h5-keys { flex: 0 0 auto; display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 4px;
-  padding: 6px 8px max(6px, env(safe-area-inset-bottom)); background: var(--h5-panel); border-top: 1px solid var(--h5-border);
-  user-select: none; -webkit-user-select: none; }
-.h5-translate + .h5-keys { border-top: 0; padding-top: 0; }
-.h5-keys button { height: 34px; min-width: 0; padding: 0 2px; border: 1px solid #4a4a4a; border-radius: 8px; background: var(--h5-key);
-  font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.h5-keys button:active { background: var(--h5-key-active); }
-.h5-keys button[aria-pressed="true"] { background: var(--h5-pressed); border-color: var(--h5-accent); color: #fff; }
-.h5-keys button:disabled { opacity: .45; }
-.h5-keys .h5-wide { grid-column: span 2; }
-.h5-keys [data-action="keyboard"] { font-size: 20px; }
-
-/* Task sheet */
-.h5-sheet { position: fixed; inset: 0; z-index: 109; /* above the agent chat (108), so the task sheet and settings open over it */ width: 100%; max-width: var(--h5-max-width); margin: 0 auto; overflow: hidden; visibility: hidden; pointer-events: none; transition: visibility 0s linear .25s; }
-.h5-sheet.open { visibility: visible; pointer-events: auto; transition-delay: 0s; }
-/* The panel slides in from the left; the host clips it to the phone column so it never spills over the side margins on a computer. */
-.h5-sheet-panel { height: 100%; display: flex; flex-direction: column; background: var(--h5-bg); transform: translateX(-100%); transition: transform .25s ease-out;
-  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
-.h5-sheet.open .h5-sheet-panel { transform: none; }
-.h5-sheet-right .h5-sheet-panel { transform: translateX(100%); }
-.h5-sheet-right.open .h5-sheet-panel { transform: none; }
-.h5-settings-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 8px 12px; }
-.h5-setting-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--h5-border); }
-.h5-setting-block { padding: 12px 0; }
-.h5-update-icon { width: 44px; height: 44px; font-size: 22px; line-height: 1; }
-.h5-setting-hint { margin-top: 10px !important; }
-.h5-setting-hint { margin: 0 0 10px; color: var(--h5-muted); font-size: 13px; line-height: 1.5; }
-.h5-setting-action { width: 100%; height: 42px; border: 1px solid #555; border-radius: 8px; background: var(--h5-key); font-size: 15px; }
-.h5-setting-action:disabled { opacity: .45; }
-.h5-setting-action.danger { background: var(--h5-pressed); border-color: var(--h5-accent); color: #fff; }
-.h5-update-log { margin: 10px 0 0; max-height: 40vh; overflow: auto; padding: 8px; border: 1px solid var(--h5-border); border-radius: 8px; background: #1b1b1c; font: 12px/1.5 Menlo, Monaco, monospace; white-space: pre-wrap; word-break: break-all; }
-.h5-sheet-header { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; border-bottom: 1px solid var(--h5-border); background: var(--h5-panel); }
-.h5-sheet-header h2 { margin: 0; font-size: 17px; }
-.h5-engine { display: flex; align-items: center; gap: 10px; padding: 10px 12px 0; color: var(--h5-muted); }
-.h5-engine select { flex: 1 1 auto; min-width: 0; height: 40px; padding: 0 8px; border: 1px solid #555; border-radius: 8px; background: var(--h5-key); font-size: 16px; }
-.h5-new-task { display: flex; gap: 8px; padding: 10px 12px; }
-.h5-new-task input { flex: 1 1 auto; min-width: 0; height: 42px; padding: 0 10px; border: 1px solid #555; border-radius: 8px; background: #1b1b1c; font-size: 16px; }
-.h5-new-task input:focus { outline: none; border-color: var(--h5-accent); }
-.h5-new-task button { flex: 0 0 auto; height: 42px; padding: 0 16px; border: 0; border-radius: 8px; background: var(--h5-pressed); color: #fff; font-weight: 600; }
-.h5-task-list { flex: 1 1 auto; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 0 12px 12px; }
-.h5-group-title { margin: 14px 0 6px; color: var(--h5-muted); font-size: 13px; font-weight: 600; }
-.h5-task-item { display: block; width: 100%; min-height: 48px; margin-bottom: 6px; padding: 10px 12px; border: 1px solid var(--h5-border); border-radius: 10px; background: var(--h5-panel); text-align: left; overflow-wrap: anywhere; }
-.h5-task-item[aria-current="true"] { border-color: var(--h5-accent); box-shadow: inset 3px 0 var(--h5-accent); }
-.h5-task-item:active { background: var(--h5-key); }
-/* The selected task row carries a "+" (new terminal) on its right; its phone terminals are nested under it. */
-.h5-task-row { display: flex; gap: 6px; margin-bottom: 6px; }
-.h5-task-row .h5-task-item { flex: 1 1 auto; min-width: 0; margin-bottom: 0; }
-.h5-task-add { flex: 0 0 48px; border: 1px solid var(--h5-border); border-radius: 10px; background: var(--h5-panel); font-size: 24px; line-height: 1; color: var(--h5-muted); }
-.h5-task-add:active { background: var(--h5-key); }
-.h5-terminal-list { display: flex; flex-direction: column; gap: 6px; margin: 0 0 8px 14px; padding-left: 10px; border-left: 2px solid var(--h5-border); }
-.h5-terminal-row { display: flex; gap: 6px; }
-.h5-peek-note { padding: 8px 4px; color: var(--h5-muted); font-size: 13px; }
-.h5-terminal-row button { min-height: 40px; border: 1px solid var(--h5-border); border-radius: 8px; background: var(--h5-key); font-size: 14px; }
-.h5-terminal-main { flex: 1 1 auto; min-width: 0; padding: 0 12px; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.h5-terminal-main { display: flex; align-items: center; gap: 8px; }
-.h5-terminal-icon { flex: 0 0 22px; text-align: center; font: 600 13px/1 Menlo, Monaco, monospace; color: var(--h5-muted); }
-.h5-terminal-icon.claude { color: #d97757; font-size: 16px; }
-.h5-terminal-icon.codex { color: inherit; font-size: 16px; }
-.h5-terminal-icon .agent-logo { width: 16px; height: 16px; margin: 0 auto; }
-.h5-terminal-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.h5-terminal-more { flex: 0 0 44px; font-size: 18px; line-height: 1; }
-.h5-terminal-row button[aria-current="true"] { background: var(--h5-pressed); border-color: var(--h5-accent); color: #fff; }
-.h5-terminal-row button:active { background: var(--h5-key-active); }
 /* Agent chat: a view over the terminal, below the page header; its top and height are set by fitAgentView so the on-screen keyboard never covers the composer. */
-.h5-agent { position: fixed; top: 0; left: 0; right: 0; height: 100dvh; z-index: 108; width: 100%; max-width: var(--h5-max-width); margin: 0 auto; background: var(--h5-bg);
+.h5-agent { position: fixed; top: 0; left: 0; right: 0; height: 100dvh; z-index: 108; width: 100%; background: var(--h5-bg);
   padding: 0 env(safe-area-inset-right) 0 env(safe-area-inset-left); }
 .h5-agent .ac-head { display: none; } /* the page header above the chat replaces it */
 .h5-agent[hidden] { display: none; }
-/* Copy text: a snapshot of the terminal as plain text that the browser can select with its own handles. */
-.h5-copy { position: fixed; inset: 0; z-index: 110; width: 100%; max-width: var(--h5-max-width); margin: 0 auto; display: flex; flex-direction: column; background: var(--h5-bg);
-  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
-.h5-copy-actions { display: flex; gap: 8px; }
-/* Same font, size and side padding as the terminal and no wrapping of its own: one terminal row is one line, so the layout matches. */
+.h5-app, .h5-agent { transition: transform .25s ease-out, border-radius .25s ease-out; }
+body.h5-tasks-open .h5-app, body.h5-tasks-open .h5-agent { transform: translateX(var(--h5-drawer-width)); }
+body.h5-tasks-open .h5-app { border-radius: 28px 0 0 28px; overflow: hidden; }
+body.h5-tasks-open .h5-agent { border-bottom-left-radius: 28px; overflow: hidden; }
+@media (prefers-reduced-motion: reduce) { .h5-app, .h5-agent { transition: none; } }
+
+/* Copy text: a snapshot of the terminal as plain text that the browser can select with its own handles. Same font, size and side padding as the terminal and no
+   wrapping of its own: one terminal row is one line, so the layout matches. */
 .h5-copy-text { flex: 1 1 auto; min-height: 0; overflow: auto; -webkit-overflow-scrolling: touch; padding: 4px 4px 8px; font: 11px/1.2 Menlo, Monaco, "Courier New", monospace; -webkit-text-size-adjust: 100%; white-space: pre;
   user-select: text; -webkit-user-select: text; -webkit-touch-callout: default; outline: none; }
-/* Terminal action menu: a bottom sheet over the task sheet. */
-.h5-menu { position: absolute; inset: 0; z-index: 5; display: flex; align-items: flex-end; background: rgba(0, 0, 0, .55); }
-.h5-menu-panel { width: 100%; padding: 12px 12px max(12px, env(safe-area-inset-bottom)); border-radius: 14px 14px 0 0; background: var(--h5-panel); }
-.h5-menu-panel h3 { margin: 0 0 10px; font-size: 15px; color: var(--h5-muted); overflow-wrap: anywhere; }
-.h5-menu-actions { display: flex; flex-direction: column; gap: 6px; }
-.h5-menu-actions button, .h5-menu-cancel { width: 100%; height: 46px; border: 1px solid var(--h5-border); border-radius: 10px; background: var(--h5-key); font-size: 16px; }
-.h5-menu-actions .danger { color: var(--h5-danger); }
-.h5-menu-cancel { margin-top: 10px; }
-.h5-menu-rename { display: flex; gap: 8px; margin-bottom: 8px; }
-.h5-menu-rename input { flex: 1 1 auto; min-width: 0; height: 44px; padding: 0 10px; border: 1px solid #555; border-radius: 8px; background: #1b1b1c; font-size: 16px; }
-.h5-menu-rename button { padding: 0 16px; border: 0; border-radius: 8px; background: var(--h5-pressed); color: #fff; font-size: 15px; }
-.h5-list-note { padding: 24px 0; color: var(--h5-muted); text-align: center; }
-.h5-desktop-link { display: block; padding: 12px; color: var(--h5-accent); text-align: center; text-decoration: none; border-top: 1px solid var(--h5-border); }
-
-/* Image upload lock */
-.h5-upload-overlay { position: fixed; inset: 0; z-index: 200; display: flex; align-items: center; justify-content: center; background: rgba(0, 0, 0, .72); touch-action: none; }
-.h5-upload-card { width: min(340px, 86vw); padding: 20px; border-radius: 12px; background: var(--h5-panel); box-shadow: 0 8px 40px #0008; }
-.h5-upload-card p { margin: 0 0 12px; }
-.h5-upload-card progress { width: 100%; height: 14px; accent-color: #58a6ff; }
-
-/* Floating notices (toast.js) */
-.toast-stack { position: fixed; top: calc(12px + env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); z-index: 2147483646; display: flex; flex-direction: column; align-items: center; gap: 8px; width: min(var(--h5-max-width), 100vw) ; padding: 0 12px; pointer-events: none; }
-.toast { box-sizing: border-box; max-width: 100%; padding: 10px 14px; border-radius: 8px; border-left: 4px solid var(--h5-accent); background: #2d2d30; color: #f0f0f0; font-size: 14px; line-height: 1.45; overflow-wrap: anywhere; box-shadow: 0 6px 20px rgba(0, 0, 0, .35); pointer-events: auto; }
-.toast-success { border-left-color: #3fb950; }
-.toast-error { border-left-color: var(--h5-danger); }
-
-@media (prefers-reduced-motion: reduce) { .h5-translate-input.translating { animation: none; } .h5-sheet, .h5-sheet-panel { transition: none; } }
 
 /* Shown over a terminal that another device is using; the button takes it over. */
 .terminal-owner-prompt { position: absolute; inset: 0; z-index: 5; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 16px; text-align: center; background: rgba(0, 0, 0, 0.72); color: #fff; }
@@ -191,66 +88,13 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; c
 .vo-arc { position: absolute; left: -10%; right: -10%; bottom: 0; height: 17vh; display: flex; align-items: flex-start; justify-content: center; padding-top: 26px; border-radius: 50% 50% 0 0 / 38px 38px 0 0; background: #8a8a8d; color: #111; font-size: 17px; transition: background .12s; }
 .vo-overlay:not([data-zone="send"]) .vo-arc { background: #3a3a3c; color: #aaa; }
 
-/* The task drawer reveals the left edge of the conversation as it slides right. Settings stay full width. */
-#h5-tasks > .h5-sheet-panel { position: relative; width: var(--h5-drawer-width); z-index: 1; }
-.h5-task-backdrop { position: absolute; inset: 0 0 0 var(--h5-drawer-width); border: 0; padding: 0; background: rgba(0, 0, 0, .3); }
-.h5-app, .h5-agent { transition: transform .25s ease-out, border-radius .25s ease-out; }
-body.h5-tasks-open .h5-app, body.h5-tasks-open .h5-agent { transform: translateX(var(--h5-drawer-width)); }
-body.h5-tasks-open .h5-app { border-radius: 28px 0 0 28px; overflow: hidden; }
-body.h5-tasks-open .h5-agent { border-bottom-left-radius: 28px; overflow: hidden; }
-@media (prefers-reduced-motion: reduce) { .h5-app, .h5-agent { transition: none; } }
-
-/* Settings groups: the desktop settings (working directory, image upload, remote service, access mode) as folding groups */
-.h5-setting-group { border-bottom: 1px solid var(--h5-border); }
-.h5-setting-group > summary { display: flex; align-items: center; justify-content: space-between; min-height: 44px; padding: 8px 0; font-size: 15px; cursor: pointer; list-style: none; }
-.h5-setting-group > summary::-webkit-details-marker { display: none; }
-.h5-setting-group > summary::after { content: '\203A'; color: var(--h5-muted); font-size: 20px; transition: transform .15s; }
-.h5-setting-group[open] > summary::after { transform: rotate(90deg); }
-.h5-setting-group-body { display: flex; flex-direction: column; gap: 8px; padding: 0 0 14px; }
-.h5-setting-group-body .h5-setting-hint { margin: 0 !important; }
-.h5-setting-label { color: var(--h5-muted); font-size: 13px; }
-.h5-setting-input { box-sizing: border-box; width: 100%; height: 42px; padding: 0 10px; border: 1px solid var(--h5-border); border-radius: 8px; background: var(--h5-key); color: var(--h5-text); font-size: 16px; }
-.h5-setting-check { display: flex; align-items: center; gap: 8px; font-size: 15px; }
-.h5-setting-link { display: flex; align-items: center; justify-content: center; box-sizing: border-box; color: inherit; text-decoration: none; }
-.h5-token-list { display: flex; flex-direction: column; gap: 6px; }
-.h5-token-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; border: 1px solid var(--h5-border); border-radius: 8px; }
-.h5-token-row small { display: block; color: var(--h5-muted); overflow-wrap: anywhere; }
-.h5-token-created { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; border: 1px solid var(--h5-border); border-radius: 8px; background: var(--h5-key); }
-.h5-token-created code { font-size: 18px; letter-spacing: 1px; overflow-wrap: anywhere; user-select: all; }
-
 /* Responsive layout.
-   - Phone (under 900px): the page fills the window; the task sheet slides over it (the drawer above).
-   - Wide (900px and up, a computer or a landscape tablet): the task sheet is a permanent sidebar and the terminal or chat fills the rest;
-     settings open as a panel on the right with the page dimmed behind it. h5.js (`isWide`) uses the same breakpoint. */
-@media (hover: hover) {
-  .h5-task-item:hover, .h5-task-add:hover, .h5-terminal-row button:hover, .h5-header-button:hover, .h5-keys button:hover, .h5-setting-action:hover { background: var(--h5-key-active); }
-  .h5-setting-group > summary:hover { color: var(--h5-accent); }
-}
+   - Phone (under 900px): the page fills the window; the task list slides over it (a Material UI temporary drawer).
+   - Wide (900px and up, a computer or a landscape tablet): the task list is a permanent sidebar (a permanent drawer) and the terminal or chat fills the rest;
+     the keys and the composer are limited to 960px. h5.js (`isWide`) and the shell use the same breakpoint. */
 @media (min-width: 900px) {
-  :root { --h5-drawer-width: var(--h5-sidebar-width); }
-  .h5-app { inset: 0 0 auto var(--h5-sidebar-width); width: auto; margin: 0; }
-  .h5-agent { left: var(--h5-sidebar-width); width: auto; margin: 0; }
-  #h5-tasks { inset: 0 auto 0 0; width: var(--h5-sidebar-width); max-width: none; margin: 0; border-right: 1px solid var(--h5-border); }
-  #h5-tasks > .h5-sheet-panel { width: 100%; transform: none; transition: none; }
-  #h5-tasks .h5-task-backdrop, #h5-close-tasks { display: none; }
-  .h5-menu-icon { display: none; }
-  .h5-task-button { cursor: default; pointer-events: none; }
-  /* The sheets that open over the page cover the page area beside the sidebar. */
-  .h5-copy { left: var(--h5-sidebar-width); width: auto; margin: 0; }
-  .h5-copy-text { font-size: 13px; padding: 8px 16px; }
-  /* Settings: a panel on the right, the rest of the page dimmed and clickable to close. */
-  #h5-settings { max-width: none; margin: 0; background: rgba(0, 0, 0, .45); }
-  #h5-settings > .h5-sheet-panel { width: min(440px, 100%); margin-left: auto; border-left: 1px solid var(--h5-border); }
-  /* Long lines of keys and the composer would stretch across a computer screen. */
+  .h5-app { inset: 0 0 auto var(--h5-sidebar-width); width: auto; }
+  .h5-agent { left: var(--h5-sidebar-width); width: auto; }
   .h5-keys, .h5-translate { width: 100%; max-width: 960px; margin-inline: auto; }
-  .h5-menu-panel { width: min(420px, 100%); margin: 0 auto; border-radius: 14px; margin-bottom: 12px; }
+  .h5-copy-text { font-size: 13px; padding: 8px 16px; }
 }
-/* A tablet or a window between the phone and the sidebar layouts: the page is one comfortable column and the sheets keep to it. */
-@media (min-width: 600px) and (max-width: 899px) {
-  .h5-settings-body { width: 100%; max-width: 560px; }
-  #h5-settings > .h5-sheet-panel { width: min(480px, 100%); margin-left: auto; }
-  #h5-settings { background: rgba(0, 0, 0, .45); }
-}
-
-.h5-setting-textarea { height: auto; min-height: 76px; padding: 8px 10px; resize: vertical; line-height: 1.4; }
-select.h5-setting-input { appearance: auto; }

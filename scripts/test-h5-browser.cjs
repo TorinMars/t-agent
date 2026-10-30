@@ -9,6 +9,7 @@ const ORIGIN = 'http://h5.test';
 const TYPES = { '.js': 'application/javascript', '.css': 'text/css', '.html': 'text/html' };
 
 const ossUploads = [];
+const pageErrors = [];
 // The conversations the page's server knows; a test can make the list unreadable.
 const chats = [];
 const chatPatches = [];
@@ -30,6 +31,7 @@ async function openTask(page, title, how = 'tap') {
 async function openPage(browser, { remoteTerminals, remoteChat = false, viewport } = {}) {
   const context = await browser.newContext(viewport ? { viewport } : { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
   const page = await context.newPage();
+  page.on('pageerror', error => pageErrors.push(error.message));
   const calls = [];
   await page.addInitScript(() => {
     window.sockets = [];
@@ -226,6 +228,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     const [chooser] = await Promise.all([page.waitForEvent('filechooser'), page.locator('[data-action="image"]').tap()]);
     await chooser.setFiles({ name: 'shot.png', mimeType: 'image/png', buffer: Buffer.from('89504e470d0a1a0a', 'hex') });
     await page.waitForFunction(() => window.sockets[0].sent.includes('https://img.test/shot.png '));
+    await page.locator('.h5-upload-overlay').waitFor({ state: 'detached' }); // the dialog fades out
     assert.equal(await page.locator('.h5-upload-overlay').count(), 0);
     assert.equal(ossUploads.length, 1, 'the image went to OSS from the browser');
     assert.ok(ossUploads[0].includes('\x89PNG'));
@@ -303,20 +306,23 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     assert.equal(await page.locator('.h5-header').evaluate(el => el === document.elementFromPoint(el.getBoundingClientRect().x + 20, el.getBoundingClientRect().y + 20) || el.contains(document.elementFromPoint(el.getBoundingClientRect().x + 20, el.getBoundingClientRect().y + 20))), true, 'the header is not covered by the chat');
     assert.equal(await page.locator('#h5-agent .ac-text strong').textContent(), 'there');
     assert.ok(calls.includes('POST /api/tasks/1/agent/conversations'));
-    // The task drawer leaves the conversation visible on the right, without resizing it.
+    // The Material UI drawer reveals the conversation's left edge on the right without resizing it.
     await page.locator('#h5-open-tasks').tap();
-    await page.waitForTimeout(300);
+    await page.waitForTimeout(400);
     const drawer = await page.locator('#h5-tasks > .h5-sheet-panel').boundingBox();
     const shiftedChat = await page.locator('#h5-agent').boundingBox();
     assert.ok(drawer.width > 390 * .7 && drawer.width < 390 * .85, 'the sidebar leaves room for the conversation');
     assert.ok(Math.abs(shiftedChat.x - drawer.width) < 1, 'the conversation begins at the sidebar edge');
-    assert.equal(shiftedChat.width, chatBox.width, 'the conversation keeps its original width');
+    assert.ok(Math.abs(shiftedChat.width - chatBox.width) < 1, 'and keeps its original width');
+    assert.equal(await page.locator('#h5-agent').getAttribute('aria-hidden'), 'true', 'it is hidden from assistive technology while the drawer is open');
     assert.equal(await page.locator('#h5-agent').evaluate(node => node.inert), true);
     await page.screenshot({ path: '/tmp/t-agent-sidebar-open.png' });
-    await page.locator('#h5-task-backdrop').tap();
+    await page.locator('#h5-task-backdrop').tap({ position: { x: 375, y: 400 } });
     await page.locator('#h5-tasks').waitFor({ state: 'hidden' });
+    assert.equal(await page.locator('#h5-agent').getAttribute('aria-hidden'), null);
     assert.equal(await page.locator('#h5-agent').evaluate(node => node.inert), false);
     assert.equal(await page.locator('#h5-open-tasks').getAttribute('aria-expanded'), 'false');
+    await page.waitForFunction(() => getComputedStyle(document.getElementById('h5-agent')).transform === 'none');
     assert.equal(Math.round((await page.locator('#h5-agent').boundingBox()).x), 0);
 
     // The open chat is kept by the server: a refresh brings it back, and the back button means the person is done with it.
@@ -547,11 +553,15 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     await pollUntil(() => openOnServer() > 0);
 
     // Settings: the header button opens a menu with the language toggle and the PC one-click update.
-    assert.equal(await page.locator('#h5-open-settings').textContent(), '⚙');
+    assert.equal(await page.locator('#h5-open-settings').getAttribute('aria-label'), 'Settings');
+    assert.equal(await page.locator('#h5-open-settings svg').count(), 1, 'a gear icon');
     await page.locator('#h5-open-settings').tap();
     await page.locator('#h5-settings').waitFor({ state: 'visible' });
-    assert.equal(await page.locator('#h5-settings [data-lang-toggle]').count(), 1);
+    assert.equal(await page.locator('#h5-settings #h5-lang').count(), 1, 'the settings have the language button');
+    assert.equal(await page.locator('#h5-lang').textContent(), '\u4e2d\u6587', 'it names the other language');
     assert.equal(await page.locator('#h5-settings #h5-logout').isVisible(), true, 'the settings have a log out button');
+    await page.waitForFunction(() => getComputedStyle(document.querySelector('#h5-settings .h5-sheet-panel')).transform === 'none');
+    await page.screenshot({ path: '/tmp/t-agent-mui-settings.png' });
     // Logging out goes to the hidden login address the server wrote into the page, and comes back to the phone page afterwards.
     await page.evaluate(() => { const meta = document.createElement('meta'); meta.name = 't-agent-login-path'; meta.content = '/torin/hide/login'; document.head.append(meta); });
     page.once('dialog', dialog => dialog.accept());
@@ -585,23 +595,26 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     await wide.page.waitForTimeout(100);
     const cols = await wide.page.evaluate(() => window.sockets[0].sent.map(item => { try { return JSON.parse(item); } catch { return null; } }).filter(item => item?.type === 'resize').pop().cols);
     assert.ok(cols > 100, `the terminal uses the width beside the sidebar (${cols} columns)`);
+    await wide.page.screenshot({ path: '/tmp/t-agent-mui-wide.png' });
     // Settings are a panel on the right with the page dimmed; a click beside the panel closes it.
     await wide.page.locator('#h5-open-settings').click();
     await wide.page.locator('#h5-settings').waitFor({ state: 'visible' });
-    await wide.page.waitForFunction(() => getComputedStyle(document.querySelector('#h5-settings > .h5-sheet-panel')).transform === 'none'); // the slide-in has finished
-    const panelBox = await wide.page.locator('#h5-settings > .h5-sheet-panel').boundingBox();
+    await wide.page.waitForFunction(() => getComputedStyle(document.querySelector('#h5-settings .h5-sheet-panel')).transform === 'none'); // the slide-in has finished
+    const panelBox = await wide.page.locator('#h5-settings .h5-sheet-panel').boundingBox();
     assert.deepEqual([panelBox.width, panelBox.x + panelBox.width], [440, 1440]);
     await wide.page.mouse.click(600, 400);
-    await wide.page.waitForFunction(() => !document.getElementById('h5-settings').classList.contains('open'));
+    await wide.page.locator('#h5-settings').waitFor({ state: 'detached' });
     // Narrowing the window below the breakpoint turns the sidebar back into the sheet that is closed; widening brings it back.
     await wide.page.setViewportSize({ width: 600, height: 900 });
-    await wide.page.waitForFunction(() => !document.getElementById('h5-tasks').classList.contains('open'));
+    await wide.page.locator('#h5-tasks').waitFor({ state: 'detached' });
     assert.deepEqual(await wide.page.locator('#h5-app').boundingBox().then(box => [box.x, box.width]), [0, 600], 'a tablet-sized window is one full-width column');
     await wide.page.locator('#h5-open-tasks').click();
-    assert.equal(await wide.page.evaluate(() => document.getElementById('h5-app').inert), true, 'the sheet is modal below the breakpoint');
+    assert.equal(await wide.page.evaluate(() => document.getElementById('h5-root').getAttribute('aria-hidden')), 'true', 'the sheet is modal below the breakpoint');
     await wide.page.locator('#h5-close-tasks').click();
+    await wide.page.locator('#h5-tasks').waitFor({ state: 'detached' });
     await wide.page.setViewportSize({ width: 1200, height: 900 });
-    await wide.page.waitForFunction(() => document.getElementById('h5-tasks').classList.contains('open') && !document.getElementById('h5-app').inert);
+    await wide.page.locator('#h5-tasks').waitFor({ state: 'visible' });
+    assert.equal(await wide.page.evaluate(() => document.getElementById('h5-root').getAttribute('aria-hidden')), null, 'the page beside the sidebar is usable');
     assert.equal(await wide.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
     await wide.context.close();
 
@@ -640,17 +653,14 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
         await remote.page.locator('#h5-term-menu-actions button', { hasText: 'New Codex chat' }).tap();
         await remote.page.locator('#h5-agent .agent-chat').waitFor();
         // A source change hides the old view without clearing its saved open state.
-        await remote.page.evaluate(() => {
-          const select = document.getElementById('h5-engine');
-          select.value = 'local';
-          select.dispatchEvent(new Event('change'));
-        });
+        await remote.page.locator('#h5-engine').selectOption('local');
         await remote.page.locator('#h5-agent').waitFor({ state: 'hidden' });
       } else {
         assert.equal(await remote.page.locator('#h5-term-menu-actions button', { hasText: 'Codex agent' }).count(), 0);
       }
       await remote.context.close();
     }
+    assert.deepEqual(pageErrors, [], 'the phone shell has no browser runtime errors');
     console.log('Phone page layout, phone terminals, keys, paste, image upload, translate-and-send and old-engine guard passed.');
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

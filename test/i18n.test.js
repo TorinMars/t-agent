@@ -97,7 +97,33 @@ test('pages load the engine before other scripts and expose a language toggle', 
   assert.match(fs.readFileSync(path.join(ROOT, 'public', 'login.html'), 'utf8'), /data-lang-toggle/);
   const h5 = fs.readFileSync(path.join(ROOT, 'public', 'h5.html'), 'utf8');
   assert.ok(h5.indexOf('/js/i18n.js') > 0 && h5.indexOf('/js/i18n-zh-ui.js') < h5.indexOf('/js/h5.js'));
-  assert.match(h5, /data-lang-toggle/);
+  // The phone page is drawn by the Material UI shell: its settings carry the language button, which switches with I18n.toggle().
+  assert.ok(h5.indexOf('/js/h5-shell.js') > 0 && h5.indexOf('/js/h5-shell.js') < h5.indexOf('/js/h5.js'));
+  const settings = fs.readFileSync(path.join(ROOT, 'scripts', 'h5-shell', 'Settings.jsx'), 'utf8');
+  assert.match(settings, /id="h5-lang"/);
+  assert.match(settings, /I18n\.toggle\(\)/);
+});
+
+// The phone page is drawn by the Material UI shell (scripts/h5-shell/*.jsx), so its texts are in the source, not in h5.html: every text it shows through t(),
+// a label / title / placeholder attribute or a settings message has a Chinese translation.
+test('h5 shell: every text the Material UI shell shows has a Chinese translation', () => {
+  const I18n = load('zh');
+  const dir = path.join(ROOT, 'scripts', 'h5-shell');
+  const found = new Set();
+  const unescape = text => text.replace(/\\u([0-9a-f]{4})/gi, (m, hex) => String.fromCharCode(parseInt(hex, 16))).replace(/\\n/g, '\n').replace(/\\'/g, "'");
+  for (const file of fs.readdirSync(dir).filter(name => name.endsWith('.jsx'))) {
+    const source = fs.readFileSync(path.join(dir, file), 'utf8');
+    const take = (pattern, group = 2) => { for (const match of source.matchAll(pattern)) found.add(unescape(match[group])); };
+    take(/\bt\(\s*(['"`])((?:\\.|(?!\1).)*)\1/g);
+    take(/(?:label|title|placeholder)=(["'])((?:\\.|(?!\1).)*)\1/g);
+    take(/(?:\bsay|\bshow)\(\s*(['`])((?:\\.|(?!\1).)*)\1/g);
+    take(/\[\s*'((?:Rename|Reopen|Restart in the working directory|Delete|Open|New Terminal|Back))'/g, 1);
+    take(/>\s*([A-Z][A-Za-z ,.:'\u2019-]{2,})\s*</g, 1);
+  }
+  const SAME = /^(Tasks|Esc|Tab|Ctrl|Alt|Shift|Enter|Paste|Image|English|\^C)$/;
+  const missing = [...found].filter(text => /[A-Za-z]{3}/.test(text) && !text.includes('${') && !SAME.test(text) && I18n.t(text) === text);
+  assert.ok(found.size > 60, `found ${found.size} texts to look at`);
+  assert.deepEqual(missing, []);
 });
 
 // The project source is English. Chinese text may only appear in the translation dictionaries and in a few fixtures that

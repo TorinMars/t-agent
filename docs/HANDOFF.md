@@ -136,3 +136,9 @@ For the Claude / developer taking over: read `AGENTS.md` (development and releas
 ## Voice input
 
 - The iFlytek speaker filter was removed. Click-mode recording now shows a live sound wave (voice-input.js).
+
+## H5 Material UI shell (v2.84.46)
+
+- Continued Claude session `494563fd-3538-466b-845a-7d1280d0b275` after its DeepSeek tool-format error. The user chose React + MUI for the shell, the default MUI theme (no M3 customization), and accepted the extra bundle size. Existing uncommitted shell changes were preserved.
+- Shell source: `scripts/h5-shell/`; rebuild with `npm run build:h5-shell`. `h5.js` remains the controller through `H5UI`; old `h5-settings.js` is replaced by React settings. Terminal and agent chat implementations remain. Added safe-area padding and preserved the existing phone drawer motion that reveals the conversation, including inert background handling. Updated documentation and browser screenshots.
+- Final verification: phone browser (including browser runtime-error checks), settings browser, session-redirect browser and all 15 i18n tests passed. Shell production build, modified JavaScript syntax checks and git diff checks passed. Phone drawer, phone settings and wide terminal screenshots were inspected. The user then authorized full tests, version upgrade and push: all 660 tests passed (`npm test -- --test-concurrency=2`, 143.8 seconds), and version fields were raised to v2.84.46 for origin/main. The live checkout outside this workspace was not modified.

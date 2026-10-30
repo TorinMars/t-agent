@@ -2140,3 +2140,12 @@ Usage, notifications and phone sidebar changes:
 > v2.84.43 Responsive phone page with settings, suggested next message, server-side queue and default full access
 > v2.84.44 Pages lead to the login entrance when logged out, the phone page goes there when a login expires, and the Claude plan usage refreshes by itself
 > v2.84.45 Keep the microphone ready option and tap to translate words in the chat
+
+## Material UI phone shell
+
+- `scripts/h5-shell/entry.jsx` synchronously mounts React into `#h5-root` before the existing phone scripts run, preserving the element IDs used by voice input and agent activity. Build with `npm run build:h5-shell`; the bundled `public/js/h5-shell.js` is shipped with the application. MUI, Emotion and the icon package are build-time development dependencies. The user selected the default MUI dark theme rather than a custom Material Design 3 theme.
+- `store.mjs` exposes `window.H5UI` (`get`, `set`, `subscribe`, `actions`). `public/js/h5.js` owns task loading, sessions, sockets, uploads, translation and viewport handling; it updates store state instead of drawing the shell. React components own headers, lists, drawers, terminal keys, notices and dialogs. The terminal, voice input and agent chat keep their existing implementations.
+- Settings moved from `public/js/h5-settings.js` into `Settings.jsx`, retaining the same API endpoints, saved-secret handling, inherited working directory, translation provider drafts, access-mode verification, remote pairing and update monitoring.
+- The 900px breakpoint is shared by the shell and controller: a temporary 78%-width phone task drawer becomes a permanent 320px sidebar. Settings open on the right; dialogs and drawers use MUI focus handling and Escape/backdrop dismissal. Drawer padding respects device safe areas. The chat and file picker remain outside the React root.
+- Focused verification covers the actual bundled shell with the existing phone and settings browser scripts; the i18n suite checks shell labels and settings messages. No backend protocol changes.
+> v2.84.46 Rebuild the responsive H5 shell with React and Material UI, preserving terminal and chat behavior, settings, and the conversation-revealing task drawer. Full regression: 660 tests passed.

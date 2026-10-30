@@ -133,7 +133,7 @@ const server = http.createServer(app);
       window.Notification = class { static permission = 'granted'; static requestPermission() { return Promise.resolve('granted'); } constructor(title, options) { this.title = title; this.options = options; window.notes.push(this); } close() {} };
       Object.defineProperty(document, 'hidden', { configurable: true, get: () => window.away });
       document.hasFocus = () => !window.away;
-      window.voice = { attached: 0, started: 0, stopped: 0, textarea: null, base: '' };
+      window.voice = { attached: 0, started: 0, stopped: 0, textarea: null, base: '', keep: false, keepCalls: [], keepListeners: new Set() };
       window.SpeechRecognition = class { start() { window.voice.browser = true; } };
       window.VoiceInput = {
         attach({ textarea, button }) {
@@ -148,6 +148,11 @@ const server = http.createServer(app);
           const finish = async () => { if (state === 'idle') return; state = 'idle'; window.voice.stopped += 1; button.classList.remove('listening'); await new Promise(resolve => setTimeout(resolve, 50)); window.VoiceInput.say(window.voice.said + ' now'); };
           return { finish, stop() { return finish(); }, cancel() { state = 'idle'; button.classList.remove('listening'); }, get state() { return state; } };
         },
+        // Keeping the microphone ready (a setting of the device, kept by the real voice-input.js): the chat options have a switch for it.
+        canKeepWarm: () => true,
+        get keepWarm() { return window.voice.keep; },
+        setKeepWarm(on) { window.voice.keep = Boolean(on); window.voice.keepCalls.push(Boolean(on)); for (const listener of window.voice.keepListeners) listener(); },
+        onKeepWarm(listener) { window.voice.keepListeners.add(listener); return () => window.voice.keepListeners.delete(listener); },
         say(text) { window.voice.said = text.replace(/ now$/, ''); const box = window.voice.textarea; box.value = window.voice.base + text; box.dispatchEvent(new Event('input', { bubbles: true })); },
       };
     });
@@ -603,6 +608,16 @@ const server = http.createServer(app);
       if (await page.locator('.ac-options-list').count()) await page.click('.ac-options-button');
       return result;
     };
+    // Keeping the microphone ready is in the options too: off at first, and a tap turns it on or off for the device.
+    const keepMic = page.getByRole('switch', { name: /Keeps the microphone on so recording starts faster/ });
+    assert.equal(await inMenu(() => keepMic.getAttribute('aria-checked')), 'false', 'the microphone is not kept ready by default');
+    assert.equal(await inMenu(() => page.locator('.ac-keep-mic').textContent()), 'Keep the microphone ready');
+    await inMenu(() => keepMic.click());
+    assert.deepEqual(await page.evaluate(() => window.voice.keepCalls), [true]);
+    assert.equal(await inMenu(() => keepMic.getAttribute('aria-checked')), 'true');
+    await inMenu(() => keepMic.click());
+    assert.deepEqual(await page.evaluate(() => window.voice.keepCalls), [true, false]);
+    assert.equal(await inMenu(() => keepMic.getAttribute('aria-checked')), 'false');
     const translation = page.getByRole('switch', { name: 'Translate to English' });
     const translationOn = () => inMenu(() => translation.getAttribute('aria-checked'));
     const flipTranslation = () => inMenu(() => translation.click());

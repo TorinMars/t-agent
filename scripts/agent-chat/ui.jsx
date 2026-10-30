@@ -382,6 +382,10 @@ function Composer({ store, state, agent, notify, inputRef }) {
   const [sending, setSending] = useState(false);
   const [expanded, setExpanded] = useState(false); // the big input box: Enter is a new line, and the message is sent with the button only
   const collapse = state.collapseKeyboard; // saved with the chat, like the translation switch
+  // Keeping the microphone ready (voice-input.js) is a setting of this device, not of the chat: the switch follows it.
+  const Voice = typeof window !== 'undefined' ? window.VoiceInput : undefined;
+  const keepMicAvailable = Boolean(Voice && Voice.setKeepWarm && Voice.canKeepWarm && Voice.canKeepWarm());
+  const keepMic = useSyncExternalStore(listener => (keepMicAvailable ? Voice.onKeepWarm(listener) : () => {}), () => Boolean(keepMicAvailable && Voice.keepWarm));
   const translate = state.translate; // saved with the chat: each chat keeps its own switch
 
   // Slash commands: while the first word of the message is being typed (/ and then the name), a menu of the commands that match is shown above the box.
@@ -623,6 +627,7 @@ function Composer({ store, state, agent, notify, inputRef }) {
       <OptionsMenu>
         <Switch className="ac-translate" label={t('Translate to English')} text={t('Translate')} checked={translate} disabled={sending} onChange={() => void store.setTranslate(!translate)} />
         <Switch className="ac-collapse" label={t('Collapse the keyboard after sending')} text={t('Collapse the keyboard after sending')} checked={collapse} onChange={() => void store.setCollapseKeyboard(!collapse)} />
+        {keepMicAvailable ? <Switch className="ac-keep-mic" label={t('Keeps the microphone on so recording starts faster. The browser shows its microphone indicator, and other audio on the device may be affected.')} text={t('Keep the microphone ready')} checked={keepMic} onChange={() => Voice.setKeepWarm(!keepMic)} /> : null}
       </OptionsMenu>
       <Limits limits={state.limits} onRefresh={() => store.refreshLimits()} />
     </div>

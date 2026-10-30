@@ -1292,4 +1292,7 @@ I18n.add({
   "Edit before sending": "编辑后发送",
   "Edit before sending (Tab)": "编辑后发送（Tab）",
   "Dismiss the suggestion": "忽略这条推荐",
+  "Keep the microphone ready": "保持麦克风就绪",
+  "Keeps the microphone on so recording starts faster. The browser shows its microphone indicator, and other audio on the device may be affected.": "保持麦克风开启，录音开始得更快。浏览器会一直显示麦克风标志，设备上的其他音频（如音乐、蓝牙耳机）可能受影响。",
+  "Cannot keep the microphone ready": "无法保持麦克风就绪",
 });

@@ -10,7 +10,10 @@ const VoiceInput = (() => {
   const STOP_TIMEOUT_MS = 10000;
   const HIGH_PASS_HZ = 100;
   const HOLD_MS = 350; // a press shorter than this is a tap, not a long press
-  const WORKLET = 'registerProcessor("pcm-capture", class extends AudioWorkletProcessor { process(inputs) { const channel = inputs[0] && inputs[0][0]; if (channel) this.port.postMessage(channel.slice()); return true; } });';
+  // The worklet posts the microphone blocks only while it is on (a message `false` turns it off): a microphone that is only kept ready costs nothing.
+  const WORKLET = 'registerProcessor("pcm-capture", class extends AudioWorkletProcessor { constructor() { super(); this.on = true; this.port.onmessage = event => { this.on = event.data !== false; }; } process(inputs) { if (!this.on) return true; const channel = inputs[0] && inputs[0][0]; if (channel) this.port.postMessage(channel.slice()); return true; } });';
+  const MIC_CONSTRAINTS = { audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } };
+  const KEEP_KEY = 'voice-keep-mic';
 
   // Converts a stream of Float32 microphone blocks at inRate into Int16 samples at outRate (linear interpolation); the tail of a block is kept for the next call.
   function createResampler(inRate, outRate = TARGET_RATE) {
@@ -185,17 +188,110 @@ const VoiceInput = (() => {
     };
   }
 
+  // The audio graph that connects a microphone stream to the capture worklet; it ends in a muted gain so the graph is pulled without playing the microphone back.
+  function connectGraph(context, stream, node) {
+    const silent = context.createGain();
+    silent.gain.value = 0;
+    // A high-pass filter at 100 Hz takes out the rumble of fans, traffic and handling noise, which carries no speech.
+    const source = context.createMediaStreamSource(stream);
+    if (context.createBiquadFilter) {
+      const filter = context.createBiquadFilter();
+      filter.type = 'highpass';
+      filter.frequency.value = HIGH_PASS_HZ;
+      source.connect(filter);
+      filter.connect(node);
+    } else source.connect(node);
+    node.connect(silent);
+    silent.connect(context.destination);
+    return silent;
+  }
+
+  // ── Keeping the microphone ready (an option of the chat, saved on this device) ──
+  // Asking for the microphone and loading the audio worklet take the most of the time between the tap and the start of the recording. With this on, the
+  // page gets the microphone once and keeps the whole audio graph running but off (the worklet posts nothing), and a recording just switches it on.
+  // The price: the browser shows its microphone indicator all the time and other audio on the device may be affected, so it is off by default, and the
+  // microphone is let go when the page is hidden and taken again when it is shown.
+  const warm = { wanted: false, graph: null, building: null, listeners: new Set() };
+  try { warm.wanted = localStorage.getItem(KEEP_KEY) === '1'; } catch { /* storage blocked: off */ }
+  const warmAvailable = () => Boolean(typeof navigator !== 'undefined' && navigator.mediaDevices && navigator.mediaDevices.getUserMedia && (window.AudioContext || window.webkitAudioContext));
+  const tracksEnded = graph => graph.stream.getTracks().some(track => track.readyState !== 'live') || graph.context.state === 'closed';
+  function dropWarm() {
+    const graph = warm.graph;
+    warm.graph = null;
+    if (!graph) return;
+    graph.node.port.onmessage = null;
+    try { graph.node.disconnect(); } catch { /* already disconnected */ }
+    try { graph.silent.disconnect(); } catch { /* already disconnected */ }
+    for (const track of graph.stream.getTracks()) { track.onended = null; track.stop(); }
+    if (graph.context.state !== 'closed') graph.context.close().catch(() => {});
+  }
+  // `manual`: the person has just turned it on; a refusal is then said and the option turns itself off. A later attempt (the page is shown again) fails quietly.
+  function buildWarm(manual = false) {
+    if (!warm.wanted || warm.graph || warm.building || !warmAvailable() || (typeof document !== 'undefined' && document.hidden)) return warm.building || Promise.resolve();
+    const Context = window.AudioContext || window.webkitAudioContext;
+    const context = new Context();
+    context.resume().catch(() => {}); // a context made outside a tap may stay suspended; the next tap (the recording) resumes it
+    let stream = null;
+    warm.building = (async () => {
+      try {
+        const loaded = context.audioWorklet.addModule(URL.createObjectURL(new Blob([WORKLET], { type: 'text/javascript' })));
+        loaded.catch(() => {});
+        stream = await navigator.mediaDevices.getUserMedia(MIC_CONSTRAINTS);
+        await loaded;
+        if (!warm.wanted) throw Object.assign(new Error('no longer wanted'), { quiet: true });
+        const node = new AudioWorkletNode(context, 'pcm-capture');
+        node.port.postMessage(false);
+        const graph = { context, stream, node, silent: connectGraph(context, stream, node), inUse: false };
+        for (const track of stream.getTracks()) track.onended = () => { if (warm.graph === graph && !graph.inUse) dropWarm(); }; // the system took the microphone away
+        warm.graph = graph;
+      } catch (error) {
+        if (stream) for (const track of stream.getTracks()) track.stop();
+        if (context.state !== 'closed') context.close().catch(() => {});
+        if (manual && !(error && error.quiet)) {
+          const denied = error && (error.name === 'NotAllowedError' || error.name === 'SecurityError');
+          setKeepWarm(false);
+          tell(denied ? 'Microphone access was denied; allow it in the browser settings' : `Cannot keep the microphone ready: ${errorText(error)}`, 'error');
+        }
+      } finally { warm.building = null; }
+    })();
+    return warm.building;
+  }
+  // A graph a recording can use now (the microphone is live and the context is open), taken from the pool; null when there is none.
+  function takeWarm() {
+    const graph = warm.graph;
+    if (!graph || graph.inUse) return null;
+    if (tracksEnded(graph)) { dropWarm(); return null; }
+    graph.inUse = true;
+    return graph;
+  }
+  function setKeepWarm(on) {
+    const value = Boolean(on) && warmAvailable();
+    warm.wanted = value;
+    try { localStorage.setItem(KEEP_KEY, value ? '1' : '0'); } catch { /* storage blocked: kept until the page closes */ }
+    if (value) void buildWarm(true);
+    else if (warm.graph && !warm.graph.inUse) dropWarm();
+    for (const listener of warm.listeners) listener(value);
+  }
+  if (typeof document !== 'undefined' && document.addEventListener && typeof window !== 'undefined' && window.addEventListener) {
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) { if (warm.graph && !warm.graph.inUse) dropWarm(); } else void buildWarm();
+    });
+    window.addEventListener('pagehide', () => { if (warm.graph && !warm.graph.inUse) dropWarm(); });
+  }
+
   // textarea: the box to fill; button: the microphone toggle; onNotConfigured: called when the server has no speech key yet.
   // readySound: play a short chime once the recording is ready (the speech service answered and the microphone is connected), so the person knows when to speak.
   function attach({ textarea, button, onNotConfigured, hold = false, overlay = null, onSend = null, readySound = false }) {
     let state = 'idle'; // idle → connecting → listening → stopping → idle
     let recognizer, stream, context, node, silent, resampler, stopTimer, limitTimer;
+    let warmGraph = null; // the kept-ready graph this recording uses (it is not stopped when the recording ends)
     let base = '', committed = '', partial = '';
     let frame = new Int16Array(FRAME_SAMPLES);
     let filled = 0;
     let afterStop = null; // 'send': when the recognition ends, hand the text to onSend (released over the send zone)
     let run = 0; // identifies the current start; an older start that is still waiting must not touch a newer one
     const wave = overlay ? null : createWave(button);
+    void buildWarm(); // when the person has kept the microphone ready on this device, it is ready as soon as a microphone button exists
     let early = [], earlyBytes = 0, stopAfterToken = false; // audio recorded before the recognizer exists (the token is still being fetched)
     let recognizerReady = false, graphReady = false, announced = false, mutedUntil = 0;
     const waiters = []; // finish() calls that wait for the recording to be over
@@ -236,13 +332,24 @@ const VoiceInput = (() => {
       textarea.value = compose(base, committed, partial);
       textarea.dispatchEvent(new Event('input', { bubbles: true }));
     }
-    function release() { // stop the microphone and the audio graph
+    function release() { // stop the microphone and the audio graph (a kept-ready one is only switched off and given back)
       if (wave) wave.hide();
+      if (warmGraph) {
+        const graph = warmGraph;
+        warmGraph = null;
+        graph.inUse = false;
+        graph.node.port.onmessage = null;
+        graph.node.port.postMessage(false);
+        node = silent = stream = context = null;
+        if (!warm.wanted || tracksEnded(graph)) dropWarm();
+        return;
+      }
       if (node) { node.port.onmessage = null; try { node.disconnect(); } catch { /* already disconnected */ } }
       if (silent) { try { silent.disconnect(); } catch { /* already disconnected */ } }
       if (stream) for (const track of stream.getTracks()) track.stop();
       if (context && context.state !== 'closed') context.close().catch(() => {});
       node = silent = stream = context = null;
+      if (warm.wanted && !warm.graph) void buildWarm(); // the first recording is also what gets the permission: keep the microphone ready from here on
     }
     function reset() {
       run += 1;
@@ -305,24 +412,31 @@ const VoiceInput = (() => {
       filled = 0; early = []; earlyBytes = 0; stopAfterToken = false;
       recognizerReady = graphReady = announced = false; mutedUntil = 0;
       render();
-      // Create the audio context inside the click, before any await, so iOS Safari lets it run.
+      // Create the audio context inside the click, before any await, so iOS Safari lets it run. A kept-ready graph has its context already.
       const Context = window.AudioContext || window.webkitAudioContext;
-      context = new Context();
+      warmGraph = takeWarm();
+      context = warmGraph ? warmGraph.context : new Context();
       context.resume().catch(() => {});
       try {
         // Everything slow runs at the same time: the microphone permission, the audio worklet and the token. The microphone is recording
-        // as soon as the first two are ready, without waiting for the token.
+        // as soon as the first two are ready, without waiting for the token. With the microphone kept ready the first two are done already.
         let tokenAt = Date.now();
         const tokenRequest = requestToken();
         tokenRequest.catch(() => {}); // handled when it is awaited below
-        const moduleLoaded = context.audioWorklet.addModule(URL.createObjectURL(new Blob([WORKLET], { type: 'text/javascript' })));
-        moduleLoaded.catch(() => {});
-        stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
-        if (mine !== run) { release(); return; }
-        await moduleLoaded;
-        if (mine !== run) { release(); return; }
+        if (warmGraph) {
+          stream = warmGraph.stream;
+          node = warmGraph.node;
+          silent = warmGraph.silent;
+        } else {
+          const moduleLoaded = context.audioWorklet.addModule(URL.createObjectURL(new Blob([WORKLET], { type: 'text/javascript' })));
+          moduleLoaded.catch(() => {});
+          stream = await navigator.mediaDevices.getUserMedia(MIC_CONSTRAINTS);
+          if (mine !== run) { release(); return; }
+          await moduleLoaded;
+          if (mine !== run) { release(); return; }
+          node = new AudioWorkletNode(context, 'pcm-capture');
+        }
         resampler = createResampler(context.sampleRate);
-        node = new AudioWorkletNode(context, 'pcm-capture');
         if (wave) wave.show();
         node.port.onmessage = event => {
           if (overlay || wave) {
@@ -334,19 +448,8 @@ const VoiceInput = (() => {
           if (Date.now() < mutedUntil) return; // the chime is playing
           send(resampler.push(event.data));
         };
-        silent = context.createGain();
-        silent.gain.value = 0; // keeps the graph pulled without playing the microphone back
-        // A high-pass filter at 100 Hz takes out the rumble of fans, traffic and handling noise, which carries no speech.
-        const source = context.createMediaStreamSource(stream);
-        if (context.createBiquadFilter) {
-          const filter = context.createBiquadFilter();
-          filter.type = 'highpass';
-          filter.frequency.value = HIGH_PASS_HZ;
-          source.connect(filter);
-          filter.connect(node);
-        } else source.connect(node);
-        node.connect(silent);
-        silent.connect(context.destination);
+        if (warmGraph) node.port.postMessage(true); // switch the kept-ready graph on
+        else silent = connectGraph(context, stream, node);
         limitTimer = setTimeout(stop, MAX_SESSION_MS);
         graphReady = true;
         announce();
@@ -501,7 +604,12 @@ const VoiceInput = (() => {
     overlay: typeof VoiceOverlay !== 'undefined' ? VoiceOverlay.create() : null,
     onSend: () => { const form = document.getElementById('h5-translate'); if (form && form.requestSubmit) form.requestSubmit(); } });
 
-  return { attach, showSettings, createResampler, createRecognizer, compose };
+  return {
+    attach, showSettings, createResampler, createRecognizer, compose,
+    // Keeping the microphone ready: the switch of the chat options reads and sets it; `onKeepWarm` follows changes (several chats can be open).
+    setKeepWarm, get keepWarm() { return warm.wanted; }, canKeepWarm: warmAvailable,
+    onKeepWarm(listener) { warm.listeners.add(listener); return () => warm.listeners.delete(listener); },
+  };
 })();
 if (typeof window !== 'undefined') window.VoiceInput = VoiceInput;
 if (typeof module !== 'undefined' && module.exports) module.exports = VoiceInput;

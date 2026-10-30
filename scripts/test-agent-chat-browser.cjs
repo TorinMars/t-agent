@@ -103,6 +103,7 @@ app.use(express.static(path.join(root, 'public')));
 app.get('/harness', (req, res) => res.type('html').send(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="stylesheet" href="/css/agent-chat.css"><link rel="stylesheet" href="/css/themes.css"><style>html,body,#host{height:100%;margin:0}</style><div id="host"></div>
 <script src="/js/agent-chat.js"></script>
+<script src="/js/word-translate.js"></script>
 <script>
 const call = (method, url, body) => fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) })
   .then(async r => { const j = await r.json(); if (!r.ok) throw new Error(j.error); return j; });
@@ -751,6 +752,43 @@ const server = http.createServer(app);
     await page.locator('.ac-input').press('Enter');
     await page.waitForFunction(() => !document.querySelector('.ac-suggestion'));
     assert.equal(await page.locator('.ac-box').evaluate(node => node.scrollWidth <= node.clientWidth), true, 'the input row still fits');
+    // Tap to translate: a switch in the options (off by default); with it on a tap on an English word of a message shows its meaning.
+    const wordSwitch = page.getByRole('switch', { name: /Tap an English word in a message/ });
+    assert.equal(await inMenu(() => wordSwitch.getAttribute('aria-checked')), 'false', 'off by default');
+    assert.equal(await inMenu(() => page.locator('.ac-word-translate').textContent()), 'Translate words on tap');
+    const lookups = [];
+    await page.route('**/api/translate/word', route => { lookups.push(route.request().postDataJSON()); return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ word: lookups.at(-1).word, base: 'queue', phonetic: '/kjuː/', pos: 'n.', meaning: '\u961f\u5217' }) }); });
+    const wordInChat = async word => page.evaluate(target => {
+      for (const holder of document.querySelectorAll('.agent-chat .ac-text')) {
+        const walker = document.createTreeWalker(holder, NodeFilter.SHOW_TEXT);
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+          const at = node.data.indexOf(target);
+          if (at < 0) continue;
+          node.parentElement.scrollIntoView({ block: 'center' }); // the chat is long: bring the word into view before measuring it
+          const range = document.createRange();
+          range.setStart(node, at); range.setEnd(node, at + target.length);
+          const rect = range.getBoundingClientRect();
+          return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+        }
+      }
+      return null;
+    }, word);
+    const at = await wordInChat('queued');
+    assert.ok(at, 'a message with the word is on the page');
+    await page.mouse.click(at.x, at.y);
+    await page.waitForTimeout(200);
+    assert.equal(await page.locator('.wt-popup').count(), 0, 'nothing happens while it is off');
+    await inMenu(() => wordSwitch.click());
+    assert.equal(await inMenu(() => wordSwitch.getAttribute('aria-checked')), 'true');
+    assert.equal(await page.evaluate(() => WordTranslate.enabled), true, 'the real option is on');
+    const again = await wordInChat('queued');
+    await page.mouse.click(again.x, again.y);
+    await page.waitForSelector('.wt-meaning');
+    assert.equal(await page.locator('.wt-meaning').textContent(), '\u961f\u5217');
+    assert.deepEqual(lookups.map(item => item.word), ['queued']);
+    assert.match(lookups[0].context, /Got the queued message/);
+    await inMenu(() => wordSwitch.click());
+    assert.equal(await page.locator('.wt-popup').count(), 0, 'turning it off closes the popup');
     console.log('Agent chat view: streaming, permissions, stop, access level, attachments, reopen, Codex questions and steering, tool steps, choices and reviews passed.');
   } finally {
     await browser.close();

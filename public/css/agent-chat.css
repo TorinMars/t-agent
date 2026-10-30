@@ -256,3 +256,16 @@ fieldset.ac-question { min-width: 0; margin: 0 0 10px; padding: 0; border: 0; }
 .ac-suggestion-label { flex: none; color: var(--ac-accent); font-size: 12px; font-weight: 600; }
 .ac-suggestion-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ac-suggestion .ac-chip-remove { flex: none; width: 28px; height: 28px; font-size: 15px; }
+
+/* Tap to translate (public/js/word-translate.js): the word that was tapped, and the popup with its meaning. The popup lives on the page, outside the chat,
+   so it takes the colours of either page (desktop or phone). */
+body.wt-on .agent-chat .ac-text, body.wt-on .agent-chat .ac-user { cursor: pointer; } /* also makes iOS report a tap on text */
+::highlight(wt-word) { background: rgba(88, 166, 255, .35); }
+.wt-popup { position: fixed; z-index: 3000; box-sizing: border-box; max-width: min(320px, calc(100vw - 16px)); padding: 8px 12px; border: 1px solid var(--border, var(--h5-border, #3a3a3a)); border-radius: 10px;
+  background: var(--bg-secondary, var(--h5-panel, #252526)); color: var(--text, var(--h5-text, #e6e6e6)); box-shadow: 0 6px 24px rgba(0, 0, 0, .35); font-size: 14px; line-height: 1.45; overflow-wrap: anywhere; }
+.wt-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
+.wt-word { font-size: 15px; }
+.wt-phonetic, .wt-pos, .wt-base, .wt-loading { color: var(--text-muted, var(--h5-muted, #9da5b0)); font-size: 12px; }
+.wt-meaning { margin-top: 2px; }
+.wt-base { margin-top: 2px; }
+.wt-error { margin-top: 2px; color: var(--danger, var(--h5-danger, #ff7b72)); font-size: 13px; }

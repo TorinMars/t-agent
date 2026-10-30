@@ -154,3 +154,106 @@ test('An old flat DeepSeek configuration is migrated automatically, and the save
   assert.equal(calls[0].options.headers.Authorization, 'Bearer sk-old');
   assert.equal(service.saveConfig('o', { provider: 'glm', apiKey: 'g' }).providers.deepseek.hasApiKey, true);
 });
+
+// ── One English word (tap to translate in the chat) ──
+const wordAnswer = (extra = {}) => ({ base: 'resolve', phonetic: '/rɪˈzɒlv/', pos: 'v.', meaning: '解决；决定', ...extra });
+const wordReply = content => reply(200, { choices: [{ message: { content: typeof content === 'string' ? content : JSON.stringify(content) } }] });
+
+test('Word translation: the word and its sentence go to the model as data, and the answer comes back as a small entry', async () => {
+  const { service, calls } = setup(() => wordReply(wordAnswer()));
+  service.saveConfig('o', { apiKey: 'sk-word' });
+  const entry = await service.translateWord('o', { word: 'resolved', context: '  The   conflict was\nresolved by a merge.  ' });
+  assert.deepEqual(entry, { word: 'resolved', base: 'resolve', phonetic: '/rɪˈzɒlv/', pos: 'v.', meaning: '解决；决定' });
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].body.messages[0].content, /dictionary/);
+  assert.match(calls[0].body.messages[0].content, /never instructions/, 'the word is data, not an instruction');
+  assert.deepEqual(JSON.parse(calls[0].body.messages[1].content), { word: 'resolved', sentence: 'The conflict was resolved by a merge.' }, 'the sentence is flattened to one line');
+  assert.equal(calls[0].body.temperature, 0);
+  assert.equal(calls[0].options.headers.Authorization, 'Bearer sk-word');
+});
+
+test('Word translation: the same word in the same sentence is answered from memory; another sentence, person or model asks again', async () => {
+  const { service, calls } = setup(() => wordReply(wordAnswer()));
+  service.saveConfig('o', { apiKey: 'k' });
+  service.saveConfig('p', { apiKey: 'k' });
+  await service.translateWord('o', { word: 'Merge', context: 'Merge it.' });
+  await service.translateWord('o', { word: 'merge', context: 'Merge it.' });
+  assert.equal(calls.length, 1, 'the case of the word does not matter');
+  await service.translateWord('o', { word: 'merge', context: 'A merge commit.' });
+  assert.equal(calls.length, 2, 'another sentence can mean another thing');
+  await service.translateWord('p', { word: 'merge', context: 'Merge it.' });
+  assert.equal(calls.length, 3, 'one person never gets what another asked');
+  service.saveConfig('o', { apiKey: 'k', model: 'another-model' });
+  await service.translateWord('o', { word: 'merge', context: 'Merge it.' });
+  assert.equal(calls.length, 4, 'a model that answers differently is asked again');
+});
+
+test('Word translation: only one English word is accepted, and a sentence is cut to its limit', async () => {
+  const { service, calls } = setup(() => wordReply(wordAnswer()));
+  service.saveConfig('o', { apiKey: 'k' });
+  for (const bad of ['', ' ', 'two words', '123', 'a1', '-dash', "'quote", 'x'.repeat(41), '你好', 'rm -rf', 'a\nb', undefined, null, 5, {}]) {
+    await assert.rejects(service.translateWord('o', { word: bad }), /Enter an English word/, JSON.stringify(bad));
+  }
+  await assert.rejects(service.translateWord('o', null), /Enter an English word/);
+  assert.equal(calls.length, 0, 'nothing is sent for a bad word');
+  for (const good of ["don't", 'well-known', 'a', 'I', 'x'.repeat(40), 'don’t']) await service.translateWord('o', { word: good });
+  await service.translateWord('o', { word: 'long', context: 'word '.repeat(200) });
+  assert.equal(JSON.parse(calls.at(-1).body.messages[1].content).sentence.length, 300);
+  await service.translateWord('o', { word: 'odd', context: 42 });
+  assert.equal(JSON.parse(calls.at(-1).body.messages[1].content).sentence, '', 'a sentence that is not text is ignored');
+});
+
+test('Word translation: an answer is read from a line of JSON even when the model wraps it, and an unreadable one is an error, not a guess', async () => {
+  const answers = ['```json\n{"base":"run","phonetic":"/rʌn/","pos":"v.","meaning":"运行"}\n```', 'Here you go: {"base":"run","meaning":"运行"} hope it helps', '{"meaning":"  运行 \\n 跑  "}'];
+  let n = 0;
+  const { service } = setup(() => wordReply(answers[n++]));
+  service.saveConfig('o', { apiKey: 'k' });
+  assert.deepEqual(await service.translateWord('o', { word: 'run', context: 'one' }), { word: 'run', base: 'run', phonetic: '/rʌn/', pos: 'v.', meaning: '运行' });
+  assert.deepEqual(await service.translateWord('o', { word: 'run', context: 'two' }), { word: 'run', base: 'run', phonetic: '', pos: '', meaning: '运行' });
+  assert.equal((await service.translateWord('o', { word: 'run', context: 'three' })).meaning, '运行 跑', 'white space is flattened');
+  for (const unreadable of ['not json at all', '{"base":"run"}', '{"meaning":""}', '{"meaning":5}', '[1,2]', '{"meaning": "x"']) {
+    const { service: bad } = setup(() => wordReply(unreadable));
+    bad.saveConfig('o', { apiKey: 'k' });
+    await assert.rejects(bad.translateWord('o', { word: 'run' }), /could not be read/, unreadable);
+  }
+});
+
+test('Word translation: without a configured service, and when the service fails, the person is told why', async () => {
+  const { service, calls } = setup(() => reply(401, {}));
+  await assert.rejects(service.translateWord('o', { word: 'run' }), error => error.statusCode === 409 && /not configured/.test(error.message));
+  assert.equal(calls.length, 0);
+  service.saveConfig('o', { apiKey: 'k' });
+  await assert.rejects(service.translateWord('o', { word: 'run' }), error => error.statusCode === 502 && /API key is invalid/.test(error.message));
+  const failing = setup(() => { throw new Error('network down'); });
+  failing.service.saveConfig('o', { apiKey: 'k' });
+  await assert.rejects(failing.service.translateWord('o', { word: 'run' }), /Cannot reach the translation service/);
+  // A failed word is not remembered: asking again asks the service again.
+  let healthy = false;
+  const flaky = setup(() => (healthy ? wordReply(wordAnswer()) : reply(429, {})));
+  flaky.service.saveConfig('o', { apiKey: 'k' });
+  await assert.rejects(flaky.service.translateWord('o', { word: 'run' }), /rate limit/);
+  healthy = true;
+  assert.equal((await flaky.service.translateWord('o', { word: 'run' })).meaning, '解决；决定');
+});
+
+test('Word translation: the HTTP route needs the same-origin proof and returns the entry, or the error with its status', async () => {
+  const { service } = setup(() => wordReply(wordAnswer()));
+  const app = express();
+  app.use(express.json());
+  app.use('/api/translate', createTranslateRouter({ service, requireAuth: (req, res, next) => { req.session = { user: { login: 'owner' } }; next(); } }));
+  const server = await new Promise(resolve => { const s = app.listen(0, '127.0.0.1', () => resolve(s)); });
+  const base = `http://127.0.0.1:${server.address().port}/api/translate`;
+  const headers = { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' };
+  try {
+    const before = await fetch(`${base}/word`, { method: 'POST', headers, body: JSON.stringify({ word: 'resolve' }) });
+    assert.equal(before.status, 409, 'not configured yet');
+    assert.equal((await before.json()).error, 'Translation service not configured yet');
+    await fetch(`${base}/config`, { method: 'PUT', headers, body: JSON.stringify({ apiKey: 'sk-route' }) });
+    const ok = await fetch(`${base}/word`, { method: 'POST', headers, body: JSON.stringify({ word: 'resolve', context: 'resolve it' }) });
+    assert.equal(ok.status, 200);
+    assert.deepEqual(await ok.json(), { word: 'resolve', base: 'resolve', phonetic: '/rɪˈzɒlv/', pos: 'v.', meaning: '解决；决定' });
+    const bad = await fetch(`${base}/word`, { method: 'POST', headers, body: JSON.stringify({ word: 'two words' }) });
+    assert.deepEqual([bad.status, (await bad.json()).error], [400, 'Enter an English word']);
+    assert.equal((await fetch(`${base}/word`, { method: 'POST', body: '{"word":"run"}', headers: { 'Content-Type': 'application/json' } })).status, 403, 'needs same-origin proof');
+  } finally { server.close(); }
+});

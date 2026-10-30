@@ -385,6 +385,9 @@ function Composer({ store, state, agent, notify, inputRef }) {
   // Keeping the microphone ready (voice-input.js) is a setting of this device, not of the chat: the switch follows it.
   const Voice = typeof window !== 'undefined' ? window.VoiceInput : undefined;
   const keepMicAvailable = Boolean(Voice && Voice.setKeepWarm && Voice.canKeepWarm && Voice.canKeepWarm());
+  // Tap to translate (word-translate.js) is a setting of this device too.
+  const Words = typeof window !== 'undefined' ? window.WordTranslate : undefined;
+  const wordTap = useSyncExternalStore(listener => (Words ? Words.onChange(listener) : () => {}), () => Boolean(Words && Words.enabled));
   const keepMic = useSyncExternalStore(listener => (keepMicAvailable ? Voice.onKeepWarm(listener) : () => {}), () => Boolean(keepMicAvailable && Voice.keepWarm));
   const translate = state.translate; // saved with the chat: each chat keeps its own switch
 
@@ -626,6 +629,7 @@ function Composer({ store, state, agent, notify, inputRef }) {
     <div className="ac-meta">
       <OptionsMenu>
         <Switch className="ac-translate" label={t('Translate to English')} text={t('Translate')} checked={translate} disabled={sending} onChange={() => void store.setTranslate(!translate)} />
+        {Words ? <Switch className="ac-word-translate" label={t('Tap an English word in a message to see what it means. It uses the translation service in the settings.')} text={t('Translate words on tap')} checked={wordTap} onChange={() => Words.setEnabled(!wordTap)} /> : null}
         <Switch className="ac-collapse" label={t('Collapse the keyboard after sending')} text={t('Collapse the keyboard after sending')} checked={collapse} onChange={() => void store.setCollapseKeyboard(!collapse)} />
         {keepMicAvailable ? <Switch className="ac-keep-mic" label={t('Keeps the microphone on so recording starts faster. The browser shows its microphone indicator, and other audio on the device may be affected.')} text={t('Keep the microphone ready')} checked={keepMic} onChange={() => Voice.setKeepWarm(!keepMic)} /> : null}
       </OptionsMenu>

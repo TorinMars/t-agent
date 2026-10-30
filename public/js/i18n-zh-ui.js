@@ -1295,4 +1295,9 @@ I18n.add({
   "Keep the microphone ready": "保持麦克风就绪",
   "Keeps the microphone on so recording starts faster. The browser shows its microphone indicator, and other audio on the device may be affected.": "保持麦克风开启，录音开始得更快。浏览器会一直显示麦克风标志，设备上的其他音频（如音乐、蓝牙耳机）可能受影响。",
   "Cannot keep the microphone ready": "无法保持麦克风就绪",
+  "Translate words on tap": "点击单词翻译",
+  "Tap an English word in a message to see what it means. It uses the translation service in the settings.": "点击消息中的英文单词，直接显示它的意思。使用设置里的翻译服务。",
+  "Base form": "原形",
+  "Looking up…": "正在查询…",
+  "Could not translate the word": "无法翻译这个单词",
 });

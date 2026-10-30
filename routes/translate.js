@@ -14,6 +14,11 @@ function createTranslateRouter(options = {}) {
     try { res.json(await service.translate(owner(req), req.body && req.body.text)); }
     catch (error) { next(error); }
   });
+  // One English word for the tap-to-translate option of the chat: { word, context } -> { word, base, phonetic, pos, meaning }.
+  router.post('/word', async (req, res, next) => {
+    try { res.json(await service.translateWord(owner(req), req.body)); }
+    catch (error) { next(error); }
+  });
   router.use((error, req, res, next) => {
     if (res.headersSent) return next(error);
     if (error instanceof TranslatorError) return res.status(error.statusCode).json({ error: error.message });

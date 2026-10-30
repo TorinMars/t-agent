@@ -429,4 +429,6 @@ I18n.add({
   "English": "英文",
   "Japanese": "日文",
   "Korean": "韩文",
+  "Enter an English word": "请输入一个英文单词",
+  "The translation service gave an answer that could not be read": "翻译服务的回答无法解析",
 });

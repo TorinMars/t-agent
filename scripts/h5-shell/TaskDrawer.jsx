@@ -20,14 +20,14 @@ const GLYPHS = { shell: '>_', claude: '✳', codex: 'GPT' };
 // The sessions under a task: its terminals, then its chats. The selected task's rows have "⋯" actions; those of another task only open.
 function Sessions({ ui, taskId, sessions }) {
   return (
-    <List className="h5-terminal-list" role="group" aria-label={sessions.label} dense disablePadding sx={{ ml: 2, mb: 1, pl: 1, borderLeft: 2, borderColor: 'divider' }}>
-      {sessions.note ? <Typography className="h5-peek-note" variant="body2" color="text.secondary" sx={{ px: 1, py: 1 }}>{t(sessions.note)}</Typography> : null}
+    <List className="h5-terminal-list" role="group" aria-label={sessions.label} dense disablePadding sx={{ ml: 2.5, mb: 0.5, pl: 0.5, borderLeft: 1, borderColor: 'divider' }}>
+      {sessions.note ? <Typography className="h5-peek-note" variant="body2" color="text.secondary" sx={{ px: 1, py: 0.75 }}>{t(sessions.note)}</Typography> : null}
       {sessions.rows.map(row => (
         <Box key={`${row.kind}:${row.id}`} className="h5-terminal-row" sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
           <ListItemButton
             component="button" className="h5-terminal-main" aria-current={row.current ? 'true' : undefined}
             selected={row.current} onClick={() => ui.actions.openRow(taskId, row)}
-            sx={{ flex: '1 1 auto', minWidth: 0, borderRadius: 1, gap: 1, textAlign: 'left' }}
+            sx={{ flex: '1 1 auto', minWidth: 0, minHeight: 32, py: 0, px: 1, borderRadius: 2, gap: 1, textAlign: 'left', fontSize: 14, '&.Mui-selected': { bgcolor: 'action.selected' } }}
           >
             <Box component="span" className={`h5-terminal-icon ${row.agent || 'shell'}`} aria-hidden="true" sx={{ flex: '0 0 22px', display: 'inline-flex', justifyContent: 'center', fontSize: 13, fontFamily: 'monospace', color: row.agent === 'claude' ? '#d97757' : 'text.secondary', '& svg': { width: 16, height: 16 } }}>
               {row.kind === 'chat' ? <DomIcon make={chatMark(row.agent)} />
@@ -37,7 +37,7 @@ function Sessions({ ui, taskId, sessions }) {
             <Box component="span" className="h5-terminal-name" sx={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.title}</Box>
           </ListItemButton>
           {row.more ? (
-            <IconButton className="h5-terminal-more" size="small" aria-label={t(row.kind === 'chat' ? 'Chat actions' : 'Terminal actions')} onClick={() => ui.actions.rowMore(row)}>
+            <IconButton className="h5-terminal-more" size="small" sx={{ p: 0.5 }} aria-label={t(row.kind === 'chat' ? 'Chat actions' : 'Terminal actions')} onClick={() => ui.actions.rowMore(row)}>
               <MoreHorizIcon fontSize="small" />
             </IconButton>
           ) : null}
@@ -52,18 +52,18 @@ function Tasks({ state, ui }) {
   if (note) return <Typography className="h5-list-note" color="text.secondary" sx={{ py: 3, textAlign: 'center' }}>{t(note)}</Typography>;
   return groups.map(group => (
     <Box key={group.key} component="section">
-      <ListSubheader component="h3" className="h5-group-title" disableSticky sx={{ bgcolor: 'transparent', lineHeight: '32px', mt: 1 }}>{group.name}</ListSubheader>
+      <ListSubheader component="h3" className="h5-group-title" disableSticky sx={{ bgcolor: 'transparent', m: 0, mt: 1.5, px: 1, fontSize: 13, fontWeight: 500, lineHeight: '32px' }}>{group.name}</ListSubheader>
       {group.tasks.map(task => (
         <Box key={task.id}>
           <Box className={task.add ? 'h5-task-row' : undefined} sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
             <ListItemButton
               component="button" className="h5-task-item" selected={task.selected} aria-current={task.selected ? 'true' : undefined} aria-expanded={task.expanded}
               onClick={() => ui.actions.toggleTask(task.id)}
-              sx={{ flex: '1 1 auto', minWidth: 0, minHeight: 48, borderRadius: 1, textAlign: 'left', overflowWrap: 'anywhere' }}
+              sx={{ flex: '1 1 auto', minWidth: 0, minHeight: 32, py: 0.5, px: 1, borderRadius: 2, textAlign: 'left', overflowWrap: 'anywhere', fontSize: 15, lineHeight: 1.35, '&.Mui-selected': { bgcolor: 'action.selected' } }}
             >
               {task.title}
             </ListItemButton>
-            {task.add ? <IconButton className="h5-task-add" aria-label={t('Session')} onClick={() => ui.actions.openSessionMenu()}><AddIcon /></IconButton> : null}
+            {task.add ? <IconButton className="h5-task-add" size="small" sx={{ p: 0.5 }} aria-label={t('Session')} onClick={() => ui.actions.openSessionMenu()}><AddIcon /></IconButton> : null}
           </Box>
           {task.expanded && task.sessions ? <Sessions ui={ui} taskId={task.id} sessions={task.sessions} /> : null}
         </Box>
@@ -94,14 +94,14 @@ function Panel({ state, ui }) {
           </NativeSelect>
         </Box>
       ) : null}
-      <Box component="form" id="h5-new-task" className="h5-new-task" autoComplete="off" onSubmit={submit} sx={{ display: 'flex', gap: 1, px: 2, py: 1.5 }}>
+      <Box component="form" id="h5-new-task" className="h5-new-task" autoComplete="off" onSubmit={submit} sx={{ display: 'flex', gap: 1, px: 2, py: 1.25 }}>
         <TextField
           id="h5-new-task-title" size="small" fullWidth placeholder={t('New task title')} value={title} onChange={event => setTitle(event.target.value)}
-          slotProps={{ htmlInput: { maxLength: 200, enterKeyHint: 'done', 'aria-label': t('New task title') } }}
+          slotProps={{ htmlInput: { maxLength: 200, enterKeyHint: 'done', 'aria-label': t('New task title'), style: { paddingTop: 7, paddingBottom: 7 } } }}
         />
-        <Button type="submit" variant="contained" disabled={state.creatingTask} sx={{ flex: '0 0 auto' }}>{t('Create')}</Button>
+        <Button type="submit" variant="contained" disabled={state.creatingTask} sx={{ flex: '0 0 auto', height: 36 }}>{t('Create')}</Button>
       </Box>
-      <List id="h5-task-list" className="h5-task-list" disablePadding sx={{ flex: '1 1 auto', overflowY: 'auto', px: 1.5, pb: 1.5 }}>
+      <List id="h5-task-list" className="h5-task-list" disablePadding sx={{ flex: '1 1 auto', overflowY: 'auto', px: 1, pb: 1.5 }}>
         <Tasks state={state} ui={ui} />
       </List>
       <Divider />

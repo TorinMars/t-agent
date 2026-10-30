@@ -34,9 +34,9 @@ export function TranslateBar({ state }) {
         id="h5-translate-input" className={`h5-translate-input${state.translating ? ' translating' : ''}`} fullWidth size="small" inputComponent="textarea" readOnly={state.translating}
         placeholder={t('Chinese → English, then send')}
         inputProps={{ rows: 1, maxLength: 4000, enterKeyHint: 'send', 'aria-label': t('Chinese input, translated to English and sent to the terminal'), style: { resize: 'none', maxHeight: 120 } }}
-        sx={{ alignItems: 'flex-end', py: 0.25 }}
+        sx={{ alignItems: 'flex-end', py: 0.25, fontSize: 15, bgcolor: 'action.hover', '& fieldset': { borderColor: 'transparent' } }}
       />
-      <IconButton id="h5-voice" className="h5-voice" title={t('Voice input: hold to speak, release to stop')} aria-label={t('Voice input')} aria-pressed="false"><MicIcon /></IconButton>
+      <IconButton id="h5-voice" className="h5-voice" sx={{ width: 40, height: 40 }} title={t('Voice input: hold to speak, release to stop')} aria-label={t('Voice input')} aria-pressed="false"><MicIcon /></IconButton>
       <Button type="submit" id="h5-translate-send" className="h5-translate-send" variant="contained" disabled={state.translating} endIcon={<SendIcon />} sx={{ flex: '0 0 auto', height: 40 }}>{t('Send')}</Button>
     </Box>
   );
@@ -56,16 +56,17 @@ export function KeyBar({ state, ui }) {
     <Box
       className="h5-keys" id="h5-keys" role="toolbar" aria-label={t('Terminal keys')} hidden={state.keysHidden}
       onMouseDown={event => event.preventDefault()}
-      sx={{ flex: '0 0 auto', display: state.keysHidden ? 'none' : 'grid', gridTemplateColumns: 'repeat(8, minmax(0, 1fr))', gap: 0.5, p: 1, pb: 'max(8px, env(safe-area-inset-bottom))' }}
+      sx={{ flex: '0 0 auto', display: state.keysHidden ? 'none' : 'grid', gridTemplateColumns: 'repeat(8, minmax(0, 1fr))', gap: 0.75, p: 1, pb: 'max(8px, env(safe-area-inset-bottom))' }}
     >
       {KEYS.map(item => {
-        const common = { key: item.label, size: 'small', 'aria-label': item.aria ? t(item.aria) : undefined, sx: { minWidth: 0, px: 0.5, height: 36, textTransform: 'none', gridColumn: item.wide ? 'span 2' : undefined } };
+        // Flat keys: a quiet fill, no outline; a latched modifier takes the accent colour.
+        const common = { key: item.label, size: 'small', 'aria-label': item.aria ? t(item.aria) : undefined, sx: { minWidth: 0, px: 0.5, height: 38, border: 0, borderRadius: 2, color: 'text.primary', bgcolor: 'action.hover', gridColumn: item.wide ? 'span 2' : undefined, '&:hover': { bgcolor: 'action.selected' }, '&.Mui-selected, &.Mui-selected:hover': { bgcolor: 'primary.main', color: 'primary.contrastText' } } };
         const data = item.key ? { 'data-key': item.key } : item.modifier ? { 'data-modifier': item.modifier } : item.action ? { 'data-action': item.action } : { 'data-shortcut': item.shortcut };
         if (item.modifier) {
           const on = Boolean(state.mods[item.modifier]);
           return <ToggleButton {...common} {...data} value={item.modifier} selected={on} aria-pressed={on} onClick={() => ui.actions.key(item)}>{item.label}</ToggleButton>;
         }
-        return <Button {...common} {...data} variant="outlined" color="inherit" onClick={() => ui.actions.key(item)}>{item.label}</Button>;
+        return <Button {...common} {...data} variant="text" color="inherit" onClick={() => ui.actions.key(item)}>{item.label}</Button>;
       })}
     </Box>
   );

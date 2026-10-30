@@ -8,12 +8,15 @@ import Typography from '@mui/material/Typography';
 import { t } from './common.jsx';
 
 // The sheet from the bottom that serves three lists: the actions of a terminal, the actions of a chat, and the "Session" choices of the "+" of a task.
+// On a phone it is as wide as the window (at most 480px, centred). Beside the permanent sidebar it rises inside the sidebar's width, under the "⋯" that
+// opened it, instead of floating over the middle of the window far from it.
 export function TermMenu({ state, ui }) {
   const menu = state.menu;
+  const placement = state.wide ? { width: 320, maxWidth: 320, left: 0, right: 'auto', mx: 0 } : { maxWidth: 480, width: '100%', mx: 'auto' };
   return (
     <Drawer
       anchor="bottom" id="h5-term-menu" open={Boolean(menu)} onClose={() => ui.actions.menuCancel()}
-      slotProps={{ paper: { className: 'h5-menu-panel', sx: { maxWidth: 480, width: '100%', mx: 'auto', borderRadius: '16px 16px 0 0', p: 1.5, backgroundImage: 'none', maxHeight: '80vh' } } }}
+      slotProps={{ paper: { className: 'h5-menu-panel', sx: { ...placement, borderRadius: '16px 16px 0 0', p: 1.5, backgroundImage: 'none', maxHeight: '80vh' } } }}
       aria-labelledby="h5-term-menu-title"
     >
       {menu ? (

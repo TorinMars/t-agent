@@ -596,6 +596,14 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     const cols = await wide.page.evaluate(() => window.sockets[0].sent.map(item => { try { return JSON.parse(item); } catch { return null; } }).filter(item => item?.type === 'resize').pop().cols);
     assert.ok(cols > 100, `the terminal uses the width beside the sidebar (${cols} columns)`);
     await wide.page.screenshot({ path: '/tmp/t-agent-mui-wide.png' });
+    // The actions of a terminal rise inside the sidebar, under the "⋯" that opened them, not over the middle of the window.
+    await wide.page.locator('#h5-tasks .h5-terminal-more').first().click();
+    await wide.page.locator('#h5-term-menu-actions button').first().waitFor();
+    await wide.page.waitForFunction(() => getComputedStyle(document.querySelector('#h5-term-menu .MuiDrawer-paper')).transform === 'none'); // the slide-in has finished
+    const menuBox = await wide.page.locator('#h5-term-menu .MuiDrawer-paper').boundingBox();
+    assert.deepEqual([menuBox.x, menuBox.width], [0, 320], 'the sheet is as wide as the sidebar and starts at its edge');
+    await wide.page.locator('#h5-term-menu-cancel').click();
+    await wide.page.locator('#h5-term-menu').waitFor({ state: 'detached' });
     // Settings are a panel on the right with the page dimmed; a click beside the panel closes it.
     await wide.page.locator('#h5-open-settings').click();
     await wide.page.locator('#h5-settings').waitFor({ state: 'visible' });

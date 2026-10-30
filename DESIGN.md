@@ -2150,3 +2150,4 @@ Usage, notifications and phone sidebar changes:
 - The 900px breakpoint is shared by the shell and controller: a temporary 78%-width phone task drawer becomes a permanent 320px sidebar. Settings open on the right; dialogs and drawers use MUI focus handling and Escape/backdrop dismissal. Drawer padding respects device safe areas. The chat and file picker remain outside the React root.
 - Focused verification covers the actual bundled shell with the existing phone and settings browser scripts; the i18n suite checks shell labels and settings messages. No backend protocol changes.
 > v2.84.46 Rebuild the responsive H5 shell with React and Material UI, preserving terminal and chat behavior, settings, and the conversation-revealing task drawer. Full regression: 660 tests passed.
+> v2.84.47 Phone page: action menu inside the sidebar on wide screens, tighter sidebar rhythm, flat inputs and buttons

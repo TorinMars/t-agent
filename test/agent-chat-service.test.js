@@ -368,6 +368,23 @@ test('Claude: context use follows each request, the real window comes with the r
   assert.equal(await claude.loadMeta({ cwd: '/w', sessionId: 's-2', deps: { loadSdk: async () => ({ getSessionMessages: async () => [] }) } }), null);
 });
 
+test('Claude: reopening a session keeps the sub-agent tag, and old rows without it stay with the main agent', async () => {
+  const claude = require('../lib/agent-chat/claude');
+  const rows = [
+    { type: 'assistant', message: { id: 'm1', content: [{ type: 'tool_use', id: 'task_1', name: 'Task', input: { description: 'Look around' } }] } },
+    { type: 'assistant', parent_tool_use_id: 'task_1', message: { id: 'm2', content: [{ type: 'text', text: 'inside' }] } },
+    { type: 'user', parent_tool_use_id: 'task_1', message: { content: [{ type: 'tool_result', tool_use_id: 'task_1', content: 'ok', is_error: false }] } },
+    { type: 'assistant', parent_tool_use_id: null, message: { id: 'm3', content: [{ type: 'text', text: 'main again' }] } },
+  ];
+  const items = await claude.loadHistory({ cwd: '/w', sessionId: 's-1', deps: { loadSdk: async () => ({ getSessionMessages: async () => rows }) } });
+  const byId = Object.fromEntries(items.map(item => [item.id, item]));
+  assert.equal(byId['m2:0'].parentToolUseId, 'task_1');
+  assert.equal(byId.task_1.parentToolUseId, undefined);
+  assert.equal(byId['m3:0'].parentToolUseId, undefined);
+  const old = await claude.loadHistory({ cwd: '/w', sessionId: 's-1', deps: { loadSdk: async () => ({ getSessionMessages: async () => [{ type: 'assistant', message: { id: 'o1', content: [{ type: 'text', text: 'old' }] } }] }) } });
+  assert.equal(old[0].parentToolUseId, undefined);
+});
+
 test('a chat opened later gets its model, effort and context from the session, without replacing what a live turn reported', async () => {
   const adapter = {
     ...fakeAdapter(async ({ ctx }) => { ctx.setMeta({ context: { used: 50, window: 100 } }); return { ok: true }; }),

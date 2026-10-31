@@ -33,6 +33,13 @@ const adapter = {
   loadHistory: async () => [],
   async runTurn({ prompt, ctx, requestPermission, signal, sessionId }) {
     received.push(prompt);
+    if (/subagent/.test(prompt.text)) { // a Task call starts a sub-agent: the items it produces carry the call's id as parentToolUseId
+      ctx.upsert({ id: 'task1', kind: 'tool', name: 'Task', input: { description: 'Scan the repo' }, output: '', status: 'running' });
+      ctx.upsert({ id: 'sub1', kind: 'text', text: 'Inside the sub-agent', parentToolUseId: 'task1' });
+      ctx.upsert({ id: 'task1', kind: 'tool', name: 'Task', input: { description: 'Scan the repo' }, output: 'all scanned', status: 'done' });
+      ctx.upsert({ id: 'sm1', kind: 'text', text: 'Main agent is back.' });
+      return { ok: true };
+    }
     if (/review/.test(prompt.text)) {
       ctx.upsert({ id: 'r1', kind: 'tool', name: 'Bash', input: { command: 'ls' }, output: 'a', status: 'done' });
       ctx.upsert({ id: 'r2', kind: 'tool', name: 'Bash', input: { command: 'make' }, output: 'boom', status: 'error' });
@@ -817,6 +824,33 @@ const server = http.createServer(app);
     assert.match(lookups[0].context, /Got the queued message/);
     await inMenu(() => wordSwitch.click());
     assert.equal(await page.locator('.wt-popup').count(), 0, 'turning it off closes the popup');
+    // Sub-agents: a tab row ("Main" and one tab per Task call), a read-only view of the sub-agent, and a way back; the main view hides the sub-agent's items.
+    assert.equal(await page.locator('.ac-subagents').count(), 0, 'no tabs while there is no sub-agent');
+    await page.getByRole('button', { name: 'Allow', exact: true }).click(); // the turn of the earlier message still waits for its permission: let it end, so the next message starts a turn
+    await page.waitForFunction(() => !document.querySelector('.ac-stop'));
+    await page.fill('.ac-input', 'run a subagent');
+    await page.locator('.ac-input').press('Enter');
+    await page.waitForSelector('.ac-subagents');
+    await page.waitForFunction(() => document.body.innerText.includes('Main agent is back.'));
+    const tabs = () => page.locator('.ac-subagent').evaluateAll(nodes => nodes.map(node => [node.dataset.view, node.classList.contains('current'), node.textContent]));
+    assert.deepEqual(await tabs(), [['', true, 'Main'], ['task1', false, 'Scan the repoDone']]);
+    assert.equal(await page.locator('.agent-chat').evaluate(node => node.scrollWidth <= node.clientWidth), true, 'the tabs fit the chat');
+    assert.equal(await page.evaluate(() => document.body.innerText.includes('Inside the sub-agent')), false, 'the main view hides what the sub-agent said');
+    await page.evaluate(() => { for (let node = document.querySelector('.ac-subagent-view').closest('details'); node; node = node.parentElement && node.parentElement.closest('details')) node.open = true; }); // the step sits in a group that is closed
+    await page.locator('.ac-subagent-view').click(); // the Task call in the main view opens its sub-agent
+    assert.deepEqual((await tabs()).map(tab => tab[1]), [false, true]);
+    await page.waitForFunction(() => document.body.innerText.includes('Inside the sub-agent'));
+    assert.equal(await page.evaluate(() => document.body.innerText.includes('Main agent is back.')), false, 'the sub-agent view hides the main agent');
+    assert.equal(await page.locator('.ac-input').isVisible(), false, 'a sub-agent is read-only: no input');
+    assert.match(await page.locator('.ac-subagent-note').textContent(), /only read it here/);
+    await page.getByRole('button', { name: 'Back to the main agent' }).click();
+    assert.deepEqual((await tabs()).map(tab => tab[1]), [true, false]);
+    assert.equal(await page.locator('.ac-input').isVisible(), true, 'the input is back');
+    assert.equal(await page.locator('.ac-subagent-note').count(), 0);
+    await page.locator('.ac-subagent[data-view="task1"]').click(); // a tab switches too, and Main switches back
+    await page.waitForSelector('.ac-subagent-note');
+    await page.locator('.ac-subagent[data-view=""]').click();
+    await page.waitForFunction(() => document.body.innerText.includes('Main agent is back.'));
     console.log('Agent chat view: streaming, permissions, stop, access level, attachments, reopen, Codex questions and steering, tool steps, choices and reviews passed.');
   } finally {
     await browser.close();

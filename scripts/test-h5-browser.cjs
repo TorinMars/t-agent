@@ -45,6 +45,8 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     window.FakeSocket.CONNECTING = 0;
     window.WebSocket = window.FakeSocket;
     window.clip = 'git status';
+    window.locks = { held: 0, requested: 0 };
+    Object.defineProperty(navigator, 'wakeLock', { value: { request: async () => { window.locks.requested += 1; window.locks.held += 1; const lock = new EventTarget(); lock.release = async () => { window.locks.held -= 1; }; return lock; } }, configurable: true });
     Object.defineProperty(navigator, 'clipboard', { value: { readText: async () => window.clip }, configurable: true });
   });
   await page.route(`${ORIGIN}/**`, async route => {
@@ -169,6 +171,8 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     assert.ok(calls.includes('GET /api/tasks/1/terminals'));
     assert.match(await page.evaluate(() => new URL(window.sockets[0].url).search), /^\?taskId=1&terminalId=h5-default&clientId=[\w-]+$/);
     assert.equal(await page.evaluate(() => window.sockets[0].url.startsWith('ws://h5.test/terminal/ws')), true);
+    // The screen stays on while a task is open, so the phone does not sleep during the session.
+    await page.waitForFunction(() => window.locks.held === 1);
 
     // Saved screen first, then live input is allowed.
     await page.evaluate(() => window.sockets[0].emit(JSON.stringify({ type: 'history', data: 'saved prompt$ ', cols: 80, rows: 24 })));

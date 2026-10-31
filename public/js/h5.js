@@ -194,10 +194,29 @@
   }
 
   // target: where to go in the task, { terminal: id } or { chat: row }; without one, the task opens as it was left (its terminal, or the chat that was open).
+  // Keep the screen on while a task is open (a terminal or a chat), so the phone does not sleep in the middle of a session and drop the connection.
+  // The browser lets go of the lock whenever the page is hidden, so it is asked for again when the page comes back. Browsers without the API just sleep.
+  let wakeLock = null;
+  async function syncWakeLock() {
+    const wanted = Boolean(task) && document.visibilityState === 'visible';
+    if (!wanted) {
+      if (wakeLock) { const lock = wakeLock; wakeLock = null; try { await lock.release(); } catch { /* already released */ } }
+      return;
+    }
+    if (wakeLock || !navigator.wakeLock) return;
+    try {
+      const lock = await navigator.wakeLock.request('screen');
+      wakeLock = lock;
+      lock.addEventListener('release', () => { if (wakeLock === lock) wakeLock = null; });
+      if (!task || document.visibilityState !== 'visible') void syncWakeLock(); // the page moved on while the request was pending
+    } catch { /* refused (low battery, power saver): not worth telling the person */ }
+  }
+
   function selectTask(item, target = null) {
     // A chat open over another task is put away (but not forgotten: it comes back with its task).
     if (agentChat && agentFor && (!item || agentFor.taskId !== item.id || agentFor.source !== source.key)) hideAgent();
     task = item;
+    void syncWakeLock();
     chats = [];
     peek = null;
     expandedId = item ? item.id : null;
@@ -321,6 +340,7 @@
     store.set('source', source.key === 'local' ? null : source.key);
     tasks = [];
     task = null;
+    void syncWakeLock();
     expandedId = null;
     peek = null;
     ui.set({ taskName: '', sourceKey: source.key });
@@ -850,6 +870,7 @@
 
   // Phones drop sockets in the background; reconnect when the page comes back.
   document.addEventListener('visibilitychange', () => {
+    void syncWakeLock();
     if (document.visibilityState !== 'visible') return;
     fitViewport();
     if (session && !session.ws && !session.timer) open(session);

@@ -381,6 +381,22 @@ test('Claude: reopening a session keeps the sub-agent tag, and old rows without 
   assert.equal(byId['m2:0'].parentToolUseId, 'task_1');
   assert.equal(byId.task_1.parentToolUseId, undefined);
   assert.equal(byId['m3:0'].parentToolUseId, undefined);
+  // The transcript of a sub-agent is a file of its own: it is found by the agentId that the result of the Task call names, and its items carry the call's id.
+  const withFiles = [
+    { type: 'assistant', message: { id: 'p1', content: [{ type: 'tool_use', id: 'task_9', name: 'Agent', input: { description: 'Check it' } }] } },
+    { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'task_9', content: [{ type: 'text', text: 'Done.\nagentId: a1b2c3 (for resuming)' }], is_error: false }] } },
+  ];
+  const asked = [];
+  const sdkFiles = { getSessionMessages: async () => withFiles, getSubagentMessages: async (session, agent) => { asked.push([session, agent]); return [
+    { type: 'user', uuid: 'su1', message: { content: 'Look at it' } },
+    { type: 'assistant', message: { id: 'sa1', content: [{ type: 'text', text: 'Looked.' }] } },
+  ]; } };
+  const nested = await claude.loadHistory({ cwd: '/w', sessionId: 's-9', deps: { loadSdk: async () => sdkFiles } });
+  assert.deepEqual(asked, [['s-9', 'a1b2c3']]);
+  const own = Object.fromEntries(nested.map(item => [item.id, item.parentToolUseId]));
+  assert.deepEqual([own['sa1:0'], own['user:su1'], own.task_9], ['task_9', 'task_9', undefined]);
+  const broken = await claude.loadHistory({ cwd: '/w', sessionId: 's-9', deps: { loadSdk: async () => ({ ...sdkFiles, getSubagentMessages: async () => { throw new Error('gone'); } }) } });
+  assert.ok(broken.find(item => item.id === 'task_9'), 'a transcript that cannot be read leaves the tab empty and nothing else');
   const old = await claude.loadHistory({ cwd: '/w', sessionId: 's-1', deps: { loadSdk: async () => ({ getSessionMessages: async () => [{ type: 'assistant', message: { id: 'o1', content: [{ type: 'text', text: 'old' }] } }] }) } });
   assert.equal(old[0].parentToolUseId, undefined);
 });
@@ -975,6 +991,7 @@ test('Claude: the suggestion is asked for, handed to the chat after the result, 
   const ctx = { upsert() {}, append() {}, getItem() {}, setSession() {}, suggest: text => suggested.push(text) };
   const outcome = await claude.runTurn({ cwd: '/w', mode: 'full', prompt: { text: 'x' }, signal: new AbortController().signal, ctx, requestPermission: async () => ({ allow: true }), deps: { loadSdk: async () => sdk, executable: undefined } });
   assert.equal(options.promptSuggestions, true);
+  assert.equal(options.forwardSubagentText, true, 'the text of a sub-agent is needed for its tab');
   assert.equal(outcome.ok, true, 'the turn ended at the result, before the suggestion');
   assert.deepEqual(suggested, []);
   release();

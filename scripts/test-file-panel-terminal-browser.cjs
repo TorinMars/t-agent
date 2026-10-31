@@ -61,7 +61,7 @@ let server,browser,wss,connections=0;
   await page.waitForFunction(()=>document.querySelector('#terminal-pane').getBoundingClientRect().height>350);
   const input=page.locator('#xterm-container .xterm-helper-textarea');
   await input.focus();await page.keyboard.type("printf 'PANEL_%s_OK\\n' 'TERMINAL'");await page.keyboard.press('Enter');
-  await page.waitForFunction(()=>{const b=window.__testTerms[0]?.buffer.active;return b&&Array.from({length:b.length},(_,i)=>b.getLine(i)?.translateToString()).some(line=>line?.trim()==='PANEL_TERMINAL_OK');});
+  await page.waitForFunction(()=>{const b=window.__testTerms[0]?.buffer.active;return b&&Array.from({length:b.length},(_,i)=>b.getLine(i)?.translateToString()).some(line=>line?.trim()==='PANEL_TERMINAL_OK');},undefined,{timeout:90000}); // a real shell: it can be slow when the machine is busy
   assert.equal(connections,1,'opening browser starts only one terminal connection');
   // The root integration must not close or recreate the terminal on a panel toggle.
   await page.locator('#btn-file-browser').click();

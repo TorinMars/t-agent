@@ -2046,6 +2046,12 @@ The settings sheet of `/h5` has the same configuration as the desktop "Settings"
 - **Access mode and authenticator**: `POST /auth/mode`, with the same confirmation and error texts as the desktop; "Replace authenticator" opens `/auth/setup?return_to=/h5`. Switching to local access only from a phone locks that phone out; the page says so.
 - Tests: `node scripts/test-h5-settings-browser.cjs`.
 
+## Dependencies and the Monaco bundle
+
+- `npm audit --omit=dev` is kept at 0 findings. axios, body-parser, follow-redirects, qs and express are updated within their ranges (`npm update`). DOMPurify needs more care: monaco-editor does not use the npm package of that name for the editor, it imports its own old copy by a relative path (`monaco-editor/esm/vs/base/browser/dompurify`, 3.4.8 in monaco-editor 0.56; 0.57 pins 3.4.15, also inside the vulnerable range), so raising the version in `node_modules` alone only silences the audit. `scripts/build-monaco.js` (what `npm run build:monaco` runs) builds the same three bundles as before and redirects that one import to `node_modules/dompurify`, which `overrides` in `package.json` pins to an exact patched version. The build fails when the redirect no longer finds anything to redirect (a newer monaco-editor that uses the package itself), so the script cannot rot unnoticed. `test/monaco-bundle.test.js` checks that the built bundle carries the installed DOMPurify and not the vendored one. Not checked: Monaco's markdown hover (the part that calls DOMPurify) was not driven in a browser; the editor browser tests pass.
+- `npm test` is `node --test --test-concurrency=2`: the browser regressions start real Chromium windows and shells, and with every file in parallel a busy machine makes the slower ones time out (the terminal check of `scripts/test-file-panel-terminal-browser.cjs` also waits up to 90 s for the shell).
+- Installing through a flaky proxy: a request that stalls leaves `npm` waiting without using the CPU, and an interrupted install leaves temporary directories (`node_modules/.axios-XXXXXXXX`) that make the next install fail with `ENOTEMPTY`. Use `--fetch-timeout=20000 --fetch-retries=2` so a stalled request fails fast, and remove such directories before retrying.
+
 ## Multi-task page (desktop)
 
 The "Multi-task" tab (below "Environment" in the left navigation, `public/js/multi-task.js`) shows up to four agent chats (Claude / Codex) side by side. The columns share the whole page width and height equally (CSS grid, `--mt-columns`), so one to four chats always fill the screen exactly.

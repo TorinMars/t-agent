@@ -561,7 +561,7 @@ npx playwright install chromium
 npm test
 ```
 
-Playwright is pinned to 1.58.2, which is compatible with macOS 13. The full test run includes real Chromium browser regressions, and the dev dependencies include Playwright, xterm and the Fit addon. Linux CI can install the system dependencies with `npx playwright install --with-deps chromium`; you can also point `CHROME_PATH` at an existing Chromium executable.
+`npm test` runs two test files at a time (`node --test --test-concurrency=2`): the browser regressions start real Chromium windows and shells, and with every file in parallel a busy machine makes the slower ones time out. Playwright is pinned to 1.58.2, which is compatible with macOS 13. The full test run includes real Chromium browser regressions, and the dev dependencies include Playwright, xterm and the Fit addon. Linux CI can install the system dependencies with `npx playwright install --with-deps chromium`; you can also point `CHROME_PATH` at an existing Chromium executable.
 
 
 The default address is `http://127.0.0.1:3000`.

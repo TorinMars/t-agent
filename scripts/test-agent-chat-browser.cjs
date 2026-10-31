@@ -168,7 +168,11 @@ const server = http.createServer(app);
     }
     await page.evaluate(() => { delete document.documentElement.dataset.theme; });
     assert.equal(await page.locator('.ac-badge').textContent(), '✳');
-    assert.deepEqual(await page.locator('.ac-mode option').allTextContents(), ['Ask before changes', 'Accept edits', 'Plan only', 'Full access (no prompts)']);
+    await page.click('.ac-mode-label');
+    assert.deepEqual(await page.locator('.ac-mode-item .ac-picker-name').allTextContents(), ['Ask before changes', 'Accept edits', 'Plan only', 'Full access (no prompts)'], 'the access levels are listed like the models');
+    assert.equal(await page.locator('.ac-mode-item[aria-checked="true"]').getAttribute('data-mode'), 'ask');
+    await page.keyboard.press('Escape');
+    assert.equal(await page.locator('.ac-mode-picker').count(), 0);
 
     // A turn: the answer streams in, the tool waits for approval, and the page never runs markup the agent wrote.
     await page.fill('.ac-input', 'clean the build');
@@ -219,7 +223,7 @@ const server = http.createServer(app);
     assert.ok(footBox.height <= 46, 'the row is low');
     assert.equal(await page.locator('.ac-context').getAttribute('class'), 'ac-context');
     assert.equal(await page.locator('.ac-context-value').getAttribute('stroke-dasharray'), `${2 * Math.PI * 8 * 0.21} ${2 * Math.PI * 8}`);
-    assert.match(await page.locator('.ac-mode').getAttribute('aria-label'), /Ask before changes/);
+    assert.match(await page.locator('.ac-mode-label').getAttribute('aria-label'), /Ask before changes/);
     assert.equal(await page.locator('.ac-text strong').textContent(), 'bold');
     assert.deepEqual(await page.locator('.ac-text li').allTextContents(), ['one', 'two']);
     assert.equal(await page.locator('.ac-text pre code').textContent(), 'console.log(1)');
@@ -360,8 +364,9 @@ const server = http.createServer(app);
     await page.evaluate(() => notes[0].onclick());
     assert.deepEqual(await page.evaluate(() => opened.map(data => data.conversationId)), [note.data.conversationId], 'a click asks the page to show that chat');
     await page.evaluate(() => { window.away = false; });
-    await page.selectOption('.ac-mode', 'edits');
-    await page.waitForFunction(() => document.querySelector('.ac-mode').value === 'edits');
+    await page.click('.ac-mode-label');
+    await page.click('.ac-mode-item[data-mode="edits"]');
+    await page.waitForFunction(() => document.querySelector('.ac-mode-holder').classList.contains('ac-mode-edits'));
     await page.setInputFiles('.agent-chat input[type=file]', [
       { name: 'notes.txt', mimeType: 'text/plain', buffer: Buffer.from('remember this') },
       { name: 'pic.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgo=', 'base64') },
@@ -495,7 +500,9 @@ const server = http.createServer(app);
     assert.equal(await page.locator('.ac-commands').count(), 0, 'a path is not a command');
     await page.fill('.ac-input', '');
     assert.equal(await page.locator('.ac-badge svg.agent-logo path').count(), 1, 'Codex shows the OpenAI logo');
-    assert.deepEqual(await page.locator('.ac-mode option').allTextContents(), ['Read-only', 'Workspace write', 'Full access']);
+    await page.click('.ac-mode-label');
+    assert.deepEqual(await page.locator('.ac-mode-item .ac-picker-name').allTextContents(), ['Read-only', 'Workspace write', 'Full access']);
+    await page.keyboard.press('Escape');
     assert.deepEqual([await page.locator('.ac-model').getAttribute('title'), await page.locator('.ac-context').count(), await page.locator('.ac-limit').count()], ['Model', 0, 0], 'a choosable model shows its name only once it is known; no ring or limits until reported');
     await page.fill('.ac-input', 'start');
     await page.click('.ac-send');

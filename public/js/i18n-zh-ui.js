@@ -1311,4 +1311,10 @@ I18n.add({
   "Plan usage": "套餐用量",
   "Left bar: usage left. Right bar: time left.": "左条：剩余用量。右条：剩余时间。",
   "Refresh usage": "刷新用量",
+  "Asks before it changes anything": "改动任何东西前先询问",
+  "Edits files without asking, asks for the rest": "直接编辑文件，其余操作先询问",
+  "Only plans, changes nothing": "只做计划，不改动任何东西",
+  "Reads only, changes nothing": "只读，不改动任何东西",
+  "Changes files in the working folder, asks for the rest": "可直接改动工作目录里的文件，其余操作先询问",
+  "Acts without asking": "不询问，直接执行",
 });

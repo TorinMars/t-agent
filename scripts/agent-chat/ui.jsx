@@ -845,17 +845,36 @@ function TitleMenu({ title, store, onClose }) {
 }
 
 // ── The view ──
-// The access level as an icon; the select lies over it (invisible) so the keyboard and screen readers work as for any select.
+// The access level as an icon; it opens a list like the model's (name and what it means), and a choice applies at once.
 const MODE_ICONS = { ask: 'shield', edits: 'edit', plan: 'list', readonly: 'lock', write: 'edit', full: 'bolt' };
-function ModeButton({ agent, mode, onChange }) {
+const MODE_HELP = {
+  ask: 'Asks before it changes anything', edits: 'Edits files without asking, asks for the rest', plan: 'Only plans, changes nothing',
+  readonly: 'Reads only, changes nothing', write: 'Changes files in the working folder, asks for the rest', full: 'Acts without asking',
+};
+function ModeButton({ agent, mode, onPick }) {
+  const [open, setOpen] = useState(false);
+  const holder = useRef(null);
+  useDismiss(open, () => setOpen(false), holder);
   const label = t((agent.modes.find(([value]) => value === mode) || [mode, mode])[1]);
   return (
-    <label className={`ac-mode-label ac-mode-${mode}`} title={label}>
-      <Icon d={ICONS[MODE_ICONS[mode] || 'shield']} />
-      <select className="ac-mode" aria-label={`${t('Access level')}: ${label}`} value={mode} onChange={onChange}>
-        {agent.modes.map(([value, text]) => <option key={value} value={value}>{t(text)}</option>)}
-      </select>
-    </label>
+    <div className={`ac-mode-holder ac-mode-${mode}`} ref={holder}>
+      <button type="button" className="ac-mode-label" aria-haspopup="menu" aria-expanded={open} aria-label={`${t('Access level')}: ${label}`} title={label} onClick={() => setOpen(value => !value)}>
+        <Icon d={ICONS[MODE_ICONS[mode] || 'shield']} />
+      </button>
+      {open ? (
+        <div className="ac-picker ac-mode-picker" role="menu" aria-label={t('Access level')}>
+          <div className="ac-picker-title">{t('Access level')}</div>
+          <div className="ac-picker-list">
+            {agent.modes.map(([value, text]) => (
+              <button type="button" role="menuitemradio" aria-checked={value === mode} key={value} className="ac-picker-item ac-mode-item" data-mode={value} onClick={() => { setOpen(false); if (value !== mode) void onPick(value); }}>
+                <span className="ac-picker-name">{t(text)}</span>
+                {MODE_HELP[value] ? <span className="ac-picker-desc">{t(MODE_HELP[value])}</span> : null}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -879,8 +898,7 @@ export const Chat = React.forwardRef(function Chat({ store, agent, conversation,
     onNew: async () => {},
   });
 
-  const changeMode = async event => {
-    const next = event.target.value;
+  const changeMode = async next => {
     if (next === 'full' && !window.confirm(t('Full access lets the agent act without asking. Continue?'))) return;
     await store.setMode(next);
   };
@@ -903,7 +921,7 @@ export const Chat = React.forwardRef(function Chat({ store, agent, conversation,
       </FooterContext.Provider></AssistantRuntimeProvider>
       <Composer store={store} state={state} agent={agent} notify={notify} inputRef={inputRef} draft={draft} tools={(
         <>
-          <ModeButton agent={agent} mode={state.mode} onChange={changeMode} />
+          <ModeButton agent={agent} mode={state.mode} onPick={changeMode} />
           <span className="ac-status">
             <ModelPicker store={store} state={state} />
             <ContextRing context={state.context} />

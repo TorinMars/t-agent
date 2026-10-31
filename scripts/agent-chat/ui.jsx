@@ -9,7 +9,7 @@ import remarkGfm from 'remark-gfm';
 import hljs from 'highlight.js/lib/common';
 import { toMessages } from './convert.mjs';
 import ReactMarkdown from 'react-markdown';
-import { callBrief, capitalize, diffLines, groupLabel, limitText, modelName, tokens, visibleLimits } from './format.mjs';
+import { callBrief, capitalize, diffLines, groupLabel, limitBars, limitText, modelName, tokens, visibleLimits } from './format.mjs';
 
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const MAX_FILE_CHARS = 200 * 1024;
@@ -27,6 +27,7 @@ const Icon = ({ d, fill }) => (
   <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill={fill ? 'currentColor' : 'none'} stroke={fill ? 'none' : 'currentColor'} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={d} /></svg>
 );
 const ICONS = {
+  sliders: 'M4 7h9M17 7h3M4 17h3M11 17h9M15 4v6M9 14v6', shield: 'M12 3l7 3v5c0 5-3 8-7 10-4-2-7-5-7-10V6z', list: 'M5 6h14M5 12h14M5 18h9', lock: 'M7 11V8a5 5 0 0 1 10 0v3M5 11h14v9H5z', bolt: 'M13 2L5 14h6l-1 8 8-12h-6z', model: 'M8 8h8v8H8zM4 4h16v16H4zM9 1v3M15 1v3M9 20v3M15 20v3M1 9h3M1 15h3M20 9h3M20 15h3',
   copy: 'M9 9h11v11H9zM5 15V5h10', fork: 'M6 3v6a3 3 0 0 0 3 3h6a3 3 0 0 1 3 3v6M6 3v18M18 21v0', chat: 'M4 5h16v11H9l-5 4V5zM12 8v5M9.5 10.5h5', check: 'M5 12l5 5 9-10', plus: 'M12 5v14M5 12h14', chevron: 'M6 9l6 6 6-6', up: 'M12 19V5M5 12l7-7 7 7', stop: 'M6 6h12v12H6z',
   mic: 'M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3zM5 11a7 7 0 0 0 14 0M12 18v3', close: 'M6 6l12 12M18 6L6 18', edit: 'M4 20h4L19 9l-4-4L4 16v4zM13.5 6.5l4 4', expand: 'M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7', collapse: 'M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7', enter: 'M20 5v7a3 3 0 0 1-3 3H5m0 0l4-4m-4 4l4 4',
 };
@@ -412,15 +413,15 @@ function OptionsMenu({ children }) {
   useDismiss(open, () => setOpen(false), holder);
   return (
     <div className="ac-options" ref={holder}>
-      <button type="button" className="ac-options-button" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(value => !value)}>
-        <span>{t('Options')}</span><Icon d={ICONS.chevron} />
+      <button type="button" className="ac-options-button" aria-haspopup="menu" aria-expanded={open} aria-label={t('Options')} title={t('Options')} onClick={() => setOpen(value => !value)}>
+        <Icon d={ICONS.sliders} />
       </button>
       {open ? <div className="ac-options-list" role="group" aria-label={t('Options')}>{children}</div> : null}
     </div>
   );
 }
 
-function Composer({ store, state, agent, notify, inputRef, draft }) {
+function Composer({ store, state, agent, notify, inputRef, draft, tools }) {
   const [text, setText] = useState(draft ? draft.text : '');
   const [attachments, setAttachments] = useState([]);
   const [sending, setSending] = useState(false);
@@ -669,15 +670,15 @@ function Composer({ store, state, agent, notify, inputRef, draft }) {
       </div>
       <input ref={picker} type="file" multiple hidden accept={ACCEPT} onChange={event => { void addFiles([...event.target.files]); event.target.value = ''; }} />
     </form>
-    {/* Between the input box and the access level: the options menu on the left, the plan usage on the right. */}
-    <div className="ac-meta">
+    {/* One row under the input box, all icons: the options menu and the access level on the left, the model, the context and the plan usage on the right. */}
+    <div className="ac-foot">
       <OptionsMenu>
         <Switch className="ac-translate" label={t('Translate to English')} text={t('Translate')} checked={translate} disabled={sending} onChange={() => void store.setTranslate(!translate)} />
         {Words ? <Switch className="ac-word-translate" label={t('Tap an English word in a message to see what it means. It uses the translation service in the settings.')} text={t('Translate words on tap')} checked={wordTap} onChange={() => Words.setEnabled(!wordTap)} /> : null}
         <Switch className="ac-collapse" label={t('Collapse the keyboard after sending')} text={t('Collapse the keyboard after sending')} checked={collapse} onChange={() => void store.setCollapseKeyboard(!collapse)} />
         {keepMicAvailable ? <Switch className="ac-keep-mic" label={t('Keeps the microphone on so recording starts faster. The browser shows its microphone indicator, and other audio on the device may be affected.')} text={t('Keep the microphone ready')} checked={keepMic} onChange={() => Voice.setKeepWarm(!keepMic)} /> : null}
       </OptionsMenu>
-      <Limits limits={state.limits} onRefresh={() => store.refreshLimits()} />
+      {tools}
     </div>
     </>
   );
@@ -708,7 +709,7 @@ function ModelPicker({ store, state }) {
   const holder = useRef(null);
   useDismiss(open, () => setOpen(false), holder);
   const shown = [modelName(state.model), capitalize(state.effort)].filter(Boolean).join(' ');
-  if (!state.canChoose) return shown ? <span className="ac-model" translate="no">{shown}</span> : null;
+  if (!state.canChoose) return shown ? <span className="ac-model" translate="no" role="img" aria-label={shown} title={shown}><Icon d={ICONS.model} /></span> : null;
   const { status, list } = state.models;
   const selected = list.find(entry => entry.value === state.choice.model) || list[0];
   const efforts = selected ? selected.efforts : [];
@@ -719,10 +720,9 @@ function ModelPicker({ store, state }) {
   };
   return (
     <div className="ac-picker-holder" ref={holder}>
-      <button type="button" className="ac-model ac-picker-button" aria-haspopup="menu" aria-expanded={open} translate="no"
+      <button type="button" className="ac-model ac-picker-button" aria-haspopup="menu" aria-expanded={open} translate="no" aria-label={shown || t('Model')} title={shown || t('Model')}
         onClick={() => { setOpen(value => !value); void store.loadModels(); }}>
-        <span>{shown || t('Model')}</span>
-        <Icon d={ICONS.chevron} />
+        <Icon d={ICONS.model} />
       </button>
       {open ? (
         <div className="ac-picker" role="menu" aria-label={t('Model')}>
@@ -760,22 +760,44 @@ function ModelPicker({ store, state }) {
   );
 }
 
-// What is left of the plan windows (5 hours, 7 days) and when each resets, in one unit with decimals: "62.5% · 4.2h".
+// What is left of the plan windows (5 hours, 7 days) as one small unit: per window a bar for the usage left and a bar for the time left before it resets, standing
+// upright. A click opens a floating window with the numbers in words and a button that reads the usage again.
 function Limits({ limits, onRefresh }) {
   const [now, setNow] = useState(() => Date.now());
   const [busy, setBusy] = useState(false);
+  const [open, setOpen] = useState(false);
+  const holder = useRef(null);
+  useDismiss(open, () => setOpen(false), holder);
   useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 30000); return () => clearInterval(timer); }, []);
   const shown = visibleLimits(limits, now);
   if (!shown.length) return null;
+  const summary = shown.map(entry => { const { left, reset } = limitText(entry, now); return `${entry.label}: ${left}%${reset ? ` · ${reset}` : ''}`; }).join('  ');
+  const low = shown.some(entry => 100 - entry.usedPercent <= 10);
   return (
-    <button type="button" className={`ac-limits${busy ? ' busy' : ''}`} translate="no" disabled={busy} title={t('Click to refresh the usage')}
-      onClick={() => { setBusy(true); Promise.resolve(onRefresh()).finally(() => setBusy(false)); }}>
-      {shown.map(entry => {
-        const { left, reset, text } = limitText(entry, now);
-        const title = t(`${entry.label} limit: ${left}% left${reset ? `, resets in ${reset}` : ''}`);
-        return <span className={`ac-limit${100 - entry.usedPercent <= 10 ? ' low' : ''}`} key={entry.id} title={title} aria-label={title}>{text}</span>;
-      })}
-    </button>
+    <div className="ac-limits-holder" ref={holder}>
+      <button type="button" className={`ac-limits${busy ? ' busy' : ''}${low ? ' low' : ''}`} translate="no" aria-haspopup="dialog" aria-expanded={open} aria-label={summary} title={summary} onClick={() => setOpen(value => !value)}>
+        {shown.map(entry => {
+          const bars = limitBars(entry, now);
+          return (
+            <span className={`ac-limit${100 - entry.usedPercent <= 10 ? ' low' : ''}`} key={entry.id}>
+              <span className="ac-bar ac-bar-usage"><i style={{ height: `${Math.round(bars.usage * 100)}%` }} /></span>
+              <span className="ac-bar ac-bar-time"><i style={{ height: `${Math.round(bars.time * 100)}%` }} /></span>
+            </span>
+          );
+        })}
+      </button>
+      {open ? (
+        <div className="ac-limits-pop" role="dialog" aria-label={t('Plan usage')} translate="no">
+          <div className="ac-picker-title">{t('Plan usage')}</div>
+          {shown.map(entry => {
+            const { left, reset } = limitText(entry, now);
+            return <p className={`ac-limit-line${100 - entry.usedPercent <= 10 ? ' low' : ''}`} key={entry.id}>{t(`${entry.label} limit: ${left}% left${reset ? `, resets in ${reset}` : ''}`)}</p>;
+          })}
+          <p className="ac-picker-note">{t('Left bar: usage left. Right bar: time left.')}</p>
+          <button type="button" className="ac-limits-refresh" disabled={busy} onClick={() => { setBusy(true); Promise.resolve(onRefresh()).finally(() => setBusy(false)); }}>{t(busy ? 'Refreshing…' : 'Refresh usage')}</button>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -823,6 +845,20 @@ function TitleMenu({ title, store, onClose }) {
 }
 
 // ── The view ──
+// The access level as an icon; the select lies over it (invisible) so the keyboard and screen readers work as for any select.
+const MODE_ICONS = { ask: 'shield', edits: 'edit', plan: 'list', readonly: 'lock', write: 'edit', full: 'bolt' };
+function ModeButton({ agent, mode, onChange }) {
+  const label = t((agent.modes.find(([value]) => value === mode) || [mode, mode])[1]);
+  return (
+    <label className={`ac-mode-label ac-mode-${mode}`} title={label}>
+      <Icon d={ICONS[MODE_ICONS[mode] || 'shield']} />
+      <select className="ac-mode" aria-label={`${t('Access level')}: ${label}`} value={mode} onChange={onChange}>
+        {agent.modes.map(([value, text]) => <option key={value} value={value}>{t(text)}</option>)}
+      </select>
+    </label>
+  );
+}
+
 export const Chat = React.forwardRef(function Chat({ store, agent, conversation, onClose, notify, onOpenChat = () => {}, draft = null }, ref) {
   const state = useSyncExternalStore(store.subscribe, store.getState);
   const messages = useMemo(() => toMessages(state.items), [state.items]);
@@ -865,20 +901,16 @@ export const Chat = React.forwardRef(function Chat({ store, agent, conversation,
           </ThreadPrimitive.Viewport>
         </ThreadPrimitive.Root>
       </FooterContext.Provider></AssistantRuntimeProvider>
-      <Composer store={store} state={state} agent={agent} notify={notify} inputRef={inputRef} draft={draft} />
-      <div className="ac-foot">
-        <label className="ac-mode-label">
-          <span className="ac-mode-text">{t((agent.modes.find(([value]) => value === state.mode) || [state.mode, state.mode])[1])}</span>
-          <Icon d={ICONS.chevron} />
-          <select className="ac-mode" aria-label={t('Access level')} value={state.mode} onChange={changeMode}>
-            {agent.modes.map(([value, label]) => <option key={value} value={value}>{t(label)}</option>)}
-          </select>
-        </label>
-        <span className="ac-status">
-          <ModelPicker store={store} state={state} />
-          <ContextRing context={state.context} />
-        </span>
-      </div>
+      <Composer store={store} state={state} agent={agent} notify={notify} inputRef={inputRef} draft={draft} tools={(
+        <>
+          <ModeButton agent={agent} mode={state.mode} onChange={changeMode} />
+          <span className="ac-status">
+            <ModelPicker store={store} state={state} />
+            <ContextRing context={state.context} />
+            <Limits limits={state.limits} onRefresh={() => store.refreshLimits()} />
+          </span>
+        </>
+      )} />
     </section>
   );
 });

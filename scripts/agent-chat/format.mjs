@@ -27,6 +27,19 @@ export function visibleLimits(limits, now) {
   return (Array.isArray(limits) ? limits : []).filter(entry => entry && (entry.resetsAt === null || entry.resetsAt === undefined || entry.resetsAt > now));
 }
 
+// The length of a plan window from its label ("5h", "7d", "30m") in ms, or 0 when the label is not a length.
+export function windowMs(label) {
+  const match = /^(\d+(?:\.\d+)?)([mhd])$/.exec(String(label || ''));
+  return match ? Number(match[1]) * { m: 60000, h: 3600000, d: 86400000 }[match[2]] : 0;
+}
+
+// The two bars of a window, each as a fraction 0..1: what is left of the plan (usage) and what is left of the time before it resets (time; 0 when unknown).
+export function limitBars(entry, now) {
+  const length = windowMs(entry.label);
+  const time = entry.resetsAt && length ? Math.min(1, Math.max(0, (entry.resetsAt - now) / length)) : 0;
+  return { usage: Math.min(1, Math.max(0, (100 - entry.usedPercent) / 100)), time };
+}
+
 // What is left of a window and when it resets: { text: "62% · 4.2h", title: "5h limit: 62% left, resets in 4.2h" }.
 export function limitText(entry, now) {
   const left = num(Math.max(0, 100 - entry.usedPercent));

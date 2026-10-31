@@ -187,36 +187,39 @@ const server = http.createServer(app);
     assert.equal(await page.locator('.ac-init').evaluate(node => node.open), false);
     await page.locator('.ac-init summary').click();
     assert.deepEqual(await page.locator('.ac-init-body dt').allTextContents(), ['Model', 'Session']);
-    assert.equal(await page.locator('.ac-model').textContent(), 'Sonnet 5.5 Medium');
+    assert.equal(await page.locator('.ac-model').getAttribute('title'), 'Sonnet 5.5 Medium', 'the model is an icon; its name is in the title');
     // The ring says how much of the context window is used, and changes colour as it fills.
     assert.equal(await page.locator('.ac-context').getAttribute('aria-label'), 'Context: 21% used (42k of 200k tokens)');
-    // What is left of the plan windows and when they reset: one unit, decimals allowed.
-    assert.deepEqual(await page.locator('.ac-limit').allTextContents(), ['62.5% · 4.2h', '80% · 3.5d']);
-    assert.equal(await page.locator('.ac-limit').first().getAttribute('title'), '5h limit: 62.5% left, resets in 4.2h');
-    // A click on the usage asks the server to read it again; it stays shown and usable afterwards.
-    const [refreshRequest] = await Promise.all([page.waitForRequest(request => request.method() === 'POST' && request.url().endsWith('/limits/refresh')), page.click('.ac-limits')]);
-    assert.ok(refreshRequest, 'clicking the usage asks for a fresh reading');
-    await page.waitForFunction(() => !document.querySelector('.ac-limits').disabled);
-    assert.deepEqual(await page.locator('.ac-limit').allTextContents(), ['62.5% · 4.2h', '80% · 3.5d']);
+    // The plan usage is one small unit of upright bars (usage left and time left per window); its numbers are in a floating window.
+    assert.equal(await page.locator('.ac-limits').count(), 1, 'one unit');
+    assert.equal(await page.locator('.ac-limits .ac-bar').count(), 4, 'two bars per window');
+    assert.equal(await page.locator('.ac-limits .ac-bar-usage i').first().evaluate(node => node.style.height), '63%', '62.5% of the 5h usage is left');
+    assert.equal(await page.locator('.ac-limits').getAttribute('title'), '5h: 62.5% · 4.2h  7d: 80% · 3.5d');
+    assert.equal(await page.locator('.ac-limits-pop').count(), 0, 'the numbers are hidden until the unit is clicked');
+    await page.click('.ac-limits');
+    assert.deepEqual(await page.locator('.ac-limit-line').allTextContents(), ['5h limit: 62.5% left, resets in 4.2h', '7d limit: 80% left, resets in 3.5d']);
+    // The button in the floating window asks the server to read the usage again; it stays shown and usable afterwards.
+    const [refreshRequest] = await Promise.all([page.waitForRequest(request => request.method() === 'POST' && request.url().endsWith('/limits/refresh')), page.click('.ac-limits-refresh')]);
+    assert.ok(refreshRequest, 'the button asks for a fresh reading');
+    await page.waitForFunction(() => !document.querySelector('.ac-limits-refresh').disabled);
+    assert.deepEqual(await page.locator('.ac-limit-line').allTextContents(), ['5h limit: 62.5% left, resets in 4.2h', '7d limit: 80% left, resets in 3.5d']);
+    await page.keyboard.press('Escape');
+    assert.equal(await page.locator('.ac-limits-pop').count(), 0, 'Escape closes the floating window');
     // The composer icons keep a real size (they were specks on an iPhone).
     for (const selector of ['.ac-attach svg', '.ac-mic svg']) {
       const box = await page.locator(selector).first().boundingBox();
       assert.deepEqual([box.width, box.height], [18, 18], `${selector} is 18px`);
     }
-    // The usage is its own row below the input box and above the footer that holds the access level and the model.
-    const [composerBox, limitsBox, footBox] = await Promise.all([page.locator('.ac-composer').boundingBox(), page.locator('.agent-chat > .ac-meta').boundingBox(), page.locator('.ac-foot').boundingBox()]);
-    assert.ok(limitsBox.y >= composerBox.y + composerBox.height - 1 && limitsBox.y + limitsBox.height <= footBox.y + 1, 'usage sits between the input box and the footer');
-    // The usage is right-aligned, on the same side as the model: its right edge matches the footer's content edge.
-    const lastLimitBox = await page.locator('.ac-limit').last().boundingBox();
-    assert.ok(Math.abs((lastLimitBox.x + lastLimitBox.width) - (footBox.x + footBox.width - 24)) <= 1, 'usage is right-aligned');
-    // The translation switch shares that row: on the left edge of the footer content, left of the usage, above the access level.
-    const [switchBox, firstLimitBox, modeBox] = await Promise.all([page.locator('.ac-options-button').boundingBox(), page.locator('.ac-limit').first().boundingBox(), page.locator('.ac-mode-label').boundingBox()]);
-    assert.ok(Math.abs(switchBox.x - modeBox.x) <= 1, 'the switch is left-aligned with the access level');
-    assert.ok(switchBox.x + switchBox.width <= firstLimitBox.x, 'the switch is left of the usage');
-    assert.ok(switchBox.y + switchBox.height <= footBox.y + 1 && switchBox.y >= composerBox.y + composerBox.height - 1, 'the switch sits between the input box and the footer');
+    // One row of icons under the input box: options and access level on the left, the usage unit at the right edge.
+    assert.equal(await page.locator('.ac-meta').count(), 0, 'no separate row for the options and the usage');
+    const [composerBox, footBox, optionsBox, modeBox, limitsBox] = await Promise.all([page.locator('.ac-composer').boundingBox(), page.locator('.ac-foot').boundingBox(), page.locator('.ac-options-button').boundingBox(), page.locator('.ac-mode-label').boundingBox(), page.locator('.ac-limits').boundingBox()]);
+    assert.ok(footBox.y >= composerBox.y + composerBox.height - 1, 'the row is below the input box');
+    assert.ok(optionsBox.x + optionsBox.width <= modeBox.x + 1 && modeBox.x + modeBox.width <= limitsBox.x, 'options, access level, then the usage, left to right');
+    for (const box of [optionsBox, modeBox, limitsBox]) assert.ok(box.y >= footBox.y - 1 && box.y + box.height <= footBox.y + footBox.height + 1, 'all in the same row');
+    assert.ok(footBox.height <= 46, 'the row is low');
     assert.equal(await page.locator('.ac-context').getAttribute('class'), 'ac-context');
     assert.equal(await page.locator('.ac-context-value').getAttribute('stroke-dasharray'), `${2 * Math.PI * 8 * 0.21} ${2 * Math.PI * 8}`);
-    assert.match(await page.locator('.ac-mode-text').textContent(), /Ask before changes/);
+    assert.match(await page.locator('.ac-mode').getAttribute('aria-label'), /Ask before changes/);
     assert.equal(await page.locator('.ac-text strong').textContent(), 'bold');
     assert.deepEqual(await page.locator('.ac-text li').allTextContents(), ['one', 'two']);
     assert.equal(await page.locator('.ac-text pre code').textContent(), 'console.log(1)');
@@ -413,15 +416,15 @@ const server = http.createServer(app);
     assert.equal(await page.locator('.ac-picker-item[aria-checked="true"] .ac-picker-name').textContent(), 'Default');
     assert.deepEqual(await page.locator('.ac-picker-effort').allTextContents(), ['Default', 'Low', 'High', 'Max']);
     await page.locator('.ac-picker-item', { hasText: 'Opus 5.5' }).click();
-    await page.waitForFunction(() => document.querySelector('.ac-picker-button').textContent === 'Opus');
+    await page.waitForFunction(() => document.querySelector('.ac-picker-button').title === 'Opus');
     assert.deepEqual(await page.locator('.ac-picker-effort').allTextContents(), ['Default', 'High', 'Max'], 'only the efforts of the chosen model');
     await page.locator('.ac-picker-effort', { hasText: 'Max' }).click();
-    await page.waitForFunction(() => document.querySelector('.ac-picker-button').textContent === 'Opus Max');
+    await page.waitForFunction(() => document.querySelector('.ac-picker-button').title === 'Opus Max');
     assert.equal(await page.locator('.ac-picker-effort[aria-checked="true"]').textContent(), 'Max');
     let row = await page.evaluate(async () => (await api.get(`${base}/conversations`))[0]);
     assert.deepEqual([row.model, row.effort], ['opus', 'max'], 'the choice is saved on the server');
     await page.locator('.ac-picker-item', { hasText: 'Sonnet 5.5' }).click();
-    await page.waitForFunction(() => document.querySelector('.ac-picker-button').textContent === 'Sonnet');
+    await page.waitForFunction(() => document.querySelector('.ac-picker-button').title === 'Sonnet');
     row = await page.evaluate(async () => (await api.get(`${base}/conversations`))[0]);
     assert.deepEqual([row.model, row.effort], ['sonnet', undefined], 'an effort the new model does not offer is cleared');
     await page.keyboard.press('Escape');
@@ -493,7 +496,7 @@ const server = http.createServer(app);
     await page.fill('.ac-input', '');
     assert.equal(await page.locator('.ac-badge svg.agent-logo path').count(), 1, 'Codex shows the OpenAI logo');
     assert.deepEqual(await page.locator('.ac-mode option').allTextContents(), ['Read-only', 'Workspace write', 'Full access']);
-    assert.deepEqual([await page.locator('.ac-model').textContent(), await page.locator('.ac-context').count(), await page.locator('.ac-limit').count()], ['Model', 0, 0], 'a choosable model shows its name only once it is known; no ring or limits until reported');
+    assert.deepEqual([await page.locator('.ac-model').getAttribute('title'), await page.locator('.ac-context').count(), await page.locator('.ac-limit').count()], ['Model', 0, 0], 'a choosable model shows its name only once it is known; no ring or limits until reported');
     await page.fill('.ac-input', 'start');
     await page.click('.ac-send');
     await page.waitForSelector('.ac-question');

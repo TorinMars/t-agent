@@ -151,24 +151,17 @@
 .ac-stop svg { width: 20px; height: 20px; }
 .ac-foot { flex: 0 0 auto; box-sizing: border-box; display: flex; align-items: center; justify-content: space-between; gap: 12px; width: min(100%, calc(var(--ac-width) + 32px)); margin: 0 auto; padding: 4px 24px max(8px, env(safe-area-inset-bottom)); font-size: 14px; }
 .ac-mode-label { position: relative; display: inline-flex; align-items: center; gap: 4px; min-width: 0; color: var(--ac-text); }
-.ac-mode-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* The select covers the label so the label can be as wide as its text; the select keeps the keyboard and screen reader behavior. */
 .ac-mode { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; font: inherit; }
 .ac-mode-label svg { width: 14px; height: 14px; flex: 0 0 auto; color: var(--ac-muted); pointer-events: none; }
 .ac-foot { flex-wrap: wrap; row-gap: 2px; }
 .ac-status { position: relative; display: inline-flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 4px 12px; min-width: 0; margin-left: auto; }
-.ac-limits { display: inline-flex; gap: 12px; color: var(--ac-muted); font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.agent-chat > .ac-meta { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 12px; box-sizing: border-box; width: min(100%, calc(var(--ac-width) + 32px)); margin: 0 auto; padding: 0 24px; } /* its own row between the input box and the footer: the translation switch on the left, the usage on the right (above the model) */
-.ac-meta .ac-limits { margin-left: auto; }
 .ac-options { position: relative; }
 .ac-options-button { display: inline-flex; align-items: center; gap: 4px; min-height: 30px; padding: 0; border: 0; background: none; color: var(--ac-muted); font: inherit; font-size: 12px; cursor: pointer; }
 .ac-options-button svg { width: 14px; height: 14px; }
 .ac-options-list { position: absolute; z-index: 6; left: 0; bottom: calc(100% + 6px); display: flex; flex-direction: column; gap: 2px; box-sizing: border-box; min-width: 220px; padding: 6px; border: 1px solid var(--ac-border); border-radius: 12px; background: var(--ac-bg); box-shadow: 0 8px 24px rgba(0,0,0,.25); }
 .ac-options-list .ac-switch { justify-content: space-between; width: 100%; padding: 0 8px; white-space: nowrap; }
 .ac-options-list .ac-switch:hover { background: var(--ac-key); }
-.ac-limits { border: 0; background: none; padding: 4px 0; font-family: inherit; cursor: pointer; }
-.ac-limits.busy { opacity: .5; cursor: progress; }
-.ac-limit.low { color: var(--ac-danger); }
 .ac-picker-holder { min-width: 0; } /* the list is placed against the whole status area, so it stays inside the page when that wraps */
 .ac-picker-button { display: inline-flex; align-items: center; gap: 4px; padding: 4px 0; border: 0; background: none; font: inherit; cursor: pointer; }
 .ac-picker-button svg { width: 14px; height: 14px; color: var(--ac-muted); }
@@ -280,3 +273,29 @@ body.wt-on .agent-chat .ac-text, body.wt-on .agent-chat .ac-user { cursor: point
 .ac-msg-btn svg { width: 15px; height: 15px; }
 .ac-msg-btn:hover:not(:disabled) { background: rgba(127, 127, 127, .18); }
 .ac-msg-btn:disabled { opacity: .4; cursor: default; }
+
+
+/* The footer is one row of icons under the input box: options and access level on the left; model, context and plan usage on the right. */
+.ac-foot { gap: 4px; padding: 2px 24px max(6px, env(safe-area-inset-bottom)); flex-wrap: nowrap; }
+.ac-options-button, .ac-picker-button, .ac-mode-label, .ac-context, .ac-model { width: 30px; height: 30px; justify-content: center; box-sizing: border-box; border-radius: 8px; }
+.ac-options-button svg, .ac-picker-button svg, .ac-mode-label svg { width: 18px; height: 18px; color: var(--ac-muted); }
+.ac-mode-label:hover svg, .ac-options-button:hover svg, .ac-picker-button:hover svg { color: var(--ac-text); }
+.ac-mode-full svg { color: var(--ac-danger); }
+.ac-model { display: inline-flex; align-items: center; color: var(--ac-muted); }
+.ac-status { gap: 2px; flex-wrap: nowrap; margin-left: auto; }
+.ac-context { align-items: center; }
+.ac-limits-holder { display: inline-flex; }
+.ac-limits { display: inline-flex; align-items: flex-end; gap: 7px; height: 30px; padding: 5px 6px; box-sizing: border-box; border: 0; border-radius: 8px; background: none; cursor: pointer; }
+.ac-limits:hover { background: var(--ac-key); }
+.ac-limits.busy { opacity: .5; cursor: progress; }
+.ac-limit { display: inline-flex; align-items: stretch; gap: 2px; height: 100%; }
+.ac-bar { position: relative; display: flex; align-items: flex-end; width: 4px; height: 100%; overflow: hidden; border-radius: 2px; background: var(--ac-border); }
+.ac-bar i { display: block; width: 100%; border-radius: 2px; background: var(--ac-accent); }
+.ac-bar-time i { background: var(--ac-muted); }
+.ac-limit.low .ac-bar-usage i { background: var(--ac-danger); }
+.ac-limits-pop { position: absolute; z-index: 6; right: 0; bottom: calc(100% + 8px); box-sizing: border-box; width: min(300px, calc(100cqw - 32px)); padding: 8px 12px 10px; border: 1px solid var(--ac-border); border-radius: 12px; background: var(--ac-bg); box-shadow: 0 8px 28px rgba(0,0,0,.18); font-size: 14px; font-variant-numeric: tabular-nums; }
+.ac-limits-pop .ac-picker-title, .ac-limits-pop .ac-picker-note { padding-left: 0; margin-left: 0; }
+.ac-limit-line { margin: 4px 0; }
+.ac-limit-line.low { color: var(--ac-danger); }
+.ac-limits-refresh { margin-top: 6px; padding: 4px 12px; border: 1px solid var(--ac-border); border-radius: 14px; background: none; color: inherit; font: inherit; font-size: 13px; cursor: pointer; }
+.ac-limits-refresh:disabled { opacity: .5; cursor: progress; }

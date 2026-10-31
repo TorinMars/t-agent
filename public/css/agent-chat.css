@@ -275,11 +275,16 @@ body.wt-on .agent-chat .ac-text, body.wt-on .agent-chat .ac-user { cursor: point
 
 /* The footer is one row of icons under the input box: options and access level on the left; model, context and plan usage on the right. */
 .ac-foot { gap: 4px; padding: 2px 24px max(6px, env(safe-area-inset-bottom)); flex-wrap: nowrap; }
-.ac-options-button, .ac-picker-button, .ac-mode-label, .ac-context, .ac-model { width: 30px; height: 30px; justify-content: center; box-sizing: border-box; border-radius: 8px; }
+.ac-options-button, .ac-picker-button, .ac-mode-label, .ac-context { width: 30px; height: 30px; justify-content: center; box-sizing: border-box; border-radius: 8px; }
 .ac-options-button svg, .ac-picker-button svg, .ac-mode-label svg { width: 18px; height: 18px; color: var(--ac-muted); }
 .ac-mode-label:hover svg, .ac-options-button:hover svg, .ac-picker-button:hover svg { color: var(--ac-text); }
 .ac-mode-full svg { color: var(--ac-danger); }
-.ac-model { display: inline-flex; align-items: center; color: var(--ac-muted); }
+.ac-model { display: inline-flex; align-items: center; gap: 6px; width: auto; max-width: 100%; height: 30px; padding: 0 8px; box-sizing: border-box; border-radius: 8px; color: var(--ac-muted); font-size: 13px; white-space: nowrap; }
+.ac-model-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--ac-text); }
+.ac-model-effort { flex: 0 0 auto; padding: 1px 7px; border: 1px solid var(--ac-border); border-radius: 10px; font-size: 12px; line-height: 16px; }
+.ac-picker-button.ac-model:hover { background: var(--ac-key); }
+/* The options button and the access level share one center line: every control in the row is 30px high and the wrappers do not add line height. */
+.ac-foot .ac-options, .ac-mode-holder, .ac-picker-holder { display: inline-flex; flex-direction: row; align-items: center; height: 30px; margin: 0; gap: 0; } /* .ac-options is also the question options list (margin-top 6px); the footer one must not inherit that */
 .ac-status { gap: 2px; flex-wrap: nowrap; margin-left: auto; }
 .ac-context { align-items: center; }
 .ac-limits-holder { display: inline-flex; }

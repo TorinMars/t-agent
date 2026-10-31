@@ -191,7 +191,10 @@ const server = http.createServer(app);
     assert.equal(await page.locator('.ac-init').evaluate(node => node.open), false);
     await page.locator('.ac-init summary').click();
     assert.deepEqual(await page.locator('.ac-init-body dt').allTextContents(), ['Model', 'Session']);
-    assert.equal(await page.locator('.ac-model').getAttribute('title'), 'Sonnet 5.5 Medium', 'the model is an icon; its name is in the title');
+    assert.equal(await page.locator('.ac-model').getAttribute('title'), 'Sonnet 5.5 Medium', 'the model name and the effort are in the title');
+    assert.deepEqual([await page.locator('.ac-model-name').textContent(), await page.locator('.ac-model-effort').textContent()], ['Sonnet 5.5', 'Medium'], 'the footer shows the model name and the effort');
+    const centers = await page.evaluate(() => ['.ac-options-button', '.ac-mode-label', '.ac-model'].map(selector => { const box = document.querySelector(selector).getBoundingClientRect(); return Math.round(box.top + box.height / 2); }));
+    assert.equal(new Set(centers).size, 1, `the footer controls share one center line: ${centers}`);
     // The ring says how much of the context window is used, and changes colour as it fills.
     assert.equal(await page.locator('.ac-context').getAttribute('aria-label'), 'Context: 21% used (42k of 200k tokens)');
     // The plan usage is one small unit of upright bars (usage left and time left per window); its numbers are in a floating window.

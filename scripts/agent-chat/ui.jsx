@@ -709,7 +709,13 @@ function ModelPicker({ store, state }) {
   const holder = useRef(null);
   useDismiss(open, () => setOpen(false), holder);
   const shown = [modelName(state.model), capitalize(state.effort)].filter(Boolean).join(' ');
-  if (!state.canChoose) return shown ? <span className="ac-model" translate="no" role="img" aria-label={shown} title={shown}><Icon d={ICONS.model} /></span> : null;
+  const label = (
+    <>
+      <span className="ac-model-name" translate="no">{modelName(state.model) || t('Model')}</span>
+      {state.effort ? <span className="ac-model-effort" title={t('Thinking effort')}>{t(capitalize(state.effort))}</span> : null}
+    </>
+  );
+  if (!state.canChoose) return shown ? <span className="ac-model" role="img" aria-label={shown} title={shown}>{label}</span> : null;
   const { status, list } = state.models;
   const selected = list.find(entry => entry.value === state.choice.model) || list[0];
   const efforts = selected ? selected.efforts : [];
@@ -722,7 +728,7 @@ function ModelPicker({ store, state }) {
     <div className="ac-picker-holder" ref={holder}>
       <button type="button" className="ac-model ac-picker-button" aria-haspopup="menu" aria-expanded={open} translate="no" aria-label={shown || t('Model')} title={shown || t('Model')}
         onClick={() => { setOpen(value => !value); void store.loadModels(); }}>
-        <Icon d={ICONS.model} />
+        {label}
       </button>
       {open ? (
         <div className="ac-picker" role="menu" aria-label={t('Model')}>

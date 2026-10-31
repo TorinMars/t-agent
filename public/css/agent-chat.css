@@ -283,6 +283,10 @@ body.wt-on .agent-chat .ac-text, body.wt-on .agent-chat .ac-user { cursor: point
 .ac-model-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--ac-text); }
 .ac-model-effort { flex: 0 0 auto; padding: 1px 7px; border: 1px solid var(--ac-border); border-radius: 10px; font-size: 12px; line-height: 16px; }
 .ac-picker-button.ac-model:hover { background: var(--ac-key); }
+/* Phone page only: the model name and the thinking effort share one button, stacked in two lines (name on top). */
+.h5-agent .ac-model { flex-direction: column; align-items: flex-start; justify-content: center; gap: 0; max-width: 150px; padding: 0 6px; }
+.h5-agent .ac-model-name, .h5-agent .ac-model-effort { display: block; max-width: 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 14px; }
+.h5-agent .ac-model-effort { padding: 0; border: 0; border-radius: 0; color: var(--ac-muted); font-size: 11px; }
 /* The options button and the access level share one center line: every control in the row is 30px high and the wrappers do not add line height. */
 .ac-foot .ac-options, .ac-mode-holder, .ac-picker-holder { display: inline-flex; flex-direction: row; align-items: center; height: 30px; margin: 0; gap: 0; } /* .ac-options is also the question options list (margin-top 6px); the footer one must not inherit that */
 .ac-status { gap: 2px; flex-wrap: nowrap; margin-left: auto; }

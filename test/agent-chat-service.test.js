@@ -1236,3 +1236,24 @@ test('usage: Claude asks for the usage to be read again, Codex does not', () => 
   assert.equal(claude.POLL_LIMITS, true);
   assert.equal(require('../lib/agent-chat/codex').POLL_LIMITS, undefined);
 });
+
+test('a tool still running when the turn ends is marked as ended, and /clear empties the context but keeps its window', async () => {
+  const own = tasks.createTask('owner', { title: 'stale tool' });
+  const adapter = fakeAdapter(async ({ ctx, prompt }) => {
+    if (prompt.text === '/clear') { ctx.resetConversation(); return { ok: true }; }
+    ctx.setMeta({ context: { used: 5000, window: 200000 } });
+    ctx.upsert({ id: 't1', kind: 'tool', name: 'Bash', input: { command: 'sleep 100' }, output: '', status: 'running' });
+    return { ok: false, error: '' };
+  });
+  const chat = createAgentChat({ db, adapters: { claude: adapter, codex: fakeAdapter(async () => ({ ok: true })) } });
+  const a = chat.create(own, { agent: 'claude' });
+  await chat.sendMessage(own, a.id, { text: 'run it' });
+  await wait(() => !chat.list(own.id).find(row => row.id === a.id).running);
+  let snap = await chat.snapshot(own, a.id);
+  assert.equal(snap.items.find(item => item.id === 't1').status, 'error', 'it does not stay running for ever');
+  assert.deepEqual(snap.conversation.context, { used: 5000, window: 200000 });
+  await chat.sendMessage(own, a.id, { text: '/clear' });
+  await wait(() => !chat.list(own.id).find(row => row.id === a.id).running);
+  snap = await chat.snapshot(own, a.id);
+  assert.deepEqual(snap.conversation.context, { used: 0, window: 200000 }, 'the percentage starts again from zero');
+});

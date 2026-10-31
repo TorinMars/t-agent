@@ -534,7 +534,11 @@ function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS,
       },
       getItem: id => rt.items.get(id),
       // /clear: the chat starts again from nothing; the pages (and the ones that come later) drop what was said before.
-      resetConversation() { rt.items.clear(); emit(rt, { op: 'reset' }); },
+      resetConversation() {
+        rt.items.clear();
+        emit(rt, { op: 'reset' });
+        if (rt.context) { rt.context = { used: 0, window: rt.context.window }; emit(rt, { op: 'meta', context: rt.context }); } // the new session starts with an empty context
+      },
       // What the running turn offers while it runs: `steer(prompt)` adds the person's input to it.
       setControl(control) { rt.control = control || null; },
       // The agent's guess at what the person says next (after the turn). It is dropped when the person sends something, so a late one from an
@@ -629,6 +633,8 @@ function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS,
       rt.abort = null;
       rt.control = null;
       rt.status = 'idle';
+      // A tool that was still running when the turn ended (Stop, a failure) is not running any more: its group must not say "running" for ever.
+      for (const item of [...rt.items.values()]) if (item.kind === 'tool' && item.status === 'running') ctx.upsert({ ...item, status: 'error' });
       if (controller.signal.aborted) ctx.upsert({ id: `n${rt.counter++}`, kind: 'notice', text: 'Stopped' });
       else if (outcome && outcome.error) ctx.upsert({ id: `e${rt.counter++}`, kind: 'error', text: outcome.error });
       touch(rt);

@@ -83,6 +83,7 @@ export function createChatStore({ api, base, conversation, agent = '', notify = 
       case 'reset': // /clear: everything said so far is gone
         items = new Map();
         publishItems();
+        if (state.context) publish({ context: { ...state.context, used: 0 } }); // the new session starts with an empty context
         break;
       case 'permission':
         if (!state.pending.some(request => request.id === event.request.id)) publish({ pending: [...state.pending, event.request] });

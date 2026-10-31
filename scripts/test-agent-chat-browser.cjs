@@ -195,6 +195,17 @@ const server = http.createServer(app);
     assert.deepEqual([await page.locator('.ac-model-name').textContent(), await page.locator('.ac-model-effort').textContent()], ['Sonnet 5.5', 'Medium'], 'the footer shows the model name and the effort');
     const centers = await page.evaluate(() => ['.ac-options-button', '.ac-mode-label', '.ac-model'].map(selector => { const box = document.querySelector(selector).getBoundingClientRect(); return box.top + box.height / 2; }));
     assert.ok(Math.max(...centers) - Math.min(...centers) < 1, `the footer controls share one center line: ${centers}`);
+    // Phone page (inside .h5-agent): the model name sits on top of the effort in the same button, and neither overflows it.
+    const stacked = await page.evaluate(() => {
+      document.body.classList.add('h5-agent');
+      const box = selector => document.querySelector(selector).getBoundingClientRect();
+      const result = { button: box('.ac-model'), name: box('.ac-model-name'), effort: box('.ac-model-effort'), count: document.querySelectorAll('.ac-model').length };
+      document.body.classList.remove('h5-agent');
+      return result;
+    });
+    assert.equal(stacked.count, 1, 'one button holds both');
+    assert.ok(stacked.effort.top >= stacked.name.bottom - 0.5, 'the effort is below the model name');
+    assert.ok(stacked.name.top >= stacked.button.top - 0.5 && stacked.effort.bottom <= stacked.button.bottom + 0.5, 'both lines stay inside the button');
     // Focus in the input: two rows, the input on a full row and the buttons under it; without focus, one row.
     await page.evaluate(() => document.activeElement && document.activeElement.blur());
     const rows = () => page.evaluate(() => { const input = document.querySelector('.ac-input').getBoundingClientRect(); const box = document.querySelector('.ac-box').getBoundingClientRect(); const attach = document.querySelector('.ac-attach').getBoundingClientRect(); return { full: input.width > box.width - 24, below: attach.top >= input.bottom - 1 }; });

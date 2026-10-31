@@ -2169,3 +2169,4 @@ Usage, notifications and phone sidebar changes:
 - Focused verification covers the actual bundled shell with the existing phone and settings browser scripts; the i18n suite checks shell labels and settings messages. No backend protocol changes.
 > v2.84.46 Rebuild the responsive H5 shell with React and Material UI, preserving terminal and chat behavior, settings, and the conversation-revealing task drawer. Full regression: 660 tests passed.
 > v2.84.47 Phone page: action menu inside the sidebar on wide screens, tighter sidebar rhythm, flat inputs and buttons
+> v2.84.50 H5 task sidebar redesign: chevron tasks, session tiles with state, AGENT badge, Pending state, search and filters, New task button

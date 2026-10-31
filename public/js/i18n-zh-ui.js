@@ -1306,4 +1306,6 @@ I18n.add({
   "Start a chat from here": "从这里开始新对话",
   "No room for another session. Close one first.": "没有空位了，请先关闭一个会话。",
   "Refresh the page": "刷新页面",
+  "Expand all": "全部展开",
+  "Collapse all": "全部折叠",
 });

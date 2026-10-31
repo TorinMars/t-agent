@@ -2,6 +2,8 @@
 
 > Date: 2026-07-15
 
+> Unreleased: Task list (phone page and wide sidebar): any number of tasks can be open at once. `expanded` (a Set of task ids) and `peeks` (task id -> sessions of an open task that is not selected) replace the single `expandedId` / `peek` in `public/js/h5.js`; selecting a task or opening the list no longer closes the others (the lists of open tasks are read again when the list opens). The header row of the list has "Expand all" (`#h5-expand-all`) and "Collapse all" (`#h5-collapse-all`) buttons (`scripts/h5-shell/TaskDrawer.jsx`; `ui.actions.expandAll` / `collapseAll`). `public/js/h5-shell.js` was rebuilt. Regression: `scripts/test-h5-browser.cjs`.
+
 > v2.84.48 Phone page header has a refresh button just before the settings button (`#h5-refresh`, `scripts/h5-shell/Header.jsx`; `ui.actions.refresh` in `public/js/h5.js`). It deletes Cache Storage entries, asks the service worker to update, then calls `location.reload()`, so a phone holding old scripts loads the new ones. Login, settings and the open task are kept. `public/js/h5-shell.js` was rebuilt. Regression: `scripts/test-h5-browser.cjs`.
 
 > v2.84.48 The phone page keeps the screen on while a task is open (Screen Wake Lock API in `public/js/h5.js`, `syncWakeLock`): requested when a task is selected, let go when none is, and asked for again when the page becomes visible (the browser drops it in the background). Browsers without the API, or that refuse it, behave as before. Regression: `scripts/test-h5-browser.cjs`.

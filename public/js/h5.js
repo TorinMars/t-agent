@@ -42,8 +42,9 @@
   let task = null;
   let terminals = [];
   let terminalId = null;
-  let expandedId = null; // the task whose sessions are listed in the task sheet (a tap on a task opens and closes its list; it does not open the task)
-  let peek = null; // the sessions of an expanded task that is not the selected one: { source, taskId, status, terminals, chats }
+  const expanded = new Set(); // the tasks whose sessions are listed in the task sheet (a tap on a task opens and closes its list; it does not open the task); any number can be open
+  const peeks = new Map(); // task id -> the sessions of an expanded task that is not the selected one: { source, taskId, status, terminals, chats }
+  let peekSeq = 0;
   let wantedTerminal = null; // the terminal to show when the terminals of the task just selected arrive
   let session = null;
   let mods = {};
@@ -157,7 +158,8 @@
   // The sessions under an expanded task that is not selected: its terminals, then its chats, as in the list of the selected task (without the "⋯" actions).
   function peekSessions(item) {
     const label = item.title;
-    if (!peek || peek.taskId !== item.id || peek.source !== source || peek.status === 'loading') return { label, note: 'Loading…', rows: [] };
+    const peek = peeks.get(item.id);
+    if (!peek || peek.source !== source || peek.status === 'loading') return { label, note: 'Loading…', rows: [] };
     if (peek.status === 'error') return { label, note: 'Could not load the sessions', rows: [] };
     const rows = [
       ...peek.terminals.map(row => ({ kind: 'terminal', id: row.terminal_id, title: row.title, agent: row.agent || null, current: false, more: false })),
@@ -182,7 +184,7 @@
         key: group.key, name: group.name,
         tasks: members.map(item => {
           const selected = Boolean(task && task.id === item.id);
-          const open = expandedId === item.id;
+          const open = expanded.has(item.id);
           // A tap opens or closes the list of sessions under the task. Going to a session is a tap on that session.
           const hasSessions = Boolean(selected && (terminals.length || chats.length));
           // The selected task: "+" on the right of its row adds a terminal.
@@ -193,7 +195,6 @@
     ui.set({ taskList: { note: null, groups: out } });
   }
 
-  // target: where to go in the task, { terminal: id } or { chat: row }; without one, the task opens as it was left (its terminal, or the chat that was open).
   // Keep the screen on while a task is open (a terminal or a chat), so the phone does not sleep in the middle of a session and drop the connection.
   // The browser lets go of the lock whenever the page is hidden, so it is asked for again when the page comes back. Browsers without the API just sleep.
   let wakeLock = null;
@@ -212,14 +213,14 @@
     } catch { /* refused (low battery, power saver): not worth telling the person */ }
   }
 
+  // target: where to go in the task, { terminal: id } or { chat: row }; without one, the task opens as it was left (its terminal, or the chat that was open).
   function selectTask(item, target = null) {
     // A chat open over another task is put away (but not forgotten: it comes back with its task).
     if (agentChat && agentFor && (!item || agentFor.taskId !== item.id || agentFor.source !== source.key)) hideAgent();
     task = item;
     void syncWakeLock();
     chats = [];
-    peek = null;
-    expandedId = item ? item.id : null;
+    if (item) { peeks.delete(item.id); expanded.add(item.id); } // the other open lists stay open
     wantedTerminal = target && target.terminal ? target.terminal : null;
     store.set(`task:${source.key}`, item ? item.id : null);
     ui.set({ taskName: item ? item.title : '' });
@@ -231,21 +232,30 @@
 
   // Opens or closes the list of sessions under a task, without going anywhere.
   function toggleTask(item) {
-    if (expandedId === item.id) { expandedId = null; renderTasks(); return; }
-    expandedId = item.id;
+    if (expanded.has(item.id)) { expanded.delete(item.id); peeks.delete(item.id); renderTasks(); return; }
+    expanded.add(item.id);
     if (!(task && task.id === item.id)) void loadPeek(item);
+    renderTasks();
+  }
+  // "Expand all" / "Collapse all" in the header of the task list.
+  function setAllExpanded(open) {
+    expanded.clear();
+    peeks.clear();
+    if (open) for (const item of tasks) { expanded.add(item.id); if (!(task && task.id === item.id)) void loadPeek(item); }
     renderTasks();
   }
   // The terminals and chats of a task that is not the selected one, read when its list is opened.
   async function loadPeek(item) {
     const current = source;
-    const mine = { source: current, taskId: item.id, status: 'loading', terminals: [], chats: [] };
-    peek = mine;
+    const mine = { source: current, taskId: item.id, status: 'loading', terminals: [], chats: [], seq: (peekSeq += 1) };
+    const before = peeks.get(item.id);
+    if (!before || before.source !== current) peeks.set(item.id, mine); // a list that is already shown stays until the new one is read
     const [rows, chatRows] = await Promise.all([
       api('GET', `${current.tasksBase}/${item.id}/terminals`).catch(() => null),
       readChats(item, { peek: true }),
     ]);
-    if (peek !== mine || source !== current) return;
+    if (source !== current || !expanded.has(item.id) || (peeks.get(item.id) && peeks.get(item.id).seq > mine.seq)) return;
+    peeks.set(item.id, mine);
     mine.status = Array.isArray(rows) ? 'ready' : 'error';
     mine.terminals = Array.isArray(rows) ? rows : [];
     mine.chats = chatRows || [];
@@ -254,7 +264,8 @@
   // Goes to a session of a task that is not the selected one: the task is selected and that session is shown.
   function openFromPeek(item, target) {
     // A chat that was open on the phone for this task is not any more once a terminal is shown, as when going to a terminal inside the task.
-    if (target.terminal && peek && peek.taskId === item.id) for (const row of peek.chats) if (row.opened && row.opened.h5) setOpened(item.id, row.id, false);
+    const peek = peeks.get(item.id);
+    if (target.terminal && peek) for (const row of peek.chats) if (row.opened && row.opened.h5) setOpened(item.id, row.id, false);
     selectTask(item, target);
   }
   // A wide screen (a computer, a landscape tablet) shows the task list as a permanent sidebar next to the terminal: it is never closed,
@@ -263,7 +274,8 @@
   const isWide = () => wideQuery.matches;
   function openTasks() {
     const wide = isWide();
-    if (!wide || !ui.get().tasksOpen) expandedId = task ? task.id : null; // the sheet opens with the sessions of the task that is shown, as before
+    if (task) expanded.add(task.id); // the sheet opens with the sessions of the task that is shown; the lists the person opened stay open
+    for (const item of tasks) if (expanded.has(item.id) && !(task && task.id === item.id)) void loadPeek(item); // read again: they may have changed
     ui.set({ tasksOpen: true, wide });
     renderTasks();
     void loadTasks();
@@ -304,6 +316,8 @@
   wideQuery.addEventListener('change', syncLayout);
 
   ui.actions.openTasks = openTasks;
+  ui.actions.expandAll = () => setAllExpanded(true);
+  ui.actions.collapseAll = () => setAllExpanded(false);
   ui.actions.closeTasks = closeTasks;
   // Force refresh: forget what the browser kept for this site (Cache Storage) and load the page again from the network, so a phone that holds an old
   // copy of the scripts gets the new ones. The login, the settings and the open task are kept (they are in the cookie and localStorage).
@@ -336,7 +350,7 @@
       return;
     }
     if (row.kind === 'terminal') openFromPeek(item, { terminal: row.id });
-    else if (row.kind === 'chat') { const entry = peek && peek.chats.find(candidate => candidate.id === row.id); if (entry) openFromPeek(item, { chat: entry }); }
+    else if (row.kind === 'chat') { const peek = peeks.get(item.id); const entry = peek && peek.chats.find(candidate => candidate.id === row.id); if (entry) openFromPeek(item, { chat: entry }); }
     else selectTask(item);
   };
   ui.actions.rowMore = row => {
@@ -350,8 +364,8 @@
     tasks = [];
     task = null;
     void syncWakeLock();
-    expandedId = null;
-    peek = null;
+    expanded.clear();
+    peeks.clear();
     ui.set({ taskName: '', sourceKey: source.key });
     disconnect();
     terminals = [];

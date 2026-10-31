@@ -538,7 +538,13 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     assert.equal(await page.locator('.h5-task-item', { hasText: 'Fix login' }).getAttribute('aria-expanded'), 'true', 'the sheet opens with the sessions of the task that is shown');
     await page.locator('.h5-task-item', { hasText: 'Write docs' }).tap();
     await page.locator('#h5-tasks .h5-terminal-list[aria-label="Write docs"] .h5-terminal-main', { hasText: 'Docs terminal' }).waitFor();
-    assert.deepEqual(await page.locator('.h5-task-item').evaluateAll(nodes => nodes.map(node => [node.textContent, node.getAttribute('aria-expanded')])), [['Fix login', 'false'], ['Write docs', 'true']], 'one task is open at a time');
+    assert.deepEqual(await page.locator('.h5-task-item').evaluateAll(nodes => nodes.map(node => [node.textContent, node.getAttribute('aria-expanded')])), [['Fix login', 'true'], ['Write docs', 'true']], 'opening a second task does not close the first');
+    // Collapse all and Expand all are in the header of the list.
+    await page.locator('#h5-collapse-all').tap();
+    assert.deepEqual(await page.locator('.h5-task-item').evaluateAll(nodes => nodes.map(node => node.getAttribute('aria-expanded'))), ['false', 'false'], 'collapse all');
+    await page.locator('#h5-expand-all').tap();
+    await page.locator('#h5-tasks .h5-terminal-list[aria-label="Write docs"] .h5-terminal-main', { hasText: 'Docs terminal' }).waitFor();
+    assert.deepEqual(await page.locator('.h5-task-item').evaluateAll(nodes => nodes.map(node => node.getAttribute('aria-expanded'))), ['true', 'true'], 'expand all, with the sessions of the task that is not selected read');
     assert.equal(await page.locator('#h5-task-name').textContent(), 'Fix login', 'still on the same task');
     await page.locator('#h5-tasks .h5-terminal-list[aria-label="Write docs"] .h5-terminal-main', { hasText: 'Docs terminal' }).tap();
     await page.locator('#h5-tasks').waitFor({ state: 'hidden' });
@@ -549,7 +555,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     chats.length = 0;
     chats.push({ id: 'c1', agent: 'claude', session_id: null, title: 'Cross chat', mode: 'ask', running: false, opened: { web: null, h5: null } });
     await page.locator('#h5-open-tasks').tap();
-    await page.locator('.h5-task-item', { hasText: 'Fix login' }).tap();
+    // Fix login was left open, so its list is there already (read again when the sheet opens).
     await page.locator('#h5-tasks .h5-terminal-list[aria-label="Fix login"] .h5-terminal-main', { hasText: 'Cross chat' }).tap();
     await page.locator('#h5-agent .agent-chat').waitFor();
     assert.equal(await page.locator('#h5-task-name').textContent(), 'Fix login');

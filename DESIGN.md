@@ -2175,3 +2175,4 @@ Usage, notifications and phone sidebar changes:
 > v2.84.51 Phone task sidebar made more compact: shorter rows, smaller icons and buttons, uppercase task names
 > v2.84.52 Phone sidebar and chat page made more compact: wider drawer, shorter rows, tighter message spacing and composer
 > v2.84.53 Agent chat footer: model name and thinking effort shown, footer controls aligned, input box becomes two rows when focused, one run button (time inside, Ready, green breathing light when done), context window is a vertical bar in the usage unit
+> v2.84.54 Agent chat: sub-agents are shown as tabs and can be opened read-only; the phone page shows the model and thinking effort on one stacked button; Claude Code ends with its process group, stale running tools are marked as ended, and /clear resets the context.

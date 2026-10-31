@@ -309,3 +309,16 @@ body.wt-on .agent-chat .ac-text, body.wt-on .agent-chat .ac-user { cursor: point
 .ac-mode-label { border: 0; background: none; padding: 0; cursor: pointer; }
 .ac-mode-picker { left: 0; right: auto; }
 .ac-mode-full .ac-mode-label svg { color: var(--ac-danger); }
+/* Sub-agents: a tab row under the header (scrolls sideways on a phone), the open tab highlighted, and a read-only note in place of the composer. */
+.ac-subagents { flex: 0 0 auto; display: flex; gap: 6px; padding: 6px 16px; overflow-x: auto; border-bottom: 1px solid var(--ac-border); background: var(--ac-bg); -webkit-overflow-scrolling: touch; }
+.ac-subagent { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 6px; max-width: 220px; min-height: 30px; padding: 0 10px; border: 1px solid var(--ac-border); border-radius: 15px; background: var(--ac-panel); color: var(--ac-text); font-size: 13px; cursor: pointer; }
+.ac-subagent.current { border-color: var(--ac-accent); background: var(--ac-key); font-weight: 600; }
+.ac-subagent-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ac-subagent-state { color: var(--ac-muted); font-size: 12px; font-weight: 400; }
+.ac-subagent-dot { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; background: var(--ac-ok); }
+.ac-subagent-dot.running { background: var(--ac-accent); animation: ac-pulse 1.2s ease-in-out infinite; }
+.ac-subagent-dot.error { background: var(--ac-danger); }
+.ac-subagent-view { margin: 4px 10px 8px; padding: 3px 10px; border: 1px solid var(--ac-border); border-radius: 8px; background: var(--ac-bg); color: var(--ac-accent); font-size: 12px; cursor: pointer; }
+.ac-subagent-note { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 16px calc(10px + env(safe-area-inset-bottom, 0px)); border-top: 1px solid var(--ac-border); background: var(--ac-panel); color: var(--ac-muted); font-size: 13px; }
+.ac-subagent-note button { flex: 0 0 auto; min-height: 32px; padding: 0 12px; border: 1px solid var(--ac-border); border-radius: 16px; background: var(--ac-bg); color: var(--ac-accent); cursor: pointer; }
+@media (max-width: 700px) { .ac-subagents { padding-inline: 10px; } }

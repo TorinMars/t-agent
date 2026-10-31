@@ -113,3 +113,18 @@ export function diffLines(input) {
   if (out.length > MAX_DIFF_LINES) { const more = out.length - MAX_DIFF_LINES; out.length = MAX_DIFF_LINES; out.push({ type: 'hunk', text: `… ${more} more lines` }); }
   return out;
 }
+
+// Sub-agents: a Task (or Agent) tool call starts one, and the items it produces carry that call's id as `parentToolUseId`. Items without it belong to the
+// main agent, so conversations stored before sub-agents were kept still show as the main view.
+export const isSubAgentCall = name => name === 'Task' || name === 'Agent';
+
+export function subAgents(items) {
+  return items.filter(item => item.kind === 'tool' && isSubAgentCall(item.name)).map(item => {
+    const input = item.input && typeof item.input === 'object' ? item.input : {};
+    const name = String(input.description || input.subagent_type || '').trim() || 'Sub-agent';
+    return { id: item.id, name, status: item.status === 'running' ? 'running' : item.status === 'error' ? 'error' : 'done' };
+  });
+}
+
+// The items of one view: the main agent (`viewId` empty) or the sub-agent started by the Task call `viewId`.
+export const viewItems = (items, viewId) => items.filter(item => (viewId ? item.parentToolUseId === viewId : !item.parentToolUseId));

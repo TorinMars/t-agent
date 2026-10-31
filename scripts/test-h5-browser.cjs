@@ -133,7 +133,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     const { context, page, calls } = await openPage(browser);
     // Nothing chosen yet: the task sheet opens on its own.
     await page.locator('#h5-tasks').waitFor({ state: 'visible' });
-    assert.deepEqual(await page.locator('.h5-group-title').allTextContents(), ['In progress', 'To do']);
+    assert.equal(await page.locator('.h5-group-title').count(), 0, 'the tasks are one list, with no group titles');
     // A tap on a task does not go anywhere: it opens the list of its sessions, and a tap on a session goes there.
     await page.locator('.h5-task-item', { hasText: 'Fix login' }).tap();
     await page.locator('#h5-tasks .h5-terminal-list[aria-label="Fix login"] .h5-terminal-main', { hasText: 'Terminal 1' }).waitFor();
@@ -282,16 +282,16 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     assert.deepEqual(await page.locator('#h5-tasks .h5-terminal-main .h5-terminal-name').allTextContents(), ['Terminal 1'], 'the selected task lists its terminals under it');
     assert.equal(await page.locator('#h5-tasks .h5-terminal-main[aria-current="true"] .h5-terminal-name').textContent(), 'Terminal 1');
     assert.equal(await page.locator('#h5-terminal-tabs').count(), 0, 'there is no tab strip above the terminal any more');
-    assert.equal(await page.locator('#h5-tasks .h5-task-add').count(), 1, 'only the selected task has the "+" button');
+    assert.equal(await page.locator('#h5-tasks .h5-task-add').count(), await page.locator('#h5-tasks .h5-task-item').count(), 'every task has the "+" button');
     // Measured in one step: the task list re-renders when the sheet opens and would replace the row between two separate reads.
-    await page.locator('#h5-tasks .h5-task-add').waitFor();
+    await page.locator('#h5-tasks .h5-task-row:has(.h5-task-item[aria-current="true"]) .h5-task-add').waitFor();
     const atEnd = await page.evaluate(() => {
-      const row = document.querySelector('#h5-tasks .h5-task-row').getBoundingClientRect();
-      const add = document.querySelector('#h5-tasks .h5-task-add').getBoundingClientRect();
+      const row = document.querySelector('#h5-tasks .h5-task-row:has(.h5-task-item[aria-current="true"])').getBoundingClientRect();
+      const add = document.querySelector('#h5-tasks .h5-task-row:has(.h5-task-item[aria-current="true"]) .h5-task-add').getBoundingClientRect();
       return add.x + add.width > row.x + row.width - 2;
     });
     assert.ok(atEnd, 'the "+" sits at the right end of the task row');
-    await page.locator('#h5-tasks .h5-task-add').tap();
+    await page.locator('#h5-tasks .h5-task-row:has(.h5-task-item[aria-current="true"]) .h5-task-add').tap();
     assert.deepEqual(await page.locator('#h5-term-menu-actions button').allTextContents(), ['New Terminal', 'Claude session', 'Codex session', 'Claude agent', 'Codex agent'], 'the "+" opens the Session menu');
     // A chat-style agent: choose new or an existing session, then a conversation view covers the terminal.
     await page.locator('#h5-term-menu-actions button', { hasText: 'Claude agent' }).tap();
@@ -349,18 +349,10 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     await page.locator('#h5-open-tasks').tap();
     const chatRow = page.locator('#h5-tasks .h5-terminal-row', { hasText: 'New chat' });
     await chatRow.waitFor();
-    // A chat shows the agent's mark with a speech bubble, so it differs from a terminal that runs the same agent.
-    assert.equal(await chatRow.locator('.agent-chat-mark .agent-chat-bubble').count(), 1);
-    await chatRow.locator('.agent-chat-bubble').waitFor({ state: 'visible' }); // the sheet may still be sliding in
-    // Loading chats can replace the row between visibility and geometry reads. Re-resolve it until drawn.
-    let bubble;
-    for (let attempt = 0; attempt < 50; attempt += 1) {
-      bubble = await chatRow.locator('.agent-chat-bubble').boundingBox();
-      if (bubble && bubble.width >= 8 && bubble.height >= 8) break;
-      await page.waitForTimeout(20);
-    }
-    assert.ok(bubble && bubble.width >= 8 && bubble.height >= 8, 'the bubble is drawn');
-    assert.equal(await page.locator('#h5-tasks .h5-terminal-row:not(:has(.agent-chat-mark)) .agent-chat-bubble').count(), 0, 'only chats have the bubble');
+    // A chat shows the agent's mark with a small robot and an AGENT badge, so it differs from a terminal that runs the same agent.
+    await chatRow.locator('.h5-robot').waitFor({ state: 'visible' }); // the sheet may still be sliding in
+    assert.equal(await chatRow.locator('.h5-agent-badge').count(), 1);
+    assert.equal(await page.locator('#h5-tasks .h5-terminal-row:not(:has(.h5-robot)) .h5-agent-badge').count(), 0, 'only chats have the badge');
     await chatRow.locator('.h5-terminal-main').tap();
     await page.locator('#h5-agent .agent-chat').waitFor();
     assert.equal(await page.locator('#h5-session-name').textContent(), 'New chat', 'an open chat shows its own name');
@@ -429,7 +421,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     await page.waitForTimeout(400);
     assert.equal(await page.locator('#h5-agent').isHidden(), true, 'a deleted chat is not shown');
     await page.locator('#h5-open-tasks').tap();
-    await page.locator('#h5-tasks .h5-task-add').tap();
+    await page.locator('#h5-tasks .h5-task-row:has(.h5-task-item[aria-current="true"]) .h5-task-add').tap();
     await page.locator('#h5-term-menu-actions button', { hasText: 'New Terminal' }).tap();
     await page.locator('#h5-tasks').waitFor({ state: 'hidden' });
     await page.waitForFunction(() => window.sockets.length === 2);

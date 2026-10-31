@@ -8,7 +8,6 @@ import Drawer from '@mui/material/Drawer';
 import IconButton from '@mui/material/IconButton';
 import List from '@mui/material/List';
 import ListItemButton from '@mui/material/ListItemButton';
-import ListSubheader from '@mui/material/ListSubheader';
 import NativeSelect from '@mui/material/NativeSelect';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
@@ -17,6 +16,9 @@ import CloseIcon from '@mui/icons-material/Close';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ChevronRightIcon from '@mui/icons-material/ChevronRight';
 import SearchIcon from '@mui/icons-material/Search';
+import DesktopWindowsOutlinedIcon from '@mui/icons-material/DesktopWindowsOutlined';
+import SettingsIcon from '@mui/icons-material/Settings';
+import SmartToyOutlinedIcon from '@mui/icons-material/SmartToyOutlined';
 import MoreHorizIcon from '@mui/icons-material/MoreHoriz';
 import UnfoldLessIcon from '@mui/icons-material/UnfoldLess';
 import UnfoldMoreIcon from '@mui/icons-material/UnfoldMore';
@@ -30,8 +32,9 @@ const AGENT_NAMES = { claude: 'Claude', codex: 'Codex' };
 // The second line of a session row: what it is, then its state or when it last changed.
 function subtitle(row) {
   const name = AGENT_NAMES[row.agent];
-  const kind = row.kind === 'chat' ? `${name || ''} ${t('Session')}`.trim() : row.kind === 'terminal' ? (name ? `${name} ${t('Terminal')}` : t('Terminal')) : '';
-  const state = row.running ? t('Running') : ago(row.updated);
+  // A chat is an "Agent"; a Claude / Codex running in a terminal is a "Session".
+  const kind = row.kind === 'chat' ? `${name || ''} ${t('Agent')}`.trim() : row.kind === 'terminal' ? (name ? `${name} ${t('Session')}` : t('Terminal')) : '';
+  const state = row.running ? t('Running') : row.pending ? t('Pending') : ago(row.updated);
   return [kind, state].filter(Boolean).join(' \u00B7 ');
 }
 
@@ -59,15 +62,17 @@ function Sessions({ ui, taskId, sessions }) {
             selected={row.current} onClick={() => ui.actions.openRow(taskId, row)}
             sx={{ flex: '1 1 auto', minWidth: 0, minHeight: 52, py: 0.5, px: 1, borderRadius: 2, gap: 1.25, textAlign: 'left', fontSize: 15, borderLeft: 3, borderColor: 'transparent', '&.Mui-selected': { bgcolor: 'action.selected', borderColor: 'primary.main' } }}
           >
-            <Box component="span" className={`h5-terminal-icon ${row.agent || 'shell'}`} aria-hidden="true" sx={{ flex: '0 0 36px', width: 36, height: 36, borderRadius: 1.5, bgcolor: 'action.hover', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, fontFamily: 'monospace', color: row.agent === 'claude' ? '#d97757' : 'text.secondary', '& svg': { width: 22, height: 22 } }}>
-              {row.kind === 'chat' ? <DomIcon make={chatMark(row.agent)} />
+            <Box component="span" className={`h5-terminal-icon ${row.agent || 'shell'}`} aria-hidden="true" sx={{ position: 'relative', flex: '0 0 36px', width: 36, height: 36, borderRadius: 1.5, bgcolor: 'action.hover', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, fontFamily: 'monospace', color: row.agent === 'claude' ? '#d97757' : 'text.secondary', '& svg': { width: 22, height: 22 } }}>
+              {row.kind === 'chat' ? <DomIcon make={terminalMark(row.agent)} />
                 : row.kind === 'terminal' && row.agent ? <DomIcon make={terminalMark(row.agent)} />
                   : GLYPHS.shell}
+              {row.kind === 'chat' ? <Box component="span" className="h5-robot" sx={{ position: 'absolute', right: -4, bottom: -4, width: 16, height: 16, borderRadius: '50%', bgcolor: 'background.paper', border: 1, borderColor: 'divider', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: 'text.primary', '& svg': { width: 11, height: 11 } }}><SmartToyOutlinedIcon /></Box> : null}
             </Box>
             <Box component="span" sx={{ minWidth: 0, display: 'flex', flexDirection: 'column' }}>
               <Box component="span" className="h5-terminal-name" sx={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.title}</Box>
               {subtitle(row) ? <Box component="span" className="h5-terminal-sub" sx={{ fontSize: 12.5, color: row.running ? 'success.main' : 'text.secondary', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{subtitle(row)}</Box> : null}
             </Box>
+            {row.kind === 'chat' ? <Chip className="h5-agent-badge" label={t('AGENT')} size="small" variant="outlined" sx={{ ml: 'auto', flex: '0 0 auto', height: 22, fontSize: 11, letterSpacing: 0.5 }} /> : null}
           </ListItemButton>
           {row.more ? (
             <IconButton className="h5-terminal-more" size="small" sx={{ p: 0.5 }} aria-label={t(row.kind === 'chat' ? 'Chat actions' : 'Terminal actions')} onClick={() => ui.actions.rowMore(row)}>
@@ -92,14 +97,13 @@ function Tasks({ state, ui, query, filter }) {
       if (!filtering) return true;
       const rows = (task.sessions && task.sessions.rows) || [];
       const nameHit = !needle || task.title.toLowerCase().includes(needle);
-      const rowHit = rows.some(row => (!needle || row.title.toLowerCase().includes(needle)) && (filter !== 'running' || row.running));
-      return filter === 'running' ? rowHit : nameHit || rowHit;
+      const rowHit = rows.some(row => (!needle || row.title.toLowerCase().includes(needle)) && (filter === 'all' || row[filter]));
+      return filter !== 'all' ? rowHit : nameHit || rowHit;
     }),
   })).filter(group => group.tasks.length);
   if (filtering && !shown.length) return <Typography className="h5-list-note" color="text.secondary" sx={{ py: 3, textAlign: 'center' }}>{t('No matching sessions')}</Typography>;
   return shown.map(group => (
     <Box key={group.key} component="section">
-      <ListSubheader component="h3" className="h5-group-title" disableSticky sx={{ bgcolor: 'transparent', m: 0, mt: 1.5, px: 1, fontSize: 13, fontWeight: 500, lineHeight: '32px' }}>{group.name}</ListSubheader>
       {group.tasks.map(task => (
         <Box key={task.id} sx={{ borderBottom: 1, borderColor: 'divider', '&:last-of-type': { borderBottom: 0 } }}>
           <Box className={task.add ? 'h5-task-row' : undefined} sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
@@ -116,7 +120,7 @@ function Tasks({ state, ui, query, filter }) {
                 </Box>
               </Box>
             </ListItemButton>
-            {task.add ? <IconButton className="h5-task-add" size="small" sx={{ p: 0.5 }} aria-label={t('Session')} onClick={() => ui.actions.openSessionMenu()}><AddIcon /></IconButton> : null}
+            {task.add ? <IconButton className="h5-task-add" size="small" sx={{ p: 0.5 }} aria-label={t('Session')} onClick={() => ui.actions.addSession(task.id)}><AddIcon /></IconButton> : null}
           </Box>
           {task.expanded && task.sessions ? <Sessions ui={ui} taskId={task.id} sessions={task.sessions} /> : null}
         </Box>
@@ -127,13 +131,14 @@ function Tasks({ state, ui, query, filter }) {
 
 function Panel({ state, ui }) {
   const [title, setTitle] = useState('');
+  const [adding, setAdding] = useState(false);
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('all');
   const submit = async event => {
     event.preventDefault();
     const value = title.trim();
     if (!value || state.creatingTask) return;
-    if (await ui.actions.createTask(value)) setTitle('');
+    if (await ui.actions.createTask(value)) { setTitle(''); setAdding(false); }
   };
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
@@ -153,20 +158,13 @@ function Panel({ state, ui }) {
           </NativeSelect>
         </Box>
       ) : null}
-      <Box component="form" id="h5-new-task" className="h5-new-task" autoComplete="off" onSubmit={submit} sx={{ display: 'flex', gap: 1, px: 2, py: 1.25 }}>
-        <TextField
-          id="h5-new-task-title" size="small" fullWidth placeholder={t('New task title')} value={title} onChange={event => setTitle(event.target.value)}
-          slotProps={{ htmlInput: { maxLength: 200, enterKeyHint: 'done', 'aria-label': t('New task title'), style: { paddingTop: 7, paddingBottom: 7 } } }}
-        />
-        <Button type="submit" variant="contained" disabled={state.creatingTask} sx={{ flex: '0 0 auto', height: 36 }}>{t('Create')}</Button>
-      </Box>
       <Box className="h5-task-search" sx={{ px: 2, pb: 1 }}>
         <TextField
           size="small" fullWidth type="search" placeholder={t('Search sessions')} value={query} onChange={event => setQuery(event.target.value)}
           slotProps={{ input: { startAdornment: <InputAdornment position="start"><SearchIcon fontSize="small" /></InputAdornment>, sx: { borderRadius: 3 } }, htmlInput: { 'aria-label': t('Search sessions') } }}
         />
         <Box className="h5-task-filters" sx={{ display: 'flex', gap: 1, pt: 1 }}>
-          {[['all', 'All'], ['running', 'Running']].map(([key, label]) => (
+          {[['all', 'All'], ['running', 'Running'], ['pending', 'Pending']].map(([key, label]) => (
             <Chip key={key} label={t(label)} clickable color={filter === key ? 'primary' : 'default'} variant={filter === key ? 'filled' : 'outlined'} onClick={() => setFilter(key)} />
           ))}
         </Box>
@@ -174,8 +172,21 @@ function Panel({ state, ui }) {
       <List id="h5-task-list" className="h5-task-list" disablePadding sx={{ flex: '1 1 auto', overflowY: 'auto', px: 1, pb: 1.5 }}>
         <Tasks state={state} ui={ui} query={query} filter={filter} />
       </List>
+      {adding ? (      <Box component="form" id="h5-new-task" className="h5-new-task" autoComplete="off" onSubmit={submit} sx={{ display: 'flex', gap: 1, px: 2, pb: 1 }}>
+        <TextField
+          id="h5-new-task-title" autoFocus size="small" fullWidth placeholder={t('New task title')} value={title} onChange={event => setTitle(event.target.value)}
+          slotProps={{ htmlInput: { maxLength: 200, enterKeyHint: 'done', 'aria-label': t('New task title'), style: { paddingTop: 7, paddingBottom: 7 } } }}
+        />
+        <Button type="submit" variant="contained" disabled={state.creatingTask} sx={{ flex: '0 0 auto', height: 36 }}>{t('Create')}</Button>
+      </Box>) : null}
+      <Box sx={{ px: 2, pb: 1.5 }}>
+        <Button id="h5-add-task" fullWidth variant="contained" size="large" startIcon={<AddIcon />} onClick={() => setAdding(open => !open)} sx={{ borderRadius: 3, py: 1.25, textTransform: 'none', fontSize: 17 }}>{t('New task')}</Button>
+      </Box>
       <Divider />
-      <Button className="h5-desktop-link" component="a" href="/web" fullWidth sx={{ py: 1.5, borderRadius: 0 }}>{t('Desktop version')}</Button>
+      <Box sx={{ display: 'flex', alignItems: 'center' }}>
+        <Button className="h5-desktop-link" component="a" href="/web" startIcon={<DesktopWindowsOutlinedIcon />} sx={{ flex: '1 1 auto', justifyContent: 'flex-start', py: 1.5, px: 2, borderRadius: 0, textTransform: 'none', color: 'text.secondary' }}>{t('Desktop version')}</Button>
+        <IconButton id="h5-tasks-settings" aria-label={t('Settings')} onClick={() => ui.actions.openSettings()} sx={{ mr: 1 }}><SettingsIcon /></IconButton>
+      </Box>
     </Box>
   );
 }

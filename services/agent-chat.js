@@ -35,7 +35,7 @@ function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS,
   const rowOf = (taskId, id) => db.prepare('SELECT * FROM agent_conversations WHERE id = ? AND task_id = ?').get(id, taskId);
   const publicRow = (row, rt) => ({
     id: row.id, agent: row.agent, session_id: row.session_id, title: row.title, mode: row.mode,
-    updated_at: row.updated_at, running: Boolean(rt && rt.status === 'running'), translate: row.translate === 1, collapseKeyboard: row.collapse_keyboard !== 0,
+    updated_at: row.updated_at, running: Boolean(rt && rt.status === 'running'), pending: Boolean((rt && rt.pending && rt.pending.size) || readQueue(row.id).length), translate: row.translate === 1, collapseKeyboard: row.collapse_keyboard !== 0,
     opened: { web: row.opened_web || null, h5: row.opened_h5 || null },
     ...(rt && rt.model ? { model: rt.model } : {}), ...(rt && rt.effort ? { effort: rt.effort } : {}), ...(rt && rt.context ? { context: rt.context } : {}),
     ...(rt && rt.limits ? { limits: rt.limits } : {}),

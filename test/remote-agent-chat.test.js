@@ -132,6 +132,18 @@ test('the queue operations reach the Engine through the Client proxy too', async
   }
 });
 
+test('the fork request reaches the Engine through the Client proxy too (the test adapter cannot fork, and says so the same way on both)', async () => {
+  const [direct, viaProxy] = targets();
+  for (const target of [direct, viaProxy]) {
+    const base = `/tasks/${mine.id}/agent`;
+    const id = (await call(target, 'POST', `${base}/conversations`, { agent: 'claude', session_id: `session-fork-${target.prefix.replace(/\W/g, '')}` })).body.id;
+    const answer = await call(target, 'POST', `${base}/conversations/${id}/fork`, { itemId: 'whatever' });
+    assert.deepEqual([answer.status, answer.body.error], [400, 'FORK_NOT_SUPPORTED'], target.prefix);
+    assert.equal((await call(target, 'POST', `${base}/conversations/missing/fork`, { itemId: 'x' })).body.error, 'CONVERSATION_NOT_FOUND');
+    await call(target, 'DELETE', `${base}/conversations/${id}`);
+  }
+});
+
 test('tokens, connection ownership and task ownership are enforced, including streams', async () => {
   const [direct, proxied] = targets();
   const noToken = await fetch(`${engine}/v1/tasks/${mine.id}/agent/conversations`);

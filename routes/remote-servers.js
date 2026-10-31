@@ -312,6 +312,7 @@ for (const [method, suffix, upstream] of [
   ['get', '/conversations/:cid/models', req => `${conversationPath(req)}/models`],
   ['post', '/conversations/:cid/messages', req => `${conversationPath(req)}/messages`],
   ['post', '/conversations/:cid/interrupt', req => `${conversationPath(req)}/interrupt`],
+  ['post', '/conversations/:cid/fork', req => `${conversationPath(req)}/fork`],
   ['post', '/conversations/:cid/queue', req => `${conversationPath(req)}/queue`],
   ['post', '/conversations/:cid/queue/add', req => `${conversationPath(req)}/queue/add`],
   ['post', '/conversations/:cid/queue/:eid/remove', req => `${conversationPath(req)}/queue/${encodeURIComponent(req.params.eid)}/remove`],

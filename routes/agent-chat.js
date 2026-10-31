@@ -41,6 +41,8 @@ function createAgentChatRouter({ service = getAgentChat(), authenticate = requir
   router.post('/conversations/:cid/queue/:eid/remove', handle((task, req) => service.queueRemove(task, req.params.cid, req.params.eid)));
   router.post('/conversations/:cid/queue/:eid/edit', handle((task, req) => service.queueEdit(task, req.params.cid, req.params.eid, (req.body || {}).text)));
   router.post('/conversations/:cid/queue/:eid/send', handle((task, req) => service.queueSendNow(task, req.params.cid, req.params.eid)));
+  // A new conversation that continues from a message of this one: { itemId } -> { conversation, draft }.
+  router.post('/conversations/:cid/fork', handle((task, req) => service.fork(task, req.params.cid, req.body || {})));
   router.post('/conversations/:cid/limits/refresh', handle((task, req) => service.refreshUsage(task, req.params.cid)));
   router.get('/conversations/:cid/commands', handle((task, req) => service.listCommands(task, req.params.cid)));
   router.get('/conversations/:cid/models', handle((task, req) => service.listModels(task, req.params.cid)));

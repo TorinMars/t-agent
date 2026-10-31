@@ -430,6 +430,27 @@ function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS,
     return { running, queued, submitted: running + queued };
   }
 
+  // A new conversation that continues from an item of this one: the adapter makes the fork in the agent's own record (a forked Claude session, a forked
+  // Codex thread) and the new conversation resumes it, in the same task, with the same access level. Returns the new conversation and, for a message of the
+  // person (the fork is everything before it), its text as `draft`. The adapter refuses a fork it cannot place with certainty (FORK_MISMATCH,
+  // FORK_AT_FIRST_MESSAGE); nothing can be forked while the agent works, or before it has said anything.
+  async function fork(task, id, { itemId } = {}, deps = {}) {
+    const row = rowOf(task.id, id);
+    if (!row) throw fail('CONVERSATION_NOT_FOUND', 404);
+    const rt = runtimeFor(row, task);
+    const adapter = adapters[rt.agent];
+    if (!adapter.fork) throw fail('FORK_NOT_SUPPORTED');
+    if (rt.status === 'running') throw fail('CONVERSATION_BUSY', 409);
+    if (!rt.sessionId) throw fail('NOTHING_TO_FORK', 409);
+    await loadHistory(rt);
+    const items = [...rt.items.values()];
+    if (typeof itemId !== 'string' || !items.some(item => item.id === itemId)) throw fail('ITEM_NOT_FOUND', 404);
+    const title = `${row.title} (fork)`;
+    const result = await adapter.fork({ cwd: rt.workDir, sessionId: rt.sessionId, items, itemId, title, deps: deps[rt.agent] });
+    const conversation = create(task, { agent: rt.agent, session_id: result.sessionId, mode: row.mode, title });
+    return { conversation, draft: result.draft || '' };
+  }
+
   // The state of the chat's translation switch, kept per chat; the other pages that show this chat follow it through a meta event.
   function setTranslate(task, id, value) {
     const row = rowOf(task.id, id);
@@ -497,7 +518,14 @@ function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS,
   function turnContext(rt) {
     const turnNo = rt.suggestTurn; // the turn this context belongs to
     return {
-      upsert(item) { rt.items.set(item.id, item); emit(rt, { op: 'upsert', item }); },
+      // `at`: when the item first appeared (ms). An item replaced by a newer version of itself keeps its time; history items come with the time the
+      // agent recorded, the others are stamped now.
+      upsert(item) {
+        const known = rt.items.get(item.id);
+        const stamped = item.at ? item : { ...item, at: (known && known.at) || Date.now() };
+        rt.items.set(stamped.id, stamped);
+        emit(rt, { op: 'upsert', item: stamped });
+      },
       append(id, text) {
         const item = rt.items.get(id);
         if (!item) return;
@@ -560,7 +588,7 @@ function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS,
     const control = rt.control;
     try { await control.steer(prompt); }
     catch (error) { throw fail(rt.status === 'running' ? 'STEER_FAILED' : 'CONVERSATION_BUSY', 409); }
-    ctx.upsert({ id: `u${Date.now().toString(36)}${rt.counter++}`, kind: 'user', text: prompt.display, attachments: prompt.names });
+    ctx.upsert({ id: `u${Date.now().toString(36)}${rt.counter++}`, kind: 'user', text: prompt.display, attachments: prompt.names, steered: true }); // `steered`: it joined a running turn (see lib/agent-chat/fork-point.js)
     return { success: true, steered: true };
   }
 
@@ -712,7 +740,7 @@ function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS,
     }
   }
 
-  return { list, create, snapshot, subscribe, sendMessage, interrupt, answerPermission, setMode, setPreferences, listModels, setOpened, setTranslate, setCollapseKeyboard, refreshUsage, setQueue, queueAdd, queueRemove, queueEdit, queueSendNow, summary, listCommands, rename, remove, stopTask, refreshLimits };
+  return { list, create, snapshot, subscribe, sendMessage, interrupt, answerPermission, setMode, setPreferences, listModels, setOpened, setTranslate, setCollapseKeyboard, refreshUsage, fork, setQueue, queueAdd, queueRemove, queueEdit, queueSendNow, summary, listCommands, rename, remove, stopTask, refreshLimits };
 }
 
 let shared = null;

@@ -15,12 +15,12 @@ const COMMAND = /^\/[A-Za-z][\w:.-]*(\s|$)/;
 const RETRY_EVENTS_MS = 2000;
 const RETRY_LOAD_MS = 4000;
 
-export function createChatStore({ api, base, conversation, notify = () => {}, EventSourceImpl = globalThis.EventSource }) {
+export function createChatStore({ api, base, conversation, agent = '', notify = () => {}, EventSourceImpl = globalThis.EventSource }) {
   const url = suffix => `${base}/conversations/${conversation.id}${suffix}`;
   const listeners = new Set();
   let items = new Map();
   let state = {
-    items: [], pending: [], status: 'idle', canSteer: false, loaded: false, title: conversation.title, mode: conversation.mode,
+    items: [], pending: [], status: 'idle', canSteer: false, canFork: false, loaded: false, title: conversation.title, mode: conversation.mode,
     model: conversation.model || '', effort: conversation.effort || '', context: conversation.context || null, limits: conversation.limits || [],
     lastTurn: null, // the latest turn that ended while this page watched: { n, ok, stopped } (the host page may tell the person)
     translate: conversation.translate === true, // the translation switch of this chat
@@ -122,6 +122,7 @@ export function createChatStore({ api, base, conversation, notify = () => {}, Ev
       publish({
         items: [...items.values()], pending: snapshot.pending || [], status: snapshot.status, loaded: true,
         canSteer: Boolean(snapshot.capabilities && snapshot.capabilities.steer),
+        canFork: Boolean(snapshot.capabilities && snapshot.capabilities.fork),
         runningSince: snapshot.status === 'running' ? Date.now() - (snapshot.runningMs || 0) : null,
         ...(snapshot.conversation && snapshot.conversation.model ? { model: snapshot.conversation.model } : {}),
         ...(snapshot.conversation && snapshot.conversation.effort ? { effort: snapshot.conversation.effort } : {}),
@@ -345,6 +346,29 @@ export function createChatStore({ api, base, conversation, notify = () => {}, Ev
     }
   }
 
+  // Start a new chat from a message (fork): resolves to { conversation, draft } or null (the person is told why). `draft` is the text of the person's
+  // own message, to put in the input box of the new chat.
+  async function fork(itemId) {
+    try {
+      const result = await api.post(url('/fork'), { itemId });
+      return result && result.conversation ? { conversation: result.conversation, draft: result.draft || '' } : null;
+    } catch (error) {
+      notify(`Could not start a chat from this message: ${error.message}`);
+      return null;
+    }
+  }
+
+  // Start an empty chat with the same agent and access level: resolves to the conversation or null.
+  async function newChat() {
+    try {
+      const body = { agent: agent || conversation.agent, ...(state.mode ? { mode: state.mode } : {}) };
+      return await api.post(`${base}/conversations`, body);
+    } catch (error) {
+      notify(`Could not start a new chat: ${error.message}`);
+      return null;
+    }
+  }
+
   // Resolves to 'stopping' (the turn was asked to end), 'idle' (nothing was running) or 'failed'.
   async function stop() {
     stopping = true;
@@ -385,7 +409,7 @@ export function createChatStore({ api, base, conversation, notify = () => {}, Ev
   return {
     getState: () => state,
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
-    prepareMessage, dismissSuggestion, load, send, stop, answer, setMode, loadModels, choose, loadCommands, setTranslate, setCollapseKeyboard, refreshLimits, rename, enqueue, unqueue, editQueued, forceSend, sendQueued, apply,
+    prepareMessage, dismissSuggestion, load, send, fork, newChat, stop, answer, setMode, loadModels, choose, loadCommands, setTranslate, setCollapseKeyboard, refreshLimits, rename, enqueue, unqueue, editQueued, forceSend, sendQueued, apply,
     destroy() {
       disposed = true;
       clearTimeout(retry);

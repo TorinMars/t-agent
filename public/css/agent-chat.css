@@ -269,3 +269,14 @@ body.wt-on .agent-chat .ac-text, body.wt-on .agent-chat .ac-user { cursor: point
 .wt-meaning { margin-top: 2px; }
 .wt-base { margin-top: 2px; }
 .wt-error { margin-top: 2px; color: var(--danger, var(--h5-danger, #ff7b72)); font-size: 13px; }
+
+/* The line under a message: time, copy, fork, new chat. Quiet until the message is hovered (always shown on a touch screen). */
+.ac-msg-foot { display: flex; align-items: center; gap: 2px; min-height: 26px; color: var(--ac-muted, #8a8f98); font-size: 12px; opacity: 0; transition: opacity .15s; }
+.ac-user .ac-msg-foot { align-self: flex-end; }
+.ac-user:hover .ac-msg-foot, .ac-assistant:hover .ac-msg-foot, .ac-msg-foot:focus-within { opacity: 1; }
+@media (pointer: coarse) { .ac-msg-foot { opacity: 1; } }
+.ac-msg-time { margin-right: 4px; font-variant-numeric: tabular-nums; }
+.ac-msg-btn { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 6px; background: none; color: inherit; cursor: pointer; }
+.ac-msg-btn svg { width: 15px; height: 15px; }
+.ac-msg-btn:hover:not(:disabled) { background: rgba(127, 127, 127, .18); }
+.ac-msg-btn:disabled { opacity: .4; cursor: default; }

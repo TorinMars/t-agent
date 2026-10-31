@@ -71,7 +71,7 @@ const MultiTask = (() => {
     layout();
   }
 
-  function addCell(base, conversation, taskTitle) {
+  function addCell(base, conversation, taskTitle, draft = '') {
     if (cells.some(cell => cell.base === base && cell.id === conversation.id)) return false;
     if (cells.length >= MAX) return false;
     const node = el('section', 'mt-cell');
@@ -95,6 +95,10 @@ const MultiTask = (() => {
       api, base, conversation,
       onClose: () => closeCell(cell),
       onTitle: title => { cell.titleNode.textContent = title; },
+      draft,
+      onOpenChat: (created, extra = {}) => { // a fork or a new chat gets a cell of its own
+        if (!addCell(base, created, taskTitle, extra.draft || '')) toast('No room for another session. Close one first.');
+      },
       onOpen: () => { if (typeof Tools !== 'undefined') Tools.showPage('multi-task'); },
       notify: toast,
     });

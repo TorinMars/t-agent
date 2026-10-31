@@ -175,6 +175,9 @@ const server = http.createServer(app);
     await page.click('.ac-send');
     await page.waitForSelector('.ac-request');
     assert.equal(await page.locator('.ac-user .ac-bubble').textContent(), 'clean the build');
+    // The line under the person's message: time, copy and new chat (no fork: this fake agent does not offer it).
+    assert.equal(await page.locator('.ac-user .ac-msg-foot .ac-msg-time').count(), 1, 'the send time is under the message');
+    assert.deepEqual(await page.locator('.ac-user .ac-msg-btn').evaluateAll(buttons => buttons.map(button => button.getAttribute('aria-label'))), ['Copy', 'New chat']);
     assert.equal(await page.locator('.ac-request-title').textContent(), 'Run rm -rf build');
     assert.equal(await page.locator('.ac-stop').isVisible(), true, 'Stop is there while the turn runs');
     assert.equal(await page.locator('.ac-send').count(), 0, 'and Send only when there is something to send');

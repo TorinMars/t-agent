@@ -6,8 +6,8 @@ import { flushSync } from 'react-dom';
 import { createChatStore } from './store.mjs';
 import { Chat } from './ui.jsx';
 
-export function mount(container, { api, base, conversation, agent, onClose, onTitle = () => {}, onTurn = () => {}, notify = () => {} }) {
-  const store = createChatStore({ api, base, conversation, notify });
+export function mount(container, { api, base, conversation, agent, onClose, onTitle = () => {}, onTurn = () => {}, onOpenChat = () => {}, draft = null, notify = () => {} }) {
+  const store = createChatStore({ api, base, conversation, agent, notify });
   // The page that holds the chat shows its name too (the phone header), so it is told whenever the title changes (a rename, or the first message).
   let title = conversation.title;
   // The host is also told when a turn ends (not when the person stopped it), with the last thing the agent said, so it can notify the person.
@@ -23,7 +23,7 @@ export function mount(container, { api, base, conversation, agent, onClose, onTi
   container.replaceChildren(host);
   const root = createRoot(host);
   const handle = React.createRef();
-  flushSync(() => root.render(<Chat ref={handle} store={store} agent={agent} conversation={conversation} onClose={onClose} notify={notify} />));
+  flushSync(() => root.render(<Chat ref={handle} store={store} agent={agent} conversation={conversation} onClose={onClose} notify={notify} onOpenChat={onOpenChat} draft={draft ? { text: draft } : null} />));
   void store.load();
   return {
     root: host,

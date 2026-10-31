@@ -574,7 +574,7 @@
     void loadChats();
   }
   // `remember`: the person opened it, so the server is told; a chat that is shown again because it was already open is not sent again.
-  function mountAgent(conversation, { remember = true } = {}) {
+  function mountAgent(conversation, { remember = true, draft = '' } = {}) {
     if (agentChat) agentChat.destroy();
     agentView.hidden = false;
     if (window.visualViewport) {
@@ -582,7 +582,8 @@
       window.visualViewport.addEventListener('scroll', fitAgentView);
     }
     fitAgentView();
-    agentChat = AgentChat.mount(agentView, { api: chatApi, base: `${source.tasksBase}/${task.id}/agent`, conversation, onClose: closeAgent, notify: message => tell(message, 'error'),
+    agentChat = AgentChat.mount(agentView, { api: chatApi, base: `${source.tasksBase}/${task.id}/agent`, conversation, onClose: closeAgent, notify: message => tell(message, 'error'), draft,
+      onOpenChat: (created, extra = {}) => mountAgent(created, { draft: extra.draft || '' }), // a fork or a new chat replaces the one shown
       onTitle: title => { // a rename or the first message gave the chat a new name
         if (!agentFor || agentFor.conversation !== conversation.id) return;
         agentFor.title = title;

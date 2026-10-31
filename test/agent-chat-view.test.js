@@ -697,3 +697,38 @@ test('with an older Engine the page still sends the next queued message itself a
   await new Promise(resolve => setTimeout(resolve, 10));
   assert.ok(calls.some(call => call[0] === 'post' && /messages$/.test(call[1]) && call[2].text === 'later'), 'the page sent it');
 });
+
+test('every message carries the data of its footer: the item to fork at, the time and the text to copy', async () => {
+  const { toMessages } = await load();
+  const messages = toMessages([
+    { id: 'u1', kind: 'user', text: 'hi', at: 10 },
+    { id: 'th', kind: 'thinking', text: 'plan', at: 11 },
+    { id: 't1', kind: 'tool', name: 'Bash', input: {}, output: '', status: 'done', at: 12 },
+    { id: 'm1', kind: 'text', text: 'first', at: 13 },
+    { id: 't2', kind: 'tool', name: 'Bash', input: {}, output: '', status: 'done', at: 14 },
+    { id: 'm2', kind: 'text', text: 'second', at: 15 },
+    { id: 't3', kind: 'tool', name: 'Bash', input: {}, output: '', status: 'done', at: 16 },
+  ]);
+  assert.deepEqual(messages[0].footer, { itemId: 'u1', at: 10, text: 'hi' });
+  assert.deepEqual(messages[1].footer, { itemId: 't3', at: 16, text: 'first\n\nsecond' }, 'the agent message forks after its last item and copies only its text');
+});
+
+test('the store starts a chat from a message (fork) and a new chat, and says why when it cannot', async () => {
+  const { createChatStore } = await load();
+  const { options, calls, notices, api } = harness({ snapshot: { items: [], pending: [], status: 'idle', seq: 0, capabilities: { fork: true } } });
+  api.post = async (url, body) => {
+    calls.push(['post', url, body]);
+    if (/fork$/.test(url)) return body.itemId === 'bad' ? Promise.reject(new Error('FORK_MISMATCH')) : { conversation: { id: 'c2' }, draft: 'text' };
+    return { id: 'c3' };
+  };
+  const store = createChatStore({ ...options, agent: 'claude' });
+  await store.load();
+  assert.equal(store.getState().canFork, true);
+  assert.deepEqual(await store.fork('u1'), { conversation: { id: 'c2' }, draft: 'text' });
+  assert.deepEqual(calls.find(call => /fork$/.test(call[1])).slice(1), ['/b/conversations/c1/fork', { itemId: 'u1' }]);
+  assert.equal(await store.fork('bad'), null);
+  assert.match(notices[0], /FORK_MISMATCH/);
+  assert.deepEqual(await store.newChat(), { id: 'c3' });
+  assert.deepEqual(calls[calls.length - 1].slice(1), ['/b/conversations', { agent: 'claude', mode: 'ask' }]);
+  store.destroy();
+});

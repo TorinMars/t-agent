@@ -160,7 +160,7 @@ const AgentView = (() => {
   }
 
   // Mounts the chat of a conversation as a tab of the task (nothing happens when it is already open).
-  function mountRow(scope, conversation) {
+  function mountRow(scope, conversation, { draft = '' } = {}) {
     let group = sessions.get(scope);
     if (!group) sessions.set(scope, group = { rows: [], active: null });
     let row = group.rows.find(item => item.id === conversation.id);
@@ -170,7 +170,15 @@ const AgentView = (() => {
     holder.className = 'agent-holder';
     holder.hidden = true; // sync() decides what is shown
     pane.append(holder);
-    const chat = AgentChat.mount(holder, { api, base, conversation, onClose: () => closeChat(scope, conversation.id), onOpen: () => void showChat(scope, conversation.id), notify: message => { if (typeof Toast !== 'undefined') Toast.error(message); } });
+    const chat = AgentChat.mount(holder, { api, base, conversation, onClose: () => closeChat(scope, conversation.id), onOpen: () => void showChat(scope, conversation.id), draft,
+      onOpenChat: (created, extra = {}) => { // a chat started from a message (fork) or a new chat: shown as the active tab
+        const next = mountRow(scope, created, { draft: extra.draft || '' });
+        setOpened(scope, created.id, true);
+        sessions.get(scope).active = created.id;
+        save(scope);
+        sync();
+        next.chat.focus();
+      }, notify: message => { if (typeof Toast !== 'undefined') Toast.error(message); } });
     row = { id: conversation.id, agent: conversation.agent, title: conversation.title, chat, holder };
     group.rows.push(row);
     return row;

@@ -6,7 +6,7 @@ const WordTranslate = (() => {
   const KEY = 'word-translate';
   const AREA = '.agent-chat';
   // Where a tap is not a lookup: things that have an action of their own, code (identifiers are not words), tool output and the controls of the chat.
-  const SKIP = 'a, button, input, textarea, select, summary, label, pre, code, kbd, [contenteditable], .ac-tool, .ac-composer, .ac-options, .ac-meta, .ac-commands, .wt-popup';
+  const SKIP = 'a, button, input, textarea, select, summary, label, pre, code, kbd, [contenteditable], .ac-tool, .ac-msg-foot, .ac-composer, .ac-options, .ac-meta, .ac-commands, .wt-popup';
   const TAP_MOVE_PX = 8;
   const TAP_MS = 600; // a longer press is the person selecting text
   const SENTENCE_REACH = 200;

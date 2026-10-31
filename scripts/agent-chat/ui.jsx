@@ -2,7 +2,7 @@
 // level, permission / question cards and the composer are ours because they talk to this server's API (see store.js).
 import React, { useEffect, useImperativeHandle, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import {
-  AssistantRuntimeProvider, MessagePrimitive, ThreadPrimitive, useExternalStoreRuntime,
+  AssistantRuntimeProvider, MessagePrimitive, ThreadPrimitive, useAuiState, useExternalStoreRuntime,
 } from '@assistant-ui/react';
 import { MarkdownTextPrimitive } from '@assistant-ui/react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -27,7 +27,7 @@ const Icon = ({ d, fill }) => (
   <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill={fill ? 'currentColor' : 'none'} stroke={fill ? 'none' : 'currentColor'} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={d} /></svg>
 );
 const ICONS = {
-  plus: 'M12 5v14M5 12h14', chevron: 'M6 9l6 6 6-6', up: 'M12 19V5M5 12l7-7 7 7', stop: 'M6 6h12v12H6z',
+  copy: 'M9 9h11v11H9zM5 15V5h10', fork: 'M6 3v6a3 3 0 0 0 3 3h6a3 3 0 0 1 3 3v6M6 3v18M18 21v0', chat: 'M4 5h16v11H9l-5 4V5zM12 8v5M9.5 10.5h5', check: 'M5 12l5 5 9-10', plus: 'M12 5v14M5 12h14', chevron: 'M6 9l6 6 6-6', up: 'M12 19V5M5 12l7-7 7 7', stop: 'M6 6h12v12H6z',
   mic: 'M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3zM5 11a7 7 0 0 0 14 0M12 18v3', close: 'M6 6l12 12M18 6L6 18', edit: 'M4 20h4L19 9l-4-4L4 16v4zM13.5 6.5l4 4', expand: 'M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7', collapse: 'M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7', enter: 'M20 5v7a3 3 0 0 1-3 3H5m0 0l4-4m-4 4l4 4',
 };
 
@@ -152,8 +152,52 @@ function Init({ data }) {
 const AGENT_PARTS = { Text: AgentText, Reasoning: Thinking, data: { by_name: { notice: Notice, init: Init, tools: ToolGroup } } };
 const USER_PARTS = { Text: UserText, data: { by_name: { attachments: Attachments } } };
 
-const AssistantMessage = () => <MessagePrimitive.Root className="ac-assistant"><MessagePrimitive.Parts components={AGENT_PARTS} /></MessagePrimitive.Root>;
-const UserMessage = () => <MessagePrimitive.Root className="ac-item ac-user"><MessagePrimitive.Parts components={USER_PARTS} /></MessagePrimitive.Root>;
+// The line under a message: when it was sent, copy, start a chat from here (fork) and start a new chat. Its data comes from `toMessages` (by message id),
+// the actions from the Chat through this context.
+const FooterContext = React.createContext(null);
+
+function clock(at) {
+  if (!at) return '';
+  const date = new Date(at);
+  const time = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return date.toDateString() === new Date().toDateString() ? time : `${date.toLocaleDateString([], { month: 'numeric', day: 'numeric' })} ${time}`;
+}
+
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); return true; } catch { /* fall back to the old way below */ }
+  const area = document.createElement('textarea');
+  area.value = text;
+  area.style.cssText = 'position:fixed;opacity:0';
+  document.body.append(area);
+  area.select();
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch { ok = false; }
+  area.remove();
+  return ok;
+}
+
+function MessageFooter({ id, user }) {
+  const context = React.useContext(FooterContext);
+  const [copied, setCopied] = useState(false);
+  const footer = context && context.footers.get(id);
+  if (!footer || (!user && context.running && context.lastId === id)) return null; // the agent's message is still being written
+  const copy = async () => {
+    if (await copyText(footer.text)) { setCopied(true); setTimeout(() => setCopied(false), 1500); } else context.notify(t('Could not copy'));
+  };
+  const forkLabel = user ? t('Start a chat from before this message') : t('Start a chat from here');
+  return (
+    <div className="ac-msg-foot">
+      {footer.at ? <time className="ac-msg-time" dateTime={new Date(footer.at).toISOString()}>{clock(footer.at)}</time> : null}
+      {footer.text ? <button type="button" className="ac-msg-btn" aria-label={t('Copy')} title={t('Copy')} onClick={copy}><Icon d={copied ? ICONS.check : ICONS.copy} /></button> : null}
+      {context.canFork ? <button type="button" className="ac-msg-btn" aria-label={forkLabel} title={forkLabel} disabled={context.running} onClick={() => context.fork(footer.itemId)}><Icon d={ICONS.fork} /></button> : null}
+      <button type="button" className="ac-msg-btn" aria-label={t('New chat')} title={t('New chat')} onClick={() => context.newChat()}><Icon d={ICONS.chat} /></button>
+    </div>
+  );
+}
+
+const messageId = () => useAuiState(state => state.message.id);
+const AssistantMessage = () => { const id = messageId(); return <MessagePrimitive.Root className="ac-assistant"><MessagePrimitive.Parts components={AGENT_PARTS} /><MessageFooter id={id} /></MessagePrimitive.Root>; };
+const UserMessage = () => { const id = messageId(); return <MessagePrimitive.Root className="ac-item ac-user"><MessagePrimitive.Parts components={USER_PARTS} /><MessageFooter id={id} user /></MessagePrimitive.Root>; };
 const MESSAGES = { UserMessage, AssistantMessage };
 
 // ── Permission, question and plan cards ──
@@ -376,8 +420,8 @@ function OptionsMenu({ children }) {
   );
 }
 
-function Composer({ store, state, agent, notify, inputRef }) {
-  const [text, setText] = useState('');
+function Composer({ store, state, agent, notify, inputRef, draft }) {
+  const [text, setText] = useState(draft ? draft.text : '');
   const [attachments, setAttachments] = useState([]);
   const [sending, setSending] = useState(false);
   const [expanded, setExpanded] = useState(false); // the big input box: Enter is a new line, and the message is sent with the button only
@@ -779,9 +823,16 @@ function TitleMenu({ title, store, onClose }) {
 }
 
 // ── The view ──
-export const Chat = React.forwardRef(function Chat({ store, agent, conversation, onClose, notify }, ref) {
+export const Chat = React.forwardRef(function Chat({ store, agent, conversation, onClose, notify, onOpenChat = () => {}, draft = null }, ref) {
   const state = useSyncExternalStore(store.subscribe, store.getState);
   const messages = useMemo(() => toMessages(state.items), [state.items]);
+  const footerContext = useMemo(() => ({
+    footers: new Map(messages.filter(message => message.footer).map(message => [message.id, message.footer])),
+    lastId: messages.length ? messages[messages.length - 1].id : '',
+    running: state.status === 'running', canFork: state.canFork, notify,
+    fork: async itemId => { const result = await store.fork(itemId); if (result) onOpenChat(result.conversation, { draft: result.draft }); },
+    newChat: async () => { const created = await store.newChat(); if (created) onOpenChat(created, {}); },
+  }), [messages, state.status, state.canFork, store, notify, onOpenChat]);
   const inputRef = useRef(null);
   useImperativeHandle(ref, () => ({ focus: () => inputRef.current && inputRef.current.focus() }), []);
   const runtime = useExternalStoreRuntime({
@@ -805,7 +856,7 @@ export const Chat = React.forwardRef(function Chat({ store, agent, conversation,
         <AgentIcon agent={conversation.agent} />
         <TitleMenu title={state.title} store={store} onClose={onClose} />
       </header>
-      <AssistantRuntimeProvider runtime={runtime}>
+      <AssistantRuntimeProvider runtime={runtime}><FooterContext.Provider value={footerContext}>
         <ThreadPrimitive.Root className="ac-thread">
           <ThreadPrimitive.Viewport className="ac-messages" role="log" aria-live="polite" scrollToBottomOnInitialize>
             <div className="ac-list"><ThreadPrimitive.Messages components={MESSAGES} /></div>
@@ -813,8 +864,8 @@ export const Chat = React.forwardRef(function Chat({ store, agent, conversation,
             {state.status === 'running' ? <Working since={state.runningSince} store={store} /> : null}
           </ThreadPrimitive.Viewport>
         </ThreadPrimitive.Root>
-      </AssistantRuntimeProvider>
-      <Composer store={store} state={state} agent={agent} notify={notify} inputRef={inputRef} />
+      </FooterContext.Provider></AssistantRuntimeProvider>
+      <Composer store={store} state={state} agent={agent} notify={notify} inputRef={inputRef} draft={draft} />
       <div className="ac-foot">
         <label className="ac-mode-label">
           <span className="ac-mode-text">{t((agent.modes.find(([value]) => value === state.mode) || [state.mode, state.mode])[1])}</span>

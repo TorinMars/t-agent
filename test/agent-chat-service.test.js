@@ -147,7 +147,12 @@ test('Claude messages become text, thinking and tool items; streamed text is rep
   normalizer.handle({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'ok', is_error: false }] } });
   assert.deepEqual([ctx.items.get('toolu_1').status, ctx.items.get('toolu_1').output], ['done', 'ok']);
   normalizer.handle({ type: 'assistant', parent_tool_use_id: 'toolu_x', message: { id: 'msg_sub', content: [{ type: 'text', text: 'subagent' }] } });
-  assert.equal(ctx.items.size, 2, 'subagent chatter is not shown');
+  assert.equal(ctx.items.size, 3, 'subagent chatter is kept, tagged with the Task call that started it');
+  assert.equal(ctx.items.get('msg_sub:0').parentToolUseId, 'toolu_x');
+  assert.equal(ctx.items.get('msg_1:0').parentToolUseId, undefined, 'the main agent has no parent');
+  normalizer.handle({ type: 'assistant', parent_tool_use_id: 'toolu_x', message: { id: 'msg_sub2', content: [{ type: 'tool_use', id: 'toolu_sub', name: 'Read', input: { file_path: '/a' } }] } });
+  normalizer.handle({ type: 'user', parent_tool_use_id: 'toolu_x', message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_sub', content: 'data', is_error: false }] } });
+  assert.deepEqual([ctx.items.get('toolu_sub').parentToolUseId, ctx.items.get('toolu_sub').status, ctx.items.get('toolu_sub').output], ['toolu_x', 'done', 'data']);
   const result = normalizer.handle({ type: 'result', subtype: 'success', session_id: 's-1', total_cost_usd: 0.01, usage: { input_tokens: 3, output_tokens: 4 } });
   assert.deepEqual([result.ok, result.usage, ctx.session], [true, { input: 3, output: 4 }, 's-1']);
   assert.equal(normalizer.handle({ type: 'result', subtype: 'error_max_turns' }).ok, false);
@@ -350,7 +355,9 @@ test('Claude: context use follows each request, the real window comes with the r
   assert.equal(meta.at(-1).context.window, 1000000, 'a request that held more than 200k ran on a larger window');
   normalizer.handle({ type: 'result', subtype: 'success', is_error: false, modelUsage: { 'claude-sonnet-5-5': { contextWindow: 1000000 }, 'claude-haiku-5-5': { contextWindow: 200000 } } });
   assert.deepEqual(meta.at(-1), { context: { used: 450010, window: 1000000 } }, 'the largest reported window, with the use of the last request');
-  normalizer.handle({ type: 'assistant', message: { id: 'sub', parent_tool_use_id: 'x', content: [] } }); // no usage: nothing reported
+  const reported = meta.length;
+  normalizer.handle({ type: 'assistant', parent_tool_use_id: 'x', message: { id: 'sub', model: 'claude-haiku-5-5', content: [], usage: { input_tokens: 9, output_tokens: 9 } } }); // a sub-agent's usage is not the main context
+  assert.equal(meta.length, reported);
 
   const sdk = { getSessionMessages: async () => [
     { type: 'user', message: { content: 'hi' } },

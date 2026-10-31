@@ -421,6 +421,10 @@ function OptionsMenu({ children }) {
   );
 }
 
+// While the input has focus the box is two rows (the text on a full row, the buttons under it). A press on a button must not take the focus,
+// or the box would fold back and move the button before the click lands.
+const keepFocus = event => { if (event.target.closest && event.target.closest('button')) event.preventDefault(); };
+
 function Composer({ store, state, agent, notify, inputRef, draft, tools }) {
   const [text, setText] = useState(draft ? draft.text : '');
   const [attachments, setAttachments] = useState([]);
@@ -579,7 +583,7 @@ function Composer({ store, state, agent, notify, inputRef, draft, tools }) {
   };
   return (
     <>
-    <form ref={form} className={`ac-composer${expanded ? ' expanded' : ''}`} aria-busy={sending} autoComplete="off" onSubmit={event => { event.preventDefault(); void dispatch(false); }}>
+    <form ref={form} className={`ac-composer${expanded ? ' expanded' : ''}`} aria-busy={sending} autoComplete="off" onPointerDown={keepFocus} onSubmit={event => { event.preventDefault(); void dispatch(false); }}>
       {menu !== 'none' ? (
         <div className="ac-commands" role={menu === 'list' ? 'listbox' : 'status'} aria-label={t('Slash commands')}>
           {menu === 'list' ? matches.map((command, index) => (
@@ -671,7 +675,7 @@ function Composer({ store, state, agent, notify, inputRef, draft, tools }) {
       <input ref={picker} type="file" multiple hidden accept={ACCEPT} onChange={event => { void addFiles([...event.target.files]); event.target.value = ''; }} />
     </form>
     {/* One row under the input box, all icons: the options menu and the access level on the left, the model, the context and the plan usage on the right. */}
-    <div className="ac-foot">
+    <div className="ac-foot" onPointerDown={keepFocus}>
       <OptionsMenu>
         <Switch className="ac-translate" label={t('Translate to English')} text={t('Translate')} checked={translate} disabled={sending} onChange={() => void store.setTranslate(!translate)} />
         {Words ? <Switch className="ac-word-translate" label={t('Tap an English word in a message to see what it means. It uses the translation service in the settings.')} text={t('Translate words on tap')} checked={wordTap} onChange={() => Words.setEnabled(!wordTap)} /> : null}

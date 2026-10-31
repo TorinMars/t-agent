@@ -195,7 +195,14 @@ const server = http.createServer(app);
     assert.deepEqual([await page.locator('.ac-model-name').textContent(), await page.locator('.ac-model-effort').textContent()], ['Sonnet 5.5', 'Medium'], 'the footer shows the model name and the effort');
     const centers = await page.evaluate(() => ['.ac-options-button', '.ac-mode-label', '.ac-model'].map(selector => { const box = document.querySelector(selector).getBoundingClientRect(); return Math.round(box.top + box.height / 2); }));
     assert.equal(new Set(centers).size, 1, `the footer controls share one center line: ${centers}`);
-    // The ring says how much of the context window is used, and changes colour as it fills.
+    // Focus in the input: two rows, the input on a full row and the buttons under it; without focus, one row.
+    await page.evaluate(() => document.activeElement && document.activeElement.blur());
+    const rows = () => page.evaluate(() => { const input = document.querySelector('.ac-input').getBoundingClientRect(); const box = document.querySelector('.ac-box').getBoundingClientRect(); const attach = document.querySelector('.ac-attach').getBoundingClientRect(); return { full: input.width > box.width - 24, below: attach.top >= input.bottom - 1 }; });
+    assert.deepEqual(await rows(), { full: false, below: false }, 'one row while the input has no focus');
+    await page.focus('.ac-input');
+    assert.deepEqual(await rows(), { full: true, below: true }, 'two rows while the input has focus');
+    await page.evaluate(() => document.activeElement.blur());
+    // The ring says how much of the context window is used, and changes colouras it fills.
     assert.equal(await page.locator('.ac-context').getAttribute('aria-label'), 'Context: 21% used (42k of 200k tokens)');
     // The plan usage is one small unit of upright bars (usage left and time left per window); its numbers are in a floating window.
     assert.equal(await page.locator('.ac-limits').count(), 1, 'one unit');

@@ -130,6 +130,10 @@
 .ac-commands-note { padding: 8px 10px; color: var(--ac-muted); font-size: 13px; }
 .ac-box { display: flex; align-items: flex-end; gap: 4px; padding: 6px 8px; border: 1px solid var(--ac-border); border-radius: 24px; background: var(--ac-bg); box-shadow: 0 1px 4px rgba(0,0,0,.06); }
 .ac-box:focus-within { border-color: var(--ac-muted); }
+/* Focused: two rows. The input takes the whole first row; the attach button stays at the left of the second row and the other buttons go to the right. */
+.ac-box:focus-within { flex-wrap: wrap; align-items: center; border-radius: 20px; }
+.ac-box:focus-within .ac-input { order: -1; flex: 1 0 100%; }
+.ac-box:focus-within .ac-expand { margin-left: auto; }
 .ac-input { box-sizing: border-box; flex: 1 1 auto; min-width: 0; min-height: 36px; max-height: 200px; padding: 7px 4px; border: 0; background: none; color: inherit; resize: none; font: inherit; font-size: 16px; line-height: 1.4; }
 .ac-input:focus { outline: none; }
 /* The expanded input box: tall, with Enter for a new line; the message goes with the send button only. */

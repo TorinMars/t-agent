@@ -53,16 +53,16 @@ function ago(value) {
 // The sessions under a task: its terminals, then its chats. The selected task's rows have "⋯" actions; those of another task only open.
 function Sessions({ ui, taskId, sessions }) {
   return (
-    <List className="h5-terminal-list" role="group" aria-label={sessions.label} dense disablePadding sx={{ ml: 2, mb: 0.25, pl: 0.25, borderLeft: 1, borderColor: 'divider' }}>
+    <List className="h5-terminal-list" role="group" aria-label={sessions.label} dense disablePadding sx={{ ml: 1.75, mb: 0.125, pl: 0.125, borderLeft: 1, borderColor: 'divider' }}>
       {sessions.note ? <Typography className="h5-peek-note" variant="body2" color="text.secondary" sx={{ px: 1, py: 0.75 }}>{t(sessions.note)}</Typography> : null}
       {sessions.rows.map(row => (
         <Box key={`${row.kind}:${row.id}`} className="h5-terminal-row" sx={{ display: 'flex', alignItems: 'center', gap: 0.5, borderRadius: 2, borderLeft: 3, borderColor: row.current ? 'primary.main' : 'transparent', bgcolor: row.current ? 'action.selected' : undefined }}>
           <ListItemButton
             component="button" className="h5-terminal-main" aria-current={row.current ? 'true' : undefined}
             selected={row.current} onClick={() => ui.actions.openRow(taskId, row)}
-            sx={{ flex: '1 1 auto', minWidth: 0, minHeight: 44, py: 0.25, px: 1, borderRadius: 2, gap: 1, textAlign: 'left', fontSize: 14, '&.Mui-selected': { bgcolor: 'transparent' } }}
+            sx={{ flex: '1 1 auto', minWidth: 0, minHeight: 40, py: 0.125, px: 0.75, borderRadius: 2, gap: 0.875, textAlign: 'left', fontSize: 14, '&.Mui-selected': { bgcolor: 'transparent' } }}
           >
-            <Box component="span" className={`h5-terminal-icon ${row.agent || 'shell'}`} aria-hidden="true" sx={{ position: 'relative', flex: '0 0 32px', width: 32, height: 32, borderRadius: 1.5, bgcolor: 'action.hover', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontFamily: 'monospace', color: row.agent === 'claude' ? '#d97757' : 'text.secondary', '& svg': { width: 20, height: 20 } }}>
+            <Box component="span" className={`h5-terminal-icon ${row.agent || 'shell'}`} aria-hidden="true" sx={{ position: 'relative', flex: '0 0 28px', width: 28, height: 28, borderRadius: 1.5, bgcolor: 'action.hover', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontFamily: 'monospace', color: row.agent === 'claude' ? '#d97757' : 'text.secondary', '& svg': { width: 18, height: 18 } }}>
               {row.kind === 'chat' ? <DomIcon make={terminalMark(row.agent)} />
                 : row.kind === 'terminal' && row.agent ? <DomIcon make={terminalMark(row.agent)} />
                   : GLYPHS.shell}
@@ -110,7 +110,7 @@ function Tasks({ state, ui, query, filter }) {
             <ListItemButton
               component="button" className="h5-task-item" selected={task.selected} aria-current={task.selected ? 'true' : undefined} aria-expanded={task.expanded}
               onClick={() => ui.actions.toggleTask(task.id)}
-              sx={{ flex: '1 1 auto', minWidth: 0, minHeight: 40, py: 0.25, px: 1, borderRadius: 2, textAlign: 'left', overflowWrap: 'anywhere', fontSize: 15, lineHeight: 1.3, '&.Mui-selected': { bgcolor: 'transparent' } }}
+              sx={{ flex: '1 1 auto', minWidth: 0, minHeight: 36, py: 0, px: 0.75, borderRadius: 2, textAlign: 'left', overflowWrap: 'anywhere', fontSize: 14, lineHeight: 1.25, '&.Mui-selected': { bgcolor: 'transparent' } }}
             >
               <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', gap: 1, width: '100%' }}>
                 {task.expanded ? <ExpandMoreIcon fontSize="small" /> : <ChevronRightIcon fontSize="small" />}
@@ -142,7 +142,7 @@ function Panel({ state, ui }) {
   };
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
-      <Box className="h5-sheet-header" sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', px: 2, py: 0.5, borderBottom: 1, borderColor: 'divider' }}>
+      <Box className="h5-sheet-header" sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', px: 1.5, py: 0.25, borderBottom: 1, borderColor: 'divider' }}>
         <Typography id="h5-tasks-title" variant="h6" component="h2">{t('Tasks')}</Typography>
         <Box sx={{ display: 'flex', alignItems: 'center' }}>
           <IconButton id="h5-expand-all" size="small" aria-label={t('Expand all')} title={t('Expand all')} onClick={() => ui.actions.expandAll()}><UnfoldMoreIcon /></IconButton>
@@ -158,7 +158,7 @@ function Panel({ state, ui }) {
           </NativeSelect>
         </Box>
       ) : null}
-      <Box className="h5-task-search" sx={{ px: 2, pb: 0.5, pt: 1 }}>
+      <Box className="h5-task-search" sx={{ px: 1.5, pb: 0.25, pt: 0.75 }}>
         <TextField
           size="small" fullWidth type="search" placeholder={t('Search sessions')} value={query} onChange={event => setQuery(event.target.value)}
           slotProps={{ input: { startAdornment: <InputAdornment position="start"><SearchIcon fontSize="small" /></InputAdornment>, sx: { borderRadius: 3, fontSize: 14, '& input': { py: 0.75 } } }, htmlInput: { 'aria-label': t('Search sessions') } }}
@@ -169,7 +169,7 @@ function Panel({ state, ui }) {
           ))}
         </Box>
       </Box>
-      <List id="h5-task-list" className="h5-task-list" disablePadding sx={{ flex: '1 1 auto', overflowY: 'auto', px: 1, pb: 1 }}>
+      <List id="h5-task-list" className="h5-task-list" disablePadding sx={{ flex: '1 1 auto', overflowY: 'auto', px: 0.5, pb: 0.5 }}>
         <Tasks state={state} ui={ui} query={query} filter={filter} />
       </List>
       {adding ? (      <Box component="form" id="h5-new-task" className="h5-new-task" autoComplete="off" onSubmit={submit} sx={{ display: 'flex', gap: 1, px: 2, pb: 1 }}>
@@ -179,12 +179,12 @@ function Panel({ state, ui }) {
         />
         <Button type="submit" variant="contained" disabled={state.creatingTask} sx={{ flex: '0 0 auto', height: 36 }}>{t('Create')}</Button>
       </Box>) : null}
-      <Box sx={{ px: 2, pb: 1 }}>
-        <Button id="h5-add-task" fullWidth variant="contained" size="medium" startIcon={<AddIcon />} onClick={() => setAdding(open => !open)} sx={{ borderRadius: 3, py: 0.75, textTransform: 'none', fontSize: 15 }}>{t('New task')}</Button>
+      <Box sx={{ px: 1.5, pb: 0.75 }}>
+        <Button id="h5-add-task" fullWidth variant="contained" size="medium" startIcon={<AddIcon />} onClick={() => setAdding(open => !open)} sx={{ borderRadius: 3, py: 0.5, textTransform: 'none', fontSize: 14 }}>{t('New task')}</Button>
       </Box>
       <Divider />
       <Box sx={{ display: 'flex', alignItems: 'center' }}>
-        <Button className="h5-desktop-link" component="a" href="/web" startIcon={<DesktopWindowsOutlinedIcon />} sx={{ flex: '1 1 auto', justifyContent: 'flex-start', py: 0.75, px: 2, borderRadius: 0, textTransform: 'none', fontSize: 14, color: 'text.secondary' }}>{t('Desktop version')}</Button>
+        <Button className="h5-desktop-link" component="a" href="/web" startIcon={<DesktopWindowsOutlinedIcon />} sx={{ flex: '1 1 auto', justifyContent: 'flex-start', py: 0.5, px: 1.5, borderRadius: 0, textTransform: 'none', fontSize: 13, color: 'text.secondary' }}>{t('Desktop version')}</Button>
         <IconButton id="h5-tasks-settings" aria-label={t('Settings')} onClick={() => ui.actions.openSettings()} size="small" sx={{ mr: 1 }}><SettingsIcon fontSize="small" /></IconButton>
       </Box>
     </Box>
@@ -193,7 +193,7 @@ function Panel({ state, ui }) {
 
 // A phone: the list slides over the page. A wide screen (a computer, a landscape tablet): it stays beside it.
 export function TaskDrawer({ state, ui }) {
-  const paperProps = { className: 'h5-sheet-panel', sx: { width: state.wide ? 320 : 'min(78vw, 360px)', maxWidth: '100%', backgroundImage: 'none' } };
+  const paperProps = { className: 'h5-sheet-panel', sx: { width: state.wide ? 320 : 'min(82vw, 360px)', maxWidth: '100%', backgroundImage: 'none' } };
   if (state.wide) {
     return (
       // The permanent drawer's own element has no size (its paper is fixed), so the sidebar is the paper.

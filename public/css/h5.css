@@ -13,7 +13,7 @@
   --h5-pressed: #1976d2;
   --h5-danger: #f44336;
   --h5-sidebar-width: 320px;
-  --h5-drawer-width: min(78vw, 360px);
+  --h5-drawer-width: min(82vw, 360px);
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: none; }
@@ -55,6 +55,19 @@ body { -webkit-text-size-adjust: 100%; }
 .h5-agent { position: fixed; top: 0; left: 0; right: 0; height: 100dvh; z-index: 108; width: 100%; background: var(--h5-bg);
   padding: 0 env(safe-area-inset-right) 0 env(safe-area-inset-left); }
 .h5-agent .ac-head { display: none; } /* the page header above the chat replaces it */
+/* A compact chat page: less padding around the messages and the composer, so more of the conversation shows. The input stays at 16px (iOS zooms smaller text). */
+.h5-agent .ac-messages { padding: 8px 0 4px; }
+.h5-agent .ac-messages > * { padding-inline: 10px; }
+.h5-agent .ac-list { gap: 10px; }
+.h5-agent .ac-user { max-width: 92%; }
+.h5-agent .ac-bubble { padding: 7px 12px; border-radius: 16px; }
+.h5-agent .ac-assistant { gap: 6px; }
+.h5-agent .ac-text { font-size: 15px; line-height: 1.45; }
+.h5-agent .ac-text p, .h5-agent .ac-text ul, .h5-agent .ac-text ol, .h5-agent .ac-text blockquote, .h5-agent .ac-text pre, .h5-agent .ac-text h4 { margin-bottom: 6px; }
+.h5-agent .ac-composer { padding: 4px 10px 0; }
+.h5-agent .ac-commands { left: 10px; right: 10px; }
+.h5-agent .ac-box { padding: 3px 6px; border-radius: 20px; }
+.h5-agent .ac-input { min-height: 32px; padding: 5px 4px; }
 .h5-agent[hidden] { display: none; }
 .h5-app, .h5-agent { transition: transform .25s ease-out, border-radius .25s ease-out; }
 body.h5-tasks-open .h5-app, body.h5-tasks-open .h5-agent { transform: translateX(var(--h5-drawer-width)); }

@@ -11,7 +11,7 @@ import { t } from './common.jsx';
 export function Header({ state, ui }) {
   return (
     <AppBar position="static" color="default" enableColorOnDark elevation={0} className="h5-header" sx={{ flex: '0 0 auto', borderBottom: 1, borderColor: 'divider' }}>
-      <Toolbar variant="dense" disableGutters sx={{ px: 1, gap: 1, minHeight: 52 }}>
+      <Toolbar variant="dense" disableGutters sx={{ px: 1, gap: 1, minHeight: 44 }}>
         <ButtonBase
           id="h5-open-tasks" className="h5-task-button" aria-expanded={state.tasksOpen} aria-haspopup="dialog" aria-controls="h5-tasks"
           onClick={() => ui.actions.openTasks()}

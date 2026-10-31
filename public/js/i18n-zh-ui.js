@@ -1330,4 +1330,9 @@ I18n.add({
   "Reads only, changes nothing": "只读，不改动任何东西",
   "Changes files in the working folder, asks for the rest": "可直接改动工作目录里的文件，其余操作先询问",
   "Acts without asking": "不询问，直接执行",
+  "Main": "主代理",
+  "Agents": "代理",
+  "View sub-agent": "查看子代理",
+  "This is a sub-agent. You can only read it here.": "这是子代理，这里只能查看。",
+  "Back to the main agent": "返回主代理",
 });

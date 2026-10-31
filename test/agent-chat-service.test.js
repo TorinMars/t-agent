@@ -147,7 +147,12 @@ test('Claude messages become text, thinking and tool items; streamed text is rep
   normalizer.handle({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'ok', is_error: false }] } });
   assert.deepEqual([ctx.items.get('toolu_1').status, ctx.items.get('toolu_1').output], ['done', 'ok']);
   normalizer.handle({ type: 'assistant', parent_tool_use_id: 'toolu_x', message: { id: 'msg_sub', content: [{ type: 'text', text: 'subagent' }] } });
-  assert.equal(ctx.items.size, 2, 'subagent chatter is not shown');
+  assert.equal(ctx.items.size, 3, 'subagent chatter is kept, tagged with the Task call that started it');
+  assert.equal(ctx.items.get('msg_sub:0').parentToolUseId, 'toolu_x');
+  assert.equal(ctx.items.get('msg_1:0').parentToolUseId, undefined, 'the main agent has no parent');
+  normalizer.handle({ type: 'assistant', parent_tool_use_id: 'toolu_x', message: { id: 'msg_sub2', content: [{ type: 'tool_use', id: 'toolu_sub', name: 'Read', input: { file_path: '/a' } }] } });
+  normalizer.handle({ type: 'user', parent_tool_use_id: 'toolu_x', message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_sub', content: 'data', is_error: false }] } });
+  assert.deepEqual([ctx.items.get('toolu_sub').parentToolUseId, ctx.items.get('toolu_sub').status, ctx.items.get('toolu_sub').output], ['toolu_x', 'done', 'data']);
   const result = normalizer.handle({ type: 'result', subtype: 'success', session_id: 's-1', total_cost_usd: 0.01, usage: { input_tokens: 3, output_tokens: 4 } });
   assert.deepEqual([result.ok, result.usage, ctx.session], [true, { input: 3, output: 4 }, 's-1']);
   assert.equal(normalizer.handle({ type: 'result', subtype: 'error_max_turns' }).ok, false);
@@ -350,7 +355,9 @@ test('Claude: context use follows each request, the real window comes with the r
   assert.equal(meta.at(-1).context.window, 1000000, 'a request that held more than 200k ran on a larger window');
   normalizer.handle({ type: 'result', subtype: 'success', is_error: false, modelUsage: { 'claude-sonnet-5-5': { contextWindow: 1000000 }, 'claude-haiku-5-5': { contextWindow: 200000 } } });
   assert.deepEqual(meta.at(-1), { context: { used: 450010, window: 1000000 } }, 'the largest reported window, with the use of the last request');
-  normalizer.handle({ type: 'assistant', message: { id: 'sub', parent_tool_use_id: 'x', content: [] } }); // no usage: nothing reported
+  const reported = meta.length;
+  normalizer.handle({ type: 'assistant', parent_tool_use_id: 'x', message: { id: 'sub', model: 'claude-haiku-5-5', content: [], usage: { input_tokens: 9, output_tokens: 9 } } }); // a sub-agent's usage is not the main context
+  assert.equal(meta.length, reported);
 
   const sdk = { getSessionMessages: async () => [
     { type: 'user', message: { content: 'hi' } },
@@ -359,6 +366,23 @@ test('Claude: context use follows each request, the real window comes with the r
   ] };
   assert.deepEqual(await claude.loadMeta({ cwd: '/w', sessionId: 's-1', deps: { loadSdk: async () => sdk } }), { model: 'claude-opus-5-5', context: { used: 1100, window: 200000 } });
   assert.equal(await claude.loadMeta({ cwd: '/w', sessionId: 's-2', deps: { loadSdk: async () => ({ getSessionMessages: async () => [] }) } }), null);
+});
+
+test('Claude: reopening a session keeps the sub-agent tag, and old rows without it stay with the main agent', async () => {
+  const claude = require('../lib/agent-chat/claude');
+  const rows = [
+    { type: 'assistant', message: { id: 'm1', content: [{ type: 'tool_use', id: 'task_1', name: 'Task', input: { description: 'Look around' } }] } },
+    { type: 'assistant', parent_tool_use_id: 'task_1', message: { id: 'm2', content: [{ type: 'text', text: 'inside' }] } },
+    { type: 'user', parent_tool_use_id: 'task_1', message: { content: [{ type: 'tool_result', tool_use_id: 'task_1', content: 'ok', is_error: false }] } },
+    { type: 'assistant', parent_tool_use_id: null, message: { id: 'm3', content: [{ type: 'text', text: 'main again' }] } },
+  ];
+  const items = await claude.loadHistory({ cwd: '/w', sessionId: 's-1', deps: { loadSdk: async () => ({ getSessionMessages: async () => rows }) } });
+  const byId = Object.fromEntries(items.map(item => [item.id, item]));
+  assert.equal(byId['m2:0'].parentToolUseId, 'task_1');
+  assert.equal(byId.task_1.parentToolUseId, undefined);
+  assert.equal(byId['m3:0'].parentToolUseId, undefined);
+  const old = await claude.loadHistory({ cwd: '/w', sessionId: 's-1', deps: { loadSdk: async () => ({ getSessionMessages: async () => [{ type: 'assistant', message: { id: 'o1', content: [{ type: 'text', text: 'old' }] } }] }) } });
+  assert.equal(old[0].parentToolUseId, undefined);
 });
 
 test('a chat opened later gets its model, effort and context from the session, without replacing what a live turn reported', async () => {

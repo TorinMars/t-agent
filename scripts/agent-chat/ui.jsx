@@ -9,7 +9,7 @@ import remarkGfm from 'remark-gfm';
 import hljs from 'highlight.js/lib/common';
 import { toMessages } from './convert.mjs';
 import ReactMarkdown from 'react-markdown';
-import { callBrief, capitalize, diffLines, groupLabel, limitBars, limitText, modelName, tokens, visibleLimits } from './format.mjs';
+import { callBrief, capitalize, diffLines, groupLabel, isSubAgentCall, limitBars, limitText, modelName, subAgents, tokens, viewItems, visibleLimits } from './format.mjs';
 
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const MAX_FILE_CHARS = 200 * 1024;
@@ -94,7 +94,10 @@ function StepIcon({ status }) {
 }
 
 // One call of a group: its state and what it is about; opening it shows what was sent and what came back.
+const SubAgentContext = React.createContext(null);
+
 function ToolStep({ call }) {
+  const sub = React.useContext(SubAgentContext);
   const changes = diffLines(call.args);
   const input = changes ? '' : prettyInput(call.args);
   return (
@@ -107,6 +110,7 @@ function ToolStep({ call }) {
       {changes ? <DiffView lines={changes} /> : null}
       {input ? <pre className="ac-tool-input">{input}</pre> : null}
       {call.output ? <pre className="ac-tool-output">{String(call.output)}</pre> : null}
+      {sub && isSubAgentCall(call.name) && sub.known.has(call.id) ? <button type="button" className="ac-subagent-view" onClick={() => sub.open(call.id)}>{t('View sub-agent')}</button> : null}
     </details>
   );
 }
@@ -904,9 +908,29 @@ function ModeButton({ agent, mode, onPick }) {
   );
 }
 
+// "Main" and one tab per sub-agent, with a dot for its state; the open view is highlighted. Switching only changes what is shown.
+function SubAgentTabs({ agents, view, onPick }) {
+  return (
+    <nav className="ac-subagents" aria-label={t('Agents')}>
+      <button type="button" className={`ac-subagent${view ? '' : ' current'}`} aria-current={view ? undefined : 'true'} data-view="" onClick={() => onPick('')}>{t('Main')}</button>
+      {agents.map(agent => (
+        <button type="button" key={agent.id} className={`ac-subagent${view === agent.id ? ' current' : ''}`} aria-current={view === agent.id ? 'true' : undefined} data-view={agent.id} title={agent.name} onClick={() => onPick(agent.id)}>
+          <span className={`ac-subagent-dot ${agent.status}`} aria-hidden="true" />
+          <span className="ac-subagent-name" translate="no">{agent.name}</span>
+          <span className="ac-subagent-state">{t(agent.status === 'running' ? 'Running' : agent.status === 'error' ? 'Failed' : 'Done')}</span>
+        </button>
+      ))}
+    </nav>
+  );
+}
+
 export const Chat = React.forwardRef(function Chat({ store, agent, conversation, onClose, notify, onOpenChat = () => {}, draft = null }, ref) {
   const state = useSyncExternalStore(store.subscribe, store.getState);
-  const messages = useMemo(() => toMessages(state.items), [state.items]);
+  const [view, setView] = useState('');
+  const agents = useMemo(() => subAgents(state.items), [state.items]);
+  const current = view && agents.some(agent => agent.id === view) ? view : ''; // a view that is gone (/clear) falls back to the main agent
+  const messages = useMemo(() => toMessages(viewItems(state.items, current)), [state.items, current]);
+  const subContext = useMemo(() => ({ known: new Set(agents.map(agent => agent.id)), open: setView }), [agents]);
   const footerContext = useMemo(() => ({
     footers: new Map(messages.filter(message => message.footer).map(message => [message.id, message.footer])),
     lastId: messages.length ? messages[messages.length - 1].id : '',
@@ -936,14 +960,22 @@ export const Chat = React.forwardRef(function Chat({ store, agent, conversation,
         <AgentIcon agent={conversation.agent} />
         <TitleMenu title={state.title} store={store} onClose={onClose} />
       </header>
-      <AssistantRuntimeProvider runtime={runtime}><FooterContext.Provider value={footerContext}>
+      {agents.length ? <SubAgentTabs agents={agents} view={current} onPick={setView} /> : null}
+      <AssistantRuntimeProvider runtime={runtime}><SubAgentContext.Provider value={subContext}><FooterContext.Provider value={footerContext}>
         <ThreadPrimitive.Root className="ac-thread">
           <ThreadPrimitive.Viewport className="ac-messages" role="log" aria-live="polite" scrollToBottomOnInitialize>
             <div className="ac-list"><ThreadPrimitive.Messages components={MESSAGES} /></div>
             <div className="ac-requests">{state.pending.map(request => <Request key={request.id} request={request} store={store} agent={agent} />)}</div>
           </ThreadPrimitive.Viewport>
         </ThreadPrimitive.Root>
-      </FooterContext.Provider></AssistantRuntimeProvider>
+      </FooterContext.Provider></SubAgentContext.Provider></AssistantRuntimeProvider>
+      {current ? (
+        <div className="ac-subagent-note" role="note">
+          <span>{t('This is a sub-agent. You can only read it here.')}</span>
+          <button type="button" onClick={() => setView('')}>{t('Back to the main agent')}</button>
+        </div>
+      ) : null}
+      <div className="ac-composer-holder" style={{ display: current ? 'none' : 'contents' }}> {/* kept mounted so a draft survives a look at a sub-agent */}
       <Composer store={store} state={state} agent={agent} notify={notify} inputRef={inputRef} draft={draft} tools={(
         <>
           <ModeButton agent={agent} mode={state.mode} onPick={changeMode} />
@@ -954,6 +986,7 @@ export const Chat = React.forwardRef(function Chat({ store, agent, conversation,
           </span>
         </>
       )} />
+      </div>
     </section>
   );
 });

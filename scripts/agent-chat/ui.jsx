@@ -341,17 +341,41 @@ function formatElapsed(ms) {
   return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, '0')}s`;
 }
 
-// The turn is running: animated dots and how long it has been going.
-function Working({ since, store }) {
+// The run state as one button in the footer. Running: the Stop button, with the time the turn has run inside it and a marquee over it. Idle: "Ready".
+// A turn that has finished (and was not stopped by the person) breathes green until the person touches the page, so a finished turn is not missed.
+function RunButton({ state, store }) {
+  const running = state.status === 'running';
   const [now, setNow] = useState(() => Date.now());
-  useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(timer); }, []);
-  return (
-    <div className="ac-working" role="status">
-      <button type="button" className="ac-stop" aria-label={t('Stop')} onClick={() => void store.stop()}><Icon d={ICONS.stop} fill /></button>
-      <span className="ac-dots" aria-hidden="true"><i /><i /><i /></span>
-      <span className="ac-elapsed">{formatElapsed(since ? now - since : 0)}</span>
-    </div>
-  );
+  const [done, setDone] = useState(false);
+  const seen = useRef(state.lastTurn ? state.lastTurn.n : 0);
+  useEffect(() => {
+    if (!running) return undefined;
+    setNow(Date.now());
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [running]);
+  useEffect(() => {
+    const turn = state.lastTurn;
+    if (running) { setDone(false); return; }
+    if (turn && turn.n !== seen.current) { seen.current = turn.n; setDone(!turn.stopped); }
+  }, [state.lastTurn, running]);
+  useEffect(() => {
+    if (!done) return undefined;
+    const clear = () => setDone(false);
+    document.addEventListener('pointerdown', clear);
+    document.addEventListener('keydown', clear);
+    return () => { document.removeEventListener('pointerdown', clear); document.removeEventListener('keydown', clear); };
+  }, [done]);
+  if (running) {
+    const label = formatElapsed(state.runningSince ? now - state.runningSince : 0);
+    return (
+      <button type="button" className="ac-run ac-stop running" role="status" aria-label={`${t('Stop')} · ${label}`} title={t('Stop')} onClick={() => void store.stop()}>
+        <Icon d={ICONS.stop} fill />
+        <span className="ac-elapsed">{label}</span>
+      </button>
+    );
+  }
+  return <span className={`ac-run${done ? ' done' : ''}`} role="status"><span className="ac-run-light" aria-hidden="true" />{t(done ? 'Done' : 'Ready')}</span>;
 }
 
 // Speech to text with the speech model of the page (VoiceInput in voice-input.js: Fun-ASR, the same as the Chinese input box), not the browser's own
@@ -925,13 +949,13 @@ export const Chat = React.forwardRef(function Chat({ store, agent, conversation,
           <ThreadPrimitive.Viewport className="ac-messages" role="log" aria-live="polite" scrollToBottomOnInitialize>
             <div className="ac-list"><ThreadPrimitive.Messages components={MESSAGES} /></div>
             <div className="ac-requests">{state.pending.map(request => <Request key={request.id} request={request} store={store} agent={agent} />)}</div>
-            {state.status === 'running' ? <Working since={state.runningSince} store={store} /> : null}
           </ThreadPrimitive.Viewport>
         </ThreadPrimitive.Root>
       </FooterContext.Provider></AssistantRuntimeProvider>
       <Composer store={store} state={state} agent={agent} notify={notify} inputRef={inputRef} draft={draft} tools={(
         <>
           <ModeButton agent={agent} mode={state.mode} onPick={changeMode} />
+          <RunButton state={state} store={store} />
           <span className="ac-status">
             <ModelPicker store={store} state={state} />
             <ContextRing context={state.context} />

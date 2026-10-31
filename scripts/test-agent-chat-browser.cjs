@@ -186,15 +186,15 @@ const server = http.createServer(app);
     assert.equal(await page.locator('.ac-stop').isVisible(), true, 'Stop is there while the turn runs');
     assert.equal(await page.locator('.ac-send').count(), 0, 'and Send only when there is something to send');
     // The turn shows how long it has run, the session start folds away, and the model is next to the composer.
-    assert.match(await page.locator('.ac-working .ac-elapsed').textContent(), /^\d+s$/);
+    assert.match(await page.locator('.ac-run .ac-elapsed').textContent(), /^\d+s$/);
     assert.equal(await page.locator('.ac-init summary').textContent(), 'Initialized session');
     assert.equal(await page.locator('.ac-init').evaluate(node => node.open), false);
     await page.locator('.ac-init summary').click();
     assert.deepEqual(await page.locator('.ac-init-body dt').allTextContents(), ['Model', 'Session']);
     assert.equal(await page.locator('.ac-model').getAttribute('title'), 'Sonnet 5.5 Medium', 'the model name and the effort are in the title');
     assert.deepEqual([await page.locator('.ac-model-name').textContent(), await page.locator('.ac-model-effort').textContent()], ['Sonnet 5.5', 'Medium'], 'the footer shows the model name and the effort');
-    const centers = await page.evaluate(() => ['.ac-options-button', '.ac-mode-label', '.ac-model'].map(selector => { const box = document.querySelector(selector).getBoundingClientRect(); return Math.round(box.top + box.height / 2); }));
-    assert.equal(new Set(centers).size, 1, `the footer controls share one center line: ${centers}`);
+    const centers = await page.evaluate(() => ['.ac-options-button', '.ac-mode-label', '.ac-model'].map(selector => { const box = document.querySelector(selector).getBoundingClientRect(); return box.top + box.height / 2; }));
+    assert.ok(Math.max(...centers) - Math.min(...centers) < 1, `the footer controls share one center line: ${centers}`);
     // Focus in the input: two rows, the input on a full row and the buttons under it; without focus, one row.
     await page.evaluate(() => document.activeElement && document.activeElement.blur());
     const rows = () => page.evaluate(() => { const input = document.querySelector('.ac-input').getBoundingClientRect(); const box = document.querySelector('.ac-box').getBoundingClientRect(); const attach = document.querySelector('.ac-attach').getBoundingClientRect(); return { full: input.width > box.width - 24, below: attach.top >= input.bottom - 1 }; });
@@ -245,6 +245,11 @@ const server = http.createServer(app);
     await page.click('.ac-allow');
     await page.waitForSelector('.ac-tool.done', { state: 'attached' });
     await page.waitForSelector('.ac-stop', { state: 'detached' });
+    // A finished turn breathes green ("Done") until the person touches the page; then the button reads "Ready".
+    assert.deepEqual([await page.locator('.ac-run.done').count(), (await page.locator('.ac-run').textContent()).trim()], [1, 'Done']);
+    await page.mouse.click(5, 5);
+    await page.waitForSelector('.ac-run:not(.done)');
+    assert.equal((await page.locator('.ac-run').textContent()).trim(), 'Ready');
     assert.equal(await page.locator('.ac-request').count(), 0);
     assert.equal(await page.locator('.ac-toolgroup > summary').textContent(), 'Ran 1 command', 'the calls of a turn are one folded line');
     assert.equal(await page.locator('.ac-steps').isVisible(), false);

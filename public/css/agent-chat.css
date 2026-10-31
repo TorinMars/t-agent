@@ -96,12 +96,15 @@
 .ac-init-body { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 2px 14px; font-size: 13px; }
 .ac-init-body dt { color: var(--ac-muted); }
 .ac-init-body dd { margin: 0; color: var(--ac-text); overflow-wrap: anywhere; font-family: Menlo, Monaco, Consolas, monospace; font-size: 12px; }
-.ac-working { display: flex; align-items: center; gap: 12px; margin-top: 12px; padding-block: 4px; color: var(--ac-muted); font-size: 15px; }
-.ac-dots { display: inline-flex; align-items: center; gap: 4px; }
-.ac-dots i { width: 5px; height: 5px; border-radius: 50%; background: var(--ac-spark); animation: ac-dot 1.2s ease-in-out infinite; }
-.ac-dots i:nth-child(2) { animation-delay: .15s; }
-.ac-dots i:nth-child(3) { animation-delay: .3s; }
 .ac-elapsed { font-variant-numeric: tabular-nums; }
+/* The run state in the footer: one pill. Running = Stop with the time inside and a marquee flowing over it; done and not yet looked at = green breathing light. */
+.ac-run { position: relative; flex: 0 1 auto; display: inline-flex; align-items: center; gap: 6px; height: 30px; margin-left: 4px; padding: 0 12px; box-sizing: border-box; border: 1px solid var(--ac-border); border-radius: 15px; background: none; color: var(--ac-muted); font: inherit; font-size: 13px; white-space: nowrap; }
+.ac-run-light { width: 7px; height: 7px; border-radius: 50%; background: var(--ac-muted); opacity: .6; }
+button.ac-run.ac-stop { width: auto; height: 30px; border-radius: 15px; cursor: pointer; color: var(--ac-text); border: 1px solid #2563eb; background-image: linear-gradient(90deg, #2563eb33 33%, #2563eb99 50%, #2563eb33 66%); background-size: 300% 100%; animation: ac-marquee 1.2s infinite linear; }
+button.ac-run.ac-stop svg { width: 12px; height: 12px; }
+.ac-run.done { color: var(--ac-text); border-color: transparent; }
+.ac-run.done .ac-run-light { background: #3fb950; opacity: 1; }
+.ac-run.done::after { content: ''; position: absolute; inset: -1px; border-radius: inherit; pointer-events: none; border: 2px solid #3fb950; animation: ac-breathe 2s ease-in-out infinite; }
 
 .ac-requests { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
 .ac-request { padding: 10px; border: 1px solid var(--ac-accent); border-radius: 10px; background: var(--ac-panel); }
@@ -149,9 +152,6 @@
 .ac-send { background: var(--ac-text); color: var(--ac-bg); }
 .ac-send:disabled { opacity: .5; }
 .ac-stop { background: none; color: var(--ac-text); border: 1.5px solid var(--ac-muted); box-sizing: border-box; }
-.ac-working { gap: 10px; }
-.ac-working .ac-stop { width: 22px; height: 22px; border-width: 1.25px; }
-.ac-working .ac-stop svg { width: 12px; height: 12px; }
 .ac-stop svg { width: 20px; height: 20px; }
 .ac-foot { flex: 0 0 auto; box-sizing: border-box; display: flex; align-items: center; justify-content: space-between; gap: 12px; width: min(100%, calc(var(--ac-width) + 32px)); margin: 0 auto; padding: 4px 24px max(8px, env(safe-area-inset-bottom)); font-size: 14px; }
 .ac-mode-label { position: relative; display: inline-flex; align-items: center; gap: 4px; min-width: 0; color: var(--ac-text); }
@@ -190,8 +190,10 @@
 @media (pointer: coarse) { .agent-chat { font-size: 16px; } }
 @keyframes ac-spin { to { transform: rotate(360deg); } }
 @keyframes ac-dot { 0%, 100% { opacity: .3; transform: scale(.8); } 50% { opacity: 1; transform: scale(1.1); } }
+@keyframes ac-marquee { from { background-position: 100% 0; } to { background-position: 0 0; } }
+@keyframes ac-breathe { 0%, 100% { opacity: .25; box-shadow: 0 0 0 0 #3fb95000; } 50% { opacity: 1; box-shadow: 0 0 10px 1px #3fb950aa; } }
 @keyframes ac-pulse { 50% { opacity: .45; } }
-@media (prefers-reduced-motion: reduce) { .ac-dots i, .ac-step-icon.running { animation: none; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .ac-step-icon.running, button.ac-run.ac-stop, .ac-run.done::after { animation: none; opacity: 1; } }
 
 /* React view (public/js/agent-chat-ui.js): wrappers around the same ac-* elements. */
 .agent-chat-host { width: 100%; height: 100%; min-height: 0; }

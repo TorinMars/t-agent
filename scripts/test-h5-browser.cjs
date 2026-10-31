@@ -147,12 +147,12 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     await openTask(page, 'Fix login');
     await page.locator('#h5-tasks').waitFor({ state: 'hidden' });
     assert.equal(await page.locator('#h5-task-name').textContent(), 'Fix login');
-    // The agent counters stand in the header, right of the task name and left of the settings button.
+    // The agent counters stand in the header, right of the task name and left of the refresh button.
     await page.locator('#agent-activity').waitFor({ state: 'visible' });
     assert.deepEqual(await page.locator('#agent-activity .count').allTextContents(), ['3', '1']);
     assert.deepEqual(await page.locator('#agent-activity .label').allTextContents(), ['submitted', 'running']);
-    const [activityBox, settingsBox, titleBox] = await Promise.all([page.locator('#agent-activity').boundingBox(), page.locator('#h5-open-settings').boundingBox(), page.locator('#h5-task-name').boundingBox()]);
-    assert.ok(activityBox.x + activityBox.width <= settingsBox.x + 1 && activityBox.x >= titleBox.x, 'between the task name and the settings button');
+    const [activityBox, refreshBox, titleBox] = await Promise.all([page.locator('#agent-activity').boundingBox(), page.locator('#h5-refresh').boundingBox(), page.locator('#h5-task-name').boundingBox()]);
+    assert.ok(activityBox.x + activityBox.width <= refreshBox.x + 1 && activityBox.x >= titleBox.x, 'between the task name and the refresh button');
     // The name of the terminal that is shown stands under the task name, in small text.
     await page.locator('#h5-session-name', { hasText: 'Terminal 1' }).waitFor();
     const [nameBox, sessionBox] = await Promise.all([page.locator('#h5-task-name').boundingBox(), page.locator('#h5-session-name').boundingBox()]);
@@ -554,16 +554,15 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     assert.equal(await page.locator('#h5-session-name').textContent(), 'Cross chat');
     await pollUntil(() => openOnServer() > 0);
 
-    // Settings: the header button opens a menu with the language toggle and the PC one-click update.
-    assert.equal(await page.locator('#h5-open-settings').getAttribute('aria-label'), 'Settings');
-    assert.equal(await page.locator('#h5-open-settings svg').count(), 1, 'a gear icon');
-    // The refresh button sits next to the settings button and loads the page again.
-    assert.equal(await page.locator('#h5-refresh + #h5-open-settings').count(), 1, 'the refresh button is just before the settings button');
+    // Settings: the gear at the bottom of the task sidebar opens a sheet with the language toggle and the PC one-click update; the header has no settings button.
+    assert.equal(await page.locator('#h5-open-settings').count(), 0, 'the header has no settings button');
     await page.evaluate(() => { window.beforeRefresh = true; });
     await Promise.all([page.waitForEvent('load'), page.locator('#h5-refresh').click()]);
-    await page.waitForSelector('#h5-open-settings');
+    await page.waitForSelector('#h5-refresh');
     assert.equal(await page.evaluate(() => window.beforeRefresh === true), false, 'the page was loaded again');
-    await page.locator('#h5-open-settings').tap();
+    await page.locator('#h5-open-tasks').tap();
+    assert.equal(await page.locator('#h5-tasks-settings svg').count(), 1, 'a gear icon');
+    await page.locator('#h5-tasks-settings').tap();
     await page.locator('#h5-settings').waitFor({ state: 'visible' });
     assert.equal(await page.locator('#h5-settings #h5-lang').count(), 1, 'the settings have the language button');
     assert.equal(await page.locator('#h5-lang').textContent(), '\u4e2d\u6587', 'it names the other language');
@@ -576,8 +575,8 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     await Promise.all([page.waitForURL(`${ORIGIN}/torin/hide/login?return_to=/h5`), page.locator('#h5-logout').tap()]);
     assert.ok(calls.includes('POST /auth/logout'));
     await page.goto(`${ORIGIN}/h5`);
-    await page.locator('#h5-open-settings').waitFor();
-    await page.locator('#h5-open-settings').tap();
+    await page.locator('#h5-open-tasks').tap();
+    await page.locator('#h5-tasks-settings').tap();
     await page.locator('#h5-settings').waitFor({ state: 'visible' });
     await page.locator('#h5-update-check').tap();
     // One tap checks and starts the update; there is no second confirmation.
@@ -612,13 +611,13 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     assert.deepEqual([menuBox.x, menuBox.width], [0, 320], 'the sheet is as wide as the sidebar and starts at its edge');
     await wide.page.locator('#h5-term-menu-cancel').click();
     await wide.page.locator('#h5-term-menu').waitFor({ state: 'detached' });
-    // Settings are a panel on the right with the page dimmed; a click beside the panel closes it.
-    await wide.page.locator('#h5-open-settings').click();
+    // Settings are a sheet from the bottom with the page dimmed; a click beside the sheet closes it.
+    await wide.page.locator('#h5-tasks-settings').click();
     await wide.page.locator('#h5-settings').waitFor({ state: 'visible' });
     await wide.page.waitForFunction(() => getComputedStyle(document.querySelector('#h5-settings .h5-sheet-panel')).transform === 'none'); // the slide-in has finished
     const panelBox = await wide.page.locator('#h5-settings .h5-sheet-panel').boundingBox();
-    assert.deepEqual([panelBox.width, panelBox.x + panelBox.width], [440, 1440]);
-    await wide.page.mouse.click(600, 400);
+    assert.deepEqual([panelBox.width, panelBox.x + panelBox.width / 2, panelBox.y + panelBox.height], [440, 720, 900], 'a centred sheet that rises from the bottom');
+    await wide.page.mouse.click(100, 100);
     await wide.page.locator('#h5-settings').waitFor({ state: 'detached' });
     // Narrowing the window below the breakpoint turns the sidebar back into the sheet that is closed; widening brings it back.
     await wide.page.setViewportSize({ width: 600, height: 900 });

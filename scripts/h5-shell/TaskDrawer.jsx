@@ -53,16 +53,16 @@ function ago(value) {
 // The sessions under a task: its terminals, then its chats. The selected task's rows have "⋯" actions; those of another task only open.
 function Sessions({ ui, taskId, sessions }) {
   return (
-    <List className="h5-terminal-list" role="group" aria-label={sessions.label} dense disablePadding sx={{ ml: 2.5, mb: 0.5, pl: 0.5, borderLeft: 1, borderColor: 'divider' }}>
+    <List className="h5-terminal-list" role="group" aria-label={sessions.label} dense disablePadding sx={{ ml: 2, mb: 0.25, pl: 0.25, borderLeft: 1, borderColor: 'divider' }}>
       {sessions.note ? <Typography className="h5-peek-note" variant="body2" color="text.secondary" sx={{ px: 1, py: 0.75 }}>{t(sessions.note)}</Typography> : null}
       {sessions.rows.map(row => (
-        <Box key={`${row.kind}:${row.id}`} className="h5-terminal-row" sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+        <Box key={`${row.kind}:${row.id}`} className="h5-terminal-row" sx={{ display: 'flex', alignItems: 'center', gap: 0.5, borderRadius: 2, borderLeft: 3, borderColor: row.current ? 'primary.main' : 'transparent', bgcolor: row.current ? 'action.selected' : undefined }}>
           <ListItemButton
             component="button" className="h5-terminal-main" aria-current={row.current ? 'true' : undefined}
             selected={row.current} onClick={() => ui.actions.openRow(taskId, row)}
-            sx={{ flex: '1 1 auto', minWidth: 0, minHeight: 52, py: 0.5, px: 1, borderRadius: 2, gap: 1.25, textAlign: 'left', fontSize: 15, borderLeft: 3, borderColor: 'transparent', '&.Mui-selected': { bgcolor: 'action.selected', borderColor: 'primary.main' } }}
+            sx={{ flex: '1 1 auto', minWidth: 0, minHeight: 44, py: 0.25, px: 1, borderRadius: 2, gap: 1, textAlign: 'left', fontSize: 14, '&.Mui-selected': { bgcolor: 'transparent' } }}
           >
-            <Box component="span" className={`h5-terminal-icon ${row.agent || 'shell'}`} aria-hidden="true" sx={{ position: 'relative', flex: '0 0 36px', width: 36, height: 36, borderRadius: 1.5, bgcolor: 'action.hover', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, fontFamily: 'monospace', color: row.agent === 'claude' ? '#d97757' : 'text.secondary', '& svg': { width: 22, height: 22 } }}>
+            <Box component="span" className={`h5-terminal-icon ${row.agent || 'shell'}`} aria-hidden="true" sx={{ position: 'relative', flex: '0 0 32px', width: 32, height: 32, borderRadius: 1.5, bgcolor: 'action.hover', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontFamily: 'monospace', color: row.agent === 'claude' ? '#d97757' : 'text.secondary', '& svg': { width: 20, height: 20 } }}>
               {row.kind === 'chat' ? <DomIcon make={terminalMark(row.agent)} />
                 : row.kind === 'terminal' && row.agent ? <DomIcon make={terminalMark(row.agent)} />
                   : GLYPHS.shell}
@@ -70,9 +70,9 @@ function Sessions({ ui, taskId, sessions }) {
             </Box>
             <Box component="span" sx={{ minWidth: 0, display: 'flex', flexDirection: 'column' }}>
               <Box component="span" className="h5-terminal-name" sx={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.title}</Box>
-              {subtitle(row) ? <Box component="span" className="h5-terminal-sub" sx={{ fontSize: 12.5, color: row.running ? 'success.main' : 'text.secondary', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{subtitle(row)}</Box> : null}
+              {subtitle(row) ? <Box component="span" className="h5-terminal-sub" sx={{ fontSize: 12, lineHeight: 1.3, color: row.running ? 'success.main' : 'text.secondary', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{subtitle(row)}</Box> : null}
             </Box>
-            {row.kind === 'chat' ? <Chip className="h5-agent-badge" label={t('AGENT')} size="small" variant="outlined" sx={{ ml: 'auto', flex: '0 0 auto', height: 22, fontSize: 11, letterSpacing: 0.5 }} /> : null}
+            {row.kind === 'chat' ? <Chip className="h5-agent-badge" label={t('AGENT')} size="small" variant="outlined" sx={{ ml: 'auto', flex: '0 0 auto', height: 20, fontSize: 10, letterSpacing: 0.5 }} /> : null}
           </ListItemButton>
           {row.more ? (
             <IconButton className="h5-terminal-more" size="small" sx={{ p: 0.5 }} aria-label={t(row.kind === 'chat' ? 'Chat actions' : 'Terminal actions')} onClick={() => ui.actions.rowMore(row)}>
@@ -106,17 +106,17 @@ function Tasks({ state, ui, query, filter }) {
     <Box key={group.key} component="section">
       {group.tasks.map(task => (
         <Box key={task.id} sx={{ borderBottom: 1, borderColor: 'divider', '&:last-of-type': { borderBottom: 0 } }}>
-          <Box className={task.add ? 'h5-task-row' : undefined} sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+          <Box className={task.add ? 'h5-task-row' : undefined} sx={{ display: 'flex', alignItems: 'center', gap: 0.5, borderRadius: 2, bgcolor: task.selected ? 'action.selected' : undefined }}>
             <ListItemButton
               component="button" className="h5-task-item" selected={task.selected} aria-current={task.selected ? 'true' : undefined} aria-expanded={task.expanded}
               onClick={() => ui.actions.toggleTask(task.id)}
-              sx={{ flex: '1 1 auto', minWidth: 0, minHeight: 48, py: 0.75, px: 1, borderRadius: 2, textAlign: 'left', overflowWrap: 'anywhere', fontSize: 16, lineHeight: 1.35, '&.Mui-selected': { bgcolor: 'action.selected' } }}
+              sx={{ flex: '1 1 auto', minWidth: 0, minHeight: 40, py: 0.25, px: 1, borderRadius: 2, textAlign: 'left', overflowWrap: 'anywhere', fontSize: 15, lineHeight: 1.3, '&.Mui-selected': { bgcolor: 'transparent' } }}
             >
               <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', gap: 1, width: '100%' }}>
                 {task.expanded ? <ExpandMoreIcon fontSize="small" /> : <ChevronRightIcon fontSize="small" />}
                 <Box component="span" sx={{ minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-                  <Box component="span" className="h5-task-title" sx={{ fontWeight: 600 }}>{task.title}</Box>
-                  {task.count != null ? <Box component="span" className="h5-task-count" sx={{ fontSize: 13, color: 'text.secondary' }}>{task.count} {t(task.count === 1 ? 'session' : 'sessions')}</Box> : null}
+                  <Box component="span" className="h5-task-title" sx={{ fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.3 }}>{task.title}</Box>
+                  {task.count != null ? <Box component="span" className="h5-task-count" sx={{ fontSize: 12, color: 'text.secondary' }}>{task.count} {t(task.count === 1 ? 'session' : 'sessions')}</Box> : null}
                 </Box>
               </Box>
             </ListItemButton>
@@ -142,7 +142,7 @@ function Panel({ state, ui }) {
   };
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
-      <Box className="h5-sheet-header" sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', px: 2, py: 1, borderBottom: 1, borderColor: 'divider' }}>
+      <Box className="h5-sheet-header" sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', px: 2, py: 0.5, borderBottom: 1, borderColor: 'divider' }}>
         <Typography id="h5-tasks-title" variant="h6" component="h2">{t('Tasks')}</Typography>
         <Box sx={{ display: 'flex', alignItems: 'center' }}>
           <IconButton id="h5-expand-all" size="small" aria-label={t('Expand all')} title={t('Expand all')} onClick={() => ui.actions.expandAll()}><UnfoldMoreIcon /></IconButton>
@@ -151,25 +151,25 @@ function Panel({ state, ui }) {
         </Box>
       </Box>
       {state.sources.length > 1 ? (
-        <Box id="h5-engine-row" component="label" className="h5-engine" sx={{ display: 'flex', alignItems: 'center', gap: 1.5, px: 2, pt: 1.5, color: 'text.secondary' }}>
+        <Box id="h5-engine-row" component="label" className="h5-engine" sx={{ display: 'flex', alignItems: 'center', gap: 1.5, px: 2, pt: 1, color: 'text.secondary' }}>
           <span>{t('Engine')}</span>
           <NativeSelect fullWidth value={state.sourceKey} inputProps={{ id: 'h5-engine', 'aria-label': t('Engine') }} onChange={event => ui.actions.changeEngine(event.target.value)}>
             {state.sources.map(source => <option key={source.key} value={source.key}>{source.label}</option>)}
           </NativeSelect>
         </Box>
       ) : null}
-      <Box className="h5-task-search" sx={{ px: 2, pb: 1 }}>
+      <Box className="h5-task-search" sx={{ px: 2, pb: 0.5, pt: 1 }}>
         <TextField
           size="small" fullWidth type="search" placeholder={t('Search sessions')} value={query} onChange={event => setQuery(event.target.value)}
-          slotProps={{ input: { startAdornment: <InputAdornment position="start"><SearchIcon fontSize="small" /></InputAdornment>, sx: { borderRadius: 3 } }, htmlInput: { 'aria-label': t('Search sessions') } }}
+          slotProps={{ input: { startAdornment: <InputAdornment position="start"><SearchIcon fontSize="small" /></InputAdornment>, sx: { borderRadius: 3, fontSize: 14, '& input': { py: 0.75 } } }, htmlInput: { 'aria-label': t('Search sessions') } }}
         />
-        <Box className="h5-task-filters" sx={{ display: 'flex', gap: 1, pt: 1 }}>
+        <Box className="h5-task-filters" sx={{ display: 'flex', gap: 0.75, pt: 0.75 }}>
           {[['all', 'All'], ['running', 'Running'], ['pending', 'Pending']].map(([key, label]) => (
-            <Chip key={key} label={t(label)} clickable color={filter === key ? 'primary' : 'default'} variant={filter === key ? 'filled' : 'outlined'} onClick={() => setFilter(key)} />
+            <Chip key={key} size="small" label={t(label)} clickable color={filter === key ? 'primary' : 'default'} variant={filter === key ? 'filled' : 'outlined'} onClick={() => setFilter(key)} />
           ))}
         </Box>
       </Box>
-      <List id="h5-task-list" className="h5-task-list" disablePadding sx={{ flex: '1 1 auto', overflowY: 'auto', px: 1, pb: 1.5 }}>
+      <List id="h5-task-list" className="h5-task-list" disablePadding sx={{ flex: '1 1 auto', overflowY: 'auto', px: 1, pb: 1 }}>
         <Tasks state={state} ui={ui} query={query} filter={filter} />
       </List>
       {adding ? (      <Box component="form" id="h5-new-task" className="h5-new-task" autoComplete="off" onSubmit={submit} sx={{ display: 'flex', gap: 1, px: 2, pb: 1 }}>
@@ -179,13 +179,13 @@ function Panel({ state, ui }) {
         />
         <Button type="submit" variant="contained" disabled={state.creatingTask} sx={{ flex: '0 0 auto', height: 36 }}>{t('Create')}</Button>
       </Box>) : null}
-      <Box sx={{ px: 2, pb: 1.5 }}>
-        <Button id="h5-add-task" fullWidth variant="contained" size="large" startIcon={<AddIcon />} onClick={() => setAdding(open => !open)} sx={{ borderRadius: 3, py: 1.25, textTransform: 'none', fontSize: 17 }}>{t('New task')}</Button>
+      <Box sx={{ px: 2, pb: 1 }}>
+        <Button id="h5-add-task" fullWidth variant="contained" size="medium" startIcon={<AddIcon />} onClick={() => setAdding(open => !open)} sx={{ borderRadius: 3, py: 0.75, textTransform: 'none', fontSize: 15 }}>{t('New task')}</Button>
       </Box>
       <Divider />
       <Box sx={{ display: 'flex', alignItems: 'center' }}>
-        <Button className="h5-desktop-link" component="a" href="/web" startIcon={<DesktopWindowsOutlinedIcon />} sx={{ flex: '1 1 auto', justifyContent: 'flex-start', py: 1.5, px: 2, borderRadius: 0, textTransform: 'none', color: 'text.secondary' }}>{t('Desktop version')}</Button>
-        <IconButton id="h5-tasks-settings" aria-label={t('Settings')} onClick={() => ui.actions.openSettings()} sx={{ mr: 1 }}><SettingsIcon /></IconButton>
+        <Button className="h5-desktop-link" component="a" href="/web" startIcon={<DesktopWindowsOutlinedIcon />} sx={{ flex: '1 1 auto', justifyContent: 'flex-start', py: 0.75, px: 2, borderRadius: 0, textTransform: 'none', fontSize: 14, color: 'text.secondary' }}>{t('Desktop version')}</Button>
+        <IconButton id="h5-tasks-settings" aria-label={t('Settings')} onClick={() => ui.actions.openSettings()} size="small" sx={{ mr: 1 }}><SettingsIcon fontSize="small" /></IconButton>
       </Box>
     </Box>
   );

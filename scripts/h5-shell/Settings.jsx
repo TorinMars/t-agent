@@ -440,12 +440,12 @@ function Rows({ ui }) {
   );
 }
 
-// The settings sheet from the right: the same configuration as the desktop "Settings" dialog and its translation and voice buttons.
+// The settings sheet that rises from the bottom (opened by the gear at the bottom of the task sidebar): the same configuration as the desktop "Settings" dialog and its translation and voice buttons.
 export function SettingsDrawer({ state, ui }) {
   return (
     <Drawer
-      anchor="right" id="h5-settings" open={state.settingsOpen} onClose={() => ui.actions.closeSettings()} aria-labelledby="h5-settings-title"
-      slotProps={{ paper: { className: 'h5-sheet-panel', sx: { width: 'min(440px, 100%)', backgroundImage: 'none' } } }}
+      anchor="bottom" id="h5-settings" open={state.settingsOpen} onClose={() => ui.actions.closeSettings()} aria-labelledby="h5-settings-title"
+      slotProps={{ paper: { className: 'h5-sheet-panel', sx: { width: 'min(440px, 100%)', maxWidth: '100%', height: '92dvh', mx: 'auto', borderRadius: '16px 16px 0 0', backgroundImage: 'none' } } }}
     >
       <AppBar position="static" color="default" enableColorOnDark elevation={0} className="h5-sheet-header" sx={{ borderBottom: 1, borderColor: 'divider' }}>
         <Toolbar variant="dense" sx={{ justifyContent: 'space-between' }}>

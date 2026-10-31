@@ -305,6 +305,15 @@
 
   ui.actions.openTasks = openTasks;
   ui.actions.closeTasks = closeTasks;
+  // Force refresh: forget what the browser kept for this site (Cache Storage) and load the page again from the network, so a phone that holds an old
+  // copy of the scripts gets the new ones. The login, the settings and the open task are kept (they are in the cookie and localStorage).
+  ui.actions.refresh = async () => {
+    try {
+      if (window.caches) for (const name of await caches.keys()) await caches.delete(name);
+      if (navigator.serviceWorker) for (const registration of await navigator.serviceWorker.getRegistrations()) await registration.update().catch(() => {});
+    } catch { /* reload anyway */ }
+    location.reload();
+  };
   ui.actions.openSettings = () => ui.set({ settingsOpen: true }); // the settings themselves are the shell's (scripts/h5-shell/Settings.jsx)
   ui.actions.closeSettings = () => ui.set({ settingsOpen: false });
   ui.actions.toggleTask = id => { const item = tasks.find(entry => entry.id === id); if (item) toggleTask(item); };

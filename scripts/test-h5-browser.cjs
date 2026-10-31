@@ -559,6 +559,12 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     // Settings: the header button opens a menu with the language toggle and the PC one-click update.
     assert.equal(await page.locator('#h5-open-settings').getAttribute('aria-label'), 'Settings');
     assert.equal(await page.locator('#h5-open-settings svg').count(), 1, 'a gear icon');
+    // The refresh button sits next to the settings button and loads the page again.
+    assert.equal(await page.locator('#h5-refresh + #h5-open-settings').count(), 1, 'the refresh button is just before the settings button');
+    await page.evaluate(() => { window.beforeRefresh = true; });
+    await Promise.all([page.waitForEvent('load'), page.locator('#h5-refresh').click()]);
+    await page.waitForSelector('#h5-open-settings');
+    assert.equal(await page.evaluate(() => window.beforeRefresh === true), false, 'the page was loaded again');
     await page.locator('#h5-open-settings').tap();
     await page.locator('#h5-settings').waitFor({ state: 'visible' });
     assert.equal(await page.locator('#h5-settings #h5-lang').count(), 1, 'the settings have the language button');

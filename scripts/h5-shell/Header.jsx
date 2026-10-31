@@ -5,6 +5,7 @@ import IconButton from '@mui/material/IconButton';
 import Toolbar from '@mui/material/Toolbar';
 import Typography from '@mui/material/Typography';
 import MenuIcon from '@mui/icons-material/Menu';
+import RefreshIcon from '@mui/icons-material/Refresh';
 import SettingsIcon from '@mui/icons-material/Settings';
 import { t } from './common.jsx';
 
@@ -28,6 +29,9 @@ export function Header({ state, ui }) {
           <span className="agent-activity-submitted"><b className="count">0</b> <span className="label" translate="no">submitted</span></span>
           <span className="agent-activity-running"><b className="count">0</b> <span className="label" translate="no">running</span></span>
         </span>
+        <IconButton id="h5-refresh" aria-label={t('Refresh the page')} title={t('Refresh the page')} onClick={() => ui.actions.refresh()}>
+          <RefreshIcon />
+        </IconButton>
         <IconButton id="h5-open-settings" aria-haspopup="dialog" aria-controls="h5-settings" aria-label={t('Settings')} onClick={() => ui.actions.openSettings()}>
           <SettingsIcon />
         </IconButton>

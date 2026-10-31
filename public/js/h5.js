@@ -151,7 +151,7 @@
       label: 'Phone terminals', note: null,
       rows: [
         ...terminals.map(row => ({ kind: 'terminal', id: row.terminal_id, title: row.title, agent: row.agent || null, current: row.terminal_id === terminalId && !agentChat, more: true })), // only one of a terminal and a chat is shown
-        ...chats.map(row => ({ kind: 'chat', id: row.id, title: `${row.running ? '\u25CF ' : ''}${row.title}`, agent: row.agent, current: Boolean(agentFor && agentFor.conversation === row.id), more: true })),
+        ...chats.map(row => ({ kind: 'chat', id: row.id, title: row.title, running: Boolean(row.running), updated: row.updated_at || null, agent: row.agent, current: Boolean(agentFor && agentFor.conversation === row.id), more: true })),
       ],
     };
   }
@@ -163,7 +163,7 @@
     if (peek.status === 'error') return { label, note: 'Could not load the sessions', rows: [] };
     const rows = [
       ...peek.terminals.map(row => ({ kind: 'terminal', id: row.terminal_id, title: row.title, agent: row.agent || null, current: false, more: false })),
-      ...peek.chats.map(row => ({ kind: 'chat', id: row.id, title: `${row.running ? '\u25CF ' : ''}${row.title}`, agent: row.agent, current: false, more: false })),
+      ...peek.chats.map(row => ({ kind: 'chat', id: row.id, title: row.title, running: Boolean(row.running), updated: row.updated_at || null, agent: row.agent, current: false, more: false })),
     ];
     if (!rows.length) rows.push({ kind: 'open', id: 'open', title: tr('Open this task'), agent: null, current: false, more: false });
     return { label, note: null, rows };
@@ -188,7 +188,7 @@
           // A tap opens or closes the list of sessions under the task. Going to a session is a tap on that session.
           const hasSessions = Boolean(selected && (terminals.length || chats.length));
           // The selected task: "+" on the right of its row adds a terminal.
-          return { id: item.id, title: item.title, selected, expanded: open, add: hasSessions, sessions: open ? (selected ? (hasSessions ? ownSessions() : null) : peekSessions(item)) : null };
+          return { id: item.id, title: item.title, count: open ? (selected ? (hasSessions ? terminals.length + chats.length : null) : (peeks.get(item.id) && peeks.get(item.id).status === 'ready' ? peeks.get(item.id).terminals.length + peeks.get(item.id).chats.length : null)) : null, selected, expanded: open, add: hasSessions, sessions: open ? (selected ? (hasSessions ? ownSessions() : null) : peekSessions(item)) : null };
         }),
       });
     }

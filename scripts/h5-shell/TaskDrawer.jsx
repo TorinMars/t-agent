@@ -1,7 +1,9 @@
 import { useState } from 'react';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
+import Chip from '@mui/material/Chip';
 import Divider from '@mui/material/Divider';
+import InputAdornment from '@mui/material/InputAdornment';
 import Drawer from '@mui/material/Drawer';
 import IconButton from '@mui/material/IconButton';
 import List from '@mui/material/List';
@@ -12,12 +14,38 @@ import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
 import AddIcon from '@mui/icons-material/Add';
 import CloseIcon from '@mui/icons-material/Close';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import ChevronRightIcon from '@mui/icons-material/ChevronRight';
+import SearchIcon from '@mui/icons-material/Search';
 import MoreHorizIcon from '@mui/icons-material/MoreHoriz';
 import UnfoldLessIcon from '@mui/icons-material/UnfoldLess';
 import UnfoldMoreIcon from '@mui/icons-material/UnfoldMore';
 import { DomIcon, chatMark, t, terminalMark } from './common.jsx';
 
 const GLYPHS = { shell: '>_', claude: '✳', codex: 'GPT' };
+
+// The sessions under a task: its terminals, then its chats. The selected task's rows have "⋯" actions; those of another task only open.
+const AGENT_NAMES = { claude: 'Claude', codex: 'Codex' };
+
+// The second line of a session row: what it is, then its state or when it last changed.
+function subtitle(row) {
+  const name = AGENT_NAMES[row.agent];
+  const kind = row.kind === 'chat' ? `${name || ''} ${t('Session')}`.trim() : row.kind === 'terminal' ? (name ? `${name} ${t('Terminal')}` : t('Terminal')) : '';
+  const state = row.running ? t('Running') : ago(row.updated);
+  return [kind, state].filter(Boolean).join(' \u00B7 ');
+}
+
+// "12 min ago" from a 'YYYY-MM-DD HH:MM:SS' time (UTC, as the server writes it); empty when it is not known.
+function ago(value) {
+  if (!value) return '';
+  const time = Date.parse(`${String(value).replace(' ', 'T')}Z`);
+  if (!Number.isFinite(time)) return '';
+  const minutes = Math.max(0, Math.round((Date.now() - time) / 60000));
+  if (minutes < 1) return t('Just now');
+  if (minutes < 60) return `${minutes} ${t('min ago')}`;
+  if (minutes < 1440) return `${Math.round(minutes / 60)} ${t('h ago')}`;
+  return `${Math.round(minutes / 1440)} ${t('d ago')}`;
+}
 
 // The sessions under a task: its terminals, then its chats. The selected task's rows have "⋯" actions; those of another task only open.
 function Sessions({ ui, taskId, sessions }) {
@@ -29,14 +57,17 @@ function Sessions({ ui, taskId, sessions }) {
           <ListItemButton
             component="button" className="h5-terminal-main" aria-current={row.current ? 'true' : undefined}
             selected={row.current} onClick={() => ui.actions.openRow(taskId, row)}
-            sx={{ flex: '1 1 auto', minWidth: 0, minHeight: 32, py: 0, px: 1, borderRadius: 2, gap: 1, textAlign: 'left', fontSize: 14, '&.Mui-selected': { bgcolor: 'action.selected' } }}
+            sx={{ flex: '1 1 auto', minWidth: 0, minHeight: 52, py: 0.5, px: 1, borderRadius: 2, gap: 1.25, textAlign: 'left', fontSize: 15, borderLeft: 3, borderColor: 'transparent', '&.Mui-selected': { bgcolor: 'action.selected', borderColor: 'primary.main' } }}
           >
-            <Box component="span" className={`h5-terminal-icon ${row.agent || 'shell'}`} aria-hidden="true" sx={{ flex: '0 0 22px', display: 'inline-flex', justifyContent: 'center', fontSize: 13, fontFamily: 'monospace', color: row.agent === 'claude' ? '#d97757' : 'text.secondary', '& svg': { width: 16, height: 16 } }}>
+            <Box component="span" className={`h5-terminal-icon ${row.agent || 'shell'}`} aria-hidden="true" sx={{ flex: '0 0 36px', width: 36, height: 36, borderRadius: 1.5, bgcolor: 'action.hover', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, fontFamily: 'monospace', color: row.agent === 'claude' ? '#d97757' : 'text.secondary', '& svg': { width: 22, height: 22 } }}>
               {row.kind === 'chat' ? <DomIcon make={chatMark(row.agent)} />
                 : row.kind === 'terminal' && row.agent ? <DomIcon make={terminalMark(row.agent)} />
                   : GLYPHS.shell}
             </Box>
-            <Box component="span" className="h5-terminal-name" sx={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.title}</Box>
+            <Box component="span" sx={{ minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+              <Box component="span" className="h5-terminal-name" sx={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.title}</Box>
+              {subtitle(row) ? <Box component="span" className="h5-terminal-sub" sx={{ fontSize: 12.5, color: row.running ? 'success.main' : 'text.secondary', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{subtitle(row)}</Box> : null}
+            </Box>
           </ListItemButton>
           {row.more ? (
             <IconButton className="h5-terminal-more" size="small" sx={{ p: 0.5 }} aria-label={t(row.kind === 'chat' ? 'Chat actions' : 'Terminal actions')} onClick={() => ui.actions.rowMore(row)}>
@@ -49,21 +80,41 @@ function Sessions({ ui, taskId, sessions }) {
   );
 }
 
-function Tasks({ state, ui }) {
+function Tasks({ state, ui, query, filter }) {
   const { note, groups } = state.taskList;
   if (note) return <Typography className="h5-list-note" color="text.secondary" sx={{ py: 3, textAlign: 'center' }}>{t(note)}</Typography>;
-  return groups.map(group => (
+  const needle = query.trim().toLowerCase();
+  const filtering = Boolean(needle) || filter !== 'all';
+  // A search or the Running filter keeps the tasks whose name matches, or that have a matching session in a list that is open.
+  const shown = groups.map(group => ({
+    ...group,
+    tasks: group.tasks.filter(task => {
+      if (!filtering) return true;
+      const rows = (task.sessions && task.sessions.rows) || [];
+      const nameHit = !needle || task.title.toLowerCase().includes(needle);
+      const rowHit = rows.some(row => (!needle || row.title.toLowerCase().includes(needle)) && (filter !== 'running' || row.running));
+      return filter === 'running' ? rowHit : nameHit || rowHit;
+    }),
+  })).filter(group => group.tasks.length);
+  if (filtering && !shown.length) return <Typography className="h5-list-note" color="text.secondary" sx={{ py: 3, textAlign: 'center' }}>{t('No matching sessions')}</Typography>;
+  return shown.map(group => (
     <Box key={group.key} component="section">
       <ListSubheader component="h3" className="h5-group-title" disableSticky sx={{ bgcolor: 'transparent', m: 0, mt: 1.5, px: 1, fontSize: 13, fontWeight: 500, lineHeight: '32px' }}>{group.name}</ListSubheader>
       {group.tasks.map(task => (
-        <Box key={task.id}>
+        <Box key={task.id} sx={{ borderBottom: 1, borderColor: 'divider', '&:last-of-type': { borderBottom: 0 } }}>
           <Box className={task.add ? 'h5-task-row' : undefined} sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
             <ListItemButton
               component="button" className="h5-task-item" selected={task.selected} aria-current={task.selected ? 'true' : undefined} aria-expanded={task.expanded}
               onClick={() => ui.actions.toggleTask(task.id)}
-              sx={{ flex: '1 1 auto', minWidth: 0, minHeight: 32, py: 0.5, px: 1, borderRadius: 2, textAlign: 'left', overflowWrap: 'anywhere', fontSize: 15, lineHeight: 1.35, '&.Mui-selected': { bgcolor: 'action.selected' } }}
+              sx={{ flex: '1 1 auto', minWidth: 0, minHeight: 48, py: 0.75, px: 1, borderRadius: 2, textAlign: 'left', overflowWrap: 'anywhere', fontSize: 16, lineHeight: 1.35, '&.Mui-selected': { bgcolor: 'action.selected' } }}
             >
-              {task.title}
+              <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', gap: 1, width: '100%' }}>
+                {task.expanded ? <ExpandMoreIcon fontSize="small" /> : <ChevronRightIcon fontSize="small" />}
+                <Box component="span" sx={{ minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+                  <Box component="span" className="h5-task-title" sx={{ fontWeight: 600 }}>{task.title}</Box>
+                  {task.count != null ? <Box component="span" className="h5-task-count" sx={{ fontSize: 13, color: 'text.secondary' }}>{task.count} {t(task.count === 1 ? 'session' : 'sessions')}</Box> : null}
+                </Box>
+              </Box>
             </ListItemButton>
             {task.add ? <IconButton className="h5-task-add" size="small" sx={{ p: 0.5 }} aria-label={t('Session')} onClick={() => ui.actions.openSessionMenu()}><AddIcon /></IconButton> : null}
           </Box>
@@ -76,6 +127,8 @@ function Tasks({ state, ui }) {
 
 function Panel({ state, ui }) {
   const [title, setTitle] = useState('');
+  const [query, setQuery] = useState('');
+  const [filter, setFilter] = useState('all');
   const submit = async event => {
     event.preventDefault();
     const value = title.trim();
@@ -107,8 +160,19 @@ function Panel({ state, ui }) {
         />
         <Button type="submit" variant="contained" disabled={state.creatingTask} sx={{ flex: '0 0 auto', height: 36 }}>{t('Create')}</Button>
       </Box>
+      <Box className="h5-task-search" sx={{ px: 2, pb: 1 }}>
+        <TextField
+          size="small" fullWidth type="search" placeholder={t('Search sessions')} value={query} onChange={event => setQuery(event.target.value)}
+          slotProps={{ input: { startAdornment: <InputAdornment position="start"><SearchIcon fontSize="small" /></InputAdornment>, sx: { borderRadius: 3 } }, htmlInput: { 'aria-label': t('Search sessions') } }}
+        />
+        <Box className="h5-task-filters" sx={{ display: 'flex', gap: 1, pt: 1 }}>
+          {[['all', 'All'], ['running', 'Running']].map(([key, label]) => (
+            <Chip key={key} label={t(label)} clickable color={filter === key ? 'primary' : 'default'} variant={filter === key ? 'filled' : 'outlined'} onClick={() => setFilter(key)} />
+          ))}
+        </Box>
+      </Box>
       <List id="h5-task-list" className="h5-task-list" disablePadding sx={{ flex: '1 1 auto', overflowY: 'auto', px: 1, pb: 1.5 }}>
-        <Tasks state={state} ui={ui} />
+        <Tasks state={state} ui={ui} query={query} filter={filter} />
       </List>
       <Divider />
       <Button className="h5-desktop-link" component="a" href="/web" fullWidth sx={{ py: 1.5, borderRadius: 0 }}>{t('Desktop version')}</Button>

@@ -538,7 +538,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     assert.equal(await page.locator('.h5-task-item', { hasText: 'Fix login' }).getAttribute('aria-expanded'), 'true', 'the sheet opens with the sessions of the task that is shown');
     await page.locator('.h5-task-item', { hasText: 'Write docs' }).tap();
     await page.locator('#h5-tasks .h5-terminal-list[aria-label="Write docs"] .h5-terminal-main', { hasText: 'Docs terminal' }).waitFor();
-    assert.deepEqual(await page.locator('.h5-task-item').evaluateAll(nodes => nodes.map(node => [node.textContent, node.getAttribute('aria-expanded')])), [['Fix login', 'true'], ['Write docs', 'true']], 'opening a second task does not close the first');
+    assert.deepEqual(await page.locator('.h5-task-item').evaluateAll(nodes => nodes.map(node => [node.querySelector('.h5-task-title').textContent, node.getAttribute('aria-expanded')])), [['Fix login', 'true'], ['Write docs', 'true']], 'opening a second task does not close the first');
     // Collapse all and Expand all are in the header of the list.
     await page.locator('#h5-collapse-all').tap();
     assert.deepEqual(await page.locator('.h5-task-item').evaluateAll(nodes => nodes.map(node => node.getAttribute('aria-expanded'))), ['false', 'false'], 'collapse all');

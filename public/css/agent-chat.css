@@ -180,12 +180,6 @@ button.ac-run.ac-stop svg { width: 12px; height: 12px; }
 .ac-picker-note { margin: 4px 8px 2px; color: var(--ac-muted); font-size: 12px; }
 .ac-link { border: 0; background: none; color: var(--ac-accent); font: inherit; cursor: pointer; text-decoration: underline; padding: 0; }
 .ac-model { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ac-text); }
-.ac-context { display: inline-flex; flex: 0 0 auto; color: var(--ac-accent); }
-.ac-context.high { color: #d29922; }
-.ac-context.full { color: var(--ac-danger); }
-.ac-context-track, .ac-context-value { fill: none; stroke-width: 3; }
-.ac-context-track { stroke: var(--ac-border); }
-.ac-context-value { stroke: currentColor; stroke-linecap: round; }
 .ac-composer [hidden] { display: none; }
 @media (pointer: coarse) { .agent-chat { font-size: 16px; } }
 @keyframes ac-spin { to { transform: rotate(360deg); } }
@@ -281,7 +275,7 @@ body.wt-on .agent-chat .ac-text, body.wt-on .agent-chat .ac-user { cursor: point
 
 /* The footer is one row of icons under the input box: options and access level on the left; model, context and plan usage on the right. */
 .ac-foot { gap: 4px; padding: 2px 24px max(6px, env(safe-area-inset-bottom)); flex-wrap: nowrap; }
-.ac-options-button, .ac-picker-button, .ac-mode-label, .ac-context { width: 30px; height: 30px; justify-content: center; box-sizing: border-box; border-radius: 8px; }
+.ac-options-button, .ac-picker-button, .ac-mode-label { width: 30px; height: 30px; justify-content: center; box-sizing: border-box; border-radius: 8px; }
 .ac-options-button svg, .ac-picker-button svg, .ac-mode-label svg { width: 18px; height: 18px; color: var(--ac-muted); }
 .ac-mode-label:hover svg, .ac-options-button:hover svg, .ac-picker-button:hover svg { color: var(--ac-text); }
 .ac-mode-full svg { color: var(--ac-danger); }
@@ -292,7 +286,6 @@ body.wt-on .agent-chat .ac-text, body.wt-on .agent-chat .ac-user { cursor: point
 /* The options button and the access level share one center line: every control in the row is 30px high and the wrappers do not add line height. */
 .ac-foot .ac-options, .ac-mode-holder, .ac-picker-holder { display: inline-flex; flex-direction: row; align-items: center; height: 30px; margin: 0; gap: 0; } /* .ac-options is also the question options list (margin-top 6px); the footer one must not inherit that */
 .ac-status { gap: 2px; flex-wrap: nowrap; margin-left: auto; }
-.ac-context { align-items: center; }
 .ac-limits-holder { display: inline-flex; }
 .ac-limits { display: inline-flex; align-items: flex-end; gap: 7px; height: 30px; padding: 5px 6px; box-sizing: border-box; border: 0; border-radius: 8px; background: none; cursor: pointer; }
 .ac-limits:hover { background: var(--ac-key); }
@@ -302,6 +295,10 @@ body.wt-on .agent-chat .ac-text, body.wt-on .agent-chat .ac-user { cursor: point
 .ac-bar i { display: block; width: 100%; border-radius: 2px; background: var(--ac-accent); }
 .ac-bar-time i { background: var(--ac-muted); }
 .ac-limit.low .ac-bar-usage i { background: var(--ac-danger); }
+/* The context window: the first bar of the usage unit; it fills as the conversation grows (the plan bars show what is left). */
+.ac-context .ac-bar i { background: var(--ac-accent); }
+.ac-context.high .ac-bar i { background: #d29922; }
+.ac-context.full .ac-bar i { background: var(--ac-danger); }
 .ac-limits-pop { position: absolute; z-index: 6; right: 0; bottom: calc(100% + 8px); box-sizing: border-box; width: min(300px, calc(100cqw - 32px)); padding: 8px 12px 10px; border: 1px solid var(--ac-border); border-radius: 12px; background: var(--ac-bg); box-shadow: 0 8px 28px rgba(0,0,0,.18); font-size: 14px; font-variant-numeric: tabular-nums; }
 .ac-limits-pop .ac-picker-title, .ac-limits-pop .ac-picker-note { padding-left: 0; margin-left: 0; }
 .ac-limit-line { margin: 4px 0; }

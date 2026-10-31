@@ -202,21 +202,22 @@ const server = http.createServer(app);
     await page.focus('.ac-input');
     assert.deepEqual(await rows(), { full: true, below: true }, 'two rows while the input has focus');
     await page.evaluate(() => document.activeElement.blur());
-    // The ring says how much of the context window is used, and changes colouras it fills.
-    assert.equal(await page.locator('.ac-context').getAttribute('aria-label'), 'Context: 21% used (42k of 200k tokens)');
+    // The context window is the first bar of the usage unit: how much of it is used; its numbers are in the floating window.
+    assert.equal(await page.locator('.ac-limits .ac-context .ac-bar i').evaluate(node => node.style.height), '21%');
+    assert.equal(await page.locator('.ac-context').count(), 1, 'there is no separate context ring');
     // The plan usage is one small unit of upright bars (usage left and time left per window); its numbers are in a floating window.
     assert.equal(await page.locator('.ac-limits').count(), 1, 'one unit');
-    assert.equal(await page.locator('.ac-limits .ac-bar').count(), 4, 'two bars per window');
+    assert.equal(await page.locator('.ac-limits .ac-bar').count(), 5, 'the context bar and two bars per window');
     assert.equal(await page.locator('.ac-limits .ac-bar-usage i').first().evaluate(node => node.style.height), '63%', '62.5% of the 5h usage is left');
-    assert.equal(await page.locator('.ac-limits').getAttribute('title'), '5h: 62.5% · 4.2h  7d: 80% · 3.5d');
+    assert.equal(await page.locator('.ac-limits').getAttribute('title'), 'Context: 21% used (42k of 200k tokens)  5h: 62.5% · 4.2h  7d: 80% · 3.5d');
     assert.equal(await page.locator('.ac-limits-pop').count(), 0, 'the numbers are hidden until the unit is clicked');
     await page.click('.ac-limits');
-    assert.deepEqual(await page.locator('.ac-limit-line').allTextContents(), ['5h limit: 62.5% left, resets in 4.2h', '7d limit: 80% left, resets in 3.5d']);
+    assert.deepEqual(await page.locator('.ac-limit-line').allTextContents(), ['Context: 21% used (42k of 200k tokens)', '5h limit: 62.5% left, resets in 4.2h', '7d limit: 80% left, resets in 3.5d']);
     // The button in the floating window asks the server to read the usage again; it stays shown and usable afterwards.
     const [refreshRequest] = await Promise.all([page.waitForRequest(request => request.method() === 'POST' && request.url().endsWith('/limits/refresh')), page.click('.ac-limits-refresh')]);
     assert.ok(refreshRequest, 'the button asks for a fresh reading');
     await page.waitForFunction(() => !document.querySelector('.ac-limits-refresh').disabled);
-    assert.deepEqual(await page.locator('.ac-limit-line').allTextContents(), ['5h limit: 62.5% left, resets in 4.2h', '7d limit: 80% left, resets in 3.5d']);
+    assert.deepEqual(await page.locator('.ac-limit-line').allTextContents(), ['Context: 21% used (42k of 200k tokens)', '5h limit: 62.5% left, resets in 4.2h', '7d limit: 80% left, resets in 3.5d']);
     await page.keyboard.press('Escape');
     assert.equal(await page.locator('.ac-limits-pop').count(), 0, 'Escape closes the floating window');
     // The composer icons keep a real size (they were specks on an iPhone).
@@ -231,8 +232,7 @@ const server = http.createServer(app);
     assert.ok(optionsBox.x + optionsBox.width <= modeBox.x + 1 && modeBox.x + modeBox.width <= limitsBox.x, 'options, access level, then the usage, left to right');
     for (const box of [optionsBox, modeBox, limitsBox]) assert.ok(box.y >= footBox.y - 1 && box.y + box.height <= footBox.y + footBox.height + 1, 'all in the same row');
     assert.ok(footBox.height <= 46, 'the row is low');
-    assert.equal(await page.locator('.ac-context').getAttribute('class'), 'ac-context');
-    assert.equal(await page.locator('.ac-context-value').getAttribute('stroke-dasharray'), `${2 * Math.PI * 8 * 0.21} ${2 * Math.PI * 8}`);
+    assert.equal(await page.locator('.ac-context').getAttribute('class'), 'ac-limit ac-context');
     assert.match(await page.locator('.ac-mode-label').getAttribute('aria-label'), /Ask before changes/);
     assert.equal(await page.locator('.ac-text strong').textContent(), 'bold');
     assert.deepEqual(await page.locator('.ac-text li').allTextContents(), ['one', 'two']);

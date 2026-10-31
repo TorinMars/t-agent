@@ -1321,6 +1321,7 @@ I18n.add({
   "Expand all": "全部展开",
   "Collapse all": "全部折叠",
   "Plan usage": "套餐用量",
+  "Usage": "用量",
   "Left bar: usage left. Right bar: time left.": "左条：剩余用量。右条：剩余时间。",
   "Refresh usage": "刷新用量",
   "Asks before it changes anything": "改动任何东西前先询问",

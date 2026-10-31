@@ -796,7 +796,7 @@ function ModelPicker({ store, state }) {
 
 // What is left of the plan windows (5 hours, 7 days) as one small unit: per window a bar for the usage left and a bar for the time left before it resets, standing
 // upright. A click opens a floating window with the numbers in words and a button that reads the usage again.
-function Limits({ limits, onRefresh }) {
+function Limits({ limits, context, onRefresh }) {
   const [now, setNow] = useState(() => Date.now());
   const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState(false);
@@ -804,12 +804,20 @@ function Limits({ limits, onRefresh }) {
   useDismiss(open, () => setOpen(false), holder);
   useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 30000); return () => clearInterval(timer); }, []);
   const shown = visibleLimits(limits, now);
-  if (!shown.length) return null;
-  const summary = shown.map(entry => { const { left, reset } = limitText(entry, now); return `${entry.label}: ${left}%${reset ? ` · ${reset}` : ''}`; }).join('  ');
+  // The context window is the first bar of the unit: how much of it the conversation fills (the plan bars show what is left); it turns amber and red as the window runs out.
+  const fill = context && context.window ? Math.min(1, Math.max(0, context.used / context.window)) : null;
+  if (!shown.length && fill === null) return null;
+  const contextText = fill === null ? '' : t(`Context: ${Math.round(fill * 100)}% used (${tokens(context.used)} of ${tokens(context.window)} tokens)`);
+  const summary = [contextText, ...shown.map(entry => { const { left, reset } = limitText(entry, now); return `${entry.label}: ${left}%${reset ? ` · ${reset}` : ''}`; })].filter(Boolean).join('  ');
   const low = shown.some(entry => 100 - entry.usedPercent <= 10);
   return (
     <div className="ac-limits-holder" ref={holder}>
       <button type="button" className={`ac-limits${busy ? ' busy' : ''}${low ? ' low' : ''}`} translate="no" aria-haspopup="dialog" aria-expanded={open} aria-label={summary} title={summary} onClick={() => setOpen(value => !value)}>
+        {fill !== null ? (
+          <span className={`ac-limit ac-context${fill >= 0.92 ? ' full' : fill >= 0.8 ? ' high' : ''}`} data-context={Math.round(fill * 100)}>
+            <span className="ac-bar"><i style={{ height: `${Math.round(fill * 100)}%` }} /></span>
+          </span>
+        ) : null}
         {shown.map(entry => {
           const bars = limitBars(entry, now);
           return (
@@ -821,34 +829,18 @@ function Limits({ limits, onRefresh }) {
         })}
       </button>
       {open ? (
-        <div className="ac-limits-pop" role="dialog" aria-label={t('Plan usage')} translate="no">
-          <div className="ac-picker-title">{t('Plan usage')}</div>
+        <div className="ac-limits-pop" role="dialog" aria-label={t('Usage')} translate="no">
+          <div className="ac-picker-title">{t('Usage')}</div>
+          {fill !== null ? <p className={`ac-limit-line ac-context-line${fill >= 0.8 ? ' low' : ''}`}>{contextText}</p> : null}
           {shown.map(entry => {
             const { left, reset } = limitText(entry, now);
             return <p className={`ac-limit-line${100 - entry.usedPercent <= 10 ? ' low' : ''}`} key={entry.id}>{t(`${entry.label} limit: ${left}% left${reset ? `, resets in ${reset}` : ''}`)}</p>;
           })}
-          <p className="ac-picker-note">{t('Left bar: usage left. Right bar: time left.')}</p>
-          <button type="button" className="ac-limits-refresh" disabled={busy} onClick={() => { setBusy(true); Promise.resolve(onRefresh()).finally(() => setBusy(false)); }}>{t(busy ? 'Refreshing…' : 'Refresh usage')}</button>
+          {shown.length ? <p className="ac-picker-note">{t('Left bar: usage left. Right bar: time left.')}</p> : null}
+          {shown.length ? <button type="button" className="ac-limits-refresh" disabled={busy} onClick={() => { setBusy(true); Promise.resolve(onRefresh()).finally(() => setBusy(false)); }}>{t(busy ? 'Refreshing…' : 'Refresh usage')}</button> : null}
         </div>
       ) : null}
     </div>
-  );
-}
-
-// How much of the model's context window the conversation fills; it turns amber and red as the window runs out.
-function ContextRing({ context }) {
-  if (!context || !context.window) return null;
-  const ratio = Math.min(1, Math.max(0, context.used / context.window));
-  const percent = Math.round(ratio * 100);
-  const circumference = 2 * Math.PI * 8;
-  const label = t(`Context: ${percent}% used (${tokens(context.used)} of ${tokens(context.window)} tokens)`);
-  return (
-    <span className={`ac-context${ratio >= 0.92 ? ' full' : ratio >= 0.8 ? ' high' : ''}`} role="img" aria-label={label} title={label}>
-      <svg viewBox="0 0 22 22" width="18" height="18" aria-hidden="true">
-        <circle className="ac-context-track" cx="11" cy="11" r="8" />
-        <circle className="ac-context-value" cx="11" cy="11" r="8" strokeDasharray={`${circumference * ratio} ${circumference}`} transform="rotate(-90 11 11)" />
-      </svg>
-    </span>
   );
 }
 
@@ -958,8 +950,7 @@ export const Chat = React.forwardRef(function Chat({ store, agent, conversation,
           <RunButton state={state} store={store} />
           <span className="ac-status">
             <ModelPicker store={store} state={state} />
-            <ContextRing context={state.context} />
-            <Limits limits={state.limits} onRefresh={() => store.refreshLimits()} />
+            <Limits limits={state.limits} context={state.context} onRefresh={() => store.refreshLimits()} />
           </span>
         </>
       )} />

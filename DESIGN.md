@@ -914,7 +914,7 @@ Implemented according to the design of chapter 12; the details as actually lande
 
 1. Each task gets a new `work_dir` (working directory) field, defaulting to the directory of `md_path`
 2. The content area gets a tab switch (**Document** / **Terminal**), and the terminal uses xterm.js to open a server shell
-3. The shell process stays resident in memory, and the terminal output (the commands + their results) is persisted in SQLite so history can be restored after a service restart
+3. The shell process stays resident in memory together with its output history (the commands + their results). The history is not persisted: after a service restart a terminal starts empty with a new shell (originally it was stored in SQLite; see "Terminal architecture")
 
 ---
 
@@ -927,16 +927,7 @@ ALTER TABLE tasks ADD COLUMN work_dir TEXT;
 -- working directory, defaults to the directory of md_path and can be changed by hand
 ```
 
-**New terminal_logs table**:
-
-```sql
-CREATE TABLE IF NOT EXISTS terminal_logs (
-  task_id    INTEGER PRIMARY KEY,
-  buffer     TEXT    NOT NULL DEFAULT '',
-  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
--- buffer: the full raw terminal output (ANSI escape codes), capped at 5MB; beyond that it is truncated from the start, keeping the last 5MB
-```
+**Removed terminal_logs table**: the first design stored the full raw terminal output in a `terminal_logs` table (and in `task_terminals.buffer` for extra terminals). The history is now kept in memory only, so the table and the column no longer exist. At start `db/index.js` runs `DROP TABLE IF EXISTS terminal_logs` and drops `task_terminals.buffer` when it is still there (idempotent, safe on every start; `agent_session_id`, the work directory and all task and session tables are untouched). The deletion is irreversible: back up the database file before the first start of the version that includes this change if the old history might still be needed.
 
 ---
 
@@ -959,12 +950,10 @@ CREATE TABLE IF NOT EXISTS terminal_logs (
 ```
 Frontend xterm.js  ←—— WebSocket ——→  node-pty (per task, resident in memory)
                                        ↓
-                              in-memory buffer (5MB ring)
-                                       ↓  flush every 5s or when 50KB has accumulated
-                              SQLite terminal_logs (persistent)
+                              in-memory buffer (5MB ring, not persisted)
 ```
 
-**Process lifecycle**: the pty is created at a task's first connection, is not destroyed when the ws disconnects, and only disappears when the service restarts. After a service restart the history buffer is restored from `terminal_logs` and then a new pty is spawned.
+**Process lifecycle**: the pty is created at a task's first connection, is not destroyed when the ws disconnects, and only disappears when the service restarts or the terminal is closed, restarted or deleted. The history lives only in memory: a reconnect replays it, but after a service restart (or close / restart) a new pty is spawned and the terminal opens empty. `reopenCommand` still starts `claude --resume ...` / `codex resume ...` for agent terminals. Because no old text is replayed, the old reset of stale mouse and focus modes for restored history is gone; the live reset when the shell regains the foreground (`watchShellReturn`) stays.
 
 ---
 
@@ -1004,9 +993,9 @@ Frontend CDN includes (`index.html`):
 
 | File | Change |
 |------|------|
-| `db/index.js` | Append the work_dir migration; create the terminal_logs table |
+| `db/index.js` | Append the work_dir migration (the terminal_logs table it once created is now dropped by a migration) |
 | `routes/tasks.js` | POST/PUT support work_dir; validate-path returns work_dir |
-| `routes/terminal.js` | New: WebSocket PTY, node-pty resident, buffer + SQLite dual write |
+| `routes/terminal.js` | New: WebSocket PTY, node-pty resident, in-memory output history |
 | `server.js` | Mount the ws server and intercept the `/terminal/ws` upgrade |
 | `package.json` | Add node-pty and ws |
 | `public/index.html` | Include the xterm.js CDN; add the tab bar and terminal-pane structure |
@@ -1951,11 +1940,11 @@ The Client uses a unified cookie policy and keeps requiring HTTPS for remote acc
 
 ### Bounded terminal restore and on-demand history
 
-The terminal service maintains a headless xterm state synchronized with the PTY output / size, and uses a serialized snapshot to restore the current screen, modes and the latest 500 lines of scrollback. On connect the entire persisted buffer is no longer sent to the browser; the snapshot restore and the live output are delivered in order, so no data is lost or duplicated during asynchronous parsing. The raw log format on disk and its retention limit are unchanged. The headless xterm and the serialize addon are pinned to compatible versions; for the full-screen modes and cursor state the addon does not cover, restore sequences are added and verified with a real parser. When the server process restarts, the state is rebuilt from the retained log, and control context that was already discarded because it exceeded the retention limit cannot be restored.
+The terminal service maintains a headless xterm state synchronized with the PTY output / size, and uses a serialized snapshot to restore the current screen, modes and the latest 500 lines of scrollback. On connect the entire retained buffer is no longer sent to the browser; the snapshot restore and the live output are delivered in order, so no data is lost or duplicated during asynchronous parsing. The retention limit of the in-memory raw log is unchanged. The headless xterm and the serialize addon are pinned to compatible versions; for the full-screen modes and cursor state the addon does not cover, restore sequences are added and verified with a real parser. The history is kept in memory only (5 MB); after a server restart a terminal starts empty, so nothing is rebuilt from disk. Control context that was already discarded because it exceeded the retention limit cannot be restored.
 
 The initial WebSocket `history` frame keeps the `data` field and carries the snapshot size and optional `archive` metadata. The archive is pinned to the log snapshot of this connection, and a plain-text page of at most 500 lines and 128 KiB is returned only when the browser explicitly requests `history-page`. The request is bound to the connection, the archive ID and a cursor, and inherits the terminal authentication; control frames must never fall into the PTY input. An old Client can still restore the initial data, and a new Client does not request paging from an old Engine without archive metadata.
 
-**Flow control and persistence**: the PTY is paused when the browser socket (`bufferedAmount`) plus the unparsed headless-xterm queue exceed 1 MiB and resumed below 256 KiB (polled every 20 ms; a closed socket stops counting, so the PTY is never left paused). Consecutive live chunks that wait for the parser are merged into batches of at most 256 KiB, so the live WebSocket messages are ordered byte runs, not one message per PTY chunk. The access check (session and task owner) runs at most once per second per socket; a revoked access closes the socket within about a second. The retained history is a chunk list trimmed in whole chunks and cut to exactly 5 MB when read; it is written to SQLite when 512 KiB of new output is unsaved, every 5 s if anything is unsaved, on exit and on terminal control, and on socket close only if something is unsaved. One escape-sequence scanner (`ControlScanner` in `lib/terminal-snapshot.js`, CAN/SUB aware) serves both the live parser tracker and the history archive.
+**Flow control and history retention**: the PTY is paused when the browser socket (`bufferedAmount`) plus the unparsed headless-xterm queue exceed 1 MiB and resumed below 256 KiB (polled every 20 ms; a closed socket stops counting, so the PTY is never left paused). Consecutive live chunks that wait for the parser are merged into batches of at most 256 KiB, so the live WebSocket messages are ordered byte runs, not one message per PTY chunk. The access check (session and task owner) runs at most once per second per socket; a revoked access closes the socket within about a second. The retained history is a chunk list trimmed in whole chunks and cut to exactly 5 MB when read; it is never written to SQLite (the earlier periodic and on-exit writes were removed together with the `terminal_logs` table). One escape-sequence scanner (`ControlScanner` in `lib/terminal-snapshot.js`, CAN/SUB aware) serves both the live parser tracker and the history archive.
 
 The Client shares one history controller, keeping the input / OSC52 suppression and the scroll-position handling during replay; earlier logs are shown in a separate read-only window, inserted through text nodes, without replaying ANSI control sequences. Paging does not block the live main terminal, and pending requests are cleaned up when switching tasks, on disconnect and when releasing an instance, so history cannot mix into another terminal. This extension is backward compatible and changes neither the database nor the Engine API major version.
 

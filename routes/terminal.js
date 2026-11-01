@@ -18,8 +18,6 @@ const TERMINAL_IN_USE_CLOSE = 4009;
 const TERMINAL_TAKEN_CLOSE = 4010;
 
 const MAX_BUFFER = 5 * 1024 * 1024;   // 5MB
-const FLUSH_INTERVAL = 5000;           // 5s
-const FLUSH_SIZE = 512 * 1024;         // 512KB of unsaved output triggers a write
 // Flow control: pause the PTY while this much output is unsent (socket buffer) or unparsed (headless xterm queue).
 const FLOW_HIGH = 1024 * 1024;
 const FLOW_LOW = 256 * 1024;
@@ -181,33 +179,9 @@ function renameTerminal(taskId, value, requestedTitle) {
   return { terminal_id: id, title };
 }
 
-function clearBuffer(taskId, id) {
-  if (id === 'default') db.prepare('DELETE FROM terminal_logs WHERE task_id = ?').run(taskId);
-  else db.prepare("UPDATE task_terminals SET buffer = '', updated_at = CURRENT_TIMESTAMP WHERE task_id = ? AND terminal_id = ?").run(taskId, id);
-}
-
-function flushToDB(taskId) {
-  const s = sessions.get(taskId);
-  if (!s || !s.pendingSince) return;
-  persistBuffer(s.taskId, bufferText(s), s.terminalId);
-  s.pendingSince = 0;
-}
-
-function persistBuffer(taskId, buffer, id = 'default') {
-  if (id !== 'default') {
-    db.prepare('UPDATE task_terminals SET buffer = ?, updated_at = CURRENT_TIMESTAMP WHERE task_id = ? AND terminal_id = ?').run(buffer || '', taskId, id);
-    return;
-  }
-  db.prepare(`
-    INSERT INTO terminal_logs (task_id, buffer, updated_at)
-    VALUES (?, ?, CURRENT_TIMESTAMP)
-    ON CONFLICT(task_id) DO UPDATE SET buffer = excluded.buffer, updated_at = excluded.updated_at
-  `).run(taskId, buffer || '');
-}
-
 // The history is a list of chunks, so a PTY chunk is an O(1) push. Whole chunks
 // are dropped from the front once the total is well above the limit; the exact
-// MAX_BUFFER cut is made only when the text is read (persist, snapshot archive).
+// MAX_BUFFER cut is made only when the text is read (snapshot archive). The history lives in memory only; it is never written to the database.
 function bufferText(s) {
   if (s.chunks.length !== 1) s.chunks = [s.chunks.join('')];
   if (s.chunks[0].length > MAX_BUFFER) s.chunks[0] = s.chunks[0].slice(s.chunks[0].length - MAX_BUFFER);
@@ -225,28 +199,15 @@ function appendBuffer(taskId, data) {
     while (drop < s.chunks.length - 1 && s.size - s.chunks[drop].length >= MAX_BUFFER) s.size -= s.chunks[drop++].length;
     s.chunks.splice(0, drop);
   }
-  s.pendingSince += data.length;
-  // write once enough output has accumulated (the interval timer covers the rest)
-  if (s.pendingSince >= FLUSH_SIZE) {
-    clearInterval(s.flushTimer);
-    flushToDB(taskId);
-    s.flushTimer = setInterval(() => flushToDB(taskId), FLUSH_INTERVAL);
-  }
 }
 
 function getOrCreateSession(ownerTaskId, workDir, dirWarning, id = 'default') {
   const taskId = sessionKey(ownerTaskId, id);
   if (sessions.has(taskId)) return sessions.get(taskId);
 
-  // restore the history buffer from the DB
-  const row = id === 'default'
-    ? db.prepare('SELECT buffer FROM terminal_logs WHERE task_id = ?').get(ownerTaskId)
-    : db.prepare('SELECT buffer FROM task_terminals WHERE task_id = ? AND terminal_id = ?').get(ownerTaskId, id);
-  // The restored history comes from a PTY that no longer exists (service restart, crash, manual close). The killed program had no chance to turn off the
-  // mouse/focus reporting modes it had enabled; if replayed unchanged, the browser terminal keeps feeding mouse movement into the new shell as input,
-  // which shows up as characters like 35;39;58M after the prompt. So these input modes are always reset when restoring.
-  const staleModes = row && row.buffer ? RESET_INPUT_MODES : '';
-  const savedBuffer = (dirWarning || '') + (row ? row.buffer : '') + staleModes;
+  // The history is not persisted: after a service restart (or a close / restart) a terminal starts empty with a new shell.
+  // No old text is replayed, so the stale mouse/focus mode reset of a restored history is not needed here.
+  const savedBuffer = dirWarning || '';
 
   let pty;
   let shell;
@@ -315,8 +276,6 @@ function getOrCreateSession(ownerTaskId, workDir, dirWarning, id = 'default') {
     ws: null,
     snapshot: new TerminalSnapshot(),
     ready: false,
-    flushTimer: setInterval(() => flushToDB(taskId), FLUSH_INTERVAL),
-    pendingSince: 0,
   };
   sessions.set(taskId, s);
   s.snapshot.write(savedBuffer);
@@ -363,8 +322,6 @@ function getOrCreateSession(ownerTaskId, workDir, dirWarning, id = 'default') {
     s.activity.stop();
     s.snapshot.enqueue(() => {
       if (sessions.get(taskId) !== s) return;
-      clearInterval(s.flushTimer);
-      persistBuffer(s.taskId, bufferText(s), s.terminalId);
       sessions.delete(taskId);
       s.snapshot.dispose();
       const activeWs = s.ws;
@@ -377,8 +334,8 @@ function getOrCreateSession(ownerTaskId, workDir, dirWarning, id = 'default') {
 }
 
 /**
- * Terminate the task's server-side PTY. restart-workdir also clears the old history and the next connection creates a brand-new shell from the
- * task work_dir; close keeps the history; delete also removes the terminal record (the default terminal is marked removed instead).
+ * Terminate the task's server-side PTY. restart-workdir: the next connection creates a brand-new shell from the
+ * task work_dir; close also ends the shell (the history lives in memory only, so every action leaves the next terminal empty); delete also removes the terminal record (the default terminal is marked removed instead).
  */
 function controlSession(taskId, action, requestedTerminalId) {
   const id = Number.parseInt(taskId, 10);
@@ -391,24 +348,17 @@ function controlSession(taskId, action, requestedTerminalId) {
   const selectedId = assertTerminal(id, requestedTerminalId);
   const key = sessionKey(id, selectedId);
   const session = sessions.get(key);
-  const clearHistory = action === 'restart-workdir' || action === 'delete';
   if (session) {
     sessions.delete(key);
     session.snapshot.dispose();
-    clearInterval(session.flushTimer);
     session.stopShellWatch?.();
     session.stopFlowWatch?.();
     session.activity?.stop();
-    if (clearHistory) clearBuffer(id, selectedId);
-    else persistBuffer(id, bufferText(session), selectedId);
-    session.pendingSince = 0;
 
     const activeWs = session.ws;
     session.ws = null;
     try { session.pty.kill(); } catch {}
     if (activeWs && activeWs.readyState === 1) activeWs.close(1000, `terminal ${action}`);
-  } else if (clearHistory) {
-    clearBuffer(id, selectedId);
   }
 
   if (action === 'delete' && selectedId === 'default') {
@@ -562,10 +512,6 @@ function handleWs(ws, req, sessionUser, requestedTaskId = null, requestedTermina
   ws.on('close', () => {
     if (s.ws === ws) {
       s.ws = null;
-      // flush to the DB immediately
-      clearInterval(s.flushTimer);
-      flushToDB(key);
-      s.flushTimer = setInterval(() => flushToDB(key), FLUSH_INTERVAL);
     }
   });
 

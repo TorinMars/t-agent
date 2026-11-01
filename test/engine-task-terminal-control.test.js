@@ -40,13 +40,11 @@ test('A remote Engine rejects a relative working directory', () => {
   }), /WORKSPACE_PATH_MUST_BE_ABSOLUTE/);
 });
 
-test('Reopening from the working directory clears the old terminal history', () => {
-  db.prepare('INSERT INTO terminal_logs (task_id, buffer) VALUES (?, ?)').run(9001, 'old terminal output');
-
+test('Reopening from the working directory needs no stored history', () => {
   const result = terminal.controlSession(9001, 'restart-workdir');
 
   assert.deepEqual(result, { success: true, action: 'restart-workdir', had_session: false });
-  assert.equal(db.prepare('SELECT buffer FROM terminal_logs WHERE task_id = ?').get(9001), undefined);
+  assert.equal(db.prepare("SELECT name FROM sqlite_master WHERE name = 'terminal_logs'").get(), undefined);
 });
 
 test('Terminal control rejects unknown actions', () => {

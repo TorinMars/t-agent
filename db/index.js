@@ -75,12 +75,12 @@ for (const column of ['opened_web', 'opened_h5', 'translate', 'collapse_keyboard
 // Bookmark groups created before the project became English-first used a Chinese default name.
 db.prepare("UPDATE bookmarks SET group_name = 'Default' WHERE group_name = ?").run('\u9ed8\u8ba4');
 
-// terminal output history
-db.exec(`CREATE TABLE IF NOT EXISTS terminal_logs (
-  task_id    INTEGER PRIMARY KEY,
-  buffer     TEXT    NOT NULL DEFAULT '',
-  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-)`);
+// Terminal output history is no longer persisted (it lives in memory only). Drop what older versions stored; both statements are no-ops on a
+// database that no longer has them, so this is safe to run on every start. Other task_terminals columns (agent_session_id, ...) are untouched.
+db.exec('DROP TABLE IF EXISTS terminal_logs');
+if (db.prepare('PRAGMA table_info(task_terminals)').all().some(column => column.name === 'buffer')) {
+  db.exec('ALTER TABLE task_terminals DROP COLUMN buffer');
+}
 
 // User table (local accounts)
 db.exec(`CREATE TABLE IF NOT EXISTS users (

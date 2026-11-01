@@ -96,7 +96,6 @@ test('independent shells preserve histories across switching; control only affec
   await first.waitFor(2);
   assert.equal(first.sent.at(-1), ' STILL RUNNING');
   terminal.controlSession(task.id, 'close');
-  assert.equal(db.prepare('SELECT buffer FROM terminal_logs WHERE task_id = ?').get(task.id).buffer, 'FIRST HISTORY STILL RUNNING');
 });
 
 test('terminal IDs cannot address other tasks or bypass ownership', () => {
@@ -132,10 +131,14 @@ test('deleting an extra terminal stops its shell and permanently removes its his
 
 test('history controls are scoped, bounded and never passed to PTY; snapshot precedes live bytes', async () => {
   const added = terminal.createTerminal(task.id);
-  db.prepare('UPDATE task_terminals SET buffer = ? WHERE task_id = ? AND terminal_id = ?')
-    .run(Array.from({ length: 2000 }, (_, i) => `old-${i}\r\n`).join(''), task.id, added.terminal_id);
-  const ws = connect(added.terminal_id);
+  const seed = connect(added.terminal_id);
   const shell = shells.at(-1);
+  const oldText = Array.from({ length: 2000 }, (_, i) => `old-${i}\r\n`).join('');
+  await seed.waitFor(1);
+  shell.data(oldText);
+  await until(() => seed.sent.slice(1).join('').length >= oldText.length, 'old output delivered');
+  seed.close(1000, 'seed done');
+  const ws = connect(added.terminal_id);
   shell.data('LIVE-A'); shell.data('LIVE-B');
   await ws.waitFor(2);
   const history = JSON.parse(ws.sent[0]);
@@ -208,26 +211,36 @@ test('natural PTY exit drains final live bytes and snapshot before closing', asy
   assert.equal(JSON.parse(ws.sent[0]).type, 'history');
   assert.equal(ws.sent[1], 'last-line');
   assert.equal(ws.reason, 'terminal exited');
-  assert.equal(db.prepare('SELECT buffer FROM task_terminals WHERE task_id = ? AND terminal_id = ?').get(task.id, added.terminal_id).buffer, 'last-line');
   terminal.controlSession(task.id, 'delete', added.terminal_id);
 });
 
-test('restoring history from a dead PTY switches off the mouse modes it left enabled', async () => {
-  const other = tasks.createTask('owner', { title: 'killed program' });
-  // A TUI (e.g. Claude Code) was killed by a service restart before it could disable mouse reporting.
-  db.prepare('INSERT INTO terminal_logs (task_id, buffer) VALUES (?, ?)')
-    .run(other.id, 'tui output\x1b[?1003h\x1b[?1006h\x1b[?1000h\x1b[?1002h');
-  const ws = new Socket();
-  terminal.handleWs(ws, { url: `/terminal/ws?taskId=${other.id}&terminalId=default` }, { login: 'owner' });
-  await ws.waitFor(1);
-  const replay = JSON.parse(ws.sent[0]).data;
-  assert.match(replay, /tui output/);
-  for (const mode of ['1000h', '1002h', '1003h', '1006h']) {
-    assert.ok(!replay.includes(`\x1b[?${mode}`), `replay must not re-enable ?${mode}`);
-  }
+test('terminal history is kept in memory only: a reconnect replays it, a new shell after close or restart starts empty', async () => {
+  const other = tasks.createTask('owner', { title: 'memory only' });
+  const open = () => {
+    const ws = new Socket();
+    terminal.handleWs(ws, { url: `/terminal/ws?taskId=${other.id}&terminalId=default&clientId=mem` }, { login: 'owner' });
+    return ws;
+  };
+  const before = shells.length;
+  const first = open();
+  await first.waitFor(1);
+  shells.at(-1).data('tui output\x1b[?1003h\x1b[?1006h');
+  await first.waitFor(2);
+  first.close(1000, 'switch');
+  const again = open();
+  await again.waitFor(1);
+  assert.equal(shells.length, before + 1, 'a reconnect keeps the shell');
+  assert.match(JSON.parse(again.sent[0]).data, /tui output/, 'a reconnect replays from memory');
+  // Nothing was written to the database: the table and the column no longer exist.
+  assert.equal(db.prepare("SELECT name FROM sqlite_master WHERE name = 'terminal_logs'").get(), undefined);
+  assert.equal(db.prepare('PRAGMA table_info(task_terminals)').all().some(column => column.name === 'buffer'), false);
+  again.close(1000, 'bye');
+  terminal.controlSession(other.id, 'close');
+  const fresh = open();
+  await fresh.waitFor(1);
+  assert.equal(shells.length, before + 2, 'a new shell is started');
+  assert.doesNotMatch(JSON.parse(fresh.sent[0]).data, /tui output/);
   terminal.closeTaskTerminals(other.id);
-  const persisted = db.prepare('SELECT buffer FROM terminal_logs WHERE task_id = ?').get(other.id).buffer;
-  assert.ok(persisted.endsWith('\x1b[?1003l\x1b[?1004l\x1b[?1005l\x1b[?1006l\x1b[?1015l\x1b[?1016l\x1b[?25h'), 'the reset is stored so later replays stay clean');
 });
 
 test('a second client is refused until it takes over; the same client replaces its own socket', async () => {
@@ -285,7 +298,6 @@ test('the default terminal can be deleted: it stops, is no longer listed or conn
   assert.equal(ws.readyState, 3);
   assert.equal(terminal.listTerminals(own.id).map(row => row.terminal_id).join(), other.terminal_id);
   assert.throws(() => terminal.assertTerminal(own.id, 'default'), /TERMINAL_NOT_FOUND/);
-  assert.equal(db.prepare('SELECT * FROM terminal_logs WHERE task_id = ?').get(own.id), undefined);
   const refused = new Socket();
   terminal.handleWs(refused, { url: `/terminal/ws?taskId=${own.id}&terminalId=default&clientId=test` }, { login: 'owner' });
   assert.equal(refused.code, 1008);
@@ -349,22 +361,30 @@ test('a burst of chunks is parsed in bounded batches, in order, and delivered in
   terminal.closeTaskTerminals(other.id);
 });
 
-test('the stored history keeps only the last 5MB and stays a suffix of the output', async () => {
+test('the in-memory history keeps the end of a very long output', async () => {
   const other = tasks.createTask('owner', { title: 'history limit' });
-  const ws = new Socket();
-  terminal.handleWs(ws, { url: `/terminal/ws?taskId=${other.id}&terminalId=default&clientId=limit` }, { login: 'owner' });
+  const open = () => {
+    const ws = new Socket();
+    terminal.handleWs(ws, { url: `/terminal/ws?taskId=${other.id}&terminalId=default&clientId=limit` }, { login: 'owner' });
+    return ws;
+  };
+  const ws = open();
   const shell = shells.at(-1);
   await ws.waitFor(1);
-  let all = '';
+  let total = 0;
   for (let i = 0; i < 70; i++) {
-    const chunk = `${i}`.padStart(4, '0') + 'y'.repeat(100 * 1024 - 4);
-    all += chunk;
+    const chunk = `${i}`.padStart(4, '0') + ' ' + 'y'.repeat(100 * 1024 - 5) + '\r\n';
+    total += chunk.length;
     shell.data(chunk);
   }
+  await until(() => ws.sent.slice(1).join('').length >= total, 'all output delivered');
+  ws.close(1000, 'switch');
+  const again = open();
+  await again.waitFor(1);
+  const replay = JSON.parse(again.sent[0]);
+  assert.match(replay.data, /0069 y/, 'the newest output is replayed');
+  assert.doesNotMatch(replay.data, /0000 y/);
   terminal.closeTaskTerminals(other.id);
-  const persisted = db.prepare('SELECT buffer FROM terminal_logs WHERE task_id = ?').get(other.id).buffer;
-  assert.equal(persisted.length, 5 * 1024 * 1024);
-  assert.equal(persisted, all.slice(all.length - persisted.length));
 });
 
 test('access is rechecked about once a second, not per chunk, and revoking it still closes the socket', async () => {

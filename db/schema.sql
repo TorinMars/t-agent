@@ -122,7 +122,6 @@ CREATE TABLE IF NOT EXISTS engine_identity (
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- Additional terminals retain the original terminal_logs table for the default shell.
 -- The default terminal has no task_terminals row, so its (renamed) title is kept here.
 CREATE TABLE IF NOT EXISTS task_default_terminal_titles (
   task_id INTEGER PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
@@ -138,7 +137,6 @@ CREATE TABLE IF NOT EXISTS task_terminals (
   task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
   terminal_id TEXT NOT NULL,
   title TEXT NOT NULL,
-  buffer TEXT NOT NULL DEFAULT '',
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (task_id, terminal_id)
 );

@@ -16,13 +16,14 @@ function setup() {
   }
   class Terminal {
     constructor() { this.cols = 80; this.rows = 24; this.scrollPosition = 37; this.output = ''; terminals.push(this); }
+    unicode = {};
     loadAddon() {} open(el) { this.el = el; } focus() { this.focused = (this.focused || 0) + 1; }
     onData() {} onResize() {} reset() { this.output = ''; this.resets = (this.resets || 0) + 1; }
     write(data, done) { this.output += data; done?.(); } dispose() { this.disposed = true; }
   }
   const context = { document, Event, localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
     location: { protocol: 'http:', host: 'localhost' }, mermaid: { initialize() {} },
-    WebSocket: Socket, Terminal, FitAddon: { FitAddon: class {} }, WebLinksAddon: { WebLinksAddon: class {} },
+    WebSocket: Socket, Terminal, FitAddon: { FitAddon: class {} }, WebLinksAddon: { WebLinksAddon: class {} }, Unicode11Addon: { Unicode11Addon: class {} },
     TerminalOwner: { query: () => '', isBlocked: () => false, prompt() {} },
     TerminalViewport: { fit() {}, observe: () => ({ disconnect() {} }), capture: () => null, restore() {} },
     TerminalImages: { busy: false, attach: () => ({ dispose() {} }) },

@@ -312,6 +312,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       for (let y = from; y !== to; y += from < to ? 20 : -20) { await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y }] }); await page.waitForTimeout(16); }
       if (check) await check();
       await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+      await page.waitForFunction(() => !window.__h5WheelCoasting(), null, { timeout: 8000 }); // let the momentum end
     };
     const wheels = () => page.evaluate(() => window.sockets[0].sent.filter(item => /^\x1b\[<6[45];/.test(item)).map(item => item.slice(3, 5)));
     const before = (await wheels()).length;
@@ -338,8 +339,70 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     await drag(stripX, 300, 500);
     const olderText = await rowsText();
     assert.notEqual(olderText, bottomText, 'dragging down on the strip shows older output in the normal buffer');
-    await drag(stripX, 500, 300);
+    await drag(stripX, 500, 100); // momentum makes the way back longer than the way out
     assert.equal(await rowsText(), bottomText, 'dragging up brings the newest output back');
+
+    // A tap on the strip (no travel) is handed to the element under it, so links under the strip stay clickable.
+    await page.evaluate(() => { window.__tapClicks = 0; document.querySelector('.h5-xterm').addEventListener('click', () => { window.__tapClicks++; }); });
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: stripX, y: 200 }] });
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await page.waitForTimeout(100);
+    assert.ok(await page.evaluate(() => window.__tapClicks) >= 1, 'a tap on the strip reaches the terminal under it');
+
+    // Momentum: a quick flick keeps scrolling after the finger is lifted, then stops by itself; a new touch cancels it.
+    const coasting = () => page.evaluate(() => window.__h5WheelCoasting());
+    const flick = async () => {
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: stripX, y: 300 }] });
+      for (let y = 300; y <= 400; y += 25) { await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: stripX, y }] }); await page.waitForTimeout(8); }
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    };
+    await flick();
+    assert.equal(await coasting(), true, 'a quick flick starts momentum scrolling');
+    await page.waitForFunction(() => !window.__h5WheelCoasting(), null, { timeout: 8000 });
+    assert.equal(await coasting(), false, 'the momentum stops by itself');
+    await flick();
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: stripX, y: 300 }] });
+    assert.equal(await coasting(), false, 'a new touch cancels the momentum');
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await page.waitForTimeout(1000);
+
+    // The buffer type is read for every step: switching to the alternate screen in the middle of a gesture sends wheel reports.
+    await page.evaluate(() => window.sockets[0].emit(JSON.stringify({ type: 'history', data: '\x1b[?1000h\x1b[?1006hnormal', cols: 40, rows: 30 })));
+    await page.waitForTimeout(150);
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: stripX, y: 300 }] });
+    for (let y = 300; y <= 400; y += 20) { await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: stripX, y }] }); await page.waitForTimeout(16); }
+    const midBefore = (await wheels()).length;
+    await page.evaluate(() => window.sockets[0].emit('\x1b[?1049h'));
+    await page.waitForTimeout(100);
+    for (let y = 400; y <= 520; y += 20) { await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: stripX, y }] }); await page.waitForTimeout(16); }
+    assert.ok((await wheels()).length > midBefore, 'steps after a switch to the alternate screen become wheel reports');
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await page.waitForTimeout(1500);
+
+    // A fast fling in the alternate buffer delivers proportional lines (no cap of 10 per move).
+    const fling0 = (await wheels()).length;
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: stripX, y: 100 }] });
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: stripX, y: 500 }] });
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await page.waitForTimeout(100);
+    assert.ok((await wheels()).length - fling0 >= 40, 'one long move sends many lines, not at most 10');
+    await page.waitForFunction(() => !window.__h5WheelCoasting(), null, { timeout: 8000 });
+
+    // Android: the back button closes the keyboard but leaves the input focused; inputmode goes back to none by itself.
+    const vp = page.viewportSize();
+    await page.locator('[data-action="keyboard"]').tap();
+    assert.equal(await inputmode(), 'text');
+    await page.setViewportSize({ width: vp.width, height: vp.height - 300 });
+    await page.waitForTimeout(1000);
+    assert.equal(await inputmode(), 'text', 'the keyboard is open: inputmode stays');
+    await page.setViewportSize(vp);
+    await page.waitForTimeout(900);
+    assert.equal(await inputmode(), 'none', 'after the keyboard closed without a blur, inputmode is reset');
+    await page.locator('.h5-xterm').tap();
+    assert.equal(await inputmode(), 'none', 'the next terminal tap does not reopen the keyboard');
+    await page.locator('[data-action="keyboard"]').tap();
+    assert.equal(await inputmode(), 'text', 'the keyboard key still opens it afterwards');
+    await page.locator('[data-action="keyboard"]').tap();
 
     // The terminal has no floating up/down buttons: scrolling is by the wheel strip.
     assert.equal(await page.locator('[data-scroll]').count(), 0, 'no scroll buttons are drawn');

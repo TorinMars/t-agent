@@ -67,11 +67,31 @@
     const height = window.visualViewport ? window.visualViewport.height : window.innerHeight;
     if (window.innerWidth !== fullWidth) { fullWidth = window.innerWidth; fullHeight = 0; } // rotated: measure again
     fullHeight = Math.max(fullHeight, height);
+    const wasOpen = keyboardOpen;
     keyboardOpen = fullHeight - height > KEYBOARD_MIN_SHRINK;
+    if (wasOpen && !keyboardOpen) scheduleKeyboardReset();
     if (ui.get().keysHidden !== keyboardOpen) ui.set({ keysHidden: keyboardOpen }); // the on-screen keyboard has its own keys; the function keys come back when it closes
     document.documentElement.style.setProperty('--h5-height', `${Math.round(height)}px`);
     if (window.scrollY) window.scrollTo(0, 0);
     holdTerminalSize();
+  }
+  // Android: the back button closes the keyboard but leaves the terminal input focused, so `focusout` never restores
+  // inputmode="none" and the next terminal tap would reopen the keyboard. Reset it a moment after the keyboard really closed,
+  // unless the keyboard key was used meanwhile (it manages inputmode itself) or the keyboard is open again.
+  const KEYBOARD_RESET_DELAY_MS = 350;
+  const KEYBOARD_TOGGLE_GRACE_MS = 800;
+  let keyboardToggledAt = -Infinity;
+  let keyboardResetTimer = 0;
+  function scheduleKeyboardReset() {
+    clearTimeout(keyboardResetTimer);
+    keyboardResetTimer = setTimeout(() => {
+      keyboardResetTimer = 0;
+      const textarea = session && session.term && session.term.textarea;
+      if (keyboardOpen || !textarea || textarea.getAttribute('inputmode') === 'none') return;
+      if (Date.now() - keyboardToggledAt < KEYBOARD_TOGGLE_GRACE_MS) return;
+      if (document.activeElement === textarea) textarea.blur(); // the focusout handler sets inputmode to none
+      noScreenKeyboard(session.term);
+    }, KEYBOARD_RESET_DELAY_MS);
   }
   // While the keyboard is open the terminal keeps its closed height, aligned to the bottom of the (shorter) box so the cursor stays visible.
   function holdTerminalSize() {
@@ -832,34 +852,85 @@
   // full-screen program (alternate buffer: Claude Code, Codex, vim, tmux ...) has no scrollback, so the drag is sent as wheel
   // events and xterm forwards them the way a desktop wheel would (mouse reports, or arrow keys when the program has no mouse mode).
   // A drag on the terminal body does not make wheel events; the browser scrolls the normal-buffer history natively there.
+  // Wheel strip tuning. Change these to tune the feel.
   const WHEEL_GAIN = 2; // lines per terminal row of finger travel
   const WHEEL_FADE_MS = 700; // how long the strip stays visible after the finger is lifted
+  const WHEEL_MAX_EVENTS = 200; // wheel events sent per step in the alternate buffer (one per line); high so fast flicks lose no lines
+  const WHEEL_FLICK_SPEED = 0.4; // px/ms at release that starts momentum scrolling
+  const WHEEL_FLICK_WINDOW_MS = 80; // the finger must have moved this recently when lifted for a flick
+  const WHEEL_DECAY = 0.95; // momentum speed factor per 16 ms frame
+  const WHEEL_MIN_SPEED = 0.03; // px/ms below which momentum stops
+  const WHEEL_TAP_SLOP = 8; // px of travel still counted as a tap
+  const WHEEL_TAP_MS = 400; // a tap is shorter than this
   function lineHeight(s) {
     const screen = s.el.querySelector('.xterm-screen');
     return screen && s.term.rows ? Math.max(8, screen.clientHeight / s.term.rows) : 16;
   }
   function wheel(s, lines, x, y) {
     const target = s.el.querySelector('.xterm-screen') || s.el;
-    for (let i = 0; i < Math.min(Math.abs(lines), 10); i++) {
+    for (let i = 0; i < Math.min(Math.abs(lines), WHEEL_MAX_EVENTS); i++) {
       target.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaMode: 1, deltaY: Math.sign(lines), clientX: x, clientY: y }));
     }
+  }
+  // One scroll step. The buffer type is read here, at the moment of sending, so a program that switches between the normal
+  // and the alternate screen during a gesture (or during inertia) is followed.
+  function scrollStep(s, lines, x, y) {
+    if (s.term.buffer.active.type === 'alternate') wheel(s, lines, x, y);
+    else s.term.scrollLines(lines);
   }
   function bindWheelStrip() {
     let drag = null;
     let fade = 0;
+    let lastMoveAt = 0;
+    let inertia = 0; // requestAnimationFrame id of the running momentum scroll
     const strip = event => event.target.closest && event.target.closest('#h5-wheel');
+    const stopInertia = () => { if (inertia) cancelAnimationFrame(inertia); inertia = 0; };
+    const hideLater = el => { clearTimeout(fade); fade = setTimeout(() => { if (!drag && !inertia) el.classList.remove('active'); }, WHEEL_FADE_MS); };
+    // Momentum after a quick flick: the speed (px/ms) decays by WHEEL_DECAY per 16 ms frame until it is below WHEEL_MIN_SPEED.
+    const coast = (s, el, speed, x, y) => {
+      let last = performance.now();
+      let rest = 0;
+      const frame = now => {
+        const dt = Math.min(now - last, 64);
+        last = now;
+        speed *= Math.pow(WHEEL_DECAY, dt / 16);
+        if (Math.abs(speed) < WHEEL_MIN_SPEED || session !== s || s.disposed) { inertia = 0; hideLater(el); return; }
+        rest += speed * dt * WHEEL_GAIN;
+        const height = lineHeight(s);
+        const lines = Math.trunc(rest / height);
+        if (lines) { rest -= lines * height; scrollStep(s, lines, x, y); }
+        inertia = requestAnimationFrame(frame);
+      };
+      inertia = requestAnimationFrame(frame);
+    };
+    // The strip takes the touches, so a tap (no travel) is handed to whatever is under it, for example a link.
+    const passTap = (event, el) => {
+      const old = el.style.pointerEvents;
+      el.style.pointerEvents = 'none';
+      const under = document.elementFromPoint(event.clientX, event.clientY);
+      el.style.pointerEvents = old;
+      if (!under) return;
+      for (const type of ['mousedown', 'mouseup', 'click']) {
+        under.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window, clientX: event.clientX, clientY: event.clientY }));
+      }
+    };
     const finish = event => {
       if (!drag || event.pointerId !== drag.id) return;
-      const el = drag.el;
+      const { el, speed, moved, started } = drag;
+      const s = session;
       drag = null;
-      clearTimeout(fade);
-      fade = setTimeout(() => el.classList.remove('active'), WHEEL_FADE_MS);
+      const flick = event.type === 'pointerup' && s && !s.disposed && performance.now() - lastMoveAt < WHEEL_FLICK_WINDOW_MS && Math.abs(speed) >= WHEEL_FLICK_SPEED;
+      if (event.type === 'pointerup' && Math.abs(moved) < WHEEL_TAP_SLOP && performance.now() - started < WHEEL_TAP_MS) passTap(event, el);
+      if (flick) coast(s, el, speed, el.getBoundingClientRect().left + el.getBoundingClientRect().width / 2, event.clientY);
+      hideLater(el);
     };
     document.addEventListener('pointerdown', event => {
       const el = strip(event);
       const s = session;
       if (!el || !s || s.disposed || drag || (event.pointerType === 'mouse' && event.button !== 0)) return;
-      drag = { id: event.pointerId, el, y: event.clientY, rest: 0, total: 0 };
+      stopInertia(); // a new touch stops the momentum
+      drag = { id: event.pointerId, el, y: event.clientY, rest: 0, total: 0, moved: 0, speed: 0, started: performance.now() };
+      lastMoveAt = performance.now();
       clearTimeout(fade);
       el.classList.add('active');
       try { el.setPointerCapture(event.pointerId); } catch { /* the pointer is gone already */ }
@@ -869,23 +940,27 @@
       const s = session;
       if (!drag || event.pointerId !== drag.id || !s || s.disposed) return;
       event.preventDefault();
-      drag.rest += (drag.y - event.clientY) * WHEEL_GAIN; // dragging down is negative: older output, like a wheel turned up
-      drag.total += drag.y - event.clientY;
+      const now = performance.now();
+      const delta = drag.y - event.clientY; // dragging down is negative: older output, like a wheel turned up
+      const dt = Math.max(now - lastMoveAt, 1);
+      drag.speed = dt > WHEEL_FLICK_WINDOW_MS ? 0 : drag.speed * 0.5 + (delta / dt) * 0.5; // smoothed finger speed in px/ms
+      lastMoveAt = now;
+      drag.rest += delta * WHEEL_GAIN;
+      drag.total += delta;
+      drag.moved += Math.abs(delta);
       drag.y = event.clientY;
       drag.el.style.setProperty('--h5-wheel-offset', `${Math.round(drag.total % 24)}px`); // the ticks follow the finger
       const height = lineHeight(s);
       const lines = Math.trunc(drag.rest / height);
       if (!lines) return;
       drag.rest -= lines * height;
-      if (s.term.buffer.active.type === 'alternate') {
-        const rect = drag.el.getBoundingClientRect();
-        wheel(s, lines, rect.left + rect.width / 2, event.clientY);
-      } else {
-        s.term.scrollLines(lines);
-      }
+      const rect = drag.el.getBoundingClientRect();
+      scrollStep(s, lines, rect.left + rect.width / 2, event.clientY);
     });
     document.addEventListener('pointerup', finish);
     document.addEventListener('pointercancel', finish);
+    // Test hook: lets the browser test see whether the momentum is running.
+    window.__h5WheelCoasting = () => Boolean(inertia);
   }
   bindWheelStrip();
 
@@ -950,7 +1025,10 @@
       refit(s);
       s.term.scrollToBottom();
       sendResize(s);
-      requestAnimationFrame(() => requestAnimationFrame(() => { if (s.ws === ws) { s.paused = false; flushQueued(s); } }));
+      // Animation frames do not run in a hidden tab, so a timer clears the flag there (and as a fallback when frames stall).
+      const unpause = () => { if (s.ws === ws && s.paused) { s.paused = false; flushQueued(s); } };
+      if (document.visibilityState === 'hidden') unpause();
+      else { requestAnimationFrame(() => requestAnimationFrame(unpause)); setTimeout(unpause, 300); }
     });
   }
 
@@ -999,6 +1077,7 @@
   function toggleKeyboard() {
     if (!session || !session.term.textarea) return;
     const textarea = session.term.textarea;
+    keyboardToggledAt = Date.now();
     const open = textarea.getAttribute('inputmode') !== 'none';
     textarea.blur(); // the focusout handler sets inputmode to none
     if (open) return;

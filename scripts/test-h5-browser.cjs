@@ -233,7 +233,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       return [...byRow.entries()].sort((a, b) => a[0] - b[0]).map(([, row]) => row.sort((a, b) => a.left - b.left));
     });
     assert.equal(rows.length, 1, 'the function keys are one row that scrolls sideways');
-    assert.deepEqual(rows[0].map(cell => cell.text), ['⌨', 'Esc', '←', '↓', '↑', '→', 'Enter', 'Tab', 'Ctrl', 'Alt', 'Home', 'End', 'PgUp', 'PgDn', 'Ins', 'Del', 'Shift', '⌫', '^C'], 'the order is keyboard, Esc, the arrows, Enter, then the other keys');
+    assert.deepEqual(rows[0].map(cell => cell.text), ['⌨', 'Esc', '←', '↓', '↑', '→', 'Enter', '⌫', 'Tab', 'Ctrl', 'Alt', 'Home', 'End', 'PgUp', 'PgDn', 'Ins', 'Del', 'Shift', '^C'], 'the order is keyboard, Esc, the arrows, Enter, Backspace, then the other keys');
     assert.equal(await page.evaluate(() => { const el = document.getElementById('h5-keys'); const first = el.querySelector('button').getBoundingClientRect(); return el.scrollLeft === 0 && first.left >= 0; }), true, 'the row starts scrolled to the left with the keyboard key in view');
     const keyStrip = await page.evaluate(() => { const el = document.getElementById('h5-keys'); return { scrolls: el.scrollWidth > el.clientWidth, overflowX: getComputedStyle(el).overflowX }; });
     assert.ok(keyStrip.scrolls && keyStrip.overflowX === 'auto', 'the key row scrolls sideways');

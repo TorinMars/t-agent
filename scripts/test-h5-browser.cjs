@@ -445,7 +445,8 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       assert.equal(resizesAfter, resizesBefore, 'opening and closing the menu sends no resize');
     }
 
-    // Translate box height: one line when empty, two lines for text that needs two, never more (it scrolls inside), one line again after a send.
+    // Translate box height: one line when empty, then it grows with the text and shows ALL of it (1, 2, 5, 12 lines) without inner scroll, up to a cap of half the
+    // visible viewport; beyond the cap it scrolls inside. It shrinks back when lines are deleted, and a send gives one line again.
     {
       const input = page.locator('#h5-translate-input');
       const box = async () => { await barSettled(); return page.evaluate(() => {
@@ -457,7 +458,8 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
         const voice = document.getElementById('h5-voice').getBoundingClientRect();
         const resizes = window.sockets[0].sent.filter(item => { try { return JSON.parse(item).type === 'resize'; } catch { return false; } }).length;
         return { height: rect.height, bottom: rect.bottom, line: parseFloat(style.lineHeight), pad: parseFloat(style.paddingTop) + parseFloat(style.paddingBottom),
-          overflowY: style.overflowY, termHeight: term.height, sendBottom: send.bottom, voiceBottom: voice.bottom, resizes, placeholder: el.placeholder };
+          overflowY: style.overflowY, scrollHeight: el.scrollHeight, clientHeight: el.clientHeight, viewport: window.visualViewport.height,
+          screenBottom: document.querySelector('#h5-terminal .xterm-screen').getBoundingClientRect().bottom, areaTop: document.getElementById('h5-bottom').getBoundingClientRect().top, termHeight: term.height, sendBottom: send.bottom, voiceBottom: voice.bottom, resizes, placeholder: el.placeholder };
       }); };
       await input.focus(); // fill() focuses the box anyway: measure the active layout throughout
       const one = await box();
@@ -470,10 +472,35 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       assert.ok(Math.abs(two.bottom - one.bottom) <= 1, 'the box grows upward, its bottom stays');
       assert.equal(two.termHeight, one.termHeight, 'the terminal box keeps its height as the box grows (it is moved, not resized)');
       assert.ok(two.sendBottom >= two.bottom && Math.abs(two.voiceBottom - one.voiceBottom) <= 1 && Math.abs(two.sendBottom - one.sendBottom) <= 1, 'the buttons stay on the bottom row');
-      await input.fill('a long sentence that does not fit on a single line of the narrow phone box, so it wraps. '.repeat(6));
+      const noInnerScroll = state => state.scrollHeight <= state.clientHeight + 1 && state.overflowY !== 'auto';
+      assert.ok(noInnerScroll(two), 'two lines: everything is shown, no inner scroll');
+      const lines = n => Array.from({ length: n }, (_, i) => `row ${i + 1}`).join('\n');
+      let previous = two;
+      for (const n of [5, 12]) {
+        await input.fill(lines(n));
+        const grownBox = await box();
+        assert.ok(Math.abs(grownBox.height - (n * grownBox.line + grownBox.pad)) <= 3, `${n} lines are all shown (${grownBox.height}px)`);
+        assert.ok(noInnerScroll(grownBox), `${n} lines: no inner scroll`);
+        assert.ok(grownBox.height > previous.height + 10, `${n} lines: taller than before`);
+        assert.equal(grownBox.termHeight, one.termHeight, `${n} lines: the terminal box keeps its height`);
+        assert.equal(grownBox.resizes, one.resizes, `${n} lines: no resize message`);
+        assert.ok(grownBox.screenBottom <= grownBox.areaTop + 1, `${n} lines: the last terminal row stays above the bar`);
+        previous = grownBox;
+      }
+      // Deleting lines shrinks the box again.
+      await input.fill(lines(2));
+      const shrunk = await box();
+      assert.ok(Math.abs(shrunk.height - (2 * shrunk.line + shrunk.pad)) <= 3 && noInnerScroll(shrunk), `shrinks back after deleting lines (${shrunk.height}px)`);
+      assert.ok(shrunk.screenBottom <= shrunk.areaTop + 1, 'the last terminal row stays above the bar after shrinking');
+      // Beyond the cap (half of the visible viewport) the box stops growing and scrolls inside.
+      await input.fill(lines(80));
       const many = await box();
-      assert.ok(Math.abs(many.height - two.height) <= 1, `longer text stays at two lines (${many.height}px)`);
-      assert.equal(many.overflowY, 'auto', 'the text scrolls inside the box');
+      assert.ok(many.height <= many.viewport * 0.5 + 1 && many.height >= many.viewport * 0.5 - many.line - 2, `the cap is about half of the viewport (${many.height}px of ${many.viewport}px)`);
+      assert.equal(many.overflowY, 'auto', 'beyond the cap the text scrolls inside the box');
+      assert.ok(many.scrollHeight > many.clientHeight + 10, 'beyond the cap there is more text than is shown');
+      assert.equal(many.termHeight, one.termHeight, 'at the cap the terminal box keeps its height');
+      assert.equal(many.resizes, one.resizes, 'at the cap no resize message');
+      assert.ok(many.sendBottom >= many.bottom && Math.abs(many.voiceBottom - one.voiceBottom) <= 1, 'at the cap the buttons stay on the bottom row');
       await page.waitForTimeout(700);
       const settled = await box();
       await page.waitForTimeout(700);
@@ -486,7 +513,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       assert.equal(await input.evaluate(el => el.scrollWidth <= el.clientWidth + 1), true, 'the placeholder stays on one line');
     }
 
-    // Keyboard dismissed: the box goes back to ONE line and the bar to the resting pill, the text is kept, no resize message; focusing again gives two lines.
+    // Keyboard dismissed: the box goes back to ONE line and the bar to the resting pill, the text is kept, no resize message; focusing again shows everything.
     {
       const input = page.locator('#h5-translate-input');
       const text = 'a long sentence that does not fit on a single line of the narrow phone box, so it wraps';
@@ -502,23 +529,38 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       await input.focus();
       await input.fill(text);
       const open = await state();
-      assert.ok(Math.abs(open.height - (2 * open.line + open.pad)) <= 2, `two lines while typing (${open.height}px)`);
-      // 1) blur (the keyboard hide button, or focus moving away)
-      await input.blur();
+      assert.ok(Math.abs(open.height - (2 * open.line + open.pad)) <= 2, `all (two) lines while typing (${open.height}px)`);
+      // 1) blur (the keyboard hide button, or focus moving away): the default state is back in the SAME tick, nothing waits for a timer or the viewport.
+      const sync = await page.evaluate(() => {
+        const el = document.getElementById('h5-translate-input');
+        const read = () => ({ height: el.getBoundingClientRect().height, line: parseFloat(getComputedStyle(el).lineHeight), pad: parseFloat(getComputedStyle(el).paddingTop) + parseFloat(getComputedStyle(el).paddingBottom),
+          form: document.getElementById('h5-translate').getBoundingClientRect().height, extra: document.getElementById('h5-bottom').style.getPropertyValue('--h5-bar-extra'),
+          transform: document.getElementById('h5-terminal').firstElementChild?.style.transform || '' });
+        const before = read();
+        el.blur();
+        return { before, after: read() };
+      });
+      assert.ok(Math.abs(sync.after.height - (sync.after.line + sync.after.pad)) <= 2, `one line in the same tick as the blur (${sync.after.height}px)`);
+      assert.ok(sync.after.form < sync.before.form - 10, 'the bar is the resting pill in the same tick as the blur');
+      assert.equal(sync.after.extra, '0px', 'the bar overlap is reset in the same tick');
+      assert.ok(!sync.after.transform || parseFloat(sync.after.transform.replace(/[^0-9.-]/g, '')) >= parseFloat(sync.before.transform.replace(/[^0-9.-]/g, '') || '0'), 'the terminal shift is released in the same tick');
       const blurred = await state();
       assert.ok(Math.abs(blurred.height - (blurred.line + blurred.pad)) <= 2, `one line after blur (${blurred.height}px)`);
       assert.equal(blurred.value, text, 'the text is kept');
       assert.ok(blurred.formHeight < open.formHeight - 10, 'the bar is back to the resting pill');
       assert.equal(blurred.resizes, open.resizes, 'no resize message');
       await input.focus();
-      assert.ok(Math.abs((await state()).height - open.height) <= 2, 'two lines again on focus');
+      assert.ok(Math.abs((await state()).height - open.height) <= 2, 'all lines again on focus');
       // 2) the keyboard goes away without a blur (Android back button): the viewport returns to full height while the box stays focused
       await page.setViewportSize({ width: vp.width, height: vp.height - 300 });
       await page.waitForFunction(() => document.documentElement.style.getPropertyValue('--h5-height') !== '', null, { timeout: 3000 });
       await page.waitForTimeout(300);
       assert.equal((await state()).focused, true, 'the box is focused while the keyboard is up');
       await page.setViewportSize(vp);
+      await page.waitForFunction(() => window.visualViewport.height >= innerHeight - 1, null, { timeout: 3000 });
+      const lag = Date.now();
       await page.waitForFunction(() => document.activeElement !== document.getElementById('h5-translate-input'), null, { timeout: 4000 });
+      assert.ok(Date.now() - lag < 250, `the box is blurred right after the viewport is back, no 350 ms timer (${Date.now() - lag} ms)`);
       const closed = await state();
       assert.ok(Math.abs(closed.height - (closed.line + closed.pad)) <= 2, `one line after the keyboard went away (${closed.height}px)`);
       assert.equal(closed.value, text, 'the text is kept');
@@ -601,7 +643,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       await page.keyboard.type('four');
       await barSettled();
       const many = await input.evaluate(el => ({ height: el.getBoundingClientRect().height, overflowY: getComputedStyle(el).overflowY }));
-      assert.ok(Math.abs(many.height - grown.height) <= 1 && many.overflowY === 'auto', 'beyond two lines the box scrolls inside');
+      assert.ok(many.height > grown.height + 15 && many.overflowY !== 'auto', 'five lines from Enter are all shown, no inner scroll');
       assert.equal(translateRequests.length, requests, 'Enter sends no translate request');
       assert.equal((await sent()).length, inputs, 'Enter writes nothing to the terminal');
       // Enter that confirms an IME composition neither sends nor adds a line.

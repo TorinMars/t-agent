@@ -70,7 +70,12 @@
     fullHeight = Math.max(fullHeight, height);
     const wasOpen = keyboardOpen;
     keyboardOpen = fullHeight - height > KEYBOARD_MIN_SHRINK;
-    if (wasOpen && !keyboardOpen) scheduleKeyboardReset();
+    if (wasOpen && !keyboardOpen) {
+      // The keyboard went away: the translate box returns to rest at once (no timer; blur runs the focusout handler, which collapses the box, the bar and the terminal
+      // shift in the same tick). One animation frame of grace only, because iOS can report the full height for a moment while focus moves between two inputs.
+      requestAnimationFrame(() => { if (!keyboardOpen && document.activeElement === translateInput) translateInput.blur(); });
+      scheduleKeyboardReset();
+    }
     document.documentElement.style.setProperty('--h5-height', `${Math.round(height)}px`);
     if (window.scrollY) window.scrollTo(0, 0);
     holdTerminalSize();
@@ -86,8 +91,7 @@
     clearTimeout(keyboardResetTimer);
     keyboardResetTimer = setTimeout(() => {
       keyboardResetTimer = 0;
-      // The same for the translate box: without a blur it would stay focused, expanded and in the active layout after the keyboard is gone. The text stays in it.
-      if (!keyboardOpen && document.activeElement === translateInput) translateInput.blur();
+      // (The translate box is blurred at once in fitViewport, not here: it has no reason to wait.)
       const textarea = session && session.term && session.term.textarea;
       if (keyboardOpen || !textarea || textarea.getAttribute('inputmode') === 'none') return;
       if (Date.now() - keyboardToggledAt < KEYBOARD_TOGGLE_GRACE_MS) return;
@@ -1385,9 +1389,11 @@
 
   // ── Translate and send ──
   let translating = false;
-  // The one place that sets the height of the translate box: one line while it is empty or its text fits one line, two lines at most
-  // (a longer text scrolls inside), measured from the textarea's own line height and padding. Called on input, after a send and at start.
-  const TRANSLATE_MAX_LINES = 2;
+  // The one place that sets the height of the translate box: while it has focus it grows with its text and shows ALL of it (wrapped lines and Enter
+  // new lines included), measured from the textarea's own scrollHeight. Only a safety cap makes it scroll inside: half of the visible viewport height
+  // (visualViewport, so the on-screen keyboard is already subtracted), cut down to whole lines, so the key row, the buttons and part of the terminal stay in view.
+  // Called on input, on focus changes, after a send, when the viewport changes and at start.
+  const TRANSLATE_MAX_VIEWPORT_FRACTION = 0.5;
   function autosize() {
     const input = translateInput;
     input.style.height = '';
@@ -1400,10 +1406,12 @@
     const lineHeight = parseFloat(style.lineHeight) || (parseFloat(style.fontSize) || 15) * 1.4375;
     const padding = (parseFloat(style.paddingTop) || 0) + (parseFloat(style.paddingBottom) || 0);
     const border = (parseFloat(style.borderTopWidth) || 0) + (parseFloat(style.borderBottomWidth) || 0);
-    const cap = Math.round(lineHeight * TRANSLATE_MAX_LINES + padding); // scrollHeight includes the padding
+    const visible = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+    const maxLines = Math.max(2, Math.floor((visible * TRANSLATE_MAX_VIEWPORT_FRACTION - padding) / lineHeight));
+    const cap = Math.round(lineHeight * maxLines + padding); // scrollHeight includes the padding
     const wanted = Math.min(input.scrollHeight, cap);
     input.style.height = `${style.boxSizing === 'border-box' ? wanted + border : wanted - padding}px`;
-    input.style.overflowY = input.scrollHeight > cap ? 'auto' : 'hidden';
+    input.style.overflowY = input.scrollHeight > cap + 1 ? 'auto' : 'hidden';
     syncBar(); // the bar grows over the terminal; the terminal is moved, not resized
   }
   // The translation keeps its line breaks only when the program in the terminal reads a paste as one paste (bracketed paste mode, as Claude Code does). Then it
@@ -1545,6 +1553,10 @@
   // The bar size also changes when the window turns or the font loads: keep the overlap and the measured layout current (no animation).
   new ResizeObserver(() => { if (!flips.length) { barLayout = measureBar(); syncBar(false); } }).observe(translateForm);
   autosize(); // the first height (and the first syncBar) once the bar state exists
+  // The cap follows the visible height: the keyboard opening or closing, or a rotation, changes it.
+  const refitBox = () => { autosize(); relayoutBar(); };
+  window.visualViewport?.addEventListener('resize', refitBox);
+  window.addEventListener('resize', refitBox);
   // A press on a button: the controls jump to their final places first and the button captures the pointer, so a tap during the animation still ends
   // on the same button. `data-hold` keeps an already active layout from collapsing until a moment after the release; a press at rest does not expand it.
   const PRESS_HOLD_MS = 400;

@@ -1,16 +1,14 @@
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
-import Fab from '@mui/material/Fab';
 import IconButton from '@mui/material/IconButton';
 import OutlinedInput from '@mui/material/OutlinedInput';
 import Paper from '@mui/material/Paper';
 import ToggleButton from '@mui/material/ToggleButton';
-import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import MicIcon from '@mui/icons-material/Mic';
 import SendIcon from '@mui/icons-material/Send';
 import { t } from './common.jsx';
 
-// The terminal area. h5.js puts the xterm element in after these two; React draws only the note, the wheel strip (h5.js handles its touches) and the copy button.
+// The terminal area. h5.js puts the xterm element in after these two; React draws only the note, the wheel strip (h5.js handles its touches) and the selection bar.
 export function TerminalArea({ state, ui }) {
   return (
     <Box component="main" className="h5-terminal" id="h5-terminal">
@@ -22,9 +20,6 @@ export function TerminalArea({ state, ui }) {
           <Button id="h5-selection-cancel" size="small" color="inherit" onClick={() => ui.actions.selectionCancel()}>{t('Cancel')}</Button>
         </Paper>
       ) : null}
-      <Box className="h5-scroll" id="h5-scroll" onMouseDown={event => event.preventDefault()} sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-        <Fab size="small" data-copy aria-label={t('Copy text')} onClick={() => ui.actions.openCopy()}><ContentCopyIcon fontSize="small" /></Fab>
-      </Box>
     </Box>
   );
 }

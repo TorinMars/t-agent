@@ -334,15 +334,16 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     assert.equal(await page.locator('#h5-wheel').count(), 1, 'the terminal has one wheel strip');
     const idle = await page.evaluate(() => {
       const el = document.querySelector('#h5-wheel');
-      const copy = document.querySelector('#h5-scroll [data-copy]').getBoundingClientRect();
       const box = el.getBoundingClientRect();
+      const area = document.querySelector('#h5-terminal').getBoundingClientRect();
       return { bg: getComputedStyle(el).backgroundColor, trackOpacity: getComputedStyle(el, '::before').opacity, touchAction: getComputedStyle(el).touchAction,
-        overlap: !(box.right <= copy.left || box.left >= copy.right || box.bottom <= copy.top || box.top >= copy.bottom), width: box.width };
+        bottomGap: Math.abs(area.bottom - box.bottom), width: box.width };
     });
     assert.equal(idle.bg, 'rgba(0, 0, 0, 0)', 'the idle strip has no background');
     assert.equal(idle.trackOpacity, '0', 'the idle strip shows nothing');
     assert.equal(idle.touchAction, 'none');
-    assert.equal(idle.overlap, false, 'the strip does not cover the copy button');
+    assert.ok(idle.bottomGap <= 1, `the wheel strip reaches the bottom of the terminal area (${idle.bottomGap}px short)`);
+    assert.equal(await page.locator('[data-copy], #h5-scroll, .h5-scroll').count(), 0, 'the floating copy button is gone');
     assert.ok(idle.width >= 36 && idle.width <= 48, 'the strip is about 40px wide');
 
     await page.evaluate(() => window.sockets[0].emit(JSON.stringify({ type: 'history', data: '\x1b[?1049h\x1b[?1000h\x1b[?1006hfull screen app', cols: 40, rows: 30 })));
@@ -550,6 +551,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     assert.equal(await page.locator('#h5-tasks .h5-terminal-row', { hasText: 'New chat' }).locator('.h5-terminal-main').getAttribute('aria-current'), null);
     // Chat actions (the three dots on a chat row): rename, and delete with a confirmation; the sheet is still open.
     await page.locator('#h5-tasks .h5-terminal-row', { hasText: 'New chat' }).locator('.h5-terminal-more').tap();
+    assert.equal(await page.locator('#h5-term-menu-actions button', { hasText: 'Copy text' }).count(), 0, 'a chat row has no Copy text item');
     await page.locator('#h5-term-menu-actions button', { hasText: 'Rename' }).tap();
     await page.locator('#h5-term-rename-input').fill('Renamed chat');
     await page.locator('#h5-term-rename-input').press('Enter');
@@ -646,15 +648,19 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     await page.setViewportSize({ width: 390, height: 844 });
     await page.waitForTimeout(300);
 
-    // Copy text: the floating button shows the terminal text in a selectable overlay.
-    assert.equal(await page.locator('#h5-scroll button').count(), 1, 'the copy button is the only floating button');
+    // Copy text: the "Copy text" item of the terminal actions menu shows the terminal text in a selectable overlay (the long press is tested below).
+    const openCopyFromMenu = async () => {
+      await page.locator('#h5-open-tasks').tap();
+      await page.locator('#h5-tasks .h5-terminal-main[aria-current="true"]').locator('xpath=..').locator('.h5-terminal-more').tap();
+      await page.locator('#h5-term-menu-actions button', { hasText: 'Copy text' }).tap();
+      await page.locator('#h5-copy').waitFor({ state: 'visible' });
+    };
     await page.evaluate(() => { navigator.clipboard.writeText = async text => { window.copied = text; }; });
     // A row as wide as the terminal must stay one line in the overlay (same font, no wrapping of its own).
     const termCols = await page.evaluate(() => window.sockets[1].sent.map(item => { try { return JSON.parse(item); } catch { return null; } }).filter(item => item?.type === 'resize').pop().cols);
     await page.evaluate(width => window.sockets[1].emit(`\r\n${'x'.repeat(width)}`), termCols);
     await page.waitForTimeout(150);
-    await page.locator('[data-copy]').tap();
-    await page.locator('#h5-copy').waitFor({ state: 'visible' });
+    await openCopyFromMenu();
     const view = await page.locator('#h5-copy-text').evaluate(el => ({ white: getComputedStyle(el).whiteSpace, size: getComputedStyle(el).fontSize, over: el.scrollWidth - el.clientWidth }));
     assert.deepEqual({ white: view.white, size: view.size }, { white: 'pre', size: '11px' });
     assert.ok(view.over <= 0, `a full-width terminal row fits without scrolling sideways (${view.over}px over)`);
@@ -684,8 +690,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     // A space in the last cell of a wrapped row is real text and must survive in the copy view.
     await page.evaluate(width => window.sockets[1].emit(`\r\n${'q'.repeat(width - 1)} WRAPTAIL`), termCols);
     await page.waitForTimeout(150);
-    await page.locator('[data-copy]').tap();
-    await page.locator('#h5-copy').waitFor({ state: 'visible' });
+    await openCopyFromMenu();
     assert.match(await page.locator('#h5-copy-text').textContent(), new RegExp(`q{${termCols - 1}} WRAPTAIL`), 'the space at the soft wrap is kept');
     await page.locator('#h5-copy-close').tap();
     await page.locator('#h5-copy').waitFor({ state: 'hidden' });
@@ -756,7 +761,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     const more = page.locator('#h5-tasks .h5-terminal-row').nth(1).locator('.h5-terminal-more');
     await more.tap();
     await page.locator('#h5-term-menu').waitFor({ state: 'visible' });
-    assert.deepEqual(await page.locator('#h5-term-menu-actions button').allTextContents(), ['Rename', 'Reopen', 'Restart in the working directory', 'Delete']);
+    assert.deepEqual(await page.locator('#h5-term-menu-actions button').allTextContents(), ['Copy text', 'Rename', 'Reopen', 'Restart in the working directory', 'Delete'], 'the open terminal also offers Copy text');
     await page.locator('#h5-term-menu-actions button', { hasText: 'Rename' }).tap();
     await page.locator('#h5-term-rename-input').fill('Build logs');
     await page.locator('#h5-term-rename button').tap();

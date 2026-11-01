@@ -2191,3 +2191,4 @@ Usage, notifications and phone sidebar changes:
 > v2.85.3 h5 side wheel strip replaces scroll buttons and drag-wheel, http(s)-only OSC 8 links, no keyboard on terminal tap
 > v2.86.0 Terminal protocol v2 with heartbeat and flow control, Unicode 11 widths, phone copy by long press and menu, side wheel strip, no keyboard on terminal tap, two-line translate box, inverted-T arrow keys, terminal history no longer stored in SQLite (migration drops terminal_logs and task_terminals.buffer).
 > v2.87.0 New phone bottom bar with key row and Insert command menu, translate-and-send, Enter newline, animation; no selected state in sidebar; Update modal
+> v2.87.1 Phone: message box collapses to one line when the keyboard is dismissed; new function key order; send and translate buttons swapped

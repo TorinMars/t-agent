@@ -1344,4 +1344,9 @@ I18n.add({
   "View sub-agent": "查看子代理",
   "This is a sub-agent. You can only read it here.": "这是子代理，这里只能查看。",
   "Back to the main agent": "返回主代理",
+  "Close menu": "关闭菜单",
+  "Paste text": "粘贴文本",
+  "Insert command": "插入命令",
+  "Translate only": "仅翻译",
+  "Translate only: put the English text in the box, do not send": "仅翻译：把英文放进输入框，不发送",
 });

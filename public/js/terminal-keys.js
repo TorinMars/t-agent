@@ -4,7 +4,7 @@ const TerminalKeys = (() => {
     const modifier = 1 + (mods.shift ? 1 : 0) + (mods.alt ? 2 : 0) + (mods.ctrl ? 4 : 0) + (mods.meta ? 8 : 0);
     const arrows = { ArrowUp: 'A', ArrowDown: 'B', ArrowRight: 'C', ArrowLeft: 'D', Home: 'H', End: 'F' };
     if (arrows[key]) return `\x1b[${modifier === 1 ? '' : `1;${modifier}`}${arrows[key]}`;
-    const tilde = { Delete: 3, PageUp: 5, PageDown: 6 };
+    const tilde = { Insert: 2, Delete: 3, PageUp: 5, PageDown: 6 };
     if (tilde[key]) return `\x1b[${tilde[key]}${modifier === 1 ? '' : `;${modifier}`}~`;
     const special = { Escape: '\x1b', Tab: '\t', Enter: '\r', Backspace: '\x7f', Space: ' ' };
     let text = special[key] ?? (Array.from(key).length === 1 ? key : null);

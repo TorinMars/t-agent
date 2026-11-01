@@ -5,7 +5,7 @@ import { CopyDialog, Notice, RetainDialog, UploadDialog } from './Dialogs.jsx';
 import { Header } from './Header.jsx';
 import { SettingsDrawer } from './Settings.jsx';
 import { TaskDrawer } from './TaskDrawer.jsx';
-import { KeyBar, TerminalArea, TranslateBar } from './Terminal.jsx';
+import { BottomArea, TerminalArea } from './Terminal.jsx';
 import { TermMenu } from './TermMenu.jsx';
 import { theme } from './theme.mjs';
 
@@ -28,8 +28,7 @@ export function App({ ui }) {
       <div className="h5-app" id="h5-app" inert={tasksModal}>
         <Header state={state} ui={ui} />
         <TerminalArea state={state} ui={ui} />
-        <TranslateBar state={state} ui={ui} />
-        <KeyBar state={state} ui={ui} />
+        <BottomArea state={state} ui={ui} />
       </div>
       <TaskDrawer state={state} ui={ui} />
       <SettingsDrawer state={state} ui={ui} />

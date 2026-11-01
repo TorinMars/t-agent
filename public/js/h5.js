@@ -1102,6 +1102,22 @@
     textarea.setAttribute('inputmode', 'text');
     session.term.focus();
   }
+  // The "Draft keyboard" key: focus the draft box (it is hidden until it has the focus, see TranslateBar), so the on-screen keyboard types into it; a second tap closes the keyboard.
+  // The terminal's textarea loses the focus and, through its focusout handler, goes back to inputmode none.
+  function toggleDraftKeyboard() {
+    if (document.activeElement === translateInput) { translateInput.blur(); return; }
+    translateInput.focus();
+    autosize();
+    relayoutBar();
+  }
+  // Which keyboard key is blue: the terminal one while the terminal's textarea has the focus with the on-screen keyboard allowed, the draft one while the draft box has the focus.
+  function keyboardTarget(el) {
+    if (el === translateInput) return 'draft';
+    const textarea = session && session.term && session.term.textarea;
+    return el && el === textarea && textarea.getAttribute('inputmode') !== 'none' ? 'terminal' : null;
+  }
+  document.addEventListener('focusin', event => ui.set({ keyboard: keyboardTarget(event.target) }));
+  document.addEventListener('focusout', event => ui.set({ keyboard: keyboardTarget(event.relatedTarget) }));
   // The first image on the clipboard, or null when there is none or the browser cannot read images.
   async function clipboardImage() {
     if (!navigator.clipboard?.read) return null;
@@ -1381,6 +1397,7 @@
       mods[item.modifier] = !mods[item.modifier];
       renderMods();
     } else if (item.action === 'keyboard') toggleKeyboard();
+    else if (item.action === 'draft') toggleDraftKeyboard();
     else if (item.action === 'paste') void paste();
     else if (item.action === 'image') pickImage();
     else if (item.shortcut === 'ctrl-c') sendKey('c', { ctrl: true });
@@ -1481,29 +1498,21 @@
     return { items, active: items[1].y >= items[0].y + flipRoot.offsetHeight - 1 }; // active: the buttons are below the box
   };
   let barLayout = measureBar();
-  let barHeight = translateForm.offsetHeight;
+  let barHeight = barOuterHeight();
   let flips = [];
   let movingTimer = 0;
   const finishFlips = () => { flips.forEach(animation => { try { animation.finish(); } catch { /* already gone */ } }); flips = []; };
   const reducedMotion = () => window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  // The height the bar keeps in the page layout: its resting row (the voice button plus the bar's padding and border).
-  function barReserved() {
+  // The bar keeps no height in the page layout: it is hidden until the draft box has the focus, and then it covers the terminal. Its outer height (the margin above it counts) is all `--h5-bar-extra`.
+  function barOuterHeight() {
     const style = getComputedStyle(translateForm);
-    const extras = ['paddingTop', 'paddingBottom', 'borderTopWidth', 'borderBottomWidth'].reduce((sum, key) => sum + (parseFloat(style[key]) || 0), 0);
-    // The resting row is as tall as the voice button or the one-line box, whichever is taller.
-    const input = getComputedStyle(translateInput);
-    const lineHeight = parseFloat(input.lineHeight) || (parseFloat(input.fontSize) || 15) * 1.4375;
-    const pad = (parseFloat(input.paddingTop) || 0) + (parseFloat(input.paddingBottom) || 0);
-    const border = input.boxSizing === 'border-box' ? (parseFloat(input.borderTopWidth) || 0) + (parseFloat(input.borderBottomWidth) || 0) : 0;
-    const wrap = flipRoot.getBoundingClientRect().height - translateInput.getBoundingClientRect().height; // the padding around the textarea
-    const oneLine = lineHeight + pad + border + wrap;
-    return Math.max($('h5-voice').getBoundingClientRect().height, oneLine) + extras;
+    return translateForm.getBoundingClientRect().height + (parseFloat(style.marginTop) || 0) + (parseFloat(style.marginBottom) || 0);
   }
   // Called whenever the bar height may have changed. The page layout always gets exactly the reserved height (the margin takes the difference, positive or
   // negative), so the terminal box cannot change by even a fraction of a pixel; what the bar covers is moved, not resized.
   function syncBar(animate = false) {
-    const height = translateForm.getBoundingClientRect().height;
-    const overlap = height - barReserved();
+    const height = barOuterHeight();
+    const overlap = height;
     const extra = Math.max(0, overlap);
     if (overlap !== barOverlap) bottomArea.style.setProperty('--h5-bar-extra', `${overlap}px`);
     barOverlap = overlap;

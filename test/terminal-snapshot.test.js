@@ -184,3 +184,41 @@ test('DEC line drawing continues after replay and saved charset restores indepen
     terminal.dispose(); await snapshot.dispose();
   }
 });
+
+test('queued writes are merged into bounded batches without reordering or losing output', async () => {
+  const snapshot = new TerminalSnapshot(40, 10);
+  const seen = [];
+  const after = batch => seen.push(batch);
+  const parts = Array.from({ length: 500 }, (_, i) => `row${i}\r\n`);
+  for (const part of parts) snapshot.write(part, after);
+  assert.equal(snapshot.pendingBytes, parts.join('').length);
+  await snapshot.pending;
+  assert.equal(seen.join(''), parts.join(''));
+  assert.ok(seen.length < 10, 'chunks were merged');
+  assert.equal(snapshot.pendingBytes, 0);
+  const big = 'z'.repeat(200 * 1024);
+  seen.length = 0;
+  snapshot.write(big, after); snapshot.write(big, after);
+  await snapshot.pending;
+  assert.ok(seen.every(batch => batch.length <= 256 * 1024 + 1), 'a batch never exceeds the cap');
+  assert.equal(seen.join(''), big + big);
+  await snapshot.dispose();
+});
+
+test('one failing queued operation does not block the ones behind it', async () => {
+  const snapshot = new TerminalSnapshot(40, 10);
+  await assert.rejects(snapshot.enqueue(() => { throw new Error('boom'); }), /boom/);
+  const seen = [];
+  await snapshot.write('ok', batch => seen.push(batch));
+  assert.deepEqual(seen, ['ok']);
+  await snapshot.dispose();
+});
+
+test('a cancelled OSC (CAN/SUB) ends in both the live tracker and the history archive', () => {
+  for (const cancel of ['\x18', '\x1a']) {
+    assert.equal(archiveText(`before\x1b]0;title${cancel}after`), 'beforeafter');
+    assert.equal(archiveText(`a\x1b[31${cancel}b`), 'ab');
+    assert.equal(archiveText(`a\x1bP1$q${cancel}b`), 'ab');
+  }
+  assert.equal(archiveText('a\x1bP1$q\x07b\x1b\\c'), 'ac', 'BEL does not end a DCS string');
+});

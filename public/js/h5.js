@@ -784,6 +784,10 @@
     const fit = new FitAddon.FitAddon();
     term.loadAddon(fit);
     term.open(el);
+    // Tapping the terminal must not open the on-screen keyboard (xterm focuses its helper textarea on every touch): the
+    // textarea stays focusable for a hardware keyboard but asks for no on-screen keyboard. Only the keyboard key opens it.
+    noScreenKeyboard(term);
+    el.addEventListener('focusout', () => noScreenKeyboard(term)); // the keyboard closed: the next terminal tap must not reopen it
     const s = { term, fit, el, ws: null, timer: null, attempts: 0, paused: false, disposed: false, task, terminalId, source };
     session = s;
     // A pasted image (long-press paste in the xterm textarea) is uploaded like a picked one; plain text keeps xterm's own paste.
@@ -963,10 +967,19 @@
     clearMods();
     if (data !== null && !send(session, data)) tell('The terminal is not connected', 'error');
   }
+  function noScreenKeyboard(term) {
+    if (term.textarea) term.textarea.setAttribute('inputmode', 'none');
+  }
+  // The keyboard key is the only way to open the on-screen keyboard from the terminal. iOS reads inputmode only when the
+  // element gets focus, so the value is changed while blurred and the focus follows.
   function toggleKeyboard() {
-    if (!session) return;
-    if (session.el.contains(document.activeElement)) document.activeElement.blur();
-    else session.term.focus();
+    if (!session || !session.term.textarea) return;
+    const textarea = session.term.textarea;
+    const open = textarea.getAttribute('inputmode') !== 'none';
+    textarea.blur(); // the focusout handler sets inputmode to none
+    if (open) return;
+    textarea.setAttribute('inputmode', 'text');
+    session.term.focus();
   }
   // The first image on the clipboard, or null when there is none or the browser cannot read images.
   async function clipboardImage() {

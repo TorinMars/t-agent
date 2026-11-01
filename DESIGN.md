@@ -2178,3 +2178,4 @@ Usage, notifications and phone sidebar changes:
 > v2.85.1 Messages sent to a sub-agent show in its view, and Claude Code is kept alive after a turn while background tasks (sub-agents) still run, instead of being closed 20 seconds after the result
 > v2.85.2 A sub-agent view starts with the prompt the main agent gave it, also for sub-agents that ran live
 > v2.85.3 h5 side wheel strip replaces scroll buttons and drag-wheel, http(s)-only OSC 8 links, no keyboard on terminal tap
+> v2.86.0 Terminal protocol v2 with heartbeat and flow control, Unicode 11 widths, phone copy by long press and menu, side wheel strip, no keyboard on terminal tap, two-line translate box, inverted-T arrow keys, terminal history no longer stored in SQLite (migration drops terminal_logs and task_terminals.buffer).

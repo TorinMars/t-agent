@@ -2,6 +2,8 @@
 
 > Date: 2026-07-15
 
+> Unreleased: Tasks in the left sidebar have no selected state. The desktop sidebar (`.task-nav-item`) no longer dims unselected tasks or highlights the open one (`public/css/style.css`, `themes.css`); the phone task list and the wide phone sidebar (`scripts/h5-shell/TaskDrawer.jsx`, rebuilt into `public/js/h5-shell.js`) no longer fill the open task's row. Kept: hover feedback, the `active` class and `aria-current` on the open task (script and test hooks, no style), and the highlight of the current terminal or chat row. Regression: `test/sidebar-no-selected.test.js`, `scripts/test-h5-browser.cjs`.
+
 > v2.84.49 The access level in the chat footer opens a list like the model's (`ModeButton` in `scripts/agent-chat/ui.jsx`: `ac-picker` menu with `menuitemradio` items, a name and a short explanation each) instead of the invisible native `select`; a choice applies at once, and Full access still asks to confirm. Regression: `scripts/test-agent-chat-browser.cjs`.
 
 > v2.84.49 Agent chat footer is one row of icons under the input box (before: a row for the options and the usage, and another for the access level and model). Left: options (sliders icon) and the access level (an icon per level; the invisible `select` over it keeps keyboard and screen-reader use). Right: the model (chip icon; the model and effort are its title, the list opens as before), the context ring and the plan usage. The usage is one button of upright bars, per window one for the usage left and one for the time left (`limitBars` in `scripts/agent-chat/format.mjs`); a click opens a floating window with the numbers in words and a "Refresh usage" button (a click on the bars no longer refreshes by itself). `public/js/agent-chat-ui.js` was rebuilt. Regression: `scripts/test-agent-chat-browser.cjs`, `test/agent-chat-view.test.js`.
@@ -290,7 +292,7 @@ Right (MD outline): fixed 220px, shown only when there is an md_path
 
 - Tasks are grouped by status into three groups: **In progress / To do / Done**, and each group can be collapsed
 - A task with an `md_path` shows a `▶` arrow icon, and a task without md shows an ordinary dot
-- Clicking a task → highlights it as selected and loads the MD preview on the right
+- Clicking a task → loads it on the right; the task has no selected look (no highlight, dimming or bar), on the wide sidebar and on the phone list alike (the current terminal or chat row under a task is still marked)
 - Right-clicking a task → context menu (change status / delete)
 - Clicking the status circle → quick status switch (todo → doing → done → todo)
 

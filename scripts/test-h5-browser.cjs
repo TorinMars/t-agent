@@ -731,6 +731,12 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     assert.deepEqual(await page.locator('#h5-tasks .h5-terminal-main .h5-terminal-name').allTextContents(), ['Terminal 1'], 'the selected task lists its terminals under it');
     assert.equal(await page.locator('#h5-tasks .h5-terminal-main[aria-current="true"] .h5-terminal-name').textContent(), 'Terminal 1');
     assert.equal(await page.locator('#h5-terminal-tabs').count(), 0, 'there is no tab strip above the terminal any more');
+    // A task has no selected look: the open task's row is painted like the others (the current session row below it still is).
+    assert.deepEqual(await page.evaluate(() => {
+      const bg = node => getComputedStyle(node).backgroundColor;
+      const rows = [...document.querySelectorAll('#h5-tasks .h5-task-item')];
+      return { selectedClass: rows.some(node => node.classList.contains('Mui-selected')), colors: [...new Set(rows.map(node => bg(node) + '|' + bg(node.parentElement)))].length };
+    }), { selectedClass: false, colors: 1 }, 'no task row looks selected');
     assert.equal(await page.locator('#h5-tasks .h5-task-add').count(), await page.locator('#h5-tasks .h5-task-item').count(), 'every task has the "+" button');
     // Measured in one step: the task list re-renders when the sheet opens and would replace the row between two separate reads.
     await page.locator('#h5-tasks .h5-task-row:has(.h5-task-item[aria-current="true"]) .h5-task-add').waitFor();

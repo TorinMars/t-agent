@@ -29,14 +29,14 @@ export function TerminalArea({ state, ui }) {
   );
 }
 
-// The Chinese-to-English box. The textarea is the plain DOM one that voice-input.js and h5.js read and write directly (value, height); Material UI draws around it.
+// The Chinese-to-English box. The textarea is the plain DOM one that voice-input.js and h5.js read and write directly (value, height; `autosize()` in h5.js keeps it at one line, growing to two); Material UI draws around it.
 export function TranslateBar({ state }) {
   return (
     <Box component="form" className="h5-translate" id="h5-translate" autoComplete="off" sx={{ flex: '0 0 auto', display: 'flex', alignItems: 'flex-end', gap: 1, px: 1, pt: 1, borderTop: 1, borderColor: 'divider' }}>
       <OutlinedInput
         id="h5-translate-input" className={`h5-translate-input${state.translating ? ' translating' : ''}`} fullWidth size="small" inputComponent="textarea" readOnly={state.translating}
         placeholder={t('Chinese → English, then send')}
-        inputProps={{ rows: 1, maxLength: 4000, enterKeyHint: 'send', 'aria-label': t('Chinese input, translated to English and sent to the terminal'), style: { resize: 'none', maxHeight: 120 } }}
+        inputProps={{ rows: 1, maxLength: 4000, enterKeyHint: 'send', 'aria-label': t('Chinese input, translated to English and sent to the terminal'), style: { resize: 'none' } }}
         sx={{ alignItems: 'flex-end', py: 0.25, fontSize: 15, bgcolor: 'action.hover', '& fieldset': { borderColor: 'transparent' } }}
       />
       <IconButton id="h5-voice" className="h5-voice" sx={{ width: 40, height: 40 }} title={t('Voice input: hold to speak, release to stop')} aria-label={t('Voice input')} aria-pressed="false"><MicIcon /></IconButton>

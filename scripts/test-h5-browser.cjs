@@ -255,12 +255,56 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     await page.locator('.h5-xterm').tap();
     assert.equal(await inputmode(), 'none', 'a terminal tap after closing does not reopen it');
 
+    // Translate box height: one line when empty, two lines for text that needs two, never more (it scrolls inside), one line again after a send.
+    {
+      const input = page.locator('#h5-translate-input');
+      const box = () => page.evaluate(() => {
+        const el = document.getElementById('h5-translate-input');
+        const style = getComputedStyle(el);
+        const rect = el.getBoundingClientRect();
+        const term = document.getElementById('h5-terminal').getBoundingClientRect();
+        const send = document.getElementById('h5-translate-send').getBoundingClientRect();
+        const voice = document.getElementById('h5-voice').getBoundingClientRect();
+        const resizes = window.sockets[0].sent.filter(item => { try { return JSON.parse(item).type === 'resize'; } catch { return false; } }).length;
+        return { height: rect.height, bottom: rect.bottom, line: parseFloat(style.lineHeight), pad: parseFloat(style.paddingTop) + parseFloat(style.paddingBottom),
+          overflowY: style.overflowY, termHeight: term.height, sendBottom: send.bottom, voiceBottom: voice.bottom, resizes, placeholder: el.placeholder };
+      });
+      const one = await box();
+      assert.ok(Math.abs(one.height - (one.line + one.pad)) <= 2, `one line when empty (${one.height}px)`);
+      await input.fill('short');
+      assert.ok(Math.abs((await box()).height - one.height) <= 1, 'short text stays on one line');
+      await input.fill('a long sentence that does not fit on a single line of the narrow phone box, so it wraps');
+      const two = await box();
+      assert.ok(Math.abs(two.height - (2 * two.line + two.pad)) <= 2, `two lines for text that needs two (${two.height}px)`);
+      assert.ok(Math.abs(two.bottom - one.bottom) <= 1, 'the box grows upward, its bottom stays');
+      assert.ok(two.termHeight < one.termHeight, 'the terminal gets shorter as the box grows');
+      assert.ok(Math.abs(two.sendBottom - two.bottom) <= 12 && Math.abs(two.voiceBottom - two.bottom) <= 12 && Math.abs(two.sendBottom - one.sendBottom) <= 1, 'the buttons stay at the bottom');
+      await input.fill('a long sentence that does not fit on a single line of the narrow phone box, so it wraps. '.repeat(6));
+      const many = await box();
+      assert.ok(Math.abs(many.height - two.height) <= 1, `longer text stays at two lines (${many.height}px)`);
+      assert.equal(many.overflowY, 'auto', 'the text scrolls inside the box');
+      await page.waitForTimeout(700);
+      const settled = await box();
+      await page.waitForTimeout(700);
+      assert.equal((await box()).resizes, settled.resizes, 'no terminal resize loop after the box changed');
+      assert.ok(settled.termHeight > 100, 'the terminal still has room');
+      await input.fill('');
+      const cleared = await box();
+      assert.ok(Math.abs(cleared.height - one.height) <= 1, 'back to one line when cleared');
+      assert.ok(Math.abs(cleared.termHeight - one.termHeight) <= 1, 'the terminal gets its height back');
+      assert.equal(await input.evaluate(el => el.scrollWidth <= el.clientWidth + 1), true, 'the placeholder stays on one line');
+    }
+
     // Translate and send: control characters are stripped and Enter follows separately.
-    await page.locator('#h5-translate-input').fill('run the tests');
+    await page.locator('#h5-translate-input').fill('run the tests, and please make the text long enough that the box grows to two lines on the phone');
     await page.locator('#h5-translate-send').tap();
     await page.waitForFunction(() => window.sockets[0].sent.includes('\r'));
     assert.deepEqual((await sent()).slice(-2), ['Run the tests [2J', '\r'], 'ESC is removed, so no escape sequence reaches the shell');
     assert.equal(await page.locator('#h5-translate-input').inputValue(), '');
+    {
+      const afterSend = await page.locator('#h5-translate-input').evaluate(el => ({ height: el.getBoundingClientRect().height, inline: el.style.height }));
+      assert.ok(afterSend.height < 50 && afterSend.inline === '', `one line again after a send (${afterSend.height}px)`);
+    }
 
     // Image upload: the link is typed into the terminal with a trailing space and no Enter.
     const [chooser] = await Promise.all([page.waitForEvent('filechooser'), page.locator('[data-action="image"]').tap()]);

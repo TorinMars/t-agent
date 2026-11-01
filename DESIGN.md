@@ -2192,3 +2192,4 @@ Usage, notifications and phone sidebar changes:
 > v2.86.0 Terminal protocol v2 with heartbeat and flow control, Unicode 11 widths, phone copy by long press and menu, side wheel strip, no keyboard on terminal tap, two-line translate box, inverted-T arrow keys, terminal history no longer stored in SQLite (migration drops terminal_logs and task_terminals.buffer).
 > v2.87.0 New phone bottom bar with key row and Insert command menu, translate-and-send, Enter newline, animation; no selected state in sidebar; Update modal
 > v2.87.1 Phone: message box collapses to one line when the keyboard is dismissed; new function key order; send and translate buttons swapped
+> v2.87.2 Phone message box grows to show all its text up to half of the visible viewport and collapses to one line at once when focus is lost or the keyboard hides

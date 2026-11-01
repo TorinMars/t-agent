@@ -313,7 +313,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       const form = r('h5-translate');
       const root = document.querySelector('.h5-translate-input').getBoundingClientRect();
       const resizes = window.sockets[0].sent.filter(item => { try { return JSON.parse(item).type === 'resize'; } catch { return false; } }).length;
-      return { form, root: { top: root.top, bottom: root.bottom, left: root.left, right: root.right, width: root.width }, input: r('h5-translate-input'), voice: r('h5-voice'), add: r('h5-add'), area: r('h5-bottom'), send: r('h5-translate-send'), resizes,
+      return { form, root: { top: root.top, bottom: root.bottom, left: root.left, right: root.right, width: root.width }, input: r('h5-translate-input'), voice: r('h5-voice'), add: r('h5-add'), area: r('h5-bottom'), send: r('h5-translate-send'), translate: r('h5-translate-button'), resizes,
         term: document.getElementById('h5-terminal').getBoundingClientRect().height, focused: document.activeElement && document.activeElement.id,
         xterm: (() => { const b = document.querySelector('.h5-xterm').getBoundingClientRect(); return { top: b.top, height: b.height }; })(),
         screenBottom: document.querySelector('.h5-xterm .xterm-screen').getBoundingClientRect().bottom, rows: document.querySelectorAll('.h5-xterm .xterm-rows > div').length };
@@ -326,6 +326,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       const rest = await barRects();
       assert.notEqual(rest.focused, 'h5-translate-input');
       assert.equal(rest.send.width, 0, 'at rest the send button is not shown (as in the reference design)');
+      assert.equal(rest.translate.width, 0, 'at rest the translate-and-send button is not shown either');
       assert.ok(Math.abs(rest.root.top - rest.voice.top) <= 12 && Math.abs(rest.voice.top - rest.add.top) <= 12, 'at rest the plus button, the box and voice share one row');
       assert.ok(rest.add.right <= rest.root.left + 1 && rest.voice.left > rest.root.right - 1, 'at rest: plus, box, voice side by side');
       await page.locator('#h5-translate-input').focus();
@@ -333,9 +334,12 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       assert.ok(active.root.bottom <= active.voice.top + 1 && active.root.bottom <= active.send.top + 1, 'focused: the box is on row 1, the buttons below it');
       assert.ok(Math.abs(active.voice.top - active.send.top) <= 1, 'focused: voice and send share row 2');
       assert.ok(active.voice.left < active.send.left, 'focused: voice is left of send');
-      assert.ok(Math.abs(active.send.right - rest.voice.right) <= 1, 'send sits at the right edge, where voice was at rest');
+      assert.ok(active.send.right <= active.translate.left + 1 && Math.abs(active.send.top - active.translate.top) <= 1, 'focused: the send arrow is left of the translate-and-send button, same row');
+      assert.ok(Math.abs(active.translate.right - rest.voice.right) <= 1, 'translate-and-send sits at the far right edge, where voice was at rest');
+      assert.equal(await page.evaluate(() => { const a = document.getElementById('h5-translate-send'), b = document.getElementById('h5-translate-button'); return Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING); }), true, 'DOM and tab order: send arrow before translate-and-send');
+      assert.equal(await page.evaluate(() => { const bg = id => getComputedStyle(document.getElementById(id)).backgroundColor; return [bg('h5-translate-button'), bg('h5-translate-send')]; }).then(c => c[0] === 'rgb(255, 255, 255)' && c[1] !== 'rgb(255, 255, 255)'), true, 'the far-right translate-and-send button is the white primary button');
       assert.ok(active.add.left < active.voice.left && active.add.top >= active.root.bottom - 1, 'focused: plus is on row 2 at the left');
-      assert.ok(active.root.width > rest.root.width + 60 && active.root.right >= active.send.right - 1, 'focused: the box takes the full width');
+      assert.ok(active.root.width > rest.root.width + 60 && active.root.right >= active.translate.right - 1, 'focused: the box takes the full width');
       assert.ok(active.form.height > rest.form.height + 30, 'the bar is one row taller');
       // The terminal is moved, not resized: same box, same element height, same rows, no resize message; it only moves up.
       assert.equal(active.term, rest.term, 'the terminal box keeps its height');

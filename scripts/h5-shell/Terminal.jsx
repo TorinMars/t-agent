@@ -92,7 +92,7 @@ const ACTIVE = {
   borderRadius: '22px',
   '& .h5-translate-input': { gridColumn: '1 / -1', gridRow: 1 },
   '& #h5-add': { gridColumn: 1, ...BUTTON_ROW }, '& #h5-voice': { gridColumn: 3, ...BUTTON_ROW },
-  '& #h5-translate-button': { display: 'inline-flex', gridColumn: 4, ...BUTTON_ROW }, '& #h5-translate-send': { display: 'inline-flex', gridColumn: 5, ...BUTTON_ROW },
+  '& #h5-translate-send': { display: 'inline-flex', gridColumn: 4, ...BUTTON_ROW }, '& #h5-translate-button': { display: 'inline-flex', gridColumn: 5, ...BUTTON_ROW },
 };
 const ROUND = { width: 40, height: 40 };
 export function TranslateBar({ state, menu, onMenu }) {
@@ -115,8 +115,8 @@ export function TranslateBar({ state, menu, onMenu }) {
         sx={{ alignItems: 'flex-end', py: 0.25, fontSize: 15, bgcolor: 'transparent', '& fieldset': { borderColor: 'transparent' } }}
       />
       <IconButton id="h5-voice" className="h5-voice" sx={ROUND} title={t('Voice input: hold to speak, release to stop')} aria-label={t('Voice input')} aria-pressed="false"><MicIcon /></IconButton>
-      <IconButton id="h5-translate-button" type="button" disabled={state.translating} sx={{ ...ROUND, border: 1, borderColor: 'divider', borderRadius: 2 }} title={t('Translate to English and send')} aria-label={t('Translate and send')}><TranslateIcon /></IconButton>
-      <IconButton type="submit" id="h5-translate-send" className="h5-translate-send" disabled={state.translating} sx={{ ...ROUND, borderRadius: 2, bgcolor: '#fff', color: '#111', '&:hover': { bgcolor: '#e6e6e6' }, '&.Mui-disabled': { bgcolor: 'action.disabledBackground', color: 'action.disabled' } }} title={t('Send as typed, without translating')} aria-label={t('Send')}><ArrowUpwardIcon /></IconButton>
+      <IconButton type="submit" id="h5-translate-send" className="h5-translate-send" disabled={state.translating} sx={{ ...ROUND, border: 1, borderColor: 'divider', borderRadius: 2 }} title={t('Send as typed, without translating')} aria-label={t('Send')}><ArrowUpwardIcon /></IconButton>
+      <IconButton id="h5-translate-button" type="button" disabled={state.translating} sx={{ ...ROUND, borderRadius: 2, bgcolor: '#fff', color: '#111', '&:hover': { bgcolor: '#e6e6e6' }, '&.Mui-disabled': { bgcolor: 'action.disabledBackground', color: 'action.disabled' } }} title={t('Translate to English and send')} aria-label={t('Translate and send')}><TranslateIcon /></IconButton>
     </Box>
   );
 }

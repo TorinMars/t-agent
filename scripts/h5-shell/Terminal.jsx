@@ -45,12 +45,16 @@ export function TranslateBar({ state }) {
   );
 }
 
+// Six columns, three rows. `at` is [row, column]; `wide` spans two columns. The arrows sit like a keyboard's cluster (an inverted T) in the
+// right half of the last two rows: ↑ above ↓, ← and → beside ↓. The cells beside ↑ stay empty.
 const KEYS = [
-  { key: 'Escape', label: 'Esc' }, { key: 'Tab', label: 'Tab' },
-  { modifier: 'ctrl', label: 'Ctrl' }, { modifier: 'alt', label: 'Alt' }, { modifier: 'shift', label: 'Shift' },
-  { action: 'keyboard', label: '⌨', aria: 'Show or hide the on-screen keyboard' }, { action: 'paste', label: 'Paste' }, { action: 'image', label: 'Image', aria: 'Upload image' },
-  { key: 'ArrowLeft', label: '←', aria: 'ArrowLeft' }, { key: 'ArrowDown', label: '↓', aria: 'ArrowDown' }, { key: 'ArrowUp', label: '↑', aria: 'ArrowUp' }, { key: 'ArrowRight', label: '→', aria: 'ArrowRight' },
-  { key: 'Enter', label: 'Enter', wide: true }, { key: 'Backspace', label: '⌫', aria: 'Backspace' }, { shortcut: 'ctrl-c', label: '^C', aria: 'Send Ctrl+C' },
+  { key: 'Escape', label: 'Esc', at: [1, 1] }, { key: 'Tab', label: 'Tab', at: [1, 2] },
+  { modifier: 'ctrl', label: 'Ctrl', at: [1, 3] }, { modifier: 'alt', label: 'Alt', at: [1, 4] }, { modifier: 'shift', label: 'Shift', at: [1, 5] },
+  { action: 'keyboard', label: '⌨', aria: 'Show or hide the on-screen keyboard', at: [1, 6] },
+  { action: 'paste', label: 'Paste', at: [2, 1] }, { action: 'image', label: 'Image', aria: 'Upload image', at: [2, 2] }, { key: 'Backspace', label: '⌫', aria: 'Backspace', at: [2, 3] },
+  { key: 'Enter', label: 'Enter', wide: true, at: [3, 1] }, { shortcut: 'ctrl-c', label: '^C', aria: 'Send Ctrl+C', at: [3, 3] },
+  { key: 'ArrowUp', label: '↑', aria: 'ArrowUp', at: [2, 5] },
+  { key: 'ArrowLeft', label: '←', aria: 'ArrowLeft', at: [3, 4] }, { key: 'ArrowDown', label: '↓', aria: 'ArrowDown', at: [3, 5] }, { key: 'ArrowRight', label: '→', aria: 'ArrowRight', at: [3, 6] },
 ];
 
 // The function keys. A tap keeps the focus where it is (mouse down is stopped), so it neither opens nor closes the on-screen keyboard.
@@ -59,11 +63,11 @@ export function KeyBar({ state, ui }) {
     <Box
       className="h5-keys" id="h5-keys" role="toolbar" aria-label={t('Terminal keys')} hidden={state.keysHidden}
       onMouseDown={event => event.preventDefault()}
-      sx={{ flex: '0 0 auto', display: state.keysHidden ? 'none' : 'grid', gridTemplateColumns: 'repeat(8, minmax(0, 1fr))', gap: 0.75, p: 1, pb: 'max(8px, env(safe-area-inset-bottom))' }}
+      sx={{ flex: '0 0 auto', display: state.keysHidden ? 'none' : 'grid', gridTemplateColumns: 'repeat(6, minmax(0, 1fr))', gap: 0.75, p: 1, pb: 'max(8px, env(safe-area-inset-bottom))' }}
     >
       {KEYS.map(item => {
         // Flat keys: a quiet fill, no outline; a latched modifier takes the accent colour.
-        const common = { key: item.label, size: 'small', 'aria-label': item.aria ? t(item.aria) : undefined, sx: { minWidth: 0, px: 0.5, height: 38, border: 0, borderRadius: 2, color: 'text.primary', bgcolor: 'action.hover', gridColumn: item.wide ? 'span 2' : undefined, '&:hover': { bgcolor: 'action.selected' }, '&.Mui-selected, &.Mui-selected:hover': { bgcolor: 'primary.main', color: 'primary.contrastText' } } };
+        const common = { key: item.label, size: 'small', 'aria-label': item.aria ? t(item.aria) : undefined, sx: { minWidth: 0, px: 0.5, height: 38, border: 0, borderRadius: 2, color: 'text.primary', bgcolor: 'action.hover', gridRow: item.at[0], gridColumn: item.wide ? `${item.at[1]} / span 2` : item.at[1], '&:hover': { bgcolor: 'action.selected' }, '&.Mui-selected, &.Mui-selected:hover': { bgcolor: 'primary.main', color: 'primary.contrastText' } } };
         const data = item.key ? { 'data-key': item.key } : item.modifier ? { 'data-modifier': item.modifier } : item.action ? { 'data-action': item.action } : { 'data-shortcut': item.shortcut };
         if (item.modifier) {
           const on = Boolean(state.mods[item.modifier]);

@@ -216,9 +216,17 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       }
       return [...byRow.entries()].sort((a, b) => a[0] - b[0]).map(([, row]) => row.sort((a, b) => a.left - b.left));
     });
-    assert.equal(rows.length, 2, 'the function keys fit in two rows');
-    assert.deepEqual(rows[0].map(cell => cell.text), ['Esc', 'Tab', 'Ctrl', 'Alt', 'Shift', '⌨', 'Paste', 'Image']);
-    assert.deepEqual(rows[1].map(cell => cell.text), ['←', '↓', '↑', '→', 'Enter', '⌫', '^C']);
+    assert.equal(rows.length, 3, 'the function keys fit in three rows');
+    assert.deepEqual(rows[0].map(cell => cell.text), ['Esc', 'Tab', 'Ctrl', 'Alt', 'Shift', '⌨']);
+    assert.deepEqual(rows[1].map(cell => cell.text), ['Paste', 'Image', '⌫', '↑']);
+    assert.deepEqual(rows[2].map(cell => cell.text), ['Enter', '^C', '←', '↓', '→']);
+    // The arrows form an inverted T: ↑ right above ↓, and ← ↓ → in one row in that order.
+    const arrows = await page.evaluate(() => Object.fromEntries(['Left', 'Down', 'Up', 'Right'].map(name => { const box = document.querySelector(`#h5-keys [data-key="Arrow${name}"]`).getBoundingClientRect(); return [name, { left: box.left, top: box.top, bottom: box.bottom, cx: (box.left + box.right) / 2 }]; })));
+    assert.ok(arrows.Up.bottom <= arrows.Down.top, 'the up arrow is above the down arrow');
+    assert.ok(Math.abs(arrows.Up.cx - arrows.Down.cx) < 1, 'the up arrow is centred over the down arrow');
+    assert.equal(arrows.Left.top, arrows.Down.top);
+    assert.equal(arrows.Right.top, arrows.Down.top);
+    assert.ok(arrows.Left.left < arrows.Down.left && arrows.Down.left < arrows.Right.left, 'left, down, right in that order');
     assert.equal(await page.locator('#h5-translate').isVisible(), true, 'the translate box is always shown');
     assert.ok(rows.flat().every(cell => cell.height >= 32 && cell.right <= 390));
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
@@ -237,6 +245,8 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     await page.locator('[data-action="paste"]').tap();
     await page.waitForFunction(() => window.sockets[0].sent.includes('git status'));
     assert.deepEqual(await sent(), ['\x1b', '\x1b[1;5A', '\x03', '\x03', 'git status']);
+    for (const name of ['Left', 'Down', 'Up', 'Right']) await page.locator(`[data-key="Arrow${name}"]`).tap();
+    assert.deepEqual((await sent()).slice(5), ['\x1b[D', '\x1b[B', '\x1b[A', '\x1b[C'], 'each arrow sends its own sequence');
 
     // Tapping the terminal never asks for the on-screen keyboard; the keyboard key toggles it through the textarea's inputmode.
     const inputmode = () => page.evaluate(() => document.querySelector('.h5-xterm textarea').getAttribute('inputmode'));
@@ -798,6 +808,21 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     assert.ok(calls.includes('POST /api/system/apply-update'));
     assert.equal(await page.locator('#h5-update-confirm').count(), 0, 'no confirmation step is left');
     await context.close();
+
+    // The key grid shows every key, without sideways scrolling, on the narrowest phones and in landscape.
+    for (const viewport of [{ width: 320, height: 640 }, { width: 844, height: 390 }]) {
+      const small = await openPage(browser, { viewport });
+      await small.page.locator('#h5-keys').waitFor({ state: 'visible' });
+      await openTask(small.page, 'Fix login', 'click');
+      await small.page.waitForFunction(() => window.sockets.length === 1);
+      await small.page.waitForTimeout(500); // the task sheet slides away
+      const fit = await small.page.evaluate(() => {
+        const boxes = [...document.querySelectorAll('#h5-keys button')].map(button => button.getBoundingClientRect());
+        return { count: boxes.length, inside: boxes.every(box => box.left >= 0 && box.right <= innerWidth && box.bottom <= innerHeight && box.width >= 36 && box.height >= 36), overflow: document.documentElement.scrollWidth > innerWidth };
+      });
+      assert.deepEqual(fit, { count: 15, inside: true, overflow: false }, `all keys fit at ${viewport.width}px`);
+      await small.context.close();
+    }
 
     // Opened on a computer, the task sheet is a permanent sidebar and the terminal fills the rest of the window.
     const wide = await openPage(browser, { viewport: { width: 1440, height: 900 } });

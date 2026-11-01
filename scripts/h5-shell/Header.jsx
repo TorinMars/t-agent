@@ -7,6 +7,7 @@ import Typography from '@mui/material/Typography';
 import MenuIcon from '@mui/icons-material/Menu';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import { t } from './common.jsx';
+import { UpdateButton } from './Update.jsx';
 
 export function Header({ state, ui }) {
   return (
@@ -31,6 +32,7 @@ export function Header({ state, ui }) {
         <IconButton id="h5-refresh" aria-label={t('Refresh the page')} title={t('Refresh the page')} onClick={() => ui.actions.refresh()}>
           <RefreshIcon />
         </IconButton>
+        <UpdateButton />
       </Toolbar>
     </AppBar>
   );

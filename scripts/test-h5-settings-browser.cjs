@@ -49,6 +49,7 @@ const html = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8').replace(
     await page.addScriptTag({ content: fs.readFileSync(path.join(root, 'public/js/h5-shell.js'), 'utf8') }); // the shell draws the page, and the settings with it
     await page.evaluate(() => window.H5UI.set({ settingsOpen: true }));
     await page.locator('#h5-settings').waitFor({ state: 'visible' });
+    assert.equal(await page.locator('#h5-update-check, #h5-update-log, #h5-update-hint').count(), 0, 'the updater moved to the header Update button');
     const calls = () => page.evaluate(() => window.calls);
     assert.equal((await calls()).length, 0, 'nothing is read until a group is opened');
     assert.deepEqual(await page.locator('.h5-setting-group .MuiAccordionSummary-content').allTextContents(), ['Working directory', 'Image upload', 'Translation', 'Voice input', 'Remote service', 'Access mode']);

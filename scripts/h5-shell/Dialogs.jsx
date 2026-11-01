@@ -1,7 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import Alert from '@mui/material/Alert';
 import AppBar from '@mui/material/AppBar';
+import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
+import Chip from '@mui/material/Chip';
 import Dialog from '@mui/material/Dialog';
 import DialogActions from '@mui/material/DialogActions';
 import DialogContent from '@mui/material/DialogContent';
@@ -19,8 +21,20 @@ import { t } from './common.jsx';
 // The terminal text as plain text, so the browser's own selection handles work on it.
 export function CopyDialog({ state, ui }) {
   const text = state.copyText;
+  const stick = useRef(true); // the view was at the bottom: follow new output
   const box = useRef(null);
-  useEffect(() => { if (text !== null && box.current) box.current.scrollTop = box.current.scrollHeight; }, [text]); // the latest output first
+  const [query, setQuery] = useState('');
+  const attach = useCallback(node => { // the latest output first, when the view opens
+    box.current = node;
+    if (node) { node.scrollTop = node.scrollHeight; stick.current = true; }
+  }, []);
+  useLayoutEffect(() => { // a refresh keeps the scroll position, unless the view sat at the bottom
+    const node = box.current;
+    if (node && stick.current) node.scrollTop = node.scrollHeight;
+  }, [text]);
+  useEffect(() => { if (text === null) setQuery(''); }, [text === null]);
+  const onScroll = event => { const node = event.currentTarget; stick.current = node.scrollHeight - node.scrollTop - node.clientHeight < 24; };
+  const search = event => { event.preventDefault(); ui.actions.copySearch(query); };
   return (
     <Dialog id="h5-copy" fullScreen open={text !== null} onClose={() => ui.actions.copyClose()} aria-labelledby="h5-copy-title">
       <AppBar position="static" color="default" enableColorOnDark elevation={0} sx={{ borderBottom: 1, borderColor: 'divider' }}>
@@ -29,8 +43,20 @@ export function CopyDialog({ state, ui }) {
           <Button id="h5-copy-all" color="inherit" onClick={() => ui.actions.copyAll()}>{t('Copy all')}</Button>
           <IconButton id="h5-copy-close" aria-label={t('Close')} edge="end" onClick={() => ui.actions.copyClose()}><CloseIcon /></IconButton>
         </Toolbar>
+        <Box component="form" role="search" onSubmit={search} sx={{ display: 'flex', alignItems: 'center', gap: 1, px: 2, pb: 1 }}>
+          <TextField
+            id="h5-copy-search" type="search" size="small" fullWidth value={query} onChange={event => { setQuery(event.target.value); if (!event.target.value) ui.actions.copySearch(''); }}
+            placeholder={t('Search')} inputProps={{ 'aria-label': t('Search in the text'), enterKeyHint: 'search', autoCapitalize: 'off', autoCorrect: 'off', spellCheck: false }}
+          />
+          <Button id="h5-copy-next" type="submit" variant="outlined" color="inherit" disabled={!query} sx={{ flex: '0 0 auto' }}>{t('Next match')}</Button>
+        </Box>
+        {state.copyStale ? (
+          <Box sx={{ px: 2, pb: 1 }}>
+            <Chip id="h5-copy-stale" role="button" color="primary" size="small" label={t('New output')} onClick={() => ui.actions.copyRefresh()} />
+          </Box>
+        ) : null}
       </AppBar>
-      <div className="h5-copy-text" id="h5-copy-text" ref={box} tabIndex={0}>{text}</div>
+      <div className="h5-copy-text" id="h5-copy-text" ref={attach} onScroll={onScroll} tabIndex={0}>{text}</div>
     </Dialog>
   );
 }

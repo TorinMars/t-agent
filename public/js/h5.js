@@ -1021,18 +1021,80 @@
     for (let i = 0; i < buffer.length; i++) {
       const line = buffer.getLine(i);
       if (!line) continue;
-      const text = line.translateToString(true);
+      // A row that a wrapped row continues must keep its trailing spaces (a space in the last cell is real text); only the end of a logical line is trimmed.
+      const next = buffer.getLine(i + 1);
+      const text = line.translateToString(!(next && next.isWrapped));
       if (line.isWrapped && lines.length) lines[lines.length - 1] += text; else lines.push(text);
     }
     while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
     return lines.join('\n');
   }
+  let copyWatch = null; // { term, listener, timer }: refreshes the open copy view when new output arrives
+  function stopCopyWatch() {
+    if (!copyWatch) return;
+    clearTimeout(copyWatch.timer);
+    copyWatch.listener.dispose();
+    copyWatch = null;
+  }
+  function copyBoxSelected() { // the user holds a text selection inside the copy view
+    const box = $('h5-copy-text');
+    const selection = window.getSelection();
+    return Boolean(box && selection && !selection.isCollapsed && selection.rangeCount && box.contains(selection.anchorNode));
+  }
+  function refreshCopy(force = false) {
+    if (ui.get().copyText === null || !session || session.disposed) return;
+    const text = bufferText(session.term);
+    if (!text || text === ui.get().copyText) { if (ui.get().copyStale) ui.set({ copyStale: false }); return; }
+    if (!force && copyBoxSelected()) { ui.set({ copyStale: true }); return; } // never replace text under an active selection
+    if (force) window.getSelection()?.removeAllRanges();
+    ui.set({ copyText: text, copyStale: false });
+  }
   function openCopy() {
     const text = session && !session.disposed ? bufferText(session.term) : '';
     if (!text) { tell('Nothing to copy'); return; }
-    ui.set({ copyText: text });
+    stopCopyWatch();
+    const term = session.term;
+    copyWatch = { term, timer: 0, listener: term.onWriteParsed(() => { // debounced: a busy program must not rebuild the text on every chunk
+      clearTimeout(copyWatch.timer);
+      copyWatch.timer = setTimeout(() => refreshCopy(false), 400);
+    }) };
+    searchState = { query: '', from: 0 };
+    ui.set({ copyText: text, copyStale: false });
   }
-  function closeCopy() { ui.set({ copyText: null }); }
+  function closeCopy() { stopCopyWatch(); clearCopyHighlight(); ui.set({ copyText: null, copyStale: false }); }
+
+  // Search in the copy view: jump to the next match (wrapping around) and mark it. The Custom Highlight API marks it without touching the user's
+  // selection; without it the match is selected instead.
+  let searchState = { query: '', from: 0 };
+  function clearCopyHighlight() { try { window.CSS?.highlights?.delete('h5-copy-match'); } catch { /* not supported */ } }
+  function copySearch(query) {
+    const box = $('h5-copy-text');
+    const text = ui.get().copyText || '';
+    const node = box && box.firstChild;
+    clearCopyHighlight();
+    if (!query || !node || node.nodeType !== 3) { searchState = { query, from: 0 }; return false; }
+    const hay = text.toLowerCase();
+    const needle = query.toLowerCase();
+    const from = searchState.query === query ? searchState.from : 0;
+    let at = hay.indexOf(needle, from);
+    if (at < 0) at = hay.indexOf(needle); // wrap around
+    if (at < 0) { searchState = { query, from: 0 }; return false; }
+    searchState = { query, from: at + needle.length };
+    const range = document.createRange();
+    range.setStart(node, at);
+    range.setEnd(node, at + needle.length);
+    if (window.CSS?.highlights && typeof Highlight === 'function') {
+      CSS.highlights.set('h5-copy-match', new Highlight(range));
+    } else {
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }
+    const row = text.slice(0, at).split('\n').length - 1; // one terminal row is one line, so the row decides the scroll position
+    const lineHeight = parseFloat(getComputedStyle(box).lineHeight) || 13;
+    box.scrollTop = Math.max(0, row * lineHeight - box.clientHeight / 2);
+    return true;
+  }
   async function copyAll() {
     const text = ui.get().copyText || '';
     try {
@@ -1052,6 +1114,140 @@
   ui.actions.openCopy = openCopy;
   ui.actions.copyClose = closeCopy;
   ui.actions.copyAll = () => void copyAll();
+  ui.actions.copyRefresh = () => refreshCopy(true);
+  ui.actions.copySearch = query => {
+    if (copySearch(query) === false && query) tell('No match');
+  };
+
+  // Long press on the terminal body opens the copy view (same as the copy button), scrolled to the latest output. It is cancelled by any movement
+  // (a scroll or a drag), by lifting the finger, and it ignores the wheel strip, the buttons and mouse input.
+  const LONG_PRESS_MS = 500;
+  const LONG_PRESS_SLOP = 8; // px a finger may move before it is a scroll, not a press
+  let longPress = null;
+  let lastPointerTouch = false;
+  let longPressDone = false; // the next click belongs to the press that opened the view
+  function cancelLongPress() { if (longPress) { clearTimeout(longPress.timer); longPress = null; } }
+  terminalHost.addEventListener('pointerdown', event => {
+    cancelLongPress();
+    longPressDone = false;
+    lastPointerTouch = event.pointerType !== 'mouse'; // a mouse keeps xterm's own double-click selection
+    if (event.pointerType === 'mouse' || !event.isPrimary || !event.target.closest || !event.target.closest('.h5-xterm')) return;
+    longPress = { id: event.pointerId, x: event.clientX, y: event.clientY, timer: setTimeout(() => {
+      longPress = null;
+      longPressDone = true;
+      if (session && !session.disposed && ui.get().copyText === null) openCopy();
+    }, LONG_PRESS_MS) };
+  });
+  terminalHost.addEventListener('pointermove', event => {
+    if (longPress && event.pointerId === longPress.id && Math.hypot(event.clientX - longPress.x, event.clientY - longPress.y) > LONG_PRESS_SLOP) cancelLongPress();
+  });
+  for (const type of ['pointerup', 'pointercancel']) terminalHost.addEventListener(type, cancelLongPress);
+  terminalHost.addEventListener('scroll', cancelLongPress, true);
+  terminalHost.addEventListener('contextmenu', event => { if (event.target.closest && event.target.closest('.h5-xterm') && longPressDone) event.preventDefault(); });
+
+  // Double tap selects a word and triple tap a line, with xterm's own selection (term.select / selectLines), then a small Copy / Cancel bar shows
+  // (the shell draws it from `selectionBar`). Only while the program has no mouse mode (term.modes.mouseTrackingMode === 'none'): vim, tmux and
+  // Claude Code get every tap as a click, never swallowed. The cell comes from the bounding box of .xterm-screen, which already includes the 4px
+  // inset, any transform (scale) and the keyboard shift. New output, or a tap elsewhere, clears the selection.
+  const MULTI_TAP_MS = 400;
+  const MULTI_TAP_SLOP = 24; // px between taps of one multi-tap
+  let tapChain = { count: 0, at: 0, x: 0, y: 0 };
+  function cellAt(s, x, y) {
+    const screen = s.el.querySelector('.xterm-screen');
+    if (!screen || !s.term.cols || !s.term.rows) return null;
+    const rect = screen.getBoundingClientRect();
+    if (x < rect.left || x >= rect.right || y < rect.top || y >= rect.bottom) return null;
+    const col = Math.min(s.term.cols - 1, Math.floor((x - rect.left) / (rect.width / s.term.cols)));
+    const row = Math.min(s.term.rows - 1, Math.floor((y - rect.top) / (rect.height / s.term.rows)));
+    return { col, row: s.term.buffer.active.viewportY + row, screenRow: row };
+  }
+  const WORD_BREAK = /[\s()[\]{}<>'"`,;|]/;
+  function wordRange(line, col, cols) {
+    const at = c => { // the text of a cell; the second half of a wide character belongs to the first
+      let cell = line.getCell(c);
+      if (cell && cell.getWidth() === 0 && c > 0) { c -= 1; cell = line.getCell(c); }
+      return cell ? { chars: cell.getChars() || ' ', start: c, width: Math.max(1, cell.getWidth()) } : null;
+    };
+    const hit = at(col);
+    if (!hit || WORD_BREAK.test(hit.chars)) return null;
+    let start = hit.start;
+    while (start > 0) {
+      const previous = at(start - 1);
+      if (!previous || WORD_BREAK.test(previous.chars)) break;
+      start = previous.start;
+    }
+    let end = hit.start + hit.width;
+    while (end < cols) {
+      const next = at(end);
+      if (!next || WORD_BREAK.test(next.chars)) break;
+      end = next.start + next.width;
+    }
+    return { start, length: end - start };
+  }
+  function selectAt(s, cell, count) {
+    const buffer = s.term.buffer.active;
+    if (count === 2) {
+      const line = buffer.getLine(cell.row);
+      const range = line && wordRange(line, cell.col, s.term.cols);
+      if (!range) return false;
+      s.term.select(range.start, cell.row, range.length);
+    } else {
+      let first = cell.row;
+      let last = cell.row;
+      while (first > 0 && buffer.getLine(first)?.isWrapped) first--;
+      while (buffer.getLine(last + 1)?.isWrapped) last++;
+      s.term.selectLines(first, last);
+    }
+    return true;
+  }
+  function hookSelection(s) {
+    if (s.selectionHooked) return;
+    s.selectionHooked = true;
+    s.term.onSelectionChange(() => { // the bar follows the selection, however it was made or cleared
+      if (session !== s || s.disposed) return;
+      const shown = s.term.hasSelection();
+      if (shown !== Boolean(ui.get().selectionBar)) ui.set({ selectionBar: shown });
+    });
+    s.term.onWriteParsed(() => { if (s.term.hasSelection()) { s.term.clearSelection(); ui.set({ selectionBar: false }); } }); // new output moves the text under the selection
+  }
+  terminalHost.addEventListener('click', event => {
+    const s = session;
+    if (!s || s.disposed || !lastPointerTouch || longPressDone || !event.target.closest || !event.target.closest('.h5-xterm')) return;
+    const now = Date.now();
+    const chain = now - tapChain.at < MULTI_TAP_MS && Math.hypot(event.clientX - tapChain.x, event.clientY - tapChain.y) < MULTI_TAP_SLOP ? tapChain.count + 1 : 1;
+    tapChain = { count: chain, at: now, x: event.clientX, y: event.clientY };
+    hookSelection(s);
+    if (chain === 1) { if (s.term.hasSelection()) s.term.clearSelection(); ui.set({ selectionBar: false }); return; } // a tap elsewhere
+    if (chain > 3) { tapChain.count = 1; return; }
+    if (s.term.modes.mouseTrackingMode !== 'none') return; // the program owns the taps
+    const cell = cellAt(s, event.clientX, event.clientY);
+    if (cell && selectAt(s, cell, chain)) ui.set({ selectionBar: s.term.hasSelection() }); // xterm reports the change a frame later; do not wait for it
+  });
+  async function copySelection() {
+    const s = session;
+    const text = s && !s.disposed ? s.term.getSelection() : '';
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      // No clipboard API (plain HTTP): the legacy copy command from a temporary read-only field.
+      const field = document.createElement('textarea');
+      field.value = text;
+      field.readOnly = true;
+      field.setAttribute('aria-hidden', 'true');
+      field.style.cssText = 'position:fixed;top:0;left:0;opacity:0;pointer-events:none';
+      document.body.append(field);
+      field.select();
+      const ok = document.execCommand && document.execCommand('copy');
+      field.remove();
+      if (!ok) { tell('Could not copy. Select the text and copy it by hand', 'error'); return; }
+    }
+    s.term.clearSelection();
+    ui.set({ selectionBar: false });
+    tell('Copied', 'success');
+  }
+  ui.actions.selectionCopy = () => void copySelection();
+  ui.actions.selectionCancel = () => { if (session && !session.disposed) session.term.clearSelection(); ui.set({ selectionBar: false }); };
 
   // A tap on a key of the key bar (the shell keeps the focus where it is, so tapping keys does not open or close the on-screen keyboard).
   ui.actions.key = item => {

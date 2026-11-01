@@ -32,6 +32,8 @@ export const initialState = () => ({
   mods: {},
   translating: false,
   copyText: null, // the text of the copy view while it is open
+  copyStale: false, // new output arrived while the user holds a selection in the copy view
+  selectionBar: false, // a word / line is selected on the terminal: show Copy / Cancel
   upload: null, // { status, progress } while an image goes up (progress: 0-100, or null when it is not known)
   retainUrl: null, // the link of an image that was uploaded after its terminal went away
   notice: null, // { id, message, type } the last floating notice

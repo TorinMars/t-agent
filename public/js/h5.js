@@ -1416,30 +1416,30 @@
     if (target.term && target.term.modes && target.term.modes.bracketedPasteMode) return send(target, `\x1b[200~${text.replace(/\n/g, '\r')}\x1b[201~`);
     return send(target, TerminalTranslate.sanitize(text));
   }
-  // `sendIt` false = "translate only": the English text replaces the text in the box and nothing is sent, so the user can check or edit it first.
-  async function translate(sendIt = true) {
+  // Two ways to send what is in the box. Translate button: translate first, then send the English result. Send arrow: send the text as typed, with no translation
+  // and no request to the translator. Both use the same safe rules (sendTranslation: control characters removed, bracketed paste or lines joined) and then one Enter.
+  // When the translation fails nothing is sent, the error is shown and the text stays in the box.
+  async function submitBox(translateFirst) {
     const text = translateInput.value.trim();
     if (translating || !text) return;
     const target = session;
-    if (sendIt && (uploading || !connected(target))) { tell('The terminal is not connected', 'error'); return; }
+    if (uploading || !connected(target)) { tell('The terminal is not connected', 'error'); return; }
     translating = true;
     ui.set({ translating: true });
     try {
-      const result = await api('POST', '/api/translate', { text });
-      if (!pasteText(result && result.text)) throw new Error('Translation result is empty');
-      if (!sendIt) {
-        translateInput.value = pasteText(result.text);
-        autosize();
-        relayoutBar();
-        return;
-      }
-      if (!sendTranslation(target, result.text)) throw new Error('Terminal not connected; translation was not sent');
+      let outgoing = text;
+      if (translateFirst) {
+        const result = await api('POST', '/api/translate', { text });
+        outgoing = result && result.text;
+        if (!pasteText(outgoing)) throw new Error('Translation result is empty');
+      } else if (!pasteText(outgoing)) throw new Error('Nothing to send');
+      if (!sendTranslation(target, outgoing)) throw new Error('Terminal not connected; the text was not sent');
       setTimeout(() => send(target, '\r'), SUBMIT_DELAY_MS);
       translateInput.value = '';
       autosize();
       relayoutBar(); // the box is empty again: the bar may go back to its resting layout
     } catch (error) {
-      const message = error.message || 'Translation failed';
+      const message = error.message || (translateFirst ? 'Translation failed' : 'Send failed');
       tell(message, 'error');
       if (/not configured/i.test(message)) tell('Set up the translation service in Settings');
     } finally {
@@ -1447,10 +1447,10 @@
       ui.set({ translating: false });
     }
   }
-  translateForm.addEventListener('submit', event => { event.preventDefault(); void translate(); });
+  translateForm.addEventListener('submit', event => { event.preventDefault(); void submitBox(false); }); // the send arrow: as typed
   // Enter in the box is a new line (the browser inserts it and the `input` event runs autosize); only the Send button submits. There is no keydown handler on purpose.
   translateInput.addEventListener('input', () => { autosize(); relayoutBar(); }); // the bar also changes layout when the box gains or loses text
-  $('h5-translate-only').addEventListener('click', () => void translate(false));
+  $('h5-translate-button').addEventListener('click', () => void submitBox(true));
   // The bar has two layouts (CSS only): one row at rest, and while it is active (the box has focus, a button is pressed, voice is recording, a
   // translation runs) the box on row 1 and the voice and send buttons on row 2. The switch itself is instant (grid cannot be transitioned).
   // The terminal box never changes size: the bar reserves only its resting height in the page layout and grows upward over the terminal (`--h5-bar-extra`
@@ -1460,7 +1460,7 @@
   const FLIP_MS = 180;
   const FLIP_EASING = 'cubic-bezier(0.2, 0.7, 0.2, 1)';
   const flipRoot = translateForm.querySelector('.h5-translate-input');
-  const flipItems = [flipRoot, $('h5-voice'), $('h5-add')]; // the send and translate-only buttons are only shown in the active layout
+  const flipItems = [flipRoot, $('h5-voice'), $('h5-add')]; // the send and translate buttons are only shown in the active layout
   // Layout positions (offsets, so running transforms do not count), measured from the bottom of the bar because the bar grows upward.
   const measureBar = () => {
     const h = translateForm.offsetHeight;

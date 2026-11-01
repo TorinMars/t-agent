@@ -80,7 +80,7 @@ export function BottomArea({ state, ui }) {
 
 // The message box. The textarea is the plain DOM one that voice-input.js and h5.js read and write directly (value, height; `autosize()` in h5.js keeps it at one line, growing to two); Material UI draws around it.
 // One grid, one element tree. At rest: the plus button, the box and the voice button share one row (a pill). While the bar is "active" the box takes row 1 across the
-// full width and the buttons sit on row 2: plus (it becomes a cross while its menu is open) at the left, voice, translate-only and send at the right.
+// full width and the buttons sit on row 2: plus (it becomes a cross while its menu is open) at the left, voice, translate (and send) and send (as typed) at the right.
 // Active = the box has focus (`:focus-within`), or it holds text, or a button is being pressed (`data-hold`, set by h5.js), or the add menu is open (`data-menu`),
 // or the voice input is recording (`:has(.listening)`), or a translation is running (class `translating`).
 // Only the CSS changes between the two states, so the textarea is never remounted and keeps its focus.
@@ -92,7 +92,7 @@ const ACTIVE = {
   borderRadius: '22px',
   '& .h5-translate-input': { gridColumn: '1 / -1', gridRow: 1 },
   '& #h5-add': { gridColumn: 1, ...BUTTON_ROW }, '& #h5-voice': { gridColumn: 3, ...BUTTON_ROW },
-  '& #h5-translate-only': { display: 'inline-flex', gridColumn: 4, ...BUTTON_ROW }, '& #h5-translate-send': { display: 'inline-flex', gridColumn: 5, ...BUTTON_ROW },
+  '& #h5-translate-button': { display: 'inline-flex', gridColumn: 4, ...BUTTON_ROW }, '& #h5-translate-send': { display: 'inline-flex', gridColumn: 5, ...BUTTON_ROW },
 };
 const ROUND = { width: 40, height: 40 };
 export function TranslateBar({ state, menu, onMenu }) {
@@ -102,7 +102,7 @@ export function TranslateBar({ state, menu, onMenu }) {
       onMouseDown={event => { if (event.target.closest('button')) event.preventDefault(); }}
       sx={{
         position: 'relative', mx: 1, mt: 0.75, display: 'grid', gridTemplateColumns: 'auto 1fr auto', alignItems: 'end', columnGap: 0.5, rowGap: 0.5, px: 0.75, py: 0.75, border: 1, borderColor: 'divider', borderRadius: '28px', bgcolor: 'action.hover',
-        '& #h5-translate-only, & #h5-translate-send': { display: 'none' },
+        '& #h5-translate-button, & #h5-translate-send': { display: 'none' },
         '&:focus-within, &[data-hold], &[data-menu], &.translating, &:has(.h5-translate-input textarea:not(:placeholder-shown))': ACTIVE,
         '&:has(.h5-voice.listening)': ACTIVE,
       }}
@@ -115,8 +115,8 @@ export function TranslateBar({ state, menu, onMenu }) {
         sx={{ alignItems: 'flex-end', py: 0.25, fontSize: 15, bgcolor: 'transparent', '& fieldset': { borderColor: 'transparent' } }}
       />
       <IconButton id="h5-voice" className="h5-voice" sx={ROUND} title={t('Voice input: hold to speak, release to stop')} aria-label={t('Voice input')} aria-pressed="false"><MicIcon /></IconButton>
-      <IconButton id="h5-translate-only" type="button" disabled={state.translating} sx={{ ...ROUND, border: 1, borderColor: 'divider', borderRadius: 2 }} title={t('Translate only: put the English text in the box, do not send')} aria-label={t('Translate only')}><TranslateIcon /></IconButton>
-      <IconButton type="submit" id="h5-translate-send" className="h5-translate-send" disabled={state.translating} sx={{ ...ROUND, borderRadius: 2, bgcolor: '#fff', color: '#111', '&:hover': { bgcolor: '#e6e6e6' }, '&.Mui-disabled': { bgcolor: 'action.disabledBackground', color: 'action.disabled' } }} title={t('Send')} aria-label={t('Send')}><ArrowUpwardIcon /></IconButton>
+      <IconButton id="h5-translate-button" type="button" disabled={state.translating} sx={{ ...ROUND, border: 1, borderColor: 'divider', borderRadius: 2 }} title={t('Translate to English and send')} aria-label={t('Translate and send')}><TranslateIcon /></IconButton>
+      <IconButton type="submit" id="h5-translate-send" className="h5-translate-send" disabled={state.translating} sx={{ ...ROUND, borderRadius: 2, bgcolor: '#fff', color: '#111', '&:hover': { bgcolor: '#e6e6e6' }, '&.Mui-disabled': { bgcolor: 'action.disabledBackground', color: 'action.disabled' } }} title={t('Send as typed, without translating')} aria-label={t('Send')}><ArrowUpwardIcon /></IconButton>
     </Box>
   );
 }

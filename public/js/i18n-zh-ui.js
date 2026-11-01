@@ -1347,6 +1347,7 @@ I18n.add({
   "Close menu": "关闭菜单",
   "Paste text": "粘贴文本",
   "Insert command": "插入命令",
-  "Translate only": "仅翻译",
-  "Translate only: put the English text in the box, do not send": "仅翻译：把英文放进输入框，不发送",
+  "Translate and send": "翻译并发送",
+  "Translate to English and send": "翻译成英文并发送",
+  "Send as typed, without translating": "按原文发送，不翻译",
 });

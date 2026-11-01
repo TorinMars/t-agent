@@ -117,6 +117,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     if (url.pathname === '/api/translate') {
       const text = route.request().postDataJSON().text;
       translateRequests.push(text);
+      if (text.startsWith('FAIL')) return json({ error: 'Translation service unavailable' }, 502);
       return json({ text: text.startsWith('MULTI') ? 'First line\n\nSecond line\u001b[2J' : 'Run the tests\u001b[2J' });
     }
     return json({ error: 'not mocked' }, 404);
@@ -456,7 +457,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     await page.locator('#h5-translate-input').fill('run the tests, and please make the text long enough that the box grows to two lines on the phone');
     await page.locator('#h5-translate-input').blur();
     await page.evaluate(() => document.getElementById('h5-translate-input').focus()); // the bar is still animating when the tap lands
-    await page.locator('#h5-translate-send').tap();
+    await page.locator('#h5-translate-button').tap();
     await page.waitForFunction(() => window.sockets[0].sent.includes('\r'));
     assert.deepEqual((await sent()).slice(-2), ['Run the tests [2J', '\r'], 'ESC is removed, so no escape sequence reaches the shell');
     assert.equal(await page.locator('#h5-translate-input').inputValue(), '');
@@ -467,19 +468,41 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       await page.locator('#h5-translate-input').blur();
     }
 
-    // Translate only: the English text replaces the text in the box and nothing is sent to the terminal.
+    // The send arrow sends the text as typed: no translate request; control characters removed; one Enter. Lines are joined (no bracketed paste) or sent as one paste (bracketed paste on).
     {
       const input = page.locator('#h5-translate-input');
-      const before = (await sent()).length;
-      await input.fill('plan the work');
-      await page.locator('#h5-translate-only').tap();
-      await page.waitForFunction(() => document.getElementById('h5-translate-input').value === 'Run the tests [2J');
-      assert.equal((await sent()).length, before, 'translate only sends nothing');
+      const requests = translateRequests.length;
+      const returns = () => page.evaluate(() => window.sockets[0].sent.filter(item => item === '\r').length);
+      let before = await returns();
+      await input.fill('ls -la\u001b[2J \n  second   line');
+      await page.locator('#h5-translate-send').tap();
+      await page.waitForFunction(count => window.sockets[0].sent.filter(item => item === '\r').length > count, before);
+      assert.deepEqual((await sent()).slice(-2), ['ls -la [2J\nsecond line'.replace('\n', ' '), '\r'], 'as typed: controls removed, lines joined, one Enter');
+      assert.equal(translateRequests.length, requests, 'the send arrow makes no translate request');
+      assert.equal(await input.inputValue(), '');
+      await page.evaluate(() => window.sockets[0].emit('\x1b[?2004h'));
+      await page.waitForTimeout(100);
+      before = await returns();
+      await input.fill('one\ntwo');
+      await page.locator('#h5-translate-send').tap();
+      await page.waitForFunction(count => window.sockets[0].sent.filter(item => item === '\r').length > count, before);
+      assert.deepEqual((await sent()).slice(-2), ['\x1b[200~one\rtwo\x1b[201~', '\r'], 'as typed with bracketed paste: one paste, one Enter');
+      assert.equal(translateRequests.length, requests, 'still no translate request');
+      await page.evaluate(() => window.sockets[0].emit('\x1b[?2004l'));
+      // A failed translation sends nothing and keeps the text in the box.
+      const sentBefore = (await sent()).length;
+      await input.fill('FAIL please');
+      await page.locator('#h5-translate-button').tap();
+      await page.waitForFunction(count => window.sockets[0].sent.length >= 0 && document.getElementById('h5-translate-send').disabled === false, 0);
+      await page.waitForTimeout(300);
+      assert.equal(translateRequests.at(-1), 'FAIL please');
+      assert.equal((await sent()).length, sentBefore, 'a failed translation sends nothing');
+      assert.equal(await input.inputValue(), 'FAIL please', 'the text stays in the box');
       await input.fill('');
       await input.blur();
     }
 
-    // Enter is a new line in the box and never sends; only the Send button does. Several lines reach the terminal as one paste (or joined, see below).
+    // Enter is a new line in the box and never sends; only a send button does. Several lines reach the terminal as one paste (or joined, see below).
     {
       const input = page.locator('#h5-translate-input');
       const requests = translateRequests.length;
@@ -515,7 +538,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       assert.equal(translateRequests.length, requests, 'an IME Enter sends nothing');
       await input.fill('MULTI one\n\ntwo');
       // Without bracketed paste the lines are joined, so a shell cannot run them one by one.
-      await page.locator('#h5-translate-send').tap();
+      await page.locator('#h5-translate-button').tap();
       await page.waitForFunction(count => window.sockets[0].sent.filter(item => item === '\r').length > count, (await sent()).filter(item => item === '\r').length);
       assert.equal(translateRequests.at(-1), 'MULTI one\n\ntwo', 'the request keeps the line breaks');
       assert.deepEqual((await sent()).slice(-2), ['First line Second line [2J', '\r'], 'no bracketed paste: the lines are joined into one');
@@ -526,7 +549,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       await page.waitForTimeout(100);
       const returns = (await sent()).filter(item => item === '\r').length;
       await input.fill('MULTI one\n\ntwo');
-      await page.locator('#h5-translate-send').tap();
+      await page.locator('#h5-translate-button').tap();
       await page.waitForFunction(count => window.sockets[0].sent.filter(item => item === '\r').length > count, returns);
       assert.deepEqual((await sent()).slice(-2), ['\x1b[200~First line\r\rSecond line [2J\x1b[201~', '\r'], 'bracketed paste: one paste, then a single Enter');
       assert.equal(await input.inputValue(), '');

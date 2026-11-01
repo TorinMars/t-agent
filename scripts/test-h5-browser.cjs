@@ -214,12 +214,22 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     await page.waitForFunction(() => window.sockets[0].sent.includes('git status'));
     assert.deepEqual(await sent(), ['\x1b', '\x1b[1;5A', '\x03', '\x03', 'git status']);
 
-    // The keyboard key toggles focus of the terminal input (which is what shows the on-screen keyboard).
-    assert.equal(await page.evaluate(() => document.querySelector('.h5-xterm').contains(document.activeElement)), true);
+    // Tapping the terminal never asks for the on-screen keyboard; the keyboard key toggles it through the textarea's inputmode.
+    const inputmode = () => page.evaluate(() => document.querySelector('.h5-xterm textarea').getAttribute('inputmode'));
+    const inTerminal = () => page.evaluate(() => document.querySelector('.h5-xterm').contains(document.activeElement));
+    assert.equal(await inputmode(), 'none');
+    await page.locator('.h5-xterm').tap();
+    assert.equal(await inputmode(), 'none', 'tapping the terminal does not request the on-screen keyboard');
     await page.locator('[data-action="keyboard"]').tap();
-    assert.equal(await page.evaluate(() => document.querySelector('.h5-xterm').contains(document.activeElement)), false);
+    assert.equal(await inputmode(), 'text');
+    assert.equal(await inTerminal(), true);
+    await page.locator('.h5-xterm').tap();
+    assert.equal(await inputmode(), 'text', 'a terminal tap keeps the open keyboard');
     await page.locator('[data-action="keyboard"]').tap();
-    assert.equal(await page.evaluate(() => document.querySelector('.h5-xterm').contains(document.activeElement)), true);
+    assert.equal(await inputmode(), 'none');
+    assert.equal(await inTerminal(), false);
+    await page.locator('.h5-xterm').tap();
+    assert.equal(await inputmode(), 'none', 'a terminal tap after closing does not reopen it');
 
     // Translate and send: control characters are stripped and Enter follows separately.
     await page.locator('#h5-translate-input').fill('run the tests');

@@ -225,8 +225,9 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       return [...byRow.entries()].sort((a, b) => a[0] - b[0]).map(([, row]) => row.sort((a, b) => a.left - b.left));
     });
     assert.equal(rows.length, 1, 'the function keys are one row that scrolls sideways');
-    assert.deepEqual(rows[0].map(cell => cell.text).slice(0, 13), ['Esc', 'Tab', 'Ctrl', 'Alt', '←', '↓', '↑', '→', 'Home', 'End', 'PgUp', 'PgDn', 'Ins'], 'the keys follow the reference design');
-    assert.deepEqual(rows[0].map(cell => cell.text).slice(13), ['Del', 'Shift', 'Enter', '⌫', '^C', '⌨'], 'the other keys follow after them');
+    assert.deepEqual(rows[0].map(cell => cell.text).slice(0, 14), ['⌨', 'Esc', 'Tab', 'Ctrl', 'Alt', '←', '↓', '↑', '→', 'Home', 'End', 'PgUp', 'PgDn', 'Ins'], 'the keyboard key is first, then the keys of the reference design');
+    assert.deepEqual(rows[0].map(cell => cell.text).slice(14), ['Del', 'Shift', 'Enter', '⌫', '^C'], 'the other keys follow after them');
+    assert.equal(await page.evaluate(() => { const el = document.getElementById('h5-keys'); const first = el.querySelector('button').getBoundingClientRect(); return el.scrollLeft === 0 && first.left >= 0; }), true, 'the row starts scrolled to the left with the keyboard key in view');
     const keyStrip = await page.evaluate(() => { const el = document.getElementById('h5-keys'); return { scrolls: el.scrollWidth > el.clientWidth, overflowX: getComputedStyle(el).overflowX }; });
     assert.ok(keyStrip.scrolls && keyStrip.overflowX === 'auto', 'the key row scrolls sideways');
     // The arrows sit in one row in the order left, down, up, right.
@@ -241,6 +242,27 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
 
     const sent = () => page.evaluate(() => window.sockets[0].sent.filter(item => !item.startsWith('{')));
+    // The blue state of Ctrl, Alt and Shift is exactly the armed state: aria-pressed and the accent colour agree; a second tap disarms; the next key releases it (one-shot).
+    for (const name of ['ctrl', 'alt', 'shift']) {
+      const key = page.locator(`[data-modifier="${name}"]`);
+      const look = () => key.evaluate(el => ({ pressed: el.getAttribute('aria-pressed'), selected: el.classList.contains('Mui-selected'), border: getComputedStyle(el).borderColor }));
+      const off = await look();
+      assert.deepEqual([off.pressed, off.selected], ['false', false], `${name} is normal at first`);
+      await key.tap();
+      const on = await look();
+      assert.deepEqual([on.pressed, on.selected], ['true', true], `${name} armed: pressed and blue`);
+      assert.notEqual(on.border, off.border, `${name} armed looks different`);
+      await page.locator('#h5-translate-input').focus(); // the bar changes layout: the state stays
+      await page.waitForTimeout(250);
+      assert.equal((await look()).pressed, 'true', `${name} stays armed when the bar changes layout`);
+      await page.locator('#h5-translate-input').blur();
+      await key.tap();
+      assert.deepEqual([(await look()).pressed, (await look()).selected], ['false', false], `${name} disarmed by a second tap`);
+    }
+    await page.locator('[data-modifier="shift"]').tap();
+    await page.locator('[data-key="Home"]').tap();
+    assert.equal(await page.locator('[data-modifier="shift"]').getAttribute('aria-pressed'), 'false', 'the modifier is released after the next key (one-shot)');
+
     await page.locator('[data-key="Escape"]').tap();
     await page.locator('[data-modifier="ctrl"]').tap();
     assert.equal(await page.locator('[data-modifier="ctrl"]').getAttribute('aria-pressed'), 'true');
@@ -254,9 +276,9 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     await page.locator('#h5-add').tap(); // the add menu: Paste text
     await page.locator('.h5-add-menu [role="menuitem"]', { hasText: 'Paste text' }).tap();
     await page.waitForFunction(() => window.sockets[0].sent.includes('git status'));
-    assert.deepEqual(await sent(), ['\x1b', '\x1b[1;5A', '\x03', '\x03', 'git status']);
+    assert.deepEqual(await sent(), ['\x1b[1;2H', '\x1b', '\x1b[1;5A', '\x03', '\x03', 'git status']);
     for (const name of ['Left', 'Down', 'Up', 'Right']) await page.locator(`[data-key="Arrow${name}"]`).tap();
-    assert.deepEqual((await sent()).slice(5), ['\x1b[D', '\x1b[B', '\x1b[A', '\x1b[C'], 'each arrow sends its own sequence');
+    assert.deepEqual((await sent()).slice(6), ['\x1b[D', '\x1b[B', '\x1b[A', '\x1b[C'], 'each arrow sends its own sequence');
 
     // Tapping the terminal never asks for the on-screen keyboard; the keyboard key toggles it through the textarea's inputmode.
     const inputmode = () => page.evaluate(() => document.querySelector('.h5-xterm textarea').getAttribute('inputmode'));

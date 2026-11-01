@@ -22,7 +22,7 @@ vm.runInNewContext(fs.readFileSync(terminalPath, 'utf8'), {
     if (name === 'node-pty') return { spawn(shell, args, options) {
       const pty = { options, input: [], killed: false,
         onData(fn) { this.data = fn; }, onExit(fn) { this.exit = fn; },
-        write(text) { this.input.push(text); }, resize(cols, rows) { this.size = [cols, rows]; },
+        write(text) { this.input.push(text); }, pause() { this.paused = true; }, resume() { this.paused = false; this.resumes = (this.resumes || 0) + 1; }, resize(cols, rows) { this.size = [cols, rows]; },
         kill() { this.killed = true; this.exit(); },
       };
       shells.push(pty);
@@ -35,6 +35,7 @@ const terminal = mod.exports;
 class Socket extends EventEmitter {
   readyState = 1;
   sent = [];
+  bufferedAmount = 0;
   send(data) { this.sent.push(data); }
   async waitFor(count) {
     for (let i = 0; this.sent.length < count && i < 100; i++) await new Promise(resolve => setTimeout(resolve, 5));
@@ -136,11 +137,12 @@ test('history controls are scoped, bounded and never passed to PTY; snapshot pre
   const ws = connect(added.terminal_id);
   const shell = shells.at(-1);
   shell.data('LIVE-A'); shell.data('LIVE-B');
-  await ws.waitFor(3);
+  await ws.waitFor(2);
   const history = JSON.parse(ws.sent[0]);
   assert.equal(history.type, 'history');
   assert.doesNotMatch(history.data, /LIVE-|old-100\r/);
-  assert.deepEqual(ws.sent.slice(1), ['LIVE-A', 'LIVE-B']);
+  await until(() => ws.sent.slice(1).join('').length >= 12, 'live output delivered');
+  assert.equal(ws.sent.slice(1).join(''), 'LIVE-ALIVE-B', 'live chunks may be merged but keep their order');
   const request = { type: 'history-page', ...history.archive, requestId: 'r' };
   ws.emit('message', JSON.stringify(request));
   const page = JSON.parse(ws.sent.at(-1));
@@ -160,6 +162,7 @@ test('history controls are scoped, bounded and never passed to PTY; snapshot pre
   next.emit('message', JSON.stringify(request));
   assert.equal(JSON.parse(next.sent.at(-1)).error, 'INVALID_HISTORY_REQUEST');
   db.prepare('UPDATE tasks SET user_id = ? WHERE id = ?').run('other-owner', task.id);
+  await new Promise(resolve => setTimeout(resolve, 1100)); // access checks are cached for about 1 s
   next.emit('message', JSON.stringify(request));
   assert.equal(next.code, 1008);
   assert.deepEqual(shell.input, []);
@@ -262,4 +265,103 @@ test('the default terminal can be deleted: it stops, is no longer listed or conn
   terminal.controlSession(own.id, 'delete', other.terminal_id);
   assert.equal(terminal.listTerminals(own.id).length, 0, 'a task may have no terminal at all');
   assert.equal(terminal.createTerminal(own.id).title, 'Terminal 1');
+});
+
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+async function until(check, label) {
+  for (let i = 0; !check() && i < 200; i++) await sleep(10);
+  assert.ok(check(), label);
+}
+
+test('the PTY is paused while the socket is backed up and resumed once it drains', async () => {
+  const other = tasks.createTask('owner', { title: 'flow control' });
+  const ws = new Socket();
+  terminal.handleWs(ws, { url: `/terminal/ws?taskId=${other.id}&terminalId=default&clientId=flow` }, { login: 'owner' });
+  const shell = shells.at(-1);
+  await ws.waitFor(1);
+  ws.bufferedAmount = 4 * 1024 * 1024;
+  shell.data('first');
+  await until(() => shell.paused === true, 'paused above the high watermark');
+  await sleep(60);
+  assert.equal(shell.paused, true, 'stays paused while the backlog is high');
+  ws.bufferedAmount = 0;
+  await until(() => shell.paused === false, 'resumed below the low watermark');
+  ws.sent.length = 0;
+  shell.data('second');
+  await ws.waitFor(1);
+  assert.equal(ws.sent[0], 'second');
+  terminal.closeTaskTerminals(other.id);
+});
+
+test('a socket that closes while the PTY is paused never leaves the PTY paused', async () => {
+  const other = tasks.createTask('owner', { title: 'flow close' });
+  const ws = new Socket();
+  terminal.handleWs(ws, { url: `/terminal/ws?taskId=${other.id}&terminalId=default&clientId=flow` }, { login: 'owner' });
+  const shell = shells.at(-1);
+  await ws.waitFor(1);
+  ws.bufferedAmount = 4 * 1024 * 1024;
+  shell.data('x');
+  await until(() => shell.paused === true, 'paused');
+  ws.close(1006, 'gone');
+  await until(() => shell.paused === false, 'resumed after the socket closed');
+  terminal.closeTaskTerminals(other.id);
+});
+
+test('a burst of chunks is parsed in bounded batches, in order, and delivered intact', async () => {
+  const other = tasks.createTask('owner', { title: 'batching' });
+  const ws = new Socket();
+  terminal.handleWs(ws, { url: `/terminal/ws?taskId=${other.id}&terminalId=default&clientId=batch` }, { login: 'owner' });
+  const shell = shells.at(-1);
+  await ws.waitFor(1);
+  ws.sent.length = 0;
+  const parts = Array.from({ length: 2000 }, (_, i) => `line-${i}\r\n`);
+  for (const part of parts) shell.data(part);
+  await until(() => ws.sent.join('').length >= parts.join('').length, 'all output delivered');
+  assert.equal(ws.sent.join(''), parts.join(''));
+  assert.ok(ws.sent.length < parts.length, 'chunks were merged before parsing');
+  terminal.closeTaskTerminals(other.id);
+});
+
+test('the stored history keeps only the last 5MB and stays a suffix of the output', async () => {
+  const other = tasks.createTask('owner', { title: 'history limit' });
+  const ws = new Socket();
+  terminal.handleWs(ws, { url: `/terminal/ws?taskId=${other.id}&terminalId=default&clientId=limit` }, { login: 'owner' });
+  const shell = shells.at(-1);
+  await ws.waitFor(1);
+  let all = '';
+  for (let i = 0; i < 70; i++) {
+    const chunk = `${i}`.padStart(4, '0') + 'y'.repeat(100 * 1024 - 4);
+    all += chunk;
+    shell.data(chunk);
+  }
+  terminal.closeTaskTerminals(other.id);
+  const persisted = db.prepare('SELECT buffer FROM terminal_logs WHERE task_id = ?').get(other.id).buffer;
+  assert.equal(persisted.length, 5 * 1024 * 1024);
+  assert.equal(persisted, all.slice(all.length - persisted.length));
+});
+
+test('access is rechecked about once a second, not per chunk, and revoking it still closes the socket', async () => {
+  const other = tasks.createTask('owner', { title: 'auth cache' });
+  const ws = new Socket();
+  terminal.handleWs(ws, { url: `/terminal/ws?taskId=${other.id}&terminalId=default&clientId=auth` }, { login: 'owner' });
+  const shell = shells.at(-1);
+  await ws.waitFor(1);
+  const realPrepare = db.prepare.bind(db);
+  let lookups = 0;
+  db.prepare = sql => { if (/FROM tasks WHERE id = \? AND user_id/.test(sql)) lookups += 1; return realPrepare(sql); };
+  try {
+    for (let i = 0; i < 20; i++) { shell.data(`chunk ${i}\r\n`); await sleep(2); }
+    await ws.waitFor(2);
+    assert.ok(lookups <= 2, `expected a cached check, saw ${lookups} lookups`);
+    db.prepare = realPrepare;
+    db.prepare('UPDATE tasks SET user_id = ? WHERE id = ?').run('someone-else', other.id);
+    await sleep(1100);
+    shell.data('after revoke');
+    await until(() => ws.readyState !== 1, 'socket closed after access was revoked');
+    assert.equal(ws.code, 1008);
+  } finally {
+    db.prepare = realPrepare;
+    db.prepare('UPDATE tasks SET user_id = ? WHERE id = ?').run('owner', other.id);
+    terminal.closeTaskTerminals(other.id);
+  }
 });

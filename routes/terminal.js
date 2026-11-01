@@ -19,7 +19,12 @@ const TERMINAL_TAKEN_CLOSE = 4010;
 
 const MAX_BUFFER = 5 * 1024 * 1024;   // 5MB
 const FLUSH_INTERVAL = 5000;           // 5s
-const FLUSH_SIZE = 50 * 1024;          // 50KB
+const FLUSH_SIZE = 512 * 1024;         // 512KB of unsaved output triggers a write
+// Flow control: pause the PTY while this much output is unsent (socket buffer) or unparsed (headless xterm queue).
+const FLOW_HIGH = 1024 * 1024;
+const FLOW_LOW = 256 * 1024;
+const FLOW_POLL_MS = 20;
+const AUTH_CACHE_MS = 1000;            // how long a successful access check is trusted
 
 // Agent hooks (Claude Code / Codex) report activity back through this endpoint.
 // The token is an HMAC of task + terminal, so it needs no storage and is only
@@ -183,8 +188,8 @@ function clearBuffer(taskId, id) {
 
 function flushToDB(taskId) {
   const s = sessions.get(taskId);
-  if (!s) return;
-  persistBuffer(s.taskId, s.buffer, s.terminalId);
+  if (!s || !s.pendingSince) return;
+  persistBuffer(s.taskId, bufferText(s), s.terminalId);
   s.pendingSince = 0;
 }
 
@@ -200,16 +205,28 @@ function persistBuffer(taskId, buffer, id = 'default') {
   `).run(taskId, buffer || '');
 }
 
+// The history is a list of chunks, so a PTY chunk is an O(1) push. Whole chunks
+// are dropped from the front once the total is well above the limit; the exact
+// MAX_BUFFER cut is made only when the text is read (persist, snapshot archive).
+function bufferText(s) {
+  if (s.chunks.length !== 1) s.chunks = [s.chunks.join('')];
+  if (s.chunks[0].length > MAX_BUFFER) s.chunks[0] = s.chunks[0].slice(s.chunks[0].length - MAX_BUFFER);
+  s.size = s.chunks[0].length;
+  return s.chunks[0];
+}
+
 function appendBuffer(taskId, data) {
   const s = sessions.get(taskId);
   if (!s) return;
-  s.buffer += data;
-  // when over the limit, truncate and keep the last 5MB
-  if (s.buffer.length > MAX_BUFFER) {
-    s.buffer = s.buffer.slice(s.buffer.length - MAX_BUFFER);
+  s.chunks.push(data);
+  s.size += data.length;
+  if (s.size > MAX_BUFFER * 1.25) {
+    let drop = 0;
+    while (drop < s.chunks.length - 1 && s.size - s.chunks[drop].length >= MAX_BUFFER) s.size -= s.chunks[drop++].length;
+    s.chunks.splice(0, drop);
   }
   s.pendingSince += data.length;
-  // flush immediately once more than 50KB has accumulated
+  // write once enough output has accumulated (the interval timer covers the rest)
   if (s.pendingSince >= FLUSH_SIZE) {
     clearInterval(s.flushTimer);
     flushToDB(taskId);
@@ -292,7 +309,9 @@ function getOrCreateSession(ownerTaskId, workDir, dirWarning, id = 'default') {
     taskId: ownerTaskId,
     terminalId: id,
     pty,
-    buffer: savedBuffer,
+    chunks: [savedBuffer],
+    size: savedBuffer.length,
+    get buffer() { return bufferText(this); },
     ws: null,
     snapshot: new TerminalSnapshot(),
     ready: false,
@@ -302,12 +321,30 @@ function getOrCreateSession(ownerTaskId, workDir, dirWarning, id = 'default') {
   sessions.set(taskId, s);
   s.snapshot.write(savedBuffer);
 
+  // Backpressure: bytes the browser socket has not sent yet plus bytes the parser has not consumed.
+  const backlog = () => (s.ws && s.ws.readyState === 1 ? s.ws.bufferedAmount || 0 : 0) + s.snapshot.pendingBytes;
+  const stopFlowWatch = () => { clearInterval(s.flowTimer); s.flowTimer = null; };
+  s.stopFlowWatch = stopFlowWatch;
+  const updateFlow = () => {
+    if (s.flowTimer || sessions.get(taskId) !== s || backlog() <= FLOW_HIGH || typeof pty.pause !== 'function') return;
+    try { pty.pause(); } catch { return; }
+    // A closed socket reports no backlog, so a socket that dies while paused also ends the pause.
+    s.flowTimer = setInterval(() => {
+      const gone = sessions.get(taskId) !== s;
+      if (!gone && backlog() > FLOW_LOW) return;
+      stopFlowWatch();
+      if (!gone) { try { pty.resume(); } catch {} }
+    }, FLOW_POLL_MS);
+  };
+  const deliver = batch => {
+    if (s.ready && s.ws && s.authorized && s.authorized()) s.ws.send(batch);
+    updateFlow();
+  };
   const emit = data => {
     if (sessions.get(taskId) !== s) return;
     appendBuffer(taskId, data);
-    s.snapshot.write(data, () => {
-      if (s.ready && s.ws && s.authorized && s.authorized()) s.ws.send(data);
-    });
+    s.snapshot.write(data, deliver);
+    updateFlow();
   };
   pty.onData(data => {
     s.activity?.noteOutput();
@@ -321,12 +358,13 @@ function getOrCreateSession(ownerTaskId, workDir, dirWarning, id = 'default') {
     // The parser queue also owns live delivery. Drain its last bytes before
     // closing a naturally exited shell; explicit control remains immediate.
     s.exiting = true;
+    stopFlowWatch();
     s.stopShellWatch();
     s.activity.stop();
     s.snapshot.enqueue(() => {
       if (sessions.get(taskId) !== s) return;
       clearInterval(s.flushTimer);
-      persistBuffer(s.taskId, s.buffer, s.terminalId);
+      persistBuffer(s.taskId, bufferText(s), s.terminalId);
       sessions.delete(taskId);
       s.snapshot.dispose();
       const activeWs = s.ws;
@@ -359,9 +397,10 @@ function controlSession(taskId, action, requestedTerminalId) {
     session.snapshot.dispose();
     clearInterval(session.flushTimer);
     session.stopShellWatch?.();
+    session.stopFlowWatch?.();
     session.activity?.stop();
     if (clearHistory) clearBuffer(id, selectedId);
-    else persistBuffer(id, session.buffer, selectedId);
+    else persistBuffer(id, bufferText(session), selectedId);
     session.pendingSince = 0;
 
     const activeWs = session.ws;
@@ -441,8 +480,12 @@ function handleWs(ws, req, sessionUser, requestedTaskId = null, requestedTermina
 
   s.ready = false;
   const archive = createHistoryArchive(s.buffer);
+  let checkedAt = 0;
   const authorized = () => {
     if (ws.readyState !== 1 || sessions.get(key) !== s || s.ws !== ws) return false;
+    // The database and session checks run at most once per AUTH_CACHE_MS, not per PTY chunk.
+    const now = Date.now();
+    if (checkedAt && now - checkedAt < AUTH_CACHE_MS) return true;
     if (req.sessionID && !require('../services/client-auth').getClientAuth().sessionActive(req.sessionID)) {
       ws.close(1008, 'Authentication required');
       return false;
@@ -451,6 +494,7 @@ function handleWs(ws, req, sessionUser, requestedTaskId = null, requestedTermina
       ws.close(1008, 'task not found');
       return false;
     }
+    checkedAt = now;
     return true;
   };
   s.authorized = authorized;

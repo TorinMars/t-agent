@@ -132,7 +132,7 @@
   background: rgba(10, 22, 48, .92); border-color: #00e5ff44; box-shadow: 0 0 0 1px #00e5ff14, 0 8px 28px rgba(0, 0, 0, .55);
 }
 :root[data-theme="tech"] .theme-card.active { border-color: #00e5ff; box-shadow: var(--glow); }
-:root[data-theme="tech"] .task-nav-item.active, :root[data-theme="tech"] .main-nav-item.active, :root[data-theme="tech"] .main-nav-item[aria-pressed="true"], :root[data-theme="tech"] .engine-tab.active {
+:root[data-theme="tech"] .main-nav-item.active, :root[data-theme="tech"] .main-nav-item[aria-pressed="true"], :root[data-theme="tech"] .engine-tab.active {
   background: linear-gradient(90deg, rgba(0, 229, 255, .18), rgba(0, 229, 255, .03)); box-shadow: inset 2px 0 #00e5ff; color: #fff;
 }
 :root[data-theme="tech"] input, :root[data-theme="tech"] select, :root[data-theme="tech"] textarea { background: #07112a; border-color: #17356b; color: var(--text); }

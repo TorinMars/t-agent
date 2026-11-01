@@ -121,13 +121,15 @@ export function TranslateBar({ state, menu, onMenu }) {
   );
 }
 
-// One row that scrolls sideways. The first keys are the ones of the reference design; the keys after them are the rest of the old key grid.
+// One row that scrolls sideways. Order: keyboard, Esc, the four arrows, Enter, then all the other keys.
 const KEYS = [
   { action: 'keyboard', label: '⌨', aria: 'Show or hide the on-screen keyboard' }, // first, so it is on screen when the row starts at the left
-  { key: 'Escape', label: 'Esc' }, { key: 'Tab', label: 'Tab' }, { modifier: 'ctrl', label: 'Ctrl' }, { modifier: 'alt', label: 'Alt' },
+  { key: 'Escape', label: 'Esc' },
   { key: 'ArrowLeft', label: '←', aria: 'ArrowLeft' }, { key: 'ArrowDown', label: '↓', aria: 'ArrowDown' }, { key: 'ArrowUp', label: '↑', aria: 'ArrowUp' }, { key: 'ArrowRight', label: '→', aria: 'ArrowRight' },
+  { key: 'Enter', label: 'Enter' },
+  { key: 'Tab', label: 'Tab' }, { modifier: 'ctrl', label: 'Ctrl' }, { modifier: 'alt', label: 'Alt' },
   { key: 'Home', label: 'Home' }, { key: 'End', label: 'End' }, { key: 'PageUp', label: 'PgUp', aria: 'PageUp' }, { key: 'PageDown', label: 'PgDn', aria: 'PageDown' }, { key: 'Insert', label: 'Ins', aria: 'Insert' },
-  { key: 'Delete', label: 'Del', aria: 'Delete' }, { modifier: 'shift', label: 'Shift' }, { key: 'Enter', label: 'Enter' }, { key: 'Backspace', label: '⌫', aria: 'Backspace' },
+  { key: 'Delete', label: 'Del', aria: 'Delete' }, { modifier: 'shift', label: 'Shift' }, { key: 'Backspace', label: '⌫', aria: 'Backspace' },
   { shortcut: 'ctrl-c', label: '^C', aria: 'Send Ctrl+C' },
 ];
 

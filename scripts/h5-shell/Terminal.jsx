@@ -16,6 +16,12 @@ export function TerminalArea({ state, ui }) {
     <Box component="main" className="h5-terminal" id="h5-terminal">
       {state.empty ? <div className="h5-empty" id="h5-empty">{t(state.empty)}</div> : null}
       <div className="h5-wheel" id="h5-wheel" role="presentation" aria-label={t('Scroll wheel')} />
+      {state.selectionBar ? (
+        <Paper className="h5-selection-bar" id="h5-selection-bar" role="toolbar" aria-label={t('Selected text')} elevation={4} onMouseDown={event => event.preventDefault()}>
+          <Button id="h5-selection-copy" size="small" onClick={() => ui.actions.selectionCopy()}>{t('Copy')}</Button>
+          <Button id="h5-selection-cancel" size="small" color="inherit" onClick={() => ui.actions.selectionCancel()}>{t('Cancel')}</Button>
+        </Paper>
+      ) : null}
       <Box className="h5-scroll" id="h5-scroll" onMouseDown={event => event.preventDefault()} sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
         <Fab size="small" data-copy aria-label={t('Copy text')} onClick={() => ui.actions.openCopy()}><ContentCopyIcon fontSize="small" /></Fab>
       </Box>

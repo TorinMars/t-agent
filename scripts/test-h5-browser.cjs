@@ -618,8 +618,93 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     assert.equal(await page.locator('#h5-copy-text').evaluate(el => getComputedStyle(el).userSelect), 'text');
     await page.locator('#h5-copy-all').tap();
     await page.waitForFunction(() => /full screen app/.test(window.copied || ''));
+    // Search: Enter jumps to the match and marks it; the next press moves on and wraps around.
+    await page.locator('#h5-copy-search').fill('full');
+    await page.locator('#h5-copy-search').press('Enter');
+    const marked = () => page.evaluate(() => (window.CSS?.highlights?.get('h5-copy-match') ? [...CSS.highlights.get('h5-copy-match')][0].toString() : String(getSelection())));
+    assert.equal(await marked(), 'full', 'search marks the match');
+    // Live refresh: new output reaches the open view without a reopen (debounced) and the scroll position follows the bottom.
+    await page.evaluate(() => window.sockets[1].emit('\r\nlive refresh line'));
+    await page.waitForFunction(() => /live refresh line/.test(document.querySelector('#h5-copy-text').textContent), null, { timeout: 3000 });
+    // With a selection in the view the text is kept and a chip offers the refresh.
+    await page.evaluate(() => { const range = document.createRange(); range.selectNodeContents(document.querySelector('#h5-copy-text')); getSelection().removeAllRanges(); getSelection().addRange(range); });
+    await page.evaluate(() => window.sockets[1].emit('\r\nheld back line'));
+    await page.locator('#h5-copy-stale').waitFor({ state: 'visible', timeout: 3000 });
+    assert.doesNotMatch(await page.locator('#h5-copy-text').textContent(), /held back line/, 'an active selection keeps the text');
+    await page.locator('#h5-copy-stale').click();
+    await page.waitForFunction(() => /held back line/.test(document.querySelector('#h5-copy-text').textContent));
+    assert.equal(await page.locator('#h5-copy-stale').count(), 0);
     await page.locator('#h5-copy-close').tap();
     await page.locator('#h5-copy').waitFor({ state: 'hidden' });
+
+    // A space in the last cell of a wrapped row is real text and must survive in the copy view.
+    await page.evaluate(width => window.sockets[1].emit(`\r\n${'q'.repeat(width - 1)} WRAPTAIL`), termCols);
+    await page.waitForTimeout(150);
+    await page.locator('[data-copy]').tap();
+    await page.locator('#h5-copy').waitFor({ state: 'visible' });
+    assert.match(await page.locator('#h5-copy-text').textContent(), new RegExp(`q{${termCols - 1}} WRAPTAIL`), 'the space at the soft wrap is kept');
+    await page.locator('#h5-copy-close').tap();
+    await page.locator('#h5-copy').waitFor({ state: 'hidden' });
+
+    // Long press on the terminal body opens the copy view; a press that moves does not.
+    const touch = (type, x, y) => page.evaluate(([kind, px, py]) => {
+      const target = document.querySelector('.h5-xterm .xterm-screen');
+      const init = { bubbles: true, cancelable: true, clientX: px, clientY: py, pointerId: 7, pointerType: 'touch', isPrimary: true };
+      target.dispatchEvent(new PointerEvent(kind, init));
+    }, [type, x, y]);
+    const screenBox = await page.locator('.h5-xterm .xterm-screen').boundingBox();
+    await touch('pointerdown', screenBox.x + 50, screenBox.y + 100);
+    await touch('pointermove', screenBox.x + 50, screenBox.y + 130);
+    await page.waitForTimeout(700);
+    assert.equal(await page.locator('#h5-copy').isVisible(), false, 'a moving press is a scroll, not a long press');
+    await touch('pointerup', screenBox.x + 50, screenBox.y + 130);
+    await touch('pointerdown', screenBox.x + 50, screenBox.y + 100);
+    await page.waitForTimeout(700);
+    await page.locator('#h5-copy').waitFor({ state: 'visible' });
+    await touch('pointerup', screenBox.x + 50, screenBox.y + 100);
+    await page.locator('#h5-copy-close').tap();
+    await page.locator('#h5-copy').waitFor({ state: 'hidden' });
+
+    // Double tap selects a word, triple tap a line, then Copy / Cancel; a program with mouse mode gets the taps instead.
+    await page.evaluate(() => window.sockets[1].emit('\x1b[2J\x1b[Hhello world foo'));
+    await page.waitForTimeout(150);
+    const cell = { w: screenBox.width / termCols };
+    const tap = async (col, count) => {
+      await page.waitForTimeout(450); // the previous multi-tap is over
+      for (let i = 0; i < count; i++) {
+        await page.evaluate(([x, y]) => {
+          const target = document.querySelector('.h5-xterm .xterm-screen');
+          const init = { bubbles: true, cancelable: true, clientX: x, clientY: y, pointerId: 8, pointerType: 'touch', isPrimary: true };
+          target.dispatchEvent(new PointerEvent('pointerdown', init));
+          target.dispatchEvent(new PointerEvent('pointerup', init));
+          target.dispatchEvent(new MouseEvent('click', init));
+        }, [screenBox.x + (col + 0.5) * cell.w, screenBox.y + 4]);
+      }
+    };
+    await page.evaluate(() => { window.copied = ''; });
+    await tap(8, 2);
+    await page.locator('#h5-selection-bar').waitFor({ state: 'visible', timeout: 2000 });
+    await page.locator('#h5-selection-copy').click();
+    await page.waitForFunction(() => window.copied === 'world');
+    await page.locator('#h5-selection-bar').waitFor({ state: 'hidden' });
+    await tap(8, 3);
+    await page.locator('#h5-selection-bar').waitFor({ state: 'visible', timeout: 2000 });
+    await page.locator('#h5-selection-copy').click();
+    await page.waitForFunction(() => window.copied.trim() === 'hello world foo');
+    await tap(8, 2);
+    await page.locator('#h5-selection-bar').waitFor({ state: 'visible' });
+    await page.locator('#h5-selection-cancel').click();
+    await page.locator('#h5-selection-bar').waitFor({ state: 'hidden' });
+    await tap(8, 2);
+    await page.locator('#h5-selection-bar').waitFor({ state: 'visible' });
+    await page.evaluate(() => window.sockets[1].emit('x'));
+    await page.locator('#h5-selection-bar').waitFor({ state: 'hidden', timeout: 2000 });
+    await page.evaluate(() => window.sockets[1].emit('\x1b[?1000h'));
+    await page.waitForTimeout(100);
+    await tap(8, 2);
+    await page.waitForTimeout(200);
+    assert.equal(await page.locator('#h5-selection-bar').count(), 0, 'no selection while the program tracks the mouse');
+    await page.evaluate(() => window.sockets[1].emit('\x1b[?1000l'));
 
     // Terminal actions: the "⋯" on a terminal row opens rename / reopen / restart / delete.
     await page.locator('#h5-open-tasks').tap();

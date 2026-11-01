@@ -120,3 +120,8 @@ body.h5-tasks-open .h5-agent { border-bottom-left-radius: 28px; overflow: hidden
   .h5-keys, .h5-translate { width: 100%; max-width: 960px; margin-inline: auto; }
   .h5-copy-text { font-size: 13px; padding: 8px 16px; }
 }
+
+/* The match that the copy view search jumped to (CSS Custom Highlight API; browsers without it select the match instead). */
+::highlight(h5-copy-match) { background: #ffd54f; color: #000; }
+/* Copy / Cancel after a double or triple tap selected text on the terminal. */
+.h5-selection-bar { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); z-index: 3; display: flex; gap: 4px; padding: 2px 4px; border-radius: 20px; }

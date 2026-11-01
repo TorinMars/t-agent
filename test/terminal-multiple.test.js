@@ -16,7 +16,7 @@ const terminalPath = path.resolve(__dirname, '../routes/terminal.js');
 const mod = { exports: {} };
 vm.runInNewContext(fs.readFileSync(terminalPath, 'utf8'), {
   module: mod, __dirname: path.dirname(terminalPath), process, console, URL,
-  setInterval, clearInterval,
+  setInterval, clearInterval, Buffer,
   require(name) {
     if (name === '../lib/node-pty-runtime') return { repairSpawnHelperPermissions() {} };
     if (name === 'node-pty') return { spawn(shell, args, options) {
@@ -43,9 +43,9 @@ class Socket extends EventEmitter {
   close(code, reason) { this.readyState = 3; this.code = code; this.reason = reason; this.emit('close'); }
 }
 const task = tasks.createTask('owner', { title: 'multiple' });
-function connect(id, owner = 'owner') {
+function connect(id, owner = 'owner', extra = '') {
   const ws = new Socket();
-  terminal.handleWs(ws, { url: `/terminal/ws?taskId=${task.id}&terminalId=${id}&clientId=test` }, { login: owner });
+  terminal.handleWs(ws, { url: `/terminal/ws?taskId=${task.id}&terminalId=${id}&clientId=test${extra}` }, { login: owner });
   return ws;
 }
 test.after(() => {
@@ -164,6 +164,33 @@ test('history controls are scoped, bounded and never passed to PTY; snapshot pre
   assert.equal(next.code, 1008);
   assert.deepEqual(shell.input, []);
   db.prepare('UPDATE tasks SET user_id = ? WHERE id = ?').run('owner', task.id);
+  terminal.controlSession(task.id, 'delete', added.terminal_id);
+});
+
+test('proto=2: controls are binary frames, text that looks like a control message is plain input, ping is answered', async () => {
+  const added = terminal.createTerminal(task.id);
+  const ws = connect(added.terminal_id, 'owner', '&proto=2');
+  const shell = shells.at(-1);
+  await ws.waitFor(1);
+  assert.ok(Buffer.isBuffer(ws.sent[0]), 'the snapshot is a binary frame');
+  assert.equal(JSON.parse(ws.sent[0].toString()).type, 'history');
+  const resize = '{"type":"resize","cols":10,"rows":5}';
+  ws.emit('message', Buffer.from(resize), false);
+  assert.equal(shell.size, undefined);
+  assert.deepEqual(shell.input, [resize], 'a text frame is input even when it parses as a resize');
+  ws.emit('message', Buffer.from(resize.replace('10', '11')), true);
+  assert.deepEqual(shell.size, [11, 5]);
+  ws.emit('message', Buffer.from('{"type":"history-page","id":"x"}'), false);
+  assert.equal(shell.input.length, 2);
+  ws.emit('message', Buffer.from('{"type":"ping"}'), true);
+  assert.deepEqual(JSON.parse(ws.sent.at(-1).toString()), { type: 'pong' });
+  assert.equal(shell.input.length, 2);
+  // The old protocol (no proto=2) is unchanged: text controls, text snapshot, ping is not a control message.
+  const old = connect(added.terminal_id, 'owner', '');
+  await old.waitFor(1);
+  assert.equal(typeof old.sent[0], 'string');
+  old.emit('message', '{"type":"resize","cols":20,"rows":6}');
+  assert.deepEqual(shell.size, [20, 6]);
   terminal.controlSession(task.id, 'delete', added.terminal_id);
 });
 

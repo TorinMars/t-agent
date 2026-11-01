@@ -54,13 +54,13 @@ const TerminalHistory = (() => {
       viewer.earlier.disabled = !api.available() || !!pending || !viewer.hasMore;
     }
     const api = {
-      archive: null, legacy: false, cancel,
+      archive: null, legacy: false, cancel, viewing: () => viewer?.owner === api,
       available: () => current(socket) && socket?.readyState === WebSocket.OPEN && !!api.archive,
       bind(ws) {
         cancel(); generation++;
         if (viewer?.owner === api) close();
         socket = ws; api.archive = null; api.legacy = false;
-        instance.paused = false; instance.restoringHistory = false;
+        instance.paused = false; instance.restoringHistory = false; instance.queued = '';
         refresh();
       },
       disconnect(ws) {
@@ -83,14 +83,13 @@ const TerminalHistory = (() => {
           pending = null; status('Load timed out. Please retry');
         }, 15000) };
         status('Loading…');
-        try { socket.send(JSON.stringify({ type: 'history-page', id: api.archive.id, before: viewer.before, requestId })); }
+        try { TerminalProtocol.send(socket, { type: 'history-page', id: api.archive.id, before: viewer.before, requestId }); }
         catch { cancel(); status('Load failed. Please retry'); }
       },
       handle(data, ws) {
-        if (typeof data !== 'string' || !data.startsWith('{')) return false;
-        let message;
-        try { message = JSON.parse(data); } catch { return false; }
-        if (!['history', 'history-page'].includes(message?.type)) return false;
+        const message = TerminalProtocol.parse(ws, data); // null: terminal output, never a control message
+        if (!message) return false;
+        if (!['history', 'history-page'].includes(message.type)) return true; // pong and future controls
         if (!current(ws)) return true;
         if (message.type === 'history') {
           cancel();
@@ -112,10 +111,10 @@ const TerminalHistory = (() => {
             instance.reconnectScroll = null;
             instance.restoringHistory = false;
             if (ws.readyState === WebSocket.OPEN && instance.term.cols && instance.term.rows) {
-              ws.send(JSON.stringify({ type: 'resize', cols: instance.term.cols, rows: instance.term.rows }));
+              TerminalProtocol.send(ws, { type: 'resize', cols: instance.term.cols, rows: instance.term.rows });
             }
             requestAnimationFrame(() => requestAnimationFrame(() => {
-              if (current(ws) && generation === replay) instance.paused = false;
+              if (current(ws) && generation === replay) { instance.paused = false; instance.flushQueued?.(); }
             }));
           });
           return true;

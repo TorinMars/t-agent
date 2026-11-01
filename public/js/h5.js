@@ -751,9 +751,20 @@
     s.ws.send(data);
     return true;
   }
+  // Typed input. While the saved screen is replayed it is kept (modifiers stay latched until the text is really sent).
+  function typed(s, data) {
+    if (uploading || s !== session || !s.ws || s.ws.readyState !== WebSocket.OPEN) return;
+    if (s.paused) { if (!s.queued || s.queued.length < 4096) s.queued = (s.queued || '') + withModifiers(data); return; }
+    send(s, withModifiers(data));
+  }
+  function flushQueued(s) {
+    const data = s.queued;
+    s.queued = '';
+    if (data) send(s, data);
+  }
   function sendResize(s) {
     if (s.ws && s.ws.readyState === WebSocket.OPEN && s.term.cols && s.term.rows) {
-      s.ws.send(JSON.stringify({ type: 'resize', cols: s.term.cols, rows: s.term.rows }));
+      TerminalProtocol.send(s.ws, { type: 'resize', cols: s.term.cols, rows: s.term.rows });
     }
   }
   function refit(s) { if (!s.disposed) TerminalViewport.fit(s.term, s.fit, s.el); }
@@ -799,8 +810,8 @@
       if (images.length !== 1) { tell('Upload one image at a time', 'error'); return; }
       if (!uploading) void upload(s, images[0].getAsFile());
     }, true);
-    term.onData(data => send(s, withModifiers(data)));
-    TerminalIme.attach(term, data => send(s, withModifiers(data))); // the Apple Chinese keyboard's spaces and punctuation, which xterm drops
+    term.onData(data => typed(s, data));
+    TerminalIme.attach(term, data => typed(s, data)); // the Apple Chinese keyboard's spaces and punctuation, which xterm drops
     term.onResize(() => { if (!s.paused) sendResize(s); });
     let cursorFrame = 0;
     term.onCursorMove(() => { // the cursor decides how far the terminal is shifted while the keyboard is open
@@ -878,9 +889,15 @@
 
   function open(s, takeover = false) {
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    const ws = new WebSocket(`${proto}://${location.host}${s.source.wsPath}?taskId=${s.task.id}&terminalId=${encodeURIComponent(s.terminalId)}${TerminalOwner.query(takeover)}`);
+    const ws = new WebSocket(`${proto}://${location.host}${s.source.wsPath}?taskId=${s.task.id}&terminalId=${encodeURIComponent(s.terminalId)}${TerminalOwner.query(takeover)}${TerminalProtocol.query()}`);
     ws.binaryType = 'arraybuffer';
     s.ws = ws;
+    if (s.heartbeat) s.heartbeat.stop();
+    // A half-open connection never fires onclose (phone slept): close it ourselves and go through the normal reconnect.
+    const heartbeat = s.heartbeat = TerminalProtocol.heartbeat(ws, () => {
+      try { ws.close(); } catch { /* already closed */ }
+      closed({ code: 1006 });
+    });
     ws.onopen = () => {
       if (s.ws !== ws || s.disposed) return;
       s.attempts = 0;
@@ -889,15 +906,16 @@
     };
     ws.onmessage = event => {
       if (s.ws !== ws || s.disposed) return;
-      if (typeof event.data === 'string' && event.data.startsWith('{')) {
-        let message = null;
-        try { message = JSON.parse(event.data); } catch { /* terminal output that happens to start with "{" */ }
-        if (message && message.type === 'history') { replay(s, ws, message); return; }
-        if (message && message.type === 'history-page') return;
+      heartbeat.touch();
+      const message = TerminalProtocol.parse(ws, event.data); // null: terminal output, never a control message
+      if (message) {
+        if (message.type === 'history') replay(s, ws, message);
+        return; // history-page, pong
       }
       s.term.write(typeof event.data === 'string' ? event.data : new Uint8Array(event.data));
     };
-    ws.onclose = event => {
+    function closed(event) {
+      heartbeat.stop();
       if (s.ws !== ws || s.disposed) return;
       s.ws = null;
       if (TerminalOwner.isBlocked(event.code)) {
@@ -912,13 +930,15 @@
       s.attempts += 1;
       s.term.write(tr(`\r\n\x1b[33m[Connection lost, reconnecting in ${Math.ceil(delay / 1000)}s...]\x1b[0m\r\n`));
       s.timer = setTimeout(() => { s.timer = null; if (session === s && !s.disposed) open(s); }, delay);
-    };
+    }
+    ws.onclose = closed;
     ws.onerror = () => {};
   }
 
   // The server sends the saved screen first; input is held back until it has been drawn.
   function replay(s, ws, message) {
     s.paused = true;
+    s.queued = '';
     s.term.reset();
     if (Number.isInteger(message.cols) && Number.isInteger(message.rows) && message.cols >= 2 && message.cols <= 1000 && message.rows >= 1 && message.rows <= 1000) {
       s.term.resize(message.cols, message.rows);
@@ -928,7 +948,7 @@
       refit(s);
       s.term.scrollToBottom();
       sendResize(s);
-      requestAnimationFrame(() => requestAnimationFrame(() => { if (s.ws === ws) s.paused = false; }));
+      requestAnimationFrame(() => requestAnimationFrame(() => { if (s.ws === ws) { s.paused = false; flushQueued(s); } }));
     });
   }
 
@@ -938,6 +958,7 @@
     if (!s) return;
     s.disposed = true;
     clearTimeout(s.timer);
+    s.heartbeat?.stop();
     s.observer?.disconnect();
     if (s.ws) { const ws = s.ws; s.ws = null; try { ws.close(); } catch { /* already closed */ } }
     s.term.dispose();
@@ -950,6 +971,7 @@
     if (document.visibilityState !== 'visible') return;
     fitViewport();
     if (session && !session.ws && !session.timer) open(session);
+    else if (session && !session.ws && session.timer) { clearTimeout(session.timer); session.timer = null; open(session); } // do not wait out the backoff
   });
 
   // ── Keys ──

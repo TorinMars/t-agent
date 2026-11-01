@@ -440,6 +440,19 @@ function handleWs(ws, req, sessionUser, requestedTaskId = null, requestedTermina
   s.wsClientId = clientId;
 
   s.ready = false;
+  // proto=2: control messages are binary frames; every text frame is terminal input (see public/js/terminal-protocol.js).
+  const binaryControl = query.get('proto') === '2';
+  const sendControl = message => ws.send(binaryControl ? Buffer.from(JSON.stringify(message)) : JSON.stringify(message));
+  // Drop connections that vanished without a close (a phone that went to sleep), so they do not keep the terminal owned.
+  let alive = true;
+  ws.on('pong', () => { alive = true; });
+  const aliveTimer = setInterval(() => {
+    if (!alive) { ws.terminate(); return; }
+    alive = false;
+    try { ws.ping(); } catch { /* closing */ }
+  }, 30000);
+  aliveTimer.unref?.();
+  ws.on('close', () => clearInterval(aliveTimer));
   const archive = createHistoryArchive(s.buffer);
   const authorized = () => {
     if (ws.readyState !== 1 || sessions.get(key) !== s || s.ws !== ws) return false;
@@ -456,29 +469,41 @@ function handleWs(ws, req, sessionUser, requestedTaskId = null, requestedTermina
   s.authorized = authorized;
   s.snapshot.snapshot(snapshot => {
     if (!authorized()) return;
-    ws.send(JSON.stringify({ type: 'history', ...snapshot, archive: archive.metadata() }));
+    sendControl({ type: 'history', ...snapshot, archive: archive.metadata() });
     s.ready = true;
   });
 
-  ws.on('message', (msg) => {
+  // Returns true when the message was a control message and must not reach the shell.
+  const handleControl = data => {
+    if (!data || typeof data.type !== 'string') return false;
+    if (data.type.startsWith('history')) {
+      if (data.type === 'history-page') sendControl(archive.page(data));
+      return true;
+    }
+    if (data.type === 'ping' && binaryControl) { sendControl({ type: 'pong' }); return true; }
+    if (data.type === 'resize') {
+      if (!Number.isInteger(data.cols) || !Number.isInteger(data.rows) || data.cols < 1 || data.rows < 1 || data.cols > 1000 || data.rows > 1000) return true;
+      s.activity?.noteInput();
+      s.pty.resize(data.cols, data.rows);
+      s.snapshot.resize(data.cols, data.rows);
+      return true;
+    }
+    return false;
+  };
+
+  ws.on('message', (msg, isBinary) => {
     if (!authorized()) return;
     const str = msg.toString();
-    // Only try to parse messages starting with '{' as control commands (such as resize)
-    // digit characters (0-9) are valid JSON and would be parsed and silently dropped without this check
-    if (/^\s*\{/.test(str)) {
+    if (binaryControl) {
+      // Only binary frames are control messages; text is always terminal input, whatever it looks like.
+      if (isBinary) {
+        try { handleControl(JSON.parse(str)); } catch { /* malformed control: ignore */ }
+        return;
+      }
+    } else if (/^\s*\{/.test(str)) {
+      // Old clients: control messages are text frames. Only try messages starting with '{' (digits are valid JSON too).
       try {
-        const data = JSON.parse(str);
-        if (typeof data.type === 'string' && data.type.startsWith('history')) {
-          if (data.type === 'history-page') ws.send(JSON.stringify(archive.page(data)));
-          return;
-        }
-        if (data.type === 'resize') {
-          if (!Number.isInteger(data.cols) || !Number.isInteger(data.rows) || data.cols < 1 || data.rows < 1 || data.cols > 1000 || data.rows > 1000) return;
-          s.activity?.noteInput();
-          s.pty.resize(data.cols, data.rows);
-          s.snapshot.resize(data.cols, data.rows);
-          return;
-        }
+        if (handleControl(JSON.parse(str))) return;
       } catch {
         // Malformed history controls must never become shell input.
         if (/\"type\"\s*:\s*\"history/.test(str)) return;

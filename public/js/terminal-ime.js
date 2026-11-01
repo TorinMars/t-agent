@@ -10,7 +10,8 @@ const TerminalIme = (() => {
     if (!root) return () => {};
     const emitted = [];
     let pending = 0;
-    const data = term.onData(chunk => emitted.push(chunk));
+    // Chunks are only needed while an input event waits for its settle window; otherwise nothing is kept.
+    const data = term.onData(chunk => { if (pending) emitted.push(chunk); });
     // On the terminal's root in the capture phase, so it runs before xterm's own handler on the textarea and `from` is taken before xterm emits.
     const onInput = event => {
       const text = event.data;

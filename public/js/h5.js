@@ -777,6 +777,7 @@
     el.className = 'h5-xterm';
     terminalHost.append(el);
     const term = new Terminal({
+      allowProposedApi: true, // needed by the Unicode 11 addon
       cursorBlink: true,
       fontSize: 11,
       fontFamily: 'Menlo, Monaco, "Courier New", monospace',
@@ -794,6 +795,7 @@
     });
     const fit = new FitAddon.FitAddon();
     term.loadAddon(fit);
+    term.loadAddon(new Unicode11Addon.Unicode11Addon()); term.unicode.activeVersion = '11'; // same width rules as the server snapshot
     term.open(el);
     // Tapping the terminal must not open the on-screen keyboard (xterm focuses its helper textarea on every touch): the
     // textarea stays focusable for a hardware keyboard but asks for no on-screen keyboard. Only the keyboard key opens it.

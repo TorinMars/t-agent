@@ -326,6 +326,7 @@ const Tasks = (() => {
     container.appendChild(el);
 
     const t = new Terminal({
+      allowProposedApi: true, // needed by the Unicode 11 addon
       cursorBlink: true,
       fontSize: 13,
       fontFamily: 'Menlo, Monaco, "Courier New", monospace',
@@ -342,6 +343,7 @@ const Tasks = (() => {
     });
     const fa = new FitAddon.FitAddon();
     t.loadAddon(fa);
+    t.loadAddon(new Unicode11Addon.Unicode11Addon()); t.unicode.activeVersion = '11'; // same width rules as the server snapshot
     // Cmd (macOS) / Ctrl + click opens a link from the terminal in a new tab; without a modifier it is ordinary selection, avoiding accidental clicks.
     t.loadAddon(new WebLinksAddon.WebLinksAddon((event, uri) => {
       if (event.metaKey || event.ctrlKey) window.open(uri, '_blank', 'noopener,noreferrer');

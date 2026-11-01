@@ -28,6 +28,8 @@ async function openTask(page, title, how = 'tap') {
   await page.locator(`#h5-tasks .h5-terminal-list[aria-label="${title}"] .h5-terminal-main`).first()[how]();
 }
 
+let checkMode = 'available'; // what the mocked update check answers: available | current | error
+
 async function openPage(browser, { remoteTerminals, remoteChat = false, viewport } = {}) {
   const context = await browser.newContext(viewport ? { viewport } : { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
   const page = await context.newPage();
@@ -108,7 +110,11 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       return json({ host: 'https://bucket.oss.test', fields: { key: 'terminal-images/shot.png', policy: 'p', 'x-oss-signature': 's' }, url: 'https://img.test/shot.png', expiresAt: null });
     }
     if (url.pathname === '/api/oss/images') return json({ error: 'the Client no longer receives images' }, 404);
-    if (url.pathname === '/api/system/check-update') return json({ status: 'available', is_update_admin: true, local_version: '1.0.0', remote_version: '1.0.1' });
+    if (url.pathname === '/api/system/check-update') {
+      if (checkMode === 'current') return json({ status: 'current', is_update_admin: true, local_version: '1.0.0', remote_version: '1.0.0' });
+      if (checkMode === 'error') return json({ status: 'failed', error: 'REMOTE_DOWN', is_update_admin: true, local_version: '1.0.0' });
+      return json({ status: 'available', is_update_admin: true, local_version: '1.0.0', remote_version: '1.0.1' });
+    }
     if (url.pathname === '/api/system/version') return json({ boot_id: 'old' });
     if (url.pathname === '/api/system/apply-update') { assert.deepEqual(route.request().postDataJSON(), { confirm: true }); return json({ accepted: true }, 202); }
     if (url.pathname === '/api/system/update-status') return json({ status: 'updating', stage: 'installing', message: 'Installing dependencies', log: [{ at: 1, text: 'npm ci' }], boot_id: 'old' });
@@ -829,6 +835,40 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
 
     // Settings: the gear at the bottom of the task sidebar opens a sheet with the language toggle and the PC one-click update; the header has no settings button.
     assert.equal(await page.locator('#h5-open-settings').count(), 0, 'the header has no settings button');
+    // The Update button stands right of the refresh button; it opens a modal that checks, shows both versions, and offers the update.
+    // Both boxes are read in one step (the activity counter can still move the row).
+    await page.waitForFunction(() => {
+      const refresh = document.getElementById('h5-refresh').getBoundingClientRect();
+      const update = document.getElementById('h5-update').getBoundingClientRect();
+      return update.left >= refresh.right - 1 && Math.abs(update.top - refresh.top) < 2 && Math.abs(update.width - refresh.width) < 1 && update.right <= innerWidth;
+    }, null, { timeout: 5000 });
+    await page.locator('#h5-update').click();
+    await page.locator('#h5-update-dialog [role="dialog"]').waitFor({ state: 'visible' });
+    assert.equal(await page.locator('#h5-update-dialog [role="dialog"]').getAttribute('aria-modal'), 'true');
+    assert.equal(await page.locator('#h5-update-dialog [role="dialog"]').getAttribute('aria-labelledby'), 'h5-update-title');
+    await page.waitForFunction(() => document.getElementById('h5-update-latest') && document.getElementById('h5-update-latest').textContent === '1.0.1');
+    assert.equal(await page.locator('#h5-update-current').textContent(), '1.0.0');
+    assert.equal(await page.locator('#h5-update-now').count(), 1, 'the update action is offered');
+    assert.equal(calls.includes('POST /api/system/apply-update'), false, 'opening the modal only checks');
+    await page.keyboard.press('Escape');
+    await page.locator('#h5-update-dialog').waitFor({ state: 'detached' });
+    assert.equal(await page.evaluate(() => document.activeElement.id), 'h5-update', 'focus returns to the Update button');
+    await page.locator('#h5-update').click();
+    await page.locator('#h5-update-close').click();
+    await page.locator('#h5-update-dialog').waitFor({ state: 'detached' });
+    await page.locator('#h5-update').click();
+    await page.locator('#h5-update-now').waitFor();
+    await page.mouse.click(5, 5); // tap outside
+    await page.locator('#h5-update-dialog').waitFor({ state: 'detached' });
+    // Up to date and a failed check.
+    for (const [mode, selector, text] of [['current', '#h5-update-state', 'Already up to date'], ['error', '#h5-update-state[role="alert"]', 'REMOTE_DOWN']]) {
+      checkMode = mode;
+      await page.locator('#h5-update').click();
+      await page.locator(selector).filter({ hasText: text }).waitFor();
+      await page.keyboard.press('Escape');
+      await page.locator('#h5-update-dialog').waitFor({ state: 'detached' });
+    }
+    checkMode = 'available';
     await page.evaluate(() => { window.beforeRefresh = true; });
     await Promise.all([page.waitForEvent('load'), page.locator('#h5-refresh').click()]);
     await page.waitForSelector('#h5-refresh');

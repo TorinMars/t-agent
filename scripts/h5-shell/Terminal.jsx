@@ -87,21 +87,27 @@ export function BottomArea({ state, ui }) {
 // The bar reserves only its resting height in the page layout. What it grows beyond that is `--h5-bar-extra`, set by h5.js on `#h5-bottom`, pulled back by a negative top margin
 // there, so the bar grows upward OVER the terminal and the terminal box never changes size (no fit, no PTY resize); h5.js moves the terminal instead.
 const BUTTON_ROW = { gridRow: 2 };
+// One radius system: the bar sets `--h5-bar-radius` (its own outer corner radius: 28px at rest, 22px when active); the send and translate buttons use it as is, and the box
+// inside uses it minus the bar padding (concentric corners, never below 8px). Nothing else holds a radius number, so they cannot drift apart.
+const BAR_RADIUS_REST = '28px';
+const BAR_RADIUS_ACTIVE = '22px';
+const BAR_PAD = '6px'; // the bar padding (px/py 0.75 = 6px) between the outer shape and the box
 const ACTIVE = {
+  '--h5-bar-radius': BAR_RADIUS_ACTIVE,
   gridTemplateColumns: 'auto 1fr auto auto auto',
-  borderRadius: '22px',
   '& .h5-translate-input': { gridColumn: '1 / -1', gridRow: 1 },
   '& #h5-add': { gridColumn: 1, ...BUTTON_ROW }, '& #h5-voice': { gridColumn: 3, ...BUTTON_ROW },
   '& #h5-translate-send': { display: 'inline-flex', gridColumn: 4, ...BUTTON_ROW }, '& #h5-translate-button': { display: 'inline-flex', gridColumn: 5, ...BUTTON_ROW },
 };
 const ROUND = { width: 40, height: 40 };
+const WIDE = { width: 60, height: 40, borderRadius: 'var(--h5-bar-radius)' }; // the send arrow and translate-and-send: 1.5 times as wide as the round buttons, same height
 export function TranslateBar({ state, menu, onMenu }) {
   return (
     <Box
       component="form" className={`h5-translate${state.translating ? ' translating' : ''}`} id="h5-translate" autoComplete="off" data-menu={menu ? '' : undefined}
       onMouseDown={event => { if (event.target.closest('button')) event.preventDefault(); }}
       sx={{
-        position: 'relative', mx: 1, mt: 0.75, display: 'grid', gridTemplateColumns: 'auto 1fr auto', alignItems: 'end', columnGap: 0.5, rowGap: 0.5, px: 0.75, py: 0.75, border: 1, borderColor: 'divider', borderRadius: '28px', bgcolor: 'action.hover',
+        position: 'relative', mx: 1, mt: 0.75, display: 'grid', gridTemplateColumns: 'auto 1fr auto', alignItems: 'end', columnGap: 0.5, rowGap: 0.5, px: 0.75, py: 0.75, border: 1, borderColor: 'divider', '--h5-bar-radius': BAR_RADIUS_REST, borderRadius: 'var(--h5-bar-radius)', bgcolor: 'action.hover',
         '& #h5-translate-button, & #h5-translate-send': { display: 'none' },
         '&:focus-within, &[data-hold], &[data-menu], &.translating': ACTIVE,
         '&:has(.h5-voice.listening)': ACTIVE,
@@ -112,11 +118,11 @@ export function TranslateBar({ state, menu, onMenu }) {
         id="h5-translate-input" className={`h5-translate-input${state.translating ? ' translating' : ''}`} fullWidth size="small" inputComponent="textarea" readOnly={state.translating}
         placeholder={t('Chinese → English, then send')}
         inputProps={{ rows: 1, maxLength: 4000, enterKeyHint: 'enter', 'aria-label': t('Chinese input, translated to English and sent to the terminal'), style: { resize: 'none' } }}
-        sx={{ alignItems: 'flex-end', py: 0.25, fontSize: 15, bgcolor: 'transparent', '& fieldset': { borderColor: 'transparent' } }}
+        sx={{ alignItems: 'flex-end', py: 0.25, fontSize: 15, bgcolor: 'transparent', borderRadius: `max(8px, calc(var(--h5-bar-radius) - ${BAR_PAD}))`, '& fieldset': { borderColor: 'transparent' } }}
       />
       <IconButton id="h5-voice" className="h5-voice" sx={ROUND} title={t('Voice input: hold to speak, release to stop')} aria-label={t('Voice input')} aria-pressed="false"><MicIcon /></IconButton>
-      <IconButton type="submit" id="h5-translate-send" className="h5-translate-send" disabled={state.translating} sx={{ ...ROUND, border: 1, borderColor: 'divider', borderRadius: 2 }} title={t('Send as typed, without translating')} aria-label={t('Send')}><ArrowUpwardIcon /></IconButton>
-      <IconButton id="h5-translate-button" type="button" disabled={state.translating} sx={{ ...ROUND, borderRadius: 2, bgcolor: '#fff', color: '#111', '&:hover': { bgcolor: '#e6e6e6' }, '&.Mui-disabled': { bgcolor: 'action.disabledBackground', color: 'action.disabled' } }} title={t('Translate to English and send')} aria-label={t('Translate and send')}><TranslateIcon /></IconButton>
+      <IconButton type="submit" id="h5-translate-send" className="h5-translate-send" disabled={state.translating} sx={{ ...WIDE, border: 1, borderColor: 'divider' }} title={t('Send as typed, without translating')} aria-label={t('Send')}><ArrowUpwardIcon /></IconButton>
+      <IconButton id="h5-translate-button" type="button" disabled={state.translating} sx={{ ...WIDE, bgcolor: '#fff', color: '#111', '&:hover': { bgcolor: '#e6e6e6' }, '&.Mui-disabled': { bgcolor: 'action.disabledBackground', color: 'action.disabled' } }} title={t('Translate to English and send')} aria-label={t('Translate and send')}><TranslateIcon /></IconButton>
     </Box>
   );
 }

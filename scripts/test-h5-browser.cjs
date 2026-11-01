@@ -341,6 +341,21 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       assert.ok(active.add.left < active.voice.left && active.add.top >= active.root.bottom - 1, 'focused: plus is on row 2 at the left');
       assert.ok(active.root.width > rest.root.width + 60 && active.root.right >= active.translate.right - 1, 'focused: the box takes the full width');
       assert.ok(active.form.height > rest.form.height + 30, 'the bar is one row taller');
+      // Wider send / translate buttons, with the outer corner radius; the box is concentric (outer radius minus the 6px bar padding, at least 8px).
+      assert.ok(active.send.width >= 56 && Math.abs(active.send.width - active.translate.width) <= 0.5, `send and translate are wider than the old 40px and equal (${active.send.width} / ${active.translate.width})`);
+      assert.ok(active.send.height >= 40 && active.translate.height >= 40 && active.send.width >= 40, 'tap targets are at least 40px');
+      const radii = await page.evaluate(() => { const rad = el => getComputedStyle(el).borderTopLeftRadius; const id = x => document.getElementById(x);
+        return { outer: rad(id('h5-translate')), send: rad(id('h5-translate-send')), translate: rad(id('h5-translate-button')), input: rad(document.querySelector('.h5-translate-input')) }; });
+      assert.equal(radii.outer, '22px', 'the active bar has the 22px outer radius');
+      assert.equal(radii.send, radii.outer, 'the send arrow radius equals the outer radius');
+      assert.equal(radii.translate, radii.outer, 'the translate-and-send radius equals the outer radius');
+      assert.equal(radii.input, '16px', 'the box radius is the outer radius minus the 6px padding');
+      await page.evaluate(() => document.activeElement && document.activeElement.blur());
+      await barSettled();
+      const restRadii = await page.evaluate(() => ({ outer: getComputedStyle(document.getElementById('h5-translate')).borderTopLeftRadius, input: getComputedStyle(document.querySelector('.h5-translate-input')).borderTopLeftRadius }));
+      assert.deepEqual(restRadii, { outer: '28px', input: '22px' }, 'at rest: 28px outer, 22px box');
+      await page.locator('#h5-translate-input').focus();
+      await barSettled();
       // The terminal is moved, not resized: same box, same element height, same rows, no resize message; it only moves up.
       assert.equal(active.term, rest.term, 'the terminal box keeps its height');
       assert.equal(active.xterm.height, rest.xterm.height, 'the terminal element keeps its height');
@@ -1286,6 +1301,22 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     updateDone = true;
     await Promise.all([page.waitForEvent('load', { timeout: 15000 }), page.locator('#h5-update-state', { hasText: /reloading/ }).waitFor()]);
     await context.close();
+
+    // The typing row (plus, wide send arrow, wide translate-and-send, mic) fits a 360px phone with no sideways overflow.
+    {
+      const narrow = await openPage(browser, { viewport: { width: 360, height: 740 } });
+      await openTask(narrow.page, 'Fix login', 'click');
+      await narrow.page.waitForFunction(() => window.sockets.length === 1);
+      await narrow.page.waitForTimeout(500);
+      await narrow.page.locator('#h5-translate-input').focus();
+      await narrow.page.waitForFunction(() => !document.getAnimations().some(a => a.playState === 'running') && !document.querySelector('.h5-bar-moving'), null, { timeout: 3000 });
+      const row = await narrow.page.evaluate(() => { const r = id => document.getElementById(id).getBoundingClientRect(); const ids = ['h5-add', 'h5-voice', 'h5-translate-send', 'h5-translate-button'];
+        return { inside: ids.every(id => r(id).left >= 0 && r(id).right <= innerWidth && r(id).width >= 40 && r(id).height >= 40), overflow: document.documentElement.scrollWidth > innerWidth, wide: r('h5-translate-send').width, noOverlap: r('h5-add').right <= r('h5-voice').left && r('h5-voice').right <= r('h5-translate-send').left && r('h5-translate-send').right <= r('h5-translate-button').left };
+      });
+      assert.deepEqual({ inside: row.inside, overflow: row.overflow, noOverlap: row.noOverlap }, { inside: true, overflow: false, noOverlap: true }, 'the typing row fits at 360px, plus and mic visible');
+      assert.ok(row.wide >= 56, 'the buttons stay wide at 360px');
+      await narrow.context.close();
+    }
 
     // The key row scrolls sideways (as in the reference design): the first keys are fully on screen on the narrowest phones and in landscape, the page itself never scrolls sideways.
     for (const viewport of [{ width: 320, height: 640 }, { width: 844, height: 390 }]) {

@@ -46,7 +46,7 @@ export function TranslateBar({ state }) {
       <OutlinedInput
         id="h5-translate-input" className={`h5-translate-input${state.translating ? ' translating' : ''}`} fullWidth size="small" inputComponent="textarea" readOnly={state.translating}
         placeholder={t('Chinese → English, then send')}
-        inputProps={{ rows: 1, maxLength: 4000, enterKeyHint: 'send', 'aria-label': t('Chinese input, translated to English and sent to the terminal'), style: { resize: 'none' } }}
+        inputProps={{ rows: 1, maxLength: 4000, enterKeyHint: 'enter', 'aria-label': t('Chinese input, translated to English and sent to the terminal'), style: { resize: 'none' } }}
         sx={{ alignItems: 'flex-end', py: 0.25, fontSize: 15, bgcolor: 'action.hover', '& fieldset': { borderColor: 'transparent' } }}
       />
       <IconButton id="h5-voice" className="h5-voice" sx={{ width: 40, height: 40 }} title={t('Voice input: hold to speak, release to stop')} aria-label={t('Voice input')} aria-pressed="false"><MicIcon /></IconButton>

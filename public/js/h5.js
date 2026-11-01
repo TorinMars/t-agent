@@ -1396,6 +1396,21 @@
     input.style.overflowY = input.scrollHeight > cap ? 'auto' : 'hidden';
     syncBar(); // the bar grows over the terminal; the terminal is moved, not resized
   }
+  // The translation keeps its line breaks only when the program in the terminal reads a paste as one paste (bracketed paste mode, as Claude Code does). Then it
+  // goes in as ONE bracketed paste, so no line is run on its own. Without that mode a shell would run every line at once, so the lines are joined with spaces.
+  // Control characters (ESC included) are removed in both cases, so the text cannot carry its own paste end marker or any key sequence.
+  const LINE_CONTROLS = new RegExp('[\\u0000-\\u0009\\u000b\\u000c\\u000e-\\u001f\\u007f-\\u009f]+', 'g');
+  function pasteText(raw) {
+    const lines = String(raw).replace(/\r\n?|\u2028|\u2029/g, '\n').replace(LINE_CONTROLS, ' ').split('\n').map(line => line.replace(/\s+/g, ' ').trim());
+    return lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  }
+  function sendTranslation(target, raw) {
+    const text = pasteText(raw);
+    if (!text) return false;
+    if (!text.includes('\n')) return send(target, text);
+    if (target.term && target.term.modes && target.term.modes.bracketedPasteMode) return send(target, `\x1b[200~${text.replace(/\n/g, '\r')}\x1b[201~`);
+    return send(target, TerminalTranslate.sanitize(text));
+  }
   async function translate() {
     const text = translateInput.value.trim();
     if (translating || !text) return;
@@ -1405,9 +1420,8 @@
     ui.set({ translating: true });
     try {
       const result = await api('POST', '/api/translate', { text });
-      const english = TerminalTranslate.sanitize(result && result.text);
-      if (!english) throw new Error('Translation result is empty');
-      if (!send(target, english)) throw new Error('Terminal not connected; translation was not sent');
+      if (!pasteText(result && result.text)) throw new Error('Translation result is empty');
+      if (!sendTranslation(target, result.text)) throw new Error('Terminal not connected; translation was not sent');
       setTimeout(() => send(target, '\r'), SUBMIT_DELAY_MS);
       translateInput.value = '';
       autosize();
@@ -1421,12 +1435,7 @@
     }
   }
   translateForm.addEventListener('submit', event => { event.preventDefault(); void translate(); });
-  translateInput.addEventListener('keydown', event => {
-    if (event.key !== 'Enter' || event.shiftKey) return;
-    if (event.isComposing || event.keyCode === 229) return; // Enter that picks an IME candidate
-    event.preventDefault();
-    void translate();
-  });
+  // Enter in the box is a new line (the browser inserts it and the `input` event runs autosize); only the Send button submits. There is no keydown handler on purpose.
   translateInput.addEventListener('input', autosize);
   // The bar has two layouts (CSS only): one row at rest, and while it is active (the box has focus, a button is pressed, voice is recording, a
   // translation runs) the box on row 1 and the voice and send buttons on row 2. The switch itself is instant (grid cannot be transitioned).

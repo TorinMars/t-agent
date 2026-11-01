@@ -17,6 +17,8 @@ const pollUntil = async condition => { for (let i = 0; i < 500 && !condition(); 
 let chatListFails = false;
 
 // The chat has no back button; going to a terminal from the task sheet leaves it.
+const translateRequests = []; // the texts the phone page sent to /api/translate
+
 async function leaveChatByTerminal(page) {
   await page.locator('#h5-open-tasks').tap();
   await page.locator('#h5-tasks .h5-terminal-row:not(:has(.h5-terminal-icon.claude, .h5-terminal-icon.codex)) .h5-terminal-main').first().tap();
@@ -112,7 +114,11 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     if (url.pathname === '/api/system/version') return json({ boot_id: 'old' });
     if (url.pathname === '/api/system/apply-update') { assert.deepEqual(route.request().postDataJSON(), { confirm: true }); return json({ accepted: true }, 202); }
     if (url.pathname === '/api/system/update-status') return json({ status: 'updating', stage: 'installing', message: 'Installing dependencies', log: [{ at: 1, text: 'npm ci' }], boot_id: 'old' });
-    if (url.pathname === '/api/translate') return json({ text: 'Run the tests\u001b[2J' });
+    if (url.pathname === '/api/translate') {
+      const text = route.request().postDataJSON().text;
+      translateRequests.push(text);
+      return json({ text: text.startsWith('MULTI') ? 'First line\n\nSecond line\u001b[2J' : 'Run the tests\u001b[2J' });
+    }
     return json({ error: 'not mocked' }, 404);
   });
   await page.route('https://bucket.oss.test/**', async route => {
@@ -420,6 +426,61 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       assert.ok(afterSend.height < 50 && afterSend.inline === '', `one line again after a send (${afterSend.height}px)`);
       assert.equal(await page.evaluate(() => document.activeElement && document.activeElement.id), 'h5-translate-input', 'the box keeps the focus after a send (the tap on send does not blur it)');
       await page.locator('#h5-translate-input').blur();
+    }
+
+    // Enter is a new line in the box and never sends; only the Send button does. Several lines reach the terminal as one paste (or joined, see below).
+    {
+      const input = page.locator('#h5-translate-input');
+      const requests = translateRequests.length;
+      const inputs = (await sent()).length;
+      const oneLine = await input.evaluate(el => el.getBoundingClientRect().height);
+      await input.focus();
+      assert.equal(await input.getAttribute('enterkeyhint'), 'enter', 'the on-screen Enter key is a new-line key');
+      await page.keyboard.type('MULTI one');
+      await page.keyboard.press('Enter');
+      await page.keyboard.press('Shift+Enter');
+      await page.keyboard.type('two');
+      assert.equal(await input.inputValue(), 'MULTI one\n\ntwo', 'Enter and Shift+Enter both insert a new line');
+      await barSettled();
+      const grown = await input.evaluate(el => ({ height: el.getBoundingClientRect().height, overflowY: getComputedStyle(el).overflowY }));
+      assert.ok(grown.height > oneLine + 10, `the box grows after new lines (${oneLine} to ${grown.height})`);
+      await page.keyboard.press('Enter');
+      await page.keyboard.type('three');
+      await page.keyboard.press('Enter');
+      await page.keyboard.type('four');
+      await barSettled();
+      const many = await input.evaluate(el => ({ height: el.getBoundingClientRect().height, overflowY: getComputedStyle(el).overflowY }));
+      assert.ok(Math.abs(many.height - grown.height) <= 1 && many.overflowY === 'auto', 'beyond two lines the box scrolls inside');
+      assert.equal(translateRequests.length, requests, 'Enter sends no translate request');
+      assert.equal((await sent()).length, inputs, 'Enter writes nothing to the terminal');
+      // Enter that confirms an IME composition neither sends nor adds a line.
+      const before = await input.inputValue();
+      await input.evaluate(el => {
+        el.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+        el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', keyCode: 229, isComposing: true, bubbles: true, cancelable: true }));
+        el.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: '' }));
+      });
+      assert.equal(await input.inputValue(), before, 'an IME Enter adds no new line');
+      assert.equal(translateRequests.length, requests, 'an IME Enter sends nothing');
+      await input.fill('MULTI one\n\ntwo');
+      // Without bracketed paste the lines are joined, so a shell cannot run them one by one.
+      await page.locator('#h5-translate-send').tap();
+      await page.waitForFunction(count => window.sockets[0].sent.filter(item => item === '\r').length > count, (await sent()).filter(item => item === '\r').length);
+      assert.equal(translateRequests.at(-1), 'MULTI one\n\ntwo', 'the request keeps the line breaks');
+      assert.deepEqual((await sent()).slice(-2), ['First line Second line [2J', '\r'], 'no bracketed paste: the lines are joined into one');
+      assert.equal(translateRequests.length, requests + 1, 'one click sends once');
+      assert.equal(await input.inputValue(), '');
+      // With bracketed paste mode on, the lines go in as ONE paste (Claude Code accepts it); line breaks are carriage returns inside the markers.
+      await page.evaluate(() => window.sockets[0].emit('\x1b[?2004h'));
+      await page.waitForTimeout(100);
+      const returns = (await sent()).filter(item => item === '\r').length;
+      await input.fill('MULTI one\n\ntwo');
+      await page.locator('#h5-translate-send').tap();
+      await page.waitForFunction(count => window.sockets[0].sent.filter(item => item === '\r').length > count, returns);
+      assert.deepEqual((await sent()).slice(-2), ['\x1b[200~First line\r\rSecond line [2J\x1b[201~', '\r'], 'bracketed paste: one paste, then a single Enter');
+      assert.equal(await input.inputValue(), '');
+      await page.evaluate(() => window.sockets[0].emit('\x1b[?2004l'));
+      await input.blur();
     }
 
     // Image upload: the link is typed into the terminal with a trailing space and no Enter.

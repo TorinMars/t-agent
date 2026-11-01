@@ -1366,9 +1366,23 @@
 
   // ── Translate and send ──
   let translating = false;
+  // The one place that sets the height of the translate box: one line while it is empty or its text fits one line, two lines at most
+  // (a longer text scrolls inside), measured from the textarea's own line height and padding. Called on input, after a send and at start.
+  const TRANSLATE_MAX_LINES = 2;
   function autosize() {
-    translateInput.style.height = 'auto';
-    if (translateInput.value) translateInput.style.height = `${translateInput.scrollHeight + 2}px`;
+    const input = translateInput;
+    input.style.height = '';
+    input.style.overflowY = 'hidden';
+    if (!input.value) { holdTerminalSize(); return; } // empty: the natural height of rows=1
+    const style = getComputedStyle(input);
+    const lineHeight = parseFloat(style.lineHeight) || (parseFloat(style.fontSize) || 15) * 1.4375;
+    const padding = (parseFloat(style.paddingTop) || 0) + (parseFloat(style.paddingBottom) || 0);
+    const border = (parseFloat(style.borderTopWidth) || 0) + (parseFloat(style.borderBottomWidth) || 0);
+    const cap = Math.round(lineHeight * TRANSLATE_MAX_LINES + padding); // scrollHeight includes the padding
+    const wanted = Math.min(input.scrollHeight, cap);
+    input.style.height = `${style.boxSizing === 'border-box' ? wanted + border : wanted - padding}px`;
+    input.style.overflowY = input.scrollHeight > cap ? 'auto' : 'hidden';
+    holdTerminalSize(); // with the keyboard open the terminal keeps its closed height; its shift follows the box
   }
   async function translate() {
     const text = translateInput.value.trim();
@@ -1402,6 +1416,7 @@
     void translate();
   });
   translateInput.addEventListener('input', autosize);
+  autosize();
 
   // ── Image upload: the Client uploads to OSS and the link is typed into the terminal without Enter ──
   let pickedFor = null;

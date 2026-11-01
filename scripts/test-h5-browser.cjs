@@ -177,6 +177,30 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     // Saved screen first, then live input is allowed.
     await page.evaluate(() => window.sockets[0].emit(JSON.stringify({ type: 'history', data: 'saved prompt$ ', cols: 80, rows: 24 })));
     await page.waitForFunction(() => document.querySelector('.xterm-rows')?.textContent.includes('saved prompt$'));
+    // OSC 8 links: a javascript: address is never confirmed or opened; an https address is confirmed first, then opened in a new tab.
+    await page.evaluate(() => {
+      window.opened = [];
+      window.open = (...args) => { window.opened.push(args[0]); return null; };
+      window.sockets[0].emit('\r\n\x1b]8;;javascript:alert(1)\x07EVILLINK\x1b]8;;\x07\r\n\x1b]8;;https://example.com/ok\x07GOODLINK\x1b]8;;\x07');
+    });
+    await page.waitForFunction(() => document.querySelector('.xterm-rows')?.textContent.includes('GOODLINK'));
+    const clickText = async text => {
+      const box = await page.locator('.xterm-rows > div', { hasText: text }).first().boundingBox();
+      await page.mouse.move(box.x + 12, box.y + box.height / 2);
+      await page.mouse.move(box.x + 14, box.y + box.height / 2);
+      await page.mouse.down(); await page.mouse.up();
+    };
+    const prompts = [];
+    page.on('dialog', dialog => { prompts.push(dialog.message()); void dialog.accept(); });
+    await clickText('EVILLINK');
+    await page.waitForTimeout(300);
+    assert.deepEqual(prompts, [], 'a javascript: link asks nothing');
+    assert.deepEqual(await page.evaluate(() => window.opened), [], 'a javascript: link is never opened');
+    await clickText('GOODLINK');
+    await page.waitForFunction(() => window.opened.length === 1);
+    assert.deepEqual(await page.evaluate(() => window.opened), ['https://example.com/ok'], 'an https link opens after confirmation');
+    assert.match(prompts[0], /https:\/\/example\.com\/ok/, 'the real address is shown');
+    page.removeAllListeners('dialog');
     await page.waitForTimeout(100);
     const resize = await page.evaluate(() => window.sockets[0].sent.map(item => { try { return JSON.parse(item); } catch { return null; } }).filter(item => item?.type === 'resize').pop());
     assert.ok(resize.cols < 80 && resize.cols >= 30, `the phone terminal fits the phone width (${resize.cols} columns)`);
@@ -251,31 +275,64 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     assert.equal(ossUploads.length, 2, 'the pasted image went to OSS from the browser');
     assert.equal((await sent()).length, sentBefore + 1, 'only the link was typed');
 
-    // Dragging scrolls a full-screen program (alternate buffer with mouse reporting) by sending wheel events.
+    // The wheel strip on the right edge scrolls like a wheel; a drag on the terminal body makes no wheel events.
+    const strip = page.locator('#h5-wheel');
+    assert.equal(await page.locator('#h5-wheel').count(), 1, 'the terminal has one wheel strip');
+    const idle = await page.evaluate(() => {
+      const el = document.querySelector('#h5-wheel');
+      const copy = document.querySelector('#h5-scroll [data-copy]').getBoundingClientRect();
+      const box = el.getBoundingClientRect();
+      return { bg: getComputedStyle(el).backgroundColor, trackOpacity: getComputedStyle(el, '::before').opacity, touchAction: getComputedStyle(el).touchAction,
+        overlap: !(box.right <= copy.left || box.left >= copy.right || box.bottom <= copy.top || box.top >= copy.bottom), width: box.width };
+    });
+    assert.equal(idle.bg, 'rgba(0, 0, 0, 0)', 'the idle strip has no background');
+    assert.equal(idle.trackOpacity, '0', 'the idle strip shows nothing');
+    assert.equal(idle.touchAction, 'none');
+    assert.equal(idle.overlap, false, 'the strip does not cover the copy button');
+    assert.ok(idle.width >= 36 && idle.width <= 48, 'the strip is about 40px wide');
+
     await page.evaluate(() => window.sockets[0].emit(JSON.stringify({ type: 'history', data: '\x1b[?1049h\x1b[?1000h\x1b[?1006hfull screen app', cols: 40, rows: 30 })));
     await page.waitForTimeout(150);
     const cdp = await context.newCDPSession(page);
-    const drag = async (from, to) => {
-      await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: 200, y: from }] });
-      await page.waitForTimeout(400); // press and hold first
-      for (let y = from; y !== to; y += from < to ? 20 : -20) { await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: 200, y }] }); await page.waitForTimeout(16); }
+    const box = await strip.boundingBox();
+    const stripX = box.x + box.width / 2;
+    const drag = async (x, from, to, check) => {
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y: from }] });
+      await page.waitForTimeout(50);
+      for (let y = from; y !== to; y += from < to ? 20 : -20) { await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y }] }); await page.waitForTimeout(16); }
+      if (check) await check();
       await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
     };
     const wheels = () => page.evaluate(() => window.sockets[0].sent.filter(item => /^\x1b\[<6[45];/.test(item)).map(item => item.slice(3, 5)));
     const before = (await wheels()).length;
-    await drag(300, 500);
+    await drag(stripX, 300, 500, async () => {
+      assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('#h5-wheel'), '::before').opacity), '1', 'the track shows while a finger is on the strip');
+    });
     const down = (await wheels()).slice(before);
-    assert.ok(down.length >= 5 && down.every(code => code === '64'), 'dragging down sends wheel-up reports');
-    await drag(500, 300);
+    assert.ok(down.length >= 5 && down.every(code => code === '64'), 'dragging down on the strip sends wheel-up reports');
+    await drag(stripX, 500, 300);
     const up = (await wheels()).slice(before + down.length);
-    assert.ok(up.length >= 5 && up.every(code => code === '65'), 'dragging up sends wheel-down reports');
+    assert.ok(up.length >= 5 && up.every(code => code === '65'), 'dragging up on the strip sends wheel-down reports');
+    await page.waitForFunction(() => getComputedStyle(document.querySelector('#h5-wheel'), '::before').opacity === '0', null, { timeout: 3000 });
 
-    // The floating buttons scroll by click, without a drag.
-    const clicked = (await wheels()).length;
-    await page.locator('[data-scroll="-1"]').tap();
-    await page.locator('[data-scroll="1"]').tap();
-    const buttons = (await wheels()).slice(clicked);
-    assert.deepEqual([...new Set(buttons)].sort(), ['64', '65'], 'the up button sends wheel-up and the down button wheel-down reports');
+    const afterStrip = (await wheels()).length;
+    await drag(150, 300, 500);
+    await drag(150, 500, 300);
+    assert.equal((await wheels()).length, afterStrip, 'dragging the terminal body sends no wheel reports');
+
+    // In the normal buffer the strip scrolls the history.
+    await page.evaluate(() => window.sockets[0].emit(JSON.stringify({ type: 'history', data: '\x1b[?1049l\x1b[?1000l' + Array.from({ length: 200 }, (_, i) => 'line ' + i).join('\r\n'), cols: 40, rows: 30 })));
+    await page.waitForTimeout(300);
+    const rowsText = () => page.locator('.h5-xterm .xterm-rows').textContent();
+    const bottomText = await rowsText();
+    await drag(stripX, 300, 500);
+    const olderText = await rowsText();
+    assert.notEqual(olderText, bottomText, 'dragging down on the strip shows older output in the normal buffer');
+    await drag(stripX, 500, 300);
+    assert.equal(await rowsText(), bottomText, 'dragging up brings the newest output back');
+
+    // The terminal has no floating up/down buttons: scrolling is by the wheel strip.
+    assert.equal(await page.locator('[data-scroll]').count(), 0, 'no scroll buttons are drawn');
 
     // A new terminal is a phone terminal and gets its own connection.
     await page.locator('#h5-open-tasks').tap();
@@ -472,9 +529,8 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     await page.setViewportSize({ width: 390, height: 844 });
     await page.waitForTimeout(300);
 
-    // Copy text: the floating button above the scroll buttons shows the terminal text in a selectable overlay.
-    const order = await page.evaluate(() => [...document.querySelectorAll('#h5-scroll button')].map(button => button.getBoundingClientRect().top));
-    assert.ok(order[0] < order[1] && order[1] < order[2], 'the copy button sits above the scroll buttons');
+    // Copy text: the floating button shows the terminal text in a selectable overlay.
+    assert.equal(await page.locator('#h5-scroll button').count(), 1, 'the copy button is the only floating button');
     await page.evaluate(() => { navigator.clipboard.writeText = async text => { window.copied = text; }; });
     // A row as wide as the terminal must stay one line in the overlay (same font, no wrapping of its own).
     const termCols = await page.evaluate(() => window.sockets[1].sent.map(item => { try { return JSON.parse(item); } catch { return null; } }).filter(item => item?.type === 'resize').pop().cols);

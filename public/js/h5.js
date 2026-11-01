@@ -771,6 +771,15 @@
       fontFamily: 'Menlo, Monaco, "Courier New", monospace',
       theme: { background: '#121212' },
       scrollback: 5000,
+      // Hyperlinks printed by programs with OSC 8 (the visible text may differ from the real address): only http(s) is opened, after
+      // the real address is confirmed; any other scheme (javascript:, data:, file:) is ignored silently.
+      linkHandler: {
+        allowNonHttpProtocols: false,
+        activate(event, uri) {
+          if (!/^https?:\/\//i.test(uri)) return;
+          if (window.confirm(`${tr('Open this link?')}\n\n${uri}`)) window.open(uri, '_blank', 'noopener,noreferrer');
+        },
+      },
     });
     const fit = new FitAddon.FitAddon();
     term.loadAddon(fit);
@@ -794,7 +803,6 @@
       if (!keyboardOpen || cursorFrame) return;
       cursorFrame = requestAnimationFrame(() => { cursorFrame = 0; if (session === s && !s.disposed) holdTerminalSize(); });
     });
-    bindTouchScroll(s);
     s.observer = new ResizeObserver(() => refit(s));
     s.observer.observe(el);
     holdTerminalSize();
@@ -802,9 +810,13 @@
     open(s);
   }
 
-  // xterm only reacts to the mouse wheel. In the normal buffer the browser scrolls the history natively, but a full-screen
-  // program (alternate buffer: Claude Code, Codex, vim, tmux ...) has no scrollback, so a drag is turned into wheel events and
-  // xterm forwards them the way a desktop wheel would (mouse reports, or arrow keys when the program has no mouse mode).
+  // The wheel strip: a transparent touch strip on the right edge of the terminal (drawn by the shell, scripts/h5-shell/Terminal.jsx).
+  // A vertical drag on it works like a scroll wheel. In the normal buffer it scrolls the history with term.scrollLines; a
+  // full-screen program (alternate buffer: Claude Code, Codex, vim, tmux ...) has no scrollback, so the drag is sent as wheel
+  // events and xterm forwards them the way a desktop wheel would (mouse reports, or arrow keys when the program has no mouse mode).
+  // A drag on the terminal body does not make wheel events; the browser scrolls the normal-buffer history natively there.
+  const WHEEL_GAIN = 2; // lines per terminal row of finger travel
+  const WHEEL_FADE_MS = 700; // how long the strip stays visible after the finger is lifted
   function lineHeight(s) {
     const screen = s.el.querySelector('.xterm-screen');
     return screen && s.term.rows ? Math.max(8, screen.clientHeight / s.term.rows) : 16;
@@ -815,26 +827,50 @@
       target.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaMode: 1, deltaY: Math.sign(lines), clientX: x, clientY: y }));
     }
   }
-  function bindTouchScroll(s) {
-    let touch = null;
-    s.el.addEventListener('touchstart', event => {
-      touch = event.touches.length === 1 ? { y: event.touches[0].clientY, rest: 0 } : null;
-    }, { passive: true });
-    s.el.addEventListener('touchmove', event => {
-      if (!touch || event.touches.length !== 1 || s.term.buffer.active.type !== 'alternate') return;
-      const point = event.touches[0];
-      touch.rest += touch.y - point.clientY;
-      touch.y = point.clientY;
-      const height = lineHeight(s);
-      const lines = Math.trunc(touch.rest / height);
+  function bindWheelStrip() {
+    let drag = null;
+    let fade = 0;
+    const strip = event => event.target.closest && event.target.closest('#h5-wheel');
+    const finish = event => {
+      if (!drag || event.pointerId !== drag.id) return;
+      const el = drag.el;
+      drag = null;
+      clearTimeout(fade);
+      fade = setTimeout(() => el.classList.remove('active'), WHEEL_FADE_MS);
+    };
+    document.addEventListener('pointerdown', event => {
+      const el = strip(event);
+      const s = session;
+      if (!el || !s || s.disposed || drag || (event.pointerType === 'mouse' && event.button !== 0)) return;
+      drag = { id: event.pointerId, el, y: event.clientY, rest: 0, total: 0 };
+      clearTimeout(fade);
+      el.classList.add('active');
+      try { el.setPointerCapture(event.pointerId); } catch { /* the pointer is gone already */ }
       event.preventDefault();
+    });
+    document.addEventListener('pointermove', event => {
+      const s = session;
+      if (!drag || event.pointerId !== drag.id || !s || s.disposed) return;
+      event.preventDefault();
+      drag.rest += (drag.y - event.clientY) * WHEEL_GAIN; // dragging down is negative: older output, like a wheel turned up
+      drag.total += drag.y - event.clientY;
+      drag.y = event.clientY;
+      drag.el.style.setProperty('--h5-wheel-offset', `${Math.round(drag.total % 24)}px`); // the ticks follow the finger
+      const height = lineHeight(s);
+      const lines = Math.trunc(drag.rest / height);
       if (!lines) return;
-      touch.rest -= lines * height;
-      wheel(s, lines, point.clientX, point.clientY);
-    }, { passive: false });
-    s.el.addEventListener('touchend', () => { touch = null; }, { passive: true });
-    s.el.addEventListener('touchcancel', () => { touch = null; }, { passive: true });
+      drag.rest -= lines * height;
+      if (s.term.buffer.active.type === 'alternate') {
+        const rect = drag.el.getBoundingClientRect();
+        wheel(s, lines, rect.left + rect.width / 2, event.clientY);
+      } else {
+        s.term.scrollLines(lines);
+      }
+    });
+    document.addEventListener('pointerup', finish);
+    document.addEventListener('pointercancel', finish);
   }
+  bindWheelStrip();
 
   function open(s, takeover = false) {
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -1003,18 +1039,6 @@
   ui.actions.openCopy = openCopy;
   ui.actions.copyClose = closeCopy;
   ui.actions.copyAll = () => void copyAll();
-
-  // The floating buttons move about a page per click: scrollback in the normal buffer, wheel events in a full-screen program.
-  ui.actions.scrollPage = direction => {
-    const s = session;
-    if (!s || s.disposed) return;
-    if (s.term.buffer.active.type === 'alternate') {
-      const rect = (s.el.querySelector('.xterm-screen') || s.el).getBoundingClientRect();
-      wheel(s, direction * 5, rect.left + rect.width / 2, rect.top + rect.height / 2);
-    } else {
-      s.term.scrollLines(direction * Math.max(1, s.term.rows - 2));
-    }
-  };
 
   // A tap on a key of the key bar (the shell keeps the focus where it is, so tapping keys does not open or close the on-screen keyboard).
   ui.actions.key = item => {

@@ -6,21 +6,18 @@ import OutlinedInput from '@mui/material/OutlinedInput';
 import Paper from '@mui/material/Paper';
 import ToggleButton from '@mui/material/ToggleButton';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
-import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
-import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
 import MicIcon from '@mui/icons-material/Mic';
 import SendIcon from '@mui/icons-material/Send';
 import { t } from './common.jsx';
 
-// The terminal area. h5.js puts the xterm element in after these two; React draws only the note and the scroll buttons.
+// The terminal area. h5.js puts the xterm element in after these two; React draws only the note, the wheel strip (h5.js handles its touches) and the copy button.
 export function TerminalArea({ state, ui }) {
   return (
     <Box component="main" className="h5-terminal" id="h5-terminal">
       {state.empty ? <div className="h5-empty" id="h5-empty">{t(state.empty)}</div> : null}
+      <div className="h5-wheel" id="h5-wheel" role="presentation" aria-label={t('Scroll wheel')} />
       <Box className="h5-scroll" id="h5-scroll" onMouseDown={event => event.preventDefault()} sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
         <Fab size="small" data-copy aria-label={t('Copy text')} onClick={() => ui.actions.openCopy()}><ContentCopyIcon fontSize="small" /></Fab>
-        <Fab size="small" data-scroll="-1" aria-label={t('Scroll up')} onClick={() => ui.actions.scrollPage(-1)}><KeyboardArrowUpIcon /></Fab>
-        <Fab size="small" data-scroll="1" aria-label={t('Scroll down')} onClick={() => ui.actions.scrollPage(1)}><KeyboardArrowDownIcon /></Fab>
       </Box>
     </Box>
   );

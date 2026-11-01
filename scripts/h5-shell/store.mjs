@@ -28,7 +28,6 @@ export const initialState = () => ({
   creatingTask: false,
   menu: null, // { title, items: [{ label, kind }], renaming, renameValue } while the terminal / chat / session sheet is open
   empty: 'Choose a task to open its phone terminal', // what the terminal area says when there is no terminal; null when one is shown
-  keysHidden: false,
   mods: {},
   translating: false,
   copyText: null, // the text of the copy view while it is open

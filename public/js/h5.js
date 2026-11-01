@@ -53,6 +53,7 @@
   const terminalHost = $('h5-terminal');
   const translateForm = $('h5-translate');
   const translateInput = $('h5-translate-input');
+  const bottomArea = $('h5-bottom'); // the function keys and the message bar; this box is what grows over the terminal
   const picker = $('h5-image-picker');
 
   // ── Layout: follow the visual viewport so the on-screen keyboard pushes the keys up instead of covering them ──
@@ -70,7 +71,6 @@
     const wasOpen = keyboardOpen;
     keyboardOpen = fullHeight - height > KEYBOARD_MIN_SHRINK;
     if (wasOpen && !keyboardOpen) scheduleKeyboardReset();
-    if (ui.get().keysHidden !== keyboardOpen) ui.set({ keysHidden: keyboardOpen }); // the on-screen keyboard has its own keys; the function keys come back when it closes
     document.documentElement.style.setProperty('--h5-height', `${Math.round(height)}px`);
     if (window.scrollY) window.scrollTo(0, 0);
     holdTerminalSize();
@@ -93,22 +93,31 @@
       noScreenKeyboard(session.term);
     }, KEYBOARD_RESET_DELAY_MS);
   }
-  // While the keyboard is open the terminal keeps its closed height, aligned to the bottom of the (shorter) box so the cursor stays visible.
+  // The terminal is never resized for the translate bar or the keyboard, only moved. While the keyboard is open it keeps its closed height, aligned to the
+  // bottom of the (shorter) box; the translate bar growing over the terminal (`barExtra`, see syncBar()) hides more of the bottom. Both are covered by ONE
+  // translateY, so the two never add up twice. The shift is capped so the cursor row stays on screen (a shell prompt near the top).
+  let barOverlap = 0;
+  let barExtra = 0; // px the translate bar currently extends over the bottom of the terminal box
   function holdTerminalSize() {
     const el = session && session.el;
     if (!el) return;
-    if (!keyboardOpen || !closedTerminalHeight) {
+    const pinned = keyboardOpen && closedTerminalHeight;
+    if (!pinned && !barExtra) {
       el.style.removeProperty('height');
       el.style.removeProperty('bottom');
       el.style.removeProperty('transform');
       return;
     }
-    // Shift up by the hidden height, but keep the cursor row on screen when it sits near the top (a shell prompt).
-    const hidden = Math.max(0, closedTerminalHeight - terminalHost.clientHeight);
+    const hidden = (pinned ? Math.max(0, closedTerminalHeight - terminalHost.clientHeight) : 0) + barExtra;
     const screen = el.querySelector('.xterm-screen');
     const shift = TerminalViewport.keyboardShift(session.term, screen ? screen.clientHeight : 0, hidden);
-    el.style.height = `${closedTerminalHeight - 6}px`; // the terminal sits 4px from the top and 2px from the bottom of its box
-    el.style.bottom = 'auto';
+    if (pinned) {
+      el.style.height = `${closedTerminalHeight - 6}px`; // the terminal sits 4px from the top and 2px from the bottom of its box
+      el.style.bottom = 'auto';
+    } else {
+      el.style.removeProperty('height');
+      el.style.removeProperty('bottom');
+    }
     el.style.transform = shift ? `translateY(${-shift}px)` : '';
   }
   new ResizeObserver(() => { if (!keyboardOpen) closedTerminalHeight = terminalHost.clientHeight; }).observe(terminalHost);
@@ -1356,6 +1365,11 @@
   ui.actions.selectionCancel = () => { if (session && !session.disposed) session.term.clearSelection(); ui.set({ selectionBar: false }); };
 
   // A tap on a key of the key bar (the shell keeps the focus where it is, so tapping keys does not open or close the on-screen keyboard).
+  // Types a preset command into the terminal like a paste; no Enter is sent, so the user checks it and presses Enter.
+  ui.actions.insertCommand = command => {
+    if (uploading || !connected(session)) { tell('The terminal is not connected', 'error'); return; }
+    session.term.paste(command);
+  };
   ui.actions.key = item => {
     if (item.modifier) {
       mods[item.modifier] = !mods[item.modifier];
@@ -1376,7 +1390,7 @@
     const input = translateInput;
     input.style.height = '';
     input.style.overflowY = 'hidden';
-    if (!input.value) { holdTerminalSize(); return; } // empty: the natural height of rows=1
+    if (!input.value) { syncBar(); return; } // empty: the natural height of rows=1
     const style = getComputedStyle(input);
     const lineHeight = parseFloat(style.lineHeight) || (parseFloat(style.fontSize) || 15) * 1.4375;
     const padding = (parseFloat(style.paddingTop) || 0) + (parseFloat(style.paddingBottom) || 0);
@@ -1385,9 +1399,27 @@
     const wanted = Math.min(input.scrollHeight, cap);
     input.style.height = `${style.boxSizing === 'border-box' ? wanted + border : wanted - padding}px`;
     input.style.overflowY = input.scrollHeight > cap ? 'auto' : 'hidden';
-    holdTerminalSize(); // with the keyboard open the terminal keeps its closed height; its shift follows the box
+    syncBar(); // the bar grows over the terminal; the terminal is moved, not resized
   }
-  async function translate() {
+  // The translation keeps its line breaks only when the program in the terminal reads a paste as one paste (bracketed paste mode, as Claude Code does). Then it
+  // goes in as ONE bracketed paste, so no line is run on its own. Without that mode a shell would run every line at once, so the lines are joined with spaces.
+  // Control characters (ESC included) are removed in both cases, so the text cannot carry its own paste end marker or any key sequence.
+  const LINE_CONTROLS = new RegExp('[\\u0000-\\u0009\\u000b\\u000c\\u000e-\\u001f\\u007f-\\u009f]+', 'g');
+  function pasteText(raw) {
+    const lines = String(raw).replace(/\r\n?|\u2028|\u2029/g, '\n').replace(LINE_CONTROLS, ' ').split('\n').map(line => line.replace(/\s+/g, ' ').trim());
+    return lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  }
+  function sendTranslation(target, raw) {
+    const text = pasteText(raw);
+    if (!text) return false;
+    if (!text.includes('\n')) return send(target, text);
+    if (target.term && target.term.modes && target.term.modes.bracketedPasteMode) return send(target, `\x1b[200~${text.replace(/\n/g, '\r')}\x1b[201~`);
+    return send(target, TerminalTranslate.sanitize(text));
+  }
+  // Two ways to send what is in the box. Translate button: translate first, then send the English result. Send arrow: send the text as typed, with no translation
+  // and no request to the translator. Both use the same safe rules (sendTranslation: control characters removed, bracketed paste or lines joined) and then one Enter.
+  // When the translation fails nothing is sent, the error is shown and the text stays in the box.
+  async function submitBox(translateFirst) {
     const text = translateInput.value.trim();
     if (translating || !text) return;
     const target = session;
@@ -1395,15 +1427,19 @@
     translating = true;
     ui.set({ translating: true });
     try {
-      const result = await api('POST', '/api/translate', { text });
-      const english = TerminalTranslate.sanitize(result && result.text);
-      if (!english) throw new Error('Translation result is empty');
-      if (!send(target, english)) throw new Error('Terminal not connected; translation was not sent');
+      let outgoing = text;
+      if (translateFirst) {
+        const result = await api('POST', '/api/translate', { text });
+        outgoing = result && result.text;
+        if (!pasteText(outgoing)) throw new Error('Translation result is empty');
+      } else if (!pasteText(outgoing)) throw new Error('Nothing to send');
+      if (!sendTranslation(target, outgoing)) throw new Error('Terminal not connected; the text was not sent');
       setTimeout(() => send(target, '\r'), SUBMIT_DELAY_MS);
       translateInput.value = '';
       autosize();
+      relayoutBar(); // the box is empty again: the bar may go back to its resting layout
     } catch (error) {
-      const message = error.message || 'Translation failed';
+      const message = error.message || (translateFirst ? 'Translation failed' : 'Send failed');
       tell(message, 'error');
       if (/not configured/i.test(message)) tell('Set up the translation service in Settings');
     } finally {
@@ -1411,15 +1447,117 @@
       ui.set({ translating: false });
     }
   }
-  translateForm.addEventListener('submit', event => { event.preventDefault(); void translate(); });
-  translateInput.addEventListener('keydown', event => {
-    if (event.key !== 'Enter' || event.shiftKey) return;
-    if (event.isComposing || event.keyCode === 229) return; // Enter that picks an IME candidate
-    event.preventDefault();
-    void translate();
+  translateForm.addEventListener('submit', event => { event.preventDefault(); void submitBox(false); }); // the send arrow: as typed
+  // Enter in the box is a new line (the browser inserts it and the `input` event runs autosize); only the Send button submits. There is no keydown handler on purpose.
+  translateInput.addEventListener('input', () => { autosize(); relayoutBar(); }); // the bar also changes layout when the box gains or loses text
+  $('h5-translate-button').addEventListener('click', () => void submitBox(true));
+  // The bar has two layouts (CSS only): one row at rest, and while it is active (the box has focus, a button is pressed, voice is recording, a
+  // translation runs) the box on row 1 and the voice and send buttons on row 2. The switch itself is instant (grid cannot be transitioned).
+  // The terminal box never changes size: the bar reserves only its resting height in the page layout and grows upward over the terminal (`--h5-bar-extra`
+  // is a negative top margin), so no fit and no PTY resize happens. The terminal is moved up by the covered height with one transform (holdTerminalSize),
+  // and that move, the three controls (FLIP: transform plus the width of the box) and the bar's own growth or shrink all animate over the same time.
+  // Nothing is animated frame by frame in layout terms, and nothing at all with prefers-reduced-motion.
+  const FLIP_MS = 180;
+  const FLIP_EASING = 'cubic-bezier(0.2, 0.7, 0.2, 1)';
+  const flipRoot = translateForm.querySelector('.h5-translate-input');
+  const flipItems = [flipRoot, $('h5-voice'), $('h5-add')]; // the send and translate buttons are only shown in the active layout
+  // Layout positions (offsets, so running transforms do not count), measured from the bottom of the bar because the bar grows upward.
+  const measureBar = () => {
+    const h = translateForm.offsetHeight;
+    const items = flipItems.map(el => ({ x: el.offsetLeft, y: el.offsetTop - h, w: el.offsetWidth }));
+    return { items, active: items[1].y >= items[0].y + flipRoot.offsetHeight - 1 }; // active: the buttons are below the box
+  };
+  let barLayout = measureBar();
+  let barHeight = translateForm.offsetHeight;
+  let flips = [];
+  let movingTimer = 0;
+  const finishFlips = () => { flips.forEach(animation => { try { animation.finish(); } catch { /* already gone */ } }); flips = []; };
+  const reducedMotion = () => window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  // The height the bar keeps in the page layout: its resting row (the voice button plus the bar's padding and border).
+  function barReserved() {
+    const style = getComputedStyle(translateForm);
+    const extras = ['paddingTop', 'paddingBottom', 'borderTopWidth', 'borderBottomWidth'].reduce((sum, key) => sum + (parseFloat(style[key]) || 0), 0);
+    // The resting row is as tall as the voice button or the one-line box, whichever is taller.
+    const input = getComputedStyle(translateInput);
+    const lineHeight = parseFloat(input.lineHeight) || (parseFloat(input.fontSize) || 15) * 1.4375;
+    const pad = (parseFloat(input.paddingTop) || 0) + (parseFloat(input.paddingBottom) || 0);
+    const border = input.boxSizing === 'border-box' ? (parseFloat(input.borderTopWidth) || 0) + (parseFloat(input.borderBottomWidth) || 0) : 0;
+    const wrap = flipRoot.getBoundingClientRect().height - translateInput.getBoundingClientRect().height; // the padding around the textarea
+    const oneLine = lineHeight + pad + border + wrap;
+    return Math.max($('h5-voice').getBoundingClientRect().height, oneLine) + extras;
+  }
+  // Called whenever the bar height may have changed. The page layout always gets exactly the reserved height (the margin takes the difference, positive or
+  // negative), so the terminal box cannot change by even a fraction of a pixel; what the bar covers is moved, not resized.
+  function syncBar(animate = false) {
+    const height = translateForm.getBoundingClientRect().height;
+    const overlap = height - barReserved();
+    const extra = Math.max(0, overlap);
+    if (overlap !== barOverlap) bottomArea.style.setProperty('--h5-bar-extra', `${overlap}px`);
+    barOverlap = overlap;
+    const delta = height - barHeight;
+    const moved = Math.abs(extra - barExtra) > 0.5;
+    barHeight = height;
+    barExtra = extra;
+    const el = session && session.el;
+    const motion = moved && !reducedMotion() && el && el.animate;
+    if (motion) {
+      el.classList.add('h5-bar-moving'); // CSS: transform transition + will-change, only while it moves
+      clearTimeout(movingTimer);
+      movingTimer = setTimeout(() => { if (el) el.classList.remove('h5-bar-moving'); }, FLIP_MS + 60);
+    }
+    holdTerminalSize();
+    if (motion && delta && bottomArea.animate) {
+      const grow = delta > 0;
+      const d = Math.abs(delta);
+      const frames = grow ? [{ clipPath: `inset(${d}px 0 0 0)` }, { clipPath: 'inset(0)' }] : [{ boxShadow: `0 -${d}px 0 0 var(--h5-bg)` }, { boxShadow: '0 0 0 0 var(--h5-bg)' }];
+      flips.push(bottomArea.animate(frames, { duration: FLIP_MS, easing: FLIP_EASING }));
+    }
+  }
+  function relayoutBar() {
+    const next = measureBar();
+    const before = barLayout;
+    // The focus event and the mutation observer both call this for one change: the second call finds nothing new and must not cut the animation short.
+    if (before.active === next.active && before.items.every((item, i) => item.x === next.items[i].x && item.y === next.items[i].y)) return;
+    finishFlips();
+    barLayout = next;
+    const changed = before.active !== next.active;
+    syncBar(changed);
+    if (!changed || reducedMotion() || !flipRoot.animate) return;
+    flipItems.forEach((el, i) => {
+      const dx = before.items[i].x - next.items[i].x;
+      const dy = before.items[i].y - next.items[i].y;
+      if (!dx && !dy && before.items[i].w === next.items[i].w) return;
+      const from = { transform: `translate(${dx}px, ${dy}px)` };
+      const to = { transform: 'none' };
+      if (i === 0 && before.items[0].w !== next.items[0].w) { from.width = `${before.items[0].w}px`; to.width = `${next.items[0].w}px`; }
+      flips.push(el.animate([from, to], { duration: FLIP_MS, easing: FLIP_EASING }));
+    });
+  }
+  new MutationObserver(relayoutBar).observe(translateForm, { attributes: true, subtree: true, attributeFilter: ['class', 'data-hold', 'data-menu'] });
+  // The bar size also changes when the window turns or the font loads: keep the overlap and the measured layout current (no animation).
+  new ResizeObserver(() => { if (!flips.length) { barLayout = measureBar(); syncBar(false); } }).observe(translateForm);
+  autosize(); // the first height (and the first syncBar) once the bar state exists
+  // A press on a button: the controls jump to their final places first and the button captures the pointer, so a tap during the animation still ends
+  // on the same button. `data-hold` keeps an already active layout from collapsing until a moment after the release; a press at rest does not expand it.
+  const PRESS_HOLD_MS = 400;
+  let pressTimer = 0;
+  translateForm.addEventListener('pointerdown', event => {
+    const button = event.target.closest && event.target.closest('button');
+    if (!button) return;
+    finishFlips();
+    if (button.setPointerCapture) { try { button.setPointerCapture(event.pointerId); } catch { /* pointer already gone */ } }
+    clearTimeout(pressTimer);
+    if (barLayout.active) translateForm.setAttribute('data-hold', '');
   });
-  translateInput.addEventListener('input', autosize);
-  autosize();
+  const endPress = () => {
+    if (!translateForm.hasAttribute('data-hold')) return;
+    clearTimeout(pressTimer);
+    pressTimer = setTimeout(() => translateForm.removeAttribute('data-hold'), PRESS_HOLD_MS);
+  };
+  window.addEventListener('pointerup', endPress);
+  window.addEventListener('pointercancel', endPress);
+  translateForm.addEventListener('focusin', relayoutBar);
+  translateForm.addEventListener('focusout', relayoutBar);
 
   // ── Image upload: the Client uploads to OSS and the link is typed into the terminal without Enter ──
   let pickedFor = null;

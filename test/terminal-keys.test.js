@@ -7,6 +7,8 @@ test('terminal keys encode escape, navigation and Option+Up', () => {
   assert.equal(encode('ArrowUp', {alt:true}), '\x1b[1;3A');
   assert.equal(encode('ArrowUp', {alt:true,ctrl:true}), '\x1b[1;7A');
   assert.equal(encode('Tab', {shift:true}), '\x1b[Z');
+  assert.equal(encode('Insert'), '\x1b[2~');
+  assert.equal(encode('PageUp'), '\x1b[5~');
 });
 test('modifier combinations encode control characters and Command', () => {
   assert.equal(encode('c', {ctrl:true}), '\x03');

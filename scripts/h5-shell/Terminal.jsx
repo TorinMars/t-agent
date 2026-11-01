@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import IconButton from '@mui/material/IconButton';
@@ -5,7 +6,14 @@ import OutlinedInput from '@mui/material/OutlinedInput';
 import Paper from '@mui/material/Paper';
 import ToggleButton from '@mui/material/ToggleButton';
 import MicIcon from '@mui/icons-material/Mic';
-import SendIcon from '@mui/icons-material/Send';
+import AddIcon from '@mui/icons-material/Add';
+import ArrowBackIcon from '@mui/icons-material/ArrowBack';
+import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward';
+import CloseIcon from '@mui/icons-material/Close';
+import ContentPasteIcon from '@mui/icons-material/ContentPasteOutlined';
+import ImageIcon from '@mui/icons-material/ImageOutlined';
+import TerminalIcon from '@mui/icons-material/Terminal';
+import TranslateIcon from '@mui/icons-material/Translate';
 import { t } from './common.jsx';
 
 // The terminal area. h5.js puts the xterm element in after these two; React draws only the note, the wheel strip (h5.js handles its touches) and the selection bar.
@@ -24,45 +32,115 @@ export function TerminalArea({ state, ui }) {
   );
 }
 
-// The Chinese-to-English box. The textarea is the plain DOM one that voice-input.js and h5.js read and write directly (value, height; `autosize()` in h5.js keeps it at one line, growing to two); Material UI draws around it.
-export function TranslateBar({ state }) {
+// The commands of the "Insert command" list. Edit this list to change the presets (there is no user editing yet).
+// A tap puts the text into the terminal input like a paste and does NOT press Enter, so the user checks it and presses Enter.
+export const INSERT_COMMANDS = ['ls -la', 'pwd', 'git status', 'git diff', 'git log --oneline -10', 'clear', 'claude', 'exit'];
+
+// The bottom area: the function keys (one row that scrolls sideways) above the message bar. One box holds both so that, when the bar grows over the
+// terminal, the keys move up with it and stay visible (h5.js sets `--h5-bar-extra` on this box and moves the terminal; the terminal is never resized).
+export function BottomArea({ state, ui }) {
+  const [menu, setMenu] = useState(null); // null, 'add' (the add menu) or 'commands' (the preset commands)
+  useEffect(() => {
+    if (!menu) return undefined;
+    // A tap outside the menu (and outside the plus button) or Escape closes it.
+    const away = event => { if (!event.target.closest('.h5-add-menu, #h5-add')) setMenu(null); };
+    const escape = event => { if (event.key === 'Escape') setMenu(null); };
+    document.addEventListener('pointerdown', away, true);
+    document.addEventListener('keydown', escape);
+    return () => { document.removeEventListener('pointerdown', away, true); document.removeEventListener('keydown', escape); };
+  }, [menu]);
+  const run = action => { setMenu(null); action(); };
+  const rows = menu === 'commands'
+    ? [{ icon: <ArrowBackIcon />, label: 'Insert command', run: () => setMenu('add'), head: true }, ...INSERT_COMMANDS.map(command => ({ label: command, mono: true, run: () => run(() => ui.actions.insertCommand(command)) }))]
+    : [
+      { icon: <ImageIcon />, label: 'Upload image', run: () => run(() => ui.actions.key({ action: 'image' })) },
+      { icon: <ContentPasteIcon />, label: 'Paste text', run: () => run(() => ui.actions.key({ action: 'paste' })) },
+      { icon: <TerminalIcon />, label: 'Insert command', run: () => setMenu('commands') },
+    ];
   return (
-    <Box component="form" className="h5-translate" id="h5-translate" autoComplete="off" sx={{ flex: '0 0 auto', display: 'flex', alignItems: 'flex-end', gap: 1, px: 1, pt: 1, borderTop: 1, borderColor: 'divider' }}>
-      <OutlinedInput
-        id="h5-translate-input" className={`h5-translate-input${state.translating ? ' translating' : ''}`} fullWidth size="small" inputComponent="textarea" readOnly={state.translating}
-        placeholder={t('Chinese → English, then send')}
-        inputProps={{ rows: 1, maxLength: 4000, enterKeyHint: 'send', 'aria-label': t('Chinese input, translated to English and sent to the terminal'), style: { resize: 'none' } }}
-        sx={{ alignItems: 'flex-end', py: 0.25, fontSize: 15, bgcolor: 'action.hover', '& fieldset': { borderColor: 'transparent' } }}
-      />
-      <IconButton id="h5-voice" className="h5-voice" sx={{ width: 40, height: 40 }} title={t('Voice input: hold to speak, release to stop')} aria-label={t('Voice input')} aria-pressed="false"><MicIcon /></IconButton>
-      <Button type="submit" id="h5-translate-send" className="h5-translate-send" variant="contained" disabled={state.translating} endIcon={<SendIcon />} sx={{ flex: '0 0 auto', height: 40 }}>{t('Send')}</Button>
+    <Box className="h5-bottom" id="h5-bottom" sx={{ flex: '0 0 auto', position: 'relative', zIndex: 3, bgcolor: 'var(--h5-bg)', marginTop: 'calc(var(--h5-bar-extra, 0px) * -1)', pb: 'max(8px, env(safe-area-inset-bottom))' }}>
+      {menu ? (
+        <Paper
+          className="h5-add-menu" role="menu" aria-label={t('Add')} elevation={8} onMouseDown={event => event.preventDefault()}
+          sx={{ position: 'absolute', left: 8, bottom: 'calc(100% + 8px)', width: 240, maxHeight: '60vh', overflowY: 'auto', borderRadius: 2, border: 1, borderColor: 'divider', zIndex: 4 }}
+        >
+          {rows.map((row, index) => (
+            <Button
+              key={row.label} role="menuitem" fullWidth color="inherit" onClick={row.run} startIcon={row.icon}
+              sx={{ justifyContent: 'flex-start', height: 44, borderRadius: 0, px: 2, textTransform: 'none', fontSize: 15, fontFamily: row.mono ? 'ui-monospace, Menlo, monospace' : undefined, borderTop: index ? 1 : 0, borderColor: 'divider', ...(row.head ? { color: 'text.secondary' } : null) }}
+            >{row.mono ? row.label : t(row.label)}</Button>
+          ))}
+        </Paper>
+      ) : null}
+      <KeyBar state={state} ui={ui} />
+      <TranslateBar state={state} menu={menu} onMenu={setMenu} />
     </Box>
   );
 }
 
-// Six columns, three rows. `at` is [row, column]; `wide` spans two columns. The arrows sit like a keyboard's cluster (an inverted T) in the
-// right half of the last two rows: ↑ above ↓, ← and → beside ↓. The cells beside ↑ stay empty.
+// The message box. The textarea is the plain DOM one that voice-input.js and h5.js read and write directly (value, height; `autosize()` in h5.js keeps it at one line, growing to two); Material UI draws around it.
+// One grid, one element tree. At rest: the plus button, the box and the voice button share one row (a pill). While the bar is "active" the box takes row 1 across the
+// full width and the buttons sit on row 2: plus (it becomes a cross while its menu is open) at the left, voice, translate (and send) and send (as typed) at the right.
+// Active = the box has focus (`:focus-within`), or it holds text, or a button is being pressed (`data-hold`, set by h5.js), or the add menu is open (`data-menu`),
+// or the voice input is recording (`:has(.listening)`), or a translation is running (class `translating`).
+// Only the CSS changes between the two states, so the textarea is never remounted and keeps its focus.
+// The bar reserves only its resting height in the page layout. What it grows beyond that is `--h5-bar-extra`, set by h5.js on `#h5-bottom`, pulled back by a negative top margin
+// there, so the bar grows upward OVER the terminal and the terminal box never changes size (no fit, no PTY resize); h5.js moves the terminal instead.
+const BUTTON_ROW = { gridRow: 2 };
+const ACTIVE = {
+  gridTemplateColumns: 'auto 1fr auto auto auto',
+  borderRadius: '22px',
+  '& .h5-translate-input': { gridColumn: '1 / -1', gridRow: 1 },
+  '& #h5-add': { gridColumn: 1, ...BUTTON_ROW }, '& #h5-voice': { gridColumn: 3, ...BUTTON_ROW },
+  '& #h5-translate-button': { display: 'inline-flex', gridColumn: 4, ...BUTTON_ROW }, '& #h5-translate-send': { display: 'inline-flex', gridColumn: 5, ...BUTTON_ROW },
+};
+const ROUND = { width: 40, height: 40 };
+export function TranslateBar({ state, menu, onMenu }) {
+  return (
+    <Box
+      component="form" className={`h5-translate${state.translating ? ' translating' : ''}`} id="h5-translate" autoComplete="off" data-menu={menu ? '' : undefined}
+      onMouseDown={event => { if (event.target.closest('button')) event.preventDefault(); }}
+      sx={{
+        position: 'relative', mx: 1, mt: 0.75, display: 'grid', gridTemplateColumns: 'auto 1fr auto', alignItems: 'end', columnGap: 0.5, rowGap: 0.5, px: 0.75, py: 0.75, border: 1, borderColor: 'divider', borderRadius: '28px', bgcolor: 'action.hover',
+        '& #h5-translate-button, & #h5-translate-send': { display: 'none' },
+        '&:focus-within, &[data-hold], &[data-menu], &.translating, &:has(.h5-translate-input textarea:not(:placeholder-shown))': ACTIVE,
+        '&:has(.h5-voice.listening)': ACTIVE,
+      }}
+    >
+      <IconButton id="h5-add" className="h5-add" type="button" sx={ROUND} aria-haspopup="menu" aria-expanded={Boolean(menu)} title={t(menu ? 'Close menu' : 'Add')} aria-label={t(menu ? 'Close menu' : 'Add')} onClick={() => onMenu(menu ? null : 'add')}>{menu ? <CloseIcon /> : <AddIcon />}</IconButton>
+      <OutlinedInput
+        id="h5-translate-input" className={`h5-translate-input${state.translating ? ' translating' : ''}`} fullWidth size="small" inputComponent="textarea" readOnly={state.translating}
+        placeholder={t('Chinese → English, then send')}
+        inputProps={{ rows: 1, maxLength: 4000, enterKeyHint: 'enter', 'aria-label': t('Chinese input, translated to English and sent to the terminal'), style: { resize: 'none' } }}
+        sx={{ alignItems: 'flex-end', py: 0.25, fontSize: 15, bgcolor: 'transparent', '& fieldset': { borderColor: 'transparent' } }}
+      />
+      <IconButton id="h5-voice" className="h5-voice" sx={ROUND} title={t('Voice input: hold to speak, release to stop')} aria-label={t('Voice input')} aria-pressed="false"><MicIcon /></IconButton>
+      <IconButton id="h5-translate-button" type="button" disabled={state.translating} sx={{ ...ROUND, border: 1, borderColor: 'divider', borderRadius: 2 }} title={t('Translate to English and send')} aria-label={t('Translate and send')}><TranslateIcon /></IconButton>
+      <IconButton type="submit" id="h5-translate-send" className="h5-translate-send" disabled={state.translating} sx={{ ...ROUND, borderRadius: 2, bgcolor: '#fff', color: '#111', '&:hover': { bgcolor: '#e6e6e6' }, '&.Mui-disabled': { bgcolor: 'action.disabledBackground', color: 'action.disabled' } }} title={t('Send as typed, without translating')} aria-label={t('Send')}><ArrowUpwardIcon /></IconButton>
+    </Box>
+  );
+}
+
+// One row that scrolls sideways. The first keys are the ones of the reference design; the keys after them are the rest of the old key grid.
 const KEYS = [
-  { key: 'Escape', label: 'Esc', at: [1, 1] }, { key: 'Tab', label: 'Tab', at: [1, 2] },
-  { modifier: 'ctrl', label: 'Ctrl', at: [1, 3] }, { modifier: 'alt', label: 'Alt', at: [1, 4] }, { modifier: 'shift', label: 'Shift', at: [1, 5] },
-  { action: 'keyboard', label: '⌨', aria: 'Show or hide the on-screen keyboard', at: [1, 6] },
-  { action: 'paste', label: 'Paste', at: [2, 1] }, { action: 'image', label: 'Image', aria: 'Upload image', at: [2, 2] }, { key: 'Backspace', label: '⌫', aria: 'Backspace', at: [2, 3] },
-  { key: 'Enter', label: 'Enter', wide: true, at: [3, 1] }, { shortcut: 'ctrl-c', label: '^C', aria: 'Send Ctrl+C', at: [3, 3] },
-  { key: 'ArrowUp', label: '↑', aria: 'ArrowUp', at: [2, 5] },
-  { key: 'ArrowLeft', label: '←', aria: 'ArrowLeft', at: [3, 4] }, { key: 'ArrowDown', label: '↓', aria: 'ArrowDown', at: [3, 5] }, { key: 'ArrowRight', label: '→', aria: 'ArrowRight', at: [3, 6] },
+  { action: 'keyboard', label: '⌨', aria: 'Show or hide the on-screen keyboard' }, // first, so it is on screen when the row starts at the left
+  { key: 'Escape', label: 'Esc' }, { key: 'Tab', label: 'Tab' }, { modifier: 'ctrl', label: 'Ctrl' }, { modifier: 'alt', label: 'Alt' },
+  { key: 'ArrowLeft', label: '←', aria: 'ArrowLeft' }, { key: 'ArrowDown', label: '↓', aria: 'ArrowDown' }, { key: 'ArrowUp', label: '↑', aria: 'ArrowUp' }, { key: 'ArrowRight', label: '→', aria: 'ArrowRight' },
+  { key: 'Home', label: 'Home' }, { key: 'End', label: 'End' }, { key: 'PageUp', label: 'PgUp', aria: 'PageUp' }, { key: 'PageDown', label: 'PgDn', aria: 'PageDown' }, { key: 'Insert', label: 'Ins', aria: 'Insert' },
+  { key: 'Delete', label: 'Del', aria: 'Delete' }, { modifier: 'shift', label: 'Shift' }, { key: 'Enter', label: 'Enter' }, { key: 'Backspace', label: '⌫', aria: 'Backspace' },
+  { shortcut: 'ctrl-c', label: '^C', aria: 'Send Ctrl+C' },
 ];
 
-// The function keys. A tap keeps the focus where it is (mouse down is stopped), so it neither opens nor closes the on-screen keyboard.
+// The function keys. A tap keeps the focus where it is (mouse down is stopped), so it neither opens nor closes the on-screen keyboard. They stay visible while the on-screen keyboard is open.
 export function KeyBar({ state, ui }) {
   return (
     <Box
-      className="h5-keys" id="h5-keys" role="toolbar" aria-label={t('Terminal keys')} hidden={state.keysHidden}
+      className="h5-keys" id="h5-keys" role="toolbar" aria-label={t('Terminal keys')}
       onMouseDown={event => event.preventDefault()}
-      sx={{ flex: '0 0 auto', display: state.keysHidden ? 'none' : 'grid', gridTemplateColumns: 'repeat(6, minmax(0, 1fr))', gap: 0.75, p: 1, pb: 'max(8px, env(safe-area-inset-bottom))' }}
+      sx={{ display: 'flex', gap: 0.75, px: 1, pt: 0.75, overflowX: 'auto', overscrollBehaviorX: 'contain', scrollbarWidth: 'none', '&::-webkit-scrollbar': { display: 'none' }, WebkitMaskImage: 'linear-gradient(to right, #000 calc(100% - 28px), transparent)', maskImage: 'linear-gradient(to right, #000 calc(100% - 28px), transparent)' }}
     >
       {KEYS.map(item => {
-        // Flat keys: a quiet fill, no outline; a latched modifier takes the accent colour.
-        const common = { key: item.label, size: 'small', 'aria-label': item.aria ? t(item.aria) : undefined, sx: { minWidth: 0, px: 0.5, height: 38, border: 0, borderRadius: 2, color: 'text.primary', bgcolor: 'action.hover', gridRow: item.at[0], gridColumn: item.wide ? `${item.at[1]} / span 2` : item.at[1], '&:hover': { bgcolor: 'action.selected' }, '&.Mui-selected, &.Mui-selected:hover': { bgcolor: 'primary.main', color: 'primary.contrastText' } } };
+        const common = { key: item.label, size: 'small', 'aria-label': item.aria ? t(item.aria) : undefined, sx: { flex: '0 0 auto', minWidth: 44, px: 1.25, height: 34, border: 1, borderColor: 'divider', borderRadius: 2, color: 'text.primary', bgcolor: 'action.hover', textTransform: 'none', '&:hover': { bgcolor: 'action.selected' }, '&.Mui-selected, &.Mui-selected:hover': { bgcolor: 'rgba(41, 182, 246, .18)', borderColor: 'primary.main', color: 'primary.light' } } };
         const data = item.key ? { 'data-key': item.key } : item.modifier ? { 'data-modifier': item.modifier } : item.action ? { 'data-action': item.action } : { 'data-shortcut': item.shortcut };
         if (item.modifier) {
           const on = Boolean(state.mods[item.modifier]);

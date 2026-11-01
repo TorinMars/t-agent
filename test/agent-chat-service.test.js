@@ -153,6 +153,14 @@ test('Claude messages become text, thinking and tool items; streamed text is rep
   normalizer.handle({ type: 'assistant', parent_tool_use_id: 'toolu_x', message: { id: 'msg_sub2', content: [{ type: 'tool_use', id: 'toolu_sub', name: 'Read', input: { file_path: '/a' } }] } });
   normalizer.handle({ type: 'user', parent_tool_use_id: 'toolu_x', message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_sub', content: 'data', is_error: false }] } });
   assert.deepEqual([ctx.items.get('toolu_sub').parentToolUseId, ctx.items.get('toolu_sub').status, ctx.items.get('toolu_sub').output], ['toolu_x', 'done', 'data']);
+  const before = ctx.items.size;
+  normalizer.handle({ type: 'user', parent_tool_use_id: 'toolu_x', uuid: 'u-sent', message: { content: 'Please continue' } });
+  assert.deepEqual([ctx.items.get('user:u-sent').kind, ctx.items.get('user:u-sent').text, ctx.items.get('user:u-sent').parentToolUseId], ['user', 'Please continue', 'toolu_x'], 'a text message sent to a sub-agent shows in its view');
+  normalizer.handle({ type: 'user', parent_tool_use_id: 'toolu_x', message: { content: [{ type: 'text', text: 'Second' }] } });
+  assert.equal(ctx.items.size, before + 2, 'a message without a uuid still gets an item of its own');
+  normalizer.handle({ type: 'user', message: { content: 'main prompt' } });
+  normalizer.handle({ type: 'user', parent_tool_use_id: 'toolu_x', message: { content: '<command-name>/x</command-name>' } });
+  assert.equal(ctx.items.size, before + 2, 'main-agent prompts (already added by the service) and injected context are not added');
   const result = normalizer.handle({ type: 'result', subtype: 'success', session_id: 's-1', total_cost_usd: 0.01, usage: { input_tokens: 3, output_tokens: 4 } });
   assert.deepEqual([result.ok, result.usage, ctx.session], [true, { input: 3, output: 4 }, 's-1']);
   assert.equal(normalizer.handle({ type: 'result', subtype: 'error_max_turns' }).ok, false);
@@ -1297,4 +1305,67 @@ test('a tool still running when the turn ends is marked as ended, and /clear emp
   await wait(() => !chat.list(own.id).find(row => row.id === a.id).running);
   snap = await chat.snapshot(own, a.id);
   assert.deepEqual(snap.conversation.context, { used: 0, window: 200000 }, 'the percentage starts again from zero');
+});
+
+test('Claude: a turn keeps Claude Code alive while a background task runs, closes it after the answer to the last one, and a new turn of the session ends an older process', async () => {
+  const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+  const controlled = () => {
+    const queue = [];
+    let wake = null;
+    let done = false;
+    const query = {
+      closes: 0,
+      push(message) { queue.push({ session_id: 'sess-bg', ...message }); if (wake) wake(); },
+      close() { query.closes += 1; done = true; if (wake) wake(); },
+      [Symbol.asyncIterator]() {
+        return { next: async () => { while (!queue.length && !done) await new Promise(resolve => { wake = resolve; }); return queue.length ? { value: queue.shift(), done: false } : { value: undefined, done: true }; } };
+      },
+    };
+    return query;
+  };
+  const run = (query, extra = {}, sessionId) => claude.runTurn({
+    cwd: '/w', sessionId, mode: 'ask', prompt: { text: 'x' }, signal: new AbortController().signal,
+    ctx: { upsert() {}, append() {}, getItem() {}, setSession() {} }, requestPermission: async () => ({ allow: true }),
+    deps: { loadSdk: async () => ({ query: () => query }), executable: undefined, suggestionWaitMs: 30, backgroundWaitMs: 400, ...extra },
+  });
+  const result = { type: 'result', subtype: 'success', is_error: false };
+
+  const plain = controlled();
+  await run(plain.push({ ...result }) || plain);
+  await sleep(80);
+  assert.equal(plain.closes, 1, 'with no background task Claude Code is closed soon after the result');
+
+  const bg = controlled();
+  bg.push({ type: 'system', subtype: 'task_started', task_id: 't1', is_backgrounded: true });
+  bg.push({ ...result });
+  const outcome = await run(bg);
+  assert.equal(outcome.ok, true, 'the turn itself ends at the result');
+  await sleep(120);
+  assert.equal(bg.closes, 0, 'a background task is still running: Claude Code is kept alive');
+  bg.push({ type: 'system', subtype: 'task_notification', task_id: 't1', status: 'completed' });
+  bg.push({ type: 'assistant', message: { id: 'again', content: [{ type: 'text', text: 'it finished' }] } });
+  await sleep(120);
+  assert.equal(bg.closes, 0, 'the answer to the finished task is still coming');
+  bg.push({ ...result });
+  await sleep(120);
+  assert.equal(bg.closes, 1, 'closed after the answer to the last task');
+
+  const stuck = controlled();
+  stuck.push({ type: 'system', subtype: 'background_tasks_changed', tasks: [{ task_id: 'x' }] });
+  stuck.push({ ...result });
+  await run(stuck, { backgroundWaitMs: 100 });
+  await sleep(250);
+  assert.equal(stuck.closes, 1, 'a task that never ends does not keep it alive for ever');
+
+  const older = controlled();
+  older.push({ type: 'system', subtype: 'task_started', task_id: 't2' });
+  older.push({ ...result });
+  await run(older);
+  await sleep(40);
+  assert.equal(older.closes, 0);
+  const next = controlled();
+  next.push({ ...result });
+  await run(next, {}, 'sess-bg');
+  assert.equal(older.closes, 1, 'a new turn of the same session ends the process that was kept for background tasks');
+  await sleep(80);
 });

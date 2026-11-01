@@ -2178,3 +2178,4 @@ Usage, notifications and phone sidebar changes:
 > v2.84.54 Agent chat: sub-agents are shown as tabs and can be opened read-only; the phone page shows the model and thinking effort on one stacked button; Claude Code ends with its process group, stale running tools are marked as ended, and /clear resets the context.
 > v2.84.55 Sub-agent tabs show the sub-agent's text: the SDK now forwards it (forwardSubagentText), and a reopened session reads each sub-agent's own transcript.
 > v2.85.0 Agent chat: sub-agents are child rows under their chat in the phone sidebar; answered AskUserQuestion questions stay visible as a card
+> v2.85.1 Messages sent to a sub-agent show in its view, and Claude Code is kept alive after a turn while background tasks (sub-agents) still run, instead of being closed 20 seconds after the result

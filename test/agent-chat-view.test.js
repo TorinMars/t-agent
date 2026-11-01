@@ -759,3 +759,17 @@ test('an answered AskUserQuestion stays visible as its own part, with the answer
   assert.deepEqual([...questionAnswers(output)], [['Which db?', 'Postgres'], ['Pick "x"', 'a, b']]);
   assert.equal(questionAnswers('The person skipped the question').size, 0);
 });
+
+test('a sub-agent view starts with the prompt the main agent gave it, once', async () => {
+  const { viewItems } = await import('../scripts/agent-chat/format.mjs');
+  const call = { id: 'task_1', kind: 'tool', name: 'Agent', input: { description: 'Do it', prompt: 'Run the loop' }, status: 'done', at: 5 };
+  const inside = { id: 'm1:0', kind: 'text', text: 'finished', parentToolUseId: 'task_1' };
+  const main = { id: 'main:0', kind: 'text', text: 'launched' };
+  const shown = viewItems([main, call, inside], 'task_1');
+  assert.deepEqual(shown.map(item => [item.kind, item.text]), [['user', 'Run the loop'], ['text', 'finished']], 'the prompt comes first, taken from the call');
+  assert.equal(shown[0].at, 5);
+  const loaded = { id: 'user:u1', kind: 'user', text: 'Run the loop', parentToolUseId: 'task_1' };
+  assert.deepEqual(viewItems([main, call, loaded, inside], 'task_1').map(item => item.id), ['user:u1', 'm1:0'], 'a prompt that the history has is not shown twice');
+  assert.deepEqual(viewItems([main, call, inside], '').map(item => item.id), ['main:0', 'task_1'], 'the main view is unchanged');
+  assert.deepEqual(viewItems([main, { ...call, input: {} }, inside], 'task_1').map(item => item.id), ['m1:0'], 'a call without a prompt adds nothing');
+});

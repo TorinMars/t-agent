@@ -127,7 +127,16 @@ export function subAgents(items) {
 }
 
 // The items of one view: the main agent (`viewId` empty) or the sub-agent started by the Task call `viewId`.
-export const viewItems = (items, viewId) => items.filter(item => (viewId ? item.parentToolUseId === viewId : !item.parentToolUseId));
+// A sub-agent's view starts with what the main agent told it (the `prompt` of the Task call). The live stream does not carry that message and the
+// history of a chat is read once, so it is taken from the call; a copy that the history already has is not shown twice.
+export function viewItems(items, viewId) {
+  if (!viewId) return items.filter(item => !item.parentToolUseId);
+  const own = items.filter(item => item.parentToolUseId === viewId);
+  const call = items.find(item => item.id === viewId && item.kind === 'tool' && isSubAgentCall(item.name));
+  const prompt = call && call.input && typeof call.input.prompt === 'string' ? call.input.prompt.trim() : '';
+  if (!prompt || own.some(item => item.kind === 'user' && String(item.text || '').trim() === prompt)) return own;
+  return [{ id: `prompt:${viewId}`, kind: 'user', text: prompt, parentToolUseId: viewId, ...(call.at ? { at: call.at } : {}) }, ...own];
+}
 
 // ── Questions the agent asked ──
 // The answers of an AskUserQuestion call, read from its result: `User has answered your questions: "Q1"="A1", "Q2"="A2". You can now ...`.

@@ -743,3 +743,19 @@ test('the plan usage bars: usage left and time left of each window', async () =>
   assert.deepEqual(limitBars({ label: '7d', usedPercent: 120, resetsAt: null }, now), { usage: 0, time: 0 }, 'no reset time, or too much used, gives an empty bar');
   assert.equal(limitBars({ label: '5h', usedPercent: 0, resetsAt: now + 99 * 3600000 }, now).time, 1, 'never above full');
 });
+
+test('an answered AskUserQuestion stays visible as its own part, with the answers read from the result', async () => {
+  const { toMessages } = await load();
+  const { questionAnswers } = await import('../scripts/agent-chat/format.mjs');
+  const output = 'User has answered your questions: "Which db?"="Postgres", "Pick \\"x\\""="a, b". You can now continue.';
+  const messages = toMessages([
+    { id: 'u1', kind: 'user', text: 'go' },
+    { id: 't0', kind: 'tool', name: 'Bash', input: { command: 'ls' }, output: 'x', status: 'done' },
+    { id: 't1', kind: 'tool', name: 'AskUserQuestion', input: { questions: [{ question: 'Which db?', header: 'DB' }] }, output, status: 'done' },
+    { id: 't2', kind: 'tool', name: 'Bash', input: { command: 'ls' }, output: 'x', status: 'done' },
+  ]);
+  assert.deepEqual(messages[1].content.map(part => part.name), ['tools', 'ask', 'tools'], 'the question is not folded into a group of tool calls');
+  assert.equal(messages[1].content[1].data.call.output, output);
+  assert.deepEqual([...questionAnswers(output)], [['Which db?', 'Postgres'], ['Pick "x"', 'a, b']]);
+  assert.equal(questionAnswers('The person skipped the question').size, 0);
+});

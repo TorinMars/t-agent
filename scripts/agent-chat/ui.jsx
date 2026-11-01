@@ -9,7 +9,7 @@ import remarkGfm from 'remark-gfm';
 import hljs from 'highlight.js/lib/common';
 import { toMessages } from './convert.mjs';
 import ReactMarkdown from 'react-markdown';
-import { callBrief, capitalize, diffLines, groupLabel, isSubAgentCall, limitBars, limitText, modelName, subAgents, tokens, viewItems, visibleLimits } from './format.mjs';
+import { callBrief, questionAnswers, capitalize, diffLines, groupLabel, isSubAgentCall, limitBars, limitText, modelName, subAgents, tokens, viewItems, visibleLimits } from './format.mjs';
 
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const MAX_FILE_CHARS = 200 * 1024;
@@ -115,6 +115,30 @@ function ToolStep({ call }) {
   );
 }
 
+// A question the agent asked, with what the person answered (or that it was skipped / is still waiting).
+function AskCard({ data }) {
+  const { call } = data;
+  const answers = questionAnswers(call.output);
+  const waiting = call.status === 'running';
+  return (
+    <section className={`ac-item ac-asked ${call.status}`} aria-label={t('Question')}>
+      {call.args.questions.map((entry, index) => {
+        const question = String((entry && entry.question) || '');
+        const answer = answers.get(question);
+        return (
+          <div className="ac-asked-q" key={index}>
+            <div className="ac-asked-text" translate="no">
+              {entry && entry.header ? <span className="ac-question-chip">{String(entry.header)}</span> : null}
+              <span>{question}</span>
+            </div>
+            <div className="ac-asked-answer" translate="no">{answer || <em>{t(waiting ? 'Waiting for your answer' : 'No answer')}</em>}</div>
+          </div>
+        );
+      })}
+    </section>
+  );
+}
+
 // The tool calls of a turn as one folded line ("Ran 2 commands"); opened, a card with a row per call.
 function ToolGroup({ data }) {
   const label = groupLabel(data.calls);
@@ -154,7 +178,7 @@ function Init({ data }) {
   );
 }
 
-const AGENT_PARTS = { Text: AgentText, Reasoning: Thinking, data: { by_name: { notice: Notice, init: Init, tools: ToolGroup } } };
+const AGENT_PARTS = { Text: AgentText, Reasoning: Thinking, data: { by_name: { notice: Notice, init: Init, tools: ToolGroup, ask: AskCard } } };
 const USER_PARTS = { Text: UserText, data: { by_name: { attachments: Attachments } } };
 
 // The line under a message: when it was sent, copy, start a chat from here (fork) and start a new chat. Its data comes from `toMessages` (by message id),
@@ -924,11 +948,14 @@ function SubAgentTabs({ agents, view, onPick }) {
   );
 }
 
-export const Chat = React.forwardRef(function Chat({ store, agent, conversation, onClose, notify, onOpenChat = () => {}, draft = null }, ref) {
+// `hostTabs`: the page that holds the chat lists the sub-agents itself (the phone sidebar), so the tab row is not drawn; `onViews` tells it the list and the open view.
+export const Chat = React.forwardRef(function Chat({ store, agent, conversation, onClose, notify, onOpenChat = () => {}, draft = null, hostTabs = false, onViews = () => {} }, ref) {
   const state = useSyncExternalStore(store.subscribe, store.getState);
   const [view, setView] = useState('');
   const agents = useMemo(() => subAgents(state.items), [state.items]);
   const current = view && agents.some(agent => agent.id === view) ? view : ''; // a view that is gone (/clear) falls back to the main agent
+  useEffect(() => { onViews({ agents, view: current }); }, [agents, current]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => () => onViews({ agents: [], view: '' }), []); // eslint-disable-line react-hooks/exhaustive-deps
   const messages = useMemo(() => toMessages(viewItems(state.items, current)), [state.items, current]);
   const subContext = useMemo(() => ({ known: new Set(agents.map(agent => agent.id)), open: setView }), [agents]);
   const footerContext = useMemo(() => ({
@@ -939,7 +966,7 @@ export const Chat = React.forwardRef(function Chat({ store, agent, conversation,
     newChat: async () => { const created = await store.newChat(); if (created) onOpenChat(created, {}); },
   }), [messages, state.status, state.canFork, store, notify, onOpenChat]);
   const inputRef = useRef(null);
-  useImperativeHandle(ref, () => ({ focus: () => inputRef.current && inputRef.current.focus() }), []);
+  useImperativeHandle(ref, () => ({ focus: () => inputRef.current && inputRef.current.focus(), setView }), []);
   const runtime = useExternalStoreRuntime({
     messages,
     isRunning: state.status === 'running',
@@ -960,7 +987,7 @@ export const Chat = React.forwardRef(function Chat({ store, agent, conversation,
         <AgentIcon agent={conversation.agent} />
         <TitleMenu title={state.title} store={store} onClose={onClose} />
       </header>
-      {agents.length ? <SubAgentTabs agents={agents} view={current} onPick={setView} /> : null}
+      {agents.length && !hostTabs ? <SubAgentTabs agents={agents} view={current} onPick={setView} /> : null}
       <AssistantRuntimeProvider runtime={runtime}><SubAgentContext.Provider value={subContext}><FooterContext.Provider value={footerContext}>
         <ThreadPrimitive.Root className="ac-thread">
           <ThreadPrimitive.Viewport className="ac-messages" role="log" aria-live="polite" scrollToBottomOnInitialize>

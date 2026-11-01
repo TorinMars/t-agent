@@ -326,3 +326,10 @@ body.wt-on .agent-chat .ac-text, body.wt-on .agent-chat .ac-user { cursor: point
 .ac-subagent-note { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 16px calc(10px + env(safe-area-inset-bottom, 0px)); border-top: 1px solid var(--ac-border); background: var(--ac-panel); color: var(--ac-muted); font-size: 13px; }
 .ac-subagent-note button { flex: 0 0 auto; min-height: 32px; padding: 0 12px; border: 1px solid var(--ac-border); border-radius: 16px; background: var(--ac-bg); color: var(--ac-accent); cursor: pointer; }
 @media (max-width: 700px) { .ac-subagents { padding-inline: 10px; } }
+
+/* A question the agent asked, with the answer */
+.ac-asked { margin: 6px 0; padding: 8px 12px; border: 1px solid var(--ac-border); border-radius: 10px; background: var(--ac-panel); }
+.ac-asked-q + .ac-asked-q { margin-top: 8px; }
+.ac-asked-text { font-size: 13px; color: var(--ac-muted); }
+.ac-asked-answer { margin-top: 2px; font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
+.ac-asked-answer em { font-weight: 400; color: var(--ac-muted); }

@@ -6,7 +6,7 @@ import { flushSync } from 'react-dom';
 import { createChatStore } from './store.mjs';
 import { Chat } from './ui.jsx';
 
-export function mount(container, { api, base, conversation, agent, onClose, onTitle = () => {}, onTurn = () => {}, onOpenChat = () => {}, draft = null, notify = () => {} }) {
+export function mount(container, { api, base, conversation, agent, onClose, onTitle = () => {}, onTurn = () => {}, onOpenChat = () => {}, draft = null, notify = () => {}, hostTabs = false, onViews = () => {} }) {
   const store = createChatStore({ api, base, conversation, agent, notify });
   // The page that holds the chat shows its name too (the phone header), so it is told whenever the title changes (a rename, or the first message).
   let title = conversation.title;
@@ -23,11 +23,12 @@ export function mount(container, { api, base, conversation, agent, onClose, onTi
   container.replaceChildren(host);
   const root = createRoot(host);
   const handle = React.createRef();
-  flushSync(() => root.render(<Chat ref={handle} store={store} agent={agent} conversation={conversation} onClose={onClose} notify={notify} onOpenChat={onOpenChat} draft={draft ? { text: draft } : null} />));
+  flushSync(() => root.render(<Chat ref={handle} store={store} agent={agent} conversation={conversation} onClose={onClose} notify={notify} onOpenChat={onOpenChat} draft={draft ? { text: draft } : null} hostTabs={hostTabs} onViews={onViews} />));
   void store.load();
   return {
     root: host,
     focus: () => { if (handle.current) handle.current.focus(); },
+    setView: id => { if (handle.current) handle.current.setView(id); },
     destroy() {
       store.destroy();
       root.unmount();

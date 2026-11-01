@@ -128,3 +128,15 @@ export function subAgents(items) {
 
 // The items of one view: the main agent (`viewId` empty) or the sub-agent started by the Task call `viewId`.
 export const viewItems = (items, viewId) => items.filter(item => (viewId ? item.parentToolUseId === viewId : !item.parentToolUseId));
+
+// ── Questions the agent asked ──
+// The answers of an AskUserQuestion call, read from its result: `User has answered your questions: "Q1"="A1", "Q2"="A2". You can now ...`.
+// Returns a Map question -> answer; empty when the result has no answers (skipped, still waiting, or another wording).
+export function questionAnswers(output) {
+  const answers = new Map();
+  const text = String(output || '');
+  const re = /"((?:[^"\\]|\\.)*)"="((?:[^"\\]|\\.)*)"/g;
+  let match;
+  while ((match = re.exec(text))) answers.set(match[1].replace(/\\(.)/g, '$1'), match[2].replace(/\\(.)/g, '$1'));
+  return answers;
+}

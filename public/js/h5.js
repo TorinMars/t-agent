@@ -151,7 +151,7 @@
       label: 'Phone terminals', note: null,
       rows: [
         ...terminals.map(row => ({ kind: 'terminal', id: row.terminal_id, title: row.title, agent: row.agent || null, current: row.terminal_id === terminalId && !agentChat, more: true })), // only one of a terminal and a chat is shown
-        ...chats.map(row => ({ kind: 'chat', id: row.id, title: row.title, running: Boolean(row.running), pending: Boolean(row.pending), updated: row.updated_at || null, agent: row.agent, current: Boolean(agentFor && agentFor.conversation === row.id), more: true })),
+        ...chats.map(row => ({ kind: 'chat', id: row.id, title: row.title, running: Boolean(row.running), pending: Boolean(row.pending), updated: row.updated_at || null, agent: row.agent, current: Boolean(agentFor && agentFor.conversation === row.id) && !agentViews.view, children: agentFor && agentFor.conversation === row.id ? agentViews.agents.map(sub => ({ kind: 'subagent', id: sub.id, title: sub.name, status: sub.status, current: agentViews.view === sub.id })) : [], more: true })),
       ],
     };
   }
@@ -344,8 +344,11 @@
         const entry = terminals.find(candidate => candidate.terminal_id === row.id);
         if (entry) switchTerminal(entry);
       } else if (row.kind === 'chat') {
+        if (agentChat && agentFor && agentFor.conversation === row.id) { agentChat.setView(''); closeTasks(); return; } // the open chat: back to its main agent
         const entry = chats.find(candidate => candidate.id === row.id);
         if (entry) { closeTasks(); mountAgent(entry); }
+      } else if (row.kind === 'subagent') {
+        if (agentChat) { agentChat.setView(row.id); closeTasks(); }
       }
       return;
     }
@@ -580,6 +583,7 @@
   const agentView = $('h5-agent');
   const chatApi = { get: url => api('GET', url), post: (url, body) => api('POST', url, body), patch: (url, body) => api('PATCH', url, body), del: url => api('DELETE', url) };
   let agentChat = null;
+  let agentViews = { agents: [], view: '' }; // the sub-agents of the open chat and the view shown, listed under its row in the sidebar
   // The chat fills the screen below the page header (task name and settings), the same header the terminal has, and follows the
   // visual viewport so the on-screen keyboard never covers the composer.
   function fitAgentView() {
@@ -608,6 +612,7 @@
   function hideAgent() {
     if (agentChat) agentChat.destroy();
     agentChat = null;
+    agentViews = { agents: [], view: '' };
     agentFor = null;
     agentView.hidden = true;
     agentView.style.height = agentView.style.top = '';
@@ -632,7 +637,8 @@
       window.visualViewport.addEventListener('scroll', fitAgentView);
     }
     fitAgentView();
-    agentChat = AgentChat.mount(agentView, { api: chatApi, base: `${source.tasksBase}/${task.id}/agent`, conversation, onClose: closeAgent, notify: message => tell(message, 'error'), draft,
+    agentChat = AgentChat.mount(agentView, { api: chatApi, base: `${source.tasksBase}/${task.id}/agent`, conversation, onClose: closeAgent, notify: message => tell(message, 'error'), draft, hostTabs: true,
+      onViews: views => { if (!agentFor || agentFor.conversation !== conversation.id) return; agentViews = views; renderTasks(); },
       onOpenChat: (created, extra = {}) => mountAgent(created, { draft: extra.draft || '' }), // a fork or a new chat replaces the one shown
       onTitle: title => { // a rename or the first message gave the chat a new name
         if (!agentFor || agentFor.conversation !== conversation.id) return;

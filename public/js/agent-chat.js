@@ -154,6 +154,7 @@ const AgentChat = (() => {
     }).catch(error => { if (!disposed) notify(error.message); });
     return {
       focus() { wantFocus = true; if (view) view.focus(); },
+      setView(id) { if (view) view.setView(id); }, // shows the main agent ('') or the sub-agent started by the Task call `id`
       destroy() { disposed = true; openers.delete(ids.conversationId); container.removeEventListener('pointerup', requestPermission); container.removeEventListener('keydown', requestPermission); if (view) view.destroy(); view = null; },
     };
   }

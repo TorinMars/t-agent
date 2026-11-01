@@ -33,6 +33,10 @@ export function toMessages(items) {
       if (item.text) add({ id: item.id, type: 'reasoning', text: item.text }, item); // a block that streamed nothing is not shown
     } else if (item.kind === 'tool') {
       const call = { id: item.id, name: item.name || 'Tool', args: asObject(item.input), output: item.output || '', status: item.status === 'running' ? 'running' : item.status === 'error' ? 'error' : 'done' };
+      if (call.name === 'AskUserQuestion' && Array.isArray(call.args.questions) && call.args.questions.length) { // the questions and the person's answers stay visible
+        add({ id: `ask-${item.id}`, type: 'data', name: 'ask', data: { call } }, item);
+        continue;
+      }
       const last = assistant && assistant.content[assistant.content.length - 1];
       if (last && last.type === 'data' && last.name === 'tools') last.data.calls.push(call);
       else add({ id: `tools-${item.id}`, type: 'data', name: 'tools', data: { calls: [call] } }, item);

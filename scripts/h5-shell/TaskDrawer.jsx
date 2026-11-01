@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import React, { useState } from 'react';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import Chip from '@mui/material/Chip';
@@ -56,7 +56,8 @@ function Sessions({ ui, taskId, sessions }) {
     <List className="h5-terminal-list" role="group" aria-label={sessions.label} dense disablePadding sx={{ ml: 1.75, mb: 0.125, pl: 0.125, borderLeft: 1, borderColor: 'divider' }}>
       {sessions.note ? <Typography className="h5-peek-note" variant="body2" color="text.secondary" sx={{ px: 1, py: 0.75 }}>{t(sessions.note)}</Typography> : null}
       {sessions.rows.map(row => (
-        <Box key={`${row.kind}:${row.id}`} className="h5-terminal-row" sx={{ display: 'flex', alignItems: 'center', gap: 0.5, borderRadius: 2, borderLeft: 3, borderColor: row.current ? 'primary.main' : 'transparent', bgcolor: row.current ? 'action.selected' : undefined }}>
+        <React.Fragment key={`${row.kind}:${row.id}`}>
+        <Box className="h5-terminal-row" sx={{ display: 'flex', alignItems: 'center', gap: 0.5, borderRadius: 2, borderLeft: 3, borderColor: row.current ? 'primary.main' : 'transparent', bgcolor: row.current ? 'action.selected' : undefined }}>
           <ListItemButton
             component="button" className="h5-terminal-main" aria-current={row.current ? 'true' : undefined}
             selected={row.current} onClick={() => ui.actions.openRow(taskId, row)}
@@ -80,6 +81,19 @@ function Sessions({ ui, taskId, sessions }) {
             </IconButton>
           ) : null}
         </Box>
+        {row.children && row.children.length ? (
+          <List className="h5-subagent-list" role="group" aria-label={t('Agents')} dense disablePadding sx={{ ml: 3.5, pl: 0.125, borderLeft: 1, borderColor: 'divider' }}>
+            {row.children.map(sub => (
+              <ListItemButton key={sub.id} component="button" className="h5-subagent-row" data-view={sub.id} aria-current={sub.current ? 'true' : undefined} selected={sub.current} onClick={() => ui.actions.openRow(taskId, sub)} title={sub.title}
+                sx={{ minHeight: 32, py: 0.125, px: 0.75, borderRadius: 2, gap: 0.875, textAlign: 'left', fontSize: 13, width: '100%', borderLeft: 3, borderColor: sub.current ? 'primary.main' : 'transparent', '&.Mui-selected': { bgcolor: 'action.selected' } }}>
+                <Box component="span" className={`h5-subagent-dot ${sub.status}`} aria-hidden="true" sx={{ flex: '0 0 8px', width: 8, height: 8, borderRadius: '50%', bgcolor: sub.status === 'running' ? 'success.main' : sub.status === 'error' ? 'error.main' : 'text.disabled' }} />
+                <Box component="span" translate="no" sx={{ minWidth: 0, flex: '1 1 auto', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sub.title}</Box>
+                <Box component="span" sx={{ flex: '0 0 auto', fontSize: 11, color: 'text.secondary' }}>{t(sub.status === 'running' ? 'Running' : sub.status === 'error' ? 'Failed' : 'Done')}</Box>
+              </ListItemButton>
+            ))}
+          </List>
+        ) : null}
+        </React.Fragment>
       ))}
     </List>
   );

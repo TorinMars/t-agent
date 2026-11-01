@@ -28,6 +28,7 @@ async function openTask(page, title, how = 'tap') {
   await page.locator(`#h5-tasks .h5-terminal-list[aria-label="${title}"] .h5-terminal-main`).first()[how]();
 }
 
+let updateDone = false; // the mocked update-status answers "completed" once the test sets this
 let checkMode = 'available'; // what the mocked update check answers: available | current | error
 
 async function openPage(browser, { remoteTerminals, remoteChat = false, viewport } = {}) {
@@ -117,6 +118,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     }
     if (url.pathname === '/api/system/version') return json({ boot_id: 'old' });
     if (url.pathname === '/api/system/apply-update') { assert.deepEqual(route.request().postDataJSON(), { confirm: true }); return json({ accepted: true }, 202); }
+    if (url.pathname === '/api/system/update-status' && updateDone) return json({ status: 'current', stage: 'completed', message: 'done', log: [{ at: 1, text: 'npm ci' }], boot_id: 'old' });
     if (url.pathname === '/api/system/update-status') return json({ status: 'updating', stage: 'installing', message: 'Installing dependencies', log: [{ at: 1, text: 'npm ci' }], boot_id: 'old' });
     if (url.pathname === '/api/translate') return json({ text: 'Run the tests\u001b[2J' });
     return json({ error: 'not mocked' }, 404);
@@ -891,11 +893,17 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     await page.locator('#h5-open-tasks').tap();
     await page.locator('#h5-tasks-settings').tap();
     await page.locator('#h5-settings').waitFor({ state: 'visible' });
-    await page.locator('#h5-update-check').tap();
-    // One tap checks and starts the update; there is no second confirmation.
-    await page.waitForFunction(() => document.getElementById('h5-update-log').textContent.includes('npm ci'));
+    // The settings sheet has no updater any more: the Update button's modal does the whole flow.
+    assert.equal(await page.locator('#h5-settings #h5-update-check, #h5-settings #h5-update-log, #h5-settings #h5-update-hint').count(), 0, 'no updater in Settings');
+    await page.goto(`${ORIGIN}/h5`); // back to the plain page (no sheets open)
+    await page.locator('#h5-update').click();
+    await page.locator('#h5-update-now').click();
+    // Update now starts the update at once and shows the live log; the page reloads when the service is back.
+    await page.waitForFunction(() => (document.getElementById('h5-update-log') || {}).textContent === 'npm ci');
     assert.ok(calls.includes('POST /api/system/apply-update'));
-    assert.equal(await page.locator('#h5-update-confirm').count(), 0, 'no confirmation step is left');
+    assert.equal(await page.locator('#h5-update-dismiss').isDisabled(), true, 'the modal cannot be closed while updating');
+    updateDone = true;
+    await Promise.all([page.waitForEvent('load', { timeout: 15000 }), page.locator('#h5-update-state', { hasText: /reloading/ }).waitFor()]);
     await context.close();
 
     // The key grid shows every key, without sideways scrolling, on the narrowest phones and in landscape.

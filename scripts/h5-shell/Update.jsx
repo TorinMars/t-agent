@@ -58,7 +58,7 @@ export function UpdateButton() {
     try {
       const status = await api('POST', '/api/system/check-update', {});
       if (!alive.current) return;
-      const versions = { local: status.local_version || '?', remote: status.remote_version || '?', admin: Boolean(status.is_update_admin) };
+      const versions = { local: status.local_version || '?', remote: status.remote_version || '?', admin: Boolean(status.is_update_admin), notes: (status.remote_manifest && status.remote_manifest.release_url) || '' };
       if (status.status === 'updating') { setView({ phase: 'updating', ...versions, message: status.message || 'Updating…' }); monitor(); }
       else if (status.error || status.status === 'failed' || status.status === 'blocked') setView({ phase: 'error', ...versions, message: errorText(status) });
       else if (status.status === 'available') setView({ phase: 'available', ...versions });
@@ -103,6 +103,7 @@ export function UpdateButton() {
               <dt>{t('Latest version')}</dt><dd style={{ margin: 0 }} id="h5-update-latest">{view.remote}</dd>
             </Box>
           ) : null}
+          {view.notes && /^https?:\/\//.test(view.notes) ? <Typography variant="body2" sx={{ mb: 1 }}><a id="h5-update-notes" href={view.notes} target="_blank" rel="noopener noreferrer">{t('Release notes')}</a></Typography> : null}
           {view.phase === 'current' ? <Typography id="h5-update-state" role="status">{t('Already up to date')}</Typography> : null}
           {view.phase === 'available' ? <Typography id="h5-update-state" role="status">{view.admin ? t('A new version is available.') : t('Only the update administrator can run updates')}</Typography> : null}
           {view.phase === 'updating' ? <Typography id="h5-update-state" role="status">{t(view.message || 'Updating…')}</Typography> : null}

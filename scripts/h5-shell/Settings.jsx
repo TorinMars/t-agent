@@ -15,7 +15,6 @@ import Toolbar from '@mui/material/Toolbar';
 import Typography from '@mui/material/Typography';
 import CloseIcon from '@mui/icons-material/Close';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
-import SystemUpdateAltIcon from '@mui/icons-material/SystemUpdateAlt';
 import { api, t } from './common.jsx';
 
 const OSS_FIELDS = [
@@ -340,80 +339,6 @@ function AccessGroup() {
   );
 }
 
-// The one-tap update of the PC service: it checks, updates, and follows the progress while the service restarts (same /api/system endpoints as the desktop page).
-function Updater() {
-  const [hint, setHint] = useState('');
-  const [log, setLog] = useState(null);
-  const [busy, setBusy] = useState(false);
-  const timer = useRef(null);
-  const logNode = useRef(null);
-  useEffect(() => () => clearInterval(timer.current), []);
-  const show = (message, lines) => {
-    setHint(t(message));
-    if (Array.isArray(lines) && lines.length) setLog(lines.map(line => line.text).join('\n'));
-  };
-  useEffect(() => { const node = logNode.current; if (node) node.scrollTop = node.scrollHeight; }, [log]);
-  const end = () => { clearInterval(timer.current); setBusy(false); };
-  const monitor = (bootId = null) => {
-    clearInterval(timer.current);
-    setBusy(true);
-    let restartingAt = null;
-    let down = false;
-    timer.current = setInterval(async () => {
-      let status;
-      try { status = await api('GET', '/api/system/update-status'); } catch { down = true; return; }
-      const restarted = down || (restartingAt && Date.now() - restartingAt > 4000) || (bootId && status.boot_id && status.boot_id !== bootId);
-      if (status.status === 'blocked' || status.status === 'failed') {
-        show(`${status.error || status.message || 'Update failed'}${status.error_details ? `: ${status.error_details}` : ''}`, status.log);
-        end();
-      } else if (status.stage === 'completed' || (status.status !== 'updating' && restarted)) {
-        show('Update complete, reloading…', status.log);
-        end();
-        setTimeout(() => location.reload(), 1500);
-      } else {
-        if (status.stage === 'restarting' && !restartingAt) restartingAt = Date.now();
-        show(status.stage === 'restarting' ? 'Restarting the PC service, this page reloads when it is back…' : (status.message || 'Updating…'), status.log);
-      }
-    }, 1000);
-  };
-  const start = async versions => {
-    show(`${t('Updating…')} ${versions}`);
-    try {
-      let bootId = null;
-      try { bootId = (await api('GET', '/api/system/version')).boot_id || null; } catch { /* the monitor falls back to the restart grace period */ }
-      await api('POST', '/api/system/apply-update', { confirm: true });
-      monitor(bootId);
-    } catch (error) { show(error.message || 'Update not run'); end(); }
-  };
-  const check = async () => {
-    if (busy) return;
-    setBusy(true);
-    setLog(null);
-    show('Checking for the latest version…');
-    try {
-      const status = await api('POST', '/api/system/check-update', {});
-      if (status.status === 'updating') { monitor(); return; }
-      if (status.status === 'available') {
-        if (!status.is_update_admin) { show('Only the update administrator can run updates'); end(); return; }
-        // One tap checks and, when a newer version exists, updates at once.
-        await start(`${status.local_version || '?'} → ${status.remote_version}`);
-        return;
-      }
-      show(status.error ? `${status.error}${status.error_details ? `: ${status.error_details}` : ''}` : (status.message || 'Already up to date'));
-    } catch (error) { show(error.message || 'Update failed'); }
-    end();
-  };
-  return (
-    <Box className="h5-setting-block" sx={{ py: 2 }}>
-      <IconButton id="h5-update-check" className="h5-update-icon" aria-label={t('One-click update PC')} title={t('One-click update PC')} disabled={busy} onClick={() => void check()} sx={{ border: 1, borderColor: 'divider' }}>
-        <SystemUpdateAltIcon />
-      </IconButton>
-      {hint ? <Typography id="h5-update-hint" variant="body2" color="text.secondary" sx={{ mt: 1.5 }}>{hint}</Typography> : <p id="h5-update-hint" hidden />}
-      {log !== null ? <Paper id="h5-update-log" component="pre" variant="outlined" ref={logNode} aria-label={t('Update log')} aria-live="off" sx={{ m: 0, mt: 1.5, p: 1, maxHeight: '40vh', overflow: 'auto', fontSize: 12, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{log}</Paper> : <pre id="h5-update-log" hidden />}
-    </Box>
-  );
-}
-
 function Rows({ ui }) {
   const logout = async () => {
     if (!confirm(t('Logging out disconnects local and remote terminals, but tasks running on the server keep running. Log out?'))) return;
@@ -461,7 +386,6 @@ export function SettingsDrawer({ state, ui }) {
         <VoiceGroup />
         <RemoteGroup />
         <AccessGroup />
-        <Updater />
       </Box>
     </Drawer>
   );

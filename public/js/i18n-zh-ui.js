@@ -1076,7 +1076,6 @@ I18n.add({
   "Send Ctrl+C": "发送 Ctrl+C",
   "Set up the translation service on the desktop page": "请在电脑版页面配置翻译服务",
   "Language": "语言",
-  "One-click update PC": "一键更新电脑",
   "Update": "更新",
   "Latest version": "最新版本",
   "A new version is available.": "有新版本可用。",

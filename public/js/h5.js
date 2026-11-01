@@ -470,7 +470,10 @@
   function openTerminalMenu(row) {
     menuRow = row;
     menuChat = null;
+    // "Copy text" is for the terminal that is open (the copy view reads its buffer); the long press on the terminal body is the other way in.
+    const open = row.terminal_id === terminalId && !agentChat && session && !session.disposed;
     showMenu(row.title, [
+      ...(open ? [['Copy text', () => { closeTerminalMenu(); closeTasks(); openCopy(); }]] : []),
       ...(row.agent ? [] : [['Rename', () => askRename(row.title)]]),
       ['Reopen', () => { closeTerminalMenu(); closeTasks(); switchTerminal(row); }],
       ['Restart in the working directory', () => void restartTerminal(row), 'danger'],
@@ -1222,7 +1225,7 @@
     if (copySearch(query) === false && query) tell('No match');
   };
 
-  // Long press on the terminal body opens the copy view (same as the copy button), scrolled to the latest output. It is cancelled by any movement
+  // Long press on the terminal body opens the copy view (also reachable from the terminal actions menu, "Copy text"), scrolled to the latest output. It is cancelled by any movement
   // (a scroll or a drag), by lifting the finger, and it ignores the wheel strip, the buttons and mouse input.
   const LONG_PRESS_MS = 500;
   const LONG_PRESS_SLOP = 8; // px a finger may move before it is a scroll, not a press

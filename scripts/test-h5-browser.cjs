@@ -265,6 +265,66 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     await page.locator('.h5-xterm').tap();
     assert.equal(await inputmode(), 'none', 'a terminal tap after closing does not reopen it');
 
+    // Translate bar layouts: at rest the box, the voice button and the send button share one row; while the box has focus the box takes row 1
+    // across the width and the two buttons sit on row 2; blur goes back. Pressing a button must not collapse it.
+    const barRects = () => page.evaluate(() => {
+      const r = id => { const b = document.getElementById(id).getBoundingClientRect(); return { top: b.top, bottom: b.bottom, left: b.left, right: b.right, width: b.width, height: b.height }; };
+      const form = r('h5-translate');
+      const root = document.querySelector('.h5-translate-input').getBoundingClientRect();
+      const resizes = window.sockets[0].sent.filter(item => { try { return JSON.parse(item).type === 'resize'; } catch { return false; } }).length;
+      return { form, root: { top: root.top, bottom: root.bottom, left: root.left, right: root.right, width: root.width }, input: r('h5-translate-input'), voice: r('h5-voice'), send: r('h5-translate-send'), resizes,
+        term: document.getElementById('h5-terminal').getBoundingClientRect().height, focused: document.activeElement && document.activeElement.id };
+    });
+    {
+      await page.evaluate(() => document.activeElement && document.activeElement.blur());
+      const rest = await barRects();
+      assert.notEqual(rest.focused, 'h5-translate-input');
+      assert.ok(Math.abs(rest.root.top - rest.voice.top) <= 12 && Math.abs(rest.voice.top - rest.send.top) <= 12, 'at rest the box, voice and send share one row');
+      assert.ok(rest.voice.left > rest.root.right - 1 && rest.send.left > rest.voice.left, 'at rest they sit side by side');
+      await page.locator('#h5-translate-input').focus();
+      const active = await barRects();
+      assert.ok(active.root.bottom <= active.voice.top + 1 && active.root.bottom <= active.send.top + 1, 'focused: the box is on row 1, the buttons below it');
+      assert.ok(Math.abs(active.voice.top - active.send.top) <= 1, 'focused: voice and send share row 2');
+      assert.ok(active.voice.left < active.send.left, 'focused: voice is left of send');
+      assert.ok(Math.abs(active.send.right - rest.send.right) <= 1, 'send keeps its place at the right edge');
+      assert.ok(active.root.width > rest.root.width + 60 && active.root.right >= active.send.right - 1, 'focused: the box takes the full width');
+      assert.ok(active.form.height > rest.form.height + 30, 'the bar is one row taller');
+      assert.ok(active.term < rest.term - 30, 'the terminal follows the bar height');
+      await page.waitForTimeout(500);
+      const settled = await barRects();
+      await page.waitForTimeout(500);
+      assert.equal((await barRects()).resizes, settled.resizes, 'no resize loop after the layout change');
+      // Typing still grows the box from one to two lines while focused.
+      await page.locator('#h5-translate-input').fill('a long sentence that does not fit on a single line of the narrow phone box, so it wraps');
+      const grown = await barRects();
+      assert.ok(grown.input.height > active.input.height + 10, 'focused: the box still grows to two lines');
+      assert.ok(Math.abs(grown.voice.top - active.voice.top) <= 1, 'the buttons stay on the bottom row');
+      assert.ok(grown.term < active.term, 'the terminal gets shorter as the box grows');
+      await page.locator('#h5-translate-input').fill('');
+      // A press on the voice button keeps the focus in the box (no blur between pointerdown and click), so the layout does not collapse.
+      await page.evaluate(() => {
+        window.blurCount = 0;
+        document.getElementById('h5-translate-input').addEventListener('blur', () => { window.blurCount++; });
+      });
+      const voiceBox = await page.locator('#h5-voice').boundingBox();
+      await page.mouse.move(voiceBox.x + voiceBox.width / 2, voiceBox.y + voiceBox.height / 2);
+      await page.mouse.down();
+      const pressed = await barRects();
+      assert.equal(pressed.focused, 'h5-translate-input', 'pressing the voice button keeps the focus in the box');
+      assert.ok(Math.abs(pressed.voice.top - active.voice.top) <= 1, 'pressing voice does not collapse the layout');
+      await page.mouse.up();
+      await page.waitForTimeout(600);
+      assert.equal(await page.evaluate(() => window.blurCount), 0, 'the box was not blurred by the voice press');
+      assert.equal((await barRects()).focused, 'h5-translate-input');
+      // Blur goes back to one row.
+      await page.locator('#h5-translate-input').blur();
+      await page.waitForTimeout(500);
+      const back = await barRects();
+      assert.ok(Math.abs(back.root.top - back.send.top) <= 12 && Math.abs(back.form.height - rest.form.height) <= 1, 'blur goes back to one row');
+      assert.ok(Math.abs(back.term - rest.term) <= 1, 'the terminal gets its height back');
+      await page.locator('#h5-translate-input').focus();
+    }
+
     // Translate box height: one line when empty, two lines for text that needs two, never more (it scrolls inside), one line again after a send.
     {
       const input = page.locator('#h5-translate-input');
@@ -279,6 +339,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
         return { height: rect.height, bottom: rect.bottom, line: parseFloat(style.lineHeight), pad: parseFloat(style.paddingTop) + parseFloat(style.paddingBottom),
           overflowY: style.overflowY, termHeight: term.height, sendBottom: send.bottom, voiceBottom: voice.bottom, resizes, placeholder: el.placeholder };
       });
+      await input.focus(); // fill() focuses the box anyway: measure the active layout throughout
       const one = await box();
       assert.ok(Math.abs(one.height - (one.line + one.pad)) <= 2, `one line when empty (${one.height}px)`);
       await input.fill('short');
@@ -288,7 +349,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       assert.ok(Math.abs(two.height - (2 * two.line + two.pad)) <= 2, `two lines for text that needs two (${two.height}px)`);
       assert.ok(Math.abs(two.bottom - one.bottom) <= 1, 'the box grows upward, its bottom stays');
       assert.ok(two.termHeight < one.termHeight, 'the terminal gets shorter as the box grows');
-      assert.ok(Math.abs(two.sendBottom - two.bottom) <= 12 && Math.abs(two.voiceBottom - two.bottom) <= 12 && Math.abs(two.sendBottom - one.sendBottom) <= 1, 'the buttons stay at the bottom');
+      assert.ok(two.sendBottom >= two.bottom && Math.abs(two.voiceBottom - one.voiceBottom) <= 1 && Math.abs(two.sendBottom - one.sendBottom) <= 1, 'the buttons stay on the bottom row');
       await input.fill('a long sentence that does not fit on a single line of the narrow phone box, so it wraps. '.repeat(6));
       const many = await box();
       assert.ok(Math.abs(many.height - two.height) <= 1, `longer text stays at two lines (${many.height}px)`);
@@ -314,6 +375,8 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     {
       const afterSend = await page.locator('#h5-translate-input').evaluate(el => ({ height: el.getBoundingClientRect().height, inline: el.style.height }));
       assert.ok(afterSend.height < 50 && afterSend.inline === '', `one line again after a send (${afterSend.height}px)`);
+      assert.equal(await page.evaluate(() => document.activeElement && document.activeElement.id), 'h5-translate-input', 'the box keeps the focus after a send (the tap on send does not blur it)');
+      await page.locator('#h5-translate-input').blur();
     }
 
     // Image upload: the link is typed into the terminal with a trailing space and no Enter.

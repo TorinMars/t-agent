@@ -25,9 +25,22 @@ export function TerminalArea({ state, ui }) {
 }
 
 // The Chinese-to-English box. The textarea is the plain DOM one that voice-input.js and h5.js read and write directly (value, height; `autosize()` in h5.js keeps it at one line, growing to two); Material UI draws around it.
+// One grid, one element tree. At rest the box, the voice button and the send button share one row. While the bar is "active" the box takes row 1 across the full
+// width and the two buttons sit on row 2, right-aligned (send keeps its place at the right edge). Active = the box has focus (`:focus-within`), or a button is being
+// pressed (`data-hold`, set by h5.js), or the voice input is recording (`:has(.listening)`), or a translation is running (class `translating`).
+// Only the CSS changes between the two states, so the textarea is never remounted and keeps its focus.
+const ACTIVE = { gridTemplateColumns: '1fr auto auto', '& .h5-translate-input': { gridColumn: '1 / -1', gridRow: 1 }, '& #h5-voice': { gridColumn: 2, gridRow: 2 }, '& #h5-translate-send': { gridColumn: 3, gridRow: 2 } };
 export function TranslateBar({ state }) {
   return (
-    <Box component="form" className="h5-translate" id="h5-translate" autoComplete="off" sx={{ flex: '0 0 auto', display: 'flex', alignItems: 'flex-end', gap: 1, px: 1, pt: 1, borderTop: 1, borderColor: 'divider' }}>
+    <Box
+      component="form" className={`h5-translate${state.translating ? ' translating' : ''}`} id="h5-translate" autoComplete="off"
+      onMouseDown={event => { if (event.target.closest('button')) event.preventDefault(); }}
+      sx={{
+        flex: '0 0 auto', display: 'grid', gridTemplateColumns: '1fr auto auto', alignItems: 'end', gap: 1, px: 1, pt: 1, borderTop: 1, borderColor: 'divider',
+        '&:focus-within, &[data-hold], &.translating': ACTIVE,
+        '&:has(.h5-voice.listening)': ACTIVE,
+      }}
+    >
       <OutlinedInput
         id="h5-translate-input" className={`h5-translate-input${state.translating ? ' translating' : ''}`} fullWidth size="small" inputComponent="textarea" readOnly={state.translating}
         placeholder={t('Chinese → English, then send')}

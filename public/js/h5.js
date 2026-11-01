@@ -1420,6 +1420,27 @@
   });
   translateInput.addEventListener('input', autosize);
   autosize();
+  // The bar has two layouts (CSS only): one row at rest, and while it is active (the box has focus, a button is pressed, voice is recording, a
+  // translation runs) the box on row 1 and the voice and send buttons on row 2. A press on a button must not collapse the layout between pointerdown
+  // and click, so `data-hold` keeps it expanded from pointerdown until a moment after the release (the mousedown default is also stopped in the
+  // TranslateBar, so the box keeps focus). Every layout change moves the bar height, so the terminal follows it the way `autosize()` does.
+  const PRESS_HOLD_MS = 400;
+  let pressTimer = 0;
+  translateForm.addEventListener('pointerdown', event => {
+    if (!event.target.closest || !event.target.closest('button')) return;
+    clearTimeout(pressTimer);
+    translateForm.setAttribute('data-hold', '');
+    holdTerminalSize();
+  });
+  const endPress = () => {
+    if (!translateForm.hasAttribute('data-hold')) return;
+    clearTimeout(pressTimer);
+    pressTimer = setTimeout(() => { translateForm.removeAttribute('data-hold'); holdTerminalSize(); }, PRESS_HOLD_MS);
+  };
+  window.addEventListener('pointerup', endPress);
+  window.addEventListener('pointercancel', endPress);
+  translateForm.addEventListener('focusin', holdTerminalSize);
+  translateForm.addEventListener('focusout', () => requestAnimationFrame(holdTerminalSize));
 
   // ── Image upload: the Client uploads to OSS and the link is typed into the terminal without Enter ──
   let pickedFor = null;

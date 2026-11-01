@@ -93,22 +93,31 @@
       noScreenKeyboard(session.term);
     }, KEYBOARD_RESET_DELAY_MS);
   }
-  // While the keyboard is open the terminal keeps its closed height, aligned to the bottom of the (shorter) box so the cursor stays visible.
+  // The terminal is never resized for the translate bar or the keyboard, only moved. While the keyboard is open it keeps its closed height, aligned to the
+  // bottom of the (shorter) box; the translate bar growing over the terminal (`barExtra`, see syncBar()) hides more of the bottom. Both are covered by ONE
+  // translateY, so the two never add up twice. The shift is capped so the cursor row stays on screen (a shell prompt near the top).
+  let barOverlap = 0;
+  let barExtra = 0; // px the translate bar currently extends over the bottom of the terminal box
   function holdTerminalSize() {
     const el = session && session.el;
     if (!el) return;
-    if (!keyboardOpen || !closedTerminalHeight) {
+    const pinned = keyboardOpen && closedTerminalHeight;
+    if (!pinned && !barExtra) {
       el.style.removeProperty('height');
       el.style.removeProperty('bottom');
       el.style.removeProperty('transform');
       return;
     }
-    // Shift up by the hidden height, but keep the cursor row on screen when it sits near the top (a shell prompt).
-    const hidden = Math.max(0, closedTerminalHeight - terminalHost.clientHeight);
+    const hidden = (pinned ? Math.max(0, closedTerminalHeight - terminalHost.clientHeight) : 0) + barExtra;
     const screen = el.querySelector('.xterm-screen');
     const shift = TerminalViewport.keyboardShift(session.term, screen ? screen.clientHeight : 0, hidden);
-    el.style.height = `${closedTerminalHeight - 6}px`; // the terminal sits 4px from the top and 2px from the bottom of its box
-    el.style.bottom = 'auto';
+    if (pinned) {
+      el.style.height = `${closedTerminalHeight - 6}px`; // the terminal sits 4px from the top and 2px from the bottom of its box
+      el.style.bottom = 'auto';
+    } else {
+      el.style.removeProperty('height');
+      el.style.removeProperty('bottom');
+    }
     el.style.transform = shift ? `translateY(${-shift}px)` : '';
   }
   new ResizeObserver(() => { if (!keyboardOpen) closedTerminalHeight = terminalHost.clientHeight; }).observe(terminalHost);
@@ -1376,7 +1385,7 @@
     const input = translateInput;
     input.style.height = '';
     input.style.overflowY = 'hidden';
-    if (!input.value) { holdTerminalSize(); return; } // empty: the natural height of rows=1
+    if (!input.value) { syncBar(); return; } // empty: the natural height of rows=1
     const style = getComputedStyle(input);
     const lineHeight = parseFloat(style.lineHeight) || (parseFloat(style.fontSize) || 15) * 1.4375;
     const padding = (parseFloat(style.paddingTop) || 0) + (parseFloat(style.paddingBottom) || 0);
@@ -1385,7 +1394,7 @@
     const wanted = Math.min(input.scrollHeight, cap);
     input.style.height = `${style.boxSizing === 'border-box' ? wanted + border : wanted - padding}px`;
     input.style.overflowY = input.scrollHeight > cap ? 'auto' : 'hidden';
-    holdTerminalSize(); // with the keyboard open the terminal keeps its closed height; its shift follows the box
+    syncBar(); // the bar grows over the terminal; the terminal is moved, not resized
   }
   async function translate() {
     const text = translateInput.value.trim();
@@ -1419,28 +1428,113 @@
     void translate();
   });
   translateInput.addEventListener('input', autosize);
-  autosize();
   // The bar has two layouts (CSS only): one row at rest, and while it is active (the box has focus, a button is pressed, voice is recording, a
-  // translation runs) the box on row 1 and the voice and send buttons on row 2. A press on a button must not collapse the layout between pointerdown
-  // and click, so `data-hold` keeps it expanded from pointerdown until a moment after the release (the mousedown default is also stopped in the
-  // TranslateBar, so the box keeps focus). Every layout change moves the bar height, so the terminal follows it the way `autosize()` does.
+  // translation runs) the box on row 1 and the voice and send buttons on row 2. The switch itself is instant (grid cannot be transitioned).
+  // The terminal box never changes size: the bar reserves only its resting height in the page layout and grows upward over the terminal (`--h5-bar-extra`
+  // is a negative top margin), so no fit and no PTY resize happens. The terminal is moved up by the covered height with one transform (holdTerminalSize),
+  // and that move, the three controls (FLIP: transform plus the width of the box) and the bar's own growth or shrink all animate over the same time.
+  // Nothing is animated frame by frame in layout terms, and nothing at all with prefers-reduced-motion.
+  const FLIP_MS = 180;
+  const FLIP_EASING = 'cubic-bezier(0.2, 0.7, 0.2, 1)';
+  const flipRoot = translateForm.querySelector('.h5-translate-input');
+  const flipItems = [flipRoot, $('h5-voice'), $('h5-translate-send')];
+  // Layout positions (offsets, so running transforms do not count), measured from the bottom of the bar because the bar grows upward.
+  const measureBar = () => {
+    const h = translateForm.offsetHeight;
+    const items = flipItems.map(el => ({ x: el.offsetLeft, y: el.offsetTop - h, w: el.offsetWidth }));
+    return { items, active: items[1].y >= items[0].y + flipRoot.offsetHeight - 1 }; // active: the buttons are below the box
+  };
+  let barLayout = measureBar();
+  let barHeight = translateForm.offsetHeight;
+  let flips = [];
+  let movingTimer = 0;
+  const finishFlips = () => { flips.forEach(animation => { try { animation.finish(); } catch { /* already gone */ } }); flips = []; };
+  const reducedMotion = () => window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  // The height the bar keeps in the page layout: its resting row (the send button plus the bar's padding and border).
+  function barReserved() {
+    const style = getComputedStyle(translateForm);
+    const extras = ['paddingTop', 'paddingBottom', 'borderTopWidth', 'borderBottomWidth'].reduce((sum, key) => sum + (parseFloat(style[key]) || 0), 0);
+    // The resting row is as tall as the send button or the one-line box, whichever is taller.
+    const input = getComputedStyle(translateInput);
+    const lineHeight = parseFloat(input.lineHeight) || (parseFloat(input.fontSize) || 15) * 1.4375;
+    const pad = (parseFloat(input.paddingTop) || 0) + (parseFloat(input.paddingBottom) || 0);
+    const border = input.boxSizing === 'border-box' ? (parseFloat(input.borderTopWidth) || 0) + (parseFloat(input.borderBottomWidth) || 0) : 0;
+    const wrap = flipRoot.getBoundingClientRect().height - translateInput.getBoundingClientRect().height; // the padding around the textarea
+    const oneLine = lineHeight + pad + border + wrap;
+    return Math.max($('h5-translate-send').getBoundingClientRect().height, oneLine) + extras;
+  }
+  // Called whenever the bar height may have changed. The page layout always gets exactly the reserved height (the margin takes the difference, positive or
+  // negative), so the terminal box cannot change by even a fraction of a pixel; what the bar covers is moved, not resized.
+  function syncBar(animate = false) {
+    const height = translateForm.getBoundingClientRect().height;
+    const overlap = height - barReserved();
+    const extra = Math.max(0, overlap);
+    if (overlap !== barOverlap) translateForm.style.setProperty('--h5-bar-extra', `${overlap}px`);
+    barOverlap = overlap;
+    const delta = height - barHeight;
+    const moved = Math.abs(extra - barExtra) > 0.5;
+    barHeight = height;
+    barExtra = extra;
+    const el = session && session.el;
+    const motion = moved && !reducedMotion() && el && el.animate;
+    if (motion) {
+      el.classList.add('h5-bar-moving'); // CSS: transform transition + will-change, only while it moves
+      clearTimeout(movingTimer);
+      movingTimer = setTimeout(() => { if (el) el.classList.remove('h5-bar-moving'); }, FLIP_MS + 60);
+    }
+    holdTerminalSize();
+    if (motion && delta && translateForm.animate) {
+      const grow = delta > 0;
+      const d = Math.abs(delta);
+      const frames = grow ? [{ clipPath: `inset(${d}px 0 0 0)` }, { clipPath: 'inset(0)' }] : [{ boxShadow: `0 -${d}px 0 0 var(--h5-bg)` }, { boxShadow: '0 0 0 0 var(--h5-bg)' }];
+      flips.push(translateForm.animate(frames, { duration: FLIP_MS, easing: FLIP_EASING }));
+    }
+  }
+  function relayoutBar() {
+    const next = measureBar();
+    const before = barLayout;
+    // The focus event and the mutation observer both call this for one change: the second call finds nothing new and must not cut the animation short.
+    if (before.active === next.active && before.items.every((item, i) => item.x === next.items[i].x && item.y === next.items[i].y)) return;
+    finishFlips();
+    barLayout = next;
+    const changed = before.active !== next.active;
+    syncBar(changed);
+    if (!changed || reducedMotion() || !flipRoot.animate) return;
+    flipItems.forEach((el, i) => {
+      const dx = before.items[i].x - next.items[i].x;
+      const dy = before.items[i].y - next.items[i].y;
+      if (!dx && !dy && before.items[i].w === next.items[i].w) return;
+      const from = { transform: `translate(${dx}px, ${dy}px)` };
+      const to = { transform: 'none' };
+      if (i === 0 && before.items[0].w !== next.items[0].w) { from.width = `${before.items[0].w}px`; to.width = `${next.items[0].w}px`; }
+      flips.push(el.animate([from, to], { duration: FLIP_MS, easing: FLIP_EASING }));
+    });
+  }
+  new MutationObserver(relayoutBar).observe(translateForm, { attributes: true, subtree: true, attributeFilter: ['class', 'data-hold'] });
+  // The bar size also changes when the window turns or the font loads: keep the overlap and the measured layout current (no animation).
+  new ResizeObserver(() => { if (!flips.length) { barLayout = measureBar(); syncBar(false); } }).observe(translateForm);
+  autosize(); // the first height (and the first syncBar) once the bar state exists
+  // A press on a button: the controls jump to their final places first and the button captures the pointer, so a tap during the animation still ends
+  // on the same button. `data-hold` keeps an already active layout from collapsing until a moment after the release; a press at rest does not expand it.
   const PRESS_HOLD_MS = 400;
   let pressTimer = 0;
   translateForm.addEventListener('pointerdown', event => {
-    if (!event.target.closest || !event.target.closest('button')) return;
+    const button = event.target.closest && event.target.closest('button');
+    if (!button) return;
+    finishFlips();
+    if (button.setPointerCapture) { try { button.setPointerCapture(event.pointerId); } catch { /* pointer already gone */ } }
     clearTimeout(pressTimer);
-    translateForm.setAttribute('data-hold', '');
-    holdTerminalSize();
+    if (barLayout.active) translateForm.setAttribute('data-hold', '');
   });
   const endPress = () => {
     if (!translateForm.hasAttribute('data-hold')) return;
     clearTimeout(pressTimer);
-    pressTimer = setTimeout(() => { translateForm.removeAttribute('data-hold'); holdTerminalSize(); }, PRESS_HOLD_MS);
+    pressTimer = setTimeout(() => translateForm.removeAttribute('data-hold'), PRESS_HOLD_MS);
   };
   window.addEventListener('pointerup', endPress);
   window.addEventListener('pointercancel', endPress);
-  translateForm.addEventListener('focusin', holdTerminalSize);
-  translateForm.addEventListener('focusout', () => requestAnimationFrame(holdTerminalSize));
+  translateForm.addEventListener('focusin', relayoutBar);
+  translateForm.addEventListener('focusout', relayoutBar);
 
   // ── Image upload: the Client uploads to OSS and the link is typed into the terminal without Enter ──
   let pickedFor = null;

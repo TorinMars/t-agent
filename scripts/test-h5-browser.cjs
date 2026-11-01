@@ -123,6 +123,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     ossUploads.push(body);
     await route.fulfill({ status: 200, headers: { 'access-control-allow-origin': '*' }, body: '' });
   });
+  page.on('pageerror', e => console.log('PAGEERR', e.message));
   await page.goto(`${ORIGIN}/h5`);
   return { context, page, calls };
 }
@@ -267,15 +268,22 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
 
     // Translate bar layouts: at rest the box, the voice button and the send button share one row; while the box has focus the box takes row 1
     // across the width and the two buttons sit on row 2; blur goes back. Pressing a button must not collapse it.
-    const barRects = () => page.evaluate(() => {
+    // The bar animates (about 180 ms); measurements wait until no animation is running instead of sleeping.
+    const barSettled = () => page.waitForFunction(() => !document.getAnimations().some(a => a.playState === 'running') && !document.querySelector('.h5-bar-moving'), null, { timeout: 3000 });
+    const barRects = async () => { await barSettled(); return page.evaluate(() => {
       const r = id => { const b = document.getElementById(id).getBoundingClientRect(); return { top: b.top, bottom: b.bottom, left: b.left, right: b.right, width: b.width, height: b.height }; };
       const form = r('h5-translate');
       const root = document.querySelector('.h5-translate-input').getBoundingClientRect();
       const resizes = window.sockets[0].sent.filter(item => { try { return JSON.parse(item).type === 'resize'; } catch { return false; } }).length;
       return { form, root: { top: root.top, bottom: root.bottom, left: root.left, right: root.right, width: root.width }, input: r('h5-translate-input'), voice: r('h5-voice'), send: r('h5-translate-send'), resizes,
-        term: document.getElementById('h5-terminal').getBoundingClientRect().height, focused: document.activeElement && document.activeElement.id };
-    });
+        term: document.getElementById('h5-terminal').getBoundingClientRect().height, focused: document.activeElement && document.activeElement.id,
+        xterm: (() => { const b = document.querySelector('.h5-xterm').getBoundingClientRect(); return { top: b.top, height: b.height }; })(),
+        screenBottom: document.querySelector('.h5-xterm .xterm-screen').getBoundingClientRect().bottom, rows: document.querySelectorAll('.h5-xterm .xterm-rows > div').length };
+    }); };
     {
+      // The cursor is on the last row, so the last row must stay visible above the bar when the bar grows over the terminal.
+      await page.evaluate(() => window.sockets[0].emit('\x1b[999;1Hlast'));
+      await page.waitForTimeout(200);
       await page.evaluate(() => document.activeElement && document.activeElement.blur());
       const rest = await barRects();
       assert.notEqual(rest.focused, 'h5-translate-input');
@@ -289,17 +297,24 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       assert.ok(Math.abs(active.send.right - rest.send.right) <= 1, 'send keeps its place at the right edge');
       assert.ok(active.root.width > rest.root.width + 60 && active.root.right >= active.send.right - 1, 'focused: the box takes the full width');
       assert.ok(active.form.height > rest.form.height + 30, 'the bar is one row taller');
-      assert.ok(active.term < rest.term - 30, 'the terminal follows the bar height');
-      await page.waitForTimeout(500);
-      const settled = await barRects();
-      await page.waitForTimeout(500);
-      assert.equal((await barRects()).resizes, settled.resizes, 'no resize loop after the layout change');
+      // The terminal is moved, not resized: same box, same element height, same rows, no resize message; it only moves up.
+      assert.equal(active.term, rest.term, 'the terminal box keeps its height');
+      assert.equal(active.xterm.height, rest.xterm.height, 'the terminal element keeps its height');
+      assert.equal(active.rows, rest.rows, 'the terminal keeps its rows');
+      assert.equal(active.resizes, rest.resizes, `no resize message for the layout switch (${rest.resizes} before, ${active.resizes} after)`);
+      assert.ok(active.xterm.top <= rest.xterm.top - 30, `the terminal moves up (${rest.xterm.top} to ${active.xterm.top})`);
+      assert.ok(active.screenBottom <= active.form.top + 1, 'the last terminal row stays visible above the grown bar');
+      await page.waitForTimeout(300);
+      assert.equal((await barRects()).resizes, active.resizes, 'no resize loop after the layout change');
       // Typing still grows the box from one to two lines while focused.
       await page.locator('#h5-translate-input').fill('a long sentence that does not fit on a single line of the narrow phone box, so it wraps');
       const grown = await barRects();
       assert.ok(grown.input.height > active.input.height + 10, 'focused: the box still grows to two lines');
       assert.ok(Math.abs(grown.voice.top - active.voice.top) <= 1, 'the buttons stay on the bottom row');
-      assert.ok(grown.term < active.term, 'the terminal gets shorter as the box grows');
+      assert.equal(grown.term, active.term, 'the terminal box keeps its height as the box grows');
+      assert.equal(grown.resizes, rest.resizes, 'no resize message while the box grows');
+      assert.ok(grown.xterm.top < active.xterm.top, 'the terminal moves further up as the box grows');
+      assert.ok(grown.screenBottom <= grown.form.top + 1, 'the last row stays visible above the two-line bar');
       await page.locator('#h5-translate-input').fill('');
       // A press on the voice button keeps the focus in the box (no blur between pointerdown and click), so the layout does not collapse.
       await page.evaluate(() => {
@@ -321,14 +336,40 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       await page.waitForTimeout(500);
       const back = await barRects();
       assert.ok(Math.abs(back.root.top - back.send.top) <= 12 && Math.abs(back.form.height - rest.form.height) <= 1, 'blur goes back to one row');
-      assert.ok(Math.abs(back.term - rest.term) <= 1, 'the terminal gets its height back');
-      await page.locator('#h5-translate-input').focus();
+      assert.equal(back.term, rest.term);
+      assert.equal(back.resizes, rest.resizes, 'no resize message after blur either');
+      assert.ok(Math.abs(back.xterm.top - rest.xterm.top) <= 1, 'the terminal moves back down');
+      // The animation: right after focusing, the controls and the terminal are still on their way (not reduced motion); with reduced motion the switch is instant.
+      const mid = await page.evaluate(async () => {
+        document.getElementById('h5-translate-input').focus();
+        await new Promise(resolve => requestAnimationFrame(resolve));
+        const voice = getComputedStyle(document.querySelector('.h5-translate-input')).transform; // the buttons keep their bottom row; the box slides up and widens
+        return { voice, animations: document.getAnimations().length, moving: !!document.querySelector('.h5-bar-moving'), xtermTransform: getComputedStyle(document.querySelector('.h5-xterm')).transform };
+      });
+      assert.notEqual(mid.voice, 'none', 'mid-transition the box is still on its way (transform)');
+      assert.ok(mid.animations > 0 && mid.moving, 'the controls and the terminal move with an animation');
+      const during = await barRects();
+      assert.equal(during.resizes, rest.resizes, 'no resize message during or after the animation');
+      assert.ok(Math.abs(during.xterm.top - active.xterm.top) <= 1, 'the terminal ends where the focused layout wants it');
+      await page.locator('#h5-translate-input').blur();
+      await barRects();
+      await page.emulateMedia({ reducedMotion: 'reduce' });
+      const instant = await page.evaluate(() => {
+        document.getElementById('h5-translate-input').focus();
+        return { animations: document.getAnimations().length, moving: !!document.querySelector('.h5-bar-moving'), voiceTransform: getComputedStyle(document.querySelector('.h5-translate-input')).transform,
+          top: document.querySelector('.h5-xterm').getBoundingClientRect().top, form: document.getElementById('h5-translate').getBoundingClientRect().top };
+      });
+      assert.equal(instant.animations, 0, 'reduced motion: no animation');
+      assert.equal(instant.voiceTransform, 'none', 'reduced motion: the box is in place at once');
+      assert.ok(Math.abs(instant.top - active.xterm.top) <= 1, 'reduced motion: the terminal moves at once');
+      await page.emulateMedia({ reducedMotion: 'no-preference' });
+      assert.equal((await barRects()).resizes, rest.resizes);
     }
 
     // Translate box height: one line when empty, two lines for text that needs two, never more (it scrolls inside), one line again after a send.
     {
       const input = page.locator('#h5-translate-input');
-      const box = () => page.evaluate(() => {
+      const box = async () => { await barSettled(); return page.evaluate(() => {
         const el = document.getElementById('h5-translate-input');
         const style = getComputedStyle(el);
         const rect = el.getBoundingClientRect();
@@ -338,7 +379,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
         const resizes = window.sockets[0].sent.filter(item => { try { return JSON.parse(item).type === 'resize'; } catch { return false; } }).length;
         return { height: rect.height, bottom: rect.bottom, line: parseFloat(style.lineHeight), pad: parseFloat(style.paddingTop) + parseFloat(style.paddingBottom),
           overflowY: style.overflowY, termHeight: term.height, sendBottom: send.bottom, voiceBottom: voice.bottom, resizes, placeholder: el.placeholder };
-      });
+      }); };
       await input.focus(); // fill() focuses the box anyway: measure the active layout throughout
       const one = await box();
       assert.ok(Math.abs(one.height - (one.line + one.pad)) <= 2, `one line when empty (${one.height}px)`);
@@ -348,7 +389,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       const two = await box();
       assert.ok(Math.abs(two.height - (2 * two.line + two.pad)) <= 2, `two lines for text that needs two (${two.height}px)`);
       assert.ok(Math.abs(two.bottom - one.bottom) <= 1, 'the box grows upward, its bottom stays');
-      assert.ok(two.termHeight < one.termHeight, 'the terminal gets shorter as the box grows');
+      assert.equal(two.termHeight, one.termHeight, 'the terminal box keeps its height as the box grows (it is moved, not resized)');
       assert.ok(two.sendBottom >= two.bottom && Math.abs(two.voiceBottom - one.voiceBottom) <= 1 && Math.abs(two.sendBottom - one.sendBottom) <= 1, 'the buttons stay on the bottom row');
       await input.fill('a long sentence that does not fit on a single line of the narrow phone box, so it wraps. '.repeat(6));
       const many = await box();
@@ -362,12 +403,14 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       await input.fill('');
       const cleared = await box();
       assert.ok(Math.abs(cleared.height - one.height) <= 1, 'back to one line when cleared');
-      assert.ok(Math.abs(cleared.termHeight - one.termHeight) <= 1, 'the terminal gets its height back');
+      assert.equal(cleared.termHeight, one.termHeight);
       assert.equal(await input.evaluate(el => el.scrollWidth <= el.clientWidth + 1), true, 'the placeholder stays on one line');
     }
 
     // Translate and send: control characters are stripped and Enter follows separately.
     await page.locator('#h5-translate-input').fill('run the tests, and please make the text long enough that the box grows to two lines on the phone');
+    await page.locator('#h5-translate-input').blur();
+    await page.evaluate(() => document.getElementById('h5-translate-input').focus()); // the bar is still animating when the tap lands
     await page.locator('#h5-translate-send').tap();
     await page.waitForFunction(() => window.sockets[0].sent.includes('\r'));
     assert.deepEqual((await sent()).slice(-2), ['Run the tests [2J', '\r'], 'ESC is removed, so no escape sequence reaches the shell');
@@ -685,6 +728,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       const resizes = window.sockets[1].sent.filter(item => { try { return JSON.parse(item).type === 'resize'; } catch { return false; } }).length;
       return { boxTop: box.top, boxBottom: box.bottom, top: term.top, bottom: term.bottom, height: term.height, resizes };
     });
+    await page.evaluate(() => document.activeElement && document.activeElement.blur());
     await page.evaluate(() => window.sockets[1].emit(JSON.stringify({ type: 'history', data: '\x1b[?1049hfull screen app\x1b[30;1H', cols: 40, rows: 30 })));
     await page.waitForTimeout(200);
     const closed = await termInfo();
@@ -717,6 +761,26 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     assert.equal(await page.evaluate(() => document.querySelector('.h5-app').getBoundingClientRect().height), 300);
     await page.locator('#h5-translate-input').focus();
     await page.waitForFunction(() => Math.abs(document.querySelector('.h5-app').getBoundingClientRect().height - window.visualViewport.height) <= 1, null, { timeout: 3000 });
+    {
+      // Keyboard open and the bar grown over the terminal: still no resize, same element height, one combined shift, last rows above the bar.
+      await page.evaluate(() => window.sockets[1].emit('\x1b[30;1H')); // the cursor on the last row, so the full shift applies
+      await page.waitForTimeout(100);
+      await barSettled();
+      const formTop = () => page.evaluate(() => document.getElementById('h5-translate').getBoundingClientRect().top);
+      const withBar = await termInfo();
+      assert.equal(withBar.resizes, closed.resizes, 'keyboard open and the bar grown: no resize message');
+      assert.ok(Math.abs(withBar.height - closed.height) < 1, 'keyboard open and the bar grown: the terminal keeps its height');
+      assert.ok(withBar.bottom <= (await formTop()) + 3, 'the bottom rows stay above the grown bar while the keyboard is open');
+      assert.ok(withBar.bottom >= (await formTop()) - 40, 'the terminal is not shifted further than needed');
+      await page.locator('#h5-translate-input').fill('a long sentence that does not fit on a single line of the narrow phone box, so it wraps');
+      await barSettled();
+      const twoLines = await termInfo();
+      assert.equal(twoLines.resizes, closed.resizes, 'two lines with the keyboard open: no resize message');
+      assert.ok(Math.abs(twoLines.height - closed.height) < 1);
+      assert.ok(twoLines.bottom <= (await formTop()) + 3, 'the bottom rows stay above the two-line bar');
+      assert.ok(twoLines.top < withBar.top, 'the terminal moved further up');
+      await page.locator('#h5-translate-input').fill('');
+    }
     await page.locator('#h5-translate-input').blur();
     await page.setViewportSize({ width: 390, height: 844 });
     await page.waitForTimeout(300);

@@ -35,6 +35,9 @@ body { -webkit-text-size-adjust: 100%; }
 /* The terminal: the xterm element is put in by h5.js. */
 .h5-terminal { position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; background: var(--h5-bg); }
 .h5-terminal .h5-xterm { position: absolute; inset: 4px 4px 2px; }
+/* While the translate bar grows over the terminal (or shrinks back) the terminal is moved with a transform, never resized. h5.js adds the class only for the length of the move. */
+.h5-terminal .h5-xterm.h5-bar-moving { transition: transform .18s cubic-bezier(.2, .7, .2, 1); will-change: transform; }
+@media (prefers-reduced-motion: reduce) { .h5-terminal .h5-xterm.h5-bar-moving { transition: none; will-change: auto; } }
 /* A press-and-hold must not start text selection or the callout menu: dragging always scrolls. */
 .h5-terminal .h5-xterm { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; touch-action: pan-y; } /* a drag on the body scrolls the normal-buffer history natively; there are no synthetic wheel events */
 /* The wheel strip (2px in from the screen edge, so the browser edge-swipe gesture keeps working): a transparent touch strip on the right edge, above the copy button. It takes the touches itself (touch-action: none) and

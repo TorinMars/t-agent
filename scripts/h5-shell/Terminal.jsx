@@ -29,6 +29,8 @@ export function TerminalArea({ state, ui }) {
 // width and the two buttons sit on row 2, right-aligned (send keeps its place at the right edge). Active = the box has focus (`:focus-within`), or a button is being
 // pressed (`data-hold`, set by h5.js), or the voice input is recording (`:has(.listening)`), or a translation is running (class `translating`).
 // Only the CSS changes between the two states, so the textarea is never remounted and keeps its focus.
+// The bar reserves only its resting height in the page layout. What it grows beyond that (the second row, the second text line) is `--h5-bar-extra`, set by h5.js,
+// pulled back by a negative top margin, so the bar grows upward OVER the terminal and the terminal box never changes size (no fit, no PTY resize); h5.js moves the terminal instead.
 const ACTIVE = { gridTemplateColumns: '1fr auto auto', '& .h5-translate-input': { gridColumn: '1 / -1', gridRow: 1 }, '& #h5-voice': { gridColumn: 2, gridRow: 2 }, '& #h5-translate-send': { gridColumn: 3, gridRow: 2 } };
 export function TranslateBar({ state }) {
   return (
@@ -36,7 +38,7 @@ export function TranslateBar({ state }) {
       component="form" className={`h5-translate${state.translating ? ' translating' : ''}`} id="h5-translate" autoComplete="off"
       onMouseDown={event => { if (event.target.closest('button')) event.preventDefault(); }}
       sx={{
-        flex: '0 0 auto', display: 'grid', gridTemplateColumns: '1fr auto auto', alignItems: 'end', gap: 1, px: 1, pt: 1, borderTop: 1, borderColor: 'divider',
+        flex: '0 0 auto', position: 'relative', zIndex: 3, bgcolor: 'var(--h5-bg)', marginTop: 'calc(var(--h5-bar-extra, 0px) * -1)', display: 'grid', gridTemplateColumns: '1fr auto auto', alignItems: 'end', gap: 1, px: 1, pt: 1, borderTop: 1, borderColor: 'divider',
         '&:focus-within, &[data-hold], &.translating': ACTIVE,
         '&:has(.h5-voice.listening)': ACTIVE,
       }}

@@ -6,14 +6,15 @@ const { parseHTML } = require('linkedom');
 function setup() {
   const { document, Event } = parseHTML('<button id="btn-terminal-history"></button>');
   const frames = [], timers = new Map(); let timerId = 0;
-  const context = { document, WebSocket: { OPEN: 1 }, requestAnimationFrame: fn => frames.push(fn),
+  const context = { document, WebSocket: { OPEN: 1 }, requestAnimationFrame: fn => frames.push(fn), TextEncoder, TextDecoder,
     setTimeout: fn => { timers.set(++timerId, fn); return timerId; }, clearTimeout: id => timers.delete(id),
     TerminalViewport: { restore: (term, value) => { term.restored = value; } } };
   vm.createContext(context);
+  vm.runInContext(fs.readFileSync(require.resolve('../public/js/terminal-protocol.js'), 'utf8').replace('const TerminalProtocol', 'this.TerminalProtocol'), context);
   vm.runInContext(fs.readFileSync(require.resolve('../public/js/terminal-history.js'), 'utf8') + '\nthis.History = TerminalHistory;', context);
   function instance() {
     const writes = [], callbacks = [], sent = [];
-    const inst = { term: {}, paused: false, ws: { readyState: 1, send: data => sent.push(JSON.parse(data)) },
+    const inst = { term: {}, paused: false, ws: { readyState: 1, send: data => sent.push(JSON.parse(typeof data === 'string' ? data : new TextDecoder().decode(data))) },
       clipboard: { writeHistory: (data, done) => { writes.push(data); callbacks.push(done); } } };
     inst.history = context.History.attach(inst); inst.history.bind(inst.ws);
     return { inst, writes, callbacks, sent };

@@ -11,7 +11,7 @@ const root = path.resolve(__dirname, '..');
     await page.setContent(fs.readFileSync(path.join(root, 'public/index.html'), 'utf8').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '').replace(/<link\b[^>]*>/g, ''));
     await page.addStyleTag({ path: path.join(root, 'public/css/style.css') });
     await page.addStyleTag({ path: require.resolve('@xterm/xterm/css/xterm.css') });
-    for (const file of [require.resolve('@xterm/xterm'), require.resolve('@xterm/addon-fit'), 'public/js/terminal-viewport.js', 'public/js/terminal-clipboard.js', 'public/js/terminal-history.js']) {
+    for (const file of [require.resolve('@xterm/xterm'), require.resolve('@xterm/addon-fit'), 'public/js/terminal-viewport.js', 'public/js/terminal-clipboard.js', 'public/js/terminal-protocol.js', 'public/js/terminal-history.js']) {
       await page.addScriptTag({ path: file.startsWith('public/') ? path.join(root, file) : file });
     }
     const result = await page.evaluate(async () => {
@@ -20,7 +20,7 @@ const root = path.resolve(__dirname, '..');
       const term = new Terminal({ cols: 80, rows: 24, scrollback: 5000 });
       const fitAddon = new FitAddon.FitAddon(); term.loadAddon(fitAddon); term.open(el);
       window.sent = [];
-      const ws = { readyState: WebSocket.OPEN, send: data => { const frame = JSON.parse(data); if (frame.type === 'history-page') sent.push(frame); } };
+      const ws = { readyState: WebSocket.OPEN, send: data => { const frame = JSON.parse(typeof data === 'string' ? data : new TextDecoder().decode(data)); if (frame.type === 'history-page') sent.push(frame); } };
       window.inst = { term, ws, el, fitAddon, clipboard: TerminalClipboard.attach(term, el) };
       inst.history = TerminalHistory.attach(inst); inst.history.bind(ws); TerminalHistory.activate(inst);
       let replies = ''; term.onData(data => { if (!inst.paused) replies += data; });

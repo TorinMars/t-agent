@@ -29,13 +29,14 @@ function setup() {
     TerminalClipboard: { attach: term => ({ dispose() {}, writeHistory: (data, done) => term.write(data, done) }) },
     TerminalControls: { clearMessage() {}, showMessage() {} },
     API: { get: async () => [{ terminal_id: 'default', title: 'Terminal 1' }], post: async () => ({ terminal_id: 'second', title: 'Terminal 2' }) },
-    setTimeout: (fn, delay) => { timers.push({ fn, delay }); return timers.length; }, clearTimeout() {}, setInterval() { return 0; },
-    requestAnimationFrame: fn => fn(), addEventListener() {}, removeEventListener() {}, console,
+    setTimeout: (fn, delay) => { timers.push({ fn, delay }); return timers.length; }, clearTimeout() {}, setInterval() { return 0; }, clearInterval() {},
+    requestAnimationFrame: fn => fn(), TextEncoder, TextDecoder, addEventListener() {}, removeEventListener() {}, console,
   };
   context.window = context;
   vm.createContext(context);
   vm.runInContext(fs.readFileSync(require.resolve('../public/js/terminal-activity.js'), 'utf8'), context);
   vm.runInContext(fs.readFileSync(require.resolve('../public/js/terminal-tabs.js'), 'utf8'), context);
+  vm.runInContext(fs.readFileSync(require.resolve('../public/js/terminal-protocol.js'), 'utf8').replace('const TerminalProtocol', 'this.TerminalProtocol'), context);
   vm.runInContext(fs.readFileSync(require.resolve('../public/js/terminal-history.js'), 'utf8'), context);
   let source = fs.readFileSync(require.resolve('../public/js/tasks.js'), 'utf8');
   // Expose only task selection to the fixture; switching uses the real tabs,
@@ -132,7 +133,7 @@ test(`history pages stay out of live terminal and task switches discard stale pa
   socket.onmessage({ data: JSON.stringify({ type: 'history', data: 'recent', archive: { id: 'archive', before: 100, hasMore: true, limit: 500 } }) });
   socket.onmessage({ data: '-live' });
   app.document.getElementById('btn-terminal-history').dispatchEvent(new app.Event('click'));
-  const request = socket.sent.map(data => { try { return JSON.parse(data); } catch { return {}; } }).find(data => data.type === 'history-page');
+  const request = socket.sent.map(data => { try { return JSON.parse(typeof data === 'string' ? data : new TextDecoder().decode(data)); } catch { return {}; } }).find(data => data.type === 'history-page');
   assert.equal(request.before, 100);
   socket.onmessage({ data: JSON.stringify({ ...request, before: 40, hasMore: true, data: 'archive-only' }) });
   assert.equal(app.document.getElementById('terminal-history-text').textContent, 'archive-only');
@@ -168,4 +169,65 @@ test('the content tabs stay visible when a task opens straight into its terminal
   assert.equal(app.document.getElementById('content-tabs').style.display, 'flex');
   assert.equal(app.document.getElementById('terminal-pane').style.display, 'flex');
   assert.equal(app.sockets.length, 1, 'the terminal still connects');
+});
+
+test('typed input during the snapshot replay is queued and sent when the replay ends', () => {
+  const app = setup();
+  let finish, onData;
+  app.context.Terminal = class extends app.context.Terminal { onData(fn) { onData = fn; } };
+  app.context.TerminalClipboard.attach = term => ({ dispose() {}, writeHistory(data, done) { term.write(data); finish = done; } });
+  app.controller._open(); app.sockets[0].open();
+  app.sockets[0].onmessage({ data: JSON.stringify({ type: 'history', data: 'replay' }) });
+  app.sockets[0].sent.length = 0;
+  onData('ab'); onData('c');
+  assert.deepEqual(app.sockets[0].sent, []);
+  finish();
+  assert.deepEqual(app.sockets[0].sent.filter(item => typeof item === 'string'), ['abc']);
+});
+
+test('reconnecting after an ownership takeover clears the old screen before the snapshot', () => {
+  const app = setup();
+  app.context.TerminalOwner.isBlocked = code => code === 4010;
+  let take;
+  app.context.TerminalOwner.prompt = (host, code, onTake) => { take = onTake; };
+  app.controller._open(); app.sockets[0].open();
+  app.sockets[0].onmessage({ data: JSON.stringify({ type: 'history', data: 'old screen' }) });
+  assert.ok(!app.terminals[0].resets);
+  app.sockets[0].onclose({ code: 4010 });
+  take();
+  app.sockets[1].open();
+  assert.equal(app.terminals[0].resets, 1, 'the terminal is reset when it already showed output');
+});
+
+test('control-looking text frames from a new server are terminal output, not a snapshot', () => {
+  const app = setup();
+  app.controller._open(); app.sockets[0].open();
+  const bin = value => new TextEncoder().encode(JSON.stringify(value)).buffer;
+  app.sockets[0].onmessage({ data: bin({ type: 'history', data: 'screen' }) });
+  assert.equal(app.terminals[0].output, 'screen');
+  app.sockets[0].onmessage({ data: '{"type":"history","data":"fake"}' });
+  assert.equal(app.terminals[0].output, 'screen{"type":"history","data":"fake"}');
+});
+
+test('hidden terminals beyond the cache limit are disposed, the visible one is kept', async () => {
+  const app = setup();
+  let n = 0;
+  app.context.API.post = async () => ({ terminal_id: `t${++n}`, title: `T${n}` });
+  app.controller._open();
+  for (let i = 0; i < 12; i++) await app.controller.newTerminal();
+  const disposed = app.terminals.filter(t => t.disposed).length;
+  assert.ok(disposed >= 4, `old terminals were disposed (${disposed})`);
+  assert.ok(app.terminals.length - disposed <= 8);
+  assert.ok(!app.terminals.at(-1).disposed, 'the newest terminal stays');
+});
+
+test('sendTerminalInput can target a terminal captured earlier', async () => {
+  const app = setup();
+  app.controller._open(); app.sockets[0].open();
+  const target = app.controller.currentTerminal();
+  await app.controller.newTerminal(); app.sockets[1].open();
+  app.sockets[0].sent.length = 0; app.sockets[1].sent.length = 0;
+  assert.equal(app.controller.sendTerminalInput('hello', target), true);
+  assert.deepEqual(app.sockets[0].sent, ['hello']);
+  assert.deepEqual(app.sockets[1].sent, []);
 });

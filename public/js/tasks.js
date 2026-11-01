@@ -183,6 +183,7 @@ const Tasks = (() => {
     if (inst.reconnectTimer) clearTimeout(inst.reconnectTimer);
     if (inst.resizeObserver) inst.resizeObserver.disconnect();
     if (inst.onWindowResize) window.removeEventListener('resize', inst.onWindowResize);
+    if (inst.heartbeat) inst.heartbeat.stop();
     if (inst.ws) inst.ws.close();
     inst.history.dispose();
     inst.images.dispose();
@@ -195,6 +196,20 @@ const Tasks = (() => {
       fitAddon = null;
       termWs = null;
       termTaskId = null;
+    }
+  }
+
+  // Every cached terminal keeps up to 5000 lines and its parser running, so only the most recently used ones stay.
+  // An evicted terminal is rebuilt from the server snapshot when it is opened again.
+  const MAX_CACHED_TERMINALS = 8;
+  function evictTerminals() {
+    if (TerminalImages.busy) return;
+    const candidates = [...termInstances.values()]
+      .filter(inst => inst.term !== term && !inst.history.viewing() && !inst.el.querySelector('.terminal-owner-prompt'))
+      .sort((a, b) => a.lastUsed - b.lastUsed);
+    for (let count = termInstances.size; count >= MAX_CACHED_TERMINALS && candidates.length; count--) {
+      const inst = candidates.shift();
+      disposeTerminalInstance(inst.taskId, inst.terminalId, inst.sourceKey);
     }
   }
 
@@ -211,14 +226,22 @@ const Tasks = (() => {
 
   function connectWebSocket(task, inst, takeover = false) {
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    const ws = new WebSocket(`${proto}://${location.host}${inst.wsPath}?taskId=${task.id}&terminalId=${encodeURIComponent(inst.terminalId)}${TerminalOwner.query(takeover)}`);
+    const ws = new WebSocket(`${proto}://${location.host}${inst.wsPath}?taskId=${task.id}&terminalId=${encodeURIComponent(inst.terminalId)}${TerminalOwner.query(takeover)}${TerminalProtocol.query()}`);
     ws.binaryType = 'arraybuffer';
     inst.ws = ws;
     inst.history.bind(ws);
+    if (inst.heartbeat) inst.heartbeat.stop();
+    // A half-open connection (laptop slept, network changed) never fires onclose: close it ourselves and reconnect.
+    const heartbeat = inst.heartbeat = TerminalProtocol.heartbeat(ws, () => {
+      try { ws.close(); } catch { /* already closed */ }
+      handleClose({ code: 1006 });
+    });
     if (term === inst.term) termWs = ws;
 
     ws.onopen = () => {
-      const reconnecting = inst.reconnectAttempts > 0;
+      // A terminal that already showed output is cleared first: the server sends the whole screen again (also after a takeover).
+      const reconnecting = inst.reconnectAttempts > 0 || inst.opened;
+      inst.opened = true;
       if (reconnecting) {
         inst.reconnectScroll = TerminalViewport.capture(inst.term);
         inst.term.reset();
@@ -226,11 +249,12 @@ const Tasks = (() => {
       inst.reconnectAttempts = 0;
       TerminalViewport.fit(inst.term, inst.fitAddon, inst.el);
       if (!reconnecting && term === inst.term && activeTab === 'shell' && selectedId === task.id && source.key === inst.sourceKey) inst.term.focus();
-      ws.send(JSON.stringify({ type: 'resize', cols: inst.term.cols, rows: inst.term.rows }));
+      TerminalProtocol.send(ws, { type: 'resize', cols: inst.term.cols, rows: inst.term.rows });
     };
 
     ws.onmessage = (e) => {
       if (inst.disposed || inst.ws !== ws) return;
+      heartbeat.touch();
       if (inst.history.handle(e.data, ws)) return;
       if (e.data instanceof ArrayBuffer) {
         inst.term.write(new Uint8Array(e.data));
@@ -239,7 +263,8 @@ const Tasks = (() => {
       }
     };
 
-    ws.onclose = (event) => {
+    function handleClose(event) {
+      heartbeat.stop();
       if (inst.ws !== ws || inst.disposed || termInstances.get(terminalKey(task.id, inst.terminalId, inst.sourceKey)) !== inst) return;
       inst.history.disconnect(ws);
       inst.ws = null;
@@ -252,7 +277,8 @@ const Tasks = (() => {
         return;
       }
       scheduleReconnect(task, inst);
-    };
+    }
+    ws.onclose = handleClose;
 
     ws.onerror = () => {};
   }
@@ -281,6 +307,7 @@ const Tasks = (() => {
       if ((inst.ws && [WebSocket.CONNECTING, WebSocket.OPEN].includes(inst.ws.readyState)) || inst.reconnectTimer) {
         Array.from(container.children).forEach(el => { el.style.display = el === inst.el ? '' : 'none'; });
         TerminalHistory.activate(inst);
+        inst.lastUsed = Date.now();
         term = inst.term;
         fitAddon = inst.fitAddon;
         termWs = inst.ws;
@@ -291,6 +318,7 @@ const Tasks = (() => {
       disposeTerminalInstance(task.id);
     }
 
+    evictTerminals();
     Array.from(container.children).forEach(el => { el.style.display = 'none'; });
 
     const el = document.createElement('div');
@@ -336,6 +364,7 @@ const Tasks = (() => {
       reconnectTimer: null,
       reconnectAttempts: 0,
       resizeObserver: null,
+      lastUsed: Date.now(),
     };
     inst.history = TerminalHistory.attach(inst);
     TerminalHistory.activate(inst);
@@ -346,22 +375,28 @@ const Tasks = (() => {
     term = t;
     fitAddon = fa;
 
-    t.onData(data => {
-      if (inst.paused || TerminalImages.busy) return;
-      if (inst.ws && inst.ws.readyState === WebSocket.OPEN) inst.ws.send(data);
-    });
+    // While the saved screen is replayed (inst.paused) typed input is kept and sent when the replay ends, not lost.
+    const typed = data => {
+      if (TerminalImages.busy || !inst.ws || inst.ws.readyState !== WebSocket.OPEN) return;
+      if (inst.paused) { if (inst.queued.length < 4096) inst.queued += data; return; }
+      inst.ws.send(data);
+    };
+    inst.queued = '';
+    inst.flushQueued = () => {
+      const data = inst.queued;
+      inst.queued = '';
+      if (data) typed(data);
+    };
+    t.onData(typed);
     // A Chinese IME on a PC types punctuation (? ! , . and so on) as insertText after a keyCode 229 keydown, which xterm 5.5 drops; send what it dropped.
     if (typeof TerminalIme !== 'undefined') {
-      TerminalIme.attach(t, data => {
-        if (inst.paused || TerminalImages.busy) return;
-        if (inst.ws && inst.ws.readyState === WebSocket.OPEN) inst.ws.send(data);
-      });
+      TerminalIme.attach(t, typed);
     }
 
     t.onResize(({ cols, rows }) => {
       if (inst.restoringHistory) return;
       if (inst.ws && inst.ws.readyState === WebSocket.OPEN) {
-        inst.ws.send(JSON.stringify({ type: 'resize', cols, rows }));
+        TerminalProtocol.send(inst.ws, { type: 'resize', cols, rows });
       }
     });
 
@@ -2240,14 +2275,17 @@ const Tasks = (() => {
     deleteTerminal,
     restartTerminalFromWorkDir,
     // Returns whether it was really sent (false while the terminal is disconnected, paused or an image is uploading).
-    sendTerminalInput(data) {
+    sendTerminalInput(data, target = termInstances.get(terminalKey(selectedId))) {
       if (TerminalImages.busy) return false;
-      const instance = termInstances.get(terminalKey(selectedId));
-      if (!instance || instance.paused || !instance.ws || instance.ws.readyState !== WebSocket.OPEN || activeTab !== 'shell') return false;
+      const instance = target;
+      if (!instance || instance.disposed || instance.paused || !instance.ws || instance.ws.readyState !== WebSocket.OPEN) return false;
+      if (!target || target === termInstances.get(terminalKey(selectedId))) { if (activeTab !== 'shell') return false; }
       instance.ws.send(data);
-      instance.term.focus();
+      if (instance.term === term) instance.term.focus();
       return true;
     },
+    // The terminal that is current now; pass it back to sendTerminalInput later so the text goes where it was meant.
+    currentTerminal() { return termInstances.get(terminalKey(selectedId)) || null; },
   };
 })();
 

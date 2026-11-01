@@ -38,7 +38,7 @@ async function handleRemoteTerminalUpgrade(req, socket, head, wss, user) {
     });
     const upstreamUrl = new URL(terminalSession.websocket_path, `${server.base_url}/`);
     upstreamUrl.protocol = upstreamUrl.protocol === 'https:' ? 'wss:' : 'ws:';
-    for (const name of ['clientId', 'takeover']) {
+    for (const name of ['clientId', 'takeover', 'proto']) {
       if (url.searchParams.has(name)) upstreamUrl.searchParams.set(name, url.searchParams.get(name));
     }
     const upstream = new WebSocket(upstreamUrl, { handshakeTimeout: 10_000 });

@@ -41,12 +41,13 @@ const TerminalTranslate = (() => {
     if (busy || !source) return;
     setBusy(true);
     say('');
+    const target = window.Tasks && Tasks.currentTerminal ? Tasks.currentTerminal() : null; // the terminal that was current when the user asked
     try {
       const result = await API.post('/api/translate', { text: source });
       const text = sanitize(result.text);
       if (!text) throw new Error('Translation result is empty');
-      if (!window.Tasks || !Tasks.sendTerminalInput(text)) throw new Error('Terminal not connected; translation was not sent');
-      setTimeout(() => { Tasks.sendTerminalInput('\r'); input.focus(); }, SUBMIT_DELAY_MS);
+      if (!window.Tasks || !Tasks.sendTerminalInput(text, target)) throw new Error('Terminal not connected; translation was not sent');
+      setTimeout(() => { Tasks.sendTerminalInput('\r', target); input.focus(); }, SUBMIT_DELAY_MS);
       say(''); // on success the translation is not shown, it is already visible in the terminal
       input.value = '';
       autosize();

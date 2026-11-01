@@ -37,7 +37,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     window.sockets = [];
     window.FakeSocket = class {
       constructor(url) { this.url = url; this.readyState = 0; this.sent = []; window.sockets.push(this); setTimeout(() => { this.readyState = 1; this.onopen?.(); }, 0); }
-      send(data) { this.sent.push(data); }
+      send(data) { this.sent.push(typeof data === 'string' ? data : new TextDecoder().decode(data)); }
       close() { this.readyState = 3; }
       emit(data) { this.onmessage?.({ data }); }
     };
@@ -169,7 +169,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     await page.locator('#h5-tasks').waitFor({ state: 'hidden' });
     await page.waitForFunction(() => window.sockets.length === 1 && window.sockets[0].readyState === 1);
     assert.ok(calls.includes('GET /api/tasks/1/terminals'));
-    assert.match(await page.evaluate(() => new URL(window.sockets[0].url).search), /^\?taskId=1&terminalId=h5-default&clientId=[\w-]+$/);
+    assert.match(await page.evaluate(() => new URL(window.sockets[0].url).search), /^\?taskId=1&terminalId=h5-default&clientId=[\w-]+&proto=2$/);
     assert.equal(await page.evaluate(() => window.sockets[0].url.startsWith('ws://h5.test/terminal/ws')), true);
     // The screen stays on while a task is open, so the phone does not sleep during the session.
     await page.waitForFunction(() => window.locks.held === 1);

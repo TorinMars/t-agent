@@ -483,6 +483,50 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       assert.equal(await input.evaluate(el => el.scrollWidth <= el.clientWidth + 1), true, 'the placeholder stays on one line');
     }
 
+    // Keyboard dismissed: the box goes back to ONE line and the bar to the resting pill, the text is kept, no resize message; focusing again gives two lines.
+    {
+      const input = page.locator('#h5-translate-input');
+      const text = 'a long sentence that does not fit on a single line of the narrow phone box, so it wraps';
+      const state = async () => { await barSettled(); return page.evaluate(() => {
+        const el = document.getElementById('h5-translate-input');
+        const style = getComputedStyle(el);
+        const form = document.getElementById('h5-translate').getBoundingClientRect();
+        return { height: el.getBoundingClientRect().height, line: parseFloat(style.lineHeight), pad: parseFloat(style.paddingTop) + parseFloat(style.paddingBottom), value: el.value, focused: document.activeElement === el,
+          formHeight: form.height, extra: document.getElementById('h5-bottom').style.getPropertyValue('--h5-bar-extra'), termTransform: document.getElementById('h5-terminal').firstElementChild?.style.transform || '',
+          resizes: window.sockets[0].sent.filter(item => { try { return JSON.parse(item).type === 'resize'; } catch { return false; } }).length };
+      }); };
+      const vp = page.viewportSize();
+      await input.focus();
+      await input.fill(text);
+      const open = await state();
+      assert.ok(Math.abs(open.height - (2 * open.line + open.pad)) <= 2, `two lines while typing (${open.height}px)`);
+      // 1) blur (the keyboard hide button, or focus moving away)
+      await input.blur();
+      const blurred = await state();
+      assert.ok(Math.abs(blurred.height - (blurred.line + blurred.pad)) <= 2, `one line after blur (${blurred.height}px)`);
+      assert.equal(blurred.value, text, 'the text is kept');
+      assert.ok(blurred.formHeight < open.formHeight - 10, 'the bar is back to the resting pill');
+      assert.equal(blurred.resizes, open.resizes, 'no resize message');
+      await input.focus();
+      assert.ok(Math.abs((await state()).height - open.height) <= 2, 'two lines again on focus');
+      // 2) the keyboard goes away without a blur (Android back button): the viewport returns to full height while the box stays focused
+      await page.setViewportSize({ width: vp.width, height: vp.height - 300 });
+      await page.waitForFunction(() => document.documentElement.style.getPropertyValue('--h5-height') !== '', null, { timeout: 3000 });
+      await page.waitForTimeout(300);
+      assert.equal((await state()).focused, true, 'the box is focused while the keyboard is up');
+      await page.setViewportSize(vp);
+      await page.waitForFunction(() => document.activeElement !== document.getElementById('h5-translate-input'), null, { timeout: 4000 });
+      const closed = await state();
+      assert.ok(Math.abs(closed.height - (closed.line + closed.pad)) <= 2, `one line after the keyboard went away (${closed.height}px)`);
+      assert.equal(closed.value, text, 'the text is kept');
+      assert.equal(closed.resizes, open.resizes, 'no resize message when the keyboard comes and goes');
+      await input.focus();
+      assert.ok(Math.abs((await state()).height - open.height) <= 2, 'two lines again on focus after that');
+      // 3) a tap on a bar button while the box is focused keeps the focus and the click
+      await input.blur();
+      await input.fill('');
+    }
+
     // Translate and send: control characters are stripped and Enter follows separately.
     await page.locator('#h5-translate-input').fill('run the tests, and please make the text long enough that the box grows to two lines on the phone');
     await page.locator('#h5-translate-input').blur();

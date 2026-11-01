@@ -81,7 +81,7 @@ export function BottomArea({ state, ui }) {
 // The message box. The textarea is the plain DOM one that voice-input.js and h5.js read and write directly (value, height; `autosize()` in h5.js keeps it at one line, growing to two); Material UI draws around it.
 // One grid, one element tree. At rest: the plus button, the box and the voice button share one row (a pill). While the bar is "active" the box takes row 1 across the
 // full width and the buttons sit on row 2: plus (it becomes a cross while its menu is open) at the left, voice, translate (and send) and send (as typed) at the right.
-// Active = the box has focus (`:focus-within`), or it holds text, or a button is being pressed (`data-hold`, set by h5.js), or the add menu is open (`data-menu`),
+// Active = the box has focus (`:focus-within`; a box that holds text but has no focus is back at rest, one line), or a button is being pressed (`data-hold`, set by h5.js), or the add menu is open (`data-menu`),
 // or the voice input is recording (`:has(.listening)`), or a translation is running (class `translating`).
 // Only the CSS changes between the two states, so the textarea is never remounted and keeps its focus.
 // The bar reserves only its resting height in the page layout. What it grows beyond that is `--h5-bar-extra`, set by h5.js on `#h5-bottom`, pulled back by a negative top margin
@@ -103,7 +103,7 @@ export function TranslateBar({ state, menu, onMenu }) {
       sx={{
         position: 'relative', mx: 1, mt: 0.75, display: 'grid', gridTemplateColumns: 'auto 1fr auto', alignItems: 'end', columnGap: 0.5, rowGap: 0.5, px: 0.75, py: 0.75, border: 1, borderColor: 'divider', borderRadius: '28px', bgcolor: 'action.hover',
         '& #h5-translate-button, & #h5-translate-send': { display: 'none' },
-        '&:focus-within, &[data-hold], &[data-menu], &.translating, &:has(.h5-translate-input textarea:not(:placeholder-shown))': ACTIVE,
+        '&:focus-within, &[data-hold], &[data-menu], &.translating': ACTIVE,
         '&:has(.h5-voice.listening)': ACTIVE,
       }}
     >

@@ -86,6 +86,8 @@
     clearTimeout(keyboardResetTimer);
     keyboardResetTimer = setTimeout(() => {
       keyboardResetTimer = 0;
+      // The same for the translate box: without a blur it would stay focused, expanded and in the active layout after the keyboard is gone. The text stays in it.
+      if (!keyboardOpen && document.activeElement === translateInput) translateInput.blur();
       const textarea = session && session.term && session.term.textarea;
       if (keyboardOpen || !textarea || textarea.getAttribute('inputmode') === 'none') return;
       if (Date.now() - keyboardToggledAt < KEYBOARD_TOGGLE_GRACE_MS) return;
@@ -1390,7 +1392,10 @@
     const input = translateInput;
     input.style.height = '';
     input.style.overflowY = 'hidden';
-    if (!input.value) { syncBar(); return; } // empty: the natural height of rows=1
+    // One line while the box is empty, or while it has no focus (keyboard dismissed): the text stays in the box, clipped to the first line, and is shown in full again on focus.
+    // A pressed bar button (data-hold) keeps the current size so the button does not move under the finger.
+    const resting = document.activeElement !== input && !translateForm.hasAttribute('data-hold');
+    if (!input.value || resting) { if (resting) input.scrollTop = 0; syncBar(); return; } // the natural height of rows=1
     const style = getComputedStyle(input);
     const lineHeight = parseFloat(style.lineHeight) || (parseFloat(style.fontSize) || 15) * 1.4375;
     const padding = (parseFloat(style.paddingTop) || 0) + (parseFloat(style.paddingBottom) || 0);
@@ -1533,7 +1538,10 @@
       flips.push(el.animate([from, to], { duration: FLIP_MS, easing: FLIP_EASING }));
     });
   }
-  new MutationObserver(relayoutBar).observe(translateForm, { attributes: true, subtree: true, attributeFilter: ['class', 'data-hold', 'data-menu'] });
+  new MutationObserver(records => {
+    if (records.some(record => record.attributeName === 'data-hold')) autosize(); // the press ended: a box that lost focus meanwhile collapses now
+    relayoutBar();
+  }).observe(translateForm, { attributes: true, subtree: true, attributeFilter: ['class', 'data-hold', 'data-menu'] });
   // The bar size also changes when the window turns or the font loads: keep the overlap and the measured layout current (no animation).
   new ResizeObserver(() => { if (!flips.length) { barLayout = measureBar(); syncBar(false); } }).observe(translateForm);
   autosize(); // the first height (and the first syncBar) once the bar state exists
@@ -1556,8 +1564,9 @@
   };
   window.addEventListener('pointerup', endPress);
   window.addEventListener('pointercancel', endPress);
-  translateForm.addEventListener('focusin', relayoutBar);
-  translateForm.addEventListener('focusout', relayoutBar);
+  // Focus decides the box height (autosize): expand on focus, collapse to one line on blur, then switch the bar layout.
+  translateForm.addEventListener('focusin', () => { autosize(); relayoutBar(); });
+  translateForm.addEventListener('focusout', () => { autosize(); relayoutBar(); });
 
   // ── Image upload: the Client uploads to OSS and the link is typed into the terminal without Enter ──
   let pickedFor = null;

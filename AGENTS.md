@@ -14,11 +14,13 @@
 
 ## Phone UI icons
 
-- All icons in the phone UI (`/h5`) come from one icon library: the "Ant Design Official Icon Library" collection on iconfont.cn (https://www.iconfont.cn/collections/detail?cid=9402). Same grid, same outlined style. Do not mix in icons from other sets and do not draw your own.
-- Icons are inline SVG paths in `scripts/h5-shell/Icons.jsx`, drawn with `currentColor` at a consistent size (24px; 22px for the function keys). No runtime requests and no icon fonts.
+- All icons in the phone UI (`/h5`) come from one icon library: the "Ant Design Official Icon Library" collection on iconfont.cn (https://www.iconfont.cn/collections/detail?cid=9402). Same grid, same outlined style. Do not mix in icons from other sets. Library icons come first.
+- Where no library icon is clearly recognisable for a button (for example the keyboard keys Backspace, Tab and Shift), you may draw an inline SVG yourself on the 24 grid, with the same stroke weight (1.5), round caps and joins, outlined style and `currentColor`, or use a short text label instead. Judge it on a real-size screenshot (phone width, 3x). A text label is better than an unclear icon.
+- Self-drawn icons live in `scripts/h5-shell/Icons.jsx`, in the clearly marked `SELF-DRAWN ICONS` section (the `DRAWN` map).
+- Icons are inline SVG paths in `scripts/h5-shell/Icons.jsx`, drawn with `currentColor` at a consistent size (24px; 22px for the function keys; the self-drawn ones are stroked on a 24 viewBox). No runtime requests and no icon fonts.
 - Every icon-only button has an English `aria-label` and the same `title` (with its Chinese text in `public/js/i18n-zh-ui.js`).
-- To add an icon: take the closest same-style icon from the same collection, add its path to `Icons.jsx`, and update the mapping table in "Phone UI icons" in `DESIGN.md` (say which icon was substituted when the exact one does not exist).
-- Use a text label only where no icon in the collection fits, and style it to match the icons (same size, weight and vertical alignment).
+- To add an icon: take the closest same-style icon from the same collection, add its path to `Icons.jsx`, and update the mapping table in "Phone UI icons" in `DESIGN.md` (library icon with its id, self-drawn icon, or text label).
+- Text labels are styled to match the icons (same size, weight and vertical alignment).
 
 ## Development workflow
 

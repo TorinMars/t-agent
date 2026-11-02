@@ -2,7 +2,7 @@
 
 > Date: 2026-07-15
 
-> Unreleased: The function keys of the phone bottom bar (row 1) use the same icon library as row 2, and the translate-and-send button is now the send button with a small "Aa" mark. Full icon information is in "Phone UI icons" below. Regression: `scripts/test-h5-browser.cjs`.
+> Unreleased: The function keys of the phone bottom bar (row 1) use clear faces (library icons for the arrows and Enter, self-drawn icons for Backspace, Tab and Shift, text for the rest), and the translate-and-send button is now the send button with a small "Aa" mark. Full icon information is in "Phone UI icons" below. Regression: `scripts/test-h5-browser.cjs`.
 > Unreleased: The icons of the phone bottom bar come from one set, the "Ant Design Official Icon Library" collection (Chinese collection title translated) on iconfont.cn (https://www.iconfont.cn/collections/detail?cid=9402; the official Ant Design icons, outlined style, 1024 grid, author Ant Design / ant-design/ant-design-icons, MIT licence; the licence is stated by the Ant Design project, the collection page itself shows no licence field, to be confirmed by the owner). Paths were copied from the public SVG data of the collection (no login, no cookies) into `scripts/h5-shell/Icons.jsx` as inline SVG with `currentColor` (24px, no runtime request). Mapping: terminal keyboard = `code library` (4765970), draft keyboard = `edit-square` (4765957), upload image = `image` (4766917), saved commands = `unordered list` (4767060), voice = `audio` (5756281), send = `send` (9230696), translate and send = `translate` (8094821), Paste text menu item = `snippets` (4766482). The set has no keyboard icon, so the two keyboard keys use the closest same-style ones (a terminal prompt box and a pencil on a square). The send button stays a white round button; only its glyph changed. Rebuilt `public/js/h5-shell.js`. Regression: `scripts/test-h5-browser.cjs`.
 > Unreleased: Tasks in the left sidebar have no selected state. The desktop sidebar (`.task-nav-item`) no longer dims unselected tasks or highlights the open one (`public/css/style.css`, `themes.css`); the phone task list and the wide phone sidebar (`scripts/h5-shell/TaskDrawer.jsx`, rebuilt into `public/js/h5-shell.js`) no longer fill the open task's row. Kept: hover feedback, the `active` class and `aria-current` on the open task (script and test hooks, no style), and the highlight of the current terminal or chat row. Regression: `test/sidebar-no-selected.test.js`, `scripts/test-h5-browser.cjs`.
 
@@ -2111,7 +2111,7 @@ Phones and computers use two separate pages that share no frontend state or layo
 - Wrong page address: for a logged-in browser page visit (GET/HEAD asking for `text/html`) to an address nothing serves, the last handler (`createUnknownPageRedirect` in `lib/login-gate.js`, mounted after the static files) redirects to `/` (phones continue to `/h5`). Logged-out requests are never redirected, so the hidden login entrance stays hidden and they keep getting the plain 404; `/api`, `/auth`, `/v1`, `/share`, `/hooks`, `/terminal`, `/js`, `/css`, `/vendor`, `/icons`, the login path and non-HTML requests also keep the 404. Tests: `test/login-gate.test.js` and `test/client-auth-http.test.js`.
 - Keyboard and terminal size: when the visual viewport shrinks by more than 8px from its tallest height (the on-screen keyboard), the terminal keeps the height it had before and is shifted up (`translateY`) so its bottom rows stay visible above the keys; the top rows are clipped. The shift is capped by the cursor row (`TerminalViewport.keyboardShift`, updated on every cursor move), so a shell prompt near the top of the terminal stays visible instead of being pushed out of sight. Its size does not change, so no `resize` reaches the PTY and a full-screen program does not redraw. When the keyboard closes the terminal goes back to its place. Rotating the phone measures the full height again. iOS Safari can report the final keyboard height without a last `resize` event (for example when focus moves from the terminal to the translate box), which left a blank band under the translate row; the page therefore measures again on `visualViewport` `scroll`, on every focus change (at 0, 100, 250, 500 and 1000 ms) and every 500 ms while the keyboard is open.
 - Two rows and a hidden draft box (phone, after v2.87.3; reference image of 2026-11-01; this replaces the pill message bar and the one-row key bar described in the next paragraphs wherever they differ). `#h5-bottom` holds, top to bottom: the draft box `#h5-translate` (hidden), row 1 `#h5-keys` and row 2 `#h5-actions` (`BottomArea`, `TranslateBar`, `KeyBar`, `ActionBar` in `scripts/h5-shell/Terminal.jsx`).
-  - Row 1 (function keys, `#h5-keys`): Esc, Left, Down, Up, Right, Enter, Backspace, Tab, Ctrl, Alt, Home, End, Page up, Page down, Ins, Delete, Shift, ^C, in that order; keys with a fitting icon show an icon (see "Phone UI icons"), Ctrl, Alt, Ins and ^C keep a text label. It still scrolls sideways: `overflow-x: auto`, no wrapping, keys do not shrink (`flex: 0 0 auto`), no scroll bar, a fade at the right edge. A touch drag scrolls and presses no key (the browser drops the click). Ctrl, Alt and Shift stay one-shot latches (blue, `aria-pressed`).
+  - Row 1 (function keys, `#h5-keys`): Esc, Left, Down, Up, Right, Enter, Backspace, Tab, Ctrl, Alt, Home, End, Page up, Page down, Ins, Delete, Shift, ^C, in that order; the arrows, Enter, Backspace, Tab and Shift show an icon and the other keys a short text label (see "Phone UI icons"). It still scrolls sideways: `overflow-x: auto`, no wrapping, keys do not shrink (`flex: 0 0 auto`), no scroll bar, a fade at the right edge. A touch drag scrolls and presses no key (the browser drops the click). Ctrl, Alt and Shift stay one-shot latches (blue, `aria-pressed`).
   - Row 2 (actions, `#h5-actions`), equal-width buttons filling the width: terminal keyboard, draft keyboard, upload image (`#h5-image`), saved commands (`#h5-commands`), voice (`#h5-voice`). While the draft box is shown the row also gets a divider, the send icon (`#h5-translate-send`, white round button; sends the text as typed) and translate-and-send (`#h5-translate-button`, the same white round button with the same send icon plus a small "Aa" mark in its lower right corner; the mark is the only difference) at its right end (`.h5-draft-only`, shown by the `:has()` rule `DRAFT_ON` on `#h5-bottom`). The send button sits outside the form and uses the `form="h5-translate"` attribute. Both rows stay visible while the on-screen keyboard is open (the image shows only the action row above the keyboard; the arrow keys are too useful in the terminal to hide).
   - Keyboard keys: icons are a prompt box with `>_` (terminal) and a pencil on a square (draft), from the iconfont.cn set above; `aria-label` and `title` "Terminal keyboard" / "Draft keyboard" (Chinese in `i18n-zh-ui.js`). "Terminal keyboard" focuses the terminal (inputmode `text`) and toggles; the draft box stays hidden. "Draft keyboard" (`toggleDraftKeyboard()` in `h5.js`) focuses `#h5-translate-input`; a second tap blurs it. The one whose input has the focus is blue and `aria-pressed="true"` (`ui.state.keyboard`, from document `focusin` / `focusout`).
   - Saved commands opens the list: `Paste text` first (it has no button of its own in the image), then the presets (`INSERT_COMMANDS`; a tap types the command without Enter). Upload image is a direct button. The plus button and the add menu are gone. Voice: the voice button works with the box hidden; while recording the box is shown, and when it is done `voice-input.js` focuses the box so the text can be seen.
@@ -2185,8 +2185,9 @@ Usage, notifications and phone sidebar changes:
 - Licence: MIT, as stated by the Ant Design project. The iconfont.cn collection page shows no licence field, so the owner should confirm the terms before the project is distributed outside private use.
 - How the icons were obtained: from the public JSON API of iconfont.cn, without login and without cookies. The list of the collection is `https://www.iconfont.cn/api/collection/detail.json?id=9402`; every icon in it has an `id`, a `name` and a `show_svg` field with the SVG source. The `d` attribute of each `path` was copied into `PATHS` in `scripts/h5-shell/Icons.jsx` (an icon with two paths, such as `delete`, has them joined into one path string).
 - How they are used: inline SVG (`viewBox="0 0 1024 1024"`, `fill` is `currentColor`, `aria-hidden`), drawn by `<Icon name size />` from Material UI `SvgIcon`: 24px in row 2, 22px in row 1. Colour follows the theme, the blue pressed state and the disabled colour. Nothing is fetched at runtime.
-- Rules for new icons: see "Phone UI icons" in `AGENTS.md`. Any icon that is not exactly what the button means is listed below as a substitute.
-- Text labels: Ctrl, Alt, Ins and ^C have no fitting icon in the set, so they keep a short text label with the same size (14px), weight and vertical alignment as the icon keys.
+- Rules for new icons: see "Phone UI icons" in `AGENTS.md`. Library icons come first; where none is clearly recognisable, a self-drawn icon or a text label is used (in 2.87.6 several keys used library substitutes that nobody could recognise as those keys, such as a cross for Esc and Backspace, a trash can for Delete).
+- Self-drawn icons: `DRAWN` in the `SELF-DRAWN ICONS` section of `scripts/h5-shell/Icons.jsx`. 24 viewBox, outlined, `stroke-width` 1.5, round caps and joins, `currentColor`, shown at 22px like the library icons.
+- Text labels: Esc, Ctrl, Alt, Home, End, PgUp, PgDn, Ins, Del and ^C show a short text (14px, weight 500, centred) with the same size and alignment as the icon keys. Their `aria-label` and `title` stay the full name (Escape, Page up, Page down, Insert, Delete, ...).
 - Send and translate-and-send: both use the white round 44px button (`SEND` in `scripts/h5-shell/Terminal.jsx`) and the same `send` icon. Translate-and-send adds a 10px bold "Aa" text (`.h5-aa`, `aria-hidden`) inside the circle at the lower right. The outlined square and the `translate` icon (8094821) are no longer used and were removed from `Icons.jsx`.
 
 | Button | Icon name | iconfont.cn icon id | Note |
@@ -2199,23 +2200,26 @@ Usage, notifications and phone sidebar changes:
 | Send | send | 9230696 | |
 | Translate and send | send | 9230696 | the same icon, plus the "Aa" text mark |
 | Paste text (menu item) | snippets | 4766482 | |
-| Esc | close | 4767096 | substitute: no Escape icon |
-| Left | arrowleft | 4767022 | |
-| Down | arrowdown | 4767023 | |
-| Up | arrowup | 4767021 | |
-| Right | arrowright | 4767020 | |
-| Enter | enter | 4767097 | |
-| Backspace | close-square | 4765964 | substitute: no Backspace icon (a crossed box) |
-| Tab | vertical left | 4767010 | substitute: an arrow pointing to a bar (the icon name in the library is the opposite of its shape) |
-| Home | home | 4766685 | |
-| End | double right | 4767019 | substitute: no End icon |
-| Page up | vertical-align-top | 4767030 | substitute |
-| Page down | vertical-align-botto | 4767027 | substitute (the name is cut in the library) |
-| Delete | delete | 4766676 | substitute: a trash can for the forward-delete key |
-| Shift | up | 4767013 | substitute: no Shift icon (an up chevron, different from the arrow of the Up key) |
-| Ctrl, Alt, Ins, ^C | none | none | text labels, no fitting icon in the set |
+| Esc | none | none | text "Esc" |
+| Left | arrowleft | 4767022 | library icon |
+| Down | arrowdown | 4767023 | library icon |
+| Up | arrowup | 4767021 | library icon |
+| Right | arrowright | 4767020 | library icon |
+| Enter | enter | 4767097 | library icon (the return arrow) |
+| Backspace | self-drawn `keyBackspace` | none | self-drawn: a keycap tag pointing left with a cross inside |
+| Tab | self-drawn `keyTab` | none | self-drawn: an arrow to a bar |
+| Ctrl | none | none | text "Ctrl" |
+| Alt | none | none | text "Alt" |
+| Home | none | none | text "Home" |
+| End | none | none | text "End" |
+| Page up | none | none | text "PgUp" |
+| Page down | none | none | text "PgDn" |
+| Insert | none | none | text "Ins" |
+| Delete | none | none | text "Del" |
+| Shift | self-drawn `keyShift` | none | self-drawn: a hollow up arrow |
+| Ctrl+C | none | none | text "^C" |
 
-Every icon-only button has an English `aria-label` and the same `title` (function keys: Escape, Left arrow, Down arrow, Up arrow, Right arrow, Enter, Backspace, Tab, Home, End, Page up, Page down, Delete, Shift; the Chinese UI text is in `public/js/i18n-zh-ui.js`). The `data-key`, `data-modifier` and `data-shortcut` attributes did not change. The one-shot Ctrl, Alt and Shift keys still turn blue with `aria-pressed` (the Shift icon takes the blue through `currentColor`).
+Every icon-only button has an English `aria-label` and the same `title` (function keys: Escape, Left arrow, Down arrow, Up arrow, Right arrow, Enter, Backspace, Tab, Home, End, Page up, Page down, Insert, Delete, Shift, Send Ctrl+C; the Chinese UI text is in `public/js/i18n-zh-ui.js`). The `data-key`, `data-modifier` and `data-shortcut` attributes did not change. The one-shot Ctrl, Alt and Shift keys still turn blue with `aria-pressed` (the Shift icon takes the blue through `currentColor`).
 
 ## Material UI phone shell
 

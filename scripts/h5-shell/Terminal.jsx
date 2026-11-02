@@ -106,12 +106,12 @@ export function TranslateBar({ state }) {
 // Row 1, one row that scrolls sideways. Order: Esc, the four arrows, Enter, then all the other keys. Keys with `icon` draw that icon from `Icons.jsx` (Ant Design Official Icon Library, see "Phone UI icons" in AGENTS.md)
 // and need `aria` (the English accessible name, also used as the title). Keys without an icon (the set has none that fits Ctrl, Alt, Ins or ^C) keep a short text label in the same size and weight.
 const KEYS = [
-  { key: 'Escape', icon: 'keyEscape', aria: 'Escape' },
+  { key: 'Escape', label: 'Esc', aria: 'Escape' },
   { key: 'ArrowLeft', icon: 'keyArrowLeft', aria: 'Left arrow' }, { key: 'ArrowDown', icon: 'keyArrowDown', aria: 'Down arrow' }, { key: 'ArrowUp', icon: 'keyArrowUp', aria: 'Up arrow' }, { key: 'ArrowRight', icon: 'keyArrowRight', aria: 'Right arrow' },
   { key: 'Enter', icon: 'keyEnter', aria: 'Enter' }, { key: 'Backspace', icon: 'keyBackspace', aria: 'Backspace' },
   { key: 'Tab', icon: 'keyTab', aria: 'Tab' }, { modifier: 'ctrl', label: 'Ctrl' }, { modifier: 'alt', label: 'Alt' },
-  { key: 'Home', icon: 'keyHome', aria: 'Home' }, { key: 'End', icon: 'keyEnd', aria: 'End' }, { key: 'PageUp', icon: 'keyPageUp', aria: 'Page up' }, { key: 'PageDown', icon: 'keyPageDown', aria: 'Page down' }, { key: 'Insert', label: 'Ins', aria: 'Insert' },
-  { key: 'Delete', icon: 'keyDelete', aria: 'Delete' }, { modifier: 'shift', icon: 'keyShift', aria: 'Shift' },
+  { key: 'Home', label: 'Home', aria: 'Home' }, { key: 'End', label: 'End', aria: 'End' }, { key: 'PageUp', label: 'PgUp', aria: 'Page up' }, { key: 'PageDown', label: 'PgDn', aria: 'Page down' }, { key: 'Insert', label: 'Ins', aria: 'Insert' },
+  { key: 'Delete', label: 'Del', aria: 'Delete' }, { modifier: 'shift', icon: 'keyShift', aria: 'Shift' },
   { shortcut: 'ctrl-c', label: '^C', aria: 'Send Ctrl+C' },
 ];
 

@@ -103,14 +103,15 @@ export function TranslateBar({ state }) {
   );
 }
 
-// Row 1, one row that scrolls sideways. Order: Esc, the four arrows, Enter, then all the other keys.
+// Row 1, one row that scrolls sideways. Order: Esc, the four arrows, Enter, then all the other keys. Keys with `icon` draw that icon from `Icons.jsx` (Ant Design Official Icon Library, see "Phone UI icons" in AGENTS.md)
+// and need `aria` (the English accessible name, also used as the title). Keys without an icon (the set has none that fits Ctrl, Alt, Ins or ^C) keep a short text label in the same size and weight.
 const KEYS = [
-  { key: 'Escape', label: 'Esc' },
-  { key: 'ArrowLeft', label: '←', aria: 'ArrowLeft' }, { key: 'ArrowDown', label: '↓', aria: 'ArrowDown' }, { key: 'ArrowUp', label: '↑', aria: 'ArrowUp' }, { key: 'ArrowRight', label: '→', aria: 'ArrowRight' },
-  { key: 'Enter', label: '↵', aria: 'Enter' }, { key: 'Backspace', label: '⌫', aria: 'Backspace' },
-  { key: 'Tab', label: 'Tab' }, { modifier: 'ctrl', label: 'Ctrl' }, { modifier: 'alt', label: 'Alt' },
-  { key: 'Home', label: 'Home' }, { key: 'End', label: 'End' }, { key: 'PageUp', label: 'PgUp', aria: 'PageUp' }, { key: 'PageDown', label: 'PgDn', aria: 'PageDown' }, { key: 'Insert', label: 'Ins', aria: 'Insert' },
-  { key: 'Delete', label: 'Del', aria: 'Delete' }, { modifier: 'shift', label: 'Shift' },
+  { key: 'Escape', icon: 'keyEscape', aria: 'Escape' },
+  { key: 'ArrowLeft', icon: 'keyArrowLeft', aria: 'Left arrow' }, { key: 'ArrowDown', icon: 'keyArrowDown', aria: 'Down arrow' }, { key: 'ArrowUp', icon: 'keyArrowUp', aria: 'Up arrow' }, { key: 'ArrowRight', icon: 'keyArrowRight', aria: 'Right arrow' },
+  { key: 'Enter', icon: 'keyEnter', aria: 'Enter' }, { key: 'Backspace', icon: 'keyBackspace', aria: 'Backspace' },
+  { key: 'Tab', icon: 'keyTab', aria: 'Tab' }, { modifier: 'ctrl', label: 'Ctrl' }, { modifier: 'alt', label: 'Alt' },
+  { key: 'Home', icon: 'keyHome', aria: 'Home' }, { key: 'End', icon: 'keyEnd', aria: 'End' }, { key: 'PageUp', icon: 'keyPageUp', aria: 'Page up' }, { key: 'PageDown', icon: 'keyPageDown', aria: 'Page down' }, { key: 'Insert', label: 'Ins', aria: 'Insert' },
+  { key: 'Delete', icon: 'keyDelete', aria: 'Delete' }, { modifier: 'shift', icon: 'keyShift', aria: 'Shift' },
   { shortcut: 'ctrl-c', label: '^C', aria: 'Send Ctrl+C' },
 ];
 
@@ -126,20 +127,24 @@ export function KeyBar({ state, ui }) {
       sx={{ display: 'flex', gap: 0.75, px: 1, pt: 0.75, overflowX: 'auto', overscrollBehaviorX: 'contain', scrollbarWidth: 'none', '&::-webkit-scrollbar': { display: 'none' }, WebkitMaskImage: 'linear-gradient(to right, #000 calc(100% - 28px), transparent)', maskImage: 'linear-gradient(to right, #000 calc(100% - 28px), transparent)' }}
     >
       {KEYS.map(item => {
-        const common = { key: item.label, size: 'small', 'aria-label': item.aria ? t(item.aria) : undefined, sx: { flex: '0 0 auto', minWidth: 44, px: 1.25, height: 38, ...keyLook } };
+        const name = item.aria ? t(item.aria) : undefined;
+        const common = { key: item.aria || item.label, size: 'small', 'aria-label': name, title: name, sx: { flex: '0 0 auto', minWidth: 44, px: 1.25, height: 38, fontSize: 14, fontWeight: 500, lineHeight: 1, ...keyLook } };
+        const face = item.icon ? <Icon name={item.icon} size={22} /> : item.label;
         const data = item.key ? { 'data-key': item.key } : item.modifier ? { 'data-modifier': item.modifier } : { 'data-shortcut': item.shortcut };
         if (item.modifier) {
           const on = Boolean(state.mods[item.modifier]);
-          return <ToggleButton {...common} {...data} value={item.modifier} selected={on} aria-pressed={on} onClick={() => ui.actions.key(item)}>{item.label}</ToggleButton>;
+          return <ToggleButton {...common} {...data} value={item.modifier} selected={on} aria-pressed={on} onClick={() => ui.actions.key(item)}>{face}</ToggleButton>;
         }
-        return <Button {...common} {...data} variant="text" color="inherit" onClick={() => ui.actions.key(item)}>{item.label}</Button>;
+        return <Button {...common} {...data} variant="text" color="inherit" onClick={() => ui.actions.key(item)}>{face}</Button>;
       })}
     </Box>
   );
 }
 
 // Row 2 (reference design): terminal keyboard, draft keyboard, upload image, saved commands, voice; then, only while the draft box is shown, a divider, the send arrow (white circle: sends the text as typed)
-// and translate-and-send (outlined). The keyboard key whose input has the focus is blue and aria-pressed. The voice button is the one voice-input.js drives (`#h5-voice`).
+// and translate-and-send (the same white circle with a small "Aa"). The keyboard key whose input has the focus is blue and aria-pressed. The voice button is the one voice-input.js drives (`#h5-voice`).
+// The send and translate-and-send buttons look the same (white round button, send icon); translate-and-send only has a small "Aa" mark in its lower right corner.
+const SEND = { display: 'none', flex: '0 0 auto', width: 44, height: 44, bgcolor: '#fff', color: '#111', '&:hover': { bgcolor: '#e6e6e6' }, '&.Mui-disabled': { bgcolor: 'action.disabledBackground', color: 'action.disabled' } };
 const ACTION = { flex: '1 1 0', minWidth: 0, height: 44, p: 0, ...keyLook };
 export function ActionBar({ state, ui, menu, onMenu }) {
   const keyboard = (action, kind, label) => (
@@ -159,12 +164,12 @@ export function ActionBar({ state, ui, menu, onMenu }) {
       <Box className="h5-draft-only" aria-hidden="true" sx={{ display: 'none', alignSelf: 'stretch', width: '1px', my: 0.5, bgcolor: 'divider' }} />
       <IconButton
         type="submit" form="h5-translate" id="h5-translate-send" className="h5-translate-send h5-draft-only" disabled={state.translating} title={t('Send as typed, without translating')} aria-label={t('Send')}
-        sx={{ display: 'none', flex: '0 0 auto', width: 44, height: 44, bgcolor: '#fff', color: '#111', '&:hover': { bgcolor: '#e6e6e6' }, '&.Mui-disabled': { bgcolor: 'action.disabledBackground', color: 'action.disabled' } }}
+        sx={SEND}
       ><Icon name="send" /></IconButton>
       <IconButton
         id="h5-translate-button" type="button" className="h5-draft-only" disabled={state.translating} title={t('Translate to English and send')} aria-label={t('Translate and send')}
-        sx={{ display: 'none', flex: '0 0 auto', width: 52, height: 44, ...keyLook, borderColor: 'text.primary', borderRadius: 2 }}
-      ><Icon name="translateSend" /></IconButton>
+        sx={{ ...SEND, position: 'relative' }}
+      ><Icon name="send" /><Box component="span" className="h5-aa" aria-hidden="true" sx={{ position: 'absolute', right: 10, bottom: 8, fontSize: 10, fontWeight: 700, lineHeight: 1, letterSpacing: '-0.02em', pointerEvents: 'none' }}>Aa</Box></IconButton>
     </Box>
   );
 }

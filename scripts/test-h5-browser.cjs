@@ -233,7 +233,16 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       return [...byRow.entries()].sort((a, b) => a[0] - b[0]).map(([, row]) => row.sort((a, b) => a.left - b.left));
     });
     assert.equal(rows.length, 1, 'the function keys are one row that scrolls sideways');
-    assert.deepEqual(rows[0].map(cell => cell.text), ['Esc', '←', '↓', '↑', '→', '↵', '⌫', 'Tab', 'Ctrl', 'Alt', 'Home', 'End', 'PgUp', 'PgDn', 'Ins', 'Del', 'Shift', '^C'], 'the order is Esc, the arrows, Enter, Backspace, then the other keys');
+    assert.deepEqual(rows[0].map(cell => cell.text), ['Escape', 'Left arrow', 'Down arrow', 'Up arrow', 'Right arrow', 'Enter', 'Backspace', 'Tab', 'Ctrl', 'Alt', 'Home', 'End', 'Page up', 'Page down', 'Ins', 'Delete', 'Shift', '^C'], 'the order is Esc, the arrows, Enter, Backspace, then the other keys');
+    {
+      // Function keys use the icon library: an icon key has one inline SVG (currentColor, no text), an English aria-label and the same title; Ctrl, Alt, Ins and ^C keep a text label.
+      const keys = await page.evaluate(() => [...document.querySelectorAll('#h5-keys button')].map(b => ({ text: b.textContent.trim(), svg: b.querySelectorAll('svg').length, aria: b.getAttribute('aria-label'), title: b.getAttribute('title'), fill: getComputedStyle(b.querySelector('svg') || b).fill })));
+      const textKeys = keys.filter(k => !k.svg).map(k => k.text);
+      assert.deepEqual(textKeys, ['Ctrl', 'Alt', 'Ins', '^C'], 'only the keys without a fitting icon keep a text label');
+      for (const k of keys.filter(k => k.svg)) { assert.equal(k.text, '', `${k.aria} has no text`); assert.ok(k.aria && k.aria === k.title, `${k.aria} has an aria-label equal to its title`); }
+      assert.equal(await page.locator('#h5-keys svg').evaluateAll(list => new Set(list.map(el => el.innerHTML)).size), 14, 'the 14 icon keys have 14 different icons');
+      assert.equal(await page.evaluate(() => [...document.querySelectorAll('#h5-keys svg')].every(el => el.getAttribute('aria-hidden') === 'true' && el.querySelector('path'))), true, 'the icons are inline SVG paths');
+    }
     assert.equal(await page.evaluate(() => { const el = document.getElementById('h5-keys'); const first = el.querySelector('button').getBoundingClientRect(); return el.scrollLeft === 0 && first.left >= 0; }), true, 'the row starts scrolled to the left with Esc in view');
     const keyStrip = await page.evaluate(() => { const el = document.getElementById('h5-keys'); return { scrolls: el.scrollWidth > el.clientWidth, overflowX: getComputedStyle(el).overflowX }; });
     assert.ok(keyStrip.scrolls && keyStrip.overflowX === 'auto', 'the key row scrolls sideways');
@@ -408,7 +417,10 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       assert.equal(await page.evaluate(() => { const a = document.getElementById('h5-translate-send'), b = document.getElementById('h5-translate-button'); return Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING); }), true, 'DOM and tab order: send arrow before translate-and-send');
       const looks = await page.evaluate(() => { const bg = id => getComputedStyle(document.getElementById(id)).backgroundColor; const rad = id => getComputedStyle(document.getElementById(id)).borderTopLeftRadius; return { send: bg('h5-translate-send'), translate: bg('h5-translate-button'), sendRadius: rad('h5-translate-send') }; });
       assert.equal(looks.send, 'rgb(255, 255, 255)', 'as in the image, the send arrow is the white round button');
-      assert.notEqual(looks.translate, 'rgb(255, 255, 255)', 'translate-and-send is the outlined button');
+      assert.equal(looks.translate, 'rgb(255, 255, 255)', 'translate-and-send looks like the send button (white round button)');
+      const same = await page.evaluate(() => { const pick = id => { const el = document.getElementById(id), cs = getComputedStyle(el), box = el.getBoundingClientRect(); return { w: box.width, h: box.height, radius: cs.borderTopLeftRadius, bg: cs.backgroundColor, color: cs.color, border: cs.borderTopWidth, icon: el.querySelector('svg').innerHTML }; }; const aa = document.querySelector('#h5-translate-button .h5-aa'), box = document.getElementById('h5-translate-button').getBoundingClientRect(), ab = aa.getBoundingClientRect(); return { send: pick('h5-translate-send'), translate: pick('h5-translate-button'), aa: aa.textContent, inside: ab.left >= box.left && ab.right <= box.right && ab.top >= box.top && ab.bottom <= box.bottom, sendAa: document.querySelectorAll('#h5-translate-send .h5-aa').length }; });
+      assert.deepEqual(same.translate, same.send, 'translate-and-send has the same size, shape, colours, border and send icon as the send button');
+      assert.deepEqual([same.aa, same.inside, same.sendAa], ['Aa', true, 0], 'only translate-and-send has the small Aa mark, inside the button');
       assert.ok(parseFloat(looks.sendRadius) >= 20, 'the send arrow is round');
       assert.ok(active.root.width > 250 && active.root.left >= 0 && active.root.right <= 390, 'the box takes the full width');
       assert.equal(await page.evaluate(() => getComputedStyle(document.getElementById('h5-translate')).borderTopLeftRadius), '22px', 'the box has the 22px outer radius');

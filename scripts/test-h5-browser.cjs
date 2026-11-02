@@ -233,14 +233,15 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       return [...byRow.entries()].sort((a, b) => a[0] - b[0]).map(([, row]) => row.sort((a, b) => a.left - b.left));
     });
     assert.equal(rows.length, 1, 'the function keys are one row that scrolls sideways');
-    assert.deepEqual(rows[0].map(cell => cell.text), ['Escape', 'Left arrow', 'Down arrow', 'Up arrow', 'Right arrow', 'Enter', 'Backspace', 'Tab', 'Ctrl', 'Alt', 'Home', 'End', 'Page up', 'Page down', 'Ins', 'Delete', 'Shift', '^C'], 'the order is Esc, the arrows, Enter, Backspace, then the other keys');
+    assert.deepEqual(rows[0].map(cell => cell.text), ['Esc', 'Left arrow', 'Down arrow', 'Up arrow', 'Right arrow', 'Enter', 'Backspace', 'Tab', 'Ctrl', 'Alt', 'Home', 'End', 'PgUp', 'PgDn', 'Ins', 'Del', 'Shift', '^C'], 'the order is Esc, the arrows, Enter, Backspace, then the other keys');
     {
-      // Function keys use the icon library: an icon key has one inline SVG (currentColor, no text), an English aria-label and the same title; Ctrl, Alt, Ins and ^C keep a text label.
+      // Function keys: the arrows, Enter, Backspace, Tab and Shift are icons (library or self-drawn; one inline SVG, currentColor, no text), the rest are short text labels; every key has an English aria-label and the same title.
       const keys = await page.evaluate(() => [...document.querySelectorAll('#h5-keys button')].map(b => ({ text: b.textContent.trim(), svg: b.querySelectorAll('svg').length, aria: b.getAttribute('aria-label'), title: b.getAttribute('title'), fill: getComputedStyle(b.querySelector('svg') || b).fill })));
       const textKeys = keys.filter(k => !k.svg).map(k => k.text);
-      assert.deepEqual(textKeys, ['Ctrl', 'Alt', 'Ins', '^C'], 'only the keys without a fitting icon keep a text label');
+      assert.deepEqual(textKeys, ['Esc', 'Ctrl', 'Alt', 'Home', 'End', 'PgUp', 'PgDn', 'Ins', 'Del', '^C'], 'the keys without a clear icon keep a text label');
+      for (const k of keys.filter(k => !k.svg && k.aria)) assert.ok(k.aria === k.title, `${k.text} has an aria-label equal to its title`);
       for (const k of keys.filter(k => k.svg)) { assert.equal(k.text, '', `${k.aria} has no text`); assert.ok(k.aria && k.aria === k.title, `${k.aria} has an aria-label equal to its title`); }
-      assert.equal(await page.locator('#h5-keys svg').evaluateAll(list => new Set(list.map(el => el.innerHTML)).size), 14, 'the 14 icon keys have 14 different icons');
+      assert.equal(await page.locator('#h5-keys svg').evaluateAll(list => new Set(list.map(el => el.innerHTML)).size), 8, 'the 8 icon keys have 8 different icons');
       assert.equal(await page.evaluate(() => [...document.querySelectorAll('#h5-keys svg')].every(el => el.getAttribute('aria-hidden') === 'true' && el.querySelector('path'))), true, 'the icons are inline SVG paths');
     }
     assert.equal(await page.evaluate(() => { const el = document.getElementById('h5-keys'); const first = el.querySelector('button').getBoundingClientRect(); return el.scrollLeft === 0 && first.left >= 0; }), true, 'the row starts scrolled to the left with Esc in view');

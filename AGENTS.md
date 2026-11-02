@@ -12,6 +12,14 @@
 - Chinese characters may appear only in those dictionaries and in test fixtures that exist to prove that Chinese user content (translator input, terminal output, file names) is handled. `test/i18n.test.js` fails when Chinese shows up anywhere else. Where a regular expression needs a CJK range, write it with `\u` escapes.
 - Content created or entered by users (tasks, documents, file names, terminal input) must keep working with Chinese and any other language.
 
+## Phone UI icons
+
+- All icons in the phone UI (`/h5`) come from one icon library: the "Ant Design Official Icon Library" collection on iconfont.cn (https://www.iconfont.cn/collections/detail?cid=9402). Same grid, same outlined style. Do not mix in icons from other sets and do not draw your own.
+- Icons are inline SVG paths in `scripts/h5-shell/Icons.jsx`, drawn with `currentColor` at a consistent size (24px; 22px for the function keys). No runtime requests and no icon fonts.
+- Every icon-only button has an English `aria-label` and the same `title` (with its Chinese text in `public/js/i18n-zh-ui.js`).
+- To add an icon: take the closest same-style icon from the same collection, add its path to `Icons.jsx`, and update the mapping table in "Phone UI icons" in `DESIGN.md` (say which icon was substituted when the exact one does not exist).
+- Use a text label only where no icon in the collection fits, and style it to match the icons (same size, weight and vertical alignment).
+
 ## Development workflow
 
 0. For a task that needs its own branch, create the worktree with `scripts/new-worktree.sh <name> [branch]`: it starts from the latest `origin/main` and links `node_modules`, so tests run at once.

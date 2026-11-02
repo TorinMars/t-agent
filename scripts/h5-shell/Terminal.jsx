@@ -4,13 +4,9 @@ import Button from '@mui/material/Button';
 import IconButton from '@mui/material/IconButton';
 import OutlinedInput from '@mui/material/OutlinedInput';
 import Paper from '@mui/material/Paper';
-import SvgIcon from '@mui/material/SvgIcon';
 import ToggleButton from '@mui/material/ToggleButton';
-import MicIcon from '@mui/icons-material/Mic';
-import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward';
-import ContentPasteIcon from '@mui/icons-material/ContentPasteOutlined';
-import ImageIcon from '@mui/icons-material/ImageOutlined';
 import { t } from './common.jsx';
+import { Icon } from './Icons.jsx';
 
 // The terminal area. h5.js puts the xterm element in after these two; React draws only the note, the wheel strip (h5.js handles its touches) and the selection bar.
 export function TerminalArea({ state, ui }) {
@@ -48,7 +44,7 @@ export function BottomArea({ state, ui }) {
   }, [menu]);
   const run = action => { setMenu(false); action(); };
   const rows = [
-    { icon: <ContentPasteIcon />, label: 'Paste text', run: () => run(() => ui.actions.key({ action: 'paste' })) },
+    { icon: <Icon name="paste" />, label: 'Paste text', run: () => run(() => ui.actions.key({ action: 'paste' })) },
     ...INSERT_COMMANDS.map(command => ({ label: command, mono: true, run: () => run(() => ui.actions.insertCommand(command)) })),
   ];
   return (
@@ -118,35 +114,6 @@ const KEYS = [
   { shortcut: 'ctrl-c', label: '^C', aria: 'Send Ctrl+C' },
 ];
 
-// Icons of the action row (drawn like the reference design: outlined, 1.6px strokes). The two keyboard icons are a keyboard with a prompt (terminal) and a keyboard with a pencil (draft).
-const ICON_PROPS = { viewBox: '0 0 36 24', fill: 'none', stroke: 'currentColor', strokeWidth: '1.6', strokeLinecap: 'round', strokeLinejoin: 'round', sx: { width: 30, height: 22 } };
-function KeyboardIcon({ kind }) {
-  return (
-    <SvgIcon {...ICON_PROPS}>
-      <rect x="1.5" y="5.5" width="19" height="13" rx="2.2" />
-      <path d="M5 9.2h1.6M9 9.2h1.6M13 9.2h1.6M17 9.2h.4M5 12.4h1.6M9 12.4h1.6M13 12.4h1.6M17 12.4h.4M7 15.6h8" strokeWidth="1.4" />
-      {kind === 'terminal' ? <path d="M24 9.5l4 3-4 3M30 16h4.5" /> : <path d="M31.5 6.5l3 3-8.5 8.5-3.8.8.8-3.8z" />}
-    </SvgIcon>
-  );
-}
-// Saved commands: a rounded square with a prompt and a list.
-function CommandsIcon() {
-  return (
-    <SvgIcon {...ICON_PROPS}>
-      <rect x="8" y="2.5" width="20" height="19" rx="3" />
-      <path d="M12.5 8.5l3.5 3.5-3.5 3.5M19 9h5M19 12h5M19 15h5" />
-    </SvgIcon>
-  );
-}
-// Translate and send: an "A" and an arrow.
-function TranslateSendIcon() {
-  return (
-    <SvgIcon {...ICON_PROPS}>
-      <path d="M6 18l4.5-12L15 18M7.6 14h5.8M19 12h10M25 7.5l4.5 4.5-4.5 4.5" />
-    </SvgIcon>
-  );
-}
-
 const KEY_BLUE = { bgcolor: 'rgba(41, 182, 246, .18)', borderColor: 'primary.main', color: 'primary.light' };
 const keyLook = { border: 1, borderColor: 'divider', borderRadius: 2, color: 'text.primary', bgcolor: 'action.hover', textTransform: 'none', '&:hover': { bgcolor: 'action.selected' }, '&.Mui-selected, &.Mui-selected:hover, &[aria-pressed="true"], &[aria-pressed="true"]:hover': KEY_BLUE };
 
@@ -176,7 +143,7 @@ export function KeyBar({ state, ui }) {
 const ACTION = { flex: '1 1 0', minWidth: 0, height: 44, p: 0, ...keyLook };
 export function ActionBar({ state, ui, menu, onMenu }) {
   const keyboard = (action, kind, label) => (
-    <IconButton data-action={action} sx={ACTION} title={t(label)} aria-label={t(label)} aria-pressed={state.keyboard === kind} onClick={() => ui.actions.key({ action })}><KeyboardIcon kind={kind} /></IconButton>
+    <IconButton data-action={action} sx={ACTION} title={t(label)} aria-label={t(label)} aria-pressed={state.keyboard === kind} onClick={() => ui.actions.key({ action })}><Icon name={kind === 'terminal' ? 'terminalKeyboard' : 'draftKeyboard'} /></IconButton>
   );
   return (
     <Box
@@ -186,18 +153,18 @@ export function ActionBar({ state, ui, menu, onMenu }) {
     >
       {keyboard('keyboard', 'terminal', 'Terminal keyboard')}
       {keyboard('draft', 'draft', 'Draft keyboard')}
-      <IconButton id="h5-image" data-action="image" sx={ACTION} title={t('Upload image')} aria-label={t('Upload image')} onClick={() => ui.actions.key({ action: 'image' })}><ImageIcon /></IconButton>
-      <IconButton id="h5-commands" data-action="commands" sx={ACTION} title={t('Saved commands')} aria-label={t('Saved commands')} aria-haspopup="menu" aria-expanded={menu} onClick={() => onMenu(!menu)}><CommandsIcon /></IconButton>
-      <IconButton id="h5-voice" className="h5-voice" sx={ACTION} title={t('Voice input: hold to speak, release to stop')} aria-label={t('Voice input')} aria-pressed="false"><MicIcon /></IconButton>
+      <IconButton id="h5-image" data-action="image" sx={ACTION} title={t('Upload image')} aria-label={t('Upload image')} onClick={() => ui.actions.key({ action: 'image' })}><Icon name="image" /></IconButton>
+      <IconButton id="h5-commands" data-action="commands" sx={ACTION} title={t('Saved commands')} aria-label={t('Saved commands')} aria-haspopup="menu" aria-expanded={menu} onClick={() => onMenu(!menu)}><Icon name="commands" /></IconButton>
+      <IconButton id="h5-voice" className="h5-voice" sx={ACTION} title={t('Voice input: hold to speak, release to stop')} aria-label={t('Voice input')} aria-pressed="false"><Icon name="voice" /></IconButton>
       <Box className="h5-draft-only" aria-hidden="true" sx={{ display: 'none', alignSelf: 'stretch', width: '1px', my: 0.5, bgcolor: 'divider' }} />
       <IconButton
         type="submit" form="h5-translate" id="h5-translate-send" className="h5-translate-send h5-draft-only" disabled={state.translating} title={t('Send as typed, without translating')} aria-label={t('Send')}
         sx={{ display: 'none', flex: '0 0 auto', width: 44, height: 44, bgcolor: '#fff', color: '#111', '&:hover': { bgcolor: '#e6e6e6' }, '&.Mui-disabled': { bgcolor: 'action.disabledBackground', color: 'action.disabled' } }}
-      ><ArrowUpwardIcon /></IconButton>
+      ><Icon name="send" /></IconButton>
       <IconButton
         id="h5-translate-button" type="button" className="h5-draft-only" disabled={state.translating} title={t('Translate to English and send')} aria-label={t('Translate and send')}
         sx={{ display: 'none', flex: '0 0 auto', width: 52, height: 44, ...keyLook, borderColor: 'text.primary', borderRadius: 2 }}
-      ><TranslateSendIcon /></IconButton>
+      ><Icon name="translateSend" /></IconButton>
     </Box>
   );
 }

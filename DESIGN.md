@@ -2244,3 +2244,4 @@ Every icon-only button has an English `aria-label` and the same `title` (functio
 > v2.87.3 Phone send buttons wider with outer corner radius, concentric input radius, Backspace key next to Enter
 > v2.87.4 Phone bottom bar is now two rows with separate terminal and draft keyboard buttons
 > v2.87.5 Consistent Ant Design icon set from iconfont.cn in the phone bottom bar, new send icon
+> v2.87.6 Function keys use the Ant Design icon set, translate-send button matches the send button with an Aa mark, icon docs and rules

@@ -1466,8 +1466,10 @@
       if (!sendTranslation(target, outgoing)) throw new Error('Terminal not connected; the text was not sent');
       setTimeout(() => send(target, '\r'), SUBMIT_DELAY_MS);
       translateInput.value = '';
+      translateForm.removeAttribute('data-hold'); // the press on the send button is over: do not keep the box shown
+      translateInput.blur(); // sent: the on-screen keyboard goes away and the box hides at once (no timer); the terminal is not focused
       autosize();
-      relayoutBar(); // the box is empty again: the bar may go back to its resting layout
+      relayoutBar();
     } catch (error) {
       const message = error.message || (translateFirst ? 'Translation failed' : 'Send failed');
       tell(message, 'error');
@@ -1481,23 +1483,11 @@
   // Enter in the box is a new line (the browser inserts it and the `input` event runs autosize); only the Send button submits. There is no keydown handler on purpose.
   translateInput.addEventListener('input', () => { autosize(); relayoutBar(); }); // the bar also changes layout when the box gains or loses text
   $('h5-translate-button').addEventListener('click', () => void submitBox(true));
-  // The bar has two layouts (CSS only): one row at rest, and while it is active (the box has focus, a button is pressed, voice is recording, a
-  // translation runs) the box on row 1 and the voice and send buttons on row 2. The switch itself is instant (grid cannot be transitioned).
-  // The terminal box never changes size: the bar reserves only its resting height in the page layout and grows upward over the terminal (`--h5-bar-extra`
-  // is a negative top margin), so no fit and no PTY resize happens. The terminal is moved up by the covered height with one transform (holdTerminalSize),
-  // and that move, the three controls (FLIP: transform plus the width of the box) and the bar's own growth or shrink all animate over the same time.
-  // Nothing is animated frame by frame in layout terms, and nothing at all with prefers-reduced-motion.
+  // The draft box is hidden (no height) until it has the focus, a button is pressed, voice is recording or a translation runs (CSS only, see TranslateBar). It covers the terminal:
+  // the page layout reserves nothing for it (`--h5-bar-extra` is a negative top margin of `#h5-bottom`), so no fit and no PTY resize happens. The terminal is moved up by the
+  // covered height with one transform (holdTerminalSize), and that move and the bar's own growth or shrink animate over the same time (nothing at all with prefers-reduced-motion).
   const FLIP_MS = 180;
   const FLIP_EASING = 'cubic-bezier(0.2, 0.7, 0.2, 1)';
-  const flipRoot = translateForm.querySelector('.h5-translate-input');
-  const flipItems = [flipRoot, $('h5-voice'), $('h5-add')]; // the send and translate buttons are only shown in the active layout
-  // Layout positions (offsets, so running transforms do not count), measured from the bottom of the bar because the bar grows upward.
-  const measureBar = () => {
-    const h = translateForm.offsetHeight;
-    const items = flipItems.map(el => ({ x: el.offsetLeft, y: el.offsetTop - h, w: el.offsetWidth }));
-    return { items, active: items[1].y >= items[0].y + flipRoot.offsetHeight - 1 }; // active: the buttons are below the box
-  };
-  let barLayout = measureBar();
   let barHeight = barOuterHeight();
   let flips = [];
   let movingTimer = 0;
@@ -1535,32 +1525,14 @@
       flips.push(bottomArea.animate(frames, { duration: FLIP_MS, easing: FLIP_EASING }));
     }
   }
-  function relayoutBar() {
-    const next = measureBar();
-    const before = barLayout;
-    // The focus event and the mutation observer both call this for one change: the second call finds nothing new and must not cut the animation short.
-    if (before.active === next.active && before.items.every((item, i) => item.x === next.items[i].x && item.y === next.items[i].y)) return;
-    finishFlips();
-    barLayout = next;
-    const changed = before.active !== next.active;
-    syncBar(changed);
-    if (!changed || reducedMotion() || !flipRoot.animate) return;
-    flipItems.forEach((el, i) => {
-      const dx = before.items[i].x - next.items[i].x;
-      const dy = before.items[i].y - next.items[i].y;
-      if (!dx && !dy && before.items[i].w === next.items[i].w) return;
-      const from = { transform: `translate(${dx}px, ${dy}px)` };
-      const to = { transform: 'none' };
-      if (i === 0 && before.items[0].w !== next.items[0].w) { from.width = `${before.items[0].w}px`; to.width = `${next.items[0].w}px`; }
-      flips.push(el.animate([from, to], { duration: FLIP_MS, easing: FLIP_EASING }));
-    });
-  }
+  // The bar has one layout, so a change of its height is all there is to follow. Both the focus events and the mutation observer call this; the second call finds nothing new.
+  function relayoutBar() { syncBar(); }
   new MutationObserver(records => {
     if (records.some(record => record.attributeName === 'data-hold')) autosize(); // the press ended: a box that lost focus meanwhile collapses now
     relayoutBar();
-  }).observe(translateForm, { attributes: true, subtree: true, attributeFilter: ['class', 'data-hold', 'data-menu'] });
+  }).observe(translateForm, { attributes: true, subtree: true, attributeFilter: ['class', 'data-hold'] });
   // The bar size also changes when the window turns or the font loads: keep the overlap and the measured layout current (no animation).
-  new ResizeObserver(() => { if (!flips.length) { barLayout = measureBar(); syncBar(false); } }).observe(translateForm);
+  new ResizeObserver(() => { if (!flips.length) syncBar(false); }).observe(translateForm);
   autosize(); // the first height (and the first syncBar) once the bar state exists
   // The cap follows the visible height: the keyboard opening or closing, or a rotation, changes it.
   const refitBox = () => { autosize(); relayoutBar(); };
@@ -1570,13 +1542,14 @@
   // on the same button. `data-hold` keeps an already active layout from collapsing until a moment after the release; a press at rest does not expand it.
   const PRESS_HOLD_MS = 400;
   let pressTimer = 0;
-  translateForm.addEventListener('pointerdown', event => {
+  bottomArea.addEventListener('pointerdown', event => {
     const button = event.target.closest && event.target.closest('button');
     if (!button) return;
     finishFlips();
     if (button.setPointerCapture) { try { button.setPointerCapture(event.pointerId); } catch { /* pointer already gone */ } }
     clearTimeout(pressTimer);
-    if (barLayout.active) translateForm.setAttribute('data-hold', '');
+    // The two keyboard keys move the focus themselves, so the box must follow the focus at once; any other button keeps a shown box until the press ends.
+    if (translateForm.getBoundingClientRect().height > 0 && !button.matches('[data-action="keyboard"], [data-action="draft"]')) translateForm.setAttribute('data-hold', '');
   });
   const endPress = () => {
     if (!translateForm.hasAttribute('data-hold')) return;

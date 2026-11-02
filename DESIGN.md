@@ -2204,3 +2204,4 @@ Usage, notifications and phone sidebar changes:
 > v2.87.2 Phone message box grows to show all its text up to half of the visible viewport and collapses to one line at once when focus is lost or the keyboard hides
 > v2.87.3 Phone send buttons wider with outer corner radius, concentric input radius, Backspace key next to Enter
 > v2.87.4 Phone bottom bar is now two rows with separate terminal and draft keyboard buttons
+> v2.87.5 Consistent Ant Design icon set from iconfont.cn in the phone bottom bar, new send icon

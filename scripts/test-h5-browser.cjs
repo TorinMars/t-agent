@@ -15,9 +15,16 @@ const chats = [];
 const chatPatches = [];
 const pollUntil = async condition => { for (let i = 0; i < 500 && !condition(); i++) await new Promise(resolve => setTimeout(resolve, 20)); assert.ok(condition(), 'timed out waiting for the server'); };
 let chatListFails = false;
+// What the task file API answers for DESIGN.md of task 1: the document, or a missing file. The paths of the file reads are kept.
+let designMode = 'ready';
+const designReads = [];
+const DESIGN_MD = ['# Design of Fix login', '', 'Intro with **bold** text and a [web link](https://example.test/doc) and a [bad link](javascript:alert(1)).', '', '<script>window.injected = true</script>', '',
+  '## Table', '', '| Key | Value |', '| --- | --- |', '| a | 1 |', '', '```js', 'const answer = 42;', '```', '', ...Array.from({ length: 60 }, (_, i) => `Paragraph ${i + 1} of the long design text.`)].join('\n');
 
 // The chat has no back button; going to a terminal from the task sheet leaves it.
 const translateRequests = []; // the texts the phone page sent to /api/translate
+
+const innerWidthOf = viewport => viewport.width;
 
 async function leaveChatByTerminal(page) {
   await page.locator('#h5-open-tasks').tap();
@@ -34,7 +41,9 @@ let updateDone = false; // the mocked update-status answers "completed" once the
 let checkMode = 'available'; // what the mocked update check answers: available | current | error
 
 async function openPage(browser, { remoteTerminals, remoteChat = false, viewport } = {}) {
-  const context = await browser.newContext(viewport ? { viewport } : { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  // H5_SHOT_DIR=<dir> also saves screenshots of the design document sheet there, at 3x like a phone screen.
+  const scale = process.env.H5_SHOT_DIR ? { deviceScaleFactor: 3 } : {};
+  const context = await browser.newContext(viewport ? { viewport, ...scale } : { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, ...scale });
   const page = await context.newPage();
   page.on('pageerror', error => pageErrors.push(error.message));
   const calls = [];
@@ -66,12 +75,16 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     if (url.pathname === '/auth/logout' && method === 'POST') return json({ success: true });
     if (url.pathname === '/torin/hide/login') return route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>login</title>' });
     if (url.pathname === '/api/remote-servers') return json(remoteTerminals ? [{ id: 7, name: 'Old VPS' }] : []);
-    if (url.pathname === '/api/tasks' && method === 'GET') return json([{ id: 1, title: 'Fix login', status: 'doing' }, { id: 2, title: 'Write docs', status: 'todo' }]);
+    if (url.pathname === '/api/tasks' && method === 'GET') return json([{ id: 1, title: 'Fix login', status: 'doing', work_dir: '/work/fix-login' }, { id: 2, title: 'Write docs', status: 'todo' }]);
     if (url.pathname === '/api/task-groups') return json([{ key: 'doing', name: 'In progress', sort_order: 1 }, { key: 'todo', name: 'To do', sort_order: 2 }]);
     if (url.pathname === '/api/remote-servers/7/tasks') return json([{ id: 9, title: 'Remote task', status: 'doing' }]);
     if (url.pathname === '/api/remote-servers/7/task-groups') return json([]);
     if (url.pathname === '/api/remote-servers/7/tasks/9/terminals') return json([{ terminal_id: remoteChat ? 'h5-default' : 'default', title: 'Terminal 1' }]);
     if (url.pathname === '/api/remote-servers/7/info') return json({ capabilities: remoteChat ? ['agent-chat:manage'] : [] });
+    if (url.pathname === '/api/tasks/1/files/content' && method === 'GET') {
+      designReads.push(url.searchParams.get('path'));
+      return designMode === 'missing' ? json({ error: 'FILE_NOT_FOUND' }, 404) : json({ path: 'DESIGN.md', content: DESIGN_MD, revision: 'r1', eol: '\n', bom: false });
+    }
     if (url.pathname === '/api/agent-chat/summary') return json({ running: 1, queued: 2, submitted: 3 });
     if (url.pathname === '/api/tasks/1/terminals' && method === 'GET') return json([{ terminal_id: 'h5-default', title: 'Terminal 1' }]);
     if (url.pathname === '/api/tasks/2/terminals' && method === 'GET') return json([{ terminal_id: 'h5-docs', title: 'Docs terminal' }]);
@@ -291,7 +304,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     // Row 2 (reference design): terminal keyboard, draft keyboard, upload image, saved commands, voice; equal buttons filling the width, below the function key row. Send and translate-and-send are not shown while the box is hidden.
     {
       const row2 = await page.evaluate(() => [...document.querySelectorAll('#h5-actions button')].map(b => { const r = b.getBoundingClientRect(); return { label: b.getAttribute('aria-label'), left: r.left, right: r.right, top: r.top, width: r.width, height: r.height }; }).filter(b => b.width > 0));
-      assert.deepEqual(row2.map(b => b.label), ['Terminal keyboard', 'Draft keyboard', 'Upload image', 'Saved commands', 'Voice input'], 'row 2: the two keyboards, image, saved commands, voice');
+      assert.deepEqual(row2.map(b => b.label), ['Terminal keyboard', 'Draft keyboard', 'Upload image', 'Saved commands', 'Voice input', 'Design document'], 'row 2: the two keyboards, image, saved commands, voice, design document');
       assert.ok(row2.every(b => Math.abs(b.top - row2[0].top) <= 1 && Math.abs(b.width - row2[0].width) <= 1 && b.height >= 40), 'row 2: one row of equal, finger-sized buttons');
       assert.ok(row2[0].left >= 0 && row2.at(-1).right <= 390, 'row 2 fits the screen');
       assert.equal(await page.evaluate(() => document.querySelector('#h5-actions').getBoundingClientRect().top >= document.getElementById('h5-keys').getBoundingClientRect().bottom - 1), true, 'row 2 is below the function keys');
@@ -300,6 +313,80 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     }
     assert.ok(rows.flat().every(cell => cell.height >= 32), 'the keys are finger-sized');
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+
+    // Design document: the last button of row 2 opens DESIGN.md of the task's working directory in a sheet from the bottom. The terminal keeps its size and no resize is sent.
+    {
+      const design = page.locator('#h5-design');
+      assert.equal(await design.getAttribute('aria-label'), 'Design document');
+      assert.equal(await design.getAttribute('title'), 'Design document');
+      assert.equal(await design.locator('svg').count(), 1, 'the design button has an icon');
+      const measure = () => page.evaluate(() => {
+        const term = document.querySelector('#h5-terminal .xterm').getBoundingClientRect();
+        return { width: term.width, height: term.height, top: term.top, resizes: window.sockets[0].sent.filter(item => { try { return JSON.parse(item).type === 'resize'; } catch { return false; } }).length };
+      });
+      const before = await measure();
+      await page.evaluate(() => document.querySelector('#h5-terminal .xterm-helper-textarea').focus()); // a focused input is blurred first, so the on-screen keyboard closes
+      await design.tap();
+      await page.locator('#h5-design-body h1', { hasText: 'Design of Fix login' }).waitFor();
+      assert.deepEqual(designReads, ['DESIGN.md'], 'read through the task file API, relative to the working directory');
+      assert.equal(await page.evaluate(() => document.activeElement && document.activeElement.classList.contains('xterm-helper-textarea')), false, 'the terminal input lost the focus');
+      assert.equal(await page.locator('#h5-design-path').textContent(), '/work/fix-login/DESIGN.md');
+      await page.waitForFunction(() => { const panel = document.querySelector('.h5-design-panel'); return panel && ['none', 'matrix(1, 0, 0, 1, 0, 0)'].includes(getComputedStyle(panel).transform); }, null, { timeout: 3000 }); // the slide has ended
+      const sheet = await page.locator('.h5-design-panel').boundingBox();
+      const vh = page.viewportSize().height;
+      assert.ok(Math.abs(sheet.height - vh * 0.88) <= 2 && Math.abs(sheet.y + sheet.height - vh) <= 1, `the sheet is 88% of the height, at the bottom (${sheet.y}, ${sheet.height})`);
+      assert.equal(await page.locator('#h5-design-body table td').first().textContent(), 'a', 'tables are rendered');
+      assert.equal((await page.locator('#h5-design-body .md-code-block code').textContent()).trim(), 'const answer = 42;', 'code blocks are rendered');
+      assert.equal(await page.locator('#h5-design-body a[href="https://example.test/doc"]').count(), 1, 'web links stay links');
+      assert.equal(await page.locator('#h5-design-body a', { hasText: 'bad link' }).count(), 0, 'a javascript: link is only text');
+      assert.equal(await page.evaluate(() => Boolean(window.injected) || Boolean(document.querySelector('#h5-design-body script'))), false, 'raw HTML is shown as text, never run');
+      assert.equal(await page.evaluate(() => { const b = document.getElementById('h5-design-body'); return b.scrollHeight > b.clientHeight && getComputedStyle(b).overflowY === 'auto'; }), true, 'the content scrolls');
+      assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('#h5-design-body .markdown-body')).color), 'rgb(230, 237, 243)', 'dark document colours');
+      if (process.env.H5_SHOT_DIR) await page.screenshot({ path: path.join(process.env.H5_SHOT_DIR, 'h5-design-open.png') });
+      const open = await measure();
+      assert.deepEqual(open, before, 'opening the sheet does not resize or move the terminal and sends no resize');
+      // The close button closes it.
+      await page.locator('#h5-design-close').tap();
+      await page.locator('.h5-design-panel').waitFor({ state: 'hidden' });
+      // A tap on the dimmed page closes it too.
+      await design.tap();
+      await page.locator('#h5-design-body h1').waitFor();
+      await page.mouse.click(200, 30);
+      await page.locator('.h5-design-panel').waitFor({ state: 'hidden' });
+      // Escape closes it.
+      await design.tap();
+      await page.locator('#h5-design-body h1').waitFor();
+      await page.keyboard.press('Escape');
+      await page.locator('.h5-design-panel').waitFor({ state: 'hidden' });
+      // A swipe down on the sheet closes it (real touch events through the DevTools protocol).
+      await design.tap();
+      await page.locator('#h5-design-body h1').waitFor();
+      await page.waitForFunction(() => ['none', 'matrix(1, 0, 0, 1, 0, 0)'].includes(getComputedStyle(document.querySelector('.h5-design-panel')).transform), null, { timeout: 3000 });
+      {
+        const cdp = await page.context().newCDPSession(page);
+        const handle = await page.locator('.h5-design-handle').boundingBox();
+        const x = handle.x + handle.width / 2;
+        let y = handle.y + handle.height / 2;
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
+        for (let i = 0; i < 12; i++) { y += 40; await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y }] }); await page.waitForTimeout(16); }
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+        await cdp.detach();
+      }
+      await page.locator('.h5-design-panel').waitFor({ state: 'hidden' });
+      // No DESIGN.md: a clear empty state, not an error.
+      designMode = 'missing';
+      await design.tap();
+      await page.locator('#h5-design-empty', { hasText: 'No DESIGN.md in /work/fix-login' }).waitFor();
+      assert.equal(await page.locator('#h5-design-body').isVisible(), false);
+      if (process.env.H5_SHOT_DIR) {
+        await page.waitForFunction(() => ['none', 'matrix(1, 0, 0, 1, 0, 0)'].includes(getComputedStyle(document.querySelector('.h5-design-panel')).transform), null, { timeout: 3000 });
+        await page.screenshot({ path: path.join(process.env.H5_SHOT_DIR, 'h5-design-missing.png') });
+      }
+      await page.locator('#h5-design-close').tap();
+      await page.locator('.h5-design-panel').waitFor({ state: 'hidden' });
+      designMode = 'ready';
+      assert.deepEqual(await measure(), before, 'after all of it the terminal has the same size and no resize was sent');
+    }
 
     const sent = () => page.evaluate(() => window.sockets[0].sent.filter(item => !item.startsWith('{')));
     // The blue state of Ctrl, Alt and Shift is exactly the armed state: aria-pressed and the accent colour agree; a second tap disarms; the next key releases it (one-shot).
@@ -1392,10 +1479,10 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       await narrow.page.locator('#h5-translate-input').focus();
       await narrow.page.waitForFunction(() => !document.getAnimations().some(a => a.playState === 'running') && !document.querySelector('.h5-bar-moving'), null, { timeout: 3000 });
       const row = await narrow.page.evaluate(() => { const r = id => document.getElementById(id).getBoundingClientRect(); const ids = ['h5-image', 'h5-commands', 'h5-voice', 'h5-translate-send', 'h5-translate-button'];
-        const boxes = [...document.querySelectorAll('#h5-actions button')].map(b => b.getBoundingClientRect());
-        return { inside: ids.every(id => r(id).left >= 0 && r(id).right <= innerWidth && r(id).width >= 32 && r(id).height >= 40), overflow: document.documentElement.scrollWidth > innerWidth, noOverlap: boxes.every((box, i) => i === 0 || boxes[i - 1].right <= box.left + 0.5) };
+        const boxes = [...document.querySelectorAll('#h5-actions button')].map(b => b.getBoundingClientRect()).filter(box => box.width > 0);
+        return { designHidden: document.getElementById('h5-design').getBoundingClientRect().width === 0, inside: ids.every(id => r(id).left >= 0 && r(id).right <= innerWidth && r(id).width >= 32 && r(id).height >= 40), overflow: document.documentElement.scrollWidth > innerWidth, noOverlap: boxes.every((box, i) => i === 0 || boxes[i - 1].right <= box.left + 0.5) };
       });
-      assert.deepEqual(row, { inside: true, overflow: false, noOverlap: true }, 'the action row with send and translate fits at 360px');
+      assert.deepEqual(row, { designHidden: true, inside: true, overflow: false, noOverlap: true }, 'the action row with send and translate fits at 360px (the design button steps aside)');
       await narrow.context.close();
     }
 
@@ -1412,6 +1499,16 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
         return { count: boxes.length, inside: first.every(box => box.left >= 0 && box.right <= innerWidth && box.bottom <= innerHeight && box.width >= 36 && box.height >= 32), overflow: document.documentElement.scrollWidth > innerWidth };
       });
       assert.deepEqual(fit, { count: 18, inside: true, overflow: false }, `the first keys fit at ${viewport.width}px`);
+      const row2 = () => small.page.evaluate(() => [...document.querySelectorAll('#h5-actions button')].map(b => b.getBoundingClientRect()).filter(box => box.width > 0).map(box => ({ left: box.left, right: box.right, width: box.width, height: box.height })));
+      const resting = await row2();
+      if (process.env.H5_SHOT_DIR && viewport.width === 320) await small.page.screenshot({ path: path.join(process.env.H5_SHOT_DIR, 'h5-row2-320-rest.png') });
+      assert.ok(resting.length === 6 && resting.every(box => box.left >= 0 && box.right <= innerWidthOf(viewport) && box.width >= 40 && box.height >= 40), `row 2 at rest: six buttons of at least 40px at ${viewport.width}px`);
+      await small.page.locator('#h5-translate-input').focus();
+      await small.page.waitForFunction(() => !document.getAnimations().some(a => a.playState === 'running') && !document.querySelector('.h5-bar-moving'), null, { timeout: 3000 });
+      const drafting = await row2();
+      assert.ok(drafting.length === 7 && drafting.every((box, i) => box.left >= 0 && box.right <= innerWidthOf(viewport) && box.width >= 32 && (i === 0 || drafting[i - 1].right <= box.left + 0.5)), `row 2 with the draft box: the design button steps aside and the rest fits at ${viewport.width}px`);
+      if (process.env.H5_SHOT_DIR && viewport.width === 320) await small.page.screenshot({ path: path.join(process.env.H5_SHOT_DIR, 'h5-row2-320-draft.png') });
+      await small.page.evaluate(() => document.activeElement.blur());
       await small.context.close();
     }
 

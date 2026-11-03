@@ -95,4 +95,7 @@ I18n.add({
   // ---- Task status words and misc ----
   'Done': '已完成',
   'Finish': '完成',
+
+  // ---- Design document sheet (phone) ----
+  'No DESIGN.md in {1}': '{1} 中没有 DESIGN.md',
 });

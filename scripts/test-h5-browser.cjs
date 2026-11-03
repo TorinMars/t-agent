@@ -126,6 +126,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       const text = route.request().postDataJSON().text;
       translateRequests.push(text);
       if (text.startsWith('FAIL')) return json({ error: 'Translation service unavailable' }, 502);
+      if (text.startsWith('SLOW')) { await new Promise(resolve => setTimeout(resolve, 600)); return json({ text: 'Slow done' }); }
       return json({ text: text.startsWith('MULTI') ? 'First line\n\nSecond line\u001b[2J' : 'Run the tests\u001b[2J' });
     }
     return json({ error: 'not mocked' }, 404);
@@ -676,7 +677,8 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       assert.equal(await page.evaluate(() => window.sockets[0].sent.filter(item => { try { return JSON.parse(item).type === 'resize'; } catch { return false; } }).length), restResizes, 'a send resizes nothing');
     }
 
-    // The send arrow sends the text as typed: no translate request; control characters removed; one Enter. Lines are joined (no bracketed paste) or sent as one paste (bracketed paste on).
+    // The send arrow sends the text as typed: no translate request, nothing trimmed or joined; only invisible control characters (ESC) are dropped; one Enter.
+    // Line breaks are carriage returns; with bracketed paste on, text with a line break or a tab is one paste.
     {
       const input = page.locator('#h5-translate-input');
       const requests = translateRequests.length;
@@ -685,7 +687,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       await input.focus(); await input.fill('ls -la\u001b[2J \n  second   line');
       await page.locator('#h5-translate-send').tap();
       await page.waitForFunction(count => window.sockets[0].sent.filter(item => item === '\r').length > count, before);
-      assert.deepEqual((await sent()).slice(-2), ['ls -la [2J\nsecond line'.replace('\n', ' '), '\r'], 'as typed: controls removed, lines joined, one Enter');
+      assert.deepEqual((await sent()).slice(-2), ['ls -la[2J \r  second   line', '\r'], 'as typed: ESC dropped, spaces and the line break kept, one Enter');
       assert.equal(translateRequests.length, requests, 'the send arrow makes no translate request');
       assert.equal(await input.inputValue(), '');
       await page.evaluate(() => window.sockets[0].emit('\x1b[?2004h'));
@@ -696,7 +698,34 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       await page.waitForFunction(count => window.sockets[0].sent.filter(item => item === '\r').length > count, before);
       assert.deepEqual((await sent()).slice(-2), ['\x1b[200~one\rtwo\x1b[201~', '\r'], 'as typed with bracketed paste: one paste, one Enter');
       assert.equal(translateRequests.length, requests, 'still no translate request');
+      // No limit on what can be typed: 50,000 characters with CJK, emoji, tabs, blank lines and indentation reach the terminal in full, in one paste.
+      assert.equal(await input.getAttribute('maxlength'), null, 'the box has no length cap');
+      const unit = '\u4f60\u597d \u{1F600}\u{1F44D}\u{1F3FD}\tcol\n\n    indented line\n';
+      const huge = unit.repeat(Math.ceil(50_000 / unit.length)).slice(0, 50_000);
+      before = await returns();
+      await input.focus(); await input.fill(huge.slice(0, 5000)); // typed through the browser's editing (Playwright's insertText is very slow with thousands of lines)
+      assert.equal(await input.inputValue(), huge.slice(0, 5000), 'CJK, emoji, tabs, blank lines and indentation are kept as typed');
+      await input.evaluate((el, text) => { el.value = text; el.dispatchEvent(new Event('input', { bubbles: true })); }, huge); // the rest as one long paste
+      assert.equal((await input.inputValue()).length, 50_000, 'the box keeps all 50,000 characters');
+      await page.locator('#h5-translate-send').tap();
+      await page.waitForFunction(count => window.sockets[0].sent.filter(item => item === '\r').length > count, before);
+      assert.deepEqual((await sent()).slice(-2), [`\x1b[200~${huge.replace(/\n/g, '\r')}\x1b[201~`, '\r'], 'every character is sent as typed, in one paste');
+      assert.equal(await input.inputValue(), '');
+      assert.equal(translateRequests.length, requests, 'still no translate request');
       await page.evaluate(() => window.sockets[0].emit('\x1b[?2004l'));
+      // The box stays editable while a translation runs; only the sent text leaves the box, what was typed meanwhile stays, with the keyboard.
+      before = await returns();
+      await input.focus(); await input.fill('SLOW first');
+      await page.locator('#h5-translate-button').tap();
+      await page.waitForFunction(() => document.getElementById('h5-translate-input').classList.contains('translating') || document.querySelector('.h5-translate-input.translating'));
+      assert.equal(await input.evaluate(el => el.readOnly), false, 'not read-only while translating');
+      await input.press('End'); await page.keyboard.type(' and more');
+      assert.equal(await input.inputValue(), 'SLOW first and more', 'typing works during the translation');
+      await page.waitForFunction(count => window.sockets[0].sent.filter(item => item === '\r').length > count, before);
+      assert.deepEqual((await sent()).slice(-2), ['Slow done', '\r']);
+      assert.equal(await input.inputValue(), ' and more', 'what was typed during the translation stays in the box');
+      assert.equal(await page.evaluate(() => document.activeElement && document.activeElement.id), 'h5-translate-input', 'the keyboard stays while text is left');
+      await input.fill('');
       // A failed translation sends nothing and keeps the text in the box.
       const sentBefore = (await sent()).length;
       await input.focus(); await input.fill('FAIL please');

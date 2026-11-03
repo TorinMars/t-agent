@@ -1431,9 +1431,9 @@
     input.style.overflowY = input.scrollHeight > cap + 1 ? 'auto' : 'hidden';
     syncBar(); // the bar grows over the terminal; the terminal is moved, not resized
   }
-  // The translation keeps its line breaks only when the program in the terminal reads a paste as one paste (bracketed paste mode, as Claude Code does). Then it
-  // goes in as ONE bracketed paste, so no line is run on its own. Without that mode a shell would run every line at once, so the lines are joined with spaces.
-  // Control characters (ESC included) are removed in both cases, so the text cannot carry its own paste end marker or any key sequence.
+  // The TRANSLATION (machine output the user has not seen) keeps its line breaks only when the program in the terminal reads a paste as one paste (bracketed paste
+  // mode, as Claude Code does). Then it goes in as ONE bracketed paste, so no line is run on its own. Without that mode a shell would run every line at once, so the
+  // lines are joined with spaces. Control characters (ESC included) are removed in both cases, so the text cannot carry its own paste end marker or any key sequence.
   const LINE_CONTROLS = new RegExp('[\\u0000-\\u0009\\u000b\\u000c\\u000e-\\u001f\\u007f-\\u009f]+', 'g');
   function pasteText(raw) {
     const lines = String(raw).replace(/\r\n?|\u2028|\u2029/g, '\n').replace(LINE_CONTROLS, ' ').split('\n').map(line => line.replace(/\s+/g, ' ').trim());
@@ -1446,11 +1446,27 @@
     if (target.term && target.term.modes && target.term.modes.bracketedPasteMode) return send(target, `\x1b[200~${text.replace(/\n/g, '\r')}\x1b[201~`);
     return send(target, TerminalTranslate.sanitize(text));
   }
-  // Two ways to send what is in the box. Translate button: translate first, then send the English result. Send arrow: send the text as typed, with no translation
-  // and no request to the translator. Both use the same safe rules (sendTranslation: control characters removed, bracketed paste or lines joined) and then one Enter.
-  // When the translation fails nothing is sent, the error is shown and the text stays in the box.
+  // What the user TYPED (the send arrow) reaches the terminal as typed: any length, every character, spaces, tabs, blank lines and indentation kept, nothing trimmed.
+  // Line breaks become carriage returns (what the Enter key sends). Text with a line break or a tab goes in as ONE bracketed paste when the program has that mode on,
+  // so a shell or Claude Code neither runs a line early nor completes on the tab; without the mode it is typed key by key, as a desktop paste into xterm is.
+  // Only invisible control characters (ESC, NUL, C1 and the like, which a keyboard cannot type but a paste can carry) are dropped: they could end the paste early
+  // or act as key sequences. Tab and line breaks are kept.
+  const TYPED_CONTROLS = new RegExp('[\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f-\\u009f]', 'g');
+  const typedText = raw => String(raw).replace(/\r\n?|\u2028|\u2029/g, '\n').replace(TYPED_CONTROLS, '');
+  function sendTyped(target, raw) {
+    const text = typedText(raw);
+    if (!text) return false;
+    const bracketed = /[\n\t]/.test(text) && target.term && target.term.modes && target.term.modes.bracketedPasteMode;
+    const keys = text.replace(/\n/g, '\r');
+    return send(target, bracketed ? `\x1b[200~${keys}\x1b[201~` : keys);
+  }
+  // Two ways to send what is in the box. Translate button: translate first, then send the English result (sendTranslation). Send arrow: send the text as typed
+  // (sendTyped), with no translation and no request to the translator. Both are followed by one Enter. A box with only spaces sends nothing.
+  // The box never blocks typing: while a translation runs the user can keep typing; after the send only the text that was sent is taken out of the box, and the
+  // keyboard is dismissed only when nothing is left. When the translation fails nothing is sent, the error is shown and the text stays in the box.
   async function submitBox(translateFirst) {
-    const text = translateInput.value.trim();
+    const typed = translateInput.value;
+    const text = typed.trim();
     if (translating || !text) return;
     const target = session;
     if (uploading || !connected(target)) { tell('The terminal is not connected', 'error'); return; }
@@ -1462,12 +1478,13 @@
         const result = await api('POST', '/api/translate', { text });
         outgoing = result && result.text;
         if (!pasteText(outgoing)) throw new Error('Translation result is empty');
-      } else if (!pasteText(outgoing)) throw new Error('Nothing to send');
-      if (!sendTranslation(target, outgoing)) throw new Error('Terminal not connected; the text was not sent');
+      } else if (!typedText(typed).trim()) throw new Error('Nothing to send');
+      if (!(translateFirst ? sendTranslation(target, outgoing) : sendTyped(target, typed))) throw new Error('Terminal not connected; the text was not sent');
       setTimeout(() => send(target, '\r'), SUBMIT_DELAY_MS);
-      translateInput.value = '';
+      const now = translateInput.value; // typed on while the translation ran: keep what came after the sent text
+      translateInput.value = now === typed ? '' : now.startsWith(typed) ? now.slice(typed.length) : now;
       translateForm.removeAttribute('data-hold'); // the press on the send button is over: do not keep the box shown
-      translateInput.blur(); // sent: the on-screen keyboard goes away and the box hides at once (no timer); the terminal is not focused
+      if (!translateInput.value) translateInput.blur(); // sent: the on-screen keyboard goes away and the box hides at once (no timer); the terminal is not focused
       autosize();
       relayoutBar();
     } catch (error) {

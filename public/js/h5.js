@@ -1600,6 +1600,33 @@
   function retain(url) { ui.set({ retainUrl: url }); }
   ui.actions.retainClose = () => ui.set({ retainUrl: null });
 
+  // ── Design document: DESIGN.md of the task's working directory, in a sheet from the bottom (scripts/h5-shell/Design.jsx) ──
+  // Read through the task file API (`GET {tasksBase}/{task}/files/content?path=DESIGN.md`, local, Engine and remote proxy alike), which takes only paths
+  // relative to the working directory and follows no symbolic links. Read only: nothing is written. Opening blurs the focused input first, so the on-screen
+  // keyboard closes; the terminal keeps its size, so no resize reaches the PTY.
+  let designSeq = 0;
+  const taskDir = item => (item && (item.work_dir || (item.md_path ? item.md_path.replace(/\/[^/]*$/, '') : ''))) || '';
+  ui.actions.openDesign = async () => {
+    if (document.activeElement && document.activeElement !== document.body && typeof document.activeElement.blur === 'function') document.activeElement.blur();
+    const seq = ++designSeq;
+    const current = task;
+    const from = source;
+    if (!current) { ui.set({ design: { open: true, status: 'no-task' } }); return; }
+    const dir = taskDir(current);
+    ui.set({ design: { open: true, status: 'loading', dir } });
+    try {
+      const file = await api('GET', `${from.tasksBase}/${current.id}/files/content?path=DESIGN.md`);
+      if (seq !== designSeq) return;
+      ui.set({ design: { open: true, status: 'ready', dir, content: String((file && file.content) || '') } });
+    } catch (error) {
+      if (seq !== designSeq) return;
+      const code = error.message;
+      const status = code === 'FILE_NOT_FOUND' ? 'missing' : code === 'TASK_ROOT_UNAVAILABLE' ? 'no-dir' : 'error';
+      ui.set({ design: { open: true, status, dir, message: code } });
+    }
+  };
+  ui.actions.closeDesign = () => { designSeq += 1; ui.set(state => ({ design: state.design ? { ...state.design, open: false } : null })); };
+
   async function upload(target, file) {
     if (!/^image\/(png|jpeg|gif|webp)$/.test(file.type) || file.size <= 0 || file.size > MAX_IMAGE_BYTES) {
       tell('Choose a PNG, JPEG, GIF or WebP image up to 10 MiB', 'error');

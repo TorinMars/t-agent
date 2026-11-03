@@ -83,7 +83,7 @@ const COLLAPSED = { maxHeight: 0, overflow: 'hidden', m: 0, p: 0, border: 0 };
 const SHOWN = { maxHeight: 'none', overflow: 'visible', mt: 0.75, mx: 1, px: 0.75, py: 0.75, border: 1, borderColor: 'divider' };
 const DRAFT_ON = {
   '&:has(#h5-translate:focus-within), &:has(#h5-translate[data-hold]), &:has(#h5-translate.translating), &:has(.h5-voice.listening)': {
-    '& #h5-translate': SHOWN, '& .h5-draft-only': { display: 'inline-flex' },
+    '& #h5-translate': SHOWN, '& .h5-draft-only': { display: 'inline-flex' }, '& .h5-draft-hide': { display: 'none' },
   },
 };
 export function TranslateBar({ state }) {
@@ -141,7 +141,7 @@ export function KeyBar({ state, ui }) {
   );
 }
 
-// Row 2 (reference design): terminal keyboard, draft keyboard, upload image, saved commands, voice; then, only while the draft box is shown, a divider, the send arrow (white circle: sends the text as typed)
+// Row 2 (reference design): terminal keyboard, draft keyboard, upload image, saved commands, voice, design document (hidden while the draft box is shown); then, only while the draft box is shown, a divider, the send arrow (white circle: sends the text as typed)
 // and translate-and-send (the same white circle with a small "Aa"). The keyboard key whose input has the focus is blue and aria-pressed. The voice button is the one voice-input.js drives (`#h5-voice`).
 // The send and translate-and-send buttons look the same (white round button, send icon); translate-and-send only has a small "Aa" mark in its lower right corner.
 const SEND = { display: 'none', flex: '0 0 auto', width: 44, height: 44, bgcolor: '#fff', color: '#111', '&:hover': { bgcolor: '#e6e6e6' }, '&.Mui-disabled': { bgcolor: 'action.disabledBackground', color: 'action.disabled' } };
@@ -161,6 +161,8 @@ export function ActionBar({ state, ui, menu, onMenu }) {
       <IconButton id="h5-image" data-action="image" sx={ACTION} title={t('Upload image')} aria-label={t('Upload image')} onClick={() => ui.actions.key({ action: 'image' })}><Icon name="image" /></IconButton>
       <IconButton id="h5-commands" data-action="commands" sx={ACTION} title={t('Saved commands')} aria-label={t('Saved commands')} aria-haspopup="menu" aria-expanded={menu} onClick={() => onMenu(!menu)}><Icon name="commands" /></IconButton>
       <IconButton id="h5-voice" className="h5-voice" sx={ACTION} title={t('Voice input: hold to speak, release to stop')} aria-label={t('Voice input')} aria-pressed="false"><Icon name="voice" /></IconButton>
+      {/* The design document viewer. It steps aside while the draft box is shown (`.h5-draft-hide`), so send and translate-and-send keep finger-sized buttons at 320px. */}
+      <IconButton id="h5-design" className="h5-draft-hide" data-action="design" sx={ACTION} title={t('Design document')} aria-label={t('Design document')} aria-haspopup="dialog" aria-expanded={Boolean(state.design && state.design.open)} onClick={() => ui.actions.openDesign()}><Icon name="designDoc" /></IconButton>
       <Box className="h5-draft-only" aria-hidden="true" sx={{ display: 'none', alignSelf: 'stretch', width: '1px', my: 0.5, bgcolor: 'divider' }} />
       <IconButton
         type="submit" form="h5-translate" id="h5-translate-send" className="h5-translate-send h5-draft-only" disabled={state.translating} title={t('Send as typed, without translating')} aria-label={t('Send')}

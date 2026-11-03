@@ -2,6 +2,7 @@ import { useLayoutEffect, useSyncExternalStore } from 'react';
 import CssBaseline from '@mui/material/CssBaseline';
 import { ThemeProvider } from '@mui/material/styles';
 import { CopyDialog, Notice, RetainDialog, UploadDialog } from './Dialogs.jsx';
+import { DesignSheet } from './Design.jsx';
 import { Header } from './Header.jsx';
 import { SettingsDrawer } from './Settings.jsx';
 import { TaskDrawer } from './TaskDrawer.jsx';
@@ -34,6 +35,7 @@ export function App({ ui }) {
       <SettingsDrawer state={state} ui={ui} />
       <TermMenu state={state} ui={ui} />
       <CopyDialog state={state} ui={ui} />
+      <DesignSheet state={state} ui={ui} />
       <UploadDialog state={state} ui={ui} />
       <RetainDialog state={state} ui={ui} />
       <Notice state={state} ui={ui} />

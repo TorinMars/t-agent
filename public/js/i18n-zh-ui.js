@@ -1364,4 +1364,14 @@ I18n.add({
   "Translate and send": "翻译并发送",
   "Translate to English and send": "翻译成英文并发送",
   "Send as typed, without translating": "按原文发送，不翻译",
+  // Design document sheet (phone)
+  "Design document": "设计文档",
+  "Choose a task first": "请先选择任务",
+  "This task has no working directory": "此任务没有工作目录",
+  "No DESIGN.md in the working directory of this task": "此任务的工作目录中没有 DESIGN.md",
+  "DESIGN.md is larger than 5 MB": "DESIGN.md 超过 5 MB",
+  "DESIGN.md is not a plain text file": "DESIGN.md 不是纯文本文件",
+  "DESIGN.md cannot be read": "无法读取 DESIGN.md",
+  "Could not open DESIGN.md": "无法打开 DESIGN.md",
+  "Could not show DESIGN.md": "无法显示 DESIGN.md",
 });

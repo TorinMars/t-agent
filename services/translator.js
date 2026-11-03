@@ -2,7 +2,10 @@
 // Each provider stores its own {apiKey, baseUrl, model}; switching providers only changes "currently used" and never overwrites or loses the other provider's saved key.
 const { encryptToken, decryptToken } = require('../lib/token-crypto');
 
-const MAX_INPUT_CHARS = 4000;
+// The whole text of one request may be long (a pasted log or document); one provider call gets at most CHUNK_CHARS of it.
+// Longer text is split at line breaks (a very long line at a sentence end) and translated piece by piece, in order.
+const MAX_INPUT_CHARS = 100_000;
+const CHUNK_CHARS = 4000;
 const TIMEOUT_MS = 30_000;
 const PROVIDERS = {
   deepseek: { label: 'DeepSeek', baseUrl: 'https://api.deepseek.com', model: 'deepseek-flash' },
@@ -179,7 +182,12 @@ function createTranslator({ db, sessionSecret, fetchImpl = (...args) => fetch(..
       if (!source) throw new TranslatorError('Enter the text to translate');
       if (source.length > MAX_INPUT_CHARS) throw new TranslatorError(`The text cannot exceed ${MAX_INPUT_CHARS} characters`, 413);
       if (!hasCjk(source)) return { text: source, translated: false }; // already English: do not waste a call
-      return { text: await complete(owner, PROMPT, source), translated: true };
+      let output = '';
+      for (const [index, part] of splitForTranslation(source).entries()) {
+        // A piece with no Chinese is kept exactly (code, logs, blank lines) and costs no call.
+        output += (index ? part.joint : '') + (hasCjk(part.text) ? await complete(owner, PROMPT, part.text) : part.text);
+      }
+      return { text: output, translated: true };
     },
     // One English word, explained in Chinese for a developer: { word, base, phonetic, pos, meaning }. The sentence it stands in (optional) picks the meaning.
     // The answers are kept in memory (per person, provider, model, word and sentence), so tapping the same word again costs nothing.
@@ -200,4 +208,32 @@ function createTranslator({ db, sessionSecret, fetchImpl = (...args) => fetch(..
   };
 }
 
-module.exports = { PROVIDERS, createTranslator, TranslatorError, MAX_INPUT_CHARS, hasCjk };
+// Splits text into pieces of at most `limit` characters: whole lines where they fit, a longer line cut at its last sentence end in the piece
+// (or at the limit, never inside a surrogate pair). Each piece has `joint`, what joins it to the piece before ('\n' between lines, ' ' inside a line).
+const SENTENCE_END = /[\u3002\uff01\uff1f\uff1b.!?;]/g;
+function splitForTranslation(source, limit = CHUNK_CHARS) {
+  const segments = [];
+  for (const line of String(source).split('\n')) {
+    let rest = line;
+    let joint = '\n';
+    while (rest.length > limit) {
+      const head = rest.slice(0, limit);
+      let cut = 0;
+      for (const match of head.matchAll(SENTENCE_END)) cut = match.index + 1;
+      if (cut < limit / 2) cut = /[\ud800-\udbff]/.test(head[limit - 1]) ? limit - 1 : limit;
+      segments.push({ text: rest.slice(0, cut), joint });
+      rest = rest.slice(cut);
+      joint = ' ';
+    }
+    segments.push({ text: rest, joint });
+  }
+  const parts = [];
+  for (const segment of segments) {
+    const last = parts[parts.length - 1];
+    if (last && last.text.length + segment.joint.length + segment.text.length <= limit) last.text += segment.joint + segment.text;
+    else parts.push({ ...segment });
+  }
+  return parts;
+}
+
+module.exports = { PROVIDERS, createTranslator, TranslatorError, MAX_INPUT_CHARS, CHUNK_CHARS, splitForTranslation, hasCjk };

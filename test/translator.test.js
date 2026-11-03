@@ -3,7 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
 const Database = require('better-sqlite3');
-const { createTranslator } = require('../services/translator');
+const { createTranslator, splitForTranslation, MAX_INPUT_CHARS, CHUNK_CHARS } = require('../services/translator');
 const { createTranslateRouter } = require('../routes/translate');
 
 const SECRET = 'translator-test-secret-translator-test-secret';
@@ -69,13 +69,36 @@ test('DeepSeek errors become readable messages, and empty or over-long content i
   empty.service.saveConfig('o', { apiKey: 'k' });
   await assert.rejects(empty.service.translate('o', '你好'), /is empty/);
   await assert.rejects(empty.service.translate('o', ' '), /Enter/);
-  await assert.rejects(empty.service.translate('o', '好'.repeat(4001)), /cannot exceed/);
+  await assert.rejects(empty.service.translate('o', '好'.repeat(MAX_INPUT_CHARS + 1)), /cannot exceed/);
+});
+
+test('Long text is translated piece by piece: no piece is over the limit, lines stay in order and English-only pieces cost no call', async () => {
+  const { service, calls } = setup(count => reply(200, { choices: [{ message: { content: `T${count}` } }] }));
+  service.saveConfig('o', { apiKey: 'k' });
+  const line = '好'.repeat(CHUNK_CHARS - 10); // two of them, or one with the English line, do not fit one piece
+  const result = await service.translate('o', [line, line, 'npm test\tok', line].join('\n'));
+  assert.equal(calls.length, 3, 'three Chinese pieces, three calls');
+  assert.ok(calls.every(call => call.body.messages[1].content.length <= CHUNK_CHARS));
+  assert.deepEqual(result, { text: 'T1\nT2\nnpm test\tok\nT3', translated: true }, 'the English line is kept exactly, tab included');
+  // 50,000 characters in one request: accepted and fully sent to the provider.
+  calls.length = 0;
+  const long = '\u{1F600}\u597d'.repeat(16_667).slice(0, 50_000);
+  await service.translate('o', long);
+  assert.equal(calls.map(call => call.body.messages[1].content).join(''), long, 'every character reaches the provider, no surrogate pair is cut');
+});
+
+test('splitForTranslation keeps every character and cuts long lines at a sentence end', () => {
+  const text = `${'a'.repeat(30)}. ${'b'.repeat(30)}\n\nshort\n${'c'.repeat(100)}`;
+  const parts = splitForTranslation(text, 40);
+  assert.ok(parts.every(part => part.text.length <= 40));
+  assert.equal(parts[0].text, `${'a'.repeat(30)}.`, 'cut after the full stop');
+  assert.equal(parts.map((part, index) => (index ? part.joint : '') + part.text).join('').replace(/ /g, ''), text.replace(/ /g, ''), 'nothing is lost');
+  assert.deepEqual(splitForTranslation('one\ntwo', 40), [{ text: 'one\ntwo', joint: '\n' }], 'short text stays one piece');
 });
 
 test('HTTP routes: reading and writing config and translating, with no key in the responses', async () => {
   const { service } = setup(() => reply(200, { choices: [{ message: { content: 'Hello' } }] }));
-  const app = express();
-  app.use(express.json());
+  const app = express(); // no app-wide body parser: the router's own limit is the one tested
   app.use('/api/translate', createTranslateRouter({ service, requireAuth: (req, res, next) => { req.session = { user: { login: 'owner' } }; next(); } }));
   const server = await new Promise(resolve => { const s = app.listen(0, '127.0.0.1', () => resolve(s)); });
   const base = `http://127.0.0.1:${server.address().port}/api/translate`;
@@ -86,6 +109,8 @@ test('HTTP routes: reading and writing config and translating, with no key in th
     assert.equal((await put.text()).includes('sk-http'), false);
     const translated = await fetch(base, { method: 'POST', headers, body: JSON.stringify({ text: '你好' }) });
     assert.deepEqual(await translated.json(), { text: 'Hello', translated: true });
+    const long = await fetch(base, { method: 'POST', headers, body: JSON.stringify({ text: '\u4f60\u597d'.repeat(50_000) }) });
+    assert.equal(long.status, 200, 'a 100,000-character body is accepted');
     const bad = await fetch(`${base}/config`, { method: 'PUT', headers, body: JSON.stringify({ apiKey: 'k', baseUrl: 'http://x.com' }) });
     assert.equal(bad.status, 400);
     assert.equal((await fetch(`${base}/config`, { method: 'PUT', body: '{}', headers: { 'Content-Type': 'application/json' } })).status, 403, 'needs same-origin proof');

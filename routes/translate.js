@@ -5,7 +5,8 @@ const { createTranslator, TranslatorError } = require('../services/translator');
 function createTranslateRouter(options = {}) {
   const service = options.service || createTranslator({ db: require('../db'), sessionSecret: require('../config').sessionSecret });
   const router = express.Router();
-  router.use(clientOrigin, options.requireAuth || require('../middleware/auth'), express.json({ limit: '64kb' }));
+  // 1 MB: room for the longest text the translator accepts (MAX_INPUT_CHARS of Chinese, JSON-escaped).
+  router.use(clientOrigin, options.requireAuth || require('../middleware/auth'), express.json({ limit: '1mb' }));
   const owner = req => req.session.user.login;
   router.get('/config', (req, res) => res.json(service.getConfig(owner(req))));
   router.put('/config', (req, res) => res.json(service.saveConfig(owner(req), req.body)));

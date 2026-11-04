@@ -8,7 +8,7 @@ const { RESET_INPUT_MODES, watchShellReturn } = require('../lib/terminal-input-m
 const { createActivityTracker } = require('../lib/terminal-activity');
 const { repairSpawnHelperPermissions } = require('../lib/node-pty-runtime');
 const { utf8LocaleEnv } = require('../lib/terminal-locale');
-const { listSessions, startupCommand, newClaudeCommand } = require('../lib/agent-sessions');
+const { listSessions, startupCommand, newClaudeCommand, runningSubagents } = require('../lib/agent-sessions');
 const { resolveTerminalUser, userCanEnter, terminalEnvFor } = require('../lib/terminal-user');
 
 // Sessions are keyed by task ID and terminal ID; omitted IDs use the legacy shell.
@@ -534,6 +534,20 @@ function activitySnapshot(taskIds) {
   return result;
 }
 
+/** Running sub-agents of the live Claude terminals of the given tasks: { [taskId]: { [terminalId]: count } } (terminals with none are left out).
+ *  Only a terminal whose shell is alive and that is bound to a Claude session (agent_session_id) can have one; see runningSubagents. */
+function subagentSnapshot(taskIds, home) {
+  const result = {};
+  const wanted = new Set(taskIds.map(String));
+  const rows = db.prepare("SELECT t.task_id, t.terminal_id, t.agent_session_id, k.work_dir FROM task_terminals t JOIN tasks k ON k.id = t.task_id WHERE t.agent = 'claude' AND t.agent_session_id IS NOT NULL").all();
+  for (const row of rows) {
+    if (!wanted.has(String(row.task_id)) || !sessions.has(sessionKey(row.task_id, row.terminal_id))) continue;
+    const count = runningSubagents(row.work_dir, row.agent_session_id, home);
+    if (count) (result[row.task_id] ||= {})[row.terminal_id] = count;
+  }
+  return result;
+}
+
 function acknowledgeActivity(taskId, requestedTerminalId) {
   const id = assertTerminal(taskId, requestedTerminalId);
   const session = sessions.get(sessionKey(taskId, id));
@@ -547,4 +561,4 @@ function closeTaskTerminals(taskId) {
   for (const item of [...listTerminals(taskId), ...phone]) controlSession(taskId, 'close', item.terminal_id);
 }
 
-module.exports = { setHookEndpoint, reportHook, activitySnapshot, acknowledgeActivity, controlSession, handleWs, listTerminals, createTerminal, listAgentSessions, reopenCommand, renameTerminal, assertTerminal, closeTaskTerminals };
+module.exports = { setHookEndpoint, reportHook, activitySnapshot, subagentSnapshot, acknowledgeActivity, controlSession, handleWs, listTerminals, createTerminal, listAgentSessions, reopenCommand, renameTerminal, assertTerminal, closeTaskTerminals };

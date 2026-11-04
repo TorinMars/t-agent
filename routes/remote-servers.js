@@ -348,6 +348,7 @@ router.post('/:id/workspace/cleanup', (req, res) => proxyWorkspace(req, res, '/v
 router.post('/:id/workspace/restore', (req, res) => proxyWorkspace(req, res, '/v1/workspace/restore', 'POST'));
 
 router.get('/:id/terminal-activity', forwardJson('GET', () => '/v1/terminal-activity'));
+router.get('/:id/terminal-subagents', forwardJson('GET', () => '/v1/terminal-subagents'));
 router.post('/:id/tasks/:taskId/terminal/ack', forwardJson('POST', req => `${taskPath(req)}/terminal/ack`));
 
 // Relative files referenced from documents (images etc.) and the document change event stream: not buffered, forwarded directly.

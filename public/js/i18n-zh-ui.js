@@ -1374,4 +1374,9 @@ I18n.add({
   "DESIGN.md cannot be read": "无法读取 DESIGN.md",
   "Could not open DESIGN.md": "无法打开 DESIGN.md",
   "Could not show DESIGN.md": "无法显示 DESIGN.md",
+  // Next running or pending session (phone, row 2)
+  "Next running or pending session": "下一个运行中或待验收的会话",
+  "No running or pending sessions": "没有运行中或待验收的会话",
+  "This is the only running or pending session": "这是唯一一个运行中或待验收的会话",
+  "Could not read the session states: {1}": "读取会话状态失败：{1}",
 });

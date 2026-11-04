@@ -155,12 +155,21 @@ export function ActionBar({ state, ui, menu, onMenu }) {
   return (
     <Box
       className="h5-actions" id="h5-actions" role="toolbar" aria-label={t('Input')}
-      onMouseDown={event => { if (event.target.closest('button')) event.preventDefault(); }}
+      onMouseDown={event => { if (event.target.closest('button, label')) event.preventDefault(); }}
       sx={{ display: 'flex', alignItems: 'center', gap: 0.75, px: 1, pt: 0.75 }}
     >
       {keyboard('keyboard', 'terminal', 'Terminal keyboard')}
       {keyboard('draft', 'draft', 'Draft keyboard')}
-      <IconButton id="h5-image" data-action="image" sx={ACTION} title={t('Upload image')} aria-label={t('Upload image')} onClick={() => ui.actions.key({ action: 'image' })}><Icon name="image" /></IconButton>
+      {/* Upload image is a label around the real file input, and the (invisible, not display:none) input covers the whole button, so the finger taps the input
+          itself and the picker opens natively. iOS WebKit, a Home Screen web app above all, ignores a script `input.click()` on a hidden input here. h5.js checks
+          on the input's click (it can cancel it) and reads the chosen file. Not a <button>, so the bar's press capture leaves it alone. */}
+      <IconButton component="label" id="h5-image" data-action="image" sx={{ ...ACTION, position: 'relative', overflow: 'hidden' }} title={t('Upload image')} aria-label={t('Upload image')}>
+        <Icon name="image" />
+        <input
+          type="file" id="h5-image-picker" accept="image/png,image/jpeg,image/gif,image/webp" tabIndex={-1} aria-hidden="true"
+          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', margin: 0, padding: 0, opacity: 0, cursor: 'pointer', fontSize: 0 }}
+        />
+      </IconButton>
       <IconButton id="h5-commands" data-action="commands" sx={ACTION} title={t('Saved commands')} aria-label={t('Saved commands')} aria-haspopup="menu" aria-expanded={menu} onClick={() => onMenu(!menu)}><Icon name="commands" /></IconButton>
       <IconButton id="h5-voice" className="h5-voice" sx={ACTION} title={t('Voice input: hold to speak, release to stop')} aria-label={t('Voice input')} aria-pressed="false"><Icon name="voice" /></IconButton>
       {/* The design document viewer. It steps aside while the draft box is shown (`.h5-draft-hide`), so send and translate-and-send keep finger-sized buttons at 320px. */}

@@ -28,9 +28,8 @@
 </head>
 <body>
   <!-- The page is drawn by the Material UI shell (scripts/h5-shell, built to js/h5-shell.js) into #h5-root, at once, before the scripts below run.
-       The chat and the image picker are plain elements that h5.js drives. -->
+       The chat is a plain element that h5.js drives; the image file input is inside the Upload image button (scripts/h5-shell/Terminal.jsx). -->
   <div id="h5-root"></div>
-  <input type="file" id="h5-image-picker" accept="image/png,image/jpeg,image/gif,image/webp" hidden>
   <div class="h5-agent" id="h5-agent" role="dialog" aria-modal="true" aria-label="Agent chat" hidden></div>
 
   <script src="/js/h5-shell.js"></script>

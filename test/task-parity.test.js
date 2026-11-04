@@ -208,6 +208,10 @@ test('terminal activity is exposed by the local routes, the Engine and the proxy
   const task = await createTask({ ...backends()[1] }, 'activity');
   assert.deepEqual(await (await fetch(`${engine}/v1/terminal-activity`, { headers: { Authorization: `Bearer ${engineToken}` } })).json(), {});
   assert.deepEqual(await (await fetch(`${proxy}/api/remote-servers/${remoteId}/terminal-activity`)).json(), {});
+  assert.deepEqual(await (await fetch(`${local}/api/tasks/terminal-subagents`)).json(), {});
+  assert.deepEqual(await (await fetch(`${engine}/v1/terminal-subagents`, { headers: { Authorization: `Bearer ${engineToken}` } })).json(), {});
+  assert.deepEqual(await (await fetch(`${proxy}/api/remote-servers/${remoteId}/terminal-subagents`)).json(), {});
+  assert.equal((await fetch(`${engine}/v1/terminal-subagents`, { headers: { Authorization: 'Bearer nope' } })).status, 401);
   const ack = await fetch(`${proxy}/api/remote-servers/${remoteId}/tasks/${task.id}/terminal/ack`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ terminal_id: 'default' }),
   });

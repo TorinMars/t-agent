@@ -305,7 +305,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     // Row 2 (reference design): terminal keyboard, draft keyboard, upload image, saved commands, voice; equal buttons filling the width, below the function key row. Send and translate-and-send are not shown while the box is hidden.
     {
       const row2 = await page.evaluate(() => [...document.querySelectorAll('#h5-actions button, #h5-actions [role="button"]')].map(b => { const r = b.getBoundingClientRect(); return { label: b.getAttribute('aria-label'), left: r.left, right: r.right, top: r.top, width: r.width, height: r.height }; }).filter(b => b.width > 0));
-      assert.deepEqual(row2.map(b => b.label), ['Terminal keyboard', 'Draft keyboard', 'Upload image', 'Saved commands', 'Voice input', 'Design document'], 'row 2: the two keyboards, image, saved commands, voice, design document');
+      assert.deepEqual(row2.map(b => b.label), ['Terminal keyboard', 'Draft keyboard', 'Upload image', 'Saved commands', 'Voice input', 'Design document', 'Next running or pending session'], 'row 2: the two keyboards, image, saved commands, voice, design document, next running or pending session');
       assert.ok(row2.every(b => Math.abs(b.top - row2[0].top) <= 1 && Math.abs(b.width - row2[0].width) <= 1 && b.height >= 40), 'row 2: one row of equal, finger-sized buttons');
       assert.ok(row2[0].left >= 0 && row2.at(-1).right <= 390, 'row 2 fits the screen');
       assert.equal(await page.evaluate(() => document.querySelector('#h5-actions').getBoundingClientRect().top >= document.getElementById('h5-keys').getBoundingClientRect().bottom - 1), true, 'row 2 is below the function keys');
@@ -1530,9 +1530,9 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       await narrow.page.waitForFunction(() => !document.getAnimations().some(a => a.playState === 'running') && !document.querySelector('.h5-bar-moving'), null, { timeout: 3000 });
       const row = await narrow.page.evaluate(() => { const r = id => document.getElementById(id).getBoundingClientRect(); const ids = ['h5-image', 'h5-commands', 'h5-voice', 'h5-translate-send', 'h5-translate-button'];
         const boxes = [...document.querySelectorAll('#h5-actions button, #h5-actions [role="button"]')].map(b => b.getBoundingClientRect()).filter(box => box.width > 0);
-        return { designHidden: document.getElementById('h5-design').getBoundingClientRect().width === 0, inside: ids.every(id => r(id).left >= 0 && r(id).right <= innerWidth && r(id).width >= 32 && r(id).height >= 40), overflow: document.documentElement.scrollWidth > innerWidth, noOverlap: boxes.every((box, i) => i === 0 || boxes[i - 1].right <= box.left + 0.5) };
+        return { designHidden: document.getElementById('h5-design').getBoundingClientRect().width === 0 && document.getElementById('h5-cycle').getBoundingClientRect().width === 0, inside: ids.every(id => r(id).left >= 0 && r(id).right <= innerWidth && r(id).width >= 32 && r(id).height >= 40), overflow: document.documentElement.scrollWidth > innerWidth, noOverlap: boxes.every((box, i) => i === 0 || boxes[i - 1].right <= box.left + 0.5) };
       });
-      assert.deepEqual(row, { designHidden: true, inside: true, overflow: false, noOverlap: true }, 'the action row with send and translate fits at 360px (the design button steps aside)');
+      assert.deepEqual(row, { designHidden: true, inside: true, overflow: false, noOverlap: true }, 'the action row with send and translate fits at 360px (the design and next-session buttons step aside)');
       await narrow.context.close();
     }
 
@@ -1552,11 +1552,11 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       const row2 = () => small.page.evaluate(() => [...document.querySelectorAll('#h5-actions button, #h5-actions [role="button"]')].map(b => b.getBoundingClientRect()).filter(box => box.width > 0).map(box => ({ left: box.left, right: box.right, width: box.width, height: box.height })));
       const resting = await row2();
       if (process.env.H5_SHOT_DIR && viewport.width === 320) await small.page.screenshot({ path: path.join(process.env.H5_SHOT_DIR, 'h5-row2-320-rest.png') });
-      assert.ok(resting.length === 6 && resting.every(box => box.left >= 0 && box.right <= innerWidthOf(viewport) && box.width >= 40 && box.height >= 40), `row 2 at rest: six buttons of at least 40px at ${viewport.width}px`);
+      assert.ok(resting.length === 7 && resting.every((box, i) => box.left >= 0 && box.right <= innerWidthOf(viewport) && box.width >= 40 && box.height >= 40 && (i === 0 || resting[i - 1].right <= box.left + 0.5)), `row 2 at rest: seven buttons of at least 40px at ${viewport.width}px`);
       await small.page.locator('#h5-translate-input').focus();
       await small.page.waitForFunction(() => !document.getAnimations().some(a => a.playState === 'running') && !document.querySelector('.h5-bar-moving'), null, { timeout: 3000 });
       const drafting = await row2();
-      assert.ok(drafting.length === 7 && drafting.every((box, i) => box.left >= 0 && box.right <= innerWidthOf(viewport) && box.width >= 32 && (i === 0 || drafting[i - 1].right <= box.left + 0.5)), `row 2 with the draft box: the design button steps aside and the rest fits at ${viewport.width}px`);
+      assert.ok(drafting.length === 7 && drafting.every((box, i) => box.left >= 0 && box.right <= innerWidthOf(viewport) && box.width >= 32 && (i === 0 || drafting[i - 1].right <= box.left + 0.5)), `row 2 with the draft box: the design and next-session buttons step aside and the rest fits at ${viewport.width}px`);
       if (process.env.H5_SHOT_DIR && viewport.width === 320) await small.page.screenshot({ path: path.join(process.env.H5_SHOT_DIR, 'h5-row2-320-draft.png') });
       await small.page.evaluate(() => document.activeElement.blur());
       await small.context.close();

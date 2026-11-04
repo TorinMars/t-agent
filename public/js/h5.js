@@ -34,7 +34,7 @@
     },
   };
 
-  const LOCAL = { key: 'local', label: 'This machine', tasksBase: '/api/tasks', groupsBase: '/api/task-groups', wsPath: '/terminal/ws' };
+  const LOCAL = { key: 'local', label: 'This machine', tasksBase: '/api/tasks', groupsBase: '/api/task-groups', wsPath: '/terminal/ws', activityBase: '/api/tasks' };
   let sources = [LOCAL];
   let source = LOCAL;
   let tasks = [];
@@ -155,6 +155,7 @@
         tasksBase: `/api/remote-servers/${server.id}/tasks`,
         groupsBase: `/api/remote-servers/${server.id}/task-groups`,
         wsPath: `/api/remote-servers/${server.id}/terminal/ws`,
+        activityBase: `/api/remote-servers/${server.id}`, // {activityBase}/terminal-activity and /terminal-subagents
       }))];
     } catch { sources = [LOCAL]; }
     source = sources.find(item => item.key === store.get('source')) || LOCAL;
@@ -204,17 +205,20 @@
     return { label, note: null, rows };
   }
 
-  function renderTasks() {
-    if (!tasks.length) { note('No tasks yet. Create one above'); return; }
+  // The groups of the task sheet in the order they are drawn, each with its tasks in list order (groups without tasks left out).
+  function groupedTasks() {
     const ordered = [...groups].sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
     const known = new Set(ordered.map(group => group.key));
     for (const item of tasks) {
       if (!known.has(item.status)) { known.add(item.status); ordered.push({ key: item.status, name: item.status }); }
     }
+    return ordered.map(group => ({ group, members: tasks.filter(item => item.status === group.key) })).filter(entry => entry.members.length);
+  }
+
+  function renderTasks() {
+    if (!tasks.length) { note('No tasks yet. Create one above'); return; }
     const out = [];
-    for (const group of ordered) {
-      const members = tasks.filter(item => item.status === group.key);
-      if (!members.length) continue;
+    for (const { group, members } of groupedTasks()) {
       out.push({
         key: group.key, name: group.name,
         tasks: members.map(item => {
@@ -390,6 +394,55 @@
     if (row.kind === 'terminal') openFromPeek(item, { terminal: row.id });
     else if (row.kind === 'chat') { const peek = peeks.get(item.id); const entry = peek && peek.chats.find(candidate => candidate.id === row.id); if (entry) openFromPeek(item, { chat: entry }); }
     else selectTask(item);
+  };
+  // ── Next running or pending session (row 2, `#h5-cycle`) ──
+  // Goes to the next terminal session, in task sheet order (groups, tasks, then the terminals of each task), that is running or pending acceptance,
+  // wrapping around after the last one. Only terminal sessions count: plain shells ("Terminal") and Claude / Codex terminals ("Session"); agent chats do not.
+  // Running: the server's terminal activity state is 'running', or the terminal is a live Claude session with a running sub-agent (`terminal-subagents`).
+  // Pending acceptance: the activity state is 'done' (finished, not yet seen on the desktop; the desktop clears it when the terminal is opened there).
+  // Both are read fresh on every tap, so the list is never stale; nothing is polled in the background.
+  let cycling = false;
+  async function activeSessions(from) {
+    const [activity, subagents] = await Promise.all([
+      api('GET', `${from.activityBase}/terminal-activity`),
+      api('GET', `${from.activityBase}/terminal-subagents`).catch(() => ({})), // an Engine older than this feature: no sub-agent information
+    ]);
+    const stateOf = (taskId, id) => {
+      const state = ((activity || {})[taskId] || {})[id];
+      if (state === 'running' || Number(((subagents || {})[taskId] || {})[id]) > 0) return 'running';
+      return state === 'done' ? 'pending' : null;
+    };
+    const order = groupedTasks().flatMap(entry => entry.members)
+      .filter(item => Object.keys((activity || {})[item.id] || {}).length || Object.keys((subagents || {})[item.id] || {}).length);
+    // The terminal order of a task as the task sheet lists it: the open task's own list, else a fresh read of that task's terminals.
+    const lists = await Promise.all(order.map(item => (task && task.id === item.id && terminals.length
+      ? terminals : api('GET', `${from.tasksBase}/${item.id}/terminals`).catch(() => []))));
+    const out = [];
+    order.forEach((item, index) => {
+      for (const row of Array.isArray(lists[index]) ? lists[index] : []) {
+        const state = stateOf(item.id, row.terminal_id);
+        if (state) out.push({ taskId: item.id, terminalId: row.terminal_id, state });
+      }
+    });
+    return out;
+  }
+  ui.actions.nextActiveSession = async () => {
+    // Close the on-screen keyboard first (as the design document button does); the terminal is not resized.
+    if (document.activeElement && document.activeElement !== document.body && typeof document.activeElement.blur === 'function') document.activeElement.blur();
+    if (cycling) return;
+    cycling = true;
+    const from = source;
+    try {
+      const list = await activeSessions(from);
+      if (from !== source) return;
+      if (!list.length) { tell('No running or pending sessions'); return; }
+      const here = list.findIndex(entry => task && entry.taskId === task.id && entry.terminalId === terminalId && !agentChat);
+      if (here >= 0 && list.length === 1) { tell('This is the only running or pending session'); return; }
+      const next = list[(here + 1) % list.length]; // not in the list (here = -1): the first one
+      ui.actions.openRow(next.taskId, { kind: 'terminal', id: next.terminalId }); // the same path as a tap in the task sheet
+    } catch (error) {
+      tell(`Could not read the session states: ${error.message}`, 'error');
+    } finally { cycling = false; }
   };
   ui.actions.rowMore = row => {
     if (row.kind === 'chat') { const entry = chats.find(candidate => candidate.id === row.id); if (entry) openChatMenu(entry); }

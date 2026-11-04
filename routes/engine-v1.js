@@ -324,6 +324,11 @@ router.get('/terminal-activity', requireEngineAuth('terminal:execute'), (req, re
   res.json(terminal.activitySnapshot(ids));
 });
 
+router.get('/terminal-subagents', requireEngineAuth('terminal:execute'), (req, res) => {
+  const ids = db.prepare('SELECT id FROM tasks WHERE user_id = ?').all(principal(req)).map(row => row.id);
+  res.json(terminal.subagentSnapshot(ids));
+});
+
 router.post('/tasks/:id/terminal/ack', requireEngineAuth('terminal:execute'), (req, res) => {
   const task = tasks.ownedTask(principal(req), req.params.id);
   if (!task) return res.status(404).json({ error: 'TASK_NOT_FOUND' });

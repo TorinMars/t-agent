@@ -188,6 +188,12 @@ router.get('/terminal-activity', (req, res) => {
   res.json(terminal.activitySnapshot(ids));
 });
 
+// Running sub-agents of the live Claude terminals (the phone's "next running or pending session" button counts them as running).
+router.get('/terminal-subagents', (req, res) => {
+  const ids = db.prepare('SELECT id FROM tasks WHERE user_id = ?').all(ownerFilter(req)).map(row => row.id);
+  res.json(terminal.subagentSnapshot(ids));
+});
+
 router.post('/:id/terminal/ack', (req, res) => {
   const task = db.prepare('SELECT id FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, ownerFilter(req));
   if (!task) return res.status(404).json({ error: 'TASK_NOT_FOUND' });

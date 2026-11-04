@@ -2263,3 +2263,4 @@ Every icon-only button has an English `aria-label` and the same `title` (functio
 > v2.87.7 Recognisable phone function key faces (self-drawn icons and text labels); icon rule updated
 > v2.87.8 Phone DESIGN.md bottom-sheet viewer; the draft box has no input limits and sends text as typed; the translator splits long text up to 100k chars
 > v2.87.9 Phone Upload image button is now a label over a real file input, so the picker opens on iOS Home Screen web apps.
+> v2.87.10 Phone row 2 has a button that cycles through running or pending-review terminal and session terminals; running includes running Claude sub-agents, read from the new read-only terminal-subagents endpoint (API version stays 1).

@@ -1580,14 +1580,17 @@
   translateForm.addEventListener('focusout', () => { autosize(); relayoutBar(); });
 
   // ── Image upload: the Client uploads to OSS and the link is typed into the terminal without Enter ──
+  // The file input covers the Upload image button (Terminal.jsx), so a tap opens the picker natively, inside the user's own gesture: iOS WebKit (the Home Screen
+  // web app above all) ignores a script click() on a hidden file input from another button's handler. The checks run on the input's click and cancel it.
   let pickedFor = null;
-  function pickImage() {
-    if (uploading) return;
-    if (!connected(session)) { tell('The original terminal is not connected. Reconnect and retry', 'error'); return; }
+  picker.addEventListener('click', event => {
+    if (uploading) { event.preventDefault(); return; }
+    if (!connected(session)) { event.preventDefault(); tell('The original terminal is not connected. Reconnect and retry', 'error'); return; }
     pickedFor = session;
     picker.value = '';
-    picker.click();
-  }
+  });
+  // The image action from code (for example a hardware keyboard): the same input, through its click.
+  function pickImage() { picker.click(); }
   picker.addEventListener('change', () => {
     const file = picker.files[0];
     const target = pickedFor;

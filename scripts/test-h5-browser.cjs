@@ -304,7 +304,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     assert.notEqual(await page.locator('[data-action="keyboard"] svg').innerHTML(), await page.locator('[data-action="draft"] svg').innerHTML(), 'the two keyboard icons differ');
     // Row 2 (reference design): terminal keyboard, draft keyboard, upload image, saved commands, voice; equal buttons filling the width, below the function key row. Send and translate-and-send are not shown while the box is hidden.
     {
-      const row2 = await page.evaluate(() => [...document.querySelectorAll('#h5-actions button')].map(b => { const r = b.getBoundingClientRect(); return { label: b.getAttribute('aria-label'), left: r.left, right: r.right, top: r.top, width: r.width, height: r.height }; }).filter(b => b.width > 0));
+      const row2 = await page.evaluate(() => [...document.querySelectorAll('#h5-actions button, #h5-actions [role="button"]')].map(b => { const r = b.getBoundingClientRect(); return { label: b.getAttribute('aria-label'), left: r.left, right: r.right, top: r.top, width: r.width, height: r.height }; }).filter(b => b.width > 0));
       assert.deepEqual(row2.map(b => b.label), ['Terminal keyboard', 'Draft keyboard', 'Upload image', 'Saved commands', 'Voice input', 'Design document'], 'row 2: the two keyboards, image, saved commands, voice, design document');
       assert.ok(row2.every(b => Math.abs(b.top - row2[0].top) <= 1 && Math.abs(b.width - row2[0].width) <= 1 && b.height >= 40), 'row 2: one row of equal, finger-sized buttons');
       assert.ok(row2[0].left >= 0 && row2.at(-1).right <= 390, 'row 2 fits the screen');
@@ -890,7 +890,28 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     }
 
     // Image upload: the link is typed into the terminal with a trailing space and no Enter.
+    // iOS WebKit (a Home Screen web app above all) opens the photo picker only for a tap that lands on the file input itself: a script `input.click()` on a
+    // hidden input, run from the click handler of another, pointer-captured button, is ignored there without any error. Chromium would open the picker anyway,
+    // so the test checks the conditions WebKit needs: the finger hits a real, rendered file input, no script click opens it and the press is not captured.
+    {
+      const hit = await page.evaluate(() => {
+        const box = document.getElementById('h5-image').getBoundingClientRect();
+        const el = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+        const style = el && getComputedStyle(el);
+        return { tag: el && el.tagName, type: el && el.type, id: el && el.id, display: style && style.display, visibility: style && style.visibility, events: style && style.pointerEvents, insideButton: Boolean(el && el.closest('#h5-image')) };
+      });
+      assert.deepEqual(hit, { tag: 'INPUT', type: 'file', id: 'h5-image-picker', display: 'block', visibility: 'visible', events: 'auto', insideButton: true }, 'a tap on Upload image lands on the file input itself');
+      await page.evaluate(() => {
+        window.scriptClicks = 0; window.captures = [];
+        const click = HTMLInputElement.prototype.click;
+        HTMLInputElement.prototype.click = function () { if (this.type === 'file') window.scriptClicks += 1; return click.call(this); };
+        const capture = Element.prototype.setPointerCapture;
+        Element.prototype.setPointerCapture = function (id) { window.captures.push(this.id || this.tagName); return capture.call(this, id); };
+      });
+    }
     const [chooser] = await Promise.all([page.waitForEvent('filechooser'), page.locator('#h5-image').tap()]);
+    assert.equal(await page.evaluate(() => window.scriptClicks), 0, 'the picker opens from the tap itself, not from a script click');
+    assert.deepEqual(await page.evaluate(() => window.captures.filter(id => /h5-image|LABEL|INPUT/.test(id))), [], 'the image press is not pointer-captured');
     await chooser.setFiles({ name: 'shot.png', mimeType: 'image/png', buffer: Buffer.from('89504e470d0a1a0a', 'hex') });
     await page.waitForFunction(() => window.sockets[0].sent.includes('https://img.test/shot.png '));
     await page.locator('.h5-upload-overlay').waitFor({ state: 'detached' }); // the dialog fades out
@@ -1508,7 +1529,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       await narrow.page.locator('#h5-translate-input').focus();
       await narrow.page.waitForFunction(() => !document.getAnimations().some(a => a.playState === 'running') && !document.querySelector('.h5-bar-moving'), null, { timeout: 3000 });
       const row = await narrow.page.evaluate(() => { const r = id => document.getElementById(id).getBoundingClientRect(); const ids = ['h5-image', 'h5-commands', 'h5-voice', 'h5-translate-send', 'h5-translate-button'];
-        const boxes = [...document.querySelectorAll('#h5-actions button')].map(b => b.getBoundingClientRect()).filter(box => box.width > 0);
+        const boxes = [...document.querySelectorAll('#h5-actions button, #h5-actions [role="button"]')].map(b => b.getBoundingClientRect()).filter(box => box.width > 0);
         return { designHidden: document.getElementById('h5-design').getBoundingClientRect().width === 0, inside: ids.every(id => r(id).left >= 0 && r(id).right <= innerWidth && r(id).width >= 32 && r(id).height >= 40), overflow: document.documentElement.scrollWidth > innerWidth, noOverlap: boxes.every((box, i) => i === 0 || boxes[i - 1].right <= box.left + 0.5) };
       });
       assert.deepEqual(row, { designHidden: true, inside: true, overflow: false, noOverlap: true }, 'the action row with send and translate fits at 360px (the design button steps aside)');
@@ -1528,7 +1549,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
         return { count: boxes.length, inside: first.every(box => box.left >= 0 && box.right <= innerWidth && box.bottom <= innerHeight && box.width >= 36 && box.height >= 32), overflow: document.documentElement.scrollWidth > innerWidth };
       });
       assert.deepEqual(fit, { count: 18, inside: true, overflow: false }, `the first keys fit at ${viewport.width}px`);
-      const row2 = () => small.page.evaluate(() => [...document.querySelectorAll('#h5-actions button')].map(b => b.getBoundingClientRect()).filter(box => box.width > 0).map(box => ({ left: box.left, right: box.right, width: box.width, height: box.height })));
+      const row2 = () => small.page.evaluate(() => [...document.querySelectorAll('#h5-actions button, #h5-actions [role="button"]')].map(b => b.getBoundingClientRect()).filter(box => box.width > 0).map(box => ({ left: box.left, right: box.right, width: box.width, height: box.height })));
       const resting = await row2();
       if (process.env.H5_SHOT_DIR && viewport.width === 320) await small.page.screenshot({ path: path.join(process.env.H5_SHOT_DIR, 'h5-row2-320-rest.png') });
       assert.ok(resting.length === 6 && resting.every(box => box.left >= 0 && box.right <= innerWidthOf(viewport) && box.width >= 40 && box.height >= 40), `row 2 at rest: six buttons of at least 40px at ${viewport.width}px`);

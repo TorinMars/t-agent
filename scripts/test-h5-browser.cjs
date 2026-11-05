@@ -1348,8 +1348,12 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     // iOS can miss the last resize event while focus moves to the translate box: the page must still follow the visible height.
     await page.setViewportSize({ width: 390, height: 844 - 330 });
     await page.waitForTimeout(300);
-    await page.evaluate(() => document.documentElement.style.setProperty('--h5-height', '300px')); // a stale height, as if the event was missed
-    assert.equal(await page.evaluate(() => document.querySelector('.h5-app').getBoundingClientRect().height), 300);
+    // A stale height, as if the event was missed. Set and read in one evaluate: the page's 500 ms keyboard timer
+    // (fitViewport) may run between two evaluates and fix the height before the test reads it.
+    assert.equal(await page.evaluate(() => {
+      document.documentElement.style.setProperty('--h5-height', '300px');
+      return document.querySelector('.h5-app').getBoundingClientRect().height;
+    }), 300);
     await page.locator('#h5-translate-input').focus();
     await page.waitForFunction(() => Math.abs(document.querySelector('.h5-app').getBoundingClientRect().height - window.visualViewport.height) <= 1, null, { timeout: 3000 });
     {

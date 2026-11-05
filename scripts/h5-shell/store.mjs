@@ -35,6 +35,7 @@ export const initialState = () => ({
   menu: null, // { title, items: [{ label, kind }], renaming, renameValue } while the terminal / chat / session sheet is open
   empty: 'Choose a task to open its phone terminal', // what the terminal area says when there is no terminal; null when one is shown
   mods: {},
+  osk: false, // the terminal on-screen keyboard (Osk.jsx) is shown; the "Terminal keyboard" button of row 2 toggles it (h5.js `toggleKeyboard`)
   translating: false,
   copyText: null, // the text of the copy view while it is open
   copyStale: false, // new output arrived while the user holds a selection in the copy view

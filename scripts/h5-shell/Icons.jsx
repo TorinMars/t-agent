@@ -52,6 +52,8 @@ const DRAWN = {
   keyTab: 'M3 12h13 M12 7.5l4.5 4.5-4.5 4.5 M20.5 5v14',
   // Shift: a hollow up arrow
   keyShift: 'M12 3.5L3.5 12.5H8V20h8v-7.5h4.5z',
+  // Caps lock (the terminal on-screen keyboard, Shift tapped twice): the Shift arrow, shorter, over a bar
+  keyCapsLock: 'M12 3L3.5 11.5H8V16h8v-4.5h4.5z M8 20h8',
 };
 
 export function Icon({ name, size = 24 }) {

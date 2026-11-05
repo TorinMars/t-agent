@@ -9,6 +9,7 @@ import ToggleButton from '@mui/material/ToggleButton';
 import { named, t } from './common.jsx';
 import { Icon } from './Icons.jsx';
 import { commandsFor } from './commands.mjs';
+import { TerminalKeyboard } from './Osk.jsx';
 
 // The terminal area. h5.js puts the xterm element in after these two; React draws only the note, the wheel strip (h5.js handles its touches) and the selection bar.
 export function TerminalArea({ state, ui }) {
@@ -30,7 +31,8 @@ export function TerminalArea({ state, ui }) {
 
 // The bottom area (reference design): the draft box (hidden by default), then two rows of buttons. Row 1 are the function keys (one row that scrolls sideways); row 2 is the action row:
 // terminal keyboard, draft keyboard, upload image, saved commands, voice, and (only while the draft box is shown) send and translate-and-send. One box holds all of it so that, when the draft box
-// grows over the terminal, the rows move up with it and stay visible (h5.js sets `--h5-bar-extra` on this box and moves the terminal; the terminal is never resized).
+// grows over the terminal, the rows move up with it and stay visible (h5.js sets `--h5-bar-extra` on this box and moves the terminal; the terminal is never resized for it).
+// Under row 2, while `state.osk` is on (touch mode only), the terminal's own on-screen keyboard (Osk.jsx). It takes room in the layout, so the terminal refits above it.
 export function BottomArea({ state, ui }) {
   const [menu, setMenu] = useState(false); // the saved commands list (and Paste text) is open
   useEffect(() => {
@@ -82,6 +84,7 @@ export function BottomArea({ state, ui }) {
       <TranslateBar state={state} pointer={pointer} />
       {pointer ? null : <KeyBar state={state} ui={ui} />}
       <ActionBar state={state} ui={ui} menu={menu} onMenu={setMenu} pointer={pointer} />
+      {state.osk && !pointer ? <TerminalKeyboard ui={ui} /> : null}
     </Box>
   );
 }
@@ -220,9 +223,10 @@ const SEND_KEYS = APPLE ? ' (\u2325\u21a9)' : ' (Alt+Enter)';
 const TRANSLATE_KEYS = APPLE ? ' (\u2318\u21a9)' : ' (Ctrl+Enter)';
 export function ActionBar({ state, ui, menu, onMenu, pointer = false }) {
   const look = pointer ? POINTER_ACTION : ACTION;
-  // The keyboard keys exist only on touch screens: they open the on-screen keyboard for the terminal or for the draft box.
+  // The keyboard keys exist only on touch screens. Terminal keyboard shows and hides the terminal's own on-screen keyboard (Osk.jsx, never the system one);
+  // draft keyboard focuses the draft box, so the system keyboard (with its IME and dictation) types into it.
   const keyboard = (action, kind, label) => (
-    <IconButton data-action={action} sx={look} title={t(label)} aria-label={t(label)} aria-pressed={state.keyboard === kind} onClick={() => ui.actions.key({ action })}><Icon name={kind === 'terminal' ? 'terminalKeyboard' : 'draftKeyboard'} /></IconButton>
+    <IconButton data-action={action} sx={look} title={t(label)} aria-label={t(label)} aria-pressed={kind === 'terminal' ? Boolean(state.osk) : state.keyboard === kind} onClick={() => ui.actions.key({ action })}><Icon name={kind === 'terminal' ? 'terminalKeyboard' : 'draftKeyboard'} /></IconButton>
   );
   const image = t('Upload image');
   const commands = t('Saved commands');

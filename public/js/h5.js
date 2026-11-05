@@ -129,7 +129,6 @@
       keyboardOpen = false;
       fullHeight = 0;
       fullWidth = 0;
-      clearTimeout(keyboardResetTimer);
       document.documentElement.style.setProperty('--h5-height', `${Math.round(window.innerHeight)}px`);
       if (window.scrollY) window.scrollTo(0, 0);
       holdTerminalSize();
@@ -144,30 +143,10 @@
       // The keyboard went away: the translate box returns to rest at once (no timer; blur runs the focusout handler, which collapses the box, the bar and the terminal
       // shift in the same tick). One animation frame of grace only, because iOS can report the full height for a moment while focus moves between two inputs.
       requestAnimationFrame(() => { if (!keyboardOpen && document.activeElement === translateInput) translateInput.blur(); });
-      scheduleKeyboardReset();
     }
     document.documentElement.style.setProperty('--h5-height', `${Math.round(height)}px`);
     if (window.scrollY) window.scrollTo(0, 0);
     holdTerminalSize();
-  }
-  // Android: the back button closes the keyboard but leaves the terminal input focused, so `focusout` never restores
-  // inputmode="none" and the next terminal tap would reopen the keyboard. Reset it a moment after the keyboard really closed,
-  // unless the keyboard key was used meanwhile (it manages inputmode itself) or the keyboard is open again.
-  const KEYBOARD_RESET_DELAY_MS = 350;
-  const KEYBOARD_TOGGLE_GRACE_MS = 800;
-  let keyboardToggledAt = -Infinity;
-  let keyboardResetTimer = 0;
-  function scheduleKeyboardReset() {
-    clearTimeout(keyboardResetTimer);
-    keyboardResetTimer = setTimeout(() => {
-      keyboardResetTimer = 0;
-      // (The translate box is blurred at once in fitViewport, not here: it has no reason to wait.)
-      const textarea = session && session.term && session.term.textarea;
-      if (keyboardOpen || !textarea || textarea.getAttribute('inputmode') === 'none') return;
-      if (Date.now() - keyboardToggledAt < KEYBOARD_TOGGLE_GRACE_MS) return;
-      if (document.activeElement === textarea) textarea.blur(); // the focusout handler sets inputmode to none
-      noScreenKeyboard(session.term);
-    }, KEYBOARD_RESET_DELAY_MS);
   }
   // The terminal is never resized for the translate bar or the keyboard, only moved. While the keyboard is open it keeps its closed height, aligned to the
   // bottom of the (shorter) box; the translate bar growing over the terminal (`barExtra`, see syncBar()) hides more of the bottom. Both are covered by ONE
@@ -1114,9 +1093,8 @@
     term.loadAddon(new Unicode11Addon.Unicode11Addon()); term.unicode.activeVersion = '11'; // same width rules as the server snapshot
     term.open(el);
     // Tapping the terminal must not open the on-screen keyboard (xterm focuses its helper textarea on every touch): the
-    // textarea stays focusable for a hardware keyboard but asks for no on-screen keyboard. Only the keyboard key opens it.
+    // textarea stays focusable for a hardware keyboard but asks for no on-screen keyboard, ever: the "Terminal keyboard" key shows the page's own keyboard instead.
     noScreenKeyboard(term);
-    el.addEventListener('focusout', () => noScreenKeyboard(term)); // the keyboard closed: the next terminal tap must not reopen it
     const s = { term, fit, el, ws: null, timer: null, attempts: 0, paused: false, disposed: false, task, terminalId, source, key };
     session = s;
     warm = [s, ...warm];
@@ -1606,33 +1584,38 @@
   function noScreenKeyboard(term) {
     if (term.textarea) term.textarea.setAttribute('inputmode', 'none');
   }
-  // The keyboard key is the only way to open the on-screen keyboard from the terminal. iOS reads inputmode only when the
-  // element gets focus, so the value is changed while blurred and the focus follows.
+  // The "Terminal keyboard" key shows and hides the terminal's own on-screen keyboard (`state.osk`, drawn by scripts/h5-shell/Osk.jsx); the system keyboard
+  // is never opened for the terminal. Opening it closes a system keyboard that is up: the draft box and the terminal's textarea lose the focus, and the
+  // textarea keeps inputmode="none". The keyboard takes room under row 2, so the terminal box gets shorter and refits (its ResizeObserver) like on any
+  // size change; nothing here waits for the visual viewport. Its keys call `ui.actions.key`, like row 1.
+  function setOsk(open) {
+    if (Boolean(ui.get().osk) === open) return;
+    if (open) {
+      if (document.activeElement === translateInput) translateInput.blur();
+      const textarea = session && session.term && session.term.textarea;
+      if (textarea) { noScreenKeyboard(session.term); if (document.activeElement === textarea) textarea.blur(); }
+    }
+    ui.set({ osk: open });
+  }
   function toggleKeyboard() {
-    if (!session || !session.term.textarea) return;
-    const textarea = session.term.textarea;
-    keyboardToggledAt = Date.now();
-    const open = textarea.getAttribute('inputmode') !== 'none';
-    textarea.blur(); // the focusout handler sets inputmode to none
-    if (open) return;
-    textarea.setAttribute('inputmode', 'text');
-    session.term.focus();
+    if (!ui.get().osk && !session) return; // nothing to type into
+    setOsk(!ui.get().osk);
   }
   // The "Draft keyboard" key: focus the draft box (it is hidden until it has the focus, see TranslateBar), so the on-screen keyboard types into it; a second tap closes the keyboard.
-  // The terminal's textarea loses the focus and, through its focusout handler, goes back to inputmode none.
+  // The terminal's textarea loses the focus (it always has inputmode none). The terminal's own keyboard is hidden first.
   function toggleDraftKeyboard() {
     if (document.activeElement === translateInput) { translateInput.blur(); return; }
+    setOsk(false);
     translateInput.focus();
     autosize();
     relayoutBar();
   }
-  // Which keyboard key is blue: the terminal one while the terminal's textarea has the focus with the on-screen keyboard allowed, the draft one while the draft box has the focus.
-  function keyboardTarget(el) {
-    if (el === translateInput) return 'draft';
-    const textarea = session && session.term && session.term.textarea;
-    return el && el === textarea && textarea.getAttribute('inputmode') !== 'none' ? 'terminal' : null;
-  }
-  document.addEventListener('focusin', event => ui.set({ keyboard: keyboardTarget(event.target) }));
+  // Which keyboard key is blue: the draft one while the draft box has the focus (the terminal one follows `state.osk`, see ActionBar).
+  const keyboardTarget = el => (el === translateInput ? 'draft' : null);
+  document.addEventListener('focusin', event => {
+    ui.set({ keyboard: keyboardTarget(event.target) });
+    if (event.target === translateInput) setOsk(false); // the system keyboard comes up for the draft box: the terminal keyboard steps aside
+  });
   document.addEventListener('focusout', event => ui.set({ keyboard: keyboardTarget(event.relatedTarget) }));
   // The first image on the clipboard, or null when there is none or the browser cannot read images.
   async function clipboardImage() {

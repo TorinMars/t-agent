@@ -161,3 +161,37 @@ test('remote proxy forwards supported file APIs and returns FILES_UNSUPPORTED fo
     await new Promise(resolve => oldServer.close(resolve));
   }
 });
+
+test('images of the working directory are served for Markdown previews: local, Engine and proxy; only real PNG/JPEG/GIF/WebP, no links, size-limited', async () => {
+  const png = Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex');
+  fs.mkdirSync(path.join(task.workspace, 'docs', 'img'), { recursive: true });
+  fs.writeFileSync(path.join(task.workspace, 'docs', 'img', 'shot.png'), png);
+  fs.writeFileSync(path.join(task.workspace, 'fake.png'), 'not an image');
+  fs.writeFileSync(path.join(task.workspace, 'logo.svg'), '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>');
+  fs.writeFileSync(path.join(task.workspace, 'big.png'), Buffer.concat([png, Buffer.alloc(5 * 1024 * 1024)]));
+  fs.symlinkSync(path.join(task.workspace, 'docs', 'img', 'shot.png'), path.join(task.workspace, 'link.png'));
+  const known = db.prepare('SELECT id FROM remote_servers WHERE owner_id = ? AND base_url = ?').get('owner', engineBase);
+  const supportedId = known ? known.id : db.prepare('INSERT INTO remote_servers (owner_id, name, base_url, token_cipher) VALUES (?, ?, ?, ?)')
+    .run('owner', 'images', engineBase, encryptToken(operator, process.env.SESSION_SECRET)).lastInsertRowid;
+  const bases = [
+    [`${localBase}/api/tasks/${task.id}/files/image`, {}],
+    [`${engineBase}/v1/tasks/${task.id}/files/image`, { Authorization: `Bearer ${reader}` }],
+    [`${localBase}/api/remote-servers/${supportedId}/tasks/${task.id}/files/image`, {}],
+  ];
+  for (const [base, headers] of bases) {
+    const ok = await fetch(`${base}?path=${encodeURIComponent('docs/img/shot.png')}`, { headers });
+    assert.equal(ok.status, 200, base);
+    assert.equal(ok.headers.get('content-type'), 'image/png');
+    assert.equal(ok.headers.get('content-security-policy'), 'sandbox');
+    assert.equal(ok.headers.get('x-content-type-options'), 'nosniff');
+    assert.deepEqual(Buffer.from(await ok.arrayBuffer()), png);
+    const status = async name => { const response = await fetch(`${base}?path=${encodeURIComponent(name)}`, { headers }); await response.arrayBuffer(); return response.status; };
+    assert.equal(await status('fake.png'), 415, 'the content must be an image');
+    assert.equal(await status('logo.svg'), 415, 'no SVG');
+    assert.equal(await status('notes.txt'), 415);
+    assert.equal(await status('big.png'), 413, 'size limit');
+    assert.equal(await status('link.png'), 415, 'no symbolic links');
+    assert.equal(await status('../secret.png'), 400, 'inside the working directory only');
+    assert.equal(await status('missing.png'), 404);
+  }
+});

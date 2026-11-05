@@ -14,7 +14,13 @@ const FILES = {
   'docs/设计.md': '# 设计\n\nSome **bold** text.\n',
   'sub/a.md': '# In sub\n',
   'other/x.js': 'const other = 1;\n',
+  // A large log (about 4.5 MB, 200 000 lines): only the lines in view are drawn.
+  'big/log.txt': Array.from({ length: 200000 }, (_, i) => `${i + 1} log line with some text ${'x'.repeat(i % 7)}`).join('\n') + '\n',
+  // Relative images resolve through the file API; one that does not load shows its text.
+  'docs/pic.md': '# Pictures\n\n![the shot](img/shot.png)\n\n![gone picture](img/missing.png)\n\n![outside](../../etc/x.png)\n',
 };
+const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
+const images = [];
 // The shell's live directory as the server reads it (GET .../terminals/:tid/cwd); the shell here sends no OSC 7 unless the test prints one.
 let liveCwd = { cwd: '/work/fix-login', relative: '' };
 let cwdAsks = 0;
@@ -51,6 +57,10 @@ let cwdAsks = 0;
       if (url.pathname === '/api/tasks/1/terminals') return json([{ terminal_id: 'h5-default', title: 'Terminal 1' }]);
       if (url.pathname === '/api/tasks/1/agent/conversations') return json([]);
       if (url.pathname === '/api/tasks/1/terminals/h5-default/cwd') { cwdAsks += 1; return json(liveCwd); }
+      if (url.pathname === '/api/tasks/1/files/image') {
+        images.push(url.searchParams.get('path'));
+        return url.searchParams.get('path') === 'docs/img/shot.png' ? route.fulfill({ contentType: 'image/png', body: PNG }) : json({ error: 'FILE_NOT_FOUND' }, 404);
+      }
       if (url.pathname.startsWith('/api/tasks/1/files')) {
         const file = url.searchParams.get('path');
         reads.push(`${url.pathname.endsWith('/content') ? 'read' : 'list'} ${file}`);
@@ -118,6 +128,38 @@ let cwdAsks = 0;
     // A missing file says so.
     await tap(await pointOf('A5 ', 'missing/gone.js'));
     await page.locator('#h5-design-empty', { hasText: 'Not found in the working directory: missing/gone.js' }).waitFor();
+    await closeSheet();
+
+    // A large file: only a window of lines exists, the named line is marked and in view, and scrolling draws the lines that come into view.
+    await page.evaluate(() => window.sockets[0].emit('B1 big/log.txt:150000\r\nB2 docs/pic.md\r\n'));
+    await page.waitForFunction(text => [...document.querySelectorAll('.xterm-rows > div')].some(row => row.textContent.startsWith(text)), 'B2 ');
+    const opened = await page.evaluate(() => performance.now());
+    await tap(await pointOf('B1 ', 'big/log.txt'));
+    await page.locator('#h5-design-body .h5-file-line.is-target').waitFor();
+    const big = await page.evaluate(started => {
+      const body = document.querySelector('#h5-design-body').getBoundingClientRect();
+      const target = document.querySelector('.h5-file-line.is-target');
+      const box = target.getBoundingClientRect();
+      return { ms: performance.now() - started, lines: document.querySelectorAll('#h5-design-body .h5-file-line').length, line: target.dataset.line, text: target.textContent, inView: box.top >= body.top && box.bottom <= body.bottom };
+    }, opened);
+    assert.equal(big.line, '150000');
+    assert.match(big.text, /^150000 log line/);
+    assert.ok(big.inView, 'the named line is in view');
+    assert.ok(big.lines < 400, `only a window of lines is drawn: ${big.lines}`);
+    console.log(`large file: ${big.lines} line elements for 200000 lines, shown ${Math.round(big.ms)} ms after the tap`);
+    await page.evaluate(() => { document.querySelector('#h5-design-body').scrollTop = 0; });
+    await page.waitForFunction(() => document.querySelector('#h5-design-body .h5-file-line')?.dataset.line === '1');
+    await page.evaluate(() => { const body = document.querySelector('#h5-design-body'); body.scrollTop = body.scrollHeight; });
+    await page.waitForFunction(() => [...document.querySelectorAll('#h5-design-body .h5-file-line')].at(-1)?.dataset.line === '200000');
+    await closeSheet();
+    // Markdown with relative images: the one in the folder loads from the file API, a missing one and one outside show their text.
+    await tap(await pointOf('B2 ', 'docs/pic.md'));
+    await page.locator('#h5-design-body h1', { hasText: 'Pictures' }).waitFor();
+    await page.waitForFunction(() => { const img = document.querySelector('#h5-design-body img[alt="the shot"]'); return img && img.complete && img.naturalWidth === 1; });
+    await page.locator('#h5-design-body .h5-design-image', { hasText: 'gone picture' }).waitFor();
+    assert.equal(await page.locator('#h5-design-body .h5-design-image', { hasText: 'outside' }).count(), 1, 'a path outside the working directory is not asked for');
+    assert.deepEqual(images.sort(), ['docs/img/missing.png', 'docs/img/shot.png']);
+    if (process.env.H5_SHOT_DIR) await page.screenshot({ path: path.join(process.env.H5_SHOT_DIR, 'h5-file-link-images.png') });
     await closeSheet();
 
     // After "cd sub" (no OSC 7): the tap asks the server for the shell's directory and opens the file from there.

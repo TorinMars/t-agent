@@ -2064,7 +2064,8 @@
     try {
       const file = await api('GET', `${files}/content?path=${encodeURIComponent(filePath)}`);
       if (seq !== designSeq) return;
-      ui.set({ design: { ...base, status: 'ready', dir, content: String((file && file.content) || '') } });
+      // imageBase: relative images of a Markdown file are read through the same file API (`…/files/image?path=`, images only, at most 5 MB).
+      ui.set({ design: { ...base, status: 'ready', dir, content: String((file && file.content) || ''), imageBase: `${files}/image?path=` } });
     } catch (error) {
       if (seq !== designSeq) return;
       let code = error.message;

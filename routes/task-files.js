@@ -33,6 +33,17 @@ function createTaskFilesRouter({ getTask, canRead = () => true, canWrite = () =>
     catch (error) { errorResponse(res, error); }
   });
 
+  // An image of the working directory (a relative image of a Markdown preview), as the image itself. It never runs in the page's origin as a document.
+  router.get('/image', requireScope('files:read', canRead), (req, res) => {
+    const task = taskFor(req, res);
+    if (!task) return;
+    let image;
+    try { image = files.readImage(task, req.query.path); }
+    catch (error) { errorResponse(res, error); return; }
+    res.set({ 'Content-Type': image.type, 'Content-Length': String(image.data.length), 'Cache-Control': 'private, no-cache', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': 'sandbox' });
+    res.end(image.data);
+  });
+
   router.put('/content', requireScope('files:write', canWrite), (req, res) => {
     const task = taskFor(req, res);
     if (!task) return;

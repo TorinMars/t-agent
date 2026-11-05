@@ -100,7 +100,7 @@
 
   if (HAS_DOM) {
     const ATTRS = ['title', 'placeholder', 'aria-label', 'data-tip', 'alt'];
-    const SKIP = 'script,style,.xterm,.monaco-editor,.markdown-body,.md-code-block,.file-tree-name,.task-nav-title,.quicklinks-chip,.todo-content,#terminal-history-text,[translate="no"]';
+    const SKIP = 'script,style,.xterm,.markdown-body,.md-code-block,[translate="no"]';
     const skipped = el => !!(el && el.closest && el.closest(SKIP));
 
     const fixText = node => {

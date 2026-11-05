@@ -424,7 +424,7 @@ function Mic({ text, setText, notify, voiceRef }) {
       textarea: proxy,
       button: node,
       readySound: true,
-      onNotConfigured: () => (typeof API !== 'undefined' && Voice.showSettings ? Voice.showSettings() : notify('Set up voice input on the desktop page')),
+      onNotConfigured: () => notify('Set up voice input in Settings'),
     });
     // Capturing: this runs before VoiceInput's own click handler on the button, so the text typed so far is the base of a new recording.
     const begin = () => { if (controller.state === 'idle') { typed = latest.current; proxy.value = ''; } };

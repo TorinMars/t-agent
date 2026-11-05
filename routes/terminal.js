@@ -85,7 +85,7 @@ function assertTerminal(taskId, value) {
 
 const MAX_TERMINAL_TITLE = 40;
 
-// Phone (H5) and desktop share the same terminals; only one client at a time may be attached to each (see handleWs).
+// Every open page (computer or phone) and other Clients share the same terminals; only one client at a time may be attached to each (see handleWs).
 // Terminals whose ids start with "h5-" were phone-only shells from earlier versions: they are no longer listed.
 
 // Agent terminals show the name of their session (unless the person named the terminal: title_custom), read from the agent's own files on every listing so a rename done inside Claude / Codex follows.

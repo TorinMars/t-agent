@@ -61,13 +61,17 @@ test('a logged-in browser page visit to an unknown address goes to the home page
 
 test('logged out, the pages lead to the login entrance and come back after the login; nothing else is opened', () => {
   const gate = createLoginGate({ loginPath: '/torin/hide/login', isAuthenticated: session => session.ok === true });
-  function run(pathname, { method = 'GET', ok = false, rawPath = pathname } = {}) {
+  function run(pathname, { method = 'GET', ok = false, rawPath = pathname, query = '' } = {}) {
     const result = { next: false };
     const res = { status(code) { result.status = code; return this; }, set() { return this; }, type() { return this; }, send(body) { result.body = body; }, redirect(location) { result.location = location; } };
-    gate({ path: rawPath, method, session: { ok }, headers: {} }, res, () => { result.next = true; });
+    gate({ path: rawPath, method, session: { ok }, headers: {}, originalUrl: rawPath + query }, res, () => { result.next = true; });
     return result;
   }
   assert.deepEqual([...PAGE_ADDRESSES].sort(), ['/', '/h5', '/web']);
+  // The query goes along to the login, so an old /web?openChat=… link opens its chat after the login (safeReturnTo checks it again).
+  assert.equal(run('/web', { query: '?openChat=x' }).location, '/torin/hide/login?return_to=%2Fweb%3FopenChat%3Dx');
+  assert.equal(run('/', { query: '?openChat=a%20b&task=3' }).location, '/torin/hide/login?return_to=%2F%3FopenChat%3Da%2520b%26task%3D3');
+  assert.equal(run('/h5', { query: '?x=1' }).location, '/torin/hide/login?return_to=%2Fh5%3Fx%3D1');
   assert.equal(run('/h5').location, '/torin/hide/login?return_to=%2Fh5');
   assert.equal(run('/web').location, '/torin/hide/login?return_to=%2Fweb');
   assert.equal(run('/').location, '/torin/hide/login?return_to=%2F');

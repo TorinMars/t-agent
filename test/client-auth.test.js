@@ -110,9 +110,14 @@ test('loopback detection requires a direct loopback peer and Host, never forward
 });
 
 test('return targets are restricted to actual Client pages', () => {
-  for (const value of ['https://attacker.test', '//attacker.test', '/auth/logout', '/h5?x=1', undefined]) assert.equal(safeReturnTo(value), '/');
-  for (const value of ['/', '/h5']) assert.equal(safeReturnTo(value), value);
+  for (const value of ['https://attacker.test', '//attacker.test', '/\\attacker.test', '/\\/attacker.test', '/%2f/attacker.test', 'javascript:alert(1)', '/auth/logout',
+    '/auth/logout?openChat=x', '/h5/x?y=1', '/web/x', '', 'h5', undefined, null, 42, ['/h5']]) assert.equal(safeReturnTo(value), '/', String(value));
+  for (const value of ['/', '/h5', '/h5?x=1', '/?openChat=a%20b&task=3']) assert.equal(safeReturnTo(value), value);
   assert.equal(safeReturnTo('/web'), '/', 'the old desktop address leads to the one page at /');
+  assert.equal(safeReturnTo('/web?openChat=x'), '/?openChat=x', 'an old /web link keeps its query, so it still opens its chat');
+  assert.equal(safeReturnTo('/web?openChat=x#frag'), '/?openChat=x', 'the fragment is dropped');
+  assert.equal(safeReturnTo('/?a=<script>'), '/?a=%3Cscript%3E', 'the query is re-encoded');
+  assert.equal(safeReturnTo(`/?q=${'x'.repeat(3000)}`), '/', 'an overlong query is dropped');
 });
 
 test('active sessions slide by 30 days without granting recent verification', t => {

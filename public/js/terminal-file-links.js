@@ -1,4 +1,4 @@
-// File paths in terminal output become links that open the file in the task's file browser (desktop: the file panel, phone: the file preview sheet).
+// File paths in terminal output become links that open the file in the page's read-only file preview (a bottom sheet, or the side panel on a wide screen).
 // findFileLinks() finds path-like text in one logical line (pure, unit tested in test/terminal-file-links.test.js), toRelative() turns a found path
 // into a path relative to the task's working directory (or null when it is outside), and attach() registers an xterm link provider that uses both.
 // Relative paths are taken from the shell's live current directory: the one it reports with OSC 7 (parseOsc7), else, when a link is activated,

@@ -15,7 +15,7 @@ async function startAuthPage(status, post = {}, pathname = '/torin/hide/login/se
   } };
   const location = { search, pathname, replaced: null, replace(url) { this.replaced = url; } };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'auth.js'), 'utf8'), {
-    document, URLSearchParams, location, navigator: {},
+    document, URL, URLSearchParams, location, navigator: {},
     async fetch(url, options = {}) {
       requests.push({ url, body: options.body && JSON.parse(options.body) });
       return { ok: true, async json() {
@@ -58,7 +58,8 @@ test('An install that already chose an access mode never sees the chooser page (
 });
 
 test('After the login the page goes to /, or back to /h5 when that address asked (an iPhone Home Screen app); the old /web leads to /', async () => {
-  for (const [search, target] of [['', '/'], ['?return_to=%2Fh5', '/h5'], ['?return_to=%2Fweb', '/'], ['?return_to=%2F', '/'], ['?return_to=https%3A%2F%2Fattacker.test', '/']]) {
+  for (const [search, target] of [['', '/'], ['?return_to=%2Fh5', '/h5'], ['?return_to=%2Fweb', '/'], ['?return_to=%2F', '/'], ['?return_to=https%3A%2F%2Fattacker.test', '/'],
+    ['?return_to=%2Fweb%3FopenChat%3Dx', '/?openChat=x'], ['?return_to=%2Fh5%3Fx%3D1', '/h5?x=1'], ['?return_to=%2F%2Fattacker.test%3Fx%3D1', '/'], ['?return_to=%2Fauth%2Flogout%3Fx%3D1', '/']]) {
     const page = await startAuthPage({ bound: true, authenticated: true, mode: 'remote' }, {}, '/torin/hide/login', search);
     assert.equal(page.location.replaced, target, search || 'no return_to');
   }

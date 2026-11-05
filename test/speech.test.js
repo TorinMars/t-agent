@@ -312,7 +312,7 @@ test('A failed task and a dropped connection are reported once', () => {
   assert.deepEqual(closed.log.errors, [], 'closing it yourself is not an error');
 });
 
-test('Recording starts on a page that has no API helper or Modal (the phone page does not load app.js)', async () => {
+test('Recording starts on a page that has no API helper or Modal (the page has no shared API helper)', async () => {
   const vm = require('vm');
   const fs = require('fs');
   const path = require('path');

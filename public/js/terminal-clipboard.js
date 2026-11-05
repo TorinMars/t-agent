@@ -1,6 +1,6 @@
 // Clipboard operations stay in the Client. OSC 52 never writes without confirmation.
-// The desktop page has a terminal toolbar with a copy button and a "review the request" button. A page without that toolbar (the MUI page, /h5, on a
-// computer) gets the same shortcuts and the same confirmation dialog, which then opens by itself when a program asks to copy (there is no button to wait on).
+// The page (on a computer, pointer mode) gets the copy shortcuts and a confirmation dialog, which opens by itself when a program asks to copy
+// (there is no toolbar button to wait on).
 const TerminalClipboard = (() => {
   const tell = (message, type) => (typeof notify === 'function' ? notify(message, type) : (typeof alert === 'function' ? alert(message) : undefined)); // floating notice; falls back to alert where toast.js is not loaded
   const instances = new Map();

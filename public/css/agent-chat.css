@@ -1,4 +1,4 @@
-/* Chat view of a Claude / Codex conversation, shared by the desktop page (--bg ...) and the phone page (--h5-...). */
+/* Chat view of a Claude / Codex conversation inside the page (colours from its --h5-... variables). */
 .agent-chat {
   --ac-bg: var(--h5-bg, var(--bg, #fff));
   --ac-panel: var(--h5-panel, var(--bg-secondary, #f6f8fa));
@@ -228,7 +228,7 @@ fieldset.ac-question { min-width: 0; margin: 0 0 10px; padding: 0; border: 0; }
 .ac-plan h1, .ac-plan h2, .ac-plan h3 { margin: 0 0 6px; font-size: 1.1em; }
 .ac-plan-feedback { width: 100%; box-sizing: border-box; margin-bottom: 8px; resize: vertical; }
 
-/* Keep the translation switch beside dictation on both desktop and phone. */
+/* Keep the translation switch beside dictation. */
 .ac-switch { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 5px; min-height: 36px; padding: 0 5px; border: 0; border-radius: 18px; background: transparent; color: var(--ac-muted); font: inherit; font-size: 12px; cursor: pointer; }
 .ac-switch-track { display: inline-flex; align-items: center; width: 26px; height: 16px; padding: 2px; box-sizing: border-box; border-radius: 10px; background: var(--ac-border); }
 .ac-switch-track > span { width: 12px; height: 12px; border-radius: 50%; background: var(--ac-muted); transition: transform .15s; }
@@ -249,7 +249,7 @@ fieldset.ac-question { min-width: 0; margin: 0 0 10px; padding: 0; border: 0; }
 .ac-suggestion .ac-chip-remove { flex: none; width: 28px; height: 28px; font-size: 15px; }
 
 /* Tap to translate (public/js/word-translate.js): the word that was tapped, and the popup with its meaning. The popup lives on the page, outside the chat,
-   so it takes the colours of either page (desktop or phone). */
+   so it takes the colours of the page. */
 body.wt-on .agent-chat .ac-text, body.wt-on .agent-chat .ac-user { cursor: pointer; } /* also makes iOS report a tap on text */
 ::highlight(wt-word) { background: rgba(88, 166, 255, .35); }
 .wt-popup { position: fixed; z-index: 3000; box-sizing: border-box; max-width: min(320px, calc(100vw - 16px)); padding: 8px 12px; border: 1px solid var(--border, var(--h5-border, #3a3a3a)); border-radius: 10px;

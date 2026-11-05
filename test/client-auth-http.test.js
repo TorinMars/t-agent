@@ -6,7 +6,7 @@ const path = require('path');
 const http = require('node:http');
 const { spawn, spawnSync } = require('child_process');
 const WebSocket = require('ws');
-const { totp, SESSION_TTL } = require('../services/client-auth');
+const { totp, SESSION_TTL, safeReturnTo } = require('../services/client-auth');
 
 test('Client HTTP opt-in requires the exact true environment value', () => {
   for (const value of ['', 'false', 'TRUE', '1', 'true']) {
@@ -256,6 +256,12 @@ for (const [environment, allowHttp] of [['test', 'false'], ['production', 'false
     assert.equal(new URL(response.headers.get('location'), base).pathname, LOGIN);
     assert.match(response.headers.get('location'), new RegExp(`return_to=${back}$`));
   }
+  // An old notification link keeps its query through the login: /web?openChat=… → login → /?openChat=….
+  const oldLink = await call('/web?openChat=1:abc');
+  assert.equal(oldLink.status, 302);
+  const returnTo = new URL(oldLink.headers.get('location'), base).searchParams.get('return_to');
+  assert.equal(returnTo, '/web?openChat=1:abc');
+  assert.equal(safeReturnTo(returnTo), '/?openChat=1:abc');
   assert.equal((await call('/api/tasks')).status, 404, 'an API stays closed');
   assert.equal((await call('/h5/x')).status, 404);
 });

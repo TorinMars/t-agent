@@ -443,6 +443,7 @@ const terminalOptions = body => {
   const out = {};
   if (body && typeof body.agent === 'string') out.agent = body.agent;
   if (body && typeof body.session_id === 'string') out.session_id = body.session_id;
+  if (body && typeof body.title === 'string') out.title = body.title;
   return out;
 };
 

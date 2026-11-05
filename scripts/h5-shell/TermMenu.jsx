@@ -8,6 +8,7 @@ import Typography from '@mui/material/Typography';
 import { t } from './common.jsx';
 
 // The sheet from the bottom that serves three lists: the actions of a terminal, the actions of a chat, and the "Session" choices of the "+" of a task.
+// The "Session" lists have the optional name field above them (`menu.naming`); it is not remounted between those lists, so the typed name stays.
 // On a phone it is as wide as the window (at most 480px, centred). Beside the permanent sidebar it rises inside the sidebar's width, under the "⋯" that
 // opened it, instead of floating over the middle of the window far from it.
 export function TermMenu({ state, ui }) {
@@ -22,6 +23,18 @@ export function TermMenu({ state, ui }) {
       {menu ? (
         <>
           <Typography id="h5-term-menu-title" variant="subtitle2" component="h3" color="text.secondary" sx={{ mb: 1, overflowWrap: 'anywhere' }}>{menu.title}</Typography>
+          {menu.naming ? (
+            <Box
+              component="form" id="h5-new-name" className="h5-menu-name" autoComplete="off" sx={{ mb: 1 }}
+              onSubmit={event => { event.preventDefault(); ui.actions.menuNameSubmit(); }}
+            >
+              <TextField
+                id="h5-new-name-input" name="name" size="small" fullWidth defaultValue={menu.name} placeholder={t('Name (optional)')}
+                onChange={event => ui.actions.menuName(event.target.value)}
+                slotProps={{ htmlInput: { maxLength: 40, enterKeyHint: 'go', autoCapitalize: 'off', spellCheck: false, 'aria-label': t('Name (optional)') } }}
+              />
+            </Box>
+          ) : null}
           {menu.renaming ? (
             <Box
               component="form" id="h5-term-rename" className="h5-menu-rename" autoComplete="off" sx={{ display: 'flex', gap: 1, mb: 1 }}

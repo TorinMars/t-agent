@@ -64,9 +64,12 @@ const AgentChat = (() => {
   }
 
   // A choice from `choices()` (or a new chat) as a conversation row, creating it on the server when needed.
-  async function open(api, base, agent, choice) {
+  // `title`: the name the person typed for the new chat (empty: a resumed session keeps its own name, a new chat is named by its first message).
+  async function open(api, base, agent, choice, title = '') {
     if (choice && choice.conversation) return choice.conversation;
-    return api.post(`${base}/conversations`, { agent, ...(choice && choice.session_id ? { session_id: choice.session_id, title: choice.title } : {}) });
+    const name = String(title || '').trim();
+    const resumed = choice && choice.session_id ? { session_id: choice.session_id, title: choice.title } : {};
+    return api.post(`${base}/conversations`, { agent, ...resumed, ...(name ? { title: name } : {}) });
   }
 
   // The bundle sits next to this script (same ?v= release query, so it is cached like the other scripts).

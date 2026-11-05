@@ -194,6 +194,29 @@ test('document change events reach the browser through every backend', async () 
   }
 });
 
+test('a terminal can be named when it is created, on every backend', async () => {
+  for (const backend of backends()) {
+    const task = await createTask(backend, 'named-terminal');
+    const create = body => call(backend, `/${task.id}/terminals`, { method: 'POST', body });
+    const plain = await create({});
+    assert.equal(plain.status, 201, `${backend.name} plain`);
+    assert.equal((await plain.json()).title, 'Terminal 2', `${backend.name}: no name keeps the default`);
+    const named = await create({ title: '  Build\t  \u65e5\u5fd7 \u{1F680} ' });
+    assert.equal(named.status, 201, `${backend.name} named`);
+    const row = await named.json();
+    assert.equal(row.title, 'Build \u65e5\u5fd7 \u{1F680}', `${backend.name}: trimmed, Chinese and emoji kept`);
+    const claude = await (await create({ agent: 'claude', title: 'Review' })).json();
+    assert.deepEqual([claude.agent, claude.title], ['claude', 'Review'], `${backend.name}: an agent terminal takes the name too`);
+    const blank = await (await create({ agent: 'claude', title: '   ' })).json();
+    assert.equal(blank.title, 'Claude 5', `${backend.name}: a blank name keeps the default`);
+    const long = await create({ title: 'x'.repeat(41) });
+    assert.equal(long.status, 400, `${backend.name} too long`);
+    assert.equal((await long.json()).error, 'TERMINAL_TITLE_TOO_LONG');
+    const listed = await (await call(backend, `/${task.id}/terminals`)).json();
+    assert.deepEqual(listed.map(item => item.title), ['Terminal 1', 'Terminal 2', 'Build \u65e5\u5fd7 \u{1F680}', 'Review', 'Claude 5'], `${backend.name} list`);
+  }
+});
+
 test('Engine info advertises the parity capabilities and the proxy relays them', async () => {
   const direct = await (await fetch(`${engine}/v1/info`, { headers: { Authorization: `Bearer ${engineToken}` } })).json();
   for (const capability of ['tasks:reorder', 'documents:create', 'documents:watch', 'files:assets', 'paths:validate', 'terminal:activity']) {

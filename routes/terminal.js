@@ -86,11 +86,11 @@ const MAX_TERMINAL_TITLE = 40;
 // Phone (H5) and desktop share the same terminals; only one client at a time may be attached to each (see handleWs).
 // Terminals whose ids start with "h5-" were phone-only shells from earlier versions: they are no longer listed.
 
-// Agent terminals show the name of their session, read from the agent's own files on every listing so a rename done inside Claude / Codex follows.
+// Agent terminals show the name of their session (unless the person named the terminal: title_custom), read from the agent's own files on every listing so a rename done inside Claude / Codex follows.
 // A Codex session only gets an id once it has a first message, so it is bound here: the oldest unbound Codex terminal takes the oldest unclaimed
 // session of the task directory that started after the terminal did.
 function withAgentSessions(taskId, rows) {
-  const meta = db.prepare("SELECT terminal_id, agent, agent_session_id, agent_started_at FROM task_terminals WHERE task_id = ? AND agent IS NOT NULL ORDER BY rowid").all(taskId);
+  const meta = db.prepare("SELECT terminal_id, agent, agent_session_id, agent_started_at, title_custom FROM task_terminals WHERE task_id = ? AND agent IS NOT NULL ORDER BY rowid").all(taskId);
   if (!meta.length) return rows;
   const task = db.prepare('SELECT work_dir FROM tasks WHERE id = ?').get(taskId);
   const dir = task && task.work_dir;
@@ -109,6 +109,7 @@ function withAgentSessions(taskId, rows) {
   return rows.map(row => {
     const item = info.get(row.terminal_id);
     if (!item) return row;
+    if (item.title_custom) return { ...row, agent: item.agent }; // a name the person gave (at creation or by a rename) wins over the session's name
     const session = item.agent_session_id && sessionsOf(item.agent).find(entry => entry.id === item.agent_session_id);
     return { ...row, agent: item.agent, title: session ? session.title : row.title };
   });
@@ -125,9 +126,18 @@ function listTerminals(taskId) {
 const pendingStartup = new Map();
 const AGENT_LABELS = { claude: 'Claude', codex: 'Codex' };
 
+// A terminal name as the person typed it: control characters and runs of whitespace become one space, the ends are trimmed. Any script is kept.
+function cleanTitle(value) {
+  const title = String(value ?? '').replace(/[\x00-\x1f\x7f]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (title.length > MAX_TERMINAL_TITLE) throw Object.assign(new Error('TERMINAL_TITLE_TOO_LONG'), { statusCode: 400 });
+  return title;
+}
+
+// options.title: an optional name, validated like a rename and kept like one (title_custom); empty keeps the default "Terminal N" / "Claude N".
 function createTerminal(taskId, options = {}) {
   const id = require('crypto').randomUUID();
   const agent = options && options.agent;
+  const named = cleanTitle(options && typeof options.title === 'string' ? options.title : '');
   let sessionId = options && options.session_id ? String(options.session_id) : null;
   let command = startupCommand(agent, sessionId);
   if (command && !sessionId && agent === 'claude') {
@@ -135,10 +145,10 @@ function createTerminal(taskId, options = {}) {
     command = newClaudeCommand(sessionId);
   }
   const count = listTerminals(taskId).length + 1;
-  const title = command ? `${AGENT_LABELS[agent]} ${count}` : `Terminal ${count}`;
+  const title = named || (command ? `${AGENT_LABELS[agent]} ${count}` : `Terminal ${count}`);
   if (command) pendingStartup.set(sessionKey(taskId, id), command);
-  db.prepare('INSERT INTO task_terminals (task_id, terminal_id, title, agent, agent_session_id, agent_started_at) VALUES (?, ?, ?, ?, ?, ?)')
-    .run(taskId, id, title, command ? agent : null, sessionId, command ? Date.now() : null);
+  db.prepare('INSERT INTO task_terminals (task_id, terminal_id, title, agent, agent_session_id, agent_started_at, title_custom) VALUES (?, ?, ?, ?, ?, ?, ?)')
+    .run(taskId, id, title, command ? agent : null, sessionId, command ? Date.now() : null, named ? 1 : null);
   return { terminal_id: id, title, agent: command ? agent : null };
 }
 
@@ -165,16 +175,15 @@ function listAgentSessions(task, agent) {
 
 function renameTerminal(taskId, value, requestedTitle) {
   const id = assertTerminal(taskId, value);
-  const title = String(requestedTitle ?? '').replace(/[\x00-\x1f\x7f]/g, ' ').replace(/\s+/g, ' ').trim();
+  const title = cleanTitle(requestedTitle);
   if (!title) throw Object.assign(new Error('TERMINAL_TITLE_REQUIRED'), { statusCode: 400 });
-  if (title.length > MAX_TERMINAL_TITLE) throw Object.assign(new Error('TERMINAL_TITLE_TOO_LONG'), { statusCode: 400 });
   if (id === 'default') {
     db.prepare(`
       INSERT INTO task_default_terminal_titles (task_id, title) VALUES (?, ?)
       ON CONFLICT(task_id) DO UPDATE SET title = excluded.title
     `).run(taskId, title);
   } else {
-    db.prepare('UPDATE task_terminals SET title = ? WHERE task_id = ? AND terminal_id = ?').run(title, taskId, id);
+    db.prepare('UPDATE task_terminals SET title = ?, title_custom = 1 WHERE task_id = ? AND terminal_id = ?').run(title, taskId, id);
   }
   return { terminal_id: id, title };
 }

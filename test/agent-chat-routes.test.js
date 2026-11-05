@@ -69,6 +69,22 @@ test('conversations are created, listed, messaged and renamed through the API', 
   assert.equal((await call('GET', `${url}/conversations/${id}`)).status, 404, 'a deleted conversation is gone');
 });
 
+test('a chat named when it is created keeps that name after its first message', async () => {
+  const url = `/api/tasks/${mine.id}/agent`;
+  const named = (await call('POST', `${url}/conversations`, { agent: 'claude', title: '  \u8bc4\u5ba1   chat ' })).body;
+  assert.equal(named.title, '\u8bc4\u5ba1 chat');
+  const plain = (await call('POST', `${url}/conversations`, { agent: 'claude' })).body;
+  assert.equal(plain.title, 'New chat');
+  for (const id of [named.id, plain.id]) {
+    assert.equal((await call('POST', `${url}/conversations/${id}/messages`, { text: 'ping' })).status, 200);
+    for (let i = 0; i < 50 && (await call('GET', `${url}/conversations/${id}`)).body.conversation.running; i++) await new Promise(resolve => setTimeout(resolve, 20));
+  }
+  const titles = Object.fromEntries((await call('GET', `${url}/conversations`)).body.map(row => [row.id, row.title]));
+  assert.equal(titles[named.id], '\u8bc4\u5ba1 chat', 'the given name stays');
+  assert.equal(titles[plain.id], 'ping', 'without a name the first message names the chat');
+  for (const id of [named.id, plain.id]) await call('DELETE', `${url}/conversations/${id}`);
+});
+
 test('another person\'s task is not reachable', async () => {
   const res = await call('GET', `/api/tasks/${theirs.id}/agent/conversations`);
   assert.equal(res.status, 404);

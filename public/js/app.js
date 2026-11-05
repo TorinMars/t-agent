@@ -284,9 +284,9 @@ const AgentView = (() => {
     available: chatsAvailable,
     openChat: (taskId, id) => showChat(`/api/tasks/${taskId}`, id),
     choices: agent => AgentChat.choices(api, baseOf(), agent),
-    async open(agent, choice) {
+    async open(agent, choice, title = '') {
       const scope = scopeOf();
-      const conversation = await AgentChat.open(api, baseOf(), agent, choice);
+      const conversation = await AgentChat.open(api, baseOf(), agent, choice, title);
       const row = mountRow(scope, conversation);
       sessions.get(scope).active = row.id;
       setOpened(scope, conversation.id, true);
@@ -299,26 +299,54 @@ const AgentView = (() => {
 })();
 
 // "+" opens a menu: a plain terminal, or a Claude / Codex session of the task directory (new or resumed).
+// The optional name field at its top names whatever is created from the menu (empty: the default "Terminal N" / "Claude N" / chat name).
 const TerminalNewMenu = (() => {
   const SESSION_KINDS = [['claude', 'Claude session'], ['codex', 'Codex session']];
+  const MAX_NAME = 40; // the terminal rename limit (MAX_TERMINAL_TITLE on the server)
   const button = document.getElementById('btn-terminal-new');
   let menu = null;
+  let nameInput = null; // kept while the menu is open, so a name typed before going into a submenu is not lost
   let token = 0; // invalidates a session list that finishes loading after the menu was closed or changed
 
   function close() {
     token++;
     if (menu) menu.remove();
     menu = null;
+    nameInput = null;
+  }
+
+  const typedName = () => (nameInput ? nameInput.value.replace(/\s+/g, ' ').trim() : '');
+
+  function nameField() {
+    if (nameInput) return nameInput;
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'terminal-new-name';
+    input.maxLength = MAX_NAME;
+    input.placeholder = 'Name (optional)';
+    input.setAttribute('aria-label', 'Name (optional)');
+    input.autocomplete = 'off';
+    input.spellcheck = false;
+    // Enter creates the first entry of the menu shown (New Terminal, New Claude session, New Claude chat).
+    input.addEventListener('keydown', event => {
+      if (event.key !== 'Enter' || event.isComposing) return;
+      event.preventDefault();
+      const first = menu && menu.querySelector('li[data-create]');
+      if (first) first.click();
+    });
+    nameInput = input;
+    return input;
   }
 
   function show(items) {
     const list = document.createElement('ul');
     list.setAttribute('role', 'menu');
-    for (const [label, run, raw] of items) {
+    for (const [label, run, raw, create] of items) {
       const item = document.createElement('li');
       item.setAttribute('role', 'menuitem');
       item.textContent = label;
       if (raw) { item.translate = false; item.title = label; item.className = 'terminal-new-session'; }
+      if (create) item.dataset.create = '';
       item.addEventListener('click', run);
       list.append(item);
     }
@@ -327,17 +355,24 @@ const TerminalNewMenu = (() => {
       menu.className = 'context-menu terminal-new-menu';
       document.body.append(menu);
     }
-    menu.replaceChildren(list);
+    const field = nameField();
+    const focused = document.activeElement === field;
+    menu.replaceChildren(field, list);
+    if (focused) field.focus();
     const rect = button.getBoundingClientRect();
     menu.style.top = `${rect.bottom + 4}px`;
     menu.style.right = `${Math.max(8, document.documentElement.clientWidth - rect.right)}px`;
   }
 
-  const start = options => () => { close(); TerminalControls.run('newTerminal', '', options); };
+  const start = options => () => {
+    const title = typedName();
+    close();
+    TerminalControls.run('newTerminal', '', title ? { ...options, title } : options);
+  };
 
   function root() {
     show([
-      ['New Terminal', start({})],
+      ['New Terminal', start({}), false, true],
       ...SESSION_KINDS.map(([agent, label]) => [label, () => sessions(agent, label)]),
       ...(AgentView.available() ? [['Claude agent', () => chats('claude', 'Claude agent')], ['Codex agent', () => chats('codex', 'Codex agent')]] : []),
     ]);
@@ -352,12 +387,13 @@ const TerminalNewMenu = (() => {
     catch (error) { if (typeof Toast !== 'undefined') Toast.error(`Could not load sessions: ${error.message}`); }
     if (mine !== token || !menu || !target) return;
     const open = choice => async () => {
+      const title = typedName();
       close();
-      try { await AgentView.open(agent, choice); }
+      try { await AgentView.open(agent, choice, title); }
       catch (error) { if (typeof Toast !== 'undefined') Toast.error(`Could not open the chat: ${error.message}`); }
     };
     show([
-      [`New ${AgentChat.AGENTS[agent].label} chat`, open(null)],
+      [`New ${AgentChat.AGENTS[agent].label} chat`, open(null), false, true],
       ...rows.map(choice => [`${choice.running ? '● ' : ''}${choice.title}`, open(choice), true]),
       ['Back', root],
     ]);
@@ -371,7 +407,7 @@ const TerminalNewMenu = (() => {
     catch (error) { if (typeof Toast !== 'undefined') Toast.error(`Could not load sessions: ${error.message}`); }
     if (mine !== token || !menu) return;
     show([
-      [`New ${label}`, start({ agent })],
+      [`New ${label}`, start({ agent }), false, true],
       ...(Array.isArray(rows) ? rows : []).map(row => [row.title, start({ agent, session_id: row.id }), true]),
       ['Back', root],
     ]);

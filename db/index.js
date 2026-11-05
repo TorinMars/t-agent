@@ -57,8 +57,9 @@ if (!pairingColumns.includes('principal_id')) {
 }
 
 // Terminals started as a Claude / Codex session remember the agent, its session id (bound later for Codex) and when they were created.
+// title_custom (1): the person named the terminal (at creation or by a rename), so that name is shown instead of the agent session's name.
 const terminalColumns = db.prepare('PRAGMA table_info(task_terminals)').all().map(column => column.name);
-for (const [column, type] of [['agent', 'TEXT'], ['agent_session_id', 'TEXT'], ['agent_started_at', 'INTEGER']]) {
+for (const [column, type] of [['agent', 'TEXT'], ['agent_session_id', 'TEXT'], ['agent_started_at', 'INTEGER'], ['title_custom', 'INTEGER']]) {
   if (!terminalColumns.includes(column)) db.exec(`ALTER TABLE task_terminals ADD COLUMN ${column} ${type}`);
 }
 

@@ -1360,6 +1360,8 @@ html[lang="zh-CN"] .update-log:empty::before { content: '\7B49\5F85\8F93\51FA\20
 /* Menu under the terminal "+" button: new terminal / Claude session / Codex session */
 .terminal-new-menu { min-width: 170px; max-width: 320px; max-height: 60vh; overflow-y: auto; }
 .terminal-new-menu .terminal-new-session { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.terminal-new-menu .terminal-new-name { display: block; box-sizing: border-box; width: calc(100% - 16px); margin: 8px 8px 4px; height: 28px; padding: 0 8px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg); color: var(--text); font: inherit; font-size: 13px; }
+.terminal-new-menu .terminal-new-name:focus { outline: none; border-color: var(--accent); }
 
 /* Loading */
 .preview-loading {

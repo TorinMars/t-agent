@@ -522,17 +522,26 @@
   let menuRuns = [];
   let menuRow = null;
   let menuChat = null; // the chat whose actions are open
+  // The optional name typed in the "Session" sheet. It is kept while moving between its lists (Claude session, Back) and names what is created.
+  let newName = '';
+  let menuCreate = -1; // the item that Enter in the name field runs (New Terminal, New Claude session, New Claude chat)
 
   function closeTerminalMenu() {
     menuRow = null;
     menuChat = null;
     menuRuns = [];
+    menuCreate = -1;
+    newName = '';
     ui.set({ menu: null });
   }
-  // items: [label, run, kind]; kind 'danger' is drawn as a warning, 'raw' is a name that is not translated.
-  function showMenu(title, items) {
+  // The typed name, as the server will keep it (an empty name: the default "Terminal N" / "Claude N" / chat name).
+  const takeName = () => newName.replace(/\s+/g, ' ').trim();
+  // items: [label, run, kind, create]; kind 'danger' is drawn as a warning, 'raw' is a name that is not translated; create: Enter in the name field runs it.
+  // naming: the sheet shows the optional name field above the list.
+  function showMenu(title, items, { naming = false } = {}) {
     menuRuns = items.map(item => item[1]);
-    ui.set({ menu: { title, items: items.map(([label, , kind]) => ({ label, kind: kind || null })), renaming: false, renameValue: '' } });
+    menuCreate = items.findIndex(item => item[3]);
+    ui.set({ menu: { title, items: items.map(([label, , kind]) => ({ label, kind: kind || null })), renaming: false, renameValue: '', naming, name: newName } });
   }
   const askRename = value => ui.set(state => ({ menu: state.menu && { ...state.menu, renaming: true, renameValue: value } }));
   function openTerminalMenu(row) {
@@ -605,6 +614,8 @@
   }
   ui.actions.menuRun = index => { const run = menuRuns[index]; if (run) run(); };
   ui.actions.menuCancel = closeTerminalMenu;
+  ui.actions.menuName = value => { newName = String(value || ''); };
+  ui.actions.menuNameSubmit = () => { const run = menuRuns[menuCreate]; if (run) run(); };
   ui.actions.menuRename = async value => {
     const row = menuRow;
     const title = String(value || '').trim();
@@ -641,14 +652,14 @@
 
   // ── Session: a plain terminal, or a Claude / Codex session of the task directory (new or resumed) ──
   const SESSION_KINDS = [['claude', 'Claude session'], ['codex', 'Codex session']];
-  function showSessionMenu(title, items) { showMenu(tr(title), items); }
+  function showSessionMenu(title, items) { showMenu(tr(title), items, { naming: true }); }
   async function openSessionMenu() {
     const currentSource = source;
     const currentTask = task;
     menuRow = null;
     menuChat = null;
     const show = chatsAvailable => showSessionMenu('Session', [
-      ['New Terminal', () => { closeTerminalMenu(); closeTasks(); void createTerminal(); }],
+      ['New Terminal', () => { const title = takeName(); closeTerminalMenu(); closeTasks(); void createTerminal(title ? { title } : {}); }, null, true],
       ...SESSION_KINDS.map(([agent, label]) => [label, () => void openAgentSessions(agent, label)]),
       ...(chatsAvailable ? [['Claude agent', () => void openAgentChats('claude', 'Claude agent')], ['Codex agent', () => void openAgentChats('codex', 'Codex agent')]] : []),
     ]);
@@ -667,6 +678,7 @@
     const item = tasks.find(entry => entry.id === id);
     if (!item) return;
     if (!(task && task.id === item.id)) selectTask(item, null);
+    newName = ''; // a new "Session" sheet starts with an empty name
     void openSessionMenu();
   };
 
@@ -792,15 +804,16 @@
     catch (error) { if (current === task) tell(`Could not load sessions: ${error.message}`, 'error'); }
     if (current !== task || !ui.get().menu) return;
     const start = choice => async () => {
+      const title = takeName();
       try {
-        const conversation = await AgentChat.open(chatApi, base, agent, choice);
+        const conversation = await AgentChat.open(chatApi, base, agent, choice, title);
         closeTerminalMenu();
         closeTasks();
         if (current === task) mountAgent(conversation);
       } catch (error) { tell(`Could not open the chat: ${error.message}`, 'error'); }
     };
     showSessionMenu(label, [
-      [`New ${AgentChat.AGENTS[agent].label} chat`, start(null)],
+      [`New ${AgentChat.AGENTS[agent].label} chat`, start(null), null, true],
       ...rows.map(choice => [`${choice.running ? '● ' : ''}${choice.title}`, start(choice), 'raw']),
       ['Back', openSessionMenu],
     ]);
@@ -812,9 +825,14 @@
     try { rows = await api('GET', `${source.tasksBase}/${current.id}/agent-sessions?agent=${agent}`); }
     catch (error) { if (current === task) tell(`Could not load sessions: ${error.message}`, 'error'); }
     if (current !== task || !ui.get().menu) return;
-    const start = sessionId => () => { closeTerminalMenu(); closeTasks(); void createTerminal({ agent, session_id: sessionId }); };
+    const start = sessionId => () => {
+      const title = takeName();
+      closeTerminalMenu();
+      closeTasks();
+      void createTerminal({ agent, session_id: sessionId, ...(title ? { title } : {}) });
+    };
     showSessionMenu(label, [
-      [`New ${label}`, start(undefined)],
+      [`New ${label}`, start(undefined), null, true],
       ...(Array.isArray(rows) ? rows : []).map(row => [row.title, start(row.id), 'raw']),
       ['Back', openSessionMenu],
     ]);

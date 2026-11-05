@@ -36,6 +36,27 @@ test('a Claude terminal keeps its session id and follows the session title', () 
   assert.deepEqual(titles().default, [null, 'Terminal 1']);
 });
 
+test('a name given at creation, or by a rename, wins over the Claude session title', () => {
+  const named = terminal.createTerminal(task.id, { agent: 'claude', title: '\u8bc4\u5ba1 review' });
+  assert.equal(named.title, '\u8bc4\u5ba1 review');
+  const plain = terminal.createTerminal(task.id, { agent: 'claude' });
+  const sessionOf = id => db.prepare('SELECT agent_session_id FROM task_terminals WHERE terminal_id = ?').get(id).agent_session_id;
+  fs.mkdirSync(claudeFolder, { recursive: true });
+  for (const row of [named, plain]) {
+    fs.writeFileSync(path.join(claudeFolder, `${sessionOf(row.terminal_id)}.jsonl`),
+      jsonl([{ type: 'user', message: { content: 'first prompt' } }, { type: 'ai-title', aiTitle: 'Generated name' }, { type: 'custom-title', customTitle: 'Renamed in Claude' }]));
+  }
+  assert.deepEqual(titles()[named.terminal_id], ['claude', '\u8bc4\u5ba1 review'], 'the creation name stays');
+  assert.deepEqual(titles()[plain.terminal_id], ['claude', 'Renamed in Claude'], 'without a name the session title is followed');
+  terminal.renameTerminal(task.id, plain.terminal_id, 'Sidebar name');
+  fs.appendFileSync(path.join(claudeFolder, `${sessionOf(plain.terminal_id)}.jsonl`), jsonl([{ type: 'ai-title', aiTitle: 'Newer generated name' }]));
+  assert.deepEqual(titles()[plain.terminal_id], ['claude', 'Sidebar name'], 'a rename also wins from then on');
+  for (const row of [named, plain]) { // leave the task as the next tests expect it (they count terminals)
+    fs.rmSync(path.join(claudeFolder, `${sessionOf(row.terminal_id)}.jsonl`));
+    db.prepare('DELETE FROM task_terminals WHERE terminal_id = ?').run(row.terminal_id);
+  }
+});
+
 test('a new Codex terminal binds the session started after it and takes its thread name', () => {
   const row = terminal.createTerminal(task.id, { agent: 'codex' });
   const day = path.join(home, '.codex', 'sessions', '2026', '10', '25');

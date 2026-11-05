@@ -919,6 +919,7 @@ I18n.add({
   "This remote connection no longer exists": "这个远程连接已不存在",
   "This remote engine does not support new terminals yet. Please upgrade it": "远程 Engine 暂不支持新开终端，请先升级该 Engine",
   "Double-click to rename": "双击重命名",
+  "Name (optional)": "名称（可选）",
   "Terminal name": "终端名称",
   "Terminal names are limited to {1} characters": "终端名称最多 {1} 个字符",
   "This remote engine does not support renaming terminals yet. Please upgrade it": "远程 Engine 暂不支持重命名终端，请先升级该 Engine",

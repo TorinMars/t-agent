@@ -30,7 +30,7 @@
     const text = await res.text();
     let data = null;
     try { data = text ? JSON.parse(text) : null; } catch { /* plain-text error */ }
-    if (!res.ok) throw new Error((data && data.error) || text || `HTTP ${res.status}`);
+    if (!res.ok) throw Object.assign(new Error((data && data.error) || text || `HTTP ${res.status}`), { data }); // `data`: the whole error body (a `reason` ...)
     return data;
   }
   // Remembered choices are a convenience only; private mode or blocked storage just starts fresh.
@@ -171,7 +171,9 @@
   async function loadSources() {
     try {
       const servers = await api('GET', '/api/remote-servers');
-      sources = [LOCAL, ...(Array.isArray(servers) ? servers : []).map(server => ({
+      const before = new Map(sources.map(item => [item.key, item]));
+      // An Engine that is still there keeps its object (only its name can change): requests in flight compare it with `source`.
+      sources = [LOCAL, ...(Array.isArray(servers) ? servers : []).map(server => (before.has(`remote:${server.id}`) ? Object.assign(before.get(`remote:${server.id}`), { label: server.name }) : {
         key: `remote:${server.id}`, label: server.name,
         tasksBase: `/api/remote-servers/${server.id}/tasks`,
         groupsBase: `/api/remote-servers/${server.id}/task-groups`,
@@ -490,11 +492,12 @@
     void loadTasks();
   };
   // Resolves to whether the task was made (the shell then empties its input).
-  ui.actions.createTask = async title => {
+  // workDir: an absolute path, or empty for the default rule (a folder named after the task under the tasks folder); the default is never sent.
+  ui.actions.createTask = async (title, workDir = '') => {
     const current = source;
     ui.set({ creatingTask: true });
     try {
-      const created = await api('POST', current.tasksBase, { title });
+      const created = await api('POST', current.tasksBase, workDir ? { title, work_dir: workDir } : { title });
       if (current !== source) return true;
       await loadTasks();
       selectTask(tasks.find(item => item.id === created.id) || created);
@@ -503,6 +506,93 @@
       tell(`Could not create the task: ${error.message}`, 'error');
       return false;
     } finally { ui.set({ creatingTask: false }); }
+  };
+  // The engine whose tasks are listed, for the new-task form: its default folder rule is shown only for this machine (a remote one keeps its own).
+  ui.actions.newTaskTarget = () => ({ local: source.key === 'local', label: source.label });
+
+  // ── Task actions (the "⋯" of a task): move to another group, change the working directory, delete (optionally with the directory) ──
+  // The same endpoints as the desktop page's task menu, through the task base of the engine, so local, Engine and proxied tasks work alike.
+  const taskById = id => tasks.find(entry => entry.id === id);
+  ui.actions.taskMore = id => {
+    const item = taskById(id);
+    if (!item) return;
+    menuRow = null;
+    menuChat = null;
+    const ordered = [...groups].sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+    showMenu(item.title, [
+      ...ordered.map(group => [`${item.status === group.key ? '\u2713 ' : ''}${tr('Move to')} \u201C${tr(group.name)}\u201D`, () => void moveTask(item, group.key), 'raw']),
+      ['Edit working directory', () => { closeTerminalMenu(); ui.set({ taskDialog: { kind: 'workdir', id: item.id, title: item.title, workDir: item.work_dir || '', error: '', busy: false } }); }],
+      ['Delete', () => { closeTerminalMenu(); ui.set({ taskDialog: { kind: 'delete', id: item.id, title: item.title, workDir: item.work_dir || '', error: '', busy: false } }); }, 'danger'],
+    ]);
+  };
+  async function moveTask(item, status) {
+    closeTerminalMenu();
+    if (item.status === status) return;
+    const from = source;
+    try {
+      await api('PUT', `${from.tasksBase}/${item.id}`, { status });
+      if (from === source) await loadTasks();
+    } catch (error) { tell(`Could not update task: ${error.message}`, 'error'); }
+  }
+  const patchDialog = patch => ui.set(state => ({ taskDialog: state.taskDialog && { ...state.taskDialog, ...patch } }));
+  ui.actions.taskDialogClose = () => { if (!(ui.get().taskDialog || {}).busy) ui.set({ taskDialog: null }); };
+  const DELETE_ERRORS = { DIRECTORY_NOT_SAFE_TO_DELETE: 'This directory cannot be deleted (protected or shared with other tasks); the task was not deleted' };
+  ui.actions.taskDelete = async deleteDirectory => {
+    const dialog = ui.get().taskDialog;
+    const item = dialog && taskById(dialog.id);
+    if (!item || dialog.busy) return;
+    const from = source;
+    patchDialog({ busy: true, error: '' });
+    let result;
+    try {
+      result = await api('DELETE', `${from.tasksBase}/${item.id}${deleteDirectory ? '?delete_directory=1' : ''}`);
+    } catch (error) {
+      const data = error.data || {};
+      const label = tr(DELETE_ERRORS[error.message] || error.message);
+      patchDialog({ busy: false, error: data.reason ? `${label}: ${data.reason}` : label });
+      return;
+    }
+    ui.set({ taskDialog: null });
+    if (deleteDirectory && result && result.directory_error) tell(`${tr('Task deleted, but deleting the directory failed:')} ${result.directory_error}`, 'error');
+    else if (deleteDirectory && result && result.directory_deleted === undefined) tell('Task deleted, but the remote service is older and did not delete the directory.', 'error');
+    else tell('Task deleted', 'success');
+    if (from !== source) return;
+    expanded.delete(item.id);
+    peeks.delete(item.id);
+    if (task && task.id === item.id) { hideAgent(); selectTask(null); }
+    tasks = tasks.filter(entry => entry.id !== item.id);
+    await loadTasks();
+  };
+  // An existing task's working directory: the form shows the saved one; an absolute path is required (the server keeps the old one for an empty value).
+  ui.actions.taskWorkdirSave = async value => {
+    const dialog = ui.get().taskDialog;
+    const item = dialog && taskById(dialog.id);
+    if (!item || dialog.busy) return;
+    const workDir = String(value || '').trim();
+    if (!isAbsolutePath(workDir)) { patchDialog({ error: 'Enter an absolute path' }); return; }
+    if (workDir === (item.work_dir || '')) { ui.set({ taskDialog: null }); return; }
+    const from = source;
+    patchDialog({ busy: true, error: '' });
+    try {
+      await api('PUT', `${from.tasksBase}/${item.id}`, { work_dir: workDir });
+    } catch (error) { patchDialog({ busy: false, error: tr(error.message) }); return; }
+    ui.set({ taskDialog: null });
+    if (from !== source) return;
+    await loadTasks();
+    if (task && task.id === item.id) { const fresh = taskById(item.id); if (fresh) task = fresh; }
+    tell('Saved', 'success');
+  };
+  // The same rule as the server (path.isAbsolute): a POSIX path, or a Windows drive path.
+  function isAbsolutePath(value) { return /^\//.test(value) || /^[A-Za-z]:[\\/]/.test(value); }
+  ui.actions.isAbsolutePath = isAbsolutePath;
+
+  // The Engines settings (scripts/h5-shell/Engines.jsx) connected, edited or removed an Engine: read the list of engines again. `changedKey` is the
+  // Engine whose connection changed; when it is the one shown (or the one shown was removed), its tasks and terminals are opened again.
+  ui.actions.enginesChanged = async (changedKey = null) => {
+    const before = source;
+    await loadSources();
+    if (source !== before || changedKey === before.key) ui.actions.changeEngine(source.key);
+    else ui.set({ sourceKey: source.key });
   };
 
   // ── Phone terminals ──

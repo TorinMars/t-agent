@@ -41,5 +41,6 @@ export const initialState = () => ({
   upload: null, // { status, progress } while an image goes up (progress: 0-100, or null when it is not known)
   retainUrl: null, // the link of an image that was uploaded after its terminal went away
   design: null, // { open, status: loading | ready | missing | folder | no-dir | no-task | error, dir, path, link, line, content, message } of the file sheet (DESIGN.md, or a terminal file link)
+  taskDialog: null, // { kind: 'delete' | 'workdir', id, title, workDir, error, busy } the delete confirmation or the working directory form of a task
   notice: null, // { id, message, type } the last floating notice
 });

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import Chip from '@mui/material/Chip';
@@ -22,7 +22,8 @@ import SmartToyOutlinedIcon from '@mui/icons-material/SmartToyOutlined';
 import MoreHorizIcon from '@mui/icons-material/MoreHoriz';
 import UnfoldLessIcon from '@mui/icons-material/UnfoldLess';
 import UnfoldMoreIcon from '@mui/icons-material/UnfoldMore';
-import { DomIcon, chatMark, t, terminalMark } from './common.jsx';
+import { DomIcon, api, chatMark, t, terminalMark } from './common.jsx';
+import { Icon } from './Icons.jsx';
 
 const GLYPHS = { shell: '>_', claude: '✳', codex: 'GPT' };
 
@@ -134,6 +135,8 @@ function Tasks({ state, ui, query, filter }) {
                 </Box>
               </Box>
             </ListItemButton>
+            {/* "⋯" (move, working directory, delete) left of the "+", which stays at the right end of the row */}
+            {task.add ? <IconButton className="h5-task-more" size="small" sx={{ p: 0.5 }} aria-label={t('Task actions')} title={t('Task actions')} aria-haspopup="dialog" onClick={() => ui.actions.taskMore(task.id)}><Icon name="taskMore" size={20} /></IconButton> : null}
             {task.add ? <IconButton className="h5-task-add" size="small" sx={{ p: 0.5 }} aria-label={t('Session')} onClick={() => ui.actions.addSession(task.id)}><AddIcon /></IconButton> : null}
           </Box>
           {task.expanded && task.sessions ? <Sessions ui={ui} taskId={task.id} sessions={task.sessions} /> : null}
@@ -143,16 +146,35 @@ function Tasks({ state, ui, query, filter }) {
   ));
 }
 
+// The folder name the server makes from a task title (titleToSlug in routes/tasks.js and services/engine-tasks.js), for the default path shown.
+const slug = title => title.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9\u4e00-\u9fff\-_.]/g, '').replace(/^-+|-+$/g, '') || 'task';
+
 function Panel({ state, ui }) {
   const [title, setTitle] = useState('');
+  const [workDir, setWorkDir] = useState('');
+  const [dirError, setDirError] = useState('');
+  const [base, setBase] = useState(null); // the folder new tasks of this machine go under (the user's setting, TASKS_BASE_DIR, else ~/tasks)
   const [adding, setAdding] = useState(false);
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('all');
+  const target = ui.actions.newTaskTarget ? ui.actions.newTaskTarget() : { local: true };
+  useEffect(() => {
+    if (!adding || !target.local) return;
+    let live = true;
+    api('GET', '/auth/me').then(user => { if (live) setBase((user && user.effective_work_dir) || null); }).catch(() => {});
+    return () => { live = false; };
+  }, [adding, target.local]);
+  // An empty field keeps the default rule: the path shown is only a hint and is never sent.
+  const defaultPath = target.local && base ? `${base.replace(/\/+$/, '')}/${slug(title.trim() || 'task')}` : '';
   const submit = async event => {
     event.preventDefault();
     const value = title.trim();
+    const dir = workDir.trim();
     if (!value || state.creatingTask) return;
-    if (await ui.actions.createTask(value)) { setTitle(''); setAdding(false); }
+    if (dir && ui.actions.isAbsolutePath && !ui.actions.isAbsolutePath(dir)) { setDirError('Enter an absolute path'); return; }
+    setDirError('');
+    if (await ui.actions.createTask(value, dir)) { setTitle(''); setWorkDir(''); setAdding(false); }
+    else if (dir) setDirError('The task was not created. Check the working directory.');
   };
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
@@ -186,13 +208,24 @@ function Panel({ state, ui }) {
       <List id="h5-task-list" className="h5-task-list" disablePadding sx={{ flex: '1 1 auto', overflowY: 'auto', px: 0.5, pb: 0.5 }}>
         <Tasks state={state} ui={ui} query={query} filter={filter} />
       </List>
-      {adding ? (      <Box component="form" id="h5-new-task" className="h5-new-task" autoComplete="off" onSubmit={submit} sx={{ display: 'flex', gap: 1, px: 2, pb: 1 }}>
-        <TextField
-          id="h5-new-task-title" autoFocus size="small" fullWidth placeholder={t('New task title')} value={title} onChange={event => setTitle(event.target.value)}
-          slotProps={{ htmlInput: { maxLength: 200, enterKeyHint: 'done', 'aria-label': t('New task title'), style: { paddingTop: 7, paddingBottom: 7 } } }}
-        />
-        <Button type="submit" variant="contained" disabled={state.creatingTask} sx={{ flex: '0 0 auto', height: 36 }}>{t('Create')}</Button>
-      </Box>) : null}
+      {adding ? (
+        <Box component="form" id="h5-new-task" className="h5-new-task" autoComplete="off" onSubmit={submit} sx={{ display: 'flex', flexDirection: 'column', gap: 1, px: 2, pb: 1 }}>
+          <Box sx={{ display: 'flex', gap: 1 }}>
+            <TextField
+              id="h5-new-task-title" autoFocus size="small" fullWidth placeholder={t('New task title')} value={title} onChange={event => setTitle(event.target.value)}
+              slotProps={{ htmlInput: { maxLength: 200, enterKeyHint: 'done', 'aria-label': t('New task title'), style: { paddingTop: 7, paddingBottom: 7 } } }}
+            />
+            <Button type="submit" variant="contained" disabled={state.creatingTask} sx={{ flex: '0 0 auto', height: 36 }}>{t('Create')}</Button>
+          </Box>
+          <TextField
+            id="h5-new-task-dir" size="small" fullWidth label={t('Working directory')} value={workDir} placeholder={defaultPath || t('Default folder')}
+            onChange={event => { setWorkDir(event.target.value); setDirError(''); }} error={Boolean(dirError)}
+            helperText={<span id="h5-new-task-dir-help">{dirError ? t(dirError) : target.local
+              ? `${t('Leave empty to use the default:')} ${defaultPath || t('a folder named after the task under the tasks folder')}`
+              : t('Absolute path on the remote engine. Leave empty to use a folder named after the task under that engine’s tasks folder.')}</span>}
+            slotProps={{ inputLabel: { shrink: true }, htmlInput: { autoCapitalize: 'off', spellCheck: false, 'aria-label': t('Working directory'), style: { paddingTop: 7, paddingBottom: 7 } } }}
+          />
+        </Box>) : null}
       <Box sx={{ px: 1.5, pb: 0.75 }}>
         <Button id="h5-add-task" fullWidth variant="contained" size="medium" startIcon={<AddIcon />} onClick={() => setAdding(open => !open)} sx={{ borderRadius: 3, py: 0.5, textTransform: 'none', fontSize: 14 }}>{t('New task')}</Button>
       </Box>

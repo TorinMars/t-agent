@@ -296,7 +296,7 @@ One line each for the main modules, by area. Each route file is mounted in `serv
 
 ### G. Target: one MUI page for PC and phone (agreed design)
 
-Decided by the user on 2026-11-05. The MUI phone page becomes the only page; the PC page is removed. This is the agreed design. Phase 1 is done (released in 2.87.12, see "MUI page on a computer (single page, phase 1)"); phases 2 to 4 are not implemented yet. Each phase below is releasable on its own.
+Decided by the user on 2026-11-05. The MUI phone page becomes the only page; the PC page is removed. This is the agreed design. Phase 1 is done (released in 2.87.12, see "MUI page on a computer (single page, phase 1)"). Phase 2 is done on branch `feat/single-page-phase2` (not released yet, see "MUI page on a computer (single page, phase 2)"); phases 3 and 4 are not implemented yet. Each phase below is releasable on its own.
 
 #### G.1 Routes
 
@@ -343,11 +343,11 @@ Stored in `store.mjs` and on `<html data-input>`.
 
 #### G.5 User decisions on features
 
-KEEP / PORT into the MUI page:
+KEEP / PORT into the MUI page (all three done in phase 2, see "MUI page on a computer (single page, phase 2)"):
 
-- Remote Engine management in a Settings "Engines" section: connect with address + pairing code (`POST /api/remote-servers`), edit (`PUT`), remove (`DELETE`), check (`POST /:id/check`), update the remote Engine (`/:id/check-update`, `/:id/apply-update`, `/:id/update-status`). Today only `public/js/engines.js` on the PC page does this.
-- Richer Update details in `scripts/h5-shell/Update.jsx`: `restart_pending` with restart help, install type, release link, force update, a red dot when an update exists.
-- Task menu: Delete (optionally with the directory), Move to group; a Work directory field in the new-task form that shows the effective default path (AGENTS.md workflow rule 3).
+- Remote Engine management in a Settings "Engines" section: connect with address + pairing code (`POST /api/remote-servers`), edit (`PUT`), remove (`DELETE`), check (`POST /:id/check`), update the remote Engine (`/:id/check-update`, `/:id/apply-update`, `/:id/update-status`). Done in phase 2 (`scripts/h5-shell/Engines.jsx`); before that only `public/js/engines.js` on the PC page did this.
+- Richer Update details in `scripts/h5-shell/Update.jsx`: `restart_pending` with restart help, install type, release link, force update, a red dot when an update exists. Done in phase 2.
+- Task menu: Delete (optionally with the directory), Move to group; a Work directory field in the new-task form that shows the effective default path (AGENTS.md workflow rule 3). Done in phase 2, plus Edit working directory of an existing task (the PC edit form has it).
 
 DROP (UI removed):
 
@@ -369,7 +369,6 @@ These become unused by the browser but stay on the server (and in `/v1` and the 
 - `POST /api/tasks/:id/reveal`, `POST /api/tasks/:id/vscode`, `POST /api/tasks/:id/share`
 - `POST` / `PUT` / `DELETE /api/task-groups`
 - `/api/pm2`, `/api/apps`, `/api/frp`, `/api/ssh-tunnel`, `/api/agent-config`, `/api/file-sync`, `/api/environment`
-- `POST /api/system/update-notified`
 - the matching `/api/remote-servers/:id/...` proxies
 - the `agent_conversations.opened_web` column
 
@@ -383,7 +382,7 @@ These become unused by the browser but stay on the server (and in `/v1` and the 
 
 0. Tag the last two-page version: done, `v2.87.11-two-pages` (commit `8494601`).
 1. The MUI page works on PC next to the old page: input mode, wide layout, side panel, ack, shared `wideQuery`, PC-viewport tests. `/` and `/web` still serve the old page. Done, released in 2.87.12 (`scripts/test-h5-pc-browser.cjs`).
-2. Port the kept features: Engines settings, Update details, task Delete / Move / Work directory. Next.
+2. Port the kept features: Engines settings, Update details, task Delete / Move / Work directory. Done on branch `feat/single-page-phase2` (`scripts/test-h5-phase2-browser.cjs`), not released yet.
 3. Switch `/` to the MUI page and delete the old page; the delete list is shown to the user first.
 4. Cleanup: explicit `npm test` list, unused CSS / vendor files, documentation.
 
@@ -2527,6 +2526,7 @@ Usage, notifications and phone sidebar changes:
 | Send | send | 9230696 | |
 | Translate and send | send | 9230696 | the same icon, plus the "Aa" text mark |
 | Paste text (menu item) | snippets | 4766482 | |
+| Task actions ("⋯" of a task row, task sidebar) | ellipsis | 4767094 | `taskMore` in `Icons.jsx`, 20px, left of the "+" (phase 2) |
 | Esc | none | none | text "Esc" |
 | Left | arrowleft | 4767022 | library icon |
 | Down | arrowdown | 4767023 | library icon |
@@ -2595,3 +2595,15 @@ Phase 1 of the agreed single-page plan ("System architecture and functionality",
 - Terminal "done" ack (`h5.js`): `POST {tasksBase}/{task}/terminal/ack { terminal_id }` when a terminal is shown while the page is visible, when the page becomes visible again, when a chat over the terminal is closed, and when the shown terminal turns `done` while visible (`GET {activityBase}/terminal-activity` every 3 s, only while a terminal is shown and the page is visible). Same task base as every other call, so local, Engine and proxied tasks work alike; the server ignores the ack unless the state is `done`. Behaviour change on the phone: opening a terminal there now clears its Pending state (before, only the PC page did), and the next-session button then sees it as idle.
 - Tests: `node scripts/test-h5-pc-browser.cjs` (PC 1440x900 and 1280x800 without touch, plus the phone; `H5_SHOT_DIR=<dir>` saves screenshots). In `scripts/test-h5-browser.cjs` the phone-sized contexts now have touch, the 1440 context stays a mouse-only computer, and the flag `hasKeyboard` (set by Playwright's trusted key presses) is cleared before the phone send checks. Not verified on real PC browsers other than headless Chromium, on an iPad with a keyboard or trackpad, or on an iPhone.
 > v2.87.12 MUI page works on PC (input mode, terminal done-ack, touch-only viewport logic, PC layout, collapsible sidebar, right side panel); system architecture section in DESIGN.md
+
+## MUI page on a computer (single page, phase 2)
+
+Phase 2 of the agreed single-page plan ("System architecture and functionality", part G): the PC-only features the user kept are ported into the MUI page. Routes are unchanged; `/` and `/web` still serve the old desktop page, which is unchanged (it is deleted in phase 3). No server change: every endpoint below already existed and is used the same way as by the PC page, so local tasks, remote Engines and proxied tasks behave alike.
+
+- **Settings "Engines"** (`scripts/h5-shell/Engines.jsx`, a group of the settings sheet before "Remote service"; the form parts moved to `scripts/h5-shell/Form.jsx`). Lists "This machine" (version from `GET /api/system/version`) and every remote Engine of `GET /api/remote-servers` with its state (Online / Offline / Authentication expired), address, version, last check and last error. Per Engine: Check (`POST /:id/check`; a 502 still returns the new state, which is shown with the error text), Check for updates, Edit connection, Remove connection (`DELETE /:id` after the same `confirm()` text as the PC page). "Connect remote service" opens the connect form (URL, Port, Pairing code or access token as a password field; Test connection = `POST /test`, Connect = `POST /`). Edit connection echoes the saved name, URL and port (split from `base_url`); there is no token field, as on the PC page: the saved token is reused and never reaches the browser (Test connection = `POST /:id/test`, Save = `PUT /:id`). Error texts are the PC page's `errorLabel` table. The update of a remote Engine is the PC flow: check (`POST /:id/check-update`: versions, status, install type, target branch, release notes link, error), Update now, a confirmation, `POST /:id/apply-update`, then `GET /:id/update-status` every 2 s (offline answers are "waiting for it to restart") until the Engine reports the target version, for at most 12 minutes; the dialog cannot be closed while it runs. Unlike the PC page the page is not reloaded at the end: the engine list is read again instead. The dialogs are full screen on a phone (< 900px) and normal dialogs on a wide screen.
+- After a connect, edit, remove or finished update, `ui.actions.enginesChanged(key)` (`h5.js`) reads `/api/remote-servers` again and refreshes the engine selector of the task list. `loadSources` now keeps the object of an Engine that is still there, so requests in flight are not dropped. When the Engine shown was removed, the list goes back to this machine; when the Engine shown was edited or updated, its task list is read again from the start (`changeEngine`: the open terminal or chat of that Engine is closed, as the PC page disposes that Engine's terminals).
+- **Update modal** (`scripts/h5-shell/Update.jsx`), checked against `Updates` in `public/js/app.js`: ported the status label, current and latest version, install type, last checked time and check interval, GitHub version source (`version_url`), publish time and the release notes link (`remote_manifest.release_url`, http(s) only), the `restart_pending` state with the restart commands for PM2, the macOS login service and Linux systemd, the `errorLabel` texts (also for the 502 of a failed check), the warning of what the update does (package / Git / frontend only without restart), the database backup note, **force update** (a checkbox for non-package installs; `POST /api/system/apply-update { confirm: true, force: true }`, without force the body stays `{ confirm: true }`), "Choose force update…" after a `WORKTREE_DIRTY` failure, the non-admin text, and a "Refresh now" button when the restart takes more than 20 s. **Red dot**: a MUI `Badge` on the header Update button (`#h5-update-dot`, `data-attention` on the button) when the state is `available` or `restart_pending`; read with `GET /api/system/update-status` when the page loads and every 60 s; a state that was never checked or whose last check failed is checked once with `POST /api/system/check-update` (as the PC page's `Updates.start`). When the modal shows a new version it calls `POST /api/system/update-notified` (the PC page then does not pop up the same version again). Not ported on purpose: the PC page opens the "Update available" modal by itself; the MUI page only shows the dot (no pop-up over a phone terminal).
+- **Task "⋯" menu** (`TaskDrawer.jsx`, `h5.js` `ui.actions.taskMore`, dialogs in `scripts/h5-shell/TaskDialogs.jsx`). Every task row has "⋯" (Ant Design `ellipsis`, left of the "+", which stays at the right end). The sheet lists "Move to “<group>”" for every group of the engine (the current one with a tick; `PUT {tasksBase}/:id { status }`), Edit working directory and Delete. Delete opens a confirmation with "Also delete the directory" (off by default; shows the path and the "permanently deleted" warning when ticked; only when the task has a working directory) and calls `DELETE {tasksBase}/:id[?delete_directory=1]`; a refused directory (`409 DIRECTORY_NOT_SAFE_TO_DELETE` with a reason) is shown in the dialog and the task stays; `directory_error` and an old remote service that did not delete the directory are reported as on the PC page. Deleting the open task closes it. Edit working directory echoes the saved path; it must be absolute (the server rule `path.isAbsolute`), and an unchanged path sends nothing (`PUT {tasksBase}/:id { work_dir }`).
+- **New-task form**: a Working directory field under the title. Empty = the default rule (the server makes a folder named after the task under the user's working directory, `TASKS_BASE_DIR` or `~/tasks`); for this machine the placeholder and the helper show that effective path (`effective_work_dir` of `/auth/me` plus the same slug as the server), which follows the title; the default is never sent (the request is `{ title }`). A remote Engine shows a helper instead (its tasks folder is not known to the browser). A non-empty path must be absolute (checked in the browser, the server checks again); it is sent as `work_dir`. `POST /api/tasks/validate-path` is not used: it validates a Markdown file path (`md_path`, the PC "Design doc path" field, which was dropped), not a directory.
+- Not ported (user decision): priority, due date, document paths, group create / rename / delete, drag-sort.
+- Tests: `node scripts/test-h5-phase2-browser.cjs` (phone 390x844 with touch and PC 1440x900 with a mouse, mocked endpoints; `H5_SHOT_DIR=<dir>` saves screenshots). `scripts/test-h5-settings-browser.cjs` now expects the Engines group and ignores the Update button's own `/api/system/*` reads.

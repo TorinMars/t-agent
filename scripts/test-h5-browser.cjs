@@ -432,22 +432,24 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     for (const name of ['Left', 'Down', 'Up', 'Right']) await page.locator(`[data-key="Arrow${name}"]`).tap();
     assert.deepEqual((await sent()).slice(7), ['\x1b[D', '\x1b[B', '\x1b[A', '\x1b[C'], 'each arrow sends its own sequence');
 
-    // Tapping the terminal never asks for the on-screen keyboard; the keyboard key toggles it through the textarea's inputmode.
+    // Tapping the terminal never asks for the system keyboard; the keyboard key shows the terminal's own keyboard (scripts/test-h5-osk-browser.cjs) and the
+    // textarea keeps inputmode none and is not focused.
     const inputmode = () => page.evaluate(() => document.querySelector('.h5-xterm:not([hidden]) textarea').getAttribute('inputmode'));
     const inTerminal = () => page.evaluate(() => document.querySelector('.h5-xterm:not([hidden])').contains(document.activeElement));
     assert.equal(await inputmode(), 'none');
     await page.locator('.h5-xterm:not([hidden])').tap();
     assert.equal(await inputmode(), 'none', 'tapping the terminal does not request the on-screen keyboard');
+    await page.evaluate(() => document.activeElement && document.activeElement.blur());
     await page.locator('[data-action="keyboard"]').tap();
-    assert.equal(await inputmode(), 'text');
-    assert.equal(await inTerminal(), true);
+    await page.locator('#h5-osk').waitFor();
+    assert.equal(await inputmode(), 'none', 'the terminal keyboard key never asks for the system keyboard');
+    assert.equal(await inTerminal(), false, 'the terminal keyboard key does not focus the terminal');
     await page.locator('.h5-xterm:not([hidden])').tap();
-    assert.equal(await inputmode(), 'text', 'a terminal tap keeps the open keyboard');
-    await page.locator('[data-action="keyboard"]').tap();
     assert.equal(await inputmode(), 'none');
-    assert.equal(await inTerminal(), false);
-    await page.locator('.h5-xterm:not([hidden])').tap();
-    assert.equal(await inputmode(), 'none', 'a terminal tap after closing does not reopen it');
+    assert.equal(await page.locator('#h5-osk').count(), 1, 'a terminal tap keeps the terminal keyboard shown');
+    await page.locator('[data-action="keyboard"]').tap();
+    await page.locator('#h5-osk').waitFor({ state: 'detached' });
+    assert.equal(await inputmode(), 'none');
 
     // Draft box: hidden by default (no resting pill). The "Draft keyboard" key focuses it and it shows ABOVE the function keys: the box takes row 1 across the width
     // and the buttons sit on row 2. The "Terminal keyboard" key focuses the terminal and keeps it hidden. Blur hides it again. Pressing a button must not hide it.
@@ -474,20 +476,21 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       assert.equal(rest.form.height, 0, 'hidden by default: the draft box has no height');
       assert.equal(await page.locator('#h5-translate').isVisible(), false);
       assert.equal(await page.locator('[data-action="draft"]').getAttribute('aria-pressed'), 'false');
-      // The terminal keyboard key focuses the terminal and keeps the draft box hidden.
+      // The terminal keyboard key shows the terminal's own keyboard (not the system one) and keeps the draft box hidden; the terminal refits above it
+      // (rows and resizes are checked in scripts/test-h5-osk-browser.cjs).
       await page.locator('[data-action="keyboard"]').tap();
-      await page.waitForTimeout(300); // the focused terminal cursor blinks forever, so the animation-free wait of barRects() does not apply here
-      const viaTerminal = await page.evaluate(() => ({ form: { height: document.getElementById('h5-translate').getBoundingClientRect().height }, xterm: { top: document.querySelector('.h5-xterm:not([hidden])').getBoundingClientRect().top },
-        resizes: window.sockets[0].sent.filter(item => { try { return JSON.parse(item).type === 'resize'; } catch { return false; } }).length }));
-      assert.equal(await page.evaluate(() => document.querySelector('.h5-xterm:not([hidden])').contains(document.activeElement)), true, 'the terminal keyboard key focuses the terminal');
-      assert.equal(viaTerminal.form.height, 0, 'the draft box stays hidden');
+      await page.locator('#h5-osk').waitFor();
+      assert.equal(await page.evaluate(() => document.querySelector('.h5-xterm:not([hidden])').contains(document.activeElement)), false, 'the terminal keyboard key does not focus the terminal');
+      assert.equal(await page.evaluate(() => document.getElementById('h5-translate').getBoundingClientRect().height), 0, 'the draft box stays hidden');
       assert.equal(await page.locator('[data-action="keyboard"]').getAttribute('aria-pressed'), 'true', 'the terminal keyboard key is blue');
       assert.equal(await page.locator('[data-action="draft"]').getAttribute('aria-pressed'), 'false');
-      assert.equal(viaTerminal.xterm.top, rest.xterm.top, 'the terminal does not move');
-      assert.equal(viaTerminal.resizes, rest.resizes);
       await page.locator('[data-action="keyboard"]').tap(); // a second tap closes it
+      await page.locator('#h5-osk').waitFor({ state: 'detached' });
       assert.equal(await page.locator('[data-action="keyboard"]').getAttribute('aria-pressed'), 'false');
       await page.evaluate(() => document.activeElement && document.activeElement.blur());
+      // Showing and hiding the terminal keyboard refits the terminal twice (smaller, then back): wait for the rows to come back and count resizes from here.
+      await page.waitForFunction(rows => document.querySelectorAll('.h5-xterm:not([hidden]) .xterm-rows > div').length === rows, rest.rows);
+      rest.resizes = (await barRects()).resizes;
       // The draft keyboard key focuses the box, which shows above the function keys.
       await openDraft();
       const active = await barRects();
@@ -495,9 +498,12 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       assert.equal(await page.locator('#h5-translate').isVisible(), true, 'the draft box is shown');
       assert.equal(await page.evaluate(() => document.querySelector('.h5-xterm:not([hidden]) textarea').getAttribute('inputmode')), 'none', 'the terminal asks for no keyboard while the draft box has it');
       await page.locator('[data-action="keyboard"]').tap(); // moving to the terminal keyboard hides the draft box again
-      await page.waitForTimeout(300);
+      await page.waitForFunction(() => document.getElementById('h5-translate').getBoundingClientRect().height === 0 && document.getElementById('h5-osk'));
       assert.equal(await page.evaluate(() => document.getElementById('h5-translate').getBoundingClientRect().height), 0, 'the terminal keyboard key hides the draft box');
       await openDraft();
+      // That round trip showed and hid the terminal keyboard, which refits the terminal twice: move the resize baseline past it.
+      await page.waitForFunction(rows => document.querySelectorAll('.h5-xterm:not([hidden]) .xterm-rows > div').length === rows, rest.rows);
+      { const roundTrip = (await barRects()).resizes - active.resizes; assert.ok(roundTrip === 0 || roundTrip === 2, `the terminal keyboard round trip resized ${roundTrip} times`); rest.resizes += roundTrip; active.resizes += roundTrip; }
       assert.equal(await page.locator('[data-action="draft"]').getAttribute('aria-pressed'), 'true', 'the draft keyboard key is blue');
       assert.equal(await page.locator('[data-action="keyboard"]').getAttribute('aria-pressed'), 'false');
       assert.ok(active.form.bottom <= active.keys.top + 1 && active.form.top < active.keys.top, 'the draft box is above the function keys');
@@ -1118,21 +1124,21 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     assert.ok((await wheels()).length - fling0 >= 40, 'one long move sends many lines, not at most 10');
     await page.waitForFunction(() => !window.__h5WheelCoasting(), null, { timeout: 8000 });
 
-    // Android: the back button closes the keyboard but leaves the input focused; inputmode goes back to none by itself.
+    // The terminal's textarea never asks for the system keyboard, whatever the visual viewport does (Android back button, a viewport change): the terminal
+    // keyboard is the page's own and stays until its key is tapped again.
     const vp = page.viewportSize();
     await page.locator('[data-action="keyboard"]').tap();
-    assert.equal(await inputmode(), 'text');
+    await page.locator('#h5-osk').waitFor();
     await page.setViewportSize({ width: vp.width, height: vp.height - 300 });
-    await page.waitForTimeout(1000);
-    assert.equal(await inputmode(), 'text', 'the keyboard is open: inputmode stays');
+    await page.waitForFunction(height => innerHeight === height, vp.height - 300);
+    assert.equal(await inputmode(), 'none');
     await page.setViewportSize(vp);
-    await page.waitForTimeout(900);
-    assert.equal(await inputmode(), 'none', 'after the keyboard closed without a blur, inputmode is reset');
+    await page.waitForFunction(height => innerHeight === height, vp.height);
+    assert.equal(await page.locator('#h5-osk').count(), 1, 'a viewport change does not hide the terminal keyboard');
     await page.locator('.h5-xterm:not([hidden])').tap();
-    assert.equal(await inputmode(), 'none', 'the next terminal tap does not reopen the keyboard');
+    assert.equal(await inputmode(), 'none', 'a terminal tap does not ask for the system keyboard');
     await page.locator('[data-action="keyboard"]').tap();
-    assert.equal(await inputmode(), 'text', 'the keyboard key still opens it afterwards');
-    await page.locator('[data-action="keyboard"]').tap();
+    await page.locator('#h5-osk').waitFor({ state: 'detached' });
 
     // The terminal has no floating up/down buttons: scrolling is by the wheel strip.
     assert.equal(await page.locator('[data-scroll]').count(), 0, 'no scroll buttons are drawn');

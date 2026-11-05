@@ -13,6 +13,7 @@ const pageErrors = [];
 // The conversations the page's server knows; a test can make the list unreadable.
 const chats = [];
 const chatPatches = [];
+const createBodies = []; // the bodies of POST .../terminals and POST .../agent/conversations, in order
 const pollUntil = async condition => { for (let i = 0; i < 500 && !condition(); i++) await new Promise(resolve => setTimeout(resolve, 20)); assert.ok(condition(), 'timed out waiting for the server'); };
 let chatListFails = false;
 // What the task file API answers for DESIGN.md of task 1: the document, or a missing file. The paths of the file reads are kept.
@@ -89,7 +90,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     if (url.pathname === '/api/tasks/1/terminals' && method === 'GET') return json([{ terminal_id: 'h5-default', title: 'Terminal 1' }]);
     if (url.pathname === '/api/tasks/2/terminals' && method === 'GET') return json([{ terminal_id: 'h5-docs', title: 'Docs terminal' }]);
     if (url.pathname === '/api/tasks/2/agent/conversations' && method === 'GET') return json([]);
-    if (url.pathname === '/api/tasks/1/terminals' && method === 'POST') return json({ terminal_id: 'h5-second', title: 'Terminal 2' }, 201);
+    if (url.pathname === '/api/tasks/1/terminals' && method === 'POST') { createBodies.push(route.request().postDataJSON()); return json({ terminal_id: 'h5-second', title: 'Terminal 2' }, 201); }
     if (url.pathname === '/api/tasks/1/terminals/h5-second' && method === 'PATCH') return json({ terminal_id: 'h5-second', title: route.request().postDataJSON().title });
     if (url.pathname === '/api/tasks/1/terminal/control' && method === 'POST') return json({ success: true });
     // Both local and remote chats use the same view, with a different task base.
@@ -98,6 +99,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     if (chatPath === '/api/tasks/1/agent/conversations' && method === 'GET') return chatListFails ? json({ error: 'down' }, 500) : json(chats);
     if (chatPath === '/api/tasks/1/agent/sessions') return json([{ id: 'session-old-1234', title: 'Old chat' }]);
     if (chatPath === '/api/tasks/1/agent/conversations' && method === 'POST') {
+      createBodies.push(route.request().postDataJSON());
       const row = { id: 'c1', agent: route.request().postDataJSON().agent, session_id: null, title: 'New chat', mode: 'ask', running: false, opened: { web: null, h5: null } };
       chats.push(row);
       return json(row);
@@ -1078,11 +1080,24 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     assert.ok(atEnd, 'the "+" sits at the right end of the task row');
     await page.locator('#h5-tasks .h5-task-row:has(.h5-task-item[aria-current="true"]) .h5-task-add').tap();
     assert.deepEqual(await page.locator('#h5-term-menu-actions button').allTextContents(), ['New Terminal', 'Claude session', 'Codex session', 'Claude agent', 'Codex agent'], 'the "+" opens the Session menu');
+    // The optional name field above the Session lists: placeholder, limit, the name stays when moving between the lists, and Enter creates.
+    const nameField = page.locator('#h5-new-name-input');
+    assert.equal(await nameField.getAttribute('placeholder'), 'Name (optional)');
+    assert.equal(await nameField.getAttribute('maxlength'), '40');
+    assert.equal(await nameField.inputValue(), '', 'the name starts empty');
+    assert.notEqual(await page.evaluate(() => document.activeElement && document.activeElement.id), 'h5-new-name-input', 'the field is not focused on its own (no keyboard pops up)');
+    await nameField.fill('  \u8bc4\u5ba1  \u{1F680} ');
     // A chat-style agent: choose new or an existing session, then a conversation view covers the terminal.
     await page.locator('#h5-term-menu-actions button', { hasText: 'Claude agent' }).tap();
     await page.locator('#h5-term-menu-actions button', { hasText: 'Old chat' }).waitFor();
     assert.deepEqual(await page.locator('#h5-term-menu-actions button').allTextContents(), ['New Claude chat', 'Old chat', 'Back']);
-    await page.locator('#h5-term-menu-actions button', { hasText: 'New Claude chat' }).tap();
+    assert.equal(await nameField.inputValue(), '  \u8bc4\u5ba1  \u{1F680} ', 'the name is kept in the sub-list');
+    await page.locator('#h5-term-menu-actions button', { hasText: 'Back' }).tap();
+    await page.locator('#h5-term-menu-actions button', { hasText: 'New Terminal' }).waitFor();
+    assert.equal(await nameField.inputValue(), '  \u8bc4\u5ba1  \u{1F680} ', 'and after Back');
+    await page.locator('#h5-term-menu-actions button', { hasText: 'Claude agent' }).tap();
+    await page.locator('#h5-term-menu-actions button', { hasText: 'New Claude chat' }).waitFor();
+    await nameField.press('Enter'); // creates the first entry of the list: New Claude chat
     await page.locator('#h5-agent .agent-chat').waitFor();
     await page.locator('#h5-tasks').waitFor({ state: 'hidden' }); // opening a chat closes the task sheet
     await page.locator('#h5-agent .ac-bubble', { hasText: 'hello agent' }).waitFor();
@@ -1095,6 +1110,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     assert.equal(await page.locator('.h5-header').evaluate(el => el === document.elementFromPoint(el.getBoundingClientRect().x + 20, el.getBoundingClientRect().y + 20) || el.contains(document.elementFromPoint(el.getBoundingClientRect().x + 20, el.getBoundingClientRect().y + 20))), true, 'the header is not covered by the chat');
     assert.equal(await page.locator('#h5-agent .ac-text strong').textContent(), 'there');
     assert.ok(calls.includes('POST /api/tasks/1/agent/conversations'));
+    assert.deepEqual(createBodies[createBodies.length - 1], { agent: 'claude', title: '\u8bc4\u5ba1 \u{1F680}' }, 'the chat is created with the trimmed name');
     // The Material UI drawer reveals the conversation's left edge on the right without resizing it.
     await page.locator('#h5-open-tasks').tap();
     await page.waitForTimeout(400);
@@ -1208,10 +1224,12 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     assert.equal(await page.locator('#h5-agent').isHidden(), true, 'a deleted chat is not shown');
     await page.locator('#h5-open-tasks').tap();
     await page.locator('#h5-tasks .h5-task-row:has(.h5-task-item[aria-current="true"]) .h5-task-add').tap();
+    assert.equal(await page.locator('#h5-new-name-input').inputValue(), '', 'a new Session sheet starts with an empty name');
     await page.locator('#h5-term-menu-actions button', { hasText: 'New Terminal' }).tap();
     await page.locator('#h5-tasks').waitFor({ state: 'hidden' });
     await page.waitForFunction(() => window.sockets.length === 2);
     assert.ok(calls.includes('POST /api/tasks/1/terminals'));
+    assert.deepEqual(createBodies[createBodies.length - 1], {}, 'no name: the terminal keeps its default name');
     assert.equal(await page.evaluate(() => new URL(window.sockets[1].url).searchParams.get('terminalId')), 'h5-second');
     assert.equal(await page.evaluate(() => window.sockets[0].readyState), 3);
 

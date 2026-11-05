@@ -28,6 +28,8 @@ for (const changed of ['public/js/mobile.js', 'services/engine-tasks.js']) {
       },
       // Progress reporting is irrelevant to this test: run the command directly.
       runWithProgress: (label, run) => run(() => {}) },
+      // The backup folder comes from the data folder; a test must never resolve the real ~/.tagent.
+      '../lib/data-home': { prepare: () => ({ backupsDir: path.join(require('node:os').tmpdir(), 'update-no-restart-backups') }) },
       '../lib/git-update-workspace': { prepareWorkspace: async () => null, trackedChanges: async () => [], dirtyError: changes => Object.assign(new Error('WORKTREE_DIRTY'), { details: changes.join(',') }) },
     };
     const context = { require: name => mocks[name] || realRequire(name), module: { exports: {} },

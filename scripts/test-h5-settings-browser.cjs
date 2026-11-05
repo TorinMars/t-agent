@@ -60,6 +60,10 @@ const html = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8').replace(
     await page.click('#h5-workdir-save');
     await page.waitForFunction(() => calls.some(call => call.url === '/auth/settings'));
     assert.deepEqual((await calls()).find(call => call.url === '/auth/settings').body, { work_dir: null }, 'the untouched default is not saved as a fixed path');
+    // Wait until that save is finished (it reads the settings again and refills the field) before typing, as a person would:
+    // typing earlier is overwritten by the refill. With few rendered frames (headless Chromium while the display sleeps) the
+    // fill used to land inside that window.
+    await page.waitForFunction(() => calls.filter(call => call.url === '/auth/me').length === 2 && !document.getElementById('h5-workdir-save').disabled);
     await page.fill('#h5-workdir', '/data/tasks');
     await page.click('#h5-workdir-save');
     await page.waitForFunction(() => state.work_dir === '/data/tasks' && !document.getElementById('h5-workdir-save').disabled);

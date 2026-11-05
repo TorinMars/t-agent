@@ -1,7 +1,4 @@
 import { useEffect, useRef, useState } from 'react';
-import Accordion from '@mui/material/Accordion';
-import AccordionDetails from '@mui/material/AccordionDetails';
-import AccordionSummary from '@mui/material/AccordionSummary';
 import AppBar from '@mui/material/AppBar';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
@@ -14,44 +11,14 @@ import TextField from '@mui/material/TextField';
 import Toolbar from '@mui/material/Toolbar';
 import Typography from '@mui/material/Typography';
 import CloseIcon from '@mui/icons-material/Close';
-import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import { api, t } from './common.jsx';
+import { EnginesGroup } from './Engines.jsx';
+import { Feedback, Field, Group, Hint, failure, useFeedback } from './Form.jsx';
 
 const OSS_FIELDS = [
   ['region', 'Region (e.g. oss-cn-hangzhou)'], ['bucket', 'Bucket'], ['accessKeyId', 'AccessKey ID'],
   ['accessKeySecret', 'AccessKey Secret'], ['prefix', 'Object path prefix'], ['publicBaseUrl', 'Public HTTPS address (optional)'],
 ];
-const failure = error => `${t('Failed')}: ${error.message}`;
-
-// A line under a group's buttons: what was saved, or why it was not. Nothing is drawn when there is nothing to say.
-function useFeedback() {
-  const [feedback, setFeedback] = useState({ message: '', error: false });
-  return [feedback, (message, error = false) => setFeedback({ message: message ? t(message) : '', error })];
-}
-function Feedback({ id, feedback }) {
-  if (!feedback.message) return <p id={id} hidden />;
-  return <Typography id={id} role="status" variant="body2" color={feedback.error ? 'error' : 'text.secondary'} sx={{ overflowWrap: 'anywhere', whiteSpace: 'pre-line' }}>{feedback.message}</Typography>;
-}
-const Hint = ({ children, id }) => <Typography id={id} variant="body2" color="text.secondary" sx={{ overflowWrap: 'anywhere' }}>{children}</Typography>;
-const Field = ({ id, label, htmlInput, ...props }) => (
-  <TextField id={id} label={t(label)} size="small" fullWidth autoComplete="off" slotProps={{ htmlInput: { autoCapitalize: 'off', spellCheck: false, ...htmlInput } }} {...props} />
-);
-
-// One folding group. Its data is read each time it is opened, as the desktop dialog reads it each time it is shown.
-function Group({ id, title, onOpen, children }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <Accordion
-      id={`h5-set-${id}`} className="h5-setting-group" expanded={open} disableGutters square elevation={0} sx={{ '&::before': { display: 'none' }, borderBottom: 1, borderColor: 'divider', bgcolor: 'transparent' }}
-      onChange={(_, expanded) => { setOpen(expanded); if (expanded) onOpen(); }}
-      slotProps={{ transition: { unmountOnExit: false } }}
-    >
-      <AccordionSummary expandIcon={<ExpandMoreIcon />}>{t(title)}</AccordionSummary>
-      <AccordionDetails sx={{ display: 'flex', flexDirection: 'column', gap: 1.5, pt: 0 }}>{children}</AccordionDetails>
-    </Accordion>
-  );
-}
-
 function WorkdirGroup() {
   const [value, setValue] = useState('');
   const known = useRef({ saved: '', custom: null });
@@ -384,6 +351,7 @@ export function SettingsDrawer({ state, ui }) {
         <OssGroup />
         <TranslateGroup />
         <VoiceGroup />
+        <EnginesGroup state={state} ui={ui} />
         <RemoteGroup />
         <AccessGroup />
       </Box>

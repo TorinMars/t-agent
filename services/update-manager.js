@@ -333,7 +333,7 @@ function verifyNodePty() {
 }
 
 async function backupDatabase(metadata = {}) {
-  const backupDir = path.join(projectRoot, 'data', 'backups');
+  const backupDir = require('../lib/data-home').prepare().backupsDir;
   fs.mkdirSync(backupDir, { recursive: true });
   const backupPath = path.join(backupDir, `db-${new Date().toISOString().replace(/[:.]/g, '-')}.sqlite`);
   saveState({

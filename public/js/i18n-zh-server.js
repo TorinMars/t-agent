@@ -374,7 +374,7 @@ I18n.add({
   "Install git": "安装 git",
   "Check the bucket name, the region and the network of this machine": "检查 Bucket 名称、地域和这台机器的网络",
   "In the OSS console add a CORS rule: allowed origin {1}, allowed method POST, allowed headers *": "在 OSS 控制台添加一条 CORS 规则：允许来源 {1}，允许方法 POST，允许头 *",
-  "Set a random SESSION_SECRET of at least {1} characters in .env and restart the Client": "在 .env 里设置至少 {1} 个字符的随机 SESSION_SECRET，然后重启 Client",
+  "Put a random SESSION_SECRET of at least {1} characters in the file session-secret in the data folder and restart the Client (saved tokens and the authenticator must then be set up again)": "在数据文件夹的 session-secret 文件里写入至少 {1} 个字符的随机 SESSION_SECRET，然后重启 Client（之后需要重新设置已保存的令牌和验证器）",
   "Run `node scripts/client-auth-setup.js` on this machine": "在这台机器上运行 `node scripts/client-auth-setup.js`",
   "Put the Client behind HTTPS (see the Nginx section of the README), or set CLIENT_ALLOW_HTTP=true for a trusted network": "把 Client 放到 HTTPS 后面（见 README 的 Nginx 一节），或在可信内网里设置 CLIENT_ALLOW_HTTP=true",
   "Install frpc again from the Page enhancement tab": "在“页面增强”标签页里重新安装 frpc",

@@ -1,22 +1,23 @@
 const path = require('path');
 const fs = require('fs');
 const Database = require('better-sqlite3');
+const dataHome = require('../lib/data-home');
 
-const dataDir = process.env.T_AGENT_DATA_DIR
-  ? path.resolve(process.env.T_AGENT_DATA_DIR)
-  : path.join(__dirname, '..', 'data');
-if (!fs.existsSync(dataDir)) {
-  fs.mkdirSync(dataDir, { recursive: true });
-}
-
-const dbPath = process.env.T_AGENT_DB_PATH
-  ? path.resolve(process.env.T_AGENT_DB_PATH)
-  : path.join(dataDir, 'db.sqlite');
-fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+// The data folder (~/.tagent by default, see lib/data-home.js): copied once from the old <install>/data, 0700, secrets 0600.
+const { dbPath } = dataHome.prepare();
 const db = new Database(dbPath);
+// The schema generation is stored in the database (PRAGMA user_version). A database written by a newer version is refused,
+// so an older app never runs its migrations over data it does not understand; an older database is migrated below and stamped.
+const codeSchema = dataHome.codeSchemaVersion();
+const storedSchema = db.pragma('user_version', { simple: true });
+if (storedSchema > codeSchema) {
+  db.close();
+  throw dataHome.newerSchemaError(dbPath, storedSchema, codeSchema);
+}
 
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
+dataHome.secureDatabaseFiles(dbPath);
 
 const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
 db.exec(schema);
@@ -101,5 +102,7 @@ for (const [username, cred] of Object.entries(config.authUsers || {})) {
     db.prepare('INSERT INTO users (username, salt, hash) VALUES (?, ?, ?)').run(username, cred.salt, cred.hash);
   }
 }
+
+if (storedSchema < codeSchema) db.pragma(`user_version = ${codeSchema}`);
 
 module.exports = db;

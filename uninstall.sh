@@ -10,6 +10,7 @@ LAUNCH_LABEL='com.tagent.client'
 LAUNCH_PLIST=""
 TASKS_PATH=""
 APP_PORT=""
+DATA_PATH=""
 
 fail() {
   printf 'Error: %s\n' "$*" >&2
@@ -43,12 +44,16 @@ esac
 if [ -f "$APP_DIR/.env" ]; then
   APP_PORT="$(sed -n 's/^PORT=//p' "$APP_DIR/.env" | tail -n 1)"
   TASKS_PATH="$(sed -n 's/^TASKS_BASE_DIR=//p' "$APP_DIR/.env" | tail -n 1)"
+  DATA_PATH="$(sed -n 's/^TAGENT_HOME=//p; s/^T_AGENT_DATA_DIR=//p' "$APP_DIR/.env" | tail -n 1)"
 fi
+# The data folder (database, session secret, backups) is outside the project: ~/.tagent unless .env names another one.
+[ -n "$DATA_PATH" ] || DATA_PATH="$HOME/.tagent"
 LAUNCH_PLIST="$HOME/Library/LaunchAgents/$LAUNCH_LABEL.plist"
 
 printf '\nThis will completely uninstall T-Agent. The following will be permanently deleted:\n'
 printf '  - Project directory: %s\n' "$APP_DIR"
 printf '  - Database, logs, configuration and task files inside the project\n'
+[ -d "$DATA_PATH" ] && printf '  - Data folder (database, keys, backups; shared by every installed version): %s\n' "$DATA_PATH"
 [ -n "$TASKS_PATH" ] && printf '  - Task working directory: %s\n' "$TASKS_PATH"
 printf '  - The PM2 process named t-agent, and the macOS LaunchAgent or Linux systemd startup entry\n\n'
 read -r -p 'Type UNINSTALL to confirm permanent deletion:' CONFIRMATION </dev/tty
@@ -85,6 +90,7 @@ fi
 if [ -n "$TASKS_PATH" ] && [ "$TASKS_PATH" != "$APP_DIR" ] && [[ "$TASKS_PATH" != "$APP_DIR/"* ]]; then
   safe_delete_target "$TASKS_PATH"
 fi
+[ -d "$DATA_PATH" ] && safe_delete_target "$DATA_PATH"
 safe_delete_target "$APP_DIR"
 
-printf '\nT-Agent is completely uninstalled: startup entries, service process, project data and task directory are all removed.\n'
+printf '\nT-Agent is completely uninstalled: startup entries, service process, project, data folder and task directory are all removed.\n'

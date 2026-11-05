@@ -16,3 +16,4 @@ git -C "$main" fetch -q origin
 git -C "$main" worktree add -q -b "$branch" "$target" origin/main
 [ -d "$main/node_modules" ] && ln -s "$main/node_modules" "$target/node_modules"
 echo "$target ($branch from $(git -C "$target" rev-parse --short HEAD))"
+echo 'Dev servers here must use their own data folder: TAGENT_HOME="$(mktemp -d)" PORT=3100 npm start'

@@ -8,7 +8,20 @@ const os = require('os');
 const http = require('http');
 const WebSocket = require('ws');
 const config = require('./config');
-const db = require('./db');
+// The data folder first: one server per folder (server.lock), then the database (the one-time copy and the schema check run there).
+// These failures are expected situations, so they print one clear line instead of a stack.
+const dataHome = require('./lib/data-home');
+let serverLock;
+let db;
+try {
+  serverLock = dataHome.acquireServerLock({ port: config.port, host: config.host });
+  db = require('./db');
+} catch (error) {
+  if (!dataHome.isStartupError(error)) throw error;
+  console.error(`T-Agent cannot start: ${error.message}`);
+  process.exit(1);
+}
+console.log(`Data folder: ${dataHome.paths().root}`);
 const SqliteStore = require('./db/session-store');
 const terminal = require('./routes/terminal');
 const updates = require('./services/update-manager');
@@ -455,6 +468,7 @@ server.on('upgrade', (req, socket, head) => {
 
 server.listen(config.port, config.host, () => {
   const listeningPort = server.address().port;
+  serverLock.update({ port: listeningPort });
   const anyHost = ['0.0.0.0', '::', '', 'localhost'].includes(config.host);
   terminal.setHookEndpoint(`http://${anyHost ? '127.0.0.1' : config.host}:${listeningPort}/hooks/terminal-activity`);
   console.log(`Server running at http://localhost:${listeningPort}`);

@@ -129,7 +129,7 @@ Contents of this part:
 - A. Purpose and users
 - B. Deployment topology
 - C. Server modules
-- D. Data storage
+- D. Data storage (and "Data directory")
 - E. Data model and core concepts
 - F. Client UI today (v2.87.11, two pages)
 - G. Target: one MUI page for PC and phone (agreed design)
@@ -155,7 +155,7 @@ flowchart LR
       Proxy["/api/remote-servers/:id/* proxy"]
       LocalEngine["built-in Engine: services/*, routes/*"]
       V1["/v1 Engine API (Bearer token)"]
-      DB[(data/db.sqlite)]
+      DB[(~/.tagent/db.sqlite)]
     end
     subgraph Remote[Remote machine: another Client]
       RV1["/v1 Engine API"]
@@ -252,8 +252,8 @@ One line each for the main modules, by area. Each route file is mounted in `serv
 
 ### D. Data storage
 
-- One SQLite file per machine: `data/db.sqlite` in the install directory, or `T_AGENT_DB_PATH` / `T_AGENT_DATA_DIR` (`db/index.js`; WAL, foreign keys on).
-- Schema: `db/schema.sql` (`CREATE TABLE IF NOT EXISTS`) plus additive, idempotent migrations in `db/index.js` that add missing columns on every start. There is no numbered migration runner.
+- One SQLite file per machine: `~/.tagent/db.sqlite` in the data folder of the service user (`TAGENT_HOME`, old name `T_AGENT_DATA_DIR`; `T_AGENT_DB_PATH` moves only the file), WAL, foreign keys on. Before the data folder it was `data/db.sqlite` in the install directory; see "Data directory" below for the layout, the one-time copy, the lock and the schema check.
+- Schema: `db/schema.sql` (`CREATE TABLE IF NOT EXISTS`) plus additive, idempotent migrations in `db/index.js` that add missing columns on every start. There is no numbered migration runner. The database stores the schema generation it was last migrated to in `PRAGMA user_version` (= `VERSION.json` `schema_version`); a database with a higher number is refused (see "Data directory").
 - Main tables and key columns:
 
 | Table | Key columns / purpose |
@@ -272,7 +272,44 @@ One line each for the main modules, by area. Each route file is mounted in `serv
 | `sessions`, `client_auth`, `client_access_mode`, `client_auth_attempts`, `users` | login sessions, authenticator, access mode, rate limits, legacy accounts |
 
 - Terminal output is not stored (dropped in v2.86.0); history lives in memory.
-- `VERSION.json` fields: `app_version` (release, bumped by `scripts/release.js`), `api_version` (the `/v1` protocol; `/v1/info` also answers 1), `min_remote_api_version` / `max_remote_api_version` (the range this Client accepts from remote Engines), `schema_version` (the SQLite schema generation, now 7; it is validated as a number but no code migrates by it, the migrations in `db/index.js` check for missing columns). Rule ("Version release rules" in part 13 below, `AGENTS.md` "Releases and pushing" point 3, `docs/HANDOFF.md`): change `api_version` and the remote range only when the `/v1` protocol changes incompatibly; raise `schema_version` whenever the SQLite schema changes (a new table or column counts), and never bump these fields mechanically with each release. History: v2.87.11 raised it from 6 to 7 for `task_terminals.title_custom`; earlier column additions in v2.28.2, v2.70.0, v2.77.0 and v2.78.0 did not raise it, so the number is lower than the real count of schema changes. New endpoints are added as capabilities in `/v1/info` with the API version unchanged (for example `terminal-subagents` in v2.87.10, and `terminal-activity/stream` as `terminal:activity-stream`, which the page detects by its 404 on an older Engine and then polls).
+- `VERSION.json` fields: `app_version` (release, bumped by `scripts/release.js`), `api_version` (the `/v1` protocol; `/v1/info` also answers 1), `min_remote_api_version` / `max_remote_api_version` (the range this Client accepts from remote Engines), `schema_version` (the SQLite schema generation, now 7; the migrations in `db/index.js` still check for missing columns, and after them the number is stored in `PRAGMA user_version`; a code version whose number is lower than the stored one refuses to start, so forgetting to raise it lets an older version open newer data). Rule ("Version release rules" in part 13 below, `AGENTS.md` "Releases and pushing" point 3, `docs/HANDOFF.md`): change `api_version` and the remote range only when the `/v1` protocol changes incompatibly; raise `schema_version` whenever the SQLite schema changes (a new table or column counts), and never bump these fields mechanically with each release. History: v2.87.11 raised it from 6 to 7 for `task_terminals.title_custom`; earlier column additions in v2.28.2, v2.70.0, v2.77.0 and v2.78.0 did not raise it, so the number is lower than the real count of schema changes. New endpoints are added as capabilities in `/v1/info` with the API version unchanged (for example `terminal-subagents` in v2.87.10, and `terminal-activity/stream` as `terminal:activity-stream`, which the page detects by its 404 on an older Engine and then polls).
+
+### Data directory
+
+> Added in v2.87.14 (branch `feat/data-home-tagent`). Code: `lib/data-home.js` (the only place that knows data paths), `db/index.js`, `server.js`, `config.js` (`sessionSecret` getter). Tests: `test/data-home.test.js`, `test/uninstall.test.js`.
+
+Goal: the runtime data of a machine lives outside the install directory, so every installed version (a second checkout, a worktree, an upgrade) reads the same data and no data migration is needed between versions.
+
+- **Root**: `~/.tagent` (`os.homedir()` of the user the service runs as). `TAGENT_HOME` overrides it; the old name `T_AGENT_DATA_DIR` is an alias (the new name wins when both are set); a leading `~/` is expanded. `T_AGENT_DB_PATH` still overrides only the SQLite file.
+- **Layout** (the same as the old `<install>/data`, so an older version pointed at it with `T_AGENT_DATA_DIR` reads the same data): `db.sqlite` (+ `-wal`, `-shm`), `session-secret`, `backups/` (database backups before updates, `services/update-manager.js`), `bin/frpc` and `frpc.toml` (`routes/frp.js`), `server.lock`, `migrated-from.json`.
+- **Inventory of runtime data** (what moved and what stayed):
+
+| Data | Before | Now |
+| --- | --- | --- |
+| SQLite database (tasks, groups, terminals, chats, sessions, remote servers and their encrypted tokens, pairing, authenticator, access mode, translator / voice / OSS / agent-config settings, update state, file-sync state, apps, share tokens) | `<install>/data/db.sqlite` (+ WAL / SHM) | `~/.tagent/db.sqlite` |
+| Session secret (encrypts tokens, settings and the authenticator) | `SESSION_SECRET` in `<install>/.env` | `~/.tagent/session-secret`, seeded once from `.env` |
+| Update backups | `<install>/data/backups/` | `~/.tagent/backups/` (old ones are not copied) |
+| frpc binary and config | `<install>/data/bin/`, `<install>/data/frpc.toml` | `~/.tagent/bin/`, `~/.tagent/frpc.toml` |
+| Server lock, copy marker | none | `~/.tagent/server.lock`, `~/.tagent/migrated-from.json` |
+| `.env` (port, host, access mode, update source, `TASKS_BASE_DIR`, `TERMINAL_USER`) | `<install>/.env` | unchanged: it describes one install, written by `install.sh` |
+| Service logs | `<install>/logs/` (launchd), `~/.pm2/logs` (PM2) | unchanged |
+| Task folders | `TASKS_BASE_DIR`, default `~/tasks` | unchanged (user content) |
+| File-sync backups, agent-sync cache and overrides | `~/.t-agent/file-sync-backups/`, `~/.cache/t-agent-sync`, `~/.config/t-agent/overrides` | unchanged (already per user; the backup paths are stored in the database) |
+| Terminal history, update log, uploads | memory only; images go from the browser to OSS; chat images to a temporary folder | unchanged |
+
+- **One-time copy** (`migrateLegacyData`): only for the default root, and only when the root has no `db.sqlite` and `<install>/data/db.sqlite` exists. Steps: copy the old folder as it is to `<install>/data.backup-<time>` (through `…partial-<pid>`, retried when the database changed during the copy, which means a server still writes it); build `~/.tagent.partial-<time>-<pid>` from that backup without `-shm`, `wal_checkpoint(TRUNCATE)` and `quick_check` it, write `migrated-from.json` (source, backup, time, app and schema version); publish by renaming the folder, or, when the root already exists without a database, by moving the other entries and hard-linking `db.sqlite` last (fails when another process published first). Half-done folders of dead pids are removed on the next start. The old folder is never opened by SQLite or changed. `backups/` is not copied (often gigabytes). Any failure stops the start with `DATA_COPY_FAILED` and leaves no database in the root, so the next start tries again. If the root has a database with a marker, the root is used and the old folder is named in the log as ignored.
+- **Empty-home trap** (the root has a database but no `migrated-from.json`, the old `db.sqlite` exists, and no live server holds `server.lock`): both databases are checked for **user data** (`userDataIn`). User data = at least one row in `tasks`, `task_todos`, `task_terminals`, `agent_conversations`, `bookmarks`, `repo_cleanups`, `remote_servers`, `engine_access_tokens`, `engine_pairing_codes` or `remote_access_tokens`; a `task_groups` row other than the defaults `personal` / `doing` / `todo` / `done`; a bound authenticator (`client_auth.secret_cipher` set); a `users.work_dir`; a `system_state` key other than `update_state`, `single_user_id` and `file_sync_v1`; or a `file_sync_v1` with a master or files. Not user data (a start writes them by itself): default groups, the single user, sessions, PM2 apps, `engine_identity`, the unbound `client_auth` row, the access mode, update and empty file-sync state. The old database is read from a temporary copy (db + WAL), never opened in place.
+  - **1a** root without user data, old folder with user data: `db.sqlite`, `-wal`, `-shm` and `session-secret` of the root are moved to `<root>/empty-start-<time>/`, then the normal one-time copy runs (backup, marker). Logged.
+  - **1b** both with user data: nothing is guessed; the root is used, a framed warning names both folders with their counts and says how to choose (move the root away and restart to copy the old data, or set `TAGENT_HOME`), and the environment check "Storage → Data source" warns (`dataHomeCheck()`).
+  - Old folder without user data: the root is used, the old folder is logged as ignored.
+  - A separate rule for "a server started from a git checkout that is not the installed location" was not added: an install is itself a git checkout anywhere on disk, so there is no reliable way to tell them apart. 1a, 1b and the lock cover the cases: a dev server while the real one runs is refused by the lock, and an empty folder it made earlier is replaced by 1a.
+- **Session secret**: the stored tokens, settings and the authenticator are encrypted with it, so it must live with the data. First start: `SESSION_SECRET` from `.env`; without one, existing data keeps the old built-in default (so it stays readable) and a new root gets 32 random bytes. Afterwards the file wins and a different `.env` value is ignored with a warning.
+- **Permissions**: root 0700, `db.sqlite*`, `session-secret`, `frpc.toml`, `server.lock` 0600; looser modes are fixed on start with a warning.
+- **Single writer**: `server.js` takes `server.lock` before opening the database (`open(…, 'wx')` with `{pid, port, host, version, started_at, install_dir}`; the real port is written after `listen`). A live pid makes the second server exit with `T-Agent cannot start: Another T-Agent server is already using the data folder …`; a dead pid (or an unreadable file older than 5 seconds) is moved aside and taken over. The lock is removed on exit. Command-line scripts (`create-engine-token.js`, …) open the database without the lock (short writes; SQLite serialises them).
+- **Schema check**: `db/index.js` reads `PRAGMA user_version` before anything else. Higher than `VERSION.json` `schema_version` → close and refuse (`DATA_SCHEMA_NEWER`, "Upgrade T-Agent to the latest version"); lower → run the migrations and store the code's number. Adding `user_version` is not a table or column change, so `schema_version` stays 7. From now on, forgetting to raise `schema_version` for a schema change means older versions are not stopped from opening the newer data. Startup errors are console output only (no page is served), so they have no Chinese translation.
+- **Linux root and `TERMINAL_USER`**: the root is the home of the user the service runs as (root under PM2 as root → `/root/.tagent`; the systemd unit uses `User=` → that user's home). Terminals that drop to `TERMINAL_USER` do not get `SESSION_SECRET` (`lib/terminal-user.js`) and cannot read the 0700 folder; nothing in a terminal needs it.
+- **Tests and dev servers**: `paths()` throws `DATA_HOME_IN_TEST` when no override is set in a test process (`NODE_TEST_CONTEXT`, or the script is `*.test.js` / `test-*.cjs`), so no test can touch the real `~/.tagent`. Every test that opens the database sets `T_AGENT_DATA_DIR` (or `TAGENT_HOME`) to a temporary folder; `T_AGENT_LEGACY_DATA_DIR` exists only so tests can point the one-time copy at a temporary old folder. Dev servers in worktrees must set `TAGENT_HOME` too; otherwise the lock stops them while the real server runs (and, when no real server runs, they would use the real data).
+- **Install and uninstall**: `install.sh` no longer creates `<install>/data` and prints the data folder; `uninstall.sh` keeps the data folder (`TAGENT_HOME` / `T_AGENT_DATA_DIR` from `.env`, else `~/.tagent`), because every install shares it, and prints where it is and how to delete it; `--purge-data` deletes it after a second confirmation (`DELETE DATA`). Test: `test/uninstall.test.js` (stub service tools, temporary home).
 
 ### E. Data model and core concepts
 

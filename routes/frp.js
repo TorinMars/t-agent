@@ -1,11 +1,10 @@
 const express = require('express');
-const path = require('node:path');
 const clientOrigin = require('../middleware/client-origin');
 const { createFrpService, FrpError } = require('../services/frp');
 
 function defaultService() {
   const config = require('../config');
-  const dataDir = process.env.T_AGENT_DATA_DIR ? path.resolve(process.env.T_AGENT_DATA_DIR) : path.join(__dirname, '..', 'data');
+  const dataDir = require('../lib/data-home').prepare().frpDir;
   return createFrpService({ db: require('../db'), secret: config.sessionSecret, dataDir, localPort: config.port, localHost: config.host });
 }
 

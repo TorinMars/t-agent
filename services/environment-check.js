@@ -126,7 +126,7 @@ function createEnvironmentCheck(deps = {}) {
         },
         {
           id: 'tasks-dir', name: 'Task folder', run: async () => {
-            const dir = deps.tasksDir || env.TASKS_BASE_DIR || path.join(projectRoot, 'data', 'tasks');
+            const dir = deps.tasksDir || env.TASKS_BASE_DIR || path.join(os.homedir(), 'tasks');
             return writable(dir)
               ? done('ok', dir)
               : done('fail', `The folder ${dir} cannot be written`, { fix: 'Fix the permissions of that folder, or choose another working directory in Settings', impact: 'New tasks cannot be created' });
@@ -285,7 +285,7 @@ function createEnvironmentCheck(deps = {}) {
           id: 'secret', name: 'Session key (SESSION_SECRET)', run: async () => {
             const secret = deps.sessionSecret !== undefined ? deps.sessionSecret : require('../config').sessionSecret;
             if (!secret || secret === 'dev-secret-change-me' || secret.length < MIN_SECRET_LENGTH) {
-              return done('fail', `SESSION_SECRET is missing, the default one, or shorter than ${MIN_SECRET_LENGTH} characters`, { fix: `Set a random SESSION_SECRET of at least ${MIN_SECRET_LENGTH} characters in .env and restart the Client`, impact: 'The authenticator cannot be bound, and saved credentials are not protected' });
+              return done('fail', `SESSION_SECRET is missing, the default one, or shorter than ${MIN_SECRET_LENGTH} characters`, { fix: `Put a random SESSION_SECRET of at least ${MIN_SECRET_LENGTH} characters in the file session-secret in the data folder and restart the Client (saved tokens and the authenticator must then be set up again)`, impact: 'The authenticator cannot be bound, and saved credentials are not protected' });
             }
             return done('ok', 'Set and long enough');
           },
@@ -337,7 +337,7 @@ function createEnvironmentCheck(deps = {}) {
       id: 'storage', name: 'Storage', description: 'The database, terminal history and task files',
       checks: [{
         id: 'disk', name: 'Data folder', run: async () => {
-          const dir = deps.dataDir || env.T_AGENT_DATA_DIR || path.join(projectRoot, 'data');
+          const dir = deps.dataDir || require('../lib/data-home').paths({ env }).root;
           if (!writable(dir)) return done('fail', `The folder ${dir} cannot be written`, { fix: 'Fix the permissions of that folder', impact: 'The database and the terminal history cannot be saved' });
           let free;
           try {
@@ -350,6 +350,15 @@ function createEnvironmentCheck(deps = {}) {
           if (free < 0.1 * GB) return done('fail', `Only ${text} on the disk of the data folder`, { fix: 'Free some disk space', impact: 'The database and the terminal history cannot be saved' });
           if (free < GB) return done('warn', `Only ${text} on the disk of the data folder`, { fix: 'Free some disk space', impact: 'Saving may fail soon' });
           return done('ok', `${dir} (${text})`);
+        },
+      }, {
+        id: 'data-choice', name: 'Data source', run: async () => {
+          const check = (deps.dataHomeCheck || require('../lib/data-home').dataHomeCheck)();
+          if (check.status !== 'conflict') return done('ok', 'One data folder is in use');
+          return done('warn', `Two folders hold data: ${check.root} is used, ${check.legacy} is ignored`, {
+            fix: `To use the old data, stop the server, move ${check.root} away and start again (the old data is then copied in); or set TAGENT_HOME to the folder you want`,
+            impact: 'Tasks and connections of the ignored folder are not shown',
+          });
         },
       }],
     },

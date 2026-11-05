@@ -224,7 +224,8 @@ if [ "$PLATFORM" = "Linux" ]; then
   configure_linux_cxx20_compiler
 fi
 
-mkdir -p "$APP_DIR/logs" "$APP_DIR/data"
+# Runtime data lives in ~/.tagent of the user the service runs as (TAGENT_HOME in .env overrides it), not in the install directory.
+mkdir -p "$APP_DIR/logs"
 
 update_env_value() {
   local key="$1"
@@ -507,6 +508,8 @@ process.stdout.write(`http://${host}:${port}`);
 NODE
 )"
 printf '\n%s installed.\n' "$MODE"
+DATA_HINT="$(sed -n 's/^TAGENT_HOME=//p; s/^T_AGENT_DATA_DIR=//p' "$ENV_FILE" | tail -n 1)"
+printf 'Data folder: %s (database, session secret, backups; copied once from %s/data on the first start when that exists).\n' "${DATA_HINT:-~/.tagent of the user the service runs as}" "$APP_DIR"
 case "${ACCESS_MODE_ARG:-}" in
   local) printf 'Access mode: local access only, no verification. You can switch to authenticator + external access later under Settings → Access mode.\n' ;;
   remote) printf 'Access mode: authenticator + external access. Bind the authenticator the first time you open the page; you can switch to local access only later under Settings → Access mode.\n' ;;

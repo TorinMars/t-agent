@@ -181,6 +181,11 @@ test('the tunnel program matters only when the tunnel is set up; storage warns b
   assert.equal(checkOf(await report(free(50)), 'storage', 'disk').status, 'fail');
   assert.equal(checkOf(await report(healthy({ dataDir: '/proc/not/writable' })), 'storage', 'disk').status, 'fail');
   assert.equal(checkOf(await report(healthy({ statfs: () => { throw new Error('no statfs'); } })), 'storage', 'disk').status, 'ok', 'a disk that cannot be measured is not a problem');
+  assert.equal(checkOf(await report(healthy({ dataHomeCheck: () => ({ status: 'copied' }) })), 'storage', 'data-choice').status, 'ok');
+  const conflict = checkOf(await report(healthy({ dataHomeCheck: () => ({ status: 'conflict', root: '/h/.tagent', legacy: '/app/data' }) })), 'storage', 'data-choice');
+  assert.equal(conflict.status, 'warn');
+  assert.match(conflict.detail, /\/h\/\.tagent is used, \/app\/data is ignored/);
+  assert.match(conflict.fix, /move \/h\/\.tagent away/);
 });
 
 test('a check that throws or hangs is one failed check, never a failed report, and checking changes nothing on the machine', async () => {

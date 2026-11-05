@@ -894,6 +894,7 @@
     el.addEventListener('focusout', () => noScreenKeyboard(term)); // the keyboard closed: the next terminal tap must not reopen it
     const s = { term, fit, el, ws: null, timer: null, attempts: 0, paused: false, disposed: false, task, terminalId, source };
     session = s;
+    attachFileLinks(s);
     // A pasted image (long-press paste in the xterm textarea) is uploaded like a picked one; plain text keeps xterm's own paste.
     el.addEventListener('paste', event => {
       const images = [...(event.clipboardData?.items || [])].filter(entry => entry.kind === 'file' && entry.type.startsWith('image/'));
@@ -1325,6 +1326,7 @@
     longPress = { id: event.pointerId, x: event.clientX, y: event.clientY, timer: setTimeout(() => {
       longPress = null;
       longPressDone = true;
+      cancelPendingLink();
       if (session && !session.disposed && ui.get().copyText === null) openCopy();
     }, LONG_PRESS_MS) };
   });
@@ -1407,6 +1409,7 @@
     const chain = now - tapChain.at < MULTI_TAP_MS && Math.hypot(event.clientX - tapChain.x, event.clientY - tapChain.y) < MULTI_TAP_SLOP ? tapChain.count + 1 : 1;
     tapChain = { count: chain, at: now, x: event.clientX, y: event.clientY };
     hookSelection(s);
+    if (chain > 1) cancelPendingLink(); // a double or triple tap on a file link selects; it does not open the file
     if (chain === 1) { if (s.term.hasSelection()) s.term.clearSelection(); ui.set({ selectionBar: false }); return; } // a tap elsewhere
     if (chain > 3) { tapChain.count = 1; return; }
     if (s.term.modes.mouseTrackingMode !== 'none') return; // the program owns the taps
@@ -1679,25 +1682,57 @@
   // keyboard closes; the terminal keeps its size, so no resize reaches the PTY.
   let designSeq = 0;
   const taskDir = item => (item && (item.work_dir || (item.md_path ? item.md_path.replace(/\/[^/]*$/, '') : ''))) || '';
-  ui.actions.openDesign = async () => {
+  // Opens one file of the task's working directory in the sheet: DESIGN.md from the row 2 button, any file from a terminal link (`link`: true, with the
+  // line the link named). `filePath` is relative to the working directory. A folder is not listed on the phone; the sheet says so.
+  async function openFileSheet(filePath, { link = false, line = null, directory = false } = {}) {
     if (document.activeElement && document.activeElement !== document.body && typeof document.activeElement.blur === 'function') document.activeElement.blur();
     const seq = ++designSeq;
     const current = task;
     const from = source;
-    if (!current) { ui.set({ design: { open: true, status: 'no-task' } }); return; }
+    const base = { open: true, path: filePath, link, line };
+    if (!current) { ui.set({ design: { ...base, status: 'no-task' } }); return; }
     const dir = taskDir(current);
-    ui.set({ design: { open: true, status: 'loading', dir } });
+    if (directory) { ui.set({ design: { ...base, status: 'folder', dir } }); return; }
+    ui.set({ design: { ...base, status: 'loading', dir } });
+    const files = `${from.tasksBase}/${current.id}/files`;
     try {
-      const file = await api('GET', `${from.tasksBase}/${current.id}/files/content?path=DESIGN.md`);
+      const file = await api('GET', `${files}/content?path=${encodeURIComponent(filePath)}`);
       if (seq !== designSeq) return;
-      ui.set({ design: { open: true, status: 'ready', dir, content: String((file && file.content) || '') } });
+      ui.set({ design: { ...base, status: 'ready', dir, content: String((file && file.content) || '') } });
     } catch (error) {
       if (seq !== designSeq) return;
-      const code = error.message;
-      const status = code === 'FILE_NOT_FOUND' ? 'missing' : code === 'TASK_ROOT_UNAVAILABLE' ? 'no-dir' : 'error';
-      ui.set({ design: { open: true, status, dir, message: code } });
+      let code = error.message;
+      // A folder named without a trailing slash: the content read refuses it; a listing tells a folder from a binary file.
+      if (link && code === 'FILE_UNSUPPORTED') {
+        try { await api('GET', `${files}?path=${encodeURIComponent(filePath)}&offset=0`); code = 'FOLDER'; } catch { /* not a folder */ }
+        if (seq !== designSeq) return;
+      }
+      const status = code === 'FOLDER' ? 'folder' : code === 'FILE_NOT_FOUND' ? 'missing' : code === 'TASK_ROOT_UNAVAILABLE' ? 'no-dir' : 'error';
+      ui.set({ design: { ...base, status, dir, message: code } });
     }
-  };
+  }
+  ui.actions.openDesign = () => openFileSheet('DESIGN.md');
+
+  // ── File links in the terminal (public/js/terminal-file-links.js): a tap on a path inside the working directory opens it in the sheet above ──
+  // The tap waits out the double-tap time first, so a double or triple tap on a path still selects the word or the line and opens nothing. A long press
+  // (the copy view), an open copy view or a shown selection bar also open nothing. Nothing is read from the server until the tap.
+  let pendingLink = 0;
+  function cancelPendingLink() { clearTimeout(pendingLink); pendingLink = 0; }
+  function attachFileLinks(s) {
+    if (typeof TerminalFileLinks === 'undefined') return;
+    TerminalFileLinks.attach(s.term, {
+      root: () => taskDir(s.task) || null,
+      activate: link => {
+        cancelPendingLink();
+        if (session !== s || s.disposed || longPressDone || ui.get().copyText !== null || ui.get().selectionBar) return;
+        pendingLink = setTimeout(() => {
+          pendingLink = 0;
+          if (session !== s || s.disposed || longPressDone || ui.get().copyText !== null) return;
+          void openFileSheet(link.relative || '.', { link: true, line: link.line, directory: link.directory || !link.relative });
+        }, MULTI_TAP_MS);
+      },
+    });
+  }
   ui.actions.closeDesign = () => { designSeq += 1; ui.set(state => ({ design: state.design ? { ...state.design, open: false } : null })); };
 
   async function upload(target, file) {

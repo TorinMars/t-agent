@@ -66,6 +66,37 @@ const ERRORS = {
   FILE_UNSUPPORTED: 'DESIGN.md is not a plain text file',
   FILE_FORBIDDEN: 'DESIGN.md cannot be read',
 };
+// The same for a file opened from a terminal link.
+const FILE_ERRORS = {
+  FILE_TOO_LARGE: 'The file is larger than 5 MB',
+  FILE_UNSUPPORTED: 'This is not a plain text file',
+  FILE_FORBIDDEN: 'The file cannot be read',
+};
+const MARKDOWN_FILE = /\.(md|markdown|mdx)$/i;
+
+// A file that is not Markdown is shown as plain text with line numbers (the phone has no code highlighter); the line a link named is marked and
+// scrolled to the middle of the sheet. The text goes in as text nodes, never as HTML.
+function renderText(node, source, line) {
+  const pre = document.createElement('pre');
+  pre.className = 'h5-file-text';
+  pre.setAttribute('translate', 'no');
+  const lines = source.split(/\r\n|\r|\n/);
+  if (lines.length > 1 && lines[lines.length - 1] === '') lines.pop();
+  const width = String(lines.length).length;
+  let target = null;
+  lines.forEach((text, index) => {
+    const row = document.createElement('span');
+    row.className = 'h5-file-line';
+    row.dataset.line = String(index + 1);
+    row.style.setProperty('--h5-line-digits', String(width));
+    row.textContent = `${text}\n`;
+    if (line && index + 1 === line) { row.classList.add('is-target'); target = row; }
+    pre.append(row);
+  });
+  node.replaceChildren(pre);
+  node.scrollTop = 0;
+  if (target) node.scrollTop = Math.max(0, target.getBoundingClientRect().top - node.getBoundingClientRect().top - node.clientHeight / 2);
+}
 
 // The design document of the task, in a sheet that slides up from the bottom (h5.js `openDesign` reads `DESIGN.md` from the task's working directory
 // through the task file API and writes `state.design`). Closes with the close button, a tap on the dimmed page, Escape or a swipe down.
@@ -77,6 +108,10 @@ export function DesignSheet({ state, ui }) {
   const [node, setNode] = useState(null); // the content box; it is mounted again each time the sheet opens, so the document is drawn again
   const [render, setRender] = useState({ status: 'idle' }); // the rendering of a loaded document: idle | rendering | done | failed
   const content = design && design.status === 'ready' ? design.content : null;
+  const filePathInDir = (design && design.path) || 'DESIGN.md';
+  const fromLink = Boolean(design && design.link);
+  const markdown = !fromLink || MARKDOWN_FILE.test(filePathInDir);
+  const line = (design && design.line) || null;
 
   useEffect(() => {
     if (content === null || !node) return undefined;
@@ -84,6 +119,7 @@ export function DesignSheet({ state, ui }) {
     setRender({ status: 'rendering' });
     (async () => {
       try {
+        if (!markdown) { renderText(node, content, line); setRender({ status: 'done' }); return; }
         await Promise.all([loadOnce(MARKED_SRC), loadOnce(MARKDOWN_VIEW_SRC), loadOnce(MARKDOWN_CSS, true)]);
         if (cancelled) return;
         node.innerHTML = renderMarkdown(content);
@@ -100,12 +136,20 @@ export function DesignSheet({ state, ui }) {
       }
     })();
     return () => { cancelled = true; };
-  }, [content, node]);
+  }, [content, node, markdown, line]);
 
   const close = () => ui.actions.closeDesign();
   const dir = design && design.dir;
   let note = null;
-  if (design) {
+  const name = filePathInDir.replace(/\/+$/, '').split('/').pop() || filePathInDir;
+  if (design && fromLink) {
+    if (design.status === 'no-task') note = t('Choose a task first');
+    else if (design.status === 'no-dir') note = t('This task has no working directory');
+    else if (design.status === 'folder') note = t('Folders cannot be shown on the phone');
+    else if (design.status === 'missing') note = t(`Not found in the working directory: ${filePathInDir}`);
+    else if (design.status === 'error') note = t(FILE_ERRORS[design.message] || 'Could not open the file');
+    else if (design.status === 'ready' && render.status === 'failed') note = t('Could not show the file');
+  } else if (design) {
     if (design.status === 'no-task') note = t('Choose a task first');
     else if (design.status === 'no-dir') note = t('This task has no working directory');
     else if (design.status === 'missing') note = dir ? t(`No DESIGN.md in ${dir}`) : t('No DESIGN.md in the working directory of this task');
@@ -113,7 +157,7 @@ export function DesignSheet({ state, ui }) {
     else if (design.status === 'ready' && render.status === 'failed') note = t('Could not show DESIGN.md');
   }
   const loading = design && (design.status === 'loading' || (design.status === 'ready' && render.status === 'rendering'));
-  const filePath = dir ? `${dir.replace(/\/+$/, '')}/DESIGN.md` : 'DESIGN.md';
+  const filePath = dir ? `${dir.replace(/\/+$/, '')}/${filePathInDir}` : filePathInDir;
 
   return (
     <SwipeableDrawer
@@ -127,7 +171,7 @@ export function DesignSheet({ state, ui }) {
       </Box>
       <Box sx={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 1, pl: 2, pr: 1, pb: 1, borderBottom: 1, borderColor: 'divider' }}>
         <Box sx={{ flex: '1 1 auto', minWidth: 0 }}>
-          <Typography id="h5-design-title" variant="subtitle1" component="h2" sx={{ fontWeight: 600, lineHeight: 1.3 }}>{t('Design document')}</Typography>
+          <Typography id="h5-design-title" variant="subtitle1" component="h2" sx={{ fontWeight: 600, lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} translate={fromLink ? 'no' : undefined}>{fromLink ? name : t('Design document')}</Typography>
           <Typography id="h5-design-path" variant="caption" component="div" color="text.secondary" translate="no" title={filePath}
             sx={{ fontFamily: 'ui-monospace, Menlo, monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', direction: 'rtl', textAlign: 'left' }}
           ><bdi>{filePath}</bdi></Typography>

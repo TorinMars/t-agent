@@ -469,3 +469,8 @@
     animation: none;
   }
 }
+
+/* The line a terminal link pointed at ("src/app.js:42"), marked in the editor. */
+.file-panel-line-mark {
+  background: color-mix(in srgb, var(--accent, #0969da) 22%, transparent);
+}

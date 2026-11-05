@@ -1374,6 +1374,14 @@ I18n.add({
   "DESIGN.md cannot be read": "无法读取 DESIGN.md",
   "Could not open DESIGN.md": "无法打开 DESIGN.md",
   "Could not show DESIGN.md": "无法显示 DESIGN.md",
+  // Terminal file links (phone sheet and desktop file panel)
+  "The file is larger than 5 MB": "文件超过 5 MB",
+  "This is not a plain text file": "这不是纯文本文件",
+  "The file cannot be read": "无法读取该文件",
+  "Could not open the file": "无法打开该文件",
+  "Could not show the file": "无法显示该文件",
+  "Folders cannot be shown on the phone": "手机端无法显示文件夹",
+  "The file or folder does not exist.": "文件或文件夹不存在。",
   // Next running or pending session (phone, row 2)
   "Next running or pending session": "下一个运行中或待验收的会话",
   "No running or pending sessions": "没有运行中或待验收的会话",

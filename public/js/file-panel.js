@@ -94,6 +94,7 @@
       FILE_CONFLICT: 'The file was modified elsewhere. Reload it or confirm a forced save.',
       FILE_EXISTS: 'A file or folder with this name already exists.',
       ROOT_PROTECTED: 'The working directory root cannot be modified.',
+      FILE_NOT_FOUND: 'The file or folder does not exist.',
     };
     return messages[code] || `Request failed (${status || 'unknown error'})`;
   }
@@ -973,6 +974,57 @@
     status.classList.toggle('is-error', isError);
   }
 
+  // Is `filePath` (relative to the working directory) a file or a folder? Listing it answers both in one read-only request: a folder lists, a file
+  // answers FILE_NOT_DIRECTORY; anything else (missing, symbolic link, outside the root) throws the API error. Used before a terminal link opens the panel.
+  async function probe(baseUrl, filePath) {
+    const params = new URLSearchParams({ path: filePath, offset: '0', hidden: 'true' });
+    try {
+      await requestJson(`${baseUrl.replace(/\/$/, '')}?${params}`);
+      return 'directory';
+    } catch (error) {
+      if (error.code === 'FILE_NOT_DIRECTORY') return 'file';
+      throw error;
+    }
+  }
+
+  // Shows `filePath` in the open panel: the folders above it are expanded and the row selected; a file is opened in a tab and, with a line, the editor
+  // scrolls to that line and marks it. Hidden files are shown when the path goes through a hidden folder.
+  async function reveal(filePath, { type = 'file', line = null, column = null } = {}) {
+    if (!state) return false;
+    const current = state;
+    const parts = filePath ? filePath.split('/') : [];
+    if (!current.showHidden && parts.some(part => part.startsWith('.'))) {
+      await toggleHidden();
+      if (!stateIsCurrent(current)) return false;
+    }
+    const folders = type === 'directory' ? parts : parts.slice(0, -1);
+    for (let index = 1; index <= folders.length; index += 1) {
+      const folder = folders.slice(0, index).join('/');
+      const known = current.directories.get(folder);
+      if (known) known.expanded = true;
+      else {
+        try { await loadDirectory(folder, true); } catch (error) { if (stateIsCurrent(current)) showOperationError(error); return false; }
+        if (!stateIsCurrent(current)) return false;
+      }
+    }
+    if (filePath) selectPath(filePath); else renderTree();
+    current.panel.querySelector(`.file-tree-row[data-path="${CSS.escape(filePath)}"]`)?.scrollIntoView({ block: 'nearest' });
+    if (type !== 'file') return true;
+    await openFile(filePath);
+    const tab = current.tabs.get(filePath);
+    if (!stateIsCurrent(current) || !tab || current.activePath !== filePath || !current.editor) return false;
+    if (line) {
+      const lineNumber = Math.min(line, tab.model.getLineCount());
+      const columnNumber = Math.min(column || 1, tab.model.getLineMaxColumn(lineNumber));
+      current.editor.setPosition({ lineNumber, column: columnNumber });
+      current.editor.revealLineInCenter(lineNumber);
+      // A new editor gets its final size a frame later (ensureEditor lays it out then); centre the line again after that.
+      requestAnimationFrame(() => { if (stateIsCurrent(current) && current.activePath === filePath) current.editor?.revealLineInCenter(lineNumber); });
+      tab.lineMark = tab.model.deltaDecorations(tab.lineMark || [], [{ range: new monaco.Range(lineNumber, 1, lineNumber, 1), options: { isWholeLine: true, className: 'file-panel-line-mark' } }]);
+    }
+    return true;
+  }
+
   window.addEventListener('beforeunload', event => {
     if (!state || ![...state.tabs.values()].some(tab => tab.dirty)) return;
     event.preventDefault();
@@ -983,6 +1035,8 @@
     open,
     close,
     beforeContextChange,
+    probe,
+    reveal,
     isOpen() { return Boolean(state); },
   });
 })();

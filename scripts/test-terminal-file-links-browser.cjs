@@ -24,6 +24,11 @@ fs.mkdirSync(path.join(task.work_dir, 'docs'));
 fs.writeFileSync(path.join(task.work_dir, 'src/app.js'), Array.from({ length: 120 }, (_, i) => `const line${i + 1} = ${i + 1};`).join('\n') + '\n');
 fs.writeFileSync(path.join(task.work_dir, 'docs/设计.md'), '# Design\n');
 fs.writeFileSync(path.join(scratch, 'outside.md'), '# Outside\n');
+// The lines the shell prints. They are read from a file with a short command: typing the long paths key by key into a real
+// interactive shell on a busy machine sometimes damaged them (a space inside the path), which broke the links under test.
+fs.writeFileSync(path.join(scratch, 'lines.txt'), ['L1 src/app.js:42 and docs/设计.md', `L2 ${path.join(task.work_dir, 'src')}/`,
+  `L4 ${path.join(scratch, 'outside.md')}`, 'L5 ../outside.md', 'L3 missing/nothing.js https://example.com/x/y.js', ''].join('\n'));
+process.env.TFL_LINES = path.join(scratch, 'lines.txt'); // the terminal shell gets this environment
 const app = express(); app.use(express.json({ limit: '32mb' }));
 app.use('/api/tasks', require('../routes/tasks'));
 app.get('/js/app.js', (req, res) => res.type('js').send(fs.readFileSync(path.join(root, 'public/js/app.js'), 'utf8').split('// app.js loads before the other feature scripts')[0]));
@@ -47,10 +52,12 @@ let server; let browser; let wss;
     await page.waitForFunction(() => document.querySelector('#xterm-container .xterm-screen')?.clientHeight > 10);
     const input = page.locator('#xterm-container .xterm-helper-textarea');
     await input.focus();
-    await page.keyboard.type(`clear; printf 'L1 src/app.js:42 and docs/%s.md\\nL2 ${path.join(task.work_dir, 'src')}/\\nL4 ${path.join(scratch, 'outside.md')}\\nL5 ../outside.md\\nL3 missing/nothing.js https://example.com/x/y.js\\n' '设计'`);
+    await page.keyboard.type('clear; cat "$TFL_LINES"');
     await page.keyboard.press('Enter');
     await page.waitForFunction(() => { const b = window.__testTerms[0]?.buffer.active; return b && Array.from({ length: b.length }, (_, i) => b.getLine(i)?.translateToString()).some(line => line?.startsWith('L3 ')); }, undefined, { timeout: 90000 });
     assert.equal(fileRequests.length, 0, 'printing paths sends nothing to the file API');
+    const printed = await page.evaluate(() => { const b = window.__testTerms[0].buffer.active; return Array.from({ length: b.length }, (_, i) => b.getLine(i)?.translateToString(true)); });
+    for (const line of fs.readFileSync(process.env.TFL_LINES, 'utf8').split('\n').filter(Boolean)) assert.ok(printed.includes(line), `the shell printed the fixture line unchanged: ${line}`);
 
     // The pixel centre of `text` on the row that starts with `prefix` (cells counted with xterm, so the wide CJK characters are right).
     const pointOf = (prefix, text) => page.evaluate(({ prefix, text }) => {

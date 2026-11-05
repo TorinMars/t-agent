@@ -144,6 +144,98 @@ test('compose keeps the text that was in the box before recording', () => {
   assert.equal(VoiceInput.compose('Fix ', 'the test. ', 'then run'), 'Fix the test. then run');
 });
 
+test('follow keeps the recognized segment in place while the person types around it', () => {
+  const { follow } = VoiceInput;
+  // "Fix |" + segment "the test" + " now": typing before the segment moves it, after it changes nothing.
+  assert.deepEqual(follow('Fix the test now', 'Please fix the test now', 4, 8), { start: 11, length: 8, inside: false }, 'an edit before it moves it');
+  assert.deepEqual(follow('Fix the test now', 'Fix the test now!', 4, 8), { start: 4, length: 8, inside: false }, 'an edit after it changes nothing');
+  assert.deepEqual(follow('Fix the test', 'Fix the test.', 4, 8), { start: 4, length: 8, inside: false }, 'typing right after it');
+  assert.deepEqual(follow('ab', 'axb', 1, 0), { start: 2, length: 0, inside: false }, 'typing at the caret of an empty segment goes before the speech');
+  assert.deepEqual(follow('Fix the test now', 'Fix the best now', 4, 8), { start: 12, length: 0, inside: true }, 'an edit inside it makes it the person\'s text');
+  assert.deepEqual(follow('same', 'same', 1, 2), { start: 1, length: 2, inside: false });
+});
+
+test('Text typed while the microphone records is kept; the speech goes in at the caret', async () => {
+  const vm = require('vm');
+  const fs = require('fs');
+  const path = require('path');
+  const source = fs.readFileSync(path.join(__dirname, '../public/js/voice-input.js'), 'utf8');
+  const handlers = {};
+  const button = { addEventListener: (type, fn) => { handlers[type] = fn; }, classList: { toggle() {} }, setAttribute() {} };
+  const textarea = { value: '', selectionStart: 0, selectionEnd: 0, dispatchEvent() {}, focus() {},
+    setSelectionRange(start, end) { this.selectionStart = start; this.selectionEnd = end; } };
+  class FakeContext {
+    constructor() { this.sampleRate = 48000; this.state = 'running'; this.destination = {}; this.audioWorklet = { addModule: async () => {} }; }
+    resume() { return Promise.resolve(); }
+    close() { this.state = 'closed'; return Promise.resolve(); }
+    createGain() { return { gain: {}, connect() {}, disconnect() {} }; }
+    createMediaStreamSource() { return { connect() {} }; }
+  }
+  const sandbox = {
+    document: { getElementById: () => null, activeElement: textarea },
+    navigator: { mediaDevices: { getUserMedia: async () => ({ getTracks: () => [] }) } },
+    fetch: async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ url: 'wss://speech.example/x', token: 't', model: 'm', language: 'zh' }) }),
+    WebSocket: FakeSocket,
+    AudioWorkletNode: class { constructor() { this.port = {}; } connect() {} disconnect() {} },
+    Blob: class {}, URL: { createObjectURL: () => 'blob:x' }, Event: class {},
+    crypto: require('crypto').webcrypto, console, setTimeout, clearTimeout,
+    notify() {},
+  };
+  sandbox.window = sandbox;
+  sandbox.AudioContext = FakeContext;
+  vm.runInNewContext(source, sandbox);
+  const controller = sandbox.VoiceInput.attach({ textarea, button });
+  const ticks = async () => { for (let i = 0; i < 10; i += 1) await new Promise(resolve => setImmediate(resolve)); };
+  const type = (text, at = textarea.selectionEnd) => { // what a keyboard does: insert at the caret, caret after it
+    textarea.value = textarea.value.slice(0, at) + text + textarea.value.slice(at);
+    textarea.selectionStart = textarea.selectionEnd = at + text.length;
+  };
+  const say = (socket, text, id, final) => socket.receive({ ...header('result-generated'), payload: { output: { sentence: { text, sentence_id: id, sentence_end: final } } } });
+
+  // The box holds "Fix  please" with the caret after "Fix ": the speech goes there, not at the end.
+  textarea.value = 'Fix  please';
+  textarea.selectionStart = textarea.selectionEnd = 4;
+  void controller.start();
+  await ticks();
+  const socket = FakeSocket.last;
+  socket.onopen();
+  socket.receive(header('task-started'));
+  say(socket, 'the', 1, false);
+  assert.equal(textarea.value, 'Fix the please');
+  // The person types at the end while still speaking: the next update keeps it.
+  type('!', textarea.value.length);
+  say(socket, 'the test', 1, true);
+  assert.equal(textarea.value, 'Fix the test please!', 'typed text survives the update');
+  assert.equal(textarea.selectionEnd, textarea.value.length, 'the caret stays after what was typed');
+  // Typing before the segment moves it.
+  type('Now: ', 0);
+  say(socket, ' and run', 2, false);
+  assert.equal(textarea.value, 'Now: Fix the test and run please!');
+  assert.equal(textarea.selectionEnd, 5, 'the caret stays where the person types');
+  // An edit inside the segment: the text so far is the person's; the rest of that sentence is not written twice.
+  textarea.value = textarea.value.replace('test', 'TEST');
+  textarea.selectionStart = textarea.selectionEnd = textarea.value.indexOf('TEST') + 4;
+  say(socket, ' and run it', 2, true);
+  assert.equal(textarea.value, 'Now: Fix the TEST and run it please!');
+  controller.stop();
+  socket.receive(header('task-finished'));
+  await ticks();
+  assert.equal(textarea.value, 'Now: Fix the TEST and run it please!');
+
+  // Cancel throws away only the speech of that recording.
+  textarea.value = 'keep';
+  textarea.selectionStart = textarea.selectionEnd = 4;
+  void controller.start();
+  await ticks();
+  const second = FakeSocket.last;
+  second.onopen();
+  second.receive(header('task-started'));
+  say(second, ' spoken', 1, false);
+  type(' typed', textarea.value.length);
+  controller.cancel();
+  assert.equal(textarea.value, 'keep typed', 'cancel removes the speech and keeps the typing');
+});
+
 class FakeSocket {
   constructor(url) { this.url = url; this.sent = []; FakeSocket.last = this; }
   send(data) { this.sent.push(data); }

@@ -2,6 +2,8 @@
 
 > Date: 2026-07-15
 
+> Start here: "System architecture and functionality" (after the release notes below) is the current map of the system and the agreed target design (one MUI page for PC and phone).
+
 > Unreleased: Phone row 2 has a "Next running or pending session" button (`#h5-cycle`, Ant Design `swap` icon): each tap goes to the next terminal session (plain terminal or Claude / Codex session terminal) that is running, has a running Claude sub-agent, or is pending acceptance, in task sheet order, wrapping around. New read-only endpoint `GET /api/tasks/terminal-subagents` (Engine `/v1/terminal-subagents`, proxy `/api/remote-servers/:id/terminal-subagents`). See "Next running or pending session" under the phone page. Regression: `scripts/test-h5-cycle-browser.cjs`, `test/agent-sessions.test.js`, `test/task-parity.test.js`.
 > Unreleased: The function keys of the phone bottom bar (row 1) use clear faces (library icons for the arrows and Enter, self-drawn icons for Backspace, Tab and Shift, text for the rest), and the translate-and-send button is now the send button with a small "Aa" mark. Full icon information is in "Phone UI icons" below. Regression: `scripts/test-h5-browser.cjs`.
 > Unreleased: The icons of the phone bottom bar come from one set, the "Ant Design Official Icon Library" collection (Chinese collection title translated) on iconfont.cn (https://www.iconfont.cn/collections/detail?cid=9402; the official Ant Design icons, outlined style, 1024 grid, author Ant Design / ant-design/ant-design-icons, MIT licence; the licence is stated by the Ant Design project, the collection page itself shows no licence field, to be confirmed by the owner). Paths were copied from the public SVG data of the collection (no login, no cookies) into `scripts/h5-shell/Icons.jsx` as inline SVG with `currentColor` (24px, no runtime request). Mapping: terminal keyboard = `code library` (4765970), draft keyboard = `edit-square` (4765957), upload image = `image` (4766917), saved commands = `unordered list` (4767060), voice = `audio` (5756281), send = `send` (9230696), translate and send = `translate` (8094821), Paste text menu item = `snippets` (4766482). The set has no keyboard icon, so the two keyboard keys use the closest same-style ones (a terminal prompt box and a pencil on a square). The send button stays a white round button; only its glyph changed. Rebuilt `public/js/h5-shell.js`. Regression: `scripts/test-h5-browser.cjs`.
@@ -114,6 +116,304 @@
 > v2.7.2 Reading experience: local documents, remote read-only documents and the share page uniformly use an isolated Markdown style and locally bundled Highlight.js syntax highlighting. Code blocks keep the original whitespace and offer a language label and a copy button; unknown languages are shown as plain text, and Mermaid keeps using diagram rendering. The terminal and the Monaco editor are unaffected by this style.
 
 > Current implementation note (v2.7.1): this document keeps the early design record; the current architecture is split into Client and Engine. The Client runs as a single-user application and builds a local user context automatically at start-up, with no username, password, login page or logout entry; on upgrade the existing user in the database and its task ownership are kept first. The Client listens on `127.0.0.1` only by default. A standalone Engine always listens on `0.0.0.0`, serves the remote API and terminal connections to the Client through a Bearer Token, allows a Client holding an owner Token to trigger a controlled self-update, and provides control endpoints to close a terminal and to rebuild one from the task working directory. A task can use any absolute working directory on the Engine server, and the design doc defaults to `DESIGN.md` in the working directory. A standalone Engine supports Docker image deployment with a pinned Node/C++ toolchain, with the host updating the image, and persists data, tasks and the independent Codex configuration under `~/.torin/t-agent-data`; the Engine image includes the Codex CLI. The installed-app mode uses a dynamic viewport and flex height constraints and recomputes the terminal rows and columns automatically when the terminal container changes size, so the bottom input row is not clipped by the window edge. The complete current architecture and deployment are described in `README.md` and `docs/ARCHITECTURE.md`.
+
+---
+
+## System architecture and functionality
+
+> Written 2026-11-05 against v2.87.11. This part is the map of the whole system: what exists today, the target design the user decided on 2026-11-05 (one Material UI page for PC and phone), and the rules that apply everywhere. The older sections below it are the detailed record (many of them historical); where this part and an older section disagree, this part describes the current code, and the "Notes on older sections" list at the end names the known differences.
+
+Contents of this part:
+
+- A. Purpose and users
+- B. Deployment topology
+- C. Server modules
+- D. Data storage
+- E. Data model and core concepts
+- F. Client UI today (v2.87.11, two pages)
+- G. Target: one MUI page for PC and phone (agreed design)
+- H. Cross-cutting rules
+- I. Notes on older sections
+
+### A. Purpose and users
+
+T-Agent is a self-hosted, single-user web workbench for running and watching coding agents and terminals on one or more machines. One person installs a **Client** on each machine they work on. In a browser on a PC, or from the iPhone Home Screen app, they open tasks (a task is a working directory), start shells and Claude Code / Codex sessions in real PTYs, chat with Claude / Codex through the agent chat view, see which terminals are running or finished, and type into terminals with helpers (Chinese-to-English translate-and-send, voice input, image upload). Every Client also contains an **Engine**, so one Client can show and drive the tasks and terminals of other machines (see `README.md` "Project architecture", `docs/ARCHITECTURE.md`).
+
+### B. Deployment topology
+
+```mermaid
+flowchart LR
+    subgraph Devices
+      PC[PC browser / installed PWA]
+      Phone[iPhone Home Screen app /h5]
+    end
+    subgraph ClientA[Client on this machine - server.js, PM2 process t-agent]
+      Gates[access gate, login gate, session cookie]
+      API["/api/* browser API"]
+      WS["/terminal/ws WebSocket"]
+      Proxy["/api/remote-servers/:id/* proxy"]
+      LocalEngine["built-in Engine: services/*, routes/*"]
+      V1["/v1 Engine API (Bearer token)"]
+      DB[(data/db.sqlite)]
+    end
+    subgraph Remote[Remote machine: another Client]
+      RV1["/v1 Engine API"]
+      RPTY[PTYs, agent chats, files]
+      RDB[(its own db.sqlite)]
+    end
+    PC -->|HTTPS or HTTP| Gates
+    Phone -->|HTTPS| Gates
+    Gates --> API
+    Gates --> WS
+    API --> LocalEngine
+    WS --> LocalEngine
+    API --> Proxy
+    Proxy -->|"HTTPS + tae_ token, WS ticket tat_"| RV1
+    RV1 --> RPTY
+    RV1 --> RDB
+    LocalEngine --> DB
+    LocalEngine --> PTY["node-pty shells: bash/zsh, claude, codex"]
+    LocalEngine --> Chat["agent chat: Claude Agent SDK, codex app-server"]
+    LocalEngine --> FS["task working directories"]
+    LocalEngine -.->|"VERSION.json on main"| GitHub[(GitHub)]
+    V1 -.->|another Client may connect here| LocalEngine
+```
+
+- **Client** (`server.js`): one Express + `ws` process. It serves the pages, the browser API under `/api`, the browser terminal WebSocket `/terminal/ws`, the hook endpoint `POST /hooks/terminal-activity`, the share pages `/share/:token`, and the Engine API `/v1`. The browser only ever talks to its own Client.
+- **Engine**: the part that owns tasks, documents, terminals and chats. The local Engine is the same process (`routes/tasks.js`, `routes/terminal.js`, `services/*`). A remote Engine is another Client reached over `/v1` (`routes/engine-v1.js`; contract in `docs/ENGINE_API.md`). There is no standalone Engine service any more (removed in v2.28, see the v2.28.2 note).
+- **Remote proxy**: `routes/remote-servers.js` mounts `/api/remote-servers/:id/...`. The Client decrypts the stored token (`lib/token-crypto.js`, key from `SESSION_SECRET`) and calls the Engine; the token never reaches the browser. JSON calls are forwarded, SSE streams are piped unbuffered (`services/remote-stream.js`), and terminals go through `services/remote-terminal-proxy.js`: the Client asks `POST /v1/terminal-sessions` for a one-time ticket (`tat_…`, 30 s) and opens `/v1/terminal-sessions/:id/stream?ticket=…`. The browser side of that is `/api/remote-servers/:id/terminal/ws`.
+- **Pairing and tokens**: on the Engine, `POST /api/remote-tokens/pairing` makes a one-time pairing code `TA-XXXX-XXXX-XXXX` (10 minutes) or `POST /api/remote-tokens` an access token `tae_…` (stored as a SHA-256 hash in `engine_access_tokens`). On the Client, `POST /api/remote-servers` with the address and the code calls the Engine's rate-limited `POST /v1/pair`, gets a token, checks `GET /v1/info` and stores the token encrypted in `remote_servers.token_cipher`. Every token is admin (`services/engine-auth.js`).
+- **Access mode** (`services/client-auth.js`, `lib/access-gate.js`, table `client_access_mode`): `local` = only direct loopback access, no login; `remote` = TOTP authenticator and external access; `unset` = choose on first local visit. Non-local requests in `local` / `unset` get 404.
+- **Login gate** (`lib/login-gate.js`): when logged out, a GET of exactly `/`, `/web` or `/h5` redirects to the hidden login path (`CLIENT_LOGIN_PATH`, default `/torin/hide/login`) with `return_to`; everything else is a plain 404, except the login entrance, `/v1`, `/api/remote/v1`, `/health`, `/share/*` and the hook endpoint. Sessions are SQLite sessions (`db/session-store.js`) with a rolling 30-day life.
+- **Process and listening**: `install.sh` starts the Client under PM2 with the name `t-agent` (launchd / systemd are still supported, `README.md` "Service management"). `config.js` defaults `HOST` to `127.0.0.1`; a fresh install writes `HOST=0.0.0.0` to `.env` unless `--access-mode local`.
+- **Update flow** (`services/update-manager.js`, `lib/update-impact.js`, `routes/system.js`): the runtime version is `VERSION.json` in the install directory. `POST /api/system/check-update` reads `VERSION.json` of `main` on GitHub (`lib/version-utils.js` only allows `raw.githubusercontent.com` / `api.github.com`) and answers `available`, `current`, `local_newer` or `restart_pending` (the code on disk is newer than the running process). `POST /api/system/apply-update` does a Git fast-forward (optional force with a stash backup) or an archive update, installs and builds when needed, then exits with code 75 so PM2 (or launchd / systemd) restarts it; a frontend-only change skips the restart. `GET /api/system/update-status` gives the stage, log lines and `boot_id`, which the page uses to reload when the new process is up. Remote Engines are updated through `/api/remote-servers/:id/check-update|apply-update|update-status` (`services/remote-engine-updates.js`).
+
+### C. Server modules
+
+One line each for the main modules, by area. Each route file is mounted in `server.js` (browser API) and, where the feature exists remotely, has a twin in `routes/engine-v1.js` and a proxy in `routes/remote-servers.js`.
+
+**Entry and auth**
+
+- `server.js` — Express app, gates, page routes (`sendClientPage` adds `?v=<version>` to `/js` and `/css` URLs and the login-path meta tag), static files with `Cache-Control: no-cache`, share pages, WebSocket upgrade routing.
+- `config.js` — `.env` settings (port, host, access mode, login path, cookie name, session secret).
+- `routes/auth.js`, `services/client-auth.js` — TOTP binding and login, access mode, recovery codes, rate limits; `services/single-user.js` builds the single local user.
+- `lib/access-gate.js`, `lib/login-gate.js`, `lib/client-embedding.js` — the gates above and the frame-ancestors / cookie SameSite rules.
+- `middleware/auth.js`, `middleware/client-origin.js` (same-origin proof for browser mutations), `middleware/engine-auth.js` (Bearer token scopes for `/v1`), `middleware/remote-auth.js` (old `/api/remote/v1`).
+
+**Tasks and groups**
+
+- `routes/tasks.js` — task CRUD, reorder, validate-path, documents (`/document/:kind`, watch SSE), to-dos, share, reveal, vscode, workspace tools, terminals, activity, sub-agents, ack, agent sessions; mounts the files API.
+- `routes/task-groups.js`, `services/task-groups.js` — groups (system groups `doing` / `todo` / `done` plus user groups).
+- `services/task-documents.js`, `services/engine-tasks.js`, `services/task-assets.js` — document paths (`DESIGN.md`, `README.md`, `AGENTS.md` + `CLAUDE.md` with `@AGENTS.md`), creating missing documents, relative assets.
+- `services/workspace-tools.js` — import unmanaged directories under `TASKS_BASE_DIR`, clean up and restore code directories (`repo_cleanups`).
+
+**Terminals, PTY and activity**
+
+- `routes/terminal.js` — PTY sessions keyed by task and terminal id (`node-pty`, `lib/node-pty-runtime.js`), WebSocket `handleWs` with protocol v2 (heartbeat, flow control; client side `public/js/terminal-protocol.js`), single owner per terminal (close codes 4009 / 4010, `takeover=1`), in-memory history replay, `cleanTitle`, agent terminals (`claude --session-id` / `--resume`, `codex resume`), `subagentSnapshot`, hook token per PTY.
+- `lib/terminal-activity.js` — state per terminal: `idle` → `running` → `done` (until acknowledged) → `idle`. Decided by the foreground process, by output bursts for agents and TUIs, and by Claude / Codex hooks when they report. `GET /api/tasks/terminal-activity` reads it, `POST /api/tasks/:id/terminal/ack { terminal_id }` turns `done` into `idle`.
+- `lib/terminal-snapshot.js` (headless xterm with the vendored Unicode 11 addon), `lib/terminal-history.js`, `lib/terminal-input-modes.js` (reset mouse modes on restore), `lib/terminal-locale.js`, `lib/terminal-user.js` (drop root), `lib/websocket-close.js`, `services/terminal-tickets.js`.
+
+**Agent sessions and sub-agents**
+
+- `lib/agent-sessions.js` — lists Claude (`~/.claude/projects/<dir>/*.jsonl`) and Codex (`~/.codex/sessions/**/rollout-*.jsonl`) sessions of a directory, session names, and `runningSubagents` (Claude sub-agent logs under `<session>/subagents/agent-*.jsonl`).
+- `GET /api/tasks/terminal-subagents` (Engine `/v1/terminal-subagents`, proxy `/api/remote-servers/:id/terminal-subagents`) — read-only count of running sub-agents per Claude terminal; used by the phone "next running or pending session" button.
+
+**Agent chat**
+
+- `routes/agent-chat.js`, `services/agent-chat.js` — chat conversations of a task (`/api/tasks/:id/agent/conversations…`: create, events SSE, messages, interrupt, permissions, queue, fork, commands, models, limits) and `/api/agent-chat/summary` (top-bar counters).
+- `lib/agent-chat/claude.js` (Claude Agent SDK adapter), `lib/agent-chat/codex.js` + `codex-app-server.js` (JSON-RPC to `codex app-server`), `lib/agent-chat/fork-point.js`.
+- Browser bundle: `scripts/agent-chat/*` → `public/js/agent-chat-ui.js` (`npm run build:agent-chat`), host glue `public/js/agent-chat.js`. Details: "Agent chat mode (v2.72.0)".
+
+**Files API and safety**
+
+- `routes/task-files.js`, `services/task-files.js` — `/api/tasks/:id/files` (list, create, rename, delete) and `/files/content` (read, write). Rules: paths are relative to the task root (`work_dir`, else the folder of `md_path`); absolute paths, `..`, backslashes and NUL are refused; symbolic links are never followed (`O_NOFOLLOW`, `lstat`, identity checks before and after); text at most 5 MiB of UTF-8; the root itself cannot be deleted. Engine scopes `files:read` / `files:write`.
+
+**Input helpers**
+
+- `routes/translate.js`, `services/translator.js` — `POST /api/translate` with DeepSeek or Zhipu GLM; up to 100,000 characters, split into pieces of at most 4,000 at line or sentence ends (`splitForTranslation`), pieces without Chinese kept as they are; `POST /api/translate/word`. Config is per user, encrypted in `system_state`.
+- `routes/speech.js`, `services/speech.js` — voice input: the server only mints a 60-second Alibaba Cloud token (`POST /api/speech/token`); audio goes from the browser straight to Fun-ASR (`public/js/voice-input.js`).
+- `routes/oss.js`, `services/oss-images.js` — image upload: `POST /api/oss/upload-policy` signs a POST policy and the browser uploads to Alibaba Cloud OSS itself (`public/js/oss-direct.js`).
+
+**Share pages**
+
+- `GET /share/:token` and `/share/:token/file` in `server.js` — read-only Markdown of a task (`tasks.share_token`, created by `POST /api/tasks/:id/share`), only `.md` files under the folder of `md_path`.
+
+**Machine tools** (local, and remote through `/v1` and the proxy where noted)
+
+- PM2 and apps: `routes/pm2.js`, `services/pm2-manager.js` (status, logs, start / stop / restart / reload only), `routes/apps.js`, `services/apps-registry.js`, `services/apps-service.js`, `services/port-detector.js` (table `apps`; remote: `/v1/pm2`, `/v1/apps`).
+- Tunnels: `routes/frp.js`, `services/frp.js`, `services/frp-install.js`; `routes/ssh-tunnel.js`, `services/ssh-tunnel.js` (local only).
+- File sync: `routes/file-sync.js`, `services/file-sync.js`, `services/file-sync-instance.js` (master / slave, `/v1/file-sync/*`, state in `system_state.file_sync_v1`).
+- Agent config: `routes/agent-config.js`, `services/agent-config.js` (default Claude / Codex settings pushed to this and remote machines, `/v1/agent-config`).
+- Environment check: `routes/environment.js`, `services/environment-check.js`.
+- Bookmarks (quick links): `routes/bookmarks.js`.
+- Update: `routes/system.js`, `services/update-manager.js`, `services/archive-updater.js`, `lib/git-update-workspace.js`, `lib/update-command.js`, `lib/update-impact.js`, `services/remote-engine-updates.js`.
+- Remote connections: `routes/remote-servers.js`, `services/remote-client.js`, `services/remote-server-settings.js`, `routes/remote-tokens.js`, `services/engine-identity.js` (stable `engine_id`), `routes/remote-api.js` (old read-only `/api/remote/v1`).
+
+### D. Data storage
+
+- One SQLite file per machine: `data/db.sqlite` in the install directory, or `T_AGENT_DB_PATH` / `T_AGENT_DATA_DIR` (`db/index.js`; WAL, foreign keys on).
+- Schema: `db/schema.sql` (`CREATE TABLE IF NOT EXISTS`) plus additive, idempotent migrations in `db/index.js` that add missing columns on every start. There is no numbered migration runner.
+- Main tables and key columns:
+
+| Table | Key columns / purpose |
+| --- | --- |
+| `tasks` | `id`, `title`, `status` (= group key), `priority`, `due_date`, `md_path`, `work_dir`, `technical_path`, `readme_path`, `agent_path`, `sort_order`, `user_id`, `share_token` |
+| `task_groups` | `owner_id`, `group_key`, `name`, `sort_order`, `is_system` |
+| `task_terminals` | `task_id`, `terminal_id`, `title`, `agent`, `agent_session_id`, `agent_started_at`, `title_custom` (1 = the person named it) |
+| `task_default_terminal_titles`, `task_default_terminal_removed` | name and removal of the implicit `default` terminal |
+| `agent_conversations` | `id`, `task_id`, `agent`, `session_id`, `title`, `mode`, `model`, `effort`, `opened_web`, `opened_h5`, `translate`, `collapse_keyboard`, `queue` (JSON) |
+| `task_todos` | to-dos of a task |
+| `remote_servers` | `owner_id`, `name`, `base_url`, `token_cipher`, `status`, `remote_version` |
+| `engine_access_tokens`, `engine_pairing_codes`, `engine_identity` | Engine side of pairing (hashes only) and the instance id |
+| `remote_access_tokens` | tokens of the old `/api/remote/v1` |
+| `system_state` | key / value: encrypted per-user settings (`translator:<owner>`, `speech:<owner>`, OSS, `agent-config:<owner>`), `file_sync_v1`, update state |
+| `apps`, `repo_cleanups`, `bookmarks` | app list, cleaned repo records, quick links |
+| `sessions`, `client_auth`, `client_access_mode`, `client_auth_attempts`, `users` | login sessions, authenticator, access mode, rate limits, legacy accounts |
+
+- Terminal output is not stored (dropped in v2.86.0); history lives in memory.
+- `VERSION.json` fields: `app_version` (release, bumped by `scripts/release.js`), `api_version` (the `/v1` protocol; `/v1/info` also answers 1), `min_remote_api_version` / `max_remote_api_version` (the range this Client accepts from remote Engines), `schema_version` (the SQLite schema generation, now 7; it is validated as a number but no code migrates by it, the migrations in `db/index.js` check for missing columns). Rule ("Version release rules" in part 13 below, `AGENTS.md` "Releases and pushing" point 3, `docs/HANDOFF.md`): change `api_version` and the remote range only when the `/v1` protocol changes incompatibly; raise `schema_version` whenever the SQLite schema changes (a new table or column counts), and never bump these fields mechanically with each release. History: v2.87.11 raised it from 6 to 7 for `task_terminals.title_custom`; earlier column additions in v2.28.2, v2.70.0, v2.77.0 and v2.78.0 did not raise it, so the number is lower than the real count of schema changes. New endpoints are added as capabilities in `/v1/info` with the API version unchanged (for example `terminal-subagents` in v2.87.10).
+
+### E. Data model and core concepts
+
+- **Engine**: a machine's task store and runtime. The browser picks one: local (`/api/tasks`, `tasksBase = /api/tasks`) or a remote one (`/api/remote-servers/:id/tasks`). Resources are told apart by `(engine_id, task_id)`.
+- **Group**: a `task_groups` row; a task's `status` holds the group key. The system groups are `doing`, `todo`, `done`.
+- **Task**: a title plus a working directory `work_dir` (any absolute path on that Engine; the default is a new folder under `TASKS_BASE_DIR`) and a design document `md_path` (default `DESIGN.md` in `work_dir`). The task root for files is `work_dir`, else the folder of `md_path`.
+- **Session types of a task**:
+  - plain **Terminal**: a shell in a PTY (`agent` null). Each task has the implicit `default` terminal plus rows in `task_terminals`.
+  - **Claude / Codex Session**: a terminal whose shell types `claude --session-id <uuid>` / `claude --resume <id>` or `codex` / `codex resume <id>` (`agent` = `claude` / `codex`, `agent_session_id`).
+  - **Agent chat**: an `agent_conversations` row shown in the chat view, driven by the SDK / app-server, not a PTY.
+- **Terminal states**: `idle`, `running`, `done` (finished, not yet seen). Opening a terminal on the PC page sends the ack; the phone page does not ack (see G, must-port).
+- **Naming precedence** (`routes/terminal.js`, `lib/agent-sessions.js`): if `title_custom` = 1 the stored `title` is always shown; otherwise an agent terminal shows its session name (Claude: last `custom-title` / `ai-title`, else the first prompt; Codex: `thread_name`), falling back to the stored `Claude N` / `Codex N`; a plain terminal shows its `title` (`Terminal N` by default). Names are cleaned by `cleanTitle` (at most 40 characters).
+- **Sub-agents**: Claude Task / Agent tool calls. In a chat they are views inside the conversation (items with `parentToolUseId`); in a Claude terminal they are only counted as running from their log files (`runningSubagents`). Codex has none.
+
+### F. Client UI today (v2.87.11, two pages)
+
+- **PC page**: `public/index.html` with `app.js`, `tasks.js`, `engines.js`, `file-panel.js` (Monaco), `multi-task.js`, `tools.js`, `apps.js`, `file-sync.js`, `agent-config.js`, `frp.js`, `ssh-tunnel.js`, `environment-check.js`, `batch-update.js`, `bookmarks.js`, `theme.js`, `terminal-*.js`, `agent-chat*.js`, styles `style.css` and `themes.css`. Served at `/web`, and at `/` for non-phone user agents. Fixed-width desktop layout (see "Phone page (/h5)" first bullet and the README feature list).
+- **Phone page**: `public/h5.html` + `public/js/h5.js` (controller: tasks, sockets, viewport, keys, uploads, translation) + the React / MUI shell in `scripts/h5-shell/*` bundled to `public/js/h5-shell.js` (`npm run build:h5-shell`; `store.mjs` exposes `window.H5UI`). Served at `/h5`; `/` redirects phone user agents there (`PHONE_USER_AGENT` in `server.js`). From 900px wide it already shows a permanent sidebar. Details: "Phone page (/h5)", "Phone UI icons", "Material UI phone shell".
+- Shared: `i18n*.js`, `toast.js`, `terminal-keys.js`, `terminal-translate.js`, `terminal-viewport.js`, `terminal-owner.js`, `terminal-ime.js`, `voice-input.js`, `voice-overlay.js`, `oss-direct.js`, `agent-chat*.js`, `agent-activity.js`, `markdown-view.js`, `sw.js`.
+- Manifests: `index.html` links `manifest.json` (`display_override` with `window-controls-overlay`); `h5.html` and `login.html` link `manifest-h5.json` (`start_url` `/h5`).
+- Tag: `v2.87.11-two-pages` (on `origin`, commit `8494601`, the 2.87.11 release) marks the last release with two pages.
+
+### G. Target: one MUI page for PC and phone (agreed design)
+
+Decided by the user on 2026-11-05. The MUI phone page becomes the only page; the PC page is removed. This is the agreed design; it is not implemented yet. Each phase below is releasable on its own.
+
+#### G.1 Routes
+
+- `/` serves the MUI page (`h5.html`). `/h5` serves the same HTML (not a redirect), so iPhone Home Screen apps keep working (`manifest-h5.json`, `start_url` `/h5`).
+- `/web`, `/index.html` and `/h5.html` redirect to `/`.
+- `PHONE_USER_AGENT` routing is removed.
+- `sendClientPage` injects the manifest link by path (`/h5` → `manifest-h5.json`, `/` → `manifest.json`) instead of a fixed link in the HTML.
+- `manifest.json` drops `window-controls-overlay` from `display_override`.
+- The login gate keeps `/`, `/web`, `/h5` in `PAGE_ADDRESSES`.
+
+#### G.2 Layout by width
+
+- One breakpoint, 900px. `wideQuery` (`matchMedia('(min-width: 900px)')`) is shared by `h5.js` and `scripts/h5-shell/entry.jsx` (today each makes its own query).
+- Narrow (< 900px): the current phone layout (drawer task sheet, two-row bottom bar, bottom sheets).
+- Wide (≥ 900px): a permanent left drawer that can be collapsed, the terminal or chat fills the rest, and the Design document and the file preview open as a right side panel instead of a bottom sheet.
+- Portrait iPad is under 900px and gets the phone layout.
+
+#### G.3 Input mode (separate from width, no user agent)
+
+```js
+const input = matchMedia('(hover: hover) and (pointer: fine)').matches && !matchMedia('(any-pointer: coarse)').matches ? 'pointer' : 'touch';
+```
+
+Stored in `store.mjs` and on `<html data-input>`.
+
+- **pointer** (PC with mouse and keyboard):
+  - hide row 1 (key bar `#h5-keys`) and the wheel strip `#h5-wheel`;
+  - the draft box is always visible, one line;
+  - hide the two keyboard buttons (terminal keyboard, draft keyboard);
+  - terminal font 13px;
+  - MUI Tooltips on icon buttons;
+  - typing while nothing is focused goes to the terminal;
+  - Esc in the draft box returns focus to the terminal;
+  - voice button in click mode (click to start, click to stop);
+  - attach `TerminalClipboard` (OSC 52 review, `public/js/terminal-clipboard.js`);
+  - draft-box shortcuts (the user's rule): Cmd/Ctrl+Enter = translate and send, Option/Alt+Enter = send as typed, plain Enter = new line; IME-safe (`isComposing` / keyCode 229 ignored). This is the rule already in `h5.js` for the phone draft box.
+- **touch**: everything as today.
+- Touch-only logic (does not run in pointer mode): `fitViewport` keyboard detection, `holdTerminalSize`, `scheduleKeyboardReset`, `settleViewport` (this also fixes a desktop window resize being taken for the on-screen keyboard); the long-press / press protection is skipped for `pointerType === 'mouse'`; Screen Wake Lock (`syncWakeLock`).
+- iPad: an iPad with a trackpad stays `touch` (it reports a coarse pointer). The first hardware `keydown` sets `hasKeyboard`, which turns on the shortcuts. Must be checked on a real iPad.
+
+#### G.4 Must port before the switch
+
+- Terminal "done" ack from the MUI page: `POST {tasksBase}/{id}/terminal/ack { terminal_id }` when a terminal is shown (today only `public/js/terminal-activity.js` on the PC page acks, so Pending never clears on the phone). This changes phone behaviour: opening a terminal on the phone will clear its Pending state.
+
+#### G.5 User decisions on features
+
+KEEP / PORT into the MUI page:
+
+- Remote Engine management in a Settings "Engines" section: connect with address + pairing code (`POST /api/remote-servers`), edit (`PUT`), remove (`DELETE`), check (`POST /:id/check`), update the remote Engine (`/:id/check-update`, `/:id/apply-update`, `/:id/update-status`). Today only `public/js/engines.js` on the PC page does this.
+- Richer Update details in `scripts/h5-shell/Update.jsx`: `restart_pending` with restart help, install type, release link, force update, a red dot when an update exists.
+- Task menu: Delete (optionally with the directory), Move to group; a Work directory field in the new-task form that shows the effective default path (AGENTS.md workflow rule 3).
+
+DROP (UI removed):
+
+- File browser and the Monaco editor, in-page Markdown editing, the To-do tab. Monaco and its build (`scripts/build-monaco.js`, `scripts/monaco-entry.js`, `build:monaco`) are removed; terminal file links keep opening the read-only preview.
+- Theme picker (dark MUI theme only).
+- Multi-task page; terminal history viewer; environment check page; Utilities; quick links; workspace import / cleanup; batch update; share button (the `/share/:token` pages stay); Finder / VS Code buttons; drag-sort and group create / rename / delete; priority, due date and document paths in forms.
+- Apps (PM2), Agent config, tunnels (frp / SSH) and File sync pages: the user selected none of them to keep, so their UI is dropped and their server endpoints are kept. **Pending final confirmation by the user.**
+
+#### G.6 Endpoints kept for compatibility
+
+These become unused by the browser but stay on the server (and in `/v1` and the remote proxy), so older pages, other Clients and scripts keep working:
+
+- `/api/bookmarks`
+- `/api/tasks/workspace/*`
+- `PUT /api/tasks/reorder`, `POST /api/tasks/validate-path`
+- `/api/tasks/:id/todos*`
+- document `PUT` / `POST /api/tasks/:id/document/:kind`, `GET …/document/:kind/watch`, `GET …/md/watch`
+- `/api/tasks/:id/files*` except `GET …/files/content` (still used by the preview)
+- `POST /api/tasks/:id/reveal`, `POST /api/tasks/:id/vscode`, `POST /api/tasks/:id/share`
+- `POST` / `PUT` / `DELETE /api/task-groups`
+- `/api/pm2`, `/api/apps`, `/api/frp`, `/api/ssh-tunnel`, `/api/agent-config`, `/api/file-sync`, `/api/environment`
+- `POST /api/system/update-notified`
+- the matching `/api/remote-servers/:id/...` proxies
+- the `agent_conversations.opened_web` column
+
+#### G.7 Tests
+
+- `npm test` is `node --test --test-concurrency=2` with no file list. Its default patterns also match `scripts/test-*` (confirmed): all 32 real-Chromium browser scripts `scripts/test-*.cjs` plus `scripts/test-quick.js`, 33 files under `scripts/`. Plan: give `npm test` an explicit file list (unit tests in `test/`, then the browser scripts that are wanted).
+- Delete with the PC page: browser scripts that drive `index.html` for dropped features (`test-file-panel-*`, `test-multi-task`, `test-environment-page`, `test-apps-ui`, `test-file-sync-ui`, `test-theme`, `test-terminal-history`, `test-agent-tabs-restore`, `test-context-menu`, `test-desktop-layout`) and unit tests of dropped modules (for example `test/batch-update.test.js`, `test/file-panel-task-integration.test.js`). Rewrite against the MUI page: the PC-page terminal tests that cover kept behaviour (`test-terminal-keys`, `test-terminal-width`, `test-terminal-translate`, `test-terminal-images`, `test-terminal-file-links`, `test-terminal-new-menu`, `test-terminal-theme`), `test-session-redirect` (new routes) and unit tests that read `index.html` (`test/i18n.test.js`, `test/login-gate.test.js`, `test/client-auth-http.test.js`, `test/access-mode-page.test.js`, `test/sidebar-no-selected.test.js`, `test/vendor-assets.test.js`, update tests). The exact list is shown to the user in phase 3.
+- Add PC-viewport variants of `scripts/test-h5-browser.cjs` (1280x800, pointer mode: hidden key row and wheel strip, visible draft box, shortcuts, Esc, typing to the terminal, no keyboard detection on window resize, side panel, ack).
+
+#### G.8 Phases
+
+0. Tag the last two-page version: done, `v2.87.11-two-pages` (commit `8494601`).
+1. The MUI page works on PC next to the old page: input mode, wide layout, side panel, ack, shared `wideQuery`, PC-viewport tests. `/` and `/web` still serve the old page.
+2. Port the kept features: Engines settings, Update details, task Delete / Move / Work directory.
+3. Switch `/` to the MUI page and delete the old page; the delete list is shown to the user first.
+4. Cleanup: explicit `npm test` list, unused CSS / vendor files, documentation.
+
+#### G.9 Risks and open items
+
+- Installed desktop PWA title bar: an app installed from `manifest.json` with `window-controls-overlay` may keep its old title-bar mode until reinstalled.
+- iPad media queries: trackpad / keyboard iPads must be tried on a real device.
+- One terminal connection at a time on PC: the MUI page attaches one terminal; the multi-task page and side-by-side terminals go away.
+- The ack changes phone behaviour (Pending clears when a terminal is opened on the phone).
+- Large deletion in phase 3 (old page, Monaco, many modules and tests).
+- Browser test coverage drops until the PC-viewport variants exist.
+
+### H. Cross-cutting rules
+
+- **Language and i18n**: code, docs and UI text are English; Chinese lives only in `public/js/i18n-zh-ui.js`, `i18n-zh-server.js`, `i18n-zh-extra.js` (keyed by the exact English text) and in fixtures; `test/i18n.test.js` enforces it. See "Interface language".
+- **Phone UI icons**: one library (Ant Design Official Icon Library, iconfont.cn collection 9402), inline SVG in `scripts/h5-shell/Icons.jsx`; self-drawn icons (`DRAWN`) or text labels where no library icon is clear; every icon-only button has an English `aria-label` and `title`. See `AGENTS.md` "Phone UI icons" and "Phone UI icons" below.
+- **Security**: the browser never gets an Engine token; tokens and secrets are stored hashed or encrypted and never written to logs; same-origin checks on browser mutations and WebSocket upgrades; the files API rules in C; untrusted Markdown (the design document sheet) shows raw HTML as text and keeps only `http(s)` / `mailto` links and `http(s)` / `data:image` images; shared Markdown stays inside the folder of `md_path`; remote file responses carry `Content-Security-Policy: sandbox`; OSC 52 writes need a user preview; terminal output is not stored.
+- **Releases**: batch requirements until the user says all are submitted, then one full `npm test`, `node scripts/release.js`, commit, normal push to `origin/main`. See `AGENTS.md` "Requirement batches" and "Releases and pushing".
+- **Testing**: unit tests in `test/` (`npm run test:quick` while developing), real-Chromium scripts `scripts/test-*-browser.cjs` for UI, full `npm test` once before a release; bundles (`build:h5-shell`, `build:agent-chat`, `build:markdown`) are rebuilt when their sources change.
+
+### I. Notes on older sections
+
+Known differences between the older sections and the current code (not rewritten, only noted):
+
+- Sections "1. Goals" to "12. How to start" (and their duplicated "3." to "11.") are the first design: GitHub OAuth, the project name `torin-x-web`, marked and mermaid from a CDN, a fixed task path under `/Users/torin/main-kuaishou/02_agent/`. Today login is a TOTP authenticator, the libraries are self-hosted in `public/vendor`, and new task folders go under `TASKS_BASE_DIR` (default `~/tasks`).
+- "Current implementation note (v2.7.1)" at the top still describes a standalone Engine on `0.0.0.0` with Docker images; both were removed (v2.28.2, v2.29.1). Every Client contains the Engine.
+- "12. Remote terminal plan" shows `/terminal/remote/:serverId/:taskId` and `/api/remote/v1/tasks/:id/terminal`; the code uses `/api/remote-servers/:id/terminal/ws` and a one-time ticket for `/v1/terminal-sessions/:id/stream` (see B).
+- Many notes at the top still say "Unreleased" for work that shipped in v2.87.4 to v2.87.11 (see the version list at the end of "Phone page (/h5)").
+- "Phone page (/h5)": its first line ("only offers tasks, terminals, image upload and translate-and-send") is out of date (chats, settings, update, design document, next session were added). Its "Layout" bullet (8-column two-row key grid) and the "Density" bullet of "Material UI phone shell" (6 by 3 key grid) are replaced by the "Two rows and a hidden draft box" bullet. Its "Settings" bullet (update button in the settings sheet) is replaced by the Update modal (note at the top: the updater was removed from the Settings sheet). Its upload text names `POST /api/oss/images`; the code signs with `POST /api/oss/upload-policy` and the browser uploads to OSS directly (see "Client OSS terminal image upload").
+- `docs/ARCHITECTURE.md` says the Client listens on `127.0.0.1` by default. That is the default of `config.js`; a fresh `install.sh` writes `HOST=0.0.0.0` unless `--access-mode local` (`README.md`).
 
 ---
 

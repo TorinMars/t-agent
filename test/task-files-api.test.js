@@ -194,4 +194,8 @@ test('images of the working directory are served for Markdown previews: local, E
     assert.equal(await status('../secret.png'), 400, 'inside the working directory only');
     assert.equal(await status('missing.png'), 404);
   }
+  // A new endpoint is declared in /v1/info (API version unchanged), so a Client can tell an Engine that has it.
+  const info = await (await fetch(`${engineBase}/v1/info`, { headers: { Authorization: `Bearer ${reader}` } })).json();
+  assert.ok(info.capabilities.includes('files:image'));
+  assert.equal(info.api_version, 1);
 });

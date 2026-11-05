@@ -73,7 +73,7 @@ function infoHandler(req, res) {
       'documents:read', 'documents:write',
       'files:read', 'files:write',
       // Parity with the Client's own task routes; older Engines simply lack these.
-      'tasks:reorder', 'documents:create', 'documents:watch', 'files:assets', 'paths:validate', 'terminal:activity', 'terminal:activity-stream',
+      'tasks:reorder', 'documents:create', 'documents:watch', 'files:assets', 'files:image', 'paths:validate', 'terminal:activity', 'terminal:activity-stream',
       'todos:read', 'todos:write',
       'terminal:interactive', 'terminal:control', 'terminal:multiple', 'token:pairing',
       'engine:update', 'pm2:manage', 'apps:manage', 'agent-config:manage', 'file-sync:manage', 'workspace:manage', 'agent-chat:manage',

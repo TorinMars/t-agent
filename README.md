@@ -37,19 +37,21 @@ For implementation details see [Component architecture](docs/ARCHITECTURE.md), a
 
 ### Client
 
-- The engine switch bar is at the top: switch between "Default" and several remote Engines, and right-click a remote tab to refresh, edit or remove the connection; the main navigation on the left (Tasks / Utilities) switches features inside the current engine.
-- Create, edit and delete local tasks, with the groups Personal tasks, In progress, To do and Done, and drag-and-drop ordering.
-- Manage `DESIGN.md`, `README.md` and `AGENTS.md` for a task, with Markdown, Mermaid, a table-of-contents outline and in-page editing.
-- Local, remote and share pages use one Markdown reading style: a comfortable text width, a clear heading hierarchy, tables that scroll horizontally, and dark syntax-highlighted code blocks with a language label and a copy button. Code with no language or an unsupported one is shown as plain text. After changing the highlighting module run `npm run build:markdown` to generate the local script that ships with the app. The marked, mermaid and xterm versions used by the page are pinned and self-hosted in `public/vendor` (the manifest and SHA-256 values are in `scripts/vendor-libs.json`), so no CDN is used at run time and it works offline; mermaid is about 5 MB and is only loaded when the first diagram is rendered, `/vendor` is gzip-compressed and versioned files are cached for a long time. To upgrade a version, change the version and address in the manifest, run `node scripts/fetch-vendor.js --update` to download again and write the hashes back, then update the reference paths in the pages (`test/vendor-assets.test.js` checks that the two agree).
-- Manage a task's to-dos, priority, due date and working directory.
-- Every task supports several independent terminals: click "New terminal" to create a shell and switch with the terminal tabs; each terminal starts from the task's working directory and keeps its own output history.
-- Chat-style agents: besides terminals, the "+" menu of a task (desktop and phone) offers **Claude agent** and **Codex agent**, a conversation view instead of a terminal. Start a new chat or resume an existing Claude / Codex session of the task directory; replies stream in, tool calls show as cards, tool calls are folded into a line such as "Ran 2 commands" that opens into a card of steps, Claude asks for permission in the page (Allow / Deny, with the changes of an edit shown as a diff), can ask you to choose between options and can send a plan for you to approve or send back with comments, and images and text files can be attached. Each chat has an access level (Claude: ask / accept edits / plan only / full access; Codex: read-only / workspace write / full access). Codex runs on `codex app-server`, so it asks for approval in the page too (Allow / Allow for this session / Deny), can ask you questions, and takes a message you send while it works (shown as "Add to what Codex is doing"); Stop interrupts the turn; Cmd/Ctrl+Enter queues a message to be sent when the turn ends. Under the composer the access level, the plan limits that are left with the time until they reset (for example `5h 62.5% · 4.2h`), the model and thinking effort (click it to change them for the next messages) and a ring for how full the context window is are shown when the agent reports them. Chats run on the selected local or remote Engine (update older Engines to enable `agent-chat:manage`) and use the Claude Agent SDK and the installed `codex` CLI with the logins of the installed CLIs on that Engine. The Client finds `codex` on its PATH, in the usual install folders of the user (`~/.local/bin`, `~/.bun/bin`, `~/.npm-global/bin`, the newest `~/.nvm` node ...) and through the user's login shell; when it still reports that the Codex CLI was not found (a service started with a short PATH, or `codex` installed somewhere unusual), set `CODEX_PATH=/full/path/to/codex` in `.env` and restart.
-- The terminal run state is shown directly on the task items on the left and on the terminal tabs: running is an outer-ring marquee, and when finished a green breathing light waits for you to open and acknowledge it; see "Terminal run state" below.
-- Open a local task directory from Finder / a file manager or VS Code, and create read-only share links.
-- The quick-links bar is hidden by default and existing link data is kept; PWA installation is supported; computers use the desktop page at `/web` (minimum width 1280px, stretched horizontally on large screens, maximum height 1200px in a normal browser, and an installed Chrome app or full-screen mode fills the actual window width and height, so a narrow window does not crop the terminal), which supports browser zoom; phones use the separate phone page at `/h5` (tasks, terminals, image upload and translate-and-send, with large terminal keys). Opening `/` picks the page by device; `/web` and `/h5` can always be opened directly.
-- Automatically checks for updates, shows a hint in settings, and the user clicks to run the update.
+- **One page for computers and phones** (since 2.88.0): `/` and `/h5` serve the same React / Material UI page (dark theme). From 900px wide the task list is a sidebar that can be folded, the terminal or chat fills the rest, and documents and files open in a side panel; below 900px the phone layout is used (task drawer, two-row key bar, bottom sheets). With a mouse and keyboard (pointer mode) the key bar is hidden, the draft box is always shown and typing goes to the terminal. The old desktop page (`/web`) was removed: `/web`, `/index.html` and `/h5.html` lead to `/`. The last release with two pages is tagged `v2.87.11-two-pages`.
+- The engine selector at the top of the task list switches between this machine and the connected remote Engines; connect, edit, check, update and remove Engines in **Settings → Engines**.
+- Create tasks (title and an optional working directory; the effective default path is shown), move a task to another group, edit its working directory and delete it (optionally with its directory) from the task "⋯" menu. Groups themselves (create / rename / delete), drag-sort, priority, due date and document paths are no longer edited in the page (the endpoints stay).
+- Read a task's `DESIGN.md` with Markdown, Mermaid and relative images; a file path printed in a terminal opens a read-only preview of that file.
+- Local, remote and share pages use one Markdown reading style: a comfortable text width, a clear heading hierarchy, tables that scroll horizontally, and dark syntax-highlighted code blocks with a language label and a copy button. Code with no language or an unsupported one is shown as plain text. After changing the highlighting module run `npm run build:markdown` to generate the local script that ships with the app. The marked, mermaid and xterm versions used by the page are pinned and self-hosted in `public/vendor` (the manifest and SHA-256 values are in `scripts/vendor-libs.json`), so no CDN is used at run time and it works offline; marked and mermaid (about 5 MB) are only loaded when a document is shown, and `/vendor` is gzip-compressed. To upgrade a version, change the version and address in the manifest, run `node scripts/fetch-vendor.js --update` to download again and write the hashes back, then update the reference paths in the page (`test/vendor-assets.test.js` checks that the two agree).
+- Every task supports several independent terminals and agent sessions: the `+` Session menu starts a new terminal or a new / resumed Claude or Codex session of the task directory; each terminal starts from the task's working directory and keeps its own output history.
+- Chat-style agents: besides terminals, the `+` Session menu of a task offers **Claude agent** and **Codex agent**, a conversation view instead of a terminal. Start a new chat or resume an existing Claude / Codex session of the task directory; replies stream in, tool calls show as cards, tool calls are folded into a line such as "Ran 2 commands" that opens into a card of steps, Claude asks for permission in the page (Allow / Deny, with the changes of an edit shown as a diff), can ask you to choose between options and can send a plan for you to approve or send back with comments, and images and text files can be attached. Each chat has an access level (Claude: ask / accept edits / plan only / full access; Codex: read-only / workspace write / full access). Codex runs on `codex app-server`, so it asks for approval in the page too (Allow / Allow for this session / Deny), can ask you questions, and takes a message you send while it works (shown as "Add to what Codex is doing"); Stop interrupts the turn; Cmd/Ctrl+Enter queues a message to be sent when the turn ends. Under the composer the access level, the plan limits that are left with the time until they reset (for example `5h 62.5% · 4.2h`), the model and thinking effort (click it to change them for the next messages) and a ring for how full the context window is are shown when the agent reports them. Chats run on the selected local or remote Engine (update older Engines to enable `agent-chat:manage`) and use the Claude Agent SDK and the installed `codex` CLI with the logins of the installed CLIs on that Engine. The Client finds `codex` on its PATH, in the usual install folders of the user (`~/.local/bin`, `~/.bun/bin`, `~/.npm-global/bin`, the newest `~/.nvm` node ...) and through the user's login shell; when it still reports that the Codex CLI was not found (a service started with a short PATH, or `codex` installed somewhere unusual), set `CODEX_PATH=/full/path/to/codex` in `.env` and restart.
+- The terminal run state (running, finished and not yet seen) is shown on the sessions in the task list and pushed by the server; opening a finished terminal acknowledges it; the "next running or pending session" button jumps between them. See "Terminal run state" below.
+- Read-only share links `/share/:token` keep working (they are no longer created from the page).
+- PWA: the page can be installed (`manifest.json`, start `/`); an iPhone Home Screen app added from `/h5` keeps `manifest-h5.json` (start `/h5`).
+- Automatically checks for updates; the header "Update" button shows a red dot when a new version exists and opens the update details (install type, release link, force update, restart help).
 
 ### Tunnel (frp)
+
+> **The page for this was removed in 2.88.0** (one page for computers and phones, see "One page" in `DESIGN.md`). The server endpoints stay (`/api/frp`; a tunnel set to start with the Client still starts), so scripts, other Clients and older pages keep working; the text below describes the feature as it was.
 
 The "Page enhancement" page on the left uses this machine's `frpc` to map the Client port to your frps server (a TCP tunnel).
 
@@ -62,6 +64,8 @@ The "Page enhancement" page on the left uses this machine's `frpc` to map the Cl
 
 ### SSH reverse tunnel
 
+> **The page for this was removed in 2.88.0** (one page for computers and phones, see "One page" in `DESIGN.md`). The server endpoints stay (`/api/ssh-tunnel`; a tunnel set to start with the Client still starts), so scripts, other Clients and older pages keep working; the text below describes the feature as it was.
+
 The top of the "Page enhancement" page can switch to the SSH method: `ssh -R` binds a port on a server that points to the Client port on this machine. Nothing has to be installed on the server; SSH login is enough.
 
 - Required: the server IP/domain and the username; the SSH port defaults to 22. The remote port is random by default (20000-60000) and stays stable, or can be entered manually; when it is taken the automatic mode retries with another port and the manual mode does not.
@@ -72,25 +76,27 @@ The top of the "Page enhancement" page can switch to the SSH method: `ssh -R` bi
 
 ### Login entrance
 
-When logged out, the pages `/`, `/web` and `/h5` **lead to the login entrance** (with `return_to`, so the login brings you back to the page you opened), and apart from the exceptions below **every other address returns 404** (exactly like a non-existent address, with no redirect and no login hint). The login entrance, which anyone who opens a page is taken to, is by default:
+When logged out, the pages `/` and `/h5` (and the old `/web`) **lead to the login entrance** (with `return_to`, so the login brings you back to the page you opened), and apart from the exceptions below **every other address returns 404** (exactly like a non-existent address, with no redirect and no login hint). The login entrance, which anyone who opens a page is taken to, is by default:
 
 ```
 http://127.0.0.1:3000/torin/hide/login
 ```
 
-- Binding an authenticator for the first time, logging in and replacing the authenticator all start from this entrance; `/web` and the features are only accessible after a successful login. After a session expires the page jumps back to this entrance automatically.
+- Binding an authenticator for the first time, logging in and replacing the authenticator all start from this entrance; the page and the features are only accessible after a successful login. After the login the page opens at `/`, or at `/h5` when that address sent you there (an iPhone Home Screen app). After a session expires the page jumps back to this entrance automatically.
 - Change the entrance with `CLIENT_LOGIN_PATH` in `.env` (it starts with `/`, has at least 6 characters, contains only letters, digits and `-._~`, may have several levels, and must not use built-in paths such as `/api`, `/auth`, `/web` or `/v1`), and restart afterwards. An invalid value produces a notice and falls back to the default.
 - Exceptions still reachable when logged out: the Bearer-token machine endpoints `/v1` and `/api/remote/v1` (used to connect several t-agent instances; without a token they still return their own errors), `/health`, public share pages `/share/*` and the scripts and styles they depend on.
-- On a device where it is installed as an app (PWA): it works normally within the login validity; after a session expires the app opens at the login entrance (the phone page address leads there when logged out).
+- On a device where it is installed as an app (PWA): it works normally within the login validity; after a session expires the app opens at the login entrance (the page addresses lead there when logged out).
 - The old page addresses `/auth/login` and `/auth/setup` and the multi-Client workspace `/clients` have been removed (always 404 when logged out). `CLIENT_FRAME_ORIGINS` can still be used to allow other sites to embed this Client's pages.
 
 ### Workspace tools: import and cleanup
+
+> **The page for this was removed in 2.88.0** (one page for computers and phones, see "One page" in `DESIGN.md`). The server endpoints stay (`/api/tasks/workspace/*`), so scripts, other Clients and older pages keep working; the text below describes the feature as it was. Deleting a task with its directory is in the task "⋯" menu of the page.
 
 Tasks are still only stored in the database. The two tools below are three icon buttons in one row at the top of the sidebar (+ new, 📁 import, 🧹 cleanup, with text shown on hover; local Client only, not available for remote Engines yet):
 
 - **Import unmanaged directories**: when the page loads it automatically checks the first-level subdirectories of the current working directory (the working directory set in the account settings, or `TASKS_BASE_DIR`, default `~/tasks`), and if some are not managed by any task it shows "N directories in the workspace are unmanaged · Import". Opening it lets you tick, select all and import in bulk; only tasks are registered (the title is the directory name, status "To do") and no files are created in the directories. Directories starting with `.` and `node_modules` are not shown; neither are directories that are already a task directory (or contain one).
 - **Clean up code directories**: a task directory is usually not a Git repository and contains several repositories. Click "Clean up code directories" to open a list that groups, by task, all repositories inside each task directory (up to 3 levels deep, not entering repositories, hidden directories or `node_modules`), showing disk usage and how many days they have been untouched; tasks and repositories are both ordered by usage, largest first, and can be ticked for bulk cleanup. Only the local repository directory is deleted; other files in the task directory, the task and its to-dos are kept. When the task directory itself is a repository only it counts. A repository can only be ticked when all of the following hold, otherwise the reason is shown: no uncommitted changes or untracked files; no stash; not a detached HEAD; it has a remote; every local branch has a remote branch and no unpushed commits; the repository directory is the repository root. The workspace itself, the home directory, a directory that contains other task directories and the directory of this program are always refused. The server re-checks before deleting and only accepts repositories that really lie inside that task directory, and the frontend asks for a second confirmation. Before cleaning, the repository address, branch and commit are recorded in the database table `repo_cleanups`, and "Restore from repo" in "Cleaned, restorable" at the bottom of the list clones it back to the original path.
-- **Delete the directory together with a task**: right-click a task → Delete, and the dialog has an "Also delete the directory" checkbox which is **unticked by default** (only the task record and its to-dos are deleted). When ticked, the directory path that will be permanently deleted is shown. The workspace itself, the home directory, a directory containing other task directories or this program, and a directory shared by other tasks are always refused, and then the task is not deleted either. Local and remote Engines both support it; when the other side is older, only the task is deleted and a hint says the directory was not deleted. Directory deletion is irreversible and does not check Git state; when you want to keep a repository, use "Clean up code directories" first.
+- **Delete the directory together with a task**: task "⋯" menu → Delete, and the dialog has an "Also delete the directory" checkbox which is **unticked by default** (only the task record and its to-dos are deleted). The workspace itself, the home directory, a directory containing other task directories or this program, and a directory shared by other tasks are always refused, and then the task is not deleted either. Local and remote Engines both support it; when the other side is older, only the task is deleted and a hint says the directory was not deleted. Directory deletion is irreversible and does not check Git state.
 - Note: the checks rely on the remote branch state known locally and do not go online to verify it; files ignored by `.gitignore` (dependency directories, `.env` and so on) are deleted with the directory and must be generated again after a restore. `TASK_IDLE_DAYS` (default 30) is only used for the "suggested for cleanup first" hint in the list.
 
 ## Terminal user
@@ -105,11 +111,11 @@ If t-agent runs as root on a Linux server, Claude Code in the web terminal refus
 ### Multiple Engines
 
 - One Client can save and switch between several remote Engines.
-- Connect with a pairing code or an access Token; the online, offline and authentication-expired states are shown. When a connection fails (offline, authentication expired or loading tasks failed), that Engine shows no tasks, documents or terminals, only the "Check the service status" hint, the service address and the reason for the failure, with "Retry connection / Edit connection / Remove connection".
-- Create tasks on a specific remote Engine. **A remote task uses the same UI and features as a local task**: editing the design doc / README / AGENTS.md in the page, adding / editing / deleting to-dos, the outline, relative-path images, automatic refresh on document changes, editing the task (title, paths, working directory, priority, group, due date), deleting, drag-and-drop ordering, the file browser and editing, several terminals, terminal history, image upload, and the terminal run state (marquee / breathing light, also summarized on the engine tab).
-- Only features that depend on this machine's file system do not apply to remote tasks: "Reveal in Finder", "Open in VS Code" and "Create share link" are hidden.
+- Connect with a pairing code (Settings → Engines); the online, offline and authentication-expired states are shown there, with Check, Edit, Update and Remove. When loading the tasks of an Engine fails, its task list shows the error instead of tasks.
+- Create tasks on a specific remote Engine. **A remote task uses the same UI and features as a local task**: the design document, the working directory, moving and deleting, several terminals and agent sessions, image upload, file previews and the terminal run state.
+- Every page feature works the same for local and remote tasks.
 - Every Engine connection has admin rights; view / operate / manage are no longer distinguished. Features are enabled by the capabilities the Engine declares: capabilities an old Engine lacks (ordering, automatic document refresh, relative-path images, path validation, run state and so on) are disabled automatically while the rest works as usual. The Engine must be upgraded to v2.29.0 or later for the full feature set.
-- Tasks are shown by group, and local and remote both support creating, renaming and deleting custom groups (the "+" next to the sidebar title).
+- Tasks are shown by group; a task can be moved to another group from its "⋯" menu. Creating, renaming and deleting custom groups is no longer in the page (the `/api/task-groups` endpoints stay).
 - "In progress / To do / Done" are system groups that cannot be modified; a custom group can only be deleted when it has no tasks.
 - Remote interactive terminals are used through the Client proxy; the browser never stores an Engine Token.
 - The name, HTTP/HTTPS address and port of a remote connection can be changed, and the old address is overwritten only after verification succeeds.
@@ -191,9 +197,9 @@ A new install and an upgrade from an old version both start with no authenticato
 1. In a terminal on the server running the Client, run `node scripts/client-auth-setup.js` (it can be run after an SSH login and does not have to be on the local machine; the port is read from `PORT`), scan the QR code in the terminal and enter the code; or open the login entrance directly (`http://127.0.0.1:3000/torin/hide/login` locally, or the phone, LAN or reverse-proxy address) and scan the code. No initial password or setup code is needed, and it is not limited to local or remote. Once bound, a restart does not cancel the binding.
 2. Scan with Google Authenticator, Microsoft Authenticator or a compatible app; on the same phone you can tap "Open in authenticator", or add the key manually (time-based, 6 digits, 30 seconds). Enter the code the authenticator generates to finish binding.
 3. Download and keep safe the 8 one-time recovery codes the page shows. Recovery codes are shown only once and each can be used once. If a code was already used, wait for the next one before logging in on another device.
-4. When the phone and the Client are on the same LAN, change `HOST` in the Client's `.env` to `0.0.0.0` and restart the service. Open `http://<computer's LAN IP>:3000/` in the phone browser (the port depends on the actual configuration); a phone is sent to the phone page `/h5`. It offers tasks, terminals (the `+` Session menu opens a terminal or a new/resumed Claude or Codex session of the task directory), image upload and translate-and-send. The phone shows the same terminals as the computer, but a terminal can be attached to one device at a time: when the computer already has it open, the phone shows "This terminal is in use on another device" with a "Use this terminal here" button (and the other way round); tapping it moves the terminal to that device and the previous one is told it was taken over. Reloading a page on the same device does not count as another device. Open `/web` on the phone for the full desktop page.
+4. When the phone and the Client are on the same LAN, change `HOST` in the Client's `.env` to `0.0.0.0` and restart the service. Open `http://<computer's LAN IP>:3000/` in the phone browser (the port depends on the actual configuration); the page is the same on every device (the phone layout below 900px wide). It offers tasks, terminals (the `+` Session menu opens a terminal or a new/resumed Claude or Codex session of the task directory), image upload and translate-and-send. The phone shows the same terminals as the computer, but a terminal can be attached to one device at a time: when the computer already has it open, the phone shows "This terminal is in use on another device" with a "Use this terminal here" button (and the other way round); tapping it moves the terminal to that device and the previous one is told it was taken over. Reloading a page on the same device does not count as another device.
 
-The responsive `/h5` interface uses React and Material UI with its default dark theme. Below 900px, the task drawer leaves part of the conversation visible; wider windows show a permanent task sidebar. Settings, session actions, terminal keys and upload dialogs use Material UI components. The terminal and agent chat retain their existing controllers. After editing `scripts/h5-shell/`, install development dependencies and run `npm run build:h5-shell` to rebuild `public/js/h5-shell.js`; browsers use the bundled file without loading Node packages.
+The page (`/` and `/h5`, `public/h5.html`) uses React and Material UI with its default dark theme. Below 900px, the task drawer leaves part of the conversation visible; wider windows show a permanent task sidebar that can be folded. Settings, session actions, terminal keys and upload dialogs use Material UI components. The terminal and agent chat retain their existing controllers. After editing `scripts/h5-shell/`, install development dependencies and run `npm run build:h5-shell` to rebuild `public/js/h5-shell.js`; browsers use the bundled file without loading Node packages.
 
 Production deployments require HTTPS/WSS by default; a trusted intranet can enable `CLIENT_ALLOW_HTTP=true` explicitly. For the public network use an HTTPS/WSS reverse proxy and limit the sources with a firewall. An authenticator login session is valid for 30 days and renews while in use; it only expires after 30 days of no use, and a new device, an expired session or an explicit logout needs verification again. The authenticator can be replaced in the login settings; if you lose it, log in with a recovery code and bind again, and after the replacement the old authenticator, the old recovery codes and the sessions of other devices stop working immediately. Logging out only disconnects the web terminal connection and does not terminate the programs running on the server.
 
@@ -226,13 +232,13 @@ An existing `.env` is not overwritten; when `--port` or `--tasks-dir` is given e
 
 ### 1. Create a local task
 
-After opening the Client click "New task":
+Open the Client (`http://127.0.0.1:3000/`). In the task list (the sidebar on a computer, the drawer on a phone):
 
-1. For "Engine" choose "Local engine".
-2. Enter a title; the MD file path and working path can be left empty.
-3. Set the priority, group and due date, then create it.
+1. When remote Engines are connected, choose the Engine at the top of the list ("This machine" for a local task).
+2. Click "New task", enter a title and, optionally, a working directory (an absolute path). The effective default is shown under the field; leaving it empty uses that default.
+3. Create it.
 
-When the paths are left empty, T-Agent creates the task directory under `TASKS_BASE_DIR` and generates:
+When the working directory is left empty, T-Agent creates the task directory under `TASKS_BASE_DIR` and generates:
 
 ```text
 task-directory/
@@ -242,41 +248,34 @@ task-directory/
 └── CLAUDE.md
 ```
 
-The top of the task details switches between the design doc, README, AGENTS.md, to-dos and the terminal. The terminal uses the task's working path as its current directory. The terminal tabs switch between several independent shells of the same task; the page caches the screen, scroll position and connection per task and terminal, so an ordinary switch does not reconnect or replay history and never terminates background programs. After refreshing the page you can select the terminals you already created again. The bottom of the terminal has a compact function-key bar: Esc, Tab, Ctrl, Command, Option, Shift, the arrow keys, Enter and Backspace. Click a modifier key and then a function key or type a letter to form a combination; it is released automatically after being sent once; the "Option + ↑" button sends Alt+Up (`ESC [ 1 ; 3 A`) directly. Command uses the Super modifier of the extended keyboard protocol, needs support from the program in the terminal, and does not trigger operating-system shortcuts. The top of the terminal offers five actions:
-
-- "+" opens a menu: "New Terminal" starts a separate shell in the task working directory and keeps the existing terminals; "Claude session" / "Codex session" start that agent in a new terminal, either a new session or one of the sessions already run in the working directory (resumed), as on the phone. The optional name field at the top of the menu names the new terminal or chat (empty keeps the default name; Enter creates the first entry); a name given there, or by a rename, is kept even when Claude or Codex later names the session.
-
-- "Reopen" only rebuilds the browser connection and keeps the current shell process, its directory and history.
-- "Close current terminal" terminates the current shell and the programs running in it, and keeps the tab and the output history already recorded.
-- The entry to delete a terminal is in the terminal tab: every terminal tab, the default one included, has a × on its right (you can also press Delete on the tab); after you confirm, the shell of that terminal is terminated and the tab and history are permanently deleted; if the deleted one is the current tab the view then switches to the first remaining terminal, and deleting another tab does not switch. When the last terminal is deleted the task shows a hint and the + button starts a new one. An Engine older than 2.84.0 still refuses to delete the default terminal. For remote tasks the Engine must support this operation too. The old "Delete current terminal" button in the toolbar has been removed.
-- "Reopen from working directory" terminates the current shell, clears the old terminal history and starts a brand-new shell in the working directory configured for the task.
+Open a task to see its sessions. The `+` Session menu starts a new terminal or a new / resumed Claude or Codex session (terminal or chat) in the task's working directory; the optional name field names it. Each session's "⋯" menu renames, reopens or deletes it; the task's "⋯" menu moves it to a group, edits its working directory or deletes it. The header opens the task's `DESIGN.md`. On a computer you type straight into the terminal; the draft box below it sends text as typed (Option/Alt+Enter) or translated to English (Cmd/Ctrl+Enter). On a phone the two-row key bar has Esc, Tab, Ctrl, the arrows and the other keys a TUI needs.
 
 ### 2. Connect a remote Engine
 
-At the bottom of the Engine navigation on the left click `+ Connect remote`:
+Open **Settings → Engines** (the gear at the bottom of the task list) and click "Connect remote service":
 
 1. Enter the URL, for example `http://192.168.1.20` or `https://engine.example.com`.
 2. The port may be left empty when the default HTTP/HTTPS port is used; when connecting directly to a custom port enter it, such as `3100`.
-3. Enter a one-time pairing code `TA-XXXX-XXXX-XXXX` or an access Token `tae_...`.
+3. Enter a one-time pairing code `TA-XXXX-XXXX-XXXX`.
 4. Click "Test connection", and after it succeeds click "Connect".
 
 The URL may only contain the protocol and the host; do not include `/v1` or any other path. When using an HTTPS reverse proxy you usually enter the domain and leave the port empty.
 
-After connecting, a new Engine tab appears on the left. Each tab shows that Engine's current version; the Client probes remote versions automatically at start-up and throttles repeated loads within one minute. Switch tabs to look at the tasks of the corresponding server.
+After connecting, the Engine is listed in Settings → Engines with its version and state, and appears in the engine selector at the top of the task list. Choose it there to see the tasks of that server.
 
 ### Let another Client connect to this Client
 
 The Client already includes a standard Engine service on the same port, so no separate Engine install is needed:
 
 1. In the Client to be connected, open "Settings → Remote service → Allow other clients to connect as an engine" and generate a pairing code.
-2. In the other Client click "+ Connect remote" and enter a reachable IP/domain of the Client being connected, the actual port and the pairing code; the URL does not include `/v1` or a page path.
+2. In the other Client open Settings → Engines → "Connect remote service" and enter a reachable IP/domain of the Client being connected, the actual port and the pairing code; the URL does not include `/v1` or a page path.
 3. After connecting you can manage that Client's local tasks, files and terminals; the other remote Engines it has connected are not forwarded. A connection obtained by pairing has admin rights and can be revoked from the same settings entry of the connected Client.
 
 The connected Client must allow remote access. Set `HOST=0.0.0.0` in `.env` to open listening, and for plain HTTP on a trusted intranet also set `CLIENT_ALLOW_HTTP=true`. A visitor exchanges the one-time pairing code for an independent Token, and no browser login session or authenticator needs to be shared.
 
 ### 3. Create a remote task
 
-Click "New task", choose the target remote node under "Engine", and then enter an absolute path on the server under "Remote working directory". The task, documents and working directory are created directly on that Engine and are not copied to the Client's machine; when the specified directory does not exist the Engine creates it automatically.
+Choose the remote Engine in the engine selector of the task list, click "New task", and enter an absolute path on that server as the working directory (or leave it empty). The task, documents and working directory are created directly on that Engine and are not copied to the Client's machine; when the specified directory does not exist the Engine creates it automatically.
 
 Every task can have its own working directory, no longer limited by an allowlist of workspace roots. When only the working directory is entered, the design doc defaults to `DESIGN.md` in that directory; when the paths are left empty, the Engine creates the task directory under its own `TASKS_BASE_DIR`. A remote path must be absolute, and the account of the Engine process needs read and write permission on the directory.
 
@@ -284,20 +283,15 @@ Remote terminals likewise support starting several independent terminals, reopen
 
 ### 4. Manage remote connections and task groups
 
-When the server IP, the port or the HTTPS domain changes:
+When the server IP, the port or the HTTPS domain changes, open Settings → Engines, choose "Edit connection" on that Engine, change the name, URL or port, test the connection and save.
 
-1. Right-click the corresponding remote Engine tab on the left.
-2. Choose "Edit connection".
-3. Change the name, URL or port and test the connection.
-4. Save.
+The Client keeps using the saved Token. The new address is only saved when it can reach `/v1/info` with the Token, so a failed test never damages the original connection. "Remove connection" deletes only the connection; the data on the remote machine stays.
 
-The Client keeps using the saved Token. The new address is only saved when it can reach `/v1/info` with the Token, so a failed test never damages the original connection.
-
-The same context menu can create a task group. Right-click a custom group to rename or delete it, and right-click a task to move it to another group. The server refuses to delete a group that still has tasks; the three system groups "In progress / To do / Done" offer no edit or delete.
+A task's "⋯" menu moves it to another group. Creating, renaming and deleting groups is no longer offered by the page (the endpoints stay); the three system groups "In progress / To do / Done" are always there.
 
 ### 5. Upgrade a remote Engine from the Client
 
-The context menu of a remote Engine tab offers "Check for updates". The Client decrypts the saved Token on the server and proxies the following operations; the Token is never sent to the browser:
+Settings → Engines offers "Check for updates" on each remote Engine. The Client decrypts the saved Token on the server and proxies the following operations; the Token is never sent to the browser:
 
 1. Ask the remote Engine to check for a new version on its configured branch.
 2. Show the current version, the target version, the install type and any check error.
@@ -464,7 +458,6 @@ The update UI (the same for this machine and remote Engines) shows the elapsed t
 cd /path/to/t-agent
 git pull --ff-only origin main
 npm ci --ignore-scripts=false
-npm run build:monaco
 node scripts/verify-node-pty.js
 ```
 
@@ -493,7 +486,7 @@ pm2 stop t-agent            # stop
 pm2 startup && pm2 save     # start on boot: run the command printed by pm2 startup, then save the process list
 ```
 
-"Utilities → PM2 process management" and the "App list" in the web UI can both show status, restart, stop and show logs; note that stopping or restarting t-agent itself interrupts the current page (the UI asks for a second confirmation). To migrate from an old LaunchAgent/systemd: `./install.sh --pm2`. The macOS / Linux sections below apply to old installs that keep using a system service.
+The PM2 and App list pages were removed in 2.88.0 (their endpoints `/api/pm2` and `/api/apps` stay); use `pm2 status`, `pm2 logs t-agent` and `pm2 restart t-agent` on the machine. To migrate from an old LaunchAgent/systemd: `./install.sh --pm2`. The macOS / Linux sections below apply to old installs that keep using a system service.
 
 ### macOS
 
@@ -702,17 +695,19 @@ t-agent/
 
 The repository has not declared an open-source license yet. Without authorization, do not assume the code may be copied, distributed or used for commercial release.
 
-The "Update" button to the left of the settings button checks for a new client version immediately and, when one can be installed, runs it directly without a second confirmation; repeated clicks are disabled while updating. A frontend-only change keeps shell connections, and a change that needs the engine restarts according to the update flow. Blockers such as working-tree conflicts show the reason and are never overwritten by force automatically. The top of the update dialog shows the current stage and elapsed time, and below it the update log scrolls like a terminal (the output of git and npm, the latest 300 lines, with credentials hidden); after the update completes the page refreshes automatically (when the service must restart, it refreshes once the service is back). The update dialog of a remote Engine likewise shows the log and refreshes the page after completion; an Engine that is too old has no log and shows only the progress text.
+The "Update" button in the header opens the update details: the current and the new version, the install type, the last check, the release link and the update log. "Update now" runs it (with "force update" after a blocked Git update); repeated clicks are disabled while updating. A frontend-only change keeps shell connections, and a change that needs the engine restarts according to the update flow; the page reloads by itself when the new process answers, or offers "Refresh now" after 20 seconds. When the code on disk is newer than the running process the details say a restart is needed and show the restart commands.
 
 Task documents default to `DESIGN.md`, `README.md` and `AGENTS.md` in the working directory; existing files are read directly and only created when missing, and existing content is never overwritten. The default `DESIGN.md` follows the working directory; the default `DESIGN.md` of an old task that pointed at another directory is also resolved against the current working directory, and the old file is kept. A design path that was set manually to another file name keeps using the custom file.
 
-Task editing supports setting the absolute paths of the design doc, README and AGENT files separately; for a remote task they can be set from the context menu entry "Edit document paths". An explicit path wins over the working-directory default (including a DESIGN.md in another directory); clearing it restores the default. Changing a path never moves or overwrites the old file, and the target is created when it does not exist. A remote Engine must be upgraded to v2.10.12 or later.
+Separate absolute paths for the design doc, README and AGENT files can still be set through the API (`PUT /api/tasks/:id`); the page no longer edits them (2.88.0). An explicit path wins over the working-directory default; clearing it restores the default. Changing a path never moves or overwrites the old file.
 
 ### Agent rule file compatibility
 
 New tasks create `AGENTS.md` and `CLAUDE.md` by default, and the latter references the main rules through `@AGENTS.md`. An existing `CLAUDE.md` keeps its content and gets the reference added. Existing tasks are migrated at start-up: when only `AGENT.md` exists it becomes `AGENTS.md`; when both exist `AGENTS.md` is kept and `AGENT.md` is deleted. An old explicit `AGENT.md` path is migrated as well, other custom rule paths are left as they are, and the working directory still gets the standard rule entry points. A working directory that cannot be accessed records an error and is retried at the next start-up, and an old directory that no longer exists is not recreated. Remote projects are migrated after the corresponding Engine is updated and started.
 
 ### Task file browser
+
+> **The page for this was removed in 2.88.0** (one page for computers and phones, see "One page" in `DESIGN.md`). The server endpoints stay (`/api/tasks/:id/files*`; `GET …/files/content` is still used by the read-only preview of a file link), so scripts, other Clients and older pages keep working; the text below describes the feature as it was.
 
 After selecting a task, click "File browser" at the top to open the directory tree and the code editor. The page switches to the terminal automatically and the file panel unfolds from the top, taking 85% of the height below the toolbar by default, while the terminal at the bottom still accepts input; drag the bottom edge of the panel to adjust the ratio and drag the right edge of the tree to adjust its width. Click the button again or "Collapse" to restore the full terminal; this does not close the shell.
 
@@ -722,13 +717,13 @@ Local and remote tasks use the same panel. A remote Engine must support the `fil
 
 ### Terminal Chinese-to-English input (DeepSeek / Zhipu GLM)
 
-Below the terminal there is an input box: type Chinese, press Enter, and DeepSeek or Zhipu GLM translates it into English, types it into the current terminal and submits it with Enter (handy for giving instructions to Claude Code / Codex). On first use click the ⚙ on the right of the input, pick DeepSeek in the "Translation service" dropdown (the endpoint defaults to `https://api.deepseek.com` and the model to `deepseek-flash`) or Zhipu GLM (default `https://open.bigmodel.cn/api/paas/v4`, model `glm-5.3-flash`, with thinking pushed to the lowest level to avoid timeouts), and enter the matching API key; each provider's key is stored separately, switching providers never loses the key saved for the other one (leaving the key empty when saving keeps the stored key); keys are stored encrypted on the Client and are never sent to the browser or remote engines, and translation happens on the Client, so terminals of remote engines work too. Input without any Chinese (plain English) is sent as-is and no endpoint is called. Control characters in the translation are removed and the text is collapsed into one line; when the terminal is not connected nothing is sent and the input is kept.
+The draft box below the terminal translates and sends: type Chinese and use translate-and-send (the button, or Cmd/Ctrl+Enter on a computer), and DeepSeek or Zhipu GLM translates it into English, types it into the current terminal and submits it with Enter (handy for giving instructions to Claude Code / Codex). Set it up in **Settings → Translation**: DeepSeek (the endpoint defaults to `https://api.deepseek.com` and the model to `deepseek-flash`) or Zhipu GLM (default `https://open.bigmodel.cn/api/paas/v4`, model `glm-5.3-flash`, with thinking pushed to the lowest level to avoid timeouts), and the matching API key; each provider's key is stored separately, switching providers never loses the key saved for the other one (leaving the key empty when saving keeps the stored key); keys are stored encrypted on the Client and are never sent to the browser or remote engines, and translation happens on the Client, so terminals of remote engines work too. Input without any Chinese (plain English) is sent as-is and no endpoint is called. Control characters in the translation are removed and the text is collapsed into one line; when the terminal is not connected nothing is sent and the input is kept.
 
 ### Voice input (Alibaba Cloud real-time speech recognition)
 
-Next to the Chinese input box there is a 🎤 button (also on the phone page). Click it and speak: the recognized text appears in the box after each sentence ends, after the text that is already there. Click it again to stop. Nothing is translated or sent to the terminal until you press Enter as usual, so you can read and correct the text first. A recording stops by itself after 5 minutes.
+Next to the draft box there is a 🎤 button. Click it (on a computer) or hold it (on a touch screen) and speak: the recognized text appears in the box after each sentence ends, after the text that is already there. Click it again to stop. Nothing is translated or sent to the terminal until you press Enter as usual, so you can read and correct the text first. A recording stops by itself after 5 minutes.
 
-Setup: click the **🎤⚙** button on the right of the input (desktop page), enter the Alibaba Cloud Model Studio API key, and choose the **region the key was created in** (China (Beijing) or Singapore; a key only works in its own region). Language (default Chinese), model (default `fun-asr-realtime`) and an optional endpoint (for a workspace-specific `wss://` address) can be changed there. For a single-user install the key can also be given as `DASHSCOPE_API_KEY` in `.env`; a key saved in the dialog overrides it. The phone page uses the settings made on the desktop page.
+Setup: open **Settings → Voice input**, enter the Alibaba Cloud Model Studio API key, and choose the **region the key was created in** (China (Beijing) or Singapore; a key only works in its own region). Language (default Chinese), model (default `fun-asr-realtime`) and an optional endpoint (for a workspace-specific `wss://` address) can be changed there. For a single-user install the key can also be given as `DASHSCOPE_API_KEY` in `.env`; a key saved in the dialog overrides it. The phone page uses the settings made on the desktop page.
 
 While you speak, a small sound wave next to the 🎤 button shows how loud your voice is. The audio goes **straight from the browser to Alibaba Cloud** and does not pass through the Client server, so it uses none of the server's bandwidth (about 32 KB/s while speaking). The Client only keeps the settings and, for each recording, asks Alibaba for a one-minute temporary token (`POST /api/speech/token`); the real key is stored encrypted on the Client and is never sent to the browser. The browser needs a secure page to use the microphone: `https://` or `http://localhost` (a plain `http://` LAN address is refused by the browser).
 
@@ -744,6 +739,8 @@ By default a private-object signed link valid for 24 hours is returned. When a l
 The installed app and the web page share the same OSS settings. After saving the credentials you must tick "Enable image upload"; when it is not enabled the save page says so explicitly. The configuration is refreshed when the app regains focus or returns to the foreground, a first read failure can be retried at upload time, and the terminal upload button is not hidden because reading the configuration failed. The OSS configuration of different Clients is still independent.
 
 ### Environment check
+
+> **The page for this was removed in 2.88.0** (one page for computers and phones, see "One page" in `DESIGN.md`). The server endpoints stay (`/api/environment`), so scripts, other Clients and older pages keep working; the text below describes the feature as it was.
 
 The **Environment** tab (below "File sync") checks the machine running the Client and says which features will have problems. It is grouped by feature, the ones that will not work come first and are open, and each problem says what stops working and what to do about it:
 
@@ -795,6 +792,8 @@ When an Agent is interrupted midway with Esc or Ctrl+C, the end hook is not trig
 
 ## Dev environment install script
 
+> **The page for this was removed in 2.88.0** (one page for computers and phones, see "One page" in `DESIGN.md`). The server endpoints stay (the scripts in `scripts/`; the "Utilities" tab that copied the command is gone), so scripts, other Clients and older pages keep working; the text below describes the feature as it was.
+
 The command copied by the "Utilities" tab at the top of the page runs `scripts/install-claude-code.sh`. It suits macOS and Linux, installs everything into the current user's directory, and uses neither Homebrew nor `sudo`:
 
 1. Check the system, architecture, `curl`/`wget`, `tar`, `git`, and whether `claude.ai` and `github.com` are reachable.
@@ -811,6 +810,8 @@ Options: `--check` (check only), `--upgrade`, `--no-modify-path`, `--passphrase`
 
 ## Proxy install and subscription setup
 
+> **The page for this was removed in 2.88.0** (one page for computers and phones, see "One page" in `DESIGN.md`). The server endpoints stay (the script; the "Utilities" tab is gone), so scripts, other Clients and older pages keep working; the text below describes the feature as it was.
+
 The "Configure proxy" command on the "Utilities" page runs `scripts/install-proxy.sh`, which only prompts for the subscription link and needs no `sudo`:
 
 - **macOS (default)**: checks that Clash Verge is installed (install it first with `install-claude-code.sh --with-apps`) and imports the subscription into Clash Verge with a `clash://install-config` deep link; the "System Proxy" switch must be turned on by hand in the app.
@@ -819,6 +820,8 @@ The "Configure proxy" command on the "Utilities" page runs `scripts/install-prox
 - Other options: `--update` (fetch again with the saved subscription and restart), `--status`, `--reconfigure`, `--upgrade`, `--no-service`.
 
 ## Local install wizard
+
+> **The page for this was removed in 2.88.0** (one page for computers and phones, see "One page" in `DESIGN.md`). The server endpoints stay (the script; the "Utilities" tab is gone), so scripts, other Clients and older pages keep working; the text below describes the feature as it was.
 
 The "Copy wizard start command" on the "Utilities" page runs `scripts/setup-wizard.sh`: it downloads `setup-wizard.py`, `setup-wizard.html` and the two install scripts into a temporary directory (deleted on exit) and starts a web wizard where you can tick the dev environment and Mac apps, enter the subscription link and watch the output live. It needs Python 3.6+ (standard library only), with the options `--port N` (default 8765), `--no-browser` and `--idle-timeout seconds`.
 
@@ -866,6 +869,8 @@ Key points:
 
 ## Agent config (default settings for several servers)
 
+> **The page for this was removed in 2.88.0** (one page for computers and phones, see "One page" in `DESIGN.md`). The server endpoints stay (`/api/agent-config`, `/v1/agent-config`), so scripts, other Clients and older pages keep working; the text below describes the feature as it was.
+
 The "Agent config" page (⚙️) in the main navigation maintains one **global default** for Claude Code and Codex and pushes it at once to this machine and all servers under "Connect remote"; each server can **override** it individually. The page itself does not belong to any engine, and the server list is "this machine + all remote engines".
 
 | Setting | Claude Code (`~/.claude/settings.json`) | Codex (`~/.codex/config.toml`) |
@@ -885,6 +890,8 @@ The "Agent config" page (⚙️) in the main navigation maintains one **global d
 
 ## App list
 
+> **The page for this was removed in 2.88.0** (one page for computers and phones, see "One page" in `DESIGN.md`). The server endpoints stay (`/api/apps`, `/v1/apps`), so scripts, other Clients and older pages keep working; the text below describes the feature as it was.
+
 The "App list" page next to "Utilities" in the main navigation records which services exist on the machine of the current engine and how to reach them, and clicking an address opens it in a new tab:
 
 - **There are three sources**: PM2 processes are **registered automatically** (synced every time the page is opened, after which the description, domain and so on can be edited); **added manually**; **self-registration by programs** (the service calls `POST /v1/apps/register` at startup, an idempotent update by name; an example command is at the bottom of the page and the token is generated with `node scripts/create-engine-token.js owner service-name`). A manual app and a PM2 process with the same name are merged into one row automatically.
@@ -896,6 +903,8 @@ The "App list" page next to "Utilities" in the main navigation records which ser
 - **Security**: `url` and `domain` only accept http(s) without credentials (they become clickable links), all text on the page is rendered with `textContent`, and the program registration endpoint needs a valid access token.
 
 ## File sync
+
+> **The page for this was removed in 2.88.0** (one page for computers and phones, see "One page" in `DESIGN.md`). The server endpoints stay (`/api/file-sync`, `/v1/file-sync/*`; a configured sync keeps running), so scripts, other Clients and older pages keep working; the text below describes the feature as it was.
 
 The "File sync" page in the main navigation belongs to the current engine, and file sync uses a master / slave structure. "This node's role" at the top of the page switches between **Master** and **Slave** (the default is master with an empty file list; switching clears the sync list and keeps local files). Add the files to sync on the master, for example `~/.claude/settings.json`, `~/.codex/config.toml`, `home/.claude/CLAUDE.md`, and absolute paths are also accepted. The home-directory form resolves on each node to the home directory of the user running T-Agent there, which suits Macs and Linux machines whose home directories differ. When the master uses an absolute path, the slave can choose "Change local path" in the file table and set its own `~/.codex/config.toml` or an absolute path; clear the input to restore the default path. If an absolute path of the master does not exist on the slave, the first connection waits for a local path to be set and never creates the master's original path on the slave. Only the master can change the sync file list.
 

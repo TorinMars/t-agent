@@ -289,7 +289,9 @@ test('Phone microphone: a tap shorter than a long press is discarded, and keyboa
   const source = fs.readFileSync(path.join(__dirname, '../public/js/voice-input.js'), 'utf8');
   const handlers = {};
   const classes = new Set();
-  const button = { addEventListener: (type, fn) => { handlers[type] = fn; }, classList: { toggle: (name, on) => (on ? classes.add(name) : classes.delete(name)) }, setAttribute() {} };
+  // Like a real button, every listener of a type runs (voice-input.js adds two click listeners: keyboard toggle in hold mode and click mode).
+  const listeners = {};
+  const button = { addEventListener: (type, fn) => { (listeners[type] ||= []).push(fn); handlers[type] = event => listeners[type].forEach(listener => listener(event)); }, classList: { toggle: (name, on) => (on ? classes.add(name) : classes.delete(name)) }, setAttribute() {} };
   const textarea = { value: '', dispatchEvent() {}, focus() {} };
   const elements = { 'h5-translate-input': textarea, 'h5-voice': button };
   class FakeContext {

@@ -296,7 +296,7 @@ One line each for the main modules, by area. Each route file is mounted in `serv
 
 ### G. Target: one MUI page for PC and phone (agreed design)
 
-Decided by the user on 2026-11-05. The MUI phone page becomes the only page; the PC page is removed. This is the agreed design; it is not implemented yet. Each phase below is releasable on its own.
+Decided by the user on 2026-11-05. The MUI phone page becomes the only page; the PC page is removed. This is the agreed design. Phase 1 is done (released in 2.87.12, see "MUI page on a computer (single page, phase 1)"); phases 2 to 4 are not implemented yet. Each phase below is releasable on its own.
 
 #### G.1 Routes
 
@@ -339,7 +339,7 @@ Stored in `store.mjs` and on `<html data-input>`.
 
 #### G.4 Must port before the switch
 
-- Terminal "done" ack from the MUI page: `POST {tasksBase}/{id}/terminal/ack { terminal_id }` when a terminal is shown (today only `public/js/terminal-activity.js` on the PC page acks, so Pending never clears on the phone). This changes phone behaviour: opening a terminal on the phone will clear its Pending state.
+- Done in phase 1 (2.87.12). Terminal "done" ack from the MUI page: `POST {tasksBase}/{id}/terminal/ack { terminal_id }` when a terminal is shown (before 2.87.12 only `public/js/terminal-activity.js` on the PC page acked, so Pending never cleared on the phone). This changes phone behaviour: opening a terminal on the phone clears its Pending state.
 
 #### G.5 User decisions on features
 
@@ -377,13 +377,13 @@ These become unused by the browser but stay on the server (and in `/v1` and the 
 
 - `npm test` is `node --test --test-concurrency=2` with no file list. Its default patterns also match `scripts/test-*` (confirmed): all 32 real-Chromium browser scripts `scripts/test-*.cjs` plus `scripts/test-quick.js`, 33 files under `scripts/`. Plan: give `npm test` an explicit file list (unit tests in `test/`, then the browser scripts that are wanted).
 - Delete with the PC page: browser scripts that drive `index.html` for dropped features (`test-file-panel-*`, `test-multi-task`, `test-environment-page`, `test-apps-ui`, `test-file-sync-ui`, `test-theme`, `test-terminal-history`, `test-agent-tabs-restore`, `test-context-menu`, `test-desktop-layout`) and unit tests of dropped modules (for example `test/batch-update.test.js`, `test/file-panel-task-integration.test.js`). Rewrite against the MUI page: the PC-page terminal tests that cover kept behaviour (`test-terminal-keys`, `test-terminal-width`, `test-terminal-translate`, `test-terminal-images`, `test-terminal-file-links`, `test-terminal-new-menu`, `test-terminal-theme`), `test-session-redirect` (new routes) and unit tests that read `index.html` (`test/i18n.test.js`, `test/login-gate.test.js`, `test/client-auth-http.test.js`, `test/access-mode-page.test.js`, `test/sidebar-no-selected.test.js`, `test/vendor-assets.test.js`, update tests). The exact list is shown to the user in phase 3.
-- Add PC-viewport variants of `scripts/test-h5-browser.cjs` (1280x800, pointer mode: hidden key row and wheel strip, visible draft box, shortcuts, Esc, typing to the terminal, no keyboard detection on window resize, side panel, ack).
+- Done in phase 1: `scripts/test-h5-pc-browser.cjs`, a PC-viewport variant of `scripts/test-h5-browser.cjs` (1280x800, pointer mode: hidden key row and wheel strip, visible draft box, shortcuts, Esc, typing to the terminal, no keyboard detection on window resize, side panel, ack).
 
 #### G.8 Phases
 
 0. Tag the last two-page version: done, `v2.87.11-two-pages` (commit `8494601`).
-1. The MUI page works on PC next to the old page: input mode, wide layout, side panel, ack, shared `wideQuery`, PC-viewport tests. `/` and `/web` still serve the old page.
-2. Port the kept features: Engines settings, Update details, task Delete / Move / Work directory.
+1. The MUI page works on PC next to the old page: input mode, wide layout, side panel, ack, shared `wideQuery`, PC-viewport tests. `/` and `/web` still serve the old page. Done, released in 2.87.12 (`scripts/test-h5-pc-browser.cjs`).
+2. Port the kept features: Engines settings, Update details, task Delete / Move / Work directory. Next.
 3. Switch `/` to the MUI page and delete the old page; the delete list is shown to the user first.
 4. Cleanup: explicit `npm test` list, unused CSS / vendor files, documentation.
 

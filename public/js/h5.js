@@ -5,6 +5,13 @@
 (() => {
   const $ = id => document.getElementById(id);
   const ui = window.H5UI;
+  // Input mode, decided by the shell from media queries (scripts/h5-shell/entry.jsx; never from the user agent): 'pointer' on a computer with a mouse or
+  // trackpad and no touch screen, 'touch' otherwise. The on-screen keyboard handling below runs only in touch mode.
+  const pointerMode = () => ui.get().input === 'pointer';
+  // The computer keyboard shortcuts (typing to the terminal, Escape back to it, Cmd/Ctrl+K): on a computer, and on a touch device once a hardware keyboard was used.
+  const deskKeys = () => pointerMode() || Boolean(ui.get().hasKeyboard);
+  const terminalFontSize = () => (pointerMode() ? 13 : 11);
+  const APPLE = /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent || '');
   const tell = (message, type = 'info') => notify(message, type);
   const tr = text => (typeof I18n !== 'undefined' ? I18n.t(text) : text);
   const SUBMIT_DELAY_MS = 120; // same as the desktop: type the text first, then Enter, so a TUI does not see a pasted newline
@@ -65,6 +72,18 @@
   let closedTerminalHeight = 0; // the terminal box height while the keyboard is closed
   let keyboardOpen = false;
   function fitViewport() {
+    if (pointerMode()) {
+      // A computer has no on-screen keyboard: a shorter window is just a shorter window. The page follows the window height and the terminal refits
+      // (a real size change, so the PTY resize is right); nothing is pinned or shifted, and no keyboard timers run.
+      keyboardOpen = false;
+      fullHeight = 0;
+      fullWidth = 0;
+      clearTimeout(keyboardResetTimer);
+      document.documentElement.style.setProperty('--h5-height', `${Math.round(window.innerHeight)}px`);
+      if (window.scrollY) window.scrollTo(0, 0);
+      holdTerminalSize();
+      return;
+    }
     const height = window.visualViewport ? window.visualViewport.height : window.innerHeight;
     if (window.innerWidth !== fullWidth) { fullWidth = window.innerWidth; fullHeight = 0; } // rotated: measure again
     fullHeight = Math.max(fullHeight, height);
@@ -137,11 +156,13 @@
   let settleTimers = [];
   function settleViewport() {
     settleTimers.forEach(clearTimeout);
+    settleTimers = [];
+    if (pointerMode()) return; // touch only: there is no on-screen keyboard to wait for
     settleTimers = [0, 100, 250, 500, 1000].map(delay => setTimeout(fitViewport, delay));
   }
   document.addEventListener('focusin', settleViewport);
   document.addEventListener('focusout', settleViewport);
-  setInterval(() => { if (keyboardOpen) fitViewport(); }, 500);
+  setInterval(() => { if (keyboardOpen && !pointerMode()) fitViewport(); }, 500);
 
   // ── Tasks ──
   // The task list the shell draws: a note (loading, an error, no tasks), or groups of tasks, each with the sessions listed under it when it is open.
@@ -238,7 +259,7 @@
   // The browser lets go of the lock whenever the page is hidden, so it is asked for again when the page comes back. Browsers without the API just sleep.
   let wakeLock = null;
   async function syncWakeLock() {
-    const wanted = Boolean(task) && document.visibilityState === 'visible';
+    const wanted = !pointerMode() && Boolean(task) && document.visibilityState === 'visible'; // touch only: a computer manages its own screen sleep
     if (!wanted) {
       if (wakeLock) { const lock = wakeLock; wakeLock = null; try { await lock.release(); } catch { /* already released */ } }
       return;
@@ -309,7 +330,7 @@
   }
   // A wide screen (a computer, a landscape tablet) shows the task list as a permanent sidebar next to the terminal: it is never closed,
   // the page behind it stays usable, and a phone-sized screen keeps the sheet that slides over the page.
-  const wideQuery = window.matchMedia('(min-width: 900px)');
+  const wideQuery = (ui.media && ui.media.wideQuery) || window.matchMedia('(min-width: 900px)'); // the same query object as the shell's
   const isWide = () => wideQuery.matches;
   function openTasks() {
     const wide = isWide();
@@ -354,7 +375,11 @@
   }
   wideQuery.addEventListener('change', syncLayout);
 
-  ui.actions.openTasks = openTasks;
+  // The task name in the header (and Cmd/Ctrl+K): on a wide screen with the sidebar folded away, it brings the sidebar back first.
+  ui.actions.openTasks = () => {
+    if (isWide() && ui.get().sidebarCollapsed && ui.actions.toggleSidebar) ui.actions.toggleSidebar();
+    openTasks();
+  };
   ui.actions.expandAll = () => setAllExpanded(true);
   ui.actions.collapseAll = () => setAllExpanded(false);
   ui.actions.closeTasks = closeTasks;
@@ -728,6 +753,7 @@
   function closeAgent() {
     if (agentFor && agentFor.source === source.key) setOpened(agentFor.taskId, agentFor.conversation, false);
     hideAgent();
+    ackShown(); // the terminal under the chat is shown again
     renderTabs();
     void loadChats();
   }
@@ -888,7 +914,7 @@
     const term = new Terminal({
       allowProposedApi: true, // needed by the Unicode 11 addon
       cursorBlink: true,
-      fontSize: 11,
+      fontSize: terminalFontSize(), // 13px on a computer, 11px on a phone
       fontFamily: 'Menlo, Monaco, "Courier New", monospace',
       theme: { background: '#121212' },
       scrollback: 5000,
@@ -912,6 +938,8 @@
     el.addEventListener('focusout', () => noScreenKeyboard(term)); // the keyboard closed: the next terminal tap must not reopen it
     const s = { term, fit, el, ws: null, timer: null, attempts: 0, paused: false, disposed: false, task, terminalId, source };
     session = s;
+    // A computer: Cmd/Ctrl+Shift+C (and Cmd+C with a selection) copy, and a program's OSC 52 copy request asks for confirmation (terminal-clipboard.js).
+    if (pointerMode() && typeof TerminalClipboard !== 'undefined') s.clipboard = TerminalClipboard.attach(term, el);
     attachFileLinks(s);
     // A pasted image (long-press paste in the xterm textarea) is uploaded like a picked one; plain text keeps xterm's own paste.
     el.addEventListener('paste', event => {
@@ -935,8 +963,18 @@
     holdTerminalSize();
     refit(s);
     open(s);
+    ackShown();
+    focusTerminalSoon(s);
   }
-
+  // With a keyboard (a computer, or a tablet with a hardware keyboard) the terminal that was just shown takes the focus, so typing goes there at once;
+  // not when the person is typing somewhere else or a dialog is open. On a touch screen without a keyboard nothing is focused (no on-screen keyboard).
+  function focusTerminalSoon(s) {
+    if (!deskKeys()) return;
+    setTimeout(() => {
+      if (session !== s || s.disposed || agentChat || modalOpen() || editing(document.activeElement)) return;
+      s.term.focus();
+    }, 0);
+  }
   // The wheel strip: a transparent touch strip on the right edge of the terminal (drawn by the shell, scripts/h5-shell/Terminal.jsx).
   // A vertical drag on it works like a scroll wheel. In the normal buffer it scrolls the history with term.scrollLines; a
   // full-screen program (alternate buffer: Claude Code, Codex, vim, tmux ...) has no scrollback, so the drag is sent as wheel
@@ -1110,7 +1148,9 @@
     if (Number.isInteger(message.cols) && Number.isInteger(message.rows) && message.cols >= 2 && message.cols <= 1000 && message.rows >= 1 && message.rows <= 1000) {
       s.term.resize(message.cols, message.rows);
     }
-    s.term.write(typeof message.data === 'string' ? message.data : '', () => {
+    const history = typeof message.data === 'string' ? message.data : '';
+    const write = s.clipboard ? (data, done) => s.clipboard.writeHistory(data, done) : (data, done) => s.term.write(data, done); // a replayed OSC 52 never asks again
+    write(history, () => {
       if (s.ws !== ws || s.disposed) return;
       refit(s);
       s.term.scrollToBottom();
@@ -1130,6 +1170,7 @@
     clearTimeout(s.timer);
     s.heartbeat?.stop();
     s.observer?.disconnect();
+    s.clipboard?.dispose();
     if (s.ws) { const ws = s.ws; s.ws = null; try { ws.close(); } catch { /* already closed */ } }
     s.term.dispose();
     s.el.remove();
@@ -1140,8 +1181,84 @@
     void syncWakeLock();
     if (document.visibilityState !== 'visible') return;
     fitViewport();
+    ackShown(); // the person is looking again: a terminal that finished meanwhile is seen now
     if (session && !session.ws && !session.timer) open(session);
     else if (session && !session.ws && session.timer) { clearTimeout(session.timer); session.timer = null; open(session); } // do not wait out the backoff
+  });
+
+  // ── Terminal "done" acknowledgement (the PC page does the same, public/js/tasks.js `acknowledgeCurrentTerminal`) ──
+  // The server keeps each terminal's activity state: running, done (finished, not yet seen) or idle (lib/terminal-activity.js). Seeing a finished
+  // terminal is what clears 'done': when a terminal is shown while the page is visible, when the shown one turns 'done' while it is visible, and when
+  // the page becomes visible again, `POST {tasksBase}/{task}/terminal/ack` tells the server (local, Engine `/v1` and the remote proxy alike; the server
+  // ignores it unless the state is 'done'). The next-session button then sees that terminal as idle. A terminal hidden under a chat is not seen.
+  const ACK_POLL_MS = 3000;
+  const shownTerminal = () => (session && !session.disposed && !agentChat && document.visibilityState === 'visible' ? session : null);
+  function ackShown() {
+    const s = shownTerminal();
+    if (!s) return;
+    api('POST', `${s.source.tasksBase}/${s.task.id}/terminal/ack`, { terminal_id: s.terminalId }).catch(() => { /* an older Engine, or offline: it stays pending */ });
+  }
+  let ackPolling = false;
+  async function pollShownActivity() {
+    const s = shownTerminal();
+    if (!s || ackPolling) return;
+    ackPolling = true;
+    try {
+      const activity = await api('GET', `${s.source.activityBase}/terminal-activity`);
+      if (shownTerminal() === s && (((activity || {})[s.task.id] || {})[s.terminalId]) === 'done') ackShown();
+    } catch { /* keep the state; the next poll tries again */ } finally { ackPolling = false; }
+  }
+  setInterval(() => void pollShownActivity(), ACK_POLL_MS);
+
+  // ── A hardware keyboard: type to the terminal, Escape back to it, Cmd/Ctrl+K for the search (deskKeys: a computer, or a tablet with a keyboard) ──
+  const EDITABLE = 'input, textarea, select, [contenteditable=""], [contenteditable="true"]';
+  const editing = el => Boolean(el && el.closest && el.closest(EDITABLE));
+  // A dialog, a temporary drawer (task sheet, settings, menus) or the copy view is open: keys belong to it.
+  const modalOpen = () => Boolean(document.querySelector('.MuiModal-root:not(.MuiModal-hidden), dialog[open]')) || ui.get().copyText !== null;
+  const MODIFIER_KEYS = new Set(['Shift', 'Control', 'Alt', 'Meta', 'CapsLock', 'NumLock', 'ScrollLock', 'Fn', 'FnLock', 'Hyper', 'Super', 'OS', 'AltGraph', 'Dead', 'Unidentified', 'Process', 'Compose']);
+  // Cmd+K (Apple) or Ctrl+K (others) focuses the session search; on a wide screen a folded sidebar comes back first. Inside the terminal, Ctrl+K stays the
+  // shell's own key (kill to the end of the line), so on other systems it works only outside the terminal.
+  document.addEventListener('keydown', event => {
+    if (!deskKeys() || event.defaultPrevented || event.repeat || event.shiftKey || event.altKey || (event.key || '').toLowerCase() !== 'k') return;
+    if (APPLE ? !(event.metaKey && !event.ctrlKey) : !(event.ctrlKey && !event.metaKey)) return;
+    if (!APPLE && document.activeElement && document.activeElement.closest && document.activeElement.closest('.xterm')) return;
+    if (document.querySelector('dialog[open]') || ui.get().copyText !== null) return;
+    event.preventDefault();
+    event.stopPropagation();
+    ui.actions.openTasks();
+    const focusSearch = (tries = 0) => {
+      const box = $('h5-task-search-input');
+      if (box) { box.focus(); box.select(); } else if (tries < 10) setTimeout(() => focusSearch(tries + 1), 30);
+    };
+    setTimeout(focusSearch, 0);
+  }, true);
+  // Typing with nothing editable focused goes to the terminal: the key is sent and the terminal takes the focus, so the next keys go to it directly.
+  // Keys with Cmd stay the browser's (and Ctrl ones on other systems: reload, tabs ...); function keys (F1-F12) and lone modifiers are left alone. A focused
+  // button or link keeps Enter, Space, Tab and the arrows; only characters go on from there. A dialog, the chat and the side panel keep their keys.
+  document.addEventListener('keydown', event => {
+    if (!deskKeys() || event.defaultPrevented || !event.key || MODIFIER_KEYS.has(event.key) || event.metaKey) return;
+    if (event.ctrlKey && !APPLE) return;
+    const s = session;
+    if (!s || s.disposed || agentChat || modalOpen()) return;
+    const active = document.activeElement;
+    if (editing(active) || (active && active.closest && active.closest('#h5-design-sheet, #h5-agent'))) return;
+    if (event.key === 'Escape' && isWide() && ui.get().design && ui.get().design.open) { ui.actions.closeDesign(); return; } // closes the side panel first
+    const onBody = !active || active === document.body || active === document.documentElement;
+    const printable = Array.from(event.key).length === 1;
+    if (!onBody && (!printable || event.key === ' ')) return;
+    if (event.isComposing || event.keyCode === 229) { s.term.focus(); return; } // an IME starts: let it compose in the terminal
+    const data = printable && !event.ctrlKey && (!event.altKey || APPLE) ? event.key // Option on a Mac types its own characters
+      : TerminalKeys.encode(event.key, { ctrl: event.ctrlKey, alt: event.altKey, shift: event.shiftKey });
+    if (data === null || data === undefined) return;
+    event.preventDefault();
+    s.term.focus();
+    typed(s, data);
+  });
+  // A click on the terminal gives it the focus (xterm does this on mouse down too; this also covers a click on its padding).
+  terminalHost.addEventListener('click', event => {
+    const s = session;
+    if (!deskKeys() || !s || s.disposed || s.term.hasSelection() || (event.target.closest && event.target.closest('#h5-wheel, #h5-selection-bar'))) return;
+    s.term.focus();
   });
 
   // ── Keys ──
@@ -1485,10 +1602,12 @@
   // (visualViewport, so the on-screen keyboard is already subtracted), cut down to whole lines, so the key row, the buttons and part of the terminal stay in view.
   // Called on input, on focus changes, after a send, when the viewport changes and at start.
   const TRANSLATE_MAX_VIEWPORT_FRACTION = 0.5;
+  let oneLineInput = 0;
   function autosize() {
     const input = translateInput;
     input.style.height = '';
     input.style.overflowY = 'hidden';
+    oneLineInput = input.offsetHeight; // rows=1 with no height set: the one-line box (the resting line that a computer's layout keeps room for)
     // One line while the box is empty, or while it has no focus (keyboard dismissed): the text stays in the box, clipped to the first line, and is shown in full again on focus.
     // A pressed bar button (data-hold) keeps the current size so the button does not move under the finger.
     const resting = document.activeElement !== input && !translateForm.hasAttribute('data-hold');
@@ -1558,7 +1677,13 @@
       const now = translateInput.value; // typed on while the translation ran: keep what came after the sent text
       translateInput.value = now === typed ? '' : now.startsWith(typed) ? now.slice(typed.length) : now;
       translateForm.removeAttribute('data-hold'); // the press on the send button is over: do not keep the box shown
-      if (!translateInput.value) translateInput.blur(); // sent: the on-screen keyboard goes away and the box hides at once (no timer); the terminal is not focused
+      // Sent: on a touch screen the on-screen keyboard goes away and the box hides at once (no timer); the terminal is not focused. With a keyboard there is
+      // no on-screen keyboard to dismiss, and blurring would leave the focus nowhere, so the terminal takes it: its answer is right there, and the next keys
+      // (a confirmation, Ctrl+C) reach it. The box itself stays shown on a computer, ready for the next message.
+      if (!translateInput.value) {
+        if (deskKeys() && target === session && !target.disposed) target.term.focus();
+        else translateInput.blur();
+      }
       autosize();
       relayoutBar();
     } catch (error) {
@@ -1575,6 +1700,8 @@
   // Cmd+Enter (Ctrl+Enter on other systems) is the translate-and-send button and Option+Enter (Alt+Enter) is the send arrow, through the same submitBox. The key
   // never inserts a new line (preventDefault), and an Enter that confirms an IME candidate (isComposing, keyCode 229) is left alone, so it never sends.
   translateInput.addEventListener('keydown', event => {
+    // With a keyboard, Escape leaves the draft box for the terminal (the text stays in the box).
+    if (event.key === 'Escape' && deskKeys() && !event.isComposing && session && !session.disposed) { event.preventDefault(); session.term.focus(); return; }
     if (event.key !== 'Enter' || event.isComposing || event.keyCode === 229 || event.shiftKey) return;
     const translateFirst = (event.metaKey || event.ctrlKey) && !event.altKey;
     if (!translateFirst && !(event.altKey && !event.metaKey && !event.ctrlKey)) return; // plain Enter, or Cmd and Option together: a new line as before
@@ -1602,7 +1729,9 @@
   // negative), so the terminal box cannot change by even a fraction of a pixel; what the bar covers is moved, not resized.
   function syncBar(animate = false) {
     const height = barOuterHeight();
-    const overlap = height;
+    // Touch: the whole box covers the terminal (it is hidden at rest). Computer: the box is always shown and its resting line has its own room in the
+    // layout, so only the growth beyond one line covers the terminal (the terminal is moved for it, never resized while typing).
+    const overlap = pointerMode() ? Math.max(0, translateInput.offsetHeight - oneLineInput) : height;
     const extra = Math.max(0, overlap);
     if (overlap !== barOverlap) bottomArea.style.setProperty('--h5-bar-extra', `${overlap}px`);
     barOverlap = overlap;
@@ -1643,6 +1772,7 @@
   const PRESS_HOLD_MS = 400;
   let pressTimer = 0;
   bottomArea.addEventListener('pointerdown', event => {
+    if (event.pointerType === 'mouse') return; // a mouse does not slide off a button while the layout animates, and its focus is kept by mousedown
     const button = event.target.closest && event.target.closest('button');
     if (!button) return;
     finishFlips();
@@ -1799,6 +1929,18 @@
   if (typeof AgentChat !== 'undefined' && AgentChat.setOpenHandler) AgentChat.setOpenHandler(data => { if (!data.remote) void openChatFromLink(data); });
   // The same for the service worker that shows these notifications (the phone shows them only through it).
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+
+  // The input mode can change while the page is open (a mouse or a touch screen attached): the terminal font, the layout measurements and the wake lock follow.
+  let lastInput = ui.get().input;
+  ui.subscribe(() => {
+    const input = ui.get().input;
+    if (input === lastInput) return;
+    lastInput = input;
+    if (session && !session.disposed) { session.term.options.fontSize = terminalFontSize(); refit(session); }
+    fitViewport();
+    autosize();
+    void syncWakeLock();
+  });
 
   // ── Start ──
   (async () => {

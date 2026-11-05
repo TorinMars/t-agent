@@ -1,4 +1,6 @@
 // Clipboard operations stay in the Client. OSC 52 never writes without confirmation.
+// The desktop page has a terminal toolbar with a copy button and a "review the request" button. A page without that toolbar (the MUI page, /h5, on a
+// computer) gets the same shortcuts and the same confirmation dialog, which then opens by itself when a program asks to copy (there is no button to wait on).
 const TerminalClipboard = (() => {
   const tell = (message, type) => (typeof notify === 'function' ? notify(message, type) : (typeof alert === 'function' ? alert(message) : undefined)); // floating notice; falls back to alert where toast.js is not loaded
   const instances = new Map();
@@ -15,7 +17,7 @@ const TerminalClipboard = (() => {
   request.setAttribute('aria-label', 'Review program copy request');
   request.dataset.tip = 'Review program copy request: a program asked to write to your clipboard through the terminal and needs your confirmation';
   request.hidden = true;
-  toolbar.append(copy, request);
+  if (toolbar) toolbar.append(copy, request);
   const pane = document.getElementById('terminal-pane');
   const container = document.getElementById('xterm-container');
   const hint = /Mac|iPhone|iPad/.test(navigator.platform) ? 'Hold Option while selecting, then copy' : 'Hold Shift while selecting, then copy';
@@ -23,7 +25,7 @@ const TerminalClipboard = (() => {
   let shown = null;
 
   function active() {
-    if (pane.style.display === 'none' || container.style.display === 'none') return null;
+    if ((pane && pane.style.display === 'none') || (container && container.style.display === 'none')) return null;
     return [...instances.values()].find(item => item.el.isConnected && item.el.style.display !== 'none') || null;
   }
   function render() {
@@ -139,6 +141,7 @@ const TerminalClipboard = (() => {
       const text = decodeOsc52(data);
       if (text && !item.replaying && active() === item && !item.pending) {
         item.pending = text;
+        if (!toolbar) { render(); request.click(); return true; } // no toolbar button: show the confirmation at once (it still copies nothing until confirmed)
         message(item, 'A program wants to copy: click “Review program copy request” to confirm');
         item.expiry = setTimeout(() => { item.pending = null; item.dialog?.remove(); item.dialog = null; render(); }, 60000);
         render();
@@ -155,8 +158,8 @@ const TerminalClipboard = (() => {
     } };
   }
   const observer = new MutationObserver(render);
-  observer.observe(container, { attributes: true, attributeFilter: ['style'], subtree: true, childList: true });
-  observer.observe(pane, { attributes: true, attributeFilter: ['style'] });
+  if (container) observer.observe(container, { attributes: true, attributeFilter: ['style'], subtree: true, childList: true });
+  if (pane) observer.observe(pane, { attributes: true, attributeFilter: ['style'] });
   render();
   return { attach, decodeOsc52 };
 })();

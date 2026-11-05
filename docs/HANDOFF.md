@@ -2,6 +2,14 @@
 
 For the Claude / developer taking over: read `AGENTS.md` (development and release rules) and this file first, then start working.
 
+## Current goal (2026-11-05, after v2.87.11): one MUI page for PC and phone
+
+- The map of the system and the agreed plan are in `DESIGN.md` "System architecture and functionality" (parts F and G). Read it first. The sections below this one are older history.
+- Phase status: phase 0 done (tag `v2.87.11-two-pages` = commit `8494601`, the last release with the two pages `index.html` and `h5.html`). Phases 1 (MUI page works on PC next to the old page), 2 (port kept features), 3 (switch `/`, delete the old page; show the delete list to the user first) and 4 (cleanup) are not started.
+- User decisions (2026-11-05): `/` and `/h5` serve the same MUI page; layout by width (900px), input mode by pointer media queries, not by user agent. Keep / port: remote Engine management (Settings "Engines"), richer Update details, task Delete / Move to group / Work directory field. Drop: file browser and Monaco, in-page Markdown editing, To-do tab, theme picker, multi-task page, terminal history viewer, environment check, Utilities, quick links, workspace import / cleanup, batch update, share button, Finder / VS Code buttons, drag-sort and group editing, priority / due date / document paths. Apps (PM2), Agent config, tunnels and File sync pages: UI dropped, endpoints kept, pending the user's final confirmation.
+- Must port before the switch: the terminal "done" ack from the MUI page (today only the PC page acks).
+- Pitfalls: `npm test` has no file list, so on Node 24 it also runs `scripts/test-*.cjs`; iPad input mode must be checked on a real iPad.
+
 ## Current state
 
 - Branch `main`, latest release **v2.48.0**, pushed to `origin/main`, working tree clean.

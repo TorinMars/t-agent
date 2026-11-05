@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
-import Chip from '@mui/material/Chip';
 import Divider from '@mui/material/Divider';
 import InputAdornment from '@mui/material/InputAdornment';
 import Drawer from '@mui/material/Drawer';
@@ -9,7 +8,7 @@ import IconButton from '@mui/material/IconButton';
 import List from '@mui/material/List';
 import ListItemButton from '@mui/material/ListItemButton';
 import NativeSelect from '@mui/material/NativeSelect';
-import TextField from '@mui/material/TextField';
+import TextField from './TextField.jsx';
 import Typography from '@mui/material/Typography';
 import AddIcon from '@mui/icons-material/Add';
 import CloseIcon from '@mui/icons-material/Close';
@@ -22,7 +21,8 @@ import SmartToyOutlinedIcon from '@mui/icons-material/SmartToyOutlined';
 import MoreHorizIcon from '@mui/icons-material/MoreHoriz';
 import UnfoldLessIcon from '@mui/icons-material/UnfoldLess';
 import UnfoldMoreIcon from '@mui/icons-material/UnfoldMore';
-import { DomIcon, api, chatMark, t, terminalMark } from './common.jsx';
+import { DomIcon, Pill, api, chatMark, t, terminalMark } from './common.jsx';
+import { TOUCH } from './theme.mjs';
 import { Icon } from './Icons.jsx';
 
 const GLYPHS = { shell: '>_', claude: '✳', codex: 'GPT' };
@@ -58,7 +58,7 @@ function Sessions({ ui, taskId, sessions }) {
       {sessions.note ? <Typography className="h5-peek-note" variant="body2" color="text.secondary" sx={{ px: 1, py: 0.75 }}>{t(sessions.note)}</Typography> : null}
       {sessions.rows.map(row => (
         <React.Fragment key={`${row.kind}:${row.id}`}>
-        <Box className="h5-terminal-row" sx={{ display: 'flex', alignItems: 'center', gap: 0.5, borderRadius: 2, borderLeft: 3, borderColor: row.current ? 'primary.main' : 'transparent', bgcolor: row.current ? 'action.selected' : undefined }}>
+        <Box className="h5-terminal-row" sx={{ display: 'flex', alignItems: 'center', gap: 0.5, [TOUCH]: { gap: 1 }, borderRadius: 2, borderLeft: 3, borderColor: row.current ? 'primary.main' : 'transparent', bgcolor: row.current ? 'action.selected' : undefined }}>
           <ListItemButton
             component="button" className="h5-terminal-main" aria-current={row.current ? 'true' : undefined}
             selected={row.current} onClick={() => ui.actions.openRow(taskId, row)}
@@ -74,7 +74,7 @@ function Sessions({ ui, taskId, sessions }) {
               <Box component="span" className="h5-terminal-name" sx={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.title}</Box>
               {subtitle(row) ? <Box component="span" className="h5-terminal-sub" sx={{ fontSize: 12, lineHeight: 1.3, color: row.running ? 'success.main' : 'text.secondary', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{subtitle(row)}</Box> : null}
             </Box>
-            {row.kind === 'chat' ? <Chip className="h5-agent-badge" label={t('AGENT')} size="small" variant="outlined" sx={{ ml: 'auto', flex: '0 0 auto', height: 20, fontSize: 10, letterSpacing: 0.5 }} /> : null}
+            {row.kind === 'chat' ? <Pill className="h5-agent-badge" label={t('AGENT')} sx={{ ml: 'auto', flex: '0 0 auto', height: 20, px: 0.75, fontSize: 10, letterSpacing: 0.5 }} /> : null}
           </ListItemButton>
           {row.more ? (
             <IconButton className="h5-terminal-more" size="small" sx={{ p: 0.5 }} aria-label={t(row.kind === 'chat' ? 'Chat actions' : 'Terminal actions')} onClick={() => ui.actions.rowMore(row)}>
@@ -121,7 +121,7 @@ function Tasks({ state, ui, query, filter }) {
     <Box key={group.key} component="section">
       {group.tasks.map(task => (
         <Box key={task.id} sx={{ borderBottom: 1, borderColor: 'divider', '&:last-of-type': { borderBottom: 0 } }}>
-          <Box className={task.add ? 'h5-task-row' : undefined} sx={{ display: 'flex', alignItems: 'center', gap: 0.5, borderRadius: 2 }}>
+          <Box className={task.add ? 'h5-task-row' : undefined} sx={{ display: 'flex', alignItems: 'center', gap: 0.5, borderRadius: 2, [TOUCH]: { gap: 1 } }}>
             <ListItemButton
               component="button" className="h5-task-item" aria-current={task.selected ? 'true' : undefined} aria-expanded={task.expanded}
               onClick={() => ui.actions.toggleTask(task.id)}
@@ -137,7 +137,7 @@ function Tasks({ state, ui, query, filter }) {
             </ListItemButton>
             {/* "⋯" (move, working directory, delete) left of the "+", which stays at the right end of the row */}
             {task.add ? <IconButton className="h5-task-more" size="small" sx={{ p: 0.5 }} aria-label={t('Task actions')} title={t('Task actions')} aria-haspopup="dialog" onClick={() => ui.actions.taskMore(task.id)}><Icon name="taskMore" size={20} /></IconButton> : null}
-            {task.add ? <IconButton className="h5-task-add" size="small" sx={{ p: 0.5 }} aria-label={t('Session')} onClick={() => ui.actions.addSession(task.id)}><AddIcon /></IconButton> : null}
+            {task.add ? <IconButton className="h5-task-add" size="small" sx={{ p: 0.5 }} aria-label={t('Session')} title={t('Session')} onClick={() => ui.actions.addSession(task.id)}><AddIcon /></IconButton> : null}
           </Box>
           {task.expanded && task.sessions ? <Sessions ui={ui} taskId={task.id} sessions={task.sessions} /> : null}
         </Box>
@@ -180,7 +180,7 @@ function Panel({ state, ui }) {
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
       <Box className="h5-sheet-header" sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', px: 1.5, py: 0.25, borderBottom: 1, borderColor: 'divider' }}>
         <Typography id="h5-tasks-title" variant="h6" component="h2">{t('Tasks')}</Typography>
-        <Box sx={{ display: 'flex', alignItems: 'center' }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', [TOUCH]: { gap: 1 } }}>
           <IconButton id="h5-expand-all" size="small" aria-label={t('Expand all')} title={t('Expand all')} onClick={() => ui.actions.expandAll()}><UnfoldMoreIcon /></IconButton>
           <IconButton id="h5-collapse-all" size="small" aria-label={t('Collapse all')} title={t('Collapse all')} onClick={() => ui.actions.collapseAll()}><UnfoldLessIcon /></IconButton>
           {state.wide ? null : <IconButton id="h5-close-tasks" aria-label={t('Close')} onClick={() => ui.actions.closeTasks()}><CloseIcon /></IconButton>}
@@ -194,14 +194,18 @@ function Panel({ state, ui }) {
           </NativeSelect>
         </Box>
       ) : null}
-      <Box className="h5-task-search" sx={{ px: 1.5, pb: 0.25, pt: 0.75 }}>
+      <Box className="h5-task-search" sx={{ px: 1.5, pb: 0.25, pt: 0.75, [TOUCH]: { pb: 0 } }}>
         <TextField
           size="small" fullWidth type="search" placeholder={t('Search sessions')} value={query} onChange={event => setQuery(event.target.value)}
           slotProps={{ input: { startAdornment: <InputAdornment position="start"><SearchIcon fontSize="small" /></InputAdornment>, sx: { borderRadius: 3, fontSize: 14, '& input': { py: 0.75 } } }, htmlInput: { id: 'h5-task-search-input', 'aria-label': t('Search sessions') } }}
         />
-        <Box className="h5-task-filters" sx={{ display: 'flex', gap: 0.75, pt: 0.75 }}>
+        {/* The filters look small (32px on a touch screen) but each is a 44px target: its `::after` reaches 6px above and below, into the row's padding. */}
+        <Box className="h5-task-filters" sx={{ display: 'flex', gap: 0.75, pt: 0.75, [TOUCH]: { gap: 1, py: 0.75 } }}>
           {[['all', 'All'], ['running', 'Running'], ['pending', 'Pending']].map(([key, label]) => (
-            <Chip key={key} size="small" label={t(label)} clickable color={filter === key ? 'primary' : 'default'} variant={filter === key ? 'filled' : 'outlined'} onClick={() => setFilter(key)} />
+            <Pill
+              key={key} label={t(label)} tone={filter === key ? 'primary' : 'default'} filled={filter === key} aria-pressed={filter === key} onClick={() => setFilter(key)}
+              sx={{ [TOUCH]: { height: 32, minWidth: 44, px: 1.5, fontSize: 14, borderRadius: 16, position: 'relative', '&::after': { content: '""', position: 'absolute', inset: '-7px 0' } } }}
+            />
           ))}
         </Box>
       </Box>
@@ -226,13 +230,13 @@ function Panel({ state, ui }) {
             slotProps={{ inputLabel: { shrink: true }, htmlInput: { autoCapitalize: 'off', spellCheck: false, 'aria-label': t('Working directory'), style: { paddingTop: 7, paddingBottom: 7 } } }}
           />
         </Box>) : null}
-      <Box sx={{ px: 1.5, pb: 0.75 }}>
+      <Box sx={{ px: 1.5, pb: 0.75, [TOUCH]: { pt: 0.5, pb: 1 } }}>
         <Button id="h5-add-task" fullWidth variant="contained" size="medium" startIcon={<AddIcon />} onClick={() => setAdding(open => !open)} sx={{ borderRadius: 3, py: 0.5, textTransform: 'none', fontSize: 14 }}>{t('New task')}</Button>
       </Box>
       <Divider />
       <Box sx={{ display: 'flex', alignItems: 'center' }}>
         <Button className="h5-desktop-link" component="a" href="/web" startIcon={<DesktopWindowsOutlinedIcon />} sx={{ flex: '1 1 auto', justifyContent: 'flex-start', py: 0.5, px: 1.5, borderRadius: 0, textTransform: 'none', fontSize: 13, color: 'text.secondary' }}>{t('Desktop version')}</Button>
-        <IconButton id="h5-tasks-settings" aria-label={t('Settings')} onClick={() => ui.actions.openSettings()} size="small" sx={{ mr: 1 }}><SettingsIcon fontSize="small" /></IconButton>
+        <IconButton id="h5-tasks-settings" aria-label={t('Settings')} title={t('Settings')} onClick={() => ui.actions.openSettings()} size="small" sx={{ mr: 1, [TOUCH]: { ml: 1 } }}><SettingsIcon fontSize="small" /></IconButton>
       </Box>
     </Box>
   );

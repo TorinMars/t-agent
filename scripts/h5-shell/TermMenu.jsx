@@ -3,7 +3,7 @@ import Button from '@mui/material/Button';
 import Drawer from '@mui/material/Drawer';
 import List from '@mui/material/List';
 import ListItemButton from '@mui/material/ListItemButton';
-import TextField from '@mui/material/TextField';
+import TextField from './TextField.jsx';
 import Typography from '@mui/material/Typography';
 import { t } from './common.jsx';
 

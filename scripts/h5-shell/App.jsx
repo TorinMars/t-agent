@@ -1,4 +1,4 @@
-import { useLayoutEffect, useSyncExternalStore } from 'react';
+import { useLayoutEffect, useState, useSyncExternalStore } from 'react';
 import CssBaseline from '@mui/material/CssBaseline';
 import { ThemeProvider } from '@mui/material/styles';
 import { CopyDialog, Notice, RetainDialog, UploadDialog } from './Dialogs.jsx';
@@ -10,6 +10,14 @@ import { TaskDrawer } from './TaskDrawer.jsx';
 import { BottomArea, TerminalArea } from './Terminal.jsx';
 import { TermMenu } from './TermMenu.jsx';
 import { theme } from './theme.mjs';
+
+// A sheet or dialog that is closed when the page starts is not drawn at all until it is opened the first time (the first render of the page is
+// shorter); from then on it stays mounted, so MUI runs its closing animation and gives the focus back as usual.
+function Lazy({ open, children }) {
+  const [seen, setSeen] = useState(open);
+  if (open && !seen) setSeen(true);
+  return seen || open ? children : null;
+}
 
 // The whole phone page, drawn from the state in the store. The chat (#h5-agent) and the image picker are plain elements of h5.html, outside of React.
 export function App({ ui }) {
@@ -40,13 +48,13 @@ export function App({ ui }) {
         <BottomArea state={state} ui={ui} />
       </div>
       <TaskDrawer state={state} ui={ui} />
-      <SettingsDrawer state={state} ui={ui} />
-      <TermMenu state={state} ui={ui} />
-      <CopyDialog state={state} ui={ui} />
-      <DesignSheet state={state} ui={ui} />
-      <UploadDialog state={state} ui={ui} />
-      <RetainDialog state={state} ui={ui} />
-      <TaskDialog state={state} ui={ui} />
+      <Lazy open={state.settingsOpen}><SettingsDrawer state={state} ui={ui} /></Lazy>
+      <Lazy open={Boolean(state.menu)}><TermMenu state={state} ui={ui} /></Lazy>
+      <Lazy open={state.copyText !== null}><CopyDialog state={state} ui={ui} /></Lazy>
+      <Lazy open={Boolean(state.design && state.design.open)}><DesignSheet state={state} ui={ui} /></Lazy>
+      <Lazy open={Boolean(state.upload)}><UploadDialog state={state} ui={ui} /></Lazy>
+      <Lazy open={state.retainUrl !== null}><RetainDialog state={state} ui={ui} /></Lazy>
+      <Lazy open={Boolean(state.taskDialog)}><TaskDialog state={state} ui={ui} /></Lazy>
       <Notice state={state} ui={ui} />
     </ThemeProvider>
   );

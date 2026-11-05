@@ -1,12 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Box from '@mui/material/Box';
 import Drawer from '@mui/material/Drawer';
 import IconButton from '@mui/material/IconButton';
 import LinearProgress from '@mui/material/LinearProgress';
-import SwipeableDrawer from '@mui/material/SwipeableDrawer';
 import Typography from '@mui/material/Typography';
 import useMediaQuery from '@mui/material/useMediaQuery';
-import { Tip, named, t } from './common.jsx';
+import { named, t } from './common.jsx';
 import { Icon } from './Icons.jsx';
 
 // The Markdown renderer the app already ships (the desktop document view uses the same files). They are loaded the first time the sheet shows a
@@ -99,6 +98,47 @@ function renderText(node, source, line) {
   if (target) node.scrollTop = Math.max(0, target.getBoundingClientRect().top - node.getBoundingClientRect().top - node.clientHeight / 2);
 }
 
+// A swipe down closes the bottom sheet (what MUI's SwipeableDrawer did, in a few lines and without its 7 KB). The finger moves the sheet with it;
+// letting go after 25% of the sheet's height, or after a quick flick down, closes it, else it slides back. A swipe that starts on the document
+// while it is scrolled away from its top scrolls the document instead. The sheet's closing slide starts from where the finger left it.
+function useSwipeDown(onClose) {
+  const drag = useRef(null);
+  const paper = event => event.currentTarget;
+  const onTouchStart = event => {
+    if (event.touches.length !== 1) { drag.current = null; return; }
+    const body = event.target.closest('.h5-design-body');
+    if (body && body.scrollTop > 0) { drag.current = null; return; }
+    drag.current = { y: event.touches[0].clientY, x: event.touches[0].clientX, t: performance.now(), dy: 0, active: false };
+  };
+  const onTouchMove = event => {
+    const d = drag.current;
+    if (!d) return;
+    const dy = event.touches[0].clientY - d.y;
+    const dx = event.touches[0].clientX - d.x;
+    if (!d.active) {
+      if (Math.abs(dy) < 8 && Math.abs(dx) < 8) return;
+      if (dy <= 0 || Math.abs(dx) > Math.abs(dy)) { drag.current = null; return; } // up or sideways: a scroll, not a swipe
+      d.active = true;
+    }
+    d.dy = Math.max(0, dy);
+    const node = paper(event);
+    node.style.transition = 'none';
+    node.style.transform = `translateY(${d.dy}px)`;
+  };
+  const onTouchEnd = event => {
+    const d = drag.current;
+    drag.current = null;
+    if (!d || !d.active) return;
+    const node = paper(event);
+    const speed = d.dy / Math.max(1, performance.now() - d.t); // px per ms
+    node.style.transition = '';
+    if (d.dy > node.offsetHeight * 0.25 || (speed > 0.6 && d.dy > 40)) { onClose(); return; } // the closing slide starts from here
+    node.style.transition = 'transform 200ms cubic-bezier(0, 0, 0.2, 1)';
+    node.style.transform = 'none';
+  };
+  return { onTouchStart, onTouchMove, onTouchEnd, onTouchCancel: onTouchEnd };
+}
+
 // The design document of the task, in a sheet that slides up from the bottom (h5.js `openDesign` reads `DESIGN.md` from the task's working directory
 // through the task file API and writes `state.design`). Closes with the close button, a tap on the dimmed page, Escape or a swipe down.
 // The page behind is not resized: no scroll lock (it would change the body padding), and the terminal keeps its size, so no PTY resize is sent.
@@ -141,6 +181,7 @@ export function DesignSheet({ state, ui }) {
   }, [content, node, markdown, line]);
 
   const close = () => ui.actions.closeDesign();
+  const swipe = useSwipeDown(close);
   const dir = design && design.dir;
   let note = null;
   const name = filePathInDir.replace(/\/+$/, '').split('/').pop() || filePathInDir;
@@ -161,7 +202,6 @@ export function DesignSheet({ state, ui }) {
   const loading = design && (design.status === 'loading' || (design.status === 'ready' && render.status === 'rendering'));
   const filePath = dir ? `${dir.replace(/\/+$/, '')}/${filePathInDir}` : filePathInDir;
 
-  const tip = state.input === 'pointer';
   const contents = (
     <>
       {side ? null : (
@@ -176,9 +216,7 @@ export function DesignSheet({ state, ui }) {
             sx={{ fontFamily: 'ui-monospace, Menlo, monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', direction: 'rtl', textAlign: 'left' }}
           ><bdi>{filePath}</bdi></Typography>
         </Box>
-        <Tip on={tip} title={t('Close')}>
-          <IconButton id="h5-design-close" {...named(t('Close'), tip)} onClick={close}><Icon name="close" size={22} /></IconButton>
-        </Tip>
+        <IconButton id="h5-design-close" {...named(t('Close'))} onClick={close}><Icon name="close" size={22} /></IconButton>
       </Box>
       {loading ? <LinearProgress id="h5-design-loading" aria-label={t('Loading…')} sx={{ flex: '0 0 auto' }} /> : null}
       {note ? (
@@ -203,13 +241,12 @@ export function DesignSheet({ state, ui }) {
     );
   }
   return (
-    <SwipeableDrawer
-      anchor="bottom" id="h5-design-sheet" open={open} onClose={close} onOpen={() => {}}
-      disableSwipeToOpen disableDiscovery transitionDuration={reduced ? 0 : undefined}
+    <Drawer
+      anchor="bottom" id="h5-design-sheet" open={open} onClose={close} transitionDuration={reduced ? 0 : undefined}
       ModalProps={{ disableScrollLock: true }}
-      slotProps={{ paper: { className: 'h5-design-panel', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'h5-design-title', sx: { height: '88dvh', maxWidth: 960, width: '100%', mx: 'auto', borderRadius: '16px 16px 0 0', backgroundImage: 'none', display: 'flex', flexDirection: 'column', overflow: 'hidden', pb: 'env(safe-area-inset-bottom)' } } }}
+      slotProps={{ paper: { className: 'h5-design-panel', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'h5-design-title', ...swipe, sx: { height: '88dvh', maxWidth: 960, width: '100%', mx: 'auto', borderRadius: '16px 16px 0 0', backgroundImage: 'none', display: 'flex', flexDirection: 'column', overflow: 'hidden', pb: 'env(safe-area-inset-bottom)' } } }}
     >
       {contents}
-    </SwipeableDrawer>
+    </Drawer>
   );
 }

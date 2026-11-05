@@ -1,6 +1,6 @@
 // The MUI page (/h5) on a computer, in real Chromium with mocked servers: input mode 'pointer' (no touch, a mouse) at 1440x900 and 1280x800, and the
 // touch mode at phone size for comparison. Checks: no key row, no wheel strip, no keyboard buttons, the draft box always shown, 13px terminal font,
-// MUI tooltips; Cmd/Ctrl+Enter translates and sends, Alt+Enter sends as typed, Enter is a new line, and a send gives the focus back to the terminal;
+// native titles on icon buttons, Escape closing the saved commands menu from the terminal; Cmd/Ctrl+Enter translates and sends, Alt+Enter sends as typed, Enter is a new line, and a send gives the focus back to the terminal;
 // typing with nothing focused reaches the terminal, Escape in the draft box goes back to it, Cmd/Ctrl+K focuses the session search; a shorter window does
 // NOT pin the terminal (it was taken for the on-screen keyboard); the terminal "done" acknowledgement (local and remote Engine) and the next-session
 // button seeing it idle; folding the sidebar (remembered) and the design document as a right side panel, both refitting the terminal.
@@ -130,14 +130,27 @@ const waitAck = (url, id, from = 0) => new Promise((resolve, reject) => {
       assert.ok(bottom.terminal <= bottom.box + 1, `${label}: the resting draft box has its own room below the terminal (${JSON.stringify(bottom)})`);
       assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('.h5-xterm .xterm-rows')).fontSize), '13px', `${label}: 13px terminal font`);
       assert.equal(await page.locator('#h5-voice').getAttribute('title'), 'Voice input: click to start speaking', `${label}: voice is click to start / stop`);
-      // MUI tooltip on an icon button; the aria-label stays and the title comes back when the tooltip closes.
-      assert.equal(await page.locator('#h5-design').getAttribute('title'), 'Design document');
+      // Icon buttons: the native title is the tooltip (no MUI Tooltip any more), the same text as the aria-label; no MUI tooltip opens on hover.
+      for (const [id, name] of [['h5-design', 'Design document'], ['h5-commands', 'Saved commands'], ['h5-image', 'Upload image'], ['h5-refresh', 'Refresh the page']]) {
+        assert.equal(await page.locator(`#${id}`).getAttribute('title'), name, `${label}: #${id} has its title`);
+        assert.equal(await page.locator(`#${id}`).getAttribute('aria-label'), name, `${label}: #${id} has its aria-label`);
+      }
       await page.locator('#h5-design').hover();
-      await page.locator('[role="tooltip"]', { hasText: 'Design document' }).waitFor({ timeout: 3000 });
-      assert.equal(await page.locator('#h5-design').getAttribute('aria-label'), 'Design document');
+      await page.waitForTimeout(400);
+      assert.equal(await page.locator('[role="tooltip"]').count(), 0, `${label}: no MUI tooltip`);
       await page.mouse.move(viewport.width / 2, 200);
-      await page.locator('[role="tooltip"]').waitFor({ state: 'detached', timeout: 3000 });
-      assert.equal(await page.locator('#h5-design').getAttribute('title'), 'Design document', 'the native title is back once the tooltip closed');
+      // The saved commands menu: Escape closes it while the focus is in the terminal (xterm stops the keydown, so the menu listens in the capture
+      // phase), and that Escape is not typed into the terminal.
+      await page.locator('#h5-terminal .xterm-helper-textarea').focus();
+      await page.locator('#h5-commands').click();
+      await page.locator('.h5-add-menu').waitFor();
+      assert.equal(await page.evaluate(() => document.activeElement && document.activeElement.classList.contains('xterm-helper-textarea')), true, `${label}: the terminal keeps the focus while the menu is open`);
+      const typedBefore = (await lastSocket(page)).filter(item => !item.startsWith('{')).length;
+      await page.keyboard.press('Escape');
+      await page.locator('.h5-add-menu').waitFor({ state: 'detached', timeout: 2000 });
+      await page.waitForTimeout(200);
+      assert.equal((await lastSocket(page)).filter(item => !item.startsWith('{')).length, typedBefore, `${label}: the Escape that closed the menu was not sent to the terminal`);
+      await page.evaluate(() => document.activeElement && document.activeElement.blur());
       if (SHOTS && viewport.width === 1440) await page.screenshot({ path: path.join(SHOTS, 'pc-1440-sidebar-open.png') });
 
       // Typing with nothing focused goes to the terminal, and the terminal keeps the focus.

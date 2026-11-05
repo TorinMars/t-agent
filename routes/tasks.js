@@ -231,6 +231,14 @@ router.patch('/:id/terminals/:terminalId', (req, res) => {
   catch (error) { res.status(error.statusCode || 400).json({ error: error.message || 'TERMINAL_RENAME_FAILED' }); }
 });
 
+// The live current directory of a terminal's shell, for terminal file links (read-only, see terminal.terminalCwd).
+router.get('/:id/terminals/:terminalId/cwd', async (req, res) => {
+  const task = db.prepare('SELECT id, work_dir, md_path FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, ownerFilter(req));
+  if (!task) return res.status(404).json({ error: 'TASK_NOT_FOUND' });
+  try { res.json(await terminal.terminalCwd(task, req.params.terminalId)); }
+  catch (error) { res.status(error.statusCode || 400).json({ error: error.message || 'TERMINAL_CWD_FAILED' }); }
+});
+
 router.post('/:id/terminal/control', (req, res) => {
   const uid = ownerFilter(req);
   const task = db.prepare('SELECT id FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, uid);

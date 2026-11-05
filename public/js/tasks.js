@@ -245,6 +245,7 @@ const Tasks = (() => {
       if (reconnecting) {
         inst.reconnectScroll = TerminalViewport.capture(inst.term);
         inst.term.reset();
+        if (inst.fileLinks) inst.fileLinks.resetCwd(); // the shell may be a new one; it reports again at its next prompt, the server knows meanwhile
       }
       inst.reconnectAttempts = 0;
       TerminalViewport.fit(inst.term, inst.fitAddon, inst.el);
@@ -349,11 +350,16 @@ const Tasks = (() => {
       if (event.metaKey || event.ctrlKey) window.open(uri, '_blank', 'noopener,noreferrer');
     }));
     // File paths in the output (src/app.js:42, /work/dir/a.md, file:///...) open in the file browser above the terminal, also with Cmd/Ctrl + click.
-    // Only paths inside the task's working directory are links; relative ones are taken relative to it.
+    // Only paths inside the task's working directory are links; relative ones are taken from the shell's live directory (OSC 7, else the server).
     const linkSourceKey = source.key;
+    let fileLinks = null;
     if (typeof TerminalFileLinks !== 'undefined') {
-      TerminalFileLinks.attach(t, {
+      fileLinks = TerminalFileLinks.attach(t, {
         root: () => taskRoot(tasks.find(item => item.id === task.id) || task),
+        liveCwd: async () => {
+          const res = await fetch(taskUrl(task.id, `/terminals/${encodeURIComponent(terminalId)}/cwd`), { headers: { 'X-Requested-With': 'XMLHttpRequest' } });
+          return res.ok ? res.json() : null; // an older Engine has no such endpoint: the working directory is used
+        },
         activate: (link, event) => {
           if (!(event.metaKey || event.ctrlKey)) return;
           void openTerminalFileLink(task.id, linkSourceKey, link);
@@ -365,6 +371,7 @@ const Tasks = (() => {
 
     const inst = {
       clipboard,
+      fileLinks,
       sourceKey: source.key,
       wsPath: source.wsPath,
       taskId: task.id,
@@ -503,6 +510,10 @@ const Tasks = (() => {
     if (sourceKey !== source.key || taskId !== selectedId) return;
     const task = tasks.find(item => item.id === taskId);
     if (!task) return;
+    const relative = link.resolve ? await link.resolve() : link.relative;
+    if (sourceKey !== source.key || taskId !== selectedId) return;
+    if (relative == null) { notify(`Outside the working directory: ${link.path}`, 'error'); return; }
+    link = { ...link, relative };
     const label = link.relative || '.';
     let type;
     try {

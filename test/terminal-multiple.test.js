@@ -412,3 +412,29 @@ test('access is rechecked about once a second, not per chunk, and revoking it st
     terminal.closeTaskTerminals(other.id);
   }
 });
+
+test('terminalCwd reports the live directory of the shell, relative to the task root, and nothing for a terminal without a shell', { skip: !['darwin', 'linux'].includes(process.platform) }, async () => {
+  const { spawn } = require('node:child_process');
+  const added = terminal.createTerminal(task.id);
+  const row = db.prepare('SELECT id, work_dir, md_path FROM tasks WHERE id = ?').get(task.id);
+  assert.deepEqual({ ...(await terminal.terminalCwd(row, added.terminal_id)) }, { cwd: null, relative: null }, 'no shell runs yet');
+  await assert.rejects(terminal.terminalCwd(row, 'missing'), /TERMINAL_NOT_FOUND/);
+  const ws = connect(added.terminal_id);
+  const pty = shells[shells.length - 1];
+  const sub = path.join(task.work_dir, 'sub dir');
+  fs.mkdirSync(sub, { recursive: true });
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 't-agent-outside-'));
+  const run = cwd => new Promise(resolve => { const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 20000)'], { cwd, stdio: 'ignore' }); child.once('spawn', () => resolve(child)); });
+  for (const [cwd, relative] of [[sub, 'sub dir'], [task.work_dir, ''], [outside, null]]) {
+    const child = await run(cwd);
+    pty.pid = child.pid; // the fake PTY stands for a shell whose process is this child
+    try {
+      const result = await terminal.terminalCwd(row, added.terminal_id);
+      assert.equal(result.cwd, fs.realpathSync(cwd));
+      assert.equal(result.relative, relative, cwd);
+    } finally { child.kill(); }
+  }
+  fs.rmSync(outside, { recursive: true, force: true });
+  ws.close(1000, 'done');
+  terminal.controlSession(task.id, 'delete', added.terminal_id);
+});

@@ -99,6 +99,46 @@ async function toast(page, text) {
 (async () => {
   const browser = await chromium.launch({ headless: true, ...(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {}) });
   try {
+    // The back button (page.goBack: Android back, the back gesture) closes the open sheet, menu or dialog instead of leaving the page.
+    {
+      const { context, page } = await openPage(browser, { width: 390, height: 844 });
+      await page.goto(`${ORIGIN}/h5?openChat=9:x`); // the notification link: its address is kept by every entry
+      const sheet = page.locator('#h5-tasks');
+      await sheet.waitFor({ state: 'visible' }); // the task sheet opens by itself on a phone
+      await page.waitForFunction(() => history.state && history.state.h5Layer === 1);
+      await page.goBack();
+      await sheet.waitFor({ state: 'hidden' });
+      assert.equal(new URL(page.url()).search, '?openChat=9:x', 'still on the page, same address');
+      // Settings, then a menu over the task sheet: one back press each, top first.
+      await page.evaluate(() => window.H5UI.actions.openSettings());
+      await page.locator('#h5-settings').waitFor({ state: 'visible' });
+      await page.goBack();
+      await page.locator('#h5-settings').waitFor({ state: 'hidden' });
+      await page.locator('#h5-open-tasks').tap();
+      await sheet.waitFor({ state: 'visible' });
+      await page.locator('.h5-task-item', { hasText: 'Alpha' }).tap();
+      await page.locator('#h5-tasks .h5-terminal-list[aria-label="Alpha"] .h5-terminal-main', { hasText: 'Terminal 1' }).tap();
+      await sheet.waitFor({ state: 'hidden' });
+      await page.waitForFunction(() => !(history.state && history.state.h5Layer)); // closed by choosing a terminal: its entry was taken back
+      await page.locator('#h5-open-tasks').tap();
+      await page.locator('#h5-tasks .h5-terminal-row', { hasText: 'Claude work' }).locator('.h5-terminal-more').tap();
+      await page.locator('#h5-term-menu').waitFor({ state: 'visible' });
+      await page.waitForFunction(() => history.state && history.state.h5Layer === 2);
+      await page.goBack();
+      await page.locator('#h5-term-menu').waitFor({ state: 'hidden' });
+      assert.equal(await sheet.isVisible(), true, 'the sheet under the menu stays');
+      // Closed another way (Cancel): its entry is taken back, so one back press closes the sheet and nothing is left over.
+      await page.locator('#h5-tasks .h5-terminal-row', { hasText: 'Claude work' }).locator('.h5-terminal-more').tap();
+      await page.locator('#h5-term-menu-cancel').tap();
+      await page.locator('#h5-term-menu').waitFor({ state: 'hidden' });
+      await page.waitForFunction(() => history.state && history.state.h5Layer === 1);
+      await page.goBack();
+      await sheet.waitFor({ state: 'hidden' });
+      await page.waitForFunction(() => !(history.state && history.state.h5Layer));
+      assert.equal(new URL(page.url()).pathname, '/h5');
+      await context.close();
+    }
+
     const { context, page } = await openPage(browser, { width: 390, height: 844 });
     // Open Alpha / Terminal 1 from the task sheet, as a person would.
     await page.locator('#h5-tasks').waitFor({ state: 'visible' });

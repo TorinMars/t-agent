@@ -1344,6 +1344,8 @@ I18n.add({
   "Refresh the page": "刷新页面",
   "Expand all": "全部展开",
   "Collapse all": "全部折叠",
+  "Collapse the sidebar": "收起侧边栏",
+  "Expand the sidebar": "展开侧边栏",
   "Plan usage": "套餐用量",
   "Usage": "用量",
   "Left bar: usage left. Right bar: time left.": "左条：剩余用量。右条：剩余时间。",

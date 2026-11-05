@@ -23,6 +23,13 @@ export function App({ ui }) {
       if (chat) chat.inert = false;
     };
   }, [tasksModal]);
+  // The wide layout's folded sidebar and the right side panel (the design document / file preview) change the page's side offsets in h5.css.
+  const folded = state.wide && state.sidebarCollapsed;
+  const sidePanel = state.wide && Boolean(state.design && state.design.open);
+  useLayoutEffect(() => {
+    document.documentElement.toggleAttribute('data-sidebar-collapsed', folded);
+    document.documentElement.toggleAttribute('data-side-panel', sidePanel);
+  }, [folded, sidePanel]);
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />

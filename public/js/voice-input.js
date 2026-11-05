@@ -281,7 +281,11 @@ const VoiceInput = (() => {
 
   // textarea: the box to fill; button: the microphone toggle; onNotConfigured: called when the server has no speech key yet.
   // readySound: play a short chime once the recording is ready (the speech service answered and the microphone is connected), so the person knows when to speak.
+  // hold: true (hold to talk), false (click to start, click to stop), or a function that answers at each press (the MUI page: hold on a touch screen,
+  // click on a computer, following its input mode). The overlay (voice-overlay.js) belongs to hold to talk; click mode shows the small wave instead.
   function attach({ textarea, button, onNotConfigured, hold = false, overlay = null, onSend = null, readySound = false }) {
+    const holding = () => (typeof hold === 'function' ? Boolean(hold()) : hold);
+    const canHold = typeof hold === 'function' || hold;
     let state = 'idle'; // idle → connecting → listening → stopping → idle
     let recognizer, stream, context, node, silent, resampler, stopTimer, limitTimer;
     let warmGraph = null; // the kept-ready graph this recording uses (it is not stopped when the recording ends)
@@ -290,7 +294,8 @@ const VoiceInput = (() => {
     let filled = 0;
     let afterStop = null; // 'send': when the recognition ends, hand the text to onSend (released over the send zone)
     let run = 0; // identifies the current start; an older start that is still waiting must not touch a newer one
-    const wave = overlay ? null : createWave(button);
+    const wave = overlay && typeof hold !== 'function' ? null : createWave(button);
+    let meter = null; // the level display of the running recording: the overlay (hold to talk) or the wave
     void buildWarm(); // when the person has kept the microphone ready on this device, it is ready as soon as a microphone button exists
     let early = [], earlyBytes = 0, stopAfterToken = false; // audio recorded before the recognizer exists (the token is still being fetched)
     let recognizerReady = false, graphReady = false, announced = false, mutedUntil = 0;
@@ -325,7 +330,7 @@ const VoiceInput = (() => {
       button.classList.toggle('listening', active);
       button.setAttribute('aria-pressed', String(active));
       button.disabled = state === 'stopping';
-      if (hold) button.title = 'Voice input: hold to speak, release to stop';
+      if (holding()) button.title = 'Voice input: hold to speak, release to stop';
       else button.title = state === 'idle' ? 'Voice input: click to start speaking' : 'Voice input: click to stop';
     }
     function show() {
@@ -437,13 +442,14 @@ const VoiceInput = (() => {
           node = new AudioWorkletNode(context, 'pcm-capture');
         }
         resampler = createResampler(context.sampleRate);
-        if (wave) wave.show();
+        meter = overlay && holding() ? overlay : wave;
+        if (meter === wave && wave) wave.show();
         node.port.onmessage = event => {
-          if (overlay || wave) {
+          if (meter) {
             let sum = 0;
             for (let i = 0; i < event.data.length; i += 1) sum += event.data[i] * event.data[i];
             const rms = Math.sqrt(sum / (event.data.length || 1));
-            if (overlay) overlay.level(rms); else wave.level(rms);
+            meter.level(rms);
           }
           if (Date.now() < mutedUntil) return; // the chime is playing
           send(resampler.push(event.data));
@@ -501,14 +507,14 @@ const VoiceInput = (() => {
       return done;
     }
 
-    if (hold) {
+    if (canHold) {
       // Hold to speak: pressing starts the recording (inside the touch, so iOS lets the audio context run) and letting go ends the
       // recognition, keeping the text. A tap shorter than HOLD_MS is not a long press and is discarded. Keyboard activation
       // (click without a pointer, detail 0) still toggles, because a keyboard cannot hold a button.
       let pressedAt = 0;
       let zone = 'send';
       button.addEventListener('pointerdown', event => {
-        if (event.button || state !== 'idle') return;
+        if (event.button || state !== 'idle' || !holding()) return;
         pressedAt = Date.now();
         zone = 'send';
         if (button.setPointerCapture) { try { button.setPointerCapture(event.pointerId); } catch { /* pointer already gone */ } }
@@ -532,11 +538,10 @@ const VoiceInput = (() => {
       };
       button.addEventListener('pointerup', release);
       button.addEventListener('pointercancel', release);
-      button.addEventListener('contextmenu', event => event.preventDefault());
-      button.addEventListener('click', event => { if (event.detail === 0) { if (state === 'idle') void start(); else stop(); } });
-    } else {
-      button.addEventListener('click', () => { if (state === 'idle') void start(); else stop(); });
+      button.addEventListener('contextmenu', event => { if (holding()) event.preventDefault(); });
+      button.addEventListener('click', event => { if (holding() && event.detail === 0) { if (state === 'idle') void start(); else stop(); } });
     }
+    button.addEventListener('click', () => { if (holding()) return; if (state === 'idle') void start(); else stop(); });
     render();
     return { start, stop, finish, cancel, get state() { return state; } };
   }
@@ -600,7 +605,9 @@ const VoiceInput = (() => {
   // Phone page: settings live on the desktop page, like the translation settings.
   const h5Input = document.getElementById('h5-translate-input');
   const h5Mic = document.getElementById('h5-voice');
-  if (h5Input && h5Mic) attach({ textarea: h5Input, button: h5Mic, onNotConfigured: () => tell('Set up voice input in Settings', 'info'), hold: true,
+  // Hold to talk on a touch screen, click to start and stop on a computer (the shell's input mode, `H5UI` in scripts/h5-shell/entry.jsx).
+  const h5Hold = () => !(window.H5UI && window.H5UI.get().input === 'pointer');
+  if (h5Input && h5Mic) attach({ textarea: h5Input, button: h5Mic, onNotConfigured: () => tell('Set up voice input in Settings', 'info'), hold: h5Hold,
     overlay: typeof VoiceOverlay !== 'undefined' ? VoiceOverlay.create() : null,
     onSend: () => { const form = document.getElementById('h5-translate'); if (form && form.requestSubmit) form.requestSubmit(); } });
 

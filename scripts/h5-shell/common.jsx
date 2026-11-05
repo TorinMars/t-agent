@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import Tooltip from '@mui/material/Tooltip';
 
 export const t = text => (typeof I18n !== 'undefined' ? I18n.t(text) : text);
 
@@ -29,3 +30,12 @@ export function DomIcon({ make }) {
 }
 export const terminalMark = agent => AgentChat => AgentChat.icon(agent);
 export const chatMark = agent => AgentChat => AgentChat.chatIcon(agent);
+
+// Icon buttons on a computer (input mode 'pointer') get a Material UI tooltip; on a touch screen they keep only the native title (a tooltip there would
+// open on a long press and get in the way of hold-to-talk and the press handling). `describeChild` keeps the button's own aria-label as its name, and
+// MUI gives the button its `title` back whenever the tooltip is closed, so the title never shows twice.
+export function Tip({ on, title, children }) {
+  return on ? <Tooltip title={title} describeChild>{children}</Tooltip> : children;
+}
+// The name props of an icon button: always the aria-label; the title only where no MUI tooltip supplies it.
+export const named = (label, tip) => (tip ? { 'aria-label': label } : { 'aria-label': label, title: label });

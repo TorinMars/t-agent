@@ -5,7 +5,7 @@ import IconButton from '@mui/material/IconButton';
 import OutlinedInput from '@mui/material/OutlinedInput';
 import Paper from '@mui/material/Paper';
 import ToggleButton from '@mui/material/ToggleButton';
-import { t } from './common.jsx';
+import { Tip, named, t } from './common.jsx';
 import { Icon } from './Icons.jsx';
 
 // The terminal area. h5.js puts the xterm element in after these two; React draws only the note, the wheel strip (h5.js handles its touches) and the selection bar.
@@ -13,7 +13,8 @@ export function TerminalArea({ state, ui }) {
   return (
     <Box component="main" className="h5-terminal" id="h5-terminal">
       {state.empty ? <div className="h5-empty" id="h5-empty">{t(state.empty)}</div> : null}
-      <div className="h5-wheel" id="h5-wheel" role="presentation" aria-label={t('Scroll wheel')} />
+      {/* The wheel strip is for fingers; a computer has a real wheel or trackpad, so it is not drawn there (input mode 'pointer'). */}
+      {state.input === 'pointer' ? null : <div className="h5-wheel" id="h5-wheel" role="presentation" aria-label={t('Scroll wheel')} />}
       {state.selectionBar ? (
         <Paper className="h5-selection-bar" id="h5-selection-bar" role="toolbar" aria-label={t('Selected text')} elevation={4} onMouseDown={event => event.preventDefault()}>
           <Button id="h5-selection-copy" size="small" onClick={() => ui.actions.selectionCopy()}>{t('Copy')}</Button>
@@ -43,12 +44,14 @@ export function BottomArea({ state, ui }) {
     return () => { document.removeEventListener('pointerdown', away, true); document.removeEventListener('keydown', escape); };
   }, [menu]);
   const run = action => { setMenu(false); action(); };
+  // A computer (input mode 'pointer'): no function key row (a real keyboard has the keys), the draft box always shown, and the whole action row always there.
+  const pointer = state.input === 'pointer';
   const rows = [
     { icon: <Icon name="paste" />, label: 'Paste text', run: () => run(() => ui.actions.key({ action: 'paste' })) },
     ...INSERT_COMMANDS.map(command => ({ label: command, mono: true, run: () => run(() => ui.actions.insertCommand(command)) })),
   ];
   return (
-    <Box className="h5-bottom" id="h5-bottom" sx={{ flex: '0 0 auto', position: 'relative', zIndex: 3, bgcolor: 'var(--h5-bg)', marginTop: 'calc(var(--h5-bar-extra, 0px) * -1)', pb: 'max(8px, env(safe-area-inset-bottom))', ...DRAFT_ON }}>
+    <Box className="h5-bottom" id="h5-bottom" sx={{ flex: '0 0 auto', position: 'relative', zIndex: 3, bgcolor: 'var(--h5-bg)', marginTop: 'calc(var(--h5-bar-extra, 0px) * -1)', pb: 'max(8px, env(safe-area-inset-bottom))', ...(pointer ? POINTER_ON : DRAFT_ON) }}>
       {menu ? (
         <Paper
           className="h5-add-menu" role="menu" aria-label={t('Saved commands')} elevation={8} onMouseDown={event => event.preventDefault()}
@@ -62,9 +65,9 @@ export function BottomArea({ state, ui }) {
           ))}
         </Paper>
       ) : null}
-      <TranslateBar state={state} />
-      <KeyBar state={state} ui={ui} />
-      <ActionBar state={state} ui={ui} menu={menu} onMenu={setMenu} />
+      <TranslateBar state={state} pointer={pointer} />
+      {pointer ? null : <KeyBar state={state} ui={ui} />}
+      <ActionBar state={state} ui={ui} menu={menu} onMenu={setMenu} pointer={pointer} />
     </Box>
   );
 }
@@ -81,6 +84,9 @@ const BAR_RADIUS = '22px';
 const BAR_PAD = '6px'; // the box padding (px/py 0.75 = 6px) between the outer shape and the textarea
 const COLLAPSED = { maxHeight: 0, overflow: 'hidden', m: 0, p: 0, border: 0 };
 const SHOWN = { maxHeight: 'none', overflow: 'visible', mt: 0.75, mx: 1, px: 0.75, py: 0.75, border: 1, borderColor: 'divider' };
+// On a computer the draft box is always shown (one line at rest, growing with its text like on the phone) and so are send and translate-and-send.
+// Its resting line takes room in the page layout there (h5.js `syncBar` counts only the growth beyond one line as `--h5-bar-extra`), so the terminal sits above it.
+const POINTER_ON = { '& .h5-draft-only': { display: 'inline-flex' } };
 const DRAFT_ON = {
   '&:has(#h5-translate:focus-within), &:has(#h5-translate[data-hold]), &:has(#h5-translate.translating), &:has(.h5-voice.listening)': {
     '& #h5-translate': SHOWN, '& .h5-draft-only': { display: 'inline-flex' }, '& .h5-draft-hide': { display: 'none' },
@@ -88,12 +94,12 @@ const DRAFT_ON = {
 };
 // The draft box takes anything: no length cap, no character filter, and it stays editable while a translation runs (only the send buttons wait).
 // The keyboard settings are the platform defaults (Enter is a new line), so the user's own keyboard, IME, autocorrect and dictation work as usual.
-export function TranslateBar({ state }) {
+export function TranslateBar({ state, pointer = false }) {
   return (
     <Box
       component="form" className={`h5-translate${state.translating ? ' translating' : ''}`} id="h5-translate" autoComplete="off"
       onMouseDown={event => { if (event.target.closest('button')) event.preventDefault(); }}
-      sx={{ position: 'relative', '--h5-bar-radius': BAR_RADIUS, borderRadius: 'var(--h5-bar-radius)', bgcolor: 'action.hover', ...COLLAPSED }}
+      sx={{ position: 'relative', '--h5-bar-radius': BAR_RADIUS, borderRadius: 'var(--h5-bar-radius)', bgcolor: 'action.hover', ...(pointer ? SHOWN : COLLAPSED) }}
     >
       <OutlinedInput
         id="h5-translate-input" className={`h5-translate-input${state.translating ? ' translating' : ''}`} fullWidth size="small" inputComponent="textarea"
@@ -148,47 +154,66 @@ export function KeyBar({ state, ui }) {
 // The send and translate-and-send buttons look the same (white round button, send icon); translate-and-send only has a small "Aa" mark in its lower right corner.
 const SEND = { display: 'none', flex: '0 0 auto', width: 44, height: 44, bgcolor: '#fff', color: '#111', '&:hover': { bgcolor: '#e6e6e6' }, '&.Mui-disabled': { bgcolor: 'action.disabledBackground', color: 'action.disabled' } };
 const ACTION = { flex: '1 1 0', minWidth: 0, height: 44, p: 0, ...keyLook };
+// A computer: compact square buttons on the left, send and translate-and-send at the right end (the row does not stretch the buttons over 960px).
+const POINTER_ACTION = { flex: '0 0 auto', width: 40, height: 40, p: 0, ...keyLook };
 // The hardware keyboard shortcuts of the draft box (keydown on #h5-translate-input in h5.js), shown after the tooltips: Apple systems (iPadOS reports MacIntel) use Cmd / Option.
 const APPLE = typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent || '');
 const SEND_KEYS = APPLE ? ' (\u2325\u21a9)' : ' (Alt+Enter)';
 const TRANSLATE_KEYS = APPLE ? ' (\u2318\u21a9)' : ' (Ctrl+Enter)';
-export function ActionBar({ state, ui, menu, onMenu }) {
+export function ActionBar({ state, ui, menu, onMenu, pointer = false }) {
+  const look = pointer ? POINTER_ACTION : ACTION;
+  // The keyboard keys exist only on touch screens: they open the on-screen keyboard for the terminal or for the draft box.
   const keyboard = (action, kind, label) => (
-    <IconButton data-action={action} sx={ACTION} title={t(label)} aria-label={t(label)} aria-pressed={state.keyboard === kind} onClick={() => ui.actions.key({ action })}><Icon name={kind === 'terminal' ? 'terminalKeyboard' : 'draftKeyboard'} /></IconButton>
+    <IconButton data-action={action} sx={look} title={t(label)} aria-label={t(label)} aria-pressed={state.keyboard === kind} onClick={() => ui.actions.key({ action })}><Icon name={kind === 'terminal' ? 'terminalKeyboard' : 'draftKeyboard'} /></IconButton>
   );
+  // An icon button with its name; on a computer the name is also a Material UI tooltip.
+  const tipped = (label, button) => <Tip on={pointer} title={label}>{button}</Tip>;
+  const image = t('Upload image');
+  const commands = t('Saved commands');
+  const design = t('Design document');
+  const cycle = t('Next running or pending session');
+  const sendTitle = t('Send as typed, without translating') + SEND_KEYS;
+  const translateTitle = t('Translate to English and send') + TRANSLATE_KEYS;
   return (
     <Box
       className="h5-actions" id="h5-actions" role="toolbar" aria-label={t('Input')}
       onMouseDown={event => { if (event.target.closest('button, label')) event.preventDefault(); }}
       sx={{ display: 'flex', alignItems: 'center', gap: 0.75, px: 1, pt: 0.75, '@media (max-width: 340px)': { gap: 0.5, px: 0.75 } }}
     >
-      {keyboard('keyboard', 'terminal', 'Terminal keyboard')}
-      {keyboard('draft', 'draft', 'Draft keyboard')}
+      {pointer ? null : keyboard('keyboard', 'terminal', 'Terminal keyboard')}
+      {pointer ? null : keyboard('draft', 'draft', 'Draft keyboard')}
       {/* Upload image is a label around the real file input, and the (invisible, not display:none) input covers the whole button, so the finger taps the input
           itself and the picker opens natively. iOS WebKit, a Home Screen web app above all, ignores a script `input.click()` on a hidden input here. h5.js checks
           on the input's click (it can cancel it) and reads the chosen file. Not a <button>, so the bar's press capture leaves it alone. */}
-      <IconButton component="label" id="h5-image" data-action="image" sx={{ ...ACTION, position: 'relative', overflow: 'hidden' }} title={t('Upload image')} aria-label={t('Upload image')}>
-        <Icon name="image" />
-        <input
-          type="file" id="h5-image-picker" accept="image/png,image/jpeg,image/gif,image/webp" tabIndex={-1} aria-hidden="true"
-          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', margin: 0, padding: 0, opacity: 0, cursor: 'pointer', fontSize: 0 }}
-        />
-      </IconButton>
-      <IconButton id="h5-commands" data-action="commands" sx={ACTION} title={t('Saved commands')} aria-label={t('Saved commands')} aria-haspopup="menu" aria-expanded={menu} onClick={() => onMenu(!menu)}><Icon name="commands" /></IconButton>
-      <IconButton id="h5-voice" className="h5-voice" sx={ACTION} title={t('Voice input: hold to speak, release to stop')} aria-label={t('Voice input')} aria-pressed="false"><Icon name="voice" /></IconButton>
+      {tipped(image, (
+        <IconButton component="label" id="h5-image" data-action="image" sx={{ ...look, position: 'relative', overflow: 'hidden' }} {...named(image, pointer)}>
+          <Icon name="image" />
+          <input
+            type="file" id="h5-image-picker" accept="image/png,image/jpeg,image/gif,image/webp" tabIndex={-1} aria-hidden="true"
+            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', margin: 0, padding: 0, opacity: 0, cursor: 'pointer', fontSize: 0 }}
+          />
+        </IconButton>
+      ))}
+      {tipped(commands, <IconButton id="h5-commands" data-action="commands" sx={look} {...named(commands, pointer)} aria-haspopup="menu" aria-expanded={menu} onClick={() => onMenu(!menu)}><Icon name="commands" /></IconButton>)}
+      {/* voice-input.js owns this button's title (hold-to-talk on touch, click to start and stop on a computer), so it keeps the native title only. */}
+      <IconButton id="h5-voice" className="h5-voice" sx={look} title={t(pointer ? 'Voice input: click to start speaking' : 'Voice input: hold to speak, release to stop')} aria-label={t('Voice input')} aria-pressed="false"><Icon name="voice" /></IconButton>
       {/* The design document viewer. It steps aside while the draft box is shown (`.h5-draft-hide`), so send and translate-and-send keep finger-sized buttons at 320px. */}
-      <IconButton id="h5-design" className="h5-draft-hide" data-action="design" sx={ACTION} title={t('Design document')} aria-label={t('Design document')} aria-haspopup="dialog" aria-expanded={Boolean(state.design && state.design.open)} onClick={() => ui.actions.openDesign()}><Icon name="designDoc" /></IconButton>
+      {tipped(design, <IconButton id="h5-design" className="h5-draft-hide" data-action="design" sx={look} {...named(design, pointer)} aria-haspopup="dialog" aria-expanded={Boolean(state.design && state.design.open)} onClick={() => ui.actions.openDesign()}><Icon name="designDoc" /></IconButton>)}
       {/* Next running or pending terminal session, in task sheet order (`ui.actions.nextActiveSession` in h5.js). Also steps aside while the draft box is shown. */}
-      <IconButton id="h5-cycle" className="h5-draft-hide" data-action="cycle" sx={ACTION} title={t('Next running or pending session')} aria-label={t('Next running or pending session')} onClick={() => ui.actions.nextActiveSession()}><Icon name="cycleSessions" /></IconButton>
-      <Box className="h5-draft-only" aria-hidden="true" sx={{ display: 'none', alignSelf: 'stretch', width: '1px', my: 0.5, bgcolor: 'divider' }} />
-      <IconButton
-        type="submit" form="h5-translate" id="h5-translate-send" className="h5-translate-send h5-draft-only" disabled={state.translating} title={t('Send as typed, without translating') + SEND_KEYS} aria-label={t('Send')}
-        sx={SEND}
-      ><Icon name="send" /></IconButton>
-      <IconButton
-        id="h5-translate-button" type="button" className="h5-draft-only" disabled={state.translating} title={t('Translate to English and send') + TRANSLATE_KEYS} aria-label={t('Translate and send')}
-        sx={{ ...SEND, position: 'relative' }}
-      ><Icon name="send" /><Box component="span" className="h5-aa" aria-hidden="true" sx={{ position: 'absolute', right: 10, bottom: 8, fontSize: 10, fontWeight: 700, lineHeight: 1, letterSpacing: '-0.02em', pointerEvents: 'none' }}>Aa</Box></IconButton>
+      {tipped(cycle, <IconButton id="h5-cycle" className="h5-draft-hide" data-action="cycle" sx={look} {...named(cycle, pointer)} onClick={() => ui.actions.nextActiveSession()}><Icon name="cycleSessions" /></IconButton>)}
+      <Box className="h5-draft-only" aria-hidden="true" sx={{ display: 'none', alignSelf: 'stretch', width: '1px', my: 0.5, ml: pointer ? 'auto' : 0, bgcolor: 'divider' }} />
+      {tipped(sendTitle, (
+        <IconButton
+          type="submit" form="h5-translate" id="h5-translate-send" className="h5-translate-send h5-draft-only" disabled={state.translating} {...(pointer ? {} : { title: sendTitle })} aria-label={t('Send')}
+          sx={SEND}
+        ><Icon name="send" /></IconButton>
+      ))}
+      {tipped(translateTitle, (
+        <IconButton
+          id="h5-translate-button" type="button" className="h5-draft-only" disabled={state.translating} {...(pointer ? {} : { title: translateTitle })} aria-label={t('Translate and send')}
+          sx={{ ...SEND, position: 'relative' }}
+        ><Icon name="send" /><Box component="span" className="h5-aa" aria-hidden="true" sx={{ position: 'absolute', right: 10, bottom: 8, fontSize: 10, fontWeight: 700, lineHeight: 1, letterSpacing: '-0.02em', pointerEvents: 'none' }}>Aa</Box></IconButton>
+      ))}
     </Box>
   );
 }

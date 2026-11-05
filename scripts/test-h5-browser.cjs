@@ -41,10 +41,12 @@ async function openTask(page, title, how = 'tap') {
 let updateDone = false; // the mocked update-status answers "completed" once the test sets this
 let checkMode = 'available'; // what the mocked update check answers: available | current | error
 
-async function openPage(browser, { remoteTerminals, remoteChat = false, viewport } = {}) {
+// touch: a phone or tablet (a touch screen: input mode 'touch'); without it the context has a mouse only, like a computer (input mode 'pointer').
+// Phone-sized windows are touch screens by default; the wide window is the computer. The computer layout itself is tested in test-h5-pc-browser.cjs.
+async function openPage(browser, { remoteTerminals, remoteChat = false, viewport, touch = !viewport || viewport.width < 900 } = {}) {
   // H5_SHOT_DIR=<dir> also saves screenshots of the design document sheet there, at 3x like a phone screen.
   const scale = process.env.H5_SHOT_DIR ? { deviceScaleFactor: 3 } : {};
-  const context = await browser.newContext(viewport ? { viewport, ...scale } : { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, ...scale });
+  const context = await browser.newContext({ viewport: viewport || { width: 390, height: 844 }, ...(touch ? { isMobile: true, hasTouch: true } : {}), ...scale });
   const page = await context.newPage();
   page.on('pageerror', error => pageErrors.push(error.message));
   const calls = [];
@@ -745,6 +747,10 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       await input.focus(); await input.fill('');
     }
 
+    // The key presses above are trusted hardware keydowns, so the page has noticed a hardware keyboard (entry.jsx `hasKeyboard`). The send checks below are
+    // about a phone with only the on-screen keyboard, so that flag is cleared for them (with a keyboard, a send focuses the terminal instead; see test-h5-pc-browser.cjs).
+    assert.equal(await page.evaluate(() => window.H5UI.get().hasKeyboard), true, 'a trusted keydown with the full viewport counts as a hardware keyboard');
+    await page.evaluate(() => window.H5UI.set({ hasKeyboard: false }));
     // Translate and send: control characters are stripped and Enter follows separately.
     const restResizes = await page.evaluate(() => window.sockets[0].sent.filter(item => { try { return JSON.parse(item).type === 'resize'; } catch { return false; } }).length);
     await page.locator('#h5-translate-input').focus(); await page.locator('#h5-translate-input').fill('run the tests, and please make the text long enough that the box grows to two lines on the phone');

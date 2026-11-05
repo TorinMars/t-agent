@@ -175,7 +175,7 @@ function Panel({ state, ui }) {
       <Box className="h5-task-search" sx={{ px: 1.5, pb: 0.25, pt: 0.75 }}>
         <TextField
           size="small" fullWidth type="search" placeholder={t('Search sessions')} value={query} onChange={event => setQuery(event.target.value)}
-          slotProps={{ input: { startAdornment: <InputAdornment position="start"><SearchIcon fontSize="small" /></InputAdornment>, sx: { borderRadius: 3, fontSize: 14, '& input': { py: 0.75 } } }, htmlInput: { 'aria-label': t('Search sessions') } }}
+          slotProps={{ input: { startAdornment: <InputAdornment position="start"><SearchIcon fontSize="small" /></InputAdornment>, sx: { borderRadius: 3, fontSize: 14, '& input': { py: 0.75 } } }, htmlInput: { id: 'h5-task-search-input', 'aria-label': t('Search sessions') } }}
         />
         <Box className="h5-task-filters" sx={{ display: 'flex', gap: 0.75, pt: 0.75 }}>
           {[['all', 'All'], ['running', 'Running'], ['pending', 'Pending']].map(([key, label]) => (
@@ -209,6 +209,8 @@ function Panel({ state, ui }) {
 export function TaskDrawer({ state, ui }) {
   const paperProps = { className: 'h5-sheet-panel', sx: { width: state.wide ? 320 : 'min(82vw, 360px)', maxWidth: '100%', backgroundImage: 'none' } };
   if (state.wide) {
+    // Folded away with the header button (entry.jsx `toggleSidebar`): the terminal or chat then fills the whole width.
+    if (state.sidebarCollapsed) return null;
     return (
       // The permanent drawer's own element has no size (its paper is fixed), so the sidebar is the paper.
       <Drawer variant="permanent" slotProps={{ paper: { ...paperProps, id: 'h5-tasks' } }} sx={{ '& .MuiDrawer-paper': { position: 'fixed' } }}>

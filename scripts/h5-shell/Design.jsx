@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
 import Box from '@mui/material/Box';
+import Drawer from '@mui/material/Drawer';
 import IconButton from '@mui/material/IconButton';
 import LinearProgress from '@mui/material/LinearProgress';
 import SwipeableDrawer from '@mui/material/SwipeableDrawer';
 import Typography from '@mui/material/Typography';
 import useMediaQuery from '@mui/material/useMediaQuery';
-import { t } from './common.jsx';
+import { Tip, named, t } from './common.jsx';
 import { Icon } from './Icons.jsx';
 
 // The Markdown renderer the app already ships (the desktop document view uses the same files). They are loaded the first time the sheet shows a
@@ -104,6 +105,7 @@ function renderText(node, source, line) {
 export function DesignSheet({ state, ui }) {
   const design = state.design;
   const open = Boolean(design && design.open);
+  const side = Boolean(state.wide); // a wide screen shows the file beside the terminal, a narrow one in a sheet from the bottom
   const reduced = useMediaQuery('(prefers-reduced-motion: reduce)');
   const [node, setNode] = useState(null); // the content box; it is mounted again each time the sheet opens, so the document is drawn again
   const [render, setRender] = useState({ status: 'idle' }); // the rendering of a loaded document: idle | rendering | done | failed
@@ -159,24 +161,24 @@ export function DesignSheet({ state, ui }) {
   const loading = design && (design.status === 'loading' || (design.status === 'ready' && render.status === 'rendering'));
   const filePath = dir ? `${dir.replace(/\/+$/, '')}/${filePathInDir}` : filePathInDir;
 
-  return (
-    <SwipeableDrawer
-      anchor="bottom" id="h5-design-sheet" open={open} onClose={close} onOpen={() => {}}
-      disableSwipeToOpen disableDiscovery transitionDuration={reduced ? 0 : undefined}
-      ModalProps={{ disableScrollLock: true }}
-      slotProps={{ paper: { className: 'h5-design-panel', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'h5-design-title', sx: { height: '88dvh', maxWidth: 960, width: '100%', mx: 'auto', borderRadius: '16px 16px 0 0', backgroundImage: 'none', display: 'flex', flexDirection: 'column', overflow: 'hidden', pb: 'env(safe-area-inset-bottom)' } } }}
-    >
-      <Box className="h5-design-handle" aria-hidden="true" sx={{ flex: '0 0 auto', display: 'flex', justifyContent: 'center', pt: 1, pb: 0.5 }}>
-        <Box sx={{ width: 36, height: 4, borderRadius: 2, bgcolor: 'text.disabled' }} />
-      </Box>
-      <Box sx={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 1, pl: 2, pr: 1, pb: 1, borderBottom: 1, borderColor: 'divider' }}>
+  const tip = state.input === 'pointer';
+  const contents = (
+    <>
+      {side ? null : (
+        <Box className="h5-design-handle" aria-hidden="true" sx={{ flex: '0 0 auto', display: 'flex', justifyContent: 'center', pt: 1, pb: 0.5 }}>
+          <Box sx={{ width: 36, height: 4, borderRadius: 2, bgcolor: 'text.disabled' }} />
+        </Box>
+      )}
+      <Box sx={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 1, pl: 2, pr: 1, pb: 1, pt: side ? 1 : 0, borderBottom: 1, borderColor: 'divider' }}>
         <Box sx={{ flex: '1 1 auto', minWidth: 0 }}>
           <Typography id="h5-design-title" variant="subtitle1" component="h2" sx={{ fontWeight: 600, lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} translate={fromLink ? 'no' : undefined}>{fromLink ? name : t('Design document')}</Typography>
           <Typography id="h5-design-path" variant="caption" component="div" color="text.secondary" translate="no" title={filePath}
             sx={{ fontFamily: 'ui-monospace, Menlo, monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', direction: 'rtl', textAlign: 'left' }}
           ><bdi>{filePath}</bdi></Typography>
         </Box>
-        <IconButton id="h5-design-close" aria-label={t('Close')} title={t('Close')} onClick={close}><Icon name="close" size={22} /></IconButton>
+        <Tip on={tip} title={t('Close')}>
+          <IconButton id="h5-design-close" {...named(t('Close'), tip)} onClick={close}><Icon name="close" size={22} /></IconButton>
+        </Tip>
       </Box>
       {loading ? <LinearProgress id="h5-design-loading" aria-label={t('Loading…')} sx={{ flex: '0 0 auto' }} /> : null}
       {note ? (
@@ -186,6 +188,28 @@ export function DesignSheet({ state, ui }) {
         ref={setNode} id="h5-design-body" className="h5-design-body" tabIndex={0}
         sx={{ display: note || content === null ? 'none' : 'block', flex: '1 1 auto', minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', px: 2, pt: 2, pb: 4 }}
       />
+    </>
+  );
+  if (side) {
+    // A wide screen: a panel on the right beside the terminal (a persistent drawer: the page is not dimmed and stays usable). h5.css narrows the page
+    // while it is open (`html[data-side-panel]`), so the terminal refits once to the width that is left. Escape inside the panel closes it.
+    return (
+      <Drawer
+        variant="persistent" anchor="right" id="h5-design-sheet" open={open} transitionDuration={reduced ? 0 : undefined}
+        slotProps={{ paper: { className: 'h5-design-panel h5-design-side', role: 'complementary', 'aria-labelledby': 'h5-design-title', onKeyDown: event => { if (event.key === 'Escape') { event.stopPropagation(); close(); } }, sx: { width: 'var(--h5-side-width)', height: '100%', backgroundImage: 'none', display: 'flex', flexDirection: 'column', overflow: 'hidden', borderLeft: 1, borderColor: 'divider' } } }}
+      >
+        {contents}
+      </Drawer>
+    );
+  }
+  return (
+    <SwipeableDrawer
+      anchor="bottom" id="h5-design-sheet" open={open} onClose={close} onOpen={() => {}}
+      disableSwipeToOpen disableDiscovery transitionDuration={reduced ? 0 : undefined}
+      ModalProps={{ disableScrollLock: true }}
+      slotProps={{ paper: { className: 'h5-design-panel', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'h5-design-title', sx: { height: '88dvh', maxWidth: 960, width: '100%', mx: 'auto', borderRadius: '16px 16px 0 0', backgroundImage: 'none', display: 'flex', flexDirection: 'column', overflow: 'hidden', pb: 'env(safe-area-inset-bottom)' } } }}
+    >
+      {contents}
     </SwipeableDrawer>
   );
 }

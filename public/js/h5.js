@@ -666,7 +666,8 @@
     const open = row.terminal_id === terminalId && !agentChat && session && !session.disposed;
     showMenu(row.title, [
       ...(open ? [['Copy text', () => { closeTerminalMenu(); closeTasks(); openCopy(); }]] : []),
-      ...(row.agent ? [] : [['Rename', () => askRename(row.title)]]),
+      // Agent terminals too: a name given here is kept (title_custom) and wins over the Claude / Codex session title from then on.
+      ['Rename', () => askRename(row.title)],
       ['Reopen', () => { closeTerminalMenu(); closeTasks(); switchTerminal(row); }],
       ['Restart in the working directory', () => void restartTerminal(row), 'danger'],
       ['Delete', () => void deleteTerminal(row), 'danger'],

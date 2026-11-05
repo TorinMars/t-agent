@@ -35,6 +35,7 @@ let subagentsMissing = false; // an Engine older than the sub-agent endpoint
 const pageErrors = [];
 const hits = {}; // GET requests per path
 const acks = []; // [task, terminal_id] of every acknowledgement
+const renames = []; // [task, terminal_id, title] of every terminal rename
 
 async function openPage(browser, viewport, { stream = false } = {}) {
   const scale = process.env.H5_SHOT_DIR ? { deviceScaleFactor: 3 } : {};
@@ -67,6 +68,14 @@ async function openPage(browser, viewport, { stream = false } = {}) {
     if (url.pathname === '/api/task-groups') return json([{ key: 'doing', name: 'In progress', sort_order: 1 }, { key: 'todo', name: 'To do', sort_order: 2 }]);
     if (url.pathname === '/api/tasks/terminal-activity') return json(activity);
     if (url.pathname === '/api/tasks/terminal-subagents') return subagentsMissing ? json({ error: 'not found' }, 404) : json(subagents);
+    const rename = url.pathname.match(/^\/api\/tasks\/(\d+)\/terminals\/([^/]+)$/);
+    if (rename && method === 'PATCH') { // the server keeps a given name (title_custom), so the listing answers it from now on
+      const row = (TERMINALS[rename[1]] || []).find(item => item.terminal_id === decodeURIComponent(rename[2]));
+      if (!row) return json({ error: 'TERMINAL_NOT_FOUND' }, 404);
+      row.title = route.request().postDataJSON().title;
+      renames.push([Number(rename[1]), row.terminal_id, row.title]);
+      return json({ terminal_id: row.terminal_id, title: row.title });
+    }
     const terminals = url.pathname.match(/^\/api\/tasks\/(\d+)\/terminals$/);
     if (terminals && method === 'GET') return json(TERMINALS[terminals[1]] || []);
     if (url.pathname === '/api/tasks/1/agent/conversations') return json([{ id: 'k1', agent: 'claude', title: 'Busy chat', running: true, pending: false, opened: { web: null, h5: null } }]);
@@ -96,6 +105,20 @@ async function toast(page, text) {
     await page.locator('.h5-task-item', { hasText: 'Alpha' }).tap();
     await page.locator('#h5-tasks .h5-terminal-list[aria-label="Alpha"] .h5-terminal-main', { hasText: 'Terminal 1' }).tap();
     await waitFor(page, 'Alpha', 'default');
+    await page.locator('#h5-tasks').waitFor({ state: 'hidden' });
+
+    // A Claude terminal can be renamed from its menu too (a given name wins over the Claude session title on the server).
+    await page.locator('#h5-open-tasks').tap();
+    await page.locator('#h5-tasks .h5-terminal-row', { hasText: 'Claude work' }).locator('.h5-terminal-more').tap();
+    await page.locator('#h5-term-menu').waitFor({ state: 'visible' });
+    assert.deepEqual(await page.locator('#h5-term-menu-actions button').allTextContents(), ['Rename', 'Reopen', 'Restart in the working directory', 'Delete'], 'Rename is offered for an agent terminal');
+    await page.locator('#h5-term-menu-actions button', { hasText: 'Rename' }).tap();
+    await page.locator('#h5-term-rename-input').fill('My review');
+    await page.locator('#h5-term-rename button').tap();
+    await page.locator('#h5-term-menu').waitFor({ state: 'hidden' });
+    assert.deepEqual(renames, [[1, 'c1', 'My review']]);
+    await page.locator('#h5-tasks .h5-terminal-row .h5-terminal-name', { hasText: 'My review' }).waitFor();
+    await page.evaluate(() => window.H5UI.actions.closeTasks()); // not Escape: a key press would turn on the hardware keyboard mode
     await page.locator('#h5-tasks').waitFor({ state: 'hidden' });
 
     const cycle = page.locator('#h5-cycle');

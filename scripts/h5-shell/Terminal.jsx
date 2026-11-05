@@ -7,6 +7,7 @@ import Paper from '@mui/material/Paper';
 import ToggleButton from '@mui/material/ToggleButton';
 import { Tip, named, t } from './common.jsx';
 import { Icon } from './Icons.jsx';
+import { commandsFor } from './commands.mjs';
 
 // The terminal area. h5.js puts the xterm element in after these two; React draws only the note, the wheel strip (h5.js handles its touches) and the selection bar.
 export function TerminalArea({ state, ui }) {
@@ -25,9 +26,6 @@ export function TerminalArea({ state, ui }) {
   );
 }
 
-// The commands of the "Insert command" list. Edit this list to change the presets (there is no user editing yet).
-// A tap puts the text into the terminal input like a paste and does NOT press Enter, so the user checks it and presses Enter.
-export const INSERT_COMMANDS = ['ls -la', 'pwd', 'git status', 'git diff', 'git log --oneline -10', 'clear', 'claude', 'exit'];
 
 // The bottom area (reference design): the draft box (hidden by default), then two rows of buttons. Row 1 are the function keys (one row that scrolls sideways); row 2 is the action row:
 // terminal keyboard, draft keyboard, upload image, saved commands, voice, and (only while the draft box is shown) send and translate-and-send. One box holds all of it so that, when the draft box
@@ -46,23 +44,36 @@ export function BottomArea({ state, ui }) {
   const run = action => { setMenu(false); action(); };
   // A computer (input mode 'pointer'): no function key row (a real keyboard has the keys), the draft box always shown, and the whole action row always there.
   const pointer = state.input === 'pointer';
+  const presets = commandsFor(state.terminalAgent);
   const rows = [
     { icon: <Icon name="paste" />, label: 'Paste text', run: () => run(() => ui.actions.key({ action: 'paste' })) },
-    ...INSERT_COMMANDS.map(command => ({ label: command, mono: true, run: () => run(() => ui.actions.insertCommand(command)) })),
+    // The presets of the open terminal's kind (Claude Code, Codex or a plain shell; `state.terminalAgent`, set by h5.js), under a header naming the list (scripts/h5-shell/commands.mjs).
+    // A tap types the command WITHOUT Enter, so the user checks it and presses Enter.
+    { head: true, label: presets.title },
+    ...presets.commands.map(({ command, note }) => ({ label: command, note, mono: true, run: () => run(() => ui.actions.insertCommand(command)) })),
   ];
   return (
     <Box className="h5-bottom" id="h5-bottom" sx={{ flex: '0 0 auto', position: 'relative', zIndex: 3, bgcolor: 'var(--h5-bg)', marginTop: 'calc(var(--h5-bar-extra, 0px) * -1)', pb: 'max(8px, env(safe-area-inset-bottom))', ...(pointer ? POINTER_ON : DRAFT_ON) }}>
       {menu ? (
         <Paper
           className="h5-add-menu" role="menu" aria-label={t('Saved commands')} elevation={8} onMouseDown={event => event.preventDefault()}
-          sx={{ position: 'absolute', left: 8, bottom: 'calc(100% + 8px)', width: 240, maxHeight: '60vh', overflowY: 'auto', borderRadius: 2, border: 1, borderColor: 'divider', zIndex: 4 }}
+          sx={{ position: 'absolute', left: 8, bottom: 'calc(100% + 8px)', width: 280, maxWidth: 'calc(100vw - 16px)', maxHeight: '60vh', overflowY: 'auto', borderRadius: 2, border: 1, borderColor: 'divider', zIndex: 4 }}
         >
-          {rows.map((row, index) => (
+          {rows.map((row, index) => (row.head ? (
+            <Box key={`head-${row.label}`} className="h5-add-menu-head" role="presentation" sx={{ px: 2, pt: 1.25, pb: 0.5, fontSize: 12, fontWeight: 600, color: 'text.secondary', borderTop: index ? 1 : 0, borderColor: 'divider' }}>{t(row.label)}</Box>
+          ) : (
             <Button
-              key={row.label} role="menuitem" fullWidth color="inherit" onClick={row.run} startIcon={row.icon}
-              sx={{ justifyContent: 'flex-start', height: 44, borderRadius: 0, px: 2, textTransform: 'none', fontSize: 15, fontFamily: row.mono ? 'ui-monospace, Menlo, monospace' : undefined, borderTop: index ? 1 : 0, borderColor: 'divider', ...(row.head ? { color: 'text.secondary' } : null) }}
-            >{row.mono ? row.label : t(row.label)}</Button>
-          ))}
+              key={row.label} role="menuitem" fullWidth color="inherit" onClick={row.run} startIcon={row.icon} title={row.note ? t(row.note) : undefined}
+              sx={{ justifyContent: 'flex-start', minHeight: 44, borderRadius: 0, px: 2, py: row.note ? 0.75 : 0, textTransform: 'none', fontSize: 15, borderTop: index && !rows[index - 1].head ? 1 : 0, borderColor: 'divider' }}
+            >
+              {row.note ? (
+                <Box component="span" sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', minWidth: 0, textAlign: 'left' }}>
+                  <Box component="span" className="h5-add-menu-command" sx={{ fontFamily: 'ui-monospace, Menlo, monospace', lineHeight: 1.3 }}>{row.label}</Box>
+                  <Box component="span" className="h5-add-menu-note" sx={{ fontSize: 12, lineHeight: 1.3, color: 'text.secondary' }}>{t(row.note)}</Box>
+                </Box>
+              ) : t(row.label)}
+            </Button>
+          )))}
         </Paper>
       ) : null}
       <TranslateBar state={state} pointer={pointer} />

@@ -26,6 +26,7 @@ export const initialState = () => ({
   settingsOpen: false,
   taskName: '', // empty: "Choose a task"
   sessionName: '',
+  terminalAgent: null, // 'claude' / 'codex' when the current terminal is that agent's, null for a plain shell: picks the presets of the saved commands list
   sources: [{ key: 'local', label: 'This machine' }],
   sourceKey: 'local',
   // The task list: a note (loading, an error, no tasks), or groups of tasks; a task can carry the sessions listed under it.

@@ -588,7 +588,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       assert.equal((await barRects()).resizes, rest.resizes);
     }
 
-    // The add menu (reference design): plus -> Upload image / Paste text / Insert command; the plus turns into a cross while it is open; a preset command is typed WITHOUT Enter.
+    // The saved commands menu: Paste text, then the presets of the terminal kind (a plain shell here; the Claude / Codex lists are checked in test-h5-pc-browser.cjs); a preset command is typed WITHOUT Enter.
     {
       await page.evaluate(() => document.activeElement && document.activeElement.blur());
       await barSettled();
@@ -597,8 +597,10 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       const sentBefore = (await sent()).length;
       await page.locator('#h5-commands').tap();
       assert.equal(await page.locator('#h5-translate').isVisible(), false, 'the saved commands menu does not open the draft box');
-      const commands = await page.locator('.h5-add-menu [role="menuitem"]').allTextContents();
-      assert.deepEqual(commands, ['Paste text', 'ls -la', 'pwd', 'git status', 'git diff', 'git log --oneline -10', 'clear', 'claude', 'exit'], 'the menu lists Paste text and the preset commands');
+      assert.equal(await page.locator('.h5-add-menu [role="menuitem"]').first().textContent(), 'Paste text', 'Paste text is the first item');
+      assert.deepEqual(await page.locator('.h5-add-menu .h5-add-menu-head').allTextContents(), ['Start an agent'], 'a plain terminal shows the shell list');
+      const commands = await page.locator('.h5-add-menu .h5-add-menu-command').allTextContents();
+      assert.deepEqual(commands, ['claude', 'claude --continue', 'claude --resume', 'codex', 'codex resume', 'git status'], 'the menu lists the commands that start an agent');
       await page.locator('.h5-add-menu [role="menuitem"]', { hasText: 'git status' }).tap();
       await page.waitForFunction(count => window.sockets[0].sent.filter(item => !item.startsWith('{')).length > count, sentBefore);
       const typedAfter = (await sent()).slice(sentBefore);

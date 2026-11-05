@@ -12,8 +12,8 @@ import TextField from './TextField.jsx';
 import Typography from '@mui/material/Typography';
 import { t } from './common.jsx';
 
-// The dialogs of the task "⋯" menu (h5.js `ui.actions.taskMore`): the delete confirmation, with "Also delete the directory" (off by default, as on the
-// desktop page; the server refuses a protected or shared directory), and the working directory of an existing task (the saved path is shown).
+// The dialogs of the task "⋯" menu (h5.js `ui.actions.taskMore`): the delete confirmation, with "Also delete the directory" (off by default;
+// the server refuses a protected or shared directory), and the working directory of an existing task (the saved path is shown).
 export function TaskDialog({ state, ui }) {
   const dialog = state.taskDialog;
   const [alsoDir, setAlsoDir] = useState(false);

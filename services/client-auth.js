@@ -49,8 +49,19 @@ function matchStep(secret, code, now = Date.now()) {
 
 function hash(value) { return crypto.createHash('sha256').update(value).digest('hex'); }
 function fail(code, status = 400) { const error = new Error(code); error.status = status; throw error; }
-// `/web` (the old desktop page) now leads to `/`; `/h5` stays, so an iPhone Home Screen app returns to its own start address.
-function safeReturnTo(value) { return value === '/h5' ? '/h5' : '/'; }
+// Where the page goes after the login. Only the page addresses count: `/h5` stays (an iPhone Home Screen app returns to its own start address), `/` and
+// `/web` (the old desktop page) lead to `/`, anything else (another path, another origin, `//host`, a backslash) to a bare `/`. The query of a page address is
+// kept (an old `/web?openChat=…` notification link still opens its chat); the path is always one of ours, so this is never an open redirect.
+const RETURN_PAGES = { '/': '/', '/web': '/', '/h5': '/h5' };
+const MAX_RETURN_QUERY = 2000;
+function safeReturnTo(value) {
+  if (typeof value !== 'string' || !value.startsWith('/') || value.startsWith('//') || value.includes('\\')) return '/';
+  let url;
+  try { url = new URL(value, 'http://return.invalid'); } catch { return '/'; }
+  const page = url.origin === 'http://return.invalid' ? RETURN_PAGES[url.pathname] : undefined;
+  if (!page) return '/';
+  return url.search && url.search.length <= MAX_RETURN_QUERY ? page + url.search : page;
+}
 
 // Do not trust req.ip: reverse proxies and forwarded headers can make a remote
 // request appear local. Used only to decide cookie security for direct loopback

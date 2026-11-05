@@ -11,8 +11,8 @@ import Typography from '@mui/material/Typography';
 import { Pill, api, t } from './common.jsx';
 import { Feedback, Field, Group, Hint, failure, useFeedback } from './Form.jsx';
 
-// Settings "Engines": the remote Engines this Client is connected to (the desktop page's engine tabs and their right-click menu, public/js/engines.js).
-// Same endpoints, the same validation and the same error texts: connect with an address and a pairing code or token (POST /api/remote-servers), edit
+// Settings "Engines": the remote Engines this Client is connected to (ported from the old desktop page's engine tabs in 2.87.13).
+// The /api/remote-servers endpoints, their validation and their error texts: connect with an address and a pairing code or token (POST /api/remote-servers), edit
 // the name and address (PUT, the saved token is reused and never sent to the browser), remove (DELETE), check (POST /:id/check), and update a remote
 // Engine (/:id/check-update, /:id/apply-update, then /:id/update-status until it is back). After every change the engine selector of the task list is
 // read again (ui.actions.enginesChanged in h5.js).

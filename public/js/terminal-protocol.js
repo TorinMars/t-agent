@@ -1,4 +1,4 @@
-// Terminal WebSocket protocol shared by the desktop page and the phone page.
+// Terminal WebSocket protocol of the page (public/js/h5.js).
 //
 // Terminal output and typed input travel in text frames. Control messages (history snapshot, history pages, resize,
 // ping/pong) travel in BINARY frames that hold JSON, so program output or pasted text can never be mistaken for a

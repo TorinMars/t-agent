@@ -28,7 +28,7 @@
       }
       if (lost && !redirecting) {
         redirecting = true;
-        location.replace(`${loginPath}?return_to=${encodeURIComponent(/^\/h5(\/|$)/.test(location.pathname) ? '/h5' : '/')}`); // back to the page that was open
+        location.replace(`${loginPath}?return_to=${encodeURIComponent((/^\/h5(\/|$)/.test(location.pathname) ? '/h5' : '/') + location.search)}`); // back to the page that was open
       }
     }
     return response;

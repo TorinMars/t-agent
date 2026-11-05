@@ -1,4 +1,4 @@
-// Uploads an image from the browser straight to Alibaba Cloud OSS (a form POST), shared by the desktop and the phone page.
+// Uploads an image from the browser straight to Alibaba Cloud OSS (a form POST), used by the page's image upload.
 // The Client only signs what the upload may contain (POST /api/oss/upload-policy); the image bytes never pass through it and the
 // AccessKey secret never reaches the browser. The bucket needs a CORS rule that allows POST from this page's origin.
 const OssDirect = (() => {

@@ -341,7 +341,7 @@ const waitAck = (url, id, from = 0) => new Promise((resolve, reject) => {
       await context.close();
     }
 
-    // The phone (touch mode) keeps its layout; it now acks a Pending terminal when it is shown, like the PC page.
+    // The phone (touch mode) keeps its layout; it now acks a Pending terminal when it is shown, like pointer mode.
     {
       activity = { 1: { p1: 'done' } };
       const { context, page } = await openPage(browser, { viewport: { width: 390, height: 844 }, touch: true });

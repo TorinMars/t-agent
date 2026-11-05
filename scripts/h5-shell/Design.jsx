@@ -9,7 +9,7 @@ import { named, t } from './common.jsx';
 import { Icon } from './Icons.jsx';
 import { imagePath, renderText } from './file-view.mjs';
 
-// The Markdown renderer the app already ships (the desktop document view uses the same files). They are loaded the first time the sheet shows a
+// The Markdown renderer the app ships (the /share/:token pages use the same files). They are loaded the first time the sheet shows a
 // document, from this server; mermaid (about 5 MB) only when the document has a diagram. Keep the versions in step with scripts/vendor-libs.json.
 const MARKED_SRC = '/vendor/marked/marked-15.0.12.min.js';
 const MARKDOWN_VIEW_SRC = '/js/markdown-view.js';

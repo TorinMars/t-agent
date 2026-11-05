@@ -48,7 +48,7 @@ test('placeholders keep the variable part and translate it when it is itself kno
 
 test('a prefix piece followed by a runtime message is translated, and the message is kept', () => {
   const I18n = load('zh');
-  assert.equal(I18n.t('Could not save the document: boom'), '保存文档失败：boom');
+  assert.equal(I18n.t('Cannot start the microphone: boom'), '无法启动麦克风：boom');
 });
 
 test('templates with almost no fixed text only match numbers', () => {
@@ -60,7 +60,8 @@ test('templates with almost no fixed text only match numbers', () => {
 
 test('segments joined with a middle dot are translated one by one', () => {
   const I18n = load('zh');
-  assert.equal(I18n.t('Default engine · Unknown version'), `${I18n.t('Default engine')} · ${I18n.t('Unknown version')}`);
+  assert.equal(I18n.t('Local · Unknown version'), `${I18n.t('Local')} · ${I18n.t('Unknown version')}`);
+  assert.notEqual(I18n.t('Local'), 'Local');
 });
 
 test('unknown text is shown unchanged rather than dropped', () => {

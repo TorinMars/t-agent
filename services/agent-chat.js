@@ -713,8 +713,8 @@ function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS,
     return { success: true };
   }
 
-  // Marks a chat as open (or not) on a page: 'web' is the desktop page, which shows every open chat as a tab; 'h5' is the phone page, which
-  // shows one at a time, so opening a chat there closes the others of the task. Opening does not change the order of the list.
+  // Marks a chat as open (or not) on a page: 'web' was the old desktop page (gone since 2.88.0; the
+  // `opened_web` column and the surface stay for older Clients), which shows every open chat as a tab; 'h5' is the page, which shows one at a time, so opening a chat there closes the others of the task. Opening does not change the order of the list.
   const SURFACES = { web: 'opened_web', h5: 'opened_h5' };
   function setOpened(task, id, { surface, opened } = {}) {
     const row = rowOf(task.id, id);

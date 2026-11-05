@@ -6,10 +6,18 @@
   const title = document.getElementById('auth-title');
   const description = document.getElementById('auth-description');
   const errorNode = document.getElementById('auth-error');
-  const requested = new URLSearchParams(location.search).get('return_to');
   // After logging in the page goes to `/` (the one page for computers and phones), or back to `/h5` when that address asked: an iPhone Home Screen app
-  // starts at /h5 and stays there. Any other return_to (the old `/web` included) leads to `/`.
-  const returnTo = requested === '/h5' ? '/h5' : '/';
+  // starts at /h5 and stays there. `/web` (the old page) leads to `/`, anything else to a bare `/`. The query of a page address is kept, so an old
+  // `/web?openChat=…` link still opens its chat. The same rule as `safeReturnTo` in services/client-auth.js; the path is always one of ours.
+  const returnTo = (requested => {
+    const pages = { '/': '/', '/web': '/', '/h5': '/h5' };
+    if (typeof requested !== 'string' || !requested.startsWith('/') || requested.startsWith('//') || requested.includes('\\')) return '/';
+    let url;
+    try { url = new URL(requested, 'http://return.invalid'); } catch { return '/'; }
+    const page = url.origin === 'http://return.invalid' && Object.prototype.hasOwnProperty.call(pages, url.pathname) ? pages[url.pathname] : '';
+    if (!page) return '/';
+    return url.search && url.search.length <= 2000 ? page + url.search : page;
+  })(new URLSearchParams(location.search).get('return_to'));
   const messages = {
     AUTH_CODE_INVALID: 'The code is invalid or already used. Wait for the next code, or use an unused recovery code.',
     AUTHENTICATOR_BINDING_REQUIRED: 'You must bind an authenticator before using this.',

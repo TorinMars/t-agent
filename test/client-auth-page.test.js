@@ -12,7 +12,7 @@ async function start(status) {
     return elements.get(id);
   } };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'auth.js'), 'utf8'), {
-    document, URLSearchParams, location: { search: '', pathname: '/auth/setup' }, navigator: { userAgent: 'iPhone Mobile' },
+    document, URL, URLSearchParams, location: { search: '', pathname: '/auth/setup' }, navigator: { userAgent: 'iPhone Mobile' },
     async fetch(url, options) {
       requests.push({ url, options });
       return { ok: true, async json() {
@@ -51,7 +51,7 @@ async function logIn({ search = '', userAgent, maxTouchPoints = 0, screen }) {
   };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'auth.js'), 'utf8'), {
     document: { getElementById: element },
-    URLSearchParams, location: { search, pathname: '/torin/hide/login', replace: url => { went = url; } }, navigator: { userAgent, maxTouchPoints }, screen,
+    URL, URLSearchParams, location: { search, pathname: '/torin/hide/login', replace: url => { went = url; } }, navigator: { userAgent, maxTouchPoints }, screen,
     async fetch(url, options) {
       requests.push({ url, body: options && options.body ? JSON.parse(options.body) : null });
       return { ok: true, async json() { return url.endsWith('/status') ? { bound: true, authenticated: false } : { success: true, redirect: JSON.parse(options.body).return_to }; } };
@@ -72,5 +72,7 @@ test('after the login every device goes to the same page: /h5 when that address 
       const target = search === '?return_to=/h5' ? '/h5' : '/';
       assert.deepEqual(await logIn({ ...device, search }), { sent: target, went: target }, `${device.userAgent.slice(0, 30)} ${search}`);
     }
+    // An old /web?openChat=… notification link: the query survives the login, the path becomes /.
+    assert.deepEqual(await logIn({ ...device, search: '?return_to=%2Fweb%3FopenChat%3Dx' }), { sent: '/?openChat=x', went: '/?openChat=x' });
   }
 });

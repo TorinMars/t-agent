@@ -24,7 +24,7 @@ export const Field = ({ id, label, htmlInput, ...props }) => (
   <TextField id={id} label={t(label)} size="small" fullWidth autoComplete="off" slotProps={{ htmlInput: { autoCapitalize: 'off', spellCheck: false, ...htmlInput } }} {...props} />
 );
 
-// One folding group. Its data is read each time it is opened, as the desktop dialog reads it each time it is shown.
+// One folding group. Its data is read each time it is opened.
 export function Group({ id, title, onOpen, children }) {
   const [open, setOpen] = useState(false);
   return (

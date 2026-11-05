@@ -1,5 +1,5 @@
-// Phone page (/h5): tasks, terminals, image upload and translate-and-send. It shares the task terminals with the desktop page;
-// only one client at a time is attached to a terminal, and the other one can take it over with a button.
+// The page (/ and /h5, for every device): tasks, terminals, image upload and translate-and-send. Its task terminals are shared with other open copies
+// of the page and other Clients; only one client at a time is attached to a terminal, and the other one can take it over with a button.
 // This file is the controller: the tasks, the terminals and their sockets, the chat, the viewport. What the page looks like is the Material UI shell
 // (scripts/h5-shell, js/h5-shell.js): this file writes the state the shell shows (`ui.set`) and registers what a tap does (`ui.actions`).
 (() => {
@@ -14,7 +14,7 @@
   const APPLE = /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent || '');
   const tell = (message, type = 'info') => notify(message, type);
   const tr = text => (typeof I18n !== 'undefined' ? I18n.t(text) : text);
-  const SUBMIT_DELAY_MS = 120; // same as the desktop: type the text first, then Enter, so a TUI does not see a pasted newline
+  const SUBMIT_DELAY_MS = 120; // type the text first, then Enter, so a TUI does not see a pasted newline
   const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
   const DEFAULT_GROUPS = [
     { key: 'personal', name: 'Personal tasks', sort_order: 0 },
@@ -451,7 +451,7 @@
   // Goes to the next terminal session, in task sheet order (groups, tasks, then the terminals of each task), that is running or pending acceptance,
   // wrapping around after the last one. Only terminal sessions count: plain shells ("Terminal") and Claude / Codex terminals ("Session"); agent chats do not.
   // Running: the server's terminal activity state is 'running', or the terminal is a live Claude session with a running sub-agent (`terminal-subagents`).
-  // Pending acceptance: the activity state is 'done' (finished, not yet seen on the desktop; the desktop clears it when the terminal is opened there).
+  // Pending acceptance: the activity state is 'done' (finished, not yet seen; showing the terminal clears it, see the terminal done acknowledgement below).
   // Both come from the pushed snapshot while the activity stream is live (see "Terminal activity push" below), else they are read fresh on the tap.
   let cycling = false;
   async function activeSessions(from) {
@@ -535,7 +535,7 @@
   ui.actions.newTaskTarget = () => ({ local: source.key === 'local', label: source.label });
 
   // ── Task actions (the "⋯" of a task): move to another group, change the working directory, delete (optionally with the directory) ──
-  // The same endpoints as the desktop page's task menu, through the task base of the engine, so local, Engine and proxied tasks work alike.
+  // The task endpoints, through the task base of the engine, so local, Engine and proxied tasks work alike.
   const taskById = id => tasks.find(entry => entry.id === id);
   ui.actions.taskMore = id => {
     const item = taskById(id);
@@ -656,7 +656,7 @@
     connect();
   }
 
-  // ── Terminal actions: rename, reopen, restart in the working directory, delete (same endpoints as the desktop tabs) ──
+  // ── Terminal actions: rename, reopen, restart in the working directory, delete ──
   // One sheet (the shell's `menu`) serves the actions of a terminal, the actions of a chat and the "Session" choices of the "+" of a task. Its items are
   // { label, kind } in the state and their functions are kept here, in the order shown.
   let menuRuns = [];
@@ -1377,7 +1377,7 @@
     else if (session && !session.ws && session.timer) { clearTimeout(session.timer); session.timer = null; open(session); } // do not wait out the backoff
   });
 
-  // ── Terminal "done" acknowledgement (the PC page does the same, public/js/tasks.js `acknowledgeCurrentTerminal`) ──
+  // ── Terminal "done" acknowledgement ──
   // The server keeps each terminal's activity state: running, done (finished, not yet seen) or idle (lib/terminal-activity.js). Seeing a finished
   // terminal is what clears 'done': when a terminal is shown while the page is visible, when the shown one turns 'done' while it is visible (pushed, see below), and when
   // the page becomes visible again, `POST {tasksBase}/{task}/terminal/ack` tells the server (local, Engine `/v1` and the remote proxy alike; the server

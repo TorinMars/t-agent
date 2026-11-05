@@ -16,7 +16,7 @@ import CloseIcon from '@mui/icons-material/Close';
 import SystemUpdateAltIcon from '@mui/icons-material/SystemUpdateAlt';
 import { api, t } from './common.jsx';
 
-// The texts of the desktop page's updater (public/js/app.js `Updates`), so both pages say the same thing.
+// The texts of the updater (the same as the old desktop page's, so the Chinese dictionary keeps its translations).
 const STATUS = {
   idle: 'Not checked yet', checking: 'Checking', current: 'Up to date', available: 'Update available',
   local_newer: 'Local version is newer', blocked: 'Update blocked', updating: 'Updating', failed: 'Check failed',
@@ -54,7 +54,7 @@ function formatTime(value) {
 }
 const errorText = status => `${t(errorLabel(status.error)) || t(status.message || 'Update failed')}${status.error_details ? `: ${status.error_details}` : ''}`;
 const lines = status => (Array.isArray(status.log) ? status.log.map(line => line.text).join('\n') : '');
-const POLL_MS = 60_000; // how often the red dot reads the update state, as the desktop page does
+const POLL_MS = 60_000; // how often the red dot reads the update state
 const RESTART_GRACE_MS = 4000;
 
 const Detail = ({ label, id, children }) => (
@@ -64,7 +64,7 @@ const Detail = ({ label, id, children }) => (
   </>
 );
 
-// The header "Update" button (right of the refresh button) and its modal. It uses the /api/system update endpoints of the desktop page: opening it
+// The header "Update" button (right of the refresh button) and its modal. It uses the /api/system update endpoints: opening it
 // checks for a new version (nothing is installed by the check); "Update now" starts the update (optionally forced) and follows it while the service
 // restarts. A red dot on the button says that an update is available or that the service must be restarted.
 export function UpdateButton() {
@@ -81,7 +81,7 @@ export function UpdateButton() {
   useEffect(() => () => { alive.current = false; clearInterval(timer.current); }, []);
   useEffect(() => { const node = logNode.current; if (node) node.scrollTop = node.scrollHeight; }, [log]);
 
-  // The red dot: read the state now and every minute; a state that was never checked (or whose last check failed) is checked once, as on the desktop page.
+  // The red dot: read the state now and every minute; a state that was never checked (or whose last check failed) is checked once.
   useEffect(() => {
     let stop = false;
     const read = async () => {
@@ -144,7 +144,7 @@ export function UpdateButton() {
     else if (next.error || next.status === 'failed' || next.status === 'blocked') setView({ phase: 'error', status: next, message: errorText(next), dirty: next.error === 'WORKTREE_DIRTY' });
     else if (next.status === 'available') {
       setView({ phase: 'available', status: next });
-      // The desktop page shows a new version once (notice_version); seeing it here counts as shown too.
+      // A new version is announced once (notice_version, kept by the server); seeing it here counts as announced.
       if (next.remote_version && next.remote_version !== next.notice_version) api('POST', '/api/system/update-notified', { version: next.remote_version }).catch(() => {});
     } else setView({ phase: 'current', status: next });
   };

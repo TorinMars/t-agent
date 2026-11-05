@@ -1,4 +1,4 @@
-// Chat-style view of a Claude Code / Codex conversation (instead of a terminal). Shared by the desktop page and the phone page.
+// Chat-style view of a Claude Code / Codex conversation (instead of a terminal), used by the page (public/js/h5.js).
 // This file is small and loaded with every page; the view itself (React + assistant-ui, source in scripts/agent-chat/) is the bundle
 // agent-chat-ui.js, fetched when the first chat is mounted.
 //

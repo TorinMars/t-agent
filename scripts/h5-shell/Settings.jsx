@@ -335,7 +335,7 @@ function Rows({ ui }) {
   );
 }
 
-// The settings sheet that rises from the bottom (opened by the gear at the bottom of the task sidebar): the same configuration as the desktop "Settings" dialog and its translation and voice buttons.
+// The settings sheet that rises from the bottom (opened by the gear at the bottom of the task sidebar): the Client configuration, translation and voice input.
 export function SettingsDrawer({ state, ui }) {
   return (
     <Drawer

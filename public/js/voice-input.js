@@ -147,7 +147,7 @@ const VoiceInput = (() => {
   if (typeof document === 'undefined') return { createResampler, createRecognizer, compose, follow };
 
   const tell = (message, type) => (typeof notify === 'function' ? notify(message, type) : (typeof alert === 'function' ? alert(message) : undefined));
-  // The phone page does not load app.js (where API lives), so the recording asks for its token with its own request.
+  // The page has no shared API helper, so the recording asks for its token with its own request.
   async function requestToken() {
     const res = await fetch('/api/speech/token', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }, body: '{}' });
     const body = await res.text();
@@ -596,10 +596,7 @@ const VoiceInput = (() => {
     return { start, stop, finish, cancel, get state() { return state; } };
   }
 
-  // Voice input is set up in the page's Settings (scripts/h5-shell/Settings.jsx `VoiceGroup`); the old desktop settings dialog is gone (2.88.0).
-  function showSettings() { tell('Set up voice input in Settings', 'info'); }
-
-  // The page: the microphone next to the draft box.
+  // The page: the microphone next to the draft box. Voice input is set up in the page's Settings (scripts/h5-shell/Settings.jsx `VoiceGroup`).
   const h5Input = document.getElementById('h5-translate-input');
   const h5Mic = document.getElementById('h5-voice');
   // Hold to talk on a touch screen, click to start and stop on a computer (the shell's input mode, `H5UI` in scripts/h5-shell/entry.jsx).
@@ -609,7 +606,7 @@ const VoiceInput = (() => {
     onSend: () => { const form = document.getElementById('h5-translate'); if (form && form.requestSubmit) form.requestSubmit(); } });
 
   return {
-    attach, showSettings, createResampler, createRecognizer, compose, follow,
+    attach, createResampler, createRecognizer, compose, follow,
     // Keeping the microphone ready: the switch of the chat options reads and sets it; `onKeepWarm` follows changes (several chats can be open).
     setKeepWarm, get keepWarm() { return warm.wanted; }, canKeepWarm: warmAvailable,
     onKeepWarm(listener) { warm.listeners.add(listener); return () => warm.listeners.delete(listener); },

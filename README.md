@@ -76,7 +76,7 @@ The top of the "Page enhancement" page can switch to the SSH method: `ssh -R` bi
 
 ### Login entrance
 
-When logged out, the pages `/` and `/h5` (and the old `/web`) **lead to the login entrance** (with `return_to`, so the login brings you back to the page you opened), and apart from the exceptions below **every other address returns 404** (exactly like a non-existent address, with no redirect and no login hint). The login entrance, which anyone who opens a page is taken to, is by default:
+When logged out, the pages `/` and `/h5` (and the old `/web`) **lead to the login entrance** (with `return_to`, so the login brings you back to the page you opened, query included: an old `/web?openChat=…` link opens its chat after the login), and apart from the exceptions below **every other address returns 404** (exactly like a non-existent address, with no redirect and no login hint). The login entrance, which anyone who opens a page is taken to, is by default:
 
 ```
 http://127.0.0.1:3000/torin/hide/login

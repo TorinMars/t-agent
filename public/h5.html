@@ -13,40 +13,56 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
   <meta name="apple-mobile-web-app-title" content="Tasks">
   <meta name="theme-color" content="#1e1e1e">
+  <!-- First paint: every script is deferred (they run in this order after the page is parsed), so the page is painted as soon as the three style sheets
+       below arrive, with this inline style and the skeleton in #h5-root. The skeleton has the shell's dark background and its header bar (and the sidebar edge on a wide screen) at the same place, so
+       nothing jumps when the shell replaces it (React empties #h5-root on its first render). Keep the sizes in step with the shell; the load test
+       (scripts/test-h5-load-browser.cjs) compares them. -->
+  <style>
+    html, body { margin: 0; background: #121212; color: #fff; }
+    .h5-skeleton { position: fixed; inset: 0; padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left); background: #121212; }
+    .h5-skeleton-header { height: 45px; box-sizing: border-box; background: #212121; border-bottom: 1px solid rgba(255, 255, 255, .12); }
+    .h5-skeleton-side { display: none; }
+    @media (min-width: 900px) {
+      .h5-skeleton { left: 320px; }
+      .h5-skeleton-side { display: block; position: fixed; top: 0; bottom: 0; left: 0; width: 320px; box-sizing: border-box; border-right: 1px solid rgba(255, 255, 255, .12); background: #121212; }
+      html[data-sidebar-collapsed] .h5-skeleton { left: 0; }
+      html[data-sidebar-collapsed] .h5-skeleton-side { display: none; }
+    }
+  </style>
   <link rel="stylesheet" href="/vendor/xterm/xterm-5.5.0.css">
   <link rel="stylesheet" href="/css/h5.css">
   <link rel="stylesheet" href="/css/agent-chat.css">
-  <script src="/js/i18n.js"></script>
-  <script src="/js/i18n-zh-ui.js"></script>
-  <script src="/js/i18n-zh-server.js"></script>
-  <script src="/js/i18n-zh-extra.js"></script>
-  <script src="/js/toast.js"></script>
-  <script src="/js/client-auth.js"></script>
-  <script src="/vendor/xterm/xterm-5.5.0.js"></script>
-  <script src="/vendor/xterm/addon-fit-0.10.0.js"></script>
-  <script src="/vendor/xterm/addon-unicode11-0.8.0.js"></script>
+  <script defer src="/js/i18n.js"></script>
+  <script defer src="/js/i18n-zh-ui.js"></script>
+  <script defer src="/js/i18n-zh-server.js"></script>
+  <script defer src="/js/i18n-zh-extra.js"></script>
+  <script defer src="/js/toast.js"></script>
+  <script defer src="/js/client-auth.js"></script>
+  <script defer src="/vendor/xterm/xterm-5.5.0.js"></script>
+  <script defer src="/vendor/xterm/addon-fit-0.10.0.js"></script>
+  <script defer src="/vendor/xterm/addon-unicode11-0.8.0.js"></script>
 </head>
 <body>
-  <!-- The page is drawn by the Material UI shell (scripts/h5-shell, built to js/h5-shell.js) into #h5-root, at once, before the scripts below run.
+  <!-- The page is drawn by the Material UI shell (scripts/h5-shell, built to js/h5-shell.js) into #h5-root, before the scripts after it run.
        The chat is a plain element that h5.js drives; the image file input is inside the Upload image button (scripts/h5-shell/Terminal.jsx). -->
-  <div id="h5-root"></div>
+  <div id="h5-root"><div class="h5-skeleton" aria-hidden="true"><div class="h5-skeleton-header"></div></div><div class="h5-skeleton-side" aria-hidden="true"></div></div>
   <div class="h5-agent" id="h5-agent" role="dialog" aria-modal="true" aria-label="Agent chat" hidden></div>
 
-  <script src="/js/h5-shell.js"></script>
-  <script src="/js/terminal-owner.js"></script>
-  <script src="/js/terminal-protocol.js"></script>
-  <script src="/js/terminal-keys.js"></script>
-  <script src="/js/terminal-ime.js"></script>
-  <script src="/js/terminal-translate.js"></script>
-  <script src="/js/voice-overlay.js"></script>
-  <script src="/js/voice-input.js"></script>
-  <script src="/js/word-translate.js"></script>
-  <script src="/js/terminal-viewport.js"></script>
-  <script src="/js/terminal-file-links.js"></script>
-  <script src="/js/terminal-clipboard.js"></script>
-  <script src="/js/oss-direct.js"></script>
-  <script src="/js/agent-chat.js"></script>
-  <script src="/js/agent-activity.js"></script>
-  <script src="/js/h5.js"></script>
+  <script defer src="/js/h5-shell.js"></script>
+  <script defer src="/js/terminal-owner.js"></script>
+  <script defer src="/js/terminal-protocol.js"></script>
+  <script defer src="/js/terminal-keys.js"></script>
+  <script defer src="/js/terminal-ime.js"></script>
+  <script defer src="/js/terminal-translate.js"></script>
+  <script defer src="/js/voice-overlay.js"></script>
+  <script defer src="/js/voice-input.js"></script>
+  <script defer src="/js/word-translate.js"></script>
+  <script defer src="/js/terminal-viewport.js"></script>
+  <script defer src="/js/terminal-file-links.js"></script>
+  <script defer src="/js/terminal-clipboard.js"></script>
+  <script defer src="/js/oss-direct.js"></script>
+  <script defer src="/js/agent-chat.js"></script>
+  <script defer src="/js/agent-activity.js"></script>
+  <script defer src="/js/h5.js"></script>
 </body>
 </html>

@@ -24,6 +24,7 @@
   ];
 
   async function api(method, url, body) {
+    if (method === 'GET' && early.has(url)) { const answer = early.get(url); early.delete(url); return answer; }
     const headers = { 'X-Requested-With': 'XMLHttpRequest' };
     if (body !== undefined) headers['Content-Type'] = 'application/json';
     const res = await fetch(url, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
@@ -41,7 +42,57 @@
     },
   };
 
+  // ── Early requests (start) ──
+  // A slow phone network pays a full round trip for each request that waits for another one. At start the page therefore asks at once for what it
+  // will need: the Engine list, the tasks and groups of the remembered Engine, and for the remembered task its terminals and chats; and it opens the
+  // WebSocket of the remembered terminal. An early answer is used when the normal code asks for the same URL (in `api`, once, within EARLY_MS); the
+  // early socket is taken by `open` when the terminal shown is that one, and closed cleanly when it is not (the task or the terminal is gone, another
+  // one was chosen), so the server never keeps a stray attachment.
+  const EARLY_MS = 20000;
+  const early = new Map(); // url -> the promise of its answer
+  function prefetch(url) {
+    const answer = api('GET', url);
+    answer.catch(() => {}); // a failure is handled by whoever uses it
+    early.set(url, answer);
+    setTimeout(() => { if (early.get(url) === answer) early.delete(url); }, EARLY_MS);
+  }
+  let earlySocket = null; // { source, taskId, terminalId, ws, events, timer }
+  const socketUrl = (from, taskId, id, takeover) => `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}${from.wsPath}?taskId=${taskId}&terminalId=${encodeURIComponent(id)}${TerminalOwner.query(takeover)}${TerminalProtocol.query()}`;
+  function openEarlySocket(from, taskId, id) {
+    const ws = new WebSocket(socketUrl(from, taskId, id, false));
+    ws.binaryType = 'arraybuffer';
+    const entry = { source: from, taskId, terminalId: id, ws, events: [] };
+    // Until `open` takes it, what arrives is kept in order and handed over then (the history snapshot usually comes before the terminal exists).
+    ws.onopen = event => entry.events.push(['onopen', event]);
+    ws.onmessage = event => entry.events.push(['onmessage', event]);
+    ws.onclose = event => entry.events.push(['onclose', event]);
+    ws.onerror = () => {};
+    entry.timer = setTimeout(dropEarlySocket, EARLY_MS);
+    earlySocket = entry;
+  }
+  function dropEarlySocket() {
+    const entry = earlySocket;
+    earlySocket = null;
+    if (!entry) return;
+    clearTimeout(entry.timer);
+    try { entry.ws.close(1000); } catch { /* already closed */ }
+  }
+  function takeEarlySocket(s) {
+    const entry = earlySocket;
+    if (!entry || entry.source !== s.source || entry.taskId !== s.task.id || entry.terminalId !== s.terminalId) { dropEarlySocket(); return null; }
+    earlySocket = null;
+    clearTimeout(entry.timer);
+    return entry;
+  }
+
   const LOCAL = { key: 'local', label: 'This machine', tasksBase: '/api/tasks', groupsBase: '/api/task-groups', wsPath: '/terminal/ws', activityBase: '/api/tasks' };
+  const remoteSource = (id, name) => ({
+    key: `remote:${id}`, label: name,
+    tasksBase: `/api/remote-servers/${id}/tasks`,
+    groupsBase: `/api/remote-servers/${id}/task-groups`,
+    wsPath: `/api/remote-servers/${id}/terminal/ws`,
+    activityBase: `/api/remote-servers/${id}`, // {activityBase}/terminal-activity and /terminal-subagents
+  });
   let sources = [LOCAL];
   let source = LOCAL;
   let tasks = [];
@@ -173,13 +224,7 @@
       const servers = await api('GET', '/api/remote-servers');
       const before = new Map(sources.map(item => [item.key, item]));
       // An Engine that is still there keeps its object (only its name can change): requests in flight compare it with `source`.
-      sources = [LOCAL, ...(Array.isArray(servers) ? servers : []).map(server => (before.has(`remote:${server.id}`) ? Object.assign(before.get(`remote:${server.id}`), { label: server.name }) : {
-        key: `remote:${server.id}`, label: server.name,
-        tasksBase: `/api/remote-servers/${server.id}/tasks`,
-        groupsBase: `/api/remote-servers/${server.id}/task-groups`,
-        wsPath: `/api/remote-servers/${server.id}/terminal/ws`,
-        activityBase: `/api/remote-servers/${server.id}`, // {activityBase}/terminal-activity and /terminal-subagents
-      }))];
+      sources = [LOCAL, ...(Array.isArray(servers) ? servers : []).map(server => (before.has(`remote:${server.id}`) ? Object.assign(before.get(`remote:${server.id}`), { label: server.name }) : remoteSource(server.id, server.name)))];
     } catch { sources = [LOCAL]; }
     source = sources.find(item => item.key === store.get('source')) || LOCAL;
     ui.set({ sources: sources.map(item => ({ key: item.key, label: item.label })), sourceKey: source.key });
@@ -610,11 +655,12 @@
     catch (error) { if (current === task) showEmpty(`Could not load terminals: ${error.message}`); return; }
     if (current !== task) return;
     terminals = Array.isArray(rows) ? rows : [];
-    if (!terminals.length) { showEmpty('This task has no terminal yet'); return; }
+    if (!terminals.length) { dropEarlySocket(); showEmpty('This task has no terminal yet'); return; }
     const saved = store.get(`terminal:${source.key}:${current.id}`);
     const wanted = wantedTerminal; // a session that was tapped in the task sheet
     wantedTerminal = null;
     terminalId = [wanted, saved].find(id => id && terminals.some(row => row.terminal_id === id)) || terminals[0].terminal_id;
+    if (earlySocket && earlySocket.terminalId !== terminalId) dropEarlySocket();
     if (wanted && terminalId === wanted) store.set(`terminal:${source.key}:${current.id}`, terminalId);
     renderTabs();
     connect();
@@ -1186,8 +1232,8 @@
   bindWheelStrip();
 
   function open(s, takeover = false) {
-    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    const ws = new WebSocket(`${proto}://${location.host}${s.source.wsPath}?taskId=${s.task.id}&terminalId=${encodeURIComponent(s.terminalId)}${TerminalOwner.query(takeover)}${TerminalProtocol.query()}`);
+    const taken = takeover ? (dropEarlySocket(), null) : takeEarlySocket(s);
+    const ws = taken ? taken.ws : new WebSocket(socketUrl(s.source, s.task.id, s.terminalId, takeover));
     ws.binaryType = 'arraybuffer';
     s.ws = ws;
     if (s.heartbeat) s.heartbeat.stop();
@@ -1231,6 +1277,8 @@
     }
     ws.onclose = closed;
     ws.onerror = () => {};
+    // The early socket: what it got before this terminal existed is handled now, in order.
+    if (taken) for (const [handler, event] of taken.events) { if (s.ws !== ws || s.disposed) break; ws[handler](event); }
   }
 
   // The server sends the saved screen first; input is held back until it has been drawn.
@@ -2150,15 +2198,30 @@
 
   // ── Start ──
   (async () => {
-    await loadSources();
-    await loadTasks();
-    void connectFeed();
+    // The remembered Engine is assumed until the Engine list says otherwise: its tasks are asked for at the same time as the list. Its object is put in
+    // `sources` so that loadSources keeps it (requests in flight compare with `source`).
+    const remembered = /^remote:(\d+)$/.exec(store.get('source') || '');
+    if (remembered) { source = remoteSource(Number(remembered[1]), ''); sources = [LOCAL, source]; }
+    const assumed = source;
     // The page opened by a click on a notification: ?openChat=<task id>:<conversation id>.
     const link = /^(\d+):(.+)$/.exec(new URLSearchParams(location.search).get('openChat') || '');
+    const savedId = Number(store.get(`task:${assumed.key}`));
+    if (savedId > 0 && !link) {
+      prefetch(`${assumed.tasksBase}/${savedId}/terminals`);
+      if (assumed.key === 'local') prefetch(`${assumed.tasksBase}/${savedId}/agent/conversations`);
+      else prefetch(`${assumed.tasksBase.replace(/\/tasks$/, '')}/info`);
+      const savedTerminal = store.get(`terminal:${assumed.key}:${savedId}`);
+      if (savedTerminal) openEarlySocket(assumed, savedId, savedTerminal);
+    }
+    const tasksLoaded = loadTasks();
+    await loadSources();
+    await tasksLoaded;
+    if (source !== assumed) { dropEarlySocket(); early.clear(); await loadTasks(); } // the remembered Engine is gone: this machine's tasks
+    void connectFeed();
     if (link && await openChatFromLink({ taskId: Number(link[1]), conversationId: link[2] })) return;
-    const savedId = Number(store.get(`task:${source.key}`));
-    const saved = tasks.find(item => item.id === savedId);
+    const saved = tasks.find(item => item.id === Number(store.get(`task:${source.key}`)));
     if (saved) selectTask(saved);
+    else dropEarlySocket(); // the remembered task is gone
     if (!saved || isWide()) openTasks();
   })();
 })();

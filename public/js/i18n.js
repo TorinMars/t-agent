@@ -7,6 +7,8 @@
 // Dictionaries live in i18n-zh-*.js as I18n.add({ 'English text': '<Chinese text>' }). A key may contain {1}, {2} ... placeholders
 // for the variable parts of a sentence; the same placeholders appear in the Chinese value and may be reordered.
 // Text without an entry is shown unchanged. Switching the language reloads the page so everything is rendered again.
+// The language is also kept in the `ta-lang` cookie, so the server leaves the dictionaries out of the pages for English readers (lib/static-assets.js).
+// When Chinese is wanted and the page came without them (the cookie was not set yet), they are fetched here and the page is translated again.
 // User content (Markdown documents, terminals, the editor, task / file names ...) is never translated: it is excluded by
 // the SKIP selector below or by translate="no".
 (() => {
@@ -42,7 +44,9 @@
     }
     templates.sort((a, b) => b.weight - a.weight);
     cache.clear();
+    if (afterAdd) afterAdd();
   }
+  let afterAdd = null;
 
   function translateCore(core, depth) {
     const hit = exact.get(core);
@@ -77,9 +81,17 @@
     return result;
   }
 
+  // The cookie tells the server which page to send (with or without the Chinese dictionaries); it holds the language only.
+  const COOKIE = /(?:^|;\s*)ta-lang=zh(?:;|$)/;
+  function writeCookie(value) {
+    if (!HAS_DOM) return;
+    try { document.cookie = value === 'zh' ? `${KEY}=zh; path=/; max-age=31536000; SameSite=Lax` : `${KEY}=; path=/; max-age=0; SameSite=Lax`; } catch { /* cookies blocked */ }
+  }
+
   function set(next) {
     if (!LANGS.includes(next) || next === lang) return;
     try { localStorage.setItem(KEY, next); } catch { /* private mode: not remembered, the next load falls back to English */ }
+    writeCookie(next);
     if (HAS_DOM) location.reload();
     lang = next;
   }
@@ -93,7 +105,7 @@
 
     const fixText = node => {
       const value = node.nodeValue;
-      if (!value || !LETTER.test(value) || node.parentNode.nodeName === 'TEXTAREA' || skipped(node.parentElement)) return;
+      if (!value || !LETTER.test(value) || !node.parentNode || node.parentNode.nodeName === 'TEXTAREA' || skipped(node.parentElement)) return; // no parent: already removed again
       const next = t(value);
       if (next !== value) node.nodeValue = next;
     };
@@ -143,7 +155,26 @@
         if (typeof original === 'function') window[fn] = (message, ...rest) => original.call(window, t(String(message === undefined ? '' : message)), ...rest);
       }
     }
-    const ready = () => { if (lang === 'zh') walk(document.documentElement); wireToggles(); };
+    let cookieZh = false;
+    try { cookieZh = COOKIE.test(document.cookie); } catch { /* cookies blocked */ }
+    if (cookieZh !== (lang === 'zh')) writeCookie(lang);
+    // Chinese, but the page came without the dictionaries: fetch them, and translate the page again as each one arrives.
+    const DICTIONARIES = ['/js/i18n-zh-ui.js', '/js/i18n-zh-server.js', '/js/i18n-zh-extra.js'];
+    const loadDictionaries = () => {
+      let pending = 0;
+      afterAdd = () => { if (!pending) pending = setTimeout(() => { pending = 0; walk(document.documentElement); }, 0); };
+      for (const src of DICTIONARIES) {
+        const script = document.createElement('script');
+        script.src = src;
+        script.async = false;
+        document.head.append(script);
+      }
+    };
+    const ready = () => {
+      if (lang === 'zh' && !document.querySelector('script[src^="/js/i18n-zh-"]')) loadDictionaries();
+      if (lang === 'zh') walk(document.documentElement);
+      wireToggles();
+    };
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', ready); else ready();
   }
 

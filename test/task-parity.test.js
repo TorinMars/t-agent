@@ -242,6 +242,47 @@ test('terminal activity is exposed by the local routes, the Engine and the proxy
   assert.equal((await fetch(`${engine}/v1/tasks/${task.id}/terminal/ack`, { method: 'POST', headers: { Authorization: 'Bearer nope', 'Content-Type': 'application/json' }, body: '{}' })).status, 401);
 });
 
+// The first `event: activity` message of a stream, then the stream is closed.
+async function firstActivity(url, headers = {}) {
+  const ctrl = new AbortController();
+  const response = await fetch(url, { headers, signal: ctrl.signal });
+  assert.equal(response.status, 200, url);
+  assert.match(response.headers.get('content-type'), /text\/event-stream/);
+  const reader = response.body.getReader();
+  let text = '';
+  try {
+    while (!/event: activity\ndata: .*\n\n/.test(text)) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      text += new TextDecoder().decode(value);
+    }
+  } finally { ctrl.abort(); }
+  return JSON.parse(text.match(/event: activity\ndata: (.*)\n\n/)[1]);
+}
+
+test('terminal activity is pushed by the local routes, the Engine and the proxy; an older Engine answers 404 through the proxy', async () => {
+  await createTask(backends()[1], 'activity-stream');
+  const empty = { activity: {}, subagents: {} };
+  assert.deepEqual(await firstActivity(`${local}/api/tasks/terminal-activity/stream`), empty);
+  assert.deepEqual(await firstActivity(`${engine}/v1/terminal-activity/stream`, { Authorization: `Bearer ${engineToken}` }), empty);
+  assert.deepEqual(await firstActivity(`${proxy}/api/remote-servers/${remoteId}/terminal-activity/stream`), empty);
+  assert.equal((await fetch(`${engine}/v1/terminal-activity/stream`, { headers: { Authorization: 'Bearer nope' } })).status, 401);
+  assert.equal((await fetch(`${engine}/v1/terminal-activity/stream`)).status, 401);
+  const info = await (await fetch(`${engine}/v1/info`, { headers: { Authorization: `Bearer ${engineToken}` } })).json();
+  assert.ok(info.capabilities.includes('terminal:activity-stream'));
+
+  // An Engine from before the stream: the page sees the 404 and polls instead.
+  const oldApp = express();
+  oldApp.get('/v1/terminal-activity/stream', (req, res) => res.status(404).json({ error: 'NOT_FOUND' }));
+  const old = await listen(oldApp);
+  const oldId = db.prepare('INSERT INTO remote_servers (owner_id, name, base_url, token_cipher) VALUES (?, ?, ?, ?)')
+    .run('owner', 'old', old, encryptToken(engineToken, process.env.SESSION_SECRET)).lastInsertRowid;
+  const response = await fetch(`${proxy}/api/remote-servers/${oldId}/terminal-activity/stream`);
+  assert.equal(response.status, 404);
+  await response.body.cancel();
+  db.prepare('DELETE FROM remote_servers WHERE id = ?').run(oldId);
+});
+
 test('every Engine token can edit through the proxy, whatever role was requested', async () => {
   const requestedReadonly = createAccessToken(db, { role: 'readonly', principalId: 'owner' }).token;
   const id = db.prepare('INSERT INTO remote_servers (owner_id, name, base_url, token_cipher) VALUES (?, ?, ?, ?)')

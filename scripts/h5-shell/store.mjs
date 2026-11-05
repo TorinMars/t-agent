@@ -43,4 +43,5 @@ export const initialState = () => ({
   design: null, // { open, status: loading | ready | missing | folder | no-dir | no-task | error, dir, path, link, line, content, message } of the file sheet (DESIGN.md, or a terminal file link)
   taskDialog: null, // { kind: 'delete' | 'workdir', id, title, workDir, error, busy } the delete confirmation or the working directory form of a task
   notice: null, // { id, message, type } the last floating notice
+  activeCount: 0, // running or pending terminal sessions of the Engine (the badge on #h5-cycle; h5.js `showActiveCount`)
 });

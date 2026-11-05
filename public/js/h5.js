@@ -197,6 +197,7 @@
       tasks = Array.isArray(list) ? list : [];
       groups = Array.isArray(groupRows) && groupRows.length ? groupRows : DEFAULT_GROUPS;
       renderTasks();
+      showActiveCount();
       return true;
     } catch (error) {
       if (current === source) { tasks = []; note(`Could not load tasks: ${error.message}`); }
@@ -427,13 +428,11 @@
   // wrapping around after the last one. Only terminal sessions count: plain shells ("Terminal") and Claude / Codex terminals ("Session"); agent chats do not.
   // Running: the server's terminal activity state is 'running', or the terminal is a live Claude session with a running sub-agent (`terminal-subagents`).
   // Pending acceptance: the activity state is 'done' (finished, not yet seen on the desktop; the desktop clears it when the terminal is opened there).
-  // Both are read fresh on every tap, so the list is never stale; nothing is polled in the background.
+  // Both come from the pushed snapshot while the activity stream is live (see "Terminal activity push" below), else they are read fresh on the tap.
   let cycling = false;
   async function activeSessions(from) {
-    const [activity, subagents] = await Promise.all([
-      api('GET', `${from.activityBase}/terminal-activity`),
-      api('GET', `${from.activityBase}/terminal-subagents`).catch(() => ({})), // an Engine older than this feature: no sub-agent information
-    ]);
+    const pushed = feed.live && feed.source === from && feed.snapshot;
+    const [activity, subagents] = pushed ? [pushed.activity, pushed.subagents] : await readActivity(from);
     const stateOf = (taskId, id) => {
       const state = ((activity || {})[taskId] || {})[id];
       if (state === 'running' || Number(((subagents || {})[taskId] || {})[id]) > 0) return 'running';
@@ -490,6 +489,7 @@
     renderTabs();
     showEmpty('Choose a task to open its phone terminal');
     void loadTasks();
+    void connectFeed();
   };
   // Resolves to whether the task was made (the shell then empties its input).
   // workDir: an absolute path, or empty for the default rule (a folder named after the task under the tasks folder); the default is never sent.
@@ -1278,27 +1278,134 @@
 
   // ── Terminal "done" acknowledgement (the PC page does the same, public/js/tasks.js `acknowledgeCurrentTerminal`) ──
   // The server keeps each terminal's activity state: running, done (finished, not yet seen) or idle (lib/terminal-activity.js). Seeing a finished
-  // terminal is what clears 'done': when a terminal is shown while the page is visible, when the shown one turns 'done' while it is visible, and when
+  // terminal is what clears 'done': when a terminal is shown while the page is visible, when the shown one turns 'done' while it is visible (pushed, see below), and when
   // the page becomes visible again, `POST {tasksBase}/{task}/terminal/ack` tells the server (local, Engine `/v1` and the remote proxy alike; the server
   // ignores it unless the state is 'done'). The next-session button then sees that terminal as idle. A terminal hidden under a chat is not seen.
-  const ACK_POLL_MS = 3000;
   const shownTerminal = () => (session && !session.disposed && !agentChat && document.visibilityState === 'visible' ? session : null);
   function ackShown() {
     const s = shownTerminal();
     if (!s) return;
     api('POST', `${s.source.tasksBase}/${s.task.id}/terminal/ack`, { terminal_id: s.terminalId }).catch(() => { /* an older Engine, or offline: it stays pending */ });
   }
-  let ackPolling = false;
-  async function pollShownActivity() {
-    const s = shownTerminal();
-    if (!s || ackPolling) return;
-    ackPolling = true;
-    try {
-      const activity = await api('GET', `${s.source.activityBase}/terminal-activity`);
-      if (shownTerminal() === s && (((activity || {})[s.task.id] || {})[s.terminalId]) === 'done') ackShown();
-    } catch { /* keep the state; the next poll tries again */ } finally { ackPolling = false; }
+
+  // ── Terminal activity push (`GET {activityBase}/terminal-activity/stream`, server-sent events read with fetch) ──
+  // The server sends `event: activity` with { activity, subagents } (the answers of the two polling endpoints) on connect and on every change
+  // (lib/terminal-activity-stream.js). It drives the count on #h5-cycle, the next-session button and the "done" ack of the shown terminal.
+  // fetch, not EventSource, so the status is seen: 404 / 405 / 501 means an Engine older than the stream (also through the remote proxy), and the page then
+  // polls slowly instead (FALLBACK_POLL_MS). Other failures reconnect with a backoff (1 s doubling to 30 s), polling slowly meanwhile. A stream that is
+  // silent for STALL_MS (the server sends a comment every 20 s) is taken as dead. The stream is closed while the page is hidden and opened again, with a
+  // fresh snapshot, when it is shown: nothing on a hidden page needs the state, and phones drop background connections anyway. Each tab has its own stream.
+  const FALLBACK_POLL_MS = 30000;
+  const STALL_MS = 50000;
+  const feed = { source: null, live: false, snapshot: null, ctrl: null, retry: 0, retryTimer: null, poll: null, stall: null };
+  async function readActivity(from) {
+    return Promise.all([
+      api('GET', `${from.activityBase}/terminal-activity`),
+      api('GET', `${from.activityBase}/terminal-subagents`).catch(() => ({})), // an Engine older than this feature: no sub-agent information
+    ]);
   }
-  setInterval(() => void pollShownActivity(), ACK_POLL_MS);
+  // Running (a running state or a running sub-agent) and pending ('done') terminals of the listed tasks: the same set the next-session button goes through.
+  function showActiveCount() {
+    const snap = feed.snapshot && feed.source === source ? feed.snapshot : null;
+    let count = 0;
+    if (snap) {
+      const listed = new Set(tasks.map(item => String(item.id)));
+      for (const taskId of new Set([...Object.keys(snap.activity), ...Object.keys(snap.subagents)])) {
+        if (!listed.has(taskId)) continue;
+        const states = snap.activity[taskId] || {};
+        const subs = snap.subagents[taskId] || {};
+        for (const id of new Set([...Object.keys(states), ...Object.keys(subs)])) if (states[id] === 'running' || states[id] === 'done' || Number(subs[id]) > 0) count += 1;
+      }
+    }
+    ui.set({ activeCount: count });
+  }
+  function applyActivity(from, snap) {
+    if (from !== source || feed.source !== from) return;
+    const object = value => (value && typeof value === 'object' ? value : {});
+    feed.snapshot = { activity: object(snap && snap.activity), subagents: object(snap && snap.subagents) };
+    showActiveCount();
+    // The shown terminal finished while the person is looking at it: it is seen.
+    const s = shownTerminal();
+    if (s && s.source === from && ((feed.snapshot.activity[s.task.id] || {})[s.terminalId]) === 'done') ackShown();
+  }
+  function stopFeed() {
+    if (feed.ctrl) feed.ctrl.abort();
+    clearTimeout(feed.retryTimer);
+    clearTimeout(feed.stall);
+    clearInterval(feed.poll);
+    Object.assign(feed, { live: false, ctrl: null, retryTimer: null, stall: null, poll: null });
+  }
+  function startFallbackPoll(from) {
+    if (feed.poll) return;
+    const tick = async () => {
+      if (document.visibilityState !== 'visible' || feed.live) return;
+      try { const [activity, subagents] = await readActivity(from); applyActivity(from, { activity, subagents }); } catch { /* keep the last state */ }
+    };
+    feed.poll = setInterval(() => void tick(), FALLBACK_POLL_MS);
+    void tick();
+  }
+  function retryFeed(from) {
+    feed.live = false;
+    startFallbackPoll(from);
+    clearTimeout(feed.retryTimer);
+    feed.retryTimer = setTimeout(() => void connectFeed(), Math.min(30000, 1000 * 2 ** feed.retry++));
+  }
+  async function connectFeed() {
+    const from = source;
+    if (feed.source !== from) { stopFeed(); feed.snapshot = null; feed.retry = 0; showActiveCount(); }
+    else { if (feed.ctrl) feed.ctrl.abort(); clearTimeout(feed.retryTimer); clearTimeout(feed.stall); feed.ctrl = null; feed.live = false; }
+    feed.source = from;
+    if (document.visibilityState !== 'visible') return;
+    const ctrl = new AbortController();
+    feed.ctrl = ctrl;
+    const stalled = () => { clearTimeout(feed.stall); feed.stall = setTimeout(() => ctrl.abort(), STALL_MS); };
+    let res;
+    try {
+      res = await fetch(`${from.activityBase}/terminal-activity/stream`, { headers: { 'X-Requested-With': 'XMLHttpRequest', Accept: 'text/event-stream' }, cache: 'no-store', signal: ctrl.signal });
+    } catch { if (feed.ctrl === ctrl) retryFeed(from); return; }
+    if (feed.ctrl !== ctrl) return;
+    if (!res.ok || !res.body || !/text\/event-stream/.test(res.headers.get('content-type') || '')) {
+      ctrl.abort();
+      if ([404, 405, 501].includes(res.status) || res.ok) { feed.ctrl = null; startFallbackPoll(from); } // no stream on this Engine: poll slowly
+      else retryFeed(from);
+      return;
+    }
+    feed.live = true;
+    feed.retry = 0;
+    clearInterval(feed.poll);
+    feed.poll = null;
+    stalled();
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        stalled();
+        buffer += decoder.decode(value, { stream: true }).replace(/\r\n?/g, '\n');
+        let cut;
+        while ((cut = buffer.indexOf('\n\n')) >= 0) {
+          const block = buffer.slice(0, cut);
+          buffer = buffer.slice(cut + 2);
+          let event = 'message';
+          let data = '';
+          for (const line of block.split('\n')) {
+            if (line.startsWith('event:')) event = line.slice(6).trim();
+            else if (line.startsWith('data:')) data += line.slice(5).replace(/^ /, '');
+          }
+          if (event === 'activity' && data) { try { applyActivity(from, JSON.parse(data)); } catch { /* a broken message: wait for the next */ } }
+        }
+      }
+    } catch { /* aborted or dropped */ }
+    if (feed.ctrl !== ctrl) return; // closed on purpose (hidden page, another Engine)
+    clearTimeout(feed.stall);
+    retryFeed(from);
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') void connectFeed();
+    else stopFeed();
+  });
 
   // ── A hardware keyboard: type to the terminal, Escape back to it, Cmd/Ctrl+K for the search (deskKeys: a computer, or a tablet with a keyboard) ──
   const EDITABLE = 'input, textarea, select, [contenteditable=""], [contenteditable="true"]';
@@ -2036,6 +2143,7 @@
   (async () => {
     await loadSources();
     await loadTasks();
+    void connectFeed();
     // The page opened by a click on a notification: ?openChat=<task id>:<conversation id>.
     const link = /^(\d+):(.+)$/.exec(new URLSearchParams(location.search).get('openChat') || '');
     if (link && await openChatFromLink({ taskId: Number(link[1]), conversationId: link[2] })) return;

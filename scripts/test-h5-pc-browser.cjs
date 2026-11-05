@@ -9,6 +9,7 @@ const { chromium } = require('playwright');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
+const { activityStreamMock } = require('./h5-activity-stream-mock.cjs');
 const root = path.resolve(__dirname, '..');
 const ORIGIN = 'http://h5.test';
 const TYPES = { '.js': 'application/javascript', '.css': 'text/css', '.html': 'text/html' };
@@ -40,6 +41,7 @@ async function openPage(browser, { viewport, touch = false, remote = false, stor
     window.FakeSocket.CONNECTING = 0;
     window.WebSocket = window.FakeSocket;
   }, storage);
+  await page.addInitScript(activityStreamMock); // the pushed terminal activity (window.activityStream)
   await page.route(`${ORIGIN}/**`, async route => {
     const url = new URL(route.request().url());
     const method = route.request().method();
@@ -248,11 +250,14 @@ const waitAck = (url, id, from = 0) => new Promise((resolve, reject) => {
         await openTerminal(page, 'Fix login', 'Pending shell');
         await waitAck('/api/tasks/1/terminal/ack', 'p1', from);
         assert.deepEqual(activity, { 1: {} }, 'the server cleared the pending state');
+        const push = snapshot => page.waitForFunction(snap => window.activityStream.push('/api/tasks/terminal-activity/stream', snap), snapshot);
+        await push({ activity, subagents: {} }); // the server pushes the cleared state
         await page.locator('#h5-cycle').click();
         await toast(page, 'No running or pending sessions');
-        // The shown terminal finishes while it is on screen: the page acks it again by itself (polling every 3 s while visible).
+        // The shown terminal finishes while it is on screen: the pushed 'done' makes the page ack it again by itself.
         const again = acks.length;
         activity = { 1: { p1: 'done' } };
+        await push({ activity, subagents: {} });
         await waitAck('/api/tasks/1/terminal/ack', 'p1', again);
         assert.deepEqual(activity, { 1: {} });
       }

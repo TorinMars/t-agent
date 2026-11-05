@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import Badge from '@mui/material/Badge';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import IconButton from '@mui/material/IconButton';
@@ -171,7 +172,9 @@ export function ActionBar({ state, ui, menu, onMenu, pointer = false }) {
   const image = t('Upload image');
   const commands = t('Saved commands');
   const design = t('Design document');
-  const cycle = t('Next running or pending session');
+  // The name carries the count of running or pending sessions while there are some; the badge shows the same number.
+  const active = Number(state.activeCount) || 0;
+  const cycle = t('Next running or pending session') + (active ? ` (${active})` : '');
   const sendTitle = t('Send as typed, without translating') + SEND_KEYS;
   const translateTitle = t('Translate to English and send') + TRANSLATE_KEYS;
   return (
@@ -200,7 +203,7 @@ export function ActionBar({ state, ui, menu, onMenu, pointer = false }) {
       {/* The design document viewer. It steps aside while the draft box is shown (`.h5-draft-hide`), so send and translate-and-send keep finger-sized buttons at 320px. */}
       {tipped(design, <IconButton id="h5-design" className="h5-draft-hide" data-action="design" sx={look} {...named(design, pointer)} aria-haspopup="dialog" aria-expanded={Boolean(state.design && state.design.open)} onClick={() => ui.actions.openDesign()}><Icon name="designDoc" /></IconButton>)}
       {/* Next running or pending terminal session, in task sheet order (`ui.actions.nextActiveSession` in h5.js). Also steps aside while the draft box is shown. */}
-      {tipped(cycle, <IconButton id="h5-cycle" className="h5-draft-hide" data-action="cycle" sx={look} {...named(cycle, pointer)} onClick={() => ui.actions.nextActiveSession()}><Icon name="cycleSessions" /></IconButton>)}
+      {tipped(cycle, <IconButton id="h5-cycle" className="h5-draft-hide" data-action="cycle" sx={look} {...named(cycle, pointer)} onClick={() => ui.actions.nextActiveSession()}><Badge className="h5-cycle-badge" badgeContent={active} max={99} color="primary" invisible={!active} overlap="circular" sx={{ '& .MuiBadge-badge': { fontSize: 10, height: 16, minWidth: 16, px: 0.5, pointerEvents: 'none' } }}><Icon name="cycleSessions" /></Badge></IconButton>)}
       <Box className="h5-draft-only" aria-hidden="true" sx={{ display: 'none', alignSelf: 'stretch', width: '1px', my: 0.5, ml: pointer ? 'auto' : 0, bgcolor: 'divider' }} />
       {tipped(sendTitle, (
         <IconButton

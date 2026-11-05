@@ -6,6 +6,7 @@ const db = require('../db');
 const { TerminalSnapshot, createHistoryArchive } = require('../lib/terminal-snapshot');
 const { RESET_INPUT_MODES, watchShellReturn } = require('../lib/terminal-input-modes');
 const { createActivityTracker } = require('../lib/terminal-activity');
+const { createActivityStream } = require('../lib/terminal-activity-stream');
 const { repairSpawnHelperPermissions } = require('../lib/node-pty-runtime');
 const { utf8LocaleEnv } = require('../lib/terminal-locale');
 const { listSessions, startupCommand, newClaudeCommand, runningSubagents } = require('../lib/agent-sessions');
@@ -320,7 +321,7 @@ function getOrCreateSession(ownerTaskId, workDir, dirWarning, id = 'default') {
   });
   // Also goes through the history buffer so replays do not re-enable mouse reporting.
   s.stopShellWatch = watchShellReturn(pty, shell, () => emit(RESET_INPUT_MODES));
-  s.activity = createActivityTracker(pty, shell);
+  s.activity = createActivityTracker(pty, shell, () => activityStream.notify());
 
   pty.onExit(() => {
     // The parser queue also owns live delivery. Drain its last bytes before
@@ -332,6 +333,7 @@ function getOrCreateSession(ownerTaskId, workDir, dirWarning, id = 'default') {
     s.snapshot.enqueue(() => {
       if (sessions.get(taskId) !== s) return;
       sessions.delete(taskId);
+      activityStream.notify(); // a terminal that ends is idle from now on
       s.snapshot.dispose();
       const activeWs = s.ws;
       s.ws = null;
@@ -359,6 +361,7 @@ function controlSession(taskId, action, requestedTerminalId) {
   const session = sessions.get(key);
   if (session) {
     sessions.delete(key);
+    activityStream.notify();
     session.snapshot.dispose();
     session.stopShellWatch?.();
     session.stopFlowWatch?.();
@@ -547,15 +550,20 @@ function activitySnapshot(taskIds) {
  *  Only a terminal whose shell is alive and that is bound to a Claude session (agent_session_id) can have one; see runningSubagents. */
 function subagentSnapshot(taskIds, home) {
   const result = {};
-  const wanted = new Set(taskIds.map(String));
+  const wanted = taskIds ? new Set(taskIds.map(String)) : null; // null: every task (the push stream's shared refresh)
   const rows = db.prepare("SELECT t.task_id, t.terminal_id, t.agent_session_id, k.work_dir FROM task_terminals t JOIN tasks k ON k.id = t.task_id WHERE t.agent = 'claude' AND t.agent_session_id IS NOT NULL").all();
   for (const row of rows) {
-    if (!wanted.has(String(row.task_id)) || !sessions.has(sessionKey(row.task_id, row.terminal_id))) continue;
+    if ((wanted && !wanted.has(String(row.task_id))) || !sessions.has(sessionKey(row.task_id, row.terminal_id))) continue;
     const count = runningSubagents(row.work_dir, row.agent_session_id, home);
     if (count) (result[row.task_id] ||= {})[row.terminal_id] = count;
   }
   return result;
 }
+
+// Pushed activity (lib/terminal-activity-stream.js): GET /api/tasks/terminal-activity/stream and Engine /v1/terminal-activity/stream.
+// The sub-agent counts of all live Claude terminals are read once per refresh, whatever the number of open streams.
+const activityStream = createActivityStream({ activity: activitySnapshot, subagents: () => subagentSnapshot(null) });
+function serveActivityStream(req, res, taskIds) { activityStream.serve(req, res, taskIds); }
 
 function acknowledgeActivity(taskId, requestedTerminalId) {
   const id = assertTerminal(taskId, requestedTerminalId);
@@ -570,4 +578,4 @@ function closeTaskTerminals(taskId) {
   for (const item of [...listTerminals(taskId), ...phone]) controlSession(taskId, 'close', item.terminal_id);
 }
 
-module.exports = { setHookEndpoint, reportHook, activitySnapshot, subagentSnapshot, acknowledgeActivity, controlSession, handleWs, listTerminals, createTerminal, listAgentSessions, reopenCommand, renameTerminal, assertTerminal, closeTaskTerminals };
+module.exports = { setHookEndpoint, reportHook, activitySnapshot, subagentSnapshot, serveActivityStream, acknowledgeActivity, controlSession, handleWs, listTerminals, createTerminal, listAgentSessions, reopenCommand, renameTerminal, assertTerminal, closeTaskTerminals };

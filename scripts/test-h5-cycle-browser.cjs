@@ -235,9 +235,14 @@ async function toast(page, text) {
       // No polling while the stream is live: wait longer than the old 3 s poll, twice over.
       const polled = () => (hits['/api/tasks/terminal-activity'] || 0) + (hits['/api/tasks/terminal-subagents'] || 0);
       const before = polled();
+      // The agent counters of the top bar travel in the same stream: shown at once, and their 5 s poll stops.
+      await push({ activity: { 1: { c1: 'done' } }, subagents: {}, agents: { running: 2, queued: 1, submitted: 3 } });
+      await live.page.waitForFunction(() => [...document.querySelectorAll('#agent-activity .count')].map(node => node.textContent).join() === '3,2');
+      const summaries = hits['/api/agent-chat/summary'] || 0;
       await live.page.waitForTimeout(7000);
       assert.equal(polled(), before, 'no GET of terminal-activity / terminal-subagents while the stream is live');
       assert.equal(before, 0, 'not even once since the page opened');
+      assert.equal(hits['/api/agent-chat/summary'] || 0, summaries, 'no GET of the agent summary while the stream pushes it');
       assert.deepEqual(await live.page.evaluate(() => window.activityStream.opens), [STREAM], 'one stream for the whole time');
       // A lost connection reconnects (after a 1 s backoff) and the new stream's snapshot is used.
       await live.page.evaluate(url => window.activityStream.drop(url), STREAM);

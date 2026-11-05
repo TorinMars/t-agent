@@ -1303,6 +1303,10 @@
   const FALLBACK_POLL_MS = 30000;
   const STALL_MS = 50000;
   const feed = { source: null, live: false, snapshot: null, ctrl: null, retry: 0, retryTimer: null, poll: null, stall: null };
+  // The agent counters of the top bar (agent-activity.js) travel in the stream of this machine as `agents`: while they arrive nothing is polled for them;
+  // without them (a remote Engine is shown, the stream is down, the page is hidden) they are read every FALLBACK_POLL_MS instead of every 5 s.
+  const agentCounters = () => (typeof AgentActivity !== 'undefined' && AgentActivity.page) || null;
+  agentCounters()?.setPollMs(FALLBACK_POLL_MS);
   async function readActivity(from) {
     return Promise.all([
       api('GET', `${from.activityBase}/terminal-activity`),
@@ -1329,11 +1333,13 @@
     const object = value => (value && typeof value === 'object' ? value : {});
     feed.snapshot = { activity: object(snap && snap.activity), subagents: object(snap && snap.subagents) };
     showActiveCount();
+    if (from.key === 'local' && snap && snap.agents && typeof snap.agents === 'object') agentCounters()?.push(snap.agents);
     // The shown terminal finished while the person is looking at it: it is seen.
     const s = shownTerminal();
     if (s && s.source === from && ((feed.snapshot.activity[s.task.id] || {})[s.terminalId]) === 'done') ackShown();
   }
   function stopFeed() {
+    agentCounters()?.unlive();
     if (feed.ctrl) feed.ctrl.abort();
     clearTimeout(feed.retryTimer);
     clearTimeout(feed.stall);
@@ -1341,6 +1347,7 @@
     Object.assign(feed, { live: false, ctrl: null, retryTimer: null, stall: null, poll: null });
   }
   function startFallbackPoll(from) {
+    agentCounters()?.unlive();
     if (feed.poll) return;
     const tick = async () => {
       if (document.visibilityState !== 'visible' || feed.live) return;

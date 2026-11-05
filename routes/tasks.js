@@ -188,6 +188,12 @@ router.get('/terminal-activity', (req, res) => {
   res.json(terminal.activitySnapshot(ids));
 });
 
+// The same activity and sub-agent snapshot pushed as server-sent events (`event: activity`), on connect and on every change.
+router.get('/terminal-activity/stream', (req, res) => {
+  const owner = ownerFilter(req);
+  terminal.serveActivityStream(req, res, () => db.prepare('SELECT id FROM tasks WHERE user_id = ?').all(owner).map(row => row.id));
+});
+
 // Running sub-agents of the live Claude terminals (the phone's "next running or pending session" button counts them as running).
 router.get('/terminal-subagents', (req, res) => {
   const ids = db.prepare('SELECT id FROM tasks WHERE user_id = ?').all(ownerFilter(req)).map(row => row.id);

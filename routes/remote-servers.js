@@ -349,6 +349,12 @@ router.post('/:id/workspace/restore', (req, res) => proxyWorkspace(req, res, '/v
 
 router.get('/:id/terminal-activity', forwardJson('GET', () => '/v1/terminal-activity'));
 router.get('/:id/terminal-subagents', forwardJson('GET', () => '/v1/terminal-subagents'));
+// Piped unbuffered; an Engine older than the stream answers 404, which reaches the page as is (it then polls).
+router.get('/:id/terminal-activity/stream', (req, res) => {
+  const target = remoteTarget(req, res);
+  if (!target) return;
+  streamRemote(req, res, target.row.base_url, target.token, '/v1/terminal-activity/stream', { sse: true });
+});
 router.post('/:id/tasks/:taskId/terminal/ack', forwardJson('POST', req => `${taskPath(req)}/terminal/ack`));
 
 // Relative files referenced from documents (images etc.) and the document change event stream: not buffered, forwarded directly.

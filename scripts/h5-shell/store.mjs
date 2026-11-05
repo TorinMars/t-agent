@@ -42,4 +42,5 @@ export const initialState = () => ({
   retainUrl: null, // the link of an image that was uploaded after its terminal went away
   design: null, // { open, status: loading | ready | missing | folder | no-dir | no-task | error, dir, path, link, line, content, message } of the file sheet (DESIGN.md, or a terminal file link)
   notice: null, // { id, message, type } the last floating notice
+  activeCount: 0, // running or pending terminal sessions of the Engine (the badge on #h5-cycle; h5.js `showActiveCount`)
 });

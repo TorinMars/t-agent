@@ -1,11 +1,14 @@
 // Phone page (/h5), row 2 "Next running or pending session" (#h5-cycle) in real Chromium with mocked sessions:
 // it cycles through the running and pending-acceptance terminal sessions in task sheet order and wraps, skips idle terminals and chats,
 // counts an idle Claude terminal with a running sub-agent as running, shows a toast when there is nothing to go to, and fits row 2 at 320 and 360px.
+// The count badge on the button: from the pushed activity stream (mocked, scripts/h5-activity-stream-mock.cjs) with no polling while it is live,
+// and from a slow fallback poll when the stream answers 404 (an older Engine). The shown terminal is acked when the stream says it is done.
 // H5_SHOT_DIR=<dir> saves 3x screenshots of row 2 there.
 const { chromium } = require('playwright');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
+const { activityStreamMock } = require('./h5-activity-stream-mock.cjs');
 const root = path.resolve(__dirname, '..');
 const ORIGIN = 'http://h5.test';
 const TYPES = { '.js': 'application/javascript', '.css': 'text/css', '.html': 'text/html' };
@@ -30,8 +33,10 @@ let activity = BUSY;
 let subagents = { 1: { c1: 2 } };
 let subagentsMissing = false; // an Engine older than the sub-agent endpoint
 const pageErrors = [];
+const hits = {}; // GET requests per path
+const acks = []; // [task, terminal_id] of every acknowledgement
 
-async function openPage(browser, viewport) {
+async function openPage(browser, viewport, { stream = false } = {}) {
   const scale = process.env.H5_SHOT_DIR ? { deviceScaleFactor: 3 } : {};
   const context = await browser.newContext({ viewport, isMobile: true, hasTouch: true, ...scale });
   const page = await context.newPage();
@@ -47,10 +52,14 @@ async function openPage(browser, viewport) {
     window.FakeSocket.CONNECTING = 0;
     window.WebSocket = window.FakeSocket;
   });
+  if (stream) await page.addInitScript(activityStreamMock);
   await page.route(`${ORIGIN}/**`, async route => {
     const url = new URL(route.request().url());
     const method = route.request().method();
     const json = (body, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
+    if (method === 'GET') hits[url.pathname] = (hits[url.pathname] || 0) + 1;
+    const ack = url.pathname.match(/^\/api\/tasks\/(\d+)\/terminal\/ack$/);
+    if (ack && method === 'POST') { acks.push([Number(ack[1]), route.request().postDataJSON().terminal_id]); return json({ success: true }); }
     if (url.pathname === '/h5') return route.fulfill({ contentType: 'text/html', body: fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8') });
     if (/^\/(js|css|vendor)\//.test(url.pathname)) return route.fulfill({ contentType: TYPES[path.extname(url.pathname)] || 'text/plain', body: fs.readFileSync(path.join(root, 'public', url.pathname)) });
     if (url.pathname === '/api/remote-servers') return json([]);
@@ -90,8 +99,12 @@ async function toast(page, text) {
     await page.locator('#h5-tasks').waitFor({ state: 'hidden' });
 
     const cycle = page.locator('#h5-cycle');
-    assert.equal(await cycle.getAttribute('aria-label'), 'Next running or pending session');
-    assert.equal(await cycle.getAttribute('title'), 'Next running or pending session');
+    // No stream here (the mock answers 404, as an older Engine would): the page reads the states once and then polls slowly. The badge counts
+    // Alpha default (running), Alpha c1 (sub-agent), Beta b1 and Gamma g1 (pending); task 99 is not in the list.
+    await page.waitForFunction(() => document.getElementById('h5-cycle').getAttribute('aria-label') === 'Next running or pending session (4)');
+    assert.equal(await cycle.getAttribute('title'), 'Next running or pending session (4)');
+    assert.equal((await cycle.locator('.MuiBadge-badge').textContent()).trim(), '4');
+    assert.ok(hits['/api/tasks/terminal-activity/stream'] >= 1, 'the stream was tried first');
     assert.equal(await cycle.locator('svg').count(), 1, 'an icon button');
 
     // The terminal keyboard is open (the terminal input has the focus): a tap closes it first.
@@ -162,7 +175,56 @@ async function toast(page, text) {
       await waitFor(small.page, 'Alpha', 'c1');
       await small.context.close();
     }
+    // A live stream: the badge and the button follow the pushed snapshots, nothing is polled, and a pushed 'done' of the shown terminal is acked.
+    {
+      activity = {};
+      subagents = {};
+      for (const key of Object.keys(hits)) delete hits[key]; // count this page's requests only
+      const live = await openPage(browser, { width: 390, height: 844 }, { stream: true });
+      const STREAM = '/api/tasks/terminal-activity/stream';
+      const push = snapshot => live.page.waitForFunction(([url, snap]) => window.activityStream.push(url, snap), [STREAM, snapshot]);
+      const label = () => live.page.locator('#h5-cycle').getAttribute('aria-label');
+      const labelIs = text => live.page.waitForFunction(want => document.getElementById('h5-cycle').getAttribute('aria-label') === want, text);
+      await push({ activity: BUSY, subagents: { 1: { c1: 2 } } });
+      await labelIs('Next running or pending session (4)');
+      await live.page.locator('.h5-task-item', { hasText: 'Alpha' }).tap();
+      await live.page.locator('#h5-tasks .h5-terminal-list[aria-label="Alpha"] .h5-terminal-main', { hasText: 'Terminal 1' }).tap();
+      await waitFor(live.page, 'Alpha', 'default');
+      await live.page.locator('#h5-tasks').waitFor({ state: 'hidden' });
+      // The tap uses the pushed states: no read of the polling endpoints.
+      await live.page.locator('#h5-cycle').tap();
+      await waitFor(live.page, 'Alpha', 'c1');
+      // Changes arrive without a request: two left, then none (the badge is hidden).
+      await push({ activity: { 2: { b1: 'done' } }, subagents: { 1: { c1: 1 } } });
+      await labelIs('Next running or pending session (2)');
+      await push({ activity: {}, subagents: {} });
+      await labelIs('Next running or pending session');
+      assert.equal(await live.page.locator('#h5-cycle .MuiBadge-badge.MuiBadge-invisible').count(), 1, 'the badge is hidden at 0');
+      // The shown terminal (Alpha c1) finishes while it is on screen: acked.
+      const from = acks.length;
+      await push({ activity: { 1: { c1: 'done' } }, subagents: {} });
+      const started = Date.now();
+      while (!acks.slice(from).some(([taskId, id]) => taskId === 1 && id === 'c1')) {
+        assert.ok(Date.now() - started < 8000, `no ack: ${JSON.stringify(acks)}`);
+        await live.page.waitForTimeout(50);
+      }
+      assert.equal(await label(), 'Next running or pending session (1)', 'the badge counts it until the server pushes the cleared state');
+      // No polling while the stream is live: wait longer than the old 3 s poll, twice over.
+      const polled = () => (hits['/api/tasks/terminal-activity'] || 0) + (hits['/api/tasks/terminal-subagents'] || 0);
+      const before = polled();
+      await live.page.waitForTimeout(7000);
+      assert.equal(polled(), before, 'no GET of terminal-activity / terminal-subagents while the stream is live');
+      assert.equal(before, 0, 'not even once since the page opened');
+      assert.deepEqual(await live.page.evaluate(() => window.activityStream.opens), [STREAM], 'one stream for the whole time');
+      // A lost connection reconnects (after a 1 s backoff) and the new stream's snapshot is used.
+      await live.page.evaluate(url => window.activityStream.drop(url), STREAM);
+      await live.page.waitForFunction(() => window.activityStream.opens.length === 2, null, { timeout: 10000 });
+      await push({ activity: { 3: { g1: 'running' } }, subagents: {} });
+      await labelIs('Next running or pending session (1)');
+      await live.context.close();
+    }
+
     assert.deepEqual(pageErrors, [], 'no browser runtime errors');
-    console.log('Phone next running or pending session: order, wrap, skips, sub-agents, toasts and row fit passed.');
+    console.log('Phone next running or pending session: order, wrap, skips, sub-agents, toasts, row fit, pushed badge, ack and fallback polling passed.');
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

@@ -132,6 +132,7 @@ const CJK_ALLOWED = new Set([
   'public/js/i18n-zh-ui.js', 'public/js/i18n-zh-server.js', 'public/js/i18n-zh-extra.js', 'test/i18n.test.js',
   'test/translator.test.js', 'test/terminal-clipboard.test.js', 'test/terminal-snapshot.test.js', 'test/install-script.test.js',
   'scripts/test-terminal-clipboard-browser.cjs', 'scripts/test-terminal-selection-browser.cjs', 'scripts/test-terminal-translate-browser.cjs', 'scripts/test-terminal-width-browser.cjs',
+  'test/terminal-file-links.test.js', 'scripts/test-terminal-file-links-browser.cjs', 'scripts/test-h5-file-links-browser.cjs',
 ]);
 function sourceFiles(dir, out = []) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {

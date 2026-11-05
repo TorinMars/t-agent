@@ -35,6 +35,6 @@ export const initialState = () => ({
   selectionBar: false, // a word / line is selected on the terminal: show Copy / Cancel
   upload: null, // { status, progress } while an image goes up (progress: 0-100, or null when it is not known)
   retainUrl: null, // the link of an image that was uploaded after its terminal went away
-  design: null, // { open, status: loading | ready | missing | no-dir | no-task | error, dir, content, message } of the design document sheet
+  design: null, // { open, status: loading | ready | missing | folder | no-dir | no-task | error, dir, path, link, line, content, message } of the file sheet (DESIGN.md, or a terminal file link)
   notice: null, // { id, message, type } the last floating notice
 });

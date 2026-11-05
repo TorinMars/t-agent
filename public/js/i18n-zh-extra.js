@@ -98,4 +98,8 @@ I18n.add({
 
   // ---- Design document sheet (phone) ----
   'No DESIGN.md in {1}': '{1} 中没有 DESIGN.md',
+
+  // ---- Terminal file links ----
+  'Not found in the working directory: {1}': '工作目录中找不到：{1}',
+  'Could not open {1}: {2}': '无法打开 {1}：{2}',
 });

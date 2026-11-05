@@ -146,3 +146,9 @@ body.h5-tasks-open .h5-agent { border-bottom-left-radius: 28px; overflow: hidden
 .h5-design-body .markdown-body .md-code-block { margin: 14px 0; }
 .h5-design-body .markdown-body .mermaid { overflow-x: auto; }
 .h5-design-body .markdown-body :is(.h5-design-link, .h5-design-image) { text-decoration: underline dotted; text-underline-offset: 3px; }
+
+/* A file opened from a terminal link that is not Markdown: plain text with line numbers; the named line is marked. Long lines scroll sideways. */
+.h5-file-text { margin: 0 -16px; padding: 0; font: 12px/1.6 ui-monospace, Menlo, Monaco, "Courier New", monospace; color: #e6edf3; overflow-x: auto; white-space: pre; tab-size: 4; }
+.h5-file-line { display: block; padding-right: 16px; min-width: max-content; }
+.h5-file-line::before { content: attr(data-line); display: inline-block; box-sizing: content-box; width: calc(var(--h5-line-digits, 3) * 1ch); padding: 0 12px 0 16px; margin-right: 0; text-align: right; color: #6e7681; user-select: none; -webkit-user-select: none; }
+.h5-file-line.is-target { background: rgba(56, 139, 253, .22); }

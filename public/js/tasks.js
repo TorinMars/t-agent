@@ -348,6 +348,18 @@ const Tasks = (() => {
     t.loadAddon(new WebLinksAddon.WebLinksAddon((event, uri) => {
       if (event.metaKey || event.ctrlKey) window.open(uri, '_blank', 'noopener,noreferrer');
     }));
+    // File paths in the output (src/app.js:42, /work/dir/a.md, file:///...) open in the file browser above the terminal, also with Cmd/Ctrl + click.
+    // Only paths inside the task's working directory are links; relative ones are taken relative to it.
+    const linkSourceKey = source.key;
+    if (typeof TerminalFileLinks !== 'undefined') {
+      TerminalFileLinks.attach(t, {
+        root: () => taskRoot(tasks.find(item => item.id === task.id) || task),
+        activate: (link, event) => {
+          if (!(event.metaKey || event.ctrlKey)) return;
+          void openTerminalFileLink(task.id, linkSourceKey, link);
+        },
+      });
+    }
     t.open(el);
     const clipboard = TerminalClipboard.attach(t, el);
 
@@ -476,6 +488,34 @@ const Tasks = (() => {
     if (activeTab !== 'shell') contentTabs.querySelector('[data-tab="shell"]').click();
     if (activeTab !== 'shell') return;
     return FilePanel.open({ key: `${source.key}:${task.id}`, baseUrl: taskUrl(task.id, '/files'), title: task.title, root: task.work_dir });
+  }
+
+  // The working directory the file API uses (the server's taskRoot: work_dir, else the folder of the MD file).
+  function taskRoot(task) {
+    if (!task) return null;
+    if (task.work_dir) return task.work_dir;
+    return task.md_path && task.md_path.includes('/') ? task.md_path.slice(0, task.md_path.lastIndexOf('/')) || '/' : null;
+  }
+
+  // A file link in the terminal of the task that is shown: ask whether it is a file or a folder (one read-only request, only now), then open the
+  // file browser on it. A missing path gives a notice and leaves the panel as it is.
+  async function openTerminalFileLink(taskId, sourceKey, link) {
+    if (sourceKey !== source.key || taskId !== selectedId) return;
+    const task = tasks.find(item => item.id === taskId);
+    if (!task) return;
+    const label = link.relative || '.';
+    let type;
+    try {
+      type = await FilePanel.probe(taskUrl(task.id, '/files'), link.relative);
+    } catch (error) {
+      notify(error.code === 'FILE_NOT_FOUND' ? `Not found in the working directory: ${label}` : `Could not open ${label}: ${error.message}`, 'error');
+      return;
+    }
+    if (sourceKey !== source.key || taskId !== selectedId) return;
+    try {
+      if (!(await openFileBrowser())) return;
+      await FilePanel.reveal(link.relative, { type, line: link.line, column: link.column });
+    } catch (error) { notify(`Could not open ${label}: ${error.message}`, 'error'); }
   }
 
   document.querySelector('.content-area')?.addEventListener('file-panel:layout', event => {

@@ -361,7 +361,7 @@
       const next = fresh.get(row.terminal_id);
       if (next && (next.title !== row.title || next.agent !== row.agent)) { row.title = next.title; row.agent = next.agent; changed = true; }
     }
-    if (changed) renderTasks();
+    if (changed) renderTabs();
   }
   function closeTasks() {
     if (isWide()) return; // the sidebar stays
@@ -754,6 +754,9 @@
   // The name of what is shown (the chat that is open, otherwise the current terminal) in small text under the task name.
   function renderSessionName() {
     let name = '';
+    const current = terminalId ? terminals.find(entry => entry.terminal_id === terminalId) : null;
+    const agent = (current && current.agent) || null; // the kind of the current terminal, as the task list shows it: picks the saved commands presets
+    if (ui.get().terminalAgent !== agent) ui.set({ terminalAgent: agent });
     if (agentChat && agentFor) {
       const row = chats.find(entry => entry.id === agentFor.conversation);
       name = (row && row.title) || agentFor.title || '';

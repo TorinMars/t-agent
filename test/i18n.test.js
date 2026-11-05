@@ -120,6 +120,9 @@ test('h5 shell: every text the Material UI shell shows has a Chinese translation
     take(/\[\s*'((?:Rename|Reopen|Restart in the working directory|Delete|Open|New Terminal|Back))'/g, 1);
     take(/>\s*([A-Z][A-Za-z ,.:'\u2019-]{2,})\s*</g, 1);
   }
+  // The saved commands presets (commands.mjs): the list titles and the descriptions shown under each command.
+  const presets = fs.readFileSync(path.join(dir, 'commands.mjs'), 'utf8');
+  for (const match of presets.matchAll(/\b(?:title|note):\s*'((?:\\.|[^'])*)'/g)) found.add(unescape(match[1]));
   const SAME = /^(Tasks|Esc|Tab|Ctrl|Alt|Shift|Enter|Paste|Image|English|\^C)$/;
   const missing = [...found].filter(text => /[A-Za-z]{3}/.test(text) && !text.includes('${') && !SAME.test(text) && I18n.t(text) === text);
   assert.ok(found.size > 60, `found ${found.size} texts to look at`);

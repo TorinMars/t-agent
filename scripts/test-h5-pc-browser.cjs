@@ -264,6 +264,58 @@ const waitAck = (url, id, from = 0) => new Promise((resolve, reject) => {
       await context.close();
     }
 
+    // Saved commands follow the kind of the open terminal: Claude Code slash commands in a Claude terminal, Codex slash commands in a Codex terminal,
+    // and the "Start an agent" shell list in a plain terminal. Paste text is always first, and a preset is typed WITHOUT Enter.
+    {
+      const saved = TERMINALS[2];
+      TERMINALS[2] = [{ terminal_id: 'd1', title: 'Docs shell' }, { terminal_id: 'dc', title: 'Claude docs', agent: 'claude' }, { terminal_id: 'dx', title: 'Codex docs', agent: 'codex' }];
+      activity = {};
+      const { context, page } = await openPage(browser, { viewport: { width: 1440, height: 900 } });
+      await page.locator('#h5-tasks').waitFor({ state: 'visible' });
+      const menu = async () => {
+        await page.locator('#h5-commands').click();
+        await page.locator('.h5-add-menu').waitFor();
+        const out = await page.evaluate(() => ({
+          head: [...document.querySelectorAll('.h5-add-menu .h5-add-menu-head')].map(node => node.textContent),
+          first: document.querySelector('.h5-add-menu [role="menuitem"]').textContent,
+          commands: [...document.querySelectorAll('.h5-add-menu .h5-add-menu-command')].map(node => node.textContent),
+          notes: [...document.querySelectorAll('.h5-add-menu .h5-add-menu-note')].map(node => node.textContent),
+        }));
+        assert.equal(out.first, 'Paste text', 'Paste text is the first item');
+        assert.equal(out.notes.length, out.commands.length, 'every preset has a description');
+        assert.ok(out.notes.every(Boolean));
+        return out;
+      };
+      const closeMenu = async () => { await page.locator('#h5-commands').click(); await page.locator('.h5-add-menu').waitFor({ state: 'detached' }); }; // a second click on the button closes it
+      await openTerminal(page, 'Write docs', 'Docs shell');
+      await history(page);
+      const shell = await menu();
+      assert.deepEqual(shell.head, ['Start an agent']);
+      assert.deepEqual(shell.commands, ['claude', 'claude --continue', 'claude --resume', 'codex', 'codex resume', 'git status'], 'a plain terminal lists the commands that start an agent');
+      await closeMenu();
+      await openTerminal(page, 'Write docs', 'Claude docs');
+      await history(page);
+      const claude = await menu();
+      assert.deepEqual(claude.head, ['Claude Code commands']);
+      assert.deepEqual(claude.commands, ['/clear', '/compact', '/resume', '/model', '/context', '/usage', '/diff', '/rewind', '/review', '/init', '/memory', '/mcp'], 'a Claude terminal lists Claude Code slash commands');
+      // A preset is typed into the terminal without Enter.
+      const socket = await page.evaluate(() => window.sockets.length - 1);
+      const typed = () => page.evaluate(index => window.sockets[index].sent.filter(item => !item.startsWith('{')), socket);
+      const before = (await typed()).length;
+      await page.locator('.h5-add-menu [role="menuitem"]', { hasText: '/compact' }).click();
+      await page.waitForFunction(([index, count]) => window.sockets[index].sent.filter(item => !item.startsWith('{')).length > count, [socket, before]);
+      assert.deepEqual((await typed()).slice(before), ['/compact'], 'the slash command is typed without Enter');
+      assert.equal(await page.locator('.h5-add-menu').count(), 0, 'the menu closes after a command is chosen');
+      await openTerminal(page, 'Write docs', 'Codex docs');
+      await history(page);
+      const codex = await menu();
+      assert.deepEqual(codex.head, ['Codex commands']);
+      assert.deepEqual(codex.commands, ['/new', '/resume', '/compact', '/model', '/permissions', '/status', '/diff', '/review', '/mention', '/plan', '/init', '/mcp'], 'a Codex terminal lists Codex slash commands');
+      await closeMenu();
+      await context.close();
+      TERMINALS[2] = saved;
+    }
+
     // A remote Engine: the ack goes through the Client's proxy with the same task base as the other calls.
     {
       remoteActivity = { 9: { r1: 'done' } };
@@ -297,6 +349,6 @@ const waitAck = (url, id, from = 0) => new Promise((resolve, reject) => {
       await context.close();
     }
     assert.deepEqual(pageErrors, [], 'no runtime errors');
-    console.log('MUI page on a computer: pointer layout, shortcuts, typing to the terminal, Escape, Cmd/Ctrl+K, no pinning on a shorter window, ack (local, remote, phone), sidebar folding and the design side panel passed.');
+    console.log('MUI page on a computer: pointer layout, shortcuts, typing to the terminal, Escape, Cmd/Ctrl+K, no pinning on a shorter window, ack (local, remote, phone), sidebar folding, the design side panel and the saved commands of each terminal kind passed.');
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

@@ -10,7 +10,8 @@ const { chromium } = require('playwright');
 const express = require('express');
 const { WebSocketServer } = require('ws');
 const root = path.resolve(__dirname, '..');
-const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'terminal-file-links-'));
+// The real path: a shell that reports its directory (OSC 7) names the physical one (/private/var/... on macOS), which must match the work dir text.
+const scratch = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'terminal-file-links-')));
 process.env.T_AGENT_DATA_DIR = path.join(scratch, 'data');
 process.env.TASKS_BASE_DIR = path.join(scratch, 'tasks');
 const auth = require.resolve('../middleware/auth');
@@ -29,6 +30,22 @@ fs.writeFileSync(path.join(scratch, 'outside.md'), '# Outside\n');
 fs.writeFileSync(path.join(scratch, 'lines.txt'), ['L1 src/app.js:42 and docs/设计.md', `L2 ${path.join(task.work_dir, 'src')}/`,
   `L4 ${path.join(scratch, 'outside.md')}`, 'L5 ../outside.md', 'L3 missing/nothing.js https://example.com/x/y.js', ''].join('\n'));
 process.env.TFL_LINES = path.join(scratch, 'lines.txt'); // the terminal shell gets this environment
+// The live directory: a file only in sub/ (the shell does "cd sub"), one only in other/ (an OSC 7 report names it), one outside the work dir.
+fs.mkdirSync(path.join(task.work_dir, 'sub'));
+fs.mkdirSync(path.join(task.work_dir, 'other'));
+fs.writeFileSync(path.join(task.work_dir, 'sub/a.md'), '# In sub\n');
+fs.writeFileSync(path.join(task.work_dir, 'other/b.md'), '# In other\n');
+fs.writeFileSync(path.join(scratch, 'c.md'), '# Outside\n');
+const osc7 = dir => `\x1b]7;file://engine-host${dir.split('/').map(encodeURIComponent).join('/')}\x07`;
+// Short commands on the shell's PATH print them (long typed commands are flaky on a busy machine). "sleep" keeps the shell from reporting its own
+// directory at the next prompt, which would replace the printed report.
+const bin = path.join(scratch, 'bin');
+fs.mkdirSync(bin);
+const script = (name, text, wait) => { fs.writeFileSync(path.join(scratch, `${name}.txt`), text); fs.writeFileSync(path.join(bin, name), `#!/bin/sh\ncat '${path.join(scratch, `${name}.txt`)}'\n${wait ? 'sleep 60\n' : ''}`, { mode: 0o755 }); };
+script('tfl6', 'L6 a.md\n', false);
+script('tfl7', `${osc7(path.join(task.work_dir, 'other'))}L7 b.md\n`, true);
+script('tfl8', `${osc7(scratch)}L8 c.md\n`, true);
+process.env.PATH = `${bin}:${process.env.PATH}`;
 const app = express(); app.use(express.json({ limit: '32mb' }));
 app.use('/api/tasks', require('../routes/tasks'));
 app.get('/js/app.js', (req, res) => res.type('js').send(fs.readFileSync(path.join(root, 'public/js/app.js'), 'utf8').split('// app.js loads before the other feature scripts')[0]));
@@ -66,7 +83,7 @@ let server; let browser; let wss;
       for (let y = 0; y < buffer.length; y += 1) {
         const line = buffer.getLine(y);
         const value = line.translateToString(true);
-        if (!value.startsWith(prefix)) continue;
+        if (!value.trimStart().startsWith(prefix)) continue; // zsh may leave a space in front of a program's first line
         const index = value.indexOf(text);
         if (index < 0) return null;
         let column = 0; let seen = 0;
@@ -133,6 +150,34 @@ let server; let browser; let wss;
     await modClick(await pointOf('L3 ', 'missing/nothing.js'));
     await page.locator('.toast', { hasText: 'Not found in the working directory: missing/nothing.js' }).waitFor();
     assert.equal(await page.locator('.file-editor-tab').count(), 2);
+
+    // The shell's live directory. After "cd sub" a relative path opens from sub/ (the server reads the shell's directory, or the shell's own
+    // OSC 7 report names it when its configuration sends one).
+    const runInShell = async (command, prefix) => {
+      await input.focus();
+      await page.keyboard.type(command);
+      await page.keyboard.press('Enter');
+      await page.waitForFunction(text => { const b = window.__testTerms[0]?.buffer.active; return b && Array.from({ length: b.length }, (_, i) => b.getLine(i)?.translateToString()).some(line => line?.trimStart().startsWith(text)); }, prefix, { timeout: Number(process.env.TFL_WAIT) || 90000 })
+        .catch(async error => { if (process.env.TFL_DEBUG) console.log(await page.evaluate(() => { const b = window.__testTerms[0].buffer.active; return Array.from({ length: b.length }, (_, i) => b.getLine(i)?.translateToString(true)).filter(Boolean).join('\n'); })); throw error; });
+    };
+    await runInShell('cd sub;tfl6', 'L6 ');
+    await modClick(await pointOf('L6 ', 'a.md'));
+    await page.locator('.file-editor-tab.is-active[data-tab-path="sub/a.md"]').waitFor();
+    // An OSC 7 report printed by a program names other/.
+    await runInShell('tfl7', 'L7 ');
+    await modClick(await pointOf('L7 ', 'b.md'));
+    await page.locator('.file-editor-tab.is-active[data-tab-path="other/b.md"]').waitFor();
+    // A reported directory outside the work dir: relative paths there are no links and open nothing.
+    await input.focus(); await page.keyboard.press('Control+C'); // the opened file took the focus
+    await runInShell('tfl8', 'L8 ');
+    const outsideBefore = fileRequests.length;
+    const cPoint = await pointOf('L8 ', 'c.md');
+    await hover(cPoint);
+    assert.equal(await underlined(), false, 'c.md from an outside directory is not a link');
+    await modClick(cPoint, false);
+    await page.waitForTimeout(300);
+    assert.equal(fileRequests.length, outsideBefore, 'nothing is asked for a path from an outside directory');
+    await input.focus(); await page.keyboard.press('Control+C'); // the opened file took the focus
     assert.deepEqual(errors, []);
     console.log('terminal file links browser test passed');
   } finally {

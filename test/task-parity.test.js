@@ -217,6 +217,20 @@ test('a terminal can be named when it is created, on every backend', async () =>
   }
 });
 
+test('the live terminal directory endpoint answers on every backend and checks the terminal and the token', async () => {
+  for (const backend of backends()) {
+    const task = await createTask(backend, 'terminal-cwd');
+    const response = await call(backend, `/${task.id}/terminals/default/cwd`);
+    assert.equal(response.status, 200, `${backend.name} cwd`);
+    assert.deepEqual(await response.json(), { cwd: null, relative: null }, `${backend.name}: no shell runs, so the browser keeps the work dir`);
+    const missing = await call(backend, `/${task.id}/terminals/nope/cwd`);
+    assert.equal(missing.status, 404, `${backend.name} unknown terminal`);
+    assert.equal((await missing.json()).error, 'TERMINAL_NOT_FOUND', backend.name);
+    assert.equal((await call(backend, '/999999/terminals/default/cwd')).status, 404, `${backend.name} unknown task`);
+  }
+  assert.equal((await fetch(`${engine}/v1/tasks/1/terminals/default/cwd`, { headers: { Authorization: 'Bearer nope' } })).status, 401);
+});
+
 test('Engine info advertises the parity capabilities and the proxy relays them', async () => {
   const direct = await (await fetch(`${engine}/v1/info`, { headers: { Authorization: `Bearer ${engineToken}` } })).json();
   for (const capability of ['tasks:reorder', 'documents:create', 'documents:watch', 'files:assets', 'paths:validate', 'terminal:activity']) {

@@ -12,7 +12,12 @@ const TYPES = { '.js': 'application/javascript', '.css': 'text/css', '.html': 't
 const FILES = {
   'src/app.js': Array.from({ length: 80 }, (_, i) => `const line${i + 1} = '<b>${i + 1}</b>';`).join('\n') + '\n',
   'docs/设计.md': '# 设计\n\nSome **bold** text.\n',
+  'sub/a.md': '# In sub\n',
+  'other/x.js': 'const other = 1;\n',
 };
+// The shell's live directory as the server reads it (GET .../terminals/:tid/cwd); the shell here sends no OSC 7 unless the test prints one.
+let liveCwd = { cwd: '/work/fix-login', relative: '' };
+let cwdAsks = 0;
 
 (async () => {
   const browser = await chromium.launch({ headless: true, ...(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {}) });
@@ -45,6 +50,7 @@ const FILES = {
       if (url.pathname === '/api/task-groups') return json([{ key: 'doing', name: 'In progress', sort_order: 1 }]);
       if (url.pathname === '/api/tasks/1/terminals') return json([{ terminal_id: 'h5-default', title: 'Terminal 1' }]);
       if (url.pathname === '/api/tasks/1/agent/conversations') return json([]);
+      if (url.pathname === '/api/tasks/1/terminals/h5-default/cwd') { cwdAsks += 1; return json(liveCwd); }
       if (url.pathname.startsWith('/api/tasks/1/files')) {
         const file = url.searchParams.get('path');
         reads.push(`${url.pathname.endsWith('/content') ? 'read' : 'list'} ${file}`);
@@ -66,7 +72,7 @@ const FILES = {
     await page.waitForFunction(() => document.querySelector('.xterm-rows')?.textContent.includes('A5 missing'));
     assert.deepEqual(reads, [], 'printing paths reads nothing');
     const resizes = () => page.evaluate(() => window.sockets[0].sent.filter(data => data.includes('"resize"')).length);
-    const resizesBefore = await resizes();
+    let resizesBefore = await resizes();
 
     // The centre of `text` in the row that starts with `prefix`, counted in cells (the CJK characters are two cells wide).
     const pointOf = (prefix, text) => page.evaluate(({ prefix, text }) => {
@@ -114,8 +120,47 @@ const FILES = {
     await page.locator('#h5-design-empty', { hasText: 'Not found in the working directory: missing/gone.js' }).waitFor();
     await closeSheet();
 
+    // After "cd sub" (no OSC 7): the tap asks the server for the shell's directory and opens the file from there.
+    liveCwd = { cwd: '/work/fix-login/sub', relative: 'sub' };
+    await page.evaluate(() => window.sockets[0].emit('A6 a.md\r\n'));
+    await page.waitForFunction(text => [...document.querySelectorAll('.xterm-rows > div')].some(row => row.textContent.startsWith(text)), 'A6 ');
+    await tap(await pointOf('A6 ', 'a.md'));
+    await page.locator('#h5-design-body h1', { hasText: 'In sub' }).waitFor();
+    assert.equal(reads[reads.length - 1], 'read sub/a.md');
+    await closeSheet();
+    // The shell reports its directory with OSC 7 (ST terminator here): relative paths come from it, the server is not asked.
+    const asksBefore = cwdAsks;
+    await page.evaluate(() => window.sockets[0].emit('\x1b]7;file://engine-host/work/fix-login/other\x1b\\A7 x.js\r\n'));
+    await page.waitForFunction(text => [...document.querySelectorAll('.xterm-rows > div')].some(row => row.textContent.startsWith(text)), 'A7 ');
+    await tap(await pointOf('A7 ', 'x.js'));
+    await page.locator('#h5-design-body .h5-file-line').first().waitFor();
+    assert.equal(reads[reads.length - 1], 'read other/x.js');
+    assert.equal(cwdAsks, asksBefore, 'a reported directory needs no request');
+    await closeSheet();
+    // A reported directory outside the working directory: relative paths are no links.
+    let readsBefore = reads.length;
+    await page.evaluate(() => window.sockets[0].emit('\x1b]7;file://engine-host/elsewhere\x07A8 x.js\r\n'));
+    await page.waitForFunction(text => [...document.querySelectorAll('.xterm-rows > div')].some(row => row.textContent.startsWith(text)), 'A8 ');
+    await tap(await pointOf('A8 ', 'x.js'));
+    await page.waitForTimeout(700);
+    assert.equal(await sheet.isVisible(), false, 'a relative path from an outside directory opens nothing');
+    assert.equal(reads.length, readsBefore);
+    // The screen is restored (a reconnect, maybe a new shell): the reported directory is forgotten. The server says the shell is outside: a notice.
+    assert.equal(await resizes(), resizesBefore, 'the link taps so far send no resize to the PTY');
+    liveCwd = { cwd: '/elsewhere', relative: null };
+    await page.evaluate(() => window.sockets[0].emit(JSON.stringify({ type: 'history', data: '$ \r\nA9 x.js\r\n', cols: 50, rows: 24 })));
+    await page.waitForFunction(() => document.querySelector('.xterm-rows')?.textContent.includes('A9 x.js'));
+    await tap(await pointOf('A9 ', 'x.js'));
+    await page.getByText('Outside the working directory: x.js').first().waitFor();
+    assert.equal(await sheet.isVisible(), false);
+    assert.equal(reads.length, readsBefore, 'nothing is read when the shell is outside');
+    await page.evaluate(() => window.sockets[0].emit('\r\nA1 ● Read(src/app.js:42)\r\nA3 /etc/hosts and ../up.md\r\n'));
+    await page.waitForFunction(() => document.querySelector('.xterm-rows')?.textContent.includes('A3 /etc'));
+    liveCwd = { cwd: '/work/fix-login', relative: '' };
+    resizesBefore = await resizes(); // a restored screen sends its size once; the taps below must send none
+
     // Outside the working directory: not a link, the tap opens and reads nothing.
-    const readsBefore = reads.length;
+    readsBefore = reads.length;
     for (const text of ['/etc/hosts', '../up.md']) {
       await tap(await pointOf('A3 ', text));
       await page.waitForTimeout(700);

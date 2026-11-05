@@ -1,7 +1,9 @@
 // File paths in terminal output become links that open the file in the task's file browser (desktop: the file panel, phone: the file preview sheet).
 // findFileLinks() finds path-like text in one logical line (pure, unit tested in test/terminal-file-links.test.js), toRelative() turns a found path
 // into a path relative to the task's working directory (or null when it is outside), and attach() registers an xterm link provider that uses both.
-// Nothing is sent to the server while text is printed or hovered: whether the file exists is only asked for when a link is activated.
+// Relative paths are taken from the shell's live current directory: the one it reports with OSC 7 (parseOsc7), else, when a link is activated,
+// the one the server reads from the shell process (options.liveCwd), else the working directory.
+// Nothing is sent to the server while text is printed or hovered: the live directory and whether the file exists are only asked for on activation.
 (function (root, factory) {
   const api = factory();
   if (typeof module === 'object' && module.exports) module.exports = api;
@@ -134,6 +136,33 @@
     return parts.join('/');
   }
 
+  // The directory of an OSC 7 report ("ESC ] 7 ; file://host/path BEL|ST"; `data` is the part after "7;"), or null when it is not a usable one.
+  // The host is not checked: the PTY runs on the Engine machine, so a shell there names that machine (its host name, "localhost" or nothing), and the
+  // browser does not know that name. The path is taken as a path on the Engine machine; the file API still confines it to the task root.
+  // Percent escapes are decoded (UTF-8, so Chinese folder names work); a trailing slash is dropped.
+  function parseOsc7(data) {
+    const match = /^file:\/\/([^/]*)(\/.*)$/i.exec(String(data || ''));
+    if (!match || match[2].length > MAX_PATH * 3) return null;
+    let decoded;
+    try { decoded = decodeURIComponent(match[2]); } catch { return null; }
+    if (/[\u0000-\u001f\u007f\\]/.test(decoded) || decoded.length > MAX_PATH) return null;
+    const parts = [];
+    for (const part of decoded.split('/')) {
+      if (!part || part === '.') continue;
+      if (part === '..') { parts.pop(); continue; }
+      parts.push(part);
+    }
+    return `/${parts.join('/')}`;
+  }
+
+  // The path for the file API of a found path: absolute paths against the root, relative ones from `cwd` (an absolute directory, the shell's
+  // current directory) when it is known, else from the root. null when the result is outside the root.
+  function resolvePath(filePath, root, cwd) {
+    const value = String(filePath || '');
+    if (value.startsWith('/') || !cwd || !String(cwd).startsWith('/')) return toRelative(value, root);
+    return toRelative(`${String(cwd).replace(/\/+$/, '')}/${value}`, root);
+  }
+
   // The logical line (the row and the rows wrapped into it) around buffer row `row` (0-based), as text plus the cell of each code unit.
   function logicalLine(buffer, row) {
     let first = row;
@@ -155,23 +184,44 @@
     return { text, cells };
   }
 
-  // Registers the link provider on an xterm Terminal. options: root() -> the working directory or null, activate(link, event) where link also has
-  // `relative` (the path for the file API). Returns the disposable of the provider.
+  // Registers the link provider (and the OSC 7 handler) on an xterm Terminal. options: root() -> the working directory or null,
+  // activate(link, event) where link also has `relative` (the path for the file API, as far as it is known while hovering) and resolve() -> a
+  // promise of the final path for the file API (null: outside the root, open nothing), liveCwd() (optional) -> a promise of the server's
+  // { cwd, relative } for the shell. Returns { dispose(), cwd(), resetCwd() }; resetCwd() forgets the reported directory (a new shell, a reconnect).
   function attach(term, options) {
-    return term.registerLinkProvider({
+    let reported = null; // the last directory the shell reported with OSC 7
+    const osc = term.parser && typeof term.parser.registerOscHandler === 'function'
+      ? term.parser.registerOscHandler(7, data => {
+        const cwd = parseOsc7(data);
+        if (cwd) reported = cwd;
+        return true;
+      })
+      : null;
+    const resolver = (link, relative, fromReport) => async () => {
+      // An absolute path, or one placed with the reported directory, is final. Otherwise ask the server for the shell's directory.
+      if (link.path.startsWith('/') || fromReport || !options.liveCwd) return relative;
+      let live = null;
+      try { live = await options.liveCwd(); } catch { live = null; }
+      if (!live || typeof live.cwd !== 'string' || !live.cwd) return relative; // no shell, an older Engine: the working directory
+      if (typeof live.relative !== 'string') return null; // the shell is outside the root
+      return toRelative(live.relative ? `${live.relative}/${link.path}` : link.path, null);
+    };
+    const provider = term.registerLinkProvider({
       provideLinks(bufferLineNumber, callback) {
         try {
           const row = bufferLineNumber - 1;
           const root = options.root ? options.root() : null;
+          const cwd = reported;
           const { text, cells } = logicalLine(term.buffer.active, row);
           const links = [];
           for (const link of findFileLinks(text)) {
-            const relative = toRelative(link.path, root);
+            const relative = resolvePath(link.path, root, cwd);
             if (relative == null) continue; // outside the working directory: the file browser cannot show it, so it is not a link
             const start = cells[link.index];
             const end = cells[link.index + link.length - 1];
             if (!start || !end || row < start.y || row > end.y) continue;
             const found = { ...link, relative };
+            found.resolve = resolver(link, relative, Boolean(cwd));
             links.push({
               range: { start: { x: start.x + 1, y: start.y + 1 }, end: { x: end.x + end.width, y: end.y + 1 } },
               text: link.text,
@@ -185,7 +235,12 @@
         }
       },
     });
+    return {
+      dispose() { provider.dispose(); if (osc) osc.dispose(); },
+      cwd: () => reported,
+      resetCwd() { reported = null; },
+    };
   }
 
-  return { findFileLinks, toRelative, attach, pathLike, splitPosition, MAX_LINE };
+  return { findFileLinks, toRelative, resolvePath, parseOsc7, attach, pathLike, splitPosition, MAX_LINE };
 });

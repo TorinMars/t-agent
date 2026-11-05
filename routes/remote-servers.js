@@ -488,6 +488,16 @@ router.patch('/:id/tasks/:taskId/terminals/:terminalId', async (req, res) => {
   } catch (error) { res.status(error.statusCode || 502).json({ error: safeError(error) }); }
 });
 
+router.get('/:id/tasks/:taskId/terminals/:terminalId/cwd', async (req, res) => {
+  const row = getServer(req);
+  if (!row) return res.status(404).json({ error: 'REMOTE_NOT_FOUND' });
+  try {
+    res.json(await request(row.base_url,
+      `/v1/tasks/${encodeURIComponent(req.params.taskId)}/terminals/${encodeURIComponent(req.params.terminalId)}/cwd`,
+      decryptToken(row.token_cipher, config.sessionSecret)));
+  } catch (error) { res.status(error.statusCode || 502).json({ error: safeError(error) }); }
+});
+
 router.post('/:id/tasks/:taskId/terminal/control', async (req, res) => {
   const row = getServer(req);
   if (!row) return res.status(404).json({ error: 'REMOTE_NOT_FOUND' });

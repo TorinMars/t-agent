@@ -1235,6 +1235,7 @@
     s.paused = true;
     s.queued = '';
     s.term.reset();
+    if (s.fileLinks) s.fileLinks.resetCwd(); // the shell may be a new one; it reports again at its next prompt, the server knows meanwhile
     if (Number.isInteger(message.cols) && Number.isInteger(message.rows) && message.cols >= 2 && message.cols <= 1000 && message.rows >= 1 && message.rows <= 1000) {
       s.term.resize(message.cols, message.rows);
     }
@@ -2074,15 +2075,20 @@
   function cancelPendingLink() { clearTimeout(pendingLink); pendingLink = 0; }
   function attachFileLinks(s) {
     if (typeof TerminalFileLinks === 'undefined') return;
-    TerminalFileLinks.attach(s.term, {
+    s.fileLinks = TerminalFileLinks.attach(s.term, {
       root: () => taskDir(s.task) || null,
+      // Relative paths come from the shell's live directory: its OSC 7 report, else the server reads it (an older Engine: the work dir).
+      liveCwd: () => api('GET', `${s.source.tasksBase}/${s.task.id}/terminals/${encodeURIComponent(s.terminalId)}/cwd`).catch(() => null),
       activate: link => {
         cancelPendingLink();
         if (session !== s || s.disposed || longPressDone || ui.get().copyText !== null || ui.get().selectionBar) return;
-        pendingLink = setTimeout(() => {
+        pendingLink = setTimeout(async () => {
           pendingLink = 0;
           if (session !== s || s.disposed || longPressDone || ui.get().copyText !== null) return;
-          void openFileSheet(link.relative || '.', { link: true, line: link.line, directory: link.directory || !link.relative });
+          const relative = await link.resolve();
+          if (session !== s || s.disposed) return;
+          if (relative == null) { tell(`Outside the working directory: ${link.path}`, 'error'); return; }
+          void openFileSheet(relative || '.', { link: true, line: link.line, directory: link.directory || !relative });
         }, MULTI_TAP_MS);
       },
     });

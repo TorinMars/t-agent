@@ -11,6 +11,7 @@ const { repairSpawnHelperPermissions } = require('../lib/node-pty-runtime');
 const { utf8LocaleEnv } = require('../lib/terminal-locale');
 const { listSessions, startupCommand, newClaudeCommand, runningSubagents } = require('../lib/agent-sessions');
 const { resolveTerminalUser, userCanEnter, terminalEnvFor } = require('../lib/terminal-user');
+const { processCwd, cwdInRoot } = require('../lib/terminal-cwd');
 
 // Sessions are keyed by task ID and terminal ID; omitted IDs use the legacy shell.
 const sessions = new Map();
@@ -172,6 +173,18 @@ function reopenCommand(taskId, id, workDir) {
 // Sessions of an agent CLI that were run in the task's working directory (newest first).
 function listAgentSessions(task, agent) {
   return listSessions(agent, task && task.work_dir);
+}
+
+// The live current directory of a terminal's shell, for file links (read-only). `task` has work_dir / md_path. Answers
+// { cwd, relative }: cwd null when no shell runs (or it cannot be read), relative null when the directory is outside the task root (real paths, so a
+// symbolic link out of the root is outside). The browser then resolves relative paths against the work dir, or opens nothing when outside.
+async function terminalCwd(task, value) {
+  const id = assertTerminal(task.id, value);
+  const s = sessions.get(sessionKey(task.id, id));
+  const cwd = s && s.pty && !s.startupError ? await processCwd(s.pty.pid) : null;
+  if (!cwd) return { cwd: null, relative: null };
+  const configured = task.work_dir || (task.md_path && path.dirname(task.md_path));
+  return { cwd, relative: configured && path.isAbsolute(configured) ? cwdInRoot(cwd, configured) : null };
 }
 
 function renameTerminal(taskId, value, requestedTitle) {
@@ -578,4 +591,4 @@ function closeTaskTerminals(taskId) {
   for (const item of [...listTerminals(taskId), ...phone]) controlSession(taskId, 'close', item.terminal_id);
 }
 
-module.exports = { setHookEndpoint, reportHook, activitySnapshot, subagentSnapshot, serveActivityStream, acknowledgeActivity, controlSession, handleWs, listTerminals, createTerminal, listAgentSessions, reopenCommand, renameTerminal, assertTerminal, closeTaskTerminals };
+module.exports = { setHookEndpoint, reportHook, activitySnapshot, subagentSnapshot, serveActivityStream, acknowledgeActivity, controlSession, handleWs, listTerminals, createTerminal, listAgentSessions, reopenCommand, renameTerminal, terminalCwd, assertTerminal, closeTaskTerminals };

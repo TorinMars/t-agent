@@ -98,3 +98,105 @@ test('toRelative keeps paths inside the working directory', () => {
   assert.equal(toRelative('/abs/a.js', null), null, 'absolute paths need a known root');
   assert.equal(toRelative('src/a.js', null), 'src/a.js', 'relative paths are resolved by the server');
 });
+
+test('parseOsc7 reads the directory of an OSC 7 report', () => {
+  const { parseOsc7 } = require('../public/js/terminal-file-links.js');
+  assert.equal(parseOsc7('file://mac.local/Users/me/proj'), '/Users/me/proj', 'any host: the shell names the Engine machine');
+  assert.equal(parseOsc7('file:///work/proj/'), '/work/proj', 'no host, trailing slash dropped');
+  assert.equal(parseOsc7('file://localhost/work/my%20dir'), '/work/my dir', 'percent escapes are decoded');
+  assert.equal(parseOsc7('file://h/work/%E8%AE%BE%E8%AE%A1/%E6%96%87%E6%A1%A3'), '/work/设计/文档', 'UTF-8 Chinese folder names');
+  assert.equal(parseOsc7('file://h/work/设计'), '/work/设计', 'unescaped Chinese is kept');
+  assert.equal(parseOsc7('FILE://h/a/./b/../c'), '/a/c', 'dot parts are folded');
+  assert.equal(parseOsc7('file://h/'), '/');
+  for (const bad of ['', null, undefined, '/work/proj', 'file://hostonly', 'http://h/work', 'file://h/work/%E8%AE', 'file://h/a%0Ab', 'file://h/a\\b',
+    `file://h/${'a'.repeat(1100)}`, 'kitty-shell-cwd://h/work']) {
+    assert.equal(parseOsc7(bad), null, String(bad));
+  }
+});
+
+test('resolvePath takes relative paths from the live directory and keeps the root as the limit', () => {
+  const { resolvePath } = require('../public/js/terminal-file-links.js');
+  const root = '/work/proj';
+  assert.equal(resolvePath('a.js', root, '/work/proj/sub'), 'sub/a.js');
+  assert.equal(resolvePath('../b.js', root, '/work/proj/sub'), 'b.js');
+  assert.equal(resolvePath('./x/设计.md', root, '/work/proj/子/'), '子/x/设计.md');
+  assert.equal(resolvePath('a.js', root, null), 'a.js', 'unknown cwd: the root');
+  assert.equal(resolvePath('a.js', root, '/elsewhere'), null, 'a cwd outside the root');
+  assert.equal(resolvePath('../../c.js', root, '/work/proj/sub'), null, 'climbing past the root');
+  assert.equal(resolvePath('/work/proj/d.js', root, '/elsewhere'), 'd.js', 'absolute paths do not use the cwd');
+  assert.equal(resolvePath('/etc/hosts', root, '/work/proj'), null);
+});
+
+// A headless xterm gives the real parser (BEL and ST terminators, split writes) and buffer; the link provider is captured instead of rendered.
+function headlessTerm() {
+  const { Terminal } = require('@xterm/headless');
+  const real = new Terminal({ cols: 80, rows: 5, allowProposedApi: true });
+  let provider = null;
+  const term = { parser: real.parser, buffer: real.buffer, registerLinkProvider(p) { provider = p; return { dispose() { provider = null; } }; } };
+  const write = data => new Promise(resolve => real.write(data, resolve));
+  const links = row => new Promise(resolve => provider.provideLinks(row, resolve));
+  return { real, term, write, links, provider: () => provider };
+}
+
+test('attach tracks the OSC 7 directory with BEL and ST terminators and resolves links from it', async () => {
+  const { attach } = require('../public/js/terminal-file-links.js');
+  const { real, term, write, links } = headlessTerm();
+  const activated = [];
+  let asked = 0;
+  const handle = attach(term, { root: () => '/work/proj', liveCwd: async () => { asked += 1; return { cwd: '/work/proj', relative: '' }; }, activate: link => activated.push(link) });
+  assert.equal(handle.cwd(), null);
+  await write('\x1b]7;file://host/work/proj/sub\x07');
+  assert.equal(handle.cwd(), '/work/proj/sub', 'BEL');
+  await write('\x1b]7;file://host/work/proj/%E5%AD%90\x1b\\');
+  assert.equal(handle.cwd(), '/work/proj/子', 'ST');
+  await write('\x1b]7;not a url\x07');
+  assert.equal(handle.cwd(), '/work/proj/子', 'a bad report keeps the last directory');
+  await write('\x1b]7;file://host/work/');
+  await write('proj/sub/deep\x07');
+  assert.equal(handle.cwd(), '/work/proj/sub/deep', 'a report split over two writes');
+  await write('\x1b]7;file://host/work/proj/sub\x07see a.js\r\n');
+  const [link] = await links(1);
+  assert.equal(link.text, 'a.js');
+  link.activate({});
+  assert.equal(activated[0].relative, 'sub/a.js');
+  assert.equal(await activated[0].resolve(), 'sub/a.js');
+  assert.equal(asked, 0, 'a reported directory needs no request');
+  await write('\x1b]7;file://host/elsewhere\x07');
+  assert.equal(await links(1), undefined, 'a cwd outside the root: relative paths are no links');
+  handle.resetCwd();
+  assert.equal(handle.cwd(), null);
+  handle.dispose();
+  await write('\x1b]7;file://host/work/proj/sub\x07');
+  assert.equal(handle.cwd(), null, 'disposed: no more tracking');
+  real.dispose();
+});
+
+test('without an OSC 7 report a link asks the server for the live directory', async () => {
+  const { attach } = require('../public/js/terminal-file-links.js');
+  const { real, term, write, links } = headlessTerm();
+  let live = { cwd: '/real/work/proj/sub', relative: 'sub' };
+  const activated = [];
+  attach(term, { root: () => '/work/proj', liveCwd: async () => (live instanceof Error ? Promise.reject(live) : live), activate: link => activated.push(link) });
+  await write('src/a.js /work/proj/b.js\r\n');
+  const found = await links(1);
+  found.forEach(link => link.activate({}));
+  const [relative, absolute] = activated;
+  assert.equal(relative.relative, 'src/a.js', 'while hovering: the work dir');
+  assert.equal(await relative.resolve(), 'sub/src/a.js', 'activated: the server directory');
+  assert.equal(await absolute.resolve(), 'b.js', 'absolute paths ask nothing');
+  live = { cwd: '/real/work/proj', relative: '' };
+  assert.equal(await relative.resolve(), 'src/a.js');
+  live = { cwd: '/elsewhere', relative: null };
+  assert.equal(await relative.resolve(), null, 'the shell is outside the root: open nothing');
+  live = { cwd: null, relative: null };
+  assert.equal(await relative.resolve(), 'src/a.js', 'no shell: the work dir');
+  live = null;
+  assert.equal(await relative.resolve(), 'src/a.js', 'an older Engine: the work dir');
+  live = new Error('offline');
+  assert.equal(await relative.resolve(), 'src/a.js', 'a failed request: the work dir');
+  live = { cwd: '/real/work/proj/sub', relative: 'sub' };
+  await write('../../up.js\r\n');
+  const [up] = await links(2) || [];
+  assert.equal(up, undefined, 'past the root from the work dir: no link');
+  real.dispose();
+});

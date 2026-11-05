@@ -41,11 +41,13 @@ async function openPage(browser, { viewport = { width: 390, height: 844 }, touch
     window.WebSocket = window.FakeSocket;
   }, { saved, lang });
   const requests = [];
+  const acks = []; // terminal_id of every POST …/terminal/ack, in order
   let release = null;
   const scriptsHeld = holdScripts ? new Promise(resolve => { release = resolve; }) : null;
   await page.route(`${ORIGIN}/**`, async route => {
     const url = new URL(route.request().url());
     requests.push(url.pathname + url.search);
+    if (url.pathname.endsWith('/terminal/ack')) { acks.push((route.request().postDataJSON() || {}).terminal_id); return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' }); }
     const json = async body => { if (delays[url.pathname]) await wait(delays[url.pathname]); mark(`done ${url.pathname}`); return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) }); };
     if (url.pathname === '/h5') {
       const zh = /(?:^|;\s*)ta-lang=zh(?:;|$)/.test(route.request().headers().cookie || '');
@@ -69,7 +71,7 @@ async function openPage(browser, { viewport = { width: 390, height: 844 }, touch
     return route.fulfill({ status: 404, contentType: 'application/json', body: '{"error":"not mocked"}' });
   });
   const goto = page.goto(`${ORIGIN}/h5`, { waitUntil: holdScripts ? 'commit' : 'load' });
-  return { context, page, requests, log, release, goto };
+  return { context, page, requests, acks, log, release, goto };
 }
 const at = (log, what) => { const hit = log.find(entry => entry.what === what); assert.ok(hit, `${what} happened: ${JSON.stringify(log)}`); return hit.at; };
 const asked = (log, what) => at(log, `ask ${what}`);
@@ -128,6 +130,25 @@ const asked = (log, what) => at(log, `ask ${what}`);
     // The early socket works like any other: the history it got before the terminal existed is drawn, and typing reaches it.
     await slow.page.evaluate(() => { const ws = window.sockets[0]; ws.onmessage({ data: new TextEncoder().encode(JSON.stringify({ type: 'history', data: 'EARLY-HISTORY $ ', cols: 80, rows: 24 })).buffer }); });
     await slow.page.locator('.xterm-rows', { hasText: 'EARLY-HISTORY' }).waitFor();
+    // The early socket is a warm terminal like any other (WARM_MAX): another terminal gets its own socket, the early one stays open while hidden, and
+    // going back shows it again without a new socket. Only the shown terminal is acked.
+    const shownId = () => slow.page.evaluate(() => document.querySelector('.h5-xterm:not([hidden])')?.dataset.terminalId);
+    const pickTerminal = async name => {
+      if (!(await slow.page.locator('#h5-tasks').isVisible())) await slow.page.locator('#h5-open-tasks').tap();
+      await slow.page.locator('#h5-tasks .h5-terminal-main', { hasText: name }).click();
+      await slow.page.locator('#h5-tasks').waitFor({ state: 'hidden' });
+    };
+    await pickTerminal('Terminal 2');
+    await slow.page.waitForFunction(() => window.sockets.length === 2 && window.sockets[1].readyState === 1);
+    assert.equal(await shownId(), 'h5-other');
+    assert.equal(await slow.page.evaluate(() => window.sockets[0].closedWith), null, 'the early socket stays warm while its terminal is hidden');
+    const acksBefore = slow.acks.length;
+    await pickTerminal('Terminal 1');
+    await slow.page.waitForFunction(() => document.querySelector('.h5-xterm:not([hidden])')?.dataset.terminalId === 'h5-default');
+    assert.equal(await slow.page.evaluate(() => window.sockets.length), 2, 'no new socket for the early terminal');
+    assert.ok(await slow.page.evaluate(() => document.querySelector('.h5-xterm:not([hidden]) .xterm-rows').textContent.includes('EARLY-HISTORY')), 'its view is kept');
+    await wait(200);
+    assert.ok(slow.acks.length > acksBefore && slow.acks.slice(acksBefore).every(id => id === 'h5-default'), `only the shown terminal is acked: ${JSON.stringify(slow.acks)}`);
     await slow.context.close();
 
     // A history sent before the page took the socket is not lost.

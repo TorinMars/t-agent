@@ -16,7 +16,6 @@ import CloseIcon from '@mui/icons-material/Close';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ChevronRightIcon from '@mui/icons-material/ChevronRight';
 import SearchIcon from '@mui/icons-material/Search';
-import DesktopWindowsOutlinedIcon from '@mui/icons-material/DesktopWindowsOutlined';
 import SettingsIcon from '@mui/icons-material/Settings';
 import SmartToyOutlinedIcon from '@mui/icons-material/SmartToyOutlined';
 import MoreHorizIcon from '@mui/icons-material/MoreHoriz';
@@ -230,8 +229,7 @@ function Panel({ state, ui }) {
         <Button id="h5-add-task" fullWidth variant="contained" size="medium" startIcon={<AddIcon />} onClick={() => setAdding(open => !open)} sx={{ borderRadius: 3, py: 0.5, textTransform: 'none', fontSize: 14 }}>{t('New task')}</Button>
       </Box>
       <Divider />
-      <Box sx={{ display: 'flex', alignItems: 'center' }}>
-        <Button className="h5-desktop-link" component="a" href="/web" startIcon={<DesktopWindowsOutlinedIcon />} sx={{ flex: '1 1 auto', justifyContent: 'flex-start', py: 0.5, px: 1.5, borderRadius: 0, textTransform: 'none', fontSize: 13, color: 'text.secondary' }}>{t('Desktop version')}</Button>
+      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', minHeight: 36 }}>
         <IconButton id="h5-tasks-settings" aria-label={t('Settings')} onClick={() => ui.actions.openSettings()} size="small" sx={{ mr: 1 }}><SettingsIcon fontSize="small" /></IconButton>
       </Box>
     </Box>

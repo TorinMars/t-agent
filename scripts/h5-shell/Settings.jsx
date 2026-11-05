@@ -15,6 +15,9 @@ import { api, t } from './common.jsx';
 import { EnginesGroup } from './Engines.jsx';
 import { Feedback, Field, Group, Hint, failure, useFeedback } from './Form.jsx';
 
+// The address this page was opened at, to come back to after a login or a switch: `/` or `/h5` (an iPhone Home Screen app starts at /h5).
+const pagePath = () => (/^\/h5(\/|$)/.test(location.pathname) ? '/h5' : '/');
+
 const OSS_FIELDS = [
   ['region', 'Region (e.g. oss-cn-hangzhou)'], ['bucket', 'Bucket'], ['accessKeyId', 'AccessKey ID'],
   ['accessKeySecret', 'AccessKey Secret'], ['prefix', 'Object path prefix'], ['publicBaseUrl', 'Public HTTPS address (optional)'],
@@ -276,10 +279,10 @@ function AccessGroup() {
       const result = await api('POST', '/auth/mode', info.local ? { mode: 'remote', code: code.trim() } : { mode: 'local' });
       // A phone is not the local machine: switching to local access only locks this page out too.
       if (result.locked_out) { say('Switched to local access only. This device is not the local machine and can no longer connect; use the browser on the server itself.'); return; }
-      location.replace('/h5');
+      location.replace(pagePath());
     } catch (error) {
       const data = error.data || {};
-      if (data.error === 'AUTHENTICATOR_BINDING_REQUIRED') { location.href = (data.redirect || '/auth/setup?return_to=/web').replace('return_to=/web', 'return_to=/h5'); return; }
+      if (data.error === 'AUTHENTICATOR_BINDING_REQUIRED') { location.href = (data.redirect || '/auth/setup?return_to=/').replace(/return_to=[^&]*/, `return_to=${pagePath()}`); return; }
       const known = { AUTH_CODE_INVALID: 'The code is invalid or already used. Wait for the next code.', AUTH_RATE_LIMITED: 'Too many attempts. Try again in 15 minutes.' }[data.error];
       say(known || `${t('Switch failed')}: ${error.message}`, true);
     } finally { setBusy(false); }
@@ -301,7 +304,7 @@ function AccessGroup() {
       <Feedback id="h5-access-feedback" feedback={feedback} />
       <Typography variant="subtitle2" component="strong">{t('Authenticator')}</Typography>
       <Hint>{t('Computer and phone share the same page and binding. Logins last 30 days and renew while in use; after 30 days of inactivity you must verify again. After replacing, the old authenticator, recovery codes and other devices’ logins stop working immediately.')}</Hint>
-      <Button id="h5-authenticator-replace" component="a" href="/auth/setup?return_to=/h5" variant="outlined">{t('Replace authenticator')}</Button>
+      <Button id="h5-authenticator-replace" component="a" href={`/auth/setup?return_to=${pagePath()}`} variant="outlined">{t('Replace authenticator')}</Button>
     </Group>
   );
 }
@@ -313,7 +316,7 @@ function Rows({ ui }) {
       await api('POST', '/auth/logout', {});
       // The server puts the (hidden) login address of this install into the page.
       const meta = document.querySelector('meta[name="t-agent-login-path"]');
-      location.replace(`${(meta && meta.content) || '/auth/login'}?return_to=/h5`);
+      location.replace(`${(meta && meta.content) || '/auth/login'}?return_to=${pagePath()}`);
     } catch { ui.notify(t('Log out failed. Please retry later.'), 'error'); }
   };
   const english = typeof I18n !== 'undefined' && I18n.get() === 'en';

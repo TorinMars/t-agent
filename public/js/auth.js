@@ -7,9 +7,9 @@
   const description = document.getElementById('auth-description');
   const errorNode = document.getElementById('auth-error');
   const requested = new URLSearchParams(location.search).get('return_to');
-  // After logging in the page always goes to the phone page (/h5), whatever the device is and whatever address sent the person here (the desktop page asks for
-  // return_to=/web when its session ends, and a browser that asks for the desktop site hides the phone from the server). "Desktop version" on /h5 still opens /web.
-  const returnTo = '/h5';
+  // After logging in the page goes to `/` (the one page for computers and phones), or back to `/h5` when that address asked: an iPhone Home Screen app
+  // starts at /h5 and stays there. Any other return_to (the old `/web` included) leads to `/`.
+  const returnTo = requested === '/h5' ? '/h5' : '/';
   const messages = {
     AUTH_CODE_INVALID: 'The code is invalid or already used. Wait for the next code, or use an unused recovery code.',
     AUTHENTICATOR_BINDING_REQUIRED: 'You must bind an authenticator before using this.',

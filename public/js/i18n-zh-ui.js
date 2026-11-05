@@ -1,4 +1,4 @@
-// Chinese translations of the UI text (public/index.html, public/login.html and public/js/*.js). English text is the key.
+// Chinese translations of the UI text (public/h5.html with the Material UI shell in scripts/h5-shell, public/login.html and public/js/*.js). English text is the key.
 // {1}, {2} ... mark the variable parts of a sentence. This file is data: it is the only place (besides i18n-zh-server.js and i18n-zh-extra.js) with Chinese text.
 I18n.add({
   "Translate to English": "翻译成英文",
@@ -1046,7 +1046,6 @@ I18n.add({
   "Could not create the terminal: {1}": "创建终端失败：{1}",
   "Could not load tasks: {1}": "加载任务失败：{1}",
   "Could not load terminals: {1}": "加载终端失败：{1}",
-  "Desktop version": "电脑版",
   "Search sessions": "搜索会话",
   "Pending": "待处理",
   "Terminal": "终端",

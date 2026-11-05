@@ -322,10 +322,12 @@ app.get('/share/:token/file', (req, res) => {
   sendSharedMarkdown(res, task, req.params.token, file.content, file.relativePath);
 });
 
-// Phones and computers get two separate pages: /h5 (tasks, phone terminals, image upload, translate and send) and /web.
-const PHONE_USER_AGENT = /iPhone|iPod|Android.+Mobile|Windows Phone|HarmonyOS.+Mobile|Mobile Safari/i;
+// One page for computers and phones (the MUI page, public/h5.html): `/` and `/h5` serve the same HTML, so iPhone Home Screen apps that start at /h5
+// keep working. The old page addresses lead to `/`.
+// The manifest follows the address: /h5 keeps manifest-h5.json (start_url /h5, what installed phone apps were added with), every other address gets manifest.json.
+function manifestFor(pagePath) { return pagePath === '/h5' ? '/manifest-h5.json' : '/manifest.json'; }
 
-function sendClientPage(req, res, page = 'index.html') {
+function sendClientPage(req, res, page = 'h5.html') {
   res.set('Cache-Control', 'no-store');
   const auth = getClientAuth().ready(req.session);
   const returnTo = safeReturnTo(req.path);
@@ -336,14 +338,16 @@ function sendClientPage(req, res, page = 'index.html') {
   const assetVersion = encodeURIComponent(JSON.parse(fs.readFileSync(path.join(__dirname, 'VERSION.json'), 'utf8')).app_version);
   html = html.replace(/(src|href)="(\/(?:js|css|vendor)\/[^"?]+\.(?:js|css))"/g, `$1="$2?v=${assetVersion}"`);
   html = html.replace('</head>', `<meta name="t-agent-login-path" content="${escapeHtml(config.loginPath)}">\n</head>`);
+  html = html.replace(/<link rel="manifest" href="[^"]*">/, `<link rel="manifest" href="${manifestFor(req.path)}">`);
   res.type('html').send(html);
 }
 
-app.get('/', (req, res) => (PHONE_USER_AGENT.test(req.get('User-Agent') || '') ? res.redirect('/h5') : sendClientPage(req, res)));
-app.get('/web', (req, res) => sendClientPage(req, res));
-app.get('/h5', (req, res) => sendClientPage(req, res, 'h5.html'));
-app.get('/index.html', (req, res) => res.redirect('/web'));
-app.get('/h5.html', (req, res) => res.redirect('/h5'));
+app.get('/', (req, res) => sendClientPage(req, res));
+app.get('/h5', (req, res) => sendClientPage(req, res));
+// The query stays, so a notification link to an old address (`/web?openChat=…`) still opens its chat.
+for (const oldPage of ['/web', '/index.html', '/h5.html']) {
+  app.get(oldPage, (req, res) => res.redirect(`/${req.originalUrl.includes('?') ? req.originalUrl.slice(req.originalUrl.indexOf('?')) : ''}`));
+}
 app.get('/login.html', (req, res) => res.redirect(config.loginPath));
 // Static middleware decodes paths: encoded /index%2ehtml must not evade the
 // explicit page routes above. Do not allow implicit directory index documents.

@@ -64,12 +64,13 @@ async function logIn({ search = '', userAgent, maxTouchPoints = 0, screen }) {
   return { sent: requests.find(request => request.url.endsWith('/login')).body.return_to, went };
 }
 
-test('after the login every device goes to the phone page, whatever address sent it and also when the browser asks for the desktop site', async () => {
+test('after the login every device goes to the same page: /h5 when that address asked (an iPhone Home Screen app), / otherwise (the old /web too)', async () => {
   const iphone = { userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148', maxTouchPoints: 5, screen: { width: 390, height: 844 } };
   const mac = { userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Safari/605.1.15', maxTouchPoints: 0, screen: { width: 1728, height: 1117 } };
   for (const device of [iphone, { ...iphone, userAgent: mac.userAgent }, mac]) {
     for (const search of ['', '?return_to=/h5', '?return_to=/web', '?return_to=/']) {
-      assert.deepEqual(await logIn({ ...device, search }), { sent: '/h5', went: '/h5' }, `${device.userAgent.slice(0, 30)} ${search}`);
+      const target = search === '?return_to=/h5' ? '/h5' : '/';
+      assert.deepEqual(await logIn({ ...device, search }), { sent: target, went: target }, `${device.userAgent.slice(0, 30)} ${search}`);
     }
   }
 });

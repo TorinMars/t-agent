@@ -1571,7 +1571,16 @@
     }
   }
   translateForm.addEventListener('submit', event => { event.preventDefault(); void submitBox(false); }); // the send arrow: as typed
-  // Enter in the box is a new line (the browser inserts it and the `input` event runs autosize); only the Send button submits. There is no keydown handler on purpose.
+  // Enter in the box is a new line (the browser inserts it and the `input` event runs autosize), and so is Shift+Enter. A hardware keyboard has two shortcuts:
+  // Cmd+Enter (Ctrl+Enter on other systems) is the translate-and-send button and Option+Enter (Alt+Enter) is the send arrow, through the same submitBox. The key
+  // never inserts a new line (preventDefault), and an Enter that confirms an IME candidate (isComposing, keyCode 229) is left alone, so it never sends.
+  translateInput.addEventListener('keydown', event => {
+    if (event.key !== 'Enter' || event.isComposing || event.keyCode === 229 || event.shiftKey) return;
+    const translateFirst = (event.metaKey || event.ctrlKey) && !event.altKey;
+    if (!translateFirst && !(event.altKey && !event.metaKey && !event.ctrlKey)) return; // plain Enter, or Cmd and Option together: a new line as before
+    event.preventDefault();
+    if (!event.repeat) void submitBox(translateFirst); // a held key sends once
+  });
   translateInput.addEventListener('input', () => { autosize(); relayoutBar(); }); // the bar also changes layout when the box gains or loses text
   $('h5-translate-button').addEventListener('click', () => void submitBox(true));
   // The draft box is hidden (no height) until it has the focus, a button is pressed, voice is recording or a translation runs (CSS only, see TranslateBar). It covers the terminal:

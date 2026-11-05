@@ -67,7 +67,7 @@ test('unknown text is shown unchanged rather than dropped', () => {
   assert.equal(load('zh').t('A sentence that is not in the dictionary'), 'A sentence that is not in the dictionary');
 });
 
-for (const page of ['index.html', 'h5.html', 'login.html', path.join('tools', 'kwai-url-parser.html')]) {
+for (const page of ['h5.html', 'login.html', path.join('tools', 'kwai-url-parser.html')]) {
   test(`${page}: every static label has a Chinese translation`, () => {
     const I18n = load('zh');
     const { document } = parseHTML(fs.readFileSync(path.join(ROOT, 'public', page), 'utf8'));
@@ -90,13 +90,10 @@ for (const page of ['index.html', 'h5.html', 'login.html', path.join('tools', 'k
 }
 
 test('pages load the engine before other scripts and expose a language toggle', () => {
-  const index = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
-  assert.ok(index.indexOf('/js/i18n.js') > 0 && index.indexOf('/js/i18n.js') < index.indexOf('/js/toast.js'));
-  assert.ok(index.indexOf('/js/i18n-zh-ui.js') < index.indexOf('/js/app.js'));
-  assert.match(index, /data-lang-toggle/);
   assert.match(fs.readFileSync(path.join(ROOT, 'public', 'login.html'), 'utf8'), /data-lang-toggle/);
   const h5 = fs.readFileSync(path.join(ROOT, 'public', 'h5.html'), 'utf8');
-  assert.ok(h5.indexOf('/js/i18n.js') > 0 && h5.indexOf('/js/i18n-zh-ui.js') < h5.indexOf('/js/h5.js'));
+  assert.ok(h5.indexOf('/js/i18n.js') > 0 && h5.indexOf('/js/i18n.js') < h5.indexOf('/js/toast.js'));
+  assert.ok(h5.indexOf('/js/i18n-zh-ui.js') < h5.indexOf('/js/h5.js'));
   // The phone page is drawn by the Material UI shell: its settings carry the language button, which switches with I18n.toggle().
   assert.ok(h5.indexOf('/js/h5-shell.js') > 0 && h5.indexOf('/js/h5-shell.js') < h5.indexOf('/js/h5.js'));
   const settings = fs.readFileSync(path.join(ROOT, 'scripts', 'h5-shell', 'Settings.jsx'), 'utf8');
@@ -134,7 +131,7 @@ test('h5 shell: every text the Material UI shell shows has a Chinese translation
 const CJK_ALLOWED = new Set([
   'public/js/i18n-zh-ui.js', 'public/js/i18n-zh-server.js', 'public/js/i18n-zh-extra.js', 'test/i18n.test.js',
   'test/translator.test.js', 'test/terminal-clipboard.test.js', 'test/terminal-snapshot.test.js', 'test/install-script.test.js',
-  'scripts/test-terminal-clipboard-browser.cjs', 'scripts/test-terminal-selection-browser.cjs', 'scripts/test-terminal-translate-browser.cjs', 'scripts/test-terminal-width-browser.cjs',
+  'scripts/test-terminal-clipboard-browser.cjs', 'scripts/test-terminal-selection-browser.cjs', 'scripts/test-terminal-width-browser.cjs',
   'test/terminal-file-links.test.js', 'test/terminal-cwd.test.js', 'scripts/test-terminal-file-links-browser.cjs', 'scripts/test-h5-file-links-browser.cjs',
 ]);
 function sourceFiles(dir, out = []) {

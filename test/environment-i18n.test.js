@@ -39,15 +39,3 @@ test('every text of the environment checks has a Chinese translation', () => {
   const missing = texts.filter(text => !SAME.has(text) && I18n.t(text) === text);
   assert.deepEqual(missing, [], 'add these to public/js/i18n-zh-server.js');
 });
-
-test('the texts of the environment page have a Chinese translation too', () => {
-  const I18n = loadChinese();
-  const source = fs.readFileSync(path.join(JS, 'environment-check.js'), 'utf8');
-  const texts = [
-    ...[...source.matchAll(/(?:WORD = \{|ICON = \{)[^}]*\}/g)].flatMap(match => [...match[0].matchAll(/'([A-Za-z ]+)'/g)].map(item => item[1])),
-    'Affects:', 'What to do:', 'What will not work', 'What may not work', 'Everything checked works', 'The check could not be run', 'Checking…', 'Checking this machine…', 'Check again',
-    '1 feature will not work', '3 features will not work', '1 feature needs attention', '2 features need attention', '1 will not work · 1 need attention · 2 fine',
-    'Darwin 22.6.0 · Node v24.22.0 · x64 · user torin · checked 6:00:00 PM', 'This page checks the machine running the Client, not the remote engine Shanghai',
-  ].filter(text => !/^[✕!✓–]$/.test(text));
-  assert.deepEqual(texts.filter(text => I18n.t(text) === text), []);
-});

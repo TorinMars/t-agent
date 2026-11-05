@@ -61,10 +61,10 @@ test('several characters typed quickly are each checked against what xterm emitt
   assert.deepEqual(t.sent, ['\uFF0C']);
 });
 
-test('the desktop page loads the IME helper and the desktop terminal attaches it', () => {
+test('the page loads the IME helper and its terminal attaches it', () => {
   const fs = require('node:fs');
   const path = require('node:path');
   const root = path.join(__dirname, '..', 'public');
-  assert.match(fs.readFileSync(path.join(root, 'index.html'), 'utf8'), /<script src="\/js\/terminal-ime\.js"><\/script>/);
-  assert.match(fs.readFileSync(path.join(root, 'js', 'tasks.js'), 'utf8'), /TerminalIme\.attach\(t,/);
+  assert.match(fs.readFileSync(path.join(root, 'h5.html'), 'utf8'), /<script src="\/js\/terminal-ime\.js"[^>]*><\/script>/);
+  assert.match(fs.readFileSync(path.join(root, 'js', 'h5.js'), 'utf8'), /TerminalIme\.attach\(term,/);
 });

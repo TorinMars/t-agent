@@ -1,3 +1,5 @@
+// Mouse selection in the page's terminal (a computer): mixed ASCII / CJK / punctuation text stays on xterm's cell grid, so a drag selects exactly the
+// characters under the mouse, in the normal and the alternate screen, at DPR 1 and 2, with the page's own styles (public/css/h5.css).
 const { chromium } = require('playwright');
 const assert = require('node:assert/strict');
 const path = require('node:path');
@@ -9,14 +11,15 @@ const root = path.resolve(__dirname, '..');
   try {
     for (const deviceScaleFactor of [1, 2]) {
       const page = await browser.newPage({ viewport: { width: 1728, height: 917 }, deviceScaleFactor });
-      await page.setContent('<html lang="zh-CN"><div id="xterm-container" style="width:1400px;height:700px;margin-left:100px"><div class="xterm-host"></div></div></html>');
-      await page.addStyleTag({ path: path.join(root, 'public/css/style.css') });
+      // The page's terminal (public/h5.html): the xterm element inside .h5-terminal > .h5-xterm, styled by h5.css.
+      await page.setContent('<html lang="zh-CN"><div class="h5-terminal" style="width:1400px;height:700px;margin-left:100px;flex:none"><div class="h5-xterm"></div></div></html>');
+      await page.addStyleTag({ path: path.join(root, 'public/css/h5.css') });
       await page.addStyleTag({ path: require.resolve('@xterm/xterm/css/xterm.css') });
       await page.addScriptTag({ path: require.resolve('@xterm/xterm') });
       await page.evaluate(() => {
         window.term = new Terminal({ cols: 170, rows: 40, fontSize: 13,
           fontFamily: 'Menlo, Monaco, "Courier New", monospace' });
-        term.open(document.querySelector('.xterm-host'));
+        term.open(document.querySelector('.h5-xterm'));
       });
       for (const alternate of [false, true]) {
         for (const prefix of ['ASCII text '.repeat(8), '中文测试'.repeat(10), '中文, 测试. '.repeat(6), ' (中文): 测试; '.repeat(5)]) {

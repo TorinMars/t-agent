@@ -41,6 +41,9 @@ body { -webkit-text-size-adjust: 100%; }
 @media (prefers-reduced-motion: reduce) { .h5-terminal .h5-xterm.h5-bar-moving { transition: none; will-change: auto; } }
 /* A press-and-hold must not start text selection or the callout menu: dragging always scrolls. */
 .h5-terminal .h5-xterm { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; touch-action: pan-y; } /* a drag on the body scrolls the normal-buffer history natively; there are no synthetic wheel events */
+/* Keep glyph measurement and drawing on xterm's fixed cell grid: Chrome's contextual CJK punctuation trimming breaks xterm's repeated glyph width
+   measurement and made a mouse selection drift in earlier Chrome versions (moved from the old desktop style.css in 2.88.0). */
+.h5-terminal .xterm { text-spacing-trim: space-all; text-autospace: no-autospace; }
 /* The wheel strip (2px in from the screen edge, so the browser edge-swipe gesture keeps working): a transparent touch strip on the right edge, above the copy button. It takes the touches itself (touch-action: none) and
    shows a faint track with ticks only while a finger is on it (and a moment after). */
 .h5-wheel { position: absolute; top: 0; right: 2px; bottom: 0; width: 40px; z-index: 2; background: transparent; touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }

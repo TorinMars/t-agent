@@ -316,7 +316,6 @@ async function runApply({ force = false } = {}) {
 
   await execNpm(['ci', '--ignore-scripts=false'], 'installing');
   await verifyNodePty();
-  await execNpm(['run', 'build:monaco'], 'building');
   saveState({ status: 'updating', stage: 'restarting', message: 'Update finished, restarting the service' });
   // A non-zero exit code makes both systemd Restart=on-failure and macOS KeepAlive bring the new version up.
   setTimeout(() => process.exit(75), 750).unref();

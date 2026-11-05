@@ -1064,11 +1064,20 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
 
     // Momentum: a quick flick keeps scrolling after the finger is lifted, then stops by itself; a new touch cancels it.
     const coasting = () => page.evaluate(() => window.__h5WheelCoasting());
-    const flick = async () => {
-      await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: stripX, y: 300 }] });
-      for (let y = 300; y <= 400; y += 25) { await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: stripX, y }] }); await page.waitForTimeout(8); }
-      await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
-    };
+    // The flick is made of pointer events fired inside the page with a fixed real gap between the moves. CDP touch events
+    // are delivered one per rendered frame, and headless Chromium can draw only 10-20 frames a second (for example on
+    // macOS while the display sleeps), so CDP moves arrive 60-250 ms apart: slower than the 80 ms flick window, which
+    // is a slow drag, not a flick. The gap is measured with performance.now(), the clock the strip itself uses.
+    const flick = (gapMs = 8) => page.evaluate(async ({ x, gapMs }) => {
+      const el = document.querySelector('#h5-wheel');
+      const fire = (type, y) => el.dispatchEvent(new PointerEvent(type, { pointerId: 99, pointerType: 'touch', isPrimary: true, bubbles: true, cancelable: true, clientX: x, clientY: y }));
+      const wait = ms => { const end = performance.now() + ms; while (performance.now() < end) { /* busy wait: timers may be throttled */ } };
+      fire('pointerdown', 300);
+      for (let y = 325; y <= 400; y += 25) { wait(gapMs); fire('pointermove', y); }
+      fire('pointerup', 400);
+    }, { x: stripX, gapMs });
+    await flick(120); // the same travel with long pauses is a slow drag: no momentum
+    assert.equal(await coasting(), false, 'a slow drag does not start momentum scrolling');
     await flick();
     assert.equal(await coasting(), true, 'a quick flick starts momentum scrolling');
     await page.waitForFunction(() => !window.__h5WheelCoasting(), null, { timeout: 8000 });

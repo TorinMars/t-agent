@@ -668,7 +668,7 @@ Since this change the runtime data of a machine lives in **`~/.tagent`** (the ho
 ```
 
 - **Another folder**: set `TAGENT_HOME=/full/path` in `.env` (a leading `~/` is also understood) (or the environment). The old name `T_AGENT_DATA_DIR` still works; when both are set, `TAGENT_HOME` wins. `T_AGENT_DB_PATH` still moves only the SQLite file. With an explicit folder nothing is copied automatically.
-- **First start after the upgrade**: when `~/.tagent` has no database and `<install>/data/db.sqlite` exists, the server copies the old data once. It first makes an untouched copy `<install>/data.backup-<time>`, builds the new folder from that copy in a temporary folder (the WAL is checkpointed and the copy is checked), then renames it into place and writes `migrated-from.json`. The old `data/` folder is never changed and is not used any more. Old update backups (`data/backups/`, often large) are not copied; they stay where they are. If both folders have data, `~/.tagent` is used and the log says that the old folder is ignored.
+- **First start after the upgrade**: when `~/.tagent` has no database and `<install>/data/db.sqlite` exists, the server copies the old data once. It first makes an untouched copy `<install>/data.backup-<time>`, builds the new folder from that copy in a temporary folder (the WAL is checkpointed and the copy is checked), then renames it into place and writes `migrated-from.json`. The old `data/` folder is never changed and is not used any more. Old update backups (`data/backups/`, often large) are not copied; they stay where they are. If `~/.tagent` already has a database that this copy did not make (no `migrated-from.json`, for example a development checkout started without the old data): when it holds no user data and the old folder does, it is moved aside to `~/.tagent/empty-start-<time>/` and the old data is copied in; when both hold user data, `~/.tagent` is kept, a loud warning in the log names both folders and how to choose, and the environment check shows "Two folders hold data".
 - **Session secret**: on the first start the `SESSION_SECRET` of `.env` is saved to `session-secret` (so saved tokens stay readable); after that the file is used and a different `SESSION_SECRET` in `.env` is ignored with a warning. Without any secret a new folder gets a random one.
 - **One server per folder**: a second server on the same folder stops at once with `Another T-Agent server is already using the data folder … (pid …, port …)`. A lock left by a crashed server (its pid is not running) is taken over. Development servers (for example in a git worktree) must use their own folder: `TAGENT_HOME=$(mktemp -d) PORT=3100 npm start`.
 - **Version safety**: the database stores its schema generation (`PRAGMA user_version`). A version of the app whose `schema_version` is lower than the stored one refuses to start and asks you to upgrade, so an old version never writes into data it does not understand.
@@ -680,10 +680,16 @@ Since this change the runtime data of a machine lives in **`~/.tagent`** (the ho
 
 ## Uninstall
 
-The following stops the service and permanently deletes the install directory, configuration, database, logs and the default task directory. The script first lists the targets and asks you to type `UNINSTALL` to confirm:
+The following stops the service and permanently deletes the install directory, its configuration and logs, and the default task directory. The script first lists the targets and asks you to type `UNINSTALL` to confirm:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/TorinMars/t-agent/main/uninstall.sh | bash
+```
+
+The data folder (`~/.tagent`, or `TAGENT_HOME` / `T_AGENT_DATA_DIR` from `.env`) is **kept**, because every installed version on the machine shares it; the script prints where it is and how to delete it by hand. To delete it as well, add `--purge-data` and type `DELETE DATA` at the second prompt:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/TorinMars/t-agent/main/uninstall.sh | bash -s -- --purge-data
 ```
 
 Custom install directory:

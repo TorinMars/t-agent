@@ -5,10 +5,15 @@ For the Claude / developer taking over: read `AGENTS.md` (development and releas
 ## Current goal (2026-11-05, after v2.87.11): one MUI page for PC and phone
 
 - The map of the system and the agreed plan are in `DESIGN.md` "System architecture and functionality" (parts F and G). Read it first. The sections below this one are older history.
-- Phase status: phase 0 done (tag `v2.87.11-two-pages` = commit `8494601`, the last release with the two pages `index.html` and `h5.html`). Phases 1 (MUI page works on PC next to the old page), 2 (port kept features), 3 (switch `/`, delete the old page; show the delete list to the user first) and 4 (cleanup) are not started.
+- Phase status: phase 0 done (tag `v2.87.11-two-pages` = commit `8494601`, the last release with the two pages `index.html` and `h5.html`). Phase 1 (MUI page works on PC next to the old page) is in progress. Phases 2 (port kept features), 3 (switch `/`, delete the old page; show the delete list to the user first) and 4 (cleanup) are not started.
 - User decisions (2026-11-05): `/` and `/h5` serve the same MUI page; layout by width (900px), input mode by pointer media queries, not by user agent. Keep / port: remote Engine management (Settings "Engines"), richer Update details, task Delete / Move to group / Work directory field. Drop: file browser and Monaco, in-page Markdown editing, To-do tab, theme picker, multi-task page, terminal history viewer, environment check, Utilities, quick links, workspace import / cleanup, batch update, share button, Finder / VS Code buttons, drag-sort and group editing, priority / due date / document paths. Apps (PM2), Agent config, tunnels and File sync pages: UI dropped, endpoints kept, pending the user's final confirmation.
 - Must port before the switch: the terminal "done" ack from the MUI page (today only the PC page acks).
-- Pitfalls: `npm test` has no file list, so on Node 24 it also runs `scripts/test-*.cjs`; iPad input mode must be checked on a real iPad.
+- Pitfalls:
+  - `npm test` is plain `node --test` with no file list; its default patterns also run 33 files under `scripts/` (confirmed): the 32 browser scripts `scripts/test-*.cjs` and `scripts/test-quick.js`.
+  - Headless Chromium draws only about 10 to 17 frames per second while the Mac display sleeps, so touch-timing tests must send in-page pointer events and time them with `performance.now()`, not rely on frame timing.
+  - `scripts/test-h5-settings-browser.cjs` had a save / reload race (the reload ran before the first working directory save finished); fixed in `d5a879f`.
+  - `schema_version` is 7 since v2.87.11 (`task_terminals.title_custom`). Raise it for every SQLite schema change; v2.28.2, v2.70.0, v2.77.0 and v2.78.0 added columns without raising it.
+  - iPad input mode must be checked on a real iPad.
 
 ## Current state
 

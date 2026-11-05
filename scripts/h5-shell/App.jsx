@@ -5,6 +5,7 @@ import { CopyDialog, Notice, RetainDialog, UploadDialog } from './Dialogs.jsx';
 import { DesignSheet } from './Design.jsx';
 import { Header } from './Header.jsx';
 import { SettingsDrawer } from './Settings.jsx';
+import { TaskDialog } from './TaskDialogs.jsx';
 import { TaskDrawer } from './TaskDrawer.jsx';
 import { BottomArea, TerminalArea } from './Terminal.jsx';
 import { TermMenu } from './TermMenu.jsx';
@@ -45,6 +46,7 @@ export function App({ ui }) {
       <DesignSheet state={state} ui={ui} />
       <UploadDialog state={state} ui={ui} />
       <RetainDialog state={state} ui={ui} />
+      <TaskDialog state={state} ui={ui} />
       <Notice state={state} ui={ui} />
     </ThemeProvider>
   );

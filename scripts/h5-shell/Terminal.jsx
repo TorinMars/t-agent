@@ -148,6 +148,10 @@ export function KeyBar({ state, ui }) {
 // The send and translate-and-send buttons look the same (white round button, send icon); translate-and-send only has a small "Aa" mark in its lower right corner.
 const SEND = { display: 'none', flex: '0 0 auto', width: 44, height: 44, bgcolor: '#fff', color: '#111', '&:hover': { bgcolor: '#e6e6e6' }, '&.Mui-disabled': { bgcolor: 'action.disabledBackground', color: 'action.disabled' } };
 const ACTION = { flex: '1 1 0', minWidth: 0, height: 44, p: 0, ...keyLook };
+// The hardware keyboard shortcuts of the draft box (keydown on #h5-translate-input in h5.js), shown after the tooltips: Apple systems (iPadOS reports MacIntel) use Cmd / Option.
+const APPLE = typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent || '');
+const SEND_KEYS = APPLE ? ' (\u2325\u21a9)' : ' (Alt+Enter)';
+const TRANSLATE_KEYS = APPLE ? ' (\u2318\u21a9)' : ' (Ctrl+Enter)';
 export function ActionBar({ state, ui, menu, onMenu }) {
   const keyboard = (action, kind, label) => (
     <IconButton data-action={action} sx={ACTION} title={t(label)} aria-label={t(label)} aria-pressed={state.keyboard === kind} onClick={() => ui.actions.key({ action })}><Icon name={kind === 'terminal' ? 'terminalKeyboard' : 'draftKeyboard'} /></IconButton>
@@ -178,11 +182,11 @@ export function ActionBar({ state, ui, menu, onMenu }) {
       <IconButton id="h5-cycle" className="h5-draft-hide" data-action="cycle" sx={ACTION} title={t('Next running or pending session')} aria-label={t('Next running or pending session')} onClick={() => ui.actions.nextActiveSession()}><Icon name="cycleSessions" /></IconButton>
       <Box className="h5-draft-only" aria-hidden="true" sx={{ display: 'none', alignSelf: 'stretch', width: '1px', my: 0.5, bgcolor: 'divider' }} />
       <IconButton
-        type="submit" form="h5-translate" id="h5-translate-send" className="h5-translate-send h5-draft-only" disabled={state.translating} title={t('Send as typed, without translating')} aria-label={t('Send')}
+        type="submit" form="h5-translate" id="h5-translate-send" className="h5-translate-send h5-draft-only" disabled={state.translating} title={t('Send as typed, without translating') + SEND_KEYS} aria-label={t('Send')}
         sx={SEND}
       ><Icon name="send" /></IconButton>
       <IconButton
-        id="h5-translate-button" type="button" className="h5-draft-only" disabled={state.translating} title={t('Translate to English and send')} aria-label={t('Translate and send')}
+        id="h5-translate-button" type="button" className="h5-draft-only" disabled={state.translating} title={t('Translate to English and send') + TRANSLATE_KEYS} aria-label={t('Translate and send')}
         sx={{ ...SEND, position: 'relative' }}
       ><Icon name="send" /><Box component="span" className="h5-aa" aria-hidden="true" sx={{ position: 'absolute', right: 10, bottom: 8, fontSize: 10, fontWeight: 700, lineHeight: 1, letterSpacing: '-0.02em', pointerEvents: 'none' }}>Aa</Box></IconButton>
     </Box>

@@ -889,6 +889,68 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       await input.blur();
     }
 
+    // Hardware keyboard shortcuts in the draft box: Cmd+Enter (or Ctrl+Enter) is translate-and-send, Option+Enter (Alt+Enter) is the send arrow. No new line is inserted;
+    // plain Enter stays a new line and an IME Enter does nothing.
+    {
+      const input = page.locator('#h5-translate-input');
+      const returns = () => page.evaluate(() => window.sockets[0].sent.filter(item => item === '\r').length);
+      assert.match(await page.locator('#h5-translate-button').getAttribute('title'), /\((⌘↩|Ctrl\+Enter)\)$/, 'the translate tooltip names its shortcut');
+      assert.match(await page.locator('#h5-translate-send').getAttribute('title'), /\((⌥↩|Alt\+Enter)\)$/, 'the send tooltip names its shortcut');
+      for (const combo of ['Meta+Enter', 'Control+Enter']) {
+        const requests = translateRequests.length;
+        const before = await returns();
+        await input.focus(); await input.fill('shortcut please');
+        await page.keyboard.press(combo);
+        await page.waitForFunction(count => window.sockets[0].sent.filter(item => item === '\r').length > count, before);
+        assert.equal(translateRequests.length, requests + 1, `${combo} makes one translate request`);
+        assert.equal(translateRequests.at(-1), 'shortcut please', `${combo} translates the text without a new line`);
+        assert.deepEqual((await sent()).slice(-2), ['Run the tests [2J', '\r'], `${combo} sends the translation, then Enter`);
+        assert.equal(await input.inputValue(), '', `${combo} clears the box`);
+        assert.notEqual(await page.evaluate(() => document.activeElement && document.activeElement.id), 'h5-translate-input', `${combo} dismisses the keyboard like the button`);
+      }
+      {
+        const requests = translateRequests.length;
+        const before = await returns();
+        await input.focus(); await input.fill('echo  typed');
+        await page.keyboard.press('Alt+Enter');
+        await page.waitForFunction(count => window.sockets[0].sent.filter(item => item === '\r').length > count, before);
+        assert.deepEqual((await sent()).slice(-2), ['echo  typed', '\r'], 'Option+Enter sends as typed, with no new line added');
+        assert.equal(translateRequests.length, requests, 'Option+Enter makes no translate request');
+        assert.equal(await input.inputValue(), '');
+      }
+      {
+        const requests = translateRequests.length;
+        const inputs = (await sent()).length;
+        await input.focus(); await input.fill('FAIL shortcut');
+        await page.keyboard.press('Meta+Enter');
+        await page.waitForFunction(() => document.getElementById('h5-translate-send').disabled === false);
+        await page.waitForTimeout(300);
+        assert.equal(translateRequests.length, requests + 1);
+        assert.equal((await sent()).length, inputs, 'a failed shortcut translation sends nothing');
+        assert.equal(await input.inputValue(), 'FAIL shortcut', 'and keeps the text, with no new line');
+        await input.fill('');
+        await page.keyboard.press('Alt+Enter'); await page.keyboard.press('Meta+Enter');
+        await page.waitForTimeout(200);
+        assert.equal((await sent()).length, inputs, 'an empty box sends nothing by shortcut');
+        assert.equal(translateRequests.length, requests + 1, 'an empty box makes no translate request');
+        await page.keyboard.type('line'); await page.keyboard.press('Enter');
+        assert.equal(await input.inputValue(), 'line\n', 'plain Enter is still a new line');
+        for (const extra of [{ metaKey: true }, { altKey: true }, { ctrlKey: true }]) {
+          const value = await input.evaluate((el, mods) => {
+            const event = new KeyboardEvent('keydown', { key: 'Enter', keyCode: 229, isComposing: true, bubbles: true, cancelable: true, ...mods });
+            el.dispatchEvent(event);
+            return { value: el.value, prevented: event.defaultPrevented };
+          }, extra);
+          assert.deepEqual(value, { value: 'line\n', prevented: false }, `a composing Enter with ${Object.keys(extra)[0]} is left alone`);
+        }
+        await page.waitForTimeout(200);
+        assert.equal((await sent()).length, inputs, 'a composing shortcut sends nothing');
+        assert.equal(translateRequests.length, requests + 1, 'a composing shortcut makes no translate request');
+        await input.fill('');
+        await input.blur();
+      }
+    }
+
     // Image upload: the link is typed into the terminal with a trailing space and no Enter.
     // iOS WebKit (a Home Screen web app above all) opens the photo picker only for a tap that lands on the file input itself: a script `input.click()` on a
     // hidden input, run from the click handler of another, pointer-captured button, is ignored there without any error. Chromium would open the picker anyway,

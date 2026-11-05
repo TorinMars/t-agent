@@ -210,16 +210,16 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
 
     // Saved screen first, then live input is allowed.
     await page.evaluate(() => window.sockets[0].emit(JSON.stringify({ type: 'history', data: 'saved prompt$ ', cols: 80, rows: 24 })));
-    await page.waitForFunction(() => document.querySelector('.xterm-rows')?.textContent.includes('saved prompt$'));
+    await page.waitForFunction(() => document.querySelector('.h5-xterm:not([hidden]) .xterm-rows')?.textContent.includes('saved prompt$'));
     // OSC 8 links: a javascript: address is never confirmed or opened; an https address is confirmed first, then opened in a new tab.
     await page.evaluate(() => {
       window.opened = [];
       window.open = (...args) => { window.opened.push(args[0]); return null; };
       window.sockets[0].emit('\r\n\x1b]8;;javascript:alert(1)\x07EVILLINK\x1b]8;;\x07\r\n\x1b]8;;https://example.com/ok\x07GOODLINK\x1b]8;;\x07');
     });
-    await page.waitForFunction(() => document.querySelector('.xterm-rows')?.textContent.includes('GOODLINK'));
+    await page.waitForFunction(() => document.querySelector('.h5-xterm:not([hidden]) .xterm-rows')?.textContent.includes('GOODLINK'));
     const clickText = async text => {
-      const box = await page.locator('.xterm-rows > div', { hasText: text }).first().boundingBox();
+      const box = await page.locator('.h5-xterm:not([hidden]) .xterm-rows > div', { hasText: text }).first().boundingBox();
       await page.mouse.move(box.x + 12, box.y + box.height / 2);
       await page.mouse.move(box.x + 14, box.y + box.height / 2);
       await page.mouse.down(); await page.mouse.up();
@@ -330,7 +330,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
         return { width: term.width, height: term.height, top: term.top, resizes: window.sockets[0].sent.filter(item => { try { return JSON.parse(item).type === 'resize'; } catch { return false; } }).length };
       });
       const before = await measure();
-      await page.evaluate(() => document.querySelector('#h5-terminal .xterm-helper-textarea').focus()); // a focused input is blurred first, so the on-screen keyboard closes
+      await page.evaluate(() => document.querySelector('#h5-terminal .h5-xterm:not([hidden]) .xterm-helper-textarea').focus()); // a focused input is blurred first, so the on-screen keyboard closes
       await design.tap();
       await page.locator('#h5-design-body h1', { hasText: 'Design of Fix login' }).waitFor();
       assert.deepEqual(designReads, ['DESIGN.md'], 'read through the task file API, relative to the working directory');
@@ -422,7 +422,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     assert.equal(await page.locator('[data-modifier="ctrl"]').getAttribute('aria-pressed'), 'false');
     // A latched Ctrl applies to the next character typed on the on-screen keyboard.
     await page.locator('[data-modifier="ctrl"]').tap();
-    await page.locator('.h5-xterm textarea').focus();
+    await page.locator('.h5-xterm:not([hidden]) textarea').focus();
     await page.keyboard.type('c');
     await page.locator('[data-shortcut="ctrl-c"]').tap();
     await page.locator('#h5-commands').tap(); // the saved commands menu also holds Paste text
@@ -433,20 +433,20 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     assert.deepEqual((await sent()).slice(7), ['\x1b[D', '\x1b[B', '\x1b[A', '\x1b[C'], 'each arrow sends its own sequence');
 
     // Tapping the terminal never asks for the on-screen keyboard; the keyboard key toggles it through the textarea's inputmode.
-    const inputmode = () => page.evaluate(() => document.querySelector('.h5-xterm textarea').getAttribute('inputmode'));
-    const inTerminal = () => page.evaluate(() => document.querySelector('.h5-xterm').contains(document.activeElement));
+    const inputmode = () => page.evaluate(() => document.querySelector('.h5-xterm:not([hidden]) textarea').getAttribute('inputmode'));
+    const inTerminal = () => page.evaluate(() => document.querySelector('.h5-xterm:not([hidden])').contains(document.activeElement));
     assert.equal(await inputmode(), 'none');
-    await page.locator('.h5-xterm').tap();
+    await page.locator('.h5-xterm:not([hidden])').tap();
     assert.equal(await inputmode(), 'none', 'tapping the terminal does not request the on-screen keyboard');
     await page.locator('[data-action="keyboard"]').tap();
     assert.equal(await inputmode(), 'text');
     assert.equal(await inTerminal(), true);
-    await page.locator('.h5-xterm').tap();
+    await page.locator('.h5-xterm:not([hidden])').tap();
     assert.equal(await inputmode(), 'text', 'a terminal tap keeps the open keyboard');
     await page.locator('[data-action="keyboard"]').tap();
     assert.equal(await inputmode(), 'none');
     assert.equal(await inTerminal(), false);
-    await page.locator('.h5-xterm').tap();
+    await page.locator('.h5-xterm:not([hidden])').tap();
     assert.equal(await inputmode(), 'none', 'a terminal tap after closing does not reopen it');
 
     // Draft box: hidden by default (no resting pill). The "Draft keyboard" key focuses it and it shows ABOVE the function keys: the box takes row 1 across the width
@@ -461,8 +461,8 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       const resizes = window.sockets[0].sent.filter(item => { try { return JSON.parse(item).type === 'resize'; } catch { return false; } }).length;
       return { form, root: { top: root.top, bottom: root.bottom, left: root.left, right: root.right, width: root.width }, input: r('h5-translate-input'), voice: r('h5-voice'), commands: r('h5-commands'), area: r('h5-bottom'), keys: r('h5-keys'), send: r('h5-translate-send'), translate: r('h5-translate-button'), resizes,
         term: document.getElementById('h5-terminal').getBoundingClientRect().height, focused: document.activeElement && document.activeElement.id,
-        xterm: (() => { const b = document.querySelector('.h5-xterm').getBoundingClientRect(); return { top: b.top, height: b.height }; })(),
-        screenBottom: document.querySelector('.h5-xterm .xterm-screen').getBoundingClientRect().bottom, rows: document.querySelectorAll('.h5-xterm .xterm-rows > div').length };
+        xterm: (() => { const b = document.querySelector('.h5-xterm:not([hidden])').getBoundingClientRect(); return { top: b.top, height: b.height }; })(),
+        screenBottom: document.querySelector('.h5-xterm:not([hidden]) .xterm-screen').getBoundingClientRect().bottom, rows: document.querySelectorAll('.h5-xterm:not([hidden]) .xterm-rows > div').length };
     }); };
     {
       // The cursor is on the last row, so the last row must stay visible above the bar when the bar grows over the terminal.
@@ -477,9 +477,9 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       // The terminal keyboard key focuses the terminal and keeps the draft box hidden.
       await page.locator('[data-action="keyboard"]').tap();
       await page.waitForTimeout(300); // the focused terminal cursor blinks forever, so the animation-free wait of barRects() does not apply here
-      const viaTerminal = await page.evaluate(() => ({ form: { height: document.getElementById('h5-translate').getBoundingClientRect().height }, xterm: { top: document.querySelector('.h5-xterm').getBoundingClientRect().top },
+      const viaTerminal = await page.evaluate(() => ({ form: { height: document.getElementById('h5-translate').getBoundingClientRect().height }, xterm: { top: document.querySelector('.h5-xterm:not([hidden])').getBoundingClientRect().top },
         resizes: window.sockets[0].sent.filter(item => { try { return JSON.parse(item).type === 'resize'; } catch { return false; } }).length }));
-      assert.equal(await page.evaluate(() => document.querySelector('.h5-xterm').contains(document.activeElement)), true, 'the terminal keyboard key focuses the terminal');
+      assert.equal(await page.evaluate(() => document.querySelector('.h5-xterm:not([hidden])').contains(document.activeElement)), true, 'the terminal keyboard key focuses the terminal');
       assert.equal(viaTerminal.form.height, 0, 'the draft box stays hidden');
       assert.equal(await page.locator('[data-action="keyboard"]').getAttribute('aria-pressed'), 'true', 'the terminal keyboard key is blue');
       assert.equal(await page.locator('[data-action="draft"]').getAttribute('aria-pressed'), 'false');
@@ -491,9 +491,9 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       // The draft keyboard key focuses the box, which shows above the function keys.
       await openDraft();
       const active = await barRects();
-      assert.equal(await page.evaluate(() => document.querySelector('.h5-xterm').contains(document.activeElement)), false, 'the terminal gave up the focus');
+      assert.equal(await page.evaluate(() => document.querySelector('.h5-xterm:not([hidden])').contains(document.activeElement)), false, 'the terminal gave up the focus');
       assert.equal(await page.locator('#h5-translate').isVisible(), true, 'the draft box is shown');
-      assert.equal(await page.evaluate(() => document.querySelector('.h5-xterm textarea').getAttribute('inputmode')), 'none', 'the terminal asks for no keyboard while the draft box has it');
+      assert.equal(await page.evaluate(() => document.querySelector('.h5-xterm:not([hidden]) textarea').getAttribute('inputmode')), 'none', 'the terminal asks for no keyboard while the draft box has it');
       await page.locator('[data-action="keyboard"]').tap(); // moving to the terminal keyboard hides the draft box again
       await page.waitForTimeout(300);
       assert.equal(await page.evaluate(() => document.getElementById('h5-translate').getBoundingClientRect().height), 0, 'the terminal keyboard key hides the draft box');
@@ -568,7 +568,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       const mid = await page.evaluate(async () => {
         document.getElementById('h5-translate-input').focus();
         await new Promise(resolve => requestAnimationFrame(resolve));
-        return { animations: document.getAnimations().length, moving: !!document.querySelector('.h5-bar-moving'), xtermTransform: getComputedStyle(document.querySelector('.h5-xterm')).transform };
+        return { animations: document.getAnimations().length, moving: !!document.querySelector('.h5-bar-moving'), xtermTransform: getComputedStyle(document.querySelector('.h5-xterm:not([hidden])')).transform };
       });
       assert.ok(mid.animations > 0 && mid.moving, 'the bar and the terminal move with an animation');
       const during = await barRects();
@@ -580,7 +580,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       const instant = await page.evaluate(() => {
         document.getElementById('h5-translate-input').focus();
         return { animations: document.getAnimations().length, moving: !!document.querySelector('.h5-bar-moving'),
-          top: document.querySelector('.h5-xterm').getBoundingClientRect().top, form: document.getElementById('h5-translate').getBoundingClientRect().top };
+          top: document.querySelector('.h5-xterm:not([hidden])').getBoundingClientRect().top, form: document.getElementById('h5-translate').getBoundingClientRect().top };
       });
       assert.equal(instant.animations, 0, 'reduced motion: no animation');
       assert.ok(Math.abs(instant.top - active.xterm.top) <= 1, 'reduced motion: the terminal moves at once');
@@ -636,7 +636,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
         const resizes = window.sockets[0].sent.filter(item => { try { return JSON.parse(item).type === 'resize'; } catch { return false; } }).length;
         return { height: rect.height, bottom: rect.bottom, line: parseFloat(style.lineHeight), pad: parseFloat(style.paddingTop) + parseFloat(style.paddingBottom),
           overflowY: style.overflowY, scrollHeight: el.scrollHeight, clientHeight: el.clientHeight, viewport: window.visualViewport.height,
-          screenBottom: document.querySelector('#h5-terminal .xterm-screen').getBoundingClientRect().bottom, areaTop: document.getElementById('h5-bottom').getBoundingClientRect().top, termHeight: term.height, sendBottom: send.bottom, voiceBottom: voice.bottom, resizes, placeholder: el.placeholder };
+          screenBottom: document.querySelector('#h5-terminal .h5-xterm:not([hidden]) .xterm-screen').getBoundingClientRect().bottom, areaTop: document.getElementById('h5-bottom').getBoundingClientRect().top, termHeight: term.height, sendBottom: send.bottom, voiceBottom: voice.bottom, resizes, placeholder: el.placeholder };
       }); };
       await input.focus(); // fill() focuses the box anyway: measure the active layout throughout
       const one = await box();
@@ -767,7 +767,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       assert.ok(afterSend.height < 50 && afterSend.inline === '', `one line again after a send (${afterSend.height}px)`);
       // After a send the keyboard is dismissed: the box is blurred (and hidden at once), the terminal is not focused, no keyboard key stays pressed, nothing is resized.
       assert.notEqual(await page.evaluate(() => document.activeElement && document.activeElement.id), 'h5-translate-input', 'the box is blurred after a send');
-      assert.equal(await page.evaluate(() => document.querySelector('.h5-xterm').contains(document.activeElement)), false, 'the terminal is not focused after a send');
+      assert.equal(await page.evaluate(() => document.querySelector('.h5-xterm:not([hidden])').contains(document.activeElement)), false, 'the terminal is not focused after a send');
       assert.equal(await page.evaluate(() => document.getElementById('h5-translate').getBoundingClientRect().height), 0, 'the box is hidden right after a send');
       assert.equal(await page.evaluate(() => document.getElementById('h5-bottom').style.getPropertyValue('--h5-bar-extra') || '0px'), '0px', 'nothing is covered any more');
       for (const action of ['keyboard', 'draft']) assert.equal(await page.locator(`#h5-actions [data-action="${action}"]`).getAttribute('aria-pressed'), 'false', `${action} key is reset after a send`);
@@ -998,7 +998,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     await page.evaluate(() => {
       const data = new DataTransfer();
       data.items.add(new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])], 'clip.png', { type: 'image/png' }));
-      document.querySelector('.h5-xterm textarea').dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
+      document.querySelector('.h5-xterm:not([hidden]) textarea').dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
     });
     await page.waitForFunction(() => window.sockets[0].sent.filter(item => item === 'https://img.test/shot.png ').length === 2);
     assert.equal(await linkCount(), 2);
@@ -1055,7 +1055,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     // In the normal buffer the strip scrolls the history.
     await page.evaluate(() => window.sockets[0].emit(JSON.stringify({ type: 'history', data: '\x1b[?1049l\x1b[?1000l' + Array.from({ length: 200 }, (_, i) => 'line ' + i).join('\r\n'), cols: 40, rows: 30 })));
     await page.waitForTimeout(300);
-    const rowsText = () => page.locator('.h5-xterm .xterm-rows').textContent();
+    const rowsText = () => page.locator('.h5-xterm:not([hidden]) .xterm-rows').textContent();
     const bottomText = await rowsText();
     await drag(stripX, 300, 500);
     const olderText = await rowsText();
@@ -1064,7 +1064,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     assert.equal(await rowsText(), bottomText, 'dragging up brings the newest output back');
 
     // A tap on the strip (no travel) is handed to the element under it, so links under the strip stay clickable.
-    await page.evaluate(() => { window.__tapClicks = 0; document.querySelector('.h5-xterm').addEventListener('click', () => { window.__tapClicks++; }); });
+    await page.evaluate(() => { window.__tapClicks = 0; document.querySelector('.h5-xterm:not([hidden])').addEventListener('click', () => { window.__tapClicks++; }); });
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: stripX, y: 200 }] });
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
     await page.waitForTimeout(100);
@@ -1128,7 +1128,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     await page.setViewportSize(vp);
     await page.waitForTimeout(900);
     assert.equal(await inputmode(), 'none', 'after the keyboard closed without a blur, inputmode is reset');
-    await page.locator('.h5-xterm').tap();
+    await page.locator('.h5-xterm:not([hidden])').tap();
     assert.equal(await inputmode(), 'none', 'the next terminal tap does not reopen the keyboard');
     await page.locator('[data-action="keyboard"]').tap();
     assert.equal(await inputmode(), 'text', 'the keyboard key still opens it afterwards');
@@ -1310,12 +1310,13 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     assert.ok(calls.includes('POST /api/tasks/1/terminals'));
     assert.deepEqual(createBodies[createBodies.length - 1], {}, 'no name: the terminal keeps its default name');
     assert.equal(await page.evaluate(() => new URL(window.sockets[1].url).searchParams.get('terminalId')), 'h5-second');
-    assert.equal(await page.evaluate(() => window.sockets[0].readyState), 3);
+    assert.equal(await page.evaluate(() => window.sockets[0].readyState), 1, 'the previous terminal stays connected, hidden (recent terminals are kept warm)');
+    assert.equal(await page.evaluate(() => document.querySelectorAll('.h5-xterm').length - document.querySelectorAll('.h5-xterm:not([hidden])').length), 1);
 
     // The on-screen keyboard shrinks the viewport: the terminal keeps its size (no resize, so no redraw) and is shifted up instead.
     const termInfo = () => page.evaluate(() => {
       const box = document.getElementById('h5-terminal').getBoundingClientRect();
-      const term = document.querySelector('.h5-xterm').getBoundingClientRect();
+      const term = document.querySelector('.h5-xterm:not([hidden])').getBoundingClientRect();
       const resizes = window.sockets[1].sent.filter(item => { try { return JSON.parse(item).type === 'resize'; } catch { return false; } }).length;
       return { boxTop: box.top, boxBottom: box.bottom, top: term.top, bottom: term.bottom, height: term.height, resizes };
     });
@@ -1430,11 +1431,11 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
 
     // Long press on the terminal body opens the copy view; a press that moves does not.
     const touch = (type, x, y) => page.evaluate(([kind, px, py]) => {
-      const target = document.querySelector('.h5-xterm .xterm-screen');
+      const target = document.querySelector('.h5-xterm:not([hidden]) .xterm-screen');
       const init = { bubbles: true, cancelable: true, clientX: px, clientY: py, pointerId: 7, pointerType: 'touch', isPrimary: true };
       target.dispatchEvent(new PointerEvent(kind, init));
     }, [type, x, y]);
-    const screenBox = await page.locator('.h5-xterm .xterm-screen').boundingBox();
+    const screenBox = await page.locator('.h5-xterm:not([hidden]) .xterm-screen').boundingBox();
     await touch('pointerdown', screenBox.x + 50, screenBox.y + 100);
     await touch('pointermove', screenBox.x + 50, screenBox.y + 130);
     await page.waitForTimeout(700);
@@ -1455,7 +1456,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       await page.waitForTimeout(450); // the previous multi-tap is over
       for (let i = 0; i < count; i++) {
         await page.evaluate(([x, y]) => {
-          const target = document.querySelector('.h5-xterm .xterm-screen');
+          const target = document.querySelector('.h5-xterm:not([hidden]) .xterm-screen');
           const init = { bubbles: true, cancelable: true, clientX: x, clientY: y, pointerId: 8, pointerType: 'touch', isPrimary: true };
           target.dispatchEvent(new PointerEvent('pointerdown', init));
           target.dispatchEvent(new PointerEvent('pointerup', init));
@@ -1519,7 +1520,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     await page.waitForFunction(() => document.querySelectorAll('#h5-tasks .h5-terminal-main').length === 1);
     assert.deepEqual(sentBodies, [{ action: 'delete', terminal_id: 'h5-second' }]);
     await page.locator('#h5-tasks').waitFor({ state: 'hidden' });
-    assert.equal(await page.evaluate(() => new URL(window.sockets.at(-1).url).searchParams.get('terminalId')), 'h5-default');
+    assert.equal(await page.evaluate(() => document.querySelector('.h5-xterm:not([hidden])')?.dataset.terminalId), 'h5-default');
 
     // A session of another task: a tap on that task lists its sessions (the task shown stays), and a tap on a session selects the task and goes there.
     await page.locator('#h5-open-tasks').tap();
@@ -1538,7 +1539,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     await page.locator('#h5-tasks').waitFor({ state: 'hidden' });
     assert.equal(await page.locator('#h5-task-name').textContent(), 'Write docs');
     assert.equal(await page.locator('#h5-session-name').textContent(), 'Docs terminal');
-    await page.waitForFunction(() => new URL(window.sockets.at(-1).url).searchParams.get('terminalId') === 'h5-docs');
+    await page.waitForFunction(() => document.querySelector('.h5-xterm:not([hidden])')?.dataset.terminalId === 'h5-docs');
     // And a chat of another task: that task is selected and the chat opens over it.
     chats.length = 0;
     chats.push({ id: 'c1', agent: 'claude', session_id: null, title: 'Cross chat', mode: 'ask', running: false, opened: { web: null, h5: null } });

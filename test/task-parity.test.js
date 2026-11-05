@@ -276,7 +276,8 @@ async function firstActivity(url, headers = {}) {
 
 test('terminal activity is pushed by the local routes, the Engine and the proxy; an older Engine answers 404 through the proxy', async () => {
   await createTask(backends()[1], 'activity-stream');
-  const empty = { activity: {}, subagents: {} };
+  // The agent chat counters of the stream's owner travel in the same snapshot (the top bar needs no poll).
+  const empty = { activity: {}, subagents: {}, agents: { running: 0, queued: 0, submitted: 0 } };
   assert.deepEqual(await firstActivity(`${local}/api/tasks/terminal-activity/stream`), empty);
   assert.deepEqual(await firstActivity(`${engine}/v1/terminal-activity/stream`, { Authorization: `Bearer ${engineToken}` }), empty);
   assert.deepEqual(await firstActivity(`${proxy}/api/remote-servers/${remoteId}/terminal-activity/stream`), empty);

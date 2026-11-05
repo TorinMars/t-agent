@@ -81,7 +81,7 @@ async function openPage(browser, { viewport, touch = false, remote = false, stor
 
 const lastSocket = page => page.evaluate(() => window.sockets.at(-1).sent);
 const resizes = page => page.evaluate(() => window.sockets.at(-1).sent.map(item => { try { return JSON.parse(item); } catch { return null; } }).filter(item => item && item.type === 'resize'));
-const activeIsTerminal = page => page.evaluate(() => Boolean(document.activeElement && document.activeElement.closest('.h5-xterm')));
+const activeIsTerminal = page => page.evaluate(() => Boolean(document.activeElement && document.activeElement.closest('.h5-xterm:not([hidden])')));
 async function openTerminal(page, task, terminal, how = 'click') {
   // The terminal names are unique in these mocks; a task that is not open yet is opened first.
   const row = page.locator('#h5-tasks .h5-terminal-main', { hasText: terminal });
@@ -128,7 +128,7 @@ const waitAck = (url, id, from = 0) => new Promise((resolve, reject) => {
       }
       const bottom = await page.evaluate(() => ({ terminal: document.querySelector('.h5-terminal').getBoundingClientRect().bottom, box: document.getElementById('h5-translate').getBoundingClientRect().top }));
       assert.ok(bottom.terminal <= bottom.box + 1, `${label}: the resting draft box has its own room below the terminal (${JSON.stringify(bottom)})`);
-      assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('.h5-xterm .xterm-rows')).fontSize), '13px', `${label}: 13px terminal font`);
+      assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('.h5-xterm:not([hidden]) .xterm-rows')).fontSize), '13px', `${label}: 13px terminal font`);
       assert.equal(await page.locator('#h5-voice').getAttribute('title'), 'Voice input: click to start speaking', `${label}: voice is click to start / stop`);
       // Icon buttons: the native title is the tooltip (no MUI Tooltip any more), the same text as the aria-label; no MUI tooltip opens on hover.
       for (const [id, name] of [['h5-design', 'Design document'], ['h5-commands', 'Saved commands'], ['h5-image', 'Upload image'], ['h5-refresh', 'Refresh the page']]) {
@@ -162,7 +162,7 @@ const waitAck = (url, id, from = 0) => new Promise((resolve, reject) => {
       assert.equal(await activeIsTerminal(page), true, `${label}: and the terminal has the focus`);
       // A click on the terminal focuses it.
       await page.evaluate(() => document.activeElement.blur());
-      await page.locator('.h5-xterm').click({ position: { x: 200, y: 100 } });
+      await page.locator('.h5-xterm:not([hidden])').click({ position: { x: 200, y: 100 } });
       assert.equal(await activeIsTerminal(page), true, `${label}: a click focuses the terminal`);
 
       // Draft box shortcuts: Cmd/Ctrl+Enter translates and sends, Alt+Enter sends as typed, Enter is a new line; a send returns the focus to the terminal.
@@ -210,7 +210,7 @@ const waitAck = (url, id, from = 0) => new Promise((resolve, reject) => {
       const rowsBefore = (await resizes(page)).at(-1).rows;
       await page.setViewportSize({ width: viewport.width, height: viewport.height - 300 });
       await page.waitForTimeout(400);
-      const pinned = await page.evaluate(() => { const el = document.querySelector('.h5-xterm'); const host = document.getElementById('h5-terminal').getBoundingClientRect(); const box = el.getBoundingClientRect();
+      const pinned = await page.evaluate(() => { const el = document.querySelector('.h5-xterm:not([hidden])'); const host = document.getElementById('h5-terminal').getBoundingClientRect(); const box = el.getBoundingClientRect();
         return { height: el.style.height, transform: el.style.transform, inside: box.top >= host.top - 1 && box.bottom <= host.bottom + 1, page: parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--h5-height')), inner: innerHeight }; });
       assert.deepEqual({ height: pinned.height, transform: pinned.transform, inside: pinned.inside }, { height: '', transform: '', inside: true }, `${label}: a shorter window does not pin or shift the terminal`);
       assert.equal(pinned.page, pinned.inner, '--h5-height follows the window height');
@@ -355,7 +355,7 @@ const waitAck = (url, id, from = 0) => new Promise((resolve, reject) => {
       assert.equal(await page.locator('#h5-wheel').count(), 1, 'phone: the wheel strip is there');
       assert.equal(await page.locator('#h5-actions [data-action="keyboard"]').isVisible(), true, 'phone: the keyboard buttons are shown');
       assert.equal(await page.evaluate(() => document.getElementById('h5-translate').getBoundingClientRect().height), 0, 'phone: the draft box is hidden at rest');
-      assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('.h5-xterm .xterm-rows')).fontSize), '11px', 'phone: 11px terminal font');
+      assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('.h5-xterm:not([hidden]) .xterm-rows')).fontSize), '11px', 'phone: 11px terminal font');
       assert.equal(await page.locator('#h5-sidebar-toggle').count(), 0, 'phone: no sidebar toggle');
       assert.equal(await activeIsTerminal(page), false, 'phone: showing a terminal does not focus it (no on-screen keyboard)');
       if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'phone-390-unchanged.png') });

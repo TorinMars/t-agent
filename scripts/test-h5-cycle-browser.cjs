@@ -35,6 +35,7 @@ let subagentsMissing = false; // an Engine older than the sub-agent endpoint
 const pageErrors = [];
 const hits = {}; // GET requests per path
 const acks = []; // [task, terminal_id] of every acknowledgement
+const renames = []; // [task, terminal_id, title] of every terminal rename
 
 async function openPage(browser, viewport, { stream = false } = {}) {
   const scale = process.env.H5_SHOT_DIR ? { deviceScaleFactor: 3 } : {};
@@ -67,6 +68,14 @@ async function openPage(browser, viewport, { stream = false } = {}) {
     if (url.pathname === '/api/task-groups') return json([{ key: 'doing', name: 'In progress', sort_order: 1 }, { key: 'todo', name: 'To do', sort_order: 2 }]);
     if (url.pathname === '/api/tasks/terminal-activity') return json(activity);
     if (url.pathname === '/api/tasks/terminal-subagents') return subagentsMissing ? json({ error: 'not found' }, 404) : json(subagents);
+    const rename = url.pathname.match(/^\/api\/tasks\/(\d+)\/terminals\/([^/]+)$/);
+    if (rename && method === 'PATCH') { // the server keeps a given name (title_custom), so the listing answers it from now on
+      const row = (TERMINALS[rename[1]] || []).find(item => item.terminal_id === decodeURIComponent(rename[2]));
+      if (!row) return json({ error: 'TERMINAL_NOT_FOUND' }, 404);
+      row.title = route.request().postDataJSON().title;
+      renames.push([Number(rename[1]), row.terminal_id, row.title]);
+      return json({ terminal_id: row.terminal_id, title: row.title });
+    }
     const terminals = url.pathname.match(/^\/api\/tasks\/(\d+)\/terminals$/);
     if (terminals && method === 'GET') return json(TERMINALS[terminals[1]] || []);
     if (url.pathname === '/api/tasks/1/agent/conversations') return json([{ id: 'k1', agent: 'claude', title: 'Busy chat', running: true, pending: false, opened: { web: null, h5: null } }]);
@@ -78,9 +87,10 @@ async function openPage(browser, viewport, { stream = false } = {}) {
   return { context, page };
 }
 
-const shown = page => page.evaluate(() => ({ terminal: new URL(window.sockets.at(-1).url).searchParams.get('terminalId'), task: document.getElementById('h5-task-name').textContent }));
+// The terminal on screen: recent terminals stay connected but hidden, so the newest socket is not always the shown one.
+const shown = page => page.evaluate(() => ({ terminal: document.querySelector('.h5-xterm:not([hidden])')?.dataset.terminalId, task: document.getElementById('h5-task-name').textContent }));
 async function waitFor(page, task, terminal) {
-  await page.waitForFunction(([name, id]) => window.sockets.length && new URL(window.sockets.at(-1).url).searchParams.get('terminalId') === id && document.getElementById('h5-task-name').textContent === name, [task, terminal]);
+  await page.waitForFunction(([name, id]) => document.querySelector('.h5-xterm:not([hidden])')?.dataset.terminalId === id && document.getElementById('h5-task-name').textContent === name, [task, terminal]);
 }
 // The shell's floating notice (Notice in scripts/h5-shell/Dialogs.jsx, a Snackbar) shows the last message.
 async function toast(page, text) {
@@ -90,12 +100,66 @@ async function toast(page, text) {
 (async () => {
   const browser = await chromium.launch({ headless: true, ...(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {}) });
   try {
+    // The back button (page.goBack: Android back, the back gesture) closes the open sheet, menu or dialog instead of leaving the page.
+    {
+      const { context, page } = await openPage(browser, { width: 390, height: 844 });
+      await page.goto(`${ORIGIN}/h5?openChat=9:x`); // the notification link: its address is kept by every entry
+      const sheet = page.locator('#h5-tasks');
+      await sheet.waitFor({ state: 'visible' }); // the task sheet opens by itself on a phone
+      await page.waitForFunction(() => history.state && history.state.h5Layer === 1);
+      await page.goBack();
+      await sheet.waitFor({ state: 'hidden' });
+      assert.equal(new URL(page.url()).search, '?openChat=9:x', 'still on the page, same address');
+      // Settings, then a menu over the task sheet: one back press each, top first.
+      await page.evaluate(() => window.H5UI.actions.openSettings());
+      await page.locator('#h5-settings').waitFor({ state: 'visible' });
+      await page.goBack();
+      await page.locator('#h5-settings').waitFor({ state: 'hidden' });
+      await page.locator('#h5-open-tasks').tap();
+      await sheet.waitFor({ state: 'visible' });
+      await page.locator('.h5-task-item', { hasText: 'Alpha' }).tap();
+      await page.locator('#h5-tasks .h5-terminal-list[aria-label="Alpha"] .h5-terminal-main', { hasText: 'Terminal 1' }).tap();
+      await sheet.waitFor({ state: 'hidden' });
+      await page.waitForFunction(() => !(history.state && history.state.h5Layer)); // closed by choosing a terminal: its entry was taken back
+      await page.locator('#h5-open-tasks').tap();
+      await page.locator('#h5-tasks .h5-terminal-row', { hasText: 'Claude work' }).locator('.h5-terminal-more').tap();
+      await page.locator('#h5-term-menu').waitFor({ state: 'visible' });
+      await page.waitForFunction(() => history.state && history.state.h5Layer === 2);
+      await page.goBack();
+      await page.locator('#h5-term-menu').waitFor({ state: 'hidden' });
+      assert.equal(await sheet.isVisible(), true, 'the sheet under the menu stays');
+      // Closed another way (Cancel): its entry is taken back, so one back press closes the sheet and nothing is left over.
+      await page.locator('#h5-tasks .h5-terminal-row', { hasText: 'Claude work' }).locator('.h5-terminal-more').tap();
+      await page.locator('#h5-term-menu-cancel').tap();
+      await page.locator('#h5-term-menu').waitFor({ state: 'hidden' });
+      await page.waitForFunction(() => history.state && history.state.h5Layer === 1);
+      await page.goBack();
+      await sheet.waitFor({ state: 'hidden' });
+      await page.waitForFunction(() => !(history.state && history.state.h5Layer));
+      assert.equal(new URL(page.url()).pathname, '/h5');
+      await context.close();
+    }
+
     const { context, page } = await openPage(browser, { width: 390, height: 844 });
     // Open Alpha / Terminal 1 from the task sheet, as a person would.
     await page.locator('#h5-tasks').waitFor({ state: 'visible' });
     await page.locator('.h5-task-item', { hasText: 'Alpha' }).tap();
     await page.locator('#h5-tasks .h5-terminal-list[aria-label="Alpha"] .h5-terminal-main', { hasText: 'Terminal 1' }).tap();
     await waitFor(page, 'Alpha', 'default');
+    await page.locator('#h5-tasks').waitFor({ state: 'hidden' });
+
+    // A Claude terminal can be renamed from its menu too (a given name wins over the Claude session title on the server).
+    await page.locator('#h5-open-tasks').tap();
+    await page.locator('#h5-tasks .h5-terminal-row', { hasText: 'Claude work' }).locator('.h5-terminal-more').tap();
+    await page.locator('#h5-term-menu').waitFor({ state: 'visible' });
+    assert.deepEqual(await page.locator('#h5-term-menu-actions button').allTextContents(), ['Rename', 'Reopen', 'Restart in the working directory', 'Delete'], 'Rename is offered for an agent terminal');
+    await page.locator('#h5-term-menu-actions button', { hasText: 'Rename' }).tap();
+    await page.locator('#h5-term-rename-input').fill('My review');
+    await page.locator('#h5-term-rename button').tap();
+    await page.locator('#h5-term-menu').waitFor({ state: 'hidden' });
+    assert.deepEqual(renames, [[1, 'c1', 'My review']]);
+    await page.locator('#h5-tasks .h5-terminal-row .h5-terminal-name', { hasText: 'My review' }).waitFor();
+    await page.evaluate(() => window.H5UI.actions.closeTasks()); // not Escape: a key press would turn on the hardware keyboard mode
     await page.locator('#h5-tasks').waitFor({ state: 'hidden' });
 
     const cycle = page.locator('#h5-cycle');
@@ -108,7 +172,7 @@ async function toast(page, text) {
     assert.equal(await cycle.locator('svg').count(), 1, 'an icon button');
 
     // The terminal keyboard is open (the terminal input has the focus): a tap closes it first.
-    await page.evaluate(() => document.querySelector('#h5-terminal .xterm-helper-textarea').focus());
+    await page.evaluate(() => document.querySelector('#h5-terminal .h5-xterm:not([hidden]) .xterm-helper-textarea').focus());
     // Sheet order: Alpha (default, c1), Beta (b1), Gamma (g1); x1, b2, d1 are idle, the running chat and task 99 do not count. Then it wraps.
     const expected = [['Alpha', 'c1'], ['Beta', 'b1'], ['Gamma', 'g1'], ['Alpha', 'default'], ['Alpha', 'c1']];
     for (const [index, [task, terminal]] of expected.entries()) {
@@ -212,9 +276,14 @@ async function toast(page, text) {
       // No polling while the stream is live: wait longer than the old 3 s poll, twice over.
       const polled = () => (hits['/api/tasks/terminal-activity'] || 0) + (hits['/api/tasks/terminal-subagents'] || 0);
       const before = polled();
+      // The agent counters of the top bar travel in the same stream: shown at once, and their 5 s poll stops.
+      await push({ activity: { 1: { c1: 'done' } }, subagents: {}, agents: { running: 2, queued: 1, submitted: 3 } });
+      await live.page.waitForFunction(() => [...document.querySelectorAll('#agent-activity .count')].map(node => node.textContent).join() === '3,2');
+      const summaries = hits['/api/agent-chat/summary'] || 0;
       await live.page.waitForTimeout(7000);
       assert.equal(polled(), before, 'no GET of terminal-activity / terminal-subagents while the stream is live');
       assert.equal(before, 0, 'not even once since the page opened');
+      assert.equal(hits['/api/agent-chat/summary'] || 0, summaries, 'no GET of the agent summary while the stream pushes it');
       assert.deepEqual(await live.page.evaluate(() => window.activityStream.opens), [STREAM], 'one stream for the whole time');
       // A lost connection reconnects (after a 1 s backoff) and the new stream's snapshot is used.
       await live.page.evaluate(url => window.activityStream.drop(url), STREAM);

@@ -7,6 +7,7 @@ import Typography from '@mui/material/Typography';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import { named, t } from './common.jsx';
 import { Icon } from './Icons.jsx';
+import { imagePath, renderText } from './file-view.mjs';
 
 // The Markdown renderer the app already ships (the desktop document view uses the same files). They are loaded the first time the sheet shows a
 // document, from this server; mermaid (about 5 MB) only when the document has a diagram. Keep the versions in step with scripts/vendor-libs.json.
@@ -42,8 +43,10 @@ function ensureMermaid() {
 const escapeHtml = value => String(value).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]);
 const SAFE_LINK = /^(https?:|mailto:)/i;
 const SAFE_IMAGE = /^(https?:|data:image\/(png|jpeg|gif|webp);)/i;
-// The document is shown, not trusted: raw HTML is shown as text, and only web / mail links and web images are live (a relative link or image shows its text).
-function renderMarkdown(source) {
+// The document is shown, not trusted: raw HTML is shown as text, and only web / mail links and web images are live (a relative link shows its text).
+// A relative image inside the working directory is read through the task file API (`imageUrl(path)`: PNG, JPEG, GIF or WebP, at most 5 MB); one that
+// cannot be shown (outside the folder, another type, missing, an older Engine) shows its text.
+function renderMarkdown(source, docPath, imageUrl) {
   const marked = new window.marked.Marked({
     renderer: {
       html({ text }) { return escapeHtml(text); },
@@ -53,6 +56,8 @@ function renderMarkdown(source) {
         return `<a href="${escapeHtml(href)}"${title ? ` title="${escapeHtml(title)}"` : ''} target="_blank" rel="noopener noreferrer">${inner}</a>`;
       },
       image({ href, title, text }) {
+        const local = !SAFE_IMAGE.test(href || '') && imageUrl ? imagePath(docPath, href) : null;
+        if (local) return `<img src="${escapeHtml(imageUrl(local))}" alt="${escapeHtml(text || '')}" data-h5-local="${escapeHtml(href || '')}"${title ? ` title="${escapeHtml(title)}"` : ''} loading="lazy">`;
         if (!SAFE_IMAGE.test(href || '')) return `<span class="h5-design-image">${escapeHtml(text || href || '')}</span>`;
         return `<img src="${escapeHtml(href)}" alt="${escapeHtml(text || '')}"${title ? ` title="${escapeHtml(title)}"` : ''} loading="lazy">`;
       },
@@ -74,29 +79,16 @@ const FILE_ERRORS = {
 };
 const MARKDOWN_FILE = /\.(md|markdown|mdx)$/i;
 
-// A file that is not Markdown is shown as plain text with line numbers (the phone has no code highlighter); the line a link named is marked and
-// scrolled to the middle of the sheet. The text goes in as text nodes, never as HTML.
-function renderText(node, source, line) {
-  const pre = document.createElement('pre');
-  pre.className = 'h5-file-text';
-  pre.setAttribute('translate', 'no');
-  const lines = source.split(/\r\n|\r|\n/);
-  if (lines.length > 1 && lines[lines.length - 1] === '') lines.pop();
-  const width = String(lines.length).length;
-  let target = null;
-  lines.forEach((text, index) => {
-    const row = document.createElement('span');
-    row.className = 'h5-file-line';
-    row.dataset.line = String(index + 1);
-    row.style.setProperty('--h5-line-digits', String(width));
-    row.textContent = `${text}\n`;
-    if (line && index + 1 === line) { row.classList.add('is-target'); target = row; }
-    pre.append(row);
-  });
-  node.replaceChildren(pre);
-  node.scrollTop = 0;
-  if (target) node.scrollTop = Math.max(0, target.getBoundingClientRect().top - node.getBoundingClientRect().top - node.clientHeight / 2);
-}
+// A file that is not Markdown is shown as plain text with line numbers (renderText, scripts/h5-shell/file-view.mjs: only the lines in view are drawn).
+// A relative image that does not load shows its text instead.
+const localImageFailed = event => {
+  const img = event.target;
+  if (!img || !img.dataset || img.dataset.h5Local === undefined) return;
+  const span = document.createElement('span');
+  span.className = 'h5-design-image';
+  span.textContent = img.alt || img.dataset.h5Local;
+  img.replaceWith(span);
+};
 
 // A swipe down closes the bottom sheet (what MUI's SwipeableDrawer did, in a few lines and without its 7 KB). The finger moves the sheet with it;
 // letting go after 25% of the sheet's height, or after a quick flick down, closes it, else it slides back. A swipe that starts on the document
@@ -154,17 +146,20 @@ export function DesignSheet({ state, ui }) {
   const fromLink = Boolean(design && design.link);
   const markdown = !fromLink || MARKDOWN_FILE.test(filePathInDir);
   const line = (design && design.line) || null;
+  const imageBase = (design && design.imageBase) || null; // `${files}/image?path=` of the task (h5.js openFileSheet)
 
   useEffect(() => {
     if (content === null || !node) return undefined;
     let cancelled = false;
+    let view = null; // the plain-text view, which listens to the scrolling of the box
     setRender({ status: 'rendering' });
     (async () => {
       try {
-        if (!markdown) { renderText(node, content, line); setRender({ status: 'done' }); return; }
+        if (!markdown) { view = renderText(node, content, line); setRender({ status: 'done' }); return; }
         await Promise.all([loadOnce(MARKED_SRC), loadOnce(MARKDOWN_VIEW_SRC), loadOnce(MARKDOWN_CSS, true)]);
         if (cancelled) return;
-        node.innerHTML = renderMarkdown(content);
+        node.innerHTML = renderMarkdown(content, filePathInDir, imageBase ? path => `${imageBase}${encodeURIComponent(path)}` : null);
+        for (const img of node.querySelectorAll('img[data-h5-local]')) img.addEventListener('error', localImageFailed);
         window.MarkdownView.enhance(node);
         node.scrollTop = 0;
         setRender({ status: 'done' });
@@ -177,8 +172,8 @@ export function DesignSheet({ state, ui }) {
         if (!cancelled) setRender({ status: 'failed' });
       }
     })();
-    return () => { cancelled = true; };
-  }, [content, node, markdown, line]);
+    return () => { cancelled = true; if (view) view.dispose(); };
+  }, [content, node, markdown, line, filePathInDir, imageBase]);
 
   const close = () => ui.actions.closeDesign();
   const swipe = useSwipeDown(close);

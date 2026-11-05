@@ -333,7 +333,7 @@ router.get('/terminal-activity', requireEngineAuth('terminal:execute'), (req, re
 
 router.get('/terminal-activity/stream', requireEngineAuth('terminal:execute'), (req, res) => {
   const owner = principal(req);
-  terminal.serveActivityStream(req, res, () => db.prepare('SELECT id FROM tasks WHERE user_id = ?').all(owner).map(row => row.id));
+  terminal.serveActivityStream(req, res, () => db.prepare('SELECT id FROM tasks WHERE user_id = ?').all(owner).map(row => row.id), owner);
 });
 
 router.get('/terminal-subagents', requireEngineAuth('terminal:execute'), (req, res) => {

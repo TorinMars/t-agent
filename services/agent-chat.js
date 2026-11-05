@@ -88,11 +88,19 @@ function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS,
     return rt;
   }
 
+  // Listeners of the counters of `summary` (the terminal activity stream pushes them): told when a turn starts or ends, a queue changes or a chat goes.
+  const summaryListeners = new Set();
+  function summaryChanged() {
+    for (const listener of summaryListeners) { try { listener(); } catch { /* one listener must not break the others */ } }
+  }
+  function onSummaryChange(listener) { summaryListeners.add(listener); return () => summaryListeners.delete(listener); }
+
   function emit(rt, event) {
     const full = { ...event, seq: ++rt.seq };
     rt.events.push(full);
     if (rt.events.length > MAX_EVENTS) rt.events.splice(0, rt.events.length - MAX_EVENTS);
     for (const send of rt.subscribers) send(full);
+    if (event.op === 'status' || event.op === 'queue') summaryChanged();
     return full;
   }
 
@@ -734,6 +742,7 @@ function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS,
       runtimes.delete(id);
     }
     db.prepare('DELETE FROM agent_conversations WHERE id = ?').run(id);
+    summaryChanged(); // its queued messages are gone
     return { success: true };
   }
 
@@ -746,7 +755,7 @@ function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS,
     }
   }
 
-  return { list, create, snapshot, subscribe, sendMessage, interrupt, answerPermission, setMode, setPreferences, listModels, setOpened, setTranslate, setCollapseKeyboard, refreshUsage, fork, setQueue, queueAdd, queueRemove, queueEdit, queueSendNow, summary, listCommands, rename, remove, stopTask, refreshLimits };
+  return { list, create, snapshot, subscribe, sendMessage, interrupt, answerPermission, setMode, setPreferences, listModels, setOpened, setTranslate, setCollapseKeyboard, refreshUsage, fork, setQueue, queueAdd, queueRemove, queueEdit, queueSendNow, summary, onSummaryChange, listCommands, rename, remove, stopTask, refreshLimits };
 }
 
 let shared = null;

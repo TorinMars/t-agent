@@ -70,6 +70,17 @@ test('a new Codex terminal binds the session started after it and takes its thre
   assert.equal(db.prepare('SELECT agent_session_id FROM task_terminals WHERE terminal_id = ?').get(row.terminal_id).agent_session_id, 'eeeeeeee-1111');
 });
 
+test('a rename of a Codex terminal (the phone menu offers it) wins over a later thread rename', () => {
+  const row = db.prepare("SELECT terminal_id FROM task_terminals WHERE agent = 'codex'").get();
+  const index = path.join(home, '.codex', 'session_index.jsonl');
+  const before = fs.readFileSync(index, 'utf8');
+  assert.equal(terminal.renameTerminal(task.id, row.terminal_id, 'Phone name').title, 'Phone name');
+  fs.appendFileSync(index, jsonl([{ id: 'eeeeeeee-1111', thread_name: 'Renamed later in Codex' }]));
+  assert.deepEqual(titles()[row.terminal_id], ['codex', 'Phone name']);
+  fs.writeFileSync(index, before); // the next tests read the thread names as they were
+  db.prepare('UPDATE task_terminals SET title_custom = 0 WHERE terminal_id = ?').run(row.terminal_id);
+});
+
 test('a reopened agent terminal resumes its bound session', () => {
   const claude = db.prepare("SELECT terminal_id, agent_session_id FROM task_terminals WHERE agent = 'claude'").get();
   const codex = db.prepare("SELECT terminal_id, agent_session_id FROM task_terminals WHERE agent = 'codex'").get();

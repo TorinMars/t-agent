@@ -158,11 +158,16 @@ const server = http.createServer((req, res) => res.writeHead(200, { 'Content-Typ
 
     // The popup follows the word while the chat scrolls, and goes when the word has scrolled out of view.
     const y0 = (await popup.boundingBox()).y;
+    // The popup reacts in the scroll event, which comes with the next frame; with the display asleep frames can be far
+    // more than 100 ms apart, so wait for the state itself (up to 5 s) instead of a fixed time, then assert it.
     await tab.evaluate(() => { document.getElementById('scroller').scrollTop = 30; });
-    await tab.waitForTimeout(100);
+    await tab.waitForFunction(want => {
+      const box = document.querySelector('.wt-popup')?.getBoundingClientRect();
+      return box && Math.abs(box.y - want) < 3;
+    }, y0 - 30, { timeout: 5000 }).catch(() => {});
     assert.ok(Math.abs((await popup.boundingBox()).y - (y0 - 30)) < 3, 'it moves with the word');
     await tab.evaluate(() => { document.getElementById('scroller').scrollTop = 300; });
-    await tab.waitForTimeout(100);
+    await tab.waitForFunction(() => !document.querySelector('.wt-popup'), null, { timeout: 5000 }).catch(() => {});
     assert.equal(await popup.count(), 0, 'and goes when the word is out of view');
     // Near the bottom of the window the popup opens above the word.
     await tab.evaluate(() => { document.getElementById('scroller').scrollTop = 1000; });

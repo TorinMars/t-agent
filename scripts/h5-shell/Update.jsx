@@ -69,6 +69,7 @@ const Detail = ({ label, id, children }) => (
 // restarts. A red dot on the button says that an update is available or that the service must be restarted.
 export function UpdateButton() {
   const [open, setOpen] = useState(false);
+  const [opened, setOpened] = useState(false); // the dialog is drawn only once it was opened the first time (it then stays, for its closing animation)
   const [view, setView] = useState({ phase: 'checking' }); // checking | current | available | restart | updating | error
   const [status, setStatus] = useState(null); // the last state read, for the dot and the details
   const [force, setForce] = useState(false);
@@ -164,7 +165,7 @@ export function UpdateButton() {
   const busy = view.phase === 'checking' || view.phase === 'updating';
   // While the update runs the modal cannot be closed by accident (the service is about to restart).
   const close = () => { if (view.phase !== 'updating') { setOpen(false); clearInterval(timer.current); } };
-  const show = () => { setOpen(true); void check(); };
+  const show = () => { setOpened(true); setOpen(true); void check(); };
   const shown = view.status || null;
   const notes = shown && shown.remote_manifest && shown.remote_manifest.release_url;
   const published = shown && shown.remote_manifest && shown.remote_manifest.published_at;
@@ -180,12 +181,13 @@ export function UpdateButton() {
           <SystemUpdateAltIcon />
         </Badge>
       </IconButton>
-      <Dialog id="h5-update-dialog" open={open} onClose={close} fullWidth maxWidth="sm" aria-labelledby="h5-update-title" aria-describedby="h5-update-body">
+      {opened ? <Dialog id="h5-update-dialog" open={open} onClose={close} fullWidth maxWidth="sm" aria-labelledby="h5-update-title" aria-describedby="h5-update-body">
         <DialogTitle id="h5-update-title" sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', pr: 1 }}>
           {t('Update')}
           <IconButton id="h5-update-close" aria-label={t('Close')} edge="end" disabled={view.phase === 'updating'} onClick={close}><CloseIcon /></IconButton>
         </DialogTitle>
-        <DialogContent id="h5-update-body" dividers>
+        {/* Links in the dialog use the theme's light blue: the browser's default link blue (and its visited purple) cannot be read on the dark paper. */}
+        <DialogContent id="h5-update-body" dividers sx={{ '& a, & a:visited': { color: 'primary.light', textUnderlineOffset: '3px' }, '& a:hover': { color: 'primary.main' } }}>
           {view.phase === 'checking' ? (
             <Box id="h5-update-state" role="status" sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}><CircularProgress size={20} /><span>{t('Checking for the latest version…')}</span></Box>
           ) : null}
@@ -251,7 +253,7 @@ export function UpdateButton() {
           {view.phase === 'available' && admin ? <Button id="h5-update-now" variant="contained" color={force && !archive ? 'warning' : 'primary'} disabled={busy} onClick={() => void start()}>{t(force && !archive ? 'Force update now' : 'Update now')}</Button> : null}
           <Button id="h5-update-dismiss" color="inherit" disabled={view.phase === 'updating'} onClick={close}>{t('Close')}</Button>
         </DialogActions>
-      </Dialog>
+      </Dialog> : null}
     </>
   );
 }

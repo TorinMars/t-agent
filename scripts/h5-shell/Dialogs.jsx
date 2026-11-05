@@ -3,7 +3,6 @@ import Alert from '@mui/material/Alert';
 import AppBar from '@mui/material/AppBar';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
-import Chip from '@mui/material/Chip';
 import Dialog from '@mui/material/Dialog';
 import DialogActions from '@mui/material/DialogActions';
 import DialogContent from '@mui/material/DialogContent';
@@ -12,11 +11,12 @@ import DialogTitle from '@mui/material/DialogTitle';
 import IconButton from '@mui/material/IconButton';
 import LinearProgress from '@mui/material/LinearProgress';
 import Snackbar from '@mui/material/Snackbar';
-import TextField from '@mui/material/TextField';
+import TextField from './TextField.jsx';
 import Toolbar from '@mui/material/Toolbar';
 import Typography from '@mui/material/Typography';
 import CloseIcon from '@mui/icons-material/Close';
-import { t } from './common.jsx';
+import { Pill, t } from './common.jsx';
+import { TOUCH } from './theme.mjs';
 
 // The terminal text as plain text, so the browser's own selection handles work on it.
 export function CopyDialog({ state, ui }) {
@@ -52,7 +52,7 @@ export function CopyDialog({ state, ui }) {
         </Box>
         {state.copyStale ? (
           <Box sx={{ px: 2, pb: 1 }}>
-            <Chip id="h5-copy-stale" role="button" color="primary" size="small" label={t('New output')} onClick={() => ui.actions.copyRefresh()} />
+            <Pill id="h5-copy-stale" tone="primary" filled label={t('New output')} onClick={() => ui.actions.copyRefresh()} sx={{ [TOUCH]: { height: 32, px: 1.5, position: 'relative', '&::after': { content: '""', position: 'absolute', inset: '-6px 0' } } }} />
           </Box>
         ) : null}
       </AppBar>

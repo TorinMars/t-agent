@@ -24,6 +24,7 @@
   ];
 
   async function api(method, url, body) {
+    if (method === 'GET' && early.has(url)) { const answer = early.get(url); early.delete(url); return answer; }
     const headers = { 'X-Requested-With': 'XMLHttpRequest' };
     if (body !== undefined) headers['Content-Type'] = 'application/json';
     const res = await fetch(url, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
@@ -41,7 +42,57 @@
     },
   };
 
+  // ── Early requests (start) ──
+  // A slow phone network pays a full round trip for each request that waits for another one. At start the page therefore asks at once for what it
+  // will need: the Engine list, the tasks and groups of the remembered Engine, and for the remembered task its terminals and chats; and it opens the
+  // WebSocket of the remembered terminal. An early answer is used when the normal code asks for the same URL (in `api`, once, within EARLY_MS); the
+  // early socket is taken by `open` when the terminal shown is that one, and closed cleanly when it is not (the task or the terminal is gone, another
+  // one was chosen), so the server never keeps a stray attachment.
+  const EARLY_MS = 20000;
+  const early = new Map(); // url -> the promise of its answer
+  function prefetch(url) {
+    const answer = api('GET', url);
+    answer.catch(() => {}); // a failure is handled by whoever uses it
+    early.set(url, answer);
+    setTimeout(() => { if (early.get(url) === answer) early.delete(url); }, EARLY_MS);
+  }
+  let earlySocket = null; // { source, taskId, terminalId, ws, events, timer }
+  const socketUrl = (from, taskId, id, takeover) => `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}${from.wsPath}?taskId=${taskId}&terminalId=${encodeURIComponent(id)}${TerminalOwner.query(takeover)}${TerminalProtocol.query()}`;
+  function openEarlySocket(from, taskId, id) {
+    const ws = new WebSocket(socketUrl(from, taskId, id, false));
+    ws.binaryType = 'arraybuffer';
+    const entry = { source: from, taskId, terminalId: id, ws, events: [] };
+    // Until `open` takes it, what arrives is kept in order and handed over then (the history snapshot usually comes before the terminal exists).
+    ws.onopen = event => entry.events.push(['onopen', event]);
+    ws.onmessage = event => entry.events.push(['onmessage', event]);
+    ws.onclose = event => entry.events.push(['onclose', event]);
+    ws.onerror = () => {};
+    entry.timer = setTimeout(dropEarlySocket, EARLY_MS);
+    earlySocket = entry;
+  }
+  function dropEarlySocket() {
+    const entry = earlySocket;
+    earlySocket = null;
+    if (!entry) return;
+    clearTimeout(entry.timer);
+    try { entry.ws.close(1000); } catch { /* already closed */ }
+  }
+  function takeEarlySocket(s) {
+    const entry = earlySocket;
+    if (!entry || entry.source !== s.source || entry.taskId !== s.task.id || entry.terminalId !== s.terminalId) { dropEarlySocket(); return null; }
+    earlySocket = null;
+    clearTimeout(entry.timer);
+    return entry;
+  }
+
   const LOCAL = { key: 'local', label: 'This machine', tasksBase: '/api/tasks', groupsBase: '/api/task-groups', wsPath: '/terminal/ws', activityBase: '/api/tasks' };
+  const remoteSource = (id, name) => ({
+    key: `remote:${id}`, label: name,
+    tasksBase: `/api/remote-servers/${id}/tasks`,
+    groupsBase: `/api/remote-servers/${id}/task-groups`,
+    wsPath: `/api/remote-servers/${id}/terminal/ws`,
+    activityBase: `/api/remote-servers/${id}`, // {activityBase}/terminal-activity and /terminal-subagents
+  });
   let sources = [LOCAL];
   let source = LOCAL;
   let tasks = [];
@@ -173,13 +224,7 @@
       const servers = await api('GET', '/api/remote-servers');
       const before = new Map(sources.map(item => [item.key, item]));
       // An Engine that is still there keeps its object (only its name can change): requests in flight compare it with `source`.
-      sources = [LOCAL, ...(Array.isArray(servers) ? servers : []).map(server => (before.has(`remote:${server.id}`) ? Object.assign(before.get(`remote:${server.id}`), { label: server.name }) : {
-        key: `remote:${server.id}`, label: server.name,
-        tasksBase: `/api/remote-servers/${server.id}/tasks`,
-        groupsBase: `/api/remote-servers/${server.id}/task-groups`,
-        wsPath: `/api/remote-servers/${server.id}/terminal/ws`,
-        activityBase: `/api/remote-servers/${server.id}`, // {activityBase}/terminal-activity and /terminal-subagents
-      }))];
+      sources = [LOCAL, ...(Array.isArray(servers) ? servers : []).map(server => (before.has(`remote:${server.id}`) ? Object.assign(before.get(`remote:${server.id}`), { label: server.name }) : remoteSource(server.id, server.name)))];
     } catch { sources = [LOCAL]; }
     source = sources.find(item => item.key === store.get('source')) || LOCAL;
     ui.set({ sources: sources.map(item => ({ key: item.key, label: item.label })), sourceKey: source.key });
@@ -484,7 +529,7 @@
     expanded.clear();
     peeks.clear();
     ui.set({ taskName: '', sourceKey: source.key });
-    disconnect();
+    hideShown(); // its connection stays warm (WARM_MAX)
     terminals = [];
     renderTabs();
     showEmpty('Choose a task to open its phone terminal');
@@ -599,7 +644,7 @@
   function showEmpty(text) { ui.set({ empty: text }); }
 
   async function loadTerminals() {
-    disconnect();
+    hideShown(); // another task: the terminal shown so far stays warm (WARM_MAX)
     terminals = [];
     renderTabs();
     if (!task) { showEmpty('Choose a task to open its phone terminal'); return; }
@@ -610,11 +655,12 @@
     catch (error) { if (current === task) showEmpty(`Could not load terminals: ${error.message}`); return; }
     if (current !== task) return;
     terminals = Array.isArray(rows) ? rows : [];
-    if (!terminals.length) { showEmpty('This task has no terminal yet'); return; }
+    if (!terminals.length) { dropEarlySocket(); showEmpty('This task has no terminal yet'); return; }
     const saved = store.get(`terminal:${source.key}:${current.id}`);
     const wanted = wantedTerminal; // a session that was tapped in the task sheet
     wantedTerminal = null;
     terminalId = [wanted, saved].find(id => id && terminals.some(row => row.terminal_id === id)) || terminals[0].terminal_id;
+    if (earlySocket && earlySocket.terminalId !== terminalId) dropEarlySocket();
     if (wanted && terminalId === wanted) store.set(`terminal:${source.key}:${current.id}`, terminalId);
     renderTabs();
     connect();
@@ -666,7 +712,8 @@
     const open = row.terminal_id === terminalId && !agentChat && session && !session.disposed;
     showMenu(row.title, [
       ...(open ? [['Copy text', () => { closeTerminalMenu(); closeTasks(); openCopy(); }]] : []),
-      ...(row.agent ? [] : [['Rename', () => askRename(row.title)]]),
+      // Agent terminals too: a name given here is kept (title_custom) and wins over the Claude / Codex session title from then on.
+      ['Rename', () => askRename(row.title)],
       ['Reopen', () => { closeTerminalMenu(); closeTasks(); switchTerminal(row); }],
       ['Restart in the working directory', () => void restartTerminal(row), 'danger'],
       ['Delete', () => void deleteTerminal(row), 'danger'],
@@ -696,6 +743,8 @@
     const current = task;
     const wasCurrent = row.terminal_id === terminalId;
     if (wasCurrent) disconnect(); // end the view first, so the server closing the shell is not shown as a lost connection
+    const from = source;
+    closeWarm(item => item.key === warmKey(from, current.id, row.terminal_id)); // a hidden warm view of it too
     try {
       await api('POST', `${source.tasksBase}/${current.id}/terminal/control`, { action, terminal_id: row.terminal_id });
     } catch (error) {
@@ -991,18 +1040,57 @@
     if (data) send(s, data);
   }
   function sendResize(s) {
+    if (s !== session) return; // a hidden warm terminal leaves the PTY size alone
     if (s.ws && s.ws.readyState === WebSocket.OPEN && s.term.cols && s.term.rows) {
       TerminalProtocol.send(s.ws, { type: 'resize', cols: s.term.cols, rows: s.term.rows });
     }
   }
-  function refit(s) { if (!s.disposed) TerminalViewport.fit(s.term, s.fit, s.el); }
+  function refit(s) { if (!s.disposed && s === session) TerminalViewport.fit(s.term, s.fit, s.el); } // a hidden one has no size
+
+  // ── Recent terminals stay connected (WARM_MAX, the shown one included) ──
+  // Going back to one of them shows it at once: its xterm is kept, hidden, and its socket keeps receiving output, so nothing is reconnected or replayed.
+  // Only the shown one is acked, sends input and sends its size (a hidden terminal must not resize the PTY of someone else's view); the least recently
+  // shown one is closed when a new one opens. A hidden terminal that another device takes over is closed quietly (shown again, it connects normally and
+  // asks to take over). After WARM_IDLE_MS on a hidden page all of them are closed; the shown one connects again when the page is shown.
+  const WARM_MAX = 3;
+  const WARM_IDLE_MS = 60000;
+  let warm = []; // the connected sessions, most recently shown first (the shown one, `session`, is first)
+  const warmKey = (from, taskId, id) => `${from.key}|${taskId}|${id}`;
+  function hideShown() {
+    const s = session;
+    session = null;
+    if (!s) return;
+    s.el.hidden = true;
+    s.term.blur();
+  }
+  function showWarm(s) {
+    warm = [s, ...warm.filter(item => item !== s)];
+    session = s;
+    s.el.hidden = false;
+    ui.set({ empty: null });
+    holdTerminalSize();
+    refit(s);
+    sendResize(s); // the size may have changed (another view, the keyboard) while it was hidden
+    if (!s.ws) { clearTimeout(s.timer); s.timer = null; open(s); }
+    ackShown();
+    focusTerminalSoon(s);
+  }
+  // Closes the warm sessions of one terminal (it is restarted or deleted), or all of them.
+  function closeWarm(match = () => true) {
+    for (const s of warm.filter(match)) disposeSession(s);
+  }
 
   function connect() {
-    disconnect();
+    hideShown();
     if (!task || !terminalId) return;
+    const key = warmKey(source, task.id, terminalId);
+    const kept = warm.find(item => item.key === key && !item.disposed);
+    if (kept) { showWarm(kept); return; }
     ui.set({ empty: null });
     const el = document.createElement('div');
     el.className = 'h5-xterm';
+    el.dataset.terminalId = terminalId;
+    el.dataset.taskId = String(task.id);
     terminalHost.append(el);
     const term = new Terminal({
       allowProposedApi: true, // needed by the Unicode 11 addon
@@ -1029,8 +1117,10 @@
     // textarea stays focusable for a hardware keyboard but asks for no on-screen keyboard. Only the keyboard key opens it.
     noScreenKeyboard(term);
     el.addEventListener('focusout', () => noScreenKeyboard(term)); // the keyboard closed: the next terminal tap must not reopen it
-    const s = { term, fit, el, ws: null, timer: null, attempts: 0, paused: false, disposed: false, task, terminalId, source };
+    const s = { term, fit, el, ws: null, timer: null, attempts: 0, paused: false, disposed: false, task, terminalId, source, key };
     session = s;
+    warm = [s, ...warm];
+    while (warm.length > WARM_MAX) disposeSession(warm[warm.length - 1]);
     // A computer: Cmd/Ctrl+Shift+C (and Cmd+C with a selection) copy, and a program's OSC 52 copy request asks for confirmation (terminal-clipboard.js).
     if (pointerMode() && typeof TerminalClipboard !== 'undefined') s.clipboard = TerminalClipboard.attach(term, el);
     attachFileLinks(s);
@@ -1045,7 +1135,7 @@
     }, true);
     term.onData(data => typed(s, data));
     TerminalIme.attach(term, data => typed(s, data)); // the Apple Chinese keyboard's spaces and punctuation, which xterm drops
-    term.onResize(() => { if (!s.paused) sendResize(s); });
+    term.onResize(() => { if (!s.paused) sendResize(s); }); // only the shown one (sendResize)
     let cursorFrame = 0;
     term.onCursorMove(() => { // the cursor decides how far the terminal is shifted while the keyboard is open
       if (!keyboardOpen || cursorFrame) return;
@@ -1186,8 +1276,8 @@
   bindWheelStrip();
 
   function open(s, takeover = false) {
-    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    const ws = new WebSocket(`${proto}://${location.host}${s.source.wsPath}?taskId=${s.task.id}&terminalId=${encodeURIComponent(s.terminalId)}${TerminalOwner.query(takeover)}${TerminalProtocol.query()}`);
+    const taken = takeover ? (dropEarlySocket(), null) : takeEarlySocket(s);
+    const ws = taken ? taken.ws : new WebSocket(socketUrl(s.source, s.task.id, s.terminalId, takeover));
     ws.binaryType = 'arraybuffer';
     s.ws = ws;
     if (s.heartbeat) s.heartbeat.stop();
@@ -1217,6 +1307,7 @@
       if (s.ws !== ws || s.disposed) return;
       s.ws = null;
       if (TerminalOwner.isBlocked(event.code)) {
+        if (session !== s) { disposeSession(s); return; } // a hidden warm terminal taken over elsewhere: shown again, it asks then
         TerminalOwner.prompt(s.el.parentElement || s.el, event.code, () => { if (session === s && !s.disposed) open(s, true); });
         return;
       }
@@ -1231,6 +1322,8 @@
     }
     ws.onclose = closed;
     ws.onerror = () => {};
+    // The early socket: what it got before this terminal existed is handled now, in order.
+    if (taken) for (const [handler, event] of taken.events) { if (s.ws !== ws || s.disposed) break; ws[handler](event); }
   }
 
   // The server sends the saved screen first; input is held back until it has been drawn.
@@ -1256,24 +1349,50 @@
     });
   }
 
+  // Ends the shown terminal's connection and view for good (it is restarted or deleted, or the page shows something else for a long time).
   function disconnect() {
     const s = session;
     session = null;
-    if (!s) return;
+    if (s) disposeSession(s);
+  }
+  function disposeSession(s) {
+    if (s.disposed) return;
+    if (session === s) session = null;
+    warm = warm.filter(item => item !== s);
     s.disposed = true;
     clearTimeout(s.timer);
     s.heartbeat?.stop();
     s.observer?.disconnect();
     s.clipboard?.dispose();
     if (s.ws) { const ws = s.ws; s.ws = null; try { ws.close(); } catch { /* already closed */ } }
-    s.term.dispose();
+    disposeTerm(s.term);
     s.el.remove();
+  }
+  // xterm 5.5 never disposes its screen-DPR monitor, which keeps a window `resize` listener and a matchMedia listener per terminal: two leaked listeners
+  // for every terminal ever opened. It is disposed here after the terminal (a private field; nothing happens when a later xterm renames it).
+  function disposeTerm(term) {
+    const monitor = term._core && term._core._coreBrowserService && term._core._coreBrowserService._screenDprMonitor;
+    term.dispose();
+    try { if (monitor && typeof monitor.dispose === 'function') monitor.dispose(); } catch { /* already gone */ }
   }
 
   // Phones drop sockets in the background; reconnect when the page comes back.
+  let warmIdle = 0;
+  function sleepWarm() { // the page has been hidden for WARM_IDLE_MS: close every socket; the shown terminal keeps its view and connects when shown
+    warmIdle = 0;
+    for (const s of warm) {
+      if (s !== session) { disposeSession(s); continue; }
+      clearTimeout(s.timer);
+      s.timer = null;
+      s.heartbeat?.stop();
+      if (s.ws) { const ws = s.ws; s.ws = null; try { ws.close(); } catch { /* already closed */ } }
+    }
+  }
   document.addEventListener('visibilitychange', () => {
     void syncWakeLock();
-    if (document.visibilityState !== 'visible') return;
+    clearTimeout(warmIdle);
+    warmIdle = 0;
+    if (document.visibilityState !== 'visible') { warmIdle = setTimeout(sleepWarm, WARM_IDLE_MS); return; }
     fitViewport();
     ackShown(); // the person is looking again: a terminal that finished meanwhile is seen now
     if (session && !session.ws && !session.timer) open(session);
@@ -1302,6 +1421,10 @@
   const FALLBACK_POLL_MS = 30000;
   const STALL_MS = 50000;
   const feed = { source: null, live: false, snapshot: null, ctrl: null, retry: 0, retryTimer: null, poll: null, stall: null };
+  // The agent counters of the top bar (agent-activity.js) travel in the stream of this machine as `agents`: while they arrive nothing is polled for them;
+  // without them (a remote Engine is shown, the stream is down, the page is hidden) they are read every FALLBACK_POLL_MS instead of every 5 s.
+  const agentCounters = () => (typeof AgentActivity !== 'undefined' && AgentActivity.page) || null;
+  agentCounters()?.setPollMs(FALLBACK_POLL_MS);
   async function readActivity(from) {
     return Promise.all([
       api('GET', `${from.activityBase}/terminal-activity`),
@@ -1328,11 +1451,13 @@
     const object = value => (value && typeof value === 'object' ? value : {});
     feed.snapshot = { activity: object(snap && snap.activity), subagents: object(snap && snap.subagents) };
     showActiveCount();
+    if (from.key === 'local' && snap && snap.agents && typeof snap.agents === 'object') agentCounters()?.push(snap.agents);
     // The shown terminal finished while the person is looking at it: it is seen.
     const s = shownTerminal();
     if (s && s.source === from && ((feed.snapshot.activity[s.task.id] || {})[s.terminalId]) === 'done') ackShown();
   }
   function stopFeed() {
+    agentCounters()?.unlive();
     if (feed.ctrl) feed.ctrl.abort();
     clearTimeout(feed.retryTimer);
     clearTimeout(feed.stall);
@@ -1340,6 +1465,7 @@
     Object.assign(feed, { live: false, ctrl: null, retryTimer: null, stall: null, poll: null });
   }
   function startFallbackPoll(from) {
+    agentCounters()?.unlive();
     if (feed.poll) return;
     const tick = async () => {
       if (document.visibilityState !== 'visible' || feed.live) return;
@@ -2056,7 +2182,8 @@
     try {
       const file = await api('GET', `${files}/content?path=${encodeURIComponent(filePath)}`);
       if (seq !== designSeq) return;
-      ui.set({ design: { ...base, status: 'ready', dir, content: String((file && file.content) || '') } });
+      // imageBase: relative images of a Markdown file are read through the same file API (`…/files/image?path=`, images only, at most 5 MB).
+      ui.set({ design: { ...base, status: 'ready', dir, content: String((file && file.content) || ''), imageBase: `${files}/image?path=` } });
     } catch (error) {
       if (seq !== designSeq) return;
       let code = error.message;
@@ -2150,15 +2277,30 @@
 
   // ── Start ──
   (async () => {
-    await loadSources();
-    await loadTasks();
-    void connectFeed();
+    // The remembered Engine is assumed until the Engine list says otherwise: its tasks are asked for at the same time as the list. Its object is put in
+    // `sources` so that loadSources keeps it (requests in flight compare with `source`).
+    const remembered = /^remote:(\d+)$/.exec(store.get('source') || '');
+    if (remembered) { source = remoteSource(Number(remembered[1]), ''); sources = [LOCAL, source]; }
+    const assumed = source;
     // The page opened by a click on a notification: ?openChat=<task id>:<conversation id>.
     const link = /^(\d+):(.+)$/.exec(new URLSearchParams(location.search).get('openChat') || '');
+    const savedId = Number(store.get(`task:${assumed.key}`));
+    if (savedId > 0 && !link) {
+      prefetch(`${assumed.tasksBase}/${savedId}/terminals`);
+      if (assumed.key === 'local') prefetch(`${assumed.tasksBase}/${savedId}/agent/conversations`);
+      else prefetch(`${assumed.tasksBase.replace(/\/tasks$/, '')}/info`);
+      const savedTerminal = store.get(`terminal:${assumed.key}:${savedId}`);
+      if (savedTerminal) openEarlySocket(assumed, savedId, savedTerminal);
+    }
+    const tasksLoaded = loadTasks();
+    await loadSources();
+    await tasksLoaded;
+    if (source !== assumed) { dropEarlySocket(); early.clear(); await loadTasks(); } // the remembered Engine is gone: this machine's tasks
+    void connectFeed();
     if (link && await openChatFromLink({ taskId: Number(link[1]), conversationId: link[2] })) return;
-    const savedId = Number(store.get(`task:${source.key}`));
-    const saved = tasks.find(item => item.id === savedId);
+    const saved = tasks.find(item => item.id === Number(store.get(`task:${source.key}`)));
     if (saved) selectTask(saved);
+    else dropEarlySocket(); // the remembered task is gone
     if (!saved || isWide()) openTasks();
   })();
 })();

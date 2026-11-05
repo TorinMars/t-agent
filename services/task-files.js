@@ -235,6 +235,28 @@ function read(task, value) {
   finally { fs.closeSync(descriptor); }
 }
 
+// An image of the working directory, for a relative image in a Markdown preview: the same path rules as `read` (relative, no symbolic links, the path
+// must not change while it is read) and the same 5 MiB limit. Only PNG, JPEG, GIF and WebP, by name and by content; never SVG (it can carry script).
+const IMAGE_TYPES = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp' };
+function sniffImage(buffer) {
+  if (buffer.length >= 8 && buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'image/png';
+  if (buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return 'image/jpeg';
+  if (buffer.length >= 6 && /^GIF8[79]a$/.test(buffer.subarray(0, 6).toString('latin1'))) return 'image/gif';
+  if (buffer.length >= 12 && buffer.subarray(0, 4).toString('latin1') === 'RIFF' && buffer.subarray(8, 12).toString('latin1') === 'WEBP') return 'image/webp';
+  return null;
+}
+function readImage(task, value) {
+  const target = resolvePath(task, value);
+  const declared = IMAGE_TYPES[path.extname(target.relative).slice(1).toLowerCase()];
+  if (!declared) throw failure('FILE_NOT_IMAGE', 415);
+  const { descriptor } = openRegularFile(target, fs.constants.O_RDONLY);
+  let buffer;
+  try { buffer = Buffer.from(readBounded(descriptor)); }
+  finally { fs.closeSync(descriptor); }
+  if (sniffImage(buffer) !== declared) throw failure('FILE_NOT_IMAGE', 415);
+  return { path: target.relative, type: declared, data: buffer };
+}
+
 function readCurrent(target) {
   const { descriptor, stat } = openRegularFile(target, fs.constants.O_RDONLY);
   try { return { metadata: inspectBuffer(readBounded(descriptor), target.relative), stat }; }
@@ -412,6 +434,7 @@ module.exports = {
   taskRoot,
   list,
   read,
+  readImage,
   write,
   create,
   rename,

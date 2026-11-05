@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
-import Chip from '@mui/material/Chip';
 import CircularProgress from '@mui/material/CircularProgress';
 import Dialog from '@mui/material/Dialog';
 import DialogActions from '@mui/material/DialogActions';
@@ -9,7 +8,7 @@ import DialogContent from '@mui/material/DialogContent';
 import DialogTitle from '@mui/material/DialogTitle';
 import Paper from '@mui/material/Paper';
 import Typography from '@mui/material/Typography';
-import { api, t } from './common.jsx';
+import { Pill, api, t } from './common.jsx';
 import { Feedback, Field, Group, Hint, failure, useFeedback } from './Form.jsx';
 
 // Settings "Engines": the remote Engines this Client is connected to (the desktop page's engine tabs and their right-click menu, public/js/engines.js).
@@ -267,7 +266,7 @@ function EngineRow({ server, busy, onCheck, onUpdate, onEdit, onRemove, feedback
     <Paper variant="outlined" className="h5-engine-row" data-engine={server.id} sx={{ display: 'flex', flexDirection: 'column', gap: 0.75, p: 1 }}>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
         <strong className="h5-engine-name" style={{ minWidth: 0, overflowWrap: 'anywhere', flex: '1 1 auto' }}>{server.name}</strong>
-        <Chip className="h5-engine-status" size="small" variant="outlined" color={statusColor(server.status)} label={t(statusLabel(server.status))} />
+        <Pill className="h5-engine-status" tone={statusColor(server.status)} label={t(statusLabel(server.status))} />
       </Box>
       <Typography className="h5-engine-meta" variant="caption" color="text.secondary" sx={{ overflowWrap: 'anywhere' }}>
         {[server.base_url, versionText(server.remote_version), server.last_checked_at ? `${t('Last checked')} ${server.last_checked_at}` : ''].filter(Boolean).join(' · ')}
@@ -332,7 +331,7 @@ export function EnginesGroup({ state, ui }) {
         <Paper variant="outlined" className="h5-engine-row" data-engine="local" sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1 }}>
           <strong style={{ flex: '1 1 auto' }}>{t('This machine')}</strong>
           <Typography variant="caption" color="text.secondary" id="h5-engine-local-version">{versionText(localVersion)}</Typography>
-          <Chip size="small" variant="outlined" color="success" label={t('Local')} />
+          <Pill tone="success" label={t('Local')} />
         </Paper>
         {servers.map(server => (
           <EngineRow

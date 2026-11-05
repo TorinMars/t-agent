@@ -30,7 +30,8 @@ module.exports = {
   // The only login entrance visible when logged out; every other address returns 404.
   loginPath: require('./lib/login-gate').resolveLoginPath(process.env.CLIENT_LOGIN_PATH, message => console.warn(message)),
   clientSessionCookieName,
-  sessionSecret: process.env.SESSION_SECRET || 'dev-secret-change-me',
+  // Saved in the data folder (lib/data-home.js), because the stored tokens are encrypted with it; .env only seeds it on the first start.
+  get sessionSecret() { return require('./lib/data-home').sessionSecret(); },
   // AUTH_USERS format: "user1:salt:hash,user2:salt:hash"
   authUsers,
   singleUserId,

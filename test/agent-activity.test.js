@@ -77,3 +77,31 @@ test('an older answer that arrives late does not replace a newer one', async () 
   await tick();
   assert.equal(element.parts.submitted.count.textContent, '9');
 });
+
+test('pushed counters stop the poll; unlive polls again at the rate the page chose', async () => {
+  const element = fakeElement();
+  const documentImpl = fakeDocument();
+  let calls = 0;
+  const timers = new Map();
+  let ids = 0;
+  const activity = AgentActivity.attach(element, {
+    documentImpl, fetchImpl: async () => { calls += 1; return answer({ submitted: 1, running: 0 }); },
+    setIntervalImpl: (fn, ms) => { ids += 1; timers.set(ids, { fn, ms }); return ids; }, clearIntervalImpl: id => timers.delete(id),
+  });
+  await tick();
+  assert.deepEqual([...timers.values()].map(t => t.ms), [5000], 'the default rate');
+  activity.setPollMs(30000);
+  assert.deepEqual([...timers.values()].map(t => t.ms), [30000], 'the slower fallback rate');
+  activity.push({ submitted: 5, running: 2 });
+  assert.equal(activity.live, true);
+  assert.equal(timers.size, 0, 'no poll while the counters are pushed');
+  assert.deepEqual([element.parts.submitted.count.textContent, element.parts.running.count.textContent], ['5', '2']);
+  const before = calls;
+  documentImpl.listeners.visibilitychange();
+  await tick();
+  assert.equal(calls, before, 'shown again: the stream sends a fresh snapshot, no request');
+  activity.unlive();
+  await tick();
+  assert.equal(calls, before + 1, 'back to polling: one read at once');
+  assert.deepEqual([...timers.values()].map(t => t.ms), [30000]);
+});

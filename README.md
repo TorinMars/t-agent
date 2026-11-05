@@ -58,7 +58,7 @@ The "Page enhancement" page on the left uses this machine's `frpc` to map the Cl
 - Required: the frps server IP/domain and the frps server port (default 7000); fill in the Token as well when frps has one (stored encrypted and never echoed).
 - The remote port is generated randomly by default (range 20000-60000) and then stays stable; click "Regenerate" to change it, which restarts a running tunnel. You can also enter a fixed port (it may be outside the random range and must be within frps `allowPorts`): a manual port that is taken is not changed automatically, and clearing it and saving returns to automatic random. In automatic mode, when the port is taken by frps it is changed automatically and retried up to 3 times.
 - The domain is optional and only used to show the public address `domain:remote-port`; it is not written to the frpc configuration. Domain resolution and the reverse proxy (such as Nginx terminating HTTPS) are configured by you and forward to `server-IP:remote-port`; without a domain you can open `http://server-IP:remote-port` directly (the port must be allowed through).
-- frpc must be available on this machine (0.52 or later, TOML configuration). When it is not detected, the page shows an "Install frpc" button and asks whether an Agent should install it: choose "Yes" to copy an install prompt (paste it to an Agent to run it), or "No" to let the Client download the official release package of a pinned version (0.61.1), verify its SHA-256 and put only frpc into `data/bin/`; when GitHub is unreachable, point `T_AGENT_FRP_DOWNLOAD_BASE` at a mirror (same layout as GitHub releases, including `v0.61.1/frp_sha256_checksums.txt`). You can also install it yourself (for example `brew install frpc` on a Mac) and then click "Re-detect frpc" on the page: it looks in `T_AGENT_FRPC_BIN`, `data/bin/`, PATH and common directories, Homebrew's `bin/`, `opt/frpc/bin` and `Cellar/frpc/<latest version>/bin` (including `/opt/homebrew` on Apple silicon, `/usr/local` on Intel and Linuxbrew), and shows the frpc path and version; a version below 0.52 (no TOML configuration support) is reported and refuses to start. Automatic install only supports macOS / Linux. You can tick "Start the tunnel automatically when the Client starts".
+- frpc must be available on this machine (0.52 or later, TOML configuration). When it is not detected, the page shows an "Install frpc" button and asks whether an Agent should install it: choose "Yes" to copy an install prompt (paste it to an Agent to run it), or "No" to let the Client download the official release package of a pinned version (0.61.1), verify its SHA-256 and put only frpc into `bin/` of the data folder (`~/.tagent/bin/`); when GitHub is unreachable, point `T_AGENT_FRP_DOWNLOAD_BASE` at a mirror (same layout as GitHub releases, including `v0.61.1/frp_sha256_checksums.txt`). You can also install it yourself (for example `brew install frpc` on a Mac) and then click "Re-detect frpc" on the page: it looks in `T_AGENT_FRPC_BIN`, `~/.tagent/bin/`, PATH and common directories, Homebrew's `bin/`, `opt/frpc/bin` and `Cellar/frpc/<latest version>/bin` (including `/opt/homebrew` on Apple silicon, `/usr/local` on Intel and Linuxbrew), and shows the frpc path and version; a version below 0.52 (no TOML configuration support) is reported and refuses to start. Automatic install only supports macOS / Linux. You can tick "Start the tunnel automatically when the Client starts".
 - The "Install frps" card at the bottom of the page copies an frps install prompt to paste to an Agent that can operate the public server: the prompt carries the server port, the Token (when empty the Agent is asked to generate one at random) and the `allowPorts` range from the page, and includes systemd auto-start and opening the firewall / security group. The prompt contains the Token, so only send it to an Agent you trust.
 - It only manages the machine running the Client and does not go through an Engine proxy. Make sure an authenticator is bound before exposing the Client.
 
@@ -332,7 +332,7 @@ The plaintext of a Token cannot be recovered, because the Engine only stores has
 
 When only the server address changes, no new Token is needed; just use "Edit connection".
 
-The remote Tokens saved by the Client are decrypted with `SESSION_SECRET` from `.env`. When migrating or backing up the Client, keep both `.env` and `data/`.
+The remote Tokens saved by the Client are decrypted with the session secret saved in the data folder (`~/.tagent/session-secret`, seeded once from `SESSION_SECRET` in `.env`). When migrating or backing up the Client, keep the whole data folder (see "Data folder and backups").
 
 ## HTTPS and Nginx reverse proxy
 
@@ -646,25 +646,43 @@ UPDATE_CHECK_ENABLED=false
 
 Restart the service after changing `.env`.
 
-## Data and backups
+## Data folder and backups
 
-Back up:
+Since this change the runtime data of a machine lives in **`~/.tagent`** (the home folder of the user the service runs as), not in the install directory. Every installed version of the app reads the same folder, so a second checkout or a newer version needs no data migration.
 
 ```text
-.env             # single-user ID, SESSION_SECRET, update source
-data/            # SQLite, sessions, remote connections and update state
-tasks/           # default task working directory; custom directories need a separate backup
-logs/            # optional, run logs
+~/.tagent/              # mode 0700
+├── db.sqlite           # SQLite (+ -wal / -shm): tasks, sessions, remote connections, settings, update state (0600)
+├── session-secret      # the key that encrypts saved tokens, settings and the authenticator (0600)
+├── backups/            # database backups taken before each update
+├── bin/frpc, frpc.toml # the tunnel client and its config (0600)
+├── server.lock         # the running server: pid, port, version, start time
+└── migrated-from.json  # written once when the data was copied from the old <install>/data
 ```
 
-Do not copy only `data/` and lose `.env`, otherwise the Client may be unable to decrypt the remote Tokens already saved.
+- **Another folder**: set `TAGENT_HOME=/full/path` in `.env` (a leading `~/` is also understood) (or the environment). The old name `T_AGENT_DATA_DIR` still works; when both are set, `TAGENT_HOME` wins. `T_AGENT_DB_PATH` still moves only the SQLite file. With an explicit folder nothing is copied automatically.
+- **First start after the upgrade**: when `~/.tagent` has no database and `<install>/data/db.sqlite` exists, the server copies the old data once. It first makes an untouched copy `<install>/data.backup-<time>`, builds the new folder from that copy in a temporary folder (the WAL is checkpointed and the copy is checked), then renames it into place and writes `migrated-from.json`. The old `data/` folder is never changed and is not used any more. Old update backups (`data/backups/`, often large) are not copied; they stay where they are. If `~/.tagent` already has a database that this copy did not make (no `migrated-from.json`, for example a development checkout started without the old data): when it holds no user data and the old folder does, it is moved aside to `~/.tagent/empty-start-<time>/` and the old data is copied in; when both hold user data, `~/.tagent` is kept, a loud warning in the log names both folders and how to choose, and the environment check shows "Two folders hold data".
+- **Session secret**: on the first start the `SESSION_SECRET` of `.env` is saved to `session-secret` (so saved tokens stay readable); after that the file is used and a different `SESSION_SECRET` in `.env` is ignored with a warning. Without any secret a new folder gets a random one.
+- **One server per folder**: a second server on the same folder stops at once with `Another T-Agent server is already using the data folder … (pid …, port …)`. A lock left by a crashed server (its pid is not running) is taken over. Development servers (for example in a git worktree) must use their own folder: `TAGENT_HOME=$(mktemp -d) PORT=3100 npm start`.
+- **Version safety**: the database stores its schema generation (`PRAGMA user_version`). A version of the app whose `schema_version` is lower than the stored one refuses to start and asks you to upgrade, so an old version never writes into data it does not understand.
+- **Permissions**: the folder is 0700 and the secret files 0600; looser modes are fixed on start with a warning. On Linux, when the service runs as root and the web terminal drops to `TERMINAL_USER`, the data stays in root's `~/.tagent`, which that user cannot read.
+
+**Backup**: stop the service (or use `sqlite3 ~/.tagent/db.sqlite ".backup /path/backup.sqlite"`) and copy the whole `~/.tagent` folder, plus `.env` and your task folders. Keep `session-secret` together with `db.sqlite`: without it saved tokens, settings and the authenticator cannot be decrypted.
+
+**Move back to the old layout** (for example to run a version from before this change): stop the service, then either set `T_AGENT_DATA_DIR=/home/<you>/.tagent` (a full path; `.env` does not expand `$HOME`) and `SESSION_SECRET=<the content of session-secret>` in that version's `.env` (old versions read the same layout, but do not check the schema version or the lock, so stop the new version first), or copy `~/.tagent/db.sqlite` into `<install>/data/` and put the content of `session-secret` into `SESSION_SECRET` of `.env`. The untouched old data is still in `<install>/data` and `<install>/data.backup-<time>`.
 
 ## Uninstall
 
-The following stops the service and permanently deletes the install directory, configuration, database, logs and the default task directory. The script first lists the targets and asks you to type `UNINSTALL` to confirm:
+The following stops the service and permanently deletes the install directory, its configuration and logs, and the default task directory. The script first lists the targets and asks you to type `UNINSTALL` to confirm:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/TorinMars/t-agent/main/uninstall.sh | bash
+```
+
+The data folder (`~/.tagent`, or `TAGENT_HOME` / `T_AGENT_DATA_DIR` from `.env`) is **kept**, because every installed version on the machine shares it; the script prints where it is and how to delete it by hand. To delete it as well, add `--purge-data` and type `DELETE DATA` at the second prompt:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/TorinMars/t-agent/main/uninstall.sh | bash -s -- --purge-data
 ```
 
 Custom install directory:
@@ -686,7 +704,7 @@ t-agent/
 ├── routes/           # HTTP/WebSocket routes of the Client and the Engine
 ├── scripts/          # Token, migration, build and diagnostic scripts
 ├── services/         # Engine, remote connection and update business components
-├── data/             # Run-time data, not committed to Git
+├── data/             # Run-time data of versions before ~/.tagent (kept unchanged after the one-time copy)
 ├── logs/             # Service logs, not committed to Git
 └── tasks/            # Default task working directory, not committed to Git
 ```

@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
-import Tooltip from '@mui/material/Tooltip';
+import Box from '@mui/material/Box';
+import ButtonBase from '@mui/material/ButtonBase';
 
 export const t = text => (typeof I18n !== 'undefined' ? I18n.t(text) : text);
 
@@ -31,11 +32,22 @@ export function DomIcon({ make }) {
 export const terminalMark = agent => AgentChat => AgentChat.icon(agent);
 export const chatMark = agent => AgentChat => AgentChat.chatIcon(agent);
 
-// Icon buttons on a computer (input mode 'pointer') get a Material UI tooltip; on a touch screen they keep only the native title (a tooltip there would
-// open on a long press and get in the way of hold-to-talk and the press handling). `describeChild` keeps the button's own aria-label as its name, and
-// MUI gives the button its `title` back whenever the tooltip is closed, so the title never shows twice.
-export function Tip({ on, title, children }) {
-  return on ? <Tooltip title={title} describeChild>{children}</Tooltip> : children;
+// The name props of an icon button: the aria-label and the same native title (the browser's own tooltip on a computer; no MUI Tooltip, which
+// would add about 31 KB and on a touch screen open on a long press, in the way of hold-to-talk).
+export const named = label => ({ 'aria-label': label, title: label });
+
+// A small rounded label (what MUI's Chip drew here, without its 8 KB): `onClick` makes it a button (ButtonBase: ripple, focus ring).
+// `tone` is a palette colour ('primary', 'success', 'error', ...) or 'default'; `filled` fills it with that colour, else it is outlined.
+export function Pill({ label, tone = 'default', filled = false, onClick, sx, ...props }) {
+  const color = tone === 'default' ? 'text.primary' : `${tone}.main`;
+  const look = {
+    display: 'inline-flex', alignItems: 'center', justifyContent: 'center', boxSizing: 'border-box', height: 24, px: 1.25, borderRadius: 12,
+    fontSize: 13, lineHeight: 1, whiteSpace: 'nowrap', border: 1, verticalAlign: 'middle', fontFamily: 'inherit',
+    ...(filled
+      ? { bgcolor: tone === 'default' ? 'action.selected' : `${tone}.main`, color: tone === 'default' ? 'text.primary' : `${tone}.contrastText`, borderColor: 'transparent' }
+      : { bgcolor: 'transparent', color, borderColor: tone === 'default' ? 'divider' : color }),
+    ...sx,
+  };
+  if (!onClick) return <Box component="span" sx={look} {...props}>{label}</Box>;
+  return <ButtonBase onClick={onClick} sx={{ ...look, '&:hover': { filter: 'brightness(1.15)' }, '&.Mui-focusVisible': { outline: 2, outlineColor: 'primary.main', outlineOffset: 2 } }} {...props}>{label}</ButtonBase>;
 }
-// The name props of an icon button: always the aria-label; the title only where no MUI tooltip supplies it.
-export const named = (label, tip) => (tip ? { 'aria-label': label } : { 'aria-label': label, title: label });

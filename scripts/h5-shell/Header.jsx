@@ -6,12 +6,11 @@ import Toolbar from '@mui/material/Toolbar';
 import Typography from '@mui/material/Typography';
 import MenuIcon from '@mui/icons-material/Menu';
 import RefreshIcon from '@mui/icons-material/Refresh';
-import { Tip, named, t } from './common.jsx';
+import { named, t } from './common.jsx';
 import { Icon } from './Icons.jsx';
 import { UpdateButton } from './Update.jsx';
 
 export function Header({ state, ui }) {
-  const tip = state.input === 'pointer';
   const docked = state.wide && !state.sidebarCollapsed; // the permanent sidebar is shown, so the task name opens nothing
   const fold = state.sidebarCollapsed ? 'Expand the sidebar' : 'Collapse the sidebar';
   const refresh = t('Refresh the page');
@@ -20,11 +19,9 @@ export function Header({ state, ui }) {
       <Toolbar variant="dense" disableGutters sx={{ px: 1, gap: 1, minHeight: 44 }}>
         {state.wide ? (
           // Wide layout: fold the permanent sidebar away and back (the state is remembered; entry.jsx `toggleSidebar`).
-          <Tip on={tip} title={t(fold)}>
-            <IconButton id="h5-sidebar-toggle" {...named(t(fold), tip)} aria-expanded={!state.sidebarCollapsed} aria-controls="h5-tasks" onClick={() => ui.actions.toggleSidebar()}>
-              <Icon name={state.sidebarCollapsed ? 'sidebarUnfold' : 'sidebarFold'} size={22} />
-            </IconButton>
-          </Tip>
+          <IconButton id="h5-sidebar-toggle" {...named(t(fold))} aria-expanded={!state.sidebarCollapsed} aria-controls="h5-tasks" onClick={() => ui.actions.toggleSidebar()}>
+            <Icon name={state.sidebarCollapsed ? 'sidebarUnfold' : 'sidebarFold'} size={22} />
+          </IconButton>
         ) : null}
         <ButtonBase
           id="h5-open-tasks" className="h5-task-button" aria-expanded={state.tasksOpen && !state.sidebarCollapsed} aria-haspopup="dialog" aria-controls="h5-tasks"
@@ -42,11 +39,9 @@ export function Header({ state, ui }) {
           <span className="agent-activity-submitted"><b className="count">0</b> <span className="label" translate="no">submitted</span></span>
           <span className="agent-activity-running"><b className="count">0</b> <span className="label" translate="no">running</span></span>
         </span>
-        <Tip on={tip} title={refresh}>
-          <IconButton id="h5-refresh" {...named(refresh, tip)} onClick={() => ui.actions.refresh()}>
-            <RefreshIcon />
-          </IconButton>
-        </Tip>
+        <IconButton id="h5-refresh" {...named(refresh)} onClick={() => ui.actions.refresh()}>
+          <RefreshIcon />
+        </IconButton>
         <UpdateButton />
       </Toolbar>
     </AppBar>

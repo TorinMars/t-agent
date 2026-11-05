@@ -45,6 +45,21 @@ const VoiceInput = (() => {
   // Text shown in the box: what was there before recording, the finished sentences and the sentence still being recognized.
   const compose = (base, committed, partial) => base + committed + partial;
 
+  // The recognized text is one segment of the box, [start, start + length), placed at the caret when the recording starts. The person may type while
+  // speaking: before each update the box is compared with what was last written there, and the segment follows the edit. An edit before the segment (or
+  // right at its start) moves it, one after it changes nothing, and an edit inside it makes the text so far the person's own (`inside`: the segment
+  // starts again, empty, where that edit ended). Returns { start, length, inside }.
+  function follow(shown, current, start, length) {
+    if (shown === current) return { start, length, inside: false };
+    const tail = shown.slice(start); // the segment and everything after it
+    if (current.endsWith(tail)) return { start: current.length - tail.length, length, inside: false };
+    if (current.startsWith(shown.slice(0, start + length))) return { start, length, inside: false };
+    let suffix = 0; // the end that is still as it was written: the segment starts again just before it
+    const room = Math.min(shown.length, current.length);
+    while (suffix < room && shown[shown.length - 1 - suffix] === current[current.length - 1 - suffix]) suffix += 1;
+    return { start: Math.max(0, current.length - Math.min(suffix, shown.length - start - length)), length: 0, inside: true };
+  }
+
   // One recognition task on the speech service (run-task → task-started → audio → finish-task → task-finished).
   // callbacks: onReady(), onResult({ text, sentenceId, final }), onDone(), onError(message). Returns { sendAudio, finish, close }.
   function createRecognizer({ url, token, model, language, noiseThreshold, vocabularyId, hotwords, WebSocketImpl = WebSocket, callbacks }) {
@@ -129,7 +144,7 @@ const VoiceInput = (() => {
     };
   }
 
-  if (typeof document === 'undefined') return { createResampler, createRecognizer, compose };
+  if (typeof document === 'undefined') return { createResampler, createRecognizer, compose, follow };
 
   const tell = (message, type) => (typeof notify === 'function' ? notify(message, type) : (typeof alert === 'function' ? alert(message) : undefined));
   // The phone page does not load app.js (where API lives), so the recording asks for its token with its own request.
@@ -289,7 +304,10 @@ const VoiceInput = (() => {
     let state = 'idle'; // idle → connecting → listening → stopping → idle
     let recognizer, stream, context, node, silent, resampler, stopTimer, limitTimer;
     let warmGraph = null; // the kept-ready graph this recording uses (it is not stopped when the recording ends)
-    let base = '', committed = '', partial = '';
+    let committed = '', partial = '';
+    // Where the recognized text goes (see follow): the segment's start and length, the box as last written, and the part of the sentence being
+    // recognized that the person has already taken over by editing inside it (it is not written twice).
+    let segStart = 0, segLength = 0, written = null, taken = '';
     let frame = new Int16Array(FRAME_SAMPLES);
     let filled = 0;
     let afterStop = null; // 'send': when the recognition ends, hand the text to onSend (released over the send zone)
@@ -333,8 +351,33 @@ const VoiceInput = (() => {
       if (holding()) button.title = 'Voice input: hold to speak, release to stop';
       else button.title = state === 'idle' ? 'Voice input: click to start speaking' : 'Voice input: click to stop';
     }
+    // Takes in what the person changed in the box since it was last written (see follow). Run before a new result is added.
+    function track() {
+      const current = String(textarea.value ?? '');
+      if (written === null || current === written) return current;
+      const moved = follow(written, current, segStart, segLength);
+      segStart = Math.min(moved.start, current.length);
+      segLength = moved.length;
+      if (moved.inside) { committed = ''; taken = partial; partial = ''; }
+      written = current;
+      return current;
+    }
     function show() {
-      textarea.value = compose(base, committed, partial);
+      const current = track();
+      const text = committed + partial;
+      const before = segLength; // the segment's length in the box now
+      const next = current.slice(0, segStart) + text + current.slice(segStart + before);
+      segLength = text.length;
+      written = next;
+      if (next === current) return;
+      // The caret stays where the person was typing: before the segment it stays, after it it moves with it, inside it it goes to its end.
+      const caret = typeof textarea.selectionEnd === 'number' ? textarea.selectionEnd : null;
+      const focused = typeof document !== 'undefined' && document.activeElement === textarea;
+      textarea.value = next;
+      if (focused && caret !== null && typeof textarea.setSelectionRange === 'function') {
+        const at = caret <= segStart ? caret : caret >= segStart + before ? caret + text.length - before : segStart + text.length;
+        try { textarea.setSelectionRange(at, at); } catch { /* not a text box */ }
+      }
       textarea.dispatchEvent(new Event('input', { bubbles: true }));
     }
     function release() { // stop the microphone and the audio graph (a kept-ready one is only switched off and given back)
@@ -382,7 +425,7 @@ const VoiceInput = (() => {
       reset();
       if (wants === 'send' && onSend) onSend();
     }
-    // Throw away what this recording recognized and put the box back as it was.
+    // Throw away what this recording recognized; what the person typed meanwhile stays.
     function cancel() {
       if (state === 'idle') return;
       committed = ''; partial = '';
@@ -413,7 +456,11 @@ const VoiceInput = (() => {
       state = 'connecting';
       run += 1;
       const mine = run;
-      base = textarea.value; committed = ''; partial = '';
+      committed = ''; partial = ''; taken = '';
+      // The recognized text goes in at the caret (at the end when the box has no caret), not after everything that is there.
+      written = String(textarea.value ?? '');
+      segStart = typeof textarea.selectionEnd === 'number' ? Math.min(textarea.selectionEnd, written.length) : written.length;
+      segLength = 0;
       filled = 0; early = []; earlyBytes = 0; stopAfterToken = false;
       recognizerReady = graphReady = announced = false; mutedUntil = 0;
       render();
@@ -468,7 +515,10 @@ const VoiceInput = (() => {
             onReady() { if (mine === run) { if (state === 'connecting') state = 'listening'; recognizerReady = true; render(); announce(); } },
             onResult(result) {
               if (mine !== run) return;
-              if (result.final) { committed += result.text; partial = ''; } else partial = result.text;
+              track();
+              let text = result.text;
+              if (taken) { if (text.startsWith(taken)) text = text.slice(taken.length); if (result.final) taken = ''; }
+              if (result.final) { committed += text; partial = ''; } else partial = text;
               show();
             },
             onDone() { if (mine !== run) return; settle(); if (!onSend) textarea.focus(); },
@@ -559,7 +609,7 @@ const VoiceInput = (() => {
     onSend: () => { const form = document.getElementById('h5-translate'); if (form && form.requestSubmit) form.requestSubmit(); } });
 
   return {
-    attach, showSettings, createResampler, createRecognizer, compose,
+    attach, showSettings, createResampler, createRecognizer, compose, follow,
     // Keeping the microphone ready: the switch of the chat options reads and sets it; `onKeepWarm` follows changes (several chats can be open).
     setKeepWarm, get keepWarm() { return warm.wanted; }, canKeepWarm: warmAvailable,
     onKeepWarm(listener) { warm.listeners.add(listener); return () => warm.listeners.delete(listener); },

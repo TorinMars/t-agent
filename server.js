@@ -8,7 +8,20 @@ const os = require('os');
 const http = require('http');
 const WebSocket = require('ws');
 const config = require('./config');
-const db = require('./db');
+// The data folder first: one server per folder (server.lock), then the database (the one-time copy and the schema check run there).
+// These failures are expected situations, so they print one clear line instead of a stack.
+const dataHome = require('./lib/data-home');
+let serverLock;
+let db;
+try {
+  serverLock = dataHome.acquireServerLock({ port: config.port, host: config.host });
+  db = require('./db');
+} catch (error) {
+  if (!dataHome.isStartupError(error)) throw error;
+  console.error(`T-Agent cannot start: ${error.message}`);
+  process.exit(1);
+}
+console.log(`Data folder: ${dataHome.paths().root}`);
 const SqliteStore = require('./db/session-store');
 const terminal = require('./routes/terminal');
 const updates = require('./services/update-manager');
@@ -20,6 +33,7 @@ const requireAuth = require('./middleware/auth');
 const clientOrigin = require('./middleware/client-origin');
 const { frameAncestors, clientCookieSameSite } = require('./lib/client-embedding');
 const { createLoginGate, createUnknownPageRedirect } = require('./lib/login-gate');
+const { createStaticAssets, wantsChinese } = require('./lib/static-assets');
 const { createAccessGate, upgradeAllowed } = require('./lib/access-gate');
 
 const app = express();
@@ -324,6 +338,7 @@ app.get('/share/:token/file', (req, res) => {
 
 // One page for computers and phones (the MUI page, public/h5.html): `/` and `/h5` serve the same HTML, so iPhone Home Screen apps that start at /h5
 // keep working. The old page addresses lead to `/`.
+const staticAssets = createStaticAssets({ publicDir: path.join(__dirname, 'public') });
 // The manifest follows the address: /h5 keeps manifest-h5.json (start_url /h5, what installed phone apps were added with), every other address gets manifest.json.
 function manifestFor(pagePath) { return pagePath === '/h5' ? '/manifest-h5.json' : '/manifest.json'; }
 
@@ -334,9 +349,8 @@ function sendClientPage(req, res, page = 'h5.html') {
   if (auth.setupRequired) return res.redirect(`${config.loginPath}/setup?return_to=${encodeURIComponent(returnTo)}`);
   if (auth.loginRequired) return res.redirect(`${config.loginPath}?return_to=${encodeURIComponent(returnTo)}`);
   req.session.user = ensureSingleUser();
-  let html = fs.readFileSync(path.join(__dirname, 'public', page), 'utf8');
-  const assetVersion = encodeURIComponent(JSON.parse(fs.readFileSync(path.join(__dirname, 'VERSION.json'), 'utf8')).app_version);
-  html = html.replace(/(src|href)="(\/(?:js|css|vendor)\/[^"?]+\.(?:js|css))"/g, `$1="$2?v=${assetVersion}"`);
+  // Each script and style is named by the hash of its content (lib/static-assets.js), so it is cached for a year and any change gets a new URL.
+  let html = staticAssets.rewritePage(fs.readFileSync(path.join(__dirname, 'public', page), 'utf8'), { zh: wantsChinese(req) });
   html = html.replace('</head>', `<meta name="t-agent-login-path" content="${escapeHtml(config.loginPath)}">\n</head>`);
   html = html.replace(/<link rel="manifest" href="[^"]*">/, `<link rel="manifest" href="${manifestFor(req.path)}">`);
   res.type('html').send(html);
@@ -361,20 +375,21 @@ app.use((req, res, next) => {
   if (auth.loginRequired) return res.redirect(config.loginPath);
   next();
 });
-// Static files are never reused without asking the server first: every response says `no-cache`, so the browser (and any proxy in front of this server,
-// such as a tunnel) revalidates each time with the ETag / Last-Modified that express.static sends. An unchanged file costs a 304 without a body, a changed
-// one arrives at once, so a new release never shows a stale script or style. (`no-cache` still lets the browser keep a copy to validate; `no-store` would
-// download the 5 MB mermaid bundle again on every load.) Scripts and styles are gzipped, and /vendor too (mermaid is about 5 MB); only these prefixes, so
+// Static files: a script or style asked for with `?v=<hash of its content>` (the URLs the pages name, see sendClientPage) is cached for a year
+// (`immutable`): that URL can never name other content, and a changed file gets a new hash, so a release never shows a stale script or style. Every other
+// request (a plain URL, an old or a wrong hash, icons, manifests) says `no-cache`: it is revalidated with the ETag / Last-Modified each time (a 304 when
+// unchanged). Scripts and styles are sent as brotli / gzip copies made once in the background (staticAssets.precompressed); until a copy is ready, and for
+// everything else under /js, /css and /vendor (mermaid is about 5 MB), the compression middleware compresses on the fly. Only these prefixes, so
 // streaming endpoints such as SSE are never buffered.
-const noCache = res => res.setHeader('Cache-Control', 'no-cache');
+app.use(['/js', '/css', '/vendor'], staticAssets.precompressed);
 app.use('/vendor', compression(), express.static(path.join(__dirname, 'public', 'vendor'), {
   index: false,
-  setHeaders: noCache,
+  setHeaders: staticAssets.setHeaders,
 }));
 app.use(['/js', '/css'], compression());
 app.use(express.static(path.join(__dirname, 'public'), {
   index: false,
-  setHeaders: noCache,
+  setHeaders: staticAssets.setHeaders,
 }));
 // A logged-in person who opens a wrong page address goes to the home page; everyone else keeps getting 404.
 app.use(createUnknownPageRedirect({ loginPath: config.loginPath, isAuthenticated: session => getClientAuth().authenticated(session) }));
@@ -459,9 +474,12 @@ server.on('upgrade', (req, socket, head) => {
 
 server.listen(config.port, config.host, () => {
   const listeningPort = server.address().port;
+  serverLock.update({ port: listeningPort });
   const anyHost = ['0.0.0.0', '::', '', 'localhost'].includes(config.host);
   terminal.setHookEndpoint(`http://${anyHost ? '127.0.0.1' : config.host}:${listeningPort}/hooks/terminal-activity`);
   console.log(`Server running at http://localhost:${listeningPort}`);
+  // Make the brotli / gzip copies of the pages' scripts and styles now, in the background, so the first visitor already gets them.
+  for (const page of ['h5.html']) { try { staticAssets.rewritePage(fs.readFileSync(path.join(__dirname, 'public', page), 'utf8')); } catch { /* the page is not there */ } }
   frpRouter.service.autoStart();
   sshTunnelRouter.service.autoStart();
   console.log(`             LAN: http://${getLocalIP()}:${listeningPort}`);

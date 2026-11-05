@@ -4,6 +4,7 @@ import { flushSync } from 'react-dom';
 import { createRoot } from 'react-dom/client';
 import { App } from './App.jsx';
 import { createStore, initialState } from './store.mjs';
+import { createBackLayers } from './back.mjs';
 
 // One breakpoint for the shell and for h5.js (which reads it from `H5UI.media.wideQuery`), so the two can never disagree.
 const wideQuery = window.matchMedia('(min-width: 900px)');
@@ -66,3 +67,8 @@ ui.actions.toggleSidebar = () => {
 
 const root = createRoot(document.getElementById('h5-root'));
 flushSync(() => root.render(<App ui={ui} />));
+
+// The back button closes the open sheet, dialog or menu (scripts/h5-shell/back.mjs). The file sheet beside the terminal on a wide screen is not a modal,
+// so it is named here; the modals are found by themselves.
+const back = createBackLayers({ extra: () => { const s = ui.get(); return s.wide && s.design && s.design.open ? [{ close: () => ui.actions.closeDesign && ui.actions.closeDesign() }] : []; } });
+ui.subscribe(back.sync);

@@ -422,6 +422,14 @@ router.get('/:id/tasks/:taskId/document/:kind', async (req, res) => {
 });
 
 router.get('/:id/tasks/:taskId/files/content', proxyFiles('GET', '/content'));
+// An image of the working directory, not buffered: the Engine checks the path and the type (an older Engine answers 404, the page shows the alt text).
+router.get('/:id/tasks/:taskId/files/image', (req, res) => {
+  const target = remoteTarget(req, res);
+  if (!target) return;
+  const query = new URLSearchParams();
+  if (req.query.path !== undefined) query.set('path', String(req.query.path));
+  streamRemote(req, res, target.row.base_url, target.token, `${taskPath(req)}/files/image?${query}`, { sandbox: true });
+});
 router.put('/:id/tasks/:taskId/files/content', proxyFiles('PUT', '/content'));
 router.get('/:id/tasks/:taskId/files', proxyFiles('GET'));
 router.post('/:id/tasks/:taskId/files', proxyFiles('POST'));

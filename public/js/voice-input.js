@@ -596,63 +596,10 @@ const VoiceInput = (() => {
     return { start, stop, finish, cancel, get state() { return state; } };
   }
 
-  async function showSettings() {
-    let config;
-    try { config = await API.get('/api/speech/config'); } catch (error) { tell('Could not read voice input settings: ' + errorText(error), 'error'); return; }
-    const options = (map, selected) => Object.entries(map).map(([id, item]) => `<option value="${escapeHtml(id)}"${id === selected ? ' selected' : ''}>${escapeHtml(typeof item === 'string' ? item : item.label)}</option>`).join('');
-    const keyHint = config.keySource === 'saved' ? 'Saved; leave empty to keep it' : (config.keySource === 'environment' ? 'Using DASHSCOPE_API_KEY from the server; enter a key here to override it' : 'API Key');
-    Modal.show('Voice input settings', `
-      <div class="form-group"><label class="form-label" for="vi-key">Alibaba Cloud API Key</label>
-        <input class="form-input" id="vi-key" type="password" autocomplete="new-password" placeholder="${escapeHtml(keyHint)}"></div>
-      <div class="form-group"><label class="form-label" for="vi-region">Region</label>
-        <select class="form-input" id="vi-region">${options(config.regions, config.region)}</select></div>
-      <div class="form-group"><label class="form-label" for="vi-language">Language</label>
-        <select class="form-input" id="vi-language">${options(config.languages, config.language)}</select></div>
-      <div class="form-group"><label class="form-label" for="vi-model">Model</label>
-        <input class="form-input" id="vi-model" value="${escapeHtml(config.model)}"></div>
-      <div class="form-group"><label class="form-label" for="vi-noise">Noise filter (-1 to 1, optional)</label>
-        <input class="form-input" id="vi-noise" type="number" min="-1" max="1" step="0.1" value="${config.noiseThreshold === null ? '' : escapeHtml(String(config.noiseThreshold))}" placeholder="Service default">
-        <div class="form-hint">How sure the service must be that a sound is speech and not noise. Closer to 1 filters more noise (try 0.2 to 0.5 in a noisy room) but can cut quiet speech. It cannot tell your voice from other people talking nearby.</div></div>
-      <div class="form-group"><label class="form-label" for="vi-hotwords">Hot words (optional)</label>
-        <textarea class="form-input" id="vi-hotwords" rows="3" maxlength="400" placeholder="One per line: names, product and code terms">${escapeHtml(config.hotwords)}</textarea></div>
-      <div class="form-group"><label class="form-label" for="vi-vocab">Hot word list ID (optional)</label>
-        <input class="form-input" id="vi-vocab" value="${escapeHtml(config.vocabularyId)}" placeholder="A list made in advance on Alibaba Cloud"></div>
-      <div class="form-group"><label class="form-label" for="vi-url">Endpoint (optional)</label>
-        <input class="form-input" id="vi-url" value="${escapeHtml(config.endpoint)}"></div>
-      <div class="form-hint" id="vi-effective"></div>
-      <div class="form-hint">The key is stored encrypted on the client. The browser never receives it: it gets a one-minute token and sends the audio straight to Alibaba Cloud Model Studio, so no audio goes through the client server. Keys are specific to a region, so choose the region the key was created in. Leave the endpoint empty to use the region’s address.</div>
-      <p id="vi-feedback" role="status"></p>
-      <div class="form-actions"><button class="btn-cancel" id="vi-clear" type="button">Delete all settings</button><button class="btn-cancel" id="vi-cancel" type="button">Cancel</button><button class="btn-submit" id="vi-save" type="button">Save</button></div>`);
-    const field = id => document.getElementById(id);
-    const effective = () => {
-      const custom = field('vi-url').value.trim();
-      field('vi-effective').textContent = 'Address in use: ' + (custom || config.regions[field('vi-region').value].endpoint);
-    };
-    effective();
-    field('vi-region').addEventListener('change', effective);
-    field('vi-url').addEventListener('input', effective);
-    field('vi-cancel').addEventListener('click', Modal.hide);
-    const feedback = field('vi-feedback');
-    field('vi-save').addEventListener('click', async () => {
-      try {
-        await API.put('/api/speech/config', { apiKey: field('vi-key').value.trim(), region: field('vi-region').value, language: field('vi-language').value, model: field('vi-model').value.trim(), endpoint: field('vi-url').value.trim(), noiseThreshold: field('vi-noise').value.trim(), hotwords: field('vi-hotwords').value, vocabularyId: field('vi-vocab').value.trim() });
-        Modal.hide();
-        tell('Voice input settings saved', 'info');
-      } catch (error) { feedback.textContent = 'Save failed: ' + errorText(error); }
-    });
-    field('vi-clear').addEventListener('click', async () => {
-      try { await API.delete('/api/speech/config'); Modal.hide(); tell('Voice input settings deleted', 'info'); }
-      catch (error) { feedback.textContent = 'Delete failed: ' + errorText(error); }
-    });
-  }
+  // Voice input is set up in the page's Settings (scripts/h5-shell/Settings.jsx `VoiceGroup`); the old desktop settings dialog is gone (2.88.0).
+  function showSettings() { tell('Set up voice input in Settings', 'info'); }
 
-  // Desktop page: the microphone and settings buttons next to the Chinese input box.
-  const input = document.getElementById('terminal-translate-input');
-  const mic = document.getElementById('terminal-voice');
-  const settings = document.getElementById('terminal-voice-settings');
-  if (input && mic) attach({ textarea: input, button: mic, onNotConfigured: showSettings });
-  if (settings) settings.addEventListener('click', showSettings);
-  // Phone page: settings live on the desktop page, like the translation settings.
+  // The page: the microphone next to the draft box.
   const h5Input = document.getElementById('h5-translate-input');
   const h5Mic = document.getElementById('h5-voice');
   // Hold to talk on a touch screen, click to start and stop on a computer (the shell's input mode, `H5UI` in scripts/h5-shell/entry.jsx).

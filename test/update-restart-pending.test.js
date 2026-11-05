@@ -72,7 +72,7 @@ test('Git install: same version but the on-disk code is newer than the running p
 });
 
 test('When only hot-updatable files such as the frontend changed no restart is needed → still current', async () => {
-  const hot = 'public/js/app.js\0README.md\0docs/HANDOFF.md\0';
+  const hot = 'public/js/h5.js\0README.md\0docs/HANDOFF.md\0';
   const state = await load({ diffs: { HEAD: hot, 'origin/main': hot } }).check({ force: true });
   assert.equal(state.status, 'current');
   assert.equal(state.restart_pending, false);

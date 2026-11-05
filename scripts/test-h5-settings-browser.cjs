@@ -161,7 +161,7 @@ const html = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8').replace(
     await page.waitForFunction(() => !document.getElementById('h5-access-feedback').hidden);
     assert.equal(await page.locator('#h5-access-feedback').textContent(), 'The code is invalid or already used. Wait for the next code.');
     assert.deepEqual((await calls()).find(call => call.url === '/auth/mode').body, { mode: 'local' });
-    assert.equal(await page.locator('#h5-authenticator-replace').getAttribute('href'), '/auth/setup?return_to=/h5');
+    assert.equal(await page.locator('#h5-authenticator-replace').getAttribute('href'), '/auth/setup?return_to=/', 'opened at /, the page comes back to /');
 
     // Nothing is wider than the phone.
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'no horizontal overflow');

@@ -22,17 +22,30 @@ test('every vendored library exists locally and matches its pinned SHA-256', () 
 
 test('pages load libraries from /vendor, every referenced file is in the manifest, and no CDN remains', () => {
   const known = new Set(manifest.libs.map(lib => `/${lib.file.replace(/^public\//, '')}`));
-  for (const file of ['public/index.html', 'public/js/tasks.js', 'server.js']) {
+  for (const file of ['public/h5.html', 'scripts/h5-shell/Design.jsx', 'server.js']) {
     const source = read(file);
     assert.doesNotMatch(source, /cdn\.jsdelivr\.net/, `${file} must not use a runtime CDN`);
     for (const [, url] of source.matchAll(/(\/vendor\/(?:marked|mermaid|xterm)\/[\w.-]+)/g)) {
       assert.ok(known.has(url), `${file} references ${url}, which is not in scripts/vendor-libs.json`);
     }
   }
-  // The main page must load marked / xterm synchronously; mermaid may only be lazy-loaded (about 5 MB).
-  const index = read('public/index.html');
-  assert.match(index, /\/vendor\/marked\/marked-[\d.]+\.min\.js/);
-  assert.match(index, /\/vendor\/xterm\/xterm-[\d.]+\.js/);
-  assert.doesNotMatch(index, /<script[^>]*mermaid/, 'mermaid is not loaded eagerly');
-  assert.match(read('public/js/tasks.js'), /MERMAID_SRC = '\/vendor\/mermaid\/mermaid-[\d.]+\.min\.js'/);
+  // The page loads xterm synchronously; marked and mermaid (about 5 MB) are only loaded when a document is shown (scripts/h5-shell/Design.jsx).
+  const page = read('public/h5.html');
+  assert.match(page, /\/vendor\/xterm\/xterm-[\d.]+\.js/);
+  assert.doesNotMatch(page, /<script[^>]*(?:mermaid|marked)/, 'marked and mermaid are not loaded eagerly');
+  const design = read('scripts/h5-shell/Design.jsx');
+  assert.match(design, /MARKED_SRC = '\/vendor\/marked\/marked-[\d.]+\.min\.js'/);
+  assert.match(design, /MERMAID_SRC = '\/vendor\/mermaid\/mermaid-[\d.]+\.min\.js'/);
+  // The share page renders Markdown with marked on the server's page.
+  assert.match(read('server.js'), /\/vendor\/marked\/marked-[\d.]+\.min\.js/);
+});
+
+test('every vendored file is in the manifest (nothing left over after a library is dropped)', () => {
+  const listed = new Set(manifest.libs.map(lib => lib.file));
+  for (const folder of fs.readdirSync(path.join(root, 'public/vendor'))) {
+    for (const name of fs.readdirSync(path.join(root, 'public/vendor', folder))) {
+      const file = `public/vendor/${folder}/${name}`;
+      assert.ok(listed.has(file), `${file} is not in scripts/vendor-libs.json`);
+    }
+  }
 });

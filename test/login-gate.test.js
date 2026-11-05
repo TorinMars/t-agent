@@ -18,7 +18,7 @@ test('only the login entrance, machine APIs and share assets are open before log
   for (const open of [login, `${login}/`, `${login}/status`, `${login}/setup`, '/health', '/v1/info', '/api/remote/v1/capabilities', '/share/abc', '/share/abc/file', '/js/auth.js', '/js/i18n.js', '/js/i18n-zh-ui.js', '/css/auth.css', '/favicon.svg', '/manifest-h5.json', '/icons/icon-192.png', '/icons/icon-512.png', '/vendor/marked/marked-15.0.12.min.js']) {
     assert.equal(isOpenPath(open, login), true, open);
   }
-  for (const closed of ['/', '/web', '/api/tasks', '/auth/login', '/auth/status', '/clients', '/js/app.js', '/manifest.json', '/sw.js', '/torin/hide', '/torin/hide/login-x', '/v1x', '/vendor/monaco/monaco.js', '/vendor/marked/../monaco/x.js']) {
+  for (const closed of ['/', '/web', '/api/tasks', '/auth/login', '/auth/status', '/clients', '/js/h5.js', '/manifest.json', '/sw.js', '/torin/hide', '/torin/hide/login-x', '/v1x', '/vendor/xterm/xterm-5.5.0.js', '/vendor/marked/../xterm/x.js']) {
     assert.equal(isOpenPath(closed, login), false, closed);
   }
 });
@@ -72,7 +72,7 @@ test('logged out, the pages lead to the login entrance and come back after the l
   assert.equal(run('/web').location, '/torin/hide/login?return_to=%2Fweb');
   assert.equal(run('/').location, '/torin/hide/login?return_to=%2F');
   assert.equal(run('/web', { method: 'HEAD' }).location, '/torin/hide/login?return_to=%2Fweb');
-  for (const other of ['/api/tasks', '/h5/x', '/web/x', '/manifest.json', '/js/app.js', '/css/h5.css', '/index.html', '/h5.html']) assert.equal(run(other).status, 404, `${other} stays closed`);
+  for (const other of ['/api/tasks', '/h5/x', '/web/x', '/manifest.json', '/js/h5.js', '/css/h5.css', '/index.html', '/h5.html']) assert.equal(run(other).status, 404, `${other} stays closed`);
   assert.equal(run('/h5', { method: 'POST' }).status, 404, 'only page visits are sent on');
   assert.equal(run('/h5', { rawPath: '/h5/' }).status, 404, 'a look-alike address is not one of the pages');
   assert.equal(run('/%68%35', { rawPath: '/%68%35' }).status, 404, 'an encoded look-alike is not either');

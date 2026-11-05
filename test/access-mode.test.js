@@ -125,25 +125,26 @@ test('Fresh install: anything not local gets 404; after choosing “local access
   assert.equal((await raw(`${LOGIN}/mode`, { body: { mode: 'bogus' } })).json.error, 'INVALID_ACCESS_MODE');
   const chosen = await raw(`${LOGIN}/mode`, { body: { mode: 'local' } });
   assert.equal(chosen.status, 200);
-  assert.deepEqual(chosen.json, { mode: 'local', redirect: '/web' });
+  assert.deepEqual(chosen.json, { mode: 'local', redirect: '/' });
   const cookie = chosen.cookie;
   assert.ok(cookie);
 
   // No verification needed: pages, endpoints and settings are all usable.
-  assert.equal((await raw('/web', { cookie })).status, 200);
+  assert.equal((await raw('/', { cookie })).status, 200);
+  assert.equal((await raw('/web', { cookie })).status, 302, 'the old desktop address leads to /');
   assert.equal((await raw('/api/tasks', { cookie })).status, 200);
   const me = (await raw('/auth/me', { cookie })).json;
   assert.equal(me.access_mode, 'local');
   assert.equal(me.authenticator_bound, false);
   // Even locally, a Host that is not a loopback name (DNS rebinding) or a request forwarded by a proxy is refused.
-  assert.equal((await raw('/web', { cookie, host: 'client.example.test' })).status, 404);
+  assert.equal((await raw('/', { cookie, host: 'client.example.test' })).status, 404);
   assert.equal((await raw('/api/tasks', { cookie, host: 'evil.test:3000' })).status, 404);
   assert.equal((await raw('/v1/info', { host: 'client.example.test' })).status, 404);
 });
 
 test('Local only → authenticator + external: bind first, external access opens only after binding succeeds; switching back to local only disconnects immediately', { timeout: 40000 }, async t => {
   const { raw } = await startServer(t, { ACCESS_MODE: 'local' });
-  const first = await raw('/web');
+  const first = await raw('/');
   assert.equal(first.status, 200, 'seeded local mode needs no choice and no login');
   const cookie = first.cookie;
   assert.equal((await raw('/api/tasks', { cookie, host: 'client.example.test' })).status, 404, 'still local-only');

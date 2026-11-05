@@ -71,7 +71,7 @@ test('hidden login entrance, embedded Clients still authenticate and HTTPS cooki
   assert.match(confirmation.headers.get('set-cookie'), /SameSite=Strict/);
   assert.match(confirmation.headers.get('set-cookie'), /(?:^|, )embedding-client\.sid=/); // next to the cookie that remembers the device
   const cookie = /(?:^|, )(embedding-client\.sid=[^;]+)/.exec(confirmation.headers.get('set-cookie'))[1];
-  const ready = await call('/web', { cookie, headers: { 'Sec-Fetch-Dest': 'iframe', 'X-Forwarded-Proto': 'https' } });
+  const ready = await call('/', { cookie, headers: { 'Sec-Fetch-Dest': 'iframe', 'X-Forwarded-Proto': 'https' } });
   assert.equal(ready.status, 200);
   assert.match(await ready.text(), /name="t-agent-login-path" content="\/torin\/hide\/login"/);
   assert.match(ready.headers.get('set-cookie'), /SameSite=None/);

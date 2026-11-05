@@ -1,6 +1,7 @@
-// File links in the desktop terminal: real task routes, xterm, Monaco and a real shell. A path printed by the shell is a link; Cmd/Ctrl + click
-// opens it in the file browser above the terminal (the folders expanded, the file in a tab, the line of "file:line" in view and marked).
-// A plain click opens nothing, a path outside the working directory is not a link, and a missing path gives a notice without opening the panel.
+// File links in the page's terminal on a computer (1440x900, mouse): the page at `/` (public/h5.html) with the real task routes, the real terminal
+// WebSocket handler, xterm and a real shell. A path the shell prints is a link on hover; a click opens it in the side panel (the line of
+// "file:line" marked), a path outside the working directory is no link, a missing path says so, and relative paths follow the shell's live directory
+// (after "cd", read by the server; or an OSC 7 report). Replaces the old desktop-page version (Monaco file browser), removed in 2.88.0.
 // SHOT_DIR=<dir> saves a screenshot of the opened file there.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -27,8 +28,7 @@ fs.writeFileSync(path.join(task.work_dir, 'docs/设计.md'), '# Design\n');
 fs.writeFileSync(path.join(scratch, 'outside.md'), '# Outside\n');
 // The lines the shell prints. They are read from a file with a short command: typing the long paths key by key into a real
 // interactive shell on a busy machine sometimes damaged them (a space inside the path), which broke the links under test.
-fs.writeFileSync(path.join(scratch, 'lines.txt'), ['L1 src/app.js:42 and docs/设计.md', `L2 ${path.join(task.work_dir, 'src')}/`,
-  `L4 ${path.join(scratch, 'outside.md')}`, 'L5 ../outside.md', 'L3 missing/nothing.js https://example.com/x/y.js', ''].join('\n'));
+fs.writeFileSync(path.join(scratch, 'lines.txt'), ['L1 src/app.js:42 and docs/设计.md', `L4 ${path.join(scratch, 'outside.md')}`, 'L5 ../outside.md', 'L3 missing/nothing.js', ''].join('\n'));
 process.env.TFL_LINES = path.join(scratch, 'lines.txt'); // the terminal shell gets this environment
 // The live directory: a file only in sub/ (the shell does "cd sub"), one only in other/ (an OSC 7 report names it), one outside the work dir.
 fs.mkdirSync(path.join(task.work_dir, 'sub'));
@@ -46,11 +46,19 @@ script('tfl6', 'L6 a.md\n', false);
 script('tfl7', `${osc7(path.join(task.work_dir, 'other'))}L7 b.md\n`, true);
 script('tfl8', `${osc7(scratch)}L8 c.md\n`, true);
 process.env.PATH = `${bin}:${process.env.PATH}`;
+
 const app = express(); app.use(express.json({ limit: '32mb' }));
 app.use('/api/tasks', require('../routes/tasks'));
-app.get('/js/app.js', (req, res) => res.type('js').send(fs.readFileSync(path.join(root, 'public/js/app.js'), 'utf8').split('// app.js loads before the other feature scripts')[0]));
-app.get('/', (req, res) => res.type('html').sendFile(path.join(root, 'public/index.html')));
-app.use(express.static(path.join(root, 'public')));
+app.use('/api/task-groups', require('../routes/task-groups'));
+// What the page asks for besides tasks and terminals: no remote Engines, no update, no chats.
+app.get('/api/remote-servers', (req, res) => res.json([]));
+app.get('/auth/me', (req, res) => res.json({ work_dir: null, effective_work_dir: process.env.TASKS_BASE_DIR }));
+app.get('/api/system/version', (req, res) => res.json({ app_version: '0.0.0', boot_id: 'b1' }));
+app.all('/api/system/*', (req, res) => res.json({ status: 'current', is_update_admin: false }));
+app.get('/api/agent-chat/summary', (req, res) => res.json({ running: 0, queued: 0, submitted: 0 }));
+app.get('/', (req, res) => res.type('html').sendFile(path.join(root, 'public/h5.html')));
+app.use(express.static(path.join(root, 'public'), { index: false }));
+app.use((req, res) => res.status(404).json({ error: 'not mocked' }));
 let server; let browser; let wss;
 (async () => {
   try {
@@ -62,23 +70,25 @@ let server; let browser; let wss;
     const errors = []; page.on('pageerror', error => errors.push(error.message));
     const fileRequests = [];
     page.on('request', request => { if (request.url().includes('/files')) fileRequests.push(decodeURIComponent(request.url())); });
-    await page.addInitScript(id => localStorage.setItem('selectedTaskId', String(id)), task.id);
-    await page.goto(`http://127.0.0.1:${server.address().port}`);
-    await page.evaluate(() => { const Original = window.Terminal; window.__testTerms = []; window.Terminal = class extends Original { constructor(...args) { super(...args); window.__testTerms.push(this); } }; return Tasks.load(); });
-    await page.locator('#content-tabs [data-tab="shell"]').click();
-    await page.waitForFunction(() => document.querySelector('#xterm-container .xterm-screen')?.clientHeight > 10);
-    const input = page.locator('#xterm-container .xterm-helper-textarea');
-    await input.focus();
-    await page.keyboard.type('clear; cat "$TFL_LINES"');
-    await page.keyboard.press('Enter');
-    await page.waitForFunction(() => { const b = window.__testTerms[0]?.buffer.active; return b && Array.from({ length: b.length }, (_, i) => b.getLine(i)?.translateToString()).some(line => line?.startsWith('L3 ')); }, undefined, { timeout: 90000 });
+    await page.addInitScript(() => { window.__testTerms = []; Object.defineProperty(window, 'Terminal', { configurable: true, set(Original) { delete window.Terminal; window.Terminal = class extends Original { constructor(...args) { super(...args); window.__testTerms.push(this); } }; }, get() { return undefined; } }); });
+    await page.goto(`http://127.0.0.1:${server.address().port}/`);
+    assert.equal(await page.evaluate(() => document.documentElement.dataset.input), 'pointer', 'a computer with a mouse: pointer mode');
+    await page.locator('.h5-task-item', { hasText: 'Links fixture' }).click();
+    await page.locator('#h5-tasks .h5-terminal-list[aria-label="Links fixture"] .h5-terminal-main').first().click();
+    await page.waitForFunction(() => document.querySelector('.h5-xterm .xterm-screen')?.clientHeight > 10);
+    const input = page.locator('.h5-xterm .xterm-helper-textarea');
+    const runInShell = async (command, prefix) => {
+      await input.focus();
+      await page.keyboard.type(command);
+      await page.keyboard.press('Enter');
+      await page.waitForFunction(text => { const b = window.__testTerms.at(-1)?.buffer.active; return b && Array.from({ length: b.length }, (_, i) => b.getLine(i)?.translateToString()).some(line => line?.trimStart().startsWith(text)); }, prefix, { timeout: 90000 });
+    };
+    await runInShell('clear; cat "$TFL_LINES"', 'L3 ');
     assert.equal(fileRequests.length, 0, 'printing paths sends nothing to the file API');
-    const printed = await page.evaluate(() => { const b = window.__testTerms[0].buffer.active; return Array.from({ length: b.length }, (_, i) => b.getLine(i)?.translateToString(true)); });
-    for (const line of fs.readFileSync(process.env.TFL_LINES, 'utf8').split('\n').filter(Boolean)) assert.ok(printed.includes(line), `the shell printed the fixture line unchanged: ${line}`);
 
     // The pixel centre of `text` on the row that starts with `prefix` (cells counted with xterm, so the wide CJK characters are right).
     const pointOf = (prefix, text) => page.evaluate(({ prefix, text }) => {
-      const term = window.__testTerms[0];
+      const term = window.__testTerms.at(-1);
       const buffer = term.buffer.active;
       for (let y = 0; y < buffer.length; y += 1) {
         const line = buffer.getLine(y);
@@ -88,48 +98,39 @@ let server; let browser; let wss;
         if (index < 0) return null;
         let column = 0; let seen = 0;
         for (let x = 0; x < line.length && seen < index; x += 1) { const cell = line.getCell(x); if (!cell.getWidth()) continue; seen += cell.getChars().length || 1; column = x + cell.getWidth(); }
-        if (y < buffer.viewportY || y >= buffer.viewportY + term.rows) term.scrollToLine(Math.max(0, y - Math.floor(term.rows / 2))); // the panel made the terminal short
-        const screen = document.querySelector('#xterm-container .xterm-screen').getBoundingClientRect();
+        if (y < buffer.viewportY || y >= buffer.viewportY + term.rows) term.scrollToLine(Math.max(0, y - Math.floor(term.rows / 2)));
+        const screen = document.querySelector('.h5-xterm .xterm-screen').getBoundingClientRect();
         const cellWidth = screen.width / term.cols; const cellHeight = screen.height / term.rows;
         return { x: screen.left + (column + 1.5) * cellWidth, y: screen.top + (y - buffer.viewportY + 0.5) * cellHeight };
       }
       return null;
     }, { prefix, text });
     const hover = async point => { await page.mouse.move(point.x, point.y - 3); await page.mouse.move(point.x, point.y); await page.waitForTimeout(150); };
-    const modifier = process.platform === 'darwin' ? 'Meta' : 'Control';
+    const underlined = () => page.evaluate(() => document.querySelector('.h5-xterm .xterm-screen')?.classList.contains('xterm-cursor-pointer'));
     // xterm finds the link under the mouse a little after the move; on a busy machine wait for it (the pointer cursor) before clicking.
-    const modClick = async (point, link = true) => { await hover(point); if (link) await page.waitForFunction(() => document.querySelector('#xterm-container .xterm-screen')?.classList.contains('xterm-cursor-pointer')); await page.keyboard.down(modifier); await page.mouse.click(point.x, point.y); await page.keyboard.up(modifier); };
-    const underlined = () => page.evaluate(() => document.querySelector('#xterm-container .xterm-screen')?.classList.contains('xterm-cursor-pointer'));
+    const click = async (point, link = true) => { await hover(point); if (link) await page.waitForFunction(() => document.querySelector('.h5-xterm .xterm-screen')?.classList.contains('xterm-cursor-pointer')); await page.mouse.click(point.x, point.y); };
+    const panel = page.locator('#h5-design-sheet .h5-design-panel');
+    const closePanel = async () => { await page.locator('#h5-design-close').click(); await panel.waitFor({ state: 'hidden' }); };
 
-    // A plain click on a path selects text as before; it opens nothing.
+    // A click on a path opens it in the side panel at line 42.
     const appPoint = await pointOf('L1 ', 'src/app.js:42');
     await hover(appPoint);
     assert.equal(await underlined(), true, 'a path inside the working directory is a link on hover');
     assert.equal(fileRequests.length, 0, 'hovering sends nothing to the file API');
-    await page.mouse.click(appPoint.x, appPoint.y);
-    await page.waitForTimeout(300);
-    assert.equal(await page.locator('#file-panel').count(), 0, 'a plain click does not open the file browser');
+    await click(appPoint);
+    await panel.waitFor({ state: 'visible' });
+    assert.match(await panel.getAttribute('class'), /h5-design-side/, 'on a wide screen the file opens in the side panel');
+    await page.locator('#h5-design-body .h5-file-line.is-target').waitFor();
+    assert.equal(await page.locator('#h5-design-title').textContent(), 'app.js');
+    assert.equal(await page.locator('#h5-design-body .h5-file-line.is-target').getAttribute('data-line'), '42');
+    if (process.env.SHOT_DIR) await page.screenshot({ path: path.join(process.env.SHOT_DIR, 'terminal-file-link-pc.png') });
+    await closePanel();
 
-    // Cmd/Ctrl + click: the file browser opens on src/app.js at line 42.
-    await modClick(appPoint);
-    await page.locator('#file-panel').waitFor({ state: 'visible' });
-    await page.locator('.file-tree-row.is-selected[data-path="src/app.js"]').waitFor();
-    await page.locator('.file-editor-tab.is-active[data-tab-path="src/app.js"]').waitFor();
-    await page.waitForFunction(() => monaco.editor.getEditors()[0]?.getPosition()?.lineNumber === 42);
-    await page.waitForFunction(() => document.querySelectorAll('#file-panel-editor .file-panel-line-mark').length === 1, undefined, { timeout: 3000 }).catch(() => {});
-    const view = await page.evaluate(() => { const editor = monaco.editor.getEditors()[0]; const ranges = editor.getVisibleRanges(); return { first: ranges[0].startLineNumber, last: ranges[ranges.length - 1].endLineNumber, marks: document.querySelectorAll('#file-panel-editor .file-panel-line-mark').length }; });
-    assert.ok(view.first <= 42 && view.last >= 42, `line 42 is in view (${JSON.stringify(view)})`);
-    assert.equal(view.marks, 1, 'the target line is marked');
-    assert.equal(await page.locator('.file-tree-row[data-path="src"]').getAttribute('aria-expanded'), 'true', 'the folder above the file is expanded');
-    if (process.env.SHOT_DIR) await page.screenshot({ path: path.join(process.env.SHOT_DIR, 'terminal-file-link-desktop.png') });
-
-    // A Chinese file name (wide cells) opens too, in the panel that is already open.
-    await modClick(await pointOf('L1 ', 'docs/'));
-    await page.locator('.file-editor-tab.is-active[data-tab-path="docs/设计.md"]').waitFor();
-
-    // An absolute folder inside the working directory opens as the folder in the tree.
-    await modClick(await pointOf('L2 ', 'src/'));
-    await page.waitForFunction(() => document.querySelector('.file-tree-row.is-selected')?.dataset.path === 'src');
+    // A Chinese file name (wide cells) opens too.
+    await click(await pointOf('L1 ', 'docs/'));
+    await page.locator('#h5-design-body h1', { hasText: 'Design' }).waitFor();
+    assert.equal(await page.locator('#h5-design-title').textContent(), '设计.md');
+    await closePanel();
 
     // Outside the working directory (absolute or ../): not a link, so a click does nothing and asks nothing.
     const before = fileRequests.length;
@@ -137,49 +138,40 @@ let server; let browser; let wss;
       const point = await pointOf(prefix, text);
       await hover(point);
       assert.equal(await underlined(), false, `${text} is not a link`);
-      await modClick(point, false);
+      await click(point, false);
     }
-    // A web link stays a web link (the web links addon opens it in a new tab).
-    await page.evaluate(() => { window.__opened = []; window.open = (...args) => { window.__opened.push(args[0]); return null; }; });
-    await modClick(await pointOf('L3 ', 'example.com/x/y.js'));
-    assert.deepEqual(await page.evaluate(() => window.__opened), ['https://example.com/x/y.js']);
-    await page.waitForTimeout(300);
-    assert.equal(fileRequests.length, before, 'outside paths and web links do not reach the file API');
+    await page.waitForTimeout(700);
+    assert.equal(await panel.isVisible(), false, 'outside paths open nothing');
+    assert.equal(fileRequests.length, before, 'outside paths do not reach the file API');
 
-    // A missing path: one read, then a notice; the panel keeps its file.
-    await modClick(await pointOf('L3 ', 'missing/nothing.js'));
-    await page.locator('.toast', { hasText: 'Not found in the working directory: missing/nothing.js' }).waitFor();
-    assert.equal(await page.locator('.file-editor-tab').count(), 2);
+    // A missing path says so.
+    await click(await pointOf('L3 ', 'missing/nothing.js'));
+    await page.locator('#h5-design-empty', { hasText: 'Not found in the working directory: missing/nothing.js' }).waitFor();
+    await closePanel();
 
-    // The shell's live directory. After "cd sub" a relative path opens from sub/ (the server reads the shell's directory, or the shell's own
-    // OSC 7 report names it when its configuration sends one).
-    const runInShell = async (command, prefix) => {
-      await input.focus();
-      await page.keyboard.type(command);
-      await page.keyboard.press('Enter');
-      await page.waitForFunction(text => { const b = window.__testTerms[0]?.buffer.active; return b && Array.from({ length: b.length }, (_, i) => b.getLine(i)?.translateToString()).some(line => line?.trimStart().startsWith(text)); }, prefix, { timeout: Number(process.env.TFL_WAIT) || 90000 })
-        .catch(async error => { if (process.env.TFL_DEBUG) console.log(await page.evaluate(() => { const b = window.__testTerms[0].buffer.active; return Array.from({ length: b.length }, (_, i) => b.getLine(i)?.translateToString(true)).filter(Boolean).join('\n'); })); throw error; });
-    };
+    // The shell's live directory. After "cd sub" a relative path opens from sub/ (the server reads the shell's directory).
     await runInShell('cd sub;tfl6', 'L6 ');
-    await modClick(await pointOf('L6 ', 'a.md'));
-    await page.locator('.file-editor-tab.is-active[data-tab-path="sub/a.md"]').waitFor();
+    await click(await pointOf('L6 ', 'a.md'));
+    await page.locator('#h5-design-body h1', { hasText: 'In sub' }).waitFor();
+    await closePanel();
     // An OSC 7 report printed by a program names other/.
     await runInShell('tfl7', 'L7 ');
-    await modClick(await pointOf('L7 ', 'b.md'));
-    await page.locator('.file-editor-tab.is-active[data-tab-path="other/b.md"]').waitFor();
+    await click(await pointOf('L7 ', 'b.md'));
+    await page.locator('#h5-design-body h1', { hasText: 'In other' }).waitFor();
+    await closePanel();
     // A reported directory outside the work dir: relative paths there are no links and open nothing.
-    await input.focus(); await page.keyboard.press('Control+C'); // the opened file took the focus
+    await input.focus(); await page.keyboard.press('Control+C');
     await runInShell('tfl8', 'L8 ');
     const outsideBefore = fileRequests.length;
     const cPoint = await pointOf('L8 ', 'c.md');
     await hover(cPoint);
     assert.equal(await underlined(), false, 'c.md from an outside directory is not a link');
-    await modClick(cPoint, false);
-    await page.waitForTimeout(300);
+    await click(cPoint, false);
+    await page.waitForTimeout(700);
     assert.equal(fileRequests.length, outsideBefore, 'nothing is asked for a path from an outside directory');
-    await input.focus(); await page.keyboard.press('Control+C'); // the opened file took the focus
+    await input.focus(); await page.keyboard.press('Control+C');
     assert.deepEqual(errors, []);
-    console.log('terminal file links browser test passed');
+    console.log('terminal file links browser test (computer) passed');
   } finally {
     if (browser) await browser.close();
     terminal.closeTaskTerminals(task.id);

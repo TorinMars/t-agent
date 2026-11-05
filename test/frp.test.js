@@ -254,35 +254,6 @@ test('A manual port that is taken is not changed automatically, and a hint to ch
   assert.match(service.view().error, /choose another port/);
 });
 
-// ── Agent prompts ──
-const FrpPrompts = require('../public/js/frp-prompts.js');
-
-test('frpc prompt: carries checksum, install directory, version and prohibitions', () => {
-  const text = FrpPrompts.frpc({ binDir: '/srv/t-agent/data/bin', version: '0.61.1', target: { os: 'linux', arch: 'amd64' } });
-  assert.match(text, /frp_0\.61\.1_linux_amd64\.tar\.gz/);
-  assert.match(text, /frp_sha256_checksums\.txt/);
-  assert.match(text, /\/srv\/t-agent\/data\/bin\/frpc/);
-  assert.match(text, /--version.*0\.61\.1/);
-  assert.match(text, /do not use sudo/);
-  assert.match(FrpPrompts.frpc({ binDir: '/x', version: '0.61.1', target: null }), /confirm the system and architecture/);
-});
-
-test('frps prompt: carries server port, Token and allowed range; without a Token the Agent is told to generate one at random', () => {
-  const base = { version: '0.61.1', serverPort: 7001, portMin: 20000, portMax: 60000, remotePort: 28000 };
-  const withToken = FrpPrompts.frps({ ...base, token: 'tok"en' });
-  assert.match(withToken, /bindPort = 7001/);
-  assert.match(withToken, /auth\.token = "tok\\"en"/);
-  assert.match(withToken, /allowPorts = \[\{ start = 20000, end = 60000 \}\]/);
-  assert.match(withToken, /TCP 7001/);
-  assert.match(withToken, /TCP 20000-60000/);
-  assert.match(withToken, /security group/);
-  const noToken = FrpPrompts.frps({ ...base, token: '' });
-  assert.match(noToken, /random 32-character token/);
-  const outside = FrpPrompts.frps({ ...base, token: '', remotePort: 8080 });
-  assert.match(outside, /\{ single = 8080 \}/);
-  assert.match(outside, /20000-60000 and 8080/);
-});
-
 // ── frpc detection ──
 const { findFrpc, homebrewDirs } = require('../services/frp');
 

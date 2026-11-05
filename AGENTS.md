@@ -12,14 +12,14 @@
 - Chinese characters may appear only in those dictionaries and in test fixtures that exist to prove that Chinese user content (translator input, terminal output, file names) is handled. `test/i18n.test.js` fails when Chinese shows up anywhere else. Where a regular expression needs a CJK range, write it with `\u` escapes.
 - Content created or entered by users (tasks, documents, file names, terminal input) must keep working with Chinese and any other language.
 
-## Phone UI icons
+## UI icons
 
-- All icons in the phone UI (`/h5`) come from one icon library: the "Ant Design Official Icon Library" collection on iconfont.cn (https://www.iconfont.cn/collections/detail?cid=9402). Same grid, same outlined style. Do not mix in icons from other sets. Library icons come first.
+- All icons in the page (the MUI page at `/` and `/h5`) come from one icon library: the "Ant Design Official Icon Library" collection on iconfont.cn (https://www.iconfont.cn/collections/detail?cid=9402). Same grid, same outlined style. Do not mix in icons from other sets. Library icons come first.
 - Where no library icon is clearly recognisable for a button (for example the keyboard keys Backspace, Tab and Shift), you may draw an inline SVG yourself on the 24 grid, with the same stroke weight (1.5), round caps and joins, outlined style and `currentColor`, or use a short text label instead. Judge it on a real-size screenshot (phone width, 3x). A text label is better than an unclear icon.
 - Self-drawn icons live in `scripts/h5-shell/Icons.jsx`, in the clearly marked `SELF-DRAWN ICONS` section (the `DRAWN` map).
 - Icons are inline SVG paths in `scripts/h5-shell/Icons.jsx`, drawn with `currentColor` at a consistent size (24px; 22px for the function keys; the self-drawn ones are stroked on a 24 viewBox). No runtime requests and no icon fonts.
 - Every icon-only button has an English `aria-label` and the same `title` (with its Chinese text in `public/js/i18n-zh-ui.js`).
-- To add an icon: take the closest same-style icon from the same collection, add its path to `Icons.jsx`, and update the mapping table in "Phone UI icons" in `DESIGN.md` (library icon with its id, self-drawn icon, or text label).
+- To add an icon: take the closest same-style icon from the same collection, add its path to `Icons.jsx`, and update the mapping table in "UI icons" in `DESIGN.md` (library icon with its id, self-drawn icon, or text label).
 - Text labels are styled to match the icons (same size, weight and vertical alignment).
 
 ## Development workflow

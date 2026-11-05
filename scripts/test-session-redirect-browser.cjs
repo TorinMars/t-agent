@@ -1,5 +1,5 @@
-// Browser test of what happens when the login expires while a page is open: the phone page and the desktop page both go to the login entrance and come back
-// to the page that was open; a real "not found" does not log anyone out.
+// Browser test of what happens when the login expires while the page is open, at both of its addresses (`/`, and `/h5` where iPhone Home Screen apps
+// start): it goes to the login entrance and comes back to the address that was open; a real "not found" does not log anyone out.
 const { chromium } = require('playwright');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -8,14 +8,14 @@ const root = path.resolve(__dirname, '..');
 const clientAuth = fs.readFileSync(path.join(root, 'public/js/client-auth.js'), 'utf8');
 const LOGIN = '/torin/hide/login';
 
-// The phone page loads client-auth.js, ahead of its own script.
+// The page loads client-auth.js, ahead of its own script.
 const h5 = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8');
 assert.ok(h5.indexOf('/js/client-auth.js') > 0 && h5.indexOf('/js/client-auth.js') < h5.indexOf('/js/h5.js'), 'h5.html loads client-auth.js before h5.js');
 
 (async () => {
   const browser = await chromium.launch({ headless: true, ...(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {}) });
   try {
-    for (const [page, back] of [['/h5', '%2Fh5'], ['/web', '%2Fweb']]) {
+    for (const [page, back] of [['/h5', '%2Fh5'], ['/', '%2F']]) {
       for (const authenticated of [false, true]) {
         const context = await browser.newContext();
         const tab = await context.newPage();
@@ -52,6 +52,6 @@ assert.ok(h5.indexOf('/js/client-auth.js') > 0 && h5.indexOf('/js/client-auth.js
         await context.close();
       }
     }
-    console.log('Session redirect: the phone page and the desktop page go to the login entrance and back, and a missing resource does not log anyone out.');
+    console.log('Session redirect: / and /h5 go to the login entrance and back to the same address, and a missing resource does not log anyone out.');
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exit(1); });

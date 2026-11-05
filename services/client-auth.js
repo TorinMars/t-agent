@@ -49,7 +49,8 @@ function matchStep(secret, code, now = Date.now()) {
 
 function hash(value) { return crypto.createHash('sha256').update(value).digest('hex'); }
 function fail(code, status = 400) { const error = new Error(code); error.status = status; throw error; }
-function safeReturnTo(value) { return ['/', '/web', '/h5'].includes(value) ? value : '/'; }
+// `/web` (the old desktop page) now leads to `/`; `/h5` stays, so an iPhone Home Screen app returns to its own start address.
+function safeReturnTo(value) { return value === '/h5' ? '/h5' : '/'; }
 
 // Do not trust req.ip: reverse proxies and forwarded headers can make a remote
 // request appear local. Used only to decide cookie security for direct loopback

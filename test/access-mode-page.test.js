@@ -1,11 +1,11 @@
-// The "Choose an access mode" page shown on first open, and the "Access mode" block in settings.
+// The "Choose an access mode" page shown on first open, and where the login page leads afterwards.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-async function startAuthPage(status, post = {}, pathname = '/torin/hide/login/setup') {
+async function startAuthPage(status, post = {}, pathname = '/torin/hide/login/setup', search = '') {
   const elements = new Map();
   const listeners = new Map();
   const requests = [];
@@ -13,7 +13,7 @@ async function startAuthPage(status, post = {}, pathname = '/torin/hide/login/se
     if (!elements.has(id)) elements.set(id, { innerHTML: '', textContent: '', hidden: true, disabled: false, querySelectorAll: () => [], addEventListener: (type, fn) => listeners.set(`${id}:${type}`, fn) });
     return elements.get(id);
   } };
-  const location = { search: '', pathname, replaced: null, replace(url) { this.replaced = url; } };
+  const location = { search, pathname, replaced: null, replace(url) { this.replaced = url; } };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'auth.js'), 'utf8'), {
     document, URLSearchParams, location, navigator: {},
     async fetch(url, options = {}) {
@@ -39,11 +39,11 @@ test('Fresh install: shows both access modes and does not start binding directly
 });
 
 test('Choosing “local access only” submits mode=local and enters the workspace; choosing “external access” starts binding', async () => {
-  const local = await startAuthPage({ bound: false, authenticated: false, mode: 'unset' }, { mode: 'local', redirect: '/web' });
+  const local = await startAuthPage({ bound: false, authenticated: false, mode: 'unset' }, { mode: 'local', redirect: '/' });
   await local.listeners.get('mode-local:click')();
   await new Promise(resolve => setImmediate(resolve));
   assert.deepEqual(local.requests.at(-1), { url: '/torin/hide/login/mode', body: { mode: 'local' } });
-  assert.equal(local.location.replaced, '/web');
+  assert.equal(local.location.replaced, '/');
 
   const remote = await startAuthPage({ bound: false, authenticated: false, mode: 'unset' }, { mode: 'unset', redirect: '/torin/hide/login/setup' });
   await remote.listeners.get('mode-remote:click')();
@@ -57,20 +57,9 @@ test('An install that already chose an access mode never sees the chooser page (
   assert.match(page.elements.get('auth-title').textContent, /Log in with your authenticator/);
 });
 
-test('The access-mode block in settings: current mode, switch button and the loopback-only reminder', () => {
-  const source = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
-  const fn = source.match(/function accessModeSection\(user\) \{[\s\S]*?\n\}\n/)[0];
-  const context = { escapeHtml: value => String(value) };
-  vm.createContext(context);
-  vm.runInContext(`${fn}\nglobalThis.render = accessModeSection;`, context);
-  const remote = context.render({ access_mode: 'remote', listen_host: '127.0.0.1' });
-  assert.match(remote, /Access mode · Authenticator \+ allow external access/);
-  assert.match(remote, /Switch to: local access only \(no verification\)/);
-  assert.match(remote, /HOST=0\.0\.0\.0/, 'warns when the service only listens on loopback');
-  assert.doesNotMatch(context.render({ access_mode: 'remote', listen_host: '0.0.0.0' }), /HOST=0\.0\.0\.0/);
-  const local = context.render({ access_mode: 'local', authenticator_bound: true, listen_host: '0.0.0.0' });
-  assert.match(local, /Access mode · Local access only/);
-  assert.match(local, /Switch to: authenticator \+ external access/);
-  assert.match(local, /settings-mode-code/, 'a previously bound authenticator is verified with a code');
-  assert.doesNotMatch(context.render({ access_mode: 'local', authenticator_bound: false, listen_host: '0.0.0.0' }), /settings-mode-code/);
+test('After the login the page goes to /, or back to /h5 when that address asked (an iPhone Home Screen app); the old /web leads to /', async () => {
+  for (const [search, target] of [['', '/'], ['?return_to=%2Fh5', '/h5'], ['?return_to=%2Fweb', '/'], ['?return_to=%2F', '/'], ['?return_to=https%3A%2F%2Fattacker.test', '/']]) {
+    const page = await startAuthPage({ bound: true, authenticated: true, mode: 'remote' }, {}, '/torin/hide/login', search);
+    assert.equal(page.location.replaced, target, search || 'no return_to');
+  }
 });

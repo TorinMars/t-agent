@@ -4,6 +4,8 @@
 
 > Start here: "System architecture and functionality" (after the release notes below) is the current map of the system and the agreed target design (one MUI page for PC and phone).
 
+> Unreleased (2.88.0): **One page.** `/` and `/h5` serve the MUI page (`public/h5.html`) for every device; `/web`, `/index.html` and `/h5.html` redirect to `/`; `PHONE_USER_AGENT` routing is gone; the manifest link follows the address. The desktop page, its scripts and styles, Monaco and `addon-web-links` are deleted; every server endpoint stays. See "One page (single page, phase 3)" at the end and part G.
+
 > Unreleased: Terminal activity is pushed to the MUI page instead of polled: `GET /api/tasks/terminal-activity/stream` (Engine `/v1/terminal-activity/stream`, capability `terminal:activity-stream`; proxy `/api/remote-servers/:id/terminal-activity/stream`), server-sent `event: activity` with `{ activity, subagents }` on connect and on every change (`lib/terminal-activity-stream.js`). The 3 s ack poll is gone; an Engine without the stream (404) is polled every 30 s. `#h5-cycle` shows a count badge of running and pending sessions. See "Terminal activity push" under the phone page. Regression: `test/terminal-activity-stream.test.js`, `test/task-parity.test.js`, `scripts/test-h5-cycle-browser.cjs`, `scripts/test-h5-pc-browser.cjs`.
 > Unreleased: Phone row 2 has a "Next running or pending session" button (`#h5-cycle`, Ant Design `swap` icon): each tap goes to the next terminal session (plain terminal or Claude / Codex session terminal) that is running, has a running Claude sub-agent, or is pending acceptance, in task sheet order, wrapping around. New read-only endpoint `GET /api/tasks/terminal-subagents` (Engine `/v1/terminal-subagents`, proxy `/api/remote-servers/:id/terminal-subagents`). See "Next running or pending session" under the phone page. Regression: `scripts/test-h5-cycle-browser.cjs`, `test/agent-sessions.test.js`, `test/task-parity.test.js`.
 > Unreleased: The function keys of the phone bottom bar (row 1) use clear faces (library icons for the arrows and Enter, self-drawn icons for Backspace, Tab and Shift, text for the rest), and the translate-and-send button is now the send button with a small "Aa" mark. Full icon information is in "Phone UI icons" below. Regression: `scripts/test-h5-browser.cjs`.
@@ -131,8 +133,8 @@ Contents of this part:
 - C. Server modules
 - D. Data storage (and "Data directory")
 - E. Data model and core concepts
-- F. Client UI today (v2.87.11, two pages)
-- G. Target: one MUI page for PC and phone (agreed design)
+- F. Client UI (one page since 2.88.0; two pages until 2.87.13)
+- G. One MUI page for PC and phone (agreed design, phases 0 to 3 done)
 - H. Cross-cutting rules
 - I. Notes on older sections
 
@@ -325,17 +327,16 @@ Goal: the runtime data of a machine lives outside the install directory, so ever
 - **Naming precedence** (`routes/terminal.js`, `lib/agent-sessions.js`): if `title_custom` = 1 the stored `title` is always shown; otherwise an agent terminal shows its session name (Claude: last `custom-title` / `ai-title`, else the first prompt; Codex: `thread_name`), falling back to the stored `Claude N` / `Codex N`; a plain terminal shows its `title` (`Terminal N` by default). Names are cleaned by `cleanTitle` (at most 40 characters).
 - **Sub-agents**: Claude Task / Agent tool calls. In a chat they are views inside the conversation (items with `parentToolUseId`); in a Claude terminal they are only counted as running from their log files (`runningSubagents`). Codex has none.
 
-### F. Client UI today (v2.87.11, two pages)
+### F. Client UI (one page since 2.88.0)
 
-- **PC page**: `public/index.html` with `app.js`, `tasks.js`, `engines.js`, `file-panel.js` (Monaco), `multi-task.js`, `tools.js`, `apps.js`, `file-sync.js`, `agent-config.js`, `frp.js`, `ssh-tunnel.js`, `environment-check.js`, `batch-update.js`, `bookmarks.js`, `theme.js`, `terminal-*.js`, `agent-chat*.js`, styles `style.css` and `themes.css`. Served at `/web`, and at `/` for non-phone user agents. Fixed-width desktop layout (see "Phone page (/h5)" first bullet and the README feature list).
-- **Phone page**: `public/h5.html` + `public/js/h5.js` (controller: tasks, sockets, viewport, keys, uploads, translation) + the React / MUI shell in `scripts/h5-shell/*` bundled to `public/js/h5-shell.js` (`npm run build:h5-shell`; `store.mjs` exposes `window.H5UI`). Served at `/h5`; `/` redirects phone user agents there (`PHONE_USER_AGENT` in `server.js`). From 900px wide it already shows a permanent sidebar. Details: "Phone page (/h5)", "Phone UI icons", "Material UI phone shell".
-- Shared: `i18n*.js`, `toast.js`, `terminal-keys.js`, `terminal-translate.js`, `terminal-viewport.js`, `terminal-owner.js`, `terminal-ime.js`, `voice-input.js`, `voice-overlay.js`, `oss-direct.js`, `agent-chat*.js`, `agent-activity.js`, `markdown-view.js`, `sw.js`.
-- Manifests: `index.html` links `manifest.json` (`display_override` with `window-controls-overlay`); `h5.html` and `login.html` link `manifest-h5.json` (`start_url` `/h5`).
-- Tag: `v2.87.11-two-pages` (on `origin`, commit `8494601`, the 2.87.11 release) marks the last release with two pages.
+- **The page**: `public/h5.html` + `public/js/h5.js` (controller: tasks, sockets, viewport, keys, uploads, translation) + the React / MUI shell in `scripts/h5-shell/*` bundled to `public/js/h5-shell.js` (`npm run build:h5-shell`; `store.mjs` exposes `window.H5UI`). Served at `/` and `/h5` (the same HTML; `sendClientPage` sets the manifest link by address). Layout by width (900px), input mode by pointer media queries (part G). Details: "The page (/ and /h5)", "UI icons", "Material UI phone shell", "MUI page on a computer" (phases 1 and 2), "One page (single page, phase 3)".
+- Shared: `i18n*.js`, `toast.js`, `client-auth.js`, `terminal-owner.js`, `terminal-protocol.js`, `terminal-keys.js`, `terminal-ime.js`, `terminal-translate.js` (only `sanitize` is used), `terminal-viewport.js`, `terminal-file-links.js`, `terminal-clipboard.js`, `voice-input.js`, `voice-overlay.js`, `word-translate.js`, `oss-direct.js`, `agent-chat*.js`, `agent-activity.js`, `markdown-view.js` (bundled into the design sheet and used by `server.js`), `sw.js`. Styles: `h5.css`, `agent-chat.css`, `markdown.css` (design sheet and share pages), `auth.css` (login).
+- Manifests: `/` gets `manifest.json` (start `/`, standalone, `#121212`); `/h5` and `login.html` get `manifest-h5.json` (`start_url` `/h5`).
+- Until 2.87.13 there were two pages: the PC page `public/index.html` (with `app.js`, `tasks.js`, `engines.js`, `file-panel.js` (Monaco), `multi-task.js`, `tools.js`, `apps.js`, `file-sync.js`, `agent-config.js`, `frp.js`, `ssh-tunnel.js`, `environment-check.js`, `batch-update.js`, `bookmarks.js`, `theme.js`, `terminal-*.js`, styles `style.css` and `themes.css`) at `/web` and at `/` for non-phone user agents, and the phone page at `/h5`. Tag `v2.87.11-two-pages` (on `origin`, commit `8494601`) marks the last release with two pages.
 
-### G. Target: one MUI page for PC and phone (agreed design)
+### G. One MUI page for PC and phone (agreed design)
 
-Decided by the user on 2026-11-05. The MUI phone page becomes the only page; the PC page is removed. This is the agreed design. Phase 1 is done (released in 2.87.12, see "MUI page on a computer (single page, phase 1)"). Phase 2 is done on branch `feat/single-page-phase2` (not released yet, see "MUI page on a computer (single page, phase 2)"); phases 3 and 4 are not implemented yet. Each phase below is releasable on its own.
+Decided by the user on 2026-11-05. The MUI phone page becomes the only page; the PC page is removed. This is the agreed design. Phase 1 is done (released in 2.87.12, see "MUI page on a computer (single page, phase 1)"). Phase 2 is done (released in 2.87.13, see "MUI page on a computer (single page, phase 2)"). Phase 3 is done on branch `feat/single-page-phase3` (2.88.0, see "One page (single page, phase 3)"); phase 4 (cleanup) is not started. Each phase below is releasable on its own.
 
 #### G.1 Routes
 
@@ -343,8 +344,9 @@ Decided by the user on 2026-11-05. The MUI phone page becomes the only page; the
 - `/web`, `/index.html` and `/h5.html` redirect to `/`.
 - `PHONE_USER_AGENT` routing is removed.
 - `sendClientPage` injects the manifest link by path (`/h5` → `manifest-h5.json`, `/` → `manifest.json`) instead of a fixed link in the HTML.
-- `manifest.json` drops `window-controls-overlay` from `display_override`.
-- The login gate keeps `/`, `/web`, `/h5` in `PAGE_ADDRESSES`.
+- `manifest.json` drops `window-controls-overlay` from `display_override` and uses the MUI dark background `#121212`.
+- Done in phase 3. The old addresses keep their query (`/web?openChat=…` → `/?openChat=…`), so an old notification link still opens its chat.
+- The login gate keeps `/`, `/web`, `/h5` in `PAGE_ADDRESSES`. After the login the page goes to `/`, or to `/h5` when `return_to=/h5` (`safeReturnTo` maps everything else, `/web` included, to `/`).
 
 #### G.2 Layout by width
 
@@ -394,37 +396,39 @@ DROP (UI removed):
 - File browser and the Monaco editor, in-page Markdown editing, the To-do tab. Monaco and its build (`scripts/build-monaco.js`, `scripts/monaco-entry.js`, `build:monaco`) are removed; terminal file links keep opening the read-only preview.
 - Theme picker (dark MUI theme only).
 - Multi-task page; terminal history viewer; environment check page; Utilities; quick links; workspace import / cleanup; batch update; share button (the `/share/:token` pages stay); Finder / VS Code buttons; drag-sort and group create / rename / delete; priority, due date and document paths in forms.
-- Apps (PM2), Agent config, tunnels (frp / SSH) and File sync pages: the user selected none of them to keep, so their UI is dropped and their server endpoints are kept. **Pending final confirmation by the user.**
+- Apps (PM2), Agent config, tunnels (frp / SSH) and File sync pages: UI dropped, server endpoints kept (confirmed by the user for phase 3). Tunnels and file sync that are set to start with the Client still start.
 
 #### G.6 Endpoints kept for compatibility
 
-These become unused by the browser but stay on the server (and in `/v1` and the remote proxy), so older pages, other Clients and scripts keep working:
+These are unused by the page since 2.88.0 but stay on the server (and in `/v1` and the remote proxy), so older pages, other Clients and scripts keep working. Phase 3 removed no route.
 
 - `/api/bookmarks`
-- `/api/tasks/workspace/*`
+- `/api/tasks/workspace/*` (import, cleanup, restore)
 - `PUT /api/tasks/reorder`, `POST /api/tasks/validate-path`
 - `/api/tasks/:id/todos*`
 - document `PUT` / `POST /api/tasks/:id/document/:kind`, `GET …/document/:kind/watch`, `GET …/md/watch`
 - `/api/tasks/:id/files*` except `GET …/files/content` (still used by the preview)
-- `POST /api/tasks/:id/reveal`, `POST /api/tasks/:id/vscode`, `POST /api/tasks/:id/share`
-- `POST` / `PUT` / `DELETE /api/task-groups`
-- `/api/pm2`, `/api/apps`, `/api/frp`, `/api/ssh-tunnel`, `/api/agent-config`, `/api/file-sync`, `/api/environment`
-- the matching `/api/remote-servers/:id/...` proxies
+- `POST /api/tasks/:id/reveal`, `POST /api/tasks/:id/vscode`, `POST /api/tasks/:id/share` (the `/share/:token` pages stay)
+- `POST` / `PUT` / `DELETE /api/task-groups` (and the `priority`, `due_date`, `technical_path`, `readme_path`, `agent_path` fields of `PUT /api/tasks/:id`)
+- `/api/pm2`, `/api/apps`, `/api/frp`, `/api/ssh-tunnel`, `/api/agent-config`, `/api/file-sync`, `/api/environment`, `/api/local-ip`
+- `GET /api/tasks/terminal-activity` (polled by the old page; the MUI page uses the stream and falls back to it for older Engines)
+- the matching `/v1/...` routes and `/api/remote-servers/:id/...` proxies (including `/v1/pm2`, `/v1/apps`, `/v1/agent-config`, `/v1/file-sync/*`)
 - the `agent_conversations.opened_web` column
+- the npm script `build:monaco` as a no-op: an update started by an older Client (2.87.13 and before) runs `npm run build:monaco` in the new code after `npm ci`, and a missing script would fail that update. `services/update-manager.js` no longer runs it; it can go once no Client older than 2.88.0 is left.
 
 #### G.7 Tests
 
-- `npm test` is `node --test --test-concurrency=2` with no file list. Its default patterns also match `scripts/test-*` (confirmed): all 32 real-Chromium browser scripts `scripts/test-*.cjs` plus `scripts/test-quick.js`, 33 files under `scripts/`. Plan: give `npm test` an explicit file list (unit tests in `test/`, then the browser scripts that are wanted).
-- Delete with the PC page: browser scripts that drive `index.html` for dropped features (`test-file-panel-*`, `test-multi-task`, `test-environment-page`, `test-apps-ui`, `test-file-sync-ui`, `test-theme`, `test-terminal-history`, `test-agent-tabs-restore`, `test-context-menu`, `test-desktop-layout`) and unit tests of dropped modules (for example `test/batch-update.test.js`, `test/file-panel-task-integration.test.js`). Rewrite against the MUI page: the PC-page terminal tests that cover kept behaviour (`test-terminal-keys`, `test-terminal-width`, `test-terminal-translate`, `test-terminal-images`, `test-terminal-file-links`, `test-terminal-new-menu`, `test-terminal-theme`), `test-session-redirect` (new routes) and unit tests that read `index.html` (`test/i18n.test.js`, `test/login-gate.test.js`, `test/client-auth-http.test.js`, `test/access-mode-page.test.js`, `test/sidebar-no-selected.test.js`, `test/vendor-assets.test.js`, update tests). The exact list is shown to the user in phase 3.
+- Done in phase 3: `npm test` is `node --test --test-concurrency=2 test/*.test.js scripts/test-*-browser.cjs` (an explicit list, so `scripts/test-quick.js` and helpers such as `scripts/h5-activity-stream-mock.cjs` no longer run inside it); `npm run test:quick` is unchanged.
+- Done in phase 3: the browser scripts and unit tests of the old page are deleted or rewritten against the MUI page; the list is in "One page (single page, phase 3)".
 - Done in phase 1: `scripts/test-h5-pc-browser.cjs`, a PC-viewport variant of `scripts/test-h5-browser.cjs` (1280x800, pointer mode: hidden key row and wheel strip, visible draft box, shortcuts, Esc, typing to the terminal, no keyboard detection on window resize, side panel, ack).
 
 #### G.8 Phases
 
 0. Tag the last two-page version: done, `v2.87.11-two-pages` (commit `8494601`).
 1. The MUI page works on PC next to the old page: input mode, wide layout, side panel, ack, shared `wideQuery`, PC-viewport tests. `/` and `/web` still serve the old page. Done, released in 2.87.12 (`scripts/test-h5-pc-browser.cjs`).
-2. Port the kept features: Engines settings, Update details, task Delete / Move / Work directory. Done on branch `feat/single-page-phase2` (`scripts/test-h5-phase2-browser.cjs`), not released yet.
-3. Switch `/` to the MUI page and delete the old page; the delete list is shown to the user first.
-4. Cleanup: explicit `npm test` list, unused CSS / vendor files, documentation.
+2. Port the kept features: Engines settings, Update details, task Delete / Move / Work directory. Done, released in 2.87.13 (`scripts/test-h5-phase2-browser.cjs`).
+3. Switch `/` to the MUI page and delete the old page. Done on branch `feat/single-page-phase3` (2.88.0, `scripts/test-h5-phase3-browser.cjs`).
+4. Cleanup (not started): unused i18n keys, the comments that still name deleted files (`h5.js`, `Update.jsx`, `Engines.jsx`, `i18n.js` `SKIP`), `routes`/services only the old page used if the user wants them gone, the `build:monaco` no-op, documentation. (The explicit `npm test` list was done in phase 3.)
 
 #### G.9 Risks and open items
 
@@ -432,13 +436,12 @@ These become unused by the browser but stay on the server (and in `/v1` and the 
 - iPad media queries: trackpad / keyboard iPads must be tried on a real device.
 - One terminal connection at a time on PC: the MUI page attaches one terminal; the multi-task page and side-by-side terminals go away.
 - The ack changes phone behaviour (Pending clears when a terminal is opened on the phone).
-- Large deletion in phase 3 (old page, Monaco, many modules and tests).
-- Browser test coverage drops until the PC-viewport variants exist.
+- Phase 3 deleted the old page, Monaco and many modules and tests (list in "One page (single page, phase 3)").
 
 ### H. Cross-cutting rules
 
 - **Language and i18n**: code, docs and UI text are English; Chinese lives only in `public/js/i18n-zh-ui.js`, `i18n-zh-server.js`, `i18n-zh-extra.js` (keyed by the exact English text) and in fixtures; `test/i18n.test.js` enforces it. See "Interface language".
-- **Phone UI icons**: one library (Ant Design Official Icon Library, iconfont.cn collection 9402), inline SVG in `scripts/h5-shell/Icons.jsx`; self-drawn icons (`DRAWN`) or text labels where no library icon is clear; every icon-only button has an English `aria-label` and `title`. See `AGENTS.md` "Phone UI icons" and "Phone UI icons" below.
+- **UI icons**: one library (Ant Design Official Icon Library, iconfont.cn collection 9402), inline SVG in `scripts/h5-shell/Icons.jsx`; self-drawn icons (`DRAWN`) or text labels where no library icon is clear; every icon-only button has an English `aria-label` and `title`. See `AGENTS.md` "UI icons" and "UI icons" below.
 - **Security**: the browser never gets an Engine token; tokens and secrets are stored hashed or encrypted and never written to logs; same-origin checks on browser mutations and WebSocket upgrades; the files API rules in C; untrusted Markdown (the design document sheet) shows raw HTML as text and keeps only `http(s)` / `mailto` links and `http(s)` / `data:image` images; shared Markdown stays inside the folder of `md_path`; remote file responses carry `Content-Security-Policy: sandbox`; OSC 52 writes need a user preview; terminal output is not stored.
 - **Releases**: batch requirements until the user says all are submitted, then one full `npm test`, `node scripts/release.js`, commit, normal push to `origin/main`. See `AGENTS.md` "Requirement batches" and "Releases and pushing".
 - **Testing**: unit tests in `test/` (`npm run test:quick` while developing), real-Chromium scripts `scripts/test-*-browser.cjs` for UI, full `npm test` once before a release; bundles (`build:h5-shell`, `build:agent-chat`, `build:markdown`) are rebuilt when their sources change.
@@ -595,6 +598,8 @@ All APIs need a login state, otherwise they return `401`.
 
 ## 7. Page layout
 
+> **Removed in 2.88.0** (single page, phase 3): this describes the old desktop page (`public/index.html`), which was deleted; kept as history. The endpoints stay (part G.6). See "One page (single page, phase 3)".
+
 ### Login page (`/login.html`)
 
 A centered card with a GitHub icon + a "Log in with GitHub" button.
@@ -632,6 +637,8 @@ Right (MD outline): fixed 220px, shown only when there is an md_path
 ---
 
 ## 8. Frontend interaction
+
+> **Removed in 2.88.0** (single page, phase 3): this describes the old desktop page (`public/index.html`), which was deleted; kept as history. The endpoints stay (part G.6). See "One page (single page, phase 3)".
 
 ### Left navigation bar
 
@@ -898,6 +905,8 @@ All APIs need a login state, otherwise they return `401`.
 
 ## 7. Frontend page design
 
+> **Removed in 2.88.0** (single page, phase 3): this describes the old desktop page (`public/index.html`), which was deleted; kept as history. The endpoints stay (part G.6). See "One page (single page, phase 3)".
+
 ### Login page (`/login.html`)
 
 - A centered card
@@ -1093,6 +1102,8 @@ tail -f /Users/torin/main-kuaishou/02_agent/torin-x-web/logs/stderr.log
 
 ---
 ## 12. Quick links technical design
+
+> **Removed in 2.88.0** (single page, phase 3): this describes the old desktop page (`public/index.html`), which was deleted; kept as history. The endpoints stay (part G.6). See "One page (single page, phase 3)".
 
 > Date: 2026-07-16
 
@@ -1353,6 +1364,8 @@ Frontend CDN includes (`index.html`):
 
 ## 16. Task drag-and-drop ordering + personal task group
 
+> **Removed in 2.88.0** (single page, phase 3): this describes the old desktop page (`public/index.html`), which was deleted; kept as history. The endpoints stay (part G.6). See "One page (single page, phase 3)".
+
 > Date: 2026-07-27
 
 ### Goals
@@ -1421,6 +1434,8 @@ New `PUT /api/tasks/reorder`: bulk update of sort_order, body: `[{ id, sort_orde
 ---
 
 ## 15. PWA Window Controls Overlay + header display mode switch
+
+> **Removed in 2.88.0** (single page, phase 3): this describes the old desktop page (`public/index.html`), which was deleted; kept as history. The endpoints stay (part G.6). See "One page (single page, phase 3)".
 
 > Date: 2026-07-21
 
@@ -1501,6 +1516,8 @@ CSS environment variables read the size of the system title bar area and only ta
 
 ## 18. Stronger highlight of the selected task on the left
 
+> **Removed in 2.88.0** (single page, phase 3): this describes the old desktop page (`public/index.html`), which was deleted; kept as history. The endpoints stay (part G.6). See "One page (single page, phase 3)".
+
 > Date: 2026-08-07
 
 ### Goals
@@ -1524,6 +1541,8 @@ Make the currently selected task in the left task navigation easier to recognize
 ---
 
 ## 19. Grey overlay for unselected tasks
+
+> **Removed in 2.88.0** (single page, phase 3): this describes the old desktop page (`public/index.html`), which was deleted; kept as history. The endpoints stay (part G.6). See "One page (single page, phase 3)".
 
 > Date: 2026-08-07
 
@@ -1647,6 +1666,8 @@ ws.open(OPEN)  ── onclose ──►  scheduleReconnect(delay)
 
 ## 20. Multiple content tabs and the to-do list for a task
 
+> **Removed in 2.88.0** (single page, phase 3): this describes the old desktop page (`public/index.html`), which was deleted; kept as history. The endpoints stay (part G.6). See "One page (single page, phase 3)".
+
 > Date: 2026-08-13
 
 ### Goals
@@ -1751,6 +1772,8 @@ The application currently only manages tasks in the local SQLite and files on th
 6. **Symmetric peer roles**: the same program mounts both the local Session API and the Token-authenticated remote API, and there is no separate "client edition" or "server edition".
 
 ### 4. Left sidebar information architecture
+
+> **Removed in 2.88.0** (single page, phase 3): this describes the old desktop page (`public/index.html`), which was deleted; kept as history. The endpoints stay (part G.6). See "One page (single page, phase 3)".
 
 ```text
 Left task bar
@@ -2265,6 +2288,8 @@ The full test run includes real Chromium regressions; Playwright, xterm 5.5 and 
 
 ### Task file panel (v2.11.0)
 
+> **Removed in 2.88.0** (single page, phase 3): this describes the old desktop page (`public/index.html`), which was deleted; kept as history. The endpoints stay (part G.6). See "One page (single page, phase 3)".
+
 A "File browser" was added to the content toolbar; after it automatically selects the task terminal, it unfolds downward. By default it takes 85% of the available height below the toolbar, its bottom edge can be adjusted between 20% and 90%, and on a narrow height it gives priority to keeping the terminal usable; no draggable floating window or modal mask is used. The original content tabs are hidden for now, the terminal is truly resized into the remaining area, the function keys at the bottom are hidden in compact mode, and the shell and connection stay unchanged. The directory tree and the Monaco file tabs are separate modules that isolate models by the task / Engine / path combination, and unsaved content is dealt with first when switching context.
 
 The file service is shared by the local `/api/tasks/:id/files`, the Engine `/v1/tasks/:id/files` and the matching Client remote proxy. The root GET lists directories in pages, GET/PUT `/content` reads and saves, POST creates, PATCH renames and DELETE deletes. A save carries the file revision, a conflict is HTTP 409, and the client sends force only after an explicit confirmation. Paths are only accepted relative to the working directory, the root cannot be modified and symbolic links are never followed. UTF-8 text is limited to 5 MiB, keeping the BOM, line endings and permissions.
@@ -2284,7 +2309,7 @@ File paths in terminal output are links that open the file in the task's file br
 - Root: the limit is the task working directory (`work_dir`, else the folder of `md_path`: the same root the server's `taskRoot` and the file panel use). A path outside the root (absolute elsewhere, or `..` past it) is not a link at all: no underline and no request, because the file panel could not show it. Absolute paths need a known root; the server checks everything again (relative only, no symbolic links, 5 MiB).
 - Live directory: relative paths are taken from the shell's current directory, so after `cd sub` a printed `a.md` opens `sub/a.md`. In order: (1) the directory the shell reports with OSC 7 (`ESC ] 7 ; file://host/path BEL|ST`), read in the browser with `term.parser.registerOscHandler(7)` (`parseOsc7`: percent escapes decoded as UTF-8, trailing slash and `.`/`..` parts folded, control characters refused). The host is not checked: the PTY runs on the Engine machine, so the shell names that machine (`$HOST`, `localhost` or nothing) and the browser does not know its name; the path is taken as an Engine path and still limited to the root. (2) Else, only when a link is activated, the server reads the shell's directory: `GET …/terminals/:terminalId/cwd` (local `/api/tasks/:id`, Engine `/v1/tasks/:id` with `terminal:execute`, and the remote proxy; read-only, `lib/terminal-cwd.js`: `/proc/<pid>/cwd` on Linux, `lsof -a -d cwd -p <pid> -Fn` on macOS) answers `{ cwd, relative }`, where `relative` is the directory inside the root compared as real paths (a symbolic link out of the root is outside, `null`). Only the shell process is asked, not its foreground child: Claude Code and other programs print paths relative to the directory they were started in, which is the shell's. (3) Else (no shell running, an older Engine without the endpoint, a failed request) the work dir, as before. With a reported directory outside the root, relative paths are no links; with a server directory outside the root the tap opens nothing and says "Outside the working directory: <path>". The app does not inject shell integration (it starts `/bin/zsh`, `/bin/bash` or `/bin/sh` with no rc wrapper and does not touch dotfiles). OSC 7 comes out of the box from oh-my-zsh (`termsupport.zsh`, since the PTY has `TERM=xterm-256color`; not inside SSH sessions) and from macOS `/etc/zshrc_Apple_Terminal` / `/etc/bashrc_Apple_Terminal` when the service inherited `TERM_PROGRAM=Apple_Terminal`; plain bash or zsh need a `precmd` / `PROMPT_COMMAND` hook, and the server fallback covers them. The reported directory is forgotten when the screen is restored (reconnect, new shell); the shell reports again at its next prompt. Limits: a line is resolved against the directory current when the link is hovered, not when it was printed; a reported directory is compared as text, so a work dir reached through a symbolic link (`/tmp/x` while the shell reports `/private/tmp/x`) hides relative links until the shell is in a path written like the work dir; a program that prints an OSC 7 for another machine (an SSH session with its own hook) is taken as an Engine path.
 - Nothing is requested while text is printed or hovered. Only on activation the existing task file API is asked (local `/api/tasks/:id/files`, Engine and remote proxy through the same `tasksBase`/`taskUrl`).
-- Desktop: Cmd/Ctrl + click (like web links; a plain click keeps selecting text). `FilePanel.probe` lists the path once (a folder lists, a file answers `FILE_NOT_DIRECTORY`); a missing path shows a toast "Not found in the working directory: <path>" and leaves the panel alone. Otherwise the file panel opens above the terminal (as the "File browser" button does, with its unsaved-changes checks) and `FilePanel.reveal` expands the folders, selects the row, opens the file in Monaco (syntax highlight) and, with a line, puts the cursor there, centres it and marks it (`.file-panel-line-mark`). A folder opens as the folder in the tree. A path through a hidden folder turns on "Show hidden files". Regression: `scripts/test-terminal-file-links-browser.cjs`.
+- Desktop (removed in 2.88.0 with the old page; on a computer the MUI page opens a link with a click into the side panel, `scripts/test-terminal-file-links-browser.cjs`): Cmd/Ctrl + click (like web links; a plain click keeps selecting text). `FilePanel.probe` lists the path once (a folder lists, a file answers `FILE_NOT_DIRECTORY`); a missing path shows a toast "Not found in the working directory: <path>" and leaves the panel alone. Otherwise the file panel opens above the terminal (as the "File browser" button does, with its unsaved-changes checks) and `FilePanel.reveal` expands the folders, selects the row, opens the file in Monaco (syntax highlight) and, with a line, puts the cursor there, centres it and marks it (`.file-panel-line-mark`). A folder opens as the folder in the tree. A path through a hidden folder turns on "Show hidden files". Regression: `scripts/test-terminal-file-links-browser.cjs`.
 - Phone (`/h5` has no file tree): a tap on a link opens the file in the design document sheet (`openFileSheet` in `h5.js`, `DesignSheet` in `scripts/h5-shell/Design.jsx`): the title is the file name, Markdown is rendered as for DESIGN.md, other files are plain text with line numbers (no highlighter on the phone), the named line marked and scrolled to the middle. A folder or a missing file shows a note in the sheet. The tap waits the double-tap time (400 ms) first, so a double or triple tap on a path still selects; a long press, the open copy view or a shown selection bar open nothing. Opening blurs the focused input (the keyboard closes) and the terminal keeps its size, so no resize reaches the PTY. Regression: `scripts/test-h5-file-links-browser.cjs`.
 
 ## Client OSS terminal image upload
@@ -2321,6 +2346,8 @@ The frontend OSS configuration is read again when the window gets focus, when th
 
 ## Tunnel (frp)
 
+> **Removed in 2.88.0** (single page, phase 3): this describes the old desktop page (`public/index.html`), which was deleted; kept as history. The endpoints stay (part G.6). See "One page (single page, phase 3)".
+
 - Service: `services/frp.js` (configuration, random port, TOML generation, frpc process management), routes: `routes/frp.js` (`/api/frp`, login + same-origin check required), page: `public/js/frp.js`.
 - The configuration is stored in `system_state.frp_config` (JSON); the Token is encrypted with `SESSION_SECRET` through `lib/token-crypto`. The frpc configuration is written to `data/frpc.toml` (0600).
 - A fixed `type = "tcp"` proxy: `localIP/localPort` points at this Client and `remotePort` is a random value within `[portMin, portMax]`, generated only when missing or out of range and otherwise kept stable. If frpc exits because of a busy port within 15 seconds after start-up, a new random port is chosen and it retries, at most 3 times.
@@ -2331,6 +2358,8 @@ The frontend OSS configuration is read again when the window gets focus, when th
 - Limits: local machine only; automatic install only on macOS / Linux (amd64, arm64, arm).
 
 ## SSH reverse tunnel
+
+> **Removed in 2.88.0** (single page, phase 3): this describes the old desktop page (`public/index.html`), which was deleted; kept as history. The endpoints stay (part G.6). See "One page (single page, phase 3)".
 
 - Service: `services/ssh-tunnel.js`, routes: `routes/ssh-tunnel.js` (`/api/ssh-tunnel`, login + same-origin check required), page: `public/js/ssh-tunnel.js`; it shares the "Page enhancement" page (the left navigation name) with frp, a radio switch at the top (the choice is stored in `localStorage`), and the configuration and process of the two methods are independent of each other.
 - The configuration is stored in `system_state.ssh_tunnel_config`. No key content is stored, only the private key **path**; the private key file is never read.
@@ -2353,6 +2382,8 @@ The frontend OSS configuration is read again when the window gets focus, when th
 - Still unchanged: operation status text placed next to buttons inside forms (such as the frp / SSH pages and the feedback in the settings dialog), the image upload progress card, `confirm` dialogs that need the user's confirmation, and the `alert` used for tasks, sharing, document editing and so on.
 
 ## Terminal colours and themes
+
+> **Removed in 2.88.0** (single page, phase 3): this describes the old desktop page (`public/index.html`), which was deleted; kept as history. The endpoints stay (part G.6). See "One page (single page, phase 3)".
 
 The terminal, its tab strip, the buttons, the keys bar, the translate bar and xterm's own background use one set of CSS variables (`--term-bg`, `--term-chrome`, `--term-line`, `--term-btn`, `--term-btn-hover`, `--term-btn-line`, `--term-pop`, `--term-text`, `--term-tab-active`, `--term-accent`). `style.css` holds the neutral grey defaults (the light and dark themes keep the terminal they always had) and `themes.css` replaces the whole set for the futuristic theme with the blue of the page, so the pieces never mix two palettes. xterm takes its background from `Theme.terminal()` (the same variable) when it is created and every open terminal is updated when the theme changes. A new terminal rule must use the variables: `test/terminal-theme-css.test.js` fails when a grey is written into a rule again, and `scripts/test-terminal-theme-browser.cjs` checks the real colours in every theme, including xterm's background.
 
@@ -2412,13 +2443,16 @@ The settings sheet of `/h5` has the same configuration as the desktop "Settings"
 - **Access mode and authenticator**: `POST /auth/mode`, with the same confirmation and error texts as the desktop; "Replace authenticator" opens `/auth/setup?return_to=/h5`. Switching to local access only from a phone locks that phone out; the page says so.
 - Tests: `node scripts/test-h5-settings-browser.cjs`.
 
-## Dependencies and the Monaco bundle
+## Dependencies (the Monaco bundle until 2.87.13)
 
-- `npm audit --omit=dev` is kept at 0 findings. axios, body-parser, follow-redirects, qs and express are updated within their ranges (`npm update`). DOMPurify needs more care: monaco-editor does not use the npm package of that name for the editor, it imports its own old copy by a relative path (`monaco-editor/esm/vs/base/browser/dompurify`, 3.4.8 in monaco-editor 0.56; 0.57 pins 3.4.15, also inside the vulnerable range), so raising the version in `node_modules` alone only silences the audit. `scripts/build-monaco.js` (what `npm run build:monaco` runs) builds the same three bundles as before and redirects that one import to `node_modules/dompurify`, which `overrides` in `package.json` pins to an exact patched version. The build fails when the redirect no longer finds anything to redirect (a newer monaco-editor that uses the package itself), so the script cannot rot unnoticed. `test/monaco-bundle.test.js` checks that the built bundle carries the installed DOMPurify and not the vendored one. Not checked: Monaco's markdown hover (the part that calls DOMPurify) was not driven in a browser; the editor browser tests pass.
-- `npm test` is `node --test --test-concurrency=2`: the browser regressions start real Chromium windows and shells, and with every file in parallel a busy machine makes the slower ones time out (the terminal check of `scripts/test-file-panel-terminal-browser.cjs` also waits up to 90 s for the shell).
+- `npm audit --omit=dev` is kept at 0 findings. axios, body-parser, follow-redirects, qs and express are updated within their ranges (`npm update`).
+- Removed in 2.88.0: `monaco-editor`, `scripts/build-monaco.js`, `scripts/monaco-entry.js`, `public/vendor/monaco/` and the `dompurify` override (DOMPurify was only there for monaco-editor's own vendored copy, which `build-monaco.js` redirected to the patched npm package). `build:monaco` stays as a no-op script for updates started by older Clients (part G.6).
+- `npm test` is `node --test --test-concurrency=2 test/*.test.js scripts/test-*-browser.cjs`: the browser regressions start real Chromium windows and shells, and with every file in parallel a busy machine makes the slower ones time out (the terminal check of `scripts/test-terminal-file-links-browser.cjs` waits up to 90 s for the shell).
 - Installing through a flaky proxy: a request that stalls leaves `npm` waiting without using the CPU, and an interrupted install leaves temporary directories (`node_modules/.axios-XXXXXXXX`) that make the next install fail with `ENOTEMPTY`. Use `--fetch-timeout=20000 --fetch-retries=2` so a stalled request fails fast, and remove such directories before retrying.
 
 ## Multi-task page (desktop)
+
+> **Removed in 2.88.0** (single page, phase 3): this describes the old desktop page (`public/index.html`), which was deleted; kept as history. The endpoints stay (part G.6). See "One page (single page, phase 3)".
 
 The "Multi-task" tab (below "Environment" in the left navigation, `public/js/multi-task.js`) shows up to four agent chats (Claude / Codex) side by side. The columns share the whole page width and height equally (CSS grid, `--mt-columns`), so one to four chats always fill the screen exactly.
 
@@ -2428,6 +2462,8 @@ The "Multi-task" tab (below "Environment" in the left navigation, `public/js/mul
 - Tests: `node scripts/test-multi-task-browser.cjs`.
 
 ## Environment check
+
+> **Removed in 2.88.0** (single page, phase 3): this describes the old desktop page (`public/index.html`), which was deleted; kept as history. The endpoints stay (part G.6). See "One page (single page, phase 3)".
 
 `GET /api/environment/check` (`routes/environment.js`, behind the same sign-in and same-origin check as the other Client APIs) runs `services/environment-check.js` and answers `{ checked_at, machine, summary, features: [{ id, name, description, status, checks: [{ id, name, status, detail, fix, impact }] }] }`. The page (`public/js/environment-check.js`, the tab right below "File sync") draws it with the features that will not work first and open.
 
@@ -2447,7 +2483,9 @@ Scripts and styles are named by their content (single-page load work, after v2.8
 - **Pre-compressed copies.** For `/js`, `/css` and `/vendor` scripts and styles, `staticAssets.precompressed` answers with a brotli (quality 11) or gzip (level 9) copy chosen from `Accept-Encoding` (`br` first; a coding with `q=0` is not used), with `Content-Encoding`, `Vary: Accept-Encoding`, an ETag `"<hash>-<coding>"` and the same `Cache-Control` rule. The copies are made in the background, one file at a time (Node's own `zlib`, no new dependency), for the files of `h5.html` and `index.html` at server start and for any other file the first time it is asked for; they live in memory (at most 48 MB, files up to 8 MB) next to the file's size and modification time, so nothing is written to the app directory or `~/.tagent`. Until a copy is ready, and for range requests, the `compression` middleware compresses on the fly as before. Brotli 11 is too slow for every request (about 1 s per MB), which is why it is done once; doing it at release time would add build output to the repository. Measured on the 28 files of `h5.html` (1412 KB raw): about 357 KB in brotli 11, 428 KB in gzip 9 and 429 KB with the middleware's default brotli.
 - **Chinese dictionaries only for Chinese.** `i18n.js` keeps the language in the cookie `ta-lang=zh` as well as `localStorage['ta-lang']`; `sendClientPage` leaves the three `i18n-zh-*.js` scripts out of the page when the cookie is not there, so English readers skip three requests and about 44 KB (brotli 11). Switching the language writes the cookie before the reload, so the next page comes with them. A Chinese reader without the cookie yet (the first load after this change) gets the page without them: `i18n.js` then fetches them itself and translates the page again when they arrive.
 
-## Phone page (/h5)
+## The page (/ and /h5; "Phone page (/h5)" until 2.87.13)
+
+> Since 2.88.0 this is the only page, served at `/` and `/h5` for every device (see "One page (single page, phase 3)"). The text below grew as the phone page; where it says "phone page" or `/h5`, it is the same page.
 
 **Loading (after v2.87.13; `scripts/test-h5-load-browser.cjs`).** Every script of `h5.html` is `defer` (same order: `i18n.js` and its dictionaries, then `toast.js`, `client-auth.js`, xterm, then the shell and the controller scripts, `h5.js` last), so the page is painted as soon as its three style sheets arrive, with an inline dark style and a static skeleton inside `#h5-root` (the header bar, and the sidebar edge on a wide screen, at the shell's sizes; the shell's first React render empties `#h5-root`). The load test compares the skeleton's header and sidebar with the shell's, so a change of the header height must change the skeleton too. At start `h5.js` asks for everything at once instead of in rounds: the Engine list, the tasks and groups of the remembered Engine (assumed until the list says it is gone, then this machine's tasks are loaded), and for the remembered task its `/terminals` and its chats (`/agent/conversations`, or `/info` on an Engine). It also opens the WebSocket of the remembered terminal at once and keeps what arrives; `open` takes that socket when the terminal shown is that one (the history it got is replayed in order), and it is closed with code 1000 when the task or the terminal is gone or another one is shown (and after 20 s unused). Early answers are used once, by the same URL, within 20 s.
 
@@ -2551,13 +2589,13 @@ Usage, notifications and phone sidebar changes:
 > v2.84.44 Pages lead to the login entrance when logged out, the phone page goes there when a login expires, and the Claude plan usage refreshes by itself
 > v2.84.45 Keep the microphone ready option and tap to translate words in the chat
 
-### Phone UI icons
+### UI icons
 
 - Library: "Ant Design Official Icon Library", a collection on iconfont.cn: https://www.iconfont.cn/collections/detail?cid=9402 (collection id 9402, 599 icons when checked on 2026-11-02). The icons are the official Ant Design icons (outlined style, 1024 grid, project ant-design/ant-design-icons).
 - Licence: MIT, as stated by the Ant Design project. The iconfont.cn collection page shows no licence field, so the owner should confirm the terms before the project is distributed outside private use.
 - How the icons were obtained: from the public JSON API of iconfont.cn, without login and without cookies. The list of the collection is `https://www.iconfont.cn/api/collection/detail.json?id=9402`; every icon in it has an `id`, a `name` and a `show_svg` field with the SVG source. The `d` attribute of each `path` was copied into `PATHS` in `scripts/h5-shell/Icons.jsx` (an icon with two paths, such as `delete`, has them joined into one path string).
 - How they are used: inline SVG (`viewBox="0 0 1024 1024"`, `fill` is `currentColor`, `aria-hidden`), drawn by `<Icon name size />` from Material UI `SvgIcon`: 24px in row 2, 22px in row 1. Colour follows the theme, the blue pressed state and the disabled colour. Nothing is fetched at runtime.
-- Rules for new icons: see "Phone UI icons" in `AGENTS.md`. Library icons come first; where none is clearly recognisable, a self-drawn icon or a text label is used (in 2.87.6 several keys used library substitutes that nobody could recognise as those keys, such as a cross for Esc and Backspace, a trash can for Delete).
+- Rules for new icons: see "UI icons" in `AGENTS.md`. Library icons come first; where none is clearly recognisable, a self-drawn icon or a text label is used (in 2.87.6 several keys used library substitutes that nobody could recognise as those keys, such as a cross for Esc and Backspace, a trash can for Delete).
 - Self-drawn icons: `DRAWN` in the `SELF-DRAWN ICONS` section of `scripts/h5-shell/Icons.jsx`. 24 viewBox, outlined, `stroke-width` 1.5, round caps and joins, `currentColor`, shown at 22px like the library icons.
 - Text labels: Esc, Ctrl, Alt, Home, End, PgUp, PgDn, Ins, Del and ^C show a short text (14px, weight 500, centred) with the same size and alignment as the icon keys. Their `aria-label` and `title` stay the full name (Escape, Page up, Page down, Insert, Delete, ...).
 - Send and translate-and-send: both use the white round 44px button (`SEND` in `scripts/h5-shell/Terminal.jsx`) and the same `send` icon. Translate-and-send adds a 10px bold "Aa" text (`.h5-aa`, `aria-hidden`) inside the circle at the lower right. The outlined square and the `translate` icon (8094821) are no longer used and were removed from `Icons.jsx`.
@@ -2694,3 +2732,21 @@ Branch `feat/h5-opt-behaviour` (merged in 2.87.15). These replace older text abo
 - **Relative images in the Markdown preview**: `![alt](img/a.png)` in a Markdown file of the working directory is read through the task file API: `GET {tasksBase}/{task}/files/image?path=` (local `/api/tasks`, Engine `/v1/tasks`, proxy `/api/remote-servers/:id/tasks/:taskId/files/image`, streamed; capability `files:image` in `/v1/info`, API version still 1). The path is resolved from the folder of the document (`imagePath`), must stay inside the working directory, and follows the file API rules (relative, no symbolic links, the path must not change while it is read); only PNG, JPEG, GIF and WebP, checked by name and by content (never SVG), at most 5 MB (413), with `Content-Security-Policy: sandbox` and `nosniff`. An image that does not load (missing, other type, an older Engine without the endpoint) shows its alt text as before; web images stay as they were. Tests: `test/task-files-api.test.js` (local, Engine, proxy), `scripts/test-h5-file-links-browser.cjs`.
 - **Agent counters pushed** (`lib/terminal-activity-stream.js`, `routes/terminal.js`, `services/agent-chat.js` `onSummaryChange`, `public/js/agent-activity.js` `push` / `unlive` / `setPollMs`). The terminal activity stream snapshot now also has `agents: { running, queued, submitted }` for the stream's owner (local, `/v1` and through the proxy; the same numbers as `GET /api/agent-chat/summary`). The agent chat service tells the stream when a turn starts or ends, a queue changes or a chat is removed, and the stream sends a new snapshot when it changed. The MUI page shows the counters from the local stream and does not poll them while it is live; without it (a remote Engine is shown, the stream is down or missing, the page is hidden) it reads the summary every 30 s instead of every 5 s. The old PC page still polls every 5 s. Idle requests per minute on the MUI page with a terminal open (mocked, 60 s): 13 before (12 of them `agent-chat/summary`), 1 after (`system/update-status`). Tests: `test/terminal-activity-stream.test.js`, `test/agent-activity.test.js`, `test/agent-chat-service.test.js`, `test/task-parity.test.js`, `scripts/test-h5-cycle-browser.cjs`.
 > v2.87.15 Phone/PC page loads faster (parallel start, hashed long-cache assets, defer + skeleton, pre-compressed files, zh dictionaries only for zh), slimmer MUI bundle and 44 px touch targets, voice keeps typed text, Android back closes layers, rename agent terminals, 3 warm terminals, virtualized file preview and Markdown images (capability files:image), pushed agent counters.
+
+## One page (single page, phase 3)
+
+Phase 3 of the agreed single-page plan (part G): `/` serves the MUI page and the old desktop page is deleted. Branch `feat/single-page-phase3`, planned as 2.88.0. Every server endpoint stays (G.6).
+
+- **Routes** (`server.js`): `/` and `/h5` both call `sendClientPage` with `public/h5.html` (the file name is kept: other branches and tests name it, and a rename would only add churn). `sendClientPage` replaces the page's manifest link by address: `/h5` → `/manifest-h5.json` (start `/h5`, what iPhone Home Screen apps were added with), every other address → `/manifest.json`. `/web`, `/index.html` and `/h5.html` answer 302 to `/`, with the query kept. `PHONE_USER_AGENT` is gone: every user agent gets the same page.
+- **Manifest**: `manifest.json` has no `display_override` (no `window-controls-overlay`), `background_color` / `theme_color` `#121212` (the MUI dark background).
+- **Login and return**: `routes/auth.js` answers `redirect: '/'` (was `/web`) and `setup?return_to=/`; `services/client-auth.js` `safeReturnTo` keeps `/h5` and maps everything else (`/web` included) to `/`; `public/js/auth.js` returns to `/h5` only when `return_to=/h5`, else `/`; `public/js/client-auth.js` sends `return_to` `/h5` or `/`; `lib/login-gate.js` still leads `/`, `/web`, `/h5` to the login entrance. `scripts/h5-shell/Settings.jsx` uses the address the page was opened at (`pagePath()`: `/` or `/h5`) for the logout, the access-mode switch and "Replace authenticator". The "Desktop version" link in the task list is gone.
+- **Update**: `services/update-manager.js` no longer runs `npm run build:monaco`; the script stays in `package.json` as a no-op, because an update started by an older Client runs it in the new code (G.6).
+- **CSS**: the CJK text-spacing rule of the old `style.css` (`text-spacing-trim: space-all; text-autospace: no-autospace` on `.xterm`) moved to `h5.css` (`.h5-terminal .xterm`).
+- **voice-input.js**: the desktop attach (`#terminal-voice`, `#terminal-voice-settings`) and the desktop settings dialog are gone; `showSettings()` now only says "Set up voice input in Settings" (kept as an export). `terminal-translate.js` is unchanged (the page uses only `sanitize`; its desktop form code does nothing without the old elements and goes in phase 4).
+- **Deleted, page**: `public/index.html`, `public/css/style.css`, `public/css/themes.css`, `public/css/file-panel.css`; `public/js/` `app.js`, `tasks.js`, `terminal-tabs.js`, `engines.js`, `file-panel.js`, `bookmarks.js`, `workspace-tools.js`, `batch-update.js`, `apps.js`, `agent-config.js`, `frp.js`, `frp-prompts.js`, `ssh-tunnel.js`, `file-sync.js`, `environment-check.js`, `multi-task.js`, `tools.js`, `terminal-history.js`, `terminal-activity.js`, `terminal-images.js`, `theme.js`, `update-log.js`. Kept: `markdown.css` (design sheet and share pages), `agent-chat.css`, `auth.css`, `public/tools/kwai-url-parser.html` (a standalone page).
+- **Deleted, Monaco and vendor**: `public/vendor/monaco/`, `scripts/build-monaco.js`, `scripts/monaco-entry.js`, the `monaco-editor` dependency and the `dompurify` override (`package-lock.json` regenerated with `npm install --package-lock-only` in a scratch copy; only those packages left the lock), `public/vendor/xterm/addon-web-links-0.11.0.js` (and its entry in `scripts/vendor-libs.json`). marked and mermaid stay (design sheet, share page).
+- **Deleted, browser tests** (old page only): `test-agent-tabs-restore`, `test-apps-ui`, `test-context-menu`, `test-desktop-layout`, `test-environment-page`, `test-file-panel-languages`, `test-file-panel-navigation`, `test-file-panel-terminal`, `test-file-sync-ui`, `test-multi-task`, `test-terminal-history`, `test-terminal-keys`, `test-terminal-new-menu`, `test-terminal-theme`, `test-theme`, `test-terminal-links`, `test-terminal-translate` (the MUI translate-and-send is covered by `test-h5-browser`, `sanitize` by `test/terminal-translate.test.js`), `test-terminal-images` (image upload: `test-h5-browser`, `test-oss-direct-browser`).
+- **Deleted, unit tests** (old page only): `batch-update`, `browser-startup`, `file-panel`, `file-panel-task-integration`, `mermaid-zoom`, `monaco-bundle`, `one-click-update`, `preview-race`, `remote-active-engine`, `remote-engine-unavailable`, `sidebar-no-selected`, `task-document-path-form`, `terminal-client-cache`, `terminal-history-client`, `terminal-images`, `terminal-layout`, `terminal-tabs`, `terminal-theme-css`, `update-reload-after-restart`; and the old-page parts of `update-log` (the client log view), `frp` (the prompts of `frp-prompts.js`), `environment-i18n` (the old page's texts) and `access-mode-page` (the settings block of `app.js`).
+- **Rewritten**: `scripts/test-terminal-file-links-browser.cjs` (the page at `/` on a computer with the real task routes, the real terminal WebSocket and a real shell: click opens the side panel, live directory, OSC 7, outside paths), `scripts/test-terminal-width-browser.cjs` (h5.css and `TerminalViewport.fit` at 390 to 1920 px), `scripts/test-terminal-selection-browser.cjs` (h5.css), `scripts/test-session-redirect-browser.cjs` (`/` and `/h5`), `scripts/test-agent-chat-browser.cjs` (h5.css instead of themes.css). New: `scripts/test-h5-phase3-browser.cjs` (the page at `/`: saved Engine restored, removed Engine falls back, failing Engine shows the error; update reload only for a new process or after an outage, "Refresh now" after 20 s). Unit tests updated for the routes: `client-auth-http` (same page for every user agent, manifest by address, old addresses 302 to `/` with the query), `client-auth`, `access-mode`, `access-mode-page` (return to `/h5` only when asked), `client-embedding`, `login-gate`, `i18n`, `vendor-assets` (every vendored file is in the manifest), `terminal-ime`, `update-impact`, `update-restart-pending`.
+- **`npm test`**: an explicit list (`test/*.test.js scripts/test-*-browser.cjs`), see G.7.
+- Not verified here: a real iPhone Home Screen app started at `/h5` after the switch, an installed desktop PWA that was installed with `window-controls-overlay` (it may keep its old title bar until reinstalled), a real iPad.

@@ -336,11 +336,13 @@ app.get('/share/:token/file', (req, res) => {
   sendSharedMarkdown(res, task, req.params.token, file.content, file.relativePath);
 });
 
-// Phones and computers get two separate pages: /h5 (tasks, phone terminals, image upload, translate and send) and /web.
+// One page for computers and phones (the MUI page, public/h5.html): `/` and `/h5` serve the same HTML, so iPhone Home Screen apps that start at /h5
+// keep working. The old page addresses lead to `/`.
 const staticAssets = createStaticAssets({ publicDir: path.join(__dirname, 'public') });
-const PHONE_USER_AGENT = /iPhone|iPod|Android.+Mobile|Windows Phone|HarmonyOS.+Mobile|Mobile Safari/i;
+// The manifest follows the address: /h5 keeps manifest-h5.json (start_url /h5, what installed phone apps were added with), every other address gets manifest.json.
+function manifestFor(pagePath) { return pagePath === '/h5' ? '/manifest-h5.json' : '/manifest.json'; }
 
-function sendClientPage(req, res, page = 'index.html') {
+function sendClientPage(req, res, page = 'h5.html') {
   res.set('Cache-Control', 'no-store');
   const auth = getClientAuth().ready(req.session);
   const returnTo = safeReturnTo(req.path);
@@ -350,14 +352,16 @@ function sendClientPage(req, res, page = 'index.html') {
   // Each script and style is named by the hash of its content (lib/static-assets.js), so it is cached for a year and any change gets a new URL.
   let html = staticAssets.rewritePage(fs.readFileSync(path.join(__dirname, 'public', page), 'utf8'), { zh: wantsChinese(req) });
   html = html.replace('</head>', `<meta name="t-agent-login-path" content="${escapeHtml(config.loginPath)}">\n</head>`);
+  html = html.replace(/<link rel="manifest" href="[^"]*">/, `<link rel="manifest" href="${manifestFor(req.path)}">`);
   res.type('html').send(html);
 }
 
-app.get('/', (req, res) => (PHONE_USER_AGENT.test(req.get('User-Agent') || '') ? res.redirect('/h5') : sendClientPage(req, res)));
-app.get('/web', (req, res) => sendClientPage(req, res));
-app.get('/h5', (req, res) => sendClientPage(req, res, 'h5.html'));
-app.get('/index.html', (req, res) => res.redirect('/web'));
-app.get('/h5.html', (req, res) => res.redirect('/h5'));
+app.get('/', (req, res) => sendClientPage(req, res));
+app.get('/h5', (req, res) => sendClientPage(req, res));
+// The query stays, so a notification link to an old address (`/web?openChat=…`) still opens its chat.
+for (const oldPage of ['/web', '/index.html', '/h5.html']) {
+  app.get(oldPage, (req, res) => res.redirect(`/${req.originalUrl.includes('?') ? req.originalUrl.slice(req.originalUrl.indexOf('?')) : ''}`));
+}
 app.get('/login.html', (req, res) => res.redirect(config.loginPath));
 // Static middleware decodes paths: encoded /index%2ehtml must not evade the
 // explicit page routes above. Do not allow implicit directory index documents.
@@ -475,7 +479,7 @@ server.listen(config.port, config.host, () => {
   terminal.setHookEndpoint(`http://${anyHost ? '127.0.0.1' : config.host}:${listeningPort}/hooks/terminal-activity`);
   console.log(`Server running at http://localhost:${listeningPort}`);
   // Make the brotli / gzip copies of the pages' scripts and styles now, in the background, so the first visitor already gets them.
-  for (const page of ['h5.html', 'index.html']) { try { staticAssets.rewritePage(fs.readFileSync(path.join(__dirname, 'public', page), 'utf8')); } catch { /* the page is not there */ } }
+  for (const page of ['h5.html']) { try { staticAssets.rewritePage(fs.readFileSync(path.join(__dirname, 'public', page), 'utf8')); } catch { /* the page is not there */ } }
   frpRouter.service.autoStart();
   sshTunnelRouter.service.autoStart();
   console.log(`             LAN: http://${getLocalIP()}:${listeningPort}`);

@@ -75,7 +75,7 @@ for (const [environment, allowHttp] of [['test', 'false'], ['production', 'false
     assert.equal(response.status, 302, page);
     assert.match(response.headers.get('location'), /^\/torin\/hide\/login\?return_to=/, page);
   }
-  for (const route of ['/index.html', '/index%2ehtml', '/login.html', '/clients', '/auth/login', '/auth/setup', '/auth/status', '/auth/me', '/js/app.js', '/css/style.css', '/manifest.json', '/sw.js', '/nonexistent']) {
+  for (const route of ['/index.html', '/index%2ehtml', '/login.html', '/clients', '/auth/login', '/auth/setup', '/auth/status', '/auth/me', '/js/h5.js', '/css/h5.css', '/manifest.json', '/sw.js', '/nonexistent']) {
     const response = await call(route);
     assert.equal(response.status, 404, route);
     assert.equal(response.headers.get('location'), null, route);
@@ -167,26 +167,33 @@ for (const [environment, allowHttp] of [['test', 'false'], ['production', 'false
   assert.ok(refreshedCookie, 'active HTTP request reissues the rolling cookie');
   const expiry = Date.parse(refreshedCookie.match(/Expires=([^;]+)/)[1]);
   assert.ok(Math.abs(expiry - Date.now() - SESSION_TTL) < 5000, 'cookie lasts 30 days from this request');
-  const h5 = await call('/h5', { cookie: boundCookie });
-  assert.equal(h5.status, 200);
-  const h5Html = await h5.text();
+  // One page for every device (the MUI page, public/h5.html): `/` and `/h5` serve the same HTML whatever the user agent; only the manifest link differs,
+  // so an iPhone Home Screen app started at /h5 keeps its manifest (start_url /h5). The old addresses lead to `/`.
+  const pageOf = async (route, headers = {}) => {
+    const response = await call(route, { cookie: boundCookie, headers });
+    assert.equal(response.status, 200, route);
+    assert.equal(response.headers.get('cache-control'), 'no-store', route);
+    return response.text();
+  };
+  const sameBody = html => html.replace(/<link rel="manifest" href="[^"]*">/, '');
+  const h5Html = await pageOf('/h5');
   assert.match(h5Html, /width=device-width/);
   assert.match(h5Html, /src="\/js\/h5.js\?v=/);
   assert.doesNotMatch(h5Html, /monaco|style\.css/);
-  assert.equal((await call('/h5.html', { cookie: boundCookie })).headers.get('location'), '/h5');
-  const web = await call('/web', { cookie: boundCookie });
-  const webHtml = await web.text();
-  assert.match(webHtml, /width=1280, user-scalable=yes/);
-  assert.doesNotMatch(webHtml, /mobile-client|h5-client|mobile\.js|mobile\.css/);
-  assert.match(webHtml, /src="\/vendor\/monaco\/monaco.js/);
-  assert.equal(web.headers.get('cache-control'), 'no-store');
-  const phone = await call('/', { cookie: boundCookie, headers: { 'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) Mobile/15E148' } });
-  assert.equal(phone.status, 302);
-  assert.equal(phone.headers.get('location'), '/h5');
-  const tablet = await call('/', { cookie: boundCookie, headers: { 'User-Agent': 'Mozilla/5.0 (iPad; CPU OS 18_0 like Mac OS X)' } });
-  assert.equal(tablet.status, 200);
-  assert.match(await tablet.text(), /width=1280, user-scalable=yes/);
-  assert.equal((await call('/index.html', { cookie: boundCookie })).headers.get('location'), '/web');
+  assert.match(h5Html, /<link rel="manifest" href="\/manifest-h5\.json">/);
+  const rootHtml = await pageOf('/');
+  assert.match(rootHtml, /<link rel="manifest" href="\/manifest\.json">/);
+  assert.doesNotMatch(rootHtml, /manifest-h5/);
+  assert.equal(sameBody(rootHtml), sameBody(h5Html), '/ and /h5 serve the same page');
+  for (const agent of ['Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) Mobile/15E148', 'Mozilla/5.0 (iPad; CPU OS 18_0 like Mac OS X)', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)']) {
+    assert.equal(sameBody(await pageOf('/', { 'User-Agent': agent })), sameBody(h5Html), `the same page for ${agent}`);
+  }
+  for (const old of ['/web', '/index.html', '/h5.html']) {
+    const response = await call(old, { cookie: boundCookie });
+    assert.equal(response.status, 302, old);
+    assert.equal(response.headers.get('location'), '/', old);
+  }
+  assert.equal((await call('/web?openChat=1:abc', { cookie: boundCookie })).headers.get('location'), '/?openChat=1:abc', 'the query of an old address stays');
   assert.equal((await call('/auth/settings', { cookie: boundCookie, body: { work_dir: null }, method: 'PUT', headers: { Origin: 'https://attacker.test' } })).status, 403);
 
   const loginHeaders = allowHttp === 'true' ? { Host: 'client.example.test', Origin: 'http://client.example.test' } : {};
@@ -199,7 +206,7 @@ for (const [environment, allowHttp] of [['test', 'false'], ['production', 'false
   const recoveryCookie = cookieOf(loginResponse);
   if (allowHttp === 'true') {
     // A browser can store this cookie on a non-loopback HTTP origin and reuse it.
-    for (const route of ['/auth/me', '/api/tasks', '/web']) {
+    for (const route of ['/auth/me', '/api/tasks', '/h5']) {
       const response = await call(route, { cookie: recoveryCookie, headers: loginHeaders });
       assert.equal(response.status, 200);
       assert.ok(response.headers.get('set-cookie'), 'rolling HTTP cookie remains usable');

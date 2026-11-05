@@ -46,23 +46,23 @@ router.post('/mode', (req, res) => {
     if (!isLocalInitialization(req)) return fail(403, 'LOCAL_ACCESS_REQUIRED');
     auth.setAccessMode('local');
     req.session.localTrusted = true;
-    return req.session.save(error => (error ? errorResponse(res, error) : res.json({ mode: 'local', redirect: '/web' })));
+    return req.session.save(error => (error ? errorResponse(res, error) : res.json({ mode: 'local', redirect: '/' })));
   }
   if (!auth.authenticated(req.session)) return fail(401, 'AUTH_REQUIRED');
-  if (mode === current) return res.json({ mode, redirect: '/web' });
+  if (mode === current) return res.json({ mode, redirect: '/' });
   if (mode === 'local') {
     auth.setAccessMode('local');
     if (req.app.locals.disconnectAllClientSessions) req.app.locals.disconnectAllClientSessions();
     const local = isLocalInitialization(req);
     if (local) req.session.localTrusted = true;
-    return req.session.save(error => (error ? errorResponse(res, error) : res.json({ mode: 'local', redirect: local ? '/web' : null, locked_out: !local })));
+    return req.session.save(error => (error ? errorResponse(res, error) : res.json({ mode: 'local', redirect: local ? '/' : null, locked_out: !local })));
   }
   // local → remote
-  if (!auth.status(req.session).bound) return fail(409, 'AUTHENTICATOR_BINDING_REQUIRED', { redirect: `${config.loginPath}/setup?return_to=/web` });
+  if (!auth.status(req.session).bound) return fail(409, 'AUTHENTICATOR_BINDING_REQUIRED', { redirect: `${config.loginPath}/setup?return_to=/` });
   try {
     const grant = auth.authenticate(req.body.code, req.ip);
     auth.setAccessMode('remote');
-    saveLogin(req, res, grant, error => (error ? errorResponse(res, error) : res.json({ mode: 'remote', redirect: '/web' })));
+    saveLogin(req, res, grant, error => (error ? errorResponse(res, error) : res.json({ mode: 'remote', redirect: '/' })));
   } catch (error) { errorResponse(res, error); }
 });
 for (const route of ['/', '/login', '/setup']) {

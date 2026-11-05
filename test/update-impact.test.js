@@ -20,10 +20,10 @@ test('static assets and release-only metadata do not require a restart', async (
   after['package.json'].version = after['package-lock.json'].version = after['package-lock.json'].packages[''].version = '1.0.1';
   after['VERSION.json'].app_version = '1.0.1';
   after['VERSION.json'].published_at = 'today';
-  assert.equal(await requiresRestart(git(['public/js/tasks.js', 'test/new.test.js', ...Object.keys(before)], before, after), 'running', 'target'), false);
+  assert.equal(await requiresRestart(git(['public/js/h5.js', 'test/new.test.js', ...Object.keys(before)], before, after), 'running', 'target'), false);
 });
 test('server, build source and dependency changes require restart', async () => {
-  for (const file of ['server.js', 'routes/terminal.js', 'scripts/monaco-entry.js', 'config.js']) {
+  for (const file of ['server.js', 'routes/terminal.js', 'scripts/h5-shell/entry.jsx', 'config.js']) {
     assert.equal(await requiresRestart(git([file]), 'running', 'target'), true);
   }
   assert.equal(await requiresRestart(git(['package.json'], { 'package.json': { dependencies: { a: '1' } } }, { 'package.json': { dependencies: { a: '2' } } }), 'running', 'target'), true);

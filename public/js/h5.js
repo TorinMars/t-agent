@@ -484,7 +484,7 @@
     expanded.clear();
     peeks.clear();
     ui.set({ taskName: '', sourceKey: source.key });
-    disconnect();
+    hideShown(); // its connection stays warm (WARM_MAX)
     terminals = [];
     renderTabs();
     showEmpty('Choose a task to open its phone terminal');
@@ -599,7 +599,7 @@
   function showEmpty(text) { ui.set({ empty: text }); }
 
   async function loadTerminals() {
-    disconnect();
+    hideShown(); // another task: the terminal shown so far stays warm (WARM_MAX)
     terminals = [];
     renderTabs();
     if (!task) { showEmpty('Choose a task to open its phone terminal'); return; }
@@ -697,6 +697,8 @@
     const current = task;
     const wasCurrent = row.terminal_id === terminalId;
     if (wasCurrent) disconnect(); // end the view first, so the server closing the shell is not shown as a lost connection
+    const from = source;
+    closeWarm(item => item.key === warmKey(from, current.id, row.terminal_id)); // a hidden warm view of it too
     try {
       await api('POST', `${source.tasksBase}/${current.id}/terminal/control`, { action, terminal_id: row.terminal_id });
     } catch (error) {
@@ -992,18 +994,57 @@
     if (data) send(s, data);
   }
   function sendResize(s) {
+    if (s !== session) return; // a hidden warm terminal leaves the PTY size alone
     if (s.ws && s.ws.readyState === WebSocket.OPEN && s.term.cols && s.term.rows) {
       TerminalProtocol.send(s.ws, { type: 'resize', cols: s.term.cols, rows: s.term.rows });
     }
   }
-  function refit(s) { if (!s.disposed) TerminalViewport.fit(s.term, s.fit, s.el); }
+  function refit(s) { if (!s.disposed && s === session) TerminalViewport.fit(s.term, s.fit, s.el); } // a hidden one has no size
+
+  // ── Recent terminals stay connected (WARM_MAX, the shown one included) ──
+  // Going back to one of them shows it at once: its xterm is kept, hidden, and its socket keeps receiving output, so nothing is reconnected or replayed.
+  // Only the shown one is acked, sends input and sends its size (a hidden terminal must not resize the PTY of someone else's view); the least recently
+  // shown one is closed when a new one opens. A hidden terminal that another device takes over is closed quietly (shown again, it connects normally and
+  // asks to take over). After WARM_IDLE_MS on a hidden page all of them are closed; the shown one connects again when the page is shown.
+  const WARM_MAX = 3;
+  const WARM_IDLE_MS = 60000;
+  let warm = []; // the connected sessions, most recently shown first (the shown one, `session`, is first)
+  const warmKey = (from, taskId, id) => `${from.key}|${taskId}|${id}`;
+  function hideShown() {
+    const s = session;
+    session = null;
+    if (!s) return;
+    s.el.hidden = true;
+    s.term.blur();
+  }
+  function showWarm(s) {
+    warm = [s, ...warm.filter(item => item !== s)];
+    session = s;
+    s.el.hidden = false;
+    ui.set({ empty: null });
+    holdTerminalSize();
+    refit(s);
+    sendResize(s); // the size may have changed (another view, the keyboard) while it was hidden
+    if (!s.ws) { clearTimeout(s.timer); s.timer = null; open(s); }
+    ackShown();
+    focusTerminalSoon(s);
+  }
+  // Closes the warm sessions of one terminal (it is restarted or deleted), or all of them.
+  function closeWarm(match = () => true) {
+    for (const s of warm.filter(match)) disposeSession(s);
+  }
 
   function connect() {
-    disconnect();
+    hideShown();
     if (!task || !terminalId) return;
+    const key = warmKey(source, task.id, terminalId);
+    const kept = warm.find(item => item.key === key && !item.disposed);
+    if (kept) { showWarm(kept); return; }
     ui.set({ empty: null });
     const el = document.createElement('div');
     el.className = 'h5-xterm';
+    el.dataset.terminalId = terminalId;
+    el.dataset.taskId = String(task.id);
     terminalHost.append(el);
     const term = new Terminal({
       allowProposedApi: true, // needed by the Unicode 11 addon
@@ -1030,8 +1071,10 @@
     // textarea stays focusable for a hardware keyboard but asks for no on-screen keyboard. Only the keyboard key opens it.
     noScreenKeyboard(term);
     el.addEventListener('focusout', () => noScreenKeyboard(term)); // the keyboard closed: the next terminal tap must not reopen it
-    const s = { term, fit, el, ws: null, timer: null, attempts: 0, paused: false, disposed: false, task, terminalId, source };
+    const s = { term, fit, el, ws: null, timer: null, attempts: 0, paused: false, disposed: false, task, terminalId, source, key };
     session = s;
+    warm = [s, ...warm];
+    while (warm.length > WARM_MAX) disposeSession(warm[warm.length - 1]);
     // A computer: Cmd/Ctrl+Shift+C (and Cmd+C with a selection) copy, and a program's OSC 52 copy request asks for confirmation (terminal-clipboard.js).
     if (pointerMode() && typeof TerminalClipboard !== 'undefined') s.clipboard = TerminalClipboard.attach(term, el);
     attachFileLinks(s);
@@ -1046,7 +1089,7 @@
     }, true);
     term.onData(data => typed(s, data));
     TerminalIme.attach(term, data => typed(s, data)); // the Apple Chinese keyboard's spaces and punctuation, which xterm drops
-    term.onResize(() => { if (!s.paused) sendResize(s); });
+    term.onResize(() => { if (!s.paused) sendResize(s); }); // only the shown one (sendResize)
     let cursorFrame = 0;
     term.onCursorMove(() => { // the cursor decides how far the terminal is shifted while the keyboard is open
       if (!keyboardOpen || cursorFrame) return;
@@ -1218,6 +1261,7 @@
       if (s.ws !== ws || s.disposed) return;
       s.ws = null;
       if (TerminalOwner.isBlocked(event.code)) {
+        if (session !== s) { disposeSession(s); return; } // a hidden warm terminal taken over elsewhere: shown again, it asks then
         TerminalOwner.prompt(s.el.parentElement || s.el, event.code, () => { if (session === s && !s.disposed) open(s, true); });
         return;
       }
@@ -1257,24 +1301,50 @@
     });
   }
 
+  // Ends the shown terminal's connection and view for good (it is restarted or deleted, or the page shows something else for a long time).
   function disconnect() {
     const s = session;
     session = null;
-    if (!s) return;
+    if (s) disposeSession(s);
+  }
+  function disposeSession(s) {
+    if (s.disposed) return;
+    if (session === s) session = null;
+    warm = warm.filter(item => item !== s);
     s.disposed = true;
     clearTimeout(s.timer);
     s.heartbeat?.stop();
     s.observer?.disconnect();
     s.clipboard?.dispose();
     if (s.ws) { const ws = s.ws; s.ws = null; try { ws.close(); } catch { /* already closed */ } }
-    s.term.dispose();
+    disposeTerm(s.term);
     s.el.remove();
+  }
+  // xterm 5.5 never disposes its screen-DPR monitor, which keeps a window `resize` listener and a matchMedia listener per terminal: two leaked listeners
+  // for every terminal ever opened. It is disposed here after the terminal (a private field; nothing happens when a later xterm renames it).
+  function disposeTerm(term) {
+    const monitor = term._core && term._core._coreBrowserService && term._core._coreBrowserService._screenDprMonitor;
+    term.dispose();
+    try { if (monitor && typeof monitor.dispose === 'function') monitor.dispose(); } catch { /* already gone */ }
   }
 
   // Phones drop sockets in the background; reconnect when the page comes back.
+  let warmIdle = 0;
+  function sleepWarm() { // the page has been hidden for WARM_IDLE_MS: close every socket; the shown terminal keeps its view and connects when shown
+    warmIdle = 0;
+    for (const s of warm) {
+      if (s !== session) { disposeSession(s); continue; }
+      clearTimeout(s.timer);
+      s.timer = null;
+      s.heartbeat?.stop();
+      if (s.ws) { const ws = s.ws; s.ws = null; try { ws.close(); } catch { /* already closed */ } }
+    }
+  }
   document.addEventListener('visibilitychange', () => {
     void syncWakeLock();
-    if (document.visibilityState !== 'visible') return;
+    clearTimeout(warmIdle);
+    warmIdle = 0;
+    if (document.visibilityState !== 'visible') { warmIdle = setTimeout(sleepWarm, WARM_IDLE_MS); return; }
     fitViewport();
     ackShown(); // the person is looking again: a terminal that finished meanwhile is seen now
     if (session && !session.ws && !session.timer) open(session);

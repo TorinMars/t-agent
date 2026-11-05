@@ -16,7 +16,7 @@ test('lines are split on every line end, without an empty last line', async () =
   const { splitLines } = await import('../scripts/h5-shell/file-view.mjs');
   assert.deepEqual(splitLines('a\r\nb\rc\n'), ['a', 'b', 'c']);
   assert.deepEqual(splitLines(''), ['']);
-  assert.deepEqual(splitLines('中文\n'), ['中文'], 'any script');
+  assert.deepEqual(splitLines('\u4e2d\u6587\n'), ['\u4e2d\u6587'], 'any script');
 });
 
 test('relative image paths resolve from the folder of the document and never leave the working directory', async () => {
@@ -31,5 +31,5 @@ test('relative image paths resolve from the folder of the document and never lea
   assert.equal(imagePath('readme.md', 'logo.svg'), null, 'images only, no SVG');
   assert.equal(imagePath('readme.md', 'notes.txt'), null);
   assert.equal(imagePath('readme.md', '%E0%A4%A.png'), null, 'broken escape');
-  assert.equal(imagePath('readme.md', '图/截图.png'), '图/截图.png', 'Chinese names');
+  assert.equal(imagePath('readme.md', '\u56fe/\u622a\u56fe.png'), '\u56fe/\u622a\u56fe.png', 'Chinese names');
 });

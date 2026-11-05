@@ -87,9 +87,10 @@ async function openPage(browser, viewport, { stream = false } = {}) {
   return { context, page };
 }
 
-const shown = page => page.evaluate(() => ({ terminal: new URL(window.sockets.at(-1).url).searchParams.get('terminalId'), task: document.getElementById('h5-task-name').textContent }));
+// The terminal on screen: recent terminals stay connected but hidden, so the newest socket is not always the shown one.
+const shown = page => page.evaluate(() => ({ terminal: document.querySelector('.h5-xterm:not([hidden])')?.dataset.terminalId, task: document.getElementById('h5-task-name').textContent }));
 async function waitFor(page, task, terminal) {
-  await page.waitForFunction(([name, id]) => window.sockets.length && new URL(window.sockets.at(-1).url).searchParams.get('terminalId') === id && document.getElementById('h5-task-name').textContent === name, [task, terminal]);
+  await page.waitForFunction(([name, id]) => document.querySelector('.h5-xterm:not([hidden])')?.dataset.terminalId === id && document.getElementById('h5-task-name').textContent === name, [task, terminal]);
 }
 // The shell's floating notice (Notice in scripts/h5-shell/Dialogs.jsx, a Snackbar) shows the last message.
 async function toast(page, text) {
@@ -171,7 +172,7 @@ async function toast(page, text) {
     assert.equal(await cycle.locator('svg').count(), 1, 'an icon button');
 
     // The terminal keyboard is open (the terminal input has the focus): a tap closes it first.
-    await page.evaluate(() => document.querySelector('#h5-terminal .xterm-helper-textarea').focus());
+    await page.evaluate(() => document.querySelector('#h5-terminal .h5-xterm:not([hidden]) .xterm-helper-textarea').focus());
     // Sheet order: Alpha (default, c1), Beta (b1), Gamma (g1); x1, b2, d1 are idle, the running chat and task 99 do not count. Then it wraps.
     const expected = [['Alpha', 'c1'], ['Beta', 'b1'], ['Gamma', 'g1'], ['Alpha', 'default'], ['Alpha', 'c1']];
     for (const [index, [task, terminal]] of expected.entries()) {

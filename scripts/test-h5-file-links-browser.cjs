@@ -79,7 +79,7 @@ let cwdAsks = 0;
     await page.waitForFunction(() => window.sockets.length === 1 && window.sockets[0].readyState === 1);
     await page.evaluate(() => window.sockets[0].emit(JSON.stringify({ type: 'history', data: '$ ', cols: 50, rows: 24 })));
     await page.evaluate(() => window.sockets[0].emit('\r\nA1 ● Read(src/app.js:42)\r\nA2 see docs/设计.md\r\nA3 /etc/hosts and ../up.md\r\nA4 src/ folder\r\nA5 missing/gone.js\r\n'));
-    await page.waitForFunction(() => document.querySelector('.xterm-rows')?.textContent.includes('A5 missing'));
+    await page.waitForFunction(() => document.querySelector('.h5-xterm:not([hidden]) .xterm-rows')?.textContent.includes('A5 missing'));
     assert.deepEqual(reads, [], 'printing paths reads nothing');
     const resizes = () => page.evaluate(() => window.sockets[0].sent.filter(data => data.includes('"resize"')).length);
     let resizesBefore = await resizes();
@@ -88,7 +88,7 @@ let cwdAsks = 0;
     const pointOf = (prefix, text) => page.evaluate(({ prefix, text }) => {
       const rows = [...document.querySelectorAll('.xterm-rows > div')];
       const row = rows.find(node => node.textContent.startsWith(prefix));
-      const screen = document.querySelector('.h5-xterm .xterm-screen').getBoundingClientRect();
+      const screen = document.querySelector('.h5-xterm:not([hidden]) .xterm-screen').getBoundingClientRect();
       const before = row.textContent.slice(0, row.textContent.indexOf(text));
       const cells = [...before].reduce((sum, ch) => sum + (/[⺀-鿿＀-￯]/.test(ch) ? 2 : 1), 0);
       const box = row.getBoundingClientRect();
@@ -191,13 +191,13 @@ let cwdAsks = 0;
     assert.equal(await resizes(), resizesBefore, 'the link taps so far send no resize to the PTY');
     liveCwd = { cwd: '/elsewhere', relative: null };
     await page.evaluate(() => window.sockets[0].emit(JSON.stringify({ type: 'history', data: '$ \r\nA9 x.js\r\n', cols: 50, rows: 24 })));
-    await page.waitForFunction(() => document.querySelector('.xterm-rows')?.textContent.includes('A9 x.js'));
+    await page.waitForFunction(() => document.querySelector('.h5-xterm:not([hidden]) .xterm-rows')?.textContent.includes('A9 x.js'));
     await tap(await pointOf('A9 ', 'x.js'));
     await page.getByText('Outside the working directory: x.js').first().waitFor();
     assert.equal(await sheet.isVisible(), false);
     assert.equal(reads.length, readsBefore, 'nothing is read when the shell is outside');
     await page.evaluate(() => window.sockets[0].emit('\r\nA1 ● Read(src/app.js:42)\r\nA3 /etc/hosts and ../up.md\r\n'));
-    await page.waitForFunction(() => document.querySelector('.xterm-rows')?.textContent.includes('A3 /etc'));
+    await page.waitForFunction(() => document.querySelector('.h5-xterm:not([hidden]) .xterm-rows')?.textContent.includes('A3 /etc'));
     liveCwd = { cwd: '/work/fix-login', relative: '' };
     resizesBefore = await resizes(); // a restored screen sends its size once; the taps below must send none
 

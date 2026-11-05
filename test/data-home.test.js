@@ -176,7 +176,7 @@ test('the first start under the default folder copies the old data in (end to en
   assert.ok(!fs.existsSync(path.join(explicit, 'migrated-from.json')));
 });
 
-test('when both folders have data the new one is used; nothing to copy when the old folder is empty', t => {
+test('when both folders have a database the new one is used; nothing to copy when the old folder is empty', t => {
   const base = temp(t);
   const from = path.join(base, 'data');
   const to = path.join(base, '.tagent');
@@ -185,7 +185,7 @@ test('when both folders have data the new one is used; nothing to copy when the 
   new Database(path.join(to, 'db.sqlite')).close();
   const logs = [];
   assert.equal(dataHome.migrateLegacyData({ from, to, log: message => logs.push(message) }).status, 'exists');
-  assert.match(logs[0], /check that this is the data you expect/, 'no marker: the message asks to check');
+  assert.match(logs[0], /has no user data; it is ignored/, 'no marker, but the old folder holds no user data (rules 1a / 1b below)');
   assert.equal(dataHome.migrateLegacyData({ from: path.join(base, 'missing'), to: path.join(base, 'other'), log: quiet }).status, 'none');
 });
 
@@ -300,4 +300,109 @@ test('a second server on the same data folder exits with a message naming the fi
   first.kill('SIGTERM');
   await new Promise(resolve => first.once('exit', resolve));
   assert.ok(!fs.existsSync(path.join(root, 'server.lock')));
+});
+
+// A database as a server start without the old data leaves it: the app schema plus the rows a start writes by itself.
+function emptyStart(root, extraSql = '') {
+  const result = openDb({ TAGENT_HOME: root });
+  assert.equal(result.status, 0, result.stderr);
+  const db = new Database(path.join(root, 'db.sqlite'));
+  db.exec(`
+    INSERT INTO task_groups (owner_id, group_key, name, sort_order, is_system) VALUES
+      ('local', 'personal', 'Personal tasks', 0, 0), ('local', 'doing', 'Doing', 1000, 1), ('local', 'todo', 'To do', 1001, 1), ('local', 'done', 'Done', 1002, 1);
+    INSERT INTO system_state (key, value) VALUES ('single_user_id', 'local'),
+      ('file_sync_v1', '{"masterId":null,"files":[],"versions":{},"mode":"master"}'), ('update_state', '{"status":"idle"}');
+    INSERT INTO users (username, salt, hash) VALUES ('local', 'single-user', 'password-auth-disabled');
+    CREATE TABLE IF NOT EXISTS client_auth (owner_id TEXT PRIMARY KEY, secret_cipher TEXT, version TEXT NOT NULL, last_step INTEGER NOT NULL DEFAULT -1, recovery_hashes TEXT NOT NULL DEFAULT '[]', bound_at TEXT);
+    INSERT INTO client_auth (owner_id, version) VALUES ('local', 'v');
+    CREATE TABLE IF NOT EXISTS sessions (sid TEXT PRIMARY KEY, sess TEXT NOT NULL, expired INTEGER NOT NULL);
+    INSERT INTO sessions VALUES ('s', '{}', 9999999999999);
+    ${extraSql}`);
+  db.close();
+  fs.writeFileSync(path.join(root, 'session-secret'), 'secret-of-the-empty-start\n', { mode: 0o600 });
+}
+function oldDataWithTask(from) {
+  fs.mkdirSync(from, { recursive: true });
+  assert.equal(openDb({ T_AGENT_DATA_DIR: from }).status, 0);
+  fs.rmSync(path.join(from, 'session-secret'), { force: true });
+  const db = new Database(path.join(from, 'db.sqlite'));
+  db.prepare("INSERT INTO tasks (title, status) VALUES ('my old task', 'doing')").run();
+  db.close();
+}
+const countRows = (file, sql) => { const db = new Database(file, { readonly: true }); try { return db.prepare(sql).pluck().get(); } finally { db.close(); } };
+
+test('what counts as user data: rows a start writes by itself do not count', t => {
+  const root = temp(t);
+  emptyStart(root);
+  const db = new Database(path.join(root, 'db.sqlite'));
+  assert.deepEqual(dataHome.userDataIn(db), []);
+  db.exec("INSERT INTO apps (name, source) VALUES ('pm2 app', 'pm2')");
+  assert.deepEqual(dataHome.userDataIn(db), [], 'apps registered from PM2 do not count');
+  db.exec("UPDATE client_auth SET secret_cipher = 'x'");
+  db.exec("INSERT INTO system_state (key, value) VALUES ('translator:local', 'x')");
+  db.exec("UPDATE system_state SET value = '{\"masterId\":\"m\",\"files\":[]}' WHERE key = 'file_sync_v1'");
+  db.exec("INSERT INTO task_groups (owner_id, group_key, name, sort_order, is_system) VALUES ('local', 'g1', 'Mine', 1, 0)");
+  db.exec("UPDATE users SET work_dir = '/w'");
+  assert.deepEqual(dataHome.userDataIn(db), ['task groups: 1', 'bound authenticator: 1', 'working directory settings: 1', 'settings: 1', 'file sync: 1']);
+  db.close();
+});
+
+test('rule 1a: an empty data home without a marker is moved aside and the old data is copied in', t => {
+  const base = temp(t);
+  const to = path.join(base, 'home', '.tagent');
+  const from = path.join(base, 'install', 'data');
+  fs.mkdirSync(to, { recursive: true });
+  emptyStart(to);
+  oldDataWithTask(from);
+  const oldHash = hash(path.join(from, 'db.sqlite'));
+  const logs = [];
+  const result = dataHome.migrateLegacyData({ from, to, log: message => logs.push(message), warn: message => logs.push(message), now: () => new Date('2026-11-06T01:02:03Z') });
+  assert.equal(result.status, 'copied');
+  assert.equal(countRows(path.join(to, 'db.sqlite'), "SELECT COUNT(*) FROM tasks WHERE title = 'my old task'"), 1);
+  const aside = path.join(to, 'empty-start-2026-11-06T01-02-03-000Z');
+  assert.ok(fs.existsSync(path.join(aside, 'db.sqlite')), 'the empty database is kept aside');
+  assert.equal(fs.readFileSync(path.join(aside, 'session-secret'), 'utf8'), 'secret-of-the-empty-start\n');
+  assert.ok(!fs.existsSync(path.join(to, 'session-secret')), 'the secret of the empty start is not used for the old data');
+  assert.ok(fs.existsSync(path.join(to, 'migrated-from.json')));
+  assert.equal(hash(path.join(from, 'db.sqlite')), oldHash, 'the old database is not changed');
+  assert.match(logs.join('\n'), /had a database without user data .* moved it to .*empty-start-/);
+  assert.equal(dataHome.dataHomeCheck().status, 'copied');
+  // Afterwards the marker exists: later starts just use the data home.
+  assert.equal(dataHome.migrateLegacyData({ from, to, log: quiet, warn: quiet }).status, 'exists');
+});
+
+test('rule 1a does not apply when the old folder has no user data, or a live server holds the data home', t => {
+  const base = temp(t);
+  const to = path.join(base, '.tagent');
+  const from = path.join(base, 'data');
+  fs.mkdirSync(to);
+  emptyStart(to);
+  fs.mkdirSync(from);
+  assert.equal(openDb({ T_AGENT_DATA_DIR: from }).status, 0); // an old folder with only the schema
+  const logs = [];
+  assert.equal(dataHome.migrateLegacyData({ from, to, log: message => logs.push(message), warn: quiet }).status, 'exists');
+  assert.match(logs[0], /has no user data; it is ignored/);
+  oldDataWithTask(path.join(base, 'data2'));
+  fs.writeFileSync(path.join(to, 'server.lock'), JSON.stringify({ pid: process.ppid }));
+  assert.equal(dataHome.migrateLegacyData({ from: path.join(base, 'data2'), to, log: quiet, warn: quiet }).status, 'exists');
+  assert.ok(fs.existsSync(path.join(to, 'db.sqlite')) && !fs.existsSync(path.join(to, 'migrated-from.json')), 'nothing moved while in use');
+});
+
+test('rule 1b: when both folders hold user data and there is no marker, the data home is kept and a loud warning names both', t => {
+  const base = temp(t);
+  const to = path.join(base, '.tagent');
+  const from = path.join(base, 'data');
+  fs.mkdirSync(to);
+  emptyStart(to, "INSERT INTO tasks (title, status) VALUES ('new task', 'doing');");
+  oldDataWithTask(from);
+  const warnings = [];
+  assert.equal(dataHome.migrateLegacyData({ from, to, log: quiet, warn: message => warnings.push(message) }).status, 'conflict');
+  const text = warnings.join('\n');
+  assert.match(text, /T-Agent data folder warning/);
+  assert.ok(text.includes(`in use:  ${to} (tasks: 1`) && text.includes(`ignored: ${from} (tasks: 1`), text);
+  assert.match(text, /move .* away .* start again/);
+  assert.match(text, /set TAGENT_HOME=/);
+  assert.equal(countRows(path.join(to, 'db.sqlite'), "SELECT COUNT(*) FROM tasks WHERE title = 'new task'"), 1, 'the data home is unchanged');
+  assert.ok(!fs.existsSync(path.join(to, 'migrated-from.json')));
+  assert.equal(dataHome.dataHomeCheck().status, 'conflict');
 });

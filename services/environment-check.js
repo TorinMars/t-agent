@@ -351,6 +351,15 @@ function createEnvironmentCheck(deps = {}) {
           if (free < GB) return done('warn', `Only ${text} on the disk of the data folder`, { fix: 'Free some disk space', impact: 'Saving may fail soon' });
           return done('ok', `${dir} (${text})`);
         },
+      }, {
+        id: 'data-choice', name: 'Data source', run: async () => {
+          const check = (deps.dataHomeCheck || require('../lib/data-home').dataHomeCheck)();
+          if (check.status !== 'conflict') return done('ok', 'One data folder is in use');
+          return done('warn', `Two folders hold data: ${check.root} is used, ${check.legacy} is ignored`, {
+            fix: `To use the old data, stop the server, move ${check.root} away and start again (the old data is then copied in); or set TAGENT_HOME to the folder you want`,
+            impact: 'Tasks and connections of the ignored folder are not shown',
+          });
+        },
       }],
     },
   ];

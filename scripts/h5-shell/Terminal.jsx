@@ -56,6 +56,9 @@ export function BottomArea({ state, ui }) {
     // A tap types the command WITHOUT Enter, so the user checks it and presses Enter.
     { head: true, label: presets.title },
     ...presets.commands.map(({ command, note }) => ({ label: command, note, mono: true, run: () => run(() => ui.actions.insertCommand(command)) })),
+    // Claude Code and Codex also list common key combinations under "Keys". A tap SENDS the key at once (h5.js `ui.actions.key({ send })`, which drops a latched Ctrl / Alt / Shift)
+    // and closes the list, like a command.
+    ...(presets.keys ? [{ head: true, label: 'Keys' }, ...presets.keys.map(({ label, send, note }) => ({ label, note, mono: true, keyRow: true, run: () => run(() => ui.actions.key({ send })) }))] : []),
   ];
   return (
     <Box className="h5-bottom" id="h5-bottom" sx={{ flex: '0 0 auto', position: 'relative', zIndex: 3, bgcolor: 'var(--h5-bg)', marginTop: 'calc(var(--h5-bar-extra, 0px) * -1)', pb: 'max(8px, env(safe-area-inset-bottom))', ...(pointer ? POINTER_ON : DRAFT_ON) }}>
@@ -68,12 +71,12 @@ export function BottomArea({ state, ui }) {
             <Box key={`head-${row.label}`} className="h5-add-menu-head" role="presentation" sx={{ px: 2, pt: 1.25, pb: 0.5, fontSize: 12, fontWeight: 600, color: 'text.secondary', borderTop: index ? 1 : 0, borderColor: 'divider' }}>{t(row.label)}</Box>
           ) : (
             <Button
-              key={row.label} role="menuitem" fullWidth color="inherit" onClick={row.run} startIcon={row.icon} title={row.note ? t(row.note) : undefined}
+              key={`${row.keyRow ? 'key' : 'item'}-${row.label}`} role="menuitem" fullWidth color="inherit" onClick={row.run} startIcon={row.icon} title={row.note ? t(row.note) : undefined}
               sx={{ justifyContent: 'flex-start', minHeight: 44, borderRadius: 0, px: 2, py: row.note ? 0.75 : 0, textTransform: 'none', fontSize: 15, borderTop: index && !rows[index - 1].head ? 1 : 0, borderColor: 'divider' }}
             >
               {row.note ? (
                 <Box component="span" sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', flex: '1 1 auto', minWidth: 0, textAlign: 'left' }}>
-                  <Box component="span" className="h5-add-menu-command" translate="no" sx={{ fontFamily: 'ui-monospace, Menlo, monospace', lineHeight: 1.3, overflowWrap: 'anywhere' }}>{row.label}</Box>
+                  <Box component="span" className={row.keyRow ? 'h5-add-menu-key' : 'h5-add-menu-command'} translate="no" sx={{ fontFamily: 'ui-monospace, Menlo, monospace', lineHeight: 1.3, overflowWrap: 'anywhere' }}>{row.label}</Box>
                   <Box component="span" className="h5-add-menu-note" sx={{ fontSize: 12, lineHeight: 1.35, color: 'text.secondary', overflowWrap: 'anywhere', textWrap: 'pretty' }}>{t(row.note)}</Box>
                 </Box>
               ) : t(row.label)}

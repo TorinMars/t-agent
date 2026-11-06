@@ -128,10 +128,11 @@
 
 ## System architecture and functionality
 
-> Written 2026-11-05 against v2.87.11. This part is the map of the whole system: what exists today, the target design the user decided on 2026-11-05 (one Material UI page for PC and phone), and the rules that apply everywhere. The older sections below it are the detailed record (many of them historical); where this part and an older section disagree, this part describes the current code, and the "Notes on older sections" list at the end names the known differences.
+> Written 2026-11-05 against v2.87.11; the overview diagrams were added on 2026-11-07 and match the current version (2.88.x: one MUI page at `/` and `/h5`, data in `~/.tagent`). This part is the map of the whole system: what exists today, the target design the user decided on 2026-11-05 (one Material UI page for PC and phone), and the rules that apply everywhere. The older sections below it are the detailed record (many of them historical); where this part and an older section disagree, this part describes the current code, and the "Notes on older sections" list at the end names the known differences.
 
 Contents of this part:
 
+- Overview diagram
 - A. Purpose and users
 - B. Deployment topology
 - C. Server modules
@@ -141,6 +142,140 @@ Contents of this part:
 - G. One MUI page for PC and phone (agreed design, phases 0 to 3 done)
 - H. Cross-cutting rules
 - I. Notes on older sections
+
+### Overview diagram
+
+The whole project in five layers, from the device to the data. Part B shows how Clients connect to each other; the second diagram shows how a terminal and an agent chat move data.
+
+```mermaid
+flowchart TB
+    subgraph Devices["1. Devices"]
+      PC["PC browser or PWA"]
+      Phone["iPhone Home Screen app"]
+    end
+    subgraph Page["2. One page: h5.html at / and /h5"]
+      Shell["MUI shell h5-shell.js"]
+      Logic["page logic h5.js"]
+      ChatUI["agent chat bundle"]
+      I18n["i18n layer"]
+    end
+    subgraph Client["3. Client: server.js, Express + ws, PM2"]
+      Gates["access gate, login gate, sessions"]
+      Static["static assets"]
+      API["/api browser API"]
+      WS["/terminal/ws"]
+      Hook["/hooks/terminal-activity"]
+      Share["/share pages"]
+      Proxy["remote proxy"]
+      V1["/v1 Engine API"]
+    end
+    subgraph Engine["4. Engine services"]
+      Term["terminals, activity"]
+      PTY["PTY: shell, claude, codex"]
+      Chat["agent chat"]
+      Tasks["tasks, documents, files"]
+      Helpers["translator, voice, OSS"]
+      Upd["update manager"]
+    end
+    subgraph Outside["5. Data and outside"]
+      Home[("~/.tagent")]
+      Dirs[("task folders")]
+      Sess[("~/.claude, ~/.codex")]
+      GitHub["GitHub VERSION.json"]
+      Cloud["DeepSeek / GLM, Alibaba Cloud"]
+      Remote["remote Engines"]
+    end
+    Shell <--> Logic
+    Logic --- ChatUI
+    Devices --> Page
+    Page --> Gates
+    Gates --> Static
+    Gates --> API
+    Gates --> WS
+    Gates --> Share
+    API --> Proxy
+    V1 ~~~ Hook
+    Static ~~~ Share
+    Upd ~~~ Helpers
+    Home ~~~ GitHub
+    Dirs ~~~ Cloud
+    Sess ~~~ Remote
+    WS --> Term
+    API --> Tasks
+    API --> Chat
+    API --> Helpers
+    API --> Upd
+    Term --> PTY
+    PTY -->|"hooks"| Hook
+    Hook --> Term
+    V1 --> Tasks
+    Proxy -->|"/v1 + token"| Remote
+    Tasks --> Home
+    Tasks --> Dirs
+    Term --> Sess
+    Chat --> Sess
+    Helpers --> Cloud
+    Upd --> GitHub
+```
+
+- **Devices**: a PC browser (or the installed PWA) and the iPhone Home Screen app open the same page. There is no second page any more (the old PC page and Monaco were removed in 2.88.0).
+- **Page** (`public/h5.html`): the React / MUI shell `scripts/h5-shell/*` (built to `public/js/h5-shell.js`: TaskDrawer, terminal bottom bar and on-screen keyboard, Settings, Update, Engines, Design sheet, file viewer) draws the UI; `public/js/h5.js` does the work (xterm.js terminals, warm connections, translate-and-send, voice, image upload, activity stream). They talk through the `window.H5UI` store. The agent chat bundle is `public/js/agent-chat-ui.js`; the i18n layer is `i18n.js` plus the Chinese dictionaries.
+- **Client** (`server.js`, Express + `ws`, PM2 process `t-agent`): every request passes the access gate, the login gate and the SQLite session. Static files get content-hash URLs and brotli copies (`lib/static-assets.js`). The page uses `/api` and `/terminal/ws`; `/share/:token` serves read-only Markdown.
+- **Engine services** live in the same process (`routes/*`, `services/*`, `lib/*`): terminals in `node-pty` with activity tracking, live directory and agent session binding (`routes/terminal.js`); agent chat through the Claude Agent SDK and `codex app-server`; tasks, groups, documents and files; the translator, voice token and OSS upload policy; the update manager.
+- **Hooks**: Claude / Codex in a terminal report start, stop and `SessionStart` to `POST /hooks/terminal-activity` with the per-terminal `TA_HOOK_TOKEN`.
+- **Data**: `~/.tagent` holds `db.sqlite`, `session-secret` and `server.lock` (see "Data directory"); task folders hold the user's files; `~/.claude` and `~/.codex` session files are read for names, sub-agents and resume.
+- **Outside services**: GitHub `VERSION.json` on `main` for updates; DeepSeek or Zhipu GLM for translation; Alibaba Cloud OSS (images) and Fun-ASR (voice), which the browser calls directly after the Client signs the request.
+- **Remote Engines**: the remote proxy `/api/remote-servers/:id/*` calls another Client's `/v1` with a `tae_` token (terminals with a one-time `tat_` ticket). Other Clients call this Client's `/v1` the same way.
+
+```mermaid
+flowchart TB
+    subgraph Browser["Browser page"]
+      View["terminal view, xterm.js"]
+      Drawer["TaskDrawer status dots"]
+      ChatView["agent chat view"]
+    end
+    subgraph Server["Client server.js"]
+      WS["/terminal/ws"]
+      Hook["/hooks/terminal-activity"]
+      Act["activity: idle, running, done"]
+      Names["agent sessions: titles, sub-agents"]
+      Stream["activity stream, SSE"]
+      Ack["terminal ack"]
+      ChatAPI["agent chat API and service"]
+    end
+    subgraph Machine["This machine"]
+      PTY["node-pty shell"]
+      CLI["claude or codex CLI"]
+      SDK["Claude Agent SDK, codex app-server"]
+      Jsonl[("~/.claude, ~/.codex sessions")]
+      DB[("db.sqlite")]
+    end
+    View <-->|"1. keys, output"| WS
+    WS <-->|"2. PTY data"| PTY
+    PTY -->|"3. runs"| CLI
+    CLI -->|"4. hook reports"| Hook
+    Hook --> Act
+    Hook -->|"SessionStart: rebind"| DB
+    CLI -->|"writes"| Jsonl
+    Jsonl --> Names
+    Act --> Stream
+    Names --> Stream
+    Stream -->|"5. states, counts"| Drawer
+    Drawer -->|"6. opened"| Ack
+    Ack --> Act
+    ChatView <-->|"messages, events SSE"| ChatAPI
+    ChatAPI --> SDK
+    SDK --> Jsonl
+    ChatAPI --> DB
+```
+
+- **1–2**: the terminal view sends keys over `/terminal/ws` (protocol v2, one owner per terminal); `handleWs` writes them to the PTY and sends output (and the in-memory history on reconnect) back.
+- **3**: the shell runs `claude --session-id` / `--resume` or `codex` / `codex resume` for agent terminals.
+- **4**: the CLI hooks post to `/hooks/terminal-activity`; activity events change the state (`idle`, `running`, `done`), and the Claude `SessionStart` hook rebinds the terminal to its new session after `/clear` (`task_terminals.agent_session_id`). Without hooks, the state comes from the foreground process and output bursts.
+- **5**: `GET /api/tasks/terminal-activity/stream` (SSE) pushes the states and the running sub-agent counts, which `lib/agent-sessions.js` reads from the session log files; the TaskDrawer shows them as dots.
+- **6**: opening a terminal that is `done` posts `POST /api/tasks/:id/terminal/ack`, which turns it back to `idle`.
+- **Agent chat**: the chat view uses `/api/tasks/:id/agent/conversations` (REST plus an events SSE stream); `services/agent-chat.js` drives the Claude Agent SDK or `codex app-server` and stores the conversation in `agent_conversations`.
+- For a remote Engine, the same calls go through `/api/remote-servers/:id/...` and the remote `/v1`.
 
 ### A. Purpose and users
 

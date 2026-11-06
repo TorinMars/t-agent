@@ -19,7 +19,7 @@ test('a fresh database has no terminal history storage', () => {
   const db = new Database(dbFile);
   assert.equal(db.prepare("SELECT name FROM sqlite_master WHERE name = 'terminal_logs'").get(), undefined);
   assert.deepEqual(db.prepare('PRAGMA table_info(task_terminals)').all().map(c => c.name).sort(),
-    ['agent', 'agent_session_id', 'agent_started_at', 'task_id', 'terminal_id', 'title', 'title_custom', 'updated_at']);
+    ['agent', 'agent_session_id', 'agent_started_at', 'task_id', 'terminal_id', 'title', 'title_custom', 'updated_at', 'work_dir']);
   db.close();
 });
 

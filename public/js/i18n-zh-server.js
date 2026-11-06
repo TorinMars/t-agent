@@ -6,6 +6,7 @@ I18n.add({
   "(no output for {1}; the network may be down or it may be compiling)": "（已 {1}无输出，可能是网络不通或在编译）",
   "\u001b[31m[Task does not exist or access denied]\u001b[0m": "\u001b[31m[任务不存在或无权限]\u001b[0m",
   "\u001b[31m[Terminal failed to start]\u001b[0m {1}": "\u001b[31m[终端启动失败]\u001b[0m {1}",
+  "\u001b[33m[⚠ Session directory does not exist: {1}]\u001b[0m \u001b[33m[Started in the task's working directory {2}]\u001b[0m": "\u001b[33m[⚠ 会话目录不存在: {1}]\u001b[0m \u001b[33m[已改在任务工作目录 {2} 中启动]\u001b[0m",
   "\u001b[33m[⚠ Working directory does not exist: {1}]\u001b[0m \u001b[33m[Fell back to {2}; edit the task to update the working path]\u001b[0m": "\u001b[33m[⚠ 工作目录不存在: {1}]\u001b[0m \u001b[33m[已回退到 {2}，请编辑任务更新工作路径]\u001b[0m",
   "[t-agent] remote port in use; retrying with {1} ({2}/{3})": "[t-agent] 远程端口被占用，已换成 {1} 重试（{2}/{3}）",
   "[terminal] terminal user {1} does not exist; the terminal still runs as the service user (root). Create that user or set TERMINAL_USER= in .env to silence this message": "[terminal] 终端用户 {1} 不存在，终端仍以服务用户（root）运行；创建该用户或在 .env 设置 TERMINAL_USER= 可消除此提示",

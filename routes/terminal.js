@@ -78,15 +78,30 @@ function realDir(dir) {
   try { return fs.realpathSync(dir); } catch { return path.resolve(dir); }
 }
 
+// Each terminal keeps the directory it was started in (option A of the start-directory change, schema 8): a change of the task's working
+// directory only affects terminals created afterwards. task_terminals.work_dir is set when the terminal is created (NULL on a row that has
+// none: it follows the task); the default terminal, which has no row, records its directory in task_default_terminal_dirs the first time its
+// shell starts (before that it follows the task). Answers the configured directory (null when neither the terminal nor the task has one).
+function terminalWorkDir(task, id) {
+  const row = id === 'default'
+    ? db.prepare('SELECT work_dir FROM task_default_terminal_dirs WHERE task_id = ?').get(task.id)
+    : db.prepare('SELECT work_dir FROM task_terminals WHERE task_id = ? AND terminal_id = ?').get(task.id, id);
+  return (row && row.work_dir) || task.work_dir || null;
+}
+
 // event=session: the Claude session the terminal now runs. Only a Claude terminal of this task takes it, only a
-// well-formed id, and only one that Claude started in the directory the terminal's shell starts in.
+// well-formed id, and only one that Claude started in the directory the terminal's shell starts in (its own directory, or the directory
+// its live shell really started in when that one was missing and the shell fell back to the task's).
 function bindReportedSession(taskId, id, report) {
   if (!report || typeof report !== 'object') return 400;
   const sessionId = report.session_id;
   if (typeof sessionId !== 'string' || !SESSION_ID.test(sessionId)) return 400;
-  const row = db.prepare('SELECT t.agent, t.agent_session_id, k.work_dir FROM task_terminals t JOIN tasks k ON k.id = t.task_id WHERE t.task_id = ? AND t.terminal_id = ?').get(taskId, id);
+  const row = db.prepare('SELECT t.agent, t.agent_session_id, COALESCE(t.work_dir, k.work_dir) AS work_dir FROM task_terminals t JOIN tasks k ON k.id = t.task_id WHERE t.task_id = ? AND t.terminal_id = ?').get(taskId, id);
   if (!row || row.agent !== 'claude') return 404;
-  if (typeof report.cwd !== 'string' || !path.isAbsolute(report.cwd) || realDir(report.cwd) !== realDir(row.work_dir || os.homedir())) return 400;
+  if (typeof report.cwd !== 'string' || !path.isAbsolute(report.cwd)) return 400;
+  const live = sessions.get(sessionKey(taskId, id));
+  const allowed = [row.work_dir || os.homedir(), live && live.startDir].filter(Boolean).map(realDir);
+  if (!allowed.includes(realDir(report.cwd))) return 400;
   if (row.agent_session_id !== sessionId) {
     db.prepare('UPDATE task_terminals SET agent_session_id = ? WHERE task_id = ? AND terminal_id = ?').run(sessionId, taskId, id);
     activityStream.notify(); // the sub-agent count now follows the new session
@@ -139,19 +154,22 @@ const MAX_TERMINAL_TITLE = 40;
 
 // Agent terminals show the name of their session (unless the person named the terminal: title_custom), read from the agent's own files on every listing so a rename done inside Claude / Codex follows.
 // A Codex session only gets an id once it has a first message, so it is bound here: the oldest unbound Codex terminal takes the oldest unclaimed
-// session of the task directory that started after the terminal did.
+// session of the terminal's own directory that started after the terminal did. Sessions are read per directory: each terminal keeps the
+// directory it was started in (terminalWorkDir), which may differ from the task's current one.
 function withAgentSessions(taskId, rows) {
-  const meta = db.prepare("SELECT terminal_id, agent, agent_session_id, agent_started_at, title_custom FROM task_terminals WHERE task_id = ? AND agent IS NOT NULL ORDER BY rowid").all(taskId);
+  const meta = db.prepare("SELECT t.terminal_id, t.agent, t.agent_session_id, t.agent_started_at, t.title_custom, COALESCE(t.work_dir, k.work_dir) AS work_dir FROM task_terminals t JOIN tasks k ON k.id = t.task_id WHERE t.task_id = ? AND t.agent IS NOT NULL ORDER BY t.rowid").all(taskId);
   if (!meta.length) return rows;
-  const task = db.prepare('SELECT work_dir FROM tasks WHERE id = ?').get(taskId);
-  const dir = task && task.work_dir;
-  const byAgent = {};
-  const sessionsOf = agent => (byAgent[agent] ||= listSessions(agent, dir, undefined, 200));
+  const lists = new Map();
+  const sessionsOf = (agent, dir) => {
+    const key = `${agent}\0${dir || ''}`;
+    if (!lists.has(key)) lists.set(key, listSessions(agent, dir, undefined, 200));
+    return lists.get(key);
+  };
   const claimed = new Set(meta.map(item => item.agent_session_id).filter(Boolean));
   const info = new Map(meta.map(item => [item.terminal_id, item]));
   for (const item of meta) {
     if (item.agent_session_id || item.agent !== 'codex') continue;
-    const found = sessionsOf('codex').filter(row => !claimed.has(row.id) && row.started_at >= item.agent_started_at - 2000).sort((x, y) => x.started_at - y.started_at)[0];
+    const found = sessionsOf('codex', item.work_dir).filter(row => !claimed.has(row.id) && row.started_at >= item.agent_started_at - 2000).sort((x, y) => x.started_at - y.started_at)[0];
     if (!found) continue;
     claimed.add(found.id);
     item.agent_session_id = found.id;
@@ -161,16 +179,20 @@ function withAgentSessions(taskId, rows) {
     const item = info.get(row.terminal_id);
     if (!item) return row;
     if (item.title_custom) return { ...row, agent: item.agent }; // a name the person gave (at creation or by a rename) wins over the session's name
-    const session = item.agent_session_id && sessionsOf(item.agent).find(entry => entry.id === item.agent_session_id);
+    const session = item.agent_session_id && sessionsOf(item.agent, item.work_dir).find(entry => entry.id === item.agent_session_id);
     return { ...row, agent: item.agent, title: session ? session.title : row.title };
   });
 }
 
+// Each row also has work_dir: the terminal's own directory (terminalWorkDir), so the page can resolve file links against it and show it
+// when it is not the task's current one.
 function listTerminals(taskId) {
   const stored = db.prepare('SELECT title FROM task_default_terminal_titles WHERE task_id = ?').get(taskId);
-  return withAgentSessions(taskId, [...(defaultRemoved(taskId) ? [] : [{ terminal_id: 'default', title: stored ? stored.title : 'Terminal 1' }]), ...db.prepare(
-    "SELECT terminal_id, title FROM task_terminals WHERE task_id = ? AND substr(terminal_id, 1, 3) != 'h5-' ORDER BY rowid"
-  ).all(taskId)]);
+  const task = db.prepare('SELECT id, work_dir FROM tasks WHERE id = ?').get(taskId) || { id: taskId, work_dir: null };
+  const defaultDir = defaultRemoved(taskId) ? null : terminalWorkDir(task, 'default');
+  return withAgentSessions(taskId, [...(defaultRemoved(taskId) ? [] : [{ terminal_id: 'default', title: stored ? stored.title : 'Terminal 1', work_dir: defaultDir }]), ...db.prepare(
+    "SELECT terminal_id, title, work_dir FROM task_terminals WHERE task_id = ? AND substr(terminal_id, 1, 3) != 'h5-' ORDER BY rowid"
+  ).all(taskId).map(row => ({ ...row, work_dir: row.work_dir || task.work_dir || null }))]);
 }
 
 // A terminal created for an agent session types its command once, when its shell is first spawned.
@@ -198,13 +220,17 @@ function createTerminal(taskId, options = {}) {
   const count = listTerminals(taskId).length + 1;
   const title = named || (command ? `${AGENT_LABELS[agent]} ${count}` : `Terminal ${count}`);
   if (command) pendingStartup.set(sessionKey(taskId, id), withSessionHook(agent, command));
-  db.prepare('INSERT INTO task_terminals (task_id, terminal_id, title, agent, agent_session_id, agent_started_at, title_custom) VALUES (?, ?, ?, ?, ?, ?, ?)')
-    .run(taskId, id, title, command ? agent : null, sessionId, command ? Date.now() : null, named ? 1 : null);
-  return { terminal_id: id, title, agent: command ? agent : null };
+  // The terminal keeps the task's working directory of this moment, whatever the task's directory becomes later.
+  const task = db.prepare('SELECT work_dir FROM tasks WHERE id = ?').get(taskId);
+  const workDir = (task && task.work_dir) || null;
+  db.prepare('INSERT INTO task_terminals (task_id, terminal_id, title, agent, agent_session_id, agent_started_at, title_custom, work_dir) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(taskId, id, title, command ? agent : null, sessionId, command ? Date.now() : null, named ? 1 : null, workDir);
+  return { terminal_id: id, title, agent: command ? agent : null, work_dir: workDir };
 }
 
 // A new shell for an agent terminal that was closed or restarted resumes the session it is bound to.
 // A Claude session that never got a message has no file to resume, and a Codex session that was never bound starts fresh.
+// `workDir` is the directory the new shell starts in (the terminal's own directory), where the agent looks for the session.
 function reopenCommand(taskId, id, workDir) {
   const row = id === 'default' ? null : db.prepare('SELECT agent, agent_session_id FROM task_terminals WHERE task_id = ? AND terminal_id = ?').get(taskId, id);
   if (!row || !row.agent) return null;
@@ -219,20 +245,22 @@ function reopenCommand(taskId, id, workDir) {
   return withSessionHook(row.agent, row.agent === 'claude' ? newClaudeCommand(row.agent_session_id) : startupCommand(row.agent));
 }
 
-// Sessions of an agent CLI that were run in the task's working directory (newest first).
+// Sessions of an agent CLI that were run in the task's working directory (newest first). A new terminal starts there, so the list of
+// sessions to resume is read from the task's current directory.
 function listAgentSessions(task, agent) {
   return listSessions(agent, task && task.work_dir);
 }
 
 // The live current directory of a terminal's shell, for file links (read-only). `task` has work_dir / md_path. Answers
-// { cwd, relative }: cwd null when no shell runs (or it cannot be read), relative null when the directory is outside the task root (real paths, so a
-// symbolic link out of the root is outside). The browser then resolves relative paths against the work dir, or opens nothing when outside.
+// { cwd, relative }: cwd null when no shell runs (or it cannot be read), relative null when the directory is outside the terminal's root (real
+// paths, so a symbolic link out of the root is outside). The root is the terminal's own directory (terminalWorkDir; the task's when it has none).
+// The browser then resolves relative paths against that directory, or opens nothing when outside.
 async function terminalCwd(task, value) {
   const id = assertTerminal(task.id, value);
   const s = sessions.get(sessionKey(task.id, id));
   const cwd = s && s.pty && !s.startupError ? await processCwd(s.pty.pid) : null;
   if (!cwd) return { cwd: null, relative: null };
-  const configured = task.work_dir || (task.md_path && path.dirname(task.md_path));
+  const configured = terminalWorkDir(task, id) || (task.md_path && path.dirname(task.md_path));
   return { cwd, relative: configured && path.isAbsolute(configured) ? cwdInRoot(cwd, configured) : null };
 }
 
@@ -348,6 +376,7 @@ function getOrCreateSession(ownerTaskId, workDir, dirWarning, id = 'default') {
     ws: null,
     snapshot: new TerminalSnapshot(),
     ready: false,
+    startDir: workDir, // the directory this shell was started in (the hook check also accepts it)
   };
   sessions.set(taskId, s);
   s.snapshot.write(savedBuffer);
@@ -407,8 +436,8 @@ function getOrCreateSession(ownerTaskId, workDir, dirWarning, id = 'default') {
 }
 
 /**
- * Terminate the task's server-side PTY. restart-workdir: the next connection creates a brand-new shell from the
- * task work_dir; close also ends the shell (the history lives in memory only, so every action leaves the next terminal empty); delete also removes the terminal record (the default terminal is marked removed instead).
+ * Terminate the task's server-side PTY. restart-workdir: the next connection creates a brand-new shell in the
+ * terminal's own directory (terminalWorkDir: the task work_dir when the terminal was created); close also ends the shell (the history lives in memory only, so every action leaves the next terminal empty); delete also removes the terminal record (the default terminal is marked removed instead).
  */
 function controlSession(taskId, action, requestedTerminalId) {
   const id = Number.parseInt(taskId, 10);
@@ -438,6 +467,7 @@ function controlSession(taskId, action, requestedTerminalId) {
   if (action === 'delete' && selectedId === 'default') {
     db.prepare('INSERT OR IGNORE INTO task_default_terminal_removed (task_id) VALUES (?)').run(id);
     db.prepare('DELETE FROM task_default_terminal_titles WHERE task_id = ?').run(id);
+    db.prepare('DELETE FROM task_default_terminal_dirs WHERE task_id = ?').run(id);
   } else if (action === 'delete') {
     db.prepare('DELETE FROM task_terminals WHERE task_id = ? AND terminal_id = ?').run(id, selectedId);
   }
@@ -468,13 +498,25 @@ function handleWs(ws, req, sessionUser, requestedTaskId = null, requestedTermina
     return;
   }
   const key = sessionKey(taskId, selectedId);
-  const workDir = task.work_dir || os.homedir();
-  // Check that the directory exists; if not, fall back to $HOME and log a warning
-  let actualDir = workDir;
+  // The shell starts in the terminal's own directory. When that one is gone (and it is not the task's current one), the task's directory is
+  // used; when that is missing too, $HOME. Each fallback is logged and shown in the terminal.
+  const ownDir = terminalWorkDir(task, selectedId) || os.homedir();
+  let actualDir = ownDir;
   let dirWarning = null;
-  if (!fs.existsSync(workDir)) {
-    actualDir = os.homedir();
-    dirWarning = `\r\n\x1b[33m[⚠ Working directory does not exist: ${workDir}]\x1b[0m\r\n\x1b[33m[Fell back to ${actualDir}; edit the task to update the working path]\x1b[0m\r\n\r\n`;
+  if (!sessions.has(key) && !fs.existsSync(ownDir)) {
+    const taskDir = task.work_dir || os.homedir();
+    if (taskDir !== ownDir && fs.existsSync(taskDir)) {
+      actualDir = taskDir;
+      console.warn(`[terminal] the directory of terminal ${selectedId} of task ${taskId} does not exist (${ownDir}); its shell starts in the task's working directory ${taskDir}`);
+      dirWarning = `\r\n\x1b[33m[⚠ Session directory does not exist: ${ownDir}]\x1b[0m\r\n\x1b[33m[Started in the task's working directory ${taskDir}]\x1b[0m\r\n\r\n`;
+    } else {
+      actualDir = os.homedir();
+      dirWarning = `\r\n\x1b[33m[⚠ Working directory does not exist: ${ownDir}]\x1b[0m\r\n\x1b[33m[Fell back to ${actualDir}; edit the task to update the working path]\x1b[0m\r\n\r\n`;
+    }
+  }
+  // The default terminal has no row: it keeps the directory its shell first started in from now on.
+  if (selectedId === 'default' && !sessions.has(key) && task.work_dir && actualDir === task.work_dir) {
+    db.prepare('INSERT OR IGNORE INTO task_default_terminal_dirs (task_id, work_dir) VALUES (?, ?)').run(taskId, task.work_dir);
   }
   const s = getOrCreateSession(taskId, actualDir, dirWarning, selectedId);
   if (s.startupError) {
@@ -613,10 +655,12 @@ function activitySnapshot(taskIds) {
 function subagentSnapshot(taskIds, home) {
   const result = {};
   const wanted = taskIds ? new Set(taskIds.map(String)) : null; // null: every task (the push stream's shared refresh)
-  const rows = db.prepare("SELECT t.task_id, t.terminal_id, t.agent_session_id, k.work_dir FROM task_terminals t JOIN tasks k ON k.id = t.task_id WHERE t.agent = 'claude' AND t.agent_session_id IS NOT NULL").all();
+  // The sub-agent logs live under the directory the terminal's Claude runs in (its own directory, not the task's current one).
+  const rows = db.prepare("SELECT t.task_id, t.terminal_id, t.agent_session_id, COALESCE(t.work_dir, k.work_dir) AS work_dir FROM task_terminals t JOIN tasks k ON k.id = t.task_id WHERE t.agent = 'claude' AND t.agent_session_id IS NOT NULL").all();
   for (const row of rows) {
-    if ((wanted && !wanted.has(String(row.task_id))) || !sessions.has(sessionKey(row.task_id, row.terminal_id))) continue;
-    const count = runningSubagents(row.work_dir, row.agent_session_id, home);
+    const live = sessions.get(sessionKey(row.task_id, row.terminal_id));
+    if ((wanted && !wanted.has(String(row.task_id))) || !live) continue;
+    const count = runningSubagents(live.startDir || row.work_dir, row.agent_session_id, home);
     if (count) (result[row.task_id] ||= {})[row.terminal_id] = count;
   }
   return result;
@@ -647,4 +691,4 @@ function closeTaskTerminals(taskId) {
   for (const item of [...listTerminals(taskId), ...phone]) controlSession(taskId, 'close', item.terminal_id);
 }
 
-module.exports = { setHookEndpoint, reportHook, activitySnapshot, subagentSnapshot, serveActivityStream, acknowledgeActivity, controlSession, handleWs, listTerminals, createTerminal, listAgentSessions, reopenCommand, renameTerminal, terminalCwd, assertTerminal, closeTaskTerminals };
+module.exports = { terminalWorkDir, setHookEndpoint, reportHook, activitySnapshot, subagentSnapshot, serveActivityStream, acknowledgeActivity, controlSession, handleWs, listTerminals, createTerminal, listAgentSessions, reopenCommand, renameTerminal, terminalCwd, assertTerminal, closeTaskTerminals };

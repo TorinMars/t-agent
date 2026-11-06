@@ -55,7 +55,7 @@ async function assertFilesSupported(row, token) {
 
 function remoteFilesPath(req, suffix = '') {
   const query = new URLSearchParams();
-  for (const key of ['path', 'offset', 'hidden']) {
+  for (const key of ['path', 'offset', 'hidden', 'terminal']) {
     if (req.query[key] !== undefined) query.set(key, String(req.query[key]));
   }
   const search = query.toString();
@@ -362,6 +362,7 @@ router.get('/:id/tasks/:taskId/file', (req, res) => {
   const target = remoteTarget(req, res);
   if (!target) return;
   const query = new URLSearchParams();
+  if (req.query.terminal !== undefined) query.set('terminal', String(req.query.terminal));
   if (req.query.path !== undefined) query.set('path', String(req.query.path));
   streamRemote(req, res, target.row.base_url, target.token, `${taskPath(req)}/file?${query}`, { sandbox: true });
 });

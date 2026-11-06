@@ -229,12 +229,17 @@
     }
   }
 
+  // The directory of a terminal that kept its own after the task's working directory changed (null when it is the task's).
+  const otherDir = (row, item) => {
+    const own = item && (item.work_dir || (item.md_path ? item.md_path.replace(/\/[^/]*$/, '') : ''));
+    return row.work_dir && own && row.work_dir !== own ? row.work_dir : null;
+  };
   // The sessions of the selected task: its terminals, then its chats (the way back into one that was left by going to a terminal); each has "⋯" actions.
   function ownSessions() {
     return {
       label: 'Phone terminals', note: null,
       rows: [
-        ...terminals.map(row => ({ kind: 'terminal', id: row.terminal_id, title: row.title, agent: row.agent || null, current: row.terminal_id === terminalId && !agentChat, more: true })), // only one of a terminal and a chat is shown
+        ...terminals.map(row => ({ kind: 'terminal', id: row.terminal_id, title: row.title, agent: row.agent || null, otherDir: otherDir(row, task), current: row.terminal_id === terminalId && !agentChat, more: true })), // only one of a terminal and a chat is shown
         ...chats.map(row => ({ kind: 'chat', id: row.id, title: row.title, running: Boolean(row.running), pending: Boolean(row.pending), updated: row.updated_at || null, agent: row.agent, current: Boolean(agentFor && agentFor.conversation === row.id) && !agentViews.view, children: agentFor && agentFor.conversation === row.id ? agentViews.agents.map(sub => ({ kind: 'subagent', id: sub.id, title: sub.name, status: sub.status, current: agentViews.view === sub.id })) : [], more: true })),
       ],
     };
@@ -246,7 +251,7 @@
     if (!peek || peek.source !== source || peek.status === 'loading') return { label, note: 'Loading…', rows: [] };
     if (peek.status === 'error') return { label, note: 'Could not load the sessions', rows: [] };
     const rows = [
-      ...peek.terminals.map(row => ({ kind: 'terminal', id: row.terminal_id, title: row.title, agent: row.agent || null, current: false, more: false })),
+      ...peek.terminals.map(row => ({ kind: 'terminal', id: row.terminal_id, title: row.title, agent: row.agent || null, otherDir: otherDir(row, item), current: false, more: false })),
       ...peek.chats.map(row => ({ kind: 'chat', id: row.id, title: row.title, running: Boolean(row.running), pending: Boolean(row.pending), updated: row.updated_at || null, agent: row.agent, current: false, more: false })),
     ];
     if (!rows.length) rows.push({ kind: 'open', id: 'open', title: tr('Open this task'), agent: null, current: false, more: false });
@@ -608,6 +613,19 @@
     if (from !== source) return;
     await loadTasks();
     if (task && task.id === item.id) { const fresh = taskById(item.id); if (fresh) task = fresh; }
+    peeks.delete(item.id);
+    // Existing terminals keep their directory; the list says which one each has now (a default terminal never started follows the task).
+    if (task && task.id === item.id) {
+      const current = task;
+      try {
+        const rows = await api('GET', `${source.tasksBase}/${current.id}/terminals`);
+        if (current === task && Array.isArray(rows)) {
+          const fresh = new Map(rows.map(row => [row.terminal_id, row]));
+          for (const row of terminals) { const next = fresh.get(row.terminal_id); if (next) row.work_dir = next.work_dir; }
+          renderTabs();
+        }
+      } catch { /* the list is read again on the next visit */ }
+    }
     tell('Saved', 'success');
   };
   // The same rule as the server (path.isAbsolute): a POSIX path, or a Windows drive path.
@@ -1109,7 +1127,9 @@
     // Tapping the terminal must not open the on-screen keyboard (xterm focuses its helper textarea on every touch): the
     // textarea stays focusable for a hardware keyboard but asks for no on-screen keyboard, ever: the "Terminal keyboard" key shows the page's own keyboard instead.
     noScreenKeyboard(term);
-    const s = { term, fit, el, ws: null, timer: null, attempts: 0, paused: false, disposed: false, task, terminalId, source, key };
+    // workDir: the terminal's own directory (it keeps the one it was created in when the task's directory changes later); an older Engine sends none.
+    const own = terminals.find(row => row.terminal_id === terminalId);
+    const s = { term, fit, el, ws: null, timer: null, attempts: 0, paused: false, disposed: false, task, terminalId, source, key, workDir: (own && own.work_dir) || null };
     session = s;
     warm = [s, ...warm];
     while (warm.length > WARM_MAX) disposeSession(warm[warm.length - 1]);
@@ -2184,28 +2204,30 @@
   const taskDir = item => (item && (item.work_dir || (item.md_path ? item.md_path.replace(/\/[^/]*$/, '') : ''))) || '';
   // Opens one file of the task's working directory in the sheet: DESIGN.md from the row 2 button, any file from a terminal link (`link`: true, with the
   // line the link named). `filePath` is relative to the working directory. A folder is not listed on the phone; the sheet says so.
-  async function openFileSheet(filePath, { link = false, line = null, directory = false } = {}) {
+  // `terminal`: the id of a terminal whose own directory is not the task's: the file is read from that directory (`&terminal=` on the file API).
+  async function openFileSheet(filePath, { link = false, line = null, directory = false, terminal = null, terminalDir = null } = {}) {
     if (document.activeElement && document.activeElement !== document.body && typeof document.activeElement.blur === 'function') document.activeElement.blur();
     const seq = ++designSeq;
     const current = task;
     const from = source;
     const base = { open: true, path: filePath, link, line };
     if (!current) { ui.set({ design: { ...base, status: 'no-task' } }); return; }
-    const dir = taskDir(current);
+    const dir = (terminal && terminalDir) || taskDir(current);
     if (directory) { ui.set({ design: { ...base, status: 'folder', dir } }); return; }
     ui.set({ design: { ...base, status: 'loading', dir } });
     const files = `${from.tasksBase}/${current.id}/files`;
+    const scope = terminal ? `terminal=${encodeURIComponent(terminal)}&` : '';
     try {
-      const file = await api('GET', `${files}/content?path=${encodeURIComponent(filePath)}`);
+      const file = await api('GET', `${files}/content?${scope}path=${encodeURIComponent(filePath)}`);
       if (seq !== designSeq) return;
       // imageBase: relative images of a Markdown file are read through the same file API (`…/files/image?path=`, images only, at most 5 MB).
-      ui.set({ design: { ...base, status: 'ready', dir, content: String((file && file.content) || ''), imageBase: `${files}/image?path=` } });
+      ui.set({ design: { ...base, status: 'ready', dir, content: String((file && file.content) || ''), imageBase: `${files}/image?${scope}path=` } });
     } catch (error) {
       if (seq !== designSeq) return;
       let code = error.message;
       // A folder named without a trailing slash: the content read refuses it; a listing tells a folder from a binary file.
       if (link && code === 'FILE_UNSUPPORTED') {
-        try { await api('GET', `${files}?path=${encodeURIComponent(filePath)}&offset=0`); code = 'FOLDER'; } catch { /* not a folder */ }
+        try { await api('GET', `${files}?${scope}path=${encodeURIComponent(filePath)}&offset=0`); code = 'FOLDER'; } catch { /* not a folder */ }
         if (seq !== designSeq) return;
       }
       const status = code === 'FOLDER' ? 'folder' : code === 'FILE_NOT_FOUND' ? 'missing' : code === 'TASK_ROOT_UNAVAILABLE' ? 'no-dir' : 'error';
@@ -2222,7 +2244,8 @@
   function attachFileLinks(s) {
     if (typeof TerminalFileLinks === 'undefined') return;
     s.fileLinks = TerminalFileLinks.attach(s.term, {
-      root: () => taskDir(s.task) || null,
+      // Links resolve against the terminal's own directory (the task's when the Engine does not send one).
+      root: () => s.workDir || taskDir(s.task) || null,
       // Relative paths come from the shell's live directory: its OSC 7 report, else the server reads it (an older Engine: the work dir).
       liveCwd: () => api('GET', `${s.source.tasksBase}/${s.task.id}/terminals/${encodeURIComponent(s.terminalId)}/cwd`).catch(() => null),
       activate: link => {
@@ -2234,7 +2257,8 @@
           const relative = await link.resolve();
           if (session !== s || s.disposed) return;
           if (relative == null) { tell(`Outside the working directory: ${link.path}`, 'error'); return; }
-          void openFileSheet(relative || '.', { link: true, line: link.line, directory: link.directory || !relative });
+          const elsewhere = s.workDir && s.workDir !== taskDir(s.task) ? s.terminalId : null;
+          void openFileSheet(relative || '.', { link: true, line: link.line, directory: link.directory || !relative, terminal: elsewhere, terminalDir: s.workDir });
         }, MULTI_TAP_MS);
       },
     });

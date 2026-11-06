@@ -29,13 +29,15 @@ const GLYPHS = { shell: '>_', claude: '✳', codex: 'GPT' };
 // The sessions under a task: its terminals, then its chats. The selected task's rows have "⋯" actions; those of another task only open.
 const AGENT_NAMES = { claude: 'Claude', codex: 'Codex' };
 
-// The second line of a session row: what it is, then its state or when it last changed.
+// The second line of a session row: what it is, the folder of a terminal that kept its own directory after the task's working directory
+// changed (the full path is the row's tooltip), then its state or when it last changed.
 function subtitle(row) {
   const name = AGENT_NAMES[row.agent];
   // A chat is an "Agent"; a Claude / Codex running in a terminal is a "Session".
   const kind = row.kind === 'chat' ? `${name || ''} ${t('Agent')}`.trim() : row.kind === 'terminal' ? (name ? `${name} ${t('Session')}` : t('Terminal')) : '';
+  const folder = row.otherDir ? row.otherDir.replace(/\/+$/, '').split('/').pop() || row.otherDir : '';
   const state = row.running ? t('Running') : row.pending ? t('Pending') : ago(row.updated);
-  return [kind, state].filter(Boolean).join(' \u00B7 ');
+  return [kind, folder, state].filter(Boolean).join(' \u00B7 ');
 }
 
 // "12 min ago" from a 'YYYY-MM-DD HH:MM:SS' time (UTC, as the server writes it); empty when it is not known.
@@ -155,7 +157,7 @@ function Sessions({ ui, taskId, sessions, menu }) {
             </Box>
             <Box component="span" sx={{ minWidth: 0, display: 'flex', flexDirection: 'column' }}>
               <Box component="span" className="h5-terminal-name" sx={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.title}</Box>
-              {subtitle(row) ? <Box component="span" className="h5-terminal-sub" sx={{ fontSize: 12, lineHeight: 1.3, color: row.running ? 'success.main' : 'text.secondary', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{subtitle(row)}</Box> : null}
+              {subtitle(row) ? <Box component="span" className="h5-terminal-sub" title={row.otherDir ? `${t('Directory')}: ${row.otherDir}` : undefined} sx={{ fontSize: 12, lineHeight: 1.3, color: row.running ? 'success.main' : 'text.secondary', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{subtitle(row)}</Box> : null}
             </Box>
             {row.kind === 'chat' ? <Pill className="h5-agent-badge" label={t('AGENT')} sx={{ ml: 'auto', flex: '0 0 auto', height: 20, px: 0.75, fontSize: 10, letterSpacing: 0.5 }} /> : null}
           </ListItemButton>

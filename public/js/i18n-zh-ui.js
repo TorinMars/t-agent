@@ -853,6 +853,10 @@ I18n.add({
   "Send as typed, without translating": "按原文发送，不翻译",
   // Design document sheet (phone)
   "Design document": "设计文档",
+  "Outline": "大纲",
+  "Close outline": "关闭大纲",
+  "Image viewer": "图片查看器",
+  "View diagram": "查看图表",
   "Choose a task first": "请先选择任务",
   "This task has no working directory": "此任务没有工作目录",
   "No DESIGN.md in the working directory of this task": "此任务的工作目录中没有 DESIGN.md",
@@ -884,6 +888,7 @@ I18n.add({
   "upgraded to": "已升级到",
   "Removed": "已移除",
   "Edit working directory": "修改工作目录",
+  "Existing sessions keep their directory; new sessions start in the new one.": "已有会话保留原来的目录；新会话从新目录启动。",
   "The task record and its to-dos will be deleted.": "任务记录及其待办会被删除。",
   "Task actions": "任务操作",
   "Default folder": "默认文件夹",

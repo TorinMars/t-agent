@@ -10,13 +10,24 @@ function createTaskFilesRouter({ getTask, canRead = () => true, canWrite = () =>
   if (typeof getTask !== 'function') throw new TypeError('getTask is required');
   const router = express.Router({ mergeParams: true });
 
+  // `?terminal=<id>` on a read (GET): the root is that terminal's own directory instead of the task's working directory (a file link of a
+  // terminal that kept its directory after the task's directory changed). Only a terminal of this task; writes always use the task root.
   function taskFor(req, res) {
     const task = getTask(req);
     if (!task) {
       res.status(404).json({ error: 'TASK_NOT_FOUND' });
       return null;
     }
-    return task;
+    if (req.method !== 'GET' || req.query.terminal === undefined) return task;
+    try {
+      const terminal = require('./terminal');
+      const id = terminal.assertTerminal(task.id, String(req.query.terminal));
+      const dir = terminal.terminalWorkDir(task, id);
+      return dir ? { ...task, work_dir: dir } : task;
+    } catch (error) {
+      errorResponse(res, error);
+      return null;
+    }
   }
 
   function requireScope(scope, predicate) {

@@ -4,7 +4,7 @@ const Database = require('better-sqlite3');
 const dataHome = require('../lib/data-home');
 
 // The data folder (~/.tagent by default, see lib/data-home.js): copied once from the old <install>/data, 0700, secrets 0600.
-const { dbPath } = dataHome.prepare();
+const { dbPath, backupsDir } = dataHome.prepare();
 const db = new Database(dbPath);
 // The schema generation is stored in the database (PRAGMA user_version). A database written by a newer version is refused,
 // so an older app never runs its migrations over data it does not understand; an older database is migrated below and stamped.
@@ -18,6 +18,20 @@ if (storedSchema > codeSchema) {
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 dataHome.secureDatabaseFiles(dbPath);
+
+// Before an older schema generation is migrated (an existing database, user_version 1 or more), a copy is written to the backups folder, so an
+// older app version can be brought back with it (it refuses the migrated database). A failed copy is logged and the start goes on.
+if (storedSchema > 0 && storedSchema < codeSchema) {
+  const backup = path.join(backupsDir, `db-schema-${storedSchema}-before-${codeSchema}-${new Date().toISOString().replace(/[:.]/g, '-')}.sqlite`);
+  try {
+    fs.mkdirSync(backupsDir, { recursive: true, mode: 0o700 });
+    db.prepare('VACUUM INTO ?').run(backup);
+    fs.chmodSync(backup, 0o600);
+    console.log(`Database: schema ${storedSchema} is migrated to ${codeSchema}; a copy of the database before the migration is in ${backup}`);
+  } catch (error) {
+    console.warn(`Database: could not copy the database before migrating schema ${storedSchema} to ${codeSchema} (${error.message}); migrating anyway`);
+  }
+}
 
 const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
 db.exec(schema);
@@ -59,9 +73,17 @@ if (!pairingColumns.includes('principal_id')) {
 
 // Terminals started as a Claude / Codex session remember the agent, its session id (bound later for Codex) and when they were created.
 // title_custom (1): the person named the terminal (at creation or by a rename), so that name is shown instead of the agent session's name.
+// work_dir (schema 8): the directory the terminal keeps when the task's working directory changes later. Terminals that exist when the column
+// is added get the task's current directory, in the same transaction, so nothing changes for them; a second start finds the column and does nothing.
 const terminalColumns = db.prepare('PRAGMA table_info(task_terminals)').all().map(column => column.name);
 for (const [column, type] of [['agent', 'TEXT'], ['agent_session_id', 'TEXT'], ['agent_started_at', 'INTEGER'], ['title_custom', 'INTEGER']]) {
   if (!terminalColumns.includes(column)) db.exec(`ALTER TABLE task_terminals ADD COLUMN ${column} ${type}`);
+}
+if (!terminalColumns.includes('work_dir')) {
+  db.transaction(() => {
+    db.exec('ALTER TABLE task_terminals ADD COLUMN work_dir TEXT');
+    db.exec('UPDATE task_terminals SET work_dir = (SELECT work_dir FROM tasks WHERE tasks.id = task_terminals.task_id) WHERE work_dir IS NULL');
+  })();
 }
 
 // The model and thinking effort chosen for an agent chat (empty: the agent's own default).

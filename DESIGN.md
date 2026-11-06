@@ -2776,3 +2776,4 @@ Phase 4 of the agreed single-page plan (part G), released in 2.88.1. No route, s
 - Not verified here: the login round trip with a query on a real phone or an iPhone Home Screen app.
 > v2.88.1 Phase 4 cleanup: stale comments, dead i18n keys, unused vendor files; login keeps the query of old /web links
 > v2.88.2 Terminal keyboard button opens a custom full on-screen keyboard instead of the system keyboard
+> v2.88.3 Saved commands: Keys group with common Claude Code and Codex key combinations (Shift+Tab, Shift+Left, Esc, Ctrl+R, ...)

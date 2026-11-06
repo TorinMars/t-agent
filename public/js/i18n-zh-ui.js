@@ -853,6 +853,8 @@ I18n.add({
   "Send as typed, without translating": "按原文发送，不翻译",
   // Design document sheet (phone)
   "Design document": "设计文档",
+  "Outline": "大纲",
+  "Close outline": "关闭大纲",
   "Choose a task first": "请先选择任务",
   "This task has no working directory": "此任务没有工作目录",
   "No DESIGN.md in the working directory of this task": "此任务的工作目录中没有 DESIGN.md",

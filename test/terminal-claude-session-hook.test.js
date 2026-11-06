@@ -1,0 +1,188 @@
+// Claude terminals follow the session Claude really runs (after /clear, /resume, a fork) through a per-process
+// SessionStart hook. The real claude binary is never started here: node-pty is mocked and the hook script is fed by hand.
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const http = require('node:http');
+const vm = require('node:vm');
+const { spawn } = require('node:child_process');
+const { EventEmitter } = require('node:events');
+
+const root = fs.mkdtempSync(path.join(os.tmpdir(), 't-agent-session-hook-'));
+process.env.T_AGENT_DATA_DIR = root;
+process.env.TASKS_BASE_DIR = path.join(root, 'tasks');
+const home = path.join(root, 'home');
+fs.mkdirSync(home);
+process.env.HOME = home;
+const db = require('../db');
+const tasks = require('../services/engine-tasks');
+const shells = [];
+const terminalPath = path.resolve(__dirname, '../routes/terminal.js');
+const hookScript = path.resolve(__dirname, '../scripts/claude-session-hook.js');
+const mod = { exports: {} };
+vm.runInNewContext(fs.readFileSync(terminalPath, 'utf8'), {
+  module: mod, __dirname: path.dirname(terminalPath), process, console, URL,
+  setInterval, clearInterval, Buffer,
+  require(name) {
+    if (name === '../lib/node-pty-runtime') return { repairSpawnHelperPermissions() {} };
+    if (name === 'node-pty') return { spawn(shell, args, options) {
+      const pty = { options, input: [], killed: false,
+        onData(fn) { this.data = fn; }, onExit(fn) { this.exit = fn; },
+        write(text) { this.input.push(text); }, pause() {}, resume() {}, resize() {},
+        kill() { this.killed = true; this.exit(); },
+      };
+      shells.push(pty);
+      return pty;
+    } };
+    return require(name.startsWith('.') ? path.resolve(path.dirname(terminalPath), name) : name);
+  },
+});
+const terminal = mod.exports;
+class Socket extends EventEmitter {
+  readyState = 1;
+  sent = [];
+  send(data) { this.sent.push(data); }
+  close() { this.readyState = 3; this.emit('close'); }
+}
+const task = tasks.createTask('owner', { title: 'session hook' });
+const other = tasks.createTask('owner', { title: 'other task' });
+const claudeFolder = path.join(home, '.claude', 'projects', path.resolve(task.work_dir).replace(/[^A-Za-z0-9]/g, '-'));
+const HOOK = '--settings "$TA_CLAUDE_SETTINGS"';
+
+function open(taskId, id) {
+  const ws = new Socket();
+  terminal.handleWs(ws, { url: `/terminal/ws?taskId=${taskId}&terminalId=${id}&clientId=test` }, { login: 'owner' });
+  return shells[shells.length - 1];
+}
+const boundSession = id => db.prepare('SELECT agent_session_id FROM task_terminals WHERE terminal_id = ?').get(id).agent_session_id;
+
+test.after(() => {
+  terminal.closeTaskTerminals(task.id);
+  terminal.closeTaskTerminals(other.id);
+  terminal.setHookEndpoint(null);
+  db.close();
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('a new Claude terminal starts with its session id and the per-process session hook', () => {
+  terminal.setHookEndpoint('http://127.0.0.1:9/hooks/terminal-activity');
+  const row = terminal.createTerminal(task.id, { agent: 'claude' });
+  const pty = open(task.id, row.terminal_id);
+  const sessionId = boundSession(row.terminal_id);
+  assert.deepEqual(pty.input, [`claude --session-id ${sessionId} ${HOOK}\r`]);
+  const env = pty.options.env;
+  assert.equal(env.TA_HOOK_URL, `http://127.0.0.1:9/hooks/terminal-activity?task=${task.id}&terminal=${row.terminal_id}`);
+  assert.match(env.TA_HOOK_TOKEN, /^[0-9a-f]{64}$/);
+  const settings = JSON.parse(env.TA_CLAUDE_SETTINGS);
+  assert.deepEqual(Object.keys(settings), ['hooks'], 'only adds a hook; nothing else of the person\'s settings is overridden');
+  assert.deepEqual(Object.keys(settings.hooks), ['SessionStart']);
+  const hook = settings.hooks.SessionStart[0].hooks[0];
+  assert.equal(hook.type, 'command');
+  assert.ok(hook.command.includes(`'${hookScript}'`) && hook.command.includes(`'${process.execPath}'`));
+  assert.match(hook.command, />\/dev\/null 2>&1 \|\| true$/, 'prints nothing and never fails Claude');
+  assert.ok(!hook.command.includes(env.TA_HOOK_TOKEN) && !pty.input.join('').includes(env.TA_HOOK_TOKEN), 'the token stays in the environment');
+  terminal.controlSession(task.id, 'close', row.terminal_id);
+});
+
+test('a reported session rebinds the terminal; reopening then resumes that session', () => {
+  terminal.setHookEndpoint('http://127.0.0.1:9/hooks/terminal-activity');
+  const row = terminal.createTerminal(task.id, { agent: 'claude' });
+  const pty = open(task.id, row.terminal_id);
+  const token = pty.options.env.TA_HOOK_TOKEN;
+  const original = boundSession(row.terminal_id);
+  const cleared = '0f0e0d0c-1111-4222-8333-444455556666';
+  const report = (body, extra = {}) => terminal.reportHook(extra.task ?? task.id, extra.terminal ?? row.terminal_id, extra.token ?? token, 'session', body);
+
+  assert.equal(report({ session_id: cleared, source: 'clear', cwd: task.work_dir }, { token: 'f'.repeat(64) }), 403, 'wrong token');
+  assert.equal(report({ session_id: cleared, source: 'clear', cwd: task.work_dir }, { token: '' }), 403, 'no token');
+  assert.equal(report({ session_id: cleared, source: 'clear', cwd: task.work_dir }, { task: other.id }), 403, 'token of another task');
+  const second = terminal.createTerminal(task.id, { agent: 'claude' });
+  assert.equal(report({ session_id: cleared, source: 'clear', cwd: task.work_dir }, { terminal: second.terminal_id }), 403, 'token of another terminal');
+  assert.equal(report({ session_id: '../../etc', source: 'clear', cwd: task.work_dir }), 400, 'malformed session id');
+  assert.equal(report({ session_id: 42, source: 'clear', cwd: task.work_dir }), 400, 'not a string');
+  assert.equal(report(undefined), 400, 'no body');
+  assert.equal(report({ session_id: cleared, source: 'clear', cwd: other.work_dir }), 400, 'a session of another directory');
+  assert.equal(report({ session_id: cleared, source: 'clear' }), 400, 'no directory');
+  assert.equal(boundSession(row.terminal_id), original, 'nothing rejected changed the binding');
+
+  assert.equal(report({ session_id: original, source: 'startup', cwd: task.work_dir }), 204, 'startup reports the same id');
+  assert.equal(boundSession(row.terminal_id), original);
+  assert.equal(report({ session_id: cleared, source: 'clear', cwd: task.work_dir }), 204);
+  assert.equal(boundSession(row.terminal_id), cleared, '/clear moved the terminal to the new session');
+
+  // The cleared session has no message yet (no file): a new shell starts that id again instead of the old conversation.
+  assert.equal(terminal.reopenCommand(task.id, row.terminal_id, task.work_dir), `claude --session-id ${cleared} ${HOOK}`);
+  fs.mkdirSync(claudeFolder, { recursive: true });
+  fs.writeFileSync(path.join(claudeFolder, `${cleared}.jsonl`), `${JSON.stringify({ type: 'user', message: { content: 'after clear' } })}\n`);
+  assert.equal(terminal.reopenCommand(task.id, row.terminal_id, task.work_dir), `claude --resume ${cleared} ${HOOK}`);
+  assert.equal(terminal.listTerminals(task.id).find(item => item.terminal_id === row.terminal_id).title, 'after clear', 'the sidebar title follows');
+
+  // After a restart of the shell the new PTY types the resume command of the current session.
+  terminal.controlSession(task.id, 'restart-workdir', row.terminal_id);
+  assert.deepEqual(open(task.id, row.terminal_id).input, [`claude --resume ${cleared} ${HOOK}\r`]);
+  terminal.controlSession(task.id, 'close', row.terminal_id);
+  terminal.controlSession(task.id, 'delete', second.terminal_id);
+});
+
+test('only Claude terminals take a session report', () => {
+  terminal.setHookEndpoint('http://127.0.0.1:9/hooks/terminal-activity');
+  const plain = terminal.createTerminal(task.id);
+  const pty = open(task.id, plain.terminal_id);
+  assert.deepEqual(pty.input, [], 'a plain shell types nothing');
+  assert.equal(terminal.reportHook(task.id, plain.terminal_id, pty.options.env.TA_HOOK_TOKEN, 'session', { session_id: '0f0e0d0c-1111-4222-8333-444455556666', cwd: task.work_dir }), 404);
+  const codex = terminal.createTerminal(task.id, { agent: 'codex' });
+  const codexPty = open(task.id, codex.terminal_id);
+  assert.deepEqual(codexPty.input, ['codex\r'], 'Codex gets no --settings');
+  assert.equal(terminal.reportHook(task.id, codex.terminal_id, codexPty.options.env.TA_HOOK_TOKEN, 'session', { session_id: '0f0e0d0c-1111-4222-8333-444455556666', cwd: task.work_dir }), 404);
+  terminal.controlSession(task.id, 'delete', plain.terminal_id);
+  terminal.controlSession(task.id, 'delete', codex.terminal_id);
+});
+
+test('without a hook endpoint the commands stay as before', () => {
+  terminal.setHookEndpoint(null);
+  const row = terminal.createTerminal(task.id, { agent: 'claude' });
+  const pty = open(task.id, row.terminal_id);
+  assert.deepEqual(pty.input, [`claude --session-id ${boundSession(row.terminal_id)}\r`]);
+  assert.equal(pty.options.env.TA_CLAUDE_SETTINGS, undefined);
+  assert.equal(terminal.reopenCommand(task.id, row.terminal_id, task.work_dir), `claude --session-id ${boundSession(row.terminal_id)}`);
+  terminal.controlSession(task.id, 'delete', row.terminal_id);
+});
+
+function runHook(env, input) {
+  return new Promise(resolve => {
+    const child = spawn(process.execPath, [hookScript], { env: { PATH: process.env.PATH, ...env }, stdio: ['pipe', 'pipe', 'pipe'] });
+    let out = '';
+    child.stdout.on('data', chunk => { out += chunk; });
+    child.stderr.on('data', chunk => { out += chunk; });
+    const started = Date.now();
+    child.on('close', code => resolve({ code, out, ms: Date.now() - started }));
+    child.stdin.end(input);
+  });
+}
+
+test('the hook script posts the session with the token header, prints nothing and exits 0', async () => {
+  const seen = [];
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', () => { seen.push({ url: req.url, token: req.headers['x-ta-token'], type: req.headers['content-type'], body: JSON.parse(body) }); res.statusCode = 204; res.end(); });
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const url = `http://127.0.0.1:${server.address().port}/hooks/terminal-activity?task=3&terminal=abc`;
+  const input = JSON.stringify({ session_id: 'aaaaaaaa-bbbb', source: 'clear', cwd: '/work', transcript_path: '/x.jsonl', hook_event_name: 'SessionStart' });
+  const result = await runHook({ TA_HOOK_URL: url, TA_HOOK_TOKEN: 'secret-token' }, input);
+  server.close();
+  assert.deepEqual(result, { code: 0, out: '', ms: result.ms });
+  assert.deepEqual(seen, [{ url: '/hooks/terminal-activity?task=3&terminal=abc&event=session', token: 'secret-token', type: 'application/json', body: { session_id: 'aaaaaaaa-bbbb', source: 'clear', cwd: '/work' } }]);
+});
+
+test('the hook script does nothing outside a t-agent terminal and never fails', async () => {
+  const input = JSON.stringify({ session_id: 'aaaaaaaa-bbbb', source: 'startup', cwd: '/work' });
+  assert.deepEqual(await runHook({}, input).then(r => [r.code, r.out]), [0, '']);
+  assert.deepEqual(await runHook({ TA_HOOK_URL: 'http://127.0.0.1:9/hooks/terminal-activity?task=1&terminal=a', TA_HOOK_TOKEN: 't' }, 'not json').then(r => [r.code, r.out]), [0, '']);
+  const refused = await runHook({ TA_HOOK_URL: 'http://127.0.0.1:9/hooks/terminal-activity?task=1&terminal=a', TA_HOOK_TOKEN: 't' }, input);
+  assert.deepEqual([refused.code, refused.out], [0, ''], 'the server is not reachable');
+  assert.ok(refused.ms < 2500);
+});

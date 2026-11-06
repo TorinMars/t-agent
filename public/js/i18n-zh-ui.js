@@ -884,6 +884,7 @@ I18n.add({
   "upgraded to": "已升级到",
   "Removed": "已移除",
   "Edit working directory": "修改工作目录",
+  "Existing sessions keep their directory; new sessions start in the new one.": "已有会话保留原来的目录；新会话从新目录启动。",
   "The task record and its to-dos will be deleted.": "任务记录及其待办会被删除。",
   "Task actions": "任务操作",
   "Default folder": "默认文件夹",

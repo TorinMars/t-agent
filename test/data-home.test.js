@@ -247,6 +247,48 @@ test('an older database is migrated and its schema version is stored (old name T
   after.close();
 });
 
+test('a schema 7 database gets the terminal start directories (schema 8), with a copy taken first; a second start changes nothing', t => {
+  const root = temp(t);
+  assert.equal(openDb({ TAGENT_HOME: root }).status, 0);
+  // Make it look like a database of the previous generation: no task_terminals.work_dir, no default-terminal table, user_version 7.
+  const file = path.join(root, 'db.sqlite');
+  const old = new Database(file);
+  old.exec('ALTER TABLE task_terminals DROP COLUMN work_dir; DROP TABLE task_default_terminal_dirs;');
+  const task = old.prepare("INSERT INTO tasks (title, work_dir, user_id) VALUES ('t', '/work/old', 'owner')").run().lastInsertRowid;
+  const bare = old.prepare("INSERT INTO tasks (title, user_id) VALUES ('no dir', 'owner')").run().lastInsertRowid;
+  old.prepare("INSERT INTO task_terminals (task_id, terminal_id, title, agent, agent_session_id) VALUES (?, 'a', 'Claude 2', 'claude', 's1')").run(task);
+  old.prepare("INSERT INTO task_terminals (task_id, terminal_id, title) VALUES (?, 'b', 'Terminal 2')").run(bare);
+  old.pragma('user_version = 7');
+  old.close();
+
+  const result = openDb({ TAGENT_HOME: root });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /schema 7 is migrated to 8; a copy of the database before the migration is in /);
+  const after = new Database(file, { readonly: true });
+  assert.equal(after.pragma('user_version', { simple: true }), CODE_SCHEMA);
+  assert.deepEqual(after.prepare('SELECT terminal_id, work_dir, agent_session_id FROM task_terminals ORDER BY terminal_id').all(),
+    [{ terminal_id: 'a', work_dir: '/work/old', agent_session_id: 's1' }, { terminal_id: 'b', work_dir: null, agent_session_id: null }], 'backfilled with the task directory; other columns kept');
+  assert.equal(after.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE name = 'task_default_terminal_dirs'").get().n, 1);
+  after.close();
+  const copies = fs.readdirSync(path.join(root, 'backups'));
+  assert.equal(copies.length, 1);
+  assert.match(copies[0], /^db-schema-7-before-8-.+\.sqlite$/);
+  const copy = new Database(path.join(root, 'backups', copies[0]), { readonly: true });
+  assert.equal(copy.pragma('user_version', { simple: true }), 7, 'the copy is the database as it was');
+  assert.ok(!copy.prepare('PRAGMA table_info(task_terminals)').all().some(column => column.name === 'work_dir'));
+  assert.equal(copy.prepare('SELECT COUNT(*) AS n FROM task_terminals').get().n, 2);
+  copy.close();
+  if (posix) assert.equal(mode(path.join(root, 'backups', copies[0])), 0o600);
+
+  const again = openDb({ TAGENT_HOME: root });
+  assert.equal(again.status, 0, again.stderr);
+  assert.doesNotMatch(again.stdout, /is migrated/);
+  assert.equal(fs.readdirSync(path.join(root, 'backups')).length, 1, 'no second copy');
+  const last = new Database(file, { readonly: true });
+  assert.equal(last.prepare("SELECT work_dir FROM task_terminals WHERE terminal_id = 'a'").get().work_dir, '/work/old');
+  last.close();
+});
+
 test('the lock refuses a second server and takes over a lock whose pid is dead', t => {
   const root = temp(t);
   const env = { TAGENT_HOME: root };

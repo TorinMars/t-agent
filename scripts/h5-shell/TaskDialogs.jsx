@@ -34,6 +34,11 @@ export function TaskDialog({ state, ui }) {
               error={Boolean(dialog.error)} helperText={dialog.error ? t(dialog.error) : t('Docs and the terminal use this directory; existing DESIGN.md, README.md and AGENTS.md are used first and created if missing')}
               slotProps={{ htmlInput: { autoCapitalize: 'off', spellCheck: false } }}
             />
+            {dir.trim() && dir.trim() !== (dialog.workDir || '') ? (
+              <Typography id="h5-task-workdir-note" variant="caption" component="p" color="text.secondary" sx={{ mt: 1 }}>
+                {t('Existing sessions keep their directory; new sessions start in the new one.')}
+              </Typography>
+            ) : null}
           </DialogContent>
           <DialogActions>
             <Button id="h5-task-dialog-cancel" color="inherit" onClick={close} disabled={dialog.busy}>{t('Cancel')}</Button>

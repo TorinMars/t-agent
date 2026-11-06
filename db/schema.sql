@@ -133,6 +133,13 @@ CREATE TABLE IF NOT EXISTS task_default_terminal_removed (
   task_id INTEGER PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE
 );
 
+-- The directory the default terminal keeps (schema 8): written the first time its shell starts. Without a row it follows the task's work_dir.
+CREATE TABLE IF NOT EXISTS task_default_terminal_dirs (
+  task_id INTEGER PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+  work_dir TEXT NOT NULL
+);
+
+-- work_dir (added by the column migration in db/index.js, schema 8): the directory the terminal was created in; NULL follows the task.
 CREATE TABLE IF NOT EXISTS task_terminals (
   task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
   terminal_id TEXT NOT NULL,

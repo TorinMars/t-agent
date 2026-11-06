@@ -292,10 +292,11 @@ const waitAck = (url, id, from = 0) => new Promise((resolve, reject) => {
           head: [...document.querySelectorAll('.h5-add-menu .h5-add-menu-head')].map(node => node.textContent),
           first: document.querySelector('.h5-add-menu [role="menuitem"]').textContent,
           commands: [...document.querySelectorAll('.h5-add-menu .h5-add-menu-command')].map(node => node.textContent),
+          keys: [...document.querySelectorAll('.h5-add-menu .h5-add-menu-key')].map(node => node.textContent),
           notes: [...document.querySelectorAll('.h5-add-menu .h5-add-menu-note')].map(node => node.textContent),
         }));
         assert.equal(out.first, 'Paste text', 'Paste text is the first item');
-        assert.equal(out.notes.length, out.commands.length, 'every preset has a description');
+        assert.equal(out.notes.length, out.commands.length + out.keys.length, 'every preset and key has a description');
         assert.ok(out.notes.every(Boolean));
         return out;
       };
@@ -304,12 +305,14 @@ const waitAck = (url, id, from = 0) => new Promise((resolve, reject) => {
       await history(page);
       const shell = await menu();
       assert.deepEqual(shell.head, ['Start an agent']);
+      assert.deepEqual(shell.keys, [], 'a plain terminal has no key group');
       assert.deepEqual(shell.commands, ['claude', 'claude --continue', 'claude --resume', 'codex', 'codex resume', 'git status'], 'a plain terminal lists the commands that start an agent');
       await closeMenu();
       await openTerminal(page, 'Write docs', 'Claude docs');
       await history(page);
       const claude = await menu();
-      assert.deepEqual(claude.head, ['Claude Code commands']);
+      assert.deepEqual(claude.head, ['Claude Code commands', 'Keys']);
+      assert.deepEqual(claude.keys, ['Shift+Tab', 'Esc', 'Esc Esc', 'Ctrl+C', 'Ctrl+R', 'Ctrl+O', 'Ctrl+G', 'Ctrl+J'], 'a Claude terminal lists its key combinations after the commands');
       assert.deepEqual(claude.commands, ['/clear', '/compact', '/resume', '/model', '/context', '/usage', '/diff', '/rewind', '/review', '/init', '/memory', '/mcp'], 'a Claude terminal lists Claude Code slash commands');
       // A preset is typed into the terminal without Enter.
       const socket = await page.evaluate(() => window.sockets.length - 1);
@@ -322,9 +325,63 @@ const waitAck = (url, id, from = 0) => new Promise((resolve, reject) => {
       await openTerminal(page, 'Write docs', 'Codex docs');
       await history(page);
       const codex = await menu();
-      assert.deepEqual(codex.head, ['Codex commands']);
+      assert.deepEqual(codex.head, ['Codex commands', 'Keys']);
       assert.deepEqual(codex.commands, ['/new', '/resume', '/compact', '/model', '/permissions', '/status', '/diff', '/review', '/mention', '/plan', '/init', '/mcp'], 'a Codex terminal lists Codex slash commands');
+      assert.deepEqual(codex.keys, ['Shift+Tab', 'Shift+Left', 'Esc', 'Esc Esc', 'Ctrl+C', 'Ctrl+R', 'Ctrl+T', 'Ctrl+G', 'Ctrl+J'], 'a Codex terminal lists its key combinations after the commands');
       await closeMenu();
+      await context.close();
+      TERMINALS[2] = saved;
+    }
+
+    // The "Keys" group on a phone (touch) in a Codex terminal: a tap SENDS the key bytes at once and closes the list; a latched Ctrl from row 1 is
+    // dropped, not added to the key (and not left for the next character); Esc Esc arrives as two separate presses.
+    {
+      const saved = TERMINALS[2];
+      TERMINALS[2] = [{ terminal_id: 'dx', title: 'Codex docs', agent: 'codex' }];
+      const { context, page } = await openPage(browser, { viewport: { width: 390, height: 844 }, touch: true });
+      await page.locator('#h5-tasks').waitFor({ state: 'visible' });
+      await openTerminal(page, 'Write docs', 'Codex docs', 'tap');
+      await history(page);
+      const socket = await page.evaluate(() => window.sockets.length - 1);
+      const typed = () => page.evaluate(index => window.sockets[index].sent.filter(item => !item.startsWith('{')), socket);
+      const pick = async label => {
+        await page.locator('#h5-commands').tap();
+        await page.locator('.h5-add-menu').waitFor();
+        const item = page.locator('.h5-add-menu [role="menuitem"]').filter({ has: page.locator('.h5-add-menu-key', { hasText: new RegExp(`^${label.replace('+', '\\+')}$`) }) });
+        assert.equal(await item.count(), 1, `one ${label} entry`);
+        const box = await item.boundingBox();
+        assert.ok(box.height >= 44, `${label}: a 44px touch target`);
+        await item.tap();
+        await page.locator('.h5-add-menu').waitFor({ state: 'detached' });
+      };
+      if (SHOTS) {
+        await page.locator('#h5-commands').tap();
+        await page.locator('.h5-add-menu').waitFor();
+        await page.evaluate(() => { const menu = document.querySelector('.h5-add-menu'); const head = [...menu.querySelectorAll('.h5-add-menu-head')].at(-1); menu.scrollTop = head.offsetTop - 120; });
+        await page.screenshot({ path: path.join(SHOTS, 'agent-keys-codex-390.png') });
+        await page.locator('#h5-commands').tap();
+        await page.locator('.h5-add-menu').waitFor({ state: 'detached' });
+      }
+      let before = (await typed()).length;
+      await pick('Shift+Tab');
+      await page.waitForFunction(([index, count]) => window.sockets[index].sent.filter(item => !item.startsWith('{')).length > count, [socket, before]);
+      assert.deepEqual((await typed()).slice(before), ['\x1b[Z'], 'Shift+Tab sends the back-tab sequence, without Enter');
+      before = (await typed()).length;
+      await pick('Shift+Left');
+      await page.waitForFunction(([index, count]) => window.sockets[index].sent.filter(item => !item.startsWith('{')).length > count, [socket, before]);
+      assert.deepEqual((await typed()).slice(before), ['\x1b[1;2D'], 'Shift+Left sends its xterm sequence');
+      // A latched Ctrl is not applied to the key, and it is released.
+      await page.locator('#h5-keys [data-modifier="ctrl"]').tap();
+      assert.equal(await page.locator('#h5-keys button[aria-pressed="true"]').count(), 1, 'Ctrl is latched');
+      before = (await typed()).length;
+      await pick('Ctrl+R');
+      await page.waitForFunction(([index, count]) => window.sockets[index].sent.filter(item => !item.startsWith('{')).length > count, [socket, before]);
+      assert.deepEqual((await typed()).slice(before), ['\x12'], 'Ctrl+R is sent once, unchanged by the latched Ctrl');
+      assert.equal(await page.locator('#h5-keys button[aria-pressed="true"]').count(), 0, 'the latch is released');
+      before = (await typed()).length;
+      await pick('Esc Esc');
+      await page.waitForFunction(([index, count]) => window.sockets[index].sent.filter(item => !item.startsWith('{')).length >= count + 2, [socket, before]);
+      assert.deepEqual((await typed()).slice(before), ['\x1b', '\x1b'], 'Esc Esc is two separate presses');
       await context.close();
       TERMINALS[2] = saved;
     }

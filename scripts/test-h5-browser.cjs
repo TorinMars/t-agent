@@ -1710,6 +1710,8 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     assert.deepEqual(await wide.page.locator('#h5-app').boundingBox().then(box => [box.x, box.width]), [0, 600], 'a tablet-sized window is one full-width column');
     await wide.page.locator('#h5-open-tasks').click();
     assert.equal(await wide.page.evaluate(() => document.getElementById('h5-root').getAttribute('aria-hidden')), 'true', 'the sheet is modal below the breakpoint');
+    // Close only after the slide-in has finished: a click on the moving close button can miss it on a busy machine.
+    await wide.page.waitForFunction(() => getComputedStyle(document.querySelector('#h5-tasks .MuiDrawer-paper')).transform === 'none');
     await wide.page.locator('#h5-close-tasks').click();
     await wide.page.locator('#h5-tasks').waitFor({ state: 'detached' });
     await wide.page.setViewportSize({ width: 1200, height: 900 });

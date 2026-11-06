@@ -32,7 +32,9 @@ export const initialState = () => ({
   // The task list: a note (loading, an error, no tasks), or groups of tasks; a task can carry the sessions listed under it.
   taskList: { note: null, groups: [] },
   creatingTask: false,
-  menu: null, // { title, items: [{ label, kind }], renaming, renameValue } while the terminal / chat / session sheet is open
+  // { title, items: [{ label, kind }], naming, task, name, rename, renameValue } while the terminal / chat actions or the Session list are open.
+  // naming: the Session list of the "+" of task `task`, drawn under that task in the task list; rename: { kind, id } of the row whose name field is shown in its place.
+  menu: null,
   empty: 'Choose a task to open its phone terminal', // what the terminal area says when there is no terminal; null when one is shown
   mods: {},
   osk: false, // the terminal on-screen keyboard (Osk.jsx) is shown; the "Terminal keyboard" button of row 2 toggles it (h5.js `toggleKeyboard`)

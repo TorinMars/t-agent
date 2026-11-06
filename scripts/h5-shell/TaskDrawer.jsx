@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import Divider from '@mui/material/Divider';
@@ -50,13 +50,97 @@ function ago(value) {
   return `${Math.round(minutes / 1440)} ${t('d ago')}`;
 }
 
+// Keeps the node in the visible part of the task list: when it appears, and when the visible area changes (the on-screen keyboard opens or closes;
+// the sheet follows the visual viewport through --h5-height). With the focus inside it, the form of the focused field (with its outline) is kept in view.
+function useInView(ref) {
+  useEffect(() => {
+    const show = () => {
+      const node = ref.current;
+      if (!node) return;
+      const active = document.activeElement;
+      const form = active && node.contains(active) ? active.closest('form') : null;
+      (form && node.contains(form) ? form : node).scrollIntoView({ block: 'nearest' });
+    };
+    show();
+    const viewport = window.visualViewport;
+    if (!viewport) return undefined;
+    viewport.addEventListener('resize', show);
+    return () => viewport.removeEventListener('resize', show);
+  }, [ref]);
+}
+
+// Escape in a name field closes it. preventDefault: the page does not pass the key on to the terminal (h5.js), and the sheet of a phone stays open.
+const escapeCancels = ui => event => {
+  if (event.key !== 'Escape') return;
+  event.preventDefault();
+  event.stopPropagation();
+  ui.actions.menuCancel();
+};
+
+// The "Session" list of the "+" of a task, drawn right under that task's row and indented like its session rows (instead of a sheet at the bottom of
+// the screen, far from the "+"): the optional name field, then the choices (New Terminal, Claude session, ...; their sub-lists replace them here).
+// Enter in the field runs the first choice. The field takes the focus on a computer; on a touch screen it does not, so no keyboard covers the choices.
+function NewSession({ menu, ui, pointer }) {
+  const ref = useRef(null);
+  useInView(ref);
+  return (
+    <Box ref={ref} id="h5-new-session" className="h5-new-session" role="group" aria-labelledby="h5-new-session-title" sx={{ ml: 1.75, mb: 0.5, pl: 0.125, borderLeft: 1, borderColor: 'divider' }}>
+      <Box sx={{ ml: '3px' }}>
+        <Typography id="h5-new-session-title" variant="caption" component="h3" color="text.secondary" sx={{ display: 'block', px: 0.75, pt: 0.25, overflowWrap: 'anywhere' }}>{menu.title}</Typography>
+        <Box component="form" id="h5-new-name" className="h5-menu-name" autoComplete="off" sx={{ py: 0.5 }} onSubmit={event => { event.preventDefault(); ui.actions.menuNameSubmit(); }}>
+          <TextField
+            id="h5-new-name-input" name="name" size="small" fullWidth autoFocus={pointer} defaultValue={menu.name} placeholder={t('Name (optional)')}
+            onChange={event => ui.actions.menuName(event.target.value)} onKeyDown={escapeCancels(ui)}
+            slotProps={{ input: { sx: { fontSize: 14 } }, htmlInput: { maxLength: 40, enterKeyHint: 'go', autoCapitalize: 'off', spellCheck: false, 'aria-label': t('Name (optional)') } }}
+          />
+        </Box>
+        <List id="h5-term-menu-actions" className="h5-menu-actions" dense disablePadding>
+          {menu.items.map((item, index) => (
+            <ListItemButton key={`${index}:${item.label}`} component="button" className={item.kind === 'danger' ? 'danger' : undefined} onClick={() => ui.actions.menuRun(index)}
+              sx={{ width: '100%', minHeight: 36, py: 0.25, px: 0.75, borderRadius: 2, fontSize: 14, textAlign: 'left', overflowWrap: 'anywhere', color: item.kind === 'danger' ? 'error.main' : undefined }}>
+              {item.kind === 'raw' ? item.label : t(item.label)}
+            </ListItemButton>
+          ))}
+        </List>
+        <Button id="h5-term-menu-cancel" className="h5-menu-cancel" size="small" onClick={() => ui.actions.menuCancel()} sx={{ ml: 0.25, mb: 0.25 }}>{t('Cancel')}</Button>
+      </Box>
+    </Box>
+  );
+}
+
+// The rename field, in place of the row being renamed (same place, indentation and height). Enter or Save keeps the name; Escape or leaving the field
+// cancels. The Save button does not take the focus (its pointerdown is cancelled), so pressing it does not first cancel through the blur.
+function RenameRow({ menu, ui, row }) {
+  const ref = useRef(null);
+  useInView(ref);
+  useEffect(() => {
+    const input = ref.current && ref.current.querySelector('input');
+    if (input) { input.focus({ preventScroll: true }); input.select(); }
+  }, []);
+  const keep = event => event.preventDefault();
+  return (
+    <Box
+      ref={ref} component="form" id="h5-term-rename" className="h5-menu-rename" autoComplete="off"
+      onSubmit={event => { event.preventDefault(); ui.actions.menuRename(new FormData(event.currentTarget).get('title')); }}
+      sx={{ display: 'flex', alignItems: 'center', gap: 0.5, [TOUCH]: { gap: 1 }, borderRadius: 2, borderLeft: 3, borderColor: row.current ? 'primary.main' : 'transparent' }}
+    >
+      <TextField
+        id="h5-term-rename-input" name="title" size="small" fullWidth defaultValue={menu.renameValue} onKeyDown={escapeCancels(ui)} onBlur={() => ui.actions.menuCancel()}
+        slotProps={{ input: { sx: { fontSize: 14 } }, htmlInput: { maxLength: 40, enterKeyHint: 'done', 'aria-label': t('Terminal name') } }}
+      />
+      <Button type="submit" variant="contained" size="small" onPointerDown={keep} onMouseDown={keep} sx={{ flex: '0 0 auto', minHeight: 40 }}>{t('Save')}</Button>
+    </Box>
+  );
+}
+
 // The sessions under a task: its terminals, then its chats. The selected task's rows have "⋯" actions; those of another task only open.
-function Sessions({ ui, taskId, sessions }) {
+function Sessions({ ui, taskId, sessions, menu }) {
   return (
     <List className="h5-terminal-list" role="group" aria-label={sessions.label} dense disablePadding sx={{ ml: 1.75, mb: 0.125, pl: 0.125, borderLeft: 1, borderColor: 'divider' }}>
       {sessions.note ? <Typography className="h5-peek-note" variant="body2" color="text.secondary" sx={{ px: 1, py: 0.75 }}>{t(sessions.note)}</Typography> : null}
       {sessions.rows.map(row => (
         <React.Fragment key={`${row.kind}:${row.id}`}>
+        {row.more && menu && menu.rename && menu.rename.kind === row.kind && menu.rename.id === row.id ? <RenameRow menu={menu} ui={ui} row={row} /> : (
         <Box className="h5-terminal-row" sx={{ display: 'flex', alignItems: 'center', gap: 0.5, [TOUCH]: { gap: 1 }, borderRadius: 2, borderLeft: 3, borderColor: row.current ? 'primary.main' : 'transparent', bgcolor: row.current ? 'action.selected' : undefined }}>
           <ListItemButton
             component="button" className="h5-terminal-main" aria-current={row.current ? 'true' : undefined}
@@ -80,7 +164,7 @@ function Sessions({ ui, taskId, sessions }) {
               <MoreHorizIcon fontSize="small" />
             </IconButton>
           ) : null}
-        </Box>
+        </Box>)}
         {row.children && row.children.length ? (
           <List className="h5-subagent-list" role="group" aria-label={t('Agents')} dense disablePadding sx={{ ml: 3.5, pl: 0.125, borderLeft: 1, borderColor: 'divider' }}>
             {row.children.map(sub => (
@@ -138,7 +222,8 @@ function Tasks({ state, ui, query, filter }) {
             {task.add ? <IconButton className="h5-task-more" size="small" sx={{ p: 0.5 }} aria-label={t('Task actions')} title={t('Task actions')} aria-haspopup="dialog" onClick={() => ui.actions.taskMore(task.id)}><Icon name="taskMore" size={20} /></IconButton> : null}
             {task.add ? <IconButton className="h5-task-add" size="small" sx={{ p: 0.5 }} aria-label={t('Session')} title={t('Session')} onClick={() => ui.actions.addSession(task.id)}><AddIcon /></IconButton> : null}
           </Box>
-          {task.expanded && task.sessions ? <Sessions ui={ui} taskId={task.id} sessions={task.sessions} /> : null}
+          {state.menu && state.menu.naming && state.menu.task === task.id ? <NewSession menu={state.menu} ui={ui} pointer={state.input === 'pointer'} /> : null}
+          {task.expanded && task.sessions ? <Sessions ui={ui} taskId={task.id} sessions={task.sessions} menu={state.menu} /> : null}
         </Box>
       ))}
     </Box>
@@ -208,7 +293,8 @@ function Panel({ state, ui }) {
           ))}
         </Box>
       </Box>
-      <List id="h5-task-list" className="h5-task-list" disablePadding sx={{ flex: '1 1 auto', overflowY: 'auto', px: 0.5, pb: 0.5 }}>
+      {/* Basis 0: a long list (an open Session list) scrolls inside its own space instead of squeezing the rows below it (the settings row). */}
+      <List id="h5-task-list" className="h5-task-list" disablePadding sx={{ flex: '1 1 0', minHeight: 0, overflowY: 'auto', px: 0.5, pb: 0.5 }}>
         <Tasks state={state} ui={ui} query={query} filter={filter} />
       </List>
       {adding ? (
@@ -242,7 +328,9 @@ function Panel({ state, ui }) {
 
 // A phone: the list slides over the page. A wide screen (a computer, a landscape tablet): it stays beside it.
 export function TaskDrawer({ state, ui }) {
-  const paperProps = { className: 'h5-sheet-panel', sx: { width: state.wide ? 320 : 'min(82vw, 360px)', maxWidth: '100%', backgroundImage: 'none' } };
+  // The height follows the visual viewport (--h5-height, h5.js `fitViewport`), so the on-screen keyboard shortens the list instead of covering its end
+  // (a name field in the list stays visible above the keyboard).
+  const paperProps = { className: 'h5-sheet-panel', sx: { width: state.wide ? 320 : 'min(82vw, 360px)', maxWidth: '100%', height: 'var(--h5-height, 100%)', backgroundImage: 'none' } };
   if (state.wide) {
     // Folded away with the header button (entry.jsx `toggleSidebar`): the terminal or chat then fills the whole width.
     if (state.sidebarCollapsed) return null;

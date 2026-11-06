@@ -156,7 +156,7 @@ async function toast(page, text) {
     await page.locator('#h5-term-menu-actions button', { hasText: 'Rename' }).tap();
     await page.locator('#h5-term-rename-input').fill('My review');
     await page.locator('#h5-term-rename button').tap();
-    await page.locator('#h5-term-menu').waitFor({ state: 'hidden' });
+    await page.locator('#h5-term-rename').waitFor({ state: 'detached' }); // the field is in the task list, in place of the row
     assert.deepEqual(renames, [[1, 'c1', 'My review']]);
     await page.locator('#h5-tasks .h5-terminal-row .h5-terminal-name', { hasText: 'My review' }).waitFor();
     await page.evaluate(() => window.H5UI.actions.closeTasks()); // not Escape: a key press would turn on the hardware keyboard mode

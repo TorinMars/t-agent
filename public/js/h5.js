@@ -1968,16 +1968,24 @@
     const lines = String(raw).replace(/\r\n?|\u2028|\u2029/g, '\n').replace(LINE_CONTROLS, ' ').split('\n').map(line => line.replace(/\s+/g, ' ').trim());
     return lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
   }
+  // A long single line must go in as one bracketed paste too. The PTY hands the program its input in pieces of about 1 KB, and Claude Code reads a big
+  // unbracketed piece as a paste of its own: the first piece became a "[Pasted text #1]" chip and the rest was typed after it, so the line seemed to start in
+  // the middle of a word. A short line (at most PASTE_LINE_CHARS, so at most 800 bytes of UTF-8: always one piece) is still typed as keys, so a "/command" or
+  // a "!" at the start keeps working as if it was typed.
+  const PASTE_LINE_CHARS = 200;
+  const bracketedPaste = target => Boolean(target.term && target.term.modes && target.term.modes.bracketedPasteMode);
+  const asPaste = (target, text) => bracketedPaste(target) && (/[\n\t]/.test(text) || text.length > PASTE_LINE_CHARS);
   function sendTranslation(target, raw) {
     const text = pasteText(raw);
     if (!text) return false;
+    if (asPaste(target, text)) return send(target, `\x1b[200~${text.replace(/\n/g, '\r')}\x1b[201~`);
     if (!text.includes('\n')) return send(target, text);
-    if (target.term && target.term.modes && target.term.modes.bracketedPasteMode) return send(target, `\x1b[200~${text.replace(/\n/g, '\r')}\x1b[201~`);
     return send(target, TerminalTranslate.sanitize(text));
   }
   // What the user TYPED (the send arrow) reaches the terminal as typed: any length, every character, spaces, tabs, blank lines and indentation kept, nothing trimmed.
-  // Line breaks become carriage returns (what the Enter key sends). Text with a line break or a tab goes in as ONE bracketed paste when the program has that mode on,
-  // so a shell or Claude Code neither runs a line early nor completes on the tab; without the mode it is typed key by key, as a desktop paste into xterm is.
+  // Line breaks become carriage returns (what the Enter key sends). Text with a line break or a tab, or one line longer than PASTE_LINE_CHARS, goes in as ONE
+  // bracketed paste when the program has that mode on, so a shell or Claude Code neither runs a line early, completes on the tab nor cuts a long line in two;
+  // without the mode it is typed key by key, as a desktop paste into xterm is.
   // Only invisible control characters (ESC, NUL, C1 and the like, which a keyboard cannot type but a paste can carry) are dropped: they could end the paste early
   // or act as key sequences. Tab and line breaks are kept.
   const TYPED_CONTROLS = new RegExp('[\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f-\\u009f]', 'g');
@@ -1985,9 +1993,8 @@
   function sendTyped(target, raw) {
     const text = typedText(raw);
     if (!text) return false;
-    const bracketed = /[\n\t]/.test(text) && target.term && target.term.modes && target.term.modes.bracketedPasteMode;
     const keys = text.replace(/\n/g, '\r');
-    return send(target, bracketed ? `\x1b[200~${keys}\x1b[201~` : keys);
+    return send(target, asPaste(target, text) ? `\x1b[200~${keys}\x1b[201~` : keys);
   }
   // Two ways to send what is in the box. Translate button: translate first, then send the English result (sendTranslation). Send arrow: send the text as typed
   // (sendTyped), with no translation and no request to the translator. Both are followed by one Enter. A box with only spaces sends nothing.

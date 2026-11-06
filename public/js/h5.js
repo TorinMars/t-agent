@@ -1581,6 +1581,17 @@
     clearMods();
     if (data !== null && !send(session, data)) tell('The terminal is not connected', 'error');
   }
+  // A key combination of the saved commands list ("Keys", scripts/h5-shell/commands.mjs): its exact bytes, or a list of byte strings sent one after another
+  // KEY_GAP ms apart, so "Esc Esc" reaches the program as two presses and not as one Alt+Esc. The entry already is the whole key, so a latched Ctrl / Alt / Shift
+  // from row 1 is dropped, not added to it (and not left for the next typed character).
+  const KEY_GAP = 120;
+  function sendBytes(data) {
+    const parts = Array.isArray(data) ? data : [data];
+    const target = session;
+    clearMods();
+    if (!send(target, parts[0])) { tell('The terminal is not connected', 'error'); return; }
+    parts.slice(1).forEach((part, index) => setTimeout(() => send(target, part), KEY_GAP * (index + 1)));
+  }
   function noScreenKeyboard(term) {
     if (term.textarea) term.textarea.setAttribute('inputmode', 'none');
   }
@@ -1901,6 +1912,7 @@
     else if (item.action === 'draft') toggleDraftKeyboard();
     else if (item.action === 'paste') void paste();
     else if (item.action === 'image') pickImage();
+    else if (item.send) sendBytes(item.send);
     else if (item.shortcut === 'ctrl-c') sendKey('c', { ctrl: true });
     else if (item.key) sendKey(item.key, mods);
   };

@@ -2786,3 +2786,4 @@ Phase 4 of the agreed single-page plan (part G), released in 2.88.1. No route, s
 > v2.88.1 Phase 4 cleanup: stale comments, dead i18n keys, unused vendor files; login keeps the query of old /web links
 > v2.88.2 Terminal keyboard button opens a custom full on-screen keyboard instead of the system keyboard
 > v2.88.3 Saved commands: Keys group with common Claude Code and Codex key combinations (Shift+Tab, Shift+Left, Esc, Ctrl+R, ...)
+> v2.88.4 Session name fields inline in the sidebar; Claude terminals follow their current session after /clear

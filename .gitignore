@@ -1,5 +1,7 @@
 .env
 data/
+# Copies of the old data folder left by the one-time data-home move (lib/data-home.js), and their partial copies.
+data.backup-*/
 logs/
 node_modules/
 tasks/

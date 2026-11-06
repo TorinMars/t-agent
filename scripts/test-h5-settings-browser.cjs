@@ -60,6 +60,19 @@ const html = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8').replace(
     const calls = () => page.evaluate(() => window.calls.filter(call => !call.url.startsWith('/api/system/')));
     assert.equal((await calls()).length, 0, 'nothing is read until a group is opened');
     assert.deepEqual(await page.locator('.h5-setting-group .MuiAccordionSummary-content').allTextContents(), ['Working directory', 'Image upload', 'Translation', 'Voice input', 'Engines', 'Remote service', 'Access mode']);
+    // One row style for every top-level row (Language, the group headers, Log out): same height, label size, letter spacing and left edge; Log out is last.
+    const rows = await page.evaluate(() => [...document.querySelectorAll('#h5-settings .h5-settings-body > *')].map(el => {
+      const head = el.querySelector('.MuiAccordionSummary-root') || el;
+      const label = el.querySelector('.h5-setting-label');
+      const style = getComputedStyle(label);
+      return { id: el.id, height: Math.round(head.getBoundingClientRect().height), size: style.fontSize, spacing: style.letterSpacing, left: Math.round(label.getBoundingClientRect().left), text: label.textContent };
+    }));
+    assert.equal(rows.length, 9);
+    assert.deepEqual(rows.map(row => row.text), ['Language', 'Working directory', 'Image upload', 'Translation', 'Voice input', 'Engines', 'Remote service', 'Access mode', 'Log out']);
+    assert.equal(rows.at(-1).id, 'h5-logout', 'the Log out row itself is the button');
+    for (const key of ['height', 'size', 'spacing', 'left']) assert.equal(new Set(rows.map(row => row[key])).size, 1, `all rows share one ${key}: ${JSON.stringify(rows)}`);
+    assert.ok(rows[0].height >= 44, 'a row is a 44px touch target');
+    assert.equal(await page.locator('#h5-settings').getByText('Log out', { exact: true }).count(), 1, 'the Log out text is not repeated');
 
     // Working directory: the effective default is shown; an unchanged default stays inherited, a new path is saved, clearing restores the default.
     await openGroup('workdir');

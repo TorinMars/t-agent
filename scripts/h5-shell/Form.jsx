@@ -24,6 +24,11 @@ export const Field = ({ id, label, htmlInput, ...props }) => (
   <TextField id={id} label={t(label)} size="small" fullWidth autoComplete="off" slotProps={{ htmlInput: { autoCapitalize: 'off', spellCheck: false, ...htmlInput } }} {...props} />
 );
 
+// The one look of every top-level row of the settings sheet (plain rows and the headers of the folding groups): the body1 label, 16px side
+// padding (lined up with the sheet title), 56px high and a full-width divider under it. Test hook: `.h5-setting-label` on the label.
+export const ROW_HEIGHT = 56;
+export const ROW = { minHeight: ROW_HEIGHT, px: 2, typography: 'body1' };
+
 // One folding group. Its data is read each time it is opened.
 export function Group({ id, title, onOpen, children }) {
   const [open, setOpen] = useState(false);
@@ -33,8 +38,10 @@ export function Group({ id, title, onOpen, children }) {
       onChange={(_, expanded) => { setOpen(expanded); if (expanded) onOpen(); }}
       slotProps={{ transition: { unmountOnExit: false } }}
     >
-      <AccordionSummary expandIcon={<ExpandMoreIcon />}>{t(title)}</AccordionSummary>
-      <AccordionDetails sx={{ display: 'flex', flexDirection: 'column', gap: 1.5, pt: 0 }}>{children}</AccordionDetails>
+      <AccordionSummary expandIcon={<ExpandMoreIcon />} sx={{ ...ROW, '&.Mui-expanded': { minHeight: ROW_HEIGHT }, '& .MuiAccordionSummary-content': { my: 0 } }}>
+        <span className="h5-setting-label">{t(title)}</span>
+      </AccordionSummary>
+      <AccordionDetails sx={{ display: 'flex', flexDirection: 'column', gap: 1.5, px: 2, pt: 0, pb: 2 }}>{children}</AccordionDetails>
     </Accordion>
   );
 }

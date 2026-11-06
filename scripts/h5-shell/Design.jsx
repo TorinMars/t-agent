@@ -254,8 +254,15 @@ export function DesignSheet({ state, ui }) {
     const byHand = () => { pinned.current = null; };
     node.addEventListener('scroll', onScroll, { passive: true });
     for (const type of ['wheel', 'touchstart', 'keydown', 'pointerdown']) node.addEventListener(type, byHand, { passive: true });
+    // A picture that loads or a diagram that is drawn after a jump moves the headings below it: the heading jumped to is put back in place.
+    const resized = typeof ResizeObserver === 'function' ? new ResizeObserver(() => {
+      const head = pinned.current && node.querySelector(`#${CSS.escape(pinned.current)}`);
+      if (head) node.scrollTo({ top: Math.max(0, head.getBoundingClientRect().top - node.getBoundingClientRect().top + node.scrollTop - JUMP_GAP), behavior: 'auto' });
+    }) : null;
+    if (resized) for (const child of node.children) resized.observe(child);
     update();
     return () => {
+      if (resized) resized.disconnect();
       if (frame) cancelAnimationFrame(frame);
       node.removeEventListener('scroll', onScroll);
       for (const type of ['wheel', 'touchstart', 'keydown', 'pointerdown']) node.removeEventListener(type, byHand);

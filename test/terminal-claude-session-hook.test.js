@@ -142,10 +142,15 @@ test('only Claude terminals take a session report', () => {
 
 test('without a hook endpoint the commands stay as before', () => {
   terminal.setHookEndpoint(null);
+  // A server started from inside a t-agent terminal has that terminal's hook variables; they are not passed on.
+  Object.assign(process.env, { TA_HOOK_URL: 'http://127.0.0.1:1/outer', TA_HOOK_TOKEN: 'outer-token', TA_CLAUDE_SETTINGS: '{"outer":true}' });
   const row = terminal.createTerminal(task.id, { agent: 'claude' });
   const pty = open(task.id, row.terminal_id);
   assert.deepEqual(pty.input, [`claude --session-id ${boundSession(row.terminal_id)}\r`]);
   assert.equal(pty.options.env.TA_CLAUDE_SETTINGS, undefined);
+  assert.equal(pty.options.env.TA_HOOK_URL, undefined);
+  assert.equal(pty.options.env.TA_HOOK_TOKEN, undefined);
+  for (const key of ['TA_HOOK_URL', 'TA_HOOK_TOKEN', 'TA_CLAUDE_SETTINGS']) delete process.env[key];
   assert.equal(terminal.reopenCommand(task.id, row.terminal_id, task.work_dir), `claude --session-id ${boundSession(row.terminal_id)}`);
   terminal.controlSession(task.id, 'delete', row.terminal_id);
 });

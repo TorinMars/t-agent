@@ -65,8 +65,8 @@ const Detail = ({ label, id, children }) => (
 );
 
 // The header "Update" button (right of the refresh button) and its modal. It uses the /api/system update endpoints: opening it
-// checks for a new version (nothing is installed by the check); "Update now" starts the update (optionally forced) and follows it while the service
-// restarts. A red dot on the button says that an update is available or that the service must be restarted.
+// checks for a new version (nothing is installed by the check); "Update now" starts the update and follows it while the service
+// restarts. A forced update is offered only after an update was blocked by local uncommitted changes (WORKTREE_DIRTY). A red dot on the button says that an update is available or that the service must be restarted.
 export function UpdateButton() {
   const [open, setOpen] = useState(false);
   const [opened, setOpened] = useState(false); // the dialog is drawn only once it was opened the first time (it then stays, for its closing animation)
@@ -150,7 +150,7 @@ export function UpdateButton() {
   };
 
   const start = async () => {
-    const forced = force && view.status && view.status.install_type !== 'archive';
+    const forced = force && view.forceOffered && view.status && view.status.install_type !== 'archive';
     setView(previous => ({ ...previous, phase: 'updating', message: 'Updating…' }));
     try {
       let bootId = null;
@@ -171,6 +171,7 @@ export function UpdateButton() {
   const published = shown && shown.remote_manifest && shown.remote_manifest.published_at;
   const admin = Boolean(shown && shown.is_update_admin);
   const archive = shown && shown.install_type === 'archive';
+  const forcing = Boolean(force && view.forceOffered && !archive);
   const noRestart = shown && shown.restart_required === false;
   const dot = needsAttention(status);
 
@@ -226,7 +227,9 @@ export function UpdateButton() {
                         : 'The update checks the Git workspace and fast-forwards the code, then installs dependencies and restarts the service. Existing shell connections will be interrupted.')}
                   </Typography>
                   <Typography variant="body2" color="text.secondary">{t('The SQLite database is backed up before updating; accounts, tokens, tasks and working directories are not overwritten.')}</Typography>
-                  {archive ? null : (
+                  {/* The force option is offered only after an update was blocked by local changes ("Choose force update…"): shown
+                      every time, it read like a warning that the install has uncommitted changes. */}
+                  {archive || !view.forceOffered ? null : (
                     <FormControlLabel
                       sx={{ alignItems: 'flex-start', '& .MuiCheckbox-root': { pt: 0.25 } }}
                       control={<Checkbox checked={force} onChange={event => setForce(event.target.checked)} slotProps={{ input: { id: 'h5-update-force' } }} />}
@@ -248,9 +251,9 @@ export function UpdateButton() {
           {log ? <Paper id="h5-update-log" component="pre" variant="outlined" ref={logNode} aria-label={t('Update log')} aria-live="off" sx={{ m: 0, mt: 1.5, p: 1, maxHeight: '30vh', overflow: 'auto', fontSize: 12, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{log}</Paper> : null}
         </DialogContent>
         <DialogActions>
-          {view.phase === 'error' && view.dirty && admin ? <Button id="h5-update-force-retry" onClick={() => { setForce(true); setView(previous => ({ ...previous, phase: 'available' })); }}>{t('Choose force update…')}</Button> : null}
+          {view.phase === 'error' && view.dirty && admin ? <Button id="h5-update-force-retry" onClick={() => { setForce(true); setView(previous => ({ ...previous, phase: 'available', forceOffered: true })); }}>{t('Choose force update…')}</Button> : null}
           {view.phase === 'error' || view.phase === 'restart' ? <Button id="h5-update-retry" onClick={() => void check()}>{t('Check again')}</Button> : null}
-          {view.phase === 'available' && admin ? <Button id="h5-update-now" variant="contained" color={force && !archive ? 'warning' : 'primary'} disabled={busy} onClick={() => void start()}>{t(force && !archive ? 'Force update now' : 'Update now')}</Button> : null}
+          {view.phase === 'available' && admin ? <Button id="h5-update-now" variant="contained" color={forcing ? 'warning' : 'primary'} disabled={busy} onClick={() => void start()}>{t(forcing ? 'Force update now' : 'Update now')}</Button> : null}
           <Button id="h5-update-dismiss" color="inherit" disabled={view.phase === 'updating'} onClick={close}>{t('Close')}</Button>
         </DialogActions>
       </Dialog> : null}

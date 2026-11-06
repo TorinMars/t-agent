@@ -143,6 +143,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       const text = route.request().postDataJSON().text;
       translateRequests.push(text);
       if (text.startsWith('FAIL')) return json({ error: 'Translation service unavailable' }, 502);
+      if (text.startsWith('LONG')) return json({ text: `${'word '.repeat(300)}end\u001b[2J` }); // a long translation on one line
       if (text.startsWith('SLOW')) { await new Promise(resolve => setTimeout(resolve, 600)); return json({ text: 'Slow done' }); }
       return json({ text: text.startsWith('MULTI') ? 'First line\n\nSecond line\u001b[2J' : 'Run the tests\u001b[2J' });
     }
@@ -901,6 +902,25 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       await page.waitForFunction(count => window.sockets[0].sent.filter(item => item === '\r').length > count, returns);
       assert.deepEqual((await sent()).slice(-2), ['\x1b[200~First line\r\rSecond line [2J\x1b[201~', '\r'], 'bracketed paste: one paste, then a single Enter');
       assert.equal(await input.inputValue(), '');
+      // A long translation on ONE line is one paste too: sent as keys, the PTY splits it into ~1 KB reads and Claude Code turned the first read into a
+      // "[Pasted text #1]" chip and typed the rest, so the message seemed to start in the middle of a word.
+      const longLine = `${'word '.repeat(300)}end [2J`;
+      const sendAndWait = async (button, text) => {
+        const count = (await sent()).filter(item => item === '\r').length;
+        await input.focus(); await input.fill(text);
+        await page.locator(button).tap();
+        await page.waitForFunction(before => window.sockets[0].sent.filter(item => item === '\r').length > before, count);
+        return (await sent()).slice(-2);
+      };
+      assert.deepEqual(await sendAndWait('#h5-translate-button', 'LONG one line'), [`\x1b[200~${longLine}\x1b[201~`, '\r'], 'a long one-line translation is one bracketed paste, without ESC');
+      const typedLong = `${'typed '.repeat(60)}\u001b[2Jend`;
+      assert.deepEqual(await sendAndWait('#h5-translate-send', typedLong), [`\x1b[200~${typedLong.replace('\u001b', '')}\x1b[201~`, '\r'], 'a long typed line is one bracketed paste, without ESC');
+      assert.deepEqual(await sendAndWait('#h5-translate-send', '/compact'), ['/compact', '\r'], 'a short typed line is still typed as keys (a slash command keeps working)');
+      await page.evaluate(() => window.sockets[0].emit('\x1b[?2004l'));
+      await page.waitForTimeout(100);
+      assert.deepEqual(await sendAndWait('#h5-translate-button', 'LONG one line'), [longLine, '\r'], 'without bracketed paste a long translation is typed as keys, as before');
+      await page.evaluate(() => window.sockets[0].emit('\x1b[?2004h'));
+      await page.waitForTimeout(100);
       await page.evaluate(() => window.sockets[0].emit('\x1b[?2004l'));
       await input.blur();
     }

@@ -87,6 +87,49 @@ test('Long text is translated piece by piece: no piece is over the limit, lines 
   assert.equal(calls.map(call => call.body.messages[1].content).join(''), long, 'every character reaches the provider, no surrogate pair is cut');
 });
 
+test('Line breaks are kept: the prompt asks for them, and an answer on one line is translated again line by line', async () => {
+  // The model joins a three-line message into one line; then each Chinese line is asked again on its own and the lines come back in order.
+  const answers = { '背景：登录失败': 'Background: login fails', '日志如下': 'The log is below', '修复目标：不再写入标记': 'Fix goal: no longer write the flag' };
+  const { service, calls } = setup(count => {
+    const content = calls[count - 1].body.messages[1].content;
+    return reply(200, { choices: [{ message: { content: answers[content] || 'Background: login fails. ID 42. The log is below. Fix goal: no longer write the flag.' } }] });
+  });
+  service.saveConfig('o', { apiKey: 'k' });
+  const source = '背景：登录失败\n\nuser_id=42 ERROR timeout\n  日志如下\n\n修复目标：不再写入标记';
+  const result = await service.translate('o', source);
+  assert.match(calls[0].body.messages[0].content, /same number of lines/);
+  assert.equal(calls[0].body.messages[1].content, source, 'first the whole piece in one call');
+  assert.equal(calls.length, 4, 'one call for the piece, then one per Chinese line');
+  assert.equal(result.text, 'Background: login fails\n\nuser_id=42 ERROR timeout\n  The log is below\n\nFix goal: no longer write the flag', 'same lines, blank lines, indentation and English line kept');
+  assert.equal(result.text.split('\n').length, source.split('\n').length);
+});
+
+test('Line breaks are kept: an answer with the same lines is used as it is, in one call, and English lines are kept exactly', async () => {
+  const { service, calls } = setup(() => reply(200, { choices: [{ message: { content: 'First line\n\nchanged english\nThird line' } }] }));
+  service.saveConfig('o', { apiKey: 'k' });
+  const result = await service.translate('o', '\n第一行\n\nnpm test -- --grep "a  b"\n第三行');
+  assert.equal(calls.length, 1);
+  assert.equal(result.text, 'First line\n\nnpm test -- --grep "a  b"\nThird line', 'the line without Chinese is the original, not the model\'s copy');
+  // A blank line moved to another place also counts as changed lines.
+  const moved = setup(count => reply(200, { choices: [{ message: { content: count === 1 ? 'A\nB\n\nC' : `L${count}` } }] }));
+  moved.service.saveConfig('o', { apiKey: 'k' });
+  assert.equal((await moved.service.translate('o', '甲\n\n乙\n丙')).text, 'L2\n\nL3\nL4');
+});
+
+test('Line breaks are kept across pieces: long text stays in order, line for line', async () => {
+  // The model always answers on one line: a piece of many lines is asked again line by line, and a one-line request gets `Line <number>`.
+  const { service, calls } = setup(count => {
+    const content = calls[count - 1].body.messages[1].content;
+    return reply(200, { choices: [{ message: { content: content.includes('\n') ? 'all on one line' : `Line ${content.split(' ')[0]}` } }] });
+  });
+  service.saveConfig('o', { apiKey: 'k' });
+  const source = Array.from({ length: 20 }, (_, index) => `${index} ${'好'.repeat(500)}`).join('\n'); // about 10,000 characters: three pieces
+  assert.ok(splitForTranslation(source).length >= 3);
+  const result = await service.translate('o', source);
+  assert.ok(calls.every(call => call.body.messages[1].content.length <= CHUNK_CHARS));
+  assert.equal(result.text, Array.from({ length: 20 }, (_, index) => `Line ${index}`).join('\n'), 'twenty lines in, twenty lines out, in order');
+});
+
 test('splitForTranslation keeps every character and cuts long lines at a sentence end', () => {
   const text = `${'a'.repeat(30)}. ${'b'.repeat(30)}\n\nshort\n${'c'.repeat(100)}`;
   const parts = splitForTranslation(text, 40);

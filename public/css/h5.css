@@ -158,6 +158,8 @@ body.h5-tasks-open .h5-agent { border-bottom-left-radius: 28px; overflow: hidden
 .h5-design-body .markdown-body.markdown-body tbody tr:nth-child(even) { background: #161b22; }
 .h5-design-body .markdown-body .md-code-block { margin: 14px 0; }
 .h5-design-body .markdown-body .mermaid { overflow-x: auto; }
+/* A picture or a rendered diagram opens full screen (ImageViewer.jsx) on a tap: the zoom cursor shows it on a computer. */
+.h5-design-body .markdown-body :is(img, .mermaid[role="button"]) { cursor: zoom-in; }
 .h5-design-body .markdown-body :is(.h5-design-link, .h5-design-image) { text-decoration: underline dotted; text-underline-offset: 3px; }
 
 /* A file opened from a terminal link that is not Markdown: plain text with line numbers; the named line is marked. Long lines scroll sideways. */

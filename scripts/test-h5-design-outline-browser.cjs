@@ -3,9 +3,13 @@
 //   document to that heading and closes the drawer; the section being read is marked while scrolling; Escape and the back button close the drawer
 //   before the sheet; a document without headings has no Outline button.
 // - computer 1440x900 (mouse): the outline is a column on the right of the document inside the side panel, scrolling on its own, foldable (remembered).
-// Headings get unique ids (duplicates, Chinese text), and a `#` line inside a code block is no heading. H5_SHOT_DIR=<dir> saves screenshots
+// Headings get unique ids (duplicates, Chinese text), and a `#` line inside a code block is no heading.
+// The full-screen viewer (ImageViewer.jsx): a tap on a picture (a relative one, read through the task file API) shows it with the same src; a tap on a
+// mermaid diagram shows a clone of its SVG; a pinch (two in-page pointers) zooms, a double tap switches fit / detail, the wheel and a mouse drag work on a
+// computer; Escape, the back button and a tap on the background close the viewer and leave the sheet open. H5_SHOT_DIR=<dir> saves screenshots
 // (phone at 3x). Chinese text is written with \u escapes (test/i18n.test.js).
 const { chromium } = require('playwright');
+const zlib = require('node:zlib');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
@@ -16,9 +20,23 @@ const SHOTS = process.env.H5_SHOT_DIR || '';
 
 const CN = '\u8bbe\u8ba1\u6982\u89c8'; // "design overview" in Chinese
 const paras = (name, n) => Array.from({ length: n }, (_, i) => `${name} paragraph ${i + 1} of the design text, long enough to wrap on a phone screen.\n`);
+// A 1200x800 PNG (a colour gradient with a grid), so the viewer has more pixels to show than the phone does.
+function png(width, height) {
+  const crcTable = Array.from({ length: 256 }, (_, n) => { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; return c >>> 0; });
+  const crc = buf => { let c = 0xffffffff; for (const b of buf) c = crcTable[(c ^ b) & 0xff] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; };
+  const chunk = (type, data) => { const len = Buffer.alloc(4); len.writeUInt32BE(data.length); const body = Buffer.concat([Buffer.from(type), data]); const sum = Buffer.alloc(4); sum.writeUInt32BE(crc(body)); return Buffer.concat([len, body, sum]); };
+  const head = Buffer.alloc(13); head.writeUInt32BE(width, 0); head.writeUInt32BE(height, 4); head[8] = 8; head[9] = 2;
+  const rows = Buffer.alloc((width * 3 + 1) * height);
+  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+    const at = y * (width * 3 + 1) + 1 + x * 3; const line = x % 100 === 0 || y % 100 === 0;
+    rows[at] = line ? 255 : Math.round(x / width * 200); rows[at + 1] = line ? 255 : Math.round(y / height * 200); rows[at + 2] = line ? 255 : 120;
+  }
+  return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', head), chunk('IDAT', zlib.deflateSync(rows)), chunk('IEND', Buffer.alloc(0))]);
+}
+const PICTURE = png(1200, 800);
 const STEPS = Array.from({ length: 24 }, (_, i) => `Step ${i + 1}`);
 const WITH_HEADINGS = [
-  '# Design of Fix login', '', ...paras('Intro', 6),
+  '# Design of Fix login', '', ...paras('Intro', 2), '![the big picture](img/big.png)', '', '```mermaid', 'graph LR', '  A[Client] --> B[Server]', '  B --> C[(Database)]', '```', '', ...paras('Intro', 4),
   '## Goals', '', ...paras('Goals', 8),
   '### Notes', '', ...paras('Notes A', 6),
   '## Architecture', '', ...paras('Architecture', 6), '```md', '# Not a heading', '## Also not one', '```', '',
@@ -62,6 +80,7 @@ async function openPage(browser, { viewport, touch }) {
     if (url.pathname === '/api/task-groups') return json([{ key: 'doing', name: 'In progress', sort_order: 1 }]);
     if (url.pathname === '/api/tasks/1/terminals') return json([{ terminal_id: 'h5-default', title: 'Terminal 1' }]);
     if (url.pathname === '/api/tasks/1/agent/conversations') return json([]);
+    if (url.pathname === '/api/tasks/1/files/image') return url.searchParams.get('path') === 'img/big.png' ? route.fulfill({ contentType: 'image/png', body: PICTURE }) : json({ error: 'FILE_NOT_FOUND' }, 404);
     if (url.pathname === '/api/tasks/1/files/content') return json({ path: 'DESIGN.md', content, revision: 'r1', eol: '\n', bom: false });
     return json({ error: 'not mocked' }, 404);
   });
@@ -97,6 +116,30 @@ const expectedCurrent = page => page.evaluate(() => {
 });
 const marked = page => page.evaluate(() => [...document.querySelectorAll('#h5-design-outline-list [aria-current="location"]')].map(node => node.dataset.target));
 const listed = page => page.evaluate(() => [...document.querySelectorAll('#h5-design-outline-list [data-target]')].map(node => [node.textContent, Number(node.dataset.level), node.dataset.target]));
+
+// The viewer has faded in (the screenshots show it fully opaque).
+const faded = page => page.waitForFunction(() => { const c = document.querySelector('#h5-viewer')?.closest('.MuiDialog-container'); return c && getComputedStyle(c).opacity === '1'; }, null, { timeout: 3000 });
+const waitScale = (page, test) => page.waitForFunction(body => { const node = document.getElementById('h5-viewer-content'); return node && new Function('s', `return ${body}`)(Number(node.dataset.scale)); }, test, { timeout: 3000 });
+// In-page pointers on the viewer stage: a pinch from `from` px apart to `to` px apart around the centre, and a double tap at the centre.
+const pinchOn = (page, from, to) => page.evaluate(([a, b]) => {
+  const stage = document.querySelector('.h5-viewer-stage');
+  const r = stage.getBoundingClientRect();
+  const cx = r.left + r.width / 2;
+  const cy = r.top + r.height / 2;
+  const fire = (type, id, x) => stage.dispatchEvent(new PointerEvent(type, { pointerId: id, pointerType: 'touch', isPrimary: id === 11, clientX: x, clientY: cy, bubbles: true, cancelable: true }));
+  fire('pointerdown', 11, cx - a / 2); fire('pointerdown', 12, cx + a / 2);
+  for (let i = 1; i <= 5; i++) { const d = a + (b - a) * i / 5; fire('pointermove', 11, cx - d / 2); fire('pointermove', 12, cx + d / 2); }
+  fire('pointerup', 11, cx - b / 2); fire('pointerup', 12, cx + b / 2);
+}, [from, to]);
+const doubleTap = page => page.evaluate(() => {
+  const content = document.getElementById('h5-viewer-content');
+  const r = content.getBoundingClientRect();
+  const x = r.left + r.width / 2;
+  const y = r.top + r.height / 2;
+  for (let i = 0; i < 2; i++) {
+    for (const type of ['pointerdown', 'pointerup']) content.dispatchEvent(new PointerEvent(type, { pointerId: 21 + i, pointerType: 'touch', isPrimary: true, clientX: x, clientY: y, bubbles: true, cancelable: true }));
+  }
+});
 
 async function checkIds(page) {
   const ids = await page.evaluate(() => [...document.querySelectorAll('#h5-design-body :is(h1, h2, h3)')].map(node => node.id));
@@ -180,6 +223,69 @@ async function checkIds(page) {
       await page.goBack();
       await page.locator('.h5-design-panel').waitFor({ state: 'hidden' });
 
+      // The viewer: a tap on the picture shows it full screen with the same src (the file API URL, at its natural 1200px).
+      await page.locator('#h5-design').tap();
+      await page.locator('#h5-design-body .mermaid svg').waitFor({ timeout: 15000 });
+      const img = page.locator('#h5-design-body img');
+      await page.waitForFunction(() => document.querySelector('#h5-design-body img').naturalWidth === 1200);
+      assert.equal(await img.evaluate(node => getComputedStyle(node).cursor), 'zoom-in', 'the picture shows it can be opened');
+      await img.scrollIntoViewIfNeeded();
+      await img.tap();
+      const viewer = page.locator('#h5-viewer');
+      await viewer.waitFor();
+      await page.waitForFunction(() => document.getElementById('h5-viewer-content').complete && document.getElementById('h5-viewer-content').naturalWidth > 0);
+      const shown = await page.evaluate(() => { const v = document.getElementById('h5-viewer-content'); return { src: v.getAttribute('src'), doc: document.querySelector('#h5-design-body img').getAttribute('src'), natural: v.naturalWidth, width: v.getBoundingClientRect().width }; });
+      assert.equal(shown.src, shown.doc, 'the viewer shows the same src');
+      assert.ok(shown.src.includes('/api/tasks/1/files/image?path=img%2Fbig.png'), shown.src);
+      assert.equal(shown.natural, 1200);
+      assert.ok(Math.abs(shown.width - 390) <= 1, `fit to the screen width (${shown.width})`);
+      const closeBox = await page.locator('#h5-viewer-close').boundingBox();
+      assert.ok(closeBox.width >= 44 && closeBox.x + closeBox.width <= 390 && closeBox.y >= 0 && closeBox.y < 70, `the close button at the top right (${JSON.stringify(closeBox)})`);
+      assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('.h5-viewer-stage')).touchAction), 'none', 'the browser does not pan or zoom the page');
+      await faded(page);
+      if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'phone-390-viewer-image.png') });
+      await pinchOn(page, 100, 300);
+      await waitScale(page, 's > 2.5');
+      await doubleTap(page);
+      await waitScale(page, 's === 1');
+      await doubleTap(page);
+      await waitScale(page, 's > 3.05 && s < 3.1'); // the natural size: 1200 / 390 = 3.08
+      assert.equal(await page.evaluate(() => visualViewport.scale), 1, 'the page itself is not zoomed');
+      await page.keyboard.press('Escape');
+      await viewer.waitFor({ state: 'detached' });
+      assert.equal(await page.locator('.h5-design-panel').isVisible(), true, 'Escape closed only the viewer');
+
+      // A tap on the diagram shows a clone of its SVG (vector, without the fixed max-width), zoomable.
+      await page.locator('#h5-design-body .mermaid').tap();
+      await viewer.waitFor();
+      const svg = await page.evaluate(() => {
+        const clone = document.querySelector('#h5-viewer-content svg');
+        const original = document.querySelector('#h5-design-body .mermaid svg');
+        return { clone: Boolean(clone), same: clone === original, maxWidth: clone && clone.style.maxWidth, width: document.getElementById('h5-viewer-content').getBoundingClientRect().width, text: clone && clone.textContent };
+      });
+      assert.equal(svg.clone, true);
+      assert.equal(svg.same, false, 'a clone, the document keeps its diagram');
+      assert.equal(svg.maxWidth, '');
+      assert.ok(svg.width >= 390 - 2 * 16 - 1, `the diagram fills the width (${svg.width})`);
+      assert.ok(svg.text.includes('Database'));
+      await pinchOn(page, 80, 240);
+      await waitScale(page, 's > 2.5');
+      await faded(page);
+      if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'phone-390-viewer-diagram-zoomed.png') });
+      // The back button closes the viewer, not the sheet.
+      await page.waitForFunction(() => history.state && history.state.h5Layer === 2, null, { timeout: 3000 });
+      await page.goBack();
+      await viewer.waitFor({ state: 'detached' });
+      assert.equal(await page.locator('.h5-design-panel').isVisible(), true, 'back closed only the viewer');
+      // A tap on the background (not zoomed) closes it; a zoomed view does not close on a background tap.
+      await img.tap();
+      await viewer.waitFor();
+      await page.touchscreen.tap(195, 800);
+      await viewer.waitFor({ state: 'detached' });
+      assert.equal(await page.locator('.h5-design-panel').isVisible(), true);
+      await page.locator('#h5-design-close').tap();
+      await page.locator('.h5-design-panel').waitFor({ state: 'hidden' });
+
       // A document without headings: no Outline button.
       content = NO_HEADINGS;
       await page.locator('#h5-design').tap();
@@ -251,6 +357,30 @@ async function checkIds(page) {
       await page.locator('#h5-design-outline').click();
       await list.waitFor();
       assert.equal(await page.evaluate(() => localStorage.getItem('h5-design-outline')), '1');
+
+      // The viewer on a computer: a click opens the picture, the wheel zooms at the pointer, a drag pans, a double click fits; Escape closes only it.
+      await page.locator('#h5-design-body .mermaid svg').waitFor({ timeout: 15000 });
+      await page.locator('#h5-design-body img').scrollIntoViewIfNeeded();
+      await page.locator('#h5-design-body img').click();
+      await page.locator('#h5-viewer').waitFor();
+      assert.equal(await page.evaluate(() => document.getElementById('h5-viewer-content').getAttribute('src') === document.querySelector('#h5-design-body img').getAttribute('src')), true);
+      await page.mouse.move(720, 450);
+      await page.mouse.wheel(0, -600);
+      await waitScale(page, 's > 1.5');
+      const before = await page.evaluate(() => document.getElementById('h5-viewer-content').style.transform);
+      await page.mouse.down();
+      await page.mouse.move(620, 400, { steps: 5 });
+      await page.mouse.up();
+      await page.waitForFunction(t => document.getElementById('h5-viewer-content').style.transform !== t, before, { timeout: 3000 });
+      await page.mouse.dblclick(720, 450);
+      await waitScale(page, 's === 1');
+      await page.keyboard.press('Escape');
+      await page.locator('#h5-viewer').waitFor({ state: 'detached' });
+      assert.equal(await page.evaluate(() => document.documentElement.hasAttribute('data-side-panel')), true, 'Escape closed only the viewer, the panel stays');
+      await page.locator('#h5-design-body .mermaid').click();
+      await page.locator('#h5-viewer-content svg').waitFor();
+      await page.keyboard.press('Escape');
+      await page.locator('#h5-viewer').waitFor({ state: 'detached' });
 
       // A document without headings: no Outline button and no column.
       await page.locator('#h5-design-body').focus();

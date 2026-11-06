@@ -855,6 +855,8 @@ I18n.add({
   "Design document": "设计文档",
   "Outline": "大纲",
   "Close outline": "关闭大纲",
+  "Image viewer": "图片查看器",
+  "View diagram": "查看图表",
   "Choose a task first": "请先选择任务",
   "This task has no working directory": "此任务没有工作目录",
   "No DESIGN.md in the working directory of this task": "此任务的工作目录中没有 DESIGN.md",

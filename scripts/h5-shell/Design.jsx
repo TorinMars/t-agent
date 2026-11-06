@@ -11,6 +11,7 @@ import { named, t } from './common.jsx';
 import { Icon } from './Icons.jsx';
 import { imagePath, renderText } from './file-view.mjs';
 import { buildOutline, currentIndex } from './outline.mjs';
+import { ImageViewer } from './ImageViewer.jsx';
 
 // The Markdown renderer the app ships (the /share/:token pages use the same files). They are loaded the first time the sheet shows a
 // document, from this server; mermaid (about 5 MB) only when the document has a diagram. Keep the versions in step with scripts/vendor-libs.json.
@@ -191,6 +192,7 @@ export function DesignSheet({ state, ui }) {
   const [listOpen, setListOpen] = useState(false); // a narrow screen: the outline drawer is open
   const [columnOpen, setColumnOpen] = useState(readColumnOpen); // a wide screen: the outline column is shown
   const pinned = useRef(null); // the heading the outline scrolled to: it stays marked until the reader scrolls by hand
+  const [viewer, setViewer] = useState(null); // the picture or diagram shown full screen (ImageViewer.jsx)
   const content = design && design.status === 'ready' ? design.content : null;
   const filePathInDir = (design && design.path) || 'DESIGN.md';
   const fromLink = Boolean(design && design.link);
@@ -211,6 +213,7 @@ export function DesignSheet({ state, ui }) {
         if (cancelled) return;
         node.innerHTML = renderMarkdown(content, filePathInDir, imageBase ? path => `${imageBase}${encodeURIComponent(path)}` : null);
         for (const img of node.querySelectorAll('img[data-h5-local]')) img.addEventListener('error', localImageFailed);
+        for (const img of node.querySelectorAll('img')) { img.tabIndex = 0; img.setAttribute('aria-haspopup', 'dialog'); } // a tap or Enter shows it full screen
         window.MarkdownView.enhance(node);
         node.scrollTop = 0;
         pinned.current = null;
@@ -220,6 +223,13 @@ export function DesignSheet({ state, ui }) {
         if (diagrams.length) {
           await ensureMermaid();
           if (!cancelled) await window.mermaid.run({ nodes: diagrams }).catch(() => { /* a broken diagram keeps its source text */ });
+          for (const diagram of diagrams) {
+            if (cancelled || !diagram.querySelector('svg')) continue;
+            diagram.tabIndex = 0;
+            diagram.setAttribute('role', 'button');
+            diagram.setAttribute('aria-label', t('View diagram'));
+            diagram.setAttribute('aria-haspopup', 'dialog');
+          }
         }
       } catch {
         if (!cancelled) setRender({ status: 'failed' });
@@ -251,7 +261,37 @@ export function DesignSheet({ state, ui }) {
       for (const type of ['wheel', 'touchstart', 'keydown', 'pointerdown']) node.removeEventListener(type, byHand);
     };
   }, [node, outline]);
-  useEffect(() => { if (!open) setListOpen(false); }, [open]);
+  useEffect(() => { if (!open) { setListOpen(false); setViewer(null); } }, [open]);
+
+  // A tap (or Enter) on a picture or a rendered diagram of the document shows it full screen: the picture at its own resolution (the same src), the
+  // diagram as a clone of its SVG.
+  useEffect(() => {
+    if (!node) return undefined;
+    const pick = target => {
+      if (!target || !target.closest) return null;
+      const img = target.closest('img');
+      if (img && node.contains(img)) return { kind: 'img', src: img.getAttribute('src') || img.currentSrc, alt: img.alt };
+      const diagram = target.closest('.mermaid');
+      const svg = diagram && node.contains(diagram) ? diagram.querySelector('svg') : null;
+      return svg ? { kind: 'svg', svg } : null;
+    };
+    const onClick = event => {
+      const item = pick(event.target);
+      if (!item) return;
+      event.preventDefault(); // a picture inside a link shows the picture
+      setViewer(item);
+    };
+    const onKey = event => {
+      if ((event.key !== 'Enter' && event.key !== ' ') || !(event.target.matches && event.target.matches('img, .mermaid'))) return;
+      const item = pick(event.target);
+      if (!item) return;
+      event.preventDefault();
+      setViewer(item);
+    };
+    node.addEventListener('click', onClick);
+    node.addEventListener('keydown', onKey);
+    return () => { node.removeEventListener('click', onClick); node.removeEventListener('keydown', onKey); };
+  }, [node]);
 
   // Scrolls the document so the heading sits just below the top of the document view (the sheet's header is outside the scrolling box).
   const jump = id => {
@@ -341,6 +381,7 @@ export function DesignSheet({ state, ui }) {
           <OutlineList outline={outline} current={current} onPick={jump} sx={{ flex: '1 1 auto', minHeight: 0 }} />
         </Drawer>
       ) : null}
+      <ImageViewer item={viewer} onClose={() => setViewer(null)} />
     </>
   );
   if (side) {
@@ -349,7 +390,7 @@ export function DesignSheet({ state, ui }) {
     return (
       <Drawer
         variant="persistent" anchor="right" id="h5-design-sheet" open={open} transitionDuration={reduced ? 0 : undefined}
-        slotProps={{ paper: { className: 'h5-design-panel h5-design-side', role: 'complementary', 'aria-labelledby': 'h5-design-title', onKeyDown: event => { if (event.key === 'Escape') { event.stopPropagation(); close(); } }, sx: { width: 'var(--h5-side-width)', height: '100%', backgroundImage: 'none', display: 'flex', flexDirection: 'column', overflow: 'hidden', borderLeft: 1, borderColor: 'divider' } } }}
+        slotProps={{ paper: { className: 'h5-design-panel h5-design-side', role: 'complementary', 'aria-labelledby': 'h5-design-title', onKeyDown: event => { if (event.key === 'Escape' && event.currentTarget.contains(event.target)) { event.stopPropagation(); close(); } }, sx: { width: 'var(--h5-side-width)', height: '100%', backgroundImage: 'none', display: 'flex', flexDirection: 'column', overflow: 'hidden', borderLeft: 1, borderColor: 'divider' } } }}
       >
         {contents}
       </Drawer>

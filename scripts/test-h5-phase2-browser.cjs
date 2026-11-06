@@ -3,8 +3,8 @@
 // - Settings "Engines": list (this machine + remote Engines), connect with a pairing code (wrong code error), edit (the form echoes the saved name and
 //   address, has no token field), check (an offline Engine shows the error), update a remote Engine with progress and the wait for its restart, remove
 //   (confirmation); the engine selector of the task list follows every change. Dialogs are full screen on the phone and normal dialogs on the PC.
-// - Update modal: red dot, install type, last check and interval, version source, release link, update-notified, force update, "Choose force update…"
-//   after WORKTREE_DIRTY, the restart_pending help with the restart commands.
+// - Update modal: red dot, install type, last check and interval, version source, release link, update-notified, no force option in the normal view,
+//   "Choose force update…" after WORKTREE_DIRTY shows it and sends force: true, the restart_pending help with the restart commands.
 // - Task "⋯" menu: move to a group, edit the working directory (echo, relative path refused), delete with and without the directory (confirmation),
 //   a refused directory delete; the new-task form's working directory (the default path shown but never sent, a relative path refused, a custom path sent).
 // H5_SHOT_DIR=<dir> saves screenshots there.
@@ -181,15 +181,28 @@ async function checkUpdateModal(page, label, touch) {
   await until(() => callsTo('POST', '/api/system/update-notified').length === 1, 'update-notified');
   assert.deepEqual(callsTo('POST', '/api/system/update-notified')[0].body, { version: '2.88.0' });
   await shot(page, `${label}-update-modal`);
-  // Force update sends force: true; the mocked update then stops on WORKTREE_DIRTY, which offers the force update again.
-  await page.locator('#h5-update-force').check();
-  assert.equal(await page.locator('#h5-update-now').textContent(), 'Force update now');
+  // The normal "available" view has no force option (it read like a warning about uncommitted changes).
+  assert.equal(await page.locator('#h5-update-force').count(), 0, `${label}: no force checkbox in the normal available view`);
+  assert.equal(await page.locator('#h5-update-now').textContent(), 'Update now');
+  // A normal update is sent without force; the mocked update stops on WORKTREE_DIRTY, which offers the force update.
   await page.locator('#h5-update-now').click();
   await until(() => callsTo('POST', '/api/system/apply-update').length === 1, 'apply-update');
-  assert.deepEqual(callsTo('POST', '/api/system/apply-update')[0].body, { confirm: true, force: true });
+  assert.deepEqual(callsTo('POST', '/api/system/apply-update')[0].body, { confirm: true });
   await page.locator('#h5-update-state[role="alert"]', { hasText: 'Local uncommitted changes: src/a.js' }).waitFor();
   await page.locator('#h5-update-force-retry').click();
-  assert.equal(await page.locator('#h5-update-force').isChecked(), true, `${label}: "Choose force update…" goes back with force ticked`);
+  assert.equal(await page.locator('#h5-update-force').isChecked(), true, `${label}: "Choose force update…" shows the force option, ticked`);
+  assert.match(await page.locator('label:has(#h5-update-force)').textContent(), /back up local uncommitted code and untracked files to a Git stash/);
+  assert.equal(await page.locator('#h5-update-now').textContent(), 'Force update now');
+  await shot(page, `${label}-update-force`);
+  await page.locator('#h5-update-now').click();
+  await until(() => callsTo('POST', '/api/system/apply-update').length === 2, 'forced apply-update');
+  assert.deepEqual(callsTo('POST', '/api/system/apply-update')[1].body, { confirm: true, force: true });
+  await page.locator('#h5-update-force-retry').waitFor();
+  // Checking again goes back to the normal view, without the force option.
+  server.afterApply = null;
+  await page.locator('#h5-update-retry').click();
+  await page.locator('#h5-update-now', { hasText: 'Update now' }).waitFor();
+  assert.equal(await page.locator('#h5-update-force').count(), 0, `${label}: "Check again" hides the force option`);
   await page.locator('#h5-update-dismiss').click();
   await page.locator('#h5-update-dialog').waitFor({ state: 'detached' });
   server.afterApply = null;

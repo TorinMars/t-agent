@@ -56,6 +56,15 @@ function withSessionHook(agent, command) {
   return `${command} --settings "$TA_CLAUDE_SETTINGS"`;
 }
 
+const HOOK_ENV_KEYS = ['TA_HOOK_URL', 'TA_HOOK_TOKEN', 'TA_CLAUDE_SETTINGS'];
+// The server's own environment may already hold these (a server started from inside a t-agent terminal): they belong to
+// that outer terminal and are never passed on.
+function withoutInheritedHookEnv(env) {
+  const next = { ...env };
+  for (const key of HOOK_ENV_KEYS) delete next[key];
+  return next;
+}
+
 function hookEnv(taskId, id) {
   if (!hookEndpoint) return {};
   return {
@@ -311,7 +320,7 @@ function getOrCreateSession(ownerTaskId, workDir, dirWarning, id = 'default') {
       cwd,
       ...(runAs ? { uid: runAs.uid, gid: runAs.gid } : {}),
       env: {
-        ...(runAs ? { ...terminalEnvFor(runAs, process.env), SHELL: shell } : process.env),
+        ...withoutInheritedHookEnv(runAs ? { ...terminalEnvFor(runAs, process.env), SHELL: shell } : process.env),
         TERM: 'xterm-256color',
         PATH: fullPath,
         // Pick UTF-8 from the locales actually installed on this machine (C.UTF-8 / en_US / zh_CN ...),

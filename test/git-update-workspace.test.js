@@ -117,3 +117,27 @@ test('git itself refuses to overwrite a colliding untracked file during the fast
     assert.equal(fs.readFileSync(path.join(clone, 'collide.js'), 'utf8'), 'my local file', 'On conflict the merge is refused by git and local files are not overwritten');
   } finally { origin.cleanup(); fs.rmSync(clone, { recursive: true, force: true }); }
 });
+
+test('the data-home move backups in the install directory are ignored by Git, so a forced update does not stash them', async () => {
+  const r = repo('git-data-backup-');
+  try {
+    // The project's real .gitignore.
+    fs.copyFileSync(path.join(__dirname, '..', '.gitignore'), path.join(r.cwd, '.gitignore'));
+    r.git(['add', '.gitignore']); r.git(['commit', '-qm', 'project ignore rules']);
+    const backup = path.join(r.cwd, 'data.backup-20261106T010203Z');
+    const partial = path.join(r.cwd, 'data.backup-20261106T020304Z.partial-12345');
+    for (const dir of [backup, partial]) { fs.mkdirSync(dir); fs.writeFileSync(path.join(dir, 'db.sqlite'), 'database copy'); }
+    assert.equal(r.git(['status', '--porcelain']), '', 'Only the backups exist: the tree is clean');
+    assert.equal(await prepareWorkspace(r.exec, true), null, 'Nothing to back up, no stash is made');
+
+    fs.writeFileSync(path.join(r.cwd, 'app.js'), 'edited');
+    fs.writeFileSync(path.join(r.cwd, 'notes.txt'), 'personal');
+    const stash = await prepareWorkspace(r.exec, true);
+    assert.match(stash, /^[a-f0-9]{40}$/);
+    assert.equal(fs.readFileSync(path.join(backup, 'db.sqlite'), 'utf8'), 'database copy', 'The backup stays in place');
+    assert.equal(fs.readFileSync(path.join(partial, 'db.sqlite'), 'utf8'), 'database copy');
+    const untracked = r.git(['ls-tree', '-r', '--name-only', `${stash}^3`]);
+    assert.match(untracked, /notes\.txt/);
+    assert.doesNotMatch(untracked, /data\.backup-/, 'The stash does not hold the data backups');
+  } finally { r.cleanup(); }
+});

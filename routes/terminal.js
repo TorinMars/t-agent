@@ -9,7 +9,7 @@ const { createActivityTracker } = require('../lib/terminal-activity');
 const { createActivityStream } = require('../lib/terminal-activity-stream');
 const { repairSpawnHelperPermissions } = require('../lib/node-pty-runtime');
 const { utf8LocaleEnv } = require('../lib/terminal-locale');
-const { listSessions, startupCommand, newClaudeCommand, runningSubagents } = require('../lib/agent-sessions');
+const { listSessions, startupCommand, newClaudeCommand, runningSubagents, SESSION_ID } = require('../lib/agent-sessions');
 const { resolveTerminalUser, userCanEnter, terminalEnvFor } = require('../lib/terminal-user');
 const { processCwd, cwdInRoot } = require('../lib/terminal-cwd');
 
@@ -38,21 +38,61 @@ function hookToken(taskId, id) {
   return crypto.createHmac('sha256', hookSecret).update(`${Number(taskId)}:${id}`).digest('hex');
 }
 
+// Claude terminals follow the session Claude really runs (after /clear, /resume, a fork): Claude is started with
+// `--settings "$TA_CLAUDE_SETTINGS"`, a JSON string in the PTY environment that adds one SessionStart hook for that
+// process only (the person's own Claude settings and hooks are not touched and still apply). The hook
+// (scripts/claude-session-hook.js) posts { session_id, source, cwd } to the hook endpoint with event=session.
+const SESSION_HOOK_SCRIPT = path.resolve(__dirname, '..', 'scripts', 'claude-session-hook.js');
+const shellQuote = value => `'${String(value).replace(/'/g, `'\\''`)}'`;
+function claudeSettings() {
+  const command = `${shellQuote(process.execPath)} ${shellQuote(SESSION_HOOK_SCRIPT)} >/dev/null 2>&1 || true`;
+  return JSON.stringify({ hooks: { SessionStart: [{ hooks: [{ type: 'command', command, timeout: 10 }] }] } });
+}
+
+// The command typed for a Claude terminal, with the session hook when the hook endpoint is known (the same condition
+// that puts TA_CLAUDE_SETTINGS into the PTY environment).
+function withSessionHook(agent, command) {
+  if (!command || agent !== 'claude' || !hookEndpoint) return command;
+  return `${command} --settings "$TA_CLAUDE_SETTINGS"`;
+}
+
 function hookEnv(taskId, id) {
   if (!hookEndpoint) return {};
   return {
     TA_HOOK_URL: `${hookEndpoint}?task=${Number(taskId)}&terminal=${encodeURIComponent(id)}`,
     TA_HOOK_TOKEN: hookToken(taskId, id),
+    TA_CLAUDE_SETTINGS: claudeSettings(),
   };
 }
 
-/** Handles one hook report; returns an HTTP status code. */
-function reportHook(taskId, requestedTerminalId, token, event) {
+function realDir(dir) {
+  try { return fs.realpathSync(dir); } catch { return path.resolve(dir); }
+}
+
+// event=session: the Claude session the terminal now runs. Only a Claude terminal of this task takes it, only a
+// well-formed id, and only one that Claude started in the directory the terminal's shell starts in.
+function bindReportedSession(taskId, id, report) {
+  if (!report || typeof report !== 'object') return 400;
+  const sessionId = report.session_id;
+  if (typeof sessionId !== 'string' || !SESSION_ID.test(sessionId)) return 400;
+  const row = db.prepare('SELECT t.agent, t.agent_session_id, k.work_dir FROM task_terminals t JOIN tasks k ON k.id = t.task_id WHERE t.task_id = ? AND t.terminal_id = ?').get(taskId, id);
+  if (!row || row.agent !== 'claude') return 404;
+  if (typeof report.cwd !== 'string' || !path.isAbsolute(report.cwd) || realDir(report.cwd) !== realDir(row.work_dir || os.homedir())) return 400;
+  if (row.agent_session_id !== sessionId) {
+    db.prepare('UPDATE task_terminals SET agent_session_id = ? WHERE task_id = ? AND terminal_id = ?').run(sessionId, taskId, id);
+    activityStream.notify(); // the sub-agent count now follows the new session
+  }
+  return 204;
+}
+
+/** Handles one hook report; returns an HTTP status code. `body` is the parsed JSON body (event=session only). */
+function reportHook(taskId, requestedTerminalId, token, event, body) {
   let id;
   try { id = terminalId(requestedTerminalId); } catch { return 400; }
   const expected = Buffer.from(hookToken(taskId, id));
   const given = Buffer.from(String(token || ''));
   if (given.length !== expected.length || !crypto.timingSafeEqual(given, expected)) return 403;
+  if (event === 'session') return bindReportedSession(Number(taskId), id, body);
   const session = sessions.get(sessionKey(taskId, id));
   if (!session || !session.activity) return 404;
   return session.activity.report(event) ? 204 : 400;
@@ -148,7 +188,7 @@ function createTerminal(taskId, options = {}) {
   }
   const count = listTerminals(taskId).length + 1;
   const title = named || (command ? `${AGENT_LABELS[agent]} ${count}` : `Terminal ${count}`);
-  if (command) pendingStartup.set(sessionKey(taskId, id), command);
+  if (command) pendingStartup.set(sessionKey(taskId, id), withSessionHook(agent, command));
   db.prepare('INSERT INTO task_terminals (task_id, terminal_id, title, agent, agent_session_id, agent_started_at, title_custom) VALUES (?, ?, ?, ?, ?, ?, ?)')
     .run(taskId, id, title, command ? agent : null, sessionId, command ? Date.now() : null, named ? 1 : null);
   return { terminal_id: id, title, agent: command ? agent : null };
@@ -164,10 +204,10 @@ function reopenCommand(taskId, id, workDir) {
     const bound = db.prepare('SELECT agent_session_id FROM task_terminals WHERE task_id = ? AND terminal_id = ?').get(taskId, id);
     row.agent_session_id = bound && bound.agent_session_id;
   }
-  if (!row.agent_session_id) return startupCommand(row.agent);
+  if (!row.agent_session_id) return withSessionHook(row.agent, startupCommand(row.agent));
   const exists = listSessions(row.agent, workDir, undefined, 200).some(entry => entry.id === row.agent_session_id);
-  if (exists) return startupCommand(row.agent, row.agent_session_id);
-  return row.agent === 'claude' ? newClaudeCommand(row.agent_session_id) : startupCommand(row.agent);
+  if (exists) return withSessionHook(row.agent, startupCommand(row.agent, row.agent_session_id));
+  return withSessionHook(row.agent, row.agent === 'claude' ? newClaudeCommand(row.agent_session_id) : startupCommand(row.agent));
 }
 
 // Sessions of an agent CLI that were run in the task's working directory (newest first).

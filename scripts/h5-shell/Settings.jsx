@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import AppBar from '@mui/material/AppBar';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
+import ButtonBase from '@mui/material/ButtonBase';
 import Checkbox from '@mui/material/Checkbox';
 import Drawer from '@mui/material/Drawer';
 import FormControlLabel from '@mui/material/FormControlLabel';
@@ -13,7 +14,7 @@ import Typography from '@mui/material/Typography';
 import CloseIcon from '@mui/icons-material/Close';
 import { api, t } from './common.jsx';
 import { EnginesGroup } from './Engines.jsx';
-import { Feedback, Field, Group, Hint, failure, useFeedback } from './Form.jsx';
+import { Feedback, Field, Group, Hint, ROW, failure, useFeedback } from './Form.jsx';
 
 // The address this page was opened at, to come back to after a login or a switch: `/` or `/h5` (an iPhone Home Screen app starts at /h5).
 const pagePath = () => (/^\/h5(\/|$)/.test(location.pathname) ? '/h5' : '/');
@@ -300,16 +301,30 @@ function AccessGroup() {
           <Field id="h5-access-code" label="6-digit authenticator code (verified when switching back to external access)" value={code} onChange={event => setCode(event.target.value)} autoComplete="one-time-code" htmlInput={{ inputMode: 'numeric', maxLength: 6 }} />
         </Box>
       ) : <span id="h5-access-code-row" hidden />}
-      <Button id="h5-access-switch" variant="outlined" disabled={busy || !loaded} onClick={() => void switchMode()}>{loaded ? t(info.local ? 'Switch to: authenticator + external access' : 'Switch to: local access only (no verification)') : ''}</Button>
+      <Button id="h5-access-switch" variant="contained" disabled={busy || !loaded} onClick={() => void switchMode()}>{loaded ? t(info.local ? 'Switch to: authenticator + external access' : 'Switch to: local access only (no verification)') : ''}</Button>
       <Feedback id="h5-access-feedback" feedback={feedback} />
-      <Typography variant="subtitle2" component="strong">{t('Authenticator')}</Typography>
+      <Typography variant="subtitle2" component="strong" sx={{ mt: 1 }}>{t('Authenticator')}</Typography>
       <Hint>{t('Computer and phone share the same page and binding. Logins last 30 days and renew while in use; after 30 days of inactivity you must verify again. After replacing, the old authenticator, recovery codes and other devices’ logins stop working immediately.')}</Hint>
       <Button id="h5-authenticator-replace" component="a" href={`/auth/setup?return_to=${pagePath()}`} variant="outlined">{t('Replace authenticator')}</Button>
     </Group>
   );
 }
 
-function Rows({ ui }) {
+const rowSx = { ...ROW, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, borderBottom: 1, borderColor: 'divider' };
+
+// The first row: the language. The compact button on the right shows the name of the OTHER language; switching reloads the page in it.
+function LanguageRow() {
+  const english = typeof I18n !== 'undefined' && I18n.get() === 'en';
+  return (
+    <Box className="h5-setting-row" sx={rowSx}>
+      <span className="h5-setting-label">{t('Language')}</span>
+      <Button id="h5-lang" size="small" variant="outlined" color="inherit" translate="no" onClick={() => { if (typeof I18n !== 'undefined') I18n.toggle(); }}>{english ? '\u4e2d\u6587' : 'English'}</Button>
+    </Box>
+  );
+}
+
+// The last row: log out. The whole row is the button (an exit action goes last), in the error colour.
+function LogoutRow({ ui }) {
   const logout = async () => {
     if (!confirm(t('Logging out disconnects local and remote terminals, but tasks running on the server keep running. Log out?'))) return;
     try {
@@ -319,19 +334,10 @@ function Rows({ ui }) {
       location.replace(`${(meta && meta.content) || '/auth/login'}?return_to=${pagePath()}`);
     } catch { ui.notify(t('Log out failed. Please retry later.'), 'error'); }
   };
-  const english = typeof I18n !== 'undefined' && I18n.get() === 'en';
   return (
-    <>
-      <Box className="h5-setting-row" sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', py: 1.5, borderBottom: 1, borderColor: 'divider' }}>
-        <span>{t('Language')}</span>
-        {/* The button shows the name of the OTHER language; switching reloads the page in it. */}
-        <Button id="h5-lang" variant="outlined" color="inherit" translate="no" onClick={() => { if (typeof I18n !== 'undefined') I18n.toggle(); }}>{english ? '\u4e2d\u6587' : 'English'}</Button>
-      </Box>
-      <Box className="h5-setting-row" sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', py: 1.5, borderBottom: 1, borderColor: 'divider' }}>
-        <span>{t('Log out')}</span>
-        <Button id="h5-logout" variant="outlined" color="inherit" onClick={() => void logout()}>{t('Log out')}</Button>
-      </Box>
-    </>
+    <ButtonBase id="h5-logout" className="h5-setting-row" onClick={() => void logout()} sx={{ ...rowSx, width: '100%', justifyContent: 'flex-start', color: 'error.main', textAlign: 'left' }}>
+      <span className="h5-setting-label">{t('Log out')}</span>
+    </ButtonBase>
   );
 }
 
@@ -343,13 +349,13 @@ export function SettingsDrawer({ state, ui }) {
       slotProps={{ paper: { className: 'h5-sheet-panel', sx: { width: 'min(440px, 100%)', maxWidth: '100%', height: '92dvh', mx: 'auto', borderRadius: '16px 16px 0 0', backgroundImage: 'none' } } }}
     >
       <AppBar position="static" color="default" enableColorOnDark elevation={0} className="h5-sheet-header" sx={{ borderBottom: 1, borderColor: 'divider' }}>
-        <Toolbar variant="dense" sx={{ justifyContent: 'space-between' }}>
+        <Toolbar variant="dense" disableGutters sx={{ justifyContent: 'space-between', px: 2 }}>
           <Typography id="h5-settings-title" variant="h6" component="h2">{t('Settings')}</Typography>
           <IconButton id="h5-close-settings" aria-label={t('Close')} edge="end" onClick={() => ui.actions.closeSettings()}><CloseIcon /></IconButton>
         </Toolbar>
       </AppBar>
-      <Box className="h5-settings-body" sx={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto', px: 1.5, py: 1 }}>
-        <Rows ui={ui} />
+      <Box className="h5-settings-body" sx={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto', pb: 1 }}>
+        <LanguageRow />
         <WorkdirGroup />
         <OssGroup />
         <TranslateGroup />
@@ -357,6 +363,7 @@ export function SettingsDrawer({ state, ui }) {
         <EnginesGroup state={state} ui={ui} />
         <RemoteGroup />
         <AccessGroup />
+        <LogoutRow ui={ui} />
       </Box>
     </Drawer>
   );

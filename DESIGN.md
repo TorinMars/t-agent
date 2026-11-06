@@ -2446,7 +2446,8 @@ The settings sheet of `/h5` has the same configuration as the desktop "Settings"
 - **Voice input**: `GET/PUT/DELETE /api/speech/config` (Alibaba Cloud: key, region, language, model, noise filter, hot words, hot word list ID, endpoint). The key is never echoed; the "Address in use" line follows the region and a custom endpoint. When the translation service or voice input is not set up, the phone page now says to set it up in Settings (it used to point to the desktop page).
 - **Remote service**: `/api/remote-tokens` (list, revoke) and `POST /api/remote-tokens/pairing` (a code valid for 10 minutes, single use).
 - **Access mode and authenticator**: `POST /auth/mode`, with the same confirmation and error texts as the desktop; "Replace authenticator" opens `/auth/setup?return_to=/h5`. Switching to local access only from a phone locks that phone out; the page says so.
-- Tests: `node scripts/test-h5-settings-browser.cjs`.
+- **One row style** (2.88.7, `scripts/h5-shell/Settings.jsx` and `ROW` in `scripts/h5-shell/Form.jsx`): every top-level row, Language, the group headers and Log out, uses the same body1 label (`.h5-setting-label`), 16px side padding lined up with the sheet title, a 56px height and a full-width divider; on a wide screen too. Order: Language (a compact button on the right names the other language, `#h5-lang`), the groups, then Log out last as a full-width row in the error colour (`#h5-logout` is the row itself; the old repeated "Log out" label and button are gone). Group content has 16px side and bottom padding; the main action of each group is a contained button (Access mode's switch too), deleting is an outlined error button.
+- Tests: `node scripts/test-h5-settings-browser.cjs` (it also checks that all top-level rows share one height, label size, letter spacing and left edge, and that Log out is last).
 
 ## Dependencies (the Monaco bundle until 2.87.13)
 

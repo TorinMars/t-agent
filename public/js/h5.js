@@ -301,7 +301,8 @@
   }
 
   // target: where to go in the task, { terminal: id } or { chat: row }; without one, the task opens as it was left (its terminal, or the chat that was open).
-  function selectTask(item, target = null) {
+  // stay: the task sheet of a phone stays open (the "+" of a task that was not selected shows its Session list in the sheet, under that task).
+  function selectTask(item, target = null, { stay = false } = {}) {
     // A chat open over another task is put away (but not forgotten: it comes back with its task).
     if (agentChat && agentFor && (!item || agentFor.taskId !== item.id || agentFor.source !== source.key)) hideAgent();
     task = item;
@@ -311,7 +312,7 @@
     wantedTerminal = target && target.terminal ? target.terminal : null;
     store.set(`task:${source.key}`, item ? item.id : null);
     ui.set({ taskName: item ? item.title : '' });
-    closeTasks();
+    if (!stay) closeTasks();
     void loadTerminals();
     if (target && target.chat) mountAgent(target.chat);
     else if (item && !target) void restoreAgent(item);
@@ -389,6 +390,9 @@
   }
   function closeTasks() {
     if (isWide()) return; // the sidebar stays
+    // The Session list and the rename field are drawn inside the sheet: they go with it.
+    const menu = ui.get().menu;
+    if (menu && (menu.naming || menu.rename)) closeTerminalMenu();
     clearInterval(namesTimer);
     ui.set({ tasksOpen: false });
   }
@@ -657,33 +661,40 @@
   }
 
   // ── Terminal actions: rename, reopen, restart in the working directory, delete ──
-  // One sheet (the shell's `menu`) serves the actions of a terminal, the actions of a chat and the "Session" choices of the "+" of a task. Its items are
-  // { label, kind } in the state and their functions are kept here, in the order shown.
+  // One `menu` state serves the actions of a terminal, the actions of a chat and the "Session" choices of the "+" of a task. Its items are
+  // { label, kind } in the state and their functions are kept here, in the order shown. The actions are a sheet from the bottom (TermMenu.jsx); the
+  // Session choices (`naming`, under the task `task`) and the rename field (`rename`, in place of that row) are drawn in the task list (TaskDrawer.jsx),
+  // where the person tapped.
   let menuRuns = [];
   let menuRow = null;
   let menuChat = null; // the chat whose actions are open
   // The optional name typed in the "Session" sheet. It is kept while moving between its lists (Claude session, Back) and names what is created.
   let newName = '';
   let menuCreate = -1; // the item that Enter in the name field runs (New Terminal, New Claude session, New Claude chat)
+  let menuTask = null; // the id of the task whose "+" opened the Session list
 
   function closeTerminalMenu() {
     menuRow = null;
     menuChat = null;
     menuRuns = [];
     menuCreate = -1;
+    menuTask = null;
     newName = '';
     ui.set({ menu: null });
   }
   // The typed name, as the server will keep it (an empty name: the default "Terminal N" / "Claude N" / chat name).
   const takeName = () => newName.replace(/\s+/g, ' ').trim();
   // items: [label, run, kind, create]; kind 'danger' is drawn as a warning, 'raw' is a name that is not translated; create: Enter in the name field runs it.
-  // naming: the sheet shows the optional name field above the list.
+  // naming: the Session list, with the optional name field above it, drawn under the task `menuTask` in the task list.
   function showMenu(title, items, { naming = false } = {}) {
     menuRuns = items.map(item => item[1]);
     menuCreate = items.findIndex(item => item[3]);
-    ui.set({ menu: { title, items: items.map(([label, , kind]) => ({ label, kind: kind || null })), renaming: false, renameValue: '', naming, name: newName } });
+    ui.set({ menu: { title, items: items.map(([label, , kind]) => ({ label, kind: kind || null })), rename: null, renameValue: '', naming, task: naming ? menuTask : null, name: newName } });
   }
-  const askRename = value => ui.set(state => ({ menu: state.menu && { ...state.menu, renaming: true, renameValue: value } }));
+  // The rename field takes the place of the row in the task list ({ kind, id } of the row); the sheet of actions goes away.
+  const askRename = value => ui.set(state => ({
+    menu: state.menu && { ...state.menu, rename: menuChat ? { kind: 'chat', id: menuChat.id } : { kind: 'terminal', id: menuRow && menuRow.terminal_id }, renameValue: value },
+  }));
   function openTerminalMenu(row) {
     menuRow = row;
     menuChat = null;
@@ -823,8 +834,11 @@
   ui.actions.addSession = id => {
     const item = tasks.find(entry => entry.id === id);
     if (!item) return;
-    if (!(task && task.id === item.id)) selectTask(item, null);
-    newName = ''; // a new "Session" sheet starts with an empty name
+    const menu = ui.get().menu;
+    if (menu && menu.naming && menuTask === item.id) { closeTerminalMenu(); return; } // the "+" again closes its list
+    if (!(task && task.id === item.id)) selectTask(item, null, { stay: true });
+    menuTask = item.id;
+    newName = ''; // a new "Session" list starts with an empty name
     void openSessionMenu();
   };
 

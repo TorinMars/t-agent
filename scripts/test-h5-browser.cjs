@@ -1504,8 +1504,8 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     assert.deepEqual(await page.locator('#h5-term-menu-actions button').allTextContents(), ['Copy text', 'Rename', 'Reopen', 'Restart in the working directory', 'Delete'], 'the open terminal also offers Copy text');
     await page.locator('#h5-term-menu-actions button', { hasText: 'Rename' }).tap();
     await page.locator('#h5-term-rename-input').fill('Build logs');
-    await page.locator('#h5-term-rename button').tap();
-    await page.locator('#h5-term-menu').waitFor({ state: 'hidden' });
+    await page.locator('#h5-term-rename button').tap(); // the field is in place of the row (the sheet closed at "Rename"); Save does not blur it
+    await page.locator('#h5-term-rename').waitFor({ state: 'detached' });
     assert.deepEqual(await page.locator('#h5-tasks .h5-terminal-main .h5-terminal-name').allTextContents(), ['Terminal 1', 'Build logs']);
     assert.ok(calls.includes('PATCH /api/tasks/1/terminals/h5-second'));
     // The first terminal can be deleted too.

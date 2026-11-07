@@ -7,6 +7,7 @@ import Paper from '@mui/material/Paper';
 import Typography from '@mui/material/Typography';
 import { api, t } from './common.jsx';
 import { Feedback, Field, Group, Hint, failure, useFeedback } from './Form.jsx';
+import TextField from './TextField.jsx';
 import { BASE } from './attention-feed.mjs';
 import { attentionSettingsSlots } from './attention-slots.mjs';
 
@@ -61,7 +62,7 @@ function TokenList({ opened }) {
   };
   return (
     <>
-      <Typography variant="subtitle2" component="h3">{t('CLI tokens')}</Typography>
+      <Typography variant="subtitle2" component="h3" sx={{ fontWeight: 700, mt: 1 }}>{t('CLI tokens')}</Typography>
       <Hint>{t('The t-attention command and the listener plugins (for example Claude Code hooks) sign in with a token. A token can only read and change T-Attention tasks.')}</Hint>
       <Box id="h5-attention-tokens" sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
         {tokens && tokens.length ? tokens.map(token => (
@@ -90,6 +91,51 @@ function TokenList({ opened }) {
   );
 }
 
+// The AI summary (off by default): GET / PUT /api/attention/settings/summary { enabled, provider, model }. The providers are the translation
+// providers and their saved keys (Settings "Translation"); their list comes with the answer (`providers`) or from GET /api/translate/config.
+function SummarySettings({ opened }) {
+  const [form, setForm] = useState({ enabled: false, provider: '', model: '' });
+  const [providers, setProviders] = useState({});
+  const [loaded, setLoaded] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [feedback, say] = useFeedback();
+  const load = async () => {
+    try {
+      const data = (await api('GET', `${BASE}/settings/summary`)) || {};
+      let list = data.providers && typeof data.providers === 'object' ? data.providers : null;
+      if (!list) { try { list = ((await api('GET', '/api/translate/config')) || {}).providers || {}; } catch { list = {}; } }
+      setProviders(list);
+      setForm({ enabled: Boolean(data.enabled), provider: data.provider || Object.keys(list)[0] || '', model: data.model || '' });
+      setLoaded(true);
+      say('');
+    } catch (error) { say(failure(error), true); }
+  };
+  useEffect(() => { if (opened) void load(); }, [opened]); // eslint-disable-line react-hooks/exhaustive-deps -- read each time the group is opened
+  const save = async () => {
+    setBusy(true);
+    try { await api('PUT', `${BASE}/settings/summary`, { enabled: form.enabled, provider: form.provider, model: form.model.trim() }); await load(); say('Saved'); }
+    catch (error) { say(failure(error), true); }
+    finally { setBusy(false); }
+  };
+  const ids = Object.keys(providers);
+  return (
+    <>
+      <Typography variant="subtitle2" component="h3" sx={{ fontWeight: 700, mt: 1 }}>{t('AI summary')}</Typography>
+      <FormControlLabel
+        control={<Checkbox checked={form.enabled} disabled={!loaded} onChange={event => setForm(current => ({ ...current, enabled: event.target.checked }))} slotProps={{ input: { id: 'h5-attention-summary-enabled' } }} />}
+        label={t('Write a 3-line summary when a task needs you or is ready for review')}
+      />
+      <TextField id="h5-attention-summary-provider" select label={t('Provider')} size="small" fullWidth value={form.provider} disabled={!loaded} onChange={event => setForm(current => ({ ...current, provider: event.target.value }))} slotProps={{ select: { native: true } }}>
+        {ids.map(id => <option key={id} value={id}>{`${(providers[id] && providers[id].label) || id}${providers[id] && providers[id].hasApiKey === false ? ` (${t('no key saved')})` : ''}`}</option>)}
+      </TextField>
+      <Field id="h5-attention-summary-model" label="Model (optional)" value={form.model} disabled={!loaded} onChange={event => setForm(current => ({ ...current, model: event.target.value }))} placeholder={t('The provider’s default model')} />
+      <Hint id="h5-attention-summary-privacy">{t('When this is on, the task’s goal, latest prompt, last reply, pending question, changed file names and the last messages of the session are sent to the chosen provider, with the key saved under Translation. Nothing is sent while it is off.')}</Hint>
+      <Button id="h5-attention-summary-save" variant="contained" disabled={busy || !loaded} onClick={() => void save()}>{t('Save')}</Button>
+      <Feedback id="h5-attention-summary-feedback" feedback={feedback} />
+    </>
+  );
+}
+
 function Reminders({ ui, prefs, setPrefs }) {
   const [feedback, say] = useFeedback();
   const notify = async on => {
@@ -103,7 +149,7 @@ function Reminders({ ui, prefs, setPrefs }) {
     : prefs.notify ? 'System notifications are on' : prefs.permission === 'denied' ? 'The browser blocks notifications for this page' : 'System notifications are off';
   return (
     <>
-      <Typography variant="subtitle2" component="h3">{t('Reminders on this device')}</Typography>
+      <Typography variant="subtitle2" component="h3" sx={{ fontWeight: 700, mt: 1 }}>{t('Reminders on this device')}</Typography>
       <Hint>{t('When a task starts to need you, fails or is ready for review, this page shows a notice. A change you make on this page gives no reminder.')}</Hint>
       <FormControlLabel
         control={<Checkbox checked={prefs.sound} onChange={event => { ui.actions.attentionSetSound(event.target.checked); setPrefs(ui.actions.attentionPrefs()); }} slotProps={{ input: { id: 'h5-attention-sound' } }} />}
@@ -133,6 +179,7 @@ export function AttentionSettings({ ui }) {
   return (
     <Group id="attention" title="T-Attention" onOpen={open}>
       <Reminders ui={ui} prefs={prefs} setPrefs={setPrefs} />
+      <SummarySettings opened={opened} />
       <TokenList opened={opened} />
       {/* SLOT: the settings of other T-Attention parts (attention-slots.mjs, e.g. NotifierSettings). Nothing is drawn when none is registered. */}
       {attentionSettingsSlots().map(({ id, Component }) => <Box key={id} className="h5-attention-slot" data-slot={id} sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}><Component ui={ui} /></Box>)}

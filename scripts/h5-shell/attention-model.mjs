@@ -112,3 +112,96 @@ export function today(now = new Date()) {
   return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
 }
 export const overdue = (item, day = today()) => Boolean(item && item.due_date && !CLOSED_STATUSES.includes(item.status) && item.due_date < day);
+
+// ── Context recall: the context card, the timeline and the jump back (see "T-Attention on the page" in DESIGN.md) ──
+
+// `item.context` as an object (the API sends it parsed; a JSON string is read too). Never throws.
+export function contextOf(item) {
+  const raw = item && item.context;
+  if (!raw) return {};
+  if (typeof raw === 'object') return raw;
+  try { const value = JSON.parse(raw); return value && typeof value === 'object' ? value : {}; } catch { return {}; }
+}
+
+// The one line under the title of a row that needs the user: what is pending, else the reason.
+export function pendingLine(item) {
+  const pending = contextOf(item).pending;
+  if (pending && pending.text) return String(pending.text);
+  return item && item.attention_reason ? String(item.attention_reason) : '';
+}
+
+// The timeline sentences: an English fixed part (`key`, translated by the page) and the variable text (shown as it is).
+export const ACTIVITY_SENTENCES = {
+  prompt: 'You asked', permission: 'Asked for permission', question: 'Asked you a question', resumed: 'Work resumed',
+  turn_end: 'Finished a turn', error: 'Error', session_end: 'Session ended', note: 'Note',
+};
+export const STATUS_SENTENCES = {
+  todo: 'Moved to To do', working: 'Started working', waiting_user: 'Now needs you', review: 'Ready for your review',
+  done: 'Marked done', failed: 'Failed', cancelled: 'Cancelled',
+};
+const QUIET_FIELDS = new Set(['context', 'meta', 'attention_reason', 'activity', 'excerpt', 'updated_at', 'source']);
+const dataOf = event => {
+  if (!event || !event.data) return {};
+  if (typeof event.data === 'object') return event.data;
+  try { return JSON.parse(event.data) || {}; } catch { return {}; }
+};
+
+// One event as a sentence, or null when it says nothing a person needs to read (an update of the context only).
+export function eventSentence(event) {
+  if (!event) return null;
+  const data = dataOf(event);
+  if (event.type === 'activity') return { key: ACTIVITY_SENTENCES[data.kind] || 'Note', text: String(data.text || ''), kind: data.kind || 'note' };
+  if (event.type === 'status') return { key: STATUS_SENTENCES[event.to_status] || 'Status changed', text: '', kind: 'status', status: event.to_status };
+  if (event.type === 'created') return { key: 'Created', text: '', kind: 'created' };
+  if (event.type === 'deleted') return { key: 'Deleted', text: '', kind: 'deleted' };
+  if (event.type === 'updated') {
+    const fields = Object.keys(data).filter(field => !QUIET_FIELDS.has(field));
+    return fields.length ? { key: 'Changed', text: fields.join(', '), kind: 'updated' } : null;
+  }
+  return null;
+}
+
+// The local calendar day of a time (YYYY-MM-DD), '' for none.
+export function dayOf(value) {
+  const at = Date.parse(value || '');
+  return Number.isFinite(at) ? today(new Date(at)) : '';
+}
+
+// The events (the API sends them newest first) as days, oldest first, each with its sentences oldest first.
+export function timeline(events) {
+  const rows = (events || [])
+    .map(event => ({ event, sentence: eventSentence(event), at: Date.parse((event && event.at) || '') }))
+    .filter(row => row.sentence)
+    .sort((a, b) => (a.at || 0) - (b.at || 0) || (Number(a.event.id) || 0) - (Number(b.event.id) || 0));
+  const days = [];
+  for (const row of rows) {
+    const day = dayOf(row.event.at);
+    if (!days.length || days.at(-1).day !== day) days.push({ day, items: [] });
+    days.at(-1).items.push({ id: row.event.id, at: row.event.at, actor: row.event.actor || '', ...row.sentence });
+  }
+  return days;
+}
+
+// Back to where the task runs: the T-Agent terminal it runs in, when that task is in the list of this machine the page shows; else the
+// command that resumes the session; null when neither is known. `groups` is `state.taskList.groups` (tasks with their ids).
+export function jumpBack(context, { sourceKey, groups } = {}) {
+  const tagent = context && context.tagent;
+  if (tagent && tagent.task_id != null && tagent.terminal_id && sourceKey === 'local') {
+    for (const group of groups || []) {
+      for (const task of group.tasks || []) {
+        if (String(task.id) === String(tagent.task_id)) return { kind: 'terminal', taskId: task.id, terminalId: String(tagent.terminal_id) };
+      }
+    }
+  }
+  const resume = context && context.session && context.session.resume;
+  return resume ? { kind: 'copy', command: String(resume) } : null;
+}
+
+// The absolute path of a file of the context (`files[].path` is relative to `context.cwd`, or already absolute); null when it cannot be told.
+export function contextFilePath(context, file) {
+  const name = String((file && file.path) || '');
+  if (!name) return null;
+  if (name.startsWith('/')) return name;
+  const cwd = String((context && context.cwd) || '');
+  return cwd.startsWith('/') ? `${cwd.replace(/\/+$/, '')}/${name.replace(/^\.\//, '')}` : null;
+}

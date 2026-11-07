@@ -14,7 +14,7 @@ import { Pill, named, t } from './common.jsx';
 import { Field } from './Form.jsx';
 import TextField from './TextField.jsx';
 import { Icon } from './Icons.jsx';
-import { PRIORITIES, PRIORITY_LABELS, REMIND_STATUSES, STATUSES, STATUS_LABELS, groupItems, overdue, patchFor, safeLink } from './attention-model.mjs';
+import { PRIORITIES, PRIORITY_LABELS, REMIND_STATUSES, STATUSES, STATUS_LABELS, contextFilePath, contextOf, groupItems, jumpBack, overdue, patchFor, pendingLine, safeLink, timeline } from './attention-model.mjs';
 
 // T-Attention: the tasks agents and services report (through listener plugins, the `t-attention` CLI) and the user's own, in one list
 // ("Attention" in row 2). Phone: a full-screen sheet; wide: the right side panel (like the file viewer and the file tree). The list and the live
@@ -28,7 +28,8 @@ const PRIORITY_COLOR = { high: 'error.light', medium: 'warning.light', low: 'tex
 
 function Row({ item, ui, onOpen }) {
   const done = item.status === 'done';
-  const reason = REMIND_STATUSES.includes(item.status) && item.attention_reason;
+  // A row that needs the user shows what is pending (the context), else the reason.
+  const reason = REMIND_STATUSES.includes(item.status) && pendingLine(item);
   const late = overdue(item);
   const toggle = async () => {
     try { await ui.actions.attentionUpdate(item.id, { status: done ? 'todo' : 'done' }); }
@@ -42,7 +43,7 @@ function Row({ item, ui, onOpen }) {
       </IconButton>
       <ListItemButton className="h5-attention-open" onClick={() => onOpen(item.id)} sx={{ flex: '1 1 auto', minWidth: 0, display: 'block', py: 1, pl: 0.5, pr: 2 }}>
         <Box className="h5-attention-title" sx={{ fontSize: 15, lineHeight: 1.35, overflowWrap: 'anywhere', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', color: done || item.status === 'cancelled' ? 'text.secondary' : 'text.primary', textDecoration: done ? 'line-through' : 'none' }}>{item.title}</Box>
-        {reason ? <Box className="h5-attention-reason" sx={{ mt: 0.25, fontSize: 13, lineHeight: 1.35, color: REASON_COLOR[item.status], overflowWrap: 'anywhere', display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{item.attention_reason}</Box> : null}
+        {reason ? <Box className="h5-attention-reason" sx={{ mt: 0.25, fontSize: 13, lineHeight: 1.35, color: REASON_COLOR[item.status], overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{reason}</Box> : null}
         {(item.source && item.source !== 'user') || (item.priority && item.priority !== 'none') || item.due_date || item.status === 'failed' || item.status === 'cancelled' ? (
           <Box sx={{ mt: 0.5, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 0.75, fontSize: 12, color: 'text.secondary' }}>
             {item.source && item.source !== 'user' ? <Pill className="h5-attention-source" label={item.source} translate="no" sx={{ height: 20, fontSize: 12, px: 1 }} /> : null}
@@ -80,17 +81,158 @@ function QuickAdd({ ui }) {
 }
 
 const when = value => { const at = Date.parse(value || ''); return Number.isFinite(at) ? new Date(at).toLocaleString() : ''; };
-function eventText(event) {
-  if (event.type === 'created') return t('Created');
-  if (event.type === 'deleted') return t('Deleted');
-  if (event.type === 'status') return `${t(STATUS_LABELS[event.from_status] || event.from_status || '')} → ${t(STATUS_LABELS[event.to_status] || event.to_status || '')}`;
-  let fields = [];
-  try { fields = Object.keys((typeof event.data === 'string' ? JSON.parse(event.data) : event.data) || {}); } catch { /* no fields */ }
-  return fields.length ? `${t('Updated')}: ${fields.join(', ')}` : t('Updated');
+const clock = value => { const at = Date.parse(value || ''); return Number.isFinite(at) ? new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''; };
+const dayLabel = day => { const at = Date.parse(`${day}T12:00:00`); return Number.isFinite(at) ? new Date(at).toLocaleDateString([], { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' }) : day; };
+const CODE = { m: 0, p: 1, borderRadius: 1, bgcolor: 'action.hover', fontFamily: MONO, fontSize: 12.5, lineHeight: 1.45, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', maxHeight: 160, overflowY: 'auto' };
+const HEAD = { fontSize: 12, fontWeight: 600, color: 'text.secondary', textTransform: 'none', mb: 0.25 };
+
+// THE place that opens a file named by a task's context. A later branch adds a preview of any path (/api/fs/content, `ui.actions.openAnyPath`);
+// until then a file opens in the file sheet when it lies inside the working directory of a task of this machine (h5.js `openLocalPath`), else
+// only its path is shown. Returns the action, or null when the file cannot be opened here.
+export function contextFileAction(ui, absolute) {
+  if (!absolute) return null;
+  if (typeof ui.actions.openAnyPath === 'function') return () => ui.actions.openAnyPath(absolute);
+  if (ui.actions.canOpenLocalPath && ui.actions.canOpenLocalPath(absolute)) return () => ui.actions.openLocalPath(absolute);
+  return null;
+}
+
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); return true; } catch { /* plain HTTP: the old way */ }
+  const area = document.createElement('textarea');
+  area.value = text;
+  area.setAttribute('readonly', '');
+  area.style.cssText = 'position:fixed;top:0;left:0;opacity:0';
+  document.body.appendChild(area);
+  area.select();
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch { ok = false; }
+  area.remove();
+  return ok;
+}
+
+// The context card at the top of the edit view: what the task is, how far it got, what it needs, the AI summary, where it runs, and the way back.
+function ContextCard({ item, state, ui, onLeave }) {
+  const context = contextOf(item);
+  const [asking, setAsking] = useState(false);
+  const pending = context.pending && context.pending.text ? context.pending : null;
+  const files = Array.isArray(context.files) ? context.files.slice(0, 50) : [];
+  const summary = context.summary && context.summary.text ? context.summary : null;
+  const jump = jumpBack(context, { sourceKey: state.sourceKey, groups: state.taskList && state.taskList.groups });
+  const reply = String(context.last_reply || '').trim();
+  const turns = Number(context.turns) || 0;
+  const place = [context.cwd, context.branch].filter(Boolean);
+  if (!context.goal && !reply && !pending && !files.length && !summary && !place.length && !jump) return null;
+  const refresh = async () => {
+    setAsking(true);
+    try { await ui.actions.attentionSummarize(item.id); ui.notify(t('A new summary was asked for')); }
+    catch (error) { ui.notify(`${t('Could not ask for a summary')}: ${error.message}`, 'error'); }
+    finally { setAsking(false); }
+  };
+  const go = async () => {
+    if (jump.kind === 'terminal') { onLeave(); ui.actions.openRow(jump.taskId, { kind: 'terminal', id: jump.terminalId }); return; }
+    ui.notify(t((await copyText(jump.command)) ? 'Resume command copied' : 'Could not copy. Select the text and copy it by hand'), 'success');
+  };
+  return (
+    <Box id="h5-attention-context" sx={{ display: 'flex', flexDirection: 'column', gap: 1.5, p: 1.5, borderRadius: 2, border: 1, borderColor: 'divider', bgcolor: 'rgba(255,255,255,.02)' }}>
+      {pending ? (
+        <Box id="h5-attention-context-pending" sx={{ color: REASON_COLOR.waiting_user }}>
+          <Box sx={{ ...HEAD, color: 'warning.light' }}>{t('Needs you')}</Box>
+          <Box sx={{ fontSize: 14, overflowWrap: 'anywhere', whiteSpace: 'pre-wrap', color: 'text.primary' }}>{pending.text}</Box>
+          {pending.command ? <Box component="pre" id="h5-attention-context-command" translate="no" sx={{ ...CODE, mt: 0.75 }}>{pending.command}</Box> : null}
+        </Box>
+      ) : null}
+      {summary ? (
+        <Box id="h5-attention-context-summary">
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <Box sx={{ ...HEAD, flex: '1 1 auto', mb: 0 }}>{t('AI summary')}</Box>
+            <Button id="h5-attention-summary-refresh" size="small" disabled={asking} onClick={() => void refresh()}>{t('Refresh')}</Button>
+          </Box>
+          <Box sx={{ fontSize: 14, whiteSpace: 'pre-line', overflowWrap: 'anywhere' }}>{summary.text}</Box>
+          <Box sx={{ fontSize: 12, color: 'text.secondary' }}>{when(summary.at)}{summary.model ? ' \u00b7 ' : ''}<span translate="no">{summary.model || ''}</span></Box>
+        </Box>
+      ) : null}
+      {context.goal ? (
+        <Box id="h5-attention-context-goal">
+          <Box sx={HEAD}>{t('Goal')}</Box>
+          <Box sx={{ fontSize: 14, overflowWrap: 'anywhere', whiteSpace: 'pre-wrap', display: '-webkit-box', WebkitLineClamp: 6, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{context.goal}</Box>
+        </Box>
+      ) : null}
+      {reply || files.length || turns ? (
+        <Box id="h5-attention-context-progress">
+          <Box sx={HEAD}>{t('Progress')}</Box>
+          {reply ? <Box sx={{ fontSize: 14, overflowWrap: 'anywhere', whiteSpace: 'pre-wrap', display: '-webkit-box', WebkitLineClamp: 4, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{reply}</Box> : null}
+          <Box sx={{ fontSize: 12, color: 'text.secondary', mt: 0.25 }}>
+            {[when(context.turn_started_at || item.updated_at), turns ? `${t('Turns')}: ${turns}` : ''].filter(Boolean).join(' \u00b7 ')}
+          </Box>
+          {files.length ? (
+            <Box component="ul" id="h5-attention-context-files" aria-label={t('Changed files')} sx={{ listStyle: 'none', m: 0, mt: 0.75, p: 0 }}>
+              {files.map(file => {
+                const absolute = contextFilePath(context, file);
+                const open = contextFileAction(ui, absolute);
+                const counts = (
+                  <Box component="span" sx={{ flex: '0 0 auto', fontFamily: MONO, fontSize: 12 }}>
+                    <Box component="span" sx={{ color: 'success.light' }}>{`+${Number(file.added) || 0}`}</Box>{' '}
+                    <Box component="span" sx={{ color: 'error.light' }}>{`\u2212${Number(file.deleted) || 0}`}</Box>
+                  </Box>
+                );
+                const name = <Box component="span" translate="no" sx={{ flex: '1 1 auto', minWidth: 0, fontFamily: MONO, fontSize: 12.5, color: open ? 'primary.light' : 'text.secondary', textDecoration: open ? 'underline' : 'none', textUnderlineOffset: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', direction: 'rtl', textAlign: 'left' }}><bdi>{file.path}</bdi></Box>;
+                return (
+                  <Box component="li" key={file.path} className="h5-attention-file" data-path={file.path} data-open={open ? 'true' : undefined}>
+                    {open ? (
+                      <ButtonBase onClick={() => { onLeave(); open(); }} title={absolute} sx={{ width: '100%', display: 'flex', gap: 1, alignItems: 'center', minHeight: 36, px: 0.5, borderRadius: 1, color: 'primary.light', 'html[data-input="touch"] &': { minHeight: 44 } }}>{name}{counts}</ButtonBase>
+                    ) : (
+                      <Box title={absolute || file.path} sx={{ display: 'flex', gap: 1, alignItems: 'center', minHeight: 32, px: 0.5 }}>{name}{counts}</Box>
+                    )}
+                  </Box>
+                );
+              })}
+            </Box>
+          ) : null}
+        </Box>
+      ) : null}
+      {place.length ? (
+        <Box id="h5-attention-context-place" translate="no" sx={{ fontFamily: MONO, fontSize: 12, color: 'text.secondary', overflowWrap: 'anywhere' }}>
+          {context.cwd || ''}{context.branch ? `${context.cwd ? ' \u00b7 ' : ''}${context.branch}` : ''}{context.host ? ` \u00b7 ${context.host}` : ''}
+        </Box>
+      ) : null}
+      {jump ? (
+        <Button id="h5-attention-jump" variant="outlined" onClick={() => void go()} sx={{ alignSelf: 'flex-start' }} title={jump.kind === 'copy' ? jump.command : undefined}>
+          {t(jump.kind === 'terminal' ? 'Open terminal' : 'Copy resume command')}
+        </Button>
+      ) : null}
+    </Box>
+  );
+}
+
+// The history as a timeline: readable sentences with their times, grouped by day, the newest last.
+function Timeline({ events }) {
+  if (events === null) return <LinearProgress aria-label={t('Loading…')} />;
+  const days = timeline(events);
+  if (!days.length) return <Typography variant="body2" color="text.secondary">{t('No history yet')}</Typography>;
+  return (
+    <Box id="h5-attention-history">
+      {days.map(day => (
+        <Box key={day.day || 'none'} className="h5-attention-day" data-day={day.day}>
+          <Box sx={{ fontSize: 12, fontWeight: 600, color: 'text.secondary', pt: 1, pb: 0.25 }}>{day.day ? dayLabel(day.day) : ''}</Box>
+          <Box component="ol" sx={{ listStyle: 'none', m: 0, p: 0 }}>
+            {day.items.map(entry => (
+              <Box component="li" key={entry.id} className="h5-attention-event" data-kind={entry.kind} sx={{ display: 'flex', gap: 1, py: 0.5, borderBottom: 1, borderColor: 'divider', fontSize: 13 }}>
+                <Box component="span" sx={{ flex: '0 0 auto', color: 'text.secondary', fontVariantNumeric: 'tabular-nums', minWidth: 44 }}>{clock(entry.at)}</Box>
+                <Box component="span" className="h5-attention-sentence" sx={{ flex: '1 1 auto', minWidth: 0, overflowWrap: 'anywhere', whiteSpace: 'pre-wrap' }}>
+                  {entry.text ? `${t(entry.key)}: ${entry.text}` : t(entry.key)}
+                  {entry.actor && ['status', 'created', 'updated', 'deleted'].includes(entry.kind) ? <Box component="span" translate="no" sx={{ color: 'text.secondary' }}>{` \u00b7 ${entry.actor}`}</Box> : null}
+                </Box>
+              </Box>
+            ))}
+          </Box>
+        </Box>
+      ))}
+    </Box>
+  );
 }
 
 // The edit view of one task. The form starts from the item; Save sends only the changed fields (PATCH). The history is read when it opens.
-function EditDialog({ item, wide, ui, onClose }) {
+function EditDialog({ item, state, wide, ui, onClose, onLeave }) {
   const [form, setForm] = useState(() => ({ title: item.title || '', notes: item.notes || '', status: item.status, priority: item.priority || 'none', due_date: item.due_date || '' }));
   const [events, setEvents] = useState(null); // null: loading
   const [busy, setBusy] = useState(false);
@@ -129,7 +271,8 @@ function EditDialog({ item, wide, ui, onClose }) {
         <IconButton id="h5-attention-edit-close" {...named(t('Close'))} onClick={onClose}><Icon name="close" size={22} /></IconButton>
       </Box>
       <Box sx={{ flex: '1 1 auto', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2, px: 2, pt: 2.5, pb: 2 }}>
-        {REMIND_STATUSES.includes(item.status) && item.attention_reason ? (
+        <ContextCard item={item} state={state} ui={ui} onLeave={onLeave} />
+        {REMIND_STATUSES.includes(item.status) && item.attention_reason && !(contextOf(item).pending && contextOf(item).pending.text) ? (
           <Box id="h5-attention-edit-reason" sx={{ p: 1.5, borderRadius: 2, border: 1, borderColor: REASON_COLOR[item.status], color: REASON_COLOR[item.status], fontSize: 14, overflowWrap: 'anywhere', whiteSpace: 'pre-wrap' }}>{item.attention_reason}</Box>
         ) : null}
         <Field id="h5-attention-edit-name" label="Title" value={form.title} onChange={set('title')} htmlInput={{ maxLength: 300 }} />
@@ -160,16 +303,7 @@ function EditDialog({ item, wide, ui, onClose }) {
         </Box>
         <Box component="section" aria-labelledby="h5-attention-history-title">
           <Typography id="h5-attention-history-title" variant="subtitle2" component="h3" sx={{ mb: 0.5 }}>{t('History')}</Typography>
-          {events === null ? <LinearProgress aria-label={t('Loading…')} /> : events.length ? (
-            <Box component="ol" id="h5-attention-history" sx={{ listStyle: 'none', m: 0, p: 0 }}>
-              {events.map(event => (
-                <Box component="li" key={event.id} className="h5-attention-event" sx={{ py: 0.75, borderBottom: 1, borderColor: 'divider', fontSize: 13 }}>
-                  <Box sx={{ overflowWrap: 'anywhere' }}>{eventText(event)}</Box>
-                  <Box sx={{ color: 'text.secondary', fontSize: 12 }}>{when(event.at)}{event.actor ? ' · ' : ''}<span translate="no" style={{ fontFamily: MONO }}>{event.actor || ''}</span></Box>
-                </Box>
-              ))}
-            </Box>
-          ) : <Typography variant="body2" color="text.secondary">{t('No history yet')}</Typography>}
+          <Timeline events={events} />
         </Box>
       </Box>
       <Dialog open={confirming} onClose={() => setConfirming(false)} aria-labelledby="h5-attention-delete-title" id="h5-attention-delete" slotProps={{ paper: { sx: { backgroundImage: 'none', m: 2 } } }}>
@@ -245,7 +379,8 @@ export function AttentionPanel({ state, ui }) {
           );
         })}
       </Box>
-      {item ? <EditDialog key={item.id} item={item} wide={side} ui={ui} onClose={() => setEditing(null)} /> : null}
+      {/* onLeave: the user goes to a terminal or a file from the context card; the edit view closes, and on a phone the sheet too. */}
+      {item ? <EditDialog key={item.id} item={item} state={state} wide={side} ui={ui} onClose={() => setEditing(null)} onLeave={() => { setEditing(null); if (!side) ui.actions.closeAttention(); }} /> : null}
     </>
   );
   if (side) {

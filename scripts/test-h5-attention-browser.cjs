@@ -4,7 +4,10 @@
 //   (Done & failed folded) and the order inside a group; source badge and reason; quick add (POST body); the circle marks done (PATCH); the edit
 //   view (history, PATCH of the changed fields only, link) and delete with a confirmation; a live event moving a task into Needs you gives a
 //   toast, the badge, a system notification and a sound, a change made on this page gives none; a lost stream connects again and reads the list
-//   again; the Android back button and Escape close one layer; Settings "T-Attention": tokens (create shown once, revoke), sound, notifications.
+//   again; the Android back button and Escape close one layer; Settings "T-Attention": tokens (create shown once, revoke), sound, notifications,
+//   AI summary (off by default, provider / model, privacy note). Context recall: the pending text on the row, the context card (needs you with the
+//   command, AI summary with refresh, goal, progress with files: one inside a task folder opens in the file sheet, one outside shows its path),
+//   folder and branch, the timeline by day, "Open terminal" (the T-Agent terminal) and "Copy resume command".
 // - phone 320x640 (touch): seven 44px buttons in row 2 (Docs left out, reached from the saved commands list); the sheet's controls are 44px.
 // - computer 1440x900 (mouse): the right side panel (html[data-side-panel]), one panel at a time with Docs, Escape closes it, the edit view is a
 //   normal dialog.
@@ -20,13 +23,22 @@ const SHOTS = process.env.H5_SHOT_DIR || '';
 const AT = '2026-11-05T10:00:00Z';
 
 const ITEMS = () => [
-  { id: 1, title: 'Allow Bash in the repo', status: 'waiting_user', priority: 'none', source: 'claude', attention_reason: 'Claude needs your permission to use Bash', updated_at: AT, created_at: AT },
+  { id: 1, title: 'Allow Bash in the repo', status: 'waiting_user', priority: 'none', source: 'claude', attention_reason: 'Claude needs your permission to use Bash', updated_at: AT, created_at: AT,
+    context: {
+      goal: 'Add a login page with a remember-me box', last_reply: 'The form is done. Next I run the tests.', turns: 3, turn_started_at: AT,
+      pending: { kind: 'permission', text: 'Allow Bash: npm test', tool: 'Bash', command: 'npm test -- --watch=false' },
+      files: [{ path: 'src/login.js', added: 40, deleted: 2 }, { path: '/etc/hosts', added: 1, deleted: 0 }],
+      cwd: '/work/fix-login', branch: 'feat/login', host: 'mac',
+      session: { agent: 'claude', id: 's1', resume: "cd '/work/fix-login' && claude --resume s1" },
+      tagent: { task_id: '1', terminal_id: 't2' },
+      summary: { text: 'Doing: login page\nProgress: form done, tests next\nNeeds: allow npm test', at: AT, model: 'deepseek-chat' },
+    } },
   { id: 2, title: 'Check the PR', status: 'review', priority: 'none', source: 'claude', attention_reason: 'Claude finished. Review the result.', link_url: 'https://example.test/pr/1', link_label: 'PR #1', updated_at: AT, created_at: AT },
   { id: 3, title: 'Refactor login', status: 'working', priority: 'none', source: 'claude', updated_at: AT, created_at: AT },
   { id: 4, title: 'Write release notes', status: 'todo', priority: 'low', source: 'user', updated_at: AT, created_at: AT },
   { id: 5, title: 'Fix the build', status: 'todo', priority: 'high', due_date: '2026-11-20', source: 'cli', updated_at: AT, created_at: AT },
   { id: 6, title: 'Old thing', status: 'done', priority: 'none', source: 'user', updated_at: AT, created_at: AT },
-  { id: 7, title: 'Deploy', status: 'failed', priority: 'none', source: 'cli', attention_reason: 'Exit code 1', updated_at: AT, created_at: AT },
+  { id: 7, title: 'Deploy', status: 'failed', priority: 'none', source: 'cli', attention_reason: 'Exit code 1', updated_at: AT, created_at: AT, context: { session: { agent: 'claude', id: 's7', resume: "cd '/srv' && claude --resume s7" }, tagent: { task_id: '55', terminal_id: 'x' } } },
   { id: 8, title: 'Pay invoice', status: 'todo', priority: 'high', due_date: '2026-11-10', source: 'user', updated_at: AT, created_at: AT },
 ];
 
@@ -36,7 +48,7 @@ async function openPage(browser, { viewport, touch = true, notify = true }) {
   const page = await context.newPage();
   const errors = [];
   const calls = []; // { method, path, body } of every /api/attention request
-  const db = { items: ITEMS(), next: 100, tokens: [{ id: 1, name: 'laptop claude', created_at: AT, last_used_at: null, revoked_at: null }] };
+  const db = { items: ITEMS(), next: 100, summary: { enabled: false, provider: 'deepseek', model: '' }, tokens: [{ id: 1, name: 'laptop claude', created_at: AT, last_used_at: null, revoked_at: null }] };
   page.on('pageerror', error => errors.push(error.message));
   await page.addInitScript(({ notify: on }) => {
     window.sockets = [];
@@ -81,13 +93,20 @@ async function openPage(browser, { viewport, touch = true, notify = true }) {
     if (p === '/api/remote-servers') return json([]);
     if (p === '/api/tasks' && method === 'GET') return json([{ id: 1, title: 'Fix login', status: 'doing', work_dir: '/work/fix-login' }]);
     if (p === '/api/task-groups') return json([{ key: 'doing', name: 'In progress', sort_order: 1 }]);
-    if (p === '/api/tasks/1/terminals') return json([{ terminal_id: 't1', title: 'Terminal 1' }]);
+    if (p === '/api/tasks/1/terminals') return json([{ terminal_id: 't1', title: 'Terminal 1' }, { terminal_id: 't2', title: 'Claude 1', agent: 'claude' }]);
     if (/\/agent\/conversations$/.test(p)) return json([]);
-    if (p === '/api/tasks/1/files/content') return json({ path: 'DESIGN.md', content: '# Design of Fix login\n\nText.\n' });
+    if (p === '/api/tasks/1/files/content') {
+      const file = url.searchParams.get('path');
+      return json({ path: file, content: file === 'DESIGN.md' ? '# Design of Fix login\n\nText.\n' : 'const login = 1;\n' });
+    }
+    if (p === '/api/translate/config') return json({ provider: 'deepseek', providers: { deepseek: { label: 'DeepSeek', hasApiKey: true }, glm: { label: 'GLM', hasApiKey: false } } });
     if (p.startsWith('/api/attention')) {
       const body = request.postData() ? JSON.parse(request.postData()) : undefined;
       calls.push({ method, path: p + url.search, body });
       if (p === '/api/attention/tokens' && method === 'GET') return json({ tokens: db.tokens });
+      if (p === '/api/attention/settings/summary' && method === 'GET') return json(db.summary);
+      if (p === '/api/attention/settings/summary' && method === 'PUT') { db.summary = { ...body }; return json(db.summary); }
+      if (/^\/api\/attention\/\d+\/summarize$/.test(p) && method === 'POST') return json({ ok: true }, 202);
       if (p === '/api/attention/tokens' && method === 'POST') { const token = { id: db.tokens.length + 1, name: body.name, created_at: AT, last_used_at: null, revoked_at: null }; db.tokens.push(token); return json({ id: token.id, name: token.name, token: 'tatt_0123456789abcdefghijklmnopqrstuvwxyzABCDEFG' }, 201); }
       const token = p.match(/^\/api\/attention\/tokens\/(\d+)$/);
       if (token && method === 'DELETE') { db.tokens.find(entry => entry.id === Number(token[1])).revoked_at = AT; return route.fulfill({ status: 204, body: '' }); }
@@ -98,7 +117,16 @@ async function openPage(browser, { viewport, touch = true, notify = true }) {
         const id = Number(one[1]);
         const item = db.items.find(entry => entry.id === id);
         if (!item) return json({ error: 'NOT_FOUND', message: 'Not found' }, 404);
-        if (method === 'GET') return json({ item, events: [{ id: 2, item_id: id, at: AT, actor: 'claude', type: 'status', from_status: 'working', to_status: item.status, data: null }, { id: 1, item_id: id, at: AT, actor: 'claude', type: 'created', data: null }] });
+        if (method === 'GET') {
+          const events = [
+            { id: 5, item_id: id, at: '2026-11-05T10:00:00Z', actor: 'claude', type: 'status', from_status: 'working', to_status: item.status, data: null },
+            { id: 4, item_id: id, at: '2026-11-05T09:59:00Z', actor: 'claude', type: 'activity', data: { kind: 'permission', text: 'Bash: npm test' } },
+            { id: 3, item_id: id, at: '2026-11-04T12:00:00Z', actor: 'claude', type: 'updated', data: { context: {} } },
+            { id: 2, item_id: id, at: '2026-11-04T11:00:00Z', actor: 'claude', type: 'activity', data: { kind: 'prompt', text: 'Add a login page' } },
+            { id: 1, item_id: id, at: '2026-11-04T10:59:00Z', actor: 'claude', type: 'created', data: null },
+          ];
+          return json({ item, events });
+        }
         if (method === 'PATCH') { Object.assign(item, body, { updated_at: new Date().toISOString() }); return json(item); }
         if (method === 'DELETE') { db.items = db.items.filter(entry => entry.id !== id); return route.fulfill({ status: 204, body: '' }); }
       }
@@ -160,7 +188,8 @@ const row2 = page => page.evaluate(() => [...document.querySelectorAll('#h5-acti
       assert.equal(await page.locator('#h5-attention-closed-toggle').getAttribute('aria-expanded'), 'false');
       assert.equal(await page.locator('#h5-attention-closed-toggle').textContent(), 'Done & failed (2)');
       assert.equal(await row(page, 1).locator('.h5-attention-source').textContent(), 'claude', 'the source badge');
-      assert.equal(await row(page, 1).locator('.h5-attention-reason').textContent(), 'Claude needs your permission to use Bash');
+      assert.equal(await row(page, 1).locator('.h5-attention-reason').textContent(), 'Allow Bash: npm test', 'a row that needs the user shows what is pending');
+      assert.equal(await row(page, 7).locator('.h5-attention-reason').count(), 0, 'Done & failed is folded');
       assert.equal(await row(page, 3).locator('.h5-attention-reason').count(), 0, 'a working task shows no reason');
       assert.equal(await row(page, 4).locator('.h5-attention-source').count(), 0, 'no badge for the user\'s own task');
       await page.locator('#h5-attention-closed-toggle').tap();
@@ -191,7 +220,8 @@ const row2 = page => page.evaluate(() => [...document.querySelectorAll('#h5-acti
       const edit = page.locator('#h5-attention-edit .MuiDialog-paper');
       await edit.waitFor({ state: 'visible' });
       await page.locator('#h5-attention-history .h5-attention-event').first().waitFor();
-      assert.equal(await page.locator('#h5-attention-history .h5-attention-event').count(), 2);
+      assert.equal(await page.locator('#h5-attention-history .h5-attention-event').count(), 4, 'the quiet context update is left out');
+      assert.equal(await page.locator('#h5-attention-context').count(), 0, 'no context card for a task without context');
       assert.equal(await page.locator('#h5-attention-edit-name').inputValue(), 'Write release notes');
       assert.equal(await page.locator('#h5-attention-edit-priority').inputValue(), 'low');
       const editBox = await edit.boundingBox();
@@ -279,12 +309,81 @@ const row2 = page => page.evaluate(() => [...document.querySelectorAll('#h5-acti
       await sheet.waitFor({ state: 'hidden' });
       assert.equal(await layerDepth(page), 0);
 
+      // Context recall: the card of a task that needs the user.
+      await page.locator('#h5-attention').tap();
+      await sheet.waitFor({ state: 'visible' });
+      await row(page, 1).locator('.h5-attention-open').tap();
+      await edit.waitFor({ state: 'visible' });
+      const card = page.locator('#h5-attention-context');
+      await card.waitFor();
+      assert.equal(await page.locator('#h5-attention-context-command').textContent(), 'npm test -- --watch=false');
+      assert.ok((await page.locator('#h5-attention-context-pending').textContent()).includes('Allow Bash: npm test'));
+      assert.equal(await page.locator('#h5-attention-edit-reason').count(), 0, 'the pending text replaces the reason box');
+      assert.ok((await page.locator('#h5-attention-context-summary').textContent()).includes('Progress: form done, tests next'));
+      assert.ok((await page.locator('#h5-attention-context-goal').textContent()).includes('Add a login page with a remember-me box'));
+      assert.ok((await page.locator('#h5-attention-context-progress').textContent()).includes('The form is done. Next I run the tests.'));
+      assert.ok((await page.locator('#h5-attention-context-progress').textContent()).includes('Turns: 3'));
+      assert.equal(await page.locator('#h5-attention-context-place').textContent(), '/work/fix-login \u00b7 feat/login \u00b7 mac');
+      assert.equal(await page.locator('.h5-attention-file[data-path="src/login.js"]').getAttribute('data-open'), 'true', 'a file inside a task folder can be opened');
+      assert.equal(await page.locator('.h5-attention-file[data-path="/etc/hosts"]').getAttribute('data-open'), null, 'a file outside shows only its path');
+      assert.equal(await page.locator('.h5-attention-file[data-path="/etc/hosts"] button').count(), 0);
+      assert.ok((await page.locator('.h5-attention-file[data-path="src/login.js"]').textContent()).includes('+40'));
+      // The timeline: by day, oldest first, readable sentences.
+      await page.locator('#h5-attention-history .h5-attention-event').first().waitFor();
+      assert.equal(await page.locator('#h5-attention-history .h5-attention-day').count(), 2);
+      const sentences = await page.locator('#h5-attention-history .h5-attention-sentence').allTextContents();
+      assert.deepEqual(sentences, ['Created \u00b7 claude', 'You asked: Add a login page', 'Asked for permission: Bash: npm test', 'Now needs you \u00b7 claude']);
+      if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'h5-attention-context-phone.png') });
+      // AI summary refresh.
+      await page.locator('#h5-attention-summary-refresh').tap();
+      await notice(page).filter({ hasText: 'A new summary was asked for' }).waitFor();
+      assert.deepEqual(calls.filter(call => call.path.endsWith('/summarize')).map(call => [call.method, call.path]), [['POST', '/api/attention/1/summarize']]);
+      // Open terminal: the T-Agent terminal of the task (t2); the edit view and the sheet close.
+      assert.equal(await page.locator('#h5-attention-jump').textContent(), 'Open terminal');
+      await page.locator('#h5-attention-jump').tap();
+      await sheet.waitFor({ state: 'hidden' });
+      await page.waitForFunction(() => window.sockets.some(socket => socket.url.includes('t2')) && document.getElementById('h5-session-name').textContent === 'Claude 1');
+      // A file of the context opens in the file sheet (inside the folder of task 1).
+      await page.locator('#h5-attention').tap();
+      await sheet.waitFor({ state: 'visible' });
+      await row(page, 1).locator('.h5-attention-open').tap();
+      await page.locator('.h5-attention-file[data-path="src/login.js"] button').tap();
+      await page.locator('#h5-design-body .h5-file-line').first().waitFor();
+      assert.equal(await page.locator('#h5-design-title').textContent(), 'login.js');
+      assert.equal(await page.locator('#h5-design-path').textContent(), '/work/fix-login/src/login.js');
+      await page.locator('#h5-design-close').tap();
+      await page.locator('#h5-design-sheet .h5-design-panel').waitFor({ state: 'hidden' });
+      // Copy resume command: a task whose T-Agent task is not in this list.
+      await page.locator('#h5-attention').tap();
+      await sheet.waitFor({ state: 'visible' });
+      if (await page.locator('#h5-attention-closed-toggle').getAttribute('aria-expanded') === 'false') await page.locator('#h5-attention-closed-toggle').tap();
+      await row(page, 7).locator('.h5-attention-open').tap();
+      await edit.waitFor({ state: 'visible' });
+      assert.equal(await page.locator('#h5-attention-jump').textContent(), 'Copy resume command');
+      await page.locator('#h5-attention-jump').tap();
+      await notice(page).filter({ hasText: 'Resume command copied' }).waitFor();
+      await page.keyboard.press('Escape');
+      await edit.waitFor({ state: 'hidden' });
+      await page.keyboard.press('Escape');
+      await sheet.waitFor({ state: 'hidden' });
+
       // Settings "T-Attention": tokens (shown once, revoke), sound, system notifications.
       await page.evaluate(() => window.H5UI.set({ settingsOpen: true }));
       await page.locator('#h5-settings').waitFor({ state: 'visible' });
       await page.locator('#h5-set-attention .MuiAccordionSummary-root').tap();
       await page.waitForFunction(() => Boolean(document.querySelector('#h5-set-attention .MuiCollapse-entered')));
       await page.locator('#h5-attention-tokens .h5-attention-token').first().waitFor();
+      // AI summary: off by default; provider and model; the privacy note.
+      assert.equal(await page.locator('#h5-attention-summary-enabled').isChecked(), false);
+      assert.ok((await page.locator('#h5-attention-summary-privacy').textContent()).includes('sent to the chosen provider'));
+      assert.deepEqual(await page.locator('#h5-attention-summary-provider option').allTextContents(), ['DeepSeek', 'GLM (no key saved)']);
+      await page.locator('#h5-attention-summary-enabled').tap();
+      await page.locator('#h5-attention-summary-provider').selectOption('glm');
+      await page.locator('#h5-attention-summary-model').fill(' glm-4-flash ');
+      await page.locator('#h5-attention-summary-save').tap();
+      await page.locator('#h5-attention-summary-feedback', { hasText: 'Saved' }).waitFor();
+      assert.deepEqual(calls.filter(call => call.path === '/api/attention/settings/summary' && call.method === 'PUT').map(call => call.body), [{ enabled: true, provider: 'glm', model: 'glm-4-flash' }]);
+      assert.equal(await page.locator('#h5-attention-summary-enabled').isChecked(), true, 'the saved setting is shown again');
       assert.equal(await page.locator('#h5-attention-tokens .h5-attention-token').count(), 1);
       assert.equal(await page.locator('#h5-attention-sound').isChecked(), true, 'sound is on by default');
       assert.equal(await page.locator('#h5-attention-notify-state').textContent(), 'System notifications are on');
@@ -369,7 +468,7 @@ const row2 = page => page.evaluate(() => [...document.querySelectorAll('#h5-acti
       const edit = page.locator('#h5-attention-edit .MuiDialog-paper');
       await edit.waitFor({ state: 'visible' });
       assert.ok((await edit.boundingBox()).width < 700, 'a normal dialog on a wide screen');
-      assert.equal(await page.locator('#h5-attention-edit-reason').textContent(), 'Claude needs your permission to use Bash');
+      assert.equal(await page.locator('#h5-attention-context-command').textContent(), 'npm test -- --watch=false', 'the context card on a wide screen too');
       if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'pc-1440-attention-edit.png') });
       await page.keyboard.press('Escape');
       await edit.waitFor({ state: 'hidden' });

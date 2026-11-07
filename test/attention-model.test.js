@@ -95,3 +95,66 @@ test('overdue: a due date before today on a task that is not closed', async () =
   assert.equal(overdue(item(1, 'done', { due_date: '2026-11-01' }), '2026-11-08'), false);
   assert.equal(overdue(item(1, 'todo'), '2026-11-08'), false);
 });
+
+test('context: parsed from an object or a JSON string; the pending line wins over the reason', async () => {
+  const { contextOf, pendingLine } = await load();
+  assert.deepEqual(contextOf({ context: { goal: 'g' } }), { goal: 'g' });
+  assert.deepEqual(contextOf({ context: '{"goal":"g"}' }), { goal: 'g' });
+  assert.deepEqual(contextOf({ context: 'not json' }), {});
+  assert.deepEqual(contextOf(null), {});
+  assert.equal(pendingLine(item(1, 'waiting_user', { attention_reason: 'r', context: { pending: { kind: 'permission', text: 'Allow Bash: npm test' } } })), 'Allow Bash: npm test');
+  assert.equal(pendingLine(item(1, 'waiting_user', { attention_reason: 'r' })), 'r');
+  assert.equal(pendingLine(item(1, 'todo')), '');
+});
+
+test('timeline sentences: activity kinds, status changes, created; quiet context updates are left out', async () => {
+  const { eventSentence } = await load();
+  assert.deepEqual(eventSentence({ type: 'activity', data: { kind: 'prompt', text: 'Add login' } }), { key: 'You asked', text: 'Add login', kind: 'prompt' });
+  assert.deepEqual(eventSentence({ type: 'activity', data: '{"kind":"permission","text":"Bash: rm -rf build"}' }), { key: 'Asked for permission', text: 'Bash: rm -rf build', kind: 'permission' });
+  assert.equal(eventSentence({ type: 'activity', data: { kind: 'turn_end', text: '' } }).key, 'Finished a turn');
+  assert.equal(eventSentence({ type: 'activity', data: { kind: 'something-new', text: 'x' } }).key, 'Note', 'an unknown kind is a note');
+  assert.deepEqual(eventSentence({ type: 'status', from_status: 'working', to_status: 'waiting_user' }), { key: 'Now needs you', text: '', kind: 'status', status: 'waiting_user' });
+  assert.equal(eventSentence({ type: 'status', to_status: 'review' }).key, 'Ready for your review');
+  assert.equal(eventSentence({ type: 'status', to_status: 'odd' }).key, 'Status changed');
+  assert.equal(eventSentence({ type: 'created' }).key, 'Created');
+  assert.deepEqual(eventSentence({ type: 'updated', data: { title: 'x', priority: 'high', context: {} } }), { key: 'Changed', text: 'title, priority', kind: 'updated' });
+  assert.equal(eventSentence({ type: 'updated', data: { context: {}, attention_reason: 'x' } }), null);
+  assert.equal(eventSentence({ type: 'weird' }), null);
+});
+
+test('timeline: oldest first, grouped by local day', async () => {
+  const { timeline, dayOf } = await load();
+  const local = (d, h) => new Date(2026, 10, d, h, 0).toISOString();
+  const events = [ // newest first, as the API sends them
+    { id: 5, at: local(6, 9), type: 'status', to_status: 'waiting_user', actor: 'claude' },
+    { id: 4, at: local(6, 8), type: 'activity', data: { kind: 'prompt', text: 'Continue' }, actor: 'claude' },
+    { id: 3, at: local(5, 18), type: 'updated', data: { context: {} } },
+    { id: 2, at: local(5, 17), type: 'activity', data: { kind: 'turn_end', text: 'Done with step 1' } },
+    { id: 1, at: local(5, 16), type: 'created', actor: 'claude' },
+  ];
+  const days = timeline(events);
+  assert.deepEqual(days.map(day => day.day), [dayOf(local(5, 12)), dayOf(local(6, 12))]);
+  assert.deepEqual(days[0].items.map(entry => entry.id), [1, 2], 'the quiet update is left out');
+  assert.deepEqual(days[1].items.map(entry => [entry.key, entry.text]), [['You asked', 'Continue'], ['Now needs you', '']]);
+  assert.equal(days[1].items[1].actor, 'claude');
+  assert.deepEqual(timeline(null), []);
+});
+
+test('jump back: the T-Agent terminal when its task is in the local list, else the resume command', async () => {
+  const { jumpBack } = await load();
+  const groups = [{ tasks: [{ id: 7 }, { id: 9 }] }];
+  const context = { tagent: { task_id: '9', terminal_id: 'h5-abc' }, session: { resume: "cd '/w' && claude --resume s1" } };
+  assert.deepEqual(jumpBack(context, { sourceKey: 'local', groups }), { kind: 'terminal', taskId: 9, terminalId: 'h5-abc' });
+  assert.deepEqual(jumpBack(context, { sourceKey: 'remote:2', groups }), { kind: 'copy', command: "cd '/w' && claude --resume s1" }, 'a remote Engine is shown');
+  assert.deepEqual(jumpBack({ ...context, tagent: { task_id: '99', terminal_id: 'x' } }, { sourceKey: 'local', groups }).kind, 'copy', 'the task is not here');
+  assert.equal(jumpBack({}, { sourceKey: 'local', groups }), null);
+});
+
+test('context file paths: relative to the folder, or already absolute', async () => {
+  const { contextFilePath } = await load();
+  assert.equal(contextFilePath({ cwd: '/w/app/' }, { path: 'src/a.js' }), '/w/app/src/a.js');
+  assert.equal(contextFilePath({ cwd: '/w/app' }, { path: './b.js' }), '/w/app/b.js');
+  assert.equal(contextFilePath({}, { path: '/abs/c.js' }), '/abs/c.js');
+  assert.equal(contextFilePath({ cwd: 'relative' }, { path: 'a' }), null);
+  assert.equal(contextFilePath({ cwd: '/w' }, {}), null);
+});

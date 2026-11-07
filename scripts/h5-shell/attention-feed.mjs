@@ -198,6 +198,8 @@ export function startAttentionFeed(ui, { t = text => text, api, EventSourceImpl 
     patch({ items: (current().items || []).filter(item => item.id !== id) });
   };
   ui.actions.attentionDetail = id => api('GET', `${BASE}/${encodeURIComponent(id)}`);
+  // A new AI summary (the server writes it into context.summary later and sends a change event; session only).
+  ui.actions.attentionSummarize = id => api('POST', `${BASE}/${encodeURIComponent(id)}/summarize`, {});
   // Settings (AttentionSettings.jsx): sound, system notifications.
   ui.actions.attentionPrefs = () => prefs();
   ui.actions.attentionSetSound = on => { write(SOUND_KEY, on ? null : '0'); if (on) playSound(); };

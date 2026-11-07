@@ -775,6 +775,8 @@ A call only rings (no voice) and hangs up when answered, declined or after the r
 
 Security: the login of account 1 (a session string) is **full access to that Telegram account**. It is stored encrypted on the Client together with `api_hash`, is never logged and never sent to the browser; **Log out of Telegram** ends it on Telegram and deletes it. Telegram may restrict accounts that automate too much, so keep the limits low and preferably use a secondary account as account 1.
 
+Third-party licenses: gramjs (`telegram` 2.26.22, MIT) pulls in `@cryptography/aes` (GPL-3.0-or-later) and uses it at runtime. That is fine for self-hosted personal use; if you distribute the project with this dependency, the GPL terms apply to the combined work.
+
 ### Environment check
 
 > **The page for this was removed in 2.88.0** (one page for computers and phones, see "One page" in `DESIGN.md`). The server endpoints stay (`/api/environment`), so scripts, other Clients and older pages keep working; the text below describes the feature as it was.

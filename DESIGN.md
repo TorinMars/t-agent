@@ -815,6 +815,8 @@ Tells the user on another channel when an attention item enters a status that ne
 - Call: `messages.getDhConfig` -> a random `a`, `g_a = g^a mod p`, `g_a_hash = sha256(g_a)` -> `phone.requestCall` (protocol udp_p2p + reflector, layers 65-92) -> wait for `updatePhoneCall` (`phoneCallAccepted` = answered, `phoneCallDiscarded` = declined) or the ring time (default 30 s, 5-120) -> `phone.discardCall` (reason missed after a timeout, hangup after an answer; nothing after a decline). No `confirmCall`, no audio. Errors (`USER_PRIVACY_RESTRICTED`, `FLOOD` with seconds, others) give the message fallback.
 - A connected client is reused for notifications and closed after 10 idle minutes.
 
+**Third-party licenses.** gramjs (`telegram` 2.26.22, MIT) pulls in `@cryptography/aes` (GPL-3.0-or-later), which it uses at runtime (`telegram/crypto`). Accepted for this self-hosted tool: fine for self-hosted personal use; distributing the project with this dependency means the GPL terms apply to the combined work.
+
 **Security and limits.** The account 1 session is full access to that Telegram account (messages, contacts, other sessions): it is stored with AES-256-GCM under the session secret like the other per-user secrets, and anyone with the data folder and `.env` can use it. Prefer a secondary account as account 1. Automating a user account is allowed by the API terms, but Telegram may limit or ban accounts that send too much or call too often: keep the hourly limits low (defaults 20 messages, 6 calls). Account 2 must allow calls from account 1. Not tried with a real Telegram login (no credentials here): the login, message and call flows are verified against a mocked gramjs only.
 
 ## Development notes

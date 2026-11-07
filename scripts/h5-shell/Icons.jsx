@@ -80,6 +80,10 @@ const DRAWN = {
   keyShift: 'M12 3.5L3.5 12.5H8V20h8v-7.5h4.5z',
   // Caps lock (the terminal on-screen keyboard, Shift tapped twice): the Shift arrow, shorter, over a bar
   keyCapsLock: 'M12 3L3.5 11.5H8V16h8v-4.5h4.5z M8 20h8',
+  // Wheel strip in a full-screen program (the spring thumb): a chevron above it (pull up = older) and one below it (pull down = newer).
+  // Shown at 14px inside the thin strip, not 22px: they mark the direction and are not buttons.
+  chevronUp: 'M6 15l6-6 6 6',
+  chevronDown: 'M6 9l6 6 6-6',
 };
 
 export function Icon({ name, size = 24 }) {

@@ -44,14 +44,28 @@ body { -webkit-text-size-adjust: 100%; }
 /* Keep glyph measurement and drawing on xterm's fixed cell grid: Chrome's contextual CJK punctuation trimming breaks xterm's repeated glyph width
    measurement and made a mouse selection drift in earlier Chrome versions (moved from the old desktop style.css in 2.88.0). */
 .h5-terminal .xterm { text-spacing-trim: space-all; text-autospace: no-autospace; }
-/* The wheel strip (2px in from the screen edge, so the browser edge-swipe gesture keeps working): a transparent touch strip on the right edge, above the copy button. It takes the touches itself (touch-action: none) and
-   shows a faint track with ticks only while a finger is on it (and a moment after). */
-.h5-wheel { position: absolute; top: 0; right: 2px; bottom: 0; width: 40px; z-index: 2; background: transparent; touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
-.h5-wheel::before { content: ''; position: absolute; top: 0; bottom: 0; right: 0; width: 100%; opacity: 0; transition: opacity .4s ease; pointer-events: none;
-  background: linear-gradient(to left, rgba(255, 255, 255, .10), rgba(255, 255, 255, 0)), repeating-linear-gradient(to bottom, rgba(255, 255, 255, .28) 0 1px, transparent 1px 24px);
-  background-position: 0 0, right var(--h5-wheel-offset, 0px); background-size: 100% 100%, 14px 100%; background-repeat: no-repeat, repeat; }
-.h5-wheel.active::before { opacity: 1; transition-duration: .08s; }
-@media (prefers-reduced-motion: reduce) { .h5-wheel::before { transition: none; } }
+/* The wheel strip (2px in from the screen edge, so the browser edge-swipe gesture keeps working): a scrollbar on the right edge of the terminal,
+   drawn over the terminal's right margin (it is absolutely placed and never changes the columns). The 40px hit area takes the touches itself
+   (touch-action: none); only a 4px track and thumb are drawn, dim when idle and brighter while a finger is on it ('active').
+   data-mode (set by h5.js): 'bar' = normal buffer with history (thumb at --h5-thumb-top, --h5-thumb-size); 'spring' = full-screen program
+   (thumb in the middle, moved by --h5-spring-offset while pulled, springs back when released; chevrons above and below); 'none' = not drawn,
+   touches go through. */
+.h5-wheel { position: absolute; top: 0; right: 2px; bottom: 0; width: 40px; z-index: 2; background: transparent; touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; --h5-wheel-x: 4px; }
+.h5-wheel[data-mode="none"] { pointer-events: none; visibility: hidden; }
+.h5-wheel-track, .h5-wheel-thumb { position: absolute; right: var(--h5-wheel-x); width: 4px; border-radius: 2px; pointer-events: none; transition: background-color .4s ease, width .12s ease, right .12s ease; }
+.h5-wheel-track { top: 0; bottom: 0; background: rgba(255, 255, 255, .06); }
+.h5-wheel-thumb { top: var(--h5-thumb-top, 0px); height: var(--h5-thumb-size, 32px); background: rgba(255, 255, 255, .30); }
+.h5-wheel.active .h5-wheel-track { background: rgba(255, 255, 255, .14); transition-duration: .08s; }
+.h5-wheel.active .h5-wheel-thumb { width: 6px; right: calc(var(--h5-wheel-x) - 1px); background: rgba(255, 255, 255, .62); transition-duration: .08s; }
+.h5-wheel-chevron { display: none; position: absolute; right: calc(var(--h5-wheel-x) - 5px); width: 14px; height: 14px; line-height: 0; color: rgba(255, 255, 255, .45); pointer-events: none; transition: color .4s ease; }
+.h5-wheel.active .h5-wheel-chevron { color: rgba(255, 255, 255, .75); transition-duration: .08s; }
+.h5-wheel[data-mode="spring"] .h5-wheel-chevron { display: block; }
+.h5-wheel[data-mode="spring"] .h5-wheel-up { top: calc(50% - 16px - 20px); }
+.h5-wheel[data-mode="spring"] .h5-wheel-down { top: calc(50% + 16px + 6px); }
+.h5-wheel[data-mode="spring"] .h5-wheel-thumb { top: calc(50% - 16px); height: 32px; transform: translateY(var(--h5-spring-offset, 0px));
+  transition: background-color .4s ease, width .12s ease, right .12s ease, transform .32s cubic-bezier(.34, 1.56, .64, 1); }
+.h5-wheel[data-mode="spring"][data-pulling] .h5-wheel-thumb { transition: background-color .08s, width .12s ease, right .12s ease; } /* follows the finger at once */
+@media (prefers-reduced-motion: reduce) { .h5-wheel-track, .h5-wheel-thumb, .h5-wheel-chevron, .h5-wheel[data-mode="spring"] .h5-wheel-thumb { transition: none; } }
 .h5-empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 24px; color: var(--h5-muted); text-align: center; }
 
 /* The translate box and the microphone (the box is a plain textarea that voice-input.js and h5.js write to). */

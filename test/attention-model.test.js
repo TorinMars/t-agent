@@ -148,6 +148,17 @@ test('jump back: the T-Agent terminal when its task is in the local list, else t
   assert.deepEqual(jumpBack(context, { sourceKey: 'remote:2', groups }), { kind: 'copy', command: "cd '/w' && claude --resume s1" }, 'a remote Engine is shown');
   assert.deepEqual(jumpBack({ ...context, tagent: { task_id: '99', terminal_id: 'x' } }, { sourceKey: 'local', groups }).kind, 'copy', 'the task is not here');
   assert.equal(jumpBack({}, { sourceKey: 'local', groups }), null);
+  // A session of another machine (context.host is not this Client's host) never jumps to a local terminal of the same id.
+  assert.equal(jumpBack({ ...context, host: 'other-box' }, { sourceKey: 'local', groups, localHost: 'my-mac' }).kind, 'copy');
+  assert.equal(jumpBack({ ...context, host: 'My-Mac' }, { sourceKey: 'local', groups, localHost: 'my-mac' }).kind, 'terminal', 'the host is compared without case');
+});
+
+test('onThisMachine: context.host against the host of GET /api/attention; unknown on either side is this machine', async () => {
+  const { onThisMachine } = await load();
+  assert.equal(onThisMachine({ host: 'box' }, 'box'), true);
+  assert.equal(onThisMachine({ host: 'box' }, 'other'), false);
+  assert.equal(onThisMachine({}, 'other'), true);
+  assert.equal(onThisMachine({ host: 'box' }, null), true);
 });
 
 test('context file paths: relative to the folder, or already absolute', async () => {

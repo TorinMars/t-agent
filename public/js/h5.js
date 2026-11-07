@@ -2377,6 +2377,13 @@
     return best;
   };
   ui.actions.canOpenLocalPath = absolute => Boolean(localTaskFor(absolute));
+  // The preview of any path for T-Attention: the central list belongs to this Client, so its files are read with the local Engine's any-path read
+  // (`GET /api/fs/content`, read only, as the terminal user), whatever Engine the page shows. Attention.jsx calls it only for a context of this machine.
+  ui.actions.openAnyPath = absolute => {
+    if (typeof absolute !== 'string' || !(absolute.startsWith('/') || absolute === '~' || absolute.startsWith('~/'))) return false;
+    void openFileSheet(absolute, { link: true, absolute: true, from: LOCAL });
+    return true;
+  };
   ui.actions.openLocalPath = absolute => {
     const found = localTaskFor(absolute);
     if (!found) return false;

@@ -6,7 +6,8 @@
 //   toast, the badge, a system notification and a sound, a change made on this page gives none; a lost stream connects again and reads the list
 //   again; the Android back button and Escape close one layer; Settings "T-Attention": tokens (create shown once, revoke), sound, notifications,
 //   AI summary (off by default, provider / model, privacy note). Context recall: the pending text on the row, the context card (needs you with the
-//   command, AI summary with refresh, goal, progress with files: one inside a task folder opens in the file sheet, one outside shows its path),
+//   command, AI summary with refresh, goal, progress with files: a file of this machine opens with the any-path preview (/api/fs/content), one
+//   of a session on another machine (context.host) shows only its path),
 //   folder and branch, the timeline by day, "Open terminal" (the T-Agent terminal) and "Copy resume command".
 // - phone 320x640 (touch): seven 44px buttons in row 2 (Docs left out, reached from the saved commands list); the sheet's controls are 44px.
 // - computer 1440x900 (mouse): the right side panel (html[data-side-panel]), one panel at a time with Docs, Escape closes it, the edit view is a
@@ -38,7 +39,7 @@ const ITEMS = () => [
   { id: 4, title: 'Write release notes', status: 'todo', priority: 'low', source: 'user', updated_at: AT, created_at: AT },
   { id: 5, title: 'Fix the build', status: 'todo', priority: 'high', due_date: '2026-11-20', source: 'cli', updated_at: AT, created_at: AT },
   { id: 6, title: 'Old thing', status: 'done', priority: 'none', source: 'user', updated_at: AT, created_at: AT },
-  { id: 7, title: 'Deploy', status: 'failed', priority: 'none', source: 'cli', attention_reason: 'Exit code 1', updated_at: AT, created_at: AT, context: { session: { agent: 'claude', id: 's7', resume: "cd '/srv' && claude --resume s7" }, tagent: { task_id: '55', terminal_id: 'x' } } },
+  { id: 7, title: 'Deploy', status: 'failed', priority: 'none', source: 'cli', attention_reason: 'Exit code 1', updated_at: AT, created_at: AT, context: { session: { agent: 'claude', id: 's7', resume: "cd '/srv' && claude --resume s7" }, tagent: { task_id: '55', terminal_id: 'x' }, cwd: '/srv', host: 'linux-box', files: [{ path: 'deploy.sh', added: 2, deleted: 1 }] } },
   { id: 8, title: 'Pay invoice', status: 'todo', priority: 'high', due_date: '2026-11-10', source: 'user', updated_at: AT, created_at: AT },
 ];
 
@@ -48,6 +49,7 @@ async function openPage(browser, { viewport, touch = true, notify = true }) {
   const page = await context.newPage();
   const errors = [];
   const calls = []; // { method, path, body } of every /api/attention request
+  const fsReads = []; // the paths read with GET /api/fs/content
   const db = { items: ITEMS(), next: 100, summary: { enabled: false, provider: 'deepseek', model: '' }, tokens: [{ id: 1, name: 'laptop claude', created_at: AT, last_used_at: null, revoked_at: null }] };
   page.on('pageerror', error => errors.push(error.message));
   await page.addInitScript(({ notify: on }) => {
@@ -99,6 +101,8 @@ async function openPage(browser, { viewport, touch = true, notify = true }) {
       const file = url.searchParams.get('path');
       return json({ path: file, content: file === 'DESIGN.md' ? '# Design of Fix login\n\nText.\n' : 'const login = 1;\n' });
     }
+    // The any-path read of the local Engine (T-Attention's context files): records the path and answers with the normalized path.
+    if (p === '/api/fs/content') { fsReads.push(url.searchParams.get('path')); return json({ path: url.searchParams.get('path'), realPath: url.searchParams.get('path'), content: 'const login = 1;\n' }); }
     if (p === '/api/translate/config') return json({ provider: 'deepseek', providers: { deepseek: { label: 'DeepSeek', hasApiKey: true }, glm: { label: 'GLM', hasApiKey: false } } });
     if (p.startsWith('/api/attention')) {
       const body = request.postData() ? JSON.parse(request.postData()) : undefined;
@@ -122,7 +126,7 @@ async function openPage(browser, { viewport, touch = true, notify = true }) {
       if (p === '/api/attention/tokens' && method === 'POST') { const token = { id: db.tokens.length + 1, name: body.name, created_at: AT, last_used_at: null, revoked_at: null }; db.tokens.push(token); return json({ id: token.id, name: token.name, token: 'tatt_0123456789abcdefghijklmnopqrstuvwxyzABCDEFG' }, 201); }
       const token = p.match(/^\/api\/attention\/tokens\/(\d+)$/);
       if (token && method === 'DELETE') { db.tokens.find(entry => entry.id === Number(token[1])).revoked_at = AT; return route.fulfill({ status: 204, body: '' }); }
-      if (p === '/api/attention' && method === 'GET') return json({ items: db.items });
+      if (p === '/api/attention' && method === 'GET') return json({ items: db.items, host: 'mac' });
       if (p === '/api/attention' && method === 'POST') { const item = { id: db.next++, status: 'todo', priority: 'none', source: 'user', ...body, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }; db.items.push(item); return json(item, 201); }
       const one = p.match(/^\/api\/attention\/(\d+)$/);
       if (one) {
@@ -154,7 +158,7 @@ async function openPage(browser, { viewport, touch = true, notify = true }) {
   await page.waitForFunction(() => window.sockets.length >= 1 && window.sockets.at(-1).readyState === 1);
   // The phone task sheet has slid away (the page is back in place).
   await page.waitForFunction(() => innerWidth >= 900 || !document.body.classList.contains('h5-tasks-open') && Math.abs(document.getElementById('h5-app').getBoundingClientRect().left) < 0.5 && innerWidth >= document.getElementById('h5-app').getBoundingClientRect().right - 0.5);
-  return { context, page, how, errors, calls, db };
+  return { context, page, how, errors, calls, db, fsReads };
 }
 
 const settled = (page, selector) => page.waitForFunction(sel => { const node = document.querySelector(sel); return node && ['none', 'matrix(1, 0, 0, 1, 0, 0)'].includes(getComputedStyle(node).transform); }, selector, { timeout: 3000 });
@@ -171,7 +175,7 @@ const row2 = page => page.evaluate(() => [...document.querySelectorAll('#h5-acti
   try {
     // ── Phone 390x844, touch ──
     {
-      const { context, page, errors, calls, db } = await openPage(browser, { viewport: { width: 390, height: 844 } });
+      const { context, page, errors, calls, db, fsReads } = await openPage(browser, { viewport: { width: 390, height: 844 } });
       // Row 2: Docs (the design document) and Attention take the places of the design document and Files buttons.
       await page.waitForFunction(() => document.getElementById('h5-attention').getAttribute('aria-label') === 'Attention (1)');
       assert.equal(await page.locator('#h5-attention').getAttribute('title'), 'Attention (1)');
@@ -336,9 +340,9 @@ const row2 = page => page.evaluate(() => [...document.querySelectorAll('#h5-acti
       assert.ok((await page.locator('#h5-attention-context-progress').textContent()).includes('The form is done. Next I run the tests.'));
       assert.ok((await page.locator('#h5-attention-context-progress').textContent()).includes('Turns: 3'));
       assert.equal(await page.locator('#h5-attention-context-place').textContent(), '/work/fix-login \u00b7 feat/login \u00b7 mac');
-      assert.equal(await page.locator('.h5-attention-file[data-path="src/login.js"]').getAttribute('data-open'), 'true', 'a file inside a task folder can be opened');
-      assert.equal(await page.locator('.h5-attention-file[data-path="/etc/hosts"]').getAttribute('data-open'), null, 'a file outside shows only its path');
-      assert.equal(await page.locator('.h5-attention-file[data-path="/etc/hosts"] button').count(), 0);
+      assert.equal(await page.locator('.h5-attention-file[data-path="src/login.js"]').getAttribute('data-open'), 'true', 'a file of this machine (host mac) can be opened');
+      assert.equal(await page.locator('.h5-attention-file[data-path="/etc/hosts"]').getAttribute('data-open'), 'true', 'also outside every task folder (any-path preview)');
+      assert.equal(await page.locator('#h5-attention-context-elsewhere').count(), 0);
       assert.ok((await page.locator('.h5-attention-file[data-path="src/login.js"]').textContent()).includes('+40'));
       // The timeline: by day, oldest first, readable sentences.
       await page.locator('#h5-attention-history .h5-attention-event').first().waitFor();
@@ -367,6 +371,17 @@ const row2 = page => page.evaluate(() => [...document.querySelectorAll('#h5-acti
       await page.locator('#h5-design-body .h5-file-line').first().waitFor();
       assert.equal(await page.locator('#h5-design-title').textContent(), 'login.js');
       assert.equal(await page.locator('#h5-design-path').textContent(), '/work/fix-login/src/login.js');
+      assert.deepEqual(fsReads, ['/work/fix-login/src/login.js'], 'read with the local any-path read');
+      await page.locator('#h5-design-close').tap();
+      await page.locator('#h5-design-sheet .h5-design-panel').waitFor({ state: 'hidden' });
+      // A file outside every task folder opens the same way.
+      await page.locator('#h5-attention').tap();
+      await sheet.waitFor({ state: 'visible' });
+      await row(page, 1).locator('.h5-attention-open').tap();
+      await page.locator('.h5-attention-file[data-path="/etc/hosts"] button').tap();
+      await page.locator('#h5-design-body .h5-file-line').first().waitFor();
+      assert.equal(await page.locator('#h5-design-title').textContent(), 'hosts');
+      assert.deepEqual(fsReads, ['/work/fix-login/src/login.js', '/etc/hosts']);
       await page.locator('#h5-design-close').tap();
       await page.locator('#h5-design-sheet .h5-design-panel').waitFor({ state: 'hidden' });
       // Copy resume command: a task whose T-Agent task is not in this list.
@@ -376,6 +391,10 @@ const row2 = page => page.evaluate(() => [...document.querySelectorAll('#h5-acti
       await row(page, 7).locator('.h5-attention-open').tap();
       await edit.waitFor({ state: 'visible' });
       assert.equal(await page.locator('#h5-attention-jump').textContent(), 'Copy resume command');
+      // A session of another machine (host linux-box, this Client is mac): its files show only their paths, and the card says why.
+      assert.equal(await page.locator('.h5-attention-file[data-path="deploy.sh"]').getAttribute('data-open'), null);
+      assert.equal(await page.locator('.h5-attention-file[data-path="deploy.sh"] button').count(), 0);
+      assert.equal(await page.locator('#h5-attention-context-elsewhere').textContent(), 'These files are on linux-box; only their paths are shown here');
       await page.locator('#h5-attention-jump').tap();
       await notice(page).filter({ hasText: 'Resume command copied' }).waitFor();
       await page.keyboard.press('Escape');

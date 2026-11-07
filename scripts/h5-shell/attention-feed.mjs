@@ -100,7 +100,7 @@ export function startAttentionFeed(ui, { t = text => text, api, EventSourceImpl 
     try {
       const data = await api('GET', LIST_URL);
       if (seq !== readSeq) return;
-      patch({ status: 'ready', items: Array.isArray(data && data.items) ? data.items : [], error: null });
+      patch({ status: 'ready', items: Array.isArray(data && data.items) ? data.items : [], host: data && typeof data.host === 'string' ? data.host : null, error: null });
     } catch (error) {
       if (seq !== readSeq) return;
       patch({ status: current().items ? 'ready' : 'error', error: error.message });

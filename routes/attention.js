@@ -7,6 +7,7 @@
 //    the login gate. It answers every Bearer request to /api/attention* itself and never passes one on, so a token reaches this router and nothing
 //    else: not the token endpoints (/api/attention/tokens*, browser session only), no other /api route and no page. No cookie is read or set, there is
 //    no same-origin check (a token is not sent by a browser on its own), failed attempts are rate limited per address, and every failure is 401 JSON.
+const os = require('node:os');
 const express = require('express');
 const { AttentionError } = require('../services/attention');
 
@@ -123,7 +124,9 @@ function createAttentionRoutes({ service, summary = null, heartbeatMs = 25000, f
 
   router.get('/', wrap((req, res) => {
     const includeDone = ['1', 'true', 'yes'].includes(String(req.query.include_done || '').toLowerCase());
-    res.json({ items: service.list({ status: req.query.status, q: req.query.q, limit: req.query.limit, includeDone }) });
+    // `host`: this machine's name, as the Claude listener writes it into context.host (os.hostname()). The page opens the files of a context only
+    // when they are on this machine.
+    res.json({ items: service.list({ status: req.query.status, q: req.query.q, limit: req.query.limit, includeDone }), host: os.hostname() });
   }));
 
   router.post('/', wrap((req, res) => res.status(201).json(service.create(req.body, { actor: actor(req), defaultSource: defaultSource(req) }))));

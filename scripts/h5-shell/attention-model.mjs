@@ -184,9 +184,17 @@ export function timeline(events) {
 
 // Back to where the task runs: the T-Agent terminal it runs in, when that task is in the list of this machine the page shows; else the
 // command that resumes the session; null when neither is known. `groups` is `state.taskList.groups` (tasks with their ids).
-export function jumpBack(context, { sourceKey, groups } = {}) {
+// Whether the session of a context ran on this machine: `context.host` (the listener's os.hostname()) against `localHost` (GET /api/attention
+// `host`). Unknown on either side counts as this machine (older items, a listener that sent no host).
+export function onThisMachine(context, localHost) {
+  const host = context && typeof context.host === 'string' ? context.host.trim().toLowerCase() : '';
+  const here = typeof localHost === 'string' ? localHost.trim().toLowerCase() : '';
+  return !host || !here || host === here;
+}
+
+export function jumpBack(context, { sourceKey, groups, localHost } = {}) {
   const tagent = context && context.tagent;
-  if (tagent && tagent.task_id != null && tagent.terminal_id && sourceKey === 'local') {
+  if (tagent && tagent.task_id != null && tagent.terminal_id && sourceKey === 'local' && onThisMachine(context, localHost)) {
     for (const group of groups || []) {
       for (const task of group.tasks || []) {
         if (String(task.id) === String(tagent.task_id)) return { kind: 'terminal', taskId: task.id, terminalId: String(tagent.terminal_id) };

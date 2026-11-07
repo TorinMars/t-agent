@@ -1034,6 +1034,7 @@ I18n.add({
   "Progress": "进展",
   "Turns": "轮次",
   "Changed files": "改动的文件",
+  "These files are on {1}; only their paths are shown here": "这些文件在 {1} 上，这里只显示路径",
   "Write a 3-line summary when a task needs you or is ready for review": "任务需要你或等待审阅时，生成 3 行摘要",
   "Provider": "服务商",
   "no key saved": "未保存 Key",

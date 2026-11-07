@@ -14,7 +14,7 @@ import { Pill, errorText, named, t } from './common.jsx';
 import { Field } from './Form.jsx';
 import TextField from './TextField.jsx';
 import { Icon } from './Icons.jsx';
-import { PRIORITIES, PRIORITY_LABELS, REMIND_STATUSES, STATUSES, STATUS_LABELS, contextFilePath, contextOf, groupItems, jumpBack, overdue, patchFor, pendingLine, safeLink, timeline } from './attention-model.mjs';
+import { PRIORITIES, PRIORITY_LABELS, REMIND_STATUSES, STATUSES, STATUS_LABELS, contextFilePath, contextOf, groupItems, jumpBack, onThisMachine, overdue, patchFor, pendingLine, safeLink, timeline } from './attention-model.mjs';
 
 // T-Attention: the tasks agents and services report (through listener plugins, the `t-attention` CLI) and the user's own, in one list
 // ("Attention" in row 2). Phone: a full-screen sheet; wide: the right side panel (like the file viewer and the file tree). The list and the live
@@ -86,9 +86,10 @@ const dayLabel = day => { const at = Date.parse(`${day}T12:00:00`); return Numbe
 const CODE = { m: 0, p: 1, borderRadius: 1, bgcolor: 'action.hover', fontFamily: MONO, fontSize: 12.5, lineHeight: 1.45, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', maxHeight: 160, overflowY: 'auto' };
 const HEAD = { fontSize: 12, fontWeight: 600, color: 'text.secondary', textTransform: 'none', mb: 0.25 };
 
-// THE place that opens a file named by a task's context. A later branch adds a preview of any path (/api/fs/content, `ui.actions.openAnyPath`);
-// until then a file opens in the file sheet when it lies inside the working directory of a task of this machine (h5.js `openLocalPath`), else
-// only its path is shown. Returns the action, or null when the file cannot be opened here.
+// THE place that opens a file named by a task's context (a file of this machine: the card checks context.host first). With the preview of any
+// path (h5.js `ui.actions.openAnyPath`: GET /api/fs/content of the local Engine) every absolute path opens; without it a file opens in the file
+// sheet when it lies inside the working directory of a task of this machine (h5.js `openLocalPath`), else only its path is shown. Returns the
+// action, or null when the file cannot be opened here.
 export function contextFileAction(ui, absolute) {
   if (!absolute) return null;
   if (typeof ui.actions.openAnyPath === 'function') return () => ui.actions.openAnyPath(absolute);
@@ -117,7 +118,9 @@ function ContextCard({ item, state, ui, onLeave }) {
   const pending = context.pending && context.pending.text ? context.pending : null;
   const files = Array.isArray(context.files) ? context.files.slice(0, 50) : [];
   const summary = context.summary && context.summary.text ? context.summary : null;
-  const jump = jumpBack(context, { sourceKey: state.sourceKey, groups: state.taskList && state.taskList.groups });
+  const localHost = state.attention && state.attention.host;
+  const here = onThisMachine(context, localHost);
+  const jump = jumpBack(context, { sourceKey: state.sourceKey, groups: state.taskList && state.taskList.groups, localHost });
   const reply = String(context.last_reply || '').trim();
   const turns = Number(context.turns) || 0;
   const place = [context.cwd, context.branch].filter(Boolean);
@@ -164,11 +167,14 @@ function ContextCard({ item, state, ui, onLeave }) {
           <Box sx={{ fontSize: 12, color: 'text.secondary', mt: 0.25 }}>
             {[when(context.turn_started_at || item.updated_at), turns ? `${t('Turns')}: ${turns}` : ''].filter(Boolean).join(' \u00b7 ')}
           </Box>
+          {files.length && !here ? (
+            <Box id="h5-attention-context-elsewhere" sx={{ fontSize: 12, color: 'text.secondary', mt: 0.75, overflowWrap: 'anywhere' }}>{t(`These files are on ${context.host}; only their paths are shown here`)}</Box>
+          ) : null}
           {files.length ? (
             <Box component="ul" id="h5-attention-context-files" aria-label={t('Changed files')} sx={{ listStyle: 'none', m: 0, mt: 0.75, p: 0 }}>
               {files.map(file => {
                 const absolute = contextFilePath(context, file);
-                const open = contextFileAction(ui, absolute);
+                const open = here ? contextFileAction(ui, absolute) : null;
                 const counts = (
                   <Box component="span" sx={{ flex: '0 0 auto', fontFamily: MONO, fontSize: 12 }}>
                     <Box component="span" sx={{ color: 'success.light' }}>{`+${Number(file.added) || 0}`}</Box>{' '}

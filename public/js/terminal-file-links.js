@@ -4,6 +4,8 @@
 // Relative paths are taken from the shell's live current directory: the one it reports with OSC 7 (parseOsc7), else, when a link is activated,
 // the one the server reads from the shell process (options.liveCwd), else the working directory.
 // Nothing is sent to the server while text is printed or hovered: the live directory and whether the file exists are only asked for on activation.
+// Paths outside the root are links only with the option `anyPath` (an Engine that reads any path, capability 'fs:read-any'): absolute paths, '~/...',
+// relative paths above the root and relative paths from a live directory outside the root. Without it, they are not links (the old rule).
 (function (root, factory) {
   const api = factory();
   if (typeof module === 'object' && module.exports) module.exports = api;
@@ -33,10 +35,18 @@
     return dot > 0 ? name.slice(dot + 1).toLowerCase() : '';
   }
 
+  // Is `options.anyPath` on? It is a boolean or a function (the capability of the Engine can become known later).
+  function anyPathOn(options) {
+    const value = options && options.anyPath;
+    return Boolean(typeof value === 'function' ? value() : value);
+  }
+
   // Is this (already trimmed, position removed) text a file path? Absolute paths, ./ and ../ paths and a/b paths; a bare name needs a known extension.
-  function pathLike(value) {
+  // With options.anyPath, '~/...' (the home directory on the Engine) is a path too; '~', '~/' and '~user/...' are not.
+  function pathLike(value, options) {
     if (!value || value.length > MAX_PATH || /[\u0000-\u001f\u007f\\]/.test(value)) return false;
-    if (value.includes(':') || value.startsWith('~') || value.startsWith('//')) return false;
+    if (value.includes(':') || value.startsWith('//')) return false;
+    if (value.startsWith('~') && !(anyPathOn(options) && /^~\/[^/]/.test(value))) return false;
     const directory = value.endsWith('/');
     const body = directory ? value.replace(/\/+$/, '') : value;
     if (!body || /^[./]+$/.test(body)) return false; // "/", ".", "..", "./"
@@ -61,13 +71,13 @@
     return { path: value.slice(0, match.index), line: line > 0 ? line : null, column: column > 0 ? column : null };
   }
 
-  function candidate(index, raw, out) {
+  function candidate(index, raw, out, options) {
     let start = index;
     let value = raw;
     if (value.startsWith('@')) { value = value.slice(1); start += 1; } // "@src/app.js" mentions
     value = value.replace(TRAILING_RE, ''); // "see src/app.js." / "in src/app.js:42:"
     const position = splitPosition(value);
-    if (!pathLike(position.path)) return false;
+    if (!pathLike(position.path, options)) return false;
     out.push({ index: start, length: value.length, text: value, path: position.path, line: position.line, column: position.column, directory: position.path.endsWith('/') });
     return true;
   }
@@ -77,8 +87,8 @@
   }
 
   // All file links in one line of text, in order: [{ index, length, text, path, line, column, directory }]. index/length are in UTF-16 code units of
-  // `text`; `path` is what the link points to (decoded for file:// URLs), `text` the part of the line that is the link.
-  function findFileLinks(input) {
+  // `text`; `path` is what the link points to (decoded for file:// URLs), `text` the part of the line that is the link. options: { anyPath } (pathLike).
+  function findFileLinks(input, options) {
     const text = String(input || '').slice(0, MAX_LINE);
     const out = [];
     const taken = [];
@@ -94,7 +104,7 @@
       let decoded;
       try { decoded = decodeURIComponent(rest.slice(slash)); } catch { continue; }
       const position = splitPosition(decoded);
-      if (!pathLike(position.path)) continue;
+      if (!pathLike(position.path, options)) continue;
       out.push({ index: match.index, length: url.length, text: url, path: position.path, line: position.line, column: position.column, directory: position.path.endsWith('/') });
     }
     // Quoted paths may hold spaces: "my notes/plan.md". Unquoted, a space ends the path.
@@ -104,14 +114,14 @@
       const start = match.index + 1;
       if (inner.trim() !== inner || !inner.includes(' ') || overlaps(taken, start, start + inner.length)) continue;
       const position = splitPosition(inner);
-      if (!pathLike(position.path)) continue;
+      if (!pathLike(position.path, options)) continue;
       out.push({ index: start, length: inner.length, text: inner, path: position.path, line: position.line, column: position.column, directory: position.path.endsWith('/') });
       taken.push({ start: match.index, end: match.index + match[0].length });
     }
     TOKEN_RE.lastIndex = 0;
     for (let match; (match = TOKEN_RE.exec(text));) {
       if (overlaps(taken, match.index, match.index + match[0].length)) continue;
-      candidate(match.index, match[0], out);
+      candidate(match.index, match[0], out, options);
     }
     return out.sort((left, right) => left.index - right.index);
   }
@@ -163,6 +173,33 @@
     return toRelative(`${String(cwd).replace(/\/+$/, '')}/${value}`, root);
   }
 
+  // `value` (absolute, or '~/...') with '.' and '..' parts folded and no trailing slash. A '..' above '~' cannot be folded without the home directory:
+  // the text is then left as it is (the Engine resolves it).
+  function foldAbsolute(value) {
+    const home = value.startsWith('~/');
+    const parts = [];
+    for (const part of value.slice(home ? 2 : 1).split('/')) {
+      if (!part || part === '.') continue;
+      if (part === '..') { if (home && !parts.length) return value.replace(/\/+$/, ''); parts.pop(); continue; }
+      parts.push(part);
+    }
+    return `${home ? '~' : ''}/${parts.join('/')}`;
+  }
+
+  // Where a found path points: { relative } (for the task file API, as resolvePath) when it is inside the root, else with options.anyPath
+  // { absolute } (an absolute path or '~/...', for the any-path read), else null. Relative paths outside the root are placed from `cwd`, else the root.
+  function locatePath(filePath, root, cwd, options) {
+    const value = String(filePath || '');
+    const any = anyPathOn(options);
+    if (value.startsWith('~')) return any && /^~\/[^/]/.test(value) ? { absolute: foldAbsolute(value) } : null;
+    const relative = resolvePath(value, root, cwd);
+    if (relative != null) return { relative };
+    if (!any) return null;
+    if (value.startsWith('/')) return { absolute: foldAbsolute(value) };
+    const base = [cwd, root].map(dir => String(dir || '')).find(dir => dir.startsWith('/'));
+    return base ? { absolute: foldAbsolute(`${base}/${value}`) } : null;
+  }
+
   // Text a program wrapped itself: a TUI such as Claude Code breaks a long path at the edge with a real newline (no soft wrap) and indents the next
   // row ("  \u23bf  /private/tmp/claude-501/-Users-a-b-" + "     c/scratchpad/plan.md"). Such a row continues in the next one only when its text
   // reaches the last column (HARD_WRAP_SLACK columns are allowed for a box with a right padding) and the next row starts, after its indent, with
@@ -180,11 +217,11 @@
   // ("a.js" + ":42"), extends a known extension ("plan.m" + "d", "a.js" + "on"), or, when the piece has no known extension, ends in a folder
   // ("dir/" + ...), goes on with a "/" ("-Users-a-" + "b/plan.md") or gets a known extension ("open-te" + "st.md"). So "see /a/plan.md" + "next"
   // and "/a/b" + "for" stay apart.
-  function continuesPath(tail, head) {
+  function continuesPath(tail, head, options) {
     const piece = tail.startsWith('@') ? tail.slice(1) : tail;
     if (!piece.includes('/')) return false;
     const whole = splitPosition((piece + head).replace(TRAILING_RE, ''));
-    if (!pathLike(whole.path)) return false;
+    if (!pathLike(whole.path, options)) return false;
     const own = splitPosition(piece);
     if (whole.path === own.path) return true; // only a position (or sentence punctuation) follows
     if (own.line != null) return false;
@@ -217,7 +254,7 @@
   }
 
   // The number of code units of `next` (its indent) to skip when the text of `prev` continues in it (a hard-wrapped path), else -1.
-  function hardWrapIndent(prev, next, cols) {
+  function hardWrapIndent(prev, next, cols, options) {
     const end = prev.text.replace(/\s+$/, '').length;
     if (!end || !cols) return -1;
     const edge = prev.cells[end - 1];
@@ -226,19 +263,19 @@
     if (indent * 2 >= cols) return -1;
     const tail = TOKEN_TAIL_RE.exec(prev.text.slice(0, end));
     const head = TOKEN_HEAD_RE.exec(next.text.slice(indent));
-    return tail && head && continuesPath(tail[0], head[0]) ? indent : -1;
+    return tail && head && continuesPath(tail[0], head[0], options) ? indent : -1;
   }
 
   // The logical line around buffer row `row` (0-based): its soft-wrapped rows, joined with the rows before and after it when a program wrapped
   // a path there itself (hardWrapIndent), as text plus the cell of each code unit. A joined row's indent and the blanks at the end of the row
   // before it are left out of the text. `cols` is the terminal width: a buffer line can be longer than that after the terminal got narrower.
-  function logicalLine(buffer, row, cols) {
+  function logicalLine(buffer, row, cols, options) {
     const groups = [softGroup(buffer, row)];
     const size = () => groups.reduce((sum, group) => sum + group.last - group.first + 1, 0);
     const length = () => groups.reduce((sum, group) => sum + group.text.length, 0);
     while (groups[0].first > 0 && size() < MAX_WRAPPED_ROWS && length() < MAX_LINE) {
       const prev = softGroup(buffer, groups[0].first - 1);
-      const indent = hardWrapIndent(prev, groups[0], cols);
+      const indent = hardWrapIndent(prev, groups[0], cols, options);
       if (indent < 0) break;
       groups[0].indent = indent;
       groups.unshift(prev);
@@ -248,7 +285,7 @@
       if (!buffer.getLine(current.last + 1)) break;
       const next = softGroup(buffer, current.last + 1);
       if (next.first <= current.last) break; // the rows of `current` were cut at MAX_LINE: no hard wrap there
-      const indent = hardWrapIndent(current, next, cols);
+      const indent = hardWrapIndent(current, next, cols, options);
       if (indent < 0) break;
       next.indent = indent;
       groups.push(next);
@@ -267,7 +304,9 @@
   // Registers the link provider (and the OSC 7 handler) on an xterm Terminal. options: root() -> the working directory or null,
   // activate(link, event) where link also has `relative` (the path for the file API, as far as it is known while hovering) and resolve() -> a
   // promise of the final path for the file API (null: outside the root, open nothing), liveCwd() (optional) -> a promise of the server's
-  // { cwd, relative } for the shell. Returns { dispose(), cwd(), resetCwd() }; resetCwd() forgets the reported directory (a new shell, a reconnect).
+  // { cwd, relative } for the shell, anyPath (optional, a boolean or a function) -> paths outside the root are links too. A link also has `absolute`
+  // (an absolute or '~/...' path outside the root, or null) and locate() -> a promise of { relative } or { absolute } or null (resolve() keeps
+  // answering the relative path or null). Returns { dispose(), cwd(), resetCwd() }; resetCwd() forgets the reported directory (a new shell, a reconnect).
   function attach(term, options) {
     let reported = null; // the last directory the shell reported with OSC 7
     const osc = term.parser && typeof term.parser.registerOscHandler === 'function'
@@ -277,14 +316,18 @@
         return true;
       })
       : null;
-    const resolver = (link, relative, fromReport) => async () => {
-      // An absolute path, or one placed with the reported directory, is final. Otherwise ask the server for the shell's directory.
-      if (link.path.startsWith('/') || fromReport || !options.liveCwd) return relative;
+    const locator = (link, target, fromReport) => async () => {
+      // An absolute or '~/' path, or one placed with the reported directory, is final. Otherwise ask the server for the shell's directory.
+      if (/^[/~]/.test(link.path) || fromReport || !options.liveCwd) return target;
       let live = null;
       try { live = await options.liveCwd(); } catch { live = null; }
-      if (!live || typeof live.cwd !== 'string' || !live.cwd) return relative; // no shell, an older Engine: the working directory
-      if (typeof live.relative !== 'string') return null; // the shell is outside the root
-      return toRelative(live.relative ? `${live.relative}/${link.path}` : link.path, null);
+      if (!live || typeof live.cwd !== 'string' || !live.cwd) return target; // no shell, an older Engine: the working directory
+      if (typeof live.relative === 'string') { // the shell is inside the root
+        const relative = toRelative(live.relative ? `${live.relative}/${link.path}` : link.path, null);
+        if (relative != null) return { relative };
+      }
+      // The shell is outside the root, or the path goes above it: only an Engine that reads any path can open it.
+      return anyPathOn(options) && live.cwd.startsWith('/') ? { absolute: foldAbsolute(`${live.cwd}/${link.path}`) } : null;
     };
     const provider = term.registerLinkProvider({
       provideLinks(bufferLineNumber, callback) {
@@ -292,16 +335,18 @@
           const row = bufferLineNumber - 1;
           const root = options.root ? options.root() : null;
           const cwd = reported;
-          const { text, cells } = logicalLine(term.buffer.active, row, term.cols || term.buffer.active.getLine(row)?.length || 0);
+          const any = { anyPath: anyPathOn(options) };
+          const { text, cells } = logicalLine(term.buffer.active, row, term.cols || term.buffer.active.getLine(row)?.length || 0, any);
           const links = [];
-          for (const link of findFileLinks(text)) {
-            const relative = resolvePath(link.path, root, cwd);
-            if (relative == null) continue; // outside the working directory: the file browser cannot show it, so it is not a link
+          for (const link of findFileLinks(text, any)) {
+            const target = locatePath(link.path, root, cwd, any);
+            if (!target) continue; // outside the working directory and no any-path read: the file sheet cannot show it, so it is not a link
             const start = cells[link.index];
             const end = cells[link.index + link.length - 1];
             if (!start || !end || row < start.y || row > end.y) continue;
-            const found = { ...link, relative };
-            found.resolve = resolver(link, relative, Boolean(cwd));
+            const found = { ...link, relative: target.relative != null ? target.relative : null, absolute: target.absolute || null };
+            found.locate = locator(link, target, Boolean(cwd));
+            found.resolve = async () => { const final = await found.locate(); return final && final.relative != null ? final.relative : null; };
             links.push({
               range: { start: { x: start.x + 1, y: start.y + 1 }, end: { x: end.x + end.width, y: end.y + 1 } },
               text: link.text,
@@ -322,5 +367,5 @@
     };
   }
 
-  return { findFileLinks, toRelative, resolvePath, parseOsc7, attach, pathLike, splitPosition, continuesPath, MAX_LINE };
+  return { findFileLinks, toRelative, resolvePath, locatePath, parseOsc7, attach, pathLike, splitPosition, continuesPath, MAX_LINE };
 });

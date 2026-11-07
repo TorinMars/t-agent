@@ -72,6 +72,7 @@ I18n.add({
 
   // ---- Terminal file links ----
   'Not found in the working directory: {1}': '工作目录中找不到：{1}',
+  'Not found: {1}': '找不到：{1}',
   'Outside the working directory: {1}': '不在工作目录中：{1}',
   'Could not open {1}: {2}': '无法打开 {1}：{2}',
 });

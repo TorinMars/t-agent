@@ -1,7 +1,9 @@
 // File links in the page's terminal on a computer (1440x900, mouse): the page at `/` (public/h5.html) with the real task routes, the real terminal
 // WebSocket handler, xterm and a real shell. A path the shell prints is a link on hover; a click opens it in the side panel (the line of
-// "file:line" marked), a path outside the working directory is no link, a missing path says so, and relative paths follow the shell's live directory
-// (after "cd", read by the server; or an OSC 7 report). Replaces the old desktop-page version (Monaco file browser), removed in 2.88.0.
+// "file:line" marked), a missing path says so, and relative paths follow the shell's live directory (after "cd", read by the server; or an OSC 7
+// report). A path outside the working directory (absolute, ~/, above the root, from a reported directory outside it) is a link too on the local
+// Client, read with `GET /api/fs/content` (a fake here that reads the disk: the server side is tested on its own) and never with the task file API.
+// Replaces the old desktop-page version (Monaco file browser), removed in 2.88.0.
 // SHOT_DIR=<dir> saves a screenshot of the opened file there.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -28,7 +30,9 @@ fs.writeFileSync(path.join(task.work_dir, 'docs/设计.md'), '# Design\n');
 fs.writeFileSync(path.join(scratch, 'outside.md'), '# Outside\n');
 // The lines the shell prints. They are read from a file with a short command: typing the long paths key by key into a real
 // interactive shell on a busy machine sometimes damaged them (a space inside the path), which broke the links under test.
-fs.writeFileSync(path.join(scratch, 'lines.txt'), ['L1 src/app.js:42 and docs/设计.md', `L4 ${path.join(scratch, 'outside.md')}`, 'L5 ../outside.md', 'L3 missing/nothing.js', ''].join('\n'));
+fs.mkdirSync(path.join(scratch, 'home'));
+fs.writeFileSync(path.join(scratch, 'home/notes.md'), '# Home notes\n');
+fs.writeFileSync(path.join(scratch, 'lines.txt'), ['L1 src/app.js:42 and docs/设计.md', `L4 ${path.join(scratch, 'outside.md')}`, 'L5 ../outside.md', 'L11 ~/notes.md', 'L3 missing/nothing.js', ''].join('\n'));
 process.env.TFL_LINES = path.join(scratch, 'lines.txt'); // the terminal shell gets this environment
 // The live directory: a file only in sub/ (the shell does "cd sub"), one only in other/ (an OSC 7 report names it), one outside the work dir.
 fs.mkdirSync(path.join(task.work_dir, 'sub'));
@@ -66,6 +70,18 @@ app.get('/auth/me', (req, res) => res.json({ work_dir: null, effective_work_dir:
 app.get('/api/system/version', (req, res) => res.json({ app_version: '0.0.0', boot_id: 'b1' }));
 app.all('/api/system/*', (req, res) => res.json({ status: 'current', is_update_admin: false }));
 app.get('/api/agent-chat/summary', (req, res) => res.json({ running: 0, queued: 0, submitted: 0 }));
+// The any-path read (the contract of /api/fs/content): absolute or ~/ (here the home is scratch/home), regular files only.
+const fsReads = [];
+app.get('/api/fs/content', (req, res) => {
+  const requested = String(req.query.path || '');
+  fsReads.push(requested);
+  const file = requested.startsWith('~/') ? path.join(scratch, 'home', requested.slice(2)) : requested;
+  if (!path.isAbsolute(file)) return res.status(400).json({ error: 'BAD_PATH', message: 'Bad path' });
+  let stat;
+  try { stat = fs.statSync(file); } catch { return res.status(404).json({ error: 'NOT_FOUND', message: 'File not found' }); }
+  if (stat.isDirectory()) return res.status(400).json({ error: 'IS_DIRECTORY', message: 'This is a directory', path: path.resolve(file) });
+  return res.json({ path: path.resolve(file), realPath: fs.realpathSync(file), content: fs.readFileSync(file, 'utf8'), revision: 'r1', eol: '\n', bom: false });
+});
 app.get('/', (req, res) => res.type('html').sendFile(path.join(root, 'public/h5.html')));
 app.use(express.static(path.join(root, 'public'), { index: false }));
 app.use((req, res) => res.status(404).json({ error: 'not mocked' }));
@@ -155,17 +171,27 @@ let server; let browser; let wss;
     assert.equal(await page.locator('#h5-design-title').textContent(), '设计.md');
     await closePanel();
 
-    // Outside the working directory (absolute or ../): not a link, so a click does nothing and asks nothing.
+    // Outside the working directory: an absolute path and a ~/ path open with the any-path read; one above the root is placed from the work dir
+    // (here missing, which the panel says). None of them reaches the task file API.
     const before = fileRequests.length;
-    for (const [prefix, text] of [['L4 ', path.join(scratch, 'outside.md')], ['L5 ', '../outside.md']]) {
-      const point = await pointOf(prefix, text);
-      await hover(point);
-      assert.equal(await underlined(), false, `${text} is not a link`);
-      await click(point, false);
-    }
-    await page.waitForTimeout(700);
-    assert.equal(await panel.isVisible(), false, 'outside paths open nothing');
-    assert.equal(fileRequests.length, before, 'outside paths do not reach the file API');
+    const outside = path.join(scratch, 'outside.md');
+    await click(await pointOf('L4 ', outside));
+    await page.locator('#h5-design-body h1', { hasText: 'Outside' }).waitFor();
+    assert.equal(fsReads.at(-1), outside);
+    assert.equal(await page.locator('#h5-design-title').textContent(), 'outside.md');
+    assert.equal(await page.locator('#h5-design-path').getAttribute('title'), outside, 'the full path');
+    await closePanel();
+    await click(await pointOf('L11 ', '~/notes.md'));
+    await page.locator('#h5-design-body h1', { hasText: 'Home notes' }).waitFor();
+    assert.equal(fsReads.at(-1), '~/notes.md');
+    assert.equal(await page.locator('#h5-design-path').getAttribute('title'), path.join(scratch, 'home/notes.md'), 'the path the Engine resolved');
+    await closePanel();
+    const above = path.join(path.dirname(task.work_dir), 'outside.md');
+    await click(await pointOf('L5 ', '../outside.md'));
+    await page.locator('#h5-design-empty', { hasText: `Not found: ${above}` }).waitFor();
+    assert.equal(fsReads.at(-1), above);
+    await closePanel();
+    assert.equal(fileRequests.length, before, 'outside paths do not reach the task file API');
 
     // A missing path says so.
     await click(await pointOf('L3 ', 'missing/nothing.js'));
@@ -203,16 +229,15 @@ let server; let browser; let wss;
     await click(await pointOf('L7 ', 'b.md'));
     await page.locator('#h5-design-body h1', { hasText: 'In other' }).waitFor();
     await closePanel();
-    // A reported directory outside the work dir: relative paths there are no links and open nothing.
+    // A reported directory outside the work dir: relative paths there open from it with the any-path read.
     await input.focus(); await page.keyboard.press('Control+C');
     await runInShell('tfl8', 'L8 ');
     const outsideBefore = fileRequests.length;
-    const cPoint = await pointOf('L8 ', 'c.md');
-    await hover(cPoint);
-    assert.equal(await underlined(), false, 'c.md from an outside directory is not a link');
-    await click(cPoint, false);
-    await page.waitForTimeout(700);
-    assert.equal(fileRequests.length, outsideBefore, 'nothing is asked for a path from an outside directory');
+    await click(await pointOf('L8 ', 'c.md'));
+    await page.locator('#h5-design-body h1', { hasText: 'Outside' }).waitFor();
+    assert.equal(fsReads.at(-1), path.join(scratch, 'c.md'));
+    assert.equal(fileRequests.length, outsideBefore, 'the task file API is not asked for a path from an outside directory');
+    await closePanel();
     await input.focus(); await page.keyboard.press('Control+C');
     assert.deepEqual(errors, []);
     console.log('terminal file links browser test (computer) passed');

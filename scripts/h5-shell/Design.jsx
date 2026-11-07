@@ -81,6 +81,17 @@ const FILE_ERRORS = {
   FILE_UNSUPPORTED: 'This is not a plain text file',
   FILE_FORBIDDEN: 'The file cannot be read',
 };
+// The any-path read of a file outside the working directory (`/fs/content`) has codes of its own. IS_DIRECTORY and NOT_FOUND are states
+// (h5.js openAnyFile); FS_READ_UNSUPPORTED (an Engine without 'fs:read-any') closes the sheet with the old note.
+const FS_ERRORS = {
+  BAD_PATH: 'This path cannot be opened',
+  NOT_A_REGULAR_FILE: 'This is not a plain file',
+  PERMISSION_DENIED: 'The file cannot be read',
+  FILE_TOO_LARGE: 'The file is larger than 5 MB',
+  FILE_UNSUPPORTED: 'This is not a plain text file',
+  FILE_PATH_CHANGED: 'The file changed while it was read',
+  READ_TIMEOUT: 'Reading the file took too long',
+};
 const MARKDOWN_FILE = /\.(md|markdown|mdx)$/i;
 
 // A file that is not Markdown is shown as plain text with line numbers (renderText, scripts/h5-shell/file-view.mjs: only the lines in view are drawn).
@@ -327,8 +338,8 @@ export function DesignSheet({ state, ui }) {
     if (design.status === 'no-task') note = t('Choose a task first');
     else if (design.status === 'no-dir') note = t('This task has no working directory');
     else if (design.status === 'folder') note = t('Folders cannot be shown on the phone');
-    else if (design.status === 'missing') note = t(`Not found in the working directory: ${filePathInDir}`);
-    else if (design.status === 'error') note = t(FILE_ERRORS[design.message] || 'Could not open the file');
+    else if (design.status === 'missing') note = design.absolute ? t(`Not found: ${filePathInDir}`) : t(`Not found in the working directory: ${filePathInDir}`);
+    else if (design.status === 'error') note = t((design.absolute ? FS_ERRORS : FILE_ERRORS)[design.message] || 'Could not open the file');
     else if (design.status === 'ready' && render.status === 'failed') note = t('Could not show the file');
   } else if (design) {
     if (design.status === 'no-task') note = t('Choose a task first');

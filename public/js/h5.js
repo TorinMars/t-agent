@@ -1190,6 +1190,7 @@
   const WHEEL_MIN_SPEED = 0.03; // px/ms below which momentum stops
   const WHEEL_TAP_SLOP = 8; // px of travel still counted as a tap
   const WHEEL_TAP_MS = 400; // a tap is shorter than this
+  const WHEEL_STALE_MS = 3000; // a finger with no pointer event for this long hides the track (a lost pointerup must not keep it)
   function lineHeight(s) {
     const screen = s.el.querySelector('.xterm-screen');
     return screen && s.term.rows ? Math.max(8, screen.clientHeight / s.term.rows) : 16;
@@ -1207,13 +1208,34 @@
     else s.term.scrollLines(lines);
   }
   function bindWheelStrip() {
+    // The browser does not always end a touch: an Android system gesture (edge back swipe, notification shade, app switch),
+    // a hidden page, a dialog over the strip, a re-mounted strip or a second finger can swallow the pointerup / pointercancel.
+    // So a drag also ends on lostpointercapture, a hidden page, pagehide, window blur, a switched or closed terminal and a
+    // detached strip; a new touch always takes over from an old drag; and the track is hidden when no pointer event came for
+    // WHEEL_STALE_MS (the next move of the same finger shows it again). Every element that got 'active' loses it.
     let drag = null;
     let fade = 0;
+    let watch = 0; // interval that checks the running drag (only while a finger is down)
     let lastMoveAt = 0;
     let inertia = 0; // requestAnimationFrame id of the running momentum scroll
+    const shown = new Set(); // strip elements with the 'active' class
     const strip = event => event.target.closest && event.target.closest('#h5-wheel');
     const stopInertia = () => { if (inertia) cancelAnimationFrame(inertia); inertia = 0; };
-    const hideLater = el => { clearTimeout(fade); fade = setTimeout(() => { if (!drag && !inertia) el.classList.remove('active'); }, WHEEL_FADE_MS); };
+    const show = el => { el.classList.add('active'); shown.add(el); };
+    const hideAll = () => { for (const el of shown) el.classList.remove('active'); shown.clear(); };
+    const hideLater = () => { clearTimeout(fade); fade = setTimeout(() => { if (!drag && !inertia) hideAll(); }, WHEEL_FADE_MS); };
+    // Ends the drag without a flick or a tap.
+    const drop = () => {
+      if (!drag) return;
+      drag = null;
+      clearInterval(watch);
+      hideLater();
+    };
+    const check = () => {
+      if (!drag) { clearInterval(watch); return; }
+      if (drag.s !== session || drag.s.disposed || !drag.el.isConnected) { drop(); return; }
+      if (performance.now() - drag.seen > WHEEL_STALE_MS) hideAll();
+    };
     // Momentum after a quick flick: the speed (px/ms) decays by WHEEL_DECAY per 16 ms frame until it is below WHEEL_MIN_SPEED.
     const coast = (s, el, speed, x, y) => {
       let last = performance.now();
@@ -1222,7 +1244,7 @@
         const dt = Math.min(now - last, 64);
         last = now;
         speed *= Math.pow(WHEEL_DECAY, dt / 16);
-        if (Math.abs(speed) < WHEEL_MIN_SPEED || session !== s || s.disposed) { inertia = 0; hideLater(el); return; }
+        if (Math.abs(speed) < WHEEL_MIN_SPEED || session !== s || s.disposed || !el.isConnected) { inertia = 0; hideLater(); return; }
         rest += speed * dt * WHEEL_GAIN;
         const height = lineHeight(s);
         const lines = Math.trunc(rest / height);
@@ -1244,31 +1266,36 @@
     };
     const finish = event => {
       if (!drag || event.pointerId !== drag.id) return;
-      const { el, speed, moved, started } = drag;
-      const s = session;
-      drag = null;
-      const flick = event.type === 'pointerup' && s && !s.disposed && performance.now() - lastMoveAt < WHEEL_FLICK_WINDOW_MS && Math.abs(speed) >= WHEEL_FLICK_SPEED;
-      if (event.type === 'pointerup' && Math.abs(moved) < WHEEL_TAP_SLOP && performance.now() - started < WHEEL_TAP_MS) passTap(event, el);
+      const { el, speed, moved, started, s } = drag;
+      drop();
+      if (event.type !== 'pointerup' || s !== session || s.disposed || !el.isConnected) return;
+      const flick = performance.now() - lastMoveAt < WHEEL_FLICK_WINDOW_MS && Math.abs(speed) >= WHEEL_FLICK_SPEED;
+      if (Math.abs(moved) < WHEEL_TAP_SLOP && performance.now() - started < WHEEL_TAP_MS) passTap(event, el);
       if (flick) coast(s, el, speed, el.getBoundingClientRect().left + el.getBoundingClientRect().width / 2, event.clientY);
-      hideLater(el);
     };
     document.addEventListener('pointerdown', event => {
       const el = strip(event);
       const s = session;
-      if (!el || !s || s.disposed || drag || (event.pointerType === 'mouse' && event.button !== 0)) return;
+      if (!el || !s || s.disposed || (event.pointerType === 'mouse' && event.button !== 0)) return;
+      drop(); // a drag still open here lost its end (or this is a second finger): the new touch takes over
       stopInertia(); // a new touch stops the momentum
-      drag = { id: event.pointerId, el, y: event.clientY, rest: 0, total: 0, moved: 0, speed: 0, started: performance.now() };
-      lastMoveAt = performance.now();
+      const now = performance.now();
+      drag = { id: event.pointerId, el, s, y: event.clientY, rest: 0, total: 0, moved: 0, speed: 0, started: now, seen: now };
+      lastMoveAt = now;
       clearTimeout(fade);
-      el.classList.add('active');
+      show(el);
+      watch = setInterval(check, 250);
       try { el.setPointerCapture(event.pointerId); } catch { /* the pointer is gone already */ }
       event.preventDefault();
     });
     document.addEventListener('pointermove', event => {
+      if (!drag || event.pointerId !== drag.id) return;
       const s = session;
-      if (!drag || event.pointerId !== drag.id || !s || s.disposed) return;
+      if (drag.s !== s || !s || s.disposed || !drag.el.isConnected) { drop(); return; }
       event.preventDefault();
       const now = performance.now();
+      drag.seen = now;
+      if (!shown.has(drag.el)) show(drag.el); // hidden by the stale check while the finger was still
       const delta = drag.y - event.clientY; // dragging down is negative: older output, like a wheel turned up
       const dt = Math.max(now - lastMoveAt, 1);
       drag.speed = dt > WHEEL_FLICK_WINDOW_MS ? 0 : drag.speed * 0.5 + (delta / dt) * 0.5; // smoothed finger speed in px/ms
@@ -1287,6 +1314,12 @@
     });
     document.addEventListener('pointerup', finish);
     document.addEventListener('pointercancel', finish);
+    // Capture lost without a pointerup first (the strip was removed, or the browser took the pointer): the drag is over.
+    document.addEventListener('lostpointercapture', finish, true);
+    const away = () => { drop(); stopInertia(); hideLater(); };
+    document.addEventListener('visibilitychange', () => { if (document.hidden) away(); });
+    window.addEventListener('pagehide', away);
+    window.addEventListener('blur', event => { if (event.target === window) drop(); });
     // Test hook: lets the browser test see whether the momentum is running.
     window.__h5WheelCoasting = () => Boolean(inertia);
   }

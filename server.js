@@ -113,6 +113,8 @@ app.use(config.loginPath, authRouter);
 app.use('/api/tasks/:id/agent', require('./routes/agent-chat').createAgentChatRouter());
 app.use('/api/agent-chat', require('./routes/agent-chat').createAgentChatSummaryRouter());
 app.use('/api/tasks', require('./routes/tasks'));
+// Read-only preview of a file at any path, as the terminal user (services/fs-read.js); the session check is the /api gate above.
+app.use('/api/fs', require('./routes/fs-read').createFsReadRouter());
 app.use('/api/task-groups', require('./routes/task-groups'));
 app.use('/api/bookmarks', require('./routes/bookmarks'));
 app.use('/api/system', require('./routes/system'));

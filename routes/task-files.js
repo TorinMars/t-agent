@@ -1,5 +1,6 @@
 const express = require('express');
 const files = require('../services/task-files');
+const { IMAGE_HEADERS } = require('../services/file-content');
 
 function errorResponse(res, error) {
   const code = /^[A-Z0-9_]+$/.test(error.message || '') ? error.message : 'FILE_OPERATION_FAILED';
@@ -51,7 +52,7 @@ function createTaskFilesRouter({ getTask, canRead = () => true, canWrite = () =>
     let image;
     try { image = files.readImage(task, req.query.path); }
     catch (error) { errorResponse(res, error); return; }
-    res.set({ 'Content-Type': image.type, 'Content-Length': String(image.data.length), 'Cache-Control': 'private, no-cache', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': 'sandbox' });
+    res.set({ 'Content-Type': image.type, 'Content-Length': String(image.data.length), ...IMAGE_HEADERS });
     res.end(image.data);
   });
 

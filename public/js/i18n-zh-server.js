@@ -1,6 +1,14 @@
 // Chinese translations of messages that come from the server (services/, routes/, lib/): error messages, update steps, field labels.
 I18n.add({
   ", error code {1}": "，错误码 {1}",
+  "Only regular files can be opened": "只能打开普通文件",
+  "Permission denied: the terminal user cannot read this file": "没有权限：终端用户无法读取这个文件",
+  "Reading the file took longer than 10 seconds": "读取文件超过 10 秒",
+  "The file changed while it was read": "读取期间文件发生了变化",
+  "The file could not be read": "无法读取文件",
+  "The path must be absolute or start with ~/": "路径必须是绝对路径或以 ~/ 开头",
+  "This is not a PNG, JPEG, GIF or WebP image": "这不是 PNG、JPEG、GIF 或 WebP 图片",
+  "This path is a folder": "这个路径是文件夹",
   "· waiting for output": "· 等待输出",
   "“Full access” is risky and only recommended on an isolated development machine.": "“完全访问”风险高，只建议用于隔离的开发机。",
   "(no output for {1}; the network may be down or it may be compiling)": "（已 {1}无输出，可能是网络不通或在编译）",

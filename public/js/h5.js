@@ -93,6 +93,22 @@
     activityBase: `/api/remote-servers/${id}`, // {activityBase}/terminal-activity and /terminal-subagents
   });
   let sources = [LOCAL];
+  // What an Engine can do: the `capabilities` of its `/info` (`/v1/info` through the proxy), kept on its source object each time the page reads it
+  // (the session menu and the chat list read it again, so an upgraded Engine is seen). The local Client has no such list and can do everything the
+  // page asks for here. One read at a time per Engine.
+  const infoUrl = from => `${from.tasksBase.replace(/\/tasks$/, '')}/info`;
+  function readInfo(from) {
+    if (from.infoPending) return from.infoPending;
+    const pending = api('GET', infoUrl(from)).then(info => {
+      from.capabilities = Array.isArray(info && info.capabilities) ? info.capabilities : [];
+      return info;
+    }).finally(() => { if (from.infoPending === pending) from.infoPending = null; });
+    from.infoPending = pending;
+    return pending;
+  }
+  // Files at any path of the Engine machine (`/fs/content`, `/fs/image`): the local Client always, a remote Engine with 'fs:read-any'.
+  const readsAnyPath = from => from.key === 'local' || Boolean(Array.isArray(from.capabilities) && from.capabilities.includes('fs:read-any'));
+  const fsBase = from => `${from.tasksBase.replace(/\/tasks$/, '')}/fs`; // /api/fs, or /api/remote-servers/:id/fs
   let source = LOCAL;
   let tasks = [];
   let groups = [];
@@ -843,7 +859,7 @@
     show(source.key === 'local');
     if (source.key === 'local') return;
     try {
-      const info = await api('GET', `${source.tasksBase.replace(/\/tasks$/, '')}/info`);
+      const info = await readInfo(source);
       const menu = ui.get().menu;
       if (source !== currentSource || task !== currentTask || !menu || menu.title !== tr('Session')) return;
       show(Array.isArray(info.capabilities) && info.capabilities.includes('agent-chat:manage'));
@@ -942,7 +958,7 @@
     const stale = () => source !== current || (!forOther && task !== item); // forOther: the task is not the selected one (its list is opened in the sheet)
     try {
       if (current.key !== 'local') {
-        const info = await api('GET', `${current.tasksBase.replace(/\/tasks$/, '')}/info`);
+        const info = await readInfo(current);
         if (!Array.isArray(info.capabilities) || !info.capabilities.includes('agent-chat:manage')) return null;
         if (stale()) return null;
       }
@@ -2218,11 +2234,13 @@
   // Opens one file of the task's working directory in the sheet: DESIGN.md from the row 2 button, any file from a terminal link (`link`: true, with the
   // line the link named). `filePath` is relative to the working directory. A folder is not listed on the phone; the sheet says so.
   // `terminal`: the id of a terminal whose own directory is not the task's: the file is read from that directory (`&terminal=` on the file API).
-  async function openFileSheet(filePath, { link = false, line = null, directory = false, terminal = null, terminalDir = null } = {}) {
+  // `absolute`: `filePath` is an absolute (or '~/...') path outside the working directory, read with the any-path read of the Engine `from`
+  // (`GET {fs}/content?path=`; see openAnyFile).
+  async function openFileSheet(filePath, { link = false, line = null, directory = false, terminal = null, terminalDir = null, absolute = false, from = source } = {}) {
     if (document.activeElement && document.activeElement !== document.body && typeof document.activeElement.blur === 'function') document.activeElement.blur();
     const seq = ++designSeq;
+    if (absolute) { await openAnyFile(seq, filePath, { link, line, directory, from }); return; }
     const current = task;
-    const from = source;
     const base = { open: true, path: filePath, link, line };
     if (!current) { ui.set({ design: { ...base, status: 'no-task' } }); return; }
     const dir = (terminal && terminalDir) || taskDir(current);
@@ -2248,6 +2266,35 @@
     }
   }
   ui.actions.openDesign = () => openFileSheet('DESIGN.md');
+  // A file outside the working directory (Engines with 'fs:read-any'): `GET {fs}/content?path=` (local `/api/fs`, remote `/api/remote-servers/:id/fs`),
+  // read only, as the terminal user, regular files only. The sheet's title is the file name and its second line the full path (the Engine's normalized
+  // `path`, so '~/x.md' shows where it is). Relative images of a Markdown file are read with `{fs}/image?path=` from the file's folder.
+  async function openAnyFile(seq, filePath, { link, line, directory, from }) {
+    const base = { open: true, path: filePath, link, line, absolute: true, dir: '' };
+    if (directory) { ui.set({ design: { ...base, status: 'folder' } }); return; }
+    ui.set({ design: { ...base, status: 'loading' } });
+    const fs = fsBase(from);
+    try {
+      const file = await api('GET', `${fs}/content?path=${encodeURIComponent(filePath)}`);
+      if (seq !== designSeq) return;
+      const shown = file && typeof file.path === 'string' && /^\/./.test(file.path) ? file.path : filePath;
+      // Design.jsx resolves an image against the folder of `path` without its leading '/' and appends it encoded: the '/' goes in front here.
+      const imageBase = `${fs}/image?path=${shown.startsWith('/') ? encodeURIComponent('/') : ''}`;
+      ui.set({ design: { ...base, path: shown, status: 'ready', content: String((file && file.content) || ''), imageBase } });
+    } catch (error) {
+      if (seq !== designSeq) return;
+      const code = error.message;
+      if (code === 'FS_READ_UNSUPPORTED') {
+        // The proxy says the remote Engine has no any-path read (an older Engine after all): forget the capability and say so, as before.
+        if (Array.isArray(from.capabilities)) from.capabilities = from.capabilities.filter(name => name !== 'fs:read-any');
+        ui.actions.closeDesign();
+        tell(`Outside the working directory: ${filePath}`, 'error');
+        return;
+      }
+      const status = code === 'IS_DIRECTORY' ? 'folder' : code === 'NOT_FOUND' ? 'missing' : 'error';
+      ui.set({ design: { ...base, status, message: code } });
+    }
+  }
 
   // ── File links in the terminal (public/js/terminal-file-links.js): a tap on a path inside the working directory opens it in the sheet above ──
   // The tap waits out the double-tap time first, so a double or triple tap on a path still selects the word or the line and opens nothing. A long press
@@ -2261,20 +2308,29 @@
       root: () => s.workDir || taskDir(s.task) || null,
       // Relative paths come from the shell's live directory: its OSC 7 report, else the server reads it (an older Engine: the work dir).
       liveCwd: () => api('GET', `${s.source.tasksBase}/${s.task.id}/terminals/${encodeURIComponent(s.terminalId)}/cwd`).catch(() => null),
+      // Paths outside it are links too when the Engine reads any path (the local Client; a remote Engine with 'fs:read-any', known after its /info).
+      anyPath: () => readsAnyPath(s.source),
       activate: link => {
         cancelPendingLink();
         if (session !== s || s.disposed || longPressDone || ui.get().copyText !== null || ui.get().selectionBar) return;
         pendingLink = setTimeout(async () => {
           pendingLink = 0;
           if (session !== s || s.disposed || longPressDone || ui.get().copyText !== null) return;
-          const relative = await link.resolve();
+          const target = await link.locate();
           if (session !== s || s.disposed) return;
+          // Outside the working directory: an Engine that reads any path opens it; an older one cannot (the old note).
+          if (target && target.absolute && readsAnyPath(s.source)) {
+            void openFileSheet(target.absolute, { link: true, line: link.line, directory: link.directory, absolute: true, from: s.source });
+            return;
+          }
+          const relative = target && target.relative != null ? target.relative : null;
           if (relative == null) { tell(`Outside the working directory: ${link.path}`, 'error'); return; }
           const elsewhere = s.workDir && s.workDir !== taskDir(s.task) ? s.terminalId : null;
           void openFileSheet(relative || '.', { link: true, line: link.line, directory: link.directory || !relative, terminal: elsewhere, terminalDir: s.workDir });
         }, MULTI_TAP_MS);
       },
     });
+    if (s.source.key !== 'local' && !Array.isArray(s.source.capabilities)) readInfo(s.source).catch(() => { /* an older or offline Engine: the old rule */ });
   }
   ui.actions.closeDesign = () => { designSeq += 1; ui.set(state => ({ design: state.design ? { ...state.design, open: false } : null })); };
 
@@ -2364,7 +2420,7 @@
     if (savedId > 0 && !link) {
       prefetch(`${assumed.tasksBase}/${savedId}/terminals`);
       if (assumed.key === 'local') prefetch(`${assumed.tasksBase}/${savedId}/agent/conversations`);
-      else prefetch(`${assumed.tasksBase.replace(/\/tasks$/, '')}/info`);
+      else prefetch(infoUrl(assumed));
       const savedTerminal = store.get(`terminal:${assumed.key}:${savedId}`);
       if (savedTerminal) openEarlySocket(assumed, savedId, savedTerminal);
     }

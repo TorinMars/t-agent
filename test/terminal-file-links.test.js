@@ -302,3 +302,105 @@ test('a broken path outside the working directory is no link (the root rule stil
   assert.equal(await links(2), undefined);
   real.dispose();
 });
+
+// Any path (an Engine with the capability 'fs:read-any'): paths outside the root are links too, read through /fs/content.
+test('with anyPath, ~/ paths are found and the other rules hold', () => {
+  const any = { anyPath: true };
+  const foundAny = line => findFileLinks(line, any).map(link => link.text);
+  assert.deepEqual(foundAny('see ~/notes.md and ~/.zshrc:12 then /etc/hosts'), ['~/notes.md', '~/.zshrc:12', '/etc/hosts']);
+  assert.deepEqual(foundAny('@~/proj/a.js.'), ['~/proj/a.js'], 'a mention and sentence punctuation');
+  for (const line of ['~', '~/', '~user/notes.md', '~~/a.md', 'https://example.com/a/b.md', 'github.com/owner/repo', '2026/11/05', '1/2', 'v2.87.10',
+    'origin:main', 'C:\\dir\\a.txt', '//cdn.test/x.js', 'e.g. this']) {
+    assert.deepEqual(foundAny(line), [], line);
+  }
+  assert.deepEqual(found('~/notes.md'), [], 'without anyPath: ~/ is no path (the old rule)');
+  assert.equal(findFileLinks('see ~/a.md', { anyPath: () => true }).length, 1, 'anyPath may be a function');
+  assert.equal(findFileLinks('see ~/a.md', { anyPath: () => false }).length, 0);
+});
+
+test('locatePath: inside the root relative, outside absolute only with anyPath', () => {
+  const { locatePath } = require('../public/js/terminal-file-links.js');
+  const root = '/work/proj';
+  const any = { anyPath: true };
+  // Inside the root: the task file API, as before (with or without the option).
+  assert.deepEqual(locatePath('src/a.js', root, null, any), { relative: 'src/a.js' });
+  assert.deepEqual(locatePath('/work/proj/b.js', root, '/elsewhere', any), { relative: 'b.js' });
+  assert.deepEqual(locatePath('a.js', root, '/work/proj/sub', any), { relative: 'sub/a.js' });
+  // Outside: absolute paths, ~/, relative above the root, relative from a live directory outside the root.
+  assert.deepEqual(locatePath('/etc/hosts', root, null, any), { absolute: '/etc/hosts' });
+  assert.deepEqual(locatePath('/private/tmp/claude-501/-Users-me/f5bc/scratchpad/plan.md', root, null, any), { absolute: '/private/tmp/claude-501/-Users-me/f5bc/scratchpad/plan.md' });
+  assert.deepEqual(locatePath('~/notes/../a.md', root, null, any), { absolute: '~/a.md' });
+  assert.deepEqual(locatePath('~/../other/a.md', root, null, any), { absolute: '~/../other/a.md' }, 'above ~: left to the Engine');
+  assert.deepEqual(locatePath('../../up.md', root, null, any), { absolute: '/up.md' });
+  assert.deepEqual(locatePath('../sibling/a.md', root, '/work/proj/sub', any), { relative: 'sibling/a.md' });
+  assert.deepEqual(locatePath('../../../x.md', root, '/work/proj/sub', any), { absolute: '/x.md' });
+  assert.deepEqual(locatePath('c.md', root, '/elsewhere/dir', any), { absolute: '/elsewhere/dir/c.md' });
+  assert.deepEqual(locatePath('/abs/a.js', null, null, any), { absolute: '/abs/a.js' }, 'no known root');
+  assert.equal(locatePath('../x.md', null, null, any), null, 'nothing to place a relative path from');
+  // Without the option: exactly the old rule.
+  for (const [value, cwd] of [['/etc/hosts', null], ['~/notes.md', null], ['../../up.md', null], ['c.md', '/elsewhere'], ['/private/tmp/x/plan.md', null]]) {
+    assert.equal(locatePath(value, root, cwd), null, value);
+    assert.equal(locatePath(value, root, cwd, { anyPath: false }), null, value);
+  }
+});
+
+test('attach with anyPath: outside paths are links and locate() gives the absolute path', async () => {
+  const { attach } = require('../public/js/terminal-file-links.js');
+  const { real, term, write, links } = headlessTerm();
+  let live = { cwd: '/work/proj', relative: '' };
+  let any = true;
+  const activated = [];
+  const handle = attach(term, { root: () => '/work/proj', anyPath: () => any, liveCwd: async () => live, activate: link => activated.push(link) });
+  await write('/etc/hosts ~/n.md ../../up.md src/a.js\r\n');
+  const found = await links(1);
+  assert.deepEqual(found.map(link => link.text), ['/etc/hosts', '~/n.md', '../../up.md', 'src/a.js']);
+  found.forEach(link => link.activate({}));
+  const [etc, home, up, inside] = activated;
+  assert.equal(etc.absolute, '/etc/hosts');
+  assert.equal(etc.relative, null);
+  assert.deepEqual(await etc.locate(), { absolute: '/etc/hosts' });
+  assert.equal(await etc.resolve(), null, 'resolve() still names only paths inside the root');
+  assert.deepEqual(await home.locate(), { absolute: '~/n.md' });
+  assert.deepEqual(await up.locate(), { absolute: '/up.md' }, 'from the live directory');
+  assert.deepEqual(await inside.locate(), { relative: 'src/a.js' });
+  // The server says the shell is outside the root: a relative path opens from there.
+  live = { cwd: '/elsewhere', relative: null };
+  assert.deepEqual(await inside.locate(), { absolute: '/elsewhere/src/a.js' });
+  live = { cwd: '/work/proj/sub', relative: 'sub' };
+  assert.deepEqual(await inside.locate(), { relative: 'sub/src/a.js' });
+  assert.deepEqual(await up.locate(), { absolute: '/work/up.md' }, 'above the root from a live directory inside it');
+  // An OSC 7 report outside the root: relative paths are links to that directory, no request.
+  live = new Error('must not be asked');
+  await write('\x1b]7;file://host/private/tmp/scratch\x07c.md\r\n');
+  const [outside] = await links(2);
+  outside.activate({});
+  assert.deepEqual(await activated.at(-1).locate(), { absolute: '/private/tmp/scratch/c.md' });
+  // The capability goes away (another Engine): the old rule.
+  any = false;
+  assert.equal(await links(2), undefined);
+  assert.deepEqual(((await links(1)) || []).map(link => link.text), [], 'no outside links; src/a.js is outside the reported directory');
+  handle.resetCwd();
+  assert.deepEqual((await links(1)).map(link => link.text), ['src/a.js']);
+  real.dispose();
+});
+
+test('a broken path outside the working directory is one link with anyPath', async () => {
+  const { attach } = require('../public/js/terminal-file-links.js');
+  const { real, term, write, links } = headlessTerm(40);
+  const activated = [];
+  attach(term, { root: () => '/Users/me/project', anyPath: true, activate: link => activated.push(link) });
+  const target = '/private/tmp/claude-501/-Users-me-project/f5bcf118-e52a/scratchpad/open-test.md';
+  await write(hardRows(`  ⎿  ${target}`, '', '     ', 40));
+  const [link] = await links(2);
+  assert.equal(link.text, target);
+  link.activate({});
+  assert.deepEqual(await activated[0].locate(), { absolute: target });
+  // A ~/ path hard-wrapped the same way is joined too.
+  const home = headlessTerm(30);
+  attach(home.term, { root: () => '/Users/me/project', anyPath: true, activate() {} });
+  const homePath = '~/Documents/notes/a-long-folder-name/plan.md';
+  await home.write(hardRows(`  ⎿  ${homePath}`, '', '     ', 30));
+  assert.equal((await home.links(1))?.[0]?.text, homePath);
+  home.real.dispose();
+  real.dispose();
+});

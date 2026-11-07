@@ -1,7 +1,10 @@
 // File links in the phone terminal (/h5) in Chromium at phone size with touch: a tap on a path inside the working directory opens the file in the
 // sheet from the bottom (Markdown rendered, other files as text with the named line marked), read through the task file API only at the tap.
-// A path outside the working directory is no link, a double tap on a path selects the word and opens nothing, the keyboard closes and the
-// terminal is not resized (no resize message reaches the PTY). H5_SHOT_DIR=<dir> saves screenshots at 3x.
+// A path outside the working directory (absolute, ~/, above the root, from a live directory outside it) opens through the any-path read
+// (`/api/fs/content`, mocked here: the server side is tested on its own) on the local Client and on a remote Engine with 'fs:read-any'
+// (`/api/remote-servers/:id/fs/content`); on a remote Engine without it such a path is no link (the old rule). A double tap on a path selects the
+// word and opens nothing, the keyboard closes and the terminal is not resized (no resize message reaches the PTY). H5_SHOT_DIR=<dir> saves
+// screenshots at 3x.
 const { chromium } = require('playwright');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -24,14 +27,84 @@ const FILES = {
 };
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
 const images = [];
+const reads = []; // the task file API reads: `read <path>` / `list <path>`
 // The shell's live directory as the server reads it (GET .../terminals/:tid/cwd); the shell here sends no OSC 7 unless the test prints one.
 let liveCwd = { cwd: '/work/fix-login', relative: '' };
 let cwdAsks = 0;
 
+// Files outside the working directory, as the any-path read answers them (`path` is the Engine's normalized absolute path).
+const SCRATCH = '/private/tmp/claude-501/-Users-me/f5bc/scratchpad';
+const FS_FILES = {
+  '/etc/hosts': '127.0.0.1 localhost\n',
+  '/work/up.md': '# Up one\n',
+  '/elsewhere/x.js': 'const elsewhere = 1;\n',
+  '~/notes.md': { path: '/home/me/notes.md', content: '# Home notes\n' },
+  [`${SCRATCH}/plan.md`]: '# Plan\n\n![the plan](img/p.png)\n\n![missing](../gone.png)\n',
+};
+const FS_ERRORS = {
+  '/etc/secret.txt': [403, 'PERMISSION_DENIED'],
+  '/etc': [400, 'IS_DIRECTORY'],
+  '/dev/tty0': [400, 'NOT_A_REGULAR_FILE'],
+  '/var/log/huge.log': [413, 'FILE_TOO_LARGE'],
+  '/var/log/app.bin': [415, 'FILE_UNSUPPORTED'],
+  '/mnt/slow.txt': [504, 'READ_TIMEOUT'],
+  '/etc/odd.txt': [500, 'FS_READ_FAILED'],
+  // The proxy's answer for a remote Engine without 'fs:read-any' (it said otherwise, or was downgraded).
+  '/etc/old.txt': [501, 'FS_READ_UNSUPPORTED'],
+};
+const fsReads = []; // `${pathname} ${path}` of each any-path read
+const fsImages = [];
+// The remote Engines (through the proxy, /api/remote-servers/:id/...) and the capabilities of their /info: 7 is older, 8 reads any path.
+const REMOTES = { 7: [], 8: ['fs:read-any'] };
+
+// The fake server of every page: the local Client (/api/...) and the remote Engines, all with the same task. The any-path read (/fs/content,
+// /fs/image) answers from FS_FILES / FS_ERRORS.
+async function serve(route) {
+  const url = new URL(route.request().url());
+  const json = (body, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
+  if (url.pathname === '/h5') return route.fulfill({ contentType: 'text/html', body: fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8') });
+  if (/^\/(js|css|vendor)\//.test(url.pathname)) return route.fulfill({ contentType: TYPES[path.extname(url.pathname)] || 'text/plain', body: fs.readFileSync(path.join(root, 'public', url.pathname)) });
+  if (url.pathname === '/api/remote-servers') return json(Object.keys(REMOTES).map(id => ({ id: Number(id), name: `Engine ${id}`, status: 'online' })));
+  const remote = /^\/api\/remote-servers\/(\d+)\//.exec(url.pathname);
+  const p = remote ? url.pathname.replace(remote[0], '/api/') : url.pathname;
+  if (remote && p === '/api/info') return json({ api_version: 1, capabilities: REMOTES[remote[1]] || [] });
+  if (p === '/api/fs/content') {
+    const file = url.searchParams.get('path');
+    fsReads.push(`${url.pathname} ${file}`);
+    if (FS_ERRORS[file]) return json({ error: FS_ERRORS[file][1], message: `Error ${FS_ERRORS[file][1]}`, ...(FS_ERRORS[file][1] === 'IS_DIRECTORY' ? { path: file } : {}) }, FS_ERRORS[file][0]);
+    const entry = FS_FILES[file];
+    if (entry === undefined) return json({ error: 'NOT_FOUND', message: 'File not found' }, 404);
+    const { path: filePath, content } = typeof entry === 'string' ? { path: file, content: entry } : entry;
+    return json({ path: filePath, realPath: filePath, content, revision: 'r1', eol: '\n', bom: false });
+  }
+  if (p === '/api/fs/image') {
+    fsImages.push(`${url.pathname} ${url.searchParams.get('path')}`);
+    return url.searchParams.get('path') === `${SCRATCH}/img/p.png` ? route.fulfill({ contentType: 'image/png', body: PNG }) : json({ error: 'NOT_FOUND', message: 'File not found' }, 404);
+  }
+  if (p === '/api/tasks' && route.request().method() === 'GET') return json([{ id: 1, title: 'Fix login', status: 'doing', work_dir: '/work/fix-login' }]);
+  if (p === '/api/task-groups') return json([{ key: 'doing', name: 'In progress', sort_order: 1 }]);
+  if (p === '/api/tasks/1/terminals') return json([{ terminal_id: 'h5-default', title: 'Terminal 1' }]);
+  if (p === '/api/tasks/1/agent/conversations') return json([]);
+  if (p === '/api/tasks/1/terminals/h5-default/cwd') { cwdAsks += 1; return json(liveCwd); }
+  if (p === '/api/tasks/1/files/image') {
+    images.push(url.searchParams.get('path'));
+    return url.searchParams.get('path') === 'docs/img/shot.png' ? route.fulfill({ contentType: 'image/png', body: PNG }) : json({ error: 'FILE_NOT_FOUND' }, 404);
+  }
+  if (p.startsWith('/api/tasks/1/files')) {
+    const file = url.searchParams.get('path');
+    reads.push(`${p.endsWith('/content') ? 'read' : 'list'} ${file}`);
+    if (p.endsWith('/content')) {
+      if (file === 'src') return json({ error: 'FILE_UNSUPPORTED' }, 415);
+      return FILES[file] ? json({ path: file, content: FILES[file], revision: 'r1', eol: '\n', bom: false }) : json({ error: 'FILE_NOT_FOUND' }, 404);
+    }
+    return file === 'src' ? json({ entries: [], nextOffset: null, root: '/work/fix-login' }) : json({ error: 'FILE_NOT_DIRECTORY' }, 400);
+  }
+  return json({ error: 'not mocked' }, 404);
+}
+
 (async () => {
   const browser = await chromium.launch({ headless: true, ...(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {}) });
   const errors = [];
-  const reads = [];
   try {
     const scale = process.env.H5_SHOT_DIR ? { deviceScaleFactor: 3 } : {};
     const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, ...scale });
@@ -49,32 +122,7 @@ let cwdAsks = 0;
       window.FakeSocket.CONNECTING = 0;
       window.WebSocket = window.FakeSocket;
     });
-    await page.route(`${ORIGIN}/**`, async route => {
-      const url = new URL(route.request().url());
-      const json = (body, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
-      if (url.pathname === '/h5') return route.fulfill({ contentType: 'text/html', body: fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8') });
-      if (/^\/(js|css|vendor)\//.test(url.pathname)) return route.fulfill({ contentType: TYPES[path.extname(url.pathname)] || 'text/plain', body: fs.readFileSync(path.join(root, 'public', url.pathname)) });
-      if (url.pathname === '/api/remote-servers') return json([]);
-      if (url.pathname === '/api/tasks' && route.request().method() === 'GET') return json([{ id: 1, title: 'Fix login', status: 'doing', work_dir: '/work/fix-login' }]);
-      if (url.pathname === '/api/task-groups') return json([{ key: 'doing', name: 'In progress', sort_order: 1 }]);
-      if (url.pathname === '/api/tasks/1/terminals') return json([{ terminal_id: 'h5-default', title: 'Terminal 1' }]);
-      if (url.pathname === '/api/tasks/1/agent/conversations') return json([]);
-      if (url.pathname === '/api/tasks/1/terminals/h5-default/cwd') { cwdAsks += 1; return json(liveCwd); }
-      if (url.pathname === '/api/tasks/1/files/image') {
-        images.push(url.searchParams.get('path'));
-        return url.searchParams.get('path') === 'docs/img/shot.png' ? route.fulfill({ contentType: 'image/png', body: PNG }) : json({ error: 'FILE_NOT_FOUND' }, 404);
-      }
-      if (url.pathname.startsWith('/api/tasks/1/files')) {
-        const file = url.searchParams.get('path');
-        reads.push(`${url.pathname.endsWith('/content') ? 'read' : 'list'} ${file}`);
-        if (url.pathname.endsWith('/content')) {
-          if (file === 'src') return json({ error: 'FILE_UNSUPPORTED' }, 415);
-          return FILES[file] ? json({ path: file, content: FILES[file], revision: 'r1', eol: '\n', bom: false }) : json({ error: 'FILE_NOT_FOUND' }, 404);
-        }
-        return file === 'src' ? json({ entries: [], nextOffset: null, root: '/work/fix-login' }) : json({ error: 'FILE_NOT_DIRECTORY' }, 400);
-      }
-      return json({ error: 'not mocked' }, 404);
-    });
+    await page.route(`${ORIGIN}/**`, serve);
     await page.goto(`${ORIGIN}/h5`);
     await page.locator('.h5-task-item', { hasText: 'Fix login' }).tap();
     await page.locator('#h5-tasks .h5-terminal-list[aria-label="Fix login"] .h5-terminal-main').first().tap();
@@ -215,43 +263,175 @@ let cwdAsks = 0;
     assert.equal(reads[reads.length - 1], 'read other/x.js');
     assert.equal(cwdAsks, asksBefore, 'a reported directory needs no request');
     await closeSheet();
-    // A reported directory outside the working directory: relative paths are no links.
+    // A reported directory outside the working directory: relative paths there are links read with the any-path read (the local Client has it).
     let readsBefore = reads.length;
     await page.evaluate(() => window.sockets[0].emit('\x1b]7;file://engine-host/elsewhere\x07A8 x.js\r\n'));
     await page.waitForFunction(text => [...document.querySelectorAll('.xterm-rows > div')].some(row => row.textContent.startsWith(text)), 'A8 ');
     await tap(await pointOf('A8 ', 'x.js'));
-    await page.waitForTimeout(700);
-    assert.equal(await sheet.isVisible(), false, 'a relative path from an outside directory opens nothing');
-    assert.equal(reads.length, readsBefore);
-    // The screen is restored (a reconnect, maybe a new shell): the reported directory is forgotten. The server says the shell is outside: a notice.
+    await page.locator('#h5-design-body .h5-file-line', { hasText: 'const elsewhere' }).waitFor();
+    assert.equal(fsReads.at(-1), '/api/fs/content /elsewhere/x.js');
+    assert.equal(await page.locator('#h5-design-title').textContent(), 'x.js');
+    assert.equal(await page.locator('#h5-design-path').textContent(), '/elsewhere/x.js');
+    assert.equal(reads.length, readsBefore, 'the task file API is not asked for an outside path');
+    await closeSheet();
+    // The screen is restored (a reconnect, maybe a new shell): the reported directory is forgotten. The server says the shell is outside: the
+    // file opens from there (no "Outside the working directory" note any more).
     assert.equal(await resizes(), resizesBefore, 'the link taps so far send no resize to the PTY');
     liveCwd = { cwd: '/elsewhere', relative: null };
     await page.evaluate(() => window.sockets[0].emit(JSON.stringify({ type: 'history', data: '$ \r\nA9 x.js\r\n', cols: 50, rows: 24 })));
     await page.waitForFunction(() => document.querySelector('.h5-xterm:not([hidden]) .xterm-rows')?.textContent.includes('A9 x.js'));
+    const fsBefore = fsReads.length;
     await tap(await pointOf('A9 ', 'x.js'));
-    await page.getByText('Outside the working directory: x.js').first().waitFor();
-    assert.equal(await sheet.isVisible(), false);
-    assert.equal(reads.length, readsBefore, 'nothing is read when the shell is outside');
-    await page.evaluate(() => window.sockets[0].emit('\r\nA1 ● Read(src/app.js:42)\r\nA3 /etc/hosts and ../up.md\r\n'));
-    await page.waitForFunction(() => document.querySelector('.h5-xterm:not([hidden]) .xterm-rows')?.textContent.includes('A3 /etc'));
+    await page.locator('#h5-design-body .h5-file-line', { hasText: 'const elsewhere' }).waitFor();
+    assert.deepEqual(fsReads.slice(fsBefore), ['/api/fs/content /elsewhere/x.js']);
+    assert.equal(await page.getByText('Outside the working directory: x.js').count(), 0, 'no outside note');
+    assert.equal(reads.length, readsBefore, 'nothing is read through the task file API when the shell is outside');
+    await closeSheet();
     liveCwd = { cwd: '/work/fix-login', relative: '' };
+    await page.evaluate(lines => window.sockets[0].emit(lines), ['', 'A1 ● Read(src/app.js:42)', 'A3 /etc/hosts and ../up.md', 'D1 see ~/notes.md', `D2 ${SCRATCH}/plan.md`,
+      'D3 /etc/secret.txt', 'D4 /etc and /dev/tty0', 'D5 /var/log/huge.log', 'D6 /nope/gone.md', 'D7 /var/log/app.bin and /mnt/slow.txt', 'D8 /etc/odd.txt', ''].join('\r\n'));
+    await page.waitForFunction(() => document.querySelector('.h5-xterm:not([hidden]) .xterm-rows')?.textContent.includes('D6 /nope'));
     resizesBefore = await resizes(); // a restored screen sends its size once; the taps below must send none
 
-    // Outside the working directory: not a link, the tap opens and reads nothing.
+    // Outside the working directory: an absolute path, one above the root (placed from the live directory) and a ~/ path open in the sheet; the
+    // title is the file name and the second line the full path (for ~/ the Engine's normalized path).
     readsBefore = reads.length;
-    for (const text of ['/etc/hosts', '../up.md']) {
-      await tap(await pointOf('A3 ', text));
-      await page.waitForTimeout(700);
-      assert.equal(await sheet.isVisible(), false, `${text} opens nothing`);
+    for (const [prefix, text, request, title, shown, check] of [
+      ['A3 ', '/etc/hosts', '/etc/hosts', 'hosts', '/etc/hosts', page.locator('#h5-design-body .h5-file-line', { hasText: '127.0.0.1' })],
+      ['A3 ', '../up.md', '/work/up.md', 'up.md', '/work/up.md', page.locator('#h5-design-body h1', { hasText: 'Up one' })],
+      ['D1 ', '~/notes.md', '~/notes.md', 'notes.md', '/home/me/notes.md', page.locator('#h5-design-body h1', { hasText: 'Home notes' })],
+    ]) {
+      await tap(await pointOf(prefix, text));
+      await check.waitFor();
+      assert.equal(fsReads.at(-1), `/api/fs/content ${request}`, text);
+      assert.equal(await page.locator('#h5-design-title').textContent(), title);
+      assert.equal(await page.locator('#h5-design-path').textContent(), shown);
+      assert.equal(await page.locator('#h5-design-path').getAttribute('title'), shown, 'the full path is the tooltip too');
+      await closeSheet();
     }
+    // Markdown outside the root: its relative images are read with /fs/image from the file's folder; one that does not load shows its text.
+    await tap(await pointOf('D2 ', '/private'));
+    await page.locator('#h5-design-body h1', { hasText: 'Plan' }).waitFor();
+    await page.waitForFunction(() => { const img = document.querySelector('#h5-design-body img[alt="the plan"]'); return img && img.complete && img.naturalWidth === 1; });
+    await page.locator('#h5-design-body .h5-design-image', { hasText: 'missing' }).waitFor();
+    assert.deepEqual(fsImages.sort(), [`/api/fs/image /private/tmp/claude-501/-Users-me/f5bc/gone.png`, `/api/fs/image ${SCRATCH}/img/p.png`]);
+    if (process.env.H5_SHOT_DIR) await page.screenshot({ path: path.join(process.env.H5_SHOT_DIR, 'h5-file-link-outside.png') });
+    await closeSheet();
+    // Errors of the any-path read show a note in the sheet.
+    for (const [prefix, text, note] of [
+      ['D3 ', '/etc/secret.txt', 'The file cannot be read'],
+      ['D4 ', '/etc', 'Folders cannot be shown on the phone'],
+      ['D4 ', '/dev/tty0', 'This is not a plain file'],
+      ['D5 ', '/var/log/huge.log', 'The file is larger than 5 MB'],
+      ['D6 ', '/nope/gone.md', 'Not found: /nope/gone.md'],
+      ['D7 ', '/var/log/app.bin', 'This is not a plain text file'],
+      ['D7 ', '/mnt/slow.txt', 'Reading the file took too long'],
+      ['D8 ', '/etc/odd.txt', 'Could not open the file'],
+    ]) {
+      await tap(await pointOf(prefix, text));
+      await page.locator('#h5-design-empty', { hasText: note }).waitFor();
+      assert.equal(fsReads.at(-1), `/api/fs/content ${text}`);
+      await closeSheet();
+    }
+    assert.equal(reads.length, readsBefore, 'outside paths never reach the task file API');
     // A double tap on a path selects the word (Copy bar) and opens nothing.
+    const fsBeforeDouble = fsReads.length;
     const point = await pointOf('A1 ', 'src/app.js');
     await tap(point); await page.waitForTimeout(80); await tap(point);
     await page.locator('.h5-selection-bar').waitFor();
     await page.waitForTimeout(700);
     assert.equal(await sheet.isVisible(), false, 'a double tap does not open the file');
-    assert.equal(reads.length, readsBefore, 'outside paths and the double tap read nothing');
+    assert.equal(reads.length, readsBefore, 'the double tap reads nothing');
+    assert.equal(fsReads.length, fsBeforeDouble);
     assert.equal(await resizes(), resizesBefore, 'the link taps send no resize to the PTY');
+    assert.deepEqual(errors, []);
+    await context.close();
+
+    // Remote Engines. 8 has 'fs:read-any': an outside path is read through the proxy. 7 is older: outside paths are no links and a shell outside
+    // the root still says "Outside the working directory".
+    for (const id of [8, 7]) {
+      const remoteContext = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+      const remotePage = await remoteContext.newPage();
+      remotePage.on('pageerror', error => errors.push(error.message));
+      await remotePage.addInitScript(key => {
+        try { localStorage.setItem('h5-source', key); } catch { /* ignore */ }
+        window.sockets = [];
+        window.FakeSocket = class {
+          constructor(url) { this.url = url; this.readyState = 0; this.sent = []; window.sockets.push(this); setTimeout(() => { this.readyState = 1; this.onopen?.(); }, 0); }
+          send(data) { this.sent.push(typeof data === 'string' ? data : new TextDecoder().decode(data)); }
+          close() { this.readyState = 3; }
+          emit(data) { this.onmessage?.({ data }); }
+        };
+        window.FakeSocket.OPEN = 1;
+        window.FakeSocket.CONNECTING = 0;
+        window.WebSocket = window.FakeSocket;
+      }, `remote:${id}`);
+      await remotePage.route(`${ORIGIN}/**`, serve);
+      const infoAsked = remotePage.waitForRequest(request => request.url().endsWith(`/api/remote-servers/${id}/info`));
+      await remotePage.goto(`${ORIGIN}/h5`);
+      await remotePage.locator('.h5-task-item', { hasText: 'Fix login' }).tap();
+      await remotePage.locator('#h5-tasks .h5-terminal-list[aria-label="Fix login"] .h5-terminal-main').first().tap();
+      await remotePage.locator('#h5-tasks').waitFor({ state: 'hidden' });
+      await remotePage.waitForFunction(() => window.sockets.length === 1 && window.sockets[0].readyState === 1);
+      assert.match(await remotePage.evaluate(() => window.sockets[0].url), new RegExp(`/api/remote-servers/${id}/terminal/ws`));
+      await infoAsked;
+      await remotePage.evaluate(() => window.sockets[0].emit(JSON.stringify({ type: 'history', data: '$ \r\nR1 /etc/hosts\r\nR2 ~/notes.md\r\nR3 x.js\r\nR4 /etc/old.txt\r\n', cols: 50, rows: 24 })));
+      await remotePage.waitForFunction(() => document.querySelector('.h5-xterm:not([hidden]) .xterm-rows')?.textContent.includes('R3 x.js'));
+      await remotePage.waitForTimeout(100);
+      const remotePoint = (prefix, text) => remotePage.evaluate(({ prefix, text }) => {
+        const row = [...document.querySelectorAll('.xterm-rows > div')].find(node => node.textContent.startsWith(prefix));
+        const screen = document.querySelector('.h5-xterm:not([hidden]) .xterm-screen').getBoundingClientRect();
+        const box = row.getBoundingClientRect();
+        return { x: screen.left + (row.textContent.indexOf(text) + 1.5) * (screen.width / 50), y: box.top + box.height / 2 };
+      }, { prefix, text });
+      const remoteSheet = remotePage.locator('#h5-design-sheet .h5-design-panel');
+      const fsStart = fsReads.length;
+      const readsStart = reads.length;
+      if (id === 8) {
+        for (const [prefix, text, check] of [['R1 ', '/etc/hosts', '127.0.0.1'], ['R2 ', '~/notes.md', 'Home notes']]) {
+          const p = await remotePoint(prefix, text);
+          await remotePage.touchscreen.tap(p.x, p.y);
+          await remotePage.locator('#h5-design-body', { hasText: check }).waitFor();
+          assert.equal(fsReads.at(-1), `/api/remote-servers/8/fs/content ${text}`, `${text} through the proxy`);
+          await remotePage.locator('#h5-design-close').tap(); await remoteSheet.waitFor({ state: 'hidden' });
+        }
+        // The shell outside the root (server cwd): the file opens from there through the proxy.
+        liveCwd = { cwd: '/elsewhere', relative: null };
+        const p = await remotePoint('R3 ', 'x.js');
+        await remotePage.touchscreen.tap(p.x, p.y);
+        await remotePage.locator('#h5-design-body', { hasText: 'const elsewhere' }).waitFor();
+        assert.equal(fsReads.at(-1), '/api/remote-servers/8/fs/content /elsewhere/x.js');
+        liveCwd = { cwd: '/work/fix-login', relative: '' };
+        await remotePage.locator('#h5-design-close').tap(); await remoteSheet.waitFor({ state: 'hidden' });
+        // The proxy answers 501 FS_READ_UNSUPPORTED: the old note, no sheet, and outside paths are no links any more on this Engine.
+        const old = await remotePoint('R4 ', '/etc/old.txt');
+        await remotePage.touchscreen.tap(old.x, old.y);
+        await remotePage.getByText('Outside the working directory: /etc/old.txt').first().waitFor();
+        await remoteSheet.waitFor({ state: 'hidden' });
+        const readsAfter = fsReads.length;
+        const hosts = await remotePoint('R1 ', '/etc/hosts');
+        await remotePage.touchscreen.tap(hosts.x, hosts.y);
+        await remotePage.waitForTimeout(700);
+        assert.equal(await remoteSheet.isVisible(), false, 'no link after FS_READ_UNSUPPORTED');
+        assert.equal(fsReads.length, readsAfter);
+      } else {
+        for (const [prefix, text] of [['R1 ', '/etc/hosts'], ['R2 ', '~/notes.md']]) {
+          const p = await remotePoint(prefix, text);
+          await remotePage.touchscreen.tap(p.x, p.y);
+          await remotePage.waitForTimeout(700);
+          assert.equal(await remoteSheet.isVisible(), false, `${text} is no link on an older Engine`);
+        }
+        liveCwd = { cwd: '/elsewhere', relative: null };
+        const p = await remotePoint('R3 ', 'x.js');
+        await remotePage.touchscreen.tap(p.x, p.y);
+        await remotePage.getByText('Outside the working directory: x.js').first().waitFor();
+        assert.equal(await remoteSheet.isVisible(), false);
+        liveCwd = { cwd: '/work/fix-login', relative: '' };
+        assert.equal(fsReads.length, fsStart, 'an older Engine is never asked for an any-path read');
+      }
+      assert.equal(reads.length, readsStart, 'outside paths never reach the task file API');
+      await remoteContext.close();
+    }
     assert.deepEqual(errors, []);
     console.log('h5 file links browser test passed');
   } finally {

@@ -116,6 +116,7 @@ const POINTER_ON = { '& .h5-draft-only': { display: 'inline-flex' } };
 const DRAFT_ON = {
   '&:has(#h5-translate:focus-within), &:has(#h5-translate[data-hold]), &:has(#h5-translate.translating), &:has(.h5-voice.listening)': {
     '& #h5-translate': SHOWN, '& .h5-draft-only': { display: 'inline-flex' }, '& .h5-draft-hide': { display: 'none' },
+    '@media (min-width: 380px)': { '& #h5-actions': { gap: '8px' } }, // the draft-shown row has fewer buttons: the full 8px gaps (see REST_GAP)
   },
 };
 // The draft box takes anything: no length cap, no character filter, and it stays editable while a translation runs (only the send buttons wait).
@@ -196,13 +197,15 @@ export function KeyBar({ state, ui }) {
   );
 }
 
-// Row 2 (reference design): terminal keyboard, draft keyboard, upload image, saved commands, voice, design document and next running or pending session (both hidden while the draft box is shown); then, only while the draft box is shown, a divider, the send arrow (white circle: sends the text as typed)
+// Row 2 (reference design): terminal keyboard, draft keyboard, upload image, saved commands, voice, design document, files and next running or pending session (the last three hidden while the draft box is shown); then, only while the draft box is shown, a divider, the send arrow (white circle: sends the text as typed)
 // and translate-and-send (the same white circle with a small "Aa"). The keyboard key whose input has the focus is blue and aria-pressed. The voice button is the one voice-input.js drives (`#h5-voice`).
 // The send and translate-and-send buttons look the same (white round button, send icon); translate-and-send only has a small "Aa" mark in its lower right corner.
-// Touch targets: every button of the row is at least 44 x 44px. From 380px up the buttons are 44px or wider with 8px between them. Under 380px
-// (a 320 or 360px phone) seven 44px buttons and 8px gaps do not fit, so the buttons touch: each takes an equal share of the row (at least 44px at
+// Touch targets: every button of the row is at least 44 x 44px. At rest the row has eight buttons (seven under 360px, where Files is left out), which
+// need 8 x 44 + 7 x 8 + 16 = 424px with 8px gaps: from 380px the gaps shrink to what is left (`REST_GAP`, about 3px at 390px, 8px from 424px), and
+// with the draft box shown (five buttons, a divider and the two send buttons) they are 8px again. Under 380px (a 320 or 360px phone) the buttons touch: each takes an equal share of the row (at least 44px at
 // 320px) and is DRAWN `--h5-slot-pad` smaller on each side (`::before`), so the whole share is the target and the gap stays visible.
 const NARROW = '@media (max-width: 379.98px)';
+const REST_GAP = 'min(8px, calc((100% - 352px) / 7))'; // eight 44px buttons in the row's width, at most 8px apart
 const SEND = { display: 'none', flex: '0 0 auto', width: 44, height: 44, bgcolor: '#fff', color: '#111', '&:hover': { bgcolor: '#e6e6e6' }, '&.Mui-disabled': { bgcolor: 'action.disabledBackground', color: 'action.disabled' } };
 const TOUCH_SEND = {
   ...SEND,
@@ -240,6 +243,7 @@ export function ActionBar({ state, ui, menu, onMenu, pointer = false }) {
   const image = t('Upload image or file');
   const commands = t('Saved commands');
   const design = t('Design document');
+  const files = t('Files');
   // The name carries the count of running or pending sessions while there are some; the badge shows the same number.
   const active = Number(state.activeCount) || 0;
   const cycle = t('Next running or pending session') + (active ? ` (${active})` : '');
@@ -250,7 +254,7 @@ export function ActionBar({ state, ui, menu, onMenu, pointer = false }) {
       className="h5-actions" id="h5-actions" role="toolbar" aria-label={t('Input')}
       onMouseDown={event => { if (event.target.closest('button, label')) event.preventDefault(); }}
       sx={pointer ? { display: 'flex', alignItems: 'center', gap: 0.75, px: 1, pt: 0.75 }
-        : { display: 'flex', alignItems: 'center', gap: 1, px: 1, pt: 1, [NARROW]: { gap: 0, px: 0.5, '--h5-slot-pad': '3px' }, '@media (max-width: 339.98px)': { '--h5-slot-pad': '2px' } }}
+        : { display: 'flex', alignItems: 'center', gap: REST_GAP, px: 1, pt: 1, [NARROW]: { gap: 0, px: 0.5, '--h5-slot-pad': '3px' }, '@media (max-width: 339.98px)': { '--h5-slot-pad': '2px' } }}
     >
       {pointer ? null : keyboard('keyboard', 'terminal', 'Terminal keyboard')}
       {pointer ? null : keyboard('draft', 'draft', 'Draft keyboard')}
@@ -269,6 +273,9 @@ export function ActionBar({ state, ui, menu, onMenu, pointer = false }) {
       <IconButton id="h5-voice" className="h5-voice" sx={look} title={t(pointer ? 'Voice input: click to start speaking' : 'Voice input: hold to speak, release to stop')} aria-label={t('Voice input')} aria-pressed="false"><Icon name="voice" /></IconButton>
       {/* The design document viewer. It steps aside while the draft box is shown (`.h5-draft-hide`), so send and translate-and-send keep finger-sized buttons at 320px. */}
       <IconButton id="h5-design" className="h5-draft-hide" data-action="design" sx={look} {...named(design)} aria-haspopup="dialog" aria-expanded={Boolean(state.design && state.design.open)} onClick={() => ui.actions.openDesign()}><Icon name="designDoc" /></IconButton>
+      {/* The read-only file tree of the working directory (FileTree.jsx). Steps aside with the draft box too. On a touch screen under 360px eight 44px
+          buttons do not fit, so it is left out there: the file viewer's own "Files" button (Design.jsx) leads to the tree. */}
+      <IconButton id="h5-files" className="h5-draft-hide" data-action="files" sx={pointer ? look : { ...look, '@media (max-width: 359.98px)': { display: 'none' } }} {...named(files)} aria-haspopup={state.wide ? undefined : 'dialog'} aria-expanded={Boolean(state.files && state.files.open)} onClick={() => ui.actions.openFiles()}><Icon name="folder" /></IconButton>
       {/* Next running or pending terminal session, in task sheet order (`ui.actions.nextActiveSession` in h5.js). Also steps aside while the draft box is shown. */}
       <IconButton id="h5-cycle" className="h5-draft-hide" data-action="cycle" sx={look} {...named(cycle)} onClick={() => ui.actions.nextActiveSession()}><Badge className="h5-cycle-badge" badgeContent={active} max={99} color="primary" invisible={!active} overlap="circular" sx={{ '& .MuiBadge-badge': { fontSize: 10, height: 16, minWidth: 16, px: 0.5, pointerEvents: 'none' } }}><Icon name="cycleSessions" /></Badge></IconButton>
       {/* The divider takes 1px and no extra gap (its right margin cancels one gap), so the draft-shown row fits from 380px with 8px gaps. */}

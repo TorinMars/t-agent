@@ -48,6 +48,7 @@ export const initialState = () => ({
   upload: null, // { status, progress } while an image goes up (progress: 0-100, or null when it is not known)
   retainUrl: null, // the link of an image that was uploaded after its terminal went away
   design: null, // { open, status: loading | ready | missing | folder | no-dir | no-task | error, dir, path, link, line, content, message } of the file sheet (DESIGN.md, or a terminal file link)
+  files: null, // { open, key, base, dir } of the read-only file tree (FileTree.jsx): base = `<tasksBase>/<task>/files` (null without a task); a new key (task, working directory or Engine) draws a new tree
   taskDialog: null, // { kind: 'delete' | 'workdir', id, title, workDir, error, busy } the delete confirmation or the working directory form of a task
   notice: null, // { id, message, type } the last floating notice
   activeCount: 0, // running or pending terminal sessions of the Engine (the badge on #h5-cycle; h5.js `showActiveCount`)

@@ -97,14 +97,14 @@ const localImageFailed = event => {
 // A swipe down closes the bottom sheet (what MUI's SwipeableDrawer did, in a few lines and without its 7 KB). The finger moves the sheet with it;
 // letting go after 25% of the sheet's height, or after a quick flick down, closes it, else it slides back. A swipe that starts on the document
 // while it is scrolled away from its top scrolls the document instead. The sheet's closing slide starts from where the finger left it.
-function useSwipeDown(onClose) {
+export function useSwipeDown(onClose) {
   const drag = useRef(null);
   const paper = event => event.currentTarget;
   const onTouchStart = event => {
     if (event.touches.length !== 1) { drag.current = null; return; }
     // A touch in the outline list (a drawer of its own, whose React events still bubble through the sheet) never drags the sheet.
     if (!event.currentTarget.contains(event.target)) { drag.current = null; return; }
-    const body = event.target.closest('.h5-design-body');
+    const body = event.target.closest('.h5-design-body, .h5-files-body'); // the document, or the file tree (FileTree.jsx)
     if (body && body.scrollTop > 0) { drag.current = null; return; }
     drag.current = { y: event.touches[0].clientY, x: event.touches[0].clientX, t: performance.now(), dy: 0, active: false };
   };
@@ -314,7 +314,11 @@ export function DesignSheet({ state, ui }) {
     try { localStorage.setItem(OUTLINE_KEY, value ? '0' : '1'); } catch { /* no storage */ }
     return !value;
   });
+  // Opened from the file tree (FileTree.jsx), the file lies over the tree: the back arrow, Escape, the back button and a swipe down go back to the tree
+  // (one layer); Close and a tap beside the sheet close both. Otherwise the header has a Files button that shows the tree instead.
+  const fromTree = Boolean(state.files && state.files.open);
   const close = () => ui.actions.closeDesign();
+  const closeAll = () => { if (fromTree) ui.actions.closeFiles(); ui.actions.closeDesign(); };
   const swipe = useSwipeDown(close);
   const dir = design && design.dir;
   let note = null;
@@ -345,7 +349,8 @@ export function DesignSheet({ state, ui }) {
           <Box sx={{ width: 36, height: 4, borderRadius: 2, bgcolor: 'text.disabled' }} />
         </Box>
       )}
-      <Box sx={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 1, pl: 2, pr: 1, pb: 1, pt: side ? 1 : 0, borderBottom: 1, borderColor: 'divider' }}>
+      <Box sx={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 1, pl: fromTree ? 0.5 : 2, pr: 1, pb: 1, pt: side ? 1 : 0, borderBottom: 1, borderColor: 'divider' }}>
+        {fromTree ? <IconButton id="h5-design-back" {...named(t('Back to files'))} onClick={close}><Icon name="back" size={22} /></IconButton> : null}
         <Box sx={{ flex: '1 1 auto', minWidth: 0 }}>
           <Typography id="h5-design-title" variant="subtitle1" component="h2" sx={{ fontWeight: 600, lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} translate={fromLink ? 'no' : undefined}>{fromLink ? name : t('Design document')}</Typography>
           <Typography id="h5-design-path" variant="caption" component="div" color="text.secondary" translate="no" title={filePath}
@@ -359,7 +364,8 @@ export function DesignSheet({ state, ui }) {
             <IconButton id="h5-design-outline" {...named(t('Outline'))} aria-haspopup="dialog" aria-expanded={listOpen} onClick={() => setListOpen(true)}><Icon name="outline" size={22} /></IconButton>
           )
         ) : null}
-        <IconButton id="h5-design-close" {...named(t('Close'))} onClick={close}><Icon name="close" size={22} /></IconButton>
+        {fromTree ? null : <IconButton id="h5-design-files" {...named(t('Files'))} onClick={() => ui.actions.openFiles()}><Icon name="folder" size={22} /></IconButton>}
+        <IconButton id="h5-design-close" {...named(t('Close'))} onClick={closeAll}><Icon name="close" size={22} /></IconButton>
       </Box>
       {loading ? <LinearProgress id="h5-design-loading" aria-label={t('Loading…')} sx={{ flex: '0 0 auto' }} /> : null}
       {note ? (
@@ -405,9 +411,9 @@ export function DesignSheet({ state, ui }) {
   }
   return (
     <Drawer
-      anchor="bottom" id="h5-design-sheet" open={open} onClose={close} transitionDuration={reduced ? 0 : undefined}
+      anchor="bottom" id="h5-design-sheet" open={open} onClose={(event, reason) => (reason === 'backdropClick' ? closeAll() : close())} transitionDuration={reduced ? 0 : undefined}
       ModalProps={{ disableScrollLock: true }}
-      slotProps={{ paper: { className: 'h5-design-panel', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'h5-design-title', ...swipe, sx: { height: '88dvh', maxWidth: 960, width: '100%', mx: 'auto', borderRadius: '16px 16px 0 0', backgroundImage: 'none', display: 'flex', flexDirection: 'column', overflow: 'hidden', pb: 'env(safe-area-inset-bottom)' } } }}
+      slotProps={{ backdrop: fromTree ? { sx: { bgcolor: 'transparent' } } : undefined, paper: { className: 'h5-design-panel', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'h5-design-title', ...swipe, sx: { height: '88dvh', maxWidth: 960, width: '100%', mx: 'auto', borderRadius: '16px 16px 0 0', backgroundImage: 'none', display: 'flex', flexDirection: 'column', overflow: 'hidden', pb: 'env(safe-area-inset-bottom)' } } }}
     >
       {contents}
     </Drawer>

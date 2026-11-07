@@ -132,10 +132,12 @@ function measure(min) {
       await page.locator('#h5-tasks .h5-terminal-list[aria-label="Fix login"] .h5-terminal-main', { hasText: 'Terminal 1' }).tap();
       await page.locator('#h5-tasks').waitFor({ state: 'hidden' });
       const main = await check('main');
-      // Row 2 at rest: seven buttons, every one at least 44px wide, inside the screen, none on top of another.
+      // Row 2 at rest: eight buttons from 360px (seven at 320px, where Files is left out: the file viewer has its own Files button), every one at least
+      // 44px wide, inside the screen, none on top of another.
       const row2 = await page.evaluate(() => [...document.querySelectorAll('#h5-actions > button, #h5-actions > label')].map(b => b.getBoundingClientRect()).filter(b => b.width > 0).map(b => ({ left: b.left, right: b.right, width: b.width, height: b.height })));
-      assert.equal(row2.length, 7, `${viewport.width}px: seven buttons in row 2`);
-      assert.ok(row2.every((b, i) => b.width >= MIN - 0.01 && b.height >= MIN - 0.01 && b.left >= 0 && b.right <= viewport.width && (i === 0 || row2[i - 1].right <= b.left + 0.01)), `${viewport.width}px: row 2 has seven 44px buttons in the screen: ${JSON.stringify(row2.map(b => Math.round(b.width * 10) / 10))}`);
+      const count = viewport.width < 360 ? 7 : 8;
+      assert.equal(row2.length, count, `${viewport.width}px: ${count} buttons in row 2`);
+      assert.ok(row2.every((b, i) => b.width >= MIN - 0.01 && b.height >= MIN - 0.01 && b.left >= 0 && b.right <= viewport.width && (i === 0 || row2[i - 1].right <= b.left + 0.01)), `${viewport.width}px: row 2 has ${count} 44px buttons in the screen: ${JSON.stringify(row2.map(b => Math.round(b.width * 10) / 10))}`);
       // Row 1: 44px high keys with 8px between them.
       const keys = await page.evaluate(() => [...document.querySelectorAll('#h5-keys > button')].map(b => b.getBoundingClientRect()).map(b => ({ left: b.left, right: b.right, width: b.width, height: b.height })));
       assert.ok(keys.every((b, i) => b.height >= MIN && b.width >= MIN && (i === 0 || b.left - keys[i - 1].right >= 7.99)), `${viewport.width}px: row 1 keys are 44px with 8px gaps`);

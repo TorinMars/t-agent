@@ -67,7 +67,13 @@ app.post('/hooks/terminal-activity', express.json({ limit: '64kb' }), (req, res)
 // T-Attention (routes/attention.js). A request with `Authorization: Bearer tatt_...` to /api/attention* is answered here, before the session, the access
 // gate and the login gate: the token is its only credential, and it reaches the T-Attention API and nothing else (not /api/attention/tokens*, no other route,
 // no page). Requests without a Bearer header go on to the browser session path below.
-const attentionRoutes = require('./routes/attention').createAttentionRoutes({ service: require('./services/attention').defaultService() });
+const attentionService = require('./services/attention').defaultService();
+// The AI summary (off by default) uses the translator's providers and saved keys.
+const attentionSummary = require('./services/attention-summary').createAttentionSummary({
+  db, sessionSecret: config.sessionSecret, attention: attentionService,
+  translator: require('./services/translator').createTranslator({ db, sessionSecret: config.sessionSecret }),
+});
+const attentionRoutes = require('./routes/attention').createAttentionRoutes({ service: attentionService, summary: attentionSummary });
 app.use('/api/attention', attentionRoutes.bearer);
 
 app.use(express.json({ limit: '32mb' }));

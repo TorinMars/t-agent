@@ -219,6 +219,7 @@ CREATE TABLE IF NOT EXISTS attention_items (
   link_url         TEXT,                             -- http(s) or a page path starting with '/'
   link_label       TEXT,
   meta             TEXT,                             -- a JSON object of at most 8 KiB
+  context          TEXT,                             -- recall card: JSON object of at most 32 KiB (goal, last_reply, pending, files, summary, ...)
   sort_order       INTEGER NOT NULL DEFAULT 0,
   created_at       TEXT    NOT NULL,
   updated_at       TEXT    NOT NULL,
@@ -232,7 +233,7 @@ CREATE TABLE IF NOT EXISTS attention_events (
   item_id     INTEGER NOT NULL REFERENCES attention_items(id) ON DELETE CASCADE,
   at          TEXT    NOT NULL,
   actor       TEXT    NOT NULL,  -- 'user', 'cli', a token name or a listener name
-  type        TEXT    NOT NULL,  -- created | updated | status | deleted
+  type        TEXT    NOT NULL,  -- created | updated | status | activity (timeline: data {kind, text}); deleted is published only
   from_status TEXT,
   to_status   TEXT,
   data        TEXT

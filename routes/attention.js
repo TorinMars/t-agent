@@ -32,7 +32,7 @@ function createCounter({ windowMs, max, now = Date.now }) {
   };
 }
 
-function createAttentionRoutes({ service, heartbeatMs = 25000, failedAuth = { windowMs: 15 * 60 * 1000, max: 20 }, tokenRequests = { windowMs: 60 * 1000, max: 600 }, now = Date.now } = {}) {
+function createAttentionRoutes({ service, summary = null, heartbeatMs = 25000, failedAuth = { windowMs: 15 * 60 * 1000, max: 20 }, tokenRequests = { windowMs: 60 * 1000, max: 600 }, now = Date.now } = {}) {
   if (!service) throw new Error('createAttentionRoutes needs the attention service');
   const failures = createCounter({ ...failedAuth, now });
   const perToken = createCounter({ ...tokenRequests, now });
@@ -75,6 +75,20 @@ function createAttentionRoutes({ service, heartbeatMs = 25000, failedAuth = { wi
     return res.status(204).end();
   }));
   router.all(/^\/tokens(?:\/.*)?$/i, (req, res) => sendError(res, 404, 'NOT_FOUND', 'Not found'));
+
+  // AI summary (services/attention-summary.js): the browser session only.
+  const owner = req => req.session.user.login;
+  const needSummary = (req, res, next) => (summary ? next() : sendError(res, 404, 'NOT_FOUND', 'Not found'));
+  router.get('/settings/summary', sessionOnly, needSummary, wrap((req, res) => res.json(summary.getSettings(owner(req)))));
+  router.put('/settings/summary', sessionOnly, needSummary, wrap((req, res) => res.json(summary.saveSettings(owner(req), req.body))));
+  router.all(/^\/settings(?:\/.*)?$/i, sessionOnly, (req, res) => sendError(res, 404, 'NOT_FOUND', 'Not found'));
+  // Starts a new summary in the background: 202 { started } (false while one already runs for the item); the result arrives as a change event.
+  router.post('/:id/summarize', sessionOnly, needSummary, wrap((req, res) => {
+    const id = idOf(req.params.id);
+    if (id === null) return sendError(res, 404, 'NOT_FOUND', 'Task not found');
+    const { started } = summary.summarize(owner(req), id);
+    return res.status(202).json({ started });
+  }));
 
   // Server-sent events: `event: change` with { kind, item, previous, event } for every change, a comment line every heartbeatMs.
   // A token's stream ends when the token is revoked.

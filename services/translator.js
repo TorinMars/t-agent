@@ -186,6 +186,9 @@ function createTranslator({ db, sessionSecret, fetchImpl = (...args) => fetch(..
 
   return {
     getConfig: owner => safe(read(owner)),
+    // Server side only (the T-Attention summary, services/attention-summary.js): the saved { apiKey, baseUrl, model } of one provider, whether or not
+    // translation itself is switched on. Never send it to a page.
+    providerConfig: (owner, id) => (Object.hasOwn(PROVIDERS, id) ? { ...read(owner).providers[id] } : null),
     saveConfig(owner, body) {
       if (!body || typeof body !== 'object' || Array.isArray(body)) throw new TranslatorError('Invalid translation configuration');
       const next = read(owner);
@@ -269,4 +272,4 @@ function splitForTranslation(source, limit = CHUNK_CHARS) {
   return parts;
 }
 
-module.exports = { PROVIDERS, createTranslator, TranslatorError, MAX_INPUT_CHARS, CHUNK_CHARS, splitForTranslation, hasCjk };
+module.exports = { PROVIDERS, glmReasoning, createTranslator, TranslatorError, MAX_INPUT_CHARS, CHUNK_CHARS, splitForTranslation, hasCjk };

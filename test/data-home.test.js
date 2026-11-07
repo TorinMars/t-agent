@@ -309,6 +309,7 @@ test('a schema 8 database gets the T-Attention tables (schema 9), with a copy ta
   for (const table of ['attention_items', 'attention_events', 'attention_tokens']) {
     assert.equal(after.prepare('SELECT COUNT(*) AS n FROM sqlite_master WHERE type = ? AND name = ?').get('table', table).n, 1, table);
   }
+  assert.ok(after.prepare('PRAGMA table_info(attention_items)').all().some(column => column.name === 'context'), 'items have the context column');
   assert.equal(after.prepare('SELECT title FROM tasks').get().title, 'kept task');
   // The events of an item go with it (foreign key with ON DELETE CASCADE).
   after.pragma('foreign_keys = ON');
@@ -332,6 +333,17 @@ test('a schema 8 database gets the T-Attention tables (schema 9), with a copy ta
   assert.equal(again.status, 0, again.stderr);
   assert.doesNotMatch(again.stdout, /is migrated/);
   assert.equal(fs.readdirSync(path.join(root, 'backups')).length, 1, 'no second copy');
+
+  // A schema 9 database made by an earlier build of T-Attention (before the context column) gets the column, rows kept.
+  const early = new Database(file);
+  early.prepare("INSERT INTO attention_items (title, created_at, updated_at) VALUES ('early', 'x', 'x')").run();
+  early.exec('ALTER TABLE attention_items DROP COLUMN context');
+  early.close();
+  assert.equal(openDb({ TAGENT_HOME: root }).status, 0);
+  const fixed = new Database(file, { readonly: true });
+  assert.ok(fixed.prepare('PRAGMA table_info(attention_items)').all().some(column => column.name === 'context'));
+  assert.equal(fixed.prepare('SELECT title FROM attention_items').get().title, 'early');
+  fixed.close();
 });
 
 test('the lock refuses a second server and takes over a lock whose pid is dead', t => {

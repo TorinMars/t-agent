@@ -5,13 +5,20 @@
 //   fn({ kind: 'created' | 'updated' | 'deleted', item, previous, event }). Notifiers and the SSE stream subscribe to it.
 // - A change that changes nothing (a listener sending the same state again) writes no event, keeps updated_at and is not published.
 // - completed_at is set when the status becomes done / failed / cancelled and cleared when it leaves them.
+// - context (a JSON object, at most 32 KiB) is merged shallowly: a key set to null removes it. Its text values are cut to their limits (they come
+//   from prompts and replies), other wrong values are refused. Events record only the names of the context keys that changed.
+// - activity ({kind, text}) on a create / update is stored as an 'activity' event in the same transaction, for the timeline.
+// - excerpt (the end of a session transcript, at most 8 KiB) is never stored or published: only in-process subscribers of onChangeInternal
+//   (the AI summary) get it with the change.
 // - Tokens ('tatt_' + 32 random bytes base64url) are stored as sha256 hashes only; the token itself is returned once, at creation.
 const crypto = require('crypto');
 
 const STATUSES = Object.freeze(['todo', 'working', 'waiting_user', 'review', 'done', 'failed', 'cancelled']);
 const FINISHED = new Set(['done', 'failed', 'cancelled']);
 const PRIORITIES = Object.freeze(['high', 'medium', 'low', 'none']);
-const LIMITS = Object.freeze({ title: 300, notes: 20000, externalRef: 200, attentionReason: 500, linkUrl: 2000, linkLabel: 200, source: 64, metaBytes: 8192, tokenName: 80, listDefault: 200, listMax: 1000, events: 100 });
+const ACTIVITY_KINDS = Object.freeze(['prompt', 'permission', 'question', 'resumed', 'turn_end', 'error', 'session_end', 'note']);
+const PENDING_KINDS = Object.freeze(['permission', 'question', 'error']);
+const LIMITS = Object.freeze({ contextBytes: 32768, excerptBytes: 8192, activityText: 500, contextFiles: 50, summaryText: 600, title: 300, notes: 20000, externalRef: 200, attentionReason: 500, linkUrl: 2000, linkLabel: 200, source: 64, metaBytes: 8192, tokenName: 80, listDefault: 200, listMax: 1000, events: 100 });
 // The fields a create / update body may carry. Anything else in a body is ignored (newer callers may send more).
 const FIELDS = ['title', 'notes', 'status', 'priority', 'due_date', 'source', 'external_ref', 'attention_reason', 'link_url', 'link_label', 'meta', 'sort_order'];
 const TOKEN_PATTERN = /^tatt_[A-Za-z0-9_-]{43}$/;
@@ -117,15 +124,125 @@ const VALIDATORS = {
 function readFields(body) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) throw invalid('The request body must be a JSON object');
   const out = {};
+  // context, activity and excerpt are read by readBody.
   for (const field of FIELDS) if (Object.prototype.hasOwnProperty.call(body, field)) out[field] = VALIDATORS[field](body[field]);
   return out;
 }
 
+// Context values. Text is cut to its limit (it comes from prompts, replies and tool input) after control characters other than tab and line
+// breaks are dropped; a wrong type or an unknown enum value is refused.
+function clip(name, max) {
+  return value => {
+    if (typeof value !== 'string') throw invalid(`context.${name} must be text`);
+    return value.replace(new RegExp(CONTROL.source, 'g'), '').slice(0, max);
+  };
+}
+function isoTime(name) {
+  return value => {
+    if (typeof value !== 'string' || value.length > 40 || Number.isNaN(Date.parse(value))) throw invalid(`context.${name} must be an ISO 8601 time`);
+    return value;
+  };
+}
+function count(name) {
+  return value => {
+    if (!Number.isSafeInteger(value) || value < 0) throw invalid(`context.${name} must be a whole number of 0 or more`);
+    return value;
+  };
+}
+function plainObject(name, value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw invalid(`${name ? `context.${name}` : 'context'} must be a JSON object`);
+  return value;
+}
+// Known keys of an object value: missing optional keys are left out, unknown keys are dropped.
+function shape(name, parts, { nullable = true, required = [] } = {}) {
+  return value => {
+    if (value === null && nullable) return null;
+    plainObject(name, value);
+    const out = {};
+    for (const [key, check] of Object.entries(parts)) {
+      if (value[key] === undefined || value[key] === null) {
+        if (required.includes(key)) throw invalid(`context.${name}.${key} is required`);
+        continue;
+      }
+      out[key] = check(value[key]);
+    }
+    return out;
+  };
+}
+const CONTEXT_KEYS = {
+  goal: clip('goal', 2000),
+  latest_prompt: clip('latest_prompt', 2000),
+  last_reply: clip('last_reply', 2000),
+  pending: shape('pending', {
+    kind: value => { if (!PENDING_KINDS.includes(value)) throw invalid(`context.pending.kind must be one of: ${PENDING_KINDS.join(', ')}`); return value; },
+    text: clip('pending.text', 1000), tool: clip('pending.tool', 200), command: clip('pending.command', 1000),
+  }, { required: ['kind'] }),
+  files: value => {
+    if (!Array.isArray(value)) throw invalid('context.files must be a list');
+    return value.slice(0, LIMITS.contextFiles).map(entry => shape('files', { path: clip('files.path', 1000), added: count('files.added'), deleted: count('files.deleted') }, { nullable: false, required: ['path'] })(entry));
+  },
+  cwd: clip('cwd', 1000),
+  branch: clip('branch', 200),
+  host: clip('host', 200),
+  started_at: isoTime('started_at'),
+  turn_started_at: isoTime('turn_started_at'),
+  turns: count('turns'),
+  session: shape('session', { agent: clip('session.agent', 32), id: clip('session.id', 200), resume: clip('session.resume', 2000) }, { nullable: false }),
+  tagent: shape('tagent', { task_id: clip('tagent.task_id', 64), terminal_id: clip('tagent.terminal_id', 64) }),
+  summary: shape('summary', { text: clip('summary.text', LIMITS.summaryText), at: isoTime('summary.at'), model: clip('summary.model', 80) }, { required: ['text'] }),
+};
+// A context patch: { key: value | null }, null removes the key. Unknown keys are dropped.
+function contextPatch(value) {
+  if (value === undefined) return undefined;
+  if (value === null) return null; // clears the whole context
+  plainObject('', value);
+  const patch = {};
+  for (const [key, check] of Object.entries(CONTEXT_KEYS)) {
+    if (!Object.prototype.hasOwnProperty.call(value, key)) continue;
+    patch[key] = value[key] === null ? null : check(value[key]);
+  }
+  return patch;
+}
+function mergeContext(current, patch) {
+  if (patch === undefined) return current;
+  if (patch === null) return null;
+  const next = { ...(current || {}) };
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === null) delete next[key]; else next[key] = value;
+  }
+  if (!Object.keys(next).length) return null;
+  if (Buffer.byteLength(JSON.stringify(next), 'utf8') > LIMITS.contextBytes) throw invalid(`context cannot exceed ${LIMITS.contextBytes} bytes of JSON`);
+  return next;
+}
+function activity(value) {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'object' || Array.isArray(value)) throw invalid('activity must be a JSON object');
+  if (!ACTIVITY_KINDS.includes(value.kind)) throw invalid(`activity.kind must be one of: ${ACTIVITY_KINDS.join(', ')}`);
+  const textValue = value.text === undefined || value.text === null ? '' : value.text;
+  if (typeof textValue !== 'string') throw invalid('activity.text must be text');
+  return { kind: value.kind, text: textValue.replace(new RegExp(CONTROL.source, 'g'), '').slice(0, LIMITS.activityText) };
+}
+// The end of the session transcript: the last 8 KiB are kept (in memory only).
+function excerpt(value) {
+  if (value === undefined || value === null || value === '') return null;
+  if (typeof value !== 'string') throw invalid('excerpt must be text');
+  const clean = value.replace(new RegExp(CONTROL.source, 'g'), '');
+  const bytes = Buffer.from(clean, 'utf8');
+  if (bytes.length <= LIMITS.excerptBytes) return clean;
+  return bytes.subarray(bytes.length - LIMITS.excerptBytes).toString('utf8').replace(/^\uFFFD+/, ''); // a cut character at the start is dropped
+}
+// The whole body: the stored fields, the context patch, the activity entry and the excerpt.
+function readBody(body) {
+  const fields = readFields(body);
+  return { fields, context: contextPatch(body.context), activity: activity(body.activity), excerpt: excerpt(body.excerpt) };
+}
+const parseJson = value => { if (!value) return null; try { return JSON.parse(value); } catch { return null; } };
+const contextKeysChanged = (before, after) => [...new Set([...Object.keys(before || {}), ...Object.keys(after || {})])]
+  .filter(key => JSON.stringify((before || {})[key]) !== JSON.stringify((after || {})[key])).sort();
+
 function rowToItem(row) {
   if (!row) return null;
-  let parsed = null;
-  if (row.meta) { try { parsed = JSON.parse(row.meta); } catch { parsed = null; } }
-  return { ...row, meta: parsed };
+  return { ...row, meta: parseJson(row.meta), context: parseJson(row.context) };
 }
 
 function rowToEvent(row) {
@@ -140,6 +257,7 @@ const tokenView = row => ({ id: row.id, name: row.name, created_at: row.created_
 function createAttentionService({ db, now = () => new Date() } = {}) {
   if (!db) throw new Error('createAttentionService needs a database');
   const listeners = new Set();
+  const internalListeners = new Set();
   const stamp = () => now().toISOString();
   const actorOf = value => (typeof value === 'string' && value.trim() ? value.trim().slice(0, LIMITS.source) : 'user');
 
@@ -148,10 +266,21 @@ function createAttentionService({ db, now = () => new Date() } = {}) {
   const insertEvent = db.prepare('INSERT INTO attention_events (item_id, at, actor, type, from_status, to_status, data) VALUES (?, ?, ?, ?, ?, ?, ?)');
   const selectEvent = db.prepare('SELECT * FROM attention_events WHERE id = ?');
 
-  function emit(change) {
+  // Public subscribers get the change; in-process ones of onChangeInternal also get the request's excerpt (never stored or sent to a page).
+  function emit(change, extra = null) {
+    const { excerpt: transcript = null } = extra || {};
     for (const listener of [...listeners]) {
       try { listener(change); } catch (error) { console.warn(`T-Attention: a change listener failed: ${error.message}`); }
     }
+    for (const listener of [...internalListeners]) {
+      try { listener({ ...change, excerpt: transcript }); } catch (error) { console.warn(`T-Attention: a change listener failed: ${error.message}`); }
+    }
+  }
+
+  function onChangeInternal(fn) {
+    if (typeof fn !== 'function') throw new TypeError('onChangeInternal needs a function');
+    internalListeners.add(fn);
+    return () => { internalListeners.delete(fn); };
   }
 
   function onChange(fn) {
@@ -219,7 +348,7 @@ function createAttentionService({ db, now = () => new Date() } = {}) {
   }
 
   // Inside a transaction. fields: validated (readFields).
-  function insertItem(fields, actor, defaultSource) {
+  function insertItem({ fields, context, activity: entry }, actor, defaultSource) {
     if (!fields.title) throw invalid('title cannot be empty');
     if (fields.external_ref && selectByRef.get(fields.external_ref)) {
       const existing = selectByRef.get(fields.external_ref);
@@ -240,22 +369,27 @@ function createAttentionService({ db, now = () => new Date() } = {}) {
       link_url: fields.link_url ?? null,
       link_label: fields.link_label ?? null,
       meta: fields.meta ?? null,
+      context: null,
       sort_order: order,
       created_at: at,
       updated_at: at,
       completed_at: FINISHED.has(status) ? at : null,
     };
+    const mergedContext = mergeContext(null, context);
+    row.context = mergedContext ? JSON.stringify(mergedContext) : null;
     const columns = Object.keys(row);
     const id = db.prepare(`INSERT INTO attention_items (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`).run(...columns.map(column => row[column])).lastInsertRowid;
     const item = get(id);
     const data = {};
     for (const field of FIELDS) if (fields[field] !== undefined && fields[field] !== null) data[field] = field === 'meta' ? item.meta : fields[field];
+    if (mergedContext) data.context = Object.keys(mergedContext).sort();
     const event = writeEvent(item.id, at, actorOf(actor), 'created', null, status, data);
-    return { kind: 'created', item, previous: null, event };
+    const activityEvent = entry ? writeEvent(item.id, at, actorOf(actor), 'activity', status, status, entry) : null;
+    return { kind: 'created', item, previous: null, event, activity: activityEvent };
   }
 
   // Inside a transaction. Returns null when nothing changed.
-  function updateRow(before, fields, actor) {
+  function updateRow(before, { fields, context, activity: entry }, actor) {
     const changes = {};
     for (const [field, value] of Object.entries(fields)) {
       if (field === 'title' && value === null) throw invalid('title cannot be empty');
@@ -266,8 +400,18 @@ function createAttentionService({ db, now = () => new Date() } = {}) {
       const other = selectByRef.get(changes.external_ref);
       if (other && other.id !== before.id) throw new AttentionError('EXTERNAL_REF_EXISTS', 'A task with this external_ref already exists', 409, { id: other.id });
     }
-    if (!Object.keys(changes).length) return null;
+    const beforeContext = parseJson(before.context);
+    const afterContext = mergeContext(beforeContext, context);
+    const changedKeys = contextKeysChanged(beforeContext, afterContext);
+    if (changedKeys.length) changes.context = afterContext ? JSON.stringify(afterContext) : null;
     const at = stamp();
+    if (!Object.keys(changes).length) {
+      if (!entry) return null;
+      // Only an activity: the item is unchanged, the timeline gets its row and the change is published.
+      const item = rowToItem(before);
+      const activityEvent = writeEvent(before.id, at, actorOf(actor), 'activity', before.status, before.status, entry);
+      return { kind: 'updated', item, previous: item, event: activityEvent, activity: activityEvent };
+    }
     const statusChanged = changes.status !== undefined && changes.status !== before.status;
     if (statusChanged) changes.completed_at = FINISHED.has(changes.status) ? at : null;
     changes.updated_at = at;
@@ -276,25 +420,27 @@ function createAttentionService({ db, now = () => new Date() } = {}) {
     const item = get(before.id);
     const data = {};
     for (const field of Object.keys(changes)) if (FIELDS.includes(field)) data[field] = field === 'meta' ? item.meta : changes[field];
+    if (changedKeys.length) data.context = changedKeys;
     const event = writeEvent(before.id, at, actorOf(actor), statusChanged ? 'status' : 'updated', before.status, item.status, data);
-    return { kind: 'updated', item, previous: rowToItem(before), event };
+    const activityEvent = entry ? writeEvent(before.id, at, actorOf(actor), 'activity', item.status, item.status, entry) : null;
+    return { kind: 'updated', item, previous: rowToItem(before), event, activity: activityEvent };
   }
 
   function create(body, { actor, defaultSource } = {}) {
-    const fields = readFields(body);
-    const change = db.transaction(() => insertItem(fields, actor, defaultSource))();
-    emit(change);
+    const parts = readBody(body);
+    const change = db.transaction(() => insertItem(parts, actor, defaultSource))();
+    emit(change, parts);
     return change.item;
   }
 
   function update(id, body, { actor } = {}) {
-    const fields = readFields(body);
+    const parts = readBody(body);
     const change = db.transaction(() => {
       const before = selectItem.get(Number(id));
       if (!before) throw new AttentionError('NOT_FOUND', 'Task not found', 404);
-      return updateRow(before, fields, actor) || { unchanged: true, item: rowToItem(before) };
+      return updateRow(before, parts, actor) || { unchanged: true, item: rowToItem(before) };
     })();
-    if (!change.unchanged) emit(change);
+    if (!change.unchanged) emit(change, parts);
     return change.item;
   }
 
@@ -302,14 +448,14 @@ function createAttentionService({ db, now = () => new Date() } = {}) {
   function upsertByRef(ref, body, { actor, defaultSource } = {}) {
     const externalRef = VALIDATORS.external_ref(ref);
     if (!externalRef) throw invalid('external_ref cannot be empty');
-    const fields = readFields(body);
-    delete fields.external_ref; // the address names the item; a different body value cannot move it
+    const parts = readBody(body);
+    delete parts.fields.external_ref; // the address names the item; a different body value cannot move it
     const change = db.transaction(() => {
       const before = selectByRef.get(externalRef);
-      if (!before) return insertItem({ ...fields, external_ref: externalRef }, actor, defaultSource);
-      return updateRow(before, fields, actor) || { unchanged: true, item: rowToItem(before) };
+      if (!before) return insertItem({ ...parts, fields: { ...parts.fields, external_ref: externalRef } }, actor, defaultSource);
+      return updateRow(before, parts, actor) || { unchanged: true, item: rowToItem(before) };
     })();
-    if (!change.unchanged) emit(change);
+    if (!change.unchanged) emit(change, parts);
     return { created: change.kind === 'created', item: change.item };
   }
 
@@ -361,7 +507,7 @@ function createAttentionService({ db, now = () => new Date() } = {}) {
     return Boolean(row && !row.revoked_at);
   }
 
-  return { list, get, getByRef, events, detail, detailByRef, create, update, upsertByRef, remove, onChange, listTokens, createToken, revokeToken, verifyToken, tokenActive };
+  return { list, get, getByRef, events, detail, detailByRef, create, update, upsertByRef, remove, onChange, onChangeInternal, listTokens, createToken, revokeToken, verifyToken, tokenActive };
 }
 
 // The service of this server's database, made on first use (so requiring this file does not open the database).
@@ -372,7 +518,7 @@ function defaultService() {
 }
 
 module.exports = {
-  createAttentionService, defaultService, AttentionError, STATUSES, PRIORITIES, FINISHED, LIMITS, TOKEN_PATTERN, hashToken,
+  createAttentionService, defaultService, AttentionError, ACTIVITY_KINDS, PENDING_KINDS, STATUSES, PRIORITIES, FINISHED, LIMITS, TOKEN_PATTERN, hashToken,
   // In-process subscribers (notifiers) of this server's list.
   onChange: fn => defaultService().onChange(fn),
 };

@@ -87,6 +87,10 @@ if (!terminalColumns.includes('work_dir')) {
   })();
 }
 
+// T-Attention items got the context column during schema 9 (before its release); a database made by an earlier build of it gets the column here.
+const attentionColumns = db.prepare('PRAGMA table_info(attention_items)').all().map(column => column.name);
+if (!attentionColumns.includes('context')) db.exec('ALTER TABLE attention_items ADD COLUMN context TEXT');
+
 // The model and thinking effort chosen for an agent chat (empty: the agent's own default).
 const conversationColumns = db.prepare('PRAGMA table_info(agent_conversations)').all().map(column => column.name);
 for (const column of ['model', 'effort', 'queue']) { // queue: the messages queued in the chat (JSON)

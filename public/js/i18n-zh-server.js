@@ -462,4 +462,13 @@ I18n.add({
   "{1} must be one of: {2}": "{1} 只能是以下之一：{2}",
   "limit must be an integer between 1 and {1}": "limit 必须是 1 到 {1} 之间的整数",
   "{1} cannot contain line breaks or control characters": "{1} 不能包含换行或控制字符",
+  "{1} must be an ISO 8601 time": "{1} 必须是 ISO 8601 时间",
+  "{1} must be a whole number of 0 or more": "{1} 必须是不小于 0 的整数",
+  "{1} must be a JSON object": "{1} 必须是 JSON 对象",
+  "{1} is required": "{1} 为必填项",
+  "{1} must be a list": "{1} 必须是列表",
+  "context cannot exceed {1} bytes of JSON": "context 的 JSON 不能超过 {1} 字节",
+  "{1} must be true or false": "{1} 只能是 true 或 false",
+  "Save a {1} API key in the translation settings first": "请先在翻译设置中保存 {1} 的 API 密钥",
+  "The AI summary is switched off; turn it on in Settings first": "AI 摘要未开启，请先在设置中开启",
 });

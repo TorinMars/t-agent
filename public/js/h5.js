@@ -1073,6 +1073,7 @@
     if (!s) return;
     s.el.hidden = true;
     s.term.blur();
+    s.clipboard?.dismiss(); // a copy request of a terminal that is no longer shown goes away
   }
   function showWarm(s) {
     warm = [s, ...warm.filter(item => item !== s)];
@@ -1133,8 +1134,9 @@
     session = s;
     warm = [s, ...warm];
     while (warm.length > WARM_MAX) disposeSession(warm[warm.length - 1]);
-    // A computer: Cmd/Ctrl+Shift+C (and Cmd+C with a selection) copy, and a program's OSC 52 copy request asks for confirmation (terminal-clipboard.js).
-    if (pointerMode() && typeof TerminalClipboard !== 'undefined') s.clipboard = TerminalClipboard.attach(term, el);
+    // Both input modes (terminal-clipboard.js): Cmd+C with a selection and Ctrl/Cmd+Shift+C copy, and a program's OSC 52 copy request is written
+    // at once right after the user's own gesture on this terminal, otherwise it asks first (`state.clipboard`). Only the shown terminal may copy.
+    if (typeof TerminalClipboard !== 'undefined') s.clipboard = TerminalClipboard.attach(term, el, { isActive: () => session === s && !s.disposed && !s.el.hidden });
     attachFileLinks(s);
     // A pasted image (long-press paste in the xterm textarea) is uploaded like a picked one; plain text keeps xterm's own paste.
     el.addEventListener('paste', event => {
@@ -1596,7 +1598,7 @@
   // A click on the terminal gives it the focus (xterm does this on mouse down too; this also covers a click on its padding).
   terminalHost.addEventListener('click', event => {
     const s = session;
-    if (!deskKeys() || !s || s.disposed || s.term.hasSelection() || (event.target.closest && event.target.closest('#h5-wheel, #h5-selection-bar'))) return;
+    if (!deskKeys() || !s || s.disposed || s.term.hasSelection() || (event.target.closest && event.target.closest('#h5-wheel, #h5-selection-bar, #h5-clipboard-bar'))) return;
     s.term.focus();
   });
 
@@ -1930,15 +1932,22 @@
     tell('Copied', 'success');
   }
   ui.actions.selectionCopy = () => void copySelection();
+  // A program's OSC 52 copy request (terminal-clipboard.js): the shell shows it from `state.clipboard` (the dialog, or the "Tap to copy" bar);
+  // Confirm / Tap to copy writes inside the tap, Cancel drops it.
+  if (typeof TerminalClipboard !== 'undefined') TerminalClipboard.setHost({ show: request => ui.set({ clipboard: request }) });
+  ui.actions.clipboardConfirm = () => { if (typeof TerminalClipboard !== 'undefined') void TerminalClipboard.confirm(); };
+  ui.actions.clipboardCancel = () => { if (typeof TerminalClipboard !== 'undefined') TerminalClipboard.cancel(); };
   ui.actions.selectionCancel = () => { if (session && !session.disposed) session.term.clearSelection(); ui.set({ selectionBar: false }); };
 
   // A tap on a key of the key bar (the shell keeps the focus where it is, so tapping keys does not open or close the on-screen keyboard).
   // Types a preset command into the terminal like a paste; no Enter is sent, so the user checks it and presses Enter.
   ui.actions.insertCommand = command => {
     if (uploading || !connected(session)) { tell('The terminal is not connected', 'error'); return; }
+    session.clipboard?.gesture();
     session.term.paste(command);
   };
   ui.actions.key = item => {
+    if (session && !session.disposed && (item.send || item.key || item.shortcut)) session.clipboard?.gesture(); // a key the user sent to this terminal (key bar, on-screen keyboard)
     if (item.modifier) {
       mods[item.modifier] = !mods[item.modifier];
       renderMods();

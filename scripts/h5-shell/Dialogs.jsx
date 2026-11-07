@@ -61,6 +61,32 @@ export function CopyDialog({ state, ui }) {
   );
 }
 
+// A program in the terminal asks to copy text (OSC 52) without a recent gesture of the user: the text is shown and copied only on "Confirm copy"
+// (public/js/terminal-clipboard.js decides; the request expires after 60 s). The preview is a snapshot: later output cannot change it.
+export function ClipboardDialog({ state, ui }) {
+  const request = state.clipboard && state.clipboard.kind === 'ask' ? state.clipboard : null;
+  const [shown, setShown] = useState(request); // kept while the dialog closes, so its text does not vanish during the animation
+  if (request && request !== shown) setShown(request);
+  const view = request || shown;
+  return (
+    <Dialog id="h5-clipboard" open={Boolean(request)} onClose={() => ui.actions.clipboardCancel()} fullWidth maxWidth="sm" aria-labelledby="h5-clipboard-title">
+      <DialogTitle id="h5-clipboard-title" sx={{ fontSize: 16 }}>{t('A program asks to copy the following')}</DialogTitle>
+      <DialogContent>
+        <DialogContentText sx={{ fontSize: 14, mb: 1.5 }}>{t('This content comes from a program in this terminal. Confirming overwrites your clipboard; cancelling copies nothing.')}</DialogContentText>
+        <TextField
+          id="h5-clipboard-text" fullWidth multiline minRows={3} maxRows={10} value={view ? view.text : ''}
+          slotProps={{ htmlInput: { readOnly: true, translate: 'no', 'aria-label': t('Content to copy'), style: { fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 13 } } }}
+        />
+        {view && view.failed ? <DialogContentText role="status" color="error" sx={{ fontSize: 14, mt: 1 }}>{t('Copy failed; select the text above and copy it manually.')}</DialogContentText> : null}
+      </DialogContent>
+      <DialogActions>
+        <Button id="h5-clipboard-cancel-ask" color="inherit" onClick={() => ui.actions.clipboardCancel()}>{t('Cancel')}</Button>
+        <Button id="h5-clipboard-confirm" variant="contained" onClick={() => ui.actions.clipboardConfirm()}>{t('Confirm copy')}</Button>
+      </DialogActions>
+    </Dialog>
+  );
+}
+
 // While an image goes up the page is locked and says how far it is.
 export function UploadDialog({ state }) {
   const upload = state.upload;

@@ -129,12 +129,6 @@ body.h5-tasks-open .h5-agent { border-bottom-left-radius: 28px; overflow: hidden
   /* The design document or a file preview is open as a panel on the right: the page and the chat end where it starts. */
   html[data-side-panel] .h5-app, html[data-side-panel] .h5-agent { right: var(--h5-side-width); }
 }
-/* The program copy request (terminal-clipboard.js, OSC 52) is a plain <dialog> on this page: dark like the rest. */
-.terminal-copy-dialog { max-width: min(650px, calc(100vw - 32px)); background: var(--h5-panel); color: var(--h5-text); border: 1px solid var(--h5-border); border-radius: 12px; padding: 16px; }
-.terminal-copy-dialog textarea { width: 100%; min-height: 160px; background: var(--h5-bg); color: var(--h5-text); border: 1px solid var(--h5-border); border-radius: 8px; font: 13px Menlo, Monaco, monospace; }
-.terminal-copy-dialog button { margin: 8px 8px 0 0; padding: 6px 14px; border-radius: 8px; border: 1px solid var(--h5-border); background: var(--h5-key); color: var(--h5-text); font: inherit; cursor: pointer; }
-.terminal-copy-dialog::backdrop { background: rgba(0, 0, 0, .5); }
-
 /* The match that the copy view search jumped to (CSS Custom Highlight API; browsers without it select the match instead). */
 ::highlight(h5-copy-match) { background: #ffd54f; color: #000; }
 /* Copy / Cancel after a double or triple tap selected text on the terminal. */

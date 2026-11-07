@@ -1,0 +1,40 @@
+#!/bin/sh
+# TA-CLIPBOARD-SHIM
+# xsel shim of T-Agent terminals: setting the clipboard or primary selection (-i / --input, or data piped in without
+# -o) also goes to the browser clipboard (OSC 52), then the real xsel runs when an X display is set. Output, append,
+# follow, clear, delete, keep, exchange, the secondary selection and unknown flags go to the real xsel unchanged.
+. "$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)/osc52-lib.sh" || exit 1
+[ "$TA_CLIPBOARD_OSC52" = 1 ] || ta_exec_real xsel "$@"
+want=0 input=0 other=0
+for a in "$@"; do
+  if [ "$want" = 1 ]; then want=0; continue; fi
+  case $a in
+    --input) input=1 ;;
+    --primary|--clipboard|--nodetach|--verbose) ;;
+    --display|--selectionTimeout|--logfile) want=1 ;;
+    --display=*|--selectionTimeout=*|--logfile=*) ;;
+    --*) other=1 ;;
+    -?*)
+      flags=${a#-}
+      while [ -n "$flags" ]; do
+        rest=${flags#?}
+        letter=${flags%"$rest"}
+        case $letter in
+          i) input=1 ;;
+          p|b|n|v) ;;
+          t|l) [ -n "$rest" ] || want=1; rest= ;;
+          *) other=1 ;;
+        esac
+        flags=$rest
+      done
+      ;;
+    *) other=1 ;;
+  esac
+done
+[ "$other" = 0 ] || ta_exec_real xsel "$@"
+[ "$input" = 1 ] || [ ! -t 0 ] || ta_exec_real xsel "$@"
+ta_tempfile
+cat > "$TA_SHIM_DATA"
+run=0
+[ -z "$DISPLAY" ] || run=1
+ta_copy xsel "$run" 0 "$@"

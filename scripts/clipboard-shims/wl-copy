@@ -1,0 +1,37 @@
+#!/bin/sh
+# TA-CLIPBOARD-SHIM
+# wl-copy shim of T-Agent terminals: copied text (stdin, or the text arguments joined by spaces) also goes to the browser
+# clipboard (OSC 52), then the real wl-copy runs when a Wayland display is set. --clear, non-text --type values and
+# unknown flags go to the real wl-copy unchanged.
+. "$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)/osc52-lib.sh" || exit 1
+[ "$TA_CLIPBOARD_OSC52" = 1 ] || ta_exec_real wl-copy "$@"
+ta_tempfile
+want= words=0 trim=0 type= literal=0
+for a in "$@"; do
+  if [ -n "$want" ]; then
+    [ "$want" != type ] || type=$a
+    want=
+    continue
+  fi
+  if [ "$literal" = 0 ]; then
+    case $a in
+      --) literal=1; continue ;;
+      -o|--paste-once|-f|--foreground|-p|--primary|--regular|--sensitive) continue ;;
+      -n|--trim-newline) trim=1; continue ;;
+      -t|--type) want=type; continue ;;
+      -s|--seat) want=seat; continue ;;
+      --type=*) type=${a#--type=}; continue ;;
+      --seat=*) continue ;;
+      -?*) ta_pass wl-copy "$@" ;;
+    esac
+  fi
+  if [ "$words" = 1 ]; then printf ' %s' "$a"; else printf '%s' "$a"; fi >> "$TA_SHIM_DATA"
+  words=1
+done
+[ -z "$want" ] || ta_pass wl-copy "$@"
+ta_text_type "$type" || ta_pass wl-copy "$@"
+[ "$words" = 1 ] || cat > "$TA_SHIM_DATA"
+[ "$trim" = 0 ] || ta_trim_newline "$TA_SHIM_DATA"
+run=0
+[ -z "$WAYLAND_DISPLAY" ] || run=1
+ta_copy wl-copy "$run" 0 "$@"

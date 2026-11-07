@@ -9,6 +9,7 @@ const { createActivityTracker } = require('../lib/terminal-activity');
 const { createActivityStream } = require('../lib/terminal-activity-stream');
 const { repairSpawnHelperPermissions } = require('../lib/node-pty-runtime');
 const { utf8LocaleEnv } = require('../lib/terminal-locale');
+const { clipboardShimEnv } = require('../lib/clipboard-shims');
 const { listSessions, startupCommand, newClaudeCommand, runningSubagents, SESSION_ID } = require('../lib/agent-sessions');
 const { resolveTerminalUser, userCanEnter, terminalEnvFor } = require('../lib/terminal-user');
 const { processCwd, cwdInRoot } = require('../lib/terminal-cwd');
@@ -350,7 +351,9 @@ function getOrCreateSession(ownerTaskId, workDir, dirWarning, id = 'default') {
       env: {
         ...withoutInheritedHookEnv(runAs ? { ...terminalEnvFor(runAs, process.env), SHELL: shell } : process.env),
         TERM: 'xterm-256color',
-        PATH: fullPath,
+        // The clipboard shims come first, so a copy by a program in the terminal (`| pbcopy`, Neovim, Claude Code)
+        // also reaches the browser clipboard as OSC 52 (lib/clipboard-shims.js).
+        ...clipboardShimEnv(fullPath, runAs),
         // Pick UTF-8 from the locales actually installed on this machine (C.UTF-8 / en_US / zh_CN ...),
         // otherwise zsh shows Chinese directory names as \M-^ garbage.
         ...utf8LocaleEnv(process.env),

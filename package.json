@@ -3,6 +3,9 @@
   "version": "2.88.9",
   "description": "T-Agent task client with browser terminals",
   "main": "server.js",
+  "bin": {
+    "t-attention": "scripts/t-attention.js"
+  },
   "scripts": {
     "start": "node server.js",
     "start:client": "node server.js",

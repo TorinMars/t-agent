@@ -817,3 +817,4 @@ One line per release, added by `scripts/release.js`. Older notes are in `git log
 > v2.88.7 Settings: one consistent row style; Design sheet: outline and full-screen zoomable images and diagrams; terminals keep their own start directory when the task's working directory changes (schema 8)
 > v2.88.8 Terminal file links: a path that a program such as Claude Code wraps itself over several rows (real newlines and an indent) is one link
 > v2.88.9 File tree on the MUI page, upload any file to OSS, OSC 52 copy in all input modes plus clipboard shims (pbcopy/xclip/xsel/wl-copy; Codex copies via OSC 52 with HERDR_ENV=1 and a codex wrapper), terminal uses the full width
+> v2.88.10 Wheel strip never gets stuck after an interrupted touch; copy on select with one shared copy bar for page selections and program (OSC 52) copies

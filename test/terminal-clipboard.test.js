@@ -5,8 +5,10 @@ const vm = require('node:vm');
 const { parseHTML } = require('linkedom');
 
 // The module in a small DOM with a fake clock, fake timers, a recording clipboard and a page host that records what it is asked to show.
-function setup({ clipboardFails = false } = {}) {
+function setup({ clipboardFails = false, input = 'touch' } = {}) {
   const { document } = parseHTML('<html><body><div id="host"></div></body></html>');
+  document.documentElement.dataset.input = input;
+  const windowListeners = {};
   const writes = [];
   const notices = [];
   const shown = [];
@@ -15,7 +17,7 @@ function setup({ clipboardFails = false } = {}) {
   const clipboard = { fails: clipboardFails, async writeText(text) { if (this.fails) throw new Error('NotAllowedError'); writes.push(text); } };
   document.execCommand = () => false; // the legacy fallback fails too, like iOS Safari outside a gesture
   const context = vm.createContext({
-    document, window: { isSecureContext: true }, navigator: { platform: 'MacIntel', clipboard }, TextDecoder, Uint8Array, atob, Promise,
+    document, window: { isSecureContext: true, addEventListener: (type, fn) => { windowListeners[type] = fn; }, removeEventListener: type => { delete windowListeners[type]; } }, navigator: { platform: 'MacIntel', clipboard }, TextDecoder, Uint8Array, atob, Promise,
     Date: { now: () => clock.now },
     setTimeout: (fn, ms) => { timers.push({ fn, ms, at: clock.now + ms }); return timers.length; },
     clearTimeout: id => { if (timers[id - 1]) timers[id - 1].fn = null; },
@@ -29,17 +31,21 @@ function setup({ clipboardFails = false } = {}) {
   const flush = () => new Promise(resolve => setImmediate(resolve));
   const advance = ms => { clock.now += ms; for (const timer of timers) if (timer.fn && timer.at <= clock.now) { const fn = timer.fn; timer.fn = null; fn(); } };
   const last = () => shown[shown.length - 1];
-  return { term, handle, context, document, writes, notices, shown, last, state, clock, clipboard, flush, advance };
+  // A real (trusted) mouse press on the terminal, then the button goes up on the window (copy on select with a mouse).
+  const trusted = (type, init = {}) => { const event = new document.defaultView.Event(type); Object.defineProperty(event, 'isTrusted', { value: true }); Object.assign(event, init); return event; };
+  const mouse = { down(button = 0) { document.getElementById('host').dispatchEvent(trusted('pointerdown', { pointerType: 'mouse', button })); }, up() { windowListeners.mouseup({ button: 0 }); } };
+  return { term, handle, context, document, writes, notices, shown, last, state, clock, clipboard, flush, advance, mouse, windowListeners };
 }
 const osc = text => 'c;' + Buffer.from(text).toString('base64');
 
 test('Cmd+C writes the current selection once; Ctrl+C and no-selection input remain available', async () => {
-  const { term, writes, flush } = setup();
+  const { term, writes, notices, flush } = setup();
   const key = { key: 'c', type: 'keydown', metaKey: true, preventDefault() {} };
   assert.equal(term.key(key), false);
   assert.equal(term.key({ ...key, type: 'keyup' }), false);
   await flush();
   assert.deepEqual(writes, ['中文\nsecond line']);
+  assert.deepEqual(notices, [['Copied 14 characters', 'success']], 'the same notice as a program copy');
   assert.equal(term.key({ ...key, metaKey: false, ctrlKey: true }), true);
   term.selection = '';
   assert.equal(term.key(key), true);
@@ -55,13 +61,14 @@ test('OSC 52 decoding is bounded, UTF-8 only, and never answers clipboard querie
   }
 });
 
-test('without a recent gesture a request asks first: nothing is written until Confirm copy', async () => {
+test('without a recent gesture a request asks first: nothing is written until Copy', async () => {
   const { term, context, writes, notices, last, flush } = setup();
   term.osc(osc('Remote program\nhello'));
   assert.deepEqual(writes, []);
   assert.equal(last().kind, 'ask');
   assert.equal(last().text, 'Remote program\nhello');
   assert.equal(last().chars, 20);
+  assert.equal(last().preview, 'Remote program hello', 'a one-line preview');
   // A second request cannot replace the text already shown for approval.
   term.osc(osc('evil'));
   assert.equal(last().text, 'Remote program\nhello');
@@ -123,12 +130,140 @@ test('when the browser refuses the automatic write, the page offers Tap to copy 
   assert.equal(last(), null);
 });
 
-test('a confirmation whose write fails stays open and says so', async () => {
-  const { term, context, last } = setup({ clipboardFails: true });
-  term.osc(osc('text'));
-  assert.equal(await context.clipboard.confirm(), false);
-  assert.equal(last().kind, 'ask');
-  assert.equal(last().failed, true);
+test('a write that fails inside the tap closes the bar with one error notice, by input mode', async () => {
+  for (const [input, message] of [['touch', 'Could not copy. Long-press to open the copy view'], ['pointer', 'Could not copy. Use Copy text in the terminal menu']]) {
+    const { term, handle, context, notices, last } = setup({ clipboardFails: true, input });
+    term.osc(osc('text'));
+    assert.equal(await context.clipboard.confirm(), false);
+    assert.equal(last(), null);
+    assert.deepEqual(notices, [[message, 'error']]);
+    // A refused page selection whose Tap to copy fails ends the same way.
+    context.clipboard.cancel();
+    await handle.copy('selected');
+    assert.equal(last().kind, 'tap');
+    assert.equal(await context.clipboard.confirm(), false);
+    assert.equal(last(), null);
+    assert.deepEqual(notices, [[message, 'error'], [message, 'error']]);
+  }
+});
+
+test('the preview is one line and bounded', () => {
+  const { context } = setup();
+  assert.equal(context.clipboard.previewOf('  a\n\tb  c \r\n'), 'a b c');
+  assert.equal(context.clipboard.previewOf('x'.repeat(500)), `${'x'.repeat(120)}…`);
+  assert.equal(context.clipboard.previewOf('中'.repeat(121)), `${'中'.repeat(120)}…`);
+});
+
+test('a page selection and a program copy after a gesture give the identical write, notice and bar', async () => {
+  const runs = [];
+  for (const source of ['page', 'program']) {
+    const { term, handle, writes, notices, shown, flush } = setup();
+    if (source === 'page') await handle.copy('same text');
+    else { handle.gesture(); term.osc(osc('same text')); }
+    await flush();
+    runs.push({ writes, notices: [...notices], shown: [...shown] });
+  }
+  assert.deepEqual(runs[0], runs[1]);
+  assert.deepEqual(runs[0], { writes: ['same text'], notices: [['Copied 9 characters', 'success']], shown: [] });
+  // Refused by the browser: the same "Tap to copy" bar for both.
+  const bars = [];
+  for (const source of ['page', 'program']) {
+    const { term, handle, notices, last, flush } = setup({ clipboardFails: true });
+    if (source === 'page') await handle.copy('x');
+    else { handle.gesture(); term.osc(osc('x')); }
+    await flush();
+    const { id, ...bar } = last();
+    bars.push(bar);
+    assert.deepEqual(notices, [], 'no notice while the bar waits');
+  }
+  assert.deepEqual(bars[0], bars[1]);
+  assert.deepEqual(bars[0], { kind: 'tap', text: 'x', preview: 'x', chars: 1 });
+});
+
+test('a page copy uses up the gesture, is ignored for a hidden terminal and merges with the program\'s copy of the same text', async () => {
+  const { term, handle, context, writes, notices, shown, last, state, advance, flush } = setup();
+  handle.gesture();
+  await handle.copy('word');
+  term.osc(osc('other'));
+  await flush();
+  assert.equal(last().kind, 'ask', 'the program cannot copy on the gesture the page copy used');
+  context.clipboard.cancel();
+  // The program copies the same text the page just copied (Claude Code with a forced selection, its pbcopy shim): one copy.
+  advance(context.clipboard.DUPLICATE_WINDOW_MS + 1);
+  await handle.copy('merged');
+  handle.gesture();
+  term.osc(osc('merged'));
+  term.osc(osc('merged'));
+  await flush();
+  // And the other way round: the program first, then the page selects it.
+  advance(context.clipboard.DUPLICATE_WINDOW_MS + 1);
+  handle.gesture();
+  term.osc(osc('first'));
+  await handle.copy('first');
+  await flush();
+  assert.deepEqual(writes, ['word', 'merged', 'first']);
+  assert.deepEqual(notices.map(([message]) => message), ['Copied 4 characters', 'Copied 6 characters', 'Copied 5 characters']);
+  assert.equal(shown.length, 2, 'only the ask and its cancel');
+  state.active = false;
+  assert.equal(await handle.copy('hidden'), false);
+  assert.equal(writes.length, 3);
+});
+
+test('mouse: copy on select when the button goes up; a plain click or an unchanged selection copies nothing; Cmd+C gives no second notice', async () => {
+  const { term, handle, windowListeners, writes, notices, mouse, advance, flush } = setup({ input: 'pointer' });
+  term.selection = '';
+  mouse.down(); mouse.up(); // a plain click
+  windowListeners.mouseup({ button: 0 }); // a button going up without a press on this terminal
+  term.selection = 'dragged';
+  windowListeners.mouseup({ button: 0 });
+  await flush();
+  assert.deepEqual(writes, []);
+  mouse.down(); mouse.up(); // a drag, a double or triple click, an Option / Shift selection
+  await flush();
+  assert.deepEqual(writes, ['dragged']);
+  assert.deepEqual(notices, [['Copied 7 characters', 'success']]);
+  // Cmd+C on the text just copied: no second write or notice.
+  term.key({ key: 'c', type: 'keydown', metaKey: true, preventDefault() {} });
+  await flush();
+  // A press that leaves the selection as it was (the scrollbar) copies nothing, even after the merge window.
+  advance(5000);
+  mouse.down(); mouse.up();
+  await flush();
+  assert.deepEqual(writes, ['dragged']);
+  assert.equal(notices.length, 1);
+  // A right button never copies.
+  term.selection = 'right';
+  mouse.down(2);
+  windowListeners.mouseup({ button: 2 });
+  windowListeners.mouseup({ button: 0 });
+  await flush();
+  assert.deepEqual(writes, ['dragged']);
+  // A new selection copies; after the selection was cleared the same text copies again.
+  term.selection = 'longer selection';
+  mouse.down(); mouse.up();
+  term.selection = '';
+  mouse.down(); mouse.up();
+  advance(5000);
+  term.selection = 'longer selection';
+  mouse.down(); mouse.up();
+  await flush();
+  assert.deepEqual(writes, ['dragged', 'longer selection', 'longer selection']);
+  handle.dispose();
+  assert.equal(windowListeners.mouseup, undefined, 'dispose removes the window listener');
+});
+
+test('Cmd+C on the text of a refused copy writes it inside the key press', async () => {
+  const { term, clipboard, writes, notices, last, mouse, flush } = setup({ clipboardFails: true, input: 'pointer' });
+  term.selection = 'refused';
+  mouse.down(); mouse.up();
+  await flush();
+  assert.equal(last().kind, 'tap');
+  clipboard.fails = false;
+  term.key({ key: 'c', type: 'keydown', metaKey: true, preventDefault() {} });
+  await flush();
+  assert.deepEqual(writes, ['refused']);
+  assert.equal(last(), null);
+  assert.deepEqual(notices, [['Copied 7 characters', 'success']]);
 });
 
 test('replayed history, a hidden terminal and a disposed one never copy or ask', async () => {
@@ -184,7 +319,7 @@ test('the same text twice within 2 seconds is one copy (pbcopy shim and the prog
   assert.deepEqual(writes, ['twice']);
   assert.equal(notices.filter(([message]) => message === 'Copied 5 characters').length, 1);
   assert.equal(shown.length, 0);
-  // Without a gesture: one dialog; the duplicate does not open another after Cancel either.
+  // Without a gesture: one bar; the duplicate does not open another after Cancel either.
   advance(context.clipboard.DUPLICATE_WINDOW_MS + 1);
   term.osc(osc('asked'));
   term.osc(osc('asked'));

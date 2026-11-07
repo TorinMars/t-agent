@@ -553,7 +553,7 @@ I18n.add({
   "Open this link?": "打开此链接?",
   "Delete this terminal? It ends the programs in it and removes its history.": "删除该终端?会结束其中的程序并移除其历史。",
   "Copy text": "复制文本",
-  "Scroll wheel": "滚轮",
+  "Scroll": "滚动",
   "Copy all": "复制全部",
   "Search": "搜索",
   "Search in the text": "在文本中搜索",

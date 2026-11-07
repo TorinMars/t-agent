@@ -114,6 +114,12 @@ function createAttentionRoutes({ service, heartbeatMs = 25000, failedAuth = { wi
 
   router.post('/', wrap((req, res) => res.status(201).json(service.create(req.body, { actor: actor(req), defaultSource: defaultSource(req) }))));
 
+  router.get('/by-ref/:ref', wrap((req, res) => {
+    const found = service.detailByRef(req.params.ref);
+    if (!found) return sendError(res, 404, 'NOT_FOUND', 'Task not found');
+    return res.json(found);
+  }));
+
   router.put('/by-ref/:ref', wrap((req, res) => {
     const { created, item } = service.upsertByRef(req.params.ref, req.body, { actor: actor(req), defaultSource: defaultSource(req) });
     res.status(created ? 201 : 200).json(item);

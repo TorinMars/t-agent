@@ -377,6 +377,7 @@ Goal: less attention spent on managing agent work. Agents and services (listener
 
 - `GET /api/attention?status=a,b&q=text&limit=200&include_done=1` → `{items}`, newest first (`sort_order` DESC). Without `status`, finished items (`done` / `failed` / `cancelled`) are left out unless `include_done=1`; `q` searches title, notes and reason (`%` and `_` are literal); `limit` 1..1000, default 200.
 - `POST /api/attention` → 201 item; 409 `{error: 'EXTERNAL_REF_EXISTS', id}` when the ref is taken (also on a `PATCH` that sets a taken ref).
+- `GET /api/attention/by-ref/:ref` (URL-encoded) → `{item, events}` like `GET /api/attention/:id`; 404 `NOT_FOUND` when no item has that ref. Session or token; the CLI and listeners look an item up with it instead of listing.
 - `PUT /api/attention/by-ref/:ref` (URL-encoded) → 201 created or 200 updated; the address names the item (a body `external_ref` is ignored); creating needs a title. The listener path.
 - `GET /api/attention/:id` → `{item, events}` (newest first, at most 100); `PATCH /api/attention/:id` → item; `DELETE /api/attention/:id` → 204.
 - `GET /api/attention/stream`: server-sent events, `retry: 3000`, then `event: change` with `{kind, item, previous, event}` per change, a comment line every 25 s. Works with the session and with a token; a token's stream ends when the token is revoked (at once through the route, otherwise at the next heartbeat).

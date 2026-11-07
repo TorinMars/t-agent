@@ -125,6 +125,16 @@ test('browser session: CRUD, 409, events, upsert by ref, same-origin rule, token
   assert.equal(upUpdated.status, 200);
   assert.equal((await upUpdated.json()).id, upItem.id);
 
+  const byRef = await call(`/api/attention/by-ref/${ref}`);
+  assert.equal(byRef.status, 200);
+  const byRefBody = await byRef.json();
+  assert.equal(byRefBody.item.id, upItem.id);
+  assert.equal(byRefBody.item.status, 'waiting_user');
+  assert.deepEqual(byRefBody.events.map(event => event.type), ['status', 'created'], 'newest first, like GET /:id');
+  const missingRef = await call(`/api/attention/by-ref/${encodeURIComponent('claude:none/x')}`);
+  assert.equal(missingRef.status, 404);
+  assert.deepEqual(await missingRef.json(), { error: 'NOT_FOUND', message: 'Task not found' });
+
   const listed = await (await call('/api/attention')).json();
   assert.deepEqual(listed.items.map(entry => entry.title), ['from prompt'], 'done items are hidden by default');
   assert.equal((await (await call('/api/attention?include_done=1')).json()).items.length, 2);
@@ -208,6 +218,15 @@ test('login gate: a logged-out request reaches /api/attention only with a token,
   assert.equal(upsert.status, 201);
   assert.equal((await upsert.json()).source, 'claude');
   assert.equal((await call('/api/attention', { method: 'POST', headers: bearer(token), body: '{"title":' })).status, 400, 'bad JSON is a JSON 400');
+  const found = await call(`/api/attention/by-ref/${encodeURIComponent('claude:abc')}`, { headers: bearer(token) });
+  assert.equal(found.status, 200);
+  const foundBody = await found.json();
+  assert.equal(foundBody.item.external_ref, 'claude:abc');
+  assert.equal(foundBody.events.length, 1);
+  const notThere = await call(`/api/attention/by-ref/${encodeURIComponent('claude:a/b')}`, { headers: bearer(token) });
+  assert.equal(notThere.status, 404);
+  assert.equal((await notThere.json()).error, 'NOT_FOUND');
+  assert.equal((await call(`/api/attention/by-ref/${encodeURIComponent('claude:abc')}`)).status, 404, 'logged out without a token: the gate 404');
 
   for (const route of ['/api/tasks', '/api/system/version', '/api/task-groups', '/api/remote-servers', '/api/bookmarks', '/api/attentionx', '/js/h5.js', '/manifest.json', '/auth/me']) {
     const response = await call(route, { headers: bearer(token) });

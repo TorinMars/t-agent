@@ -213,6 +213,11 @@ function createAttentionService({ db, now = () => new Date() } = {}) {
     return { item, events: events(id) };
   }
 
+  function detailByRef(ref) {
+    const item = typeof ref === 'string' && ref ? getByRef(ref) : null;
+    return item ? { item, events: events(item.id) } : null;
+  }
+
   // Inside a transaction. fields: validated (readFields).
   function insertItem(fields, actor, defaultSource) {
     if (!fields.title) throw invalid('title cannot be empty');
@@ -356,7 +361,7 @@ function createAttentionService({ db, now = () => new Date() } = {}) {
     return Boolean(row && !row.revoked_at);
   }
 
-  return { list, get, getByRef, events, detail, create, update, upsertByRef, remove, onChange, listTokens, createToken, revokeToken, verifyToken, tokenActive };
+  return { list, get, getByRef, events, detail, detailByRef, create, update, upsertByRef, remove, onChange, listTokens, createToken, revokeToken, verifyToken, tokenActive };
 }
 
 // The service of this server's database, made on first use (so requiring this file does not open the database).

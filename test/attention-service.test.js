@@ -126,6 +126,10 @@ test('external_ref is unique; upsert by ref creates once and then updates', () =
   assert.equal(updated.item.title, 'first prompt', 'later calls keep the title when they do not send one');
   assert.equal(updated.item.source, 'claude');
   assert.equal(service.getByRef('claude:s2').status, 'waiting_user');
+  const detail = service.detailByRef('claude:s2');
+  assert.equal(detail.item.id, made.item.id);
+  assert.deepEqual(detail.events.map(event => event.type), ['status', 'created']);
+  assert.equal(service.detailByRef('claude:missing'), null);
   fails(() => service.upsertByRef('claude:s3', { status: 'working' }), 'VALIDATION_FAILED'); // creating needs a title
   fails(() => service.upsertByRef('', { title: 'x' }), 'VALIDATION_FAILED');
   // The default source applies to a create only.

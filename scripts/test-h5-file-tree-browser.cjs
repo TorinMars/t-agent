@@ -1,9 +1,10 @@
 // The read-only file tree of the MUI page (scripts/h5-shell/FileTree.jsx, Headless Tree) in real Chromium:
-// - phone 390x844 (touch): "Files" in row 2 opens a bottom sheet; the root is read on open, a folder only when it is expanded (one request each), a
+// - phone 390x844 (touch): "Docs" in row 2 opens the design document, whose "Files" button opens the tree in a bottom sheet (the tree's
+//   "Design document" button leads back); the root is read on open, a folder only when it is expanded (one request each), a
 //   folder of 450 entries is read in pages of 200 with a "Load more" row; a missing folder and an empty folder show a note; a tap on a file opens it in
 //   the file viewer over the tree with a back arrow; the back arrow and the Android back button (history back) return to the tree with its folders and
 //   its scroll position kept; Close closes both; the tree is drawn again for another task; every row is 44px high; nothing is resized on the PTY.
-// - phone 320x640 (touch): eight buttons do not fit, so "Files" is left out of row 2; the file viewer's own Files button leads to the tree.
+// - phone 320x640 (touch): eight buttons do not fit, so "Docs" is left out of row 2 (the saved commands list has it); its Files button leads to the tree.
 // - computer 1440x900 (mouse): the tree is the right side panel (`html[data-side-panel]`); a file opens in the panel over it, back and Escape return one
 //   layer; a remote Engine's tree is read through `/api/remote-servers/:id/tasks/:task/files`.
 // H5_SHOT_DIR=<dir> saves screenshots (phone at 3x). Chinese names are written with \u escapes (test/i18n.test.js).
@@ -104,6 +105,13 @@ const rowOf = (page, filePath) => page.locator(`#h5-files-tree [data-path="${fil
 const names = page => page.evaluate(() => [...document.querySelectorAll('#h5-files-tree [role="treeitem"]')].map(node => node.textContent));
 const resizes = page => page.evaluate(() => window.sockets.reduce((sum, socket) => sum + socket.sent.filter(data => data.includes('"resize"')).length, 0));
 // The sheet has stopped sliding (its transform is none or the identity).
+// The tree is reached from the Docs button (the design document sheet) and its Files button; under 360px Docs is in the saved commands list.
+async function openTree(page, how = 'tap') {
+  if (await page.locator('#h5-design').isVisible()) await page.locator('#h5-design')[how]();
+  else { await page.locator('#h5-commands')[how](); await page.locator('#h5-commands-docs')[how](); }
+  await page.locator('#h5-design-files')[how]();
+  await page.locator('#h5-files-sheet .h5-files-panel').waitFor({ state: 'visible' });
+}
 const settled = (page, selector) => page.waitForFunction(sel => { const node = document.querySelector(sel); return node && ['none', 'matrix(1, 0, 0, 1, 0, 0)'].includes(getComputedStyle(node).transform); }, selector, { timeout: 3000 });
 
 (async () => {
@@ -113,17 +121,17 @@ const settled = (page, selector) => page.waitForFunction(sel => { const node = d
     {
       const { context, page, errors, lists, reads } = await openPage(browser, { viewport: { width: 390, height: 844 } });
       const resizesBefore = await resizes(page);
-      const files = page.locator('#h5-files');
-      assert.equal(await files.getAttribute('aria-label'), 'Files');
-      assert.equal(await files.getAttribute('title'), 'Files');
+      assert.equal(await page.locator('#h5-files').count(), 0, 'no Files button in row 2: Docs leads to the tree');
       assert.equal(await page.locator('#h5-files-sheet').count(), 0, 'the sheet is not drawn before it is opened');
       assert.deepEqual(lists, [], 'nothing is listed before the tree is opened');
-      const actionRow = await page.evaluate(() => [...document.querySelectorAll('#h5-actions > *')].filter(node => getComputedStyle(node).display !== 'none').map(node => node.id || node.dataset.action || node.className));
-      assert.ok(actionRow.indexOf('h5-files') === actionRow.indexOf('h5-design') + 1, `Files is next to the design document (${actionRow})`);
-
-      await files.tap();
+      await page.locator('#h5-design').tap();
+      const viewerFiles = page.locator('#h5-design-files');
+      assert.equal(await viewerFiles.getAttribute('aria-label'), 'Files');
+      assert.equal(await viewerFiles.getAttribute('title'), 'Files');
+      await viewerFiles.tap();
       const sheet = page.locator('#h5-files-sheet .h5-files-panel');
       await sheet.waitFor({ state: 'visible' });
+      await page.locator('#h5-design-sheet .h5-design-panel').waitFor({ state: 'hidden' }); // the design document makes way for the tree
       await rowOf(page, 'README.md').waitFor();
       assert.deepEqual(lists, ['/api/tasks/1/files .@0'], 'only the root is read');
       assert.deepEqual(await names(page), ['big', 'docs', 'gone', 'src', 'README.md', 'link​link'.replace('​', '')], 'folders first, the symbolic link marked');
@@ -134,7 +142,7 @@ const settled = (page, selector) => page.waitForFunction(sel => { const node = d
       // 44px rows in touch mode.
       const heights = await page.evaluate(() => [...document.querySelectorAll('#h5-files-tree .MuiListItemButton-root')].map(node => node.getBoundingClientRect().height));
       assert.ok(heights.every(h => h >= 44), `rows are 44px high (${heights})`);
-      for (const id of ['h5-files-reload', 'h5-files-close']) {
+      for (const id of ['h5-files-design', 'h5-files-reload', 'h5-files-close']) {
         const box = await page.locator(`#${id}`).boundingBox();
         assert.ok(box.width >= 44 && box.height >= 44, `${id} is a 44px target`);
         assert.equal(await page.locator(`#${id}`).getAttribute('aria-label'), await page.locator(`#${id}`).getAttribute('title'));
@@ -219,8 +227,7 @@ const settled = (page, selector) => page.waitForFunction(sel => { const node = d
       assert.equal(new URL(page.url()).pathname, '/h5', 'the page is not left');
 
       // Opened again: as it was left. Close in the viewer closes both.
-      await files.tap();
-      await sheet.waitFor({ state: 'visible' });
+      await openTree(page);
       assert.equal(await rowOf(page, 'docs').getAttribute('aria-expanded'), 'true');
       await rowOf(page, 'README.md').scrollIntoViewIfNeeded();
       await rowOf(page, 'README.md').tap();
@@ -236,8 +243,14 @@ const settled = (page, selector) => page.waitForFunction(sel => { const node = d
       await page.locator('.h5-task-item', { hasText: 'Write docs' }).tap();
       await page.locator('#h5-tasks .h5-terminal-list[aria-label="Write docs"] .h5-terminal-main').first().tap();
       await page.locator('#h5-tasks').waitFor({ state: 'hidden' });
-      await files.tap();
+      await openTree(page);
       await rowOf(page, 'notes.md').waitFor();
+      // The tree's Design document button: DESIGN.md over the tree, its back arrow returns to the tree.
+      await page.locator('#h5-files-design').tap();
+      await page.locator('#h5-design-sheet .h5-design-panel').waitFor({ state: 'visible' });
+      await page.locator('#h5-design-back').tap();
+      await page.locator('#h5-design-sheet .h5-design-panel').waitFor({ state: 'hidden' });
+      assert.ok(await sheet.isVisible(), 'back from the design document returns to the tree');
       assert.equal(await rowOf(page, 'docs').count(), 0, 'the old tree is gone');
       assert.equal(await page.locator('#h5-files-path').textContent(), '/work/docs');
       assert.equal(lists.at(-1), '/api/tasks/2/files .@0');
@@ -250,10 +263,11 @@ const settled = (page, selector) => page.waitForFunction(sel => { const node = d
     // ── Phone 320x640, touch: Files is left out of row 2, the viewer leads to the tree ──
     {
       const { context, page, errors, lists } = await openPage(browser, { viewport: { width: 320, height: 640 } });
-      assert.equal(await page.locator('#h5-files').isVisible(), false, 'no room for an eighth button at 320px');
+      assert.equal(await page.locator('#h5-design').isVisible(), false, 'no room for an eighth button at 320px: Docs is left out');
       const widths = await page.evaluate(() => [...document.querySelectorAll('#h5-actions > button, #h5-actions > label')].filter(node => getComputedStyle(node).display !== 'none').map(node => Math.round(node.getBoundingClientRect().width)));
       assert.ok(widths.every(w => w >= 44), `row 2 keeps 44px buttons (${widths})`);
-      await page.locator('#h5-design').tap();
+      await page.locator('#h5-commands').tap();
+      await page.locator('#h5-commands-docs').tap();
       const viewerFiles = page.locator('#h5-design-files');
       await viewerFiles.waitFor();
       assert.equal(await viewerFiles.getAttribute('aria-label'), 'Files');
@@ -268,7 +282,7 @@ const settled = (page, selector) => page.waitForFunction(sel => { const node = d
     // ── Computer 1440x900, mouse ──
     {
       const { context, page, errors, lists } = await openPage(browser, { viewport: { width: 1440, height: 900 }, touch: false });
-      await page.locator('#h5-files').click();
+      await openTree(page, 'click');
       const panel = page.locator('#h5-files-sheet .h5-files-panel');
       await panel.waitFor({ state: 'visible' });
       await rowOf(page, 'src').waitFor();
@@ -297,16 +311,15 @@ const settled = (page, selector) => page.waitForFunction(sel => { const node = d
       assert.equal(await rowOf(page, 'src').getAttribute('aria-expanded'), 'true');
       assert.equal(await rowOf(page, 'src/app.js').getAttribute('aria-selected'), 'false');
       if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'pc-1440-file-tree.png') });
-      // The back arrow too; the Files button hides the panel.
+      // The back arrow too; Close hides the panel.
       await rowOf(page, 'README.md').click();
       await page.locator('#h5-design-body h1', { hasText: 'Read me' }).waitFor();
       await page.locator('#h5-design-back').click();
       await viewer.waitFor({ state: 'hidden' });
-      await page.locator('#h5-files').click();
+      await page.locator('#h5-files-close').click();
       await panel.waitFor({ state: 'hidden' });
       assert.equal(await page.evaluate(() => document.documentElement.hasAttribute('data-side-panel')), false);
-      await page.locator('#h5-files').click();
-      await panel.waitFor({ state: 'visible' });
+      await openTree(page, 'click');
       await page.locator('#h5-files-tree [data-path="README.md"]').click();
       await page.locator('#h5-design-body h1', { hasText: 'Read me' }).waitFor();
       await page.keyboard.press('Escape');
@@ -315,8 +328,7 @@ const settled = (page, selector) => page.waitForFunction(sel => { const node = d
       await panel.waitFor({ state: 'hidden' });
 
       // A remote Engine: the tree is read through the remote proxy, and it is a new tree.
-      await page.locator('#h5-files').click();
-      await panel.waitFor({ state: 'visible' });
+      await openTree(page, 'click');
       await page.locator('#h5-engine').selectOption('remote:7');
       await page.locator('.h5-task-item', { hasText: 'Remote job' }).click();
       const remoteRow = page.locator('#h5-tasks .h5-terminal-list[aria-label="Remote job"] .h5-terminal-main').first();

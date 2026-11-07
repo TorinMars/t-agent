@@ -1585,9 +1585,10 @@
     const s = session;
     if (!s || s.disposed || agentChat || modalOpen()) return;
     const active = document.activeElement;
-    if (editing(active) || (active && active.closest && active.closest('#h5-design-sheet, #h5-files-sheet, #h5-agent'))) return;
+    if (editing(active) || (active && active.closest && active.closest('#h5-design-sheet, #h5-files-sheet, #h5-attention-sheet, #h5-agent'))) return;
     if (event.key === 'Escape' && isWide() && ui.get().design && ui.get().design.open) { ui.actions.closeDesign(); return; } // closes the side panel first
     if (event.key === 'Escape' && isWide() && ui.get().files && ui.get().files.open) { ui.actions.closeFiles(); return; } // then the file tree
+    if (event.key === 'Escape' && isWide() && ui.get().attention && ui.get().attention.open) { ui.actions.closeAttention(); return; } // the T-Attention panel
     const onBody = !active || active === document.body || active === document.documentElement;
     const printable = Array.from(event.key).length === 1;
     if (!onBody && (!printable || event.key === ' ')) return;

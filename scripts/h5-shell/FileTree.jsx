@@ -136,6 +136,8 @@ export function FileTreeSheet({ state, ui }) {
             sx={{ fontFamily: 'ui-monospace, Menlo, monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', direction: 'rtl', textAlign: 'left', minHeight: '1.66em' }}
           ><bdi>{dir}</bdi></Typography>
         </Box>
+        {/* The way back to the design document (row 2 "Docs" opens it, its Files button leads here): DESIGN.md opens over the tree, with a back arrow to it. */}
+        <IconButton id="h5-files-design" {...named(t('Design document'))} onClick={() => ui.actions.openDesign()}><Icon name="designDoc" size={20} /></IconButton>
         <IconButton id="h5-files-reload" {...named(t('Reload'))} onClick={() => setReload(value => value + 1)}><Icon name="reload" size={20} /></IconButton>
         <IconButton id="h5-files-close" {...named(t('Close'))} onClick={close}><Icon name="close" size={22} /></IconButton>
       </Box>

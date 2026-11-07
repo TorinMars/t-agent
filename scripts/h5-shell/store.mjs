@@ -51,5 +51,8 @@ export const initialState = () => ({
   files: null, // { open, key, base, dir } of the read-only file tree (FileTree.jsx): base = `<tasksBase>/<task>/files` (null without a task); a new key (task, working directory or Engine) draws a new tree
   taskDialog: null, // { kind: 'delete' | 'workdir', id, title, workDir, error, busy } the delete confirmation or the working directory form of a task
   notice: null, // { id, message, type } the last floating notice
+  // T-Attention (attention-feed.mjs, Attention.jsx): { open, status: idle | loading | ready | error, items, needs (the waiting_user count, the badge
+  // on #h5-attention), live (the stream is connected), focus (a task id whose edit view opens) }
+  attention: { open: false, status: 'idle', items: null, needs: 0, live: false, focus: null },
   activeCount: 0, // running or pending terminal sessions of the Engine (the badge on #h5-cycle; h5.js `showActiveCount`)
 });

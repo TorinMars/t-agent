@@ -31,4 +31,6 @@ plugins/listeners/<name>/
 | `SessionEnd` | `review` if it was still `working` or `waiting_user` |
 | `PostToolUse`, `PostToolUseFailure` | back to `working` after a prompt was answered; only when the last status this hook set was `waiting_user` (a small state file in `~/.tagent/listeners/claude-state/`), so normal tool calls send nothing |
 
+Each event also fills the task's `context` (goal, latest prompt, last reply, what is pending with the tool and command, changed files from `git diff --numstat` with a 1.5 s limit, branch, resume command, the T-Agent task and terminal from `TA_HOOK_URL`) and sends an `activity` for the timeline. On a change to `waiting_user` or `review` it sends an `excerpt`: the last 8 KiB of readable text of the transcript (the server only passes it to the optional AI summary and never stores it). `PermissionRequest` only remembers the tool for the next permission notification and makes no request.
+
 The hooks are in `rules/claude/settings.json` and reach `~/.claude/settings.json` through `scripts/agent-sync.py` (run by `ta` before Claude starts). They find this install through `~/.tagent/listeners/claude-hook.path`, which `t-attention login` writes; until then, and without `node`, they do nothing. Errors go to `~/.tagent/listeners/claude.log`. Set `TA_ATTENTION_LISTENER=0` to turn the listener off for one shell.

@@ -17,7 +17,7 @@ const GROUPS = [
   { label: 'Done & failed', statuses: ['done', 'failed', 'cancelled'] },
 ];
 const STATUS_LABELS = { todo: 'To do', working: 'Working', waiting_user: 'Needs you', review: 'Review', done: 'Done', failed: 'Failed', cancelled: 'Cancelled' };
-const VALUE_FLAGS = new Set(['url', 'token', 'title', 'notes', 'priority', 'due', 'status', 'ref', 'reason', 'link', 'label', 'q', 'limit', 'timeout']);
+const VALUE_FLAGS = new Set(['url', 'token', 'title', 'notes', 'priority', 'due', 'status', 'ref', 'reason', 'link', 'label', 'note', 'q', 'limit', 'timeout']);
 const BOOL_FLAGS = new Set(['json', 'all', 'help', 'no-check']);
 // CLI flag -> API field; an empty value clears the field (null).
 const FIELD_FLAGS = { title: 'title', notes: 'notes', priority: 'priority', due: 'due_date', status: 'status', reason: 'attention_reason', link: 'link_url', label: 'link_label' };
@@ -45,6 +45,8 @@ Fields
   --title T  --notes T  --priority high|medium|low|none
   --due YYYY-MM-DD  --status S  --ref R  --reason T
   --link URL  --label T     (an empty value clears it)
+  --note T                  update, upsert: add a note
+                            to the task's timeline
 
 Statuses: todo working waiting_user review
   done failed cancelled
@@ -118,6 +120,15 @@ function only(flags, allowed, command) {
   }
 }
 
+// --note "text" -> an activity of kind 'note' (an event in the task's timeline; at most 500 characters).
+function addNote(body, flags) {
+  if (flags.note === undefined) return;
+  const text = oneLine(flags.note);
+  if (!text) throw new UsageError('--note cannot be empty');
+  if (Array.from(text).length > 500) throw new UsageError('--note can be at most 500 characters');
+  body.activity = { kind: 'note', text };
+}
+
 // <id> or ref:<external_ref>
 function target(value, command) {
   if (value === undefined) throw new UsageError(`${command} needs a task id or ref:<ref>`);
@@ -183,25 +194,95 @@ function formatList(items) {
   return out.join('\n');
 }
 
+function ago(iso, now = Date.now()) {
+  const ms = now - Date.parse(iso);
+  if (!Number.isFinite(ms)) return '';
+  const min = Math.round(ms / 60000);
+  if (min < 1) return 'just now';
+  if (min < 60) return `${min} min ago`;
+  const hours = Math.round(min / 60);
+  if (hours < 48) return `${hours} h ago`;
+  return `${Math.round(hours / 24)} days ago`;
+}
+
+function firstLines(text, count, cols) {
+  return String(text || '').split('\n').map(line => line.trim()).filter(Boolean).slice(0, count).map(line => clip(line, cols));
+}
+
+const ACTIVITY_LABELS = { prompt: 'Prompt', permission: 'Permission', question: 'Question', resumed: 'Resumed', turn_end: 'Turn ended', error: 'Error', session_end: 'Session ended', note: 'Note' };
+
+function eventLine(event) {
+  const when = String(event.at || '').slice(0, 16).replace('T', ' ');
+  let what;
+  if (event.type === 'activity' && event.data) {
+    what = `${ACTIVITY_LABELS[event.data.kind] || event.data.kind}: ${oneLine(event.data.text)}`;
+  } else if (event.type === 'created') {
+    what = `Created${event.to_status ? ` (${STATUS_LABELS[event.to_status] || event.to_status})` : ''}`;
+  } else if (event.type === 'status' || (event.from_status !== event.to_status && event.to_status)) {
+    what = `${STATUS_LABELS[event.from_status] || event.from_status || '-'} -> ${STATUS_LABELS[event.to_status] || event.to_status}`;
+  } else {
+    what = event.type;
+  }
+  return clip(`  ${when} ${what}`, width());
+}
+
+// The context card first (goal, progress, what is needed, files, how to resume), then the fields and the history.
 function formatItem(item, events) {
-  const out = [`#${item.id} ${oneLine(item.title)}`, `Status:   ${STATUS_LABELS[item.status] || item.status}`];
-  if (item.priority && item.priority !== 'none') out.push(`Priority: ${item.priority}`);
-  if (item.due_date) out.push(`Due:      ${item.due_date}`);
-  if (item.attention_reason) out.push(`Reason:   ${item.attention_reason}`);
-  if (item.link_url) out.push(`Link:     ${item.link_label ? `${item.link_label} ` : ''}${item.link_url}`);
-  if (item.external_ref) out.push(`Ref:      ${item.external_ref}`);
-  out.push(`Source:   ${item.source || 'user'}`);
-  if (item.meta && typeof item.meta === 'object' && item.meta.cwd) out.push(`Folder:   ${item.meta.cwd}${item.meta.host ? ` (${item.meta.host})` : ''}`);
-  out.push(`Updated:  ${item.updated_at || ''}`);
+  const cols = width();
+  const indent = '  ';
+  const context = item.context && typeof item.context === 'object' ? item.context : {};
+  const out = [`#${item.id} ${oneLine(item.title)}`, `${STATUS_LABELS[item.status] || item.status}${item.updated_at ? ` - ${ago(item.updated_at)}` : ''}`];
+  const section = (label, lines) => { if (lines.length) out.push('', label, ...lines.map(line => indent + line)); };
+
+  if (context.summary && context.summary.text) section('Summary', firstLines(context.summary.text, 3, cols - 2));
+  if (context.goal) section('Goal', firstLines(context.goal, 3, cols - 2));
+  const progress = [];
+  if (context.last_reply) progress.push(...firstLines(context.last_reply, 3, cols - 2));
+  else if (context.latest_prompt && context.latest_prompt !== context.goal) progress.push(`Asked: ${clip(oneLine(context.latest_prompt), cols - 9)}`);
+  const facts = [];
+  if (context.turns) facts.push(`${context.turns} turn${context.turns === 1 ? '' : 's'}`);
+  if (context.turn_started_at) facts.push(`turn started ${ago(context.turn_started_at)}`);
+  if (facts.length) progress.push(facts.join(', '));
+  if (Array.isArray(context.files) && context.files.length) {
+    progress.push(`${context.files.length} changed file${context.files.length === 1 ? '' : 's'}:`);
+    for (const file of context.files.slice(0, 10)) progress.push(`  ${clip(file.path, cols - 16)} +${file.added || 0} -${file.deleted || 0}`);
+    if (context.files.length > 10) progress.push(`  ... ${context.files.length - 10} more`);
+  }
+  section('Progress', progress);
+  const needs = [];
+  if (context.pending && context.pending.text) {
+    needs.push(...firstLines(context.pending.text, 3, cols - 2));
+    if (context.pending.tool) needs.push(`Tool: ${context.pending.tool}`);
+    if (context.pending.command) needs.push(...firstLines(context.pending.command, 5, cols - 4).map(line => `$ ${line}`));
+  } else if (item.attention_reason && (item.status === 'waiting_user' || item.status === 'failed')) {
+    needs.push(...firstLines(item.attention_reason, 3, cols - 2));
+  }
+  section('Needs you', needs);
+
+  const where = [];
+  const folder = context.cwd || (item.meta && item.meta.cwd);
+  if (folder) where.push(`${folder}${context.branch ? ` (${context.branch})` : ''}`);
+  const host = context.host || (item.meta && item.meta.host);
+  if (host) where.push(`on ${host}`);
+  if (context.tagent && context.tagent.task_id) where.push(`T-Agent task ${context.tagent.task_id}, terminal ${context.tagent.terminal_id}`);
+  if (context.session && context.session.resume) where.push('Resume:', `  ${context.session.resume}`);
+  section('Where', where);
+
+  const fields = [];
+  if (item.priority && item.priority !== 'none') fields.push(`Priority: ${item.priority}`);
+  if (item.due_date) fields.push(`Due:      ${item.due_date}`);
+  if (item.attention_reason && !needs.length) fields.push(`Reason:   ${item.attention_reason}`);
+  if (item.link_url) fields.push(`Link:     ${item.link_label ? `${item.link_label} ` : ''}${item.link_url}`);
+  if (item.external_ref) fields.push(`Ref:      ${item.external_ref}`);
+  fields.push(`Source:   ${item.source || 'user'}`);
+  if (!folder && item.meta && item.meta.cwd) fields.push(`Folder:   ${item.meta.cwd}`);
+  fields.push(`Updated:  ${item.updated_at || ''}`);
+  out.push('', ...fields);
   if (item.notes) out.push('', item.notes);
   if (events && events.length) {
     out.push('', 'History');
-    for (const event of events.slice(0, 20)) {
-      const what = event.type === 'status' || (event.from_status !== event.to_status && event.to_status)
-        ? `${event.from_status || '-'} -> ${event.to_status}`
-        : event.type;
-      out.push(`  ${String(event.at || '').slice(0, 16).replace('T', ' ')} ${event.actor || ''}: ${what}`);
-    }
+    // Oldest first, like a timeline; the API gives newest first.
+    for (const event of events.slice(0, 20).reverse()) out.push(eventLine(event));
   }
   return out.join('\n');
 }
@@ -279,10 +360,11 @@ async function run(argv, { env = process.env, print, printError } = {}) {
   }
 
   if (command === 'update') {
-    only(flags, ['title', 'notes', 'priority', 'due', 'status', 'ref', 'reason', 'link', 'label'], 'update');
+    only(flags, ['title', 'notes', 'priority', 'due', 'status', 'ref', 'reason', 'link', 'label', 'note'], 'update');
     const spec = target(args[0], 'update');
     const body = fieldsFrom(flags);
     if (flags.ref !== undefined) body.external_ref = flags.ref === '' ? null : flags.ref;
+    addNote(body, flags);
     if (!Object.keys(body).length) throw new UsageError('update needs at least one field, for example --status review');
     const api = connect(flags, env);
     const item = await api.update(await resolveId(api, spec), body);
@@ -302,10 +384,11 @@ async function run(argv, { env = process.env, print, printError } = {}) {
   }
 
   if (command === 'upsert') {
-    only(flags, ['title', 'notes', 'priority', 'due', 'status', 'ref', 'reason', 'link', 'label'], 'upsert');
+    only(flags, ['title', 'notes', 'priority', 'due', 'status', 'ref', 'reason', 'link', 'label', 'note'], 'upsert');
     if (!flags.ref) throw new UsageError('upsert needs --ref <ref>');
     if (args.length) throw new UsageError('upsert takes no arguments; give the title with --title');
     const body = { ...fieldsFrom(flags), source: 'cli' };
+    addNote(body, flags);
     const result = await connect(flags, env).upsertByRef(flags.ref, body);
     show(result.item, `${result.created ? 'Added' : 'Updated'} #${result.item.id} ${oneLine(result.item.title)} (${STATUS_LABELS[result.item.status] || result.item.status})`);
     return EXIT.ok;

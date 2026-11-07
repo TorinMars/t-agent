@@ -141,7 +141,7 @@ test('add, list, show, update, status verbs, upsert and rm send the contract req
 
     const shown = await run(['show', '1'], { env });
     assert.equal(shown.code, 0);
-    assert.match(shown.stdout, /^#1 Write the report\nStatus: {3}To do\nPriority: high/);
+    assert.match(shown.stdout, /^#1 Write the report\nTo do - just now\n\nPriority: high/);
     assert.match(shown.stdout, /History\n/);
     const byRef = await run(['show', 'ref:ci:42', '--json'], { env });
     assert.equal(JSON.parse(byRef.stdout).item.id, 1);
@@ -234,6 +234,45 @@ test('the client keeps a path prefix of the server URL and encodes refs', async 
     assert.equal(fake.requests[0].path, '/proxy/api/attention');
     await api.request('PUT', `/by-ref/${encodeURIComponent('claude:a/b c')}`, { body: {} });
     assert.equal(fake.requests[1].path, '/proxy/api/attention/by-ref/claude%3Aa%2Fb%20c');
+  } finally {
+    await fake.close();
+  }
+});
+
+test('--note sends a timeline activity; show prints the context card (goal, progress, needs, files, resume)', async () => {
+  const fake = await fakeServer();
+  const env = auth(fake);
+  try {
+    assert.equal((await run(['upsert', '--ref', 'claude:s1', '--title', 'Fix login', '--status', 'waiting_user', '--note', 'Asked  Claude\nto wait'], { env })).code, 0);
+    assert.deepEqual(fake.requests.at(-1).body.activity, { kind: 'note', text: 'Asked Claude to wait' });
+    assert.equal((await run(['update', '1', '--note', 'Checked the logs'], { env })).code, 0, 'a note alone is enough for update');
+    assert.deepEqual(fake.requests.at(-1).body, { activity: { kind: 'note', text: 'Checked the logs' } });
+    assert.equal((await run(['update', '1', '--note', ''], { env })).code, 1);
+    assert.equal((await run(['update', '1', '--note', 'x'.repeat(501)], { env })).code, 1);
+    assert.equal((await run(['add', 'x', '--note', 'n'], { env })).code, 1, 'add does not take --note');
+
+    const item = fake.items.get(1);
+    item.context = {
+      goal: 'Fix the login page so it redirects after sign-in',
+      latest_prompt: 'Also add a test',
+      last_reply: 'I changed routes/auth.js.\nNow I need to run the tests.\nThird line\nFourth line',
+      pending: { kind: 'permission', text: 'Claude needs your permission to use Bash', tool: 'Bash', command: 'npm test -- test/auth.test.js' },
+      files: [{ path: 'routes/auth.js', added: 12, deleted: 3 }, { path: 'test/auth.test.js', added: 40, deleted: 0 }],
+      cwd: '/work/app', branch: 'feat/login', host: 'laptop', turns: 2, turn_started_at: new Date(Date.now() - 5 * 60000).toISOString(),
+      session: { agent: 'claude', id: 's1', resume: "cd '/work/app' && claude --resume s1" },
+      tagent: { task_id: '3', terminal_id: 'abc' },
+    };
+    const shown = await run(['show', 'ref:claude:s1'], { env: { ...env } });
+    assert.equal(shown.code, 0, shown.stderr);
+    const text = shown.stdout;
+    assert.match(text, /^#1 Fix login\nNeeds you - just now\n\nGoal\n {2}Fix the login page so it redirects after sign-in\n/);
+    assert.match(text, /\nProgress\n {2}I changed routes\/auth.js.\n {2}Now I need to run the tests.\n {2}Third line\n {2}2 turns, turn started 5 min ago\n {2}2 changed files:\n {4}routes\/auth.js \+12 -3\n {4}test\/auth.test.js \+40 -0\n/);
+    assert.ok(!text.includes('Fourth line'), 'only the first lines of the reply');
+    assert.match(text, /\nNeeds you\n {2}Claude needs your permission to use Bash\n {2}Tool: Bash\n {2}\$ npm test -- test\/auth.test.js\n/);
+    assert.match(text, /\nWhere\n {2}\/work\/app \(feat\/login\)\n {2}on laptop\n {2}T-Agent task 3, terminal abc\n {2}Resume:\n {4}cd '\/work\/app' && claude --resume s1\n/);
+    assert.match(text, /\nHistory\n.*Created \(Needs you\)\n/);
+    assert.match(text, /Note: Asked Claude to wait\n.*Note: Checked the logs/);
+    for (const line of text.split('\n')) assert.ok(line.length <= 80, `fits 80 columns: ${line}`);
   } finally {
     await fake.close();
   }

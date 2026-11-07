@@ -57,6 +57,9 @@ function hook(dir, input, env = {}) {
 }
 
 const ref = `/api/attention/by-ref/${encodeURIComponent(`claude:${SESSION}`)}`;
+// The status part of a body, without the context recall fields (checked in their own tests).
+const core = body => { const { context, activity, excerpt, ...rest } = body || {}; return rest; }; // eslint-disable-line no-unused-vars
+const coreOf = request => ({ ...request, body: core(request.body) });
 
 test('one task per session: the first prompt creates it with a title, later events only change status and reason', async () => {
   const fake = await fakeServer();
@@ -68,7 +71,7 @@ test('one task per session: the first prompt creates it with a title, later even
     assert.equal(fake.requests.length, 2, 'a lookup by ref, then the create with the title');
     assert.deepEqual([fake.requests[0].method, fake.requests[0].path, fake.requests[0].auth], ['GET', ref, `Bearer ${TOKEN}`]);
     assert.deepEqual([fake.requests[1].method, fake.requests[1].path], ['PUT', ref]);
-    assert.deepEqual(fake.requests[1].body, {
+    assert.deepEqual(core(fake.requests[1].body), {
       status: 'working', attention_reason: null, meta: { host: os.hostname(), cwd: '/work/app' }, source: 'claude',
       title: 'Fix the login page so it redirects after sign-in, and add a regression test f...',
     });
@@ -90,7 +93,7 @@ test('one task per session: the first prompt creates it with a title, later even
       assert.deepEqual([result.code, result.out], [0, '']);
       assert.equal(fake.requests.length, before + 2, `${input.hook_event_name}: lookup and update`);
       assert.deepEqual(fake.requests.at(-2).method + ' ' + fake.requests.at(-2).path, `GET ${ref}`);
-      assert.deepEqual(fake.requests.at(-1), { method: 'PUT', path: ref, query: {}, auth: `Bearer ${TOKEN}`, body });
+      assert.deepEqual(coreOf(fake.requests.at(-1)), { method: 'PUT', path: ref, query: {}, auth: `Bearer ${TOKEN}`, body });
     }
     assert.equal(item.title, 'Renamed by the user', 'the title is never sent for an existing task');
     assert.equal(fake.items.size, 1);
@@ -136,15 +139,16 @@ test('SessionEnd moves a working or waiting task to review and leaves the others
     const [item] = fake.items.values();
     let before = fake.requests.length;
     await hook(dir, events.end);
-    assert.deepEqual(fake.requests.slice(before).map(r => [r.method, r.path, r.query, r.body]), [
-      ['GET', ref, {}, undefined],
+    assert.deepEqual(fake.requests.slice(before).map(r => [r.method, r.path, r.query, core(r.body)]), [
+      ['GET', ref, {}, {}],
       ['PATCH', `/api/attention/${item.id}`, {}, { status: 'review', source: 'claude' }],
     ]);
+    assert.deepEqual(fake.requests.at(-1).body.activity, { kind: 'session_end', text: 'Session ended (prompt_input_exit)' });
     assert.equal(item.status, 'review');
 
     before = fake.requests.length;
     await hook(dir, events.end);
-    assert.deepEqual(fake.requests.slice(before).map(r => r.method), ['GET'], 'already in review: nothing to change');
+    assert.deepEqual(fake.requests.slice(before).map(r => [r.method, r.body]), [['GET', undefined], ['PATCH', { source: 'claude', activity: { kind: 'session_end', text: 'Session ended (prompt_input_exit)' } }]], 'already in review: only the timeline entry');
     await hook(dir, { ...events.end, session_id: 'never-seen' });
     assert.equal(fake.items.size, 1, 'SessionEnd never creates a task');
   } finally {
@@ -219,7 +223,7 @@ test('after a prompt left the task waiting_user, the next tool event sets it bac
     let before = fake.requests.length;
     const resumed = await hook(dir, events.tool);
     assert.deepEqual([resumed.code, resumed.out], [0, '']);
-    assert.deepEqual(fake.requests.slice(before), [{ method: 'PUT', path: ref, query: {}, auth: `Bearer ${TOKEN}`, body: { status: 'working', attention_reason: null, source: 'claude' } }]);
+    assert.deepEqual(fake.requests.slice(before), [{ method: 'PUT', path: ref, query: {}, auth: `Bearer ${TOKEN}`, body: { status: 'working', attention_reason: null, source: 'claude', context: { pending: null }, activity: { kind: 'resumed', text: 'Claude continued (Bash)' } } }]);
     assert.deepEqual([item.status, item.attention_reason], ['working', null]);
     assert.equal(JSON.parse(fs.readFileSync(stateFile, 'utf8')).status, 'working');
 

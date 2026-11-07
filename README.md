@@ -783,6 +783,23 @@ By default a private-object signed link valid for 24 hours is returned. When a l
 
 The installed app and the web page share the same OSS settings. After saving the credentials you must tick "Enable image and file upload"; when it is not enabled the save page says so explicitly. The configuration is refreshed when the app regains focus or returns to the foreground, a first read failure can be retried at upload time, and the terminal upload button is not hidden because reading the configuration failed. The OSS configuration of different Clients is still independent.
 
+### T-Attention notifications (Telegram)
+
+When a T-Attention item enters a status that needs you (by default **Needs you**, **Failed** and **Review**), the Client can tell you on Telegram: your Telegram **account 1** sends a message to, or rings, your **account 2** (for example the account on the phone you carry). It uses the MTProto user API through the npm package `telegram` (gramjs), not a bot.
+
+Setup: open **Settings → T-Attention notifications**.
+
+1. Create an app at [my.telegram.org](https://my.telegram.org) → API development tools to get `api_id` and `api_hash`.
+2. Enter them and the phone number of account 1, press **Send code**, enter the code Telegram sends, and the two-step verification password if account 1 has one.
+3. Enter account 2 as a username (`@name`) or a numeric user id, and the ring time (default 30 s). Use **Send test message** and **Test call**.
+4. Choose per status: **Message**, **Call** or **Off**; optionally "call only if still in that status after M minutes", quiet hours, the hourly limits (default 20 messages and 6 calls) and the page address used to make links absolute.
+
+A call only rings (no voice) and hangs up when answered, declined or after the ring time. Account 2 must allow calls from account 1 (Privacy and Security → Calls); when a call is not possible (privacy settings, flood wait), a message is sent instead. The same item and status is sent at most once in 10 minutes.
+
+Security: the login of account 1 (a session string) is **full access to that Telegram account**. It is stored encrypted on the Client together with `api_hash`, is never logged and never sent to the browser; **Log out of Telegram** ends it on Telegram and deletes it. Telegram may restrict accounts that automate too much, so keep the limits low and preferably use a secondary account as account 1.
+
+Third-party licenses: gramjs (`telegram` 2.26.22, MIT) pulls in `@cryptography/aes` (GPL-3.0-or-later) and uses it at runtime. That is fine for self-hosted personal use; if you distribute the project with this dependency, the GPL terms apply to the combined work.
+
 ### Environment check
 
 > **The page for this was removed in 2.88.0** (one page for computers and phones, see "One page" in `DESIGN.md`). The server endpoints stay (`/api/environment`), so scripts, other Clients and older pages keep working; the text below describes the feature as it was.

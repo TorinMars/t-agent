@@ -88,9 +88,9 @@ body.h5-tasks-open .h5-app { border-radius: 28px 0 0 28px; overflow: hidden; }
 body.h5-tasks-open .h5-agent { border-bottom-left-radius: 28px; overflow: hidden; }
 @media (prefers-reduced-motion: reduce) { .h5-app, .h5-agent { transition: none; } }
 
-/* Copy text: a snapshot of the terminal as plain text that the browser can select with its own handles. Same font, size and side padding as the terminal and no
+/* Copy text: a snapshot of the terminal as plain text that the browser can select with its own handles. Same font, size, letter spacing (none: the dialog inherits MUI's 0.15px, which made a full-width row about 8px wider) and side padding as the terminal and no
    wrapping of its own: one terminal row is one line, so the layout matches. */
-.h5-copy-text { flex: 1 1 auto; min-height: 0; overflow: auto; -webkit-overflow-scrolling: touch; padding: 4px 4px 8px; font: 11px/1.2 Menlo, Monaco, "Courier New", monospace; -webkit-text-size-adjust: 100%; white-space: pre;
+.h5-copy-text { flex: 1 1 auto; min-height: 0; overflow: auto; -webkit-overflow-scrolling: touch; padding: 4px 4px 8px; font: 11px/1.2 Menlo, Monaco, "Courier New", monospace; letter-spacing: normal; -webkit-text-size-adjust: 100%; white-space: pre;
   user-select: text; -webkit-user-select: text; -webkit-touch-callout: default; outline: none; }
 
 /* Shown over a terminal that another device is using; the button takes it over. */

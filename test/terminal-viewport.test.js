@@ -38,11 +38,38 @@ test('history replay restores reading distance and leaves alternate screens alon
   assert.equal(s.buffer.viewportY, 140);
 });
 
-test('actual viewport width clamps columns when cached scrollbar width is stale', () => {
+// A host whose viewport has the given scrollbar room (offsetWidth - clientWidth) and a term whose measured glyph width is `cell`.
+function sized(width, scrollbar, cell = 6.62255859375) {
   const s = setup();
-  viewport.fit(s.term, s.addon, { clientWidth: 160, clientHeight: 200,
-    querySelector: selector => ({ clientWidth: selector === '.xterm-screen' ? 160 : 120 }) });
-  assert.equal(s.term.cols, 59);
+  s.term._core = { _charSizeService: { width: cell } };
+  s.term.options = { scrollback: 5000 };
+  const viewport = { offsetWidth: width, clientWidth: width - scrollbar };
+  s.host = { clientWidth: width, clientHeight: 200, getBoundingClientRect: () => ({ width }), querySelector: selector => selector === '.xterm-viewport' ? viewport : null };
+  return s;
+}
+test('an overlay scrollbar takes no columns, although FitAddon would take off its 15px fallback', () => {
+  const s = sized(404, 0);
+  s.addon.proposeDimensions = () => ({ cols: Math.floor((404 - 15) / 6.62255859375), rows: 12 }); // what xterm 5.5 + FitAddon propose: 58
+  viewport.fit(s.term, s.addon, s.host);
+  assert.equal(s.term.cols, 61); // round(61 * 6.6226) = 404 fits
+  assert.equal(s.term.rows, 12);
+});
+test('a classic scrollbar keeps its live room, also when it changed after start', () => {
+  const s = sized(160, 40, 2);
+  viewport.fit(s.term, s.addon, s.host);
+  assert.equal(s.term.cols, 60);
+});
+test('one column less when the rounded screen would pass the edge, and no flip on a width just short of a pixel', () => {
+  assert.equal(viewport.columns(sized(403.6, 0).term, sized(403.6, 0).host), 60); // round(61 * 6.6226) = 404 > 403.6
+  const s = sized(403.99997, 0);
+  assert.equal(viewport.columns(s.term, s.host), 61);
+});
+test('without xterm internals the drawn screen gives the cell width', () => {
+  const s = setup();
+  s.term.options = { scrollback: 5000 };
+  const host = { clientWidth: 160, clientHeight: 200, querySelector: selector => selector === '.xterm-viewport' ? { offsetWidth: 160, clientWidth: 120 } : { clientWidth: 160 } };
+  viewport.fit(s.term, s.addon, host);
+  assert.equal(s.term.cols, 60); // cell 160 / 80 = 2, 120px visible
   assert.equal(s.term.rows, 12);
 });
 

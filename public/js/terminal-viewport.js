@@ -10,19 +10,40 @@ const TerminalViewport = (() => {
     if (saved.bottom) term.scrollToBottom();
     else term.scrollToLine(Math.max(0, term.buffer.active.baseY - saved.distance));
   }
+  // The width of one cell in CSS pixels: xterm's measured glyph width (fractional, the same for any column count; its css.cell.width is derived
+  // from a rounded screen width and changes slightly with the columns, which could make the count flip between two values), else the drawn screen
+  // divided by the columns.
+  function cellWidth(term, host) {
+    const glyph = term._core?._charSizeService?.width;
+    if (glyph > 0) return glyph + Math.round(term.options?.letterSpacing || 0) / (globalThis.devicePixelRatio || 1);
+    const screen = host.querySelector?.('.xterm-screen');
+    const width = screen?.getBoundingClientRect?.().width || screen?.clientWidth || 0;
+    return width > 0 && term.cols > 0 ? width / term.cols : 0;
+  }
+  // The columns that fit the host now. FitAddon takes the viewport scrollbar width off the host width, but xterm 5.5 measures that width once, at
+  // start, and uses 15px whenever it measures 0, which is always the case with overlay scrollbars (phones, macOS): a phone lost two or three columns
+  // on the right. Count only the room a scrollbar really takes now (offsetWidth - clientWidth of the viewport: 0 for an overlay scrollbar, the full
+  // width for a classic one, which is drawn over the right edge of the screen) and no other reserve, so at most part of one cell stays empty.
+  // xterm draws the screen Math.round(cols * cell) wide: take the most columns whose rounded screen still fits (0.05px of slack for a fractional
+  // layout width just short of a whole pixel, which would otherwise flip the count between two values at start).
+  function columns(term, host) {
+    const viewport = host.querySelector?.('.xterm-viewport');
+    const cell = cellWidth(term, host);
+    if (!viewport || !(cell > 0)) return 0;
+    const scrollbar = term.options?.scrollback === 0 ? 0 : Math.max(0, (viewport.offsetWidth || 0) - (viewport.clientWidth || 0));
+    const style = term.element && typeof getComputedStyle === 'function' ? getComputedStyle(term.element) : null;
+    const padding = style ? (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0) : 0;
+    const available = (host.getBoundingClientRect?.().width || host.clientWidth) - padding - scrollbar;
+    let cols = Math.floor((available + 0.5) / cell);
+    if (Math.round(cols * cell) > available + 0.05) cols--;
+    return Math.max(2, cols);
+  }
   function fit(term, addon, host) {
     if (host.clientWidth <= 0 || host.clientHeight <= 0) return;
     const size = addon.proposeDimensions();
     if (!size) return;
-    // FitAddon caches scrollbar width at startup. Measure the current clipping
-    // area as well, since browser zoom or scrollbar settings may change it.
-    const screen = host.querySelector?.('.xterm-screen');
-    const viewport = host.querySelector?.('.xterm-viewport');
-    if (screen?.clientWidth > 0 && viewport?.clientWidth > 0) {
-      const cellWidth = screen.clientWidth / term.cols;
-      const available = Math.min(host.clientWidth, viewport.clientWidth) - 2;
-      size.cols = Math.min(size.cols, Math.max(2, Math.floor(available / cellWidth)));
-    }
+    const cols = columns(term, host);
+    if (cols) size.cols = cols;
     if (size.cols === term.cols && size.rows === term.rows) return;
     const saved = capture(term);
     const buffer = term.buffer.active;
@@ -56,5 +77,5 @@ const TerminalViewport = (() => {
     document.fonts?.ready.then(schedule);
     return { disconnect() { disposed = true; observer.disconnect(); cancelAnimationFrame(frame); } };
   }
-  return { capture, restore, fit, keyboardShift, observe };
+  return { capture, restore, fit, columns, keyboardShift, observe };
 })();

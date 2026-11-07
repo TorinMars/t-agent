@@ -121,7 +121,10 @@ test('h5 shell: every text the Material UI shell shows has a Chinese translation
   // The saved commands presets (commands.mjs): the list titles and the descriptions shown under each command.
   const presets = fs.readFileSync(path.join(dir, 'commands.mjs'), 'utf8');
   for (const match of presets.matchAll(/\b(?:title|note):\s*'((?:\\.|[^'])*)'/g)) found.add(unescape(match[1]));
-  const SAME = /^(Tasks|Esc|Tab|Ctrl|Alt|Shift|Enter|Paste|Image|English|\^C)$/;
+  // The T-Attention labels (attention-model.mjs): statuses, priorities and group titles.
+  const attention = fs.readFileSync(path.join(dir, 'attention-model.mjs'), 'utf8');
+  for (const match of attention.matchAll(/\b(?:\w+|label):\s*'([A-Z][^']*)'/g)) found.add(unescape(match[1]));
+  const SAME = /^(Tasks|T-Attention|Esc|Tab|Ctrl|Alt|Shift|Enter|Paste|Image|English|\^C)$/;
   const missing = [...found].filter(text => /[A-Za-z]{3}/.test(text) && !text.includes('${') && !SAME.test(text) && I18n.t(text) === text);
   assert.ok(found.size > 60, `found ${found.size} texts to look at`);
   assert.deepEqual(missing, []);

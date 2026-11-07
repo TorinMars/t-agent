@@ -317,7 +317,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     // Row 2 (reference design): terminal keyboard, draft keyboard, upload image, saved commands, voice; equal buttons filling the width, below the function key row. Send and translate-and-send are not shown while the box is hidden.
     {
       const row2 = await page.evaluate(() => [...document.querySelectorAll('#h5-actions button, #h5-actions [role="button"]')].map(b => { const r = b.getBoundingClientRect(); return { label: b.getAttribute('aria-label'), left: r.left, right: r.right, top: r.top, width: r.width, height: r.height }; }).filter(b => b.width > 0));
-      assert.deepEqual(row2.map(b => b.label), ['Terminal keyboard', 'Draft keyboard', 'Upload image or file', 'Saved commands', 'Voice input', 'Design document', 'Files', 'Next running or pending session'], 'row 2: the two keyboards, image, saved commands, voice, design document, files, next running or pending session');
+      assert.deepEqual(row2.map(b => b.label), ['Terminal keyboard', 'Draft keyboard', 'Upload image or file', 'Saved commands', 'Voice input', 'Docs', 'Attention', 'Next running or pending session'], 'row 2: the two keyboards, image, saved commands, voice, Docs, Attention, next running or pending session');
       assert.ok(row2.every(b => Math.abs(b.top - row2[0].top) <= 1 && Math.abs(b.width - row2[0].width) <= 1 && b.height >= 40), 'row 2: one row of equal, finger-sized buttons');
       assert.ok(row2[0].left >= 0 && row2.at(-1).right <= 390, 'row 2 fits the screen');
       assert.equal(await page.evaluate(() => document.querySelector('#h5-actions').getBoundingClientRect().top >= document.getElementById('h5-keys').getBoundingClientRect().bottom - 1), true, 'row 2 is below the function keys');
@@ -330,8 +330,8 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     // Design document: the last button of row 2 opens DESIGN.md of the task's working directory in a sheet from the bottom. The terminal keeps its size and no resize is sent.
     {
       const design = page.locator('#h5-design');
-      assert.equal(await design.getAttribute('aria-label'), 'Design document');
-      assert.equal(await design.getAttribute('title'), 'Design document');
+      assert.equal(await design.getAttribute('aria-label'), 'Docs');
+      assert.equal(await design.getAttribute('title'), 'Docs');
       assert.equal(await design.locator('svg').count(), 1, 'the design button has an icon');
       const measure = () => page.evaluate(() => {
         const term = document.querySelector('#h5-terminal .xterm').getBoundingClientRect();

@@ -5,6 +5,10 @@ import { createRoot } from 'react-dom/client';
 import { App } from './App.jsx';
 import { createStore, initialState } from './store.mjs';
 import { createBackLayers } from './back.mjs';
+import { startAttentionFeed } from './attention-feed.mjs';
+import { api, t } from './common.jsx';
+// T-Attention settings slots: the modules of other T-Attention parts that register Settings content (attention-slots.mjs) are imported here, e.g.
+// import './NotifierSettings.jsx';
 
 // One breakpoint for the shell and for h5.js (which reads it from `H5UI.media.wideQuery`), so the two can never disagree.
 const wideQuery = window.matchMedia('(min-width: 900px)');
@@ -77,7 +81,11 @@ const back = createBackLayers({
     const layers = [];
     if (s.files && s.files.open) layers.push({ close: () => ui.actions.closeFiles && ui.actions.closeFiles() });
     if (s.design && s.design.open) layers.push({ close: () => ui.actions.closeDesign && ui.actions.closeDesign() });
+    if (s.attention && s.attention.open) layers.push({ close: () => ui.actions.closeAttention() });
     return layers;
   },
 });
 ui.subscribe(back.sync);
+
+// T-Attention: the list, its live stream and the reminders run from the start (the badge on the Attention button); the panel is drawn when opened.
+startAttentionFeed(ui, { t, api });

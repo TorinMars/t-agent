@@ -226,7 +226,7 @@ async function toast(page, text) {
         const boxes = [...document.querySelectorAll('#h5-actions button, #h5-actions [role="button"]')].filter(b => b.getBoundingClientRect().width > 0).map(b => ({ id: b.id, ...b.getBoundingClientRect().toJSON() }));
         return { boxes, overflow: document.documentElement.scrollWidth > innerWidth };
       });
-      assert.equal(row.boxes.length, viewport.width < 360 ? 7 : 8, `seven buttons at 320px, eight (with Files) at ${viewport.width}px`);
+      assert.equal(row.boxes.length, viewport.width < 360 ? 7 : 8, `seven buttons at 320px (Docs left out), eight (with Docs) at ${viewport.width}px`);
       assert.equal(row.boxes.at(-1).id, 'h5-cycle', 'the new button is the last one of row 2');
       assert.ok(row.boxes.every((box, i) => box.left >= 0 && box.right <= viewport.width && box.width >= 40 && box.height >= 40 && Math.abs(box.width - row.boxes[0].width) <= 1 && (i === 0 || row.boxes[i - 1].right <= box.left + 0.5)), `row 2 fits at ${viewport.width}px: ${JSON.stringify(row.boxes.map(box => Math.round(box.width)))}`);
       assert.equal(row.overflow, false);

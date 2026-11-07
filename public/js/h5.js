@@ -1619,9 +1619,10 @@
     const s = session;
     if (!s || s.disposed || agentChat || modalOpen()) return;
     const active = document.activeElement;
-    if (editing(active) || (active && active.closest && active.closest('#h5-design-sheet, #h5-files-sheet, #h5-agent'))) return;
+    if (editing(active) || (active && active.closest && active.closest('#h5-design-sheet, #h5-files-sheet, #h5-attention-sheet, #h5-agent'))) return;
     if (event.key === 'Escape' && isWide() && ui.get().design && ui.get().design.open) { ui.actions.closeDesign(); return; } // closes the side panel first
     if (event.key === 'Escape' && isWide() && ui.get().files && ui.get().files.open) { ui.actions.closeFiles(); return; } // then the file tree
+    if (event.key === 'Escape' && isWide() && ui.get().attention && ui.get().attention.open) { ui.actions.closeAttention(); return; } // the T-Attention panel
     const onBody = !active || active === document.body || active === document.documentElement;
     const printable = Array.from(event.key).length === 1;
     if (!onBody && (!printable || event.key === ' ')) return;
@@ -2223,10 +2224,11 @@
   // Opens one file of the task's working directory in the sheet: DESIGN.md from the row 2 button, any file from a terminal link (`link`: true, with the
   // line the link named). `filePath` is relative to the working directory. A folder is not listed on the phone; the sheet says so.
   // `terminal`: the id of a terminal whose own directory is not the task's: the file is read from that directory (`&terminal=` on the file API).
-  async function openFileSheet(filePath, { link = false, line = null, directory = false, terminal = null, terminalDir = null } = {}) {
+  // `forTask`: a task of this machine other than the shown one whose working directory holds the file (T-Attention's context files).
+  async function openFileSheet(filePath, { link = false, line = null, directory = false, terminal = null, terminalDir = null, forTask = null } = {}) {
     if (document.activeElement && document.activeElement !== document.body && typeof document.activeElement.blur === 'function') document.activeElement.blur();
     const seq = ++designSeq;
-    const current = task;
+    const current = forTask || task;
     const from = source;
     const base = { open: true, path: filePath, link, line };
     if (!current) { ui.set({ design: { ...base, status: 'no-task' } }); return; }
@@ -2307,6 +2309,24 @@
   };
   ui.actions.closeFiles = () => ui.set(state => ({ files: state.files ? { ...state.files, open: false } : null }));
   ui.actions.openTreeFile = filePath => openFileSheet(filePath, { link: true });
+  // T-Attention (scripts/h5-shell/Attention.jsx): a file named by a task's context is an absolute path. It opens in the file sheet when it lies inside
+  // the working directory of a task of this machine (the deepest one); the file API checks the path again (relative, no symbolic links).
+  const localTaskFor = absolute => {
+    if (source.key !== 'local' || typeof absolute !== 'string' || !absolute.startsWith('/') || /(^|\/)\.\.?(\/|$)/.test(absolute)) return null;
+    let best = null;
+    for (const item of tasks) {
+      const dir = taskDir(item).replace(/\/+$/, '');
+      if (dir && absolute.startsWith(`${dir}/`) && (!best || dir.length > best.dir.length)) best = { item, dir };
+    }
+    return best;
+  };
+  ui.actions.canOpenLocalPath = absolute => Boolean(localTaskFor(absolute));
+  ui.actions.openLocalPath = absolute => {
+    const found = localTaskFor(absolute);
+    if (!found) return false;
+    void openFileSheet(absolute.slice(found.dir.length + 1), { link: true, forTask: found.item });
+    return true;
+  };
 
   async function upload(target, file) {
     // The type and size limits (images 10 MiB, other files 100 MiB) are checked by OssDirect, which reads the first bytes.

@@ -2,6 +2,7 @@ import { useLayoutEffect, useState, useSyncExternalStore } from 'react';
 import CssBaseline from '@mui/material/CssBaseline';
 import { ThemeProvider } from '@mui/material/styles';
 import { CopyDialog, Notice, RetainDialog, UploadDialog } from './Dialogs.jsx';
+import { AttentionPanel } from './Attention.jsx';
 import { DesignSheet } from './Design.jsx';
 import { FileTreeSheet } from './FileTree.jsx';
 import { Header } from './Header.jsx';
@@ -35,7 +36,7 @@ export function App({ ui }) {
   }, [tasksModal]);
   // The wide layout's folded sidebar and the right side panel (the design document / file preview, or the file tree) change the page's side offsets in h5.css.
   const folded = state.wide && state.sidebarCollapsed;
-  const sidePanel = state.wide && Boolean((state.design && state.design.open) || (state.files && state.files.open));
+  const sidePanel = state.wide && Boolean((state.design && state.design.open) || (state.files && state.files.open) || (state.attention && state.attention.open));
   useLayoutEffect(() => {
     document.documentElement.toggleAttribute('data-sidebar-collapsed', folded);
     document.documentElement.toggleAttribute('data-side-panel', sidePanel);
@@ -55,6 +56,7 @@ export function App({ ui }) {
       {/* The file tree comes first: a file opened from it lies over it (the file panel, drawn after it, or a modal sheet opened after it). */}
       <Lazy open={Boolean(state.files && state.files.open)}><FileTreeSheet state={state} ui={ui} /></Lazy>
       <Lazy open={Boolean(state.design && state.design.open)}><DesignSheet state={state} ui={ui} /></Lazy>
+      <Lazy open={Boolean(state.attention && state.attention.open)}><AttentionPanel state={state} ui={ui} /></Lazy>
       <Lazy open={Boolean(state.upload)}><UploadDialog state={state} ui={ui} /></Lazy>
       <Lazy open={state.retainUrl !== null}><RetainDialog state={state} ui={ui} /></Lazy>
       <Lazy open={Boolean(state.taskDialog)}><TaskDialog state={state} ui={ui} /></Lazy>

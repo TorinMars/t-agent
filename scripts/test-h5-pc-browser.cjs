@@ -123,7 +123,7 @@ const waitAck = (url, id, from = 0) => new Promise((resolve, reject) => {
       const draft = await page.evaluate(() => ({ focused: document.activeElement && document.activeElement.id === 'h5-translate-input', height: document.getElementById('h5-translate').getBoundingClientRect().height, input: document.getElementById('h5-translate-input').getBoundingClientRect().height }));
       assert.equal(draft.focused, false);
       assert.ok(draft.height > 30 && draft.input < 40, `${label}: the draft box is shown as one line without focus (${JSON.stringify(draft)})`);
-      for (const id of ['h5-image', 'h5-commands', 'h5-voice', 'h5-design', 'h5-cycle', 'h5-translate-send', 'h5-translate-button']) {
+      for (const id of ['h5-image', 'h5-commands', 'h5-voice', 'h5-design', 'h5-attention', 'h5-cycle', 'h5-translate-send', 'h5-translate-button']) {
         assert.equal(await page.locator(`#${id}`).isVisible(), true, `${label}: #${id} is shown`);
       }
       const bottom = await page.evaluate(() => ({ terminal: document.querySelector('.h5-terminal').getBoundingClientRect().bottom, box: document.getElementById('h5-translate').getBoundingClientRect().top }));
@@ -131,7 +131,7 @@ const waitAck = (url, id, from = 0) => new Promise((resolve, reject) => {
       assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('.h5-xterm:not([hidden]) .xterm-rows')).fontSize), '13px', `${label}: 13px terminal font`);
       assert.equal(await page.locator('#h5-voice').getAttribute('title'), 'Voice input: click to start speaking', `${label}: voice is click to start / stop`);
       // Icon buttons: the native title is the tooltip (no MUI Tooltip any more), the same text as the aria-label; no MUI tooltip opens on hover.
-      for (const [id, name] of [['h5-design', 'Design document'], ['h5-commands', 'Saved commands'], ['h5-image', 'Upload image or file'], ['h5-refresh', 'Refresh the page']]) {
+      for (const [id, name] of [['h5-design', 'Docs'], ['h5-attention', 'Attention'], ['h5-commands', 'Saved commands'], ['h5-image', 'Upload image or file'], ['h5-refresh', 'Refresh the page']]) {
         assert.equal(await page.locator(`#${id}`).getAttribute('title'), name, `${label}: #${id} has its title`);
         assert.equal(await page.locator(`#${id}`).getAttribute('aria-label'), name, `${label}: #${id} has its aria-label`);
       }

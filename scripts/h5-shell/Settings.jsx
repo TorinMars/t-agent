@@ -15,6 +15,7 @@ import CloseIcon from '@mui/icons-material/Close';
 import { api, t } from './common.jsx';
 import { EnginesGroup } from './Engines.jsx';
 import { NotifierGroup } from './NotifierSettings.jsx';
+import { AttentionSettings } from './AttentionSettings.jsx';
 import { Feedback, Field, Group, Hint, ROW, failure, useFeedback } from './Form.jsx';
 
 // The address this page was opened at, to come back to after a login or a switch: `/` or `/h5` (an iPhone Home Screen app starts at /h5).
@@ -364,6 +365,7 @@ export function SettingsDrawer({ state, ui }) {
         <NotifierGroup />
         <EnginesGroup state={state} ui={ui} />
         <RemoteGroup />
+        <AttentionSettings ui={ui} />
         <AccessGroup />
         <LogoutRow ui={ui} />
       </Box>

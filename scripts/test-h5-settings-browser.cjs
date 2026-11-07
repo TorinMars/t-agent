@@ -57,9 +57,10 @@ const html = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8').replace(
       await page.locator(`#h5-set-${id} .MuiAccordionSummary-root`).tap();
       await page.waitForFunction(groupId => Boolean(document.querySelector(`#h5-set-${groupId} .MuiCollapse-entered`)), id);
     };
-    const calls = () => page.evaluate(() => window.calls.filter(call => !call.url.startsWith('/api/system/')));
+    // T-Attention reads its list (and opens its live stream) when the page loads, for the badge of row 2: not a settings read either.
+    const calls = () => page.evaluate(() => window.calls.filter(call => !call.url.startsWith('/api/system/') && !/^\/api\/attention(\?|$)/.test(call.url)));
     assert.equal((await calls()).length, 0, 'nothing is read until a group is opened');
-    assert.deepEqual(await page.locator('.h5-setting-group .MuiAccordionSummary-content').allTextContents(), ['Working directory', 'Image and file upload', 'Translation', 'Voice input', 'T-Attention notifications', 'Engines', 'Remote service', 'Access mode']);
+    assert.deepEqual(await page.locator('.h5-setting-group .MuiAccordionSummary-content').allTextContents(), ['Working directory', 'Image and file upload', 'Translation', 'Voice input', 'T-Attention notifications', 'Engines', 'Remote service', 'T-Attention', 'Access mode']);
     // One row style for every top-level row (Language, the group headers, Log out): same height, label size, letter spacing and left edge; Log out is last.
     const rows = await page.evaluate(() => [...document.querySelectorAll('#h5-settings .h5-settings-body > *')].map(el => {
       const head = el.querySelector('.MuiAccordionSummary-root') || el;
@@ -67,8 +68,8 @@ const html = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8').replace(
       const style = getComputedStyle(label);
       return { id: el.id, height: Math.round(head.getBoundingClientRect().height), size: style.fontSize, spacing: style.letterSpacing, left: Math.round(label.getBoundingClientRect().left), text: label.textContent };
     }));
-    assert.equal(rows.length, 10);
-    assert.deepEqual(rows.map(row => row.text), ['Language', 'Working directory', 'Image and file upload', 'Translation', 'Voice input', 'T-Attention notifications', 'Engines', 'Remote service', 'Access mode', 'Log out']);
+    assert.equal(rows.length, 11);
+    assert.deepEqual(rows.map(row => row.text), ['Language', 'Working directory', 'Image and file upload', 'Translation', 'Voice input', 'T-Attention notifications', 'Engines', 'Remote service', 'T-Attention', 'Access mode', 'Log out']);
     assert.equal(rows.at(-1).id, 'h5-logout', 'the Log out row itself is the button');
     for (const key of ['height', 'size', 'spacing', 'left']) assert.equal(new Set(rows.map(row => row[key])).size, 1, `all rows share one ${key}: ${JSON.stringify(rows)}`);
     assert.ok(rows[0].height >= 44, 'a row is a 44px touch target');

@@ -132,7 +132,7 @@ function measure(min) {
       await page.locator('#h5-tasks .h5-terminal-list[aria-label="Fix login"] .h5-terminal-main', { hasText: 'Terminal 1' }).tap();
       await page.locator('#h5-tasks').waitFor({ state: 'hidden' });
       const main = await check('main');
-      // Row 2 at rest: eight buttons from 360px (seven at 320px, where Files is left out: the file viewer has its own Files button), every one at least
+      // Row 2 at rest: eight buttons from 360px (seven at 320px, where Docs is left out: the saved commands list has a Docs entry), every one at least
       // 44px wide, inside the screen, none on top of another.
       const row2 = await page.evaluate(() => [...document.querySelectorAll('#h5-actions > button, #h5-actions > label')].map(b => b.getBoundingClientRect()).filter(b => b.width > 0).map(b => ({ left: b.left, right: b.right, width: b.width, height: b.height })));
       const count = viewport.width < 360 ? 7 : 8;
@@ -159,8 +159,8 @@ function measure(min) {
       assert.ok(menu.notes.every(n => n.right <= menu.right && !n.overflow), `${viewport.width}px: the notes wrap inside the menu`);
       await page.locator('#h5-commands').tap();
       await page.locator('.h5-add-menu').waitFor({ state: 'detached' });
-      // The design sheet.
-      await page.locator('#h5-design').tap();
+      // The design sheet (Docs; under 360px from the saved commands list).
+      if (viewport.width < 360) { await page.locator('#h5-commands').tap(); await page.locator('#h5-commands-docs').tap(); } else await page.locator('#h5-design').tap();
       await page.locator('#h5-design-close').waitFor();
       await check('design-sheet');
       await page.locator('#h5-design-close').tap();

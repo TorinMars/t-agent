@@ -31,6 +31,7 @@
     "highlight.js": "11.11.1",
     "node-pty": "^1.1.0",
     "qrcode": "^1.5.4",
+    "telegram": "2.26.22",
     "ws": "^8.21.1"
   },
   "devDependencies": {

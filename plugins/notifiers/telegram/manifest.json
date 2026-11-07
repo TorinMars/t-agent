@@ -1,0 +1,6 @@
+{
+  "name": "telegram",
+  "version": "1.0.0",
+  "kind": "notifier",
+  "description": "Sends T-Attention messages and rings a call from your Telegram account 1 to account 2 (MTProto user API, gramjs)."
+}

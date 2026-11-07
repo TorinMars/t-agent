@@ -18,7 +18,13 @@ export function TerminalArea({ state, ui }) {
       {state.empty ? <div className="h5-empty" id="h5-empty">{t(state.empty)}</div> : null}
       {/* The wheel strip is for fingers; a computer has a real wheel or trackpad, so it is not drawn there (input mode 'pointer'). */}
       {state.input === 'pointer' ? null : <div className="h5-wheel" id="h5-wheel" role="presentation" aria-label={t('Scroll wheel')} />}
-      {state.selectionBar ? (
+      {/* The browser refused to write a program's copy (OSC 52) right after the user's gesture (iOS Safari): this tap writes inside its own gesture. */}
+      {state.clipboard && state.clipboard.kind === 'tap' ? (
+        <Paper className="h5-selection-bar" id="h5-clipboard-bar" role="toolbar" aria-label={t('Copy from the program')} elevation={4} onMouseDown={event => event.preventDefault()}>
+          <Button id="h5-clipboard-copy" size="small" onClick={() => ui.actions.clipboardConfirm()}>{t('Tap to copy')}</Button>
+          <Button id="h5-clipboard-cancel" size="small" color="inherit" onClick={() => ui.actions.clipboardCancel()}>{t('Cancel')}</Button>
+        </Paper>
+      ) : state.selectionBar ? (
         <Paper className="h5-selection-bar" id="h5-selection-bar" role="toolbar" aria-label={t('Selected text')} elevation={4} onMouseDown={event => event.preventDefault()}>
           <Button id="h5-selection-copy" size="small" onClick={() => ui.actions.selectionCopy()}>{t('Copy')}</Button>
           <Button id="h5-selection-cancel" size="small" color="inherit" onClick={() => ui.actions.selectionCancel()}>{t('Cancel')}</Button>

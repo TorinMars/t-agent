@@ -1,17 +1,10 @@
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
-const { TextDecoder } = require('node:util');
+const { MAX_TEXT_BYTES, failure, inspectBuffer, imageTypeOf, sniffImage } = require('./file-content');
 
 const PAGE_SIZE = 200;
-const MAX_TEXT_BYTES = 5 * 1024 * 1024;
 const NOFOLLOW = fs.constants.O_NOFOLLOW || 0;
-
-function failure(code, statusCode, cause) {
-  const error = new Error(code, cause ? { cause } : undefined);
-  error.statusCode = statusCode;
-  return error;
-}
 
 function mapFsError(error) {
   if (error && error.statusCode) return error;
@@ -192,30 +185,6 @@ function openRegularFile(target, flags) {
   }
 }
 
-function inspectBuffer(buffer, relative) {
-  if (buffer.length > MAX_TEXT_BYTES) throw failure('FILE_TOO_LARGE', 413);
-  const bom = buffer.length >= 3 && buffer[0] === 0xef && buffer[1] === 0xbb && buffer[2] === 0xbf;
-  const textBytes = bom ? buffer.subarray(3) : buffer;
-  let decoded;
-  try { decoded = new TextDecoder('utf-8', { fatal: true }).decode(textBytes); }
-  catch (error) { throw failure('FILE_UNSUPPORTED', 415, error); }
-  if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(decoded)) throw failure('FILE_UNSUPPORTED', 415);
-  const firstBreak = decoded.match(/\r\n|\n|\r/);
-  const eol = firstBreak && firstBreak[0] === '\r\n' ? '\r\n' : '\n';
-  const result = {
-    path: relative,
-    content: decoded.replace(/\r\n?/g, '\n'),
-    revision: crypto.createHash('sha256').update(buffer).digest('hex'),
-    eol,
-    bom,
-  };
-  Object.defineProperty(result, 'storageEol', {
-    value: firstBreak && firstBreak[0] === '\r' ? '\r' : eol,
-    enumerable: false,
-  });
-  return result;
-}
-
 function readBounded(descriptor) {
   const buffer = Buffer.allocUnsafe(MAX_TEXT_BYTES + 1);
   let length = 0;
@@ -236,18 +205,10 @@ function read(task, value) {
 }
 
 // An image of the working directory, for a relative image in a Markdown preview: the same path rules as `read` (relative, no symbolic links, the path
-// must not change while it is read) and the same 5 MiB limit. Only PNG, JPEG, GIF and WebP, by name and by content; never SVG (it can carry script).
-const IMAGE_TYPES = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp' };
-function sniffImage(buffer) {
-  if (buffer.length >= 8 && buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'image/png';
-  if (buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return 'image/jpeg';
-  if (buffer.length >= 6 && /^GIF8[79]a$/.test(buffer.subarray(0, 6).toString('latin1'))) return 'image/gif';
-  if (buffer.length >= 12 && buffer.subarray(0, 4).toString('latin1') === 'RIFF' && buffer.subarray(8, 12).toString('latin1') === 'WEBP') return 'image/webp';
-  return null;
-}
+// must not change while it is read) and the same 5 MiB limit. Only PNG, JPEG, GIF and WebP, by name and by content (services/file-content.js).
 function readImage(task, value) {
   const target = resolvePath(task, value);
-  const declared = IMAGE_TYPES[path.extname(target.relative).slice(1).toLowerCase()];
+  const declared = imageTypeOf(target.relative);
   if (!declared) throw failure('FILE_NOT_IMAGE', 415);
   const { descriptor } = openRegularFile(target, fs.constants.O_RDONLY);
   let buffer;

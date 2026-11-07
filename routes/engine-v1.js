@@ -10,6 +10,7 @@ const { createTerminalTicket } = require('../services/terminal-tickets');
 const updates = require('../services/update-manager');
 const terminal = require('./terminal');
 const { createTaskFilesRouter } = require('./task-files');
+const { createFsReadRouter } = require('./fs-read');
 const documents = require('../services/task-documents');
 const { resolveAsset, validateMdPath } = require('../services/task-assets');
 const { serveFileWatch } = require('../lib/file-watch-sse');
@@ -76,6 +77,8 @@ function infoHandler(req, res) {
       'tasks:reorder', 'documents:create', 'documents:watch', 'files:assets', 'files:image', 'paths:validate', 'terminal:activity', 'terminal:activity-stream',
       'todos:read', 'todos:write',
       'terminal:interactive', 'terminal:control', 'terminal:multiple', 'token:pairing',
+      // fs:read-any: GET /v1/fs/content and /v1/fs/image read a file at any path (read only, as the terminal user).
+      'fs:read-any',
       'engine:update', 'pm2:manage', 'apps:manage', 'agent-config:manage', 'file-sync:manage', 'workspace:manage', 'agent-chat:manage',
     ],
   });
@@ -170,6 +173,9 @@ router.use('/tasks/:id/files', requireEngineAuth(), createTaskFilesRouter({
   canRead: req => hasScope(req.engineAuth.scopes, 'files:read'),
   canWrite: req => hasScope(req.engineAuth.scopes, 'files:write'),
 }));
+
+// A file at any path on this machine, read only and with the terminal user's identity (services/fs-read.js).
+router.use('/fs', requireEngineAuth('files:read'), createFsReadRouter());
 
 router.get('/task-groups', requireEngineAuth('tasks:read'), (req, res) => {
   try { res.json(taskGroups.listGroups(db, principal(req))); }

@@ -422,6 +422,24 @@ router.get('/:id/tasks/:taskId/document/:kind', async (req, res) => {
   } catch (error) { res.status(error.statusCode === 404 ? 404 : 502).json({ error: safeError(error) }); }
 });
 
+// A file at any path on the Engine (read only), piped unbuffered with the Engine's status and error body. An Engine without the capability
+// 'fs:read-any' answers 501 FS_READ_UNSUPPORTED here. Remote answers keep `Content-Security-Policy: sandbox`, as every remote file.
+for (const kind of ['content', 'image']) {
+  router.get(`/:id/fs/${kind}`, async (req, res) => {
+    const target = remoteTarget(req, res);
+    if (!target) return;
+    let info;
+    try { info = await request(target.row.base_url, '/v1/info', target.token); }
+    catch (error) { return res.status(error.statusCode || 502).json({ error: safeError(error) }); }
+    if (!info || !Array.isArray(info.capabilities) || !info.capabilities.includes('fs:read-any')) {
+      return res.status(501).json({ error: 'FS_READ_UNSUPPORTED' });
+    }
+    const query = new URLSearchParams();
+    if (typeof req.query.path === 'string') query.set('path', req.query.path);
+    streamRemote(req, res, target.row.base_url, target.token, `/v1/fs/${kind}?${query}`, { sandbox: true });
+  });
+}
+
 router.get('/:id/tasks/:taskId/files/content', proxyFiles('GET', '/content'));
 // An image of the working directory, not buffered: the Engine checks the path and the type (an older Engine answers 404, the page shows the alt text).
 router.get('/:id/tasks/:taskId/files/image', (req, res) => {

@@ -39,6 +39,7 @@ test.before(async () => {
   const localApp = express();
   localApp.use(express.json());
   localApp.use('/api/tasks', require('../routes/tasks'));
+  localApp.use('/api/fs', require('../routes/fs-read').createFsReadRouter());
   local = await listen(localApp);
 
   const engineApp = express();
@@ -310,4 +311,43 @@ test('every Engine token can edit through the proxy, whatever role was requested
   assert.equal(todo.status, 201);
   const info = await (await fetch(`${proxy}/api/remote-servers/${id}/info`)).json();
   assert.equal(info.role, 'owner');
+});
+
+// A file at any path (read only): local /api/fs, Engine /v1/fs and the proxy /api/remote-servers/:id/fs give the same answers.
+test('a file at any path reads alike on the local routes, the Engine and the proxy', async () => {
+  const dir = path.join(root, 'outside');
+  fs.mkdirSync(path.join(dir, 'sub'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'a.md'), '# outside\n');
+  fs.writeFileSync(path.join(dir, 'b.bin'), Buffer.from([0, 1, 2]));
+  fs.writeFileSync(path.join(dir, 'p.gif'), Buffer.concat([Buffer.from('GIF87a', 'latin1'), Buffer.alloc(8)]));
+  const fsBackends = [
+    { name: 'local', base: `${local}/api/fs`, headers: {} },
+    { name: 'engine', base: `${engine}/v1/fs`, headers: { Authorization: `Bearer ${engineToken}` } },
+    { name: 'proxy', base: `${proxy}/api/remote-servers/${remoteId}/fs`, headers: {} },
+  ];
+  const answers = [];
+  for (const backend of fsBackends) {
+    const read = async (kind, value) => {
+      const response = await fetch(`${backend.base}/${kind}?path=${encodeURIComponent(value)}`, { headers: backend.headers });
+      const type = response.headers.get('content-type') || '';
+      return { status: response.status, type: type.split(';')[0], body: type.startsWith('application/json') ? await response.json() : Buffer.from(await response.arrayBuffer()).toString('hex') };
+    };
+    answers.push({
+      name: backend.name,
+      results: [
+        await read('content', path.join(dir, 'a.md')),
+        await read('content', path.join(dir, 'sub')),
+        await read('content', path.join(dir, 'b.bin')),
+        await read('content', path.join(dir, 'none.md')),
+        await read('content', 'a.md'),
+        await read('image', path.join(dir, 'p.gif')),
+        await read('image', path.join(dir, 'a.md')),
+      ],
+    });
+  }
+  assert.equal(answers[0].results[0].status, 200);
+  assert.equal(answers[0].results[0].body.content, '# outside\n');
+  assert.deepEqual(answers[0].results.map(result => result.status), [200, 400, 415, 404, 400, 200, 415]);
+  assert.equal(answers[0].results[5].type, 'image/gif');
+  for (const other of answers.slice(1)) assert.deepEqual(other.results, answers[0].results, other.name);
 });

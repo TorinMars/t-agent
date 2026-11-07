@@ -90,9 +90,15 @@ test.after(() => fs.rmSync(root, { recursive: true, force: true }));
 
 test('the shims are committed executable and the folder is first in PATH with the marker', () => {
   for (const name of SHIMS) assert.ok(fs.statSync(path.join(SHIM_DIR, name)).mode & 0o111, `${name} is executable`);
-  const env = clipboardShimEnv('/usr/bin:/bin');
-  assert.equal(env.PATH, `${SHIM_DIR}:/usr/bin:/bin`);
-  assert.equal(env.TA_CLIPBOARD_OSC52, '1');
+  const env = clipboardShimEnv('/usr/bin:/bin', null, { env: {} });
+  assert.deepEqual(env, { PATH: `${SHIM_DIR}:/usr/bin:/bin`, TA_CLIPBOARD_OSC52: '1', HERDR_ENV: '1' });
+});
+
+test('HERDR_ENV=1 is set for Codex unless the terminal already inherits a HERDR_ENV', () => {
+  assert.equal(clipboardShimEnv('/usr/bin', null, { env: {} }).HERDR_ENV, '1');
+  const kept = clipboardShimEnv('/usr/bin', null, { env: { HERDR_ENV: '0' } });
+  assert.equal(Object.prototype.hasOwnProperty.call(kept, 'HERDR_ENV'), false, 'a real Herdr value is not overridden');
+  assert.equal(Object.prototype.hasOwnProperty.call(clipboardShimEnv('/usr/bin', null, { env: { HERDR_ENV: '' } }), 'HERDR_ENV'), false);
 });
 
 test('pbcopy sends Chinese UTF-8 text as one OSC 52 sequence to the terminal and still runs the real pbcopy', async () => {
@@ -238,8 +244,8 @@ test('ensureShimModes restores the executable bit and shimsUsableBy checks the d
   assert.equal(shimsUsableBy(user, '/opt/t-agent/scripts/clipboard-shims', stat('')), true);
   assert.equal(shimsUsableBy(user, '/root/t-agent/scripts/clipboard-shims', stat('/root')), false);
   const logs = [];
-  const env = clipboardShimEnv('/usr/bin', user, { dir: '/root/t-agent/scripts/clipboard-shims', stat: stat('/root'), log: line => logs.push(line) });
-  assert.deepEqual(env, { PATH: '/usr/bin' });
+  const env = clipboardShimEnv('/usr/bin', user, { dir: '/root/t-agent/scripts/clipboard-shims', stat: stat('/root'), log: line => logs.push(line), env: {} });
+  assert.deepEqual(env, { PATH: '/usr/bin', HERDR_ENV: '1' }, 'shims skipped for the dropped user, HERDR_ENV still set');
   clipboardShimEnv('/usr/bin', user, { dir: '/root/t-agent/scripts/clipboard-shims', stat: stat('/root'), log: line => logs.push(line) });
   assert.equal(logs.length, 1);
   assert.match(logs[0], /not usable by dev/);
@@ -280,6 +286,18 @@ test('routes/terminal.js spawns every PTY with the shim folder first in PATH and
     assert.ok(entries.includes('/usr/bin') && entries.includes('/bin'), 'the other PATH entries stay');
     for (const entry of (process.env.PATH || '').split(':').filter(Boolean)) assert.ok(entries.includes(entry), entry);
     assert.equal(env.TA_CLIPBOARD_OSC52, '1');
+    assert.equal(env.HERDR_ENV, process.env.HERDR_ENV === undefined ? '1' : process.env.HERDR_ENV);
+    // A server started inside a real Herdr: the inherited value reaches the PTY unchanged.
+    const saved = process.env.HERDR_ENV;
+    process.env.HERDR_ENV = 'from-herdr';
+    try {
+      const added = terminal.createTerminal(task.id, {});
+      terminal.handleWs(new Socket(), { url: `/terminal/ws?taskId=${task.id}&terminalId=${added.terminal_id}&clientId=test` }, { login: 'owner' });
+      assert.equal(shells.length, 2);
+      assert.equal(shells[1].options.env.HERDR_ENV, 'from-herdr');
+    } finally {
+      if (saved === undefined) delete process.env.HERDR_ENV; else process.env.HERDR_ENV = saved;
+    }
   } finally {
     terminal.closeTaskTerminals(task.id);
     db.close();

@@ -1,0 +1,8 @@
+{
+  "name": "claude",
+  "version": "1.0.0",
+  "kind": "listener",
+  "description": "Claude Code hooks: one task per Claude session (ref claude:<session_id>); prompt -> working, permission or question -> waiting_user, turn end -> review, API error -> failed.",
+  "entry": "hook.js",
+  "events": ["UserPromptSubmit", "Notification", "Stop", "StopFailure", "SessionEnd"]
+}

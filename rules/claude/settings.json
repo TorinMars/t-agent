@@ -12,6 +12,15 @@
             "command": "[ -n \"$TA_HOOK_URL\" ] && curl -s -m 1 -o /dev/null -X POST -H \"X-TA-Token: $TA_HOOK_TOKEN\" \"$TA_HOOK_URL&event=start\" || true"
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "d=\"${TAGENT_HOME:-${T_AGENT_DATA_DIR:-$HOME/.tagent}}\"; h=\"$(cat \"$d/listeners/claude-hook.path\" 2>/dev/null)\"; [ -f \"$h\" ] && command -v node >/dev/null 2>&1 && node \"$h\" >/dev/null 2>&1; true",
+            "timeout": 5
+          }
+        ]
       }
     ],
     "Stop": [
@@ -20,6 +29,15 @@
           {
             "type": "command",
             "command": "[ -n \"$TA_HOOK_URL\" ] && curl -s -m 1 -o /dev/null -X POST -H \"X-TA-Token: $TA_HOOK_TOKEN\" \"$TA_HOOK_URL&event=stop\" || true"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "d=\"${TAGENT_HOME:-${T_AGENT_DATA_DIR:-$HOME/.tagent}}\"; h=\"$(cat \"$d/listeners/claude-hook.path\" 2>/dev/null)\"; [ -f \"$h\" ] && command -v node >/dev/null 2>&1 && node \"$h\" >/dev/null 2>&1; true",
+            "timeout": 5
           }
         ]
       }
@@ -33,6 +51,16 @@
             "command": "[ -n \"$TA_HOOK_URL\" ] && curl -s -m 1 -o /dev/null -X POST -H \"X-TA-Token: $TA_HOOK_TOKEN\" \"$TA_HOOK_URL&event=attention\" || true"
           }
         ]
+      },
+      {
+        "matcher": "permission_prompt|elicitation_dialog|elicitation_url_dialog|agent_needs_input|worker_permission_prompt",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "d=\"${TAGENT_HOME:-${T_AGENT_DATA_DIR:-$HOME/.tagent}}\"; h=\"$(cat \"$d/listeners/claude-hook.path\" 2>/dev/null)\"; [ -f \"$h\" ] && command -v node >/dev/null 2>&1 && node \"$h\" >/dev/null 2>&1; true",
+            "timeout": 5
+          }
+        ]
       }
     ],
     "SessionEnd": [
@@ -41,6 +69,62 @@
           {
             "type": "command",
             "command": "[ -n \"$TA_HOOK_URL\" ] && curl -s -m 1 -o /dev/null -X POST -H \"X-TA-Token: $TA_HOOK_TOKEN\" \"$TA_HOOK_URL&event=end\" || true"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "d=\"${TAGENT_HOME:-${T_AGENT_DATA_DIR:-$HOME/.tagent}}\"; h=\"$(cat \"$d/listeners/claude-hook.path\" 2>/dev/null)\"; [ -f \"$h\" ] && command -v node >/dev/null 2>&1 && node \"$h\" >/dev/null 2>&1; true",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "StopFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "d=\"${TAGENT_HOME:-${T_AGENT_DATA_DIR:-$HOME/.tagent}}\"; h=\"$(cat \"$d/listeners/claude-hook.path\" 2>/dev/null)\"; [ -f \"$h\" ] && command -v node >/dev/null 2>&1 && node \"$h\" >/dev/null 2>&1; true",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "d=\"${TAGENT_HOME:-${T_AGENT_DATA_DIR:-$HOME/.tagent}}\"; h=\"$(cat \"$d/listeners/claude-hook.path\" 2>/dev/null)\"; [ -f \"$h\" ] && command -v node >/dev/null 2>&1 && node \"$h\" >/dev/null 2>&1; true",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "d=\"${TAGENT_HOME:-${T_AGENT_DATA_DIR:-$HOME/.tagent}}\"; h=\"$(cat \"$d/listeners/claude-hook.path\" 2>/dev/null)\"; [ -f \"$h\" ] && command -v node >/dev/null 2>&1 && node \"$h\" >/dev/null 2>&1; true",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "d=\"${TAGENT_HOME:-${T_AGENT_DATA_DIR:-$HOME/.tagent}}\"; h=\"$(cat \"$d/listeners/claude-hook.path\" 2>/dev/null)\"; [ -f \"$h\" ] && command -v node >/dev/null 2>&1 && node \"$h\" >/dev/null 2>&1; true",
+            "timeout": 5
           }
         ]
       }

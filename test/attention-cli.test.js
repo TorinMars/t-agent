@@ -145,7 +145,8 @@ test('add, list, show, update, status verbs, upsert and rm send the contract req
     assert.match(shown.stdout, /History\n/);
     const byRef = await run(['show', 'ref:ci:42', '--json'], { env });
     assert.equal(JSON.parse(byRef.stdout).item.id, 1);
-    assert.deepEqual(fake.requests.at(-2).query, { include_done: '1', limit: '1000' }, 'a ref is resolved through the list');
+    assert.equal(JSON.parse(byRef.stdout).events.length, 1);
+    assert.deepEqual(fake.requests.at(-1).method + ' ' + fake.requests.at(-1).path, `GET /api/attention/by-ref/${encodeURIComponent('ci:42')}`, 'one lookup by ref');
     assert.equal((await run(['show', 'ref:none'], { env })).code, 3);
     assert.equal((await run(['show', '99'], { env })).code, 3);
     assert.equal((await run(['show', 'abc'], { env })).code, 1);
@@ -163,6 +164,7 @@ test('add, list, show, update, status verbs, upsert and rm send the contract req
       assert.equal(result.code, 0, `${verb}: ${result.stderr}`);
       assert.deepEqual(fake.requests.at(-1).body, { status, attention_reason: `because ${verb}` });
       assert.equal(fake.requests.at(-1).path, '/api/attention/1');
+      assert.equal(fake.requests.at(-2).path, `/api/attention/by-ref/${encodeURIComponent('ci:42')}`);
     }
     await run(['done', '2'], { env });
     assert.deepEqual(fake.requests.at(-1).body, { status: 'done' });
@@ -232,6 +234,27 @@ test('the client keeps a path prefix of the server URL and encodes refs', async 
     assert.equal(fake.requests[0].path, '/proxy/api/attention');
     await api.request('PUT', `/by-ref/${encodeURIComponent('claude:a/b c')}`, { body: {} });
     assert.equal(fake.requests[1].path, '/proxy/api/attention/by-ref/claude%3Aa%2Fb%20c');
+  } finally {
+    await fake.close();
+  }
+});
+
+test('an older server without GET by-ref (HTML 404): refs are found through the list instead', async () => {
+  const fake = await fakeServer({ legacy: true });
+  const env = auth(fake);
+  try {
+    assert.equal((await run(['add', 'Old server task', '--ref', 'old:1'], { env })).code, 0);
+    const shown = await run(['show', 'ref:old:1', '--json'], { env });
+    assert.equal(shown.code, 0, shown.stderr);
+    assert.equal(JSON.parse(shown.stdout).item.title, 'Old server task');
+    assert.deepEqual(fake.requests.slice(-3).map(r => `${r.method} ${r.path} ${new URLSearchParams(r.query)}`), [
+      `GET /api/attention/by-ref/${encodeURIComponent('old:1')} `,
+      'GET /api/attention include_done=1&limit=1000',
+      'GET /api/attention/1 ',
+    ]);
+    assert.equal((await run(['done', 'ref:old:1'], { env })).code, 0);
+    assert.equal(fake.requests.at(-1).method, 'PATCH');
+    assert.equal((await run(['show', 'ref:old:2'], { env })).code, 3);
   } finally {
     await fake.close();
   }

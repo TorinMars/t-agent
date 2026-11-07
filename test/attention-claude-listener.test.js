@@ -25,6 +25,8 @@ const events = {
   failure: { ...base, hook_event_name: 'StopFailure', error: 'rate_limit', error_details: 'Rate limit reached, resets 5pm', last_assistant_message: '' },
   end: { ...base, hook_event_name: 'SessionEnd', reason: 'prompt_input_exit' },
   other: { ...base, hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'ls' } },
+  tool: { ...base, hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_input: { command: 'npm test' }, tool_response: { stdout: 'ok', stderr: '', interrupted: false }, tool_use_id: 'toolu_01' },
+  toolFailure: { ...base, hook_event_name: 'PostToolUseFailure', tool_name: 'Bash', tool_input: { command: 'false' }, error: 'Exit code 1', tool_use_id: 'toolu_02' },
 };
 
 function dataDir() {
@@ -63,11 +65,9 @@ test('one task per session: the first prompt creates it with a title, later even
   try {
     const first = await hook(dir, events.prompt);
     assert.deepEqual([first.code, first.out], [0, ''], 'prints nothing (UserPromptSubmit output would become Claude context)');
-    assert.equal(fake.requests.length, 2, 'an update without a title, then the create with the title');
-    assert.equal(fake.requests[0].method, 'PUT');
-    assert.equal(fake.requests[0].path, ref);
-    assert.equal(fake.requests[0].auth, `Bearer ${TOKEN}`);
-    assert.equal(fake.requests[0].body.title, undefined);
+    assert.equal(fake.requests.length, 2, 'a lookup by ref, then the create with the title');
+    assert.deepEqual([fake.requests[0].method, fake.requests[0].path, fake.requests[0].auth], ['GET', ref, `Bearer ${TOKEN}`]);
+    assert.deepEqual([fake.requests[1].method, fake.requests[1].path], ['PUT', ref]);
     assert.deepEqual(fake.requests[1].body, {
       status: 'working', attention_reason: null, meta: { host: os.hostname(), cwd: '/work/app' }, source: 'claude',
       title: 'Fix the login page so it redirects after sign-in, and add a regression test f...',
@@ -88,7 +88,8 @@ test('one task per session: the first prompt creates it with a title, later even
       const before = fake.requests.length;
       const result = await hook(dir, input);
       assert.deepEqual([result.code, result.out], [0, '']);
-      assert.equal(fake.requests.length, before + 1, `${input.hook_event_name}: one request`);
+      assert.equal(fake.requests.length, before + 2, `${input.hook_event_name}: lookup and update`);
+      assert.deepEqual(fake.requests.at(-2).method + ' ' + fake.requests.at(-2).path, `GET ${ref}`);
       assert.deepEqual(fake.requests.at(-1), { method: 'PUT', path: ref, query: {}, auth: `Bearer ${TOKEN}`, body });
     }
     assert.equal(item.title, 'Renamed by the user', 'the title is never sent for an existing task');
@@ -136,7 +137,7 @@ test('SessionEnd moves a working or waiting task to review and leaves the others
     let before = fake.requests.length;
     await hook(dir, events.end);
     assert.deepEqual(fake.requests.slice(before).map(r => [r.method, r.path, r.query, r.body]), [
-      ['GET', '/api/attention', { include_done: '1', limit: '1000', status: 'working,waiting_user' }, undefined],
+      ['GET', ref, {}, undefined],
       ['PATCH', `/api/attention/${item.id}`, {}, { status: 'review', source: 'claude' }],
     ]);
     assert.equal(item.status, 'review');
@@ -201,6 +202,126 @@ test('a server that hangs, is down or refuses the token: exit 0 within the 2 s b
   }
 });
 
+test('after a prompt left the task waiting_user, the next tool event sets it back to working once', async () => {
+  const fake = await fakeServer();
+  const dir = dataDir();
+  configure(dir, fake.url);
+  const stateFile = path.join(dir, 'listeners', 'claude-state', `${SESSION}.json`);
+  try {
+    await hook(dir, events.prompt);
+    assert.equal(JSON.parse(fs.readFileSync(stateFile, 'utf8')).status, 'working');
+    assert.equal(fs.statSync(stateFile).mode & 0o777, 0o600);
+    await hook(dir, events.permission);
+    assert.equal(JSON.parse(fs.readFileSync(stateFile, 'utf8')).status, 'waiting_user');
+    const [item] = fake.items.values();
+    assert.equal(item.status, 'waiting_user');
+
+    let before = fake.requests.length;
+    const resumed = await hook(dir, events.tool);
+    assert.deepEqual([resumed.code, resumed.out], [0, '']);
+    assert.deepEqual(fake.requests.slice(before), [{ method: 'PUT', path: ref, query: {}, auth: `Bearer ${TOKEN}`, body: { status: 'working', attention_reason: null, source: 'claude' } }]);
+    assert.deepEqual([item.status, item.attention_reason], ['working', null]);
+    assert.equal(JSON.parse(fs.readFileSync(stateFile, 'utf8')).status, 'working');
+
+    before = fake.requests.length;
+    await hook(dir, events.tool);
+    await hook(dir, events.toolFailure);
+    assert.equal(fake.requests.length, before, 'no request on later tool calls');
+
+    await hook(dir, events.question);
+    before = fake.requests.length;
+    await hook(dir, events.toolFailure);
+    assert.equal(fake.requests.length, before + 1, 'a failed tool call also means Claude went on');
+    assert.equal(item.status, 'working');
+  } finally {
+    await fake.close();
+  }
+});
+
+test('tool events make no request when the session is not waiting, unknown, or its task is gone', async () => {
+  const fake = await fakeServer();
+  const dir = dataDir();
+  configure(dir, fake.url);
+  const stateDir = path.join(dir, 'listeners', 'claude-state');
+  try {
+    await hook(dir, events.tool);
+    assert.equal(fake.requests.length, 0, 'no state for this session');
+    await hook(dir, events.prompt);
+    await hook(dir, events.stop);
+    let before = fake.requests.length;
+    for (let i = 0; i < 3; i += 1) await hook(dir, events.tool);
+    assert.equal(fake.requests.length, before, 'state review: nothing to send');
+
+    // The user deleted the task while Claude waited: the resume does not create it again and forgets the session.
+    await hook(dir, events.permission);
+    fake.items.clear();
+    before = fake.requests.length;
+    await hook(dir, events.tool);
+    assert.equal(fake.requests.length, before + 1);
+    assert.equal(fake.items.size, 0);
+    assert.equal(fs.existsSync(path.join(stateDir, `${SESSION}.json`)), false);
+
+    // A server that is down while waiting: still exit 0 fast.
+    const downDir = dataDir();
+    configure(downDir, 'http://127.0.0.1:9');
+    fs.mkdirSync(path.join(downDir, 'listeners', 'claude-state'), { recursive: true });
+    fs.writeFileSync(path.join(downDir, 'listeners', 'claude-state', `${SESSION}.json`), JSON.stringify({ status: 'waiting_user' }));
+    const down = await hook(downDir, events.tool);
+    assert.deepEqual([down.code, down.out], [0, '']);
+    assert.ok(down.ms < 1500);
+  } finally {
+    await fake.close();
+  }
+});
+
+test('SessionEnd removes the session state; states older than 2 days are pruned; odd session ids get a hashed file name', async () => {
+  const fake = await fakeServer();
+  const dir = dataDir();
+  configure(dir, fake.url);
+  const stateDir = path.join(dir, 'listeners', 'claude-state');
+  try {
+    fs.mkdirSync(stateDir, { recursive: true });
+    const old = path.join(stateDir, 'old-session.json');
+    const fresh = path.join(stateDir, 'fresh-session.json');
+    fs.writeFileSync(old, '{"status":"waiting_user"}');
+    fs.writeFileSync(fresh, '{"status":"waiting_user"}');
+    const threeDaysAgo = new Date(Date.now() - 3 * 24 * 3600 * 1000);
+    fs.utimesSync(old, threeDaysAgo, threeDaysAgo);
+
+    await hook(dir, events.prompt);
+    assert.equal(fs.existsSync(old), false, 'pruned');
+    assert.equal(fs.existsSync(fresh), true);
+    await hook(dir, events.end);
+    assert.equal(fs.existsSync(path.join(stateDir, `${SESSION}.json`)), false);
+
+    await hook(dir, { ...events.prompt, session_id: '../../escape' });
+    const names = fs.readdirSync(stateDir);
+    assert.ok(names.some(name => /^[0-9a-f]{64}\.json$/.test(name)), names.join(','));
+    assert.equal(fs.existsSync(path.join(dir, 'escape.json')), false);
+  } finally {
+    await fake.close();
+  }
+});
+
+test('an older server without GET by-ref: the hook falls back to the list and still sends the title only on create', async () => {
+  const fake = await fakeServer({ legacy: true });
+  const dir = dataDir();
+  configure(dir, fake.url);
+  try {
+    await hook(dir, events.prompt);
+    assert.deepEqual(fake.requests.map(r => r.method), ['GET', 'GET', 'PUT']);
+    assert.ok(fake.requests[2].body.title);
+    await hook(dir, events.permission);
+    assert.equal(fake.requests.at(-1).body.title, undefined);
+    assert.equal([...fake.items.values()][0].status, 'waiting_user');
+    await hook(dir, events.end);
+    assert.equal(fake.requests.at(-1).method, 'PATCH');
+    assert.equal([...fake.items.values()][0].status, 'review');
+  } finally {
+    await fake.close();
+  }
+});
+
 test('rules/claude/settings.json adds the listener next to the terminal-activity hooks, for the mapped events', () => {
   const settings = JSON.parse(fs.readFileSync(SETTINGS, 'utf8'));
   const listener = group => group.hooks.some(h => h.command.includes('listeners/claude-hook.path'));
@@ -211,6 +332,11 @@ test('rules/claude/settings.json adds the listener next to the terminal-activity
   }
   for (const name of ['UserPromptSubmit', 'Notification', 'Stop', 'SessionEnd']) {
     assert.ok(settings.hooks[name].some(group => group.hooks.some(h => h.command.includes('$TA_HOOK_URL'))), `${name} keeps the terminal-activity hook`);
+  }
+  for (const name of ['PostToolUse', 'PostToolUseFailure']) {
+    const groups = settings.hooks[name].filter(listener);
+    assert.equal(groups.length, 1);
+    assert.equal(groups[0].matcher, '*', `${name} for every tool`);
   }
   const notification = settings.hooks.Notification.find(listener);
   assert.deepEqual(notification.matcher.split('|').sort(), ['agent_needs_input', 'elicitation_dialog', 'elicitation_url_dialog', 'permission_prompt', 'worker_permission_prompt']);

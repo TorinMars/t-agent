@@ -1,11 +1,12 @@
 // A small fake T-Attention server (/api/attention) for the CLI and listener tests: items in memory, Bearer auth and
 // the status codes of the contract (400 for a create without a title, 409 for a duplicate external_ref, 404, 401).
-// `handler` may answer a request itself (return anything but false).
+// `handler` may answer a request itself (return anything but false). `legacy: true` acts like a server from before
+// GET /api/attention/by-ref/:ref: an HTML 404 for it, as Express answers an unknown route.
 const http = require('node:http');
 
 const TOKEN = 'tatt_test-token';
 
-function fakeServer({ token = TOKEN, handler } = {}) {
+function fakeServer({ token = TOKEN, handler, legacy = false } = {}) {
   const requests = [];
   const items = new Map();
   let nextId = 1;
@@ -44,6 +45,12 @@ function fakeServer({ token = TOKEN, handler } = {}) {
         const existing = [...items.values()].find(item => body.external_ref && item.external_ref === body.external_ref);
         if (existing) return send(409, { error: 'EXTERNAL_REF_EXISTS', message: 'A task with this external_ref already exists', id: existing.id });
         return send(201, make(body));
+      }
+      if (parts[0] === 'by-ref' && req.method === 'GET') {
+        if (legacy) { res.statusCode = 404; res.setHeader('Content-Type', 'text/html'); res.end('<pre>Cannot GET</pre>'); return; }
+        const found = [...items.values()].find(item => item.external_ref === decodeURIComponent(parts[1]));
+        if (!found) return send(404, { error: 'NOT_FOUND', message: 'Task not found' });
+        return send(200, { item: found, events: [{ id: 1, item_id: found.id, at: found.created_at, actor: 'cli', type: 'created', from_status: null, to_status: found.status }] });
       }
       if (parts[0] === 'by-ref' && req.method === 'PUT') {
         const ref = decodeURIComponent(parts[1]);

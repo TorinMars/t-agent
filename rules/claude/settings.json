@@ -92,6 +92,30 @@
           }
         ]
       }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "d=\"${TAGENT_HOME:-${T_AGENT_DATA_DIR:-$HOME/.tagent}}\"; h=\"$(cat \"$d/listeners/claude-hook.path\" 2>/dev/null)\"; [ -f \"$h\" ] && command -v node >/dev/null 2>&1 && node \"$h\" >/dev/null 2>&1; true",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "d=\"${TAGENT_HOME:-${T_AGENT_DATA_DIR:-$HOME/.tagent}}\"; h=\"$(cat \"$d/listeners/claude-hook.path\" 2>/dev/null)\"; [ -f \"$h\" ] && command -v node >/dev/null 2>&1 && node \"$h\" >/dev/null 2>&1; true",
+            "timeout": 5
+          }
+        ]
+      }
     ]
   }
 }

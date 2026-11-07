@@ -129,8 +129,12 @@ function target(value, command) {
 async function resolveId(api, spec) {
   if (spec.id) return spec.id;
   const item = await api.findByRef(spec.ref);
-  if (!item) throw new client.AttentionClientError('not_found', `No task has the ref ${spec.ref}`, { status: 404, code: 'NOT_FOUND' });
+  if (!item) throw notFoundRef(spec.ref);
   return item.id;
+}
+
+function notFoundRef(ref) {
+  return new client.AttentionClientError('not_found', `No task has the ref ${ref}`, { status: 404, code: 'NOT_FOUND' });
 }
 
 // ---------- human output (narrow terminals: short lines, no tables) ----------
@@ -261,8 +265,15 @@ async function run(argv, { env = process.env, print, printError } = {}) {
   if (command === 'show') {
     only(flags, [], 'show');
     const api = connect(flags, env);
-    const id = await resolveId(api, target(args[0], 'show'));
-    const detail = await api.get(id);
+    const spec = target(args[0], 'show');
+    let detail;
+    if (spec.ref) {
+      detail = await api.getByRef(spec.ref);
+      if (!detail) throw notFoundRef(spec.ref);
+      if (!detail.events) detail = await api.get(detail.item.id); // an older server: no events from the list
+    } else {
+      detail = await api.get(spec.id);
+    }
     show(detail, formatItem(detail.item, detail.events));
     return EXIT.ok;
   }

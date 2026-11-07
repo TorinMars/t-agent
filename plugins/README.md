@@ -29,5 +29,6 @@ plugins/listeners/<name>/
 | `Stop` | `review`, reason = Claude's last message |
 | `StopFailure` (API error) | `failed`, reason = the error |
 | `SessionEnd` | `review` if it was still `working` or `waiting_user` |
+| `PostToolUse`, `PostToolUseFailure` | back to `working` after a prompt was answered; only when the last status this hook set was `waiting_user` (a small state file in `~/.tagent/listeners/claude-state/`), so normal tool calls send nothing |
 
 The hooks are in `rules/claude/settings.json` and reach `~/.claude/settings.json` through `scripts/agent-sync.py` (run by `ta` before Claude starts). They find this install through `~/.tagent/listeners/claude-hook.path`, which `t-attention login` writes; until then, and without `node`, they do nothing. Errors go to `~/.tagent/listeners/claude.log`. Set `TA_ATTENTION_LISTENER=0` to turn the listener off for one shell.

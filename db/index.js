@@ -33,6 +33,7 @@ if (storedSchema > 0 && storedSchema < codeSchema) {
   }
 }
 
+// schema.sql creates missing tables on every start; schema 9 added the T-Attention tables (attention_items, attention_events, attention_tokens) this way.
 const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
 db.exec(schema);
 
@@ -85,6 +86,10 @@ if (!terminalColumns.includes('work_dir')) {
     db.exec('UPDATE task_terminals SET work_dir = (SELECT work_dir FROM tasks WHERE tasks.id = task_terminals.task_id) WHERE work_dir IS NULL');
   })();
 }
+
+// T-Attention items got the context column during schema 9 (before its release); a database made by an earlier build of it gets the column here.
+const attentionColumns = db.prepare('PRAGMA table_info(attention_items)').all().map(column => column.name);
+if (!attentionColumns.includes('context')) db.exec('ALTER TABLE attention_items ADD COLUMN context TEXT');
 
 // The model and thinking effort chosen for an agent chat (empty: the agent's own default).
 const conversationColumns = db.prepare('PRAGMA table_info(agent_conversations)').all().map(column => column.name);

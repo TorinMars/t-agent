@@ -203,3 +203,49 @@ CREATE TABLE IF NOT EXISTS repo_cleanups (
   size_bytes INTEGER NOT NULL DEFAULT 0,
   cleaned_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+-- T-Attention (schema 9): one central list of work items that agents, services and the person create and update (services/attention.js,
+-- routes/attention.js). Self-contained: it does not refer to tasks, terminals or chats; link_url may point at a page. Times are ISO 8601 UTC text.
+CREATE TABLE IF NOT EXISTS attention_items (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  title            TEXT    NOT NULL,
+  notes            TEXT,
+  status           TEXT    NOT NULL DEFAULT 'todo',  -- todo | working | waiting_user | review | done | failed | cancelled
+  priority         TEXT    NOT NULL DEFAULT 'none',  -- high | medium | low | none
+  due_date         TEXT,                             -- YYYY-MM-DD
+  source           TEXT    NOT NULL DEFAULT 'user',  -- listener name ('claude'), 'cli' or 'user'
+  external_ref     TEXT    UNIQUE,                   -- the caller's own key, e.g. 'claude:<session_id>'
+  attention_reason TEXT,                             -- why it needs the person
+  link_url         TEXT,                             -- http(s) or a page path starting with '/'
+  link_label       TEXT,
+  meta             TEXT,                             -- a JSON object of at most 8 KiB
+  context          TEXT,                             -- recall card: JSON object of at most 32 KiB (goal, last_reply, pending, files, summary, ...)
+  sort_order       INTEGER NOT NULL DEFAULT 0,
+  created_at       TEXT    NOT NULL,
+  updated_at       TEXT    NOT NULL,
+  completed_at     TEXT                              -- set while the status is done / failed / cancelled
+);
+CREATE INDEX IF NOT EXISTS idx_attention_items_status ON attention_items (status, sort_order);
+
+-- History of an item, written in the same transaction as the change. data: the changed fields as JSON. A deleted item takes its events with it.
+CREATE TABLE IF NOT EXISTS attention_events (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  item_id     INTEGER NOT NULL REFERENCES attention_items(id) ON DELETE CASCADE,
+  at          TEXT    NOT NULL,
+  actor       TEXT    NOT NULL,  -- 'user', 'cli', a token name or a listener name
+  type        TEXT    NOT NULL,  -- created | updated | status | activity (timeline: data {kind, text}); deleted is published only
+  from_status TEXT,
+  to_status   TEXT,
+  data        TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_attention_events_item ON attention_events (item_id, id);
+
+-- Bearer tokens ('tatt_...') for the CLI and listener plugins: only the sha256 hash is stored, the token is shown once. They reach /api/attention* only.
+CREATE TABLE IF NOT EXISTS attention_tokens (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  name         TEXT NOT NULL,
+  token_hash   TEXT NOT NULL UNIQUE,
+  created_at   TEXT NOT NULL,
+  last_used_at TEXT,
+  revoked_at   TEXT
+);

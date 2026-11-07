@@ -163,15 +163,47 @@
     return toRelative(`${String(cwd).replace(/\/+$/, '')}/${value}`, root);
   }
 
-  // The logical line (the row and the rows wrapped into it) around buffer row `row` (0-based), as text plus the cell of each code unit.
-  function logicalLine(buffer, row) {
+  // Text a program wrapped itself: a TUI such as Claude Code breaks a long path at the edge with a real newline (no soft wrap) and indents the next
+  // row ("  \u23bf  /private/tmp/claude-501/-Users-a-b-" + "     c/scratchpad/plan.md"). Such a row continues in the next one only when its text
+  // reaches the last column (HARD_WRAP_SLACK columns are allowed for a box with a right padding) and the next row starts, after its indent, with
+  // path characters that make the piece at the edge a longer path. See continuesPath() for the rules against joining ordinary wrapped words.
+  const HARD_WRAP_SLACK = 1;
+  const TOKEN_HEAD_RE = new RegExp(`^${TOKEN_RE.source}`);
+  const TOKEN_TAIL_RE = new RegExp(`${TOKEN_RE.source}$`);
+
+  function lastPart(value) {
+    return value.replace(/\/+$/, '').split('/').pop();
+  }
+
+  // Does the path piece `tail` at the end of a full row go on with `head`, the first word of the next row? Word-wrapped text looks the same
+  // as a broken path (both fill the row), so only these join: the piece holds a "/"; and the joined text is a path that adds only a position
+  // ("a.js" + ":42"), extends a known extension ("plan.m" + "d", "a.js" + "on"), or, when the piece has no known extension, ends in a folder
+  // ("dir/" + ...), goes on with a "/" ("-Users-a-" + "b/plan.md") or gets a known extension ("open-te" + "st.md"). So "see /a/plan.md" + "next"
+  // and "/a/b" + "for" stay apart.
+  function continuesPath(tail, head) {
+    const piece = tail.startsWith('@') ? tail.slice(1) : tail;
+    if (!piece.includes('/')) return false;
+    const whole = splitPosition((piece + head).replace(TRAILING_RE, ''));
+    if (!pathLike(whole.path)) return false;
+    const own = splitPosition(piece);
+    if (whole.path === own.path) return true; // only a position (or sentence punctuation) follows
+    if (own.line != null) return false;
+    const wholeKnown = KNOWN_EXTENSIONS.has(extensionOf(lastPart(whole.path)));
+    if (KNOWN_EXTENSIONS.has(extensionOf(lastPart(own.path)))) return wholeKnown && !/[./]/.test(splitPosition(head).path);
+    return own.path.endsWith('/') || head.includes('/') || wholeKnown;
+  }
+
+  // The soft-wrapped rows (isWrapped) around buffer row `row`, as text plus the cell of each code unit.
+  function softGroup(buffer, row) {
     let first = row;
     while (first > 0 && row - first < MAX_WRAPPED_ROWS && buffer.getLine(first)?.isWrapped) first -= 1;
     let text = '';
     const cells = [];
+    let last = first;
     for (let y = first; y < first + MAX_WRAPPED_ROWS && text.length < MAX_LINE; y += 1) {
       const line = buffer.getLine(y);
       if (!line || (y > first && !line.isWrapped)) break;
+      last = y;
       for (let x = 0; x < line.length; x += 1) {
         const cell = line.getCell(x);
         const width = cell ? cell.getWidth() : 1;
@@ -181,7 +213,55 @@
         text += chars;
       }
     }
-    return { text, cells };
+    return { first, last, text, cells };
+  }
+
+  // The number of code units of `next` (its indent) to skip when the text of `prev` continues in it (a hard-wrapped path), else -1.
+  function hardWrapIndent(prev, next, cols) {
+    const end = prev.text.replace(/\s+$/, '').length;
+    if (!end || !cols) return -1;
+    const edge = prev.cells[end - 1];
+    if (edge.y !== prev.last || edge.x + edge.width < cols - HARD_WRAP_SLACK) return -1;
+    const indent = next.text.length - next.text.replace(/^ +/, '').length;
+    if (indent * 2 >= cols) return -1;
+    const tail = TOKEN_TAIL_RE.exec(prev.text.slice(0, end));
+    const head = TOKEN_HEAD_RE.exec(next.text.slice(indent));
+    return tail && head && continuesPath(tail[0], head[0]) ? indent : -1;
+  }
+
+  // The logical line around buffer row `row` (0-based): its soft-wrapped rows, joined with the rows before and after it when a program wrapped
+  // a path there itself (hardWrapIndent), as text plus the cell of each code unit. A joined row's indent and the blanks at the end of the row
+  // before it are left out of the text. `cols` is the terminal width: a buffer line can be longer than that after the terminal got narrower.
+  function logicalLine(buffer, row, cols) {
+    const groups = [softGroup(buffer, row)];
+    const size = () => groups.reduce((sum, group) => sum + group.last - group.first + 1, 0);
+    const length = () => groups.reduce((sum, group) => sum + group.text.length, 0);
+    while (groups[0].first > 0 && size() < MAX_WRAPPED_ROWS && length() < MAX_LINE) {
+      const prev = softGroup(buffer, groups[0].first - 1);
+      const indent = hardWrapIndent(prev, groups[0], cols);
+      if (indent < 0) break;
+      groups[0].indent = indent;
+      groups.unshift(prev);
+    }
+    while (size() < MAX_WRAPPED_ROWS && length() < MAX_LINE) {
+      const current = groups[groups.length - 1];
+      if (!buffer.getLine(current.last + 1)) break;
+      const next = softGroup(buffer, current.last + 1);
+      if (next.first <= current.last) break; // the rows of `current` were cut at MAX_LINE: no hard wrap there
+      const indent = hardWrapIndent(current, next, cols);
+      if (indent < 0) break;
+      next.indent = indent;
+      groups.push(next);
+    }
+    let text = '';
+    const cells = [];
+    groups.forEach((group, index) => {
+      const from = group.indent || 0;
+      const to = index < groups.length - 1 ? group.text.replace(/\s+$/, '').length : group.text.length;
+      text += group.text.slice(from, to);
+      cells.push(...group.cells.slice(from, to));
+    });
+    return { text: text.slice(0, MAX_LINE), cells };
   }
 
   // Registers the link provider (and the OSC 7 handler) on an xterm Terminal. options: root() -> the working directory or null,
@@ -212,7 +292,7 @@
           const row = bufferLineNumber - 1;
           const root = options.root ? options.root() : null;
           const cwd = reported;
-          const { text, cells } = logicalLine(term.buffer.active, row);
+          const { text, cells } = logicalLine(term.buffer.active, row, term.cols || term.buffer.active.getLine(row)?.length || 0);
           const links = [];
           for (const link of findFileLinks(text)) {
             const relative = resolvePath(link.path, root, cwd);
@@ -242,5 +322,5 @@
     };
   }
 
-  return { findFileLinks, toRelative, resolvePath, parseOsc7, attach, pathLike, splitPosition, MAX_LINE };
+  return { findFileLinks, toRelative, resolvePath, parseOsc7, attach, pathLike, splitPosition, continuesPath, MAX_LINE };
 });

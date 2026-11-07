@@ -45,6 +45,16 @@ const script = (name, text, wait) => { fs.writeFileSync(path.join(scratch, `${na
 script('tfl6', 'L6 a.md\n', false);
 script('tfl7', `${osc7(path.join(task.work_dir, 'other'))}L7 b.md\n`, true);
 script('tfl8', `${osc7(scratch)}L8 c.md\n`, true);
+// Long paths over several rows: L10 is printed as one line (xterm wraps it, soft), L9 is cut at the terminal width with an indent on the next rows
+// as Claude Code and other programs that wrap text themselves print it (hard: real newlines). Both are one link. The hard rows leave the last
+// column free (a box with a right padding; zsh may also put a space in front of the first row, which then fills it).
+const deep = path.join(task.work_dir, '-Users-torin-Documents-torin-t-agent-data-SELF-TAGENT-t-agent/f5bcf118-e52a-4af7-b324-e791d46313f4/scratchpad', 'a-long-folder-name-'.repeat(6));
+fs.mkdirSync(deep, { recursive: true });
+fs.writeFileSync(path.join(deep, 'soft-target.md'), '# Soft wrapped\n');
+fs.writeFileSync(path.join(deep, 'hard-target.md'), '# Hard wrapped\n');
+script('tfl10', `L10 ${path.join(deep, 'soft-target.md')}\n`, false);
+fs.writeFileSync(path.join(scratch, 'tfl9.txt'), `L9 ${path.join(deep, 'hard-target.md')}`);
+fs.writeFileSync(path.join(bin, 'tfl9'), `#!/bin/bash\nline="$(cat '${path.join(scratch, 'tfl9.txt')}')"; c=$(( $(tput cols) - 1 )); printf '%s\\n' "\${line:0:c}"; rest="\${line:c}"\nwhile [ -n "$rest" ]; do printf '   %s\\n' "\${rest:0:c-3}"; rest="\${rest:c-3}"; done\n`, { mode: 0o755 });
 process.env.PATH = `${bin}:${process.env.PATH}`;
 
 const app = express(); app.use(express.json({ limit: '32mb' }));
@@ -105,6 +115,19 @@ let server; let browser; let wss;
       }
       return null;
     }, { prefix, text });
+    // The pixel centre of `text` on the one row that holds it (any row: a wrapped part of a path does not start with a prefix).
+    const pointIn = text => page.evaluate(text => {
+      const term = window.__testTerms.at(-1);
+      const buffer = term.buffer.active;
+      const rows = [];
+      for (let y = 0; y < buffer.length; y += 1) { const index = buffer.getLine(y).translateToString(true).indexOf(text); if (index >= 0) rows.push({ y, index }); }
+      if (rows.length !== 1) return null;
+      const { y, index } = rows[0];
+      if (y < buffer.viewportY || y >= buffer.viewportY + term.rows) term.scrollToLine(Math.max(0, y - Math.floor(term.rows / 2)));
+      const screen = document.querySelector('.h5-xterm .xterm-screen').getBoundingClientRect();
+      const cellWidth = screen.width / term.cols; const cellHeight = screen.height / term.rows;
+      return { x: screen.left + (index + 1.5) * cellWidth, y: screen.top + (y - buffer.viewportY + 0.5) * cellHeight, cols: term.cols };
+    }, text);
     const hover = async point => { await page.mouse.move(point.x, point.y - 3); await page.mouse.move(point.x, point.y); await page.waitForTimeout(150); };
     const underlined = () => page.evaluate(() => document.querySelector('.h5-xterm .xterm-screen')?.classList.contains('xterm-cursor-pointer'));
     // xterm finds the link under the mouse a little after the move; on a busy machine wait for it (the pointer cursor) before clicking.
@@ -148,6 +171,27 @@ let server; let browser; let wss;
     await click(await pointOf('L3 ', 'missing/nothing.js'));
     await page.locator('#h5-design-empty', { hasText: 'Not found in the working directory: missing/nothing.js' }).waitFor();
     await closePanel();
+
+    // Long paths over two or more rows: a click on the first or the last row opens the file.
+    await runInShell('clear; tfl10', 'L10 ');
+    const softEnd = await pointIn('soft-target.md');
+    assert.ok(softEnd, 'the end of the soft-wrapped path is on the screen');
+    assert.ok(path.join(deep, 'soft-target.md').length + 4 > softEnd.cols * 2, `the path spans three rows or more (${softEnd.cols} columns)`);
+    for (const point of [await pointOf('L10 ', '/'), softEnd]) {
+      await click(point);
+      await page.locator('#h5-design-body h1', { hasText: 'Soft wrapped' }).waitFor();
+      await closePanel();
+    }
+    await runInShell('clear; tfl9', 'L9 ');
+    const nextWrapped = await page.evaluate(() => { const b = window.__testTerms.at(-1).buffer.active; for (let y = 0; y < b.length; y += 1) if (b.getLine(y).translateToString().trimStart().startsWith('L9 ')) return b.getLine(y + 1).isWrapped || b.getLine(y + 2).isWrapped; return null; });
+    assert.equal(nextWrapped, false, 'the hard-wrapped rows are separate lines for xterm');
+    for (const point of [await pointOf('L9 ', '/'), await pointIn('hard-target.md')]) {
+      assert.ok(point, 'the hard-wrapped path is on the screen');
+      await click(point);
+      await page.locator('#h5-design-body h1', { hasText: 'Hard wrapped' }).waitFor();
+      assert.equal(await page.locator('#h5-design-title').textContent(), 'hard-target.md');
+      await closePanel();
+    }
 
     // The shell's live directory. After "cd sub" a relative path opens from sub/ (the server reads the shell's directory).
     await runInShell('cd sub;tfl6', 'L6 ');

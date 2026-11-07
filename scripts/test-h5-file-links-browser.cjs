@@ -17,6 +17,9 @@ const FILES = {
   // A large log (about 4.5 MB, 200 000 lines): only the lines in view are drawn.
   'big/log.txt': Array.from({ length: 200000 }, (_, i) => `${i + 1} log line with some text ${'x'.repeat(i % 7)}`).join('\n') + '\n',
   // Relative images resolve through the file API; one that does not load shows its text.
+  // Long paths over two or more rows of the 50-column terminal (soft-wrapped by xterm, or hard-wrapped the way Claude Code prints them).
+  'deep/f5bcf118-e52a-4af7-b324-e791d46313f4/scratchpad/soft-test.md': '# Soft long path\n',
+  'deep/f5bcf118-e52a-4af7-b324-e791d46313f4/scratchpad/hard-test.md': '# Hard long path\n',
   'docs/pic.md': '# Pictures\n\n![the shot](img/shot.png)\n\n![gone picture](img/missing.png)\n\n![outside](../../etc/x.png)\n',
 };
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
@@ -128,6 +131,39 @@ let cwdAsks = 0;
     // A missing file says so.
     await tap(await pointOf('A5 ', 'missing/gone.js'));
     await page.locator('#h5-design-empty', { hasText: 'Not found in the working directory: missing/gone.js' }).waitFor();
+    await closeSheet();
+
+    // Long paths over several rows: a tap on the wrapped part opens the file. C1 is one line that xterm wraps; C2 is cut at the last column with
+    // real newlines and an indent, as Claude Code prints a tool result ("  \u23bf  " in front, five spaces on the next rows). The terminal is
+    // as wide as the phone screen fits (not the 50 columns of the snapshot): the full first row of C1 gives the width.
+    const longPath = name => `/work/fix-login/deep/f5bcf118-e52a-4af7-b324-e791d46313f4/scratchpad/${name}`;
+    await page.evaluate(text => window.sockets[0].emit(text), `C1 ${longPath('soft-test.md')}\r\n`);
+    await page.waitForFunction(() => document.querySelector('.h5-xterm:not([hidden]) .xterm-rows')?.textContent.includes('soft-test.md'));
+    const cols = await page.evaluate(() => [...document.querySelectorAll('.xterm-rows > div')].find(node => node.textContent.startsWith('C1 ')).textContent.length);
+    assert.ok(cols > 30 && `C1 ${longPath('soft-test.md')}`.length > cols, `the soft-wrapped path spans two rows (${cols} columns)`);
+    const hard = `C2 \u23bf  ${longPath('hard-test.md')}`;
+    const hardRows = [hard.slice(0, cols)];
+    for (let rest = hard.slice(cols); rest; rest = rest.slice(cols - 5)) hardRows.push(`     ${rest.slice(0, cols - 5)}`);
+    await page.evaluate(text => window.sockets[0].emit(text), `${hardRows.join('\r\n')}\r\n`);
+    await page.waitForFunction(() => document.querySelector('.h5-xterm:not([hidden]) .xterm-rows')?.textContent.includes('hard-test.md'));
+    // The centre of `text` in the one row that holds it (ASCII only).
+    const pointIn = text => page.evaluate(({ text, cols }) => {
+      const rows = [...document.querySelectorAll('.xterm-rows > div')].filter(node => node.textContent.includes(text));
+      if (rows.length !== 1) return null;
+      const screen = document.querySelector('.h5-xterm:not([hidden]) .xterm-screen').getBoundingClientRect();
+      const box = rows[0].getBoundingClientRect();
+      return { x: screen.left + (rows[0].textContent.indexOf(text) + 1.5) * (screen.width / cols), y: box.top + box.height / 2 };
+    }, { text, cols });
+    for (const [name, heading] of [['soft-test.md', 'Soft long path'], ['hard-test.md', 'Hard long path']]) {
+      const point = await pointIn(name);
+      assert.ok(point, `${name} is on one row`);
+      await tap(point);
+      await page.locator('#h5-design-body h1', { hasText: heading }).waitFor();
+      assert.equal(await page.locator('#h5-design-title').textContent(), name);
+      await closeSheet();
+    }
+    await tap(await pointOf('C2 ', '/work'));
+    await page.locator('#h5-design-body h1', { hasText: 'Hard long path' }).waitFor();
     await closeSheet();
 
     // A large file: only a window of lines exists, the named line is marked and in view, and scrolling draws the lines that come into view.

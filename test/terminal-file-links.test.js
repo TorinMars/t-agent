@@ -128,11 +128,11 @@ test('resolvePath takes relative paths from the live directory and keeps the roo
 });
 
 // A headless xterm gives the real parser (BEL and ST terminators, split writes) and buffer; the link provider is captured instead of rendered.
-function headlessTerm() {
+function headlessTerm(cols = 80) {
   const { Terminal } = require('@xterm/headless');
-  const real = new Terminal({ cols: 80, rows: 5, allowProposedApi: true });
+  const real = new Terminal({ cols, rows: 5, allowProposedApi: true });
   let provider = null;
-  const term = { parser: real.parser, buffer: real.buffer, registerLinkProvider(p) { provider = p; return { dispose() { provider = null; } }; } };
+  const term = { parser: real.parser, buffer: real.buffer, get cols() { return real.cols; }, registerLinkProvider(p) { provider = p; return { dispose() { provider = null; } }; } };
   const write = data => new Promise(resolve => real.write(data, resolve));
   const links = row => new Promise(resolve => provider.provideLinks(row, resolve));
   return { real, term, write, links, provider: () => provider };
@@ -198,5 +198,107 @@ test('without an OSC 7 report a link asks the server for the live directory', as
   await write('../../up.js\r\n');
   const [up] = await links(2) || [];
   assert.equal(up, undefined, 'past the root from the work dir: no link');
+  real.dispose();
+});
+
+// Rows of `cols` columns as a program that wraps text itself writes them: each row ends with a real newline, so xterm does not join them.
+function hardRows(first, rest, indent, cols) {
+  const rows = [first.slice(0, cols)];
+  for (let left = first.slice(cols); left; left = left.slice(cols - indent.length)) rows.push(indent + left.slice(0, cols - indent.length));
+  return rows.join('\r\n') + '\r\n' + rest;
+}
+
+test('continuesPath joins a broken path but not a word wrapped after a path', () => {
+  const { continuesPath } = require('../public/js/terminal-file-links.js');
+  assert.equal(continuesPath('/private/tmp/claude-501/-Users-a-', 'b/scratchpad/open-test.md'), true, 'goes on with a slash');
+  assert.equal(continuesPath('docs/scratchpad/open-te', 'st.md'), true, 'gets a known extension');
+  assert.equal(continuesPath('docs/plan.m', 'd'), true, 'extends a known extension');
+  assert.equal(continuesPath('src/a.js', 'on'), true, 'a.js + on is a.json');
+  assert.equal(continuesPath('src/a.js', ':42'), true, 'a position follows');
+  assert.equal(continuesPath('src/a.js:4', '2'), true, 'a position goes on');
+  assert.equal(continuesPath('src/', 'lib'), true, 'after a folder');
+  assert.equal(continuesPath('@src/very/lo', 'ng.ts'), true, 'a mention');
+  assert.equal(continuesPath('/work/proj/plan.md', 'next'), false, 'a whole path, then a word');
+  assert.equal(continuesPath('/work/proj/plan.md', 'notes/x.md'), false, 'a whole path, then another path');
+  assert.equal(continuesPath('/work/proj/b', 'for'), false, 'a folder-like path, then a word');
+  assert.equal(continuesPath('something', 'else/x.md'), false, 'no slash in the piece at the edge');
+  assert.equal(continuesPath('src/a.js:42', 'word'), false);
+});
+
+test('a path a program wrapped itself is one link over its rows', async () => {
+  const { attach } = require('../public/js/terminal-file-links.js');
+  const { real, term, write, links } = headlessTerm(40);
+  const root = '/Users/me/projects/t-agent-data/SELF-TAGENT';
+  const target = `${root}/f5bcf118-e52a-4af7-b324-e791d46313f4/scratchpad/open-test.md`;
+  attach(term, { root: () => root, activate() {} });
+  // Claude Code's tool output: "  ⎿  " in front of the first row, five spaces in front of the others, rows filled to the last column.
+  await write(hardRows(`  ⎿  ${target}`, 'done\r\n', '     ', 40));
+  const rows = Math.ceil((target.length + 5 - 40) / 35) + 1;
+  for (let row = 1; row <= rows; row += 1) {
+    const found = await links(row);
+    assert.equal(found?.length, 1, `row ${row} has the link`);
+    assert.equal(found[0].text, target);
+    assert.deepEqual(found[0].range.start, { x: 6, y: 1 });
+    assert.equal(found[0].range.end.y, rows);
+  }
+  assert.equal(await links(rows + 1), undefined, 'the row after the path');
+  real.dispose();
+  // A box with one free column on the right (Claude Code's dialogs): rows end one column before the edge.
+  const box = headlessTerm(40);
+  attach(box.term, { root: () => root, activate() {} });
+  await box.write(hardRows(` ${target}`, '', ' ', 39));
+  const boxRows = Math.ceil((target.length + 1 - 39) / 38) + 1;
+  for (const row of [1, boxRows]) assert.equal((await box.links(row))?.[0]?.text, target, `a right padding of one column, row ${row}`);
+  // Two free columns are not a full row.
+  const wide = headlessTerm(40);
+  attach(wide.term, { root: () => root, activate() {} });
+  await wide.write(hardRows(` ${target}`, '', ' ', 38));
+  assert.notEqual((await wide.links(1))?.[0]?.text, target, 'a right padding of two columns');
+  wide.real.dispose();
+  box.real.dispose();
+});
+
+test('rows that do not continue a path stay apart', async () => {
+  const { attach } = require('../public/js/terminal-file-links.js');
+  const { real, term, write, links } = headlessTerm(40);
+  attach(term, { root: () => '/work/proj', activate() {} });
+  const texts = async row => ((await links(row)) || []).map(link => link.text);
+  // Word-wrapped text: a whole path at the edge and the next word on the next row.
+  await write(`${'x'.repeat(21)} /work/proj/plan.md\r\n  next one\r\n`);
+  assert.deepEqual(await texts(1), ['/work/proj/plan.md']);
+  assert.deepEqual(await texts(2), []);
+  // A row that ends before the edge is not continued.
+  await write('/work/proj/very/long\r\n  er/path.md\r\n');
+  assert.deepEqual(await texts(3), ['/work/proj/very/long']);
+  assert.deepEqual(await texts(4), ['er/path.md']);
+  // A space after the piece at the edge (the next row is a new word).
+  await write(`${'x'.repeat(17)} /work/proj/src/a \r\n  b.js\r\n`);
+  assert.deepEqual(await texts(5), ['/work/proj/src/a']);
+  real.dispose();
+});
+
+test('a long path soft-wrapped by the terminal is one link over its rows', async () => {
+  const { attach } = require('../public/js/terminal-file-links.js');
+  const { real, term, write, links } = headlessTerm(40);
+  const target = '/work/proj/f5bcf118-e52a-4af7-b324-e791d46313f4/scratchpad/open-test.md';
+  attach(term, { root: () => '/work/proj', activate() {} });
+  await write(`cat ${target}\r\n`);
+  for (const row of [1, 2]) {
+    const [link] = await links(row) || [];
+    assert.equal(link?.text, target, `row ${row}`);
+    assert.deepEqual(link.range.start, { x: 5, y: 1 });
+    assert.deepEqual(link.range.end, { x: (4 + target.length) - 40, y: 2 });
+  }
+  real.dispose();
+});
+
+test('a broken path outside the working directory is no link (the root rule still holds)', async () => {
+  const { attach } = require('../public/js/terminal-file-links.js');
+  const { real, term, write, links } = headlessTerm(40);
+  attach(term, { root: () => '/Users/me/project', activate() {} });
+  const target = '/private/tmp/claude-501/-Users-me-project/f5bcf118-e52a/scratchpad/open-test.md';
+  await write(hardRows(`  ⎿  ${target}`, '', '     ', 40));
+  assert.equal(await links(1), undefined);
+  assert.equal(await links(2), undefined);
   real.dispose();
 });

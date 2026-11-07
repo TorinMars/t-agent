@@ -61,11 +61,11 @@ export function CopyDialog({ state, ui }) {
   );
 }
 
-// While an image goes up the page is locked and says how far it is.
+// While an image or file goes up the page is locked and says how far it is.
 export function UploadDialog({ state }) {
   const upload = state.upload;
   return (
-    <Dialog className="h5-upload-overlay" open={Boolean(upload)} aria-label={t('Uploading image')} disableEscapeKeyDown transitionDuration={0}>
+    <Dialog className="h5-upload-overlay" open={Boolean(upload)} aria-label={t('Uploading file')} disableEscapeKeyDown transitionDuration={0}>
       {upload ? (
         <DialogContent sx={{ minWidth: 260 }}>
           <DialogContentText role="status" sx={{ mb: 2 }}>{t(upload.status)}</DialogContentText>
@@ -76,14 +76,14 @@ export function UploadDialog({ state }) {
   );
 }
 
-// The link of an image that was uploaded when its terminal was already gone.
+// The link of an image or file that was uploaded when its terminal was already gone.
 export function RetainDialog({ state, ui }) {
   const url = state.retainUrl;
   return (
     <Dialog className="h5-upload-overlay" open={url !== null} onClose={() => ui.actions.retainClose()} fullWidth maxWidth="xs" transitionDuration={0}>
-      <DialogTitle sx={{ fontSize: 16 }}>{t('Image uploaded; the original terminal was switched or disconnected. Copy the link manually:')}</DialogTitle>
+      <DialogTitle sx={{ fontSize: 16 }}>{t('Uploaded; the original terminal was switched or disconnected. Copy the link manually:')}</DialogTitle>
       <DialogContent>
-        <TextField fullWidth size="small" value={url || ''} slotProps={{ htmlInput: { readOnly: true, 'aria-label': t('Uploaded image link'), onClick: event => event.target.select() } }} />
+        <TextField fullWidth size="small" value={url || ''} slotProps={{ htmlInput: { readOnly: true, 'aria-label': t('Uploaded link'), onClick: event => event.target.select() } }} />
       </DialogContent>
       <DialogActions><Button onClick={() => ui.actions.retainClose()}>{t('Close')}</Button></DialogActions>
     </Dialog>

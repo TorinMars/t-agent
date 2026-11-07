@@ -231,7 +231,7 @@ export function ActionBar({ state, ui, menu, onMenu, pointer = false }) {
   const keyboard = (action, kind, label) => (
     <IconButton data-action={action} sx={look} title={t(label)} aria-label={t(label)} aria-pressed={kind === 'terminal' ? Boolean(state.osk) : state.keyboard === kind} onClick={() => ui.actions.key({ action })}><Icon name={kind === 'terminal' ? 'terminalKeyboard' : 'draftKeyboard'} /></IconButton>
   );
-  const image = t('Upload image');
+  const image = t('Upload image or file');
   const commands = t('Saved commands');
   const design = t('Design document');
   // The name carries the count of running or pending sessions while there are some; the badge shows the same number.
@@ -248,13 +248,13 @@ export function ActionBar({ state, ui, menu, onMenu, pointer = false }) {
     >
       {pointer ? null : keyboard('keyboard', 'terminal', 'Terminal keyboard')}
       {pointer ? null : keyboard('draft', 'draft', 'Draft keyboard')}
-      {/* Upload image is a label around the real file input, and the (invisible, not display:none) input covers the whole button, so the finger taps the input
+      {/* Upload image or file is a label around the real file input, and the (invisible, not display:none) input covers the whole button, so the finger taps the input
           itself and the picker opens natively. iOS WebKit, a Home Screen web app above all, ignores a script `input.click()` on a hidden input here. h5.js checks
           on the input's click (it can cancel it) and reads the chosen file. Not a <button>, so the bar's press capture leaves it alone. */}
       <IconButton component="label" id="h5-image" data-action="image" sx={{ ...look, position: 'relative', overflow: 'hidden' }} {...named(image)}>
         <Icon name="image" />
         <input
-          type="file" id="h5-image-picker" accept="image/png,image/jpeg,image/gif,image/webp" tabIndex={-1} aria-hidden="true"
+          type="file" id="h5-image-picker" tabIndex={-1} aria-hidden="true"
           style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', margin: 0, padding: 0, opacity: 0, cursor: 'pointer', fontSize: 0 }}
         />
       </IconButton>

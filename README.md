@@ -723,7 +723,11 @@ Separate absolute paths for the design doc, README and AGENT files can still be 
 
 New tasks create `AGENTS.md` and `CLAUDE.md` by default, and the latter references the main rules through `@AGENTS.md`. An existing `CLAUDE.md` keeps its content and gets the reference added. Existing tasks are migrated at start-up: when only `AGENT.md` exists it becomes `AGENTS.md`; when both exist `AGENTS.md` is kept and `AGENT.md` is deleted. An old explicit `AGENT.md` path is migrated as well, other custom rule paths are left as they are, and the working directory still gets the standard rule entry points. A working directory that cannot be accessed records an error and is retried at the next start-up, and an old directory that no longer exists is not recreated. Remote projects are migrated after the corresponding Engine is updated and started.
 
-### Task file browser
+### Task files (read-only tree)
+
+The "Files" button next to the design document button (row 2 under the terminal) shows the folders and files of the task's working directory as a tree. It is **browse and preview only**: nothing is created, renamed, deleted or edited. A folder is read when it is opened (200 entries at a time, with a "Load more" row); a tap on a file opens it in the file viewer (Markdown rendered, other text with line numbers), and the back arrow returns to the tree with its open folders and scroll position. On a phone the tree is a sheet from the bottom (the Android back button goes back one step; on a phone narrower than 360px the button is left out of the row and the file viewer's own Files button leads to the tree), on a wide screen a panel on the right. It works for local tasks and for tasks of remote Engines; hidden files (names starting with a dot) are not listed and symbolic links are shown but not opened.
+
+### Task file browser (old PC page)
 
 > **The page for this was removed in 2.88.0** (one page for computers and phones, see "One page" in `DESIGN.md`). The server endpoints stay (`/api/tasks/:id/files*`; `GET …/files/content` is still used by the read-only preview of a file link), so scripts, other Clients and older pages keep working; the text below describes the feature as it was.
 

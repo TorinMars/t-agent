@@ -317,6 +317,7 @@
     wantedTerminal = target && target.terminal ? target.terminal : null;
     store.set(`task:${source.key}`, item ? item.id : null);
     ui.set({ taskName: item ? item.title : '' });
+    syncFiles();
     if (!stay) closeTasks();
     void loadTerminals();
     if (target && target.chat) mountAgent(target.chat);
@@ -517,6 +518,7 @@
     expanded.clear();
     peeks.clear();
     ui.set({ taskName: '', sourceKey: source.key });
+    syncFiles();
     hideShown(); // its connection stays warm (WARM_MAX)
     terminals = [];
     renderTabs();
@@ -613,6 +615,7 @@
     if (from !== source) return;
     await loadTasks();
     if (task && task.id === item.id) { const fresh = taskById(item.id); if (fresh) task = fresh; }
+    syncFiles(); // a new working directory: a new tree
     peeks.delete(item.id);
     // Existing terminals keep their directory; the list says which one each has now (a default terminal never started follows the task).
     if (task && task.id === item.id) {
@@ -1580,8 +1583,9 @@
     const s = session;
     if (!s || s.disposed || agentChat || modalOpen()) return;
     const active = document.activeElement;
-    if (editing(active) || (active && active.closest && active.closest('#h5-design-sheet, #h5-agent'))) return;
+    if (editing(active) || (active && active.closest && active.closest('#h5-design-sheet, #h5-files-sheet, #h5-agent'))) return;
     if (event.key === 'Escape' && isWide() && ui.get().design && ui.get().design.open) { ui.actions.closeDesign(); return; } // closes the side panel first
+    if (event.key === 'Escape' && isWide() && ui.get().files && ui.get().files.open) { ui.actions.closeFiles(); return; } // then the file tree
     const onBody = !active || active === document.body || active === document.documentElement;
     const printable = Array.from(event.key).length === 1;
     if (!onBody && (!printable || event.key === ' ')) return;
@@ -2264,6 +2268,31 @@
     });
   }
   ui.actions.closeDesign = () => { designSeq += 1; ui.set(state => ({ design: state.design ? { ...state.design, open: false } : null })); };
+
+  // ── Files: the read-only tree of the task's working directory (scripts/h5-shell/FileTree.jsx), "Files" in row 2 ──
+  // The tree reads folders itself through `base` (`GET {tasksBase}/{task}/files?path=`, local, Engine and remote proxy alike); a file opens in the sheet
+  // above with `openFileSheet`. `key` names the tree: another task, working directory or Engine draws a new one (folders closed, scroll at the top).
+  const filesFor = () => (task
+    ? { key: `${source.key}:${task.id}:${taskDir(task)}`, base: `${source.tasksBase}/${task.id}/files`, dir: taskDir(task) }
+    : { key: `${source.key}:`, base: null, dir: '' });
+  function syncFiles() {
+    const files = ui.get().files;
+    if (!files) return;
+    const next = filesFor();
+    if (next.key !== files.key) ui.set({ files: { ...files, ...next } });
+  }
+  ui.actions.openFiles = () => {
+    if (document.activeElement && document.activeElement !== document.body && typeof document.activeElement.blur === 'function') document.activeElement.blur();
+    const state = ui.get();
+    const viewer = Boolean(state.design && state.design.open);
+    // A wide screen: the button shows and hides the panel; a file shown over the tree goes, so the tree is seen.
+    if (isWide() && state.files && state.files.open && !viewer) { ui.actions.closeFiles(); return; }
+    if (viewer) ui.actions.closeDesign();
+    const files = state.files && state.files.key === filesFor().key ? state.files : filesFor();
+    ui.set({ files: { ...files, open: true } });
+  };
+  ui.actions.closeFiles = () => ui.set(state => ({ files: state.files ? { ...state.files, open: false } : null }));
+  ui.actions.openTreeFile = filePath => openFileSheet(filePath, { link: true });
 
   async function upload(target, file) {
     if (!/^image\/(png|jpeg|gif|webp)$/.test(file.type) || file.size <= 0 || file.size > MAX_IMAGE_BYTES) {

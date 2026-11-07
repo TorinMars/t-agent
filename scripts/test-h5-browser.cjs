@@ -310,7 +310,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     // Row 2 (reference design): terminal keyboard, draft keyboard, upload image, saved commands, voice; equal buttons filling the width, below the function key row. Send and translate-and-send are not shown while the box is hidden.
     {
       const row2 = await page.evaluate(() => [...document.querySelectorAll('#h5-actions button, #h5-actions [role="button"]')].map(b => { const r = b.getBoundingClientRect(); return { label: b.getAttribute('aria-label'), left: r.left, right: r.right, top: r.top, width: r.width, height: r.height }; }).filter(b => b.width > 0));
-      assert.deepEqual(row2.map(b => b.label), ['Terminal keyboard', 'Draft keyboard', 'Upload image', 'Saved commands', 'Voice input', 'Design document', 'Next running or pending session'], 'row 2: the two keyboards, image, saved commands, voice, design document, next running or pending session');
+      assert.deepEqual(row2.map(b => b.label), ['Terminal keyboard', 'Draft keyboard', 'Upload image', 'Saved commands', 'Voice input', 'Design document', 'Files', 'Next running or pending session'], 'row 2: the two keyboards, image, saved commands, voice, design document, files, next running or pending session');
       assert.ok(row2.every(b => Math.abs(b.top - row2[0].top) <= 1 && Math.abs(b.width - row2[0].width) <= 1 && b.height >= 40), 'row 2: one row of equal, finger-sized buttons');
       assert.ok(row2[0].left >= 0 && row2.at(-1).right <= 390, 'row 2 fits the screen');
       assert.equal(await page.evaluate(() => document.querySelector('#h5-actions').getBoundingClientRect().top >= document.getElementById('h5-keys').getBoundingClientRect().bottom - 1), true, 'row 2 is below the function keys');
@@ -1680,7 +1680,8 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       const row2 = () => small.page.evaluate(() => [...document.querySelectorAll('#h5-actions button, #h5-actions [role="button"]')].map(b => b.getBoundingClientRect()).filter(box => box.width > 0).map(box => ({ left: box.left, right: box.right, width: box.width, height: box.height })));
       const resting = await row2();
       if (process.env.H5_SHOT_DIR && viewport.width === 320) await small.page.screenshot({ path: path.join(process.env.H5_SHOT_DIR, 'h5-row2-320-rest.png') });
-      assert.ok(resting.length === 7 && resting.every((box, i) => box.left >= 0 && box.right <= innerWidthOf(viewport) && box.width >= 40 && box.height >= 40 && (i === 0 || resting[i - 1].right <= box.left + 0.5)), `row 2 at rest: seven buttons of at least 40px at ${viewport.width}px`);
+      const restCount = viewport.width < 360 ? 7 : 8; // Files is left out under 360px (eight 44px buttons do not fit)
+      assert.ok(resting.length === restCount && resting.every((box, i) => box.left >= 0 && box.right <= innerWidthOf(viewport) && box.width >= 40 && box.height >= 40 && (i === 0 || resting[i - 1].right <= box.left + 0.5)), `row 2 at rest: ${restCount} buttons of at least 40px at ${viewport.width}px`);
       await small.page.locator('#h5-translate-input').focus();
       await small.page.waitForFunction(() => !document.getAnimations().some(a => a.playState === 'running') && !document.querySelector('.h5-bar-moving'), null, { timeout: 3000 });
       const drafting = await row2();

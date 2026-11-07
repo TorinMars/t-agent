@@ -15,7 +15,6 @@
   const tell = (message, type = 'info') => notify(message, type);
   const tr = text => (typeof I18n !== 'undefined' ? I18n.t(text) : text);
   const SUBMIT_DELAY_MS = 120; // type the text first, then Enter, so a TUI does not see a pasted newline
-  const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
   const DEFAULT_GROUPS = [
     { key: 'personal', name: 'Personal tasks', sort_order: 0 },
     { key: 'doing', name: 'In progress', sort_order: 1000 },
@@ -1138,14 +1137,15 @@
     // at once right after the user's own gesture on this terminal, otherwise it asks first (`state.clipboard`). Only the shown terminal may copy.
     if (typeof TerminalClipboard !== 'undefined') s.clipboard = TerminalClipboard.attach(term, el, { isActive: () => session === s && !s.disposed && !s.el.hidden });
     attachFileLinks(s);
-    // A pasted image (long-press paste in the xterm textarea) is uploaded like a picked one; plain text keeps xterm's own paste.
+    // A pasted image or file (long-press paste in the xterm textarea, a file copied in the file manager) is uploaded like a picked one;
+    // plain text keeps xterm's own paste.
     el.addEventListener('paste', event => {
-      const images = [...(event.clipboardData?.items || [])].filter(entry => entry.kind === 'file' && entry.type.startsWith('image/'));
-      if (!images.length) return;
+      const files = [...(event.clipboardData?.items || [])].filter(entry => entry.kind === 'file');
+      if (!files.length) return;
       event.preventDefault();
       event.stopImmediatePropagation();
-      if (images.length !== 1) { tell('Upload one image at a time', 'error'); return; }
-      if (!uploading) void upload(s, images[0].getAsFile());
+      if (files.length !== 1) { tell('Upload one file at a time', 'error'); return; }
+      if (!uploading) void upload(s, files[0].getAsFile());
     }, true);
     term.onData(data => typed(s, data));
     TerminalIme.attach(term, data => typed(s, data)); // the Apple Chinese keyboard's spaces and punctuation, which xterm drops
@@ -2164,8 +2164,8 @@
   translateForm.addEventListener('focusin', () => { autosize(); relayoutBar(); });
   translateForm.addEventListener('focusout', () => { autosize(); relayoutBar(); });
 
-  // ── Image upload: the Client uploads to OSS and the link is typed into the terminal without Enter ──
-  // The file input covers the Upload image button (Terminal.jsx), so a tap opens the picker natively, inside the user's own gesture: iOS WebKit (the Home Screen
+  // ── Image and file upload: the browser uploads to OSS and the link is typed into the terminal without Enter ──
+  // The file input covers the upload button (Terminal.jsx), so a tap opens the picker natively, inside the user's own gesture: iOS WebKit (the Home Screen
   // web app above all) ignores a script click() on a hidden file input from another button's handler. The checks run on the input's click and cancel it.
   let pickedFor = null;
   picker.addEventListener('click', event => {
@@ -2195,7 +2195,7 @@
     };
   }
 
-  // The image goes from this browser straight to OSS (oss-direct.js); the Client only signs the upload.
+  // The image or file goes from this browser straight to OSS (oss-direct.js); the Client only signs the upload.
   const transfer = (file, ui2) => OssDirect.upload(file, {
     status: text => ui2.status(text),
     progress: value => ui2.progress(value),
@@ -2275,10 +2275,8 @@
   ui.actions.closeDesign = () => { designSeq += 1; ui.set(state => ({ design: state.design ? { ...state.design, open: false } : null })); };
 
   async function upload(target, file) {
-    if (!/^image\/(png|jpeg|gif|webp)$/.test(file.type) || file.size <= 0 || file.size > MAX_IMAGE_BYTES) {
-      tell('Choose a PNG, JPEG, GIF or WebP image up to 10 MiB', 'error');
-      return;
-    }
+    // The type and size limits (images 10 MiB, other files 100 MiB) are checked by OssDirect, which reads the first bytes.
+    if (!file || file.size <= 0) { tell('The file is empty', 'error'); return; }
     const ui = lock();
     let result;
     let failure;
@@ -2286,7 +2284,7 @@
       let config;
       try { config = await api('GET', '/api/oss/config'); }
       catch { throw new Error('Could not read OSS settings. Check the connection and retry'); }
-      if (!config || !config.enabled) throw new Error('Enable Alibaba Cloud OSS image upload in this client’s settings first');
+      if (!config || !config.enabled) throw new Error('Enable Alibaba Cloud OSS upload in this client’s settings first');
       result = await transfer(file, ui);
     } catch (error) { failure = error; } finally { ui.unlock(); }
     if (failure) { tell(failure.message, 'error'); return; }

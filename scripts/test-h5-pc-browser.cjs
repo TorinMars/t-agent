@@ -131,7 +131,7 @@ const waitAck = (url, id, from = 0) => new Promise((resolve, reject) => {
       assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('.h5-xterm:not([hidden]) .xterm-rows')).fontSize), '13px', `${label}: 13px terminal font`);
       assert.equal(await page.locator('#h5-voice').getAttribute('title'), 'Voice input: click to start speaking', `${label}: voice is click to start / stop`);
       // Icon buttons: the native title is the tooltip (no MUI Tooltip any more), the same text as the aria-label; no MUI tooltip opens on hover.
-      for (const [id, name] of [['h5-design', 'Design document'], ['h5-commands', 'Saved commands'], ['h5-image', 'Upload image'], ['h5-refresh', 'Refresh the page']]) {
+      for (const [id, name] of [['h5-design', 'Design document'], ['h5-commands', 'Saved commands'], ['h5-image', 'Upload image or file'], ['h5-refresh', 'Refresh the page']]) {
         assert.equal(await page.locator(`#${id}`).getAttribute('title'), name, `${label}: #${id} has its title`);
         assert.equal(await page.locator(`#${id}`).getAttribute('aria-label'), name, `${label}: #${id} has its aria-label`);
       }

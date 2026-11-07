@@ -9,6 +9,7 @@ const ORIGIN = 'http://h5.test';
 const TYPES = { '.js': 'application/javascript', '.css': 'text/css', '.html': 'text/html' };
 
 const ossUploads = [];
+const ossPolicies = [];
 const pageErrors = [];
 // The conversations the page's server knows; a test can make the list unreadable.
 const chats = [];
@@ -126,7 +127,13 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     if (url.pathname === '/api/oss/config') return json({ enabled: true });
     if (url.pathname === '/api/oss/upload-policy' && method === 'POST') {
       // The Client only signs the upload; the image itself goes to OSS from the browser.
-      assert.deepEqual(route.request().postDataJSON(), { type: 'image/png', size: 8 });
+      const asked = route.request().postDataJSON();
+      ossPolicies.push(asked);
+      if (asked.kind === 'file') {
+        assert.deepEqual(asked, { kind: 'file', type: 'application/pdf', size: 9, name: 'notes.pdf' });
+        return json({ host: 'https://bucket.oss.test', fields: { key: 'terminal-images/notes.pdf', 'Content-Disposition': 'attachment; filename="notes.pdf"', policy: 'p' }, url: 'https://img.test/notes.pdf', expiresAt: null });
+      }
+      assert.deepEqual(asked, { type: 'image/png', size: 8 });
       return json({ host: 'https://bucket.oss.test', fields: { key: 'terminal-images/shot.png', policy: 'p', 'x-oss-signature': 's' }, url: 'https://img.test/shot.png', expiresAt: null });
     }
     if (url.pathname === '/api/oss/images') return json({ error: 'the Client no longer receives images' }, 404);
@@ -310,7 +317,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     // Row 2 (reference design): terminal keyboard, draft keyboard, upload image, saved commands, voice; equal buttons filling the width, below the function key row. Send and translate-and-send are not shown while the box is hidden.
     {
       const row2 = await page.evaluate(() => [...document.querySelectorAll('#h5-actions button, #h5-actions [role="button"]')].map(b => { const r = b.getBoundingClientRect(); return { label: b.getAttribute('aria-label'), left: r.left, right: r.right, top: r.top, width: r.width, height: r.height }; }).filter(b => b.width > 0));
-      assert.deepEqual(row2.map(b => b.label), ['Terminal keyboard', 'Draft keyboard', 'Upload image', 'Saved commands', 'Voice input', 'Design document', 'Next running or pending session'], 'row 2: the two keyboards, image, saved commands, voice, design document, next running or pending session');
+      assert.deepEqual(row2.map(b => b.label), ['Terminal keyboard', 'Draft keyboard', 'Upload image or file', 'Saved commands', 'Voice input', 'Design document', 'Next running or pending session'], 'row 2: the two keyboards, image, saved commands, voice, design document, next running or pending session');
       assert.ok(row2.every(b => Math.abs(b.top - row2[0].top) <= 1 && Math.abs(b.width - row2[0].width) <= 1 && b.height >= 40), 'row 2: one row of equal, finger-sized buttons');
       assert.ok(row2[0].left >= 0 && row2.at(-1).right <= 390, 'row 2 fits the screen');
       assert.equal(await page.evaluate(() => document.querySelector('#h5-actions').getBoundingClientRect().top >= document.getElementById('h5-keys').getBoundingClientRect().bottom - 1), true, 'row 2 is below the function keys');
@@ -1030,6 +1037,18 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     assert.equal(await linkCount(), 2);
     assert.equal(ossUploads.length, 2, 'the pasted image went to OSS from the browser');
     assert.equal((await sent()).length, sentBefore + 1, 'only the link was typed');
+
+    // Any other file: the picker accepts every type, the file goes up as a download and its link is typed the same way.
+    assert.equal(await page.locator('#h5-image-picker').getAttribute('accept'), null, 'the picker accepts any file');
+    assert.equal(await page.locator('#h5-image').getAttribute('aria-label'), 'Upload image or file');
+    const [fileChooser] = await Promise.all([page.waitForEvent('filechooser'), page.locator('#h5-image').tap()]);
+    await fileChooser.setFiles({ name: 'notes.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.7\n') });
+    await page.waitForFunction(() => window.sockets[0].sent.includes('https://img.test/notes.pdf '));
+    await page.locator('.h5-upload-overlay').waitFor({ state: 'detached' });
+    assert.equal(ossUploads.length, 3, 'the file went to OSS from the browser');
+    assert.ok(ossUploads[2].includes('attachment; filename="notes.pdf"') && ossUploads[2].includes('%PDF-1.7'));
+    assert.equal(ossPolicies.at(-1).kind, 'file');
+    assert.notEqual((await sent()).at(-1), '\r', 'no Enter after the file link');
 
     // The wheel strip on the right edge scrolls like a wheel; a drag on the terminal body makes no wheel events.
     const strip = page.locator('#h5-wheel');

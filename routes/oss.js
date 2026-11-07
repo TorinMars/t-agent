@@ -11,7 +11,7 @@ function createOssRouter(options = {}) {
   router.put('/config', (req, res) => res.json(service.saveConfig(owner(req), req.body)));
   router.delete('/config', (req, res) => res.json(service.clearConfig(owner(req))));
   // The browser uploads to OSS itself; this only signs what that upload may contain.
-  router.post('/upload-policy', express.json({ limit: '2kb' }), async (req, res, next) => {
+  router.post('/upload-policy', express.json({ limit: '4kb' }), async (req, res, next) => {
     try { res.set('Cache-Control', 'no-store').json(await service.signUpload(owner(req), req.body)); }
     catch (error) { next(error); }
   });
@@ -19,7 +19,7 @@ function createOssRouter(options = {}) {
     if (res.headersSent) return next(error);
     if (error instanceof OssImageError) return res.status(error.statusCode).json({ error: error.message });
     if (error.type === 'entity.parse.failed' || error.type === 'entity.too.large') return res.status(400).json({ error: 'Invalid upload request' });
-    return res.status(500).json({ error: 'The OSS image service is temporarily unavailable' });
+    return res.status(500).json({ error: 'The OSS upload service is temporarily unavailable' });
   });
   return router;
 }

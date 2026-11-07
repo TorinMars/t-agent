@@ -3,6 +3,7 @@ const OSS = require('ali-oss');
 const { encryptToken, decryptToken } = require('../lib/token-crypto');
 
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+const MAX_FILE_BYTES = 100 * 1024 * 1024;
 const LINK_SECONDS = 24 * 60 * 60;
 class OssImageError extends Error {
   constructor(message, statusCode = 400) { super(message); this.statusCode = statusCode; }
@@ -21,6 +22,41 @@ function publicUrl(value) {
 }
 const IMAGE_TYPES = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp' };
 const POLICY_SECONDS = 5 * 60;
+const FILE_NAME_CHARS = 200;
+// Types a browser would run or render as a page from the bucket's domain (stored XSS): such a file is stored as plain bytes.
+const ACTIVE_TYPE = /html|javascript|ecmascript|jscript|svg|css|xsl|flash|shockwave|[/+]xml$|^multipart\/|^message\//;
+// The browser's type of a file that is not an image: kept when it is a plain, well-formed MIME type (no parameters) and harmless.
+function fileType(value) {
+  const mime = text(value).toLowerCase();
+  if (mime.length > 127 || !/^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*$/.test(mime) || ACTIVE_TYPE.test(mime)) return 'application/octet-stream';
+  return mime;
+}
+// The original file name for the download: no folders, no control, format or line separator characters (a right-to-left override could
+// disguise the extension), no quotes or backslashes; at most FILE_NAME_CHARS characters, the extension kept.
+function fileName(value) {
+  let name = (typeof value === 'string' ? value : '').split(/[\\/]/).pop()
+    .replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Cs}"\\]/gu, '').replace(/\s+/g, ' ').trim();
+  if (/^\.+$/.test(name)) name = '';
+  const chars = [...name];
+  if (chars.length > FILE_NAME_CHARS) {
+    const dot = name.lastIndexOf('.');
+    const ext = dot > 0 ? [...name.slice(dot)] : [];
+    const keep = ext.length && ext.length <= 16 ? ext : [];
+    name = chars.slice(0, FILE_NAME_CHARS - keep.length).join('').trim() + keep.join('');
+  }
+  return name || 'file';
+}
+// RFC 6266 with the RFC 5987 UTF-8 form: an ASCII fallback for old clients, and filename* with every byte outside attr-char percent-encoded.
+function attachment(name) {
+  const fallback = name.replace(/[^\x20-\x7e]|[%;]/g, '_');
+  const encoded = encodeURIComponent(name).replace(/['()*]/g, char => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
+  return `attachment; filename="${fallback}"; filename*=UTF-8''${encoded}`;
+}
+// A short, safe extension for the object key, so the link still says what the file is; the name itself is only in the disposition.
+function keyExtension(name) {
+  const match = /\.([A-Za-z0-9]{1,10})$/.exec(name);
+  return match ? `.${match[1].toLowerCase()}` : '';
+}
 // OSS signature V4 of a POST policy: a chain of HMAC-SHA256 keys derived from the secret, the day, the region and the service.
 function signPolicy(accessKeySecret, day, region, encodedPolicy) {
   const hmac = (key, data) => crypto.createHmac('sha256', key).update(data).digest();
@@ -60,33 +96,49 @@ function createOssImages({ db, sessionSecret, createClient = options => new OSS(
       db.prepare('DELETE FROM system_state WHERE key = ?').run(key(owner));
       return safe(defaults());
     },
-    // The browser uploads the image straight to OSS with a form POST; this only signs what that POST may contain (one object key, one
-    // content type, exactly the announced size, valid for a few minutes), so the AccessKey secret never leaves the server and the image
-    // bytes never pass through it.
+    // The browser uploads the file straight to OSS with a form POST; this only signs what that POST may contain (one object key, one
+    // content type, one content disposition, exactly the announced size, valid for a few minutes), so the AccessKey secret never leaves
+    // the server and the bytes never pass through it. An image ({ type, size }, its type read from its first bytes by the browser) is
+    // shown inline; any other file ({ kind: 'file', type, size, name }) is always a download (attachment) under its original name.
     async signUpload(owner, body) {
       const config = read(owner);
-      if (!config.enabled) throw new OssImageError('OSS image upload is not enabled yet');
-      const mime = text(body && body.type).toLowerCase();
+      if (!config.enabled) throw new OssImageError('OSS upload is not enabled yet');
       const size = body && body.size;
-      if (!IMAGE_TYPES[mime]) throw new OssImageError('Only PNG, JPEG, GIF and WebP images are supported', 415);
-      if (!Number.isSafeInteger(size) || size <= 0) throw new OssImageError('The image is empty');
-      if (size > MAX_IMAGE_BYTES) throw new OssImageError('The image cannot exceed 10 MiB', 413);
+      const isFile = Boolean(body && body.kind === 'file');
+      let mime;
+      let disposition;
+      let extension;
+      if (isFile) {
+        if (!Number.isSafeInteger(size) || size <= 0) throw new OssImageError('The file is empty');
+        if (size > MAX_FILE_BYTES) throw new OssImageError('The file cannot exceed 100 MiB', 413);
+        const name = fileName(body.name);
+        mime = fileType(body.type);
+        disposition = attachment(name);
+        extension = keyExtension(name);
+      } else {
+        mime = text(body && body.type).toLowerCase();
+        if (!IMAGE_TYPES[mime]) throw new OssImageError('Only PNG, JPEG, GIF and WebP images are supported', 415);
+        if (!Number.isSafeInteger(size) || size <= 0) throw new OssImageError('The image is empty');
+        if (size > MAX_IMAGE_BYTES) throw new OssImageError('The image cannot exceed 10 MiB', 413);
+        disposition = 'inline';
+        extension = `.${IMAGE_TYPES[mime]}`;
+      }
       const now = new Date();
       const stamp = now.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, ''); // 20261026T120000Z
       const region = config.region.replace(/^oss-/, '');
-      const objectKey = `${config.prefix}${now.toISOString().slice(0, 10)}/${crypto.randomUUID()}.${IMAGE_TYPES[mime]}`;
+      const objectKey = `${config.prefix}${now.toISOString().slice(0, 10)}/${crypto.randomUUID()}${extension}`;
       const credential = `${config.accessKeyId}/${stamp.slice(0, 8)}/${region}/oss/aliyun_v4_request`;
       const policy = {
         expiration: new Date(now.getTime() + POLICY_SECONDS * 1000).toISOString(),
         conditions: [
           { bucket: config.bucket }, { 'x-oss-signature-version': 'OSS4-HMAC-SHA256' }, { 'x-oss-credential': credential }, { 'x-oss-date': stamp },
-          ['eq', '$key', objectKey], ['eq', '$Content-Type', mime], ['eq', '$Content-Disposition', 'inline'], ['eq', '$success_action_status', '200'],
+          ['eq', '$key', objectKey], ['eq', '$Content-Type', mime], ['eq', '$Content-Disposition', disposition], ['eq', '$success_action_status', '200'],
           ['content-length-range', size, size],
         ],
       };
       const encoded = Buffer.from(JSON.stringify(policy)).toString('base64');
       const fields = {
-        key: objectKey, 'Content-Type': mime, 'Content-Disposition': 'inline', success_action_status: '200', policy: encoded,
+        key: objectKey, 'Content-Type': mime, 'Content-Disposition': disposition, success_action_status: '200', policy: encoded,
         'x-oss-signature-version': 'OSS4-HMAC-SHA256', 'x-oss-credential': credential, 'x-oss-date': stamp,
         'x-oss-signature': signPolicy(config.accessKeySecret, stamp.slice(0, 8), region, encoded),
       };
@@ -101,4 +153,4 @@ function createOssImages({ db, sessionSecret, createClient = options => new OSS(
     },
   };
 }
-module.exports = { createOssImages, OssImageError, MAX_IMAGE_BYTES, signPolicy };
+module.exports = { createOssImages, OssImageError, MAX_IMAGE_BYTES, MAX_FILE_BYTES, signPolicy, fileName, fileType, attachment };

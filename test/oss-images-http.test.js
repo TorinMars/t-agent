@@ -41,6 +41,21 @@ test('OSS HTTP endpoints enforce origin/auth before signing an upload and return
   assert.equal((await sign({ type: 'image/png', size: 10 * 1024 * 1024 + 1 })).status, 413);
   assert.equal((await sign({ type: 'image/svg+xml', size: 5 })).status, 415);
   assert.equal((await fetch(base + '/upload-policy', { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' }, body: '{not json' })).status, 400);
+  // Any other file: an attachment under its (Chinese) name, up to 100 MiB, active types stored as plain bytes.
+  const name = '\u8bbe\u8ba1\u7a3f v2.html';
+  const file = await sign({ kind: 'file', type: 'text/html', size: 12 * 1024 * 1024, name });
+  assert.equal(file.status, 200);
+  const filePolicy = await file.json();
+  assert.equal(filePolicy.fields['Content-Type'], 'application/octet-stream');
+  assert.equal(filePolicy.fields['Content-Disposition'], `attachment; filename="___ v2.html"; filename*=UTF-8''${encodeURIComponent(name)}`);
+  assert.match(filePolicy.fields.key, /\/[0-9a-f-]{36}\.html$/);
+  assert.match(filePolicy.url, /^https:\/\/images.example\//);
+  const pdf = await (await sign({ kind: 'file', type: 'application/pdf', size: 5, name: 'a.pdf' })).json();
+  assert.equal(pdf.fields['Content-Type'], 'application/pdf');
+  assert.equal((await sign({ kind: 'file', type: 'application/zip', size: 100 * 1024 * 1024 + 1, name: 'a.zip' })).status, 413);
+  assert.equal((await sign({ kind: 'file', type: 'application/zip', size: 0, name: 'a.zip' })).status, 400);
+  // A long name still fits the request limit the page sends (it keeps at most 255 characters).
+  assert.equal((await sign({ kind: 'file', type: 'text/plain', size: 5, name: '\u6587'.repeat(255) + '.txt' })).status, 200);
   assert.equal((await fetch(base + '/images', { method: 'POST', headers: { ...headers, 'Content-Type': 'image/png' }, body: Buffer.alloc(8) })).status, 404, 'the server no longer receives image bytes');
   const deleted = await fetch(base + '/config', { method: 'DELETE', headers });
   assert.equal((await deleted.json()).enabled, false);

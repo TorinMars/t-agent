@@ -35,6 +35,13 @@ cat >> "$FAKE_RECORDS/${name}.data"
 exit 0
 `, { mode: 0o755 });
 }
+// Fake real codex: prints the SSH variables it got, its arguments and piped stdin, then exits with FAKE_CODEX_EXIT.
+fs.writeFileSync(path.join(fakeDir, 'codex'), `#!/bin/sh
+printf 'SSH_TTY=[%s] SSH_CONNECTION=[%s]\\n' "\${SSH_TTY-unset}" "\${SSH_CONNECTION-unset}"
+for a in "$@"; do printf 'arg=[%s]\\n' "$a"; done
+[ -t 0 ] || printf 'stdin=[%s]\\n' "$(cat)"
+exit "\${FAKE_CODEX_EXIT:-0}"
+`, { mode: 0o755 });
 const record = (name, kind) => {
   try { return fs.readFileSync(path.join(recordDir, `${name}.${kind}`), 'utf8'); } catch { return null; }
 };
@@ -277,4 +284,35 @@ test('routes/terminal.js spawns every PTY with the shim folder first in PATH and
     terminal.closeTaskTerminals(task.id);
     db.close();
   }
+});
+
+test('the codex wrapper sets SSH_TTY to the terminal and passes arguments, stdin and the exit code through', async () => {
+  const run = await inPty(`tty; codex resume abc 'two words'; echo "exit $?"`, baseEnv({ FAKE_CODEX_EXIT: '7' }));
+  const tty = run.output.split(/\r?\n/)[0].trim();
+  assert.match(tty, /^\/dev\//);
+  assert.ok(run.output.includes(`SSH_TTY=[${tty}] SSH_CONNECTION=[unset]`), JSON.stringify(run.output));
+  assert.match(run.output, /arg=\[resume\]\r?\narg=\[abc\]\r?\narg=\[two words\]\r?\nexit 7/);
+  const piped = await inPty(`printf 'hello' | codex exec -`);
+  assert.ok(piped.output.includes('SSH_TTY=[unset]'), 'no terminal on stdin (app-server, pipes): nothing set');
+  assert.ok(piped.output.includes('stdin=[hello]'));
+  const detached = await withoutTty('codex app-server', '{}');
+  assert.equal(detached.stdout, 'SSH_TTY=[unset] SSH_CONNECTION=[unset]\narg=[app-server]\nstdin=[{}]\n');
+});
+
+test('the codex wrapper keeps existing SSH variables, skips tmux and outside a T-Agent terminal, and never recurses', async () => {
+  const keep = await inPty('codex', baseEnv({ SSH_TTY: '/dev/custom' }));
+  assert.ok(keep.output.includes('SSH_TTY=[/dev/custom] SSH_CONNECTION=[unset]'));
+  const connection = await inPty('codex', baseEnv({ SSH_CONNECTION: '10.0.0.1 1 10.0.0.2 22' }));
+  assert.ok(connection.output.includes('SSH_TTY=[unset] SSH_CONNECTION=[10.0.0.1 1 10.0.0.2 22]'));
+  const tmux = await inPty('codex', baseEnv({ TMUX: '/tmp/fake-tmux,1,0' }));
+  assert.ok(tmux.output.includes('SSH_TTY=[unset]'), 'Codex forwards copies in tmux itself');
+  const outside = await inPty('codex', baseEnv({ TA_CLIPBOARD_OSC52: undefined }));
+  assert.ok(outside.output.includes('SSH_TTY=[unset]'));
+  const copy = path.join(root, 'shims-codex-copy');
+  fs.cpSync(SHIM_DIR, copy, { recursive: true });
+  const nested = await inPty('codex one', baseEnv({ PATH: `${SHIM_DIR}:${copy}:${fakeDir}:/usr/bin:/bin` }));
+  assert.equal(count(nested.output, 'SSH_TTY=[/dev/'), 1);
+  assert.ok(nested.output.includes('arg=[one]'));
+  const missing = await inPty('codex; echo "exit $?"', baseEnv({ PATH: `${SHIM_DIR}:/usr/bin:/bin` }));
+  assert.match(missing.output, /codex: command not found[\s\S]*exit 127/);
 });

@@ -1,0 +1,13 @@
+#!/bin/sh
+# TA-CLIPBOARD-SHIM
+# pbcopy shim of T-Agent terminals: the copied text also goes to the browser clipboard (OSC 52), then the real pbcopy runs.
+# Only `pbcopy` and `pbcopy -pboard general` are copies to the browser; any other arguments go to the real pbcopy.
+. "$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)/osc52-lib.sh" || exit 1
+[ "$TA_CLIPBOARD_OSC52" = 1 ] || ta_exec_real pbcopy "$@"
+case "$#:$*" in
+  '0:'|'2:-pboard general') ;;
+  *) ta_exec_real pbcopy "$@" ;;
+esac
+ta_tempfile
+cat > "$TA_SHIM_DATA"
+ta_copy pbcopy 1 0 "$@"

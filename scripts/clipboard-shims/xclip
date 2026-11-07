@@ -1,0 +1,38 @@
+#!/bin/sh
+# TA-CLIPBOARD-SHIM
+# xclip shim of T-Agent terminals: a copy (no -o) of text to the clipboard or primary selection also goes to the browser
+# clipboard (OSC 52), then the real xclip runs when an X display is set. Paste (-o / -out), the secondary selection,
+# non-text targets (-t image/png) and unknown flags go to the real xclip unchanged.
+. "$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)/osc52-lib.sh" || exit 1
+[ "$TA_CLIPBOARD_OSC52" = 1 ] || ta_exec_real xclip "$@"
+ta_tempfile
+want= files=0 filter=0 trim=0 sel=primary target=
+for a in "$@"; do
+  if [ -n "$want" ]; then
+    case $want in sel) sel=$a ;; target) target=$a ;; esac
+    want=
+    continue
+  fi
+  case $a in
+    -i|-in) ;;
+    -se|-sel|-sele|-selec|-select|-selecti|-selectio|-selection) want=sel ;;
+    -t|-ta|-tar|-targ|-targe|-target) want=target ;;
+    -d|-di|-dis|-disp|-displ|-displa|-display|-l|-lo|-loo|-loop|-loops) want=skip ;;
+    -f|-fi|-fil|-filt|-filte|-filter) filter=1 ;;
+    -r|-rm|-rmlastnl) trim=1 ;;
+    -si|-silent|-q|-quiet|-verb|-verbose|-noutf8|-sensitive) ;;
+    -*) ta_pass xclip "$@" ;;
+    *) files=1; cat -- "$a" >> "$TA_SHIM_DATA" 2>/dev/null ;;
+  esac
+done
+[ -z "$want" ] || ta_pass xclip "$@"
+case $sel in
+  c|cl|cli|clip|clipb|clipbo|clipboa|clipboar|clipboard|p|pr|pri|prim|prima|primar|primary) ;;
+  *) ta_pass xclip "$@" ;;
+esac
+ta_text_type "$target" || ta_pass xclip "$@"
+[ "$files" = 1 ] || cat > "$TA_SHIM_DATA"
+[ "$trim" = 0 ] || ta_trim_newline "$TA_SHIM_DATA"
+run=0
+[ -z "$DISPLAY" ] || run=1
+ta_copy xclip "$run" "$filter" "$@"

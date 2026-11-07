@@ -33,6 +33,7 @@ if (storedSchema > 0 && storedSchema < codeSchema) {
   }
 }
 
+// schema.sql creates missing tables on every start; schema 9 added the T-Attention tables (attention_items, attention_events, attention_tokens) this way.
 const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
 db.exec(schema);
 

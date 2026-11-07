@@ -247,7 +247,7 @@ test('an older database is migrated and its schema version is stored (old name T
   after.close();
 });
 
-test('a schema 7 database gets the terminal start directories (schema 8), with a copy taken first; a second start changes nothing', t => {
+test('a schema 7 database gets the terminal start directories (schema 8) and the later generations, with a copy taken first; a second start changes nothing', t => {
   const root = temp(t);
   assert.equal(openDb({ TAGENT_HOME: root }).status, 0);
   // Make it look like a database of the previous generation: no task_terminals.work_dir, no default-terminal table, user_version 7.
@@ -263,7 +263,7 @@ test('a schema 7 database gets the terminal start directories (schema 8), with a
 
   const result = openDb({ TAGENT_HOME: root });
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /schema 7 is migrated to 8; a copy of the database before the migration is in /);
+  assert.match(result.stdout, new RegExp(`schema 7 is migrated to ${CODE_SCHEMA}; a copy of the database before the migration is in `));
   const after = new Database(file, { readonly: true });
   assert.equal(after.pragma('user_version', { simple: true }), CODE_SCHEMA);
   assert.deepEqual(after.prepare('SELECT terminal_id, work_dir, agent_session_id FROM task_terminals ORDER BY terminal_id').all(),
@@ -272,7 +272,7 @@ test('a schema 7 database gets the terminal start directories (schema 8), with a
   after.close();
   const copies = fs.readdirSync(path.join(root, 'backups'));
   assert.equal(copies.length, 1);
-  assert.match(copies[0], /^db-schema-7-before-8-.+\.sqlite$/);
+  assert.match(copies[0], new RegExp(`^db-schema-7-before-${CODE_SCHEMA}-.+\\.sqlite$`));
   const copy = new Database(path.join(root, 'backups', copies[0]), { readonly: true });
   assert.equal(copy.pragma('user_version', { simple: true }), 7, 'the copy is the database as it was');
   assert.ok(!copy.prepare('PRAGMA table_info(task_terminals)').all().some(column => column.name === 'work_dir'));
@@ -287,6 +287,51 @@ test('a schema 7 database gets the terminal start directories (schema 8), with a
   const last = new Database(file, { readonly: true });
   assert.equal(last.prepare("SELECT work_dir FROM task_terminals WHERE terminal_id = 'a'").get().work_dir, '/work/old');
   last.close();
+});
+
+test('a schema 8 database gets the T-Attention tables (schema 9), with a copy taken first; existing data is kept and a second start changes nothing', t => {
+  const root = temp(t);
+  assert.equal(openDb({ TAGENT_HOME: root }).status, 0);
+  // A database of the previous generation: no attention_* tables, user_version 8.
+  const file = path.join(root, 'db.sqlite');
+  const old = new Database(file);
+  old.exec('DROP TABLE attention_events; DROP TABLE attention_items; DROP TABLE attention_tokens;');
+  old.prepare("INSERT INTO tasks (title, work_dir, user_id) VALUES ('kept task', '/work', 'owner')").run();
+  old.pragma('user_version = 8');
+  old.close();
+
+  const result = openDb({ TAGENT_HOME: root });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(CODE_SCHEMA, 9);
+  assert.match(result.stdout, /schema 8 is migrated to 9; a copy of the database before the migration is in /);
+  const after = new Database(file);
+  assert.equal(after.pragma('user_version', { simple: true }), 9);
+  for (const table of ['attention_items', 'attention_events', 'attention_tokens']) {
+    assert.equal(after.prepare('SELECT COUNT(*) AS n FROM sqlite_master WHERE type = ? AND name = ?').get('table', table).n, 1, table);
+  }
+  assert.equal(after.prepare('SELECT title FROM tasks').get().title, 'kept task');
+  // The events of an item go with it (foreign key with ON DELETE CASCADE).
+  after.pragma('foreign_keys = ON');
+  const item = after.prepare("INSERT INTO attention_items (title, created_at, updated_at) VALUES ('a', 'x', 'x')").run().lastInsertRowid;
+  after.prepare("INSERT INTO attention_events (item_id, at, actor, type) VALUES (?, 'x', 'user', 'created')").run(item);
+  assert.equal(after.prepare('SELECT status, priority, source FROM attention_items').get().status, 'todo');
+  assert.deepEqual(dataHome.userDataIn(after).filter(entry => entry.startsWith('T-Attention')), ['T-Attention items: 1'], 'items count as user data');
+  after.prepare('DELETE FROM attention_items WHERE id = ?').run(item);
+  assert.equal(after.prepare('SELECT COUNT(*) AS n FROM attention_events').get().n, 0);
+  after.close();
+  const copies = fs.readdirSync(path.join(root, 'backups'));
+  assert.equal(copies.length, 1);
+  assert.match(copies[0], /^db-schema-8-before-9-.+\.sqlite$/);
+  const copy = new Database(path.join(root, 'backups', copies[0]), { readonly: true });
+  assert.equal(copy.pragma('user_version', { simple: true }), 8, 'the copy is the database as it was');
+  assert.equal(copy.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE name LIKE 'attention_%'").get().n, 0);
+  copy.close();
+  if (posix) assert.equal(mode(path.join(root, 'backups', copies[0])), 0o600);
+
+  const again = openDb({ TAGENT_HOME: root });
+  assert.equal(again.status, 0, again.stderr);
+  assert.doesNotMatch(again.stdout, /is migrated/);
+  assert.equal(fs.readdirSync(path.join(root, 'backups')).length, 1, 'no second copy');
 });
 
 test('the lock refuses a second server and takes over a lock whose pid is dead', t => {

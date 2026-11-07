@@ -1136,8 +1136,9 @@
     session = s;
     warm = [s, ...warm];
     while (warm.length > WARM_MAX) disposeSession(warm[warm.length - 1]);
-    // Both input modes (terminal-clipboard.js): Cmd+C with a selection and Ctrl/Cmd+Shift+C copy, and a program's OSC 52 copy request is written
-    // at once right after the user's own gesture on this terminal, otherwise it asks first (`state.clipboard`). Only the shown terminal may copy.
+    // Both input modes (terminal-clipboard.js), one rule: copy on select. A finished mouse selection, Cmd+C / Ctrl+Shift+C, the double / triple tap
+    // below and a program's OSC 52 copy right after the user's own gesture on this terminal are written at once; a program's copy without one
+    // shows the bar with a preview first (`state.clipboard`). Only the shown terminal may copy.
     if (typeof TerminalClipboard !== 'undefined') s.clipboard = TerminalClipboard.attach(term, el, { isActive: () => session === s && !s.disposed && !s.el.hidden });
     attachFileLinks(s);
     // A pasted image or file (long-press paste in the xterm textarea, a file copied in the file manager) is uploaded like a picked one;
@@ -1635,7 +1636,7 @@
   // A click on the terminal gives it the focus (xterm does this on mouse down too; this also covers a click on its padding).
   terminalHost.addEventListener('click', event => {
     const s = session;
-    if (!deskKeys() || !s || s.disposed || s.term.hasSelection() || (event.target.closest && event.target.closest('#h5-wheel, #h5-selection-bar, #h5-clipboard-bar'))) return;
+    if (!deskKeys() || !s || s.disposed || s.term.hasSelection() || (event.target.closest && event.target.closest('#h5-wheel, #h5-clipboard-bar'))) return;
     s.term.focus();
   });
 
@@ -1866,10 +1867,11 @@
   terminalHost.addEventListener('scroll', cancelLongPress, true);
   terminalHost.addEventListener('contextmenu', event => { if (event.target.closest && event.target.closest('.h5-xterm') && longPressDone) event.preventDefault(); });
 
-  // Double tap selects a word and triple tap a line, with xterm's own selection (term.select / selectLines), then a small Copy / Cancel bar shows
-  // (the shell draws it from `selectionBar`). Only while the program has no mouse mode (term.modes.mouseTrackingMode === 'none'): vim, tmux and
-  // Claude Code get every tap as a click, never swallowed. The cell comes from the bounding box of .xterm-screen, which already includes the 4px
-  // inset, any transform (scale) and the keyboard shift. New output, or a tap elsewhere, clears the selection.
+  // Double tap selects a word and triple tap a line, with xterm's own selection (term.select / selectLines), and copies it at once, inside the
+  // tap (copy on select, terminal-clipboard.js `copy`: the same notice and bar as a program's OSC 52 copy). Only while the program has no mouse
+  // mode (term.modes.mouseTrackingMode === 'none'): vim, tmux and Claude Code get every tap as a click, never swallowed. The cell comes from the
+  // bounding box of .xterm-screen, which already includes the 4px inset, any transform (scale) and the keyboard shift. New output, or a tap
+  // elsewhere, clears the highlight.
   const MULTI_TAP_MS = 400;
   const MULTI_TAP_SLOP = 24; // px between taps of one multi-tap
   let tapChain = { count: 0, at: 0, x: 0, y: 0 };
@@ -1924,12 +1926,7 @@
   function hookSelection(s) {
     if (s.selectionHooked) return;
     s.selectionHooked = true;
-    s.term.onSelectionChange(() => { // the bar follows the selection, however it was made or cleared
-      if (session !== s || s.disposed) return;
-      const shown = s.term.hasSelection();
-      if (shown !== Boolean(ui.get().selectionBar)) ui.set({ selectionBar: shown });
-    });
-    s.term.onWriteParsed(() => { if (s.term.hasSelection()) { s.term.clearSelection(); ui.set({ selectionBar: false }); } }); // new output moves the text under the selection
+    s.term.onWriteParsed(() => { if (s.term.hasSelection()) s.term.clearSelection(); }); // new output moves the text under the highlight
   }
   terminalHost.addEventListener('click', event => {
     const s = session;
@@ -1939,42 +1936,17 @@
     tapChain = { count: chain, at: now, x: event.clientX, y: event.clientY };
     hookSelection(s);
     if (chain > 1) cancelPendingLink(); // a double or triple tap on a file link selects; it does not open the file
-    if (chain === 1) { if (s.term.hasSelection()) s.term.clearSelection(); ui.set({ selectionBar: false }); return; } // a tap elsewhere
+    if (chain === 1) { if (s.term.hasSelection()) s.term.clearSelection(); return; } // a tap elsewhere
     if (chain > 3) { tapChain.count = 1; return; }
     if (s.term.modes.mouseTrackingMode !== 'none') return; // the program owns the taps
     const cell = cellAt(s, event.clientX, event.clientY);
-    if (cell && selectAt(s, cell, chain)) ui.set({ selectionBar: s.term.hasSelection() }); // xterm reports the change a frame later; do not wait for it
+    if (cell && selectAt(s, cell, chain) && s.term.hasSelection()) void s.clipboard?.copy(s.term.getSelection()); // inside this tap's user activation
   });
-  async function copySelection() {
-    const s = session;
-    const text = s && !s.disposed ? s.term.getSelection() : '';
-    if (!text) return;
-    try {
-      await navigator.clipboard.writeText(text);
-    } catch {
-      // No clipboard API (plain HTTP): the legacy copy command from a temporary read-only field.
-      const field = document.createElement('textarea');
-      field.value = text;
-      field.readOnly = true;
-      field.setAttribute('aria-hidden', 'true');
-      field.style.cssText = 'position:fixed;top:0;left:0;opacity:0;pointer-events:none';
-      document.body.append(field);
-      field.select();
-      const ok = document.execCommand && document.execCommand('copy');
-      field.remove();
-      if (!ok) { tell('Could not copy. Select the text and copy it by hand', 'error'); return; }
-    }
-    s.term.clearSelection();
-    ui.set({ selectionBar: false });
-    tell('Copied', 'success');
-  }
-  ui.actions.selectionCopy = () => void copySelection();
-  // A program's OSC 52 copy request (terminal-clipboard.js): the shell shows it from `state.clipboard` (the dialog, or the "Tap to copy" bar);
-  // Confirm / Tap to copy writes inside the tap, Cancel drops it.
+  // The copy bar (terminal-clipboard.js, `state.clipboard`): a program's copy waiting for Copy, or a copy the browser refused ("Tap to copy").
+  // The button writes inside its own tap, Cancel drops it.
   if (typeof TerminalClipboard !== 'undefined') TerminalClipboard.setHost({ show: request => ui.set({ clipboard: request }) });
   ui.actions.clipboardConfirm = () => { if (typeof TerminalClipboard !== 'undefined') void TerminalClipboard.confirm(); };
   ui.actions.clipboardCancel = () => { if (typeof TerminalClipboard !== 'undefined') TerminalClipboard.cancel(); };
-  ui.actions.selectionCancel = () => { if (session && !session.disposed) session.term.clearSelection(); ui.set({ selectionBar: false }); };
 
   // A tap on a key of the key bar (the shell keeps the focus where it is, so tapping keys does not open or close the on-screen keyboard).
   // Types a preset command into the terminal like a paste; no Enter is sent, so the user checks it and presses Enter.
@@ -2284,7 +2256,7 @@
 
   // ── File links in the terminal (public/js/terminal-file-links.js): a tap on a path inside the working directory opens it in the sheet above ──
   // The tap waits out the double-tap time first, so a double or triple tap on a path still selects the word or the line and opens nothing. A long press
-  // (the copy view), an open copy view or a shown selection bar also open nothing. Nothing is read from the server until the tap.
+  // (the copy view) or an open copy view also open nothing. Nothing is read from the server until the tap.
   let pendingLink = 0;
   function cancelPendingLink() { clearTimeout(pendingLink); pendingLink = 0; }
   function attachFileLinks(s) {
@@ -2296,7 +2268,7 @@
       liveCwd: () => api('GET', `${s.source.tasksBase}/${s.task.id}/terminals/${encodeURIComponent(s.terminalId)}/cwd`).catch(() => null),
       activate: link => {
         cancelPendingLink();
-        if (session !== s || s.disposed || longPressDone || ui.get().copyText !== null || ui.get().selectionBar) return;
+        if (session !== s || s.disposed || longPressDone || ui.get().copyText !== null) return;
         pendingLink = setTimeout(async () => {
           pendingLink = 0;
           if (session !== s || s.disposed || longPressDone || ui.get().copyText !== null) return;

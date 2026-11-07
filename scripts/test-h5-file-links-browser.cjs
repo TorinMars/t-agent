@@ -244,12 +244,24 @@ let cwdAsks = 0;
       await page.waitForTimeout(700);
       assert.equal(await sheet.isVisible(), false, `${text} opens nothing`);
     }
-    // A double tap on a path selects the word (Copy bar) and opens nothing.
+    // A double tap on a path selects and copies the word and opens nothing; a triple tap selects and copies the line.
     const point = await pointOf('A1 ', 'src/app.js');
+    // Plain HTTP here: the copy goes through the legacy copy command from a temporary field; record what it copies.
+    await page.evaluate(() => { window.copied = null; document.execCommand = command => { if (command === 'copy') window.copied = document.activeElement.value; return command === 'copy'; }; });
+    const copiedNow = () => page.evaluate(() => window.copied);
     await tap(point); await page.waitForTimeout(80); await tap(point);
-    await page.locator('.h5-selection-bar').waitFor();
+    await page.waitForFunction(() => window.copied === 'src/app.js:42', null, { timeout: 3000 })
+      .catch(async error => { throw new Error(`double tap copied ${JSON.stringify(await copiedNow())}`, { cause: error }); });
     await page.waitForTimeout(700);
     assert.equal(await sheet.isVisible(), false, 'a double tap does not open the file');
+    assert.equal(await page.locator('#h5-clipboard-bar').count(), 0, 'no bar after the copy');
+    await page.getByText('Copied 13 characters').first().waitFor();
+    await page.waitForTimeout(500);
+    await tap(point); await page.waitForTimeout(80); await tap(point); await page.waitForTimeout(80); await tap(point);
+    await page.waitForFunction(() => (window.copied || '').trim() === 'A1 ● Read(src/app.js:42)', null, { timeout: 3000 })
+      .catch(async error => { throw new Error(`triple tap copied ${JSON.stringify(await copiedNow())}`, { cause: error }); });
+    await page.waitForTimeout(700);
+    assert.equal(await sheet.isVisible(), false, 'a triple tap does not open the file');
     assert.equal(reads.length, readsBefore, 'outside paths and the double tap read nothing');
     assert.equal(await resizes(), resizesBefore, 'the link taps send no resize to the PTY');
     assert.deepEqual(errors, []);

@@ -131,8 +131,10 @@ body.h5-tasks-open .h5-agent { border-bottom-left-radius: 28px; overflow: hidden
 }
 /* The match that the copy view search jumped to (CSS Custom Highlight API; browsers without it select the match instead). */
 ::highlight(h5-copy-match) { background: #ffd54f; color: #000; }
-/* Copy / Cancel after a double or triple tap selected text on the terminal. */
-.h5-selection-bar { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); z-index: 3; display: flex; gap: 4px; padding: 2px 4px; border-radius: 20px; }
+/* The copy bar (one for every terminal copy): a one-line preview cut to the bar's width, then Copy or Tap to copy, then Cancel. */
+.h5-clipboard-bar { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); z-index: 3; display: flex; align-items: center; gap: 4px; padding: 2px 4px 2px 12px; border-radius: 20px; max-width: calc(100% - 16px); box-sizing: border-box; }
+.h5-clipboard-preview { flex: 0 1 auto; min-width: 0; max-width: 360px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font: 13px/1.4 ui-monospace, Menlo, monospace; opacity: .85; }
+.h5-clipboard-bar .MuiButton-root { flex: none; white-space: nowrap; }
 
 /* Design document sheet (scripts/h5-shell/Design.jsx): the shared markdown.css is light, the phone page is dark. One more class wins over its rules. */
 .h5-design-body .markdown-body.markdown-body { color: #e6edf3; font-size: 14px; line-height: 1.7; }

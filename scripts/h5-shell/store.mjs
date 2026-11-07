@@ -41,9 +41,8 @@ export const initialState = () => ({
   translating: false,
   copyText: null, // the text of the copy view while it is open
   copyStale: false, // new output arrived while the user holds a selection in the copy view
-  selectionBar: false, // a word / line is selected on the terminal: show Copy / Cancel
-  // A program's OSC 52 copy request (public/js/terminal-clipboard.js): { id, kind, text, chars, failed }. kind 'ask': the confirmation dialog (no recent
-  // gesture of the user); kind 'tap': the "Tap to copy" bar (the browser refused the automatic write after the user's gesture).
+  // The copy bar (public/js/terminal-clipboard.js): { id, kind, text, preview, chars }. kind 'ask': a program's copy without a recent gesture
+  // of the user, written only on Copy; kind 'tap': the browser refused a copy (page selection or program), "Tap to copy" writes it.
   clipboard: null,
   upload: null, // { status, progress } while an image goes up (progress: 0-100, or null when it is not known)
   retainUrl: null, // the link of an image that was uploaded after its terminal went away

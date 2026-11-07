@@ -11,23 +11,21 @@ import { Icon } from './Icons.jsx';
 import { commandsFor } from './commands.mjs';
 import { TerminalKeyboard } from './Osk.jsx';
 
-// The terminal area. h5.js puts the xterm element in after these two; React draws only the note, the wheel strip (h5.js handles its touches) and the selection bar.
+// The terminal area. h5.js puts the xterm element in after these two; React draws only the note, the wheel strip (h5.js handles its touches) and the copy bar.
 export function TerminalArea({ state, ui }) {
   return (
     <Box component="main" className="h5-terminal" id="h5-terminal">
       {state.empty ? <div className="h5-empty" id="h5-empty">{t(state.empty)}</div> : null}
       {/* The wheel strip is for fingers; a computer has a real wheel or trackpad, so it is not drawn there (input mode 'pointer'). */}
       {state.input === 'pointer' ? null : <div className="h5-wheel" id="h5-wheel" role="presentation" aria-label={t('Scroll wheel')} />}
-      {/* The browser refused to write a program's copy (OSC 52) right after the user's gesture (iOS Safari): this tap writes inside its own gesture. */}
-      {state.clipboard && state.clipboard.kind === 'tap' ? (
-        <Paper className="h5-selection-bar" id="h5-clipboard-bar" role="toolbar" aria-label={t('Copy from the program')} elevation={4} onMouseDown={event => event.preventDefault()}>
-          <Button id="h5-clipboard-copy" size="small" onClick={() => ui.actions.clipboardConfirm()}>{t('Tap to copy')}</Button>
+      {/* The copy bar, one for every copy from the terminal (public/js/terminal-clipboard.js): kind 'ask' is a program's copy without a recent
+          gesture of the user (nothing is written before Copy); kind 'tap' is a copy the browser refused to write (a page selection or a program's
+          copy alike), written inside this tap. The preview is one line, cut to the bar's width; later output cannot change it. */}
+      {state.clipboard ? (
+        <Paper className="h5-clipboard-bar" id="h5-clipboard-bar" role="toolbar" aria-label={t('Copy to the clipboard')} elevation={4} data-kind={state.clipboard.kind} onMouseDown={event => event.preventDefault()}>
+          <span className="h5-clipboard-preview" id="h5-clipboard-text" translate="no" title={state.clipboard.text}>{state.clipboard.preview}</span>
+          <Button id="h5-clipboard-copy" size="small" onClick={() => ui.actions.clipboardConfirm()}>{state.clipboard.kind === 'ask' ? t('Copy') : t('Tap to copy')}</Button>
           <Button id="h5-clipboard-cancel" size="small" color="inherit" onClick={() => ui.actions.clipboardCancel()}>{t('Cancel')}</Button>
-        </Paper>
-      ) : state.selectionBar ? (
-        <Paper className="h5-selection-bar" id="h5-selection-bar" role="toolbar" aria-label={t('Selected text')} elevation={4} onMouseDown={event => event.preventDefault()}>
-          <Button id="h5-selection-copy" size="small" onClick={() => ui.actions.selectionCopy()}>{t('Copy')}</Button>
-          <Button id="h5-selection-cancel" size="small" color="inherit" onClick={() => ui.actions.selectionCancel()}>{t('Cancel')}</Button>
         </Paper>
       ) : null}
     </Box>

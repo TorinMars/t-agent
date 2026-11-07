@@ -1,7 +1,11 @@
-// Program copy requests (OSC 52, public/js/terminal-clipboard.js) on the real page in Chromium, in touch mode (a phone) and pointer mode (a computer):
-// right after the user's own tap or click on the terminal the text goes to the clipboard at once ("Copied N characters"); without a gesture the
-// MUI dialog shows the text and copies only on "Confirm copy" (Cancel copies nothing); when the browser refuses the automatic write, the
-// "Tap to copy" bar writes inside its own tap; replayed history and a hidden terminal never copy. Pointer mode also checks Cmd+C on a selection.
+// Copy on select on the real page in Chromium, in touch mode (a phone, 390 px) and pointer mode (a computer, 1440 px). One rule for every copy
+// from the terminal (public/js/terminal-clipboard.js), so a page selection and a program's OSC 52 copy cannot be told apart:
+// - a double / triple tap (touch) or a finished mouse drag (pointer) copies at once with "Copied N characters", no bar; Cmd+C gives no second notice;
+// - a program's copy right after the user's own tap or click is written at once with the identical notice (split request, duplicate merged);
+// - a program's copy without a gesture shows the bar with a one-line preview; Copy writes, Cancel does not, it expires after 60 s, later output
+//   cannot replace it;
+// - a write the browser refuses shows the same "Tap to copy" bar (same DOM) for both sources, and the tap writes; when that fails too, one error
+//   notice; the same text from the page and the program within 2 s is one copy; replayed history never copies.
 // The page is served over https (routed), so the real clipboard API is used with granted permissions.
 const { chromium } = require('playwright');
 const fs = require('node:fs');
@@ -42,6 +46,7 @@ async function openPage(browser, touch) {
     if (url.pathname === '/api/tasks/1/agent/conversations') return json([]);
     return json({ error: 'not mocked' }, 404);
   });
+  await page.clock.install(); // time runs normally; the expiry test fast-forwards it
   await page.goto(`${ORIGIN}/h5`);
   assert.equal(await page.evaluate(() => document.documentElement.dataset.input), touch ? 'touch' : 'pointer');
   const how = touch ? 'tap' : 'click';
@@ -53,6 +58,12 @@ async function openPage(browser, touch) {
   await page.evaluate(() => window.sockets[0].emit('hello world from the shell\r\n$ '));
   await page.waitForFunction(() => document.querySelector('.h5-xterm:not([hidden]) .xterm-rows')?.textContent.includes('hello world'));
   await page.waitForTimeout(400); // the replay pause ends
+  // Every notice the page shows, with its type (toast.js `notify`, looked up at call time by h5.js and terminal-clipboard.js).
+  await page.evaluate(() => {
+    window.notices = [];
+    const real = window.notify;
+    window.notify = (message, type) => { window.notices.push([message, type]); return real(message, type); };
+  });
   return { page, context, errors };
 }
 
@@ -62,104 +73,209 @@ async function run(browser, touch) {
   const clipboard = () => page.evaluate(() => navigator.clipboard.readText());
   const setClipboard = text => page.evaluate(value => navigator.clipboard.writeText(value), text);
   const emit = data => page.evaluate(value => window.sockets[0].emit(value), data);
-  const dialog = page.locator('#h5-clipboard');
-  const notice = () => page.locator('.MuiSnackbar-root .MuiAlert-message').last();
+  const bar = page.locator('#h5-clipboard-bar');
+  const press = locator => locator[touch ? 'tap' : 'click']();
+  const notices = () => page.evaluate(() => window.notices.splice(0));
+  const waitNotice = message => page.waitForFunction(text => window.notices.some(([m]) => m === text), message, { timeout: 5000 })
+    .catch(async error => { throw new Error(`${mode}: no notice "${message}"; seen ${JSON.stringify(await page.evaluate(() => window.notices))}, clipboard ${JSON.stringify(await clipboard())}`, { cause: error }); });
+  // The look of the bar without its text: tag, classes, ids and button labels, so the two sources can be compared.
+  const barShape = () => page.evaluate(() => {
+    const node = document.querySelector('#h5-clipboard-bar');
+    return { className: node.className, kind: node.dataset.kind, label: node.getAttribute('aria-label'), parts: [...node.children].map(child => `${child.tagName}#${child.id}.${child.className}${child.tagName === 'BUTTON' ? `:${child.textContent}` : ''}`) };
+  });
+  // The look of the notice that is shown (MUI Alert severity and classes).
+  const noticeShape = () => page.evaluate(() => [...document.querySelectorAll('.MuiSnackbar-root .MuiAlert-root')].pop()?.className.replace(/css-\S+/g, '').trim());
   // A gesture on the terminal: a finger tap in touch mode, a mouse click in pointer mode (on an empty row, away from the text).
   const gesture = async () => {
     const box = await page.locator('.h5-xterm:not([hidden]) .xterm-screen').boundingBox();
     if (touch) await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height - 20);
     else await page.mouse.click(box.x + box.width / 2, box.y + box.height - 20);
   };
+  // Where the text `word` is on the row that contains `rowStart` (a range over its characters).
+  const where = (rowStart, word) => page.evaluate(([start, text]) => {
+    const plain = node => node.textContent.replace(/\u00a0/g, ' ');
+    const row = [...document.querySelectorAll('.h5-xterm:not([hidden]) .xterm-rows > div')].find(item => plain(item).includes(start));
+    const walker = document.createTreeWalker(row, NodeFilter.SHOW_TEXT);
+    let offset = plain(row).indexOf(text);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      if (offset < node.length) {
+        const range = document.createRange();
+        range.setStart(node, offset);
+        range.setEnd(node, Math.min(node.length, offset + text.length));
+        const box = range.getBoundingClientRect();
+        return { x: box.left, y: box.top + box.height / 2, right: box.right };
+      }
+      offset -= node.length;
+    }
+    return null;
+  }, [rowStart, word]);
+  // The page's own selection: a double (word) or triple (line) tap with a finger; a mouse drag over the text.
+  const select = async (rowStart, word, count = 2) => {
+    const point = await where(rowStart, word);
+    if (touch) {
+      await page.waitForTimeout(450); // the previous multi-tap is over
+      for (let i = 0; i < count; i++) await page.touchscreen.tap(point.x + 3, point.y);
+    } else {
+      await page.mouse.move(point.x + 1, point.y);
+      await page.mouse.down();
+      await page.mouse.move(point.right + 1, point.y, { steps: 6 });
+      await page.mouse.up();
+    }
+  };
+  // The text to select sits lower on the screen, away from the notice at the top.
+  await emit('\r\n'.repeat(6) + 'pick a word from the shell\r\n$ ');
+  await page.waitForFunction(() => document.querySelector('.h5-xterm:not([hidden]) .xterm-rows')?.textContent.includes('pick'));
   // Wait out the gesture window (1500 ms) of the taps that opened the terminal.
   await page.waitForTimeout(1600);
+  await notices();
 
-  // 1. No gesture: the dialog shows the text; nothing is written before Confirm copy.
+  // 1. Page selection copies at once, with the notice and no bar.
+  await setClipboard('before');
+  await select('pick a word', 'word');
+  await waitNotice('Copied 4 characters');
+  assert.equal(await clipboard(), 'word', `${mode}: the selection is copied on select`);
+  assert.equal(await bar.count(), 0, `${mode}: no bar after a successful copy`);
+  const pageNotice = await notices();
+  const pageNoticeShape = await noticeShape();
+  assert.deepEqual(pageNotice, [['Copied 4 characters', 'success']]);
+  if (touch) {
+    await select('pick a word', 'word', 3); // a triple tap copies the whole line
+    await waitNotice('Copied 26 characters');
+    assert.equal((await clipboard()).trim(), 'pick a word from the shell', `${mode}: triple tap copies the line`);
+  } else {
+    // Cmd+C on the selection just copied: no second notice.
+    await page.keyboard.press('Meta+c');
+    await page.waitForTimeout(300);
+    assert.deepEqual(await notices(), [], `${mode}: Cmd+C on the same text gives no second notice`);
+    // A plain click copies nothing (it clears the selection).
+    await setClipboard('kept');
+    await gesture();
+    await page.waitForTimeout(300);
+    assert.equal(await clipboard(), 'kept', `${mode}: a plain click copies nothing`);
+    await page.waitForTimeout(2100); // the merge window is over
+    // A double click copies the word, Cmd+C on a fresh selection still copies.
+    const point = await where('pick a word', 'pick');
+    await page.mouse.dblclick(point.x + 3, point.y);
+    await waitNotice('Copied 4 characters');
+    assert.equal(await clipboard(), 'pick', `${mode}: a double click copies the word`);
+  }
+  await notices();
+  await page.waitForTimeout(1600); // the gesture of the selection is over
+
+  // 2. A program's copy without a gesture: the bar with a one-line preview; nothing is written before Copy; later output cannot replace it.
   await setClipboard('before');
   await emit(osc('Remote program\nhello ✓ 中文'));
-  await dialog.waitFor({ state: 'visible' });
-  assert.equal(await page.locator('#h5-clipboard-text').inputValue(), 'Remote program\nhello ✓ 中文');
-  // A second request cannot replace the text shown for approval.
+  await bar.waitFor({ state: 'visible' });
+  assert.equal(await page.locator('#h5-clipboard-text').textContent(), 'Remote program hello ✓ 中文', `${mode}: one-line preview`);
+  assert.equal(await page.locator('#h5-clipboard-copy').textContent(), 'Copy');
+  assert.equal(await page.locator('#h5-clipboard').count(), 0, `${mode}: no dialog any more`);
   await emit(osc('evil'));
-  assert.equal(await page.locator('#h5-clipboard-text').inputValue(), 'Remote program\nhello ✓ 中文');
-  assert.equal(await clipboard(), 'before', `${mode}: nothing written before confirmation`);
-  await page.locator('#h5-clipboard-confirm')[touch ? 'tap' : 'click']();
-  await dialog.waitFor({ state: 'hidden' });
-  assert.equal(await clipboard(), 'Remote program\nhello ✓ 中文', `${mode}: Confirm copy writes`);
-  await page.waitForFunction(() => [...document.querySelectorAll('.MuiAlert-message')].some(node => node.textContent === 'Copied 25 characters'));
-
-  // 2. No gesture, Cancel: nothing is written.
+  assert.equal(await page.locator('#h5-clipboard-text').textContent(), 'Remote program hello ✓ 中文');
+  assert.equal(await clipboard(), 'before', `${mode}: nothing written before Copy`);
+  const box = await bar.boundingBox();
+  const viewport = page.viewportSize();
+  assert.ok(box.x >= 0 && box.x + box.width <= viewport.width, `${mode}: the bar fits the width`);
+  await press(page.locator('#h5-clipboard-copy'));
+  await bar.waitFor({ state: 'hidden' });
+  assert.equal(await clipboard(), 'Remote program\nhello ✓ 中文', `${mode}: Copy writes the full text`);
+  await waitNotice('Copied 25 characters');
+  await notices();
+  // Cancel writes nothing.
   await emit(osc('cancelled text'));
-  await dialog.waitFor({ state: 'visible' });
-  await page.locator('#h5-clipboard-cancel-ask')[touch ? 'tap' : 'click']();
-  await dialog.waitFor({ state: 'hidden' });
+  await bar.waitFor({ state: 'visible' });
+  await press(page.locator('#h5-clipboard-cancel'));
+  await bar.waitFor({ state: 'hidden' });
   assert.equal(await clipboard(), 'Remote program\nhello ✓ 中文', `${mode}: Cancel copies nothing`);
-  await page.waitForTimeout(1600); // the Cancel tap was not on the terminal, but wait anyway so the next case starts clean
+  // A waiting request expires after 60 s.
+  await emit(osc('expires'));
+  await bar.waitFor({ state: 'visible' });
+  await page.clock.fastForward('01:01');
+  await bar.waitFor({ state: 'hidden' });
+  assert.equal(await clipboard(), 'Remote program\nhello ✓ 中文', `${mode}: an expired request copies nothing`);
+  await page.waitForTimeout(1600);
 
-  // 3. Right after a gesture on the terminal (Claude Code copies a selection on release): written at once, no dialog, even split over two writes.
+  // 3. Right after a gesture (Claude Code copies a selection on release): written at once with the identical notice, even split over two writes.
   await gesture();
   const payload = Buffer.from('selected in Claude Code').toString('base64');
   await emit(`\x1b]52;c;${payload.slice(0, 6)}`);
   await page.waitForTimeout(150);
   await emit(`${payload.slice(6)}\x07`);
-  await page.waitForFunction(() => [...document.querySelectorAll('.MuiAlert-message')].some(node => node.textContent === 'Copied 23 characters'));
+  await waitNotice('Copied 23 characters');
   assert.equal(await clipboard(), 'selected in Claude Code', `${mode}: user-initiated copy is written at once`);
-  assert.equal(await dialog.isVisible(), false, `${mode}: no dialog for a user-initiated copy`);
-  // The same text again at once (a pbcopy shim plus the program's own OSC 52) is merged: no second write, no dialog.
+  assert.equal(await bar.count(), 0, `${mode}: no bar for a user-initiated copy`);
+  const programNotice = await notices();
+  assert.deepEqual(programNotice.map(([, type]) => type), pageNotice.map(([, type]) => type), `${mode}: same notice type for both sources`);
+  assert.equal(await noticeShape(), pageNoticeShape, `${mode}: the notice looks the same for both sources`);
+  // The same text again at once (a pbcopy shim plus the program's own OSC 52) is merged: no second write, no bar.
   await setClipboard('marker');
   await emit(osc('selected in Claude Code'));
   await page.waitForTimeout(300);
-  assert.equal(await dialog.isVisible(), false, `${mode}: a duplicate opens no dialog`);
+  assert.equal(await bar.count(), 0, `${mode}: a duplicate shows no bar`);
   assert.equal(await clipboard(), 'marker', `${mode}: a duplicate is not written again`);
-  await setClipboard('selected in Claude Code');
-  // The gesture is used up: the next request asks.
-  await emit(osc('second request'));
-  await dialog.waitFor({ state: 'visible' });
-  await page.keyboard.press('Escape');
-  await dialog.waitFor({ state: 'hidden' });
-  assert.equal(await clipboard(), 'selected in Claude Code');
+  await page.waitForTimeout(1600);
 
-  // 4. The browser refuses the automatic write (iOS Safari after a network round trip): the "Tap to copy" bar writes inside its own tap.
+  // 4. Duplicate merge across sources: the page copies a selection, the program sends the same text: one write, one notice.
+  await select('pick a word', 'shell');
+  await waitNotice('Copied 5 characters');
+  await setClipboard('marker');
+  await emit(osc('shell'));
+  await page.waitForTimeout(300);
+  assert.equal(await clipboard(), 'marker', `${mode}: the program's copy of the page selection is merged`);
+  assert.deepEqual(await notices(), [['Copied 5 characters', 'success']], `${mode}: one notice for both sources`);
+  assert.equal(await bar.count(), 0);
+  await page.waitForTimeout(2100);
+
+  // 5. The browser refuses the write: the same "Tap to copy" bar for a page selection and for a program's copy; the tap writes.
   await page.evaluate(() => {
     const real = navigator.clipboard.writeText.bind(navigator.clipboard);
-    window.refuseOnce = true;
-    navigator.clipboard.writeText = text => (window.refuseOnce ? (window.refuseOnce = false, Promise.reject(new DOMException('no activation', 'NotAllowedError'))) : real(text));
+    window.refuse = 0;
+    navigator.clipboard.writeText = text => (window.refuse > 0 ? (window.refuse -= 1, Promise.reject(new DOMException('no activation', 'NotAllowedError'))) : real(text));
     const exec = document.execCommand.bind(document);
     document.execCommand = command => (command === 'copy' && window.refuseExec ? false : exec(command));
-    window.refuseExec = true;
   });
+  const refuse = (times = 1) => page.evaluate(count => { window.refuse = count; window.refuseExec = true; }, times);
+  const allow = () => page.evaluate(() => { window.refuse = 0; window.refuseExec = false; });
+  await setClipboard('before');
+  await refuse();
+  await select('pick a word', 'from');
+  await bar.waitFor({ state: 'visible' });
+  const pageBar = await barShape();
+  assert.equal(await page.locator('#h5-clipboard-copy').textContent(), 'Tap to copy');
+  assert.equal(await clipboard(), 'before');
+  await allow();
+  await press(page.locator('#h5-clipboard-copy'));
+  await bar.waitFor({ state: 'hidden' });
+  assert.equal(await clipboard(), 'from', `${mode}: Tap to copy writes the page selection`);
+  await page.waitForTimeout(1600);
+  await refuse();
   await gesture();
   await emit(osc('needs its own tap'));
-  await page.locator('#h5-clipboard-bar').waitFor({ state: 'visible' });
-  assert.equal(await clipboard(), 'selected in Claude Code');
-  await page.evaluate(() => { window.refuseExec = false; });
-  await page.locator('#h5-clipboard-copy')[touch ? 'tap' : 'click']();
-  await page.locator('#h5-clipboard-bar').waitFor({ state: 'hidden' });
-  assert.equal(await clipboard(), 'needs its own tap', `${mode}: Tap to copy writes`);
+  await bar.waitFor({ state: 'visible' });
+  assert.deepEqual(await barShape(), pageBar, `${mode}: the same bar for a page selection and a program copy`);
+  await allow();
+  await press(page.locator('#h5-clipboard-copy'));
+  await bar.waitFor({ state: 'hidden' });
+  assert.equal(await clipboard(), 'needs its own tap', `${mode}: Tap to copy writes the program copy`);
+  await notices();
+  // The tap fails too: the bar closes with one error notice.
+  await page.waitForTimeout(2100);
+  await refuse(2);
+  await gesture();
+  await emit(osc('nothing works'));
+  await bar.waitFor({ state: 'visible' });
+  await press(page.locator('#h5-clipboard-copy'));
+  await bar.waitFor({ state: 'hidden' });
+  const failed = touch ? 'Could not copy. Long-press to open the copy view' : 'Could not copy. Use Copy text in the terminal menu';
+  await waitNotice(failed);
+  assert.deepEqual(await notices(), [[failed, 'error']]);
+  await allow();
 
-  // 5. Replayed history never copies or asks, even right after a gesture.
+  // 6. Replayed history never copies or asks, even right after a gesture.
   await gesture();
   await page.evaluate(data => window.sockets[0].emit(JSON.stringify({ type: 'history', data, cols: 60, rows: 20 })), `$ ${osc('replayed')}`);
   await page.waitForTimeout(500);
-  assert.equal(await dialog.isVisible(), false);
-  assert.equal(await page.locator('#h5-clipboard-bar').count(), 0);
+  assert.equal(await bar.count(), 0);
   assert.equal(await clipboard(), 'needs its own tap', `${mode}: replay copies nothing`);
-
-  // 6. Pointer mode: a mouse selection and Cmd+C still copy (the page's own selection, not OSC 52).
-  if (!touch) {
-    await page.evaluate(() => window.sockets[0].emit('\r\nselect me please\r\n$ '));
-    await page.waitForFunction(() => document.querySelector('.h5-xterm:not([hidden]) .xterm-rows')?.textContent.includes('select me'));
-    const row = await page.evaluate(() => {
-      const node = [...document.querySelectorAll('.h5-xterm:not([hidden]) .xterm-rows > div')].find(item => item.textContent.startsWith('select me'));
-      const box = node.getBoundingClientRect();
-      return { x: box.left, y: box.top + box.height / 2 };
-    });
-    await page.mouse.move(row.x + 2, row.y);
-    await page.mouse.down();
-    await page.mouse.move(row.x + 60, row.y, { steps: 6 });
-    await page.mouse.up();
-    await page.keyboard.press('Meta+c');
-    await page.waitForFunction(() => navigator.clipboard.readText().then(text => text.startsWith('select')), null, { timeout: 2000 });
-  }
   assert.deepEqual(errors, []);
   await context.close();
 }
@@ -169,6 +285,6 @@ async function run(browser, touch) {
   try {
     await run(browser, true);
     await run(browser, false);
-    console.log('PASS: OSC 52 on the page in touch and pointer mode: auto copy after a gesture (split request, duplicate merged), confirmation dialog without one (Confirm / Cancel, immutable preview), Tap to copy fallback, replay ignored, Cmd+C on a mouse selection.');
+    console.log('PASS: copy on select in touch (390 px) and pointer (1440 px) mode: double / triple tap and mouse drag / double click copy at once with the OSC 52 notice, Cmd+C no second notice, program copy after a gesture (split, duplicate merged), bar with preview without one (Copy / Cancel / expiry, immutable), the same Tap to copy bar for both sources, error notice, merge across sources, replay ignored.');
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

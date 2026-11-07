@@ -1,7 +1,7 @@
 import { useLayoutEffect, useState, useSyncExternalStore } from 'react';
 import CssBaseline from '@mui/material/CssBaseline';
 import { ThemeProvider } from '@mui/material/styles';
-import { ClipboardDialog, CopyDialog, Notice, RetainDialog, UploadDialog } from './Dialogs.jsx';
+import { CopyDialog, Notice, RetainDialog, UploadDialog } from './Dialogs.jsx';
 import { DesignSheet } from './Design.jsx';
 import { FileTreeSheet } from './FileTree.jsx';
 import { Header } from './Header.jsx';
@@ -57,7 +57,6 @@ export function App({ ui }) {
       <Lazy open={Boolean(state.design && state.design.open)}><DesignSheet state={state} ui={ui} /></Lazy>
       <Lazy open={Boolean(state.upload)}><UploadDialog state={state} ui={ui} /></Lazy>
       <Lazy open={state.retainUrl !== null}><RetainDialog state={state} ui={ui} /></Lazy>
-      <Lazy open={Boolean(state.clipboard && state.clipboard.kind === 'ask')}><ClipboardDialog state={state} ui={ui} /></Lazy>
       <Lazy open={Boolean(state.taskDialog)}><TaskDialog state={state} ui={ui} /></Lazy>
       <Notice state={state} ui={ui} />
     </ThemeProvider>

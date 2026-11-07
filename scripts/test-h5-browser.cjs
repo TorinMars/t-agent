@@ -1493,7 +1493,8 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     await page.locator('#h5-copy-close').tap();
     await page.locator('#h5-copy').waitFor({ state: 'hidden' });
 
-    // Double tap selects a word, triple tap a line, then Copy / Cancel; a program with mouse mode gets the taps instead.
+    // Double tap selects a word and triple tap a line and copies at once (copy on select, the same notice as a program copy, no bar);
+    // new output clears the highlight; a program with mouse mode gets the taps instead.
     await page.evaluate(() => window.sockets[1].emit('\x1b[2J\x1b[Hhello world foo'));
     await page.waitForTimeout(150);
     const cell = { w: screenBox.width / termCols };
@@ -1509,29 +1510,27 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
         }, [screenBox.x + (col + 0.5) * cell.w, screenBox.y + 4]);
       }
     };
+    const selected = () => page.evaluate(() => document.querySelector('.h5-xterm:not([hidden]) .xterm-selection')?.children.length || 0);
+    // Plain HTTP here: the copy uses the legacy copy command from a temporary field (terminal-clipboard.js); record what it copies.
+    await page.evaluate(() => { document.execCommand = command => { if (command === 'copy') window.copied = document.activeElement.value; return command === 'copy'; }; });
     await page.evaluate(() => { window.copied = ''; });
     await tap(8, 2);
-    await page.locator('#h5-selection-bar').waitFor({ state: 'visible', timeout: 2000 });
-    await page.locator('#h5-selection-copy').click();
-    await page.waitForFunction(() => window.copied === 'world');
-    await page.locator('#h5-selection-bar').waitFor({ state: 'hidden' });
+    await page.waitForFunction(() => window.copied === 'world', null, { timeout: 2000 });
+    await page.getByText('Copied 5 characters').first().waitFor();
+    assert.equal(await page.locator('#h5-clipboard-bar').count(), 0, 'no bar after the copy');
     await tap(8, 3);
-    await page.locator('#h5-selection-bar').waitFor({ state: 'visible', timeout: 2000 });
-    await page.locator('#h5-selection-copy').click();
-    await page.waitForFunction(() => window.copied.trim() === 'hello world foo');
-    await tap(8, 2);
-    await page.locator('#h5-selection-bar').waitFor({ state: 'visible' });
-    await page.locator('#h5-selection-cancel').click();
-    await page.locator('#h5-selection-bar').waitFor({ state: 'hidden' });
-    await tap(8, 2);
-    await page.locator('#h5-selection-bar').waitFor({ state: 'visible' });
+    await page.waitForFunction(() => window.copied.trim() === 'hello world foo', null, { timeout: 2000 });
+    assert.equal(await page.locator('#h5-clipboard-bar').count(), 0);
+    await page.waitForFunction(() => document.querySelector('.h5-xterm:not([hidden]) .xterm-selection')?.children.length > 0);
     await page.evaluate(() => window.sockets[1].emit('x'));
-    await page.locator('#h5-selection-bar').waitFor({ state: 'hidden', timeout: 2000 });
+    await page.waitForFunction(() => !document.querySelector('.h5-xterm:not([hidden]) .xterm-selection')?.children.length, null, { timeout: 2000 });
     await page.evaluate(() => window.sockets[1].emit('\x1b[?1000h'));
     await page.waitForTimeout(100);
+    await page.evaluate(() => { window.copied = ''; });
     await tap(8, 2);
     await page.waitForTimeout(200);
-    assert.equal(await page.locator('#h5-selection-bar').count(), 0, 'no selection while the program tracks the mouse');
+    assert.equal(await selected(), 0, 'no selection while the program tracks the mouse');
+    assert.equal(await page.evaluate(() => window.copied), '', 'and nothing copied');
     await page.evaluate(() => window.sockets[1].emit('\x1b[?1000l'));
 
     // Terminal actions: the "⋯" on a terminal row opens rename / reopen / restart / delete.

@@ -6,7 +6,8 @@ import FormControlLabel from '@mui/material/FormControlLabel';
 import Typography from '@mui/material/Typography';
 import TextField from './TextField.jsx';
 import { api, t } from './common.jsx';
-import { Feedback, Field, Group, Hint, failure, useFeedback } from './Form.jsx';
+import { Feedback, Field, Hint, failure, useFeedback } from './Form.jsx';
+import { registerAttentionSettings } from './attention-slots.mjs';
 
 // T-Attention notifier settings: the Telegram login (account 1), account 2, the ring time, and the rules (mode per status and notifier,
 // delay before a call, quiet hours, hourly limits, the page address for links). Server side: services/attention-notify.js and
@@ -198,12 +199,15 @@ export function NotifierSettings({ active = true }) {
   );
 }
 
-// The same settings as their own folding group of the settings sheet.
-export function NotifierGroup() {
-  const [opened, setOpened] = useState(0);
+// The notifier settings live in the Settings group "T-Attention" (attention-slots.mjs), under their own heading. They are read when that group
+// opens (`opened` > 0) and again on each later opening.
+function NotifierSlot({ opened }) {
   return (
-    <Group id="notify" title="T-Attention notifications" onOpen={() => setOpened(count => count + 1)}>
+    <>
+      <Typography variant="subtitle2" component="h3" sx={{ fontWeight: 700, mt: 1 }}>{t('Notifications')}</Typography>
       {opened ? <NotifierSettings key={opened} active /> : null}
-    </Group>
+    </>
   );
 }
+
+registerAttentionSettings({ id: 'notifiers', order: 100, Component: NotifierSlot });

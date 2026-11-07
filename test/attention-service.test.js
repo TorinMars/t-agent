@@ -213,7 +213,9 @@ test('tokens: shown once, stored as a hash, verified, last_used_at, revoked', ()
   tick();
   assert.deepEqual(service.verifyToken(made.token), { id: made.id, name: 'laptop' });
   assert.equal(service.listTokens()[0].last_used_at, '2026-11-08T10:00:01.000Z');
-  assert.equal(service.verifyToken(`${made.token.slice(0, -1)}A`), null);
+  // One character changed (never to itself: the last one of 32 bytes in base64url has only 16 values, so a fixed 'A' could give the same token).
+  const changed = `${made.token.slice(0, 10)}${made.token[10] === 'A' ? 'B' : 'A'}${made.token.slice(11)}`;
+  assert.equal(service.verifyToken(changed), null);
   assert.equal(service.verifyToken('tatt_short'), null);
   assert.equal(service.verifyToken(undefined), null);
   assert.equal(service.tokenActive(made.id), true);

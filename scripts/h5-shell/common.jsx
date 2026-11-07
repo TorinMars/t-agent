@@ -20,6 +20,10 @@ export async function api(method, url, body) {
   return data;
 }
 
+// The text of a failed request for the person: the server's English `message` (translated by the server dictionary) when it sent one, else the
+// error code that `api` put into `error.message`.
+export const errorText = error => t((error && error.data && typeof error.data.message === 'string' && error.data.message) || (error && error.message) || '');
+
 // An icon that agent-chat.js draws as a DOM node (the agent's mark, the chat bubble): put into the React tree and left alone.
 export function DomIcon({ make }) {
   const ref = useRef(null);

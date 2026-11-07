@@ -30,6 +30,10 @@ const html = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8').replace(
         const reply = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } });
         const tg = server.tg;
         if (url.startsWith('/api/system/')) return reply({});
+        // The rest of the Settings group "T-Attention" (the notifier settings are drawn in its slot) and the list for the row 2 badge.
+        if (url === '/api/attention/tokens') return reply({ tokens: [] });
+        if (url === '/api/attention/settings/summary') return reply({ enabled: false, provider: 'deepseek', model: '', providers: [{ id: 'deepseek', label: 'DeepSeek', hasApiKey: false, model: 'deepseek-chat' }] });
+        if (url.startsWith('/api/attention') && !url.startsWith('/api/attention-notify')) return reply({ items: [], host: 'mac' });
         if (url === '/api/attention-notify/config' && method === 'GET') return reply(view());
         if (url === '/api/attention-notify/config' && method === 'PUT') { server.rules = { ...server.rules, ...body, modes: body.modes }; return reply(view()); }
         if (url === '/api/attention-notify/telegram/start') { Object.assign(tg, { step: 'code', apiId: Number(body.api_id), phone: '+86*********78' }); return reply({ ...tg, codeVia: 'app' }); }
@@ -46,8 +50,11 @@ const html = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8').replace(
     await page.locator('#h5-settings').waitFor({ state: 'visible' });
     const notifyCalls = () => page.evaluate(() => window.calls.filter(call => call.url.startsWith('/api/attention-notify')));
     assert.equal((await notifyCalls()).length, 0, 'nothing is read before the group opens');
-    await page.locator('#h5-set-notify .MuiAccordionSummary-root').tap();
+    await page.locator('#h5-set-attention .MuiAccordionSummary-root').tap();
     await page.locator('#h5-tg-apiid').waitFor({ state: 'visible' });
+    assert.equal(await page.locator('#h5-set-attention #h5-notifier-settings').count(), 1, 'the notifier settings are part of the T-Attention group');
+    assert.equal(await page.locator('#h5-set-notify').count(), 0, 'and no group of their own');
+    assert.equal(await page.locator('#h5-notifier-settings').count(), 1, 'drawn once');
     assert.equal((await notifyCalls())[0].url, '/api/attention-notify/config');
     assert.equal(await page.locator('#h5-tg-state').textContent(), 'Not logged in');
     // Step 1: api_id, api_hash, phone.

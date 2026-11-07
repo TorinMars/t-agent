@@ -135,14 +135,17 @@ function commandOf(input) {
   try { return clip(JSON.stringify(input), PENDING_MAX); } catch { return ''; }
 }
 
-// T-Agent terminals set TA_HOOK_URL=<server>/hooks/terminal-activity?task=<id>&terminal=<id> (routes/terminal.js).
+// T-Agent terminals set TA_HOOK_URL=<server>/hooks/terminal-activity?task=<id>&terminal=<id> (routes/terminal.js). Only ids T-Agent can have are
+// kept (a task number, a terminal id of routes/terminal.js: letters, digits, '_' and '-', at most 64), so the core never cuts one (64 characters).
+const TASK_ID = /^\d{1,15}$/;
+const TERMINAL_ID = /^[a-zA-Z0-9_-]{1,64}$/;
 function tagentFrom(env = process.env) {
   if (!env.TA_HOOK_URL) return null;
   try {
     const url = new URL(env.TA_HOOK_URL);
     const task = url.searchParams.get('task');
     const terminal = url.searchParams.get('terminal');
-    return task && terminal ? { task_id: clip(task, 100), terminal_id: clip(terminal, 200) } : null;
+    return task && terminal && TASK_ID.test(task) && TERMINAL_ID.test(terminal) ? { task_id: task, terminal_id: terminal } : null;
   } catch {
     return null;
   }

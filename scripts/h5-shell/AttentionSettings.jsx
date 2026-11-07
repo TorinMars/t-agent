@@ -5,7 +5,7 @@ import Checkbox from '@mui/material/Checkbox';
 import FormControlLabel from '@mui/material/FormControlLabel';
 import Paper from '@mui/material/Paper';
 import Typography from '@mui/material/Typography';
-import { api, t } from './common.jsx';
+import { api, errorText, t } from './common.jsx';
 import { Feedback, Field, Group, Hint, failure, useFeedback } from './Form.jsx';
 import TextField from './TextField.jsx';
 import { BASE } from './attention-feed.mjs';
@@ -91,8 +91,14 @@ function TokenList({ opened }) {
   );
 }
 
-// The AI summary (off by default): GET / PUT /api/attention/settings/summary { enabled, provider, model }. The providers are the translation
-// providers and their saved keys (Settings "Translation"); their list comes with the answer (`providers`) or from GET /api/translate/config.
+// The AI summary (off by default): GET / PUT /api/attention/settings/summary { enabled, provider, model, providers }. The providers are the translation
+// providers and their saved keys (Settings "Translation"): the server sends `providers` as a list [{ id, label, hasApiKey, model }] (never a key);
+// a map { id: { label, hasApiKey } } and GET /api/translate/config (when `providers` is missing) are read too. A refused save shows the server's
+// message (409 SUMMARY_PROVIDER_NOT_CONFIGURED: no key saved for that provider).
+const providerMap = list => {
+  if (Array.isArray(list)) return Object.fromEntries(list.filter(entry => entry && typeof entry.id === 'string').map(entry => [entry.id, entry]));
+  return list && typeof list === 'object' ? list : null;
+};
 function SummarySettings({ opened }) {
   const [form, setForm] = useState({ enabled: false, provider: '', model: '' });
   const [providers, setProviders] = useState({});
@@ -102,19 +108,19 @@ function SummarySettings({ opened }) {
   const load = async () => {
     try {
       const data = (await api('GET', `${BASE}/settings/summary`)) || {};
-      let list = data.providers && typeof data.providers === 'object' ? data.providers : null;
-      if (!list) { try { list = ((await api('GET', '/api/translate/config')) || {}).providers || {}; } catch { list = {}; } }
+      let list = providerMap(data.providers);
+      if (!list) { try { list = providerMap(((await api('GET', '/api/translate/config')) || {}).providers) || {}; } catch { list = {}; } }
       setProviders(list);
       setForm({ enabled: Boolean(data.enabled), provider: data.provider || Object.keys(list)[0] || '', model: data.model || '' });
       setLoaded(true);
       say('');
-    } catch (error) { say(failure(error), true); }
+    } catch (error) { say(`${t('Failed')}: ${errorText(error)}`, true); }
   };
   useEffect(() => { if (opened) void load(); }, [opened]); // eslint-disable-line react-hooks/exhaustive-deps -- read each time the group is opened
   const save = async () => {
     setBusy(true);
     try { await api('PUT', `${BASE}/settings/summary`, { enabled: form.enabled, provider: form.provider, model: form.model.trim() }); await load(); say('Saved'); }
-    catch (error) { say(failure(error), true); }
+    catch (error) { say(`${t('Failed')}: ${errorText(error)}`, true); }
     finally { setBusy(false); }
   };
   const ids = Object.keys(providers);
@@ -182,7 +188,7 @@ export function AttentionSettings({ ui }) {
       <SummarySettings opened={opened} />
       <TokenList opened={opened} />
       {/* SLOT: the settings of other T-Attention parts (attention-slots.mjs, e.g. NotifierSettings). Nothing is drawn when none is registered. */}
-      {attentionSettingsSlots().map(({ id, Component }) => <Box key={id} className="h5-attention-slot" data-slot={id} sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}><Component ui={ui} /></Box>)}
+      {attentionSettingsSlots().map(({ id, Component }) => <Box key={id} className="h5-attention-slot" data-slot={id} sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}><Component ui={ui} opened={opened} /></Box>)}
     </Group>
   );
 }

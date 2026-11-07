@@ -788,7 +788,7 @@ The installed app and the web page share the same OSS settings. After saving the
 
 When a T-Attention item enters a status that needs you (by default **Needs you**, **Failed** and **Review**), the Client can tell you on Telegram: your Telegram **account 1** sends a message to, or rings, your **account 2** (for example the account on the phone you carry). It uses the MTProto user API through the npm package `telegram` (gramjs), not a bot.
 
-Setup: open **Settings → T-Attention notifications**.
+Setup: open **Settings → T-Attention** (the Notifications part).
 
 1. Create an app at [my.telegram.org](https://my.telegram.org) → API development tools to get `api_id` and `api_hash`.
 2. Enter them and the phone number of account 1, press **Send code**, enter the code Telegram sends, and the two-step verification password if account 1 has one.

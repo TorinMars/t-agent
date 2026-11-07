@@ -14,7 +14,6 @@ import Typography from '@mui/material/Typography';
 import CloseIcon from '@mui/icons-material/Close';
 import { api, t } from './common.jsx';
 import { EnginesGroup } from './Engines.jsx';
-import { NotifierGroup } from './NotifierSettings.jsx';
 import { AttentionSettings } from './AttentionSettings.jsx';
 import { Feedback, Field, Group, Hint, ROW, failure, useFeedback } from './Form.jsx';
 
@@ -362,7 +361,6 @@ export function SettingsDrawer({ state, ui }) {
         <OssGroup />
         <TranslateGroup />
         <VoiceGroup />
-        <NotifierGroup />
         <EnginesGroup state={state} ui={ui} />
         <RemoteGroup />
         <AttentionSettings ui={ui} />

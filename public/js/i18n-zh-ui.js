@@ -914,7 +914,7 @@ I18n.add({
   "This folder cannot be read": "无法读取这个文件夹",
   "The folder changed while it was read. Reload to try again.": "读取时文件夹发生了变化，请重新读取。",
   "Could not list this folder": "无法列出这个文件夹",
-  "T-Attention notifications": "T-Attention 通知",
+  "Notifications": "通知",
   "Get a Telegram message or call when an item needs you. The Telegram login of account 1 is full access to that account: it is stored encrypted on this client and never sent to the browser.": "事项需要你处理时，通过 Telegram 发消息或打电话提醒你。账号 1 的 Telegram 登录等于这个账号的全部权限：它加密保存在本客户端，绝不会发给浏览器。",
   "Account 1:": "账号 1：",
   "Not logged in": "未登录",

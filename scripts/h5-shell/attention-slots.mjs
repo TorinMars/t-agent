@@ -2,10 +2,11 @@
 // (NotifierSettings, owned by the notifier part). A part registers its component once, from its own module:
 //
 //   import { registerAttentionSettings } from './attention-slots.mjs';
-//   registerAttentionSettings({ id: 'notifiers', order: 100, Component: NotifierSettings });
+//   registerAttentionSettings({ id: 'notifiers', order: 100, Component: NotifierSlot });
 //
-// and its module is imported for that side effect in entry.jsx (the marked line "T-Attention settings slots"). The component gets { ui } (the page
-// store: `ui.notify`, `ui.actions`) and draws its own content inside the group (headings, fields, buttons; reuse Form.jsx). When nothing is
+// and its module is imported for that side effect in entry.jsx (the marked line "T-Attention settings slots"). The component gets { ui, opened } (the
+// page store: `ui.notify`, `ui.actions`; `opened` counts the openings of the group, 0 before the first one: the group's content stays mounted while it
+// is closed, so a component reads nothing while `opened` is 0) and draws its own content inside the group (headings, fields, buttons; reuse Form.jsx). When nothing is
 // registered the group draws nothing extra. A second registration with the same id replaces the first.
 const slots = new Map();
 

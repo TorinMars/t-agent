@@ -104,9 +104,21 @@ async function openPage(browser, { viewport, touch = true, notify = true }) {
       const body = request.postData() ? JSON.parse(request.postData()) : undefined;
       calls.push({ method, path: p + url.search, body });
       if (p === '/api/attention/tokens' && method === 'GET') return json({ tokens: db.tokens });
-      if (p === '/api/attention/settings/summary' && method === 'GET') return json(db.summary);
-      if (p === '/api/attention/settings/summary' && method === 'PUT') { db.summary = { ...body }; return json(db.summary); }
-      if (/^\/api\/attention\/\d+\/summarize$/.test(p) && method === 'POST') return json({ ok: true }, 202);
+      // The summary settings answer as services/attention-summary.js does: `providers` is a list with hasApiKey (never a key), and a save that turns
+      // the summary on for a provider without a saved key is refused with 409 SUMMARY_PROVIDER_NOT_CONFIGURED and an English message.
+      const providers = [{ id: 'deepseek', label: 'DeepSeek', hasApiKey: true, model: 'deepseek-chat' }, { id: 'glm', label: 'GLM', hasApiKey: false, model: 'glm-4-flash' }];
+      if (p === '/api/attention/settings/summary' && method === 'GET') return json({ ...db.summary, providers });
+      if (p === '/api/attention/settings/summary' && method === 'PUT') {
+        const next = { ...db.summary, ...body };
+        if (next.enabled && !providers.find(entry => entry.id === next.provider).hasApiKey) return json({ error: 'SUMMARY_PROVIDER_NOT_CONFIGURED', message: 'Save a GLM API key in the translation settings first' }, 409);
+        db.summary = next;
+        return json({ ...db.summary, providers });
+      }
+      if (/^\/api\/attention\/\d+\/summarize$/.test(p) && method === 'POST') {
+        db.summarizeCalls = (db.summarizeCalls || 0) + 1;
+        if (db.summarizeCalls > 1) return json({ error: 'SUMMARY_DISABLED', message: 'The AI summary is switched off; turn it on in Settings first' }, 409);
+        return json({ ok: true }, 202);
+      }
       if (p === '/api/attention/tokens' && method === 'POST') { const token = { id: db.tokens.length + 1, name: body.name, created_at: AT, last_used_at: null, revoked_at: null }; db.tokens.push(token); return json({ id: token.id, name: token.name, token: 'tatt_0123456789abcdefghijklmnopqrstuvwxyzABCDEFG' }, 201); }
       const token = p.match(/^\/api\/attention\/tokens\/(\d+)$/);
       if (token && method === 'DELETE') { db.tokens.find(entry => entry.id === Number(token[1])).revoked_at = AT; return route.fulfill({ status: 204, body: '' }); }
@@ -338,6 +350,10 @@ const row2 = page => page.evaluate(() => [...document.querySelectorAll('#h5-acti
       await page.locator('#h5-attention-summary-refresh').tap();
       await notice(page).filter({ hasText: 'A new summary was asked for' }).waitFor();
       assert.deepEqual(calls.filter(call => call.path.endsWith('/summarize')).map(call => [call.method, call.path]), [['POST', '/api/attention/1/summarize']]);
+      // A refused refresh (409 SUMMARY_DISABLED) shows the server's message, not the code.
+      await page.waitForFunction(() => !document.querySelector('#h5-attention-summary-refresh').disabled);
+      await page.locator('#h5-attention-summary-refresh').tap();
+      await notice(page).filter({ hasText: 'Could not ask for a summary: The AI summary is switched off; turn it on in Settings first' }).waitFor();
       // Open terminal: the T-Agent terminal of the task (t2); the edit view and the sheet close.
       assert.equal(await page.locator('#h5-attention-jump').textContent(), 'Open terminal');
       await page.locator('#h5-attention-jump').tap();
@@ -381,8 +397,14 @@ const row2 = page => page.evaluate(() => [...document.querySelectorAll('#h5-acti
       await page.locator('#h5-attention-summary-provider').selectOption('glm');
       await page.locator('#h5-attention-summary-model').fill(' glm-4-flash ');
       await page.locator('#h5-attention-summary-save').tap();
+      // GLM has no saved key: the server refuses (409 SUMMARY_PROVIDER_NOT_CONFIGURED) and the page shows its message.
+      await page.locator('#h5-attention-summary-feedback', { hasText: 'Failed: Save a GLM API key in the translation settings first' }).waitFor();
+      await page.locator('#h5-attention-summary-provider').selectOption('deepseek');
+      await page.locator('#h5-attention-summary-model').fill('');
+      await page.locator('#h5-attention-summary-save').tap();
       await page.locator('#h5-attention-summary-feedback', { hasText: 'Saved' }).waitFor();
-      assert.deepEqual(calls.filter(call => call.path === '/api/attention/settings/summary' && call.method === 'PUT').map(call => call.body), [{ enabled: true, provider: 'glm', model: 'glm-4-flash' }]);
+      assert.deepEqual(calls.filter(call => call.path === '/api/attention/settings/summary' && call.method === 'PUT').map(call => call.body), [{ enabled: true, provider: 'glm', model: 'glm-4-flash' }, { enabled: true, provider: 'deepseek', model: '' }]);
+      assert.equal(await page.locator('#h5-attention-summary-provider').inputValue(), 'deepseek', 'the saved provider is shown again (an id, not a list index)');
       assert.equal(await page.locator('#h5-attention-summary-enabled').isChecked(), true, 'the saved setting is shown again');
       assert.equal(await page.locator('#h5-attention-tokens .h5-attention-token').count(), 1);
       assert.equal(await page.locator('#h5-attention-sound').isChecked(), true, 'sound is on by default');

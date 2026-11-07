@@ -136,7 +136,10 @@ app.use('/api/environment', require('./routes/environment').createEnvironmentRou
 app.use('/api/translate', require('./routes/translate').createTranslateRouter());
 app.use('/api/speech', require('./routes/speech').createSpeechRouter());
 // T-Attention notifiers (Telegram ...): subscribes to the onChange bus of services/attention.js; without that module it only serves its settings.
-app.use('/api/attention-notify', require('./services/attention-notify').start({ db, sessionSecret: config.sessionSecret }).createRouter());
+// It gets the same service instance as the routes and the summary: its public onChange bus (never the excerpt) and get(id) for delayed calls.
+app.use('/api/attention-notify', require('./services/attention-notify').start({
+  db, sessionSecret: config.sessionSecret, onChange: attentionService.onChange, getItem: id => attentionService.get(id),
+}).createRouter());
 app.use('/api/pm2', require('./routes/pm2').createPm2Router());
 app.use('/api/apps', require('./routes/apps').createAppsRouter());
 const frpRouter = require('./routes/frp').createFrpRouter();

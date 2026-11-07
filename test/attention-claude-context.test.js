@@ -226,6 +226,11 @@ test('TA_HOOK_URL gives the T-Agent task and terminal; anything else gives null'
   assert.deepEqual(tagentFrom({ TA_HOOK_URL: 'http://127.0.0.1:3000/hooks/terminal-activity?terminal=x&task=3&event=start' }), { task_id: '3', terminal_id: 'x' });
   assert.equal(tagentFrom({ TA_HOOK_URL: 'http://127.0.0.1:3000/hooks/terminal-activity?task=12' }), null);
   assert.equal(tagentFrom({ TA_HOOK_URL: 'not a url' }), null);
+  // Ids T-Agent cannot have are dropped instead of being cut by the core's 64-character limit of context.tagent.
+  assert.deepEqual(tagentFrom({ TA_HOOK_URL: `http://h/hooks/terminal-activity?task=7&terminal=${'a'.repeat(64)}` }), { task_id: '7', terminal_id: 'a'.repeat(64) });
+  assert.equal(tagentFrom({ TA_HOOK_URL: `http://h/hooks/terminal-activity?task=7&terminal=${'a'.repeat(65)}` }), null);
+  assert.equal(tagentFrom({ TA_HOOK_URL: 'http://h/hooks/terminal-activity?task=x1&terminal=t' }), null);
+  assert.equal(tagentFrom({ TA_HOOK_URL: 'http://h/hooks/terminal-activity?task=1&terminal=a%20b' }), null);
   assert.equal(tagentFrom({}), null);
 });
 

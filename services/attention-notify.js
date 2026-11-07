@@ -139,7 +139,8 @@ function defaultLog(level, message) {
   (level === 'error' || level === 'warn' ? console.warn : console.log)(`[attention-notify] ${message}`);
 }
 
-// options: db, sessionSecret, onChange (the bus of services/attention.js; optional), getOwner (the user for background events),
+// options: db, sessionSecret, onChange (the bus of services/attention.js; optional), getItem(id) (the current item, so a delayed call carries what
+// arrived after its status change, such as context.summary; optional), getOwner (the user for background events),
 // notifiers (plugins; default: loaded from plugins/notifiers), log(level, message), now(), timers { setTimeout, clearTimeout }.
 function createAttentionNotify(options) {
   const { db, sessionSecret } = options;
@@ -269,7 +270,9 @@ function createAttentionNotify(options) {
           if (!map.size) pending.delete(item.id);
           const latest = getRules(owner);
           if (inQuietHours(latest.quietHours, new Date(now()))) return remember({ ...base, outcome: 'quiet_hours' });
-          void deliver({ plugin, owner, rules: latest, item, previous, mode: 'call', reason: 'still' });
+          let current = item;
+          try { current = (typeof options.getItem === 'function' && options.getItem(item.id)) || item; } catch { current = item; }
+          void deliver({ plugin, owner, rules: latest, item: current, previous, mode: 'call', reason: 'still' });
         }, rules.callDelayMinutes * 60 * 1000);
         map.set(key, { handle: handleId, status: item.status });
         remember({ ...base, outcome: 'call_scheduled', detail: `${rules.callDelayMinutes} min` });
@@ -346,6 +349,10 @@ function start(options) {
     try {
       const attention = require('./attention');
       onChange = typeof attention.onChange === 'function' ? attention.onChange.bind(attention) : null;
+      if (options.getItem === undefined && typeof attention.defaultService === 'function') {
+        const service = attention.defaultService();
+        options = { ...options, getItem: id => service.get(id) };
+      }
     } catch (error) {
       if (error.code !== 'MODULE_NOT_FOUND' || !/Cannot find module '\.\/attention'/.test(String(error.message))) throw error;
       onChange = null;

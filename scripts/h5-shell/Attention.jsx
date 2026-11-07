@@ -10,7 +10,7 @@ import ListItemButton from '@mui/material/ListItemButton';
 import OutlinedInput from '@mui/material/OutlinedInput';
 import Typography from '@mui/material/Typography';
 import useMediaQuery from '@mui/material/useMediaQuery';
-import { Pill, named, t } from './common.jsx';
+import { Pill, errorText, named, t } from './common.jsx';
 import { Field } from './Form.jsx';
 import TextField from './TextField.jsx';
 import { Icon } from './Icons.jsx';
@@ -125,7 +125,7 @@ function ContextCard({ item, state, ui, onLeave }) {
   const refresh = async () => {
     setAsking(true);
     try { await ui.actions.attentionSummarize(item.id); ui.notify(t('A new summary was asked for')); }
-    catch (error) { ui.notify(`${t('Could not ask for a summary')}: ${error.message}`, 'error'); }
+    catch (error) { ui.notify(`${t('Could not ask for a summary')}: ${errorText(error)}`, 'error'); }
     finally { setAsking(false); }
   };
   const go = async () => {

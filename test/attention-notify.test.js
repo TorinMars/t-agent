@@ -282,3 +282,35 @@ test('HTTP: config read and save, plugin routes and test, same-origin and errors
     assert.equal(noHeader.status, 403, 'a mutation needs the same-origin proof');
   } finally { server.close(); }
 });
+
+// The real wire-up of server.js: services/attention.js publishes the changes and the notifier reads the current item for a delayed call.
+test('with the real attention service: one notification per status, the summary update (actor summary) adds none, a delayed call carries it', async () => {
+  const { createAttentionService } = require('../services/attention');
+  const db = new Database(':memory:');
+  db.pragma('foreign_keys = ON');
+  db.exec(fs.readFileSync(path.join(__dirname, '..', 'db', 'schema.sql'), 'utf8'));
+  const attention = createAttentionService({ db });
+  const timers = fakeTimers();
+  const fake = fakeNotifier();
+  const service = notify.createAttentionNotify({
+    db, sessionSecret: SECRET, onChange: attention.onChange, getItem: id => attention.get(id), getOwner: () => 'owner', notifiers: [fake.plugin],
+    log: () => {}, timers,
+  });
+  const created = attention.upsertByRef('claude:s1', { title: 'Fix login', status: 'working', source: 'claude' }, { actor: 'claude' }).item;
+  attention.upsertByRef('claude:s1', { status: 'waiting_user', context: { pending: { kind: 'permission', text: 'Allow npm test?', command: 'npm test' } } }, { actor: 'claude' });
+  await settle();
+  assert.deepEqual(fake.calls.map(call => [call.item.id, call.item.status, call.mode]), [[created.id, 'waiting_user', 'message']]);
+  assert.equal(fake.calls[0].item.context.pending.text, 'Allow npm test?');
+  attention.update(created.id, { context: { summary: { text: 'Doing: a\nProgress: b\nNeeds: c', at: '2026-11-08T12:00:05.000Z', model: 'm' } } }, { actor: 'summary' });
+  await settle();
+  assert.equal(fake.calls.length, 1, 'the summary update notifies nobody');
+  // A delayed call for review: the summary that arrives after the status change is in the item the call gets.
+  service.saveRules('owner', { callDelayMinutes: 2, modes: { fake: { review: 'call' } } });
+  attention.upsertByRef('claude:s1', { status: 'review', context: { pending: null } }, { actor: 'claude' });
+  attention.update(created.id, { context: { summary: { text: 'Doing: a\nProgress: done\nNeeds: review', at: '2026-11-08T12:01:00.000Z', model: 'm' } } }, { actor: 'summary' });
+  assert.equal(timers.count(), 1, 'the planned call is kept after the summary update');
+  timers.fire();
+  await settle();
+  assert.deepEqual(fake.calls.slice(1).map(call => [call.item.status, call.mode, call.item.context.summary.text]), [['review', 'call', 'Doing: a\nProgress: done\nNeeds: review']]);
+  service.stop();
+});

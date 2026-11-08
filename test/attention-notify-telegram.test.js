@@ -7,7 +7,9 @@ const http = require('node:http');
 const express = require('express');
 const Database = require('better-sqlite3');
 const { createAttentionNotify } = require('../services/attention-notify');
-const { createTelegramNotifier, messageText, dhHash, proxyFromEnv, MESSAGE_MAX, NETWORK_TIMEOUT_MS, UNREACHABLE } = require('../plugins/notifiers/telegram');
+const { HTMLParser } = require('telegram/extensions/html');
+const { _parseMessageText } = require('telegram/client/messageParse');
+const { createTelegramNotifier, messageText, messageHtml, dhHash, proxyFromEnv, MESSAGE_MAX, NETWORK_TIMEOUT_MS, UNREACHABLE } = require('../plugins/notifiers/telegram');
 
 const SECRET = 'attention-telegram-test-secret-012345';
 const API_HASH = '0123456789abcdef0123456789abcdef';
@@ -80,50 +82,271 @@ const dhConfig = () => {
 };
 const savedConfig = extra => ({ apiId: 12345, apiHash: API_HASH, session: SESSION, phone: '+86*******78', account: { id: '1001', name: 'Account One', username: 'acc_one' }, target: { input: 'acc_two', id: '2002', accessHash: '-55', username: 'acc_two', name: 'Account Two' }, ...extra });
 
-test('the message has the status, title, reason, source and link', () => {
-  const body = messageText({ item: { status: 'waiting_user', title: 'Fix the build', attention_reason: 'Claude needs permission to run npm', source: 'claude' }, link: 'https://t.example.com/?attention=4' });
-  assert.equal(body, 'T-Attention · Needs you: Fix the build\nReason: Claude needs permission to run npm\nSource: claude\nOpen: https://t.example.com/?attention=4');
-  assert.match(messageText({ item: { status: 'failed', title: 'x' }, reason: 'call_failed', error: 'no calls' }), /Failed: x\n\(A call was not possible: no calls\)$/);
-  assert.equal(messageText({ item: { status: 'review', title: 'y' } }), 'T-Attention · Review: y');
-});
-
-test('the card uses item.context: Needs (pending text and command), summary first, else the first line of the last reply, folder and branch', () => {
-  const context = {
-    goal: 'Make the build green', last_reply: '\n\nI changed the test runner.\nThen more text', cwd: '/Users/me/work/app', branch: 'feat/x',
+// The real gramjs HTML parser: [text, [{ type, offset, length, covered text, url }]].
+function parsed(html) {
+  const [text, entities] = HTMLParser.parse(html);
+  return { text, entities: entities.map(entity => ({ type: entity.className.replace('MessageEntity', ''), text: text.slice(entity.offset, entity.offset + entity.length), ...(entity.url ? { url: entity.url } : {}) })) };
+}
+const NEEDS_YOU = '\u{1F64B}';
+const LINK = 'https://t.example.com/?attention=4';
+const fullItem = (extra = {}) => ({
+  status: 'waiting_user', title: 'Fix the build', attention_reason: 'Blocked on approval', source: 'claude',
+  context: {
     pending: { kind: 'permission', text: 'Claude wants to run a command', tool: 'Bash', command: 'npm test -- --watch' },
+    latest_prompt: 'Make the build green\nand keep it short', summary: { text: 'Doing: build fix\nProgress: tests pass' }, last_reply: 'not used while there is a summary',
+    files: [{ path: 'path/a.js', added: 40, deleted: 7 }, { path: 'path/b.js', added: 2, deleted: 0 }, { path: 'path/c.js', added: 0, deleted: 0 }],
+    cwd: '/Users/me/work/app', branch: 'feat/x', host: 'mac',
+  },
+  ...extra,
+});
+
+test('the card with every optional line, in HTML and as parsed by the real gramjs parser', () => {
+  const html = messageHtml({ item: fullItem(), link: LINK, reason: 'call_failed', error: 'no calls' });
+  assert.equal(html, [
+    `${NEEDS_YOU} <b>Needs you</b> \u00b7 <b>Fix the build</b>`, '',
+    '<b>Needs:</b> Claude wants to run a command', '<pre>npm test -- --watch</pre>', '<b>Reason:</b> Blocked on approval', '',
+    '<b>You asked:</b> Make the build green and keep it short', '<blockquote>Doing: build fix\nProgress: tests pass</blockquote>', '',
+    '<b>Changed:</b> 3 files, +42 -7', '\u2022 path/a.js', '\u2022 path/b.js', '\u2022 path/c.js', '',
+    '<i>(A call was not possible: no calls)</i>', '',
+    '<code>/Users/me/work/app</code> \u00b7 <code>feat/x</code> \u00b7 mac \u00b7 claude', `<a href="${LINK}">Open in T-Agent</a>`,
+  ].join('\n'));
+  const { text, entities } = parsed(html);
+  assert.equal(text, messageText({ item: fullItem(), link: LINK, reason: 'call_failed', error: 'no calls' }).replace(`Open: ${LINK}`, 'Open in T-Agent'), 'the plain card is the same text, with the address written out');
+  assert.deepEqual(entities, [
+    { type: 'Bold', text: 'Needs you' }, { type: 'Bold', text: 'Fix the build' }, { type: 'Bold', text: 'Needs:' }, { type: 'Pre', text: 'npm test -- --watch' }, { type: 'Bold', text: 'Reason:' },
+    { type: 'Bold', text: 'You asked:' }, { type: 'Blockquote', text: 'Doing: build fix\nProgress: tests pass' }, { type: 'Bold', text: 'Changed:' },
+    { type: 'Italic', text: '(A call was not possible: no calls)' }, { type: 'Code', text: '/Users/me/work/app' }, { type: 'Code', text: 'feat/x' }, { type: 'TextUrl', text: 'Open in T-Agent', url: LINK },
+  ]);
+});
+
+test('every optional line is left out when it has no value, and no empty tag is written', () => {
+  const header = `${NEEDS_YOU} <b>Needs you</b> \u00b7 <b>x</b>`;
+  const card = (context, extra) => messageHtml({ item: { status: 'waiting_user', title: 'x', context, ...extra } });
+  assert.equal(card(undefined), header);
+  assert.equal(card('not json'), header);
+  assert.equal(card({ pending: { text: '  ', command: '\u0007' }, latest_prompt: ' ', summary: { text: '\n \n' }, last_reply: '\n', files: [], cwd: '', branch: '', host: '' }), header);
+  assert.equal(card({ pending: { text: 'go' } }), `${header}\n\n<b>Needs:</b> go`);
+  assert.equal(card({ pending: { command: 'ls' } }), `${header}\n\n<pre>ls</pre>`);
+  assert.equal(card({ latest_prompt: 'hello' }), `${header}\n\n<b>You asked:</b> hello`);
+  assert.equal(card({ branch: 'main' }), `${header}\n\n<code>main</code>`);
+  assert.equal(card({ host: 'mac' }), `${header}\n\nmac`);
+  assert.equal(card(undefined, { attention_reason: 'because' }), `${header}\n\n<b>Reason:</b> because`);
+  assert.equal(card(undefined, { source: 'cli' }), `${header}\n\ncli`);
+  assert.equal(messageHtml({ item: { status: 'failed' } }), '\u274c <b>Failed</b>', 'no title, no separator');
+  assert.equal(messageText({ item: { status: 'review', title: 'y' } }), '\u{1F440} Review \u00b7 y');
+  assert.equal(card({ pending: { text: 'same' } }, { attention_reason: 'same' }), `${header}\n\n<b>Needs:</b> same`, 'a reason equal to the pending text is not repeated');
+});
+
+test('each status has its own emoji, and an unknown status still has a header', () => {
+  const emoji = { waiting_user: '\u{1F64B}', review: '\u{1F440}', failed: '\u274c', working: '\u23f3', todo: '\u{1F4DD}', done: '\u2705', cancelled: '\u{1F6AB}' };
+  assert.equal(new Set(Object.values(emoji)).size, 7);
+  for (const [status, mark] of Object.entries(emoji)) assert.ok(messageHtml({ item: { status, title: 'x' } }).startsWith(`${mark} <b>`), status);
+  assert.equal(messageHtml({ item: { status: 'odd<x>', title: 'x' } }), '\u{1F514} <b>odd&lt;x&gt;</b> \u00b7 <b>x</b>');
+});
+
+test('the quote is the summary (also from a JSON string), else the first three lines of the last reply', () => {
+  const context = { last_reply: '\n\nFirst.\n\nSecond.\nThird.\nFourth.' };
+  assert.match(messageHtml({ item: { status: 'review', title: 'x', context } }), /<blockquote>First\.\nSecond\.\nThird\.<\/blockquote>$/);
+  const withSummary = messageHtml({ item: { status: 'review', title: 'x', context: JSON.stringify({ ...context, summary: { text: 'Doing: a\nNeeds: b', at: '2026-11-08T00:00:00Z', model: 'm' } }) } });
+  assert.match(withSummary, /<blockquote>Doing: a\nNeeds: b<\/blockquote>$/);
+  assert.equal(withSummary.includes('First.'), false);
+});
+
+test('text from users or the agent is escaped: tags, entities and Markdown appear literally', () => {
+  const hostile = 'A <b>bold</b> </pre> </blockquote> &amp; &lt; <a href="http://evil">x</a> **m** __u__ `c` [l](http://evil) "q" \'s\'';
+  const item = {
+    status: 'failed', title: hostile, attention_reason: hostile, source: '<i>s</i>',
+    context: { pending: { text: `${hostile}!`, command: hostile }, latest_prompt: hostile, summary: { text: hostile }, files: [{ path: '<b>a</b>&amp;.js' }], cwd: '</code>&amp;', branch: '<code>', host: '<u>h</u>' },
   };
-  const item = { status: 'waiting_user', title: 'Fix the build', attention_reason: 'Claude wants to run a command', source: 'claude', context };
-  assert.equal(messageText({ item, link: 'https://t.example.com/?attention=4' }), [
-    'T-Attention \u00b7 Needs you: Fix the build', 'Needs: Claude wants to run a command', 'Command: npm test -- --watch',
-    'Last reply: I changed the test runner.', 'Folder: /Users/me/work/app (feat/x)', 'Source: claude', 'Open: https://t.example.com/?attention=4',
-  ].join('\n'), 'the reason equal to the pending text is not repeated');
-  const withSummary = messageText({ item: { ...item, context: JSON.stringify({ ...context, summary: { text: 'Doing: build fix\nProgress: tests pass\nNeeds: approve npm', at: '2026-11-08T00:00:00Z', model: 'm' } }) } });
-  assert.match(withSummary, /\nDoing: build fix\nProgress: tests pass\nNeeds: approve npm\n/, 'the summary (also from a JSON string) replaces the last reply');
-  assert.equal(withSummary.includes('Last reply'), false);
-  assert.equal(messageText({ item: { status: 'review', title: 'x', context: { branch: 'main' } } }), 'T-Attention \u00b7 Review: x\nFolder: ? (main)');
-  assert.equal(messageText({ item: { status: 'review', title: 'x', context: 'not json' } }), 'T-Attention \u00b7 Review: x');
+  const { text, entities } = parsed(messageHtml({ item, link: LINK }));
+  const body = text.split('\n');
+  assert.equal(body[0], `\u274c Failed \u00b7 ${hostile}`);
+  assert.ok(body.includes(`Needs: ${hostile}!`));
+  assert.ok(body.includes(hostile), 'the command');
+  assert.ok(body.includes(`Reason: ${hostile}`));
+  assert.ok(body.includes(`You asked: ${hostile}`));
+  assert.ok(body.includes('\u2022 <b>a</b>&amp;.js'));
+  assert.ok(body.includes('</code>&amp; \u00b7 <code> \u00b7 <u>h</u> \u00b7 <i>s</i>'));
+  assert.deepEqual(entities.map(entity => entity.type), ['Bold', 'Bold', 'Bold', 'Pre', 'Bold', 'Bold', 'Blockquote', 'Bold', 'Code', 'Code', 'TextUrl'], 'only the tags of the card');
+  assert.deepEqual(entities.filter(entity => entity.url).map(entity => entity.url), [LINK], 'the address in the text made no link');
+  assert.deepEqual(entities.find(entity => entity.type === 'Blockquote').text, hostile);
 });
 
-test('the card is plain text: control and direction characters are removed, long values are cut, the total is capped and the link kept', () => {
-  const long = 'y'.repeat(5000);
-  const body = messageText({
-    item: { status: 'failed', title: `Title\u0007 with *stars* _under_ \`code\` [x](http://evil)\u202e${long}`, attention_reason: long, source: 'claude',
-      context: { pending: { text: long, command: long }, summary: { text: `${long}\n${long}\n${long}` }, cwd: long, branch: long } },
-    link: 'https://t.example.com/?attention=9',
-  });
-  assert.ok(body.length <= MESSAGE_MAX, `capped: ${body.length}`);
-  assert.ok(body.endsWith('\nOpen: https://t.example.com/?attention=9'), 'the link survives the cap');
-  assert.match(body, /^T-Attention \u00b7 Failed: Title with \*stars\* _under_ `code` \[x\]\(http:\/\/evil\) y+\u2026\n/, 'formatting characters are kept as text; the title is cut');
-  assert.equal(/[\u0000-\u0009\u000b-\u001f\u202e]/.test(body), false);
-  assert.ok(body.includes('\u2026'));
+test('control and direction characters are removed in both formats', () => {
+  const item = { status: 'failed', title: 'Ti\u0007tle\u202e one\u2066', context: { pending: { command: 'a\u0000b\u200b' }, latest_prompt: 'x\u2028y' } };
+  for (const body of [messageText({ item }), parsed(messageHtml({ item })).text]) {
+    assert.equal(/[\u0000-\u0009\u000b-\u001f\u007f\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]/.test(body), false);
+    assert.ok(body.includes('Ti tle one'));
+    assert.ok(body.includes('You asked: x y'));
+  }
 });
 
-test('messages are sent with parseMode off, so user text is never read as Markdown', async () => {
+test('values are cut before they are escaped, so no entity or tag is ever cut in half', () => {
+  for (const fill of ['&', '<', '>', 'a&', '&amp;']) {
+    const item = { status: 'failed', title: fill.repeat(1000), context: { pending: { text: fill.repeat(1000), command: fill.repeat(1000) }, latest_prompt: fill.repeat(1000), summary: { text: fill.repeat(1000) }, cwd: fill.repeat(1000) } };
+    const html = messageHtml({ item, link: LINK });
+    assert.equal(/&(?!amp;|lt;|gt;)/.test(html), false, `a broken entity with ${fill}`);
+    const { text, entities } = parsed(html);
+    assert.equal(entities.at(-1).url, LINK);
+    assert.ok(text.split('\n')[0].endsWith('\u2026'), 'the title is cut with an ellipsis');
+    assert.equal(text.includes('&amp;amp;'), false);
+    const title = text.split('\n')[0].slice('\u274c Failed \u00b7 '.length);
+    assert.ok(title.length <= 200, `the visible title is cut, not the escaped one: ${title.length}`);
+  }
+});
+
+test('the link: only http(s) goes in the href, escaped; anything else is left out', () => {
+  for (const link of ['javascript:alert(1)', 'tg://resolve?domain=x', 'data:text/html,x', 'file:///etc/passwd', '/relative/path', 'not a url', '', null, undefined, 5]) {
+    const html = messageHtml({ item: { status: 'failed', title: 'x' }, link });
+    assert.equal(html, '\u274c <b>Failed</b> \u00b7 <b>x</b>', String(link));
+    assert.equal(messageText({ item: { status: 'failed', title: 'x' }, link }), '\u274c Failed \u00b7 x', String(link));
+  }
+  assert.match(messageHtml({ item: { status: 'failed', title: 'x' }, link: 'HTTP://t.example.com/a' }), /<a href="http:\/\/t\.example\.com\/a">Open in T-Agent<\/a>$/);
+  const tricky = 'https://t.example.com/a\'b?x=1&y="><script>';
+  const { entities } = parsed(messageHtml({ item: { status: 'failed', title: 'x' }, link: tricky }));
+  assert.equal(entities.at(-1).type, 'TextUrl');
+  assert.equal(entities.at(-1).url, new URL(tricky).href, 'the quotes and & are decoded back to the same address');
+  const raw = messageHtml({ item: { status: 'failed', title: 'x' }, link: tricky });
+  assert.equal(raw.includes('<script>'), false);
+  assert.equal(/href="[^"]*'/.test(raw), false);
+  assert.equal(messageHtml({ item: { status: 'failed', title: 'x' }, link: `https://t.example.com/${'a'.repeat(2000)}` }), '\u274c <b>Failed</b> \u00b7 <b>x</b>', 'too long to keep whole: left out, never cut');
+});
+
+test('a link gramjs would read as a mention is shown as text, because gramjs would drop it from the message', async () => {
+  const lookups = [];
+  const client = { getInputEntity: async value => { lookups.push(value); throw new Error('no such user'); } };
+  const plus = 'https://t.example.com/a+b?q=1+2&x=1';
+  const html = messageHtml({ item: { status: 'failed', title: 'x' }, link: plus });
+  assert.equal(html.includes('<a '), false);
+  const [text, entities] = await _parseMessageText(client, html, 'html');
+  assert.ok(text.endsWith(`Open in T-Agent: ${plus}`), 'the whole address can still be followed');
+  assert.deepEqual(lookups, [], 'gramjs looks nothing up');
+  assert.deepEqual(entities.map(entity => entity.className), ['MessageEntityBold', 'MessageEntityBold']);
+  const [, dropped] = await _parseMessageText(client, `<a href="${plus}">x</a>`, 'html');
+  assert.deepEqual(dropped, [], 'why: as a link, gramjs would lose it');
+  assert.equal(lookups.length, 1);
+  const [, kept] = await _parseMessageText(client, messageHtml({ item: { status: 'failed', title: 'x' }, link: LINK }), 'html');
+  assert.equal(kept.at(-1).url, LINK, 'an ordinary link stays a link through the whole send path');
+  assert.equal(lookups.length, 1);
+});
+
+test('the file list shows at most 3 names with "and N more", and a long path keeps its end', () => {
+  const files = n => Array.from({ length: n }, (_, index) => ({ path: `src/f${index}.js`, added: 1, deleted: 2 }));
+  const card = list => parsed(messageHtml({ item: { status: 'review', title: 'x', context: { files: list } } })).text.split('\n').slice(2);
+  assert.deepEqual(card(files(1)), ['Changed: 1 file, +1 -2', '\u2022 src/f0.js']);
+  assert.deepEqual(card(files(3)), ['Changed: 3 files, +3 -6', '\u2022 src/f0.js', '\u2022 src/f1.js', '\u2022 src/f2.js']);
+  assert.deepEqual(card(files(50)), ['Changed: 50 files, +50 -100', '\u2022 src/f0.js', '\u2022 src/f1.js', '\u2022 src/f2.js', 'and 47 more']);
+  assert.deepEqual(card([{ path: 'a.js' }, { path: 'b.js' }]), ['Changed: 2 files', '\u2022 a.js', '\u2022 b.js'], 'no counts known: none shown');
+  assert.deepEqual(card([{ path: 'a.js', added: 5 }]), ['Changed: 1 file, +5 -0', '\u2022 a.js']);
+  assert.deepEqual(card([null, 'x', { path: '' }, { added: 1 }]), [], 'unusable entries are not counted');
+  const [, long] = card([{ path: `${'d/'.repeat(100)}name.js` }]);
+  assert.ok(long.endsWith('name.js') && long.startsWith('\u2022 \u2026') && long.length <= 102, long);
+});
+
+test('the length limit holds in the visible and raw text and keeps the header, the note, the footer and the link', () => {
+  for (const fill of ['y', '&', '<', '\u{1F600}', '\u6d4b']) {
+    const long = fill.repeat(5000);
+    const input = {
+      item: { status: 'failed', title: `Start ${long}`, attention_reason: long, source: long,
+        context: { pending: { text: long, command: `${long}\n${long}` }, latest_prompt: long, summary: { text: `${long}\n${long}\n${long}` }, cwd: long, branch: long, host: long,
+          files: Array.from({ length: 50 }, () => ({ path: long, added: 1, deleted: 1 })) } },
+      link: LINK, reason: 'call_failed', error: long,
+    };
+    const html = messageHtml(input);
+    const { text, entities } = parsed(html);
+    const plain = messageText(input);
+    assert.ok(text.length <= MESSAGE_MAX, `visible ${text.length} with ${fill}`);
+    assert.ok(plain.length <= MESSAGE_MAX, `plain ${plain.length} with ${fill}`);
+    assert.ok(MESSAGE_MAX <= 4096);
+    assert.ok(html.length <= MESSAGE_MAX * 5 + 500, `raw ${html.length} with ${fill}`);
+    assert.ok(text.startsWith('\u274c Failed \u00b7 Start'), 'the header');
+    assert.ok(text.endsWith('Open in T-Agent'), 'the link text');
+    assert.ok(plain.endsWith(`Open: ${LINK}`), 'the link in the plain card');
+    assert.equal(entities.at(-1).url, LINK, 'the link entity');
+    assert.ok(entities.some(entity => entity.type === 'Italic' && entity.text.startsWith('(A call was not possible')), 'the note');
+    assert.ok(entities.filter(entity => entity.type === 'Code').length === 2, 'the folder and the branch');
+    assert.equal(/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/.test(text), false, 'no half emoji');
+    for (const entity of entities) assert.ok(entity.text.length > 0);
+  }
+});
+
+test('the longest allowed link still leaves the card under the limit', () => {
+  const link = `https://t.example.com/${'a'.repeat(970)}`;
+  const long = 'z'.repeat(5000);
+  const input = { item: { status: 'failed', title: long, attention_reason: long, context: { pending: { text: long, command: long }, latest_prompt: long, summary: { text: long }, cwd: long, branch: long, host: long } }, link, reason: 'call_failed', error: long };
+  const plain = messageText(input);
+  assert.ok(plain.length <= MESSAGE_MAX, `plain ${plain.length}`);
+  assert.ok(plain.endsWith(`Open: ${link}`));
+  assert.ok(parsed(messageHtml(input)).text.length <= MESSAGE_MAX);
+});
+
+test('Chinese text in the fields stays intact', () => {
+  const zh = '\u4fee\u590d\u767b\u5f55\u95ee\u9898';
+  const input = { item: { status: 'review', title: zh, attention_reason: `${zh}\u539f\u56e0`, context: { pending: { text: `${zh}\u9700\u8981`, command: `echo ${zh}` }, latest_prompt: `${zh}\u8bf7\u6c42`, summary: { text: `${zh}\u6458\u8981` }, files: [{ path: `\u6587\u4ef6/${zh}.js`, added: 1, deleted: 1 }], cwd: `/\u9879\u76ee/${zh}`, branch: `\u5206\u652f-${zh}`, host: '\u4e3b\u673a' } }, link: LINK };
+  const { text, entities } = parsed(messageHtml(input));
+  for (const part of [zh, `Needs: ${zh}\u9700\u8981`, `echo ${zh}`, `Reason: ${zh}\u539f\u56e0`, `You asked: ${zh}\u8bf7\u6c42`, `${zh}\u6458\u8981`, `\u2022 \u6587\u4ef6/${zh}.js`, `/\u9879\u76ee/${zh} \u00b7 \u5206\u652f-${zh} \u00b7 \u4e3b\u673a`]) assert.ok(text.includes(part), part);
+  assert.equal(entities.find(entity => entity.type === 'Pre').text, `echo ${zh}`, 'offsets stay right after wide characters and the emoji');
+  assert.equal(entities.find(entity => entity.type === 'Blockquote').text, `${zh}\u6458\u8981`);
+});
+
+test('messages are sent as Telegram HTML, without a link preview', async () => {
   const { gram, state } = mockGram();
   const plugin = createTelegramNotifier({ loadGram: () => gram, timers: fakeTimers() });
-  await plugin.notify({ item: { status: 'failed', title: '**bold**' }, mode: 'message', config: savedConfig() });
-  assert.equal(state.messages[0].parseMode, false);
-  assert.equal(state.messages[0].message, 'T-Attention \u00b7 Failed: **bold**');
+  await plugin.notify({ item: { status: 'failed', title: '**bold** <b>' }, mode: 'message', config: savedConfig() });
+  assert.equal(state.messages.length, 1);
+  assert.equal(state.messages[0].parseMode, 'html');
+  assert.equal(state.messages[0].linkPreview, false);
+  assert.equal(state.messages[0].message, '\u274c <b>Failed</b> \u00b7 <b>**bold** &lt;b&gt;</b>');
+  plugin.close();
+});
+
+test('when Telegram refuses the entities the card is sent once more as plain text, and the log holds no content', async () => {
+  for (const refusal of ['ENTITY_BOUNDS_INVALID', 'ENTITY_TEXT_INVALID', 'ENTITIES_TOO_LONG', 'MESSAGE_EMPTY', 'MESSAGE_TOO_LONG']) {
+    const { gram, state } = mockGram();
+    const logs = [];
+    const plugin = createTelegramNotifier({ loadGram: () => gram, timers: fakeTimers() });
+    let calls = 0;
+    state.sendMessage = () => { calls += 1; if (calls === 1) throw rpcError(refusal); return {}; };
+    const item = fullItem({ title: 'Secret title <b>' });
+    assert.deepEqual(await plugin.notify({ item, mode: 'message', config: savedConfig(), link: LINK, log: (level, message) => logs.push(`${level} ${message}`) }), { outcome: 'sent' }, refusal);
+    assert.equal(state.messages.length, 2);
+    assert.equal(state.messages[0].parseMode, 'html');
+    assert.deepEqual([state.messages[1].parseMode, state.messages[1].linkPreview], [false, false]);
+    assert.equal(state.messages[1].message, messageText({ item, link: LINK }));
+    assert.ok(state.messages[1].message.includes('Secret title <b>'), 'plain text is not escaped');
+    assert.deepEqual(state.messages[1].peer, state.messages[0].peer);
+    assert.deepEqual(logs, [`warn formatted message refused (${refusal}), sending plain text`]);
+    plugin.close();
+  }
+});
+
+test('the plain copy is tried once only, and other errors are not retried', async () => {
+  const { gram, state } = mockGram();
+  const plugin = createTelegramNotifier({ loadGram: () => gram, timers: fakeTimers() });
+  const send = () => plugin.notify({ item: { status: 'failed', title: 'x' }, mode: 'message', config: savedConfig() });
+  state.sendMessage = () => { throw rpcError('ENTITY_BOUNDS_INVALID'); };
+  await assert.rejects(send(), /Telegram error ENTITY_BOUNDS_INVALID/);
+  assert.equal(state.messages.length, 2, 'one formatted and one plain attempt');
+  state.messages.length = 0;
+  for (const other of [rpcError('FLOOD', { seconds: 5 }), rpcError('USER_IS_BLOCKED'), new Error('socket closed')]) {
+    state.sendMessage = () => { throw other; };
+    await assert.rejects(send());
+    assert.equal(state.messages.length, 1, String(other));
+    state.messages.length = 0;
+  }
+  plugin.close();
+});
+
+test('the test message from Settings uses the same card with realistic sample content', async () => {
+  const { gram, state } = mockGram();
+  const plugin = createTelegramNotifier({ loadGram: () => gram, timers: fakeTimers() });
+  assert.deepEqual(await plugin.test(savedConfig(), { kind: 'message', link: LINK }), { ok: true, outcome: 'sent' });
+  assert.equal(state.messages[0].parseMode, 'html');
+  const { text, entities } = parsed(state.messages[0].message);
+  assert.ok(text.startsWith(`${NEEDS_YOU} Needs you \u00b7 Test message\n\n`));
+  assert.match(text, /sample data/);
+  assert.deepEqual([...new Set(entities.map(entity => entity.type))].sort(), ['Blockquote', 'Bold', 'Code', 'Pre', 'TextUrl']);
+  assert.match(text, /\nand 1 more\n/);
   plugin.close();
 });
 
@@ -143,7 +366,7 @@ test('notify(message) sends to the stored account 2 with the gramjs client of th
   assert.equal(state.clients[0].session.value, SESSION);
   assert.equal(state.clients[0].params.baseLogger.level, 'none', 'gramjs logging is off');
   assert.deepEqual(state.messages[0].peer, { className: 'InputPeerUser', userId: 'big:2002', accessHash: 'big:-55' });
-  assert.equal(state.messages[0].message, 'T-Attention · Failed: Deploy\nSource: cli');
+  assert.equal(state.messages[0].message, '\u274C <b>Failed</b> \u00b7 <b>Deploy</b>\n\ncli');
   state.sendMessage = () => { throw rpcError('FLOOD', { seconds: 42 }); };
   await assert.rejects(plugin.notify({ item: { status: 'failed', title: 'x' }, mode: 'message', config: savedConfig() }), /wait 42 seconds/);
   plugin.close();
@@ -229,7 +452,7 @@ test('end to end through the service: a failed call becomes a fallback message o
   listeners[0]({ kind: 'updated', item: { id: 5, title: 'Approve', status: 'waiting_user', source: 'claude' }, previous: { id: 5, status: 'working' }, event: { actor: 'claude' } });
   await settle(10);
   assert.equal(state.messages.length, 1);
-  assert.match(state.messages[0].message, /^T-Attention · Needs you: Approve\nSource: claude\n\(A call was not possible: The privacy settings/);
+  assert.ok(state.messages[0].message.startsWith(`${NEEDS_YOU} <b>Needs you</b> \u00b7 <b>Approve</b>\n\n<i>(A call was not possible: The privacy settings`), state.messages[0].message);
   assert.equal(logs.join('\n').includes(SESSION), false);
   plugin.close();
 });
@@ -306,7 +529,7 @@ test('login: start sends the code, verify asks for the 2FA password, password fi
     await call('PUT', '/config', { target: 'acc_two' });
     const tested = await call('POST', '/test', { kind: 'message' });
     assert.deepEqual(tested.data, { ok: true, outcome: 'sent' });
-    assert.match(state.messages.at(-1).message, /^T-Attention · Needs you: Test message/);
+    assert.ok(state.messages.at(-1).message.startsWith(`${NEEDS_YOU} <b>Needs you</b> \u00b7 <b>Test message</b>`));
     // Log out ends the session on Telegram and forgets it here.
     const out = await call('POST', '/logout');
     assert.equal(out.data.loggedIn, false);

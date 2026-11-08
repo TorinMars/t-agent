@@ -67,38 +67,127 @@ function maskPhone(phone) {
   return digits.length < 5 ? '' : `+${digits.slice(0, 2)}${'*'.repeat(Math.max(0, digits.length - 4))}${digits.slice(-2)}`;
 }
 
-// The message for one item: a short card that says what it is, what it needs and where it is. Plain text (sent with parseMode off, so
-// '*', '_' or '`' in user text are not read as formatting), control characters removed, at most MESSAGE_MAX characters; the link stays whole.
-const MESSAGE_MAX = 1000;
-const oneLine = (value, max) => cut(String(value || '').replace(/[\u0000-\u001f\u007f\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]+/g, ' ').replace(/\s+/g, ' ').trim(), max);
+// The message for one item: a compact card that says what it is, what it needs, what changed and where it is. cardOf() cleans and cuts every value
+// first and renderCard() draws the same card in one of two formats: messageHtml (Telegram HTML, what is sent) and messageText (plain text, the
+// fallback when Telegram refuses the entities). Values are cut before they are escaped, so an entity or a tag is never cut in half, and every value
+// from users or the agent is escaped, so '<b>', '&amp;' or Markdown marks in it stay literal text. Control and direction characters are removed.
+// MESSAGE_MAX is the visible length (Telegram allows 4096 UTF-16 units after parsing). It is shared out section by section: the header, the link, the
+// call-failed note and the footer are reserved first, so a long body can never push them out. Only http(s) links are used, and a link is never cut.
+const MESSAGE_MAX = 2000;
+const LINK_MAX = 1000;
+const FILES_SHOWN = 3;
+const SECTION_MIN = 8; // less room than this: the section is left out rather than shown as a stub
+const GROUP_GAPS = 5; // the blank lines between the groups of the card
+const LINK_LABEL = 'Open in T-Agent';
+const STATUS_EMOJI = { waiting_user: '\u{1F64B}', review: '\u{1F440}', failed: '\u274c', working: '\u23f3', todo: '\u{1F4DD}', done: '\u2705', cancelled: '\u{1F6AB}' };
+const OTHER_STATUS_EMOJI = '\u{1F514}';
+const oneLine = (value, max) => cut(String(value || '').replace(/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g, '').replace(/[\u0000-\u001f\u007f\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]+/g, ' ').replace(/\s+/g, ' ').trim(), max);
 const lines = (value, max) => cut(String(value || '').split(/\r?\n/).map(line => oneLine(line, max)).filter(Boolean).join('\n'), max);
-function cut(value, max) { return value.length > max ? `${value.slice(0, max - 1).trimEnd()}\u2026` : value; }
+// Never leaves half of a surrogate pair (an emoji) at the end.
+function cut(value, max) {
+  if (value.length <= max) return value;
+  const end = /[\ud800-\udbff]/.test(value[max - 2] || '') ? max - 2 : max - 1;
+  return `${value.slice(0, Math.max(0, end)).trimEnd()}\u2026`;
+}
 function contextOf(item) {
   let context = item && item.context;
   if (typeof context === 'string') { try { context = JSON.parse(context); } catch { context = null; } }
   return context && typeof context === 'object' && !Array.isArray(context) ? context : {};
 }
-function messageText({ item, link, reason, error }) {
+// The end of a long path is the part that names the file.
+const shortPath = (value, max) => { const path = oneLine(value, Infinity); return path.length > max ? `\u2026${path.slice(1 - max).replace(/^[\udc00-\udfff]/, '')}` : path; };
+const httpLink = value => {
+  try {
+    const url = new URL(String(value || '').trim());
+    return /^https?:$/.test(url.protocol) && url.href.length <= LINK_MAX ? url.href : '';
+  } catch { return ''; }
+};
+const count = value => (Number.isFinite(value) ? value : 0);
+function changedFiles(context) {
+  const files = (Array.isArray(context.files) ? context.files : []).filter(file => file && typeof file === 'object' && oneLine(file.path, 1));
+  if (!files.length) return { changed: '', paths: [], more: '' };
+  const added = files.reduce((sum, file) => sum + count(file.added), 0);
+  const deleted = files.reduce((sum, file) => sum + count(file.deleted), 0);
+  const counted = files.some(file => Number.isFinite(file.added) || Number.isFinite(file.deleted));
+  return {
+    changed: `${files.length} ${files.length === 1 ? 'file' : 'files'}${counted ? `, +${added} -${deleted}` : ''}`,
+    paths: files.slice(0, FILES_SHOWN).map(file => shortPath(file.path, 100)),
+    more: files.length > FILES_SHOWN ? `and ${files.length - FILES_SHOWN} more` : '',
+  };
+}
+// The values of the card, cleaned and cut to fit MESSAGE_MAX. `fit` is called in order of importance, which is not the order they are shown in.
+function cardOf({ item, link, reason, error }) {
   const context = contextOf(item);
   const pending = context.pending && typeof context.pending === 'object' ? context.pending : null;
-  const out = [`T-Attention \u00b7 ${STATUS_LABELS[item.status] || oneLine(item.status, 30)}: ${oneLine(item.title, 200)}`];
-  const needs = pending && oneLine(pending.text, 300);
-  if (needs) out.push(`Needs: ${needs}`);
-  if (pending && pending.command) out.push(`Command: ${oneLine(pending.command, 300)}`);
+  const status = STATUS_LABELS[item.status] || oneLine(item.status, 30) || 'Update';
+  const title = oneLine(item.title, 200);
+  const emoji = STATUS_EMOJI[item.status] || OTHER_STATUS_EMOJI;
+  const href = httpLink(link);
+  const note = reason === 'call_failed' ? `(A call was not possible: ${oneLine(error || 'unknown error', 200)})` : '';
+  let left = MESSAGE_MAX - GROUP_GAPS - (emoji.length + 1 + status.length + 3 + title.length) - (note ? note.length + 1 : 0) - (href ? LINK_LABEL.length + 2 + href.length + 1 : 0);
+  const fit = (value, extra = 0) => {
+    if (!value) return '';
+    const room = left - extra - 1;
+    if (room < SECTION_MIN) return '';
+    const out = cut(value, room);
+    left -= out.length + extra + 1;
+    return out;
+  };
+  const where = [['code', oneLine(context.cwd, 120)], ['code', oneLine(context.branch, 60)], ['text', oneLine(context.host, 40)], ['text', oneLine(item.source, 30)]]
+    .map(([kind, value]) => ({ kind, value: fit(value, 3) })).filter(part => part.value);
+  const needs = pending ? fit(oneLine(pending.text, 300), 7) : '';
+  const command = pending ? fit(lines(pending.command, 300)) : '';
   const why = oneLine(item.attention_reason, 300);
-  if (why && why !== needs) out.push(`Reason: ${why}`);
+  const reasonText = why && why !== oneLine(pending && pending.text, 300) ? fit(why, 8) : '';
+  const asked = fit(oneLine(context.latest_prompt, 160), 11);
   const summary = context.summary && typeof context.summary === 'object' ? lines(context.summary.text, 400) : '';
-  const lastReply = typeof context.last_reply === 'string' ? oneLine(context.last_reply.split(/\r?\n/).find(line => line.trim()) || '', 200) : '';
-  if (summary) out.push(summary);
-  else if (lastReply) out.push(`Last reply: ${lastReply}`);
-  const folder = oneLine(context.cwd, 160);
-  const branch = oneLine(context.branch, 80);
-  if (folder || branch) out.push(`Folder: ${folder || '?'}${branch ? ` (${branch})` : ''}`);
-  if (item.source) out.push(`Source: ${oneLine(item.source, 60)}`);
-  if (reason === 'call_failed') out.push(`(A call was not possible: ${oneLine(error || 'unknown error', 200)})`);
-  const tail = link ? `\nOpen: ${oneLine(link, 500)}` : '';
-  return cut(out.join('\n'), MESSAGE_MAX - tail.length) + tail;
+  const lastReply = typeof context.last_reply === 'string' ? lines(context.last_reply.split(/\r?\n/).filter(line => line.trim()).slice(0, 3).join('\n'), 300) : '';
+  const quote = fit(summary || lastReply);
+  const files = changedFiles(context);
+  const changed = fit(files.changed, 9);
+  const paths = changed ? files.paths.map(path => fit(path, 2)).filter(Boolean) : [];
+  const more = changed ? fit(files.more) : '';
+  return { emoji, status, title, needs, command, reason: reasonText, asked, quote, changed, paths, more, note, where, href };
 }
+function renderCard(card, format) {
+  const { text: plain, bold, italic, pre, quote, code: mono, link } = format;
+  const where = card.where.map(part => (part.kind === 'code' ? mono(part.value) : plain(part.value))).join(' \u00b7 ');
+  const groups = [
+    [`${card.emoji} ${bold(card.status)}${card.title ? ` \u00b7 ${bold(card.title)}` : ''}`],
+    [card.needs && `${bold('Needs:')} ${plain(card.needs)}`, card.command && pre(card.command), card.reason && `${bold('Reason:')} ${plain(card.reason)}`],
+    [card.asked && `${bold('You asked:')} ${plain(card.asked)}`, card.quote && quote(card.quote)],
+    [card.changed && `${bold('Changed:')} ${plain(card.changed)}`, ...card.paths.map(path => `\u2022 ${plain(path)}`), card.more && plain(card.more)],
+    [card.note && italic(card.note)],
+    [where, card.href && link(card.href)],
+  ];
+  return groups.map(group => group.filter(Boolean).join('\n')).filter(Boolean).join('\n\n');
+}
+const escapeHtml = value => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+const escapeAttribute = value => escapeHtml(value).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+// gramjs reads a link whose address holds '+' or 'tg://user?id=<n>' as a mention, looks it up and drops the link when that fails (client/messageParse.js).
+// Such an address is shown as text instead, because rewriting it could change what it means.
+const READ_AS_MENTION = /\+|tg:\/\/user\?id=\d/;
+const tag = name => value => `<${name}>${escapeHtml(value)}</${name}>`;
+const HTML_FORMAT = {
+  text: escapeHtml, bold: tag('b'), italic: tag('i'), pre: tag('pre'), quote: tag('blockquote'), code: tag('code'),
+  link: href => (READ_AS_MENTION.test(href) ? `${LINK_LABEL}: ${escapeHtml(href)}` : `<a href="${escapeAttribute(href)}">${LINK_LABEL}</a>`),
+};
+const same = value => value;
+const PLAIN_FORMAT = { text: same, bold: same, italic: same, pre: same, quote: same, code: same, link: href => `Open: ${href}` };
+const messageHtml = input => renderCard(cardOf(input), HTML_FORMAT);
+const messageText = input => renderCard(cardOf(input), PLAIN_FORMAT);
+// Telegram's answers that say the formatting of the message was refused: a plain copy can still be delivered. Other errors are not retried.
+const FORMAT_REFUSED = /^(ENTITY_|ENTITIES_|MESSAGE_EMPTY$|MESSAGE_TOO_LONG$)/;
+// What "Test message" in Settings sends: the real card with realistic content, so the format can be seen.
+const SAMPLE_ITEM = {
+  status: 'waiting_user', title: 'Test message', attention_reason: 'This is a test from Settings; the details below are sample data', source: 'claude',
+  context: {
+    pending: { kind: 'permission', text: 'Claude wants to run a command', tool: 'Bash', command: 'npm test -- --watch' },
+    latest_prompt: 'Fix the failing login test', cwd: '/home/me/work/app', branch: 'fix/login', host: 'my-laptop',
+    summary: { text: 'Doing: fixing the login test\nProgress: the cause is found\nNeeds: approval to run the tests' },
+    files: [{ path: 'src/login.js', added: 30, deleted: 5 }, { path: 'src/session.js', added: 8, deleted: 2 }, { path: 'test/login.test.js', added: 3, deleted: 0 }, { path: 'README.md', added: 1, deleted: 0 }],
+  },
+};
 
 // Big-endian bytes <-> BigInt, and g^a mod p, for the call's Diffie-Hellman hash.
 const toBig = bytes => BigInt(`0x${Buffer.from(bytes).toString('hex') || '0'}`);
@@ -209,10 +298,18 @@ function createTelegramNotifier(options = {}) {
   const userOf = (gram, target) => new gram.Api.InputUser({ userId: gram.helpers.returnBigInt(target.id), accessHash: gram.helpers.returnBigInt(target.accessHash) });
   const ready = config => Boolean(config && config.session && config.apiHash && config.apiId && config.target && config.target.id);
 
-  async function sendMessage(config, body) {
+  // Sends the card as Telegram HTML. If Telegram refuses the entities, it is sent once more as plain text, so a notification is not lost.
+  async function sendMessage(config, input, log) {
     const gram = loadGram();
     const client = await clientFor(config);
-    await client.sendMessage(peerOf(gram, config.target), { message: body, linkPreview: false, parseMode: false });
+    const peer = peerOf(gram, config.target);
+    try {
+      await client.sendMessage(peer, { message: messageHtml(input), linkPreview: false, parseMode: 'html' });
+    } catch (failure) {
+      if (!FORMAT_REFUSED.test(code(failure))) throw failure;
+      if (log) log('warn', `formatted message refused (${code(failure)}), sending plain text`);
+      await client.sendMessage(peer, { message: messageText(input), linkPreview: false, parseMode: false });
+    }
   }
 
   // Rings account 2 and hangs up after `seconds`, or when it is answered or declined. Returns 'answered' | 'declined' | 'timeout'.
@@ -275,14 +372,14 @@ function createTelegramNotifier(options = {}) {
         return { fallback: 'message', error: why };
       }
     }
-    try { await sendMessage(config, messageText({ item, link, reason, error })); return { outcome: 'sent' }; }
+    try { await sendMessage(config, { item, link, reason, error }, log); return { outcome: 'sent' }; }
     catch (failure) { throw new TelegramError(explain(failure), 502); }
   }
-  async function test(config, { kind = 'message', link = '' } = {}) {
+  async function test(config, { kind = 'message', link = '', log } = {}) {
     if (!ready(config)) throw new TelegramError('Log in and choose account 2 first', 409);
     try {
       if (kind === 'call') return { ok: true, outcome: await ring(config, callSeconds(config)) };
-      await sendMessage(config, messageText({ item: { status: 'waiting_user', title: 'Test message', attention_reason: 'This is a test from Settings', source: 'T-Attention' }, link }));
+      await sendMessage(config, { item: SAMPLE_ITEM, link }, log);
       return { ok: true, outcome: 'sent' };
     } catch (failure) { throw new TelegramError(explain(failure), 502); }
   }
@@ -517,6 +614,7 @@ function createTelegramNotifier(options = {}) {
 module.exports = createTelegramNotifier();
 module.exports.createTelegramNotifier = createTelegramNotifier;
 module.exports.messageText = messageText;
+module.exports.messageHtml = messageHtml;
 module.exports.MESSAGE_MAX = MESSAGE_MAX;
 module.exports.explain = explain;
 module.exports.dhHash = dhHash;

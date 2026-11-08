@@ -76,3 +76,36 @@ Called with the plugin's stored settings and the user. It returns an object for 
 - `summary`: one short line, for example `Logged in as Ann (+86*******78) -> account 2 Bob`. Never put a secret in it: no session string, api key, hash, token or password, and mask phone numbers. As a safety net the overview drops a summary that contains a stored setting named like session, hash, token, secret, password or key.
 
 `status` must be fast and must not use the network: the overview calls it on every request.
+
+## Publishing a plugin (marketplace)
+
+Anyone can publish a plugin in a Git repository; users install it from Settings -> T-Attention -> Plugins -> Marketplace, or with `t-attention plugins install <name|git-url>`. The server downloads it, shows what it contains and installs it only after the user confirms, pinned to that commit. Installed plugins live in `<data folder>/plugins/{listeners,notifiers}/<name>/` (`~/.tagent` by default); see "Plugin marketplace" in `DESIGN.md`.
+
+**Repository layout**: the plugin folder is the repository root, or a subfolder of it (users give it as `https://host/repo.git#<ref>:<subfolder>`, an index entry as `"path"`). It contains `manifest.json` and the files of the format above (a notifier: `index.js`; a listener: its `entry`). Rules:
+
+- `manifest.json` needs `name` (`^[a-z0-9][a-z0-9-]{0,40}$`, not the name of a built-in plugin: `claude`, `telegram`), `version`, `kind` (`listener` or `notifier`) and `description` (at most 500 characters); a notifier's `config` must be valid (see above).
+- **No dependencies**: nothing is installed with npm. Use Node built-ins only, or put the dependencies you need inside the folder (a `node_modules` you commit). A `package.json` with dependencies and no `node_modules` shows the warning "needs dependencies; not supported".
+- At most 2000 files and 20 MiB. Symlinks must be relative and stay inside the plugin folder. Submodules, Git LFS files and Git hooks are not used.
+- Tag your releases. Users pin a commit; `t-attention plugins update` (or the Update button) installs the newer commit of the same ref, and the plugin's settings stay.
+- The preview tells the user when the code uses `child_process`, network modules or `fetch`, `vm` or worker threads. A notifier runs inside the T-Agent server; a listener is only copied, and its tool must be set up to run it (say how in your README).
+
+**Index entry**: to appear in the marketplace search, add an entry to an index. The official index is `marketplace.json` at the root of the T-Agent repository (open a pull request); users can add their own indexes (https URLs) under "Sources".
+
+```json
+{
+  "name": "my-bell",
+  "kind": "notifier",
+  "description": "Rings a bell on my desk when a task needs me.",
+  "version": "1.2.0",
+  "repo": "https://github.com/me/t-attention-bell.git",
+  "path": "plugin",
+  "ref": "v1.2.0",
+  "homepage": "https://github.com/me/t-attention-bell",
+  "author": "Me",
+  "tags": ["bell", "hardware"]
+}
+```
+
+`repo` is an `https://` or `git@host:path` URL, `path` and `ref` are optional (default: the root and the default branch); `name` and `kind` must match the manifest. Built-in plugins are listed with `"builtIn": true` and no `repo`.
+
+**Developing**: `t-attention plugins link /path/to/folder` (or "Link local folder…" on the page) uses the folder in place; a linked notifier reloads when its files change. `t-attention plugins unlink <name>` ends it.

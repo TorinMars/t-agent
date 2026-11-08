@@ -20,8 +20,9 @@ const GROUPS = [
   { label: 'Done & failed', statuses: ['done', 'failed', 'cancelled'] },
 ];
 const STATUS_LABELS = { todo: 'To do', working: 'Working', waiting_user: 'Needs you', review: 'Review', done: 'Done', failed: 'Failed', cancelled: 'Cancelled' };
-const VALUE_FLAGS = new Set(['url', 'token', 'title', 'notes', 'priority', 'due', 'status', 'ref', 'reason', 'link', 'label', 'note', 'q', 'limit', 'timeout', 'name']);
-const BOOL_FLAGS = new Set(['json', 'all', 'help', 'no-check', 'no-hooks']);
+const VALUE_FLAGS = new Set(['url', 'token', 'title', 'notes', 'priority', 'due', 'status', 'ref', 'reason', 'link', 'label', 'note', 'q', 'limit', 'timeout', 'name', 'kind']);
+const BOOL_FLAGS = new Set(['json', 'all', 'help', 'no-check', 'no-hooks', 'yes', 'purge']);
+const MARKET_TIMEOUT_MS = 120000; // a download may take up to 60 s on the server
 // CLI flag -> API field; an empty value clears the field (null).
 const FIELD_FLAGS = { title: 'title', notes: 'notes', priority: 'priority', due: 'due_date', status: 'status', reason: 'attention_reason', link: 'link_url', label: 'link_label' };
 const LISTENER_HOOK = path.resolve(__dirname, '..', 'plugins', 'listeners', 'claude', 'hook.js');
@@ -49,6 +50,21 @@ Commands
     --name N              name of this machine
   plugins                 listeners and notifiers of
                           the server, and this machine
+  plugins search [text]   the marketplace
+    --kind listener|notifier
+  plugins install <name|git-url> [--yes]
+                          download, show what it
+                          contains, ask, then install
+                          (git-url: https://... or
+                          git@host:path, #ref:folder)
+  plugins update [name] [--yes]
+                          install newer commits
+  plugins remove <name> [--purge]
+                          --purge: forget its settings
+  plugins link <path>     use a local folder (dev)
+  plugins unlink <name>
+                          These need a token with
+                          "Can manage plugins".
 
 Fields
   --title T  --notes T  --priority high|medium|low|none
@@ -315,7 +331,7 @@ function timeoutOf(flags) {
   return Math.round(seconds * 1000);
 }
 
-async function run(argv, { env = process.env, print, printError } = {}) {
+async function run(argv, { env = process.env, print, printError, ask = defaultAsk } = {}) {
   const { flags, positional } = parseArgs(argv);
   const [command, ...args] = positional;
   const json = Boolean(flags.json);
@@ -458,8 +474,9 @@ async function run(argv, { env = process.env, print, printError } = {}) {
   }
 
   if (command === 'plugins') {
+    if (args.length && MARKET_COMMANDS.has(args[0])) return marketCommand(args[0], args.slice(1), flags, env, { json, print, printError, ask });
     only(flags, [], 'plugins');
-    if (args.length) throw new UsageError('plugins takes no arguments');
+    if (args.length) throw new UsageError(`Unknown plugins command: ${args[0]} (search, install, update, remove, link, unlink)`);
     return pluginsCommand(flags, env, { json, print, printError });
   }
 
@@ -496,7 +513,7 @@ function notifierLine(notifier) {
   const head = `  ${notifier.name} ${notifier.version || '?'}  `;
   if (!notifier.loaded) return `${head}failed to load: ${oneLine(notifier.error || 'unknown error')}`;
   const modes = Object.entries(notifier.statuses || {}).map(([status, mode]) => `${status}: ${mode}`).join(', ');
-  const parts = [yesNo(notifier.configured, 'configured', 'not configured'), modes || 'no statuses notified'];
+  const parts = [notifier.enabled === false ? 'disabled' : null, yesNo(notifier.configured, 'configured', 'not configured'), modes || 'no statuses notified'];
   if (notifier.error) parts.push(oneLine(notifier.error));
   const lines = [head + parts.filter(Boolean).join(' \u00b7 ')];
   if (notifier.summary) lines.push(`    ${clip(oneLine(notifier.summary), width() - 4)}`);
@@ -547,6 +564,134 @@ async function pluginsCommand(flags, env, { json, print, printError }) {
     }
   }
   return code;
+}
+
+// ---------- plugins marketplace (/api/attention/market; a token with "Can manage plugins") ----------
+const MARKET_COMMANDS = new Set(['search', 'install', 'update', 'remove', 'link', 'unlink']);
+
+function marketClient(flags, env) {
+  const config = client.resolveConfig({ flags, env });
+  if (!config.url || !config.token) throw new client.AttentionClientError('config', 'Not logged in: run t-attention login --url <server> --token <token>');
+  if (!client.normalizeUrl(config.url)) throw new UsageError(`The server URL is not a valid http(s) URL: ${config.url}`);
+  return client.createClient({ url: config.url, token: config.token, timeoutMs: flags.timeout === undefined ? MARKET_TIMEOUT_MS : timeoutOf(flags) });
+}
+
+const isGitUrl = text => /^[a-z][a-z0-9+.-]*:\/\//i.test(text) || /^git@/.test(text);
+const sizeText = bytes => (bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MiB` : bytes >= 1024 ? `${Math.round(bytes / 1024)} KiB` : `${bytes} B`);
+
+function marketLine(entry) {
+  const state = entry.builtIn ? 'built in' : entry.updateAvailable ? 'update available' : entry.installed ? 'installed' : null;
+  const head = `  ${entry.name} ${entry.version || ''}`.trimEnd();
+  const lines = [`${head}  ${[entry.kind, state].filter(Boolean).join(' \u00b7 ')}`];
+  if (entry.description) lines.push(`    ${clip(oneLine(entry.description), width() - 4)}`);
+  return lines.join('\n');
+}
+
+function formatPreview(preview) {
+  const source = preview.source || {};
+  const out = [
+    `${preview.name} ${preview.manifest && preview.manifest.version ? preview.manifest.version : ''} (${preview.kind})`.replace('  ', ' '),
+    `  ${clip(oneLine((preview.manifest && preview.manifest.description) || ''), width() - 2)}`,
+    `Source:  ${source.url}${source.ref ? ` #${source.ref}` : ''}${source.path ? ` :${source.path}` : ''}`,
+    `Commit:  ${preview.shortCommit} (pinned)`,
+    `Files:   ${preview.files.count}, ${sizeText(preview.files.totalBytes)}`,
+  ];
+  if (preview.events && preview.events.length) out.push(`Events:  ${preview.events.join(', ')}`);
+  if (preview.config && preview.config.length) out.push(`Settings: ${preview.config.map(field => field.label).join(', ')}`);
+  if (preview.dependencies && preview.dependencies.length) out.push(`Dependencies (not installed): ${preview.dependencies.join(', ')}`);
+  if (preview.update) out.push(`Update:  ${preview.update.from.version || '?'} -> ${preview.update.to.version || '?'}, ${preview.update.filesChanged} file${preview.update.filesChanged === 1 ? '' : 's'} changed`);
+  for (const warning of preview.warnings || []) out.push(`Warning: ${warning}`);
+  out.push('A plugin runs code on the server; install only plugins you trust.');
+  return out.join('\n');
+}
+
+// Prepare -> preview -> y/N (or --yes) -> install. Returns the installed plugin, or null when the user said no.
+async function prepareAndInstall(api, body, flags, { json, print, printError, ask }) {
+  const preview = (await api.request('POST', '/market/prepare', { body })).body;
+  if (!json) print(formatPreview(preview));
+  if (!flags.yes) {
+    const ok = await ask(`Install ${preview.name} at ${preview.shortCommit}? [y/N] `);
+    if (!ok) { if (json) print(JSON.stringify({ installed: false, preview }, null, 2)); else printError('Not installed.'); return null; }
+  }
+  const result = (await api.request('POST', '/market/install', { body: { prepareId: preview.prepareId, confirm: true } })).body;
+  if (json) print(JSON.stringify({ installed: true, preview, plugin: result.plugin }, null, 2));
+  else print(`${preview.update ? 'Updated' : 'Installed'} ${preview.name} ${preview.manifest.version} (${preview.shortCommit})`);
+  return result.plugin;
+}
+
+async function marketCommand(sub, args, flags, env, io) {
+  const { json, print } = io;
+  const show = (value, human) => print(json ? JSON.stringify(value, null, 2) : human);
+  if (sub === 'search') {
+    only(flags, ['kind'], 'plugins search');
+    if (flags.kind !== undefined && !['listener', 'notifier'].includes(flags.kind)) throw new UsageError('--kind must be listener or notifier');
+    const result = (await marketClient(flags, env).request('GET', '/market', { query: { q: args.join(' ').trim(), kind: flags.kind } })).body;
+    if (json) { print(JSON.stringify(result, null, 2)); return EXIT.ok; }
+    const plugins = Array.isArray(result.plugins) ? result.plugins : [];
+    print(plugins.length ? plugins.map(marketLine).join('\n') : 'No plugins found.');
+    for (const source of result.sources || []) {
+      if (source.error) io.printError(`t-attention: index ${source.url}: ${source.error}${source.stale ? ' (showing the saved copy)' : ''}`);
+    }
+    return EXIT.ok;
+  }
+  if (sub === 'install') {
+    only(flags, ['yes'], 'plugins install');
+    if (args.length !== 1) throw new UsageError('plugins install needs one plugin name or Git URL');
+    const target = args[0];
+    const body = isGitUrl(target) ? { source: target } : { source: { name: target } };
+    await prepareAndInstall(marketClient(flags, env), body, flags, io);
+    return EXIT.ok;
+  }
+  if (sub === 'update') {
+    only(flags, ['yes'], 'plugins update');
+    if (args.length > 1) throw new UsageError('plugins update takes at most one name');
+    const api = marketClient(flags, env);
+    const { updates = [] } = (await api.request('GET', '/market/updates')).body || {};
+    const wanted = args[0];
+    if (wanted && !updates.some(item => item.name === wanted)) throw new client.AttentionClientError('not_found', `${wanted} is not installed from the marketplace or Git`, { status: 404 });
+    const due = updates.filter(item => item.updateAvailable && (!wanted || item.name === wanted));
+    for (const item of updates.filter(entry => entry.error && (!wanted || entry.name === wanted))) io.printError(`t-attention: ${item.name}: ${item.error}`);
+    if (!due.length) { show({ updates, updated: [] }, wanted ? `${wanted} is up to date.` : 'Everything is up to date.'); return EXIT.ok; }
+    const updated = [];
+    for (const item of due) {
+      const plugin = await prepareAndInstall(api, { update: item.name }, flags, { ...io, json: false, print: json ? () => {} : print });
+      if (plugin) updated.push(item.name);
+    }
+    if (json) print(JSON.stringify({ updates, updated }, null, 2));
+    return EXIT.ok;
+  }
+  if (sub === 'remove') {
+    only(flags, ['purge'], 'plugins remove');
+    if (args.length !== 1) throw new UsageError('plugins remove needs one plugin name');
+    const result = (await marketClient(flags, env).request('DELETE', `/market/plugins/${encodeURIComponent(args[0])}`, { query: { purge: flags.purge ? 1 : undefined } })).body;
+    show(result, `Removed ${result.name}${result.purged ? ' and its settings' : ''}`);
+    return EXIT.ok;
+  }
+  if (sub === 'link') {
+    only(flags, [], 'plugins link');
+    if (args.length !== 1) throw new UsageError('plugins link needs the path of a local plugin folder');
+    const result = (await marketClient(flags, env).request('POST', '/market/link', { body: { path: path.resolve(args[0]) } })).body;
+    show(result, `Linked ${result.plugin.name} (${result.plugin.kind}, dev) from ${result.plugin.folder}`);
+    return EXIT.ok;
+  }
+  // unlink
+  only(flags, [], 'plugins unlink');
+  if (args.length !== 1) throw new UsageError('plugins unlink needs one plugin name');
+  const result = (await marketClient(flags, env).request('DELETE', `/market/link/${encodeURIComponent(args[0])}`)).body;
+  show(result, `Unlinked ${result.name}`);
+  return EXIT.ok;
+}
+
+// y/N from stdin: true only for y or yes. No terminal input (closed stdin) is a no.
+function defaultAsk(question) {
+  return new Promise(resolve => {
+    process.stderr.write(question);
+    const readline = require('node:readline');
+    const rl = readline.createInterface({ input: process.stdin });
+    let answered = false;
+    rl.once('line', line => { answered = true; rl.close(); resolve(/^\s*y(?:es)?\s*$/i.test(line)); });
+    rl.once('close', () => { if (!answered) resolve(false); });
+  });
 }
 
 // After login / pair: the hook path and the Claude Code hooks (lib/listener-install.js), or only the hook path with --no-hooks.
@@ -626,14 +771,14 @@ async function main(argv = process.argv.slice(2), options = {}) {
   const printError = options.printError || (text => process.stderr.write(`${text}\n`));
   const json = argv.includes('--json');
   try {
-    return await run(argv, { env: options.env || process.env, print, printError });
+    return await run(argv, { env: options.env || process.env, print, printError, ask: options.ask || defaultAsk });
   } catch (error) {
     const code = exitFor(error);
     if (json) {
       printError(JSON.stringify({ error: (error && error.code) || (error instanceof UsageError ? 'USAGE' : String((error && error.kind) || 'ERROR').toUpperCase()), message: error.message, exit: code }));
     } else {
       let message = error.message;
-      if (error && error.kind === 'auth' && error.status) message = `${message} (check the token: t-attention login)`;
+      if (error && error.kind === 'auth' && error.status && error.status !== 403) message = `${message} (check the token: t-attention login)`;
       if (error && error.kind === 'conflict' && error.body && error.body.id) message = `${message} (#${error.body.id})`;
       printError(`t-attention: ${message}`);
       if (error instanceof UsageError) printError('Run t-attention --help for usage.');

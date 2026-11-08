@@ -247,5 +247,6 @@ CREATE TABLE IF NOT EXISTS attention_tokens (
   token_hash   TEXT NOT NULL UNIQUE,
   created_at   TEXT NOT NULL,
   last_used_at TEXT,
-  revoked_at   TEXT
+  revoked_at   TEXT,
+  scopes       TEXT   -- extra permissions, space separated: 'market' = "Can manage plugins" (/api/attention/market); NULL = none
 );

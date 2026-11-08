@@ -76,15 +76,24 @@ const attentionSummary = require('./services/attention-summary').createAttention
 // T-Attention notifiers (Telegram ...): subscribes to the onChange bus of services/attention.js; without that module it only serves its settings.
 // It gets the same service instance as the routes and the summary: its public onChange bus (never the excerpt) and get(id) for delayed calls.
 // Made here, before the routes, because the plugin overview (GET /api/attention/plugins) reads it; its router is mounted further down.
+// User plugins (the marketplace, lib/plugin-store.js) live in <data folder>/plugins/ next to the built-in ones of the install.
+const attentionPluginStore = require('./lib/plugin-store');
+const attentionDataDir = dataHome.paths().root;
 const attentionNotify = require('./services/attention-notify').start({
   db, sessionSecret: config.sessionSecret, onChange: attentionService.onChange, getItem: id => attentionService.get(id),
+  extraFolders: () => attentionPluginStore.userFolders(attentionDataDir, 'notifier'),
+});
+// The plugin marketplace (services/attention-market.js): the official index is marketplace.json on the branch the update check reads.
+const attentionMarket = require('./services/attention-market').createMarket({
+  dataDir: attentionDataDir, notify: attentionNotify,
+  officialIndexUrl: `https://raw.githubusercontent.com/${config.updateRepository}/${config.updateRef}/marketplace.json`,
 });
 // The loopback address of this server (set when it listens): the claude listener install and the T-Agent terminals report to it.
 let attentionLocalUrl = null;
 const attentionPluginsService = require('./services/attention-plugins');
-const attentionPlugins = attentionPluginsService.createPluginOverview({ service: attentionService, notify: attentionNotify, autoTerminal: () => Boolean(attentionLocalUrl) });
+const attentionPlugins = attentionPluginsService.createPluginOverview({ service: attentionService, notify: attentionNotify, autoTerminal: () => Boolean(attentionLocalUrl), userListeners: () => attentionPluginStore.userFolders(attentionDataDir, 'listener') });
 const attentionInstaller = attentionPluginsService.createListenerInstaller({ service: attentionService, overview: attentionPlugins, localUrl: () => attentionLocalUrl });
-const attentionRoutes = require('./routes/attention').createAttentionRoutes({ service: attentionService, summary: attentionSummary, plugins: attentionPlugins, installer: attentionInstaller });
+const attentionRoutes = require('./routes/attention').createAttentionRoutes({ service: attentionService, summary: attentionSummary, plugins: attentionPlugins, installer: attentionInstaller, market: attentionMarket });
 // Pairing claims (`t-attention pair`) come from other machines without a session or token: answered here, before the Bearer path and the gates.
 app.use('/api/attention/pairing/claim', attentionRoutes.claim);
 app.use('/api/attention', attentionRoutes.bearer);
@@ -535,5 +544,5 @@ server.listen(config.port, config.host, () => {
 });
 
 // Do not let frpc become an orphan process after the Client exits.
-process.on('exit', () => { frpRouter.service.stop(); sshTunnelRouter.service.stop(); });
+process.on('exit', () => { frpRouter.service.stop(); sshTunnelRouter.service.stop(); attentionMarket.stop(); });
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => process.exit(0));

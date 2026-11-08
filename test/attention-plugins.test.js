@@ -106,7 +106,7 @@ test('scanNotifiers keeps the skipped plugins; the overview lists them with load
   const listed = service.overview('local');
   assert.deepEqual(listed.find(entry => entry.name === 'good'), {
     name: 'good', version: '2.0.0', description: 'A good one', loaded: true, error: null, enabled: true, configured: false, summary: 'Ready',
-    statuses: { waiting_user: 'message', review: 'message', failed: 'message' }, settings: false, test: true, customUi: null,
+    statuses: { waiting_user: 'message', review: 'message', failed: 'message' }, settings: false, test: true, customUi: null, origin: 'builtin', dev: false,
   });
   const bad = listed.find(entry => entry.name === 'bad');
   assert.equal(bad.loaded, false);
@@ -157,8 +157,8 @@ test('GET /api/attention/plugins with a session and with a token: listeners with
   assert.equal(body.listeners.find(entry => entry.name === 'broken').error, 'manifest.json is not valid JSON');
   assert.deepEqual(body.listeners.find(entry => entry.name === 'noentry').local, { hookPath: false, loggedIn: true, toolHooks: null, lastEventAt: null, itemCount: 0 });
   assert.deepEqual(body.notifiers, [
-    { name: 'fake', version: '1.0.0', description: 'Fake', loaded: true, error: null, enabled: true, configured: true, summary: 'All set', statuses: { waiting_user: 'call', review: 'off' }, settings: false, test: true, customUi: null },
-    { name: 'broken', version: '0.0.1', description: null, error: 'it does not have the notifier interface', loaded: false, enabled: null, configured: null, summary: null, statuses: {}, settings: false, test: false, customUi: null },
+    { name: 'fake', version: '1.0.0', description: 'Fake', loaded: true, error: null, enabled: true, configured: true, summary: 'All set', statuses: { waiting_user: 'call', review: 'off' }, settings: false, test: true, customUi: null, origin: 'builtin', dev: false },
+    { name: 'broken', version: '0.0.1', description: null, error: 'it does not have the notifier interface', loaded: false, enabled: null, configured: null, summary: null, statuses: {}, settings: false, test: false, customUi: null, origin: 'builtin', dev: false },
   ]);
 
   const { token } = service.createToken({ name: 'cli' });

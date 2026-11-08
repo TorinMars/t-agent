@@ -256,30 +256,62 @@ function scrubSecrets(text, secrets) {
 }
 
 // Reads every plugins/notifiers/<name>/ that has a manifest of kind 'notifier' and an index.js with the interface.
-// Returns { loaded: [{ plugin, manifest }], skipped: [{ name, version, description, error }] }; a broken plugin is skipped and logged,
-// and kept in `skipped` so the plugin overview (GET /api/attention/plugins) can show why it is not running.
-function scanNotifiers(dir = PLUGINS_DIR, log = defaultLog) {
+// Returns { loaded: [{ plugin, manifest, folder, origin, dev }], skipped: [{ name, version, description, error, origin, dev }] }; a broken plugin
+// is skipped and logged, and kept in `skipped` so the plugin overview (GET /api/attention/plugins) can show why it is not running.
+// extra: user plugin folders [{ folder, origin, dev }] (lib/plugin-store.js userFolders), read after the built-in ones; one whose name is
+// a built-in (or an earlier) notifier is skipped, so a user plugin never shadows a built-in.
+function scanNotifiers(dir = PLUGINS_DIR, log = defaultLog, extra = []) {
+  let entries = [];
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { entries = []; }
+  const folders = entries.filter(entry => entry.isDirectory()).map(entry => ({ folder: path.join(dir, entry.name), origin: 'builtin', dev: false }));
+  return scanNotifierFolders([...folders, ...(Array.isArray(extra) ? extra : [])], log, builtInNamesOf(dir));
+}
+
+function builtInNamesOf(dir) {
+  const names = new Set();
+  let entries = [];
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return names; }
+  for (const entry of entries) if (entry.isDirectory()) names.add(entry.name);
+  return names;
+}
+
+function scanNotifierFolders(folders, log = defaultLog, reserved = new Set()) {
   const loaded = [];
   const skipped = [];
-  let entries = [];
-  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return { loaded, skipped }; }
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-    const folder = path.join(dir, entry.name);
+  const taken = new Set();
+  for (const { folder, origin = 'builtin', dev = false } of folders) {
+    const label = path.basename(folder);
     let manifest = null;
     try {
       manifest = JSON.parse(fs.readFileSync(path.join(folder, 'manifest.json'), 'utf8'));
       if (!manifest || manifest.kind !== 'notifier') continue;
+      if (origin !== 'builtin' && (reserved.has(manifest.name) || reserved.has(label))) throw new Error('its name is a built-in plugin');
+      if (taken.has(manifest.name)) throw new Error('another notifier has the same name');
+      const checked = checkManifest(manifest);
       const plugin = require(path.join(folder, 'index.js'));
       if (!plugin || plugin.name !== manifest.name || typeof plugin.notify !== 'function' || typeof plugin.test !== 'function') throw new Error('it does not have the notifier interface');
-      loaded.push({ plugin, manifest: checkManifest(manifest) });
+      taken.add(manifest.name);
+      loaded.push({ plugin, manifest: checked, folder, origin, dev });
     } catch (error) {
-      log('warn', `notifier plugin ${entry.name} skipped: ${error.message}`);
+      log('warn', `notifier plugin ${label} skipped: ${error.message}`);
       const field = (key, max) => (manifest && typeof manifest[key] === 'string' ? manifest[key].slice(0, max) : null);
-      skipped.push({ name: field('name', 64) || entry.name, version: field('version', 40), description: field('description', 500), error: String(error.message || 'error').slice(0, 300) });
+      skipped.push({ name: field('name', 64) || label, version: field('version', 40), description: field('description', 500), error: String(error.message || 'error').slice(0, 300), origin, dev });
     }
   }
   return { loaded, skipped };
+}
+
+// Drops every cached module of one plugin folder (and nothing else), so the next require reads the files again.
+function dropRequireCache(folder) {
+  const roots = new Set([path.resolve(folder)]);
+  try { roots.add(fs.realpathSync(folder)); } catch { /* the folder is gone */ }
+  let dropped = 0;
+  for (const key of Object.keys(require.cache)) {
+    for (const root of roots) {
+      if (key === root || key.startsWith(root + path.sep)) { delete require.cache[key]; dropped += 1; break; }
+    }
+  }
+  return dropped;
 }
 
 // The settings part of a notifier manifest: `config` validated (an invalid schema skips the plugin), `test` (default true: every notifier has
@@ -310,16 +342,58 @@ function createAttentionNotify(options) {
   const now = options.now || (() => Date.now());
   const timers = options.timers || { setTimeout: (fn, ms) => { const handle = setTimeout(fn, ms); if (handle.unref) handle.unref(); return handle; }, clearTimeout };
   const getOwner = options.getOwner || (() => require('./single-user').ensureSingleUser(db).login);
-  // notifiers (injected plugins) skip the folder scan; then `skipped` may list broken ones for the overview.
-  const scanned = options.notifiers ? null : scanNotifiers(options.pluginsDir, log);
-  const notifiers = options.notifiers || scanned.loaded.map(entry => entry.plugin);
-  // With injected notifiers, options.manifests { <name>: manifest } gives their manifests (checked like scanned ones).
-  const manifests = new Map(scanned
-    ? scanned.loaded.map(entry => [entry.plugin.name, entry.manifest])
-    : notifiers.map(plugin => [plugin.name, checkManifest((options.manifests && options.manifests[plugin.name]) || {})]));
+  // notifiers (injected plugins) skip the folder scan; then `skipped` may list broken ones for the overview. extraFolders() gives the user
+  // plugin folders (lib/plugin-store.js), read again on every reload().
+  const extraFolders = typeof options.extraFolders === 'function' ? options.extraFolders : () => [];
+  const scan = () => scanNotifiers(options.pluginsDir, log, extraFolders());
+  let scanned = options.notifiers ? null : scan();
+  // Kept as the same objects across reloads (the array is exported as `notifiers`).
+  const notifiers = options.notifiers ? [...options.notifiers] : scanned.loaded.map(entry => entry.plugin);
+  const manifests = new Map();
+  const origins = new Map(); // name -> { origin, dev, folder }
+  const byName = new Map();
+  let skipped = [];
+  function index() {
+    manifests.clear(); origins.clear(); byName.clear();
+    if (scanned) {
+      for (const entry of scanned.loaded) { manifests.set(entry.plugin.name, entry.manifest); origins.set(entry.plugin.name, { origin: entry.origin, dev: entry.dev, folder: entry.folder }); }
+    } else {
+      for (const plugin of notifiers) { manifests.set(plugin.name, checkManifest((options.manifests && options.manifests[plugin.name]) || {})); origins.set(plugin.name, { origin: 'builtin', dev: false, folder: null }); }
+    }
+    for (const plugin of notifiers) byName.set(plugin.name, plugin);
+    skipped = scanned ? scanned.skipped : (options.skipped || []);
+  }
+  index();
   const schemaOf = name => (manifests.get(name) || {}).config || [];
-  const skipped = scanned ? scanned.skipped : (options.skipped || []);
-  const byName = new Map(notifiers.map(plugin => [plugin.name, plugin]));
+
+  // Reads the plugin folders again (after an install, update, remove or a change in a linked folder). changed: folders whose files changed;
+  // only their modules leave the require cache, and their old plugin objects (and those of plugins that are gone) get close().
+  function reload({ changed = [] } = {}) {
+    if (!scanned) return { loaded: notifiers.map(plugin => plugin.name) };
+    const changedRoots = new Set();
+    for (const folder of changed) {
+      changedRoots.add(path.resolve(folder));
+      try { changedRoots.add(fs.realpathSync(folder)); } catch { /* removed */ }
+    }
+    const inside = folder => [...changedRoots].some(root => folder === root || folder.startsWith(root + path.sep));
+    const previous = scanned.loaded;
+    for (const folder of changed) dropRequireCache(folder);
+    for (const entry of previous) {
+      const real = (() => { try { return fs.realpathSync(entry.folder); } catch { return path.resolve(entry.folder); } })();
+      if (inside(path.resolve(entry.folder)) || inside(real)) dropRequireCache(entry.folder);
+    }
+    scanned = scan();
+    const next = new Set(scanned.loaded.map(entry => entry.plugin));
+    for (const entry of previous) {
+      if (next.has(entry.plugin) || typeof entry.plugin.close !== 'function') continue;
+      try { entry.plugin.close(); } catch { /* closing is best effort */ }
+    }
+    notifiers.length = 0;
+    notifiers.push(...scanned.loaded.map(entry => entry.plugin));
+    index();
+    log('info', `notifiers reloaded: ${notifiers.map(plugin => plugin.name).join(', ') || 'none'}`);
+    return { loaded: notifiers.map(plugin => plugin.name) };
+  }
 
   // Encrypted per-user values in system_state.
   const readState = key => {
@@ -500,6 +574,7 @@ function createAttentionNotify(options) {
           map.delete(key);
           if (!map.size) pending.delete(item.id);
           const latest = getRules(owner);
+          if (byName.get(plugin.name) !== plugin) return undefined; // removed or replaced (reloaded) while the call waited
           if (!isEnabled(plugin.name, owner)) return undefined; // switched off while the call waited
           if (inQuietHours(latest.quietHours, new Date(now()))) return remember({ ...base, outcome: 'quiet_hours' });
           let current = item;
@@ -551,13 +626,27 @@ function createAttentionNotify(options) {
       if (configured === null && schema.some(field => field.required)) configured = requiredSet(schema, settings.values);
       const statuses = {};
       for (const status of rules.statuses) statuses[status] = modeOf(rules, plugin.name, status);
+      const where = origins.get(plugin.name) || { origin: 'builtin', dev: false };
       return {
         name: plugin.name, version: pick('version', 40), description: pick('description', 500), loaded: true, error, enabled: settings.enabled, configured, summary, statuses,
-        settings: schema.length > 0, test: manifest.test !== false, customUi: manifest.customUi || null,
+        settings: schema.length > 0, test: manifest.test !== false, customUi: manifest.customUi || null, origin: where.origin, dev: Boolean(where.dev),
       };
     });
-    const broken = skipped.filter(entry => !byName.has(entry.name)).map(entry => ({ ...entry, loaded: false, enabled: null, configured: null, summary: null, statuses: {}, settings: false, test: false, customUi: null }));
+    const broken = skipped.filter(entry => !byName.has(entry.name)).map(entry => ({ ...entry, loaded: false, enabled: null, configured: null, summary: null, statuses: {}, settings: false, test: false, customUi: null, origin: entry.origin || 'builtin', dev: Boolean(entry.dev) }));
     return [...loaded, ...broken];
+  }
+
+  // Forgets every stored setting of one plugin for every user (its own store and the manifest settings, also its modes in the rules).
+  function purgePlugin(name) {
+    if (typeof name !== 'string' || !/^[a-z0-9][a-z0-9-]{0,40}$/.test(name)) throw new NotifyError('Unknown notifier', 404);
+    const removed = db.prepare("DELETE FROM system_state WHERE key LIKE ? OR key LIKE ?").run(`attention-notify:${name}:%`, `attention-plugin:${name}:%`).changes;
+    for (const row of db.prepare("SELECT key FROM system_state WHERE key LIKE 'attention-notify:%'").all()) {
+      const owner = row.key.slice('attention-notify:'.length);
+      if (owner.includes(':')) continue;
+      const rules = readState(row.key);
+      if (rules && rules.modes && rules.modes[name]) { delete rules.modes[name]; writeState(row.key, rules); }
+    }
+    return removed;
   }
 
   // ---- Manifest settings API (GET/PUT /api/attention/plugins/:name/config, POST /api/attention/plugins/:name/test) ----
@@ -630,8 +719,11 @@ function createAttentionNotify(options) {
     });
     router.get('/config', (req, res) => res.json(view(owner(req))));
     router.put('/config', (req, res) => { saveRules(owner(req), req.body); res.json(view(owner(req))); });
-    // A plugin may add its own endpoints (for Telegram: the login steps) under /api/attention-notify/<name>/.
-    for (const plugin of notifiers) {
+    // A plugin may add its own endpoints (for Telegram: the login steps) under /api/attention-notify/<name>/. The sub-router of a plugin is
+    // made on its first request and looked up by name on every request, so a reloaded or removed plugin is served by its current object.
+    const subs = new WeakMap();
+    const subFor = plugin => {
+      if (subs.has(plugin)) return subs.get(plugin);
       const sub = express.Router();
       if (typeof plugin.routes === 'function') plugin.routes(sub, { store: store(plugin.name), owner, NotifyError, log: (level, message) => log(level, `${plugin.name}: ${message}`) });
       sub.post('/test', async (req, res, next) => {
@@ -641,8 +733,13 @@ function createAttentionNotify(options) {
           res.json(await plugin.test(store(plugin.name).read(owner(req)), { kind, link: base ? `${base}/` : '' }));
         } catch (error) { next(error); }
       });
-      router.use(`/${plugin.name}`, sub);
-    }
+      subs.set(plugin, sub);
+      return sub;
+    };
+    router.use('/:plugin', (req, res, next) => {
+      const plugin = byName.get(req.params.plugin);
+      return plugin ? subFor(plugin)(req, res, next) : next();
+    });
     router.use((error, req, res, next) => {
       if (res.headersSent) return next(error);
       if (error instanceof NotifyError || (error && error.name === 'NotifyError')) return res.status(error.statusCode || 400).json({ error: error.message });
@@ -654,7 +751,8 @@ function createAttentionNotify(options) {
 
   return {
     handle, listener, createRouter, getRules, saveRules, notifiers, overview, defaultOwner: () => getOwner(),
-    getPluginConfig, savePluginConfig, testPlugin, isEnabled,
+    getPluginConfig, savePluginConfig, testPlugin, isEnabled, reload, purgePlugin,
+    has: name => byName.has(name),
     rules: owner => getRules(owner),
     recent: () => recent.slice(),
     pendingCount: () => [...pending.values()].reduce((sum, map) => sum + map.size, 0),
@@ -686,6 +784,6 @@ function start(options) {
 }
 
 module.exports = {
-  start, createAttentionNotify, loadNotifiers, scanNotifiers, normalizeRules,
+  start, createAttentionNotify, loadNotifiers, scanNotifiers, scanNotifierFolders, dropRequireCache, normalizeRules,
   validateConfigSchema, normalizeConfigValues, effectiveValues, publicValues, scrubSecrets, checkManifest, CONFIG_TYPES, inQuietHours, absoluteLink, defaultRules, NotifyError, STATUSES, MODES, DEDUPE_MS,
 };

@@ -316,6 +316,7 @@ const OVERVIEW = {
   notifiers: [
     { name: 'telegram', version: '1.0.0', description: 'Telegram', loaded: true, error: null, configured: true, summary: 'Logged in as One (+86*******78) \u2192 account 2 Two', statuses: { waiting_user: 'call', review: 'message' } },
     { name: 'pager', version: '0.1.0', description: null, loaded: false, error: 'it does not have the notifier interface', configured: null, summary: null, statuses: {} },
+    { name: 'bell', version: '0.2.0', description: null, loaded: true, enabled: false, error: null, configured: true, summary: null, statuses: { review: 'message' } },
   ],
 };
 const pluginServer = () => fakeServer({ handler: (req, res, { url, send }) => {
@@ -335,7 +336,7 @@ test('plugins prints the server listeners and notifiers and this machine\'s chec
     assert.equal(fake.requests.at(-1).path, '/api/attention/plugins');
     assert.equal(fake.requests.at(-1).auth, `Bearer ${TOKEN}`);
     assert.match(text.stdout, /^Listeners\n  claude 1\.0\.0  installed here \u00b7 hooks synced \u00b7 3 open \u00b7 last 5 min ago\n  broken \?  broken: manifest\.json is not valid JSON\n/);
-    assert.match(text.stdout, /\nNotifiers\n  telegram 1\.0\.0  configured \u00b7 waiting_user: call, review: message\n    Logged in as One \(\+86\*{7}78\) \u2192 account 2 Two\n  pager 0\.1\.0  failed to load: it does not have the notifier interface\n/);
+    assert.match(text.stdout, /\nNotifiers\n  telegram 1\.0\.0  configured \u00b7 waiting_user: call, review: message\n    Logged in as One \(\+86\*{7}78\) \u2192 account 2 Two\n  pager 0\.1\.0  failed to load: it does not have the notifier interface\n  bell 0\.2\.0  disabled \u00b7 configured \u00b7 review: message\n/);
     assert.match(text.stdout, /\nThis machine:\n  claude  hook path set \u00b7 logged in \u00b7 hooks not synced\n    run ta once to sync the hooks\n$/);
     assert.ok(!text.stdout.includes(TOKEN), 'the token is never printed');
 

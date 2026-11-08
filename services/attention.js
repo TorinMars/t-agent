@@ -267,10 +267,15 @@ function pairingUrl(value) {
   return `${parsed.protocol}//${parsed.host}${parsed.pathname.replace(/\/+$/, '')}`;
 }
 
-const tokenView = row => ({ id: row.id, name: row.name, created_at: row.created_at, last_used_at: row.last_used_at, revoked_at: row.revoked_at });
+// scopes (attention_tokens.scopes, space separated): extra permissions; 'market' = "Can manage plugins" (/api/attention/market). Off by default.
+const TOKEN_SCOPES = Object.freeze(['market']);
+const scopesOf = row => String((row && row.scopes) || '').split(/\s+/).filter(scope => TOKEN_SCOPES.includes(scope));
+const tokenView = row => ({ id: row.id, name: row.name, created_at: row.created_at, last_used_at: row.last_used_at, revoked_at: row.revoked_at, market: scopesOf(row).includes('market') });
 
 function createAttentionService({ db, now = () => new Date() } = {}) {
   if (!db) throw new Error('createAttentionService needs a database');
+  // attention_tokens.scopes was added after schema 9 shipped (db/index.js adds it at start; a database made from an older schema.sql gets it here).
+  if (!db.prepare('PRAGMA table_info(attention_tokens)').all().some(column => column.name === 'scopes')) db.exec('ALTER TABLE attention_tokens ADD COLUMN scopes TEXT');
   const listeners = new Set();
   const internalListeners = new Set();
   const stamp = () => now().toISOString();
@@ -504,11 +509,14 @@ function createAttentionService({ db, now = () => new Date() } = {}) {
     return db.prepare('SELECT * FROM attention_tokens ORDER BY id DESC').all().map(tokenView);
   }
 
-  function createToken({ name } = {}) {
+  // market: true gives the token the 'market' scope ("Can manage plugins").
+  function createToken({ name, market = false } = {}) {
     const clean = text('name', LIMITS.tokenName, { required: true, singleLine: true })(name);
+    if (market !== undefined && market !== null && typeof market !== 'boolean') throw invalid('market must be true or false');
     const token = `tatt_${crypto.randomBytes(32).toString('base64url')}`;
-    const id = db.prepare('INSERT INTO attention_tokens (name, token_hash, created_at) VALUES (?, ?, ?)').run(clean, hashToken(token), stamp()).lastInsertRowid;
-    return { id: Number(id), name: clean, token };
+    const scopes = market === true ? 'market' : null;
+    const id = db.prepare('INSERT INTO attention_tokens (name, token_hash, created_at, scopes) VALUES (?, ?, ?, ?)').run(clean, hashToken(token), stamp(), scopes).lastInsertRowid;
+    return { id: Number(id), name: clean, token, market: market === true };
   }
 
   function revokeToken(id) {
@@ -550,11 +558,11 @@ function createAttentionService({ db, now = () => new Date() } = {}) {
   function verifyToken(token) {
     if (typeof token !== 'string' || !TOKEN_PATTERN.test(token)) return null;
     const terminal = terminalByHash.get(hashToken(token));
-    if (terminal) return { id: terminal.id, name: terminal.name, kind: 'terminal' };
+    if (terminal) return { id: terminal.id, name: terminal.name, kind: 'terminal', scopes: [] };
     const row = db.prepare('SELECT * FROM attention_tokens WHERE token_hash = ?').get(hashToken(token));
     if (!row || row.revoked_at) return null;
     db.prepare('UPDATE attention_tokens SET last_used_at = ? WHERE id = ?').run(stamp(), row.id);
-    return { id: row.id, name: row.name };
+    return { id: row.id, name: row.name, scopes: scopesOf(row) };
   }
 
   function tokenActive(id) {
@@ -627,7 +635,7 @@ function defaultService() {
 }
 
 module.exports = {
-  createAttentionService, defaultService, AttentionError, PAIRING, ACTIVITY_KINDS, PENDING_KINDS, STATUSES, PRIORITIES, FINISHED, LIMITS, TOKEN_PATTERN, hashToken,
+  createAttentionService, defaultService, AttentionError, PAIRING, TOKEN_SCOPES, ACTIVITY_KINDS, PENDING_KINDS, STATUSES, PRIORITIES, FINISHED, LIMITS, TOKEN_PATTERN, hashToken,
   // In-process subscribers (notifiers) of this server's list.
   onChange: fn => defaultService().onChange(fn),
 };

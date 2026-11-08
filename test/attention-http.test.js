@@ -154,7 +154,7 @@ test('browser session: CRUD, 409, events, upsert by ref, same-origin rule, token
   const tokenList = await (await call('/api/attention/tokens')).json();
   assert.equal(tokenList.tokens.length, 1);
   assert.equal(JSON.stringify(tokenList).includes(token), false);
-  assert.deepEqual(Object.keys(tokenList.tokens[0]).sort(), ['created_at', 'id', 'last_used_at', 'name', 'revoked_at']);
+  assert.deepEqual(Object.keys(tokenList.tokens[0]).sort(), ['created_at', 'id', 'last_used_at', 'market', 'name', 'revoked_at']);
 
   // A token works without cookies and without same-origin proof.
   const viaToken = await call('/api/attention', { method: 'POST', headers: bearer(token), body: { title: 'by token' } });

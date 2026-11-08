@@ -36,7 +36,7 @@ function createCounter({ windowMs, max, now = Date.now }) {
   };
 }
 
-function createAttentionRoutes({ service, summary = null, plugins = null, installer = null, pairingClaims = { windowMs: 60 * 1000, max: 5, lockMs: 60 * 1000, requests: 30 }, heartbeatMs = 25000, failedAuth = { windowMs: 15 * 60 * 1000, max: 20 }, tokenRequests = { windowMs: 60 * 1000, max: 600 }, now = Date.now } = {}) {
+function createAttentionRoutes({ service, summary = null, plugins = null, installer = null, market = null, pairingClaims = { windowMs: 60 * 1000, max: 5, lockMs: 60 * 1000, requests: 30 }, heartbeatMs = 25000, failedAuth = { windowMs: 15 * 60 * 1000, max: 20 }, tokenRequests = { windowMs: 60 * 1000, max: 600 }, now = Date.now } = {}) {
   if (!service) throw new Error('createAttentionRoutes needs the attention service');
   const failures = createCounter({ ...failedAuth, now });
   const perToken = createCounter({ ...tokenRequests, now });
@@ -70,7 +70,7 @@ function createAttentionRoutes({ service, summary = null, plugins = null, instal
 
   // Tokens: the browser session only.
   router.get('/tokens', sessionOnly, wrap((req, res) => res.json({ tokens: service.listTokens() })));
-  router.post('/tokens', sessionOnly, wrap((req, res) => res.status(201).json(service.createToken({ name: req.body && req.body.name }))));
+  router.post('/tokens', sessionOnly, wrap((req, res) => res.status(201).json(service.createToken({ name: req.body && req.body.name, market: req.body ? req.body.market : undefined }))));
   router.delete('/tokens/:id', sessionOnly, wrap((req, res) => {
     const id = idOf(req.params.id);
     if (id === null) return sendError(res, 404, 'NOT_FOUND', 'Token not found');
@@ -128,6 +128,34 @@ function createAttentionRoutes({ service, summary = null, plugins = null, instal
   const needInstaller = (req, res, next) => (installer ? next() : sendError(res, 404, 'NOT_FOUND', 'Not found'));
   router.post('/plugins/claude/install', sessionOnly, needInstaller, asyncWrap(async (req, res) => res.json(await installer.install())));
   router.post('/plugins/claude/uninstall', sessionOnly, needInstaller, asyncWrap(async (req, res) => res.json(await installer.uninstall())));
+
+  // Plugin marketplace (services/attention-market.js): the browser session, or a token with the 'market' scope ("Can manage plugins").
+  // Every other token (terminal tokens too) gets 403 TOKEN_NOT_ALLOWED.
+  const marketAccess = (req, res, next) => {
+    const auth = req.attentionAuth;
+    if (auth.kind === 'session' || (auth.kind === 'token' && Array.isArray(auth.scopes) && auth.scopes.includes('market'))) return next();
+    return sendError(res, 403, 'TOKEN_NOT_ALLOWED', 'This token cannot manage plugins; make a token with "Can manage plugins" under Settings -> T-Attention -> CLI tokens');
+  };
+  const marketCall = handler => (req, res) => {
+    if (!market) return sendError(res, 404, 'NOT_FOUND', 'Not found');
+    return Promise.resolve().then(() => handler(req)).then(result => res.json(result)).catch(error => {
+      if (error && error.name === 'MarketError') return sendError(res, error.statusCode || 400, error.code, error.message);
+      console.error(`T-Attention market: ${error && (error.stack || error.message)}`);
+      return sendError(res, 500, 'INTERNAL_ERROR', 'The plugin marketplace failed; see the server log');
+    });
+  };
+  const queryText = value => (typeof value === 'string' ? value : undefined);
+  router.get('/market', marketAccess, marketCall(req => market.list({ q: queryText(req.query.q), kind: queryText(req.query.kind) })));
+  router.get('/market/sources', marketAccess, marketCall(() => market.getSources()));
+  router.put('/market/sources', marketAccess, marketCall(req => market.saveSources(req.body)));
+  router.post('/market/prepare', marketAccess, marketCall(req => market.prepare(req.body)));
+  router.post('/market/install', marketAccess, marketCall(req => market.install(req.body)));
+  router.get('/market/updates', marketAccess, marketCall(() => market.checkUpdates()));
+  router.delete('/market/plugins/:name', marketAccess, marketCall(req => market.remove(req.params.name, { purge: ['1', 'true', 'yes'].includes(String(req.query.purge || '').toLowerCase()) })));
+  router.post('/market/link', marketAccess, marketCall(req => market.link(req.body)));
+  router.delete('/market/link/:name', marketAccess, marketCall(req => market.unlink(req.params.name)));
+  router.post('/market/reload', marketAccess, marketCall(req => market.reload(req.body)));
+  router.all(/^\/market(?:\/.*)?$/i, (req, res) => sendError(res, 404, 'NOT_FOUND', 'Not found'));
 
   // Pairing codes for another machine (`t-attention pair`): made, read and ended from the browser session; claimed through `claim` below.
   const pairingCommand = (code, url) => `t-attention pair ${code} --url ${url}`;
@@ -240,7 +268,7 @@ function createAttentionRoutes({ service, summary = null, plugins = null, instal
       return sendError(res, 429, 'RATE_LIMITED', 'Too many requests with this token; try again later');
     }
     perToken.add(tokenKey);
-    req.attentionAuth = { kind: 'token', id: auth.id, name: auth.name };
+    req.attentionAuth = { kind: 'token', id: auth.id, name: auth.name, scopes: Array.isArray(auth.scopes) ? auth.scopes : [] };
     // Ends here in every case: an unmatched address is a JSON 404, never the session path, the gates or the pages.
     const done = error => {
       if (error) return sendError(res, error.status === 413 ? 413 : 400, error.status === 413 ? 'BODY_TOO_LARGE' : 'INVALID_JSON', error.status === 413 ? 'The request body is too large' : 'The request body is not valid JSON');

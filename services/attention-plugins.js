@@ -33,16 +33,32 @@ function terminalMachine({ env = process.env, homedir = os.homedir, terminalUser
 
 // options: service (services/attention.js), notify (services/attention-notify.js; optional), listenersDir, env, homedir,
 // terminalUser() -> { user } (default lib/terminal-user.js resolveTerminalUser), autoTerminal() -> boolean (terminals get the env).
-function createPluginOverview({ service, notify = null, listenersDir = local.LISTENERS_DIR, env = process.env, homedir = os.homedir, terminalUser = () => resolveTerminalUser({ env }), autoTerminal = () => false } = {}) {
+// userListeners() -> the user listener folders [{ folder, origin, dev }] (lib/plugin-store.js userFolders); one with a built-in name is
+// listed with an error and never replaces the built-in.
+function createPluginOverview({ service, notify = null, listenersDir = local.LISTENERS_DIR, userListeners = () => [], env = process.env, homedir = os.homedir, terminalUser = () => resolveTerminalUser({ env }), autoTerminal = () => false } = {}) {
   if (!service) throw new Error('createPluginOverview needs the attention service');
+
+  function allListeners() {
+    const builtIn = local.readListeners(listenersDir);
+    const names = new Set(builtIn.map(listener => listener.name));
+    const user = [];
+    for (const item of userListeners() || []) {
+      const listener = local.readListenerFolder(item.folder, { origin: item.origin, dev: Boolean(item.dev) });
+      if (!listener) continue;
+      if (names.has(listener.name)) { user.push({ ...listener, error: 'its name is a built-in plugin' }); continue; }
+      names.add(listener.name);
+      user.push(listener);
+    }
+    return [...builtIn, ...user];
+  }
 
   function listeners() {
     const where = terminalMachine({ env, homedir, terminalUser });
-    return local.readListeners(listenersDir).map(listener => {
+    return allListeners().map(listener => {
       const stats = (typeof service.sourceStats === 'function' && service.sourceStats(listener.name)) || { itemCount: 0, lastEventAt: null };
       const check = local.checkListener(listener.name, { dataDir: where.dataDir, home: where.home });
       const extra = {};
-      if (listener.name === 'claude' && !listener.error) {
+      if (listener.name === 'claude' && listener.origin === 'builtin' && !listener.error) {
         extra.hooksCurrent = listenerInstall.checkClaudeHooks({ dataDir: where.dataDir, home: where.home }).current;
         extra.autoTerminal = Boolean(autoTerminal());
         extra.installable = true;

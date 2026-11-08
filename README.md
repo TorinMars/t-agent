@@ -333,6 +333,18 @@ Easier ways to connect Claude Code:
 t-attention pair 123456 --url https://your-client.example.com
 ```
 
+More plugins (marketplace): Settings -> T-Attention -> Plugins -> Marketplace, or from the command line with a token that has "Can manage plugins" turned on (off by default):
+
+```bash
+t-attention plugins search bell --kind notifier
+t-attention plugins install my-bell          # from the index; or a Git URL: https://host/repo.git#v1.0:subfolder
+t-attention plugins update --yes
+t-attention plugins remove my-bell --purge   # --purge also forgets its settings
+t-attention plugins link ~/code/my-plugin    # dev: use a local folder in place
+```
+
+`install` downloads the plugin, prints what it contains (source, pinned commit, files, warnings such as "Can run other programs") and asks before installing. A plugin runs code; install only plugins you trust. How to publish one: `plugins/README.md`.
+
 ## Tokens and pairing
 
 ### Permissions

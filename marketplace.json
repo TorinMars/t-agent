@@ -1,0 +1,25 @@
+{
+  "name": "T-Agent official",
+  "plugins": [
+    {
+      "name": "claude",
+      "kind": "listener",
+      "builtIn": true,
+      "version": "1.0.0",
+      "description": "Claude Code hooks: one task per Claude session; prompt -> working, permission or question -> waiting_user, turn end -> review, API error -> failed.",
+      "author": "T-Agent",
+      "homepage": "https://github.com/TorinMars/t-agent/tree/main/plugins/listeners/claude",
+      "tags": ["claude", "claude-code", "hooks"]
+    },
+    {
+      "name": "telegram",
+      "kind": "notifier",
+      "builtIn": true,
+      "version": "1.0.0",
+      "description": "Sends T-Attention messages and rings a call from your Telegram account 1 to account 2 (MTProto user API).",
+      "author": "T-Agent",
+      "homepage": "https://github.com/TorinMars/t-agent/tree/main/plugins/notifiers/telegram",
+      "tags": ["telegram", "messages", "calls"]
+    }
+  ]
+}

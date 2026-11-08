@@ -4,6 +4,7 @@
 // Rules and plugin settings are per user, encrypted in system_state (no schema change):
 //   attention-notify:<owner>          the rules (statuses, modes, quiet hours, call delay, rate limits, public page address)
 //   attention-notify:<plugin>:<owner> the plugin's own settings (for Telegram: the session string and api_hash; never sent to the browser)
+//   attention-plugin:<plugin>:<owner> the manifest settings: { enabled, values } (the "config" schema of manifest.json; secrets never sent back)
 // A notifier error never reaches the attention API: the bus handler returns at once and every delivery is caught and logged.
 const fs = require('fs');
 const path = require('path');
@@ -117,6 +118,143 @@ function absoluteLink(item, base) {
   return base ? `${base}/` : '';
 }
 
+// ---- Manifest-driven plugin settings (manifest "config", "test", "customUi") ----
+// A notifier's manifest may describe its simple settings; the server validates them, stores them per user (encrypted, with the enable switch) and
+// the page draws a form from the schema. See "Plugin settings from the manifest" in DESIGN.md and plugins/README.md.
+const CONFIG_TYPES = ['string', 'secret', 'number', 'boolean', 'select'];
+const CONFIG_KEY = /^[A-Za-z][A-Za-z0-9_]{0,39}$/;
+const CONFIG_MAX_FIELDS = 30;
+const STRING_MAX = 2000;
+const SECRET_MAX = 4096;
+
+// Checks manifest.config and returns a clean copy; throws an Error with the reason (the plugin is then skipped at load).
+function validateConfigSchema(config) {
+  if (config === undefined || config === null) return [];
+  if (!Array.isArray(config)) throw new Error('config must be a list');
+  if (config.length > CONFIG_MAX_FIELDS) throw new Error(`config has more than ${CONFIG_MAX_FIELDS} fields`);
+  const seen = new Set();
+  const optionalText = (field, name, max) => {
+    if (field[name] === undefined) return undefined;
+    if (typeof field[name] !== 'string' || field[name].length > max) throw new Error(`config field ${field.key}: ${name} must be text of at most ${max} characters`);
+    return field[name];
+  };
+  return config.map((field, index) => {
+    if (!field || typeof field !== 'object' || Array.isArray(field)) throw new Error(`config field ${index + 1} is not an object`);
+    if (typeof field.key !== 'string' || !CONFIG_KEY.test(field.key)) throw new Error(`config field ${index + 1}: key must be letters, digits or _ and start with a letter`);
+    if (seen.has(field.key)) throw new Error(`config field ${field.key} is listed twice`);
+    seen.add(field.key);
+    if (typeof field.label !== 'string' || !field.label.trim() || field.label.length > 120) throw new Error(`config field ${field.key}: label is missing`);
+    if (!CONFIG_TYPES.includes(field.type)) throw new Error(`config field ${field.key}: type must be one of ${CONFIG_TYPES.join(', ')}`);
+    const clean = { key: field.key, label: field.label.trim(), type: field.type, required: field.required === true };
+    if (field.required !== undefined && typeof field.required !== 'boolean') throw new Error(`config field ${field.key}: required must be true or false`);
+    for (const name of ['help', 'placeholder']) { const value = optionalText(field, name, 300); if (value !== undefined) clean[name] = value; }
+    if (field.type === 'select') {
+      if (!Array.isArray(field.options) || !field.options.length || field.options.length > 50) throw new Error(`config field ${field.key}: options must be a list of 1 to 50 choices`);
+      clean.options = field.options.map(option => {
+        const value = typeof option === 'string' ? option : option && option.value;
+        const label = typeof option === 'string' ? option : option && option.label;
+        if (typeof value !== 'string' || !value || value.length > 100 || typeof label !== 'string' || !label || label.length > 120) throw new Error(`config field ${field.key}: every option needs a value and a label`);
+        return { value, label };
+      });
+      if (new Set(clean.options.map(option => option.value)).size !== clean.options.length) throw new Error(`config field ${field.key}: an option value is listed twice`);
+    } else if (field.options !== undefined) throw new Error(`config field ${field.key}: only a select has options`);
+    if (field.type === 'number') {
+      for (const name of ['min', 'max']) {
+        if (field[name] === undefined) continue;
+        if (typeof field[name] !== 'number' || !Number.isFinite(field[name])) throw new Error(`config field ${field.key}: ${name} must be a number`);
+        clean[name] = field[name];
+      }
+      if (clean.min !== undefined && clean.max !== undefined && clean.min > clean.max) throw new Error(`config field ${field.key}: min is above max`);
+      if (field.integer !== undefined && typeof field.integer !== 'boolean') throw new Error(`config field ${field.key}: integer must be true or false`);
+      if (field.integer) clean.integer = true;
+    } else if (field.min !== undefined || field.max !== undefined || field.integer !== undefined) throw new Error(`config field ${field.key}: only a number has min, max or integer`);
+    if (field.default !== undefined) {
+      if (field.type === 'secret') throw new Error(`config field ${field.key}: a secret cannot have a default`);
+      try { clean.default = checkValue(clean, field.default); } catch (error) { throw new Error(`config field ${field.key}: the default is not valid (${error.message})`); }
+      if (clean.default === undefined) delete clean.default;
+    }
+    return clean;
+  });
+}
+
+// One value against its field: the clean value, or undefined for "no value" (an empty string or null). Throws NotifyError with a message for the page.
+function checkValue(field, value) {
+  if (value === undefined || value === null || value === '') return undefined;
+  const label = field.label;
+  switch (field.type) {
+    case 'string': {
+      if (typeof value !== 'string') throw new NotifyError(`${label} must be text`);
+      const text = value.trim();
+      if (text.length > STRING_MAX) throw new NotifyError(`${label} is too long`);
+      return text || undefined;
+    }
+    case 'secret':
+      if (typeof value !== 'string') throw new NotifyError(`${label} must be text`);
+      if (value.length > SECRET_MAX) throw new NotifyError(`${label} is too long`);
+      return value;
+    case 'number': {
+      const number = typeof value === 'number' ? value : typeof value === 'string' && value.trim() ? Number(value) : NaN;
+      const range = field.min !== undefined && field.max !== undefined ? ` from ${field.min} to ${field.max}` : field.min !== undefined ? ` of at least ${field.min}` : field.max !== undefined ? ` of at most ${field.max}` : '';
+      const bad = !Number.isFinite(number) || (field.integer && !Number.isInteger(number)) || (field.min !== undefined && number < field.min) || (field.max !== undefined && number > field.max);
+      if (bad) throw new NotifyError(`${label} must be a ${field.integer ? 'whole number' : 'number'}${range}`);
+      return number;
+    }
+    case 'boolean':
+      if (typeof value !== 'boolean') throw new NotifyError(`${label} must be on or off`);
+      return value;
+    case 'select':
+      if (typeof value !== 'string' || !field.options.some(option => option.value === value)) throw new NotifyError(`${label}: choose one of the listed values`);
+      return value;
+    default: throw new NotifyError('Unknown setting type');
+  }
+}
+
+// The values a save leaves: fields left out keep their value; an empty secret (or { set: true }, as the page got it) keeps the saved one, and
+// null clears it; an empty other field goes back to its default. Unknown keys and a missing required value are refused.
+function normalizeConfigValues(schema, body, current = {}) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) throw new NotifyError('Invalid settings');
+  const byKey = new Map(schema.map(field => [field.key, field]));
+  for (const key of Object.keys(body)) if (!byKey.has(key)) throw new NotifyError(`Unknown setting: ${String(key).slice(0, 40)}`);
+  const next = {};
+  for (const field of schema) {
+    const has = Object.prototype.hasOwnProperty.call(body, field.key);
+    const raw = body[field.key];
+    let value;
+    if (!has) value = current[field.key];
+    else if (field.type === 'secret' && (raw === '' || raw === undefined || (raw && typeof raw === 'object' && raw.set === true))) value = current[field.key];
+    else value = checkValue(field, raw);
+    if (value !== undefined) next[field.key] = value;
+  }
+  for (const field of schema) {
+    if (field.required && next[field.key] === undefined && field.default === undefined) throw new NotifyError(`${field.label} is required`);
+  }
+  return next;
+}
+
+// What a plugin gets: the stored value, else the default.
+function effectiveValues(schema, stored = {}) {
+  const out = {};
+  for (const field of schema) {
+    if (stored[field.key] !== undefined) out[field.key] = stored[field.key];
+    else if (field.default !== undefined) out[field.key] = field.default;
+  }
+  return out;
+}
+// What the browser gets: secrets only as { set } (never the value), the rest with defaults filled in.
+function publicValues(schema, stored = {}) {
+  const out = effectiveValues(schema, stored);
+  for (const field of schema) if (field.type === 'secret') out[field.key] = { set: typeof stored[field.key] === 'string' && stored[field.key] !== '' };
+  return out;
+}
+// Every required field has a value (a plugin without the status hook is "configured" by this).
+const requiredSet = (schema, stored = {}) => schema.every(field => !field.required || stored[field.key] !== undefined || field.default !== undefined);
+// Removes stored secrets from a text that goes to the browser (a test or error message).
+function scrubSecrets(text, secrets) {
+  let out = String(text);
+  for (const secret of secrets) if (typeof secret === 'string' && secret.length >= 4) out = out.split(secret).join('[hidden]');
+  return out;
+}
+
 // Reads every plugins/notifiers/<name>/ that has a manifest of kind 'notifier' and an index.js with the interface.
 // Returns { loaded: [{ plugin, manifest }], skipped: [{ name, version, description, error }] }; a broken plugin is skipped and logged,
 // and kept in `skipped` so the plugin overview (GET /api/attention/plugins) can show why it is not running.
@@ -134,7 +272,7 @@ function scanNotifiers(dir = PLUGINS_DIR, log = defaultLog) {
       if (!manifest || manifest.kind !== 'notifier') continue;
       const plugin = require(path.join(folder, 'index.js'));
       if (!plugin || plugin.name !== manifest.name || typeof plugin.notify !== 'function' || typeof plugin.test !== 'function') throw new Error('it does not have the notifier interface');
-      loaded.push({ plugin, manifest });
+      loaded.push({ plugin, manifest: checkManifest(manifest) });
     } catch (error) {
       log('warn', `notifier plugin ${entry.name} skipped: ${error.message}`);
       const field = (key, max) => (manifest && typeof manifest[key] === 'string' ? manifest[key].slice(0, max) : null);
@@ -142,6 +280,16 @@ function scanNotifiers(dir = PLUGINS_DIR, log = defaultLog) {
     }
   }
   return { loaded, skipped };
+}
+
+// The settings part of a notifier manifest: `config` validated (an invalid schema skips the plugin), `test` (default true: every notifier has
+// test()) and `customUi` (the name of a section the page draws itself, above the generic form).
+function checkManifest(manifest) {
+  let config;
+  try { config = validateConfigSchema(manifest.config); } catch (error) { throw new Error(`invalid config in manifest.json: ${error.message}`); }
+  if (manifest.test !== undefined && typeof manifest.test !== 'boolean') throw new Error('invalid manifest.json: test must be true or false');
+  if (manifest.customUi !== undefined && manifest.customUi !== null && (typeof manifest.customUi !== 'string' || !/^[a-z][a-z0-9-]{0,40}$/.test(manifest.customUi))) throw new Error('invalid manifest.json: customUi must be a short name');
+  return { ...manifest, config, test: manifest.test !== false, customUi: manifest.customUi || null };
 }
 
 function loadNotifiers(dir = PLUGINS_DIR, log = defaultLog) {
@@ -165,7 +313,11 @@ function createAttentionNotify(options) {
   // notifiers (injected plugins) skip the folder scan; then `skipped` may list broken ones for the overview.
   const scanned = options.notifiers ? null : scanNotifiers(options.pluginsDir, log);
   const notifiers = options.notifiers || scanned.loaded.map(entry => entry.plugin);
-  const manifests = new Map(scanned ? scanned.loaded.map(entry => [entry.plugin.name, entry.manifest]) : []);
+  // With injected notifiers, options.manifests { <name>: manifest } gives their manifests (checked like scanned ones).
+  const manifests = new Map(scanned
+    ? scanned.loaded.map(entry => [entry.plugin.name, entry.manifest])
+    : notifiers.map(plugin => [plugin.name, checkManifest((options.manifests && options.manifests[plugin.name]) || {})]));
+  const schemaOf = name => (manifests.get(name) || {}).config || [];
   const skipped = scanned ? scanned.skipped : (options.skipped || []);
   const byName = new Map(notifiers.map(plugin => [plugin.name, plugin]));
 
@@ -180,6 +332,7 @@ function createAttentionNotify(options) {
   const deleteState = key => db.prepare('DELETE FROM system_state WHERE key = ?').run(key);
   const rulesKey = owner => `attention-notify:${owner}`;
   const pluginKey = (name, owner) => `attention-notify:${name}:${owner}`;
+  const settingsKey = (name, owner) => `attention-plugin:${name}:${owner}`;
 
   function getRules(owner) {
     const base = defaultRules();
@@ -194,12 +347,70 @@ function createAttentionNotify(options) {
   }
   const modeOf = (rules, name, status) => (rules.modes[name] && rules.modes[name][status]) || 'message';
 
-  // The store a plugin gets for its own settings.
+  // The manifest settings of one plugin for one user: { enabled, values } in attention-plugin:<name>:<owner> (encrypted as a whole, so the
+  // secrets too). The first read moves the values of schema keys the plugin kept in its own store (attention-notify:<name>:<owner>, for
+  // Telegram the ring time `callSeconds`) into it, so existing settings keep working without being entered again.
+  function readSettings(name, owner) {
+    const stored = readState(settingsKey(name, owner));
+    if (stored && typeof stored === 'object') return { enabled: stored.enabled !== false, values: stored.values && typeof stored.values === 'object' ? stored.values : {} };
+    const schema = schemaOf(name);
+    const own = readState(pluginKey(name, owner));
+    const values = {};
+    if (own && schema.length) {
+      for (const field of schema) {
+        if (own[field.key] === undefined) continue;
+        try { const value = checkValue(field, own[field.key]); if (value !== undefined) values[field.key] = value; } catch { /* a value the schema refuses is dropped */ }
+      }
+    }
+    const moved = own && schema.some(field => own[field.key] !== undefined);
+    if (moved) {
+      const rest = { ...own };
+      for (const field of schema) delete rest[field.key];
+      writeState(settingsKey(name, owner), { enabled: true, values });
+      writeState(pluginKey(name, owner), rest);
+      log('info', `${name}: moved ${Object.keys(values).length} setting(s) of ${owner} to the manifest settings`);
+    }
+    return { enabled: true, values };
+  }
+  const writeSettings = (name, owner, settings) => writeState(settingsKey(name, owner), { enabled: settings.enabled !== false, values: settings.values || {} });
+  const isEnabled = (name, owner) => readSettings(name, owner).enabled;
+
+  // The store a plugin gets for its own settings. A read gives its own values plus the manifest settings (with defaults); a write of a
+  // schema key goes to the manifest settings (only when it differs from what the plugin read), the rest to its own store; clear() forgets
+  // only its own store (the manifest settings and the switch stay).
   const store = name => ({
-    read: owner => readState(pluginKey(name, owner)) || {},
-    write: (owner, value) => writeState(pluginKey(name, owner), value),
+    read: owner => ({ ...(readState(pluginKey(name, owner)) || {}), ...effectiveValues(schemaOf(name), readSettings(name, owner).values) }),
+    write: (owner, value) => {
+      const schema = schemaOf(name);
+      const rest = { ...(value || {}) };
+      if (schema.length) {
+        const settings = readSettings(name, owner);
+        const shown = effectiveValues(schema, settings.values);
+        const values = { ...settings.values };
+        let changed = false;
+        for (const field of schema) {
+          if (!Object.prototype.hasOwnProperty.call(rest, field.key)) continue;
+          const next = rest[field.key];
+          delete rest[field.key];
+          if (next === shown[field.key]) continue;
+          if (next === undefined || next === null || next === '') delete values[field.key]; else values[field.key] = next;
+          changed = true;
+        }
+        if (changed) writeSettings(name, owner, { ...settings, values });
+      }
+      writeState(pluginKey(name, owner), rest);
+    },
     clear: owner => deleteState(pluginKey(name, owner)),
   });
+  // Every stored secret of a plugin (manifest secrets and own values named like a secret), to keep them out of what the browser gets.
+  function secretsOf(name, owner) {
+    const own = readState(pluginKey(name, owner)) || {};
+    const { values } = readSettings(name, owner);
+    return [
+      ...schemaOf(name).filter(field => field.type === 'secret').map(field => values[field.key]),
+      ...Object.entries(own).filter(([key, value]) => SECRET_KEY.test(key) && typeof value === 'string').map(([, value]) => value),
+    ].filter(value => typeof value === 'string' && value);
+  }
 
   // State in memory: the last sends (dedupe), the send times per notifier and kind (rate limit), the delayed calls and a short log for Settings.
   const sentAt = new Map(); // `${notifier}:${itemId}:${status}` -> time
@@ -235,7 +446,8 @@ function createAttentionNotify(options) {
     if (typeof plugin.ready === 'function' && !plugin.ready(config)) return remember({ ...base, outcome: 'skipped', detail: 'not set up' });
     const link = absoluteLink(item, rules.publicUrl);
     const pluginLog = (level, message) => log(level, `${plugin.name}: ${message}`);
-    const send = async (kind, why, extra = {}) => plugin.notify({ item, previous, reason: why, mode: kind, config, log: pluginLog, link, ...extra });
+    const values = effectiveValues(schemaOf(plugin.name), readSettings(plugin.name, owner).values);
+    const send = async (kind, why, extra = {}) => plugin.notify({ item, previous, reason: why, mode: kind, config, values, log: pluginLog, link, ...extra });
     const message = async (why, extra) => {
       if (!allow(plugin.name, 'message', rules)) return remember({ ...base, mode: 'message', outcome: 'rate_limited' });
       await send('message', why, extra);
@@ -275,6 +487,7 @@ function createAttentionNotify(options) {
     for (const plugin of notifiers) {
       const mode = modeOf(rules, plugin.name, item.status);
       if (mode === 'off') continue;
+      if (!isEnabled(plugin.name, owner)) continue; // a plugin switched off gets nothing
       const base = { notifier: plugin.name, item_id: item.id, status: item.status, mode };
       const key = `${plugin.name}:${item.id}:${item.status}`;
       if (sentAt.has(key) && now() - sentAt.get(key) < DEDUPE_MS) { remember({ ...base, outcome: 'duplicate' }); continue; }
@@ -287,6 +500,7 @@ function createAttentionNotify(options) {
           map.delete(key);
           if (!map.size) pending.delete(item.id);
           const latest = getRules(owner);
+          if (!isEnabled(plugin.name, owner)) return undefined; // switched off while the call waited
           if (inQuietHours(latest.quietHours, new Date(now()))) return remember({ ...base, outcome: 'quiet_hours' });
           let current = item;
           try { current = (typeof options.getItem === 'function' && options.getItem(item.id)) || item; } catch { current = item; }
@@ -327,17 +541,75 @@ function createAttentionNotify(options) {
           if (typeof state.configured === 'boolean') configured = state.configured;
           if (typeof state.summary === 'string' && state.summary.trim()) {
             summary = state.summary.trim().slice(0, 300);
-            const secrets = Object.entries(config).filter(([key, value]) => SECRET_KEY.test(key) && typeof value === 'string' && value.length >= 8).map(([, value]) => value);
+            const secrets = secretsOf(plugin.name, owner).filter(value => value.length >= 8);
             if (secrets.some(value => summary.includes(value))) summary = null;
           }
         } catch (failure) { error = `status failed: ${safeError(failure)}`; }
       }
+      const schema = schemaOf(plugin.name);
+      const settings = readSettings(plugin.name, owner);
+      if (configured === null && schema.some(field => field.required)) configured = requiredSet(schema, settings.values);
       const statuses = {};
       for (const status of rules.statuses) statuses[status] = modeOf(rules, plugin.name, status);
-      return { name: plugin.name, version: pick('version', 40), description: pick('description', 500), loaded: true, error, configured, summary, statuses };
+      return {
+        name: plugin.name, version: pick('version', 40), description: pick('description', 500), loaded: true, error, enabled: settings.enabled, configured, summary, statuses,
+        settings: schema.length > 0, test: manifest.test !== false, customUi: manifest.customUi || null,
+      };
     });
-    const broken = skipped.filter(entry => !byName.has(entry.name)).map(entry => ({ ...entry, loaded: false, configured: null, summary: null, statuses: {} }));
+    const broken = skipped.filter(entry => !byName.has(entry.name)).map(entry => ({ ...entry, loaded: false, enabled: null, configured: null, summary: null, statuses: {}, settings: false, test: false, customUi: null }));
     return [...loaded, ...broken];
+  }
+
+  // ---- Manifest settings API (GET/PUT /api/attention/plugins/:name/config, POST /api/attention/plugins/:name/test) ----
+  const pluginNamed = name => {
+    const plugin = typeof name === 'string' ? byName.get(name) : null;
+    if (!plugin) throw new NotifyError('Unknown notifier', 404);
+    return plugin;
+  };
+  // { name, enabled, values, schema, test, customUi }; a secret is { set: true | false }, never its value.
+  function getPluginConfig(name, owner) {
+    const plugin = pluginNamed(name);
+    const manifest = manifests.get(plugin.name) || {};
+    const schema = schemaOf(plugin.name);
+    const settings = readSettings(plugin.name, owner);
+    return { name: plugin.name, enabled: settings.enabled, values: publicValues(schema, settings.values), schema, test: manifest.test !== false, customUi: manifest.customUi || null };
+  }
+  // body { enabled?, values? }: fields left out keep their value (see normalizeConfigValues).
+  function savePluginConfig(name, owner, body) {
+    const plugin = pluginNamed(name);
+    if (!body || typeof body !== 'object' || Array.isArray(body)) throw new NotifyError('Invalid settings');
+    for (const key of Object.keys(body)) if (!['enabled', 'values'].includes(key)) throw new NotifyError(`Unknown field: ${String(key).slice(0, 40)}`);
+    if (body.enabled !== undefined && typeof body.enabled !== 'boolean') throw new NotifyError('enabled must be true or false');
+    const settings = readSettings(plugin.name, owner);
+    const values = body.values === undefined ? settings.values : normalizeConfigValues(schemaOf(plugin.name), body.values, settings.values);
+    writeSettings(plugin.name, owner, { enabled: body.enabled === undefined ? settings.enabled : body.enabled, values });
+    return getPluginConfig(plugin.name, owner);
+  }
+  // Runs the plugin's test(config, { kind: 'message', link, values, owner, log }) and answers { ok, message }. A failure is an answer too
+  // (ok: false); the message never holds a stored secret.
+  async function testPlugin(name, owner) {
+    const plugin = pluginNamed(name);
+    const manifest = manifests.get(plugin.name) || {};
+    if (manifest.test === false) throw new NotifyError('This plugin has no test', 400);
+    const settings = readSettings(plugin.name, owner);
+    if (!settings.enabled) return { ok: false, message: 'The plugin is turned off' };
+    const config = store(plugin.name).read(owner);
+    const secrets = secretsOf(plugin.name, owner);
+    const clean = text => scrubSecrets(String(text).slice(0, 300), secrets);
+    if (typeof plugin.ready === 'function' && !plugin.ready(config)) return { ok: false, message: 'The plugin is not set up yet' };
+    const base = getRules(owner).publicUrl;
+    const values = effectiveValues(schemaOf(plugin.name), settings.values);
+    try {
+      const result = await plugin.test(config, { kind: 'message', link: base ? `${base}/` : '', values, owner, log: (level, message) => log(level, `${plugin.name}: ${message}`) });
+      const ok = !(result && result.ok === false);
+      const message = result && typeof result.message === 'string' && result.message.trim() ? clean(result.message.trim()) : (ok ? 'Test sent' : 'Test failed');
+      log(ok ? 'info' : 'warn', `${plugin.name}: test ${ok ? 'sent' : 'failed'}`);
+      return { ok, message };
+    } catch (error) {
+      const message = clean(safeError(error));
+      log('warn', `${plugin.name}: test failed: ${message}`);
+      return { ok: false, message };
+    }
   }
 
   // Browser API (session only, same origin): /api/attention-notify/...
@@ -382,6 +654,7 @@ function createAttentionNotify(options) {
 
   return {
     handle, listener, createRouter, getRules, saveRules, notifiers, overview, defaultOwner: () => getOwner(),
+    getPluginConfig, savePluginConfig, testPlugin, isEnabled,
     rules: owner => getRules(owner),
     recent: () => recent.slice(),
     pendingCount: () => [...pending.values()].reduce((sum, map) => sum + map.size, 0),
@@ -412,4 +685,7 @@ function start(options) {
   return createAttentionNotify({ ...options, onChange });
 }
 
-module.exports = { start, createAttentionNotify, loadNotifiers, scanNotifiers, normalizeRules, inQuietHours, absoluteLink, defaultRules, NotifyError, STATUSES, MODES, DEDUPE_MS };
+module.exports = {
+  start, createAttentionNotify, loadNotifiers, scanNotifiers, normalizeRules,
+  validateConfigSchema, normalizeConfigValues, effectiveValues, publicValues, scrubSecrets, checkManifest, CONFIG_TYPES, inQuietHours, absoluteLink, defaultRules, NotifyError, STATUSES, MODES, DEDUPE_MS,
+};

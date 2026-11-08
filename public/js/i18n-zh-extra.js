@@ -75,4 +75,8 @@ I18n.add({
   'Not found: {1}': '找不到：{1}',
   'Outside the working directory: {1}': '不在工作目录中：{1}',
   'Could not open {1}: {2}': '无法打开 {1}：{2}',
+  '{1} must be a whole number': '{1}必须是整数',
+  '{1} must be a number': '{1}必须是数字',
+  '{1} is out of range': '{1}超出范围',
+  'Test failed: {1}': '测试失败：{1}',
 });

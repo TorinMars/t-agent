@@ -99,6 +99,22 @@ function createAttentionRoutes({ service, summary = null, plugins = null, heartb
     return res.json(plugins.overview(who));
   }));
 
+  // Manifest settings of one notifier plugin (services/attention-notify.js): the browser session only, since a tatt_ token has no user and
+  // the values may hold secrets (they come back as { set: true } only). GET → { name, enabled, values, schema, test, customUi };
+  // PUT { enabled?, values? } → the same; POST …/test → { ok, message }.
+  const settingsOnly = (req, res, next) => (req.attentionAuth && req.attentionAuth.kind === 'session' ? next() : sendError(res, 403, 'TOKEN_NOT_ALLOWED', 'An attention token cannot change plugin settings; use the browser'));
+  const pluginCall = handler => async (req, res) => {
+    if (!plugins || typeof plugins.getConfig !== 'function') return sendError(res, 404, 'NOT_FOUND', 'Not found');
+    try { return res.json(await handler(req)); } catch (error) {
+      if (error && error.name === 'NotifyError') return sendError(res, error.statusCode || 400, error.statusCode === 404 ? 'NOT_FOUND' : 'INVALID_SETTINGS', error.message);
+      console.error(`T-Attention plugin settings: ${error && (error.stack || error.message)}`);
+      return sendError(res, 500, 'INTERNAL_ERROR', 'The plugin settings failed');
+    }
+  };
+  router.get('/plugins/:name/config', settingsOnly, pluginCall(req => plugins.getConfig(req.params.name, owner(req))));
+  router.put('/plugins/:name/config', settingsOnly, pluginCall(req => plugins.saveConfig(req.params.name, owner(req), req.body)));
+  router.post('/plugins/:name/test', settingsOnly, pluginCall(req => plugins.test(req.params.name, owner(req))));
+
   // Server-sent events: `event: change` with { kind, item, previous, event } for every change, a comment line every heartbeatMs.
   // A token's stream ends when the token is revoked.
   router.get('/stream', (req, res) => {

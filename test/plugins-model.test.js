@@ -61,6 +61,9 @@ test('notifier chips: failed to load, configured, not configured, none', async (
   assert.deepEqual(keys(notifierChips({ name: 'telegram', loaded: true, configured: true })), ['configured:Configured:success']);
   assert.deepEqual(keys(notifierChips({ name: 'telegram', loaded: true, configured: false })), ['configured:Not configured:warning']);
   assert.deepEqual(notifierChips({ name: 'plain', loaded: true, configured: null }), []);
+  assert.deepEqual(keys(notifierChips({ name: 'telegram', loaded: true, enabled: false, configured: true })), ['enabled:Disabled:default', 'configured:Configured:success'], 'a switched-off plugin says so first');
+  assert.deepEqual(keys(notifierChips({ name: 'plain', loaded: true, enabled: false, configured: null })), ['enabled:Disabled:default']);
+  assert.deepEqual(keys(notifierChips({ name: 'plain', loaded: true, enabled: true, configured: null })), []);
 });
 
 test('modes summary: the statuses that are not off, in the settings order', async () => {

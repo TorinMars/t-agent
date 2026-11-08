@@ -3,7 +3,8 @@
 //              listener is set up on the machine that runs this server, read as the terminal user (lib/terminal-user.js) when the
 //              service runs as root and drops privileges, because that user runs `t-attention login`, `ta` and Claude Code; plus
 //              the open items and the newest change it wrote (services/attention.js sourceStats)
-//   notifiers  services/attention-notify.js overview(owner): loaded and skipped notifier plugins, setup state and per-status modes
+//   notifiers  services/attention-notify.js overview(owner): loaded and skipped notifier plugins, setup state, the enable switch and per-status modes
+// It also passes the per-plugin settings calls (getConfig, saveConfig, test) through to services/attention-notify.js.
 // No secret is ever part of the answer: the token, the session string and the api_hash stay where they are.
 const os = require('node:os');
 const local = require('../lib/attention-plugins-local');
@@ -39,7 +40,18 @@ function createPluginOverview({ service, notify = null, listenersDir = local.LIS
     return { listeners: listeners(), notifiers: notify && typeof notify.overview === 'function' ? notify.overview(who) : [] };
   }
 
-  return { overview };
+  // The manifest settings of one notifier (services/attention-notify.js getPluginConfig / savePluginConfig / testPlugin), for
+  // /api/attention/plugins/:name/config and /test. Without a notify service every name is unknown.
+  const needNotify = () => {
+    if (!notify || typeof notify.getPluginConfig !== 'function') { const error = new Error('Unknown notifier'); error.name = 'NotifyError'; error.statusCode = 404; throw error; }
+    return notify;
+  };
+  return {
+    overview,
+    getConfig: (name, owner) => needNotify().getPluginConfig(name, owner),
+    saveConfig: (name, owner, body) => needNotify().savePluginConfig(name, owner, body),
+    test: (name, owner) => needNotify().testPlugin(name, owner),
+  };
 }
 
 module.exports = { createPluginOverview };

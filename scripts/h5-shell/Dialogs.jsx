@@ -141,19 +141,51 @@ export function RetainDialog({ state, ui }) {
 
 const DURATIONS = { info: 3500, success: 2500, error: 6000 };
 
-// The floating notice (what Toast did): the last message, which goes by itself.
+// A blue notice: a one-line chip that covers little of the terminal; the button opens it in place to the whole text.
+// The button is outside the role="status" box, so a screen reader reads the message without the button's name, and the text is cut by CSS only.
+// Open, the button shrinks to the icon: it keeps its element (and the keyboard focus) and closes the message again. It never takes the focus from the terminal.
+const CHIP = {
+  minHeight: 28, py: 0, px: 1.25, alignItems: 'center', fontSize: 13, lineHeight: 1.4, borderRadius: 14,
+  '& .MuiAlert-icon': { p: 0, mr: 0.75, fontSize: 16 },
+  '& .MuiAlert-message': { p: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+};
+function InfoNotice({ message, expanded, onToggle, onClose, ref, ...transition }) {
+  const label = t(expanded ? 'Collapse this notice' : 'Show the full notice');
+  const area = expanded
+    ? { top: 0, bottom: 0, left: 0, width: 44 }
+    : { inset: 0, [TOUCH]: { top: 'calc(50% - 22px)', bottom: 'auto', height: 44 } }; // the look stays 28px high, the finger gets 44px
+  return (
+    <Box ref={ref} {...transition} sx={{ position: 'relative', pointerEvents: 'auto', ...(expanded ? { width: '100%' } : { width: 'fit-content', maxWidth: 'min(280px, calc(100vw - 32px))' }) }}>
+      <Box
+        component="button" type="button" aria-expanded={expanded} aria-label={label} title={label}
+        onMouseDown={event => event.preventDefault()} onClick={onToggle}
+        sx={{ position: 'absolute', zIndex: 1, p: 0, border: 0, borderRadius: '14px', background: 'transparent', '&:hover, &:active, &:focus': { background: 'transparent' }, WebkitTapHighlightColor: 'transparent', cursor: 'pointer', '&:focus-visible': { outline: '2px solid #fff', outlineOffset: -2 }, ...area }}
+      />
+      <Alert
+        severity="info" variant="filled" role="status" onClose={expanded ? onClose : undefined}
+        sx={expanded ? { width: '100%', overflowWrap: 'anywhere', '& .MuiAlert-message': { maxHeight: '70dvh' } } : CHIP}
+      >{message}</Alert>
+    </Box>
+  );
+}
+
+// The floating notice (what Toast did): the last message, which goes by itself. Only a blue notice that is opened stays until it is closed or replaced.
 export function Notice({ state }) {
   const notice = state.notice;
   const [shown, setShown] = useState(null);
+  const [expandedId, setExpandedId] = useState(null); // by id, so a newer notice starts collapsed
   useEffect(() => { if (notice) setShown(notice); }, [notice]);
   const close = (event, reason) => { if (reason !== 'clickaway') setShown(null); };
   const type = shown && DURATIONS[shown.type] ? shown.type : 'info';
+  const expanded = Boolean(shown) && expandedId === shown.id;
   return (
     <Snackbar
-      key={shown ? shown.id : 'none'} open={Boolean(shown)} onClose={close} autoHideDuration={DURATIONS[type]}
-      anchorOrigin={{ vertical: 'top', horizontal: 'center' }} sx={{ top: 'max(12px, env(safe-area-inset-top))' }}
+      key={shown ? shown.id : 'none'} open={Boolean(shown)} onClose={close} autoHideDuration={expanded ? null : DURATIONS[type]}
+      anchorOrigin={{ vertical: 'top', horizontal: 'center' }} sx={{ top: 'max(12px, env(safe-area-inset-top))', ...(type === 'info' ? { pointerEvents: 'none' } : null) }}
     >
-      <Alert severity={type} variant="filled" onClose={() => setShown(null)} role="status" sx={{ width: '100%', overflowWrap: 'anywhere' }}>{shown ? shown.message : ''}</Alert>
+      {type === 'info'
+        ? <InfoNotice message={shown ? shown.message : ''} expanded={expanded} onToggle={() => setExpandedId(expanded ? null : shown.id)} onClose={() => setShown(null)} />
+        : <Alert severity={type} variant="filled" onClose={() => setShown(null)} role="status" sx={{ width: '100%', overflowWrap: 'anywhere' }}>{shown ? shown.message : ''}</Alert>}
     </Snackbar>
   );
 }

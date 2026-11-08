@@ -58,7 +58,7 @@ function hook(dir, input, env = {}) {
 
 const ref = `/api/attention/by-ref/${encodeURIComponent(`claude:${SESSION}`)}`;
 // The status part of a body, without the context recall fields (checked in their own tests).
-const core = body => { const { context, activity, excerpt, ...rest } = body || {}; return rest; }; // eslint-disable-line no-unused-vars
+const core = body => { const { context, activity, excerpt, plain_turn_end, ...rest } = body || {}; return rest; }; // eslint-disable-line no-unused-vars
 const coreOf = request => ({ ...request, body: core(request.body) });
 
 test('one task per session: the first prompt creates it with a title, later events only change status and reason', async () => {
@@ -536,6 +536,98 @@ test('three sub-agents finishing one by one, a Stop after each: only the last St
     assert.equal(item.attention_reason, 'Done: the login page now redirects. Tests pass.');
     assert.equal(state().status, 'review');
     assert.equal(fake.requests.filter(r => r.method === 'PUT' && r.body.status === 'review').length, 1, 'one move to review');
+  });
+});
+
+test('a plain Stop carries plain_turn_end on the update and never in the context; so does a Stop of a session never seen', async () => {
+  await withListener(async ({ fake, dir, item, state }) => {
+    const logs = sessionLogs();
+    await hook(dir, stopWith(logs.transcript));
+    const { body } = fake.requests.at(-1);
+    assert.equal(body.plain_turn_end, true);
+    assert.equal(body.status, 'review');
+    assert.equal('plain_turn_end' in body.context, false, 'not part of the context');
+    assert.equal(item.status, 'review');
+    assert.equal(state().held_stop, false);
+  });
+  const fake = await fakeServer();
+  try {
+    const dir = dataDir();
+    configure(dir, fake.url);
+    await hook(dir, events.stop);
+    assert.equal(fake.requests.at(-1).body.plain_turn_end, true, 'first seen at its Stop');
+  } finally {
+    await fake.close();
+  }
+});
+
+test('a Stop held for sub-agents, then the final Stop: neither carries the marker, also with wake-up prompts in between', async () => {
+  await withListener(async ({ fake, dir, item, state }) => {
+    const logs = sessionLogs();
+    logs.write('a1', WORKING);
+    await hook(dir, stopWith(logs.transcript));
+    assert.equal(fake.requests.at(-1).body.plain_turn_end, undefined);
+    assert.equal(state().held_stop, true);
+    logs.write('a1', FINISHED);
+    await hook(dir, { ...events.prompt2, prompt: '<task-notification>\n<task-id>a1</task-id>\n<status>completed</status>\n</task-notification>' });
+    assert.equal(state().held_stop, true, 'a wake-up is not the user\'s prompt');
+    await hook(dir, stopWith(logs.transcript));
+    const { body } = fake.requests.at(-1);
+    assert.deepEqual([body.status, body.plain_turn_end], ['review', undefined]);
+    assert.equal(item.status, 'review');
+    assert.equal(state().held_stop, false, 'cleared when the review is written');
+    // The next turn is plain again.
+    await hook(dir, events.prompt2);
+    await hook(dir, stopWith(logs.transcript));
+    assert.equal(fake.requests.at(-1).body.plain_turn_end, true);
+  });
+});
+
+test('a wake-up wrapped in a system reminder counts too; a Stop held before a failed update is still remembered', async () => {
+  await withListener(async ({ dir, state }) => {
+    const logs = sessionLogs();
+    logs.write('a1', WORKING);
+    await hook(dir, stopWith(logs.transcript));
+    await hook(dir, { ...events.prompt2, prompt: '<system-reminder>\nA task ended.\n<task-notification><task-id>a1</task-id></task-notification>\n</system-reminder>' });
+    assert.equal(state().held_stop, true);
+  });
+  const fake = await fakeServer();
+  try {
+    const dir = dataDir();
+    configure(dir, 'http://127.0.0.1:1');
+    const logs = sessionLogs();
+    logs.write('a1', WORKING);
+    await hook(dir, stopWith(logs.transcript));
+    const saved = JSON.parse(fs.readFileSync(path.join(dir, 'listeners', 'claude-state', `${SESSION}.json`), 'utf8'));
+    assert.equal(saved.held_stop, true, 'the server was down, the hold counts');
+    configure(dir, fake.url);
+    logs.write('a1', FINISHED);
+    await hook(dir, stopWith(logs.transcript));
+    assert.equal(fake.requests.at(-1).body.plain_turn_end, undefined);
+  } finally {
+    await fake.close();
+  }
+});
+
+test('a real prompt clears a held Stop: the next Stop is a plain turn end', async () => {
+  await withListener(async ({ fake, dir, state }) => {
+    const logs = sessionLogs();
+    logs.write('a1', WORKING);
+    await hook(dir, stopWith(logs.transcript));
+    assert.equal(state().held_stop, true);
+    await hook(dir, events.prompt2);
+    assert.equal(state().held_stop, false);
+    logs.write('a1', FINISHED);
+    await hook(dir, stopWith(logs.transcript));
+    assert.equal(fake.requests.at(-1).body.plain_turn_end, true);
+  });
+});
+
+test('SessionEnd moving a busy session to review sends no marker', async () => {
+  await withListener(async ({ fake, dir, item }) => {
+    await hook(dir, events.end);
+    assert.equal(item.status, 'review');
+    assert.equal(fake.requests.at(-1).body.plain_turn_end, undefined);
   });
 });
 

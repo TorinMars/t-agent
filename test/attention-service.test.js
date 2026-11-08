@@ -16,6 +16,30 @@ function setup() {
 }
 const fails = (fn, code) => assert.throws(fn, error => error instanceof AttentionError && error.code === code);
 
+test('plain_turn_end is published on that one change only and is never stored', () => {
+  const { service, db } = setup();
+  const seen = [];
+  service.onChange(change => seen.push(change));
+  const { item } = service.upsertByRef('claude:s', { title: 'Task', status: 'working' }, { actor: 'claude', defaultSource: 'claude' });
+  service.upsertByRef('claude:s', { status: 'review', plain_turn_end: true, context: { last_reply: 'Done' } }, { actor: 'claude' });
+  assert.equal(seen.at(-1).plain_turn_end, true);
+  assert.equal(seen.at(-1).item.status, 'review');
+  assert.deepEqual(service.get(item.id).context, { last_reply: 'Done' }, 'not in the context');
+  assert.equal(JSON.stringify(db.prepare('SELECT * FROM attention_items').all()).includes('plain_turn_end'), false);
+  assert.equal(JSON.stringify(db.prepare('SELECT * FROM attention_events').all()).includes('plain_turn_end'), false);
+  // Later changes do not inherit it: another path to review keeps its notice.
+  service.update(item.id, { status: 'working' }, { actor: 'user' });
+  service.update(item.id, { status: 'review' }, { actor: 'cli' });
+  assert.equal(seen.at(-1).item.status, 'review');
+  assert.equal('plain_turn_end' in seen.at(-1), false);
+  service.update(item.id, { status: 'working' }, { actor: 'user' });
+  service.update(item.id, { status: 'review', plain_turn_end: 'yes' }, { actor: 'cli' });
+  assert.equal('plain_turn_end' in seen.at(-1), false, 'only exactly true');
+  // A task first seen at its plain Stop.
+  service.upsertByRef('claude:new', { title: 'New', status: 'review', plain_turn_end: true }, { actor: 'claude' });
+  assert.deepEqual([seen.at(-1).kind, seen.at(-1).plain_turn_end], ['created', true]);
+});
+
 test('create fills defaults, keeps meta as an object and writes a created event', () => {
   const { service } = setup();
   const item = service.create({ title: '  Review the release  ', meta: { cwd: '/w', host: 'mac' } }, { actor: 'user' });

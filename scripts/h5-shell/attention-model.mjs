@@ -83,6 +83,10 @@ export function reminderFor(change) {
   return { id: item.id, status: item.status, label: STATUS_LABELS[item.status], title: String(item.title || ''), reason: String(item.attention_reason || '') };
 }
 
+// Whether a reminder also shows the in-page notice. The one exception is a review that ends a plain Claude turn (the listener's plain_turn_end on this
+// one change event); every other change keeps its notice. The sound and the system notification do not depend on this.
+export const showsNotice = change => !(change && change.plain_turn_end === true && change.item && change.item.status === 'review');
+
 // A link of a task may be opened: a web address, or a page address of this app (one leading '/', not '//').
 export function safeLink(url) {
   const text = String(url || '').trim();

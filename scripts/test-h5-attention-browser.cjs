@@ -371,6 +371,19 @@ const pluginsFit = page => page.evaluate(() => [...document.querySelectorAll('#h
       await page.evaluate(change => window.emitChange(change), { kind: 'updated', item: failed, previous: { ...failed, status: 'todo' }, event: { actor: 'cli' } });
       await notice(page).filter({ hasText: 'Failed: Pay invoice — Card declined' }).waitFor();
       assert.equal(await page.evaluate(() => window.notes.length), 2);
+      // A plain Claude turn end: the task moves to Review, the sound and the system notification stay, but no in-page notice.
+      const quiet = { ...db.items.find(item => item.id === 4), status: 'review', attention_reason: 'Plain answer', updated_at: new Date().toISOString() };
+      const tonesQuiet = await page.evaluate(() => window.tones);
+      await page.evaluate(change => window.emitChange(change), { kind: 'updated', item: quiet, previous: { ...quiet, status: 'working' }, event: { actor: 'claude', type: 'status' }, plain_turn_end: true });
+      await page.waitForFunction(() => document.querySelector('#h5-attention-sheet .h5-attention-group[data-group="review"] .h5-attention-row[data-id="4"]'));
+      await page.waitForTimeout(300);
+      assert.equal(await notice(page).filter({ hasText: `Review: ${quiet.title}` }).count(), 0, 'no in-page notice for a plain turn end');
+      assert.equal(await page.evaluate(() => window.notes.length), 3, 'the system notification is not changed');
+      assert.ok(await page.evaluate(() => window.tones) > tonesQuiet, 'the sound is not changed');
+      // The review after sub-agents: the same change without the marker does show the notice.
+      const finished = { ...quiet, attention_reason: 'All sub-agents finished', updated_at: new Date().toISOString() };
+      await page.evaluate(change => window.emitChange(change), { kind: 'updated', item: finished, previous: { ...finished, status: 'working' }, event: { actor: 'claude', type: 'status' } });
+      await notice(page).filter({ hasText: `Review: ${quiet.title} — All sub-agents finished` }).waitFor();
       // A deleted task leaves the list.
       await page.evaluate(() => window.emitChange({ kind: 'deleted', item: { id: 100 } }));
       await page.waitForFunction(() => !document.querySelector('#h5-attention-sheet .h5-attention-row[data-id="100"]'));

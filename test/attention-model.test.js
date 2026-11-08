@@ -58,6 +58,23 @@ test('a change event adds, replaces or removes a task, and returns a new list', 
   assert.equal(applyChange(list, null), list);
 });
 
+test('the in-page notice is left out only for a review with the plain_turn_end marker on that change', async () => {
+  const { reminderFor, showsNotice } = await load();
+  const into = (status, extra = {}) => ({ kind: 'updated', item: item(1, status), previous: item(1, 'working'), ...extra });
+  const plain = into('review', { plain_turn_end: true });
+  assert.equal(showsNotice(plain), false, 'a plain turn end');
+  assert.ok(reminderFor(plain), 'it is still a reminder: the sound and the system notification follow their own settings');
+  assert.equal(showsNotice(into('review')), true, 'a review after sub-agents, SessionEnd, a manual change or another listener');
+  assert.equal(showsNotice({ ...into('review'), plain_turn_end: false }), true);
+  assert.equal(showsNotice({ ...into('review'), plain_turn_end: 'true' }), true, 'only exactly true');
+  assert.equal(showsNotice(into('waiting_user', { plain_turn_end: true })), true, 'waiting_user always');
+  assert.equal(showsNotice(into('failed', { plain_turn_end: true })), true, 'failed always');
+  assert.equal(showsNotice(into('waiting_user')), true);
+  assert.equal(showsNotice(into('failed')), true);
+  assert.equal(showsNotice({ kind: 'created', item: item(2, 'review'), previous: null, plain_turn_end: true }), false, 'a task first seen at its plain Stop');
+  assert.equal(showsNotice(into('review', { item: item(1, 'review', { context: { plain_turn_end: true } }) })), true, 'a marker inside the item does not count');
+});
+
 test('a reminder only for a move INTO waiting_user, failed or review', async () => {
   const { reminderFor } = await load();
   const moved = reminderFor({ kind: 'updated', item: item(1, 'waiting_user', { attention_reason: 'Allow Bash?' }), previous: item(1, 'working') });

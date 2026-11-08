@@ -3,13 +3,14 @@
 // for one session: UserPromptSubmit -> PermissionRequest + Notification -> PostToolUse -> Stop -> SessionEnd. Checked after each step: the item
 // status; at the end: the context, the activity timeline, the live stream (SSE), that the transcript excerpt is never stored or published, the
 // notifications a fake notifier plugin got (test/fixtures/attention-fake-notifier.js, preloaded with `node -r`) with their card text, and
-// `t-attention show ref:claude:<id>` against the same server.
+// `t-attention show ref:claude:<id>` against the same server. The second test gives the real change events to the page's real feed (attention-feed.mjs).
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawn, execFileSync } = require('node:child_process');
+const { pathToFileURL } = require('node:url');
 
 const ROOT = path.resolve(__dirname, '..');
 const HOOK = path.join(ROOT, 'plugins', 'listeners', 'claude', 'hook.js');
@@ -240,4 +241,77 @@ test('Claude listener -> core -> SSE, timeline, context, notifier and CLI on a r
   assert.ok(shown.includes(`claude --resume ${sessionId}`), shown);
   const json = JSON.parse(execFileSync(process.execPath, [CLI, 'show', `ref:${ref}`, '--json'], { env, encoding: 'utf8' }));
   assert.equal((json.item || json).id, item.id);
+});
+
+test('real change events reach the page feed: no notice for a plain turn end, a notice after sub-agents and from other paths', { timeout: 90000 }, async t => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 't-agent-attention-quiet-'));
+  t.after(() => fs.rmSync(temp, { recursive: true, force: true }));
+  const { base } = await startServer(t, temp, path.join(temp, 'notifications.jsonl'));
+  const made = await fetch(`${base}/api/attention/tokens`, { method: 'POST', headers: { ...XHR, 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'e2e quiet' }) });
+  const { token } = await made.json();
+  const auth = { Authorization: `Bearer ${token}` };
+  const stream = sse(await fetch(`${base}/api/attention/stream`));
+  t.after(() => stream.close());
+
+  const transcript = path.join(temp, 'quiet.jsonl');
+  fs.writeFileSync(transcript, `${JSON.stringify({ type: 'user', message: { role: 'user', content: 'Ship the page' } })}\n`);
+  const subagents = path.join(temp, 'quiet', 'subagents');
+  const subagentLog = stopReason => {
+    fs.mkdirSync(subagents, { recursive: true });
+    fs.writeFileSync(path.join(subagents, 'agent-a1.jsonl'), `${JSON.stringify({ type: 'assistant', message: { stop_reason: stopReason } })}\n`);
+  };
+  const env = { PATH: process.env.PATH, HOME: path.join(temp, 'home'), TAGENT_HOME: path.join(temp, 'hook-home'), TA_ATTENTION_URL: base, TA_ATTENTION_TOKEN: token, TA_ATTENTION_HOOK_TIMEOUT_MS: '8000' };
+  const common = { session_id: '7a1c2b9e-e2e0-4a11-9d0b-0123456789cd', transcript_path: transcript, cwd: temp, permission_mode: 'default' };
+  const hook = async event => assert.deepEqual((await runHook(env, { ...common, ...event })).code, 0);
+  const stop = message => hook({ hook_event_name: 'Stop', stop_hook_active: false, last_assistant_message: message });
+  const prompt = text => hook({ hook_event_name: 'UserPromptSubmit', prompt: text });
+
+  await prompt('Ship the page');
+  await stop('Plain answer'); // an ordinary turn end
+  await prompt('Now with a sub-agent');
+  subagentLog('tool_use');
+  await stop('Started a sub-agent'); // held
+  subagentLog('end_turn');
+  await prompt('<task-notification>\n<task-id>a1</task-id>\n<status>completed</status>\n</task-notification>'); // Claude Code wakes the session
+  await stop('The sub-agent finished'); // the review after the sub-agents
+  const { item } = await (await fetch(`${base}/api/attention/by-ref/${encodeURIComponent(`claude:${common.session_id}`)}`, { headers: auth })).json();
+  const patch = status => fetch(`${base}/api/attention/${item.id}`, { method: 'PATCH', headers: { ...auth, 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) });
+  await patch('working');
+  await patch('review'); // another path to review
+
+  const changes = changesIn(await stream.until(text => changesIn(text).length >= 8));
+  assert.deepEqual(changes.map(change => [change.item.status, change.plain_turn_end === true]), [
+    ['working', false], ['review', true], ['working', false], ['working', false], ['working', false], ['review', false], ['working', false], ['review', false],
+  ]);
+  assert.equal(JSON.stringify(item).includes('plain_turn_end'), false, 'the item never holds the marker');
+  assert.equal(item.context.plain_turn_end, undefined);
+
+  // The real feed, fed with the real events exactly as the stream sent them.
+  const { startAttentionFeed } = await import(pathToFileURL(path.join(ROOT, 'scripts', 'h5-shell', 'attention-feed.mjs')).href);
+  globalThis.document = { addEventListener() {}, activeElement: null, visibilityState: 'visible' };
+  t.after(() => { delete globalThis.document; });
+  let state = {};
+  const notices = [];
+  const statuses = [];
+  const ui = {
+    get: () => state,
+    set: next => { state = { ...state, ...(typeof next === 'function' ? next(state) : next) }; },
+    subscribe() {},
+    actions: {},
+    notify: (text, kind) => notices.push([text, kind]),
+  };
+  let onChange = null;
+  class FakeEventSource { addEventListener(name, fn) { if (name === 'change') onChange = fn; } close() {} }
+  const feed = startAttentionFeed(ui, { api: async () => ({ items: [] }), EventSourceImpl: FakeEventSource });
+  t.after(() => feed.stop());
+  await new Promise(resolve => setImmediate(resolve));
+  for (const change of changes) {
+    onChange({ data: JSON.stringify(change) });
+    statuses.push(state.attention.items.find(entry => entry.id === item.id).status);
+  }
+  assert.deepEqual(statuses, changes.map(change => change.item.status), 'the status still changes at every event, also at the plain turn end');
+  assert.deepEqual(notices, [
+    ['Review: Ship the page \u2014 The sub-agent finished', 'info'],
+    ['Review: Ship the page \u2014 The sub-agent finished', 'info'],
+  ], 'one notice after the sub-agents and one for the API change; none for the plain turn end');
 });

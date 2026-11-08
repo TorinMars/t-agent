@@ -88,19 +88,11 @@ function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS,
     return rt;
   }
 
-  // Listeners of the counters of `summary` (the terminal activity stream pushes them): told when a turn starts or ends, a queue changes or a chat goes.
-  const summaryListeners = new Set();
-  function summaryChanged() {
-    for (const listener of summaryListeners) { try { listener(); } catch { /* one listener must not break the others */ } }
-  }
-  function onSummaryChange(listener) { summaryListeners.add(listener); return () => summaryListeners.delete(listener); }
-
   function emit(rt, event) {
     const full = { ...event, seq: ++rt.seq };
     rt.events.push(full);
     if (rt.events.length > MAX_EVENTS) rt.events.splice(0, rt.events.length - MAX_EVENTS);
     for (const send of rt.subscribers) send(full);
-    if (event.op === 'status' || event.op === 'queue') summaryChanged();
     return full;
   }
 
@@ -423,7 +415,7 @@ function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS,
   }
   const dispatchSoon = (rt, task) => { if (readQueue(rt.id).length) setImmediate(() => { void dispatchQueue(rt, task); }); };
 
-  // What the agents of one person are doing, for the status bar of the pages: the turns running now and the messages queued behind them (the queue is kept
+  // What the agents of one person are doing (GET /api/agent-chat/summary): the turns running now and the messages queued behind them (the queue is kept
   // here, see setQueue); "submitted" is both, the messages sent to an agent that have not finished. Chats of every task of the person count.
   function summary(owner) {
     const rows = db.prepare(`SELECT c.id, CASE WHEN c.queue IS NOT NULL AND json_valid(c.queue) THEN json_array_length(c.queue) ELSE 0 END AS queued
@@ -742,7 +734,6 @@ function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS,
       runtimes.delete(id);
     }
     db.prepare('DELETE FROM agent_conversations WHERE id = ?').run(id);
-    summaryChanged(); // its queued messages are gone
     return { success: true };
   }
 
@@ -755,7 +746,7 @@ function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS,
     }
   }
 
-  return { list, create, snapshot, subscribe, sendMessage, interrupt, answerPermission, setMode, setPreferences, listModels, setOpened, setTranslate, setCollapseKeyboard, refreshUsage, fork, setQueue, queueAdd, queueRemove, queueEdit, queueSendNow, summary, onSummaryChange, listCommands, rename, remove, stopTask, refreshLimits };
+  return { list, create, snapshot, subscribe, sendMessage, interrupt, answerPermission, setMode, setPreferences, listModels, setOpened, setTranslate, setCollapseKeyboard, refreshUsage, fork, setQueue, queueAdd, queueRemove, queueEdit, queueSendNow, summary, listCommands, rename, remove, stopTask, refreshLimits };
 }
 
 let shared = null;

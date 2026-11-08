@@ -145,7 +145,6 @@ test('every script of the phone page is deferred, in its old order, and the page
   before('/js/i18n-zh-extra.js', '/js/h5-shell.js');
   before('/vendor/xterm/addon-unicode11-0.8.0.js', '/js/h5.js');
   before('/js/h5-shell.js', '/js/terminal-owner.js');
-  before('/js/agent-activity.js', '/js/h5.js');
   assert.equal(order.at(-1), '/js/h5.js');
   assert.match(html, /<div id="h5-root">\s*<div class="h5-skeleton"/, 'the skeleton is inside the root the shell replaces');
 });

@@ -1369,26 +1369,3 @@ test('Claude: a turn keeps Claude Code alive while a background task runs, close
   assert.equal(older.closes, 1, 'a new turn of the same session ends the process that was kept for background tasks');
   await sleep(80);
 });
-
-test('the summary listeners (the pushed top bar counters) hear a turn start and end, a queue change and a removed chat', async () => {
-  let release;
-  const adapter = fakeAdapter(() => new Promise(resolve => { release = () => resolve({ ok: true }); }));
-  const chat = createAgentChat({ db, adapters: { claude: adapter } });
-  const own = tasks.createTask('listener', { title: 'counted' }); // a person of its own: the other tests' queues do not count
-  const conversation = chat.create(own, { agent: 'claude' });
-  const heard = [];
-  const stop = chat.onSummaryChange(() => heard.push(chat.summary('listener')));
-  await chat.sendMessage(own, conversation.id, { text: 'long work' });
-  assert.deepEqual(heard.at(-1), { running: 1, queued: 0, submitted: 1 }, 'a turn started');
-  chat.queueAdd(own, conversation.id, { body: { text: 'next' } });
-  assert.deepEqual(heard.at(-1), { running: 1, queued: 1, submitted: 2 }, 'a message was queued');
-  const count = heard.length;
-  chat.remove(own, conversation.id);
-  assert.ok(heard.length > count, 'a removed chat is heard');
-  assert.deepEqual(heard.at(-1), { running: 0, queued: 0, submitted: 0 });
-  stop();
-  release();
-  const after = heard.length;
-  chat.create(own, { agent: 'claude' });
-  assert.equal(heard.length, after, 'nothing after stop');
-});

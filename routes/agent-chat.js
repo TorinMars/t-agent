@@ -77,7 +77,8 @@ function createAgentChatRouter({ service = getAgentChat(), authenticate = requir
   return router;
 }
 
-// /api/agent-chat/summary: what the agents of the signed-in person are doing, over all their tasks (the status bar of the pages shows it).
+// /api/agent-chat/summary: what the agents of the signed-in person are doing, over all their tasks. The current pages do not read it; a tab still open from
+// before the counters left the top bar does (it would otherwise keep showing old numbers until it is reloaded).
 function createAgentChatSummaryRouter({ service = getAgentChat(), authenticate = requireAuth, ownerOf = req => req.session.user.login } = {}) {
   const router = express.Router();
   router.use(authenticate);

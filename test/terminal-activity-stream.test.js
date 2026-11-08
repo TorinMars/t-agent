@@ -94,31 +94,3 @@ test('the tracker change callback, a closed session and an ack reach the stream 
   assert.equal((source.match(/activityStream\.notify\(\)/g) || []).length, 4, 'tracker changes, natural exit, close / restart / delete and a Claude session rebind');
   assert.match(source, /UPDATE task_terminals SET agent_session_id = \? WHERE task_id = \? AND terminal_id = \?'\)\.run\(sessionId, taskId, id\);\n\s*activityStream\.notify\(\);/, 'a rebind pushes the sub-agent count of the new session');
 });
-
-test('the agent chat counters of the owner travel in the same snapshot and are pushed when a turn or a queue changes', async () => {
-  const counts = { alice: { running: 0, queued: 0, submitted: 0 }, bob: { running: 1, queued: 0, submitted: 1 } };
-  let watched = 0;
-  let changed = null;
-  const hub = createActivityStream({
-    activity: () => ({}), subagents: () => ({}), debounceMs: 1,
-    agents: owner => counts[owner], watchAgents: listener => { watched += 1; changed = listener; },
-  });
-  const a = fakeStream();
-  const b = fakeStream();
-  const old = fakeStream();
-  hub.serve(a.req, a.res, () => [], 'alice');
-  hub.serve(b.req, b.res, () => [], 'bob');
-  hub.serve(old.req, old.res, () => []); // no owner: no counters (as before)
-  assert.equal(watched, 1, 'subscribed once');
-  assert.deepEqual(a.res.events(), [{ activity: {}, subagents: {}, agents: { running: 0, queued: 0, submitted: 0 } }]);
-  assert.deepEqual(b.res.events()[0].agents, { running: 1, queued: 0, submitted: 1 });
-  assert.equal('agents' in old.res.events()[0], false);
-
-  counts.alice = { running: 1, queued: 2, submitted: 3 };
-  changed();
-  await tick(20);
-  assert.deepEqual(a.res.events().at(-1).agents, { running: 1, queued: 2, submitted: 3 }, 'pushed without a request');
-  assert.equal(b.res.events().length, 1, 'bob saw no change');
-  assert.equal(old.res.events().length, 1);
-  for (const s of [a, b, old]) s.req.emit('close');
-});

@@ -66,7 +66,6 @@ async function openPage(browser, { viewport = { width: 390, height: 844 }, touch
     if (url.pathname === '/api/tasks/terminal-activity') return json({});
     if (url.pathname === '/api/tasks/terminal-subagents') return json({});
     if (url.pathname === '/api/oss/config') return json({ enabled: false });
-    if (url.pathname === '/api/agent-chat/summary') return json({ running: 0, queued: 0, submitted: 0 });
     if (url.pathname === '/api/system/check-update') return json({ status: 'current', is_update_admin: true, local_version: '1.0.0', remote_version: '1.0.0' });
     return route.fulfill({ status: 404, contentType: 'application/json', body: '{"error":"not mocked"}' });
   });

@@ -89,7 +89,6 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       designReads.push(url.searchParams.get('path'));
       return designMode === 'missing' ? json({ error: 'FILE_NOT_FOUND' }, 404) : json({ path: 'DESIGN.md', content: DESIGN_MD, revision: 'r1', eol: '\n', bom: false });
     }
-    if (url.pathname === '/api/agent-chat/summary') return json({ running: 1, queued: 2, submitted: 3 });
     if (url.pathname === '/api/tasks/1/terminals' && method === 'GET') return json([{ terminal_id: 'h5-default', title: 'Terminal 1' }]);
     if (url.pathname === '/api/tasks/2/terminals' && method === 'GET') return json([{ terminal_id: 'h5-docs', title: 'Docs terminal' }]);
     if (url.pathname === '/api/tasks/2/agent/conversations' && method === 'GET') return json([]);
@@ -189,12 +188,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     await openTask(page, 'Fix login');
     await page.locator('#h5-tasks').waitFor({ state: 'hidden' });
     assert.equal(await page.locator('#h5-task-name').textContent(), 'Fix login');
-    // The agent counters stand in the header, right of the task name and left of the refresh button.
-    await page.locator('#agent-activity').waitFor({ state: 'visible' });
-    assert.deepEqual(await page.locator('#agent-activity .count').allTextContents(), ['3', '1']);
-    assert.deepEqual(await page.locator('#agent-activity .label').allTextContents(), ['submitted', 'running']);
-    const [activityBox, refreshBox, titleBox] = await Promise.all([page.locator('#agent-activity').boundingBox(), page.locator('#h5-refresh').boundingBox(), page.locator('#h5-task-name').boundingBox()]);
-    assert.ok(activityBox.x + activityBox.width <= refreshBox.x + 1 && activityBox.x >= titleBox.x, 'between the task name and the refresh button');
+    assert.equal(await page.locator('#agent-activity').count(), 0, 'the agent counters are gone from the header');
     // The name of the terminal that is shown stands under the task name, in small text.
     await page.locator('#h5-session-name', { hasText: 'Terminal 1' }).waitFor();
     const [nameBox, sessionBox] = await Promise.all([page.locator('#h5-task-name').boundingBox(), page.locator('#h5-session-name').boundingBox()]);

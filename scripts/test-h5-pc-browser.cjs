@@ -65,7 +65,6 @@ async function openPage(browser, { viewport, touch = false, remote = false, stor
     if (terminals && method === 'GET') return json(TERMINALS[terminals[1]] || []);
     if (url.pathname === '/api/tasks/1/files/content') return json({ path: 'DESIGN.md', content: DESIGN_MD });
     if (/^\/api\/tasks\/\d+\/agent\/conversations$/.test(url.pathname)) return json([]);
-    if (url.pathname === '/api/agent-chat/summary') return json({ running: 0, queued: 0, submitted: 0 });
     if (url.pathname === '/api/translate') { const { text } = route.request().postDataJSON(); translations.push(text); return json({ text: 'Translated text' }); }
     // A remote Engine through the Client's proxy.
     if (url.pathname === '/api/remote-servers/7/tasks') return json([{ id: 9, title: 'Remote task', status: 'doing' }]);

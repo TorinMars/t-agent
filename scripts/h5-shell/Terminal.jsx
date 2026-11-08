@@ -206,7 +206,8 @@ export function KeyBar({ state, ui }) {
 // with the draft box shown (five buttons, a divider and the two send buttons) they are 8px again. Under 380px (a 320 or 360px phone) the buttons touch: each takes an equal share of the row (at least 44px at
 // 320px) and is DRAWN `--h5-slot-pad` smaller on each side (`::before`), so the whole share is the target and the gap stays visible.
 const NARROW = '@media (max-width: 379.98px)';
-const REST_GAP = 'min(8px, calc((100% - 352px) / 7))'; // eight 44px buttons in the row's width, at most 8px apart
+// Eight 44px buttons in the row's width, at most 8px apart; with voice input off there are seven (`--h5-rest-*` in h5.css).
+const REST_GAP = 'min(8px, calc((100% - var(--h5-rest-width, 352px)) / var(--h5-rest-gaps, 7)))';
 const WIDE_ENOUGH = '@media (min-width: 360px)'; // eight 44px buttons fit in row 2 (touch)
 const SEND = { display: 'none', flex: '0 0 auto', width: 44, height: 44, bgcolor: '#fff', color: '#111', '&:hover': { bgcolor: '#e6e6e6' }, '&.Mui-disabled': { bgcolor: 'action.disabledBackground', color: 'action.disabled' } };
 const TOUCH_SEND = {

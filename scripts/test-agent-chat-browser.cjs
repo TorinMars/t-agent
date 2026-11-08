@@ -661,6 +661,12 @@ const server = http.createServer(app);
     await inMenu(() => keepMic.click());
     assert.deepEqual(await page.evaluate(() => window.voice.keepCalls), [true, false]);
     assert.equal(await inMenu(() => keepMic.getAttribute('aria-checked')), 'false');
+    // Voice input turned off in Settings: the composer offers no microphone and no keep-ready switch, and neither leaves a hole (the real page rule, h5.css).
+    await page.evaluate(() => document.documentElement.setAttribute('data-voice-off', ''));
+    assert.equal(await page.locator('.ac-mic').first().evaluate(node => getComputedStyle(node).display), 'none', 'the composer microphone is hidden');
+    assert.equal(await inMenu(() => page.locator('.ac-keep-mic').evaluate(node => getComputedStyle(node).display)), 'none', 'the keep-ready switch is hidden');
+    await page.evaluate(() => document.documentElement.removeAttribute('data-voice-off'));
+    assert.notEqual(await page.locator('.ac-mic').first().evaluate(node => getComputedStyle(node).display), 'none', 'and it comes back');
     const translation = page.getByRole('switch', { name: 'Translate to English' });
     const translationOn = () => inMenu(() => translation.getAttribute('aria-checked'));
     const flipTranslation = () => inMenu(() => translation.click());

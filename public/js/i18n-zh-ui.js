@@ -691,6 +691,8 @@ I18n.add({
   "{1} feature needs attention": "{1} 个功能需要处理",
   "{1} · Node {2} · {3} · user {4} · checked {5}": "{1} · Node {2} · {3} · 用户 {4} · 检查于 {5}",
   "Voice input": "语音输入",
+  "Enable voice input": "启用语音输入",
+  "Applies at once on this device, without Save. When off, the microphone buttons are hidden and the microphone is not used.": "在本设备上立即生效，无需保存。关闭后麦克风按钮会隐藏，也不会使用麦克风。",
   "Voice input: click to start speaking": "语音输入：点击开始说话",
   "Voice input: hold to speak, release to stop": "语音输入：按住说话，松开结束",
   "Voice input: click to stop": "语音输入：点击结束",

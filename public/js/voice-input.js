@@ -14,6 +14,7 @@ const VoiceInput = (() => {
   const WORKLET = 'registerProcessor("pcm-capture", class extends AudioWorkletProcessor { constructor() { super(); this.on = true; this.port.onmessage = event => { this.on = event.data !== false; }; } process(inputs) { if (!this.on) return true; const channel = inputs[0] && inputs[0][0]; if (channel) this.port.postMessage(channel.slice()); return true; } });';
   const MIC_CONSTRAINTS = { audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } };
   const KEEP_KEY = 'voice-keep-mic';
+  const ENABLED_KEY = 'voice-enabled';
 
   // Converts a stream of Float32 microphone blocks at inRate into Int16 samples at outRate (linear interpolation); the tail of a block is kept for the next call.
   function createResampler(inRate, outRate = TARGET_RATE) {
@@ -221,7 +222,18 @@ const VoiceInput = (() => {
     return silent;
   }
 
-  // ── Keeping the microphone ready (an option of the chat, saved on this device) ──
+  // ── The "Voice input" setting (Settings, Voice input; saved on this device like keeping the microphone ready; on by default) ──
+  // Off: `data-voice-off` on <html> hides every microphone button and the keep-ready switch (h5.css). The buttons stay in the page, because the terminal's
+  // is attached only once, here. Nothing can start a recording (`start` and the press handler ask first), a running recording ends and keeps its text, and
+  // a kept microphone is let go. The keep-ready choice itself is kept, so it comes back with voice input.
+  const voice = { enabled: true, listeners: new Set(), recordings: new Set() };
+  try { voice.enabled = localStorage.getItem(ENABLED_KEY) !== '0'; } catch { /* storage blocked: on */ }
+  function markPage() {
+    const page = document.documentElement;
+    if (page && page.toggleAttribute) page.toggleAttribute('data-voice-off', !voice.enabled);
+  }
+  markPage();
+
   // Asking for the microphone and loading the audio worklet take the most of the time between the tap and the start of the recording. With this on, the
   // page gets the microphone once and keeps the whole audio graph running but off (the worklet posts nothing), and a recording just switches it on.
   // The price: the browser shows its microphone indicator all the time and other audio on the device may be affected, so it is off by default, and the
@@ -242,7 +254,7 @@ const VoiceInput = (() => {
   }
   // `manual`: the person has just turned it on; a refusal is then said and the option turns itself off. A later attempt (the page is shown again) fails quietly.
   function buildWarm(manual = false) {
-    if (!warm.wanted || warm.graph || warm.building || !warmAvailable() || (typeof document !== 'undefined' && document.hidden)) return warm.building || Promise.resolve();
+    if (!warm.wanted || !voice.enabled || warm.graph || warm.building || !warmAvailable() || (typeof document !== 'undefined' && document.hidden)) return warm.building || Promise.resolve();
     const Context = window.AudioContext || window.webkitAudioContext;
     const context = new Context();
     context.resume().catch(() => {}); // a context made outside a tap may stay suspended; the next tap (the recording) resumes it
@@ -253,7 +265,7 @@ const VoiceInput = (() => {
         loaded.catch(() => {});
         stream = await navigator.mediaDevices.getUserMedia(MIC_CONSTRAINTS);
         await loaded;
-        if (!warm.wanted) throw Object.assign(new Error('no longer wanted'), { quiet: true });
+        if (!warm.wanted || !voice.enabled) throw Object.assign(new Error('no longer wanted'), { quiet: true });
         const node = new AudioWorkletNode(context, 'pcm-capture');
         node.port.postMessage(false);
         const graph = { context, stream, node, silent: connectGraph(context, stream, node), inUse: false };
@@ -287,11 +299,29 @@ const VoiceInput = (() => {
     else if (warm.graph && !warm.graph.inUse) dropWarm();
     for (const listener of warm.listeners) listener(value);
   }
+  function applyEnabled(value) {
+    if (value === voice.enabled) return;
+    voice.enabled = value;
+    markPage();
+    if (value) void buildWarm();
+    else {
+      for (const recording of voice.recordings) recording.halt();
+      if (warm.graph && !warm.graph.inUse) dropWarm(); // a microphone that is still being requested is let go when it arrives (buildWarm)
+    }
+    for (const listener of voice.listeners) listener(value);
+  }
+  function setEnabled(on) {
+    const value = Boolean(on);
+    try { localStorage.setItem(ENABLED_KEY, value ? '1' : '0'); } catch { /* storage blocked: kept until the page closes */ }
+    applyEnabled(value);
+  }
   if (typeof document !== 'undefined' && document.addEventListener && typeof window !== 'undefined' && window.addEventListener) {
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) { if (warm.graph && !warm.graph.inUse) dropWarm(); } else void buildWarm();
     });
     window.addEventListener('pagehide', () => { if (warm.graph && !warm.graph.inUse) dropWarm(); });
+    // Turned off in another tab of this browser: this tab must not keep the microphone either.
+    window.addEventListener('storage', event => { if (event.key === ENABLED_KEY) applyEnabled(event.newValue !== '0'); });
   }
 
   // textarea: the box to fill; button: the microphone toggle; onNotConfigured: called when the server has no speech key yet.
@@ -389,7 +419,7 @@ const VoiceInput = (() => {
         graph.node.port.onmessage = null;
         graph.node.port.postMessage(false);
         node = silent = stream = context = null;
-        if (!warm.wanted || tracksEnded(graph)) dropWarm();
+        if (!warm.wanted || !voice.enabled || tracksEnded(graph)) dropWarm();
         return;
       }
       if (node) { node.port.onmessage = null; try { node.disconnect(); } catch { /* already disconnected */ } }
@@ -449,6 +479,7 @@ const VoiceInput = (() => {
     }
 
     async function start() {
+      if (!voice.enabled) return;
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !(window.AudioContext || window.webkitAudioContext)) {
         tell('Voice input needs a secure page: open this page over HTTPS or at localhost', 'error');
         return;
@@ -557,14 +588,20 @@ const VoiceInput = (() => {
       return done;
     }
 
+    let pressedAt = 0; // while a hold to talk is pressed: when it began
+    // The setting was turned off: end the recording like a second click (the text so far is kept) and close the hold-to-talk screen.
+    function halt() {
+      if (pressedAt) { pressedAt = 0; if (overlay) overlay.hide(); }
+      stop();
+    }
+
     if (canHold) {
       // Hold to speak: pressing starts the recording (inside the touch, so iOS lets the audio context run) and letting go ends the
       // recognition, keeping the text. A tap shorter than HOLD_MS is not a long press and is discarded. Keyboard activation
       // (click without a pointer, detail 0) still toggles, because a keyboard cannot hold a button.
-      let pressedAt = 0;
       let zone = 'send';
       button.addEventListener('pointerdown', event => {
-        if (event.button || state !== 'idle' || !holding()) return;
+        if (event.button || state !== 'idle' || !holding() || !voice.enabled) return;
         pressedAt = Date.now();
         zone = 'send';
         if (button.setPointerCapture) { try { button.setPointerCapture(event.pointerId); } catch { /* pointer already gone */ } }
@@ -593,6 +630,9 @@ const VoiceInput = (() => {
     }
     button.addEventListener('click', () => { if (holding()) return; if (state === 'idle') void start(); else stop(); });
     render();
+    // A chat's microphone leaves with its chat: forget those, so the list does not grow while the page stays open.
+    for (const recording of voice.recordings) if (recording.button.isConnected === false) voice.recordings.delete(recording);
+    voice.recordings.add({ button, halt });
     return { start, stop, finish, cancel, get state() { return state; } };
   }
 
@@ -610,6 +650,9 @@ const VoiceInput = (() => {
     // Keeping the microphone ready: the switch of the chat options reads and sets it; `onKeepWarm` follows changes (several chats can be open).
     setKeepWarm, get keepWarm() { return warm.wanted; }, canKeepWarm: warmAvailable,
     onKeepWarm(listener) { warm.listeners.add(listener); return () => warm.listeners.delete(listener); },
+    // The "Voice input" setting (Settings.jsx): `onEnabled` follows changes.
+    setEnabled, get enabled() { return voice.enabled; },
+    onEnabled(listener) { voice.listeners.add(listener); return () => voice.listeners.delete(listener); },
   };
 })();
 if (typeof window !== 'undefined') window.VoiceInput = VoiceInput;

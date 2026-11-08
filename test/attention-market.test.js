@@ -246,9 +246,13 @@ test('link and unlink a local folder (dev): loaded from there, reload on demand 
   assert.equal(s.notify.has('devbell'), true);
   assert.deepEqual([s.notify.overview('local').find(item => item.name === 'devbell').origin, s.notify.overview('local').find(item => item.name === 'devbell').dev], ['link', true]);
 
-  writeFiles(folder, notifierFiles('devbell', { marker, label: 'two' }));
-  const deadline = Date.now() + 5000;
-  while (s.notify.notifiers.find(plugin => plugin.name === 'devbell').label !== 'two' && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 50));
+  // fs.watch gets ready in the background (FSEvents on macOS, a walk of the folder on Linux), so a write right after link() can be missed: write again until it is seen.
+  const deadline = Date.now() + 15000;
+  for (let nextWrite = 0; s.notify.notifiers.find(plugin => plugin.name === 'devbell').label !== 'two' && Date.now() < deadline; await new Promise(resolve => setTimeout(resolve, 50))) {
+    if (Date.now() < nextWrite) continue;
+    writeFiles(folder, notifierFiles('devbell', { marker, label: 'two' }));
+    nextWrite = Date.now() + 1000;
+  }
   assert.equal(s.notify.notifiers.find(plugin => plugin.name === 'devbell').label, 'two', 'a change in the linked folder reloads it');
 
   writeFiles(folder, notifierFiles('devbell', { marker, label: 'three' }));

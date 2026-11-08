@@ -263,7 +263,7 @@ function scrubSecrets(text, secrets) {
 function scanNotifiers(dir = PLUGINS_DIR, log = defaultLog, extra = []) {
   let entries = [];
   try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { entries = []; }
-  const folders = entries.filter(entry => entry.isDirectory()).map(entry => ({ folder: path.join(dir, entry.name), origin: 'builtin', dev: false }));
+  const folders = entries.filter(entry => entry.isDirectory()).sort((a, b) => a.name.localeCompare(b.name)).map(entry => ({ folder: path.join(dir, entry.name), origin: 'builtin', dev: false }));
   return scanNotifierFolders([...folders, ...(Array.isArray(extra) ? extra : [])], log, builtInNamesOf(dir));
 }
 

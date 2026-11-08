@@ -9,17 +9,18 @@ async function setup(t, { run, ossFor, clientAuth, frp } = {}) {
   db.exec('CREATE TABLE system_state (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT)');
   if (frp) db.prepare("INSERT INTO system_state (key, value) VALUES ('frp_config', ?)").run(JSON.stringify(frp));
   const contexts = [];
+  let arrived = 0;
   const service = { run: async context => { contexts.push(context); return run ? run(context) : { features: [], summary: { ok: 0, warn: 0, fail: 0 } }; } };
   const app = express();
   app.use('/api/environment', createEnvironmentRouter({
     service, db, ossFor: ossFor || (() => null), clientAuth: () => clientAuth || null,
-    requireAuth(req, res, next) { if (req.get('Authorization') !== 'test-session') return res.status(401).json({ error: 'AUTH_REQUIRED' }); req.session = { user: { login: 'alice' } }; next(); },
+    requireAuth(req, res, next) { if (req.get('Authorization') !== 'test-session') return res.status(401).json({ error: 'AUTH_REQUIRED' }); req.session = { user: { login: 'alice' } }; next(); arrived++; },
   }));
   const server = app.listen(0, '127.0.0.1');
   await new Promise(resolve => server.once('listening', resolve));
   t.after(() => { server.closeAllConnections(); server.close(); db.close(); });
   const base = `http://127.0.0.1:${server.address().port}/api/environment`;
-  return { base, contexts, call: (path = '/check', headers = {}) => fetch(base + path, { headers: { Authorization: 'test-session', ...headers } }) };
+  return { base, contexts, arrived: () => arrived, call: (path = '/check', headers = {}) => fetch(base + path, { headers: { Authorization: 'test-session', ...headers } }) };
 }
 
 test('the report needs a signed-in browser of this page, and is never cached', async t => {
@@ -56,10 +57,11 @@ test('settings that cannot be read do not stop the report, a second request whil
   let calls = 0;
   let release;
   const gate = new Promise(resolve => { release = resolve; });
-  const { call } = await setup(t, { ossFor: () => { throw new Error('unreadable'); }, run: async () => { calls++; await gate; return { features: [], summary: { ok: 0, warn: 0, fail: 0 } }; } });
+  const { call, arrived } = await setup(t, { ossFor: () => { throw new Error('unreadable'); }, run: async () => { calls++; await gate; return { features: [], summary: { ok: 0, warn: 0, fail: 0 } }; } });
   const first = call();
   const second = call();
-  await new Promise(resolve => setTimeout(resolve, 50));
+  // Both requests must be inside the route before the check ends; a fixed wait is too short on a busy machine.
+  for (const end = Date.now() + 10_000; arrived() < 2 && Date.now() < end;) await new Promise(resolve => setTimeout(resolve, 5));
   release();
   assert.deepEqual([(await first).status, (await second).status], [200, 200]);
   assert.equal(calls, 1, 'one check serves both requests');

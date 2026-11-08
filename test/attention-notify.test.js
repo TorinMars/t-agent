@@ -10,6 +10,12 @@ const express = require('express');
 const Database = require('better-sqlite3');
 const notify = require('../services/attention-notify');
 
+// start() without an injected bus loads the real services/attention.js, which opens the database of the data folder.
+// A test process must name its own folder (lib/data-home.js refuses otherwise, so this file needs it where nothing exports one, as in CI).
+const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 't-agent-attention-notify-'));
+process.env.T_AGENT_DATA_DIR = dataDir;
+test.after(() => fs.rmSync(dataDir, { recursive: true, force: true }));
+
 const SECRET = 'attention-notify-test-secret-0123456789';
 const makeDb = () => {
   const db = new Database(':memory:');

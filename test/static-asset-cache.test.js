@@ -78,7 +78,8 @@ test('scripts and styles are sent as brotli or gzip copies made once, by what th
   assert.equal(first.status, 200);
   assert.ok(['br', 'gzip'].includes(first.headers['content-encoding']), 'compressed on the fly before the copy is ready');
   let br;
-  for (let i = 0; i < 100; i++) { // the copy is made in the background
+  // The copy is made in the background, after those of the scripts before it in the page (brotli 11: several seconds on a shared CI machine).
+  for (const end = Date.now() + 60_000; Date.now() < end;) {
     br = await get('/js/h5.js', { 'Accept-Encoding': 'gzip, deflate, br' });
     if (br.headers['content-encoding'] === 'br' && /-br"$/.test(br.headers.etag || '')) break;
     await new Promise(resolve => setTimeout(resolve, 50));

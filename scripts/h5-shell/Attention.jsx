@@ -97,7 +97,7 @@ export function contextFileAction(ui, absolute) {
   return null;
 }
 
-async function copyText(text) {
+export async function copyText(text) {
   try { await navigator.clipboard.writeText(text); return true; } catch { /* plain HTTP: the old way */ }
   const area = document.createElement('textarea');
   area.value = text;

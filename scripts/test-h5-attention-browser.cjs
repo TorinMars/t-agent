@@ -5,11 +5,13 @@
 //   view (history, PATCH of the changed fields only, link) and delete with a confirmation; a live event moving a task into Needs you gives a
 //   toast, the badge, a system notification and a sound, a change made on this page gives none; a lost stream connects again and reads the list
 //   again; the Android back button and Escape close one layer; Settings "T-Attention": tokens (create shown once, revoke), sound, notifications,
-//   AI summary (off by default, provider / model, privacy note). Context recall: the pending text on the row, the context card (needs you with the
+//   AI summary (off by default, provider / model, privacy note), Plugins (GET /api/attention/plugins: chips, activity, setup steps with Copy, notifier
+//   modes, a plugin that failed to load, Refresh; above the notifier settings). Context recall: the pending text on the row, the context card (needs you with the
 //   command, AI summary with refresh, goal, progress with files: a file of this machine opens with the any-path preview (/api/fs/content), one
 //   of a session on another machine (context.host) shows only its path),
 //   folder and branch, the timeline by day, "Open terminal" (the T-Agent terminal) and "Copy resume command".
-// - phone 320x640 (touch): seven 44px buttons in row 2 (Docs left out, reached from the saved commands list); the sheet's controls are 44px.
+// - phone 320x640 (touch): seven 44px buttons in row 2 (Docs left out, reached from the saved commands list); the sheet's controls are 44px; the
+//   Plugins rows fit the width with 44px buttons.
 // - computer 1440x900 (mouse): the right side panel (html[data-side-panel]), one panel at a time with Docs, Escape closes it, the edit view is a
 //   normal dialog.
 // H5_SHOT_DIR=<dir> saves screenshots (phones at 3x).
@@ -42,6 +44,22 @@ const ITEMS = () => [
   { id: 7, title: 'Deploy', status: 'failed', priority: 'none', source: 'cli', attention_reason: 'Exit code 1', updated_at: AT, created_at: AT, context: { session: { agent: 'claude', id: 's7', resume: "cd '/srv' && claude --resume s7" }, tagent: { task_id: '55', terminal_id: 'x' }, cwd: '/srv', host: 'linux-box', files: [{ path: 'deploy.sh', added: 2, deleted: 1 }] } },
   { id: 8, title: 'Pay invoice', status: 'todo', priority: 'high', due_date: '2026-11-10', source: 'user', updated_at: AT, created_at: AT },
 ];
+
+// The answer of GET /api/attention/plugins (contract: "T-Attention plugin overview"): one listener set up here, one not, a configured notifier and
+// one that failed to load.
+const PLUGINS = () => ({
+  listeners: [
+    { name: 'claude', version: '1.0.0', description: 'Claude Code hooks', entry: 'hook.js', events: ['Stop'],
+      local: { hookPath: true, loggedIn: true, toolHooks: true, lastEventAt: new Date(Date.now() - 5 * 60000).toISOString(), itemCount: 3 } },
+    { name: 'codex', version: '0.1.0', description: 'Codex notify hook', entry: 'hook.js', events: [],
+      local: { hookPath: false, loggedIn: false, toolHooks: null, lastEventAt: null, itemCount: 0 } },
+  ],
+  notifiers: [
+    { name: 'telegram', version: '1.0.0', description: 'Telegram message or call', loaded: true, error: null, configured: true,
+      summary: 'Logged in as Ann \u2192 account 2 @bob', statuses: { waiting_user: 'call', review: 'message', failed: 'off', done: 'off' } },
+    { name: 'broken', version: '0.0.1', description: '', loaded: false, error: 'Bad manifest: no send()', configured: null, summary: null, statuses: {} },
+  ],
+});
 
 async function openPage(browser, { viewport, touch = true, notify = true }) {
   const scale = SHOTS && touch ? { deviceScaleFactor: 3 } : {};
@@ -108,6 +126,7 @@ async function openPage(browser, { viewport, touch = true, notify = true }) {
       const body = request.postData() ? JSON.parse(request.postData()) : undefined;
       calls.push({ method, path: p + url.search, body });
       if (p === '/api/attention/tokens' && method === 'GET') return json({ tokens: db.tokens });
+      if (p === '/api/attention/plugins' && method === 'GET') return json(PLUGINS());
       // The summary settings answer as services/attention-summary.js does: `providers` is a list with hasApiKey (never a key), and a save that turns
       // the summary on for a provider without a saved key is refused with 409 SUMMARY_PROVIDER_NOT_CONFIGURED and an English message.
       const providers = [{ id: 'deepseek', label: 'DeepSeek', hasApiKey: true, model: 'deepseek-chat' }, { id: 'glm', label: 'GLM', hasApiKey: false, model: 'glm-4-flash' }];
@@ -169,6 +188,18 @@ const notice = page => page.locator('.MuiSnackbar-root .MuiAlert-message');
 const label = page => page.locator('#h5-attention').getAttribute('aria-label');
 const layerDepth = page => page.evaluate(() => (history.state && history.state.h5Layer) || 0);
 const row2 = page => page.evaluate(() => [...document.querySelectorAll('#h5-actions > button, #h5-actions > label')].filter(b => b.getBoundingClientRect().width > 0).map(b => ({ id: b.id || b.dataset.action, ...b.getBoundingClientRect().toJSON() })));
+
+// Opens Settings → T-Attention and waits for the Plugins rows.
+async function openPluginSettings(page, how) {
+  await page.evaluate(() => window.H5UI.set({ settingsOpen: true }));
+  await page.locator('#h5-settings').waitFor({ state: 'visible' });
+  await page.locator('#h5-set-attention .MuiAccordionSummary-root')[how]();
+  await page.waitForFunction(() => Boolean(document.querySelector('#h5-set-attention .MuiCollapse-entered')));
+  await page.locator('#h5-plugins .h5-plugin').first().waitFor();
+}
+// The Plugins rows stay inside the sheet: no row is wider than its box and nothing reaches past the viewport.
+const pluginsFit = page => page.evaluate(() => [...document.querySelectorAll('#h5-plugins .h5-plugin, #h5-plugins code')]
+  .filter(node => node.scrollWidth > node.clientWidth + 1 || node.getBoundingClientRect().right > innerWidth + 0.5).map(node => node.className || node.id));
 
 (async () => {
   const browser = await chromium.launch({ headless: true, ...(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {}) });
@@ -426,6 +457,36 @@ const row2 = page => page.evaluate(() => [...document.querySelectorAll('#h5-acti
       assert.equal(await page.locator('#h5-attention-summary-provider').inputValue(), 'deepseek', 'the saved provider is shown again (an id, not a list index)');
       assert.equal(await page.locator('#h5-attention-summary-enabled').isChecked(), true, 'the saved setting is shown again');
       assert.equal(await page.locator('#h5-attention-tokens .h5-attention-token').count(), 1);
+      // Plugins: read when the group opened, drawn above the notifier settings (slot order 50 before 100).
+      await page.locator('#h5-plugins .h5-plugin').first().waitFor();
+      assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('#h5-set-attention .h5-attention-slot')].map(node => node.dataset.slot)), ['plugins', 'notifiers']);
+      const chipsOf = (kind, name) => page.locator(`#h5-plugins .h5-plugin-${kind}[data-name="${name}"] .h5-plugin-chip`).allTextContents();
+      const plugin = (kind, name) => page.locator(`#h5-plugins .h5-plugin-${kind}[data-name="${name}"]`);
+      assert.deepEqual(await chipsOf('listener', 'claude'), ['Installed', 'Hooks synced']);
+      assert.equal(await plugin('listener', 'claude').locator('.h5-plugin-activity').textContent(), '3 open \u00B7 Last event 5 min ago');
+      assert.equal(await plugin('listener', 'claude').locator('.h5-plugin-steps').count(), 0, 'a listener set up here shows no steps');
+      assert.deepEqual(await chipsOf('listener', 'codex'), ['Not installed']);
+      assert.equal(await plugin('listener', 'codex').locator('.h5-plugin-activity').textContent(), 'No open items \u00B7 No events yet');
+      assert.equal(await page.locator('#h5-plugin-login-codex').textContent(), `t-attention login --url ${ORIGIN} --token <token>`);
+      assert.equal(await page.locator('#h5-plugin-sync-codex').textContent(), 'ta');
+      await page.evaluate(() => { window.copied = []; Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async text => { window.copied.push(text); } } }); });
+      await plugin('listener', 'codex').locator('.h5-plugin-copy').first().tap();
+      await plugin('listener', 'codex').locator('.h5-plugin-copy', { hasText: 'Copied' }).waitFor();
+      assert.deepEqual(await page.evaluate(() => window.copied), [`t-attention login --url ${ORIGIN} --token <token>`]);
+      assert.deepEqual(await chipsOf('notifier', 'telegram'), ['Configured']);
+      assert.equal(await plugin('notifier', 'telegram').locator('.h5-plugin-summary').textContent(), 'Logged in as Ann \u2192 account 2 @bob');
+      assert.equal(await plugin('notifier', 'telegram').locator('.h5-plugin-modes').textContent(), 'Needs you: Call \u00B7 Review: Message');
+      assert.deepEqual(await chipsOf('notifier', 'broken'), ['Failed to load']);
+      assert.equal(await plugin('notifier', 'broken').locator('.h5-plugin-error').textContent(), 'Bad manifest: no send()');
+      assert.equal(await page.locator('#h5-plugins-refresh').getAttribute('aria-label'), 'Refresh');
+      assert.equal(await page.locator('#h5-plugins-refresh').getAttribute('title'), 'Refresh');
+      const pluginReads = () => calls.filter(call => call.path === '/api/attention/plugins').length;
+      assert.equal(pluginReads(), 1);
+      await page.locator('#h5-plugins-refresh').tap();
+      await page.waitForFunction(() => document.getElementById('h5-plugins').getAttribute('aria-busy') === 'false');
+      assert.equal(pluginReads(), 2, 'Refresh reads the list again');
+      assert.deepEqual(await pluginsFit(page), []);
+      if (SHOTS) { await page.locator('#h5-plugins').scrollIntoViewIfNeeded(); await page.screenshot({ path: path.join(SHOTS, 'h5-attention-plugins-phone.png') }); }
       assert.equal(await page.locator('#h5-attention-sound').isChecked(), true, 'sound is on by default');
       assert.equal(await page.locator('#h5-attention-notify-state').textContent(), 'System notifications are on');
       await page.locator('#h5-attention-notify-test').tap();
@@ -477,6 +538,14 @@ const row2 = page => page.evaluate(() => [...document.querySelectorAll('#h5-acti
       const small = await page.evaluate(() => [...document.querySelectorAll('#h5-attention-sheet button')].map(node => node.getBoundingClientRect()).filter(r => r.width && (r.width < 44 || r.height < 44)).length);
       assert.equal(small, 0);
       if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'h5-attention-phone-320.png') });
+      // Settings → T-Attention → Plugins at 320px: the rows and the long login command fit, the buttons are 44px.
+      await page.keyboard.press('Escape');
+      await page.locator('#h5-attention-sheet .h5-attention-panel').waitFor({ state: 'hidden' });
+      await openPluginSettings(page, 'tap');
+      assert.deepEqual(await pluginsFit(page), []);
+      const smallPlugin = await page.evaluate(() => [...document.querySelectorAll('#h5-plugins button, #h5-plugins-refresh')].map(node => node.getBoundingClientRect()).filter(r => r.width && (r.width < 44 || r.height < 44)).length);
+      assert.equal(smallPlugin, 0);
+      if (SHOTS) { await page.locator('#h5-plugins-notifiers').scrollIntoViewIfNeeded(); await page.screenshot({ path: path.join(SHOTS, 'h5-attention-plugins-320.png') }); }
       assert.deepEqual(errors, []);
       await context.close();
     }
@@ -547,6 +616,11 @@ const row2 = page => page.evaluate(() => [...document.querySelectorAll('#h5-acti
       await panel.waitFor({ state: 'hidden' });
       assert.ok(calls.length >= 2);
       assert.ok(await resizes() >= 1);
+      // Settings → T-Attention → Plugins on a computer: the same rows; the Refresh button is a compact icon button.
+      await openPluginSettings(page, 'click');
+      assert.deepEqual(await pluginsFit(page), []);
+      assert.equal(await page.locator('#h5-plugins .h5-plugin').count(), 4);
+      if (SHOTS) { await page.locator('#h5-plugins').scrollIntoViewIfNeeded(); await page.screenshot({ path: path.join(SHOTS, 'pc-1440-attention-plugins.png') }); }
       assert.deepEqual(errors, []);
       await context.close();
     }

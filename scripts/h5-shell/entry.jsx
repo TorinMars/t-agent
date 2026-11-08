@@ -8,6 +8,7 @@ import { createBackLayers } from './back.mjs';
 import { startAttentionFeed } from './attention-feed.mjs';
 import { api, t } from './common.jsx';
 // T-Attention settings slots: the modules of other T-Attention parts that register Settings content (attention-slots.mjs) are imported here, e.g.
+import './PluginSettings.jsx';
 import './NotifierSettings.jsx';
 
 // One breakpoint for the shell and for h5.js (which reads it from `H5UI.media.wideQuery`), so the two can never disagree.

@@ -1,6 +1,11 @@
 // Chinese translations of the UI text (public/h5.html with the Material UI shell in scripts/h5-shell, public/login.html and public/js/*.js). English text is the key.
 // {1}, {2} ... mark the variable parts of a sentence. This file is data: it is the only place (besides i18n-zh-server.js and i18n-zh-extra.js) with Chinese text.
 I18n.add({
+  "Wide terminal": "宽终端",
+  "{1} columns, scroll sideways": "{1} 列，左右滑动查看",
+  "Lines are wrapped at {1} columns": "行在 {1} 列处折行",
+  "Widen terminal": "加宽终端",
+  "The new width applies to new output. Text that is already wrapped stays as it is; full-screen programs redraw.": "新宽度只作用于新的输出。已经折好的行保持原样；全屏程序会重新绘制。",
   "Translate to English": "翻译成英文",
   ", published {1}": "，发布于 {1}",
   ". Restart for your install type: {1}. Restarting interrupts programs running in terminals.": "。按安装方式重启：{1}。重启会中断终端里正在运行的程序。",
@@ -553,7 +558,6 @@ I18n.add({
   "Open this link?": "打开此链接?",
   "Delete this terminal? It ends the programs in it and removes its history.": "删除该终端?会结束其中的程序并移除其历史。",
   "Copy text": "复制文本",
-  "Scroll": "滚动",
   "Copy all": "复制全部",
   "Search": "搜索",
   "Search in the text": "在文本中搜索",

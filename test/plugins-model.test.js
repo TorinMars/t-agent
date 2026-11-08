@@ -112,3 +112,36 @@ test('installSummary, secondsLeft, countdownText and codeGroups', async () => {
   assert.equal(codeGroups('123456'), '123 456');
   assert.equal(codeGroups('12'), '12');
 });
+
+test('pluginRow gives the chips and one short line of a list row', async () => {
+  const { pluginRow } = await load();
+  const t = text => `[${text}]`;
+  const claude = listener({ hookPath: true, loggedIn: true, toolHooks: true, itemCount: 2, lastEventAt: '2026-11-08T11:55:00Z' });
+  assert.deepEqual(pluginRow('listener', claude, { now: NOW, t }).line, '[2 open] · [Last event] 5 [min ago]');
+  assert.deepEqual(keys(pluginRow('listener', claude, { now: NOW, t }).chips), ['installed:Installed:success', 'hooks:Hooks synced:success']);
+  assert.equal(pluginRow('listener', { name: 'x' }, { now: NOW, t }).line, '', 'no local state, no line');
+  const telegram = { name: 'telegram', enabled: true, configured: false, summary: 'Not logged in' };
+  assert.equal(pluginRow('notifier', telegram, { t }).line, 'Not logged in', 'the summary is plugin content: not translated');
+  assert.deepEqual(keys(pluginRow('notifier', telegram, { t }).chips), ['configured:Not configured:warning']);
+  assert.deepEqual(keys(pluginRow('notifier', telegram, { t, loggingIn: true }).chips), ['login-step:Login in progress:warning', 'configured:Not configured:warning'], 'a login left half way comes first');
+  const broken = { name: 'broken', loaded: false, error: 'Bad manifest' };
+  assert.equal(pluginRow('notifier', broken, { t }).error, 'Bad manifest');
+  assert.equal(pluginRow('notifier', { name: 'quiet' }, { t }).line, '');
+});
+
+test('loginInProgress is true only for the steps that wait for the person', async () => {
+  const { loginInProgress } = await load();
+  assert.deepEqual(['code', 'password', 'qr'].map(loginInProgress), [true, true, true]);
+  assert.deepEqual(['none', 'done', undefined].map(loginInProgress), [false, false, false]);
+});
+
+test('findPlugin finds the plugin of a page by kind and name', async () => {
+  const { RULES_PAGE, findPlugin, normalizePlugins, pageKey } = await load();
+  const data = normalizePlugins({ listeners: [{ name: 'same' }], notifiers: [{ name: 'same', loaded: true }, { name: 'other' }] });
+  assert.deepEqual(findPlugin(data, { kind: 'listener', name: 'same' }), { name: 'same' });
+  assert.deepEqual(findPlugin(data, { kind: 'notifier', name: 'same' }), { name: 'same', loaded: true }, 'the kind counts');
+  assert.equal(findPlugin(data, { kind: 'notifier', name: 'gone' }), null);
+  assert.equal(findPlugin(null, { kind: 'notifier', name: 'same' }), null, 'nothing read yet');
+  assert.equal(findPlugin(data, RULES_PAGE), null, 'the rules page has no plugin');
+  assert.equal(pageKey({ kind: 'listener', name: 'a' }), 'listener-a');
+});

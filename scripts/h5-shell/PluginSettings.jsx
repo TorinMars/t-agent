@@ -1,29 +1,36 @@
 import { useEffect, useState } from 'react';
+import AppBar from '@mui/material/AppBar';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
+import ButtonBase from '@mui/material/ButtonBase';
+import Drawer from '@mui/material/Drawer';
 import IconButton from '@mui/material/IconButton';
-import Paper from '@mui/material/Paper';
+import Toolbar from '@mui/material/Toolbar';
 import Typography from '@mui/material/Typography';
 import { Pill, api, errorText, named, t } from './common.jsx';
 import { Feedback, Hint, useFeedback } from './Form.jsx';
 import { Icon } from './Icons.jsx';
 import { copyText } from './Attention.jsx';
 import { BASE } from './attention-feed.mjs';
-import { registerAttentionSettings } from './attention-slots.mjs';
+import { registerAttentionSettings, setAttentionPluginPageOpener } from './attention-slots.mjs';
 import PluginConfigForm from './PluginConfigForm.jsx';
-import { listenerActivity, listenerChips, loginCommand, modesSummary, normalizePlugins, notifierChips, setupSteps } from './plugins-model.mjs';
+import { NotifierRules, TelegramSetup } from './NotifierSettings.jsx';
+import { KIND_LABELS } from './market-model.mjs';
+import { RULES_PAGE, findPlugin, listenerActivity, listenerChips, loginCommand, modesSummary, normalizePlugins, notifierChips, pageKey, pluginRow, setupSteps } from './plugins-model.mjs';
 import { canUninstall, installAction, installSummary, showManualSteps } from './plugins-model.mjs';
 import { PairingDialog } from './PairingDialog.jsx';
 import PluginMarket from './PluginMarket.jsx';
 
-// The "Plugins" section of the Settings group "T-Attention": the listener and notifier plugins of this Client and their state, from
-// GET /api/attention/plugins (services/attention-plugins.js). "local" in the answer is about the machine that runs this Client, not this browser.
-// Read when the group opens and with the Refresh button. Plugin names, versions, descriptions and summaries are plugin content: not translated.
+// The "Plugins" section of the Settings group "T-Attention", in two levels. The list: one compact row per plugin of this Client (name, kind, chips and one
+// short line), from GET /api/attention/plugins (services/attention-plugins.js), read when the group opens, with the Refresh button and on the way back from
+// a page; a row reads nothing of its own. The page: a tap opens that plugin's page over the sheet (a MUI modal, so Escape and the phone's back button close
+// it through back.mjs, and the list keeps its tab and scroll position underneath): its forms, login and actions, which read their data only while it is open.
+// "local" in the answer is about the machine that runs this Client, not this browser. Plugin names, versions, descriptions and summaries are plugin content: not translated.
 
 function Chips({ chips }) {
   if (!chips.length) return null;
   return (
-    <Box className="h5-plugin-chips" sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+    <Box component="span" className="h5-plugin-chips" sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
       {chips.map(chip => <Pill key={chip.key} className="h5-plugin-chip" data-chip={chip.key} label={t(chip.label)} tone={chip.tone} />)}
     </Box>
   );
@@ -47,14 +54,8 @@ function Command({ id, text }) {
   );
 }
 
-function Title({ plugin }) {
-  return (
-    <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1, minWidth: 0, flexWrap: 'wrap' }}>
-      <Box component="strong" translate="no" sx={{ overflowWrap: 'anywhere' }}>{plugin.name}</Box>
-      {plugin.version ? <Typography variant="caption" component="span" color="text.secondary" translate="no">{plugin.version}</Typography> : null}
-    </Box>
-  );
-}
+// The name is the page's heading; the version goes under it.
+const Version = ({ plugin }) => (plugin.version ? <Typography variant="caption" component="span" color="text.secondary" className="h5-plugin-version" translate="no">{plugin.version}</Typography> : null);
 
 const Secondary = ({ children, className, translate }) => (
   <Typography variant="body2" color="text.secondary" className={className} translate={translate} sx={{ overflowWrap: 'anywhere' }}>{children}</Typography>
@@ -90,12 +91,12 @@ function ListenerActions({ listener, onChanged }) {
   );
 }
 
-function ListenerRow({ listener, onChanged }) {
+function ListenerPage({ listener, onChanged }) {
   const steps = showManualSteps(listener) ? setupSteps(listener) : { login: false, sync: false };
   const origin = typeof location !== 'undefined' ? location.origin : '';
   return (
-    <Paper variant="outlined" className="h5-plugin h5-plugin-listener" data-name={listener.name} sx={{ display: 'flex', flexDirection: 'column', gap: 0.75, p: 1.25 }}>
-      <Title plugin={listener} />
+    <>
+      <Version plugin={listener} />
       {listener.description ? <Secondary translate="no">{listener.description}</Secondary> : null}
       <Chips chips={listenerChips(listener)} />
       {listener.error ? <Typography variant="body2" color="error" className="h5-plugin-error" sx={{ overflowWrap: 'anywhere' }}>{t(listener.error)}</Typography> : null}
@@ -106,7 +107,7 @@ function ListenerRow({ listener, onChanged }) {
           <Secondary>{t('To use it on the machine that runs this Client:')}</Secondary>
           {steps.login ? (
             <>
-              <Secondary>{t('1. Create a token under CLI tokens above.')}</Secondary>
+              <Secondary>{t('1. Create a token under CLI tokens in Settings \u2192 T-Attention.')}</Secondary>
               <Secondary>{t('2. Log in with it (put the token in place of <token>):')}</Secondary>
               <Command id={`h5-plugin-login-${listener.name}`} text={loginCommand(origin)} />
             </>
@@ -119,22 +120,80 @@ function ListenerRow({ listener, onChanged }) {
           ) : null}
         </Box>
       ) : null}
-    </Paper>
+    </>
   );
 }
 
-function NotifierRow({ notifier, onChanged }) {
+function NotifierPage({ notifier, onChanged, onLogin, onRules }) {
   const modes = modesSummary(notifier.statuses, { t });
   return (
-    <Paper variant="outlined" className="h5-plugin h5-plugin-notifier" data-name={notifier.name} sx={{ display: 'flex', flexDirection: 'column', gap: 0.75, p: 1.25 }}>
-      <Title plugin={notifier} />
+    <>
+      <Version plugin={notifier} />
       {notifier.description ? <Secondary translate="no">{notifier.description}</Secondary> : null}
       <Chips chips={notifierChips(notifier)} />
       {notifier.error ? <Typography variant="body2" color="error" className="h5-plugin-error" sx={{ overflowWrap: 'anywhere' }}>{t(notifier.error)}</Typography> : null}
       {notifier.summary ? <Secondary className="h5-plugin-summary" translate="no">{notifier.summary}</Secondary> : null}
       {modes ? <Secondary className="h5-plugin-modes">{modes}</Secondary> : null}
-      {notifier.loaded !== false ? <PluginConfigForm notifier={notifier} onChanged={onChanged} /> : null}
-    </Paper>
+      {/* The section the page draws itself (manifest `customUi`): Telegram's login; the generic form follows it. */}
+      {notifier.name === 'telegram' && notifier.loaded !== false ? <TelegramSetup onChanged={onChanged} onLogin={onLogin} /> : null}
+      {notifier.loaded !== false ? <PluginConfigForm notifier={notifier} onChanged={onChanged} onRules={onRules} /> : null}
+    </>
+  );
+}
+
+// The second level, drawn over the Settings sheet with the same size and place. It is its own modal (see the top of this file); without an animation, so
+// leaving ends what the page runs (the Telegram QR polling) at once. A tap beside the sheet goes back, as it closes the sheet on the first level.
+const SHEET = { width: 'min(440px, 100%)', maxWidth: '100%', height: '92dvh', mx: 'auto', borderRadius: '16px 16px 0 0', backgroundImage: 'none' };
+function PluginPage({ page, data, onBack, onChanged, onLogin, onRules }) {
+  const titleId = `h5-plugin-page-title-${pageKey(page)}`;
+  const plugin = findPlugin(data, page);
+  const rules = page.kind === RULES_PAGE.kind;
+  return (
+    <Drawer
+      anchor="bottom" open transitionDuration={0} onClose={onBack} className="h5-plugin-page" data-kind={page.kind} data-name={page.name} aria-labelledby={titleId}
+      slotProps={{ backdrop: { invisible: true }, paper: { className: 'h5-sheet-panel', sx: SHEET } }}
+    >
+      <AppBar position="static" color="default" enableColorOnDark elevation={0} className="h5-sheet-header" sx={{ borderBottom: 1, borderColor: 'divider' }}>
+        <Toolbar variant="dense" disableGutters sx={{ gap: 0.5, px: 1 }}>
+          <IconButton className="h5-plugin-page-back" onClick={onBack} {...named(t('Back'))}><Icon name="back" size={22} /></IconButton>
+          <Typography id={titleId} className="h5-plugin-page-title" variant="h6" component="h2" noWrap translate={rules ? undefined : 'no'} sx={{ flex: '1 1 auto', minWidth: 0 }}>{rules ? t('Message and call rules') : page.name}</Typography>
+        </Toolbar>
+      </AppBar>
+      <Box className="h5-plugin-page-body" sx={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 1.25, p: 2 }}>
+        {rules ? <NotifierRules onChanged={onChanged} /> : null}
+        {!rules && !data ? <Hint>{t('Loading…')}</Hint> : null}
+        {!rules && data && !plugin ? <Hint>{t('This plugin was not found on this Client.')}</Hint> : null}
+        {plugin && page.kind === 'listener' ? <ListenerPage listener={plugin} onChanged={onChanged} /> : null}
+        {plugin && page.kind === 'notifier' ? <NotifierPage notifier={plugin} onChanged={onChanged} onLogin={onLogin} onRules={onRules} /> : null}
+      </Box>
+    </Drawer>
+  );
+}
+
+// One row of the list: a real button (keyboard focus, ripple) with a chevron; everything inside is phrasing content.
+const ROW_LOOK = {
+  width: '100%', minHeight: 56, justifyContent: 'flex-start', textAlign: 'left', gap: 1, p: 1.25, border: 1, borderColor: 'divider', borderRadius: 1,
+  '&:hover': { bgcolor: 'action.hover' }, '&.Mui-focusVisible': { outline: 2, outlineColor: 'primary.main', outlineOffset: 1 },
+};
+const RowText = ({ children }) => <Box component="span" sx={{ flex: '1 1 auto', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 0.5 }}>{children}</Box>;
+const Chevron = () => <Box component="span" aria-hidden="true" sx={{ flex: '0 0 auto', display: 'inline-flex', color: 'text.secondary' }}><Icon name="treeChevron" size={16} /></Box>;
+const RowLine = ({ children, color = 'text.secondary', className, translate }) => <Typography variant="body2" component="span" color={color} className={className} translate={translate} sx={{ overflowWrap: 'anywhere' }}>{children}</Typography>;
+
+function PluginRow({ kind, plugin, loggingIn, onOpen }) {
+  const row = pluginRow(kind, plugin, { t, loggingIn });
+  return (
+    <ButtonBase className={`h5-plugin h5-plugin-${kind}`} data-name={plugin.name} onClick={onOpen} sx={ROW_LOOK}>
+      <RowText>
+        <Box component="span" sx={{ display: 'flex', alignItems: 'baseline', gap: 1, minWidth: 0, flexWrap: 'wrap' }}>
+          <Box component="strong" translate="no" sx={{ overflowWrap: 'anywhere' }}>{plugin.name}</Box>
+          <Typography variant="caption" component="span" color="text.secondary" className="h5-plugin-kind">{t(KIND_LABELS[kind])}</Typography>
+        </Box>
+        <Chips chips={row.chips} />
+        {row.error ? <RowLine color="error" className="h5-plugin-error">{t(row.error)}</RowLine> : null}
+        {!row.error && row.line ? <RowLine className={kind === 'listener' ? 'h5-plugin-activity' : 'h5-plugin-summary'} translate={kind === 'listener' ? undefined : 'no'}>{row.line}</RowLine> : null}
+      </RowText>
+      <Chevron />
+    </ButtonBase>
   );
 }
 
@@ -163,8 +222,10 @@ function Tabs({ tab, onTab }) {
   );
 }
 
-function PluginSlot({ opened }) {
+function PluginSlot({ ui, opened }) {
   const [tab, setTab] = useState('installed');
+  const [pages, setPages] = useState([]); // the open pages; more than one when the rules are opened from a notifier's page
+  const [loggingIn, setLoggingIn] = useState(false); // a Telegram login was left half way: the row says so (the server keeps it until it times out)
   const [marketShown, setMarketShown] = useState(false);
   const [marketRefresh, setMarketRefresh] = useState(0);
   const [data, setData] = useState(null);
@@ -177,6 +238,12 @@ function PluginSlot({ opened }) {
     finally { setLoading(false); }
   };
   useEffect(() => { if (opened) void load(); }, [opened]); // eslint-disable-line react-hooks/exhaustive-deps -- read each time the group is opened
+  // The first-run guide opens a plugin's page directly (attention-slots.mjs).
+  useEffect(() => setAttentionPluginPageOpener(page => { setPages([page]); return true; }), []);
+  // A page lives on top of the sheet: it cannot stay behind when the sheet closes by itself.
+  useEffect(() => ui.subscribe(() => { if (!ui.get().settingsOpen) setPages(current => (current.length ? [] : current)); }), [ui]);
+  const open = page => setPages(current => [...current, page]);
+  const back = () => { setPages(current => current.slice(0, -1)); void load(); };
   return (
     <>
       <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, mt: 1 }}>
@@ -191,11 +258,21 @@ function PluginSlot({ opened }) {
         {data ? (
           <>
             <PluginList id="h5-plugins-listeners" title="Listeners" empty="No listener plugins found">
-              {data.listeners.map(listener => <ListenerRow key={listener.name} listener={listener} onChanged={() => void load()} />)}
+              {data.listeners.map(listener => <PluginRow key={listener.name} kind="listener" plugin={listener} onOpen={() => open({ kind: 'listener', name: listener.name })} />)}
             </PluginList>
             <PluginList id="h5-plugins-notifiers" title="Notifiers" empty="No notifier plugins found">
-              {data.notifiers.map(notifier => <NotifierRow key={notifier.name} notifier={notifier} onChanged={load} />)}
+              {data.notifiers.map(notifier => <PluginRow key={notifier.name} kind="notifier" plugin={notifier} loggingIn={notifier.name === 'telegram' && loggingIn} onOpen={() => open({ kind: 'notifier', name: notifier.name })} />)}
             </PluginList>
+            <Box id="h5-plugins-rules" sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+              <Typography variant="subtitle2" component="strong">{t('Rules for all notifiers')}</Typography>
+              <ButtonBase id="h5-plugins-rules-open" className="h5-plugin-rules" onClick={() => open(RULES_PAGE)} sx={ROW_LOOK}>
+                <RowText>
+                  <Box component="strong">{t('Message and call rules')}</Box>
+                  <RowLine>{t('When to notify, quiet hours, hourly limits, page address')}</RowLine>
+                </RowText>
+                <Chevron />
+              </ButtonBase>
+            </Box>
           </>
         ) : null}
       </Box>
@@ -204,6 +281,7 @@ function PluginSlot({ opened }) {
       <Box id="h5-plugins-panel-market" role="tabpanel" aria-labelledby="h5-plugins-tab-market" hidden={tab !== 'market'} sx={{ display: tab === 'market' ? 'block' : 'none' }}>
         {marketShown && opened ? <PluginMarket refresh={marketRefresh} onChanged={() => void load()} /> : null}
       </Box>
+      {pages.map(page => <PluginPage key={pageKey(page)} page={page} data={data} onBack={back} onChanged={load} onLogin={setLoggingIn} onRules={() => open(RULES_PAGE)} />)}
     </>
   );
 }

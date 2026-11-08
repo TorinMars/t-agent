@@ -15,7 +15,7 @@ import { AttentionGuide } from './AttentionGuide.jsx';
 // The "T-Attention" group of the settings sheet: the reminders of this page (sound, system notifications; remembered in this browser) and the
 // CLI tokens (`Authorization: Bearer tatt_...` for the `t-attention` CLI and the listener plugins; only /api/attention* accepts them).
 // The token endpoints take the browser session only. A new token is shown once, here, and never again.
-// Below them: the components other parts registered (attention-slots.mjs; for example the notifier settings).
+// Below them: the components other parts registered (attention-slots.mjs; for example the plugin list).
 const when = value => { const at = Date.parse(value || ''); return Number.isFinite(at) ? new Date(at).toLocaleString() : ''; };
 
 function TokenList({ opened }) {
@@ -190,7 +190,7 @@ export function AttentionSettings({ ui }) {
       <Reminders ui={ui} prefs={prefs} setPrefs={setPrefs} />
       <SummarySettings opened={opened} />
       <TokenList opened={opened} />
-      {/* SLOT: the settings of other T-Attention parts (attention-slots.mjs, e.g. NotifierSettings). Nothing is drawn when none is registered. */}
+      {/* SLOT: the settings of other T-Attention parts (attention-slots.mjs, e.g. the plugin list). Nothing is drawn when none is registered. */}
       {attentionSettingsSlots().map(({ id, Component }) => <Box key={id} className="h5-attention-slot" data-slot={id} sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}><Component ui={ui} opened={opened} /></Box>)}
     </Group>
   );

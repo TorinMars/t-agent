@@ -1,18 +1,20 @@
-// Browser test of the T-Attention notifier settings (scripts/h5-shell/NotifierSettings.jsx) on a phone-sized page: the Telegram login steps
-// (api_id / api_hash / phone -> code -> 2FA password, and the QR login: the code from the server, its refresh, no polling while the group is
-// folded, the 2FA password after the scan), account 2 (the ring time is in the manifest form, PluginConfigForm, not here), the test buttons, the rules (mode per status, delay,
+// Browser test of the T-Attention notifier settings (scripts/h5-shell/NotifierSettings.jsx) on a phone-sized page, reached through the plugin list:
+// the Telegram login steps (api_id / api_hash / phone -> code -> 2FA password, and the QR login: the code from the server, its refresh, polling only while
+// Telegram's page is open, a login left half way shown on the row and again on the page, the 2FA password after the scan), account 2 (the ring time is in the manifest form, PluginConfigForm, not here), the test buttons, the rules (mode per status, delay,
 // quiet hours, limits, page address) and that secret fields are never filled from the server. The server is a fake fetch.
 const { chromium } = require('playwright');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
 const root = path.resolve(__dirname, '..');
+// H5_TEST_WIDTH: the viewport width (390 by default; run it with 320 too).
+const WIDTH = Number(process.env.H5_TEST_WIDTH) || 390;
 const html = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '').replace(/<link\b[^>]*>/g, '');
 
 (async () => {
   const browser = await chromium.launch({ headless: true, ...(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {}) });
   try {
-    const page = await browser.newPage({ viewport: { width: 390, height: 800 }, hasTouch: true });
+    const page = await browser.newPage({ viewport: { width: WIDTH, height: 800 }, hasTouch: true });
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     await page.route('http://app.test/', route => route.fulfill({ contentType: 'text/html', body: html }));
@@ -34,6 +36,8 @@ const html = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8').replace(
         if (url.startsWith('/api/system/')) return reply({});
         // The rest of the Settings group "T-Attention" (the notifier settings are drawn in its slot) and the list for the row 2 badge.
         if (url === '/api/attention/tokens') return reply({ tokens: [] });
+        if (url === '/api/attention/plugins') return reply({ listeners: [], notifiers: [{ name: 'telegram', version: '1.0.0', description: 'Telegram', loaded: true, error: null, enabled: true, configured: server.tg.loggedIn, summary: server.tg.loggedIn ? 'Logged in as Account One' : 'Not logged in', statuses: {}, settings: true, test: true, customUi: 'telegram' }] });
+        if (url === '/api/attention/plugins/telegram/config') return reply({ name: 'telegram', enabled: true, schema: [], test: true, customUi: 'telegram', values: {} });
         if (url === '/api/attention/settings/summary') return reply({ enabled: false, provider: 'deepseek', model: '', providers: [{ id: 'deepseek', label: 'DeepSeek', hasApiKey: false, model: 'deepseek-chat' }] });
         if (url.startsWith('/api/attention') && !url.startsWith('/api/attention-notify')) return reply({ items: [], host: 'mac' });
         if (url === '/api/attention-notify/config' && method === 'GET') return reply(view());
@@ -56,10 +60,20 @@ const html = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8').replace(
     const notifyCalls = () => page.evaluate(() => window.calls.filter(call => call.url.startsWith('/api/attention-notify')));
     assert.equal((await notifyCalls()).length, 0, 'nothing is read before the group opens');
     await page.locator('#h5-set-attention .MuiAccordionSummary-root').tap();
+    // The list: a row for Telegram and for the rules, no form, and nothing of the notifier settings is read yet.
+    const telegramRow = page.locator('#h5-plugins .h5-plugin-notifier[data-name="telegram"]');
+    await telegramRow.waitFor({ state: 'visible' });
+    assert.equal(await page.locator('#h5-plugins-panel-installed input, #h5-plugins-panel-installed select, #h5-plugins-panel-installed textarea, #h5-tg-qr').count(), 0, 'no config fields on the list');
+    assert.equal(await telegramRow.locator('.h5-plugin-summary').textContent(), 'Not logged in');
+    assert.equal(await page.locator('#h5-notifier-settings').count(), 0);
+    assert.equal((await notifyCalls()).length, 0, 'the list reads no notifier settings');
+    // Telegram's page: the login is here; it is read now.
+    const back = () => page.locator('.h5-plugin-page-back').last();
+    await telegramRow.tap();
     await page.locator('#h5-tg-apiid').waitFor({ state: 'visible' });
-    assert.equal(await page.locator('#h5-set-attention #h5-notifier-settings').count(), 1, 'the notifier settings are part of the T-Attention group');
-    assert.equal(await page.locator('#h5-set-notify').count(), 0, 'and no group of their own');
+    assert.equal(await page.locator('.h5-plugin-page-title').textContent(), 'telegram');
     assert.equal(await page.locator('#h5-notifier-settings').count(), 1, 'drawn once');
+    assert.equal(await page.locator('#h5-set-notify').count(), 0, 'and no group of its own');
     assert.equal((await notifyCalls())[0].url, '/api/attention-notify/config');
     assert.equal(await page.locator('#h5-tg-state').textContent(), 'Not logged in');
     // The api_id / api_hash help: the link and four steps. The QR login comes first; the phone login is one tap away.
@@ -100,6 +114,11 @@ const html = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8').replace(
     await page.waitForFunction(() => /Test message sent/.test(document.querySelector('#h5-tg-feedback').textContent));
     await page.locator('#h5-tg-test-call').click();
     await page.waitForFunction(() => /Rang, no answer/.test(document.querySelector('#h5-tg-feedback').textContent));
+    // Rules: a page of their own, opened from the plugin's page ("Message and call rules"); Back returns to the plugin. They are also a row of the list.
+    await page.locator('.h5-plugin-page[data-name="telegram"] .h5-plugin-config-rules').click();
+    await page.locator('#h5-notify-mode-telegram-waiting_user').waitFor({ state: 'visible' });
+    assert.equal(await page.locator('.h5-plugin-page').count(), 2);
+    assert.equal(await page.locator('.h5-plugin-page[data-name="rules"] .h5-plugin-page-title').textContent(), 'Message and call rules');
     // Rules: the defaults are echoed (three statuses send a message, the others are off), then saved changed.
     assert.equal(await page.inputValue('#h5-notify-mode-telegram-waiting_user'), 'message');
     assert.equal(await page.inputValue('#h5-notify-mode-telegram-done'), 'off');
@@ -122,6 +141,9 @@ const html = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8').replace(
     assert.ok(saved.quietHours.timeZone, 'the browser time zone is sent');
     assert.deepEqual(saved.rateLimit, { message: '20', call: '3' });
     assert.equal(saved.publicUrl, 'https://t.example.com');
+    await back().click();
+    await page.locator('.h5-plugin-page[data-name="rules"]').waitFor({ state: 'detached' });
+    assert.ok(await page.locator('#h5-tg-logout').isVisible(), 'back on the plugin page');
     // Log out.
     await page.locator('#h5-tg-logout').click();
     await page.locator('#h5-tg-apiid').waitFor({ state: 'visible' });
@@ -141,16 +163,19 @@ const html = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8').replace(
     await page.evaluate(() => { server.qr = { step: 'qr', url: 'tg://login?token=BBB', svg: svgOf(2) }; });
     await page.waitForFunction(() => document.querySelector('#h5-tg-qr img').dataset.url === 'tg://login?token=BBB', null, { timeout: 5000 });
     const box = await page.locator('#h5-tg-qr').boundingBox();
-    assert.ok(box.width >= 200 && box.x >= 16 && box.x + box.width <= 374, `the QR fits the phone width: ${JSON.stringify(box)}`);
-    // Folding the group stops the polling; opening it again reads the current code at once.
-    await page.locator('#h5-set-attention .MuiAccordionSummary-root').tap();
+    assert.ok(box.width >= 200 && box.x >= 16 && box.x + box.width <= WIDTH - 16, `the QR fits the phone width: ${JSON.stringify(box)}`);
+    // Leaving the page ends the polling; the row says that a login is under way, and the page shows the current code again.
+    await back().tap();
+    await page.locator('.h5-plugin-page').waitFor({ state: 'detached' });
     await page.waitForTimeout(600);
-    const folded = await qrCalls();
+    const left = await qrCalls();
     await page.waitForTimeout(4500);
-    assert.equal(await qrCalls(), folded, 'no polling while folded');
-    await page.locator('#h5-set-attention .MuiAccordionSummary-root').tap();
+    assert.equal(await qrCalls(), left, 'no polling while the page is closed');
+    assert.deepEqual(await telegramRow.locator('.h5-plugin-chip', { hasText: 'Login in progress' }).allTextContents(), ['Login in progress'], 'the row shows the login left half way');
+    await telegramRow.tap();
     await page.locator('#h5-tg-qr img').waitFor({ state: 'visible' });
-    await page.waitForFunction(n => window.calls.filter(call => call.url.endsWith('/qr/status')).length > n, folded);
+    await page.waitForFunction(n => window.calls.filter(call => call.url.endsWith('/qr/status')).length > n, left);
+    assert.equal(await page.getAttribute('#h5-tg-qr img', 'data-url'), 'tg://login?token=BBB', 'the login is still there');
     // After the scan the server asks for the 2FA password.
     await page.evaluate(() => { server.qr = { step: 'password' }; });
     await page.locator('#h5-tg-password').waitFor({ state: 'visible', timeout: 5000 });

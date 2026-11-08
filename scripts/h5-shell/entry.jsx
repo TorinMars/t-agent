@@ -10,7 +10,6 @@ import { api, t } from './common.jsx';
 import { RAW_KINDS, kindOf } from './file-kinds.mjs';
 // T-Attention settings slots: the modules of other T-Attention parts that register Settings content (attention-slots.mjs) are imported here, e.g.
 import './PluginSettings.jsx';
-import './NotifierSettings.jsx';
 
 // One breakpoint for the shell and for h5.js (which reads it from `H5UI.media.wideQuery`), so the two can never disagree.
 const wideQuery = window.matchMedia('(min-width: 900px)');

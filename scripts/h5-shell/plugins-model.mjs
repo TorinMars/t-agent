@@ -112,6 +112,30 @@ export function notifierChips(notifier) {
   return chips;
 }
 
+// The steps of a Telegram login that wait for the person (plugins/notifiers/telegram: `step`).
+export const loginInProgress = step => ['code', 'password', 'qr'].includes(step);
+
+// What a row of the plugin list shows: the chips and one short line (`error` takes its place). `loggingIn`: a login left half way, shown first so it is seen.
+export function pluginRow(kind, plugin, { now = Date.now(), t = plain, loggingIn = false } = {}) {
+  const listener = kind === 'listener';
+  const chips = listener ? listenerChips(plugin) : notifierChips(plugin);
+  return {
+    chips: loggingIn ? [{ key: 'login-step', label: 'Login in progress', tone: 'warning' }, ...chips] : chips,
+    error: (plugin && plugin.error) || '',
+    line: listener ? (plugin && plugin.local ? listenerActivity(plugin, { now, t }) : '') : ((plugin && plugin.summary) || ''),
+  };
+}
+
+// The second level of the list (PluginSettings.jsx). A page is { kind: 'listener' | 'notifier', name }, or RULES_PAGE for the rules of all notifiers.
+export const RULES_PAGE = { kind: 'rules', name: 'rules' };
+export const pageKey = page => `${page.kind}-${page.name}`;
+
+// The plugin a page shows, from the last overview: null while there is none, or when the plugin is gone.
+export function findPlugin(data, page) {
+  const entries = data && page && (page.kind === 'listener' ? data.listeners : page.kind === 'notifier' ? data.notifiers : null);
+  return (entries && entries.find(entry => entry.name === page.name)) || null;
+}
+
 // "Needs you: Call · Review: Message": the statuses that are not off, in the settings order (unknown statuses after them).
 export function modesSummary(statuses, { t = plain } = {}) {
   if (!statuses || typeof statuses !== 'object') return '';

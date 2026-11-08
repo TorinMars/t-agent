@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import Checkbox from '@mui/material/Checkbox';
@@ -8,10 +8,10 @@ import Typography from '@mui/material/Typography';
 import TextField from './TextField.jsx';
 import { api, t } from './common.jsx';
 import { Feedback, Field, Hint, failure, useFeedback } from './Form.jsx';
-import { registerAttentionSettings } from './attention-slots.mjs';
+import { loginInProgress } from './plugins-model.mjs';
 
-// T-Attention notifier settings: the Telegram login (account 1), account 2, and the rules (mode per status and notifier,
-// delay before a call, quiet hours, hourly limits, the page address for links). Server side: services/attention-notify.js and
+// T-Attention notifier settings, drawn on the pages of the plugin list (PluginSettings.jsx): the Telegram login (account 1) and account 2 on Telegram's
+// page, and the rules of all notifiers (mode per status and notifier, delay before a call, quiet hours, hourly limits, the page address for links) on their own. Server side: services/attention-notify.js and
 // plugins/notifiers/telegram. The session string and the api_hash never come back from the server; secret fields start empty.
 const BASE = '/api/attention-notify';
 const STATUS_LABELS = { waiting_user: 'Needs you', review: 'Review', failed: 'Failed', working: 'Working', todo: 'To do', done: 'Done', cancelled: 'Cancelled' };
@@ -29,8 +29,6 @@ const API_HELP = [
   'Fill in App title and Short name (any words), choose Desktop as the platform, and click Create application.',
   'Copy App api_id and App api_hash into the fields below.',
 ];
-// True while the element is really on screen: the settings sheet is open and the T-Attention group is not folded away.
-const shown = element => Boolean(element && element.isConnected && (element.checkVisibility ? element.checkVisibility({ visibilityProperty: true, checkVisibilityCSS: true }) : element.offsetParent));
 const timeZone = () => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch { return ''; } };
 
 function TelegramPart({ telegram, onChanged }) {
@@ -40,17 +38,17 @@ function TelegramPart({ telegram, onChanged }) {
   const [busy, setBusy] = useState(false);
   const [byPhone, setByPhone] = useState(false);
   const [qr, setQr] = useState(null); // { url, svg, expiresAt } of the QR login that is shown
-  const qrRef = useRef(null);
   const [feedback, say] = useFeedback();
   const qrStep = status.step === 'qr';
   // While the QR step is shown: read /qr/status at once and then every 2 seconds (the server exports a new token when the old one expired, and
-  // finishes the login after the scan). Nothing is read while the group is folded or the page is hidden; it stops when the step ends.
+  // finishes the login after the scan). Nothing is read while the page is hidden; it stops when the step ends or Telegram's page is left. The login itself
+  // stays on the server until it times out, so coming back to the page reads the step again and shows the current code.
   useEffect(() => {
     if (!qrStep) { setQr(null); return undefined; }
     let stopped = false;
     let running = false;
     const tick = async (first = false) => {
-      if (stopped || running || (!first && (document.hidden || !shown(qrRef.current)))) return;
+      if (stopped || running || (!first && document.hidden)) return;
       running = true;
       try {
         const result = await api('GET', `${BASE}/telegram/qr/status`);
@@ -121,7 +119,7 @@ function TelegramPart({ telegram, onChanged }) {
       {qrStep ? (
         <>
           <Hint id="h5-tg-qr-steps">{t('Open Telegram on the phone of account 1 \u2192 Settings \u2192 Devices \u2192 Link Desktop Device \u2192 scan this code')}</Hint>
-          <Box ref={qrRef} id="h5-tg-qr" sx={{ alignSelf: 'center', width: 224, height: 224, p: 1, bgcolor: '#fff', borderRadius: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <Box id="h5-tg-qr" sx={{ alignSelf: 'center', width: 224, height: 224, p: 1, bgcolor: '#fff', borderRadius: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             {qr && qr.svg
               ? <Box component="img" src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(qr.svg)}`} alt={t('Telegram login QR code')} data-url={qr.url} sx={{ width: '100%', height: '100%', display: 'block' }} />
               : <Typography variant="body2" sx={{ color: '#000' }}>{t('Loading\u2026')}</Typography>}
@@ -241,35 +239,41 @@ function RulesPart({ data, onChanged }) {
   );
 }
 
-// The notifier settings. `active` turns true when the surrounding group opens; the data is read then (and after each change).
-export function NotifierSettings({ active = true }) {
+// GET /api/attention-notify/config, read when a page that needs it opens and again after each change; `changed` also tells the plugin list.
+function useNotifierData(onChanged) {
   const [data, setData] = useState(null);
   const [feedback, say] = useFeedback();
   const load = async () => {
     try { setData(await api('GET', `${BASE}/config`)); say(''); }
     catch (error) { say(failure(error), true); }
   };
-  useEffect(() => { if (active) void load(); }, [active]);
+  useEffect(() => { void load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps -- read when the page opens
+  const changed = async () => { await load(); if (onChanged) await onChanged(); };
+  return { data, feedback, changed };
+}
+
+// Telegram's own section on its page. `onLogin` says whether a login is under way, so the list can show it after the page is left.
+export function TelegramSetup({ onChanged, onLogin }) {
+  const { data, feedback, changed } = useNotifierData(onChanged);
   const telegram = data && (data.notifiers || []).find(notifier => notifier.name === 'telegram');
+  const step = telegram && telegram.status ? telegram.status.step : undefined;
+  useEffect(() => { if (onLogin && step !== undefined) onLogin(loginInProgress(step)); }, [step]); // eslint-disable-line react-hooks/exhaustive-deps -- only a new step counts
   return (
     <Box id="h5-notifier-settings" sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
       <Hint>{t('Get a Telegram message or call when an item needs you. The Telegram login of account 1 is full access to that account: it is stored encrypted on this client and never sent to the browser.')}</Hint>
-      {telegram ? <TelegramPart telegram={telegram} onChanged={load} /> : null}
-      {data ? <RulesPart data={data} onChanged={load} /> : null}
+      {telegram ? <TelegramPart telegram={telegram} onChanged={changed} /> : null}
       <Feedback id="h5-notifier-feedback" feedback={feedback} />
     </Box>
   );
 }
 
-// The notifier settings live in the Settings group "T-Attention" (attention-slots.mjs), under their own heading. They are read when that group
-// opens (`opened` > 0) and again on each later opening.
-function NotifierSlot({ opened }) {
+// The rules of all notifiers, the page of the row under the plugin list.
+export function NotifierRules({ onChanged }) {
+  const { data, feedback, changed } = useNotifierData(onChanged);
   return (
-    <>
-      <Typography variant="subtitle2" component="h3" sx={{ fontWeight: 700, mt: 1 }}>{t('Notifications')}</Typography>
-      {opened ? <NotifierSettings key={opened} active /> : null}
-    </>
+    <Box id="h5-notifier-rules" sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+      {data ? <RulesPart data={data} onChanged={changed} /> : <Hint>{t('Loading…')}</Hint>}
+      <Feedback id="h5-notifier-rules-feedback" feedback={feedback} />
+    </Box>
   );
 }
-
-registerAttentionSettings({ id: 'notifiers', order: 100, Component: NotifierSlot });

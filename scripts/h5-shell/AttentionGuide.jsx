@@ -9,6 +9,7 @@ import { api, errorText, named, t } from './common.jsx';
 import { Feedback, useFeedback } from './Form.jsx';
 import { Icon } from './Icons.jsx';
 import { BASE, playSound } from './attention-feed.mjs';
+import { openAttentionPluginPage } from './attention-slots.mjs';
 import { installAction, installSummary } from './plugins-model.mjs';
 import { claudeListener, doneLine, guideState, normalizeGuide, telegramNotifier, testableNotifiers } from './guide-model.mjs';
 import { PairingDialog } from './PairingDialog.jsx';
@@ -23,14 +24,10 @@ import { TOUCH } from './theme.mjs';
 
 const SMALL = { [TOUCH]: { minHeight: 44, minWidth: 44 } };
 
-// Settings → T-Attention, opened and scrolled to the notifier settings (the Telegram login). From the panel on a phone the sheet closes first.
-function openNotifierSettings(ui, place) {
-  const scroll = () => {
-    const node = document.getElementById('h5-notifier-settings');
-    if (node && node.scrollIntoView) node.scrollIntoView({ block: 'start', behavior: 'smooth' });
-    return Boolean(node);
-  };
-  if (place === 'settings') { scroll(); return; }
+// Telegram's page of the plugin list, in Settings → T-Attention (the login is on that page). From the panel on a phone the sheet closes first.
+function openTelegramSetup(ui, place) {
+  const openPage = () => openAttentionPluginPage({ kind: 'notifier', name: 'telegram' });
+  if (place === 'settings') { openPage(); return; }
   if (!ui.get().wide && ui.actions.closeAttention) ui.actions.closeAttention();
   ui.actions.openSettings();
   let tries = 0;
@@ -38,7 +35,7 @@ function openNotifierSettings(ui, place) {
     tries += 1;
     const summary = document.querySelector('#h5-set-attention .MuiAccordionSummary-root');
     if (summary && summary.getAttribute('aria-expanded') !== 'true') summary.click();
-    if (summary && document.querySelector('#h5-set-attention .MuiCollapse-entered') && scroll()) return;
+    if (summary && document.querySelector('#h5-set-attention .MuiCollapse-entered') && openPage()) return;
     if (tries < 40) setTimeout(step, 75);
   };
   setTimeout(step, 0);
@@ -92,7 +89,7 @@ function NotifyStep({ ui, place, overview, prefs, setPrefs, busy, run, save }) {
       <Line>{t('Get a Telegram message or call when a task needs you, or use only this page.')}</Line>
       <Actions>
         {prefs.permission !== 'unsupported' && !prefs.notify ? <Button id="h5-guide-allow" size="small" variant="outlined" disabled={busy} sx={SMALL} onClick={() => void run(allow)}>{t('Allow system notifications')}</Button> : null}
-        {telegram ? <Button id="h5-guide-telegram" size="small" variant="contained" disabled={busy} sx={SMALL} onClick={() => openNotifierSettings(ui, place)}>{t('Set up Telegram')}</Button> : null}
+        {telegram ? <Button id="h5-guide-telegram" size="small" variant="contained" disabled={busy} sx={SMALL} onClick={() => openTelegramSetup(ui, place)}>{t('Set up Telegram')}</Button> : null}
         <Button id="h5-guide-page-only" size="small" variant="outlined" disabled={busy} sx={SMALL} onClick={() => void run(async () => { await save({ pageOnly: true }); return ''; })}>{t('Page and system notifications only')}</Button>
       </Actions>
       {prefs.notify ? <Line className="h5-guide-notify-on">{t('System notifications are on')}</Line> : null}

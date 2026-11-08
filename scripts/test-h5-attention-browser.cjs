@@ -122,6 +122,7 @@ async function openPage(browser, { viewport, touch = true, notify = true }) {
     if (p === '/h5') return route.fulfill({ contentType: 'text/html', body: fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8') });
     if (/^\/(js|css|vendor)\//.test(p)) return route.fulfill({ contentType: TYPES[path.extname(p)] || 'text/plain', body: fs.readFileSync(path.join(root, 'public', p)) });
     if (p === '/api/remote-servers') return json([]);
+    if (p === '/api/attention-notify/config') return json({ rules: { statuses: ['waiting_user'], modes: {}, callDelayMinutes: 0, quietHours: { enabled: false, start: '22:00', end: '08:00', timeZone: '' }, rateLimit: { message: 20, call: 6 }, publicUrl: '' }, modes: ['message', 'call', 'off'], notifiers: [{ name: 'telegram', label: 'Telegram', status: { loggedIn: true, step: 'done', apiId: 1, hasApiHash: true, phone: '+1***', account: { id: '1', name: 'Ann' }, target: null } }], recent: [] });
     if (p === '/api/tasks' && method === 'GET') return json([{ id: 1, title: 'Fix login', status: 'doing', work_dir: '/work/fix-login' }]);
     if (p === '/api/task-groups') return json([{ key: 'doing', name: 'In progress', sort_order: 1 }]);
     if (p === '/api/tasks/1/terminals') return json([{ terminal_id: 't1', title: 'Terminal 1' }, { terminal_id: 't2', title: 'Claude 1', agent: 'claude' }]);
@@ -235,7 +236,7 @@ async function openPluginSettings(page, how) {
   await page.locator('#h5-plugins .h5-plugin').first().waitFor();
 }
 // The Plugins rows stay inside the sheet: no row is wider than its box and nothing reaches past the viewport.
-const pluginsFit = page => page.evaluate(() => [...document.querySelectorAll('#h5-plugins .h5-plugin, #h5-plugins code')]
+const pluginsFit = page => page.evaluate(() => [...document.querySelectorAll('#h5-plugins .h5-plugin, .h5-plugin-page .MuiDrawer-paper, .h5-plugin-page-body > *, .h5-plugin-page code')]
   .filter(node => node.scrollWidth > node.clientWidth + 1 || node.getBoundingClientRect().right > innerWidth + 0.5).map(node => node.className || node.id));
 
 (async () => {
@@ -494,37 +495,89 @@ const pluginsFit = page => page.evaluate(() => [...document.querySelectorAll('#h
       assert.equal(await page.locator('#h5-attention-summary-provider').inputValue(), 'deepseek', 'the saved provider is shown again (an id, not a list index)');
       assert.equal(await page.locator('#h5-attention-summary-enabled').isChecked(), true, 'the saved setting is shown again');
       assert.equal(await page.locator('#h5-attention-tokens .h5-attention-token').count(), 1);
-      // Plugins: read when the group opened, drawn above the notifier settings (slot order 50 before 100).
+      // Plugins: read when the group opened, one compact row per plugin; no forms, steps or per-plugin reads on the list.
       await page.locator('#h5-plugins .h5-plugin').first().waitFor();
-      assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('#h5-set-attention .h5-attention-slot')].map(node => node.dataset.slot)), ['plugins', 'notifiers']);
-      const chipsOf = (kind, name) => page.locator(`#h5-plugins .h5-plugin-${kind}[data-name="${name}"] .h5-plugin-chip`).allTextContents();
-      const plugin = (kind, name) => page.locator(`#h5-plugins .h5-plugin-${kind}[data-name="${name}"]`);
+      assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('#h5-set-attention .h5-attention-slot')].map(node => node.dataset.slot)), ['plugins']);
+      const listRow = (kind, name) => page.locator(`#h5-plugins .h5-plugin-${kind}[data-name="${name}"]`);
+      const chipsOf = (kind, name) => listRow(kind, name).locator('.h5-plugin-chip').allTextContents();
+      const detail = name => page.locator(`.h5-plugin-page[data-name="${name}"]`);
+      const pageTop = name => detail(name).locator('.h5-plugin-page-body');
+      const backToList = async name => { await detail(name).locator('.h5-plugin-page-back').tap(); await detail(name).waitFor({ state: 'detached' }); };
+      const openDetail = async (kind, name) => { await listRow(kind, name).tap(); await detail(name).locator('.h5-plugin-page-title').waitFor(); };
+      assert.equal(await page.locator('#h5-plugins-panel-installed input, #h5-plugins-panel-installed select, #h5-plugins-panel-installed textarea, #h5-plugins-panel-installed code, #h5-plugins-panel-installed .h5-plugin-steps, #h5-plugins-panel-installed .h5-plugin-config').count(), 0, 'no config fields or steps on the list');
+      assert.deepEqual(await page.locator('#h5-plugins .h5-plugin-kind').allTextContents(), ['Listener', 'Listener', 'Notifier', 'Notifier']);
       assert.deepEqual(await chipsOf('listener', 'claude'), ['Installed', 'Hooks synced']);
-      assert.equal(await plugin('listener', 'claude').locator('.h5-plugin-activity').textContent(), '3 open \u00B7 Last event 5 min ago');
-      assert.equal(await plugin('listener', 'claude').locator('.h5-plugin-steps').count(), 0, 'a listener set up here shows no steps');
+      assert.equal(await listRow('listener', 'claude').locator('.h5-plugin-activity').textContent(), '3 open · Last event 5 min ago');
       assert.deepEqual(await chipsOf('listener', 'codex'), ['Not installed']);
-      assert.equal(await plugin('listener', 'codex').locator('.h5-plugin-activity').textContent(), 'No open items \u00B7 No events yet');
+      assert.equal(await listRow('listener', 'codex').locator('.h5-plugin-activity').textContent(), 'No open items · No events yet');
+      assert.deepEqual(await chipsOf('notifier', 'telegram'), ['Configured']);
+      assert.equal(await listRow('notifier', 'telegram').locator('.h5-plugin-summary').textContent(), 'Logged in as Ann → account 2 @bob');
+      assert.deepEqual(await chipsOf('notifier', 'broken'), ['Failed to load']);
+      assert.equal(await listRow('notifier', 'broken').locator('.h5-plugin-error').textContent(), 'Bad manifest: no send()');
+      assert.equal(await page.locator('#h5-plugins-rules-open').isVisible(), true, 'the rules of all notifiers are a row under the list');
+      assert.equal(await listRow('listener', 'claude').evaluate(node => node.tagName), 'BUTTON', 'a row is a real button');
+      assert.equal(await listRow('listener', 'claude').locator('svg').count(), 1, 'with a chevron');
+      assert.deepEqual(calls.filter(call => /^\/api\/attention\/plugins\/[^/]+\//.test(call.path) || call.path.startsWith('/api/attention-notify')), [], 'no per-plugin reads on the list');
+      assert.deepEqual(await pluginsFit(page), []);
+      // The first-run guide (AttentionGuide.jsx, its own test: test-h5-attention-guide-browser.cjs) reads the overview with its flags; not counted here.
+      const pluginReads = () => calls.filter(call => call.path === '/api/attention/plugins').length - calls.filter(call => call.method === 'GET' && call.path === '/api/attention/settings/guide').length;
+      assert.equal(pluginReads(), 1, 'read once when the group opened');
+      // Back keeps the scroll position; the Android back button and the browser's back work like the other sheets (one history entry for the page).
+      const scrollTop = () => page.evaluate(() => document.querySelector('#h5-settings .h5-settings-body').scrollTop);
+      await listRow('notifier', 'broken').scrollIntoViewIfNeeded();
+      await page.evaluate(() => { document.querySelector('#h5-settings .h5-settings-body').scrollTop = Math.min(document.querySelector('#h5-settings .h5-settings-body').scrollHeight, document.querySelector('#h5-plugins').offsetTop); });
+      const depthOnList = await layerDepth(page);
+      await openDetail('notifier', 'broken'); // Playwright scrolls the row into view for the tap: the position to keep is the one the page was opened at
+      const scrolled = await scrollTop();
+      assert.ok(scrolled > 0, 'the sheet is scrolled');
+      assert.equal(await page.locator('.h5-plugin-page-title').textContent(), 'broken');
+      assert.equal(await pageTop('broken').locator('.h5-plugin-config').count(), 0, 'a plugin that failed to load has no settings');
+      assert.equal(await pageTop('broken').locator('.h5-plugin-error').textContent(), 'Bad manifest: no send()');
+      await page.waitForFunction(depth => history.state && history.state.h5Layer === depth, depthOnList + 1);
+      await page.goBack();
+      await detail('broken').waitFor({ state: 'detached' });
+      assert.ok(await page.locator('#h5-settings').isVisible(), 'back closes the page, not the sheet');
+      await page.waitForFunction(depth => history.state && history.state.h5Layer === depth, depthOnList);
+      assert.equal(await scrollTop(), scrolled, 'the scroll position is kept');
+      await page.waitForFunction(() => document.getElementById('h5-plugins').getAttribute('aria-busy') === 'false');
+      assert.equal(pluginReads(), 2, 'the list is read again on the way back');
+      // A row opened with the keyboard and closed with Escape: the focus goes back to the row.
+      await listRow('listener', 'codex').focus();
+      await page.keyboard.press('Enter');
+      await detail('codex').locator('.h5-plugin-page-back').waitFor();
+      await page.keyboard.press('Escape');
+      await detail('codex').waitFor({ state: 'detached' });
+      assert.equal(await page.evaluate(() => document.activeElement.dataset.name), 'codex', 'the focus returns to the row');
+      // The sheet closing by itself takes the page with it.
+      await openDetail('listener', 'codex');
+      await page.evaluate(() => window.H5UI.set({ settingsOpen: false }));
+      await detail('codex').waitFor({ state: 'detached' });
+      await page.locator('#h5-settings').waitFor({ state: 'hidden' });
+      await openPluginSettings(page, 'tap');
+      // A listener's page shows what was on the row before: the setup steps and their Copy buttons.
+      await openDetail('listener', 'codex');
+      assert.equal(await pageTop('codex').locator('.h5-plugin-activity').textContent(), 'No open items · No events yet');
       assert.equal(await page.locator('#h5-plugin-login-codex').textContent(), `t-attention login --url ${ORIGIN} --token <token>`);
       assert.equal(await page.locator('#h5-plugin-sync-codex').textContent(), 'ta');
       await page.evaluate(() => { window.copied = []; Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async text => { window.copied.push(text); } } }); });
-      await plugin('listener', 'codex').locator('.h5-plugin-copy').first().tap();
-      await plugin('listener', 'codex').locator('.h5-plugin-copy', { hasText: 'Copied' }).waitFor();
+      await pageTop('codex').locator('.h5-plugin-copy').first().tap();
+      await pageTop('codex').locator('.h5-plugin-copy', { hasText: 'Copied' }).waitFor();
       assert.deepEqual(await page.evaluate(() => window.copied), [`t-attention login --url ${ORIGIN} --token <token>`]);
-      assert.deepEqual(await chipsOf('notifier', 'telegram'), ['Configured']);
-      assert.equal(await plugin('notifier', 'telegram').locator('.h5-plugin-summary').textContent(), 'Logged in as Ann \u2192 account 2 @bob');
-      assert.equal(await plugin('notifier', 'telegram').locator('.h5-plugin-modes').textContent(), 'Needs you: Call \u00B7 Review: Message');
-      // The settings body of a notifier row: the form drawn from the schema echoes the saved values (a secret only as "saved"), Save sends
-      // only what the person typed, the switch turns the plugin off ("Disabled" chip), Test answers in the row.
-      const telegram = plugin('notifier', 'telegram');
-      assert.equal(await plugin('notifier', 'broken').locator('.h5-plugin-config').count(), 0, 'a plugin that failed to load has no settings');
-      await telegram.locator('.h5-plugin-config-toggle').tap();
+      assert.deepEqual(await pluginsFit(page), []);
+      await backToList('codex');
+      // A notifier's page: the summary and modes, Telegram's login, and the form drawn from the schema: it echoes the saved values (a secret only as
+      // "saved"), Save sends only what the person typed, the switch turns the plugin off ("Disabled" chip on the page and on the list), Test answers on the page.
+      await openDetail('notifier', 'telegram');
+      const telegram = pageTop('telegram');
+      if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'h5-attention-plugin-detail-phone.png') });
+      assert.equal(await telegram.locator('.h5-plugin-summary').textContent(), 'Logged in as Ann → account 2 @bob');
+      assert.equal(await telegram.locator('.h5-plugin-modes').textContent(), 'Needs you: Call · Review: Message');
+      await telegram.locator('#h5-tg-state').waitFor();
       await page.locator('#h5-plugin-config-telegram-callSeconds').waitFor();
-      assert.equal(await telegram.locator('.h5-plugin-config-toggle').getAttribute('aria-expanded'), 'true');
       assert.equal(await page.locator('#h5-plugin-config-telegram-callSeconds').inputValue(), '45', 'the saved value is shown');
       assert.equal(await page.locator('#h5-plugin-config-telegram-botToken').inputValue(), '', 'a secret is never filled in');
       assert.equal(await page.locator('#h5-plugin-config-telegram-botToken').getAttribute('placeholder'), 'Saved; leave empty to keep it');
       assert.equal(await page.locator('#h5-plugin-enabled-telegram').isChecked(), true);
-      assert.equal(await telegram.locator('.h5-plugin-config-custom').count(), 1, 'Telegram has its own section (customUi)');
       assert.equal((await page.content()).includes('saved-secret-value'), false);
       await page.locator('#h5-plugin-config-telegram-callSeconds').fill('2');
       await telegram.locator('.h5-plugin-config-save').tap();
@@ -542,7 +595,6 @@ const pluginsFit = page => page.evaluate(() => [...document.querySelectorAll('#h
       await page.waitForFunction(() => document.getElementById('h5-plugin-enabled-telegram') && !document.getElementById('h5-plugin-enabled-telegram').checked);
       await telegram.locator('.h5-plugin-chip', { hasText: 'Disabled' }).waitFor();
       assert.deepEqual(configPuts().at(-1), { enabled: false });
-      assert.deepEqual(await chipsOf('notifier', 'telegram'), ['Disabled', 'Configured']);
       assert.equal(await telegram.locator('.h5-plugin-config-test').isDisabled(), true, 'no test while switched off');
       await page.locator('#h5-plugin-enabled-telegram').tap();
       await page.waitForFunction(() => document.getElementById('h5-plugin-enabled-telegram').checked);
@@ -552,31 +604,35 @@ const pluginsFit = page => page.evaluate(() => [...document.querySelectorAll('#h
       assert.equal(configPuts().at(-1).values.botToken, null, 'Remove clears the saved secret');
       assert.equal(db.configs.telegram.secret, '');
       assert.deepEqual(await pluginsFit(page), []);
-      if (SHOTS) { await telegram.scrollIntoViewIfNeeded(); await page.screenshot({ path: path.join(SHOTS, 'h5-attention-plugin-config-phone.png') }); }
-      await telegram.locator('.h5-plugin-config-toggle').tap();
-      await page.locator('#h5-plugin-config-telegram-callSeconds').waitFor({ state: 'detached' });
-      assert.deepEqual(await chipsOf('notifier', 'broken'), ['Failed to load']);
-      assert.equal(await plugin('notifier', 'broken').locator('.h5-plugin-error').textContent(), 'Bad manifest: no send()');
+      if (SHOTS) { await telegram.locator('.h5-plugin-config').scrollIntoViewIfNeeded(); await page.screenshot({ path: path.join(SHOTS, 'h5-attention-plugin-config-phone.png') }); }
+      await backToList('telegram');
+      assert.deepEqual(await chipsOf('notifier', 'telegram'), ['Configured']);
       assert.equal(await page.locator('#h5-plugins-refresh').getAttribute('aria-label'), 'Refresh');
       assert.equal(await page.locator('#h5-plugins-refresh').getAttribute('title'), 'Refresh');
-      // The first-run guide (AttentionGuide.jsx, its own test: test-h5-attention-guide-browser.cjs) reads the overview with its flags; not counted here.
-      const pluginReads = () => calls.filter(call => call.path === '/api/attention/plugins').length - calls.filter(call => call.method === 'GET' && call.path === '/api/attention/settings/guide').length;
-      assert.equal(pluginReads(), 5, 'read when the group opened and again after each of the four saves (form, switch off, switch on, remove secret)');
+      await page.waitForFunction(() => document.getElementById('h5-plugins').getAttribute('aria-busy') === 'false');
+      const beforeRefresh = pluginReads();
       await page.locator('#h5-plugins-refresh').tap();
       await page.waitForFunction(() => document.getElementById('h5-plugins').getAttribute('aria-busy') === 'false');
-      assert.equal(pluginReads(), 6, 'Refresh reads the list again');
-            // Easy install: the claude row says that T-Agent terminals connect by themselves; its hooks are an older version, so "Update the hooks".
-      assert.equal(await plugin('listener', 'claude').locator('.h5-plugin-auto').textContent(), 'Connects automatically in T-Agent terminals');
-      assert.equal(await plugin('listener', 'codex').locator('.h5-plugin-actions').count(), 0, 'a listener without an installer has no actions');
-      assert.equal(await plugin('listener', 'claude').locator('.h5-plugin-install').textContent(), 'Update the hooks');
-      await plugin('listener', 'claude').locator('.h5-plugin-install').tap();
-      await plugin('listener', 'claude').locator('.h5-plugin-actions', { hasText: 'Claude Code hooks added to ~/.claude/settings.json; the saved login still works.' }).waitFor();
-      await page.waitForFunction(() => !document.querySelector('#h5-plugins .h5-plugin-listener[data-name="claude"] .h5-plugin-install'));
-      assert.equal(pluginReads(), 7, 'the list is read again after the install');
+      assert.equal(pluginReads(), beforeRefresh + 1, 'Refresh reads the list again');
+      // Easy install: claude's page says that T-Agent terminals connect by themselves; its hooks are an older version, so "Update the hooks".
+      await openDetail('listener', 'codex');
+      assert.equal(await pageTop('codex').locator('.h5-plugin-actions').count(), 0, 'a listener without an installer has no actions');
+      await backToList('codex');
+      await openDetail('listener', 'claude');
+      const claude = pageTop('claude');
+      assert.equal(await claude.locator('.h5-plugin-auto').textContent(), 'Connects automatically in T-Agent terminals');
+      assert.equal(await claude.locator('.h5-plugin-steps').count(), 0, 'a listener set up here shows no steps');
+      assert.equal(await claude.locator('.h5-plugin-install').textContent(), 'Update the hooks');
+      const beforeInstall = pluginReads();
+      await claude.locator('.h5-plugin-install').tap();
+      await claude.locator('.h5-plugin-actions', { hasText: 'Claude Code hooks added to ~/.claude/settings.json; the saved login still works.' }).waitFor();
+      await page.waitForFunction(() => !document.querySelector('.h5-plugin-page[data-name="claude"] .h5-plugin-install'));
+      assert.equal(pluginReads(), beforeInstall + 1, 'the list is read again after the install');
       assert.equal(calls.filter(call => call.path === '/api/attention/plugins/claude/install' && call.method === 'POST').length, 1);
-      assert.equal(await plugin('listener', 'claude').locator('.h5-plugin-uninstall').count(), 1);
-      // Another machine: the pairing dialog with the code, the countdown and the command; it sees the claim and reads the list again.
-      await plugin('listener', 'claude').locator('.h5-plugin-pair').tap();
+      assert.equal(await claude.locator('.h5-plugin-uninstall').count(), 1);
+      // Another machine: the pairing dialog (over the page) with the code, the countdown and the command; it sees the claim and reads the list again.
+      const beforePairing = pluginReads();
+      await claude.locator('.h5-plugin-pair').tap();
       await page.locator('#h5-pairing-code').waitFor();
       assert.equal(await page.locator('#h5-pairing-code').textContent(), '123 456');
       assert.match(await page.locator('#h5-pairing-countdown').textContent(), /^Valid for (10:00|9:5\d)$/);
@@ -590,11 +646,17 @@ const pluginsFit = page => page.evaluate(() => [...document.querySelectorAll('#h
       if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'h5-attention-pairing-phone.png') });
       await page.locator('#h5-pairing-done').waitFor({ timeout: 10000 });
       assert.equal(await page.locator('#h5-pairing-done').textContent(), 'Connected: claude listener (laptop)');
-      assert.equal(pluginReads(), 8, 'a claim reads the list again');
+      assert.equal(pluginReads(), beforePairing + 1, 'a claim reads the list again');
       await page.locator('#h5-pairing-close').tap();
       await page.locator('#h5-pairing').waitFor({ state: 'detached' });
       assert.equal(calls.filter(call => call.path === '/api/attention/pairing' && call.method === 'DELETE').length, 0, 'a used code is not cancelled');
       assert.deepEqual(await pluginsFit(page), []);
+      await backToList('claude');
+      // The rules row opens the rules of all notifiers.
+      await page.locator('#h5-plugins-rules-open').tap();
+      await page.locator('#h5-notifier-rules').waitFor();
+      assert.equal(await page.locator('.h5-plugin-page-title').textContent(), 'Message and call rules');
+      await backToList('rules');
       if (SHOTS) { await page.locator('#h5-plugins').scrollIntoViewIfNeeded(); await page.screenshot({ path: path.join(SHOTS, 'h5-attention-plugins-phone.png') }); }
       assert.equal(await page.locator('#h5-attention-sound').isChecked(), true, 'sound is on by default');
       assert.equal(await page.locator('#h5-attention-notify-state').textContent(), 'System notifications are on');
@@ -652,6 +714,15 @@ const pluginsFit = page => page.evaluate(() => [...document.querySelectorAll('#h
       await page.locator('#h5-attention-sheet .h5-attention-panel').waitFor({ state: 'hidden' });
       await openPluginSettings(page, 'tap');
       assert.deepEqual(await pluginsFit(page), []);
+      await page.locator('#h5-plugins .h5-plugin-notifier[data-name="telegram"]').tap();
+      await page.locator('.h5-plugin-page[data-name="telegram"] #h5-plugin-config-telegram-callSeconds').waitFor();
+      assert.deepEqual(await pluginsFit(page), []);
+      assert.equal(await page.evaluate(() => document.querySelector('.h5-plugin-page-body').scrollWidth <= document.querySelector('.h5-plugin-page-body').clientWidth), true, 'the page has no sideways scroll at 320px');
+      const backBox = await page.locator('.h5-plugin-page-back').boundingBox();
+      assert.ok(backBox.width >= 44 && backBox.height >= 44, `the back button is a finger target: ${JSON.stringify(backBox)}`);
+      if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'h5-attention-plugin-detail-320.png') });
+      await page.locator('.h5-plugin-page-back').tap();
+      await page.locator('.h5-plugin-page').waitFor({ state: 'detached' });
       const smallPlugin = await page.evaluate(() => [...document.querySelectorAll('#h5-plugins button, #h5-plugins-refresh')].map(node => node.getBoundingClientRect()).filter(r => r.width && (r.width < 44 || r.height < 44)).length);
       assert.equal(smallPlugin, 0);
       if (SHOTS) { await page.locator('#h5-plugins-notifiers').scrollIntoViewIfNeeded(); await page.screenshot({ path: path.join(SHOTS, 'h5-attention-plugins-320.png') }); }
@@ -729,6 +800,16 @@ const pluginsFit = page => page.evaluate(() => [...document.querySelectorAll('#h
       await openPluginSettings(page, 'click');
       assert.deepEqual(await pluginsFit(page), []);
       assert.equal(await page.locator('#h5-plugins .h5-plugin').count(), 4);
+      // On a computer the page has the size and place of the sheet, and the rows and Back work with the mouse.
+      const sheetBox = await page.locator('#h5-settings .h5-sheet-panel').boundingBox();
+      await page.locator('#h5-plugins .h5-plugin-notifier[data-name="telegram"]').click();
+      await page.locator('.h5-plugin-page[data-name="telegram"] #h5-plugin-config-telegram-callSeconds').waitFor();
+      const pageBox = await page.locator('.h5-plugin-page .h5-sheet-panel').boundingBox();
+      assert.deepEqual([Math.round(pageBox.x), Math.round(pageBox.width), Math.round(pageBox.height)], [Math.round(sheetBox.x), Math.round(sheetBox.width), Math.round(sheetBox.height)], 'the page covers the sheet');
+      assert.deepEqual(await pluginsFit(page), []);
+      if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'pc-1440-attention-plugin-detail.png') });
+      await page.locator('.h5-plugin-page-back').click();
+      await page.locator('.h5-plugin-page').waitFor({ state: 'detached' });
       if (SHOTS) { await page.locator('#h5-plugins').scrollIntoViewIfNeeded(); await page.screenshot({ path: path.join(SHOTS, 'pc-1440-attention-plugins.png') }); }
       assert.deepEqual(errors, []);
       await context.close();

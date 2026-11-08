@@ -34,3 +34,22 @@ plugins/listeners/<name>/
 Each event also fills the task's `context` (goal, latest prompt, last reply, what is pending with the tool and command, changed files from `git diff --numstat` with a 1.5 s limit, branch, resume command, the T-Agent task and terminal from `TA_HOOK_URL`) and sends an `activity` for the timeline. On a change to `waiting_user` or `review` it sends an `excerpt`: the last 8 KiB of readable text of the transcript (the server only passes it to the optional AI summary and never stores it). `PermissionRequest` only remembers the tool for the next permission notification and makes no request.
 
 The hooks are in `rules/claude/settings.json` and reach `~/.claude/settings.json` through `scripts/agent-sync.py` (run by `ta` before Claude starts). They find this install through `~/.tagent/listeners/claude-hook.path`, which `t-attention login` writes; until then, and without `node`, they do nothing. Errors go to `~/.tagent/listeners/claude.log`. Set `TA_ATTENTION_LISTENER=0` to turn the listener off for one shell.
+
+## Notifier format
+
+```
+plugins/notifiers/<name>/
+  manifest.json   {"name", "version", "kind": "notifier", "description"}
+  index.js        { name, label, configFields, notify(), test() } and optional ready(), status(), routes(), close()
+```
+
+A plugin whose manifest cannot be read or whose `index.js` lacks `notify` / `test` (or has another `name`) is skipped and logged; the plugin overview (`GET /api/attention/plugins`, `t-attention plugins`, Settings -> T-Attention -> Plugins) still lists it with `loaded: false` and the error.
+
+### Optional hook `status(config, owner)`
+
+Called with the plugin's stored settings and the user. It returns an object for the plugin's own settings page; two fields are also read by the plugin overview:
+
+- `configured`: `true` when the plugin can deliver (for Telegram: logged in and account 2 chosen), else `false`. Without the field the overview shows `null` (unknown).
+- `summary`: one short line, for example `Logged in as Ann (+86*******78) -> account 2 Bob`. Never put a secret in it: no session string, api key, hash, token or password, and mask phone numbers. As a safety net the overview drops a summary that contains a stored setting named like session, hash, token, secret, password or key.
+
+`status` must be fast and must not use the network: the overview calls it on every request.

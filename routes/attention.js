@@ -33,7 +33,7 @@ function createCounter({ windowMs, max, now = Date.now }) {
   };
 }
 
-function createAttentionRoutes({ service, summary = null, heartbeatMs = 25000, failedAuth = { windowMs: 15 * 60 * 1000, max: 20 }, tokenRequests = { windowMs: 60 * 1000, max: 600 }, now = Date.now } = {}) {
+function createAttentionRoutes({ service, summary = null, plugins = null, heartbeatMs = 25000, failedAuth = { windowMs: 15 * 60 * 1000, max: 20 }, tokenRequests = { windowMs: 60 * 1000, max: 600 }, now = Date.now } = {}) {
   if (!service) throw new Error('createAttentionRoutes needs the attention service');
   const failures = createCounter({ ...failedAuth, now });
   const perToken = createCounter({ ...tokenRequests, now });
@@ -89,6 +89,14 @@ function createAttentionRoutes({ service, summary = null, heartbeatMs = 25000, f
     if (id === null) return sendError(res, 404, 'NOT_FOUND', 'Task not found');
     const { started } = summary.summarize(owner(req), id);
     return res.status(202).json({ started });
+  }));
+
+  // Plugin overview (services/attention-plugins.js): the browser session and tokens. A token has no user, so the notifier part is the
+  // single user's (the owner of background events).
+  router.get('/plugins', wrap((req, res) => {
+    if (!plugins) return sendError(res, 404, 'NOT_FOUND', 'Not found');
+    const who = req.attentionAuth.kind === 'session' && req.session && req.session.user ? req.session.user.login : undefined;
+    return res.json(plugins.overview(who));
   }));
 
   // Server-sent events: `event: change` with { kind, item, previous, event } for every change, a comment line every heartbeatMs.

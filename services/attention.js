@@ -328,6 +328,16 @@ function createAttentionService({ db, now = () => new Date() } = {}) {
     return rowToItem(selectItem.get(Number(id)));
   }
 
+  // For the plugin overview: the open items written by one source (a listener's name) and the time of its newest item change or event.
+  function sourceStats(name) {
+    const finished = [...FINISHED];
+    const open = db.prepare(`SELECT COUNT(*) AS n FROM attention_items WHERE source = ? AND status NOT IN (${finished.map(() => '?').join(',')})`).get(name, ...finished).n;
+    const last = db.prepare(`SELECT MAX(at) AS at FROM (
+      SELECT MAX(updated_at) AS at FROM attention_items WHERE source = ?
+      UNION ALL SELECT MAX(e.at) AS at FROM attention_events e JOIN attention_items i ON i.id = e.item_id WHERE i.source = ?)`).get(name, name).at;
+    return { itemCount: Number(open) || 0, lastEventAt: last || null };
+  }
+
   function getByRef(ref) {
     return rowToItem(selectByRef.get(String(ref)));
   }
@@ -507,7 +517,7 @@ function createAttentionService({ db, now = () => new Date() } = {}) {
     return Boolean(row && !row.revoked_at);
   }
 
-  return { list, get, getByRef, events, detail, detailByRef, create, update, upsertByRef, remove, onChange, onChangeInternal, listTokens, createToken, revokeToken, verifyToken, tokenActive };
+  return { list, get, sourceStats, getByRef, events, detail, detailByRef, create, update, upsertByRef, remove, onChange, onChangeInternal, listTokens, createToken, revokeToken, verifyToken, tokenActive };
 }
 
 // The service of this server's database, made on first use (so requiring this file does not open the database).

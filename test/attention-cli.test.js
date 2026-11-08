@@ -38,6 +38,7 @@ test('help prints usage with exit 0; no command, an unknown command or option is
   assert.equal(help.code, 0);
   assert.match(help.stdout, /Usage: t-attention <command>/);
   assert.match(help.stdout, /Exit codes: 0 ok, 1 usage, 2 auth, 3 not found/);
+  assert.match(help.stdout, /^  plugins +listeners and notifiers/m);
   for (const line of help.stdout.split('\n')) assert.ok(line.length <= 60, `help fits a phone terminal: ${line}`);
   assert.equal((await run([])).code, 1);
   const unknown = await run(['frobnicate']);
@@ -304,4 +305,82 @@ test('package.json exposes the t-attention bin, executable with a node shebang',
   assert.equal(pkg.bin['t-attention'], 'scripts/t-attention.js');
   assert.match(fs.readFileSync(CLI, 'utf8'), /^#!\/usr\/bin\/env node\n/);
   assert.ok(fs.statSync(CLI).mode & 0o111, 'executable');
+});
+
+const OVERVIEW = {
+  listeners: [
+    { name: 'claude', version: '1.0.0', description: 'Claude Code hooks', entry: 'hook.js', events: ['Stop'], error: null,
+      local: { hookPath: true, loggedIn: true, toolHooks: true, lastEventAt: new Date(Date.now() - 5 * 60000).toISOString(), itemCount: 3 } },
+    { name: 'broken', version: null, description: null, entry: null, events: [], error: 'manifest.json is not valid JSON', local: { hookPath: false, loggedIn: false, toolHooks: null, lastEventAt: null, itemCount: 0 } },
+  ],
+  notifiers: [
+    { name: 'telegram', version: '1.0.0', description: 'Telegram', loaded: true, error: null, configured: true, summary: 'Logged in as One (+86*******78) \u2192 account 2 Two', statuses: { waiting_user: 'call', review: 'message' } },
+    { name: 'pager', version: '0.1.0', description: null, loaded: false, error: 'it does not have the notifier interface', configured: null, summary: null, statuses: {} },
+  ],
+};
+const pluginServer = () => fakeServer({ handler: (req, res, { url, send }) => {
+  if (url.pathname !== '/api/attention/plugins') return false;
+  if (req.headers.authorization !== `Bearer ${TOKEN}`) return send(401, { error: 'TOKEN_INVALID', message: 'The attention token is missing, wrong or revoked' });
+  return send(200, OVERVIEW);
+} });
+
+test('plugins prints the server listeners and notifiers and this machine\'s check; --json gives { server, local }', async () => {
+  const fake = await pluginServer();
+  const home = newHome();
+  try {
+    // This machine: logged in and the hook path recorded by login, but ~/.claude/settings.json without the hook.
+    assert.equal((await run(['login', '--url', fake.url, '--token', TOKEN, '--no-check'], { home })).code, 0);
+    const text = await run(['plugins'], { home });
+    assert.equal(text.code, 0, text.stderr);
+    assert.equal(fake.requests.at(-1).path, '/api/attention/plugins');
+    assert.equal(fake.requests.at(-1).auth, `Bearer ${TOKEN}`);
+    assert.match(text.stdout, /^Listeners\n  claude 1\.0\.0  installed here \u00b7 hooks synced \u00b7 3 open \u00b7 last 5 min ago\n  broken \?  broken: manifest\.json is not valid JSON\n/);
+    assert.match(text.stdout, /\nNotifiers\n  telegram 1\.0\.0  configured \u00b7 waiting_user: call, review: message\n    Logged in as One \(\+86\*{7}78\) \u2192 account 2 Two\n  pager 0\.1\.0  failed to load: it does not have the notifier interface\n/);
+    assert.match(text.stdout, /\nThis machine:\n  claude  hook path set \u00b7 logged in \u00b7 hooks not synced\n    run ta once to sync the hooks\n$/);
+    assert.ok(!text.stdout.includes(TOKEN), 'the token is never printed');
+
+    const json = await run(['plugins', '--json'], { home });
+    assert.equal(json.code, 0, json.stderr);
+    const parsed = JSON.parse(json.stdout);
+    assert.deepEqual(parsed.server, OVERVIEW);
+    assert.equal(parsed.error, undefined);
+    assert.deepEqual(parsed.local.listeners, [{ name: 'claude', version: '1.0.0', error: null, hookPath: true, loggedIn: true, toolHooks: false, hints: ['run ta once to sync the hooks'] }]);
+    assert.equal(parsed.local.dataDir, path.join(home, '.tagent'));
+
+    // Hooks synced on this machine: no hint.
+    fs.mkdirSync(path.join(home, '.claude'));
+    fs.writeFileSync(path.join(home, '.claude', 'settings.json'), JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: 'command', command: 'cat "$d/listeners/claude-hook.path"' }] }] } }));
+    assert.match((await run(['plugins'], { home })).stdout, /\n  claude  hook path set \u00b7 logged in \u00b7 hooks synced\n$/);
+    assert.equal((await run(['plugins', 'extra'], { home })).code, 1);
+  } finally {
+    await fake.close();
+  }
+});
+
+test('plugins without a server config or network still prints the local check and exits 4; a refused token exits 2', async () => {
+  const none = await run(['plugins']);
+  assert.equal(none.code, 4);
+  assert.match(none.stdout, /^This machine:\n  claude  no hook path \u00b7 not logged in \u00b7 hooks not synced\n    run: t-attention login --url <server> --token <token>\n    run ta once to sync the hooks\n$/);
+  assert.match(none.stderr, /the server part is not shown: Not logged in/);
+  const noneJson = await run(['plugins', '--json']);
+  assert.equal(noneJson.code, 4);
+  const parsed = JSON.parse(noneJson.stdout);
+  assert.equal(parsed.server, null);
+  assert.match(parsed.error, /Not logged in/);
+  assert.equal(parsed.local.listeners[0].hookPath, false);
+
+  const down = await run(['plugins'], { env: { TA_ATTENTION_URL: 'http://127.0.0.1:9', TA_ATTENTION_TOKEN: TOKEN } });
+  assert.equal(down.code, 4);
+  assert.match(down.stdout, /This machine:/);
+  assert.match(down.stderr, /Cannot reach the server/);
+  assert.match(down.stdout, /run: t-attention login --url http:\/\/127\.0\.0\.1:9 --token <token>/, 'the hint names the configured server');
+
+  const fake = await pluginServer();
+  try {
+    const denied = await run(['plugins'], { env: { TA_ATTENTION_URL: fake.url, TA_ATTENTION_TOKEN: 'tatt_bad' } });
+    assert.equal(denied.code, 2);
+    assert.match(denied.stdout, /This machine:/);
+  } finally {
+    await fake.close();
+  }
 });

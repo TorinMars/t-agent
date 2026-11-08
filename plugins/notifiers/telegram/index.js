@@ -216,9 +216,22 @@ function createTelegramNotifier(options = {}) {
       return { ok: true, outcome: 'sent' };
     } catch (failure) { throw new TelegramError(explain(failure), 502); }
   }
+  // The settings page and the plugin overview read this. `configured` and `summary` are the overview hook (see plugins/README.md):
+  // the summary names the accounts with the phone masked and never holds the session string, the api_hash or the api_id.
+  function overviewSummary(config) {
+    if (!config.session) return 'Not logged in';
+    const account = config.account || {};
+    const phone = /\*/.test(String(config.phone || '')) ? String(config.phone) : maskPhone(config.phone);
+    const who = account.name || (account.username ? `@${account.username}` : 'account 1');
+    const target = config.target
+      ? `account 2 ${config.target.name || (config.target.username ? `@${config.target.username}` : config.target.input || '')}`.trim()
+      : 'account 2 not chosen';
+    return `Logged in as ${oneLine(who, 80)}${phone ? ` (${phone})` : ''} \u2192 ${oneLine(target, 100)}`;
+  }
   function status(config, owner) {
     const login = owner !== undefined ? logins.get(owner) : null;
     return {
+      configured: ready(config), summary: overviewSummary(config),
       loggedIn: Boolean(config.session), step: login ? login.step : (config.session ? 'done' : 'none'),
       apiId: config.apiId || (login && login.apiId) || null, hasApiHash: Boolean(config.apiHash),
       phone: config.phone || (login ? maskPhone(login.phone) : ''), account: config.account || null,
@@ -360,3 +373,4 @@ module.exports.messageText = messageText;
 module.exports.MESSAGE_MAX = MESSAGE_MAX;
 module.exports.explain = explain;
 module.exports.dhHash = dhHash;
+module.exports.maskPhone = maskPhone;

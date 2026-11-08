@@ -1243,4 +1243,6 @@ I18n.add({
   "Rules for all notifiers": "所有通知器的规则",
   "When to notify, quiet hours, hourly limits, page address": "何时通知、免打扰时段、每小时上限、页面地址",
   "This plugin was not found on this Client.": "在这个客户端上没有找到这个插件。",
+  "Show the full notice": "显示完整通知",
+  "Collapse this notice": "收起这条通知",
 });

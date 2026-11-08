@@ -259,15 +259,16 @@
       ],
     };
   }
-  // The sessions under an expanded task that is not selected: its terminals, then its chats, as in the list of the selected task (without the "⋯" actions).
+  // The sessions under an expanded task that is not selected: its terminals, then its chats, as in the list of the selected task. Each has "⋯" too, with
+  // the actions that do not need the task to be the one shown (see `openOtherMenu`).
   function peekSessions(item) {
     const label = item.title;
     const peek = peeks.get(item.id);
     if (!peek || peek.source !== source || peek.status === 'loading') return { label, note: 'Loading…', rows: [] };
     if (peek.status === 'error') return { label, note: 'Could not load the sessions', rows: [] };
     const rows = [
-      ...peek.terminals.map(row => ({ kind: 'terminal', id: row.terminal_id, title: row.title, agent: row.agent || null, otherDir: otherDir(row, item), current: false, more: false })),
-      ...peek.chats.map(row => ({ kind: 'chat', id: row.id, title: row.title, running: Boolean(row.running), pending: Boolean(row.pending), updated: row.updated_at || null, agent: row.agent, current: false, more: false })),
+      ...peek.terminals.map(row => ({ kind: 'terminal', id: row.terminal_id, title: row.title, agent: row.agent || null, otherDir: otherDir(row, item), current: false, more: true })),
+      ...peek.chats.map(row => ({ kind: 'chat', id: row.id, title: row.title, running: Boolean(row.running), pending: Boolean(row.pending), updated: row.updated_at || null, agent: row.agent, current: false, more: true })),
     ];
     if (!rows.length) rows.push({ kind: 'open', id: 'open', title: tr('Open this task'), agent: null, current: false, more: false });
     return { label, note: null, rows };
@@ -519,9 +520,19 @@
       tell(`Could not read the session states: ${error.message}`, 'error');
     } finally { cycling = false; }
   };
-  ui.actions.rowMore = row => {
-    if (row.kind === 'chat') { const entry = chats.find(candidate => candidate.id === row.id); if (entry) openChatMenu(entry); }
-    else { const entry = terminals.find(candidate => candidate.terminal_id === row.id); if (entry) openTerminalMenu(entry); }
+  // The "⋯" of a session row, of the task the row is under (`taskId`), which may not be the selected one.
+  ui.actions.rowMore = (taskId, row) => {
+    const chat = row.kind === 'chat';
+    if (task && task.id === taskId) {
+      if (chat) { const entry = chats.find(candidate => candidate.id === row.id); if (entry) openChatMenu(entry); }
+      else { const entry = terminals.find(candidate => candidate.terminal_id === row.id); if (entry) openTerminalMenu(entry); }
+      return;
+    }
+    const item = tasks.find(candidate => candidate.id === taskId);
+    const peek = peeks.get(taskId);
+    if (!item || !peek) return;
+    const entry = chat ? peek.chats.find(candidate => candidate.id === row.id) : peek.terminals.find(candidate => candidate.terminal_id === row.id);
+    if (entry) openOtherMenu(item, row, entry);
   };
   ui.actions.changeEngine = key => {
     hideAgent();
@@ -704,6 +715,7 @@
   let menuRuns = [];
   let menuRow = null;
   let menuChat = null; // the chat whose actions are open
+  let menuScope = null; // { from, taskId }: the Engine and the task of that terminal or chat. A rename goes there, whichever task is selected by then.
   // The optional name typed in the "Session" sheet. It is kept while moving between its lists (Claude session, Back) and names what is created.
   let newName = '';
   let menuCreate = -1; // the item that Enter in the name field runs (New Terminal, New Claude session, New Claude chat)
@@ -712,6 +724,7 @@
   function closeTerminalMenu() {
     menuRow = null;
     menuChat = null;
+    menuScope = null;
     menuRuns = [];
     menuCreate = -1;
     menuTask = null;
@@ -727,13 +740,15 @@
     menuCreate = items.findIndex(item => item[3]);
     ui.set({ menu: { title, items: items.map(([label, , kind]) => ({ label, kind: kind || null })), rename: null, renameValue: '', naming, task: naming ? menuTask : null, name: newName } });
   }
-  // The rename field takes the place of the row in the task list ({ kind, id } of the row); the sheet of actions goes away.
+  // The rename field takes the place of the row in the task list ({ kind, id, task } of the row: `default` is a terminal id in every task); the sheet of
+  // actions goes away.
   const askRename = value => ui.set(state => ({
-    menu: state.menu && { ...state.menu, rename: menuChat ? { kind: 'chat', id: menuChat.id } : { kind: 'terminal', id: menuRow && menuRow.terminal_id }, renameValue: value },
+    menu: state.menu && { ...state.menu, rename: { ...(menuChat ? { kind: 'chat', id: menuChat.id } : { kind: 'terminal', id: menuRow && menuRow.terminal_id }), task: menuScope && menuScope.taskId }, renameValue: value },
   }));
   function openTerminalMenu(row) {
     menuRow = row;
     menuChat = null;
+    menuScope = { from: source, taskId: task.id };
     // "Copy text" is for the terminal that is open (the copy view reads its buffer); the long press on the terminal body is the other way in.
     const open = row.terminal_id === terminalId && !agentChat && session && !session.disposed;
     showMenu(row.title, [
@@ -749,11 +764,41 @@
   function openChatMenu(row) {
     menuRow = null;
     menuChat = row;
+    menuScope = { from: source, taskId: task.id };
     showMenu(row.title, [
       ['Rename', () => askRename(row.title)],
       ['Open', () => { closeTerminalMenu(); closeTasks(); mountAgent(row); }],
       ['Delete', () => void deleteChat(row), 'danger'],
     ]);
+  }
+  // The actions of a session of a task that is not selected: only those that do not need the task to be the one shown. Rename touches nothing else; Open is
+  // the same as a tap on the row. Restart and Delete stay with the selected task (they work on the connection of the terminal that is shown).
+  function openOtherMenu(item, row, entry) {
+    menuRow = row.kind === 'chat' ? null : entry;
+    menuChat = row.kind === 'chat' ? entry : null;
+    menuScope = { from: source, taskId: item.id };
+    showMenu(entry.title, [
+      ['Rename', () => askRename(entry.title)],
+      ['Open', () => { closeTerminalMenu(); ui.actions.openRow(item.id, { kind: row.kind, id: row.id }); }],
+    ]);
+  }
+  // Shows a saved name: in the list of the selected task, or under a task that is not selected. That list is read again too, so that an older read still on
+  // its way cannot bring the old name back, and a name the server cleaned up is shown as it was kept.
+  async function showRenamed(scope, kind, id, title) {
+    if (scope.from !== source) return;
+    if (task && task.id === scope.taskId) {
+      if (kind === 'chat') { await loadChats(); return; }
+      const entry = terminals.find(candidate => candidate.terminal_id === id);
+      if (entry) entry.title = title;
+      renderTabs();
+      return;
+    }
+    const peek = peeks.get(scope.taskId);
+    const entry = peek && (kind === 'chat' ? peek.chats.find(candidate => candidate.id === id) : peek.terminals.find(candidate => candidate.terminal_id === id));
+    if (entry) entry.title = title;
+    renderTasks();
+    const item = tasks.find(candidate => candidate.id === scope.taskId);
+    if (item && expanded.has(item.id)) void loadPeek(item);
   }
   async function deleteChat(row) {
     if (!window.confirm(`${tr('Delete this chat? Its messages are removed from this task.')}\n${row.title}`)) return;
@@ -808,22 +853,24 @@
   ui.actions.menuNameSubmit = () => { const run = menuRuns[menuCreate]; if (run) run(); };
   ui.actions.menuRename = async value => {
     const row = menuRow;
+    const scope = menuScope;
     const title = String(value || '').trim();
+    if (!scope) return;
+    const base = `${scope.from.tasksBase}/${scope.taskId}`;
     if (menuChat && title) {
       const chat = menuChat;
       try {
-        await api('PATCH', `${source.tasksBase}/${task.id}/agent/conversations/${encodeURIComponent(chat.id)}`, { title });
+        await api('PATCH', `${base}/agent/conversations/${encodeURIComponent(chat.id)}`, { title });
         closeTerminalMenu();
-        await loadChats();
+        await showRenamed(scope, 'chat', chat.id, title);
       } catch (error) { tell(`Could not rename the chat: ${error.message}`, 'error'); }
       return;
     }
     if (!row || !title) return;
     try {
-      const renamed = await api('PATCH', `${source.tasksBase}/${task.id}/terminals/${encodeURIComponent(row.terminal_id)}`, { title });
-      row.title = (renamed && renamed.title) || title;
+      const renamed = await api('PATCH', `${base}/terminals/${encodeURIComponent(row.terminal_id)}`, { title });
       closeTerminalMenu();
-      renderTabs();
+      await showRenamed(scope, 'terminal', row.terminal_id, (renamed && renamed.title) || title);
     } catch (error) { tell(`Could not rename the terminal: ${error.message}`, 'error'); }
   };
   // The name of what is shown (the chat that is open, otherwise the current terminal) in small text under the task name.

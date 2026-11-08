@@ -26,7 +26,7 @@ import { Icon } from './Icons.jsx';
 
 const GLYPHS = { shell: '>_', claude: '✳', codex: 'GPT' };
 
-// The sessions under a task: its terminals, then its chats. The selected task's rows have "⋯" actions; those of another task only open.
+// The sessions under a task: its terminals, then its chats. Every session row has "⋯" actions, under the selected task or any other.
 const AGENT_NAMES = { claude: 'Claude', codex: 'Codex' };
 
 // The second line of a session row: what it is, the folder of a terminal that kept its own directory after the task's working directory
@@ -135,14 +135,14 @@ function RenameRow({ menu, ui, row }) {
   );
 }
 
-// The sessions under a task: its terminals, then its chats. The selected task's rows have "⋯" actions; those of another task only open.
+// The sessions under a task: its terminals, then its chats. Every session row has "⋯" actions, for the task the row is under.
 function Sessions({ ui, taskId, sessions, menu }) {
   return (
     <List className="h5-terminal-list" role="group" aria-label={sessions.label} dense disablePadding sx={{ ml: 1.75, mb: 0.125, pl: 0.125, borderLeft: 1, borderColor: 'divider' }}>
       {sessions.note ? <Typography className="h5-peek-note" variant="body2" color="text.secondary" sx={{ px: 1, py: 0.75 }}>{t(sessions.note)}</Typography> : null}
       {sessions.rows.map(row => (
         <React.Fragment key={`${row.kind}:${row.id}`}>
-        {row.more && menu && menu.rename && menu.rename.kind === row.kind && menu.rename.id === row.id ? <RenameRow menu={menu} ui={ui} row={row} /> : (
+        {row.more && menu && menu.rename && menu.rename.task === taskId && menu.rename.kind === row.kind && menu.rename.id === row.id ? <RenameRow menu={menu} ui={ui} row={row} /> : (
         <Box className="h5-terminal-row" sx={{ display: 'flex', alignItems: 'center', gap: 0.5, [TOUCH]: { gap: 1 }, borderRadius: 2, borderLeft: 3, borderColor: row.current ? 'primary.main' : 'transparent', bgcolor: row.current ? 'action.selected' : undefined }}>
           <ListItemButton
             component="button" className="h5-terminal-main" aria-current={row.current ? 'true' : undefined}
@@ -162,7 +162,7 @@ function Sessions({ ui, taskId, sessions, menu }) {
             {row.kind === 'chat' ? <Pill className="h5-agent-badge" label={t('AGENT')} sx={{ ml: 'auto', flex: '0 0 auto', height: 20, px: 0.75, fontSize: 10, letterSpacing: 0.5 }} /> : null}
           </ListItemButton>
           {row.more ? (
-            <IconButton className="h5-terminal-more" size="small" sx={{ p: 0.5 }} aria-label={t(row.kind === 'chat' ? 'Chat actions' : 'Terminal actions')} onClick={() => ui.actions.rowMore(row)}>
+            <IconButton className="h5-terminal-more" size="small" sx={{ p: 0.5 }} aria-label={t(row.kind === 'chat' ? 'Chat actions' : 'Terminal actions')} title={t(row.kind === 'chat' ? 'Chat actions' : 'Terminal actions')} onClick={() => ui.actions.rowMore(taskId, row)}>
               <MoreHorizIcon fontSize="small" />
             </IconButton>
           ) : null}

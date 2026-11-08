@@ -1,7 +1,8 @@
 // The session name fields of the task list, in real Chromium at phone size (390x844, touch) and computer size (1440x900, pointer, permanent sidebar):
 // the "Session" list of a task's "+" (with its optional name field) is drawn right under that task, indented like its session rows, and the rename field
 // takes the place of the row being renamed. Both stay inside the sidebar and inside the visible area, also with the iPhone keyboard open (a smaller
-// visual viewport). Enter saves, Escape / Cancel / leaving the rename field cancel.
+// visual viewport). Enter saves, Escape / Cancel / leaving the rename field cancel. A session of a task that is not selected has the same "⋯" and renames
+// that session of that task, on this machine and on a remote Engine, without leaving the task and terminal that are shown.
 const { chromium } = require('playwright');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -13,15 +14,16 @@ const KEYBOARD = 336; // the height of an iPhone keyboard at 390px
 const tasks = Array.from({ length: 8 }, (_, i) => ({ id: i + 1, title: `Task ${i + 1}`, status: 'doing' }));
 const pageErrors = [];
 
-async function openPage(browser, wide) {
+async function openPage(browser, wide, remote = false) {
   const context = await browser.newContext(wide ? { viewport: { width: 1440, height: 900 } } : { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
   const page = await context.newPage();
   page.on('pageerror', error => pageErrors.push(error.message));
   const requests = []; // [method, path, body] of the terminal writes
   await page.addInitScript(() => {
     window.sent = [];
+    window.sockets = 0;
     window.WebSocket = class {
-      constructor(url) { this.url = url; this.readyState = 0; setTimeout(() => { this.readyState = 1; this.onopen?.(); }, 0); }
+      constructor(url) { window.sockets += 1; this.url = url; this.readyState = 0; setTimeout(() => { this.readyState = 1; this.onopen?.(); }, 0); }
       send(data) { window.sent.push(typeof data === 'string' ? data : new TextDecoder().decode(data)); }
       close() { this.readyState = 3; }
     };
@@ -36,20 +38,30 @@ async function openPage(browser, wide) {
     Object.defineProperty(window, 'visualViewport', { value: viewport, configurable: true });
     window.setKeyboard = height => { keyboard = height; viewport.dispatchEvent(new Event('resize')); };
   });
+  // What the server keeps: the names given by a rename ("<task>/<terminal or chat id>"), so a list read later shows them.
+  const names = new Map();
   await page.route(`${ORIGIN}/**`, async route => {
     const url = new URL(route.request().url());
     const method = route.request().method();
     const json = (body, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
     if (url.pathname === '/h5') return route.fulfill({ contentType: 'text/html', body: fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8') });
     if (/^\/(js|css|vendor)\//.test(url.pathname)) return route.fulfill({ contentType: TYPES[path.extname(url.pathname)] || 'text/plain', body: fs.readFileSync(path.join(root, 'public', url.pathname)) });
-    if (url.pathname === '/api/remote-servers') return json([]);
+    if (url.pathname === '/api/remote-servers') return json(remote ? [{ id: 7, name: 'VPS' }] : []);
+    if (url.pathname === '/api/remote-servers/7/info') return json({ capabilities: ['agent-chat:manage'] });
+    if (url.pathname === '/api/remote-servers/7/tasks' && method === 'GET') return json([{ id: 9, title: 'Remote 9', status: 'doing' }, { id: 10, title: 'Remote 10', status: 'doing' }]);
+    if (url.pathname === '/api/remote-servers/7/task-groups') return json([{ key: 'doing', name: 'Doing', sort_order: 1 }]);
     if (url.pathname === '/api/tasks' && method === 'GET') return json(tasks);
     if (url.pathname === '/api/task-groups') return json([{ key: 'doing', name: 'Doing', sort_order: 1 }]);
-    const list = url.pathname.match(/^\/api\/tasks\/(\d+)\/terminals$/);
-    if (list && method === 'GET') return json(Array.from({ length: 4 }, (_, i) => ({ terminal_id: `t${list[1]}-${i + 1}`, title: `Terminal ${i + 1}` })));
+    // Every task has a terminal `default`, as on the real server: the id alone does not say which row is renamed.
+    const list = url.pathname.match(/^\/api(?:\/remote-servers\/7)?\/tasks\/(\d+)\/terminals$/);
+    const listTask = list && list[1];
+    const titled = (id, title) => names.get(`${listTask}/${id}`) || title;
+    if (list && method === 'GET') return json(Array.from({ length: 4 }, (_, i) => { const id = i ? `t${listTask}-${i + 1}` : 'default'; return { terminal_id: id, title: titled(id, `Terminal ${i + 1}`) }; }));
     if (list && method === 'POST') { const body = route.request().postDataJSON(); requests.push([method, url.pathname, body]); return json({ terminal_id: 'fresh', title: body.title || 'Terminal 5' }, 201); }
-    if (/^\/api\/tasks\/\d+\/terminals\/[^/]+$/.test(url.pathname) && method === 'PATCH') { const body = route.request().postDataJSON(); requests.push([method, url.pathname, body]); return json({ title: body.title }); }
-    if (/\/agent\/conversations$/.test(url.pathname) && method === 'GET') return json([]);
+    const renamed = url.pathname.match(/^\/api(?:\/remote-servers\/7)?\/tasks\/(\d+)\/(?:terminals|agent\/conversations)\/([^/]+)$/);
+    if (renamed && method === 'PATCH') { const body = route.request().postDataJSON(); requests.push([method, url.pathname, body]); names.set(`${renamed[1]}/${renamed[2]}`, body.title); return json({ title: body.title }); }
+    const chatsOf = url.pathname.match(/^\/api(?:\/remote-servers\/7)?\/tasks\/(\d+)\/agent\/conversations$/);
+    if (chatsOf && method === 'GET') return json(chatsOf[1] === '3' || chatsOf[1] === '10' ? [{ id: 'c1', agent: 'claude', title: names.get(`${chatsOf[1]}/c1`) || 'Chat 1', running: false, opened: { web: null, h5: null } }] : []);
     return json({ error: 'not mocked' }, 404);
   });
   await page.goto(`${ORIGIN}/h5`);
@@ -79,6 +91,76 @@ function assertInside(g, label) {
   assert.ok(g.field.left >= g.drawer.left - 0.5 && g.field.right <= g.drawer.right + 0.5, `${label}: inside the sidebar (${JSON.stringify([g.field, g.drawer])})`);
   assert.ok(g.form.top >= g.list.top - 0.5 && g.form.bottom <= g.list.bottom + 0.5, `${label}: inside the visible part of the task list (${JSON.stringify([g.form, g.list])})`);
   assert.ok(g.form.bottom <= g.visible + 0.5, `${label}: above the bottom of the visible area (${g.form.bottom} > ${g.visible})`);
+}
+
+// A session of a task that is not selected: the row has the same "⋯"; the rename reaches that session of that task and nothing else moves.
+async function checkOtherTask({ page, requests, size, press, list, shown, base, task, chatRow = true }) {
+  const rows = page.locator(`#h5-tasks .h5-terminal-list[aria-label="${list}"] .h5-terminal-row`);
+  await rows.nth(chatRow ? 4 : 3).waitFor();
+  const state = () => page.evaluate(() => ({
+    task: document.getElementById('h5-task-name').textContent,
+    session: document.getElementById('h5-session-name').textContent,
+    terminal: document.querySelector('.h5-xterm:not([hidden])')?.dataset.terminalId,
+    sockets: window.sockets,
+    sent: window.sent.length,
+  }));
+  const before = await state();
+  assert.equal(before.task, shown, `${size}: the task shown`);
+  const buttons = await rows.locator('.h5-terminal-more').evaluateAll(nodes => nodes.map(node => [node.getAttribute('aria-label'), node.getAttribute('title')]));
+  assert.equal(buttons.length, await rows.count(), `${size}: every session of the other task has the button`);
+  for (const [label, title] of buttons) assert.ok(label && label === title, `${size}: aria-label and title agree (${label} / ${title})`);
+  const writes = requests.length;
+  const askRename = async index => {
+    await press(rows.nth(index).locator('.h5-terminal-more'));
+    await page.locator('#h5-term-menu-actions button', { hasText: 'Rename' }).waitFor();
+    assert.deepEqual(await page.locator('#h5-term-menu #h5-term-menu-actions button').allTextContents(), ['Rename', 'Open'], `${size}: what can be done from another task`);
+    await press(page.locator('#h5-term-menu-actions button', { hasText: 'Rename' }));
+    await page.locator('#h5-term-rename-input').waitFor();
+    await page.locator('#h5-term-menu .h5-menu-panel').waitFor({ state: 'hidden' });
+    await page.waitForTimeout(300);
+  };
+  // The field is under this task only, although the shown task has a terminal with the same id. Escape cancels.
+  await askRename(0);
+  assert.equal(await page.locator('#h5-term-rename').count(), 1, `${size}: one field`);
+  assert.equal(await page.locator('#h5-term-rename').evaluate(form => form.closest('.h5-terminal-list').getAttribute('aria-label')), list, `${size}: in the list of the row's own task`);
+  assert.equal(await page.locator('#h5-term-rename-input').inputValue(), 'Terminal 1');
+  await page.locator('#h5-term-rename-input').press('Escape');
+  await page.locator('#h5-term-rename').waitFor({ state: 'detached' });
+  assert.equal(requests.length, writes, `${size}: Escape saves nothing`);
+  assert.equal(await rows.nth(0).locator('.h5-terminal-name').textContent(), 'Terminal 1', `${size}: the row is back`);
+  // Leaving the field cancels too.
+  await askRename(0);
+  await press(page.locator('#h5-tasks-title'));
+  await page.locator('#h5-term-rename').waitFor({ state: 'detached' });
+  assert.equal(requests.length, writes, `${size}: leaving the field saves nothing`);
+  // Enter saves that terminal of that task.
+  await askRename(0);
+  await page.locator('#h5-term-rename-input').fill('Docs shell');
+  await page.locator('#h5-term-rename-input').press('Enter');
+  await page.locator('#h5-term-rename').waitFor({ state: 'detached' });
+  await rows.nth(0).locator('.h5-terminal-name', { hasText: 'Docs shell' }).waitFor();
+  assert.deepEqual(requests.slice(writes), [['PATCH', `${base}/${task}/terminals/default`, { title: 'Docs shell' }]], `${size}: the right task and terminal, once`);
+  assert.equal(await page.locator(`#h5-tasks .h5-terminal-list[aria-label="Phone terminals"] .h5-terminal-name`, { hasText: 'Docs shell' }).count(), 0, `${size}: the terminal with the same id in the shown task keeps its name`);
+  // And a chat of that task.
+  if (chatRow) {
+    await askRename(4);
+    assert.equal(await page.locator('#h5-term-rename-input').inputValue(), 'Chat 1');
+    await page.locator('#h5-term-rename-input').fill('Notes chat');
+    await page.locator('#h5-term-rename-input').press('Enter');
+    await page.locator('#h5-term-rename').waitFor({ state: 'detached' });
+    await rows.nth(4).locator('.h5-terminal-name', { hasText: 'Notes chat' }).waitFor();
+    assert.deepEqual(requests.at(-1), ['PATCH', `${base}/${task}/agent/conversations/c1`, { title: 'Notes chat' }], `${size}: the right task and chat`);
+  }
+  assert.deepEqual(await state(), before, `${size}: the task and terminal shown are not touched, nothing is opened`);
+  if (size.startsWith('phone')) assert.equal(await page.locator('#h5-tasks').isVisible(), true, `${size}: the sheet stays open`);
+  // The names stay after the list is read again.
+  const item = page.locator('.h5-task-item', { hasText: list });
+  await press(item); // close
+  await rows.first().waitFor({ state: 'detached' });
+  await press(item); // open: read again
+  await rows.nth(0).locator('.h5-terminal-name', { hasText: 'Docs shell' }).waitFor();
+  if (chatRow) await rows.nth(4).locator('.h5-terminal-name', { hasText: 'Notes chat' }).waitFor();
+  assert.deepEqual(await state(), before, `${size}: reading the list again changes nothing shown`);
 }
 
 (async () => {
@@ -208,11 +290,63 @@ function assertInside(g, label) {
       assert.equal(requests.length, writes, 'a cancelled rename saves nothing');
       assert.equal(await page.locator('#h5-tasks .h5-terminal-list[aria-label="Phone terminals"] .h5-terminal-name', { hasText: 'Terminal 3' }).count(), 1, 'the row is back');
       if (!wide) assert.equal(await page.locator('#h5-tasks').isVisible(), true, 'Escape in the field does not close the sheet');
+
+      // ── A session of a task that is not selected ──
+      await press(page.locator('.h5-task-item', { hasText: 'Task 3' }));
+      await checkOtherTask({ page, requests, size, press, list: 'Task 3', shown: 'Task 6', base: '/api/tasks', task: 3 });
+      if (!wide) {
+        // The rows with their button fit a phone, also at 320px.
+        for (const width of [390, 320]) {
+          await page.setViewportSize({ width, height: 700 });
+          await page.waitForTimeout(300);
+          const fit = await page.evaluate(() => {
+            const drawer = document.querySelector('#h5-tasks .h5-sheet-panel').getBoundingClientRect();
+            return [...document.querySelectorAll('#h5-tasks .h5-terminal-list[aria-label="Task 3"] .h5-terminal-row')].map(row => {
+              const box = row.getBoundingClientRect();
+              const more = row.querySelector('.h5-terminal-more').getBoundingClientRect();
+              return { row: box.right, more: more.right, drawer: drawer.right, left: more.left, main: row.querySelector('.h5-terminal-main').getBoundingClientRect().right, width: more.width, height: more.height, scroll: document.getElementById('h5-task-list').scrollWidth - document.getElementById('h5-task-list').clientWidth };
+            });
+          });
+          for (const row of fit) {
+            assert.ok(row.more <= row.row + 0.5 && row.row <= row.drawer + 0.5, `${width}px: the button is inside the row and the sheet (${JSON.stringify(row)})`);
+            assert.ok(row.main <= row.left + 0.5, `${width}px: the name does not run under the button (${JSON.stringify(row)})`);
+            assert.ok(row.width >= 43.5 && row.height >= 43.5, `${width}px: a 44px target (${JSON.stringify(row)})`);
+            assert.ok(row.scroll <= 0, `${width}px: no sideways scroll in the list (${JSON.stringify(row)})`);
+          }
+        }
+        await page.setViewportSize({ width: 390, height: 844 });
+      }
+      // Open is the other action: it goes to that session of that task, as a tap on the row does.
+      await page.locator('#h5-tasks .h5-terminal-list[aria-label="Task 3"] .h5-terminal-row').nth(1).locator('.h5-terminal-more').waitFor();
+      await press(page.locator('#h5-tasks .h5-terminal-list[aria-label="Task 3"] .h5-terminal-row').nth(1).locator('.h5-terminal-more'));
+      await press(page.locator('#h5-term-menu-actions button', { hasText: 'Open' }));
+      await page.waitForFunction(() => document.querySelector('.h5-xterm:not([hidden])')?.dataset.terminalId === 't3-2');
+      assert.equal(await page.locator('#h5-task-name').textContent(), 'Task 3', `${size}: Open goes to that task`);
+      await context.close();
+    }
+
+    // ── The same on a remote Engine, whose tasks and chats go through the proxy ──
+    for (const wide of [false, true]) {
+      const size = `remote ${wide ? 'PC' : 'phone'}`;
+      const { context, page, requests } = await openPage(browser, wide, true);
+      const press = locator => (wide ? locator.click() : locator.tap());
+      const openSheet = async () => { if (!wide && !(await page.locator('#h5-tasks').isVisible())) await page.locator('#h5-open-tasks').tap(); await page.locator('#h5-tasks .h5-task-item').first().waitFor(); };
+      await openSheet();
+      await page.locator('#h5-engine').selectOption('remote:7');
+      await page.locator('.h5-task-item', { hasText: 'Remote 9' }).waitFor();
+      await press(page.locator('.h5-task-item', { hasText: 'Remote 9' }));
+      await press(page.locator('#h5-tasks .h5-terminal-list[aria-label="Remote 9"] .h5-terminal-main').nth(1));
+      if (!wide) await page.locator('#h5-tasks').waitFor({ state: 'hidden' });
+      await page.waitForFunction(() => document.querySelector('.h5-xterm:not([hidden])')?.dataset.terminalId === 't9-2');
+      await openSheet();
+      await page.locator('#h5-tasks .h5-terminal-list[aria-label="Phone terminals"] .h5-terminal-row').nth(3).waitFor();
+      await press(page.locator('.h5-task-item', { hasText: 'Remote 10' }));
+      await checkOtherTask({ page, requests, size, press, list: 'Remote 10', shown: 'Remote 9', base: '/api/remote-servers/7/tasks', task: 10 });
       await context.close();
     }
   } finally {
     await browser.close();
   }
   assert.deepEqual(pageErrors, [], 'no page errors');
-  console.log('Session name fields in place (phone, phone with keyboard, PC): Session list under its task, rename in place of the row, Enter / Escape / blur passed.');
+  console.log('Session name fields in place (phone, phone with keyboard, PC): Session list under its task, rename in place of the row, Enter / Escape / blur, and rename of a session of another task (local and remote Engine) passed.');
 })().catch(error => { console.error(error); process.exit(1); });

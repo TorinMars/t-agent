@@ -33,7 +33,7 @@ export const initialState = () => ({
   taskList: { note: null, groups: [] },
   creatingTask: false,
   // { title, items: [{ label, kind }], naming, task, name, rename, renameValue } while the terminal / chat actions or the Session list are open.
-  // naming: the Session list of the "+" of task `task`, drawn under that task in the task list; rename: { kind, id } of the row whose name field is shown in its place.
+  // naming: the Session list of the "+" of task `task`, drawn under that task in the task list; rename: { kind, id, task } of the row whose name field is shown in its place.
   menu: null,
   empty: 'Choose a task to open its phone terminal', // what the terminal area says when there is no terminal; null when one is shown
   mods: {},

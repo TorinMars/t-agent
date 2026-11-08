@@ -626,4 +626,5 @@ I18n.add({
   "market must be true or false": "market 必须是 true 或 false",
   "its name is a built-in plugin": "它的名字和内置插件相同",
   "another notifier has the same name": "另一个通知插件同名",
+  "Unknown guide setting: {1}": "未知的向导设置：{1}",
 });

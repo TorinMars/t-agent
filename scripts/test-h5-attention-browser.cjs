@@ -559,7 +559,8 @@ const pluginsFit = page => page.evaluate(() => [...document.querySelectorAll('#h
       assert.equal(await plugin('notifier', 'broken').locator('.h5-plugin-error').textContent(), 'Bad manifest: no send()');
       assert.equal(await page.locator('#h5-plugins-refresh').getAttribute('aria-label'), 'Refresh');
       assert.equal(await page.locator('#h5-plugins-refresh').getAttribute('title'), 'Refresh');
-      const pluginReads = () => calls.filter(call => call.path === '/api/attention/plugins').length;
+      // The first-run guide (AttentionGuide.jsx, its own test: test-h5-attention-guide-browser.cjs) reads the overview with its flags; not counted here.
+      const pluginReads = () => calls.filter(call => call.path === '/api/attention/plugins').length - calls.filter(call => call.method === 'GET' && call.path === '/api/attention/settings/guide').length;
       assert.equal(pluginReads(), 5, 'read when the group opened and again after each of the four saves (form, switch off, switch on, remove secret)');
       await page.locator('#h5-plugins-refresh').tap();
       await page.waitForFunction(() => document.getElementById('h5-plugins').getAttribute('aria-busy') === 'false');

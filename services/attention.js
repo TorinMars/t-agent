@@ -279,6 +279,8 @@ function createAttentionService({ db, now = () => new Date() } = {}) {
   const listeners = new Set();
   const internalListeners = new Set();
   const stamp = () => now().toISOString();
+  // The first-run guide's per-owner flags (services/attention-guide.js), served by GET / PUT /api/attention/settings/guide.
+  const guide = require('./attention-guide').createAttentionGuide({ db, now, AttentionError });
   const actorOf = value => (typeof value === 'string' && value.trim() ? value.trim().slice(0, LIMITS.source) : 'user');
 
   const selectItem = db.prepare('SELECT * FROM attention_items WHERE id = ?');
@@ -624,7 +626,7 @@ function createAttentionService({ db, now = () => new Date() } = {}) {
   }
 
   return { list, get, sourceStats, getByRef, events, detail, detailByRef, create, update, upsertByRef, remove, onChange, onChangeInternal, listTokens, createToken, revokeToken, verifyToken, tokenActive,
-    issueTerminalToken, revokeTerminalToken, terminalTokenCount, createPairing, pairingStatus, cancelPairing, claimPairing };
+    issueTerminalToken, revokeTerminalToken, terminalTokenCount, createPairing, pairingStatus, cancelPairing, claimPairing, getGuide: guide.get, saveGuide: guide.save };
 }
 
 // The service of this server's database, made on first use (so requiring this file does not open the database).

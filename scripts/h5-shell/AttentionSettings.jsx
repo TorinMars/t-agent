@@ -10,6 +10,7 @@ import { Feedback, Field, Group, Hint, failure, useFeedback } from './Form.jsx';
 import TextField from './TextField.jsx';
 import { BASE } from './attention-feed.mjs';
 import { attentionSettingsSlots } from './attention-slots.mjs';
+import { AttentionGuide } from './AttentionGuide.jsx';
 
 // The "T-Attention" group of the settings sheet: the reminders of this page (sound, system notifications; remembered in this browser) and the
 // CLI tokens (`Authorization: Bearer tatt_...` for the `t-attention` CLI and the listener plugins; only /api/attention* accepts them).
@@ -184,6 +185,8 @@ export function AttentionSettings({ ui }) {
   };
   return (
     <Group id="attention" title="T-Attention" onOpen={open}>
+      {/* The first-run guide, or its "Show setup guide" button once it is closed or done (AttentionGuide.jsx). */}
+      <AttentionGuide ui={ui} place="settings" active={opened} />
       <Reminders ui={ui} prefs={prefs} setPrefs={setPrefs} />
       <SummarySettings opened={opened} />
       <TokenList opened={opened} />

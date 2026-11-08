@@ -118,6 +118,17 @@
   const expanded = new Set(); // the tasks whose sessions are listed in the task sheet (a tap on a task opens and closes its list; it does not open the task); any number can be open
   const peeks = new Map(); // task id -> the sessions of an expanded task that is not the selected one: { source, taskId, status, terminals, chats }
   let peekSeq = 0;
+  // The Restart and Delete requests on their way, by Engine and task (a promise that ends when all of them have). A list of that task read meanwhile would
+  // show the old row, or connect to a terminal that is going away, so `loadTerminals`, `loadPeek` and `readChats` wait for it. Without one there is nothing to wait for.
+  const actionsRunning = new Map();
+  const actionKey = (from, taskId) => `${from.key}|${taskId}`;
+  const actionsDone = (from, taskId) => actionsRunning.get(actionKey(from, taskId));
+  function trackAction(target, pending) {
+    const key = actionKey(target.from, target.taskId);
+    const all = Promise.all([actionsRunning.get(key), pending.catch(() => {})]).then(() => { if (actionsRunning.get(key) === all) actionsRunning.delete(key); });
+    actionsRunning.set(key, all);
+    return pending;
+  }
   let wantedTerminal = null; // the terminal to show when the terminals of the task just selected arrive
   let session = null;
   let mods = {};
@@ -259,8 +270,7 @@
       ],
     };
   }
-  // The sessions under an expanded task that is not selected: its terminals, then its chats, as in the list of the selected task. Each has "⋯" too, with
-  // the actions that do not need the task to be the one shown (see `openOtherMenu`).
+  // The sessions under an expanded task that is not selected: its terminals, then its chats, as in the list of the selected task. Each has "⋯" too (see `openOtherMenu`).
   function peekSessions(item) {
     const label = item.title;
     const peek = peeks.get(item.id);
@@ -360,6 +370,7 @@
     const mine = { source: current, taskId: item.id, status: 'loading', terminals: [], chats: [], seq: (peekSeq += 1) };
     const before = peeks.get(item.id);
     if (!before || before.source !== current) peeks.set(item.id, mine); // a list that is already shown stays until the new one is read
+    await actionsDone(current, item.id);
     const [rows, chatRows] = await Promise.all([
       api('GET', `${current.tasksBase}/${item.id}/terminals`).catch(() => null),
       readChats(item, { peek: true }),
@@ -680,6 +691,8 @@
     if (!task) { showEmpty('Choose a task to open its phone terminal'); return; }
     const current = task;
     showEmpty('Loading…');
+    await actionsDone(source, current.id); // a Restart or Delete started from its row before it was selected
+    if (current !== task) return;
     let rows;
     try { rows = await api('GET', `${source.tasksBase}/${current.id}/terminals`); }
     catch (error) { if (current === task) showEmpty(`Could not load terminals: ${error.message}`); return; }
@@ -715,7 +728,9 @@
   let menuRuns = [];
   let menuRow = null;
   let menuChat = null; // the chat whose actions are open
-  let menuScope = null; // { from, taskId }: the Engine and the task of that terminal or chat. A rename goes there, whichever task is selected by then.
+  // { from, taskId, row, taskTitle }: the Engine and the task of that terminal or chat, and the row. Rename, Restart and Delete go there, whichever task is selected
+  // by then. `taskTitle` is only set for a task that is not selected, so its name can be shown in the confirmation.
+  let menuScope = null;
   // The optional name typed in the "Session" sheet. It is kept while moving between its lists (Claude session, Back) and names what is created.
   let newName = '';
   let menuCreate = -1; // the item that Enter in the name field runs (New Terminal, New Claude session, New Claude chat)
@@ -748,7 +763,7 @@
   function openTerminalMenu(row) {
     menuRow = row;
     menuChat = null;
-    menuScope = { from: source, taskId: task.id };
+    const target = menuScope = { from: source, taskId: task.id, row };
     // "Copy text" is for the terminal that is open (the copy view reads its buffer); the long press on the terminal body is the other way in.
     const open = row.terminal_id === terminalId && !agentChat && session && !session.disposed;
     showMenu(row.title, [
@@ -756,30 +771,38 @@
       // Agent terminals too: a name given here is kept (title_custom) and wins over the Claude / Codex session title from then on.
       ['Rename', () => askRename(row.title)],
       ['Reopen', () => { closeTerminalMenu(); closeTasks(); switchTerminal(row); }],
-      ['Restart in the working directory', () => void restartTerminal(row), 'danger'],
-      ['Delete', () => void deleteTerminal(row), 'danger'],
+      ['Restart in the working directory', () => void restartTerminal(target), 'danger'],
+      ['Delete', () => void deleteTerminal(target), 'danger'],
     ]);
   }
   // Chat actions: the same sheet as a terminal's, with the actions a chat has (rename, open, delete).
   function openChatMenu(row) {
     menuRow = null;
     menuChat = row;
-    menuScope = { from: source, taskId: task.id };
+    const target = menuScope = { from: source, taskId: task.id, row };
     showMenu(row.title, [
       ['Rename', () => askRename(row.title)],
       ['Open', () => { closeTerminalMenu(); closeTasks(); mountAgent(row); }],
-      ['Delete', () => void deleteChat(row), 'danger'],
+      ['Delete', () => void deleteChat(target), 'danger'],
     ]);
   }
-  // The actions of a session of a task that is not selected: only those that do not need the task to be the one shown. Rename touches nothing else; Open is
-  // the same as a tap on the row. Restart and Delete stay with the selected task (they work on the connection of the terminal that is shown).
+  // A remote Engine that says what it can do and does not list 'terminal:control' cannot restart or delete a terminal; one that has not said is asked (it answers with an error).
+  const controlsTerminals = from => from.key === 'local' || !Array.isArray(from.capabilities) || from.capabilities.includes('terminal:control');
+  // The actions of a session of a task that is not selected. Open is the same as a tap on the row; Rename, Restart and Delete go to the row's own Engine and task
+  // (`target`) and leave the task, the terminal and the socket that are shown alone. A chat has no Restart, and a chat row is only listed where the Engine has 'agent-chat:manage'.
   function openOtherMenu(item, row, entry) {
-    menuRow = row.kind === 'chat' ? null : entry;
-    menuChat = row.kind === 'chat' ? entry : null;
-    menuScope = { from: source, taskId: item.id };
+    const chat = row.kind === 'chat';
+    menuRow = chat ? null : entry;
+    menuChat = chat ? entry : null;
+    const target = menuScope = { from: source, taskId: item.id, row: entry, taskTitle: item.title };
     showMenu(entry.title, [
       ['Rename', () => askRename(entry.title)],
       ['Open', () => { closeTerminalMenu(); ui.actions.openRow(item.id, { kind: row.kind, id: row.id }); }],
+      ...(chat ? [['Delete', () => void deleteChat(target), 'danger']] : []),
+      ...(!chat && controlsTerminals(source) ? [
+        ['Restart in the working directory', () => void restartTerminal(target), 'danger'],
+        ['Delete', () => void deleteTerminal(target), 'danger'],
+      ] : []),
     ]);
   }
   // Shows a saved name: in the list of the selected task, or under a task that is not selected. That list is read again too, so that an older read still on
@@ -800,44 +823,67 @@
     const item = tasks.find(candidate => candidate.id === scope.taskId);
     if (item && expanded.has(item.id)) void loadPeek(item);
   }
-  async function deleteChat(row) {
-    if (!window.confirm(`${tr('Delete this chat? Its messages are removed from this task.')}\n${row.title}`)) return;
-    const current = task;
+  // Is the task of this target the selected one, now?
+  const isSelected = target => target.from === source && Boolean(task) && task.id === target.taskId;
+  // Under a confirmation: which session it is and, for a task that is not selected, which task (every task has a terminal called `default`).
+  const whichSession = target => `\n${target.row.title}${target.taskTitle ? `\n${tr('Task')}: ${target.taskTitle}` : ''}`;
+  // After a Restart or Delete under a task that is not selected. `removed` ('terminal' or 'chat'): the row goes at once. That list is read again; a read already on its way
+  // was sent before this and could bring the row back, so it stops counting. When the task has become the selected one meanwhile, its own read is waiting for the action (`actionsDone`).
+  function showPeekChange(target, removed = null) {
+    if (target.from !== source) return;
+    const peek = peeks.get(target.taskId);
+    if (peek && peek.source === target.from) {
+      if (removed === 'chat') peek.chats = peek.chats.filter(entry => entry.id !== target.row.id);
+      if (removed === 'terminal') peek.terminals = peek.terminals.filter(entry => entry.terminal_id !== target.row.terminal_id);
+      peek.seq = (peekSeq += 1);
+    }
+    renderTasks();
+    const item = tasks.find(candidate => candidate.id === target.taskId);
+    if (item && expanded.has(item.id) && !isSelected(target)) void loadPeek(item);
+  }
+  async function deleteChat(target) {
+    const { row } = target;
+    if (!window.confirm(`${tr('Delete this chat? Its messages are removed from this task.')}${whichSession(target)}`)) return;
     closeTerminalMenu();
     try {
-      await api('DELETE', `${source.tasksBase}/${current.id}/agent/conversations/${encodeURIComponent(row.id)}`);
-      if (agentFor && agentFor.conversation === row.id) hideAgent();
-      if (current === task) await loadChats();
+      await trackAction(target, api('DELETE', `${target.from.tasksBase}/${target.taskId}/agent/conversations/${encodeURIComponent(row.id)}`));
+      if (agentFor && agentFor.source === target.from.key && agentFor.taskId === target.taskId && agentFor.conversation === row.id) hideAgent();
+      if (isSelected(target)) await loadChats();
+      else showPeekChange(target, 'chat');
     } catch (error) { tell(`Could not delete the chat: ${error.message}`, 'error'); }
   }
-  async function controlTerminal(row, action) {
-    const current = task;
-    const wasCurrent = row.terminal_id === terminalId;
+  // Ends every view of that terminal of that task in this page, then asks the server. The shown one is only ended when it is the target itself: another task's `default` is another terminal.
+  async function controlTerminal(target, action) {
+    const { row, from, taskId } = target;
+    const wasCurrent = isSelected(target) && row.terminal_id === terminalId;
     if (wasCurrent) disconnect(); // end the view first, so the server closing the shell is not shown as a lost connection
-    const from = source;
-    closeWarm(item => item.key === warmKey(from, current.id, row.terminal_id)); // a hidden warm view of it too
+    closeWarm(item => item.key === warmKey(from, taskId, row.terminal_id)); // a hidden warm view of it too
+    if (earlySocket && earlySocket.source === from && earlySocket.taskId === taskId && earlySocket.terminalId === row.terminal_id) dropEarlySocket();
     try {
-      await api('POST', `${source.tasksBase}/${current.id}/terminal/control`, { action, terminal_id: row.terminal_id });
+      await trackAction(target, api('POST', `${from.tasksBase}/${taskId}/terminal/control`, { action, terminal_id: row.terminal_id }));
     } catch (error) {
-      if (wasCurrent && current === task) connect();
+      if (wasCurrent && isSelected(target)) connect();
       throw error;
     }
     return wasCurrent;
   }
-  async function restartTerminal(row) {
-    if (!window.confirm(tr('This ends the terminal, clears its history and reopens it from the task working directory. Continue?'))) return;
+  async function restartTerminal(target) {
+    if (!window.confirm(`${tr('This ends the terminal, clears its history and reopens it from the task working directory. Continue?')}${target.taskTitle ? whichSession(target) : ''}`)) return;
     closeTerminalMenu();
+    const selected = isSelected(target);
     try {
-      await controlTerminal(row, 'restart-workdir');
-      closeTasks();
-      switchTerminal(row);
+      await controlTerminal(target, 'restart-workdir');
+      if (selected && isSelected(target)) { closeTasks(); switchTerminal(target.row); }
+      else showPeekChange(target); // no view is left: the next Open connects to the new shell
     } catch (error) { tell(`Could not restart the terminal: ${error.message}`, 'error'); }
   }
-  async function deleteTerminal(row) {
-    if (!window.confirm(`${tr('Delete this terminal? It ends the programs in it and removes its history.')}\n${row.title}`)) return;
+  async function deleteTerminal(target) {
+    const { row } = target;
+    if (!window.confirm(`${tr('Delete this terminal? It ends the programs in it and removes its history.')}${whichSession(target)}`)) return;
     closeTerminalMenu();
     try {
-      const wasCurrent = await controlTerminal(row, 'delete');
+      const wasCurrent = await controlTerminal(target, 'delete');
+      if (!isSelected(target)) { showPeekChange(target, 'terminal'); return; }
       terminals = terminals.filter(item => item.terminal_id !== row.terminal_id);
       if (wasCurrent && terminals.length) { switchTerminal(terminals[0]); closeTasks(); }
       else {
@@ -1004,6 +1050,8 @@
     const current = source;
     const stale = () => source !== current || (!forOther && task !== item); // forOther: the task is not the selected one (its list is opened in the sheet)
     try {
+      await actionsDone(current, item.id);
+      if (stale()) return null;
       if (current.key !== 'local') {
         const info = await readInfo(current);
         if (!Array.isArray(info.capabilities) || !info.capabilities.includes('agent-chat:manage')) return null;

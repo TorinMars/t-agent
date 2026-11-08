@@ -47,7 +47,7 @@ async function openPage(browser, wide, remote = false) {
     if (url.pathname === '/h5') return route.fulfill({ contentType: 'text/html', body: fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8') });
     if (/^\/(js|css|vendor)\//.test(url.pathname)) return route.fulfill({ contentType: TYPES[path.extname(url.pathname)] || 'text/plain', body: fs.readFileSync(path.join(root, 'public', url.pathname)) });
     if (url.pathname === '/api/remote-servers') return json(remote ? [{ id: 7, name: 'VPS' }] : []);
-    if (url.pathname === '/api/remote-servers/7/info') return json({ capabilities: ['agent-chat:manage'] });
+    if (url.pathname === '/api/remote-servers/7/info') return json({ capabilities: ['agent-chat:manage', 'terminal:control'] });
     if (url.pathname === '/api/remote-servers/7/tasks' && method === 'GET') return json([{ id: 9, title: 'Remote 9', status: 'doing' }, { id: 10, title: 'Remote 10', status: 'doing' }]);
     if (url.pathname === '/api/remote-servers/7/task-groups') return json([{ key: 'doing', name: 'Doing', sort_order: 1 }]);
     if (url.pathname === '/api/tasks' && method === 'GET') return json(tasks);
@@ -113,7 +113,7 @@ async function checkOtherTask({ page, requests, size, press, list, shown, base, 
   const askRename = async index => {
     await press(rows.nth(index).locator('.h5-terminal-more'));
     await page.locator('#h5-term-menu-actions button', { hasText: 'Rename' }).waitFor();
-    assert.deepEqual(await page.locator('#h5-term-menu #h5-term-menu-actions button').allTextContents(), ['Rename', 'Open'], `${size}: what can be done from another task`);
+    assert.deepEqual(await page.locator('#h5-term-menu #h5-term-menu-actions button').allTextContents(), index === 4 ? ['Rename', 'Open', 'Delete'] : ['Rename', 'Open', 'Restart in the working directory', 'Delete'], `${size}: what can be done from another task`);
     await press(page.locator('#h5-term-menu-actions button', { hasText: 'Rename' }));
     await page.locator('#h5-term-rename-input').waitFor();
     await page.locator('#h5-term-menu .h5-menu-panel').waitFor({ state: 'hidden' });

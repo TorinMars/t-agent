@@ -1,5 +1,5 @@
 // The Material UI shell of the phone page (/h5). It is drawn at once, while the page is still being parsed (flushSync), so that the scripts after it
-// (voice-input.js, agent-activity.js, h5.js ...) find #h5-translate-input, #h5-voice, #agent-activity and the rest where they have always been.
+// (voice-input.js, h5.js ...) find #h5-translate-input, #h5-voice and the rest where they have always been.
 import { flushSync } from 'react-dom';
 import { createRoot } from 'react-dom/client';
 import { App } from './App.jsx';

@@ -717,15 +717,11 @@ function subagentSnapshot(taskIds, home) {
 
 // Pushed activity (lib/terminal-activity-stream.js): GET /api/tasks/terminal-activity/stream and Engine /v1/terminal-activity/stream.
 // The sub-agent counts of all live Claude terminals are read once per refresh, whatever the number of open streams.
-// The agent chat counters of the owner travel with it (required when used: services/agent-chat is not loaded before a stream opens).
-const agentChat = () => require('../services/agent-chat').getAgentChat();
 const activityStream = createActivityStream({
   activity: activitySnapshot,
   subagents: () => subagentSnapshot(null),
-  agents: owner => agentChat().summary(owner),
-  watchAgents: listener => agentChat().onSummaryChange(listener),
 });
-function serveActivityStream(req, res, taskIds, owner) { activityStream.serve(req, res, taskIds, owner); }
+function serveActivityStream(req, res, taskIds) { activityStream.serve(req, res, taskIds); }
 
 function acknowledgeActivity(taskId, requestedTerminalId) {
   const id = assertTerminal(taskId, requestedTerminalId);

@@ -37,11 +37,6 @@ export function Header({ state, ui }) {
             <Typography id="h5-session-name" className="h5-session-name" variant="caption" component="div" color="text.secondary" noWrap translate="no" sx={{ lineHeight: 1.3 }}>{state.sessionName || ' '}</Typography>
           </Box>
         </ButtonBase>
-        {/* agent-activity.js fills this in (the counts, and when it is shown); React draws it once and leaves it alone. */}
-        <span className="agent-activity" id="agent-activity" role="status" hidden title="Messages sent to agents that have not finished (running or queued), and agent turns running now">
-          <span className="agent-activity-submitted"><b className="count">0</b> <span className="label" translate="no">submitted</span></span>
-          <span className="agent-activity-running"><b className="count">0</b> <span className="label" translate="no">running</span></span>
-        </span>
         {state.terminalWidth ? <WidthButton width={state.terminalWidth} ui={ui} /> : null}
         <IconButton id="h5-refresh" {...named(refresh)} onClick={() => ui.actions.refresh()}>
           <RefreshIcon />

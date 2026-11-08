@@ -218,5 +218,37 @@ const TerminalClipboard = (() => {
     };
   }
   function setHost(next) { host = next || null; }
-  return { attach, setHost, confirm, cancel, decodeOsc52, writeText, previewOf, GESTURE_WINDOW_MS, REQUEST_TTL_MS, DUPLICATE_WINDOW_MS, MAX_BYTES };
+
+  // ── Paste: reading the clipboard for the page's Paste action ──
+  // WebKit (Safari and every iOS browser) lets a page read the clipboard only inside a user gesture, and each read shows the system "Paste" callout
+  // (https://webkit.org/blog/10855/async-clipboard-api/); a tap elsewhere dismisses it and the read is rejected. The page used to read twice per tap
+  // (`read()` for an image, then `readText()`), so the second read had no gesture left and was always refused. `readClipboard` makes exactly ONE read
+  // and starts it synchronously, before its first await, so the caller must call it directly in the tap's handler. `read()` is preferred (the first
+  // image, else text/plain of the same items); `readText()` is used only when `read()` does not exist, never after `read()` was refused.
+  // Resolves to { kind: 'image', blob, type } | { kind: 'text', text } | { kind: 'empty' } | { kind: 'denied', error } | { kind: 'unsupported' }.
+  const PASTE_IMAGE = /^image\/(png|jpeg|gif|webp)$/;
+  const blobText = blob => (typeof blob.text === 'function' ? blob.text() : new Response(blob).text());
+  async function pickClipboard(items) {
+    const list = [...(items || [])];
+    for (const item of list) {
+      const type = (item.types || []).find(name => PASTE_IMAGE.test(name));
+      if (type) return { kind: 'image', blob: await item.getType(type), type };
+    }
+    for (const item of list) {
+      if (!(item.types || []).includes('text/plain')) continue;
+      const text = await blobText(await item.getType('text/plain'));
+      if (text) return { kind: 'text', text };
+    }
+    return { kind: 'empty' };
+  }
+  function readClipboard(clipboard) {
+    let pending;
+    try {
+      if (clipboard && typeof clipboard.read === 'function') pending = Promise.resolve(clipboard.read()).then(pickClipboard);
+      else if (clipboard && typeof clipboard.readText === 'function') pending = Promise.resolve(clipboard.readText()).then(text => (text ? { kind: 'text', text } : { kind: 'empty' }));
+      else return Promise.resolve({ kind: 'unsupported' });
+    } catch (error) { return Promise.resolve({ kind: 'denied', error }); } // a read that throws at once (no gesture, policy)
+    return pending.catch(error => ({ kind: 'denied', error }));
+  }
+  return { attach, setHost, confirm, cancel, readClipboard, pickClipboard, decodeOsc52, writeText, previewOf, GESTURE_WINDOW_MS, REQUEST_TTL_MS, DUPLICATE_WINDOW_MS, MAX_BYTES };
 })();

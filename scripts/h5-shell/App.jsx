@@ -1,7 +1,7 @@
 import { useLayoutEffect, useState, useSyncExternalStore } from 'react';
 import CssBaseline from '@mui/material/CssBaseline';
 import { ThemeProvider } from '@mui/material/styles';
-import { CopyDialog, Notice, RetainDialog, UploadDialog } from './Dialogs.jsx';
+import { CopyDialog, Notice, PasteDialog, RetainDialog, UploadDialog } from './Dialogs.jsx';
 import { AttentionPanel } from './Attention.jsx';
 import { DesignSheet } from './Design.jsx';
 import { FileTreeSheet } from './FileTree.jsx';
@@ -59,6 +59,7 @@ export function App({ ui }) {
       <Lazy open={Boolean(state.attention && state.attention.open)}><AttentionPanel state={state} ui={ui} /></Lazy>
       <Lazy open={Boolean(state.upload)}><UploadDialog state={state} ui={ui} /></Lazy>
       <Lazy open={state.retainUrl !== null}><RetainDialog state={state} ui={ui} /></Lazy>
+      <Lazy open={Boolean(state.pasteSheet)}><PasteDialog state={state} ui={ui} /></Lazy>
       <Lazy open={Boolean(state.taskDialog)}><TaskDialog state={state} ui={ui} /></Lazy>
       <Notice state={state} ui={ui} />
     </ThemeProvider>

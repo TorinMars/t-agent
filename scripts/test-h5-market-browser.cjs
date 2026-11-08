@@ -209,7 +209,7 @@ const smallButtons = (page, selector) => page.evaluate(sel => [...document.query
       await page.locator('#h5-market-empty', { hasText: 'No plugins match the search' }).waitFor();
       await page.locator('#h5-market-search').fill('');
       await page.locator('.h5-market-kind-filter[data-kind="listener"]').tap();
-      await page.waitForFunction(() => [...document.querySelectorAll('#h5-market .h5-market-card')].every(node => node.dataset.kind === 'listener'));
+      await page.waitForFunction(() => { const cards = [...document.querySelectorAll('#h5-market .h5-market-card')]; return cards.length > 0 && cards.every(node => node.dataset.kind === 'listener'); });
       assert.equal(await page.locator('.h5-market-kind-filter[data-kind="listener"]').getAttribute('aria-pressed'), 'true');
       assert.ok(marketCalls(calls).includes('/api/attention/market?kind=listener'));
       assert.deepEqual(await names(page), ['codex', 'gitty']);

@@ -512,6 +512,7 @@ I18n.add({
   "This phone number is banned by Telegram": "这个手机号已被 Telegram 封禁",
   "The code is wrong": "验证码错误",
   "The code has expired; start the login again": "验证码已过期，请重新开始登录",
+  "Telegram sent an unexpected answer; start the login again": "Telegram 返回了意外的结果，请重新开始登录",
   "The password is wrong": "密码错误",
   "The api_id / api_hash pair is invalid": "api_id / api_hash 组合无效",
   "This api_id cannot be used; create your own at my.telegram.org": "这个 api_id 不能使用，请在 my.telegram.org 创建你自己的",

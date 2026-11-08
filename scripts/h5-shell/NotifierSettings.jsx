@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import Checkbox from '@mui/material/Checkbox';
 import FormControlLabel from '@mui/material/FormControlLabel';
+import Link from '@mui/material/Link';
 import Typography from '@mui/material/Typography';
 import TextField from './TextField.jsx';
 import { api, t } from './common.jsx';
@@ -21,6 +22,15 @@ const OUTCOME_LABELS = {
   call_declined: 'Declined', call_scheduled: 'Call planned', duplicate: 'Skipped: sent less than 10 minutes ago', quiet_hours: 'Skipped: quiet hours',
   rate_limited: 'Skipped: hourly limit reached', skipped: 'Skipped: not set up', error: 'Error',
 };
+const QR_POLL_MS = 2000;
+const API_HELP = [
+  'Open my.telegram.org/apps and log in with the phone number of account 1.',
+  'Enter the code that Telegram sends to the Telegram app (not by SMS).',
+  'Fill in App title and Short name (any words), choose Desktop as the platform, and click Create application.',
+  'Copy App api_id and App api_hash into the fields below.',
+];
+// True while the element is really on screen: the settings sheet is open and the T-Attention group is not folded away.
+const shown = element => Boolean(element && element.isConnected && (element.checkVisibility ? element.checkVisibility({ visibilityProperty: true, checkVisibilityCSS: true }) : element.offsetParent));
 const timeZone = () => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch { return ''; } };
 
 function TelegramPart({ telegram, onChanged }) {
@@ -29,7 +39,34 @@ function TelegramPart({ telegram, onChanged }) {
   const [target, setTarget] = useState('');
   const [seconds, setSeconds] = useState('30');
   const [busy, setBusy] = useState(false);
+  const [byPhone, setByPhone] = useState(false);
+  const [qr, setQr] = useState(null); // { url, svg, expiresAt } of the QR login that is shown
+  const qrRef = useRef(null);
   const [feedback, say] = useFeedback();
+  const qrStep = status.step === 'qr';
+  // While the QR step is shown: read /qr/status at once and then every 2 seconds (the server exports a new token when the old one expired, and
+  // finishes the login after the scan). Nothing is read while the group is folded or the page is hidden; it stops when the step ends.
+  useEffect(() => {
+    if (!qrStep) { setQr(null); return undefined; }
+    let stopped = false;
+    let running = false;
+    const tick = async (first = false) => {
+      if (stopped || running || (!first && (document.hidden || !shown(qrRef.current)))) return;
+      running = true;
+      try {
+        const result = await api('GET', `${BASE}/telegram/qr/status`);
+        if (stopped) return;
+        if (result.step === 'qr') { setQr({ url: result.url, svg: result.svg, expiresAt: result.expiresAt }); return; }
+        stopped = true;
+        await onChanged();
+        say(result.step === 'done' ? 'Logged in' : result.step === 'password' ? 'Enter the two-step verification password' : 'The QR code has expired; start again', result.step === 'expired');
+      } catch (error) { if (!stopped) { stopped = true; await onChanged(); say(failure(error), true); } }
+      finally { running = false; }
+    };
+    void tick(true);
+    const timer = setInterval(() => void tick(), QR_POLL_MS);
+    return () => { stopped = true; clearInterval(timer); };
+  }, [qrStep]);
   useEffect(() => {
     setTarget((status.target && status.target.input) || '');
     setSeconds(String(status.callSeconds || 30));
@@ -45,6 +82,8 @@ function TelegramPart({ telegram, onChanged }) {
   };
   const start = () => run(() => api('POST', `${BASE}/telegram/start`, { api_id: login.apiId.trim(), api_hash: login.apiHash.trim(), phone: login.phone.trim() }),
     result => (result.codeVia === 'app' ? 'Code sent to your Telegram app' : 'Code sent by SMS'));
+  const startQr = () => run(async () => { const result = await api('POST', `${BASE}/telegram/qr/start`, { api_id: login.apiId.trim(), api_hash: login.apiHash.trim() }); if (result.step === 'qr') setQr({ url: result.url, svg: result.svg, expiresAt: result.expiresAt }); return result; },
+    result => (result.step === 'done' ? 'Logged in' : result.step === 'password' ? 'Enter the two-step verification password' : ''));
   const verify = () => run(() => api('POST', `${BASE}/telegram/verify`, { code: login.code.trim() }), result => (result.step === 'password' ? 'Enter the two-step verification password' : 'Logged in'));
   const password = () => run(() => api('POST', `${BASE}/telegram/password`, { password: login.password }), 'Logged in');
   const cancel = () => run(() => api('POST', `${BASE}/telegram/cancel`, {}), '');
@@ -58,13 +97,39 @@ function TelegramPart({ telegram, onChanged }) {
       <Hint id="h5-tg-state">{status.loggedIn
         ? `${t('Account 1:')} ${account ? `${account.name}${account.username ? ` (@${account.username})` : ''}` : ''} ${status.phone || ''}`
         : t('Not logged in')}</Hint>
-      {!status.loggedIn && status.step !== 'code' && status.step !== 'password' ? (
+      {!status.loggedIn && !['code', 'password', 'qr'].includes(status.step) ? (
         <>
-          <Hint>{t('Account 1 sends the messages and rings account 2. Create an app at my.telegram.org (API development tools) to get api_id and api_hash.')}</Hint>
+          <Hint>{t('Account 1 sends the messages and rings account 2. It needs an api_id and api_hash of your own:')}</Hint>
+          <Link id="h5-tg-api-link" variant="body2" href="https://my.telegram.org/apps" target="_blank" rel="noopener noreferrer" sx={{ alignSelf: 'flex-start' }}>https://my.telegram.org/apps</Link>
+          <Box id="h5-tg-api-help" component="ol" sx={{ m: 0, pl: 3, typography: 'body2', color: 'text.secondary', overflowWrap: 'anywhere' }}>
+            {API_HELP.map(step => <li key={step}>{t(step)}</li>)}
+          </Box>
           <Field id="h5-tg-apiid" label="api_id" value={login.apiId} onChange={set('apiId')} htmlInput={{ inputMode: 'numeric' }} />
           <Field id="h5-tg-apihash" label="api_hash" type="password" autoComplete="new-password" value={login.apiHash} onChange={set('apiHash')} placeholder={status.hasApiHash ? t('Saved; leave empty to keep it') : ''} />
-          <Field id="h5-tg-phone" label="Phone number of account 1 (with country code)" value={login.phone} onChange={set('phone')} htmlInput={{ inputMode: 'tel' }} placeholder="+8613800000000" />
-          <Button id="h5-tg-start" variant="contained" disabled={busy} onClick={() => void start()}>{t('Send code')}</Button>
+          {byPhone ? (
+            <>
+              <Field id="h5-tg-phone" label="Phone number of account 1 (with country code)" value={login.phone} onChange={set('phone')} htmlInput={{ inputMode: 'tel' }} placeholder="+8613800000000" />
+              <Button id="h5-tg-start" variant="contained" disabled={busy} onClick={() => void start()}>{t('Send code')}</Button>
+              <Button id="h5-tg-use-qr" variant="text" disabled={busy} onClick={() => setByPhone(false)}>{t('Use a QR code instead')}</Button>
+            </>
+          ) : (
+            <>
+              <Button id="h5-tg-qr-start" variant="contained" disabled={busy} onClick={() => void startQr()}>{t('Log in with a QR code')}</Button>
+              <Button id="h5-tg-use-phone" variant="text" disabled={busy} onClick={() => setByPhone(true)}>{t('Use phone number instead')}</Button>
+            </>
+          )}
+        </>
+      ) : null}
+      {qrStep ? (
+        <>
+          <Hint id="h5-tg-qr-steps">{t('Open Telegram on the phone of account 1 \u2192 Settings \u2192 Devices \u2192 Link Desktop Device \u2192 scan this code')}</Hint>
+          <Box ref={qrRef} id="h5-tg-qr" sx={{ alignSelf: 'center', width: 224, height: 224, p: 1, bgcolor: '#fff', borderRadius: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            {qr && qr.svg
+              ? <Box component="img" src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(qr.svg)}`} alt={t('Telegram login QR code')} data-url={qr.url} sx={{ width: '100%', height: '100%', display: 'block' }} />
+              : <Typography variant="body2" sx={{ color: '#000' }}>{t('Loading\u2026')}</Typography>}
+          </Box>
+          <Hint>{t('The code changes about every 30 seconds; this page shows the current one.')}</Hint>
+          <Button id="h5-tg-qr-cancel" variant="outlined" disabled={busy} onClick={() => void cancel()}>{t('Cancel')}</Button>
         </>
       ) : null}
       {status.step === 'code' ? (

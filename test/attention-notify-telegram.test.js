@@ -467,7 +467,8 @@ async function loginServer(options = {}) {
   const logs = [];
   const service = createAttentionNotify({ db, sessionSecret: SECRET, onChange: null, getOwner: () => 'owner', notifiers: [plugin], log: (level, message) => logs.push(message) });
   const app = express();
-  app.use((req, res, next) => { req.session = { user: { login: 'owner' } }; next(); });
+  let statusPolls = 0;
+  app.use((req, res, next) => { req.session = { user: { login: 'owner' } }; const poll = req.originalUrl.endsWith('/qr/status'); next(); if (poll) statusPolls++; });
   app.use('/api/attention-notify', service.createRouter({ requireAuth: (req, res, next) => next() }));
   const server = http.createServer(app).listen(0);
   const base = `http://127.0.0.1:${server.address().port}/api/attention-notify/telegram`;
@@ -478,7 +479,7 @@ async function loginServer(options = {}) {
     bodies.push(raw);
     return { status: res.status, data: JSON.parse(raw) };
   };
-  return { gram, state, timers, plugin, db, logs, server, call, bodies, close: () => { plugin.close(); server.close(); } };
+  return { gram, state, timers, plugin, db, logs, server, call, bodies, statusPolls: () => statusPolls, close: () => { plugin.close(); server.close(); } };
 }
 
 test('login: start sends the code, verify asks for the 2FA password, password finishes; secrets never leave the server', async () => {
@@ -712,7 +713,7 @@ test('QR login: it expires after 10 minutes or on cancel, overlapping polls expo
     state.handlers['auth.ExportLoginToken'] = () => new Promise(resolve => { release = () => resolve({ className: 'auth.LoginToken', token: TOKEN_2, expires: Math.floor(clock / 1000) + 30 }); });
     clock += 31000;
     const polls = [call('GET', '/qr/status'), call('GET', '/qr/status')];
-    await new Promise(resolve => setTimeout(resolve, 50));
+    await until(() => ctx.statusPolls() === 3 && release, 'both polls in the route (the first status call above counts too)');
     release();
     const answers = await Promise.all(polls);
     assert.deepEqual(answers.map(answer => answer.data.url), [urlOf(TOKEN_2), urlOf(TOKEN_2)]);
@@ -864,6 +865,7 @@ test('QR login: when a refresh export never resolves, /qr/status and an overlapp
     state.handlers['auth.ExportLoginToken'] = () => new Promise(resolve => { answerExport = resolve; });
     clock += 31000;
     const polls = [call('GET', '/qr/status'), call('GET', '/qr/status')];
+    await until(() => ctx.statusPolls() === 2, 'both polls in the route'); // the overlap this test is about: the timer must not fire before the second poll joins
     await fireNetworkTimer(timers);
     const answers = await Promise.all(polls);
     assert.deepEqual(answers.map(answer => [answer.status, answer.data.error]), [[504, UNREACHABLE], [504, UNREACHABLE]]);

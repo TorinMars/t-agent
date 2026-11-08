@@ -23,7 +23,8 @@ const express = require('express');
 const fsRead = require('../services/fs-read');
 const { MAX_TEXT_BYTES } = require('../services/file-content');
 
-const { createFsReader, requestedPath, isPseudoFile, spawnRunner, CHILD_SCRIPT, ERRORS } = fsRead;
+const { createFsReader, requestedPath, isPseudoFile, spawnRunner, spawnStreamRunner, CHILD_SCRIPT, ERRORS, VARIANT_MESSAGES } = fsRead;
+const { PassThrough } = require('node:stream');
 const isRoot = typeof process.getuid === 'function' && process.getuid() === 0;
 
 const home = path.join(root, 'home');
@@ -47,6 +48,39 @@ fs.writeFileSync(path.join(files, 'pic.gif'), GIF);
 fs.writeFileSync(path.join(files, 'pic.webp'), WEBP);
 fs.writeFileSync(path.join(files, 'png-named.jpg'), PNG);
 fs.writeFileSync(path.join(files, 'drawing.svg'), '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>');
+fs.writeFileSync(path.join(files, 'page.svg'), '<html><body><svg></svg></body></html>');
+const SVG = Buffer.from('<?xml version="1.0" encoding="UTF-8"?>\n<!-- icon -->\n<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"/>\n');
+const BMP = Buffer.concat([Buffer.from('BM', 'latin1'), Buffer.alloc(30, 4)]);
+const ICO = Buffer.concat([Buffer.from([0, 0, 1, 0, 1, 0]), Buffer.alloc(16, 5)]);
+const AVIF = Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from('ftypavif\0\0\0\0mif1miaf', 'latin1'), Buffer.alloc(8)]);
+fs.writeFileSync(path.join(files, 'pic.svg'), SVG);
+fs.writeFileSync(path.join(files, 'pic.bmp'), BMP);
+fs.writeFileSync(path.join(files, 'pic.ico'), ICO);
+fs.writeFileSync(path.join(files, 'pic.avif'), AVIF);
+fs.writeFileSync(path.join(files, 'ico-named.bmp'), ICO);
+fs.writeFileSync(path.join(files, 'mp4-named.avif'), Buffer.concat([Buffer.from([0, 0, 0, 0x14]), Buffer.from('ftypisom\0\0\0\0mp41', 'latin1')]));
+{
+  const descriptor = fs.openSync(path.join(files, 'huge.png'), 'w');
+  fs.writeSync(descriptor, PNG);
+  fs.ftruncateSync(descriptor, 20 * 1024 * 1024 + 1);
+  fs.closeSync(descriptor);
+}
+fs.writeFileSync(path.join(files, 'medium.png'), Buffer.concat([PNG, Buffer.alloc(6 * 1024 * 1024)]));
+// Raw files (PDF, audio, video).
+const PDF = Buffer.concat([Buffer.from('%PDF-1.4\n', 'latin1'), Buffer.alloc(3000, 0x20), Buffer.from('\n%%EOF\n', 'latin1')]);
+const MP4 = Buffer.concat([Buffer.from([0, 0, 0, 0x14]), Buffer.from('ftypisom\0\0\0\0mp41', 'latin1'), Buffer.alloc(5000, 9)]);
+const OGG = Buffer.concat([Buffer.from('OggS', 'latin1'), Buffer.alloc(100, 1)]);
+fs.writeFileSync(path.join(files, 'doc.pdf'), PDF);
+fs.writeFileSync(path.join(files, 'clip.mp4'), MP4);
+fs.writeFileSync(path.join(files, 'voice.opus'), OGG);
+fs.writeFileSync(path.join(files, 'fake.pdf'), 'not a pdf');
+fs.symlinkSync(path.join(files, 'clip.mp4'), path.join(files, 'link.mp4'));
+{
+  const descriptor = fs.openSync(path.join(files, 'huge.mp4'), 'w');
+  fs.writeSync(descriptor, MP4.subarray(0, 32));
+  fs.ftruncateSync(descriptor, 200 * 1024 * 1024 + 1);
+  fs.closeSync(descriptor);
+}
 fs.symlinkSync(path.join(files, 'notes.md'), path.join(files, 'link.md'));
 fs.symlinkSync(path.join(files, 'nowhere.md'), path.join(files, 'dangling.md'));
 fs.writeFileSync(path.join(files, 'secret.txt'), 'hidden\n');
@@ -57,6 +91,13 @@ fs.chmodSync(path.join(files, 'secret.txt'), 0o000);
   fs.closeSync(descriptor);
 }
 execFileSync('mkfifo', [path.join(files, 'pipe')]);
+execFileSync('mkfifo', [path.join(files, 'pipe.mp4')]);
+
+async function collect(stream) {
+  const chunks = [];
+  for await (const chunk of stream) chunks.push(chunk);
+  return Buffer.concat(chunks);
+}
 
 const local = createFsReader({ terminalUser: () => null, homeDir: () => home });
 
@@ -148,17 +189,59 @@ test('missing, dangling, too large, binary, not UTF-8 and unreadable files get t
   if (!isRoot) await failsWith(local.readText(path.join(files, 'secret.txt')), 'PERMISSION_DENIED', 403);
 });
 
-test('images: PNG, JPEG, GIF and WebP by name and content; SVG and a wrong name are refused', async () => {
-  for (const [name, type, bytes] of [['pic.png', 'image/png', PNG], ['pic.jpg', 'image/jpeg', JPEG], ['pic.gif', 'image/gif', GIF], ['pic.webp', 'image/webp', WEBP]]) {
+test('images: PNG, JPEG, GIF, WebP, SVG, BMP, ICO and AVIF by name and content; a wrong name or content is refused', async () => {
+  for (const [name, type, bytes] of [
+    ['pic.png', 'image/png', PNG], ['pic.jpg', 'image/jpeg', JPEG], ['pic.gif', 'image/gif', GIF], ['pic.webp', 'image/webp', WEBP],
+    ['pic.svg', 'image/svg+xml', SVG], ['pic.bmp', 'image/bmp', BMP], ['pic.ico', 'image/x-icon', ICO], ['pic.avif', 'image/avif', AVIF],
+    ['medium.png', 'image/png', null],
+  ]) {
     const image = await local.readImage(path.join(files, name));
     assert.equal(image.type, type, name);
-    assert.deepEqual(image.data, bytes, name);
+    if (bytes) assert.deepEqual(image.data, bytes, name);
     assert.equal(image.realPath, path.join(realFiles, name));
   }
   await failsWith(local.readImage(path.join(files, 'png-named.jpg')), 'FILE_NOT_IMAGE', 415);
-  await failsWith(local.readImage(path.join(files, 'drawing.svg')), 'FILE_NOT_IMAGE', 415);
+  // An SVG with a script is still an image: the answer is sandboxed and the page shows it only through <img>.
+  assert.equal((await local.readImage(path.join(files, 'drawing.svg'))).type, 'image/svg+xml');
+  await failsWith(local.readImage(path.join(files, 'page.svg')), 'FILE_NOT_IMAGE', 415);
+  await failsWith(local.readImage(path.join(files, 'ico-named.bmp')), 'FILE_NOT_IMAGE', 415);
+  await failsWith(local.readImage(path.join(files, 'mp4-named.avif')), 'FILE_NOT_IMAGE', 415);
+  await failsWith(local.readImage(path.join(files, 'huge.png')), 'FILE_TOO_LARGE', 413);
   await failsWith(local.readImage(path.join(files, 'notes.md')), 'FILE_NOT_IMAGE', 415);
   await failsWith(local.readImage(path.join(files, 'missing.png')), 'NOT_FOUND', 404);
+});
+
+test('raw: PDF, audio and video open as a stream of the whole file or one range, by name and signature', async () => {
+  const pdf = await local.openRaw(path.join(files, 'doc.pdf'));
+  assert.deepEqual({ ...pdf, stream: undefined }, {
+    path: path.join(files, 'doc.pdf'), realPath: path.join(realFiles, 'doc.pdf'), type: 'application/pdf', kind: 'pdf', size: PDF.length, range: null, stream: undefined,
+  });
+  assert.deepEqual(await collect(pdf.stream), PDF);
+  const part = await local.openRaw(path.join(files, 'clip.mp4'), { range: 'bytes=10-29' });
+  assert.equal(part.kind, 'video');
+  assert.deepEqual(part.range, { start: 10, end: 29 });
+  assert.deepEqual(await collect(part.stream), MP4.subarray(10, 30));
+  const linked = await local.openRaw(path.join(files, 'link.mp4'), { range: 'bytes=-5' });
+  assert.equal(linked.realPath, path.join(realFiles, 'clip.mp4'), 'symbolic links are followed, as for text');
+  assert.deepEqual(await collect(linked.stream), MP4.subarray(MP4.length - 5));
+  const voice = await local.openRaw(path.join(files, 'voice.opus'));
+  assert.deepEqual([voice.type, voice.kind], ['audio/ogg', 'audio']);
+  voice.stream.destroy();
+  const head = await local.openRaw(path.join(files, 'clip.mp4'), { head: true });
+  assert.equal(head.stream, null);
+  assert.equal(head.size, MP4.length);
+  const outside = await local.openRaw(path.join(files, 'clip.mp4'), { range: `bytes=${MP4.length}-` });
+  assert.equal(outside.range, 'unsatisfiable');
+  assert.equal(outside.stream, null);
+
+  await failsWith(local.openRaw(path.join(files, 'fake.pdf')), 'FILE_UNSUPPORTED', 415);
+  await failsWith(local.openRaw(path.join(files, 'notes.md')), 'FILE_UNSUPPORTED', 415);
+  await failsWith(local.openRaw(path.join(files, 'pic.png')), 'FILE_UNSUPPORTED', 415);
+  await failsWith(local.openRaw(path.join(files, 'huge.mp4')), 'FILE_TOO_LARGE', 413);
+  await failsWith(local.openRaw(path.join(files, 'pipe.mp4')), 'NOT_A_REGULAR_FILE', 400);
+  await failsWith(local.openRaw(path.join(files, 'missing.mp4')), 'NOT_FOUND', 404);
+  await failsWith(local.openRaw('relative.pdf'), 'BAD_PATH', 400);
+  await assert.rejects(local.openRaw(path.join(files, 'huge.mp4')), error => error.variant === 'raw', 'the raw messages are used');
 });
 
 // ── The dropped terminal user: a child process runs with that uid/gid ──
@@ -232,8 +315,112 @@ test('dropped user: the real child script reads with the same answers as the in-
   await failsWith(child.readText(path.join(files, 'missing.md')), 'NOT_FOUND', 404);
   await failsWith(child.readText(path.join(files, 'large.txt')), 'FILE_TOO_LARGE', 413);
   await failsWith(child.readText(path.join(files, 'binary.txt')), 'FILE_UNSUPPORTED', 415);
-  await failsWith(child.readImage(path.join(files, 'drawing.svg')), 'FILE_NOT_IMAGE', 415);
+  await failsWith(child.readImage(path.join(files, 'page.svg')), 'FILE_NOT_IMAGE', 415);
+  await failsWith(child.readImage(path.join(files, 'huge.png')), 'FILE_TOO_LARGE', 413);
+  assert.deepEqual(await child.readImage(path.join(files, 'medium.png')), await local.readImage(path.join(files, 'medium.png')), 'the child may send 20 MiB');
   if (!isRoot) await failsWith(child.readText(path.join(files, 'secret.txt')), 'PERMISSION_DENIED', 403);
+});
+
+function fakeStream(answer) {
+  const calls = [];
+  const streamRunner = async options => { calls.push(options); return typeof answer === 'function' ? answer(options) : answer; };
+  return { calls, streamRunner };
+}
+const rawFrame = (header, data) => {
+  const stream = new PassThrough();
+  stream.end(data || Buffer.alloc(0));
+  return { header, stream, kill() {} };
+};
+const mp4Head = MP4.subarray(0, 16).toString('base64');
+
+test('dropped user: a raw file is streamed by the child, checked by the parent, without a time limit after the header', async () => {
+  const { calls, streamRunner } = fakeStream(rawFrame({ realPath: '/home/dev/real.mp4', size: MP4.length, range: { start: 4, end: 11 }, head: mp4Head }, MP4.subarray(4, 12)));
+  const reader = createFsReader({ terminalUser: () => DEV, streamRunner, timeoutMs: 4321 });
+  const file = await reader.openRaw('~/clip.mp4', { range: 'bytes=4-11' });
+  assert.deepEqual([file.path, file.realPath, file.type, file.size], ['/home/dev/clip.mp4', '/home/dev/real.mp4', 'video/mp4', MP4.length]);
+  assert.deepEqual(await collect(file.stream), MP4.subarray(4, 12));
+  const [call] = calls;
+  assert.deepEqual(call.args, [CHILD_SCRIPT, 'raw', '/home/dev/clip.mp4', 'bytes=4-11', 'body']);
+  assert.deepEqual([call.uid, call.gid, call.cwd, call.timeoutMs, call.env.HOME, call.env.SESSION_SECRET], [1234, 2345, '/', 4321, '/home/dev', undefined]);
+
+  const headRunner = fakeStream(rawFrame({ realPath: '/x/a.mp4', size: MP4.length, range: null, head: mp4Head }));
+  const head = await createFsReader({ terminalUser: () => DEV, streamRunner: headRunner.streamRunner }).openRaw('/x/a.mp4', { head: true });
+  assert.equal(head.stream, null);
+  assert.equal(headRunner.calls[0].args[3], '', 'no Range header');
+  assert.equal(headRunner.calls[0].args[4], 'head');
+
+  const open = (answer, value = '/x/a.mp4', options = {}) => createFsReader({ terminalUser: () => DEV, streamRunner: fakeStream(answer).streamRunner }).openRaw(value, options);
+  await failsWith(open(rawFrame({ error: 'PERMISSION_DENIED' })), 'PERMISSION_DENIED', 403);
+  await failsWith(open(rawFrame({ error: 'FILE_TOO_LARGE' })), 'FILE_TOO_LARGE', 413);
+  await failsWith(open({ timedOut: true }), 'READ_TIMEOUT', 504);
+  await failsWith(open({ error: new Error('NO_HEADER') }), 'FS_READ_FAILED', 500);
+  await failsWith(open(rawFrame(null)), 'FS_READ_FAILED', 500);
+  await failsWith(open(rawFrame({ realPath: 'relative', size: 1, range: null, head: mp4Head })), 'FS_READ_FAILED', 500);
+  await failsWith(open(rawFrame({ realPath: '/x/a.mp4', size: 300 * 1024 * 1024, range: null, head: mp4Head })), 'FILE_TOO_LARGE', 413);
+  await failsWith(open(rawFrame({ realPath: '/x/a.mp4', size: 100, range: null, head: Buffer.from('%PDF-1.4').toString('base64') })), 'FILE_UNSUPPORTED', 415);
+  await failsWith(open(rawFrame({ realPath: '/x/a.mp4', size: 100, range: { start: 0, end: 9 }, head: mp4Head }), '/x/a.mp4', { range: 'bytes=0-4' }), 'FS_READ_FAILED', 500);
+  await failsWith(open(rawFrame({}), '/x/a.txt'), 'FILE_UNSUPPORTED', 415);
+  // A child that sends fewer (or more) bytes than the range makes the stream fail, so the answer is cut off rather than wrong.
+  const short = await open(rawFrame({ realPath: '/x/a.mp4', size: 100, range: null, head: mp4Head }, Buffer.alloc(50)));
+  await assert.rejects(collect(short.stream), /FS_READ_FAILED/);
+  const long = await open(rawFrame({ realPath: '/x/a.mp4', size: 10, range: null, head: mp4Head }, Buffer.alloc(50)));
+  await assert.rejects(collect(long.stream), /FS_READ_FAILED/);
+});
+
+test('dropped user: the real child streams raw files like the in-process read and stops when the answer closes', async t => {
+  if (typeof process.getuid !== 'function') return t.skip('no uid on this platform');
+  const self = { name: os.userInfo().username, uid: process.getuid(), gid: process.getgid(), home };
+  const child = createFsReader({ terminalUser: () => self });
+  for (const [value, range] of [[path.join(files, 'doc.pdf')], [path.join(files, 'clip.mp4'), 'bytes=100-199'], [path.join(files, 'link.mp4'), 'bytes=-3']]) {
+    const [mine, theirs] = [await local.openRaw(value, { range }), await child.openRaw(value, { range })];
+    assert.deepEqual({ ...theirs, stream: null }, { ...mine, stream: null }, value);
+    assert.deepEqual(await collect(theirs.stream), await collect(mine.stream), value);
+  }
+  assert.equal((await child.openRaw(path.join(files, 'clip.mp4'), { range: 'bytes=999999-' })).range, 'unsatisfiable');
+  assert.equal((await child.openRaw(path.join(files, 'clip.mp4'), { head: true })).stream, null);
+  await failsWith(child.openRaw(path.join(files, 'fake.pdf')), 'FILE_UNSUPPORTED', 415);
+  await failsWith(child.openRaw(path.join(files, 'huge.mp4')), 'FILE_TOO_LARGE', 413);
+  await failsWith(child.openRaw(path.join(files, 'pipe.mp4')), 'NOT_A_REGULAR_FILE', 400);
+  await failsWith(child.openRaw(path.join(files, 'missing.mp4')), 'NOT_FOUND', 404);
+
+  // A long stream is not killed by the 10 s first-byte limit, and destroying it kills the child.
+  const big = path.join(root, 'long.mp4');
+  fs.writeFileSync(big, Buffer.concat([MP4.subarray(0, 32), Buffer.alloc(8 * 1024 * 1024)]));
+  const slow = createFsReader({ terminalUser: () => self, timeoutMs: 2000 });
+  const started = await slow.openRaw(big);
+  let received = 0;
+  for await (const chunk of started.stream) {
+    received += chunk.length;
+    if (received === chunk.length) await new Promise(resolve => setTimeout(resolve, 2500));
+    if (received > 1024 * 1024) break;
+  }
+  assert.ok(received > 1024 * 1024, 'still streaming after the first-byte limit');
+});
+
+test('the stream runner gives up without a header in time and kills the command when the stream is destroyed', async () => {
+  const silent = await spawnStreamRunner({ command: process.execPath, args: ['-e', 'setTimeout(() => {}, 5000)'], cwd: '/', env: {}, timeoutMs: 200 });
+  assert.equal(silent.timedOut, true);
+  const none = await spawnStreamRunner({ command: process.execPath, args: ['-e', 'process.stdout.write("no newline")'], cwd: '/', env: {}, timeoutMs: 5000 });
+  assert.ok(none.error);
+  const missing = await spawnStreamRunner({ command: path.join(root, 'no-such-binary'), args: [], cwd: '/', env: {}, timeoutMs: 1000 });
+  assert.ok(missing.error);
+  const endless = await spawnStreamRunner({
+    command: process.execPath,
+    args: ['-e', 'process.stdout.write(JSON.stringify({ pid: process.pid }) + "\\nabc"); setInterval(() => process.stdout.write("x"), 10)'],
+    cwd: '/', env: {}, timeoutMs: 5000,
+  });
+  assert.ok(Number.isInteger(endless.header.pid));
+  const first = await new Promise(resolve => endless.stream.once('data', resolve));
+  assert.equal(first.toString().slice(0, 3), 'abc');
+  await new Promise(resolve => setTimeout(resolve, 300));
+  assert.doesNotThrow(() => process.kill(endless.header.pid, 0), 'no time limit once the header has come');
+  endless.stream.destroy();
+  let alive = true;
+  for (let tries = 0; alive && tries < 50; tries += 1) {
+    await new Promise(resolve => setTimeout(resolve, 20));
+    try { process.kill(endless.header.pid, 0); } catch { alive = false; }
+  }
+  assert.equal(alive, false, 'destroying the stream kills the command');
 });
 
 test('the spawn runner kills a child that runs too long or prints too much', async () => {
@@ -252,7 +439,7 @@ test('every error message of the API has a Chinese translation', () => {
   sandbox.window = sandbox;
   vm.createContext(sandbox);
   for (const file of ['i18n.js', 'i18n-zh-ui.js', 'i18n-zh-server.js', 'i18n-zh-extra.js']) vm.runInContext(fs.readFileSync(path.join(JS, file), 'utf8'), sandbox);
-  const missing = Object.values(ERRORS).map(([, message]) => message).filter(message => sandbox.I18n.t(message) === message);
+  const missing = [...Object.values(ERRORS).map(([, message]) => message), ...Object.values(VARIANT_MESSAGES)].filter(message => sandbox.I18n.t(message) === message);
   assert.deepEqual(missing, []);
 });
 
@@ -331,7 +518,7 @@ test('HTTP: the three routes answer text, images and errors alike; remote answer
       [path.join(files, 'missing.md'), 404, 'NOT_FOUND'],
       [path.join(files, 'large.txt'), 413, 'FILE_TOO_LARGE'],
       [path.join(files, 'binary.txt'), 415, 'FILE_UNSUPPORTED'],
-      [path.join(files, 'drawing.svg'), 415, 'FILE_NOT_IMAGE', 'image'],
+      [path.join(files, 'page.svg'), 415, 'FILE_NOT_IMAGE', 'image'],
       ...(isRoot ? [] : [[path.join(files, 'secret.txt'), 403, 'PERMISSION_DENIED']]),
     ]) {
       const response = await get(route, kind, value);
@@ -358,4 +545,68 @@ test('HTTP: the Engine needs a token, advertises fs:read-any, and the proxy refu
     assert.deepEqual(await response.json(), { error: 'FS_READ_UNSUPPORTED' });
   }
   assert.equal((await fetch(`${proxyBase}/api/remote-servers/999999/fs/content?path=/etc/hosts`)).status, 404);
+});
+
+test('HTTP: raw files stream on the three routes with Range support, the PDF exception to the sandbox, and API errors', async () => {
+  for (const route of routes()) {
+    const raw = (value, extra = {}, method = 'GET') => fetch(`${route.url('raw')}?path=${encodeURIComponent(value)}`, { method, headers: { ...route.headers, ...extra } });
+    const pdf = await raw(path.join(files, 'doc.pdf'));
+    assert.equal(pdf.status, 200, route.name);
+    assert.equal(pdf.headers.get('content-type'), 'application/pdf', route.name);
+    assert.equal(pdf.headers.get('content-security-policy'), null, `${route.name}: a sandboxed PDF is not shown by Chrome`);
+    assert.equal(pdf.headers.get('content-disposition'), 'inline', route.name);
+    assert.equal(pdf.headers.get('x-content-type-options'), 'nosniff', route.name);
+    assert.equal(pdf.headers.get('cache-control'), 'private, no-cache', route.name);
+    assert.equal(pdf.headers.get('accept-ranges'), 'bytes', route.name);
+    assert.deepEqual(Buffer.from(await pdf.arrayBuffer()), PDF, route.name);
+
+    const video = await raw(path.join(files, 'clip.mp4'), { Range: 'bytes=1000-1999' });
+    assert.equal(video.status, 206, route.name);
+    assert.equal(video.headers.get('content-type'), 'video/mp4', route.name);
+    assert.equal(video.headers.get('content-range'), `bytes 1000-1999/${MP4.length}`, route.name);
+    assert.equal(video.headers.get('content-length'), '1000', route.name);
+    assert.equal(video.headers.get('content-security-policy'), 'sandbox', route.name);
+    assert.deepEqual(Buffer.from(await video.arrayBuffer()), MP4.subarray(1000, 2000), route.name);
+
+    const head = await raw(path.join(files, 'clip.mp4'), {}, 'HEAD');
+    assert.equal(head.status, 200, route.name);
+    assert.equal(head.headers.get('content-length'), String(MP4.length), route.name);
+
+    const outside = await raw(path.join(files, 'clip.mp4'), { Range: 'bytes=999999-' });
+    assert.equal(outside.status, 416, route.name);
+    assert.equal(outside.headers.get('content-range'), `bytes */${MP4.length}`, route.name);
+    assert.deepEqual(await outside.json(), { error: 'RANGE_NOT_SATISFIABLE', message: ERRORS.RANGE_NOT_SATISFIABLE[1] }, route.name);
+
+    for (const [value, status, code, message] of [
+      [path.join(files, 'fake.pdf'), 415, 'FILE_UNSUPPORTED', VARIANT_MESSAGES['FILE_UNSUPPORTED:raw']],
+      [path.join(files, 'notes.md'), 415, 'FILE_UNSUPPORTED', VARIANT_MESSAGES['FILE_UNSUPPORTED:raw']],
+      [path.join(files, 'huge.mp4'), 413, 'FILE_TOO_LARGE', VARIANT_MESSAGES['FILE_TOO_LARGE:raw']],
+      [path.join(files, 'missing.mp4'), 404, 'NOT_FOUND', ERRORS.NOT_FOUND[1]],
+      [path.join(files, 'pipe.mp4'), 400, 'NOT_A_REGULAR_FILE', ERRORS.NOT_A_REGULAR_FILE[1]],
+      ['relative.pdf', 400, 'BAD_PATH', ERRORS.BAD_PATH[1]],
+    ]) {
+      const response = await raw(value);
+      assert.equal(response.status, status, `${route.name} ${value}`);
+      assert.deepEqual(await response.json(), { error: code, message }, `${route.name} ${value}`);
+      if (route.name === 'proxy') assert.equal(response.headers.get('content-security-policy'), 'sandbox', 'a proxied error keeps the sandbox');
+    }
+
+    const image = await get(route, 'image', path.join(files, 'pic.svg'));
+    assert.equal(image.status, 200, route.name);
+    assert.equal(image.headers.get('content-type'), 'image/svg+xml', route.name);
+    assert.equal(image.headers.get('content-security-policy'), 'sandbox', route.name);
+    assert.deepEqual(Buffer.from(await image.arrayBuffer()), SVG, route.name);
+    const tooBig = await get(route, 'image', path.join(files, 'huge.png'));
+    assert.equal(tooBig.status, 413, route.name);
+    assert.deepEqual(await tooBig.json(), { error: 'FILE_TOO_LARGE', message: VARIANT_MESSAGES['FILE_TOO_LARGE:image'] }, route.name);
+  }
+});
+
+test('HTTP: the Engine advertises files:raw and the proxy answers RAW_UNSUPPORTED for an Engine without it', async () => {
+  const info = await (await fetch(`${engineBase}/v1/info`, { headers: { Authorization: `Bearer ${token}` } })).json();
+  assert.ok(info.capabilities.includes('files:raw'));
+  assert.equal((await fetch(`${engineBase}/v1/fs/raw?path=/x.pdf`)).status, 401);
+  const response = await fetch(`${proxyBase}/api/remote-servers/${oldId}/fs/raw?path=/x.pdf`);
+  assert.equal(response.status, 501);
+  assert.deepEqual(await response.json(), { error: 'RAW_UNSUPPORTED' });
 });

@@ -79,6 +79,8 @@ function infoHandler(req, res) {
       'terminal:interactive', 'terminal:control', 'terminal:multiple', 'token:pairing',
       // fs:read-any: GET /v1/fs/content and /v1/fs/image read a file at any path (read only, as the terminal user).
       'fs:read-any',
+      // files:raw: GET /v1/tasks/:id/files/raw and /v1/fs/raw stream a PDF, audio or video file with Range support.
+      'files:raw',
       'engine:update', 'pm2:manage', 'apps:manage', 'agent-config:manage', 'file-sync:manage', 'workspace:manage', 'agent-chat:manage',
     ],
   });

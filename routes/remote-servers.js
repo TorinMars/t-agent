@@ -422,6 +422,14 @@ router.get('/:id/tasks/:taskId/document/:kind', async (req, res) => {
   } catch (error) { res.status(error.statusCode === 404 ? 404 : 502).json({ error: safeError(error) }); }
 });
 
+// Whether the Engine advertises a capability in /v1/info; false (after sending the error) when /v1/info cannot be read.
+async function remoteHas(target, res, capability) {
+  let info;
+  try { info = await request(target.row.base_url, '/v1/info', target.token); }
+  catch (error) { res.status(error.statusCode || 502).json({ error: safeError(error) }); return null; }
+  return Boolean(info && Array.isArray(info.capabilities) && info.capabilities.includes(capability));
+}
+
 // A file at any path on the Engine (read only), piped unbuffered with the Engine's status and error body. An Engine without the capability
 // 'fs:read-any' answers 501 FS_READ_UNSUPPORTED here. Remote answers keep `Content-Security-Policy: sandbox`, as every remote file.
 for (const kind of ['content', 'image']) {
@@ -440,13 +448,36 @@ for (const kind of ['content', 'image']) {
   });
 }
 
+// A PDF, audio or video file (task file or any path), streamed with the Range header passed both ways. An Engine without the capability
+// 'files:raw' answers 501 RAW_UNSUPPORTED. The sandbox is kept for everything except an application/pdf answer (services/remote-stream.js).
+router.get('/:id/fs/raw', async (req, res) => {
+  const target = remoteTarget(req, res);
+  if (!target) return;
+  const supported = await remoteHas(target, res, 'files:raw');
+  if (supported === null) return;
+  if (!supported) return res.status(501).json({ error: 'RAW_UNSUPPORTED' });
+  const query = new URLSearchParams();
+  if (typeof req.query.path === 'string') query.set('path', req.query.path);
+  streamRemote(req, res, target.row.base_url, target.token, `/v1/fs/raw?${query}`, { sandbox: true, raw: true });
+});
+router.get('/:id/tasks/:taskId/files/raw', async (req, res) => {
+  const target = remoteTarget(req, res);
+  if (!target) return;
+  const supported = await remoteHas(target, res, 'files:raw');
+  if (supported === null) return;
+  if (!supported) return res.status(501).json({ error: 'RAW_UNSUPPORTED' });
+  const query = new URLSearchParams();
+  for (const key of ['path', 'terminal']) if (req.query[key] !== undefined) query.set(key, String(req.query[key]));
+  streamRemote(req, res, target.row.base_url, target.token, `${taskPath(req)}/files/raw?${query}`, { sandbox: true, raw: true });
+});
+
 router.get('/:id/tasks/:taskId/files/content', proxyFiles('GET', '/content'));
 // An image of the working directory, not buffered: the Engine checks the path and the type (an older Engine answers 404, the page shows the alt text).
 router.get('/:id/tasks/:taskId/files/image', (req, res) => {
   const target = remoteTarget(req, res);
   if (!target) return;
   const query = new URLSearchParams();
-  if (req.query.path !== undefined) query.set('path', String(req.query.path));
+  for (const key of ['path', 'terminal']) if (req.query[key] !== undefined) query.set(key, String(req.query[key]));
   streamRemote(req, res, target.row.base_url, target.token, `${taskPath(req)}/files/image?${query}`, { sandbox: true });
 });
 router.put('/:id/tasks/:taskId/files/content', proxyFiles('PUT', '/content'));

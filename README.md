@@ -321,7 +321,17 @@ t-attention rm 12
 - `show` prints the task's context card first: goal, progress (last reply, turns, changed files), what it needs from you (with the command waiting for permission), folder, branch and the command to resume the Claude session.
 - Every command takes `--json`. Exit codes: 0 ok, 1 usage (also a value the server refuses), 2 not logged in or token refused, 3 not found, 4 server or network error.
 - Config: `--url` / `--token` > `TA_ATTENTION_URL` / `TA_ATTENTION_TOKEN` > `~/.tagent/attention-client.json` (mode 600, written by `login`; `TAGENT_HOME` moves the folder).
-- `login` also records where the Claude Code listener lives (`~/.tagent/listeners/claude-hook.path`). With that, the hooks synced into `~/.claude/settings.json` by `ta` turn every Claude Code session into one task: working while it runs, Needs you on a permission prompt or a question, Review when the turn ends, Failed on an API error. Without a login the hook does nothing.
+- `login` also records where the Claude Code listener lives (`~/.tagent/listeners/claude-hook.path`) and adds the listener hooks to `~/.claude/settings.json` (it keeps everything else there and makes a `.t-agent.bak` copy before the first change; `--no-hooks` skips this; `ta` syncs the same hooks). With that, every Claude Code session becomes one task: working while it runs, Needs you on a permission prompt or a question, Review when the turn ends, Failed on an API error. Without a login the hook does nothing.
+
+Easier ways to connect Claude Code:
+
+- **This machine**: Settings -> T-Attention -> Plugins -> claude -> "Install on this machine". It makes a token, saves the login and adds the hooks in one step (for the terminal user when the service runs as root).
+- **T-Agent terminals** connect by themselves: each terminal gets its own short-lived token in `TA_ATTENTION_URL` / `TA_ATTENTION_TOKEN` (ended when the terminal closes), so Claude started there reports once the hooks are in `~/.claude/settings.json`.
+- **Another machine** (with T-Agent installed): click "Another machine…" to get a 6-digit code (10 minutes, works once), then run there:
+
+```bash
+t-attention pair 123456 --url https://your-client.example.com
+```
 
 ## Tokens and pairing
 

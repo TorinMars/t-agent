@@ -73,3 +73,39 @@ test('modes summary: the statuses that are not off, in the settings order', asyn
   const t = text => ({ 'Needs you': 'NY', Call: 'C' })[text] || text;
   assert.equal(modesSummary({ waiting_user: 'call' }, { t }), 'NY: C');
 });
+
+test('installAction, canUninstall and showManualSteps follow the local state of an installable listener', async () => {
+  const { installAction, canUninstall, showManualSteps } = await load();
+  const ready = { hookPath: true, loggedIn: true, toolHooks: true, hooksCurrent: true, installable: true };
+  assert.equal(installAction(listener(ready)), null, 'set up: nothing to do');
+  assert.equal(installAction(listener({ ...ready, hooksCurrent: false })), 'update');
+  assert.equal(installAction(listener({ ...ready, toolHooks: false })), 'install');
+  assert.equal(installAction(listener({ ...ready, toolHooks: null })), 'install', 'an unreadable settings file: the install says why');
+  assert.equal(installAction(listener({ ...ready, loggedIn: false })), 'install');
+  assert.equal(installAction(listener({ ...ready, installable: false })), null);
+  assert.equal(installAction({ ...listener(ready), error: 'broken' }), null);
+  assert.equal(installAction(null), null);
+  assert.equal(canUninstall(listener(ready)), true);
+  assert.equal(canUninstall(listener({ installable: true, hookPath: false, toolHooks: false })), false);
+  assert.equal(canUninstall(listener({ installable: true, hookPath: false, toolHooks: true })), true);
+  assert.equal(canUninstall(listener({ hookPath: true })), false, 'no installer: no uninstall');
+  assert.equal(showManualSteps(listener(ready)), false);
+  assert.equal(showManualSteps(listener({ hookPath: false })), true);
+});
+
+test('installSummary, secondsLeft, countdownText and codeGroups', async () => {
+  const { installSummary, secondsLeft, countdownText, codeGroups } = await load();
+  const t = text => `[${text}]`;
+  assert.equal(installSummary({ changed: true, client: 'written' }, { t }), '[Claude Code hooks added to ~/.claude/settings.json]; [a token "claude listener (this machine)" was made and saved].');
+  assert.equal(installSummary({ changed: false, client: 'kept' }, { t }), '[The Claude Code hooks were already in place]; [the saved login still works].');
+  assert.equal(installSummary(null), '');
+  assert.equal(secondsLeft('2026-11-08T12:10:00.000Z', NOW), 600);
+  assert.equal(secondsLeft('2026-11-08T12:00:00.500Z', NOW), 1);
+  assert.equal(secondsLeft('2026-11-08T11:00:00Z', NOW), 0);
+  assert.equal(secondsLeft(undefined, NOW), 0);
+  assert.equal(countdownText(545), '9:05');
+  assert.equal(countdownText(0), '0:00');
+  assert.equal(countdownText(-3), '0:00');
+  assert.equal(codeGroups('123456'), '123 456');
+  assert.equal(codeGroups('12'), '12');
+});

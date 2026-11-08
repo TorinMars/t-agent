@@ -11,6 +11,11 @@
 // - excerpt (the end of a session transcript, at most 8 KiB) is never stored or published: only in-process subscribers of onChangeInternal
 //   (the AI summary) get it with the change.
 // - Tokens ('tatt_' + 32 random bytes base64url) are stored as sha256 hashes only; the token itself is returned once, at creation.
+// - Terminal tokens (the same format) are made for each shell T-Agent starts (routes/terminal.js: TA_ATTENTION_TOKEN) and live in memory only,
+//   as sha256 hashes: they are not in attention_tokens, not in the token list, and end when the terminal closes or the server stops (the
+//   shells end with it, so a server start never finds one left over).
+// - Pairing codes (6 digits, 10 minutes, one at a time, single use) let another machine get a normal token: createPairing on the page,
+//   claimPairing from `t-attention pair`. They live in memory only, as sha256 hashes; too many wrong codes end the active one.
 const crypto = require('crypto');
 
 const STATUSES = Object.freeze(['todo', 'working', 'waiting_user', 'review', 'done', 'failed', 'cancelled']);
@@ -250,6 +255,16 @@ function rowToEvent(row) {
   let data = null;
   if (row.data) { try { data = JSON.parse(row.data); } catch { data = null; } }
   return { ...row, data };
+}
+
+const PAIRING = Object.freeze({ ttlMs: 10 * 60 * 1000, maxFailures: 20 });
+
+// The address a paired machine is given: an http(s) origin without user name, password, query or fragment.
+function pairingUrl(value) {
+  let parsed;
+  try { parsed = new URL(String(value || '')); } catch { throw invalid('origin must be the http(s) address of this page'); }
+  if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) throw invalid('origin must be the http(s) address of this page');
+  return `${parsed.protocol}//${parsed.host}${parsed.pathname.replace(/\/+$/, '')}`;
 }
 
 const tokenView = row => ({ id: row.id, name: row.name, created_at: row.created_at, last_used_at: row.last_used_at, revoked_at: row.revoked_at });
@@ -503,9 +518,39 @@ function createAttentionService({ db, now = () => new Date() } = {}) {
     return tokenView(db.prepare('SELECT * FROM attention_tokens WHERE id = ?').get(row.id));
   }
 
+  // Terminal tokens: key (task:terminal) -> { id, name, hash }; hash -> the same entry.
+  const terminalByKey = new Map();
+  const terminalByHash = new Map();
+  let terminalSeq = 0;
+  const terminalKey = (taskId, terminalId) => `${Number(taskId)}:${String(terminalId)}`;
+
+  // A new token for the shell of this terminal; a previous one of the same terminal ends. Returns { id, name, token }.
+  function issueTerminalToken({ taskId, terminalId } = {}) {
+    const key = terminalKey(taskId, terminalId);
+    revokeTerminalToken({ taskId, terminalId });
+    const token = `tatt_${crypto.randomBytes(32).toString('base64url')}`;
+    terminalSeq += 1;
+    const entry = { id: `terminal:${terminalSeq}`, name: `terminal ${key}`.slice(0, LIMITS.tokenName), hash: hashToken(token), key };
+    terminalByKey.set(key, entry);
+    terminalByHash.set(entry.hash, entry);
+    return { id: entry.id, name: entry.name, token };
+  }
+
+  function revokeTerminalToken({ taskId, terminalId } = {}) {
+    const entry = terminalByKey.get(terminalKey(taskId, terminalId));
+    if (!entry) return false;
+    terminalByKey.delete(entry.key);
+    terminalByHash.delete(entry.hash);
+    return true;
+  }
+
+  const terminalTokenCount = () => terminalByKey.size;
+
   // Returns { id, name } for a valid, unrevoked token (and stores last_used_at), else null.
   function verifyToken(token) {
     if (typeof token !== 'string' || !TOKEN_PATTERN.test(token)) return null;
+    const terminal = terminalByHash.get(hashToken(token));
+    if (terminal) return { id: terminal.id, name: terminal.name, kind: 'terminal' };
     const row = db.prepare('SELECT * FROM attention_tokens WHERE token_hash = ?').get(hashToken(token));
     if (!row || row.revoked_at) return null;
     db.prepare('UPDATE attention_tokens SET last_used_at = ? WHERE id = ?').run(stamp(), row.id);
@@ -513,11 +558,65 @@ function createAttentionService({ db, now = () => new Date() } = {}) {
   }
 
   function tokenActive(id) {
+    if (typeof id === 'string' && id.startsWith('terminal:')) return [...terminalByKey.values()].some(entry => entry.id === id);
     const row = db.prepare('SELECT revoked_at FROM attention_tokens WHERE id = ?').get(Number(id));
     return Boolean(row && !row.revoked_at);
   }
 
-  return { list, get, sourceStats, getByRef, events, detail, detailByRef, create, update, upsertByRef, remove, onChange, onChangeInternal, listTokens, createToken, revokeToken, verifyToken, tokenActive };
+  // Pairing: one active code { hash, expiresAt, url, failures }; the last claim { name, at } for the page.
+  let pairing = null;
+  let lastClaim = null;
+  const nowMs = () => now().getTime();
+
+  // url: the address the page used (sent by the page); it is what the claiming machine gets back. Returns { code, expiresAt }.
+  function createPairing({ url } = {}) {
+    const address = pairingUrl(url);
+    const code = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
+    const expiresAt = nowMs() + PAIRING.ttlMs;
+    pairing = { hash: hashToken(`pair:${code}`), expiresAt, url: address, failures: 0 };
+    lastClaim = null;
+    return { code, expiresAt: new Date(expiresAt).toISOString(), url: address };
+  }
+
+  function activePairing() {
+    if (pairing && pairing.expiresAt <= nowMs()) pairing = null;
+    return pairing;
+  }
+
+  function pairingStatus() {
+    const active = activePairing();
+    return { active: Boolean(active), expiresAt: active ? new Date(active.expiresAt).toISOString() : null, claimed: lastClaim };
+  }
+
+  function cancelPairing() { pairing = null; return pairingStatus(); }
+
+  // Exchanges the active code for a new normal token named "claude listener (<name>)". The code ends on success (single use) and after
+  // PAIRING.maxFailures wrong codes. Returns { url, token, name }; throws PAIRING_INVALID (400) for a wrong, used or expired code.
+  function claimPairing({ code, name } = {}) {
+    // The name is checked first, so a bad name never uses up the code.
+    const machine = text('name', 60, { singleLine: true })(typeof name === 'string' && name.trim() ? name.trim().slice(0, 60) : 'another machine') || 'another machine';
+    const active = activePairing();
+    const given = typeof code === 'string' ? code.replace(/[\s-]/g, '') : '';
+    const wrong = () => new AttentionError('PAIRING_INVALID', 'The pairing code is wrong, used or expired; create a new one on the page', 400);
+    if (!active || !/^\d{6}$/.test(given)) {
+      if (active) { active.failures += 1; if (active.failures >= PAIRING.maxFailures) pairing = null; }
+      throw wrong();
+    }
+    const expected = Buffer.from(active.hash, 'hex');
+    const actual = Buffer.from(hashToken(`pair:${given}`), 'hex');
+    if (!crypto.timingSafeEqual(expected, actual)) {
+      active.failures += 1;
+      if (active.failures >= PAIRING.maxFailures) pairing = null;
+      throw wrong();
+    }
+    pairing = null; // used: before the token exists, so a second claim cannot get another one
+    const created = createToken({ name: `claude listener (${machine})` });
+    lastClaim = { name: created.name, at: stamp() };
+    return { url: active.url, token: created.token, name: created.name, id: created.id };
+  }
+
+  return { list, get, sourceStats, getByRef, events, detail, detailByRef, create, update, upsertByRef, remove, onChange, onChangeInternal, listTokens, createToken, revokeToken, verifyToken, tokenActive,
+    issueTerminalToken, revokeTerminalToken, terminalTokenCount, createPairing, pairingStatus, cancelPairing, claimPairing };
 }
 
 // The service of this server's database, made on first use (so requiring this file does not open the database).
@@ -528,7 +627,7 @@ function defaultService() {
 }
 
 module.exports = {
-  createAttentionService, defaultService, AttentionError, ACTIVITY_KINDS, PENDING_KINDS, STATUSES, PRIORITIES, FINISHED, LIMITS, TOKEN_PATTERN, hashToken,
+  createAttentionService, defaultService, AttentionError, PAIRING, ACTIVITY_KINDS, PENDING_KINDS, STATUSES, PRIORITIES, FINISHED, LIMITS, TOKEN_PATTERN, hashToken,
   // In-process subscribers (notifiers) of this server's list.
   onChange: fn => defaultService().onChange(fn),
 };

@@ -66,6 +66,42 @@ export function setupSteps(listener) {
 // The command that logs the CLI in to this page's Client; the token is a placeholder the person replaces.
 export const loginCommand = origin => `t-attention login --url ${origin} --token <token>`;
 
+// One-click install (POST /api/attention/plugins/claude/install): 'install' when the listener is not set up here or its hooks are missing,
+// 'update' when the hooks are there but not the current version, null when nothing is to do or the listener has no installer.
+export function installAction(listener) {
+  const local = (listener && listener.local) || {};
+  if (!listener || listener.error || !local.installable) return null;
+  if (!listenerInstalled(listener) || local.toolHooks !== true) return 'install';
+  if (local.hooksCurrent === false) return 'update';
+  return null;
+}
+
+// Uninstall is offered when something of the listener is on this machine (the hook path or the hooks).
+export const canUninstall = listener => Boolean(listener && !listener.error && listener.local && listener.local.installable && (listener.local.hookPath || listener.local.toolHooks === true));
+
+// The manual steps are only shown for a listener without the install button.
+export const showManualSteps = listener => !(listener && listener.local && listener.local.installable);
+
+// The line shown after an install: what was written. `result` is the answer of the install route.
+export function installSummary(result, { t = plain } = {}) {
+  if (!result) return '';
+  const parts = [result.changed ? t('Claude Code hooks added to ~/.claude/settings.json') : t('The Claude Code hooks were already in place')];
+  parts.push(result.client === 'written' ? t('a token "claude listener (this machine)" was made and saved') : t('the saved login still works'));
+  return `${parts.join('; ')}.`;
+}
+
+// Seconds left of a pairing code (0 when expired or unknown).
+export function secondsLeft(expiresAt, now = Date.now()) {
+  const at = typeof expiresAt === 'string' ? Date.parse(expiresAt) : NaN;
+  return Number.isFinite(at) ? Math.max(0, Math.ceil((at - now) / 1000)) : 0;
+}
+
+// "9:05" for 545 seconds.
+export const countdownText = seconds => `${Math.floor(Math.max(0, seconds) / 60)}:${String(Math.max(0, seconds) % 60).padStart(2, '0')}`;
+
+// The code in two groups of three for reading aloud: "123 456".
+export const codeGroups = code => (typeof code === 'string' && /^\d{6}$/.test(code) ? `${code.slice(0, 3)} ${code.slice(3)}` : String(code || ''));
+
 // The chips of a notifier.
 export function notifierChips(notifier) {
   if (!notifier) return [];

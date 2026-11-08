@@ -339,3 +339,68 @@ test('the same text twice within 2 seconds is one copy (pbcopy shim and the prog
   await flush();
   assert.deepEqual(writes, ['twice', 'other']);
 });
+
+// ── Paste: one clipboard read per tap (readClipboard / pickClipboard) ──
+function pasteModule() {
+  const context = vm.createContext({ TextDecoder, Uint8Array, atob, Promise, Response, Blob, Date, setTimeout, clearTimeout });
+  vm.runInContext(fs.readFileSync(require.resolve('../public/js/terminal-clipboard.js'), 'utf8') + '\nthis.clipboard = TerminalClipboard;', context);
+  return context.clipboard;
+}
+const item = parts => ({ types: Object.keys(parts), async getType(type) { if (!(type in parts)) throw new Error('NotFoundError'); return new Blob([parts[type]], { type }); } });
+const recordingClipboard = ({ items, readFails, noRead, text } = {}) => {
+  const calls = [];
+  return {
+    calls,
+    clipboard: {
+      ...(noRead ? {} : { read() { calls.push('read'); return readFails ? Promise.reject(new Error('NotAllowedError')) : Promise.resolve(items || []); } }),
+      readText() { calls.push('readText'); return Promise.resolve(text || ''); },
+    },
+  };
+};
+
+test('paste reads the clipboard once with read() and takes text/plain from the same items', async () => {
+  const { readClipboard } = pasteModule();
+  const { clipboard, calls } = recordingClipboard({ items: [item({ 'text/html': '<b>x</b>', 'text/plain': '中文 vim :wq\nline 2' })] });
+  const reading = readClipboard(clipboard);
+  assert.deepEqual(calls, ['read'], 'the read starts synchronously, inside the tap');
+  const result = await reading;
+  assert.equal(result.kind, 'text');
+  assert.equal(result.text, '中文 vim :wq\nline 2');
+  assert.deepEqual(calls, ['read'], 'readText is never called after read()');
+});
+
+test('paste prefers an image of any item over text', async () => {
+  const { readClipboard } = pasteModule();
+  const { clipboard, calls } = recordingClipboard({ items: [item({ 'text/plain': 'name.png' }), item({ 'image/png': 'PNGDATA' })] });
+  const result = await readClipboard(clipboard);
+  assert.equal(result.kind, 'image');
+  assert.equal(result.type, 'image/png');
+  assert.equal(await result.blob.text(), 'PNGDATA');
+  assert.deepEqual(calls, ['read']);
+});
+
+test('a refused read() is reported as denied and does not fall back to readText', async () => {
+  const { readClipboard } = pasteModule();
+  const { clipboard, calls } = recordingClipboard({ readFails: true, text: 'never' });
+  const result = await readClipboard(clipboard);
+  assert.equal(result.kind, 'denied');
+  assert.deepEqual(calls, ['read'], 'a second read would have no user gesture left on WebKit');
+});
+
+test('a read() that throws at once is denied, an empty clipboard is empty, no API is unsupported', async () => {
+  const { readClipboard } = pasteModule();
+  assert.equal((await readClipboard({ read() { throw new Error('SecurityError'); } })).kind, 'denied');
+  assert.equal((await readClipboard(recordingClipboard({ items: [item({ 'text/html': '<i></i>' })] }).clipboard)).kind, 'empty');
+  assert.equal((await readClipboard(recordingClipboard({ items: [item({ 'text/plain': '' })] }).clipboard)).kind, 'empty');
+  assert.equal((await readClipboard(undefined)).kind, 'unsupported', 'plain HTTP has no navigator.clipboard');
+  assert.equal((await readClipboard({})).kind, 'unsupported');
+});
+
+test('readText is used only when read() does not exist', async () => {
+  const { readClipboard } = pasteModule();
+  const { clipboard, calls } = recordingClipboard({ noRead: true, text: 'plain' });
+  const result = await readClipboard(clipboard);
+  assert.deepEqual({ kind: result.kind, text: result.text }, { kind: 'text', text: 'plain' });
+  assert.deepEqual(calls, ['readText']);
+  assert.equal((await readClipboard(recordingClipboard({ noRead: true, text: '' }).clipboard)).kind, 'empty');
+});

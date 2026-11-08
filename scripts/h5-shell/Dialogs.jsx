@@ -83,6 +83,48 @@ export function UploadDialog({ state }) {
   );
 }
 
+// The Paste sheet: the browser refused to read the clipboard (iOS asks for each read, and a dismissed "Paste" callout is a refusal), so the user pastes
+// with the system's own paste into this box. A paste of text into the empty box is sent at once; text typed or pasted next to other text waits for Send.
+// A pasted image or file goes to the upload. It sits at the top of the screen, so the on-screen keyboard does not cover it; h5.js returns the focus on close.
+export function PasteDialog({ state, ui }) {
+  const open = Boolean(state.pasteSheet && state.pasteSheet.open);
+  const [text, setText] = useState('');
+  useEffect(() => { if (!open) setText(''); }, [open]);
+  const onPaste = event => {
+    const data = event.clipboardData;
+    const files = [...((data && data.items) || [])].filter(entry => entry.kind === 'file');
+    if (files.length) {
+      event.preventDefault();
+      ui.actions.pasteSheetFile(files[0].getAsFile());
+      return;
+    }
+    const pasted = data ? data.getData('text/plain') : '';
+    if (pasted && !event.currentTarget.value) { event.preventDefault(); ui.actions.pasteSheetSend(pasted); }
+  };
+  return (
+    <Dialog
+      id="h5-paste" open={open} onClose={() => ui.actions.pasteSheetClose()} aria-labelledby="h5-paste-title" fullWidth maxWidth="xs" transitionDuration={0}
+      sx={{ '& .MuiDialog-container': { alignItems: 'flex-start' } }}
+      slotProps={{ paper: { sx: { m: 2, mt: 'max(16px, env(safe-area-inset-top))', width: 'calc(100% - 32px)', maxWidth: 420 } } }}
+    >
+      <DialogTitle id="h5-paste-title" sx={{ fontSize: 17, pb: 1 }}>{t('Paste')}</DialogTitle>
+      <DialogContent sx={{ pb: 1 }}>
+        <TextField
+          id="h5-paste-text" fullWidth multiline minRows={3} maxRows={8} autoFocus value={text} onChange={event => setText(event.target.value)}
+          placeholder={t('Long-press here and choose Paste')}
+          slotProps={{ htmlInput: { 'aria-label': t('Long-press here and choose Paste'), onPaste, autoCapitalize: 'off', autoCorrect: 'off', spellCheck: false, translate: 'no' } }}
+          sx={{ '& textarea': { fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 16 } }}
+        />
+        <DialogContentText id="h5-paste-hint" sx={{ mt: 1, fontSize: 13 }}>{t('The browser did not let the page read the clipboard. Long-press the box and choose Paste.')}</DialogContentText>
+      </DialogContent>
+      <DialogActions>
+        <Button id="h5-paste-cancel" color="inherit" onClick={() => ui.actions.pasteSheetClose()}>{t('Cancel')}</Button>
+        <Button id="h5-paste-send" variant="contained" disabled={!text} onClick={() => ui.actions.pasteSheetSend(text)}>{t('Send')}</Button>
+      </DialogActions>
+    </Dialog>
+  );
+}
+
 // The link of an image or file that was uploaded when its terminal was already gone.
 export function RetainDialog({ state, ui }) {
   const url = state.retainUrl;

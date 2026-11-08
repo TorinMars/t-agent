@@ -1709,38 +1709,60 @@
     if (event.target === translateInput) setOsk(false); // the system keyboard comes up for the draft box: the terminal keyboard steps aside
   });
   document.addEventListener('focusout', event => ui.set({ keyboard: keyboardTarget(event.relatedTarget) }));
-  // The first image on the clipboard, or null when there is none or the browser cannot read images.
-  async function clipboardImage() {
-    if (!navigator.clipboard?.read) return null;
-    try {
-      for (const item of await navigator.clipboard.read()) {
-        const type = item.types.find(name => /^image\/(png|jpeg|gif|webp)$/.test(name));
-        if (type) return new File([await item.getType(type)], 'pasted-image', { type });
-      }
-    } catch { /* fall back to reading text */ }
-    return null;
-  }
-  async function paste() {
-    if (!session) return;
+  // ── Paste (the "Paste text" row of the saved commands list) ──
+  // ONE clipboard read per tap, started synchronously in the tap's click handler (TerminalClipboard.readClipboard): WebKit, so every iOS browser, allows
+  // a read only inside the user gesture and shows its "Paste" callout for each read, so a second read (or a read after an await) is refused. An image
+  // goes to the upload, text to the terminal as one paste (xterm keeps bracketed paste). When the browser refuses the read, the user dismisses the
+  // callout or there is no clipboard API, the Paste sheet opens: a box where the system's own paste (long-press, Paste) always works.
+  let pasteReading = false;
+  function paste() {
+    if (!session || pasteReading || typeof TerminalClipboard === 'undefined') return;
     const target = session;
-    const image = await clipboardImage();
-    if (image) {
-      if (!uploading) void upload(target, image);
-      return;
-    }
-    let text;
-    try {
-      if (!navigator.clipboard?.readText) throw new Error('unsupported');
-      text = await navigator.clipboard.readText();
-    } catch {
-      tell(window.isSecureContext ? 'Paste failed: the browser denied clipboard access. Check permissions'
-        : 'Paste needs HTTPS or localhost; the browser blocks clipboard reads here', 'error');
-      return;
-    }
-    if (!text) { tell('The clipboard is empty'); return; }
-    if (uploading || !connected(session)) { tell('The terminal is not connected', 'error'); return; }
-    session.term.paste(text);
+    pasteReading = true;
+    const reading = TerminalClipboard.readClipboard(navigator.clipboard); // no await before this line: it must run inside the tap
+    reading.then(result => {
+      if (result.kind === 'image') { pasteImage(target, new File([result.blob], 'pasted-image', { type: result.type })); return; }
+      if (result.kind === 'text') { pasteInto(target, result.text); return; }
+      if (result.kind === 'empty') { tell('The clipboard is empty'); return; }
+      if (!window.isSecureContext) tell('Paste needs HTTPS or localhost; the browser blocks clipboard reads here', 'error');
+      openPasteSheet(target);
+    }).finally(() => { pasteReading = false; });
   }
+  function pasteInto(target, text) {
+    if (!text) return false;
+    if (uploading || !connected(target)) { tell('The terminal is not connected', 'error'); return false; }
+    target.clipboard?.gesture();
+    target.term.paste(text);
+    return true;
+  }
+  function pasteImage(target, file) {
+    if (!uploading && target && !target.disposed) void upload(target, file);
+  }
+  // The Paste sheet (Dialogs.jsx `PasteDialog`, `state.pasteSheet`). The element that had the focus (usually the terminal's textarea) gets it back on close.
+  let pasteSheet = null; // { target, focus }
+  function openPasteSheet(target) {
+    pasteSheet = { target, focus: document.activeElement };
+    ui.set({ pasteSheet: { open: true } });
+  }
+  function closePasteSheet() {
+    const was = pasteSheet;
+    pasteSheet = null;
+    ui.set({ pasteSheet: null });
+    const focus = was && was.focus;
+    if (focus && focus.isConnected && focus !== document.body && typeof focus.focus === 'function') setTimeout(() => { try { focus.focus({ preventScroll: true }); } catch { /* gone */ } }, 0);
+  }
+  ui.actions.pasteSheetSend = text => {
+    const target = pasteSheet ? pasteSheet.target : session;
+    if (!text) return;
+    if (pasteInto(target, text)) closePasteSheet();
+  };
+  ui.actions.pasteSheetFile = file => {
+    const target = pasteSheet ? pasteSheet.target : session;
+    if (!file) return;
+    closePasteSheet();
+    pasteImage(target, file);
+  };
+  ui.actions.pasteSheetClose = () => closePasteSheet();
 
   // ── Copy text: the terminal buffer as plain text in an overlay, so the browser's own selection handles work ──
   function bufferText(term) {

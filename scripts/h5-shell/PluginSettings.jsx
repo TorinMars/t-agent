@@ -14,6 +14,7 @@ import PluginConfigForm from './PluginConfigForm.jsx';
 import { listenerActivity, listenerChips, loginCommand, modesSummary, normalizePlugins, notifierChips, setupSteps } from './plugins-model.mjs';
 import { canUninstall, installAction, installSummary, showManualSteps } from './plugins-model.mjs';
 import { PairingDialog } from './PairingDialog.jsx';
+import PluginMarket from './PluginMarket.jsx';
 
 // The "Plugins" section of the Settings group "T-Attention": the listener and notifier plugins of this Client and their state, from
 // GET /api/attention/plugins (services/attention-plugins.js). "local" in the answer is about the machine that runs this Client, not this browser.
@@ -146,7 +147,26 @@ function PluginList({ id, title, empty, children }) {
   );
 }
 
+// The two tabs of the section: the overview of this Client's plugins, and the marketplace (PluginMarket.jsx, drawn once it is first chosen).
+const TABS = [{ key: 'installed', label: 'Installed' }, { key: 'market', label: 'Marketplace' }];
+function Tabs({ tab, onTab }) {
+  return (
+    <Box role="tablist" aria-label={t('Plugins')} sx={{ display: 'flex', gap: 0.5, borderBottom: 1, borderColor: 'divider' }}>
+      {TABS.map(entry => (
+        <Button
+          key={entry.key} id={`h5-plugins-tab-${entry.key}`} role="tab" aria-selected={tab === entry.key ? 'true' : 'false'} aria-controls={`h5-plugins-panel-${entry.key}`}
+          onClick={() => onTab(entry.key)} color={tab === entry.key ? 'primary' : 'inherit'}
+          sx={{ borderRadius: 0, px: 1.5, mb: '-1px', borderBottom: 2, borderColor: tab === entry.key ? 'primary.main' : 'transparent', fontWeight: tab === entry.key ? 700 : 500 }}
+        >{t(entry.label)}</Button>
+      ))}
+    </Box>
+  );
+}
+
 function PluginSlot({ opened }) {
+  const [tab, setTab] = useState('installed');
+  const [marketShown, setMarketShown] = useState(false);
+  const [marketRefresh, setMarketRefresh] = useState(0);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [feedback, say] = useFeedback();
@@ -161,8 +181,10 @@ function PluginSlot({ opened }) {
     <>
       <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, mt: 1 }}>
         <Typography variant="subtitle2" component="h3" sx={{ fontWeight: 700 }}>{t('Plugins')}</Typography>
-        <IconButton id="h5-plugins-refresh" size="small" disabled={loading || !opened} onClick={() => void load()} {...named(t('Refresh'))} sx={{ mr: -0.5 }}><Icon name="reload" size={20} /></IconButton>
+        <IconButton id="h5-plugins-refresh" size="small" disabled={loading || !opened} onClick={() => { void load(); setMarketRefresh(n => n + 1); }} {...named(t('Refresh'))} sx={{ mr: -0.5 }}><Icon name="reload" size={20} /></IconButton>
       </Box>
+      <Tabs tab={tab} onTab={key => { setTab(key); if (key === 'market') setMarketShown(true); }} />
+      <Box id="h5-plugins-panel-installed" role="tabpanel" aria-labelledby="h5-plugins-tab-installed" hidden={tab !== 'installed'} sx={{ display: tab === 'installed' ? 'flex' : 'none', flexDirection: 'column', gap: 1.5 }}>
       <Hint>{t('Listeners report what the agents do; notifiers send the reminders. The checks are about the machine that runs this Client.')}</Hint>
       <Box id="h5-plugins" aria-busy={loading ? 'true' : 'false'} sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
         {!data && loading ? <Hint id="h5-plugins-loading">{t('Loading…')}</Hint> : null}
@@ -178,6 +200,10 @@ function PluginSlot({ opened }) {
         ) : null}
       </Box>
       <Feedback id="h5-plugins-feedback" feedback={feedback} />
+      </Box>
+      <Box id="h5-plugins-panel-market" role="tabpanel" aria-labelledby="h5-plugins-tab-market" hidden={tab !== 'market'} sx={{ display: tab === 'market' ? 'block' : 'none' }}>
+        {marketShown && opened ? <PluginMarket refresh={marketRefresh} onChanged={() => void load()} /> : null}
+      </Box>
     </>
   );
 }

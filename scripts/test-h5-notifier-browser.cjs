@@ -1,6 +1,6 @@
 // Browser test of the T-Attention notifier settings (scripts/h5-shell/NotifierSettings.jsx) on a phone-sized page: the Telegram login steps
 // (api_id / api_hash / phone -> code -> 2FA password, and the QR login: the code from the server, its refresh, no polling while the group is
-// folded, the 2FA password after the scan), account 2 and the ring time, the test buttons, the rules (mode per status, delay,
+// folded, the 2FA password after the scan), account 2 (the ring time is in the manifest form, PluginConfigForm, not here), the test buttons, the rules (mode per status, delay,
 // quiet hours, limits, page address) and that secret fields are never filled from the server. The server is a fake fetch.
 const { chromium } = require('playwright');
 const fs = require('node:fs');
@@ -89,12 +89,12 @@ const html = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8').replace(
     assert.match(await page.locator('#h5-tg-state').textContent(), /Account One \(@acc_one\)/);
     assert.equal(await page.locator('#h5-tg-apihash').count(), 0, 'the login fields are gone once logged in');
     assert.equal(await page.locator('#h5-tg-test').isDisabled(), true, 'no test before account 2 is chosen');
-    // Account 2 and the ring time; then the test buttons.
+    // Account 2 (no ring time field here any more: it is in the plugin's manifest form); then the test buttons.
     await page.fill('#h5-tg-target', '@acc_two');
-    await page.fill('#h5-tg-seconds', '45');
+    assert.equal(await page.locator('#h5-tg-seconds').count(), 0, 'the old ring time field is gone');
     await page.locator('#h5-tg-save').click();
     await page.waitForFunction(() => /Account Two/.test(document.querySelector('#h5-tg-target-state').textContent));
-    assert.deepEqual((await notifyCalls()).find(call => call.url.endsWith('/telegram/config')).body, { target: '@acc_two', callSeconds: 45 });
+    assert.deepEqual((await notifyCalls()).find(call => call.url.endsWith('/telegram/config')).body, { target: '@acc_two' });
     assert.equal(await page.inputValue('#h5-tg-target'), 'acc_two', 'the saved target is echoed');
     await page.locator('#h5-tg-test').click();
     await page.waitForFunction(() => /Test message sent/.test(document.querySelector('#h5-tg-feedback').textContent));

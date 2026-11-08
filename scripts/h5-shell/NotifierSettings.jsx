@@ -10,7 +10,7 @@ import { api, t } from './common.jsx';
 import { Feedback, Field, Hint, failure, useFeedback } from './Form.jsx';
 import { registerAttentionSettings } from './attention-slots.mjs';
 
-// T-Attention notifier settings: the Telegram login (account 1), account 2, the ring time, and the rules (mode per status and notifier,
+// T-Attention notifier settings: the Telegram login (account 1), account 2, and the rules (mode per status and notifier,
 // delay before a call, quiet hours, hourly limits, the page address for links). Server side: services/attention-notify.js and
 // plugins/notifiers/telegram. The session string and the api_hash never come back from the server; secret fields start empty.
 const BASE = '/api/attention-notify';
@@ -37,7 +37,6 @@ function TelegramPart({ telegram, onChanged }) {
   const status = telegram.status || {};
   const [login, setLogin] = useState({ apiId: '', apiHash: '', phone: '', code: '', password: '' });
   const [target, setTarget] = useState('');
-  const [seconds, setSeconds] = useState('30');
   const [busy, setBusy] = useState(false);
   const [byPhone, setByPhone] = useState(false);
   const [qr, setQr] = useState(null); // { url, svg, expiresAt } of the QR login that is shown
@@ -69,7 +68,6 @@ function TelegramPart({ telegram, onChanged }) {
   }, [qrStep]);
   useEffect(() => {
     setTarget((status.target && status.target.input) || '');
-    setSeconds(String(status.callSeconds || 30));
     // Typed secrets are dropped after each server step, so they do not stay in the page.
     setLogin(current => ({ ...current, apiId: status.apiId ? String(status.apiId) : current.apiId, apiHash: '', code: '', password: '' }));
   }, [telegram]);
@@ -88,7 +86,7 @@ function TelegramPart({ telegram, onChanged }) {
   const password = () => run(() => api('POST', `${BASE}/telegram/password`, { password: login.password }), 'Logged in');
   const cancel = () => run(() => api('POST', `${BASE}/telegram/cancel`, {}), '');
   const logout = () => { if (confirm(t('Log out of Telegram? The saved session is deleted here and ended on Telegram.'))) void run(() => api('POST', `${BASE}/telegram/logout`, {}), 'Logged out'); };
-  const save = () => run(() => api('PUT', `${BASE}/telegram/config`, { target: target.trim(), callSeconds: Number(seconds) }), 'Saved');
+  const save = () => run(() => api('PUT', `${BASE}/telegram/config`, { target: target.trim() }), 'Saved');
   const test = kind => run(() => api('POST', `${BASE}/telegram/test`, { kind }), result => (kind === 'call' ? `${t('Test call')}: ${t(OUTCOME_LABELS[`call_${result.outcome}`] || result.outcome)}` : 'Test message sent'));
   const account = status.account;
   return (
@@ -150,7 +148,6 @@ function TelegramPart({ telegram, onChanged }) {
         <>
           <Field id="h5-tg-target" label="Account 2 (username or user id)" value={target} onChange={event => setTarget(event.target.value)} placeholder="@username" />
           <Hint id="h5-tg-target-state">{status.target ? `${t('Sends to:')} ${status.target.name}${status.target.username ? ` (@${status.target.username})` : ''}` : t('No account 2 chosen yet')}</Hint>
-          <Field id="h5-tg-seconds" label="Ring time (seconds)" type="number" value={seconds} onChange={event => setSeconds(event.target.value)} htmlInput={{ inputMode: 'numeric', min: 5, max: 120 }} />
           <Hint>{t('For calls, account 2 must allow calls from account 1 (Privacy and Security > Calls); saving account 1 as a contact helps. The call only rings: there is no voice. It hangs up when answered, declined or after the ring time.')}</Hint>
           <Button id="h5-tg-save" variant="contained" disabled={busy} onClick={() => void save()}>{t('Save')}</Button>
           <Box sx={{ display: 'flex', gap: 1 }}>

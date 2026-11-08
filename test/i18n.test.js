@@ -121,8 +121,9 @@ test('h5 shell: every text the Material UI shell shows has a Chinese translation
   // The saved commands presets (commands.mjs): the list titles and the descriptions shown under each command.
   const presets = fs.readFileSync(path.join(dir, 'commands.mjs'), 'utf8');
   for (const match of presets.matchAll(/\b(?:title|note):\s*'((?:\\.|[^'])*)'/g)) found.add(unescape(match[1]));
-  // The T-Attention labels (attention-model.mjs: statuses, priorities and group titles; plugins-model.mjs: plugin chips and modes).
-  for (const file of ['attention-model.mjs', 'plugins-model.mjs']) {
+  // The T-Attention labels (attention-model.mjs: statuses, priorities and group titles; plugins-model.mjs: plugin chips and modes;
+  // market-model.mjs: marketplace badges, kind filter and the Git URL checks).
+  for (const file of ['attention-model.mjs', 'plugins-model.mjs', 'market-model.mjs']) {
     const attention = fs.readFileSync(path.join(dir, file), 'utf8');
     for (const match of attention.matchAll(/\b(?:\w+|label):\s*'([A-Z][^']*)'/g)) found.add(unescape(match[1]));
     for (const match of attention.matchAll(/\bt\('([^']*)'\)/g)) found.add(unescape(match[1]));

@@ -10,6 +10,9 @@ const crypto = require('crypto');
 const LOGIN_TTL_MS = 10 * 60 * 1000; // a started login waits at most 10 minutes for the code / password
 const IDLE_MS = 10 * 60 * 1000; // a connected client for notifications is closed after 10 idle minutes
 const DEFAULT_CALL_SECONDS = 30;
+const NETWORK_TIMEOUT_MS = 20 * 1000; // connecting to Telegram, or one QR token export, gives up after this long
+const PROXY_TIMEOUT_SECONDS = 10; // one attempt to open a connection through the SOCKS proxy
+const UNREACHABLE = 'Cannot reach Telegram. Check the network or set ALL_PROXY to a SOCKS proxy for the T-Agent service, then try again';
 const STATUS_LABELS = { waiting_user: 'Needs you', review: 'Review', failed: 'Failed', working: 'Working', todo: 'To do', done: 'Done', cancelled: 'Cancelled' };
 
 class TelegramError extends Error {
@@ -20,6 +23,7 @@ const text = value => (typeof value === 'string' ? value.trim() : '');
 const code = error => String((error && error.errorMessage) || '');
 // The browser and the logs only get the Telegram error code (upper case letters), never the raw error object.
 function explain(error) {
+  if (error instanceof TelegramError) return error.message;
   const name = code(error);
   if (name === 'FLOOD' || /^FLOOD_WAIT/.test(name) || (error && Number.isFinite(error.seconds))) return `Telegram asks to wait ${Number(error.seconds) || 0} seconds before trying again`;
   const known = {
@@ -33,6 +37,30 @@ function explain(error) {
   }[name];
   if (known) return known;
   return /^[A-Z0-9_]{3,64}$/.test(name) ? `Telegram error ${name}` : 'Telegram could not be reached';
+}
+// The SOCKS proxy for gramjs from the environment, or null to connect directly. gramjs ignores the proxy variables and speaks only SOCKS and
+// MTProxy, so an http:// proxy cannot be used; it is skipped like a malformed value. The result may hold credentials: never log or return it.
+const SOCKS_TYPES = { socks: 5, socks5: 5, socks5h: 5, socks4: 4, socks4a: 4 };
+function parseSocksProxy(value) {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  try {
+    const url = new URL(value.trim());
+    const socksType = SOCKS_TYPES[url.protocol.slice(0, -1).toLowerCase()];
+    const ip = url.hostname.replace(/^\[|\]$/g, '');
+    const port = url.port === '' ? 1080 : Number(url.port); // 1080 is the usual SOCKS port, as in curl
+    if (!socksType || !ip || !port) return null;
+    const proxy = { ip, port, socksType, timeout: PROXY_TIMEOUT_SECONDS };
+    if (url.username) proxy.username = decodeURIComponent(url.username);
+    if (url.password) proxy.password = decodeURIComponent(url.password);
+    return proxy;
+  } catch { return null; }
+}
+function proxyFromEnv(env) {
+  for (const name of ['ALL_PROXY', 'all_proxy', 'HTTPS_PROXY', 'https_proxy']) {
+    const proxy = parseSocksProxy(env[name]);
+    if (proxy) return proxy;
+  }
+  return null;
 }
 function maskPhone(phone) {
   const digits = String(phone || '').replace(/\D/g, '');
@@ -94,12 +122,13 @@ function dhHash(dh, randomBytes = crypto.randomBytes) {
   return crypto.createHash('sha256').update(gA).digest();
 }
 
-// options: loadGram() -> the `telegram` module (tests pass a mock), timers, randomBytes.
+// options: loadGram() -> the `telegram` module (tests pass a mock), timers, randomBytes, env (default process.env, for the proxy).
 function createTelegramNotifier(options = {}) {
   const loadGram = options.loadGram || (() => require('telegram'));
   const timers = options.timers || { setTimeout: (fn, ms) => { const handle = setTimeout(fn, ms); if (handle.unref) handle.unref(); return handle; }, clearTimeout };
   const randomBytes = options.randomBytes || crypto.randomBytes;
   const now = options.now || Date.now;
+  const env = options.env || process.env;
   const renderQr = options.renderQr || (url => require('qrcode').toString(url, { type: 'svg', margin: 1, errorCorrectionLevel: 'M' }));
   const logins = new Map(); // owner -> { client, apiId, apiHash, phone, phoneCodeHash, step, timer }
   const clients = new Map(); // session string -> { client, ready, idle }
@@ -107,30 +136,66 @@ function createTelegramNotifier(options = {}) {
 
   function makeClient(session, apiId, apiHash) {
     const gram = loadGram();
+    const proxy = proxyFromEnv(env);
     return new gram.TelegramClient(new gram.sessions.StringSession(session || ''), Number(apiId), apiHash, {
       connectionRetries: 3, floodSleepThreshold: 0, deviceModel: 'T-Attention', appVersion: '1.0', baseLogger: new gram.Logger('none'),
+      ...(proxy ? { proxy } : {}),
     });
   }
   const quietly = promise => Promise.resolve(promise).catch(() => {});
+  // Ends a gramjs client for good. disconnect() is not enough: gramjs's update loop keeps running until destroy(), and neither of them closes a
+  // socket that is still connecting (Connection.disconnect returns early) or ends the retry loop of MTProtoSender.connect. So: no more attempts,
+  // destroy(), and close the socket in flight. _sender, _retries and _connection are private to gramjs (the version is pinned in package.json).
+  function stopClient(client) {
+    const sender = client._sender;
+    if (sender) sender._retries = 0;
+    quietly(client.destroy());
+    const socket = sender && sender._connection && sender._connection.socket;
+    if (socket) quietly(socket.close());
+  }
+  // Rejects when the promise takes too long. A late answer is ignored: the caller has already failed.
+  function limited(promise) {
+    return new Promise((resolve, reject) => {
+      const timer = timers.setTimeout(() => reject(new TelegramError(UNREACHABLE, 504)), NETWORK_TIMEOUT_MS);
+      Promise.resolve(promise).then(
+        value => { timers.clearTimeout(timer); resolve(value); },
+        failure => { timers.clearTimeout(timer); reject(failure); },
+      );
+    });
+  }
+  // gramjs answers false, without an error, when all its attempts failed. On any failure the client is stopped; if it connects after the
+  // timeout after all, it is stopped again, because only then can its socket be closed.
+  async function connectClient(client) {
+    const attempt = Promise.resolve(client.connect());
+    try {
+      if (await limited(attempt) === false) throw new TelegramError(UNREACHABLE, 504);
+      return client;
+    } catch (failure) {
+      stopClient(client);
+      quietly(attempt.then(() => stopClient(client)));
+      throw failure;
+    }
+  }
   function dropLogin(owner) {
     const login = logins.get(owner);
     if (!login) return;
     timers.clearTimeout(login.timer);
     logins.delete(owner);
+    login.dropped = true; // an export still under way must not finish this login
     if (login.kind === 'qr' && login.step !== 'done') qrEnded.set(owner, 'expired');
-    quietly(login.client.disconnect());
+    stopClient(login.client);
   }
   // The connected client for a saved session, reused while notifications come in.
   async function clientFor(config) {
     let entry = clients.get(config.session);
     if (!entry) {
       const client = makeClient(config.session, config.apiId, config.apiHash);
-      entry = { client, ready: client.connect().then(() => client) };
+      entry = { client, ready: connectClient(client) };
       clients.set(config.session, entry);
-      entry.ready.catch(() => { if (clients.get(config.session) === entry) clients.delete(config.session); });
+      entry.ready.catch(() => { timers.clearTimeout(entry.idle); if (clients.get(config.session) === entry) clients.delete(config.session); });
     }
     timers.clearTimeout(entry.idle);
-    entry.idle = timers.setTimeout(() => { clients.delete(config.session); quietly(entry.client.disconnect()); }, IDLE_MS);
+    entry.idle = timers.setTimeout(() => { if (clients.get(config.session) === entry) clients.delete(config.session); stopClient(entry.client); }, IDLE_MS);
     return entry.ready;
   }
   function closeClient(session) {
@@ -138,7 +203,7 @@ function createTelegramNotifier(options = {}) {
     if (!entry) return;
     clients.delete(session);
     timers.clearTimeout(entry.idle);
-    quietly(entry.ready.then(client => client.disconnect()));
+    quietly(entry.ready.then(stopClient));
   }
   const peerOf = (gram, target) => new gram.Api.InputPeerUser({ userId: gram.helpers.returnBigInt(target.id), accessHash: gram.helpers.returnBigInt(target.accessHash) });
   const userOf = (gram, target) => new gram.Api.InputUser({ userId: gram.helpers.returnBigInt(target.id), accessHash: gram.helpers.returnBigInt(target.accessHash) });
@@ -251,6 +316,7 @@ function createTelegramNotifier(options = {}) {
     const finish = async (req, login) => {
       const client = login.client;
       const me = await client.getMe();
+      if (login.dropped) return;
       const config = store.read(owner(req));
       if (config.session && config.session !== client.session.save()) closeClient(config.session);
       const account = { id: String(me.id), name: [me.firstName, me.lastName].filter(Boolean).join(' '), username: me.username || '' };
@@ -259,7 +325,7 @@ function createTelegramNotifier(options = {}) {
       login.step = 'done';
       if (logins.get(owner(req)) === login) logins.delete(owner(req));
       if (login.kind === 'qr') qrEnded.set(owner(req), 'done');
-      quietly(client.disconnect());
+      stopClient(client);
     };
     router.get('/status', (req, res) => res.json(status(store.read(owner(req)), owner(req))));
     router.post('/start', wrap(async (req, res) => {
@@ -272,14 +338,14 @@ function createTelegramNotifier(options = {}) {
       if (!/^\+?\d{6,16}$/.test(phone)) throw new TelegramError('Enter the phone number of account 1 with the country code');
       dropLogin(owner(req));
       const client = makeClient('', apiId, apiHash);
-      await client.connect();
+      await connectClient(client);
       try {
         const sent = await client.sendCode({ apiId, apiHash }, phone);
         const login = { client, apiId, apiHash, phone, phoneCodeHash: sent.phoneCodeHash, step: 'code' };
         login.timer = timers.setTimeout(() => dropLogin(owner(req)), LOGIN_TTL_MS);
         logins.set(owner(req), login);
         res.json({ ...status(store.read(owner(req)), owner(req)), codeVia: sent.isCodeViaApp ? 'app' : 'sms' });
-      } catch (failure) { quietly(client.disconnect()); throw failure; }
+      } catch (failure) { stopClient(client); throw failure; }
     }));
     router.post('/verify', wrap(async (req, res) => {
       const login = logins.get(owner(req));
@@ -318,10 +384,12 @@ function createTelegramNotifier(options = {}) {
     // A token is exported again when it expired or when the update came; the page polls /qr/status every 2 seconds and gets the current QR.
     const loginUrl = token => `tg://login?token=${Buffer.from(token).toString('base64url')}`;
     async function applyToken(req, login, result) {
+      if (login.dropped) return; // the answer came after the timeout or a cancel
       const { Api } = loadGram();
       let answer = result;
       if (answer && answer.className === 'auth.LoginTokenMigrateTo') {
         await login.client._switchDC(answer.dcId);
+        if (login.dropped) { stopClient(login.client); return; } // the switch connected it again
         answer = await login.client.invoke(new Api.auth.ImportLoginToken({ token: answer.token }));
       }
       if (answer && answer.className === 'auth.LoginTokenSuccess') { await finish(req, login); return; }
@@ -344,7 +412,7 @@ function createTelegramNotifier(options = {}) {
     }
     // One export at a time per login, so overlapping polls do not ask Telegram twice.
     function refresh(req, login) {
-      if (!login.pending) login.pending = exportToken(req, login).finally(() => { login.pending = null; });
+      if (!login.pending) login.pending = limited(exportToken(req, login)).finally(() => { login.pending = null; });
       return login.pending;
     }
     function qrAnswer(req) {
@@ -364,21 +432,21 @@ function createTelegramNotifier(options = {}) {
       dropLogin(owner(req));
       qrEnded.delete(owner(req));
       const client = makeClient('', apiId, apiHash);
-      await client.connect();
+      await connectClient(client);
       const login = { kind: 'qr', client, apiId, apiHash, phone: '', step: 'qr', url: '', svg: '', expiresAt: 0, scanned: false, pending: null };
       login.onUpdate = update => { if (update && update.className === 'UpdateLoginToken') login.scanned = true; };
       client.addEventHandler(login.onUpdate);
       login.timer = timers.setTimeout(() => { if (logins.get(owner(req)) === login) dropLogin(owner(req)); }, LOGIN_TTL_MS);
       logins.set(owner(req), login);
       try { await refresh(req, login); }
-      catch (failure) { dropLogin(owner(req)); qrEnded.delete(owner(req)); throw failure; }
+      catch (failure) { if (logins.get(owner(req)) === login) { dropLogin(owner(req)); qrEnded.delete(owner(req)); } throw failure; }
       res.json(qrAnswer(req));
     }));
     router.get('/qr/status', wrap(async (req, res) => {
       const login = logins.get(owner(req));
       if (login && login.kind === 'qr' && login.step === 'qr' && (login.scanned || now() >= login.expiresAt - 1000)) {
         try { await refresh(req, login); }
-        catch (failure) { dropLogin(owner(req)); throw failure; }
+        catch (failure) { if (logins.get(owner(req)) === login) dropLogin(owner(req)); throw failure; }
       }
       res.json(qrAnswer(req));
     }));
@@ -453,3 +521,6 @@ module.exports.MESSAGE_MAX = MESSAGE_MAX;
 module.exports.explain = explain;
 module.exports.dhHash = dhHash;
 module.exports.maskPhone = maskPhone;
+module.exports.proxyFromEnv = proxyFromEnv;
+module.exports.NETWORK_TIMEOUT_MS = NETWORK_TIMEOUT_MS;
+module.exports.UNREACHABLE = UNREACHABLE;

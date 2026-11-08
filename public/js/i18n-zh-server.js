@@ -526,6 +526,7 @@ I18n.add({
   "Telegram asks to wait {1} seconds before trying again": "Telegram 要求等待 {1} 秒后再试",
   "Telegram error {1}": "Telegram 错误 {1}",
   "Telegram could not be reached": "无法连接 Telegram",
+  "Cannot reach Telegram. Check the network or set ALL_PROXY to a SOCKS proxy for the T-Agent service, then try again": "无法连接 Telegram。请检查网络，或为 T-Agent 服务把 ALL_PROXY 设置为 SOCKS 代理，然后重试",
   "Notifications are temporarily unavailable": "通知暂时不可用",
   "The plugin is turned off": "这个插件已关闭",
   "The plugin is not set up yet": "这个插件还没有设置好",

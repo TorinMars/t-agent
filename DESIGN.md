@@ -1080,3 +1080,4 @@ One line per release, added by `scripts/release.js`. Older notes are in `git log
 > v2.90.0 File preview of common formats (code highlighting, JSON, CSV, HTML, images with zoom, PDF, audio, video); T-Attention plugin overview, one-click and pairing install, manifest settings, Telegram QR login, plugin marketplace and setup guide; Wide terminal mode and touch scrolling anywhere (the scrollbar strip is gone)
 > v2.90.1 Paste on iPhone: one clipboard read per tap (iOS refused the second read), and a paste sheet when the browser refuses
 > v2.90.2 Telegram login and notifications use the SOCKS proxy from the environment, and connecting gives up after 20 seconds with a clear error instead of loading forever
+> v2.91.0 T-Attention waits for all sub-agents before notifying, plugin settings open from a list, voice input can be turned off, and the top-bar agent counters are gone

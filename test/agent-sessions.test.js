@@ -45,6 +45,26 @@ test('lists only Codex sessions whose cwd matches', () => {
   assert.deepEqual(listSessions('codex', dir, home).map(row => [row.id, row.title]), [['bbbbbbbb-2222', 'add tests']]);
 });
 
+test('a sub-agent log is judged by its last real row: a late background notice, a row longer than the tail, an empty file', () => {
+  const { runningSubagentsIn } = require('../lib/agent-sessions');
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'subagent-rows-'));
+  const write = (name, text) => fs.writeFileSync(path.join(folder, name), text);
+  const finished = { type: 'assistant', message: { stop_reason: 'end_turn', content: [{ type: 'text', text: 'done' }] } };
+  const toolUse = { type: 'assistant', message: { stop_reason: 'tool_use', content: [{ type: 'tool_use' }] } };
+  const notice = { type: 'user', isMeta: true, origin: { kind: 'task-notification', producer: 'session-task' }, message: { content: '<task-notification>' } };
+  write('agent-notice.jsonl', jsonl([finished, notice]));
+  assert.equal(runningSubagentsIn(folder), 0, 'a notice after the final message does not restart the sub-agent');
+  write('agent-working.jsonl', jsonl([toolUse, notice]));
+  assert.equal(runningSubagentsIn(folder), 1, 'a notice in the middle of the work leaves it running');
+  write('agent-woken.jsonl', jsonl([finished, notice, { type: 'api-request' }]));
+  assert.equal(runningSubagentsIn(folder), 2, 'a sub-agent the notice woke runs again');
+  write('agent-huge.jsonl', `${JSON.stringify({ type: 'user', message: { content: 'x'.repeat(200 * 1024) } })}\n`);
+  assert.equal(runningSubagentsIn(folder), 3, 'a row longer than the tail cannot be read: not known to be finished');
+  write('agent-empty.jsonl', '');
+  assert.equal(runningSubagentsIn(folder), 3, 'an empty log is not counted');
+  assert.equal(runningSubagentsIn(path.join(folder, 'missing')), 0);
+});
+
 test('runningSubagents counts the sub-agents of a Claude session whose log is unfinished and recent', () => {
   const { runningSubagents, SUBAGENT_STALE_MS } = require('../lib/agent-sessions');
   const { home, dir } = setup();

@@ -1,6 +1,10 @@
 // Chinese translations for sentences that JavaScript assembles from several pieces (so the text in the page is a whole
 // sentence rather than one literal in the source), plus the verb forms used by the start / stop / save status lines.
 I18n.add({
+  // ---- T-Attention timeline (the Claude listener's note while sub-agents run) ----
+  '{1}: Waiting for 1 sub-agent': '{1}：正在等待 1 个子智能体',
+  '{1}: Waiting for {2} sub-agents': '{1}：正在等待 {2} 个子智能体',
+
   // ---- Agent config ----
   'Common:': '常用：',
   '{1} · failed: {2}': '{1} · 失败：{2}',

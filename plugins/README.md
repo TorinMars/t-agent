@@ -26,7 +26,7 @@ plugins/listeners/<name>/
 |---|---|
 | `UserPromptSubmit` | `working`; the first prompt (80 characters) is the title; clears the reason; `meta` `{cwd, host}` |
 | `Notification` (`permission_prompt`, `elicitation_dialog`, `elicitation_url_dialog`, `agent_needs_input`, `worker_permission_prompt`) | `waiting_user`, reason = the message |
-| `Stop` | `review`, reason = Claude's last message |
+| `Stop` | `review`, reason = Claude's last message. While sub-agents of the session still run (their logs in `<session>/subagents/`, recent and unfinished): stays `working` with a timeline note, so the Stop after the last sub-agent is the one that notifies |
 | `StopFailure` (API error) | `failed`, reason = the error |
 | `SessionEnd` | `review` if it was still `working` or `waiting_user` |
 | `PostToolUse`, `PostToolUseFailure` | back to `working` after a prompt was answered; only when the last status this hook set was `waiting_user` (a small state file in `~/.tagent/listeners/claude-state/`), so normal tool calls send nothing |

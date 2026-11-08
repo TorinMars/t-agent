@@ -440,3 +440,151 @@ test('an older listener entry does nothing when the same event in ~/.claude/sett
     await fake.close();
   }
 });
+
+// ---------- sub-agents: one notice after the last one ----------
+const FINISHED = { type: 'assistant', message: { stop_reason: 'end_turn', content: [{ type: 'text', text: 'done' }] } };
+const WORKING = { type: 'assistant', message: { stop_reason: 'tool_use', content: [{ type: 'tool_use', name: 'Bash' }] } };
+
+// A transcript and a real `subagents` folder next to it, as Claude Code leaves them.
+function sessionLogs() {
+  const root = path.join(tmp, `logs-${count += 1}`);
+  fs.mkdirSync(root);
+  const transcript = path.join(root, `${SESSION}.jsonl`);
+  fs.writeFileSync(transcript, `${JSON.stringify({ type: 'user', message: { content: 'Run three reviews' } })}\n${JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'Started them.' }] } })}\n`);
+  const folder = path.join(root, SESSION, 'subagents');
+  const write = (name, row, ageMs = 0) => {
+    fs.mkdirSync(folder, { recursive: true });
+    const file = path.join(folder, `agent-${name}.jsonl`);
+    fs.writeFileSync(file, `${JSON.stringify({ type: 'user', message: { content: 'go' } })}\n${JSON.stringify(row)}\n`);
+    if (ageMs) { const when = new Date(Date.now() - ageMs); fs.utimesSync(file, when, when); }
+  };
+  return { transcript, folder, write };
+}
+
+async function withListener(run) {
+  const fake = await fakeServer();
+  const dir = dataDir();
+  configure(dir, fake.url);
+  try {
+    const [item] = (await hook(dir, events.prompt), [...fake.items.values()]);
+    await run({ fake, dir, item, state: () => JSON.parse(fs.readFileSync(path.join(dir, 'listeners', 'claude-state', `${SESSION}.json`), 'utf8')) });
+  } finally {
+    await fake.close();
+  }
+}
+
+const stopWith = transcript => ({ ...events.stop, transcript_path: transcript });
+
+test('Stop with no sub-agent log, or with only finished sub-agents, goes to review as before', async () => {
+  await withListener(async ({ fake, dir, item }) => {
+    const logs = sessionLogs();
+    await hook(dir, stopWith(logs.transcript)); // no subagents folder
+    assert.equal(item.status, 'review');
+    assert.ok(fake.requests.at(-1).body.excerpt, 'the excerpt of a transition');
+    await hook(dir, events.prompt2);
+    logs.write('a1', FINISHED);
+    await hook(dir, stopWith(logs.transcript));
+    assert.equal(item.status, 'review');
+  });
+  await withListener(async ({ dir, item }) => {
+    await hook(dir, { ...events.stop, transcript_path: undefined });
+    assert.equal(item.status, 'review', 'no transcript path: count 0');
+  });
+});
+
+test('Stop while a sub-agent runs stays working: no review, no reason, no excerpt, a timeline note', async () => {
+  await withListener(async ({ fake, dir, item, state }) => {
+    const logs = sessionLogs();
+    logs.write('a1', WORKING);
+    await hook(dir, stopWith(logs.transcript));
+    const { body } = fake.requests.at(-1);
+    assert.deepEqual(core(body), { status: 'working', attention_reason: null, source: 'claude' });
+    assert.deepEqual(body.activity, { kind: 'note', text: 'Waiting for 1 sub-agent' });
+    assert.equal(body.excerpt, undefined);
+    assert.equal(body.context.files, undefined);
+    assert.equal(body.context.pending, null);
+    assert.equal(body.context.last_reply, 'Done: the login page now redirects. Tests pass.');
+    assert.deepEqual([item.status, item.attention_reason], ['working', null]);
+    assert.equal(state().status, 'working');
+    assert.equal(state().pending, null);
+  });
+});
+
+test('three sub-agents finishing one by one, a Stop after each: only the last Stop goes to review, once', async () => {
+  await withListener(async ({ fake, dir, item, state }) => {
+    const logs = sessionLogs();
+    for (const name of ['a1', 'a2', 'a3']) logs.write(name, WORKING);
+    const seen = [];
+    const stop = async () => {
+      await hook(dir, stopWith(logs.transcript));
+      const { body } = fake.requests.at(-1);
+      seen.push([item.status, body.activity.text, Boolean(body.excerpt)]);
+    };
+    await stop();
+    logs.write('a1', FINISHED);
+    await stop();
+    logs.write('a2', FINISHED);
+    await stop();
+    logs.write('a3', FINISHED);
+    await stop();
+    assert.deepEqual(seen, [
+      ['working', 'Waiting for 3 sub-agents', false],
+      ['working', 'Waiting for 2 sub-agents', false],
+      ['working', 'Waiting for 1 sub-agent', false],
+      ['review', 'Done: the login page now redirects. Tests pass.', true],
+    ]);
+    assert.equal(item.attention_reason, 'Done: the login page now redirects. Tests pass.');
+    assert.equal(state().status, 'review');
+    assert.equal(fake.requests.filter(r => r.method === 'PUT' && r.body.status === 'review').length, 1, 'one move to review');
+  });
+});
+
+test('a crashed sub-agent stops counting once its log is stale, and the next Stop goes to review', async () => {
+  await withListener(async ({ dir, item }) => {
+    const { SUBAGENT_STALE_MS } = require('../lib/agent-sessions');
+    const logs = sessionLogs();
+    logs.write('crashed', WORKING, SUBAGENT_STALE_MS + 60000);
+    await hook(dir, stopWith(logs.transcript));
+    assert.equal(item.status, 'review');
+  });
+});
+
+test('a session whose logs are held back still ends: SessionEnd moves the working task to review', async () => {
+  await withListener(async ({ dir, item }) => {
+    const logs = sessionLogs();
+    logs.write('a1', WORKING);
+    await hook(dir, stopWith(logs.transcript));
+    assert.equal(item.status, 'working');
+    await hook(dir, { ...events.end, transcript_path: logs.transcript });
+    assert.equal(item.status, 'review');
+  });
+});
+
+test('while sub-agents run a question still reaches the user, and a failure is still reported', async () => {
+  await withListener(async ({ fake, dir, item }) => {
+    const logs = sessionLogs();
+    logs.write('a1', WORKING);
+    await hook(dir, stopWith(logs.transcript));
+    assert.equal(item.status, 'working');
+    await hook(dir, { ...events.permission, transcript_path: logs.transcript });
+    assert.equal(item.status, 'waiting_user');
+    assert.equal(fake.requests.at(-1).body.attention_reason, 'Claude needs your permission to use Bash');
+    assert.ok(fake.requests.at(-1).body.excerpt);
+    await hook(dir, { ...events.failure, transcript_path: logs.transcript });
+    assert.equal(item.status, 'failed');
+  });
+});
+
+test('counting sub-agent logs is quick: 200 recent logs of 1 MiB each', () => {
+  const { runningSubagents } = require(HOOK);
+  const logs = sessionLogs();
+  logs.write('seed', WORKING);
+  const padding = `${JSON.stringify({ type: 'user', message: { content: 'x'.repeat(1024 * 1024) } })}\n${JSON.stringify(WORKING)}\n`;
+  for (let i = 0; i < 200; i += 1) fs.writeFileSync(path.join(logs.folder, `agent-big${i}.jsonl`), padding);
+  const started = Date.now();
+  assert.equal(runningSubagents(logs.transcript), 201);
+  assert.ok(Date.now() - started < 500, `took ${Date.now() - started} ms`);
+  assert.equal(runningSubagents('/no/such/place.jsonl'), 0);
+  assert.equal(runningSubagents(undefined), 0);
+  assert.equal(runningSubagents('/not/a/transcript'), 0);
+});

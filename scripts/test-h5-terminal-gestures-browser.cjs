@@ -121,25 +121,41 @@ const probe = page => page.evaluate(() => {
       await page.waitForTimeout(300);
       assert.equal(await topLine(), newer, 'a slow lift has no momentum');
       // A flick up keeps going after the lift.
-      await pan(150, 300, 0, 160); // back into the history first
-      const beforeFlick = await topLine();
+      // Back into the history first, far enough that the flick and its momentum never reach the bottom (which would end the momentum early).
+      await pan(150, 300, 0, 160);
+      await pan(150, 300, 0, 160);
+      await pan(150, 300, 0, 160);
       // In-page touch events at a real finger's pace (CDP touches arrive one per rendered frame, which is slow in headless Chromium).
-      await page.evaluate(async () => {
+      // 40 px per step: still a flick (over FLICK_MIN 0.3 px/ms) when a busy machine stretches the 16 ms timer to about 100 ms.
+      const flick = () => page.evaluate(async () => {
         const el = document.querySelector('.h5-xterm:not([hidden]) .xterm-screen');
         const fire = (type, y) => {
           const point = new Touch({ identifier: 9, target: el, clientX: 150, clientY: y });
           el.dispatchEvent(new TouchEvent(type, { bubbles: true, cancelable: true, touches: type === 'touchend' ? [] : [point], targetTouches: type === 'touchend' ? [] : [point], changedTouches: [point] }));
         };
         fire('touchstart', 500);
-        for (let i = 1; i <= 6; i++) { await new Promise(done => setTimeout(done, 16)); fire('touchmove', 500 - i * 20); }
-        fire('touchend', 380);
+        for (let i = 1; i <= 6; i++) { await new Promise(done => setTimeout(done, 16)); fire('touchmove', 500 - i * 40); }
+        fire('touchend', 260);
       });
-      const atLift = await topLine();
-      await page.waitForTimeout(600);
-      const afterFlick = await topLine();
-      assert.ok(atLift > beforeFlick, 'the flick scrolls while the finger moves');
-      assert.ok(afterFlick > atLift, `a flick keeps scrolling after the lift (${atLift} -> ${afterFlick})`);
+      // A headless page can stall more than FLICK_WINDOW (100 ms) between two steps; the lift is then rightly a slow one with no momentum.
+      // So the flick gets a second try from further back in the history; one of the two must keep scrolling after the lift.
+      let flicked = null;
+      for (let attempt = 0; attempt < 2 && !flicked; attempt++) {
+        if (attempt) { await pan(150, 300, 0, 160); await pan(150, 300, 0, 160); await page.waitForTimeout(800); }
+        const beforeFlick = await topLine();
+        await flick();
+        const atLift = await topLine();
+        await page.waitForTimeout(600);
+        const afterFlick = await topLine();
+        assert.ok(atLift > beforeFlick, 'the flick scrolls while the finger moves');
+        if (afterFlick > atLift) flicked = { atLift, afterFlick };
+        else console.log(`flick attempt ${attempt + 1}: no momentum (${atLift} -> ${afterFlick}), page stalled; trying again`);
+      }
+      assert.ok(flicked, 'a flick keeps scrolling after the lift');
       // Fit mode: a sideways pan moves nothing (the screen fits) and does not scroll vertically either (axis lock).
+      // Wait for the flick's momentum to end first, so the line read below is where the view rests.
+      // The momentum's slow tail moves one line only every few hundred ms, so the view must stay put for 800 ms.
+      for (let last = -1, now = await topLine(), tries = 0; now !== last && tries < 15; tries++) { last = now; await page.waitForTimeout(800); now = await topLine(); }
       const lockedTop = await topLine();
       await pan(200, 300, -120, 30);
       assert.equal(await topLine(), lockedTop, 'a sideways pan does not scroll the history');

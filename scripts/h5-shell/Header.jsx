@@ -56,11 +56,13 @@ export function Header({ state, ui }) {
 // count and the screen moves sideways). A long press (500 ms) or a right click opens a small menu: Fit to screen, 120, 160 or 200 columns.
 const WIDE_CHOICES = [120, 160, 200];
 const LONG_PRESS_MS = 500;
+const LIFT_OPEN_MS = 400; // a long press without a following click (some browsers send none) opens the menu this long after the lift
 export function WidthButton({ width, ui }) {
   const anchor = useRef(null);
-  // A long press is only marked while the finger is down; the menu opens when it is lifted, so the lift (and its click) cannot land on the
-  // menu's backdrop and close it at once.
-  const press = useRef({ timer: 0, long: false, touch: false });
+  // A long press is only marked while the finger is down. The menu opens from the click that follows the lift (it lands on this button,
+  // before the menu's backdrop exists); opening it on pointerup let that click land on the new backdrop and close the menu at once. A browser
+  // that sends no click after a long press opens it after LIFT_OPEN_MS instead.
+  const press = useRef({ timer: 0, long: false, touch: false, lift: 0 });
   const [open, setOpen] = useState(false);
   const wide = width.mode === 'wide';
   const label = t('Wide terminal');
@@ -78,11 +80,11 @@ export function WidthButton({ width, ui }) {
           press.current.long = false;
           press.current.timer = setTimeout(() => { press.current.timer = 0; press.current.long = true; }, LONG_PRESS_MS);
         }}
-        onPointerUp={() => { stop(); if (press.current.long) setOpen(true); }}
+        onPointerUp={() => { stop(); if (press.current.long) { clearTimeout(press.current.lift); press.current.lift = setTimeout(() => { press.current.lift = 0; if (press.current.long) { press.current.long = false; setOpen(true); } }, LIFT_OPEN_MS); } }}
         onPointerLeave={stop} onPointerCancel={() => { stop(); press.current.long = false; }}
         // A right click opens the menu at once; a touch long press (which also fires contextmenu on Android) waits for the lift.
         onContextMenu={event => { event.preventDefault(); if (press.current.touch) { stop(); press.current.long = true; } else setOpen(true); }}
-        onClick={() => { if (press.current.long) { press.current.long = false; return; } ui.actions.toggleTerminalWidth(); }}
+        onClick={() => { if (press.current.long) { press.current.long = false; clearTimeout(press.current.lift); press.current.lift = 0; setOpen(true); return; } ui.actions.toggleTerminalWidth(); }}
       >
         <Icon name="columnWidth" size={22} />
       </IconButton>

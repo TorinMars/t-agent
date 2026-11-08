@@ -1,15 +1,21 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Box from '@mui/material/Box';
+import Button from '@mui/material/Button';
 import Drawer from '@mui/material/Drawer';
 import IconButton from '@mui/material/IconButton';
 import LinearProgress from '@mui/material/LinearProgress';
 import List from '@mui/material/List';
 import ListItemButton from '@mui/material/ListItemButton';
+import ToggleButton from '@mui/material/ToggleButton';
+import ToggleButtonGroup from '@mui/material/ToggleButtonGroup';
 import Typography from '@mui/material/Typography';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import { named, t } from './common.jsx';
 import { Icon } from './Icons.jsx';
-import { imagePath, renderText } from './file-view.mjs';
+import { imagePath, renderText, splitHighlighted } from './file-view.mjs';
+import { RAW_KINDS, kindOf, languageOf } from './file-kinds.mjs';
+import { formatJson } from './file-formats.mjs';
+import { CsvTable, HtmlPreview, ImageView, MediaView, PdfView } from './FileViewers.jsx';
 import { buildOutline, currentIndex } from './outline.mjs';
 import { ImageViewer } from './ImageViewer.jsx';
 
@@ -48,8 +54,8 @@ const escapeHtml = value => String(value).replace(/[&<>"']/g, ch => ({ '&': '&am
 const SAFE_LINK = /^(https?:|mailto:)/i;
 const SAFE_IMAGE = /^(https?:|data:image\/(png|jpeg|gif|webp);)/i;
 // The document is shown, not trusted: raw HTML is shown as text, and only web / mail links and web images are live (a relative link shows its text).
-// A relative image inside the working directory is read through the task file API (`imageUrl(path)`: PNG, JPEG, GIF or WebP, at most 5 MB); one that
-// cannot be shown (outside the folder, another type, missing, an older Engine) shows its text.
+// A relative image inside the working directory is read through the task file API (`imageUrl(path)`: PNG, JPEG, GIF, WebP, SVG, BMP, ICO or AVIF, at
+// most 20 MB); one that cannot be shown (outside the folder, another type, missing, an older Engine) shows its text.
 function renderMarkdown(source, docPath, imageUrl) {
   const marked = new window.marked.Marked({
     renderer: {
@@ -92,9 +98,31 @@ const FS_ERRORS = {
   FILE_PATH_CHANGED: 'The file changed while it was read',
   READ_TIMEOUT: 'Reading the file took too long',
 };
-const MARKDOWN_FILE = /\.(md|markdown|mdx)$/i;
+// An image, PDF, audio or video file has notes of its own for some codes (its limits are not the text read's 5 MB).
+const IMAGE_ERRORS = {
+  FILE_TOO_LARGE: 'The image is larger than 20 MB',
+  FILE_UNSUPPORTED: 'This image type cannot be shown',
+  FILE_NOT_IMAGE: 'This image type cannot be shown',
+  MEDIA_ERROR: 'This image cannot be shown',
+};
+const RAW_ERRORS = {
+  FILE_TOO_LARGE: 'The file is larger than 200 MB',
+  FILE_UNSUPPORTED: 'This file type cannot be shown',
+  RAW_UNSUPPORTED: 'This Engine cannot show this file type',
+  MEDIA_ERROR: 'This browser cannot play this file',
+};
 
-// A file that is not Markdown is shown as plain text with line numbers (renderText, scripts/h5-shell/file-view.mjs: only the lines in view are drawn).
+// A file that is not Markdown is shown by its kind (file-kinds.mjs): text with line numbers (renderText, scripts/h5-shell/file-view.mjs: only the lines
+// in view are drawn), syntax-highlighted by highlight.js up to HIGHLIGHT_LIMIT characters (larger files stay plain: highlighting them would hold the
+// phone up for seconds); JSON pretty-printed, CSV / TSV as a table, HTML as its source with a sandboxed preview; images, PDF, audio and video in their
+// viewers (FileViewers.jsx).
+const HIGHLIGHT_LIMIT = 1024 * 1024;
+// The views a kind can switch between (the toggle under the header); the first is the default.
+const MODES = {
+  json: [['formatted', 'Formatted'], ['source', 'Raw']],
+  csv: [['table', 'Table'], ['source', 'Raw']],
+  html: [['source', 'Code'], ['preview', 'Preview']],
+};
 // A relative image that does not load shows its text instead.
 const localImageFailed = event => {
   const img = event.target;
@@ -204,22 +232,58 @@ export function DesignSheet({ state, ui }) {
   const [columnOpen, setColumnOpen] = useState(readColumnOpen); // a wide screen: the outline column is shown
   const pinned = useRef(null); // the heading the outline scrolled to: it stays marked until the reader scrolls by hand
   const [viewer, setViewer] = useState(null); // the picture or diagram shown full screen (ImageViewer.jsx)
-  const content = design && design.status === 'ready' ? design.content : null;
+  const content = design && design.status === 'ready' && typeof design.content === 'string' ? design.content : null; // none for an image, PDF, audio or video file
   const filePathInDir = (design && design.path) || 'DESIGN.md';
   const fromLink = Boolean(design && design.link);
-  const markdown = !fromLink || MARKDOWN_FILE.test(filePathInDir);
+  const kind = (design && design.kind) || (fromLink ? kindOf(filePathInDir) : 'markdown'); // h5.js decides it (the same table); DESIGN.md is Markdown
+  const markdown = kind === 'markdown';
   const line = (design && design.line) || null;
   const imageBase = (design && design.imageBase) || null; // `${files}/image?path=` of the task (h5.js openFileSheet)
+  const src = (design && design.status === 'ready' && design.src) || null; // the address of an image, PDF, audio or video file (h5.js fileByUrl)
+  const name = filePathInDir.replace(/\/+$/, '').split('/').pop() || filePathInDir;
+  // One token per shown file: the chosen view (Formatted / Source ...) and a failure belong to it, so another file starts at its default view.
+  const fileToken = useMemo(() => ({}), [content, src, filePathInDir]);
+  const [picked, setPicked] = useState(null); // { token, mode }
+  const [failed, setFailed] = useState(null); // { token, code }: the image or media file could not be shown
+  const failure = failed && failed.token === fileToken ? failed.code : null;
+  const formatted = useMemo(() => (kind === 'json' && content !== null ? formatJson(content) : null), [kind, content]);
+  // A link that names a line shows the source, whose lines it counts.
+  const modes = kind === 'json' ? (formatted !== null ? MODES.json : null) : MODES[kind] || null;
+  const defaultMode = modes ? (line && modes.some(([value]) => value === 'source') ? 'source' : modes[0][0]) : null;
+  const mode = picked && picked.token === fileToken && modes && modes.some(([value]) => value === picked.mode) ? picked.mode : defaultMode;
+  // What the content box draws: Markdown, or lines of text in a language; null when a viewer of FileViewers.jsx shows the file instead.
+  const plan = useMemo(() => {
+    if (content === null) return null;
+    if (markdown) return { type: 'markdown' };
+    if (kind === 'json') return mode === 'formatted' ? { type: 'text', text: formatted, language: 'json', line: null } : { type: 'text', text: content, language: 'json', line };
+    if (kind === 'csv') return mode === 'source' ? { type: 'text', text: content, language: null, line } : null;
+    if (kind === 'html') return mode === 'source' ? { type: 'text', text: content, language: 'xml', line } : null;
+    return { type: 'text', text: content, language: languageOf(filePathInDir), line };
+  }, [content, markdown, kind, mode, formatted, line, filePathInDir]);
 
   useEffect(() => {
-    if (content === null || !node) return undefined;
+    if (!plan || !node) return undefined;
     let cancelled = false;
     let view = null; // the plain-text view, which listens to the scrolling of the box
     setRender({ status: 'rendering' });
     setOutline([]);
     (async () => {
       try {
-        if (!markdown) { view = renderText(node, content, line); setRender({ status: 'done' }); return; }
+        if (plan.type === 'text') {
+          let html = null;
+          if (plan.language && plan.text.length <= HIGHLIGHT_LIMIT) {
+            try {
+              await loadOnce(MARKDOWN_VIEW_SRC);
+              if (cancelled) return;
+              const marked = window.MarkdownView.highlight(plan.text.replace(/\r\n?/g, '\n'), plan.language);
+              if (marked !== null && marked !== undefined) html = splitHighlighted(marked);
+            } catch { /* the highlighter did not load: plain text */ }
+          }
+          if (cancelled) return;
+          view = renderText(node, plan.text, plan.line, { html });
+          setRender({ status: 'done' });
+          return;
+        }
         await Promise.all([loadOnce(MARKED_SRC), loadOnce(MARKDOWN_VIEW_SRC), loadOnce(MARKDOWN_CSS, true)]);
         if (cancelled) return;
         node.innerHTML = renderMarkdown(content, filePathInDir, imageBase ? path => `${imageBase}${encodeURIComponent(path)}` : null);
@@ -247,7 +311,7 @@ export function DesignSheet({ state, ui }) {
       }
     })();
     return () => { cancelled = true; if (view) view.dispose(); };
-  }, [content, node, markdown, line, filePathInDir, imageBase]);
+  }, [plan, content, node, filePathInDir, imageBase]);
 
   // The section being read follows the scrolling of the document (once per frame).
   useEffect(() => {
@@ -333,14 +397,17 @@ export function DesignSheet({ state, ui }) {
   const swipe = useSwipeDown(close);
   const dir = design && design.dir;
   let note = null;
-  const name = filePathInDir.replace(/\/+$/, '').split('/').pop() || filePathInDir;
+  const kindErrors = kind === 'image' ? IMAGE_ERRORS : RAW_KINDS.has(kind) ? RAW_ERRORS : {};
   if (design && fromLink) {
     if (design.status === 'no-task') note = t('Choose a task first');
     else if (design.status === 'no-dir') note = t('This task has no working directory');
     else if (design.status === 'folder') note = t('Folders cannot be shown on the phone');
     else if (design.status === 'missing') note = design.absolute ? t(`Not found: ${filePathInDir}`) : t(`Not found in the working directory: ${filePathInDir}`);
-    else if (design.status === 'error') note = t((design.absolute ? FS_ERRORS : FILE_ERRORS)[design.message] || 'Could not open the file');
-    else if (design.status === 'ready' && render.status === 'failed') note = t('Could not show the file');
+    else if (design.status === 'error') note = t(kindErrors[design.message] || (design.absolute ? FS_ERRORS : FILE_ERRORS)[design.message] || 'Could not open the file');
+    else if (design.status === 'ready' && failure) {
+      if (failure === 'FILE_NOT_FOUND' || failure === 'NOT_FOUND') note = design.absolute ? t(`Not found: ${filePathInDir}`) : t(`Not found in the working directory: ${filePathInDir}`);
+      else note = t(kindErrors[failure] || (design.absolute ? FS_ERRORS : FILE_ERRORS)[failure] || 'Could not show the file');
+    } else if (design.status === 'ready' && render.status === 'failed') note = t('Could not show the file');
   } else if (design) {
     if (design.status === 'no-task') note = t('Choose a task first');
     else if (design.status === 'no-dir') note = t('This task has no working directory');
@@ -348,10 +415,30 @@ export function DesignSheet({ state, ui }) {
     else if (design.status === 'error') note = t(ERRORS[design.message] || 'Could not open DESIGN.md');
     else if (design.status === 'ready' && render.status === 'failed') note = t('Could not show DESIGN.md');
   }
-  const loading = design && (design.status === 'loading' || (design.status === 'ready' && render.status === 'rendering'));
+  const loading = design && (design.status === 'loading' || (design.status === 'ready' && plan && render.status === 'rendering'));
   const filePath = dir ? `${dir.replace(/\/+$/, '')}/${filePathInDir}` : filePathInDir;
   const hasOutline = markdown && outline.length > 0 && !note && content !== null;
   const showColumn = side && hasOutline && columnOpen;
+  const ready = Boolean(design && design.status === 'ready' && !note);
+  const onFailed = code => setFailed({ token: fileToken, code });
+  let viewerBox = null; // a file shown by a viewer of FileViewers.jsx
+  if (ready && !plan) {
+    if (kind === 'image' && src) viewerBox = <ImageView src={src} name={name} onView={setViewer} onFailed={onFailed} />;
+    else if (kind === 'pdf' && src) viewerBox = <PdfView src={src} name={name} />;
+    else if ((kind === 'audio' || kind === 'video') && src) viewerBox = <MediaView kind={kind} src={src} name={name} onFailed={onFailed} />;
+    else if (kind === 'csv' && content !== null) viewerBox = <CsvTable content={content} path={filePathInDir} />;
+    else if (kind === 'html' && content !== null) viewerBox = <HtmlPreview content={content} name={name} />;
+  }
+  const toolbar = ready && (modes || (kind === 'pdf' && src)) ? (
+    <Box id="h5-file-toolbar" sx={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 1, px: 2, py: 0.75, borderBottom: 1, borderColor: 'divider' }}>
+      {modes ? (
+        <ToggleButtonGroup id="h5-file-modes" size="small" exclusive value={mode} aria-label={t('View')} onChange={(event, value) => { if (value) setPicked({ token: fileToken, mode: value }); }}>
+          {modes.map(([value, label]) => <ToggleButton key={value} value={value} data-mode={value} sx={{ px: 1.5, py: 0.25, fontSize: 13 }}>{t(label)}</ToggleButton>)}
+        </ToggleButtonGroup>
+      ) : null}
+      {kind === 'pdf' && src ? <Button id="h5-file-open-tab" size="small" variant="outlined" component="a" href={src} target="_blank" rel="noopener noreferrer">{t('Open in new tab')}</Button> : null}
+    </Box>
+  ) : null;
 
   const contents = (
     <>
@@ -378,11 +465,13 @@ export function DesignSheet({ state, ui }) {
         {fromTree ? null : <IconButton id="h5-design-files" {...named(t('Files'))} onClick={() => ui.actions.openFiles()}><Icon name="folder" size={22} /></IconButton>}
         <IconButton id="h5-design-close" {...named(t('Close'))} onClick={closeAll}><Icon name="close" size={22} /></IconButton>
       </Box>
+      {toolbar}
       {loading ? <LinearProgress id="h5-design-loading" aria-label={t('Loading…')} sx={{ flex: '0 0 auto' }} /> : null}
       {note ? (
         <Box id="h5-design-empty" role="status" sx={{ flex: '1 1 auto', display: 'flex', alignItems: 'center', justifyContent: 'center', p: 3, textAlign: 'center', color: 'text.secondary', overflowWrap: 'anywhere' }}>{note}</Box>
       ) : null}
-      <Box sx={{ display: note || content === null ? 'none' : 'flex', flex: '1 1 auto', minHeight: 0 }}>
+      {viewerBox ? <Box sx={{ display: 'flex', flex: '1 1 auto', minHeight: 0 }}>{viewerBox}</Box> : null}
+      <Box sx={{ display: note || !plan ? 'none' : 'flex', flex: '1 1 auto', minHeight: 0 }}>
         <Box
           ref={setNode} id="h5-design-body" className="h5-design-body" tabIndex={0}
           sx={{ display: 'block', flex: '1 1 auto', minWidth: 0, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', px: 2, pt: 2, pb: 4 }}

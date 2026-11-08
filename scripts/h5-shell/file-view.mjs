@@ -33,12 +33,39 @@ function widest(lines) {
   return most;
 }
 
-// Draws `source` into `node` (the scrolling content box). Returns { dispose(), range() }.
-export function renderText(node, source, line) {
+// Syntax highlighting (highlight.js, Design.jsx): the highlighted HTML of the whole file is cut into one piece per line, so the drawing above stays
+// per line. A highlighted span can run over several lines (a comment block, a template string): it is closed at the end of each line and opened
+// again at the start of the next, so every line is complete HTML on its own. `html` comes from highlight.js: text is escaped, the only tags are
+// <span ...> and </span>. Line ends are '\n' (the source is given to highlight.js with \r\n and \r made '\n'); like splitLines, a last empty line
+// is dropped, so the two give the same number of lines.
+export function splitHighlighted(html) {
+  const lines = [];
+  const open = []; // the opening tags of the spans open at this point
+  let current = '';
+  for (const [token] of String(html).matchAll(/<span\b[^>]*>|<\/span>|\n|[^<\n]+|</g)) {
+    if (token === '\n') {
+      lines.push(current + '</span>'.repeat(open.length));
+      current = open.join('');
+    } else if (token === '</span>') {
+      if (open.length) { open.pop(); current += token; }
+    } else {
+      if (token.startsWith('<span')) open.push(token);
+      current += token;
+    }
+  }
+  lines.push(current + '</span>'.repeat(open.length));
+  if (lines.length > 1 && lines[lines.length - 1].replace(/<[^>]*>/g, '') === '') lines.pop();
+  return lines;
+}
+
+// Draws `source` into `node` (the scrolling content box). `html`: the highlighted lines (splitHighlighted), as many as the lines of `source`; drawn
+// with innerHTML instead of the plain text (selecting, copying and Select all still give the plain text). Returns { dispose(), range() }.
+export function renderText(node, source, line, { html = null } = {}) {
   const lines = splitLines(source);
+  const marked = Array.isArray(html) && html.length === lines.length ? html : null;
   const digits = String(lines.length).length;
   const pre = document.createElement('pre');
-  pre.className = 'h5-file-text';
+  pre.className = marked ? 'h5-file-text is-highlighted' : 'h5-file-text';
   pre.setAttribute('translate', 'no');
   pre.style.position = 'relative';
   const rows = document.createElement('div');
@@ -55,7 +82,8 @@ export function renderText(node, source, line) {
     el.className = 'h5-file-line';
     el.dataset.line = String(index + 1);
     el.style.setProperty('--h5-line-digits', String(digits));
-    el.textContent = `${lines[index]}\n`;
+    if (marked) el.innerHTML = `${marked[index]}\n`;
+    else el.textContent = `${lines[index]}\n`;
     if (line && index + 1 === line) el.classList.add('is-target');
     return el;
   };
@@ -118,6 +146,7 @@ export function renderText(node, source, line) {
   return {
     range: () => drawn.slice(),
     lineHeight,
+    highlighted: Boolean(marked),
     dispose() {
       cancelAnimationFrame(frame);
       node.removeEventListener('scroll', onScroll);
@@ -130,7 +159,7 @@ export function renderText(node, source, line) {
 
 // A relative image of a Markdown file: its path inside the working directory, from the folder of the document (`docPath`, relative to the working
 // directory too). null for what is not a relative path to an image inside the working directory (a web address is handled by the caller).
-const IMAGE_FILE = /\.(png|jpe?g|gif|webp)$/i;
+const IMAGE_FILE = /\.(png|jpe?g|gif|webp|svg|bmp|ico|avif)$/i; // the image types of the image read (an SVG is only ever shown through <img>)
 export function imagePath(docPath, href) {
   let value = String(href || '').trim();
   if (!value || /^[a-z][a-z0-9+.-]*:/i.test(value) || value.startsWith('//') || value.startsWith('/') || value.startsWith('\\')) return null;

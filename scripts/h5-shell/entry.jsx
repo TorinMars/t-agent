@@ -7,6 +7,7 @@ import { createStore, initialState } from './store.mjs';
 import { createBackLayers } from './back.mjs';
 import { startAttentionFeed } from './attention-feed.mjs';
 import { api, t } from './common.jsx';
+import { RAW_KINDS, kindOf } from './file-kinds.mjs';
 // T-Attention settings slots: the modules of other T-Attention parts that register Settings content (attention-slots.mjs) are imported here, e.g.
 import './PluginSettings.jsx';
 import './NotifierSettings.jsx';
@@ -23,6 +24,8 @@ const readCollapsed = () => { try { return localStorage.getItem(SIDEBAR_KEY) ===
 
 const ui = createStore({ ...initialState(), wide: wideQuery.matches, input: inputMode(), sidebarCollapsed: readCollapsed() });
 ui.media = { wideQuery, inputMode };
+// The kind of a file (file-kinds.mjs), for h5.js: it decides how the file sheet reads a file (text, image or raw bytes).
+ui.fileKinds = { kindOf, isRaw: kind => RAW_KINDS.has(kind) };
 let notices = 0;
 ui.notify = (message, type = 'info') => {
   const text = String(message === undefined || message === null ? '' : message).trim();

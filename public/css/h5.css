@@ -177,3 +177,15 @@ body.h5-tasks-open .h5-agent { border-bottom-left-radius: 28px; overflow: hidden
 .h5-file-line { display: block; padding-right: 16px; min-width: max-content; }
 .h5-file-line::before { content: attr(data-line); display: inline-block; box-sizing: content-box; width: calc(var(--h5-line-digits, 3) * 1ch); padding: 0 12px 0 16px; margin-right: 0; text-align: right; color: #6e7681; user-select: none; -webkit-user-select: none; }
 .h5-file-line.is-target { background: rgba(56, 139, 253, .22); }
+/* Syntax highlighting of the text view (highlight.js through js/markdown-view.js; file-view.mjs splitHighlighted): the colours of the code blocks of
+   markdown.css, so a file and a code block in a document look the same. The page is dark only, as its MUI theme. */
+.h5-file-text.is-highlighted { color: #dae4f2; }
+.h5-file-text :is(.hljs-comment, .hljs-quote) { color: #a0afc4; font-style: italic; }
+.h5-file-text :is(.hljs-keyword, .hljs-selector-tag, .hljs-literal) { color: #c5a5ff; }
+.h5-file-text :is(.hljs-string, .hljs-regexp, .hljs-addition) { color: #a6d9a0; }
+.h5-file-text :is(.hljs-number, .hljs-symbol, .hljs-attr, .hljs-variable) { color: #f1bd86; }
+.h5-file-text :is(.hljs-title, .hljs-section) { color: #91caff; }
+.h5-file-text :is(.hljs-built_in, .hljs-type, .hljs-meta) { color: #80d4d4; }
+.h5-file-text :is(.hljs-tag, .hljs-name, .hljs-deletion) { color: #f29da8; }
+.h5-file-text .hljs-emphasis { font-style: italic; }
+.h5-file-text .hljs-strong { font-weight: bold; }

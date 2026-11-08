@@ -46,7 +46,8 @@ function mockGram() {
       return handler(request, this);
     }
     async sendMessage(peer, options) { state.messages.push({ peer, ...options }); if (state.sendMessage) return state.sendMessage(); return {}; }
-    async getMe() { return { id: 1001, firstName: 'Account', lastName: 'One', username: 'acc_one' }; }
+    async getMe() { return { id: 1001, firstName: 'Account', lastName: 'One', username: 'acc_one', phone: '8613800000078' }; }
+    async _switchDC(dcId) { state.switchedTo = dcId; }
     async getDialogs() { state.dialogsRead = true; return []; }
     async getEntity(input) { state.entityInput = input; if (state.entity) return state.entity(input); return { className: 'User', id: 2002, accessHash: '-55', firstName: 'Account', lastName: 'Two', username: 'acc_two' }; }
     addEventHandler(fn) { this.events.push(fn); }
@@ -233,10 +234,10 @@ test('end to end through the service: a failed call becomes a fallback message o
 });
 
 // The login endpoints through the real service router.
-async function loginServer() {
+async function loginServer(options = {}) {
   const { gram, state } = mockGram();
   const timers = fakeTimers();
-  const plugin = createTelegramNotifier({ loadGram: () => gram, timers });
+  const plugin = createTelegramNotifier({ loadGram: () => gram, timers, ...options });
   const db = new Database(':memory:');
   db.exec('CREATE TABLE system_state (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP)');
   const logs = [];
@@ -366,4 +367,154 @@ test('the notifier overview shows the Telegram state and the per-status modes, a
   store(savedConfig({ account: { id: '1', name: SESSION } }));
   assert.equal(service.overview('local')[0].summary, null);
   service.stop();
+});
+
+// ---- QR login ----
+const TOKEN_1 = Buffer.from('qr-token-one-secret');
+const TOKEN_2 = Buffer.from('qr-token-two-secret');
+const urlOf = token => `tg://login?token=${token.toString('base64url')}`;
+const exports_ = state => state.invokes.filter(request => request.className === 'auth.ExportLoginToken');
+
+test('QR login: start shows a server-rendered SVG, the token refreshes when it expires, the scan finishes the login', async () => {
+  let clock = 1_000_000_000_000;
+  const ctx = await loginServer({ now: () => clock });
+  try {
+    const { call, state, db } = ctx;
+    assert.equal((await call('POST', '/qr/start', { api_id: 'x', api_hash: API_HASH })).status, 400);
+    assert.equal((await call('POST', '/qr/start', { api_id: 12345, api_hash: 'short' })).status, 400);
+    const tokens = [TOKEN_1, TOKEN_2];
+    state.handlers['auth.ExportLoginToken'] = () => {
+      const token = tokens.shift();
+      return token ? { className: 'auth.LoginToken', token, expires: Math.floor(clock / 1000) + 30 } : { className: 'auth.LoginTokenSuccess', authorization: { className: 'auth.Authorization' } };
+    };
+    const started = await call('POST', '/qr/start', { api_id: 12345, api_hash: API_HASH });
+    assert.equal(started.status, 200);
+    assert.equal(started.data.step, 'qr');
+    assert.equal(started.data.url, urlOf(TOKEN_1));
+    assert.match(started.data.svg, /^<svg[^>]*xmlns="http:\/\/www\.w3\.org\/2000\/svg"[\s\S]*<\/svg>\s*$/, 'rendered on the server with qrcode');
+    assert.equal(started.data.expiresAt, new Date(clock + 30000).toISOString());
+    const request = exports_(state)[0];
+    assert.deepEqual([request.apiId, request.apiHash, request.exceptIds], [12345, API_HASH, []]);
+    assert.equal(state.clients.at(-1).session.value, '', 'a fresh session');
+    // Polling before expiry does not ask Telegram again.
+    clock += 2000;
+    assert.equal((await call('GET', '/qr/status')).data.url, urlOf(TOKEN_1));
+    assert.equal(exports_(state).length, 1);
+    // After expiry the next poll gets a new token and a new QR.
+    clock += 29000;
+    const refreshed = await call('GET', '/qr/status');
+    assert.equal(refreshed.data.step, 'qr');
+    assert.equal(refreshed.data.url, urlOf(TOKEN_2));
+    assert.notEqual(refreshed.data.svg, started.data.svg);
+    assert.equal(exports_(state).length, 2);
+    // Account 1 scans and accepts: UpdateLoginToken, then the export returns LoginTokenSuccess.
+    state.clients.at(-1).emit({ className: 'UpdateLoginToken' });
+    clock += 2000;
+    const done = await call('GET', '/qr/status');
+    assert.equal(done.data.step, 'done');
+    assert.equal(done.data.loggedIn, true);
+    assert.equal(done.data.phone, '+86*********78', 'the phone of account 1 comes from getMe, masked');
+    assert.deepEqual(done.data.account, { id: '1001', name: 'Account One', username: 'acc_one' });
+    assert.equal(done.data.url, undefined);
+    assert.equal(state.clients.at(-1).connected, false, 'the login client is closed');
+    assert.equal((await call('GET', '/qr/status')).data.step, 'done', 'still done on the next poll');
+    assert.equal((await call('GET', '/status')).data.step, 'done');
+    const stored = db.prepare("SELECT value FROM system_state WHERE key = 'attention-notify:telegram:owner'").get().value;
+    assert.equal(stored.includes(SESSION) || stored.includes(API_HASH), false, 'stored encrypted');
+    const everything = ctx.bodies.join('\n') + ctx.logs.join('\n');
+    for (const secret of [SESSION, API_HASH]) assert.equal(everything.includes(secret), false, `${secret} must not leave the server`);
+  } finally { ctx.close(); }
+});
+
+test('QR login: a DC migration switches the data center and imports the token there', async () => {
+  let clock = 1_000_000_000_000;
+  const ctx = await loginServer({ now: () => clock, renderQr: async url => `<svg>${url.length}</svg>` });
+  try {
+    const { call, state } = ctx;
+    let scanned = false;
+    state.handlers['auth.ExportLoginToken'] = () => (scanned
+      ? { className: 'auth.LoginTokenMigrateTo', dcId: 4, token: TOKEN_2 }
+      : { className: 'auth.LoginToken', token: TOKEN_1, expires: Math.floor(clock / 1000) + 30 });
+    state.handlers['auth.ImportLoginToken'] = request => {
+      assert.equal(state.switchedTo, 4, 'the switch happens before the import');
+      assert.equal(Buffer.compare(request.token, TOKEN_2), 0);
+      return { className: 'auth.LoginTokenSuccess', authorization: { className: 'auth.Authorization' } };
+    };
+    assert.equal((await call('POST', '/qr/start', { api_id: 12345, api_hash: API_HASH })).data.svg, `<svg>${urlOf(TOKEN_1).length}</svg>`);
+    scanned = true;
+    state.clients.at(-1).emit({ className: 'UpdateLoginToken' });
+    const done = await call('GET', '/qr/status');
+    assert.equal(done.data.step, 'done');
+    assert.equal(state.switchedTo, 4);
+    assert.ok(state.invokes.some(request => request.className === 'auth.ImportLoginToken'));
+  } finally { ctx.close(); }
+});
+
+test('QR login: SESSION_PASSWORD_NEEDED after the scan moves to the 2FA password step, which finishes the login', async () => {
+  const clock = 1_000_000_000_000;
+  const ctx = await loginServer({ now: () => clock, renderQr: async () => '<svg></svg>' });
+  try {
+    const { call, state } = ctx;
+    let scanned = false;
+    state.handlers['auth.ExportLoginToken'] = () => { if (scanned) throw rpcError('SESSION_PASSWORD_NEEDED'); return { className: 'auth.LoginToken', token: TOKEN_1, expires: clock / 1000 + 30 }; };
+    await call('POST', '/qr/start', { api_id: 12345, api_hash: API_HASH });
+    scanned = true;
+    state.clients.at(-1).emit({ className: 'UpdateLoginToken' });
+    const asked = await call('GET', '/qr/status');
+    assert.equal(asked.data.step, 'password');
+    assert.equal(asked.data.url, undefined);
+    assert.equal(asked.data.svg, undefined);
+    assert.equal((await call('GET', '/status')).data.step, 'password');
+    state.handlers['account.GetPassword'] = () => ({ className: 'account.Password', srpId: 7 });
+    state.handlers['auth.CheckPassword'] = request => { if (!request.password.ok) throw rpcError('PASSWORD_HASH_INVALID'); return {}; };
+    assert.equal((await call('POST', '/password', { password: 'nope' })).data.error, 'The password is wrong');
+    const done = await call('POST', '/password', { password: PASSWORD });
+    assert.equal(done.data.loggedIn, true);
+    assert.equal((await call('GET', '/qr/status')).data.step, 'done');
+    const everything = ctx.bodies.join('\n') + ctx.logs.join('\n');
+    for (const secret of [SESSION, API_HASH, PASSWORD]) assert.equal(everything.includes(secret), false, `${secret} must not leave the server`);
+  } finally { ctx.close(); }
+});
+
+test('QR login: it expires after 10 minutes or on cancel, overlapping polls export once, and Telegram errors are explained', async () => {
+  let clock = 1_000_000_000_000;
+  const ctx = await loginServer({ now: () => clock, renderQr: async () => '<svg></svg>' });
+  try {
+    const { call, state, timers } = ctx;
+    assert.equal((await call('GET', '/qr/status')).data.step, 'expired', 'nothing started');
+    let release;
+    state.handlers['auth.ExportLoginToken'] = () => ({ className: 'auth.LoginToken', token: TOKEN_1, expires: Math.floor(clock / 1000) + 30 });
+    await call('POST', '/qr/start', { api_id: 12345, api_hash: API_HASH });
+    state.handlers['auth.ExportLoginToken'] = () => new Promise(resolve => { release = () => resolve({ className: 'auth.LoginToken', token: TOKEN_2, expires: Math.floor(clock / 1000) + 30 }); });
+    clock += 31000;
+    const polls = [call('GET', '/qr/status'), call('GET', '/qr/status')];
+    await new Promise(resolve => setTimeout(resolve, 50));
+    release();
+    const answers = await Promise.all(polls);
+    assert.deepEqual(answers.map(answer => answer.data.url), [urlOf(TOKEN_2), urlOf(TOKEN_2)]);
+    assert.equal(exports_(state).length, 2, 'one export for two overlapping polls');
+    assert.ok(timers.fireWhere(timer => timer.ms === 10 * 60 * 1000));
+    const expired = await call('GET', '/qr/status');
+    assert.equal(expired.data.step, 'expired');
+    assert.equal(expired.data.loggedIn, false);
+    assert.equal(state.clients.at(-1).connected, false);
+    // Cancel ends it too.
+    state.handlers['auth.ExportLoginToken'] = () => ({ className: 'auth.LoginToken', token: TOKEN_1, expires: Math.floor(clock / 1000) + 30 });
+    assert.equal((await call('POST', '/qr/start', { api_id: 12345, api_hash: API_HASH })).data.step, 'qr');
+    await call('POST', '/cancel');
+    assert.equal((await call('GET', '/qr/status')).data.step, 'expired');
+    // A bad api_id pair, and a flood wait during a refresh, come back as short messages.
+    state.handlers['auth.ExportLoginToken'] = () => { throw rpcError('API_ID_INVALID'); };
+    const bad = await call('POST', '/qr/start', { api_id: 12345, api_hash: API_HASH });
+    assert.deepEqual([bad.status, bad.data.error], [502, 'The api_id / api_hash pair is invalid']);
+    assert.equal((await call('GET', '/qr/status')).data.step, 'expired');
+    state.handlers['auth.ExportLoginToken'] = () => ({ className: 'auth.LoginToken', token: TOKEN_1, expires: Math.floor(clock / 1000) + 30 });
+    await call('POST', '/qr/start', { api_id: 12345, api_hash: API_HASH });
+    state.handlers['auth.ExportLoginToken'] = () => { throw rpcError('FLOOD', { seconds: 9 }); };
+    clock += 31000;
+    const flood = await call('GET', '/qr/status');
+    assert.deepEqual([flood.status, flood.data.error], [502, 'Telegram asks to wait 9 seconds before trying again']);
+    assert.equal((await call('GET', '/qr/status')).data.step, 'expired');
+    assert.equal(ctx.bodies.join('\n').includes(API_HASH), false);
+  } finally { ctx.close(); }
 });

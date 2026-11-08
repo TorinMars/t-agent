@@ -1,5 +1,6 @@
 // T-Attention notifier: Telegram user account 1 -> user account 2 over the MTProto user API (npm package `telegram`, gramjs).
-// Account 1 logs in from Settings (api_id, api_hash, phone, code, optional 2FA password); its session string and api_hash are
+// Account 1 logs in from Settings with api_id and api_hash, then either a QR code scanned in the Telegram app of account 1 (auth.exportLoginToken,
+// see "QR login" below) or the phone number and code; both may end with the 2FA password. Its session string and api_hash are
 // stored encrypted by services/attention-notify.js and are never logged or sent to the browser. A session string is full access
 // to account 1. Account 2 (the target) gets the messages and the calls.
 // A call is only a ring: phone.requestCall with the Diffie-Hellman g_a_hash Telegram needs, then phone.discardCall after N seconds
@@ -98,8 +99,11 @@ function createTelegramNotifier(options = {}) {
   const loadGram = options.loadGram || (() => require('telegram'));
   const timers = options.timers || { setTimeout: (fn, ms) => { const handle = setTimeout(fn, ms); if (handle.unref) handle.unref(); return handle; }, clearTimeout };
   const randomBytes = options.randomBytes || crypto.randomBytes;
+  const now = options.now || Date.now;
+  const renderQr = options.renderQr || (url => require('qrcode').toString(url, { type: 'svg', margin: 1, errorCorrectionLevel: 'M' }));
   const logins = new Map(); // owner -> { client, apiId, apiHash, phone, phoneCodeHash, step, timer }
   const clients = new Map(); // session string -> { client, ready, idle }
+  const qrEnded = new Map(); // owner -> 'done' | 'expired': how the last QR login ended, for /qr/status after it is gone
 
   function makeClient(session, apiId, apiHash) {
     const gram = loadGram();
@@ -113,6 +117,7 @@ function createTelegramNotifier(options = {}) {
     if (!login) return;
     timers.clearTimeout(login.timer);
     logins.delete(owner);
+    if (login.kind === 'qr' && login.step !== 'done') qrEnded.set(owner, 'expired');
     quietly(login.client.disconnect());
   }
   // The connected client for a saved session, reused while notifications come in.
@@ -249,9 +254,11 @@ function createTelegramNotifier(options = {}) {
       const config = store.read(owner(req));
       if (config.session && config.session !== client.session.save()) closeClient(config.session);
       const account = { id: String(me.id), name: [me.firstName, me.lastName].filter(Boolean).join(' '), username: me.username || '' };
-      store.write(owner(req), { ...config, apiId: login.apiId, apiHash: login.apiHash, session: client.session.save(), phone: maskPhone(login.phone), account });
+      store.write(owner(req), { ...config, apiId: login.apiId, apiHash: login.apiHash, session: client.session.save(), phone: maskPhone(login.phone || me.phone), account });
       timers.clearTimeout(login.timer);
-      logins.delete(owner(req));
+      login.step = 'done';
+      if (logins.get(owner(req)) === login) logins.delete(owner(req));
+      if (login.kind === 'qr') qrEnded.set(owner(req), 'done');
       quietly(client.disconnect());
     };
     router.get('/status', (req, res) => res.json(status(store.read(owner(req)), owner(req))));
@@ -302,6 +309,78 @@ function createTelegramNotifier(options = {}) {
       await login.client.invoke(new gram.Api.auth.CheckPassword({ password: check }));
       await finish(req, login);
       res.json(status(store.read(owner(req)), owner(req)));
+    }));
+
+    // ---- QR login ----
+    // auth.exportLoginToken gives a token for tg://login?token=<base64url>, valid about 30 seconds. The app of account 1 scans it and accepts it,
+    // Telegram sends UpdateLoginToken, and the next export returns auth.LoginTokenSuccess, or auth.LoginTokenMigrateTo when account 1 lives on
+    // another data center: then the client switches to that DC and imports the token there. SESSION_PASSWORD_NEEDED moves to the password step.
+    // A token is exported again when it expired or when the update came; the page polls /qr/status every 2 seconds and gets the current QR.
+    const loginUrl = token => `tg://login?token=${Buffer.from(token).toString('base64url')}`;
+    async function applyToken(req, login, result) {
+      const { Api } = loadGram();
+      let answer = result;
+      if (answer && answer.className === 'auth.LoginTokenMigrateTo') {
+        await login.client._switchDC(answer.dcId);
+        answer = await login.client.invoke(new Api.auth.ImportLoginToken({ token: answer.token }));
+      }
+      if (answer && answer.className === 'auth.LoginTokenSuccess') { await finish(req, login); return; }
+      if (!answer || answer.className !== 'auth.LoginToken') throw new TelegramError('Telegram sent an unexpected answer; start the login again', 502);
+      login.url = loginUrl(answer.token);
+      login.svg = await renderQr(login.url);
+      login.expiresAt = Number(answer.expires) * 1000;
+      login.scanned = false;
+    }
+    async function exportToken(req, login) {
+      const { Api } = loadGram();
+      try {
+        const result = await login.client.invoke(new Api.auth.ExportLoginToken({ apiId: login.apiId, apiHash: login.apiHash, exceptIds: [] }));
+        await applyToken(req, login, result);
+      } catch (failure) {
+        if (code(failure) !== 'SESSION_PASSWORD_NEEDED') throw failure;
+        login.step = 'password';
+        login.url = ''; login.svg = '';
+      }
+    }
+    // One export at a time per login, so overlapping polls do not ask Telegram twice.
+    function refresh(req, login) {
+      if (!login.pending) login.pending = exportToken(req, login).finally(() => { login.pending = null; });
+      return login.pending;
+    }
+    function qrAnswer(req) {
+      const login = logins.get(owner(req));
+      const config = store.read(owner(req));
+      if (!login || login.kind !== 'qr') return { ...status(config, owner(req)), step: (!login && qrEnded.get(owner(req))) || 'expired' };
+      const answer = { ...status(config, owner(req)), step: login.step };
+      if (login.step === 'qr') Object.assign(answer, { url: login.url, svg: login.svg, expiresAt: new Date(login.expiresAt).toISOString() });
+      return answer;
+    }
+    router.post('/qr/start', wrap(async (req, res) => {
+      const body = req.body || {};
+      const apiId = Number(body.api_id);
+      const apiHash = text(body.api_hash) || store.read(owner(req)).apiHash || '';
+      if (!Number.isInteger(apiId) || apiId <= 0) throw new TelegramError('Enter the api_id from my.telegram.org');
+      if (!/^[0-9a-f]{32}$/i.test(apiHash)) throw new TelegramError('Enter the api_hash from my.telegram.org (32 characters)');
+      dropLogin(owner(req));
+      qrEnded.delete(owner(req));
+      const client = makeClient('', apiId, apiHash);
+      await client.connect();
+      const login = { kind: 'qr', client, apiId, apiHash, phone: '', step: 'qr', url: '', svg: '', expiresAt: 0, scanned: false, pending: null };
+      login.onUpdate = update => { if (update && update.className === 'UpdateLoginToken') login.scanned = true; };
+      client.addEventHandler(login.onUpdate);
+      login.timer = timers.setTimeout(() => { if (logins.get(owner(req)) === login) dropLogin(owner(req)); }, LOGIN_TTL_MS);
+      logins.set(owner(req), login);
+      try { await refresh(req, login); }
+      catch (failure) { dropLogin(owner(req)); qrEnded.delete(owner(req)); throw failure; }
+      res.json(qrAnswer(req));
+    }));
+    router.get('/qr/status', wrap(async (req, res) => {
+      const login = logins.get(owner(req));
+      if (login && login.kind === 'qr' && login.step === 'qr' && (login.scanned || now() >= login.expiresAt - 1000)) {
+        try { await refresh(req, login); }
+        catch (failure) { dropLogin(owner(req)); throw failure; }
+      }
+      res.json(qrAnswer(req));
     }));
     router.post('/cancel', (req, res) => { dropLogin(owner(req)); res.json(status(store.read(owner(req)), owner(req))); });
     router.post('/logout', wrap(async (req, res) => {

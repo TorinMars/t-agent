@@ -78,6 +78,8 @@ async function openPage(browser, { viewport, touch = true, db: start = {} }) {
         return json(db.pairingReads >= 1 ? { active: false, expiresAt: null, claimed: { name: 'claude listener (laptop)', at: new Date().toISOString() } } : { active: true, claimed: null });
       }
       if (p === '/api/attention/pairing' && method === 'DELETE') return json({ active: false, expiresAt: null, claimed: null });
+      if (p === '/api/attention-notify/config') return json({ rules: null, modes: [], notifiers: [{ name: 'telegram', label: 'Telegram', status: { loggedIn: false, step: 'none', hasApiHash: false } }], recent: [] });
+      if (p === '/api/attention/plugins/telegram/config') return json({ name: 'telegram', enabled: true, schema: [], test: true, customUi: 'telegram', values: {} });
       if (p === '/api/attention/tokens') return json({ tokens: [] });
       if (p === '/api/attention/settings/summary') return json({ enabled: false, provider: 'deepseek', model: '', providers: [] });
       return json({ error: 'not mocked' }, 404);
@@ -192,6 +194,14 @@ async function openPanel(page, how) {
       await page.locator('#h5-guide-settings').waitFor();
       assert.deepEqual(puts(calls).at(-1), { dismissed: false });
       assert.deepEqual(await openStep(page, '#h5-guide-settings'), ['claude']);
+      // "Set up Telegram" in the Settings guide opens Telegram's page of the plugin list; Back returns to the sheet.
+      await page.locator('#h5-guide-settings .h5-guide-step[data-step="notify"] .h5-guide-step-head')[how]();
+      await page.locator('#h5-guide-settings #h5-guide-telegram')[how]();
+      await page.locator('.h5-plugin-page[data-name="telegram"] #h5-tg-qr-start').waitFor();
+      await page.locator('.h5-plugin-page-back')[how]();
+      await page.locator('.h5-plugin-page').waitFor({ state: 'detached' });
+      assert.ok(await page.locator('#h5-guide-settings').isVisible());
+      await page.locator('#h5-guide-settings .h5-guide-step[data-step="notify"] .h5-guide-step-head')[how]();
       await page.evaluate(() => window.H5UI.set({ settingsOpen: false }));
       await page.locator('#h5-settings').waitFor({ state: 'hidden' });
       // In the panel again (not closed any more); "Set up Telegram" closes the sheet and opens Settings → T-Attention.
@@ -202,6 +212,8 @@ async function openPanel(page, how) {
       await page.locator('#h5-settings').waitFor({ state: 'visible' });
       await page.waitForFunction(() => document.querySelector('#h5-set-attention .MuiAccordionSummary-root').getAttribute('aria-expanded') === 'true');
       assert.equal(await page.evaluate(() => window.H5UI.get().attention.open), false, 'the phone sheet closed');
+      await page.locator('.h5-plugin-page[data-name="telegram"] #h5-tg-qr-start').waitFor();
+      assert.equal(await page.locator('.h5-plugin-page-title').textContent(), 'telegram', 'the guide lands on Telegram\'s page');
       assert.deepEqual(errors, []);
       await context.close();
     }

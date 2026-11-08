@@ -352,6 +352,11 @@ const smallButtons = (page, selector) => page.evaluate(sel => [...document.query
       // Back to Installed: the overview is still there.
       await page.locator('#h5-plugins-tab-installed').tap();
       await page.locator('#h5-plugins .h5-plugin').first().waitFor({ state: 'visible' });
+      // A row opens its page; Back returns to the same tab.
+      await page.locator('#h5-plugins .h5-plugin').first().tap();
+      await page.locator('.h5-plugin-page .h5-plugin-page-back').tap();
+      await page.locator('.h5-plugin-page').waitFor({ state: 'detached' });
+      assert.equal(await page.locator('#h5-plugins-tab-installed').getAttribute('aria-selected'), 'true');
       assert.deepEqual(errors, []);
       await context.close();
     }

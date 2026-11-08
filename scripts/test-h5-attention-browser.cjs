@@ -6,7 +6,8 @@
 //   toast, the badge, a system notification and a sound, a change made on this page gives none; a lost stream connects again and reads the list
 //   again; the Android back button and Escape close one layer; Settings "T-Attention": tokens (create shown once, revoke), sound, notifications,
 //   AI summary (off by default, provider / model, privacy note), Plugins (GET /api/attention/plugins: chips, activity, setup steps with Copy, notifier
-//   modes, a plugin that failed to load, Refresh; above the notifier settings). Context recall: the pending text on the row, the context card (needs you with the
+//   modes, a plugin that failed to load, Refresh; above the notifier settings; a notifier's settings: the form from the manifest schema with
+//   the saved values, a secret never filled in, Save, Test, the enable switch and its "Disabled" chip). Context recall: the pending text on the row, the context card (needs you with the
 //   command, AI summary with refresh, goal, progress with files: a file of this machine opens with the any-path preview (/api/fs/content), one
 //   of a session on another machine (context.host) shows only its path),
 //   folder and branch, the timeline by day, "Open terminal" (the T-Agent terminal) and "Copy resume command".
@@ -46,8 +47,8 @@ const ITEMS = () => [
 ];
 
 // The answer of GET /api/attention/plugins (contract: "T-Attention plugin overview"): one listener set up here, one not, a configured notifier and
-// one that failed to load.
-const PLUGINS = () => ({
+// one that failed to load. `settings` is the stubbed state of GET/PUT /api/attention/plugins/:name/config (the enable switch and the values).
+const PLUGINS = (settings = CONFIGS()) => ({
   listeners: [
     { name: 'claude', version: '1.0.0', description: 'Claude Code hooks', entry: 'hook.js', events: ['Stop'],
       local: { hookPath: true, loggedIn: true, toolHooks: true, lastEventAt: new Date(Date.now() - 5 * 60000).toISOString(), itemCount: 3 } },
@@ -55,11 +56,19 @@ const PLUGINS = () => ({
       local: { hookPath: false, loggedIn: false, toolHooks: null, lastEventAt: null, itemCount: 0 } },
   ],
   notifiers: [
-    { name: 'telegram', version: '1.0.0', description: 'Telegram message or call', loaded: true, error: null, configured: true,
-      summary: 'Logged in as Ann \u2192 account 2 @bob', statuses: { waiting_user: 'call', review: 'message', failed: 'off', done: 'off' } },
+    { name: 'telegram', version: '1.0.0', description: 'Telegram message or call', loaded: true, error: null, enabled: settings.telegram.enabled, configured: true,
+      summary: 'Logged in as Ann \u2192 account 2 @bob', statuses: { waiting_user: 'call', review: 'message', failed: 'off', done: 'off' }, settings: true, test: true, customUi: 'telegram' },
     { name: 'broken', version: '0.0.1', description: '', loaded: false, error: 'Bad manifest: no send()', configured: null, summary: null, statuses: {} },
   ],
 });
+// The manifest settings (contract: "Plugin settings from the manifest"): Telegram's ring time, and a stored secret that only comes back as { set }.
+const TELEGRAM_SCHEMA = [
+  { key: 'callSeconds', label: 'Ring time (seconds)', type: 'number', integer: true, min: 5, max: 120, default: 30, required: false, help: 'How long a call rings before it hangs up.' },
+  { key: 'botToken', label: 'Bot token', type: 'secret', required: false },
+];
+const CONFIGS = () => ({ telegram: { enabled: true, values: { callSeconds: 45 }, secret: 'saved-secret-value' } });
+const configView = entry => ({ name: 'telegram', enabled: entry.enabled, schema: TELEGRAM_SCHEMA, test: true, customUi: 'telegram',
+  values: { callSeconds: entry.values.callSeconds === undefined ? 30 : entry.values.callSeconds, botToken: { set: Boolean(entry.secret) } } });
 
 async function openPage(browser, { viewport, touch = true, notify = true }) {
   const scale = SHOTS && touch ? { deviceScaleFactor: 3 } : {};
@@ -68,7 +77,7 @@ async function openPage(browser, { viewport, touch = true, notify = true }) {
   const errors = [];
   const calls = []; // { method, path, body } of every /api/attention request
   const fsReads = []; // the paths read with GET /api/fs/content
-  const db = { items: ITEMS(), next: 100, summary: { enabled: false, provider: 'deepseek', model: '' }, tokens: [{ id: 1, name: 'laptop claude', created_at: AT, last_used_at: null, revoked_at: null }] };
+  const db = { configs: CONFIGS(), items: ITEMS(), next: 100, summary: { enabled: false, provider: 'deepseek', model: '' }, tokens: [{ id: 1, name: 'laptop claude', created_at: AT, last_used_at: null, revoked_at: null }] };
   page.on('pageerror', error => errors.push(error.message));
   await page.addInitScript(({ notify: on }) => {
     window.sockets = [];
@@ -126,7 +135,20 @@ async function openPage(browser, { viewport, touch = true, notify = true }) {
       const body = request.postData() ? JSON.parse(request.postData()) : undefined;
       calls.push({ method, path: p + url.search, body });
       if (p === '/api/attention/tokens' && method === 'GET') return json({ tokens: db.tokens });
-      if (p === '/api/attention/plugins' && method === 'GET') return json(PLUGINS());
+      if (p === '/api/attention/plugins' && method === 'GET') return json(PLUGINS(db.configs));
+      if (p === '/api/attention/plugins/telegram/config' && method === 'GET') return json(configView(db.configs.telegram));
+      if (p === '/api/attention/plugins/telegram/config' && method === 'PUT') {
+        const entry = db.configs.telegram;
+        if (body.values && body.values.callSeconds !== undefined && body.values.callSeconds !== '' && (body.values.callSeconds < 5 || body.values.callSeconds > 120)) return json({ error: 'INVALID_SETTINGS', message: 'Ring time (seconds) must be a whole number from 5 to 120' }, 400);
+        if (typeof body.enabled === 'boolean') entry.enabled = body.enabled;
+        if (body.values) {
+          if (body.values.callSeconds !== undefined) entry.values.callSeconds = body.values.callSeconds === '' ? undefined : body.values.callSeconds;
+          if (body.values.botToken === null) entry.secret = '';
+          else if (typeof body.values.botToken === 'string') entry.secret = body.values.botToken;
+        }
+        return json(configView(entry));
+      }
+      if (p === '/api/attention/plugins/telegram/test' && method === 'POST') return json(db.configs.telegram.enabled ? { ok: true, message: 'Test sent' } : { ok: false, message: 'The plugin is turned off' });
       // The summary settings answer as services/attention-summary.js does: `providers` is a list with hasApiKey (never a key), and a save that turns
       // the summary on for a provider without a saved key is refused with 409 SUMMARY_PROVIDER_NOT_CONFIGURED and an English message.
       const providers = [{ id: 'deepseek', label: 'DeepSeek', hasApiKey: true, model: 'deepseek-chat' }, { id: 'glm', label: 'GLM', hasApiKey: false, model: 'glm-4-flash' }];
@@ -476,15 +498,57 @@ const pluginsFit = page => page.evaluate(() => [...document.querySelectorAll('#h
       assert.deepEqual(await chipsOf('notifier', 'telegram'), ['Configured']);
       assert.equal(await plugin('notifier', 'telegram').locator('.h5-plugin-summary').textContent(), 'Logged in as Ann \u2192 account 2 @bob');
       assert.equal(await plugin('notifier', 'telegram').locator('.h5-plugin-modes').textContent(), 'Needs you: Call \u00B7 Review: Message');
+      // The settings body of a notifier row: the form drawn from the schema echoes the saved values (a secret only as "saved"), Save sends
+      // only what the person typed, the switch turns the plugin off ("Disabled" chip), Test answers in the row.
+      const telegram = plugin('notifier', 'telegram');
+      assert.equal(await plugin('notifier', 'broken').locator('.h5-plugin-config').count(), 0, 'a plugin that failed to load has no settings');
+      await telegram.locator('.h5-plugin-config-toggle').tap();
+      await page.locator('#h5-plugin-config-telegram-callSeconds').waitFor();
+      assert.equal(await telegram.locator('.h5-plugin-config-toggle').getAttribute('aria-expanded'), 'true');
+      assert.equal(await page.locator('#h5-plugin-config-telegram-callSeconds').inputValue(), '45', 'the saved value is shown');
+      assert.equal(await page.locator('#h5-plugin-config-telegram-botToken').inputValue(), '', 'a secret is never filled in');
+      assert.equal(await page.locator('#h5-plugin-config-telegram-botToken').getAttribute('placeholder'), 'Saved; leave empty to keep it');
+      assert.equal(await page.locator('#h5-plugin-enabled-telegram').isChecked(), true);
+      assert.equal(await telegram.locator('.h5-plugin-config-custom').count(), 1, 'Telegram has its own section (customUi)');
+      assert.equal((await page.content()).includes('saved-secret-value'), false);
+      await page.locator('#h5-plugin-config-telegram-callSeconds').fill('2');
+      await telegram.locator('.h5-plugin-config-save').tap();
+      await page.locator('#h5-plugin-config-feedback-telegram', { hasText: 'Ring time (seconds) is out of range' }).waitFor();
+      const configPuts = () => calls.filter(call => call.path === '/api/attention/plugins/telegram/config' && call.method === 'PUT').map(call => call.body);
+      assert.deepEqual(configPuts(), [], 'checked in the page first');
+      await page.locator('#h5-plugin-config-telegram-callSeconds').fill('60');
+      await telegram.locator('.h5-plugin-config-save').tap();
+      await page.locator('#h5-plugin-config-feedback-telegram', { hasText: 'Saved' }).waitFor();
+      assert.deepEqual(configPuts(), [{ values: { callSeconds: 60 } }], 'the empty secret is left out, so the saved one is kept');
+      assert.equal(db.configs.telegram.secret, 'saved-secret-value');
+      await telegram.locator('.h5-plugin-config-test').tap();
+      await page.locator('#h5-plugin-config-feedback-telegram', { hasText: 'Test sent' }).waitFor();
+      await page.locator('#h5-plugin-enabled-telegram').tap();
+      await page.waitForFunction(() => document.getElementById('h5-plugin-enabled-telegram') && !document.getElementById('h5-plugin-enabled-telegram').checked);
+      await telegram.locator('.h5-plugin-chip', { hasText: 'Disabled' }).waitFor();
+      assert.deepEqual(configPuts().at(-1), { enabled: false });
+      assert.deepEqual(await chipsOf('notifier', 'telegram'), ['Disabled', 'Configured']);
+      assert.equal(await telegram.locator('.h5-plugin-config-test').isDisabled(), true, 'no test while switched off');
+      await page.locator('#h5-plugin-enabled-telegram').tap();
+      await page.waitForFunction(() => document.getElementById('h5-plugin-enabled-telegram').checked);
+      await telegram.locator('.h5-plugin-chip', { hasText: 'Disabled' }).waitFor({ state: 'detached' });
+      await telegram.locator('.h5-plugin-config-clear').tap();
+      await telegram.locator('.h5-plugin-config-clear').waitFor({ state: 'detached' });
+      assert.equal(configPuts().at(-1).values.botToken, null, 'Remove clears the saved secret');
+      assert.equal(db.configs.telegram.secret, '');
+      assert.deepEqual(await pluginsFit(page), []);
+      if (SHOTS) { await telegram.scrollIntoViewIfNeeded(); await page.screenshot({ path: path.join(SHOTS, 'h5-attention-plugin-config-phone.png') }); }
+      await telegram.locator('.h5-plugin-config-toggle').tap();
+      await page.locator('#h5-plugin-config-telegram-callSeconds').waitFor({ state: 'detached' });
       assert.deepEqual(await chipsOf('notifier', 'broken'), ['Failed to load']);
       assert.equal(await plugin('notifier', 'broken').locator('.h5-plugin-error').textContent(), 'Bad manifest: no send()');
       assert.equal(await page.locator('#h5-plugins-refresh').getAttribute('aria-label'), 'Refresh');
       assert.equal(await page.locator('#h5-plugins-refresh').getAttribute('title'), 'Refresh');
       const pluginReads = () => calls.filter(call => call.path === '/api/attention/plugins').length;
-      assert.equal(pluginReads(), 1);
+      assert.equal(pluginReads(), 5, 'read when the group opened and again after each of the four saves (form, switch off, switch on, remove secret)');
       await page.locator('#h5-plugins-refresh').tap();
       await page.waitForFunction(() => document.getElementById('h5-plugins').getAttribute('aria-busy') === 'false');
-      assert.equal(pluginReads(), 2, 'Refresh reads the list again');
+      assert.equal(pluginReads(), 6, 'Refresh reads the list again');
       assert.deepEqual(await pluginsFit(page), []);
       if (SHOTS) { await page.locator('#h5-plugins').scrollIntoViewIfNeeded(); await page.screenshot({ path: path.join(SHOTS, 'h5-attention-plugins-phone.png') }); }
       assert.equal(await page.locator('#h5-attention-sound').isChecked(), true, 'sound is on by default');

@@ -66,13 +66,14 @@ export function setupSteps(listener) {
 // The command that logs the CLI in to this page's Client; the token is a placeholder the person replaces.
 export const loginCommand = origin => `t-attention login --url ${origin} --token <token>`;
 
-// The chips of a notifier.
+// The chips of a notifier: "Disabled" when its switch is off (it then gets nothing), then the setup state.
 export function notifierChips(notifier) {
   if (!notifier) return [];
   if (notifier.loaded === false) return [{ key: 'error', label: 'Failed to load', tone: 'error' }];
-  if (notifier.configured === true) return [{ key: 'configured', label: 'Configured', tone: 'success' }];
-  if (notifier.configured === false) return [{ key: 'configured', label: 'Not configured', tone: 'warning' }];
-  return [];
+  const chips = notifier.enabled === false ? [{ key: 'enabled', label: 'Disabled', tone: 'default' }] : [];
+  if (notifier.configured === true) chips.push({ key: 'configured', label: 'Configured', tone: 'success' });
+  else if (notifier.configured === false) chips.push({ key: 'configured', label: 'Not configured', tone: 'warning' });
+  return chips;
 }
 
 // "Needs you: Call · Review: Message": the statuses that are not off, in the settings order (unknown statuses after them).

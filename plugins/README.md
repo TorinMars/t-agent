@@ -39,9 +39,32 @@ The hooks are in `rules/claude/settings.json` and reach `~/.claude/settings.json
 
 ```
 plugins/notifiers/<name>/
-  manifest.json   {"name", "version", "kind": "notifier", "description"}
+  manifest.json   {"name", "version", "kind": "notifier", "description", "config"?, "test"?, "customUi"?}
   index.js        { name, label, configFields, notify(), test() } and optional ready(), status(), routes(), close()
 ```
+
+### Settings in the manifest (`config`, `test`, `customUi`)
+
+Simple settings are described in the manifest; the server validates and stores them (per user, encrypted, with an on / off switch) and Settings -> T-Attention -> Plugins draws the form. Example:
+
+```json
+"config": [
+  { "key": "url", "label": "Webhook URL", "type": "string", "required": true, "placeholder": "https://example.com/hook" },
+  { "key": "apiKey", "label": "API key", "type": "secret", "help": "From the provider's dashboard" },
+  { "key": "seconds", "label": "Ring time (seconds)", "type": "number", "integer": true, "min": 5, "max": 120, "default": 30 },
+  { "key": "loud", "label": "Loud", "type": "boolean", "default": false },
+  { "key": "level", "label": "Level", "type": "select", "options": ["low", { "value": "high", "label": "High" }], "default": "low" }
+],
+"test": true,
+"customUi": "telegram"
+```
+
+- `type`: `string`, `secret`, `number`, `boolean` or `select`. `key`: letters, digits and `_`, starting with a letter. `label` is required; `help`, `placeholder`, `required`, `default` are optional. `options` only for a select; `min`, `max`, `integer` only for a number; a secret cannot have a default. At most 30 fields. An invalid `config` skips the plugin (the overview shows why).
+- A secret is never sent back to the browser (`{ "set": true }` only) and an empty secret in a save keeps the saved one.
+- `test` (default `true`): the page shows a Test button that calls `test(config, { kind: 'message', link, values, owner, log })`; return `{ ok, message? }` or throw. Never put a secret in the message (the server also hides stored secrets in it).
+- `customUi`: the name of a section the page draws itself (Telegram's login); the generic form is shown below it.
+- `notify` and `test` get `values` (the settings with defaults) and also find them merged into `config`. A plugin switched off gets no `notify` call. Values your plugin wrote to its own store under a schema key are moved into these settings the first time they are read.
+- API: `GET/PUT /api/attention/plugins/<name>/config` (`{ enabled, values }`), `POST /api/attention/plugins/<name>/test`; see "Plugin settings from the manifest" in `DESIGN.md`.
 
 A plugin whose manifest cannot be read or whose `index.js` lacks `notify` / `test` (or has another `name`) is skipped and logged; the plugin overview (`GET /api/attention/plugins`, `t-attention plugins`, Settings -> T-Attention -> Plugins) still lists it with `loaded: false` and the error.
 

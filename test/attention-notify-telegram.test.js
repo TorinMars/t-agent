@@ -361,7 +361,7 @@ test('the notifier overview shows the Telegram state and the per-status modes, a
   store(savedConfig());
   service.saveRules('local', { statuses: ['waiting_user', 'review'], modes: { telegram: { waiting_user: 'call' } } });
   const [entry] = service.overview('local');
-  assert.deepEqual(entry, { name: 'telegram', version: null, description: null, loaded: true, error: null, configured: true, summary: 'Logged in as Account One (+86*******78) → account 2 Account Two', statuses: { waiting_user: 'call', review: 'message' } });
+  assert.deepEqual(entry, { name: 'telegram', version: null, description: null, loaded: true, error: null, enabled: true, configured: true, summary: 'Logged in as Account One (+86*******78) → account 2 Account Two', statuses: { waiting_user: 'call', review: 'message' }, settings: false, test: true, customUi: null });
   // A summary that would carry a stored secret is dropped.
   store(savedConfig({ account: { id: '1', name: SESSION } }));
   assert.equal(service.overview('local')[0].summary, null);

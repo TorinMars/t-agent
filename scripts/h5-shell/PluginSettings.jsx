@@ -10,6 +10,7 @@ import { Icon } from './Icons.jsx';
 import { copyText } from './Attention.jsx';
 import { BASE } from './attention-feed.mjs';
 import { registerAttentionSettings } from './attention-slots.mjs';
+import PluginConfigForm from './PluginConfigForm.jsx';
 import { listenerActivity, listenerChips, loginCommand, modesSummary, normalizePlugins, notifierChips, setupSteps } from './plugins-model.mjs';
 
 // The "Plugins" section of the Settings group "T-Attention": the listener and notifier plugins of this Client and their state, from
@@ -88,7 +89,7 @@ function ListenerRow({ listener }) {
   );
 }
 
-function NotifierRow({ notifier }) {
+function NotifierRow({ notifier, onChanged }) {
   const modes = modesSummary(notifier.statuses, { t });
   return (
     <Paper variant="outlined" className="h5-plugin h5-plugin-notifier" data-name={notifier.name} sx={{ display: 'flex', flexDirection: 'column', gap: 0.75, p: 1.25 }}>
@@ -98,6 +99,7 @@ function NotifierRow({ notifier }) {
       {notifier.error ? <Typography variant="body2" color="error" className="h5-plugin-error" sx={{ overflowWrap: 'anywhere' }}>{t(notifier.error)}</Typography> : null}
       {notifier.summary ? <Secondary className="h5-plugin-summary" translate="no">{notifier.summary}</Secondary> : null}
       {modes ? <Secondary className="h5-plugin-modes">{modes}</Secondary> : null}
+      {notifier.loaded !== false ? <PluginConfigForm notifier={notifier} onChanged={onChanged} /> : null}
     </Paper>
   );
 }
@@ -137,7 +139,7 @@ function PluginSlot({ opened }) {
               {data.listeners.map(listener => <ListenerRow key={listener.name} listener={listener} />)}
             </PluginList>
             <PluginList id="h5-plugins-notifiers" title="Notifiers" empty="No notifier plugins found">
-              {data.notifiers.map(notifier => <NotifierRow key={notifier.name} notifier={notifier} />)}
+              {data.notifiers.map(notifier => <NotifierRow key={notifier.name} notifier={notifier} onChanged={load} />)}
             </PluginList>
           </>
         ) : null}

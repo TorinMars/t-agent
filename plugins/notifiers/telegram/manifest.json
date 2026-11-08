@@ -2,5 +2,19 @@
   "name": "telegram",
   "version": "1.0.0",
   "kind": "notifier",
-  "description": "Sends T-Attention messages and rings a call from your Telegram account 1 to account 2 (MTProto user API, gramjs)."
+  "description": "Sends T-Attention messages and rings a call from your Telegram account 1 to account 2 (MTProto user API, gramjs).",
+  "customUi": "telegram",
+  "test": true,
+  "config": [
+    {
+      "key": "callSeconds",
+      "label": "Ring time (seconds)",
+      "type": "number",
+      "integer": true,
+      "min": 5,
+      "max": 120,
+      "default": 30,
+      "help": "How long a call rings before it hangs up."
+    }
+  ]
 }

@@ -12,6 +12,8 @@ import { BASE } from './attention-feed.mjs';
 import { registerAttentionSettings } from './attention-slots.mjs';
 import PluginConfigForm from './PluginConfigForm.jsx';
 import { listenerActivity, listenerChips, loginCommand, modesSummary, normalizePlugins, notifierChips, setupSteps } from './plugins-model.mjs';
+import { canUninstall, installAction, installSummary, showManualSteps } from './plugins-model.mjs';
+import { PairingDialog } from './PairingDialog.jsx';
 
 // The "Plugins" section of the Settings group "T-Attention": the listener and notifier plugins of this Client and their state, from
 // GET /api/attention/plugins (services/attention-plugins.js). "local" in the answer is about the machine that runs this Client, not this browser.
@@ -57,8 +59,38 @@ const Secondary = ({ children, className, translate }) => (
   <Typography variant="body2" color="text.secondary" className={className} translate={translate} sx={{ overflowWrap: 'anywhere' }}>{children}</Typography>
 );
 
-function ListenerRow({ listener }) {
-  const steps = setupSteps(listener);
+// The actions of an installable listener (claude): install / update the hooks on this machine, uninstall, and a pairing code for another one.
+function ListenerActions({ listener, onChanged }) {
+  const [busy, setBusy] = useState(false);
+  const [pairing, setPairing] = useState(false);
+  const [feedback, say] = useFeedback();
+  const action = installAction(listener);
+  const run = async kind => {
+    if (kind === 'uninstall' && !confirm(t('Remove the T-Attention hooks from ~/.claude/settings.json on this machine? The tokens stay; revoke them under CLI tokens.'))) return;
+    setBusy(true);
+    try {
+      const result = await api('POST', `${BASE}/plugins/${encodeURIComponent(listener.name)}/${kind}`);
+      say(kind === 'uninstall' ? t('The hooks were removed.') : installSummary(result, { t }));
+      onChanged();
+    } catch (error) { say(`${t('Failed')}: ${errorText(error)}`, true); }
+    finally { setBusy(false); }
+  };
+  return (
+    <Box className="h5-plugin-actions" sx={{ display: 'flex', flexDirection: 'column', gap: 0.75, mt: 0.5 }}>
+      {listener.local.autoTerminal ? <Secondary className="h5-plugin-auto">{t('Connects automatically in T-Agent terminals')}</Secondary> : null}
+      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+        {action ? <Button variant="contained" size="small" className="h5-plugin-install" disabled={busy} onClick={() => void run('install')}>{action === 'update' ? t('Update the hooks') : t('Install on this machine')}</Button> : null}
+        <Button variant="outlined" size="small" className="h5-plugin-pair" disabled={busy} onClick={() => setPairing(true)}>{t('Another machine…')}</Button>
+        {canUninstall(listener) ? <Button size="small" className="h5-plugin-uninstall" disabled={busy} onClick={() => void run('uninstall')}>{t('Uninstall')}</Button> : null}
+      </Box>
+      <Feedback feedback={feedback} />
+      <PairingDialog open={pairing} onClose={() => setPairing(false)} onPaired={onChanged} />
+    </Box>
+  );
+}
+
+function ListenerRow({ listener, onChanged }) {
+  const steps = showManualSteps(listener) ? setupSteps(listener) : { login: false, sync: false };
   const origin = typeof location !== 'undefined' ? location.origin : '';
   return (
     <Paper variant="outlined" className="h5-plugin h5-plugin-listener" data-name={listener.name} sx={{ display: 'flex', flexDirection: 'column', gap: 0.75, p: 1.25 }}>
@@ -67,6 +99,7 @@ function ListenerRow({ listener }) {
       <Chips chips={listenerChips(listener)} />
       {listener.error ? <Typography variant="body2" color="error" className="h5-plugin-error" sx={{ overflowWrap: 'anywhere' }}>{t(listener.error)}</Typography> : null}
       {listener.local ? <Secondary className="h5-plugin-activity">{listenerActivity(listener, { t })}</Secondary> : null}
+      {listener.local && listener.local.installable && !listener.error ? <ListenerActions listener={listener} onChanged={onChanged} /> : null}
       {listener.local && (steps.login || steps.sync) ? (
         <Box className="h5-plugin-steps" sx={{ display: 'flex', flexDirection: 'column', gap: 0.75, mt: 0.5 }}>
           <Secondary>{t('To use it on the machine that runs this Client:')}</Secondary>
@@ -136,7 +169,7 @@ function PluginSlot({ opened }) {
         {data ? (
           <>
             <PluginList id="h5-plugins-listeners" title="Listeners" empty="No listener plugins found">
-              {data.listeners.map(listener => <ListenerRow key={listener.name} listener={listener} />)}
+              {data.listeners.map(listener => <ListenerRow key={listener.name} listener={listener} onChanged={() => void load()} />)}
             </PluginList>
             <PluginList id="h5-plugins-notifiers" title="Notifiers" empty="No notifier plugins found">
               {data.notifiers.map(notifier => <NotifierRow key={notifier.name} notifier={notifier} onChanged={load} />)}

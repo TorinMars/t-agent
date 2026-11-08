@@ -79,8 +79,14 @@ const attentionSummary = require('./services/attention-summary').createAttention
 const attentionNotify = require('./services/attention-notify').start({
   db, sessionSecret: config.sessionSecret, onChange: attentionService.onChange, getItem: id => attentionService.get(id),
 });
-const attentionPlugins = require('./services/attention-plugins').createPluginOverview({ service: attentionService, notify: attentionNotify });
-const attentionRoutes = require('./routes/attention').createAttentionRoutes({ service: attentionService, summary: attentionSummary, plugins: attentionPlugins });
+// The loopback address of this server (set when it listens): the claude listener install and the T-Agent terminals report to it.
+let attentionLocalUrl = null;
+const attentionPluginsService = require('./services/attention-plugins');
+const attentionPlugins = attentionPluginsService.createPluginOverview({ service: attentionService, notify: attentionNotify, autoTerminal: () => Boolean(attentionLocalUrl) });
+const attentionInstaller = attentionPluginsService.createListenerInstaller({ service: attentionService, overview: attentionPlugins, localUrl: () => attentionLocalUrl });
+const attentionRoutes = require('./routes/attention').createAttentionRoutes({ service: attentionService, summary: attentionSummary, plugins: attentionPlugins, installer: attentionInstaller });
+// Pairing claims (`t-attention pair`) come from other machines without a session or token: answered here, before the Bearer path and the gates.
+app.use('/api/attention/pairing/claim', attentionRoutes.claim);
 app.use('/api/attention', attentionRoutes.bearer);
 
 app.use(express.json({ limit: '32mb' }));
@@ -502,6 +508,12 @@ server.listen(config.port, config.host, () => {
   serverLock.update({ port: listeningPort });
   const anyHost = ['0.0.0.0', '::', '', 'localhost'].includes(config.host);
   terminal.setHookEndpoint(`http://${anyHost ? '127.0.0.1' : config.host}:${listeningPort}/hooks/terminal-activity`);
+  attentionLocalUrl = `http://${anyHost ? '127.0.0.1' : config.host}:${listeningPort}`;
+  terminal.setAttentionTerminals({
+    url: attentionLocalUrl,
+    issue: (taskId, terminalId) => attentionService.issueTerminalToken({ taskId, terminalId }).token,
+    revoke: (taskId, terminalId) => attentionService.revokeTerminalToken({ taskId, terminalId }),
+  });
   console.log(`Server running at http://localhost:${listeningPort}`);
   // Make the brotli / gzip copies of the pages' scripts and styles now, in the background, so the first visitor already gets them.
   for (const page of ['h5.html']) { try { staticAssets.rewritePage(fs.readFileSync(path.join(__dirname, 'public', page), 'utf8')); } catch { /* the page is not there */ } }

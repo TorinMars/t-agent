@@ -329,7 +329,7 @@ test('plugins prints the server listeners and notifiers and this machine\'s chec
   const home = newHome();
   try {
     // This machine: logged in and the hook path recorded by login, but ~/.claude/settings.json without the hook.
-    assert.equal((await run(['login', '--url', fake.url, '--token', TOKEN, '--no-check'], { home })).code, 0);
+    assert.equal((await run(['login', '--url', fake.url, '--token', TOKEN, '--no-check', '--no-hooks'], { home })).code, 0);
     const text = await run(['plugins'], { home });
     assert.equal(text.code, 0, text.stderr);
     assert.equal(fake.requests.at(-1).path, '/api/attention/plugins');

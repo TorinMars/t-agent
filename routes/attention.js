@@ -7,6 +7,9 @@
 //    the login gate. It answers every Bearer request to /api/attention* itself and never passes one on, so a token reaches this router and nothing
 //    else: not the token endpoints (/api/attention/tokens*, browser session only), no other /api route and no page. No cookie is read or set, there is
 //    no same-origin check (a token is not sent by a browser on its own), failed attempts are rate limited per address, and every failure is 401 JSON.
+//  - `claim` (POST /api/attention/pairing/claim): the one public endpoint, mounted in server.js before `bearer`, the session and the gates. It
+//    takes a pairing code made on the page (POST /pairing, browser session) and answers a new token once; wrong codes are rate limited per
+//    address (pairingClaims: 5 wrong codes in a minute lock the address out for a minute).
 const os = require('node:os');
 const express = require('express');
 const { AttentionError } = require('../services/attention');
@@ -33,7 +36,7 @@ function createCounter({ windowMs, max, now = Date.now }) {
   };
 }
 
-function createAttentionRoutes({ service, summary = null, plugins = null, heartbeatMs = 25000, failedAuth = { windowMs: 15 * 60 * 1000, max: 20 }, tokenRequests = { windowMs: 60 * 1000, max: 600 }, now = Date.now } = {}) {
+function createAttentionRoutes({ service, summary = null, plugins = null, installer = null, pairingClaims = { windowMs: 60 * 1000, max: 5, lockMs: 60 * 1000, requests: 30 }, heartbeatMs = 25000, failedAuth = { windowMs: 15 * 60 * 1000, max: 20 }, tokenRequests = { windowMs: 60 * 1000, max: 600 }, now = Date.now } = {}) {
   if (!service) throw new Error('createAttentionRoutes needs the attention service');
   const failures = createCounter({ ...failedAuth, now });
   const perToken = createCounter({ ...tokenRequests, now });
@@ -114,6 +117,28 @@ function createAttentionRoutes({ service, summary = null, plugins = null, heartb
   router.get('/plugins/:name/config', settingsOnly, pluginCall(req => plugins.getConfig(req.params.name, owner(req))));
   router.put('/plugins/:name/config', settingsOnly, pluginCall(req => plugins.saveConfig(req.params.name, owner(req), req.body)));
   router.post('/plugins/:name/test', settingsOnly, pluginCall(req => plugins.test(req.params.name, owner(req))));
+  // One-click install of the claude listener on this machine (services/attention-plugins.js createListenerInstaller): the browser session only.
+  const asyncWrap = handler => (req, res) => Promise.resolve().then(() => handler(req, res)).catch(error => {
+    if (error instanceof AttentionError) return sendError(res, error.statusCode, error.code, error.message);
+    if (error && error.name === 'ListenerInstallError') return sendError(res, 409, error.code, error.message);
+    if (error && error.code === 'NOT_READY') return sendError(res, 503, 'NOT_READY', error.message);
+    console.error(`T-Attention install: ${error && (error.stack || error.message)}`);
+    return sendError(res, 500, 'INSTALL_FAILED', 'The install failed; see the server log');
+  });
+  const needInstaller = (req, res, next) => (installer ? next() : sendError(res, 404, 'NOT_FOUND', 'Not found'));
+  router.post('/plugins/claude/install', sessionOnly, needInstaller, asyncWrap(async (req, res) => res.json(await installer.install())));
+  router.post('/plugins/claude/uninstall', sessionOnly, needInstaller, asyncWrap(async (req, res) => res.json(await installer.uninstall())));
+
+  // Pairing codes for another machine (`t-attention pair`): made, read and ended from the browser session; claimed through `claim` below.
+  const pairingCommand = (code, url) => `t-attention pair ${code} --url ${url}`;
+  router.post('/pairing', sessionOnly, wrap((req, res) => {
+    const origin = (req.body && typeof req.body.origin === 'string' && req.body.origin) || `${req.protocol}://${req.get('host')}`;
+    const created = service.createPairing({ url: origin });
+    return res.status(201).json({ code: created.code, expiresAt: created.expiresAt, url: created.url, command: pairingCommand(created.code, created.url) });
+  }));
+  router.get('/pairing', sessionOnly, wrap((req, res) => res.json(service.pairingStatus())));
+  router.delete('/pairing', sessionOnly, wrap((req, res) => res.json(service.cancelPairing())));
+  router.all(/^\/pairing(?:\/.*)?$/i, (req, res) => sendError(res, 404, 'NOT_FOUND', 'Not found'));
 
   // Server-sent events: `event: change` with { kind, item, previous, event } for every change, a comment line every heartbeatMs.
   // A token's stream ends when the token is revoked.
@@ -224,9 +249,50 @@ function createAttentionRoutes({ service, summary = null, plugins = null, heartb
     parseJson(req, res, error => (error ? done(error) : router(req, res, done)));
   }
 
+  // POST /api/attention/pairing/claim { code, name } -> { url, token }. No session and no token (a Bearer header is ignored: the code is the
+  // credential and works once). Per address: at most pairingClaims.requests requests a minute, and pairingClaims.max wrong codes inside
+  // windowMs lock it out for lockMs.
+  const claimFailures = createCounter({ windowMs: pairingClaims.windowMs, max: pairingClaims.max, now });
+  const claimRequests = createCounter({ windowMs: 60 * 1000, max: pairingClaims.requests, now });
+  const claimLocks = new Map();
+  const parseClaim = express.json({ limit: '4kb' });
+  function claim(req, res) {
+    res.set('Cache-Control', 'no-store');
+    if (req.method !== 'POST') return sendError(res, 405, 'METHOD_NOT_ALLOWED', 'Use POST');
+    const key = `ip:${req.ip || (req.socket && req.socket.remoteAddress) || 'unknown'}`;
+    const lockedUntil = claimLocks.get(key) || 0;
+    if (lockedUntil > now()) {
+      res.set('Retry-After', String(Math.max(1, Math.ceil((lockedUntil - now()) / 1000))));
+      return sendError(res, 429, 'TOO_MANY_ATTEMPTS', 'Too many wrong pairing codes; try again in a minute');
+    }
+    claimLocks.delete(key);
+    if (claimRequests.limited(key)) {
+      res.set('Retry-After', String(claimRequests.retryAfter(key)));
+      return sendError(res, 429, 'RATE_LIMITED', 'Too many pairing requests; try again later');
+    }
+    claimRequests.add(key);
+    parseClaim(req, res, error => {
+      if (error) return sendError(res, 400, 'INVALID_JSON', 'The request body is not valid JSON');
+      const body = req.body && typeof req.body === 'object' ? req.body : {};
+      try {
+        const result = service.claimPairing({ code: body.code, name: body.name });
+        return res.status(201).json({ url: result.url, token: result.token, name: result.name });
+      } catch (failure) {
+        if (failure instanceof AttentionError && failure.code === 'PAIRING_INVALID') {
+          claimFailures.add(key);
+          if (claimFailures.limited(key)) claimLocks.set(key, now() + pairingClaims.lockMs);
+          return sendError(res, 400, failure.code, failure.message);
+        }
+        if (failure instanceof AttentionError) return sendError(res, failure.statusCode, failure.code, failure.message);
+        console.error(`T-Attention pairing: ${failure.stack || failure.message}`);
+        return sendError(res, 500, 'INTERNAL_ERROR', 'The attention service failed');
+      }
+    });
+  }
+
   function closeStreams() { for (const stream of [...streams]) stream.close(); }
 
-  return { router, bearer, closeStreams };
+  return { router, bearer, claim, closeStreams };
 }
 
 module.exports = { createAttentionRoutes, createCounter };

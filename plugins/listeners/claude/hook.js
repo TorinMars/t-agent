@@ -53,6 +53,22 @@ function log(message) {
   } catch { /* logging must never fail the hook */ }
 }
 
+// ---------- older hook entry ----------
+// The current listener entry of rules/claude/settings.json runs `TA_ATTENTION_ENTRY=2 node <hook>` (it also accepts $TA_ATTENTION_HOOK).
+// `ta` merges it into ~/.claude/settings.json next to an older entry synced before, and Claude Code then runs both for one event. A run
+// without the mark is the older entry: it does nothing when the same event in the user's Claude settings also has the current entry.
+function supersededEntry(eventName) {
+  if (process.env.TA_ATTENTION_ENTRY === '2') return false;
+  try {
+    const dir = String(process.env.CLAUDE_CONFIG_DIR || '').trim() || path.join(os.homedir(), '.claude');
+    const settings = JSON.parse(fs.readFileSync(path.join(dir, 'settings.json'), 'utf8'));
+    const groups = settings && settings.hooks && Array.isArray(settings.hooks[eventName]) ? settings.hooks[eventName] : [];
+    return groups.some(group => group && Array.isArray(group.hooks) && group.hooks.some(hook => hook && typeof hook.command === 'string' && hook.command.includes('TA_ATTENTION_ENTRY=2')));
+  } catch {
+    return false;
+  }
+}
+
 // ---------- session state ----------
 function stateDir() {
   return path.join(client.dataHome(), 'listeners', 'claude-state');
@@ -460,6 +476,7 @@ function main() {
     let event;
     try { event = JSON.parse(input); } catch { log('hook input is not JSON; ignored'); exit(); return; }
     if (!event || typeof event !== 'object' || !event.session_id || !event.hook_event_name) { exit(); return; }
+    if (supersededEntry(event.hook_event_name)) { exit(); return; }
     const state = readState(event.session_id);
     if (TOOL_EVENTS.has(event.hook_event_name) && (!state || state.status !== 'waiting_user')) { exit(); return; }
     if (event.hook_event_name === 'PermissionRequest') {
@@ -482,4 +499,4 @@ function main() {
 
 if (require.main === module) main();
 
-module.exports = { plan, titleFrom, readTranscript, tagentFrom, branchOf, changedFiles, commandOf, WAITING_TYPES };
+module.exports = { supersededEntry, plan, titleFrom, readTranscript, tagentFrom, branchOf, changedFiles, commandOf, WAITING_TYPES };

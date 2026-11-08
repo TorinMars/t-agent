@@ -152,7 +152,7 @@ test('GET /api/attention/plugins with a session and with a token: listeners with
   assert.equal(text.includes(TOKEN_SECRET), false, 'the saved token is never returned');
   const body = JSON.parse(text);
   const claude = body.listeners.find(entry => entry.name === 'claude');
-  assert.deepEqual(claude.local, { hookPath: true, loggedIn: true, toolHooks: true, lastEventAt: '2026-11-08T10:01:00.000Z', itemCount: 2 });
+  assert.deepEqual(claude.local, { hookPath: true, loggedIn: true, toolHooks: true, hooksCurrent: false, autoTerminal: false, installable: true, lastEventAt: '2026-11-08T10:01:00.000Z', itemCount: 2 }, 'a hand-made hook entry is not the current one');
   assert.equal(claude.version, '1.0.0');
   assert.equal(body.listeners.find(entry => entry.name === 'broken').error, 'manifest.json is not valid JSON');
   assert.deepEqual(body.listeners.find(entry => entry.name === 'noentry').local, { hookPath: false, loggedIn: true, toolHooks: null, lastEventAt: null, itemCount: 0 });
@@ -185,6 +185,6 @@ test('without a plugin overview the route is a JSON 404; the terminal user\'s ho
   const root = setUpHome({ hook: false, login: false, settings: 'none' });
   const overview = createPluginOverview({ service, listenersDir: listenersDir(), env: {}, homedir: () => root.home, terminalUser: () => ({ user: { name: 'dev', uid: 1000, gid: 1000, home: user.home } }) });
   const claude = overview.overview('local').listeners.find(entry => entry.name === 'claude');
-  assert.deepEqual(claude.local, { hookPath: true, loggedIn: true, toolHooks: true, lastEventAt: null, itemCount: 0 });
+  assert.deepEqual(claude.local, { hookPath: true, loggedIn: true, toolHooks: true, hooksCurrent: false, autoTerminal: false, installable: true, lastEventAt: null, itemCount: 0 });
   assert.deepEqual(overview.overview('local').notifiers, [], 'no notify service: no notifiers');
 });

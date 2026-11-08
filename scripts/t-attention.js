@@ -7,6 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 const client = require('../lib/attention-client');
 const pluginsLocal = require('../lib/attention-plugins-local');
+const listenerInstall = require('../lib/listener-install');
 
 const EXIT = { ok: 0, usage: 1, auth: 2, notFound: 3, server: 4 };
 const STATUSES = ['todo', 'working', 'waiting_user', 'review', 'done', 'failed', 'cancelled'];
@@ -19,8 +20,8 @@ const GROUPS = [
   { label: 'Done & failed', statuses: ['done', 'failed', 'cancelled'] },
 ];
 const STATUS_LABELS = { todo: 'To do', working: 'Working', waiting_user: 'Needs you', review: 'Review', done: 'Done', failed: 'Failed', cancelled: 'Cancelled' };
-const VALUE_FLAGS = new Set(['url', 'token', 'title', 'notes', 'priority', 'due', 'status', 'ref', 'reason', 'link', 'label', 'note', 'q', 'limit', 'timeout']);
-const BOOL_FLAGS = new Set(['json', 'all', 'help', 'no-check']);
+const VALUE_FLAGS = new Set(['url', 'token', 'title', 'notes', 'priority', 'due', 'status', 'ref', 'reason', 'link', 'label', 'note', 'q', 'limit', 'timeout', 'name']);
+const BOOL_FLAGS = new Set(['json', 'all', 'help', 'no-check', 'no-hooks']);
 // CLI flag -> API field; an empty value clears the field (null).
 const FIELD_FLAGS = { title: 'title', notes: 'notes', priority: 'priority', due: 'due_date', status: 'status', reason: 'attention_reason', link: 'link_url', label: 'link_label' };
 const LISTENER_HOOK = path.resolve(__dirname, '..', 'plugins', 'listeners', 'claude', 'hook.js');
@@ -41,7 +42,11 @@ Commands
                           set the status
   upsert --ref R          create or update by ref
   rm <id|ref:R>           delete a task
-  login --url U --token T save the server and token
+  login --url U --token T save the server and token,
+                          then add the Claude Code hooks
+  pair <code> --url U     connect this machine with a
+                          pairing code from the page
+    --name N              name of this machine
   plugins                 listeners and notifiers of
                           the server, and this machine
 
@@ -60,6 +65,8 @@ Options
   --url U  --token T      server and token for this run
   --timeout <seconds>     default 10
   --no-check              login: save without testing
+  --no-hooks              login, pair: leave
+                          ~/.claude/settings.json alone
 
 Config: flags > env TA_ATTENTION_URL, TA_ATTENTION_TOKEN
   > <data folder>/attention-client.json (~/.tagent;
@@ -408,7 +415,7 @@ async function run(argv, { env = process.env, print, printError } = {}) {
   }
 
   if (command === 'login') {
-    only(flags, ['no-check'], 'login');
+    only(flags, ['no-check', 'no-hooks'], 'login');
     const config = client.resolveConfig({ flags, env });
     if (!config.url || !config.token) throw new UsageError('login needs --url <server> and --token <token>');
     const url = client.normalizeUrl(config.url);
@@ -417,12 +424,35 @@ async function run(argv, { env = process.env, print, printError } = {}) {
       await client.createClient({ url, token: config.token, timeoutMs: timeoutOf(flags) }).list({ limit: 1 });
     }
     const file = client.writeConfig({ url, token: config.token }, { env });
-    const hookPointer = writeHookPointer(env);
-    const result = { config: file, url, checked: !flags['no-check'], claude_hook: hookPointer };
+    const hooks = syncHooks(flags, env);
+    const result = { config: file, url, checked: !flags['no-check'], claude_hook: hooks.pointer, hooks: hooks.result };
     show(result, [
       `Saved ${file} (mode 600)`,
       `Server: ${url}${flags['no-check'] ? ' (not tested)' : ' (token works)'}`,
-      hookPointer ? `Claude listener: ${LISTENER_HOOK}` : 'Claude listener: could not record its path',
+      ...hooks.lines,
+    ].join('\n'));
+    return EXIT.ok;
+  }
+
+  if (command === 'pair') {
+    only(flags, ['name', 'no-hooks'], 'pair');
+    if (flags.token !== undefined) throw new UsageError('pair takes no --token: the pairing code gives one');
+    const code = String(args[0] || '').replace(/[\s-]/g, '');
+    if (!/^\d{6}$/.test(code)) throw new UsageError('pair needs the 6-digit code from the page: t-attention pair 123456 --url <server>');
+    const url = client.normalizeUrl(flags.url || '');
+    if (!url) throw new UsageError(flags.url ? `The server URL is not a valid http(s) URL: ${flags.url}` : 'pair needs --url <server> (the address of the page that shows the code)');
+    const name = flags.name !== undefined ? oneLine(flags.name) : os.hostname();
+    const claimed = await claimPairing(url, { code, name }, timeoutOf(flags));
+    // The address given here reached the server, so it is the one saved.
+    await client.createClient({ url, token: claimed.token, timeoutMs: timeoutOf(flags) }).list({ limit: 1 });
+    const file = client.writeConfig({ url, token: claimed.token }, { env });
+    const hooks = syncHooks(flags, env);
+    const result = { config: file, url, token_name: claimed.name || null, claude_hook: hooks.pointer, hooks: hooks.result };
+    show(result, [
+      `Paired: this machine has the token "${claimed.name || 'claude listener'}" (revoke it under Settings -> T-Attention -> CLI tokens)`,
+      `Saved ${file} (mode 600)`,
+      `Server: ${url} (token works)`,
+      ...hooks.lines,
     ].join('\n'));
     return EXIT.ok;
   }
@@ -517,6 +547,53 @@ async function pluginsCommand(flags, env, { json, print, printError }) {
     }
   }
   return code;
+}
+
+// After login / pair: the hook path and the Claude Code hooks (lib/listener-install.js), or only the hook path with --no-hooks.
+// A ~/.claude/settings.json that cannot be merged is left alone and reported; the login itself has succeeded.
+function syncHooks(flags, env) {
+  if (flags['no-hooks']) {
+    const pointer = writeHookPointer(env);
+    return { pointer, result: null, lines: [pointer ? `Claude listener: ${LISTENER_HOOK}` : 'Claude listener: could not record its path', 'Claude Code hooks: skipped (--no-hooks)'] };
+  }
+  const home = String(env.HOME || '').trim() || os.homedir();
+  try {
+    const result = listenerInstall.installClaudeHooks({ dataDir: client.dataHome({ env }), home, hookPath: LISTENER_HOOK });
+    const what = !result.changed ? 'already in place'
+      : [result.added ? `added ${result.added} ${result.added === 1 ? 'entry' : 'entries'}` : '', result.updated ? `updated ${result.updated}` : ''].filter(Boolean).join(', ');
+    const lines = [`Claude listener: ${LISTENER_HOOK}`, `Claude Code hooks: ${what} in ${result.settingsFile}`];
+    if (result.backup) lines.push(`  a copy of the file before the change: ${result.backup}`);
+    return { pointer: result.pathFile, result: { settings: result.settingsFile, changed: result.changed, added: result.added, updated: result.updated, backup: result.backup }, lines };
+  } catch (error) {
+    const pointer = writeHookPointer(env);
+    return { pointer, result: { error: error.message }, lines: [pointer ? `Claude listener: ${LISTENER_HOOK}` : 'Claude listener: could not record its path', `Claude Code hooks: not changed: ${error.message}`] };
+  }
+}
+
+// POST <url>/api/attention/pairing/claim { code, name } -> { url, token, name }. No token is sent: the code is the credential.
+function claimPairing(url, body, timeoutMs) {
+  const target = new URL(`${url}${client.API_BASE}/pairing/claim`);
+  const payload = Buffer.from(JSON.stringify(body));
+  const transport = target.protocol === 'https:' ? require('node:https') : require('node:http');
+  return new Promise((resolve, reject) => {
+    const req = transport.request(target, { method: 'POST', headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'Content-Length': payload.length } }, res => {
+      const chunks = [];
+      let size = 0;
+      res.on('data', chunk => { size += chunk.length; if (size > 65536) req.destroy(); else chunks.push(chunk); });
+      res.on('end', () => {
+        let parsed = null;
+        try { parsed = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { parsed = null; }
+        if (res.statusCode === 201 && parsed && typeof parsed.token === 'string') return resolve(parsed);
+        const message = parsed && typeof parsed.message === 'string' ? parsed.message : `The server answered HTTP ${res.statusCode}${res.statusCode === 404 ? ' (it may be older than this CLI, or the URL is wrong)' : ''}`;
+        const kind = res.statusCode === 400 ? 'invalid' : res.statusCode === 404 ? 'not_found' : 'server';
+        return reject(new client.AttentionClientError(kind, message, { status: res.statusCode, code: parsed && parsed.error }));
+      });
+      res.on('error', error => reject(new client.AttentionClientError('network', `Network error: ${error.message}`)));
+    });
+    req.setTimeout(timeoutMs, () => req.destroy(new client.AttentionClientError('timeout', `The server did not answer within ${Math.round(timeoutMs / 100) / 10} s`)));
+    req.on('error', error => reject(error instanceof client.AttentionClientError ? error : new client.AttentionClientError('network', `Cannot reach the server: ${error.code || error.message}`)));
+    req.end(payload);
+  });
 }
 
 // The Claude Code hook in rules/claude/settings.json is the same on every machine; it finds this install's hook

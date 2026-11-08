@@ -7,7 +7,8 @@
 //   again; the Android back button and Escape close one layer; Settings "T-Attention": tokens (create shown once, revoke), sound, notifications,
 //   AI summary (off by default, provider / model, privacy note), Plugins (GET /api/attention/plugins: chips, activity, setup steps with Copy, notifier
 //   modes, a plugin that failed to load, Refresh; above the notifier settings; a notifier's settings: the form from the manifest schema with
-//   the saved values, a secret never filled in, Save, Test, the enable switch and its "Disabled" chip). Context recall: the pending text on the row, the context card (needs you with the
+//   the saved values, a secret never filled in, Save, Test, the enable switch and its "Disabled" chip; the claude row's "Update the hooks" install button and the pairing dialog
+//   with code, countdown, Copy and the claim seen by polling). Context recall: the pending text on the row, the context card (needs you with the
 //   command, AI summary with refresh, goal, progress with files: a file of this machine opens with the any-path preview (/api/fs/content), one
 //   of a session on another machine (context.host) shows only its path),
 //   folder and branch, the timeline by day, "Open terminal" (the T-Agent terminal) and "Copy resume command".
@@ -51,7 +52,7 @@ const ITEMS = () => [
 const PLUGINS = (settings = CONFIGS()) => ({
   listeners: [
     { name: 'claude', version: '1.0.0', description: 'Claude Code hooks', entry: 'hook.js', events: ['Stop'],
-      local: { hookPath: true, loggedIn: true, toolHooks: true, lastEventAt: new Date(Date.now() - 5 * 60000).toISOString(), itemCount: 3 } },
+      local: { hookPath: true, loggedIn: true, toolHooks: true, hooksCurrent: false, autoTerminal: true, installable: true, lastEventAt: new Date(Date.now() - 5 * 60000).toISOString(), itemCount: 3 } },
     { name: 'codex', version: '0.1.0', description: 'Codex notify hook', entry: 'hook.js', events: [],
       local: { hookPath: false, loggedIn: false, toolHooks: null, lastEventAt: null, itemCount: 0 } },
   ],
@@ -77,7 +78,8 @@ async function openPage(browser, { viewport, touch = true, notify = true }) {
   const errors = [];
   const calls = []; // { method, path, body } of every /api/attention request
   const fsReads = []; // the paths read with GET /api/fs/content
-  const db = { configs: CONFIGS(), items: ITEMS(), next: 100, summary: { enabled: false, provider: 'deepseek', model: '' }, tokens: [{ id: 1, name: 'laptop claude', created_at: AT, last_used_at: null, revoked_at: null }] };
+  const db = { configs: CONFIGS(), items: ITEMS(), next: 100, summary: { enabled: false, provider: 'deepseek', model: '' }, tokens: [{ id: 1, name: 'laptop claude', created_at: AT, last_used_at: null, revoked_at: null }], claudeLocal: {}, pairingReads: 0 };
+  const pluginsNow = () => { const all = PLUGINS(db.configs); const claude = all.listeners.find(entry => entry.name === 'claude'); claude.local = { ...claude.local, ...db.claudeLocal }; return all; };
   page.on('pageerror', error => errors.push(error.message));
   await page.addInitScript(({ notify: on }) => {
     window.sockets = [];
@@ -135,7 +137,7 @@ async function openPage(browser, { viewport, touch = true, notify = true }) {
       const body = request.postData() ? JSON.parse(request.postData()) : undefined;
       calls.push({ method, path: p + url.search, body });
       if (p === '/api/attention/tokens' && method === 'GET') return json({ tokens: db.tokens });
-      if (p === '/api/attention/plugins' && method === 'GET') return json(PLUGINS(db.configs));
+      if (p === '/api/attention/plugins' && method === 'GET') return json(pluginsNow());
       if (p === '/api/attention/plugins/telegram/config' && method === 'GET') return json(configView(db.configs.telegram));
       if (p === '/api/attention/plugins/telegram/config' && method === 'PUT') {
         const entry = db.configs.telegram;
@@ -149,6 +151,19 @@ async function openPage(browser, { viewport, touch = true, notify = true }) {
         return json(configView(entry));
       }
       if (p === '/api/attention/plugins/telegram/test' && method === 'POST') return json(db.configs.telegram.enabled ? { ok: true, message: 'Test sent' } : { ok: false, message: 'The plugin is turned off' });
+            // The one-click install (services/attention-plugins.js createListenerInstaller): the hooks become current.
+      if (p === '/api/attention/plugins/claude/install' && method === 'POST') {
+        db.claudeLocal = { toolHooks: true, hooksCurrent: true };
+        const claude = pluginsNow().listeners.find(entry => entry.name === 'claude');
+        return json({ ok: true, client: 'kept', changed: true, added: 0, updated: 8, settingsFile: '/home/me/.claude/settings.json', listener: claude });
+      }
+      // Pairing: a code for 10 minutes; the second status read reports that the other machine used it.
+      if (p === '/api/attention/pairing' && method === 'POST') return json({ code: '123456', expiresAt: new Date(Date.now() + 600000).toISOString(), url: body.origin, command: `t-attention pair 123456 --url ${body.origin}` }, 201);
+      if (p === '/api/attention/pairing' && method === 'GET') {
+        db.pairingReads += 1;
+        return json(db.pairingReads >= 2 ? { active: false, expiresAt: null, claimed: { name: 'claude listener (laptop)', at: AT } } : { active: true, expiresAt: new Date(Date.now() + 590000).toISOString(), claimed: null });
+      }
+      if (p === '/api/attention/pairing' && method === 'DELETE') return json({ active: false, expiresAt: null, claimed: null });
       // The summary settings answer as services/attention-summary.js does: `providers` is a list with hasApiKey (never a key), and a save that turns
       // the summary on for a provider without a saved key is refused with 409 SUMMARY_PROVIDER_NOT_CONFIGURED and an English message.
       const providers = [{ id: 'deepseek', label: 'DeepSeek', hasApiKey: true, model: 'deepseek-chat' }, { id: 'glm', label: 'GLM', hasApiKey: false, model: 'glm-4-flash' }];
@@ -549,6 +564,35 @@ const pluginsFit = page => page.evaluate(() => [...document.querySelectorAll('#h
       await page.locator('#h5-plugins-refresh').tap();
       await page.waitForFunction(() => document.getElementById('h5-plugins').getAttribute('aria-busy') === 'false');
       assert.equal(pluginReads(), 6, 'Refresh reads the list again');
+            // Easy install: the claude row says that T-Agent terminals connect by themselves; its hooks are an older version, so "Update the hooks".
+      assert.equal(await plugin('listener', 'claude').locator('.h5-plugin-auto').textContent(), 'Connects automatically in T-Agent terminals');
+      assert.equal(await plugin('listener', 'codex').locator('.h5-plugin-actions').count(), 0, 'a listener without an installer has no actions');
+      assert.equal(await plugin('listener', 'claude').locator('.h5-plugin-install').textContent(), 'Update the hooks');
+      await plugin('listener', 'claude').locator('.h5-plugin-install').tap();
+      await plugin('listener', 'claude').locator('.h5-plugin-actions', { hasText: 'Claude Code hooks added to ~/.claude/settings.json; the saved login still works.' }).waitFor();
+      await page.waitForFunction(() => !document.querySelector('#h5-plugins .h5-plugin-listener[data-name="claude"] .h5-plugin-install'));
+      assert.equal(pluginReads(), 7, 'the list is read again after the install');
+      assert.equal(calls.filter(call => call.path === '/api/attention/plugins/claude/install' && call.method === 'POST').length, 1);
+      assert.equal(await plugin('listener', 'claude').locator('.h5-plugin-uninstall').count(), 1);
+      // Another machine: the pairing dialog with the code, the countdown and the command; it sees the claim and reads the list again.
+      await plugin('listener', 'claude').locator('.h5-plugin-pair').tap();
+      await page.locator('#h5-pairing-code').waitFor();
+      assert.equal(await page.locator('#h5-pairing-code').textContent(), '123 456');
+      assert.match(await page.locator('#h5-pairing-countdown').textContent(), /^Valid for (10:00|9:5\d)$/);
+      assert.equal(await page.locator('#h5-pairing-command').textContent(), `t-attention pair 123456 --url ${ORIGIN}`);
+      assert.deepEqual(calls.filter(call => call.path === '/api/attention/pairing' && call.method === 'POST').map(call => call.body), [{ origin: ORIGIN }]);
+      await page.locator('#h5-pairing-copy').tap();
+      await page.locator('#h5-pairing-copy', { hasText: 'Copied' }).waitFor();
+      assert.equal(await page.evaluate(() => window.copied.at(-1)), `t-attention pair 123456 --url ${ORIGIN}`);
+      const pairingFits = await page.evaluate(() => { const box = document.querySelector('#h5-pairing .MuiDialog-paper').getBoundingClientRect(); return box.left >= 0 && box.right <= innerWidth; });
+      assert.equal(pairingFits, true, 'the dialog fits the phone');
+      if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'h5-attention-pairing-phone.png') });
+      await page.locator('#h5-pairing-done').waitFor({ timeout: 10000 });
+      assert.equal(await page.locator('#h5-pairing-done').textContent(), 'Connected: claude listener (laptop)');
+      assert.equal(pluginReads(), 8, 'a claim reads the list again');
+      await page.locator('#h5-pairing-close').tap();
+      await page.locator('#h5-pairing').waitFor({ state: 'detached' });
+      assert.equal(calls.filter(call => call.path === '/api/attention/pairing' && call.method === 'DELETE').length, 0, 'a used code is not cancelled');
       assert.deepEqual(await pluginsFit(page), []);
       if (SHOTS) { await page.locator('#h5-plugins').scrollIntoViewIfNeeded(); await page.screenshot({ path: path.join(SHOTS, 'h5-attention-plugins-phone.png') }); }
       assert.equal(await page.locator('#h5-attention-sound').isChecked(), true, 'sound is on by default');

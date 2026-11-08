@@ -396,3 +396,47 @@ test('the manifest describes a listener plugin', () => {
   assert.ok(manifest.description);
   assert.ok(fs.existsSync(path.resolve(__dirname, '../plugins/listeners/claude', manifest.entry)));
 });
+
+test('in a T-Agent terminal the command uses $TA_ATTENTION_HOOK when the hook path file is missing, with the URL and token from the environment', async () => {
+  const settings = JSON.parse(fs.readFileSync(SETTINGS, 'utf8'));
+  const command = settings.hooks.Stop.find(group => group.hooks[0].command.includes('claude-hook.path')).hooks[0].command;
+  const fake = await fakeServer();
+  try {
+    const home = path.join(tmp, `home-${count += 1}`);
+    fs.mkdirSync(home, { recursive: true });
+    const env = { PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin`, HOME: home, TA_ATTENTION_HOOK: HOOK, TA_ATTENTION_URL: fake.url, TA_ATTENTION_TOKEN: TOKEN };
+    const ran = await spawnAndFeed('/bin/sh', ['-c', command], env, { ...events.stop, session_id: 'terminal-env' });
+    assert.deepEqual([ran.code, ran.out], [0, '']);
+    assert.equal(fake.requests.length, 2, 'no data folder, no login: the terminal environment is enough');
+    const missing = await spawnAndFeed('/bin/sh', ['-c', command], { ...env, TA_ATTENTION_HOOK: path.join(tmp, 'gone.js') }, { ...events.stop, session_id: 'gone' });
+    assert.deepEqual([missing.code, missing.out], [0, '']);
+    assert.equal(fake.requests.length, 2);
+  } finally {
+    await fake.close();
+  }
+});
+
+test('an older listener entry does nothing when the same event in ~/.claude/settings.json also has the current one', async () => {
+  const fake = await fakeServer();
+  const dir = dataDir();
+  configure(dir, fake.url);
+  const home = path.join(tmp, `home-${count += 1}`);
+  fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+  const current = JSON.parse(fs.readFileSync(SETTINGS, 'utf8')).hooks.Stop.find(group => group.hooks[0].command.includes('claude-hook.path'));
+  try {
+    fs.writeFileSync(path.join(home, '.claude', 'settings.json'), JSON.stringify({ hooks: { Stop: [current] } }));
+    // The older entry runs `node <hook>` without the mark.
+    await hook(dir, { ...events.stop, session_id: 'old-entry' }, { HOME: home });
+    assert.equal(fake.requests.length, 0, 'the current entry reports this event');
+    await hook(dir, { ...events.stop, session_id: 'new-entry' }, { HOME: home, TA_ATTENTION_ENTRY: '2' });
+    assert.equal(fake.requests.length, 2, 'the current entry runs');
+    // Another event without the current entry: the older entry still reports it.
+    await hook(dir, { ...events.prompt, session_id: 'old-entry' }, { HOME: home });
+    assert.equal(fake.requests.length, 4);
+    // CLAUDE_CONFIG_DIR moves the Claude settings.
+    await hook(dir, { ...events.stop, session_id: 'moved' }, { HOME: path.join(tmp, 'nowhere'), CLAUDE_CONFIG_DIR: path.join(home, '.claude') });
+    assert.equal(fake.requests.length, 4);
+  } finally {
+    await fake.close();
+  }
+});

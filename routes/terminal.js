@@ -57,7 +57,7 @@ function withSessionHook(agent, command) {
   return `${command} --settings "$TA_CLAUDE_SETTINGS"`;
 }
 
-const HOOK_ENV_KEYS = ['TA_HOOK_URL', 'TA_HOOK_TOKEN', 'TA_CLAUDE_SETTINGS'];
+const HOOK_ENV_KEYS = ['TA_HOOK_URL', 'TA_HOOK_TOKEN', 'TA_CLAUDE_SETTINGS', 'TA_ATTENTION_URL', 'TA_ATTENTION_TOKEN', 'TA_ATTENTION_HOOK'];
 // The server's own environment may already hold these (a server started from inside a t-agent terminal): they belong to
 // that outer terminal and are never passed on.
 function withoutInheritedHookEnv(env) {
@@ -73,6 +73,47 @@ function hookEnv(taskId, id) {
     TA_HOOK_TOKEN: hookToken(taskId, id),
     TA_CLAUDE_SETTINGS: claudeSettings(),
   };
+}
+
+// T-Attention in T-Agent terminals (B in "T-Attention: easy listener install"): every shell this server starts, where TA_HOOK_URL is set,
+// also gets TA_ATTENTION_URL (this Client's loopback address), TA_ATTENTION_TOKEN (a token for this terminal only, held in memory by
+// services/attention.js and ended when the shell ends) and TA_ATTENTION_HOOK (this install's Claude listener hook, which the hook command
+// in rules/claude/settings.json uses when <data folder>/listeners/claude-hook.path is missing). So Claude started in such a terminal reports
+// with no setup once ~/.claude/settings.json has the hooks. When the terminal user's attention-client.json points to another server
+// (`t-attention pair` / `login` to a central Client), the URL and token are left out, so that choice wins; the hook path is still set.
+// Set by server.js when it listens: { url, issue(taskId, terminalId) -> token, revoke(taskId, terminalId) }.
+const ATTENTION_HOOK = path.resolve(__dirname, '..', 'plugins', 'listeners', 'claude', 'hook.js');
+let attentionTerminals = null;
+function setAttentionTerminals(provider) { attentionTerminals = provider || null; }
+
+function pairedElsewhere(env) {
+  try {
+    const client = require('../lib/attention-client');
+    const stored = client.readConfigFile(client.configPath({ env, homedir: () => env.HOME || os.homedir() }));
+    const url = stored && typeof stored.url === 'string' ? client.normalizeUrl(stored.url) : null;
+    return Boolean(url && stored.token && url !== client.normalizeUrl(attentionTerminals.url));
+  } catch {
+    return false;
+  }
+}
+
+// The T-Attention variables of a new shell; env is the shell's environment without them (its HOME and data folder variables).
+function attentionEnv(taskId, id, env) {
+  if (!hookEndpoint || !attentionTerminals) return {};
+  const out = { TA_ATTENTION_HOOK: ATTENTION_HOOK };
+  if (pairedElsewhere(env)) return out;
+  try {
+    out.TA_ATTENTION_TOKEN = attentionTerminals.issue(taskId, id);
+    out.TA_ATTENTION_URL = attentionTerminals.url;
+  } catch (error) {
+    console.warn(`[terminal] could not make a T-Attention token for terminal ${id} of task ${taskId}: ${error.message}`);
+  }
+  return out;
+}
+
+function endAttentionToken(taskId, id) {
+  if (!attentionTerminals) return;
+  try { attentionTerminals.revoke(taskId, id); } catch { /* the service is gone */ }
 }
 
 function realDir(dir) {
@@ -342,6 +383,7 @@ function getOrCreateSession(ownerTaskId, workDir, dirWarning, id = 'default') {
       console.warn(`[terminal] user ${runAs.name} cannot enter ${cwd}; the terminal starts from its home directory ${runAs.home} instead. Adjust the owner or permissions of that directory`);
       cwd = runAs.home;
     }
+    const baseEnv = withoutInheritedHookEnv(runAs ? { ...terminalEnvFor(runAs, process.env), SHELL: shell } : process.env);
     pty = nodePty.spawn(shell, [], {
       name: 'xterm-256color',
       cols: 220,
@@ -349,7 +391,7 @@ function getOrCreateSession(ownerTaskId, workDir, dirWarning, id = 'default') {
       cwd,
       ...(runAs ? { uid: runAs.uid, gid: runAs.gid } : {}),
       env: {
-        ...withoutInheritedHookEnv(runAs ? { ...terminalEnvFor(runAs, process.env), SHELL: shell } : process.env),
+        ...baseEnv,
         TERM: 'xterm-256color',
         // The clipboard shims come first, so a copy by a program in the terminal (`| pbcopy`, Neovim, Claude Code)
         // also reaches the browser clipboard as OSC 52 (lib/clipboard-shims.js).
@@ -358,9 +400,11 @@ function getOrCreateSession(ownerTaskId, workDir, dirWarning, id = 'default') {
         // otherwise zsh shows Chinese directory names as \M-^ garbage.
         ...utf8LocaleEnv(process.env),
         ...hookEnv(ownerTaskId, id),
+        ...attentionEnv(ownerTaskId, id, baseEnv),
       },
     });
   } catch (e) {
+    endAttentionToken(ownerTaskId, id);
     console.error('[terminal] node-pty spawn error:', e.message, '\ncwd:', workDir, '\nenv.HOME:', process.env.HOME);
     return { startupError: e };
   }
@@ -427,6 +471,7 @@ function getOrCreateSession(ownerTaskId, workDir, dirWarning, id = 'default') {
     s.snapshot.enqueue(() => {
       if (sessions.get(taskId) !== s) return;
       sessions.delete(taskId);
+      endAttentionToken(ownerTaskId, id);
       activityStream.notify(); // a terminal that ends is idle from now on
       s.snapshot.dispose();
       const activeWs = s.ws;
@@ -455,6 +500,7 @@ function controlSession(taskId, action, requestedTerminalId) {
   const session = sessions.get(key);
   if (session) {
     sessions.delete(key);
+    endAttentionToken(id, selectedId);
     activityStream.notify();
     session.snapshot.dispose();
     session.stopShellWatch?.();
@@ -694,4 +740,4 @@ function closeTaskTerminals(taskId) {
   for (const item of [...listTerminals(taskId), ...phone]) controlSession(taskId, 'close', item.terminal_id);
 }
 
-module.exports = { terminalWorkDir, setHookEndpoint, reportHook, activitySnapshot, subagentSnapshot, serveActivityStream, acknowledgeActivity, controlSession, handleWs, listTerminals, createTerminal, listAgentSessions, reopenCommand, renameTerminal, terminalCwd, assertTerminal, closeTaskTerminals };
+module.exports = { terminalWorkDir, setHookEndpoint, setAttentionTerminals, attentionEnv, reportHook, activitySnapshot, subagentSnapshot, serveActivityStream, acknowledgeActivity, controlSession, handleWs, listTerminals, createTerminal, listAgentSessions, reopenCommand, renameTerminal, terminalCwd, assertTerminal, closeTaskTerminals };

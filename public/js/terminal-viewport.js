@@ -38,12 +38,15 @@ const TerminalViewport = (() => {
     if (Math.round(cols * cell) > available + 0.05) cols--;
     return Math.max(2, cols);
   }
-  function fit(term, addon, host) {
+  // `minCols`: the wide terminal's column count (0 in Fit mode); the PTY gets at least that many columns, the screen is then wider than the host
+  // and is moved sideways (TerminalGestures). The rows always fit the host.
+  function fit(term, addon, host, minCols = 0) {
     if (host.clientWidth <= 0 || host.clientHeight <= 0) return;
     const size = addon.proposeDimensions();
     if (!size) return;
     const cols = columns(term, host);
     if (cols) size.cols = cols;
+    if (minCols > size.cols) size.cols = Math.min(1000, minCols);
     if (size.cols === term.cols && size.rows === term.rows) return;
     const saved = capture(term);
     const buffer = term.buffer.active;
@@ -77,5 +80,5 @@ const TerminalViewport = (() => {
     document.fonts?.ready.then(schedule);
     return { disconnect() { disposed = true; observer.disconnect(); cancelAnimationFrame(frame); } };
   }
-  return { capture, restore, fit, columns, keyboardShift, observe };
+  return { capture, restore, fit, columns, cellWidth, keyboardShift, observe };
 })();

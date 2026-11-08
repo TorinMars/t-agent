@@ -50,6 +50,13 @@ export function CopyDialog({ state, ui }) {
           />
           <Button id="h5-copy-next" type="submit" variant="outlined" color="inherit" disabled={!query} sx={{ flex: '0 0 auto' }}>{t('Next match')}</Button>
         </Box>
+        {/* Fit mode on a narrow screen: programs such as Claude Code wrap their own lines at the PTY width, which the copy view cannot join. */}
+        {state.terminalWidth && state.terminalWidth.mode !== 'wide' && state.terminalWidth.current > 0 && state.terminalWidth.current < 100 ? (
+          <Box id="h5-copy-wrap-hint" sx={{ display: 'flex', alignItems: 'center', gap: 1, px: 2, pb: 1, fontSize: 13, color: 'text.secondary' }}>
+            <Box component="span" sx={{ flex: '1 1 auto', minWidth: 0 }}>{t(`Lines are wrapped at ${state.terminalWidth.current} columns`)}</Box>
+            <Button id="h5-copy-widen" size="small" variant="outlined" color="inherit" sx={{ flex: '0 0 auto', minHeight: 36 }} onClick={() => ui.actions.setTerminalWidth({ mode: 'wide' })}>{t('Widen terminal')}</Button>
+          </Box>
+        ) : null}
         {state.copyStale ? (
           <Box sx={{ px: 2, pb: 1 }}>
             <Pill id="h5-copy-stale" tone="primary" filled label={t('New output')} onClick={() => ui.actions.copyRefresh()} sx={{ [TOUCH]: { height: 32, px: 1.5, position: 'relative', '&::after': { content: '""', position: 'absolute', inset: '-6px 0' } } }} />

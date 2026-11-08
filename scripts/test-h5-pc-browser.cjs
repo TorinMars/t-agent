@@ -1,5 +1,5 @@
 // The MUI page (/h5) on a computer, in real Chromium with mocked servers: input mode 'pointer' (no touch, a mouse) at 1440x900 and 1280x800, and the
-// touch mode at phone size for comparison. Checks: no key row, no wheel strip, no keyboard buttons, the draft box always shown, 13px terminal font,
+// touch mode at phone size for comparison. Checks: no key row, no keyboard buttons, the draft box always shown, 13px terminal font,
 // native titles on icon buttons, Escape closing the saved commands menu from the terminal; Cmd/Ctrl+Enter translates and sends, Alt+Enter sends as typed, Enter is a new line, and a send gives the focus back to the terminal;
 // typing with nothing focused reaches the terminal, Escape in the draft box goes back to it, Cmd/Ctrl+K focuses the session search; a shorter window does
 // NOT pin the terminal (it was taken for the on-screen keyboard); the terminal "done" acknowledgement (local and remote Engine) and the next-session
@@ -116,9 +116,9 @@ const waitAck = (url, id, from = 0) => new Promise((resolve, reject) => {
       await openTerminal(page, 'Fix login', 'Terminal 1');
       await history(page);
 
-      // Layout: no key row, no wheel strip, no keyboard buttons; the draft box is shown at rest (one line) with the whole action row.
+      // Layout: no key row, no keyboard buttons; the draft box is shown at rest (one line) with the whole action row.
       assert.equal(await page.locator('#h5-keys').count(), 0, `${label}: no function key row`);
-      assert.equal(await page.locator('#h5-wheel').count(), 0, `${label}: no wheel strip`);
+      assert.equal(await page.locator('#h5-wheel').count(), 0, `${label}: no scrollbar strip`);
       assert.equal(await page.locator('#h5-actions [data-action="keyboard"], #h5-actions [data-action="draft"]').count(), 0, `${label}: no keyboard buttons`);
       const draft = await page.evaluate(() => ({ focused: document.activeElement && document.activeElement.id === 'h5-translate-input', height: document.getElementById('h5-translate').getBoundingClientRect().height, input: document.getElementById('h5-translate-input').getBoundingClientRect().height }));
       assert.equal(draft.focused, false);
@@ -409,7 +409,7 @@ const waitAck = (url, id, from = 0) => new Promise((resolve, reject) => {
       await waitAck('/api/tasks/1/terminal/ack', 'p1', from);
       await history(page, 40, 30);
       assert.equal(await page.locator('#h5-keys').isVisible(), true, 'phone: the key row is shown');
-      assert.equal(await page.locator('#h5-wheel').count(), 1, 'phone: the wheel strip is there');
+      assert.equal(await page.locator('#h5-wheel').count(), 0, 'phone: no wheel strip either (a pan scrolls)');
       assert.equal(await page.locator('#h5-actions [data-action="keyboard"]').isVisible(), true, 'phone: the keyboard buttons are shown');
       assert.equal(await page.evaluate(() => document.getElementById('h5-translate').getBoundingClientRect().height), 0, 'phone: the draft box is hidden at rest');
       assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('.h5-xterm:not([hidden]) .xterm-rows')).fontSize), '11px', 'phone: 11px terminal font');

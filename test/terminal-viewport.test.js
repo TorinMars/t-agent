@@ -83,3 +83,15 @@ test('keyboard shift keeps a cursor near the top visible and a bottom cursor ful
   assert.equal(viewport.keyboardShift(term, 400, 0), 0);
   assert.equal(viewport.keyboardShift(term, 0, 150), 150);
 });
+test('wide mode gives the PTY at least the chosen columns, never fewer than fit, and keeps the fitted rows', () => {
+  const s = setup();
+  viewport.fit(s.term, s.addon, { clientWidth: 300, clientHeight: 200 }, 160);
+  assert.deepEqual([s.term.cols, s.term.rows], [160, 12]);
+  const t = setup();
+  t.addon.proposeDimensions = () => ({ cols: 220, rows: 30 });
+  viewport.fit(t.term, t.addon, { clientWidth: 1500, clientHeight: 600 }, 160);
+  assert.equal(t.term.cols, 220, 'a screen wider than the choice keeps its fitted columns');
+  const u = setup();
+  viewport.fit(u.term, u.addon, { clientWidth: 300, clientHeight: 200 }, 5000);
+  assert.equal(u.term.cols, 1000, 'never past the server limit');
+});

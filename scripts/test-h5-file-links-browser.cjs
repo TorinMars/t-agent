@@ -150,6 +150,23 @@ async function serve(route) {
     const sheet = page.locator('#h5-design-sheet .h5-design-panel');
     const closeSheet = async () => { await page.locator('#h5-design-close').tap(); await sheet.waitFor({ state: 'hidden' }); };
 
+    // A pan that starts on a link is not a tap: sideways, up, down and diagonal pans from the path open nothing and read nothing
+    // (public/js/terminal-gestures.js; real CDP touches, which the browser turns into touch, pointer and, for a tap only, mouse and click events).
+    {
+      const cdp = await context.newCDPSession(page);
+      const pan = async (from, dx, dy) => {
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: from.x, y: from.y }] });
+        for (let i = 1; i <= 6; i++) await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: from.x + dx * i / 6, y: from.y + dy * i / 6 }] });
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+      };
+      const link = await pointOf('A1 ', 'src/app.js');
+      for (const [dx, dy] of [[80, 0], [-60, 0], [0, -60], [0, 60], [40, 25]]) await pan(link, dx, dy);
+      await page.waitForTimeout(700); // past the double-tap wait a link tap has
+      assert.equal(await sheet.isVisible(), false, 'a pan from a file link opens no file');
+      assert.deepEqual(reads, [], 'a pan from a file link reads nothing');
+      await cdp.detach();
+    }
+
     // A code file: plain text with line numbers, line 42 marked and in view; HTML in the file stays text.
     await tap(await pointOf('A1 ', 'src/app.js'));
     await sheet.waitFor({ state: 'visible' });

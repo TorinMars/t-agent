@@ -140,6 +140,13 @@ test('Claude listener -> core -> SSE, timeline, context, notifier and CLI on a r
   await step({ hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command: 'npm test -- --watch=false', description: 'Run the tests' } }, 'working');
   await step({ hook_event_name: 'Notification', notification_type: 'permission_prompt', message: 'Claude needs your permission to use Bash' }, 'waiting_user');
   await step({ hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_input: { command: 'npm test -- --watch=false' }, tool_response: { stdout: 'ok' } }, 'working');
+  // A background sub-agent still runs: the Stop is held back and nobody is notified; the Stop after it finished goes to review.
+  const subagents = path.join(temp, 'session', 'subagents');
+  fs.mkdirSync(subagents, { recursive: true });
+  const subagentLog = stopReason => fs.writeFileSync(path.join(subagents, 'agent-a1.jsonl'), `${JSON.stringify({ type: 'assistant', message: { stop_reason: stopReason } })}\n`);
+  subagentLog('tool_use');
+  await step({ hook_event_name: 'Stop', stop_hook_active: false, last_assistant_message: 'Started a sub-agent.' }, 'working');
+  subagentLog('end_turn');
   await step({ hook_event_name: 'Stop', stop_hook_active: false, last_assistant_message: 'The remember-me box is in place.\nAll 12 tests pass.' }, 'review');
   const last = await step({ hook_event_name: 'SessionEnd', reason: 'prompt_input_exit' }, 'review');
 
@@ -170,6 +177,7 @@ test('Claude listener -> core -> SSE, timeline, context, notifier and CLI on a r
     ['prompt', 'Add a remember-me box to the login page'],
     ['permission', 'Claude needs your permission to use Bash: npm test -- --watch=false'],
     ['resumed', 'Claude continued (Bash)'],
+    ['note', 'Waiting for 1 sub-agent'],
     ['turn_end', 'The remember-me box is in place. All 12 tests pass.'],
     ['session_end', 'Session ended (prompt_input_exit)'],
   ]);
@@ -177,10 +185,10 @@ test('Claude listener -> core -> SSE, timeline, context, notifier and CLI on a r
   assert.ok(events.every(event => event.actor === 'claude'), 'every event names the listener');
 
   // The live stream: one change per hook that changed something, in order, with the item.
-  const changes = changesIn(await stream.until(text => changesIn(text).length >= 5));
-  assert.deepEqual(changes.map(change => [change.kind, change.item.status]), [['created', 'working'], ['updated', 'waiting_user'], ['updated', 'working'], ['updated', 'review'], ['updated', 'review']]);
+  const changes = changesIn(await stream.until(text => changesIn(text).length >= 6));
+  assert.deepEqual(changes.map(change => [change.kind, change.item.status]), [['created', 'working'], ['updated', 'waiting_user'], ['updated', 'working'], ['updated', 'working'], ['updated', 'review'], ['updated', 'review']]);
   assert.deepEqual(changes[1].item.context.pending, { kind: 'permission', text: 'Claude needs your permission to use Bash', tool: 'Bash', command: 'npm test -- --watch=false' });
-  assert.equal(changes[4].event.type, 'activity');
+  assert.equal(changes[5].event.type, 'activity');
 
   // The excerpt is sent on the transitions to waiting_user and review (the server got it in process, for the AI summary) ...
   const excerpts = fs.readFileSync(path.join(temp, 'excerpts.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));

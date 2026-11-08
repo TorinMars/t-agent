@@ -46,6 +46,13 @@ test('placeholders keep the variable part and translate it when it is itself kno
   assert.ok(HAN.test(I18n.t('Update failed: Connection timed out')));
 });
 
+test('the T-Attention note about running sub-agents is translated, singular and plural', () => {
+  const I18n = load('zh');
+  assert.equal(I18n.t('Note: Waiting for 1 sub-agent'), '\u5907\u6ce8\uff1a\u6b63\u5728\u7b49\u5f85 1 \u4e2a\u5b50\u667a\u80fd\u4f53');
+  assert.equal(I18n.t('Note: Waiting for 3 sub-agents'), '\u5907\u6ce8\uff1a\u6b63\u5728\u7b49\u5f85 3 \u4e2a\u5b50\u667a\u80fd\u4f53');
+  assert.equal(I18n.t('\u5907\u6ce8: Waiting for 3 sub-agents'), '\u5907\u6ce8\uff1a\u6b63\u5728\u7b49\u5f85 3 \u4e2a\u5b50\u667a\u80fd\u4f53', 'the page translates the first part before the text reaches the DOM');
+});
+
 test('a prefix piece followed by a runtime message is translated, and the message is kept', () => {
   const I18n = load('zh');
   assert.equal(I18n.t('Cannot start the microphone: boom'), '无法启动麦克风：boom');

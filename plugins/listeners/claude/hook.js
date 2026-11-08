@@ -41,6 +41,9 @@ const exit = () => process.exit(0);
 
 let client = null;
 try { client = require('../../../lib/attention-client'); } catch { client = null; }
+// Node built-ins only, and installed with this file like lib/attention-client.js.
+let agentSessions = null;
+try { agentSessions = require('../../../lib/agent-sessions'); } catch { agentSessions = null; }
 
 function log(message) {
   try {
@@ -284,6 +287,13 @@ function readTranscript(file) {
   return out;
 }
 
+// The sub-agents of this session that still run, from their log files next to the transcript (<dir>/<session>.jsonl ->
+// <dir>/<session>/subagents). Counted from the logs, never kept in the session state: hooks run at the same time and would lose updates.
+function runningSubagents(transcriptPath, now = Date.now()) {
+  if (!agentSessions || typeof transcriptPath !== 'string' || !transcriptPath.endsWith('.jsonl')) return 0;
+  return agentSessions.runningSubagentsIn(path.join(transcriptPath.slice(0, -'.jsonl'.length), 'subagents'), now);
+}
+
 // ---------- event mapping ----------
 function meta(event) {
   const out = { host: os.hostname() };
@@ -299,7 +309,8 @@ function sessionInfo(event) {
 // Returns null for an event that changes nothing, else
 // {kind: 'upsert' | 'resume' | 'session-end', body, context, activity, title, transition, files}.
 // transition: the task enters waiting_user or review (then the excerpt is sent); files: run git diff.
-function plan(event, state = null, now = new Date()) {
+// subagents: the sub-agents still running at a Stop (see runningSubagents).
+function plan(event, state = null, now = new Date(), subagents = 0) {
   const previous = state && state.status;
   const at = now.toISOString();
   switch (event.hook_event_name) {
@@ -341,6 +352,17 @@ function plan(event, state = null, now = new Date()) {
     }
     case 'Stop': {
       const last = String(event.last_assistant_message || '').trim();
+      // Background sub-agents still run: this is not the end of the work. Claude Code wakes the session when one finishes, and the Stop
+      // after the last one goes to review, so the user is told once. The status stays working, so no notifier or page reminder fires.
+      if (subagents > 0) {
+        return {
+          kind: 'upsert', title: fallbackTitle(event), transition: false, files: false,
+          body: { status: 'working', attention_reason: null },
+          context: { last_reply: clip(last, TEXT_MAX) || undefined, pending: null, branch: branchOf(event.cwd) || undefined },
+          activity: { kind: 'note', text: `Waiting for ${subagents} sub-agent${subagents === 1 ? '' : 's'}` },
+          state: { status: 'working', pending: null, pending_tool: null },
+        };
+      }
       return {
         kind: 'upsert', title: fallbackTitle(event), transition: previous !== 'review', files: true,
         body: { status: 'review', attention_reason: last ? clip(last, REASON_MAX) : null },
@@ -395,7 +417,7 @@ function withTranscript(event, body) {
 }
 
 async function handle(event, api, deadline, state) {
-  const step = plan(event, state);
+  const step = plan(event, state, new Date(), event.hook_event_name === 'Stop' ? runningSubagents(event.transcript_path) : 0);
   if (!step) return;
   const ref = `claude:${event.session_id}`;
   const opts = { deadline };
@@ -499,4 +521,4 @@ function main() {
 
 if (require.main === module) main();
 
-module.exports = { supersededEntry, plan, titleFrom, readTranscript, tagentFrom, branchOf, changedFiles, commandOf, WAITING_TYPES };
+module.exports = { supersededEntry, plan, runningSubagents, titleFrom, readTranscript, tagentFrom, branchOf, changedFiles, commandOf, WAITING_TYPES };

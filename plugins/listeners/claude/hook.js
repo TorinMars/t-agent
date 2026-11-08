@@ -7,7 +7,7 @@
 // branch, resume command), sends one `activity` per event for the timeline, and on a transition to waiting_user or
 // review an `excerpt` (the last ~8 KiB of readable transcript text; the server never stores it).
 // <data folder>/listeners/claude-state/<session>.json remembers the last status this hook set, the turn count and the
-// tool of a pending permission dialog, so the tool hooks (PostToolUse, PostToolUseFailure: every tool call) only
+// tool of a pending permission dialog, whether a Stop was held back for sub-agents in this turn, so the tool hooks (PostToolUse, PostToolUseFailure: every tool call) only
 // make a request after a prompt left the task waiting_user, and PermissionRequest never makes one.
 // Mapping: see "T-Attention: CLI and Claude listener" in DESIGN.md and plugins/README.md.
 const crypto = require('node:crypto');
@@ -36,6 +36,8 @@ const TOOL_EVENTS = new Set(['PostToolUse', 'PostToolUseFailure']);
 // it fires after a finished turn has waited, and the task is already in review then.
 const WAITING_TYPES = new Set(['permission_prompt', 'elicitation_dialog', 'elicitation_url_dialog', 'agent_needs_input', 'worker_permission_prompt']);
 const PERMISSION_TYPES = new Set(['permission_prompt', 'worker_permission_prompt']);
+// Claude Code 2.1.x runs UserPromptSubmit for the message that wakes a session when a background task ends. It is not the user's prompt.
+const WAKE_UP_PROMPT = /^\s*(?:<system-reminder>[\s\S]*?)?<task-notification>/;
 
 const exit = () => process.exit(0);
 
@@ -317,6 +319,8 @@ function plan(event, state = null, now = new Date(), subagents = 0) {
     case 'UserPromptSubmit': {
       const prompt = String(event.prompt || '').trim();
       const turns = (Number(state && state.turns) || 0) + 1;
+      // A real prompt starts a new turn. A wake-up continues the turn that waits for its sub-agents, so a held Stop stays remembered.
+      const turnState = WAKE_UP_PROMPT.test(prompt) ? {} : { held_stop: false };
       const context = {
         latest_prompt: clip(prompt, TEXT_MAX), turn_started_at: at, turns, pending: null,
         cwd: event.cwd ? String(event.cwd) : undefined, host: os.hostname(), branch: branchOf(event.cwd) || undefined,
@@ -328,7 +332,7 @@ function plan(event, state = null, now = new Date(), subagents = 0) {
         kind: 'upsert', title: titleFrom(event), transition: false, files: false,
         body: { status: 'working', attention_reason: null, meta: meta(event) }, context,
         activity: { kind: 'prompt', text: clip(oneLine(prompt) || '(empty prompt)', ACTIVITY_MAX) },
-        state: { status: 'working', turns, goal: Boolean(prompt) || Boolean(state && state.goal), started_at: (state && state.started_at) || at, pending: null },
+        state: { status: 'working', turns, goal: Boolean(prompt) || Boolean(state && state.goal), started_at: (state && state.started_at) || at, pending: null, ...turnState },
       };
     }
     case 'Notification': {
@@ -360,15 +364,17 @@ function plan(event, state = null, now = new Date(), subagents = 0) {
           body: { status: 'working', attention_reason: null },
           context: { last_reply: clip(last, TEXT_MAX) || undefined, pending: null, branch: branchOf(event.cwd) || undefined },
           activity: { kind: 'note', text: `Waiting for ${subagents} sub-agent${subagents === 1 ? '' : 's'}` },
-          state: { status: 'working', pending: null, pending_tool: null },
+          state: { status: 'working', pending: null, pending_tool: null, held_stop: true },
         };
       }
       return {
         kind: 'upsert', title: fallbackTitle(event), transition: previous !== 'review', files: true,
-        body: { status: 'review', attention_reason: last ? clip(last, REASON_MAX) : null },
+        // plain_turn_end: this review ends a turn that never waited for sub-agents, so the page shows no in-page notice for it. It is sent only here
+        // and belongs to this one update (the server publishes it on the change and does not store it).
+        body: { status: 'review', attention_reason: last ? clip(last, REASON_MAX) : null, ...(state && state.held_stop ? {} : { plain_turn_end: true }) },
         context: { last_reply: clip(last, TEXT_MAX) || undefined, pending: null, branch: branchOf(event.cwd) || undefined },
         activity: { kind: 'turn_end', text: clip(oneLine(last) || 'The turn ended', ACTIVITY_MAX) },
-        state: { status: 'review', pending: null, pending_tool: null },
+        state: { status: 'review', pending: null, pending_tool: null, held_stop: false },
       };
     }
     case 'StopFailure': {
@@ -419,6 +425,8 @@ function withTranscript(event, body) {
 async function handle(event, api, deadline, state) {
   const step = plan(event, state, new Date(), event.hook_event_name === 'Stop' ? runningSubagents(event.transcript_path) : 0);
   if (!step) return;
+  // Written before the request: a held Stop whose update fails must still count, or the review after the sub-agents would lose its notice.
+  if (step.state && step.state.held_stop) writeState(event.session_id, { held_stop: true });
   const ref = `claude:${event.session_id}`;
   const opts = { deadline };
   const gitBudget = () => Math.min(GIT_TIMEOUT_MS, Math.max(50, deadline - Date.now() - 300));

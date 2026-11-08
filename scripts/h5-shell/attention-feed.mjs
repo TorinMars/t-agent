@@ -1,10 +1,10 @@
 // The live side of T-Attention on the page (started once by entry.jsx, before the panel is ever opened, so the "Needs you" badge and the reminders
 // work from the start): reads the list (GET /api/attention), follows GET /api/attention/stream (server-sent events, event 'change'), keeps
 // `state.attention` in the store and registers the actions the panel (Attention.jsx) and the Settings group (AttentionSettings.jsx) call.
-// Reminders: a change that moves a task INTO waiting_user, failed or review gives a toast, a system notification (only when the user enabled it in
+// Reminders: a change that moves a task INTO waiting_user, failed or review gives a toast (not for a plain Claude turn end, showsNotice), a system notification (only when the user enabled it in
 // Settings and the browser granted it) and a short sound made with WebAudio (no audio file; on by default, off in Settings). A change this page made
 // itself (the user's own tap here) gives none.
-import { applyChange, needsCount, reminderFor } from './attention-model.mjs';
+import { applyChange, needsCount, reminderFor, showsNotice } from './attention-model.mjs';
 
 export const BASE = '/api/attention';
 const LIST_URL = `${BASE}?include_done=1&limit=200`;
@@ -111,7 +111,7 @@ export function startAttentionFeed(ui, { t = text => text, api, EventSourceImpl 
     const note = reminderFor(change);
     if (!note || isOwn(change)) return;
     const head = `${t(note.label)}: ${note.title}`;
-    ui.notify(note.reason ? `${head} — ${note.reason}` : head, note.status === 'failed' ? 'error' : 'info');
+    if (showsNotice(change)) ui.notify(note.reason ? `${head} — ${note.reason}` : head, note.status === 'failed' ? 'error' : 'info');
     const settings = prefs();
     if (settings.notify) showSystemNotification(`T-Attention · ${t(note.label)}`, note.reason ? `${note.title}\n${note.reason}` : note.title, { tag: `attention-${note.id}`, onClick: () => ui.actions.openAttention({ item: note.id }) });
     if (settings.sound) playSound();

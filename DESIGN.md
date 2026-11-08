@@ -1098,3 +1098,4 @@ One line per release, added by `scripts/release.js`. Older notes are in `git log
 > v2.91.0 T-Attention waits for all sub-agents before notifying, plugin settings open from a list, voice input can be turned off, and the top-bar agent counters are gone
 > v2.91.1 Plain Claude turn ends raise no blue notice, blue notices start collapsed, Telegram sends a formatted card, and every session in the sidebar can be renamed
 > v2.91.2 The test suite passes in CI on Node 20 again, and notifier plugins load in a stable order
+> v2.91.3 Restore the phone terminal wheel strip for vertical scrolling, and offer Restart and Delete on sessions of tasks that are not selected.

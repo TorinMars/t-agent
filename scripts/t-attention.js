@@ -3,8 +3,10 @@
 // with a token (Settings -> T-Attention -> CLI tokens) through lib/attention-client.js.
 // See "T-Attention: CLI and Claude listener" in DESIGN.md. Node built-ins only.
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const client = require('../lib/attention-client');
+const pluginsLocal = require('../lib/attention-plugins-local');
 
 const EXIT = { ok: 0, usage: 1, auth: 2, notFound: 3, server: 4 };
 const STATUSES = ['todo', 'working', 'waiting_user', 'review', 'done', 'failed', 'cancelled'];
@@ -40,6 +42,8 @@ Commands
   upsert --ref R          create or update by ref
   rm <id|ref:R>           delete a task
   login --url U --token T save the server and token
+  plugins                 listeners and notifiers of
+                          the server, and this machine
 
 Fields
   --title T  --notes T  --priority high|medium|low|none
@@ -423,7 +427,96 @@ async function run(argv, { env = process.env, print, printError } = {}) {
     return EXIT.ok;
   }
 
+  if (command === 'plugins') {
+    only(flags, [], 'plugins');
+    if (args.length) throw new UsageError('plugins takes no arguments');
+    return pluginsCommand(flags, env, { json, print, printError });
+  }
+
   throw new UsageError(`Unknown command: ${command} (t-attention --help)`);
+}
+
+// ---------- plugins ----------
+// This machine (where the CLI runs; it may not be the server's machine): each listener of this install, checked like the server does.
+function localPlugins(env, serverUrl) {
+  const homedir = () => (String(env.HOME || '').trim() || os.homedir());
+  const dataDir = client.dataHome({ env, homedir });
+  const listeners = pluginsLocal.readListeners().map(listener => {
+    const check = listener.error ? { hookPath: false, loggedIn: false, toolHooks: null } : pluginsLocal.checkListener(listener.name, { dataDir, home: homedir() });
+    const hints = [];
+    if (!listener.error && (!check.hookPath || !check.loggedIn)) hints.push(`run: t-attention login --url ${serverUrl || '<server>'} --token <token>`);
+    if (!listener.error && check.toolHooks === false) hints.push('run ta once to sync the hooks');
+    return { name: listener.name, version: listener.version, error: listener.error, ...check, hints };
+  });
+  return { dataDir, listeners };
+}
+
+const yesNo = (value, yes, no) => (value === true ? yes : value === false ? no : null);
+
+function listenerLine(listener, now) {
+  if (listener.error) return `  ${listener.name} ${listener.version || '?'}  broken: ${oneLine(listener.error)}`;
+  const state = listener.local || {};
+  const parts = [state.hookPath && state.loggedIn ? 'installed here' : 'not installed here', yesNo(state.toolHooks, 'hooks synced', 'hooks not synced')];
+  parts.push(`${state.itemCount || 0} open`);
+  if (state.lastEventAt) parts.push(`last ${ago(state.lastEventAt, now)}`);
+  return `  ${listener.name} ${listener.version || '?'}  ${parts.filter(Boolean).join(' \u00b7 ')}`;
+}
+
+function notifierLine(notifier) {
+  const head = `  ${notifier.name} ${notifier.version || '?'}  `;
+  if (!notifier.loaded) return `${head}failed to load: ${oneLine(notifier.error || 'unknown error')}`;
+  const modes = Object.entries(notifier.statuses || {}).map(([status, mode]) => `${status}: ${mode}`).join(', ');
+  const parts = [yesNo(notifier.configured, 'configured', 'not configured'), modes || 'no statuses notified'];
+  if (notifier.error) parts.push(oneLine(notifier.error));
+  const lines = [head + parts.filter(Boolean).join(' \u00b7 ')];
+  if (notifier.summary) lines.push(`    ${clip(oneLine(notifier.summary), width() - 4)}`);
+  return lines.join('\n');
+}
+
+function formatPlugins(server, localState, now = Date.now()) {
+  const out = [];
+  if (server) {
+    const listeners = Array.isArray(server.listeners) ? server.listeners : [];
+    const notifiers = Array.isArray(server.notifiers) ? server.notifiers : [];
+    out.push('Listeners', ...(listeners.length ? listeners.map(item => listenerLine(item, now)) : ['  none']));
+    out.push('', 'Notifiers', ...(notifiers.length ? notifiers.map(notifierLine) : ['  none']));
+    out.push('');
+  }
+  out.push('This machine:');
+  if (!localState.listeners.length) out.push('  no listeners in this install');
+  for (const listener of localState.listeners) {
+    if (listener.error) { out.push(`  ${listener.name}  broken: ${oneLine(listener.error)}`); continue; }
+    const parts = [listener.hookPath ? 'hook path set' : 'no hook path', listener.loggedIn ? 'logged in' : 'not logged in', yesNo(listener.toolHooks, 'hooks synced', 'hooks not synced')];
+    out.push(`  ${listener.name}  ${parts.filter(Boolean).join(' \u00b7 ')}`);
+    for (const hint of listener.hints) out.push(`    ${hint}`);
+  }
+  return out.join('\n');
+}
+
+// The server part needs the config and the network; the local part always runs. Without the server: exit 4 (2 for a refused token).
+async function pluginsCommand(flags, env, { json, print, printError }) {
+  const config = client.resolveConfig({ flags, env });
+  const serverUrl = client.normalizeUrl(config.url) || '';
+  const localState = localPlugins(env, serverUrl);
+  let server = null;
+  let failure = null;
+  try {
+    if (!config.url || !config.token) throw new client.AttentionClientError('config', 'Not logged in: run t-attention login --url <server> --token <token>');
+    server = (await connect(flags, env).request('GET', '/plugins')).body;
+  } catch (error) {
+    failure = error;
+  }
+  const code = !failure ? EXIT.ok : failure.kind === 'auth' ? EXIT.auth : failure instanceof UsageError ? EXIT.usage : EXIT.server;
+  if (json) {
+    print(JSON.stringify({ server, local: localState, ...(failure ? { error: failure.message } : {}) }, null, 2));
+  } else {
+    print(formatPlugins(server, localState));
+    if (failure) {
+      const older = failure.kind === 'not_found' ? ' (the server may be older than this CLI)' : '';
+      printError(`t-attention: the server part is not shown: ${failure.message}${older}`);
+    }
+  }
+  return code;
 }
 
 // The Claude Code hook in rules/claude/settings.json is the same on every machine; it finds this install's hook
@@ -476,4 +569,4 @@ if (require.main === module) {
   main().then(code => { process.exitCode = code; });
 }
 
-module.exports = { main, parseArgs, formatList, formatItem, EXIT };
+module.exports = { main, parseArgs, formatList, formatItem, formatPlugins, EXIT };

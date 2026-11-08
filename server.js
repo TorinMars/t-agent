@@ -73,7 +73,14 @@ const attentionSummary = require('./services/attention-summary').createAttention
   db, sessionSecret: config.sessionSecret, attention: attentionService,
   translator: require('./services/translator').createTranslator({ db, sessionSecret: config.sessionSecret }),
 });
-const attentionRoutes = require('./routes/attention').createAttentionRoutes({ service: attentionService, summary: attentionSummary });
+// T-Attention notifiers (Telegram ...): subscribes to the onChange bus of services/attention.js; without that module it only serves its settings.
+// It gets the same service instance as the routes and the summary: its public onChange bus (never the excerpt) and get(id) for delayed calls.
+// Made here, before the routes, because the plugin overview (GET /api/attention/plugins) reads it; its router is mounted further down.
+const attentionNotify = require('./services/attention-notify').start({
+  db, sessionSecret: config.sessionSecret, onChange: attentionService.onChange, getItem: id => attentionService.get(id),
+});
+const attentionPlugins = require('./services/attention-plugins').createPluginOverview({ service: attentionService, notify: attentionNotify });
+const attentionRoutes = require('./routes/attention').createAttentionRoutes({ service: attentionService, summary: attentionSummary, plugins: attentionPlugins });
 app.use('/api/attention', attentionRoutes.bearer);
 
 app.use(express.json({ limit: '32mb' }));
@@ -135,11 +142,8 @@ app.use('/api/oss', require('./routes/oss').createOssRouter());
 app.use('/api/environment', require('./routes/environment').createEnvironmentRouter());
 app.use('/api/translate', require('./routes/translate').createTranslateRouter());
 app.use('/api/speech', require('./routes/speech').createSpeechRouter());
-// T-Attention notifiers (Telegram ...): subscribes to the onChange bus of services/attention.js; without that module it only serves its settings.
-// It gets the same service instance as the routes and the summary: its public onChange bus (never the excerpt) and get(id) for delayed calls.
-app.use('/api/attention-notify', require('./services/attention-notify').start({
-  db, sessionSecret: config.sessionSecret, onChange: attentionService.onChange, getItem: id => attentionService.get(id),
-}).createRouter());
+// T-Attention notifiers (made above, next to the attention routes).
+app.use('/api/attention-notify', attentionNotify.createRouter());
 app.use('/api/pm2', require('./routes/pm2').createPm2Router());
 app.use('/api/apps', require('./routes/apps').createAppsRouter());
 const frpRouter = require('./routes/frp').createFrpRouter();

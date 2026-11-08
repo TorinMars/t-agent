@@ -17,6 +17,7 @@ const DEDUPE_MS = 10 * 60 * 1000; // the same item + status is not sent again wi
 const HOUR_MS = 60 * 60 * 1000;
 const DEFAULT_RATE = { message: 20, call: 6 }; // per notifier per hour
 const RECENT_MAX = 50;
+const SECRET_KEY = /session|hash|token|secret|password|key/i;
 const PLUGINS_DIR = path.join(__dirname, '..', 'plugins', 'notifiers');
 
 class NotifyError extends Error {
@@ -116,23 +117,35 @@ function absoluteLink(item, base) {
   return base ? `${base}/` : '';
 }
 
-// Reads every plugins/notifiers/<name>/ that has a manifest of kind 'notifier' and an index.js with the interface. A broken plugin is skipped and logged.
-function loadNotifiers(dir = PLUGINS_DIR, log = defaultLog) {
-  const found = [];
+// Reads every plugins/notifiers/<name>/ that has a manifest of kind 'notifier' and an index.js with the interface.
+// Returns { loaded: [{ plugin, manifest }], skipped: [{ name, version, description, error }] }; a broken plugin is skipped and logged,
+// and kept in `skipped` so the plugin overview (GET /api/attention/plugins) can show why it is not running.
+function scanNotifiers(dir = PLUGINS_DIR, log = defaultLog) {
+  const loaded = [];
+  const skipped = [];
   let entries = [];
-  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return found; }
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return { loaded, skipped }; }
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
     const folder = path.join(dir, entry.name);
+    let manifest = null;
     try {
-      const manifest = JSON.parse(fs.readFileSync(path.join(folder, 'manifest.json'), 'utf8'));
-      if (manifest.kind !== 'notifier') continue;
+      manifest = JSON.parse(fs.readFileSync(path.join(folder, 'manifest.json'), 'utf8'));
+      if (!manifest || manifest.kind !== 'notifier') continue;
       const plugin = require(path.join(folder, 'index.js'));
       if (!plugin || plugin.name !== manifest.name || typeof plugin.notify !== 'function' || typeof plugin.test !== 'function') throw new Error('it does not have the notifier interface');
-      found.push(plugin);
-    } catch (error) { log('warn', `notifier plugin ${entry.name} skipped: ${error.message}`); }
+      loaded.push({ plugin, manifest });
+    } catch (error) {
+      log('warn', `notifier plugin ${entry.name} skipped: ${error.message}`);
+      const field = (key, max) => (manifest && typeof manifest[key] === 'string' ? manifest[key].slice(0, max) : null);
+      skipped.push({ name: field('name', 64) || entry.name, version: field('version', 40), description: field('description', 500), error: String(error.message || 'error').slice(0, 300) });
+    }
   }
-  return found;
+  return { loaded, skipped };
+}
+
+function loadNotifiers(dir = PLUGINS_DIR, log = defaultLog) {
+  return scanNotifiers(dir, log).loaded.map(entry => entry.plugin);
 }
 
 function defaultLog(level, message) {
@@ -141,14 +154,19 @@ function defaultLog(level, message) {
 
 // options: db, sessionSecret, onChange (the bus of services/attention.js; optional), getItem(id) (the current item, so a delayed call carries what
 // arrived after its status change, such as context.summary; optional), getOwner (the user for background events),
-// notifiers (plugins; default: loaded from plugins/notifiers), log(level, message), now(), timers { setTimeout, clearTimeout }.
+// notifiers (plugins; default: loaded from plugins/notifiers), skipped (with injected notifiers: broken ones for the overview),
+// log(level, message), now(), timers { setTimeout, clearTimeout }.
 function createAttentionNotify(options) {
   const { db, sessionSecret } = options;
   const log = options.log || defaultLog;
   const now = options.now || (() => Date.now());
   const timers = options.timers || { setTimeout: (fn, ms) => { const handle = setTimeout(fn, ms); if (handle.unref) handle.unref(); return handle; }, clearTimeout };
   const getOwner = options.getOwner || (() => require('./single-user').ensureSingleUser(db).login);
-  const notifiers = options.notifiers || loadNotifiers(options.pluginsDir, log);
+  // notifiers (injected plugins) skip the folder scan; then `skipped` may list broken ones for the overview.
+  const scanned = options.notifiers ? null : scanNotifiers(options.pluginsDir, log);
+  const notifiers = options.notifiers || scanned.loaded.map(entry => entry.plugin);
+  const manifests = new Map(scanned ? scanned.loaded.map(entry => [entry.plugin.name, entry.manifest]) : []);
+  const skipped = scanned ? scanned.skipped : (options.skipped || []);
   const byName = new Map(notifiers.map(plugin => [plugin.name, plugin]));
 
   // Encrypted per-user values in system_state.
@@ -290,6 +308,38 @@ function createAttentionNotify(options) {
   };
   const unsubscribe = typeof options.onChange === 'function' ? options.onChange(listener) : null;
 
+  // The notifier part of the plugin overview (GET /api/attention/plugins): every notifier with its manifest data, whether it loaded,
+  // whether it is set up and a short summary from the optional plugin hook status(config, owner) (its `configured` and `summary`
+  // fields; null when the plugin has no hook or does not give them), and the mode per notified status. Never a secret: a summary that
+  // contains a stored secret (a setting named like session, hash, token, secret, password or key) is dropped.
+  function overview(owner) {
+    const rules = getRules(owner);
+    const loaded = notifiers.map(plugin => {
+      const manifest = manifests.get(plugin.name) || {};
+      const pick = (key, max) => (typeof manifest[key] === 'string' ? manifest[key] : typeof plugin[key] === 'string' ? plugin[key] : null)?.slice(0, max) ?? null;
+      let configured = null;
+      let summary = null;
+      let error = null;
+      if (typeof plugin.status === 'function') {
+        try {
+          const config = store(plugin.name).read(owner);
+          const state = plugin.status(config, owner) || {};
+          if (typeof state.configured === 'boolean') configured = state.configured;
+          if (typeof state.summary === 'string' && state.summary.trim()) {
+            summary = state.summary.trim().slice(0, 300);
+            const secrets = Object.entries(config).filter(([key, value]) => SECRET_KEY.test(key) && typeof value === 'string' && value.length >= 8).map(([, value]) => value);
+            if (secrets.some(value => summary.includes(value))) summary = null;
+          }
+        } catch (failure) { error = `status failed: ${safeError(failure)}`; }
+      }
+      const statuses = {};
+      for (const status of rules.statuses) statuses[status] = modeOf(rules, plugin.name, status);
+      return { name: plugin.name, version: pick('version', 40), description: pick('description', 500), loaded: true, error, configured, summary, statuses };
+    });
+    const broken = skipped.filter(entry => !byName.has(entry.name)).map(entry => ({ ...entry, loaded: false, configured: null, summary: null, statuses: {} }));
+    return [...loaded, ...broken];
+  }
+
   // Browser API (session only, same origin): /api/attention-notify/...
   function createRouter(routerOptions = {}) {
     const router = express.Router();
@@ -331,7 +381,8 @@ function createAttentionNotify(options) {
   }
 
   return {
-    handle, listener, createRouter, getRules, saveRules, notifiers,
+    handle, listener, createRouter, getRules, saveRules, notifiers, overview, defaultOwner: () => getOwner(),
+    rules: owner => getRules(owner),
     recent: () => recent.slice(),
     pendingCount: () => [...pending.values()].reduce((sum, map) => sum + map.size, 0),
     stop() {
@@ -361,4 +412,4 @@ function start(options) {
   return createAttentionNotify({ ...options, onChange });
 }
 
-module.exports = { start, createAttentionNotify, loadNotifiers, normalizeRules, inQuietHours, absoluteLink, defaultRules, NotifyError, STATUSES, MODES, DEDUPE_MS };
+module.exports = { start, createAttentionNotify, loadNotifiers, scanNotifiers, normalizeRules, inQuietHours, absoluteLink, defaultRules, NotifyError, STATUSES, MODES, DEDUPE_MS };

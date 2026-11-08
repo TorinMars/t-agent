@@ -333,3 +333,37 @@ test('login: a started login expires after 10 minutes and a direct sign-in witho
     assert.equal((await call('POST', '/test', { kind: 'message' })).status, 409, 'no account 2 yet');
   } finally { ctx.close(); }
 });
+
+test('status(config, owner) is the plugin overview hook: configured and a summary with the phone masked and no secret', () => {
+  const plugin = createTelegramNotifier({ loadGram: () => { throw new Error('gramjs is not needed for the status'); } });
+  const none = plugin.status({}, 'local');
+  assert.equal(none.configured, false);
+  assert.equal(none.summary, 'Not logged in');
+  const full = plugin.status(savedConfig(), 'local');
+  assert.equal(full.configured, true);
+  assert.equal(full.summary, 'Logged in as Account One (+86*******78) → account 2 Account Two');
+  // An unmasked phone (an older saved config) is masked; no target means not configured.
+  const raw = plugin.status(savedConfig({ phone: '+8613800000078', target: undefined, account: { id: '1', name: '', username: 'acc_one' } }), 'local');
+  assert.equal(raw.configured, false);
+  assert.equal(raw.summary, 'Logged in as @acc_one (+86*********78) → account 2 not chosen');
+  for (const state of [none, full, raw]) {
+    const text = JSON.stringify({ configured: state.configured, summary: state.summary });
+    for (const secret of [SESSION, API_HASH, '13800000078', '12345']) assert.equal(text.includes(secret), false, `no ${secret}`);
+  }
+});
+
+test('the notifier overview shows the Telegram state and the per-status modes, and never a stored secret', () => {
+  const db = new Database(':memory:');
+  db.exec('CREATE TABLE system_state (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP)');
+  const plugin = createTelegramNotifier({ loadGram: () => { throw new Error('not needed'); } });
+  const service = createAttentionNotify({ db, sessionSecret: SECRET, notifiers: [plugin], getOwner: () => 'local', log: () => {} });
+  const store = config => db.prepare("INSERT OR REPLACE INTO system_state (key, value) VALUES ('attention-notify:telegram:local', ?)").run(require('../lib/token-crypto').encryptToken(JSON.stringify(config), SECRET));
+  store(savedConfig());
+  service.saveRules('local', { statuses: ['waiting_user', 'review'], modes: { telegram: { waiting_user: 'call' } } });
+  const [entry] = service.overview('local');
+  assert.deepEqual(entry, { name: 'telegram', version: null, description: null, loaded: true, error: null, configured: true, summary: 'Logged in as Account One (+86*******78) → account 2 Account Two', statuses: { waiting_user: 'call', review: 'message' } });
+  // A summary that would carry a stored secret is dropped.
+  store(savedConfig({ account: { id: '1', name: SESSION } }));
+  assert.equal(service.overview('local')[0].summary, null);
+  service.stop();
+});

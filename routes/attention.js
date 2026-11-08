@@ -85,6 +85,10 @@ function createAttentionRoutes({ service, summary = null, plugins = null, instal
   const needSummary = (req, res, next) => (summary ? next() : sendError(res, 404, 'NOT_FOUND', 'Not found'));
   router.get('/settings/summary', sessionOnly, needSummary, wrap((req, res) => res.json(summary.getSettings(owner(req)))));
   router.put('/settings/summary', sessionOnly, needSummary, wrap((req, res) => res.json(summary.saveSettings(owner(req), req.body))));
+  // The first-run guide's flags (services/attention-guide.js): the browser session only, per owner.
+  const needGuide = (req, res, next) => (typeof service.getGuide === 'function' ? next() : sendError(res, 404, 'NOT_FOUND', 'Not found'));
+  router.get('/settings/guide', sessionOnly, needGuide, wrap((req, res) => res.json(service.getGuide(owner(req)))));
+  router.put('/settings/guide', sessionOnly, needGuide, wrap((req, res) => res.json(service.saveGuide(owner(req), req.body))));
   router.all(/^\/settings(?:\/.*)?$/i, sessionOnly, (req, res) => sendError(res, 404, 'NOT_FOUND', 'Not found'));
   // Starts a new summary in the background: 202 { started } (false while one already runs for the item); the result arrives as a change event.
   router.post('/:id/summarize', sessionOnly, needSummary, wrap((req, res) => {

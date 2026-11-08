@@ -14,6 +14,7 @@ import { Pill, errorText, named, t } from './common.jsx';
 import { Field } from './Form.jsx';
 import TextField from './TextField.jsx';
 import { Icon } from './Icons.jsx';
+import { AttentionGuide } from './AttentionGuide.jsx';
 import { PRIORITIES, PRIORITY_LABELS, REMIND_STATUSES, STATUSES, STATUS_LABELS, contextFilePath, contextOf, groupItems, jumpBack, onThisMachine, overdue, patchFor, pendingLine, safeLink, timeline } from './attention-model.mjs';
 
 // T-Attention: the tasks agents and services report (through listener plugins, the `t-attention` CLI) and the user's own, in one list
@@ -360,6 +361,8 @@ export function AttentionPanel({ state, ui }) {
       <QuickAdd ui={ui} />
       {attention.status === 'loading' ? <LinearProgress id="h5-attention-loading" aria-label={t('Loading…')} sx={{ flex: '0 0 auto' }} /> : null}
       <Box id="h5-attention-body" sx={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', pb: 2 }}>
+        {/* The first-run guide (AttentionGuide.jsx): shown until its steps are done or it is closed; read each time the panel opens. */}
+        <AttentionGuide ui={ui} place="panel" active={open} />
         {attention.status === 'error' ? (
           <Box id="h5-attention-error" role="status" sx={{ p: 3, textAlign: 'center', color: 'text.secondary', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1.5 }}>
             <span>{t('Could not read the tasks')}</span>

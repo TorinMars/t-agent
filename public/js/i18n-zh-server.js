@@ -556,4 +556,5 @@ I18n.add({
   "origin must be the http(s) address of this page": "origin 必须是这个页面的 http(s) 地址",
   "The server address is not known yet; try again in a moment": "还不知道服务器地址，请稍后再试",
   "The install failed; see the server log": "安装失败，请查看服务器日志",
+  "Unknown guide setting: {1}": "未知的向导设置：{1}",
 });

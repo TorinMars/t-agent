@@ -251,6 +251,40 @@ async function checkIds(page) {
       await doubleTap(page);
       await waitScale(page, 's > 3.05 && s < 3.1'); // the natural size: 1200 / 390 = 3.08
       assert.equal(await page.evaluate(() => visualViewport.scale), 1, 'the page itself is not zoomed');
+      // The toolbar: Zoom out, the percent (of the actual pixels; a tap fits), Zoom in, 1:1; no Download for a picture of the document.
+      const level = page.locator('#h5-viewer-zoom-level');
+      const levelText = async () => (await level.textContent()).trim();
+      assert.equal(await page.locator('#h5-viewer-download').count(), 0, 'a Markdown picture has no Download button');
+      for (const id of ['h5-viewer-zoom-out', 'h5-viewer-zoom-in', 'h5-viewer-actual']) {
+        const named = await page.locator(`#${id}`).evaluate(node => ({ label: node.getAttribute('aria-label'), title: node.getAttribute('title') }));
+        assert.ok(named.label && named.label === named.title, `${id} has aria-label = title`);
+      }
+      assert.equal(await levelText(), '100%', 'at the natural size: 100%');
+      await level.tap();
+      await waitScale(page, 's === 1');
+      assert.match(await levelText(), /^3[23]%$/, 'fit: 390 of 1200 px (32.5%)');
+      assert.equal(await page.locator('#h5-viewer-zoom-out').isDisabled(), true, 'cannot zoom out below fit');
+      assert.equal(await page.locator('#h5-viewer').isVisible(), true, 'a toolbar tap does not close the viewer');
+      await page.locator('#h5-viewer-zoom-in').tap();
+      await waitScale(page, 's > 1.49 && s < 1.51');
+      await page.locator('#h5-viewer-zoom-in').tap();
+      await waitScale(page, 's > 2.24 && s < 2.26');
+      await page.locator('#h5-viewer-zoom-in').tap();
+      await waitScale(page, 's > 3.05 && s < 3.1'); // the step lands on the actual size
+      assert.equal(await levelText(), '100%');
+      await page.locator('#h5-viewer-zoom-out').tap();
+      await waitScale(page, 's > 2.04 && s < 2.06');
+      await page.locator('#h5-viewer-actual').tap();
+      await waitScale(page, 's > 3.05 && s < 3.1');
+      await page.waitForFunction(() => getComputedStyle(document.getElementById('h5-viewer-content')).transitionDuration !== '0s', null, { timeout: 3000 });
+      const bar = await page.locator('#h5-viewer-bar').boundingBox();
+      assert.ok(bar.x >= 0 && bar.x + bar.width <= 390 && bar.y + bar.height <= 844 && bar.y > 844 - 90, `the toolbar at the bottom (${JSON.stringify(bar)})`);
+      await page.setViewportSize({ width: 320, height: 640 });
+      await page.waitForFunction(() => { const r = document.getElementById('h5-viewer-bar').getBoundingClientRect(); return r.left >= 0 && r.right <= 320 && r.bottom <= 640; }, null, { timeout: 3000 });
+      const buttons = await page.evaluate(() => [...document.querySelectorAll('#h5-viewer-bar > *')].map(node => Math.round(node.getBoundingClientRect().height)));
+      assert.ok(buttons.length === 4 && buttons.every(h => h >= 44), `four 44px controls at 320 (${buttons})`);
+      if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'phone-320-viewer-toolbar.png') });
+      await page.setViewportSize({ width: 390, height: 844 });
       await page.keyboard.press('Escape');
       await viewer.waitFor({ state: 'detached' });
       assert.equal(await page.locator('.h5-design-panel').isVisible(), true, 'Escape closed only the viewer');
@@ -280,7 +314,7 @@ async function checkIds(page) {
       // A tap on the background (not zoomed) closes it; a zoomed view does not close on a background tap.
       await img.tap();
       await viewer.waitFor();
-      await page.touchscreen.tap(195, 800);
+      await page.touchscreen.tap(24, 800); // the background beside the toolbar
       await viewer.waitFor({ state: 'detached' });
       assert.equal(await page.locator('.h5-design-panel').isVisible(), true);
       await page.locator('#h5-design-close').tap();
@@ -373,6 +407,28 @@ async function checkIds(page) {
       await page.mouse.up();
       await page.waitForFunction(t => document.getElementById('h5-viewer-content').style.transform !== t, before, { timeout: 3000 });
       await page.mouse.dblclick(720, 450);
+      await waitScale(page, 's === 1');
+      // Keys: + / = zoom in, - out, 0 fit, 1 actual size, the arrows pan a zoomed view.
+      await page.keyboard.press('=');
+      await waitScale(page, 's > 1.49 && s < 1.51');
+      await page.keyboard.press('+');
+      await waitScale(page, 's > 2.24 && s < 2.26');
+      await page.keyboard.press('-');
+      await waitScale(page, 's > 1.49 && s < 1.51');
+      await page.keyboard.press('0');
+      await waitScale(page, 's === 1');
+      assert.equal((await page.locator('#h5-viewer-zoom-level').textContent()).trim(), '100%', 'at 1440 the 1200 px picture fits at its actual size');
+      await page.keyboard.press('=');
+      await waitScale(page, 's > 1.49 && s < 1.51');
+      assert.equal((await page.locator('#h5-viewer-zoom-level').textContent()).trim(), '150%');
+      const x0 = await page.evaluate(() => document.getElementById('h5-viewer-content').style.transform);
+      await page.keyboard.press('ArrowLeft');
+      await page.waitForFunction(t => document.getElementById('h5-viewer-content').style.transform !== t, x0, { timeout: 3000 });
+      await page.keyboard.press('1');
+      await waitScale(page, 's === 1'); // 1: back to the actual size, here the fit
+      await page.keyboard.press('+');
+      await waitScale(page, 's > 1.49 && s < 1.51');
+      await page.keyboard.press('0');
       await waitScale(page, 's === 1');
       await page.keyboard.press('Escape');
       await page.locator('#h5-viewer').waitFor({ state: 'detached' });

@@ -216,19 +216,21 @@ test('Claude listener -> core -> SSE, timeline, context, notifier and CLI on a r
   assert.equal(notes.length, 2);
   // The card of the Telegram plugin (no page address is set, so no Open line).
   assert.equal(final[0].text, [
-    'T-Attention \u00b7 Needs you: Add a remember-me box to the login page',
+    '\u{1F64B} Needs you \u00b7 Add a remember-me box to the login page',
+    '',
     'Needs: Claude needs your permission to use Bash',
-    'Command: npm test -- --watch=false',
-    `Folder: ${cwd} (feat/login)`,
-    'Source: claude',
+    'npm test -- --watch=false',
+    '',
+    'You asked: Add a remember-me box to the login page',
+    '',
+    'Changed: 1 file, +2 -0',
+    '\u2022 login.js',
+    '',
+    `${cwd} \u00b7 feat/login \u00b7 ${os.hostname()} \u00b7 claude`,
   ].join('\n'));
-  assert.equal(final[1].text, [
-    'T-Attention \u00b7 Review: Add a remember-me box to the login page',
-    'Reason: The remember-me box is in place. All 12 tests pass.',
-    'Last reply: The remember-me box is in place.',
-    `Folder: ${cwd} (feat/login)`,
-    'Source: claude',
-  ].join('\n'));
+  assert.match(final[1].text, /Review \u00b7 Add a remember-me box to the login page/);
+  assert.match(final[1].text, /The remember-me box is in place\./);
+  assert.ok(final[1].text.includes(`${cwd} \u00b7 feat/login \u00b7 ${os.hostname()} \u00b7 claude`));
   assert.equal(JSON.stringify(final).includes(MARKER), false, 'a notifier never gets the excerpt');
 
   // The CLI against the same server: the context card of the session.

@@ -28,7 +28,10 @@ test('relative image paths resolve from the folder of the document and never lea
   assert.equal(imagePath('readme.md', '/abs/x.png'), null, 'absolute');
   assert.equal(imagePath('readme.md', 'file:///x.png'), null);
   assert.equal(imagePath('readme.md', '//host/x.png'), null);
-  assert.equal(imagePath('readme.md', 'logo.svg'), null, 'images only, no SVG');
+  assert.equal(imagePath('readme.md', 'logo.svg'), 'logo.svg', 'SVG too (only ever shown through <img>, so its scripts never run)');
+  assert.equal(imagePath('readme.md', 'a.avif'), 'a.avif');
+  assert.equal(imagePath('readme.md', 'a.ICO'), 'a.ICO');
+  assert.equal(imagePath('readme.md', 'movie.mp4'), null, 'images only');
   assert.equal(imagePath('readme.md', 'notes.txt'), null);
   assert.equal(imagePath('readme.md', '%E0%A4%A.png'), null, 'broken escape');
   assert.equal(imagePath('readme.md', '\u56fe/\u622a\u56fe.png'), '\u56fe/\u622a\u56fe.png', 'Chinese names');

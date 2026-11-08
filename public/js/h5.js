@@ -2369,14 +2369,20 @@
     if (!current) { ui.set({ design: { ...base, status: 'no-task' } }); return; }
     const dir = (terminal && terminalDir) || taskDir(current);
     if (directory) { ui.set({ design: { ...base, status: 'folder', dir } }); return; }
-    ui.set({ design: { ...base, status: 'loading', dir } });
     const files = `${from.tasksBase}/${current.id}/files`;
     const scope = terminal ? `terminal=${encodeURIComponent(terminal)}&` : '';
+    // An image or a PDF / audio / video file is not read as text: the sheet shows it from its address (see fileByUrl).
+    const kind = link ? fileKind(filePath) : 'markdown'; // DESIGN.md from the Docs button is always Markdown
+    if (kind === 'image' || isRawKind(kind)) {
+      await fileByUrl(seq, { ...base, kind, dir }, from, `${files}/${kind === 'image' ? 'image' : 'raw'}?${scope}path=${encodeURIComponent(filePath)}`);
+      return;
+    }
+    ui.set({ design: { ...base, kind, status: 'loading', dir } });
     try {
       const file = await api('GET', `${files}/content?${scope}path=${encodeURIComponent(filePath)}`);
       if (seq !== designSeq) return;
       // imageBase: relative images of a Markdown file are read through the same file API (`…/files/image?path=`, images only, at most 5 MB).
-      ui.set({ design: { ...base, status: 'ready', dir, content: String((file && file.content) || ''), imageBase: `${files}/image?${scope}path=` } });
+      ui.set({ design: { ...base, kind, status: 'ready', dir, content: String((file && file.content) || ''), imageBase: `${files}/image?${scope}path=` } });
     } catch (error) {
       if (seq !== designSeq) return;
       let code = error.message;
@@ -2386,8 +2392,53 @@
         if (seq !== designSeq) return;
       }
       const status = code === 'FOLDER' ? 'folder' : code === 'FILE_NOT_FOUND' ? 'missing' : code === 'TASK_ROOT_UNAVAILABLE' ? 'no-dir' : 'error';
-      ui.set({ design: { ...base, status, dir, message: code } });
+      ui.set({ design: { ...base, kind, status, dir, message: code } });
     }
+  }
+  // How the sheet reads a file (scripts/h5-shell/file-kinds.mjs, through the shell): markdown, json, csv, html and code are read as text
+  // (`…/content`); an image through the image read (`…/image?path=`); pdf, audio and video as raw bytes (`…/raw?path=`, with Range, so a video seeks).
+  const fileKind = filePath => (ui.fileKinds ? ui.fileKinds.kindOf(filePath) : 'code');
+  const isRawKind = kind => Boolean(ui.fileKinds && ui.fileKinds.isRaw(kind));
+  // The raw read needs 'files:raw': the local Client always has it, a remote Engine says so in its /info (read once here when not known yet).
+  async function readsRaw(from) {
+    if (from.key === 'local') return true;
+    if (!Array.isArray(from.capabilities)) await readInfo(from).catch(() => { /* an older or offline Engine */ });
+    return Array.isArray(from.capabilities) && from.capabilities.includes('files:raw');
+  }
+  // One byte of a raw file (Range: bytes=0-0), to know before the sheet shows it whether it can be read at all: an <iframe>, <audio> or <video>
+  // cannot tell why it failed. The answer's body is not read (the request is cut off). null when it can be read, else the server's error code.
+  async function probeRaw(url) {
+    const controller = new AbortController();
+    try {
+      const res = await fetch(url, { headers: { Range: 'bytes=0-0', 'X-Requested-With': 'XMLHttpRequest' }, signal: controller.signal });
+      if (res.ok || res.status === 416) { controller.abort(); return null; } // 416: an empty file, which the viewer shows as empty
+      const text = await res.text();
+      let data = null;
+      try { data = text ? JSON.parse(text) : null; } catch { /* plain-text error */ }
+      return (data && data.error) || `HTTP ${res.status}`;
+    } catch {
+      return 'NETWORK';
+    }
+  }
+  // An image, PDF, audio or video file: `design.src` is its address. An image is shown at once (the sheet reads the error itself when it does not
+  // load); a raw file waits for probeRaw. An Engine without 'files:raw' gets the note "This Engine cannot show this file type" (RAW_UNSUPPORTED).
+  async function fileByUrl(seq, base, from, src) {
+    if (base.kind === 'image') { ui.set({ design: { ...base, status: 'ready', src } }); return; }
+    ui.set({ design: { ...base, status: 'loading' } });
+    let code = (await readsRaw(from)) ? await probeRaw(src) : 'RAW_UNSUPPORTED';
+    if (seq !== designSeq) return;
+    if (code === 'RAW_UNSUPPORTED' && Array.isArray(from.capabilities)) from.capabilities = from.capabilities.filter(name => name !== 'files:raw');
+    if (code === 'FS_READ_UNSUPPORTED') { anyPathUnsupported(from, base.path); return; }
+    if (!code) { ui.set({ design: { ...base, status: 'ready', src } }); return; }
+    if (code === 'HTTP 404') code = 'NOT_FOUND';
+    const status = code === 'FILE_NOT_FOUND' || code === 'NOT_FOUND' ? 'missing' : code === 'IS_DIRECTORY' ? 'folder' : code === 'TASK_ROOT_UNAVAILABLE' ? 'no-dir' : 'error';
+    ui.set({ design: { ...base, status, message: code } });
+  }
+  // The proxy says the remote Engine has no any-path read (an older Engine after all): forget the capability and say so, as before.
+  function anyPathUnsupported(from, filePath) {
+    if (Array.isArray(from.capabilities)) from.capabilities = from.capabilities.filter(name => name !== 'fs:read-any');
+    ui.actions.closeDesign();
+    tell(`Outside the working directory: ${filePath}`, 'error');
   }
   ui.actions.openDesign = () => openFileSheet('DESIGN.md');
   // A file outside the working directory (Engines with 'fs:read-any'): `GET {fs}/content?path=` (local `/api/fs`, remote `/api/remote-servers/:id/fs`),
@@ -2396,27 +2447,26 @@
   async function openAnyFile(seq, filePath, { link, line, directory, from }) {
     const base = { open: true, path: filePath, link, line, absolute: true, dir: '' };
     if (directory) { ui.set({ design: { ...base, status: 'folder' } }); return; }
-    ui.set({ design: { ...base, status: 'loading' } });
     const fs = fsBase(from);
+    const kind = fileKind(filePath);
+    if (kind === 'image' || isRawKind(kind)) {
+      await fileByUrl(seq, { ...base, kind }, from, `${fs}/${kind === 'image' ? 'image' : 'raw'}?path=${encodeURIComponent(filePath)}`);
+      return;
+    }
+    ui.set({ design: { ...base, kind, status: 'loading' } });
     try {
       const file = await api('GET', `${fs}/content?path=${encodeURIComponent(filePath)}`);
       if (seq !== designSeq) return;
       const shown = file && typeof file.path === 'string' && /^\/./.test(file.path) ? file.path : filePath;
       // Design.jsx resolves an image against the folder of `path` without its leading '/' and appends it encoded: the '/' goes in front here.
       const imageBase = `${fs}/image?path=${shown.startsWith('/') ? encodeURIComponent('/') : ''}`;
-      ui.set({ design: { ...base, path: shown, status: 'ready', content: String((file && file.content) || ''), imageBase } });
+      ui.set({ design: { ...base, kind, path: shown, status: 'ready', content: String((file && file.content) || ''), imageBase } });
     } catch (error) {
       if (seq !== designSeq) return;
       const code = error.message;
-      if (code === 'FS_READ_UNSUPPORTED') {
-        // The proxy says the remote Engine has no any-path read (an older Engine after all): forget the capability and say so, as before.
-        if (Array.isArray(from.capabilities)) from.capabilities = from.capabilities.filter(name => name !== 'fs:read-any');
-        ui.actions.closeDesign();
-        tell(`Outside the working directory: ${filePath}`, 'error');
-        return;
-      }
+      if (code === 'FS_READ_UNSUPPORTED') { anyPathUnsupported(from, filePath); return; }
       const status = code === 'IS_DIRECTORY' ? 'folder' : code === 'NOT_FOUND' ? 'missing' : 'error';
-      ui.set({ design: { ...base, status, message: code } });
+      ui.set({ design: { ...base, kind, status, message: code } });
     }
   }
 

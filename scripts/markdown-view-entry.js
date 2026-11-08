@@ -5,6 +5,13 @@ import nginx from 'highlight.js/lib/languages/nginx';
 hljs.registerLanguage('dockerfile', dockerfile);
 hljs.registerLanguage('nginx', nginx);
 
+// The highlighted HTML of a whole file in `language` (a highlight.js name; scripts/h5-shell/file-kinds.mjs languageOf picks it by file name), or null
+// when the language is not bundled here. The file sheet (Design.jsx) splits the result into lines (file-view.mjs splitHighlighted).
+export function highlight(source, language) {
+  if (!language || !hljs.getLanguage(language)) return null;
+  return hljs.highlight(String(source), { language, ignoreIllegals: true }).value;
+}
+
 export function enhance(root) {
   const article = document.createElement('article');
   article.className = 'markdown-body';

@@ -7,7 +7,7 @@ const http = require('node:http');
 const express = require('express');
 const Database = require('better-sqlite3');
 const { createAttentionNotify } = require('../services/attention-notify');
-const { createTelegramNotifier, messageText, dhHash, MESSAGE_MAX } = require('../plugins/notifiers/telegram');
+const { createTelegramNotifier, messageText, dhHash, proxyFromEnv, MESSAGE_MAX, NETWORK_TIMEOUT_MS, UNREACHABLE } = require('../plugins/notifiers/telegram');
 
 const SECRET = 'attention-telegram-test-secret-012345';
 const API_HASH = '0123456789abcdef0123456789abcdef';
@@ -36,8 +36,9 @@ function mockGram() {
       this.session = session; this.apiId = apiId; this.apiHash = apiHash; this.params = params; this.events = []; this.connected = false;
       state.clients.push(this);
     }
-    async connect() { this.connected = true; }
+    connect() { if (state.connect) return state.connect(this); this.connected = true; return Promise.resolve(true); }
     async disconnect() { this.connected = false; }
+    async destroy() { this.connected = false; this.destroyed = (this.destroyed || 0) + 1; }
     async sendCode(credentials, phone) { state.sendCodeArgs = { credentials, phone }; if (state.sendCode) return state.sendCode(); return { phoneCodeHash: 'hash-1', isCodeViaApp: true }; }
     async invoke(request) {
       state.invokes.push(request);
@@ -517,4 +518,157 @@ test('QR login: it expires after 10 minutes or on cancel, overlapping polls expo
     assert.equal((await call('GET', '/qr/status')).data.step, 'expired');
     assert.equal(ctx.bodies.join('\n').includes(API_HASH), false);
   } finally { ctx.close(); }
+});
+
+// ---- Network: the SOCKS proxy from the environment, and timeouts ----
+const never = () => new Promise(() => {});
+const until = async (check, what) => {
+  for (let i = 0; i < 400; i += 1) { if (check()) return; await new Promise(resolve => setTimeout(resolve, 5)); }
+  assert.fail(`timed out waiting for ${what}`);
+};
+const networkTimer = timer => timer.ms === NETWORK_TIMEOUT_MS;
+const hasNetworkTimer = timers => [...timers.list.values()].some(networkTimer);
+const fireNetworkTimer = async timers => { await until(() => hasNetworkTimer(timers), 'the network timer'); assert.ok(timers.fireWhere(networkTimer)); };
+
+test('proxyFromEnv reads a SOCKS proxy in order and ignores http and malformed values', () => {
+  assert.deepEqual(proxyFromEnv({ ALL_PROXY: 'socks5h://us%40er:p%3Ass@127.0.0.1:7897' }), { ip: '127.0.0.1', port: 7897, socksType: 5, timeout: 10, username: 'us@er', password: 'p:ss' });
+  assert.deepEqual(proxyFromEnv({ all_proxy: 'socks4://10.0.0.1:1081' }), { ip: '10.0.0.1', port: 1081, socksType: 4, timeout: 10 });
+  assert.equal(proxyFromEnv({ all_proxy: 'socks4a://h:1' }).socksType, 4);
+  assert.equal(proxyFromEnv({ all_proxy: 'socks5://h:1' }).socksType, 5);
+  assert.equal(proxyFromEnv({ all_proxy: 'SOCKS://h:1' }).socksType, 5);
+  assert.deepEqual(proxyFromEnv({ all_proxy: 'socks5://[::1]' }), { ip: '::1', port: 1080, socksType: 5, timeout: 10 }, 'IPv6 without brackets, default port');
+  assert.equal(proxyFromEnv({ ALL_PROXY: 'socks5://first:1', all_proxy: 'socks5://second:2', HTTPS_PROXY: 'socks5://third:3' }).ip, 'first');
+  assert.equal(proxyFromEnv({ all_proxy: 'socks5://second:2', HTTPS_PROXY: 'socks5://third:3' }).ip, 'second');
+  assert.equal(proxyFromEnv({ HTTPS_PROXY: 'socks5://third:3', https_proxy: 'socks5://fourth:4' }).ip, 'third');
+  assert.equal(proxyFromEnv({ https_proxy: 'socks5h://fourth:4' }).ip, 'fourth');
+  assert.equal(proxyFromEnv({ ALL_PROXY: 'http://127.0.0.1:7897', HTTPS_PROXY: 'socks5://third:3' }).ip, 'third', 'an unusable value is skipped');
+  for (const env of [{}, { ALL_PROXY: '' }, { ALL_PROXY: 'http://127.0.0.1:7897' }, { HTTPS_PROXY: 'http://127.0.0.1:7897', https_proxy: 'https://127.0.0.1:7897' }, { ALL_PROXY: 'not a url' }, { ALL_PROXY: 'socks5://' }, { ALL_PROXY: 'socks5://h:0' }, { ALL_PROXY: 'socks5://h:99999' }, { ALL_PROXY: 'socks5://%E0%A4%A:x@h:1' }, { ALL_PROXY: 'ftp://h:1' }]) {
+    assert.equal(proxyFromEnv(env), null, JSON.stringify(env));
+  }
+});
+
+test('the proxy reaches TelegramClient only when the environment has a usable one, and is not returned or logged', async () => {
+  const params = async env => {
+    const { gram, state } = mockGram();
+    const plugin = createTelegramNotifier({ loadGram: () => gram, timers: fakeTimers(), env });
+    await plugin.notify({ item: { status: 'failed', title: 'x' }, mode: 'message', config: savedConfig() });
+    plugin.close();
+    return state.clients[0].params;
+  };
+  assert.deepEqual((await params({ ALL_PROXY: 'socks5h://user:secret@127.0.0.1:7897' })).proxy, { ip: '127.0.0.1', port: 7897, socksType: 5, timeout: 10, username: 'user', password: 'secret' });
+  assert.deepEqual((await params({ all_proxy: 'socks4://127.0.0.1:1081' })).proxy, { ip: '127.0.0.1', port: 1081, socksType: 4, timeout: 10 });
+  for (const env of [{}, { ALL_PROXY: 'http://127.0.0.1:7897' }, { ALL_PROXY: 'nonsense' }]) assert.equal('proxy' in await params(env), false, JSON.stringify(env));
+  const ctx = await loginServer({ env: { ALL_PROXY: 'socks5h://proxy-user:proxy-secret@127.0.0.1:7897' } });
+  try {
+    ctx.state.handlers['auth.ExportLoginToken'] = () => ({ className: 'auth.LoginToken', token: TOKEN_1, expires: 2_000_000_000 });
+    assert.equal((await ctx.call('POST', '/qr/start', { api_id: 12345, api_hash: API_HASH })).status, 200);
+    assert.equal(ctx.state.clients.at(-1).params.proxy.password, 'proxy-secret', 'QR login uses it too');
+    const everything = ctx.bodies.join('\n') + ctx.logs.join('\n');
+    assert.equal(everything.includes('proxy-secret') || everything.includes('proxy-user'), false);
+  } finally { ctx.close(); }
+});
+
+test('QR login: a connect that never resolves ends in the error, nothing is registered, and a late connect is stopped again', async () => {
+  const ctx = await loginServer();
+  try {
+    const { call, state, timers } = ctx;
+    let connected;
+    state.connect = () => new Promise(resolve => { connected = resolve; });
+    const pending = call('POST', '/qr/start', { api_id: 12345, api_hash: API_HASH });
+    await fireNetworkTimer(timers);
+    const answer = await pending;
+    assert.deepEqual([answer.status, answer.data.error], [504, UNREACHABLE]);
+    const client = state.clients.at(-1);
+    assert.equal(client.destroyed, 1, 'the abandoned client is destroyed');
+    assert.equal((await call('GET', '/status')).data.step, 'none');
+    assert.equal((await call('GET', '/qr/status')).data.step, 'expired');
+    connected(true);
+    await settle();
+    assert.equal(client.destroyed, 2, 'stopped again once it did connect');
+    assert.equal((await call('GET', '/status')).data.step, 'none', 'a late connect registers nothing');
+    assert.equal(hasNetworkTimer(timers), false, 'no timer left');
+    assert.equal(state.invokes.length, 0, 'nothing was asked of a client that timed out');
+  } finally { ctx.close(); }
+});
+
+test('phone login: connect failing (timeout, or gramjs answering false) ends in the error', async () => {
+  const ctx = await loginServer();
+  try {
+    const { call, state, timers } = ctx;
+    state.connect = never;
+    const pending = call('POST', '/start', { api_id: 12345, api_hash: API_HASH, phone: '+8613800000078' });
+    await fireNetworkTimer(timers);
+    const answer = await pending;
+    assert.deepEqual([answer.status, answer.data.error], [504, UNREACHABLE]);
+    assert.equal(state.clients.at(-1).destroyed, 1);
+    state.connect = async () => false;
+    const refused = await call('POST', '/start', { api_id: 12345, api_hash: API_HASH, phone: '+8613800000078' });
+    assert.deepEqual([refused.status, refused.data.error], [504, UNREACHABLE]);
+    assert.equal(state.sendCodeArgs, undefined, 'no code is requested without a connection');
+    assert.equal((await call('GET', '/status')).data.step, 'none');
+  } finally { ctx.close(); }
+});
+
+test('QR login: an export that never resolves ends in the error for /qr/start and drops the login', async () => {
+  const ctx = await loginServer();
+  try {
+    const { call, state, timers } = ctx;
+    let answerExport;
+    state.handlers['auth.ExportLoginToken'] = () => new Promise(resolve => { answerExport = resolve; });
+    const pending = call('POST', '/qr/start', { api_id: 12345, api_hash: API_HASH });
+    await fireNetworkTimer(timers);
+    const answer = await pending;
+    assert.deepEqual([answer.status, answer.data.error], [504, UNREACHABLE]);
+    assert.equal(state.clients.at(-1).destroyed, 1);
+    assert.equal((await call('GET', '/status')).data.step, 'none');
+    // The late answer changes nothing, not even a success.
+    answerExport({ className: 'auth.LoginTokenSuccess', authorization: { className: 'auth.Authorization' } });
+    await settle();
+    const after = await call('GET', '/status');
+    assert.deepEqual([after.data.step, after.data.loggedIn], ['none', false]);
+    assert.equal(ctx.db.prepare("SELECT COUNT(*) n FROM system_state WHERE key = 'attention-notify:telegram:owner'").get().n, 0);
+  } finally { ctx.close(); }
+});
+
+test('QR login: when a refresh export never resolves, /qr/status and an overlapping poll end in the error, not an endless wait', async () => {
+  let clock = 1_000_000_000_000;
+  const ctx = await loginServer({ now: () => clock, renderQr: async () => '<svg></svg>' });
+  try {
+    const { call, state, timers } = ctx;
+    state.handlers['auth.ExportLoginToken'] = () => ({ className: 'auth.LoginToken', token: TOKEN_1, expires: Math.floor(clock / 1000) + 30 });
+    await call('POST', '/qr/start', { api_id: 12345, api_hash: API_HASH });
+    let answerExport;
+    state.handlers['auth.ExportLoginToken'] = () => new Promise(resolve => { answerExport = resolve; });
+    clock += 31000;
+    const polls = [call('GET', '/qr/status'), call('GET', '/qr/status')];
+    await fireNetworkTimer(timers);
+    const answers = await Promise.all(polls);
+    assert.deepEqual(answers.map(answer => [answer.status, answer.data.error]), [[504, UNREACHABLE], [504, UNREACHABLE]]);
+    assert.equal(exports_(state).length, 2);
+    assert.equal(state.clients.at(-1).destroyed, 1, 'dropped once');
+    assert.equal((await call('GET', '/qr/status')).data.step, 'expired', 'the page leaves the QR step');
+    assert.equal((await call('GET', '/status')).data.step, 'none');
+    answerExport({ className: 'auth.LoginTokenMigrateTo', dcId: 4, token: TOKEN_2 });
+    await settle();
+    assert.equal(state.switchedTo, undefined, 'a late migration does not connect a dropped client again');
+  } finally { ctx.close(); }
+});
+
+test('notifications: a timed-out connect is removed so the next notification retries with a new client', async () => {
+  const { gram, state } = mockGram();
+  const timers = fakeTimers();
+  const plugin = createTelegramNotifier({ loadGram: () => gram, timers });
+  const item = { status: 'failed', title: 'x' };
+  state.connect = never;
+  const first = plugin.notify({ item, mode: 'message', config: savedConfig() });
+  await fireNetworkTimer(timers);
+  await assert.rejects(first, error => error.message === UNREACHABLE && error.statusCode === 502);
+  assert.equal(state.clients[0].destroyed, 1);
+  await settle();
+  assert.equal(timers.list.size, 0, 'neither the idle timer nor the network timer is left');
+  state.connect = null;
+  await plugin.notify({ item, mode: 'message', config: savedConfig() });
+  assert.equal(state.clients.length, 2, 'a new client');
+  assert.equal(state.messages.length, 1);
+  plugin.close();
 });

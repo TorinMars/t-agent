@@ -1,6 +1,6 @@
 const express = require('express');
 const files = require('../services/task-files');
-const { IMAGE_HEADERS } = require('../services/file-content');
+const { IMAGE_HEADERS, sendRaw } = require('../services/file-content');
 
 function errorResponse(res, error) {
   const code = /^[A-Z0-9_]+$/.test(error.message || '') ? error.message : 'FILE_OPERATION_FAILED';
@@ -54,6 +54,16 @@ function createTaskFilesRouter({ getTask, canRead = () => true, canWrite = () =>
     catch (error) { errorResponse(res, error); return; }
     res.set({ 'Content-Type': image.type, 'Content-Length': String(image.data.length), ...IMAGE_HEADERS });
     res.end(image.data);
+  });
+
+  // A PDF, audio or video file of the working directory, streamed with Range support (206 / 416) for the browser's viewer and players.
+  router.get('/raw', requireScope('files:read', canRead), (req, res) => {
+    const task = taskFor(req, res);
+    if (!task) return;
+    let file;
+    try { file = files.openRaw(task, req.query.path, { range: req.headers.range, head: req.method === 'HEAD' }); }
+    catch (error) { errorResponse(res, error); return; }
+    sendRaw(res, file);
   });
 
   router.put('/content', requireScope('files:write', canWrite), (req, res) => {

@@ -1,7 +1,9 @@
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
-const { MAX_TEXT_BYTES, failure, inspectBuffer, imageTypeOf, sniffImage } = require('./file-content');
+const {
+  MAX_TEXT_BYTES, MAX_IMAGE_BYTES, MAX_RAW_BYTES, RAW_SNIFF_BYTES, failure, inspectBuffer, imageTypeOf, sniffImage, rawTypeOf, rawMagicMatches, parseRange,
+} = require('./file-content');
 
 const PAGE_SIZE = 200;
 const NOFOLLOW = fs.constants.O_NOFOLLOW || 0;
@@ -168,7 +170,7 @@ function list(task, options = {}) {
   };
 }
 
-function openRegularFile(target, flags) {
+function openRegularFile(target, flags, maxBytes = MAX_TEXT_BYTES) {
   if (!target.stat || !target.stat.isFile()) throw failure('FILE_UNSUPPORTED', 415);
   let descriptor;
   try {
@@ -177,7 +179,7 @@ function openRegularFile(target, flags) {
     if (!stat.isFile()) throw failure('FILE_UNSUPPORTED', 415);
     if (!sameIdentity(stat, target.stat)) throw failure('FILE_PATH_CHANGED', 409);
     assertPathStable(target);
-    if (stat.size > MAX_TEXT_BYTES) throw failure('FILE_TOO_LARGE', 413);
+    if (stat.size > maxBytes) throw failure('FILE_TOO_LARGE', 413);
     return { descriptor, stat };
   } catch (error) {
     if (descriptor !== undefined) fs.closeSync(descriptor);
@@ -185,15 +187,15 @@ function openRegularFile(target, flags) {
   }
 }
 
-function readBounded(descriptor) {
-  const buffer = Buffer.allocUnsafe(MAX_TEXT_BYTES + 1);
+function readBounded(descriptor, maxBytes = MAX_TEXT_BYTES) {
+  const buffer = Buffer.allocUnsafe(maxBytes + 1);
   let length = 0;
   while (length < buffer.length) {
     const read = fs.readSync(descriptor, buffer, length, buffer.length - length, null);
     if (read === 0) break;
     length += read;
   }
-  if (length > MAX_TEXT_BYTES) throw failure('FILE_TOO_LARGE', 413);
+  if (length > maxBytes) throw failure('FILE_TOO_LARGE', 413);
   return buffer.subarray(0, length);
 }
 
@@ -204,18 +206,47 @@ function read(task, value) {
   finally { fs.closeSync(descriptor); }
 }
 
-// An image of the working directory, for a relative image in a Markdown preview: the same path rules as `read` (relative, no symbolic links, the path
-// must not change while it is read) and the same 5 MiB limit. Only PNG, JPEG, GIF and WebP, by name and by content (services/file-content.js).
+// An image of the working directory (a file opened in the file sheet, or a relative image in a Markdown preview): the same path rules as `read`
+// (relative, no symbolic links, the path must not change while it is read), at most 20 MiB. Only the types of services/file-content.js
+// (PNG, JPEG, GIF, WebP, SVG, BMP, ICO, AVIF), by name and by content.
 function readImage(task, value) {
   const target = resolvePath(task, value);
   const declared = imageTypeOf(target.relative);
   if (!declared) throw failure('FILE_NOT_IMAGE', 415);
-  const { descriptor } = openRegularFile(target, fs.constants.O_RDONLY);
+  const { descriptor } = openRegularFile(target, fs.constants.O_RDONLY, MAX_IMAGE_BYTES);
   let buffer;
-  try { buffer = Buffer.from(readBounded(descriptor)); }
+  try { buffer = Buffer.from(readBounded(descriptor, MAX_IMAGE_BYTES)); }
   finally { fs.closeSync(descriptor); }
   if (sniffImage(buffer) !== declared) throw failure('FILE_NOT_IMAGE', 415);
   return { path: target.relative, type: declared, data: buffer };
+}
+
+// A PDF, audio or video file of the working directory, opened for streaming: the path rules of `read`, at most 200 MiB, a type of the raw table
+// by name and by signature (else 415 FILE_UNSUPPORTED). `range` is the request's Range header; `head` opens no stream (a HEAD request).
+// Answers { path, type, kind, size, range (null | { start, end } | 'unsatisfiable'), stream } for sendRaw in services/file-content.js.
+function openRaw(task, value, { range: rangeHeader, head = false } = {}) {
+  const target = resolvePath(task, value);
+  const declared = rawTypeOf(target.relative);
+  if (!declared) throw failure('FILE_UNSUPPORTED', 415);
+  const { descriptor, stat } = openRegularFile(target, fs.constants.O_RDONLY, MAX_RAW_BYTES);
+  let streaming = false;
+  try {
+    const sniff = Buffer.alloc(RAW_SNIFF_BYTES);
+    const read = fs.readSync(descriptor, sniff, 0, sniff.length, 0);
+    if (!rawMagicMatches(target.relative, sniff.subarray(0, read))) throw failure('FILE_UNSUPPORTED', 415);
+    const range = parseRange(rangeHeader, stat.size);
+    let stream = null;
+    if (!head && range !== 'unsatisfiable' && stat.size > 0) {
+      const { start, end } = range || { start: 0, end: stat.size - 1 };
+      stream = fs.createReadStream('', { fd: descriptor, start, end, autoClose: true });
+      streaming = true;
+    }
+    return { path: target.relative, ...declared, size: stat.size, range, stream };
+  } catch (error) {
+    throw mapFsError(error);
+  } finally {
+    if (!streaming) fs.closeSync(descriptor);
+  }
 }
 
 function readCurrent(target) {
@@ -396,6 +427,7 @@ module.exports = {
   list,
   read,
   readImage,
+  openRaw,
   write,
   create,
   rename,

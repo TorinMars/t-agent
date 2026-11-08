@@ -697,7 +697,7 @@ test('Click microphone: recording starts before the token arrives, and the early
 });
 
 // ── Keeping the microphone ready ──
-function keepMicHarness({ stored = null, denyAfter = Infinity } = {}) {
+function keepMicHarness({ stored = null, denyAfter = Infinity, voiceEnabled = null } = {}) {
   const vm = require('vm');
   const fs = require('fs');
   const path = require('path');
@@ -706,6 +706,8 @@ function keepMicHarness({ stored = null, denyAfter = Infinity } = {}) {
   const streams = [];
   const contexts = [];
   const store = new Map(stored === null ? [] : [['voice-keep-mic', stored]]);
+  if (voiceEnabled !== null) store.set('voice-enabled', voiceEnabled);
+  const pageMarks = new Set();
   const documentHandlers = {};
   const param = () => ({ value: 0, setValueAtTime() {}, exponentialRampToValueAtTime() {} });
   class FakeContext {
@@ -717,6 +719,7 @@ function keepMicHarness({ stored = null, denyAfter = Infinity } = {}) {
   }
   const notices = [];
   const document = { hidden: false, getElementById: () => null, createElement: () => ({ style: {}, append() {}, setAttribute() {} }), head: { append() {} }, body: { append() {} },
+    documentElement: { toggleAttribute: (name, on) => { if (on) pageMarks.add(name); else pageMarks.delete(name); } },
     addEventListener: (type, fn) => { documentHandlers[type] = fn; } };
   const sandbox = {
     document,
@@ -741,7 +744,7 @@ function keepMicHarness({ stored = null, denyAfter = Infinity } = {}) {
   const button = { addEventListener: (type, fn) => { handlers[type] = fn; }, classList: { toggle() {} }, setAttribute() {}, getBoundingClientRect: () => ({ left: 0, top: 50, width: 30 }) };
   const ticks = async () => { for (let i = 0; i < 10; i += 1) await new Promise(resolve => setImmediate(resolve)); };
   const live = () => streams.filter(stream => stream.tracks.every(track => track.readyState === 'live')).length;
-  return { sandbox, nodes, streams, contexts, store, documentHandlers, document, button, handlers, ticks, live, notices,
+  return { sandbox, nodes, streams, contexts, store, documentHandlers, document, button, handlers, ticks, live, notices, pageMarks,
     attach: () => sandbox.VoiceInput.attach({ textarea: { value: '', dispatchEvent() {}, focus() {} }, button }) };
 }
 
@@ -855,4 +858,101 @@ test('Keep the microphone ready: it is let go while the page is hidden and taken
   assert.equal(h.live(), 1, 'taken again when the page is shown');
   h.documentHandlers['window:pagehide']();
   assert.equal(h.live(), 0, 'and let go when the page goes away');
+});
+
+test('Voice input setting: on by default, saved on this device, marks the page and tells its listeners', () => {
+  const h = keepMicHarness();
+  assert.equal(h.sandbox.VoiceInput.enabled, true);
+  assert.equal(h.pageMarks.has('data-voice-off'), false, 'nothing changes for existing users');
+  const heard = [];
+  h.sandbox.VoiceInput.onEnabled(on => heard.push(on));
+  h.sandbox.VoiceInput.setEnabled(false);
+  assert.equal(h.sandbox.VoiceInput.enabled, false);
+  assert.equal(h.store.get('voice-enabled'), '0');
+  assert.equal(h.pageMarks.has('data-voice-off'), true);
+  h.sandbox.VoiceInput.setEnabled(true);
+  assert.equal(h.store.get('voice-enabled'), '1');
+  assert.equal(h.pageMarks.has('data-voice-off'), false);
+  assert.deepEqual(heard, [false, true]);
+  const reloaded = keepMicHarness({ voiceEnabled: '0' });
+  assert.equal(reloaded.sandbox.VoiceInput.enabled, false, 'it survives a reload');
+  assert.equal(reloaded.pageMarks.has('data-voice-off'), true);
+});
+
+test('Voice input setting: while it is off nothing starts a recording and the microphone is not requested', async () => {
+  const h = keepMicHarness({ stored: '1', voiceEnabled: '0' });
+  const recording = h.attach();
+  await h.ticks();
+  assert.equal(h.streams.length, 0, 'a kept microphone is not requested');
+  h.handlers.click();
+  await recording.start();
+  await h.ticks();
+  assert.equal(recording.state, 'idle');
+  let shown = 0;
+  h.sandbox.VoiceInput.attach({ textarea: { value: '', dispatchEvent() {}, focus() {} }, button: h.button, hold: true, overlay: { show() { shown += 1; }, hide() {}, zone() {}, zoneAt: () => 'send', level() {} } });
+  h.handlers.pointerdown({ button: 0, pointerId: 1 });
+  await h.ticks();
+  assert.equal(shown, 0, 'hold to talk does not open its screen');
+  h.documentHandlers.visibilitychange();
+  await h.ticks();
+  assert.equal(h.streams.length, 0, 'showing the page again does not request it either');
+});
+
+test('Voice input setting: turning it off releases a kept microphone at once, and turning it on takes it again', async () => {
+  const h = keepMicHarness();
+  h.attach();
+  h.sandbox.VoiceInput.setKeepWarm(true);
+  await h.ticks();
+  assert.equal(h.live(), 1);
+  h.sandbox.VoiceInput.setEnabled(false);
+  assert.equal(h.live(), 0, 'released in the same step');
+  assert.equal(h.contexts[0].state, 'closed');
+  assert.equal(h.sandbox.VoiceInput.keepWarm, true, 'the keep-ready choice itself is kept');
+  h.sandbox.VoiceInput.setEnabled(true);
+  await h.ticks();
+  assert.equal(h.live(), 1);
+  h.sandbox.VoiceInput.setKeepWarm(false);
+});
+
+test('Voice input setting: a microphone that arrives after it was turned off is let go', async () => {
+  const h = keepMicHarness();
+  h.attach();
+  h.sandbox.VoiceInput.setKeepWarm(true); // the request is still pending
+  h.sandbox.VoiceInput.setEnabled(false);
+  await h.ticks();
+  assert.equal(h.streams.length, 1);
+  assert.equal(h.live(), 0);
+});
+
+test('Voice input setting: turning it off ends a running recording and releases its microphone, kept or not', async () => {
+  for (const kept of [false, true]) {
+    const h = keepMicHarness();
+    const recording = h.attach();
+    if (kept) { h.sandbox.VoiceInput.setKeepWarm(true); await h.ticks(); }
+    h.handlers.click();
+    await h.ticks();
+    assert.equal(h.live(), 1);
+    assert.notEqual(recording.state, 'idle');
+    h.sandbox.VoiceInput.setEnabled(false);
+    assert.equal(h.live(), 0, `the microphone is released (kept: ${kept})`);
+    assert.notEqual(recording.state, 'listening');
+    recording.cancel(); // clears the timer that waits for the service
+  }
+});
+
+test('Voice input setting: turning it off in another tab applies here too', async () => {
+  const h = keepMicHarness();
+  h.attach();
+  h.sandbox.VoiceInput.setKeepWarm(true);
+  await h.ticks();
+  h.documentHandlers['window:storage']({ key: 'other', newValue: '0' });
+  assert.equal(h.sandbox.VoiceInput.enabled, true);
+  h.documentHandlers['window:storage']({ key: 'voice-enabled', newValue: '0' });
+  assert.equal(h.sandbox.VoiceInput.enabled, false);
+  assert.equal(h.live(), 0);
+  h.documentHandlers['window:storage']({ key: 'voice-enabled', newValue: '1' });
+  assert.equal(h.sandbox.VoiceInput.enabled, true);
+  await h.ticks();
+  assert.equal(h.live(), 1);
+  h.sandbox.VoiceInput.setKeepWarm(false);
 });

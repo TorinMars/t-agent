@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import AppBar from '@mui/material/AppBar';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
@@ -143,6 +143,20 @@ function TranslateGroup() {
   );
 }
 
+// Turns voice input on or off for this device, at once and without Save (voice-input.js owns it; localStorage, like keeping the microphone ready).
+// The options under it stay visible and can still be saved while it is off, like the fields under "Enable image and file upload".
+function VoiceSwitch() {
+  const Voice = window.VoiceInput;
+  const enabled = useSyncExternalStore(listener => (Voice ? Voice.onEnabled(listener) : () => {}), () => !Voice || Voice.enabled);
+  if (!Voice) return null;
+  return (
+    <>
+      <FormControlLabel control={<Checkbox checked={enabled} onChange={event => Voice.setEnabled(event.target.checked)} slotProps={{ input: { id: 'h5-vi-enabled' } }} />} label={t('Enable voice input')} />
+      <Hint>{t('Applies at once on this device, without Save. When off, the microphone buttons are hidden and the microphone is not used.')}</Hint>
+    </>
+  );
+}
+
 function VoiceGroup() {
   const [config, setConfig] = useState({ regions: {}, languages: {}, keySource: 'none' });
   const [form, setForm] = useState({ apiKey: '', region: '', language: '', model: '', noise: '', hotwords: '', vocab: '', url: '' });
@@ -173,6 +187,7 @@ function VoiceGroup() {
   const keyHint = config.keySource === 'saved' ? 'Saved; leave empty to keep it' : config.keySource === 'environment' ? 'Using DASHSCOPE_API_KEY from the server; enter a key here to override it' : 'API Key';
   return (
     <Group id="voice" title="Voice input" onOpen={load}>
+      <VoiceSwitch />
       <Field id="h5-vi-key" label="Alibaba Cloud API Key" type="password" autoComplete="new-password" value={form.apiKey} onChange={set('apiKey')} placeholder={t(keyHint)} />
       <TextField id="h5-vi-region" select label={t('Region')} size="small" fullWidth value={form.region} onChange={set('region')} slotProps={{ select: { native: true } }}>
         {Object.entries(config.regions).map(([key, item]) => <option key={key} value={key}>{labelOf(item)}</option>)}

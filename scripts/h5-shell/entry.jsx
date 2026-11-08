@@ -32,6 +32,8 @@ ui.notify = (message, type = 'info') => {
   if (text) ui.set({ notice: { id: ++notices, message: text, type } });
 };
 window.H5UI = ui;
+// Voice input turned off (voice-input.js owns the setting, but runs after the first paint can happen): the microphone button must not show and then vanish.
+try { if (localStorage.getItem('voice-enabled') === '0') document.documentElement.setAttribute('data-voice-off', ''); } catch { /* storage blocked: on */ }
 // The floating notices of every script of the page (voice input, chat, uploads) go through the shell.
 window.notify = (message, type) => ui.notify(message, type);
 window.Toast = { show: (message, options = {}) => ui.notify(message, options.type), error: message => ui.notify(message, 'error'), success: message => ui.notify(message, 'success') };

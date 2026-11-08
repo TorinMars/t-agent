@@ -1,4 +1,4 @@
-// Pure math of the terminal touch handler and the wide terminal (public/js/terminal-gestures.js).
+// Pure math of the sideways pan and the wide terminal (public/js/terminal-gestures.js).
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const G = require('../public/js/terminal-gestures.js');
@@ -43,23 +43,6 @@ test('following the cursor scrolls just enough, with a margin, and the left side
   assert.equal(G.inView(100, 100, 107, 400), true);
   assert.equal(G.inView(100, 99, 106, 400), false);
   assert.equal(G.inView(100, 495, 501, 400), false);
-});
-
-test('finger travel becomes whole lines and keeps the remainder', () => {
-  assert.deepEqual(G.takeLines(35, 16), { lines: 2, rest: 3 });
-  assert.deepEqual(G.takeLines(-35, 16), { lines: -2, rest: -3 });
-  assert.deepEqual(G.takeLines(15, 16), { lines: 0, rest: 15 });
-  assert.deepEqual(G.takeLines(15, 0), { lines: 0, rest: 15 });
-});
-
-test('the speed at the lift counts only the last 100ms; a finger that stopped has none', () => {
-  const samples = [{ t: 0, y: 500 }, { t: 900, y: 400 }, { t: 950, y: 380 }, { t: 1000, y: 340 }];
-  assert.equal(G.velocity(samples, 1000), (400 - 340) / 100, 'up = positive (newer)');
-  assert.equal(G.velocity([{ t: 0, y: 300 }, { t: 50, y: 330 }], 60), -0.6, 'down = negative (older)');
-  assert.equal(G.velocity(samples, 1300), 0, 'held still before the lift');
-  assert.equal(G.velocity([{ t: 0, y: 1 }], 0), 0);
-  assert.ok(G.decay(1, 16) < 1 && G.decay(1, 16) > 0.9);
-  assert.ok(Math.abs(G.decay(1, 32) - G.decay(G.decay(1, 16), 16)) < 1e-12, 'decay depends on time only, not on the frame rate');
 });
 
 test('the copy view hint shows in fit mode under 100 columns only', () => {

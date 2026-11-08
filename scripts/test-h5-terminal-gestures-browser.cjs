@@ -1,10 +1,11 @@
-// Touch scrolling and the terminal width of the page's terminal (public/js/terminal-gestures.js, h5.js) in real Chromium.
-// Phone (390 x 844, touch, real CDP touches): there is no scrollbar strip; a pan anywhere picks its axis in the first 10px and keeps it; vertical
-// pans scroll the normal buffer 1:1 and a flick keeps going; in the alternate buffer they send wheel reports (mouse tracking) or arrows (no mouse
-// mode); in Wide mode a sideways pan moves the screen, the cursor is followed after input; the switch in the header toggles Fit / Wide (one tap) and
-// its menu (long press) picks 120 / 160 / 200; the PTY gets the columns through the resize message; the copy view shows the wrap hint in Fit mode
-// and widens from there; the choice is remembered. Computer (1440 x 900, mouse): Shift+wheel and a sideways wheel move the wide screen, the
-// vertical wheel stays xterm's. The server is mocked (no data folder is used). H5_SHOT_DIR=<dir> saves screenshots.
+// The sideways pan and the width of the page's terminal (public/js/terminal-gestures.js, h5.js) in real Chromium, and how it lives with the wheel strip.
+// Phone (390 x 844, touch, real CDP touches): the strip is there and the terminal is touch-action: pan-y; a pan picks its axis in the first 10px and keeps
+// it; a vertical pan on the body scrolls the normal buffer once (xterm's own touch scrolling, 1:1) and sends the alternate buffer nothing; in Wide mode a sideways
+// pan moves the screen, but not from the strip, which stays at the right edge of the visible box; the cursor is followed after input; the switch in the header
+// toggles Fit / Wide (one tap) and its menu (long press) picks 120 / 160 / 200; the PTY gets the columns through the resize message; the copy view shows the wrap
+// hint in Fit mode and widens from there; the choice is remembered. The strip's own behaviour is in test-h5-browser.cjs and test-h5-wheel-stuck-browser.cjs.
+// Computer (1440 x 900, mouse): Shift+wheel and a sideways wheel move the wide screen, the vertical wheel stays xterm's. The server is mocked (no data folder is used).
+// H5_SHOT_DIR=<dir> saves screenshots.
 const { chromium } = require('playwright');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -96,7 +97,8 @@ const probe = page => page.evaluate(() => {
         await touch('touchEnd');
       };
       const emit = data => page.evaluate(data => new Promise(done => { window.sockets.at(-1).emit(data); requestAnimationFrame(() => requestAnimationFrame(done)); }), data);
-      assert.equal(await page.locator('#h5-wheel').count(), 0, 'there is no scrollbar strip any more');
+      assert.equal(await page.locator('#h5-wheel').count(), 1, 'the wheel strip is there');
+      assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('.h5-xterm:not([hidden])')).touchAction), 'pan-y', 'the body keeps pan-y: vertical drags stay the browser\'s and xterm\'s');
       assert.equal(await page.locator('#h5-term-width').getAttribute('aria-pressed'), 'false', 'Fit mode at first');
       assert.equal(await page.locator('#h5-term-width').getAttribute('aria-label'), 'Wide terminal');
       assert.equal(await page.locator('#h5-term-width').getAttribute('title'), 'Wide terminal');
@@ -105,7 +107,7 @@ const probe = page => page.evaluate(() => {
       assert.equal(fit.wide, false);
       assert.equal(fit.offset, 0);
 
-      // Normal buffer: 300 lines, at the bottom. A slow pan down (finger down) shows older lines, 1:1 by line height; up shows newer.
+      // Normal buffer: 300 lines, at the bottom. A pan down on the body (finger down) shows older lines, 1:1 (xterm's own touch scrolling), once; up shows newer.
       await emit(Array.from({ length: 300 }, (_, i) => `line ${i + 1}`).join('\r\n'));
       const rowsOf = () => page.evaluate(() => [...document.querySelectorAll('.h5-xterm:not([hidden]) .xterm-rows > div')].map(row => row.textContent.trim()));
       const topLine = async () => Number(((await rowsOf())[0].match(/^line (\d+)/) || [])[1] || 0);
@@ -120,42 +122,7 @@ const probe = page => page.evaluate(() => {
       assert.ok(Math.abs(newer - older - Math.round(80 / lh)) <= 1, `a pan up of 80px scrolls forward about ${Math.round(80 / lh)} lines (${newer - older})`);
       await page.waitForTimeout(300);
       assert.equal(await topLine(), newer, 'a slow lift has no momentum');
-      // A flick up keeps going after the lift.
-      // Back into the history first, far enough that the flick and its momentum never reach the bottom (which would end the momentum early).
-      await pan(150, 300, 0, 160);
-      await pan(150, 300, 0, 160);
-      await pan(150, 300, 0, 160);
-      // In-page touch events at a real finger's pace (CDP touches arrive one per rendered frame, which is slow in headless Chromium).
-      // 40 px per step: still a flick (over FLICK_MIN 0.3 px/ms) when a busy machine stretches the 16 ms timer to about 100 ms.
-      const flick = () => page.evaluate(async () => {
-        const el = document.querySelector('.h5-xterm:not([hidden]) .xterm-screen');
-        const fire = (type, y) => {
-          const point = new Touch({ identifier: 9, target: el, clientX: 150, clientY: y });
-          el.dispatchEvent(new TouchEvent(type, { bubbles: true, cancelable: true, touches: type === 'touchend' ? [] : [point], targetTouches: type === 'touchend' ? [] : [point], changedTouches: [point] }));
-        };
-        fire('touchstart', 500);
-        for (let i = 1; i <= 6; i++) { await new Promise(done => setTimeout(done, 16)); fire('touchmove', 500 - i * 40); }
-        fire('touchend', 260);
-      });
-      // A headless page can stall more than FLICK_WINDOW (100 ms) between two steps; the lift is then rightly a slow one with no momentum.
-      // So the flick gets a second try from further back in the history; one of the two must keep scrolling after the lift.
-      let flicked = null;
-      for (let attempt = 0; attempt < 2 && !flicked; attempt++) {
-        if (attempt) { await pan(150, 300, 0, 160); await pan(150, 300, 0, 160); await page.waitForTimeout(800); }
-        const beforeFlick = await topLine();
-        await flick();
-        const atLift = await topLine();
-        await page.waitForTimeout(600);
-        const afterFlick = await topLine();
-        assert.ok(atLift > beforeFlick, 'the flick scrolls while the finger moves');
-        if (afterFlick > atLift) flicked = { atLift, afterFlick };
-        else console.log(`flick attempt ${attempt + 1}: no momentum (${atLift} -> ${afterFlick}), page stalled; trying again`);
-      }
-      assert.ok(flicked, 'a flick keeps scrolling after the lift');
       // Fit mode: a sideways pan moves nothing (the screen fits) and does not scroll vertically either (axis lock).
-      // Wait for the flick's momentum to end first, so the line read below is where the view rests.
-      // The momentum's slow tail moves one line only every few hundred ms, so the view must stay put for 800 ms.
-      for (let last = -1, now = await topLine(), tries = 0; now !== last && tries < 15; tries++) { last = now; await page.waitForTimeout(800); now = await topLine(); }
       const lockedTop = await topLine();
       await pan(200, 300, -120, 30);
       assert.equal(await topLine(), lockedTop, 'a sideways pan does not scroll the history');
@@ -190,11 +157,19 @@ const probe = page => page.evaluate(() => {
       wide = await probe(page);
       assert.ok(Math.abs(wide.offset - 150) <= 1, `a 150px pan moves the screen 150px (${wide.offset})`);
       assert.equal(await topLine(), wideTop, 'a sideways pan leaves the history where it is');
-      await pan(380, 300, -370, 0);
-      await pan(380, 300, -370, 0);
-      await pan(380, 300, -370, 0);
+      await pan(340, 300, -335, 0); // from the left of the strip (it covers x 348 - 388)
+      await pan(340, 300, -335, 0);
+      await pan(340, 300, -335, 0);
       wide = await probe(page);
       assert.equal(wide.offset, wide.content - wide.visible, 'the offset stops at the right end');
+      // The strip stays at the right edge of the visible box whatever the offset, and a sideways pan that starts on it does not move the screen.
+      const stripBox = () => page.evaluate(() => { const box = document.querySelector('#h5-wheel').getBoundingClientRect(); return { left: box.left, right: box.right, mode: document.querySelector('#h5-wheel').dataset.mode }; });
+      const strip = await stripBox();
+      assert.equal(strip.mode, 'bar', 'the wide terminal with history shows the bar');
+      assert.ok(strip.right >= 387 && strip.right <= 389, `the strip stays at the right edge at any offset (${strip.right})`);
+      const atEdge = (await probe(page)).offset;
+      await pan(370, 300, -100, 0);
+      assert.equal((await probe(page)).offset, atEdge, 'a sideways pan from the strip does not move the wide screen');
       if (shots) await page.screenshot({ path: path.join(shots, 'gestures-wide-right.png') });
       // Diagonal pans lock to their first axis.
       const atEnd = wide.offset;
@@ -237,19 +212,24 @@ const probe = page => page.evaluate(() => {
       await page.locator('#h5-term-width').tap(); // Wide 200 again for the alternate buffer
       await page.waitForFunction(() => window.sockets.at(-1).sent.filter(item => item.includes('"cols":200')).length >= 2);
 
-      // Alternate buffer with mouse tracking (Claude Code, vim with mouse): a pan up (finger up) sends wheel-down reports (newer), one per line
-      // of travel; a pan down sends wheel-up reports; a sideways pan moves the screen and sends nothing.
+      // Alternate buffer with mouse tracking (Claude Code, vim with mouse): a vertical pan on the body sends nothing (that is the strip's job, as before
+      // v2.90.0); the strip's spring sends wheel reports; a sideways pan moves the screen and sends nothing.
       await emit('\x1b[?1049h\x1b[?1000h\x1b[?1006h\x1b[2J\x1b[Hfull screen app');
       const reports = async () => (await probe(page)).sent.filter(item => /^\x1b\[<6[45];/.test(item)).map(item => item.slice(3, 5));
+      await page.waitForFunction(() => document.querySelector('#h5-wheel').dataset.mode === 'spring');
       let before = (await reports()).length;
       await pan(150, 500, 0, -100);
-      let codes = (await reports()).slice(before);
-      const lines = Math.trunc(100 / lh);
-      assert.ok(codes.length >= lines - 1 && codes.length <= lines + 1 && codes.every(code => code === '65'), `a pan up sends about ${lines} wheel-down reports (${codes.join(',')})`);
-      before = (await reports()).length;
       await pan(150, 300, 0, 100);
-      codes = (await reports()).slice(before);
-      assert.ok(codes.length >= lines - 1 && codes.every(code => code === '64'), `a pan down sends wheel-up reports (${codes.join(',')})`);
+      await page.waitForTimeout(100);
+      assert.equal((await reports()).length, before, 'a vertical pan on the body sends no wheel reports');
+      const middle = await page.evaluate(() => { const box = document.querySelector('#h5-wheel').getBoundingClientRect(); return box.top + box.height / 2; });
+      await touch('touchStart', 370, middle);
+      for (let i = 1; i <= 5; i++) { await touch('touchMove', 370, middle + i * 20); await page.waitForTimeout(16); }
+      await page.waitForFunction(count => window.sockets.at(-1).sent.filter(item => /^\x1b\[<6[45];/.test(item)).length >= count, before + 3, { timeout: 8000 });
+      await touch('touchEnd');
+      const pulled = (await reports()).slice(before);
+      assert.ok(pulled.length >= 3 && pulled.every(code => code === '65'), `pulling the spring down in Wide mode sends wheel-down reports (${pulled.join(',')})`);
+      await page.waitForFunction(() => !window.__h5WheelSpring());
       before = (await reports()).length;
       const altOffset = (await probe(page)).offset;
       await pan(300, 400, -120, 20);
@@ -259,13 +239,13 @@ const probe = page => page.evaluate(() => {
       await page.touchscreen.tap(150, 400);
       await page.waitForTimeout(100);
       assert.equal((await reports()).length, before, 'a tap sends no wheel report');
-      // Without mouse mode (less, a pager): the same pan sends down / up arrows.
+      // Without mouse mode (less, a pager): a vertical pan on the body sends no arrows either.
       await emit('\x1b[?1000l\x1b[?1006l');
       const arrows = async () => (await probe(page)).sent.filter(item => /^\x1b[[O][AB]$/.test(item)).map(item => item.at(-1));
       before = (await arrows()).length;
       await pan(150, 500, 0, -100);
-      codes = (await arrows()).slice(before);
-      assert.ok(codes.length >= lines - 1 && codes.every(code => code === 'B'), `without mouse mode a pan up sends down arrows (${codes.join(',')})`);
+      await page.waitForTimeout(100);
+      assert.equal((await arrows()).length, before, 'without mouse mode a pan on the body sends no arrows');
       await emit('\x1b[?1049l');
 
       // Remembered: a new page starts in Wide 200 and sizes the PTY so at once.

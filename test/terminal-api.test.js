@@ -17,7 +17,7 @@ const db = require('../db');
 const { createAccessToken } = require('../services/engine-auth');
 const { consumeTerminalTicket } = require('../services/terminal-tickets');
 const { assertRemoteTerminal } = require('../services/remote-client');
-const tasks = require('../services/engine-tasks');
+const tasks = require('../test-support/older-tasks').olderTasks(require('../services/engine-tasks'), db);
 
 test('Engine terminal API enforces ownership, persists tabs and binds tickets', async () => {
   const server = createEngineApp().listen(0, '127.0.0.1');

@@ -130,6 +130,7 @@
     return pending;
   }
   let wantedTerminal = null; // the terminal to show when the terminals of the task just selected arrive
+  let terminalsLoaded = Promise.resolve(); // settles when the list of the task just selected has been read
   let session = null;
   let mods = {};
   let uploading = false;
@@ -345,7 +346,7 @@
     ui.set({ taskName: item ? item.title : '' });
     syncFiles();
     if (!stay) closeTasks();
-    void loadTerminals();
+    terminalsLoaded = loadTerminals();
     if (target && target.chat) mountAgent(target.chat);
   }
 
@@ -665,7 +666,25 @@
   };
 
   // ── Phone terminals ──
-  function showEmpty(text) { ui.set({ empty: text }); }
+  function showEmpty(text, { create = false } = {}) { ui.set({ empty: text, emptyCreate: create }); }
+  // The selected task has no terminal: nothing connects and nothing is spawned, and nothing of a terminal that is gone is kept (the one remembered for this task,
+  // an early socket, hidden warm views). A terminal only comes from the person: the button of the empty state opens the same Session list as the "+" of the task.
+  function showNoTerminal() {
+    terminalId = null;
+    wantedTerminal = null;
+    const from = source;
+    const taskId = task.id;
+    store.set(`terminal:${from.key}:${taskId}`, null);
+    dropEarlySocket();
+    closeWarm(item => item.source === from && item.task.id === taskId);
+    showEmpty('This task has no terminal yet', { create: true });
+  }
+  ui.actions.newSessionFromEmpty = () => {
+    if (!task) return;
+    ui.actions.openTasks(); // a phone's task sheet, or the folded sidebar of a computer
+    const menu = ui.get().menu;
+    if (!(menu && menu.naming && menuTask === task.id)) ui.actions.addSession(task.id); // the "+" would close a list that is already open
+  };
 
   async function loadTerminals() {
     hideShown(); // another task: the terminal shown so far stays warm (WARM_MAX)
@@ -681,7 +700,7 @@
     catch (error) { if (current === task) showEmpty(`Could not load terminals: ${error.message}`); return; }
     if (current !== task) return;
     terminals = Array.isArray(rows) ? rows : [];
-    if (!terminals.length) { dropEarlySocket(); showEmpty('This task has no terminal yet'); return; }
+    if (!terminals.length) { showNoTerminal(); renderTabs(); return; }
     const saved = store.get(`terminal:${source.key}:${current.id}`);
     const wanted = wantedTerminal; // a session that was tapped in the task sheet
     wantedTerminal = null;
@@ -796,7 +815,7 @@
   }
   // Is the task of this target the selected one, now?
   const isSelected = target => target.from === source && Boolean(task) && task.id === target.taskId;
-  // Under a confirmation: which session it is and, for a task that is not selected, which task (every task has a terminal called `default`).
+  // Under a confirmation: which session it is and, for a task that is not selected, which task (`default` is a terminal id in every older task).
   const whichSession = target => `\n${target.row.title}${target.taskTitle ? `\n${tr('Task')}: ${target.taskTitle}` : ''}`;
   // After a Restart or Delete under a task that is not selected. `removed` ('terminal'): the row goes at once. That list is read again; a read already on its way
   // was sent before this and could bring the row back, so it stops counting. When the task has become the selected one meanwhile, its own read is waiting for the action (`actionsDone`).
@@ -846,9 +865,8 @@
       terminals = terminals.filter(item => item.terminal_id !== row.terminal_id);
       if (wasCurrent && terminals.length) { switchTerminal(terminals[0]); closeTasks(); }
       else {
-        if (wasCurrent) terminalId = null;
+        if (wasCurrent) showNoTerminal();
         renderTabs();
-        if (wasCurrent) showEmpty('This task has no terminal yet');
       }
     } catch (error) { tell(`Could not delete the terminal: ${error.message}`, 'error'); }
   }
@@ -986,6 +1004,8 @@
     const current = task;
     leaveChat();
     try {
+      await terminalsLoaded; // a new one made while the list is on its way is not wiped by that list (a task with no terminal answers an empty one)
+      if (current !== task) return;
       const row = await api('POST', `${source.tasksBase}/${current.id}/terminals`, options);
       if (!row || !row.terminal_id) throw new Error('The engine returned no terminal');
       if (current !== task) return;

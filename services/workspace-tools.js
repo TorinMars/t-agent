@@ -9,6 +9,7 @@ const os = require('os');
 const path = require('path');
 const { execFile } = require('child_process');
 const { promisify } = require('util');
+const { startWithoutDefaultTerminal } = require('../lib/task-default-terminal');
 
 const run = promisify(execFile);
 const DAY = 24 * 60 * 60 * 1000;
@@ -73,6 +74,7 @@ function importDirs(database, owner, workDir, paths, status = 'todo') {
       const item = allowed.get(target);
       if (!item) throw serviceError('PATH_NOT_IMPORTABLE', 400, { path: target });
       const info = insert.run(item.name, status, path.join(target, 'DESIGN.md'), target, owner);
+      startWithoutDefaultTerminal(database, info.lastInsertRowid);
       created.push(database.prepare('SELECT * FROM tasks WHERE id = ?').get(info.lastInsertRowid));
       allowed.delete(target);
     }

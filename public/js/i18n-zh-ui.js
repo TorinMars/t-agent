@@ -519,6 +519,7 @@ I18n.add({
   "All": "全部",
   "Session": "会话",
   "New Terminal": "新开终端",
+  "New session": "新建会话",
   "Claude session": "Claude 会话",
   "Codex session": "Codex 会话",
   "New Claude session": "新建 Claude 会话",

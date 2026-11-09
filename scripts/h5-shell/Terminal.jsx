@@ -16,7 +16,12 @@ import { TerminalKeyboard } from './Osk.jsx';
 export function TerminalArea({ state, ui }) {
   return (
     <Box component="main" className="h5-terminal" id="h5-terminal">
-      {state.empty ? <div className="h5-empty" id="h5-empty">{t(state.empty)}</div> : null}
+      {state.empty ? (
+        <div className="h5-empty" id="h5-empty">
+          <span>{t(state.empty)}</span>
+          {state.emptyCreate ? <Button id="h5-empty-new" variant="outlined" onClick={() => ui.actions.newSessionFromEmpty()}>{t('New session')}</Button> : null}
+        </div>
+      ) : null}
       {/* The wheel strip is for fingers; a computer has a real wheel or trackpad, so it is not drawn there (input mode 'pointer').
           A scrollbar: a thin track and thumb inside a 40px hit area; in a full-screen program the thumb is a spring in the middle, with chevrons. */}
       {state.input === 'pointer' ? null : (

@@ -253,7 +253,7 @@ test('ensureShimModes restores the executable bit and shimsUsableBy checks the d
 
 test('routes/terminal.js spawns every PTY with the shim folder first in PATH and the marker', () => {
   const db = require('../db');
-  const tasks = require('../services/engine-tasks');
+  const tasks = require('../test-support/older-tasks').olderTasks(require('../services/engine-tasks'), db);
   const shells = [];
   const terminalPath = path.resolve(__dirname, '../routes/terminal.js');
   const mod = { exports: {} };

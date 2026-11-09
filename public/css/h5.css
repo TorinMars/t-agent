@@ -67,7 +67,7 @@ body { -webkit-text-size-adjust: 100%; }
 .h5-scroll-indicator { position: absolute; z-index: 2; border-radius: 2px; background: rgba(255, 255, 255, .45); pointer-events: none; opacity: 0; transition: opacity .4s ease; bottom: 1px; height: 3px; left: calc(4px + var(--h5-ind-pos, 0px)); width: var(--h5-ind-size, 24px); }
 .h5-scroll-indicator.shown { opacity: 1; transition-duration: .08s; }
 @media (prefers-reduced-motion: reduce) { .h5-scroll-indicator { transition: none; } }
-.h5-empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 24px; color: var(--h5-muted); text-align: center; }
+.h5-empty { position: absolute; inset: 0; display: flex; flex-direction: column; gap: 16px; align-items: center; justify-content: center; padding: 24px; color: var(--h5-muted); text-align: center; }
 
 /* The translate box and the microphone (the box is a plain textarea that voice-input.js and h5.js write to). */
 .h5-translate-input.translating { animation: h5-pulse 1.2s ease-in-out infinite; }

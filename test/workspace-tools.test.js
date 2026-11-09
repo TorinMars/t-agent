@@ -21,6 +21,7 @@ function testDb() {
     CREATE TABLE tasks (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'todo',
       priority TEXT NOT NULL DEFAULT 'normal', due_date TEXT, md_path TEXT, work_dir TEXT, sort_order INTEGER NOT NULL DEFAULT 0,
       user_id TEXT, updated_at TEXT DEFAULT CURRENT_TIMESTAMP);
+    CREATE TABLE task_default_terminal_removed (task_id INTEGER PRIMARY KEY);
     CREATE TABLE repo_cleanups (id INTEGER PRIMARY KEY AUTOINCREMENT, task_id INTEGER NOT NULL, path TEXT NOT NULL UNIQUE, remote TEXT NOT NULL,
       branch TEXT NOT NULL, commit_sha TEXT NOT NULL, size_bytes INTEGER NOT NULL DEFAULT 0, cleaned_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP);
   `);
@@ -68,6 +69,7 @@ test('Bulk import only registers tasks and creates no files in the directories; 
   assert.deepEqual(created.map(task => task.title), ['one', 'two']);
   assert.equal(created[0].status, 'todo');
   assert.equal(created[0].md_path, path.join(root, 'one', 'DESIGN.md'));
+  assert.equal(database.prepare('SELECT COUNT(*) AS n FROM task_default_terminal_removed').get().n, 2, 'an imported task is a new task: it has no default terminal');
   assert.deepEqual(fs.readdirSync(path.join(root, 'one')), []);
   assert.equal(tools.listUnmanaged(database, 'u', root).items.length, 0);
 

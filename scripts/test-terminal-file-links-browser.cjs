@@ -20,7 +20,7 @@ process.env.TASKS_BASE_DIR = path.join(scratch, 'tasks');
 const auth = require.resolve('../middleware/auth');
 require.cache[auth] = { id: auth, filename: auth, loaded: true, exports: (req, res, next) => { req.session = { user: { login: 'owner' } }; next(); } };
 const db = require('../db');
-const engine = require('../services/engine-tasks');
+const engine = require('../test-support/older-tasks').olderTasks(require('../services/engine-tasks'), db);
 const terminal = require('../routes/terminal');
 const task = engine.createTask('owner', { title: 'Links fixture' });
 fs.mkdirSync(path.join(task.work_dir, 'src'));

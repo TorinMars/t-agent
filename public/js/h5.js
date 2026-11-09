@@ -114,10 +114,13 @@
   let groups = [];
   let task = null;
   let terminals = [];
+  let terminalsState = 'none'; // what `terminals` is for the selected task: 'loading', 'ready' or 'error'
+  let terminalsSeq = 0; // the newest `loadTerminals`: an older one is ignored when it answers, also when the same task was selected again
   let terminalId = null;
   const expanded = new Set(); // the tasks whose sessions are listed in the task sheet (a tap on a task opens and closes its list; it does not open the task); any number can be open
   const peeks = new Map(); // task id -> the sessions of an expanded task that is not the selected one: { source, taskId, status, terminals }
   let peekSeq = 0;
+  const PEEK_WAIT_MS = 10000; // a list still on "Loading…" after this long says it could not be read (a late answer still replaces that)
   // The Restart and Delete requests on their way, by Engine and task (a promise that ends when all of them have). A list of that task read meanwhile would
   // show the old row, or connect to a terminal that is going away, so `loadTerminals` and `loadPeek` wait for it. Without one there is nothing to wait for.
   const actionsRunning = new Map();
@@ -305,7 +308,8 @@
           // A tap opens or closes the list of sessions under the task. Going to a session is a tap on that session.
           const hasSessions = Boolean(selected && terminals.length);
           // The selected task: "+" on the right of its row adds a terminal.
-          return { id: item.id, title: item.title, count: open ? (selected ? (hasSessions ? terminals.length : null) : (peeks.get(item.id) && peeks.get(item.id).status === 'ready' ? peeks.get(item.id).terminals.length : null)) : null, selected, expanded: open, add: true, sessions: open ? (selected ? (hasSessions ? ownSessions() : null) : peekSessions(item)) : null };
+          const ownList = hasSessions ? ownSessions() : terminalsState === 'error' ? { label: item.title, note: 'Could not load the sessions', rows: [] } : null;
+          return { id: item.id, title: item.title, count: open ? (selected ? (hasSessions ? terminals.length : null) : (peeks.get(item.id) && peeks.get(item.id).status === 'ready' ? peeks.get(item.id).terminals.length : null)) : null, selected, expanded: open, add: true, sessions: open ? (selected ? ownList : peekSessions(item)) : null };
         }),
       });
     }
@@ -335,7 +339,11 @@
   function selectTask(item, target = null, { stay = false } = {}) {
     // A chat open over another task is put away.
     if (agentChat && agentFor && (!item || agentFor.taskId !== item.id || agentFor.source !== source.key)) hideAgent();
+    const left = task && !(item && item.id === task.id) && expanded.has(task.id) ? task : null;
+    // The task being left is listed from `peeks` from now on, and nothing else would read it until the next `openTasks`: it keeps what is known at once and is read again.
+    if (left && terminalsState === 'ready') peeks.set(left.id, { source, taskId: left.id, status: 'ready', terminals: [...terminals], seq: (peekSeq += 1) });
     task = item;
+    if (left) void loadPeek(left);
     void syncWakeLock();
     if (item) { peeks.delete(item.id); expanded.add(item.id); } // the other open lists stay open
     // The Session list of the task that was selected: its choices act on the selected task, so they cannot stay under another one (the "+" of a task lands here too, and then opens its own).
@@ -355,6 +363,7 @@
     if (expanded.has(item.id)) { expanded.delete(item.id); peeks.delete(item.id); closeListMenu(item.id); renderTasks(); return; }
     expanded.add(item.id);
     if (!(task && task.id === item.id)) void loadPeek(item);
+    else retryTerminals();
     renderTasks();
   }
   // "Expand all" / "Collapse all" in the header of the task list.
@@ -371,12 +380,19 @@
     const mine = { source: current, taskId: item.id, status: 'loading', terminals: [], seq: (peekSeq += 1) };
     const before = peeks.get(item.id);
     if (!before || before.source !== current) peeks.set(item.id, mine); // a list that is already shown stays until the new one is read
+    const noAnswer = setTimeout(() => {
+      if (peeks.get(item.id) !== mine || mine.status !== 'loading') return;
+      mine.status = 'error';
+      renderTasks();
+    }, PEEK_WAIT_MS);
     await actionsDone(current, item.id);
     const [rows] = await Promise.all([
       api('GET', `${current.tasksBase}/${item.id}/terminals`).catch(() => null),
-      current.key === 'local' ? null : readInfo(current).catch(() => null), // what the Engine can do decides the actions of these rows (`controlsTerminals`)
+      // What the Engine can do decides the actions of these rows (`controlsTerminals`). An Engine that does not answer must not hold the list back.
+      current.key === 'local' ? null : Promise.race([readInfo(current).catch(() => null), new Promise(resolve => setTimeout(resolve, PEEK_WAIT_MS))]),
     ]);
-    if (source !== current || !expanded.has(item.id) || (peeks.get(item.id) && peeks.get(item.id).seq > mine.seq)) return;
+    clearTimeout(noAnswer);
+    if (source !== current || !expanded.has(item.id) || (task && task.id === item.id) || (peeks.get(item.id) && peeks.get(item.id).seq > mine.seq)) return; // the selected task is listed from `terminals`
     peeks.set(item.id, mine);
     mine.status = Array.isArray(rows) ? 'ready' : 'error';
     mine.terminals = Array.isArray(rows) ? rows : [];
@@ -389,6 +405,7 @@
   function openTasks() {
     const wide = isWide();
     if (task) expanded.add(task.id); // the sheet opens with the sessions of the task that is shown; the lists the person opened stay open
+    retryTerminals();
     for (const item of tasks) if (expanded.has(item.id) && !(task && task.id === item.id)) void loadPeek(item); // read again: they may have changed
     ui.set({ tasksOpen: true, wide });
     renderTasks();
@@ -536,6 +553,8 @@
     store.set('source', source.key === 'local' ? null : source.key);
     tasks = [];
     task = null;
+    terminalsSeq += 1; // a list still on its way is of the other Engine
+    terminalsState = 'none';
     void syncWakeLock();
     expanded.clear();
     peeks.clear();
@@ -686,19 +705,27 @@
     if (!(menu && menu.naming && menuTask === task.id)) ui.actions.addSession(task.id); // the "+" would close a list that is already open
   };
 
+  // The list of the selected task could not be read: the next open of the list reads it again.
+  function retryTerminals() { if (task && terminalsState === 'error') terminalsLoaded = loadTerminals(); }
   async function loadTerminals() {
     hideShown(); // another task: the terminal shown so far stays warm (WARM_MAX)
     terminals = [];
+    terminalsState = 'loading';
+    const seq = (terminalsSeq += 1);
     renderTabs();
     if (!task) { showEmpty('Choose a task to open its phone terminal'); return; }
     const current = task;
     showEmpty('Loading…');
     await actionsDone(source, current.id); // a Restart or Delete started from its row before it was selected
-    if (current !== task) return;
+    if (seq !== terminalsSeq) return;
     let rows;
     try { rows = await api('GET', `${source.tasksBase}/${current.id}/terminals`); }
-    catch (error) { if (current === task) showEmpty(`Could not load terminals: ${error.message}`); return; }
-    if (current !== task) return;
+    catch (error) {
+      if (seq === terminalsSeq) { terminalsState = 'error'; showEmpty(`Could not load terminals: ${error.message}`); renderTabs(); }
+      return;
+    }
+    if (seq !== terminalsSeq) return;
+    terminalsState = 'ready';
     terminals = Array.isArray(rows) ? rows : [];
     if (!terminals.length) { showNoTerminal(); renderTabs(); return; }
     const saved = store.get(`terminal:${source.key}:${current.id}`);

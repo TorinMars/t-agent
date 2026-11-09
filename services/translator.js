@@ -202,7 +202,7 @@ function createTranslator({ db, sessionSecret, fetchImpl = (...args) => fetch(..
         model: text(body.model) || PROVIDERS[id].model,
       };
       if (!updated.apiKey) throw new TranslatorError(`Enter the ${PROVIDERS[id].label} API key`);
-      if (controls.test(enteredKey)) throw new TranslatorError(`The ${PROVIDERS[id].label} API key cannot contain spaces, line breaks or control characters`);
+      if (controls.test(enteredKey)) throw new TranslatorError(`The ${PROVIDERS[id].label} API key contains invalid characters such as line breaks`);
       if (enteredKey.length > 512) throw new TranslatorError(`The ${PROVIDERS[id].label} API key is too long (at most 512 characters)`);
       if (!/^[\w.\-:/]{1,80}$/.test(updated.model)) throw new TranslatorError('Invalid model name');
       next.providers[id] = updated;

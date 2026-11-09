@@ -225,7 +225,7 @@ test('An old flat DeepSeek configuration is migrated automatically, and the save
 
 test('A key that was entered but cannot be used gets its own message, and a saved key is not checked again on re-save', () => {
   const { db, service } = setup(() => reply(200, {}));
-  assert.throws(() => service.saveConfig('o', { provider: 'glm', apiKey: 'fake inner-space' }), /The Zhipu GLM API key cannot contain spaces, line breaks or control characters/);
+  assert.throws(() => service.saveConfig('o', { provider: 'glm', apiKey: 'fake inner-space' }), /The Zhipu GLM API key contains invalid characters such as line breaks/);
   assert.throws(() => service.saveConfig('o', { apiKey: 'k'.repeat(513) }), /The DeepSeek API key is too long \(at most 512 characters\)/);
   assert.equal(service.saveConfig('o', { apiKey: '  sk-fake+/=_~!  ' }).hasApiKey, true, 'surrounding white space is trimmed, punctuation is kept');
   assert.equal(service.providerConfig('o', 'deepseek').apiKey, 'sk-fake+/=_~!');
@@ -254,7 +254,7 @@ for (const [provider, label, url] of [['deepseek', 'DeepSeek', 'https://api.deep
     const { service } = setup(() => reply(200, {}));
     service.saveConfig('o', { provider, apiKey: 'fake-saved' });
     for (const bad of ['fake\nkey', 'fake\r\nkey', 'fake\tkey', 'fake key', 'fake\u0000key', 'fake\u007fkey']) {
-      assert.throws(() => service.saveConfig('o', { provider, apiKey: bad }), error => error.statusCode === 400 && error.message === `The ${label} API key cannot contain spaces, line breaks or control characters`, JSON.stringify(bad));
+      assert.throws(() => service.saveConfig('o', { provider, apiKey: bad }), error => error.statusCode === 400 && error.message === `The ${label} API key contains invalid characters such as line breaks`, JSON.stringify(bad));
     }
     assert.equal(service.providerConfig('o', provider).apiKey, 'fake-saved', 'a refused key changes nothing');
   });
@@ -282,7 +282,7 @@ test('The key checks over HTTP: CRLF around the key saves, a line break inside i
     assert.equal((await put('sk-fake-http\r\n')).status, 200);
     assert.equal(service.providerConfig('owner', 'deepseek').apiKey, 'sk-fake-http');
     const bad = await put('sk-fake\nhttp');
-    assert.deepEqual([bad.status, (await bad.json()).error], [400, 'The DeepSeek API key cannot contain spaces, line breaks or control characters']);
+    assert.deepEqual([bad.status, (await bad.json()).error], [400, 'The DeepSeek API key contains invalid characters such as line breaks']);
   } finally { server.close(); }
 });
 

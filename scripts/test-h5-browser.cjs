@@ -1435,7 +1435,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     const openCopyFromMenu = async () => {
       await page.locator('#h5-open-tasks').tap();
       await page.locator('#h5-tasks .h5-terminal-main[aria-current="true"]').locator('xpath=..').locator('.h5-terminal-more').tap();
-      await page.locator('#h5-term-menu-actions button', { hasText: 'Copy text' }).tap();
+      await page.locator('#h5-session-menu [role="menuitem"]', { hasText: 'Copy text' }).tap();
       await page.locator('#h5-copy').waitFor({ state: 'visible' });
     };
     await page.evaluate(() => { navigator.clipboard.writeText = async text => { window.copied = text; }; });
@@ -1542,29 +1542,30 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     assert.deepEqual(await page.locator('#h5-tasks .h5-terminal-main .h5-terminal-name').allTextContents(), ['Terminal 1', 'Terminal 2']);
     const more = page.locator('#h5-tasks .h5-terminal-row').nth(1).locator('.h5-terminal-more');
     await more.tap();
-    await page.locator('#h5-term-menu').waitFor({ state: 'visible' });
-    assert.deepEqual(await page.locator('#h5-term-menu-actions button').allTextContents(), ['Copy text', 'Rename', 'Reopen', 'Restart in the working directory', 'Delete'], 'the open terminal also offers Copy text');
-    await page.locator('#h5-term-menu-actions button', { hasText: 'Rename' }).tap();
+    await page.locator('#h5-session-menu').waitFor({ state: 'visible' });
+    assert.deepEqual(await page.locator('#h5-session-menu [role="menuitem"]').allTextContents(), ['Copy text', 'Rename', 'Reopen', 'Restart in the working directory', 'Delete'], 'the open terminal also offers Copy text');
+    await page.locator('#h5-session-menu [role="menuitem"]', { hasText: 'Rename' }).tap();
     await page.locator('#h5-term-rename-input').fill('Build logs');
-    await page.locator('#h5-term-rename button').tap(); // the field is in place of the row (the sheet closed at "Rename"); Save does not blur it
+    await page.locator('#h5-term-rename button').tap(); // the field is in place of the row (the popup closed at "Rename"); Save does not blur it
     await page.locator('#h5-term-rename').waitFor({ state: 'detached' });
     assert.deepEqual(await page.locator('#h5-tasks .h5-terminal-main .h5-terminal-name').allTextContents(), ['Terminal 1', 'Build logs']);
     assert.ok(calls.includes('PATCH /api/tasks/1/terminals/h5-second'));
     // The first terminal can be deleted too.
     await page.locator('#h5-tasks .h5-terminal-row').nth(0).locator('.h5-terminal-more').tap();
-    assert.equal(await page.locator('#h5-term-menu-actions button', { hasText: 'Delete' }).count(), 1);
-    await page.locator('#h5-term-menu-cancel').tap();
+    await page.locator('#h5-session-menu [role="menuitem"]', { hasText: 'Delete' }).waitFor();
+    await page.keyboard.press('Escape');
+    await page.locator('#h5-session-menu').waitFor({ state: 'detached' });
     // Delete the current terminal (after a confirmation): the phone falls back to the remaining one.
     const sentBodies = [];
     await page.route(`${ORIGIN}/api/tasks/1/terminal/control`, route => { sentBodies.push(route.request().postDataJSON()); return route.fulfill({ contentType: 'application/json', body: '{"success":true}' }); });
     page.once('dialog', dialog => dialog.dismiss());
     await more.tap();
-    await page.locator('#h5-term-menu-actions button', { hasText: 'Delete' }).tap();
+    await page.locator('#h5-session-menu [role="menuitem"]', { hasText: 'Delete' }).tap();
     assert.equal(sentBodies.length, 0, 'declining the confirmation deletes nothing');
-    await page.locator('#h5-term-menu-cancel').tap();
+    await page.locator('#h5-session-menu').waitFor({ state: 'detached' }); // closed by choosing the item, whatever the answer
     await more.tap();
     page.once('dialog', dialog => dialog.accept());
-    await page.locator('#h5-term-menu-actions button', { hasText: 'Delete' }).tap();
+    await page.locator('#h5-session-menu [role="menuitem"]', { hasText: 'Delete' }).tap();
     await page.waitForFunction(() => document.querySelectorAll('#h5-tasks .h5-terminal-main').length === 1);
     assert.deepEqual(sentBodies, [{ action: 'delete', terminal_id: 'h5-second' }]);
     await page.locator('#h5-tasks').waitFor({ state: 'hidden' });
@@ -1721,14 +1722,15 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     const cols = await wide.page.evaluate(() => window.sockets[0].sent.map(item => { try { return JSON.parse(item); } catch { return null; } }).filter(item => item?.type === 'resize').pop().cols);
     assert.ok(cols > 100, `the terminal uses the width beside the sidebar (${cols} columns)`);
     await wide.page.screenshot({ path: '/tmp/t-agent-mui-wide.png' });
-    // The actions of a terminal rise inside the sidebar, under the "⋯" that opened them, not over the middle of the window.
+    // The actions of a terminal are a popup right under the "⋯" that opened them, right-aligned to it (scripts/test-h5-session-menu-browser.cjs has the rest).
     await wide.page.locator('#h5-tasks .h5-terminal-more').first().click();
-    await wide.page.locator('#h5-term-menu-actions button').first().waitFor();
-    await wide.page.waitForFunction(() => getComputedStyle(document.querySelector('#h5-term-menu .MuiDrawer-paper')).transform === 'none'); // the slide-in has finished
-    const menuBox = await wide.page.locator('#h5-term-menu .MuiDrawer-paper').boundingBox();
-    assert.deepEqual([menuBox.x, menuBox.width], [0, 320], 'the sheet is as wide as the sidebar and starts at its edge');
-    await wide.page.locator('#h5-term-menu-cancel').click();
-    await wide.page.locator('#h5-term-menu').waitFor({ state: 'detached' });
+    await wide.page.locator('#h5-session-menu [role="menuitem"]').first().waitFor();
+    await wide.page.waitForFunction(() => getComputedStyle(document.querySelector('.h5-session-menu-paper')).transform === 'none'); // the grow-in has finished
+    const moreBox = await wide.page.locator('#h5-tasks .h5-terminal-more').first().boundingBox();
+    const menuBox = await wide.page.locator('.h5-session-menu-paper').boundingBox();
+    assert.ok(Math.abs(menuBox.y - (moreBox.y + moreBox.height)) <= 2 && Math.abs(menuBox.x + menuBox.width - (moreBox.x + moreBox.width)) <= 2, `the popup is under the button (${JSON.stringify([moreBox, menuBox])})`);
+    await wide.page.keyboard.press('Escape');
+    await wide.page.locator('#h5-session-menu').waitFor({ state: 'detached' });
     // Settings are a sheet from the bottom with the page dimmed; a click beside the sheet closes it.
     await wide.page.locator('#h5-tasks-settings').click();
     await wide.page.locator('#h5-settings').waitFor({ state: 'visible' });

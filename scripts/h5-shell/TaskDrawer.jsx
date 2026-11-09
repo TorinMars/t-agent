@@ -144,7 +144,7 @@ function Sessions({ ui, taskId, sessions, menu }) {
             </Box>
           </ListItemButton>
           {row.more ? (
-            <IconButton className="h5-terminal-more" size="small" sx={{ p: 0.5 }} aria-label={t('Terminal actions')} title={t('Terminal actions')} onClick={() => ui.actions.rowMore(taskId, row)}>
+            <IconButton className="h5-terminal-more" size="small" sx={{ p: 0.5 }} aria-label={t('Terminal actions')} title={t('Terminal actions')} aria-haspopup="menu" onClick={event => ui.actions.rowMore(taskId, row, event.currentTarget)}>
               <MoreHorizIcon fontSize="small" />
             </IconButton>
           ) : null}

@@ -108,6 +108,8 @@ I18n.add({
   "Enter a username first": "请先填写用户名",
   "Enter an alias or a full model ID.": "填别名或完整模型 ID。",
   "Enter the {1} API key": "请填写 {1} API Key",
+  "The {1} API key cannot contain spaces, line breaks or control characters": "{1} API Key 不能包含空格、换行或控制字符",
+  "The {1} API key is too long (at most 512 characters)": "{1} API Key 太长（最多 512 个字符）",
   "Enter the AccessKey ID and secret": "请填写 AccessKey ID 和 Secret",
   "Enter the server IP or domain first": "请先填写服务器 IP 或域名",
   "Enter the text to translate": "请输入要翻译的内容",

@@ -1103,3 +1103,4 @@ One line per release, added by `scripts/release.js`. Older notes are in `git log
 > v2.91.3 Restore the phone terminal wheel strip for vertical scrolling, and offer Restart and Delete on sessions of tasks that are not selected.
 > v2.92.0 Give an accurate error for an unusable translation key, make Enter send and Cmd/Ctrl+Enter a new line in the translation box, open the design document and file tree as a top sheet aligned with the terminal on wide screens, and remove agent chats from the task list.
 > v2.93.0 Stop creating a terminal for new tasks, send a typed Space only once, keep lists from sticking on Loading after switching task, let sheet lists scroll without closing the sheet, and close the new session panel when its task collapses.
+> v2.93.1 Open the session row menu as a popup under its button, and fade it in so a press during the opening is not lost.

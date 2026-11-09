@@ -834,7 +834,8 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       assert.equal(await input.getAttribute('enterkeyhint'), 'enter', 'the on-screen Enter key is a new-line key');
       const fullSize = page.viewportSize();
       await page.setViewportSize({ width: fullSize.width, height: fullSize.height - 300 });
-      await page.waitForFunction(height => window.visualViewport.height <= height, fullSize.height - 300);
+      // Wait for the page's own resize handler (it sets --h5-height and notes the open keyboard), not only for the browser's viewport.
+      await page.waitForFunction(height => window.visualViewport.height <= height && parseInt(getComputedStyle(document.documentElement).getPropertyValue('--h5-height'), 10) <= height, fullSize.height - 300);
       await page.waitForTimeout(100);
       await page.keyboard.type('MULTI one');
       await page.keyboard.press('Enter');
@@ -863,7 +864,8 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       assert.equal(await input.inputValue(), before, 'an IME Enter adds no new line');
       assert.equal(translateRequests.length, requests, 'an IME Enter sends nothing');
       await page.setViewportSize(fullSize); // the on-screen keyboard goes away
-      await page.waitForFunction(height => window.visualViewport.height >= height, fullSize.height);
+      // A late resize handler would blur the box again (the keyboard went away), so wait for it before focusing.
+      await page.waitForFunction(height => window.visualViewport.height >= height && parseInt(getComputedStyle(document.documentElement).getPropertyValue('--h5-height'), 10) >= height, fullSize.height);
       await page.waitForTimeout(100);
       await input.focus(); await input.fill('MULTI one\n\ntwo');
       // Without bracketed paste the lines are joined, so a shell cannot run them one by one.

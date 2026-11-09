@@ -223,7 +223,71 @@ test('An old flat DeepSeek configuration is migrated automatically, and the save
   assert.equal(service.saveConfig('o', { provider: 'glm', apiKey: 'g' }).providers.deepseek.hasApiKey, true);
 });
 
+test('A key that was entered but cannot be used gets its own message, and a saved key is not checked again on re-save', () => {
+  const { db, service } = setup(() => reply(200, {}));
+  assert.throws(() => service.saveConfig('o', { provider: 'glm', apiKey: 'fake inner-space' }), /The Zhipu GLM API key cannot contain spaces, line breaks or control characters/);
+  assert.throws(() => service.saveConfig('o', { apiKey: 'k'.repeat(513) }), /The DeepSeek API key is too long \(at most 512 characters\)/);
+  assert.equal(service.saveConfig('o', { apiKey: '  sk-fake+/=_~!  ' }).hasApiKey, true, 'surrounding white space is trimmed, punctuation is kept');
+  assert.equal(service.providerConfig('o', 'deepseek').apiKey, 'sk-fake+/=_~!');
+  // An old row may hold a key the check would refuse today: changing only the model must still work.
+  const { encryptToken } = require('../lib/token-crypto');
+  db.prepare('UPDATE system_state SET value = ?').run(encryptToken(JSON.stringify({ enabled: true, apiKey: 'old key-fake' }), SECRET));
+  assert.equal(service.saveConfig('o', { model: 'deepseek-chat' }).model, 'deepseek-chat');
+  assert.equal(service.providerConfig('o', 'deepseek').apiKey, 'old key-fake');
+});
+
+for (const [provider, label, url] of [['deepseek', 'DeepSeek', 'https://api.deepseek.com/chat/completions'], ['glm', 'Zhipu GLM', 'https://open.bigmodel.cn/api/paas/v4/chat/completions']]) {
+  test(`${label}: newlines, CRLF and tabs around a key are removed, and requests send the cleaned key`, async () => {
+    for (const raw of ['fake-key-123\n', 'fake-key-123\r\n', '\nfake-key-123', ' \t\r\nfake-key-123\r\n\t ']) {
+      const { db, service, calls } = setup(() => reply(200, { choices: [{ message: { content: 'Hi' } }] }));
+      assert.equal(service.saveConfig('o', { provider, apiKey: raw }).providers[provider].hasApiKey, true, JSON.stringify(raw));
+      assert.equal(service.providerConfig('o', provider).apiKey, 'fake-key-123', 'stored cleaned');
+      assert.equal(db.prepare('SELECT value FROM system_state').get().value.includes('fake-key-123'), false, 'still encrypted');
+      await service.translate('o', '你好');
+      assert.equal(calls[0].url, url);
+      assert.equal(calls[0].options.headers.Authorization, 'Bearer fake-key-123');
+      assert.doesNotThrow(() => new Headers(calls[0].options.headers), 'a valid header value');
+    }
+  });
+
+  test(`${label}: a control character or space inside the key gets its own message and keeps the saved key`, () => {
+    const { service } = setup(() => reply(200, {}));
+    service.saveConfig('o', { provider, apiKey: 'fake-saved' });
+    for (const bad of ['fake\nkey', 'fake\r\nkey', 'fake\tkey', 'fake key', 'fake\u0000key', 'fake\u007fkey']) {
+      assert.throws(() => service.saveConfig('o', { provider, apiKey: bad }), error => error.statusCode === 400 && error.message === `The ${label} API key cannot contain spaces, line breaks or control characters`, JSON.stringify(bad));
+    }
+    assert.equal(service.providerConfig('o', provider).apiKey, 'fake-saved', 'a refused key changes nothing');
+  });
+
+  test(`${label}: white space only keeps the saved key, and asks for a key when none is saved`, () => {
+    for (const blank of ['', '   ', '\n', '\r\n', ' \t\r\n ']) {
+      const { service } = setup(() => reply(200, {}));
+      assert.throws(() => service.saveConfig('o', { provider, apiKey: blank }), new RegExp(`Enter the ${label} API key`), JSON.stringify(blank));
+      service.saveConfig('o', { provider, apiKey: 'fake-saved' });
+      assert.equal(service.saveConfig('o', { provider, apiKey: blank }).providers[provider].hasApiKey, true);
+      assert.equal(service.providerConfig('o', provider).apiKey, 'fake-saved', JSON.stringify(blank));
+    }
+  });
+}
+
+test('The key checks over HTTP: CRLF around the key saves, a line break inside it is a 400 with the accurate message', async () => {
+  const { service } = setup(() => reply(200, {}));
+  const app = express();
+  app.use('/api/translate', createTranslateRouter({ service, requireAuth: (req, res, next) => { req.session = { user: { login: 'owner' } }; next(); } }));
+  const server = await new Promise(resolve => { const s = app.listen(0, '127.0.0.1', () => resolve(s)); });
+  const url = `http://127.0.0.1:${server.address().port}/api/translate/config`;
+  const headers = { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' };
+  const put = apiKey => fetch(url, { method: 'PUT', headers, body: JSON.stringify({ provider: 'deepseek', apiKey, baseUrl: 'https://api.deepseek.com', model: 'deepseek-flash' }) });
+  try {
+    assert.equal((await put('sk-fake-http\r\n')).status, 200);
+    assert.equal(service.providerConfig('owner', 'deepseek').apiKey, 'sk-fake-http');
+    const bad = await put('sk-fake\nhttp');
+    assert.deepEqual([bad.status, (await bad.json()).error], [400, 'The DeepSeek API key cannot contain spaces, line breaks or control characters']);
+  } finally { server.close(); }
+});
+
 // ── One English word (tap to translate in the chat) ──
+
 const wordAnswer = (extra = {}) => ({ base: 'resolve', phonetic: '/rɪˈzɒlv/', pos: 'v.', meaning: '解决；决定', ...extra });
 const wordReply = content => reply(200, { choices: [{ message: { content: typeof content === 'string' ? content : JSON.stringify(content) } }] });
 

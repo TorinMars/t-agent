@@ -195,12 +195,15 @@ function createTranslator({ db, sessionSecret, fetchImpl = (...args) => fetch(..
       const id = providerId(body.provider);
       const entry = next.providers[id];
       // Only change this provider: an empty key keeps the key already saved for it, and the other provider's configuration is kept as-is.
+      const enteredKey = text(body.apiKey);
       const updated = {
-        apiKey: text(body.apiKey) || entry.apiKey,
+        apiKey: enteredKey || entry.apiKey,
         baseUrl: baseUrl(body.baseUrl, PROVIDERS[id].baseUrl),
         model: text(body.model) || PROVIDERS[id].model,
       };
-      if (!updated.apiKey || controls.test(updated.apiKey) || updated.apiKey.length > 512) throw new TranslatorError(`Enter the ${PROVIDERS[id].label} API key`);
+      if (!updated.apiKey) throw new TranslatorError(`Enter the ${PROVIDERS[id].label} API key`);
+      if (controls.test(enteredKey)) throw new TranslatorError(`The ${PROVIDERS[id].label} API key cannot contain spaces, line breaks or control characters`);
+      if (enteredKey.length > 512) throw new TranslatorError(`The ${PROVIDERS[id].label} API key is too long (at most 512 characters)`);
       if (!/^[\w.\-:/]{1,80}$/.test(updated.model)) throw new TranslatorError('Invalid model name');
       next.providers[id] = updated;
       next.provider = id;

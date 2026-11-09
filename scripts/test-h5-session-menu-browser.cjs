@@ -107,8 +107,24 @@ async function run(browser, wide) {
   const SELECTED = 'Phone terminals';
 
   // ── Under the button: the selected task, then a task that is not selected ──
+  // Its items do not move once they exist: a press whose mouse-down and mouse-up land on different items is lost by the browser (the click goes to the list).
+  await page.evaluate(() => {
+    window.firstBox = null;
+    const watch = new MutationObserver(() => {
+      const paper = document.querySelector('.h5-session-menu-paper');
+      const item = paper && paper.querySelector('[role="menuitem"]:last-child');
+      if (!item) return;
+      watch.disconnect();
+      const box = item.getBoundingClientRect();
+      window.firstBox = { top: box.top, bottom: box.bottom, transform: getComputedStyle(paper).transform };
+    });
+    watch.observe(document.body, { childList: true, subtree: true });
+  });
   await h.open(SELECTED, 1);
   assertBelow(await h.boxes(SELECTED, 1), `${label} selected task`);
+  const first = await page.evaluate(() => window.firstBox);
+  const last = (await h.boxes(SELECTED, 1)).items.at(-1);
+  assert.ok(first.transform === 'none' && Math.abs(first.top - last.top) <= 1 && Math.abs(first.bottom - last.bottom) <= 1, `${label}: the items are in their final place from the first frame ${JSON.stringify([first, last])}`);
   assert.deepEqual(await h.items.allTextContents(), ['Rename', 'Reopen', 'Restart in the working directory', 'Delete'], `${label}: the actions`);
   assert.deepEqual(await h.items.evaluateAll(nodes => nodes.map(node => node.classList.contains('danger'))), [false, false, true, true], `${label}: the danger style`);
   assert.equal(await page.locator('#h5-session-menu-actions').getAttribute('aria-label'), 'Terminal 2', `${label}: the list is named after the session`);

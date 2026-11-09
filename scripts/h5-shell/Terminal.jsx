@@ -245,7 +245,7 @@ const POINTER_ACTION = { flex: '0 0 auto', width: 40, height: 40, p: 0, ...keyLo
 // The hardware keyboard shortcuts of the draft box (keydown on #h5-translate-input in h5.js), shown after the tooltips: Apple systems (iPadOS reports MacIntel) use Cmd / Option.
 const APPLE = typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent || '');
 const SEND_KEYS = APPLE ? ' (\u2325\u21a9)' : ' (Alt+Enter)';
-const TRANSLATE_KEYS = APPLE ? ' (\u2318\u21a9)' : ' (Ctrl+Enter)';
+const TRANSLATE_KEYS = APPLE ? ' (\u21a9)' : ' (Enter)';
 export function ActionBar({ state, ui, menu, onMenu, pointer = false }) {
   const look = pointer ? POINTER_ACTION : ACTION;
   // The keyboard keys exist only on touch screens. Terminal keyboard shows and hides the terminal's own on-screen keyboard (Osk.jsx, never the system one);

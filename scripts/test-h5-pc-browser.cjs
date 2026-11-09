@@ -1,6 +1,6 @@
 // The MUI page (/h5) on a computer, in real Chromium with mocked servers: input mode 'pointer' (no touch, a mouse) at 1440x900 and 1280x800, and the
 // touch mode at phone size for comparison. Checks: no key row, no wheel strip, no keyboard buttons, the draft box always shown, 13px terminal font,
-// native titles on icon buttons, Escape closing the saved commands menu from the terminal; Cmd/Ctrl+Enter translates and sends, Alt+Enter sends as typed, Enter is a new line, and a send gives the focus back to the terminal;
+// native titles on icon buttons, Escape closing the saved commands menu from the terminal; Enter translates and sends, Alt+Enter sends as typed, Cmd/Ctrl+Enter is a new line, and a send gives the focus back to the terminal;
 // typing with nothing focused reaches the terminal, Escape in the draft box goes back to it, Cmd/Ctrl+K focuses the session search; a shorter window does
 // NOT pin the terminal (it was taken for the on-screen keyboard); the terminal "done" acknowledgement (local and remote Engine) and the next-session
 // button seeing it idle; folding the sidebar (remembered) and the design document as a right side panel, both refitting the terminal.
@@ -164,19 +164,19 @@ const waitAck = (url, id, from = 0) => new Promise((resolve, reject) => {
       await page.locator('.h5-xterm:not([hidden])').click({ position: { x: 200, y: 100 } });
       assert.equal(await activeIsTerminal(page), true, `${label}: a click focuses the terminal`);
 
-      // Draft box shortcuts: Cmd/Ctrl+Enter translates and sends, Alt+Enter sends as typed, Enter is a new line; a send returns the focus to the terminal.
+      // Draft box shortcuts: Enter translates and sends, Alt+Enter sends as typed, Cmd/Ctrl+Enter is a new line; a send returns the focus to the terminal.
       const input = page.locator('#h5-translate-input');
-      for (const combo of ['Meta+Enter', 'Control+Enter']) {
+      {
         const asked = translations.length;
         await input.click();
         await input.fill('translate me');
         before = (await lastSocket(page)).length;
-        await page.keyboard.press(combo);
+        await page.keyboard.press('Enter');
         await page.waitForFunction(count => window.sockets.at(-1).sent.length >= count + 2, before);
-        assert.equal(translations.length, asked + 1, `${label}: ${combo} asks for one translation`);
-        assert.deepEqual((await lastSocket(page)).slice(before), ['Translated text', '\r'], `${label}: ${combo} sends the translation, then Enter`);
+        assert.equal(translations.length, asked + 1, `${label}: Enter asks for one translation`);
+        assert.deepEqual((await lastSocket(page)).slice(before), ['Translated text', '\r'], `${label}: Enter sends the translation, then Enter`);
         assert.equal(await input.inputValue(), '');
-        assert.equal(await activeIsTerminal(page), true, `${label}: after ${combo} the terminal has the focus again`);
+        assert.equal(await activeIsTerminal(page), true, `${label}: after Enter the terminal has the focus again`);
         assert.ok(await page.locator('#h5-translate').evaluate(el => el.getBoundingClientRect().height > 30), 'the draft box stays shown');
       }
       await input.click();
@@ -188,9 +188,9 @@ const waitAck = (url, id, from = 0) => new Promise((resolve, reject) => {
       assert.equal(await activeIsTerminal(page), true);
       await input.click();
       await page.keyboard.type('one');
-      await page.keyboard.press('Enter');
+      await page.keyboard.press(process.platform === 'darwin' ? 'Meta+Enter' : 'Control+Enter');
       await page.keyboard.type('two');
-      assert.equal(await input.inputValue(), 'one\ntwo', `${label}: plain Enter is a new line`);
+      assert.equal(await input.inputValue(), 'one\ntwo', `${label}: Cmd/Ctrl+Enter is a new line`);
       const grown = await page.evaluate(() => ({ input: document.getElementById('h5-translate-input').getBoundingClientRect().height, extra: parseFloat(document.getElementById('h5-bottom').style.getPropertyValue('--h5-bar-extra')) || 0 }));
       assert.ok(grown.input > 35 && grown.extra > 10, `${label}: the box grows with its text over the terminal (${JSON.stringify(grown)})`);
       // Escape leaves the draft box for the terminal; the text stays.

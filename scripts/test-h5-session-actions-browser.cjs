@@ -93,10 +93,10 @@ function helpers({ page, wide }) {
   const row = (name, title) => list(name).locator('.h5-terminal-row').filter({ has: page.locator('.h5-terminal-name', { hasText: title }) });
   const names = name => list(name).locator('.h5-terminal-name').allTextContents();
   const item = name => page.locator('.h5-task-item', { hasText: name });
-  const actions = page.locator('#h5-term-menu #h5-term-menu-actions button');
-  const action = label => page.locator('#h5-term-menu #h5-term-menu-actions button', { hasText: label });
+  const actions = page.locator('#h5-session-menu [role="menuitem"]');
+  const action = label => page.locator('#h5-session-menu [role="menuitem"]', { hasText: label });
   const openMenu = async (name, title) => { await press(row(name, title).locator('.h5-terminal-more')); await actions.first().waitFor(); };
-  const closeMenu = async () => { await press(page.locator('#h5-term-menu-cancel')); await page.locator('#h5-term-menu .h5-menu-panel').waitFor({ state: 'hidden' }); };
+  const closeMenu = async () => { await page.keyboard.press('Escape'); await actions.first().waitFor({ state: 'detached' }); };
   const openSheet = async () => { if (!wide && !(await page.locator('#h5-tasks').isVisible())) await page.locator('#h5-open-tasks').tap(); await page.locator('#h5-tasks .h5-task-item').first().waitFor(); };
   // That terminal is on the page; on a phone the sheet has finished closing (a sheet still sliding away would count as open).
   const shown = async (taskId, id) => {
@@ -175,7 +175,7 @@ async function checkOtherTask(env, h, { wide, remote, label }) {
     await h.press(h.action(name));
     assert.ok(dialogs.at(-1).includes(words), `${label}: the same question (${dialogs.at(-1)})`);
     assert.ok(dialogs.at(-1).includes(title) && dialogs.at(-1).includes('Beta'), `${label}: it names the session and the task (${dialogs.at(-1)})`);
-    await h.closeMenu();
+    await h.actions.first().waitFor({ state: 'detached' }); // the popup closes when an item is chosen, whatever the answer
   }
   assert.deepEqual(server.writes, [], `${label}: Cancel sends nothing`);
   answers.next = 'accept';
@@ -184,7 +184,7 @@ async function checkOtherTask(env, h, { wide, remote, label }) {
   // ── Restart of Beta's `default`: the request goes to Beta, its warm view is closed, the selected task's `default` is not ──
   await h.openMenu('Beta', 'Terminal 1');
   await h.press(h.action(RESTART));
-  await page.waitForFunction(() => document.querySelectorAll('#h5-term-menu .h5-menu-panel').length === 0 || !document.querySelector('#h5-term-menu .h5-menu-panel').checkVisibility());
+  await h.actions.first().waitFor({ state: 'detached' });
   await page.waitForFunction(([task]) => !document.querySelector(`.h5-xterm[data-task-id="${task}"][data-terminal-id="default"]`), [beta]);
   assert.deepEqual(server.writes, [['POST', control, { action: 'restart-workdir', terminal_id: 'default' }]], `${label}: restart of that task's default`);
   assert.equal((await h.socket(beta, 'default')).at(-1), 3, `${label}: the socket of the restarted terminal is closed`);

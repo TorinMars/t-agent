@@ -177,10 +177,10 @@ function measure(min) {
       await page.locator('#h5-tasks .h5-terminal-more').first().waitFor();
       await check('task-sheet');
       await page.locator('#h5-tasks .h5-terminal-more').first().tap();
-      await page.locator('#h5-term-menu-actions').waitFor();
+      await page.locator('#h5-session-menu-actions').waitFor();
       await check('terminal-menu');
-      await page.locator('#h5-term-menu-cancel').tap();
-      await page.locator('#h5-term-menu-actions').waitFor({ state: 'detached' });
+      await page.locator('#h5-session-menu .MuiBackdrop-root').tap({ position: { x: 4, y: 4 } });
+      await page.locator('#h5-session-menu-actions').waitFor({ state: 'detached' });
       if (!(await page.locator('#h5-tasks').isVisible())) await page.locator('#h5-open-tasks').tap();
       await page.locator('#h5-tasks .h5-task-add').first().tap();
       await page.locator('#h5-new-name-input').waitFor();

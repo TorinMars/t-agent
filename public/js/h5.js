@@ -432,9 +432,9 @@
   }
   function closeTasks() {
     if (isWide()) return; // the sidebar stays
-    // The Session list and the rename field are drawn inside the sheet: they go with it.
+    // The Session list, the rename field and the popup of a row are drawn inside the sheet or point into it: they go with it.
     const menu = ui.get().menu;
-    if (menu && (menu.naming || menu.rename)) closeTerminalMenu();
+    if (menu && (menu.naming || menu.rename || menu.anchor)) closeTerminalMenu();
     clearInterval(namesTimer);
     ui.set({ tasksOpen: false });
   }
@@ -534,17 +534,17 @@
     } finally { cycling = false; }
   };
   // The "⋯" of a session row, of the task the row is under (`taskId`), which may not be the selected one.
-  ui.actions.rowMore = (taskId, row) => {
+  ui.actions.rowMore = (taskId, row, anchor) => {
     if (task && task.id === taskId) {
       const entry = terminals.find(candidate => candidate.terminal_id === row.id);
-      if (entry) openTerminalMenu(entry);
+      if (entry) openTerminalMenu(entry, anchor);
       return;
     }
     const item = tasks.find(candidate => candidate.id === taskId);
     const peek = peeks.get(taskId);
     if (!item || !peek) return;
     const entry = peek.terminals.find(candidate => candidate.terminal_id === row.id);
-    if (entry) openOtherMenu(item, row, entry);
+    if (entry) openOtherMenu(item, row, entry, anchor);
   };
   ui.actions.changeEngine = key => {
     hideAgent();
@@ -751,8 +751,8 @@
 
   // ── Terminal actions: rename, reopen, restart in the working directory, delete ──
   // One `menu` state serves the actions of a terminal, the actions of a chat and the "Session" choices of the "+" of a task. Its items are
-  // { label, kind } in the state and their functions are kept here, in the order shown. The actions are a sheet from the bottom (TermMenu.jsx); the
-  // Session choices (`naming`, under the task `task`) and the rename field (`rename`, in place of that row) are drawn in the task list (TaskDrawer.jsx),
+  // { label, kind } in the state and their functions are kept here, in the order shown. The actions of a session row are a popup under its "⋯" (`menu.anchor`, TermMenu.jsx); the
+  // actions of a task are a sheet from the bottom (TermMenu.jsx); the Session choices (`naming`, under the task `task`) and the rename field (`rename`, in place of that row) are drawn in the task list (TaskDrawer.jsx),
   // where the person tapped.
   let menuRuns = [];
   let menuRow = null;
@@ -773,7 +773,7 @@
     newName = '';
     ui.set({ menu: null });
   }
-  // The Session list and the rename field drawn under a task go when that task is collapsed (without an id: under any task). The sheet of actions is a modal: nothing behind it can be tapped.
+  // The Session list and the rename field drawn under a task go when that task is collapsed (without an id: under any task). The sheet and the popup of actions are modal: nothing behind them can be tapped (a popup whose row has gone closes by itself, TermMenu.jsx).
   function closeListMenu(taskId = null) {
     const menu = ui.get().menu;
     const owner = menu && (menu.naming ? menu.task : menu.rename ? menu.rename.task : null);
@@ -783,17 +783,18 @@
   const takeName = () => newName.replace(/\s+/g, ' ').trim();
   // items: [label, run, kind, create]; kind 'danger' is drawn as a warning, 'raw' is a name that is not translated; create: Enter in the name field runs it.
   // naming: the Session list, with the optional name field above it, drawn under the task `menuTask` in the task list.
-  function showMenu(title, items, { naming = false } = {}) {
+  // anchor: the "⋯" of a session row: the actions are a popup under it instead of the sheet from the bottom.
+  function showMenu(title, items, { naming = false, anchor = null } = {}) {
     menuRuns = items.map(item => item[1]);
     menuCreate = items.findIndex(item => item[3]);
-    ui.set({ menu: { title, items: items.map(([label, , kind]) => ({ label, kind: kind || null })), rename: null, renameValue: '', naming, task: naming ? menuTask : null, name: newName } });
+    ui.set({ menu: { title, items: items.map(([label, , kind]) => ({ label, kind: kind || null })), rename: null, renameValue: '', naming, task: naming ? menuTask : null, name: newName, anchor } });
   }
   // The rename field takes the place of the row in the task list ({ kind, id, task } of the row: `default` is a terminal id in every task); the sheet of
   // actions goes away.
   const askRename = value => ui.set(state => ({
     menu: state.menu && { ...state.menu, rename: { kind: 'terminal', id: menuRow && menuRow.terminal_id, task: menuScope && menuScope.taskId }, renameValue: value },
   }));
-  function openTerminalMenu(row) {
+  function openTerminalMenu(row, anchor) {
     menuRow = row;
     const target = menuScope = { from: source, taskId: task.id, row };
     // "Copy text" is for the terminal that is open (the copy view reads its buffer); the long press on the terminal body is the other way in.
@@ -805,13 +806,13 @@
       ['Reopen', () => { closeTerminalMenu(); closeTasks(); switchTerminal(row); }],
       ['Restart in the working directory', () => void restartTerminal(target), 'danger'],
       ['Delete', () => void deleteTerminal(target), 'danger'],
-    ]);
+    ], { anchor });
   }
   // A remote Engine that says what it can do and does not list 'terminal:control' cannot restart or delete a terminal; one that has not said is asked (it answers with an error).
   const controlsTerminals = from => from.key === 'local' || !Array.isArray(from.capabilities) || from.capabilities.includes('terminal:control');
   // The actions of a session of a task that is not selected. Open is the same as a tap on the row; Rename, Restart and Delete go to the row's own Engine and task
   // (`target`) and leave the task, the terminal and the socket that are shown alone.
-  function openOtherMenu(item, row, entry) {
+  function openOtherMenu(item, row, entry, anchor) {
     menuRow = entry;
     const target = menuScope = { from: source, taskId: item.id, row: entry, taskTitle: item.title };
     showMenu(entry.title, [
@@ -821,7 +822,7 @@
         ['Restart in the working directory', () => void restartTerminal(target), 'danger'],
         ['Delete', () => void deleteTerminal(target), 'danger'],
       ] : []),
-    ]);
+    ], { anchor });
   }
   // Shows a saved name: in the list of the selected task, or under a task that is not selected. That list is read again too, so that an older read still on
   // its way cannot bring the old name back, and a name the server cleaned up is shown as it was kept.

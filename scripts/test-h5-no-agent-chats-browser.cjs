@@ -96,10 +96,10 @@ function helpers({ page, wide }) {
   const row = (name, title) => list(name).locator('.h5-terminal-row').filter({ has: page.locator('.h5-terminal-name', { hasText: title }) });
   const names = name => list(name).locator('.h5-terminal-name').allTextContents();
   const item = name => page.locator('.h5-task-item', { hasText: name });
-  const actions = page.locator('#h5-term-menu #h5-term-menu-actions button');
-  const action = label => page.locator('#h5-term-menu #h5-term-menu-actions button', { hasText: label });
+  const actions = page.locator('#h5-session-menu [role="menuitem"]');
+  const action = label => page.locator('#h5-session-menu [role="menuitem"]', { hasText: label });
   const openMenu = async (name, title) => { await press(row(name, title).locator('.h5-terminal-more')); await actions.first().waitFor(); };
-  const closeMenu = async () => { await press(page.locator('#h5-term-menu-cancel')); await page.locator('#h5-term-menu .h5-menu-panel').waitFor({ state: 'hidden' }); };
+  const closeMenu = async () => { await page.keyboard.press('Escape'); await actions.first().waitFor({ state: 'detached' }); };
   const openSheet = async () => { if (!wide && !(await page.locator('#h5-tasks').isVisible())) await page.locator('#h5-open-tasks').tap(); await page.locator('#h5-tasks .h5-task-item').first().waitFor(); };
   const shown = async (taskId, id) => {
     await page.waitForFunction(([task, terminal]) => { const el = document.querySelector('.h5-xterm:not([hidden])'); return el && el.dataset.taskId === String(task) && el.dataset.terminalId === terminal; }, [taskId, id]);
@@ -162,7 +162,7 @@ async function check(env, h, { wide, remote, label }) {
   assert.deepEqual(server.writes.at(-1), ['PATCH', `${base}/${beta}/terminals/default`, { title: 'Docs shell' }], `${label}: rename reaches that terminal`);
   await h.openMenu('Beta', 'Docs shell');
   await h.press(h.action(RESTART));
-  await page.waitForFunction(() => !document.querySelector('#h5-term-menu .h5-menu-panel') || !document.querySelector('#h5-term-menu .h5-menu-panel').checkVisibility());
+  await h.actions.first().waitFor({ state: 'detached' });
   assert.deepEqual(server.writes.at(-1), ['POST', `${base}/${beta}/terminal/control`, { action: 'restart-workdir', terminal_id: 'default' }], `${label}: restart reaches that terminal`);
   await h.openMenu('Beta', 'Terminal 2');
   await h.press(h.action('Delete'));

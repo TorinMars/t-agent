@@ -173,7 +173,7 @@ const CASES = [
   ['a collapse takes the rename field away for good', async t => {
     const rows = t.list('Phone terminals').locator('.h5-terminal-row');
     await t.press(rows.nth(1).locator('.h5-terminal-more'));
-    await t.press(t.page.locator('#h5-term-menu-actions button', { hasText: 'Rename' }));
+    await t.press(t.page.locator('#h5-session-menu [role="menuitem"]', { hasText: 'Rename' }));
     await t.page.locator('#h5-term-rename-input').waitFor();
     await t.page.waitForTimeout(350);
     // Without the blur a real tap may not cause (iOS does not move the focus to a button): the page only sees the collapse.

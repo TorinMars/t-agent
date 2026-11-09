@@ -112,11 +112,11 @@ async function checkOtherTask({ page, requests, size, press, list, shown, base, 
   const writes = requests.length;
   const askRename = async index => {
     await press(rows.nth(index).locator('.h5-terminal-more'));
-    await page.locator('#h5-term-menu-actions button', { hasText: 'Rename' }).waitFor();
-    assert.deepEqual(await page.locator('#h5-term-menu #h5-term-menu-actions button').allTextContents(), index === 4 ? ['Rename', 'Open', 'Delete'] : ['Rename', 'Open', 'Restart in the working directory', 'Delete'], `${size}: what can be done from another task`);
-    await press(page.locator('#h5-term-menu-actions button', { hasText: 'Rename' }));
+    await page.locator('#h5-session-menu [role="menuitem"]', { hasText: 'Rename' }).waitFor();
+    assert.deepEqual(await page.locator('#h5-session-menu [role="menuitem"]').allTextContents(), index === 4 ? ['Rename', 'Open', 'Delete'] : ['Rename', 'Open', 'Restart in the working directory', 'Delete'], `${size}: what can be done from another task`);
+    await press(page.locator('#h5-session-menu [role="menuitem"]', { hasText: 'Rename' }));
     await page.locator('#h5-term-rename-input').waitFor();
-    await page.locator('#h5-term-menu .h5-menu-panel').waitFor({ state: 'hidden' });
+    await page.locator('#h5-session-menu').waitFor({ state: 'detached' });
     await page.waitForTimeout(300);
   };
   // The field is under this task only, although the shown task has a terminal with the same id. Escape cancels.
@@ -236,9 +236,9 @@ async function checkOtherTask({ page, requests, size, press, list, shown, base, 
       await page.waitForTimeout(400); // the list settles (session counts, sheet slide)
       const rowBox = await rows.nth(1).boundingBox();
       await press(rows.nth(1).locator('.h5-terminal-more'));
-      await press(page.locator('#h5-term-menu-actions button', { hasText: 'Rename' }));
+      await press(page.locator('#h5-session-menu [role="menuitem"]', { hasText: 'Rename' }));
       await page.locator('#h5-term-rename').waitFor();
-      await page.locator('#h5-term-menu .h5-menu-panel').waitFor({ state: 'hidden' });
+      await page.locator('#h5-session-menu').waitFor({ state: 'detached' });
       await page.waitForTimeout(300);
       g = await geometry(page, { field: '#h5-term-rename-input' });
       assertInside(g, `${size} rename`);
@@ -264,14 +264,14 @@ async function checkOtherTask({ page, requests, size, press, list, shown, base, 
       const writes = requests.length;
       // Leaving the field cancels (a tap on the list title), and so does Escape.
       await press(rows.nth(2).locator('.h5-terminal-more'));
-      await press(page.locator('#h5-term-menu-actions button', { hasText: 'Rename' }));
+      await press(page.locator('#h5-session-menu [role="menuitem"]', { hasText: 'Rename' }));
       await page.locator('#h5-term-rename-input').waitFor();
       await page.waitForTimeout(300);
       assert.equal(await page.evaluate(() => document.activeElement && document.activeElement.id), 'h5-term-rename-input');
       await press(page.locator('#h5-tasks-title'));
       await page.locator('#h5-term-rename').waitFor({ state: 'detached' });
       await press(rows.nth(2).locator('.h5-terminal-more'));
-      await press(page.locator('#h5-term-menu-actions button', { hasText: 'Rename' }));
+      await press(page.locator('#h5-session-menu [role="menuitem"]', { hasText: 'Rename' }));
       await page.locator('#h5-term-rename-input').waitFor();
       await page.waitForTimeout(300);
       await page.locator('#h5-term-rename-input').press('Escape');
@@ -308,7 +308,7 @@ async function checkOtherTask({ page, requests, size, press, list, shown, base, 
       // Open is the other action: it goes to that session of that task, as a tap on the row does.
       await page.locator('#h5-tasks .h5-terminal-list[aria-label="Task 3"] .h5-terminal-row').nth(1).locator('.h5-terminal-more').waitFor();
       await press(page.locator('#h5-tasks .h5-terminal-list[aria-label="Task 3"] .h5-terminal-row').nth(1).locator('.h5-terminal-more'));
-      await press(page.locator('#h5-term-menu-actions button', { hasText: 'Open' }));
+      await press(page.locator('#h5-session-menu [role="menuitem"]', { hasText: 'Open' }));
       await page.waitForFunction(() => document.querySelector('.h5-xterm:not([hidden])')?.dataset.terminalId === 't3-2');
       assert.equal(await page.locator('#h5-task-name').textContent(), 'Task 3', `${size}: Open goes to that task`);
       await context.close();

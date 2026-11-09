@@ -122,15 +122,15 @@ async function toast(page, text) {
       await page.waitForFunction(() => !(history.state && history.state.h5Layer)); // closed by choosing a terminal: its entry was taken back
       await page.locator('#h5-open-tasks').tap();
       await page.locator('#h5-tasks .h5-terminal-row', { hasText: 'Claude work' }).locator('.h5-terminal-more').tap();
-      await page.locator('#h5-term-menu').waitFor({ state: 'visible' });
+      await page.locator('#h5-session-menu').waitFor({ state: 'visible' });
       await page.waitForFunction(() => history.state && history.state.h5Layer === 2);
       await page.goBack();
-      await page.locator('#h5-term-menu').waitFor({ state: 'hidden' });
+      await page.locator('#h5-session-menu').waitFor({ state: 'hidden' });
       assert.equal(await sheet.isVisible(), true, 'the sheet under the menu stays');
-      // Closed another way (Cancel): its entry is taken back, so one back press closes the sheet and nothing is left over.
+      // Closed another way (a tap beside it): its entry is taken back, so one back press closes the sheet and nothing is left over.
       await page.locator('#h5-tasks .h5-terminal-row', { hasText: 'Claude work' }).locator('.h5-terminal-more').tap();
-      await page.locator('#h5-term-menu-cancel').tap();
-      await page.locator('#h5-term-menu').waitFor({ state: 'hidden' });
+      await page.locator('#h5-session-menu .MuiBackdrop-root').tap({ position: { x: 4, y: 4 } });
+      await page.locator('#h5-session-menu').waitFor({ state: 'hidden' });
       await page.waitForFunction(() => history.state && history.state.h5Layer === 1);
       await page.goBack();
       await sheet.waitFor({ state: 'hidden' });
@@ -150,9 +150,9 @@ async function toast(page, text) {
     // A Claude terminal can be renamed from its menu too (a given name wins over the Claude session title on the server).
     await page.locator('#h5-open-tasks').tap();
     await page.locator('#h5-tasks .h5-terminal-row', { hasText: 'Claude work' }).locator('.h5-terminal-more').tap();
-    await page.locator('#h5-term-menu').waitFor({ state: 'visible' });
-    assert.deepEqual(await page.locator('#h5-term-menu-actions button').allTextContents(), ['Rename', 'Reopen', 'Restart in the working directory', 'Delete'], 'Rename is offered for an agent terminal');
-    await page.locator('#h5-term-menu-actions button', { hasText: 'Rename' }).tap();
+    await page.locator('#h5-session-menu').waitFor({ state: 'visible' });
+    assert.deepEqual(await page.locator('#h5-session-menu [role="menuitem"]').allTextContents(), ['Rename', 'Reopen', 'Restart in the working directory', 'Delete'], 'Rename is offered for an agent terminal');
+    await page.locator('#h5-session-menu [role="menuitem"]', { hasText: 'Rename' }).tap();
     await page.locator('#h5-term-rename-input').fill('My review');
     await page.locator('#h5-term-rename button').tap();
     await page.locator('#h5-term-rename').waitFor({ state: 'detached' }); // the field is in the task list, in place of the row

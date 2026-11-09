@@ -337,16 +337,16 @@ async function checkIds(page) {
       content = WITH_HEADINGS;
       const { context, page } = await openPage(browser, { viewport: { width: 1440, height: 900 }, touch: false });
       await page.locator('#h5-design').click();
-      await page.locator('.h5-design-side h1', { hasText: 'Design of Fix login' }).waitFor({ timeout: 10000 });
+      await page.locator('.h5-design-panel h1', { hasText: 'Design of Fix login' }).waitFor({ timeout: 10000 });
       await checkIds(page);
       const list = page.locator('#h5-design-outline-list');
       await list.waitFor();
       assert.equal(await page.locator('#h5-design-outline').getAttribute('aria-expanded'), 'true', 'shown by default at 1440');
       assert.deepEqual(await listed(page), EXPECTED);
-      await page.waitForFunction(() => { const p = document.querySelector('.h5-design-side'); return p && Math.abs(p.getBoundingClientRect().right - innerWidth) <= 1; }); // the slide-in has ended
+      await page.waitForFunction(() => { const p = document.querySelector('.h5-design-panel'); return p && Math.abs(p.getBoundingClientRect().top) <= 1; }); // the slide-in has ended
       const geometry = await page.evaluate(() => {
         const r = node => node.getBoundingClientRect();
-        const panel = r(document.querySelector('.h5-design-side'));
+        const panel = r(document.querySelector('.h5-design-panel'));
         const body = r(document.getElementById('h5-design-body'));
         const nav = r(document.getElementById('h5-design-outline-list'));
         const el = document.getElementById('h5-design-outline-list');
@@ -432,7 +432,7 @@ async function checkIds(page) {
       await waitScale(page, 's === 1');
       await page.keyboard.press('Escape');
       await page.locator('#h5-viewer').waitFor({ state: 'detached' });
-      assert.equal(await page.evaluate(() => document.documentElement.hasAttribute('data-side-panel')), true, 'Escape closed only the viewer, the panel stays');
+      assert.equal(await page.locator('.h5-design-panel').isVisible(), true, 'Escape closed only the viewer, the sheet stays');
       await page.locator('#h5-design-body .mermaid').click();
       await page.locator('#h5-viewer-content svg').waitFor();
       await page.keyboard.press('Escape');
@@ -441,7 +441,7 @@ async function checkIds(page) {
       // A document without headings: no Outline button and no column.
       await page.locator('#h5-design-body').focus();
       await page.keyboard.press('Escape');
-      await page.waitForFunction(() => !document.documentElement.hasAttribute('data-side-panel'));
+      await page.locator('.h5-design-panel').waitFor({ state: 'hidden' });
       content = NO_HEADINGS;
       await page.locator('#h5-design').click();
       await page.locator('#h5-design-body', { hasText: 'Just text' }).waitFor();

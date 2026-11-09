@@ -77,15 +77,13 @@ ui.actions.toggleSidebar = () => {
 const root = createRoot(document.getElementById('h5-root'));
 flushSync(() => root.render(<App ui={ui} />));
 
-// The back button closes the open sheet, dialog or menu (scripts/h5-shell/back.mjs). The panels beside the terminal on a wide screen (the file tree, and
-// the file panel over it) are not modals, so they are named here, the lower one first; the modals are found by themselves.
+// The back button closes the open sheet, dialog or menu (scripts/h5-shell/back.mjs). The panel beside the terminal on a wide screen (T-Attention) is not a
+// modal, so it is named here; the modals are found by themselves.
 const back = createBackLayers({
   extra: () => {
     const s = ui.get();
     if (!s.wide) return [];
     const layers = [];
-    if (s.files && s.files.open) layers.push({ close: () => ui.actions.closeFiles && ui.actions.closeFiles() });
-    if (s.design && s.design.open) layers.push({ close: () => ui.actions.closeDesign && ui.actions.closeDesign() });
     if (s.attention && s.attention.open) layers.push({ close: () => ui.actions.closeAttention() });
     return layers;
   },

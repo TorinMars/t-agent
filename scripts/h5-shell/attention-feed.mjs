@@ -163,7 +163,7 @@ export function startAttentionFeed(ui, { t = text => text, api, EventSourceImpl 
   ui.actions.openAttention = ({ item = null } = {}) => {
     blur();
     const state = ui.get();
-    // A wide screen has one panel on the right: the file viewer and the file tree make way.
+    // A wide screen shows one of them at a time: the file viewer and the file tree make way.
     if (state.wide) {
       if (state.design && state.design.open && ui.actions.closeDesign) ui.actions.closeDesign();
       if (state.files && state.files.open && ui.actions.closeFiles) ui.actions.closeFiles();
@@ -213,7 +213,7 @@ export function startAttentionFeed(ui, { t = text => text, api, EventSourceImpl 
   };
   ui.actions.attentionTestNotify = () => showSystemNotification(`T-Attention · ${t('Test')}`, t('System notifications work'), { tag: 'attention-test' });
 
-  // A wide screen has one panel on the right: a file viewer or file tree that opens while this panel is open takes its place.
+  // A wide screen shows one of them at a time: a file viewer or file tree that opens while this panel is open takes its place.
   const others = s => Boolean((s.design && s.design.open) || (s.files && s.files.open));
   let otherOpen = others(ui.get());
   ui.subscribe(() => {

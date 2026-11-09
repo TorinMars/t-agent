@@ -14,7 +14,7 @@
   --h5-danger: #f44336;
   --h5-sidebar-width: 320px;
   --h5-drawer-width: min(82vw, 360px);
-  --h5-side-width: min(560px, 42vw); /* the design document / file preview panel on the right of a wide screen */
+  --h5-side-width: min(560px, 42vw); /* the T-Attention panel on the right of a wide screen */
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: none; }
@@ -144,7 +144,7 @@ body.h5-tasks-open .h5-agent { border-bottom-left-radius: 28px; overflow: hidden
   .h5-copy-text { font-size: 13px; padding: 8px 16px; }
   /* The sidebar folded away (header button): the page and the chat take the whole width. */
   html[data-sidebar-collapsed] { --h5-sidebar-width: 0px; }
-  /* The design document or a file preview is open as a panel on the right: the page and the chat end where it starts. */
+  /* The T-Attention panel is open on the right: the page and the chat end where it starts. */
   html[data-side-panel] .h5-app, html[data-side-panel] .h5-agent { right: var(--h5-side-width); }
 }
 /* The match that the copy view search jumped to (CSS Custom Highlight API; browsers without it select the match instead). */

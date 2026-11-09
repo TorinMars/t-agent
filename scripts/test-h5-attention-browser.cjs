@@ -14,7 +14,7 @@
 //   folder and branch, the timeline by day, "Open terminal" (the T-Agent terminal) and "Copy resume command".
 // - phone 320x640 (touch): seven 44px buttons in row 2 (Docs left out, reached from the saved commands list); the sheet's controls are 44px; the
 //   Plugins rows fit the width with 44px buttons.
-// - computer 1440x900 (mouse): the right side panel (html[data-side-panel]), one panel at a time with Docs, Escape closes it, the edit view is a
+// - computer 1440x900 (mouse): the right side panel (html[data-side-panel]), one at a time with the Docs sheet, Escape closes it, the edit view is a
 //   normal dialog.
 // H5_SHOT_DIR=<dir> saves screenshots (phones at 3x).
 const { chromium } = require('playwright');
@@ -780,15 +780,16 @@ const pluginsFit = page => page.evaluate(() => [...document.querySelectorAll('#h
       await page.keyboard.press('Escape');
       await panel.waitFor({ state: 'hidden' });
       assert.equal(await page.evaluate(() => document.documentElement.hasAttribute('data-side-panel')), false);
-      // One panel at a time: Docs takes the place of T-Attention and back.
+      // One at a time: Docs takes the place of T-Attention; the sheet is a modal, so it is closed before the panel can open again.
       await page.locator('#h5-attention').click();
       await panel.waitFor({ state: 'visible' });
       await page.locator('#h5-design').click();
       await page.locator('#h5-design-body h1', { hasText: 'Design of Fix login' }).waitFor();
       await panel.waitFor({ state: 'hidden' });
+      await page.keyboard.press('Escape');
+      await page.locator('#h5-design-sheet .h5-design-panel').waitFor({ state: 'hidden' });
       await page.locator('#h5-attention').click();
       await panel.waitFor({ state: 'visible' });
-      await page.locator('#h5-design-sheet .h5-design-panel').waitFor({ state: 'hidden' });
       // The Docs sheet's Files button opens the tree, and the tree's Design document button leads back to DESIGN.md.
       await page.locator('#h5-design').click();
       await page.locator('#h5-design-files').click();
@@ -797,7 +798,9 @@ const pluginsFit = page => page.evaluate(() => [...document.querySelectorAll('#h
       await page.locator('#h5-design-body h1', { hasText: 'Design of Fix login' }).waitFor();
       assert.ok(await page.locator('#h5-design-back').isVisible(), 'the design document lies over the tree');
       await page.keyboard.press('Escape');
+      await page.locator('#h5-design-sheet .h5-design-panel').waitFor({ state: 'hidden' });
       await page.keyboard.press('Escape');
+      await page.locator('#h5-files-sheet .h5-files-panel').waitFor({ state: 'hidden' });
       // The Attention button shows and hides the panel; keys typed in it are not sent to the terminal.
       await page.locator('#h5-attention').click();
       await panel.waitFor({ state: 'visible' });

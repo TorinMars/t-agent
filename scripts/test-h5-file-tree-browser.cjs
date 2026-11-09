@@ -1,11 +1,13 @@
 // The read-only file tree of the MUI page (scripts/h5-shell/FileTree.jsx, Headless Tree) in real Chromium:
-// - phone 390x844 (touch): "Docs" in row 2 opens the design document, whose "Files" button opens the tree in a bottom sheet (the tree's
+// - phone 390x844 (touch): "Docs" in row 2 opens the design document, whose "Files" button opens the tree in a sheet from the top (the tree's
 //   "Design document" button leads back); the root is read on open, a folder only when it is expanded (one request each), a
 //   folder of 450 entries is read in pages of 200 with a "Load more" row; a missing folder and an empty folder show a note; a tap on a file opens it in
 //   the file viewer over the tree with a back arrow; the back arrow and the Android back button (history back) return to the tree with its folders and
 //   its scroll position kept; Close closes both; the tree is drawn again for another task; every row is 44px high; nothing is resized on the PTY.
 // - phone 320x640 (touch): eight buttons do not fit, so "Docs" is left out of row 2 (the saved commands list has it); its Files button leads to the tree.
-// - computer 1440x900 (mouse): the tree is the right side panel (`html[data-side-panel]`); a file opens in the panel over it, back and Escape return one
+// - both widths: the design document and the tree slide down from the top, 88% of the height, at most 1200px wide and centred, over the dimmed page;
+//   Close, a click beside the sheet and Escape close them; a swipe up on a phone; the page and the PTY are not resized.
+// - computer 1440x900 (mouse): the tree is the same sheet; a file opens in the sheet over it, back and Escape return one
 //   layer; a remote Engine's tree is read through `/api/remote-servers/:id/tasks/:task/files`.
 // H5_SHOT_DIR=<dir> saves screenshots (phone at 3x). Chinese names are written with \u escapes (test/i18n.test.js).
 const { chromium } = require('playwright');
@@ -114,9 +116,98 @@ async function openTree(page, how = 'tap') {
 }
 const settled = (page, selector) => page.waitForFunction(sel => { const node = document.querySelector(sel); return node && ['none', 'matrix(1, 0, 0, 1, 0, 0)'].includes(getComputedStyle(node).transform); }, selector, { timeout: 3000 });
 
+// Records the inline transforms of the file sheets from now on (MUI's Slide writes the off-screen end position there when a sheet closes).
+const watchSlides = page => page.evaluate(() => {
+  window.slides = [];
+  if (window.slideWatcher) return;
+  window.slideWatcher = new MutationObserver(records => {
+    for (const { target } of records) if (target.matches('.h5-design-panel, .h5-files-panel')) window.slides.push(target.style.transform);
+  });
+  window.slideWatcher.observe(document.body, { subtree: true, attributes: true, attributeFilter: ['style'] });
+});
+// The sheet is in its place: at the very top, 88% of the height, centred at most 1200px wide, over a dimmed page that keeps its layout.
+async function assertTopSheet(page, selector, label) {
+  await settled(page, selector);
+  const { vw, vh, box, anchored, sidePanel, covered, backdrop } = await page.evaluate(sel => {
+    const node = document.querySelector(sel);
+    const r = node.getBoundingClientRect();
+    const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    const below = document.elementFromPoint(innerWidth / 2, innerHeight - 10);
+    return {
+      vw: innerWidth, vh: innerHeight, box: { x: r.x, y: r.y, width: r.width, height: r.height },
+      anchored: Boolean(node.closest('.MuiDrawer-anchorTop')), sidePanel: document.documentElement.hasAttribute('data-side-panel'),
+      covered: Boolean(hit && node.contains(hit)), backdrop: Boolean(below && below.classList.contains('MuiBackdrop-root')),
+    };
+  }, selector);
+  const width = Math.min(vw, 1200);
+  assert.ok(anchored, `${label}: anchored to the top`);
+  assert.ok(Math.abs(box.y) <= 1 && Math.abs(box.height - vh * 0.88) <= 2, `${label}: at the top, 88% of the height (${JSON.stringify(box)})`);
+  assert.ok(Math.abs(box.width - width) <= 1 && Math.abs(box.x - (vw - width) / 2) <= 1, `${label}: centred, at most 1200px wide (${JSON.stringify(box)})`);
+  assert.ok(covered, `${label}: nothing lies over the sheet`);
+  assert.ok(backdrop, `${label}: the strip below the sheet is the dimmed backdrop`);
+  assert.equal(sidePanel, false, `${label}: the page makes no room for the sheet`);
+}
+// The sheet left through the top of the screen (a negative translateY).
+const assertSlidUp = async (page, label) => assert.ok((await page.evaluate(() => window.slides)).some(value => /translateY\(-\d/.test(value)), `${label}: left through the top`);
+
+// Opens one of the two views (the Docs button; its Files button for the tree), checks its place and closes it every way.
+async function checkTopSheets(page, how, phone) {
+  const views = [
+    { name: 'design document', selector: '#h5-design-sheet .h5-design-panel', close: '#h5-design-close', open: () => page.locator('#h5-design')[how]() },
+    { name: 'file tree', selector: '#h5-files-sheet .h5-files-panel', close: '#h5-files-close', open: () => openTree(page, how) },
+  ];
+  const appSize = async () => { const { width, height } = await page.locator('#h5-app').boundingBox(); return { width: Math.round(width), height: Math.round(height) }; };
+  const app = await appSize();
+  const before = await resizes(page);
+  for (const view of views) {
+    const label = `${page.viewportSize().width}px ${view.name}`;
+    const sheet = page.locator(view.selector);
+    const open = async () => { await view.open(); await sheet.waitFor({ state: 'visible' }); await settled(page, view.selector); };
+    await watchSlides(page);
+    await open();
+    await assertTopSheet(page, view.selector, label);
+    if (SHOTS) await page.screenshot({ path: path.join(SHOTS, `top-sheet-${page.viewportSize().width}-${view.name.replace(' ', '-')}.png`) });
+    await watchSlides(page);
+    await page.locator(view.close)[how]();
+    await sheet.waitFor({ state: 'hidden' });
+    await assertSlidUp(page, label);
+    await open();
+    await page.mouse.click(page.viewportSize().width / 2, page.viewportSize().height - 10);
+    await sheet.waitFor({ state: 'hidden' });
+    await open();
+    await page.keyboard.press('Escape');
+    await sheet.waitFor({ state: 'hidden' });
+    if (phone) {
+      await open();
+      const handle = await page.locator(`${view.selector} .h5-design-handle`).boundingBox();
+      assert.ok(handle.y > page.viewportSize().height * 0.8, `${label}: the handle is at the bottom edge of the sheet`);
+      const cdp = await page.context().newCDPSession(page);
+      const x = handle.x + handle.width / 2;
+      let y = handle.y + handle.height / 2;
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
+      for (let i = 0; i < 12; i++) { y -= 40; await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y }] }); await page.waitForTimeout(16); }
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+      await cdp.detach();
+      await sheet.waitFor({ state: 'hidden' });
+    } else {
+      assert.equal(await page.locator(`${view.selector} .h5-design-handle`).count(), 0, `${label}: no handle with a mouse`);
+    }
+  }
+  assert.deepEqual(await appSize(), app, 'the page behind keeps its size');
+  assert.equal(await resizes(page), before, 'no PTY resize');
+}
+
 (async () => {
   const browser = await chromium.launch({ headless: true, ...(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {}) });
   try {
+    // ── The two views as top sheets, at both widths ──
+    for (const [viewport, how, phone] of [[{ width: 390, height: 844 }, 'tap', true], [{ width: 1440, height: 900 }, 'click', false]]) {
+      const { context, page, errors } = await openPage(browser, phone ? { viewport } : { viewport, touch: false });
+      await checkTopSheets(page, how, phone);
+      assert.deepEqual(errors, [], 'no page errors');
+      await context.close();
+    }
+
     // ── Phone 390x844, touch ──
     {
       const { context, page, errors, lists, reads } = await openPage(browser, { viewport: { width: 390, height: 844 } });
@@ -139,7 +230,8 @@ const settled = (page, selector) => page.waitForFunction(sel => { const node = d
       assert.equal(await page.locator('#h5-files-tree').getAttribute('role'), 'tree');
       assert.equal(await rowOf(page, 'docs').getAttribute('role'), 'treeitem');
       assert.equal(await rowOf(page, 'docs').getAttribute('aria-expanded'), 'false');
-      // 44px rows in touch mode.
+      // 44px rows in touch mode (measured once the slide has ended: a moving sheet gives fractions of a pixel).
+      await settled(page, '#h5-files-sheet .h5-files-panel');
       const heights = await page.evaluate(() => [...document.querySelectorAll('#h5-files-tree .MuiListItemButton-root')].map(node => node.getBoundingClientRect().height));
       assert.ok(heights.every(h => h >= 44), `rows are 44px high (${heights})`);
       for (const id of ['h5-files-design', 'h5-files-reload', 'h5-files-close']) {
@@ -286,8 +378,7 @@ const settled = (page, selector) => page.waitForFunction(sel => { const node = d
       const panel = page.locator('#h5-files-sheet .h5-files-panel');
       await panel.waitFor({ state: 'visible' });
       await rowOf(page, 'src').waitFor();
-      assert.ok(await page.evaluate(() => document.documentElement.hasAttribute('data-side-panel')), 'the page makes room for the panel');
-      await page.waitForFunction(() => { const p = document.querySelector('.h5-files-panel'); return p && Math.abs(p.getBoundingClientRect().right - innerWidth) <= 1; });
+      await assertTopSheet(page, '#h5-files-sheet .h5-files-panel', '1440px file tree');
       const rowHeight = (await rowOf(page, 'src').boundingBox()).height;
       assert.ok(rowHeight >= 34 && rowHeight < 44, `compact rows with a mouse (${rowHeight})`);
       // Keyboard: the arrows move in the tree, ArrowRight opens a folder, Enter opens a file.
@@ -301,7 +392,7 @@ const settled = (page, selector) => page.waitForFunction(sel => { const node = d
       await page.locator('#h5-design-body .h5-file-line').first().waitFor();
       assert.equal(await page.locator('#h5-design-title').textContent(), 'app.js');
       assert.ok(await page.locator('#h5-design-back').isVisible());
-      await page.waitForFunction(() => { const p = document.querySelector('.h5-design-side'); return p && Math.abs(p.getBoundingClientRect().right - innerWidth) <= 1; });
+      await assertTopSheet(page, '#h5-design-sheet .h5-design-panel', '1440px file viewer');
       if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'pc-1440-file-tree-viewer.png') });
       // Escape returns one layer: the viewer, then the tree.
       await page.locator('#h5-design-body').click();
@@ -318,7 +409,6 @@ const settled = (page, selector) => page.waitForFunction(sel => { const node = d
       await viewer.waitFor({ state: 'hidden' });
       await page.locator('#h5-files-close').click();
       await panel.waitFor({ state: 'hidden' });
-      assert.equal(await page.evaluate(() => document.documentElement.hasAttribute('data-side-panel')), false);
       await openTree(page, 'click');
       await page.locator('#h5-files-tree [data-path="README.md"]').click();
       await page.locator('#h5-design-body h1', { hasText: 'Read me' }).waitFor();
@@ -328,12 +418,12 @@ const settled = (page, selector) => page.waitForFunction(sel => { const node = d
       await panel.waitFor({ state: 'hidden' });
 
       // A remote Engine: the tree is read through the remote proxy, and it is a new tree.
-      await openTree(page, 'click');
       await page.locator('#h5-engine').selectOption('remote:7');
       await page.locator('.h5-task-item', { hasText: 'Remote job' }).click();
       const remoteRow = page.locator('#h5-tasks .h5-terminal-list[aria-label="Remote job"] .h5-terminal-main').first();
       await remoteRow.waitFor();
       await remoteRow.click();
+      await openTree(page, 'click');
       await rowOf(page, 'remote.txt').waitFor();
       assert.equal(await page.locator('#h5-files-path').textContent(), '/srv/job');
       await rowOf(page, 'srv').click();

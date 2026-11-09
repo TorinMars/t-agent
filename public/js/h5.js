@@ -337,6 +337,9 @@
     task = item;
     void syncWakeLock();
     if (item) { peeks.delete(item.id); expanded.add(item.id); } // the other open lists stay open
+    // The Session list of the task that was selected: its choices act on the selected task, so they cannot stay under another one (the "+" of a task lands here too, and then opens its own).
+    const menu = ui.get().menu;
+    if (menu && menu.naming && !(item && menu.task === item.id)) closeTerminalMenu();
     wantedTerminal = target && target.terminal ? target.terminal : null;
     store.set(`task:${source.key}`, item ? item.id : null);
     ui.set({ taskName: item ? item.title : '' });
@@ -348,7 +351,7 @@
 
   // Opens or closes the list of sessions under a task, without going anywhere.
   function toggleTask(item) {
-    if (expanded.has(item.id)) { expanded.delete(item.id); peeks.delete(item.id); renderTasks(); return; }
+    if (expanded.has(item.id)) { expanded.delete(item.id); peeks.delete(item.id); closeListMenu(item.id); renderTasks(); return; }
     expanded.add(item.id);
     if (!(task && task.id === item.id)) void loadPeek(item);
     renderTasks();
@@ -357,6 +360,7 @@
   function setAllExpanded(open) {
     expanded.clear();
     peeks.clear();
+    if (!open) closeListMenu();
     if (open) for (const item of tasks) { expanded.add(item.id); if (!(task && task.id === item.id)) void loadPeek(item); }
     renderTasks();
   }
@@ -526,6 +530,7 @@
   };
   ui.actions.changeEngine = key => {
     hideAgent();
+    closeTerminalMenu(); // what is open belongs to a task of the other Engine (the same id can be another task here)
     source = sources.find(item => item.key === key) || LOCAL;
     store.set('source', source.key === 'local' ? null : source.key);
     tasks = [];
@@ -722,6 +727,12 @@
     newName = '';
     ui.set({ menu: null });
   }
+  // The Session list and the rename field drawn under a task go when that task is collapsed (without an id: under any task). The sheet of actions is a modal: nothing behind it can be tapped.
+  function closeListMenu(taskId = null) {
+    const menu = ui.get().menu;
+    const owner = menu && (menu.naming ? menu.task : menu.rename ? menu.rename.task : null);
+    if (owner != null && (taskId === null || taskId === owner)) closeTerminalMenu();
+  }
   // The typed name, as the server will keep it (an empty name: the default "Terminal N" / "Claude N").
   const takeName = () => newName.replace(/\s+/g, ' ').trim();
   // items: [label, run, kind, create]; kind 'danger' is drawn as a warning, 'raw' is a name that is not translated; create: Enter in the name field runs it.
@@ -892,6 +903,7 @@
     const menu = ui.get().menu;
     if (menu && menu.naming && menuTask === item.id) { closeTerminalMenu(); return; } // the "+" again closes its list
     if (!(task && task.id === item.id)) selectTask(item, null, { stay: true });
+    else if (!expanded.has(item.id)) { expanded.add(item.id); renderTasks(); } // as for a task that is not selected: the list goes with an open task, so one tap on the task closes both
     menuTask = item.id;
     newName = ''; // a new "Session" list starts with an empty name
     openSessionMenu();
@@ -951,10 +963,11 @@
   async function openAgentSessions(agent, label) {
     const current = task;
     showSessionMenu(label, [['Loading…', () => {}]]);
+    const loading = ui.get().menu; // the answer belongs to this list only: not to one opened after this one was closed
     let rows = [];
     try { rows = await api('GET', `${source.tasksBase}/${current.id}/agent-sessions?agent=${agent}`); }
     catch (error) { if (current === task) tell(`Could not load sessions: ${error.message}`, 'error'); }
-    if (current !== task || !ui.get().menu) return;
+    if (current !== task || ui.get().menu !== loading) return;
     const start = sessionId => () => {
       const title = takeName();
       closeTerminalMenu();

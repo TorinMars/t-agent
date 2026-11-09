@@ -15,6 +15,8 @@ function setup() {
   return {
     sent, dispose, listeners,
     input: event => listeners.input(event),
+    keydown: () => listeners.keydown({}),
+    keypress: () => listeners.keypress({}),
     xtermEmits: chunk => dataHandlers.forEach(fn => fn(chunk)),
     settle: () => timers.splice(0).forEach(fn => fn()),
   };
@@ -35,6 +37,27 @@ test('a character xterm already emitted is not sent twice', () => {
   assert.deepEqual(t.sent, []);
 });
 
+test('a space xterm sent on keypress, before the input event, is not sent twice', () => {
+  const t = setup();
+  t.keydown();
+  t.keypress();
+  t.xtermEmits(' ');
+  t.input({ inputType: 'insertText', data: ' ', isComposing: false });
+  t.settle();
+  assert.deepEqual(t.sent, []);
+});
+
+test('a keypress only counts for its own key press', () => {
+  const t = setup();
+  t.keydown();
+  t.keypress();
+  t.input({ inputType: 'insertText', data: ' ', isComposing: false });
+  t.keydown(); // the Apple Chinese keyboard's next key: a keydown (229) and an input event, no keypress
+  t.input({ inputType: 'insertText', data: ' ', isComposing: false });
+  t.settle();
+  assert.deepEqual(t.sent, [' ']);
+});
+
 test('letters, composition and other input types are left to xterm', () => {
   const t = setup();
   t.input({ inputType: 'insertText', data: 'a', isComposing: false });
@@ -50,6 +73,8 @@ test('detaching stops the watching', () => {
   const t = setup();
   t.dispose();
   assert.equal(t.listeners.input, undefined);
+  assert.equal(t.listeners.keydown, undefined);
+  assert.equal(t.listeners.keypress, undefined);
 });
 
 test('several characters typed quickly are each checked against what xterm emitted', () => {

@@ -164,7 +164,7 @@ function Tasks({ state, ui, query, filter }) {
   const shown = groups.map(group => ({
     ...group,
     tasks: group.tasks.filter(task => {
-      if (!filtering) return true;
+      if (!filtering || (state.menu && state.menu.naming && state.menu.task === task.id)) return true; // the task whose Session list is open stays, whatever the filter
       const rows = (task.sessions && task.sessions.rows) || [];
       const nameHit = !needle || task.title.toLowerCase().includes(needle);
       const rowHit = rows.some(row => (!needle || row.title.toLowerCase().includes(needle)) && (filter === 'all' || row[filter]));

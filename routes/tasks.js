@@ -10,6 +10,7 @@ const { resolveAsset, validateMdPath } = require('../services/task-assets');
 const terminal = require('./terminal');
 const documents = require('../services/task-documents');
 const { createTaskFilesRouter } = require('./task-files');
+const { startWithoutDefaultTerminal } = require('../lib/task-default-terminal');
 
 const router = express.Router();
 
@@ -107,12 +108,16 @@ router.post('/', (req, res) => {
     return res.status(500).json({ error: `Failed to create task documents: ${err.message}` });
   }
 
-  const info = db.prepare(`
-    INSERT INTO tasks (title, status, priority, due_date, md_path, work_dir, sort_order, user_id, technical_path, readme_path, agent_path)
-    VALUES (@title, @status, @priority, @due_date, @md_path, @work_dir, @sort_order, @user_id, @technical_path, @readme_path, @agent_path)
-  `).run({ ...overrides, title, status: status || 'todo', priority: priority || 'normal', due_date: due_date || null, md_path: md_path || null, work_dir: work_dir || null, sort_order: sort_order || 0, user_id: uid });
+  const taskId = db.transaction(() => {
+    const info = db.prepare(`
+      INSERT INTO tasks (title, status, priority, due_date, md_path, work_dir, sort_order, user_id, technical_path, readme_path, agent_path)
+      VALUES (@title, @status, @priority, @due_date, @md_path, @work_dir, @sort_order, @user_id, @technical_path, @readme_path, @agent_path)
+    `).run({ ...overrides, title, status: status || 'todo', priority: priority || 'normal', due_date: due_date || null, md_path: md_path || null, work_dir: work_dir || null, sort_order: sort_order || 0, user_id: uid });
+    startWithoutDefaultTerminal(db, info.lastInsertRowid);
+    return info.lastInsertRowid;
+  })();
 
-  res.status(201).json(db.prepare('SELECT * FROM tasks WHERE id = ?').get(info.lastInsertRowid));
+  res.status(201).json(db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId));
 });
 
 router.put('/reorder', (req, res) => {

@@ -78,6 +78,9 @@ async function call(backend, suffix, { method = 'GET', body } = {}) {
   return response;
 }
 
+// For the tests of the implicit `default` terminal: a task from before tasks stopped getting one (all backends share this database here).
+const olderTask = task => require('../test-support/older-tasks').asOlderTask(db, task);
+
 async function createTask(backend, title) {
   const workDir = path.join(root, 'work', `${backend.name}-${title}`);
   fs.mkdirSync(workDir, { recursive: true });
@@ -197,7 +200,7 @@ test('document change events reach the browser through every backend', async () 
 
 test('a terminal can be named when it is created, on every backend', async () => {
   for (const backend of backends()) {
-    const task = await createTask(backend, 'named-terminal');
+    const task = olderTask(await createTask(backend, 'named-terminal'));
     const create = body => call(backend, `/${task.id}/terminals`, { method: 'POST', body });
     const plain = await create({});
     assert.equal(plain.status, 201, `${backend.name} plain`);
@@ -220,7 +223,7 @@ test('a terminal can be named when it is created, on every backend', async () =>
 
 test('the live terminal directory endpoint answers on every backend and checks the terminal and the token', async () => {
   for (const backend of backends()) {
-    const task = await createTask(backend, 'terminal-cwd');
+    const task = olderTask(await createTask(backend, 'terminal-cwd'));
     const response = await call(backend, `/${task.id}/terminals/default/cwd`);
     assert.equal(response.status, 200, `${backend.name} cwd`);
     assert.deepEqual(await response.json(), { cwd: null, relative: null }, `${backend.name}: no shell runs, so the browser keeps the work dir`);
@@ -243,7 +246,7 @@ test('Engine info advertises the parity capabilities and the proxy relays them',
 });
 
 test('terminal activity is exposed by the local routes, the Engine and the proxy', async () => {
-  const task = await createTask({ ...backends()[1] }, 'activity');
+  const task = olderTask(await createTask({ ...backends()[1] }, 'activity'));
   assert.deepEqual(await (await fetch(`${engine}/v1/terminal-activity`, { headers: { Authorization: `Bearer ${engineToken}` } })).json(), {});
   assert.deepEqual(await (await fetch(`${proxy}/api/remote-servers/${remoteId}/terminal-activity`)).json(), {});
   assert.deepEqual(await (await fetch(`${local}/api/tasks/terminal-subagents`)).json(), {});

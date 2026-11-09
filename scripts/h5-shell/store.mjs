@@ -36,6 +36,7 @@ export const initialState = () => ({
   // naming: the Session list of the "+" of task `task`, drawn under that task in the task list; rename: { kind, id, task } of the row whose name field is shown in its place.
   menu: null,
   empty: 'Choose a task to open its phone terminal', // what the terminal area says when there is no terminal; null when one is shown
+  emptyCreate: false, // the terminal area also offers a button that opens the task's Session list (the task has no terminal)
   mods: {},
   osk: false, // the terminal on-screen keyboard (Osk.jsx) is shown; the "Terminal keyboard" button of row 2 toggles it (h5.js `toggleKeyboard`)
   translating: false,

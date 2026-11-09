@@ -5,6 +5,7 @@ const db = require('../db');
 const taskGroups = require('./task-groups');
 const documents = require('./task-documents');
 const workspaceTools = require('./workspace-tools');
+const { startWithoutDefaultTerminal } = require('../lib/task-default-terminal');
 
 const DEFAULT_BASE = path.resolve(process.env.TASKS_BASE_DIR || path.join(os.homedir(), 'tasks'));
 
@@ -61,20 +62,24 @@ function createTask(principalId, input = {}) {
   mdPath = assertWorkspacePath(documents.documentPath({ work_dir: workDir, md_path: mdPath }, 'technical'));
   documents.ensureDocuments({ title, work_dir: workDir, md_path: mdPath, ...overrides });
 
-  const result = db.prepare(`INSERT INTO tasks
-    (title, status, priority, due_date, md_path, work_dir, sort_order, user_id, technical_path, readme_path, agent_path)
-    VALUES (@title, @status, @priority, @due_date, @md_path, @work_dir, @sort_order, @user_id, @technical_path, @readme_path, @agent_path)`).run({
-    ...overrides,
-    title,
-    status,
-    priority: input.priority || 'normal',
-    due_date: input.due_date || null,
-    md_path: mdPath,
-    work_dir: workDir,
-    sort_order: Number.isFinite(input.sort_order) ? input.sort_order : 0,
-    user_id: principalId,
-  });
-  return publicTask(ownedTask(principalId, result.lastInsertRowid));
+  const taskId = db.transaction(() => {
+    const result = db.prepare(`INSERT INTO tasks
+      (title, status, priority, due_date, md_path, work_dir, sort_order, user_id, technical_path, readme_path, agent_path)
+      VALUES (@title, @status, @priority, @due_date, @md_path, @work_dir, @sort_order, @user_id, @technical_path, @readme_path, @agent_path)`).run({
+      ...overrides,
+      title,
+      status,
+      priority: input.priority || 'normal',
+      due_date: input.due_date || null,
+      md_path: mdPath,
+      work_dir: workDir,
+      sort_order: Number.isFinite(input.sort_order) ? input.sort_order : 0,
+      user_id: principalId,
+    });
+    startWithoutDefaultTerminal(db, result.lastInsertRowid);
+    return result.lastInsertRowid;
+  })();
+  return publicTask(ownedTask(principalId, taskId));
 }
 
 function updateTask(principalId, id, input = {}) {

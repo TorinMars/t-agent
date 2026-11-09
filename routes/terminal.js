@@ -14,7 +14,7 @@ const { listSessions, startupCommand, newClaudeCommand, runningSubagents, SESSIO
 const { resolveTerminalUser, userCanEnter, terminalEnvFor } = require('../lib/terminal-user');
 const { processCwd, cwdInRoot } = require('../lib/terminal-cwd');
 
-// Sessions are keyed by task ID and terminal ID; omitted IDs use the legacy shell.
+// Sessions are keyed by task ID and terminal ID; omitted IDs name the implicit `default` terminal, which only older tasks have (lib/task-default-terminal.js).
 const sessions = new Map();
 // Close codes the browser uses to tell "someone else is using this terminal" from a lost connection.
 const TERMINAL_IN_USE_CLOSE = 4009;
@@ -122,7 +122,7 @@ function realDir(dir) {
 
 // Each terminal keeps the directory it was started in (option A of the start-directory change, schema 8): a change of the task's working
 // directory only affects terminals created afterwards. task_terminals.work_dir is set when the terminal is created (NULL on a row that has
-// none: it follows the task); the default terminal, which has no row, records its directory in task_default_terminal_dirs the first time its
+// none: it follows the task); the default terminal (only tasks made before tasks stopped getting one have it), which has no row, records its directory in task_default_terminal_dirs the first time its
 // shell starts (before that it follows the task). Answers the configured directory (null when neither the terminal nor the task has one).
 function terminalWorkDir(task, id) {
   const row = id === 'default'

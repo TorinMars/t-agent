@@ -11,7 +11,7 @@ process.env.T_AGENT_DATA_DIR = dataDir;
 process.env.TASKS_BASE_DIR = workspace;
 
 const db = require('../db');
-const tasks = require('../services/engine-tasks');
+const tasks = require('../test-support/older-tasks').olderTasks(require('../services/engine-tasks'), db);
 const terminal = require('../routes/terminal');
 
 test.after(() => {

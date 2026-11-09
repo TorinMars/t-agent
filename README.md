@@ -249,7 +249,7 @@ task-directory/
 └── CLAUDE.md
 ```
 
-Open a task to see its sessions. The `+` Session menu starts a new terminal or a new / resumed Claude or Codex session (terminal or chat) in the task's working directory; the optional name field names it. Each session's "⋯" menu renames, reopens or deletes it; the task's "⋯" menu moves it to a group, edits its working directory or deletes it. The header opens the task's `DESIGN.md`. On a computer you type straight into the terminal; the draft box below it sends text as typed (Option/Alt+Enter) or translated to English (Cmd/Ctrl+Enter). On a phone the two-row key bar has Esc, Tab, Ctrl, the arrows and the other keys a TUI needs.
+Open a task to see its sessions. A new task has no terminal: the terminal area says so and its New session button opens the same menu as the `+`. Tasks made earlier keep the terminals they have. The `+` Session menu starts a new terminal or a new / resumed Claude or Codex session (terminal or chat) in the task's working directory; the optional name field names it. Each session's "⋯" menu renames, reopens or deletes it; the task's "⋯" menu moves it to a group, edits its working directory or deletes it. The header opens the task's `DESIGN.md`. On a computer you type straight into the terminal; the draft box below it sends text as typed (Option/Alt+Enter) or translated to English (Cmd/Ctrl+Enter). On a phone the two-row key bar has Esc, Tab, Ctrl, the arrows and the other keys a TUI needs.
 
 ### 2. Connect a remote Engine
 

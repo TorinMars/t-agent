@@ -128,7 +128,7 @@ CREATE TABLE IF NOT EXISTS task_default_terminal_titles (
   title TEXT NOT NULL
 );
 
--- A task whose default terminal was deleted has a row here; the default terminal is then no longer listed or connectable.
+-- A task whose default terminal was deleted, or that was made without one (lib/task-default-terminal.js), has a row here; the default terminal is then not listed or connectable.
 CREATE TABLE IF NOT EXISTS task_default_terminal_removed (
   task_id INTEGER PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE
 );

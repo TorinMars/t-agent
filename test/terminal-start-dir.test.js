@@ -17,7 +17,7 @@ const home = path.join(root, 'home');
 fs.mkdirSync(home);
 process.env.HOME = home;
 const db = require('../db');
-const tasks = require('../services/engine-tasks');
+const tasks = require('../test-support/older-tasks').olderTasks(require('../services/engine-tasks'), db);
 const shells = [];
 const terminalPath = path.resolve(__dirname, '../routes/terminal.js');
 const mod = { exports: {} };

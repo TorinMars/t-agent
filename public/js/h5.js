@@ -2431,17 +2431,53 @@
     }
   }
   translateForm.addEventListener('submit', event => { event.preventDefault(); void submitBox(false); }); // the send arrow: as typed
-  // Enter in the box is a new line (the browser inserts it and the `input` event runs autosize), and so is Shift+Enter. A hardware keyboard has two shortcuts:
-  // Cmd+Enter (Ctrl+Enter on other systems) is the translate-and-send button and Option+Enter (Alt+Enter) is the send arrow, through the same submitBox. The key
-  // never inserts a new line (preventDefault), and an Enter that confirms an IME candidate (isComposing, keyCode 229) is left alone, so it never sends.
+  // The keys of the box (the user's rule; there is one box for the phone and the computer layouts):
+  // - Enter from a hardware keyboard is the translate-and-send button (the same submitBox, so an empty box or a running translation does nothing). It never adds a line.
+  // - Enter from an on-screen keyboard stays a new line (the browser inserts it): that keyboard has no other way to make one, and the buttons are right there.
+  // - Cmd+Enter or Ctrl+Enter inserts a new line at the caret, replacing a selection. Only a hardware keyboard can press them. Browsers do nothing for these, so it is done here.
+  // - Shift+Enter is a new line (the browser's own). Option+Enter (Alt+Enter) is the send arrow, as typed.
+  // - An Enter that confirms an IME candidate is left alone in every combination: isComposing, or keyCode 229 (Safari ends the composition before this keydown).
+  // A browser cannot name the keyboard, so "hardware" is: a computer (pointer mode), or a touch device where a hardware key was seen (`hasKeyboard`, entry.jsx) and no
+  // on-screen keyboard is open right now (`hasKeyboard` is never cleared, so a keyboard taken away later must not turn the on-screen Return into a send).
+  const hardwareEnter = () => pointerMode() || (Boolean(ui.get().hasKeyboard) && !keyboardOpen);
+  function insertNewline() {
+    const input = translateInput;
+    // insertText is what typing does: it keeps the undo history and fires `input`, which runs autosize.
+    let inserted = false;
+    try { inserted = document.execCommand('insertText', false, '\n'); } catch { /* not supported: below */ }
+    if (!inserted) {
+      input.setRangeText('\n', input.selectionStart, input.selectionEnd, 'end');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    revealCaret(input);
+  }
+  // At its height cap the box scrolls inside, and autosize (which collapses the box to measure it, during the `input` event) loses the scroll the browser just made
+  // for the caret. A copy of the text up to the caret, wrapped at the same width, gives the caret's line; only that line is scrolled into view.
+  function revealCaret(input) {
+    if (input.scrollHeight <= input.clientHeight + 1) return;
+    const style = getComputedStyle(input);
+    const mirror = document.createElement('div');
+    for (const name of ['fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'letterSpacing', 'wordSpacing', 'lineHeight', 'tabSize', 'wordBreak', 'overflowWrap']) mirror.style[name] = style[name];
+    Object.assign(mirror.style, { position: 'absolute', visibility: 'hidden', left: '-9999px', top: '0', whiteSpace: 'pre-wrap', width: `${input.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)}px` });
+    mirror.textContent = `${input.value.slice(0, input.selectionStart)}\u200b`; // the mark gives a last empty line its height
+    document.body.appendChild(mirror);
+    const lineHeight = parseFloat(style.lineHeight) || (parseFloat(style.fontSize) || 15) * 1.4375;
+    const paddingTop = parseFloat(style.paddingTop) || 0;
+    const paddingBottom = parseFloat(style.paddingBottom) || 0;
+    const bottom = paddingTop + mirror.offsetHeight;
+    mirror.remove();
+    const top = bottom - lineHeight;
+    if (bottom + paddingBottom > input.scrollTop + input.clientHeight) input.scrollTop = bottom + paddingBottom - input.clientHeight;
+    else if (top - paddingTop < input.scrollTop) input.scrollTop = Math.max(0, top - paddingTop);
+  }
   translateInput.addEventListener('keydown', event => {
     // With a keyboard, Escape leaves the draft box for the terminal (the text stays in the box).
     if (event.key === 'Escape' && deskKeys() && !event.isComposing && session && !session.disposed) { event.preventDefault(); session.term.focus(); return; }
     if (event.key !== 'Enter' || event.isComposing || event.keyCode === 229 || event.shiftKey) return;
-    const translateFirst = (event.metaKey || event.ctrlKey) && !event.altKey;
-    if (!translateFirst && !(event.altKey && !event.metaKey && !event.ctrlKey)) return; // plain Enter, or Cmd and Option together: a new line as before
+    if (event.metaKey || event.ctrlKey) { event.preventDefault(); insertNewline(); return; }
+    if (!event.altKey && !hardwareEnter()) return; // the on-screen Return: the browser's new line
     event.preventDefault();
-    if (!event.repeat) void submitBox(translateFirst); // a held key sends once
+    if (!event.repeat) void submitBox(!event.altKey); // a held key sends once
   });
   translateInput.addEventListener('input', () => { autosize(); relayoutBar(); }); // the bar also changes layout when the box gains or loses text
   $('h5-translate-button').addEventListener('click', () => void submitBox(true));

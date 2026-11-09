@@ -852,7 +852,8 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       await input.blur();
     }
 
-    // Enter is a new line in the box and never sends; only a send button does. Several lines reach the terminal as one paste (or joined, see below).
+    // The on-screen Return is a new line in the box and never sends (the viewport is made shorter, as an open on-screen keyboard does); a hardware Enter is below.
+    // Several lines reach the terminal as one paste (or joined, see below).
     {
       const input = page.locator('#h5-translate-input');
       const requests = translateRequests.length;
@@ -860,6 +861,10 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       const oneLine = await input.evaluate(el => el.getBoundingClientRect().height);
       await input.focus();
       assert.equal(await input.getAttribute('enterkeyhint'), 'enter', 'the on-screen Enter key is a new-line key');
+      const fullSize = page.viewportSize();
+      await page.setViewportSize({ width: fullSize.width, height: fullSize.height - 300 });
+      await page.waitForFunction(height => window.visualViewport.height <= height, fullSize.height - 300);
+      await page.waitForTimeout(100);
       await page.keyboard.type('MULTI one');
       await page.keyboard.press('Enter');
       await page.keyboard.press('Shift+Enter');
@@ -886,6 +891,9 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       });
       assert.equal(await input.inputValue(), before, 'an IME Enter adds no new line');
       assert.equal(translateRequests.length, requests, 'an IME Enter sends nothing');
+      await page.setViewportSize(fullSize); // the on-screen keyboard goes away
+      await page.waitForFunction(height => window.visualViewport.height >= height, fullSize.height);
+      await page.waitForTimeout(100);
       await input.focus(); await input.fill('MULTI one\n\ntwo');
       // Without bracketed paste the lines are joined, so a shell cannot run them one by one.
       await page.locator('#h5-translate-button').tap();
@@ -926,14 +934,14 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       await input.blur();
     }
 
-    // Hardware keyboard shortcuts in the draft box: Cmd+Enter (or Ctrl+Enter) is translate-and-send, Option+Enter (Alt+Enter) is the send arrow. No new line is inserted;
-    // plain Enter stays a new line and an IME Enter does nothing.
+    // Hardware keyboard keys in the draft box (the viewport is at its full height): Enter is translate-and-send, Option+Enter (Alt+Enter) is the send arrow, and neither
+    // inserts a new line; Cmd+Enter is a new line and an IME Enter does nothing. scripts/test-h5-enter-keys-browser.cjs covers these keys in detail.
     {
       const input = page.locator('#h5-translate-input');
       const returns = () => page.evaluate(() => window.sockets[0].sent.filter(item => item === '\r').length);
-      assert.match(await page.locator('#h5-translate-button').getAttribute('title'), /\((⌘↩|Ctrl\+Enter)\)$/, 'the translate tooltip names its shortcut');
+      assert.match(await page.locator('#h5-translate-button').getAttribute('title'), /\((↩|Enter)\)$/, 'the translate tooltip names its shortcut');
       assert.match(await page.locator('#h5-translate-send').getAttribute('title'), /\((⌥↩|Alt\+Enter)\)$/, 'the send tooltip names its shortcut');
-      for (const combo of ['Meta+Enter', 'Control+Enter']) {
+      for (const combo of ['Enter']) {
         const requests = translateRequests.length;
         const before = await returns();
         await input.focus(); await input.fill('shortcut please');
@@ -959,19 +967,19 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
         const requests = translateRequests.length;
         const inputs = (await sent()).length;
         await input.focus(); await input.fill('FAIL shortcut');
-        await page.keyboard.press('Meta+Enter');
+        await page.keyboard.press('Enter');
         await page.waitForFunction(() => document.getElementById('h5-translate-send').disabled === false);
         await page.waitForTimeout(300);
         assert.equal(translateRequests.length, requests + 1);
         assert.equal((await sent()).length, inputs, 'a failed shortcut translation sends nothing');
         assert.equal(await input.inputValue(), 'FAIL shortcut', 'and keeps the text, with no new line');
         await input.fill('');
-        await page.keyboard.press('Alt+Enter'); await page.keyboard.press('Meta+Enter');
+        await page.keyboard.press('Alt+Enter'); await page.keyboard.press('Enter');
         await page.waitForTimeout(200);
         assert.equal((await sent()).length, inputs, 'an empty box sends nothing by shortcut');
         assert.equal(translateRequests.length, requests + 1, 'an empty box makes no translate request');
-        await page.keyboard.type('line'); await page.keyboard.press('Enter');
-        assert.equal(await input.inputValue(), 'line\n', 'plain Enter is still a new line');
+        await page.keyboard.type('line'); await page.keyboard.press('Meta+Enter');
+        assert.equal(await input.inputValue(), 'line\n', 'Cmd+Enter is a new line');
         for (const extra of [{ metaKey: true }, { altKey: true }, { ctrlKey: true }]) {
           const value = await input.evaluate((el, mods) => {
             const event = new KeyboardEvent('keydown', { key: 'Enter', keyCode: 229, isComposing: true, bubbles: true, cancelable: true, ...mods });

@@ -133,9 +133,13 @@ const localImageFailed = event => {
   img.replaceWith(span);
 };
 
-// The file sheets (the design document, the file viewer and the file tree) slide down from the top on every screen width: one look, 88% of the height, at
-// most 1200px wide and centred. They are modals, so the page behind (sidebar, terminal, bottom bar) is dimmed and not resized.
-export const TOP_SHEET_PAPER = { height: '88dvh', maxWidth: 1200, width: '100%', mx: 'auto', borderRadius: '0 0 16px 16px', backgroundImage: 'none', display: 'flex', flexDirection: 'column', overflow: 'hidden', pt: 'env(safe-area-inset-top)' };
+// The file sheets (the design document, the file viewer and the file tree) slide down from the top on every screen width: one look, 88% of the height. They
+// are modals, so the page behind (sidebar, terminal, bottom bar) is dimmed and not resized. On a phone a sheet is the full width of the window. On a wide
+// screen it has the left edge and the width of the terminal area, as measured by terminal-box.mjs (the 900px is the breakpoint of h5.css and `wideQuery`).
+export const TOP_SHEET_PAPER = {
+  height: '88dvh', maxWidth: 1200, width: '100%', mx: 'auto', borderRadius: '0 0 16px 16px', backgroundImage: 'none', display: 'flex', flexDirection: 'column', overflow: 'hidden', pt: 'env(safe-area-inset-top)',
+  '@media (min-width: 900px)': { left: 'var(--h5-terminal-left, 0px)', right: 'auto', width: 'var(--h5-terminal-width, 100%)', maxWidth: 'none', mx: 0 },
+};
 
 // The grip at the bottom edge of a top sheet (phone only: a computer has the Close button, Escape and a click beside the sheet).
 export function SheetHandle() {

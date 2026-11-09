@@ -244,9 +244,9 @@ const waitAck = (url, id, from = 0) => new Promise((resolve, reject) => {
       await page.locator('.h5-design-panel h1', { hasText: 'Design of Fix login' }).waitFor({ timeout: 10000 });
       await page.waitForFunction(() => { const p = document.querySelector('.h5-design-panel'); return p && ['none', 'matrix(1, 0, 0, 1, 0, 0)'].includes(getComputedStyle(p).transform); }, null, { timeout: 3000 }); // the slide has ended
       const panel = await page.locator('.h5-design-panel').boundingBox();
-      const sheetWidth = Math.min(viewport.width, 1200);
+      const terminalBox = await page.locator('#h5-terminal').boundingBox();
       assert.ok(Math.abs(panel.y) <= 1 && Math.abs(panel.height - viewport.height * 0.88) <= 2, `${label}: 88% of the height, at the top (${JSON.stringify(panel)})`);
-      assert.ok(Math.abs(panel.width - sheetWidth) <= 1 && Math.abs(panel.x - (viewport.width - sheetWidth) / 2) <= 1, `${label}: centred, at most 1200px wide (${JSON.stringify(panel)})`);
+      assert.ok(Math.abs(panel.width - terminalBox.width) <= 0.5 && Math.abs(panel.x - terminalBox.x) <= 0.5, `${label}: in line with the terminal area (${JSON.stringify({ panel, terminalBox })})`);
       assert.equal(await page.evaluate(() => Boolean(document.querySelector('.h5-design-panel').closest('.MuiDrawer-anchorTop'))), true, `${label}: anchored to the top`);
       assert.equal(await page.evaluate(() => document.documentElement.hasAttribute('data-side-panel')), false, `${label}: the page makes no room for it`);
       assert.deepEqual(await page.locator('#h5-app').boundingBox(), app, `${label}: the page behind is not resized`);

@@ -10,6 +10,7 @@ import { SettingsDrawer } from './Settings.jsx';
 import { TaskDialog } from './TaskDialogs.jsx';
 import { TaskDrawer } from './TaskDrawer.jsx';
 import { BottomArea, TerminalArea } from './Terminal.jsx';
+import { measureTerminalBox, trackTerminalBox } from './terminal-box.mjs';
 import { TermMenu } from './TermMenu.jsx';
 import { theme } from './theme.mjs';
 
@@ -40,7 +41,10 @@ export function App({ ui }) {
   useLayoutEffect(() => {
     document.documentElement.toggleAttribute('data-sidebar-collapsed', folded);
     document.documentElement.toggleAttribute('data-side-panel', sidePanel);
+    measureTerminalBox(); // in the same frame as the new layout
   }, [folded, sidePanel]);
+  // The top sheets line up with the terminal area on a wide screen (terminal-box.mjs). It always runs, so a sheet has the right place from its first frame.
+  useLayoutEffect(() => trackTerminalBox(), []);
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />

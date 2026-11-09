@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Button from '@mui/material/Button';
 import Drawer from '@mui/material/Drawer';
+import Fade from '@mui/material/Fade';
 import List from '@mui/material/List';
 import ListItemButton from '@mui/material/ListItemButton';
 import Menu from '@mui/material/Menu';
@@ -79,7 +80,10 @@ function SessionPopup({ menu, ui, keepFocus }) {
       id="h5-session-menu" anchorEl={anchor} open={open} onClose={() => ui.actions.menuCancel()} marginThreshold={POPUP_MARGIN}
       anchorOrigin={{ vertical: place.flip ? 'top' : 'bottom', horizontal: 'right' }}
       transformOrigin={{ vertical: place.flip ? 'bottom' : 'top', horizontal: 'right' }}
-      // It goes at once: its items are gone with the state, and the rename field must be alone when it takes the focus.
+      // It fades in and does not grow (Menu's default): an item that moves under a pointer gets the mouse-down while the next item gets the mouse-up, and the
+      // browser then sends the click to the list, so the press is lost. It goes at once: its items are gone with the state, and the rename field must be
+      // alone when it takes the focus.
+      slots={{ transition: Fade }}
       transitionDuration={{ enter: 120, exit: 0 }}
       // "Rename" hands the focus to the name field in the task list: the "⋯" that opened the popup must not take it back.
       disableRestoreFocus={keepFocus}

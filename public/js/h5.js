@@ -43,7 +43,7 @@
 
   // ── Early requests (start) ──
   // A slow phone network pays a full round trip for each request that waits for another one. At start the page therefore asks at once for what it
-  // will need: the Engine list, the tasks and groups of the remembered Engine, and for the remembered task its terminals and chats; and it opens the
+  // will need: the Engine list, the tasks and groups of the remembered Engine, and for the remembered task its terminals; and it opens the
   // WebSocket of the remembered terminal. An early answer is used when the normal code asks for the same URL (in `api`, once, within EARLY_MS); the
   // early socket is taken by `open` when the terminal shown is that one, and closed cleanly when it is not (the task or the terminal is gone, another
   // one was chosen), so the server never keeps a stray attachment.
@@ -94,7 +94,7 @@
   });
   let sources = [LOCAL];
   // What an Engine can do: the `capabilities` of its `/info` (`/v1/info` through the proxy), kept on its source object each time the page reads it
-  // (the session menu and the chat list read it again, so an upgraded Engine is seen). The local Client has no such list and can do everything the
+  // (the list of a task that is not selected reads it again, so an upgraded Engine is seen). The local Client has no such list and can do everything the
   // page asks for here. One read at a time per Engine.
   const infoUrl = from => `${from.tasksBase.replace(/\/tasks$/, '')}/info`;
   function readInfo(from) {
@@ -116,10 +116,10 @@
   let terminals = [];
   let terminalId = null;
   const expanded = new Set(); // the tasks whose sessions are listed in the task sheet (a tap on a task opens and closes its list; it does not open the task); any number can be open
-  const peeks = new Map(); // task id -> the sessions of an expanded task that is not the selected one: { source, taskId, status, terminals, chats }
+  const peeks = new Map(); // task id -> the sessions of an expanded task that is not the selected one: { source, taskId, status, terminals }
   let peekSeq = 0;
   // The Restart and Delete requests on their way, by Engine and task (a promise that ends when all of them have). A list of that task read meanwhile would
-  // show the old row, or connect to a terminal that is going away, so `loadTerminals`, `loadPeek` and `readChats` wait for it. Without one there is nothing to wait for.
+  // show the old row, or connect to a terminal that is going away, so `loadTerminals` and `loadPeek` wait for it. Without one there is nothing to wait for.
   const actionsRunning = new Map();
   const actionKey = (from, taskId) => `${from.key}|${taskId}`;
   const actionsDone = (from, taskId) => actionsRunning.get(actionKey(from, taskId));
@@ -260,17 +260,16 @@
     const own = item && (item.work_dir || (item.md_path ? item.md_path.replace(/\/[^/]*$/, '') : ''));
     return row.work_dir && own && row.work_dir !== own ? row.work_dir : null;
   };
-  // The sessions of the selected task: its terminals, then its chats (the way back into one that was left by going to a terminal); each has "⋯" actions.
+  // The sessions of the selected task: its terminals, each with "⋯" actions. Agent chats are not listed in the task sheet.
   function ownSessions() {
     return {
       label: 'Phone terminals', note: null,
       rows: [
-        ...terminals.map(row => ({ kind: 'terminal', id: row.terminal_id, title: row.title, agent: row.agent || null, otherDir: otherDir(row, task), current: row.terminal_id === terminalId && !agentChat, more: true })), // only one of a terminal and a chat is shown
-        ...chats.map(row => ({ kind: 'chat', id: row.id, title: row.title, running: Boolean(row.running), pending: Boolean(row.pending), updated: row.updated_at || null, agent: row.agent, current: Boolean(agentFor && agentFor.conversation === row.id) && !agentViews.view, children: agentFor && agentFor.conversation === row.id ? agentViews.agents.map(sub => ({ kind: 'subagent', id: sub.id, title: sub.name, status: sub.status, current: agentViews.view === sub.id })) : [], more: true })),
+        ...terminals.map(row => ({ kind: 'terminal', id: row.terminal_id, title: row.title, agent: row.agent || null, otherDir: otherDir(row, task), current: row.terminal_id === terminalId && !agentChat, more: true })), // no row is current while a chat covers the terminal
       ],
     };
   }
-  // The sessions under an expanded task that is not selected: its terminals, then its chats, as in the list of the selected task. Each has "⋯" too (see `openOtherMenu`).
+  // The sessions under an expanded task that is not selected: its terminals, as in the list of the selected task. Each has "⋯" too (see `openOtherMenu`).
   function peekSessions(item) {
     const label = item.title;
     const peek = peeks.get(item.id);
@@ -278,7 +277,6 @@
     if (peek.status === 'error') return { label, note: 'Could not load the sessions', rows: [] };
     const rows = [
       ...peek.terminals.map(row => ({ kind: 'terminal', id: row.terminal_id, title: row.title, agent: row.agent || null, otherDir: otherDir(row, item), current: false, more: true })),
-      ...peek.chats.map(row => ({ kind: 'chat', id: row.id, title: row.title, running: Boolean(row.running), pending: Boolean(row.pending), updated: row.updated_at || null, agent: row.agent, current: false, more: true })),
     ];
     if (!rows.length) rows.push({ kind: 'open', id: 'open', title: tr('Open this task'), agent: null, current: false, more: false });
     return { label, note: null, rows };
@@ -304,9 +302,9 @@
           const selected = Boolean(task && task.id === item.id);
           const open = expanded.has(item.id);
           // A tap opens or closes the list of sessions under the task. Going to a session is a tap on that session.
-          const hasSessions = Boolean(selected && (terminals.length || chats.length));
+          const hasSessions = Boolean(selected && terminals.length);
           // The selected task: "+" on the right of its row adds a terminal.
-          return { id: item.id, title: item.title, count: open ? (selected ? (hasSessions ? terminals.length + chats.length : null) : (peeks.get(item.id) && peeks.get(item.id).status === 'ready' ? peeks.get(item.id).terminals.length + peeks.get(item.id).chats.length : null)) : null, selected, expanded: open, add: true, sessions: open ? (selected ? (hasSessions ? ownSessions() : null) : peekSessions(item)) : null };
+          return { id: item.id, title: item.title, count: open ? (selected ? (hasSessions ? terminals.length : null) : (peeks.get(item.id) && peeks.get(item.id).status === 'ready' ? peeks.get(item.id).terminals.length : null)) : null, selected, expanded: open, add: true, sessions: open ? (selected ? (hasSessions ? ownSessions() : null) : peekSessions(item)) : null };
         }),
       });
     }
@@ -331,14 +329,13 @@
     } catch { /* refused (low battery, power saver): not worth telling the person */ }
   }
 
-  // target: where to go in the task, { terminal: id } or { chat: row }; without one, the task opens as it was left (its terminal, or the chat that was open).
+  // target: where to go in the task, { terminal: id } or { chat: row } (a notification link, see `openChatFromLink`); without one, the task opens on its terminal.
   // stay: the task sheet of a phone stays open (the "+" of a task that was not selected shows its Session list in the sheet, under that task).
   function selectTask(item, target = null, { stay = false } = {}) {
-    // A chat open over another task is put away (but not forgotten: it comes back with its task).
+    // A chat open over another task is put away.
     if (agentChat && agentFor && (!item || agentFor.taskId !== item.id || agentFor.source !== source.key)) hideAgent();
     task = item;
     void syncWakeLock();
-    chats = [];
     if (item) { peeks.delete(item.id); expanded.add(item.id); } // the other open lists stay open
     wantedTerminal = target && target.terminal ? target.terminal : null;
     store.set(`task:${source.key}`, item ? item.id : null);
@@ -347,7 +344,6 @@
     if (!stay) closeTasks();
     void loadTerminals();
     if (target && target.chat) mountAgent(target.chat);
-    else if (item && !target) void restoreAgent(item);
   }
 
   // Opens or closes the list of sessions under a task, without going anywhere.
@@ -364,30 +360,22 @@
     if (open) for (const item of tasks) { expanded.add(item.id); if (!(task && task.id === item.id)) void loadPeek(item); }
     renderTasks();
   }
-  // The terminals and chats of a task that is not the selected one, read when its list is opened.
+  // The terminals of a task that is not the selected one, read when its list is opened.
   async function loadPeek(item) {
     const current = source;
-    const mine = { source: current, taskId: item.id, status: 'loading', terminals: [], chats: [], seq: (peekSeq += 1) };
+    const mine = { source: current, taskId: item.id, status: 'loading', terminals: [], seq: (peekSeq += 1) };
     const before = peeks.get(item.id);
     if (!before || before.source !== current) peeks.set(item.id, mine); // a list that is already shown stays until the new one is read
     await actionsDone(current, item.id);
-    const [rows, chatRows] = await Promise.all([
+    const [rows] = await Promise.all([
       api('GET', `${current.tasksBase}/${item.id}/terminals`).catch(() => null),
-      readChats(item, { peek: true }),
+      current.key === 'local' ? null : readInfo(current).catch(() => null), // what the Engine can do decides the actions of these rows (`controlsTerminals`)
     ]);
     if (source !== current || !expanded.has(item.id) || (peeks.get(item.id) && peeks.get(item.id).seq > mine.seq)) return;
     peeks.set(item.id, mine);
     mine.status = Array.isArray(rows) ? 'ready' : 'error';
     mine.terminals = Array.isArray(rows) ? rows : [];
-    mine.chats = chatRows || [];
     renderTasks();
-  }
-  // Goes to a session of a task that is not the selected one: the task is selected and that session is shown.
-  function openFromPeek(item, target) {
-    // A chat that was open on the phone for this task is not any more once a terminal is shown, as when going to a terminal inside the task.
-    const peek = peeks.get(item.id);
-    if (target.terminal && peek) for (const row of peek.chats) if (row.opened && row.opened.h5) setOpened(item.id, row.id, false);
-    selectTask(item, target);
   }
   // A wide screen (a computer, a landscape tablet) shows the task list as a permanent sidebar next to the terminal: it is never closed,
   // the page behind it stays usable, and a phone-sized screen keeps the sheet that slides over the page.
@@ -401,7 +389,6 @@
     renderTasks();
     void loadTasks();
     void refreshTerminals();
-    void loadChats();
     clearInterval(namesTimer);
     namesTimer = setInterval(() => void refreshTerminals(), 8000);
   }
@@ -471,17 +458,10 @@
         if (row.id === terminalId && session && (session.ws || session.timer)) return;
         const entry = terminals.find(candidate => candidate.terminal_id === row.id);
         if (entry) switchTerminal(entry);
-      } else if (row.kind === 'chat') {
-        if (agentChat && agentFor && agentFor.conversation === row.id) { agentChat.setView(''); closeTasks(); return; } // the open chat: back to its main agent
-        const entry = chats.find(candidate => candidate.id === row.id);
-        if (entry) { closeTasks(); mountAgent(entry); }
-      } else if (row.kind === 'subagent') {
-        if (agentChat) { agentChat.setView(row.id); closeTasks(); }
       }
       return;
     }
-    if (row.kind === 'terminal') openFromPeek(item, { terminal: row.id });
-    else if (row.kind === 'chat') { const peek = peeks.get(item.id); const entry = peek && peek.chats.find(candidate => candidate.id === row.id); if (entry) openFromPeek(item, { chat: entry }); }
+    if (row.kind === 'terminal') selectTask(item, { terminal: row.id });
     else selectTask(item);
   };
   // ── Next running or pending session (row 2, `#h5-cycle`) ──
@@ -533,16 +513,15 @@
   };
   // The "⋯" of a session row, of the task the row is under (`taskId`), which may not be the selected one.
   ui.actions.rowMore = (taskId, row) => {
-    const chat = row.kind === 'chat';
     if (task && task.id === taskId) {
-      if (chat) { const entry = chats.find(candidate => candidate.id === row.id); if (entry) openChatMenu(entry); }
-      else { const entry = terminals.find(candidate => candidate.terminal_id === row.id); if (entry) openTerminalMenu(entry); }
+      const entry = terminals.find(candidate => candidate.terminal_id === row.id);
+      if (entry) openTerminalMenu(entry);
       return;
     }
     const item = tasks.find(candidate => candidate.id === taskId);
     const peek = peeks.get(taskId);
     if (!item || !peek) return;
-    const entry = chat ? peek.chats.find(candidate => candidate.id === row.id) : peek.terminals.find(candidate => candidate.terminal_id === row.id);
+    const entry = peek.terminals.find(candidate => candidate.terminal_id === row.id);
     if (entry) openOtherMenu(item, row, entry);
   };
   ui.actions.changeEngine = key => {
@@ -589,7 +568,6 @@
     const item = taskById(id);
     if (!item) return;
     menuRow = null;
-    menuChat = null;
     const ordered = [...groups].sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
     showMenu(item.title, [
       ...ordered.map(group => [`${item.status === group.key ? '\u2713 ' : ''}${tr('Move to')} \u201C${tr(group.name)}\u201D`, () => void moveTask(item, group.key), 'raw']),
@@ -710,7 +688,7 @@
   }
 
   // The terminals of the selected task are a second-level list under it in the task sheet (ownSessions); "⋯" opens the actions of one terminal.
-  // Going to a terminal leaves the open chat, like the back arrow used to; the chat stays listed in the task sheet.
+  // Going to a terminal leaves the open chat, like the back arrow used to.
   function leaveChat() { if (agentChat) closeAgent(); }
   function switchTerminal(row) {
     leaveChat();
@@ -727,18 +705,16 @@
   // where the person tapped.
   let menuRuns = [];
   let menuRow = null;
-  let menuChat = null; // the chat whose actions are open
-  // { from, taskId, row, taskTitle }: the Engine and the task of that terminal or chat, and the row. Rename, Restart and Delete go there, whichever task is selected
+  // { from, taskId, row, taskTitle }: the Engine and the task of that terminal, and the row. Rename, Restart and Delete go there, whichever task is selected
   // by then. `taskTitle` is only set for a task that is not selected, so its name can be shown in the confirmation.
   let menuScope = null;
   // The optional name typed in the "Session" sheet. It is kept while moving between its lists (Claude session, Back) and names what is created.
   let newName = '';
-  let menuCreate = -1; // the item that Enter in the name field runs (New Terminal, New Claude session, New Claude chat)
+  let menuCreate = -1; // the item that Enter in the name field runs (New Terminal, New Claude session)
   let menuTask = null; // the id of the task whose "+" opened the Session list
 
   function closeTerminalMenu() {
     menuRow = null;
-    menuChat = null;
     menuScope = null;
     menuRuns = [];
     menuCreate = -1;
@@ -746,7 +722,7 @@
     newName = '';
     ui.set({ menu: null });
   }
-  // The typed name, as the server will keep it (an empty name: the default "Terminal N" / "Claude N" / chat name).
+  // The typed name, as the server will keep it (an empty name: the default "Terminal N" / "Claude N").
   const takeName = () => newName.replace(/\s+/g, ' ').trim();
   // items: [label, run, kind, create]; kind 'danger' is drawn as a warning, 'raw' is a name that is not translated; create: Enter in the name field runs it.
   // naming: the Session list, with the optional name field above it, drawn under the task `menuTask` in the task list.
@@ -758,11 +734,10 @@
   // The rename field takes the place of the row in the task list ({ kind, id, task } of the row: `default` is a terminal id in every task); the sheet of
   // actions goes away.
   const askRename = value => ui.set(state => ({
-    menu: state.menu && { ...state.menu, rename: { ...(menuChat ? { kind: 'chat', id: menuChat.id } : { kind: 'terminal', id: menuRow && menuRow.terminal_id }), task: menuScope && menuScope.taskId }, renameValue: value },
+    menu: state.menu && { ...state.menu, rename: { kind: 'terminal', id: menuRow && menuRow.terminal_id, task: menuScope && menuScope.taskId }, renameValue: value },
   }));
   function openTerminalMenu(row) {
     menuRow = row;
-    menuChat = null;
     const target = menuScope = { from: source, taskId: task.id, row };
     // "Copy text" is for the terminal that is open (the copy view reads its buffer); the long press on the terminal body is the other way in.
     const open = row.terminal_id === terminalId && !agentChat && session && !session.disposed;
@@ -775,31 +750,17 @@
       ['Delete', () => void deleteTerminal(target), 'danger'],
     ]);
   }
-  // Chat actions: the same sheet as a terminal's, with the actions a chat has (rename, open, delete).
-  function openChatMenu(row) {
-    menuRow = null;
-    menuChat = row;
-    const target = menuScope = { from: source, taskId: task.id, row };
-    showMenu(row.title, [
-      ['Rename', () => askRename(row.title)],
-      ['Open', () => { closeTerminalMenu(); closeTasks(); mountAgent(row); }],
-      ['Delete', () => void deleteChat(target), 'danger'],
-    ]);
-  }
   // A remote Engine that says what it can do and does not list 'terminal:control' cannot restart or delete a terminal; one that has not said is asked (it answers with an error).
   const controlsTerminals = from => from.key === 'local' || !Array.isArray(from.capabilities) || from.capabilities.includes('terminal:control');
   // The actions of a session of a task that is not selected. Open is the same as a tap on the row; Rename, Restart and Delete go to the row's own Engine and task
-  // (`target`) and leave the task, the terminal and the socket that are shown alone. A chat has no Restart, and a chat row is only listed where the Engine has 'agent-chat:manage'.
+  // (`target`) and leave the task, the terminal and the socket that are shown alone.
   function openOtherMenu(item, row, entry) {
-    const chat = row.kind === 'chat';
-    menuRow = chat ? null : entry;
-    menuChat = chat ? entry : null;
+    menuRow = entry;
     const target = menuScope = { from: source, taskId: item.id, row: entry, taskTitle: item.title };
     showMenu(entry.title, [
       ['Rename', () => askRename(entry.title)],
       ['Open', () => { closeTerminalMenu(); ui.actions.openRow(item.id, { kind: row.kind, id: row.id }); }],
-      ...(chat ? [['Delete', () => void deleteChat(target), 'danger']] : []),
-      ...(!chat && controlsTerminals(source) ? [
+      ...(controlsTerminals(source) ? [
         ['Restart in the working directory', () => void restartTerminal(target), 'danger'],
         ['Delete', () => void deleteTerminal(target), 'danger'],
       ] : []),
@@ -807,17 +768,16 @@
   }
   // Shows a saved name: in the list of the selected task, or under a task that is not selected. That list is read again too, so that an older read still on
   // its way cannot bring the old name back, and a name the server cleaned up is shown as it was kept.
-  async function showRenamed(scope, kind, id, title) {
+  async function showRenamed(scope, id, title) {
     if (scope.from !== source) return;
     if (task && task.id === scope.taskId) {
-      if (kind === 'chat') { await loadChats(); return; }
       const entry = terminals.find(candidate => candidate.terminal_id === id);
       if (entry) entry.title = title;
       renderTabs();
       return;
     }
     const peek = peeks.get(scope.taskId);
-    const entry = peek && (kind === 'chat' ? peek.chats.find(candidate => candidate.id === id) : peek.terminals.find(candidate => candidate.terminal_id === id));
+    const entry = peek && peek.terminals.find(candidate => candidate.terminal_id === id);
     if (entry) entry.title = title;
     renderTasks();
     const item = tasks.find(candidate => candidate.id === scope.taskId);
@@ -827,30 +787,18 @@
   const isSelected = target => target.from === source && Boolean(task) && task.id === target.taskId;
   // Under a confirmation: which session it is and, for a task that is not selected, which task (every task has a terminal called `default`).
   const whichSession = target => `\n${target.row.title}${target.taskTitle ? `\n${tr('Task')}: ${target.taskTitle}` : ''}`;
-  // After a Restart or Delete under a task that is not selected. `removed` ('terminal' or 'chat'): the row goes at once. That list is read again; a read already on its way
+  // After a Restart or Delete under a task that is not selected. `removed` ('terminal'): the row goes at once. That list is read again; a read already on its way
   // was sent before this and could bring the row back, so it stops counting. When the task has become the selected one meanwhile, its own read is waiting for the action (`actionsDone`).
   function showPeekChange(target, removed = null) {
     if (target.from !== source) return;
     const peek = peeks.get(target.taskId);
     if (peek && peek.source === target.from) {
-      if (removed === 'chat') peek.chats = peek.chats.filter(entry => entry.id !== target.row.id);
       if (removed === 'terminal') peek.terminals = peek.terminals.filter(entry => entry.terminal_id !== target.row.terminal_id);
       peek.seq = (peekSeq += 1);
     }
     renderTasks();
     const item = tasks.find(candidate => candidate.id === target.taskId);
     if (item && expanded.has(item.id) && !isSelected(target)) void loadPeek(item);
-  }
-  async function deleteChat(target) {
-    const { row } = target;
-    if (!window.confirm(`${tr('Delete this chat? Its messages are removed from this task.')}${whichSession(target)}`)) return;
-    closeTerminalMenu();
-    try {
-      await trackAction(target, api('DELETE', `${target.from.tasksBase}/${target.taskId}/agent/conversations/${encodeURIComponent(row.id)}`));
-      if (agentFor && agentFor.source === target.from.key && agentFor.taskId === target.taskId && agentFor.conversation === row.id) hideAgent();
-      if (isSelected(target)) await loadChats();
-      else showPeekChange(target, 'chat');
-    } catch (error) { tell(`Could not delete the chat: ${error.message}`, 'error'); }
   }
   // Ends every view of that terminal of that task in this page, then asks the server. The shown one is only ended when it is the target itself: another task's `default` is another terminal.
   async function controlTerminal(target, action) {
@@ -903,20 +851,11 @@
     const title = String(value || '').trim();
     if (!scope) return;
     const base = `${scope.from.tasksBase}/${scope.taskId}`;
-    if (menuChat && title) {
-      const chat = menuChat;
-      try {
-        await api('PATCH', `${base}/agent/conversations/${encodeURIComponent(chat.id)}`, { title });
-        closeTerminalMenu();
-        await showRenamed(scope, 'chat', chat.id, title);
-      } catch (error) { tell(`Could not rename the chat: ${error.message}`, 'error'); }
-      return;
-    }
     if (!row || !title) return;
     try {
       const renamed = await api('PATCH', `${base}/terminals/${encodeURIComponent(row.terminal_id)}`, { title });
       closeTerminalMenu();
-      await showRenamed(scope, 'terminal', row.terminal_id, (renamed && renamed.title) || title);
+      await showRenamed(scope, row.terminal_id, (renamed && renamed.title) || title);
     } catch (error) { tell(`Could not rename the terminal: ${error.message}`, 'error'); }
   };
   // The name of what is shown (the chat that is open, otherwise the current terminal) in small text under the task name.
@@ -926,8 +865,7 @@
     const agent = (current && current.agent) || null; // the kind of the current terminal, as the task list shows it: picks the saved commands presets
     if (ui.get().terminalAgent !== agent) ui.set({ terminalAgent: agent });
     if (agentChat && agentFor) {
-      const row = chats.find(entry => entry.id === agentFor.conversation);
-      name = (row && row.title) || agentFor.title || '';
+      name = agentFor.title || '';
     } else if (terminalId) {
       const row = terminals.find(entry => entry.terminal_id === terminalId);
       name = (row && row.title) || '';
@@ -939,24 +877,12 @@
   // ── Session: a plain terminal, or a Claude / Codex session of the task directory (new or resumed) ──
   const SESSION_KINDS = [['claude', 'Claude session'], ['codex', 'Codex session']];
   function showSessionMenu(title, items) { showMenu(tr(title), items, { naming: true }); }
-  async function openSessionMenu() {
-    const currentSource = source;
-    const currentTask = task;
+  function openSessionMenu() {
     menuRow = null;
-    menuChat = null;
-    const show = chatsAvailable => showSessionMenu('Session', [
+    showSessionMenu('Session', [
       ['New Terminal', () => { const title = takeName(); closeTerminalMenu(); closeTasks(); void createTerminal(title ? { title } : {}); }, null, true],
       ...SESSION_KINDS.map(([agent, label]) => [label, () => void openAgentSessions(agent, label)]),
-      ...(chatsAvailable ? [['Claude agent', () => void openAgentChats('claude', 'Claude agent')], ['Codex agent', () => void openAgentChats('codex', 'Codex agent')]] : []),
     ]);
-    show(source.key === 'local');
-    if (source.key === 'local') return;
-    try {
-      const info = await readInfo(source);
-      const menu = ui.get().menu;
-      if (source !== currentSource || task !== currentTask || !menu || menu.title !== tr('Session')) return;
-      show(Array.isArray(info.capabilities) && info.capabilities.includes('agent-chat:manage'));
-    } catch { /* old or offline Engines keep offering terminals only */ }
   }
   ui.actions.openSessionMenu = openSessionMenu;
   // The "+" of any task: a task that is not shown is selected first, then the menu adds a session to it.
@@ -968,14 +894,13 @@
     if (!(task && task.id === item.id)) selectTask(item, null, { stay: true });
     menuTask = item.id;
     newName = ''; // a new "Session" list starts with an empty name
-    void openSessionMenu();
+    openSessionMenu();
   };
 
-  // ── Agent chat: the same Claude / Codex sessions as a conversation view instead of a terminal ──
+  // ── Agent chat: the same Claude / Codex sessions as a conversation view instead of a terminal. The task sheet neither lists nor creates chats; a notification link opens one (`openChatFromLink`). ──
   const agentView = $('h5-agent');
   const chatApi = { get: url => api('GET', url), post: (url, body) => api('POST', url, body), patch: (url, body) => api('PATCH', url, body), del: url => api('DELETE', url) };
   let agentChat = null;
-  let agentViews = { agents: [], view: '' }; // the sub-agents of the open chat and the view shown, listed under its row in the sidebar
   // The chat fills the screen below the page header (task name and settings), the same header the terminal has, and follows the
   // visual viewport so the on-screen keyboard never covers the composer.
   function fitAgentView() {
@@ -985,26 +910,13 @@
     agentView.style.top = `${top}px`;
     agentView.style.height = `${Math.max(0, bottom - top)}px`;
   }
-  // Which chat of which task is shown. The chat that is open on a task is kept in the database (the open flag of the conversation, one per
-  // task on this page), so a refresh, or another phone, brings it back. Earlier versions remembered it in localStorage (`h5-agent:...`);
-  // that is moved to the database the first time it is found.
+  // Which chat of which task is shown. It is not brought back by a refresh: the page opens on a terminal, whatever earlier versions saved (the open flag of the
+  // conversation on the server, `h5-agent:...` in localStorage).
   let agentFor = null;
-  let chats = []; // the agent chats of the selected task, listed under its terminals in the task sheet
-  const legacyKey = item => `agent:${source.key}:${item.id}`;
-  // Tells the server that a chat is open (or not) on the phone page; a failure is shown, the chat just is not remembered.
-  // POST first, because some network paths (a proxy in front of the Client) let POST through but not PATCH; an older Engine without that route gets the PATCH.
-  function setOpened(taskId, id, opened) {
-    const url = `${source.tasksBase}/${taskId}/agent/conversations/${id}`;
-    const body = { opened, surface: 'h5' };
-    chatApi.post(`${url}/opened`, body)
-      .catch(() => chatApi.patch(url, body))
-      .catch(error => tell(`Could not save which chat is open: ${error.message}`, 'error'));
-  }
-  // Takes the chat view away without forgetting the chat.
+  // Takes the chat view away.
   function hideAgent() {
     if (agentChat) agentChat.destroy();
     agentChat = null;
-    agentViews = { agents: [], view: '' };
     agentFor = null;
     agentView.hidden = true;
     agentView.style.height = agentView.style.top = '';
@@ -1013,16 +925,12 @@
       window.visualViewport.removeEventListener('scroll', fitAgentView);
     }
   }
-  // Closing it with the back button is the person saying they are done with it.
   function closeAgent() {
-    if (agentFor && agentFor.source === source.key) setOpened(agentFor.taskId, agentFor.conversation, false);
     hideAgent();
     ackShown(); // the terminal under the chat is shown again
     renderTabs();
-    void loadChats();
   }
-  // `remember`: the person opened it, so the server is told; a chat that is shown again because it was already open is not sent again.
-  function mountAgent(conversation, { remember = true, draft = '' } = {}) {
+  function mountAgent(conversation, { draft = '' } = {}) {
     if (agentChat) agentChat.destroy();
     agentView.hidden = false;
     if (window.visualViewport) {
@@ -1030,85 +938,15 @@
       window.visualViewport.addEventListener('scroll', fitAgentView);
     }
     fitAgentView();
-    agentChat = AgentChat.mount(agentView, { api: chatApi, base: `${source.tasksBase}/${task.id}/agent`, conversation, onClose: closeAgent, notify: message => tell(message, 'error'), draft, hostTabs: true,
-      onViews: views => { if (!agentFor || agentFor.conversation !== conversation.id) return; agentViews = views; renderTasks(); },
+    agentChat = AgentChat.mount(agentView, { api: chatApi, base: `${source.tasksBase}/${task.id}/agent`, conversation, onClose: closeAgent, notify: message => tell(message, 'error'), draft,
       onOpenChat: (created, extra = {}) => mountAgent(created, { draft: extra.draft || '' }), // a fork or a new chat replaces the one shown
       onTitle: title => { // a rename or the first message gave the chat a new name
         if (!agentFor || agentFor.conversation !== conversation.id) return;
         agentFor.title = title;
-        const row = chats.find(entry => entry.id === conversation.id);
-        if (row) row.title = title;
         renderTabs();
       } });
     agentFor = { source: source.key, taskId: task.id, conversation: conversation.id, title: conversation.title };
-    if (remember) setOpened(task.id, conversation.id, true);
     renderTabs();
-    void loadChats();
-  }
-  // The chats of a task on the selected Engine, or null when the Engine has none to offer, the list cannot be read or the page moved on.
-  async function readChats(item, { peek: forOther = false } = {}) {
-    const current = source;
-    const stale = () => source !== current || (!forOther && task !== item); // forOther: the task is not the selected one (its list is opened in the sheet)
-    try {
-      await actionsDone(current, item.id);
-      if (stale()) return null;
-      if (current.key !== 'local') {
-        const info = await readInfo(current);
-        if (!Array.isArray(info.capabilities) || !info.capabilities.includes('agent-chat:manage')) return null;
-        if (stale()) return null;
-      }
-      const rows = await chatApi.get(`${current.tasksBase}/${item.id}/agent/conversations`);
-      return !stale() && Array.isArray(rows) ? rows : null;
-    } catch { return null; } // nothing is lost: the chats stay on the server for the next time
-  }
-  // Keeps the chats listed under the task in the task sheet up to date.
-  async function loadChats() {
-    const item = task;
-    if (!item) { chats = []; return; }
-    const rows = await readChats(item);
-    if (!rows || task !== item) return;
-    chats = rows;
-    renderTabs();
-  }
-  // Opens again the chat saved on this task by the selected Engine.
-  async function restoreAgent(item) {
-    if (agentChat) return;
-    const current = source;
-    const list = await readChats(item);
-    if (!list || agentChat) return;
-    chats = list;
-    renderTabs();
-    let row = list.filter(entry => entry.opened && entry.opened.h5).sort((x, y) => y.opened.h5 - x.opened.h5)[0];
-    const legacy = store.get(legacyKey(item));
-    if (legacy) {
-      store.set(legacyKey(item), null);
-      const old = list.find(entry => entry.id === legacy);
-      if (!row && old) { row = old; setOpened(item.id, old.id, true); } // moved to the database
-    }
-    if (row) mountAgent(row, { remember: false });
-  }
-  async function openAgentChats(agent, label) {
-    const current = task;
-    const base = `${source.tasksBase}/${current.id}/agent`;
-    showSessionMenu(label, [['Loading…', () => {}]]);
-    let rows = [];
-    try { rows = await AgentChat.choices(chatApi, base, agent); }
-    catch (error) { if (current === task) tell(`Could not load sessions: ${error.message}`, 'error'); }
-    if (current !== task || !ui.get().menu) return;
-    const start = choice => async () => {
-      const title = takeName();
-      try {
-        const conversation = await AgentChat.open(chatApi, base, agent, choice, title);
-        closeTerminalMenu();
-        closeTasks();
-        if (current === task) mountAgent(conversation);
-      } catch (error) { tell(`Could not open the chat: ${error.message}`, 'error'); }
-    };
-    showSessionMenu(label, [
-      [`New ${AgentChat.AGENTS[agent].label} chat`, start(null), null, true],
-      ...rows.map(choice => [`${choice.running ? '● ' : ''}${choice.title}`, start(choice), 'raw']),
-      ['Back', openSessionMenu],
-    ]);
   }
   async function openAgentSessions(agent, label) {
     const current = task;
@@ -2837,8 +2675,9 @@
     if (agentChat && agentFor && agentFor.conversation === conversationId) { closeTasks(); return true; }
     const item = tasks.find(entry => entry.id === Number(taskId));
     if (!item) return false;
-    const rows = await readChats(item, { peek: true });
-    const row = rows && rows.find(entry => entry.id === conversationId);
+    const current = source;
+    const rows = await chatApi.get(`${current.tasksBase}/${item.id}/agent/conversations`).catch(() => null);
+    const row = source === current && Array.isArray(rows) ? rows.find(entry => entry.id === conversationId) : null;
     if (!row) return false;
     selectTask(item, { chat: row });
     return true;
@@ -2871,8 +2710,7 @@
     const savedId = Number(store.get(`task:${assumed.key}`));
     if (savedId > 0 && !link) {
       prefetch(`${assumed.tasksBase}/${savedId}/terminals`);
-      if (assumed.key === 'local') prefetch(`${assumed.tasksBase}/${savedId}/agent/conversations`);
-      else prefetch(infoUrl(assumed));
+      if (assumed.key !== 'local') prefetch(infoUrl(assumed));
       const savedTerminal = store.get(`terminal:${assumed.key}:${savedId}`);
       if (savedTerminal) openEarlySocket(assumed, savedId, savedTerminal);
     }

@@ -14,9 +14,9 @@ const pageErrors = [];
 function freshServer(ids) {
   const lists = new Map();
   const terminalsOf = id => Array.from({ length: 4 }, (_, i) => ({ terminal_id: i ? `t${id}-${i + 1}` : 'default', title: `Terminal ${i + 1}` }));
-  lists.set(ids.alpha, { terminals: terminalsOf(ids.alpha), chats: [{ id: `c${ids.alpha}`, agent: 'claude', title: 'Own chat', running: false, opened: { web: null, h5: null } }] });
-  lists.set(ids.beta, { terminals: terminalsOf(ids.beta), chats: [{ id: `c${ids.beta}`, agent: 'claude', title: 'Beta chat', running: false, opened: { web: null, h5: null } }] });
-  lists.set(ids.gamma, { terminals: terminalsOf(ids.gamma).slice(0, 1), chats: [] });
+  lists.set(ids.alpha, { terminals: terminalsOf(ids.alpha) });
+  lists.set(ids.beta, { terminals: terminalsOf(ids.beta) });
+  lists.set(ids.gamma, { terminals: terminalsOf(ids.gamma).slice(0, 1) });
   return { lists, writes: [], fail: null, holdLists: [], holdControl: null };
 }
 
@@ -78,15 +78,6 @@ async function openPage(browser, { wide, remote, capabilities = ['agent-chat:man
       if (entry) entry.title = route.request().postDataJSON().title;
       return json({ title: entry && entry.title });
     }
-    if (tail === 'agent/conversations' && method === 'GET') return json(list.chats);
-    const chat = tail.match(/^agent\/conversations\/([^/]+)(\/opened)?$/);
-    if (chat && method === 'DELETE') {
-      server.writes.push(['DELETE', pathname]);
-      if (server.fail === 'chat') { server.fail = null; return json({ error: 'BOOM' }, 500); }
-      list.chats = list.chats.filter(row => row.id !== decodeURIComponent(chat[1]));
-      return json({ success: true });
-    }
-    if (chat) return json({ success: true });
     return json({ error: 'not mocked' }, 404);
   });
   const dialogs = [];
@@ -146,7 +137,7 @@ async function setup(env, h, { remote }) {
   await h.openSheet();
   await h.reread('Beta');
   await h.reread('Gamma');
-  await h.list('Beta').locator('.h5-terminal-name').nth(4).waitFor();
+  await h.list('Beta').locator('.h5-terminal-name').nth(3).waitFor();
 }
 
 async function checkOtherTask(env, h, { wide, remote, label }) {
@@ -176,13 +167,10 @@ async function checkOtherTask(env, h, { wide, remote, label }) {
   assert.deepEqual(await h.actions.allTextContents(), ['Rename', 'Open', RESTART, 'Delete'], `${label}: terminal actions`);
   assert.deepEqual(await h.actions.evaluateAll(nodes => nodes.map(node => node.classList.contains('danger'))), [false, false, true, true], `${label}: the same danger style`);
   await h.closeMenu();
-  await h.openMenu('Beta', 'Beta chat');
-  assert.deepEqual(await h.actions.allTextContents(), ['Rename', 'Open', 'Delete'], `${label}: chat actions`);
-  await h.closeMenu();
 
   // ── Cancel in the confirmation sends nothing and names the session and the task ──
   answers.next = 'dismiss';
-  for (const [title, name, words] of [['Terminal 1', 'Delete', 'Delete this terminal'], ['Terminal 1', RESTART, 'clears its history'], ['Beta chat', 'Delete', 'Delete this chat']]) {
+  for (const [title, name, words] of [['Terminal 1', 'Delete', 'Delete this terminal'], ['Terminal 1', RESTART, 'clears its history']]) {
     await h.openMenu('Beta', title);
     await h.press(h.action(name));
     assert.ok(dialogs.at(-1).includes(words), `${label}: the same question (${dialogs.at(-1)})`);
@@ -214,11 +202,6 @@ async function checkOtherTask(env, h, { wide, remote, label }) {
   await h.openMenu('Beta', 'Terminal 4');
   await h.press(h.action(RESTART));
   await h.toast('Could not restart the terminal');
-  server.fail = 'chat';
-  await h.openMenu('Beta', 'Beta chat');
-  await h.press(h.action('Delete'));
-  await h.toast('Could not delete the chat');
-  assert.ok((await h.names('Beta')).includes('Beta chat'), `${label}: the chat stays after an error`);
   await untouched('errors');
   server.writes.length = 0;
 
@@ -265,15 +248,6 @@ async function checkOtherTask(env, h, { wide, remote, label }) {
   await untouched('read again');
   server.writes.length = 0;
 
-  // ── A chat of another task ──
-  await h.openMenu('Beta', 'Beta chat');
-  await h.press(h.action('Delete'));
-  await h.row('Beta', 'Beta chat').waitFor({ state: 'detached' });
-  assert.deepEqual(server.writes, [['DELETE', `${base}/${beta}/agent/conversations/c${beta}`]], `${label}: the chat of that task`);
-  await h.reread('Beta');
-  assert.equal(await h.row('Beta', 'Beta chat').count(), 0, `${label}: the chat stays gone`);
-  server.writes.length = 0;
-
   // ── The last row of a task ──
   await h.openMenu('Gamma', 'Terminal 1');
   await h.press(h.action('Delete'));
@@ -297,12 +271,6 @@ async function checkOtherTask(env, h, { wide, remote, label }) {
   assert.deepEqual(server.writes, [['POST', `${base}/${alpha}/terminal/control`, { action: 'delete', terminal_id: `t${alpha}-3` }]], `${label}: own delete`);
   await h.openSheet();
   await h.row('Phone terminals', 'Terminal 3').waitFor({ state: 'detached' });
-  server.writes.length = 0;
-  if (wide) await page.locator('#h5-open-tasks').evaluate(node => node.click()); // the permanent sidebar lists the chats of a task chosen from its row after this read
-  await h.openMenu('Phone terminals', 'Own chat');
-  await h.press(h.action('Delete'));
-  await h.row('Phone terminals', 'Own chat').waitFor({ state: 'detached' });
-  assert.deepEqual(server.writes, [['DELETE', `${base}/${alpha}/agent/conversations/c${alpha}`]], `${label}: own chat delete`);
   server.writes.length = 0;
 
   // ── The selection moves to that task while the action runs: the list ends up correct and the deleted terminal is not connected ──
@@ -338,15 +306,12 @@ async function checkOtherTask(env, h, { wide, remote, label }) {
         console.log(`  ${label}: ok`);
       }
     }
-    // A remote Engine that says it cannot control terminals: those two actions are not offered; a chat keeps its Delete.
+    // A remote Engine that says it cannot control terminals: those two actions are not offered.
     const env = await openPage(browser, { wide: true, remote: true, capabilities: ['agent-chat:manage'] });
     const h = helpers({ page: env.page, wide: true });
     await setup(env, h, { remote: true });
     await h.openMenu('Beta', 'Terminal 1');
     assert.deepEqual(await h.actions.allTextContents(), ['Rename', 'Open'], 'no Restart or Delete without terminal:control');
-    await h.closeMenu();
-    await h.openMenu('Beta', 'Beta chat');
-    assert.deepEqual(await h.actions.allTextContents(), ['Rename', 'Open', 'Delete'], 'a chat keeps Delete');
     await env.context.close();
   } finally {
     await browser.close();

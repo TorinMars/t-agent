@@ -34,7 +34,6 @@ export function DomIcon({ make }) {
   return <span ref={ref} style={{ display: 'contents' }} />;
 }
 export const terminalMark = agent => AgentChat => AgentChat.icon(agent);
-export const chatMark = agent => AgentChat => AgentChat.chatIcon(agent);
 
 // The name props of an icon button: the aria-label and the same native title (the browser's own tooltip on a computer; no MUI Tooltip, which
 // would add about 31 KB and on a touch screen open on a long press, in the way of hold-to-talk).

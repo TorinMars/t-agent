@@ -94,9 +94,9 @@ function assertInside(g, label) {
 }
 
 // A session of a task that is not selected: the row has the same "⋯"; the rename reaches that session of that task and nothing else moves.
-async function checkOtherTask({ page, requests, size, press, list, shown, base, task, chatRow = true }) {
+async function checkOtherTask({ page, requests, size, press, list, shown, base, task }) {
   const rows = page.locator(`#h5-tasks .h5-terminal-list[aria-label="${list}"] .h5-terminal-row`);
-  await rows.nth(chatRow ? 4 : 3).waitFor();
+  await rows.nth(3).waitFor();
   const state = () => page.evaluate(() => ({
     task: document.getElementById('h5-task-name').textContent,
     session: document.getElementById('h5-session-name').textContent,
@@ -141,16 +141,6 @@ async function checkOtherTask({ page, requests, size, press, list, shown, base, 
   await rows.nth(0).locator('.h5-terminal-name', { hasText: 'Docs shell' }).waitFor();
   assert.deepEqual(requests.slice(writes), [['PATCH', `${base}/${task}/terminals/default`, { title: 'Docs shell' }]], `${size}: the right task and terminal, once`);
   assert.equal(await page.locator(`#h5-tasks .h5-terminal-list[aria-label="Phone terminals"] .h5-terminal-name`, { hasText: 'Docs shell' }).count(), 0, `${size}: the terminal with the same id in the shown task keeps its name`);
-  // And a chat of that task.
-  if (chatRow) {
-    await askRename(4);
-    assert.equal(await page.locator('#h5-term-rename-input').inputValue(), 'Chat 1');
-    await page.locator('#h5-term-rename-input').fill('Notes chat');
-    await page.locator('#h5-term-rename-input').press('Enter');
-    await page.locator('#h5-term-rename').waitFor({ state: 'detached' });
-    await rows.nth(4).locator('.h5-terminal-name', { hasText: 'Notes chat' }).waitFor();
-    assert.deepEqual(requests.at(-1), ['PATCH', `${base}/${task}/agent/conversations/c1`, { title: 'Notes chat' }], `${size}: the right task and chat`);
-  }
   assert.deepEqual(await state(), before, `${size}: the task and terminal shown are not touched, nothing is opened`);
   if (size.startsWith('phone')) assert.equal(await page.locator('#h5-tasks').isVisible(), true, `${size}: the sheet stays open`);
   // The names stay after the list is read again.
@@ -159,7 +149,6 @@ async function checkOtherTask({ page, requests, size, press, list, shown, base, 
   await rows.first().waitFor({ state: 'detached' });
   await press(item); // open: read again
   await rows.nth(0).locator('.h5-terminal-name', { hasText: 'Docs shell' }).waitFor();
-  if (chatRow) await rows.nth(4).locator('.h5-terminal-name', { hasText: 'Notes chat' }).waitFor();
   assert.deepEqual(await state(), before, `${size}: reading the list again changes nothing shown`);
 }
 
@@ -185,7 +174,7 @@ async function checkOtherTask({ page, requests, size, press, list, shown, base, 
       await page.locator('#h5-new-session').waitFor();
       await page.waitForTimeout(300);
       assert.equal(await page.locator('#h5-term-menu .h5-menu-panel').isVisible().catch(() => false), false, `${size}: no sheet from the bottom`);
-      assert.deepEqual(await page.locator('#h5-new-session #h5-term-menu-actions button').allTextContents(), ['New Terminal', 'Claude session', 'Codex session', 'Claude agent', 'Codex agent']);
+      assert.deepEqual(await page.locator('#h5-new-session #h5-term-menu-actions button').allTextContents(), ['New Terminal', 'Claude session', 'Codex session']);
       let g = await geometry(page, { field: '#h5-new-name-input', task: 'Task 6' });
       assertInside(g, `${size} new session`);
       assert.ok(g.field.top >= g.row.bottom - 0.5 && g.field.top - g.row.bottom < 40, `${size}: the name field is right below its task row (${g.row.bottom} -> ${g.field.top})`);

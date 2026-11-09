@@ -1099,3 +1099,4 @@ One line per release, added by `scripts/release.js`. Older notes are in `git log
 > v2.91.1 Plain Claude turn ends raise no blue notice, blue notices start collapsed, Telegram sends a formatted card, and every session in the sidebar can be renamed
 > v2.91.2 The test suite passes in CI on Node 20 again, and notifier plugins load in a stable order
 > v2.91.3 Restore the phone terminal wheel strip for vertical scrolling, and offer Restart and Delete on sessions of tasks that are not selected.
+> v2.92.0 Give an accurate error for an unusable translation key, make Enter send and Cmd/Ctrl+Enter a new line in the translation box, open the design document and file tree as a top sheet aligned with the terminal on wide screens, and remove agent chats from the task list.

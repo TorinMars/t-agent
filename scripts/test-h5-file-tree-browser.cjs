@@ -5,7 +5,8 @@
 //   the file viewer over the tree with a back arrow; the back arrow and the Android back button (history back) return to the tree with its folders and
 //   its scroll position kept; Close closes both; the tree is drawn again for another task; every row is 44px high; nothing is resized on the PTY.
 // - phone 320x640 (touch): eight buttons do not fit, so "Docs" is left out of row 2 (the saved commands list has it); its Files button leads to the tree.
-// - both widths: the design document and the tree slide down from the top, 88% of the height, at most 1200px wide and centred, over the dimmed page;
+// - both widths: the design document and the tree slide down from the top, 88% of the height, over the dimmed page (phone: the full width of the window;
+//   computer: the left edge and width of the terminal area, whatever narrows it: sidebar open or folded, the T-Attention panel, a resized window);
 //   Close, a click beside the sheet and Escape close them; a swipe up on a phone; the page and the PTY are not resized.
 // - computer 1440x900 (mouse): the tree is the same sheet; a file opens in the sheet over it, back and Escape return one
 //   layer; a remote Engine's tree is read through `/api/remote-servers/:id/tasks/:task/files`.
@@ -125,24 +126,26 @@ const watchSlides = page => page.evaluate(() => {
   });
   window.slideWatcher.observe(document.body, { subtree: true, attributes: true, attributeFilter: ['style'] });
 });
-// The sheet is in its place: at the very top, 88% of the height, centred at most 1200px wide, over a dimmed page that keeps its layout.
+// The sheet is in its place: at the very top, 88% of the height, over a dimmed page that keeps its layout. A phone: the width of the window. A wide
+// screen: the left edge and the width of the terminal area.
 async function assertTopSheet(page, selector, label) {
   await settled(page, selector);
-  const { vw, vh, box, anchored, sidePanel, covered, backdrop } = await page.evaluate(sel => {
+  const { vw, vh, box, terminal, anchored, sidePanel, covered, backdrop } = await page.evaluate(sel => {
     const node = document.querySelector(sel);
     const r = node.getBoundingClientRect();
     const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
     const below = document.elementFromPoint(innerWidth / 2, innerHeight - 10);
     return {
       vw: innerWidth, vh: innerHeight, box: { x: r.x, y: r.y, width: r.width, height: r.height },
+      terminal: (({ x, width }) => ({ x, width }))(document.getElementById('h5-terminal').getBoundingClientRect()),
       anchored: Boolean(node.closest('.MuiDrawer-anchorTop')), sidePanel: document.documentElement.hasAttribute('data-side-panel'),
       covered: Boolean(hit && node.contains(hit)), backdrop: Boolean(below && below.classList.contains('MuiBackdrop-root')),
     };
   }, selector);
-  const width = Math.min(vw, 1200);
+  const expected = vw >= 900 ? terminal : { x: (vw - Math.min(vw, 1200)) / 2, width: Math.min(vw, 1200) };
   assert.ok(anchored, `${label}: anchored to the top`);
   assert.ok(Math.abs(box.y) <= 1 && Math.abs(box.height - vh * 0.88) <= 2, `${label}: at the top, 88% of the height (${JSON.stringify(box)})`);
-  assert.ok(Math.abs(box.width - width) <= 1 && Math.abs(box.x - (vw - width) / 2) <= 1, `${label}: centred, at most 1200px wide (${JSON.stringify(box)})`);
+  assert.ok(Math.abs(box.width - expected.width) <= 0.5 && Math.abs(box.x - expected.x) <= 0.5, `${label}: in line with ${vw >= 900 ? 'the terminal area' : 'the window'} (sheet ${JSON.stringify(box)}, expected ${JSON.stringify(expected)})`);
   assert.ok(covered, `${label}: nothing lies over the sheet`);
   assert.ok(backdrop, `${label}: the strip below the sheet is the dimmed backdrop`);
   assert.equal(sidePanel, false, `${label}: the page makes no room for the sheet`);
@@ -197,6 +200,83 @@ async function checkTopSheets(page, how, phone) {
   assert.equal(await resizes(page), before, 'no PTY resize');
 }
 
+// A wide screen: the sheet has the left edge and the width of the terminal area, and that area is where this state of the layout should put it.
+async function assertAligned(page, selector, label, x, width) {
+  await settled(page, selector);
+  const { sheet, terminal, height, vh } = await page.evaluate(async sel => {
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))); // the layout and its observers have run
+    const pick = ({ x: left, width: size }) => ({ x: left, width: size });
+    const r = document.querySelector(sel).getBoundingClientRect();
+    return { sheet: pick(r), height: r.height, vh: innerHeight, terminal: pick(document.getElementById('h5-terminal').getBoundingClientRect()) };
+  }, selector);
+  assert.ok(Math.abs(terminal.x - x) <= 0.5 && Math.abs(terminal.width - width) <= 0.5, `${label}: the terminal area is at ${x}, ${width} wide (${JSON.stringify(terminal)})`);
+  assert.ok(Math.abs(sheet.x - terminal.x) <= 0.5, `${label}: same left edge as the terminal area (sheet ${JSON.stringify(sheet)}, terminal ${JSON.stringify(terminal)})`);
+  assert.ok(Math.abs(sheet.width - terminal.width) <= 0.5, `${label}: same width as the terminal area (sheet ${JSON.stringify(sheet)}, terminal ${JSON.stringify(terminal)})`);
+  assert.ok(Math.abs(height - vh * 0.88) <= 2, `${label}: 88% of the height (${height} of ${vh})`);
+}
+
+// Both sheets follow the terminal area on a wide screen, also while they are open.
+async function checkTerminalAlignment(browser) {
+  const SIDEBAR = 320;
+  const { context, page, errors } = await openPage(browser, { viewport: { width: 1440, height: 900 }, touch: false });
+  const views = [
+    { name: 'file tree', selector: '#h5-files-sheet .h5-files-panel', close: '#h5-files-close', open: () => openTree(page, 'click') },
+    { name: 'design document', selector: '#h5-design-sheet .h5-design-panel', close: '#h5-design-close', open: () => page.locator('#h5-design').click() },
+  ];
+  const fold = value => page.evaluate(on => document.documentElement.toggleAttribute('data-sidebar-collapsed', on), value); // the header button is under the modal
+  for (const view of views) {
+    const sheet = page.locator(view.selector);
+    const open = async () => { await view.open(); await sheet.waitFor({ state: 'visible' }); };
+    const close = async () => { await page.locator(view.close).click(); await sheet.waitFor({ state: 'hidden' }); };
+    await open();
+    await assertAligned(page, view.selector, `${view.name}, sidebar open`, SIDEBAR, 1440 - SIDEBAR);
+    if (SHOTS) await page.screenshot({ path: path.join(SHOTS, `pc-1440-aligned-${view.name.replace(' ', '-')}.png`) });
+    await fold(true);
+    await assertAligned(page, view.selector, `${view.name}, sidebar folded while open`, 0, 1440);
+    await fold(false);
+    await assertAligned(page, view.selector, `${view.name}, sidebar back while open`, SIDEBAR, 1440 - SIDEBAR);
+    await page.setViewportSize({ width: 1100, height: 700 });
+    await assertAligned(page, view.selector, `${view.name}, window narrowed while open`, SIDEBAR, 1100 - SIDEBAR);
+    await page.setViewportSize({ width: 1920, height: 1080 });
+    await assertAligned(page, view.selector, `${view.name}, window widened while open (no 1200px cap)`, SIDEBAR, 1920 - SIDEBAR);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await assertAligned(page, view.selector, `${view.name}, window back while open`, SIDEBAR, 1440 - SIDEBAR);
+    await close();
+
+    // The real header button; the sheet opens where the terminal now is.
+    await page.locator('#h5-sidebar-toggle').click();
+    await open();
+    await assertAligned(page, view.selector, `${view.name}, opened with the sidebar folded`, 0, 1440);
+    await close();
+    await page.locator('#h5-sidebar-toggle').click();
+
+    // The T-Attention panel gives way to a sheet (attention-feed.mjs): opening one closes it, so the terminal is wide again and the sheet takes that width.
+    await page.locator('#h5-attention').click();
+    await page.waitForFunction(() => document.documentElement.hasAttribute('data-side-panel'));
+    await open();
+    await page.waitForFunction(() => !document.documentElement.hasAttribute('data-side-panel'));
+    await assertAligned(page, view.selector, `${view.name}, opened from the T-Attention panel`, SIDEBAR, 1440 - SIDEBAR);
+    // Any column that narrows the terminal from the right is followed too (the panel's own layout rule, set by hand: it cannot open over a modal sheet).
+    await page.evaluate(() => document.documentElement.setAttribute('data-side-panel', ''));
+    await assertAligned(page, view.selector, `${view.name}, a column on the right`, SIDEBAR, 1440 - SIDEBAR - 560);
+    await page.evaluate(() => document.documentElement.removeAttribute('data-side-panel'));
+    await assertAligned(page, view.selector, `${view.name}, the column gone`, SIDEBAR, 1440 - SIDEBAR);
+    await close();
+
+    // Down to phone width while it is open: the phone geometry, and back.
+    await open();
+    await page.setViewportSize({ width: 800, height: 900 });
+    await settled(page, view.selector);
+    const narrow = await sheet.boundingBox();
+    assert.ok(Math.abs(narrow.x) <= 0.5 && Math.abs(narrow.width - 800) <= 0.5, `${view.name}: the full width under the breakpoint (${JSON.stringify(narrow)})`);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await assertAligned(page, view.selector, `${view.name}, wide again`, SIDEBAR, 1440 - SIDEBAR);
+    await close();
+  }
+  assert.deepEqual(errors, [], 'no page errors');
+  await context.close();
+}
+
 (async () => {
   const browser = await chromium.launch({ headless: true, ...(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {}) });
   try {
@@ -207,6 +287,8 @@ async function checkTopSheets(page, how, phone) {
       assert.deepEqual(errors, [], 'no page errors');
       await context.close();
     }
+
+    await checkTerminalAlignment(browser);
 
     // ── Phone 390x844, touch ──
     {

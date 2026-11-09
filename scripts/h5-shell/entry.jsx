@@ -71,6 +71,9 @@ document.addEventListener('keydown', event => {
 ui.actions.toggleSidebar = () => {
   const collapsed = !ui.get().sidebarCollapsed;
   try { if (collapsed) localStorage.setItem(SIDEBAR_KEY, '1'); else localStorage.removeItem(SIDEBAR_KEY); } catch { /* not remembered */ }
+  // The Session list and the rename field are drawn inside the sidebar: they go with it (as with the sheet of a phone, h5.js `closeTasks`).
+  const menu = ui.get().menu;
+  if (collapsed && menu && (menu.naming || menu.rename)) ui.actions.menuCancel();
   ui.set({ sidebarCollapsed: collapsed });
 };
 

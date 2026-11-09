@@ -11,27 +11,19 @@ const TYPES = { '.js': 'application/javascript', '.css': 'text/css', '.html': 't
 const ossUploads = [];
 const ossPolicies = [];
 const pageErrors = [];
-// The conversations the page's server knows; a test can make the list unreadable.
+// The conversations the page's server knows.
 const chats = [];
-const chatPatches = [];
-const createBodies = []; // the bodies of POST .../terminals and POST .../agent/conversations, in order
+const createBodies = []; // the bodies of POST .../terminals, in order
 const pollUntil = async condition => { for (let i = 0; i < 500 && !condition(); i++) await new Promise(resolve => setTimeout(resolve, 20)); assert.ok(condition(), 'timed out waiting for the server'); };
-let chatListFails = false;
 // What the task file API answers for DESIGN.md of task 1: the document, or a missing file. The paths of the file reads are kept.
 let designMode = 'ready';
 const designReads = [];
 const DESIGN_MD = ['# Design of Fix login', '', 'Intro with **bold** text and a [web link](https://example.test/doc) and a [bad link](javascript:alert(1)).', '', '<script>window.injected = true</script>', '',
   '## Table', '', '| Key | Value |', '| --- | --- |', '| a | 1 |', '', '```js', 'const answer = 42;', '```', '', ...Array.from({ length: 60 }, (_, i) => `Paragraph ${i + 1} of the long design text.`)].join('\n');
 
-// The chat has no back button; going to a terminal from the task sheet leaves it.
 const translateRequests = []; // the texts the phone page sent to /api/translate
 
 const innerWidthOf = viewport => viewport.width;
-
-async function leaveChatByTerminal(page) {
-  await page.locator('#h5-open-tasks').tap();
-  await page.locator('#h5-tasks .h5-terminal-row:not(:has(.h5-terminal-icon.claude, .h5-terminal-icon.codex)) .h5-terminal-main').first().tap();
-}
 
 // A tap on a task only opens the list of its sessions; going to one is a tap on that session.
 async function openTask(page, title, how = 'tap') {
@@ -95,32 +87,11 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     if (url.pathname === '/api/tasks/1/terminals' && method === 'POST') { createBodies.push(route.request().postDataJSON()); return json({ terminal_id: 'h5-second', title: 'Terminal 2' }, 201); }
     if (url.pathname === '/api/tasks/1/terminals/h5-second' && method === 'PATCH') return json({ terminal_id: 'h5-second', title: route.request().postDataJSON().title });
     if (url.pathname === '/api/tasks/1/terminal/control' && method === 'POST') return json({ success: true });
-    // Both local and remote chats use the same view, with a different task base.
+    if (url.pathname === '/api/tasks/1/agent-sessions') return json([]);
+    // A notification link opens a chat.
     const chatPath = url.pathname.replace('/api/remote-servers/7/tasks/9/agent', '/api/tasks/1/agent');
-    // Chat-style agents: the conversation list, the sessions of the task directory, one empty conversation and an idle event stream.
-    if (chatPath === '/api/tasks/1/agent/conversations' && method === 'GET') return chatListFails ? json({ error: 'down' }, 500) : json(chats);
-    if (chatPath === '/api/tasks/1/agent/sessions') return json([{ id: 'session-old-1234', title: 'Old chat' }]);
-    if (chatPath === '/api/tasks/1/agent/conversations' && method === 'POST') {
-      createBodies.push(route.request().postDataJSON());
-      const row = { id: 'c1', agent: route.request().postDataJSON().agent, session_id: null, title: 'New chat', mode: 'ask', running: false, opened: { web: null, h5: null } };
-      chats.push(row);
-      return json(row);
-    }
-    if (chatPath === '/api/tasks/1/agent/conversations/c1' && method === 'PATCH') {
-      // Which chat is open on the phone page is kept by the server.
-      const body = route.request().postDataJSON();
-      if (body.title !== undefined) { const named = chats.find(entry => entry.id === 'c1'); if (named) named.title = body.title; chatPatches.push(body); return json({ success: true }); }
-      chatPatches.push(body);
-      const row = chats.find(entry => entry.id === 'c1');
-      if (row) row.opened[body.surface] = body.opened ? row.opened[body.surface] || Date.now() : null;
-      return json(row || {});
-    }
-    if (chatPath.startsWith('/api/tasks/1/agent/conversations/') && method === 'DELETE') {
-      const index = chats.findIndex(entry => chatPath.endsWith(`/${entry.id}`));
-      if (index < 0) return json({ error: 'CONVERSATION_NOT_FOUND' }, 404);
-      chats.splice(index, 1);
-      return json({ success: true });
-    }
+    // Chat-style agents: the conversation list, one conversation and an idle event stream.
+    if (chatPath === '/api/tasks/1/agent/conversations' && method === 'GET') return json(chats);
     if (chatPath === '/api/tasks/1/agent/conversations/c1') return json({ conversation: { id: 'c1' }, items: [{ id: 'u1', kind: 'user', text: 'hello agent' }, { id: 't1', kind: 'text', text: 'Hi **there**' }], pending: [], status: 'idle', seq: 0 });
     if (chatPath === '/api/tasks/1/agent/conversations/c1/events') return route.fulfill({ contentType: 'text/event-stream', body: ': ok\n\n' });
     if (url.pathname === '/api/oss/config') return json({ enabled: true });
@@ -1302,7 +1273,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     });
     assert.ok(atEnd, 'the "+" sits at the right end of the task row');
     await page.locator('#h5-tasks .h5-task-row:has(.h5-task-item[aria-current="true"]) .h5-task-add').tap();
-    assert.deepEqual(await page.locator('#h5-term-menu-actions button').allTextContents(), ['New Terminal', 'Claude session', 'Codex session', 'Claude agent', 'Codex agent'], 'the "+" opens the Session menu');
+    assert.deepEqual(await page.locator('#h5-term-menu-actions button').allTextContents(), ['New Terminal', 'Claude session', 'Codex session'], 'the "+" opens the Session menu');
     // The optional name field above the Session lists: placeholder, limit, the name stays when moving between the lists, and Enter creates.
     const nameField = page.locator('#h5-new-name-input');
     assert.equal(await nameField.getAttribute('placeholder'), 'Name (optional)');
@@ -1310,17 +1281,16 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     assert.equal(await nameField.inputValue(), '', 'the name starts empty');
     assert.notEqual(await page.evaluate(() => document.activeElement && document.activeElement.id), 'h5-new-name-input', 'the field is not focused on its own (no keyboard pops up)');
     await nameField.fill('  \u8bc4\u5ba1  \u{1F680} ');
-    // A chat-style agent: choose new or an existing session, then a conversation view covers the terminal.
-    await page.locator('#h5-term-menu-actions button', { hasText: 'Claude agent' }).tap();
-    await page.locator('#h5-term-menu-actions button', { hasText: 'Old chat' }).waitFor();
-    assert.deepEqual(await page.locator('#h5-term-menu-actions button').allTextContents(), ['New Claude chat', 'Old chat', 'Back']);
+    // The name stays while moving between the lists.
+    await page.locator('#h5-term-menu-actions button', { hasText: 'Claude session' }).tap();
+    await page.locator('#h5-term-menu-actions button', { hasText: 'New Claude session' }).waitFor();
     assert.equal(await nameField.inputValue(), '  \u8bc4\u5ba1  \u{1F680} ', 'the name is kept in the sub-list');
     await page.locator('#h5-term-menu-actions button', { hasText: 'Back' }).tap();
     await page.locator('#h5-term-menu-actions button', { hasText: 'New Terminal' }).waitFor();
     assert.equal(await nameField.inputValue(), '  \u8bc4\u5ba1  \u{1F680} ', 'and after Back');
-    await page.locator('#h5-term-menu-actions button', { hasText: 'Claude agent' }).tap();
-    await page.locator('#h5-term-menu-actions button', { hasText: 'New Claude chat' }).waitFor();
-    await nameField.press('Enter'); // creates the first entry of the list: New Claude chat
+    // The task sheet does not create or list chats; a notification link still opens one, a conversation view over the terminal.
+    chats.push({ id: 'c1', agent: 'claude', session_id: null, title: 'New chat', mode: 'ask', running: false, opened: { web: null, h5: null } });
+    await page.goto(`${ORIGIN}/h5?openChat=1:c1`);
     await page.locator('#h5-agent .agent-chat').waitFor();
     await page.locator('#h5-tasks').waitFor({ state: 'hidden' }); // opening a chat closes the task sheet
     await page.locator('#h5-agent .ac-bubble', { hasText: 'hello agent' }).waitFor();
@@ -1332,8 +1302,6 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     assert.equal(Math.round(chatBox.y), Math.round(headBox.y + headBox.height), 'the chat starts below the header');
     assert.equal(await page.locator('.h5-header').evaluate(el => el === document.elementFromPoint(el.getBoundingClientRect().x + 20, el.getBoundingClientRect().y + 20) || el.contains(document.elementFromPoint(el.getBoundingClientRect().x + 20, el.getBoundingClientRect().y + 20))), true, 'the header is not covered by the chat');
     assert.equal(await page.locator('#h5-agent .ac-text strong').textContent(), 'there');
-    assert.ok(calls.includes('POST /api/tasks/1/agent/conversations'));
-    assert.deepEqual(createBodies[createBodies.length - 1], { agent: 'claude', title: '\u8bc4\u5ba1 \u{1F680}' }, 'the chat is created with the trimmed name');
     // The Material UI drawer reveals the conversation's left edge on the right without resizing it.
     await page.locator('#h5-open-tasks').tap();
     await page.waitForTimeout(400);
@@ -1353,98 +1321,25 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     await page.waitForFunction(() => getComputedStyle(document.getElementById('h5-agent')).transform === 'none');
     assert.equal(Math.round((await page.locator('#h5-agent').boundingBox()).x), 0);
 
-    // The open chat is kept by the server: a refresh brings it back, and the back button means the person is done with it.
-    const openOnServer = () => chats[0] && chats[0].opened.h5;
-    await pollUntil(() => openOnServer() > 0);
-    assert.deepEqual(chatPatches.at(-1), { opened: true, surface: 'h5' });
-    assert.equal(await page.evaluate(() => localStorage.getItem('h5-agent:local:1')), null, 'nothing about it is kept in the browser any more');
-    await page.reload();
-    await page.locator('#h5-agent .agent-chat').waitFor();
-    await page.locator('#h5-agent .ac-bubble', { hasText: 'hello agent' }).waitFor();
-    await leaveChatByTerminal(page);
-    await page.locator('#h5-agent').waitFor({ state: 'hidden' });
-    await pollUntil(() => openOnServer() === null);
-    assert.deepEqual(chatPatches.at(-1), { opened: false, surface: 'h5' });
-    await page.reload();
-    await page.locator('#h5-task-name', { hasText: 'Fix login' }).waitFor();
-    await page.waitForTimeout(400);
-    assert.equal(await page.locator('#h5-agent').isHidden(), true, 'a chat that was closed does not come back');
-    // A chat that was left is still listed under its task in the task sheet, and tapping it opens it again.
-    await page.locator('#h5-open-tasks').tap();
-    const chatRow = page.locator('#h5-tasks .h5-terminal-row', { hasText: 'New chat' });
-    await chatRow.waitFor();
-    // A chat shows the agent's mark with a small robot and an AGENT badge, so it differs from a terminal that runs the same agent.
-    await chatRow.locator('.h5-robot').waitFor({ state: 'visible' }); // the sheet may still be sliding in
-    assert.equal(await chatRow.locator('.h5-agent-badge').count(), 1);
-    assert.equal(await page.locator('#h5-tasks .h5-terminal-row:not(:has(.h5-robot)) .h5-agent-badge').count(), 0, 'only chats have the badge');
-    await chatRow.locator('.h5-terminal-main').tap();
-    await page.locator('#h5-agent .agent-chat').waitFor();
+    // A chat is not brought back by a refresh: the page comes back on its terminal, and nothing about the chat is kept in the browser.
+    assert.equal(await page.evaluate(() => localStorage.getItem('h5-agent:local:1')), null, 'nothing about it is kept in the browser');
     assert.equal(await page.locator('#h5-session-name').textContent(), 'New chat', 'an open chat shows its own name');
     assert.equal(await headerHeight(), terminalHeader, 'the header keeps its height whatever the name is');
-    await pollUntil(() => openOnServer() > 0);
-    await leaveChatByTerminal(page);
-    assert.equal(await page.locator('#h5-session-name').textContent(), 'Terminal 1', 'back on the terminal, its name');
-    await page.locator('#h5-agent').waitFor({ state: 'hidden' });
-    await pollUntil(() => openOnServer() === null);
-    // Only one of a terminal and a chat is current: with a chat open no terminal row is highlighted, and the chat row is.
+    // With a chat open no terminal row is highlighted; going to a terminal from the task sheet leaves the chat.
     await page.locator('#h5-open-tasks').tap();
-    await page.locator('#h5-tasks .h5-terminal-row', { hasText: 'New chat' }).locator('.h5-terminal-main').tap();
-    await page.locator('#h5-agent .agent-chat').waitFor();
-    await page.locator('#h5-open-tasks').tap();
-    assert.equal(await page.locator('#h5-tasks .h5-terminal-main[aria-current="true"]').count(), 1, 'exactly one row is current');
-    assert.equal(await page.locator('#h5-tasks .h5-terminal-row', { hasText: 'New chat' }).locator('.h5-terminal-main').getAttribute('aria-current'), 'true');
+    await page.locator('#h5-tasks .h5-terminal-main').first().waitFor();
+    assert.equal(await page.locator('#h5-tasks .h5-terminal-main[aria-current="true"]').count(), 0, 'no terminal is current while the chat covers it');
     await page.locator('#h5-tasks .h5-terminal-row:not(:has(.h5-terminal-icon.claude, .h5-terminal-icon.codex)) .h5-terminal-main').first().tap();
     await page.locator('#h5-agent').waitFor({ state: 'hidden' });
+    assert.equal(await page.locator('#h5-session-name').textContent(), 'Terminal 1', 'back on the terminal, its name');
     await page.locator('#h5-open-tasks').tap();
-    assert.equal(await page.locator('#h5-tasks .h5-terminal-main[aria-current="true"]').count(), 1);
-    assert.equal(await page.locator('#h5-tasks .h5-terminal-row', { hasText: 'New chat' }).locator('.h5-terminal-main').getAttribute('aria-current'), null);
-    // Chat actions (the three dots on a chat row): rename, and delete with a confirmation; the sheet is still open.
-    await page.locator('#h5-tasks .h5-terminal-row', { hasText: 'New chat' }).locator('.h5-terminal-more').tap();
-    assert.equal(await page.locator('#h5-term-menu-actions button', { hasText: 'Copy text' }).count(), 0, 'a chat row has no Copy text item');
-    await page.locator('#h5-term-menu-actions button', { hasText: 'Rename' }).tap();
-    await page.locator('#h5-term-rename-input').fill('Renamed chat');
-    await page.locator('#h5-term-rename-input').press('Enter');
-    await page.locator('#h5-tasks .h5-terminal-row', { hasText: 'Renamed chat' }).waitFor();
-    assert.deepEqual(chatPatches.at(-1), { title: 'Renamed chat' });
-    chats.push({ id: 'c2', agent: 'codex', session_id: null, title: 'Spare chat', mode: 'ask', running: false, opened: { web: null, h5: null } });
-    await page.reload();
-    await page.locator('#h5-open-tasks').tap();
-    page.once('dialog', dialog => dialog.dismiss());
-    await page.locator('#h5-tasks .h5-terminal-row', { hasText: 'Spare chat' }).locator('.h5-terminal-more').tap();
-    await page.locator('#h5-term-menu-actions button', { hasText: 'Delete' }).tap();
-    await page.waitForTimeout(200);
-    assert.ok(chats.some(entry => entry.id === 'c2'), 'declining the confirmation keeps the chat');
-    page.once('dialog', dialog => dialog.accept());
-    await page.locator('#h5-term-menu-actions button', { hasText: 'Delete' }).tap(); // the menu stays open after a declined confirmation
-    await pollUntil(() => !chats.some(entry => entry.id === 'c2'));
-    await page.locator('#h5-tasks .h5-terminal-row', { hasText: 'Spare chat' }).waitFor({ state: 'detached' });
-    await page.reload();
-    // It is the server that remembers: a list that cannot be read opens nothing and forgets nothing; a chat that no longer exists is not shown.
-    chats[0].opened.h5 = Date.now();
-    chatListFails = true;
-    await page.reload();
+    await page.locator('#h5-tasks .h5-terminal-main[aria-current="true"]').waitFor();
+    assert.equal(await page.locator('#h5-tasks .h5-terminal-main[aria-current="true"]').count(), 1, 'the terminal is current again');
+    await page.goto(`${ORIGIN}/h5`);
     await page.locator('#h5-task-name', { hasText: 'Fix login' }).waitFor();
     await page.waitForTimeout(400);
-    assert.equal(await page.locator('#h5-agent').isHidden(), true);
-    assert.ok(openOnServer() > 0);
-    chatListFails = false;
-    await page.reload();
-    await page.locator('#h5-agent .agent-chat').waitFor();
-    // What an earlier version kept in the browser moves to the server, once.
-    await leaveChatByTerminal(page);
-    await pollUntil(() => openOnServer() === null);
-    const patchesBefore = chatPatches.length;
-    await page.evaluate(() => localStorage.setItem('h5-agent:local:1', 'c1'));
-    await page.reload();
-    await page.locator('#h5-agent .agent-chat').waitFor();
-    await pollUntil(() => openOnServer() > 0);
-    assert.equal(chatPatches.length, patchesBefore + 1);
-    assert.equal(await page.evaluate(() => localStorage.getItem('h5-agent:local:1')), null, 'the old record is gone');
+    assert.equal(await page.locator('#h5-agent').isHidden(), true, 'a chat does not come back after a refresh');
     chats.length = 0;
-    await page.reload();
-    await page.locator('#h5-task-name', { hasText: 'Fix login' }).waitFor();
-    await page.waitForTimeout(400);
-    assert.equal(await page.locator('#h5-agent').isHidden(), true, 'a deleted chat is not shown');
     await page.locator('#h5-open-tasks').tap();
     await page.locator('#h5-tasks .h5-task-row:has(.h5-task-item[aria-current="true"]) .h5-task-add').tap();
     assert.equal(await page.locator('#h5-new-name-input').inputValue(), '', 'a new Session sheet starts with an empty name');
@@ -1683,16 +1578,6 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     assert.equal(await page.locator('#h5-task-name').textContent(), 'Write docs');
     assert.equal(await page.locator('#h5-session-name').textContent(), 'Docs terminal');
     await page.waitForFunction(() => document.querySelector('.h5-xterm:not([hidden])')?.dataset.terminalId === 'h5-docs');
-    // And a chat of another task: that task is selected and the chat opens over it.
-    chats.length = 0;
-    chats.push({ id: 'c1', agent: 'claude', session_id: null, title: 'Cross chat', mode: 'ask', running: false, opened: { web: null, h5: null } });
-    await page.locator('#h5-open-tasks').tap();
-    // Fix login was left open, so its list is there already (read again when the sheet opens).
-    await page.locator('#h5-tasks .h5-terminal-list[aria-label="Fix login"] .h5-terminal-main', { hasText: 'Cross chat' }).tap();
-    await page.locator('#h5-agent .agent-chat').waitFor();
-    assert.equal(await page.locator('#h5-task-name').textContent(), 'Fix login');
-    assert.equal(await page.locator('#h5-session-name').textContent(), 'Cross chat');
-    await pollUntil(() => openOnServer() > 0);
 
     // Settings: the gear at the bottom of the task sidebar opens a sheet with the language toggle and the PC one-click update; the header has no settings button.
     assert.equal(await page.locator('#h5-open-settings').count(), 0, 'the header has no settings button');
@@ -1866,40 +1751,16 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     await old.page.waitForFunction(() => window.sockets.length === 1);
     assert.match(await old.page.evaluate(() => new URL(window.sockets[0].url).search), /terminalId=default&clientId=/);
     await old.context.close();
-    // Chat capability controls the phone menu, and opening a remote chat uses only remote URLs.
-    for (const supported of [false, true]) {
-      chats.length = 0;
-      const remote = await openPage(browser, { remoteTerminals: true, remoteChat: true });
-      if (!supported) await remote.page.route(`${ORIGIN}/api/remote-servers/7/info`, route => route.fulfill({ contentType: 'application/json', body: '{"capabilities":[]}' }));
-      await remote.page.locator('#h5-engine').selectOption('remote:7');
-      await openTask(remote.page, 'Remote task');
-      await remote.page.locator('#h5-open-tasks').tap();
-      await Promise.all([remote.page.waitForResponse(`${ORIGIN}/api/remote-servers/7/info`), remote.page.locator('.h5-task-add').tap()]);
-      if (supported) {
-        await remote.page.locator('#h5-term-menu-actions button', { hasText: 'Codex agent' }).tap();
-        await remote.page.locator('#h5-term-menu-actions button', { hasText: 'New Codex chat' }).tap();
-        await remote.page.locator('#h5-agent .agent-chat').waitFor();
-        assert.ok(remote.calls.includes('POST /api/remote-servers/7/tasks/9/agent/conversations'));
-        assert.ok(remote.calls.includes('GET /api/remote-servers/7/tasks/9/agent/conversations/c1'));
-        assert.ok(!remote.calls.some(call => call.includes('/api/tasks/1/agent')));
-        await pollUntil(() => chats[0]?.opened.h5 > 0);
-        await remote.page.reload();
-        await remote.page.locator('#h5-agent .agent-chat').waitFor();
-        await leaveChatByTerminal(remote.page);
-        await pollUntil(() => chats[0]?.opened.h5 === null);
-        await remote.page.locator('#h5-open-tasks').tap();
-        await remote.page.locator('.h5-task-add').tap();
-        await remote.page.locator('#h5-term-menu-actions button', { hasText: 'Codex agent' }).tap();
-        await remote.page.locator('#h5-term-menu-actions button', { hasText: 'New Codex chat' }).tap();
-        await remote.page.locator('#h5-agent .agent-chat').waitFor();
-        // A source change hides the old view without clearing its saved open state.
-        await remote.page.locator('#h5-engine').selectOption('local');
-        await remote.page.locator('#h5-agent').waitFor({ state: 'hidden' });
-      } else {
-        assert.equal(await remote.page.locator('#h5-term-menu-actions button', { hasText: 'Codex agent' }).count(), 0);
-      }
-      await remote.context.close();
-    }
+    // A remote Engine that has chats: the "+" offers terminals only and the page does not ask for its chats.
+    const remote = await openPage(browser, { remoteTerminals: true, remoteChat: true });
+    await remote.page.locator('#h5-engine').selectOption('remote:7');
+    await openTask(remote.page, 'Remote task');
+    await remote.page.locator('#h5-open-tasks').tap();
+    await remote.page.locator('.h5-task-add').tap();
+    await remote.page.waitForTimeout(300);
+    assert.deepEqual(await remote.page.locator('#h5-term-menu-actions button').allTextContents(), ['New Terminal', 'Claude session', 'Codex session']);
+    assert.ok(!remote.calls.some(call => call.includes('/agent/conversations')), 'no chat is read');
+    await remote.context.close();
     assert.deepEqual(pageErrors, [], 'the phone shell has no browser runtime errors');
     console.log('Phone page layout, phone terminals, keys, paste, image upload, translate-and-send and old-engine guard passed.');
   } finally { await browser.close(); }

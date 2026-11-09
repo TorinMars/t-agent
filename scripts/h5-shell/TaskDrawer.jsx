@@ -16,40 +16,26 @@ import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ChevronRightIcon from '@mui/icons-material/ChevronRight';
 import SearchIcon from '@mui/icons-material/Search';
 import SettingsIcon from '@mui/icons-material/Settings';
-import SmartToyOutlinedIcon from '@mui/icons-material/SmartToyOutlined';
 import MoreHorizIcon from '@mui/icons-material/MoreHoriz';
 import UnfoldLessIcon from '@mui/icons-material/UnfoldLess';
 import UnfoldMoreIcon from '@mui/icons-material/UnfoldMore';
-import { DomIcon, Pill, api, chatMark, t, terminalMark } from './common.jsx';
+import { DomIcon, Pill, api, t, terminalMark } from './common.jsx';
 import { TOUCH } from './theme.mjs';
 import { Icon } from './Icons.jsx';
 
 const GLYPHS = { shell: '>_', claude: '✳', codex: 'GPT' };
 
-// The sessions under a task: its terminals, then its chats. Every session row has "⋯" actions, under the selected task or any other.
+// The sessions under a task are its terminals. Every session row has "⋯" actions, under the selected task or any other.
 const AGENT_NAMES = { claude: 'Claude', codex: 'Codex' };
 
 // The second line of a session row: what it is, the folder of a terminal that kept its own directory after the task's working directory
-// changed (the full path is the row's tooltip), then its state or when it last changed.
+// changed (the full path is the row's tooltip).
 function subtitle(row) {
   const name = AGENT_NAMES[row.agent];
-  // A chat is an "Agent"; a Claude / Codex running in a terminal is a "Session".
-  const kind = row.kind === 'chat' ? `${name || ''} ${t('Agent')}`.trim() : row.kind === 'terminal' ? (name ? `${name} ${t('Session')}` : t('Terminal')) : '';
+  // A Claude / Codex running in a terminal is a "Session".
+  const kind = row.kind === 'terminal' ? (name ? `${name} ${t('Session')}` : t('Terminal')) : '';
   const folder = row.otherDir ? row.otherDir.replace(/\/+$/, '').split('/').pop() || row.otherDir : '';
-  const state = row.running ? t('Running') : row.pending ? t('Pending') : ago(row.updated);
-  return [kind, folder, state].filter(Boolean).join(' \u00B7 ');
-}
-
-// "12 min ago" from a 'YYYY-MM-DD HH:MM:SS' time (UTC, as the server writes it); empty when it is not known.
-function ago(value) {
-  if (!value) return '';
-  const time = Date.parse(`${String(value).replace(' ', 'T')}Z`);
-  if (!Number.isFinite(time)) return '';
-  const minutes = Math.max(0, Math.round((Date.now() - time) / 60000));
-  if (minutes < 1) return t('Just now');
-  if (minutes < 60) return `${minutes} ${t('min ago')}`;
-  if (minutes < 1440) return `${Math.round(minutes / 60)} ${t('h ago')}`;
-  return `${Math.round(minutes / 1440)} ${t('d ago')}`;
+  return [kind, folder].filter(Boolean).join(' \u00B7 ');
 }
 
 // Keeps the node in the visible part of the task list: when it appears, and when the visible area changes (the on-screen keyboard opens or closes;
@@ -135,7 +121,7 @@ function RenameRow({ menu, ui, row }) {
   );
 }
 
-// The sessions under a task: its terminals, then its chats. Every session row has "⋯" actions, for the task the row is under.
+// The sessions under a task: its terminals. Every session row has "⋯" actions, for the task the row is under.
 function Sessions({ ui, taskId, sessions, menu }) {
   return (
     <List className="h5-terminal-list" role="group" aria-label={sessions.label} dense disablePadding sx={{ ml: 1.75, mb: 0.125, pl: 0.125, borderLeft: 1, borderColor: 'divider' }}>
@@ -150,35 +136,19 @@ function Sessions({ ui, taskId, sessions, menu }) {
             sx={{ flex: '1 1 auto', minWidth: 0, minHeight: 40, py: 0.125, px: 0.75, borderRadius: 2, gap: 0.875, textAlign: 'left', fontSize: 14, '&.Mui-selected': { bgcolor: 'transparent' } }}
           >
             <Box component="span" className={`h5-terminal-icon ${row.agent || 'shell'}`} aria-hidden="true" sx={{ position: 'relative', flex: '0 0 28px', width: 28, height: 28, borderRadius: 1.5, bgcolor: 'action.hover', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontFamily: 'monospace', color: row.agent === 'claude' ? '#d97757' : 'text.secondary', '& svg': { width: 18, height: 18 } }}>
-              {row.kind === 'chat' ? <DomIcon make={terminalMark(row.agent)} />
-                : row.kind === 'terminal' && row.agent ? <DomIcon make={terminalMark(row.agent)} />
-                  : GLYPHS.shell}
-              {row.kind === 'chat' ? <Box component="span" className="h5-robot" sx={{ position: 'absolute', right: -4, bottom: -4, width: 16, height: 16, borderRadius: '50%', bgcolor: 'background.paper', border: 1, borderColor: 'divider', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: 'text.primary', '& svg': { width: 11, height: 11 } }}><SmartToyOutlinedIcon /></Box> : null}
+              {row.kind === 'terminal' && row.agent ? <DomIcon make={terminalMark(row.agent)} /> : GLYPHS.shell}
             </Box>
             <Box component="span" sx={{ minWidth: 0, display: 'flex', flexDirection: 'column' }}>
               <Box component="span" className="h5-terminal-name" sx={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.title}</Box>
-              {subtitle(row) ? <Box component="span" className="h5-terminal-sub" title={row.otherDir ? `${t('Directory')}: ${row.otherDir}` : undefined} sx={{ fontSize: 12, lineHeight: 1.3, color: row.running ? 'success.main' : 'text.secondary', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{subtitle(row)}</Box> : null}
+              {subtitle(row) ? <Box component="span" className="h5-terminal-sub" title={row.otherDir ? `${t('Directory')}: ${row.otherDir}` : undefined} sx={{ fontSize: 12, lineHeight: 1.3, color: 'text.secondary', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{subtitle(row)}</Box> : null}
             </Box>
-            {row.kind === 'chat' ? <Pill className="h5-agent-badge" label={t('AGENT')} sx={{ ml: 'auto', flex: '0 0 auto', height: 20, px: 0.75, fontSize: 10, letterSpacing: 0.5 }} /> : null}
           </ListItemButton>
           {row.more ? (
-            <IconButton className="h5-terminal-more" size="small" sx={{ p: 0.5 }} aria-label={t(row.kind === 'chat' ? 'Chat actions' : 'Terminal actions')} title={t(row.kind === 'chat' ? 'Chat actions' : 'Terminal actions')} onClick={() => ui.actions.rowMore(taskId, row)}>
+            <IconButton className="h5-terminal-more" size="small" sx={{ p: 0.5 }} aria-label={t('Terminal actions')} title={t('Terminal actions')} onClick={() => ui.actions.rowMore(taskId, row)}>
               <MoreHorizIcon fontSize="small" />
             </IconButton>
           ) : null}
         </Box>)}
-        {row.children && row.children.length ? (
-          <List className="h5-subagent-list" role="group" aria-label={t('Agents')} dense disablePadding sx={{ ml: 3.5, pl: 0.125, borderLeft: 1, borderColor: 'divider' }}>
-            {row.children.map(sub => (
-              <ListItemButton key={sub.id} component="button" className="h5-subagent-row" data-view={sub.id} aria-current={sub.current ? 'true' : undefined} selected={sub.current} onClick={() => ui.actions.openRow(taskId, sub)} title={sub.title}
-                sx={{ minHeight: 32, py: 0.125, px: 0.75, borderRadius: 2, gap: 0.875, textAlign: 'left', fontSize: 13, width: '100%', borderLeft: 3, borderColor: sub.current ? 'primary.main' : 'transparent', '&.Mui-selected': { bgcolor: 'action.selected' } }}>
-                <Box component="span" className={`h5-subagent-dot ${sub.status}`} aria-hidden="true" sx={{ flex: '0 0 8px', width: 8, height: 8, borderRadius: '50%', bgcolor: sub.status === 'running' ? 'success.main' : sub.status === 'error' ? 'error.main' : 'text.disabled' }} />
-                <Box component="span" translate="no" sx={{ minWidth: 0, flex: '1 1 auto', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sub.title}</Box>
-                <Box component="span" sx={{ flex: '0 0 auto', fontSize: 11, color: 'text.secondary' }}>{t(sub.status === 'running' ? 'Running' : sub.status === 'error' ? 'Failed' : 'Done')}</Box>
-              </ListItemButton>
-            ))}
-          </List>
-        ) : null}
         </React.Fragment>
       ))}
     </List>
@@ -334,7 +304,7 @@ export function TaskDrawer({ state, ui }) {
   // (a name field in the list stays visible above the keyboard).
   const paperProps = { className: 'h5-sheet-panel', sx: { width: state.wide ? 320 : 'min(82vw, 360px)', maxWidth: '100%', height: 'var(--h5-height, 100%)', backgroundImage: 'none' } };
   if (state.wide) {
-    // Folded away with the header button (entry.jsx `toggleSidebar`): the terminal or chat then fills the whole width.
+    // Folded away with the header button (entry.jsx `toggleSidebar`): what is shown then fills the whole width.
     if (state.sidebarCollapsed) return null;
     return (
       // The permanent drawer's own element has no size (its paper is fixed), so the sidebar is the paper.

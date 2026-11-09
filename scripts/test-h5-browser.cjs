@@ -341,7 +341,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       await page.waitForFunction(() => { const panel = document.querySelector('.h5-design-panel'); return panel && ['none', 'matrix(1, 0, 0, 1, 0, 0)'].includes(getComputedStyle(panel).transform); }, null, { timeout: 3000 }); // the slide has ended
       const sheet = await page.locator('.h5-design-panel').boundingBox();
       const vh = page.viewportSize().height;
-      assert.ok(Math.abs(sheet.height - vh * 0.88) <= 2 && Math.abs(sheet.y + sheet.height - vh) <= 1, `the sheet is 88% of the height, at the bottom (${sheet.y}, ${sheet.height})`);
+      assert.ok(Math.abs(sheet.height - vh * 0.88) <= 2 && Math.abs(sheet.y) <= 1, `the sheet is 88% of the height, at the top (${sheet.y}, ${sheet.height})`);
       assert.equal(await page.locator('#h5-design-body table td').first().textContent(), 'a', 'tables are rendered');
       assert.equal((await page.locator('#h5-design-body .md-code-block code').textContent()).trim(), 'const answer = 42;', 'code blocks are rendered');
       assert.equal(await page.locator('#h5-design-body a[href="https://example.test/doc"]').count(), 1, 'web links stay links');
@@ -358,14 +358,14 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       // A tap on the dimmed page closes it too.
       await design.tap();
       await page.locator('#h5-design-body h1').waitFor();
-      await page.mouse.click(200, 30);
+      await page.mouse.click(200, vh - 30);
       await page.locator('.h5-design-panel').waitFor({ state: 'hidden' });
       // Escape closes it.
       await design.tap();
       await page.locator('#h5-design-body h1').waitFor();
       await page.keyboard.press('Escape');
       await page.locator('.h5-design-panel').waitFor({ state: 'hidden' });
-      // A swipe down on the sheet closes it (real touch events through the DevTools protocol).
+      // A swipe up on the sheet closes it (real touch events through the DevTools protocol).
       await design.tap();
       await page.locator('#h5-design-body h1').waitFor();
       await page.waitForFunction(() => ['none', 'matrix(1, 0, 0, 1, 0, 0)'].includes(getComputedStyle(document.querySelector('.h5-design-panel')).transform), null, { timeout: 3000 });
@@ -375,7 +375,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
         const x = handle.x + handle.width / 2;
         let y = handle.y + handle.height / 2;
         await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
-        for (let i = 0; i < 12; i++) { y += 40; await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y }] }); await page.waitForTimeout(16); }
+        for (let i = 0; i < 12; i++) { y -= 40; await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y }] }); await page.waitForTimeout(16); }
         await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
         await cdp.detach();
       }

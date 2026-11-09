@@ -3,7 +3,7 @@
 // native titles on icon buttons, Escape closing the saved commands menu from the terminal; Enter translates and sends, Alt+Enter sends as typed, Cmd/Ctrl+Enter is a new line, and a send gives the focus back to the terminal;
 // typing with nothing focused reaches the terminal, Escape in the draft box goes back to it, Cmd/Ctrl+K focuses the session search; a shorter window does
 // NOT pin the terminal (it was taken for the on-screen keyboard); the terminal "done" acknowledgement (local and remote Engine) and the next-session
-// button seeing it idle; folding the sidebar (remembered) and the design document as a right side panel, both refitting the terminal.
+// button seeing it idle; folding the sidebar (remembered) (refitting the terminal) and the design document as the sheet that slides down from the top (no refit).
 // H5_SHOT_DIR=<dir> saves screenshots there (PC 1440x900: sidebar open, folded, design panel; phone 390x844).
 const { chromium } = require('playwright');
 const fs = require('node:fs');
@@ -237,23 +237,31 @@ const waitAck = (url, id, from = 0) => new Promise((resolve, reject) => {
       await page.waitForFunction(() => window.sockets.length && document.getElementById('h5-session-name').textContent === 'Terminal 1');
       await history(page);
 
-      // The design document opens as a panel on the right, beside the terminal (not a bottom sheet); the terminal refits narrower; Escape closes it.
+      // The design document opens as the sheet that slides down from the top, over the dimmed page, as on a phone; the terminal keeps its size; Escape closes it.
       const colsBefore = (await resizes(page)).at(-1).cols;
-      await page.locator('#h5-design').click();
-      await page.locator('.h5-design-side h1', { hasText: 'Design of Fix login' }).waitFor({ timeout: 10000 });
-      await page.waitForTimeout(500); // the slide-in
-      const panel = await page.locator('.h5-design-side').boundingBox();
       const app = await page.locator('#h5-app').boundingBox();
-      assert.ok(Math.abs(panel.x + panel.width - viewport.width) <= 1 && panel.height >= viewport.height - 1, `${label}: a full-height panel at the right edge (${JSON.stringify(panel)})`);
-      assert.ok(app.x + app.width <= panel.x + 1, `${label}: the page ends where the panel starts`);
-      assert.equal(await page.locator('.MuiBackdrop-root').count(), 0, 'the page is not dimmed');
-      assert.ok((await resizes(page)).at(-1).cols < colsBefore, `${label}: the terminal refits narrower beside the panel`);
+      await page.locator('#h5-design').click();
+      await page.locator('.h5-design-panel h1', { hasText: 'Design of Fix login' }).waitFor({ timeout: 10000 });
+      await page.waitForFunction(() => { const p = document.querySelector('.h5-design-panel'); return p && ['none', 'matrix(1, 0, 0, 1, 0, 0)'].includes(getComputedStyle(p).transform); }, null, { timeout: 3000 }); // the slide has ended
+      const panel = await page.locator('.h5-design-panel').boundingBox();
+      const sheetWidth = Math.min(viewport.width, 1200);
+      assert.ok(Math.abs(panel.y) <= 1 && Math.abs(panel.height - viewport.height * 0.88) <= 2, `${label}: 88% of the height, at the top (${JSON.stringify(panel)})`);
+      assert.ok(Math.abs(panel.width - sheetWidth) <= 1 && Math.abs(panel.x - (viewport.width - sheetWidth) / 2) <= 1, `${label}: centred, at most 1200px wide (${JSON.stringify(panel)})`);
+      assert.equal(await page.evaluate(() => Boolean(document.querySelector('.h5-design-panel').closest('.MuiDrawer-anchorTop'))), true, `${label}: anchored to the top`);
+      assert.equal(await page.evaluate(() => document.documentElement.hasAttribute('data-side-panel')), false, `${label}: the page makes no room for it`);
+      assert.deepEqual(await page.locator('#h5-app').boundingBox(), app, `${label}: the page behind is not resized`);
+      assert.ok(await page.locator('#h5-design-sheet .MuiBackdrop-root').isVisible(), `${label}: the page is dimmed`);
+      assert.equal((await resizes(page)).at(-1).cols, colsBefore, `${label}: no terminal refit`);
       if (SHOTS && viewport.width === 1440) await page.screenshot({ path: path.join(SHOTS, 'pc-1440-design-panel.png') });
       await page.locator('#h5-design-body').focus();
       await page.keyboard.press('Escape');
-      await page.waitForFunction(() => !document.documentElement.hasAttribute('data-side-panel'));
-      await page.waitForTimeout(300);
-      assert.ok(Math.abs((await page.locator('#h5-app').boundingBox()).width - app.width - panel.width) <= 2, `${label}: closed, the page is wide again`);
+      await page.locator('.h5-design-panel').waitFor({ state: 'hidden' });
+      // A click beside the sheet closes it too.
+      await page.locator('#h5-design').click();
+      await page.locator('.h5-design-panel h1', { hasText: 'Design of Fix login' }).waitFor({ timeout: 10000 });
+      await page.mouse.click(viewport.width / 2, viewport.height - 10);
+      await page.locator('.h5-design-panel').waitFor({ state: 'hidden' });
+      assert.deepEqual(await page.locator('#h5-app').boundingBox(), app, `${label}: closed, the page is as it was`);
 
       // Acknowledgement (once): showing a Pending terminal acks it; the next-session button then finds nothing pending.
       if (viewport.width === 1440) {
@@ -418,6 +426,6 @@ const waitAck = (url, id, from = 0) => new Promise((resolve, reject) => {
       await context.close();
     }
     assert.deepEqual(pageErrors, [], 'no runtime errors');
-    console.log('MUI page on a computer: pointer layout, shortcuts, typing to the terminal, Escape, Cmd/Ctrl+K, no pinning on a shorter window, ack (local, remote, phone), sidebar folding, the design side panel and the saved commands of each terminal kind passed.');
+    console.log('MUI page on a computer: pointer layout, shortcuts, typing to the terminal, Escape, Cmd/Ctrl+K, no pinning on a shorter window, ack (local, remote, phone), sidebar folding, the design document top sheet and the saved commands of each terminal kind passed.');
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

@@ -34,9 +34,9 @@ export function App({ ui }) {
       if (chat) chat.inert = false;
     };
   }, [tasksModal]);
-  // The wide layout's folded sidebar and the right side panel (the design document / file preview, or the file tree) change the page's side offsets in h5.css.
+  // The wide layout's folded sidebar and the right side panel (T-Attention) change the page's side offsets in h5.css.
   const folded = state.wide && state.sidebarCollapsed;
-  const sidePanel = state.wide && Boolean((state.design && state.design.open) || (state.files && state.files.open) || (state.attention && state.attention.open));
+  const sidePanel = state.wide && Boolean(state.attention && state.attention.open);
   useLayoutEffect(() => {
     document.documentElement.toggleAttribute('data-sidebar-collapsed', folded);
     document.documentElement.toggleAttribute('data-side-panel', sidePanel);
@@ -53,7 +53,7 @@ export function App({ ui }) {
       <Lazy open={state.settingsOpen}><SettingsDrawer state={state} ui={ui} /></Lazy>
       <Lazy open={Boolean(state.menu)}><TermMenu state={state} ui={ui} /></Lazy>
       <Lazy open={state.copyText !== null}><CopyDialog state={state} ui={ui} /></Lazy>
-      {/* The file tree comes first: a file opened from it lies over it (the file panel, drawn after it, or a modal sheet opened after it). */}
+      {/* The file tree comes first: a file opened from it lies over it (a modal sheet opened after it). */}
       <Lazy open={Boolean(state.files && state.files.open)}><FileTreeSheet state={state} ui={ui} /></Lazy>
       <Lazy open={Boolean(state.design && state.design.open)}><DesignSheet state={state} ui={ui} /></Lazy>
       <Lazy open={Boolean(state.attention && state.attention.open)}><AttentionPanel state={state} ui={ui} /></Lazy>

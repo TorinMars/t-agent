@@ -1,5 +1,5 @@
 // File links in the page's terminal on a computer (1440x900, mouse): the page at `/` (public/h5.html) with the real task routes, the real terminal
-// WebSocket handler, xterm and a real shell. A path the shell prints is a link on hover; a click opens it in the side panel (the line of
+// WebSocket handler, xterm and a real shell. A path the shell prints is a link on hover; a click opens it in the top sheet (the line of
 // "file:line" marked), a missing path says so, and relative paths follow the shell's live directory (after "cd", read by the server; or an OSC 7
 // report). A path outside the working directory (absolute, ~/, above the root, from a reported directory outside it) is a link too on the local
 // Client, read with `GET /api/fs/content` (a fake here that reads the disk: the server side is tested on its own) and never with the task file API.
@@ -151,14 +151,14 @@ let server; let browser; let wss;
     const panel = page.locator('#h5-design-sheet .h5-design-panel');
     const closePanel = async () => { await page.locator('#h5-design-close').click(); await panel.waitFor({ state: 'hidden' }); };
 
-    // A click on a path opens it in the side panel at line 42.
+    // A click on a path opens it in the top sheet at line 42.
     const appPoint = await pointOf('L1 ', 'src/app.js:42');
     await hover(appPoint);
     assert.equal(await underlined(), true, 'a path inside the working directory is a link on hover');
     assert.equal(fileRequests.length, 0, 'hovering sends nothing to the file API');
     await click(appPoint);
     await panel.waitFor({ state: 'visible' });
-    assert.match(await panel.getAttribute('class'), /h5-design-side/, 'on a wide screen the file opens in the side panel');
+    assert.equal(await panel.evaluate(node => Boolean(node.closest('.MuiDrawer-anchorTop'))), true, 'on a wide screen too the file opens in the sheet from the top');
     await page.locator('#h5-design-body .h5-file-line.is-target').waitFor();
     assert.equal(await page.locator('#h5-design-title').textContent(), 'app.js');
     assert.equal(await page.locator('#h5-design-body .h5-file-line.is-target').getAttribute('data-line'), '42');

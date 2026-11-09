@@ -133,34 +133,54 @@ const localImageFailed = event => {
   img.replaceWith(span);
 };
 
-// A swipe down closes the bottom sheet (what MUI's SwipeableDrawer did, in a few lines and without its 7 KB). The finger moves the sheet with it;
-// letting go after 25% of the sheet's height, or after a quick flick down, closes it, else it slides back. A swipe that starts on the document
-// while it is scrolled away from its top scrolls the document instead. The sheet's closing slide starts from where the finger left it.
-export function useSwipeDown(onClose) {
+// The file sheets (the design document, the file viewer and the file tree) slide down from the top on every screen width: one look, 88% of the height, at
+// most 1200px wide and centred. They are modals, so the page behind (sidebar, terminal, bottom bar) is dimmed and not resized.
+export const TOP_SHEET_PAPER = { height: '88dvh', maxWidth: 1200, width: '100%', mx: 'auto', borderRadius: '0 0 16px 16px', backgroundImage: 'none', display: 'flex', flexDirection: 'column', overflow: 'hidden', pt: 'env(safe-area-inset-top)' };
+
+// The grip at the bottom edge of a top sheet (phone only: a computer has the Close button, Escape and a click beside the sheet).
+export function SheetHandle() {
+  return (
+    <Box className="h5-design-handle" aria-hidden="true" sx={{ flex: '0 0 auto', display: 'flex', justifyContent: 'center', pt: 0.5, pb: 1 }}>
+      <Box sx={{ width: 36, height: 4, borderRadius: 2, bgcolor: 'text.disabled' }} />
+    </Box>
+  );
+}
+
+// True when the touch began inside something that can still scroll further down (the document, the tree, a table), so a swipe up there is reading on.
+function scrollsFurther(node, paper) {
+  for (let el = node; el && el !== paper; el = el.parentElement) {
+    if (el.scrollHeight - el.clientHeight - el.scrollTop > 1 && /auto|scroll/.test(getComputedStyle(el).overflowY)) return true;
+  }
+  return false;
+}
+
+// A swipe up closes the top sheet (what MUI's SwipeableDrawer did, in a few lines and without its 7 KB). The finger moves the sheet with it; letting go
+// after 25% of the sheet's height, or after a quick flick up, closes it, else it slides back. A swipe that starts on content that can still scroll down
+// scrolls that content instead. The sheet's closing slide starts from where the finger left it.
+export function useSwipeUp(onClose) {
   const drag = useRef(null);
   const paper = event => event.currentTarget;
   const onTouchStart = event => {
     if (event.touches.length !== 1) { drag.current = null; return; }
     // A touch in the outline list (a drawer of its own, whose React events still bubble through the sheet) never drags the sheet.
     if (!event.currentTarget.contains(event.target)) { drag.current = null; return; }
-    const body = event.target.closest('.h5-design-body, .h5-files-body'); // the document, or the file tree (FileTree.jsx)
-    if (body && body.scrollTop > 0) { drag.current = null; return; }
+    if (scrollsFurther(event.target, event.currentTarget)) { drag.current = null; return; }
     drag.current = { y: event.touches[0].clientY, x: event.touches[0].clientX, t: performance.now(), dy: 0, active: false };
   };
   const onTouchMove = event => {
     const d = drag.current;
     if (!d) return;
-    const dy = event.touches[0].clientY - d.y;
+    const dy = d.y - event.touches[0].clientY; // how far up the finger has moved
     const dx = event.touches[0].clientX - d.x;
     if (!d.active) {
       if (Math.abs(dy) < 8 && Math.abs(dx) < 8) return;
-      if (dy <= 0 || Math.abs(dx) > Math.abs(dy)) { drag.current = null; return; } // up or sideways: a scroll, not a swipe
+      if (dy <= 0 || Math.abs(dx) > Math.abs(dy)) { drag.current = null; return; } // down or sideways: a scroll, not a swipe
       d.active = true;
     }
     d.dy = Math.max(0, dy);
     const node = paper(event);
     node.style.transition = 'none';
-    node.style.transform = `translateY(${d.dy}px)`;
+    node.style.transform = `translateY(${-d.dy}px)`;
   };
   const onTouchEnd = event => {
     const d = drag.current;
@@ -180,10 +200,9 @@ export function useSwipeDown(onClose) {
 // scrolls the document to that heading. Heading texts are the document's own, so the translation layer leaves them alone (translate="no").
 const SECTION_LINE = 40; // px from the top of the document view: a heading above this line has started the section being read
 const JUMP_GAP = 8; // px left above a heading the outline scrolled to
-const OUTLINE_KEY = 'h5-design-outline'; // wide screens: the outline column shown ('1') or folded away ('0'); unset: shown when the panel is wide enough
+const OUTLINE_KEY = 'h5-design-outline'; // wide screens: the outline column shown ('1') or folded away ('0'); unset: shown
 const readColumnOpen = () => {
-  try { const saved = localStorage.getItem(OUTLINE_KEY); if (saved === '1' || saved === '0') return saved === '1'; } catch { /* no storage */ }
-  return typeof window.matchMedia === 'function' && window.matchMedia('(min-width: 1140px)').matches; // the side panel (42vw) is then about 480px or more
+  try { return localStorage.getItem(OUTLINE_KEY) !== '0'; } catch { return true; } // the sheet is at least 900px wide, so the column always fits
 };
 function OutlineList({ outline, current, onPick, sx }) {
   const nav = useRef(null);
@@ -216,13 +235,13 @@ function OutlineList({ outline, current, onPick, sx }) {
   );
 }
 
-// The design document of the task, in a sheet that slides up from the bottom (h5.js `openDesign` reads `DESIGN.md` from the task's working directory
-// through the task file API and writes `state.design`). Closes with the close button, a tap on the dimmed page, Escape or a swipe down.
+// The design document of the task, in a sheet that slides down from the top on every screen width (h5.js `openDesign` reads `DESIGN.md` from the task's
+// working directory through the task file API and writes `state.design`). Closes with the close button, a tap on the dimmed page, Escape or a swipe up.
 // The page behind is not resized: no scroll lock (it would change the body padding), and the terminal keeps its size, so no PTY resize is sent.
 export function DesignSheet({ state, ui }) {
   const design = state.design;
   const open = Boolean(design && design.open);
-  const side = Boolean(state.wide); // a wide screen shows the file beside the terminal, a narrow one in a sheet from the bottom
+  const wide = Boolean(state.wide); // only the outline (a column, or a drawer on a narrow screen) and the handle differ by width
   const reduced = useMediaQuery('(prefers-reduced-motion: reduce)');
   const [node, setNode] = useState(null); // the content box; it is mounted again each time the sheet opens, so the document is drawn again
   const [render, setRender] = useState({ status: 'idle' }); // the rendering of a loaded document: idle | rendering | done | failed
@@ -389,12 +408,12 @@ export function DesignSheet({ state, ui }) {
     try { localStorage.setItem(OUTLINE_KEY, value ? '0' : '1'); } catch { /* no storage */ }
     return !value;
   });
-  // Opened from the file tree (FileTree.jsx), the file lies over the tree: the back arrow, Escape, the back button and a swipe down go back to the tree
+  // Opened from the file tree (FileTree.jsx), the file lies over the tree: the back arrow, Escape, the back button and a swipe up go back to the tree
   // (one layer); Close and a tap beside the sheet close both. Otherwise the header has a Files button that shows the tree instead.
   const fromTree = Boolean(state.files && state.files.open);
   const close = () => ui.actions.closeDesign();
   const closeAll = () => { if (fromTree) ui.actions.closeFiles(); ui.actions.closeDesign(); };
-  const swipe = useSwipeDown(close);
+  const swipe = useSwipeUp(close);
   const dir = design && design.dir;
   let note = null;
   const kindErrors = kind === 'image' ? IMAGE_ERRORS : RAW_KINDS.has(kind) ? RAW_ERRORS : {};
@@ -418,7 +437,7 @@ export function DesignSheet({ state, ui }) {
   const loading = design && (design.status === 'loading' || (design.status === 'ready' && plan && render.status === 'rendering'));
   const filePath = dir ? `${dir.replace(/\/+$/, '')}/${filePathInDir}` : filePathInDir;
   const hasOutline = markdown && outline.length > 0 && !note && content !== null;
-  const showColumn = side && hasOutline && columnOpen;
+  const showColumn = wide && hasOutline && columnOpen;
   const ready = Boolean(design && design.status === 'ready' && !note);
   const onFailed = code => setFailed({ token: fileToken, code });
   let viewerBox = null; // a file shown by a viewer of FileViewers.jsx
@@ -442,12 +461,7 @@ export function DesignSheet({ state, ui }) {
 
   const contents = (
     <>
-      {side ? null : (
-        <Box className="h5-design-handle" aria-hidden="true" sx={{ flex: '0 0 auto', display: 'flex', justifyContent: 'center', pt: 1, pb: 0.5 }}>
-          <Box sx={{ width: 36, height: 4, borderRadius: 2, bgcolor: 'text.disabled' }} />
-        </Box>
-      )}
-      <Box sx={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 1, pl: fromTree ? 0.5 : 2, pr: 1, pb: 1, pt: side ? 1 : 0, borderBottom: 1, borderColor: 'divider' }}>
+      <Box sx={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 1, pl: fromTree ? 0.5 : 2, pr: 1, pb: 1, pt: 1, borderBottom: 1, borderColor: 'divider' }}>
         {fromTree ? <IconButton id="h5-design-back" {...named(t('Back to files'))} onClick={close}><Icon name="back" size={22} /></IconButton> : null}
         <Box sx={{ flex: '1 1 auto', minWidth: 0 }}>
           <Typography id="h5-design-title" variant="subtitle1" component="h2" sx={{ fontWeight: 600, lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} translate={fromLink ? 'no' : undefined}>{fromLink ? name : t('Design document')}</Typography>
@@ -456,7 +470,7 @@ export function DesignSheet({ state, ui }) {
           ><bdi>{filePath}</bdi></Typography>
         </Box>
         {hasOutline ? (
-          side ? (
+          wide ? (
             <IconButton id="h5-design-outline" {...named(t('Outline'))} aria-controls="h5-design-outline-list" aria-expanded={columnOpen} color={columnOpen ? 'primary' : 'default'} onClick={toggleColumn}><Icon name="outline" size={22} /></IconButton>
           ) : (
             <IconButton id="h5-design-outline" {...named(t('Outline'))} aria-haspopup="dialog" aria-expanded={listOpen} onClick={() => setListOpen(true)}><Icon name="outline" size={22} /></IconButton>
@@ -481,7 +495,8 @@ export function DesignSheet({ state, ui }) {
           <OutlineList outline={outline} current={current} onPick={jump} sx={{ flex: '0 0 clamp(140px, 32%, 220px)', borderLeft: 1, borderColor: 'divider' }} />
         ) : null}
       </Box>
-      {!side && hasOutline ? (
+      {wide ? null : <SheetHandle />}
+      {!wide && hasOutline ? (
         // A narrow screen: the outline is a drawer from the right, over the sheet (a modal of its own: Escape, a tap beside it and the back button close it).
         <Drawer
           anchor="right" open={listOpen} onClose={() => setListOpen(false)} transitionDuration={reduced ? 0 : undefined} ModalProps={{ disableScrollLock: true }}
@@ -497,23 +512,11 @@ export function DesignSheet({ state, ui }) {
       <ImageViewer item={viewer} onClose={() => setViewer(null)} />
     </>
   );
-  if (side) {
-    // A wide screen: a panel on the right beside the terminal (a persistent drawer: the page is not dimmed and stays usable). h5.css narrows the page
-    // while it is open (`html[data-side-panel]`), so the terminal refits once to the width that is left. Escape inside the panel closes it.
-    return (
-      <Drawer
-        variant="persistent" anchor="right" id="h5-design-sheet" open={open} transitionDuration={reduced ? 0 : undefined}
-        slotProps={{ paper: { className: 'h5-design-panel h5-design-side', role: 'complementary', 'aria-labelledby': 'h5-design-title', onKeyDown: event => { if (event.key === 'Escape' && event.currentTarget.contains(event.target)) { event.stopPropagation(); close(); } }, sx: { width: 'var(--h5-side-width)', height: '100%', backgroundImage: 'none', display: 'flex', flexDirection: 'column', overflow: 'hidden', borderLeft: 1, borderColor: 'divider' } } }}
-      >
-        {contents}
-      </Drawer>
-    );
-  }
   return (
     <Drawer
-      anchor="bottom" id="h5-design-sheet" open={open} onClose={(event, reason) => (reason === 'backdropClick' ? closeAll() : close())} transitionDuration={reduced ? 0 : undefined}
+      anchor="top" id="h5-design-sheet" open={open} onClose={(event, reason) => (reason === 'backdropClick' ? closeAll() : close())} transitionDuration={reduced ? 0 : undefined}
       ModalProps={{ disableScrollLock: true }}
-      slotProps={{ backdrop: fromTree ? { sx: { bgcolor: 'transparent' } } : undefined, paper: { className: 'h5-design-panel', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'h5-design-title', ...swipe, sx: { height: '88dvh', maxWidth: 960, width: '100%', mx: 'auto', borderRadius: '16px 16px 0 0', backgroundImage: 'none', display: 'flex', flexDirection: 'column', overflow: 'hidden', pb: 'env(safe-area-inset-bottom)' } } }}
+      slotProps={{ backdrop: fromTree ? { sx: { bgcolor: 'transparent' } } : undefined, paper: { className: 'h5-design-panel', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'h5-design-title', ...swipe, sx: TOP_SHEET_PAPER } }}
     >
       {contents}
     </Drawer>

@@ -18,7 +18,7 @@ import { AttentionGuide } from './AttentionGuide.jsx';
 import { PRIORITIES, PRIORITY_LABELS, REMIND_STATUSES, STATUSES, STATUS_LABELS, contextFilePath, contextOf, groupItems, jumpBack, onThisMachine, overdue, patchFor, pendingLine, safeLink, timeline } from './attention-model.mjs';
 
 // T-Attention: the tasks agents and services report (through listener plugins, the `t-attention` CLI) and the user's own, in one list
-// ("Attention" in row 2). Phone: a full-screen sheet; wide: the right side panel (like the file viewer and the file tree). The list and the live
+// ("Attention" in row 2). Phone: a full-screen sheet; wide: the right side panel. The list and the live
 // updates are in attention-feed.mjs (`state.attention`); this file only draws them and calls `ui.actions.attention*`. Groups: Needs you, Review,
 // Working, To do, Done & failed (folded). A tap on the circle marks a task done (from any status; on a done task it opens it again); a tap on
 // the row opens the edit view (a dialog: title, notes, status, priority, due date, link, history, delete).

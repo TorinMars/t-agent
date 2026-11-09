@@ -10,7 +10,7 @@ import Typography from '@mui/material/Typography';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import { api, named, t } from './common.jsx';
 import { Icon } from './Icons.jsx';
-import { useSwipeDown } from './Design.jsx';
+import { SheetHandle, TOP_SHEET_PAPER, useSwipeUp } from './Design.jsx';
 import { ROOT_ID, loadPage, noteId } from './file-tree.mjs';
 
 // The read-only file tree of the task's working directory ("Files" in row 2). Browse and preview only: nothing is created, renamed, deleted or written.
@@ -110,26 +110,21 @@ function TreeView({ base, current, onOpen, onOther }) {
   );
 }
 
-// The sheet (narrow) or the right side panel (wide) that holds the tree. h5.js writes `state.files`: { open, key, base, dir }.
+// The sheet that holds the tree; it slides down from the top on every screen width. h5.js writes `state.files`: { open, key, base, dir }.
 export function FileTreeSheet({ state, ui }) {
   const files = state.files;
   const open = Boolean(files && files.open);
-  const side = Boolean(state.wide);
+  const wide = Boolean(state.wide);
   const reduced = useMediaQuery('(prefers-reduced-motion: reduce)');
   const [reload, setReload] = useState(0); // Reload draws the tree again from the server (folders closed)
   const close = () => ui.actions.closeFiles();
-  const swipe = useSwipeDown(close);
+  const swipe = useSwipeUp(close);
   const design = state.design;
   const current = design && design.open && design.link ? design.path : null; // the file shown in the viewer is marked in the tree
   const dir = (files && files.dir) || '';
   const contents = (
     <>
-      {side ? null : (
-        <Box className="h5-design-handle" aria-hidden="true" sx={{ flex: '0 0 auto', display: 'flex', justifyContent: 'center', pt: 1, pb: 0.5 }}>
-          <Box sx={{ width: 36, height: 4, borderRadius: 2, bgcolor: 'text.disabled' }} />
-        </Box>
-      )}
-      <Box sx={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 1, pl: 2, pr: 1, pb: 1, pt: side ? 1 : 0, borderBottom: 1, borderColor: 'divider' }}>
+      <Box sx={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 1, pl: 2, pr: 1, pb: 1, pt: 1, borderBottom: 1, borderColor: 'divider' }}>
         <Box sx={{ flex: '1 1 auto', minWidth: 0 }}>
           <Typography id="h5-files-title" variant="subtitle1" component="h2" sx={{ fontWeight: 600, lineHeight: 1.3 }}>{t('Files')}</Typography>
           <Typography id="h5-files-path" variant="caption" component="div" color="text.secondary" translate="no" title={dir}
@@ -148,27 +143,16 @@ export function FileTreeSheet({ state, ui }) {
           onOther={data => ui.notify(t(data.link ? 'Symbolic links are not opened' : 'This is not a plain file'))}
         />
       ) : null}
+      {wide ? null : <SheetHandle />}
     </>
   );
-  if (side) {
-    // A wide screen: a panel on the right beside the terminal, where the design document opens (h5.css `html[data-side-panel]`). A file opens in the
-    // file panel, which lies over this one; its back arrow (or Escape) shows the tree again.
-    return (
-      <Drawer
-        variant="persistent" anchor="right" id="h5-files-sheet" open={open} transitionDuration={reduced ? 0 : undefined}
-        slotProps={{ paper: { className: 'h5-files-panel h5-design-side', role: 'complementary', 'aria-labelledby': 'h5-files-title', onKeyDown: event => { if (event.key === 'Escape' && event.currentTarget.contains(event.target)) { event.stopPropagation(); close(); } }, sx: { width: 'var(--h5-side-width)', height: '100%', backgroundImage: 'none', display: 'flex', flexDirection: 'column', overflow: 'hidden', borderLeft: 1, borderColor: 'divider' } } }}
-      >
-        {contents}
-      </Drawer>
-    );
-  }
-  // A narrow screen: a sheet from the bottom, like the design document (88% of the height, a swipe down closes it). It stays mounted while closed
-  // (keepMounted), so opening it again shows the folders as they were left.
+  // The same top sheet as the design document (a swipe up closes it). It stays mounted while closed (keepMounted), so opening it again shows the
+  // folders as they were left.
   return (
     <Drawer
-      anchor="bottom" id="h5-files-sheet" open={open} onClose={close} transitionDuration={reduced ? 0 : undefined}
+      anchor="top" id="h5-files-sheet" open={open} onClose={close} transitionDuration={reduced ? 0 : undefined}
       ModalProps={{ disableScrollLock: true, keepMounted: true }}
-      slotProps={{ paper: { className: 'h5-files-panel', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'h5-files-title', ...swipe, sx: { height: '88dvh', maxWidth: 960, width: '100%', mx: 'auto', borderRadius: '16px 16px 0 0', backgroundImage: 'none', display: 'flex', flexDirection: 'column', overflow: 'hidden', pb: 'env(safe-area-inset-bottom)' } } }}
+      slotProps={{ paper: { className: 'h5-files-panel', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'h5-files-title', ...swipe, sx: TOP_SHEET_PAPER } }}
     >
       {contents}
     </Drawer>

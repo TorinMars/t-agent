@@ -4,8 +4,8 @@
 // A layer closed another way (its close button, a tap beside it, Escape) takes its entry back off with history.go, so the history never fills up.
 //
 // Layers are found in the page itself, so every sheet and dialog takes part without telling anyone: the open Material UI modals (each one is a
-// `.MuiModal-root` straight under <body>; a kept-mounted closed one has `.MuiModal-hidden`), plus `extra()` for a layer that is not a modal (the file
-// sheet beside the terminal on a wide screen). The top modal is closed the way Escape closes it (a modal that ignores Escape, the upload overlay, stays).
+// `.MuiModal-root` straight under <body>; a kept-mounted closed one has `.MuiModal-hidden`), plus `extra()` for a layer that is not a modal (the
+// T-Attention panel beside the terminal on a wide screen). The top modal is closed the way Escape closes it (a modal that ignores Escape, the upload overlay, stays).
 export function createBackLayers({ win = window, doc = document, extra = () => [], closeTimeoutMs = 600 } = {}) {
   const history = win.history;
   let depth = 0; // the entries this page pushed that are still on the history

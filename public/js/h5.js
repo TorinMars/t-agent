@@ -1950,8 +1950,6 @@
     if (!s || s.disposed || agentChat || modalOpen()) return;
     const active = document.activeElement;
     if (editing(active) || (active && active.closest && active.closest('#h5-design-sheet, #h5-files-sheet, #h5-attention-sheet, #h5-agent'))) return;
-    if (event.key === 'Escape' && isWide() && ui.get().design && ui.get().design.open) { ui.actions.closeDesign(); return; } // closes the side panel first
-    if (event.key === 'Escape' && isWide() && ui.get().files && ui.get().files.open) { ui.actions.closeFiles(); return; } // then the file tree
     if (event.key === 'Escape' && isWide() && ui.get().attention && ui.get().attention.open) { ui.actions.closeAttention(); return; } // the T-Attention panel
     const onBody = !active || active === document.body || active === document.documentElement;
     const printable = Array.from(event.key).length === 1;
@@ -2780,8 +2778,7 @@
     if (document.activeElement && document.activeElement !== document.body && typeof document.activeElement.blur === 'function') document.activeElement.blur();
     const state = ui.get();
     const viewer = Boolean(state.design && state.design.open);
-    // A wide screen: the button shows and hides the panel; a file shown over the tree goes, so the tree is seen.
-    if (isWide() && state.files && state.files.open && !viewer) { ui.actions.closeFiles(); return; }
+    // A file shown over the tree goes, so the tree is seen.
     if (viewer) ui.actions.closeDesign();
     const files = state.files && state.files.key === filesFor().key ? state.files : filesFor();
     ui.set({ files: { ...files, open: true } });

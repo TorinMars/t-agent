@@ -150,17 +150,18 @@ export function SheetHandle() {
   );
 }
 
-// True when the touch began inside something that can still scroll further down (the document, the tree, a table), so a swipe up there is reading on.
-function scrollsFurther(node, paper) {
+// True when the touch began inside a scrolling box (the document, the tree, a table). The box counts whatever its position: at its end, or with too little
+// content to scroll, a finger moving up is still someone scrolling the list, and the sheet must not follow it.
+function inScrollingBox(node, paper) {
   for (let el = node; el && el !== paper; el = el.parentElement) {
-    if (el.scrollHeight - el.clientHeight - el.scrollTop > 1 && /auto|scroll/.test(getComputedStyle(el).overflowY)) return true;
+    if (/auto|scroll/.test(getComputedStyle(el).overflowY)) return true;
   }
   return false;
 }
 
 // A swipe up closes the top sheet (what MUI's SwipeableDrawer did, in a few lines and without its 7 KB). The finger moves the sheet with it; letting go
-// after 25% of the sheet's height, or after a quick flick up, closes it, else it slides back. A swipe that starts on content that can still scroll down
-// scrolls that content instead. The sheet's closing slide starts from where the finger left it.
+// after 25% of the sheet's height, or after a quick flick up, closes it, else it slides back. Only a swipe that starts outside the scrolling content
+// (the header, the handle at the bottom edge, a note) moves the sheet. The sheet's closing slide starts from where the finger left it.
 export function useSwipeUp(onClose) {
   const drag = useRef(null);
   const paper = event => event.currentTarget;
@@ -168,7 +169,7 @@ export function useSwipeUp(onClose) {
     if (event.touches.length !== 1) { drag.current = null; return; }
     // A touch in the outline list (a drawer of its own, whose React events still bubble through the sheet) never drags the sheet.
     if (!event.currentTarget.contains(event.target)) { drag.current = null; return; }
-    if (scrollsFurther(event.target, event.currentTarget)) { drag.current = null; return; }
+    if (inScrollingBox(event.target, event.currentTarget)) { drag.current = null; return; }
     drag.current = { y: event.touches[0].clientY, x: event.touches[0].clientX, t: performance.now(), dy: 0, active: false };
   };
   const onTouchMove = event => {

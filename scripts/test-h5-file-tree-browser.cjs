@@ -7,7 +7,8 @@
 // - phone 320x640 (touch): eight buttons do not fit, so "Docs" is left out of row 2 (the saved commands list has it); its Files button leads to the tree.
 // - both widths: the design document and the tree slide down from the top, 88% of the height, over the dimmed page (phone: the full width of the window;
 //   computer: the left edge and width of the terminal area, whatever narrows it: sidebar open or folded, the T-Attention panel, a resized window);
-//   Close, a click beside the sheet and Escape close them; a swipe up on a phone; the page and the PTY are not resized.
+//   Close, a click beside the sheet and Escape close them; a swipe up from the handle on a phone; the page and the PTY are not resized; scrolling a list
+//   (finger at 390x844, wheel at 1440x900) moves only that list, also at its end and when it is too short to scroll.
 // - computer 1440x900 (mouse): the tree is the same sheet; a file opens in the sheet over it, back and Escape return one
 //   layer; a remote Engine's tree is read through `/api/remote-servers/:id/tasks/:task/files`.
 // H5_SHOT_DIR=<dir> saves screenshots (phone at 3x). Chinese names are written with \u escapes (test/i18n.test.js).
@@ -277,9 +278,134 @@ async function checkTerminalAlignment(browser) {
   await context.close();
 }
 
+// Where the sheet, the page and the terminal behind it are, and where the list is scrolled.
+const positions = (page, panel, list) => page.evaluate(({ panel: panelSel, list: listSel }) => {
+  const app = document.getElementById('h5-app');
+  const terminal = document.getElementById('h5-terminal');
+  const viewport = document.querySelector('.xterm-viewport');
+  const box = document.querySelector(listSel);
+  return {
+    sheet: { top: document.querySelector(panelSel).getBoundingClientRect().top },
+    list: { scrollTop: box.scrollTop, max: box.scrollHeight - box.clientHeight },
+    page: {
+      windowY: window.scrollY, documentTop: document.scrollingElement.scrollTop, bodyTop: document.body.scrollTop, visualTop: window.visualViewport.offsetTop,
+      appTop: app.getBoundingClientRect().top, appScroll: app.scrollTop, terminalTop: terminal.getBoundingClientRect().top, terminalScroll: terminal.scrollTop, xtermScroll: viewport ? viewport.scrollTop : 0,
+    },
+  };
+}, { panel, list });
+
+// One finger moves over the list (real touch input), or the wheel turns over it. Only the list may move: the sheet stays at the top at every step.
+async function assertOnlyListMoves(page, view, input, direction, where) {
+  const label = `${page.viewportSize().width}px ${view.name}, ${input} ${direction}, ${where}`;
+  await page.evaluate(({ list, at }) => {
+    const box = document.querySelector(list);
+    const max = box.scrollHeight - box.clientHeight;
+    box.scrollTop = at === 'top' ? 0 : at === 'middle' ? Math.round(max / 2) : max;
+  }, { list: view.list, at: where });
+  const before = await positions(page, view.panel, view.list);
+  const area = await page.locator(view.list).boundingBox();
+  const x = area.x + area.width / 2;
+  const assertSheetInPlace = async step => {
+    const { sheet } = await positions(page, view.panel, view.list);
+    assert.ok(Math.abs(sheet.top - before.sheet.top) <= 0.5, `${label}: the sheet stays in place at ${step} (top ${before.sheet.top} -> ${sheet.top})`);
+  };
+  if (input === 'finger') {
+    const distance = 240;
+    const sign = direction === 'up' ? -1 : 1;
+    let y = area.y + area.height / 2 - sign * distance / 2;
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
+    for (let i = 1; i <= 8; i += 1) {
+      y += sign * distance / 8;
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y }] });
+      await page.waitForTimeout(16);
+      await assertSheetInPlace(`step ${i}`);
+    }
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await cdp.detach();
+  } else {
+    await page.mouse.move(x, area.y + area.height / 2);
+    for (let i = 1; i <= 3; i += 1) {
+      await page.mouse.wheel(0, direction === 'up' ? -300 : 300);
+      await page.waitForTimeout(60);
+      await assertSheetInPlace(`step ${i}`);
+    }
+  }
+  await page.waitForTimeout(250); // a closing slide would have started, and the list has come to rest
+  const after = await positions(page, view.panel, view.list);
+  assert.ok(await page.locator(view.panel).isVisible(), `${label}: the sheet stays open`);
+  assert.ok(Math.abs(after.sheet.top - before.sheet.top) <= 0.5, `${label}: the sheet is in place afterwards (${before.sheet.top} -> ${after.sheet.top})`);
+  assert.deepEqual(after.page, before.page, `${label}: the page and the terminal do not move`);
+  // A finger moving up and a wheel turning down both go towards the end of the list.
+  const forward = (input === 'finger') === (direction === 'up');
+  const room = forward ? before.list.max - before.list.scrollTop : before.list.scrollTop;
+  if (room > 1) assert.ok(forward ? after.list.scrollTop > before.list.scrollTop : after.list.scrollTop < before.list.scrollTop, `${label}: the list scrolls (${before.list.scrollTop} -> ${after.list.scrollTop} of ${before.list.max})`);
+  else assert.ok(Math.abs(after.list.scrollTop - before.list.scrollTop) <= 1, `${label}: the list is at its end and stays there`);
+}
+
+// Scrolling inside a sheet moves only its list, at the top, in the middle and at the end of a long list and in a list too short to scroll. A swipe up from
+// the handle at the bottom edge still closes the sheet.
+async function checkListScrolling(browser, viewport, touch) {
+  const { context, page, errors } = await openPage(browser, touch ? { viewport } : { viewport, touch: false });
+  const how = touch ? 'tap' : 'click';
+  const input = touch ? 'finger' : 'wheel';
+  let design = Array.from({ length: 300 }, (_, i) => `Paragraph ${i}\n`).join('\n');
+  await page.route(`${ORIGIN}/api/tasks/1/files/content?path=DESIGN.md`, route => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ path: 'DESIGN.md', content: design, revision: 'r1', eol: '\n', bom: false }) }));
+  const tree = { name: 'file tree', panel: '#h5-files-sheet .h5-files-panel', list: '#h5-files-body' };
+  const doc = { name: 'design document', panel: '#h5-design-sheet .h5-design-panel', list: '#h5-design-body' };
+  const check = async (view, spots) => {
+    for (const where of spots) for (const direction of ['up', 'down']) await assertOnlyListMoves(page, view, input, direction, where);
+  };
+  const swipeHandle = async view => { // the list has just been scrolled to its end: the handle still closes the sheet
+    const handle = await page.locator(`${view.panel} .h5-design-handle`).boundingBox();
+    const x = handle.x + handle.width / 2;
+    let y = handle.y + handle.height / 2;
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
+    for (let i = 0; i < 12; i += 1) { y -= 40; await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y }] }); await page.waitForTimeout(16); }
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await cdp.detach();
+    await page.locator(view.panel).waitFor({ state: 'hidden' });
+  };
+
+  await openTree(page, how);
+  await rowOf(page, 'README.md').waitFor();
+  await settled(page, tree.panel);
+  await check(tree, ['top']); // the short list: six rows, nothing to scroll
+  assert.equal((await positions(page, tree.panel, tree.list)).list.max, 0, 'the list of six rows is too short to scroll');
+  await rowOf(page, 'big')[how]();
+  await rowOf(page, 'big/f-0199.txt').waitFor();
+  assert.ok((await positions(page, tree.panel, tree.list)).list.max > 1000, 'the expanded list is long enough to scroll');
+  await check(tree, ['top', 'middle', 'bottom']);
+  if (touch) await swipeHandle(tree);
+  else { await page.locator('#h5-files-close').click(); await page.locator(tree.panel).waitFor({ state: 'hidden' }); }
+
+  const openDesign = async () => {
+    await page.locator('#h5-design')[how]();
+    await page.locator('#h5-design-body p').first().waitFor();
+    await settled(page, doc.panel);
+  };
+  await openDesign();
+  assert.ok((await positions(page, doc.panel, doc.list)).list.max > 1000, 'the document is long enough to scroll');
+  await check(doc, ['top', 'middle', 'bottom']);
+  await page.locator('#h5-design-close')[how]();
+  await page.locator(doc.panel).waitFor({ state: 'hidden' });
+  design = '# Short\n\nOne line.\n';
+  await openDesign();
+  await check(doc, ['top']);
+  if (touch) await swipeHandle(doc);
+  else { await page.locator('#h5-design-close').click(); await page.locator(doc.panel).waitFor({ state: 'hidden' }); }
+  assert.deepEqual(errors, [], 'no page errors');
+  await context.close();
+}
+
 (async () => {
   const browser = await chromium.launch({ headless: true, ...(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {}) });
   try {
+    // ── Scrolling a list moves only the list ──
+    await checkListScrolling(browser, { width: 390, height: 844 }, true);
+    await checkListScrolling(browser, { width: 1440, height: 900 }, false);
+
     // ── The two views as top sheets, at both widths ──
     for (const [viewport, how, phone] of [[{ width: 390, height: 844 }, 'tap', true], [{ width: 1440, height: 900 }, 'click', false]]) {
       const { context, page, errors } = await openPage(browser, phone ? { viewport } : { viewport, touch: false });

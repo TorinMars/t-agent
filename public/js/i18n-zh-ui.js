@@ -1356,5 +1356,6 @@ I18n.add({
   "No archived tasks": "没有已归档的任务",
   "Could not load the archived tasks": "无法加载已归档的任务",
   "Could not restore the task: {1}": "无法恢复任务：{1}",
+  "This server is too old to archive tasks. Restart or update it first": "这个服务的版本过旧，无法归档任务，请先重启或升级",
   "This task was archived on another device": "此任务已在另一台设备上归档",
 });

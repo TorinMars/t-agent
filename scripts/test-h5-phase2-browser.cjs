@@ -28,9 +28,9 @@ function freshServer() {
     update: { status: 'available', is_update_admin: true, local_version: '2.87.12', remote_version: '2.88.0', notice_version: null, install_type: 'git', version_url: 'https://github.com/o/r/raw/main/VERSION.json', last_checked_at: '2026-11-05T10:00:00Z', check_interval_seconds: 3600, remote_manifest: { release_url: 'https://github.com/o/r/releases/tag/v2.88.0', published_at: '2026-11-05T09:00:00Z' }, log: [] },
     afterApply: null,
     tasks: [
-      { id: 1, title: 'Fix login', status: 'doing', work_dir: '/work/fix-login' },
-      { id: 2, title: 'Write docs', status: 'doing', work_dir: '/work/docs' },
-      { id: 3, title: 'Notes', status: 'todo', work_dir: null },
+      { id: 1, title: 'Fix login', status: 'doing', work_dir: '/work/fix-login', archived_at: null },
+      { id: 2, title: 'Write docs', status: 'doing', work_dir: '/work/docs', archived_at: null },
+      { id: 3, title: 'Notes', status: 'todo', work_dir: null, archived_at: null },
     ],
     nextTask: 10,
   };
@@ -101,7 +101,7 @@ async function openPage(browser, { viewport, touch }) {
     if (p === '/api/tasks' && method === 'GET') return json(server.tasks);
     if (p === '/api/tasks' && method === 'POST') {
       if (body.work_dir && !body.work_dir.startsWith('/')) return json({ error: 'work_dir must be an absolute path' }, 400);
-      const created = { id: server.nextTask++, title: body.title, status: 'todo', work_dir: body.work_dir || `/home/t/tasks/${body.title.replace(/\s+/g, '-')}` };
+      const created = { id: server.nextTask++, title: body.title, status: 'todo', work_dir: body.work_dir || `/home/t/tasks/${body.title.replace(/\s+/g, '-')}`, archived_at: null };
       server.tasks.push(created);
       return json(created, 201);
     }

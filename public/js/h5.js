@@ -30,7 +30,7 @@
     const text = await res.text();
     let data = null;
     try { data = text ? JSON.parse(text) : null; } catch { /* plain-text error */ }
-    if (!res.ok) throw Object.assign(new Error((data && data.error) || text || `HTTP ${res.status}`), { data }); // `data`: the whole error body (a `reason` ...)
+    if (!res.ok) throw Object.assign(new Error((data && data.error) || text || `HTTP ${res.status}`), { data, status: res.status }); // `data`: the whole error body (a `reason` ...)
     return data;
   }
   // Remembered choices are a convenience only; private mode or blocked storage just starts fresh.
@@ -110,7 +110,8 @@
   const readsAnyPath = from => from.key === 'local' || Boolean(Array.isArray(from.capabilities) && from.capabilities.includes('fs:read-any'));
   const fsBase = from => `${from.tasksBase.replace(/\/tasks$/, '')}/fs`; // /api/fs, or /api/remote-servers/:id/fs
   // Archiving tasks: the local Client always, a remote Engine with 'tasks:archive'. An Engine that has not said yet shows no archive UI.
-  const archives = from => from.key === 'local' || Boolean(Array.isArray(from.capabilities) && from.capabilities.includes('tasks:archive'));
+  // `archiveMissing`: its answers showed that this source does not implement archiving (`noArchiving`), which holds until the page is loaded again.
+  const archives = from => !from.archiveMissing && (from.key === 'local' || Boolean(Array.isArray(from.capabilities) && from.capabilities.includes('tasks:archive')));
   let source = LOCAL;
   let tasks = [];
   let groups = [];
@@ -282,6 +283,9 @@
       ]);
       if (current !== source) return false;
       tasks = Array.isArray(list) ? list : [];
+      // This machine has no capability list, but every row of a server that can archive has the key `archived_at` (null while in use): an older process, serving
+      // these newer page files until it is restarted, leaves it out. An empty list says nothing. A remote Engine is decided by its capability instead.
+      if (current.key === 'local' && tasks.length && tasks.every(row => !row || !('archived_at' in row))) noArchiving(current);
       groups = Array.isArray(groupRows) && groupRows.length ? groupRows : DEFAULT_GROUPS;
       renderTasks();
       showActiveCount();
@@ -682,6 +686,20 @@
   // An archived task leaves the task list and has no terminals; the Archived section at the end of the list (ArchivedTasks.jsx) reads its rows when it is opened.
   const archived = { open: false, status: 'idle', rows: null, busy: null, seq: 0 }; // status: 'idle', 'loading', 'ready', 'error'; busy: the id being restored
   const archivedById = id => (archived.rows || []).find(row => row.id === id);
+  // The source does not implement archiving: the Archived section and the Archive item go away for this page load.
+  function noArchiving(from) {
+    if (from.archiveMissing) return;
+    from.archiveMissing = true;
+    if (from === source) resetArchived();
+  }
+  // The rows of an answer to `?archived=1` that are really archived. A server without archiving ignores the parameter and answers its whole list of tasks in use,
+  // where Restore and Delete must never appear, so a row without `archived_at` is never used, and an answer with only such rows ends archiving for this source.
+  function archivedRowsOf(from, answer) {
+    const list = Array.isArray(answer) ? answer : [];
+    const rows = list.filter(row => row && row.archived_at);
+    if (list.length && !rows.length) noArchiving(from);
+    return rows;
+  }
   function showArchived() {
     ui.set({ archived: {
       supported: archives(source), open: archived.open, status: archived.status, busy: archived.busy, count: archived.rows ? archived.rows.length : null,
@@ -696,12 +714,13 @@
     const from = source;
     const seq = (archived.seq += 1);
     if (!archived.rows) { archived.status = 'loading'; showArchived(); } // rows already shown stay until the new ones are read
-    let rows;
-    try { rows = await api('GET', `${from.tasksBase}?archived=1`); }
+    let answer;
+    try { answer = await api('GET', `${from.tasksBase}?archived=1`); }
     catch { if (seq === archived.seq && !archived.rows) { archived.status = 'error'; showArchived(); } return; }
+    const rows = archivedRowsOf(from, answer); // before the check below: `noArchiving` resets the section, and then these rows are not wanted
     if (seq !== archived.seq) return;
     archived.status = 'ready';
-    archived.rows = Array.isArray(rows) ? rows : [];
+    archived.rows = rows;
     showArchived();
   }
   function dropArchivedRow(id) {
@@ -766,7 +785,13 @@
     const from = source;
     patchDialog({ busy: true, error: '' });
     try { await api('POST', `${from.tasksBase}/${item.id}/archive`); }
-    catch (error) { patchDialog({ busy: false, error: tr(error.message) }); return; }
+    catch (error) {
+      // No such route on this server (an HTML 404, unlike the JSON of a task that is gone), or the proxy says the Engine is too old: the task stays.
+      const unsupported = (error.status === 404 && !(error.data && error.data.error)) || error.message === 'ARCHIVE_UNSUPPORTED';
+      if (unsupported) noArchiving(from);
+      patchDialog({ busy: false, error: tr(unsupported ? 'This server is too old to archive tasks. Restart or update it first' : error.message) });
+      return;
+    }
     ui.set({ taskDialog: null });
     tell('Task archived', 'success');
     if (from !== source) return;
@@ -803,7 +828,7 @@
     const id = s.task.id;
     if (!archives(from)) return;
     const rows = await api('GET', `${from.tasksBase}?archived=1`).catch(() => null);
-    if (!s.disposed && from === source && Array.isArray(rows) && rows.some(row => row.id === id)) archivedElsewhere(from, id);
+    if (!s.disposed && from === source && archivedRowsOf(from, rows).some(row => row.id === id)) archivedElsewhere(from, id);
   }
   // An existing task's working directory: the form shows the saved one; an absolute path is required (the server keeps the old one for an empty value).
   ui.actions.taskWorkdirSave = async value => {

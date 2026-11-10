@@ -1,6 +1,6 @@
 // Archiving tasks on the page in real Chromium at 390px (touch), 1440px (mouse) and 320px: the "Archive" item of a task's menu, the confirmation with and without running
 // terminals, archiving the shown task and another one, the Archived section read on demand, Restore, Delete from it, a remote Engine with and without 'tasks:archive',
-// and a page that learns from `TASK_ARCHIVED` that another device archived its task. The server is mocked. H5_SHOT_DIR=<dir> saves screenshots at 390px.
+// a page that learns from `TASK_ARCHIVED` that another device archived its task, and an older server process that does not implement archiving. The server is mocked. H5_SHOT_DIR=<dir> saves screenshots at 390px.
 const { chromium } = require('playwright');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -11,7 +11,9 @@ const TYPES = { '.js': 'application/javascript', '.css': 'text/css', '.html': 't
 const ARCHIVED_AT = '2026-11-09 08:30:00';
 // A long title with no spaces in Chinese ("a very long task title ..."), written with escapes: it must wrap inside the row at 320px.
 const LONG = '\u4e00\u4e2a\u975e\u5e38\u975e\u5e38\u957f\u7684\u4efb\u52a1\u6807\u9898'.repeat(5);
-const task = (id, title) => ({ id, title, status: 'doing', work_dir: `/w/${id}` });
+const bare = (id, title) => ({ id, title, status: 'doing', work_dir: `/w/${id}` }); // a row of a server from before archiving: no `archived_at` key
+const task = (id, title) => ({ ...bare(id, title), archived_at: null }); // a row of a current server: the key is always there
+const CANNOT_POST = pathname => `<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<title>Error</title>\n</head>\n<body>\n<pre>Cannot POST ${pathname}</pre>\n</body>\n</html>\n`; // Express, for a route it does not have
 
 // What the mocked server holds. `bases` is `/api/tasks` and the remote proxy of each Engine: { tasks, archived }.
 function makeServer() {
@@ -19,8 +21,9 @@ function makeServer() {
     pageErrors: [], requests: [], activity: {}, createRefused: false,
     bases: {
       '/api/tasks': { tasks: [task(1, 'Alpha'), task(2, 'Beta'), task(3, 'Gamma')], archived: [] },
-      '/api/remote-servers/7/tasks': { tasks: [task(70, 'Old engine task')], archived: [] },
-      '/api/remote-servers/8/tasks': { tasks: [task(80, 'New engine task')], archived: [{ ...task(81, 'Remote archived'), archived_at: ARCHIVED_AT }] },
+      '/api/remote-servers/7/tasks': { tasks: [bare(70, 'Old engine task')], archived: [] },
+      // Without the key on purpose: a remote Engine is decided by its capability alone.
+      '/api/remote-servers/8/tasks': { tasks: [bare(80, 'New engine task')], archived: [{ ...task(81, 'Remote archived'), archived_at: ARCHIVED_AT }] },
     },
     capabilities: { 7: ['terminal:control'], 8: ['terminal:control', 'tasks:archive'] },
   };
@@ -68,6 +71,8 @@ async function openPage(browser, server, viewport, touch) {
     const store = server.bases[match[1]];
     const id = Number(match[2]);
     const action = match[3];
+    if (store.old && !match[2] && method === 'GET') return json(store.tasks); // ignores `?archived=1`
+    if (store.old && (action === 'archive' || action === 'restore')) return route.fulfill({ status: 404, contentType: 'text/html', body: CANNOT_POST(pathname) });
     if (!match[2] && method === 'GET') return json(url.searchParams.get('archived') === '1' ? [...store.archived].reverse() : store.tasks);
     if (action === 'terminals' && method === 'POST') return server.createRefused ? json({ error: 'TASK_ARCHIVED' }, 409) : json({ terminal_id: 'new', title: 'New' });
     if (action === 'terminals') return json(store.tasks.some(row => row.id === id) ? [{ terminal_id: 'default', title: 'Terminal 1' }] : []);
@@ -324,6 +329,97 @@ async function stale(browser) {
   console.log(`  ${label}: ok`);
 }
 
+// An older server process serving the newer page files (it was not restarted after an update): it answers `?archived=1` with its whole list. A row there has no
+// Restore or Delete, because Delete would delete a task in use. `rows` is what it holds: no `archived_at` key at all, or null keys once a newer process has added the column.
+async function oldServer(browser, wide) {
+  const label = wide ? 'old server 1440px' : 'old server 390px';
+  const start = async (rows, old = true) => {
+    const server = makeServer();
+    Object.assign(server.bases['/api/tasks'], { tasks: rows, old });
+    const { context, page } = await openPage(browser, server, wide ? { width: 1440, height: 900 } : { width: 390, height: 844 }, !wide);
+    const h = helpers(page, wide, label);
+    await h.sheet();
+    return { server, context, page, h, store: server.bases['/api/tasks'] };
+  };
+  const LIST = 'GET /api/tasks?archived=1';
+  const withoutKey = () => [bare(1, 'Alpha'), bare(2, 'Beta'), bare(3, 'Gamma')];
+  const nullKeys = () => [task(1, 'Alpha'), task(2, 'Beta'), task(3, 'Gamma')];
+  const items = async ({ page, h }, title) => { await h.menu(title); const texts = await h.menuItems.allTextContents(); await h.press(page.locator('#h5-term-menu-cancel')); await page.locator('#h5-term-menu .h5-menu-panel').waitFor({ state: 'detached' }); return texts; };
+  const finish = async ({ server, context }) => { await context.close(); assert.deepEqual(server.pageErrors, [], `${label}: no page errors`); };
+
+  // Rows without the key: an old server from the first list on, so nothing is offered and `?archived=1` is never read.
+  let now = await start(withoutKey());
+  await now.h.row('Alpha').waitFor();
+  await now.page.waitForTimeout(100);
+  assert.equal(await now.page.locator('#h5-archived').count(), 0, `${label}: no Archived section from the start`);
+  let texts = await items(now, 'Beta');
+  assert.ok(!texts.includes('Archive'), `${label}: no Archive item from the start`);
+  assert.ok(texts.includes('Delete'), `${label}: the normal Delete of the task stays`);
+  assert.equal(now.server.requests.filter(entry => entry === LIST).length, 0, `${label}: the list is not read`);
+  await finish(now);
+
+  // The key is there but null everywhere (a newer process added the column): only the answer shows it. Nothing is listed, and the section and the item go away.
+  now = await start(nullKeys());
+  await now.page.locator('#h5-archived').waitFor();
+  assert.ok((await items(now, 'Beta')).includes('Archive'), `${label}: not known yet`);
+  await now.h.press(now.page.locator('#h5-archived-toggle'));
+  await now.page.locator('#h5-archived').waitFor({ state: 'detached', timeout: 3000 }).catch(() => assert.fail(`${label}: the section goes away`));
+  assert.equal(now.server.requests.filter(entry => entry === LIST).length, 1, `${label}: one read`);
+  assert.equal(await now.page.locator('.h5-archived-row').count(), 0, `${label}: no row is shown`);
+  assert.equal(await now.page.locator('.h5-archived-delete').count(), 0, `${label}: no Delete on a task in use`);
+  assert.equal(await now.page.locator('.h5-task-row').count(), 3, `${label}: the tasks stay in the list`);
+  texts = await items(now, 'Beta');
+  assert.ok(!texts.includes('Archive'), `${label}: Archive left the menu`);
+  await finish(now);
+
+  // Archive on such a server: the 404 gives a sentence and not the HTML; the task stays, and the item goes away.
+  now = await start(nullKeys());
+  await now.h.askArchive('Beta');
+  await now.h.press(now.page.locator('#h5-task-dialog-ok'));
+  const error = now.page.locator('#h5-task-dialog-error');
+  await error.waitFor();
+  assert.equal(await error.textContent(), 'This server is too old to archive tasks. Restart or update it first', `${label}: a clean message`);
+  await now.h.closeDialog();
+  assert.equal(now.server.count('POST', '/api/tasks/2/archive'), 1, `${label}: it was asked`);
+  assert.equal(await now.h.row('Beta').count(), 1, `${label}: the task stays`);
+  assert.equal(await now.h.lastNotice(), '', `${label}: nothing says it was archived`);
+  await now.h.sheet();
+  assert.equal(await now.page.locator('#h5-archived').count(), 0, `${label}: the section went away`);
+  assert.ok(!(await items(now, 'Beta')).includes('Archive'), `${label}: the item went away`);
+  await finish(now);
+
+  // A terminal that ended on such a server: `?archived=1` lists the shown task, which does not make it archived.
+  now = await start(nullKeys());
+  await now.h.select('Alpha');
+  await now.page.evaluate(() => window.taskSockets(1)[0].serverClose(1000, 'terminal exited'));
+  await now.page.waitForTimeout(200);
+  assert.equal(now.server.requests.filter(entry => entry === LIST).length, 1, `${label}: it asked once`);
+  assert.equal(await now.page.locator('#h5-task-name').textContent(), 'Alpha', `${label}: the task stays shown`);
+  assert.equal(await now.h.lastNotice(), '', `${label}: nothing says it was archived on another device`);
+  await finish(now);
+
+  // An empty list says nothing: the section stays, and an empty answer is simply empty.
+  now = await start([]);
+  await now.page.locator('#h5-archived').waitFor();
+  await now.h.press(now.page.locator('#h5-archived-toggle'));
+  await now.page.locator('.h5-archived-note', { hasText: 'No archived tasks' }).waitFor();
+  await finish(now);
+
+  // A mixed answer: only the row that is really archived.
+  now = await start(nullKeys(), false);
+  now.store.archived = [{ ...task(9, 'Really archived'), archived_at: ARCHIVED_AT }, task(1, 'Alpha'), bare(2, 'Beta')];
+  await now.h.press(now.page.locator('#h5-archived-toggle'));
+  await now.page.locator('.h5-archived-row').first().waitFor();
+  await now.page.waitForTimeout(50);
+  assert.deepEqual(await now.page.locator('.h5-archived-title').allTextContents(), ['Really archived'], `${label}: only the real row`);
+  assert.equal(await now.page.locator('.h5-archived-delete').count(), 1, `${label}: one Delete`);
+  assert.equal(await now.page.locator('#h5-archived-count').textContent(), '1', `${label}: the count is of real rows`);
+  assert.ok((await items(now, 'Beta')).includes('Archive'), `${label}: archiving is still there`);
+  await finish(now);
+
+  console.log(`  ${label}: ok`);
+}
+
 // The narrowest phone: a long Chinese title wraps inside the row, and nothing goes past the edge of the sheet.
 async function narrow(browser) {
   const label = 'phone 320px';
@@ -358,6 +454,8 @@ async function narrow(browser) {
     await run(browser, false);
     await run(browser, true);
     await stale(browser);
+    await oldServer(browser, false);
+    await oldServer(browser, true);
     await narrow(browser);
   } finally {
     await browser.close();

@@ -7,6 +7,7 @@ const taskGroups = require('../services/task-groups');
 const taskArchive = require('../services/task-archive');
 const { exchangePairingCode, createAccessToken, hasScope } = require('../services/engine-auth');
 const { getEngineIdentity } = require('../services/engine-identity');
+const { getServiceLinks, CAPABILITY: SERVICE_LINKS } = require('../services/service-links');
 const { createTerminalTicket } = require('../services/terminal-tickets');
 const updates = require('../services/update-manager');
 const terminal = require('./terminal');
@@ -42,8 +43,9 @@ function rateLimitPairing(req, res, next) {
   next();
 }
 
+// `capabilities` lets a joining service see, before it has any token, that this one can link (/v1/info needs a token).
 router.get('/health', (req, res) => {
-  res.json({ ok: true });
+  res.json({ ok: true, capabilities: [SERVICE_LINKS] });
 });
 
 router.post('/pair', rateLimitPairing, (req, res) => {
@@ -60,6 +62,22 @@ router.post('/pair', rateLimitPairing, (req, res) => {
     });
   } catch (error) { errorResponse(res, error); }
 });
+
+// Service links (services/service-links.js). Join has no token: the 6-digit code is its only credential, and only a browser session can make one
+// (POST /api/service-links/code), so a linked peer cannot use /v1 to create another link.
+router.post('/service-links/join', rateLimitPairing, (req, res) => {
+  try { res.status(201).json(getServiceLinks().acceptJoin(req.body)); }
+  catch (error) { errorResponse(res, error); }
+});
+
+// The peer unlinked. Two paths, one handler: the joiner calls the first directly, the initiator calls the second through the tunnel, whose allowlist refuses
+// /v1/service-links so that requests through it can never reach the join route.
+for (const route of ['service-links', 'service-link-notice']) {
+  router.post(`/${route}/:id/unlink`, requireEngineAuth(), (req, res) => {
+    try { getServiceLinks().peerUnlink(req.params.id, req.engineAuth.tokenId); res.status(204).end(); }
+    catch (error) { errorResponse(res, error); }
+  });
+}
 
 function infoHandler(req, res) {
   let version = {};
@@ -84,6 +102,8 @@ function infoHandler(req, res) {
       'fs:read-any',
       // files:raw: GET /v1/tasks/:id/files/raw and /v1/fs/raw stream a PDF, audio or video file with Range support.
       'files:raw',
+      // service-links: POST /v1/service-links/join and the reverse tunnel at /v1/service-links/tunnel.
+      SERVICE_LINKS,
       'engine:update', 'pm2:manage', 'apps:manage', 'agent-config:manage', 'file-sync:manage', 'workspace:manage', 'agent-chat:manage',
     ],
   });
@@ -392,7 +412,7 @@ router.post('/terminal-sessions/:id/control', requireEngineAuth('terminal:execut
 router.get('/tokens', requireEngineAuth('engine:admin'), (req, res) => {
   const rows = db.prepare(`SELECT id, name, token_prefix, role, scopes, last_used_at, created_at
     FROM engine_access_tokens WHERE revoked_at IS NULL ORDER BY created_at DESC`).all();
-  res.json(rows);
+  res.json(getServiceLinks().markTokens(rows));
 });
 
 router.post('/tokens', requireEngineAuth('engine:admin'), (req, res) => {
@@ -403,9 +423,16 @@ router.post('/tokens', requireEngineAuth('engine:admin'), (req, res) => {
   res.status(201).json(created);
 });
 
-router.delete('/tokens/:id', requireEngineAuth('engine:admin'), (req, res) => {
+router.delete('/tokens/:id', requireEngineAuth('engine:admin'), async (req, res) => {
   if (Number(req.params.id) === Number(req.engineAuth.tokenId)) {
     return res.status(400).json({ error: 'CANNOT_REVOKE_CURRENT_TOKEN' });
+  }
+  // A token issued for a service link ends the whole link, not only the token.
+  const link = getServiceLinks().linkForToken(req.params.id);
+  if (link) {
+    try { await getServiceLinks().unlink(link.id); }
+    catch (error) { return res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'LINK_UNLINK_FAILED' }); }
+    return res.json({ success: true });
   }
   const result = db.prepare(`UPDATE engine_access_tokens SET revoked_at = CURRENT_TIMESTAMP
     WHERE id = ? AND revoked_at IS NULL`).run(req.params.id);

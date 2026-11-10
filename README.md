@@ -124,6 +124,10 @@ If t-agent runs as root on a Linux server, Claude Code in the web terminal refus
 - The name, HTTP/HTTPS address and port of a remote connection can be changed, and the old address is overwritten only after verification succeeds.
 - The run state of a remote terminal comes from the PTY and hooks on that Engine: run `ta` once on the Engine's machine as well and trust it once with `/hooks` in Codex; see "Terminal run state".
 
+### Service links
+
+Link two T-Agent services so that each sees and operates all the tasks, terminals and sessions of the other, as remote Engines. In Settings, service A makes a 6-digit linking code; service B enters A's address and the code. B may be behind NAT: only B has to reach A. A must allow external access, and B may be local-only. Linking grants the other side full admin on this service. The other side's own remote Engines are not forwarded. Unlink from either side.
+
 ### Security boundary
 
 - The Client uses no username or password: browsers on computers and phones must first bind an authenticator and then log in with a 6-digit TOTP code; business pages and browser APIs cannot be used without binding.

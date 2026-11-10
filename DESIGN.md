@@ -586,6 +586,33 @@ B's side is the security boundary. A stream runs only as a loopback request to `
 Every request still carries the Engine token A was given, so `/v1` authorisation applies and the tunnel adds no authority. Only the headers `remote-stream.js` forwards cross back, never `set-cookie`.
 
 A tunnelled request reaches B as a plain loopback request (loopback socket, `Host: 127.0.0.1:<port>`, no forwarded headers), so `isLocalInitialization` is true: the access gate and `upgradeAllowed` let it through in the `local` and `unset` modes, and in `local` mode the gate marks a session of that request as trusted. That session is never usable, because the cookie does not cross back and `/api`, the login routes and the pages cannot be reached through the tunnel.
+## Service links
+
+Two services see and operate each other as remote Engines, in both directions. The **initiator** (A) makes a code; the **joiner** (B) enters A's address and the code. B may be behind NAT, so B always calls A directly, and A calls B through a reverse tunnel B keeps open (`lib/service-link-tunnel.js`). The other side's own remote Engines are not forwarded: `/v1` has no route to them.
+
+Code: `services/service-links.js`, browser routes `routes/service-links.js`, Engine routes in `routes/engine-v1.js`, the tunnel upgrade in `server.js`.
+
+**State.** One `system_state` row, `service_links_v1`, `{ links: [...] }`; no schema change. Each record has the role, the peer's instance id, `remote_server_id`, `issued_token_id` (the token this side issued to the peer) and the tunnel token: a SHA-256 hash on the initiator, encrypted with `lib/token-crypto.js` on the joiner. The peer is a `remote_servers` row: on A with `base_url = tunnelBase(linkId)`, on B with A's address.
+
+**The code.** Six digits (`crypto.randomInt`), a string, one active code (a new one replaces the old), 10 minutes, single use, kept in memory only as a hash and compared in constant time. A restart loses it. It is separate from the `TA-` Engine pairing codes: neither works in the other's route.
+
+A link grants full admin and `POST /v1/service-links/join` can be on the public internet, so six digits are acceptable only because of the failure cap: **5 wrong codes in total, from any address, end the active code**, after which every attempt is `INVALID_CODE` until the owner makes a new one. A guess therefore succeeds at most 5 times in 1,000,000 per code the owner generates. The per-address `rateLimitPairing` is also on the route. A malformed value (not `^\d{6}$`) is refused without counting, since it is no guess at the code.
+
+**Join on A.** The handler is synchronous from the first check to the last write, so no other join can run in between. Order: shape, verify the code, `SELF_LINK`, `ALREADY_LINKED`, then one transaction (token for B, `remote_servers` row with status offline, link record), then the code is consumed. A refused attempt leaves the code and the tables as they were. The two refusals come after the code check, so only someone holding the code can learn this service's instance id or its links.
+
+**Join on B.** `confirm: true` is required. B reads `GET /v1/health` without a token (`/v1/info` needs one), which is how an older peer gets `LINK_UNSUPPORTED` instead of a generic failure. An address already saved as a plain Engine is refused with `REMOTE_ALREADY_EXISTS` before the code is spent. B creates a token for A, calls A's join, stores A's row and the link record in one transaction, and starts the tunnel client. A failure deletes B's token outright and, if A had already accepted, asks A to let go with the token it just returned.
+
+**Status.** `hub.onChange` (A) and the tunnel client's `onState` (B) set `remote_servers.status` online or offline, so the Engine selector works unchanged; when the tunnel comes up `/v1/info` is read again for `remote_version`. At startup every linked row is set offline first, so none keeps the `online` of the previous run.
+
+**Unlink.** `DELETE /api/service-links/:id`, and `DELETE /api/remote-servers/:id` on a linked row, tell the peer best effort (3 s), then always revoke the token issued to the peer, delete the row and the record, and drop the tunnel. The joiner tells A at `POST /v1/service-links/:id/unlink`. The initiator tells B through the tunnel at `POST /v1/service-link-notice/:id/unlink`, because the tunnel's allowlist refuses `/v1/service-links`, which keeps the join route out of reach through it. Only the token issued for that link is accepted.
+
+A peer that did not hear learns from its token failing: a tunnel 401 or a 401 from the Engine API sets the link to `revoked`. It then stops retrying, revokes the token it had issued, keeps the row with status `unauthorized`, and offers removal. Known limit: if the joiner unlinks while the initiator is unreachable, the initiator only sees `offline` until its owner removes the link, and joining again is `ALREADY_LINKED` until then.
+
+**Tokens.** A link token is named `Service link: <peer>` and has `service_link_id` in `GET /api/remote-tokens` and `GET /v1/tokens`; revoking it there is an unlink.
+
+**Editing.** `PUT /api/remote-servers/:id` and `POST /api/remote-servers/:id/test` on a linked row answer `LINK_MANAGED`, including for the name. The address and credential belong to the link.
+
+**Security.** Only a browser session can make a linking code, so a peer cannot use its `/v1` token to create another link. The `tsl_` token passes only the tunnel upgrade; `authenticateAccessToken` accepts only `tae_`. The tunnel path follows the access gate like every `/v1` path, so a local-only A refuses it; a local-only B is allowed, since joining is its owner's choice and the tunnel is outbound. An unlink does not end a terminal WebSocket that is already open over a direct connection, and tokens the peer minted itself through `/v1/tokens` stay, as for any admin.
 
 ## Update check and versions
 

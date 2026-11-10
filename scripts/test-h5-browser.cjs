@@ -1764,17 +1764,15 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     // A remote engine's desktop terminal is the phone's terminal too (shared terminals).
     const old = await openPage(browser, { remoteTerminals: true });
     await old.page.locator('#h5-tasks').waitFor({ state: 'visible' });
-    await old.page.locator('#h5-engine').selectOption('remote:7');
     await openTask(old.page, 'Remote task');
     await old.page.waitForFunction(() => window.sockets.length === 1);
     assert.match(await old.page.evaluate(() => new URL(window.sockets[0].url).search), /terminalId=default&clientId=/);
     await old.context.close();
     // A remote Engine that has chats: the "+" offers terminals only and the page does not ask for its chats.
     const remote = await openPage(browser, { remoteTerminals: true, remoteChat: true });
-    await remote.page.locator('#h5-engine').selectOption('remote:7');
     await openTask(remote.page, 'Remote task');
     await remote.page.locator('#h5-open-tasks').tap();
-    await remote.page.locator('.h5-task-add').tap();
+    await remote.page.locator('[data-source="remote:7"] .h5-task-add').tap();
     await remote.page.waitForTimeout(300);
     assert.deepEqual(await remote.page.locator('#h5-term-menu-actions button').allTextContents(), ['New Terminal', 'Claude session', 'Codex session']);
     assert.ok(!remote.calls.some(call => call.includes('/agent/conversations')), 'no chat is read');

@@ -2,7 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import CircularProgress from '@mui/material/CircularProgress';
+import FormControlLabel from '@mui/material/FormControlLabel';
 import Paper from '@mui/material/Paper';
+import Switch from '@mui/material/Switch';
 import Typography from '@mui/material/Typography';
 import { Pill, api, t } from './common.jsx';
 import { EngineDialog, Feedback, Field, Group, Hint, failure, useFeedback } from './Form.jsx';
@@ -11,8 +13,9 @@ import { UnlinkDialog, linkEngineKey, readLinks } from './ServiceLinks.jsx';
 // Settings "Engines": the remote Engines this Client is connected to (ported from the old desktop page's engine tabs in 2.87.13).
 // The /api/remote-servers endpoints, their validation and their error texts: connect with an address and a pairing code or token (POST /api/remote-servers), edit
 // the name and address (PUT, the saved token is reused and never sent to the browser), remove (DELETE), check (POST /:id/check), and update a remote
-// Engine (/:id/check-update, /:id/apply-update, then /:id/update-status until it is back). After every change the engine selector of the task list is
-// read again (ui.actions.enginesChanged in h5.js).
+// Engine (/:id/check-update, /:id/apply-update, then /:id/update-status until it is back). After every change the task list is
+// read again (ui.actions.enginesChanged in h5.js). "Show in task list" is one switch per device, shown when there is more than one device; it only changes
+// what the list shows (h5.js `setDeviceVisible`, `/api/task-list/hidden-devices`), so it is here for a linked service too, whose other editing is blocked.
 
 export function errorLabel(code) {
   return ({
@@ -28,6 +31,7 @@ export function errorLabel(code) {
     NPM_INSTALLING_FAILED: 'The remote engine failed to install dependencies', NPM_BUILDING_FAILED: 'The remote engine failed to build assets',
     NODE_PTY_LOAD_FAILED: 'The remote engine’s terminal native module check failed',
     DOCKER_MANAGED_UPDATE: 'This engine is managed by Docker. Update the image on the host',
+    LAST_DEVICE_VISIBLE: 'At least one device must stay visible',
   })[code] || code || 'Operation failed';
 }
 const STATUS = { online: 'Online', offline: 'Offline', unauthorized: 'Authentication expired', local: 'This machine' };
@@ -247,8 +251,20 @@ function UpdateDialog({ state, server, onClose, onUpdated }) {
   );
 }
 
+// "Show in task list" of one device. The last visible device cannot be hidden: its switch is disabled.
+function ShowInList({ device, hidden, last, onChange }) {
+  const label = t('Show in task list');
+  return (
+    <FormControlLabel
+      className="h5-engine-visible" data-device={device} sx={{ m: 0, alignSelf: 'flex-start', gap: 0.5 }} label={<Typography variant="body2" component="span">{label}</Typography>}
+      control={<Switch size="small" checked={!hidden} disabled={last} onChange={event => onChange(device, event.target.checked)} slotProps={{ input: { className: 'h5-engine-visible-input', 'aria-label': label } }} />}
+    />
+  );
+}
+
 // `link`: this Engine is a linked service (ServiceLinks.jsx). Its address and token belong to the link, so they cannot be edited, and removing it ends the link.
-function EngineRow({ server, link, busy, onCheck, onUpdate, onEdit, onRemove, feedback }) {
+// `show`: the props of its "Show in task list" switch, or null when the switches do not appear.
+function EngineRow({ server, link, busy, show, onCheck, onUpdate, onEdit, onRemove, feedback }) {
   return (
     <Paper variant="outlined" className="h5-engine-row" data-engine={server.id} sx={{ display: 'flex', flexDirection: 'column', gap: 0.75, p: 1 }}>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
@@ -260,6 +276,7 @@ function EngineRow({ server, link, busy, onCheck, onUpdate, onEdit, onRemove, fe
         {[link ? link.peer_url : server.base_url, versionText(server.remote_version), server.last_checked_at ? `${t('Last checked')} ${server.last_checked_at}` : ''].filter(Boolean).join(' · ')}
       </Typography>
       {server.last_error && server.status !== 'online' ? <Typography className="h5-engine-error" variant="caption" color="error">{t(errorLabel(server.last_error))}</Typography> : null}
+      {show ? <ShowInList {...show} /> : null}
       <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
         <Button size="small" variant="outlined" className="h5-engine-check" disabled={busy} onClick={onCheck}>{t('Check')}</Button>
         <Button size="small" variant="outlined" className="h5-engine-update" onClick={onUpdate}>{t('Check for updates')}</Button>
@@ -319,6 +336,16 @@ export function EnginesGroup({ state, ui, linksVersion, onLinksChanged }) {
       note(server.id, errorLabel(codeOf(error)), true);
     } finally { setChecking(null); }
   };
+  // The switches: only with more than one device, and not on an older server. Dropped when the server refuses (a stale page after another device changed the list).
+  const hidden = state.hiddenDevices || { supported: false, keys: [] };
+  const devices = ['local', ...servers.map(server => `remote:${server.id}`)];
+  const visibleDevices = devices.filter(key => !hidden.keys.includes(key));
+  const switches = hidden.supported && devices.length > 1;
+  const setVisible = async (device, visible) => {
+    try { await ui.actions.setDeviceVisible(device, visible); }
+    catch (error) { say(`${t(errorLabel(codeOf(error)))}`, true); }
+  };
+  const showProps = device => (switches ? { device, hidden: hidden.keys.includes(device), last: visibleDevices.length === 1 && visibleDevices[0] === device, onChange: (key, visible) => void setVisible(key, visible) } : null);
   const remove = async server => {
     const link = linkOf(server);
     if (link) { setUnlinking(link); return; }
@@ -330,14 +357,17 @@ export function EnginesGroup({ state, ui, linksVersion, onLinksChanged }) {
     <Group id="engines" title="Engines" onOpen={load}>
       <Hint>{t('Engines are the machines whose tasks and terminals this page shows. This machine is always there; connect other Clients with their address and a pairing code made under “Remote service” on that Client.')}</Hint>
       <Box id="h5-engine-list" sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-        <Paper variant="outlined" className="h5-engine-row" data-engine="local" sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1 }}>
-          <strong style={{ flex: '1 1 auto' }}>{t('This machine')}</strong>
-          <Typography variant="caption" color="text.secondary" id="h5-engine-local-version">{versionText(localVersion)}</Typography>
-          <Pill tone="success" label={t('Local')} />
+        <Paper variant="outlined" className="h5-engine-row" data-engine="local" sx={{ display: 'flex', flexDirection: 'column', gap: 0.75, p: 1 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <strong style={{ flex: '1 1 auto' }}>{t('This machine')}</strong>
+            <Typography variant="caption" color="text.secondary" id="h5-engine-local-version">{versionText(localVersion)}</Typography>
+            <Pill tone="success" label={t('Local')} />
+          </Box>
+          {switches ? <ShowInList {...showProps('local')} /> : null}
         </Paper>
         {servers.map(server => (
           <EngineRow
-            key={server.id} server={server} link={linkOf(server)} busy={checking === server.id} feedback={rowFeedback[server.id] || { message: '', error: false }}
+            key={server.id} server={server} link={linkOf(server)} busy={checking === server.id} show={showProps(`remote:${server.id}`)} feedback={rowFeedback[server.id] || { message: '', error: false }}
             onCheck={() => void check(server)} onUpdate={() => setUpdating(server)} onEdit={() => setEditing(server)} onRemove={() => void remove(server)}
           />
         ))}

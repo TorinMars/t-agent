@@ -159,9 +159,9 @@ async function openSettingsGroup(page, touch, id) {
   await page.waitForFunction(group => document.querySelector(`#h5-set-${group} .MuiAccordionSummary-root`).getAttribute('aria-expanded') === 'true'
     && !document.getAnimations().some(animation => animation.playState === 'running'), id);
 }
+// The services of the one task list: there is no selector any more, only the list and the "Create on" of a new task.
 async function engineOptions(page) {
-  if (!(await page.locator('#h5-engine').count())) return [];
-  return page.locator('#h5-engine option').allTextContents();
+  return page.evaluate(() => { const list = window.H5UI.get().sources.map(item => item.label); return list.length > 1 ? list : []; });
 }
 
 async function checkUpdateModal(page, label, touch) {
@@ -253,7 +253,7 @@ async function checkEngines(page, label, touch) {
   await page.locator('#h5-engine-connect').waitFor({ state: 'detached' });
   await page.locator('.h5-engine-row[data-engine="8"]').waitFor();
   assert.deepEqual(callsTo('POST', '/api/remote-servers').filter(call => call.url === '/api/remote-servers').at(-1).body, { url: 'http://10.0.0.9', port: '14002', token: 'TA-GOOD-CODE-0001' });
-  await page.waitForFunction(() => [...document.querySelectorAll('#h5-engine option')].map(o => o.textContent).includes('10.0.0.9'));
+  await page.waitForFunction(() => window.H5UI.get().sources.map(o => o.label).includes('10.0.0.9'));
 
   // Edit: the form echoes the saved name and address (no token field: the saved token is reused); saving renames the option of the selector.
   await row.locator('.h5-engine-edit').click();
@@ -268,7 +268,7 @@ async function checkEngines(page, label, touch) {
   await page.locator('#h5-engine-edit-save').click();
   await page.locator('#h5-engine-edit').waitFor({ state: 'detached' });
   assert.deepEqual(callsTo('PUT', '/api/remote-servers/7').at(-1).body, { name: 'Cloud box', url: 'http://10.0.0.7', port: '14002' });
-  await page.waitForFunction(() => [...document.querySelectorAll('#h5-engine option')].map(o => o.textContent).includes('Cloud box'));
+  await page.waitForFunction(() => window.H5UI.get().sources.map(o => o.label).includes('Cloud box'));
 
   // Check: an offline Engine shows the reason and its new state.
   server.checkOffline = true;
@@ -303,12 +303,11 @@ async function checkEngines(page, label, touch) {
   page.once('dialog', dialog => { assert.equal(dialog.message(), 'Remove this remote connection? Remote data is not deleted.'); dialog.accept(); });
   await page.locator('.h5-engine-row[data-engine="8"] .h5-engine-remove').click();
   await page.locator('.h5-engine-row[data-engine="8"]').waitFor({ state: 'detached' });
-  await page.waitForFunction(() => ![...document.querySelectorAll('#h5-engine option')].map(o => o.textContent).includes('10.0.0.9'));
+  await page.waitForFunction(() => !window.H5UI.get().sources.map(o => o.label).includes('10.0.0.9'));
   await page.locator('#h5-close-settings').click();
   await page.locator('#h5-settings .h5-sheet-panel').waitFor({ state: 'hidden' });
   // The shown Engine is removed: the task list goes back to this machine.
   await openSidebar(page, touch);
-  await page.locator('#h5-engine').selectOption('remote:7');
   await page.locator('.h5-task-item', { hasText: 'Task on Cloud box' }).waitFor();
   await openSettingsGroup(page, touch, 'engines');
   await page.locator('.h5-engine-row[data-engine="7"]').waitFor();
@@ -319,7 +318,8 @@ async function checkEngines(page, label, touch) {
   await page.locator('#h5-settings .h5-sheet-panel').waitFor({ state: 'hidden' });
   await openSidebar(page, touch);
   await page.locator('.h5-task-item', { hasText: 'Fix login' }).waitFor();
-  assert.equal(await page.locator('#h5-engine').count(), 0, `${label}: no selector with only this machine`);
+  assert.equal(await page.locator('.h5-source-header').count(), 0, `${label}: no header with only this machine`);
+  assert.equal(await page.locator('.h5-task-item', { hasText: 'Task on Cloud box' }).count(), 0, `${label}: its tasks are gone`);
 }
 
 async function taskMenu(page, title) {

@@ -124,7 +124,7 @@ async function serve(route) {
     });
     await page.route(`${ORIGIN}/**`, serve);
     await page.goto(`${ORIGIN}/h5`);
-    await page.locator('.h5-task-item', { hasText: 'Fix login' }).tap();
+    await page.locator('[data-source="local"] .h5-task-item', { hasText: 'Fix login' }).tap();
     await page.locator('#h5-tasks .h5-terminal-list[aria-label="Fix login"] .h5-terminal-main').first().tap();
     await page.locator('#h5-tasks').waitFor({ state: 'hidden' });
     await page.waitForFunction(() => window.sockets.length === 1 && window.sockets[0].readyState === 1);
@@ -398,7 +398,7 @@ async function serve(route) {
       await remotePage.route(`${ORIGIN}/**`, serve);
       const infoAsked = remotePage.waitForRequest(request => request.url().endsWith(`/api/remote-servers/${id}/info`));
       await remotePage.goto(`${ORIGIN}/h5`);
-      await remotePage.locator('.h5-task-item', { hasText: 'Fix login' }).tap();
+      await remotePage.locator(`[data-source="remote:${id}"] .h5-task-item`, { hasText: 'Fix login' }).tap();
       await remotePage.locator('#h5-tasks .h5-terminal-list[aria-label="Fix login"] .h5-terminal-main').first().tap();
       await remotePage.locator('#h5-tasks').waitFor({ state: 'hidden' });
       await remotePage.waitForFunction(() => window.sockets.length === 1 && window.sockets[0].readyState === 1);

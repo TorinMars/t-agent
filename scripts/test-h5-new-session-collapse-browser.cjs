@@ -164,11 +164,11 @@ const CASES = [
     await t.choices.filter({ hasText: 'Older session' }).waitFor();
     assert.deepEqual(await t.choices.allTextContents(), ['New Claude session', 'Older session', 'Back'], 'the Claude list');
   }],
-  ['changing the Engine closes the list', async t => {
+  ['opening a task of another service closes the list', async t => {
     await t.openPanel('Alpha');
-    await t.page.locator('#h5-engine').selectOption('remote:7');
-    await t.item('Remote one').waitFor();
-    await t.gone('after the Engine changed');
+    await t.press(t.item('Remote one'));
+    await t.press(t.list('Remote one').locator('.h5-terminal-main').first());
+    await t.gone('after a task of the other service was opened');
   }],
   ['a collapse takes the rename field away for good', async t => {
     const rows = t.list('Phone terminals').locator('.h5-terminal-row');

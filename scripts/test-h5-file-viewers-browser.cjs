@@ -213,7 +213,6 @@ const shot = (page, name) => (SHOTS ? page.screenshot({ path: path.join(SHOTS, n
     {
       const pc = await openPage(browser, { desktop: true });
       const p = pc.page;
-      await p.locator('#h5-engine').selectOption('remote:7');
       await p.locator('.h5-task-item', { hasText: 'Remote job' }).click();
       const remoteRow = p.locator('#h5-tasks .h5-terminal-list[aria-label="Remote job"] .h5-terminal-main').first();
       await remoteRow.waitFor();

@@ -38,7 +38,7 @@ For implementation details see [Component architecture](docs/ARCHITECTURE.md), a
 ### Client
 
 - **One page for computers and phones** (since 2.88.0): `/` and `/h5` serve the same React / Material UI page (dark theme). From 900px wide the task list is a sidebar that can be folded, the terminal or chat fills the rest, and documents and files open in a side panel; below 900px the phone layout is used (task drawer, two-row key bar, bottom sheets). With a mouse and keyboard (pointer mode) the key bar is hidden, the draft box is always shown and typing goes to the terminal. The old desktop page (`/web`) was removed: `/web`, `/index.html` and `/h5.html` lead to `/`. The last release with two pages is tagged `v2.87.11-two-pages`.
-- The engine selector at the top of the task list switches between this machine and the connected remote Engines; connect, edit, check, update and remove Engines in **Settings → Engines**.
+- The tasks of this machine and of every connected service are in **one list**, each service under its own small header (there is nothing to switch). Connect, edit, check, update and remove Engines, and choose which devices are shown ("Show in task list"), in **Settings → Engines**.
 - Create tasks (title and an optional working directory; the effective default path is shown), move a task to another group, edit its working directory and delete it (optionally with its directory) from the task "⋯" menu. Groups themselves (create / rename / delete), drag-sort, priority, due date and document paths are no longer edited in the page (the endpoints stay).
 - **Archive a task** instead of deleting it: its folder, documents, to-dos and sessions stay and it can be restored later. Archiving closes its terminals and stops its agent chats; until it is restored it starts no shell or agent, and it is out of the task list (a shared link keeps working). Endpoints: `POST {tasks}/:id/archive`, `POST {tasks}/:id/restore`, `GET {tasks}?archived=1`, on this machine and on an Engine that has the `tasks:archive` capability.
 - Read a task's `DESIGN.md` with Markdown, Mermaid and relative images (the "Docs" button of row 2; its header leads to the read-only file tree); a file path printed in a terminal opens a read-only preview of that file.
@@ -243,8 +243,8 @@ An existing `.env` is not overwritten; when `--port` or `--tasks-dir` is given e
 
 Open the Client (`http://127.0.0.1:3000/`). In the task list (the sidebar on a computer, the drawer on a phone):
 
-1. When remote Engines are connected, choose the Engine at the top of the list ("This machine" for a local task).
-2. Click "New task", enter a title and, optionally, a working directory (an absolute path). The effective default is shown under the field; leaving it empty uses that default.
+1. Click "New task", enter a title and, optionally, a working directory (an absolute path). The effective default is shown under the field; leaving it empty uses that default.
+2. When other services are connected, choose where it goes under "Create on" (this machine by default).
 3. Create it.
 
 When the working directory is left empty, T-Agent creates the task directory under `TASKS_BASE_DIR` and generates:
@@ -270,7 +270,7 @@ Open **Settings → Engines** (the gear at the bottom of the task list) and clic
 
 The URL may only contain the protocol and the host; do not include `/v1` or any other path. When using an HTTPS reverse proxy you usually enter the domain and leave the port empty.
 
-After connecting, the Engine is listed in Settings → Engines with its version and state, and appears in the engine selector at the top of the task list. Choose it there to see the tasks of that server.
+After connecting, the Engine is listed in Settings → Engines with its version and state, and its tasks appear in the task list, under the name of that server.
 
 ### Let another Client connect to this Client
 
@@ -284,7 +284,7 @@ The connected Client must allow remote access. Set `HOST=0.0.0.0` in `.env` to o
 
 ### 3. Create a remote task
 
-Choose the remote Engine in the engine selector of the task list, click "New task", and enter an absolute path on that server as the working directory (or leave it empty). The task, documents and working directory are created directly on that Engine and are not copied to the Client's machine; when the specified directory does not exist the Engine creates it automatically.
+Click "New task", choose the remote Engine under "Create on", and enter an absolute path on that server as the working directory (or leave it empty). The task, documents and working directory are created directly on that Engine and are not copied to the Client's machine; when the specified directory does not exist the Engine creates it automatically.
 
 Every task can have its own working directory, no longer limited by an allowlist of workspace roots. When only the working directory is entered, the design doc defaults to `DESIGN.md` in that directory; when the paths are left empty, the Engine creates the task directory under its own `TASKS_BASE_DIR`. A remote path must be absolute, and the account of the Engine process needs read and write permission on the directory.
 

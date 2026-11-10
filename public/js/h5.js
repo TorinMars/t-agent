@@ -44,7 +44,7 @@
 
   // ── Early requests (start) ──
   // A slow phone network pays a full round trip for each request that waits for another one. At start the page therefore asks at once for what it
-  // will need: the Engine list, the tasks and groups of the remembered Engine, and for the remembered task its terminals; and it opens the
+  // will need: the list of services, the tasks and groups of this machine and of the remembered service, and for the remembered task its terminals; and it opens the
   // WebSocket of the remembered terminal. An early answer is used when the normal code asks for the same URL (in `api`, once, within EARLY_MS); the
   // early socket is taken by `open` when the terminal shown is that one, and closed cleanly when it is not (the task or the terminal is gone, another
   // one was chosen), so the server never keeps a stray attachment.
@@ -85,8 +85,11 @@
     return entry;
   }
 
-  const LOCAL = { key: 'local', label: 'This machine', tasksBase: '/api/tasks', groupsBase: '/api/task-groups', wsPath: '/terminal/ws', activityBase: '/api/tasks' };
-  const remoteSource = (id, name) => ({
+  // A source is one service whose tasks are in the list: this machine, or a connected service (a remote Engine or a linked service). Each keeps its own list:
+  // `tasks`, `groups`, `status` ('new' until its first answer, 'ready', or 'offline' when its last read failed) and `failure` (what that read said).
+  const withList = from => Object.assign(from, { tasks: [], groups: DEFAULT_GROUPS, status: 'new', failure: '', loadSeq: 0, checkedAt: 0 });
+  const LOCAL = withList({ key: 'local', label: 'This machine', tasksBase: '/api/tasks', groupsBase: '/api/task-groups', wsPath: '/terminal/ws', activityBase: '/api/tasks' });
+  const remoteSource = (id, name) => withList({
     key: `remote:${id}`, label: name,
     tasksBase: `/api/remote-servers/${id}/tasks`,
     groupsBase: `/api/remote-servers/${id}/task-groups`,
@@ -94,6 +97,29 @@
     activityBase: `/api/remote-servers/${id}`, // {activityBase}/terminal-activity and /terminal-subagents
   });
   let sources = [LOCAL];
+  // The devices left out of the task list ("Show in task list" in Settings, `/api/task-list/hidden-devices`). Display only: a hidden device stays connected.
+  const HIDDEN_URL = '/api/task-list/hidden-devices';
+  let hiddenDevices = new Set();
+  let hiddenSupported = false; // an older server has no such route: nothing is hidden and the switches do not appear
+  let hiddenSeq = 0;
+  let listReady = false; // both the services and what is hidden are known: until then the list says "Loading…", so a hidden device never flashes by
+  // The sources of the list, in list order. At least one device always stays visible. A source without a name is the remembered one, assumed before the list of services has answered.
+  function listedSources() {
+    const named = sources.filter(item => item === LOCAL || item.label);
+    const visible = named.filter(item => !hiddenDevices.has(item.key));
+    return visible.length ? visible : named;
+  }
+  // Task ids repeat between services: everything kept per task is keyed by this. The shell hands it back from a row of the list.
+  const taskRef = (from, taskId) => `${from.key}|${taskId}`;
+  const findTask = (from, taskId) => from.tasks.find(entry => String(entry.id) === String(taskId));
+  // The row a ref names. A bare id (T-Attention's way back) is a task of this machine.
+  function resolveRef(ref) {
+    const text = String(ref);
+    const cut = text.lastIndexOf('|');
+    const from = cut < 0 ? LOCAL : sources.find(item => item.key === text.slice(0, cut));
+    const item = from && findTask(from, text.slice(cut + 1));
+    return item ? { from, item } : null;
+  }
   // What an Engine can do: the `capabilities` of its `/info` (`/v1/info` through the proxy), kept on its source object each time the page reads it
   // (the list of a task that is not selected reads it again, so an upgraded Engine is seen). The local Client has no such list and can do everything the
   // page asks for here. One read at a time per Engine.
@@ -113,25 +139,24 @@
   // Archiving tasks: the local Client always, a remote Engine with 'tasks:archive'. An Engine that has not said yet shows no archive UI.
   // `archiveMissing`: its answers showed that this source does not implement archiving (`noArchiving`), which holds until the page is loaded again.
   const archives = from => !from.archiveMissing && (from.key === 'local' || Boolean(Array.isArray(from.capabilities) && from.capabilities.includes('tasks:archive')));
+  // The service of the task that is shown, set by selecting a task (this machine when none is shown). There is no switch: all the services are in one list.
   let source = LOCAL;
-  let tasks = [];
-  let groups = [];
   let task = null;
+  const isShown = (from, taskId) => from === source && Boolean(task) && String(task.id) === String(taskId);
   let terminals = [];
   let terminalsState = 'none'; // what `terminals` is for the selected task: 'loading', 'ready' or 'error'
   let terminalsSeq = 0; // the newest `loadTerminals`: an older one is ignored when it answers, also when the same task was selected again
   let terminalId = null;
-  const expanded = new Set(); // the tasks whose sessions are listed in the task sheet (a tap on a task opens and closes its list; it does not open the task); any number can be open
-  const peeks = new Map(); // task id -> the sessions of an expanded task that is not the selected one: { source, taskId, status, terminals }
+  const expanded = new Set(); // the refs (`taskRef`) of the tasks whose sessions are listed in the task sheet (a tap on a task opens and closes its list; it does not open the task); any number can be open
+  const peeks = new Map(); // ref -> the sessions of an expanded task that is not the selected one: { source, taskId, status, terminals }
   let peekSeq = 0;
   const PEEK_WAIT_MS = 10000; // a list still on "Loading…" after this long says it could not be read (a late answer still replaces that)
   // The Restart and Delete requests on their way, by Engine and task (a promise that ends when all of them have). A list of that task read meanwhile would
   // show the old row, or connect to a terminal that is going away, so `loadTerminals` and `loadPeek` wait for it. Without one there is nothing to wait for.
   const actionsRunning = new Map();
-  const actionKey = (from, taskId) => `${from.key}|${taskId}`;
-  const actionsDone = (from, taskId) => actionsRunning.get(actionKey(from, taskId));
+  const actionsDone = (from, taskId) => actionsRunning.get(taskRef(from, taskId));
   function trackAction(target, pending) {
-    const key = actionKey(target.from, target.taskId);
+    const key = taskRef(target.from, target.taskId);
     const all = Promise.all([actionsRunning.get(key), pending.catch(() => {})]).then(() => { if (actionsRunning.get(key) === all) actionsRunning.delete(key); });
     actionsRunning.set(key, all);
     return pending;
@@ -260,43 +285,87 @@
   setInterval(() => { if (keyboardOpen && !pointerMode()) fitViewport(); }, 500);
 
   // ── Tasks ──
-  // The task list the shell draws: a note (loading, an error, no tasks), or groups of tasks, each with the sessions listed under it when it is open.
-  function note(text) { ui.set({ taskList: { note: text, groups: [] } }); }
-
-  async function loadSources() {
-    try {
-      const servers = await api('GET', '/api/remote-servers');
-      const before = new Map(sources.map(item => [item.key, item]));
-      // An Engine that is still there keeps its object (only its name can change): requests in flight compare it with `source`.
-      sources = [LOCAL, ...(Array.isArray(servers) ? servers : []).map(server => (before.has(`remote:${server.id}`) ? Object.assign(before.get(`remote:${server.id}`), { label: server.name }) : remoteSource(server.id, server.name)))];
-    } catch { sources = [LOCAL]; }
-    source = sources.find(item => item.key === store.get('source')) || LOCAL;
-    ui.set({ sources: sources.map(item => ({ key: item.key, label: item.label })), sourceKey: source.key });
+  function note(text) { ui.set({ taskList: { note: text, groups: [], sections: [] } }); }
+  // The task list the shell draws: a note (loading, an error, no tasks: a list of this machine alone), or one section per service, each with its groups of tasks,
+  // each task with the sessions listed under it when it is open. `groups` is this machine's own, for T-Attention's way back.
+  function publishSources() {
+    ui.set({
+      sources: sources.filter(item => item === LOCAL || item.label).map(item => ({ key: item.key, label: item.label, offline: item.status === 'offline', hidden: hiddenDevices.has(item.key) })),
+      sourceKey: source.key,
+      sourceLabel: task && source !== LOCAL ? source.label : '', // the header says which service the shown task is on when it is not this machine
+    });
   }
 
-  async function loadTasks() {
-    const current = source;
-    if (!tasks.length) note('Loading…');
+  // Reads the connected services. One that is still there keeps its object: requests in flight, sockets and warm terminals compare it.
+  async function loadSources() {
+    let servers;
+    try { servers = await api('GET', '/api/remote-servers'); }
+    catch { sources = sources.filter(item => item === LOCAL || item.label); publishSources(); return; } // this time only: what was known stays
+    const before = new Map(sources.map(item => [item.key, item]));
+    sources = [LOCAL, ...(Array.isArray(servers) ? servers : []).filter(server => server.enabled !== false).map(server => {
+      const kept = before.get(`remote:${server.id}`);
+      const from = kept ? Object.assign(kept, { label: server.name }) : remoteSource(server.id, server.name);
+      if (!kept && server.status === 'offline') from.status = 'offline'; // the first read of its tasks says for sure
+      return from;
+    })];
+    for (const from of before.values()) if (!sources.includes(from)) forgetSource(from);
+    publishSources();
+  }
+  // A service that is no longer connected: nothing of it is kept and, when its task was shown, nothing is shown.
+  function forgetSource(from) {
+    const prefix = `${from.key}|`;
+    for (const ref of [...expanded]) if (ref.startsWith(prefix)) expanded.delete(ref);
+    for (const ref of [...peeks.keys()]) if (ref.startsWith(prefix)) peeks.delete(ref);
+    if (archived.rows) archived.rows = archived.rows.filter(row => row.from !== from);
+    closeWarm(item => item.source === from);
+    if (earlySocket && earlySocket.source === from) dropEarlySocket();
+    if (store.get('source') === from.key) store.set('source', null);
+    if (source === from && task) { hideAgent(); closeTerminalMenu(); selectTask(LOCAL, null, null, { stay: true }); }
+    else if (menuScope && menuScope.from === from) closeTerminalMenu();
+  }
+
+  // Reads one service. It fails on its own: a slow or offline one neither delays nor blanks the others. An older read that answers late is ignored.
+  async function loadSource(from) {
+    const seq = (from.loadSeq += 1);
+    const stale = () => seq !== from.loadSeq || !sources.includes(from);
+    from.checkedAt = Date.now();
     try {
       const [list, groupRows] = await Promise.all([
-        api('GET', current.tasksBase),
-        api('GET', current.groupsBase).catch(() => []),
+        api('GET', from.tasksBase),
+        api('GET', from.groupsBase).catch(() => []),
       ]);
-      if (current !== source) return false;
-      tasks = Array.isArray(list) ? list : [];
+      if (stale()) return false;
+      const back = from.status !== 'ready';
+      from.tasks = Array.isArray(list) ? list : [];
+      from.status = 'ready';
+      from.failure = '';
       // This machine has no capability list, but every row of a server that can archive has the key `archived_at` (null while in use): an older process, serving
       // these newer page files until it is restarted, leaves it out. An empty list says nothing. A remote Engine is decided by its capability instead.
-      if (current.key === 'local' && tasks.length && tasks.every(row => !row || !('archived_at' in row))) noArchiving(current);
-      groups = Array.isArray(groupRows) && groupRows.length ? groupRows : DEFAULT_GROUPS;
+      if (from.key === 'local' && from.tasks.length && from.tasks.every(row => !row || !('archived_at' in row))) noArchiving(from);
+      from.groups = Array.isArray(groupRows) && groupRows.length ? groupRows : DEFAULT_GROUPS;
       renderTasks();
       showActiveCount();
-      if (current.key !== 'local' && !Array.isArray(current.capabilities)) readInfo(current).catch(() => { /* an older or offline Engine: no archive UI */ }).finally(showArchived);
+      if (back) { publishSources(); syncFeeds(); } // it came back without a reload: its feed too, and what it can do is read again below
+      if (from.key !== 'local' && !Array.isArray(from.capabilities)) {
+        readInfo(from).catch(() => { /* an older or offline Engine: no archive UI */ }).finally(() => { showArchived(); if (archives(from)) refreshArchived(); });
+      }
       return true;
     } catch (error) {
-      if (current === source) { tasks = []; note(`Could not load tasks: ${error.message}`); }
+      if (stale()) return false;
+      from.status = 'offline';
+      from.failure = error.message;
+      renderTasks();
+      showActiveCount();
+      publishSources();
+      syncFeeds();
       return false;
     }
   }
+  function loadTasks() { return Promise.all(listedSources().map(from => loadSource(from))); }
+  // A slow check of the services that are offline, while the page is visible: a service that returns comes back without a reload.
+  const OFFLINE_POLL_MS = 30000;
+  const retryOffline = () => { for (const from of listedSources()) if (from.status === 'offline') void loadSource(from); };
+  setInterval(() => { if (document.visibilityState === 'visible') retryOffline(); }, OFFLINE_POLL_MS);
 
   // The directory of a terminal that kept its own after the task's working directory changed (null when it is the task's).
   const otherDir = (row, item) => {
@@ -313,10 +382,10 @@
     };
   }
   // The sessions under an expanded task that is not selected: its terminals, as in the list of the selected task. Each has "⋯" too (see `openOtherMenu`).
-  function peekSessions(item) {
+  function peekSessions(from, item) {
     const label = item.title;
-    const peek = peeks.get(item.id);
-    if (!peek || peek.source !== source || peek.status === 'loading') return { label, note: 'Loading…', rows: [] };
+    const peek = peeks.get(taskRef(from, item.id));
+    if (!peek || peek.status === 'loading') return { label, note: 'Loading…', rows: [] };
     if (peek.status === 'error') return { label, note: 'Could not load the sessions', rows: [] };
     const rows = [
       ...peek.terminals.map(row => ({ kind: 'terminal', id: row.terminal_id, title: row.title, agent: row.agent || null, otherDir: otherDir(row, item), current: false, more: true })),
@@ -325,35 +394,50 @@
     return { label, note: null, rows };
   }
 
-  // The groups of the task sheet in the order they are drawn, each with its tasks in list order (groups without tasks left out).
-  function groupedTasks() {
-    const ordered = [...groups].sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+  // The groups of one service in the order they are drawn, each with its tasks in list order (groups without tasks left out).
+  function groupedTasks(from) {
+    const ordered = [...from.groups].sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
     const known = new Set(ordered.map(group => group.key));
-    for (const item of tasks) {
+    for (const item of from.tasks) {
       if (!known.has(item.status)) { known.add(item.status); ordered.push({ key: item.status, name: item.status }); }
     }
-    return ordered.map(group => ({ group, members: tasks.filter(item => item.status === group.key) })).filter(entry => entry.members.length);
+    return ordered.map(group => ({ group, members: from.tasks.filter(item => item.status === group.key) })).filter(entry => entry.members.length);
   }
+
+  function taskRow(from, item) {
+    const ref = taskRef(from, item.id);
+    const selected = isShown(from, item.id);
+    const open = expanded.has(ref);
+    // A tap opens or closes the list of sessions under the task. Going to a session is a tap on that session.
+    const hasSessions = Boolean(selected && terminals.length);
+    // The selected task: "+" on the right of its row adds a terminal.
+    const ownList = hasSessions ? ownSessions() : terminalsState === 'error' ? { label: item.title, note: 'Could not load the sessions', rows: [] } : null;
+    const peek = peeks.get(ref);
+    return {
+      id: item.id, ref, title: item.title, selected, expanded: open, add: true, ...activeIn(from, item.id),
+      count: open ? (selected ? (hasSessions ? terminals.length : null) : (peek && peek.status === 'ready' ? peek.terminals.length : null)) : null,
+      sessions: open ? (selected ? ownList : peekSessions(from, item)) : null,
+    };
+  }
+  const sectionGroups = from => groupedTasks(from).map(({ group, members }) => ({ key: group.key, name: group.name, tasks: members.map(item => taskRow(from, item)) }));
 
   function renderTasks() {
     showArchived(); // first: the entry is there with an empty list too, and `readInfo` of an expanded list may just have changed what the Engine can do
-    if (!tasks.length) { note('No tasks yet. Create one above'); return; }
-    const out = [];
-    for (const { group, members } of groupedTasks()) {
-      out.push({
-        key: group.key, name: group.name,
-        tasks: members.map(item => {
-          const selected = Boolean(task && task.id === item.id);
-          const open = expanded.has(item.id);
-          // A tap opens or closes the list of sessions under the task. Going to a session is a tap on that session.
-          const hasSessions = Boolean(selected && terminals.length);
-          // The selected task: "+" on the right of its row adds a terminal.
-          const ownList = hasSessions ? ownSessions() : terminalsState === 'error' ? { label: item.title, note: 'Could not load the sessions', rows: [] } : null;
-          return { id: item.id, title: item.title, count: open ? (selected ? (hasSessions ? terminals.length : null) : (peeks.get(item.id) && peeks.get(item.id).status === 'ready' ? peeks.get(item.id).terminals.length : null)) : null, selected, expanded: open, add: true, sessions: open ? (selected ? ownList : peekSessions(item)) : null };
-        }),
-      });
+    if (!listReady) { note('Loading…'); return; }
+    const listed = listedSources();
+    if (listed.length === 1 && listed[0] === LOCAL) { // this machine alone: no header, and it says so when the list is empty
+      const message = LOCAL.status === 'new' ? 'Loading…'
+        : LOCAL.status === 'offline' ? `Could not load tasks: ${LOCAL.failure}`
+          : LOCAL.tasks.length ? null : 'No tasks yet. Create one above';
+      if (message) { note(message); return; }
     }
-    ui.set({ taskList: { note: null, groups: out } });
+    const header = !(listed.length === 1 && listed[0] === LOCAL);
+    const sections = listed.map(from => ({
+      key: from.key, label: from.label, local: from === LOCAL, header, offline: from.status === 'offline',
+      groups: from.status === 'ready' ? sectionGroups(from) : [],
+    }));
+    const own = sections.find(section => section.local);
+    ui.set({ taskList: { note: null, groups: own ? own.groups : [], sections } });
   }
 
   // Keep the screen on while a task is open (a terminal or a chat), so the phone does not sleep in the middle of a session and drop the connection.
@@ -374,24 +458,33 @@
     } catch { /* refused (low battery, power saver): not worth telling the person */ }
   }
 
-  // target: where to go in the task, { terminal: id } or { chat: row } (a notification link, see `openChatFromLink`); without one, the task opens on its terminal.
-  // stay: the task sheet of a phone stays open (the "+" of a task that was not selected shows its Session list in the sheet, under that task).
-  function selectTask(item, target = null, { stay = false } = {}) {
+  // from, item: the task and its service (`item` null: no task is shown). target: where to go in the task, { terminal: id } or { chat: row } (a notification link, see
+  // `openChatFromLink`); without one, the task opens on its terminal. stay: the task sheet of a phone stays open (the "+" of a task that was not selected shows its Session
+  // list in the sheet, under that task). remember: false for a fallback at page load, so the service that was remembered is tried again on the next one.
+  function selectTask(from, item, target = null, { stay = false, remember = true } = {}) {
+    const next = item ? from : LOCAL;
     // A chat open over another task is put away.
-    if (agentChat && agentFor && (!item || agentFor.taskId !== item.id || agentFor.source !== source.key)) hideAgent();
-    const left = task && !(item && item.id === task.id) && expanded.has(task.id) ? task : null;
+    if (agentChat && agentFor && (!item || agentFor.taskId !== item.id || agentFor.source !== next.key)) hideAgent();
+    const leftFrom = source;
+    const left = task && !(item && isShown(next, item.id)) && expanded.has(taskRef(leftFrom, task.id)) ? task : null;
     // The task being left is listed from `peeks` from now on, and nothing else would read it until the next `openTasks`: it keeps what is known at once and is read again.
-    if (left && terminalsState === 'ready') peeks.set(left.id, { source, taskId: left.id, status: 'ready', terminals: [...terminals], seq: (peekSeq += 1) });
+    if (left && terminalsState === 'ready') peeks.set(taskRef(leftFrom, left.id), { source: leftFrom, taskId: left.id, status: 'ready', terminals: [...terminals], seq: (peekSeq += 1) });
+    if (!item && leftFrom !== next) store.set(`task:${leftFrom.key}`, null);
+    source = next;
     task = item;
-    if (left) void loadPeek(left);
+    if (left) void loadPeek(leftFrom, left);
     void syncWakeLock();
-    if (item) { peeks.delete(item.id); expanded.add(item.id); } // the other open lists stay open
+    const ref = item ? taskRef(next, item.id) : null;
+    if (item) { peeks.delete(ref); expanded.add(ref); } // the other open lists stay open
     // The Session list of the task that was selected: its choices act on the selected task, so they cannot stay under another one (the "+" of a task lands here too, and then opens its own).
     const menu = ui.get().menu;
-    if (menu && menu.naming && !(item && menu.task === item.id)) closeTerminalMenu();
+    if (menu && menu.naming && !(item && menu.task === ref)) closeTerminalMenu();
     wantedTerminal = target && target.terminal ? target.terminal : null;
-    store.set(`task:${source.key}`, item ? item.id : null);
+    store.set(`task:${next.key}`, item ? item.id : null);
+    if (remember) store.set('source', next === LOCAL ? null : next.key);
     ui.set({ taskName: item ? item.title : '' });
+    publishSources();
+    syncFeeds(); // the service of the shown task comes first for a live stream
     syncFiles();
     if (!stay) closeTasks();
     terminalsLoaded = loadTerminals();
@@ -399,41 +492,42 @@
   }
 
   // Opens or closes the list of sessions under a task, without going anywhere.
-  function toggleTask(item) {
-    if (expanded.has(item.id)) { expanded.delete(item.id); peeks.delete(item.id); closeListMenu(item.id); renderTasks(); return; }
-    expanded.add(item.id);
-    if (!(task && task.id === item.id)) void loadPeek(item);
+  function toggleTask(from, item) {
+    const ref = taskRef(from, item.id);
+    if (expanded.has(ref)) { expanded.delete(ref); peeks.delete(ref); closeListMenu(ref); renderTasks(); return; }
+    expanded.add(ref);
+    if (!isShown(from, item.id)) void loadPeek(from, item);
     else retryTerminals();
     renderTasks();
   }
-  // "Expand all" / "Collapse all" in the header of the task list.
+  // "Expand all" / "Collapse all" in the header of the task list: every service in the list.
   function setAllExpanded(open) {
     expanded.clear();
     peeks.clear();
     if (!open) closeListMenu();
-    if (open) for (const item of tasks) { expanded.add(item.id); if (!(task && task.id === item.id)) void loadPeek(item); }
+    if (open) for (const from of listedSources()) for (const item of from.tasks) { expanded.add(taskRef(from, item.id)); if (!isShown(from, item.id)) void loadPeek(from, item); }
     renderTasks();
   }
-  // The terminals of a task that is not the selected one, read when its list is opened.
-  async function loadPeek(item) {
-    const current = source;
-    const mine = { source: current, taskId: item.id, status: 'loading', terminals: [], seq: (peekSeq += 1) };
-    const before = peeks.get(item.id);
-    if (!before || before.source !== current) peeks.set(item.id, mine); // a list that is already shown stays until the new one is read
+  // The terminals of a task that is not the selected one, read when its list is opened. `from` is the service of the row.
+  async function loadPeek(from, item) {
+    const ref = taskRef(from, item.id);
+    const mine = { source: from, taskId: item.id, status: 'loading', terminals: [], seq: (peekSeq += 1) };
+    const before = peeks.get(ref);
+    if (!before) peeks.set(ref, mine); // a list that is already shown stays until the new one is read
     const noAnswer = setTimeout(() => {
-      if (peeks.get(item.id) !== mine || mine.status !== 'loading') return;
+      if (peeks.get(ref) !== mine || mine.status !== 'loading') return;
       mine.status = 'error';
       renderTasks();
     }, PEEK_WAIT_MS);
-    await actionsDone(current, item.id);
+    await actionsDone(from, item.id);
     const [rows] = await Promise.all([
-      api('GET', `${current.tasksBase}/${item.id}/terminals`).catch(() => null),
+      api('GET', `${from.tasksBase}/${item.id}/terminals`).catch(() => null),
       // What the Engine can do decides the actions of these rows (`controlsTerminals`). An Engine that does not answer must not hold the list back.
-      current.key === 'local' ? null : Promise.race([readInfo(current).catch(() => null), new Promise(resolve => setTimeout(resolve, PEEK_WAIT_MS))]),
+      from.key === 'local' ? null : Promise.race([readInfo(from).catch(() => null), new Promise(resolve => setTimeout(resolve, PEEK_WAIT_MS))]),
     ]);
     clearTimeout(noAnswer);
-    if (source !== current || !expanded.has(item.id) || (task && task.id === item.id) || (peeks.get(item.id) && peeks.get(item.id).seq > mine.seq)) return; // the selected task is listed from `terminals`
-    peeks.set(item.id, mine);
+    if (!expanded.has(ref) || isShown(from, item.id) || (peeks.get(ref) && peeks.get(ref).seq > mine.seq)) return; // the selected task is listed from `terminals`
+    peeks.set(ref, mine);
     mine.status = Array.isArray(rows) ? 'ready' : 'error';
     mine.terminals = Array.isArray(rows) ? rows : [];
     renderTasks();
@@ -444,12 +538,13 @@
   const isWide = () => wideQuery.matches;
   function openTasks() {
     const wide = isWide();
-    if (task) expanded.add(task.id); // the sheet opens with the sessions of the task that is shown; the lists the person opened stay open
+    if (task) expanded.add(taskRef(source, task.id)); // the sheet opens with the sessions of the task that is shown; the lists the person opened stay open
     retryTerminals();
-    for (const item of tasks) if (expanded.has(item.id) && !(task && task.id === item.id)) void loadPeek(item); // read again: they may have changed
+    for (const from of listedSources()) for (const item of from.tasks) if (expanded.has(taskRef(from, item.id)) && !isShown(from, item.id)) void loadPeek(from, item); // read again: they may have changed
     ui.set({ tasksOpen: true, wide });
     renderTasks();
     void loadTasks();
+    void loadHidden(); // set on another device too
     void refreshTerminals();
     clearInterval(namesTimer);
     namesTimer = setInterval(() => void refreshTerminals(), 8000);
@@ -458,9 +553,10 @@
   let namesTimer = null;
   async function refreshTerminals() {
     const current = task;
+    const from = source;
     if (!current || !terminals.some(row => row.agent)) return;
     let rows;
-    try { rows = await api('GET', `${source.tasksBase}/${current.id}/terminals`); } catch { return; }
+    try { rows = await api('GET', `${from.tasksBase}/${current.id}/terminals`); } catch { return; }
     if (current !== task || !Array.isArray(rows)) return;
     const fresh = new Map(rows.map(row => [row.terminal_id, row]));
     let changed = false;
@@ -508,12 +604,13 @@
   };
   ui.actions.openSettings = () => ui.set({ settingsOpen: true }); // the settings themselves are the shell's (scripts/h5-shell/Settings.jsx)
   ui.actions.closeSettings = () => ui.set({ settingsOpen: false });
-  ui.actions.toggleTask = id => { const item = tasks.find(entry => entry.id === id); if (item) toggleTask(item); };
+  ui.actions.toggleTask = ref => { const hit = resolveRef(ref); if (hit) toggleTask(hit.from, hit.item); };
   // A tap on a session row: on the selected task it goes to the terminal or chat; on another task it selects that task and shows the session.
-  ui.actions.openRow = (taskId, row) => {
-    const item = tasks.find(entry => entry.id === taskId);
-    if (!item) return;
-    if (task && task.id === taskId) {
+  ui.actions.openRow = (ref, row) => {
+    const hit = resolveRef(ref);
+    if (!hit) return;
+    const { from, item } = hit;
+    if (isShown(from, item.id)) {
       if (row.kind === 'terminal') {
         closeTasks();
         leaveChat();
@@ -524,133 +621,127 @@
       }
       return;
     }
-    if (row.kind === 'terminal') selectTask(item, { terminal: row.id });
-    else selectTask(item);
+    if (row.kind === 'terminal') selectTask(from, item, { terminal: row.id });
+    else selectTask(from, item);
   };
   // ── Next running or pending session (row 2, `#h5-cycle`) ──
-  // Goes to the next terminal session, in task sheet order (groups, tasks, then the terminals of each task), that is running or pending acceptance,
+  // Goes to the next terminal session of any service in the list, in task sheet order (services, groups, tasks, then the terminals of each task), that is running or pending acceptance,
   // wrapping around after the last one. Only terminal sessions count: plain shells ("Terminal") and Claude / Codex terminals ("Session"); agent chats do not.
   // Running: the server's terminal activity state is 'running', or the terminal is a live Claude session with a running sub-agent (`terminal-subagents`).
   // Pending acceptance: the activity state is 'done' (finished, not yet seen; showing the terminal clears it, see the terminal done acknowledgement below).
   // Both come from the pushed snapshot while the activity stream is live (see "Terminal activity push" below), else they are read fresh on the tap.
+  // Every service in the list is walked, in list order; one that cannot be read adds nothing.
   let cycling = false;
-  async function activeSessions(from) {
-    const pushed = feed.live && feed.source === from && feed.snapshot;
+  async function activeOf(from) {
+    const f = feeds.get(from.key);
+    const pushed = f && f.live && f.snapshot;
     const [activity, subagents] = pushed ? [pushed.activity, pushed.subagents] : await readActivity(from);
     const stateOf = (taskId, id) => {
       const state = ((activity || {})[taskId] || {})[id];
       if (state === 'running' || Number(((subagents || {})[taskId] || {})[id]) > 0) return 'running';
       return state === 'done' ? 'pending' : null;
     };
-    const order = groupedTasks().flatMap(entry => entry.members)
+    const order = groupedTasks(from).flatMap(entry => entry.members)
       .filter(item => Object.keys((activity || {})[item.id] || {}).length || Object.keys((subagents || {})[item.id] || {}).length);
     // The terminal order of a task as the task sheet lists it: the open task's own list, else a fresh read of that task's terminals.
-    const lists = await Promise.all(order.map(item => (task && task.id === item.id && terminals.length
+    const lists = await Promise.all(order.map(item => (isShown(from, item.id) && terminals.length
       ? terminals : api('GET', `${from.tasksBase}/${item.id}/terminals`).catch(() => []))));
     const out = [];
     order.forEach((item, index) => {
       for (const row of Array.isArray(lists[index]) ? lists[index] : []) {
         const state = stateOf(item.id, row.terminal_id);
-        if (state) out.push({ taskId: item.id, terminalId: row.terminal_id, state });
+        if (state) out.push({ from, taskId: item.id, terminalId: row.terminal_id, state });
       }
     });
     return out;
+  }
+  async function activeSessions() {
+    const answers = await Promise.all(listedSources().filter(from => from.status !== 'offline').map(from => activeOf(from).then(list => ({ list }), error => ({ error }))));
+    if (answers.length && answers.every(answer => answer.error)) throw answers[0].error;
+    return answers.flatMap(answer => answer.list || []);
   }
   ui.actions.nextActiveSession = async () => {
     // Close the on-screen keyboard first (as the design document button does); the terminal is not resized.
     if (document.activeElement && document.activeElement !== document.body && typeof document.activeElement.blur === 'function') document.activeElement.blur();
     if (cycling) return;
     cycling = true;
-    const from = source;
+    const shown = task;
     try {
-      const list = await activeSessions(from);
-      if (from !== source) return;
+      const list = await activeSessions();
+      if (task !== shown) return;
       if (!list.length) { tell('No running or pending sessions'); return; }
-      const here = list.findIndex(entry => task && entry.taskId === task.id && entry.terminalId === terminalId && !agentChat);
+      const here = list.findIndex(entry => isShown(entry.from, entry.taskId) && entry.terminalId === terminalId && !agentChat);
       if (here >= 0 && list.length === 1) { tell('This is the only running or pending session'); return; }
       const next = list[(here + 1) % list.length]; // not in the list (here = -1): the first one
-      ui.actions.openRow(next.taskId, { kind: 'terminal', id: next.terminalId }); // the same path as a tap in the task sheet
+      ui.actions.openRow(taskRef(next.from, next.taskId), { kind: 'terminal', id: next.terminalId }); // the same path as a tap in the task sheet
     } catch (error) {
       tell(`Could not read the session states: ${error.message}`, 'error');
     } finally { cycling = false; }
   };
-  // The "⋯" of a session row, of the task the row is under (`taskId`), which may not be the selected one.
-  ui.actions.rowMore = (taskId, row, anchor) => {
-    if (task && task.id === taskId) {
+  // The "⋯" of a session row, of the task the row is under (`ref`), which may not be the selected one.
+  ui.actions.rowMore = (ref, row, anchor) => {
+    const hit = resolveRef(ref);
+    if (!hit) return;
+    const { from, item } = hit;
+    if (isShown(from, item.id)) {
       const entry = terminals.find(candidate => candidate.terminal_id === row.id);
       if (entry) openTerminalMenu(entry, anchor);
       return;
     }
-    const item = tasks.find(candidate => candidate.id === taskId);
-    const peek = peeks.get(taskId);
-    if (!item || !peek) return;
+    const peek = peeks.get(taskRef(from, item.id));
+    if (!peek) return;
     const entry = peek.terminals.find(candidate => candidate.terminal_id === row.id);
-    if (entry) openOtherMenu(item, row, entry, anchor);
-  };
-  ui.actions.changeEngine = key => {
-    hideAgent();
-    closeTerminalMenu(); // what is open belongs to a task of the other Engine (the same id can be another task here)
-    source = sources.find(item => item.key === key) || LOCAL;
-    store.set('source', source.key === 'local' ? null : source.key);
-    tasks = [];
-    task = null;
-    terminalsSeq += 1; // a list still on its way is of the other Engine
-    terminalsState = 'none';
-    void syncWakeLock();
-    expanded.clear();
-    peeks.clear();
-    resetArchived();
-    ui.set({ taskName: '', sourceKey: source.key });
-    syncFiles();
-    hideShown(); // its connection stays warm (WARM_MAX)
-    terminals = [];
-    renderTabs();
-    showEmpty('Choose a task to open its phone terminal');
-    void loadTasks();
-    void connectFeed();
+    if (entry) openOtherMenu(from, item, row, entry, anchor);
   };
   // Resolves to whether the task was made (the shell then empties its input).
   // workDir: an absolute path, or empty for the default rule (a folder named after the task under the tasks folder); the default is never sent.
-  ui.actions.createTask = async (title, workDir = '') => {
-    const current = source;
+  // on: the key of the service it is made on ("Create on" in the form); without one, this machine.
+  ui.actions.createTask = async (title, workDir = '', on = null) => {
+    const current = sources.find(item => item.key === on) || LOCAL;
     ui.set({ creatingTask: true });
     try {
       const created = await api('POST', current.tasksBase, workDir ? { title, work_dir: workDir } : { title });
-      if (current !== source) return true;
-      await loadTasks();
-      selectTask(tasks.find(item => item.id === created.id) || created);
+      if (!sources.includes(current)) return true;
+      await loadSource(current);
+      selectTask(current, findTask(current, created.id) || created);
       return true;
     } catch (error) {
       tell(`Could not create the task: ${error.message}`, 'error');
       return false;
     } finally { ui.set({ creatingTask: false }); }
   };
-  // The engine whose tasks are listed, for the new-task form: its default folder rule is shown only for this machine (a remote one keeps its own).
-  ui.actions.newTaskTarget = () => ({ local: source.key === 'local', label: source.label });
+  // The service a new task is made on, for the new-task form: its default folder rule is shown only for this machine (a remote one keeps its own).
+  ui.actions.newTaskTarget = (key = 'local') => {
+    const from = sources.find(item => item.key === key) || LOCAL;
+    return { local: from.key === 'local', label: from.label };
+  };
 
   // ── Task actions (the "⋯" of a task): move to another group, change the working directory, delete (optionally with the directory) ──
   // The task endpoints, through the task base of the engine, so local, Engine and proxied tasks work alike.
-  const taskById = id => tasks.find(entry => entry.id === id);
-  ui.actions.taskMore = id => {
-    const item = taskById(id);
-    if (!item) return;
+  // Every action below belongs to the row it was started from: the service of that row, whichever task is shown.
+  const serviceOf = from => (from === LOCAL ? null : from.label); // the name a dialog or menu shows beside the title: tasks of two services can have the same title
+  const dialogFor = (kind, from, item, extra = {}) => ({ kind, sourceKey: from.key, service: serviceOf(from), id: item.id, title: item.title, workDir: item.work_dir || '', error: '', busy: false, ...extra });
+  const dialogSource = dialog => (dialog ? sources.find(item => item.key === dialog.sourceKey) : null);
+  ui.actions.taskMore = ref => {
+    const hit = resolveRef(ref);
+    if (!hit) return;
+    const { from, item } = hit;
     menuRow = null;
-    menuTask = item.id; // so that the task leaving the list closes this sheet too (`leaveTask`)
-    const ordered = [...groups].sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
-    showMenu(item.title, [
-      ...ordered.map(group => [`${item.status === group.key ? '\u2713 ' : ''}${tr('Move to')} \u201C${tr(group.name)}\u201D`, () => void moveTask(item, group.key), 'raw']),
-      ['Edit working directory', () => { closeTerminalMenu(); ui.set({ taskDialog: { kind: 'workdir', id: item.id, title: item.title, workDir: item.work_dir || '', error: '', busy: false } }); }],
-      ...(archives(source) ? [['Archive', () => void askArchive(item)]] : []),
-      ['Delete', () => { closeTerminalMenu(); ui.set({ taskDialog: { kind: 'delete', id: item.id, title: item.title, workDir: item.work_dir || '', error: '', busy: false } }); }, 'danger'],
+    menuTask = taskRef(from, item.id); // so that the task leaving the list closes this sheet too (`leaveTask`)
+    const ordered = [...from.groups].sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+    showMenu(serviceOf(from) ? `${item.title} \u00B7 ${serviceOf(from)}` : item.title, [
+      ...ordered.map(group => [`${item.status === group.key ? '\u2713 ' : ''}${tr('Move to')} \u201C${tr(group.name)}\u201D`, () => void moveTask(from, item, group.key), 'raw']),
+      ['Edit working directory', () => { closeTerminalMenu(); ui.set({ taskDialog: dialogFor('workdir', from, item) }); }],
+      ...(archives(from) ? [['Archive', () => void askArchive(from, item)]] : []),
+      ['Delete', () => { closeTerminalMenu(); ui.set({ taskDialog: dialogFor('delete', from, item) }); }, 'danger'],
     ]);
   };
-  async function moveTask(item, status) {
+  async function moveTask(from, item, status) {
     closeTerminalMenu();
     if (item.status === status) return;
-    const from = source;
     try {
       await api('PUT', `${from.tasksBase}/${item.id}`, { status });
-      if (from === source) await loadTasks();
+      await loadSource(from);
     } catch (error) { tell(`Could not update task: ${error.message}`, 'error'); }
   }
   const patchDialog = patch => ui.set(state => ({ taskDialog: state.taskDialog && { ...state.taskDialog, ...patch } }));
@@ -658,9 +749,9 @@
   const DELETE_ERRORS = { DIRECTORY_NOT_SAFE_TO_DELETE: 'This directory cannot be deleted (protected or shared with other tasks); the task was not deleted' };
   ui.actions.taskDelete = async deleteDirectory => {
     const dialog = ui.get().taskDialog;
-    const item = dialog && (taskById(dialog.id) || archivedById(dialog.id)); // also from the Archived section
+    const from = dialogSource(dialog);
+    const item = from && (findTask(from, dialog.id) || archivedByRef(taskRef(from, dialog.id))); // also from the Archived section
     if (!item || dialog.busy) return;
-    const from = source;
     patchDialog({ busy: true, error: '' });
     let result;
     try {
@@ -675,23 +766,25 @@
     if (deleteDirectory && result && result.directory_error) tell(`${tr('Task deleted, but deleting the directory failed:')} ${result.directory_error}`, 'error');
     else if (deleteDirectory && result && result.directory_deleted === undefined) tell('Task deleted, but the remote service is older and did not delete the directory.', 'error');
     else tell('Task deleted', 'success');
-    if (from !== source) return;
-    expanded.delete(item.id);
-    peeks.delete(item.id);
-    if (task && task.id === item.id) { hideAgent(); selectTask(null); }
-    tasks = tasks.filter(entry => entry.id !== item.id);
-    dropArchivedRow(item.id);
-    await loadTasks();
+    const ref = taskRef(from, item.id);
+    expanded.delete(ref);
+    peeks.delete(ref);
+    if (isShown(from, item.id)) { hideAgent(); selectTask(LOCAL, null); }
+    from.tasks = from.tasks.filter(entry => entry.id !== item.id);
+    dropArchivedRow(ref);
+    await loadSource(from);
   };
   // ── Archiving a task (`POST {tasksBase}/:id/archive`, `/restore`; `GET {tasksBase}?archived=1`), for this machine and an Engine with 'tasks:archive' ──
   // An archived task leaves the task list and has no terminals; the Archived section at the end of the list (ArchivedTasks.jsx) reads its rows when it is opened.
-  const archived = { open: false, status: 'idle', rows: null, busy: null, seq: 0 }; // status: 'idle', 'loading', 'ready', 'error'; busy: the id being restored
-  const archivedById = id => (archived.rows || []).find(row => row.id === id);
-  // The source does not implement archiving: the Archived section and the Archive item go away for this page load.
+  // The rows of every service in the list that can archive, each with its service (`from`); one that cannot adds none. `busy`: the ref being restored.
+  const archived = { open: false, status: 'idle', rows: null, busy: null, seq: 0 }; // status: 'idle', 'loading', 'ready', 'error'
+  const archivedByRef = ref => (archived.rows || []).find(row => taskRef(row.from, row.id) === ref);
+  // A source that does not implement archiving: its rows and the Archived entry and Archive item of that source go away for this page load.
   function noArchiving(from) {
     if (from.archiveMissing) return;
     from.archiveMissing = true;
-    if (from === source) resetArchived();
+    if (archived.rows) archived.rows = archived.rows.filter(row => row.from !== from);
+    showArchived();
   }
   // The rows of an answer to `?archived=1` that are really archived. A server without archiving ignores the parameter and answers its whole list of tasks in use,
   // where Restore and Delete must never appear, so a row without `archived_at` is never used, and an answer with only such rows ends archiving for this source.
@@ -703,32 +796,28 @@
   }
   function showArchived() {
     ui.set({ archived: {
-      supported: archives(source), open: archived.open, status: archived.status, busy: archived.busy, count: archived.rows ? archived.rows.length : null,
-      rows: (archived.rows || []).map(row => ({ id: row.id, title: row.title, archivedAt: row.archived_at || null })),
+      supported: listedSources().some(archives), open: archived.open, status: archived.status, busy: archived.busy, count: archived.rows ? archived.rows.length : null,
+      rows: (archived.rows || []).map(row => ({ ref: taskRef(row.from, row.id), id: row.id, title: row.title, archivedAt: row.archived_at || null, service: serviceOf(row.from) })),
     } });
   }
-  function resetArchived() { // another Engine: its own archive, read when it is opened
-    Object.assign(archived, { open: false, status: 'idle', rows: null, busy: null, seq: archived.seq + 1 });
-    showArchived();
-  }
   async function loadArchived() {
-    const from = source;
     const seq = (archived.seq += 1);
     if (!archived.rows) { archived.status = 'loading'; showArchived(); } // rows already shown stay until the new ones are read
-    let answer;
-    try { answer = await api('GET', `${from.tasksBase}?archived=1`); }
-    catch { if (seq === archived.seq && !archived.rows) { archived.status = 'error'; showArchived(); } return; }
-    const rows = archivedRowsOf(from, answer); // before the check below: `noArchiving` resets the section, and then these rows are not wanted
+    const readable = listedSources().filter(from => archives(from) && from.status !== 'offline');
+    const answers = await Promise.all(readable.map(from => api('GET', `${from.tasksBase}?archived=1`).then(answer => ({ from, answer }), () => ({ from, failed: true }))));
+    const fresh = answers.flatMap(entry => (entry.failed ? [] : archivedRowsOf(entry.from, entry.answer).map(row => ({ ...row, from: entry.from })))); // `archivedRowsOf` before the check below: `noArchiving` takes this source's rows away
     if (seq !== archived.seq) return;
+    if (answers.length && answers.every(entry => entry.failed) && !archived.rows) { archived.status = 'error'; showArchived(); return; }
+    const failed = new Set(answers.filter(entry => entry.failed).map(entry => entry.from));
     archived.status = 'ready';
-    archived.rows = rows;
+    archived.rows = [...(archived.rows || []).filter(row => failed.has(row.from)), ...fresh]; // a service that did not answer this time keeps its rows
     showArchived();
   }
-  function dropArchivedRow(id) {
-    if (!archivedById(id)) return;
+  function dropArchivedRow(ref) {
+    if (!archivedByRef(ref)) return;
     archived.seq += 1; // a read still on its way may have this row
     archived.status = 'ready';
-    archived.rows = archived.rows.filter(row => row.id !== id);
+    archived.rows = archived.rows.filter(row => taskRef(row.from, row.id) !== ref);
     showArchived();
   }
   const refreshArchived = () => { if (archived.rows) void loadArchived(); }; // never read yet: nothing to keep right until it is opened
@@ -738,27 +827,28 @@
     if (archived.open) void loadArchived();
   };
   // Back in the list, on no terminal: its rows stay and connect when opened, as after a service restart. The task that is shown stays shown.
-  ui.actions.archivedRestore = async id => {
-    if (!archivedById(id) || archived.busy) return;
-    const from = source;
-    archived.busy = id;
+  ui.actions.archivedRestore = async ref => {
+    const row = archivedByRef(ref);
+    if (!row || archived.busy) return;
+    const { from } = row;
+    archived.busy = ref;
     showArchived();
-    try { await api('POST', `${from.tasksBase}/${id}/restore`); }
+    try { await api('POST', `${from.tasksBase}/${row.id}/restore`); }
     catch (error) {
-      if (from === source) { archived.busy = null; showArchived(); }
+      archived.busy = null;
+      showArchived();
       tell(`Could not restore the task: ${error.message}`, 'error');
       return;
     }
-    if (from !== source) return;
     archived.busy = null;
-    dropArchivedRow(id);
+    dropArchivedRow(ref);
     showArchived();
     tell('Task restored', 'success');
-    await loadTasks();
+    await loadSource(from);
   };
-  ui.actions.archivedDelete = id => {
-    const row = archivedById(id);
-    if (row) ui.set({ taskDialog: { kind: 'delete', id: row.id, title: row.title, workDir: row.work_dir || '', error: '', busy: false } });
+  ui.actions.archivedDelete = ref => {
+    const row = archivedByRef(ref);
+    if (row) ui.set({ taskDialog: dialogFor('delete', row.from, row) });
   };
   // Terminals running now (a running state or a running sub-agent), as the next-session button counts them.
   function runningIn(snapshot, taskId) {
@@ -767,23 +857,23 @@
     return [...new Set([...Object.keys(states), ...Object.keys(subs)])].filter(id => states[id] === 'running' || Number(subs[id]) > 0).length;
   }
   // The confirmation. What is running comes from the pushed snapshot, else from one read; until that answers Archive waits, so the warning is not missed.
-  async function askArchive(item) {
+  async function askArchive(from, item) {
     closeTerminalMenu();
-    const from = source;
-    const pushed = feed.live && feed.source === from && feed.snapshot;
-    ui.set({ taskDialog: { kind: 'archive', id: item.id, title: item.title, workDir: '', running: pushed ? runningIn(pushed, item.id) : null, checking: !pushed, error: '', busy: false } });
+    const f = feeds.get(from.key);
+    const pushed = f && f.live && f.snapshot;
+    ui.set({ taskDialog: dialogFor('archive', from, item, { workDir: '', running: pushed ? runningIn(pushed, item.id) : null, checking: !pushed }) });
     if (pushed) return;
     let running = null; // unknown: the general sentence only
     try { const [activity, subagents] = await readActivity(from); running = runningIn({ activity, subagents }, item.id); } catch { /* an offline Engine: Archive itself will say */ }
     const dialog = ui.get().taskDialog;
-    if (dialog && dialog.kind === 'archive' && dialog.id === item.id) patchDialog({ running, checking: false });
+    if (dialog && dialog.kind === 'archive' && dialog.id === item.id && dialog.sourceKey === from.key) patchDialog({ running, checking: false });
   }
   ui.actions.taskArchive = async () => {
     const dialog = ui.get().taskDialog;
     if (!dialog || dialog.busy) return;
-    const item = taskById(dialog.id);
+    const from = dialogSource(dialog);
+    const item = from && findTask(from, dialog.id);
     if (!item) { ui.set({ taskDialog: null }); return; } // it left the list meanwhile
-    const from = source;
     patchDialog({ busy: true, error: '' });
     try { await api('POST', `${from.tasksBase}/${item.id}/archive`); }
     catch (error) {
@@ -795,32 +885,30 @@
     }
     ui.set({ taskDialog: null });
     tell('Task archived', 'success');
-    if (from !== source) return;
     leaveTask(from, item.id);
-    await loadTasks();
+    await loadSource(from);
     refreshArchived();
   };
   // A task that left the list by being archived, here or on another device: its terminals and sockets close for good (none is kept warm, so nothing reconnects)
   // and, when it was the shown task, the page goes where deleting the shown task goes (`taskDelete`): no task selected.
   function leaveTask(from, taskId) {
-    if (from === source && (menuTask === taskId || (menuScope && menuScope.taskId === taskId))) closeTerminalMenu();
-    if (from === source && task && task.id === taskId) disconnect();
+    const ref = taskRef(from, taskId);
+    if (menuTask === ref || (menuScope && menuScope.from === from && menuScope.taskId === taskId)) closeTerminalMenu();
+    if (isShown(from, taskId)) disconnect();
     closeWarm(item => item.source === from && item.task.id === taskId);
     if (earlySocket && earlySocket.source === from && earlySocket.taskId === taskId) dropEarlySocket();
     store.set(`terminal:${from.key}:${taskId}`, null);
-    if (from !== source) return;
-    expanded.delete(taskId);
-    peeks.delete(taskId);
-    if (task && task.id === taskId) { hideAgent(); selectTask(null); }
-    tasks = tasks.filter(entry => entry.id !== taskId);
+    expanded.delete(ref);
+    peeks.delete(ref);
+    if (isShown(from, taskId)) { hideAgent(); selectTask(LOCAL, null); }
+    from.tasks = from.tasks.filter(entry => entry.id !== taskId);
   }
   // Another device archived a task this page still has (`TASK_ARCHIVED` on a connect or a new terminal): say so once and read the list again.
   function archivedElsewhere(from, taskId) {
-    const shown = from === source && task && task.id === taskId;
+    const shown = isShown(from, taskId);
     leaveTask(from, taskId);
-    if (from !== source) return;
     if (shown) tell('This task was archived on another device');
-    void loadTasks();
+    void loadSource(from);
     refreshArchived();
   }
   // The server ended the shown terminal's connection for good and gave no reason: when the task turns out to be archived, the same as above.
@@ -829,32 +917,31 @@
     const id = s.task.id;
     if (!archives(from)) return;
     const rows = await api('GET', `${from.tasksBase}?archived=1`).catch(() => null);
-    if (!s.disposed && from === source && archivedRowsOf(from, rows).some(row => row.id === id)) archivedElsewhere(from, id);
+    if (!s.disposed && archivedRowsOf(from, rows).some(row => row.id === id)) archivedElsewhere(from, id);
   }
   // An existing task's working directory: the form shows the saved one; an absolute path is required (the server keeps the old one for an empty value).
   ui.actions.taskWorkdirSave = async value => {
     const dialog = ui.get().taskDialog;
-    const item = dialog && taskById(dialog.id);
+    const from = dialogSource(dialog);
+    const item = from && findTask(from, dialog.id);
     if (!item || dialog.busy) return;
     const workDir = String(value || '').trim();
     if (!isAbsolutePath(workDir)) { patchDialog({ error: 'Enter an absolute path' }); return; }
     if (workDir === (item.work_dir || '')) { ui.set({ taskDialog: null }); return; }
-    const from = source;
     patchDialog({ busy: true, error: '' });
     try {
       await api('PUT', `${from.tasksBase}/${item.id}`, { work_dir: workDir });
     } catch (error) { patchDialog({ busy: false, error: tr(error.message) }); return; }
     ui.set({ taskDialog: null });
-    if (from !== source) return;
-    await loadTasks();
-    if (task && task.id === item.id) { const fresh = taskById(item.id); if (fresh) task = fresh; }
+    await loadSource(from);
+    if (isShown(from, item.id)) { const fresh = findTask(from, item.id); if (fresh) task = fresh; }
     syncFiles(); // a new working directory: a new tree
-    peeks.delete(item.id);
+    peeks.delete(taskRef(from, item.id));
     // Existing terminals keep their directory; the list says which one each has now (a default terminal never started follows the task).
-    if (task && task.id === item.id) {
+    if (isShown(from, item.id)) {
       const current = task;
       try {
-        const rows = await api('GET', `${source.tasksBase}/${current.id}/terminals`);
+        const rows = await api('GET', `${from.tasksBase}/${current.id}/terminals`);
         if (current === task && Array.isArray(rows)) {
           const fresh = new Map(rows.map(row => [row.terminal_id, row]));
           for (const row of terminals) { const next = fresh.get(row.terminal_id); if (next) row.work_dir = next.work_dir; }
@@ -868,13 +955,57 @@
   function isAbsolutePath(value) { return /^\//.test(value) || /^[A-Za-z]:[\\/]/.test(value); }
   ui.actions.isAbsolutePath = isAbsolutePath;
 
-  // The Engines settings (scripts/h5-shell/Engines.jsx) connected, edited or removed an Engine: read the list of engines again. `changedKey` is the
-  // Engine whose connection changed; when it is the one shown (or the one shown was removed), its tasks and terminals are opened again.
+  // The Engines settings (scripts/h5-shell/Engines.jsx) or the linked services connected, edited or removed a service: the combined list and the feeds follow. `changedKey`
+  // is the service whose connection changed; when its task is the one shown, its terminals are opened again.
   ui.actions.enginesChanged = async (changedKey = null) => {
-    const before = source;
-    await loadSources();
-    if (source !== before || changedKey === before.key) ui.actions.changeEngine(source.key);
-    else ui.set({ sourceKey: source.key });
+    await Promise.all([loadSources(), loadHidden()]);
+    const changed = sources.find(item => item.key === changedKey);
+    if (changed && changed !== LOCAL) changed.capabilities = undefined; // read again (it may have been upgraded)
+    if (changed && changed === source && task) {
+      hideAgent();
+      closeTerminalMenu();
+      closeWarm(item => item.source === changed);
+      terminalsLoaded = loadTerminals();
+    }
+    syncFeeds();
+    renderTasks();
+    await loadTasks();
+  };
+
+  // ── Which devices are in the list ("Show in task list", scripts/h5-shell/Engines.jsx) ──
+  // Per service, so the phone and the computer agree. Hiding the device of the shown task leaves that terminal open until the person opens something else.
+  function applyHidden(list) {
+    const before = hiddenDevices;
+    hiddenDevices = new Set(list);
+    ui.set({ hiddenDevices: { supported: hiddenSupported, keys: [...hiddenDevices] } });
+    if (archived.rows) archived.rows = archived.rows.filter(row => !hiddenDevices.has(row.from.key));
+    publishSources();
+    syncFeeds();
+    showActiveCount();
+    renderTasks();
+    for (const from of sources) if (before.has(from.key) && !hiddenDevices.has(from.key)) void loadSource(from); // shown again: its list is read
+    if (archived.open) void loadArchived();
+  }
+  async function loadHidden() {
+    const seq = (hiddenSeq += 1);
+    let answer = null;
+    try { answer = await api('GET', HIDDEN_URL); }
+    catch (error) {
+      if (seq === hiddenSeq && error.status === 404 && hiddenSupported) { hiddenSupported = false; applyHidden([]); } // the server went back to an older version
+      return;
+    }
+    if (seq !== hiddenSeq) return;
+    hiddenSupported = Boolean(answer && Array.isArray(answer.hidden));
+    const list = hiddenSupported ? answer.hidden : [];
+    if (list.length !== hiddenDevices.size || list.some(key => !hiddenDevices.has(key)) || !ui.get().hiddenDevices.supported !== !hiddenSupported) applyHidden(list);
+  }
+  // Rejects with the server's error, which the settings row shows. A device that was removed drops out here.
+  ui.actions.setDeviceVisible = async (key, visible) => {
+    const next = new Set([...hiddenDevices].filter(item => sources.some(from => from.key === item)));
+    if (visible) next.delete(key); else next.add(key);
+    hiddenSeq += 1;
+    const saved = await api('PUT', HIDDEN_URL, { hidden: [...next] });
+    applyHidden(saved && Array.isArray(saved.hidden) ? saved.hidden : [...next]);
   };
 
   // ── Phone terminals ──
@@ -895,7 +1026,7 @@
     if (!task) return;
     ui.actions.openTasks(); // a phone's task sheet, or the folded sidebar of a computer
     const menu = ui.get().menu;
-    if (!(menu && menu.naming && menuTask === task.id)) ui.actions.addSession(task.id); // the "+" would close a list that is already open
+    if (!(menu && menu.naming && menuTask === taskRef(source, task.id))) ui.actions.addSession(taskRef(source, task.id)); // the "+" would close a list that is already open
   };
 
   // The list of the selected task could not be read: the next open of the list reads it again.
@@ -908,11 +1039,12 @@
     renderTabs();
     if (!task) { showEmpty('Choose a task to open its phone terminal'); return; }
     const current = task;
+    const from = source;
     showEmpty('Loading…');
-    await actionsDone(source, current.id); // a Restart or Delete started from its row before it was selected
+    await actionsDone(from, current.id); // a Restart or Delete started from its row before it was selected
     if (seq !== terminalsSeq) return;
     let rows;
-    try { rows = await api('GET', `${source.tasksBase}/${current.id}/terminals`); }
+    try { rows = await api('GET', `${from.tasksBase}/${current.id}/terminals`); }
     catch (error) {
       if (seq === terminalsSeq) { terminalsState = 'error'; showEmpty(`Could not load terminals: ${error.message}`); renderTabs(); }
       return;
@@ -921,12 +1053,12 @@
     terminalsState = 'ready';
     terminals = Array.isArray(rows) ? rows : [];
     if (!terminals.length) { showNoTerminal(); renderTabs(); return; }
-    const saved = store.get(`terminal:${source.key}:${current.id}`);
+    const saved = store.get(`terminal:${from.key}:${current.id}`);
     const wanted = wantedTerminal; // a session that was tapped in the task sheet
     wantedTerminal = null;
     terminalId = [wanted, saved].find(id => id && terminals.some(row => row.terminal_id === id)) || terminals[0].terminal_id;
     if (earlySocket && earlySocket.terminalId !== terminalId) dropEarlySocket();
-    if (wanted && terminalId === wanted) store.set(`terminal:${source.key}:${current.id}`, terminalId);
+    if (wanted && terminalId === wanted) store.set(`terminal:${from.key}:${current.id}`, terminalId);
     renderTabs();
     connect();
   }
@@ -955,7 +1087,7 @@
   // The optional name typed in the "Session" sheet. It is kept while moving between its lists (Claude session, Back) and names what is created.
   let newName = '';
   let menuCreate = -1; // the item that Enter in the name field runs (New Terminal, New Claude session)
-  let menuTask = null; // the id of the task whose "+" opened the Session list
+  let menuTask = null; // the ref (`taskRef`) of the task whose "+" opened the Session list
 
   function closeTerminalMenu() {
     menuRow = null;
@@ -967,10 +1099,10 @@
     ui.set({ menu: null });
   }
   // The Session list and the rename field drawn under a task go when that task is collapsed (without an id: under any task). The sheet and the popup of actions are modal: nothing behind them can be tapped (a popup whose row has gone closes by itself, TermMenu.jsx).
-  function closeListMenu(taskId = null) {
+  function closeListMenu(ref = null) {
     const menu = ui.get().menu;
     const owner = menu && (menu.naming ? menu.task : menu.rename ? menu.rename.task : null);
-    if (owner != null && (taskId === null || taskId === owner)) closeTerminalMenu();
+    if (owner != null && (ref === null || ref === owner)) closeTerminalMenu();
   }
   // The typed name, as the server will keep it (an empty name: the default "Terminal N" / "Claude N").
   const takeName = () => newName.replace(/\s+/g, ' ').trim();
@@ -982,10 +1114,10 @@
     menuCreate = items.findIndex(item => item[3]);
     ui.set({ menu: { title, items: items.map(([label, , kind]) => ({ label, kind: kind || null })), rename: null, renameValue: '', naming, task: naming ? menuTask : null, name: newName, anchor } });
   }
-  // The rename field takes the place of the row in the task list ({ kind, id, task } of the row: `default` is a terminal id in every task); the sheet of
+  // The rename field takes the place of the row in the task list ({ kind, id, task } of the row, `task` being its ref: `default` is a terminal id in every task); the sheet of
   // actions goes away.
   const askRename = value => ui.set(state => ({
-    menu: state.menu && { ...state.menu, rename: { kind: 'terminal', id: menuRow && menuRow.terminal_id, task: menuScope && menuScope.taskId }, renameValue: value },
+    menu: state.menu && { ...state.menu, rename: { kind: 'terminal', id: menuRow && menuRow.terminal_id, task: menuScope && taskRef(menuScope.from, menuScope.taskId) }, renameValue: value },
   }));
   function openTerminalMenu(row, anchor) {
     menuRow = row;
@@ -1005,13 +1137,13 @@
   const controlsTerminals = from => from.key === 'local' || !Array.isArray(from.capabilities) || from.capabilities.includes('terminal:control');
   // The actions of a session of a task that is not selected. Open is the same as a tap on the row; Rename, Restart and Delete go to the row's own Engine and task
   // (`target`) and leave the task, the terminal and the socket that are shown alone.
-  function openOtherMenu(item, row, entry, anchor) {
+  function openOtherMenu(from, item, row, entry, anchor) {
     menuRow = entry;
-    const target = menuScope = { from: source, taskId: item.id, row: entry, taskTitle: item.title };
+    const target = menuScope = { from, taskId: item.id, row: entry, taskTitle: item.title };
     showMenu(entry.title, [
       ['Rename', () => askRename(entry.title)],
-      ['Open', () => { closeTerminalMenu(); ui.actions.openRow(item.id, { kind: row.kind, id: row.id }); }],
-      ...(controlsTerminals(source) ? [
+      ['Open', () => { closeTerminalMenu(); ui.actions.openRow(taskRef(from, item.id), { kind: row.kind, id: row.id }); }],
+      ...(controlsTerminals(from) ? [
         ['Restart in the working directory', () => void restartTerminal(target), 'danger'],
         ['Delete', () => void deleteTerminal(target), 'danger'],
       ] : []),
@@ -1020,36 +1152,36 @@
   // Shows a saved name: in the list of the selected task, or under a task that is not selected. That list is read again too, so that an older read still on
   // its way cannot bring the old name back, and a name the server cleaned up is shown as it was kept.
   async function showRenamed(scope, id, title) {
-    if (scope.from !== source) return;
-    if (task && task.id === scope.taskId) {
+    if (isSelected(scope)) {
       const entry = terminals.find(candidate => candidate.terminal_id === id);
       if (entry) entry.title = title;
       renderTabs();
       return;
     }
-    const peek = peeks.get(scope.taskId);
+    const ref = taskRef(scope.from, scope.taskId);
+    const peek = peeks.get(ref);
     const entry = peek && peek.terminals.find(candidate => candidate.terminal_id === id);
     if (entry) entry.title = title;
     renderTasks();
-    const item = tasks.find(candidate => candidate.id === scope.taskId);
-    if (item && expanded.has(item.id)) void loadPeek(item);
+    const item = findTask(scope.from, scope.taskId);
+    if (item && expanded.has(ref)) void loadPeek(scope.from, item);
   }
   // Is the task of this target the selected one, now?
-  const isSelected = target => target.from === source && Boolean(task) && task.id === target.taskId;
+  const isSelected = target => isShown(target.from, target.taskId);
   // Under a confirmation: which session it is and, for a task that is not selected, which task (`default` is a terminal id in every older task).
   const whichSession = target => `\n${target.row.title}${target.taskTitle ? `\n${tr('Task')}: ${target.taskTitle}` : ''}`;
   // After a Restart or Delete under a task that is not selected. `removed` ('terminal'): the row goes at once. That list is read again; a read already on its way
   // was sent before this and could bring the row back, so it stops counting. When the task has become the selected one meanwhile, its own read is waiting for the action (`actionsDone`).
   function showPeekChange(target, removed = null) {
-    if (target.from !== source) return;
-    const peek = peeks.get(target.taskId);
-    if (peek && peek.source === target.from) {
+    const ref = taskRef(target.from, target.taskId);
+    const peek = peeks.get(ref);
+    if (peek) {
       if (removed === 'terminal') peek.terminals = peek.terminals.filter(entry => entry.terminal_id !== target.row.terminal_id);
       peek.seq = (peekSeq += 1);
     }
     renderTasks();
-    const item = tasks.find(candidate => candidate.id === target.taskId);
-    if (item && expanded.has(item.id) && !isSelected(target)) void loadPeek(item);
+    const item = findTask(target.from, target.taskId);
+    if (item && expanded.has(ref) && !isSelected(target)) void loadPeek(target.from, item);
   }
   // Ends every view of that terminal of that task in this page, then asks the server. The shown one is only ended when it is the target itself: another task's `default` is another terminal.
   async function controlTerminal(target, action) {
@@ -1122,7 +1254,7 @@
     }
     if (ui.get().sessionName !== name) ui.set({ sessionName: name });
   }
-  function renderTabs() { if (tasks.length) renderTasks(); renderSessionName(); }
+  function renderTabs() { renderTasks(); renderSessionName(); }
 
   // ── Session: a plain terminal, or a Claude / Codex session of the task directory (new or resumed) ──
   const SESSION_KINDS = [['claude', 'Claude session'], ['codex', 'Codex session']];
@@ -1136,14 +1268,16 @@
   }
   ui.actions.openSessionMenu = openSessionMenu;
   // The "+" of any task: a task that is not shown is selected first, then the menu adds a session to it.
-  ui.actions.addSession = id => {
-    const item = tasks.find(entry => entry.id === id);
-    if (!item) return;
+  ui.actions.addSession = ref => {
+    const hit = resolveRef(ref);
+    if (!hit) return;
+    const { from, item } = hit;
+    const own = taskRef(from, item.id);
     const menu = ui.get().menu;
-    if (menu && menu.naming && menuTask === item.id) { closeTerminalMenu(); return; } // the "+" again closes its list
-    if (!(task && task.id === item.id)) selectTask(item, null, { stay: true });
-    else if (!expanded.has(item.id)) { expanded.add(item.id); renderTasks(); } // as for a task that is not selected: the list goes with an open task, so one tap on the task closes both
-    menuTask = item.id;
+    if (menu && menu.naming && menuTask === own) { closeTerminalMenu(); return; } // the "+" again closes its list
+    if (!isShown(from, item.id)) selectTask(from, item, null, { stay: true });
+    else if (!expanded.has(own)) { expanded.add(own); renderTasks(); } // as for a task that is not selected: the list goes with an open task, so one tap on the task closes both
+    menuTask = own;
     newName = ''; // a new "Session" list starts with an empty name
     openSessionMenu();
   };
@@ -1238,10 +1372,11 @@
   }
   async function openAgentSessions(agent, label) {
     const current = task;
+    const from = source;
     showSessionMenu(label, [['Loading…', () => {}]]);
     const loading = ui.get().menu; // the answer belongs to this list only: not to one opened after this one was closed
     let rows = [];
-    try { rows = await api('GET', `${source.tasksBase}/${current.id}/agent-sessions?agent=${agent}`); }
+    try { rows = await api('GET', `${from.tasksBase}/${current.id}/agent-sessions?agent=${agent}`); }
     catch (error) { if (current === task) tell(`Could not load sessions: ${error.message}`, 'error'); }
     if (current !== task || ui.get().menu !== loading) return;
     const start = sessionId => () => {
@@ -1260,20 +1395,21 @@
   async function createTerminal(options = {}) {
     if (!task) return;
     const current = task;
+    const from = source;
     leaveChat();
     try {
       await terminalsLoaded; // a new one made while the list is on its way is not wiped by that list (a task with no terminal answers an empty one)
       if (current !== task) return;
-      const row = await api('POST', `${source.tasksBase}/${current.id}/terminals`, options);
+      const row = await api('POST', `${from.tasksBase}/${current.id}/terminals`, options);
       if (!row || !row.terminal_id) throw new Error('The engine returned no terminal');
       if (current !== task) return;
       terminals.push(row);
       terminalId = row.terminal_id;
-      store.set(`terminal:${source.key}:${current.id}`, terminalId);
+      store.set(`terminal:${from.key}:${current.id}`, terminalId);
       renderTabs();
       connect();
     } catch (error) {
-      if (error.message === 'TASK_ARCHIVED') { archivedElsewhere(source, current.id); return; }
+      if (error.message === 'TASK_ARCHIVED') { archivedElsewhere(from, current.id); return; }
       tell(`Could not create the terminal: ${error.message}`, 'error');
     }
   }
@@ -1949,19 +2085,88 @@
   // fresh snapshot, when it is shown: nothing on a hidden page needs the state, and phones drop background connections anyway. Each tab has its own stream.
   const FALLBACK_POLL_MS = 30000;
   const STALL_MS = 50000;
-  const feed = { source: null, live: false, snapshot: null, ctrl: null, retry: 0, retryTimer: null, poll: null, stall: null };
+  // One feed per listed service with its own backoff (`feeds`, by source key), none for a service that is hidden or offline. Every stream is a long-lived fetch to this
+  // origin and HTTP/1.1 allows about 6 connections: the page keeps at most MAX_STREAMS live (this machine and the service of the shown task first) and polls the others
+  // every FALLBACK_POLL_MS, so normal requests are never blocked. WebSockets do not count against that limit; T-Attention has one stream of its own, so 2 stay free.
+  const MAX_STREAMS = 3;
+  const MAX_STREAMS_H2 = 16; // one connection carries them all
+  const streamLimit = () => {
+    const nav = performance.getEntriesByType('navigation')[0];
+    return /^h[23]/.test((nav && nav.nextHopProtocol) || '') ? MAX_STREAMS_H2 : MAX_STREAMS;
+  };
+  const feeds = new Map();
+  function feedOf(from) {
+    let f = feeds.get(from.key);
+    if (!f || f.source !== from) {
+      if (f) stopFeed(f);
+      f = { source: from, live: false, snapshot: null, ctrl: null, retry: 0, retryTimer: null, poll: null, stall: null, wanted: null, noStream: false };
+      feeds.set(from.key, f);
+    }
+    return f;
+  }
+  const feedRuns = f => Boolean(f.ctrl || f.retryTimer || f.poll);
+  // Decides which feeds run and how: after a change of the services, of what is shown, of what is hidden, of a service going offline or back, and of the page being shown.
+  function syncFeeds() {
+    if (!listReady) return; // what is listed and hidden is not known yet
+    const listed = listedSources();
+    for (const [key, f] of feeds) {
+      if (listed.includes(f.source) && sources.includes(f.source) && f.source.status !== 'offline') continue;
+      stopFeed(f);
+      feeds.delete(key);
+    }
+    if (document.visibilityState !== 'visible') { for (const f of feeds.values()) stopFeed(f); showActiveCount(); return; }
+    const online = listed.filter(from => from.status !== 'offline');
+    const order = [LOCAL, source, ...online].filter((from, index, all) => online.includes(from) && all.indexOf(from) === index);
+    const max = streamLimit();
+    let streams = 0;
+    for (const from of order) {
+      const f = feedOf(from);
+      const stream = !f.noStream && streams < max;
+      if (stream) streams += 1;
+      const wanted = stream ? 'stream' : 'poll';
+      if (f.wanted === wanted && feedRuns(f)) continue;
+      stopFeed(f);
+      f.wanted = wanted;
+      if (stream) void connectFeed(f); else startFallbackPoll(f);
+    }
+    showActiveCount();
+  }
   async function readActivity(from) {
     return Promise.all([
       api('GET', `${from.activityBase}/terminal-activity`),
       api('GET', `${from.activityBase}/terminal-subagents`).catch(() => ({})), // an Engine older than this feature: no sub-agent information
     ]);
   }
-  // Running (a running state or a running sub-agent) and pending ('done') terminals of the listed tasks: the same set the next-session button goes through.
+  // A failed feed may mean that the service went away: the list is read at once (at most every few seconds), which says so.
+  function checkSource(from) {
+    if (from.status === 'offline' || Date.now() - from.checkedAt < 5000) return;
+    void loadSource(from);
+  }
+  const snapshotOf = from => {
+    const f = feeds.get(from.key);
+    return f && from.status !== 'offline' && !hiddenDevices.has(from.key) ? f.snapshot : null;
+  };
+  // The running and pending terminals of one task, for the Running and Pending filters of the list.
+  function activeIn(from, taskId) {
+    const snap = snapshotOf(from);
+    if (!snap) return { running: 0, pending: 0 };
+    const states = snap.activity[taskId] || {};
+    const subs = snap.subagents[taskId] || {};
+    let running = 0;
+    let pending = 0;
+    for (const id of new Set([...Object.keys(states), ...Object.keys(subs)])) {
+      if (states[id] === 'running' || Number(subs[id]) > 0) running += 1;
+      else if (states[id] === 'done') pending += 1;
+    }
+    return { running, pending };
+  }
+  // Running (a running state or a running sub-agent) and pending ('done') terminals of the listed tasks of every listed service: the same set the next-session button goes through.
   function showActiveCount() {
-    const snap = feed.snapshot && feed.source === source ? feed.snapshot : null;
     let count = 0;
-    if (snap) {
-      const listed = new Set(tasks.map(item => String(item.id)));
+    for (const from of listedSources()) {
+      const snap = snapshotOf(from);
+      if (!snap) continue;
+      const listed = new Set(from.tasks.map(item => String(item.id)));
       for (const taskId of new Set([...Object.keys(snap.activity), ...Object.keys(snap.subagents)])) {
         if (!listed.has(taskId)) continue;
         const states = snap.activity[taskId] || {};
@@ -1971,61 +2176,68 @@
     }
     ui.set({ activeCount: count });
   }
-  function applyActivity(from, snap) {
-    if (from !== source || feed.source !== from) return;
+  function applyActivity(f, snap) {
+    const from = f.source;
+    if (feeds.get(from.key) !== f) return;
     const object = value => (value && typeof value === 'object' ? value : {});
-    feed.snapshot = { activity: object(snap && snap.activity), subagents: object(snap && snap.subagents) };
+    const next = { activity: object(snap && snap.activity), subagents: object(snap && snap.subagents) };
+    const changed = JSON.stringify(next) !== JSON.stringify(f.snapshot);
+    f.snapshot = next;
     showActiveCount();
+    if (changed) renderTasks(); // the Running and Pending filters
     // The shown terminal finished while the person is looking at it: it is seen.
     const s = shownTerminal();
-    if (s && s.source === from && ((feed.snapshot.activity[s.task.id] || {})[s.terminalId]) === 'done') ackShown();
+    if (s && s.source === from && ((next.activity[s.task.id] || {})[s.terminalId]) === 'done') ackShown();
   }
-  function stopFeed() {
-    if (feed.ctrl) feed.ctrl.abort();
-    clearTimeout(feed.retryTimer);
-    clearTimeout(feed.stall);
-    clearInterval(feed.poll);
-    Object.assign(feed, { live: false, ctrl: null, retryTimer: null, stall: null, poll: null });
+  function stopFeed(f) {
+    if (f.ctrl) f.ctrl.abort();
+    clearTimeout(f.retryTimer);
+    clearTimeout(f.stall);
+    clearInterval(f.poll);
+    Object.assign(f, { live: false, ctrl: null, retryTimer: null, stall: null, poll: null });
   }
-  function startFallbackPoll(from) {
-    if (feed.poll) return;
+  function startFallbackPoll(f) {
+    if (f.poll) return;
+    const from = f.source;
     const tick = async () => {
-      if (document.visibilityState !== 'visible' || feed.live) return;
-      try { const [activity, subagents] = await readActivity(from); applyActivity(from, { activity, subagents }); } catch { /* keep the last state */ }
+      if (document.visibilityState !== 'visible' || f.live || feeds.get(from.key) !== f) return;
+      try { const [activity, subagents] = await readActivity(from); applyActivity(f, { activity, subagents }); } catch { checkSource(from); /* keep the last state */ }
     };
-    feed.poll = setInterval(() => void tick(), FALLBACK_POLL_MS);
+    f.poll = setInterval(() => void tick(), FALLBACK_POLL_MS);
     void tick();
   }
-  function retryFeed(from) {
-    feed.live = false;
-    startFallbackPoll(from);
-    clearTimeout(feed.retryTimer);
-    feed.retryTimer = setTimeout(() => void connectFeed(), Math.min(30000, 1000 * 2 ** feed.retry++));
+  function retryFeed(f) {
+    f.live = false;
+    startFallbackPoll(f);
+    clearTimeout(f.retryTimer);
+    f.retryTimer = setTimeout(() => void connectFeed(f), Math.min(30000, 1000 * 2 ** f.retry++));
+    checkSource(f.source);
   }
-  async function connectFeed() {
-    const from = source;
-    if (feed.source !== from) { stopFeed(); feed.snapshot = null; feed.retry = 0; showActiveCount(); }
-    else { if (feed.ctrl) feed.ctrl.abort(); clearTimeout(feed.retryTimer); clearTimeout(feed.stall); feed.ctrl = null; feed.live = false; }
-    feed.source = from;
-    if (document.visibilityState !== 'visible') return;
+  async function connectFeed(f) {
+    const from = f.source;
+    if (f.ctrl) f.ctrl.abort();
+    clearTimeout(f.retryTimer);
+    clearTimeout(f.stall);
+    Object.assign(f, { ctrl: null, retryTimer: null, stall: null, live: false });
+    if (document.visibilityState !== 'visible' || feeds.get(from.key) !== f) return;
     const ctrl = new AbortController();
-    feed.ctrl = ctrl;
-    const stalled = () => { clearTimeout(feed.stall); feed.stall = setTimeout(() => ctrl.abort(), STALL_MS); };
+    f.ctrl = ctrl;
+    const stalled = () => { clearTimeout(f.stall); f.stall = setTimeout(() => ctrl.abort(), STALL_MS); };
     let res;
     try {
       res = await fetch(`${from.activityBase}/terminal-activity/stream`, { headers: { 'X-Requested-With': 'XMLHttpRequest', Accept: 'text/event-stream' }, cache: 'no-store', signal: ctrl.signal });
-    } catch { if (feed.ctrl === ctrl) retryFeed(from); return; }
-    if (feed.ctrl !== ctrl) return;
+    } catch { if (f.ctrl === ctrl) retryFeed(f); return; }
+    if (f.ctrl !== ctrl) return;
     if (!res.ok || !res.body || !/text\/event-stream/.test(res.headers.get('content-type') || '')) {
       ctrl.abort();
-      if ([404, 405, 501].includes(res.status) || res.ok) { feed.ctrl = null; startFallbackPoll(from); } // no stream on this Engine: poll slowly
-      else retryFeed(from);
+      if ([404, 405, 501].includes(res.status) || res.ok) { f.ctrl = null; f.noStream = true; startFallbackPoll(f); } // no stream on this Engine: poll slowly
+      else retryFeed(f);
       return;
     }
-    feed.live = true;
-    feed.retry = 0;
-    clearInterval(feed.poll);
-    feed.poll = null;
+    f.live = true;
+    f.retry = 0;
+    clearInterval(f.poll);
+    f.poll = null;
     stalled();
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
@@ -2046,17 +2258,17 @@
             if (line.startsWith('event:')) event = line.slice(6).trim();
             else if (line.startsWith('data:')) data += line.slice(5).replace(/^ /, '');
           }
-          if (event === 'activity' && data) { try { applyActivity(from, JSON.parse(data)); } catch { /* a broken message: wait for the next */ } }
+          if (event === 'activity' && data) { try { applyActivity(f, JSON.parse(data)); } catch { /* a broken message: wait for the next */ } }
         }
       }
     } catch { /* aborted or dropped */ }
-    if (feed.ctrl !== ctrl) return; // closed on purpose (hidden page, another Engine)
-    clearTimeout(feed.stall);
-    retryFeed(from);
+    if (f.ctrl !== ctrl) return; // closed on purpose (hidden page, a service gone)
+    clearTimeout(f.stall);
+    retryFeed(f);
   }
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') void connectFeed();
-    else stopFeed();
+    if (document.visibilityState === 'visible') { syncFeeds(); retryOffline(); }
+    else for (const f of feeds.values()) stopFeed(f);
   });
 
   // ── A hardware keyboard: type to the terminal, Escape back to it, Cmd/Ctrl+K for the search (deskKeys: a computer, or a tablet with a keyboard) ──
@@ -2927,9 +3139,9 @@
   // T-Attention (scripts/h5-shell/Attention.jsx): a file named by a task's context is an absolute path. It opens in the file sheet when it lies inside
   // the working directory of a task of this machine (the deepest one); the file API checks the path again (relative, no symbolic links).
   const localTaskFor = absolute => {
-    if (source.key !== 'local' || typeof absolute !== 'string' || !absolute.startsWith('/') || /(^|\/)\.\.?(\/|$)/.test(absolute)) return null;
+    if (typeof absolute !== 'string' || !absolute.startsWith('/') || /(^|\/)\.\.?(\/|$)/.test(absolute)) return null;
     let best = null;
-    for (const item of tasks) {
+    for (const item of LOCAL.tasks) {
       const dir = taskDir(item).replace(/\/+$/, '');
       if (dir && absolute.startsWith(`${dir}/`) && (!best || dir.length > best.dir.length)) best = { item, dir };
     }
@@ -2946,7 +3158,7 @@
   ui.actions.openLocalPath = absolute => {
     const found = localTaskFor(absolute);
     if (!found) return false;
-    void openFileSheet(absolute.slice(found.dir.length + 1), { link: true, forTask: found.item });
+    void openFileSheet(absolute.slice(found.dir.length + 1), { link: true, forTask: found.item, from: LOCAL });
     return true;
   };
 
@@ -2973,15 +3185,14 @@
   // ── A click on the notification that a chat's turn ended: the task is selected and the chat opens (the chat is shown at once when it is the open one). ──
   // Resolves to whether it went there. A chat of a remote Engine is not opened from here.
   async function openChatFromLink({ taskId, conversationId }) {
-    if (source.key !== 'local' || !taskId) return false;
-    if (agentChat && agentFor && agentFor.conversation === conversationId) { closeTasks(); return true; }
-    const item = tasks.find(entry => entry.id === Number(taskId));
+    if (!taskId) return false;
+    if (agentChat && agentFor && agentFor.source === 'local' && agentFor.conversation === conversationId) { closeTasks(); return true; }
+    const item = findTask(LOCAL, taskId);
     if (!item) return false;
-    const current = source;
-    const rows = await chatApi.get(`${current.tasksBase}/${item.id}/agent/conversations`).catch(() => null);
-    const row = source === current && Array.isArray(rows) ? rows.find(entry => entry.id === conversationId) : null;
+    const rows = await chatApi.get(`${LOCAL.tasksBase}/${item.id}/agent/conversations`).catch(() => null);
+    const row = Array.isArray(rows) ? rows.find(entry => entry.id === conversationId) : null;
     if (!row) return false;
-    selectTask(item, { chat: row });
+    selectTask(LOCAL, item, { chat: row });
     return true;
   }
   if (typeof AgentChat !== 'undefined' && AgentChat.setOpenHandler) AgentChat.setOpenHandler(data => { if (!data.remote) void openChatFromLink(data); });
@@ -3001,12 +3212,14 @@
   });
 
   // ── Start ──
+  // How long the page waits for the service of the remembered task before it falls back to this machine (a slow or offline one must not hold the page).
+  const REMEMBER_WAIT_MS = 5000;
   (async () => {
-    // The remembered Engine is assumed until the Engine list says otherwise: its tasks are asked for at the same time as the list. Its object is put in
-    // `sources` so that loadSources keeps it (requests in flight compare with `source`).
+    // The remembered service is assumed until the list of services says otherwise: its tasks are asked for at the same time as that list. Its object is put in
+    // `sources` so that loadSources keeps it; without a name it is not listed yet.
     const remembered = /^remote:(\d+)$/.exec(store.get('source') || '');
-    if (remembered) { source = remoteSource(Number(remembered[1]), ''); sources = [LOCAL, source]; }
-    const assumed = source;
+    const assumed = remembered ? remoteSource(Number(remembered[1]), '') : LOCAL;
+    if (remembered) sources = [LOCAL, assumed];
     // The page opened by a click on a notification: ?openChat=<task id>:<conversation id>.
     const link = /^(\d+):(.+)$/.exec(new URLSearchParams(location.search).get('openChat') || '');
     const savedId = Number(store.get(`task:${assumed.key}`));
@@ -3016,15 +3229,27 @@
       const savedTerminal = store.get(`terminal:${assumed.key}:${savedId}`);
       if (savedTerminal) openEarlySocket(assumed, savedId, savedTerminal);
     }
-    const tasksLoaded = loadTasks();
-    await loadSources();
-    await tasksLoaded;
-    if (source !== assumed) { dropEarlySocket(); early.clear(); await loadTasks(); } // the remembered Engine is gone: this machine's tasks
-    void connectFeed();
+    renderTasks(); // "Loading…"
+    // A phone with nothing to bring back opens on the task sheet at once; that does not wait for the lists.
+    if (!link && !(savedId > 0) && !isWide()) ui.set({ tasksOpen: true, wide: false });
+    const reads = new Map([[LOCAL, loadSource(LOCAL)]]);
+    if (assumed !== LOCAL) reads.set(assumed, loadSource(assumed));
+    await Promise.all([loadSources(), loadHidden()]);
+    listReady = true;
+    for (const from of listedSources()) if (!reads.has(from)) reads.set(from, loadSource(from));
+    renderTasks();
+    syncFeeds();
     if (link && await openChatFromLink({ taskId: Number(link[1]), conversationId: link[2] })) return;
-    const saved = tasks.find(item => item.id === Number(store.get(`task:${source.key}`)));
-    if (saved) selectTask(saved);
-    else dropEarlySocket(); // the remembered task is gone
-    if (!saved || isWide()) openTasks();
+    // The remembered service and task when it is listed and answers in time; else the remembered task of another listed service; else no task and the list.
+    const listed = listedSources();
+    const tried = [assumed, LOCAL, ...listed].filter((from, index, all) => listed.includes(from) && all.indexOf(from) === index);
+    await Promise.race([Promise.all(tried.slice(0, 2).map(from => reads.get(from))), new Promise(resolve => setTimeout(resolve, REMEMBER_WAIT_MS))]);
+    if (!task) { // nothing was opened by hand meanwhile
+      const found = tried.map(from => ({ from, item: from.status === 'ready' ? findTask(from, Number(store.get(`task:${from.key}`))) : null })).find(entry => entry.item);
+      if (!found || found.from !== assumed) dropEarlySocket(); // the remembered task is gone, hidden or offline
+      if (found) selectTask(found.from, found.item, null, { remember: found.from === assumed });
+    }
+    // A wide screen always has the sidebar. A phone opens the sheet only when no task is shown, and not over Settings opened meanwhile.
+    if (isWide() || (!task && !ui.get().settingsOpen)) openTasks();
   })();
 })();

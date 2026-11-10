@@ -321,7 +321,6 @@ async function checkOtherTask({ page, requests, size, press, list, shown, base, 
       const press = locator => (wide ? locator.click() : locator.tap());
       const openSheet = async () => { if (!wide && !(await page.locator('#h5-tasks').isVisible())) await page.locator('#h5-open-tasks').tap(); await page.locator('#h5-tasks .h5-task-item').first().waitFor(); };
       await openSheet();
-      await page.locator('#h5-engine').selectOption('remote:7');
       await page.locator('.h5-task-item', { hasText: 'Remote 9' }).waitFor();
       await press(page.locator('.h5-task-item', { hasText: 'Remote 9' }));
       await press(page.locator('#h5-tasks .h5-terminal-list[aria-label="Remote 9"] .h5-terminal-main').nth(1));

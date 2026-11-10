@@ -175,6 +175,7 @@ app.use('/api/ssh-tunnel', sshTunnelRouter);
 app.use('/api/agent-config', require('./routes/agent-config').createClientRouter({ db: require('./db'), sessionSecret: require('./config').sessionSecret }));
 app.use('/api/file-sync', require('./routes/file-sync').browser);
 app.use('/api/remote-servers', require('./routes/remote-servers'));
+app.use('/api/task-list/hidden-devices', require('./routes/task-list-prefs').createTaskListPrefsRouter());
 app.use('/api/remote-tokens', require('./routes/remote-tokens'));
 app.use('/api/service-links', require('./routes/service-links'));
 app.use('/api/remote/v1', require('./routes/remote-api'));

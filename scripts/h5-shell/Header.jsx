@@ -34,7 +34,11 @@ export function Header({ state, ui }) {
           {state.wide ? null : <MenuIcon fontSize="small" aria-hidden="true" />}
           <Box sx={{ minWidth: 0, flex: '1 1 auto' }}>
             <Typography id="h5-task-name" className="h5-task-name" variant="subtitle1" component="div" noWrap sx={{ fontWeight: 600, lineHeight: 1.3 }}>{state.taskName || t('Choose a task')}</Typography>
-            <Typography id="h5-session-name" className="h5-session-name" variant="caption" component="div" color="text.secondary" noWrap translate="no" sx={{ lineHeight: 1.3 }}>{state.sessionName || ' '}</Typography>
+            <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 0.5, minWidth: 0 }}>
+              {/* The service of the shown task when it is not this machine, on the line of the session name. */}
+              {state.sourceLabel ? <Typography id="h5-task-service" className="h5-task-service" variant="caption" component="div" color="primary.light" noWrap translate="no" title={state.sourceLabel} sx={{ flex: '0 1 auto', maxWidth: '60%', lineHeight: 1.3, fontWeight: 600 }}>{state.sourceLabel}</Typography> : null}
+              <Typography id="h5-session-name" className="h5-session-name" variant="caption" component="div" color="text.secondary" noWrap translate="no" sx={{ flex: '1 1 auto', minWidth: 0, lineHeight: 1.3 }}>{state.sessionName || ' '}</Typography>
+            </Box>
           </Box>
         </ButtonBase>
         {state.terminalWidth ? <WidthButton width={state.terminalWidth} ui={ui} /> : null}

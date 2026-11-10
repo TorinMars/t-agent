@@ -75,6 +75,8 @@ function createOssImages({ db, sessionSecret, createClient = options => new OSS(
   }
   return {
     getConfig(owner) { return safe(read(owner)); },
+    // The condition `signUpload` refuses on, for the routes that may send the call to a linked service (services/linked-capabilities.js).
+    isConfigured(owner) { return Boolean(read(owner).enabled); },
     saveConfig(owner, body) {
       if (!body || typeof body !== 'object' || Array.isArray(body)) throw new OssImageError('Invalid OSS configuration');
       const old = read(owner);

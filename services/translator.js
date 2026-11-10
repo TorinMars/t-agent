@@ -186,6 +186,11 @@ function createTranslator({ db, sessionSecret, fetchImpl = (...args) => fetch(..
 
   return {
     getConfig: owner => safe(read(owner)),
+    // The condition `complete` refuses on, for the routes that may send the call to a linked service (services/linked-capabilities.js).
+    isConfigured(owner) {
+      const all = read(owner);
+      return Boolean(all.enabled && all.providers[all.provider].apiKey);
+    },
     // Server side only (the T-Attention summary, services/attention-summary.js): the saved { apiKey, baseUrl, model } of one provider, whether or not
     // translation itself is switched on. Never send it to a page.
     providerConfig: (owner, id) => (Object.hasOwn(PROVIDERS, id) ? { ...read(owner).providers[id] } : null),
@@ -247,6 +252,19 @@ function createTranslator({ db, sessionSecret, fetchImpl = (...args) => fetch(..
   };
 }
 
+// Whether `translate` would call a provider for this input. Refused input and text with no Chinese are answered without one, so they never need a linked service.
+function needsProvider(input) {
+  const source = typeof input === 'string' ? input.trim() : '';
+  return Boolean(source) && source.length <= MAX_INPUT_CHARS && hasCjk(source);
+}
+
+// How long a caller of `translate` may have to wait: the pieces run one after another, each with one provider call and at most one round of the line-by-line
+// fallback. A linked service answers nothing until the whole text is done, so its caller needs this, not the time of one provider call.
+function translationTimeoutMs(input) {
+  const pieces = typeof input === 'string' ? splitForTranslation(input.trim()).filter(part => hasCjk(part.text)).length : 0;
+  return Math.max(1, pieces) * 2 * TIMEOUT_MS;
+}
+
 // Splits text into pieces of at most `limit` characters: whole lines where they fit, a longer line cut at its last sentence end in the piece
 // (or at the limit, never inside a surrogate pair). Each piece has `joint`, what joins it to the piece before ('\n' between lines, ' ' inside a line).
 const SENTENCE_END = /[\u3002\uff01\uff1f\uff1b.!?;]/g;
@@ -275,4 +293,4 @@ function splitForTranslation(source, limit = CHUNK_CHARS) {
   return parts;
 }
 
-module.exports = { PROVIDERS, glmReasoning, createTranslator, TranslatorError, MAX_INPUT_CHARS, CHUNK_CHARS, splitForTranslation, hasCjk };
+module.exports = { PROVIDERS, glmReasoning, createTranslator, TranslatorError, MAX_INPUT_CHARS, CHUNK_CHARS, TIMEOUT_MS, splitForTranslation, hasCjk, needsProvider, translationTimeoutMs };

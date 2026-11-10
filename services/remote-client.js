@@ -47,12 +47,16 @@ function request(baseUrl, pathname, token, { expectText = false, method = 'GET',
         const body = Buffer.concat(chunks).toString('utf8');
         if (res.statusCode < 200 || res.statusCode >= 300) {
           let code = `REMOTE_HTTP_${res.statusCode}`;
+          let peerError = null;
           try {
             const parsed = JSON.parse(body);
             if (/^[A-Z0-9_]+$/.test(parsed.error || '')) code = parsed.error;
+            if (typeof parsed.error === 'string') peerError = parsed.error;
           } catch {}
           const error = new Error(code);
           error.statusCode = res.statusCode;
+          // The peer's own words, which may be a sentence and not a code. Only services/linked-capabilities.js passes them on.
+          error.peerError = peerError;
           return reject(error);
         }
         if (expectText) return resolve(body);

@@ -16,19 +16,22 @@ function when(value) {
 function Row({ row, busy, ui }) {
   const at = when(row.archivedAt);
   return (
-    <Box className="h5-archived-row" data-task-id={row.id} sx={{ px: 0.75, py: 0.5, borderBottom: 1, borderColor: 'divider', '&:last-of-type': { borderBottom: 0 } }}>
+    <Box className="h5-archived-row" data-task-id={row.id} data-ref={row.ref} sx={{ px: 0.75, py: 0.5, borderBottom: 1, borderColor: 'divider', '&:last-of-type': { borderBottom: 0 } }}>
       <Box className="h5-archived-title" translate="no" sx={{ fontSize: 14, lineHeight: 1.25, fontWeight: 700, overflowWrap: 'anywhere' }}>{row.title}</Box>
       <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', columnGap: 0.5 }}>
-        <Box component="span" className="h5-archived-when" sx={{ flex: '1 1 96px', minWidth: 0, fontSize: 12, color: 'text.secondary' }}>{at ? `${t('Archived')} ${at}` : ''}</Box>
-        <Button className="h5-archived-restore" size="small" disabled={Boolean(busy)} onClick={() => void ui.actions.archivedRestore(row.id)}>{t('Restore')}</Button>
-        <Button className="h5-archived-delete" size="small" color="error" disabled={Boolean(busy)} onClick={() => ui.actions.archivedDelete(row.id)}>{t('Delete')}</Button>
+        <Box component="span" className="h5-archived-when" sx={{ flex: '1 1 96px', minWidth: 0, fontSize: 12, color: 'text.secondary' }}>
+          {row.service ? <Box component="span" className="h5-archived-service" translate="no">{`${row.service} \u00B7 `}</Box> : null}
+          {at ? `${t('Archived')} ${at}` : ''}
+        </Box>
+        <Button className="h5-archived-restore" size="small" disabled={Boolean(busy)} onClick={() => void ui.actions.archivedRestore(row.ref)}>{t('Restore')}</Button>
+        <Button className="h5-archived-delete" size="small" color="error" disabled={Boolean(busy)} onClick={() => ui.actions.archivedDelete(row.ref)}>{t('Delete')}</Button>
       </Box>
     </Box>
   );
 }
 
 // The Archived entry at the end of the task list, the same on a phone sheet and the wide sidebar: closed at first, and its rows are read only when it is opened (h5.js `archived`).
-// Not there on a remote Engine without 'tasks:archive'. The number appears once the rows have been read.
+// The rows of every service in the list that can archive, each naming its service when it is not this machine. Not there when none can. The number appears once the rows have been read.
 export function ArchivedTasks({ archived, ui }) {
   if (!archived || !archived.supported) return null;
   const { open, status, rows, count, busy } = archived;
@@ -48,7 +51,7 @@ export function ArchivedTasks({ archived, ui }) {
           {status === 'loading' ? <Typography className="h5-archived-note" variant="body2" color="text.secondary" sx={{ px: 1, py: 0.75 }}>{t('Loading…')}</Typography> : null}
           {status === 'error' ? <Typography className="h5-archived-note" variant="body2" color="error" sx={{ px: 1, py: 0.75 }}>{t('Could not load the archived tasks')}</Typography> : null}
           {status === 'ready' && !rows.length ? <Typography className="h5-archived-note" variant="body2" color="text.secondary" sx={{ px: 1, py: 0.75 }}>{t('No archived tasks')}</Typography> : null}
-          {rows.map(row => <Row key={row.id} row={row} busy={busy} ui={ui} />)}
+          {rows.map(row => <Row key={row.ref} row={row} busy={busy} ui={ui} />)}
         </Box>
       ) : null}
     </Box>

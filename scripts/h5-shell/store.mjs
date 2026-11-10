@@ -27,14 +27,17 @@ export const initialState = () => ({
   taskName: '', // empty: "Choose a task"
   sessionName: '',
   terminalAgent: null, // 'claude' / 'codex' when the current terminal is that agent's, null for a plain shell: picks the presets of the saved commands list
-  sources: [{ key: 'local', label: 'This machine' }],
-  sourceKey: 'local',
-  // The task list: a note (loading, an error, no tasks), or groups of tasks; a task can carry the sessions listed under it.
-  taskList: { note: null, groups: [] },
+  sources: [{ key: 'local', label: 'This machine' }], // every connected service: { key, label, offline, hidden }
+  sourceKey: 'local', // the service of the shown task
+  sourceLabel: '', // its name when it is not this machine (shown in the header)
+  hiddenDevices: { supported: false, keys: [] }, // the devices left out of the list ("Show in task list"); `supported`: false on an older server
+  // The task list: a note (loading, an error, no tasks), or one section per service, each with groups of tasks; a task can carry the sessions listed under it.
+  // `groups` is this machine's section, for T-Attention's way back.
+  taskList: { note: null, groups: [], sections: [] },
   archived: { supported: false, open: false, status: 'idle', busy: null, count: null, rows: [] }, // the Archived section at the end of the task list (h5.js `showArchived`)
   creatingTask: false,
   // { title, items: [{ label, kind }], naming, task, name, rename, renameValue } while the terminal / chat actions or the Session list are open.
-  // naming: the Session list of the "+" of task `task`, drawn under that task in the task list; rename: { kind, id, task } of the row whose name field is shown in its place;
+  // naming: the Session list of the "+" of task `task` (its ref), drawn under that task in the task list; rename: { kind, id, task } of the row whose name field is shown in its place;
   // anchor: the "⋯" button of a session row, whose actions are a popup under it (TermMenu.jsx); null for the sheet from the bottom.
   menu: null,
   empty: 'Choose a task to open its phone terminal', // what the terminal area says when there is no terminal; null when one is shown
@@ -57,5 +60,5 @@ export const initialState = () => ({
   // T-Attention (attention-feed.mjs, Attention.jsx): { open, status: idle | loading | ready | error, items, needs (the waiting_user count, the badge
   // on #h5-attention), live (the stream is connected), focus (a task id whose edit view opens) }
   attention: { open: false, status: 'idle', items: null, needs: 0, live: false, focus: null },
-  activeCount: 0, // running or pending terminal sessions of the Engine (the badge on #h5-cycle; h5.js `showActiveCount`)
+  activeCount: 0, // running or pending terminal sessions of the listed services (the badge on #h5-cycle; h5.js `showActiveCount`)
 });

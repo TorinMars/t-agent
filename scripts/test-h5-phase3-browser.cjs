@@ -84,35 +84,31 @@ async function waitForList(page, pattern, what) {
 }
 
 async function engineChoice(browser) {
-  // The saved remote Engine comes back.
+  // There is no Engine switch: the tasks of both are in one list, with a remembered Engine too.
   server = freshServer();
   let { context, page } = await openPage(browser, { source: 'remote:7' });
   await waitForList(page, /Task on VPS/, 'saved Engine');
-  assert.equal(await page.locator('#h5-engine').inputValue(), 'remote:7');
-  assert.doesNotMatch(await listText(page), /Fix login/, 'only the tasks of the chosen Engine are listed');
+  await waitForList(page, /Fix login/, 'this machine is in the same list');
+  assert.equal(await page.locator('#h5-engine').count(), 0, 'no Engine selector');
   await page.reload();
   await waitForList(page, /Task on VPS/, 'saved Engine after a reload');
-  assert.equal(await page.locator('#h5-engine').inputValue(), 'remote:7');
-  // Switching back to this machine shows its tasks.
-  await page.locator('#h5-engine').selectOption('local');
-  await waitForList(page, /Fix login/, 'back to this machine');
+  await waitForList(page, /Fix login/, 'this machine after a reload');
   await context.close();
 
-  // A saved Engine that was removed: this machine.
+  // A saved Engine that was removed: this machine, without an error.
   server = freshServer();
   ({ context, page } = await openPage(browser, { source: 'remote:9' }));
   await waitForList(page, /Fix login/, 'removed Engine');
-  assert.equal(await page.locator('#h5-engine').inputValue(), 'local');
+  assert.doesNotMatch(await listText(page), /Could not load/);
   await context.close();
 
-  // An Engine whose task list fails: the error, no tasks; this machine still works.
+  // An Engine whose task list fails: only its header says Offline; this machine still works.
   server = freshServer();
   server.remoteTasksFail = true;
   ({ context, page } = await openPage(browser, { source: 'remote:7' }));
-  await waitForList(page, /Could not load tasks/, 'failing Engine');
-  assert.doesNotMatch(await listText(page), /Fix login|Task on VPS/);
-  await page.locator('#h5-engine').selectOption('local');
-  await waitForList(page, /Fix login/, 'this machine after a failing Engine');
+  await waitForList(page, /Fix login/, 'this machine next to a failing Engine');
+  await waitForList(page, /Offline/, 'failing Engine');
+  assert.doesNotMatch(await listText(page), /Task on VPS|Could not load/);
   await context.close();
 }
 

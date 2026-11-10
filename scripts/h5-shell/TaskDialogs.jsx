@@ -18,7 +18,9 @@ export function TaskDialog({ state, ui }) {
   const dialog = state.taskDialog;
   const [alsoDir, setAlsoDir] = useState(false);
   const [dir, setDir] = useState('');
-  const key = dialog ? `${dialog.kind}:${dialog.id}` : '';
+  const key = dialog ? `${dialog.kind}:${dialog.sourceKey}:${dialog.id}` : '';
+  // Tasks of two services can have the same title: the name of a service that is not this machine is shown with it.
+  const service = dialog && dialog.service ? <Typography id="h5-task-dialog-service" variant="caption" component="p" color="text.secondary" translate="no" sx={{ mb: 1, overflowWrap: 'anywhere' }}>{dialog.service}</Typography> : null;
   useEffect(() => { setAlsoDir(false); setDir(dialog ? dialog.workDir : ''); }, [key]);
   const close = () => ui.actions.taskDialogClose();
   const open = Boolean(dialog);
@@ -28,6 +30,7 @@ export function TaskDialog({ state, ui }) {
         <Box component="form" autoComplete="off" onSubmit={event => { event.preventDefault(); void ui.actions.taskWorkdirSave(dir); }}>
           <DialogTitle id="h5-task-dialog-title" sx={{ overflowWrap: 'anywhere' }}>{t('Edit working directory')}</DialogTitle>
           <DialogContent>
+            {service}
             <DialogContentText variant="body2" sx={{ mb: 1.5, overflowWrap: 'anywhere' }}>{dialog.title}</DialogContentText>
             <TextField
               id="h5-task-workdir" autoFocus fullWidth size="small" label={t('Working directory')} value={dir} onChange={event => setDir(event.target.value)}
@@ -53,6 +56,7 @@ export function TaskDialog({ state, ui }) {
       <Dialog id="h5-task-dialog" open={open} onClose={close} fullWidth maxWidth="xs" aria-labelledby="h5-task-dialog-title">
         <DialogTitle id="h5-task-dialog-title">{t('Archive this task?')}</DialogTitle>
         <DialogContent>
+          {service}
           <DialogContentText id="h5-task-archive-name" translate="no" sx={{ mb: 1, overflowWrap: 'anywhere' }}>{dialog.title}</DialogContentText>
           {dialog.running > 0 ? (
             <Typography id="h5-task-archive-running" role="alert" variant="body2" color="warning.main" sx={{ mb: 1, fontWeight: 700 }}>
@@ -76,6 +80,7 @@ export function TaskDialog({ state, ui }) {
         <>
           <DialogTitle id="h5-task-dialog-title">{t('Delete task')}</DialogTitle>
           <DialogContent>
+            {service}
             <DialogContentText id="h5-task-delete-text" sx={{ overflowWrap: 'anywhere' }}>{`${t('Delete task')} “${dialog.title}”? ${t('The task record and its to-dos will be deleted.')}`}</DialogContentText>
             {dialog.workDir ? (
               <>

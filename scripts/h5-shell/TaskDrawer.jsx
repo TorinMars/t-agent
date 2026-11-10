@@ -156,31 +156,45 @@ function Sessions({ ui, taskId, sessions, menu }) {
   );
 }
 
+// The small header row of a service in the list: its name, and "Offline" when it is. An offline service shows just this, no error text.
+function SourceHeader({ section, first }) {
+  return (
+    <Box component="h3" className="h5-source-header" data-source={section.key} sx={{ display: 'flex', alignItems: 'baseline', gap: 1, m: 0, px: 0.75, pt: first ? 0.5 : 1, pb: 0.25, fontSize: 12, lineHeight: 1.3, fontWeight: 600, color: 'text.secondary', borderTop: first ? 0 : 1, borderColor: 'divider' }}>
+      <Box component="span" className="h5-source-name" translate="no" sx={{ flex: '0 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{section.local ? t(section.label) : section.label}</Box>
+      {section.offline ? <Box component="span" className="h5-source-offline" sx={{ flex: '0 0 auto', color: 'warning.main' }}>{t('Offline')}</Box> : null}
+    </Box>
+  );
+}
+
 function Tasks({ state, ui, query, filter }) {
-  const { note, groups } = state.taskList;
+  const { note, sections } = state.taskList;
   if (note) return <Typography className="h5-list-note" color="text.secondary" sx={{ py: 3, textAlign: 'center' }}>{t(note)}</Typography>;
   const needle = query.trim().toLowerCase();
   const filtering = Boolean(needle) || filter !== 'all';
-  // A search or the Running filter keeps the tasks whose name matches, or that have a matching session in a list that is open.
-  const shown = groups.map(group => ({
-    ...group,
-    tasks: group.tasks.filter(task => {
-      if (!filtering || (state.menu && state.menu.naming && state.menu.task === task.id)) return true; // the task whose Session list is open stays, whatever the filter
-      const rows = (task.sessions && task.sessions.rows) || [];
-      const nameHit = !needle || task.title.toLowerCase().includes(needle);
-      const rowHit = rows.some(row => (!needle || row.title.toLowerCase().includes(needle)) && (filter === 'all' || row[filter]));
-      return filter !== 'all' ? rowHit : nameHit || rowHit;
-    }),
-  })).filter(group => group.tasks.length);
+  // A search keeps the tasks whose name matches, or that have a matching session in a list that is open. Running and Pending keep the tasks that have such a session, known from the feeds.
+  const keep = task => {
+    if (!filtering || (state.menu && state.menu.naming && state.menu.task === task.ref)) return true; // the task whose Session list is open stays, whatever the filter
+    if (filter !== 'all' && !task[filter]) return false;
+    const rows = (task.sessions && task.sessions.rows) || [];
+    return !needle || task.title.toLowerCase().includes(needle) || rows.some(row => row.title.toLowerCase().includes(needle));
+  };
+  const shown = (sections || []).map(section => ({
+    ...section,
+    groups: section.groups.map(group => ({ ...group, tasks: group.tasks.filter(keep) })).filter(group => group.tasks.length),
+  })).filter(section => !filtering || section.groups.length); // while searching, a service without a match goes altogether
   if (filtering && !shown.length) return <Typography className="h5-list-note" color="text.secondary" sx={{ py: 3, textAlign: 'center' }}>{t('No matching sessions')}</Typography>;
-  return shown.map(group => (
+  // Each service is one section, this machine first; its groups inside it, the way a list of one service has them. Reordering is per group: there is no way to drag a task to another service.
+  return shown.map((section, index) => (
+    <Box key={section.key} component="section" className="h5-source" data-source={section.key}>
+      {section.header ? <SourceHeader section={section} first={index === 0} /> : null}
+      {section.groups.map(group => (
     <Box key={group.key} component="section">
       {group.tasks.map(task => (
-        <Box key={task.id} sx={{ borderBottom: 1, borderColor: 'divider', '&:last-of-type': { borderBottom: 0 } }}>
+        <Box key={task.ref} sx={{ borderBottom: 1, borderColor: 'divider', '&:last-of-type': { borderBottom: 0 } }}>
           <Box className={task.add ? 'h5-task-row' : undefined} sx={{ display: 'flex', alignItems: 'center', gap: 0.5, borderRadius: 2, [TOUCH]: { gap: 1 } }}>
             <ListItemButton
               component="button" className="h5-task-item" aria-current={task.selected ? 'true' : undefined} aria-expanded={task.expanded}
-              onClick={() => ui.actions.toggleTask(task.id)}
+              onClick={() => ui.actions.toggleTask(task.ref)}
               sx={{ flex: '1 1 auto', minWidth: 0, minHeight: 36, py: 0, px: 0.75, borderRadius: 2, textAlign: 'left', overflowWrap: 'anywhere', fontSize: 14, lineHeight: 1.25 }}
             >
               <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', gap: 1, width: '100%' }}>
@@ -192,12 +206,14 @@ function Tasks({ state, ui, query, filter }) {
               </Box>
             </ListItemButton>
             {/* "⋯" (move, working directory, delete) left of the "+", which stays at the right end of the row */}
-            {task.add ? <IconButton className="h5-task-more" size="small" sx={{ p: 0.5 }} aria-label={t('Task actions')} title={t('Task actions')} aria-haspopup="dialog" onClick={() => ui.actions.taskMore(task.id)}><Icon name="taskMore" size={20} /></IconButton> : null}
-            {task.add ? <IconButton className="h5-task-add" size="small" sx={{ p: 0.5 }} aria-label={t('Session')} title={t('Session')} onClick={() => ui.actions.addSession(task.id)}><AddIcon /></IconButton> : null}
+            {task.add ? <IconButton className="h5-task-more" size="small" sx={{ p: 0.5 }} aria-label={t('Task actions')} title={t('Task actions')} aria-haspopup="dialog" onClick={() => ui.actions.taskMore(task.ref)}><Icon name="taskMore" size={20} /></IconButton> : null}
+            {task.add ? <IconButton className="h5-task-add" size="small" sx={{ p: 0.5 }} aria-label={t('Session')} title={t('Session')} onClick={() => ui.actions.addSession(task.ref)}><AddIcon /></IconButton> : null}
           </Box>
-          {state.menu && state.menu.naming && state.menu.task === task.id ? <NewSession menu={state.menu} ui={ui} pointer={state.input === 'pointer'} /> : null}
-          {task.expanded && task.sessions ? <Sessions ui={ui} taskId={task.id} sessions={task.sessions} menu={state.menu} /> : null}
+          {state.menu && state.menu.naming && state.menu.task === task.ref ? <NewSession menu={state.menu} ui={ui} pointer={state.input === 'pointer'} /> : null}
+          {task.expanded && task.sessions ? <Sessions ui={ui} taskId={task.ref} sessions={task.sessions} menu={state.menu} /> : null}
         </Box>
+      ))}
+    </Box>
       ))}
     </Box>
   ));
@@ -212,9 +228,14 @@ function Panel({ state, ui }) {
   const [dirError, setDirError] = useState('');
   const [base, setBase] = useState(null); // the folder new tasks of this machine go under (the user's setting, TASKS_BASE_DIR, else ~/tasks)
   const [adding, setAdding] = useState(false);
+  const [on, setOn] = useState('local'); // "Create on": the service a new task is made on; this machine unless chosen
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('all');
-  const target = ui.actions.newTaskTarget ? ui.actions.newTaskTarget() : { local: true };
+  // The services a task can be made on: online and in the list. A choice that went offline or was hidden meanwhile falls back to this machine, or the first that is left.
+  const targets = state.sources.filter(source => !source.offline && !source.hidden);
+  const picked = targets.find(source => source.key === on) || targets.find(source => source.key === 'local') || targets[0];
+  const onKey = picked ? picked.key : 'local';
+  const target = ui.actions.newTaskTarget ? ui.actions.newTaskTarget(onKey) : { local: true };
   useEffect(() => {
     if (!adding || !target.local) return;
     let live = true;
@@ -230,7 +251,7 @@ function Panel({ state, ui }) {
     if (!value || state.creatingTask) return;
     if (dir && ui.actions.isAbsolutePath && !ui.actions.isAbsolutePath(dir)) { setDirError('Enter an absolute path'); return; }
     setDirError('');
-    if (await ui.actions.createTask(value, dir)) { setTitle(''); setWorkDir(''); setAdding(false); }
+    if (await ui.actions.createTask(value, dir, onKey)) { setTitle(''); setWorkDir(''); setAdding(false); }
     else if (dir) setDirError('The task was not created. Check the working directory.');
   };
   return (
@@ -243,14 +264,6 @@ function Panel({ state, ui }) {
           {state.wide ? null : <IconButton id="h5-close-tasks" aria-label={t('Close')} onClick={() => ui.actions.closeTasks()}><CloseIcon /></IconButton>}
         </Box>
       </Box>
-      {state.sources.length > 1 ? (
-        <Box id="h5-engine-row" component="label" className="h5-engine" sx={{ display: 'flex', alignItems: 'center', gap: 1.5, px: 2, pt: 1, color: 'text.secondary' }}>
-          <span>{t('Engine')}</span>
-          <NativeSelect fullWidth value={state.sourceKey} inputProps={{ id: 'h5-engine', 'aria-label': t('Engine') }} onChange={event => ui.actions.changeEngine(event.target.value)}>
-            {state.sources.map(source => <option key={source.key} value={source.key}>{source.label}</option>)}
-          </NativeSelect>
-        </Box>
-      ) : null}
       <Box className="h5-task-search" sx={{ px: 1.5, pb: 0.25, pt: 0.75, [TOUCH]: { pb: 0 } }}>
         <TextField
           size="small" fullWidth type="search" placeholder={t('Search sessions')} value={query} onChange={event => setQuery(event.target.value)}
@@ -274,6 +287,14 @@ function Panel({ state, ui }) {
       </List>
       {adding ? (
         <Box component="form" id="h5-new-task" className="h5-new-task" autoComplete="off" onSubmit={submit} sx={{ display: 'flex', flexDirection: 'column', gap: 1, px: 2, pb: 1 }}>
+          {state.sources.length > 1 ? (
+            <Box id="h5-new-task-on-row" component="label" sx={{ display: 'flex', alignItems: 'center', gap: 1.5, color: 'text.secondary', fontSize: 14 }}>
+              <span style={{ whiteSpace: 'nowrap' }}>{t('Create on')}</span>
+              <NativeSelect fullWidth value={onKey} inputProps={{ id: 'h5-new-task-on', 'aria-label': t('Create on') }} onChange={event => setOn(event.target.value)}>
+                {targets.map(source => <option key={source.key} value={source.key}>{source.key === 'local' ? t(source.label) : source.label}</option>)}
+              </NativeSelect>
+            </Box>
+          ) : null}
           <Box sx={{ display: 'flex', gap: 1 }}>
             <TextField
               id="h5-new-task-title" autoFocus size="small" fullWidth placeholder={t('New task title')} value={title} onChange={event => setTitle(event.target.value)}

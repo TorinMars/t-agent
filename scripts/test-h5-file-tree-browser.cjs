@@ -626,7 +626,6 @@ async function checkListScrolling(browser, viewport, touch) {
       await panel.waitFor({ state: 'hidden' });
 
       // A remote Engine: the tree is read through the remote proxy, and it is a new tree.
-      await page.locator('#h5-engine').selectOption('remote:7');
       await page.locator('.h5-task-item', { hasText: 'Remote job' }).click();
       const remoteRow = page.locator('#h5-tasks .h5-terminal-list[aria-label="Remote job"] .h5-terminal-main').first();
       await remoteRow.waitFor();

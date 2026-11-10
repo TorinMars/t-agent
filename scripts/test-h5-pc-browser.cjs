@@ -397,7 +397,6 @@ const waitAck = (url, id, from = 0) => new Promise((resolve, reject) => {
     {
       remoteActivity = { 9: { r1: 'done' } };
       const { context, page } = await openPage(browser, { viewport: { width: 1440, height: 900 }, remote: true });
-      await page.locator('#h5-engine').selectOption('remote:7');
       const from = acks.length;
       await openTerminal(page, 'Remote task', 'Remote shell');
       await waitAck('/api/remote-servers/7/tasks/9/terminal/ack', 'r1', from);

@@ -123,7 +123,7 @@ function helpers({ page, wide }) {
 async function setup(env, h, { remote }) {
   const { page, ids } = env;
   await h.openSheet();
-  if (remote) { await page.locator('#h5-engine').selectOption('remote:7'); await h.item('Beta').waitFor(); }
+  if (remote) await h.item('Beta').waitFor();
   await h.press(h.item('Beta'));
   await h.press(h.row('Beta', 'Terminal 1').locator('.h5-terminal-main'));
   await h.shown(ids.beta, 'default');

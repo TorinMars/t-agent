@@ -23,7 +23,7 @@ function makeServer() {
       '/api/tasks': { tasks: [task(1, 'Alpha'), task(2, 'Beta'), task(3, 'Gamma')], archived: [] },
       '/api/remote-servers/7/tasks': { tasks: [bare(70, 'Old engine task')], archived: [] },
       // Without the key on purpose: a remote Engine is decided by its capability alone.
-      '/api/remote-servers/8/tasks': { tasks: [bare(80, 'New engine task')], archived: [{ ...task(81, 'Remote archived'), archived_at: ARCHIVED_AT }] },
+      '/api/remote-servers/8/tasks': { tasks: [bare(80, 'New engine task')], archived: [] }, // its archived row is added when the one list is tested, so the local steps count local rows only
     },
     capabilities: { 7: ['terminal:control'], 8: ['terminal:control', 'tasks:archive'] },
   };
@@ -239,26 +239,23 @@ async function run(browser, wide) {
   assert.equal(server.bases['/api/tasks'].archived.length, 0, `${label}: it is gone on the server`);
   await h.toast('Task deleted');
 
-  // ── A remote Engine without the capability shows nothing; one with it has its own archive; going back starts closed again ──
-  const engine = key => page.locator('#h5-engine').selectOption(key);
-  await engine('remote:7');
+  // ── A remote Engine without the capability has no Archive item; one with it adds its rows to the one Archived section, and each action goes to the row's service ──
   await h.row('Old engine task').waitFor();
-  await page.waitForFunction(() => window.H5UI.get().taskList.groups.length > 0);
+  await h.row('New engine task').waitFor();
   await page.waitForTimeout(100);
-  assert.equal(await page.locator('#h5-archived').count(), 0, `${label}: no Archived entry on an old Engine`);
   await h.menu('Old engine task');
   assert.ok(!(await h.menuItems.allTextContents()).includes('Archive'), `${label}: no Archive item on an old Engine`);
   await h.press(page.locator('#h5-term-menu-cancel'));
   await page.locator('#h5-term-menu .h5-menu-panel').waitFor({ state: 'detached' });
 
-  await engine('remote:8');
-  await h.row('New engine task').waitFor();
-  await page.locator('#h5-archived').waitFor();
-  assert.equal(await page.locator('#h5-archived-list').count(), 0, `${label}: changing Engine closes the section`);
-  assert.equal(await page.locator('#h5-archived-count').count(), 0, `${label}: and forgets the count`);
+  // The Archived section of the one list: the rows of this machine and of Engine 8 together, named by their service; the old Engine 7 adds none and is not asked.
+  server.bases['/api/remote-servers/8/tasks'].archived = [{ ...task(81, 'Remote archived'), archived_at: ARCHIVED_AT }];
+  if (await page.locator('#h5-archived-list').count()) await h.press(page.locator('#h5-archived-toggle')); // closed, so that opening reads it again
   await h.press(page.locator('#h5-archived-toggle'));
   await page.locator('.h5-archived-title', { hasText: 'Remote archived' }).waitFor();
-  assert.equal(server.count('GET', '/api/remote-servers/8/tasks?archived=1'), 1, `${label}: the list of that Engine`);
+  assert.ok(server.count('GET', '/api/remote-servers/8/tasks?archived=1') >= 1, `${label}: the list of that Engine`);
+  assert.equal(server.count('GET', '/api/remote-servers/7/tasks?archived=1'), 0, `${label}: no archive read on an old Engine`);
+  assert.ok((await page.locator('.h5-archived-row', { hasText: 'Remote archived' }).locator('.h5-archived-service').textContent()).length > 3, `${label}: the row names its service`);
   await h.askArchive('New engine task');
   await h.confirm();
   await h.gone('New engine task');
@@ -268,10 +265,6 @@ async function run(browser, wide) {
   await h.press(page.locator('.h5-archived-row', { hasText: 'New engine task' }).locator('.h5-archived-restore'));
   await h.row('New engine task').waitFor();
   assert.equal(server.count('POST', '/api/remote-servers/8/tasks/80/restore'), 1, `${label}: restored on that Engine`);
-
-  await engine('local');
-  await h.row('Gamma').waitFor();
-  assert.equal(await page.locator('#h5-archived-list').count(), 0, `${label}: back on this machine the section is closed`);
 
   await context.close();
   assert.deepEqual(server.pageErrors, [], `${label}: no page errors`);
@@ -335,6 +328,7 @@ async function oldServer(browser, wide) {
   const label = wide ? 'old server 1440px' : 'old server 390px';
   const start = async (rows, old = true) => {
     const server = makeServer();
+    server.capabilities[8] = ['terminal:control']; // no connected service can archive here: what is shown is decided by this machine alone
     Object.assign(server.bases['/api/tasks'], { tasks: rows, old });
     const { context, page } = await openPage(browser, server, wide ? { width: 1440, height: 900 } : { width: 390, height: 844 }, !wide);
     const h = helpers(page, wide, label);
@@ -367,7 +361,7 @@ async function oldServer(browser, wide) {
   assert.equal(now.server.requests.filter(entry => entry === LIST).length, 1, `${label}: one read`);
   assert.equal(await now.page.locator('.h5-archived-row').count(), 0, `${label}: no row is shown`);
   assert.equal(await now.page.locator('.h5-archived-delete').count(), 0, `${label}: no Delete on a task in use`);
-  assert.equal(await now.page.locator('.h5-task-row').count(), 3, `${label}: the tasks stay in the list`);
+  assert.equal(await now.page.locator('[data-source="local"] .h5-task-row').count(), 3, `${label}: the tasks stay in the list`);
   texts = await items(now, 'Beta');
   assert.ok(!texts.includes('Archive'), `${label}: Archive left the menu`);
   await finish(now);

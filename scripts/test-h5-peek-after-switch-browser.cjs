@@ -241,19 +241,20 @@ async function remoteScenario(browser, wide) {
   await listed(page, 'Far one', ['Far shell', 'Far Claude'], 2, `${label}: after its read`);
   assert.ok(state.paths.every(item => item.startsWith('/api/remote-servers/7/')), `${label}: every read goes through the Engine: ${state.paths}`);
 
-  // Going to another Engine while the list of a task is on its way: that late answer shows nothing and connects nothing.
+  // Going to a task of another service while the list of a task is on its way: that late answer changes nothing and connects nothing to the first service.
   state.rows[5] = []; // an empty answer would draw the "no terminal" state of a task of the Engine that was left
   state.holdNext.add(5);
   await pick(opened, 'Far one');
   await page.waitForTimeout(100);
+  await pick(opened, 'Alpha');
+  await page.waitForFunction(() => document.getElementById('h5-task-name').textContent === 'Alpha');
+  await page.waitForFunction(() => window.sockets.length && new URL(window.sockets.at(-1).url).pathname === '/terminal/ws');
   const sockets = await page.evaluate(() => window.sockets.length);
-  await page.locator('#h5-engine').selectOption('local');
-  await page.locator('#h5-tasks .h5-task-row', { hasText: 'Alpha' }).waitFor();
   releaseAll(state);
   await page.waitForTimeout(300);
   assert.equal(await page.evaluate(() => window.sockets.length), sockets, `${label}: the late answer connects nothing`);
-  assert.equal(await page.locator('#h5-empty', { hasText: 'Choose a task to open its phone terminal' }).count(), 1, `${label}: the late answer changes nothing on screen`);
-  assert.equal(await page.locator('#h5-task-name').textContent(), 'Choose a task', `${label}: no task is selected`);
+  assert.equal(await page.locator('#h5-task-name').textContent(), 'Alpha', `${label}: the late answer changes nothing on screen`);
+  assert.equal(await page.evaluate(() => new URL(window.sockets.at(-1).url).pathname), '/terminal/ws', `${label}: the task of this machine is the one connected`);
   assert.deepEqual(state.errors, [], `${label}: no page errors`);
   await context.close();
 }

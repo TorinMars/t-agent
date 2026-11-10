@@ -2,6 +2,10 @@ import { useState } from 'react';
 import Accordion from '@mui/material/Accordion';
 import AccordionDetails from '@mui/material/AccordionDetails';
 import AccordionSummary from '@mui/material/AccordionSummary';
+import Dialog from '@mui/material/Dialog';
+import DialogActions from '@mui/material/DialogActions';
+import DialogContent from '@mui/material/DialogContent';
+import DialogTitle from '@mui/material/DialogTitle';
 import TextField from './TextField.jsx';
 import Typography from '@mui/material/Typography';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
@@ -23,6 +27,17 @@ export const Hint = ({ children, id }) => <Typography id={id} variant="body2" co
 export const Field = ({ id, label, htmlInput, ...props }) => (
   <TextField id={id} label={t(label)} size="small" fullWidth autoComplete="off" slotProps={{ htmlInput: { autoCapitalize: 'off', spellCheck: false, ...htmlInput } }} {...props} />
 );
+
+// One dialog for the forms of Engines and Linked services: full screen on a phone, a normal dialog on a wide screen.
+export function EngineDialog({ state, id, title, open, onClose, locked = false, children, actions }) {
+  return (
+    <Dialog id={id} open={open} onClose={locked ? undefined : onClose} fullScreen={!state.wide} fullWidth maxWidth="sm" aria-labelledby={`${id}-title`}>
+      <DialogTitle id={`${id}-title`} sx={{ overflowWrap: 'anywhere' }}>{title}</DialogTitle>
+      <DialogContent dividers sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>{children}</DialogContent>
+      <DialogActions sx={{ flexWrap: 'wrap', gap: 0.5 }}>{actions}</DialogActions>
+    </Dialog>
+  );
+}
 
 // The one look of every top-level row of the settings sheet (plain rows and the headers of the folding groups): the body1 label, 16px side
 // padding (lined up with the sheet title), 56px high and a full-width divider under it. Test hook: `.h5-setting-label` on the label.

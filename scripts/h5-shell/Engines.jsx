@@ -2,14 +2,11 @@ import { useEffect, useRef, useState } from 'react';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import CircularProgress from '@mui/material/CircularProgress';
-import Dialog from '@mui/material/Dialog';
-import DialogActions from '@mui/material/DialogActions';
-import DialogContent from '@mui/material/DialogContent';
-import DialogTitle from '@mui/material/DialogTitle';
 import Paper from '@mui/material/Paper';
 import Typography from '@mui/material/Typography';
 import { Pill, api, t } from './common.jsx';
-import { Feedback, Field, Group, Hint, failure, useFeedback } from './Form.jsx';
+import { EngineDialog, Feedback, Field, Group, Hint, failure, useFeedback } from './Form.jsx';
+import { UnlinkDialog, linkEngineKey, readLinks } from './ServiceLinks.jsx';
 
 // Settings "Engines": the remote Engines this Client is connected to (ported from the old desktop page's engine tabs in 2.87.13).
 // The /api/remote-servers endpoints, their validation and their error texts: connect with an address and a pairing code or token (POST /api/remote-servers), edit
@@ -55,17 +52,6 @@ function splitAddress(baseUrl) {
   catch { return { url: baseUrl || '', port: '' }; }
 }
 const codeOf = error => (error && error.message) || '';
-
-// One dialog for the connect and edit forms and the update of one Engine: full screen on a phone, a normal dialog on a wide screen.
-function EngineDialog({ state, id, title, open, onClose, locked = false, children, actions }) {
-  return (
-    <Dialog id={id} open={open} onClose={locked ? undefined : onClose} fullScreen={!state.wide} fullWidth maxWidth="sm" aria-labelledby={`${id}-title`}>
-      <DialogTitle id={`${id}-title`} sx={{ overflowWrap: 'anywhere' }}>{title}</DialogTitle>
-      <DialogContent dividers sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>{children}</DialogContent>
-      <DialogActions sx={{ flexWrap: 'wrap', gap: 0.5 }}>{actions}</DialogActions>
-    </Dialog>
-  );
-}
 
 function ConnectDialog({ state, open, onClose, onDone }) {
   const [form, setForm] = useState({ url: '', port: '', token: '' });
@@ -261,30 +247,35 @@ function UpdateDialog({ state, server, onClose, onUpdated }) {
   );
 }
 
-function EngineRow({ server, busy, onCheck, onUpdate, onEdit, onRemove, feedback }) {
+// `link`: this Engine is a linked service (ServiceLinks.jsx). Its address and token belong to the link, so they cannot be edited, and removing it ends the link.
+function EngineRow({ server, link, busy, onCheck, onUpdate, onEdit, onRemove, feedback }) {
   return (
     <Paper variant="outlined" className="h5-engine-row" data-engine={server.id} sx={{ display: 'flex', flexDirection: 'column', gap: 0.75, p: 1 }}>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
         <strong className="h5-engine-name" style={{ minWidth: 0, overflowWrap: 'anywhere', flex: '1 1 auto' }}>{server.name}</strong>
+        {link ? <Typography className="h5-engine-linked" variant="caption" color="text.secondary" sx={{ flexShrink: 0, whiteSpace: 'nowrap' }}>{t('Linked')}</Typography> : null}
         <Pill className="h5-engine-status" tone={statusColor(server.status)} label={t(statusLabel(server.status))} />
       </Box>
       <Typography className="h5-engine-meta" variant="caption" color="text.secondary" sx={{ overflowWrap: 'anywhere' }}>
-        {[server.base_url, versionText(server.remote_version), server.last_checked_at ? `${t('Last checked')} ${server.last_checked_at}` : ''].filter(Boolean).join(' · ')}
+        {[link ? link.peer_url : server.base_url, versionText(server.remote_version), server.last_checked_at ? `${t('Last checked')} ${server.last_checked_at}` : ''].filter(Boolean).join(' · ')}
       </Typography>
       {server.last_error && server.status !== 'online' ? <Typography className="h5-engine-error" variant="caption" color="error">{t(errorLabel(server.last_error))}</Typography> : null}
       <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
         <Button size="small" variant="outlined" className="h5-engine-check" disabled={busy} onClick={onCheck}>{t('Check')}</Button>
         <Button size="small" variant="outlined" className="h5-engine-update" onClick={onUpdate}>{t('Check for updates')}</Button>
-        <Button size="small" variant="outlined" className="h5-engine-edit" onClick={onEdit}>{t('Edit connection')}</Button>
-        <Button size="small" variant="outlined" color="error" className="h5-engine-remove" onClick={onRemove}>{t('Remove connection')}</Button>
+        {link ? null : <Button size="small" variant="outlined" className="h5-engine-edit" onClick={onEdit}>{t('Edit connection')}</Button>}
+        <Button size="small" variant="outlined" color="error" className="h5-engine-remove" onClick={onRemove}>{t(!link ? 'Remove connection' : link.state === 'revoked' ? 'Remove' : 'Unlink')}</Button>
       </Box>
       <Feedback feedback={feedback} />
     </Paper>
   );
 }
 
-export function EnginesGroup({ state, ui }) {
+// `linksVersion` goes up after a change of the linked services; `onLinksChanged` reports one made here.
+export function EnginesGroup({ state, ui, linksVersion, onLinksChanged }) {
   const [servers, setServers] = useState([]);
+  const [links, setLinks] = useState([]);
+  const [unlinking, setUnlinking] = useState(null);
   const [localVersion, setLocalVersion] = useState(null);
   const [checking, setChecking] = useState(null); // id of the Engine being checked
   const [rowFeedback, setRowFeedback] = useState({}); // id -> { message, error }
@@ -292,17 +283,26 @@ export function EnginesGroup({ state, ui }) {
   const [editing, setEditing] = useState(null);
   const [updating, setUpdating] = useState(null);
   const [feedback, say] = useFeedback();
-  const load = async () => {
+  const load = async ({ keep = false } = {}) => {
     try {
-      const [list, version] = await Promise.all([
+      const [list, version, linked] = await Promise.all([
         api('GET', '/api/remote-servers'),
         api('GET', '/api/system/version').catch(() => null),
+        readLinks().catch(() => null),
       ]);
       setServers(Array.isArray(list) ? list : []);
       setLocalVersion(version && version.app_version ? version.app_version : null);
-      say('');
+      setLinks(linked || []);
+      if (!keep) say('');
     } catch (error) { say(failure(error), true); }
   };
+  const seenLinks = useRef(linksVersion);
+  useEffect(() => {
+    if (seenLinks.current === linksVersion) return;
+    seenLinks.current = linksVersion;
+    void load({ keep: true });
+  }, [linksVersion]); // eslint-disable-line react-hooks/exhaustive-deps -- load only reads
+  const linkOf = server => links.find(link => link.remote_server_id === server.id);
   // The engine selector of the task list follows every change; `key` is the Engine whose connection changed (its terminals are reconnected).
   const changed = async key => { await load(); if (ui.actions.enginesChanged) await ui.actions.enginesChanged(key); };
   const note = (id, message, error = false) => setRowFeedback(all => ({ ...all, [id]: { message: message ? t(message) : '', error } }));
@@ -320,6 +320,8 @@ export function EnginesGroup({ state, ui }) {
     } finally { setChecking(null); }
   };
   const remove = async server => {
+    const link = linkOf(server);
+    if (link) { setUnlinking(link); return; }
     if (!confirm(t('Remove this remote connection? Remote data is not deleted.'))) return;
     try { await api('DELETE', `/api/remote-servers/${server.id}`); await changed(`remote:${server.id}`); say('Removed'); }
     catch (error) { say(failure(error), true); }
@@ -335,7 +337,7 @@ export function EnginesGroup({ state, ui }) {
         </Paper>
         {servers.map(server => (
           <EngineRow
-            key={server.id} server={server} busy={checking === server.id} feedback={rowFeedback[server.id] || { message: '', error: false }}
+            key={server.id} server={server} link={linkOf(server)} busy={checking === server.id} feedback={rowFeedback[server.id] || { message: '', error: false }}
             onCheck={() => void check(server)} onUpdate={() => setUpdating(server)} onEdit={() => setEditing(server)} onRemove={() => void remove(server)}
           />
         ))}
@@ -345,6 +347,7 @@ export function EnginesGroup({ state, ui }) {
       <Feedback id="h5-engines-feedback" feedback={feedback} />
       <ConnectDialog state={state} open={connecting} onClose={() => setConnecting(false)} onDone={created => { setConnecting(false); void changed(null); say(`${t('Connected')}: ${created && created.name ? created.name : ''}`); }} />
       <EditDialog state={state} server={editing} onClose={() => setEditing(null)} onDone={server => { setEditing(null); void changed(`remote:${server.id}`); say('Saved'); }} />
+      <UnlinkDialog link={unlinking} onClose={() => setUnlinking(null)} onDone={async link => { setUnlinking(null); onLinksChanged(); if (ui.actions.enginesChanged) await ui.actions.enginesChanged(linkEngineKey(link)); say('Unlinked'); }} />
       <UpdateDialog state={state} server={updating} onClose={() => { setUpdating(null); void load(); }} onUpdated={server => void changed(`remote:${server.id}`)} />
     </Group>
   );

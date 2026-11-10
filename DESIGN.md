@@ -1293,7 +1293,7 @@ Tells the user on another channel when an attention item enters a status that ne
 
 - Tests: unit tests in `test/` (`npm run test:quick` while developing), real-Chromium scripts `scripts/test-*-browser.cjs` for the UI (Playwright is a dev dependency; Chromium is installed after `npm ci --include=dev`; the scripts support `CHROME_PATH`), and the full `npm test` once before a release (`AGENTS.md`).
 - `npm audit --omit=dev` is kept at 0 findings. axios, body-parser, follow-redirects, qs and express are updated within their ranges (`npm update`).
-- `npm test` is `node --test --test-concurrency=2 test/*.test.js scripts/test-*-browser.cjs`: the browser regressions start real Chromium windows and shells, and with every file in parallel a busy machine makes the slower ones time out (the terminal check of `scripts/test-terminal-file-links-browser.cjs` waits up to 90 s for the shell).
+- `npm test` is `node --test --test-concurrency=4 test/*.test.js scripts/test-*-browser.cjs`: the browser regressions start real Chromium windows and shells, so run it alone; with other heavy work on the machine, or with every file in parallel, the slower ones time out (the terminal check of `scripts/test-terminal-file-links-browser.cjs` waits up to 90 s for the shell).
 - Installing through a flaky proxy: a request that stalls leaves `npm` waiting without using the CPU, and an interrupted install leaves temporary directories (`node_modules/.axios-XXXXXXXX`) that make the next install fail with `ENOTEMPTY`. Use `--fetch-timeout=20000 --fetch-retries=2` so a stalled request fails fast, and remove such directories before retrying.
 
 ## Recent versions

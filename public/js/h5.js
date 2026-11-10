@@ -151,7 +151,7 @@
   const TERMINAL_MIN_HEIGHT = 48; // px; below this the terminal box is treated as collapsed (about three rows)
   const KEYBOARD_CLOSE_MS = 1000; // how long after the focus left a keyboard may still be going down
   // The elements that take typed text. The computer keyboard shortcuts below use this too.
-  const EDITABLE = 'input, textarea, select, [contenteditable=""], [contenteditable="true"]';
+  const EDITABLE = 'input, textarea, select, [contenteditable=""], [contenteditable="true"], [contenteditable="plaintext-only"]';
   const editing = el => Boolean(el && el.closest && el.closest(EDITABLE));
   const NO_KEYBOARD_INPUTS = new Set(['button', 'checkbox', 'color', 'file', 'hidden', 'image', 'radio', 'range', 'reset', 'submit']);
   // Can this focused element have an on-screen keyboard up? Not the terminal's textarea (`noScreenKeyboard` gives it inputmode="none"), and not a field that takes no typing.
@@ -247,6 +247,7 @@
   function measureAgain() {
     fitViewport();
     if (agentChat) fitAgentView();
+    if (mindmap) fitMindmapView();
   }
   document.addEventListener('focusin', settleViewport);
   document.addEventListener('focusout', () => { focusLeftAt = performance.now(); settleViewport(); });
@@ -475,6 +476,7 @@
     else if (ui.get().tasksOpen) closeTasks();
     fitViewport();
     if (agentChat) fitAgentView();
+    if (mindmap) fitMindmapView();
   }
   wideQuery.addEventListener('change', syncLayout);
 
@@ -984,6 +986,41 @@
     newName = ''; // a new "Session" list starts with an empty name
     openSessionMenu();
   };
+
+  // ── Mind maps (public/js/mindmap.js): a full-window view over the terminal, independent of the tasks; the terminal stays connected underneath ──
+  const mindmapView = $('h5-mindmap');
+  let mindmap = null;
+  // The same height rule as fitViewport: visualViewport.height is believed only while something that raises a keyboard is focused (iOS Home Screen apps report wrong small heights).
+  function fitMindmapView() {
+    const viewport = window.visualViewport;
+    const offset = viewport ? viewport.offsetTop : 0;
+    const visible = viewport ? offset + viewport.height : window.innerHeight;
+    const typing = pointerMode() || keyboardOpen || raisesKeyboard(document.activeElement);
+    const bottom = typing ? visible : Math.max(visible, window.innerHeight);
+    mindmapView.style.top = `${offset}px`;
+    mindmapView.style.height = `${Math.max(0, bottom - offset)}px`;
+    mindmapView.toggleAttribute('data-keyboard', !pointerMode() && keyboardOpen);
+  }
+  function closeMindmaps() {
+    if (!mindmap) return;
+    mindmap.destroy();
+    mindmap = null;
+    mindmapView.hidden = true;
+    mindmapView.style.height = mindmapView.style.top = '';
+    window.visualViewport?.removeEventListener('resize', fitMindmapView);
+    window.visualViewport?.removeEventListener('scroll', fitMindmapView);
+    ui.set({ mindmapLayers: [] });
+  }
+  function openMindmaps() {
+    if (mindmap) return;
+    if (!isWide()) closeTasks();
+    mindmapView.hidden = false;
+    window.visualViewport?.addEventListener('resize', fitMindmapView);
+    window.visualViewport?.addEventListener('scroll', fitMindmapView);
+    mindmap = MindMap.mount(mindmapView, { onClose: closeMindmaps, notify: (message, kind) => tell(message, kind), onLayers: layers => ui.set({ mindmapLayers: layers }) });
+    fitMindmapView();
+  }
+  ui.actions.openMindmaps = openMindmaps;
 
   // ── Agent chat: the same Claude / Codex sessions as a conversation view instead of a terminal. The task sheet neither lists nor creates chats; a notification link opens one (`openChatFromLink`). ──
   const agentView = $('h5-agent');
@@ -1863,7 +1900,7 @@
   // Cmd+K (Apple) or Ctrl+K (others) focuses the session search; on a wide screen a folded sidebar comes back first. Inside the terminal, Ctrl+K stays the
   // shell's own key (kill to the end of the line), so on other systems it works only outside the terminal.
   document.addEventListener('keydown', event => {
-    if (!deskKeys() || event.defaultPrevented || event.repeat || event.shiftKey || event.altKey || (event.key || '').toLowerCase() !== 'k') return;
+    if (mindmap || !deskKeys() || event.defaultPrevented || event.repeat || event.shiftKey || event.altKey || (event.key || '').toLowerCase() !== 'k') return; // the mind map view keeps its keys
     if (APPLE ? !(event.metaKey && !event.ctrlKey) : !(event.ctrlKey && !event.metaKey)) return;
     if (!APPLE && document.activeElement && document.activeElement.closest && document.activeElement.closest('.xterm')) return;
     if (document.querySelector('dialog[open]') || ui.get().copyText !== null) return;
@@ -1880,7 +1917,7 @@
   // Keys with Cmd stay the browser's (and Ctrl ones on other systems: reload, tabs ...); function keys (F1-F12) and lone modifiers are left alone. A focused
   // button or link keeps Enter, Space, Tab and the arrows; only characters go on from there. A dialog, the chat and the side panel keep their keys.
   document.addEventListener('keydown', event => {
-    if (!deskKeys() || event.defaultPrevented || !event.key || MODIFIER_KEYS.has(event.key) || event.metaKey) return;
+    if (mindmap || !deskKeys() || event.defaultPrevented || !event.key || MODIFIER_KEYS.has(event.key) || event.metaKey) return; // nothing goes to the terminal while the mind map view is open
     if (event.ctrlKey && !APPLE) return;
     const s = session;
     if (!s || s.disposed || agentChat || modalOpen()) return;

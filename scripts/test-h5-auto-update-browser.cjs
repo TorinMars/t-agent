@@ -203,6 +203,15 @@ const SCENARIOS = {
     await waitFor(() => server.navigations === 2, 'the reload once the box is empty');
     await context.close();
   },
+  async 'the reload waits while the mind map view is open'(browser) {
+    const { context, page, server } = await openPage(browser);
+    await page.evaluate(() => { document.getElementById('h5-mindmap').hidden = false; });
+    toAutoUpdated(server);
+    await stayed(server, 1, 'the mind map view is open', 1300);
+    await page.evaluate(() => { document.getElementById('h5-mindmap').hidden = true; });
+    await waitFor(() => server.navigations === 2, 'the reload once the view is closed');
+    await context.close();
+  },
   async 'the reload waits for a dialog and for a hidden page'(browser) {
     let { context, page, server } = await openPage(browser);
     await openDialog(page);

@@ -85,9 +85,10 @@ flushSync(() => root.render(<App ui={ui} />));
 const back = createBackLayers({
   extra: () => {
     const s = ui.get();
-    if (!s.wide) return [];
     const layers = [];
-    if (s.attention && s.attention.open) layers.push({ close: () => ui.actions.closeAttention() });
+    if (s.wide && s.attention && s.attention.open) layers.push({ close: () => ui.actions.closeAttention() });
+    // The mind map view (view -> editor -> dialog): a back press goes from the editor to the list before it leaves the view. It lies over everything else.
+    for (const close of s.mindmapLayers || []) layers.push({ close });
     return layers;
   },
 });

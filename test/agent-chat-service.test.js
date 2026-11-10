@@ -831,6 +831,7 @@ test('the summary counts the turns running now and the queued messages of the pe
   const adapter = fakeAdapter(async () => new Promise(resolve => { release = resolve; }));
   const chat = createAgentChat({ db, adapters: { claude: adapter } });
   assert.deepEqual(chat.summary('summary-owner'), { running: 0, queued: 0, submitted: 0 });
+  const everyoneBefore = chat.activity();
 
   const busy = chat.create(mineTask, { agent: 'claude' });
   const waiting = chat.create(mineTask, { agent: 'claude' });
@@ -844,6 +845,8 @@ test('the summary counts the turns running now and the queued messages of the pe
   chat.setQueue(mineTask, busy.id, [{ id: 3, body: { text: 'next' } }]);
   assert.deepEqual(chat.summary('summary-owner'), { running: 1, queued: 3, submitted: 4 }, 'a running turn is submitted too');
   assert.deepEqual(chat.summary('summary-other'), { running: 0, queued: 1, submitted: 1 }, 'each person sees their own');
+  assert.equal(chat.activity().running, everyoneBefore.running + 1, 'the update check counts every person');
+  assert.equal(chat.activity().queued, everyoneBefore.queued + 4, 'the update check counts every person');
   assert.deepEqual(chat.summary('nobody'), { running: 0, queued: 0, submitted: 0 });
 
   release({ ok: true });

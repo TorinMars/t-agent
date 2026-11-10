@@ -415,11 +415,21 @@ function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS,
   }
   const dispatchSoon = (rt, task) => { if (readQueue(rt.id).length) setImmediate(() => { void dispatchQueue(rt, task); }); };
 
+  const ACTIVE_ROWS = `SELECT c.id, CASE WHEN c.queue IS NOT NULL AND json_valid(c.queue) THEN json_array_length(c.queue) ELSE 0 END AS queued
+      FROM agent_conversations c JOIN tasks t ON t.id = c.task_id`;
+
   // What the agents of one person are doing (GET /api/agent-chat/summary): the turns running now and the messages queued behind them (the queue is kept
   // here, see setQueue); "submitted" is both, the messages sent to an agent that have not finished. Chats of every task of the person count.
   function summary(owner) {
-    const rows = db.prepare(`SELECT c.id, CASE WHEN c.queue IS NOT NULL AND json_valid(c.queue) THEN json_array_length(c.queue) ELSE 0 END AS queued
-      FROM agent_conversations c JOIN tasks t ON t.id = c.task_id WHERE t.user_id = ?`).all(owner);
+    return countActive(db.prepare(`${ACTIVE_ROWS} WHERE t.user_id = ?`).all(owner));
+  }
+
+  // The same counts over the chats of every person: a restart for an update ends them all.
+  function activity() {
+    return countActive(db.prepare(ACTIVE_ROWS).all());
+  }
+
+  function countActive(rows) {
     let running = 0;
     let queued = 0;
     for (const row of rows) {
@@ -746,7 +756,7 @@ function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS,
     }
   }
 
-  return { list, create, snapshot, subscribe, sendMessage, interrupt, answerPermission, setMode, setPreferences, listModels, setOpened, setTranslate, setCollapseKeyboard, refreshUsage, fork, setQueue, queueAdd, queueRemove, queueEdit, queueSendNow, summary, listCommands, rename, remove, stopTask, refreshLimits };
+  return { list, create, snapshot, subscribe, sendMessage, interrupt, answerPermission, setMode, setPreferences, listModels, setOpened, setTranslate, setCollapseKeyboard, refreshUsage, fork, setQueue, queueAdd, queueRemove, queueEdit, queueSendNow, summary, activity, listCommands, rename, remove, stopTask, refreshLimits };
 }
 
 let shared = null;

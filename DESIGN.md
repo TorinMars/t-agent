@@ -552,6 +552,41 @@ Programs in a terminal run on the server, so `cmd | pbcopy`, Neovim's `"+` regis
 - Limit: a shell profile that puts a folder with the real command in front of the existing `PATH` (for example `~/.local/bin`, where the Codex installer puts `codex`, or `/usr/bin`) wins over the shims; `type -a codex` in the terminal shows the order.
 - Tests: `test/clipboard-shims.test.js` (shims and the codex wrapper under a real PTY with fake real commands and a fake `tmux`, the `PATH` of a spawned PTY).
 
+## Service links: tunnel
+
+Service B may be behind NAT, so A cannot reach it. B keeps one outbound WebSocket to A (`<A>/v1/service-links/tunnel`, `Authorization: Bearer <link token>`), and A's requests to B travel back over it. A stores B as a normal `remote_servers` row with `base_url` = `tunnel://<linkId>`. `lib/service-link-tunnel.js` is the transport; the code that creates, stores and revokes links is separate. A user can never enter a `tunnel://` address: `normalizeBaseUrl` refuses it, and editing a linked row keeps its base.
+
+Dispatch: `services/remote-client.js` and `services/remote-stream.js` use `getHub()` in place of `http`/`https` for a `tunnel:` URL (the hub's `request` has the shape of `http.request`, so limits and error codes are shared); `services/remote-terminal-proxy.js` uses `hub.openWebSocket`, which behaves like a `ws` socket. Pending work on a lost tunnel fails at once with `REMOTE_OFFLINE`.
+
+Protocol (version 1). Text messages are JSON control frames, binary messages are `[kind | MORE][stream id: uint32 BE][payload]`, with kind 1 HTTP body, 2 WebSocket text, 3 WebSocket binary; MORE (0x80) marks a fragment of a WebSocket message. Only A opens streams.
+
+| Frame | Direction | Meaning |
+| --- | --- | --- |
+| `hello` `{v, side, window, linkId}` | both, first | version and the receive window of that side; a wrong version closes with 4406 |
+| `http` `{id, method, path, headers, body}` | A to B | HTTP stream; `body` says data frames and `end` follow |
+| `head` `{id, status, headers}`, `end` `{id}` | B to A (`end` also A to B) | the response head; end of a body |
+| `ws` `{id, path, headers}`, `open` `{id}` | A to B, B to A | WebSocket stream and its handshake |
+| `close` `{id, code, reason}` | both | WebSocket close with its code and reason |
+| `err` `{id, code}`, `cancel` `{id}` | both | the stream failed or the requester left |
+| `credit` `{id, n}` | both | the receiver has dealt with `n` more bytes |
+
+Limits (`DEFAULT_LIMITS`): 64 KiB of data per frame, 128 KiB per tunnel message, 128 streams per tunnel (`TUNNEL_TOO_MANY_STREAMS` from B, `REMOTE_TUNNEL_BUSY` from A), a request body of 64 MiB, a WebSocket message of 32 MiB. The response size limit of a buffered request stays that of the caller.
+
+Flow control is per stream: a side may send one window (512 KiB) before it needs `credit`, and credit is granted when the data has been dealt with (the reader of the HTTP response, the local socket, the browser's socket through `limitBy`). A paused reader or a slow browser therefore stops the producer after one window, and a pump sends one frame per stream in turn while the socket buffer is below 1 MiB, so a big download cannot starve the streams next to it. Sending beyond the window is a protocol error.
+
+Health: both sides ping about every 20 s and close a tunnel silent for two intervals. Malformed frames close the tunnel, never the process. A newer tunnel for the same link replaces the older one after its own hello (close 4000), so a connection that never completes its hello cannot displace a working one. B reconnects with backoff from 1 s to 30 s with jitter; a 401 or 403 answer to the upgrade stops it and reports `LINK_REVOKED`.
+
+B's side is the security boundary. A stream runs only as a loopback request to `127.0.0.1:<localPort>`, and is refused with a stream error, without any request, when:
+
+- the method is not GET, HEAD, POST, PUT, PATCH or DELETE;
+- the target is not a plain path under `/v1/` (refused: `..` and `.` segments, empty segments, `%2e`, `%2f`, `%5c`, `%25`, backslashes, absolute URLs or a host in the path, control characters, any byte outside printable ASCII, and any path character `encodeURIComponent` would not leave);
+- the path is `/v1/pair`, `/v1/service-links` or `/v1/file-sync/pair` or below them, in any case;
+- a header is not on the allowlist `authorization` (Bearer only), `content-type`, `accept`, `range`, `if-none-match`, `last-event-id`. A disallowed header refuses the request instead of being dropped.
+
+Every request still carries the Engine token A was given, so `/v1` authorisation applies and the tunnel adds no authority. Only the headers `remote-stream.js` forwards cross back, never `set-cookie`.
+
+A tunnelled request reaches B as a plain loopback request (loopback socket, `Host: 127.0.0.1:<port>`, no forwarded headers), so `isLocalInitialization` is true: the access gate and `upgradeAllowed` let it through in the `local` and `unset` modes, and in `local` mode the gate marks a session of that request as trusted. That session is never usable, because the cookie does not cross back and `/api`, the login routes and the pages cannot be reached through the tunnel.
+
 ## Update check and versions
 
 - **Version source**: `VERSION.json` in the install directory is the runtime version (`app_version`, `api_version`, `schema_version`, `min_remote_api_version`, `max_remote_api_version`, `published_at`, optional `release_url`); `package.json` and `package-lock.json` carry the same `app_version` (`scripts/release.js` sets them together). `GET /api/system/version` returns the version, the `boot_id` and the remote API range. The field rules are under "D. Data storage".

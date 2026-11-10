@@ -1,5 +1,6 @@
 const http = require('http');
 const https = require('https');
+const { TUNNEL_PROTOCOL, getHub } = require('../lib/service-link-tunnel');
 
 const FORWARDED_HEADERS = ['content-type', 'content-length', 'last-modified', 'etag'];
 // A raw file (PDF, audio, video) also keeps what the browser's viewer and players need to seek.
@@ -17,7 +18,8 @@ function mediaType(value) {
 function streamRemote(req, res, baseUrl, token, pathname, { sse = false, sandbox = false, raw = false } = {}) {
   let target;
   try { target = new URL(pathname, `${baseUrl}/`); } catch { return res.status(400).json({ error: 'INVALID_REMOTE_URL' }); }
-  const client = target.protocol === 'https:' ? https : http;
+  // A service link's Engine answers over its tunnel, through the same calls.
+  const client = target.protocol === TUNNEL_PROTOCOL ? getHub() : target.protocol === 'https:' ? https : http;
   const upstream = client.request(target, {
     method: req.method === 'HEAD' ? 'HEAD' : 'GET',
     headers: {

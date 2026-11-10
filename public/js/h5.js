@@ -14,6 +14,7 @@
   const APPLE = /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent || '');
   const tell = (message, type = 'info') => notify(message, type);
   const tr = text => (typeof I18n !== 'undefined' ? I18n.t(text) : text);
+  const errorOf = body => (typeof I18n !== 'undefined' ? I18n.errorOf(body) : body && body.error);
   const SUBMIT_DELAY_MS = 120; // type the text first, then Enter, so a TUI does not see a pasted newline
   const DEFAULT_GROUPS = [
     { key: 'personal', name: 'Personal tasks', sort_order: 0 },
@@ -30,7 +31,7 @@
     const text = await res.text();
     let data = null;
     try { data = text ? JSON.parse(text) : null; } catch { /* plain-text error */ }
-    if (!res.ok) throw Object.assign(new Error((data && data.error) || text || `HTTP ${res.status}`), { data, status: res.status }); // `data`: the whole error body (a `reason` ...)
+    if (!res.ok) throw Object.assign(new Error(errorOf(data) || text || `HTTP ${res.status}`), { data, status: res.status }); // `data`: the whole error body (a `reason` ...)
     return data;
   }
   // Remembered choices are a convenience only; private mode or blocked storage just starts fresh.
@@ -2959,7 +2960,8 @@
       let config;
       try { config = await api('GET', '/api/oss/config'); }
       catch { throw new Error('Could not read OSS settings. Check the connection and retry'); }
-      if (!config || !config.enabled) throw new Error('Enable Alibaba Cloud OSS upload in this client’s settings first');
+      // `shared_from`: not set up here, but a linked service signs the upload.
+      if (!config || (!config.enabled && !config.shared_from)) throw new Error('Enable Alibaba Cloud OSS upload in this client’s settings first');
       result = await transfer(file, ui);
     } catch (error) { failure = error; } finally { ui.unlock(); }
     if (failure) { tell(failure.message, 'error'); return; }

@@ -57,9 +57,21 @@ function WorkdirGroup() {
   );
 }
 
+// The first lines of a settings group whose feature this service gets from a linked service (`shared_from` of its config, which an older server does not send).
+function SharedFrom({ id, from }) {
+  if (!from) return null;
+  return (
+    <>
+      <Hint id={id}>{t(from.online === false ? `Provided by ${from.name} (offline)` : `Provided by ${from.name}`)}</Hint>
+      <Hint>{t('Usage is charged to that service’s account; saving settings here makes this device use its own.')}</Hint>
+    </>
+  );
+}
+
 function OssGroup() {
   const [form, setForm] = useState({ enabled: false, region: '', bucket: '', accessKeyId: '', accessKeySecret: '', prefix: '', publicBaseUrl: '' });
   const [hasSecret, setHasSecret] = useState(false);
+  const [shared, setShared] = useState(null);
   const [busy, setBusy] = useState(false);
   const [feedback, say] = useFeedback();
   const set = key => event => setForm(current => ({ ...current, [key]: event.target.value }));
@@ -68,6 +80,7 @@ function OssGroup() {
       const config = await api('GET', '/api/oss/config');
       setForm({ enabled: Boolean(config.enabled), ...Object.fromEntries(OSS_FIELDS.map(([key]) => [key, key === 'accessKeySecret' ? '' : config[key] || ''])) });
       setHasSecret(Boolean(config.hasAccessKeySecret));
+      setShared(config.shared_from || null);
       say('');
     } catch (error) { say(failure(error), true); }
   };
@@ -84,6 +97,7 @@ function OssGroup() {
   };
   return (
     <Group id="oss" title="Image and file upload" onOpen={load}>
+      <SharedFrom id="h5-oss-shared" from={shared} />
       <FormControlLabel control={<Checkbox checked={form.enabled} onChange={event => setForm(current => ({ ...current, enabled: event.target.checked }))} slotProps={{ input: { id: 'h5-oss-enabled' } }} />} label={t('Enable image and file upload')} />
       {OSS_FIELDS.map(([key, label]) => (
         <Field key={key} id={`h5-oss-${key}`} label={label} value={form[key]} onChange={set(key)} type={key === 'accessKeySecret' ? 'password' : 'text'} autoComplete={key === 'accessKeySecret' ? 'new-password' : 'off'} />
@@ -101,6 +115,7 @@ function TranslateGroup() {
   const [providers, setProviders] = useState({});
   const [current, setCurrent] = useState('');
   const [drafts, setDrafts] = useState({}); // input that is not saved yet survives switching providers
+  const [shared, setShared] = useState(null);
   const [busy, setBusy] = useState(false);
   const [feedback, say] = useFeedback();
   const saved = providers[current] || {};
@@ -114,6 +129,7 @@ function TranslateGroup() {
       setProviders(config.providers || {});
       setCurrent(config.provider || ids[0] || '');
       setDrafts({});
+      setShared(config.shared_from || null);
       say('');
     } catch (error) { say(failure(error), true); }
   };
@@ -130,6 +146,7 @@ function TranslateGroup() {
   };
   return (
     <Group id="translate" title="Translation" onOpen={load}>
+      <SharedFrom id="h5-tr-shared" from={shared} />
       <TextField id="h5-tr-provider" select label={t('Translation service')} size="small" fullWidth value={current} onChange={event => setCurrent(event.target.value)} slotProps={{ select: { native: true } }}>
         {Object.keys(providers).map(id => <option key={id} value={id}>{`${providers[id].label}${providers[id].hasApiKey ? ` (${t('Key saved')})` : ''}`}</option>)}
       </TextField>
@@ -159,7 +176,7 @@ function VoiceSwitch() {
 }
 
 function VoiceGroup() {
-  const [config, setConfig] = useState({ regions: {}, languages: {}, keySource: 'none' });
+  const [config, setConfig] = useState({ regions: {}, languages: {}, keySource: 'none', shared: null });
   const [form, setForm] = useState({ apiKey: '', region: '', language: '', model: '', noise: '', hotwords: '', vocab: '', url: '' });
   const [busy, setBusy] = useState(false);
   const [feedback, say] = useFeedback();
@@ -167,7 +184,7 @@ function VoiceGroup() {
   const load = async () => {
     try {
       const data = await api('GET', '/api/speech/config');
-      setConfig({ regions: data.regions || {}, languages: data.languages || {}, keySource: data.keySource });
+      setConfig({ regions: data.regions || {}, languages: data.languages || {}, keySource: data.keySource, shared: data.shared_from || null });
       setForm({ apiKey: '', region: data.region || '', language: data.language || '', model: data.model || '', noise: data.noiseThreshold === null || data.noiseThreshold === undefined ? '' : String(data.noiseThreshold), hotwords: data.hotwords || '', vocab: data.vocabularyId || '', url: data.endpoint || '' });
       say('');
     } catch (error) { say(failure(error), true); }
@@ -188,6 +205,7 @@ function VoiceGroup() {
   const keyHint = config.keySource === 'saved' ? 'Saved; leave empty to keep it' : config.keySource === 'environment' ? 'Using DASHSCOPE_API_KEY from the server; enter a key here to override it' : 'API Key';
   return (
     <Group id="voice" title="Voice input" onOpen={load}>
+      <SharedFrom id="h5-vi-shared" from={config.shared} />
       <VoiceSwitch />
       <Field id="h5-vi-key" label="Alibaba Cloud API Key" type="password" autoComplete="new-password" value={form.apiKey} onChange={set('apiKey')} placeholder={t(keyHint)} />
       <TextField id="h5-vi-region" select label={t('Region')} size="small" fullWidth value={form.region} onChange={set('region')} slotProps={{ select: { native: true } }}>
@@ -202,7 +220,8 @@ function VoiceGroup() {
       <Field id="h5-vi-hotwords" label="Hot words (optional)" multiline minRows={3} value={form.hotwords} onChange={set('hotwords')} placeholder={t('One per line: names, product and code terms')} htmlInput={{ maxLength: 400 }} />
       <Field id="h5-vi-vocab" label="Hot word list ID (optional)" value={form.vocab} onChange={set('vocab')} placeholder={t('A list made in advance on Alibaba Cloud')} />
       <Field id="h5-vi-url" label="Endpoint (optional)" value={form.url} onChange={set('url')} />
-      <Hint id="h5-vi-effective">{`${t('Address in use:')} ${form.url.trim() || (region && region.endpoint) || ''}`}</Hint>
+      {/* While a linked service provides voice input, the address it uses is not known here. */}
+      {config.shared ? null : <Hint id="h5-vi-effective">{`${t('Address in use:')} ${form.url.trim() || (region && region.endpoint) || ''}`}</Hint>}
       <Hint>{t('The key is stored encrypted on the client. The browser never receives it: it gets a one-minute token and sends the audio straight to Alibaba Cloud Model Studio, so no audio goes through the client server. Keys are specific to a region, so choose the region the key was created in. Leave the endpoint empty to use the region’s address.')}</Hint>
       <Button id="h5-vi-save" variant="contained" disabled={busy} onClick={() => void save(false)}>{t('Save')}</Button>
       <Button id="h5-vi-clear" variant="outlined" color="error" disabled={busy} onClick={() => void save(true)}>{t('Delete all settings')}</Button>

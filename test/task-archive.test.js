@@ -228,6 +228,8 @@ test('the normal lists leave archived tasks out; ?archived=1 has only them, newe
     assert.ok(titles(list.body).includes('visible'), label);
     assert.ok(!titles(list.body).includes('archived first'), `${label}: not listed`);
     assert.ok(list.body.every(item => !item.archived_at), label);
+    // The page tells a server that cannot archive from one that can by this key being there (h5.js `loadTasks`).
+    assert.ok(list.body.every(item => 'archived_at' in item && item.archived_at === null), `${label}: every row has the key, null while in use`);
     const archived = await call('GET', `${url}?archived=1`, undefined, headers);
     assert.equal(archived.status, 200, label);
     assert.deepEqual(titles(archived.body).slice(0, 2), ['archived second', 'archived first'], `${label}: newest archived_at first`);

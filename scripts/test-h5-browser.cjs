@@ -168,10 +168,12 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     const headerHeight = () => page.locator('.h5-header').evaluate(node => node.getBoundingClientRect().height);
     const terminalHeader = await headerHeight();
     // The task panel slides in from the left when the menu button is tapped.
+    // Sampled every frame from before the tap: on a busy machine a single reading at a fixed delay can land after the slide has ended.
+    await page.evaluate(() => { window.__slide = []; const end = performance.now() + 3000; const read = () => { const el = document.querySelector('#h5-tasks .h5-sheet-panel'); if (el) window.__slide.push(el.getBoundingClientRect().left); if (performance.now() < end) requestAnimationFrame(read); }; requestAnimationFrame(read); });
     await page.locator('#h5-open-tasks').tap();
-    const midway = await page.locator('#h5-tasks .h5-sheet-panel').evaluate(el => new Promise(resolve => setTimeout(() => resolve(el.getBoundingClientRect().left), 60)));
-    assert.ok(midway < 0 && midway > -390, `panel is mid-slide from the left (x=${midway})`);
     await page.waitForFunction(() => document.querySelector('#h5-tasks .h5-sheet-panel').getBoundingClientRect().left === 0);
+    const slide = await page.evaluate(() => window.__slide);
+    assert.ok(slide.some(x => x < 0 && x > -390), `panel is mid-slide from the left (${slide.slice(0, 12).join(', ')})`);
     await page.locator('#h5-close-tasks').tap();
     await page.locator('#h5-tasks').waitFor({ state: 'hidden' });
     await page.waitForFunction(() => window.sockets.length === 1 && window.sockets[0].readyState === 1);

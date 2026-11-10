@@ -31,6 +31,7 @@ export const initialState = () => ({
   sourceKey: 'local',
   // The task list: a note (loading, an error, no tasks), or groups of tasks; a task can carry the sessions listed under it.
   taskList: { note: null, groups: [] },
+  archived: { supported: false, open: false, status: 'idle', busy: null, count: null, rows: [] }, // the Archived section at the end of the task list (h5.js `showArchived`)
   creatingTask: false,
   // { title, items: [{ label, kind }], naming, task, name, rename, renameValue } while the terminal / chat actions or the Session list are open.
   // naming: the Session list of the "+" of task `task`, drawn under that task in the task list; rename: { kind, id, task } of the row whose name field is shown in its place;
@@ -51,7 +52,7 @@ export const initialState = () => ({
   pasteSheet: null, // { open } the Paste sheet (Dialogs.jsx `PasteDialog`) after the browser refused to read the clipboard (h5.js `paste`)
   design: null, // { open, status: loading | ready | missing | folder | no-dir | no-task | error, dir, path, link, line, content, message } of the file sheet (DESIGN.md, or a terminal file link)
   files: null, // { open, key, base, dir } of the read-only file tree (FileTree.jsx): base = `<tasksBase>/<task>/files` (null without a task); a new key (task, working directory or Engine) draws a new tree
-  taskDialog: null, // { kind: 'delete' | 'workdir', id, title, workDir, error, busy } the delete confirmation or the working directory form of a task
+  taskDialog: null, // { kind: 'delete' | 'workdir' | 'archive', id, title, workDir, error, busy } the delete confirmation or the working directory form of a task
   notice: null, // { id, message, type } the last floating notice
   // T-Attention (attention-feed.mjs, Attention.jsx): { open, status: idle | loading | ready | error, items, needs (the waiting_user count, the badge
   // on #h5-attention), live (the stream is connected), focus (a task id whose edit view opens) }

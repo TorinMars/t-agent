@@ -109,6 +109,8 @@
   // Files at any path of the Engine machine (`/fs/content`, `/fs/image`): the local Client always, a remote Engine with 'fs:read-any'.
   const readsAnyPath = from => from.key === 'local' || Boolean(Array.isArray(from.capabilities) && from.capabilities.includes('fs:read-any'));
   const fsBase = from => `${from.tasksBase.replace(/\/tasks$/, '')}/fs`; // /api/fs, or /api/remote-servers/:id/fs
+  // Archiving tasks: the local Client always, a remote Engine with 'tasks:archive'. An Engine that has not said yet shows no archive UI.
+  const archives = from => from.key === 'local' || Boolean(Array.isArray(from.capabilities) && from.capabilities.includes('tasks:archive'));
   let source = LOCAL;
   let tasks = [];
   let groups = [];
@@ -282,6 +284,7 @@
       groups = Array.isArray(groupRows) && groupRows.length ? groupRows : DEFAULT_GROUPS;
       renderTasks();
       showActiveCount();
+      if (current.key !== 'local' && !Array.isArray(current.capabilities)) readInfo(current).catch(() => { /* an older or offline Engine: no archive UI */ }).finally(showArchived);
       return true;
     } catch (error) {
       if (current === source) { tasks = []; note(`Could not load tasks: ${error.message}`); }
@@ -327,6 +330,7 @@
   }
 
   function renderTasks() {
+    showArchived(); // first: the entry is there with an empty list too, and `readInfo` of an expanded list may just have changed what the Engine can do
     if (!tasks.length) { note('No tasks yet. Create one above'); return; }
     const out = [];
     for (const { group, members } of groupedTasks()) {
@@ -588,6 +592,7 @@
     void syncWakeLock();
     expanded.clear();
     peeks.clear();
+    resetArchived();
     ui.set({ taskName: '', sourceKey: source.key });
     syncFiles();
     hideShown(); // its connection stays warm (WARM_MAX)
@@ -623,10 +628,12 @@
     const item = taskById(id);
     if (!item) return;
     menuRow = null;
+    menuTask = item.id; // so that the task leaving the list closes this sheet too (`leaveTask`)
     const ordered = [...groups].sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
     showMenu(item.title, [
       ...ordered.map(group => [`${item.status === group.key ? '\u2713 ' : ''}${tr('Move to')} \u201C${tr(group.name)}\u201D`, () => void moveTask(item, group.key), 'raw']),
       ['Edit working directory', () => { closeTerminalMenu(); ui.set({ taskDialog: { kind: 'workdir', id: item.id, title: item.title, workDir: item.work_dir || '', error: '', busy: false } }); }],
+      ...(archives(source) ? [['Archive', () => void askArchive(item)]] : []),
       ['Delete', () => { closeTerminalMenu(); ui.set({ taskDialog: { kind: 'delete', id: item.id, title: item.title, workDir: item.work_dir || '', error: '', busy: false } }); }, 'danger'],
     ]);
   };
@@ -644,7 +651,7 @@
   const DELETE_ERRORS = { DIRECTORY_NOT_SAFE_TO_DELETE: 'This directory cannot be deleted (protected or shared with other tasks); the task was not deleted' };
   ui.actions.taskDelete = async deleteDirectory => {
     const dialog = ui.get().taskDialog;
-    const item = dialog && taskById(dialog.id);
+    const item = dialog && (taskById(dialog.id) || archivedById(dialog.id)); // also from the Archived section
     if (!item || dialog.busy) return;
     const from = source;
     patchDialog({ busy: true, error: '' });
@@ -666,8 +673,136 @@
     peeks.delete(item.id);
     if (task && task.id === item.id) { hideAgent(); selectTask(null); }
     tasks = tasks.filter(entry => entry.id !== item.id);
+    dropArchivedRow(item.id);
     await loadTasks();
   };
+  // ── Archiving a task (`POST {tasksBase}/:id/archive`, `/restore`; `GET {tasksBase}?archived=1`), for this machine and an Engine with 'tasks:archive' ──
+  // An archived task leaves the task list and has no terminals; the Archived section at the end of the list (ArchivedTasks.jsx) reads its rows when it is opened.
+  const archived = { open: false, status: 'idle', rows: null, busy: null, seq: 0 }; // status: 'idle', 'loading', 'ready', 'error'; busy: the id being restored
+  const archivedById = id => (archived.rows || []).find(row => row.id === id);
+  function showArchived() {
+    ui.set({ archived: {
+      supported: archives(source), open: archived.open, status: archived.status, busy: archived.busy, count: archived.rows ? archived.rows.length : null,
+      rows: (archived.rows || []).map(row => ({ id: row.id, title: row.title, archivedAt: row.archived_at || null })),
+    } });
+  }
+  function resetArchived() { // another Engine: its own archive, read when it is opened
+    Object.assign(archived, { open: false, status: 'idle', rows: null, busy: null, seq: archived.seq + 1 });
+    showArchived();
+  }
+  async function loadArchived() {
+    const from = source;
+    const seq = (archived.seq += 1);
+    if (!archived.rows) { archived.status = 'loading'; showArchived(); } // rows already shown stay until the new ones are read
+    let rows;
+    try { rows = await api('GET', `${from.tasksBase}?archived=1`); }
+    catch { if (seq === archived.seq && !archived.rows) { archived.status = 'error'; showArchived(); } return; }
+    if (seq !== archived.seq) return;
+    archived.status = 'ready';
+    archived.rows = Array.isArray(rows) ? rows : [];
+    showArchived();
+  }
+  function dropArchivedRow(id) {
+    if (!archivedById(id)) return;
+    archived.seq += 1; // a read still on its way may have this row
+    archived.status = 'ready';
+    archived.rows = archived.rows.filter(row => row.id !== id);
+    showArchived();
+  }
+  const refreshArchived = () => { if (archived.rows) void loadArchived(); }; // never read yet: nothing to keep right until it is opened
+  ui.actions.toggleArchived = () => {
+    archived.open = !archived.open;
+    showArchived();
+    if (archived.open) void loadArchived();
+  };
+  // Back in the list, on no terminal: its rows stay and connect when opened, as after a service restart. The task that is shown stays shown.
+  ui.actions.archivedRestore = async id => {
+    if (!archivedById(id) || archived.busy) return;
+    const from = source;
+    archived.busy = id;
+    showArchived();
+    try { await api('POST', `${from.tasksBase}/${id}/restore`); }
+    catch (error) {
+      if (from === source) { archived.busy = null; showArchived(); }
+      tell(`Could not restore the task: ${error.message}`, 'error');
+      return;
+    }
+    if (from !== source) return;
+    archived.busy = null;
+    dropArchivedRow(id);
+    showArchived();
+    tell('Task restored', 'success');
+    await loadTasks();
+  };
+  ui.actions.archivedDelete = id => {
+    const row = archivedById(id);
+    if (row) ui.set({ taskDialog: { kind: 'delete', id: row.id, title: row.title, workDir: row.work_dir || '', error: '', busy: false } });
+  };
+  // Terminals running now (a running state or a running sub-agent), as the next-session button counts them.
+  function runningIn(snapshot, taskId) {
+    const states = (snapshot.activity || {})[taskId] || {};
+    const subs = (snapshot.subagents || {})[taskId] || {};
+    return [...new Set([...Object.keys(states), ...Object.keys(subs)])].filter(id => states[id] === 'running' || Number(subs[id]) > 0).length;
+  }
+  // The confirmation. What is running comes from the pushed snapshot, else from one read; until that answers Archive waits, so the warning is not missed.
+  async function askArchive(item) {
+    closeTerminalMenu();
+    const from = source;
+    const pushed = feed.live && feed.source === from && feed.snapshot;
+    ui.set({ taskDialog: { kind: 'archive', id: item.id, title: item.title, workDir: '', running: pushed ? runningIn(pushed, item.id) : null, checking: !pushed, error: '', busy: false } });
+    if (pushed) return;
+    let running = null; // unknown: the general sentence only
+    try { const [activity, subagents] = await readActivity(from); running = runningIn({ activity, subagents }, item.id); } catch { /* an offline Engine: Archive itself will say */ }
+    const dialog = ui.get().taskDialog;
+    if (dialog && dialog.kind === 'archive' && dialog.id === item.id) patchDialog({ running, checking: false });
+  }
+  ui.actions.taskArchive = async () => {
+    const dialog = ui.get().taskDialog;
+    if (!dialog || dialog.busy) return;
+    const item = taskById(dialog.id);
+    if (!item) { ui.set({ taskDialog: null }); return; } // it left the list meanwhile
+    const from = source;
+    patchDialog({ busy: true, error: '' });
+    try { await api('POST', `${from.tasksBase}/${item.id}/archive`); }
+    catch (error) { patchDialog({ busy: false, error: tr(error.message) }); return; }
+    ui.set({ taskDialog: null });
+    tell('Task archived', 'success');
+    if (from !== source) return;
+    leaveTask(from, item.id);
+    await loadTasks();
+    refreshArchived();
+  };
+  // A task that left the list by being archived, here or on another device: its terminals and sockets close for good (none is kept warm, so nothing reconnects)
+  // and, when it was the shown task, the page goes where deleting the shown task goes (`taskDelete`): no task selected.
+  function leaveTask(from, taskId) {
+    if (from === source && (menuTask === taskId || (menuScope && menuScope.taskId === taskId))) closeTerminalMenu();
+    if (from === source && task && task.id === taskId) disconnect();
+    closeWarm(item => item.source === from && item.task.id === taskId);
+    if (earlySocket && earlySocket.source === from && earlySocket.taskId === taskId) dropEarlySocket();
+    store.set(`terminal:${from.key}:${taskId}`, null);
+    if (from !== source) return;
+    expanded.delete(taskId);
+    peeks.delete(taskId);
+    if (task && task.id === taskId) { hideAgent(); selectTask(null); }
+    tasks = tasks.filter(entry => entry.id !== taskId);
+  }
+  // Another device archived a task this page still has (`TASK_ARCHIVED` on a connect or a new terminal): say so once and read the list again.
+  function archivedElsewhere(from, taskId) {
+    const shown = from === source && task && task.id === taskId;
+    leaveTask(from, taskId);
+    if (from !== source) return;
+    if (shown) tell('This task was archived on another device');
+    void loadTasks();
+    refreshArchived();
+  }
+  // The server ended the shown terminal's connection for good and gave no reason: when the task turns out to be archived, the same as above.
+  async function checkArchived(s) {
+    const from = s.source;
+    const id = s.task.id;
+    if (!archives(from)) return;
+    const rows = await api('GET', `${from.tasksBase}?archived=1`).catch(() => null);
+    if (!s.disposed && from === source && Array.isArray(rows) && rows.some(row => row.id === id)) archivedElsewhere(from, id);
+  }
   // An existing task's working directory: the form shows the saved one; an absolute path is required (the server keeps the old one for an empty value).
   ui.actions.taskWorkdirSave = async value => {
     const dialog = ui.get().taskDialog;
@@ -1074,7 +1209,10 @@
       store.set(`terminal:${source.key}:${current.id}`, terminalId);
       renderTabs();
       connect();
-    } catch (error) { tell(`Could not create the terminal: ${error.message}`, 'error'); }
+    } catch (error) {
+      if (error.message === 'TASK_ARCHIVED') { archivedElsewhere(source, current.id); return; }
+      tell(`Could not create the terminal: ${error.message}`, 'error');
+    }
   }
 
   const connected = s => Boolean(s && s === session && !s.paused && s.ws && s.ws.readyState === WebSocket.OPEN);
@@ -1629,6 +1767,7 @@
       heartbeat.stop();
       if (s.ws !== ws || s.disposed) return;
       s.ws = null;
+      if (/task[_ ]archived/i.test(event.reason || '')) { archivedElsewhere(s.source, s.task.id); return; } // never reconnects
       if (TerminalOwner.isBlocked(event.code)) {
         if (session !== s) { disposeSession(s); return; } // a hidden warm terminal taken over elsewhere: shown again, it asks then
         TerminalOwner.prompt(s.el.parentElement || s.el, event.code, () => { if (session === s && !s.disposed) open(s, true); });
@@ -1636,6 +1775,7 @@
       }
       if (event.code === 1000 || event.code === 1008) {
         s.term.write(tr('\r\n[Terminal disconnected. Tap the terminal tab to reconnect]\r\n'));
+        if (s === session) void checkArchived(s);
         return;
       }
       const delay = Math.min(1000 * (2 ** s.attempts), 30000);

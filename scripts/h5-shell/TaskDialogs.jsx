@@ -48,6 +48,28 @@ export function TaskDialog({ state, ui }) {
       </Dialog>
     );
   }
+  if (dialog && dialog.kind === 'archive') {
+    return (
+      <Dialog id="h5-task-dialog" open={open} onClose={close} fullWidth maxWidth="xs" aria-labelledby="h5-task-dialog-title">
+        <DialogTitle id="h5-task-dialog-title">{t('Archive this task?')}</DialogTitle>
+        <DialogContent>
+          <DialogContentText id="h5-task-archive-name" translate="no" sx={{ mb: 1, overflowWrap: 'anywhere' }}>{dialog.title}</DialogContentText>
+          {dialog.running > 0 ? (
+            <Typography id="h5-task-archive-running" role="alert" variant="body2" color="warning.main" sx={{ mb: 1, fontWeight: 700 }}>
+              {dialog.running === 1 ? t('1 terminal is still running and will be stopped') : t(`${dialog.running} terminals are still running and will be stopped`)}
+            </Typography>
+          ) : null}
+          <Typography id="h5-task-archive-text" variant="body2" color="text.secondary">{t('Files, documents and terminal records are kept. Its terminals will be closed.')}</Typography>
+          {dialog.checking ? <Typography id="h5-task-archive-checking" variant="caption" component="p" color="text.secondary" sx={{ mt: 1 }}>{t('Checking for running terminals…')}</Typography> : null}
+          {dialog.error ? <Typography id="h5-task-dialog-error" role="alert" variant="body2" color="error" sx={{ mt: 1, overflowWrap: 'anywhere' }}>{dialog.error}</Typography> : null}
+        </DialogContent>
+        <DialogActions>
+          <Button id="h5-task-dialog-cancel" color="inherit" onClick={close} disabled={dialog.busy}>{t('Cancel')}</Button>
+          <Button id="h5-task-dialog-ok" variant="contained" disabled={dialog.busy || dialog.checking} onClick={() => void ui.actions.taskArchive()}>{t('Archive')}</Button>
+        </DialogActions>
+      </Dialog>
+    );
+  }
   return (
     <Dialog id="h5-task-dialog" open={open} onClose={close} fullWidth maxWidth="xs" aria-labelledby="h5-task-dialog-title">
       {dialog ? (

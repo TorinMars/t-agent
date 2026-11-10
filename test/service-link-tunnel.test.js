@@ -1037,7 +1037,7 @@ test('a tunnel that dies stops every local request and socket on B', async t => 
 // What the real gates do with a tunnelled request
 // ---------------------------------------------------------------------------
 
-test('the access gate treats a tunnelled /v1 request as local, and its session cookie does not cross', async t => {
+test('the access gate lets a tunnelled /v1 request through as local, stores no session for it, and no cookie crosses', async t => {
   const { createAccessGate, upgradeAllowed } = require('../lib/access-gate');
   const session = require('express-session');
   const app = express();
@@ -1060,7 +1060,7 @@ test('the access gate treats a tunnelled /v1 request as local, and its session c
 
   const answer = await hubCall(hub, linkId, '/v1/check');
   assert.equal(answer.status, 200);
-  assert.deepEqual(seen, { localTrusted: true, upgradeAllowed: true, forwardedFor: undefined });
+  assert.deepEqual(seen, { localTrusted: undefined, upgradeAllowed: true, forwardedFor: undefined });
   assert.equal(answer.headers['set-cookie'], undefined);
 
   // The same server, called directly, does hand out a cookie: the tunnel is what withholds it.

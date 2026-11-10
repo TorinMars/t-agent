@@ -806,10 +806,11 @@ const CASES = {
     await page.touchscreen.tap(p.x, p.y);
     await page.waitForFunction(() => [...document.querySelectorAll('.me-tpc.selected')].some(el => el.textContent === 'Phone child'));
     await page.locator('#mm-action-child').tap();
-    await page.keyboard.type('Grandchild');
-    await page.keyboard.press('Enter');
+    await newTopic(page, 'Grandchild'); // waits for the editor to open and to close: a tap while it is open only ends the edit
+    await settled(page);
     p = await center('Phone child');
     await page.touchscreen.tap(p.x, p.y);
+    await page.waitForFunction(() => [...document.querySelectorAll('.me-tpc.selected')].some(el => el.textContent === 'Phone child'));
     await page.waitForFunction(() => document.querySelector('#mm-action-fold') && !document.querySelector('#mm-action-fold').disabled);
     await page.locator('#mm-action-fold').tap();
     check(!(await topics(page)).includes('Grandchild'), 'collapse from the bar');

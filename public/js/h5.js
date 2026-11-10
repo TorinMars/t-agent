@@ -336,6 +336,8 @@
       ]);
       if (stale()) return false;
       const back = from.status !== 'ready';
+      // A task that was in the list and is not any more: deleted, archived, or hidden from this machine by the machine that owns it (only a real list says so).
+      const gone = Array.isArray(list) ? from.tasks.filter(row => !list.some(next => next.id === row.id)) : [];
       from.tasks = Array.isArray(list) ? list : [];
       from.status = 'ready';
       from.failure = '';
@@ -343,6 +345,7 @@
       // these newer page files until it is restarted, leaves it out. An empty list says nothing. A remote Engine is decided by its capability instead.
       if (from.key === 'local' && from.tasks.length && from.tasks.every(row => !row || !('archived_at' in row))) noArchiving(from);
       from.groups = Array.isArray(groupRows) && groupRows.length ? groupRows : DEFAULT_GROUPS;
+      for (const row of gone) taskGone(from, row.id);
       renderTasks();
       showActiveCount();
       if (back) { publishSources(); syncFeeds(); } // it came back without a reload: its feed too, and what it can do is read again below
@@ -362,6 +365,11 @@
     }
   }
   function loadTasks() { return Promise.all(listedSources().map(from => loadSource(from))); }
+  // One read of a service's list after one of its tasks answered 404, however many of its tasks did: the list then drops the rows that are really gone.
+  function recheckSource(from) {
+    if (!from.recheck) from.recheck = loadSource(from).finally(() => { from.recheck = null; });
+    return from.recheck;
+  }
   // A slow check of the services that are offline, while the page is visible: a service that returns comes back without a reload.
   const OFFLINE_POLL_MS = 30000;
   const retryOffline = () => { for (const from of listedSources()) if (from.status === 'offline') void loadSource(from); };
@@ -521,7 +529,7 @@
     }, PEEK_WAIT_MS);
     await actionsDone(from, item.id);
     const [rows] = await Promise.all([
-      api('GET', `${from.tasksBase}/${item.id}/terminals`).catch(() => null),
+      api('GET', `${from.tasksBase}/${item.id}/terminals`).catch(error => { if (error.status === 404) void recheckSource(from); return null; }),
       // What the Engine can do decides the actions of these rows (`controlsTerminals`). An Engine that does not answer must not hold the list back.
       from.key === 'local' ? null : Promise.race([readInfo(from).catch(() => null), new Promise(resolve => setTimeout(resolve, PEEK_WAIT_MS))]),
     ]);
@@ -545,6 +553,7 @@
     renderTasks();
     void loadTasks();
     void loadHidden(); // set on another device too
+    void loadLinks();
     void refreshTerminals();
     clearInterval(namesTimer);
     namesTimer = setInterval(() => void refreshTerminals(), 8000);
@@ -728,10 +737,12 @@
     const { from, item } = hit;
     menuRow = null;
     menuTask = taskRef(from, item.id); // so that the task leaving the list closes this sheet too (`leaveTask`)
+    void loadLinks(); // for the next time: the menu never waits for it
     const ordered = [...from.groups].sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
     showMenu(serviceOf(from) ? `${item.title} \u00B7 ${serviceOf(from)}` : item.title, [
       ...ordered.map(group => [`${item.status === group.key ? '\u2713 ' : ''}${tr('Move to')} \u201C${tr(group.name)}\u201D`, () => void moveTask(from, item, group.key), 'raw']),
       ['Edit working directory', () => { closeTerminalMenu(); ui.set({ taskDialog: dialogFor('workdir', from, item) }); }],
+      ...(choosesVisibility(from) ? [['Visible to', () => void askVisibility(from, item)]] : []),
       ...(archives(from) ? [['Archive', () => void askArchive(from, item)]] : []),
       ['Delete', () => { closeTerminalMenu(); ui.set({ taskDialog: dialogFor('delete', from, item) }); }, 'danger'],
     ]);
@@ -891,7 +902,7 @@
   };
   // A task that left the list by being archived, here or on another device: its terminals and sockets close for good (none is kept warm, so nothing reconnects)
   // and, when it was the shown task, the page goes where deleting the shown task goes (`taskDelete`): no task selected.
-  function leaveTask(from, taskId) {
+  function leaveTask(from, taskId, { stay = false } = {}) {
     const ref = taskRef(from, taskId);
     if (menuTask === ref || (menuScope && menuScope.from === from && menuScope.taskId === taskId)) closeTerminalMenu();
     if (isShown(from, taskId)) disconnect();
@@ -900,8 +911,15 @@
     store.set(`terminal:${from.key}:${taskId}`, null);
     expanded.delete(ref);
     peeks.delete(ref);
-    if (isShown(from, taskId)) { hideAgent(); selectTask(LOCAL, null); }
+    if (isShown(from, taskId)) { hideAgent(); selectTask(LOCAL, null, null, { stay }); }
     from.tasks = from.tasks.filter(entry => entry.id !== taskId);
+  }
+  // A task that is no longer in its service's list: it goes the same quiet way, without a word and with the task sheet left as it is. Only the owner of a task can hide it
+  // from this machine, so on this side it looks just like a deleted one (404, or a terminal closed with 1008).
+  function taskGone(from, taskId) {
+    const dialog = ui.get().taskDialog;
+    if (dialog && !dialog.busy && dialog.sourceKey === from.key && String(dialog.id) === String(taskId)) ui.set({ taskDialog: null });
+    leaveTask(from, taskId, { stay: true });
   }
   // Another device archived a task this page still has (`TASK_ARCHIVED` on a connect or a new terminal): say so once and read the list again.
   function archivedElsewhere(from, taskId) {
@@ -919,6 +937,68 @@
     const rows = await api('GET', `${from.tasksBase}?archived=1`).catch(() => null);
     if (!s.disposed && archivedRowsOf(from, rows).some(row => row.id === id)) archivedElsewhere(from, id);
   }
+  // A connection of the shown terminal ended: is the task still there at all? A task that is gone must end here, or the page keeps retrying a terminal it can no longer open.
+  // A read that fails says nothing (a lost connection also fails it), so this does not touch the state of the list.
+  async function checkGone(s) {
+    const from = s.source;
+    const id = s.task.id;
+    const list = await api('GET', from.tasksBase).catch(() => null);
+    if (s.disposed || !Array.isArray(list) || list.some(row => row.id === id)) return;
+    taskGone(from, id);
+    renderTasks();
+    showActiveCount();
+  }
+  // ── Which linked machines can see a task of this machine (`GET` and `PUT /api/tasks/:id/visibility`). Only the owner of a task decides, so never on another service's task ──
+  let hasLinks = false; // this machine has a service link that is not over: from `GET /api/service-links` (at start, and each time the list or a task menu opens)
+  let linksSeq = 0;
+  let visibilityMissing = false; // this server's answer showed that it has no such route, which holds until the page is loaded again
+  async function loadLinks() {
+    const seq = (linksSeq += 1);
+    let answer;
+    try { answer = await api('GET', '/api/service-links'); }
+    catch (error) { if (seq === linksSeq && error.status === 404) hasLinks = false; return; } // an older server; any other failure says nothing and what was known stays
+    if (seq !== linksSeq) return;
+    hasLinks = Boolean(answer && answer.supported === true && Array.isArray(answer.links) && answer.links.some(link => link.state !== 'revoked'));
+  }
+  const choosesVisibility = from => from === LOCAL && hasLinks && !visibilityMissing;
+  const VISIBILITY_TOO_OLD = 'This server is too old to choose who can see a task. Restart or update it first';
+  const VISIBILITY_ERRORS = { INVALID_VISIBILITY: 'The list of machines has changed. Close this and try again' };
+  // No such route on this server (an HTML 404, unlike the JSON of a task that is gone): the item goes away.
+  function visibilityError(error) {
+    const code = error.data && error.data.error;
+    if (error.status === 404 && !code) visibilityMissing = true;
+    return tr(error.status === 404 && !code ? VISIBILITY_TOO_OLD : VISIBILITY_ERRORS[code] || error.message);
+  }
+  const visibilityDialog = () => { const dialog = ui.get().taskDialog; return dialog && dialog.kind === 'visibility' ? dialog : null; };
+  let visibilitySeq = 0;
+  async function askVisibility(from, item) {
+    closeTerminalMenu();
+    const seq = (visibilitySeq += 1);
+    ui.set({ taskDialog: dialogFor('visibility', from, item, { workDir: '', status: 'loading', devices: [], seq }) });
+    let patch;
+    try {
+      const answer = await api('GET', `${from.tasksBase}/${item.id}/visibility`);
+      if (Array.isArray(answer && answer.devices)) patch = { status: 'ready', devices: answer.devices };
+      else { visibilityMissing = true; patch = { status: 'error', error: tr(VISIBILITY_TOO_OLD) }; }
+    } catch (error) { patch = { status: 'error', error: visibilityError(error) }; }
+    const dialog = visibilityDialog();
+    if (dialog && dialog.seq === seq) patchDialog(patch);
+  }
+  ui.actions.taskVisibilitySet = (linkId, allowed) => {
+    const dialog = visibilityDialog();
+    if (dialog && !dialog.busy) patchDialog({ error: '', devices: dialog.devices.map(device => (device.link_id === linkId ? { ...device, allowed } : device)) });
+  };
+  // Only the unchecked machines are sent: a machine linked later is allowed, as every machine is by default. None checked is valid: no other machine sees this task.
+  ui.actions.taskVisibilitySave = async () => {
+    const dialog = visibilityDialog();
+    const from = dialogSource(dialog);
+    if (!from || dialog.busy || dialog.status !== 'ready') return;
+    patchDialog({ busy: true, error: '' });
+    try { await api('PUT', `${from.tasksBase}/${dialog.id}/visibility`, { denied: dialog.devices.filter(device => !device.allowed).map(device => device.link_id) }); }
+    catch (error) { patchDialog({ busy: false, error: visibilityError(error) }); return; }
+    ui.set({ taskDialog: null });
+    tell('Saved', 'success');
+  };
   // An existing task's working directory: the form shows the saved one; an absolute path is required (the server keeps the old one for an empty value).
   ui.actions.taskWorkdirSave = async value => {
     const dialog = ui.get().taskDialog;
@@ -958,7 +1038,7 @@
   // The Engines settings (scripts/h5-shell/Engines.jsx) or the linked services connected, edited or removed a service: the combined list and the feeds follow. `changedKey`
   // is the service whose connection changed; when its task is the one shown, its terminals are opened again.
   ui.actions.enginesChanged = async (changedKey = null) => {
-    await Promise.all([loadSources(), loadHidden()]);
+    await Promise.all([loadSources(), loadHidden(), loadLinks()]);
     const changed = sources.find(item => item.key === changedKey);
     if (changed && changed !== LOCAL) changed.capabilities = undefined; // read again (it may have been upgraded)
     if (changed && changed === source && task) {
@@ -1046,6 +1126,8 @@
     let rows;
     try { rows = await api('GET', `${from.tasksBase}/${current.id}/terminals`); }
     catch (error) {
+      // A 404: the task may be gone from this service (deleted, or hidden from this machine). The list says, and when it is, `taskGone` has already moved the page on.
+      if (error.status === 404) await recheckSource(from);
       if (seq === terminalsSeq) { terminalsState = 'error'; showEmpty(`Could not load terminals: ${error.message}`); renderTabs(); }
       return;
     }
@@ -1974,9 +2056,10 @@
       }
       if (event.code === 1000 || event.code === 1008) {
         s.term.write(tr('\r\n[Terminal disconnected. Tap the terminal tab to reconnect]\r\n'));
-        if (s === session) void checkArchived(s);
+        if (s === session) void checkArchived(s).then(() => { if (!s.disposed) return checkGone(s); });
         return;
       }
+      if (s === session) void checkGone(s); // a task that is gone can also be refused before a socket opens, which reads as a lost connection
       const delay = Math.min(1000 * (2 ** s.attempts), 30000);
       s.attempts += 1;
       s.term.write(tr(`\r\n\x1b[33m[Connection lost, reconnecting in ${Math.ceil(delay / 1000)}s...]\x1b[0m\r\n`));
@@ -3234,6 +3317,7 @@
     if (!link && !(savedId > 0) && !isWide()) ui.set({ tasksOpen: true, wide: false });
     const reads = new Map([[LOCAL, loadSource(LOCAL)]]);
     if (assumed !== LOCAL) reads.set(assumed, loadSource(assumed));
+    void loadLinks(); // the "⋯" of a task needs it, the list does not wait for it
     await Promise.all([loadSources(), loadHidden()]);
     listReady = true;
     for (const from of listedSources()) if (!reads.has(from)) reads.set(from, loadSource(from));

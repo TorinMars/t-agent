@@ -13,7 +13,7 @@ import Typography from '@mui/material/Typography';
 import { t } from './common.jsx';
 
 // The dialogs of the task "⋯" menu (h5.js `ui.actions.taskMore`): the delete confirmation, with "Also delete the directory" (off by default;
-// the server refuses a protected or shared directory), and the working directory of an existing task (the saved path is shown).
+// the server refuses a protected or shared directory), the working directory of an existing task (the saved path is shown), and which linked machines can see a task.
 export function TaskDialog({ state, ui }) {
   const dialog = state.taskDialog;
   const [alsoDir, setAlsoDir] = useState(false);
@@ -70,6 +70,40 @@ export function TaskDialog({ state, ui }) {
         <DialogActions>
           <Button id="h5-task-dialog-cancel" color="inherit" onClick={close} disabled={dialog.busy}>{t('Cancel')}</Button>
           <Button id="h5-task-dialog-ok" variant="contained" disabled={dialog.busy || dialog.checking} onClick={() => void ui.actions.taskArchive()}>{t('Archive')}</Button>
+        </DialogActions>
+      </Dialog>
+    );
+  }
+  if (dialog && dialog.kind === 'visibility') {
+    const ready = dialog.status === 'ready';
+    const devices = ready ? dialog.devices : [];
+    return (
+      <Dialog id="h5-task-dialog" open={open} onClose={close} fullWidth maxWidth="xs" aria-labelledby="h5-task-dialog-title">
+        <DialogTitle id="h5-task-dialog-title">{t('Visible to')}</DialogTitle>
+        <DialogContent>
+          <DialogContentText id="h5-task-visibility-name" translate="no" sx={{ mb: 1, overflowWrap: 'anywhere' }}>{dialog.title}</DialogContentText>
+          {dialog.status === 'loading' ? <Typography id="h5-task-visibility-loading" role="status" variant="body2" color="text.secondary">{t('Loading…')}</Typography> : null}
+          {ready && !devices.length ? <Typography id="h5-task-visibility-empty" variant="body2" color="text.secondary">{t('No linked machines')}</Typography> : null}
+          {devices.map(device => (
+            <FormControlLabel
+              key={device.link_id} className="h5-visibility-row" data-link={device.link_id}
+              sx={{ display: 'flex', ml: 0, mr: 0, minHeight: 44, '& .MuiFormControlLabel-label': { flex: '1 1 auto', minWidth: 0 } }}
+              control={<Checkbox checked={device.allowed} disabled={dialog.busy} onChange={event => ui.actions.taskVisibilitySet(device.link_id, event.target.checked)} />}
+              label={(
+                <Box component="span" sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', columnGap: 1 }}>
+                  <Box component="span" className="h5-visibility-name" translate="no" sx={{ minWidth: 0, overflowWrap: 'anywhere' }}>{device.name}</Box>
+                  {device.online ? null : <Typography className="h5-visibility-offline" component="span" variant="caption" color="text.secondary">{t('Offline')}</Typography>}
+                </Box>
+              )}
+            />
+          ))}
+          {devices.some(device => !device.allowed) ? <Typography id="h5-task-visibility-denied" variant="body2" sx={{ mt: 1 }}>{t('Unchecked machines cannot open this task or see its sessions.')}</Typography> : null}
+          {devices.length ? <Typography id="h5-task-visibility-honest" variant="caption" component="p" color="text.secondary" sx={{ mt: 1 }}>{t('Linked machines still have full control of this computer, so this hides the task but is not a security boundary.')}</Typography> : null}
+          {dialog.error ? <Typography id="h5-task-dialog-error" role="alert" variant="body2" color="error" sx={{ mt: 1, overflowWrap: 'anywhere' }}>{dialog.error}</Typography> : null}
+        </DialogContent>
+        <DialogActions>
+          <Button id="h5-task-dialog-cancel" color="inherit" onClick={close} disabled={dialog.busy}>{t('Cancel')}</Button>
+          {devices.length ? <Button id="h5-task-dialog-ok" variant="contained" disabled={dialog.busy} onClick={() => void ui.actions.taskVisibilitySave()}>{t('Save')}</Button> : null}
         </DialogActions>
       </Dialog>
     );

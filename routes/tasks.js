@@ -12,6 +12,7 @@ const documents = require('../services/task-documents');
 const { createTaskFilesRouter } = require('./task-files');
 const { startWithoutDefaultTerminal } = require('../lib/task-default-terminal');
 const taskArchive = require('../services/task-archive');
+const { getTaskVisibility } = require('../services/task-visibility');
 
 const router = express.Router();
 
@@ -273,10 +274,29 @@ router.delete('/:id', (req, res) => {
   terminal.closeTaskTerminals(task.id);
   require('../services/agent-chat').getAgentChat().stopTask(task.id);
   db.prepare('DELETE FROM tasks WHERE id = ?').run(req.params.id);
+  getTaskVisibility().forgetTask(task.id);
   if (!deleteDirectory) return res.json({ success: true });
   try { res.json({ success: true, directory_deleted: workspaceTools.removeTaskDirectory(task) }); }
   catch (error) { res.json({ success: true, directory_deleted: false, directory_error: error.message }); }
 });
+
+// Which linked services may see this task. Behind the browser session and same-origin gates of /api, so a linked service cannot reach it: it is not under /v1, and
+// the tunnel carries only /v1. See "Per-task visibility" in DESIGN.md. Two segments, so "/:id" handlers cannot take it.
+function taskVisibilityRoute(change) {
+  return (req, res) => {
+    const task = db.prepare('SELECT id FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, ownerFilter(req));
+    if (!task) return res.status(404).json({ error: 'TASK_NOT_FOUND' });
+    const visibility = getTaskVisibility();
+    try {
+      if (change) change(visibility, task, req);
+      res.json({ devices: visibility.devices(ownerFilter(req), task.id) });
+    } catch (error) {
+      res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'TASK_VISIBILITY_FAILED' });
+    }
+  };
+}
+router.get('/:id/visibility', taskVisibilityRoute());
+router.put('/:id/visibility', taskVisibilityRoute((visibility, task, req) => visibility.setDenied(ownerFilter(req), task.id, (req.body || {}).denied)));
 
 router.get('/:id/md', (req, res) => {
   const uid = ownerFilter(req);

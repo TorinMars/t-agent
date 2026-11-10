@@ -192,7 +192,7 @@ async function mapLimit(items, limit, worker) {
   return results;
 }
 
-async function cleanupOverview(database, owner, workDir) {
+async function cleanupOverview(database, owner, workDir, hidden = () => false) {
   const root = workRoot(workDir);
   // An archived task keeps its directory: its repositories are not offered for cleanup, but its directory still protects a parent directory (`others`).
   const tasks = database.prepare('SELECT * FROM tasks WHERE user_id = ? AND work_dir IS NOT NULL ORDER BY id').all(owner);
@@ -200,7 +200,7 @@ async function cleanupOverview(database, owner, workDir) {
   const cleaned = database.prepare('SELECT * FROM repo_cleanups ORDER BY cleaned_at DESC, id DESC').all();
   const cleanedPaths = new Set(cleaned.map(row => row.path));
   const jobs = [];
-  for (const task of tasks.filter(item => !item.archived_at)) for (const repo of findRepos(task.work_dir)) if (!cleanedPaths.has(repo)) jobs.push({ task, repo });
+  for (const task of tasks.filter(item => !item.archived_at && !hidden(item.id))) for (const repo of findRepos(task.work_dir)) if (!cleanedPaths.has(repo)) jobs.push({ task, repo });
   const items = await mapLimit(jobs, 4, async ({ task, repo }) => {
     const taskDir = path.resolve(task.work_dir);
     const base = { task_id: task.id, title: task.title, task_path: taskDir, path: repo, name: path.relative(taskDir, repo) || path.basename(repo) };
@@ -210,7 +210,7 @@ async function cleanupOverview(database, owner, workDir) {
     return { ...base, size_bytes: size, idle_days: last ? Math.floor((Date.now() - last) / DAY) : null, ...inspected };
   });
   items.sort((a, b) => b.size_bytes - a.size_bytes);
-  const titles = new Map(tasks.map(task => [task.id, task.title]));
+  const titles = new Map(tasks.filter(task => !hidden(task.id)).map(task => [task.id, task.title]));
   const archived = cleaned.filter(row => titles.has(row.task_id)).map(row => ({
     id: row.id, task_id: row.task_id, title: titles.get(row.task_id), path: row.path, remote: row.remote, branch: row.branch,
     size_bytes: row.size_bytes, cleaned_at: row.cleaned_at, restore: `git clone -b ${row.branch} ${row.remote} ${row.path}`,
@@ -220,7 +220,7 @@ async function cleanupOverview(database, owner, workDir) {
 
 // Clean repos one by one; one failure does not affect the others. The server re-checks and does not trust the "safe" verdict sent by the frontend;
 // only paths that really lie inside the task directory and are recognized as repos are accepted.
-async function cleanupRepos(database, owner, workDir, requests, closeTerminals = () => {}) {
+async function cleanupRepos(database, owner, workDir, requests, closeTerminals = () => {}, hidden = () => false) {
   if (!Array.isArray(requests) || !requests.length) throw serviceError('REPOS_REQUIRED');
   const root = workRoot(workDir);
   const all = database.prepare('SELECT * FROM tasks WHERE user_id = ? AND work_dir IS NOT NULL').all(owner);
@@ -229,7 +229,7 @@ async function cleanupRepos(database, owner, workDir, requests, closeTerminals =
   for (const request of requests) {
     const taskId = Number(request && request.task_id);
     const target = path.resolve(String((request && request.path) || ''));
-    const task = all.find(item => item.id === taskId);
+    const task = hidden(taskId) ? null : all.find(item => item.id === taskId);
     if (!task) { results.push({ task_id: taskId, path: target, ok: false, error: 'TASK_NOT_FOUND' }); continue; }
     if (task.archived_at) { results.push({ task_id: taskId, path: target, ok: false, error: 'TASK_ARCHIVED' }); continue; }
     if (!findRepos(task.work_dir).includes(target)) { results.push({ task_id: taskId, path: target, ok: false, error: 'NOT_A_REPOSITORY_OF_TASK' }); continue; }
@@ -252,9 +252,9 @@ async function cleanupRepos(database, owner, workDir, requests, closeTerminals =
   return results;
 }
 
-async function restoreRepo(database, owner, cleanupId) {
+async function restoreRepo(database, owner, cleanupId, hidden = () => false) {
   const row = database.prepare('SELECT * FROM repo_cleanups WHERE id = ?').get(cleanupId);
-  const task = row && database.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(row.task_id, owner);
+  const task = row && !hidden(row.task_id) && database.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(row.task_id, owner);
   if (!task) throw serviceError('CLEANUP_RECORD_NOT_FOUND', 404);
   if (fs.existsSync(row.path)) throw serviceError('RESTORE_PATH_EXISTS', 409);
   fs.mkdirSync(path.dirname(row.path), { recursive: true });

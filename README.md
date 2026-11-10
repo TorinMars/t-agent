@@ -128,6 +128,8 @@ If t-agent runs as root on a Linux server, Claude Code in the web terminal refus
 
 Link two T-Agent services so that each sees and operates all the tasks, terminals and sessions of the other, as remote Engines. In Settings, service A makes a 6-digit linking code; service B enters A's address and the code. B may be behind NAT: only B has to reach A. A must allow external access, and B may be local-only. Linking grants the other side full admin on this service. The other side's own remote Engines are not forwarded. Unlink from either side.
 
+A task's "⋯" menu sets which linked services may see it. Every task and every new link starts as allowed; a hidden task looks to that service as if it did not exist, and its open terminals and streams end at once. A linked peer has full admin on this service. Per-task visibility is not a security boundary against it: `/v1/fs/*` reads any path, a shell in another visible task can read the same files, and `/v1/tokens` can mint a token with no link id, which this check does not cover.
+
 A linked service also shares its translation, voice input and OSS upload: when a service has one of these not configured, it uses the linked service that has it, without copying any key. A service's own configuration always comes first. For OSS, the other side's bucket must allow uploads from this page's address in its CORS rule.
 
 ### Security boundary

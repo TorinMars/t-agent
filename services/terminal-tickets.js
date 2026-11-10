@@ -3,11 +3,13 @@ const crypto = require('crypto');
 const tickets = new Map();
 const TTL_MS = 30_000;
 
-function createTerminalTicket({ principalId, taskId, terminalId = 'default' }) {
+// linkId: the service link the ticket was issued to (null for any other token), which ties the socket to the link so that it can be closed when the link loses the task.
+function createTerminalTicket({ principalId, taskId, terminalId = 'default', linkId = null }) {
   const ticket = `tat_${crypto.randomBytes(24).toString('base64url')}`;
   tickets.set(ticket, {
     principalId,
     terminalId,
+    linkId,
     taskId: Number(taskId),
     expiresAt: Date.now() + TTL_MS,
   });

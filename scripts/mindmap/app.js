@@ -2,7 +2,7 @@
 import { PATHS } from '../h5-shell/Icons.jsx';
 import { createEditor } from './editor.js';
 import { createSaver } from './saver.mjs';
-import { blankDoc, DIRECTION, sanitizeDoc, DocError } from './doc.mjs';
+import { blankDoc, sanitizeDoc, DocError } from './doc.mjs';
 import { buildXmind, parseXmind, describeLost, XmindError, XMIND_LIMITS } from './xmind.mjs';
 
 const tr = text => (typeof I18n !== 'undefined' ? I18n.t(text) : text);
@@ -459,7 +459,6 @@ export function mountApp(root, { onClose, notify = () => {}, onLayers = () => {}
   function openMore() {
     if (!current || !current.editor) return;
     const { editor } = current;
-    const direction = editor.direction();
     const item = (label, run, disabled = false) => el('button', { type: 'button', class: 'mm-menu-item', text: tr(label), disabled, onClick: () => { dialog.close(); run(); } });
     const hasSel = Boolean(editor.selected());
     const list = el('div', { class: 'mm-menu' },
@@ -467,7 +466,6 @@ export function mountApp(root, { onClose, notify = () => {}, onLayers = () => {}
       item('Note', () => act('note'), !hasSel),
       item('Labels', () => act('label'), !hasSel),
       item('Link', () => act('link'), !hasSel),
-      item(direction === DIRECTION.RIGHT ? 'Layout: mind map (both sides)' : 'Layout: logic chart (right)', () => editor.actions.setLayout(direction === DIRECTION.RIGHT ? DIRECTION.SIDE : DIRECTION.RIGHT)),
       item('Copy topic', () => act('copyTopics'), !hasSel),
       item('Cut topic', () => act('cutTopics'), !hasSel),
       item('Paste topic', () => act('pasteTopics'), !hasSel),

@@ -17,7 +17,7 @@ export function pickDirectional(rects, currentId, dir) {
     // Must really be on that side: the middle of the other topic is past this topic's middle in the direction asked, by more than rounding.
     const along = dir === 'left' ? -dx : dir === 'right' ? dx : dir === 'up' ? -dy : dy;
     if (along <= 1) continue;
-    const across = Math.abs(horizontal ? dy : dx);
+    const across = horizontal ? Math.abs(dy) : Math.abs(r.left - cur.left); // the topics of a column share their left edge, not their middle
     // Moving sideways costs more than moving along, so the next topic on the same row or column wins over a nearer one that is off to the side.
     const score = along + across * 3;
     if (score < bestScore) { bestScore = score; best = r.id; }

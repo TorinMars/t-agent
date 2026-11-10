@@ -3,7 +3,7 @@ import MindElixir from 'mind-elixir';
 import { actionFor } from './keys.mjs';
 import { pickDirectional } from './nav.mjs';
 import { attachTouch } from './touch.js';
-import { DIRECTION, escapeHtml, plainDoc, safeLink, sanitizeDoc } from './doc.mjs';
+import { RIGHT_ONLY, escapeHtml, plainDoc, safeLink, sanitizeDoc } from './doc.mjs';
 
 const CLIPBOARD_MAGIC = 't-agent-mindmap-topics';
 const APPLE = /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent || '');
@@ -28,11 +28,11 @@ const THEME = {
 
 export async function createEditor(host, doc, handlers) {
   const mind = new MindElixir({
-    el: host, direction: doc.direction, toolBar: false, contextMenu: false, keypress: true, allowUndo: true, theme: THEME, alignment: 'nodes',
+    el: host, direction: RIGHT_ONLY, toolBar: false, contextMenu: false, keypress: true, allowUndo: true, theme: THEME, alignment: 'nodes',
     newTopicName: handlers.t('New topic'), scaleMin: 0.2, scaleMax: 3, mouseSelectionButton: 2,
     markdown: text => escapeHtml(text), // every text the library would draw as HTML goes through this
   });
-  await mind.init({ nodeData: doc.nodeData, arrows: doc.arrows, summaries: doc.summaries, direction: doc.direction, theme: THEME });
+  await mind.init({ nodeData: doc.nodeData, arrows: doc.arrows, summaries: doc.summaries, direction: RIGHT_ONLY, theme: THEME });
   if (!mind.container) throw new Error('The editor could not start');
   mind.container.onkeydown = null; // the shortcuts are handled below; the library's own handler also blocks keys such as reload
   // The library's scaleFit leaves the map off-centre when it scales down (its transform origin is the canvas, not the nodes), so the centre is put right from what is on the screen.
@@ -43,6 +43,14 @@ export async function createEditor(host, doc, handlers) {
     mind.move((c.left + c.right) / 2 - (n.left + n.right) / 2, (c.top + c.bottom) / 2 - (n.top + n.bottom) / 2);
   }
   fitMap();
+  // The root is at the left end of the map, so centring a map wider than the canvas would push it off the screen: such a map starts at the left edge instead.
+  function actualSize() {
+    mind.scale(1);
+    mind.toCenter();
+    const c = mind.container.getBoundingClientRect();
+    const n = mind.nodes.getBoundingClientRect();
+    if (n.width > c.width) mind.move(c.left - n.left, 0);
+  }
 
   let disposed = false;
   const changed = () => { if (!disposed) handlers.onChange(); };
@@ -88,7 +96,7 @@ export async function createEditor(host, doc, handlers) {
     fit() { fitMap(); },
     zoomIn() { mind.scale(mind.scaleVal * 1.2); },
     zoomOut() { mind.scale(mind.scaleVal / 1.2); },
-    zoomReset() { mind.scale(1); mind.toCenter(); },
+    zoomReset() { actualSize(); },
     goRoot() { select(root()); },
     goParent() { const tpc = current(); if (tpc && tpc.nodeObj.parent) select(mind.findEle(tpc.nodeObj.parent.id)); },
     selectAll() { mind.selectNodes([...mind.nodes.querySelectorAll('.me-tpc')]); },
@@ -109,13 +117,6 @@ export async function createEditor(host, doc, handlers) {
     label() { handlers.onOpenInfo('label'); },
     link() { handlers.onOpenInfo('link'); },
     back() { handlers.onBack(); },
-    setLayout(direction) {
-      finishEdit();
-      if (direction === DIRECTION.RIGHT) mind.initRight();
-      else mind.initSide();
-      fitMap();
-      changed();
-    },
     copyTopics() { const list = selection(); if (list.length) buffer = list.map(tpc => JSON.parse(mind.stringifyData(tpc.nodeObj))); },
     cutTopics() { actions.copyTopics(); actions.remove(); },
     pasteTopics() { if (buffer && buffer.length) pasteNodes(buffer); },
@@ -125,11 +126,15 @@ export async function createEditor(host, doc, handlers) {
   function move(dir) {
     const tpc = current();
     if (!tpc) { select(root()); return; }
-    const rects = [...mind.nodes.querySelectorAll('.me-tpc')].map(el => {
+    const node = tpc.nodeObj;
+    // The tree grows to the right: Left is the parent and Right one of the children, even when a topic of another branch is nearer on the screen.
+    if (dir === 'left') { if (node.parent) select(mind.findEle(node.parent.id)); return; }
+    const children = dir === 'right' ? new Set((node.expanded === false ? [] : node.children || []).map(child => child.id)) : null;
+    const rects = [...mind.nodes.querySelectorAll('.me-tpc')].filter(el => !children || el === tpc || children.has(el.nodeObj.id)).map(el => {
       const r = el.getBoundingClientRect();
       return { id: el.nodeObj.id, el, left: r.left, right: r.right, top: r.top, bottom: r.bottom };
     });
-    const id = pickDirectional(rects, tpc.nodeObj.id, dir);
+    const id = pickDirectional(rects, node.id, dir);
     if (id) select(mind.findEle(id));
   }
 
@@ -238,7 +243,6 @@ export async function createEditor(host, doc, handlers) {
     selected: current,
     canUndo: () => Boolean(mind.historyStack && mind.historyStack.canUndo),
     canRedo: () => Boolean(mind.historyStack && mind.historyStack.canRedo),
-    direction: () => mind.direction,
     // Sets note, labels or link of the selected topic through the library, so it can be undone.
     async setInfo(tpc, patch) {
       const clean = { ...patch };

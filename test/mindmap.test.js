@@ -35,7 +35,7 @@ test('a real .xmind zip becomes a document, and says what was lost', async () =>
   const { xmind, doc } = await modules;
   const { doc: map, lost } = xmind.parseXmind(zipOf(sheet.withSummaryTopic()));
   assert.equal(map.nodeData.topic, 'Root');
-  assert.equal(map.direction, doc.DIRECTION.RIGHT);
+  assert.equal(map.direction, doc.RIGHT_ONLY);
   const [a, b] = map.nodeData.children;
   assert.equal(a.topic, CHILD);
   assert.equal(a.note, 'A note');
@@ -53,7 +53,7 @@ test('a real .xmind zip becomes a document, and says what was lost', async () =>
   assert.equal(xmind.describeLost(lost).length, 5);
 });
 
-test('round trip: export then import keeps topics, notes, labels, links, markers, folding and layout', async () => {
+test('round trip: export then import keeps topics, notes, labels, links, markers and folding, and the export is a tree to the right', async () => {
   const { xmind, doc } = await modules;
   const { doc: first } = xmind.parseXmind(zipOf(sheet.withSummaryTopic()));
   const bytes = xmind.buildXmind({ title: 'Trip', data: first });
@@ -68,13 +68,29 @@ test('round trip: export then import keeps topics, notes, labels, links, markers
   const { doc: second, lost } = xmind.parseXmind(bytes);
   const strip = node => ({ ...node, id: undefined, children: node.children.map(strip) });
   assert.deepEqual(strip(second.nodeData), strip(first.nodeData));
-  assert.equal(second.direction, doc.DIRECTION.RIGHT);
+  assert.equal(second.direction, doc.RIGHT_ONLY);
   assert.equal(second.summaries.length, 1);
   assert.equal(second.arrows.length, 1);
   assert.deepEqual(lost, { sheets: 0, images: 0, boundaries: 0, callouts: 0, floating: 0, links: 0 });
-  // A map with both sides exports the mind map structure class, and folded topics survive.
-  const side = xmind.buildXmind({ title: 'S', data: { nodeData: { id: 'r', topic: 'R', children: [] }, direction: doc.DIRECTION.SIDE } });
-  assert.equal(JSON.parse(strFromU8(unzipSync(side)['content.json']))[0].rootTopic.structureClass, 'org.xmind.ui.map.unbalanced');
+  // A document that still says both sides or left exports as a tree to the right too.
+  for (const direction of [0, 2, undefined]) {
+    const other = xmind.buildXmind({ title: 'S', data: { nodeData: { id: 'r', topic: 'R', children: [] }, direction } });
+    assert.equal(JSON.parse(strFromU8(unzipSync(other)['content.json']))[0].rootTopic.structureClass, 'org.xmind.ui.logic.right', String(direction));
+  }
+});
+
+test('any structure class is imported, as a tree to the right, and nothing is reported as lost for it', async () => {
+  const { xmind, doc } = await modules;
+  for (const structureClass of ['org.xmind.ui.map.unbalanced', 'org.xmind.ui.map.clockwise', 'org.xmind.ui.logic.left', 'org.xmind.ui.logic.right', 'org.xmind.ui.fishbone.leftHeaded', 'org.xmind.ui.org-chart.down', undefined]) {
+    const { doc: map, lost } = xmind.parseXmind(zipOf([{ rootTopic: { id: 'r', title: 'R', ...(structureClass ? { structureClass } : {}), children: { attached: [{ id: 'a', title: 'A' }] } } }]));
+    assert.equal(map.direction, doc.RIGHT_ONLY, String(structureClass));
+    assert.equal(map.nodeData.children[0].topic, 'A');
+    assert.equal(map.nodeData.children[0].direction, undefined);
+    assert.deepEqual(xmind.describeLost(lost), [], String(structureClass));
+  }
+  const xml = '<?xml version="1.0"?><xmap-content xmlns="urn:xmind:xmap:xmlns:content:2.0"><sheet id="s"><topic id="r" structure-class="org.xmind.ui.logic.left"><title>Old</title></topic></sheet></xmap-content>';
+  const { doc: old } = xmind.parseXmind(zipSync({ 'content.xml': strToU8(xml) }), { parseXml: text => new (parseHTML('<!doctype html><html></html>').DOMParser)().parseFromString(text, 'text/xml') });
+  assert.equal(old.direction, doc.RIGHT_ONLY, 'an old content.xml file too');
 });
 
 test('older files with content.xml are read', async () => {
@@ -127,6 +143,24 @@ test('only the named entries are read, and limits on topics and depth hold', asy
   assert.throws(() => xmind.parseXmind(zipOf([{ rootTopic: wide }])), /too many topics/);
 });
 
+test('every map has the one layout: stale sides are dropped on the way in and never stored', async () => {
+  const { doc } = await modules;
+  assert.equal(doc.blankDoc('New').direction, doc.RIGHT_ONLY);
+  const sided = direction => ({ nodeData: { id: 'r', topic: 'R', direction: 0, children: [{ id: 'a', topic: 'A', direction: 0, children: [{ id: 'b', topic: 'B', direction: 1 }] }, { id: 'c', topic: 'C', direction: 1 }, { id: 'd', topic: 'D', direction: 'x' }] }, direction });
+  const hasSide = node => 'direction' in node || (node.children || []).some(hasSide);
+  for (const direction of [0, 1, 2, 3, 'left', null, undefined]) {
+    const clean = doc.sanitizeDoc(sided(direction));
+    assert.equal(clean.direction, doc.RIGHT_ONLY, String(direction));
+    assert.equal(hasSide(clean.nodeData), false, String(direction));
+    assert.equal(clean.nodeData.children.length, 3, 'the order and the topics stay');
+    const stored = doc.plainDoc(sided(direction));
+    assert.equal(stored.direction, doc.RIGHT_ONLY, String(direction));
+    assert.equal(hasSide(stored.nodeData), false, String(direction));
+  }
+  // A topic the library made has no children list at all; the shape stays as it is.
+  assert.deepEqual(doc.plainDoc({ nodeData: { id: 'r', topic: 'R', direction: 1 } }).nodeData, { id: 'r', topic: 'R' });
+});
+
 test('sanitizeDoc drops whatever the editor would draw as HTML or fetch', async () => {
   const { doc } = await modules;
   const clean = doc.sanitizeDoc({
@@ -141,7 +175,7 @@ test('sanitizeDoc drops whatever the editor would draw as HTML or fetch', async 
   assert.deepEqual(root.children[0].children, []);
   assert.equal(clean.arrows.length, 0);
   assert.equal(clean.summaries[0].parent, root.id, 'a summary follows its parent to the new id');
-  assert.equal(clean.direction, doc.DIRECTION.SIDE);
+  assert.equal(clean.direction, doc.RIGHT_ONLY);
   assert.throws(() => doc.sanitizeDoc({ nodeData: null }), /cannot be read/);
   assert.equal(doc.escapeHtml('<a href="x">&\''), '&lt;a href=&quot;x&quot;&gt;&amp;&#39;');
   assert.equal(doc.safeLink('mailto:a@b.c'), 'mailto:a@b.c');
@@ -326,4 +360,7 @@ test('arrow navigation picks the topic that lies that way on the screen', async 
   assert.equal(pickDirectional(rects, 'root', 'down'), 'rightDown');
   assert.equal(pickDirectional(rects, 'rightUp', 'up'), null, 'nothing that way');
   assert.equal(pickDirectional(rects, 'gone', 'up'), null);
+  // Up and down stay in a column of the tree: a wide topic does not jump to the children beside its middle.
+  const column = [{ id: 'wide', left: 100, right: 500, top: 200, bottom: 220 }, { id: 'above', left: 100, right: 140, top: 120, bottom: 140 }, { id: 'childOfAbove', left: 260, right: 340, top: 170, bottom: 190 }];
+  assert.equal(pickDirectional(column, 'wide', 'up'), 'above');
 });

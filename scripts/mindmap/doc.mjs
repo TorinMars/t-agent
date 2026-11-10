@@ -2,7 +2,7 @@
 // A document is what the editor library (mind-elixir) reads: { nodeData, arrows, summaries, direction }. The server stores it as opaque JSON.
 // Extra topic fields: `note` (plain text), `markers` (XMind marker ids, kept for the round trip).
 export const LIMITS = { topics: 20000, depth: 200, text: 20000, label: 200 };
-export const DIRECTION = { LEFT: 0, RIGHT: 1, SIDE: 2 };
+export const RIGHT_ONLY = 1; // the library's value for a tree that grows to the right of the root: the one layout of every map
 
 export class DocError extends Error {}
 
@@ -21,11 +21,12 @@ export function safeLink(value) {
 const clip = (value, size) => (typeof value === 'string' ? value.slice(0, size) : '');
 
 export function blankDoc(title) {
-  return { nodeData: { id: newId(), topic: String(title || '').trim() || 'Central Topic', children: [] }, arrows: [], summaries: [], direction: DIRECTION.SIDE };
+  return { nodeData: { id: newId(), topic: String(title || '').trim() || 'Central Topic', children: [] }, arrows: [], summaries: [], direction: RIGHT_ONLY };
 }
 
 // Keeps only the fields the editor needs, as plain data of the right type. What the library would draw as HTML or fetch (`dangerouslySetInnerHTML`, `image`, `style`) is
-// dropped. A topic id that could not go into a selector, or is used twice, is replaced; `ids` maps old ids to new ones for the arrows and summaries.
+// dropped, and so is `direction`, the side of a first-level topic in the both-sides layout that older maps may carry. A topic id that could not go into a selector, or is
+// used twice, is replaced; `ids` maps old ids to new ones for the arrows and summaries.
 function cleanTopic(raw, depth, state) {
   if (!raw || typeof raw !== 'object') throw new DocError('A topic is not valid');
   if (depth > LIMITS.depth) throw new DocError('This map is too deeply nested');
@@ -52,7 +53,6 @@ function cleanTopic(raw, depth, state) {
     if (markers.length) node.markers = markers;
   }
   if (raw.expanded === false) node.expanded = false;
-  if (raw.direction === 0 || raw.direction === 1) node.direction = raw.direction;
   node.children = Array.isArray(raw.children) ? raw.children.map(child => cleanTopic(child, depth + 1, state)) : [];
   return node;
 }
@@ -70,13 +70,17 @@ export function sanitizeDoc(raw) {
   const summaries = (Array.isArray(raw.summaries) ? raw.summaries : [])
     .filter(summary => summary && known(summary.parent) && Number.isInteger(summary.start) && Number.isInteger(summary.end))
     .map(summary => ({ id: SAFE_ID.test(summary.id || '') ? summary.id : newId(), parent: known(summary.parent), start: summary.start, end: summary.end, label: clip(summary.label, LIMITS.label) }));
-  const direction = raw.direction === DIRECTION.LEFT || raw.direction === DIRECTION.RIGHT ? raw.direction : DIRECTION.SIDE;
-  return { nodeData, arrows, summaries, direction };
+  return { nodeData, arrows, summaries, direction: RIGHT_ONLY }; // whatever layout the source had
+}
+
+// The library writes a side on new and moved first-level topics; with one layout it means nothing, so it is not stored.
+function withoutSide({ direction, ...node }) {
+  return node.children ? { ...node, children: node.children.map(withoutSide) } : node;
 }
 
 // What is stored: the editor's document without its display settings.
 export function plainDoc(data) {
-  return { nodeData: data.nodeData, arrows: data.arrows || [], summaries: data.summaries || [], direction: data.direction };
+  return { nodeData: withoutSide(data.nodeData), arrows: data.arrows || [], summaries: data.summaries || [], direction: RIGHT_ONLY };
 }
 
 export function countTopics(node) { return 1 + (node.children || []).reduce((sum, child) => sum + countTopics(child), 0); }

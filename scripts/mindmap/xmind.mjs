@@ -2,7 +2,7 @@
 // The file comes from outside, so it is handled as untrusted: size limits before anything is unpacked, only the named entries are read, and every text goes into the
 // document as plain text (doc.mjs `sanitizeDoc` runs on the result).
 import { unzipSync, zipSync, strFromU8, strToU8 } from 'fflate';
-import { DIRECTION, DocError, LIMITS, newId, safeLink, sanitizeDoc } from './doc.mjs';
+import { DocError, LIMITS, newId, safeLink, sanitizeDoc } from './doc.mjs';
 
 export const XMIND_LIMITS = { file: 64 * 1024 * 1024, entry: 16 * 1024 * 1024 };
 
@@ -49,13 +49,6 @@ function readZip(bytes) {
 }
 
 const emptyLost = () => ({ sheets: 0, images: 0, boundaries: 0, callouts: 0, floating: 0, links: 0 });
-
-function directionOf(structureClass) {
-  const value = String(structureClass || '');
-  if (/logic\.left|left$/.test(value)) return DIRECTION.LEFT;
-  if (/logic\.right|\.right$|tree\.right/.test(value)) return DIRECTION.RIGHT;
-  return DIRECTION.SIDE;
-}
 
 function fromJsonTopic(raw, ctx, depth) {
   if (!raw || typeof raw !== 'object') throw new XmindError('This .xmind file is damaged');
@@ -105,7 +98,7 @@ function fromJson(text) {
   const arrows = (Array.isArray(sheet.relationships) ? sheet.relationships : [])
     .filter(r => r && ctx.idMap.has(r.end1Id) && ctx.idMap.has(r.end2Id))
     .map(r => ({ id: newId(), label: typeof r.title === 'string' ? r.title : '', from: ctx.idMap.get(r.end1Id), to: ctx.idMap.get(r.end2Id), delta1: { x: 80, y: -40 }, delta2: { x: -80, y: -40 } }));
-  return { nodeData, arrows, summaries: ctx.summaries, direction: directionOf(sheet.rootTopic.structureClass), lost };
+  return { nodeData, arrows, summaries: ctx.summaries, lost };
 }
 
 // content.xml (XMind 8 and older). `parseXml` is the browser's DOMParser (or linkedom in a test).
@@ -158,7 +151,7 @@ function fromXml(text, parseXml) {
     const title = firstChild(r, 'title');
     return { id: newId(), label: title ? title.textContent : '', from: ctx.idMap.get(r.getAttribute('end1')), to: ctx.idMap.get(r.getAttribute('end2')), delta1: { x: 80, y: -40 }, delta2: { x: -80, y: -40 } };
   }) : [];
-  return { nodeData, arrows, summaries: [], direction: directionOf(rootEl.getAttribute('structure-class')), lost };
+  return { nodeData, arrows, summaries: [], lost };
 }
 
 // bytes: Uint8Array of the file. Returns { doc, lost } (lost: what could not be kept, as counts).
@@ -191,7 +184,7 @@ export function describeLost(lost, t = text => text) {
   return parts;
 }
 
-const STRUCTURE = { [DIRECTION.LEFT]: 'org.xmind.ui.logic.left', [DIRECTION.RIGHT]: 'org.xmind.ui.logic.right', [DIRECTION.SIDE]: 'org.xmind.ui.map.unbalanced' };
+const RIGHT_STRUCTURE = 'org.xmind.ui.logic.right'; // a file with any other structure class is read all the same, and shown to the right
 const xmindId = () => newId().replace(/[^a-z0-9]/gi, '').padEnd(26, '0').slice(0, 26);
 
 function toJsonTopic(node, idMap) {
@@ -211,7 +204,7 @@ function toJsonTopic(node, idMap) {
 export function buildXmind({ title, data, creator = 'T-Agent' }) {
   const idMap = new Map();
   const rootTopic = toJsonTopic(data.nodeData, idMap);
-  rootTopic.structureClass = STRUCTURE[data.direction] || STRUCTURE[DIRECTION.SIDE];
+  rootTopic.structureClass = RIGHT_STRUCTURE;
   const byId = new Map();
   (function index(topic) { byId.set(topic.id, topic); for (const child of (topic.children && topic.children.attached) || []) index(child); })(rootTopic);
   for (const summary of data.summaries || []) {

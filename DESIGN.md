@@ -1295,3 +1295,4 @@ One line per release, added by `scripts/release.js`. Older notes are in `git log
 > v2.95.0 Mind maps in the single page with XMind-style shortcuts, touch editing and .xmind import and export; reversible task archiving (schema 10).
 > v2.95.1 Mind maps always use one tree that grows to the right.
 > v2.95.2 Never list live tasks as archived when an older server process ignores the archived filter.
+> v2.96.0 Service links: a six-digit code connects two services in both directions, with a reverse tunnel when the joiner cannot be reached.

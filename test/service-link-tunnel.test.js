@@ -1037,7 +1037,7 @@ test('a tunnel that dies stops every local request and socket on B', async t => 
 // What the real gates do with a tunnelled request
 // ---------------------------------------------------------------------------
 
-test('the access gate lets a tunnelled /v1 request through as local, stores no session for it, and no cookie crosses', async t => {
+test('the access gate lets a tunnelled /v1 request through as local without marking it trusted, and no cookie crosses', async t => {
   const { createAccessGate, upgradeAllowed } = require('../lib/access-gate');
   const session = require('express-session');
   const app = express();
@@ -1046,6 +1046,7 @@ test('the access gate lets a tunnelled /v1 request through as local, stores no s
   let seen = null;
   app.get('/v1/check', (req, res) => {
     seen = { localTrusted: req.session.localTrusted, upgradeAllowed: upgradeAllowed(req, 'local'), forwardedFor: req.headers['x-forwarded-for'] };
+    req.session.visited = true; // so the server hands out a cookie, which the tunnel must withhold
     res.json({ ok: true });
   });
   const hub = createHub();

@@ -157,6 +157,7 @@ async function run(browser, setup) {
   // A short message opens too, and the close button ends it.
   await press(page, touch);
   await closeButton(page).waitFor({ state: 'visible' });
+  await settled(page); // the notice is still growing: a press now can land beside the button
   await closeButton(page)[touch ? 'tap' : 'click']();
   await status(page).waitFor({ state: 'detached', timeout: 2000 });
   if (!touch) await page.mouse.move(5, viewport.height - 5);
@@ -170,6 +171,7 @@ async function run(browser, setup) {
     await page.waitForFunction(() => document.querySelector('.MuiSnackbar-root button[aria-expanded]').getAttribute('aria-expanded') === 'true');
     await closeButton(page).waitFor({ state: 'visible' });
   }
+  await settled(page); // the notice is still growing: a press now can land beside the button
   await closeButton(page)[touch ? 'tap' : 'click']();
   await status(page).waitFor({ state: 'detached', timeout: 2000 });
   if (!touch) await page.mouse.move(5, viewport.height - 5);

@@ -15,6 +15,7 @@ export async function api(method, url, body) {
   if (!res.ok) {
     const error = new Error((data && data.error) || text || `HTTP ${res.status}`);
     error.data = data;
+    error.status = res.status;
     throw error;
   }
   return data;

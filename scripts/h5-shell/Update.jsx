@@ -11,6 +11,7 @@ import DialogTitle from '@mui/material/DialogTitle';
 import FormControlLabel from '@mui/material/FormControlLabel';
 import IconButton from '@mui/material/IconButton';
 import Paper from '@mui/material/Paper';
+import Switch from '@mui/material/Switch';
 import Typography from '@mui/material/Typography';
 import CloseIcon from '@mui/icons-material/Close';
 import SystemUpdateAltIcon from '@mui/icons-material/SystemUpdateAlt';
@@ -56,6 +57,62 @@ const errorText = status => `${t(errorLabel(status.error)) || t(status.message |
 const lines = status => (Array.isArray(status.log) ? status.log.map(line => line.text).join('\n') : '');
 const POLL_MS = 60_000; // how often the red dot reads the update state
 const RESTART_GRACE_MS = 4000;
+const DOWN_POLL_MS = 3000; // a read failed (the service may be restarting): read this often until it answers again
+const DOWN_POLL_FOR_MS = 5 * 60_000; // ... but not for longer than this; a service that stays away is back to the minute poll
+const RELOAD_CHECK_MS = 1000; // an automatic update is waiting to be loaded: how often to see whether the person has finished
+const AUTO_RELOADED_KEY = 'h5-auto-reloaded-versions';
+
+// The reasons the switch cannot be used, and what the service is waiting for (the codes of auto_update).
+const AUTO_UNSUPPORTED = { NO_PROCESS_MANAGER: 'Needs a process manager such as PM2 to restart the service', CHECKS_DISABLED: 'Version checks are turned off on this service' };
+function waitingLabel({ code, count }) {
+  if (code === 'terminal_running') {
+    const number = Math.max(1, Number(count) || 1);
+    return number === 1 ? 'Waiting: 1 terminal running' : `Waiting: ${number} terminals running`;
+  }
+  return ({ terminal_program: 'Waiting: an open program such as vim or ssh', chat_running: 'Waiting: an agent chat is running', recent_input: 'Waiting: recent typing' })[code] || 'Waiting for the service to be idle';
+}
+const clockTime = value => {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+};
+// The one status line under the switch; null when there is nothing to say. The first reason the server lists is the one shown: the next one appears when it clears.
+function autoStateLine(auto) {
+  if (auto.state === 'applying') return t('Updating…');
+  if (auto.state === 'gave_up') return `${t('Automatic update stopped for this version')}${auto.last_error ? `: ${t(errorLabel(auto.last_error))}` : ''}`;
+  if (auto.state !== 'waiting' && auto.state !== 'idle') return null;
+  const waiting = Array.isArray(auto.waiting_for) ? auto.waiting_for[0] : null;
+  if (auto.state === 'waiting' && waiting) return t(waitingLabel(waiting));
+  const time = auto.quiet_until && (auto.state === 'waiting' || new Date(auto.quiet_until).getTime() > Date.now()) ? clockTime(auto.quiet_until) : null;
+  return time ? t(`Will update at about ${time}`) : null;
+}
+
+// A silent reload must not take anything away from the person: text not sent yet, a dialog or sheet, a chat that is open, or a page they are not looking at.
+const TEXT_FIELD = 'textarea, input:not([type=checkbox], [type=radio], [type=button], [type=submit], [type=range], [type=file])';
+function pageBusy(ui) {
+  if (document.hidden) return true;
+  const state = ui.get();
+  if (state.menu || state.copyText !== null || state.pasteSheet || state.taskDialog || state.translating || state.upload) return true;
+  if (document.querySelector('.MuiModal-root:not(.MuiModal-hidden), dialog[open]')) return true; // the same test as modalOpen() in h5.js
+  const chat = document.getElementById('h5-agent');
+  if (chat && !chat.hidden) return true; // a reload would close the conversation, and any message being written in it
+  const draft = document.getElementById('h5-translate-input');
+  if (draft && draft.value) return true;
+  const active = document.activeElement;
+  if (!active || active.closest('.xterm')) return false; // the terminal's own hidden textarea is not a draft
+  return Boolean(active.matches(TEXT_FIELD) ? active.value : active.isContentEditable && active.textContent);
+}
+// Once per version for each tab, kept across the reload. Nothing can be remembered (private mode): no reload, because a loop is worse than an old page.
+function claimReload(version) {
+  try {
+    const done = JSON.parse(sessionStorage.getItem(AUTO_RELOADED_KEY) || '[]');
+    if (done.includes(version)) return false;
+    sessionStorage.setItem(AUTO_RELOADED_KEY, JSON.stringify([...done, version].slice(-20)));
+    return true;
+  } catch { return false; }
+}
+const alreadyReloaded = version => {
+  try { return JSON.parse(sessionStorage.getItem(AUTO_RELOADED_KEY) || '[]').includes(version); } catch { return true; }
+};
 
 const Detail = ({ label, id, children }) => (
   <>
@@ -67,36 +124,90 @@ const Detail = ({ label, id, children }) => (
 // The header "Update" button (right of the refresh button) and its modal. It uses the /api/system update endpoints: opening it
 // checks for a new version (nothing is installed by the check); "Update now" starts the update and follows it while the service
 // restarts. A forced update is offered only after an update was blocked by local uncommitted changes (WORKTREE_DIRTY). A red dot on the button says that an update is available or that the service must be restarted.
-export function UpdateButton() {
+export function UpdateButton({ ui }) {
   const [open, setOpen] = useState(false);
   const [opened, setOpened] = useState(false); // the dialog is drawn only once it was opened the first time (it then stays, for its closing animation)
   const [view, setView] = useState({ phase: 'checking' }); // checking | current | available | restart | updating | error
   const [status, setStatus] = useState(null); // the last state read, for the dot and the details
+  const [auto, setAuto] = useState(null); // auto_update of the last update-status; null on a server without the feature
+  const [autoSaving, setAutoSaving] = useState(false);
+  const [autoError, setAutoError] = useState('');
   const [force, setForce] = useState(false);
   const [log, setLog] = useState('');
   const [slow, setSlow] = useState(false); // the restart takes long: offer to reload by hand
   const timer = useRef(null);
   const alive = useRef(true);
   const logNode = useRef(null);
+  const manual = useRef(false); // the Update dialog is following an update (monitor): it does its own reload, and the silent one stands aside
   useEffect(() => () => { alive.current = false; clearInterval(timer.current); }, []);
   useEffect(() => { const node = logNode.current; if (node) node.scrollTop = node.scrollHeight; }, [log]);
 
   // The red dot: read the state now and every minute; a state that was never checked (or whose last check failed) is checked once.
+  // The same reads notice that the service restarted into an automatic update, and reload this page silently ("Automatic refresh after an update" in DESIGN.md).
   useEffect(() => {
     let stop = false;
-    const read = async () => {
-      try { const next = await api('GET', '/api/system/update-status'); if (!stop) setStatus(next); return next; } catch { return null; }
+    let baseline = null; // boot_id and local_version of the first answer: the code this page was loaded from
+    let target = null; // the automatically installed version this page should load, once it may
+    let reloading = false;
+    let reloadCheck = 0;
+    let downSince = null;
+    let downPoll = 0;
+    let lastRead = Date.now();
+    const tryReload = () => {
+      if (stop || !target || reloading || manual.current || pageBusy(ui)) return;
+      clearInterval(reloadCheck);
+      if (!claimReload(target)) { target = null; return; }
+      reloading = true;
+      if (ui.actions.refresh) void ui.actions.refresh(); else location.reload();
     };
+    const observe = next => {
+      if (!baseline) { baseline = { boot: next.boot_id, version: next.local_version }; return; }
+      const autoUpdate = next.auto_update;
+      // A new process AND a new version AND the server says it installed that version by itself: a manual update or a plain restart never gets here.
+      if (target || manual.current || !autoUpdate || !next.boot_id || !baseline.boot || next.boot_id === baseline.boot) return;
+      if (!next.local_version || next.local_version === baseline.version || autoUpdate.last_auto_version !== next.local_version || alreadyReloaded(next.local_version)) return;
+      target = next.local_version;
+      tryReload();
+      if (target && !reloading) reloadCheck = setInterval(tryReload, RELOAD_CHECK_MS);
+    };
+    const pollWhileDown = () => {
+      if (downPoll || stop || manual.current || Date.now() - downSince > DOWN_POLL_FOR_MS) return;
+      downPoll = setTimeout(() => { downPoll = 0; void read(); }, DOWN_POLL_MS);
+    };
+    const read = async () => {
+      lastRead = Date.now();
+      try {
+        const next = await api('GET', '/api/system/update-status');
+        if (stop) return next;
+        downSince = null;
+        setStatus(next);
+        setAuto(next.auto_update || null);
+        observe(next);
+        return next;
+      } catch (error) {
+        // No answer, or a gateway's error while the service is away. A refused request (signed out) is not an outage.
+        if (!stop && (!error.status || error.status >= 500)) { if (downSince === null) downSince = Date.now(); pollWhileDown(); }
+        return null;
+      }
+    };
+    // A phone brought back to the front has slept through the minute poll: look now, so it does not reload a minute after the person started using it.
+    const onVisible = () => {
+      if (document.hidden) return;
+      tryReload();
+      if (!target && !manual.current && Date.now() - lastRead > DOWN_POLL_MS) void read();
+    };
+    document.addEventListener('visibilitychange', onVisible);
     (async () => {
       const first = await read();
       if (stop || !first || !['idle', 'failed', 'blocked'].includes(first.status)) return;
       try { const next = await api('POST', '/api/system/check-update', {}); if (!stop) setStatus(next); } catch { /* the dot stays as it was */ }
     })();
     const poll = setInterval(() => void read(), POLL_MS);
-    return () => { stop = true; clearInterval(poll); };
-  }, []);
+    return () => { stop = true; clearInterval(poll); clearInterval(reloadCheck); clearTimeout(downPoll); document.removeEventListener('visibilitychange', onVisible); };
+  }, [ui]);
 
   const monitor = (bootId = null) => {
+    manual.current = true;
     clearInterval(timer.current);
     let restartingAt = null;
     let down = false;
@@ -107,6 +218,7 @@ export function UpdateButton() {
       const restarted = down || (restartingAt && Date.now() - restartingAt > RESTART_GRACE_MS) || (bootId && next.boot_id && next.boot_id !== bootId);
       setLog(lines(next));
       if (next.status === 'blocked' || next.status === 'failed') {
+        manual.current = false;
         clearInterval(timer.current);
         setStatus(next);
         setView(previous => ({ ...previous, phase: 'error', message: errorText(next), dirty: next.error === 'WORKTREE_DIRTY' }));
@@ -152,19 +264,37 @@ export function UpdateButton() {
   const start = async () => {
     const forced = force && view.forceOffered && view.status && view.status.install_type !== 'archive';
     setView(previous => ({ ...previous, phase: 'updating', message: 'Updating…' }));
+    manual.current = true;
     try {
       let bootId = null;
       try { bootId = (await api('GET', '/api/system/version')).boot_id || null; } catch { /* the monitor falls back to the restart grace period */ }
       await api('POST', '/api/system/apply-update', forced ? { confirm: true, force: true } : { confirm: true });
       monitor(bootId);
     } catch (error) {
+      manual.current = false;
       setView(previous => ({ ...previous, phase: 'error', message: t(errorLabel(error.message)) || error.message || 'Update not run' }));
+    }
+  };
+
+  // The switch shows what the server answered, never what was pressed.
+  const saveAuto = async enabled => {
+    setAutoSaving(true);
+    setAutoError('');
+    try {
+      const next = await api('POST', '/api/system/auto-update', { enabled });
+      if (!alive.current) return;
+      setStatus(next);
+      if (next.auto_update) setAuto(next.auto_update);
+    } catch (error) {
+      if (alive.current) setAutoError(t(errorLabel(error.message)) || error.message || 'Update failed');
+    } finally {
+      if (alive.current) setAutoSaving(false);
     }
   };
 
   const busy = view.phase === 'checking' || view.phase === 'updating';
   // While the update runs the modal cannot be closed by accident (the service is about to restart).
-  const close = () => { if (view.phase !== 'updating') { setOpen(false); clearInterval(timer.current); } };
+  const close = () => { if (view.phase !== 'updating') { setOpen(false); clearInterval(timer.current); manual.current = false; } };
   const show = () => { setOpened(true); setOpen(true); void check(); };
   const shown = view.status || null;
   const notes = shown && shown.remote_manifest && shown.remote_manifest.release_url;
@@ -174,6 +304,9 @@ export function UpdateButton() {
   const forcing = Boolean(force && view.forceOffered && !archive);
   const noRestart = shown && shown.restart_required === false;
   const dot = needsAttention(status);
+  const autoAdmin = Boolean(status && status.is_update_admin);
+  const autoWhy = !auto ? null : !auto.supported ? (AUTO_UNSUPPORTED[auto.unsupported_reason] || 'Not available on this service') : !autoAdmin ? 'Only the update administrator can run updates' : null;
+  const autoLine = auto ? autoStateLine(auto) : null;
 
   return (
     <>
@@ -202,6 +335,20 @@ export function UpdateButton() {
               {Number.isFinite(Number(shown.check_interval_seconds)) && shown.check_interval_seconds ? <Detail label="Check interval" id="h5-update-interval">{`${Number(shown.check_interval_seconds) / 60} ${t('min')}`}</Detail> : null}
               <Detail label="GitHub version source" id="h5-update-source"><code style={{ fontSize: 12, wordBreak: 'break-all' }}>{shown.version_url || t('Not configured')}</code></Detail>
               {published ? <Detail label="Published" id="h5-update-published">{formatTime(published)}</Detail> : null}
+            </Box>
+          ) : null}
+          {auto ? (
+            <Box id="h5-update-auto" sx={{ mb: 1.5 }}>
+              <FormControlLabel
+                sx={{ ml: 0, mr: 0, width: '100%', justifyContent: 'space-between', '& .MuiFormControlLabel-label': { flex: '1 1 auto' } }}
+                labelPlacement="start"
+                control={<Switch checked={Boolean(auto.enabled)} disabled={Boolean(autoWhy) || autoSaving} onChange={event => void saveAuto(event.target.checked)} slotProps={{ input: { id: 'h5-update-auto-switch' } }} />}
+                label={<Typography variant="body2">{t('Update automatically when idle')}</Typography>}
+              />
+              {autoWhy ? <Typography id="h5-update-auto-why" variant="body2" color="text.secondary">{t(autoWhy)}</Typography> : null}
+              {autoLine ? <Typography id="h5-update-auto-state" role="status" variant="body2">{autoLine}</Typography> : null}
+              {autoError ? <Typography id="h5-update-auto-error" role="alert" variant="body2" color="error">{autoError}</Typography> : null}
+              {auto.last_auto_version ? <Typography id="h5-update-auto-last" variant="body2" color="text.secondary">{t(auto.last_auto_at ? `Last automatic update: ${auto.last_auto_version}, ${formatTime(auto.last_auto_at)}` : `Last automatic update: ${auto.last_auto_version}`)}</Typography> : null}
             </Box>
           ) : null}
           {notes && /^https?:\/\//.test(notes) ? <Typography variant="body2" sx={{ mb: 1 }}><a id="h5-update-notes" href={notes} target="_blank" rel="noopener noreferrer">{t('View GitHub release notes ↗')}</a></Typography> : null}

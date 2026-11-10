@@ -1373,6 +1373,8 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     await page.evaluate(() => window.sockets[1].emit(JSON.stringify({ type: 'history', data: '\x1b[?1049hfull screen app\x1b[30;1H', cols: 40, rows: 30 })));
     await page.waitForTimeout(200);
     const closed = await termInfo();
+    // Something has to raise the keyboard: with nothing like that focused, a shorter window is a real size change and the terminal refits (test-h5-viewport-collapse-browser.cjs).
+    await page.evaluate(() => { const field = document.createElement('input'); field.id = 'keyboard-owner'; field.style.cssText = 'position:fixed;top:0;left:0;opacity:0'; document.body.append(field); field.focus(); });
     await page.setViewportSize({ width: 390, height: 844 - 330 });
     await page.waitForTimeout(300);
     assert.equal(await page.locator('#h5-keys').isVisible(), true, 'the function keys stay visible while the keyboard is open');
@@ -1428,6 +1430,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       await page.evaluate(() => window.sockets[1].emit('\x1b[30;1H')); // back to the cursor row the later checks expect
     }
     await page.locator('#h5-translate-input').blur();
+    await page.evaluate(() => document.getElementById('keyboard-owner').remove());
     await page.setViewportSize({ width: 390, height: 844 });
     await page.waitForTimeout(300);
 

@@ -148,10 +148,26 @@
   // The terminal itself keeps the size it had before the keyboard opened and is shifted up instead: a smaller terminal would
   // resize the PTY, and a full-screen program (Claude Code, vim, tmux) redraws its whole screen on every resize.
   const KEYBOARD_MIN_SHRINK = 8;
+  const TERMINAL_MIN_HEIGHT = 48; // px; below this the terminal box is treated as collapsed (about three rows)
+  const KEYBOARD_CLOSE_MS = 1000; // how long after the focus left a keyboard may still be going down
+  // The elements that take typed text. The computer keyboard shortcuts below use this too.
+  const EDITABLE = 'input, textarea, select, [contenteditable=""], [contenteditable="true"]';
+  const editing = el => Boolean(el && el.closest && el.closest(EDITABLE));
+  const NO_KEYBOARD_INPUTS = new Set(['button', 'checkbox', 'color', 'file', 'hidden', 'image', 'radio', 'range', 'reset', 'submit']);
+  // Can this focused element have an on-screen keyboard up? Not the terminal's textarea (`noScreenKeyboard` gives it inputmode="none"), and not a field that takes no typing.
+  // What has the focus inside an iframe cannot be seen from here, so an iframe counts.
+  function raisesKeyboard(el) {
+    if (el && el.tagName === 'IFRAME') return true;
+    if (!editing(el)) return false;
+    const field = el.closest(EDITABLE);
+    if (field.tagName === 'INPUT' && NO_KEYBOARD_INPUTS.has(field.type)) return false;
+    return field.getAttribute('inputmode') !== 'none' && !field.readOnly && !field.disabled;
+  }
   let fullHeight = 0;
   let fullWidth = 0;
   let closedTerminalHeight = 0; // the terminal box height while the keyboard is closed
   let keyboardOpen = false;
+  let focusLeftAt = 0;
   function fitViewport() {
     if (pointerMode()) {
       // A computer has no on-screen keyboard: a shorter window is just a shorter window. The page follows the window height and the terminal refits
@@ -164,9 +180,17 @@
       holdTerminalSize();
       return;
     }
-    const height = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+    const reading = window.visualViewport ? window.visualViewport.height : window.innerHeight;
     if (window.innerWidth !== fullWidth) { fullWidth = window.innerWidth; fullHeight = 0; } // rotated: measure again
-    fullHeight = Math.max(fullHeight, height);
+    // A shorter visual viewport is the on-screen keyboard only while something that raises one has the focus. With nothing like that, a small reading is not believed
+    // (iOS in standalone mode was seen with a page about 200px tall and the terminal box at height 0): the page takes the larger of the two heights, and that is also the
+    // new full height, so a bad reading cannot make a later one look like a keyboard. `innerHeight` still follows a real change (a shorter window, the Safari URL bar).
+    // After a blur a keyboard that also shortens the window (Android, interactive-widget=resizes-content) is still going down for a moment: the terminal stays pinned, or it
+    // would resize the PTY twice.
+    const closing = keyboardOpen && window.innerHeight < fullHeight - KEYBOARD_MIN_SHRINK && performance.now() - focusLeftAt < KEYBOARD_CLOSE_MS;
+    const typing = raisesKeyboard(document.activeElement) || closing;
+    const height = typing ? reading : Math.max(reading, window.innerHeight);
+    fullHeight = typing ? Math.max(fullHeight, height) : height;
     const wasOpen = keyboardOpen;
     keyboardOpen = fullHeight - height > KEYBOARD_MIN_SHRINK;
     if (wasOpen && !keyboardOpen) {
@@ -205,23 +229,29 @@
     }
     el.style.transform = shift ? `translateY(${-shift}px)` : '';
   }
-  new ResizeObserver(() => { if (!keyboardOpen) closedTerminalHeight = terminalHost.clientHeight; }).observe(terminalHost);
+  new ResizeObserver(() => { if (!keyboardOpen && terminalHost.clientHeight >= TERMINAL_MIN_HEIGHT) closedTerminalHeight = terminalHost.clientHeight; }).observe(terminalHost);
   window.visualViewport?.addEventListener('resize', fitViewport);
   window.visualViewport?.addEventListener('scroll', fitViewport);
   window.addEventListener('resize', fitViewport);
   fitViewport();
   // iOS Safari animates the keyboard and sometimes reports its final height without a last resize event (for example when
   // focus moves from the terminal to the translate box), which leaves the page shorter than the visible area. Measure again
-  // while focus changes and while the keyboard is up.
+  // while focus changes, while the keyboard is up, and when the page comes back (iOS can report late then as well).
   let settleTimers = [];
   function settleViewport() {
     settleTimers.forEach(clearTimeout);
     settleTimers = [];
     if (pointerMode()) return; // touch only: there is no on-screen keyboard to wait for
-    settleTimers = [0, 100, 250, 500, 1000].map(delay => setTimeout(fitViewport, delay));
+    settleTimers = [0, 100, 250, 500, 1000].map(delay => setTimeout(measureAgain, delay));
+  }
+  function measureAgain() {
+    fitViewport();
+    if (agentChat) fitAgentView();
   }
   document.addEventListener('focusin', settleViewport);
-  document.addEventListener('focusout', settleViewport);
+  document.addEventListener('focusout', () => { focusLeftAt = performance.now(); settleViewport(); });
+  window.addEventListener('pageshow', settleViewport);
+  window.addEventListener('orientationchange', settleViewport);
   setInterval(() => { if (keyboardOpen && !pointerMode()) fitViewport(); }, 500);
 
   // ── Tasks ──
@@ -964,7 +994,9 @@
   function fitAgentView() {
     const top = document.querySelector('.h5-header').getBoundingClientRect().bottom;
     const viewport = window.visualViewport;
-    const bottom = viewport ? viewport.offsetTop + viewport.height : window.innerHeight;
+    const visible = viewport ? viewport.offsetTop + viewport.height : window.innerHeight;
+    // The same rule as fitViewport: without a keyboard a small reading is not believed.
+    const bottom = pointerMode() || keyboardOpen || raisesKeyboard(document.activeElement) ? visible : Math.max(visible, window.innerHeight);
     agentView.style.top = `${top}px`;
     agentView.style.height = `${Math.max(0, bottom - top)}px`;
   }
@@ -1064,16 +1096,22 @@
     s.queued = '';
     if (data) send(s, data);
   }
+  // A box with no usable height (the page collapsed for a moment) says nothing about the size the terminal should have: a fit would give it one or two rows and a
+  // full-screen program would redraw for them. The size stays as it is; the box's ResizeObserver fits the terminal again when it has room.
+  const usableBox = s => s.el.clientHeight >= TERMINAL_MIN_HEIGHT;
   function sendResize(s) {
     if (s !== session) return; // a hidden warm terminal leaves the PTY size alone
+    if (!usableBox(s)) { s.sizeUnsent = true; return; }
     if (s.ws && s.ws.readyState === WebSocket.OPEN && s.term.cols && s.term.rows) {
+      s.sizeUnsent = false;
       TerminalProtocol.send(s.ws, { type: 'resize', cols: s.term.cols, rows: s.term.rows });
     }
   }
   function refit(s) { // a hidden one has no size
-    if (s.disposed || s !== session) return;
+    if (s.disposed || s !== session || !usableBox(s)) return;
     TerminalViewport.fit(s.term, s.fit, s.el, wideMin());
     layoutWide(s);
+    if (s.sizeUnsent && !s.paused) sendResize(s); // refused while the box was collapsed, and the fit changed nothing that would send it
   }
 
   // ── Recent terminals stay connected (WARM_MAX, the shown one included) ──
@@ -1681,6 +1719,7 @@
     warmIdle = 0;
     if (document.visibilityState !== 'visible') { warmIdle = setTimeout(sleepWarm, WARM_IDLE_MS); return; }
     fitViewport();
+    settleViewport(); // iOS can report the real height late and send no event
     ackShown(); // the person is looking again: a terminal that finished meanwhile is seen now
     if (session && !session.ws && !session.timer) open(session);
     else if (session && !session.ws && session.timer) { clearTimeout(session.timer); session.timer = null; open(session); } // do not wait out the backoff
@@ -1818,8 +1857,6 @@
   });
 
   // ── A hardware keyboard: type to the terminal, Escape back to it, Cmd/Ctrl+K for the search (deskKeys: a computer, or a tablet with a keyboard) ──
-  const EDITABLE = 'input, textarea, select, [contenteditable=""], [contenteditable="true"]';
-  const editing = el => Boolean(el && el.closest && el.closest(EDITABLE));
   // A dialog, a temporary drawer (task sheet, settings, menus) or the copy view is open: keys belong to it.
   const modalOpen = () => Boolean(document.querySelector('.MuiModal-root:not(.MuiModal-hidden), dialog[open]')) || ui.get().copyText !== null;
   const MODIFIER_KEYS = new Set(['Shift', 'Control', 'Alt', 'Meta', 'CapsLock', 'NumLock', 'ScrollLock', 'Fn', 'FnLock', 'Hyper', 'Super', 'OS', 'AltGraph', 'Dead', 'Unidentified', 'Process', 'Compose']);

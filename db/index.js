@@ -51,6 +51,8 @@ if (!existing.includes('work_dir'))    db.exec('ALTER TABLE tasks ADD COLUMN wor
 for (const column of ['technical_path', 'readme_path', 'agent_path']) {
   if (!existing.includes(column)) db.exec(`ALTER TABLE tasks ADD COLUMN ${column} TEXT`);
 }
+// Schema 10: when the task was archived (services/task-archive.js); a task of an older database is simply not archived.
+if (!existing.includes('archived_at')) db.exec('ALTER TABLE tasks ADD COLUMN archived_at TEXT');
 
 // Migrate documents on each host, including Engine workspaces. Missing/offline
 // workspaces are left alone and retried on the next startup.

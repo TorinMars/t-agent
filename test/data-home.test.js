@@ -289,6 +289,44 @@ test('a schema 7 database gets the terminal start directories (schema 8) and the
   last.close();
 });
 
+test('a schema 9 database gets tasks.archived_at (schema 10), with a copy taken first; existing data is kept, nothing is archived and a second start changes nothing', t => {
+  const root = temp(t);
+  assert.equal(openDb({ TAGENT_HOME: root }).status, 0);
+  // A database of the previous generation: no tasks.archived_at, user_version 9.
+  const file = path.join(root, 'db.sqlite');
+  const old = new Database(file);
+  old.exec('ALTER TABLE tasks DROP COLUMN archived_at');
+  const task = old.prepare("INSERT INTO tasks (title, work_dir, user_id, sort_order, share_token) VALUES ('kept task', '/work/kept', 'owner', 7, 'token')").run().lastInsertRowid;
+  old.prepare("INSERT INTO task_terminals (task_id, terminal_id, title, agent, agent_session_id) VALUES (?, 'a', 'Claude 2', 'claude', 's1')").run(task);
+  old.pragma('user_version = 9');
+  old.close();
+
+  const result = openDb({ TAGENT_HOME: root });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, new RegExp(`schema 9 is migrated to ${CODE_SCHEMA}; a copy of the database before the migration is in `));
+  const after = new Database(file, { readonly: true });
+  assert.equal(after.pragma('user_version', { simple: true }), CODE_SCHEMA);
+  assert.ok(after.prepare('PRAGMA table_info(tasks)').all().some(column => column.name === 'archived_at'));
+  assert.deepEqual(after.prepare('SELECT title, work_dir, user_id, sort_order, share_token, archived_at FROM tasks WHERE id = ?').get(task),
+    { title: 'kept task', work_dir: '/work/kept', user_id: 'owner', sort_order: 7, share_token: 'token', archived_at: null }, 'the row is kept and is not archived');
+  assert.equal(after.prepare('SELECT agent_session_id FROM task_terminals WHERE task_id = ?').get(task).agent_session_id, 's1');
+  after.close();
+  const copies = fs.readdirSync(path.join(root, 'backups'));
+  assert.equal(copies.length, 1);
+  assert.match(copies[0], new RegExp(`^db-schema-9-before-${CODE_SCHEMA}-.+\\.sqlite$`));
+  const copy = new Database(path.join(root, 'backups', copies[0]), { readonly: true });
+  assert.equal(copy.pragma('user_version', { simple: true }), 9, 'the copy is the database as it was');
+  assert.ok(!copy.prepare('PRAGMA table_info(tasks)').all().some(column => column.name === 'archived_at'));
+  assert.equal(copy.prepare('SELECT title FROM tasks WHERE id = ?').get(task).title, 'kept task');
+  copy.close();
+  if (posix) assert.equal(mode(path.join(root, 'backups', copies[0])), 0o600);
+
+  const again = openDb({ TAGENT_HOME: root });
+  assert.equal(again.status, 0, again.stderr);
+  assert.doesNotMatch(again.stdout, /is migrated/);
+  assert.equal(fs.readdirSync(path.join(root, 'backups')).length, 1, 'no second copy');
+});
+
 test('a schema 8 database gets the T-Attention tables (schema 9), with a copy taken first; existing data is kept and a second start changes nothing', t => {
   const root = temp(t);
   assert.equal(openDb({ TAGENT_HOME: root }).status, 0);
@@ -302,10 +340,9 @@ test('a schema 8 database gets the T-Attention tables (schema 9), with a copy ta
 
   const result = openDb({ TAGENT_HOME: root });
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(CODE_SCHEMA, 9);
-  assert.match(result.stdout, /schema 8 is migrated to 9; a copy of the database before the migration is in /);
+  assert.match(result.stdout, new RegExp(`schema 8 is migrated to ${CODE_SCHEMA}; a copy of the database before the migration is in `));
   const after = new Database(file);
-  assert.equal(after.pragma('user_version', { simple: true }), 9);
+  assert.equal(after.pragma('user_version', { simple: true }), CODE_SCHEMA);
   for (const table of ['attention_items', 'attention_events', 'attention_tokens']) {
     assert.equal(after.prepare('SELECT COUNT(*) AS n FROM sqlite_master WHERE type = ? AND name = ?').get('table', table).n, 1, table);
   }
@@ -322,7 +359,7 @@ test('a schema 8 database gets the T-Attention tables (schema 9), with a copy ta
   after.close();
   const copies = fs.readdirSync(path.join(root, 'backups'));
   assert.equal(copies.length, 1);
-  assert.match(copies[0], /^db-schema-8-before-9-.+\.sqlite$/);
+  assert.match(copies[0], new RegExp(`^db-schema-8-before-${CODE_SCHEMA}-.+\\.sqlite$`));
   const copy = new Database(path.join(root, 'backups', copies[0]), { readonly: true });
   assert.equal(copy.pragma('user_version', { simple: true }), 8, 'the copy is the database as it was');
   assert.equal(copy.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE name LIKE 'attention_%'").get().n, 0);

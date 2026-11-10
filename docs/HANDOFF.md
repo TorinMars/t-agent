@@ -47,6 +47,7 @@ For the Claude / developer taking over: read `AGENTS.md` (development and releas
   - Headless Chromium draws only about 10 to 17 frames per second while the Mac display sleeps, so touch-timing tests must send in-page pointer events and time them with `performance.now()`, not rely on frame timing.
   - `scripts/test-h5-settings-browser.cjs` had a save / reload race (the reload ran before the first working directory save finished); fixed in `d5a879f`.
   - `schema_version` is 8 since v2.88.7 (`task_terminals.work_dir`, `task_default_terminal_dirs`); 7 since v2.87.11 (`task_terminals.title_custom`). Raise it for every SQLite schema change; v2.28.2, v2.70.0, v2.77.0 and v2.78.0 added columns without raising it.
+  - `schema_version` is 10 since task archiving (`tasks.archived_at`); 9 added T-Attention. The migration is one-way: a database stamped 10 is refused by older app versions (`DATA_SCHEMA_NEWER`), so going back needs the copy `backups/db-schema-9-before-10-*.sqlite`.
   - iPad input mode must be checked on a real iPad.
 
 ## Current state

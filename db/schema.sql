@@ -10,7 +10,9 @@ CREATE TABLE IF NOT EXISTS tasks (
   agent_path TEXT,
   sort_order INTEGER NOT NULL DEFAULT 0,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  -- Schema 10: when the task was archived (ISO 8601 UTC); NULL while it is in use. See services/task-archive.js.
+  archived_at TEXT
 );
 
 -- Task groups. doing/todo/done are system groups that cannot be modified; other groups are managed by users.

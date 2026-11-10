@@ -402,7 +402,8 @@ function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS,
   // Sends the first queued message, unless the agent is working. A message that cannot be sent goes back to the front of the queue and the chat says so;
   // nothing is tried again by itself.
   async function dispatchQueue(rt, task) {
-    if (rt.status === 'running' || rt.dispatching) return;
+    // A queued message of an archived task just waits (the queue is kept): stopping the turn on archive must not send the next one.
+    if (rt.status === 'running' || rt.dispatching || taskArchived(rt.taskId)) return;
     const [head, ...rest] = readQueue(rt.id);
     if (!head) return;
     rt.dispatching = true;
@@ -421,12 +422,12 @@ function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS,
   // What the agents of one person are doing (GET /api/agent-chat/summary): the turns running now and the messages queued behind them (the queue is kept
   // here, see setQueue); "submitted" is both, the messages sent to an agent that have not finished. Chats of every task of the person count.
   function summary(owner) {
-    return countActive(db.prepare(`${ACTIVE_ROWS} WHERE t.user_id = ?`).all(owner));
+    return countActive(db.prepare(`${ACTIVE_ROWS} WHERE t.user_id = ? AND t.archived_at IS NULL`).all(owner));
   }
 
   // The same counts over the chats of every person: a restart for an update ends them all.
   function activity() {
-    return countActive(db.prepare(ACTIVE_ROWS).all());
+    return countActive(db.prepare(`${ACTIVE_ROWS} WHERE t.archived_at IS NULL`).all()); // the queue of an archived task waits for ever: it must not hold back an update
   }
 
   function countActive(rows) {
@@ -606,7 +607,14 @@ function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS,
     return { success: true, steered: true };
   }
 
+  // Read from the database each time: a queued message goes out with the task object of the turn before it, which does not know the task was archived since.
+  function taskArchived(taskId) {
+    const row = db.prepare('SELECT archived_at FROM tasks WHERE id = ?').get(taskId);
+    return Boolean(row && row.archived_at);
+  }
+
   async function sendMessage(task, id, body, deps = {}) {
+    if (taskArchived(task.id)) throw fail('TASK_ARCHIVED', 409);
     const row = rowOf(task.id, id);
     if (!row) throw fail('CONVERSATION_NOT_FOUND', 404);
     const rt = runtimeFor(row, task);

@@ -86,7 +86,13 @@ async function handleRemoteTerminalUpgrade(req, socket, head, wss, user) {
     upstream.once('error', () => {
       if (!settled) rejectUpgrade(socket, 502, 'Bad Gateway');
     });
-  } catch {
+  } catch (error) {
+    // The Engine refuses the ticket of an archived task. A failed upgrade would read as a lost connection, so the page would keep reconnecting: the
+    // socket is opened and closed the way the Engine itself closes one (1008, TASK_ARCHIVED).
+    if (error && error.message === 'TASK_ARCHIVED' && !socket.destroyed) {
+      wss.handleUpgrade(req, socket, head, downstream => closeWebSocket(downstream, 1008, 'TASK_ARCHIVED'));
+      return true;
+    }
     rejectUpgrade(socket, 502, 'Bad Gateway');
   }
   return true;

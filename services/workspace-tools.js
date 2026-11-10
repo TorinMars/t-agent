@@ -34,6 +34,7 @@ function isDirectory(target) {
 }
 
 // ---------- Import ----------
+// Every task of the owner counts here, also an archived one (services/task-archive.js): its directory is still managed and must not be offered for import.
 function managedDirs(database, owner) {
   return database.prepare('SELECT work_dir FROM tasks WHERE user_id = ? AND work_dir IS NOT NULL').all(owner)
     .map(row => path.resolve(row.work_dir));
@@ -193,12 +194,13 @@ async function mapLimit(items, limit, worker) {
 
 async function cleanupOverview(database, owner, workDir) {
   const root = workRoot(workDir);
+  // An archived task keeps its directory: its repositories are not offered for cleanup, but its directory still protects a parent directory (`others`).
   const tasks = database.prepare('SELECT * FROM tasks WHERE user_id = ? AND work_dir IS NOT NULL ORDER BY id').all(owner);
   const others = tasks.map(task => path.resolve(task.work_dir));
   const cleaned = database.prepare('SELECT * FROM repo_cleanups ORDER BY cleaned_at DESC, id DESC').all();
   const cleanedPaths = new Set(cleaned.map(row => row.path));
   const jobs = [];
-  for (const task of tasks) for (const repo of findRepos(task.work_dir)) if (!cleanedPaths.has(repo)) jobs.push({ task, repo });
+  for (const task of tasks.filter(item => !item.archived_at)) for (const repo of findRepos(task.work_dir)) if (!cleanedPaths.has(repo)) jobs.push({ task, repo });
   const items = await mapLimit(jobs, 4, async ({ task, repo }) => {
     const taskDir = path.resolve(task.work_dir);
     const base = { task_id: task.id, title: task.title, task_path: taskDir, path: repo, name: path.relative(taskDir, repo) || path.basename(repo) };
@@ -229,6 +231,7 @@ async function cleanupRepos(database, owner, workDir, requests, closeTerminals =
     const target = path.resolve(String((request && request.path) || ''));
     const task = all.find(item => item.id === taskId);
     if (!task) { results.push({ task_id: taskId, path: target, ok: false, error: 'TASK_NOT_FOUND' }); continue; }
+    if (task.archived_at) { results.push({ task_id: taskId, path: target, ok: false, error: 'TASK_ARCHIVED' }); continue; }
     if (!findRepos(task.work_dir).includes(target)) { results.push({ task_id: taskId, path: target, ok: false, error: 'NOT_A_REPOSITORY_OF_TASK' }); continue; }
     const guard = protectedReason(target, { root, others });
     const repo = guard ? { safe: false, reason: guard } : await inspectRepository(target);

@@ -8,10 +8,18 @@ Authorization: Bearer tae_xxx
 
 ## System and pairing
 
-- `GET /v1/health`
+- `GET /v1/health`: `{ ok: true, capabilities: ['service-links'] }`, without a token. A service that links reads it first; an older one answers only `{ ok: true }`.
 - `POST /v1/pair`
 - `GET /v1/info`
 - `GET /v1/capabilities`
+
+## Service links
+
+Two services that see and operate each other as remote Engines; see "Service links" in `DESIGN.md`. The capability is `service-links` (in `/v1/info` and `/v1/health`).
+
+- `POST /v1/service-links/join`: no token; the rate limit of `/v1/pair`. Body `{ code, name, instance_id, access_token }`: the 6-digit code made by the browser call `POST /api/service-links/code` on this service, and a fresh Engine token the joiner created for this service. Answer 201 `{ link_id, access_token, tunnel_token, name, instance_id, version }`. Errors: `INVALID_CODE` (wrong, used, expired or malformed), `INVALID_REQUEST`, `SELF_LINK`, `ALREADY_LINKED`, `PAIRING_RATE_LIMITED`. An Engine pairing code (`TA-…`) is refused here, and a 6-digit code is refused on `/v1/pair`.
+- `GET /v1/service-links/tunnel`: WebSocket, `Authorization: Bearer tsl_...`. 401 for a wrong or revoked token. The `tsl_` token works only here.
+- `POST /v1/service-links/:id/unlink` and `POST /v1/service-link-notice/:id/unlink`: 204. The peer says it unlinked. Bearer: the Engine token issued to that peer for that link; any other token gets 404 `LINK_NOT_FOUND`. The second path is the one the initiator calls through the tunnel.
 
 ## Tasks and documents
 
@@ -82,6 +90,8 @@ Every Token has admin rights; listing, creating and revoking Tokens needs the `e
 - `GET /v1/tokens`
 - `POST /v1/tokens`
 - `DELETE /v1/tokens/:id`
+
+`GET /v1/tokens` gives each token a `service_link_id` (null for a normal token). A link token is named `Service link: <peer>`, and revoking it ends the whole link, as an unlink does.
 
 ## Engine updates
 

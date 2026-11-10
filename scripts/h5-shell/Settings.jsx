@@ -14,6 +14,7 @@ import Typography from '@mui/material/Typography';
 import CloseIcon from '@mui/icons-material/Close';
 import { api, t } from './common.jsx';
 import { EnginesGroup } from './Engines.jsx';
+import { ServiceLinksGroup } from './ServiceLinks.jsx';
 import { AttentionSettings } from './AttentionSettings.jsx';
 import { Feedback, Field, Group, Hint, ROW, failure, useFeedback } from './Form.jsx';
 
@@ -359,6 +360,8 @@ function LogoutRow({ ui }) {
 
 // The settings sheet that rises from the bottom (opened by the gear at the bottom of the task sidebar): the Client configuration, translation and voice input.
 export function SettingsDrawer({ state, ui }) {
+  const [linksVersion, setLinksVersion] = useState(0); // Engines and Linked services show the same links: a change in one reads both again
+  const linksChanged = () => setLinksVersion(version => version + 1);
   return (
     <Drawer
       anchor="bottom" id="h5-settings" open={state.settingsOpen} onClose={() => ui.actions.closeSettings()} aria-labelledby="h5-settings-title"
@@ -376,7 +379,8 @@ export function SettingsDrawer({ state, ui }) {
         <OssGroup />
         <TranslateGroup />
         <VoiceGroup />
-        <EnginesGroup state={state} ui={ui} />
+        <EnginesGroup state={state} ui={ui} linksVersion={linksVersion} onLinksChanged={linksChanged} />
+        <ServiceLinksGroup state={state} ui={ui} version={linksVersion} onChanged={linksChanged} />
         <RemoteGroup />
         <AttentionSettings ui={ui} />
         <AccessGroup />

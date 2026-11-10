@@ -5,6 +5,7 @@ const { decryptToken } = require('../lib/token-crypto');
 const { closeWebSocket } = require('../lib/websocket-close');
 const { noteTerminalInput, isTerminalInputFrame } = require('../lib/terminal-recent-input');
 const { request, assertRemoteTerminal } = require('./remote-client');
+const { isTunnelBase, linkIdOf, getHub } = require('../lib/service-link-tunnel');
 
 function rejectUpgrade(socket, status, message) {
   if (!socket.destroyed) {
@@ -38,11 +39,15 @@ async function handleRemoteTerminalUpgrade(req, socket, head, wss, user) {
       body: { task_id: taskId, terminal_id: url.searchParams.get('terminalId') || 'default' },
     });
     const upstreamUrl = new URL(terminalSession.websocket_path, `${server.base_url}/`);
-    upstreamUrl.protocol = upstreamUrl.protocol === 'https:' ? 'wss:' : 'ws:';
+    const tunnelled = isTunnelBase(server.base_url);
+    if (!tunnelled) upstreamUrl.protocol = upstreamUrl.protocol === 'https:' ? 'wss:' : 'ws:';
     for (const name of ['clientId', 'takeover', 'proto']) {
       if (url.searchParams.has(name)) upstreamUrl.searchParams.set(name, url.searchParams.get(name));
     }
-    const upstream = new WebSocket(upstreamUrl, { handshakeTimeout: 10_000 });
+    // Over a service link's tunnel only the path and the ticket in its query are used; the object behaves like the WebSocket on the other branch.
+    const upstream = tunnelled
+      ? getHub().openWebSocket(linkIdOf(server.base_url), `${upstreamUrl.pathname}${upstreamUrl.search}`, { handshakeTimeout: 10_000 })
+      : new WebSocket(upstreamUrl, { handshakeTimeout: 10_000 });
     const inputKey = `remote:${match[1]}:${taskId}:${url.searchParams.get('terminalId') || 'default'}`;
 
     let settled = false;
@@ -57,6 +62,7 @@ async function handleRemoteTerminalUpgrade(req, socket, head, wss, user) {
       }
       wss.handleUpgrade(req, socket, head, downstream => {
         if (req.sessionID) downstream.clientSessionId = req.sessionID;
+        if (tunnelled) upstream.limitBy(downstream);
         const closeBoth = (code = 1000, reason = '') => {
           closeWebSocket(downstream, code, reason);
           closeWebSocket(upstream, code, reason);

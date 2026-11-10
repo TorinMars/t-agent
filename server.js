@@ -35,6 +35,8 @@ const { frameAncestors, clientCookieSameSite } = require('./lib/client-embedding
 const { createLoginGate, createUnknownPageRedirect } = require('./lib/login-gate');
 const { createStaticAssets, wantsChinese } = require('./lib/static-assets');
 const { createAccessGate, upgradeAllowed } = require('./lib/access-gate');
+const serviceLinks = require('./services/service-links').getServiceLinks();
+const { getHub: getLinkHub, TUNNEL_WS_OPTIONS } = require('./lib/service-link-tunnel');
 
 const app = express();
 
@@ -173,6 +175,7 @@ app.use('/api/agent-config', require('./routes/agent-config').createClientRouter
 app.use('/api/file-sync', require('./routes/file-sync').browser);
 app.use('/api/remote-servers', require('./routes/remote-servers'));
 app.use('/api/remote-tokens', require('./routes/remote-tokens'));
+app.use('/api/service-links', require('./routes/service-links'));
 app.use('/api/remote/v1', require('./routes/remote-api'));
 // Standard Engine API. The Client package bundles it by default and exposes the same protocol as a standalone Engine.
 app.use('/v1', require('./routes/engine-v1'));
@@ -441,6 +444,7 @@ app.use(createUnknownPageRedirect({ loginPath: config.loginPath, isAuthenticated
 // HTTP server + WebSocket server
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ noServer: true });
+const tunnelWss = new WebSocket.Server({ noServer: true, ...TUNNEL_WS_OPTIONS }); // the frame limit of the service link tunnel
 app.locals.disconnectClientSession = sid => {
   for (const ws of wss.clients) if (ws.clientSessionId === sid) ws.close(1008, 'Authentication required');
 };
@@ -482,6 +486,17 @@ server.on('upgrade', (req, socket, head) => {
     return socket.destroy();
   }
   const engineUrl = new URL(req.url, 'http://engine.local');
+  // The reverse tunnel of a service link. After the access check above, like every /v1 path. Its tsl_ token works only here.
+  if (engineUrl.pathname === '/v1/service-links/tunnel') {
+    const linkId = serviceLinks.authenticateTunnel(req.headers.authorization);
+    if (!linkId) {
+      socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+      socket.destroy();
+      return;
+    }
+    tunnelWss.handleUpgrade(req, socket, head, ws => getLinkHub().accept(linkId, ws));
+    return;
+  }
   const engineMatch = engineUrl.pathname.match(/^\/v1\/terminal-sessions\/(\d+)\/stream$/);
   if (engineMatch) {
     pruneExpiredTickets();
@@ -519,6 +534,7 @@ server.on('upgrade', (req, socket, head) => {
 server.listen(config.port, config.host, () => {
   const listeningPort = server.address().port;
   serverLock.update({ port: listeningPort });
+  serviceLinks.start({ port: listeningPort });
   const anyHost = ['0.0.0.0', '::', '', 'localhost'].includes(config.host);
   terminal.setHookEndpoint(`http://${anyHost ? '127.0.0.1' : config.host}:${listeningPort}/hooks/terminal-activity`);
   attentionLocalUrl = `http://${anyHost ? '127.0.0.1' : config.host}:${listeningPort}`;
@@ -554,5 +570,5 @@ server.listen(config.port, config.host, () => {
 });
 
 // Do not let frpc become an orphan process after the Client exits.
-process.on('exit', () => { frpRouter.service.stop(); sshTunnelRouter.service.stop(); attentionMarket.stop(); });
+process.on('exit', () => { frpRouter.service.stop(); sshTunnelRouter.service.stop(); attentionMarket.stop(); serviceLinks.stop(); });
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => process.exit(0));

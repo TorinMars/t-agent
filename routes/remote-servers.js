@@ -7,6 +7,7 @@ const { normalizeBaseUrl, request, assertRemoteTerminal } = require('../services
 const { inspectRemoteAddress, persistRemoteServerEdit } = require('../services/remote-server-settings');
 const remoteUpdates = require('../services/remote-engine-updates');
 const { streamRemote } = require('../services/remote-stream');
+const { getServiceLinks } = require('../services/service-links');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -37,6 +38,7 @@ async function checkServer(row) {
     const code = safeError(error);
     db.prepare(`UPDATE remote_servers SET status = ?, last_checked_at = CURRENT_TIMESTAMP, last_error = ?,
       updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(error.statusCode === 401 ? 'unauthorized' : 'offline', code, row.id);
+    if (error.statusCode === 401) getServiceLinks().noteUnauthorized(row.id);
     throw error;
   }
 }
@@ -143,7 +145,13 @@ router.post('/', async (req, res) => {
   }
 });
 
-router.post('/:id/test', async (req, res) => {
+// The address and credential of a linked peer belong to the link: only unlinking and joining again can change them.
+function refuseLinked(req, res, next) {
+  if (getServiceLinks().linkForServer(req.params.id)) return res.status(409).json({ error: 'LINK_MANAGED' });
+  next();
+}
+
+router.post('/:id/test', refuseLinked, async (req, res) => {
   const row = getServer(req);
   if (!row) return res.status(404).json({ error: 'REMOTE_NOT_FOUND' });
   try {
@@ -154,7 +162,7 @@ router.post('/:id/test', async (req, res) => {
   }
 });
 
-router.put('/:id', async (req, res) => {
+router.put('/:id', refuseLinked, async (req, res) => {
   const row = getServer(req);
   if (!row) return res.status(404).json({ error: 'REMOTE_NOT_FOUND' });
   try {
@@ -168,7 +176,14 @@ router.put('/:id', async (req, res) => {
   }
 });
 
-router.delete('/:id', (req, res) => {
+router.delete('/:id', async (req, res) => {
+  const row = getServer(req);
+  const link = row && getServiceLinks().linkForServer(row.id);
+  if (link) {
+    try { await getServiceLinks().unlink(link.id); }
+    catch (error) { return res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'LINK_UNLINK_FAILED' }); }
+    return res.json({ success: true });
+  }
   const result = db.prepare('DELETE FROM remote_servers WHERE id = ? AND owner_id = ?').run(req.params.id, owner(req));
   if (!result.changes) return res.status(404).json({ error: 'REMOTE_NOT_FOUND' });
   res.json({ success: true });

@@ -1,8 +1,10 @@
 const { decryptToken } = require('../lib/token-crypto');
 const { normalizeBaseUrl, request } = require('./remote-client');
+const { isTunnelBase } = require('../lib/service-link-tunnel');
 
 async function inspectRemoteAddress(row, body, secret, requestFn = request) {
-  const baseUrl = normalizeBaseUrl(body.url, body.port);
+  // A service link has no address to edit: its tunnel:// base stays, whatever the form sends.
+  const baseUrl = isTunnelBase(row.base_url) ? row.base_url : normalizeBaseUrl(body.url, body.port);
   const token = decryptToken(row.token_cipher, secret);
   const capabilities = await requestFn(baseUrl, '/v1/info', token);
   return { baseUrl, capabilities };

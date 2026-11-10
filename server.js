@@ -36,7 +36,7 @@ const { createLoginGate, createUnknownPageRedirect } = require('./lib/login-gate
 const { createStaticAssets, wantsChinese } = require('./lib/static-assets');
 const { createAccessGate, upgradeAllowed } = require('./lib/access-gate');
 const serviceLinks = require('./services/service-links').getServiceLinks();
-const { getHub: getLinkHub } = require('./lib/service-link-tunnel');
+const { getHub: getLinkHub, TUNNEL_WS_OPTIONS } = require('./lib/service-link-tunnel');
 
 const app = express();
 
@@ -444,6 +444,7 @@ app.use(createUnknownPageRedirect({ loginPath: config.loginPath, isAuthenticated
 // HTTP server + WebSocket server
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ noServer: true });
+const tunnelWss = new WebSocket.Server({ noServer: true, ...TUNNEL_WS_OPTIONS }); // the frame limit of the service link tunnel
 app.locals.disconnectClientSession = sid => {
   for (const ws of wss.clients) if (ws.clientSessionId === sid) ws.close(1008, 'Authentication required');
 };
@@ -493,7 +494,7 @@ server.on('upgrade', (req, socket, head) => {
       socket.destroy();
       return;
     }
-    wss.handleUpgrade(req, socket, head, ws => getLinkHub().accept(linkId, ws));
+    tunnelWss.handleUpgrade(req, socket, head, ws => getLinkHub().accept(linkId, ws));
     return;
   }
   const engineMatch = engineUrl.pathname.match(/^\/v1\/terminal-sessions\/(\d+)\/stream$/);

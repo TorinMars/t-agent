@@ -8,6 +8,8 @@ const taskArchive = require('../services/task-archive');
 const { exchangePairingCode, createAccessToken, hasScope } = require('../services/engine-auth');
 const { getEngineIdentity } = require('../services/engine-identity');
 const { getServiceLinks, CAPABILITY: SERVICE_LINKS } = require('../services/service-links');
+const { getTaskVisibility } = require('../services/task-visibility');
+const { createTaskVisibilityGuard } = require('../middleware/task-visibility');
 const { CAPABILITY: LINKED_SERVICES } = require('../services/linked-capabilities');
 const { createTerminalTicket } = require('../services/terminal-tickets');
 const updates = require('../services/update-manager');
@@ -22,6 +24,9 @@ const { Pm2Error } = require('../services/pm2-manager');
 const { createAppsHandlers, mountAppsRoutes, defaultService: defaultAppsService } = require('./apps');
 
 const router = express.Router();
+// Before every route, so that a route added later under /tasks/:id is covered too (middleware/task-visibility.js).
+const taskVisibility = getTaskVisibility();
+router.use(createTaskVisibilityGuard({ visibility: taskVisibility, db, serviceLinks: getServiceLinks() }));
 router.use('/file-sync', require('./file-sync').engine);
 router.use('/linked-services', require('./linked-services').createLinkedServicesRouter());
 const pairingAttempts = new Map();
@@ -33,6 +38,19 @@ function errorResponse(res, error) {
 
 function principal(req) {
   return req.engineAuth.principalId;
+}
+
+// The service link this token was issued for, or null: only such a token is subject to per-task visibility.
+function linkIdOf(req) {
+  const link = getServiceLinks().linkForToken(req.engineAuth.tokenId);
+  return link ? link.id : null;
+}
+const visibleTo = (req, items, idOf) => taskVisibility.visible(linkIdOf(req), items, idOf);
+const hiddenFrom = req => taskVisibility.hiddenFrom(linkIdOf(req));
+// A group's task_count leaves out the tasks this link may not see.
+function withVisibleCounts(req, groups) {
+  const hidden = taskVisibility.hiddenStatusCounts(linkIdOf(req));
+  return groups.map(group => ({ ...group, task_count: group.task_count - (hidden.get(group.key) || 0) }));
 }
 
 function rateLimitPairing(req, res, next) {
@@ -173,16 +191,16 @@ router.post('/workspace/import', workspaceWrite, (req, res) => {
   catch (error) { workspaceError(res, error); }
 });
 router.get('/workspace/cleanup', requireEngineAuth('tasks:read'), async (req, res) => {
-  try { res.json(await workspaceTools.cleanupOverview(db, principal(req), tasks.DEFAULT_BASE)); }
+  try { res.json(await workspaceTools.cleanupOverview(db, principal(req), tasks.DEFAULT_BASE, hiddenFrom(req))); }
   catch (error) { workspaceError(res, error); }
 });
 router.post('/workspace/cleanup', workspaceWrite, async (req, res) => {
   if (!req.body || req.body.confirm !== true) return res.status(400).json({ error: 'CONFIRM_REQUIRED' });
-  try { res.json(await workspaceTools.cleanupRepos(db, principal(req), tasks.DEFAULT_BASE, req.body.repos, id => terminal.closeTaskTerminals(id))); }
+  try { res.json(await workspaceTools.cleanupRepos(db, principal(req), tasks.DEFAULT_BASE, req.body.repos, id => terminal.closeTaskTerminals(id), hiddenFrom(req))); }
   catch (error) { workspaceError(res, error); }
 });
 router.post('/workspace/restore', workspaceWrite, async (req, res) => {
-  try { res.json(await workspaceTools.restoreRepo(db, principal(req), req.body && req.body.id)); }
+  try { res.json(await workspaceTools.restoreRepo(db, principal(req), req.body && req.body.id, hiddenFrom(req))); }
   catch (error) { workspaceError(res, error); }
 });
 
@@ -193,7 +211,7 @@ router.use('/tasks/:id/agent', require('./agent-chat').createAgentChatRouter({
 }));
 
 router.get('/tasks', requireEngineAuth('tasks:read'), (req, res) => {
-  try { res.json(tasks.listTasks(principal(req), req.query.status, { archived: req.query.archived === '1' })); }
+  try { res.json(visibleTo(req, tasks.listTasks(principal(req), req.query.status, { archived: req.query.archived === '1' }), task => task.id)); }
   catch (error) { errorResponse(res, error); }
 });
 
@@ -207,7 +225,7 @@ router.use('/tasks/:id/files', requireEngineAuth(), createTaskFilesRouter({
 router.use('/fs', requireEngineAuth('files:read'), createFsReadRouter());
 
 router.get('/task-groups', requireEngineAuth('tasks:read'), (req, res) => {
-  try { res.json(taskGroups.listGroups(db, principal(req))); }
+  try { res.json(withVisibleCounts(req, taskGroups.listGroups(db, principal(req)))); }
   catch (error) { errorResponse(res, error); }
 });
 
@@ -217,7 +235,7 @@ router.post('/task-groups', requireEngineAuth('tasks:write'), (req, res) => {
 });
 
 router.put('/task-groups/:id', requireEngineAuth('tasks:write'), (req, res) => {
-  try { res.json(taskGroups.updateGroup(db, principal(req), req.params.id, req.body)); }
+  try { res.json(withVisibleCounts(req, [taskGroups.updateGroup(db, principal(req), req.params.id, req.body)])[0]); }
   catch (error) { errorResponse(res, error); }
 });
 
@@ -372,16 +390,20 @@ router.get('/tasks/:id/terminals/:terminalId/cwd', requireEngineAuth('terminal:e
 });
 
 router.get('/terminal-activity', requireEngineAuth('terminal:execute'), (req, res) => {
-  res.json(terminal.activitySnapshot(taskArchive.activeTaskIds(db, principal(req))));
+  res.json(terminal.activitySnapshot(visibleTo(req, taskArchive.activeTaskIds(db, principal(req)))));
 });
 
 router.get('/terminal-activity/stream', requireEngineAuth('terminal:execute'), (req, res) => {
   const owner = principal(req);
-  terminal.serveActivityStream(req, res, () => taskArchive.activeTaskIds(db, owner));
+  const linkId = linkIdOf(req);
+  // The task list is read again for every message, so each connection follows its own link. The stream covers all tasks, so it ends when the link loses any of them;
+  // the reader reconnects and gets a picture without that task.
+  if (linkId) res.on('close', taskVisibility.track(linkId, null, () => res.end()));
+  terminal.serveActivityStream(req, res, () => taskVisibility.visible(linkId, taskArchive.activeTaskIds(db, owner)));
 });
 
 router.get('/terminal-subagents', requireEngineAuth('terminal:execute'), (req, res) => {
-  res.json(terminal.subagentSnapshot(taskArchive.activeTaskIds(db, principal(req))));
+  res.json(terminal.subagentSnapshot(visibleTo(req, taskArchive.activeTaskIds(db, principal(req)))));
 });
 
 router.post('/tasks/:id/terminal/ack', requireEngineAuth('terminal:execute'), (req, res) => {
@@ -398,7 +420,7 @@ router.post('/terminal-sessions', requireEngineAuth('terminal:execute'), (req, r
   let terminalId;
   try { terminalId = terminal.assertTerminal(task.id, req.body.terminal_id); }
   catch (error) { return errorResponse(res, error); }
-  const created = createTerminalTicket({ principalId: principal(req), taskId: task.id, terminalId });
+  const created = createTerminalTicket({ principalId: principal(req), taskId: task.id, terminalId, linkId: linkIdOf(req) });
   res.status(201).json({
     session_id: String(task.id),
     ...created,

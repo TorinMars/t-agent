@@ -331,6 +331,8 @@ function createServiceLinks({ db, sessionSecret, identity, tunnel = tunnelModule
   return {
     createCode, acceptJoin, join, unlink, peerUnlink, authenticateTunnel, start, stop, markRevoked,
     list: ownerId => links().filter(link => link.owner_id === ownerId).map(publicLink),
+    // Every link, revoked ones too: for services/task-visibility.js, which keeps an entry until the link is removed.
+    ids: () => links().map(link => link.id),
     linkForServer: serverId => links().find(link => link.remote_server_id === Number(serverId)) || null,
     linkForToken: tokenId => links().find(link => link.issued_token_id === Number(tokenId)) || null,
     // For services/linked-capabilities.js only, because it holds the Engine token and the address: never send this to a page. Live links, oldest first.

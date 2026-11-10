@@ -21,6 +21,15 @@ Two services that see and operate each other as remote Engines; see "Service lin
 - `GET /v1/service-links/tunnel`: WebSocket, `Authorization: Bearer tsl_...`. 401 for a wrong or revoked token. The `tsl_` token works only here.
 - `POST /v1/service-links/:id/unlink` and `POST /v1/service-link-notice/:id/unlink`: 204. The peer says it unlinked. Bearer: the Engine token issued to that peer for that link; any other token gets 404 `LINK_NOT_FOUND`. The second path is the one the initiator calls through the tunnel.
 
+### Per-task visibility
+
+The service that owns a task can hide it from a linked service; see "Per-task visibility" in `DESIGN.md`. It applies only to a token issued for a service link. Other tokens are not affected.
+
+- Every route under `/v1/tasks/:id` and `/v1/terminal-sessions/:id`, `POST /v1/terminal-sessions` and the ids in `PUT /v1/tasks/reorder` treat a hidden task exactly like a task that does not exist: the same status and body as the route gives for a missing id.
+- `GET /v1/tasks` (also `?archived=1`), `/v1/terminal-activity`, `/v1/terminal-activity/stream`, `/v1/terminal-subagents`, the workspace cleanup routes and `task_count` in `/v1/task-groups` leave it out.
+- When a link loses a task, its terminal WebSocket for that task closes with 1008 `task not found`, an event stream under the task ends, and its `/v1/terminal-activity/stream` ends; reconnecting gives a stream without the task.
+- A linked peer has full admin on this service. Per-task visibility is not a security boundary against it: `/v1/fs/*` reads any path, a shell in another visible task can read the same files, and `/v1/tokens` can mint a token with no link id, which this check does not cover.
+
 ### Linked services
 
 Translation, voice input and OSS upload used by a linked service, with this service's own configuration. The capability is `linked-services` (in `/v1/info`). Only a token issued for a live service link is accepted: any other Engine token, admin or not, gets 403 `LINKED_ONLY`; a missing or revoked token gets 401. A service without the feature configured answers as not configured and never asks another service.

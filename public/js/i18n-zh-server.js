@@ -1,6 +1,8 @@
 // Chinese translations of messages that come from the server (services/, routes/, lib/): error messages, update steps, field labels.
 I18n.add({
   "TASK_ARCHIVED": "任务已归档，请先恢复",
+  "TASK_NOT_FOUND": "找不到这个任务",
+  "INVALID_VISIBILITY": "设备列表无效，请重新打开后再试",
   "CONFIRM_REQUIRED": "需要确认后才能继续",
   "INVALID_CODE": "关联码错误、已使用或已过期，请在对方服务上重新生成",
   "INVALID_REQUEST": "请求内容无效",

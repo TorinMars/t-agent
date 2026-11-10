@@ -36,6 +36,7 @@ const { createLoginGate, createUnknownPageRedirect } = require('./lib/login-gate
 const { createStaticAssets, wantsChinese } = require('./lib/static-assets');
 const { createAccessGate, upgradeAllowed } = require('./lib/access-gate');
 const serviceLinks = require('./services/service-links').getServiceLinks();
+const { getTaskVisibility, MISSING_TASK_ID } = require('./services/task-visibility');
 const { getHub: getLinkHub, TUNNEL_WS_OPTIONS } = require('./lib/service-link-tunnel');
 
 const app = express();
@@ -509,7 +510,12 @@ server.on('upgrade', (req, socket, head) => {
       return;
     }
     wss.handleUpgrade(req, socket, head, ws => {
-      terminal.handleWs(ws, req, { login: authorization.principalId }, authorization.taskId, authorization.terminalId);
+      // A ticket issued before the link lost the task gets what a task that went away gets. An open socket is closed at the moment the link loses the task, the same way.
+      const { linkId, taskId } = authorization;
+      const visibility = getTaskVisibility();
+      const hidden = Boolean(linkId) && visibility.isDenied(taskId, linkId);
+      if (linkId && !hidden) ws.once('close', visibility.track(linkId, taskId, () => ws.close(1008, 'task not found')));
+      terminal.handleWs(ws, req, { login: authorization.principalId }, hidden ? MISSING_TASK_ID : taskId, authorization.terminalId);
     });
     return;
   }

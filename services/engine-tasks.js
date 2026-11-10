@@ -6,6 +6,7 @@ const taskGroups = require('./task-groups');
 const documents = require('./task-documents');
 const workspaceTools = require('./workspace-tools');
 const taskArchive = require('./task-archive');
+const { getTaskVisibility } = require('./task-visibility');
 const { startWithoutDefaultTerminal } = require('../lib/task-default-terminal');
 
 const DEFAULT_BASE = path.resolve(process.env.TASKS_BASE_DIR || path.join(os.homedir(), 'tasks'));
@@ -141,6 +142,7 @@ function deleteTask(principalId, id, { deleteDirectory = false } = {}) {
   }
   const result = db.prepare('DELETE FROM tasks WHERE id = ? AND user_id = ?').run(id, principalId);
   if (!result.changes) throw Object.assign(new Error('TASK_NOT_FOUND'), { statusCode: 404 });
+  getTaskVisibility().forgetTask(task.id);
   if (!deleteDirectory) return { success: true };
   try { return { success: true, directory_deleted: workspaceTools.removeTaskDirectory(task) }; }
   catch (error) { return { success: true, directory_deleted: false, directory_error: error.message }; }

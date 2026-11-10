@@ -248,6 +248,10 @@ One line each for the main modules, by area. Each route file is mounted in `serv
 
 - `services/attention.js` — items, events and tokens of the central attention list (validation, status rules, `onChange` bus); `routes/attention.js` — `/api/attention` for the browser session and for `Bearer tatt_…` tokens (the Bearer handler is mounted in `server.js` before the session and the gates).
 
+**Mind maps** (see "Mind maps" below)
+
+- `services/mindmap.js` — maps as JSON files in the data folder; `routes/mindmap.js` — `/api/mindmaps` for the browser session.
+
 **Files API and safety**
 
 - `routes/task-files.js`, `services/task-files.js` — `/api/tasks/:id/files` (list, create, rename, delete), `/files/content` (read, write), `/files/image` (an image, 20 MiB) and `/files/raw` (a PDF, audio or video file, streamed with Range support). Rules: paths are relative to the task root (`work_dir`, else the folder of `md_path`); absolute paths, `..`, backslashes and NUL are refused; symbolic links are never followed (`O_NOFOLLOW`, `lstat`, identity checks before and after); text at most 5 MiB of UTF-8; the root itself cannot be deleted. Engine scopes `files:read` / `files:write`.
@@ -317,7 +321,7 @@ One line each for the main modules, by area. Each route file is mounted in `serv
 Goal: the runtime data of a machine lives outside the install directory, so every installed version (a second checkout, a worktree, an upgrade) reads the same data and no data migration is needed between versions.
 
 - **Root**: `~/.tagent` (`os.homedir()` of the user the service runs as). `TAGENT_HOME` overrides it; the old name `T_AGENT_DATA_DIR` is an alias (the new name wins when both are set); a leading `~/` is expanded. `T_AGENT_DB_PATH` still overrides only the SQLite file.
-- **Layout** (the same as the old `<install>/data`, so an older version pointed at it with `T_AGENT_DATA_DIR` reads the same data): `db.sqlite` (+ `-wal`, `-shm`), `session-secret`, `backups/` (database backups before updates, `services/update-manager.js`), `bin/frpc` and `frpc.toml` (`routes/frp.js`), `server.lock`, `migrated-from.json`.
+- **Layout** (the same as the old `<install>/data`, so an older version pointed at it with `T_AGENT_DATA_DIR` reads the same data): `db.sqlite` (+ `-wal`, `-shm`), `session-secret`, `backups/` (database backups before updates, `services/update-manager.js`), `bin/frpc` and `frpc.toml` (`routes/frp.js`), `mindmaps/` (`services/mindmap.js`), `server.lock`, `migrated-from.json`.
 - **Inventory of runtime data** (what moved and what stayed):
 
 | Data | Before | Now |
@@ -413,6 +417,32 @@ Goal: less attention spent on managing agent work. Agents and services (listener
 - Format `tatt_` + 32 random bytes base64url (48 characters). Only the sha256 hash is stored; the token is shown once, by `POST /api/attention/tokens {name}` → 201 `{id, name, token}`. `GET /api/attention/tokens` → `{tokens: [{id, name, created_at, last_used_at, revoked_at}]}`; `DELETE /api/attention/tokens/:id` → 204 (revoke; the row stays). These three are browser session only (same-origin rule for mutations); a token gets 403 `TOKEN_NOT_ALLOWED` there in any spelling (case, trailing slash, percent-encoding).
 - `Authorization: Bearer tatt_…` on `/api/attention*` is handled by `bearer` in `routes/attention.js`, mounted before the JSON parser, the session, the access gate and the login gate. It answers every Bearer request to `/api/attention*` itself: valid → the T-Attention router (no cookie read or set, no same-origin check, its own 256 KiB JSON parser); anything the router does not match → JSON 404; it never passes a Bearer request on. So a token reaches the T-Attention API and nothing else: other `/api` routes, pages and static files still go through the gates (404 / login redirect when logged out), and a token is ignored there. The gates themselves are unchanged. In local-only access mode a valid token also works from a non-local address (it is an explicit credential); without one such requests still get the 404.
 - Failures: a missing, malformed, wrong or revoked token → 401 `TOKEN_INVALID`. Failed attempts are counted per address (`req.ip`): 20 in 15 minutes → 429 `TOO_MANY_ATTEMPTS` with `Retry-After` (in memory, reset by a restart). A valid token is limited to 600 requests a minute (429 `RATE_LIMITED`). `last_used_at` is written on every successful use.
+
+### Mind maps
+
+A self-contained feature: it has no database table (the schema version does not change) and it never reads or changes tasks, work directories, terminals, agent chat or terminal activity. This Client only: no `/v1` twin and no remote Engine proxy. The app has one user, so maps are not scoped per owner, like the T-Attention items.
+
+**Data**: `<data folder>/mindmaps/<id>.json` (folder 0700, files 0600), one file per map: `{ id, title, data, revision, created_at, updated_at }`. `data` is opaque to the server: a JSON object, or `null` until the page first saves. Ids are server-made UUIDs, checked strictly before any path is built. A write goes to a temp file in the same folder, is fsynced and renamed; writes of one id run one at a time, and so do creates (the map limit holds under concurrent creates). Temp files left by a crash are removed at the first use after a start. The list reads a file only when its size or time changed.
+
+**Backups**: the database backups taken before an update (`backups/`) do NOT include these files. Back up `mindmaps/` separately if the maps matter.
+
+**API** (`/api/mindmaps`; errors are `{ error, message }`, the English `message` is translated in `public/js/i18n-zh-server.js`):
+
+| Request | Answer |
+| --- | --- |
+| `GET /` | `{ maps: [{ id, title, revision, created_at, updated_at, size }] }`, newest `updated_at` first; `size` is the file size in bytes; no `data` |
+| `POST /` `{ title?, data? }` | 201 `{ id, title, data, revision, created_at, updated_at }`; the defaults are `Untitled map` and `null`; `revision` starts at 1 |
+| `GET /:id` | the same object; 404 `MINDMAP_NOT_FOUND` |
+| `PUT /:id` `{ revision, title?, data? }` (at least one of the two) | `{ id, title, revision, updated_at }` with `revision` raised by one; a stale `revision` is 409 `MINDMAP_CONFLICT` with `current_revision` and writes nothing |
+| `DELETE /:id` | 204; the file moves to `mindmaps/trash/<id>-<time>.json`, and moving it back by hand to `mindmaps/<id>.json` restores the map. The trash is never emptied automatically |
+
+Limits: title 1 to 200 characters (trimmed, one line), `data` a JSON object of at most 8 MiB serialised (413 `MINDMAP_TOO_LARGE`), at most 2000 maps (409 `MINDMAP_LIMIT`; the trash does not count). A bad body or a body that is not `application/json` is 400 `INVALID_MINDMAP`. A failing disk is 500 `MINDMAP_STORAGE_FAILED`.
+
+**Gates and body parsing**: mounted after the session, the access gate, the login gate and the `/api` check (same-origin for mutations, then the session), so logged out it answers the same 404 as any other protected address. `server.js` keeps the global parsers (`express.json` 32 MB and `express.urlencoded`, which run before the session) off this path, and the router parses JSON itself after the gates, with its own limit (8 MiB + 64 KiB for the fields around `data`). So a body is not read before the gates, and an oversized one gets the JSON answer above. Every other route keeps the global parsers and limit.
+
+**Corrupt files**: a file that does not parse or does not match its name is skipped by the list and reads as not found (a save cannot overwrite it; a delete moves it to the trash). It is logged in one line with the id only, once per change of the file. Map content is never logged.
+
+**Tests**: `test/mindmap-service.test.js`, `test/mindmap-routes.test.js` (the last case runs the real `server.js` for the gates and the parser order).
 
 ### F. Client UI
 

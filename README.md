@@ -301,6 +301,10 @@ Settings → Engines offers "Check for updates" on each remote Engine. The Clien
 
 A remote upgrade is a host administration operation and every connection has that permission. An old Engine that has no update API yet must first be upgraded by hand to `2.4.0` or later once, after which the Client can complete later upgrades. The Engine must be hosted by systemd, launchd or another process manager that can restart it automatically.
 
+## Mind maps
+
+Mind maps are saved as one JSON file each in `<data folder>/mindmaps/` (`~/.tagent/mindmaps/` by default), through `/api/mindmaps` behind the normal login. They are independent of tasks, terminals and agent chat. Deleted maps go to `mindmaps/trash/`, and moving a file back to `mindmaps/<id>.json` restores it. The database backups taken before an update do not include these files. See "Mind maps" in `DESIGN.md`.
+
 ## T-Attention from the command line (`t-attention`)
 
 `t-attention` creates and updates T-Attention tasks (the "Needs you" list) from any terminal, script or agent. It needs Node.js and this checkout; run `npm link` in the install directory (or call `node scripts/t-attention.js`). Create a token in Settings -> T-Attention -> CLI tokens, then log in once:

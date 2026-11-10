@@ -98,8 +98,11 @@ const attentionRoutes = require('./routes/attention').createAttentionRoutes({ se
 app.use('/api/attention/pairing/claim', attentionRoutes.claim);
 app.use('/api/attention', attentionRoutes.bearer);
 
-app.use(express.json({ limit: '32mb' }));
-app.use(express.urlencoded({ extended: true }));
+// /api/mindmaps parses its own JSON after the gates, with its own limit (routes/mindmap.js). Every other route keeps these parsers. Case-insensitive, like Express routing.
+const MINDMAP_API = /^\/api\/mindmaps(?:\/|$)/i;
+const exceptMindmaps = parser => (req, res, next) => (MINDMAP_API.test(req.path) ? next() : parser(req, res, next));
+app.use(exceptMindmaps(express.json({ limit: '32mb' })));
+app.use(exceptMindmaps(express.urlencoded({ extended: true })));
 
 const sessionMiddleware = session({
   name: config.clientSessionCookieName,
@@ -152,6 +155,7 @@ app.use('/api/fs', require('./routes/fs-read').createFsReadRouter());
 app.use('/api/task-groups', require('./routes/task-groups'));
 app.use('/api/bookmarks', require('./routes/bookmarks'));
 app.use('/api/attention', attentionRoutes.router);
+app.use('/api/mindmaps', require('./routes/mindmap').createMindmapRouter({ service: require('./services/mindmap').createMindmapService({ dataDir: dataHome.paths().root }) }));
 app.use('/api/system', require('./routes/system'));
 app.use('/api/oss', require('./routes/oss').createOssRouter());
 app.use('/api/environment', require('./routes/environment').createEnvironmentRouter());

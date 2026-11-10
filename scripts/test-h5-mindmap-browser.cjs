@@ -30,7 +30,7 @@ function createServer() {
     const body = request.postData() ? JSON.parse(request.postData()) : undefined;
     log.push({ method, pathname, body });
     if (pathname === '/api/mindmaps' && method === 'GET') return json({ maps: [...maps.values()].reverse().map(({ data, ...rest }) => ({ ...rest, size: JSON.stringify(data || {}).length })) });
-    if (pathname === '/api/mindmaps' && method === 'POST') { const map = make(body.title, body.data); return json(map, 201); }
+    if (pathname === '/api/mindmaps' && method === 'POST') { if ('data' in body && (body.data === null || typeof body.data !== 'object')) return json({ error: 'INVALID_MINDMAP' }, 400); const map = make(body.title, body.data); return json(map, 201); }
     const m = pathname.match(/^\/api\/mindmaps\/([^/]+)$/);
     if (!m) return null;
     const map = maps.get(m[1]);

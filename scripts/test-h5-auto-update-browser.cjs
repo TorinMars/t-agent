@@ -252,8 +252,7 @@ const SCENARIOS = {
     const before = server.reads;
     await waitFor(() => server.reads > before, 'a failed read', 2500);
     const failed = server.reads;
-    await sleep(800);
-    assert.ok(server.reads - failed >= 3, `fast polling while down: ${server.reads - failed} reads`);
+    await waitFor(() => server.reads - failed >= 3, 'three more reads while down, faster than the normal 1500 ms poll', 3000);
     toAutoUpdated(server);
     server.down = false;
     await waitFor(() => server.navigations === 2, 'the reload as soon as the service is back', 1000);

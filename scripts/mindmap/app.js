@@ -232,7 +232,7 @@ export function mountApp(root, { onClose, notify = () => {}, onLayers = () => {}
   async function createMap() {
     try {
       const title = tr('Untitled map');
-      const created = await call('POST', API, { title, data: null });
+      const created = await call('POST', API, { title });
       showEditor(created);
     } catch (error) { say(messageFor(error), 'error'); }
   }

@@ -799,6 +799,8 @@ const pluginsFit = page => page.evaluate(() => [...document.querySelectorAll('#h
       assert.ok(await page.locator('#h5-design-back').isVisible(), 'the design document lies over the tree');
       await page.keyboard.press('Escape');
       await page.locator('#h5-design-sheet .h5-design-panel').waitFor({ state: 'hidden' });
+      // The upper sheet has left the page, but the focus comes back to the tree a moment later; an Escape before that lands on the body and closes nothing.
+      await page.waitForFunction(() => document.querySelector("#h5-files-sheet .h5-files-panel").contains(document.activeElement));
       await page.keyboard.press('Escape');
       await page.locator('#h5-files-sheet .h5-files-panel').waitFor({ state: 'hidden' });
       // The Attention button shows and hides the panel; keys typed in it are not sent to the terminal.

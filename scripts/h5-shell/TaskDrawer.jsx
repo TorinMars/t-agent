@@ -292,6 +292,7 @@ function Panel({ state, ui }) {
       </Box>
       <Divider />
       <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', minHeight: 36 }}>
+        <IconButton id="h5-tasks-mindmap" aria-label={t('Mind maps')} title={t('Mind maps')} onClick={() => ui.actions.openMindmaps()} size="small" sx={{ mr: 0.5, [TOUCH]: { ml: 1 } }}><Icon name="mindmap" size={20} /></IconButton>
         <IconButton id="h5-tasks-settings" aria-label={t('Settings')} title={t('Settings')} onClick={() => ui.actions.openSettings()} size="small" sx={{ mr: 1, [TOUCH]: { ml: 1 } }}><SettingsIcon fontSize="small" /></IconButton>
       </Box>
     </Box>

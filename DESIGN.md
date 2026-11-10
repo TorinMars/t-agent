@@ -735,6 +735,64 @@ More behaviour of the chat:
 - Slash commands in agent chats. Claude Code reads a message that starts with `/` as a command, also over the SDK (checked against the real SDK: `/context`, `/cost`, `/usage`, `/model`, `/config`, `/mcp`, `/output-style` answer with an assistant message, and it works with an image attached too); the chat had no help for it. Now: typing `/` and a name at the start of the message opens a menu above the input (`.ac-commands`; matching commands first by prefix, then by part of the name, at most 8; arrows move, Tab or a click takes one, Enter takes the highlighted one unless the command is typed in full, Escape closes it; in the expanded box Enter stays a new line). The list is `GET .../conversations/:id/commands` (`listCommands` in `services/agent-chat.js`, from the SDK's `supportedCommands()` on an idle query in the task directory, so the skills and commands of the user and the project are in; kept 5 minutes per agent and folder and refreshed in the background, a failure is `COMMANDS_UNAVAILABLE` and the store retries on the next ask) and is read in the background when a chat that has `CAPABILITIES.commands` has loaded. Left out: the terminal-only commands (`doctor`, `color`, `focus`, `reload-plugins`: the SDK's `terminal_slash_commands`) and `model` and `effort` (the footer picker does that). The output of a command is an assistant message of the made-up model `<synthetic>` with empty usage; the normalizer no longer lets it set the model or the context of the footer. `/clear` ends the session with a `conversation_reset` message and the init message that follows names the new session: the normalizer calls `ctx.resetConversation()` (the service empties the items and sends a `reset` event; the pages and a page that comes later drop what was said) and shows "Started a new session". A message that is a command (`/name` then nothing or a space) is not translated. Codex chats have no commands (the Codex app-server takes text only; this was not checked in its protocol): typing a command-like `/word` shows a note and sends the text on as it is. Regression: `test/agent-chat-service.test.js`, `test/agent-chat-routes.test.js`, `test/agent-chat-view.test.js`, `scripts/test-agent-chat-browser.cjs`.
 - Agent turn notifications are sent only while the app page is hidden. A visible page stays quiet even if the window has no focus or another chat is selected. Visibility is checked again after finding the service worker to avoid notifying after the person returns.
 
+## Mind maps
+
+A mind map editor inside the one page (`/` and `/h5`), independent of tasks and terminals: maps belong to nobody's task, and opening one touches no task state. The layout and keyboard follow XMind; no XMind name, logo, artwork or theme file is used.
+
+**Why this shape.** One page, not a second app: the terminal stays connected underneath, and the same Back gesture, login and update flow apply. Lazy load: `public/js/mindmap.js` (2.6 KB) is the only part that loads with the page, so a visit that never opens a map pays almost nothing; the editor is the bundle `public/js/mindmap-ui.js`, fetched when the view is first opened (`npm run build:mindmap`, the same way as the chat). Its styles are inside the bundle as text, so no stylesheet is added to the first paint. Independent: the view has its own API (`/api/mindmaps`), its own element (`#h5-mindmap`) and no reference to tasks.
+
+**Editor library: `mind-elixir` 6.0.0 (MIT).** Measured with esbuild (minified / gzip) in a spike that really built both candidates: `mind-elixir` 102 KB + 20 KB CSS / 33 + 5 KB; `simple-mind-map` 521 KB / 152 KB. In real Chromium `simple-mind-map` closed the text editor on Enter during composition, threw a page error in one of the two layouts tried, and registers its touch handling on `window` (it would also read touches meant for the terminal). Its transitive dependencies are acceptable (MIT / BSD), and it has a .xmind parser, but the size and the composition bug decided against it. `mind-elixir` has no .xmind support, so the small converter is ours (`scripts/mindmap/xmind.mjs`) on `fflate` 0.8.3 (MIT, 12.7 KB minified for what is used, against 97 KB for `jszip`, and it unpacks into a buffer of the declared size, see below). The whole bundle is 197 KB minified, 67 KB gzip. Both are dev dependencies at exact versions.
+
+**The page.** `#h5-mindmap` is a fixed full-window element above everything but the Material UI modals (`z-index: 1250`); on a wide screen it also covers the sidebar, so a map has the whole window and no second navigation exists at the same time (`--h5-terminal-left` is not needed). The entry is a button beside Settings at the bottom of the task sheet; on a phone it closes the sheet first. Height: `fitMindmapView` in `h5.js` follows the rule of `fitViewport` (`visualViewport.height` is believed only while something that raises a keyboard is focused, which is why `[contenteditable="plaintext-only"]`, the topic editor, was added to `EDITABLE`). While the view is open: `h5.js` sends no key to the terminal and Cmd/Ctrl+K does nothing (an explicit `mindmap` check in both handlers); keys reach the view first because its listener is on `document` in the capture phase, and any key that still lands in the terminal's textarea is taken back; the Back gesture walks view, editor, dialog (`mindmapLayers` in the store, `extra()` in `entry.jsx`); the silent reload waits (`pageBusy` in `Update.jsx`). Text the person wrote is `translate="no"`, so the interface translator never rewrites it.
+
+**Editing.** `mind-elixir` draws the map; `scripts/mindmap/editor.js` adds the shortcuts and actions, `touch.js` the finger gestures, `app.js` the list, the bars, the dialogs and saving. Touch never reaches the library: it would start a topic drag only after a long press, and a drag on a topic must move it. A tap selects, a tap on the selected topic or a double tap edits, a drag on a topic moves it (onto a topic = child, near its top or bottom edge = sibling), one finger on empty canvas pans, two fingers pinch. The editor is opened inside the `click` that follows the tap (a Promise or a timer would lose the user gesture and iOS would not raise the keyboard). The library's insert and delete calls run synchronously, inside the gesture, because no `before` hook is registered.
+
+**Saving.** Autosave (`saver.mjs`): debounced 1 s, one request at a time, with the latest revision, flushed on leaving the map, `visibilitychange` to hidden and `pagehide` (with `keepalive` when the body fits in the 64 KB browsers allow). A failed request retries with a delay growing to 15 s, for as long as the map is open, so an update restart costs nothing; a retry already waiting is not pushed back by more typing. A copy of unsaved edits is kept in `localStorage` (up to 1.5 MB) so a page that dies loses nothing; opening the map restores it, or, if the map moved on meanwhile, offers it as a new copy. A 409 `MINDMAP_CONFLICT` is first checked against the stored map: if the service already holds exactly what was sent (a save whose answer was lost, typically in a restart), it counts as saved. A real conflict stops saving and offers reload or save as a new copy; nothing is overwritten. 400 and 413 stop too and say why.
+
+**.xmind.** `parseXmind` reads the current format (`content.json`) and the old one (`content.xml`); `buildXmind` writes `content.json`, `metadata.json` and `manifest.json`. **Not verified in the real XMind application**: the format was checked against the file layout and a local round trip only. Treated as untrusted: file size is limited (64 MB) before anything else, only those named entries are unpacked and each is limited to 16 MB by its declared size (fflate unpacks into a buffer of that size, so a false size cannot use more memory), JSON is parsed then rebuilt topic by topic with limits on count (20000) and depth (200), and notes and labels are text. `doc.mjs` `sanitizeDoc` runs on everything that reaches the editor (the service's data too): `dangerouslySetInnerHTML`, `image`, `style` and unsafe links are dropped, and the library's `markdown` option is a function that only escapes HTML, since its arrow and summary labels are drawn with `innerHTML`. Clipboard topics are sanitized the same way.
+
+Kept on import: topics, tree structure, order, plain notes, labels, http/https/mailto links, markers (shown as a symbol when one is known, the id is always kept and re-exported), folded branches, relationships with their titles, summaries, the left, right or both-sides layout. Lost, and reported in the message after the import: other sheets than the first, images, boundaries, callouts, floating topics and links inside the workbook. Also lost: colours and fonts, audio notes, and XMind's other structures, which open as a mind map.
+
+Keyboard (Cmd on a Mac, Ctrl elsewhere; while the topic editor is open, keys behave as text, and an Enter inside an IME composition, `isComposing` or keyCode 229, does not commit). Sources: the table in XMind's own [blog post](https://xmind.com/blog/shortcuts-in-xmind-that-improve-mapping-efficiency) ("blog"), and a list copied from XMind's help ("help list", dated 2020, https://defkey.com/xmind-shortcuts). XMind's complete list exists only inside the application (Preferences > Shortcuts, Help > Key Assist), so it could not be read here; keys are not guaranteed identical to the current version.
+
+| Action | Key | Source | Status |
+| --- | --- | --- | --- |
+| Add subtopic | Tab | blog | done |
+| Add topic after | Enter | blog | done |
+| Add topic before | Shift+Enter | blog | done |
+| Add parent topic | Cmd+Enter / Ctrl+Enter | blog (Mac), help list (Windows; the blog's Windows column contradicts itself) | done |
+| Edit topic | F2 | help list | done |
+| Edit topic | Space | not in either list | done, as a convenience |
+| Start typing to replace the text | any character | XMind behaviour | done |
+| New line inside a topic | Shift+Enter (while editing) | blog | done |
+| Delete topic | Delete, Backspace | help list | done |
+| Move selection | Arrow keys | XMind behaviour | done, spatial (`nav.mjs`) |
+| Go to central topic | Cmd/Ctrl+Home, Home | help list (Home is ours) | done |
+| Select all / siblings / children | Mod+A, Mod+Shift+A, Mod+Alt+A | help list | done |
+| Undo / Redo | Mod+Z; Mod+Y, Mod+Shift+Z | help list (Shift+Z is ours) | done |
+| Copy, cut, paste topics | Mod+C, X, V | help list | done (also pastes plain text as new topics) |
+| Move topic up / down | Alt+Up, Alt+Down | help list | done |
+| Fold / unfold | Mod+/ | blog, user guide | done (the central topic has no fold) |
+| Fold / unfold, old keys | + - * / | help list | not done: a bare character starts editing, as in current XMind |
+| Zoom in / out | Mod+= (or +), Mod+- | blog | done |
+| Actual size | Mod+0 | blog | done |
+| Zoom | Mod+wheel | user guide | done |
+| Fit map | Mod+9 | none found | done, our own key |
+| Note | F4, Shift+Mod+N | help list, blog | done; Cmd/Ctrl+Shift+N opens a private window in most browsers, so F4 is the one that works |
+| Label | F3, Shift+Mod+L | help list, blog | done |
+| Link | Shift+Mod+K | blog | done |
+| Relationship | Mod+L (two selected topics) | help list | done; the blog gives Shift+Mod+L, taken here by Label |
+| Summary | Mod+] | help list | done |
+| Save now | Mod+S | blog | done (saves at once; it also stops the browser dialog) |
+| Back to the list / close | Escape | ours | done |
+| Boundary | Shift+Mod+B | blog | not done: the library has no boundaries |
+| Copy / paste style, audio note, local image, map shot, presentation, drill down, zen mode, priority markers Ctrl+1..6 | | blog, help list | not done: no such feature here (no styles or files, no presentation mode); Ctrl+1 to 6 also switch browser tabs |
+| New, Open, New tab, Print, Save as, Close | | blog | not done: a browser reserves them or they have no meaning for maps kept on the service |
+
+On a phone or tablet none of these keys are needed: the bottom bar has add subtopic, add topic after, edit, delete, fold or unfold, undo, redo and fit (44px targets, above the keyboard and the safe area), and the More menu has parent topic, note, labels, link, layout, copy, cut, paste and zoom.
+
+Tests: `test/mindmap.test.js` (converter, sanitizer, autosave, keys, arrow navigation) and `scripts/test-h5-mindmap-browser.cjs` (the view with `/api/mindmaps` mocked, on a computer and a touch phone). Not tested: a real iPhone (the keyboard, the Home Screen app, the Back gesture of Safari), a real XMind opening an export.
+
 ## Static asset caching
 
 Scripts and styles are named by their content (single-page load work, after v2.87.13; `lib/static-assets.js`, `test/static-asset-cache.test.js`):
@@ -962,6 +1020,16 @@ The settings sheet (`scripts/h5-shell/Settings.jsx`) has folding groups. A group
 | Hide setup guide (T-Attention first-run guide) | close | 4767096 | `close` |
 | Add task (T-Attention quick add) | plus | 7834345 | `add` |
 | Open link (T-Attention edit view) | link | 4766965 | `link` |
+| Mind maps (task sheet footer) | apartment | 5756280 | `mindmap` |
+| Add subtopic (mind map bar) | subnode | 8094810 | `subnode` |
+| Add topic after (mind map bar) | sisternode | 8094823 | `sisternode` |
+| Edit topic (mind map bar) | edit | 4766959 | `edit` |
+| Delete topic, delete map (mind map bar and list) | delete | 4766676 | `delete` |
+| Collapse / expand (mind map bar) | minus-square / plus-square | 4765972 / 4765973 | `minusSquare`, `plusSquare` |
+| Undo / redo (mind map bar) | undo / redo | 4765837 / 4765838 | `undo`, `redo` |
+| Fit map (mind map bar) | fullscreen | 4767015 | `fitWindow` |
+| Import .xmind (mind map list) | Import | 4765960 | `Import` |
+| Export .xmind (mind map editor) | export | 4765958 | `export` |
 | Next running or pending session (row 2) | swap | 4767044 | `cycleSessions` in `Icons.jsx`; two opposite arrows for "switch between" |
 | Close (design document sheet) | close | 4767096 | |
 | Close (full-screen picture viewer) | close | 4767096 | the same icon as the sheet's Close |

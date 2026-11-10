@@ -17,7 +17,8 @@
     "build:markdown": "esbuild scripts/markdown-view-entry.js --bundle --minify --format=iife --global-name=MarkdownView --outfile=public/js/markdown-view.js",
     "build:monaco": "node -e \"console.log('Monaco was removed in 2.88.0; nothing to build (the script stays so updates started by older versions finish)')\"",
     "build:h5-shell": "esbuild scripts/h5-shell/entry.jsx --bundle --minify --format=iife --jsx=automatic --define:process.env.NODE_ENV=\\\"production\\\" --outfile=public/js/h5-shell.js",
-    "build:agent-chat": "esbuild scripts/agent-chat/entry.jsx --bundle --minify --format=iife --global-name=AgentChatUI --define:process.env.NODE_ENV=\\\"production\\\" --outfile=public/js/agent-chat-ui.js"
+    "build:agent-chat": "esbuild scripts/agent-chat/entry.jsx --bundle --minify --format=iife --global-name=AgentChatUI --define:process.env.NODE_ENV=\\\"production\\\" --outfile=public/js/agent-chat-ui.js",
+    "build:mindmap": "esbuild scripts/mindmap/entry.js --bundle --minify --format=iife --global-name=MindMapUI --jsx=automatic --loader:.css=text --define:process.env.NODE_ENV=\\\"production\\\" --outfile=public/js/mindmap-ui.js"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.310",
@@ -48,7 +49,9 @@
     "@mui/material": "9.5.0",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/xterm": "^5.5.0",
+    "fflate": "0.8.3",
     "linkedom": "0.18.12",
+    "mind-elixir": "6.0.0",
     "nodemon": "^3.1.4",
     "playwright": "1.58.2",
     "react": "19.3.1",

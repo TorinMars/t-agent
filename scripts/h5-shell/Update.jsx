@@ -95,6 +95,8 @@ function pageBusy(ui) {
   if (document.querySelector('.MuiModal-root:not(.MuiModal-hidden), dialog[open]')) return true; // the same test as modalOpen() in h5.js
   const chat = document.getElementById('h5-agent');
   if (chat && !chat.hidden) return true; // a reload would close the conversation, and any message being written in it
+  const mindmap = document.getElementById('h5-mindmap');
+  if (mindmap && !mindmap.hidden) return true; // a reload would close the open map, and an edit that is still being saved
   const draft = document.getElementById('h5-translate-input');
   if (draft && draft.value) return true;
   const active = document.activeElement;

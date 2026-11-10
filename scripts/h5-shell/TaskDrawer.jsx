@@ -22,6 +22,7 @@ import UnfoldMoreIcon from '@mui/icons-material/UnfoldMore';
 import { DomIcon, Pill, api, t, terminalMark } from './common.jsx';
 import { TOUCH } from './theme.mjs';
 import { Icon } from './Icons.jsx';
+import { ArchivedTasks } from './ArchivedTasks.jsx';
 
 const GLYPHS = { shell: '>_', claude: '✳', codex: 'GPT' };
 
@@ -268,6 +269,8 @@ function Panel({ state, ui }) {
       {/* Basis 0: a long list (an open Session list) scrolls inside its own space instead of squeezing the rows below it (the settings row). */}
       <List id="h5-task-list" className="h5-task-list" disablePadding sx={{ flex: '1 1 0', minHeight: 0, overflowY: 'auto', px: 0.5, pb: 0.5 }}>
         <Tasks state={state} ui={ui} query={query} filter={filter} />
+        {/* Archived tasks are not searched: the entry goes away while a search or a filter is on. */}
+        {query.trim() || filter !== 'all' ? null : <ArchivedTasks archived={state.archived} ui={ui} />}
       </List>
       {adding ? (
         <Box component="form" id="h5-new-task" className="h5-new-task" autoComplete="off" onSubmit={submit} sx={{ display: 'flex', flexDirection: 'column', gap: 1, px: 2, pb: 1 }}>

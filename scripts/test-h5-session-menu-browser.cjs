@@ -212,6 +212,8 @@ async function run(browser, wide) {
   // ── The last row of a short window: above the button, not cut off ──
   await page.setViewportSize({ width: wide ? 1440 : 390, height: 460 });
   await page.waitForTimeout(350);
+  await h.more(SELECTED, 19).evaluate(node => node.scrollIntoView({ block: 'end' })); // at the end of the visible list, whatever is listed after it
+  await page.waitForTimeout(60);
   await h.open(SELECTED, 19);
   assertAbove(await h.boxes(SELECTED, 19), `${label} short viewport`);
   await page.keyboard.press('Escape');

@@ -1289,8 +1289,6 @@ I18n.add({
   "Labels": "标签",
   "Labels (comma separated)": "标签（用逗号分隔）",
   "Link (http, https or mailto)": "链接（http、https 或 mailto）",
-  "Layout: mind map (both sides)": "结构：思维导图（两侧）",
-  "Layout: logic chart (right)": "结构：逻辑图（向右）",
   "Copy topic": "复制主题",
   "Cut topic": "剪切主题",
   "Paste topic": "粘贴主题",

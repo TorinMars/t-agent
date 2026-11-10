@@ -137,6 +137,55 @@ const waitSaved = page => page.locator('.mm-status[data-state="saved"]').waitFor
 const settled = page => page.waitForFunction(() => !document.getAnimations().some(animation => animation.playState === 'running' && animation.effect.getComputedTiming().iterations !== Infinity));
 const newTopic = async (page, text) => { await page.locator('#input-box').waitFor(); await page.keyboard.type(text); await page.keyboard.press('Enter'); await page.waitForFunction(() => !document.querySelector('#input-box')); };
 
+// Where the map is on the screen: the canvas, the central topic, the other topics, and what the library put on its left side.
+const geometry = page => page.evaluate(() => {
+  const box = el => { const { left, right, top, bottom } = el.getBoundingClientRect(); return { left, right, top, bottom }; };
+  const rootTopic = document.querySelector('.mm-canvas .me-root .me-tpc');
+  return { canvas: box(document.querySelector('.mm-canvas')), root: box(rootTopic), others: [...document.querySelectorAll('.mm-canvas .me-tpc')].filter(el => el !== rootTopic).map(box), leftBranches: document.querySelector('.mm-canvas .lhs').childElementCount };
+});
+const checkAllRight = async (page, when) => {
+  const g = await geometry(page);
+  check(g.leftBranches === 0, `${when}: nothing is on the left side (${g.leftBranches})`);
+  check(g.others.every(topic => topic.left >= g.root.right), `${when}: every topic is to the right of the root: ${JSON.stringify(g)}`);
+};
+const inside = (box, canvas) => box.left >= canvas.left - 1 && box.right <= canvas.right + 1 && box.top >= canvas.top - 1 && box.bottom <= canvas.bottom + 1;
+const checkAllVisible = async (page, when) => {
+  const g = await geometry(page);
+  check(inside(g.root, g.canvas), `${when}: the root is in view: ${JSON.stringify({ root: g.root, canvas: g.canvas })}`);
+  const off = g.others.filter(topic => !inside(topic, g.canvas));
+  check(off.length === 0, `${when}: every topic is in view, ${off.length} of ${g.others.length} are not`);
+};
+const puts = server => server.log.filter(entry => entry.method === 'PUT').length;
+// Every topic of a stored document, with its depth, so a check can look for a stale side at any level.
+const sidesIn = data => { const found = []; (function walk(node) { if ('direction' in node) found.push(node.topic); (node.children || []).forEach(walk); })(data.nodeData); return found; };
+const topicCount = data => (function count(node) { return 1 + (node.children || []).reduce((sum, child) => sum + count(child), 0); })(data.nodeData);
+const topicEl = (page, text) => page.locator('.mm-canvas .me-tpc').filter({ hasText: new RegExp(`^${text}$`) });
+const topicCenter = async (page, text) => { const box = await topicEl(page, text).boundingBox(); return { x: box.x + box.width / 2, y: box.y + box.height / 2, top: box.y, height: box.height }; };
+// The library drags the selected topics; a drop is `in` over a topic, `before` or `after` just outside its top or bottom edge.
+const mouseDrag = async (page, from, to, toY) => {
+  await topicEl(page, from).click();
+  const a = await topicCenter(page, from);
+  const b = await topicCenter(page, to);
+  await page.mouse.move(a.x, a.y);
+  await page.mouse.down();
+  await page.mouse.move(a.x + 12, a.y + 12, { steps: 3 });
+  await page.mouse.move(b.x, toY === undefined ? b.y : toY(b), { steps: 8 });
+  await page.mouse.up();
+};
+const bothSidesMap = direction => ({
+  nodeData: { id: 'r', topic: 'Root', children: [
+    { id: 'a', topic: 'Left one', direction: 0, children: [{ id: 'a1', topic: 'Left leaf', direction: 0, children: [] }, { id: 'a2', topic: 'Other leaf', children: [] }] },
+    { id: 'b', topic: 'Right one', direction: 1, children: [] },
+    { id: 'c', topic: 'Left two', direction: 0, children: [] },
+    { id: 'd', topic: 'No side', children: [] },
+  ] },
+  arrows: [], summaries: [], direction,
+});
+const manyBranches = (branches, leaves) => ({
+  nodeData: { id: 'r', topic: 'Central topic', children: Array.from({ length: branches }, (_, b) => ({ id: `b${b}`, topic: `Branch number ${b}`, children: Array.from({ length: leaves }, (__, l) => ({ id: `b${b}l${l}`, topic: `Leaf ${b}.${l} with some longer text`, children: [] })) })) },
+  arrows: [], summaries: [], direction: 2,
+});
+
 const CASES = {
   async 'computer: lazy bundle, list and keyboard editing'(browser) {
     const { context, page, server } = await openPage(browser, { touch: false });
@@ -260,6 +309,160 @@ const CASES = {
     check(await page.evaluate(() => document.querySelectorAll('.mm-row').length === 1), 'Escape returns to the list');
     await page.keyboard.press('Escape');
     await page.locator('#h5-mindmap').waitFor({ state: 'hidden' });
+    await context.close();
+  },
+
+  async 'computer: any stored map opens as a tree to the right, and opening does not save it'(browser) {
+    const { context, page, server } = await openPage(browser, { touch: false });
+    const stored = [['Both sides', 2], ['Left only', 0], ['Right only', 1], ['Bad direction', 'sideways'], ['No direction', undefined]];
+    for (const [title, direction] of stored) server.make(title, bothSidesMap(direction));
+    await openView(page, false);
+    for (const [title] of stored) {
+      await page.locator('.mm-row-open', { hasText: title }).click();
+      await page.locator('.me-tpc').nth(6).waitFor();
+      await checkAllRight(page, title);
+      await checkAllVisible(page, title);
+      await page.waitForTimeout(1300); // longer than the autosave delay
+      check(puts(server) === 0, `${title}: opening sends no save (${puts(server)})`);
+      check((await page.locator('.mm-status').getAttribute('data-state')) === 'saved', `${title}: the status stays saved`);
+      await page.locator('#mm-back').click();
+      await page.locator('.mm-row').first().waitFor();
+    }
+    check([...server.maps.values()].every(map => map.revision === 1), 'no revision was raised');
+    await context.close();
+  },
+
+  async 'computer: every way of adding or moving a topic stays on the right'(browser) {
+    const { context, page, server } = await openPage(browser, { touch: false });
+    const mod = process.platform === 'darwin' ? 'Meta' : 'Control';
+    const map = server.make('Both sides', bothSidesMap(2));
+    await openView(page, false);
+    await page.locator('.mm-row-open').first().click();
+    await page.locator('.me-tpc').nth(6).waitFor();
+
+    // The layout switch is gone from the menu, and the library's own layout keys do nothing.
+    await page.locator('#mm-more').click();
+    const menu = await page.locator('.mm-menu').textContent();
+    check(!/layout|both sides|logic chart/i.test(menu), `the menu has no layout item: ${menu}`);
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Home');
+    for (const key of ['ArrowUp', 'ArrowLeft']) await page.keyboard.press(`${mod}+${key}`);
+    await checkAllRight(page, 'the old layout keys');
+
+    await page.keyboard.press('Home');
+    await page.keyboard.press('Tab');
+    await newTopic(page, 'From root');
+    await checkAllRight(page, 'add subtopic on the root');
+    await page.keyboard.press('Enter');
+    await newTopic(page, 'After');
+    await checkAllRight(page, 'add topic after');
+    await page.keyboard.press('Shift+Enter');
+    await newTopic(page, 'Before');
+    await checkAllRight(page, 'add topic before');
+    await page.keyboard.press(`${mod}+Enter`);
+    await newTopic(page, 'New parent');
+    await checkAllRight(page, 'add parent topic');
+
+    // Copy and paste, then cut and paste, onto the root.
+    await topicEl(page, 'Left two').click();
+    let count = (await topics(page)).length;
+    await page.keyboard.press(`${mod}+c`);
+    await page.keyboard.press('Home');
+    await page.keyboard.press(`${mod}+v`);
+    await page.waitForFunction(n => document.querySelectorAll('.mm-canvas .me-tpc').length > n, count);
+    await checkAllRight(page, 'copy and paste on the root');
+    await topicEl(page, 'No side').click();
+    count = (await topics(page)).length;
+    await page.keyboard.press(`${mod}+x`);
+    await page.waitForFunction(n => document.querySelectorAll('.mm-canvas .me-tpc').length < n, count);
+    await page.keyboard.press('Home');
+    await page.keyboard.press(`${mod}+v`);
+    await page.waitForFunction(n => document.querySelectorAll('.mm-canvas .me-tpc').length === n, count);
+    await checkAllRight(page, 'cut and paste on the root');
+
+    // Undo and redo all the way through those edits.
+    for (let i = 0; i < 8; i += 1) { await page.keyboard.press(`${mod}+z`); await checkAllRight(page, `undo ${i + 1}`); }
+    for (let i = 0; i < 8; i += 1) { await page.keyboard.press(`${mod}+Shift+z`); await checkAllRight(page, `redo ${i + 1}`); }
+
+    // Drag by mouse. The library refuses a drop on the root; a deep topic becomes first level next to a first-level topic, and first-level topics change places.
+    await page.keyboard.press(`${mod}+9`); // the map has outgrown the canvas by now
+    await mouseDrag(page, 'Other leaf', 'Root');
+    await page.waitForTimeout(100);
+    check(await page.evaluate(() => [...document.querySelectorAll('.mm-canvas .rhs > .me-wrapper > .me-parent > .me-tpc')].every(el => el.textContent !== 'Other leaf')), 'a mouse drop on the root changes nothing');
+    await checkAllRight(page, 'a mouse drop on the root');
+    await mouseDrag(page, 'Left leaf', 'After', b => b.top + b.height + 6);
+    await page.waitForFunction(() => [...document.querySelectorAll('.mm-canvas .rhs > .me-wrapper > .me-parent > .me-tpc')].some(el => el.textContent === 'Left leaf'));
+    await checkAllRight(page, 'a topic dragged to first level');
+    await page.keyboard.press(`${mod}+9`);
+    await mouseDrag(page, 'Right one', 'Left one', b => b.top - 6);
+    await page.waitForFunction(() => { const list = [...document.querySelectorAll('.mm-canvas .rhs > .me-wrapper > .me-parent > .me-tpc')].map(el => el.textContent); return list.indexOf('Right one') !== -1 && list.indexOf('Right one') < list.indexOf('Left one'); });
+    await checkAllRight(page, 'a first-level topic dragged before another');
+    await page.keyboard.press(`${mod}+z`);
+    await checkAllRight(page, 'undo of a drag');
+    await page.keyboard.press(`${mod}+Shift+z`);
+    await checkAllRight(page, 'redo of a drag');
+
+    // The first edit rewrites the map, and what is stored has one layout and no side on any topic.
+    await waitSaved(page);
+    const saved = server.maps.get(map.id);
+    check(saved.revision > 1, 'an edit saves the map');
+    check(saved.data.direction === 1, `the stored layout is right only: ${saved.data.direction}`);
+    check(sidesIn(saved.data).length === 0, `no topic keeps a side: ${sidesIn(saved.data)}`);
+    await context.close();
+  },
+
+  async 'computer: arrow keys walk the tree'(browser) {
+    const { context, page, server } = await openPage(browser, { touch: false });
+    const wide = 'A very long first level topic that is much wider than its neighbours';
+    server.make('Walk', { nodeData: { id: 'r', topic: 'Root', children: [
+      { id: 'a', topic: 'Up', children: Array.from({ length: 9 }, (_, i) => ({ id: `a${i}`, topic: `Child ${i}`, children: [] })) },
+      { id: 'b', topic: wide, children: [{ id: 'b1', topic: 'Only child', children: [] }] },
+      { id: 'c', topic: 'Down', children: [] },
+    ] }, arrows: [], summaries: [], direction: 1 });
+    await openView(page, false);
+    await page.locator('.mm-row-open').first().click();
+    await page.locator('.me-tpc').nth(13).waitFor();
+    const at = async (key, expected) => { await page.keyboard.press(key); check((await selected(page))[0] === expected, `${key} goes to ${expected}, not ${await selected(page)}`); };
+    await page.keyboard.press('Home');
+    await page.keyboard.press('ArrowRight');
+    check(['Up', wide, 'Down'].includes((await selected(page))[0]), `Right from the root goes to a child: ${await selected(page)}`);
+    await topicEl(page, wide).click();
+    await at('ArrowRight', 'Only child');
+    await at('ArrowRight', 'Only child'); // a topic with no children has nothing to its right in the tree
+    await at('ArrowLeft', wide);
+    await at('ArrowUp', 'Up');
+    await at('ArrowDown', wide);
+    await at('ArrowDown', 'Down');
+    await at('ArrowLeft', 'Root');
+    await at('ArrowLeft', 'Root'); // nothing is left of the root
+    // Left is the parent even when a topic of another branch is nearer on the screen.
+    await topicEl(page, 'Child 0').click();
+    await at('ArrowLeft', 'Up');
+    await context.close();
+  },
+
+  async 'computer: Fit and Actual size keep a one-sided map in view'(browser) {
+    const { context, page, server } = await openPage(browser, { touch: false });
+    const mod = process.platform === 'darwin' ? 'Meta' : 'Control';
+    server.make('Tall map', manyBranches(30, 5));
+    server.make('Wide map', { nodeData: { id: 'r', topic: 'Central topic', children: [(function chain(i) { return { id: `c${i}`, topic: `A long topic at level ${i} of the chain`, children: i < 12 ? [chain(i + 1)] : [] }; })(0)] }, arrows: [], summaries: [], direction: 1 });
+    server.make('Small map', bothSidesMap(2));
+    await openView(page, false);
+    for (const title of ['Tall map', 'Wide map', 'Small map']) {
+      await page.locator('.mm-row-open', { hasText: title }).click();
+      await page.locator('.me-tpc').nth(4).waitFor();
+      await checkAllRight(page, `${title} opened`);
+      await checkAllVisible(page, `${title} opened`);
+      if (SHOT_DIR && title !== 'Wide map') await page.screenshot({ path: path.join(SHOT_DIR, `desktop-${title.split(' ')[0].toLowerCase()}.png`) });
+      await page.keyboard.press(`${mod}+0`);
+      const g = await geometry(page);
+      check(inside(g.root, g.canvas), `${title}: the root stays in view at actual size: ${JSON.stringify({ root: g.root, canvas: g.canvas })}`);
+      await page.keyboard.press(`${mod}+9`);
+      await checkAllVisible(page, `${title} after Fit`);
+      await page.locator('#mm-back').click();
+      await page.locator('.mm-row').first().waitFor();
+    }
+    check(puts(server) === 0, 'zooming and fitting do not save');
     await context.close();
   },
 
@@ -424,12 +627,114 @@ const CASES = {
       const content = JSON.parse(strFromU8(entries['content.json']));
       const exportRoot = content[0].rootTopic;
       check(content[0].class === 'sheet' && exportRoot.class === 'topic' && exportRoot.title === 'Imported root', 'the workbook has the format of content.json');
-      check(exportRoot.structureClass === 'org.xmind.ui.logic.right', 'the layout survives');
+      check(exportRoot.structureClass === 'org.xmind.ui.logic.right', 'the export is a right-side tree');
       const child = exportRoot.children.attached.find(topic => topic.title === 'Child \u4e2d\u6587');
       check(child && child.notes.plain.content === 'My note' && child.labels[0] === 'one' && child.href === 'https://example.com/' && child.markers[0].markerId === 'priority-1', `the topic details survive: ${JSON.stringify(child)}`);
       check(content[0].relationships && content[0].relationships.length === 1, 'the relationship survives');
+
+      // Whatever structure the file has, it opens to the right and exports as a right-side tree.
+      await page.locator('#mm-back').click();
+      await page.locator('.mm-row').first().waitFor();
+      for (const structureClass of ['org.xmind.ui.map.unbalanced', 'org.xmind.ui.logic.left', 'org.xmind.ui.fishbone.leftHeaded', undefined]) {
+        const other = [{ id: 's', class: 'sheet', title: 'Sheet', rootTopic: { id: 'r', class: 'topic', title: 'Other root', ...(structureClass ? { structureClass } : {}), children: { attached: ['One', 'Two', 'Three', 'Four'].map(title => ({ id: title, title, children: { attached: [{ id: `${title}x`, title: `${title} leaf` }] } })) } } }];
+        const otherFile = path.join(dir, 'Other.xmind');
+        fs.writeFileSync(otherFile, zipSync({ 'content.json': strToU8(JSON.stringify(other)), 'metadata.json': strToU8('{}'), 'manifest.json': strToU8('{}') }));
+        await page.locator('.mm-file').setInputFiles(otherFile);
+        await page.locator('.me-tpc', { hasText: 'Four leaf' }).waitFor();
+        await checkAllRight(page, `an import with ${structureClass}`);
+        await checkAllVisible(page, `an import with ${structureClass}`);
+        check(!/not imported/.test(await page.evaluate(() => document.body.textContent)), `no loss is claimed for ${structureClass}`);
+        const created = [...server.maps.values()].at(-1);
+        check(created.data.direction === 1 && sidesIn(created.data).length === 0, 'the imported map is stored as a right-side tree');
+        const exported = page.waitForEvent('download');
+        await page.locator('#mm-export').click();
+        const bytes = fs.readFileSync(await (await exported).path());
+        check(JSON.parse(strFromU8(unzipSync(new Uint8Array(bytes))['content.json']))[0].rootTopic.structureClass === 'org.xmind.ui.logic.right', 'the export is a right-side tree');
+        await page.locator('#mm-back').click();
+        await page.locator('.mm-row').first().waitFor();
+      }
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
+    }
+    await context.close();
+  },
+
+  async 'phone: every touch way of adding or moving a topic stays on the right'(browser) {
+    const { context, page, server } = await openPage(browser, { touch: true });
+    const map = server.make('Touch sides', bothSidesMap(2));
+    await openView(page, true);
+    await page.locator('.mm-row-open').first().tap();
+    await page.locator('.me-tpc').nth(6).waitFor();
+    await settled(page);
+    await checkAllRight(page, 'opened on a phone');
+    await page.waitForTimeout(1300);
+    check(puts(server) === 0 && server.maps.get(map.id).revision === 1, 'opening on a phone does not save');
+    const cdp = await context.newCDPSession(page);
+    const touch = (type, points) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: points });
+    const drag = async (from, to) => {
+      await touch('touchStart', [from]);
+      for (let i = 1; i <= 10; i += 1) await touch('touchMove', [{ x: from.x + (to.x - from.x) * i / 10, y: from.y + (to.y - from.y) * i / 10 }]);
+      await page.waitForFunction(() => document.querySelector('.mm-ghost'));
+      await touch('touchEnd', []);
+      await page.waitForFunction(() => !document.querySelector('.mm-ghost'));
+      await settled(page);
+    };
+    const tapTopic = async text => { const p = await topicCenter(page, text); await page.touchscreen.tap(p.x, p.y); await page.waitForFunction(label => [...document.querySelectorAll('.me-tpc.selected')].some(el => el.textContent === label), text); };
+
+    // The bar: subtopic on the root, topic after on a first-level topic.
+    await tapTopic('Root');
+    await page.locator('#mm-action-child').tap();
+    await page.keyboard.type('Bar child');
+    await page.keyboard.press('Enter');
+    await checkAllRight(page, 'add subtopic from the bar');
+    await page.locator('#mm-action-sibling').tap();
+    await page.keyboard.type('Bar sibling');
+    await page.keyboard.press('Enter');
+    await checkAllRight(page, 'add topic after from the bar');
+    await page.locator('#mm-action-fit').tap();
+    await settled(page);
+
+    // A finger drags a deep topic onto the root, then a first-level topic to just above another.
+    await drag(await topicCenter(page, 'Left leaf'), await topicCenter(page, 'Root'));
+    check(await page.evaluate(() => [...document.querySelectorAll('.mm-canvas .rhs > .me-wrapper > .me-parent > .me-tpc')].some(el => el.textContent === 'Left leaf')), 'the topic is now first level, on the right');
+    await checkAllRight(page, 'a finger drag onto the root');
+    await page.locator('#mm-action-fit').tap();
+    await settled(page);
+    const target = await topicCenter(page, 'Left one');
+    await drag(await topicCenter(page, 'Right one'), { x: target.x, y: target.top + 1 });
+    const order = await page.evaluate(() => [...document.querySelectorAll('.mm-canvas .rhs > .me-wrapper > .me-parent > .me-tpc')].map(el => el.textContent));
+    check(order.indexOf('Right one') !== -1 && order.indexOf('Right one') < order.indexOf('Left one'), `the first-level topic moved up: ${order}`);
+    await checkAllRight(page, 'a finger drag before another topic');
+    await page.locator('#mm-action-undo').tap();
+    await checkAllRight(page, 'undo of a finger drag');
+    await page.locator('#mm-action-redo').tap();
+    await checkAllRight(page, 'redo of a finger drag');
+
+    await waitSaved(page);
+    const saved = server.maps.get(map.id);
+    check(saved.data.direction === 1 && sidesIn(saved.data).length === 0, `what is stored has no side: ${JSON.stringify(sidesIn(saved.data))}`);
+    check(topicCount(saved.data) === 9, `no topic was lost: ${topicCount(saved.data)}`);
+    await context.close();
+  },
+
+  async 'phone: Fit keeps a one-sided map in view'(browser) {
+    const { context, page, server } = await openPage(browser, { touch: true });
+    server.make('Tall map', manyBranches(30, 5));
+    server.make('Wide map', { nodeData: { id: 'r', topic: 'Central topic', children: [(function chain(i) { return { id: `c${i}`, topic: `A long topic at level ${i} of the chain`, children: i < 12 ? [chain(i + 1)] : [] }; })(0)] }, arrows: [], summaries: [], direction: 1 });
+    server.make('Small map', bothSidesMap(2));
+    await openView(page, true);
+    for (const title of ['Tall map', 'Wide map', 'Small map']) {
+      await page.locator('.mm-row-open', { hasText: title }).tap();
+      await page.locator('.me-tpc').nth(4).waitFor();
+      await settled(page);
+      await checkAllRight(page, `${title} opened`);
+      await checkAllVisible(page, `${title} opened`);
+      if (SHOT_DIR && title !== 'Wide map') await page.screenshot({ path: path.join(SHOT_DIR, `phone-${title.split(' ')[0].toLowerCase()}.png`) });
+      await page.locator('#mm-action-fit').tap();
+      await settled(page);
+      await checkAllVisible(page, `${title} after Fit`);
+      await page.locator('#mm-back').tap();
+      await page.locator('.mm-row').first().waitFor();
     }
     await context.close();
   },

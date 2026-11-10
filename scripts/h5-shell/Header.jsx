@@ -41,7 +41,7 @@ export function Header({ state, ui }) {
         <IconButton id="h5-refresh" {...named(refresh)} onClick={() => ui.actions.refresh()}>
           <RefreshIcon />
         </IconButton>
-        <UpdateButton />
+        <UpdateButton ui={ui} />
       </Toolbar>
     </AppBar>
   );

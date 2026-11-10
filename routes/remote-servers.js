@@ -373,7 +373,24 @@ router.get('/:id/tasks/:taskId/document/:kind/watch', documentKindOk, (req, res)
   streamRemote(req, res, target.row.base_url, target.token, `${taskPath(req)}/document/${req.params.kind}/watch`, { sse: true });
 });
 
+// Archive and restore, on an Engine that advertises 'tasks:archive'. The capability is checked first: an older Engine has no archive routes and it would
+// ignore `?archived=1` and answer its whole list as if every task were archived.
+async function proxyArchive(req, res, upstream, options) {
+  const target = remoteTarget(req, res);
+  if (!target) return;
+  const supported = await remoteHas(target, res, 'tasks:archive');
+  if (supported === null) return;
+  if (!supported) return res.status(501).json({ error: 'ARCHIVE_UNSUPPORTED' });
+  try { res.json(await request(target.row.base_url, upstream, target.token, options)); }
+  catch (error) { res.status(error.statusCode || 502).json({ error: safeError(error) }); }
+}
+
+for (const action of ['archive', 'restore']) {
+  router.post(`/:id/tasks/:taskId/${action}`, (req, res) => proxyArchive(req, res, `${taskPath(req)}/${action}`, { method: 'POST', body: {} }));
+}
+
 router.get('/:id/tasks', async (req, res) => {
+  if (req.query.archived === '1') return proxyArchive(req, res, '/v1/tasks?archived=1');
   const row = getServer(req);
   if (!row) return res.status(404).json({ error: 'REMOTE_NOT_FOUND' });
   try { res.json(await request(row.base_url, '/v1/tasks', decryptToken(row.token_cipher, config.sessionSecret))); }

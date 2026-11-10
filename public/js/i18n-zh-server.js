@@ -1,5 +1,7 @@
 // Chinese translations of messages that come from the server (services/, routes/, lib/): error messages, update steps, field labels.
 I18n.add({
+  "TASK_ARCHIVED": "任务已归档，请先恢复",
+  "ARCHIVE_UNSUPPORTED": "这个 Engine 的版本过旧，不支持归档，请先升级",
   ", error code {1}": "，错误码 {1}",
   "Only regular files can be opened": "只能打开普通文件",
   "Permission denied: the terminal user cannot read this file": "没有权限：终端用户无法读取这个文件",

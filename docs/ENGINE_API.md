@@ -23,6 +23,7 @@ Authorization: Bearer tae_xxx
 - `POST /v1/tasks`
 - `PATCH /v1/tasks/:id`
 - `DELETE /v1/tasks/:id`
+- `POST /v1/tasks/:id/archive`, `POST /v1/tasks/:id/restore` (scope `tasks:write`, capability `tasks:archive`, see below)
 - `GET /v1/tasks/:id/documents/:kind`
 - `PUT /v1/tasks/:id/documents/:kind`
 - `GET /v1/tasks/:id/todos`
@@ -33,6 +34,17 @@ Authorization: Bearer tae_xxx
 `kind` supports `technical`, `readme` and `agent`.
 
 A task's `status` stores the `key` returned by the groups. `doing`, `todo` and `done` are system groups that cannot be renamed or deleted; other groups can be renamed and can only be deleted when they have no tasks.
+
+### Archived tasks
+
+Capability `tasks:archive` (additive, `api_version` stays 1). `tasks.archived_at` is an ISO 8601 UTC time, `null` while the task is in use.
+
+- `GET /v1/tasks` leaves archived tasks out. `GET /v1/tasks?archived=1` returns only them, newest `archived_at` first, in the same shape (`status` still filters).
+- `POST /v1/tasks/:id/archive` (no body): `200` with the task. Already archived: `200`, `archived_at` unchanged. It closes the task's live terminals and stops its running chat turns; the work folder, documents, to-dos, terminal rows, chats, share link and group stay.
+- `POST /v1/tasks/:id/restore` (no body): `200` with the task, `archived_at: null`, `sort_order` 0 as a new task. A task that is not archived is returned unchanged. Nothing is started.
+- Until it is restored, these answer `409 { "error": "TASK_ARCHIVED" }`: `POST /v1/tasks/:id/terminals`, `POST /v1/terminal-sessions`, and chat requests that give an agent work (`POST .../agent/conversations`, `.../messages`, `.../fork`, `.../queue/add`, `.../queue/:eid/send`). A terminal WebSocket whose ticket was issued earlier is closed with `1008` and the reason `TASK_ARCHIVED`. Documents, to-dos and reading a chat stay allowed, and `DELETE /v1/tasks/:id` works.
+- Archived tasks are also left out of `/v1/terminal-activity`, `/v1/terminal-activity/stream`, `/v1/terminal-subagents`, `PUT /v1/tasks/reorder` and the repositories of `/v1/workspace/cleanup` (a request for one gets `TASK_ARCHIVED`). Their folders stay managed: `/v1/workspace/unmanaged` does not list them.
+- The Client's proxy uses the same paths under `/api/remote-servers/:id/tasks`. It reads `/v1/info` first, and an Engine without the capability gets `501 ARCHIVE_UNSUPPORTED` (such an Engine would ignore `archived=1` and answer its whole list). For an archived remote task the proxy accepts the browser's terminal WebSocket and closes it with `1008 TASK_ARCHIVED`, so the page does not keep reconnecting.
 
 ## Terminals
 

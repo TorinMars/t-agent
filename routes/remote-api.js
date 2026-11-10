@@ -30,7 +30,7 @@ router.get('/tasks', (req, res) => {
     SELECT id, title, status, priority, due_date, sort_order, created_at, updated_at,
            CASE WHEN md_path IS NULL AND work_dir IS NULL THEN 0 ELSE 1 END AS has_technical,
            CASE WHEN work_dir IS NULL AND md_path IS NULL THEN 0 ELSE 1 END AS has_document_root
-    FROM tasks WHERE user_id = ? ORDER BY sort_order ASC, created_at DESC
+    FROM tasks WHERE user_id = ? AND archived_at IS NULL ORDER BY sort_order ASC, created_at DESC
   `).all(req.remoteAuth.userId);
   res.json(tasks);
 });

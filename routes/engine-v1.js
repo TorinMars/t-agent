@@ -4,6 +4,7 @@ const config = require('../config');
 const requireEngineAuth = require('../middleware/engine-auth');
 const tasks = require('../services/engine-tasks');
 const taskGroups = require('../services/task-groups');
+const taskArchive = require('../services/task-archive');
 const { exchangePairingCode, createAccessToken, hasScope } = require('../services/engine-auth');
 const { getEngineIdentity } = require('../services/engine-identity');
 const { createTerminalTicket } = require('../services/terminal-tickets');
@@ -74,6 +75,8 @@ function infoHandler(req, res) {
       'documents:read', 'documents:write',
       'files:read', 'files:write',
       // Parity with the Client's own task routes; older Engines simply lack these.
+      // tasks:archive: GET /v1/tasks?archived=1, POST /v1/tasks/:id/archive and /restore. An older Engine ignores `archived`, so the Client checks for this first.
+      'tasks:archive',
       'tasks:reorder', 'documents:create', 'documents:watch', 'files:assets', 'files:image', 'paths:validate', 'terminal:activity', 'terminal:activity-stream',
       'todos:read', 'todos:write',
       'terminal:interactive', 'terminal:control', 'terminal:multiple', 'token:pairing',
@@ -166,7 +169,7 @@ router.use('/tasks/:id/agent', require('./agent-chat').createAgentChatRouter({
 }));
 
 router.get('/tasks', requireEngineAuth('tasks:read'), (req, res) => {
-  try { res.json(tasks.listTasks(principal(req), req.query.status)); }
+  try { res.json(tasks.listTasks(principal(req), req.query.status, { archived: req.query.archived === '1' })); }
   catch (error) { errorResponse(res, error); }
 });
 
@@ -223,6 +226,16 @@ router.patch('/tasks/:id', requireEngineAuth('tasks:write'), (req, res) => {
 
 router.put('/tasks/:id', requireEngineAuth('tasks:write'), (req, res) => {
   try { res.json(tasks.updateTask(principal(req), req.params.id, req.body)); }
+  catch (error) { errorResponse(res, error); }
+});
+
+router.post('/tasks/:id/archive', requireEngineAuth('tasks:write'), (req, res) => {
+  try { res.json(tasks.archiveTask(principal(req), req.params.id)); }
+  catch (error) { errorResponse(res, error); }
+});
+
+router.post('/tasks/:id/restore', requireEngineAuth('tasks:write'), (req, res) => {
+  try { res.json(tasks.restoreTask(principal(req), req.params.id)); }
   catch (error) { errorResponse(res, error); }
 });
 
@@ -335,18 +348,16 @@ router.get('/tasks/:id/terminals/:terminalId/cwd', requireEngineAuth('terminal:e
 });
 
 router.get('/terminal-activity', requireEngineAuth('terminal:execute'), (req, res) => {
-  const ids = db.prepare('SELECT id FROM tasks WHERE user_id = ?').all(principal(req)).map(row => row.id);
-  res.json(terminal.activitySnapshot(ids));
+  res.json(terminal.activitySnapshot(taskArchive.activeTaskIds(db, principal(req))));
 });
 
 router.get('/terminal-activity/stream', requireEngineAuth('terminal:execute'), (req, res) => {
   const owner = principal(req);
-  terminal.serveActivityStream(req, res, () => db.prepare('SELECT id FROM tasks WHERE user_id = ?').all(owner).map(row => row.id));
+  terminal.serveActivityStream(req, res, () => taskArchive.activeTaskIds(db, owner));
 });
 
 router.get('/terminal-subagents', requireEngineAuth('terminal:execute'), (req, res) => {
-  const ids = db.prepare('SELECT id FROM tasks WHERE user_id = ?').all(principal(req)).map(row => row.id);
-  res.json(terminal.subagentSnapshot(ids));
+  res.json(terminal.subagentSnapshot(taskArchive.activeTaskIds(db, principal(req))));
 });
 
 router.post('/tasks/:id/terminal/ack', requireEngineAuth('terminal:execute'), (req, res) => {
@@ -359,6 +370,7 @@ router.post('/tasks/:id/terminal/ack', requireEngineAuth('terminal:execute'), (r
 router.post('/terminal-sessions', requireEngineAuth('terminal:execute'), (req, res) => {
   const task = tasks.ownedTask(principal(req), req.body.task_id);
   if (!task) return res.status(404).json({ error: 'TASK_NOT_FOUND' });
+  if (task.archived_at) return res.status(409).json({ error: 'TASK_ARCHIVED' });
   let terminalId;
   try { terminalId = terminal.assertTerminal(task.id, req.body.terminal_id); }
   catch (error) { return errorResponse(res, error); }

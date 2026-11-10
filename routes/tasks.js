@@ -11,6 +11,7 @@ const terminal = require('./terminal');
 const documents = require('../services/task-documents');
 const { createTaskFilesRouter } = require('./task-files');
 const { startWithoutDefaultTerminal } = require('../lib/task-default-terminal');
+const taskArchive = require('../services/task-archive');
 
 const router = express.Router();
 
@@ -23,14 +24,7 @@ router.use('/:id/files', createTaskFilesRouter({
 }));
 
 router.get('/', (req, res) => {
-  const uid = ownerFilter(req);
-  const { status } = req.query;
-  let tasks;
-  if (status) {
-    tasks = db.prepare('SELECT * FROM tasks WHERE user_id = ? AND status = ? ORDER BY sort_order ASC, created_at DESC').all(uid, status);
-  } else {
-    tasks = db.prepare('SELECT * FROM tasks WHERE user_id = ? ORDER BY sort_order ASC, created_at DESC').all(uid);
-  }
+  const tasks = taskArchive.listTasks(db, ownerFilter(req), { status: req.query.status, archived: req.query.archived === '1' });
   res.json(tasks.map(documents.resolveTask));
 });
 
@@ -124,7 +118,7 @@ router.put('/reorder', (req, res) => {
   const uid = ownerFilter(req);
   const items = req.body; // [{ id, sort_order }]
   if (!Array.isArray(items)) return res.status(400).json({ error: 'body must be array' });
-  const stmt = db.prepare('UPDATE tasks SET sort_order = ? WHERE id = ? AND user_id = ?');
+  const stmt = db.prepare('UPDATE tasks SET sort_order = ? WHERE id = ? AND user_id = ? AND archived_at IS NULL');
   const update = db.transaction(() => items.forEach(({ id, sort_order }) => stmt.run(sort_order, id, uid)));
   update();
   res.json({ success: true });
@@ -189,20 +183,18 @@ router.put('/:id', (req, res) => {
 });
 
 router.get('/terminal-activity', (req, res) => {
-  const ids = db.prepare('SELECT id FROM tasks WHERE user_id = ?').all(ownerFilter(req)).map(row => row.id);
-  res.json(terminal.activitySnapshot(ids));
+  res.json(terminal.activitySnapshot(taskArchive.activeTaskIds(db, ownerFilter(req))));
 });
 
 // The same activity and sub-agent snapshot pushed as server-sent events (`event: activity`), on connect and on every change.
 router.get('/terminal-activity/stream', (req, res) => {
   const owner = ownerFilter(req);
-  terminal.serveActivityStream(req, res, () => db.prepare('SELECT id FROM tasks WHERE user_id = ?').all(owner).map(row => row.id));
+  terminal.serveActivityStream(req, res, () => taskArchive.activeTaskIds(db, owner));
 });
 
 // Running sub-agents of the live Claude terminals (the phone's "next running or pending session" button counts them as running).
 router.get('/terminal-subagents', (req, res) => {
-  const ids = db.prepare('SELECT id FROM tasks WHERE user_id = ?').all(ownerFilter(req)).map(row => row.id);
-  res.json(terminal.subagentSnapshot(ids));
+  res.json(terminal.subagentSnapshot(taskArchive.activeTaskIds(db, ownerFilter(req))));
 });
 
 router.post('/:id/terminal/ack', (req, res) => {
@@ -260,6 +252,14 @@ router.post('/:id/terminal/control', (req, res) => {
     res.status(error.statusCode || 400).json({ error: error.message || 'TERMINAL_CONTROL_FAILED' });
   }
 });
+
+// Archive and restore (services/task-archive.js). Registered after /workspace/restore, whose first segment would otherwise read as a task id.
+for (const [action, run] of [['archive', taskArchive.archiveTask], ['restore', taskArchive.restoreTask]]) {
+  router.post(`/:id/${action}`, (req, res) => {
+    try { res.json(documents.resolveTask(run(db, ownerFilter(req), req.params.id))); }
+    catch (error) { res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'TASK_ARCHIVE_FAILED' }); }
+  });
+}
 
 router.delete('/:id', (req, res) => {
   const uid = ownerFilter(req);

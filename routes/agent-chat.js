@@ -9,7 +9,7 @@ function createAgentChatRouter({ service = getAgentChat(), authenticate = requir
   const router = express.Router({ mergeParams: true });
   router.use(authenticate);
 
-  const taskOf = req => db.prepare('SELECT id, work_dir FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, ownerOf(req));
+  const taskOf = req => db.prepare('SELECT id, work_dir, archived_at FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, ownerOf(req));
   const handle = run => async (req, res) => {
     const task = taskOf(req);
     if (!task) return res.status(404).json({ error: 'TASK_NOT_FOUND' });
@@ -17,8 +17,14 @@ function createAgentChatRouter({ service = getAgentChat(), authenticate = requir
     catch (error) { res.status(error.statusCode || 400).json({ error: /^[A-Z0-9_]+$/.test(error.message) ? error.message : 'AGENT_CHAT_FAILED' }); }
   };
 
+  // What would give an agent work is refused while the task is archived (services/task-archive.js); reading a chat, renaming it or deleting it is not.
+  const whileActive = run => handle((task, req, res) => {
+    if (task.archived_at) throw Object.assign(new Error('TASK_ARCHIVED'), { statusCode: 409 });
+    return run(task, req, res);
+  });
+
   router.get('/conversations', handle(task => service.list(task.id)));
-  router.post('/conversations', handle((task, req) => service.create(task, req.body || {})));
+  router.post('/conversations', whileActive((task, req) => service.create(task, req.body || {})));
   router.get('/sessions', handle((task, req) => listSessions(req.query.agent, task.work_dir)));
   router.get('/conversations/:cid', handle((task, req) => service.snapshot(task, req.params.cid)));
   router.patch('/conversations/:cid', handle((task, req) => {
@@ -37,17 +43,17 @@ function createAgentChatRouter({ service = getAgentChat(), authenticate = requir
   // The queued messages of the chat, replaced as a whole (POST, because some network paths let POST through but not PUT or PATCH).
   router.post('/conversations/:cid/queue', handle((task, req) => service.setQueue(task, req.params.cid, (req.body || {}).queue)));
   // The queue is changed by operations (all POST, for the same reason); the Client sends the queued messages itself when a turn ends.
-  router.post('/conversations/:cid/queue/add', handle((task, req) => service.queueAdd(task, req.params.cid, req.body || {})));
+  router.post('/conversations/:cid/queue/add', whileActive((task, req) => service.queueAdd(task, req.params.cid, req.body || {})));
   router.post('/conversations/:cid/queue/:eid/remove', handle((task, req) => service.queueRemove(task, req.params.cid, req.params.eid)));
   router.post('/conversations/:cid/queue/:eid/edit', handle((task, req) => service.queueEdit(task, req.params.cid, req.params.eid, (req.body || {}).text)));
-  router.post('/conversations/:cid/queue/:eid/send', handle((task, req) => service.queueSendNow(task, req.params.cid, req.params.eid)));
+  router.post('/conversations/:cid/queue/:eid/send', whileActive((task, req) => service.queueSendNow(task, req.params.cid, req.params.eid)));
   // A new conversation that continues from a message of this one: { itemId } -> { conversation, draft }.
-  router.post('/conversations/:cid/fork', handle((task, req) => service.fork(task, req.params.cid, req.body || {})));
+  router.post('/conversations/:cid/fork', whileActive((task, req) => service.fork(task, req.params.cid, req.body || {})));
   router.post('/conversations/:cid/limits/refresh', handle((task, req) => service.refreshUsage(task, req.params.cid)));
   router.get('/conversations/:cid/commands', handle((task, req) => service.listCommands(task, req.params.cid)));
   router.get('/conversations/:cid/models', handle((task, req) => service.listModels(task, req.params.cid)));
   router.delete('/conversations/:cid', handle((task, req) => service.remove(task, req.params.cid)));
-  router.post('/conversations/:cid/messages', handle((task, req) => service.sendMessage(task, req.params.cid, req.body || {})));
+  router.post('/conversations/:cid/messages', whileActive((task, req) => service.sendMessage(task, req.params.cid, req.body || {})));
   router.post('/conversations/:cid/interrupt', handle((task, req) => service.interrupt(task, req.params.cid)));
   router.post('/conversations/:cid/permissions/:rid', handle((task, req) => service.answerPermission(task, req.params.cid, req.params.rid, req.body || {})));
 

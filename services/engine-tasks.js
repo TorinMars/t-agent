@@ -5,6 +5,7 @@ const db = require('../db');
 const taskGroups = require('./task-groups');
 const documents = require('./task-documents');
 const workspaceTools = require('./workspace-tools');
+const taskArchive = require('./task-archive');
 const { startWithoutDefaultTerminal } = require('../lib/task-default-terminal');
 
 const DEFAULT_BASE = path.resolve(process.env.TASKS_BASE_DIR || path.join(os.homedir(), 'tasks'));
@@ -36,13 +37,16 @@ function ownedTask(principalId, id) {
   return db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(id, principalId);
 }
 
-function listTasks(principalId, status) {
-  if (status) {
-    return db.prepare(`SELECT * FROM tasks WHERE user_id = ? AND status = ?
-      ORDER BY sort_order ASC, created_at DESC`).all(principalId, status).map(publicTask);
-  }
-  return db.prepare(`SELECT * FROM tasks WHERE user_id = ?
-    ORDER BY sort_order ASC, created_at DESC`).all(principalId).map(publicTask);
+function listTasks(principalId, status, { archived = false } = {}) {
+  return taskArchive.listTasks(db, principalId, { status, archived }).map(publicTask);
+}
+
+function archiveTask(principalId, id) {
+  return publicTask(taskArchive.archiveTask(db, principalId, id));
+}
+
+function restoreTask(principalId, id) {
+  return publicTask(taskArchive.restoreTask(db, principalId, id));
 }
 
 function createTask(principalId, input = {}) {
@@ -116,7 +120,7 @@ function updateTask(principalId, id, input = {}) {
 
 function reorderTasks(principalId, items) {
   if (!Array.isArray(items)) throw Object.assign(new Error('BODY_MUST_BE_ARRAY'), { statusCode: 400 });
-  const stmt = db.prepare('UPDATE tasks SET sort_order = ? WHERE id = ? AND user_id = ?');
+  const stmt = db.prepare('UPDATE tasks SET sort_order = ? WHERE id = ? AND user_id = ? AND archived_at IS NULL');
   db.transaction(() => {
     for (const { id, sort_order } of items) {
       if (!Number.isInteger(sort_order)) throw Object.assign(new Error('SORT_ORDER_INVALID'), { statusCode: 400 });
@@ -225,6 +229,8 @@ module.exports = {
   assertWorkspacePath,
   ownedTask,
   listTasks,
+  archiveTask,
+  restoreTask,
   createTask,
   updateTask,
   deleteTask,

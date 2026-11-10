@@ -249,8 +249,15 @@ function cleanTitle(value) {
   return title;
 }
 
+// An archived task is inert until it is restored (services/task-archive.js): no terminal is made for it.
+function assertTaskNotArchived(taskId) {
+  const task = db.prepare('SELECT archived_at FROM tasks WHERE id = ?').get(taskId);
+  if (task && task.archived_at) throw Object.assign(new Error('TASK_ARCHIVED'), { statusCode: 409 });
+}
+
 // options.title: an optional name, validated like a rename and kept like one (title_custom); empty keeps the default "Terminal N" / "Claude N".
 function createTerminal(taskId, options = {}) {
+  assertTaskNotArchived(taskId);
   const id = require('crypto').randomUUID();
   const agent = options && options.agent;
   const named = cleanTitle(options && typeof options.title === 'string' ? options.title : '');
@@ -538,6 +545,11 @@ function handleWs(ws, req, sessionUser, requestedTaskId = null, requestedTermina
     console.error('[terminal] task not found, taskId:', taskId, 'user:', sessionUser.login);
     ws.send('\r\n\x1b[31m[Task does not exist or access denied]\x1b[0m\r\n');
     ws.close(1008, 'task not found');
+    return;
+  }
+  // No shell for an archived task, also not for a page's early socket. 1008 is the close the page does not reconnect after (a 4xxx would retry for ever).
+  if (task.archived_at) {
+    ws.close(1008, 'TASK_ARCHIVED');
     return;
   }
 

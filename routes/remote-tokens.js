@@ -2,6 +2,7 @@ const express = require('express');
 const db = require('../db');
 const requireAuth = require('../middleware/auth');
 const { createAccessToken, createPairingCode } = require('../services/engine-auth');
+const { getServiceLinks } = require('../services/service-links');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -9,7 +10,7 @@ router.use(requireAuth);
 router.get('/', (req, res) => {
   const rows = db.prepare(`SELECT id, name, token_prefix, scopes, last_used_at, created_at
     FROM engine_access_tokens WHERE principal_id = ? AND revoked_at IS NULL ORDER BY created_at DESC`).all(req.session.user.login);
-  res.json(rows);
+  res.json(getServiceLinks().markTokens(rows));
 });
 
 router.post('/', (req, res) => {
@@ -27,7 +28,14 @@ router.post('/pairing', (req, res) => {
   }));
 });
 
-router.delete('/:id', (req, res) => {
+router.delete('/:id', async (req, res) => {
+  // A token issued for a service link ends the whole link, not only the token.
+  const link = getServiceLinks().linkForToken(req.params.id);
+  if (link && link.owner_id === req.session.user.login) {
+    try { await getServiceLinks().unlink(link.id); }
+    catch (error) { return res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'LINK_UNLINK_FAILED' }); }
+    return res.json({ success: true });
+  }
   const result = db.prepare(`UPDATE engine_access_tokens SET revoked_at = CURRENT_TIMESTAMP
     WHERE id = ? AND principal_id = ? AND revoked_at IS NULL`).run(req.params.id, req.session.user.login);
   if (!result.changes) return res.status(404).json({ error: 'TOKEN_NOT_FOUND' });

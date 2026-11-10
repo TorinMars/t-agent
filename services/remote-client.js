@@ -1,6 +1,7 @@
 const http = require('http');
 const https = require('https');
 const { URL } = require('url');
+const { TUNNEL_PROTOCOL, getHub } = require('../lib/service-link-tunnel');
 
 const MAX_BYTES = 6 * 1024 * 1024;
 
@@ -20,7 +21,8 @@ function normalizeBaseUrl(urlValue, port) {
 
 function request(baseUrl, pathname, token, { expectText = false, method = 'GET', body, timeoutMs = 10_000, maxBytes = MAX_BYTES } = {}) {
   const target = new URL(pathname, `${baseUrl}/`);
-  const client = target.protocol === 'https:' ? https : http;
+  // A service link's Engine answers over its tunnel; the hub has the shape of http.request, so everything below is the same for both.
+  const client = target.protocol === TUNNEL_PROTOCOL ? getHub() : target.protocol === 'https:' ? https : http;
   return new Promise((resolve, reject) => {
     const payload = body === undefined ? null : Buffer.from(JSON.stringify(body));
     const headers = { Accept: expectText ? 'text/plain' : 'application/json' };

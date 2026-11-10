@@ -6,6 +6,8 @@ I18n.add({
   "INVALID_REQUEST": "请求内容无效",
   "SELF_LINK": "不能关联服务自身",
   "ALREADY_LINKED": "已经与这个服务关联；如需重新关联，请先在两边移除旧的关联",
+  "LINKED_ONLY": "这个接口只接受服务关联使用的令牌",
+  "LINKED_PROVIDER_OFFLINE": "提供这项功能的关联服务现在不在线",
   "LINK_UNSUPPORTED": "对方服务的版本过旧，不支持服务关联，请先升级",
   "LINK_UNREACHABLE": "无法连接对方服务，请检查地址，并确认对方允许外部访问",
   "LINK_JOIN_FAILED": "关联失败，已撤销本次操作",

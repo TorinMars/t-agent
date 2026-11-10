@@ -21,6 +21,18 @@ Two services that see and operate each other as remote Engines; see "Service lin
 - `GET /v1/service-links/tunnel`: WebSocket, `Authorization: Bearer tsl_...`. 401 for a wrong or revoked token. The `tsl_` token works only here.
 - `POST /v1/service-links/:id/unlink` and `POST /v1/service-link-notice/:id/unlink`: 204. The peer says it unlinked. Bearer: the Engine token issued to that peer for that link; any other token gets 404 `LINK_NOT_FOUND`. The second path is the one the initiator calls through the tunnel.
 
+### Linked services
+
+Translation, voice input and OSS upload used by a linked service, with this service's own configuration. The capability is `linked-services` (in `/v1/info`). Only a token issued for a live service link is accepted: any other Engine token, admin or not, gets 403 `LINKED_ONLY`; a missing or revoked token gets 401. A service without the feature configured answers as not configured and never asks another service.
+
+- `GET /v1/linked-services/availability`: `{ translate, speech, oss }`, booleans, from local configuration only.
+- `POST /v1/linked-services/translate`: as `POST /api/translate`, 1 MB.
+- `POST /v1/linked-services/translate/word`: as `POST /api/translate/word`, 1 MB.
+- `POST /v1/linked-services/speech/token`: as `POST /api/speech/token`, 16 KB.
+- `POST /v1/linked-services/oss/upload-policy`: as `POST /api/oss/upload-policy`, 4 KB.
+
+The bodies, answers, error messages and status codes are those of the `/api` routes.
+
 ## Tasks and documents
 
 - `GET /v1/task-groups`

@@ -100,11 +100,12 @@ const attentionRoutes = require('./routes/attention').createAttentionRoutes({ se
 app.use('/api/attention/pairing/claim', attentionRoutes.claim);
 app.use('/api/attention', attentionRoutes.bearer);
 
-// /api/mindmaps parses its own JSON after the gates, with its own limit (routes/mindmap.js). Every other route keeps these parsers. Case-insensitive, like Express routing.
-const MINDMAP_API = /^\/api\/mindmaps(?:\/|$)/i;
-const exceptMindmaps = parser => (req, res, next) => (MINDMAP_API.test(req.path) ? next() : parser(req, res, next));
-app.use(exceptMindmaps(express.json({ limit: '32mb' })));
-app.use(exceptMindmaps(express.urlencoded({ extended: true })));
+// /api/mindmaps (routes/mindmap.js) and /v1/linked-services (routes/linked-services.js) parse their own JSON after the gates, with their own limits: a body this
+// parser has read would make theirs do nothing. Every other route keeps these parsers. Case-insensitive, like Express routing.
+const OWN_PARSERS = /^\/(?:api\/mindmaps|v1\/linked-services)(?:\/|$)/i;
+const exceptOwnParsers = parser => (req, res, next) => (OWN_PARSERS.test(req.path) ? next() : parser(req, res, next));
+app.use(exceptOwnParsers(express.json({ limit: '32mb' })));
+app.use(exceptOwnParsers(express.urlencoded({ extended: true })));
 
 const sessionMiddleware = session({
   name: config.clientSessionCookieName,

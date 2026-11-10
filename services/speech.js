@@ -90,6 +90,8 @@ function createSpeech({ db, sessionSecret, env = process.env, fetchImpl = (...ar
 
   return {
     getConfig: owner => safe(read(owner)),
+    // The condition `createToken` refuses on, for the routes that may send the call to a linked service (services/linked-capabilities.js).
+    isConfigured: owner => Boolean(resolve(owner)),
     saveConfig(owner, body) {
       if (!body || typeof body !== 'object' || Array.isArray(body)) throw new SpeechError('Invalid voice input configuration');
       const current = read(owner);
@@ -149,4 +151,4 @@ function createSpeech({ db, sessionSecret, env = process.env, fetchImpl = (...ar
   };
 }
 
-module.exports = { REGIONS, LANGUAGES, TOKEN_TTL_SECONDS, createSpeech, SpeechError };
+module.exports = { REGIONS, LANGUAGES, TOKEN_TTL_SECONDS, TIMEOUT_MS, createSpeech, SpeechError };

@@ -8,6 +8,7 @@ const taskArchive = require('../services/task-archive');
 const { exchangePairingCode, createAccessToken, hasScope } = require('../services/engine-auth');
 const { getEngineIdentity } = require('../services/engine-identity');
 const { getServiceLinks, CAPABILITY: SERVICE_LINKS } = require('../services/service-links');
+const { CAPABILITY: LINKED_SERVICES } = require('../services/linked-capabilities');
 const { createTerminalTicket } = require('../services/terminal-tickets');
 const updates = require('../services/update-manager');
 const terminal = require('./terminal');
@@ -22,6 +23,7 @@ const { createAppsHandlers, mountAppsRoutes, defaultService: defaultAppsService 
 
 const router = express.Router();
 router.use('/file-sync', require('./file-sync').engine);
+router.use('/linked-services', require('./linked-services').createLinkedServicesRouter());
 const pairingAttempts = new Map();
 
 function errorResponse(res, error) {
@@ -104,6 +106,8 @@ function infoHandler(req, res) {
       'files:raw',
       // service-links: POST /v1/service-links/join and the reverse tunnel at /v1/service-links/tunnel.
       SERVICE_LINKS,
+      // linked-services: /v1/linked-services, a linked service's use of this service's translation, voice input and OSS upload. A peer without it is never used.
+      LINKED_SERVICES,
       'engine:update', 'pm2:manage', 'apps:manage', 'agent-config:manage', 'file-sync:manage', 'workspace:manage', 'agent-chat:manage',
     ],
   });

@@ -31,6 +31,13 @@ function createServiceLinks({ db, sessionSecret, identity, tunnel = tunnelModule
   const clientsOnline = new Set();
   let localPort = null;
   let subscribed = false;
+  const changeListeners = new Set();
+  // A link was added, removed, revoked or changed presence. Listeners only ever drop cached facts, so one that fails must not stop the change itself.
+  function notifyChange(id) {
+    for (const listener of changeListeners) {
+      try { listener(id); } catch { /* the next read asks again */ }
+    }
+  }
 
   function links() {
     const row = db.prepare('SELECT value FROM system_state WHERE key = ?').get(STATE_KEY);
@@ -104,6 +111,7 @@ function createServiceLinks({ db, sessionSecret, identity, tunnel = tunnelModule
       return created;
     })();
     activeCode = null;
+    notifyChange(linkId);
     return { link_id: linkId, access_token: issued.token, tunnel_token: tunnelToken, name: me.name, instance_id: me.instance_id, version: me.version };
   }
 
@@ -182,6 +190,7 @@ function createServiceLinks({ db, sessionSecret, identity, tunnel = tunnelModule
       } catch { /* the peer's owner removes it there */ }
       throw error.code === 'SQLITE_CONSTRAINT_UNIQUE' ? fault('REMOTE_ALREADY_EXISTS', 409) : fault('LINK_JOIN_FAILED', 500);
     }
+    notifyChange(link.id);
     return publicLink(link);
   }
 
@@ -210,6 +219,7 @@ function createServiceLinks({ db, sessionSecret, identity, tunnel = tunnelModule
       .run(online ? 'online' : 'offline', online ? null : 'LINK_OFFLINE', link.remote_server_id);
     updateLink(id, { last_seen_at: timestamp() });
     if (online) refreshPeer(link).catch(() => {});
+    notifyChange(id);
   }
 
   async function refreshPeer(link) {
@@ -246,6 +256,7 @@ function createServiceLinks({ db, sessionSecret, identity, tunnel = tunnelModule
       updateLink(id, { revoked: true });
     })();
     stopTransport(link);
+    notifyChange(id);
   }
 
   function removeLocal(id) {
@@ -257,6 +268,7 @@ function createServiceLinks({ db, sessionSecret, identity, tunnel = tunnelModule
       saveLinks(links().filter(entry => entry.id !== id));
     })();
     stopTransport(link);
+    notifyChange(id);
   }
 
   // Best effort, with a short limit: a peer that does not hear it learns from its token failing.
@@ -321,6 +333,21 @@ function createServiceLinks({ db, sessionSecret, identity, tunnel = tunnelModule
     list: ownerId => links().filter(link => link.owner_id === ownerId).map(publicLink),
     linkForServer: serverId => links().find(link => link.remote_server_id === Number(serverId)) || null,
     linkForToken: tokenId => links().find(link => link.issued_token_id === Number(tokenId)) || null,
+    // For services/linked-capabilities.js only, because it holds the Engine token and the address: never send this to a page. Live links, oldest first.
+    peers() {
+      const live = links().filter(link => !link.revoked).sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
+      return live.flatMap(link => {
+        const row = serverOf(link);
+        if (!row) return [];
+        try {
+          return [{ id: link.id, name: link.name, online: isOnline(link), remoteServerId: link.remote_server_id, baseUrl: row.base_url, token: tokenOf(row) }];
+        } catch { return []; } // a token that cannot be decrypted is a link that cannot be used
+      });
+    },
+    onChange(listener) {
+      changeListeners.add(listener);
+      return () => changeListeners.delete(listener);
+    },
     // Token lists show which tokens belong to a link.
     markTokens(rows) {
       const byToken = new Map(links().map(link => [link.issued_token_id, link.id]));

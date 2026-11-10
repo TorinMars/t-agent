@@ -1230,3 +1230,4 @@ One line per release, added by `scripts/release.js`. Older notes are in `git log
 > v2.94.0 Automatic silent updates: apply when the service has been idle for the quiet window, and reload open pages.
 > v2.94.1 Keep the phone page full height when the visual viewport reports a small height with no keyboard, and never resize the PTY from a collapsed box.
 > v2.95.0 Mind maps in the single page with XMind-style shortcuts, touch editing and .xmind import and export; reversible task archiving (schema 10).
+> v2.95.1 Mind maps always use one tree that grows to the right.

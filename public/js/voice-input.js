@@ -154,7 +154,8 @@ const VoiceInput = (() => {
     const body = await res.text();
     let data = null;
     try { data = body ? JSON.parse(body) : null; } catch { /* plain-text error */ }
-    if (!res.ok) throw new Error((data && data.error) || body || `HTTP ${res.status}`);
+    // `linked`: nothing is wrong with the microphone, so the message is shown as it is.
+    if (!res.ok) throw Object.assign(new Error((typeof I18n !== 'undefined' ? I18n.errorOf(data) : data && data.error) || body || `HTTP ${res.status}`), { linked: Boolean(data && data.error === 'LINKED_PROVIDER_OFFLINE') });
     return data;
   }
   const errorText = error => {
@@ -562,7 +563,7 @@ const VoiceInput = (() => {
       } catch (error) {
         if (mine !== run) return;
         const denied = error && (error.name === 'NotAllowedError' || error.name === 'SecurityError');
-        fail(denied ? 'Microphone access was denied; allow it in the browser settings' : (error && error.name ? `Cannot start the microphone: ${errorText(error)}` : errorText(error)));
+        fail(denied ? 'Microphone access was denied; allow it in the browser settings' : (error && error.name && !error.linked ? `Cannot start the microphone: ${errorText(error)}` : errorText(error)));
       }
     }
 

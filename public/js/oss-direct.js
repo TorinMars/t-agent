@@ -35,7 +35,7 @@ const OssDirect = (() => {
       });
     } catch { throw new Error('Could not reach the client to prepare the upload. Check your network and retry'); }
     const body = await readJson(response);
-    if (!response.ok) throw new Error(body.error || 'Could not prepare the upload');
+    if (!response.ok) throw new Error((typeof I18n !== 'undefined' ? I18n.errorOf(body) : body.error) || 'Could not prepare the upload');
     const safe = value => typeof value === 'string' && value.startsWith('https://') && !/[\s\x00-\x1f\x7f]/.test(value);
     if (!safe(body.host) || !safe(body.url) || !body.fields || typeof body.fields !== 'object') throw new Error('Upload failed: the server returned an invalid upload policy');
     return body;

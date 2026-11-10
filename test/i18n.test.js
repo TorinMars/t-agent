@@ -168,3 +168,13 @@ test('source files, comments and docs are English (Chinese only in dictionaries 
   }
   assert.deepEqual(offenders.slice(0, 20), []);
 });
+
+test('errorOf names the provider of a linked service that is offline, and leaves other errors as they are', () => {
+  const I18n = load('zh');
+  assert.equal(I18n.errorOf({ error: 'LINKED_PROVIDER_OFFLINE', provider: 'Studio' }), 'Studio is offline, so this is not available right now');
+  assert.equal(I18n.t('Studio is offline, so this is not available right now'), 'Studio 当前离线，暂时无法使用此功能');
+  assert.equal(I18n.errorOf({ error: 'LINKED_PROVIDER_OFFLINE' }), 'LINKED_PROVIDER_OFFLINE');
+  assert.equal(I18n.errorOf({ error: 'Translation service not configured yet' }), 'Translation service not configured yet');
+  assert.equal(I18n.errorOf(null), null);
+  assert.equal(I18n.t('Provided by Studio (offline)'), '由 Studio 提供（当前离线）', 'the longer template wins');
+});

@@ -96,7 +96,11 @@
     lang = next;
   }
 
-  const api = { t, add, set, get: () => lang, toggle: () => set(lang === 'en' ? 'zh' : 'en'), languages: () => LANGS.slice() };
+  // The text of a failed request, from its JSON body: its `error`, except for a code that needs a detail of the body to make sense to the person.
+  // Translate, speech and upload call the server from separate scripts with no shared request helper, so they all come here.
+  const errorOf = body => (body && body.error === 'LINKED_PROVIDER_OFFLINE' && body.provider ? `${body.provider} is offline, so this is not available right now` : body && body.error);
+
+  const api = { t, add, set, get: () => lang, toggle: () => set(lang === 'en' ? 'zh' : 'en'), languages: () => LANGS.slice(), errorOf };
 
   if (HAS_DOM) {
     const ATTRS = ['title', 'placeholder', 'aria-label', 'data-tip', 'alt'];

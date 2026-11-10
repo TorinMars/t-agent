@@ -73,7 +73,7 @@ const WordTranslate = (() => {
       const text = await response.text();
       let data = null;
       try { data = text ? JSON.parse(text) : null; } catch { /* plain-text error */ }
-      if (!response.ok) throw new Error((data && data.error) || text || `HTTP ${response.status}`);
+      if (!response.ok) throw new Error((typeof I18n !== 'undefined' ? I18n.errorOf(data) : data && data.error) || text || `HTTP ${response.status}`);
       return data;
     })();
     return job.then(entry => {

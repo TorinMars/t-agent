@@ -614,6 +614,8 @@ A peer that did not hear learns from its token failing: a tunnel 401 or a 401 fr
 
 **Security.** Only a browser session can make a linking code, so a peer cannot use its `/v1` token to create another link. The `tsl_` token passes only the tunnel upgrade; `authenticateAccessToken` accepts only `tae_`. The tunnel path follows the access gate like every `/v1` path, so a local-only A refuses it; a local-only B is allowed, since joining is its owner's choice and the tunnel is outbound. An unlink does not end a terminal WebSocket that is already open over a direct connection, and tokens the peer minted itself through `/v1/tokens` stay, as for any admin.
 
+**Shared features on the page.** When `GET /api/translate/config`, `/api/speech/config` or `/api/oss/config` has a non-null `shared_from: { name, online }`, the page treats that feature as available, keeps the Settings form usable and empty under a "Provided by" line, and `I18n.errorOf` turns a `LINKED_PROVIDER_OFFLINE` answer into a sentence that names the provider.
+
 ## Update check and versions
 
 - **Version source**: `VERSION.json` in the install directory is the runtime version (`app_version`, `api_version`, `schema_version`, `min_remote_api_version`, `max_remote_api_version`, `published_at`, optional `release_url`); `package.json` and `package-lock.json` carry the same `app_version` (`scripts/release.js` sets them together). `GET /api/system/version` returns the version, the `boot_id` and the remote API range. The field rules are under "D. Data storage".

@@ -16,6 +16,8 @@ const {
 } = require('../lib/version-utils');
 const { copyRelease, stageGithubArchive } = require('./archive-updater');
 const { prepareWorkspace, trackedChanges, dirtyError } = require('../lib/git-update-workspace');
+const { createAutoUpdate, AUTO_RESTART_REQUIRED, DEFAULT_QUIET_MS } = require('./auto-update');
+const { detectSupervisor } = require('../lib/update-supervisor');
 
 const projectRoot = path.resolve(__dirname, '..');
 const runningCommit = (() => {
@@ -24,6 +26,8 @@ const runningCommit = (() => {
 })();
 const versionPath = path.join(projectRoot, 'VERSION.json');
 const stateKey = 'update_state';
+// The automatic update has its own row: its setting and history must not be touched by anything that resets or rewrites update_state.
+const autoKey = 'update_auto';
 const MAX_RESPONSE_BYTES = 16 * 1024;
 const HTTP_TIMEOUT_MS = 10_000;
 const MAX_REDIRECTS = 3;
@@ -255,6 +259,7 @@ async function check(options) {
     saveState({ status: 'failed', stage: null, error: safeError(error), error_details: error.details || null, last_checked_at: new Date().toISOString(), message: 'Update check failed' });
     throw error;
   }).finally(() => { checkPromise = null; });
+  checkPromise.then(() => autoUpdate.kick(), () => {});
   return checkPromise;
 }
 
@@ -297,11 +302,13 @@ function execNpm(args, stage) {
   );
 }
 
-async function runApply({ force = false } = {}) {
+async function runApply({ force = false, expectNoRestart = false } = {}) {
   clearLog();
   saveState({ status: 'updating', stage: 'refreshing_version', error: null, message: 'Confirming the remote version' });
   const checked = await runCheck({ force: true });
   if (checked.status !== 'available') throw new Error('NO_UPDATE_AVAILABLE');
+  // The target was re-read just now: an automatic update that was allowed to skip the idle check must not restart because the remote moved meanwhile.
+  if (expectNoRestart && checked.restart_required !== false) throw new Error(AUTO_RESTART_REQUIRED);
 
   let restartRequired = true;
   if (installationType() === 'archive') await applyArchiveUpdate(checked);
@@ -394,6 +401,7 @@ async function applyArchiveUpdate(checked) {
 async function apply(options = {}) {
   if (applyPromise) return applyPromise;
   applyPromise = runApply(options).catch(error => {
+    if (error.message === AUTO_RESTART_REQUIRED) throw error; // the state is what the re-check just saved: available
     saveState({
       status: 'blocked',
       stage: null,
@@ -405,6 +413,34 @@ async function apply(options = {}) {
   }).finally(() => { applyPromise = null; });
   return applyPromise;
 }
+
+function readAutoStore() {
+  const row = db.prepare('SELECT value FROM system_state WHERE key = ?').get(autoKey);
+  return row ? row.value : null;
+}
+
+function writeAutoStore(value) {
+  db.prepare(`
+    INSERT INTO system_state (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+  `).run(autoKey, value);
+}
+
+const supervisor = () => detectSupervisor({ env: process.env, ppid: process.ppid, hasIpc: typeof process.send === 'function', platform: process.platform });
+
+const autoUpdate = createAutoUpdate({
+  readStore: readAutoStore,
+  writeStore: writeAutoStore,
+  updateState: () => state,
+  isApplying: () => Boolean(applyPromise),
+  apply,
+  log: logUpdate,
+  supervisor,
+  checksEnabled: config.updateCheckEnabled !== false,
+  checkIntervalMs: config.updateCheckIntervalMs,
+  quietMs: config.updateAutoQuietMs || DEFAULT_QUIET_MS,
+  setIntervalFn: (fn, ms) => setInterval(fn, ms),
+});
 
 function publicState() {
   let localManifest = null;
@@ -421,6 +457,7 @@ function publicState() {
     update_ref: config.updateRef,
     check_interval_seconds: config.updateCheckIntervalMs / 1000,
     log: recentLog(),
+    auto_update: autoUpdate.publicState(),
   };
 }
 
@@ -435,6 +472,10 @@ function start() {
   setTimeout(schedule, Math.min(config.updateCheckStartupDelayMs, config.updateCheckIntervalMs)).unref();
   timer = setInterval(schedule, config.updateCheckIntervalMs);
   timer.unref();
+  autoUpdate.start();
 }
 
-module.exports = { apply, check, markNotified, publicState, readLocalManifest, start, npmEnv, bootId };
+const setIdleProbe = fn => autoUpdate.setIdleProbe(fn);
+const setAutoUpdateEnabled = enabled => autoUpdate.setEnabled(enabled);
+
+module.exports = { apply, check, markNotified, publicState, readLocalManifest, start, npmEnv, bootId, setIdleProbe, setAutoUpdateEnabled };

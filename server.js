@@ -540,6 +540,12 @@ server.listen(config.port, config.host, () => {
     console.log('Run node scripts/client-auth-setup.js in a terminal on the server to complete the first binding (it can be run remotely over SSH); no initial password or setup code is needed.');
     console.log(`You can also open http://127.0.0.1:${listeningPort}/auth/setup (a local or remote address both work) and scan the QR code to bind.`);
   }
+  // Lives here because the terminal and chat modules are loaded by the routes: the update manager gets the snapshot without requiring them.
+  updates.setIdleProbe(() => ({
+    terminals: terminal.updateIdleTerminals(),
+    chat: require('./services/agent-chat').getAgentChat().activity(),
+    inputs: require('./lib/terminal-recent-input').recentInputTimes(),
+  }));
   updates.start();
 });
 

@@ -5,7 +5,8 @@ const path = require('path');
 const db = require('../db');
 const { TerminalSnapshot, createHistoryArchive } = require('../lib/terminal-snapshot');
 const { RESET_INPUT_MODES, watchShellReturn } = require('../lib/terminal-input-modes');
-const { createActivityTracker } = require('../lib/terminal-activity');
+const { createActivityTracker, foregroundCommand, baseName } = require('../lib/terminal-activity');
+const { noteTerminalInput } = require('../lib/terminal-recent-input');
 const { createActivityStream } = require('../lib/terminal-activity-stream');
 const { repairSpawnHelperPermissions } = require('../lib/node-pty-runtime');
 const { utf8LocaleEnv } = require('../lib/terminal-locale');
@@ -424,6 +425,7 @@ function getOrCreateSession(ownerTaskId, workDir, dirWarning, id = 'default') {
     snapshot: new TerminalSnapshot(),
     ready: false,
     startDir: workDir, // the directory this shell was started in (the hook check also accepts it)
+    shellName: baseName(shell),
   };
   sessions.set(taskId, s);
   s.snapshot.write(savedBuffer);
@@ -670,6 +672,7 @@ function handleWs(ws, req, sessionUser, requestedTaskId = null, requestedTermina
     }
     if (!s.exiting) {
       s.activity?.noteInput();
+      noteTerminalInput(`local:${key}`);
       s.pty.write(str);
     }
   });
@@ -715,6 +718,44 @@ function subagentSnapshot(taskIds, home) {
   return result;
 }
 
+// Whether reopenCommand() would really bring this terminal's agent back after a restart: the terminal is bound to a session and that session's file is
+// where a new shell will look for it. A Claude session that never got a message has no file, and an id alone is not proof of what runs in the terminal.
+function agentResumable(s, agent) {
+  try {
+    let row = db.prepare('SELECT agent_session_id FROM task_terminals WHERE task_id = ? AND terminal_id = ?').get(s.taskId, s.terminalId);
+    if (row && !row.agent_session_id) {
+      withAgentSessions(s.taskId, [{ terminal_id: s.terminalId, title: '' }]); // binds a Codex session that has appeared since
+      row = db.prepare('SELECT agent_session_id FROM task_terminals WHERE task_id = ? AND terminal_id = ?').get(s.taskId, s.terminalId);
+    }
+    if (!row || !row.agent_session_id) return false;
+    const task = db.prepare('SELECT id, work_dir FROM tasks WHERE id = ?').get(s.taskId);
+    const dir = task && (terminalWorkDir(task, s.terminalId) || os.homedir());
+    return Boolean(dir) && fs.existsSync(dir) && listSessions(agent, dir, undefined, 200).some(entry => entry.id === row.agent_session_id);
+  } catch { return false; }
+}
+
+// What every live terminal is doing, for lib/update-idle.js.
+function updateIdleTerminals() {
+  const subagents = subagentSnapshot(null);
+  const terminals = [];
+  for (const s of sessions.values()) {
+    if (s.exiting) continue;
+    const foreground = foregroundCommand(s.pty);
+    const row = s.terminalId === 'default' ? null : db.prepare('SELECT agent FROM task_terminals WHERE task_id = ? AND terminal_id = ?').get(s.taskId, s.terminalId);
+    const agent = (row && row.agent) || null;
+    terminals.push({
+      state: s.activity ? s.activity.state() : 'idle',
+      subagents: (subagents[s.taskId] && subagents[s.taskId][s.terminalId]) || 0,
+      awaiting: Boolean(s.activity && s.activity.awaitingAnswer()),
+      foreground,
+      shell: s.shellName,
+      agent,
+      resumable: Boolean(agent) && foreground.includes(agent) && agentResumable(s, agent),
+    });
+  }
+  return terminals;
+}
+
 // Pushed activity (lib/terminal-activity-stream.js): GET /api/tasks/terminal-activity/stream and Engine /v1/terminal-activity/stream.
 // The sub-agent counts of all live Claude terminals are read once per refresh, whatever the number of open streams.
 const activityStream = createActivityStream({
@@ -736,4 +777,4 @@ function closeTaskTerminals(taskId) {
   for (const item of [...listTerminals(taskId), ...phone]) controlSession(taskId, 'close', item.terminal_id);
 }
 
-module.exports = { terminalWorkDir, setHookEndpoint, setAttentionTerminals, attentionEnv, reportHook, activitySnapshot, subagentSnapshot, serveActivityStream, acknowledgeActivity, controlSession, handleWs, listTerminals, createTerminal, listAgentSessions, reopenCommand, renameTerminal, terminalCwd, assertTerminal, closeTaskTerminals };
+module.exports = { terminalWorkDir, setHookEndpoint, setAttentionTerminals, attentionEnv, reportHook, activitySnapshot, subagentSnapshot, serveActivityStream, acknowledgeActivity, controlSession, handleWs, listTerminals, createTerminal, listAgentSessions, reopenCommand, renameTerminal, terminalCwd, assertTerminal, closeTaskTerminals, updateIdleTerminals };

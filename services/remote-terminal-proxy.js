@@ -3,6 +3,7 @@ const db = require('../db');
 const config = require('../config');
 const { decryptToken } = require('../lib/token-crypto');
 const { closeWebSocket } = require('../lib/websocket-close');
+const { noteTerminalInput, isTerminalInputFrame } = require('../lib/terminal-recent-input');
 const { request, assertRemoteTerminal } = require('./remote-client');
 
 function rejectUpgrade(socket, status, message) {
@@ -42,6 +43,7 @@ async function handleRemoteTerminalUpgrade(req, socket, head, wss, user) {
       if (url.searchParams.has(name)) upstreamUrl.searchParams.set(name, url.searchParams.get(name));
     }
     const upstream = new WebSocket(upstreamUrl, { handshakeTimeout: 10_000 });
+    const inputKey = `remote:${match[1]}:${taskId}:${url.searchParams.get('terminalId') || 'default'}`;
 
     let settled = false;
     upstream.once('open', () => {
@@ -65,6 +67,7 @@ async function handleRemoteTerminalUpgrade(req, socket, head, wss, user) {
             closeBoth(1008, 'Authentication required');
             return;
           }
+          if (isTerminalInputFrame(data, binary, url.searchParams.get('proto') === '2')) noteTerminalInput(inputKey);
           if (upstream.readyState === WebSocket.OPEN) upstream.send(data, { binary });
         });
         upstream.on('message', (data, binary) => {

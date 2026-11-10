@@ -470,6 +470,7 @@ UPDATE_GIT_BRANCH=main
 UPDATE_CHECK_ENABLED=true
 UPDATE_CHECK_INTERVAL_SECONDS=1800
 UPDATE_CHECK_STARTUP_DELAY_SECONDS=30
+UPDATE_AUTO_QUIET_SECONDS=600
 ```
 
 For a private repository set `GITHUB_TOKEN` on the server. Never put a GitHub Token or an Engine Token into web code or Nginx configuration, or commit it to Git.
@@ -490,6 +491,16 @@ The Client is a single-user instance, and the local user on the settings page ca
 - When the server, engine, dependencies, build scripts or the API/database version change, dependencies are still installed, `node-pty` is verified, frontend assets are built and the service is restarted. The confirmation says whether a restart is needed. An archive install still uses the full update flow.
 - The update scope is compared with the commit the current process started with, so server-side changes left over from a failed earlier update are not mistaken for "no restart needed".
 - `.env`, the database, logs and task directories are never overwritten by an update.
+
+### Automatic updates
+
+A new version is installed without asking, unless you turn this off (the auto update switch in the Update settings, or `POST /api/system/auto-update { "enabled": false }`; `UPDATE_CHECK_ENABLED=false` also turns off the checks it depends on). The choice is kept across restarts.
+
+- An update that only touches the frontend, static assets and documents is applied at once: nothing restarts.
+- An update that needs a restart waits for a quiet time, because **a restart ends every terminal and loses the terminal text kept in memory**. It runs after `UPDATE_AUTO_QUIET_SECONDS` (default 10 minutes) with nothing going on, checked about once a minute. These reset the wait: a terminal that is running something or has running sub-agents, an agent waiting for your answer to a permission prompt, a program in a terminal that cannot come back after a restart (vim, ssh, tmux, less ...), a chat that is working or has queued messages, and typing in a terminal (local or remote) during the window. Typing holds the wait for one window and the quiet window then starts, so after your last key it can take up to twice the window.
+- A Claude or Codex terminal that is not working does not block when its session can be resumed: the terminal resumes that session the next time it is opened. Its screen text is gone, and an agent terminal with no resumable session (for example one that never got a message) counts as a program that blocks.
+- It works only under a process manager that starts the service again (PM2, systemd or launchd): without one, the exit at the end of an update would end the service for good, so automatic updates are reported as not supported.
+- Local uncommitted changes stop it for that version and are never forced aside. Other failures are retried at most 3 times, one check interval apart; a newer version starts again. You can always run the update by hand.
 
 **The update check distinguishes "a new version exists" from "the code was updated but the service has not restarted"**: it compares the remote version with the on-disk `VERSION.json`, so after a manual `git pull`, an update that failed halfway or a forced repository restore the code on disk is newer than the running process. The state is then `restart_pending` ("restart the service"), with the message "Code was updated to X, but the service is still running the Y code; restart the service for it to take effect" and a red dot, and it lists the restart commands for each install type (PM2 `pm2 restart t-agent`, macOS `launchctl kickstart -k gui/$(id -u)/com.tagent.client`, Linux `sudo systemctl restart t-agent`), instead of wrongly reporting "up to date". A Git install decides by whether there are changes needing a restart between "the commit at process start → the current HEAD" (changes only to hot-updatable files such as the frontend do not count), and a package install compares the version read at start-up; it recovers automatically after the service restarts.
 

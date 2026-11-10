@@ -35,4 +35,11 @@ router.post('/apply-update', async (req, res) => {
   res.status(202).json({ accepted: true, status: updates.publicState() });
 });
 
+router.post('/auto-update', (req, res) => {
+  if (!isAdmin(req)) return res.status(403).json({ error: 'UPDATE_ADMIN_REQUIRED' });
+  if (!req.body || typeof req.body.enabled !== 'boolean') return res.status(400).json({ error: 'INVALID_AUTO_UPDATE' });
+  updates.setAutoUpdateEnabled(req.body.enabled);
+  res.json({ ...updates.publicState(), is_update_admin: isAdmin(req) });
+});
+
 module.exports = router;

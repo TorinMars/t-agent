@@ -44,6 +44,7 @@ module.exports = {
   updateCheckEnabled: process.env.UPDATE_CHECK_ENABLED !== 'false',
   updateCheckIntervalMs: positiveInteger(process.env.UPDATE_CHECK_INTERVAL_SECONDS, 1800) * 1000,
   updateCheckStartupDelayMs: positiveInteger(process.env.UPDATE_CHECK_STARTUP_DELAY_SECONDS, 30) * 1000,
+  updateAutoQuietMs: positiveInteger(process.env.UPDATE_AUTO_QUIET_SECONDS, 600) * 1000,
   updateAdminUsers: (process.env.UPDATE_ADMIN_USERS || singleUserId || Object.keys(authUsers)[0] || 'local')
     .split(',')
     .map(value => value.trim())

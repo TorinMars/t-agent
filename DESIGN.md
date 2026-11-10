@@ -1121,3 +1121,4 @@ One line per release, added by `scripts/release.js`. Older notes are in `git log
 > v2.93.0 Stop creating a terminal for new tasks, send a typed Space only once, keep lists from sticking on Loading after switching task, let sheet lists scroll without closing the sheet, and close the new session panel when its task collapses.
 > v2.93.1 Open the session row menu as a popup under its button, and fade it in so a press during the opening is not lost.
 > v2.94.0 Automatic silent updates: apply when the service has been idle for the quiet window, and reload open pages.
+> v2.94.1 Keep the phone page full height when the visual viewport reports a small height with no keyboard, and never resize the PTY from a collapsed box.

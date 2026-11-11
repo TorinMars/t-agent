@@ -121,7 +121,7 @@ function ContextCard({ item, state, ui, onLeave }) {
   const summary = context.summary && context.summary.text ? context.summary : null;
   const localHost = state.attention && state.attention.host;
   const here = onThisMachine(context, localHost);
-  const jump = jumpBack(context, { sourceKey: 'local', groups: state.taskList && state.taskList.groups, localHost }); // `groups`: this machine's section of the one list
+  const jump = jumpBack(context, { sourceKey: 'local', groups: state.taskList && state.taskList.groups, localHost }); // `groups`: this machine's tasks of the one list, by group
   const reply = String(context.last_reply || '').trim();
   const turns = Number(context.turns) || 0;
   const place = [context.cwd, context.branch].filter(Boolean);

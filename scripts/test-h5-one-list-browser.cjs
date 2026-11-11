@@ -1,7 +1,7 @@
 // The page without an Engine switch: the tasks of this machine and of every connected service are in ONE list, in real Chromium at phone and computer size with the routes mocked.
-// Two services with the SAME task ids and titles: each section has its own rows; opening a task on each reaches that service's `tasksBase` and socket; expanding one leaves its twin
+// Two services with the SAME task ids and titles, in one flat list (no section per service: each row has its device tag and `data-source`): each has its own rows; opening a task on each reaches that service's `tasksBase` and socket; expanding one leaves its twin
 // closed; the actions of a row hit that row's service, whichever task is shown. Running counts add up, the next-session button crosses services, search finds both. An offline service
-// shows only its header, does not disturb the others and comes back on its own. New task with "Create on". A remembered remote task, and a fallback when it is offline or hidden.
+// adds no rows (or keeps the rows it had, with a muted tag), does not disturb the others and comes back on its own. New task with "Create on". A remembered remote task, and a fallback when it is offline or hidden.
 // One service looks as it did. The Archived section across services. "Show in task list": hiding removes rows, counts and feeds, the last switch is disabled, it survives a reload.
 // H5_SHOT_DIR=<dir> saves screenshots of a list with two services.
 const { chromium } = require('playwright');
@@ -114,7 +114,7 @@ async function open(browser, world, wide, { storage = {} } = {}) {
 
 function tools(page, wide) {
   const press = locator => (wide ? locator.click() : locator.tap());
-  const section = key => page.locator(`#h5-task-list .h5-source[data-source="${key}"]`);
+  const section = key => page.locator(`#h5-task-list .h5-task[data-source="${key}"]`); // the rows of one service (the list has no sections)
   const row = (key, title) => section(key).locator('.h5-task-row').filter({ has: page.locator('.h5-task-title', { hasText: title }) });
   const sheet = async () => {
     if (!wide && !await page.locator('#h5-tasks').isVisible()) await page.locator('#h5-open-tasks').tap();
@@ -168,14 +168,15 @@ async function testTwoServices(browser, wide) {
   await t.row('local', 'Alpha').waitFor();
   await t.row('remote:7', 'Alpha').waitFor();
   assert.equal(await page.locator('#h5-engine').count(), 0, `${label}: no Engine selector`);
-  assert.deepEqual(await page.locator('.h5-source-header .h5-source-name').allTextContents(), ['This machine', 'VPS'], `${label}: this machine first, each with a header`);
-  assert.equal(await page.locator('.h5-source-offline').count(), 0, `${label}: nobody is offline`);
+  assert.equal(await page.locator('.h5-source-header, .h5-source').count(), 0, `${label}: no section per service`);
+  assert.deepEqual(await page.locator('#h5-task-list .h5-task .h5-device-tag').allTextContents(), ['This machine', 'This machine', 'VPS', 'VPS'], `${label}: one list, this machine first, each row with its device tag`);
+  assert.equal(await page.locator('.h5-device-tag[data-offline]').count(), 0, `${label}: nobody is offline`);
 
   // Expanding one does not expand its twin.
   const localItem = t.row('local', 'Alpha').locator('.h5-task-item');
   const remoteItem = t.row('remote:7', 'Alpha').locator('.h5-task-item');
   await t.press(localItem);
-  await page.waitForFunction(() => document.querySelector('.h5-source[data-source="local"] .h5-task-item').getAttribute('aria-expanded') === 'true');
+  await page.waitForFunction(() => document.querySelector('.h5-task[data-source="local"] .h5-task-item').getAttribute('aria-expanded') === 'true');
   assert.equal(await remoteItem.getAttribute('aria-expanded'), 'false', `${label}: the twin stays closed`);
   await t.section('local').locator('.h5-terminal-list[aria-label="Alpha"]').waitFor();
   assert.ok(world.reads.includes('/api/tasks/1/terminals'), `${label}: the local task was read`);
@@ -197,7 +198,7 @@ async function testTwoServices(browser, wide) {
   await t.taskMenu('local', 'Beta');
   await t.press(t.menuItem('To do'));
   await page.waitForFunction(() => document.querySelectorAll('#h5-term-menu-actions button').length === 0);
-  await page.waitForFunction(() => window.H5UI.get().taskList.sections.length === 2);
+  await page.waitForFunction(() => window.H5UI.get().taskList.tasks.length === 4);
   await page.waitForTimeout(100);
   assert.deepEqual(lastWrite(world, 'PUT', '/api/tasks/2'), ['PUT', '/api/tasks/2', { status: 'todo' }], `${label}: move goes to the row's service`);
   assert.equal(lastWrite(world, 'PUT', '/api/remote-servers/7/tasks/2'), undefined, `${label}: and not to the shown one`);
@@ -272,10 +273,10 @@ async function testActivity(browser, wide) {
   await search.fill('');
   await page.locator('.h5-task-filters').getByText('Running', { exact: true }).click();
   await t.row('local', 'Alpha').waitFor();
-  assert.equal(await page.locator('.h5-source[data-source="remote:7"]').count(), 0, `${label}: the remote service has nothing running`);
+  assert.equal(await page.locator('.h5-task[data-source="remote:7"]').count(), 0, `${label}: the remote service has nothing running`);
   await page.locator('.h5-task-filters').getByText('Pending', { exact: true }).click();
   await t.row('remote:7', 'Beta').waitFor();
-  assert.equal(await page.locator('.h5-source[data-source="local"]').count(), 0, `${label}: this machine has nothing pending`);
+  assert.equal(await page.locator('.h5-task[data-source="local"]').count(), 0, `${label}: this machine has nothing pending`);
   await page.locator('.h5-task-filters').getByText('All', { exact: true }).click();
 
   // The next-session button crosses services: the one running here, then the pending one there, and back.
@@ -301,22 +302,24 @@ async function testOfflineAndReturn(browser, wide) {
   const t = tools(page, wide);
   await t.sheet();
   await t.row('local', 'Alpha').waitFor();
-  await page.locator('.h5-source[data-source="remote:7"] .h5-source-offline', { hasText: 'Offline' }).waitFor();
-  assert.equal(await t.section('remote:7').locator('.h5-task-row').count(), 0, `${label}: an offline service shows only its header`);
+  await page.waitForFunction(() => (window.H5UI.get().sources.find(item => item.key === 'remote:7') || {}).offline === true);
+  assert.equal(await t.section('remote:7').count(), 0, `${label}: an offline service that never answered adds no rows`);
   assert.doesNotMatch(await page.locator('#h5-task-list').textContent(), /Could not/, `${label}: no error text`);
   assert.equal(await page.evaluate(url => window.activityStream.open(url), REMOTE_STREAM), false, `${label}: no feed while offline`);
 
   // It comes back by itself (the slow poll runs while the page is visible).
   world.vps.offline = false;
   await t.row('remote:7', 'Alpha').waitFor({ timeout: 40000 });
-  assert.equal(await page.locator('.h5-source-offline').count(), 0, `${label}: the Offline mark is gone`);
+  assert.equal(await page.locator('.h5-device-tag[data-offline]').count(), 0, `${label}: the Offline mark is gone`);
   await page.waitForFunction(url => window.activityStream.open(url), REMOTE_STREAM);
 
   // Going offline in use: a dropped feed reads the list again and marks it. A task of another service stays usable.
   await page.waitForTimeout(5200); // a failed feed reads the list at most every 5 s, and it was just read
   world.vps.offline = true;
   await page.evaluate(url => window.activityStream.drop(url), REMOTE_STREAM);
-  await page.locator('.h5-source[data-source="remote:7"] .h5-source-offline').waitFor({ timeout: 10000 });
+  await page.locator('.h5-task[data-source="remote:7"] .h5-device-tag[data-offline="true"]').first().waitFor({ timeout: 10000 });
+  assert.equal(await t.section('remote:7').count(), 2, `${label}: its rows stay where they were, with a muted tag`);
+  assert.match(await page.locator('.h5-task[data-source="remote:7"] .h5-device-tag').first().getAttribute('title'), /VPS · Offline/, `${label}: the tag says Offline`);
   await t.row('local', 'Alpha').waitFor();
   assert.deepEqual(world.pageErrors, [], `${label}: no page errors`);
   await context.close();
@@ -353,7 +356,7 @@ async function testOneService(browser, wide) {
   const t = tools(page, wide);
   await t.sheet();
   await page.locator('.h5-task-item', { hasText: 'Alpha' }).first().waitFor();
-  assert.equal(await page.locator('.h5-source-header').count(), 0, `${label}: no header with one service`);
+  assert.equal(await page.locator('.h5-device-tag').count(), 0, `${label}: no device tags with one service`);
   await t.press(page.locator('#h5-add-task'));
   await page.locator('#h5-new-task-title').waitFor();
   assert.equal(await page.locator('#h5-new-task-on').count(), 0, `${label}: no "Create on" with one service`);
@@ -453,8 +456,8 @@ async function testHidden(browser, wide) {
   // Rows, count and feed go; the shown terminal stays until the person opens something else.
   await t.sheet();
   await t.row('local', 'Alpha').waitFor();
-  assert.equal(await page.locator('.h5-source[data-source="remote:7"]').count(), 0, `${label}: its rows are gone`);
-  assert.equal(await page.locator('.h5-source-header').count(), 0, `${label}: this machine alone has no header`);
+  assert.equal(await page.locator('.h5-task[data-source="remote:7"]').count(), 0, `${label}: its rows are gone`);
+  assert.equal(await page.locator('.h5-device-tag').count(), 0, `${label}: this machine alone has no tags`);
   await page.waitForFunction(() => window.H5UI.get().activeCount === 1);
   await page.waitForFunction(url => !window.activityStream.open(url), REMOTE_STREAM);
   assert.equal(await t.service(), 'VPS', `${label}: the task keeps being shown`);
@@ -480,7 +483,7 @@ async function testHidden(browser, wide) {
   await page.waitForFunction(() => document.getElementById('h5-task-name').textContent === 'Beta');
   await t.waitSocket('/terminal/ws');
   assert.equal(await t.service(), null, `${label}: fell back to a visible device`);
-  assert.equal(await page.locator('.h5-source-header').count(), 0, `${label}: still hidden after a reload`);
+  assert.equal(await page.locator('.h5-device-tag').count(), 0, `${label}: still hidden after a reload`);
   await page.waitForTimeout(200);
   assert.ok(!(await page.evaluate(() => window.activityStream.opens)).some(url => url.includes('/7/')), `${label}: no feed is opened for it after a reload`);
   assert.equal(count(world.reads, '/api/remote-servers/7/tasks/terminal-activity'), 0, `${label}: and it is not polled`);
@@ -493,13 +496,13 @@ async function testHidden(browser, wide) {
   await t.closeSettings();
   await t.sheet();
   await t.row('remote:7', 'Alpha').waitFor();
-  assert.equal(await page.locator('.h5-source-header').count(), 2, `${label}: both sections again`);
+  assert.deepEqual([...new Set(await page.locator('.h5-device-tag').evaluateAll(nodes => nodes.map(node => node.dataset.source)))], ['local', 'remote:7'], `${label}: both devices tagged again`);
   await page.waitForFunction(url => window.activityStream.open(url), REMOTE_STREAM);
   await pushActivity(page, REMOTE_STREAM, { activity: { 2: { b1: 'running' } }, subagents: {} });
   await pushActivity(page, LOCAL_STREAM, { activity: { 1: { default: 'running' } }, subagents: {} });
   await page.waitForFunction(() => window.H5UI.get().activeCount === 2);
 
-  // Hiding this machine, the service remains: its section has a header, "Create on" defaults to it.
+  // Hiding this machine, the service remains alone: no tags, only its rows.
   await t.openEngines();
   await page.locator('.h5-engine-visible[data-device="local"] input').click();
   await page.waitForFunction(() => window.H5UI.get().hiddenDevices.keys.includes('local'));
@@ -507,7 +510,8 @@ async function testHidden(browser, wide) {
   await t.closeSettings();
   await t.sheet();
   await t.row('remote:7', 'Alpha').waitFor();
-  assert.deepEqual(await page.locator('.h5-source-header .h5-source-name').allTextContents(), ['VPS'], `${label}: this machine can be hidden too`);
+  assert.equal(await page.locator('.h5-task[data-source="local"]').count(), 0, `${label}: this machine can be hidden too`);
+  assert.equal(await page.locator('.h5-device-tag').count(), 0, `${label}: one device left: no tags`);
   assert.deepEqual(world.pageErrors, [], `${label}: no page errors`);
   await context.close();
 }

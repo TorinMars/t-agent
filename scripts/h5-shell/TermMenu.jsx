@@ -128,7 +128,7 @@ export function TermMenu({ state, ui }) {
             <Typography id="h5-term-menu-title" variant="subtitle2" component="h3" color="text.secondary" sx={{ mb: 1, overflowWrap: 'anywhere' }}>{menu.title}</Typography>
             <List id="h5-term-menu-actions" className="h5-menu-actions" disablePadding sx={{ overflowY: 'auto' }}>
               {menu.items.map((item, index) => (
-                <ListItemButton key={`${index}:${item.label}`} component="button" className={item.kind === 'danger' ? 'danger' : undefined} onClick={() => ui.actions.menuRun(index)}
+                <ListItemButton key={`${index}:${item.label}`} component="button" className={item.kind === 'danger' ? 'danger' : undefined} disabled={Boolean(item.disabled)} onClick={() => ui.actions.menuRun(index)}
                   sx={{ width: '100%', borderRadius: 1, color: item.kind === 'danger' ? 'error.main' : undefined, overflowWrap: 'anywhere', textAlign: 'left' }}>
                   {item.kind === 'raw' ? item.label : t(item.label)}
                 </ListItemButton>

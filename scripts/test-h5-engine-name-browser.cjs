@@ -1,8 +1,8 @@
 // Engine names on the phone page, in real Chromium with the routes mocked: every place that names a device shows the engine's own name, this machine with a
-// "This machine" hint (task list headers, the header line of the shown task, "Create on", Settings \u2192 Engines, Linked services, the task's "Visible to");
+// "This machine" hint (the device tags of the task list, the header line of the shown task, "Create on", Settings \u2192 Engines, Linked services, the task's "Visible to");
 // Rename in Settings \u2192 Engines for this machine (with a reset to the default), a remote engine that renames itself, an older one that is renamed only here
 // (with a note), and a linked row; validation, busy and server errors; long Chinese names at 320px; and an older server that keeps today's labels.
-// H5_SHOT_DIR=<dir> saves 390px screenshots of the list headers and of the Engines group.
+// H5_SHOT_DIR=<dir> saves 390px screenshots of the list with its device tags and of the Engines group.
 const { chromium } = require('playwright');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -24,7 +24,7 @@ function makeWorld({ modern = true, localName = 'MacBook' } = {}) {
     modern, writes: [], pageErrors: [], fail: null, hold: null,
     local: { name: localName, default_name: 'torin-mbp', custom: true },
     servers: [row(7, 'VPS', 'engine'), row(8, 'Old box', 'local'), row(9, 'Peer', 'engine')],
-    tasks: { local: [{ id: 1, title: 'Alpha', status: 'doing', work_dir: '/w/alpha', archived_at: null }], 7: [{ id: 1, title: 'Remote alpha', status: 'doing', work_dir: '/r/alpha', archived_at: null }], 8: [], 9: [] },
+    tasks: { local: [{ id: 1, title: 'Alpha', status: 'doing', work_dir: '/w/alpha', archived_at: null }], 7: [{ id: 1, title: 'Remote alpha', status: 'doing', work_dir: '/r/alpha', archived_at: null }], 8: [{ id: 1, title: 'Old task', status: 'doing', work_dir: '/o/task', archived_at: null }], 9: [{ id: 1, title: 'Peer task', status: 'doing', work_dir: '/p/task', archived_at: null }] },
   };
 }
 const json = (route, body, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
@@ -109,12 +109,19 @@ function tools(page) {
     await page.locator('#h5-tasks').waitFor({ state: 'visible' });
     await settle();
   };
-  const header = key => page.locator(`#h5-task-list .h5-source-header[data-source="${key}"]`);
-  const headerName = key => header(key).locator('.h5-source-name').textContent();
+  // The device tag in front of the task names of a device (the list has no header per device): the name, cut to 8 characters; the full name is its title.
+  const header = key => page.locator(`#h5-task-list .h5-task[data-source="${key}"] .h5-device-tag`).first();
+  const headerName = key => header(key).textContent();
   const waitHeader = (key, text) => page.waitForFunction(([k, want]) => {
-    const node = document.querySelector(`#h5-task-list .h5-source-header[data-source="${k}"] .h5-source-name`);
-    return node && node.textContent === want;
+    const node = document.querySelector(`#h5-task-list .h5-task[data-source="${k}"] .h5-device-tag`);
+    return node && node.title.split(' \u00B7 ')[0] === want;
   }, [key, text]);
+  // The full names of the devices, one per device, in list order.
+  const tagTitles = () => page.evaluate(() => {
+    const seen = new Map();
+    for (const node of document.querySelectorAll('#h5-task-list .h5-task .h5-device-tag')) if (!seen.has(node.dataset.source)) seen.set(node.dataset.source, node.title);
+    return [...seen.values()];
+  });
   const group = async id => {
     const summary = page.locator(`#h5-set-${id} .MuiAccordionSummary-root`);
     await summary.scrollIntoViewIfNeeded();
@@ -139,7 +146,7 @@ function tools(page) {
   const field = page.locator('#h5-engine-rename-name');
   const save = async () => { await page.locator('#h5-engine-rename-save').tap(); };
   const closed = () => dialog.waitFor({ state: 'hidden' });
-  return { settle, sheet, header, headerName, waitHeader, group, openEngines, closeSettings, engineRow, engineName, dialog, openRename, field, save, closed };
+  return { settle, sheet, header, headerName, waitHeader, tagTitles, group, openEngines, closeSettings, engineRow, engineName, dialog, openRename, field, save, closed };
 }
 const writesTo = (world, pathname) => world.writes.filter(([method, p]) => method === 'PUT' && p === pathname);
 
@@ -150,10 +157,10 @@ async function testNamesShown(browser) {
   const t = tools(page);
   await t.sheet();
   await t.waitHeader('local', 'MacBook');
-  assert.equal(await t.header('local').locator('.h5-source-hint').textContent(), '\u00B7 This machine', 'list: this machine has the hint');
-  assert.equal(await t.header('local').locator('.h5-source-name').getAttribute('title'), 'MacBook \u00B7 This machine', 'list: the full text is the title');
-  assert.deepEqual(await page.locator('#h5-task-list .h5-source-header .h5-source-name').allTextContents(), ['MacBook', 'VPS', 'Old box', 'Peer'], 'list: each device by its name');
-  assert.equal(await t.header('remote:7').locator('.h5-source-hint').count(), 0, 'list: a remote device has no hint');
+  assert.equal(await t.headerName('local'), 'MacBook', 'list: the tag of this machine is its name');
+  assert.equal(await t.header('local').getAttribute('title'), 'MacBook \u00B7 This machine', 'list: the full text, with the hint, is the title');
+  assert.deepEqual(await t.tagTitles(), ['MacBook \u00B7 This machine', 'VPS', 'Old box', 'Peer'], 'list: each device by its name');
+  assert.equal(await t.header('remote:7').getAttribute('title'), 'VPS', 'list: a remote device has no hint');
   if (SHOTS) { fs.mkdirSync(SHOTS, { recursive: true }); await page.locator('#h5-tasks').screenshot({ path: path.join(SHOTS, 'engine-name-list-390.png') }); }
 
   await page.locator('#h5-add-task').tap();
@@ -163,16 +170,16 @@ async function testNamesShown(browser) {
   await page.locator('#h5-new-task-dialog').waitFor({ state: 'detached' });
 
   // The header line of a remote task names its device.
-  const item = page.locator('#h5-task-list .h5-source[data-source="remote:7"] .h5-task-item').first();
+  const item = page.locator('#h5-task-list .h5-task[data-source="remote:7"] .h5-task-item').first();
   await item.tap();
-  await page.locator('#h5-task-list .h5-source[data-source="remote:7"] .h5-terminal-main').first().tap();
+  await page.locator('#h5-task-list .h5-task[data-source="remote:7"] .h5-terminal-main').first().tap();
   await page.waitForFunction(() => document.getElementById('h5-task-name').textContent === 'Remote alpha');
   await page.locator('#h5-tasks').waitFor({ state: 'hidden' }); // the sheet closes on a phone: wait, or the next open would find it still closing
   assert.equal(await page.locator('#h5-task-service').textContent(), 'VPS', 'header: the device of the shown task');
 
   // "Visible to" of a task of this machine lists the linked machines by the names the server gives.
   await t.sheet();
-  await page.locator('#h5-task-list .h5-source[data-source="local"] .h5-task-more').first().tap();
+  await page.locator('#h5-task-list .h5-task[data-source="local"] .h5-task-more').first().tap();
   await page.locator('#h5-term-menu-actions button', { hasText: 'Visible to' }).tap();
   await page.locator('.h5-visibility-row').waitFor();
   assert.equal(await page.locator('.h5-visibility-name').textContent(), 'Peer', 'Visible to: the linked machine by name');
@@ -258,8 +265,8 @@ async function testRenameRemote(browser) {
   await t.sheet();
   await t.waitHeader('remote:7', 'VPS');
   // The task of VPS is shown, so the header line follows the rename too.
-  await page.locator('#h5-task-list .h5-source[data-source="remote:7"] .h5-task-item').first().tap();
-  await page.locator('#h5-task-list .h5-source[data-source="remote:7"] .h5-terminal-main').first().tap();
+  await page.locator('#h5-task-list .h5-task[data-source="remote:7"] .h5-task-item').first().tap();
+  await page.locator('#h5-task-list .h5-task[data-source="remote:7"] .h5-terminal-main').first().tap();
   await page.waitForFunction(() => document.getElementById('h5-task-service') && document.getElementById('h5-task-service').textContent === 'VPS');
   await page.locator('#h5-tasks').waitFor({ state: 'hidden' });
   await t.openEngines();
@@ -294,7 +301,9 @@ async function testRenameRemote(browser) {
 
   await page.waitForFunction(() => document.getElementById('h5-task-service').textContent === '\u4E1C\u4EAC VPS');
   await t.sheet();
-  assert.deepEqual(await page.locator('#h5-task-list .h5-source-header .h5-source-name').allTextContents(), ['MacBook', '\u4E1C\u4EAC VPS', 'Old box 2', 'Peer two'], 'the list follows every rename');
+  await page.waitForFunction(() => [...document.querySelectorAll('#h5-task-list .h5-device-tag')].some(node => node.title === 'Peer two'));
+  assert.deepEqual(await t.tagTitles(), ['MacBook \u00B7 This machine', '\u4E1C\u4EAC VPS', 'Old box 2', 'Peer two'], 'the list follows every rename');
+  assert.equal(await t.headerName('remote:8'), 'Old box\u2026', 'a name longer than 8 characters is cut on the tag');
 
   // An engine that keeps its own name goes back to its default (an empty name).
   await t.openEngines();
@@ -389,10 +398,10 @@ async function testLongNames(browser) {
   await t.waitHeader('local', long);
   const cut = selector => page.evaluate(sel => { const node = document.querySelector(sel); return node.scrollWidth > node.clientWidth && getComputedStyle(node).textOverflow === 'ellipsis'; }, selector);
   const inside = (inner, outer) => page.evaluate(([a, b]) => { const r = document.querySelector(a).getBoundingClientRect(); const o = document.querySelector(b).getBoundingClientRect(); return r.width > 0 && r.right <= o.right + 0.5; }, [inner, outer]);
-  assert.equal(await cut('.h5-source-header[data-source="local"] .h5-source-name'), true, 'list: the name is cut');
-  assert.equal(await inside('.h5-source-header[data-source="local"] .h5-source-hint', '.h5-source-header[data-source="local"]'), true, 'list: the hint stays visible');
-  assert.equal(await t.header('local').locator('.h5-source-name').getAttribute('title'), `${long} \u00B7 This machine`);
-  assert.equal(await cut('.h5-source-header[data-source="remote:7"] .h5-source-name'), true, 'list: a long remote name is cut');
+  assert.equal(await t.headerName('local'), `${Array.from(long).slice(0, 7).join('')}\u2026`, 'list: the name is cut to 8 characters');
+  assert.equal(await inside('.h5-task[data-source="local"] .h5-device-tag', '.h5-task[data-source="local"] .h5-task-item'), true, 'list: the tag stays inside its row');
+  assert.equal(await t.header('local').getAttribute('title'), `${long} \u00B7 This machine`);
+  assert.equal(await t.headerName('remote:7'), `${Array.from(long).slice(0, 7).join('')}\u2026`, 'list: a long remote name is cut');
   if (SHOTS) await page.locator('#h5-tasks').screenshot({ path: path.join(SHOTS, 'engine-name-long-list-320.png') });
   await t.openEngines();
   await page.waitForFunction(text => document.querySelector('.h5-engine-row[data-engine="local"] .h5-engine-name').textContent === text, long);
@@ -417,7 +426,8 @@ async function testOlderServer(browser) {
   const t = tools(page);
   await t.sheet();
   await t.waitHeader('local', 'This machine');
-  assert.equal(await t.header('local').locator('.h5-source-hint').count(), 0, 'older: no hint next to "This machine"');
+  assert.equal(await t.headerName('local'), 'This machine', 'older: the tag says "This machine"');
+  assert.equal(await t.header('local').getAttribute('title'), 'This machine', 'older: no hint next to "This machine"');
   await page.locator('#h5-add-task').tap();
   assert.deepEqual(await page.locator('#h5-new-task-on option').allTextContents(), ['This machine', 'VPS', 'Old box', 'Peer'], 'older: Create on as today');
   await page.locator('#h5-new-task-cancel').tap(); // New task is a dialog now

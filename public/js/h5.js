@@ -92,7 +92,9 @@
 
   // A source is one service whose tasks are in the list: this machine, or a connected service (a remote Engine or a linked service). Each keeps its own list:
   // `tasks`, `groups`, `status` ('new' until its first answer, 'ready', or 'offline' when its last read failed) and `failure` (what that read said).
-  const withList = from => Object.assign(from, { tasks: [], groups: DEFAULT_GROUPS, status: 'new', failure: '', loadSeq: 0, checkedAt: 0 });
+  // `instanceId`: the device's own id (`instance_id` of /api/system/version for this machine, of its /api/remote-servers row for a service), which names its tasks in
+  // the shared order (`<instance id>:<task id>`, see "Task order" below); null until known, and on an older Engine.
+  const withList = from => Object.assign(from, { tasks: [], groups: DEFAULT_GROUPS, status: 'new', failure: '', loadSeq: 0, checkedAt: 0, instanceId: null });
   // `label` stays the "This machine" text the shell translates; `name` is this machine's engine name ('' until known, and on an older server; `readLocalName`).
   const LOCAL = withList({ key: 'local', label: 'This machine', name: '', tasksBase: '/api/tasks', groupsBase: '/api/task-groups', wsPath: '/terminal/ws', activityBase: '/api/tasks', mindmapBase: '/api/mindmaps' });
   const remoteSource = (id, name) => withList({
@@ -298,9 +300,9 @@
   setInterval(() => { if (keyboardOpen && !pointerMode()) fitViewport(); }, 500);
 
   // ── Tasks ──
-  function note(text) { ui.set({ taskList: { note: text, groups: [], sections: [] } }); }
-  // The task list the shell draws: a note (loading, an error, no tasks: a list of this machine alone), or one section per service, each with its groups of tasks,
-  // each task with the sessions listed under it when it is open. `groups` is this machine's own, for T-Attention's way back.
+  function note(text) { ui.set({ taskList: { note: text, groups: [], tasks: [], sortable: false } }); }
+  // The task list the shell draws: a note (loading, an error, no tasks), or the tasks of every listed device in one flat list in the shared order (see
+  // "Task order" below), each task with its device tag and the sessions listed under it when it is open. `groups` is this machine's own, for T-Attention's way back.
   function publishSources() {
     ui.set({
       sources: sources.filter(item => item === LOCAL || item.label).map(item => ({ key: item.key, label: item.label, name: item.name || '', offline: item.status === 'offline', hidden: hiddenDevices.has(item.key) })),
@@ -322,17 +324,22 @@
     sources = [LOCAL, ...(Array.isArray(servers) ? servers : []).filter(server => server.enabled !== false).map(server => {
       const kept = before.get(`remote:${server.id}`);
       const from = kept ? Object.assign(kept, { label: server.name }) : remoteSource(server.id, server.name);
+      from.instanceId = instanceIdOf(server.instance_id);
       if (!kept && server.status === 'offline') from.status = 'offline'; // the first read of its tasks says for sure
       return from;
     })];
     for (const from of before.values()) if (!sources.includes(from)) forgetSource(from);
     publishSources();
   }
-  // A failed read keeps the name that was known.
+  // A failed read keeps the name (and the instance id) that was known.
   async function readLocalName(pending) {
     const answer = await pending;
-    if (answer && typeof answer === 'object') LOCAL.name = typeof answer.engine_name === 'string' ? answer.engine_name.trim() : '';
+    if (answer && typeof answer === 'object') {
+      LOCAL.name = typeof answer.engine_name === 'string' ? answer.engine_name.trim() : '';
+      LOCAL.instanceId = instanceIdOf(answer.instance_id);
+    }
   }
+  const instanceIdOf = value => (typeof value === 'string' && value.trim() ? value.trim() : null);
   // A service that is no longer connected: nothing of it is kept and, when its task was shown, nothing is shown.
   function forgetSource(from) {
     const prefix = `${from.key}|`;
@@ -386,7 +393,7 @@
       return false;
     }
   }
-  function loadTasks() { return Promise.all(listedSources().map(from => loadSource(from))); }
+  function loadTasks() { return Promise.all([...listedSources().map(from => loadSource(from)), loadOrder()]); }
   // One read of a service's list after one of its tasks answered 404, however many of its tasks did: the list then drops the rows that are really gone.
   function recheckSource(from) {
     if (!from.recheck) from.recheck = loadSource(from).finally(() => { from.recheck = null; });
@@ -451,23 +458,134 @@
   }
   const sectionGroups = from => groupedTasks(from).map(({ group, members }) => ({ key: group.key, name: group.name, tasks: members.map(item => taskRow(from, item)) }));
 
+  // ── Task order: one flat list in the order every client shares (`GET` / `PUT /api/task-order`; rules in scripts/h5-shell/task-order.mjs) ──
+  // The list has no section per device and no group headers (it never showed group titles): every task of the listed devices, in the shared order. A task
+  // is named in it by `<instance id>:<task id>`. The tasks not in the order (new, restored) come first, each device in its own order (groups by `sort_order`,
+  // then its list), this machine first; the tasks of a device without an instance id (an older Engine) come last and cannot be moved. The keys in the order
+  // that match no task shown here (a hidden or offline device, a task not visible here) are kept in their places when a new order is saved.
+  // An older server answers 404: then the list keeps today's order (each device after the other) and offers no sorting.
+  const ORDER_URL = '/api/task-order';
+  const ORDER_POLL_MS = 30000; // while the list is shown and the page visible; in a pane of the multi-column view every read is at most this often
+  // `known`: an order was read (sorting is offered only then: a save is the whole order, and one made without it would drop the keys of other devices).
+  // `seq`: raised by each move, so a read that was on its way meanwhile is dropped. `deferred`: an answer that came during a drag, applied when it ends.
+  const taskOrder = { supported: false, known: false, order: [], updatedAt: null, seq: 0, saving: 0, readAt: 0, pending: null, dragging: false, deferred: null };
+  const sortable = () => taskOrder.supported && taskOrder.known;
+  const orderKey = (from, item) => (from.instanceId ? `${from.instanceId}:${item.id}` : null);
+  // Every task of the list, in list order: { from, item, key }. An offline device keeps the tasks it had, where they were.
+  function orderedTasks() {
+    const rows = listedSources().flatMap(from => groupedTasks(from).flatMap(entry => entry.members).map(item => ({ from, item, key: orderKey(from, item) })));
+    return ui.taskOrder.arrangeTasks(rows, taskOrder.known ? taskOrder.order : null);
+  }
+  const shownKeys = () => orderedTasks().filter(row => row.key).map(row => row.key);
+  function applyOrder(answer) {
+    taskOrder.order = answer.order.filter(key => typeof key === 'string');
+    taskOrder.updatedAt = answer.updated_at === undefined ? null : answer.updated_at;
+    renderTasks();
+  }
+  // Reads the shared order: when the list is loaded or refreshed, when the page is shown again, and every ORDER_POLL_MS while the list is open. A newer one
+  // is applied at once, also under an open menu (its actions look at the order when they run); during a drag it waits for the drop.
+  function loadOrder() {
+    if (taskOrder.pending) return taskOrder.pending;
+    if (PANE && taskOrder.readAt && Date.now() - taskOrder.readAt < ORDER_POLL_MS) return Promise.resolve();
+    const seq = taskOrder.seq;
+    taskOrder.readAt = Date.now();
+    const pending = taskOrder.pending = (async () => {
+      let answer;
+      try { answer = await api('GET', ORDER_URL); }
+      catch (error) {
+        if (error.status === 404 && seq === taskOrder.seq && (taskOrder.supported || taskOrder.known)) { // the server went back to an older version
+          Object.assign(taskOrder, { supported: false, known: false, order: [], updatedAt: null });
+          renderTasks();
+        }
+        return; // any other failure keeps what was known
+      }
+      if (seq !== taskOrder.seq || taskOrder.saving || !answer || !Array.isArray(answer.order)) return; // a move made meanwhile is newer
+      const first = !taskOrder.known;
+      taskOrder.supported = true;
+      taskOrder.known = true;
+      if (!first && answer.updated_at === taskOrder.updatedAt && ui.taskOrder.sameOrder(answer.order, taskOrder.order)) return;
+      if (taskOrder.dragging) { taskOrder.deferred = answer; return; }
+      applyOrder(answer);
+    })().finally(() => { if (taskOrder.pending === pending) taskOrder.pending = null; });
+    return pending;
+  }
+  // A remote row can answer `instance_id: null` for about a minute after the page loads (the server fills it from the Engine's /v1/info in the background), and
+  // an older Engine never has one. While a listed service has none, its rows are read again every ID_RETRY_MS for ID_RETRY_FOR_MS; its tasks are placed by
+  // the fallback rule (after the others, not movable) until it is known.
+  const ID_RETRY_MS = 15000;
+  const ID_RETRY_FOR_MS = 180000;
+  const startedAt = Date.now();
+  const missingIds = () => listedSources().some(from => from !== LOCAL && !from.instanceId);
+  setInterval(async () => {
+    if (!listReady || document.visibilityState !== 'visible' || Date.now() - startedAt > ID_RETRY_FOR_MS || !missingIds()) return;
+    const before = sources.map(from => from.instanceId).join('\n');
+    await loadSources();
+    if (sources.map(from => from.instanceId).join('\n') !== before) renderTasks();
+  }, ID_RETRY_MS);
+  const orderShown = () => listReady && document.visibilityState === 'visible' && !columnsShown() && (isWide() ? !ui.get().sidebarCollapsed : Boolean(ui.get().tasksOpen));
+  setInterval(() => { if (orderShown()) void loadOrder(); }, ORDER_POLL_MS);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && listReady) void loadOrder(); });
+  // Saves the whole new order once (the keys this page does not show stay in their places; the server also keeps any key a PUT leaves out, and its answer
+  // is the new truth). The list moves at once; when the save fails it moves back and says so.
+  async function saveOrder(order) {
+    const before = { order: taskOrder.order, updated_at: taskOrder.updatedAt };
+    const seq = (taskOrder.seq += 1);
+    taskOrder.order = order;
+    taskOrder.saving += 1;
+    renderTasks();
+    try {
+      const answer = await api('PUT', ORDER_URL, { order });
+      if (seq === taskOrder.seq && answer && Array.isArray(answer.order)) applyOrder(answer);
+    } catch (error) {
+      if (seq === taskOrder.seq) applyOrder(before);
+      tell(`Could not save the task order: ${error.message}`, 'error');
+    } finally { taskOrder.saving -= 1; }
+  }
+  // Moves the task `ref` before the task `target` (or after it, with `after`). From a drop of a drag (TaskDrawer.jsx) and the task menu.
+  function reorderTask(ref, target, after = false) {
+    if (!sortable()) return;
+    const rows = orderedTasks();
+    const keyOf = wanted => { const row = rows.find(entry => taskRef(entry.from, entry.item.id) === wanted); return row ? row.key : null; };
+    const key = keyOf(ref);
+    const to = keyOf(target);
+    if (!key || !to) return;
+    const display = rows.filter(row => row.key).map(row => row.key);
+    const next = ui.taskOrder.moveKey(display, key, to, after);
+    if (next) void saveOrder(ui.taskOrder.mergeOrder(taskOrder.order, display, next));
+  }
+  // A drag in the list (TaskDrawer.jsx): while it runs, an order read meanwhile waits, so the rows do not move under the finger; it is applied before the drop.
+  function endDrag() {
+    taskOrder.dragging = false;
+    const answer = taskOrder.deferred;
+    taskOrder.deferred = null;
+    if (answer) applyOrder(answer);
+  }
+  ui.actions.taskDragging = on => { if (on) taskOrder.dragging = true; else endDrag(); };
+  ui.actions.reorderTask = (ref, target, after = false) => { endDrag(); reorderTask(ref, target, after); };
+  // The device tag in front of a task name, when more than one device is listed (TaskDrawer.jsx draws it).
+  const deviceTag = from => ({ key: from.key, local: from === LOCAL, label: from.label, name: from.name || '', instanceId: from.instanceId, offline: from.status === 'offline' });
+
   function renderTasks() {
     showArchived(); // first: the entry is there with an empty list too, and `readInfo` of an expanded list may just have changed what the Engine can do
     if (!listReady) { note('Loading…'); return; }
     const listed = listedSources();
-    if (listed.length === 1 && listed[0] === LOCAL) { // this machine alone: no header, and it says so when the list is empty
+    if (listed.length === 1 && listed[0] === LOCAL) { // this machine alone: no tags, and it says so when the list is empty
       const message = LOCAL.status === 'new' ? 'Loading…'
         : LOCAL.status === 'offline' ? `Could not load tasks: ${LOCAL.failure}`
           : LOCAL.tasks.length ? null : 'No tasks yet. Create one above';
       if (message) { note(message); return; }
     }
-    const header = !(listed.length === 1 && listed[0] === LOCAL);
-    const sections = listed.map(from => ({
-      key: from.key, label: from.label, name: from.name || '', local: from === LOCAL, header, offline: from.status === 'offline',
-      groups: from.status === 'ready' ? sectionGroups(from) : [],
+    const tagged = listed.length > 1;
+    const canSort = sortable();
+    const tasks = orderedTasks().map(({ from, item, key }) => ({
+      ...taskRow(from, item), source: from.key, movable: canSort && Boolean(key), device: tagged ? deviceTag(from) : null, unplaced: canSort && !key,
     }));
-    const own = sections.find(section => section.local);
-    ui.set({ taskList: { note: null, groups: own ? own.groups : [], sections } });
+    if (!tasks.length) {
+      note(listed.some(from => from.status === 'new') ? 'Loading…' : listed.includes(LOCAL) && LOCAL.status === 'offline' ? `Could not load tasks: ${LOCAL.failure}` : 'No tasks yet. Create one above');
+      return;
+    }
+    // `groups`: this machine's tasks by group, for T-Attention's way back.
+    ui.set({ taskList: { note: null, groups: listed.includes(LOCAL) ? sectionGroups(LOCAL) : [], tasks, sortable: canSort } });
   }
 
   // Keep the screen on while a task is open (a terminal or a chat), so the phone does not sleep in the middle of a session and drop the connection.
@@ -661,7 +779,7 @@
     else selectTask(from, item);
   };
   // ── Next running or pending session (row 2, `#h5-cycle`) ──
-  // Goes to the next terminal session of any service in the list, in task sheet order (services, groups, tasks, then the terminals of each task), that is running or pending acceptance,
+  // Goes to the next terminal session of any service in the list, in task sheet order (the tasks in the shared list order, then the terminals of each task), that is running or pending acceptance,
   // wrapping around after the last one. Only terminal sessions count: plain shells ("Terminal") and Claude / Codex terminals ("Session"); agent chats do not.
   // Running: the server's terminal activity state is 'running', or the terminal is a live Claude session with a running sub-agent (`terminal-subagents`).
   // Pending acceptance: the activity state is 'done' (finished, not yet seen; showing the terminal clears it, see the terminal done acknowledgement below).
@@ -695,7 +813,10 @@
   async function activeSessions() {
     const answers = await Promise.all(listedSources().filter(from => from.status !== 'offline').map(from => activeOf(from).then(list => ({ list }), error => ({ error }))));
     if (answers.length && answers.every(answer => answer.error)) throw answers[0].error;
-    return answers.flatMap(answer => answer.list || []);
+    // In list order (the shared order across devices); the terminals of one task stay in their order (a stable sort).
+    const place = new Map(orderedTasks().map((row, index) => [taskRef(row.from, row.item.id), index]));
+    const at = entry => { const index = place.get(taskRef(entry.from, entry.taskId)); return index === undefined ? Infinity : index; };
+    return answers.flatMap(answer => answer.list || []).sort((a, b) => at(a) - at(b));
   }
   ui.actions.nextActiveSession = async () => {
     // Close the on-screen keyboard first (as the design document button does); the terminal is not resized.
@@ -772,7 +893,18 @@
     menuTask = taskRef(from, item.id); // so that the task leaving the list closes this sheet too (`leaveTask`)
     void loadLinks(); // for the next time: the menu never waits for it
     const ordered = [...from.groups].sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+    // Its place in the shared order: each step is disabled where the task cannot go (already first or last). They look at the order when they run.
+    const key = sortable() ? orderKey(from, item) : null;
+    const display = key ? shownKeys() : [];
+    const steps = key && display.length > 1 ? [['Move to top', 'top'], ['Move up', 'up'], ['Move down', 'down'], ['Move to bottom', 'bottom']] : [];
+    const moveStep = step => {
+      closeTerminalMenu();
+      const to = ui.taskOrder.stepTarget(shownKeys(), key, step);
+      const target = to && orderedTasks().find(row => row.key === to.target);
+      if (target) reorderTask(taskRef(from, item.id), taskRef(target.from, target.item.id), to.after);
+    };
     showMenu(serviceOf(from) ? `${item.title} \u00B7 ${serviceOf(from)}` : item.title, [
+      ...steps.map(([label, step]) => [label, () => moveStep(step), null, null, null, !ui.taskOrder.stepTarget(display, key, step)]),
       ...ordered.map(group => [`${item.status === group.key ? '\u2713 ' : ''}${tr('Move to')} \u201C${tr(group.name)}\u201D`, () => void moveTask(from, item, group.key), 'raw']),
       ['Edit working directory', () => { closeTerminalMenu(); ui.set({ taskDialog: dialogFor('workdir', from, item) }); }],
       ...(choosesVisibility(from) ? [['Visible to', () => void askVisibility(from, item)]] : []),
@@ -1264,16 +1396,16 @@
   }
   // The typed name, as the server will keep it (an empty name: the default "Terminal N" / "Claude N").
   const takeName = () => newName.replace(/\s+/g, ' ').trim();
-  // items: [label, run, kind, create, quick]; kind 'danger' is drawn as a warning, 'raw' is a name that is not translated; create: Enter in the name field runs it;
+  // items: [label, run, kind, create, quick, disabled]; kind 'danger' is drawn as a warning, 'raw' is a name that is not translated; create: Enter in the name field runs it;
   // quick: the item is a choice of the keyboard list (`pick` in the state), and Enter on it runs `quick` instead of `run`.
   // naming: the New session dialog of the task `menuTask`, with the optional name field above the choices; `extra` adds its own fields (the task's title and service,
   // the sub-list shown, busy and error).
   // anchor: the "⋯" of a session row: the actions are a popup under it instead of the sheet from the bottom.
   function showMenu(title, items, { naming = false, anchor = null, extra = null } = {}) {
-    menuRuns = items.map(item => item[1]);
+    menuRuns = items.map(item => (item[5] ? null : item[1])); // item[5]: disabled
     menuCreate = items.findIndex(item => item[3]);
     menuQuick = items.map(item => item[4] || null);
-    ui.set({ menu: { title, items: items.map(([label, , kind, , quick]) => ({ label, kind: kind || null, pick: Boolean(quick) })), rename: null, renameValue: '', naming, task: naming ? menuTask : null, name: newName, anchor, ...extra } });
+    ui.set({ menu: { title, items: items.map(([label, , kind, , quick, disabled]) => ({ label, kind: kind || null, pick: Boolean(quick), disabled: Boolean(disabled) })), rename: null, renameValue: '', naming, task: naming ? menuTask : null, name: newName, anchor, ...extra } });
   }
   // The rename field takes the place of the row in the task list ({ kind, id, task } of the row, `task` being its ref: `default` is a terminal id in every task); the sheet of
   // actions goes away.
@@ -3500,7 +3632,7 @@
     const reads = new Map([[LOCAL, loadSource(LOCAL)]]);
     if (assumed !== LOCAL) reads.set(assumed, loadSource(assumed));
     void loadLinks(); // the "⋯" of a task needs it, the list does not wait for it
-    await Promise.all([loadSources(), loadHidden()]);
+    await Promise.all([loadSources(), loadHidden(), loadOrder()]);
     listReady = true;
     markListsKnown();
     syncMindmapSources();

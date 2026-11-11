@@ -33,9 +33,10 @@ export const initialState = () => ({
   sourceKey: 'local', // the service of the shown task
   sourceLabel: '', // its name when it is not this machine (shown in the header)
   hiddenDevices: { supported: false, keys: [] }, // the devices left out of the list ("Show in task list"); `supported`: false on an older server
-  // The task list: a note (loading, an error, no tasks), or one section per service, each with groups of tasks; a task can carry the sessions listed under it.
-  // `groups` is this machine's section, for T-Attention's way back.
-  taskList: { note: null, groups: [], sections: [] },
+  // The task list: a note (loading, an error, no tasks), or `tasks`, every listed device's tasks in one flat list in the shared order (h5.js "Task order"), each with
+  // its `source`, `device` tag (null with one device), `movable` and the sessions listed under it; `sortable`: the order can be changed. `groups` is this machine's
+  // tasks by group, for T-Attention's way back.
+  taskList: { note: null, groups: [], tasks: [], sortable: false },
   archived: { supported: false, open: false, status: 'idle', busy: null, count: null, rows: [] }, // the Archived section at the end of the task list (h5.js `showArchived`)
   creatingTask: false,
   newTaskOpen: false, // the New task dialog (TaskDrawer.jsx `NewTaskDialog`) is open

@@ -32,6 +32,8 @@ const taskVisibility = getTaskVisibility();
 router.use(createTaskVisibilityGuard({ visibility: taskVisibility, db, serviceLinks: getServiceLinks() }));
 router.use('/file-sync', require('./file-sync').engine);
 router.use('/linked-services', require('./linked-services').createLinkedServicesRouter());
+// The shared task order between linked services (routes/task-order.js), link tokens only. It holds keys, not tasks, so per-task visibility leaves it alone.
+router.use('/task-order', require('./task-order').createEngineTaskOrderRouter());
 // Mind maps of this service, for the other services connected to it (routes/mindmap.js, the same router and service as /api/mindmaps). The token is checked
 // before any body is read; server.js keeps the global JSON parser off this path. Maps belong to no task, so per-task visibility does not apply to them.
 router.use('/mindmaps', require('./mindmap').createMindmapRouter({ getService: require('../services/mindmap').getMindmapService, authenticate: requireEngineAuth() }));
@@ -136,6 +138,8 @@ function infoHandler(req, res) {
       MINDMAPS,
       // engine-name: PUT /v1/engine-name renames this Engine; `name` above is the current one.
       engineName.CAPABILITY,
+      // task-order: GET|PUT /v1/task-order, the shared task order of linked services (link tokens only).
+      'task-order',
       'engine:update', 'pm2:manage', 'apps:manage', 'agent-config:manage', 'file-sync:manage', 'workspace:manage', 'agent-chat:manage',
     ],
   });

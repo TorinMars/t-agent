@@ -9,6 +9,10 @@ const MAX_LENGTH = 60;
 const KEY = 'name';
 // The ids of the remote_servers rows whose name comes from the Engine, so that `name_source` survives a restart. One system_state row, no schema change.
 const SOURCES_KEY = 'remote_engine_names_v1';
+// The instance id each remote row's Engine reports in /v1/info (`engine_id`, from engine_identity `instance_id`): { "<row id>": "<instance id>" }.
+// It names the tasks of that Engine in the shared task order (services/task-order.js). One system_state row, no schema change.
+const INSTANCES_KEY = 'remote_engine_instances_v1';
+const INSTANCE_ID = /^[A-Za-z0-9-]{1,64}$/;
 
 const fault = (code, statusCode) => Object.assign(new Error(code), { statusCode });
 // Control characters (C0, DEL, C1, which include every line break but two) and the Unicode line and paragraph separators.
@@ -76,13 +80,43 @@ function saveEngineNamedIds(db, ids) {
     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP`).run(SOURCES_KEY, JSON.stringify({ ids: [...ids].sort((a, b) => a - b) }));
 }
 
+// The instance id a remote reports, or null. Every T-Agent Engine reports it as `engine_id`; `instance_id` is read too.
+function reportedInstanceId(info) {
+  const value = info && (info.instance_id || info.engine_id);
+  return typeof value === 'string' && INSTANCE_ID.test(value) ? value : null;
+}
+
+function remoteInstanceIds(db) {
+  const row = db.prepare('SELECT value FROM system_state WHERE key = ?').get(INSTANCES_KEY);
+  if (!row) return new Map();
+  try {
+    const value = JSON.parse(row.value);
+    return new Map(Object.entries(value && typeof value === 'object' ? value : {}).filter(([, id]) => typeof id === 'string' && INSTANCE_ID.test(id)).map(([key, id]) => [Number(key), id]));
+  } catch { return new Map(); }
+}
+
+// Remembers the instance id of the row `serverId`; rows that were removed leave the map on the same write.
+function rememberInstanceId(db, serverId, info) {
+  const instanceId = reportedInstanceId(info);
+  if (!instanceId) return null;
+  const ids = remoteInstanceIds(db);
+  if (ids.get(Number(serverId)) === instanceId) return instanceId;
+  ids.set(Number(serverId), instanceId);
+  const existing = new Set(db.prepare('SELECT id FROM remote_servers').all().map(row => Number(row.id)));
+  const kept = Object.fromEntries([...ids].filter(([id]) => existing.has(id)).sort((a, b) => a[0] - b[0]));
+  db.prepare(`INSERT INTO system_state (key, value) VALUES (?, ?)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP`).run(INSTANCES_KEY, JSON.stringify(kept));
+  return instanceId;
+}
+
 const nameSource = (serverId, named) => (named.has(Number(serverId)) ? 'engine' : 'local');
 
 // After a successful read of /v1/info for the row `serverId`. An Engine with the capability names the row (and, through `renameLink`, the link
 // record); one without it leaves the row name alone and makes the source local again, for example after a downgrade. An Engine with the
-// capability whose name does not pass the rules here changes nothing.
+// capability whose name does not pass the rules here changes nothing. The instance id the Engine reports is remembered in every case.
 function syncRemoteInfo(db, serverId, info, renameLink = () => {}) {
   const id = Number(serverId);
+  rememberInstanceId(db, id, info);
   const name = reportedName(info);
   const named = engineNamedIds(db);
   if (!name && hasCapability(info)) return null;
@@ -97,7 +131,8 @@ function syncRemoteInfo(db, serverId, info, renameLink = () => {}) {
 }
 
 module.exports = {
-  CAPABILITY, MAX_LENGTH, SOURCES_KEY,
+  CAPABILITY, MAX_LENGTH, SOURCES_KEY, INSTANCES_KEY,
   parseEngineName, nameFromBody, defaultEngineName, storedEngineName, engineNameState, setEngineName,
   hasCapability, reportedName, engineNamedIds, nameSource, syncRemoteInfo,
+  reportedInstanceId, remoteInstanceIds, rememberInstanceId,
 };

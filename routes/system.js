@@ -6,6 +6,11 @@ const engineName = require('../services/engine-name');
 // Loaded on first use, like the update manager's own state, so that loading this router opens no database.
 const db = () => require('../db');
 
+const instanceId = () => {
+  const row = db().prepare("SELECT value FROM engine_identity WHERE key = 'instance_id'").get();
+  return row ? row.value : null;
+};
+
 const router = express.Router();
 router.use(requireAuth);
 
@@ -14,12 +19,13 @@ function isAdmin(req) {
   return Boolean(req.session.user);
 }
 
-// `engine_name` is this machine's name, so the page needs no second call to show it.
+// `engine_name` is this machine's name, so the page needs no second call to show it. `instance_id` is this machine's own identity (engine_identity), the
+// first part of the keys of its tasks in the shared task order (services/task-order.js).
 router.get('/version', (req, res) => {
   let manifest;
   try { manifest = updates.readLocalManifest(); }
   catch { return res.status(500).json({ error: 'INVALID_LOCAL_VERSION' }); }
-  res.json({ ...manifest, boot_id: updates.bootId, is_update_admin: isAdmin(req), engine_name: engineName.engineNameState(db()).name, restart: updates.restartSupport() });
+  res.json({ ...manifest, boot_id: updates.bootId, is_update_admin: isAdmin(req), engine_name: engineName.engineNameState(db()).name, instance_id: instanceId(), restart: updates.restartSupport() });
 });
 
 // The name of this Engine (services/engine-name.js), which every machine connected to it shows. Behind the session and same-origin gates of /api.

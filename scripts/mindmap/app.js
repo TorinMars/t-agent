@@ -6,8 +6,14 @@ import { blankDoc, sanitizeDoc, DocError } from './doc.mjs';
 import { buildXmind, parseXmind, describeLost, XmindError, XMIND_LIMITS } from './xmind.mjs';
 
 const tr = text => (typeof I18n !== 'undefined' ? I18n.t(text) : text);
-const API = '/api/mindmaps';
-const DRAFT_KEY = id => `h5-mindmap-draft:${id}`;
+// The services whose maps are listed (`sources` of the mount options, in list order): { key, label, base, online }. `base` is where that service's maps are
+// (`/api/mindmaps` here, `/api/remote-servers/:id/mindmaps` for a connected service, same shapes). Without the option the view shows this machine only.
+const LOCAL_KEY = 'local';
+const LOCAL_SOURCE = { key: LOCAL_KEY, label: 'This machine', local: true, base: '/api/mindmaps', online: true };
+// A draft is kept per service and map. This machine keeps the key it always had, so a draft written before maps were shared still comes back; a connected
+// service's key has its source key in it, and the draft itself says which service it is for (checked again when it is read).
+const DRAFT_KEY = (sourceKey, id) => (sourceKey === LOCAL_KEY ? `h5-mindmap-draft:${id}` : `h5-mindmap-draft:${sourceKey}|${id}`);
+const OFFLINE_CODES = new Set(['REMOTE_OFFLINE', 'REMOTE_CONNECTION_FAILED']);
 const DRAFT_MAX = 1500000; // characters; a larger map is not kept in the browser (a retry still has it in memory)
 const KEEPALIVE_MAX = 60000; // bytes the browser allows in a request that outlives the page
 const FLUSH_WAIT_MS = 3000;
@@ -48,13 +54,34 @@ async function call(method, url, body) {
   return answer.json;
 }
 
-function messageFor(error) {
+const sourceName = src => (src.local ? tr(src.label || LOCAL_SOURCE.label) : src.label);
+// A connected service that did not answer (the proxy says 502). This machine never answers that way.
+const isOffline = error => error instanceof ApiError && (error.status === 502 || OFFLINE_CODES.has(error.code));
+const isUnsupported = error => error instanceof ApiError && (error.status === 501 || error.code === 'MINDMAPS_UNSUPPORTED');
+
+// `src`: the service the request went to, named when it is offline.
+function messageFor(error, src) {
   if (error instanceof XmindError || error instanceof DocError) return tr(error.message);
   if (error instanceof ApiError) {
     if (CODE_MESSAGES[error.code]) return tr(CODE_MESSAGES[error.code]);
+    if (src && !src.local && isOffline(error)) return `${tr('This service is offline:')} ${sourceName(src)}`;
+    if (isUnsupported(error)) return tr('This service is too old for mind maps. Update it first.');
     if (error.code === 'NETWORK') return tr('The service cannot be reached. Try again in a moment.');
   }
   return tr('Something went wrong');
+}
+
+function normalizeSources(list) {
+  if (!Array.isArray(list)) return [LOCAL_SOURCE];
+  const seen = new Set();
+  const out = [];
+  for (const item of list) {
+    if (!item || typeof item.key !== 'string' || typeof item.base !== 'string' || seen.has(item.key)) continue;
+    seen.add(item.key);
+    const local = item.key === LOCAL_KEY;
+    out.push({ key: item.key, label: String(item.label || (local ? LOCAL_SOURCE.label : item.key)), local, base: item.base.replace(/\/+$/, ''), online: local || item.online !== false });
+  }
+  return out;
 }
 
 function el(tag, props = {}, ...children) {
@@ -117,10 +144,17 @@ function download(bytes, name) {
   setTimeout(() => URL.revokeObjectURL(url), 30000);
 }
 
-export function mountApp(root, { onClose, notify = () => {}, onLayers = () => {} }) {
+export function mountApp(root, { onClose, notify = () => {}, onLayers = () => {}, sources: given }) {
   let disposed = false;
   let screen = 'list';
-  let current = null; // { id, title, editor, saver, statusNode, ... } the open map
+  let current = null; // { id, src, title, editor, saver, ... } the open map and the service it is on
+  // The listed services (an empty list: not known yet, the list says "Loading..."), and what each one's list is, by source key:
+  // { status: 'loading' | 'ready' | 'error' | 'offline' | 'unsupported', maps, error, seq, base }. A service whose answer is 501 is left out of the list.
+  let sources = given === undefined ? [LOCAL_SOURCE] : normalizeSources(given);
+  const lists = new Map();
+  let loadSeq = 0;
+  let createOn = LOCAL_KEY; // "Create on": the service a new or imported map goes to
+  let importTarget = null;
   let dialog = null; // the open dialog: { close }
   const say = (text, kind) => notify(text, kind);
 
@@ -193,74 +227,166 @@ export function mountApp(root, { onClose, notify = () => {}, onLayers = () => {}
   }
 
   // ── List ──
-  const rows = el('div', { class: 'mm-rows', role: 'list' });
+  const rows = el('div', { class: 'mm-rows' });
   const fileInput = el('input', { type: 'file', class: 'mm-file', tabindex: '-1', 'aria-hidden': 'true', onChange: onFilePicked });
   if (!matchMedia('(pointer: coarse)').matches) fileInput.setAttribute('accept', '.xmind'); // on a phone a file type the system does not know could not be chosen at all
+  // "Create on" (the same idea and words as the New task form of the task list): only when more than one service can take a new map.
+  const createSelect = el('select', { id: 'mm-create-on', class: 'mm-select', 'aria-label': tr('Create on'), onChange: () => { createOn = createSelect.value; } });
+  const createRow = el('label', { class: 'mm-on', hidden: true }, el('span', { class: 'mm-on-label', text: tr('Create on') }), createSelect);
+  let createSig = '';
   const listView = el('section', { class: 'mm-view mm-list' },
     el('header', { class: 'mm-top' },
       iconButton('close', 'Close', () => closeAll(), { id: 'mm-close' }),
       el('h1', { class: 'mm-heading', text: tr('Mind maps') }),
-      iconButton('Import', 'Import .xmind', () => fileInput.click(), { id: 'mm-import' }),
+      iconButton('Import', 'Import .xmind', () => { importTarget = createTarget(); fileInput.click(); }, { id: 'mm-import' }),
       iconButton('add', 'New map', () => { void createMap(); }, { id: 'mm-new' })),
-    rows, fileInput);
+    createRow, rows, fileInput);
 
-  function setRows(content) { rows.replaceChildren(...content); }
+  const sourceByKey = key => sources.find(src => src.key === key) || null;
+  const listOf = src => lists.get(src.key) || { status: 'loading', maps: [] };
+  // The services a map can be created on: online, and its list answered (so it is known to have maps at all). This machine always.
+  const createTargets = () => sources.filter(src => (src.local ? listOf(src).status !== 'unsupported' : src.online && listOf(src).status === 'ready'));
+  function createTarget() {
+    const targets = createTargets();
+    return targets.find(src => src.key === createOn) || targets.find(src => src.local) || targets[0] || sourceByKey(LOCAL_KEY) || LOCAL_SOURCE;
+  }
+  function updateCreateOn() {
+    const targets = createTargets();
+    const picked = createTarget();
+    const sig = JSON.stringify([targets.map(src => [src.key, sourceName(src)]), picked.key]);
+    if (sig === createSig) return; // rebuilding the options would close a select that is open
+    createSig = sig;
+    createSelect.replaceChildren(...targets.map(src => el('option', { value: src.key, translate: src.local ? false : 'no', text: sourceName(src) })));
+    createSelect.value = picked.key;
+    createRow.hidden = targets.length < 2;
+  }
 
-  async function loadList() {
-    setRows([el('p', { class: 'mm-note', text: tr('Loading...') })]);
+  // Reads one service's list. Each fails on its own: a slow or offline one neither delays nor blanks the others, and a late answer of an older read is ignored.
+  async function loadSource(src) {
+    const seq = (loadSeq += 1);
+    const before = lists.get(src.key);
+    if (!src.online) { lists.set(src.key, { status: 'offline', maps: [], seq, base: src.base }); renderList(); return; }
+    // A list already shown stays while it is read again, so a rename or a return from the editor does not flash "Loading...".
+    lists.set(src.key, before && before.status === 'ready' && before.base === src.base ? { ...before, seq } : { status: 'loading', maps: [], seq, base: src.base });
+    renderList();
+    let next;
     try {
-      const { maps } = await call('GET', API);
-      renderList(Array.isArray(maps) ? maps : []);
+      const { maps } = await call('GET', src.base);
+      next = { status: 'ready', maps: Array.isArray(maps) ? maps : [] };
     } catch (error) {
-      setRows([el('p', { class: 'mm-note', text: messageFor(error) }), el('button', { type: 'button', class: 'mm-btn', text: tr('Try again'), onClick: () => { void loadList(); } })]);
+      next = isUnsupported(error) ? { status: 'unsupported', maps: [] }
+        : !src.local && isOffline(error) ? { status: 'offline', maps: [] }
+          : { status: 'error', maps: [], error };
+    }
+    const now = lists.get(src.key);
+    if (disposed || !now || now.seq !== seq || !sourceByKey(src.key)) return;
+    lists.set(src.key, { ...next, seq, base: src.base });
+    renderList();
+  }
+  function loadList() {
+    renderList();
+    return Promise.all(sources.map(src => loadSource(src)));
+  }
+
+  function mapRow(src, map) {
+    const when = parseTime(map.updated_at);
+    const meta = [when ? when.toLocaleString() : '', sizeText(map.size)].filter(Boolean).join(' · ');
+    const ref = `${src.key}|${map.id}`;
+    return el('div', { class: 'mm-row', role: 'listitem', 'data-source': src.key, 'data-id': map.id, 'data-ref': ref },
+      el('button', { type: 'button', class: 'mm-row-open', 'data-part': 'open', onClick: () => { void openMap(src, map.id); } },
+        el('span', { class: 'mm-row-title', translate: 'no', text: map.title || tr('Untitled map') }),
+        el('span', { class: 'mm-row-meta', translate: 'no', text: meta })),
+      iconButton('draftKeyboard', 'Rename', () => renameMap(src, map), { 'data-part': 'rename' }),
+      iconButton('delete', 'Delete', () => deleteMap(src, map), { 'data-part': 'delete' }));
+  }
+  const note = (text, extra = '') => el('p', { class: `mm-note${extra}`, text });
+  const retry = src => el('button', { type: 'button', class: 'mm-btn mm-retry', text: tr('Try again'), onClick: () => { void loadSource(src); } });
+
+  // One list: this machine first, then each other service in the order of the task list, each under a small header (its name, and "Offline"). This machine
+  // alone has no header and looks as it always did.
+  function renderList() {
+    updateCreateOn();
+    // The focus stays on the same button of the same row when a service's answer redraws the list.
+    const active = document.activeElement;
+    const focusRow = active && rows.contains(active) && active.closest('.mm-row');
+    const focus = focusRow ? [focusRow.dataset.ref, active.dataset.part] : null;
+    const shown = sources.filter(src => listOf(src).status !== 'unsupported');
+    if (!shown.length) { rows.replaceChildren(note(tr(sources.length ? 'No mind maps yet. Create one or import a .xmind file.' : 'Loading...'))); return; }
+    const alone = shown.length === 1 && shown[0].local;
+    rows.replaceChildren(...shown.map(src => {
+      const list = listOf(src);
+      const section = el('section', { class: 'mm-section', 'data-source': src.key });
+      if (!alone) {
+        section.append(el('h2', { class: 'mm-source', 'data-source': src.key },
+          el('span', { class: 'mm-source-name', translate: src.local ? false : 'no', text: sourceName(src) }),
+          list.status === 'offline' ? el('span', { class: 'mm-source-offline', text: tr('Offline') }) : null));
+      }
+      const small = alone ? '' : ' mm-note-small';
+      if (list.status === 'loading') section.append(note(tr('Loading...'), small));
+      else if (list.status === 'error') section.append(note(messageFor(list.error, src), small), retry(src));
+      else if (list.status === 'ready' && !list.maps.length) section.append(note(tr(alone ? 'No mind maps yet. Create one or import a .xmind file.' : 'No mind maps'), small));
+      else if (list.status === 'ready') section.append(el('div', { class: 'mm-section-rows', role: 'list' }, ...list.maps.map(map => mapRow(src, map))));
+      return section; // offline: the header says so, and nothing else is shown
+    }));
+    if (focus) {
+      const row = [...rows.querySelectorAll('.mm-row')].find(node => node.dataset.ref === focus[0]);
+      const button = row && row.querySelector(`[data-part="${focus[1]}"]`);
+      if (button) button.focus();
     }
   }
-  function renderList(maps) {
-    if (!maps.length) { setRows([el('p', { class: 'mm-note', text: tr('No mind maps yet. Create one or import a .xmind file.') })]); return; }
-    setRows(maps.map(map => {
-      const when = parseTime(map.updated_at);
-      const meta = [when ? when.toLocaleString() : '', sizeText(map.size)].filter(Boolean).join(' · ');
-      return el('div', { class: 'mm-row', role: 'listitem', 'data-id': map.id },
-        el('button', { type: 'button', class: 'mm-row-open', onClick: () => { void openMap(map.id); } },
-          el('span', { class: 'mm-row-title', translate: 'no', text: map.title || tr('Untitled map') }),
-          el('span', { class: 'mm-row-meta', translate: 'no', text: meta })),
-        iconButton('draftKeyboard', 'Rename', () => renameMap(map)),
-        iconButton('delete', 'Delete', () => deleteMap(map)));
-    }));
+
+  // The services listed changed (connected, removed, hidden or shown again, offline or back). A new one, or one that came back, is read; the rest keep their lists.
+  function setSources(list) {
+    const next = normalizeSources(list);
+    const before = new Map(sources.map(src => [src.key, src]));
+    sources = next;
+    for (const key of [...lists.keys()]) if (!sourceByKey(key)) lists.delete(key);
+    if (!sourceByKey(createOn)) createOn = LOCAL_KEY;
+    for (const src of next) {
+      const old = before.get(src.key);
+      const back = old && !old.online && src.online;
+      if (!old || old.base !== src.base || old.online !== src.online || !lists.has(src.key)) void loadSource(src);
+      // The open map's service is back: its waiting save goes now.
+      if (back && current && current.src.key === src.key && current.saver) current.saver.wake();
+    }
+    renderList();
   }
 
   async function createMap() {
+    const src = createTarget();
     try {
       const title = tr('Untitled map');
-      const created = await call('POST', API, { title });
-      showEditor(created);
-    } catch (error) { say(messageFor(error), 'error'); }
+      const created = await call('POST', src.base, { title });
+      showEditor(created, src);
+    } catch (error) { say(messageFor(error, src), 'error'); }
   }
-  function renameMap(map) {
+  function renameMap(src, map) {
     promptDialog(tr('Rename map'), map.title || '', tr('Rename'), async value => {
       const title = value.trim();
       if (!title || title === map.title) return;
       try {
-        await call('PUT', `${API}/${encodeURIComponent(map.id)}`, { revision: map.revision, title });
-        await loadList();
+        await call('PUT', `${src.base}/${encodeURIComponent(map.id)}`, { revision: map.revision, title });
+        await loadSource(src);
       } catch (error) {
-        say(error.code === 'MINDMAP_CONFLICT' ? tr('This map was changed elsewhere. The list was reloaded.') : messageFor(error), 'error');
-        void loadList();
+        say(error.code === 'MINDMAP_CONFLICT' ? tr('This map was changed elsewhere. The list was reloaded.') : messageFor(error, src), 'error');
+        void loadSource(src);
       }
     });
   }
-  function deleteMap(map) {
+  function deleteMap(src, map) {
     confirmDialog(tr('Delete map'), `${tr('Delete this map? This cannot be undone.')} ${map.title || ''}`, tr('Delete'), async () => {
       try {
-        await call('DELETE', `${API}/${encodeURIComponent(map.id)}`);
-        clearDraft(map.id);
-        await loadList();
-      } catch (error) { say(messageFor(error), 'error'); void loadList(); }
+        await call('DELETE', `${src.base}/${encodeURIComponent(map.id)}`);
+        clearDraft(src.key, map.id);
+        await loadSource(src);
+      } catch (error) { say(messageFor(error, src), 'error'); void loadSource(src); }
     });
   }
 
   async function onFilePicked() {
     const file = fileInput.files && fileInput.files[0];
+    const src = importTarget || createTarget(); // the service chosen when Import was pressed
+    importTarget = null;
     fileInput.value = '';
     if (!file) return;
     if (file.size > XMIND_LIMITS.file) { say(tr('This .xmind file is too large'), 'error'); return; }
@@ -268,11 +394,11 @@ export function mountApp(root, { onClose, notify = () => {}, onLayers = () => {}
       const bytes = new Uint8Array(await file.arrayBuffer());
       const { doc, lost } = parseXmind(bytes, { parseXml: text => new DOMParser().parseFromString(text, 'text/xml') });
       const title = clipTitle(file.name.replace(/\.xmind$/i, '')) || tr('Imported map');
-      const created = await call('POST', API, { title, data: doc });
+      const created = await call('POST', src.base, { title, data: doc });
       const dropped = describeLost(lost, tr);
       say(dropped.length ? `${tr('Imported.')} ${dropped.join(', ')}` : tr('Imported'), dropped.length ? 'warning' : 'success');
-      await openMap(created.id);
-    } catch (error) { say(messageFor(error), 'error'); }
+      await openMap(src, created.id);
+    } catch (error) { say(messageFor(error, src), 'error'); }
   }
 
   // ── Editor ──
@@ -331,16 +457,24 @@ export function mountApp(root, { onClose, notify = () => {}, onLayers = () => {}
     statusNode.dataset.state = state;
   }
 
-  const readDraft = id => { try { return JSON.parse(localStorage.getItem(DRAFT_KEY(id))); } catch { return null; } };
-  const clearDraft = id => { try { localStorage.removeItem(DRAFT_KEY(id)); } catch { /* blocked storage */ } };
-  function writeDraft(id, revision, title, doc) {
+  // The draft of a map on one service. It is used only when it says it is for that service (a draft of this machine written before sharing says nothing).
+  function readDraft(src, id) {
+    let draft = null;
+    try { draft = JSON.parse(localStorage.getItem(DRAFT_KEY(src.key, id))); } catch { return null; }
+    if (!draft || typeof draft !== 'object') return null;
+    const owner = draft.source === undefined ? LOCAL_KEY : draft.source;
+    return owner === src.key && (draft.id === undefined || draft.id === id) ? draft : null;
+  }
+  const clearDraft = (sourceKey, id) => { try { localStorage.removeItem(DRAFT_KEY(sourceKey, id)); } catch { /* blocked storage */ } };
+  function writeDraft(sourceKey, id, revision, title, doc) {
     try {
-      const text = JSON.stringify({ revision, title, data: doc, at: Date.now() });
-      if (text.length <= DRAFT_MAX) localStorage.setItem(DRAFT_KEY(id), text);
+      const text = JSON.stringify({ source: sourceKey, id, revision, title, data: doc, at: Date.now() });
+      if (text.length <= DRAFT_MAX) localStorage.setItem(DRAFT_KEY(sourceKey, id), text);
     } catch { /* storage full or blocked: the retry still has the edits in memory */ }
   }
 
-  function showEditor(map, { doc: given, restored = false, draftConflict = null } = {}) {
+  // `src`: the service the map is on. Everything the editor sends goes there: saves, the check after a conflict, reload, save as a new copy.
+  function showEditor(map, src, { doc: given, restored = false, draftConflict = null } = {}) {
     let doc = given;
     try {
       if (!doc) doc = map.data ? sanitizeDoc(map.data) : blankDoc(map.title);
@@ -352,7 +486,7 @@ export function mountApp(root, { onClose, notify = () => {}, onLayers = () => {}
     setStatus('saved');
     pushLayers();
     canvas.replaceChildren();
-    const state = { id: map.id, title: map.title || '', editor: null, saver: null, leaving: false };
+    const state = { id: map.id, src: { key: src.key, label: src.label, local: src.local, base: src.base }, title: map.title || '', editor: null, saver: null, leaving: false };
     current = state;
     void startEditor(state, map, doc, { restored, draftConflict });
   }
@@ -373,19 +507,20 @@ export function mountApp(root, { onClose, notify = () => {}, onLayers = () => {}
     } catch { say(tr('The editor could not start'), 'error'); if (state === current) void returnToList(); return; }
     if (state !== current || disposed) { editor.destroy(); return; }
     state.editor = editor;
+    const url = `${state.src.base}/${encodeURIComponent(state.id)}`;
     state.saver = createSaver({
       revision: map.revision,
-      send: (body, options) => raw('PUT', `${API}/${encodeURIComponent(state.id)}`, body, options),
+      send: (body, options) => raw('PUT', url, body, options),
       getSnapshot: () => ({ title: state.title, data: editor.getDoc() }),
       verify: async sent => {
-        const { status, json } = await raw('GET', `${API}/${encodeURIComponent(state.id)}`);
+        const { status, json } = await raw('GET', url);
         return status === 200 && json.title === sent.title && JSON.stringify(json.data) === JSON.stringify(sent.data);
       },
       onState: next => { if (state === current) setStatus(next); },
       onConflict: info => showConflict(state, info),
       onRejected: code => say(messageFor(new ApiError(code, 0, {})), 'error'),
-      writeDraft: () => writeDraft(state.id, state.saver.revision, state.title, editor.getDoc()),
-      clearDraft: () => clearDraft(state.id),
+      writeDraft: () => writeDraft(state.src.key, state.id, state.saver.revision, state.title, editor.getDoc()),
+      clearDraft: () => clearDraft(state.src.key, state.id),
     });
     updateBar();
     if (restored) { state.saver.touch(); say(tr('Unsaved changes from this device were restored'), 'info'); }
@@ -403,14 +538,15 @@ export function mountApp(root, { onClose, notify = () => {}, onLayers = () => {}
     if (current.saver) current.saver.touch();
   }
 
+  // The copy goes to the service of the original.
   async function saveAsCopy(state, doc, title) {
     try {
-      const created = await call('POST', API, { title: clipTitle(`${title || tr('Untitled map')} ${tr('(copy)')}`), data: doc });
-      clearDraft(state.id);
+      const created = await call('POST', state.src.base, { title: clipTitle(`${title || tr('Untitled map')} ${tr('(copy)')}`), data: doc });
+      clearDraft(state.src.key, state.id);
       await returnToList(true);
-      showEditor(created, { doc });
+      showEditor(created, state.src, { doc });
       say(tr('Saved as a new copy'), 'success');
-    } catch (error) { say(messageFor(error), 'error'); }
+    } catch (error) { say(messageFor(error, state.src), 'error'); }
   }
 
   function showConflict(state, { gone }) {
@@ -426,18 +562,18 @@ export function mountApp(root, { onClose, notify = () => {}, onLayers = () => {}
   function showDraftConflict(state, draft) {
     const message = tr('Unsaved changes from this device were found, but the map has changed since then.');
     openDialog(tr('Unsaved changes'), el('p', { class: 'mm-dialog-text', text: message }), [
-      { label: tr('Discard my changes'), run: () => clearDraft(state.id) },
+      { label: tr('Discard my changes'), run: () => clearDraft(state.src.key, state.id) },
       { label: tr('Save mine as a new copy'), primary: true, run: () => { void saveAsCopy(state, draft.data, draft.title); } },
     ]);
   }
 
   async function reloadMap(state) {
     try {
-      const map = await call('GET', `${API}/${encodeURIComponent(state.id)}`);
-      clearDraft(state.id);
+      const map = await call('GET', `${state.src.base}/${encodeURIComponent(state.id)}`);
+      clearDraft(state.src.key, state.id);
       await returnToList(true);
-      showEditor(map);
-    } catch (error) { say(messageFor(error), 'error'); }
+      showEditor(map, state.src);
+    } catch (error) { say(messageFor(error, state.src), 'error'); }
   }
 
   function exportMap() {
@@ -513,16 +649,17 @@ export function mountApp(root, { onClose, notify = () => {}, onLayers = () => {}
     await returnToList();
   }
 
-  async function openMap(id) {
+  // Opens a map on its own service, with this device's draft of that map on that service if there is one.
+  async function openMap(src, id) {
     try {
-      const map = await call('GET', `${API}/${encodeURIComponent(id)}`);
-      const draft = readDraft(id);
-      if (!draft) { showEditor(map); return; }
+      const map = await call('GET', `${src.base}/${encodeURIComponent(id)}`);
+      const draft = readDraft(src, id);
+      if (!draft) { showEditor(map, src); return; }
       let doc = null;
-      try { doc = sanitizeDoc(draft.data); } catch { clearDraft(id); showEditor(map); return; } // a draft that cannot be read must not lock the map
-      if (draft.revision === map.revision) { showEditor({ ...map, title: draft.title || map.title }, { doc, restored: true }); return; }
-      showEditor(map, { draftConflict: { ...draft, data: doc } });
-    } catch (error) { say(messageFor(error), 'error'); void loadList(); }
+      try { doc = sanitizeDoc(draft.data); } catch { clearDraft(src.key, id); showEditor(map, src); return; } // a draft that cannot be read must not lock the map
+      if (draft.revision === map.revision) { showEditor({ ...map, title: draft.title || map.title }, src, { doc, restored: true }); return; }
+      showEditor(map, src, { draftConflict: { ...draft, data: doc } });
+    } catch (error) { say(messageFor(error, src), 'error'); if (screen === 'list') void loadSource(src); }
   }
 
   // ── Page events ──
@@ -548,6 +685,7 @@ export function mountApp(root, { onClose, notify = () => {}, onLayers = () => {}
   return {
     get busy() { return Boolean(current && current.saver && current.saver.dirty); },
     flush: () => (current && current.saver ? current.saver.flush() : Promise.resolve()),
+    setSources: list => { if (!disposed) setSources(list); },
     destroy() {
       disposed = true;
       document.removeEventListener('visibilitychange', onVisibility);

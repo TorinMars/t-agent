@@ -1,8 +1,10 @@
 // Mind maps, used by the page (public/js/h5.js). This file is small and loaded with every page; the editor (mind-elixir and the view, source in scripts/mindmap/) is the
 // bundle mindmap-ui.js, fetched when the view is first opened.
 //
-//   const view = MindMap.mount(element, { onClose, notify, onLayers });  returns { destroy(), flush() }
+//   const view = MindMap.mount(element, { onClose, notify, onLayers, sources });  returns { destroy(), flush(), setSources(list) }
 // `onLayers(closers)`: the back gesture's layers, innermost last (scripts/h5-shell/back.mjs).
+// `sources`: the services whose maps are listed, in the order of the task list: [{ key, label, base, online }] (`base`: `/api/mindmaps` or
+// `/api/remote-servers/:id/mindmaps`). An empty list: not known yet. `setSources` gives the view a new list when the services change.
 const MindMap = (() => {
   // The bundle sits next to this script (same ?v= release query, so it is cached like the other scripts).
   const BUNDLE_URL = (() => {
@@ -29,6 +31,7 @@ const MindMap = (() => {
   function mount(container, options) {
     let view = null;
     let disposed = false;
+    let sources = options.sources; // the latest list, also when it changes before the bundle has loaded
     const opener = document.activeElement;
     // The element itself has only its position here: the styles of the view arrive with the bundle.
     container.style.cssText = 'position:fixed;left:0;right:0;z-index:1250;background:#121212;color:#fff;';
@@ -39,7 +42,7 @@ const MindMap = (() => {
     loadBundle().then(ui => {
       if (disposed) return;
       container.textContent = '';
-      view = ui.mount(container, options);
+      view = ui.mount(container, { ...options, sources });
     }).catch(error => {
       if (disposed) return;
       if (options.notify) options.notify(tr(error.message), 'error');
@@ -47,6 +50,7 @@ const MindMap = (() => {
     });
     return {
       flush() { return view ? view.flush() : Promise.resolve(); },
+      setSources(list) { sources = list; if (view && view.setSources) view.setSources(list); },
       destroy() {
         disposed = true;
         if (view) view.destroy();

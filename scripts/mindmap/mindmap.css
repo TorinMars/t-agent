@@ -22,6 +22,20 @@
 .mm-row-title { max-width: 100%; font-size: 15px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .mm-row-meta { font-size: 12px; color: rgba(255, 255, 255, .6); }
 .mm-file { display: none; }
+/* One list of several services: a small header per service (as in the task list), and "Create on" under the top bar when more than one can take a map. */
+.mm-source { display: flex; align-items: baseline; gap: 8px; margin: 0; padding: 12px 8px 4px; font-size: 12px; line-height: 1.3; font-weight: 600; color: rgba(255, 255, 255, .7); border-top: 1px solid rgba(255, 255, 255, .12); }
+.mm-section:first-child .mm-source { padding-top: 4px; border-top: 0; }
+.mm-section:not(:last-child) .mm-section-rows > .mm-row:last-child { border-bottom: 0; } /* the next header's line is the divider */
+.mm-source-name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mm-source-offline { flex: none; color: #ffa726; }
+.mm-note-small { margin: 8px 12px 12px; text-align: left; font-size: 13px; }
+.mm-retry { margin: 0 12px 12px; }
+.mm-section > .mm-retry:only-child { margin-top: 12px; }
+.mm-list > .mm-on { flex: none; display: flex; align-items: center; gap: 12px; padding: 6px 16px; font-size: 14px; color: rgba(255, 255, 255, .7); border-bottom: 1px solid rgba(255, 255, 255, .08); }
+.mm-list > .mm-on[hidden] { display: none; }
+.mm-on-label { white-space: nowrap; }
+.mm-select { flex: 1; min-width: 0; min-height: 36px; padding: 0 8px; color: #fff; font-size: 16px; background: #1e1e1e; border: 1px solid rgba(255, 255, 255, .24); border-radius: 8px; }
+.mm-select:focus-visible { outline: 2px solid #90caf9; outline-offset: -1px; }
 
 .mm-canvas { flex: 1; min-height: 0; position: relative; overflow: hidden; touch-action: none; overscroll-behavior: none; background: #121212; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
 .mm-canvas .map-container { width: 100%; height: 100%; outline: none; touch-action: none; background: #121212; }

@@ -465,7 +465,8 @@ ACCESS_MODE=
 # Root directory in which task files are created automatically
 TASKS_BASE_DIR=/path/to/tasks
 
-# Name and data ownership shown when this Client is connected to by other Clients as an Engine
+# Default name and data ownership shown when this Client is connected to by other Clients as an Engine.
+# The name can be changed later on the page (or from another machine); a saved name wins over ENGINE_NAME.
 ENGINE_NAME=my-engine
 ENGINE_OWNER_ID=local
 ```

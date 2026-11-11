@@ -27,6 +27,8 @@ I18n.add({
   "LINK_REVOKED": "对方已解除关联，可以移除这个连接",
   "LINK_OFFLINE": "服务关联的通道未连接",
   "PAIRING_RATE_LIMITED": "尝试过于频繁，请一分钟后再试",
+  "INVALID_ENGINE_NAME": "名称无效：最多 60 个字符，不能包含换行或控制字符",
+  "ENGINE_ADMIN_REQUIRED": "只有管理员可以修改这台机器的名称",
   "REMOTE_ALREADY_EXISTS": "这个地址已经添加为远程 Engine；请先移除它，再进行关联",
   "ARCHIVE_UNSUPPORTED": "这个 Engine 的版本过旧，不支持归档，请先升级",
   ", error code {1}": "，错误码 {1}",

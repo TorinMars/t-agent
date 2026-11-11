@@ -189,7 +189,7 @@ test('the activity stream reads the visible tasks for every message of each conn
 // anywhere else it needs the one filter (`visibleTo`) or a reason to stay as it is.
 const REVIEWED_ROUTES = new Set([
   // No task in the answer.
-  'GET /health', 'POST /pair', 'GET /info', 'GET /capabilities', 'GET /update/status', 'POST /update/check', 'POST /update/apply',
+  'GET /health', 'POST /pair', 'GET /info', 'GET /capabilities', 'PUT /engine-name', 'GET /update/status', 'POST /update/check', 'POST /update/apply',
   'GET /pm2/status', 'GET /pm2/:id/logs', 'POST /pm2/:id/:action',
   'POST /service-links/join', 'POST /service-links/:id/unlink', 'POST /service-link-notice/:id/unlink',
   'POST /tasks/validate-path', 'POST /tasks', 'POST /task-groups', 'DELETE /task-groups/:id',

@@ -10,8 +10,9 @@ Authorization: Bearer tae_xxx
 
 - `GET /v1/health`: `{ ok: true, capabilities: ['service-links'] }`, without a token. A service that links reads it first; an older one answers only `{ ok: true }`.
 - `POST /v1/pair`
-- `GET /v1/info`
-- `GET /v1/capabilities`
+- `GET /v1/info`: the identity (`engine_id`, `name`), versions, role and capabilities.
+- `GET /v1/capabilities`: the same answer.
+- `PUT /v1/engine-name`: `engine:admin`. Body `{ name }`: trimmed, 1 to 60 characters, no control characters or line breaks; `''` or `null` resets to the default (`ENGINE_NAME` or the host name). Answer `{ name, default_name, custom }`. Error 400 `INVALID_ENGINE_NAME`. Capability `engine-name`. A Client that reads `/v1/info` of an Engine with this capability shows the `name` it reports.
 
 ## Service links
 

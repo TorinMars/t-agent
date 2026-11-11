@@ -6,6 +6,8 @@ const { hashSecret, createAccessToken } = require('./engine-auth');
 const { decryptToken, encryptToken } = require('../lib/token-crypto');
 const { normalizeBaseUrl, request: remoteRequest } = require('./remote-client');
 const tunnelModule = require('../lib/service-link-tunnel');
+const { syncRemoteInfo } = require('./engine-name');
+const { readRemoteInfo } = require('./remote-info');
 
 const STATE_KEY = 'service_links_v1';
 const CAPABILITY = 'service-links';
@@ -226,12 +228,25 @@ function createServiceLinks({ db, sessionSecret, identity, tunnel = tunnelModule
     const row = serverOf(link);
     if (!row) return;
     try {
-      const info = await request(row.base_url, '/v1/info', tokenOf(row));
+      const info = await readRemoteInfo({ baseUrl: row.base_url, token: tokenOf(row), serverId: row.id }, { request, sync: syncEngineInfo });
       db.prepare(`UPDATE remote_servers SET remote_version = COALESCE(?, remote_version), last_checked_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
         .run(info && (info.engine_version || info.app_version) || null, row.id);
     } catch (error) {
       if (error.statusCode === 401) markRevoked(link.id);
     }
+  }
+
+  // The name of a link follows the name its peer reports (services/engine-name.js); the page reads it in GET /api/service-links.
+  function renameForServer(serverId, name) {
+    const link = links().find(entry => entry.remote_server_id === Number(serverId));
+    if (!link || link.name === name) return;
+    updateLink(link.id, { name });
+    notifyChange(link.id);
+  }
+
+  // After any successful read of a remote Engine's /v1/info (services/remote-info.js), for plain remote rows as well as linked ones.
+  function syncEngineInfo(serverId, info) {
+    return syncRemoteInfo(db, serverId, info, renameForServer);
   }
 
   function stopTransport(link) {
@@ -329,7 +344,7 @@ function createServiceLinks({ db, sessionSecret, identity, tunnel = tunnelModule
   }
 
   return {
-    createCode, acceptJoin, join, unlink, peerUnlink, authenticateTunnel, start, stop, markRevoked,
+    createCode, acceptJoin, join, unlink, peerUnlink, authenticateTunnel, start, stop, markRevoked, syncEngineInfo,
     list: ownerId => links().filter(link => link.owner_id === ownerId).map(publicLink),
     // Every link, revoked ones too: for services/task-visibility.js, which keeps an entry until the link is removed.
     ids: () => links().map(link => link.id),

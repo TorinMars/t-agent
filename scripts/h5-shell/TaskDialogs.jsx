@@ -91,7 +91,7 @@ export function TaskDialog({ state, ui }) {
               control={<Checkbox checked={device.allowed} disabled={dialog.busy} onChange={event => ui.actions.taskVisibilitySet(device.link_id, event.target.checked)} />}
               label={(
                 <Box component="span" sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', columnGap: 1 }}>
-                  <Box component="span" className="h5-visibility-name" translate="no" sx={{ minWidth: 0, overflowWrap: 'anywhere' }}>{device.name}</Box>
+                  <Box component="span" className="h5-visibility-name" translate="no" title={device.name} sx={{ minWidth: 0, overflowWrap: 'anywhere' }}>{device.name}</Box>
                   {device.online ? null : <Typography className="h5-visibility-offline" component="span" variant="caption" color="text.secondary">{t('Offline')}</Typography>}
                 </Box>
               )}

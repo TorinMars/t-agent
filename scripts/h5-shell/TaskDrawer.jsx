@@ -19,7 +19,7 @@ import SettingsIcon from '@mui/icons-material/Settings';
 import MoreHorizIcon from '@mui/icons-material/MoreHoriz';
 import UnfoldLessIcon from '@mui/icons-material/UnfoldLess';
 import UnfoldMoreIcon from '@mui/icons-material/UnfoldMore';
-import { DomIcon, Pill, api, t, terminalMark } from './common.jsx';
+import { DeviceName, DomIcon, Pill, api, deviceText, t, terminalMark } from './common.jsx';
 import { TOUCH } from './theme.mjs';
 import { Icon } from './Icons.jsx';
 import { ArchivedTasks } from './ArchivedTasks.jsx';
@@ -156,11 +156,11 @@ function Sessions({ ui, taskId, sessions, menu }) {
   );
 }
 
-// The small header row of a service in the list: its name, and "Offline" when it is. An offline service shows just this, no error text.
+// The small header row of a service in the list: its name (this machine's with a "This machine" hint), and "Offline" when it is. An offline service shows just this, no error text.
 function SourceHeader({ section, first }) {
   return (
     <Box component="h3" className="h5-source-header" data-source={section.key} sx={{ display: 'flex', alignItems: 'baseline', gap: 1, m: 0, px: 0.75, pt: first ? 0.5 : 1, pb: 0.25, fontSize: 12, lineHeight: 1.3, fontWeight: 600, color: 'text.secondary', borderTop: first ? 0 : 1, borderColor: 'divider' }}>
-      <Box component="span" className="h5-source-name" translate="no" sx={{ flex: '0 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{section.local ? t(section.label) : section.label}</Box>
+      <DeviceName source={section} className="h5-source-name" hintClassName="h5-source-hint" />
       {section.offline ? <Box component="span" className="h5-source-offline" sx={{ flex: '0 0 auto', color: 'warning.main' }}>{t('Offline')}</Box> : null}
     </Box>
   );
@@ -291,7 +291,7 @@ function Panel({ state, ui }) {
             <Box id="h5-new-task-on-row" component="label" sx={{ display: 'flex', alignItems: 'center', gap: 1.5, color: 'text.secondary', fontSize: 14 }}>
               <span style={{ whiteSpace: 'nowrap' }}>{t('Create on')}</span>
               <NativeSelect fullWidth value={onKey} inputProps={{ id: 'h5-new-task-on', 'aria-label': t('Create on') }} onChange={event => setOn(event.target.value)}>
-                {targets.map(source => <option key={source.key} value={source.key}>{source.key === 'local' ? t(source.label) : source.label}</option>)}
+                {targets.map(source => <option key={source.key} value={source.key}>{deviceText(source)}</option>)}
               </NativeSelect>
             </Box>
           ) : null}

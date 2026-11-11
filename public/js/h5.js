@@ -88,7 +88,8 @@
   // A source is one service whose tasks are in the list: this machine, or a connected service (a remote Engine or a linked service). Each keeps its own list:
   // `tasks`, `groups`, `status` ('new' until its first answer, 'ready', or 'offline' when its last read failed) and `failure` (what that read said).
   const withList = from => Object.assign(from, { tasks: [], groups: DEFAULT_GROUPS, status: 'new', failure: '', loadSeq: 0, checkedAt: 0 });
-  const LOCAL = withList({ key: 'local', label: 'This machine', tasksBase: '/api/tasks', groupsBase: '/api/task-groups', wsPath: '/terminal/ws', activityBase: '/api/tasks' });
+  // `label` stays the "This machine" text the shell translates; `name` is this machine's engine name ('' until known, and on an older server; `readLocalName`).
+  const LOCAL = withList({ key: 'local', label: 'This machine', name: '', tasksBase: '/api/tasks', groupsBase: '/api/task-groups', wsPath: '/terminal/ws', activityBase: '/api/tasks' });
   const remoteSource = (id, name) => withList({
     key: `remote:${id}`, label: name,
     tasksBase: `/api/remote-servers/${id}/tasks`,
@@ -290,17 +291,20 @@
   // each task with the sessions listed under it when it is open. `groups` is this machine's own, for T-Attention's way back.
   function publishSources() {
     ui.set({
-      sources: sources.filter(item => item === LOCAL || item.label).map(item => ({ key: item.key, label: item.label, offline: item.status === 'offline', hidden: hiddenDevices.has(item.key) })),
+      sources: sources.filter(item => item === LOCAL || item.label).map(item => ({ key: item.key, label: item.label, name: item.name || '', offline: item.status === 'offline', hidden: hiddenDevices.has(item.key) })),
       sourceKey: source.key,
       sourceLabel: task && source !== LOCAL ? source.label : '', // the header says which service the shown task is on when it is not this machine
     });
   }
 
   // Reads the connected services. One that is still there keeps its object: requests in flight, sockets and warm terminals compare it.
+  // This machine's own engine name comes with them (`engine_name` of /api/system/version; an older server has none, and the page says just "This machine").
   async function loadSources() {
     let servers;
+    const version = api('GET', '/api/system/version').then(answer => answer, () => null);
     try { servers = await api('GET', '/api/remote-servers'); }
-    catch { sources = sources.filter(item => item === LOCAL || item.label); publishSources(); return; } // this time only: what was known stays
+    catch { sources = sources.filter(item => item === LOCAL || item.label); await readLocalName(version); publishSources(); return; } // this time only: what was known stays
+    await readLocalName(version);
     const before = new Map(sources.map(item => [item.key, item]));
     sources = [LOCAL, ...(Array.isArray(servers) ? servers : []).filter(server => server.enabled !== false).map(server => {
       const kept = before.get(`remote:${server.id}`);
@@ -310,6 +314,11 @@
     })];
     for (const from of before.values()) if (!sources.includes(from)) forgetSource(from);
     publishSources();
+  }
+  // A failed read keeps the name that was known.
+  async function readLocalName(pending) {
+    const answer = await pending;
+    if (answer && typeof answer === 'object') LOCAL.name = typeof answer.engine_name === 'string' ? answer.engine_name.trim() : '';
   }
   // A service that is no longer connected: nothing of it is kept and, when its task was shown, nothing is shown.
   function forgetSource(from) {
@@ -441,7 +450,7 @@
     }
     const header = !(listed.length === 1 && listed[0] === LOCAL);
     const sections = listed.map(from => ({
-      key: from.key, label: from.label, local: from === LOCAL, header, offline: from.status === 'offline',
+      key: from.key, label: from.label, name: from.name || '', local: from === LOCAL, header, offline: from.status === 'offline',
       groups: from.status === 'ready' ? sectionGroups(from) : [],
     }));
     const own = sections.find(section => section.local);

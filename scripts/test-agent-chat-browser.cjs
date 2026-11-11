@@ -449,12 +449,17 @@ const server = http.createServer(app);
     assert.deepEqual(await page.locator('.ac-picker-name').allTextContents(), ['Default', 'Sonnet 5.5', 'Opus 5.5']);
     assert.equal(await page.locator('.ac-picker-item[aria-checked="true"] .ac-picker-name').textContent(), 'Default');
     assert.deepEqual(await page.locator('.ac-picker-effort').allTextContents(), ['Default', 'Low', 'High', 'Max']);
+    // The footer label follows the server's `meta` event and the ticks in the list follow the PATCH answer; either can arrive first, so wait for both.
+    const pickerShows = (title, model, effort) => page.waitForFunction(([title, model, effort]) => {
+      const text = selector => { const node = document.querySelector(selector); return node && node.textContent; };
+      return document.querySelector('.ac-picker-button').title === title && text('.ac-picker-item[aria-checked="true"] .ac-picker-name') === model
+        && text('.ac-picker-effort[aria-checked="true"]') === effort;
+    }, [title, model, effort]);
     await page.locator('.ac-picker-item', { hasText: 'Opus 5.5' }).click();
-    await page.waitForFunction(() => document.querySelector('.ac-picker-button').title === 'Opus');
+    await pickerShows('Opus', 'Opus 5.5', 'Default');
     assert.deepEqual(await page.locator('.ac-picker-effort').allTextContents(), ['Default', 'High', 'Max'], 'only the efforts of the chosen model');
     await page.locator('.ac-picker-effort', { hasText: 'Max' }).click();
-    await page.waitForFunction(() => document.querySelector('.ac-picker-button').title === 'Opus Max');
-    assert.equal(await page.locator('.ac-picker-effort[aria-checked="true"]').textContent(), 'Max');
+    await pickerShows('Opus Max', 'Opus 5.5', 'Max');
     let row = await page.evaluate(async () => (await api.get(`${base}/conversations`))[0]);
     assert.deepEqual([row.model, row.effort], ['opus', 'max'], 'the choice is saved on the server');
     await page.locator('.ac-picker-item', { hasText: 'Sonnet 5.5' }).click();

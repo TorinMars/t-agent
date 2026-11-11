@@ -639,6 +639,27 @@ test('the store keeps the suggested next message: from the snapshot, from events
   assert.ok(calls.some(call => call[0] === 'post' && /messages$/.test(call[1])));
 });
 
+test('a suggestion for the new turn that arrives before the answer to the send is kept', async () => {
+  const { createChatStore } = await load();
+  const { options, sources } = harness({ snapshot: { items: [], pending: [], status: 'idle', seq: 3, suggestion: 'run the tests' } });
+  // A short turn: the event stream brings the whole turn, and the suggestion after it, before the page reads the answer to its POST.
+  const post = options.api.post;
+  options.api.post = async (url, body) => {
+    sources[0].emit({ seq: 4, op: 'meta', suggestion: null });
+    sources[0].emit({ seq: 5, op: 'status', status: 'running' });
+    sources[0].emit({ seq: 6, op: 'status', status: 'idle', ok: true });
+    sources[0].emit({ seq: 7, op: 'meta', suggestion: 'then deploy' });
+    return post(url, body);
+  };
+  const store = createChatStore(options);
+  await store.load();
+  assert.equal(await store.send({ text: 'run the tests' }), true);
+  assert.equal(store.getState().suggestion, 'then deploy', 'the suggestion of the turn the message started is not dropped');
+  options.api.post = post;
+  assert.equal(await store.send({ text: 'and then?' }), true);
+  assert.equal(store.getState().suggestion, '', 'a send with no new suggestion still drops the old one');
+});
+
 test('with a server that sends the queue, the page only asks for changes and follows the queue event; it never sends the next message itself', async () => {
   const { createChatStore } = await load();
   const { options, sources, calls, notices } = harness({ snapshot: { items: [], pending: [], status: 'running', seq: 1, capabilities: { steer: true, serverQueue: true }, queue: [{ id: 4, body: { text: 'first' }, label: 'first' }, { id: 5, body: { text: 'second' }, label: 'second' }] } });

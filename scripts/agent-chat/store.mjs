@@ -38,6 +38,7 @@ export function createChatStore({ api, base, conversation, agent = '', notify = 
   let forceTarget = null; // a queued message to send as soon as the turn the person stopped for it has ended
   let stopping = false; // the person pressed Stop and the turn has not ended yet: its end sends the next queued message
   let seq = 0;
+  let suggested = 0; // counts the suggestions the server gave: one that came while a message was being sent belongs to the turn that message started
   let source = null;
   let retry = null;
   let disposed = false;
@@ -91,6 +92,7 @@ export function createChatStore({ api, base, conversation, agent = '', notify = 
       case 'permission_done': publish({ pending: state.pending.filter(request => request.id !== event.id) }); break;
       case 'queue': publish({ queue: queueOf(event.queue) }); break;
       case 'meta':
+        if (event.suggestion !== undefined) suggested += 1;
         publish({
           ...(event.title ? { title: event.title } : {}), ...(event.mode ? { mode: event.mode } : {}),
           ...(event.model !== undefined ? { model: event.model } : {}), ...(event.effort !== undefined ? { effort: event.effort } : {}),
@@ -120,6 +122,7 @@ export function createChatStore({ api, base, conversation, agent = '', notify = 
       if (disposed) return;
       items = new Map(snapshot.items.map(item => [item.id, item]));
       seq = snapshot.seq;
+      suggested += 1;
       publish({
         items: [...items.values()], pending: snapshot.pending || [], status: snapshot.status, loaded: true,
         canSteer: Boolean(snapshot.capabilities && snapshot.capabilities.steer),
@@ -158,9 +161,12 @@ export function createChatStore({ api, base, conversation, agent = '', notify = 
 
   // Resolves to true when the server took the message.
   async function send(body) {
+    const before = suggested;
     try {
       await api.post(url('/messages'), body);
-      if (state.suggestion) publish({ suggestion: '' }); // what was suggested is out of date once the person has said something
+      // What was suggested is out of date once the person has said something. The answer can arrive after the event stream has already brought the
+      // suggestion for the turn this message started (a short turn, a slow answer): that one is new and stays.
+      if (state.suggestion && suggested === before) publish({ suggestion: '' });
       return true;
     } catch (error) {
       notify(error.message === 'CONVERSATION_BUSY' ? 'The agent is still working' : `Could not send: ${error.message}`);

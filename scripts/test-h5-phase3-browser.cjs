@@ -102,12 +102,11 @@ async function engineChoice(browser) {
   assert.doesNotMatch(await listText(page), /Could not load/);
   await context.close();
 
-  // An Engine whose task list fails: only its header says Offline; this machine still works.
+  // An Engine whose task list fails: there are no device headers any more, so it simply adds no rows (its state is in Settings); this machine still works.
   server = freshServer();
   server.remoteTasksFail = true;
   ({ context, page } = await openPage(browser, { source: 'remote:7' }));
   await waitForList(page, /Fix login/, 'this machine next to a failing Engine');
-  await waitForList(page, /Offline/, 'failing Engine');
   assert.doesNotMatch(await listText(page), /Task on VPS|Could not load/);
   await context.close();
 }

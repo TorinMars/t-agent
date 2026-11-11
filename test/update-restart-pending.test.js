@@ -69,6 +69,7 @@ test('Git install: same version but the on-disk code is newer than the running p
   assert.match(state.message, /restart the service for it to take effect/);
   assert.ok(state.message.includes(current.app_version));
   assert.notEqual(state.message, 'Already up to date');
+  assert.equal(state.restart_target, null, 'HEAD could not be read here: still restart_pending, but nothing to restart for automatically');
 });
 
 test('When only hot-updatable files such as the frontend changed no restart is needed → still current', async () => {
@@ -107,10 +108,12 @@ test('Package install: version at start differs from disk → restart_pending; s
   assert.equal(pending.status, 'restart_pending');
   assert.equal(pending.running_version, '1.0.0');
   assert.match(pending.message, /1\.0\.0/);
+  assert.equal(pending.restart_target, current.app_version, 'the automatic restart counts its attempts per version on disk');
 
   const same = await load({ gitInstall: false }).check({ force: true });
   assert.equal(same.status, 'current');
   assert.equal(same.running_version, current.app_version);
+  assert.equal(same.restart_target, null);
 });
 
 test('After the service restarts, the previously saved “restart needed” state is cleared and decided again at the next check', () => {

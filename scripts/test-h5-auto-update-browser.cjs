@@ -1,5 +1,5 @@
 // The automatic update on the page (scripts/h5-shell/Update.jsx) in real Chromium, with the two endpoints mocked: the switch and its status lines in the Update
-// dialog, and the silent reload after the service restarted into an automatic update. The minute poll and the 3 second poll run faster here (the timers are
+// dialog, and the silent reload after the service restarted into an automatic update or restarted itself for code already on disk. The minute poll and the 3 second poll run faster here (the timers are
 // shortened in the page); everything else is the real page.
 const { chromium } = require('playwright');
 const fs = require('node:fs');
@@ -11,7 +11,7 @@ const TYPES = { '.js': 'application/javascript', '.css': 'text/css', '.html': 't
 const pageErrors = [];
 const TASKS = [{ id: 1, title: 'Alpha', status: 'doing' }, { id: 2, title: 'Beta', status: 'doing' }];
 
-const autoUpdate = (over = {}) => ({ enabled: true, supported: true, unsupported_reason: null, state: 'idle', waiting_for: [], quiet_until: null, last_error: null, last_auto_version: null, last_auto_at: null, ...over });
+const autoUpdate = (over = {}) => ({ enabled: true, supported: true, unsupported_reason: null, state: 'idle', action: null, waiting_for: [], quiet_until: null, last_error: null, last_auto_version: null, last_auto_at: null, last_auto_action: null, last_auto_boot: null, ...over });
 const statusOf = (over = {}) => ({ status: 'current', local_version: '1.0.0', remote_version: '1.0.0', boot_id: 'boot-a', install_type: 'git', is_update_admin: true, log: [], auto_update: autoUpdate(), ...over });
 const waitFor = async (check, what, ms = 4000) => {
   const end = Date.now() + ms;
@@ -95,6 +95,8 @@ const toAutoUpdated = server => {
   server.status = statusOf({ boot_id: 'boot-b', local_version: '2.0.0', auto_update: autoUpdate({ last_auto_version: '2.0.0', last_auto_at: '2026-11-10T03:04:00.000Z' }) });
 };
 const stayed = async (server, count, what, ms = 900) => { await sleep(ms); assert.equal(server.navigations, count, what); };
+// The process `from` restarted itself to load newer code on disk; the version stays the same.
+const autoRestarted = (boot, from) => statusOf({ boot_id: boot, auto_update: autoUpdate({ last_auto_version: '1.0.0', last_auto_at: '2026-11-10T03:04:00.000Z', last_auto_action: 'restart', last_auto_boot: from }) });
 
 const SCENARIOS = {
   async 'the switch posts and shows the answer of the server'(browser) {
@@ -168,6 +170,54 @@ const SCENARIOS = {
     await page.waitForFunction(() => !document.getElementById('h5-update-auto-state'));
     server.status = statusOf({ auto_update: autoUpdate({ last_auto_version: '1.0.0', last_auto_at: '2026-11-10T03:04:00.000Z' }) });
     await page.waitForFunction(() => /^Last automatic update: 1\.0\.0, ./.test((document.getElementById('h5-update-auto-last') || {}).textContent || ''));
+    await context.close();
+  },
+  async 'each status line of a restart for code already on disk'(browser) {
+    const quiet = new Date(Date.UTC(2026, 10, 10, 13, 5));
+    const pending = over => statusOf({ status: 'restart_pending', auto_update: autoUpdate({ action: 'restart', ...over }) });
+    const { context, page, server } = await openPage(browser, { status: pending({ state: 'waiting' }) });
+    await openDialog(page);
+    await page.locator('#h5-update-auto').waitFor();
+    const lines = [
+      [{ state: 'waiting', waiting_for: [{ code: 'terminal_running', count: 2 }] }, 'Waiting to restart: 2 terminals running'],
+      [{ state: 'waiting', waiting_for: [{ code: 'terminal_running', count: 1 }] }, 'Waiting to restart: 1 terminal running'],
+      [{ state: 'waiting', waiting_for: [{ code: 'terminal_program', count: 1 }] }, 'Waiting to restart: an open program such as vim or ssh'],
+      [{ state: 'waiting', waiting_for: [{ code: 'chat_running', count: 1 }] }, 'Waiting to restart: an agent chat is running'],
+      [{ state: 'waiting', waiting_for: [{ code: 'recent_input', count: 1 }] }, 'Waiting to restart: recent typing'],
+      [{ state: 'applying' }, 'Restarting the service…'],
+      [{ state: 'gave_up', last_error: 'NPM_INSTALLING_FAILED' }, 'Automatic restart stopped for this code: Dependency install failed. Check the Node/npm environment'],
+      [{ state: 'gave_up', last_error: 'RESTART_DID_NOT_HELP' }, 'Automatic restart stopped: the service still ran the old code after restarting. Restart it by hand.'],
+    ];
+    for (const [over, wanted] of lines) {
+      server.status = pending(over);
+      await page.waitForFunction(value => (document.getElementById('h5-update-auto-state') || {}).textContent === value, wanted);
+    }
+    server.status = pending({ state: 'waiting', quiet_until: quiet.toISOString() });
+    const clock = await page.evaluate(iso => { const d = new Date(iso); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; }, quiet.toISOString());
+    await page.waitForFunction(value => (document.getElementById('h5-update-auto-state') || {}).textContent === value, `Will restart at about ${clock}`);
+    server.status = statusOf({ auto_update: autoUpdate({ last_auto_version: '1.0.0', last_auto_at: '2026-11-10T03:04:00.000Z', last_auto_action: 'restart', last_auto_boot: 'boot-0' }) });
+    await page.waitForFunction(() => /^Last automatic restart: 1\.0\.0, ./.test((document.getElementById('h5-update-auto-last') || {}).textContent || ''));
+    await context.close();
+  },
+  async 'an automatic restart with the same version reloads the page once, silently'(browser) {
+    const { context, page, server } = await openPage(browser);
+    await page.waitForFunction(() => document.getElementById('h5-task-name').textContent === 'Beta');
+    server.status = autoRestarted('boot-b', 'boot-a');
+    await waitFor(() => server.navigations === 2, 'the silent reload after the automatic restart');
+    await page.waitForFunction(() => document.getElementById('h5-task-name') && document.getElementById('h5-task-name').textContent === 'Beta');
+    assert.equal(await page.locator('.MuiModal-root:not(.MuiModal-hidden)').count(), 0, 'no dialog or banner');
+    await stayed(server, 2, 'once only');
+    // The reloaded page started on boot-b. A manual pm2 restart now keeps the record of the automatic restart of boot-a: no reload.
+    server.status = autoRestarted('boot-c', 'boot-a');
+    await stayed(server, 2, 'a manual restart after the automatic one');
+    await context.close();
+  },
+  async 'no reload after a manual restart, and a later automatic one still reloads'(browser) {
+    const { context, server } = await openPage(browser, { status: autoRestarted('boot-a', 'boot-0') }); // the page loaded after an earlier automatic restart
+    server.status = autoRestarted('boot-b', 'boot-0'); // pm2 restart or the Restart button: the record names an older process
+    await stayed(server, 1, 'a manual restart');
+    server.status = autoRestarted('boot-c', 'boot-b'); // boot-b, the process this page last saw, restarted itself
+    await waitFor(() => server.navigations === 2, 'the reload after the automatic restart of the process the page last talked to');
     await context.close();
   },
   async 'an automatic update reloads the page once, silently, and returns to the same task'(browser) {

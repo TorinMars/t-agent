@@ -1,5 +1,7 @@
 // Translation, voice input and OSS upload for a service that has none of its own: the call goes to a linked service that does, and no key is copied.
 // Local configuration always wins, and a real failure of a configured local service never moves to a peer. See "Service links" in DESIGN.md.
+const { readRemoteInfo } = require('./remote-info');
+
 const FEATURES = ['translate', 'speech', 'oss'];
 const CAPABILITY = 'linked-services';
 const ROUTE_BASE = '/v1/linked-services';
@@ -35,7 +37,9 @@ function createLinkedCapabilities({ serviceLinks, request, now = Date.now }) {
   }
 
   async function probe(peer) {
-    const info = await request(peer.baseUrl, '/v1/info', peer.token, { timeoutMs: PROBE_TIMEOUT_MS });
+    // Through services/remote-info.js, so the peer's name follows here too. The sync is skipped by a service-links object without it (tests).
+    const sync = typeof serviceLinks.syncEngineInfo === 'function' ? (id, value) => serviceLinks.syncEngineInfo(id, value) : () => {};
+    const info = await readRemoteInfo({ baseUrl: peer.baseUrl, token: peer.token, serverId: peer.remoteServerId }, { request, sync, timeoutMs: PROBE_TIMEOUT_MS });
     if (!info || !Array.isArray(info.capabilities) || !info.capabilities.includes(CAPABILITY)) return NOTHING;
     const answer = await request(peer.baseUrl, `${ROUTE_BASE}/availability`, peer.token, { timeoutMs: PROBE_TIMEOUT_MS });
     return Object.fromEntries(FEATURES.map(feature => [feature, Boolean(answer && answer[feature] === true)]));

@@ -1,6 +1,10 @@
 const express = require('express');
 const requireAuth = require('../middleware/auth');
 const updates = require('../services/update-manager');
+const engineName = require('../services/engine-name');
+
+// Loaded on first use, like the update manager's own state, so that loading this router opens no database.
+const db = () => require('../db');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -10,9 +14,25 @@ function isAdmin(req) {
   return Boolean(req.session.user);
 }
 
+// `engine_name` is this machine's name, so the page needs no second call to show it.
 router.get('/version', (req, res) => {
-  try { res.json({ ...updates.readLocalManifest(), boot_id: updates.bootId, is_update_admin: isAdmin(req) }); }
-  catch { res.status(500).json({ error: 'INVALID_LOCAL_VERSION' }); }
+  let manifest;
+  try { manifest = updates.readLocalManifest(); }
+  catch { return res.status(500).json({ error: 'INVALID_LOCAL_VERSION' }); }
+  res.json({ ...manifest, boot_id: updates.bootId, is_update_admin: isAdmin(req), engine_name: engineName.engineNameState(db()).name });
+});
+
+// The name of this Engine (services/engine-name.js), which every machine connected to it shows. Behind the session and same-origin gates of /api.
+router.get('/engine-name', (req, res) => {
+  res.json(engineName.engineNameState(db()));
+});
+
+router.put('/engine-name', (req, res) => {
+  if (!isAdmin(req)) return res.status(403).json({ error: 'ENGINE_ADMIN_REQUIRED' });
+  let name;
+  try { name = engineName.nameFromBody(req.body); }
+  catch (error) { return res.status(400).json({ error: error.message }); }
+  res.json(engineName.setEngineName(db(), name));
 });
 
 router.get('/update-status', (req, res) => {

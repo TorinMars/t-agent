@@ -7,6 +7,7 @@ const taskGroups = require('../services/task-groups');
 const taskArchive = require('../services/task-archive');
 const { exchangePairingCode, createAccessToken, hasScope } = require('../services/engine-auth');
 const { getEngineIdentity } = require('../services/engine-identity');
+const engineName = require('../services/engine-name');
 const { getServiceLinks, CAPABILITY: SERVICE_LINKS } = require('../services/service-links');
 const { getTaskVisibility } = require('../services/task-visibility');
 const { createTaskVisibilityGuard } = require('../middleware/task-visibility');
@@ -133,6 +134,8 @@ function infoHandler(req, res) {
       LINKED_SERVICES,
       // mindmaps: GET|POST /v1/mindmaps and GET|PUT|DELETE /v1/mindmaps/:id, the same API as /api/mindmaps. A Client proxies another service's maps only when it has this.
       MINDMAPS,
+      // engine-name: PUT /v1/engine-name renames this Engine; `name` above is the current one.
+      engineName.CAPABILITY,
       'engine:update', 'pm2:manage', 'apps:manage', 'agent-config:manage', 'file-sync:manage', 'workspace:manage', 'agent-chat:manage',
     ],
   });
@@ -140,6 +143,13 @@ function infoHandler(req, res) {
 
 router.get('/info', requireEngineAuth(), infoHandler);
 router.get('/capabilities', requireEngineAuth(), infoHandler);
+
+// Rename this Engine from another machine, a host administration operation like the ones below (a service link's token has it too).
+// `{ name }`: 1 to 60 characters, or empty / null for the default. Answer `{ name, default_name, custom }`.
+router.put('/engine-name', requireEngineAuth('engine:admin'), (req, res) => {
+  try { res.json(engineName.setEngineName(db, engineName.nameFromBody(req.body))); }
+  catch (error) { errorResponse(res, error); }
+});
 
 // Engine self-update is a host administration operation and only allowed for owner (* / engine:admin) tokens.
 router.get('/update/status', requireEngineAuth('engine:admin'), (req, res) => {

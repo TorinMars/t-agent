@@ -10,6 +10,8 @@ const { streamRemote } = require('../services/remote-stream');
 const { getServiceLinks } = require('../services/service-links');
 const { isMindmapId, LIMITS: MINDMAP_LIMITS } = require('../services/mindmap');
 const { createMindmapBodyParser, sendNotFound: sendMindmapNotFound, sendTooLarge: sendMindmapTooLarge, BODY_LIMIT: MINDMAP_BODY_LIMIT } = require('./mindmap');
+const { getRemoteInfo, readRemoteInfo } = require('../services/remote-info');
+const engineNames = require('../services/engine-name');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -17,13 +19,20 @@ router.use(requireAuth);
 const owner = req => req.session.user.login;
 const safeError = error => (/^[A-Z0-9_]+$/.test(error.message || '') ? error.message : 'REMOTE_CONNECTION_FAILED');
 
-function publicServer(row) {
+// `name_source` is 'engine' when the name is the one the Engine keeps itself (services/engine-name.js), 'local' when it was typed here.
+// Every row can be renamed (PUT /:id/name), linked rows too.
+function publicServer(row, named = engineNames.engineNamedIds(db)) {
   return {
     id: row.id, name: row.name, base_url: row.base_url, enabled: Boolean(row.enabled),
     status: row.status, remote_version: row.remote_version, last_checked_at: row.last_checked_at,
     last_error: row.last_error, created_at: row.created_at,
+    name_source: engineNames.nameSource(row.id, named), can_rename: true,
   };
 }
+
+const serverById = id => db.prepare('SELECT * FROM remote_servers WHERE id = ?').get(id);
+// Every /v1/info read of a saved row goes through services/remote-info.js, which keeps the row's name in step with the Engine's.
+const readInfo = (row, token = decryptToken(row.token_cipher, config.sessionSecret)) => readRemoteInfo({ baseUrl: row.base_url, token, serverId: row.id });
 
 function getServer(req) {
   return db.prepare('SELECT * FROM remote_servers WHERE id = ? AND owner_id = ?').get(req.params.id, owner(req));
@@ -32,7 +41,7 @@ function getServer(req) {
 async function checkServer(row) {
   const token = decryptToken(row.token_cipher, config.sessionSecret);
   try {
-    const capabilities = await request(row.base_url, '/v1/info', token);
+    const capabilities = await readInfo(row, token);
     db.prepare(`UPDATE remote_servers SET status = 'online', remote_version = ?, last_checked_at = CURRENT_TIMESTAMP,
       last_error = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(capabilities.engine_version || capabilities.app_version || null, row.id);
     return capabilities;
@@ -47,7 +56,7 @@ async function checkServer(row) {
 
 async function assertFilesSupported(row, token) {
   let info;
-  try { info = await request(row.base_url, '/v1/info', token); }
+  try { info = await readInfo(row, token); }
   catch (error) {
     if (error.statusCode === 404) throw Object.assign(new Error('FILES_UNSUPPORTED'), { statusCode: 501 });
     throw error;
@@ -86,7 +95,11 @@ function proxyFiles(method, suffix = '') {
 }
 
 router.get('/', (req, res) => {
-  res.json(db.prepare('SELECT * FROM remote_servers WHERE owner_id = ? ORDER BY created_at ASC').all(owner(req)).map(publicServer));
+  const rows = db.prepare('SELECT * FROM remote_servers WHERE owner_id = ? ORDER BY created_at ASC').all(owner(req));
+  const named = engineNames.engineNamedIds(db);
+  res.json(rows.map(row => publicServer(row, named)));
+  // After the answer: names of rows not read in the last minute are refreshed for the next read.
+  getRemoteInfo().refreshStale(rows, row => ({ baseUrl: row.base_url, token: decryptToken(row.token_cipher, config.sessionSecret) }));
 });
 
 // File-sync service on the current remote node. The path is fixed so arbitrary addresses are never forwarded to.
@@ -117,7 +130,7 @@ router.post('/test', async (req, res) => {
       const health = await request(baseUrl, '/v1/health', null);
       return res.json({ success: true, base_url: baseUrl, pairing_code: true, engine: health });
     }
-    const capabilities = await request(baseUrl, '/v1/info', credential);
+    const capabilities = await readRemoteInfo({ baseUrl, token: credential });
     res.json({ success: true, base_url: baseUrl, capabilities });
   } catch (error) { res.status(400).json({ error: safeError(error) }); }
 });
@@ -135,12 +148,14 @@ router.post('/', async (req, res) => {
       });
       token = paired.access_token;
     }
-    const capabilities = await request(baseUrl, '/v1/info', token);
-    const name = (typeof req.body.name === 'string' && req.body.name.trim()) || new URL(baseUrl).hostname;
+    const capabilities = await readRemoteInfo({ baseUrl, token });
+    // An Engine that keeps its own name is saved under it; the form's name is for one that does not.
+    const name = engineNames.reportedName(capabilities) || (typeof req.body.name === 'string' && req.body.name.trim()) || new URL(baseUrl).hostname;
     const result = db.prepare(`INSERT INTO remote_servers
       (owner_id, name, base_url, token_cipher, status, remote_version, last_checked_at)
       VALUES (?, ?, ?, ?, 'online', ?, CURRENT_TIMESTAMP)`).run(owner(req), name.slice(0, 80), baseUrl, encryptToken(token, config.sessionSecret), capabilities.engine_version || capabilities.app_version || null);
-    res.status(201).json(publicServer(db.prepare('SELECT * FROM remote_servers WHERE id = ?').get(result.lastInsertRowid)));
+    getServiceLinks().syncEngineInfo(result.lastInsertRowid, capabilities);
+    res.status(201).json(publicServer(serverById(result.lastInsertRowid)));
   } catch (error) {
     const code = error.code === 'SQLITE_CONSTRAINT_UNIQUE' ? 'REMOTE_ALREADY_EXISTS' : safeError(error);
     res.status(400).json({ error: code });
@@ -171,11 +186,39 @@ router.put('/:id', refuseLinked, async (req, res) => {
     // When verifying a new address, reuse the encrypted saved Token; it is only persisted after the remote authenticates successfully.
     const { baseUrl, capabilities } = await inspectRemoteAddress(row, req.body, config.sessionSecret);
     persistRemoteServerEdit(db, row, owner(req), req.body, baseUrl, capabilities);
-    res.json(publicServer(db.prepare('SELECT * FROM remote_servers WHERE id = ?').get(row.id)));
+    // The saved address is now this row's Engine, so its name source follows the answer (inspectRemoteAddress synced only an unchanged address).
+    getServiceLinks().syncEngineInfo(row.id, capabilities);
+    res.json(publicServer(serverById(row.id)));
   } catch (error) {
     const code = error.code === 'SQLITE_CONSTRAINT_UNIQUE' ? 'REMOTE_ALREADY_EXISTS' : safeError(error);
     res.status(400).json({ error: code });
   }
+});
+
+// Rename a remote Engine. One with the capability `engine-name` is renamed there (PUT /v1/engine-name), and the row takes the name it answers; for
+// one without it only this row is renamed. Allowed on linked rows: the name is not part of what a link manages (refuseLinked is not used here).
+router.put('/:id/name', async (req, res) => {
+  const row = getServer(req);
+  if (!row) return res.status(404).json({ error: 'REMOTE_NOT_FOUND' });
+  let name;
+  try { name = engineNames.nameFromBody(req.body); }
+  catch (error) { return res.status(400).json({ error: error.message }); }
+  const token = decryptToken(row.token_cipher, config.sessionSecret);
+  let info;
+  try { info = await readInfo(row, token); }
+  catch (error) { return res.status(error.statusCode || 502).json({ error: safeError(error) }); }
+  if (engineNames.hasCapability(info)) {
+    let answer;
+    try { answer = await request(row.base_url, '/v1/engine-name', token, { method: 'PUT', body: { name } }); }
+    catch (error) { return res.status(error.statusCode || 502).json({ error: safeError(error) }); }
+    // The answer is synced like an info read, so a name the Engine answers that does not pass the rules here leaves the row as it was.
+    getServiceLinks().syncEngineInfo(row.id, { capabilities: info.capabilities, name: answer && answer.name });
+  } else {
+    // Nothing to reset to: an Engine without the capability has no default name to report.
+    if (name === null) return res.status(400).json({ error: 'INVALID_ENGINE_NAME' });
+    db.prepare('UPDATE remote_servers SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(name, row.id);
+  }
+  res.json(publicServer(serverById(row.id)));
 });
 
 router.delete('/:id', async (req, res) => {
@@ -194,8 +237,8 @@ router.delete('/:id', async (req, res) => {
 router.post('/:id/check', async (req, res) => {
   const row = getServer(req);
   if (!row) return res.status(404).json({ error: 'REMOTE_NOT_FOUND' });
-  try { await checkServer(row); res.json(publicServer(db.prepare('SELECT * FROM remote_servers WHERE id = ?').get(row.id))); }
-  catch (error) { res.status(502).json({ error: safeError(error), server: publicServer(db.prepare('SELECT * FROM remote_servers WHERE id = ?').get(row.id)) }); }
+  try { await checkServer(row); res.json(publicServer(serverById(row.id))); }
+  catch (error) { res.status(502).json({ error: safeError(error), server: publicServer(serverById(row.id)) }); }
 });
 
 router.get('/:id/update-status', async (req, res) => {
@@ -303,7 +346,12 @@ const documentKindOk = (req, res, next) => (['technical', 'readme', 'agent'].inc
   ? next() : res.status(400).json({ error: 'INVALID_DOCUMENT_KIND' }));
 
 // Capabilities and role of the connection, which the frontend uses to enable/disable features (capabilities missing from an old Engine are disabled).
-router.get('/:id/info', forwardJson('GET', () => '/v1/info'));
+router.get('/:id/info', async (req, res) => {
+  const target = remoteTarget(req, res);
+  if (!target) return;
+  try { res.json(await readInfo(target.row, target.token)); }
+  catch (error) { res.status(error.statusCode || 502).json({ error: safeError(error) }); }
+});
 
 // "reorder" and "validate-path" must be registered before /:id/tasks/:taskId.
 router.put('/:id/tasks/reorder', forwardJson('PUT', () => '/v1/tasks/reorder'));
@@ -459,7 +507,7 @@ router.get('/:id/tasks/:taskId/document/:kind', async (req, res) => {
 // Whether the Engine advertises a capability in /v1/info; false (after sending the error) when /v1/info cannot be read.
 async function remoteHas(target, res, capability) {
   let info;
-  try { info = await request(target.row.base_url, '/v1/info', target.token); }
+  try { info = await readInfo(target.row, target.token); }
   catch (error) { res.status(error.statusCode || 502).json({ error: safeError(error) }); return null; }
   return Boolean(info && Array.isArray(info.capabilities) && info.capabilities.includes(capability));
 }
@@ -470,12 +518,9 @@ for (const kind of ['content', 'image']) {
   router.get(`/:id/fs/${kind}`, async (req, res) => {
     const target = remoteTarget(req, res);
     if (!target) return;
-    let info;
-    try { info = await request(target.row.base_url, '/v1/info', target.token); }
-    catch (error) { return res.status(error.statusCode || 502).json({ error: safeError(error) }); }
-    if (!info || !Array.isArray(info.capabilities) || !info.capabilities.includes('fs:read-any')) {
-      return res.status(501).json({ error: 'FS_READ_UNSUPPORTED' });
-    }
+    const supported = await remoteHas(target, res, 'fs:read-any');
+    if (supported === null) return;
+    if (!supported) return res.status(501).json({ error: 'FS_READ_UNSUPPORTED' });
     const query = new URLSearchParams();
     if (typeof req.query.path === 'string') query.set('path', req.query.path);
     streamRemote(req, res, target.row.base_url, target.token, `/v1/fs/${kind}?${query}`, { sandbox: true });

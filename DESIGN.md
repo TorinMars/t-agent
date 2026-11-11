@@ -616,7 +616,7 @@ A peer that did not hear learns from its token failing: a tunnel 401 or a 401 fr
 
 **Tokens.** A link token is named `Service link: <peer>` and has `service_link_id` in `GET /api/remote-tokens` and `GET /v1/tokens`; revoking it there is an unlink.
 
-**Editing.** `PUT /api/remote-servers/:id` and `POST /api/remote-servers/:id/test` on a linked row answer `LINK_MANAGED`, including for the name. The address and credential belong to the link.
+**Editing.** `PUT /api/remote-servers/:id` and `POST /api/remote-servers/:id/test` on a linked row answer `LINK_MANAGED`. The address and credential belong to the link. The name does not: `PUT /api/remote-servers/:id/name` works on a linked row (see "Engine names"), and the link's name follows the name the peer reports.
 
 **Security.** Only a browser session can make a linking code, so a peer cannot use its `/v1` token to create another link. The `tsl_` token passes only the tunnel upgrade; `authenticateAccessToken` accepts only `tae_`. The tunnel path follows the access gate like every `/v1` path, so a local-only A refuses it; a local-only B is allowed, since joining is its owner's choice and the tunnel is outbound. An unlink does not end a terminal WebSocket that is already open over a direct connection, and tokens the peer minted itself through `/v1/tokens` stay, as for any admin.
 
@@ -642,6 +642,20 @@ A peer that did not hear learns from its token failing: a tunnel 401 or a 401 fr
 **Per-task visibility on the page.** On a task of this machine, when `GET /api/service-links` has a link that is not revoked, the task's "⋯" has `Visible to` (`GET` and `PUT /api/tasks/:id/visibility`, `{ denied: [link_id] }`): every machine is allowed by default, the dialog says that this hides the task but is not a security boundary, and on the other machine a task that is no longer in the list or answers 404 leaves the page the quiet way (`taskGone`), with nothing reconnecting.
 
 **Shared features on the page.** When `GET /api/translate/config`, `/api/speech/config` or `/api/oss/config` has a non-null `shared_from: { name, online }`, the page treats that feature as available, keeps the Settings form usable and empty under a "Provided by" line, and `I18n.errorOf` turns a `LINKED_PROVIDER_OFFLINE` answer into a sentence that names the provider.
+
+## Engine names
+
+Each Engine has one name, kept by that Engine, and every machine connected to it shows that name. Code: `services/engine-name.js`, `services/remote-info.js`.
+
+- **Storage.** The row `name` of the `engine_identity` key/value table, next to `instance_id`; no schema change. No row means the default, `config.engineName` (`ENGINE_NAME`, otherwise the host name). `getEngineIdentity()` returns the current name, so `/v1/info`, `/v1/capabilities`, `POST /v1/pair` and a link join report it. `/v1/health` has no token and does not show the name.
+- **Rules.** Trimmed, 1 to 60 characters (code points) of any language, no control characters (C0, DEL, C1) and no U+2028 / U+2029. An empty string or `null` resets to the default; a body without `name` is refused. Error 400 `INVALID_ENGINE_NAME`.
+- **This machine.** `GET /api/system/engine-name` → `{ name, default_name, custom }`; `PUT` with `{ name }` → the same (admin, like the update routes: 403 `ENGINE_ADMIN_REQUIRED`). Behind the session and same-origin gates of `/api`. `GET /api/system/version` also has `engine_name`.
+- **From another machine.** `PUT /v1/engine-name` with `{ name }`, Engine token with `engine:admin`, answers the same object. Capability `engine-name` in `/v1/info`. A service link token has admin, and the tunnel's path rules let `/v1/engine-name` through without any change.
+- **Renaming a remote row.** `PUT /api/remote-servers/:id/name` with `{ name }` reads the Engine's `/v1/info` first. With `engine-name` it calls the Engine's `PUT /v1/engine-name` and the row takes the name answered; without it only the row is renamed, and an empty name is `INVALID_ENGINE_NAME` (there is no default to go back to). Linked rows are allowed. Errors: 400 `INVALID_ENGINE_NAME`, the remote's error and status passed through, 502 when the Engine cannot be reached. The answer is the row.
+- **Keeping names in step.** Every read of a remote `/v1/info` goes through `readRemoteInfo` (`services/remote-info.js`): check, connect, test of the saved address, edit, the page's `GET /:id/info`, the capability checks of files, archive and `fs/*`, a link coming online (`refreshPeer`) and the linked-services probe. When the answer has `engine-name` and a valid `name`, `remote_servers.name` and the link record's name take it (`serviceLinks.syncEngineInfo`), and the row is remembered as engine-named (system_state `remote_engine_names_v1`, so it survives a restart). A remote without the capability is never renamed from info; one that loses it becomes `local` again. Connecting saves an Engine with the capability under its own name; the form's name is for one without it. `PUT /:id` (edit address) does the same.
+- **Light refresh.** `GET /api/remote-servers` answers from the database first, then reads `/v1/info` in the background for enabled rows not read in the last 60 s (any read counts, a failed one too), 5 s timeout, names only: status and errors are left to Check.
+- **Rows.** `publicServer` has `name_source: 'engine' | 'local'` and `can_rename: true`. `GET /api/service-links` link names follow the same synced name.
+- Test: `test/engine-name.test.js`, including two real services where A renames B through the tunnel.
 
 ## Update check and versions
 

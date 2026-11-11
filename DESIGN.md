@@ -1360,3 +1360,4 @@ One line per release, added by `scripts/release.js`. Older notes are in `git log
 > v2.97.0 Linked services share file upload, translation and speech recognition: a service without its own settings is served by a linked one, and keys never move.
 > v2.98.0 One task list across this machine and every connected service, with no Engine switching, and a setting for which devices are shown.
 > v2.99.0 Per-task visibility for linked machines: the owner of a task chooses which linked machines can see it, enforced on the /v1 API.
+> v2.100.0 Mind maps shared across connected services, engine names with renaming, and New session / New task as dialogs.

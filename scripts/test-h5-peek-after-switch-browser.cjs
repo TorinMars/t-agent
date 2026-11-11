@@ -174,6 +174,9 @@ async function scenario(browser, wide) {
   await listed(page, 'Delta', ['Delta shell'], 1, `${label}: the selected task read again`);
 
   // Leaving a task before its own list has arrived: nothing is known about it yet, so a read that answers late is shown when it comes.
+  // Beta is collapsed first: an expanded list would be known, carried into the selection and kept when it is left.
+  await toggle(opened, 'Beta');
+  await until(page, 'Beta', list => !list.rows.length && !list.note, `${label}: Beta collapsed, nothing known`);
   state.holdNext.add(2);
   await pick(opened, 'Beta'); // its own read is held
   await page.waitForTimeout(50);
@@ -183,7 +186,9 @@ async function scenario(browser, wide) {
   releaseAll(state);
   await listed(page, 'Beta', ['Beta Claude', 'Beta Codex', 'Beta shell'], 3, `${label}: the slow read arrived`);
 
-  // A read that does not answer at all does not stay on "Loading…"; the next open reads again.
+  // A read that does not answer at all does not stay on "Loading…"; the next open reads again. Delta is collapsed first, so nothing is known (as Beta above).
+  await toggle(opened, 'Delta');
+  await until(page, 'Delta', list => !list.rows.length && !list.note, `${label}: Delta collapsed, nothing known`);
   state.holdNext.add(4);
   await pick(opened, 'Delta');
   await page.waitForTimeout(50);

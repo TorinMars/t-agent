@@ -111,7 +111,8 @@ function helpers(page, wide, label) {
     await press(page.locator('.h5-task-item', { hasText: title }));
     await press(page.locator(`#h5-tasks .h5-terminal-list[aria-label="${title}"] .h5-terminal-main`).first());
     await page.waitForFunction(name => document.getElementById('h5-task-name').textContent === name, title);
-    await page.waitForFunction(id => window.taskSockets(id).length > 0, title === 'Alpha' ? 1 : title === 'Beta' ? 2 : 3, { timeout: 3000 });
+    // Open, not only made: the page makes the socket at the tap when the row's sessions are known, and the fake socket opens on the next timer.
+    await page.waitForFunction(id => window.taskSockets(id).some(socket => socket.readyState === 1), title === 'Alpha' ? 1 : title === 'Beta' ? 2 : 3, { timeout: 3000 });
     if (!wide) await page.locator('#h5-tasks').waitFor({ state: 'hidden' }); // the sheet has finished closing, so `sheet` opens it again
   };
   const menuItems = page.locator('#h5-term-menu-actions button, #h5-term-menu-actions [role="button"]');

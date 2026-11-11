@@ -149,10 +149,22 @@ body.h5-tasks-open .h5-agent { border-bottom-left-radius: 28px; overflow: hidden
 }
 /* The match that the copy view search jumped to (CSS Custom Highlight API; browsers without it select the match instead). */
 ::highlight(h5-copy-match) { background: #ffd54f; color: #000; }
-/* The copy bar (one for every terminal copy): a one-line preview cut to the bar's width, then Copy or Tap to copy, then Cancel. */
-.h5-clipboard-bar { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); z-index: 3; display: flex; align-items: center; gap: 4px; padding: 2px 4px 2px 12px; border-radius: 20px; max-width: calc(100% - 16px); box-sizing: border-box; }
-.h5-clipboard-preview { flex: 0 1 auto; min-width: 0; max-width: 360px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font: 13px/1.4 ui-monospace, Menlo, monospace; opacity: .85; }
+/* The copy bar (one for every terminal copy, Terminal.jsx; colours from the theme's `notice` blue): the copy icon, a title line over a one-line preview
+   cut to the bar's width, then Copy and Cancel. It sits at the top of the terminal box, centred, 8px from each side and at most 640px wide (the cap
+   names the box width too: a long one-line preview has a min-content width far wider than the screen, which `fit-content` would take). When the
+   text and the buttons do not fit on one line (a phone), the buttons wrap to a second line at the right and the preview keeps the whole width.
+   It appears once with a short slide from the top and one highlight pulse (the ring of `::after`); nothing repeats, and reduced motion turns both off. */
+.h5-clipboard-bar { position: absolute; top: 8px; left: 8px; right: 8px; margin-inline: auto; width: fit-content; max-width: min(640px, 100% - 16px); z-index: 3; display: flex; flex-wrap: wrap; align-items: center; column-gap: 10px; row-gap: 2px; padding: 6px 6px 6px 12px; border-radius: 14px; box-sizing: border-box; animation: h5-clipboard-in .24s cubic-bezier(.2, .7, .2, 1) both; }
+.h5-clipboard-bar::after { content: ""; position: absolute; inset: -1px; border-radius: inherit; pointer-events: none; animation: h5-clipboard-pulse .9s ease-out .24s 1 both; }
+.h5-clipboard-icon { flex: none; display: inline-flex; align-self: flex-start; margin-top: 3px; }
+.h5-clipboard-body { flex: 1 1 200px; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.h5-clipboard-title { font-size: 12px; line-height: 1.35; font-weight: 600; letter-spacing: .01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.h5-clipboard-preview { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font: 13px/1.45 ui-monospace, Menlo, monospace; }
+.h5-clipboard-actions { flex: none; display: flex; align-items: center; gap: 4px; margin-left: auto; }
 .h5-clipboard-bar .MuiButton-root { flex: none; white-space: nowrap; }
+@keyframes h5-clipboard-in { from { opacity: 0; transform: translateY(-16px); } to { opacity: 1; transform: none; } }
+@keyframes h5-clipboard-pulse { from { box-shadow: 0 0 0 0 var(--h5-clipboard-ring, #90caf9); } to { box-shadow: 0 0 0 12px transparent; } }
+@media (prefers-reduced-motion: reduce) { .h5-clipboard-bar, .h5-clipboard-bar::after { animation: none; } }
 
 /* Design document sheet (scripts/h5-shell/Design.jsx): the shared markdown.css is light, the phone page is dark. One more class wins over its rules. */
 .h5-design-body .markdown-body.markdown-body { color: #e6edf3; font-size: 14px; line-height: 1.7; }

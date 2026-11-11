@@ -50,7 +50,7 @@ export const initialState = () => ({
   copyText: null, // the text of the copy view while it is open
   copyStale: false, // new output arrived while the user holds a selection in the copy view
   // The copy bar (public/js/terminal-clipboard.js): { id, kind, text, preview, chars }. kind 'ask': a program's copy without a recent gesture
-  // of the user, written only on Copy; kind 'tap': the browser refused a copy (page selection or program), "Tap to copy" writes it.
+  // of the user, written only on Copy; kind 'tap': the browser refused a copy (page selection or program), Copy on the bar writes it.
   clipboard: null,
   upload: null, // { status, progress } while an image goes up (progress: 0-100, or null when it is not known)
   retainUrl: null, // the link of an image that was uploaded after its terminal went away

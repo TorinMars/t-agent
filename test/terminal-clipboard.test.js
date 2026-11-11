@@ -117,7 +117,7 @@ test('right after a user gesture on the terminal the copy is written at once, on
   assert.equal(writes.length, 1);
 });
 
-test('when the browser refuses the automatic write, the page offers Tap to copy and the tap writes', async () => {
+test('when the browser refuses the automatic write, the page offers the bar (kind tap) and its Copy writes', async () => {
   const { term, handle, context, clipboard, writes, last, flush } = setup({ clipboardFails: true });
   handle.gesture();
   term.osc(osc('needs a tap'));
@@ -137,7 +137,7 @@ test('a write that fails inside the tap closes the bar with one error notice, by
     assert.equal(await context.clipboard.confirm(), false);
     assert.equal(last(), null);
     assert.deepEqual(notices, [[message, 'error']]);
-    // A refused page selection whose Tap to copy fails ends the same way.
+    // A refused page selection whose Copy on the bar fails ends the same way.
     context.clipboard.cancel();
     await handle.copy('selected');
     assert.equal(last().kind, 'tap');
@@ -165,7 +165,7 @@ test('a page selection and a program copy after a gesture give the identical wri
   }
   assert.deepEqual(runs[0], runs[1]);
   assert.deepEqual(runs[0], { writes: ['same text'], notices: [['Copied 9 characters', 'success']], shown: [] });
-  // Refused by the browser: the same "Tap to copy" bar for both.
+  // Refused by the browser: the same bar (kind tap, "Press Copy to finish copying") for both.
   const bars = [];
   for (const source of ['page', 'program']) {
     const { term, handle, notices, last, flush } = setup({ clipboardFails: true });

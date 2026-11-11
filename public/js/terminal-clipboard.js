@@ -5,8 +5,8 @@
 //   mouse: this module on mouseup after a drag, double / triple click or Option / Shift selection). Cmd+C and Ctrl+Shift+C copy the selection too.
 // - A program's request that arrives within GESTURE_WINDOW_MS after the user's own pointer, touch or key gesture on THAT terminal (the user just
 //   selected or copied something in the program) is written at once, one write per gesture.
-// - Either way, when the browser refuses the write (no user activation any more, iOS Safari), the page shows the bar ("Tap to copy"), and the
-//   tap writes inside its own gesture. If that also fails, one error notice says how to copy by hand.
+// - Either way, when the browser refuses the write (no user activation any more, iOS Safari), the page shows the bar (kind tap), and a tap
+//   on its Copy writes inside its own gesture. If that also fails, one error notice says how to copy by hand.
 // - A program's request without a recent gesture is never written silently: the same bar shows a one-line preview with Copy / Cancel. Nothing is
 //   written before Copy, later output cannot replace the text, and the request expires after REQUEST_TTL_MS.
 // The same text again from the same terminal within DUPLICATE_WINDOW_MS is one copy, whatever the source (Claude Code runs pbcopy, which the
@@ -98,7 +98,7 @@ const TerminalClipboard = (() => {
     current = request;
     show(request);
   }
-  // Copy (kind 'ask') or Tap to copy (kind 'tap') on the bar: called from the tap itself, so the write is inside its user activation.
+  // Copy on the bar (kind 'ask' or 'tap'): called from the tap itself, so the write is inside its user activation.
   function confirm() {
     const request = current;
     if (!request) return Promise.resolve(false);

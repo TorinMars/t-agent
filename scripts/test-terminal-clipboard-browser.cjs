@@ -4,9 +4,12 @@
 // - a program's copy right after the user's own tap or click is written at once with the identical notice (split request, duplicate merged);
 // - a program's copy without a gesture shows the bar with a one-line preview; Copy writes, Cancel does not, it expires after 60 s, later output
 //   cannot replace it;
-// - a write the browser refuses shows the same "Tap to copy" bar (same DOM) for both sources, and the tap writes; when that fails too, one error
-//   notice; the same text from the page and the program within 2 s is one copy; replayed history never copies.
-// The page is served over https (routed), so the real clipboard API is used with granted permissions.
+// - a write the browser refuses shows the same bar ("Press Copy to finish copying", same DOM) for both sources, and its Copy writes; when that
+//   fails too, one error notice; the same text from the page and the program within 2 s is one copy; replayed history never copies;
+// - the bar's look: a filled blue bar (the theme's `notice` blue, white text at WCAG AA), the copy icon, a title line over the preview, a white
+//   filled Copy and a text Cancel, inside the terminal box under the header; it slides in and pulses once, and not at all with reduced motion;
+//   at 320 px with a long text and the on-screen keyboard open it still fits, with 44 px buttons.
+// The page is served over https (routed), so the real clipboard API is used with granted permissions. H5_SHOT_DIR=<dir> saves screenshots of the bar.
 const { chromium } = require('playwright');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -16,8 +19,17 @@ const ORIGIN = 'https://h5.test';
 const TYPES = { '.js': 'application/javascript', '.css': 'text/css', '.html': 'text/html' };
 const osc = text => `\x1b]52;c;${Buffer.from(text).toString('base64')}\x07`;
 
-async function openPage(browser, touch) {
-  const context = await browser.newContext({ viewport: touch ? { width: 390, height: 844 } : { width: 1440, height: 900 }, ...(touch ? { isMobile: true, hasTouch: true } : {}) });
+// WCAG relative luminance and contrast of two `rgb(...)` colours (getComputedStyle form).
+const rgb = text => (text.match(/[\d.]+/g) || []).slice(0, 3).map(Number);
+const luminance = colour => { const [r, g, b] = rgb(colour).map(v => { const c = v / 255; return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; }); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+const contrast = (a, b) => { const [x, y] = [luminance(a), luminance(b)].sort((m, n) => n - m); return (x + 0.05) / (y + 0.05); };
+const SHOTS = process.env.H5_SHOT_DIR;
+// Waits until the bar's slide-in and pulse (on the bar and its ::after) have finished, so boxes are measured at rest.
+const settled = page => page.evaluate(() => Promise.all((document.querySelector('#h5-clipboard-bar')?.getAnimations({ subtree: true }) || []).map(animation => animation.finished)));
+
+async function openPage(browser, touch, size) {
+  const viewport = size || (touch ? { width: 390, height: 844 } : { width: 1440, height: 900 });
+  const context = await browser.newContext({ viewport, ...(touch ? { isMobile: true, hasTouch: true } : {}), ...(SHOTS ? { deviceScaleFactor: touch ? 3 : 2 } : {}) });
   await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: ORIGIN });
   const page = await context.newPage();
   const errors = [];
@@ -81,7 +93,9 @@ async function run(browser, touch) {
   // The look of the bar without its text: tag, classes, ids and button labels, so the two sources can be compared.
   const barShape = () => page.evaluate(() => {
     const node = document.querySelector('#h5-clipboard-bar');
-    return { className: node.className, kind: node.dataset.kind, label: node.getAttribute('aria-label'), parts: [...node.children].map(child => `${child.tagName}#${child.id}.${child.className}${child.tagName === 'BUTTON' ? `:${child.textContent}` : ''}`) };
+    const parts = [...node.querySelectorAll('*')].filter(child => child.id || child.tagName === 'BUTTON' || /^h5-clipboard-/.test(child.className))
+      .map(child => `${child.tagName}#${child.id}.${child.className}${child.tagName === 'BUTTON' || child.id === 'h5-clipboard-title' ? `:${child.textContent}` : ''}`);
+    return { className: node.className, kind: node.dataset.kind, label: node.getAttribute('aria-label'), parts };
   });
   // The look of the notice that is shown (MUI Alert severity and classes).
   const noticeShape = () => page.evaluate(() => [...document.querySelectorAll('.MuiSnackbar-root .MuiAlert-root')].pop()?.className.replace(/css-\S+/g, '').trim());
@@ -168,7 +182,48 @@ async function run(browser, touch) {
   await bar.waitFor({ state: 'visible' });
   assert.equal(await page.locator('#h5-clipboard-text').textContent(), 'Remote program hello ✓ 中文', `${mode}: one-line preview`);
   assert.equal(await page.locator('#h5-clipboard-copy').textContent(), 'Copy');
+  assert.equal(await page.locator('#h5-clipboard-cancel').textContent(), 'Cancel');
   assert.equal(await page.locator('#h5-clipboard').count(), 0, `${mode}: no dialog any more`);
+  await settled(page);
+  // The look: a filled blue bar with white text, the copy icon and the title line, a white filled Copy, a text Cancel; it slides in and pulses once.
+  const look = await page.evaluate(() => {
+    const bar = document.querySelector('#h5-clipboard-bar');
+    const style = getComputedStyle(bar);
+    const after = getComputedStyle(bar, '::after');
+    const copy = getComputedStyle(document.querySelector('#h5-clipboard-copy'));
+    const cancel = getComputedStyle(document.querySelector('#h5-clipboard-cancel'));
+    const title = document.querySelector('#h5-clipboard-title');
+    const text = document.querySelector('#h5-clipboard-text');
+    const icon = bar.querySelector('.h5-clipboard-icon svg path');
+    const header = document.querySelector('.h5-header').getBoundingClientRect();
+    const terminal = document.querySelector('#h5-terminal').getBoundingClientRect();
+    const box = bar.getBoundingClientRect();
+    return {
+      background: style.backgroundColor, colour: style.color, image: style.backgroundImage,
+      animation: style.animationName, animationCount: style.animationIterationCount, pulse: after.animationName, pulseCount: after.animationIterationCount,
+      copyBackground: copy.backgroundColor, copyColour: copy.color, cancelBackground: cancel.backgroundColor, cancelColour: cancel.color,
+      titleText: title.textContent, titleColour: getComputedStyle(title).color, titleSize: parseFloat(getComputedStyle(title).fontSize), previewTitle: text.getAttribute('title'),
+      textColour: getComputedStyle(text).color, iconPath: icon ? icon.getAttribute('d').slice(0, 20) : null, iconHidden: bar.querySelector('.h5-clipboard-icon').getAttribute('aria-hidden'),
+      inside: box.left >= terminal.left && box.right <= terminal.right && box.top >= terminal.top, belowHeader: box.top >= header.bottom,
+    };
+  });
+  assert.equal(look.background, 'rgb(21, 101, 192)', `${mode}: the bar is filled with the notice blue`);
+  assert.equal(look.image, 'none', `${mode}: no dark elevation overlay greys the blue`);
+  assert.equal(look.colour, 'rgb(255, 255, 255)');
+  for (const [name, colour] of [['text', look.colour], ['title', look.titleColour], ['preview', look.textColour], ['Cancel', look.cancelColour]]) {
+    assert.ok(contrast(colour, look.background) >= 4.5, `${mode}: ${name} on the blue is WCAG AA (${contrast(colour, look.background).toFixed(2)})`);
+  }
+  assert.equal(look.copyBackground, 'rgb(255, 255, 255)', `${mode}: Copy is a white filled button`);
+  assert.ok(contrast(look.copyColour, look.copyBackground) >= 4.5, `${mode}: Copy's text is readable (${contrast(look.copyColour, look.copyBackground).toFixed(2)})`);
+  assert.equal(look.cancelBackground, 'rgba(0, 0, 0, 0)', `${mode}: Cancel is a text button`);
+  assert.equal(look.titleText, 'Copy request from the terminal');
+  assert.ok(look.titleSize < 13.5, `${mode}: the title is a small line`);
+  assert.equal(look.previewTitle, 'Remote program\nhello ✓ 中文', `${mode}: the full text is the preview's title`);
+  assert.equal(look.iconPath, 'M832 64H296c-4.4 0-8', `${mode}: the file-copy icon of the library`);
+  assert.equal(look.iconHidden, 'true');
+  assert.ok(look.inside && look.belowHeader, `${mode}: the bar sits inside the terminal, under the header`);
+  assert.deepEqual([look.animation, look.animationCount, look.pulse, look.pulseCount], ['h5-clipboard-in', '1', 'h5-clipboard-pulse', '1'], `${mode}: one slide-in and one pulse`);
+  if (SHOTS) await page.screenshot({ path: path.join(SHOTS, `copy-bar-${touch ? 390 : 1440}.png`) });
   await emit(osc('evil'));
   assert.equal(await page.locator('#h5-clipboard-text').textContent(), 'Remote program hello ✓ 中文');
   assert.equal(await clipboard(), 'before', `${mode}: nothing written before Copy`);
@@ -225,7 +280,7 @@ async function run(browser, touch) {
   assert.equal(await bar.count(), 0);
   await page.waitForTimeout(2100);
 
-  // 5. The browser refuses the write: the same "Tap to copy" bar for a page selection and for a program's copy; the tap writes.
+  // 5. The browser refuses the write: the same bar ("Press Copy to finish copying") for a page selection and for a program's copy; the tap writes.
   await page.evaluate(() => {
     const real = navigator.clipboard.writeText.bind(navigator.clipboard);
     window.refuse = 0;
@@ -240,12 +295,14 @@ async function run(browser, touch) {
   await select('pick a word', 'from');
   await bar.waitFor({ state: 'visible' });
   const pageBar = await barShape();
-  assert.equal(await page.locator('#h5-clipboard-copy').textContent(), 'Tap to copy');
+  assert.equal(await page.locator('#h5-clipboard-copy').textContent(), 'Copy');
+  assert.equal(await page.locator('#h5-clipboard-title').textContent(), 'Press Copy to finish copying');
+  if (SHOTS) { await settled(page); await page.screenshot({ path: path.join(SHOTS, `copy-bar-tap-${touch ? 390 : 1440}.png`) }); }
   assert.equal(await clipboard(), 'before');
   await allow();
   await press(page.locator('#h5-clipboard-copy'));
   await bar.waitFor({ state: 'hidden' });
-  assert.equal(await clipboard(), 'from', `${mode}: Tap to copy writes the page selection`);
+  assert.equal(await clipboard(), 'from', `${mode}: Copy on the bar writes the refused page selection`);
   await page.waitForTimeout(1600);
   await refuse();
   await gesture();
@@ -255,7 +312,7 @@ async function run(browser, touch) {
   await allow();
   await press(page.locator('#h5-clipboard-copy'));
   await bar.waitFor({ state: 'hidden' });
-  assert.equal(await clipboard(), 'needs its own tap', `${mode}: Tap to copy writes the program copy`);
+  assert.equal(await clipboard(), 'needs its own tap', `${mode}: Copy on the bar writes the refused program copy`);
   await notices();
   // The tap fails too: the bar closes with one error notice.
   await page.waitForTimeout(2100);
@@ -270,6 +327,20 @@ async function run(browser, touch) {
   assert.deepEqual(await notices(), [[failed, 'error']]);
   await allow();
 
+  // Reduced motion: the bar appears without the slide and the pulse; Copy still writes only after the tap, Cancel still dismisses.
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.waitForTimeout(1600);
+  await emit(osc('calm bar'));
+  await bar.waitFor({ state: 'visible' });
+  const calm = await page.evaluate(() => { const node = document.querySelector('#h5-clipboard-bar'); return [getComputedStyle(node).animationName, getComputedStyle(node, '::after').animationName]; });
+  assert.deepEqual(calm, ['none', 'none'], `${mode}: no animation with reduced motion`);
+  assert.equal(await clipboard(), 'needs its own tap', `${mode}: nothing written before Copy (reduced motion)`);
+  await press(page.locator('#h5-clipboard-cancel'));
+  await bar.waitFor({ state: 'hidden' });
+  assert.equal(await clipboard(), 'needs its own tap', `${mode}: Cancel copies nothing (reduced motion)`);
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await notices();
+
   // 6. Replayed history never copies or asks, even right after a gesture.
   await gesture();
   await page.evaluate(data => window.sockets[0].emit(JSON.stringify({ type: 'history', data, cols: 60, rows: 20 })), `$ ${osc('replayed')}`);
@@ -280,11 +351,59 @@ async function run(browser, touch) {
   await context.close();
 }
 
+// A small phone (320 x 568) with a long single-line request and the terminal's on-screen keyboard open: the bar stays inside the screen and the
+// terminal, under the header, the preview is cut with an ellipsis, the title is whole, the buttons wrap under the text at the right and are 44 px.
+async function narrow(browser) {
+  const { page, context, errors } = await openPage(browser, true, { width: 320, height: 568 });
+  await page.locator('[data-action="keyboard"]').tap();
+  await page.locator('#h5-osk').waitFor({ state: 'visible' });
+  await page.waitForTimeout(1600);
+  await page.evaluate(() => navigator.clipboard.writeText('before'));
+  const long = `npm run build && ${'a-very-long-path/'.repeat(12)}end-of-the-request`;
+  await page.evaluate(value => window.sockets[0].emit(value), osc(long));
+  const bar = page.locator('#h5-clipboard-bar');
+  await bar.waitFor({ state: 'visible' });
+  await settled(page);
+  const fit = await page.evaluate(() => {
+    const box = node => node.getBoundingClientRect();
+    const bar = box(document.querySelector('#h5-clipboard-bar'));
+    const terminal = box(document.querySelector('#h5-terminal'));
+    const header = box(document.querySelector('.h5-header'));
+    const text = document.querySelector('#h5-clipboard-text');
+    const title = document.querySelector('#h5-clipboard-title');
+    const copy = box(document.querySelector('#h5-clipboard-copy'));
+    const cancel = box(document.querySelector('#h5-clipboard-cancel'));
+    const body = box(document.querySelector('.h5-clipboard-body'));
+    return {
+      bar: { left: bar.left, right: bar.right, top: bar.top, bottom: bar.bottom }, terminal: { left: terminal.left, right: terminal.right, top: terminal.top, bottom: terminal.bottom }, headerBottom: header.bottom,
+      cut: text.scrollWidth > text.clientWidth + 1, titleWhole: title.scrollWidth <= title.clientWidth + 1,
+      copy: { w: copy.width, h: copy.height, top: copy.top, right: copy.right }, cancel: { w: cancel.width, h: cancel.height, right: cancel.right }, bodyBottom: body.bottom,
+      osk: document.querySelector('[data-action="keyboard"]').getAttribute('aria-pressed'), oskTop: box(document.querySelector('#h5-osk')).top,
+    };
+  });
+  assert.equal(fit.osk, 'true', '320px: the on-screen keyboard is open');
+  assert.ok(fit.bar.bottom <= fit.oskTop, `320px: the bar is above the on-screen keyboard ${JSON.stringify(fit)}`);
+  assert.ok(fit.bar.left >= 0 && fit.bar.right <= 320 && fit.bar.left >= fit.terminal.left && fit.bar.right <= fit.terminal.right, `320px: the bar fits the width ${JSON.stringify(fit)}`);
+  assert.ok(fit.bar.top >= fit.headerBottom && fit.bar.bottom <= fit.terminal.bottom, `320px: the bar is inside the terminal, under the header ${JSON.stringify(fit)}`);
+  assert.ok(fit.cut, '320px: the long preview is cut with an ellipsis');
+  assert.ok(fit.titleWhole, '320px: the title line is shown whole');
+  assert.ok(fit.copy.h >= 44 && fit.copy.w >= 44 && fit.cancel.h >= 44 && fit.cancel.w >= 44, `320px: Copy and Cancel are 44px targets ${JSON.stringify(fit)}`);
+  assert.ok(fit.copy.top >= fit.bodyBottom - 0.5 && fit.cancel.right <= fit.bar.right, `320px: the buttons wrap under the text ${JSON.stringify(fit)}`);
+  if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'copy-bar-320-osk.png') });
+  assert.equal(await page.evaluate(() => navigator.clipboard.readText()), 'before', '320px: nothing written before Copy');
+  await page.locator('#h5-clipboard-copy').tap();
+  await bar.waitFor({ state: 'hidden' });
+  assert.equal(await page.evaluate(() => navigator.clipboard.readText()), long, '320px: Copy writes the whole text');
+  assert.deepEqual(errors, []);
+  await context.close();
+}
+
 (async () => {
   const browser = await chromium.launch({ headless: true, ...(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {}) });
   try {
     await run(browser, true);
     await run(browser, false);
-    console.log('PASS: copy on select in touch (390 px) and pointer (1440 px) mode: double / triple tap and mouse drag / double click copy at once with the OSC 52 notice, Cmd+C no second notice, program copy after a gesture (split, duplicate merged), bar with preview without one (Copy / Cancel / expiry, immutable), the same Tap to copy bar for both sources, error notice, merge across sources, replay ignored.');
+    await narrow(browser);
+    console.log('PASS: copy on select in touch (390 px) and pointer (1440 px) mode: double / triple tap and mouse drag / double click copy at once with the OSC 52 notice, Cmd+C no second notice, program copy after a gesture (split, duplicate merged), bar with preview without one (Copy / Cancel / expiry, immutable; blue, icon, title, one slide and pulse, none with reduced motion), the same refused-copy bar for both sources, 320 px with a long text and the on-screen keyboard, error notice, merge across sources, replay ignored.');
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

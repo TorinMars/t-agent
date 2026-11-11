@@ -34,17 +34,42 @@ export function TerminalArea({ state, ui }) {
       )}
       {/* The copy bar, one for every copy from the terminal (public/js/terminal-clipboard.js): kind 'ask' is a program's copy without a recent
           gesture of the user (nothing is written before Copy); kind 'tap' is a copy the browser refused to write (a page selection or a program's
-          copy alike), written inside this tap. The preview is one line, cut to the bar's width; later output cannot change it. */}
+          copy alike), written inside this tap. The preview is one line, cut to the bar's width; later output cannot change it.
+          It is a filled blue bar (`notice` in theme.mjs, white text) so it stands out from the dark terminal: the copy icon, a title line,
+          the preview, then Copy (a white filled button) and Cancel (a text button). Keyed by the request, so each new request slides in and
+          pulses once (h5.css; off with reduced motion). */}
       {state.clipboard ? (
-        <Paper className="h5-clipboard-bar" id="h5-clipboard-bar" role="toolbar" aria-label={t('Copy to the clipboard')} elevation={4} data-kind={state.clipboard.kind} onMouseDown={event => event.preventDefault()}>
-          <span className="h5-clipboard-preview" id="h5-clipboard-text" translate="no" title={state.clipboard.text}>{state.clipboard.preview}</span>
-          <Button id="h5-clipboard-copy" size="small" onClick={() => ui.actions.clipboardConfirm()}>{state.clipboard.kind === 'ask' ? t('Copy') : t('Tap to copy')}</Button>
-          <Button id="h5-clipboard-cancel" size="small" color="inherit" onClick={() => ui.actions.clipboardCancel()}>{t('Cancel')}</Button>
+        <Paper
+          key={state.clipboard.id} className="h5-clipboard-bar" id="h5-clipboard-bar" role="toolbar" aria-label={t('Copy to the clipboard')} elevation={8}
+          data-kind={state.clipboard.kind} onMouseDown={event => event.preventDefault()} sx={CLIPBOARD_BAR}
+        >
+          <span className="h5-clipboard-icon" aria-hidden="true"><Icon name="copy" size={22} /></span>
+          <span className="h5-clipboard-body">
+            <span className="h5-clipboard-title" id="h5-clipboard-title">{state.clipboard.kind === 'ask' ? t('Copy request from the terminal') : t('Press Copy to finish copying')}</span>
+            <span className="h5-clipboard-preview" id="h5-clipboard-text" translate="no" title={state.clipboard.text}>{state.clipboard.preview}</span>
+          </span>
+          <span className="h5-clipboard-actions">
+            <Button id="h5-clipboard-copy" size="small" variant="contained" onClick={() => ui.actions.clipboardConfirm()} sx={CLIPBOARD_COPY}>{t('Copy')}</Button>
+            <Button id="h5-clipboard-cancel" size="small" color="inherit" onClick={() => ui.actions.clipboardCancel()} sx={CLIPBOARD_CANCEL}>{t('Cancel')}</Button>
+          </span>
         </Paper>
       ) : null}
     </Box>
   );
 }
+
+// The copy bar's colours come from the theme (`notice`); its layout and its one slide-in and pulse are `.h5-clipboard-*` in h5.css.
+// `backgroundImage: none` drops the dark theme's elevation overlay, which would grey the blue. A focused button gets a white ring.
+const FOCUS_RING = { '&.Mui-focusVisible': { outline: '2px solid #fff', outlineOffset: 2 } };
+const CLIPBOARD_BAR = {
+  bgcolor: 'notice.main', color: 'notice.contrastText', backgroundImage: 'none',
+  border: 1, borderColor: 'rgba(255, 255, 255, .28)', '--h5-clipboard-ring': theme => theme.palette.notice.ring,
+};
+const CLIPBOARD_COPY = {
+  bgcolor: 'notice.button', color: 'notice.main', fontWeight: 600, px: 2,
+  '&:hover': { bgcolor: 'notice.buttonHover' }, '&:active': { bgcolor: 'notice.buttonHover' }, ...FOCUS_RING,
+};
+const CLIPBOARD_CANCEL = { color: 'notice.contrastText', px: 1.5, '&:hover': { bgcolor: 'rgba(255, 255, 255, .14)' }, ...FOCUS_RING };
 
 
 // The bottom area (reference design): the draft box (hidden by default), then two rows of buttons. Row 1 are the function keys (one row that scrolls sideways); row 2 is the action row:

@@ -1,7 +1,8 @@
 // The two create dialogs of the task list, in real Chromium at phone size (390x844, touch; 320x568 for the narrow check) and computer size (1440x900,
 // pointer, permanent sidebar), with the routes mocked:
 // - New session: opened by the "+" of a task (the shown one, another one, a task of another service) and by "New session" in the empty terminal area. It
-//   names the task (and its service), acts on that row's own task and service, Enter in the name field makes a terminal, each choice works (New Terminal,
+//   names the task (and its service), acts on that row's own task and service, Enter in the name field makes a new session of the highlighted choice (Claude
+//   session first; the full keyboard flow is in test-h5-new-session-keys-browser.cjs), each choice works (New Terminal,
 //   Claude / Codex sessions with their sub-list and Back), Cancel, Escape, the back gesture and a tap beside it close it, busy and error are shown in it.
 // - New task: opened by "New task"; "Create on", the working directory hint and check, busy and error, closes when made and opens the new task.
 // Both stay usable with the on-screen keyboard up (a smaller fake visual viewport, as iOS), and keys typed while one is open do not go to the terminal.
@@ -13,7 +14,7 @@ const assert = require('node:assert/strict');
 const root = path.resolve(__dirname, '..');
 const ORIGIN = 'http://h5.test';
 const TYPES = { '.js': 'application/javascript', '.css': 'text/css', '.html': 'text/html' };
-const CHOICES = ['New Terminal', 'Claude session', 'Codex session'];
+const CHOICES = ['Claude session', 'Codex session', 'New Terminal'];
 const LOCAL_TASKS = [{ id: 1, title: 'Alpha', status: 'doing' }, { id: 2, title: 'Beta', status: 'doing' }, { id: 3, title: 'Gamma', status: 'doing' }];
 const REMOTE_TASKS = [{ id: 1, title: 'Remote one', status: 'doing' }]; // the same id as Alpha: the id alone does not say which task is meant
 const SHORT = { timeout: 2000 };
@@ -157,7 +158,7 @@ function assertUsable(g, label) {
 }
 
 const CASES = [
-  ['the "+" of the shown task: the dialog names it, focuses the name, Enter makes a named terminal', async t => {
+  ['the "+" of the shown task: the dialog names it, focuses the name, Enter makes a named Claude session (the highlighted choice)', async t => {
     await t.openDialog('Alpha');
     assert.equal(await t.page.locator('#h5-new-session-title').textContent(), 'New session');
     assert.equal(await t.page.locator('#h5-new-session-task').textContent(), 'Alpha');
@@ -170,7 +171,7 @@ const CASES = [
     await t.nameField.press('Enter');
     await t.gone('after Enter');
     await t.sessionName('Review');
-    assert.deepEqual(t.server.posts, [['/api/tasks/1/terminals', { title: 'Review' }]], 'one terminal in Alpha, with that name');
+    assert.deepEqual(t.server.posts, [['/api/tasks/1/terminals', { agent: 'claude', title: 'Review' }]], 'one new Claude session in Alpha, with that name');
     await t.sheetClosed();
   }],
   ['the "+" of a task that is not shown acts on that task', async t => {
@@ -304,7 +305,7 @@ const CASES = [
     await t.nameField.fill('Up');
     await t.nameField.press('Enter');
     await t.gone('after Enter');
-    assert.deepEqual(t.server.posts, [['/api/tasks/1/terminals', { title: 'Up' }]]);
+    assert.deepEqual(t.server.posts, [['/api/tasks/1/terminals', { agent: 'claude', title: 'Up' }]], 'Enter makes a new Claude session, the highlighted choice');
   }, ['phone', 'narrow']],
 
   // ── New task ──

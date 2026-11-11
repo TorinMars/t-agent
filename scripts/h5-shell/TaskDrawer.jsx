@@ -94,10 +94,21 @@ function useFocusedInView(open) {
   }, [open]);
 }
 
-// The New session dialog of the "+" of a task and of "New session" in the empty terminal area (h5.js `addSession`, `menu.naming`): the task's title (and its
-// service when it is not this machine), the optional name field, then the choices as full-width buttons (New Terminal, Claude session, Codex session; their
-// sub-lists replace them here) and Cancel. Enter in the field runs the first choice. The field takes the focus, as in the other dialogs. While the terminal
-// is being made nothing can be pressed and the dialog does not close; a failure is shown under the choices.
+// The shortcut that opens the New session dialog for the task shown (h5.js, the capture-phase keydown after Cmd/Ctrl+K), shown in the title of the "+".
+const APPLE = typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent || '');
+const NEW_SESSION_KEYS = APPLE ? ' (⌘⇧O)' : ' (Ctrl+Shift+O)';
+const optionId = index => `h5-new-session-option-${index}`;
+// A key that belongs to an input method composing text: Enter and the arrows are left to it.
+const composing = event => Boolean(event.nativeEvent && event.nativeEvent.isComposing) || event.keyCode === 229;
+
+// The New session dialog of the "+" of a task, of "New session" in the empty terminal area and of Cmd/Ctrl+Shift+O (h5.js `addSession`, `menu.naming`): the
+// task's title (and its service when it is not this machine), the optional name field, then the choices as full-width buttons and Cancel. The first list is
+// Claude session, Codex session, New Terminal (`pick` items): one is highlighted, Claude session first. The field takes the focus, as in the other dialogs;
+// Up and Down in it move the highlight (wrapping) while the focus stays in the field (`aria-activedescendant`), and Enter makes a NEW session of the highlighted
+// kind with the typed name (`menuPick`). Tab moves the focus into the choices, one stop (roving tabIndex: only the highlighted one is in the tab order); there
+// Up and Down move the highlight with the focus, Enter makes the focused kind, Shift+Tab goes back to the field. A press (pointer, or Space on a focused
+// choice) on Claude / Codex session opens its sub-list (New …, the earlier sessions, Back), which replaces the choices; there Enter in the field runs New ….
+// While the terminal is being made nothing can be pressed and the dialog does not close; a failure is shown under the choices.
 export function NewSessionDialog({ state, ui }) {
   const menu = state.menu && state.menu.naming ? state.menu : null;
   const open = Boolean(menu);
@@ -105,32 +116,76 @@ export function NewSessionDialog({ state, ui }) {
   if (menu && menu !== shown) setShown(menu);
   const view = menu || shown;
   useFocusedInView(open);
+  // The highlighted choice, for the list it was chosen in: a new list (another opening, a sub-list, Back) starts on its first choice again.
+  const [highlight, setHighlight] = useState({ items: null, at: 0 });
   const busy = Boolean(view && view.busy);
   const close = () => { if (!busy) ui.actions.menuCancel(); };
+  const picks = view ? view.items.map((item, index) => (item.pick ? index : -1)).filter(index => index >= 0) : [];
+  const at = view && highlight.items === view.items && highlight.at < picks.length ? highlight.at : 0;
+  const active = picks.length ? picks[at] : -1;
+  const setAt = next => setHighlight({ items: view.items, at: next });
+  const step = delta => (at + delta + picks.length) % picks.length;
+  const create = index => { if (!busy) { if (index >= 0) ui.actions.menuPick(index); else ui.actions.menuNameSubmit(); } };
+  const plainKey = event => !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey && !composing(event);
+  const arrow = event => (event.key === 'ArrowDown' ? 1 : event.key === 'ArrowUp' ? -1 : 0);
+  const fieldKey = event => {
+    if (!plainKey(event)) return;
+    if (event.key === 'Enter') { event.preventDefault(); create(active); return; }
+    if (arrow(event) && picks.length) { event.preventDefault(); setAt(step(arrow(event))); }
+  };
+  const optionKey = (event, index) => {
+    if (!plainKey(event)) return;
+    if (event.key === 'Enter') { event.preventDefault(); create(index); return; } // not the press of the button: that opens the sub-list
+    if (arrow(event)) {
+      event.preventDefault();
+      const next = (picks.indexOf(index) + arrow(event) + picks.length) % picks.length;
+      setAt(next);
+      const node = document.getElementById(optionId(picks[next]));
+      if (node) node.focus();
+    }
+  };
   return (
     <Dialog id="h5-new-session" open={open} onClose={close} fullWidth maxWidth="xs" aria-labelledby="h5-new-session-title" sx={CREATE_DIALOG_SX}>
       {view ? (
-        <Box component="form" id="h5-new-name" className="h5-menu-name" autoComplete="off" sx={DIALOG_FORM_SX} onSubmit={event => { event.preventDefault(); ui.actions.menuNameSubmit(); }}>
+        <Box component="form" id="h5-new-name" className="h5-menu-name" autoComplete="off" sx={DIALOG_FORM_SX} onSubmit={event => { event.preventDefault(); create(active); }}>
           <DialogTitle id="h5-new-session-title" sx={{ pb: 0.5 }}>{t('New session')}</DialogTitle>
           <DialogContent>
             <DialogContentText id="h5-new-session-task" variant="body2" translate="no" sx={{ overflowWrap: 'anywhere' }}>{view.taskTitle}</DialogContentText>
             {view.service ? <Typography id="h5-new-session-service" variant="caption" component="p" color="text.secondary" translate="no" sx={{ overflowWrap: 'anywhere' }}>{view.service}</Typography> : null}
             <TextField
               id="h5-new-name-input" key={view.task} name="name" size="small" fullWidth autoFocus defaultValue={view.name} placeholder={t('Name (optional)')} disabled={busy}
-              onChange={event => ui.actions.menuName(event.target.value)} sx={{ mt: 1.5 }}
-              slotProps={{ input: { sx: { fontSize: 14 } }, htmlInput: { maxLength: 40, enterKeyHint: 'go', autoCapitalize: 'off', spellCheck: false, 'aria-label': t('Name (optional)') } }}
+              onChange={event => ui.actions.menuName(event.target.value)} onKeyDown={fieldKey} sx={{ mt: 1.5 }}
+              slotProps={{ input: { sx: { fontSize: 14 } }, htmlInput: {
+                maxLength: 40, enterKeyHint: 'go', autoCapitalize: 'off', spellCheck: false, 'aria-label': t('Name (optional)'),
+                ...(active >= 0 ? { role: 'combobox', 'aria-expanded': 'true', 'aria-controls': 'h5-term-menu-actions', 'aria-autocomplete': 'none', 'aria-activedescendant': optionId(active) } : {}),
+              } }}
             />
             {view.sub ? <Typography id="h5-new-session-sub" variant="subtitle2" component="h3" color="text.secondary" sx={{ mt: 1.5 }}>{t(view.sub)}</Typography> : null}
-            <Box id="h5-term-menu-actions" className="h5-menu-actions" role="group" aria-label={t(view.sub || 'New session')} sx={{ display: 'flex', flexDirection: 'column', gap: 1, mt: view.sub ? 1 : 1.5 }}>
-              {view.items.map((item, index) => (
-                <Button
-                  key={`${index}:${item.label}`} variant="outlined" fullWidth disabled={busy} className={item.kind === 'danger' ? 'danger' : undefined} onClick={() => ui.actions.menuRun(index)}
-                  sx={{ justifyContent: 'flex-start', textAlign: 'left', overflowWrap: 'anywhere', minHeight: 40 }}
-                >
-                  {item.kind === 'raw' ? item.label : t(item.label)}
-                </Button>
-              ))}
+            <Box id="h5-term-menu-actions" className="h5-menu-actions" role={active >= 0 ? 'listbox' : 'group'} aria-label={t(view.sub || 'New session')} sx={{ display: 'flex', flexDirection: 'column', gap: 1, mt: view.sub ? 1 : 1.5 }}>
+              {view.items.map((item, index) => {
+                const option = item.pick && active >= 0;
+                const on = option && index === active;
+                return (
+                  <Button
+                    key={`${index}:${item.label}`} variant={on ? 'contained' : 'outlined'} disableElevation fullWidth disabled={busy}
+                    className={[item.kind === 'danger' ? 'danger' : '', on ? 'h5-choice-on' : ''].filter(Boolean).join(' ') || undefined}
+                    onClick={() => ui.actions.menuRun(index)}
+                    {...(option ? {
+                      id: optionId(index), role: 'option', 'aria-selected': on ? 'true' : 'false', tabIndex: on ? 0 : -1,
+                      onKeyDown: event => optionKey(event, index), onFocus: () => { if (!on) setAt(picks.indexOf(index)); },
+                    } : {})}
+                    sx={{
+                      justifyContent: 'flex-start', textAlign: 'left', overflowWrap: 'anywhere', minHeight: 40,
+                      // The focus ring stands outside the button, apart from the highlight (the filled button).
+                      '&:focus-visible, &.Mui-focusVisible': { outline: '2px solid', outlineColor: 'text.primary', outlineOffset: '2px' },
+                    }}
+                  >
+                    {item.kind === 'raw' ? item.label : t(item.label)}
+                  </Button>
+                );
+              })}
             </Box>
+            {active >= 0 ? <Typography id="h5-new-session-keys" variant="caption" component="p" color="text.secondary" sx={{ mt: 1, [TOUCH]: { display: 'none' } }}>{t('Enter to create · ↑↓ to choose')}</Typography> : null}
             {busy ? <Typography id="h5-new-session-busy" role="status" variant="body2" color="text.secondary" sx={{ mt: 1 }}>{t('Creating…')}</Typography> : null}
             {view.error ? <Typography id="h5-new-session-error" role="alert" variant="body2" color="error" sx={{ mt: 1, overflowWrap: 'anywhere' }}>{view.error}</Typography> : null}
           </DialogContent>
@@ -253,7 +308,7 @@ function Tasks({ state, ui, query, filter }) {
             </ListItemButton>
             {/* "⋯" (move, working directory, delete) left of the "+", which stays at the right end of the row */}
             {task.add ? <IconButton className="h5-task-more" size="small" sx={{ p: 0.5 }} aria-label={t('Task actions')} title={t('Task actions')} aria-haspopup="dialog" onClick={() => ui.actions.taskMore(task.ref)}><Icon name="taskMore" size={20} /></IconButton> : null}
-            {task.add ? <IconButton className="h5-task-add" size="small" sx={{ p: 0.5 }} aria-label={t('Session')} title={t('Session')} aria-haspopup="dialog" onClick={() => ui.actions.addSession(task.ref)}><AddIcon /></IconButton> : null}
+            {task.add ? <IconButton className="h5-task-add" size="small" sx={{ p: 0.5 }} aria-label={t('New session')} title={t('New session') + NEW_SESSION_KEYS} aria-haspopup="dialog" onClick={() => ui.actions.addSession(task.ref)}><AddIcon /></IconButton> : null}
           </Box>
           {task.expanded && task.sessions ? <Sessions ui={ui} taskId={task.ref} sessions={task.sessions} menu={state.menu} /> : null}
         </Box>

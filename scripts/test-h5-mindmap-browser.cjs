@@ -164,6 +164,7 @@ const topicCenter = async (page, text) => { const box = await topicEl(page, text
 // The library drags the selected topics; a drop is `in` over a topic, `before` or `after` just outside its top or bottom edge.
 const mouseDrag = async (page, from, to, toY) => {
   await topicEl(page, from).click();
+  await page.waitForTimeout(450); // a press right after the click counts as the second click of a double click, and the map pans instead of the topic moving
   const a = await topicCenter(page, from);
   const b = await topicCenter(page, to);
   await page.mouse.move(a.x, a.y);
@@ -390,6 +391,8 @@ const CASES = {
     await page.waitForTimeout(100);
     check(await page.evaluate(() => [...document.querySelectorAll('.mm-canvas .rhs > .me-wrapper > .me-parent > .me-tpc')].every(el => el.textContent !== 'Other leaf')), 'a mouse drop on the root changes nothing');
     await checkAllRight(page, 'a mouse drop on the root');
+    await page.keyboard.press(`${mod}+9`); // selecting a topic scrolls the canvas: the drop target must be on the screen
+    await settled(page);
     await mouseDrag(page, 'Left leaf', 'After', b => b.top + b.height + 6);
     await page.waitForFunction(() => [...document.querySelectorAll('.mm-canvas .rhs > .me-wrapper > .me-parent > .me-tpc')].some(el => el.textContent === 'Left leaf'));
     await checkAllRight(page, 'a topic dragged to first level');

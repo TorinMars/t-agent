@@ -783,10 +783,19 @@ function acknowledgeActivity(taskId, requestedTerminalId) {
   return { success: true };
 }
 
+// The terminals of a task whose shell is running (a session in memory with a PTY). Such a shell, and an agent in it, has the task's folder open, so the
+// folder cannot be renamed under it (services/task-rename.js).
+function liveTerminalIds(taskId) {
+  const prefix = `${Number(taskId)}:`;
+  const ids = [];
+  for (const [key, s] of sessions) if (key.startsWith(prefix) && s.pty && !s.startupError) ids.push(s.terminalId);
+  return ids;
+}
+
 function closeTaskTerminals(taskId) {
   // Legacy phone-only shells are not listed any more, but one may still be running.
   const phone = db.prepare("SELECT terminal_id FROM task_terminals WHERE task_id = ? AND substr(terminal_id, 1, 3) = 'h5-'").all(taskId);
   for (const item of [...listTerminals(taskId), ...phone]) controlSession(taskId, 'close', item.terminal_id);
 }
 
-module.exports = { terminalWorkDir, setHookEndpoint, setAttentionTerminals, attentionEnv, reportHook, activitySnapshot, subagentSnapshot, serveActivityStream, acknowledgeActivity, controlSession, handleWs, listTerminals, createTerminal, listAgentSessions, reopenCommand, renameTerminal, terminalCwd, assertTerminal, closeTaskTerminals, updateIdleTerminals };
+module.exports = { terminalWorkDir, setHookEndpoint, setAttentionTerminals, attentionEnv, reportHook, activitySnapshot, subagentSnapshot, serveActivityStream, acknowledgeActivity, controlSession, handleWs, listTerminals, createTerminal, listAgentSessions, reopenCommand, renameTerminal, terminalCwd, assertTerminal, closeTaskTerminals, liveTerminalIds, updateIdleTerminals };

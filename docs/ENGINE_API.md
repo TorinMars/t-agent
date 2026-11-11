@@ -77,6 +77,7 @@ The Client's proxy is `/api/remote-servers/:id/mindmaps` and `/api/remote-server
 - `PATCH /v1/tasks/:id`
 - `DELETE /v1/tasks/:id`
 - `POST /v1/tasks/:id/archive`, `POST /v1/tasks/:id/restore` (scope `tasks:write`, capability `tasks:archive`, see below)
+- `POST /v1/tasks/:id/rename-folder` (scope `tasks:write`, capability `tasks:rename-folder`, see below)
 - `GET /v1/tasks/:id/documents/:kind`
 - `PUT /v1/tasks/:id/documents/:kind`
 - `GET /v1/tasks/:id/todos`
@@ -98,6 +99,18 @@ Capability `tasks:archive` (additive, `api_version` stays 1). `tasks.archived_at
 - Until it is restored, these answer `409 { "error": "TASK_ARCHIVED" }`: `POST /v1/tasks/:id/terminals`, `POST /v1/terminal-sessions`, and chat requests that give an agent work (`POST .../agent/conversations`, `.../messages`, `.../fork`, `.../queue/add`, `.../queue/:eid/send`). A terminal WebSocket whose ticket was issued earlier is closed with `1008` and the reason `TASK_ARCHIVED`. Documents, to-dos and reading a chat stay allowed, and `DELETE /v1/tasks/:id` works.
 - Archived tasks are also left out of `/v1/terminal-activity`, `/v1/terminal-activity/stream`, `/v1/terminal-subagents`, `PUT /v1/tasks/reorder` and the repositories of `/v1/workspace/cleanup` (a request for one gets `TASK_ARCHIVED`). Their folders stay managed: `/v1/workspace/unmanaged` does not list them.
 - The Client's proxy uses the same paths under `/api/remote-servers/:id/tasks`. It reads `/v1/info` first, and an Engine without the capability gets `501 ARCHIVE_UNSUPPORTED` (such an Engine would ignore `archived=1` and answer its whole list). For an archived remote task the proxy accepts the browser's terminal WebSocket and closes it with `1008 TASK_ARCHIVED`, so the page does not keep reconnecting.
+
+### Renaming a task folder
+
+Capability `tasks:rename-folder` (additive, `api_version` stays 1). `POST /v1/tasks/:id/rename-folder` with `{ "name": "<new folder name>", "title": "<optional new title>" }` renames the task's working folder inside the same parent folder, moves the Claude Code and Codex sessions of that folder with it (so `claude --resume` / `codex resume` work from the new folder), and updates the task's paths, its terminals' folders and the title. All or nothing.
+
+- `200 { task, old_dir, new_dir, moved: { claude_folders, claude_files, codex_rollouts, codex_threads } }`.
+- `400 INVALID_FOLDER_NAME` (not one plain path segment), `400 TITLE_REQUIRED`, `400 FOLDER_NAME_UNCHANGED`, `404 TASK_NOT_FOUND`.
+- `409 FOLDER_NOT_RENAMABLE` with `reason` (protected or shared folder, holds another task's folder, Git worktree or submodule, repository with linked worktrees, symbolic link), `409 FOLDER_MISSING`, `409 FOLDER_EXISTS` with `path`.
+- `409 TASK_BUSY` with `terminals` (ids of the task's live terminals) and `chat` (true while a chat turn runs). Close the terminals (`POST /v1/terminal-sessions/:taskId/control` with `close`) and try again.
+- `500 RENAME_FAILED` (everything was put back) or `500 RENAME_ROLLBACK_FAILED` with `reason`.
+- The Client's proxy uses `POST /api/remote-servers/:id/tasks/:taskId/rename-folder`. It reads `/v1/info` first: an Engine without the capability gets `501 RENAME_FOLDER_UNSUPPORTED`. A refusal keeps its status, code, `reason`, `terminals`, `chat` and `path`.
+- A title-only rename is the existing `PUT` / `PATCH /v1/tasks/:id` with `{ "title": "..." }`.
 
 ## Terminals
 

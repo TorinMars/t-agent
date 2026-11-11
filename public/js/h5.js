@@ -906,6 +906,7 @@
     showMenu(serviceOf(from) ? `${item.title} \u00B7 ${serviceOf(from)}` : item.title, [
       ...steps.map(([label, step]) => [label, () => moveStep(step), null, null, null, !ui.taskOrder.stepTarget(display, key, step)]),
       ...ordered.map(group => [`${item.status === group.key ? '\u2713 ' : ''}${tr('Move to')} \u201C${tr(group.name)}\u201D`, () => void moveTask(from, item, group.key), 'raw']),
+      ['Rename', () => void askTaskRename(from, item)],
       ['Edit working directory', () => { closeTerminalMenu(); ui.set({ taskDialog: dialogFor('workdir', from, item) }); }],
       ...(choosesVisibility(from) ? [['Visible to', () => void askVisibility(from, item)]] : []),
       ...(archives(from) ? [['Archive', () => void askArchive(from, item)]] : []),
@@ -921,7 +922,13 @@
     } catch (error) { tell(`Could not update task: ${error.message}`, 'error'); }
   }
   const patchDialog = patch => ui.set(state => ({ taskDialog: state.taskDialog && { ...state.taskDialog, ...patch } }));
-  ui.actions.taskDialogClose = () => { if (!(ui.get().taskDialog || {}).busy) ui.set({ taskDialog: null }); };
+  ui.actions.taskDialogClose = () => {
+    const dialog = ui.get().taskDialog || {};
+    if (dialog.busy) return;
+    ui.set({ taskDialog: null });
+    // A rename that closed the shown terminal and then did not happen: the terminal opens again where it was.
+    if (dialog.kind === 'rename' && dialog.reopen && isShown(dialogSource(dialog), dialog.id) && terminalId === dialog.reopen && !session) connect();
+  };
   const DELETE_ERRORS = { DIRECTORY_NOT_SAFE_TO_DELETE: 'This directory cannot be deleted (protected or shared with other tasks); the task was not deleted' };
   ui.actions.taskDelete = async deleteDirectory => {
     const dialog = ui.get().taskDialog;
@@ -1195,6 +1202,96 @@
       } catch { /* the list is read again on the next visit */ }
     }
     tell('Saved', 'success');
+  };
+  // ── Renaming a task (the "Rename" of its "⋯"): the title through `PUT {tasksBase}/:id`, or the title and the folder through `POST {tasksBase}/:id/rename-folder`
+  // (services/task-rename.js), which moves the folder's Claude Code and Codex sessions with it. The folder part is offered on this machine and on an Engine with
+  // 'tasks:rename-folder' (asked for when not known yet: `folderSupported` is null until then). A task with open terminals is refused (TASK_BUSY with their ids):
+  // the dialog then offers to close them (the same path as a terminal's Close) and try again. See "Task rename" in DESIGN.md.
+  const renamesFolder = from => from.key === 'local' || Boolean(Array.isArray(from.capabilities) && from.capabilities.includes('tasks:rename-folder'));
+  const renameDialog = () => { const dialog = ui.get().taskDialog; return dialog && dialog.kind === 'rename' ? dialog : null; };
+  async function askTaskRename(from, item) {
+    closeTerminalMenu();
+    const known = from.key === 'local' || Array.isArray(from.capabilities);
+    ui.set({ taskDialog: dialogFor('rename', from, item, { folderSupported: known ? renamesFolder(from) : null, blocked: null }) });
+    if (known) return;
+    try { await readInfo(from); } catch { /* an older or offline Engine: the title only */ }
+    const dialog = renameDialog();
+    if (dialog && dialog.sourceKey === from.key && dialog.id === item.id) patchDialog({ folderSupported: renamesFolder(from) });
+  }
+  const RENAME_ERRORS = {
+    TASK_NOT_FOUND: 'This task no longer exists',
+    TITLE_REQUIRED: 'Enter a title',
+    INVALID_FOLDER_NAME: 'Enter a folder name without / or \\',
+    FOLDER_NAME_UNCHANGED: 'The folder already has this name',
+    FOLDER_EXISTS: 'A folder with this name already exists',
+    FOLDER_MISSING: 'The working directory does not exist',
+    FOLDER_NOT_RENAMABLE: 'This folder cannot be renamed',
+    RENAME_FOLDER_UNSUPPORTED: 'This server is too old to rename folders. Update it first',
+    RENAME_FAILED: 'The folder was not renamed; everything was put back',
+    RENAME_ROLLBACK_FAILED: 'Renaming failed and not everything could be put back',
+  };
+  // A closed terminal's shell (and an agent in it) is given a moment to write its last lines and exit before the folder moves.
+  const CLOSE_SETTLE_MS = 1500;
+  ui.actions.taskRenameSave = async ({ title, folder = null } = {}) => {
+    const dialog = renameDialog();
+    const from = dialogSource(dialog);
+    const item = from && findTask(from, dialog.id);
+    if (!item || dialog.busy) return;
+    const value = String(title || '').trim();
+    if (!value) { patchDialog({ error: tr('Enter a title') }); return; }
+    if (!folder && value === item.title) { ui.set({ taskDialog: null }); return; }
+    patchDialog({ busy: true, error: '', blocked: null });
+    try {
+      if (folder) await api('POST', `${from.tasksBase}/${item.id}/rename-folder`, { name: folder, ...(value !== item.title ? { title: value } : {}) });
+      else await api('PUT', `${from.tasksBase}/${item.id}`, { title: value });
+    } catch (error) {
+      const data = error.data || {};
+      if (error.message === 'TASK_BUSY') { patchDialog({ busy: false, blocked: { terminals: Array.isArray(data.terminals) ? data.terminals : [], chat: data.chat === true } }); return; }
+      if (error.message === 'RENAME_FOLDER_UNSUPPORTED' && from.capabilities) from.capabilities = from.capabilities.filter(name => name !== 'tasks:rename-folder');
+      const label = tr(RENAME_ERRORS[error.message] || error.message);
+      patchDialog({ busy: false, error: data.reason ? `${label}: ${data.reason}` : label, ...(error.message === 'RENAME_FOLDER_UNSUPPORTED' ? { folderSupported: false } : {}) });
+      return;
+    }
+    ui.set({ taskDialog: null });
+    tell(folder ? 'Task and folder renamed' : 'Task renamed', 'success');
+    await loadSource(from);
+    const fresh = findTask(from, item.id);
+    if (isShown(from, item.id) && fresh) { task = fresh; ui.set({ taskName: fresh.title }); }
+    if (!folder) return;
+    peeks.delete(taskRef(from, item.id));
+    if (!isShown(from, item.id)) return;
+    syncFiles(); // a new folder: a new tree
+    const current = task;
+    try {
+      const rows = await api('GET', `${from.tasksBase}/${current.id}/terminals`);
+      if (current === task && Array.isArray(rows)) {
+        const next = new Map(rows.map(row => [row.terminal_id, row]));
+        for (const row of terminals) { const update = next.get(row.terminal_id); if (update) row.work_dir = update.work_dir; }
+        renderTabs();
+      }
+    } catch { /* the list is read again on the next visit */ }
+    // The terminal that was shown was closed for the rename: it opens again in the new folder and resumes its agent session.
+    if (dialog.reopen && current === task && terminalId === dialog.reopen && !session) connect();
+  };
+  // TASK_BUSY: close the terminals the server named (as a terminal's Close does: the view is ended first), wait a moment, then save again.
+  ui.actions.taskRenameCloseRetry = async ({ title, folder } = {}) => {
+    const dialog = renameDialog();
+    const from = dialogSource(dialog);
+    if (!dialog || dialog.busy || !dialog.blocked || !from) return;
+    patchDialog({ busy: true, error: '' });
+    let reopen = dialog.reopen || null;
+    try {
+      for (const id of dialog.blocked.terminals) {
+        const wasCurrent = await controlTerminal({ from, taskId: dialog.id, row: { terminal_id: id } }, 'close');
+        if (wasCurrent) reopen = id;
+      }
+    } catch (error) {
+      patchDialog({ busy: false, error: `${tr('Could not close the terminals:')} ${tr(error.message)}` });
+      return;
+    }
+    await new Promise(resolve => setTimeout(resolve, CLOSE_SETTLE_MS));
+    patchDialog({ busy: false, blocked: null, reopen });
+    await ui.actions.taskRenameSave({ title, folder });
   };
   // The same rule as the server (path.isAbsolute): a POSIX path, or a Windows drive path.
   function isAbsolutePath(value) { return /^\//.test(value) || /^[A-Za-z]:[\\/]/.test(value); }

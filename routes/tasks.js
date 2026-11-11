@@ -13,6 +13,7 @@ const { createTaskFilesRouter } = require('./task-files');
 const { startWithoutDefaultTerminal } = require('../lib/task-default-terminal');
 const taskArchive = require('../services/task-archive');
 const { getTaskVisibility } = require('../services/task-visibility');
+const taskRename = require('../services/task-rename');
 
 const router = express.Router();
 
@@ -132,6 +133,11 @@ router.put('/:id', (req, res) => {
   if (!task) return res.status(404).json({ error: 'Task not found' });
 
   let { title, status, priority, due_date, md_path, work_dir, sort_order } = req.body;
+  // The same rule as creating a task: a title that is given must have text; it is saved without the spaces around it.
+  if (title !== undefined) {
+    title = typeof title === 'string' ? title.trim() : '';
+    if (!title) return res.status(400).json({ error: 'title is required' });
+  }
   let overrides;
   try { overrides = documents.pathOverrides(req.body, task); }
   catch (error) { return res.status(400).json({ error: error.message }); }
@@ -181,6 +187,14 @@ router.put('/:id', (req, res) => {
   });
 
   res.json(db.prepare('SELECT * FROM tasks WHERE id = ?').get(id));
+});
+
+// Rename the task's working folder (and its title, when `title` is given): `{ name, title? }`. See services/task-rename.js and "Task rename" in DESIGN.md.
+router.post('/:id/rename-folder', (req, res) => {
+  try {
+    const result = taskRename.renameTaskFolder({ db, owner: ownerFilter(req), taskId: req.params.id, body: req.body || {}, workRoot: toolWorkDir(req) });
+    res.json({ ...result, task: documents.resolveTask(result.task) });
+  } catch (error) { res.status(error.statusCode || 500).json(taskRename.errorBody(error)); }
 });
 
 router.get('/terminal-activity', (req, res) => {

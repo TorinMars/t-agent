@@ -764,7 +764,13 @@ function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS,
     }
   }
 
-  return { list, create, snapshot, subscribe, sendMessage, interrupt, answerPermission, setMode, setPreferences, listModels, setOpened, setTranslate, setCollapseKeyboard, refreshUsage, fork, setQueue, queueAdd, queueRemove, queueEdit, queueSendNow, summary, activity, listCommands, rename, remove, stopTask, refreshLimits };
+  // Whether a chat turn of the task is running or about to start (a queued message being sent): its folder must not move then (services/task-rename.js).
+  function taskBusy(taskId) {
+    for (const rt of runtimes.values()) if (rt.taskId === Number(taskId) && (rt.status === 'running' || rt.dispatching)) return true;
+    return false;
+  }
+
+  return { list, create, snapshot, subscribe, sendMessage, interrupt, answerPermission, setMode, setPreferences, listModels, setOpened, setTranslate, setCollapseKeyboard, refreshUsage, fork, setQueue, queueAdd, queueRemove, queueEdit, queueSendNow, summary, activity, listCommands, rename, remove, stopTask, taskBusy, refreshLimits };
 }
 
 let shared = null;

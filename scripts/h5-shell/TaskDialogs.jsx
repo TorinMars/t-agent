@@ -11,6 +11,85 @@ import FormControlLabel from '@mui/material/FormControlLabel';
 import TextField from './TextField.jsx';
 import Typography from '@mui/material/Typography';
 import { t } from './common.jsx';
+import { folderFollowsTitle, folderNameProblem, folderParts, joinFolder, titleToSlug } from './task-rename.mjs';
+
+// The Rename dialog of the task "⋯" menu (h5.js `askTaskRename`): the title and, where the task's service can (`folderSupported`), "Also rename the folder"
+// (off by default) with the old path, the new name (the slug of the new title, as a new task gets, until the person edits it) and the new path. The checkbox is
+// shown at once when the folder still has its title's name; otherwise one tap on "Rename the folder too" shows it. A task with open terminals (`blocked`, the
+// server's TASK_BUSY) offers to close them and try again; a running chat turn has to be stopped first.
+function RenameTaskDialog({ dialog, ui, service, close }) {
+  const [title, setTitle] = useState(dialog.title);
+  const [also, setAlso] = useState(false);
+  const [shown, setShown] = useState(() => folderFollowsTitle(dialog.workDir, dialog.title));
+  const [name, setName] = useState(() => titleToSlug(dialog.title.trim()));
+  const [named, setNamed] = useState(false); // the person edited the name: it no longer follows the title
+  const parts = folderParts(dialog.workDir);
+  const offer = Boolean(parts) && dialog.folderSupported === true;
+  const folder = offer && also ? name : null;
+  const problem = folder !== null ? folderNameProblem(folder) : '';
+  const changeTitle = value => { setTitle(value); if (!named) setName(titleToSlug(value.trim())); };
+  const submit = event => {
+    event.preventDefault();
+    if (problem) return;
+    void ui.actions.taskRenameSave({ title, folder });
+  };
+  const blocked = dialog.blocked;
+  const count = blocked ? blocked.terminals.length : 0;
+  return (
+    <Dialog id="h5-task-dialog" open onClose={close} fullWidth maxWidth="xs" aria-labelledby="h5-task-dialog-title">
+      <Box component="form" autoComplete="off" onSubmit={submit}>
+        <DialogTitle id="h5-task-dialog-title">{t('Rename task')}</DialogTitle>
+        <DialogContent>
+          {service}
+          <TextField
+            id="h5-task-rename-title" autoFocus fullWidth size="small" label={t('Title')} value={title} onChange={event => changeTitle(event.target.value)} sx={{ mt: 1 }}
+            slotProps={{ inputLabel: { shrink: true }, htmlInput: { maxLength: 200, enterKeyHint: 'done' } }}
+          />
+          {offer && !shown ? (
+            <Button id="h5-task-rename-folder-show" size="small" sx={{ mt: 1, px: 0, minHeight: 36 }} onClick={() => { setShown(true); setAlso(true); }}>{t('Rename the folder too')}</Button>
+          ) : null}
+          {offer && shown ? (
+            <FormControlLabel sx={{ mt: 1, display: 'flex' }} control={<Checkbox checked={also} disabled={dialog.busy} onChange={event => setAlso(event.target.checked)} slotProps={{ input: { id: 'h5-task-rename-folder' } }} />} label={t('Also rename the folder')} />
+          ) : null}
+          {dialog.folderSupported === null && parts ? <Typography id="h5-task-rename-checking" variant="caption" component="p" color="text.secondary" sx={{ mt: 1 }}>{t('Checking what this server can do…')}</Typography> : null}
+          {folder !== null ? (
+            <Box id="h5-task-rename-folder-box" sx={{ mt: 1 }}>
+              <Typography variant="caption" component="p" color="text.secondary">{t('Folder')}</Typography>
+              <Typography id="h5-task-rename-old" variant="body2" translate="no" sx={{ mb: 1.5, overflowWrap: 'anywhere' }}><code>{dialog.workDir}</code></Typography>
+              <TextField
+                id="h5-task-rename-name" fullWidth size="small" label={t('New folder name')} value={name}
+                onChange={event => { setName(event.target.value); setNamed(true); }} error={Boolean(problem)} helperText={problem ? t(problem) : null}
+                slotProps={{ inputLabel: { shrink: true }, htmlInput: { autoCapitalize: 'off', spellCheck: false } }}
+              />
+              <Typography variant="caption" component="p" color="text.secondary" sx={{ mt: 1 }}>{t('New folder')}</Typography>
+              <Typography id="h5-task-rename-new" variant="body2" translate="no" sx={{ overflowWrap: 'anywhere' }}><code>{joinFolder(parts, name)}</code></Typography>
+              <Typography id="h5-task-rename-note" variant="caption" component="p" color="text.secondary" sx={{ mt: 1 }}>{t('The Claude Code and Codex sessions of this folder move with it and still resume. Its terminals must be closed.')}</Typography>
+            </Box>
+          ) : null}
+          {blocked ? (
+            <Box id="h5-task-rename-busy" role="alert" sx={{ mt: 1.5 }}>
+              <Typography variant="body2" color="warning.main" sx={{ fontWeight: 700 }}>
+                {blocked.chat ? t('A chat turn of this task is running. Stop it, then try again.')
+                  : count === 1 ? t('1 terminal of this task is open. It must be closed before the folder can be renamed.')
+                    : t(`${count} terminals of this task are open. They must be closed before the folder can be renamed.`)}
+              </Typography>
+              {!blocked.chat && count ? (
+                <Button id="h5-task-rename-close" variant="outlined" color="warning" size="small" sx={{ mt: 1 }} disabled={dialog.busy} onClick={() => void ui.actions.taskRenameCloseRetry({ title, folder })}>
+                  {t('Close terminals and rename')}
+                </Button>
+              ) : null}
+            </Box>
+          ) : null}
+          {dialog.error ? <Typography id="h5-task-dialog-error" role="alert" variant="body2" color="error" sx={{ mt: 1, overflowWrap: 'anywhere' }}>{dialog.error}</Typography> : null}
+        </DialogContent>
+        <DialogActions>
+          <Button id="h5-task-dialog-cancel" color="inherit" onClick={close} disabled={dialog.busy}>{t('Cancel')}</Button>
+          <Button id="h5-task-dialog-ok" type="submit" variant="contained" disabled={dialog.busy || Boolean(problem) || !title.trim()}>{t('Save')}</Button>
+        </DialogActions>
+      </Box>
+    </Dialog>
+  );
+}
 
 // The dialogs of the task "⋯" menu (h5.js `ui.actions.taskMore`): the delete confirmation, with "Also delete the directory" (off by default;
 // the server refuses a protected or shared directory), the working directory of an existing task (the saved path is shown), and which linked machines can see a task.
@@ -24,6 +103,7 @@ export function TaskDialog({ state, ui }) {
   useEffect(() => { setAlsoDir(false); setDir(dialog ? dialog.workDir : ''); }, [key]);
   const close = () => ui.actions.taskDialogClose();
   const open = Boolean(dialog);
+  if (dialog && dialog.kind === 'rename') return <RenameTaskDialog key={key} dialog={dialog} ui={ui} service={service} close={close} />;
   if (dialog && dialog.kind === 'workdir') {
     return (
       <Dialog id="h5-task-dialog" open={open} onClose={close} fullWidth maxWidth="xs" aria-labelledby="h5-task-dialog-title">

@@ -5,6 +5,7 @@ const requireEngineAuth = require('../middleware/engine-auth');
 const tasks = require('../services/engine-tasks');
 const taskGroups = require('../services/task-groups');
 const taskArchive = require('../services/task-archive');
+const taskRename = require('../services/task-rename');
 const { exchangePairingCode, createAccessToken, hasScope } = require('../services/engine-auth');
 const { getEngineIdentity } = require('../services/engine-identity');
 const engineName = require('../services/engine-name');
@@ -123,6 +124,8 @@ function infoHandler(req, res) {
       // Parity with the Client's own task routes; older Engines simply lack these.
       // tasks:archive: GET /v1/tasks?archived=1, POST /v1/tasks/:id/archive and /restore. An older Engine ignores `archived`, so the Client checks for this first.
       'tasks:archive',
+      // tasks:rename-folder: POST /v1/tasks/:id/rename-folder renames the task's folder and moves its Claude Code and Codex sessions with it.
+      'tasks:rename-folder',
       'tasks:reorder', 'documents:create', 'documents:watch', 'files:assets', 'files:image', 'paths:validate', 'terminal:activity', 'terminal:activity-stream',
       'todos:read', 'todos:write',
       'terminal:interactive', 'terminal:control', 'terminal:multiple', 'token:pairing',
@@ -290,6 +293,14 @@ router.patch('/tasks/:id', requireEngineAuth('tasks:write'), (req, res) => {
 router.put('/tasks/:id', requireEngineAuth('tasks:write'), (req, res) => {
   try { res.json(tasks.updateTask(principal(req), req.params.id, req.body)); }
   catch (error) { errorResponse(res, error); }
+});
+
+// Rename the task's working folder, with its sessions (services/task-rename.js): `{ name, title? }`, capability tasks:rename-folder.
+router.post('/tasks/:id/rename-folder', requireEngineAuth('tasks:write'), (req, res) => {
+  try {
+    const result = taskRename.renameTaskFolder({ db, owner: principal(req), taskId: req.params.id, body: req.body || {}, workRoot: tasks.DEFAULT_BASE });
+    res.json({ ...result, task: tasks.publicTask(result.task) });
+  } catch (error) { res.status(error.statusCode || 500).json(taskRename.errorBody(error)); }
 });
 
 router.post('/tasks/:id/archive', requireEngineAuth('tasks:write'), (req, res) => {

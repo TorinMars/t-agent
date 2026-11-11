@@ -462,6 +462,28 @@ for (const action of ['archive', 'restore']) {
   router.post(`/:id/tasks/:taskId/${action}`, (req, res) => proxyArchive(req, res, `${taskPath(req)}/${action}`, { method: 'POST', body: {} }));
 }
 
+// Rename a task's folder on an Engine that advertises 'tasks:rename-folder' (an older one answers 501 RENAME_FOLDER_UNSUPPORTED before anything is sent).
+// A refusal keeps its status and code, and the reason, the live terminal ids and the clashing path that the Engine gave, so the page can offer to close them.
+router.post('/:id/tasks/:taskId/rename-folder', async (req, res) => {
+  const target = remoteTarget(req, res);
+  if (!target) return;
+  const supported = await remoteHas(target, res, 'tasks:rename-folder');
+  if (supported === null) return;
+  if (!supported) return res.status(501).json({ error: 'RENAME_FOLDER_UNSUPPORTED' });
+  const body = req.body || {};
+  const forwarded = { name: body.name, ...(body.title !== undefined ? { title: body.title } : {}) };
+  try { res.json(await request(target.row.base_url, `${taskPath(req)}/rename-folder`, target.token, { method: 'POST', body: forwarded, timeoutMs: 60_000 })); }
+  catch (error) {
+    const peer = error.peerBody || {};
+    res.status(error.statusCode || 502).json({
+      error: safeError(error),
+      ...(typeof peer.reason === 'string' ? { reason: peer.reason } : {}),
+      ...(Array.isArray(peer.terminals) ? { terminals: peer.terminals.filter(id => typeof id === 'string'), chat: peer.chat === true } : {}),
+      ...(typeof peer.path === 'string' ? { path: peer.path } : {}),
+    });
+  }
+});
+
 router.get('/:id/tasks', async (req, res) => {
   if (req.query.archived === '1') return proxyArchive(req, res, '/v1/tasks?archived=1');
   const row = getServer(req);

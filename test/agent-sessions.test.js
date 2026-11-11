@@ -89,3 +89,20 @@ test('runningSubagents counts the sub-agents of a Claude session whose log is un
   assert.equal(runningSubagents(dir, '../../etc', home), 0);
   assert.equal(runningSubagents(null, id, home), 0);
 });
+
+test('Claude project folder names: every other character becomes "-", and a name over 200 characters is cut and gets a hash of the path', () => {
+  const { claudeProjectName } = require('../lib/agent-sessions');
+  assert.equal(claudeProjectName('/Users/a b/proj.x'), '-Users-a-b-proj-x');
+  // Java's String.hashCode over the whole path, as Claude Code uses (absolute value, base 36).
+  const long = `/${'a'.repeat(199)}hello`;
+  let hash = 0;
+  for (const char of long) hash = ((hash << 5) - hash + char.charCodeAt(0)) | 0;
+  assert.equal(claudeProjectName(long), `-${'a'.repeat(199)}-${Math.abs(hash).toString(36)}`);
+  assert.equal(claudeProjectName(long).length, 201 + Math.abs(hash).toString(36).length);
+  const { home } = setup();
+  const dir = path.join(home, 'x'.repeat(210));
+  const folder = path.join(home, '.claude', 'projects', claudeProjectName(dir));
+  fs.mkdirSync(folder, { recursive: true });
+  fs.writeFileSync(path.join(folder, 'abcdef12-3456.jsonl'), jsonl([{ type: 'user', message: { content: 'long path' } }]));
+  assert.deepEqual(listSessions('claude', dir, home).map(row => row.title), ['long path']);
+});

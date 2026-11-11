@@ -36,6 +36,25 @@ export function DomIcon({ make }) {
 }
 export const terminalMark = agent => AgentChat => AgentChat.icon(agent);
 
+// The name of a device (an entry of `state.sources` or a section of the task list) for the person. A remote one has its own name (`label`). This machine
+// has its engine name (`name`, from `GET /api/system/version` `engine_name`) followed by a small "This machine" hint; an older server has no name, and then the
+// hint is the whole name, as before.
+export function deviceParts(source) {
+  if (!source || !(source.local || source.key === 'local')) return { name: (source && source.label) || '', hint: '' };
+  return source.name ? { name: source.name, hint: t('This machine') } : { name: t('This machine'), hint: '' };
+}
+export const deviceText = source => { const parts = deviceParts(source); return parts.hint ? `${parts.name} · ${parts.hint}` : parts.name; };
+// The same in a line: the name is cut with an ellipsis when space is short (the full text is its `title`), the hint always stays.
+export function DeviceName({ source, className, hintClassName }) {
+  const parts = deviceParts(source);
+  return (
+    <>
+      <Box component="span" className={className} translate="no" title={deviceText(source)} sx={{ flex: '0 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{parts.name}</Box>
+      {parts.hint ? <Box component="span" className={hintClassName} sx={{ flex: '0 0 auto', whiteSpace: 'nowrap', fontWeight: 400, opacity: 0.8 }}>{`· ${parts.hint}`}</Box> : null}
+    </>
+  );
+}
+
 // The name props of an icon button: the aria-label and the same native title (the browser's own tooltip on a computer; no MUI Tooltip, which
 // would add about 31 KB and on a touch screen open on a long press, in the way of hold-to-talk).
 export const named = label => ({ 'aria-label': label, title: label });

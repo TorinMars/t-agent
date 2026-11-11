@@ -2,11 +2,15 @@ import { useEffect, useRef, useState } from 'react';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import CircularProgress from '@mui/material/CircularProgress';
+import Dialog from '@mui/material/Dialog';
+import DialogActions from '@mui/material/DialogActions';
+import DialogContent from '@mui/material/DialogContent';
+import DialogTitle from '@mui/material/DialogTitle';
 import FormControlLabel from '@mui/material/FormControlLabel';
 import Paper from '@mui/material/Paper';
 import Switch from '@mui/material/Switch';
 import Typography from '@mui/material/Typography';
-import { Pill, api, t } from './common.jsx';
+import { DeviceName, Pill, api, errorText, t } from './common.jsx';
 import { EngineDialog, Feedback, Field, Group, Hint, failure, useFeedback } from './Form.jsx';
 import { UnlinkDialog, linkEngineKey, readLinks } from './ServiceLinks.jsx';
 
@@ -16,6 +20,9 @@ import { UnlinkDialog, linkEngineKey, readLinks } from './ServiceLinks.jsx';
 // Engine (/:id/check-update, /:id/apply-update, then /:id/update-status until it is back). After every change the task list is
 // read again (ui.actions.enginesChanged in h5.js). "Show in task list" is one switch per device, shown when there is more than one device; it only changes
 // what the list shows (h5.js `setDeviceVisible`, `/api/task-list/hidden-devices`), so it is here for a linked service too, whose other editing is blocked.
+// Every device has its own engine name, and "Rename" changes it: this machine through `/api/system/engine-name`, a remote row (linked ones too) through
+// `PUT /api/remote-servers/:id/name`, which renames that engine itself, or only the row here when the engine is too old (`name_source: 'local'`). A server
+// without these routes shows no Rename for this machine, and the remote rows keep the name field of "Edit connection" (no `can_rename`).
 
 export function errorLabel(code) {
   return ({
@@ -32,6 +39,8 @@ export function errorLabel(code) {
     NODE_PTY_LOAD_FAILED: 'The remote engine’s terminal native module check failed',
     DOCKER_MANAGED_UPDATE: 'This engine is managed by Docker. Update the image on the host',
     LAST_DEVICE_VISIBLE: 'At least one device must stay visible',
+    INVALID_ENGINE_NAME: 'Enter a name of 1 to 60 characters on one line',
+    ENGINE_ADMIN_REQUIRED: 'Only an administrator can rename this machine',
   })[code] || code || 'Operation failed';
 }
 const STATUS = { online: 'Online', offline: 'Offline', unauthorized: 'Authentication expired', local: 'This machine' };
@@ -56,6 +65,90 @@ function splitAddress(baseUrl) {
   catch { return { url: baseUrl || '', port: '' }; }
 }
 const codeOf = error => (error && error.message) || '';
+
+// The rule of the server for an engine name: 1 to 60 characters on one line, any language. Counted in characters, so a Chinese name has the same limit.
+export const NAME_MAX = 60;
+export function nameProblem(value) {
+  const text = String(value || '');
+  if (/[\r\n]/.test(text)) return 'A name must be on one line';
+  const trimmed = text.trim();
+  if (!trimmed) return 'Enter a name';
+  if (Array.from(trimmed).length > NAME_MAX) return 'A name can have at most 60 characters';
+  return '';
+}
+// What a failed rename says: a known code in words, an offline engine (502 without a code of its own), else the server's own text.
+function renameError(error) {
+  const code = codeOf(error);
+  const label = errorLabel(code);
+  if (label !== code) return t(label);
+  if (error && error.status === 502) return t('The engine is offline. Try again when it is online.');
+  return errorText(error) || t('Operation failed');
+}
+
+// Rename one device. `target`: { kind: 'local', current: { name, default_name, custom } } for this machine, or { kind: 'remote', server } for a row of the list.
+// This machine and a remote engine that keeps its own name (`name_source: 'engine'`) can go back to their default name (an empty name is the server's reset);
+// a row named only here (`name_source: 'local'`) has no default, so it has no reset. The field keeps what was typed when the save fails.
+function RenameDialog({ target, onClose, onDone }) {
+  const [value, setValue] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const last = useRef(null);
+  if (target) last.current = target; // the text stays while the dialog closes
+  const shown = last.current;
+  const local = Boolean(shown) && shown.kind === 'local';
+  const current = !shown ? '' : local ? shown.current.name : shown.server.name;
+  useEffect(() => { if (target) { setValue(current || ''); setError(''); setBusy(false); } }, [target]); // eslint-disable-line react-hooks/exhaustive-deps -- a new target fills the form
+  const send = async name => {
+    setBusy(true);
+    setError('');
+    try {
+      const saved = local ? await api('PUT', '/api/system/engine-name', { name }) : await api('PUT', `/api/remote-servers/${shown.server.id}/name`, { name });
+      setBusy(false);
+      await onDone(shown, saved);
+    } catch (failed) { setError(renameError(failed)); setBusy(false); }
+  };
+  const save = event => {
+    event.preventDefault();
+    if (busy) return;
+    const problem = nameProblem(value);
+    if (problem) { setError(t(problem)); return; }
+    void send(value.trim());
+  };
+  const onlyHere = !local && Boolean(shown) && shown.server.name_source === 'local';
+  // This machine says whether its name is the default one; a remote engine does not, so its reset is always offered.
+  const resettable = Boolean(shown) && (local || shown.server.name_source === 'engine');
+  const resetDisabled = busy || (local && !shown.current.custom);
+  return (
+    <Dialog id="h5-engine-rename" open={Boolean(target)} onClose={busy ? undefined : onClose} fullWidth maxWidth="xs" aria-labelledby="h5-engine-rename-title">
+      <Box component="form" autoComplete="off" noValidate onSubmit={save}>
+        <DialogTitle id="h5-engine-rename-title" sx={{ fontSize: 18 }}>{t('Rename engine')}</DialogTitle>
+        <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 1.25 }}>
+          <Typography variant="body2" color="text.secondary" component="div">
+            {t('Current name')}
+            <Box component="strong" id="h5-engine-rename-current" translate="no" sx={{ display: 'block', color: 'text.primary', overflowWrap: 'anywhere' }}>{current}</Box>
+          </Typography>
+          <Field
+            id="h5-engine-rename-name" label="Name" value={value} autoFocus disabled={busy} error={Boolean(error)}
+            onChange={event => { setValue(event.target.value); setError(''); }} htmlInput={{ autoCapitalize: 'sentences', enterKeyHint: 'done' }}
+          />
+          {local ? (
+            <Typography id="h5-engine-rename-default" variant="body2" color="text.secondary" sx={{ overflowWrap: 'anywhere' }}>
+              {t('Default name:')} <span translate="no">{shown.current.default_name}</span>
+            </Typography>
+          ) : null}
+          {onlyHere ? <Typography id="h5-engine-rename-only-here" variant="body2" color="warning.main">{t('This engine is too old to be renamed. The new name only changes on this device.')}</Typography> : null}
+          {busy ? <Box id="h5-engine-rename-busy" role="status" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}><CircularProgress size={16} /><Typography variant="body2" component="span">{t('Saving…')}</Typography></Box> : null}
+          {error ? <Typography id="h5-engine-rename-error" role="alert" variant="body2" color="error" sx={{ overflowWrap: 'anywhere' }}>{error}</Typography> : null}
+        </DialogContent>
+        <DialogActions sx={{ flexWrap: 'wrap', gap: 0.5 }}>
+          {resettable ? <Button id="h5-engine-rename-reset" color="inherit" disabled={resetDisabled} onClick={() => void send('')} sx={{ mr: 'auto' }}>{t('Reset to default')}</Button> : null}
+          <Button id="h5-engine-rename-cancel" color="inherit" disabled={busy} onClick={onClose}>{t('Cancel')}</Button>
+          <Button id="h5-engine-rename-save" type="submit" variant="contained" disabled={busy}>{t('Save')}</Button>
+        </DialogActions>
+      </Box>
+    </Dialog>
+  );
+}
 
 function ConnectDialog({ state, open, onClose, onDone }) {
   const [form, setForm] = useState({ url: '', port: '', token: '' });
@@ -106,7 +199,9 @@ function EditDialog({ state, server, onClose, onDone }) {
     setResult({ message: '', ok: false });
   }, [server]);
   const set = key => event => setForm(current => ({ ...current, [key]: event.target.value }));
-  const values = () => ({ name: form.name.trim(), url: form.url.trim(), port: form.port });
+  // A row that can be renamed changes its name with "Rename" only: this form then neither shows nor sends it.
+  const named = Boolean(server) && !server.can_rename;
+  const values = () => ({ ...(named ? { name: form.name.trim() } : {}), url: form.url.trim(), port: form.port });
   const test = async () => {
     setBusy(true);
     try { await api('POST', `/api/remote-servers/${server.id}/test`, values()); setResult({ message: 'Connected; the token is valid', ok: true }); }
@@ -128,8 +223,8 @@ function EditDialog({ state, server, onClose, onDone }) {
         <Button id="h5-engine-edit-save" variant="contained" disabled={busy} onClick={() => void save()}>{t('Save')}</Button>
       </>}
     >
-      <Field id="h5-engine-edit-name" label="Name" value={form.name} onChange={set('name')} htmlInput={{ maxLength: 80 }} sx={{ mt: 1 }} />
-      <Field id="h5-engine-edit-url" label="URL" value={form.url} onChange={set('url')} placeholder={t('e.g. https://tasks.example.com')} />
+      {named ? <Field id="h5-engine-edit-name" label="Name" value={form.name} onChange={set('name')} htmlInput={{ maxLength: 80 }} sx={{ mt: 1 }} /> : null}
+      <Field id="h5-engine-edit-url" label="URL" value={form.url} onChange={set('url')} placeholder={t('e.g. https://tasks.example.com')} sx={named ? undefined : { mt: 1 }} />
       <Field id="h5-engine-edit-port" label="Port" type="number" value={form.port} onChange={set('port')} placeholder={t('May be left empty for HTTPS')} htmlInput={{ inputMode: 'numeric', min: 1, max: 65535 }} />
       <Hint>{t('The token saved for this connection is reused, so you do not need to enter it again. The new address is saved only after it verifies successfully.')}</Hint>
       <Feedback id="h5-engine-edit-result" feedback={{ message: result.message ? t(result.message) : '', error: !result.ok }} />
@@ -262,13 +357,18 @@ function ShowInList({ device, hidden, last, onChange }) {
   );
 }
 
+// The buttons of a row (44px on a touch screen, from the theme), and the line of its name (a long name is cut, `DeviceName`).
+const ACTIONS = { display: 'flex', flexWrap: 'wrap', gap: 0.5 };
+const NAME = { flex: '1 1 auto', minWidth: 0, display: 'flex', alignItems: 'baseline', gap: 0.75, fontWeight: 700 };
+
 // `link`: this Engine is a linked service (ServiceLinks.jsx). Its address and token belong to the link, so they cannot be edited, and removing it ends the link.
 // `show`: the props of its "Show in task list" switch, or null when the switches do not appear.
-function EngineRow({ server, link, busy, show, onCheck, onUpdate, onEdit, onRemove, feedback }) {
+// `onRename`: null when this row cannot be renamed (an older server).
+function EngineRow({ server, link, busy, show, onCheck, onUpdate, onEdit, onRename, onRemove, feedback }) {
   return (
     <Paper variant="outlined" className="h5-engine-row" data-engine={server.id} sx={{ display: 'flex', flexDirection: 'column', gap: 0.75, p: 1 }}>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
-        <strong className="h5-engine-name" style={{ minWidth: 0, overflowWrap: 'anywhere', flex: '1 1 auto' }}>{server.name}</strong>
+        <Box component="strong" sx={NAME}><DeviceName source={{ key: `remote:${server.id}`, label: server.name }} className="h5-engine-name" /></Box>
         {link ? <Typography className="h5-engine-linked" variant="caption" color="text.secondary" sx={{ flexShrink: 0, whiteSpace: 'nowrap' }}>{t('Linked')}</Typography> : null}
         <Pill className="h5-engine-status" tone={statusColor(server.status)} label={t(statusLabel(server.status))} />
       </Box>
@@ -277,7 +377,8 @@ function EngineRow({ server, link, busy, show, onCheck, onUpdate, onEdit, onRemo
       </Typography>
       {server.last_error && server.status !== 'online' ? <Typography className="h5-engine-error" variant="caption" color="error">{t(errorLabel(server.last_error))}</Typography> : null}
       {show ? <ShowInList {...show} /> : null}
-      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+      <Box sx={ACTIONS}>
+        {onRename ? <Button size="small" variant="outlined" className="h5-engine-rename" onClick={onRename}>{t('Rename')}</Button> : null}
         <Button size="small" variant="outlined" className="h5-engine-check" disabled={busy} onClick={onCheck}>{t('Check')}</Button>
         <Button size="small" variant="outlined" className="h5-engine-update" onClick={onUpdate}>{t('Check for updates')}</Button>
         {link ? null : <Button size="small" variant="outlined" className="h5-engine-edit" onClick={onEdit}>{t('Edit connection')}</Button>}
@@ -294,6 +395,8 @@ export function EnginesGroup({ state, ui, linksVersion, onLinksChanged }) {
   const [links, setLinks] = useState([]);
   const [unlinking, setUnlinking] = useState(null);
   const [localVersion, setLocalVersion] = useState(null);
+  const [localName, setLocalName] = useState(null); // { name, default_name, custom } of /api/system/engine-name, or null on an older server (no Rename)
+  const [renaming, setRenaming] = useState(null); // the target of RenameDialog
   const [checking, setChecking] = useState(null); // id of the Engine being checked
   const [rowFeedback, setRowFeedback] = useState({}); // id -> { message, error }
   const [connecting, setConnecting] = useState(false);
@@ -302,13 +405,15 @@ export function EnginesGroup({ state, ui, linksVersion, onLinksChanged }) {
   const [feedback, say] = useFeedback();
   const load = async ({ keep = false } = {}) => {
     try {
-      const [list, version, linked] = await Promise.all([
+      const [list, version, linked, own] = await Promise.all([
         api('GET', '/api/remote-servers'),
         api('GET', '/api/system/version').catch(() => null),
         readLinks().catch(() => null),
+        api('GET', '/api/system/engine-name').catch(() => null),
       ]);
       setServers(Array.isArray(list) ? list : []);
       setLocalVersion(version && version.app_version ? version.app_version : null);
+      setLocalName(own && typeof own.name === 'string' ? own : null);
       setLinks(linked || []);
       if (!keep) say('');
     } catch (error) { say(failure(error), true); }
@@ -346,6 +451,13 @@ export function EnginesGroup({ state, ui, linksVersion, onLinksChanged }) {
     catch (error) { say(`${t(errorLabel(codeOf(error)))}`, true); }
   };
   const showProps = device => (switches ? { device, hidden: hidden.keys.includes(device), last: visibleDevices.length === 1 && visibleDevices[0] === device, onChange: (key, visible) => void setVisible(key, visible) } : null);
+  // After a rename: this list, the task list and every other place that names a device (the same refresh as any change here); the Linked services list too.
+  const renamed = async target => {
+    setRenaming(null);
+    if (target.kind === 'remote' && linkOf(target.server)) onLinksChanged();
+    await changed(null);
+    say('Saved');
+  };
   const remove = async server => {
     const link = linkOf(server);
     if (link) { setUnlinking(link); return; }
@@ -358,17 +470,19 @@ export function EnginesGroup({ state, ui, linksVersion, onLinksChanged }) {
       <Hint>{t('Engines are the machines whose tasks and terminals this page shows. This machine is always there; connect other Clients with their address and a pairing code made under “Remote service” on that Client.')}</Hint>
       <Box id="h5-engine-list" sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
         <Paper variant="outlined" className="h5-engine-row" data-engine="local" sx={{ display: 'flex', flexDirection: 'column', gap: 0.75, p: 1 }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <strong style={{ flex: '1 1 auto' }}>{t('This machine')}</strong>
-            <Typography variant="caption" color="text.secondary" id="h5-engine-local-version">{versionText(localVersion)}</Typography>
-            <Pill tone="success" label={t('Local')} />
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
+            <Box component="strong" sx={NAME}><DeviceName source={{ key: 'local', name: localName ? localName.name : '' }} className="h5-engine-name" hintClassName="h5-engine-hint" /></Box>
+            <Pill tone="success" label={t('Local')} sx={{ flexShrink: 0 }} />
           </Box>
+          <Typography className="h5-engine-meta" variant="caption" color="text.secondary"><span id="h5-engine-local-version">{versionText(localVersion)}</span></Typography>
           {switches ? <ShowInList {...showProps('local')} /> : null}
+          {localName ? <Box sx={ACTIONS}><Button size="small" variant="outlined" className="h5-engine-rename" onClick={() => setRenaming({ kind: 'local', current: localName })}>{t('Rename')}</Button></Box> : null}
         </Paper>
         {servers.map(server => (
           <EngineRow
             key={server.id} server={server} link={linkOf(server)} busy={checking === server.id} show={showProps(`remote:${server.id}`)} feedback={rowFeedback[server.id] || { message: '', error: false }}
             onCheck={() => void check(server)} onUpdate={() => setUpdating(server)} onEdit={() => setEditing(server)} onRemove={() => void remove(server)}
+            onRename={server.can_rename ? () => setRenaming({ kind: 'remote', server }) : null}
           />
         ))}
         {servers.length ? null : <Hint id="h5-engine-empty">{t('No remote engines connected yet')}</Hint>}
@@ -378,6 +492,7 @@ export function EnginesGroup({ state, ui, linksVersion, onLinksChanged }) {
       <ConnectDialog state={state} open={connecting} onClose={() => setConnecting(false)} onDone={created => { setConnecting(false); void changed(null); say(`${t('Connected')}: ${created && created.name ? created.name : ''}`); }} />
       <EditDialog state={state} server={editing} onClose={() => setEditing(null)} onDone={server => { setEditing(null); void changed(`remote:${server.id}`); say('Saved'); }} />
       <UnlinkDialog link={unlinking} onClose={() => setUnlinking(null)} onDone={async link => { setUnlinking(null); onLinksChanged(); if (ui.actions.enginesChanged) await ui.actions.enginesChanged(linkEngineKey(link)); say('Unlinked'); }} />
+      <RenameDialog target={renaming} onClose={() => setRenaming(null)} onDone={renamed} />
       <UpdateDialog state={state} server={updating} onClose={() => { setUpdating(null); void load(); }} onUpdated={server => void changed(`remote:${server.id}`)} />
     </Group>
   );

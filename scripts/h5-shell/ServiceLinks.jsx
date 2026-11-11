@@ -241,7 +241,8 @@ function LinkRow({ link, onUnlink }) {
   return (
     <Paper variant="outlined" className="h5-link-row" data-link={link.id} sx={{ display: 'flex', flexDirection: 'column', gap: 0.75, p: 1 }}>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
-        <strong className="h5-link-name" translate="no" style={{ minWidth: 0, overflowWrap: 'anywhere', flex: '1 1 auto' }}>{link.name}</strong>
+        {/* The engine name of the other service (the server keeps it current); a long one is cut, the full name is its title. */}
+        <strong className="h5-link-name" translate="no" title={link.name} style={{ minWidth: 0, flex: '1 1 auto', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{link.name}</strong>
         <Pill className="h5-link-status" tone={STATE_TONE[link.state] || 'default'} label={t(STATE[link.state] || 'Unknown')} sx={{ flexShrink: 0 }} />
       </Box>
       <Typography className="h5-link-direction" variant="caption" color="text.secondary" sx={{ overflowWrap: 'anywhere' }}>{[direction, link.peer_url].filter(Boolean).join(' · ')}</Typography>

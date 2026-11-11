@@ -164,8 +164,12 @@
   // show the old row, or connect to a terminal that is going away, so `loadTerminals` and `loadPeek` wait for it. Without one there is nothing to wait for.
   const actionsRunning = new Map();
   const actionsDone = (from, taskId) => actionsRunning.get(taskRef(from, taskId));
+  // How many of them were ever started, by Engine and task: a list read while one started may be older than that action (`loadTerminals` reads it again).
+  const actionStarts = new Map();
+  const actionsStarted = (from, taskId) => actionStarts.get(taskRef(from, taskId)) || 0;
   function trackAction(target, pending) {
     const key = taskRef(target.from, target.taskId);
+    actionStarts.set(key, (actionStarts.get(key) || 0) + 1);
     const all = Promise.all([actionsRunning.get(key), pending.catch(() => {})]).then(() => { if (actionsRunning.get(key) === all) actionsRunning.delete(key); });
     actionsRunning.set(key, all);
     return pending;
@@ -485,7 +489,8 @@
   }
 
   // from, item: the task and its service (`item` null: no task is shown). target: where to go in the task, { terminal: id } or { chat: row } (a chat link, see
-  // `openChatFromLink`); without one, the task opens on its terminal. stay: the task sheet of a phone stays open (the "+" of a task that was not selected opens the New session
+  // `openChatFromLink`); without one, the task opens on its terminal. `target.known`: the terminals of that task just read elsewhere (the next-session button), used like
+  // the list already shown under its row (see `loadTerminals`). stay: the task sheet of a phone stays open (the "+" of a task that was not selected opens the New session
   // dialog over the sheet). remember: false for a fallback at page load, so the service that was remembered is tried again on the next one.
   function selectTask(from, item, target = null, { stay = false, remember = true } = {}) {
     const next = item ? from : LOCAL;
@@ -501,6 +506,9 @@
     if (left) void loadPeek(leftFrom, left);
     void syncWakeLock();
     const ref = item ? taskRef(next, item.id) : null;
+    // What is already listed under its row (a task that was expanded, or selected before) is carried over to `terminals`, so its sessions and count stay on screen.
+    const peek = item ? peeks.get(ref) : null;
+    const known = target && Array.isArray(target.known) ? target.known : peek && peek.status === 'ready' ? peek.terminals : null;
     if (item) { peeks.delete(ref); expanded.add(ref); } // the other open lists stay open
     // The New session dialog acts on the selected task, so it cannot stay open for another one (the "+" of a task lands here too, and then opens its own).
     const menu = ui.get().menu;
@@ -513,7 +521,7 @@
     syncFeeds(); // the service of the shown task comes first for a live stream
     syncFiles();
     if (!stay) closeTasks();
-    terminalsLoaded = loadTerminals();
+    terminalsLoaded = loadTerminals(known);
     if (target && target.chat) mountAgent(target.chat);
   }
 
@@ -648,7 +656,8 @@
       }
       return;
     }
-    if (row.kind === 'terminal') selectTask(from, item, { terminal: row.id });
+    // `row.known`: the terminals of that task, when the caller has just read them (the next-session button).
+    if (row.kind === 'terminal') selectTask(from, item, { terminal: row.id, known: row.known });
     else selectTask(from, item);
   };
   // ── Next running or pending session (row 2, `#h5-cycle`) ──
@@ -675,9 +684,10 @@
       ? terminals : api('GET', `${from.tasksBase}/${item.id}/terminals`).catch(() => []))));
     const out = [];
     order.forEach((item, index) => {
-      for (const row of Array.isArray(lists[index]) ? lists[index] : []) {
+      const rows = Array.isArray(lists[index]) ? lists[index] : [];
+      for (const row of rows) {
         const state = stateOf(item.id, row.terminal_id);
-        if (state) out.push({ from, taskId: item.id, terminalId: row.terminal_id, state });
+        if (state) out.push({ from, taskId: item.id, terminalId: row.terminal_id, state, rows });
       }
     });
     return out;
@@ -700,7 +710,8 @@
       const here = list.findIndex(entry => isShown(entry.from, entry.taskId) && entry.terminalId === terminalId && !agentChat);
       if (here >= 0 && list.length === 1) { tell('This is the only running or pending session'); return; }
       const next = list[(here + 1) % list.length]; // not in the list (here = -1): the first one
-      ui.actions.openRow(taskRef(next.from, next.taskId), { kind: 'terminal', id: next.terminalId }); // the same path as a tap in the task sheet
+      // The same path as a tap in the task sheet. The list of that task was just read, so its terminal is shown at once (a copy: `terminals` is changed in place).
+      ui.actions.openRow(taskRef(next.from, next.taskId), { kind: 'terminal', id: next.terminalId, known: next.rows.map(row => ({ ...row })) });
     } catch (error) {
       tell(`Could not read the session states: ${error.message}`, 'error');
     } finally { cycling = false; }
@@ -1129,36 +1140,76 @@
 
   // The list of the selected task could not be read: the next open of the list reads it again.
   function retryTerminals() { if (task && terminalsState === 'error') terminalsLoaded = loadTerminals(); }
-  async function loadTerminals() {
+  // known: the terminals of this task that the list already shows (the sessions under its expanded row, see `selectTask`). They are carried over, so the row keeps
+  // its sessions and count without a gap while the list is read again, and the terminal to show (the tapped one, else the saved one, else the first) is shown and
+  // connected at once instead of after that read: a remote service answers in hundreds of milliseconds. The answer then reconciles: rows, names and count are
+  // the server's, and a terminal that is gone meanwhile is closed and the same rules choose another. Nothing connects early while a Restart or Delete of that task
+  // is on its way (the terminal may be the one going away). Without known terminals the list is read first, as for a task never expanded ("Loading…").
+  async function loadTerminals(known = null) {
     hideShown(); // another task: the terminal shown so far stays warm (WARM_MAX)
-    terminals = [];
-    terminalsState = 'loading';
+    const carried = task && Array.isArray(known) && known.length ? [...known] : null;
+    terminals = carried || [];
+    terminalsState = carried ? 'ready' : 'loading';
     const seq = (terminalsSeq += 1);
-    renderTabs();
-    if (!task) { showEmpty('Choose a task to open its phone terminal'); return; }
+    if (!task) { renderTabs(); showEmpty('Choose a task to open its phone terminal'); return; }
     const current = task;
     const from = source;
-    showEmpty('Loading…');
-    await actionsDone(from, current.id); // a Restart or Delete started from its row before it was selected
-    if (seq !== terminalsSeq) return;
+    const savedKey = `terminal:${from.key}:${current.id}`;
+    const early = Boolean(carried && !actionsDone(from, current.id));
+    if (early) {
+      terminalId = [wantedTerminal, store.get(savedKey)].find(id => id && carried.some(row => row.terminal_id === id)) || carried[0].terminal_id;
+      if (earlySocket && earlySocket.terminalId !== terminalId) dropEarlySocket();
+      renderTabs();
+      connect(); // a warm one is shown as it is
+    } else {
+      if (carried) terminalId = null; // the id of the task left (every older task has a `default`) must not mark one of these rows as the current one
+      renderTabs();
+      showEmpty('Loading…');
+    }
     let rows;
-    try { rows = await api('GET', `${from.tasksBase}/${current.id}/terminals`); }
-    catch (error) {
+    try {
+      for (;;) {
+        await actionsDone(from, current.id); // a Restart or Delete started from its row before it was selected, or from a carried row since
+        if (seq !== terminalsSeq) return;
+        const started = actionsStarted(from, current.id);
+        rows = await api('GET', `${from.tasksBase}/${current.id}/terminals`);
+        if (seq !== terminalsSeq) return;
+        if (actionsStarted(from, current.id) === started) break; // else this list may be older than that action: read again once it is done
+      }
+    } catch (error) {
       // A 404: the task may be gone from this service (deleted, or hidden from this machine). The list says, and when it is, `taskGone` has already moved the page on.
       if (error.status === 404) await recheckSource(from);
-      if (seq === terminalsSeq) { terminalsState = 'error'; showEmpty(`Could not load terminals: ${error.message}`); renderTabs(); }
+      if (seq !== terminalsSeq) return;
+      // The row says the list could not be read, and the next open of the list reads it again. A terminal connected early stays shown (a lost one reconnects or
+      // ends by itself); only the terminal area of a task with nothing shown says so.
+      terminals = [];
+      terminalsState = 'error';
+      wantedTerminal = null;
+      if (!(early && session && !session.disposed)) showEmpty(`Could not load terminals: ${error.message}`);
+      renderTabs();
       return;
     }
-    if (seq !== terminalsSeq) return;
     terminalsState = 'ready';
     terminals = Array.isArray(rows) ? rows : [];
+    const listed = id => terminals.some(row => row.terminal_id === id);
+    // A terminal of this task that is no longer listed was ended elsewhere: its views here go too (the shown one included, so its socket does not linger).
+    closeWarm(item => item.source === from && String(item.task.id) === String(current.id) && !listed(item.terminalId));
     if (!terminals.length) { showNoTerminal(); renderTabs(); return; }
-    const saved = store.get(`terminal:${from.key}:${current.id}`);
     const wanted = wantedTerminal; // a session that was tapped in the task sheet
     wantedTerminal = null;
-    terminalId = [wanted, saved].find(id => id && terminals.some(row => row.terminal_id === id)) || terminals[0].terminal_id;
+    if (early && terminalId && listed(terminalId) && session && !session.disposed && session.terminalId === terminalId) {
+      // Still there and shown: it stays connected; only the rows, names and count follow the server.
+      if (wanted && terminalId === wanted) store.set(savedKey, terminalId);
+      const own = terminals.find(row => row.terminal_id === terminalId);
+      session.workDir = (own && own.work_dir) || null;
+      renderTabs();
+      return;
+    }
+    const saved = store.get(savedKey);
+    terminalId = (early && terminalId && listed(terminalId) ? terminalId : null) // chosen meanwhile (another row tapped) and not shown yet
+      || [wanted, saved].find(id => id && listed(id)) || terminals[0].terminal_id;
     if (earlySocket && earlySocket.terminalId !== terminalId) dropEarlySocket();
-    if (wanted && terminalId === wanted) store.set(`terminal:${from.key}:${current.id}`, terminalId);
+    if (wanted && terminalId === wanted) store.set(savedKey, terminalId);
     renderTabs();
     connect();
   }

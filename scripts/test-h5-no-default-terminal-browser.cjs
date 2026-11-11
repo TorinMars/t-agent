@@ -173,6 +173,9 @@ async function scenario(browser, wide) {
   await page.locator('.h5-xterm').first().waitFor(WAIT);
   for (let i = 0; i < 100 && shells.length === spawned + 1; i += 1) await page.waitForTimeout(100);
   assert.equal(shells.length, spawned + 2, `${label}: the older task's default terminal starts`);
+  // The server starts the shell as soon as the socket arrives, before Playwright reports that socket (the page opens it at the tap).
+  const attached = () => sockets.some(url => url.includes(`taskId=${older.id}`) && url.includes('terminalId=default'));
+  for (let i = 0; i < 50 && !attached(); i += 1) await page.waitForTimeout(100);
   assert.ok(sockets.some(url => url.includes(`taskId=${older.id}`) && url.includes('terminalId=default')), `${label}: attached to default`);
 
   assert.deepEqual(errors, [], `${label}: no page errors`);

@@ -442,6 +442,7 @@ async function hiddenElsewhere(browser, wide) {
   assert.deepEqual(await h.notices(), [], `${label}: not a word`);
 
   // The same for a session of such a row: it is selected, and its terminals answer 404. No error about terminals, and the page ends on no task.
+  // Its sessions were listed, so the tapped one connects at once (`loadTerminals`); the 404 then ends that socket and nothing reconnects.
   await h.sheet();
   await h.press(page.locator('.h5-task-item', { hasText: 'Remote six' }));
   const session = page.locator('.h5-terminal-list[aria-label="Remote six"] .h5-terminal-main').first();
@@ -451,7 +452,8 @@ async function hiddenElsewhere(browser, wide) {
   await h.press(session);
   await h.gone('Remote six');
   await page.locator('#h5-empty', { hasText: 'Choose a task to open its phone terminal' }).waitFor({ timeout: 3000 }).catch(() => assert.fail(`${label}: no error about its terminals`));
-  assert.equal(await h.sockets(75), 0, `${label}: nothing connected to it`);
+  assert.deepEqual(await h.socketState(75), [3], `${label}: the socket opened at the tap is closed`);
+  await noRetry(75, 1);
   assert.deepEqual(await h.notices(), [], `${label}: not a word`);
 
   // A task of this machine is not touched by any of it.

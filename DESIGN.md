@@ -1419,3 +1419,4 @@ One line per release, added by `scripts/release.js`. Older notes are in `git log
 > v2.99.0 Per-task visibility for linked machines: the owner of a task chooses which linked machines can see it, enforced on the /v1 API.
 > v2.100.0 Mind maps shared across connected services, engine names with renaming, and New session / New task as dialogs.
 > v2.101.0 Multi-column view, Cmd/Ctrl+Shift+O keyboard flow for New session, translate-and-send appends on a new line, a clearer copy bar, no system notifications, no flicker opening a remote session, and agent chat suggestions no longer lost.
+> v2.102.0 Update linked services together from the Update dialog, and restart T-Agent from Settings.

@@ -61,7 +61,7 @@ test('mergeOrder keeps the keys that are not shown in their places', async () =>
 });
 
 test('the tag colour comes from the instance id: the same on every client, readable on the dark paper', async () => {
-  const { tagColor, tagColorIndex, TAG_COLORS, TAG_TINT } = await load();
+  const { tagColor, tagColorIndex, TAG_COLORS, TAG_TINT, TAG_TINT_OPEN, TAG_NEUTRAL } = await load();
   assert.equal(tagColorIndex('7f3c2a10-0000-4000-8000-000000000001'), tagColorIndex('7f3c2a10-0000-4000-8000-000000000001'));
   assert.equal(tagColorIndex(null), -1, 'no id: neutral');
   assert.equal(tagColor('').index, -1);
@@ -72,12 +72,17 @@ test('the tag colour comes from the instance id: the same on every client, reada
   const luminance = ([r, g, b]) => 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
   const rgb = hex => [1, 3, 5].map(at => parseInt(hex.slice(at, at + 2), 16));
   const paper = [18, 18, 18];
-  for (const color of TAG_COLORS) {
-    const fg = rgb(color);
-    const bg = fg.map((value, index) => value * TAG_TINT + paper[index] * (1 - TAG_TINT));
-    const [hi, lo] = [luminance(fg), luminance(bg)].sort((a, b) => b - a);
-    assert.ok((hi + 0.05) / (lo + 0.05) >= 4.5, `${color}: ${((hi + 0.05) / (lo + 0.05)).toFixed(2)}:1`);
+  // The tag of an open task (a stronger tint) stays readable too.
+  for (const [tint, color] of [...TAG_COLORS.flatMap(color => [[TAG_TINT, color], [TAG_TINT_OPEN, color]]), [0.08, TAG_NEUTRAL], [0.2, TAG_NEUTRAL]]) {
+    for (const ground of [paper]) {
+      const fg = rgb(color);
+      const bg = fg.map((value, index) => value * tint + ground[index] * (1 - tint));
+      const [hi, lo] = [luminance(fg), luminance(bg)].sort((a, b) => b - a);
+      assert.ok((hi + 0.05) / (lo + 0.05) >= 4.5, `${color} at ${tint} on ${ground}: ${((hi + 0.05) / (lo + 0.05)).toFixed(2)}:1`);
+    }
   }
+  assert.match(tagColor('device-1').open, new RegExp(`, ${TAG_TINT_OPEN}\\)$`), 'the open tint');
+  assert.equal(tagColor(null).open, 'rgba(224, 224, 224, 0.2)', 'the neutral open tint');
 });
 
 test('shortName cuts at 8 characters with an ellipsis, by code point', async () => {

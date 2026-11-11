@@ -63,9 +63,11 @@ export const sameOrder = (a, b) => Array.isArray(a) && Array.isArray(b) && a.len
 // The device tag. Its colour comes from the device's instance id, so the same device has the same colour on every client: FNV-1a of the id picks one of
 // a small fixed set. The colours are the 200 shades of the MUI palette, light enough on the dark theme's paper (#121212) under their own 16% tint for
 // at least 4.5:1, WCAG AA (6:1 and more; test/h5-task-order.test.js checks it). A device without an id (an older Engine) gets the neutral tag.
+// The tag of a task whose sessions are open is drawn on a stronger tint (`open`, TAG_TINT_OPEN, still at least 4.5:1) with a 1px ring in its own colour.
 export const TAG_COLORS = ['#90caf9', '#a5d6a7', '#ffcc80', '#ce93d8', '#80cbc4', '#f48fb1', '#fff59d', '#9fa8da'];
 export const TAG_NEUTRAL = '#e0e0e0';
 export const TAG_TINT = 0.16;
+export const TAG_TINT_OPEN = 0.26;
 export function tagColorIndex(instanceId) {
   if (typeof instanceId !== 'string' || !instanceId) return -1;
   let hash = 0x811c9dc5;
@@ -79,7 +81,8 @@ export function tagColor(instanceId) {
   const index = tagColorIndex(instanceId);
   const color = index < 0 ? TAG_NEUTRAL : TAG_COLORS[index];
   const [r, g, b] = [1, 3, 5].map(at => parseInt(color.slice(at, at + 2), 16));
-  return { index, color, background: `rgba(${r}, ${g}, ${b}, ${index < 0 ? 0.08 : TAG_TINT})` };
+  const tint = alpha => `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  return { index, color, background: tint(index < 0 ? 0.08 : TAG_TINT), open: tint(index < 0 ? 0.2 : TAG_TINT_OPEN) };
 }
 
 // The name on a tag: at most `max` characters (code points, so a Chinese name or an emoji is not cut in half), else `max - 1` and an ellipsis.

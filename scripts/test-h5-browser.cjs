@@ -1143,11 +1143,14 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     assert.equal((await bar()).now, b.max, 'a tap on the thumb does not scroll');
 
     // The thumb follows scrolling done elsewhere: a native scroll of the body, and new output (at the bottom it stays at the bottom).
-    // xterm applies the tap's scroll in a later frame and then ignores the next scroll event, so wait until that event has passed; a scroll made before it would be ignored.
-    await page.waitForFunction(() => { const viewport = document.querySelector('.h5-xterm:not([hidden]) .xterm-viewport'); return Math.abs(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop) <= 1; });
-    await page.evaluate(() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done))));
-    await page.evaluate(() => { document.querySelector('.h5-xterm:not([hidden]) .xterm-viewport').scrollTop = 0; });
-    await page.waitForFunction(() => document.querySelector('#h5-wheel').getAttribute('aria-valuenow') === '0');
+    // xterm applies the tap's scroll in a later frame and then ignores the next scroll event, so a single native scroll can be swallowed. Scroll to the top until the
+    // thumb follows (setting the same scrollTop again fires no event, so it alternates between 1px and the top; 1px is still the first row).
+    await page.waitForFunction(() => {
+      if (document.querySelector('#h5-wheel').getAttribute('aria-valuenow') === '0') return true;
+      const viewport = document.querySelector('.h5-xterm:not([hidden]) .xterm-viewport');
+      viewport.scrollTop = viewport.scrollTop === 0 ? 1 : 0;
+      return false;
+    }, null, { polling: 200 });
     b = await bar();
     assert.ok(b.thumbTop <= 0.5, 'a native scroll to the top moves the thumb to the top');
     const max0 = b.max;

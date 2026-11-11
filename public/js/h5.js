@@ -2776,7 +2776,7 @@
     const cell = cellAt(s, event.clientX, event.clientY);
     if (cell && selectAt(s, cell, chain) && s.term.hasSelection()) void s.clipboard?.copy(s.term.getSelection()); // inside this tap's user activation
   });
-  // The copy bar (terminal-clipboard.js, `state.clipboard`): a program's copy waiting for Copy, or a copy the browser refused ("Tap to copy").
+  // The copy bar (terminal-clipboard.js, `state.clipboard`): a program's copy waiting for Copy, or a copy the browser refused (kind tap).
   // The button writes inside its own tap, Cancel drops it.
   if (typeof TerminalClipboard !== 'undefined') TerminalClipboard.setHost({ show: request => ui.set({ clipboard: request }) });
   ui.actions.clipboardConfirm = () => { if (typeof TerminalClipboard !== 'undefined') void TerminalClipboard.confirm(); };

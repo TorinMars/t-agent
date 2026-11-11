@@ -142,6 +142,16 @@ function measure(min) {
       const keys = await page.evaluate(() => [...document.querySelectorAll('#h5-keys > button')].map(b => b.getBoundingClientRect()).map(b => ({ left: b.left, right: b.right, width: b.width, height: b.height })));
       assert.ok(keys.every((b, i) => b.height >= MIN && b.width >= MIN && (i === 0 || b.left - keys[i - 1].right >= 7.99)), `${viewport.width}px: row 1 keys are 44px with 8px gaps`);
       assert.ok(main.length >= 10, 'the main screen has its controls');
+      // The copy bar (a program's OSC 52 copy without a recent gesture, with a long text): Copy and Cancel own 44px targets; Cancel closes it.
+      await page.waitForTimeout(1600); // the gesture window of the taps that opened the terminal is over
+      await page.evaluate(() => {
+        const socket = window.sockets.filter(item => item.url.includes('terminalId=h5-default')).pop();
+        socket.onmessage({ data: `\x1b]52;c;${btoa(`git log --oneline ${'--decorate '.repeat(12)}`)}\x07` });
+      });
+      await page.locator('#h5-clipboard-bar').waitFor({ state: 'visible' });
+      await check('copy-bar');
+      await page.locator('#h5-clipboard-cancel').tap();
+      await page.locator('#h5-clipboard-bar').waitFor({ state: 'detached' });
       // The draft box is shown (its keyboard key): send and translate-and-send join row 2, which still fits with 44px buttons.
       await page.locator('[data-action="draft"]').tap();
       await page.locator('#h5-translate-send').waitFor({ state: 'visible' });

@@ -35,10 +35,15 @@
     return data;
   }
   // Remembered choices are a convenience only; private mode or blocked storage just starts fresh.
+  // In a pane of the multi-column view (scripts/h5-shell/pane.mjs) what this view shows is kept per pane (`pane:<id>:h5-...`); the keys in SHARED_KEYS stay
+  // one for the device. See "Pane mode" in DESIGN.md for the list.
+  const PANE = window.H5Pane || null;
+  const SHARED_KEYS = new Set(['terminal-width-noted']);
+  const storeKey = key => (PANE && !SHARED_KEYS.has(key) ? PANE.key(`h5-${key}`) : `h5-${key}`);
   const store = {
-    get(key) { try { return localStorage.getItem(`h5-${key}`); } catch { return null; } },
+    get(key) { try { return localStorage.getItem(storeKey(key)); } catch { return null; } },
     set(key, value) {
-      try { if (value == null) localStorage.removeItem(`h5-${key}`); else localStorage.setItem(`h5-${key}`, String(value)); } catch { /* ignore */ }
+      try { if (value == null) localStorage.removeItem(storeKey(key)); else localStorage.setItem(storeKey(key), String(value)); } catch { /* ignore */ }
     },
   };
 
@@ -1647,8 +1652,9 @@
   }
   // With a keyboard (a computer, or a tablet with a hardware keyboard) the terminal that was just shown takes the focus, so typing goes there at once;
   // not when the person is typing somewhere else or a dialog is open. On a touch screen without a keyboard nothing is focused (no on-screen keyboard).
+  // A pane of the multi-column view waits until the person used it (pane.mjs `engaged`): every column would take the focus as it loads.
   function focusTerminalSoon(s) {
-    if (!deskKeys()) return;
+    if (!deskKeys() || (PANE && !PANE.engaged())) return;
     setTimeout(() => {
       if (session !== s || s.disposed || agentChat || modalOpen() || editing(document.activeElement)) return;
       s.term.focus();
@@ -2173,7 +2179,9 @@
   // every FALLBACK_POLL_MS, so normal requests are never blocked. WebSockets do not count against that limit; T-Attention has one stream of its own, so 2 stay free.
   const MAX_STREAMS = 3;
   const MAX_STREAMS_H2 = 16; // one connection carries them all
+  // A pane of the multi-column view opens none: several panes would use up the connections, so each one polls (only while it is visible).
   const streamLimit = () => {
+    if (PANE) return 0;
     const nav = performance.getEntriesByType('navigation')[0];
     return /^h[23]/.test((nav && nav.nextHopProtocol) || '') ? MAX_STREAMS_H2 : MAX_STREAMS;
   };
@@ -3297,6 +3305,26 @@
   // ── Start ──
   // How long the page waits for the service of the remembered task before it falls back to this machine (a slow or offline one must not hold the page).
   const REMEMBER_WAIT_MS = 5000;
+  let markListsKnown = null;
+  const listsKnown = new Promise(resolve => { markListsKnown = resolve; }); // the services and what is hidden are known
+  // The multi-column view asks a pane to show a task and terminal, or an agent chat of a task (a `?openChat=` link handled by the top page while its columns
+  // are shown; scripts/h5-shell/pane.mjs): a terminal as a tap on that row of the list does, on the named service; a chat as `openChatFromLink` does (this
+  // machine only, like the link). An unknown service, task or chat is ignored quietly.
+  if (PANE) {
+    ui.actions.paneOpen = async ({ sourceKey, taskId, terminalId = null, conversationId = null }) => {
+      await listsKnown;
+      const from = sources.find(item => item.key === sourceKey && (item === LOCAL || item.label));
+      if (!from) return false;
+      if (from.status !== 'ready' || !findTask(from, taskId)) await loadSource(from);
+      const item = from.status === 'ready' ? findTask(from, taskId) : null;
+      if (!item) return false;
+      if (conversationId && !terminalId) return from === LOCAL ? openChatFromLink({ taskId: item.id, conversationId }) : false;
+      if (terminalId) ui.actions.openRow(taskRef(from, item.id), { kind: 'terminal', id: String(terminalId) });
+      else if (isShown(from, item.id)) closeTasks();
+      else selectTask(from, item);
+      return true;
+    };
+  }
   (async () => {
     // The remembered service is assumed until the list of services says otherwise: its tasks are asked for at the same time as that list. Its object is put in
     // `sources` so that loadSources keeps it; without a name it is not listed yet.
@@ -3320,6 +3348,7 @@
     void loadLinks(); // the "⋯" of a task needs it, the list does not wait for it
     await Promise.all([loadSources(), loadHidden()]);
     listReady = true;
+    markListsKnown();
     for (const from of listedSources()) if (!reads.has(from)) reads.set(from, loadSource(from));
     renderTasks();
     syncFeeds();

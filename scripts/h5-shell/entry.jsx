@@ -6,6 +6,7 @@ import { App } from './App.jsx';
 import { createStore, initialState } from './store.mjs';
 import { createBackLayers } from './back.mjs';
 import { startAttentionFeed } from './attention-feed.mjs';
+import { detectPane, paneKeyPrefix, startPane } from './pane.mjs';
 import { api, t } from './common.jsx';
 import { RAW_KINDS, kindOf } from './file-kinds.mjs';
 // T-Attention settings slots: the modules of other T-Attention parts that register Settings content (attention-slots.mjs) are imported here, e.g.
@@ -18,10 +19,13 @@ const wideQuery = window.matchMedia('(min-width: 900px)');
 const fineQuery = window.matchMedia('(hover: hover) and (pointer: fine)');
 const coarseQuery = window.matchMedia('(any-pointer: coarse)');
 const inputMode = () => (fineQuery.matches && !coarseQuery.matches ? 'pointer' : 'touch');
-const SIDEBAR_KEY = 'h5-sidebar-collapsed';
+// Pane mode (pane.mjs): this page is one column of the multi-column view. Decided once, before anything is read from storage.
+const paneId = detectPane(window);
+const SIDEBAR_KEY = `${paneId ? paneKeyPrefix(paneId) : ''}h5-sidebar-collapsed`; // the layout of this view: per pane
 const readCollapsed = () => { try { return localStorage.getItem(SIDEBAR_KEY) === '1'; } catch { return false; } };
 
-const ui = createStore({ ...initialState(), wide: wideQuery.matches, input: inputMode(), sidebarCollapsed: readCollapsed() });
+const ui = createStore({ ...initialState(), wide: wideQuery.matches, input: inputMode(), sidebarCollapsed: readCollapsed(), pane: paneId });
+if (paneId) startPane(ui, paneId);
 ui.media = { wideQuery, inputMode };
 // The kind of a file (file-kinds.mjs), for h5.js: it decides how the file sheet reads a file (text, image or raw bytes).
 ui.fileKinds = { kindOf, isRaw: kind => RAW_KINDS.has(kind) };
@@ -81,8 +85,9 @@ const root = createRoot(document.getElementById('h5-root'));
 flushSync(() => root.render(<App ui={ui} />));
 
 // The back button closes the open sheet, dialog or menu (scripts/h5-shell/back.mjs). The panel beside the terminal on a wide screen (T-Attention) is not a
-// modal, so it is named here; the modals are found by themselves.
-const back = createBackLayers({
+// modal, so it is named here; the modals are found by themselves. Not in a pane: a frame's history entries are joined with the top page's, so a pane's
+// `history.go` could move another column or the top page; there Escape and the close buttons close what is open.
+const back = paneId ? null : createBackLayers({
   extra: () => {
     const s = ui.get();
     const layers = [];
@@ -92,7 +97,8 @@ const back = createBackLayers({
     return layers;
   },
 });
-ui.subscribe(back.sync);
+if (back) ui.subscribe(back.sync);
 
 // T-Attention: the list, its live stream and the reminders run from the start (the badge on the Attention button); the panel is drawn when opened.
-startAttentionFeed(ui, { t, api });
+// A pane has no Attention button and leaves the stream and the reminders to the top page (`passive`).
+startAttentionFeed(ui, { t, api, passive: Boolean(paneId) });

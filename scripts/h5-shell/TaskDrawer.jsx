@@ -342,7 +342,8 @@ export function TaskDrawer({ state, ui }) {
     <Drawer
       id="h5-tasks" open={state.tasksOpen} onClose={() => ui.actions.closeTasks()}
       slotProps={{ paper: paperProps, backdrop: { id: 'h5-task-backdrop' } }}
-      ModalProps={{ 'aria-labelledby': 'h5-tasks-title' }}
+      // A pane of the multi-column view opens on this sheet; it must not pull the focus into its frame before the person used it (pane.mjs).
+      ModalProps={{ 'aria-labelledby': 'h5-tasks-title', disableAutoFocus: Boolean(state.pane && !state.paneEngaged) }}
     >
       <Panel state={state} ui={ui} />
     </Drawer>

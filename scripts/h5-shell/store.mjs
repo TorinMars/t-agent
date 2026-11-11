@@ -17,6 +17,8 @@ export function createStore(initial) {
 
 export const initialState = () => ({
   wide: false,
+  pane: null, // the pane id when this page is one column of the multi-column view (pane.mjs), else null
+  paneEngaged: false, // a pane only: the person pressed a pointer or a key in it; until then nothing in it takes the focus by itself
   // How the page is used, decided by media queries (never by the user agent; entry.jsx keeps it current):
   // 'pointer' = a mouse or trackpad and no touch screen (a computer), 'touch' = everything else (phones, tablets, an iPad with a trackpad).
   input: 'touch',

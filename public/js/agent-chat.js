@@ -99,7 +99,8 @@ const AgentChat = (() => {
   const openers = new Map(); // conversation id -> function that shows that chat
   let openHandler = null;
   const tr = text => (typeof I18n !== 'undefined' ? I18n.t(text) : text);
-  const canNotify = () => typeof Notification !== 'undefined';
+  // A pane of the multi-column view (scripts/h5-shell/pane.mjs, `H5Pane`) shows no system notifications: the top page is the one notifier.
+  const canNotify = () => typeof Notification !== 'undefined' && !globalThis.H5Pane;
   function requestPermission() { // asked on the first touch or key in a chat: browsers want it to follow a gesture
     if (!canNotify() || Notification.permission !== 'default') return;
     try { const asked = Notification.requestPermission(); if (asked && asked.catch) asked.catch(() => {}); } catch { /* an old browser: no notifications */ }

@@ -4,6 +4,8 @@
 // Reminders: a change that moves a task INTO waiting_user, failed or review gives a toast (not for a plain Claude turn end, showsNotice), a system notification (only when the user enabled it in
 // Settings and the browser granted it) and a short sound made with WebAudio (no audio file; on by default, off in Settings). A change this page made
 // itself (the user's own tap here) gives none.
+// `passive` (a pane of the multi-column view, pane.mjs): no stream, no reminders and no reads of its own; the actions stay (Settings uses them) and the
+// list is read when the panel is opened. The top page follows the stream and reminds once for all its columns.
 import { applyChange, needsCount, reminderFor, showsNotice } from './attention-model.mjs';
 
 export const BASE = '/api/attention';
@@ -67,8 +69,8 @@ export function showSystemNotification(title, body, { tag, onClick } = {}) {
   }
 }
 
-export function startAttentionFeed(ui, { t = text => text, api, EventSourceImpl } = {}) {
-  const ES = EventSourceImpl || (typeof EventSource === 'undefined' ? null : EventSource);
+export function startAttentionFeed(ui, { t = text => text, api, EventSourceImpl, passive = false } = {}) {
+  const ES = passive ? null : EventSourceImpl || (typeof EventSource === 'undefined' ? null : EventSource);
   const own = new Map(); // id -> time until which a 'user' change of it is this page's own
   let source = null;
   let retry = 0;
@@ -109,7 +111,7 @@ export function startAttentionFeed(ui, { t = text => text, api, EventSourceImpl 
 
   function remind(change) {
     const note = reminderFor(change);
-    if (!note || isOwn(change)) return;
+    if (passive || !note || isOwn(change)) return;
     const head = `${t(note.label)}: ${note.title}`;
     if (showsNotice(change)) ui.notify(note.reason ? `${head} — ${note.reason}` : head, note.status === 'failed' ? 'error' : 'info');
     const settings = prefs();
@@ -150,7 +152,7 @@ export function startAttentionFeed(ui, { t = text => text, api, EventSourceImpl 
 
   // The page shown again: read the list (the phone may have slept) and connect at once when the stream is gone.
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState !== 'visible') return;
+    if (passive || document.visibilityState !== 'visible') return;
     void load();
     if (!source) { retry = 0; connect(); }
   });
@@ -223,7 +225,6 @@ export function startAttentionFeed(ui, { t = text => text, api, EventSourceImpl 
     otherOpen = now;
   });
 
-  void load();
-  connect();
+  if (!passive) { void load(); connect(); }
   return { stop() { stopped = true; clearTimeout(timer); if (source) source.close(); source = null; }, load };
 }

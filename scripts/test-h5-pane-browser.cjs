@@ -177,7 +177,9 @@ const socketClient = url => new URL(url).searchParams.get('clientId');
     assert.deepEqual(await a.evaluate(() => window.activityStream.opens), [], 'no stream after the page is shown again');
     // ── No reminders, no updater, no T-Attention in a pane ──
     assert.equal(fromPane('a', entry => entry.path.startsWith('/api/attention')).length + fromPane('b', entry => entry.path.startsWith('/api/attention')).length, 0, 'no T-Attention reads in a pane');
-    assert.equal(fromPane('a', entry => entry.path.startsWith('/api/system/')).length + fromPane('b', entry => entry.path.startsWith('/api/system/')).length, 0, 'no update polling in a pane');
+    const updaterRead = entry => /^\/api\/system\/(update-status|check-update|apply-update|update-notified)/.test(entry.path);
+    assert.equal(fromPane('a', updaterRead).length + fromPane('b', updaterRead).length, 0, 'no update polling in a pane');
+    for (const id of ['a', 'b']) assert.ok(fromPane(id, entry => entry.path === '/api/system/version').length <= 1, 'at most one version read (the engine name) per pane');
     for (const frame of [a, b]) {
       assert.equal(await frame.locator('#h5-update').count(), 0, 'no Update button in a pane');
       assert.equal(await frame.locator('#h5-attention').count(), 0, 'no Attention button in a pane');

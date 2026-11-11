@@ -168,6 +168,8 @@ async function shownTerminal(page, name) {
       await paneFrame(page, ids[0]).evaluate(id => parent.postMessage({ type: 't-agent-pane', paneId: id, event: 'focus' }, location.origin), ids[0]);
       await page.waitForFunction(id => { const el = document.querySelector('.h5-column[data-focused]'); return el && el.dataset.paneId === id; }, ids[0], { timeout: 3000 });
       // The third column is sent to another origin (its window stays the iframe's), and posts from there.
+      // Column 3's own pane has already said 'ready' (pane mode): forget it, so what follows shows whether the foreign page can set it.
+      await page.evaluate(id => { const columns = window.H5UI.get().columns; window.H5UI.set({ columns: { ...columns, ready: { ...columns.ready, [id]: false } } }); }, ids[2]);
       await page.evaluate(([id, url]) => { document.querySelector(`#h5-columns iframe[data-pane-id="${id}"]`).src = url; }, [ids[2], `${FOREIGN}/page`]);
       await page.waitForFunction(() => true);
       let foreign = null;

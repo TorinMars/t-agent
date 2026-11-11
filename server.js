@@ -101,9 +101,10 @@ const attentionRoutes = require('./routes/attention').createAttentionRoutes({ se
 app.use('/api/attention/pairing/claim', attentionRoutes.claim);
 app.use('/api/attention', attentionRoutes.bearer);
 
-// /api/mindmaps (routes/mindmap.js) and /v1/linked-services (routes/linked-services.js) parse their own JSON after the gates, with their own limits: a body this
-// parser has read would make theirs do nothing. Every other route keeps these parsers. Case-insensitive, like Express routing.
-const OWN_PARSERS = /^\/(?:api\/mindmaps|v1\/linked-services)(?:\/|$)/i;
+// The mind map routes (routes/mindmap.js: /api/mindmaps, /v1/mindmaps and the proxy /api/remote-servers/:id/mindmaps) and /v1/linked-services
+// (routes/linked-services.js) parse their own JSON after the gates or the token check, with their own limits: a body this parser has read would make theirs
+// do nothing. Every other route keeps these parsers. Case-insensitive, like Express routing.
+const OWN_PARSERS = /^\/(?:api\/mindmaps|api\/remote-servers\/[^/]+\/mindmaps|v1\/mindmaps|v1\/linked-services)(?:\/|$)/i;
 const exceptOwnParsers = parser => (req, res, next) => (OWN_PARSERS.test(req.path) ? next() : parser(req, res, next));
 app.use(exceptOwnParsers(express.json({ limit: '32mb' })));
 app.use(exceptOwnParsers(express.urlencoded({ extended: true })));
@@ -159,7 +160,8 @@ app.use('/api/fs', require('./routes/fs-read').createFsReadRouter());
 app.use('/api/task-groups', require('./routes/task-groups'));
 app.use('/api/bookmarks', require('./routes/bookmarks'));
 app.use('/api/attention', attentionRoutes.router);
-app.use('/api/mindmaps', require('./routes/mindmap').createMindmapRouter({ service: require('./services/mindmap').createMindmapService({ dataDir: dataHome.paths().root }) }));
+// The same service instance as /v1/mindmaps (routes/engine-v1.js), so writes of one map run one at a time whichever path they come in by.
+app.use('/api/mindmaps', require('./routes/mindmap').createMindmapRouter({ service: require('./services/mindmap').getMindmapService() }));
 app.use('/api/system', require('./routes/system'));
 app.use('/api/oss', require('./routes/oss').createOssRouter());
 app.use('/api/environment', require('./routes/environment').createEnvironmentRouter());

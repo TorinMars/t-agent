@@ -250,7 +250,7 @@ One line each for the main modules, by area. Each route file is mounted in `serv
 
 **Mind maps** (see "Mind maps" below)
 
-- `services/mindmap.js` — maps as JSON files in the data folder; `routes/mindmap.js` — `/api/mindmaps` for the browser session.
+- `services/mindmap.js` — maps as JSON files in the data folder (one shared instance, `getMindmapService`); `routes/mindmap.js` — `/api/mindmaps` for the browser session and `/v1/mindmaps` for connected services (mounted in `routes/engine-v1.js`); the proxy `/api/remote-servers/:id/mindmaps` is in `routes/remote-servers.js`.
 
 **Files API and safety**
 
@@ -425,7 +425,9 @@ Goal: less attention spent on managing agent work. Agents and services (listener
 
 ### Mind maps
 
-A self-contained feature: it has no database table (the schema version does not change) and it never reads or changes tasks, work directories, terminals, agent chat or terminal activity. This Client only: no `/v1` twin and no remote Engine proxy. The app has one user, so maps are not scoped per owner, like the T-Attention items.
+A self-contained feature: it has no database table (the schema version does not change) and it never reads or changes tasks, work directories, terminals, agent chat or terminal activity. The app has one user, so maps are not scoped per owner, like the T-Attention items.
+
+**Shared across connected services (since the release after 2.99.0).** A map stays on the service that made it, and every other connected service (plain remote Engines and service links alike, the same set as the one task list) opens and edits it in place through that service: `/v1/mindmaps` on the owner, `/api/remote-servers/:id/mindmaps` on the Client. Nothing is copied. The first version was this Client only, with no `/v1` twin and no proxy, because a map was a personal scratch pad next to the terminal. That changed once the owner wanted all machines in one list, as the tasks already are: maps made on a phone-reachable machine had to be edited from the others, and a copy would have needed a merge for every pair of edits. The single owner with revisions keeps the existing conflict rule (409, nothing overwritten) the only rule, whichever machine saves.
 
 **Data**: `<data folder>/mindmaps/<id>.json` (folder 0700, files 0600), one file per map: `{ id, title, data, revision, created_at, updated_at }`. `data` is opaque to the server: a JSON object, or `null` until the page first saves. Ids are server-made UUIDs, checked strictly before any path is built. A write goes to a temp file in the same folder, is fsynced and renamed; writes of one id run one at a time, and so do creates (the map limit holds under concurrent creates). Temp files left by a crash are removed at the first use after a start. The list reads a file only when its size or time changed.
 
@@ -445,9 +447,13 @@ Limits: title 1 to 200 characters (trimmed, one line), `data` a JSON object of a
 
 **Gates and body parsing**: mounted after the session, the access gate, the login gate and the `/api` check (same-origin for mutations, then the session), so logged out it answers the same 404 as any other protected address. `server.js` keeps the global parsers (`express.json` 32 MB and `express.urlencoded`, which run before the session) off this path, and the router parses JSON itself after the gates, with its own limit (8 MiB + 64 KiB for the fields around `data`). So a body is not read before the gates, and an oversized one gets the JSON answer above. Every other route keeps the global parsers and limit.
 
+**`/v1/mindmaps`** (capability `mindmaps` in `/v1/info`): the same router and the same service instance as `/api/mindmaps` (`getMindmapService`), so bodies, answers, errors, limits and the trash are identical, and the per-id write queue and the create queue (the map limit) hold across both paths; a second instance on the same folder would break that. The router's first layer is `requireEngineAuth()` (any Engine token: every token is owner), so no body is read before the token check, and `server.js` keeps its global parsers off `/v1/mindmaps` as well. Maps belong to no task, so the per-task visibility guard does not touch these paths (it acts only on `/tasks/:id` and `/terminal-sessions`), and `test/task-visibility.test.js` lists `/mindmaps` as a reviewed mount.
+
+**The proxy** (`/api/remote-servers/:id/mindmaps` and `.../mindmaps/:mapId`, `routes/remote-servers.js`): behind the same gates as the other proxy routes, and `server.js` keeps the global parsers off it too. In order: the map id must be a lowercase v4 UUID (else 404 `MINDMAP_NOT_FOUND`, as the owner would answer, with no request); the body goes through the same parser and the same `data` size check (400 `INVALID_MINDMAP`, 413 `MINDMAP_TOO_LARGE`), before anything is forwarded; then `/v1/info` must list `mindmaps` (else 501 `MINDMAPS_UNSUPPORTED`); then the request is forwarded with `request` (`maxBytes` 9 MiB + 64 KiB, an idle timeout of 60 s). Answers pass through with their status; an error keeps its code, `message` and `current_revision` (from `error.peerBody` of `services/remote-client.js`), nothing else. An offline Engine is 502 with the code `request` gives (`REMOTE_OFFLINE` through a tunnel, `REMOTE_CONNECTION_FAILED`, `REMOTE_TIMEOUT`). Through a service-link tunnel the request is an ordinary `/v1` stream: the path passes `checkTunnelTarget`, the headers are `authorization`, `content-type` and `accept` (the tunnel drops `content-length` and frames the body itself, so B's loopback request is chunked), and an 8 MiB map stays far below the tunnel's 64 MiB request body limit.
+
 **Corrupt files**: a file that does not parse or does not match its name is skipped by the list and reads as not found (a save cannot overwrite it; a delete moves it to the trash). It is logged in one line with the id only, once per change of the file. Map content is never logged.
 
-**Tests**: `test/mindmap-service.test.js`, `test/mindmap-routes.test.js` (the last case runs the real `server.js` for the gates and the parser order).
+**Tests**: `test/mindmap-service.test.js`, `test/mindmap-routes.test.js` (the last case runs the real `server.js` for the gates and the parser order), `test/mindmap-share.test.js` (`/v1/mindmaps` against `/api/mindmaps`, the proxy against real and fake Engines, and two real linked services editing each other's maps directly and through the tunnel, with an 8 MiB map, chunked bodies and conflicts).
 
 ### F. Client UI
 

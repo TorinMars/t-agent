@@ -8,6 +8,8 @@ const { inspectRemoteAddress, persistRemoteServerEdit } = require('../services/r
 const remoteUpdates = require('../services/remote-engine-updates');
 const { streamRemote } = require('../services/remote-stream');
 const { getServiceLinks } = require('../services/service-links');
+const { isMindmapId, LIMITS: MINDMAP_LIMITS } = require('../services/mindmap');
+const { createMindmapBodyParser, sendNotFound: sendMindmapNotFound, sendTooLarge: sendMindmapTooLarge, BODY_LIMIT: MINDMAP_BODY_LIMIT } = require('./mindmap');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -625,6 +627,70 @@ router.delete('/:id/tasks/:taskId', async (req, res) => {
     res.json(await request(row.base_url, `/v1/tasks/${encodeURIComponent(req.params.taskId)}${req.query.delete_directory === '1' ? '?delete_directory=1' : ''}`, decryptToken(row.token_cipher, config.sessionSecret), { method: 'DELETE' }));
   } catch (error) { res.status(error.statusCode || 502).json({ error: safeError(error) }); }
 });
+
+// ── Mind maps of a connected service: the same API as /api/mindmaps, forwarded to its /v1/mindmaps. The map stays on that service; nothing is copied here. ──
+// The body is parsed by the mind map parser itself (server.js keeps the global parser off this path) and the size of `data` is checked against the same
+// limit, so the proxy accepts what the owning service accepts and answers 400 / 413 the same way before anything is forwarded. A bad map id is "not found"
+// here, as it is there, without a request.
+// An Engine without the capability 'mindmaps' answers 501 MINDMAPS_UNSUPPORTED; an offline one 502 with the code `request` gives (REMOTE_OFFLINE through a
+// tunnel, REMOTE_CONNECTION_FAILED or REMOTE_TIMEOUT otherwise). An error of the owning service keeps its status, code, message and current_revision.
+const parseMindmapBody = createMindmapBodyParser();
+// A full map answer is its data (at most 8 MiB serialised) and a few fields; the list is at most 2000 short summaries.
+const MINDMAP_MAX_BYTES = MINDMAP_BODY_LIMIT + 1024 * 1024;
+// An idle limit, not a total one (http and the tunnel both restart it on progress): room for an 8 MB map over a slow link and a slow disk on the far side.
+const MINDMAP_TIMEOUT_MS = 60_000;
+
+function checkMindmapId(req, res, next) {
+  return isMindmapId(req.params.mapId) ? next() : sendMindmapNotFound(res);
+}
+
+// The service's own limit on the serialised `data`, checked here too, so that a map over 8 MiB is refused before it is forwarded. Anything else about the
+// body (its shape, the title, the revision) is left to the owning service, which answers it as /api/mindmaps does.
+function checkMindmapSize(req, res, next) {
+  const data = req.body && typeof req.body === 'object' ? req.body.data : undefined;
+  if (data && typeof data === 'object') {
+    let bytes = 0;
+    try { bytes = Buffer.byteLength(JSON.stringify(data), 'utf8'); } catch { bytes = 0; }
+    if (bytes > MINDMAP_LIMITS.dataBytes) return sendMindmapTooLarge(res);
+  }
+  return next();
+}
+
+function proxyMindmaps(method, upstream, { success = 200 } = {}) {
+  return async (req, res) => {
+    const target = remoteTarget(req, res);
+    if (!target) return;
+    const supported = await remoteHas(target, res, 'mindmaps');
+    if (supported === null) return;
+    if (!supported) return res.status(501).json({ error: 'MINDMAPS_UNSUPPORTED' });
+    try {
+      const result = await request(target.row.base_url, upstream(req), target.token, {
+        method,
+        ...(['POST', 'PUT'].includes(method) ? { body: req.body ?? {} } : {}),
+        // DELETE answers 204 with no body.
+        ...(method === 'DELETE' ? { expectText: true } : {}),
+        maxBytes: MINDMAP_MAX_BYTES,
+        timeoutMs: MINDMAP_TIMEOUT_MS,
+      });
+      if (method === 'DELETE') return res.status(204).end();
+      res.status(success).json(result);
+    } catch (error) {
+      const peer = error.peerBody || {};
+      res.status(error.statusCode || 502).json({
+        error: safeError(error),
+        ...(typeof peer.message === 'string' ? { message: peer.message } : {}),
+        ...(Number.isSafeInteger(peer.current_revision) ? { current_revision: peer.current_revision } : {}),
+      });
+    }
+  };
+}
+
+const mindmapPath = req => `/v1/mindmaps/${encodeURIComponent(req.params.mapId)}`;
+router.get('/:id/mindmaps', proxyMindmaps('GET', () => '/v1/mindmaps'));
+router.post('/:id/mindmaps', parseMindmapBody, checkMindmapSize, proxyMindmaps('POST', () => '/v1/mindmaps', { success: 201 }));
+router.get('/:id/mindmaps/:mapId', checkMindmapId, proxyMindmaps('GET', mindmapPath));
+router.put('/:id/mindmaps/:mapId', checkMindmapId, parseMindmapBody, checkMindmapSize, proxyMindmaps('PUT', mindmapPath));
+router.delete('/:id/mindmaps/:mapId', checkMindmapId, proxyMindmaps('DELETE', mindmapPath));
 
 router.put('/:id/tasks/:taskId/document/:kind', async (req, res) => {
   const row = getServer(req);

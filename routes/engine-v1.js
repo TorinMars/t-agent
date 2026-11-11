@@ -23,12 +23,17 @@ const { createPm2Handlers } = require('./pm2');
 const { Pm2Error } = require('../services/pm2-manager');
 const { createAppsHandlers, mountAppsRoutes, defaultService: defaultAppsService } = require('./apps');
 
+const MINDMAPS = 'mindmaps';
+
 const router = express.Router();
 // Before every route, so that a route added later under /tasks/:id is covered too (middleware/task-visibility.js).
 const taskVisibility = getTaskVisibility();
 router.use(createTaskVisibilityGuard({ visibility: taskVisibility, db, serviceLinks: getServiceLinks() }));
 router.use('/file-sync', require('./file-sync').engine);
 router.use('/linked-services', require('./linked-services').createLinkedServicesRouter());
+// Mind maps of this service, for the other services connected to it (routes/mindmap.js, the same router and service as /api/mindmaps). The token is checked
+// before any body is read; server.js keeps the global JSON parser off this path. Maps belong to no task, so per-task visibility does not apply to them.
+router.use('/mindmaps', require('./mindmap').createMindmapRouter({ getService: require('../services/mindmap').getMindmapService, authenticate: requireEngineAuth() }));
 const pairingAttempts = new Map();
 
 function errorResponse(res, error) {
@@ -126,6 +131,8 @@ function infoHandler(req, res) {
       SERVICE_LINKS,
       // linked-services: /v1/linked-services, a linked service's use of this service's translation, voice input and OSS upload. A peer without it is never used.
       LINKED_SERVICES,
+      // mindmaps: GET|POST /v1/mindmaps and GET|PUT|DELETE /v1/mindmaps/:id, the same API as /api/mindmaps. A Client proxies another service's maps only when it has this.
+      MINDMAPS,
       'engine:update', 'pm2:manage', 'apps:manage', 'agent-config:manage', 'file-sync:manage', 'workspace:manage', 'agent-chat:manage',
     ],
   });

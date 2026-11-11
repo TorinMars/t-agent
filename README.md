@@ -313,7 +313,7 @@ A remote upgrade is a host administration operation and every connection has tha
 
 ## Mind maps
 
-Mind maps are saved as one JSON file each in `<data folder>/mindmaps/` (`~/.tagent/mindmaps/` by default), through `/api/mindmaps` behind the normal login. They are independent of tasks, terminals and agent chat. Deleted maps go to `mindmaps/trash/`, and moving a file back to `mindmaps/<id>.json` restores it. The database backups taken before an update do not include these files. See "Mind maps" in `DESIGN.md`.
+Mind maps are saved as one JSON file each in `<data folder>/mindmaps/` (`~/.tagent/mindmaps/` by default), through `/api/mindmaps` behind the normal login. A map stays on the service that made it: a connected service (a remote Engine or a service link) opens and edits it in place, through `/api/remote-servers/:id/mindmaps` on its side and `/v1/mindmaps` (capability `mindmaps`) on the owner; nothing is copied. A service older than this feature answers `MINDMAPS_UNSUPPORTED`. They are independent of tasks, terminals and agent chat. Deleted maps go to `mindmaps/trash/`, and moving a file back to `mindmaps/<id>.json` restores it. The database backups taken before an update do not include these files. See "Mind maps" in `DESIGN.md`.
 
 ## T-Attention from the command line (`t-attention`)
 

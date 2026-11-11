@@ -201,7 +201,8 @@ const REVIEWED_ROUTES = new Set([
   // Task ids in the body, rewritten by the guard.
   'PUT /tasks/reorder', 'POST /terminal-sessions',
 ]);
-const REVIEWED_MOUNTS = new Set(['/file-sync', '/linked-services', '/apps', '/agent-config', '/fs']);
+// /mindmaps: maps belong to no task.
+const REVIEWED_MOUNTS = new Set(['/file-sync', '/linked-services', '/apps', '/agent-config', '/fs', '/mindmaps']);
 const GUARDED = /^\/(tasks|terminal-sessions)\/:id(\/|$)/;
 
 test('every /v1 route has been reviewed, and the guard runs before all of them', () => {

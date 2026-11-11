@@ -259,21 +259,27 @@ function Sessions({ ui, taskId, sessions, menu }) {
   );
 }
 
-// The device tag in front of a task name (shown when more than one device is listed): the device's name cut to 8 characters (the full name, "Offline" and
-// why its tasks cannot be moved are the `title`), in the colour its instance id gives it on every client (task-order.mjs). An offline device's tag is muted.
-function DeviceTag({ device, unplaced }) {
+// The engine tag of a task (the pill): the device's engine name cut to 8 characters (the full name, "Offline" and why its tasks cannot be moved are the
+// `title`), in the colour its instance id gives it on every client (task-order.mjs). An offline device's tag is muted (dashed, disabled text). With the
+// task's sessions open (`expanded`) the tag shows it in the same width: its 1px border takes the tag's own colour (solid; the text colour for an
+// offline tag) and the tint gets stronger.
+function DeviceTag({ device, unplaced, expanded }) {
   const parts = deviceParts(device);
-  const { index, color, background } = tagColor(device.instanceId);
+  const { index, color, background, open } = tagColor(device.instanceId);
   const title = [deviceText(device), device.offline ? t('Offline') : '', unplaced ? t('Its tasks can be moved once this device is updated') : ''].filter(Boolean).join(' · ');
+  const look = device.offline
+    ? (expanded ? { color: 'text.secondary', bgcolor: 'action.selected', borderColor: 'text.secondary', borderStyle: 'dashed' }
+      : { color: 'text.disabled', bgcolor: 'transparent', borderColor: 'divider', borderStyle: 'dashed' })
+    : (expanded ? { color, bgcolor: open, borderColor: color } : { color, bgcolor: background, borderColor: 'transparent' });
   return (
     <Box
-      component="span" className="h5-device-tag" data-source={device.key} data-color={index} data-offline={device.offline ? 'true' : undefined} title={title} translate="no"
+      component="span" className="h5-device-tag" data-source={device.key} data-color={index} data-offline={device.offline ? 'true' : undefined}
+      data-expanded={expanded ? 'true' : undefined} title={title} translate="no"
       sx={{
         flex: '0 0 auto', display: 'inline-block', boxSizing: 'border-box', maxWidth: 104, height: 20, px: 0.75, borderRadius: 10, border: 1,
         fontSize: 11, fontWeight: 600, lineHeight: '18px', letterSpacing: 0, textTransform: 'none', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-        ...(device.offline
-          ? { color: 'text.disabled', bgcolor: 'transparent', borderColor: 'divider', borderStyle: 'dashed' }
-          : { color, bgcolor: background, borderColor: 'transparent' }),
+        transition: 'background-color 120ms ease-out, border-color 120ms ease-out', '@media (prefers-reduced-motion: reduce)': { transition: 'none' },
+        ...look,
       }}
     >
       {device.local && !device.name ? parts.name /* "This machine" of an older server: a short word, never cut */ : shortName(parts.name)}
@@ -281,11 +287,12 @@ function DeviceTag({ device, unplaced }) {
   );
 }
 
-// Sorting the list (h5.js "Task order"). Only the grip at the left edge of a row that can be moved starts a drag, so a tap, a long press and a swipe on
-// the rest of the row do what they did before sorting existed. With a mouse the drag starts after a move of 4px; a finger needs no long press (the grip
-// has `touch-action: none`, so it never scrolls the list) and starts after 4px too; a plain tap or click on the grip does nothing. From the keyboard the
-// grip is a button: Space or Enter picks the task up, Up and Down move it, Space or Enter drops it and Escape (or leaving the grip) puts it back; a live
-// region says where it is.
+// Sorting the list (h5.js "Task order"). The grip is the engine tag at the left edge of a row that can be moved (`TaskTag`): only it starts a drag, so
+// a tap, a long press and a swipe on the rest of the row do what they did before sorting existed. With a mouse the drag starts after a move of 4px; a
+// finger needs no long press (the tag has `touch-action: none`, so it never scrolls the list) and starts after 4px too; a plain tap or click on the tag
+// (no drag started) opens or closes the task's sessions, like a tap on the row. From the keyboard the tag is a button: Space or Enter picks the task up,
+// Up and Down move it, Space or Enter drops it and Escape (or leaving the tag) puts it back; a live region says where it is. The row button stays the
+// keyboard's way to open and close the task.
 // While dragging, a copy of the row floats under the pointer, its place in the list is an empty slot of the same height, and the other rows slide out of
 // the way (transforms only: the rows are measured once when the drag starts, and nothing is laid out again per frame). Near the top or the bottom edge the
 // list scrolls. The drop asks h5.js to move the task (`reorderTask`: before the task now after the slot, or after the last one), which saves the whole
@@ -528,10 +535,13 @@ function useTaskDrag(listRef, hostRef, liveRef, ui) {
       aim();
       if (!s.frame) s.frame = requestAnimationFrame(scroll);
     }
+    // A press that never became a drag is a tap on the tag: it opens or closes the task's sessions, like the row.
     function onUp(event) {
       if (event.pointerId !== pointer.id) return;
+      const tap = !s.picked;
       if (s.picked && pointer.mouse) swallowClick();
       end(true);
+      if (tap) ui.actions.toggleTask(ref);
     }
     function onCancel(event) { if (event.pointerId === pointer.id) end(false); }
     function onKey(event) {
@@ -554,7 +564,7 @@ function useTaskDrag(listRef, hostRef, liveRef, ui) {
     }
     function onBlur() { if (live.current === s && s.picked) { end(false); say(t('Reorder cancelled')); } }
     function onScroll() { if (s.picked) place(slotTop(), true); } // the same target as the move that scrolled, so its slide goes on
-    // A long press on the grip would open the context menu of a touch browser (Android Chrome).
+    // A long press on the tag would open the context menu of a touch browser (Android Chrome).
     function onMenu(event) { event.preventDefault(); }
     window.addEventListener('keydown', onKey, true);
     if (keyboard) {
@@ -568,11 +578,11 @@ function useTaskDrag(listRef, hostRef, liveRef, ui) {
     window.addEventListener('pointercancel', onCancel);
     if (!pointer.mouse) window.addEventListener('contextmenu', onMenu, true);
   };
-  // The props of the grip of a row that can be moved.
+  // The props of the tag of a row that can be moved.
   const grip = task => ({
     onPointerDown: event => {
       if (!event.isPrimary || (event.pointerType === 'mouse' && event.button !== 0)) return;
-      event.preventDefault(); // no text selection, and a mouse does not move the focus to the grip
+      event.preventDefault(); // no text selection, and a mouse does not move the focus to the tag
       begin(task.ref, event.currentTarget, { id: event.pointerId, x: event.clientX, y: event.clientY, mouse: event.pointerType === 'mouse' });
     },
     onKeyDown: event => {
@@ -585,25 +595,42 @@ function useTaskDrag(listRef, hostRef, liveRef, ui) {
   });
   return { grip };
 }
-const gripOf = (list, ref) => [...list.querySelectorAll('.h5-task[data-movable="true"]')].find(el => el.dataset.ref === ref)?.querySelector('.h5-task-grip') || null;
+const gripOf = (list, ref) => [...list.querySelectorAll('.h5-task[data-movable="true"]')].find(el => el.dataset.ref === ref)?.querySelector('button.h5-task-tag') || null;
 
-// The grip: 20px wide on a computer, shown faintly and in full on the row's hover or its keyboard focus. On a touch screen it is always shown and its
-// target is 44px: the row is 44px tall, and the hit area (`::after`) reaches into the list's padding on the left and over the row button's own padding
-// on the right, so the row is no taller and the grip takes 34px of its width. Only the grip has `touch-action: none`: the list scrolls everywhere else.
-const GRIP_SX = {
-  flex: '0 0 auto', alignSelf: 'stretch', position: 'relative', zIndex: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-  width: 20, mr: -0.5, p: 0, border: 0, borderRadius: 1, bgcolor: 'transparent', color: 'text.secondary', font: 'inherit', cursor: 'grab', opacity: 0.45,
-  touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none', WebkitTouchCallout: 'none', WebkitTapHighlightColor: 'transparent',
-  transition: 'opacity 120ms ease-out, color 120ms ease-out',
-  '.h5-task-head:hover > &, &:focus-visible': { opacity: 1, color: 'text.primary' },
-  '&:focus-visible': { outline: '2px solid', outlineColor: 'primary.main', outlineOffset: -2 },
-  '&::after': { content: '""', position: 'absolute', inset: '0 -2px 0 -4px' },
-  [TOUCH]: { width: 34, mr: -1, opacity: 1, '&::after': { inset: '0 -6px 0 -4px' } },
-  '@media (prefers-reduced-motion: reduce)': { transition: 'none' },
+// The engine tag is the one control at the left edge of a task row (`TaskTag`): it names the device, shows whether the task is open, and is the drag
+// grip. It is as wide as its pill and as tall as the row, so on a touch screen its target is 44px tall (the row is 44px), and the hit area (`::after`)
+// reaches 6px past the pill on each side (into the list's padding and over the gap), and is at least 44px wide for a short name, so the row is no taller
+// and nothing is added to its width. A tag that can be dragged is a button with `touch-action: none` (only the tag: the list scrolls everywhere else) and
+// the grab cursor; its keyboard focus rings the pill. A tag that cannot be dragged (an Engine with no instance id yet, or no sorting) is a plain span; a
+// tap on it still opens or closes the task.
+const TAG_SX = {
+  flex: '0 0 auto', alignSelf: 'stretch', position: 'relative', zIndex: 1, display: 'inline-flex', alignItems: 'center', minWidth: 0, maxWidth: 104,
+  m: 0, p: 0, border: 0, borderRadius: 1, bgcolor: 'transparent', color: 'inherit', font: 'inherit', cursor: 'pointer',
+  userSelect: 'none', WebkitUserSelect: 'none', WebkitTapHighlightColor: 'transparent',
+  '&::after': { content: '""', position: 'absolute', inset: '0 -4px 0 -4px' },
+  [TOUCH]: { '&::after': { inset: 'auto', top: 0, bottom: 0, left: '50%', width: 'max(calc(100% + 12px), 44px)', transform: 'translateX(-50%)' } },
 };
-const GRIP_SPACE_SX = { flex: '0 0 auto', width: 20, mr: -0.5, [TOUCH]: { width: 34, mr: -1 } };
+const GRIP_SX = {
+  ...TAG_SX, cursor: 'grab', touchAction: 'none', WebkitTouchCallout: 'none',
+  '&:focus-visible': { outline: 'none' },
+  '&:focus-visible > .h5-device-tag': { outline: '2px solid', outlineColor: 'primary.main', outlineOffset: 2 },
+};
+function TaskTag({ task, ui, drag }) {
+  const tag = <DeviceTag device={task.device} unplaced={task.unplaced} expanded={task.expanded} />;
+  if (task.movable) {
+    return (
+      <Box
+        component="button" type="button" className="h5-task-tag" aria-roledescription="sortable"
+        aria-label={t(`${deviceParts(task.device).name}, drag to reorder`)} {...drag.grip(task)} sx={GRIP_SX}
+      >
+        {tag}
+      </Box>
+    );
+  }
+  return <Box component="span" className="h5-task-tag" onClick={() => ui.actions.toggleTask(task.ref)} sx={TAG_SX}>{tag}</Box>;
+}
 // The drag (useTaskDrag): the row's place is an empty slot (dashed, softly tinted), and the copy that floats under the pointer is lifted: a raised
-// background, a soft shadow with a faint primary outline, 2% larger, the grip in the primary colour.
+// background, a soft shadow with a faint primary outline, 2% larger, its engine tag picked out (a solid ring in the tag's colour and a shadow under it).
 const DRAG_SX = theme => ({
   // Not `visibility: hidden`: that would take the focus from the grip of a task moved with the keyboard.
   '& .h5-task[data-drag-slot] > *': { opacity: 0, pointerEvents: 'none' },
@@ -617,7 +644,7 @@ const DRAG_SX = theme => ({
     boxShadow: 'none', transformOrigin: '50% 50%', transition: `transform ${SETTLE_MS}ms ease-out, box-shadow ${SETTLE_MS}ms ease-out`,
   },
   '& .h5-task-float-lifted': { transform: 'scale(1.02)', boxShadow: `${theme.shadows[8]}, 0 0 0 1px ${alpha(theme.palette.primary.main, 0.35)}` },
-  '& .h5-task-float .h5-task-grip': { opacity: 1, color: theme.palette.primary.main },
+  '& .h5-task-float .h5-device-tag': { borderColor: 'currentColor', borderStyle: 'solid', boxShadow: theme.shadows[4] },
   '@media (prefers-reduced-motion: reduce)': { '& .h5-task-float-body': { transition: 'none' } },
 });
 const VISUALLY_HIDDEN = { position: 'absolute', width: '1px', height: '1px', overflow: 'hidden', clip: 'rect(0 0 0 0)', whiteSpace: 'nowrap' };
@@ -637,9 +664,9 @@ function Tasks({ state, ui, query, filter, drag }) {
   // One flat list in the shared order (h5.js `renderTasks`): no section per device and no group titles; a search or a filter keeps that order.
   const shown = (tasks || []).filter(keep);
   if (filtering && !shown.length) return <Typography className="h5-list-note" color="text.secondary" sx={{ py: 3, textAlign: 'center' }}>{t('No matching sessions')}</Typography>;
-  // While the order can be changed, every row has a grip at its left edge; a row that cannot be moved (its device has no instance id yet) has an empty
-  // space of the same width instead, so the chevrons stay in one column.
-  const sortable = Boolean(state.taskList.sortable);
+  // Every row with an engine tag (h5.js tags the rows whenever the order can be changed or more than one device is listed) starts with it: it opens and
+  // closes the task, shows that it is open, and is the drag grip of a row that can be moved. Only an older server with this machine alone has no tags;
+  // there the row keeps its chevron, so whether a task is open still shows.
   return shown.map(task => {
     return (
       <Box
@@ -647,19 +674,14 @@ function Tasks({ state, ui, query, filter, drag }) {
         sx={{ position: 'relative', borderBottom: 1, borderColor: 'divider', '&:last-of-type': { borderBottom: 0 } }}
       >
         <Box className={task.add ? 'h5-task-head h5-task-row' : 'h5-task-head'} sx={{ display: 'flex', alignItems: 'center', gap: 0.5, borderRadius: 2, [TOUCH]: { gap: 1 } }}>
-          {sortable && task.movable ? (
-            <Box component="button" type="button" className="h5-task-grip" aria-label={t('Drag to reorder')} title={t('Drag to reorder')} aria-roledescription="sortable" {...drag.grip(task)} sx={GRIP_SX}>
-              <Icon name="dragHandle" size={20} />
-            </Box>
-          ) : sortable ? <Box component="span" className="h5-task-grip-space" aria-hidden="true" sx={GRIP_SPACE_SX} /> : null}
+          {task.device ? <TaskTag task={task} ui={ui} drag={drag} /> : null}
           <ListItemButton
             component="button" className="h5-task-item" aria-current={task.selected ? 'true' : undefined} aria-expanded={task.expanded}
             onClick={() => ui.actions.toggleTask(task.ref)}
             sx={{ flex: '1 1 auto', minWidth: 0, minHeight: 36, py: 0, px: 0.75, borderRadius: 2, textAlign: 'left', overflowWrap: 'anywhere', fontSize: 14, lineHeight: 1.25 }}
           >
             <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', gap: 1, width: '100%', minWidth: 0 }}>
-              {task.expanded ? <ExpandMoreIcon fontSize="small" /> : <ChevronRightIcon fontSize="small" />}
-              {task.device ? <DeviceTag device={task.device} unplaced={task.unplaced} /> : null}
+              {task.device ? null : task.expanded ? <ExpandMoreIcon fontSize="small" /> : <ChevronRightIcon fontSize="small" />}
               <Box component="span" sx={{ minWidth: 0, display: 'flex', flexDirection: 'column' }}>
                 <Box component="span" className="h5-task-title" sx={{ fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.3 }}>{task.title}</Box>
                 {task.count != null ? <Box component="span" className="h5-task-count" sx={{ fontSize: 12, color: 'text.secondary' }}>{task.count} {t(task.count === 1 ? 'session' : 'sessions')}</Box> : null}

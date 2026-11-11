@@ -562,21 +562,22 @@
   }
   ui.actions.taskDragging = on => { if (on) taskOrder.dragging = true; else endDrag(); };
   ui.actions.reorderTask = (ref, target, after = false) => { endDrag(); reorderTask(ref, target, after); };
-  // The device tag in front of a task name, when more than one device is listed (TaskDrawer.jsx draws it).
+  // The engine tag at the left edge of a task row (TaskDrawer.jsx draws it): shown whenever the order can be changed (it is the drag grip) or more than
+  // one device is listed. Only an older server (no sorting) with this machine alone has no tags.
   const deviceTag = from => ({ key: from.key, local: from === LOCAL, label: from.label, name: from.name || '', instanceId: from.instanceId, offline: from.status === 'offline' });
 
   function renderTasks() {
     showArchived(); // first: the entry is there with an empty list too, and `readInfo` of an expanded list may just have changed what the Engine can do
     if (!listReady) { note('Loading…'); return; }
     const listed = listedSources();
-    if (listed.length === 1 && listed[0] === LOCAL) { // this machine alone: no tags, and it says so when the list is empty
+    if (listed.length === 1 && listed[0] === LOCAL) { // this machine alone: it says so when the list is empty
       const message = LOCAL.status === 'new' ? 'Loading…'
         : LOCAL.status === 'offline' ? `Could not load tasks: ${LOCAL.failure}`
           : LOCAL.tasks.length ? null : 'No tasks yet. Create one above';
       if (message) { note(message); return; }
     }
-    const tagged = listed.length > 1;
     const canSort = sortable();
+    const tagged = listed.length > 1 || canSort;
     const tasks = orderedTasks().map(({ from, item, key }) => ({
       ...taskRow(from, item), source: from.key, movable: canSort && Boolean(key), device: tagged ? deviceTag(from) : null, unplaced: canSort && !key,
     }));

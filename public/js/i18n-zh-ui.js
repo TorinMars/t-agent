@@ -1456,7 +1456,7 @@ I18n.add({
   "Move up": "上移",
   "Move down": "下移",
   "Move to bottom": "移到最后",
-  "Drag to reorder": "拖动调整顺序",
+  "{1}, drag to reorder": "{1}，拖动调整顺序",
   "Picked up at position {1} of {2}. Press Up or Down to move, Space to drop, Escape to cancel.": "已拿起，位于第 {1} 位，共 {2} 位。按上或下方向键移动，按空格键放下，按 Esc 取消。",
   "Moved to position {1} of {2}": "已移到第 {1} 位，共 {2} 位",
   "Dropped at position {1} of {2}": "已放在第 {1} 位，共 {2} 位",

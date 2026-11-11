@@ -1,9 +1,11 @@
 // The one flat task list in the shared order (`GET` / `PUT /api/task-order`), in real Chromium at phone size (390x844, touch) and on a computer (1280x800, mouse),
-// with the routes mocked: no section per device; a device tag in front of each task name with the device's name and a colour that comes from its instance id
-// (none with one device); the order from the API applied, new tasks first; a drag that starts on a row's grip, with the mouse (and Escape) and with a finger
-// (no long press), saves the right whole order, while a drag, a long press or a swipe on the rest of the row does not (a tap still opens it, a swipe still
-// scrolls); during a drag the row's place is an empty slot, a lifted copy floats under the pointer and the other rows slide (transforms); the keyboard
-// moves a task from its grip with an announcement, Escape puts it back; reduced motion moves everything at once; menu moves and a newer order slide the rows;
+// with the routes mocked: no section per device; an engine tag at the left edge of each row with the device's name and a colour that comes from its instance
+// id (also with one device while sorting is offered; none and the chevron with an older server and one device); the tag is the drag grip and shows whether
+// the task is open (no separate grip, no chevron); the order from the API applied, new tasks first; a drag that starts on a row's tag, with the mouse (and
+// Escape) and with a finger (no long press), saves the right whole order and opens nothing, a tap or click on the tag opens or closes the task, while a
+// drag, a long press or a swipe on the rest of the row does not reorder (a tap still opens it, a swipe still scrolls); during a drag the row's place is an
+// empty slot, a lifted copy floats under the pointer and the other rows slide (transforms); the keyboard
+// moves a task from its tag with an announcement, Escape puts it back; reduced motion moves everything at once; menu moves and a newer order slide the rows;
 // the menu moves; keys of devices not shown are kept in place; a failed save moves back; a newer order is applied on refresh, after a drag;
 // groups and the "Move to" of a group stay; an Engine without an instance id is placed last and cannot be moved until its id is known; an older server (404)
 // keeps today's order and offers no sorting. H5_SHOT_DIR=<dir> saves the list at 390px and wide, and both during a drag.
@@ -112,7 +114,8 @@ function tools(page, wide) {
   const waitTitles = wanted => page.waitForFunction(want => JSON.stringify([...document.querySelectorAll('#h5-task-list .h5-task .h5-task-title')].map(node => node.textContent)) === JSON.stringify(want), wanted);
   const row = title => page.locator('#h5-task-list .h5-task').filter({ has: page.locator('.h5-task-title', { hasText: title }) });
   const box = async title => row(title).locator('.h5-task-item').boundingBox();
-  const grip = title => row(title).locator('.h5-task-grip');
+  const grip = title => row(title).locator('button.h5-task-tag');
+  const expanded = title => row(title).locator('.h5-task-item').getAttribute('aria-expanded');
   const lastPut = world => world.writes.filter(([method, p]) => method === 'PUT' && p === '/api/task-order').at(-1);
   const puts = world => world.writes.filter(([method, p]) => method === 'PUT' && p === '/api/task-order').length;
   const menu = async title => {
@@ -123,7 +126,7 @@ function tools(page, wide) {
   };
   const item = text => page.locator('#h5-term-menu-actions button', { hasText: text });
   const notice = wanted => page.waitForFunction(text => ((window.H5UI.get().notice || {}).message || '').startsWith(text), wanted);
-  // A mouse drag that starts on the grip of the row `from` (or, `onRow`, on its main button) and goes to the upper part of `to` (before it), or to its
+  // A mouse drag that starts on the tag (the grip) of the row `from` (or, `onRow`, on its main button) and goes to the upper part of `to` (before it), or to its
   // lower part (after it).
   const mouseDrag = async (from, to, { after = false, release = true, onRow = false } = {}) => {
     const a = onRow ? await box(from) : await grip(from).boundingBox();
@@ -148,7 +151,7 @@ function tools(page, wide) {
       slotHeight: slot ? slot.getBoundingClientRect().height : 0,
       slotChildOpacity: slot ? getComputedStyle(slot.firstElementChild).opacity : null,
       slotOutline: slot ? getComputedStyle(slot, '::before').borderTopStyle : null,
-      float: float ? { title: float.querySelector('.h5-task-title').textContent, lifted: body.classList.contains('h5-task-float-lifted'), shadow: getComputedStyle(body).boxShadow, hidden: float.getAttribute('aria-hidden'), gripColor: getComputedStyle(float.querySelector('.h5-task-grip')).color, top: float.getBoundingClientRect().top } : null,
+      float: float ? { title: float.querySelector('.h5-task-title').textContent, lifted: body.classList.contains('h5-task-float-lifted'), shadow: getComputedStyle(body).boxShadow, hidden: float.getAttribute('aria-hidden'), tag: (tag => ({ color: getComputedStyle(tag).color, border: getComputedStyle(tag).borderTopColor, style: getComputedStyle(tag).borderTopStyle, shadow: getComputedStyle(tag).boxShadow }))(float.querySelector('.h5-device-tag')), top: float.getBoundingClientRect().top } : null,
       moved: rows.filter(node => node !== slot && /translate/.test(node.style.transform)).map(name),
       transitions: rows.map(node => node.style.transition),
       animations: document.getAnimations().filter(animation => animation.playState === 'running').length,
@@ -156,7 +159,7 @@ function tools(page, wide) {
     };
   });
   const dragDone = () => page.waitForFunction(() => !document.querySelector('.h5-task-float') && !document.querySelector('.h5-task[data-drag-slot]'));
-  return { press, settle, sheet, closeSheet, titles, waitTitles, row, box, grip, lastPut, puts, menu, item, notice, mouseDrag, dragView, dragDone };
+  return { press, settle, sheet, closeSheet, titles, waitTitles, row, box, grip, expanded, lastPut, puts, menu, item, notice, mouseDrag, dragView, dragDone };
 }
 
 // A finger on the touch screen, through the DevTools protocol (real touch events and the pointer events made from them: what a phone sends).
@@ -208,12 +211,24 @@ async function testFlatList(browser, wide) {
     bySource.set(source, [color, background]);
   }
   assert.notDeepEqual(bySource.get('local'), bySource.get('remote:7'), `${label}: these two devices differ`);
-  // The chevron still sits in front, and the tag is between it and the name.
-  const order = await t.row('Alpha').locator('.h5-task-item').evaluate(node => [...node.querySelectorAll('svg, .h5-device-tag, .h5-task-title')].map(item => (item.classList.contains('h5-device-tag') ? 'tag' : item.classList.contains('h5-task-title') ? 'title' : 'chevron')));
-  assert.deepEqual(order, ['chevron', 'tag', 'title'], `${label}: chevron, tag, name`);
-  // A click (or tap) still opens a row; nothing is saved.
+  // The engine tag is the one control in front of the name: no separate grip, no chevron (the tag shows whether the task is open).
+  const order = await t.row('Alpha').locator('.h5-task-head').evaluate(node => [...node.querySelectorAll('svg, .h5-device-tag, .h5-task-title')].filter(item => !item.closest('.h5-task-more, .h5-task-add')).map(item => (item.classList.contains('h5-device-tag') ? 'tag' : item.classList.contains('h5-task-title') ? 'title' : 'icon')));
+  assert.deepEqual(order, ['tag', 'title'], `${label}: tag, name, nothing else`);
+  assert.equal(await page.locator('#h5-task-list .h5-task-grip, #h5-task-list .h5-task-grip-space, #h5-task-list .h5-task-item svg').count(), 0, `${label}: no separate grip and no chevron`);
+  assert.ok(await t.row('Alpha').locator('.h5-task-head > button.h5-task-tag:first-child > .h5-device-tag').count(), `${label}: the tag button leads the row`);
+  // A click (or tap) still opens a row, and the tag shows it (data-expanded, a ring in the tag's own colour, a stronger tint); nothing is saved.
+  const tagLook = title => t.row(title).locator('.h5-device-tag').evaluate(node => ({ open: node.dataset.expanded || null, color: getComputedStyle(node).color, border: getComputedStyle(node).borderTopColor, background: getComputedStyle(node).backgroundColor, width: node.getBoundingClientRect().width }));
+  const shut = await tagLook('Alpha');
+  assert.equal(shut.open, null, `${label}: a closed task's tag`);
+  assert.equal(shut.border, 'rgba(0, 0, 0, 0)', `${label}: no ring while closed`);
   await t.press(t.row('Alpha').locator('.h5-task-item'));
   await page.waitForFunction(() => [...document.querySelectorAll('.h5-task')].some(node => node.querySelector('.h5-task-title').textContent === 'Alpha' && node.querySelector('.h5-task-item').getAttribute('aria-expanded') === 'true'));
+  await t.settle();
+  const shown = await tagLook('Alpha');
+  assert.equal(shown.open, 'true', `${label}: the open task's tag says so`);
+  assert.equal(shown.border, shown.color, `${label}: a ring in the tag's own colour`);
+  assert.notEqual(shown.background, shut.background, `${label}: a stronger tint`);
+  assert.equal(shown.width, shut.width, `${label}: the open state takes no width`);
   await t.press(t.row('Alpha').locator('.h5-task-item'));
   assert.equal(t.puts(world), 0, `${label}: no save without a move`);
   if (SHOTS) { fs.mkdirSync(SHOTS, { recursive: true }); await t.settle(); await page.screenshot({ path: path.join(SHOTS, `task-order-${wide ? 'wide' : '390'}.png`) }); }
@@ -240,8 +255,17 @@ async function testOneDevice(browser, wide) {
   const t = tools(page, wide);
   await t.sheet();
   await t.waitTitles(['Beta', 'Alpha', 'Gamma']);
-  assert.equal(await page.locator('.h5-device-tag').count(), 0, `${label}: one device: no tags`);
   assert.equal(await page.locator('.h5-task[data-movable="true"]').count(), 3, `${label}: still sortable`);
+  assert.deepEqual(await page.locator('#h5-task-list .h5-device-tag').allTextContents(), ['MacBook', 'MacBook', 'MacBook'], `${label}: one device: each row still has this machine's engine tag (the grip)`);
+  assert.equal(await page.locator('#h5-task-list button.h5-task-tag').count(), 3, `${label}: every tag is a grip`);
+  assert.equal(await page.locator('#h5-task-list .h5-task-item svg').count(), 0, `${label}: no chevrons`);
+  // A tap on the tag opens and closes the task.
+  await t.press(t.grip('Alpha'));
+  await page.waitForFunction(() => [...document.querySelectorAll('.h5-task')].some(node => node.querySelector('.h5-task-title').textContent === 'Alpha' && node.querySelector('.h5-device-tag').dataset.expanded === 'true'));
+  assert.equal(await t.expanded('Alpha'), 'true', `${label}: a tap on the tag opens the task`);
+  await t.press(t.grip('Alpha'));
+  await page.waitForFunction(() => [...document.querySelectorAll('.h5-task')].some(node => node.querySelector('.h5-task-title').textContent === 'Alpha' && node.querySelector('.h5-task-item').getAttribute('aria-expanded') === 'false'));
+  assert.equal(t.puts(world), 0, `${label}: taps save nothing`);
   assert.deepEqual(world.pageErrors, [], `${label}: no page errors`);
   await context.close();
 }
@@ -254,20 +278,22 @@ async function testMouseDrag(browser) {
   const t = tools(page, true);
   await t.sheet();
   await t.waitTitles(FIRST);
-  // The grip: named, before the chevron, faint until the row is hovered.
+  // The grip is the engine tag: a named button before the row button, with the grab cursor.
   const grip = t.grip('Gamma');
-  assert.equal(await grip.getAttribute('aria-label'), 'Drag to reorder', `${label}: the grip is named`);
-  assert.equal(await grip.getAttribute('title'), 'Drag to reorder');
+  assert.equal(await grip.getAttribute('aria-label'), 'MacBook, drag to reorder', `${label}: the tag is named`);
+  assert.equal(await t.grip('Echo').getAttribute('aria-label'), 'VPS, drag to reorder', `${label}: with its own engine`);
   assert.equal(await grip.getAttribute('aria-roledescription'), 'sortable');
-  assert.ok(await t.row('Gamma').locator('.h5-task-head > .h5-task-grip + .h5-task-item').count(), `${label}: the grip comes before the row button`);
-  assert.equal(await grip.evaluate(node => getComputedStyle(node).touchAction), 'none', `${label}: only the grip stops touch scrolling`);
+  assert.ok(await t.row('Gamma').locator('.h5-task-head > button.h5-task-tag + .h5-task-item').count(), `${label}: the tag comes before the row button`);
+  assert.equal(await grip.evaluate(node => getComputedStyle(node).touchAction), 'none', `${label}: only the tag stops touch scrolling`);
   assert.equal(await t.row('Gamma').locator('.h5-task-item').evaluate(node => getComputedStyle(node).touchAction), 'auto', `${label}: the row button scrolls`);
-  await page.mouse.move(5, 5);
-  await page.waitForTimeout(200);
-  const faint = Number(await grip.evaluate(node => getComputedStyle(node).opacity));
-  await t.row('Echo').locator('.h5-task-title').hover();
-  await page.waitForTimeout(200);
-  assert.ok(faint < 0.6 && Number(await t.grip('Echo').evaluate(node => getComputedStyle(node).opacity)) === 1, `${label}: faint (${faint}), full on hover`);
+  assert.equal(await grip.evaluate(node => getComputedStyle(node).cursor), 'grab', `${label}: the grab cursor`);
+  // Keyboard focus rings the pill.
+  await grip.focus();
+  await page.keyboard.press('Shift+Tab');
+  await page.keyboard.press('Tab');
+  assert.equal(await page.evaluate(() => document.activeElement.classList.contains('h5-task-tag')), true, `${label}: the tag takes the keyboard focus`);
+  assert.equal(await grip.locator('.h5-device-tag').evaluate(node => getComputedStyle(node).outlineStyle), 'solid', `${label}: a focus ring on the tag`);
+  await page.evaluate(() => document.activeElement.blur());
   // A drag on the row itself (not the grip) moves nothing and shows no drag.
   await t.mouseDrag('Gamma', 'Echo', { onRow: true, release: false });
   assert.equal((await t.dragView()).float, null, `${label}: no drag from the row`);
@@ -275,11 +301,15 @@ async function testMouseDrag(browser) {
   await page.waitForTimeout(150);
   await t.waitTitles(FIRST);
   assert.equal(t.puts(world), 0, `${label}: a drag on the row saves nothing`);
-  // A click on the grip does nothing.
+  // A click on the tag opens the task, like the row; a second one closes it. Nothing is saved.
   await grip.click();
-  await page.waitForTimeout(150);
-  assert.equal(await t.row('Gamma').locator('.h5-task-item').getAttribute('aria-expanded'), 'false', `${label}: a click on the grip does not open the row`);
-  assert.equal((await t.dragView()).float, null);
+  await page.waitForFunction(() => [...document.querySelectorAll('.h5-task')].some(node => node.querySelector('.h5-task-title').textContent === 'Gamma' && node.querySelector('.h5-task-item').getAttribute('aria-expanded') === 'true'));
+  assert.equal(await t.row('Gamma').locator('.h5-device-tag').getAttribute('data-expanded'), 'true', `${label}: a click on the tag opens the task`);
+  assert.equal((await t.dragView()).float, null, `${label}: and drags nothing`);
+  await t.grip('Gamma').click();
+  await page.waitForFunction(() => [...document.querySelectorAll('.h5-task')].some(node => node.querySelector('.h5-task-title').textContent === 'Gamma' && node.querySelector('.h5-task-item').getAttribute('aria-expanded') === 'false'));
+  await t.settle();
+  assert.equal(t.puts(world), 0, `${label}: clicks on the tag save nothing`);
   // Gamma (last) before Echo: the slot, the lifted copy, the rows that slid.
   await t.mouseDrag('Gamma', 'Echo', { release: false });
   await page.waitForTimeout(250);
@@ -292,7 +322,7 @@ async function testMouseDrag(browser) {
   assert.equal(view.float && view.float.title, 'Gamma', `${label}: a copy of the row floats`);
   assert.ok(view.float.lifted && view.float.shadow !== 'none', `${label}: lifted, with a shadow`);
   assert.equal(view.float.hidden, 'true', `${label}: the copy is hidden from assistive technology`);
-  assert.equal(view.float.gripColor, 'rgb(144, 202, 249)', `${label}: the grip of the copy is in the primary colour`);
+  assert.ok(view.float.tag.border === view.float.tag.color && view.float.tag.style === 'solid' && view.float.tag.shadow !== 'none', `${label}: the copy's tag is picked out (${JSON.stringify(view.float.tag)})`);
   assert.deepEqual(view.moved, ['Echo', 'Alpha', 'Delta'], `${label}: the rows between slid down`);
   assert.ok(view.transitions.some(value => /transform 180ms/.test(value)), `${label}: they slide (${view.transitions})`);
   assert.equal(view.cursor, 'grabbing', `${label}: the grabbing hand`);
@@ -355,7 +385,7 @@ async function testMouseDrag(browser) {
   await context.close();
 }
 
-// The keyboard: Space or Enter on a grip picks the task up, Up and Down move it, Space or Enter drops it, Escape puts it back; a live region says where.
+// The keyboard: Space or Enter on a tag (the grip) picks the task up, Up and Down move it, Space or Enter drops it, Escape puts it back; a live region says where.
 async function testKeyboard(browser, wide) {
   const label = wide ? 'wide keyboard' : 'phone keyboard';
   const world = makeWorld();
@@ -382,7 +412,9 @@ async function testKeyboard(browser, wide) {
   await t.waitTitles(['Beta', 'Alpha', 'Delta', 'Echo', 'Gamma']);
   await t.dragDone();
   assert.deepEqual(t.lastPut(world)[2], { order: [L(2), L(1), V(1), HIDDEN_KEY, V(2), L(3)] }, `${label}: the same save as a drop`);
-  assert.equal(await page.evaluate(() => document.activeElement.closest('.h5-task')?.querySelector('.h5-task-title').textContent), 'Echo', `${label}: the focus stays on its grip`);
+  assert.equal(await page.evaluate(() => document.activeElement.closest('.h5-task')?.querySelector('.h5-task-title').textContent), 'Echo', `${label}: the focus stays on its tag`);
+  assert.equal(await page.evaluate(() => document.activeElement.classList.contains('h5-task-tag')), true);
+  assert.equal(await t.expanded('Echo'), 'false', `${label}: Space and Enter on the tag move, they do not open the task`);
   // Escape puts it back, and the sheet stays open.
   await page.keyboard.press('Enter');
   await page.keyboard.press('ArrowUp');
@@ -398,12 +430,12 @@ async function testKeyboard(browser, wide) {
   assert.equal(t.puts(world), 1, `${label}: Escape saves nothing`);
   assert.deepEqual((await t.dragView()).moved, [], `${label}: the rows went back`);
   assert.equal(await page.locator('#h5-tasks').isVisible(), true, `${label}: the sheet stays open`);
-  // Leaving the grip (Tab) puts it back too.
+  // Leaving the tag (Tab) puts it back too.
   await page.keyboard.press('Space');
   await page.keyboard.press('ArrowDown');
   await page.keyboard.press('Tab');
   await t.dragDone();
-  assert.equal(await said(), 'Reorder cancelled', `${label}: leaving the grip cancels`);
+  assert.equal(await said(), 'Reorder cancelled', `${label}: leaving the tag cancels`);
   assert.equal(t.puts(world), 1, `${label}: still one save`);
   assert.deepEqual(world.pageErrors, [], `${label}: no page errors`);
   await context.close();
@@ -467,12 +499,20 @@ async function testTouch(browser) {
   await t.sheet();
   await t.waitTitles(FIRST);
   const f = await finger(page);
-  // The grip is shown in full, and its target is 44px tall; the row is not taller than the "⋯" beside it.
+  // The tag's target is 44px tall (its hit area a little wider than the pill); the row is not taller than the "⋯" beside it.
   const gripBox = await t.grip('Gamma').boundingBox();
-  assert.ok(gripBox.height >= 44, `${label}: the grip is 44px tall (${gripBox.height})`);
-  assert.equal(Number(await t.grip('Gamma').evaluate(node => getComputedStyle(node).opacity)), 1, `${label}: always shown on a touch screen`);
+  assert.ok(gripBox.height >= 44, `${label}: the tag is 44px tall (${gripBox.height})`);
+  // The hit area: 6px past the pill on each side, and at least 44px wide for a short name ("VPS"); its edges and the top of the 44px row hit the tag.
+  for (const title of ['Gamma', 'Echo']) {
+    const hit = await t.grip(title).evaluate(node => ({ box: node.getBoundingClientRect().toJSON(), after: parseFloat(getComputedStyle(node, '::after').width), pill: node.firstElementChild.getBoundingClientRect().height }));
+    assert.ok(hit.after >= Math.max(hit.box.width + 12, 44) - 0.5 && hit.pill === 20, `${label}: ${title}: the hit area reaches past the pill (${JSON.stringify(hit)})`);
+    const cx = hit.box.x + hit.box.width / 2;
+    const cy = hit.box.y + hit.box.height / 2;
+    const points = [[cx, hit.box.y + 1.5], [cx, hit.box.y + hit.box.height - 1.5], [cx + 20.5, cy], [Math.max(cx - 20.5, 4), cy]];
+    for (const [x, y] of points) assert.equal(await page.evaluate(({ x, y }) => Boolean(document.elementFromPoint(x, y)?.closest('.h5-task-tag')), { x, y }), true, `${label}: ${title}: (${Math.round(x)}, ${Math.round(y)}) hits the tag`);
+  }
   assert.ok((await t.row('Gamma').locator('.h5-task-head').boundingBox()).height <= 45, `${label}: the row stays 44px`);
-  // A finger on Gamma's grip goes straight to the top half of Echo: no long press needed. Midway: the slot and the floating copy.
+  // A finger on Gamma's tag goes straight to the top half of Echo: no long press needed. Midway: the slot and the floating copy.
   const echo = await t.box('Echo');
   await f.drag(middle(gripBox), { x: gripBox.x + gripBox.width / 2, y: echo.y + echo.height * 0.25 }, { release: false });
   await page.waitForTimeout(250);
@@ -487,18 +527,23 @@ async function testTouch(browser) {
   assert.deepEqual(t.lastPut(world)[2], { order: [L(2), L(3), V(2), HIDDEN_KEY, L(1), V(1)] }, `${label}: the drag saved the whole order`);
   await page.waitForTimeout(300);
   assert.equal(await t.row('Gamma').locator('.h5-task-item').getAttribute('aria-expanded'), 'false', `${label}: the drop did not open the row`);
-  // A tap on the grip does nothing.
+  // A tap on the tag opens the task (and drags nothing); a second tap closes it.
   const saved = t.puts(world);
   await f.tap(middle(await t.grip('Alpha').boundingBox()));
-  await page.waitForTimeout(250);
-  assert.equal(await t.row('Alpha').locator('.h5-task-item').getAttribute('aria-expanded'), 'false', `${label}: a tap on the grip opens nothing`);
+  await page.waitForFunction(() => [...document.querySelectorAll('.h5-task')].some(node => node.querySelector('.h5-task-title').textContent === 'Alpha' && node.querySelector('.h5-task-item').getAttribute('aria-expanded') === 'true'));
+  assert.equal(await t.row('Alpha').locator('.h5-device-tag').getAttribute('data-expanded'), 'true', `${label}: a tap on the tag opens the task`);
   assert.equal((await t.dragView()).float, null, `${label}: and drags nothing`);
+  await page.waitForTimeout(250);
+  assert.equal(await t.expanded('Alpha'), 'true', `${label}: opened once (no second toggle from the click that follows the tap)`);
+  await f.tap(middle(await t.grip('Alpha').boundingBox()));
+  await page.waitForFunction(() => [...document.querySelectorAll('.h5-task')].some(node => node.querySelector('.h5-task-title').textContent === 'Alpha' && node.querySelector('.h5-task-item').getAttribute('aria-expanded') === 'false'));
+  await page.waitForTimeout(250);
   // A quick tap on the row opens it; nothing is saved.
   await f.tap(centre(await t.box('Alpha')));
   await page.waitForFunction(() => [...document.querySelectorAll('.h5-task')].some(node => node.querySelector('.h5-task-title').textContent === 'Alpha' && node.querySelector('.h5-task-item').getAttribute('aria-expanded') === 'true'));
   await f.tap(centre(await t.box('Alpha')));
   await page.waitForTimeout(200);
-  // A long press on the row, then a move, is not a drag any more (it was before the grip).
+  // A long press on the row, then a move, is not a drag (only the tag drags).
   const alpha = await t.box('Alpha');
   await f.drag(centre(await t.box('Gamma')), { x: alpha.x + 60, y: alpha.y + alpha.height * 0.25 }, { hold: 500, release: false });
   assert.equal((await t.dragView()).float, null, `${label}: a long press on the row is not a drag`);
@@ -636,8 +681,22 @@ async function testUnknownId(browser) {
   assert.equal(await t.row('Foxtrot').getAttribute('data-movable'), null, `${label}: it cannot be moved`);
   assert.match(await t.row('Foxtrot').locator('.h5-device-tag').getAttribute('title'), /^Old box · Its tasks can be moved once this device is updated$/, `${label}: the tag says why`);
   assert.equal(await t.row('Foxtrot').locator('.h5-device-tag').getAttribute('data-color'), '-1', `${label}: a neutral tag`);
-  assert.equal(await t.grip('Foxtrot').count(), 0, `${label}: it has no grip`);
-  assert.equal(await t.row('Foxtrot').locator('.h5-task-grip-space').count(), 1, `${label}: but the same space, so the chevrons line up`);
+  assert.equal(await t.grip('Foxtrot').count(), 0, `${label}: its tag is no grip`);
+  assert.equal(await t.row('Foxtrot').locator('span.h5-task-tag > .h5-device-tag').count(), 1, `${label}: but a plain tag in the same place`);
+  assert.equal(await t.row('Foxtrot').locator('.h5-task-tag').evaluate(node => getComputedStyle(node).touchAction), 'auto', `${label}: which does not stop scrolling`);
+  // A click on it still opens and closes the task, and drags nothing.
+  await t.row('Foxtrot').locator('.h5-task-tag').click();
+  await page.waitForFunction(() => document.querySelector('.h5-task[data-source="remote:8"] .h5-task-item')?.getAttribute('aria-expanded') === 'true');
+  assert.equal(await t.row('Foxtrot').locator('.h5-device-tag').getAttribute('data-expanded'), 'true', `${label}: its tag shows it open`);
+  await t.row('Foxtrot').locator('.h5-task-tag').click();
+  await page.waitForFunction(() => document.querySelector('.h5-task[data-source="remote:8"] .h5-task-item')?.getAttribute('aria-expanded') === 'false');
+  const foxtrot = await t.row('Foxtrot').locator('.h5-task-tag').boundingBox();
+  const beta = await t.box('Beta');
+  await page.mouse.move(foxtrot.x + foxtrot.width / 2, foxtrot.y + foxtrot.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(foxtrot.x + foxtrot.width / 2, beta.y + 4, { steps: 8 });
+  assert.equal((await t.dragView()).float, null, `${label}: its tag does not drag`);
+  await page.mouse.up();
   await t.mouseDrag('Foxtrot', 'Beta', { onRow: true });
   await page.waitForTimeout(150);
   assert.equal(t.puts(world), 0, `${label}: a drag of it saves nothing`);
@@ -661,8 +720,13 @@ async function testOlderServer(browser, wide) {
   await t.sheet();
   await t.waitTitles(['Alpha', 'Beta', 'Gamma', 'Delta', 'Echo']);
   assert.equal(await page.locator('.h5-task[data-movable]').count(), 0, `${label}: nothing can be moved`);
-  assert.equal(await page.locator('.h5-task-grip, .h5-task-grip-space').count(), 0, `${label}: no grips and no space for them`);
-  assert.equal(await page.locator('.h5-device-tag').count(), 5, `${label}: the tags are there`);
+  assert.equal(await page.locator('button.h5-task-tag').count(), 0, `${label}: no grips`);
+  assert.equal(await page.locator('span.h5-task-tag > .h5-device-tag').count(), 5, `${label}: the tags are there, as plain tags`);
+  assert.equal(await page.locator('#h5-task-list .h5-task-item svg').count(), 0, `${label}: and no chevrons (the tags show what is open)`);
+  await t.press(t.row('Beta').locator('.h5-task-tag'));
+  await page.waitForFunction(() => [...document.querySelectorAll('.h5-task')].some(node => node.querySelector('.h5-task-title').textContent === 'Beta' && node.querySelector('.h5-device-tag').dataset.expanded === 'true'));
+  await t.press(t.row('Beta').locator('.h5-task-tag'));
+  await page.waitForFunction(() => [...document.querySelectorAll('.h5-task')].some(node => node.querySelector('.h5-task-title').textContent === 'Beta' && !node.querySelector('.h5-device-tag').dataset.expanded));
   assert.equal(await page.locator('.h5-source-header').count(), 0, `${label}: no headers`);
   await t.menu('Beta');
   assert.equal(await t.item('Move up').count(), 0, `${label}: no move items`);
@@ -670,6 +734,22 @@ async function testOlderServer(browser, wide) {
   if (wide) { await t.mouseDrag('Echo', 'Alpha', { onRow: true }); await page.waitForTimeout(150); }
   await t.waitTitles(['Alpha', 'Beta', 'Gamma', 'Delta', 'Echo']);
   assert.equal(world.writes.filter(([, p]) => p === '/api/task-order').length, 0, `${label}: nothing is saved`);
+  assert.deepEqual(world.pageErrors, [], `${label}: no page errors`);
+  await context.close();
+}
+
+// An older server with this machine alone: no sorting and no tags; the row keeps its chevron, so whether a task is open still shows.
+async function testOlderAlone(browser, wide) {
+  const label = wide ? 'wide old alone' : 'phone old alone';
+  const world = makeWorld({ orderRoute: false, remote: false });
+  const { context, page } = await open(browser, world, wide);
+  const t = tools(page, wide);
+  await t.sheet();
+  await t.waitTitles(['Alpha', 'Beta', 'Gamma']);
+  assert.equal(await page.locator('#h5-task-list .h5-device-tag, #h5-task-list .h5-task-tag').count(), 0, `${label}: no tags`);
+  assert.equal(await page.locator('#h5-task-list .h5-task-item svg').count(), 3, `${label}: a chevron in each row`);
+  await t.press(t.row('Alpha').locator('.h5-task-item'));
+  await page.waitForFunction(() => document.querySelector('.h5-task .h5-task-item').getAttribute('aria-expanded') === 'true');
   assert.deepEqual(world.pageErrors, [], `${label}: no page errors`);
   await context.close();
 }
@@ -685,6 +765,7 @@ async function testOlderServer(browser, wide) {
       await testRefresh(browser, wide);
       await testGroups(browser, wide);
       await testOlderServer(browser, wide);
+      await testOlderAlone(browser, wide);
       console.log(`  ${wide ? 'wide' : 'phone'}: ok`);
     }
     await testMouseDrag(browser);

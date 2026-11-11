@@ -8,6 +8,7 @@ I18n.add({
   "NO_PROCESS_MANAGER": "服务不在进程管理器（如 PM2）下运行，重启后不会自动启动",
   "UPDATE_IN_PROGRESS": "正在更新，请等更新结束后再试",
   "RESTART_FAILED": "重启服务失败",
+  "RESTART_PENDING": "服务正在重启，请等服务恢复后再更新",
   "INVALID_CODE": "关联码错误、已使用或已过期，请在对方服务上重新生成",
   "INVALID_REQUEST": "请求内容无效",
   "SELF_LINK": "不能关联服务自身",

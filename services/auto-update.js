@@ -16,7 +16,7 @@ function defaults() {
 }
 
 function createAutoUpdate({
-  readStore, writeStore, updateState, isApplying, apply, log, supervisor,
+  readStore, writeStore, updateState, isApplying, apply, log, supervisor, restartPending = () => false,
   checksEnabled, checkIntervalMs, quietMs = DEFAULT_QUIET_MS,
   now = () => Date.now(), setIntervalFn = setInterval,
 }) {
@@ -128,6 +128,8 @@ function createAutoUpdate({
   }
 
   async function evaluate() {
+    // A restart asked for from the page exits within a second: skip this tick, and keep the wait as it is for the new process to rebuild anyway.
+    if (restartPending()) return undefined;
     if (!support().supported || !load().enabled || isApplying()) return clearWait();
     const update = updateState();
     if (update.status !== 'available' || !update.remote_version) return clearWait();

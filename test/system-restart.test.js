@@ -19,7 +19,7 @@ function stub(name, exports) {
   const resolved = require.resolve(name);
   require.cache[resolved] = { id: resolved, filename: resolved, loaded: true, exports };
 }
-const world = { supervisor: 'pm2', applying: false, exits: [], timers: [], logs: [], session: { user: { login: 'local' } } };
+const world = { supervisor: 'pm2', applying: false, exits: [], timers: [], logs: [], applies: [], session: { user: { login: 'local' } } };
 const restart = createServerRestart({
   supervisor: () => world.supervisor,
   isApplying: () => world.applying,
@@ -34,6 +34,8 @@ stub('../services/update-manager', {
   publicState: () => ({ status: 'current', boot_id: 'boot-1' }),
   restartSupport: () => restart.support(),
   requestRestart: () => restart.request(),
+  restartPending: () => restart.pending(),
+  apply: options => { world.applies.push(options); return Promise.resolve(); },
 });
 stub('../middleware/auth', (req, res, next) => next());
 stub('../db', {});
@@ -114,6 +116,14 @@ test('both GET answers carry restart: { supported: true, reason: null } under a 
   assert.deepEqual(status.body, { status: 'current', boot_id: 'boot-1', is_update_admin: true, restart: { supported: true, reason: null } });
 });
 
+test('with no restart pending, POST /api/system/apply-update still starts the update', async () => {
+  const answer = await call('POST', '/api/system/apply-update', { confirm: true });
+  assert.equal(answer.status, 202);
+  assert.equal(answer.body.accepted, true);
+  assert.equal(world.applies.length, 1);
+  world.applies.length = 0;
+});
+
 // Last: it leaves a restart requested.
 test('a confirmed request answers 202 with the boot_id, logs once, and exits once with 75 after the delay', async () => {
   assert.deepEqual(await post({ confirm: true }), { status: 202, body: { accepted: true, boot_id: 'boot-1' } });
@@ -129,6 +139,11 @@ test('a confirmed request answers 202 with the boot_id, logs once, and exits onc
   assert.equal(world.timers.length, 1);
   assert.equal(world.logs.length, 1);
 
+  // Until the exit no update may start: it would be cut off halfway.
+  assert.deepEqual(await call('POST', '/api/system/apply-update', { confirm: true }), { status: 409, body: { error: 'RESTART_PENDING' } });
+  assert.deepEqual(await call('POST', '/api/system/apply-update', { confirm: true, force: true }), { status: 409, body: { error: 'RESTART_PENDING' } });
+  assert.deepEqual(world.applies, []);
+
   world.timers[0].fn();
   assert.deepEqual(world.exits, [RESTART_EXIT_CODE]);
   assert.equal(RESTART_EXIT_CODE, 75);
@@ -138,8 +153,11 @@ test('a confirmed request answers 202 with the boot_id, logs once, and exits onc
 const managerFile = require.resolve('../services/update-manager');
 const realRequire = createRequire(managerFile);
 function loadManager(env) {
-  const sandbox = { exits: [], timers: [], fetches: 0 };
+  const sandbox = { exits: [], timers: [], fetches: 0, autoOptions: null };
+  const realAuto = realRequire('./auto-update');
   const mocks = {
+    // The real scheduler, with the options the manager gives it kept for the test.
+    './auto-update': { ...realAuto, createAutoUpdate: options => { sandbox.autoOptions = options; return realAuto.createAutoUpdate(options); } },
     child_process: { execFileSync: () => 'running' },
     '../db': { prepare: () => ({ get: () => undefined, run() {} }), backup: async () => {} },
     '../config': { gitRemote: 'origin', gitBranch: 'main', updateCheckEnabled: true, updateCheckIntervalMs: 60_000, updateCheckStartupDelayMs: 1000, updateAutoQuietMs: 1000 },
@@ -174,6 +192,19 @@ test('update manager: restartSupport follows detectSupervisor, and requestRestar
   assert.deepEqual(sandbox.exits, []);
   sandbox.timers[0].fn();
   assert.deepEqual(sandbox.exits, [75]);
+});
+
+test('update manager: after an accepted restart apply() refuses with RESTART_PENDING and the scheduler is told a restart is pending', async () => {
+  const { manager, sandbox } = loadManager({ pm_id: '0' });
+  assert.equal(manager.restartPending(), false);
+  assert.equal(sandbox.autoOptions.restartPending(), false);
+  manager.requestRestart();
+  assert.equal(manager.restartPending(), true);
+  assert.equal(sandbox.autoOptions.restartPending(), true, 'the automatic update skips its ticks');
+  await assert.rejects(manager.apply(), error => error.message === 'RESTART_PENDING' && error.statusCode === 409);
+  await assert.rejects(manager.apply({ force: true }), /RESTART_PENDING/);
+  assert.equal(sandbox.fetches, 0, 'no git command ran');
+  assert.equal(manager.publicState().status === 'blocked', false, 'the refusal is not saved as a blocked update');
 });
 
 test('update manager: requestRestart is refused with UPDATE_IN_PROGRESS while apply() runs', async () => {

@@ -48,6 +48,7 @@ function defaultState() {
     stage: null,
     message: null,
     restart_pending: false,
+    restart_target: null,
     running_version: null,
     updated_at: new Date().toISOString(),
   };
@@ -77,6 +78,8 @@ function readPersistedState() {
 let state = readPersistedState();
 let checkPromise = null;
 let applyPromise = null;
+// An automatic restart for code already on disk is being prepared (npm ci, node-pty): it holds the update lock like applyPromise.
+let restartPromise = null;
 let timer = null;
 
 function saveState(patch) {
@@ -205,7 +208,7 @@ async function runCheck({ force = false } = {}) {
   saveState({ status: 'checking', stage: gitInstall ? 'fetching' : 'checking_version', error: null, error_details: null, local_version: local.app_version, message: null });
   let result;
   let restartRequired = true;
-  let restartPending = false;
+  let pending = { pending: false, target: null };
   if (gitInstall) {
     await execGit(['fetch', config.gitRemote, `refs/heads/${config.gitBranch}:refs/remotes/${config.gitRemote}/${config.gitBranch}`], 120_000);
     const target = `${config.gitRemote}/${config.gitBranch}`;
@@ -213,12 +216,10 @@ async function runCheck({ force = false } = {}) {
     result = { manifest: validateVersionManifest(JSON.parse(manifestText)) };
     restartRequired = await requiresRestart(execGit, runningCommit, target);
     // Whether the workspace code is already newer than the running process (and the change needs a restart to take effect). Auxiliary information; a failure does not affect the check itself.
-    if (runningCommit) {
-      try { restartPending = await requiresRestart(execGit, runningCommit, 'HEAD'); }
-      catch (error) { logUpdate('checking', `Cannot tell whether a restart is needed: ${error.message}`); }
-    }
+    try { pending = await pendingRestart(); }
+    catch (error) { logUpdate('checking', `Cannot tell whether a restart is needed: ${error.message}`); }
   } else {
-    restartPending = Boolean(runningVersion) && runningVersion !== local.app_version;
+    pending = await pendingRestart();
     const headers = {};
     if (!force && state.manifest_etag) headers['If-None-Match'] = state.manifest_etag;
     if (!force && state.manifest_last_modified) headers['If-Modified-Since'] = state.manifest_last_modified;
@@ -226,6 +227,7 @@ async function runCheck({ force = false } = {}) {
     if (force) requestUrl.searchParams.set('_update_check', String(Date.now()));
     result = await requestManifest(requestUrl.toString(), headers);
   }
+  const restartPending = pending.pending;
   const remote = result.notModified ? state.remote_manifest : result.manifest;
   if (!remote) throw new Error('VERSION_CACHE_EMPTY');
   validateVersionManifest(remote);
@@ -239,6 +241,7 @@ async function runCheck({ force = false } = {}) {
     remote_version: remote.app_version,
     restart_required: restartRequired,
     restart_pending: restartPending,
+    restart_target: status === 'restart_pending' ? pending.target : null,
     running_version: runningVersion,
     remote_manifest: remote,
     manifest_etag: gitInstall ? null : result.etag || state.manifest_etag,
@@ -253,8 +256,23 @@ async function runCheck({ force = false } = {}) {
   });
 }
 
+// Whether the code on disk needs a restart to take effect, and what a restart would load: the HEAD commit (git) or the version on disk (archive).
+// The automatic restart counts its attempts per target, and does nothing when the target is unknown (HEAD could not be read).
+async function pendingRestart() {
+  if (installationType() !== 'git') {
+    const disk = readLocalManifest().app_version;
+    const pending = Boolean(runningVersion) && runningVersion !== disk;
+    return { pending, target: pending ? disk : null };
+  }
+  if (!runningCommit || !(await requiresRestart(execGit, runningCommit, 'HEAD'))) return { pending: false, target: null };
+  let head = '';
+  try { head = String(await execGit(['rev-parse', 'HEAD'])).trim(); }
+  catch (error) { logUpdate('checking', `Cannot read HEAD: ${error.message}`); }
+  return { pending: true, target: head || null };
+}
+
 async function check(options) {
-  if (applyPromise) throw new Error('UPDATE_IN_PROGRESS');
+  if (applyPromise || restartPromise) throw new Error('UPDATE_IN_PROGRESS');
   if (checkPromise) return checkPromise;
   checkPromise = runCheck(options).catch(error => {
     saveState({ status: 'failed', stage: null, error: safeError(error), error_details: error.details || null, last_checked_at: new Date().toISOString(), message: 'Update check failed' });
@@ -401,8 +419,9 @@ async function applyArchiveUpdate(checked) {
 
 async function apply(options = {}) {
   if (applyPromise) return applyPromise;
-  // A restart was accepted and the process exits within a second: an update started now would be cut off halfway. Nothing is saved, the state stays as it is.
-  if (serverRestart.pending()) throw Object.assign(new Error('RESTART_PENDING'), { statusCode: 409 });
+  // A restart was accepted and the process exits within a second, or an automatic restart is being prepared: an update started now would be cut off halfway.
+  // Nothing is saved, the state stays as it is.
+  if (serverRestart.pending() || restartPromise) throw Object.assign(new Error('RESTART_PENDING'), { statusCode: 409 });
   applyPromise = runApply(options).catch(error => {
     if (error.message === AUTO_RESTART_REQUIRED) throw error; // the state is what the re-check just saved: available
     saveState({
@@ -415,6 +434,45 @@ async function apply(options = {}) {
     throw error;
   }).finally(() => { applyPromise = null; });
   return applyPromise;
+}
+
+// The automatic restart for code already on disk (status restart_pending). The scheduler has waited for a quiet window; this checks again that
+// `target` is still what a restart would load, makes sure that code can start (npm ci as in runApply when package-lock.json changed since the running
+// commit, then node-pty), and asks lib/server-restart.js for the exit, so pending() and the page's reload work as for a restart from the page.
+// Resolves { stage: 'stale' } when there is nothing to restart for any more, { stage: 'restarting', version } once the exit is scheduled; throws a code otherwise.
+async function prepareRestart(target) {
+  let current = null;
+  // A git error here says nothing about the new code: no restart now, and the next check decides again.
+  try { current = await pendingRestart(); }
+  catch (error) { logUpdate('restart', `Cannot tell whether a restart is still needed: ${error.message}`); }
+  if (!current || !current.target || current.target !== target) return { stage: 'stale' };
+  const pendingState = { status: state.status, message: state.message };
+  try {
+    clearLog();
+    saveState({ status: 'updating', stage: 'preparing_restart', error: null, error_details: null, message: 'Checking that the new code can start' });
+    if (installationType() === 'git') {
+      const lockChanged = String(await execGit(['diff', '--name-only', runningCommit, 'HEAD', '--', 'package-lock.json'])).trim();
+      if (lockChanged) await execNpm(['ci', '--ignore-scripts=false'], 'installing');
+    }
+    await verifyNodePty();
+    saveState({ status: 'updating', stage: 'restarting', message: 'Restarting the service to load the new code' });
+    // The handover: the update lock is released and the restart is accepted in the same synchronous step, so nothing can start in between.
+    restartPromise = null;
+    serverRestart.request();
+    return { stage: 'restarting', version: readLocalManifest().app_version };
+  } catch (error) {
+    // The service keeps running the old code; the status says why it was not restarted.
+    saveState({ status: pendingState.status, stage: null, error: safeError(error), error_details: error.details || null, message: pendingState.message });
+    throw error;
+  }
+}
+
+async function restartForPending({ target } = {}) {
+  if (applyPromise || restartPromise) throw new Error('UPDATE_IN_PROGRESS');
+  if (serverRestart.pending()) throw new Error('RESTART_PENDING');
+  const run = prepareRestart(target).finally(() => { if (restartPromise === run) restartPromise = null; });
+  restartPromise = run;
+  return run;
 }
 
 function readAutoStore() {
@@ -434,7 +492,7 @@ const supervisor = () => detectSupervisor({ env: process.env, ppid: process.ppid
 // POST /api/system/restart. The exit and the timer are this module's own, as in runApply, so a test that runs this file in a sandbox sees them.
 const serverRestart = createServerRestart({
   supervisor,
-  isApplying: () => Boolean(applyPromise),
+  isApplying: () => Boolean(applyPromise || restartPromise),
   bootId,
   log: logUpdate,
   exit: code => process.exit(code),
@@ -445,9 +503,11 @@ const autoUpdate = createAutoUpdate({
   readStore: readAutoStore,
   writeStore: writeAutoStore,
   updateState: () => state,
-  isApplying: () => Boolean(applyPromise),
+  isApplying: () => Boolean(applyPromise || restartPromise),
   restartPending: () => serverRestart.pending(),
   apply,
+  restart: restartForPending,
+  bootId,
   log: logUpdate,
   supervisor,
   checksEnabled: config.updateCheckEnabled !== false,
@@ -494,6 +554,7 @@ const setAutoUpdateEnabled = enabled => autoUpdate.setEnabled(enabled);
 
 const restartSupport = () => serverRestart.support();
 const requestRestart = () => serverRestart.request();
-const restartPending = () => serverRestart.pending();
+// True from an accepted restart until the exit, and while an automatic restart is being prepared: POST /api/system/apply-update answers 409 RESTART_PENDING.
+const restartPending = () => serverRestart.pending() || Boolean(restartPromise);
 
 module.exports = { apply, check, markNotified, publicState, readLocalManifest, start, npmEnv, bootId, setIdleProbe, setAutoUpdateEnabled, restartSupport, requestRestart, restartPending };

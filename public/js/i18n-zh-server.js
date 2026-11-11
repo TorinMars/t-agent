@@ -323,6 +323,8 @@ I18n.add({
   "Update check failed": "检查更新失败",
   "Update complete": "更新完成",
   "Update finished, restarting the service": "更新完成，正在重启服务",
+  "Checking that the new code can start": "正在确认新代码可以启动",
+  "Restarting the service to load the new code": "正在重启服务以加载新代码",
   "Username": "用户名",
   "Web search": "网页搜索",
   "workspace-write (writable workspace)": "workspace-write（可写工作区）",

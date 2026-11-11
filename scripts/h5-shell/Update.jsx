@@ -45,6 +45,7 @@ export function errorLabel(code) {
     NPM_INSTALLING_FAILED: 'Dependency install failed. Check the Node/npm environment',
     NPM_BUILDING_FAILED: 'Frontend build failed',
     NODE_PTY_LOAD_FAILED: 'Terminal native module install failed',
+    RESTART_DID_NOT_HELP: 'The service still ran the old code after restarting',
   })[code] || code || '';
 }
 const installLabel = type => ({ archive: 'Package update', git: 'Git fast-forward update' })[type] || 'Unknown';
@@ -65,12 +66,16 @@ const AUTO_RELOADED_KEY = 'h5-auto-reloaded-versions';
 
 // The reasons the switch cannot be used, and what the service is waiting for (the codes of auto_update).
 const AUTO_UNSUPPORTED = { NO_PROCESS_MANAGER: 'Needs a process manager such as PM2 to restart the service', CHECKS_DISABLED: 'Version checks are turned off on this service' };
-function waitingLabel({ code, count }) {
+// `restart`: the service waits to restart for code already on disk (auto_update.action 'restart'), not to install an update.
+function waitingLabel({ code, count }, restart) {
+  const lead = restart ? 'Waiting to restart' : 'Waiting';
   if (code === 'terminal_running') {
     const number = Math.max(1, Number(count) || 1);
-    return number === 1 ? 'Waiting: 1 terminal running' : `Waiting: ${number} terminals running`;
+    return number === 1 ? `${lead}: 1 terminal running` : `${lead}: ${number} terminals running`;
   }
-  return ({ terminal_program: 'Waiting: an open program such as vim or ssh', chat_running: 'Waiting: an agent chat is running', recent_input: 'Waiting: recent typing' })[code] || 'Waiting for the service to be idle';
+  const what = ({ terminal_program: 'an open program such as vim or ssh', chat_running: 'an agent chat is running', recent_input: 'recent typing' })[code];
+  if (what) return `${lead}: ${what}`;
+  return restart ? 'Waiting for the service to be idle to restart' : 'Waiting for the service to be idle';
 }
 const clockTime = value => {
   const date = new Date(value);
@@ -78,14 +83,21 @@ const clockTime = value => {
 };
 // The one status line under the switch; null when there is nothing to say. The first reason the server lists is the one shown: the next one appears when it clears.
 function autoStateLine(auto) {
-  if (auto.state === 'applying') return t('Updating…');
-  if (auto.state === 'gave_up') return `${t('Automatic update stopped for this version')}${auto.last_error ? `: ${t(errorLabel(auto.last_error))}` : ''}`;
+  const restart = auto.action === 'restart';
+  if (auto.state === 'applying') return t(restart ? 'Restarting the service…' : 'Updating…');
+  if (auto.state === 'gave_up' && restart && auto.last_error === 'RESTART_DID_NOT_HELP') return t('Automatic restart stopped: the service still ran the old code after restarting. Restart it by hand.');
+  if (auto.state === 'gave_up') return `${t(restart ? 'Automatic restart stopped for this code' : 'Automatic update stopped for this version')}${auto.last_error ? `: ${t(errorLabel(auto.last_error))}` : ''}`;
   if (auto.state !== 'waiting' && auto.state !== 'idle') return null;
   const waiting = Array.isArray(auto.waiting_for) ? auto.waiting_for[0] : null;
-  if (auto.state === 'waiting' && waiting) return t(waitingLabel(waiting));
+  if (auto.state === 'waiting' && waiting) return t(waitingLabel(waiting, restart));
   const time = auto.quiet_until && (auto.state === 'waiting' || new Date(auto.quiet_until).getTime() > Date.now()) ? clockTime(auto.quiet_until) : null;
-  return time ? t(`Will update at about ${time}`) : null;
+  if (!time) return null;
+  return t(restart ? `Will restart at about ${time}` : `Will update at about ${time}`);
 }
+const lastAutoLine = auto => {
+  const what = auto.last_auto_action === 'restart' ? 'Last automatic restart' : 'Last automatic update';
+  return t(auto.last_auto_at ? `${what}: ${auto.last_auto_version}, ${formatTime(auto.last_auto_at)}` : `${what}: ${auto.last_auto_version}`);
+};
 
 // A silent reload must not take anything away from the person: text not sent yet, a dialog or sheet, a chat that is open, or a page they are not looking at.
 const TEXT_FIELD = 'textarea, input:not([type=checkbox], [type=radio], [type=button], [type=submit], [type=range], [type=file])';
@@ -104,7 +116,7 @@ function pageBusy(ui) {
   if (!active || active.closest('.xterm')) return false; // the terminal's own hidden textarea is not a draft
   return Boolean(active.matches(TEXT_FIELD) ? active.value : active.isContentEditable && active.textContent);
 }
-// Once per version for each tab, kept across the reload. Nothing can be remembered (private mode): no reload, because a loop is worse than an old page.
+// Once per version (or per process started by an automatic restart, `boot:<id>`) for each tab, kept across the reload. Nothing can be remembered (private mode): no reload, because a loop is worse than an old page.
 function claimReload(version) {
   try {
     const done = JSON.parse(sessionStorage.getItem(AUTO_RELOADED_KEY) || '[]');
@@ -151,7 +163,8 @@ export function UpdateButton({ ui }) {
   useEffect(() => {
     let stop = false;
     let baseline = null; // boot_id and local_version of the first answer: the code this page was loaded from
-    let target = null; // the automatically installed version this page should load, once it may
+    let lastBoot = null; // the boot_id of the last answer: the process this page last talked to
+    let target = null; // what this page should load once it may: the automatically installed version, or `boot:<id>` after an automatic restart
     let reloading = false;
     let reloadCheck = 0;
     let downSince = null;
@@ -165,12 +178,19 @@ export function UpdateButton({ ui }) {
       if (ui.actions.refresh) void ui.actions.refresh(); else location.reload();
     };
     const observe = next => {
-      if (!baseline) { baseline = { boot: next.boot_id, version: next.local_version }; return; }
+      if (!baseline) { baseline = { boot: next.boot_id, version: next.local_version }; lastBoot = next.boot_id; return; }
+      const previousBoot = lastBoot;
+      if (next.boot_id) lastBoot = next.boot_id;
       const autoUpdate = next.auto_update;
-      // A new process AND a new version AND the server says it installed that version by itself: a manual update or a plain restart never gets here.
       if (target || manual.current || !autoUpdate || !next.boot_id || !baseline.boot || next.boot_id === baseline.boot) return;
-      if (!next.local_version || next.local_version === baseline.version || autoUpdate.last_auto_version !== next.local_version || alreadyReloaded(next.local_version)) return;
-      target = next.local_version;
+      // A new process AND a new version AND the server says it installed that version by itself: a manual update or a plain restart never gets here.
+      const updated = Boolean(next.local_version) && next.local_version !== baseline.version && autoUpdate.last_auto_version === next.local_version;
+      // Or the process this page last talked to restarted itself automatically to load newer code on disk; the version may be the same.
+      // A manual restart (pm2 restart, the Restart button) leaves last_auto_boot naming an older process, so it never matches.
+      const restarted = Boolean(autoUpdate.last_auto_boot) && autoUpdate.last_auto_boot === previousBoot && next.boot_id !== previousBoot;
+      const key = updated ? next.local_version : restarted ? `boot:${next.boot_id}` : null;
+      if (!key || alreadyReloaded(key)) return;
+      target = key;
       tryReload();
       if (target && !reloading) reloadCheck = setInterval(tryReload, RELOAD_CHECK_MS);
     };
@@ -367,7 +387,7 @@ export function UpdateButton({ ui }) {
               {autoWhy ? <Typography id="h5-update-auto-why" variant="body2" color="text.secondary">{t(autoWhy)}</Typography> : null}
               {autoLine ? <Typography id="h5-update-auto-state" role="status" variant="body2">{autoLine}</Typography> : null}
               {autoError ? <Typography id="h5-update-auto-error" role="alert" variant="body2" color="error">{autoError}</Typography> : null}
-              {auto.last_auto_version ? <Typography id="h5-update-auto-last" variant="body2" color="text.secondary">{t(auto.last_auto_at ? `Last automatic update: ${auto.last_auto_version}, ${formatTime(auto.last_auto_at)}` : `Last automatic update: ${auto.last_auto_version}`)}</Typography> : null}
+              {auto.last_auto_version ? <Typography id="h5-update-auto-last" variant="body2" color="text.secondary">{lastAutoLine(auto)}</Typography> : null}
             </Box>
           ) : null}
           {notes && /^https?:\/\//.test(notes) ? <Typography variant="body2" sx={{ mb: 1 }}><a id="h5-update-notes" href={notes} target="_blank" rel="noopener noreferrer">{t('View GitHub release notes ↗')}</a></Typography> : null}

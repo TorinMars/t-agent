@@ -16,6 +16,8 @@ import Typography from '@mui/material/Typography';
 import CloseIcon from '@mui/icons-material/Close';
 import SystemUpdateAltIcon from '@mui/icons-material/SystemUpdateAlt';
 import { api, t } from './common.jsx';
+import { LinkedList, useLinkedUpdates } from './LinkedUpdates.jsx';
+import { RESTART_GRACE_MS, SLOW_RESTART_MS } from './restart-wait.mjs';
 
 // The texts of the updater (the same as the old desktop page's, so the Chinese dictionary keeps its translations).
 const STATUS = {
@@ -56,7 +58,6 @@ function formatTime(value) {
 const errorText = status => `${t(errorLabel(status.error)) || t(status.message || 'Update failed')}${status.error_details ? `: ${status.error_details}` : ''}`;
 const lines = status => (Array.isArray(status.log) ? status.log.map(line => line.text).join('\n') : '');
 const POLL_MS = 60_000; // how often the red dot reads the update state
-const RESTART_GRACE_MS = 4000;
 const DOWN_POLL_MS = 3000; // a read failed (the service may be restarting): read this often until it answers again
 const DOWN_POLL_FOR_MS = 5 * 60_000; // ... but not for longer than this; a service that stays away is back to the minute poll
 const RELOAD_CHECK_MS = 1000; // an automatic update is waiting to be loaded: how often to see whether the person has finished
@@ -141,6 +142,7 @@ export function UpdateButton({ ui }) {
   const alive = useRef(true);
   const logNode = useRef(null);
   const manual = useRef(false); // the Update dialog is following an update (monitor): it does its own reload, and the silent one stands aside
+  const linked = useLinkedUpdates(); // "Also update": the connected services (LinkedUpdates.jsx)
   useEffect(() => () => { alive.current = false; clearInterval(timer.current); }, []);
   useEffect(() => { const node = logNode.current; if (node) node.scrollTop = node.scrollHeight; }, [log]);
 
@@ -229,7 +231,7 @@ export function UpdateButton({ ui }) {
         setView(previous => ({ ...previous, phase: 'updating', message: 'Update complete, reloading…' }));
         setTimeout(() => location.reload(), 1500);
       } else {
-        if (next.stage === 'restarting' && !restartingAt) { restartingAt = Date.now(); setTimeout(() => { if (alive.current) setSlow(true); }, 20000); }
+        if (next.stage === 'restarting' && !restartingAt) { restartingAt = Date.now(); setTimeout(() => { if (alive.current) setSlow(true); }, SLOW_RESTART_MS); }
         setView(previous => ({ ...previous, phase: 'updating', message: next.stage === 'restarting' ? 'Restarting the PC service, this page reloads when it is back…' : (next.message || 'Updating…') }));
       }
     }, 1000);
@@ -263,8 +265,20 @@ export function UpdateButton({ ui }) {
     } else setView({ phase: 'current', status: next });
   };
 
+  // "Update now": the ticked services first, then this machine. A service's request goes through this machine (a linked one through its reverse tunnel), so
+  // it must be sent before this machine restarts; the wait ends as soon as each was accepted or refused, and a refusal stops nothing else.
   const start = async () => {
     const forced = force && view.forceOffered && view.status && view.status.install_type !== 'archive';
+    const here = view.phase === 'available' && Boolean(view.status && view.status.is_update_admin);
+    const before = view;
+    if (linked.selected) {
+      setView(previous => ({ ...previous, phase: 'updating', message: 'Starting the updates of the other services…' }));
+      if (here) manual.current = true;
+      await linked.start();
+      if (!alive.current) return;
+      if (!here) { setView(before); return; } // only the other services: their rows show the rest
+    }
+    if (!here) return;
     setView(previous => ({ ...previous, phase: 'updating', message: 'Updating…' }));
     manual.current = true;
     try {
@@ -297,7 +311,7 @@ export function UpdateButton({ ui }) {
   const busy = view.phase === 'checking' || view.phase === 'updating';
   // While the update runs the modal cannot be closed by accident (the service is about to restart).
   const close = () => { if (view.phase !== 'updating') { setOpen(false); clearInterval(timer.current); manual.current = false; } };
-  const show = () => { setOpened(true); setOpen(true); void check(); };
+  const show = () => { setOpened(true); setOpen(true); void check(); void linked.load(); };
   const shown = view.status || null;
   const notes = shown && shown.remote_manifest && shown.remote_manifest.release_url;
   const published = shown && shown.remote_manifest && shown.remote_manifest.published_at;
@@ -309,6 +323,9 @@ export function UpdateButton({ ui }) {
   const autoAdmin = Boolean(status && status.is_update_admin);
   const autoWhy = !auto ? null : !auto.supported ? (AUTO_UNSUPPORTED[auto.unsupported_reason] || 'Not available on this service') : !autoAdmin ? 'Only the update administrator can run updates' : null;
   const autoLine = auto ? autoStateLine(auto) : null;
+  const updateHere = view.phase === 'available' && admin;
+  // "Update now" also when only other services have an update; it then names what it does.
+  const offerNow = updateHere || (linked.selected > 0 && !busy);
 
   return (
     <>
@@ -397,12 +414,13 @@ export function UpdateButton({ ui }) {
             </Typography>
           ) : null}
           {view.phase === 'error' ? <Typography id="h5-update-state" role="alert" color="error">{t(view.message)}</Typography> : null}
+          <LinkedList linked={linked} locked={view.phase === 'updating'} />
           {log ? <Paper id="h5-update-log" component="pre" variant="outlined" ref={logNode} aria-label={t('Update log')} aria-live="off" sx={{ m: 0, mt: 1.5, p: 1, maxHeight: '30vh', overflow: 'auto', fontSize: 12, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{log}</Paper> : null}
         </DialogContent>
         <DialogActions>
           {view.phase === 'error' && view.dirty && admin ? <Button id="h5-update-force-retry" onClick={() => { setForce(true); setView(previous => ({ ...previous, phase: 'available', forceOffered: true })); }}>{t('Choose force update…')}</Button> : null}
           {view.phase === 'error' || view.phase === 'restart' ? <Button id="h5-update-retry" onClick={() => void check()}>{t('Check again')}</Button> : null}
-          {view.phase === 'available' && admin ? <Button id="h5-update-now" variant="contained" color={forcing ? 'warning' : 'primary'} disabled={busy} onClick={() => void start()}>{t(forcing ? 'Force update now' : 'Update now')}</Button> : null}
+          {offerNow ? <Button id="h5-update-now" variant="contained" color={forcing && updateHere ? 'warning' : 'primary'} disabled={busy} onClick={() => void start()}>{t(!updateHere ? 'Update the selected services' : forcing ? 'Force update now' : 'Update now')}</Button> : null}
           <Button id="h5-update-dismiss" color="inherit" disabled={view.phase === 'updating'} onClick={close}>{t('Close')}</Button>
         </DialogActions>
       </Dialog> : null}

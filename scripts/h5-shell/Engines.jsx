@@ -13,6 +13,7 @@ import Typography from '@mui/material/Typography';
 import { DeviceName, Pill, api, errorText, t } from './common.jsx';
 import { EngineDialog, Feedback, Field, Group, Hint, failure, useFeedback } from './Form.jsx';
 import { UnlinkDialog, linkEngineKey, readLinks } from './ServiceLinks.jsx';
+import { RestartButton, restartInfo } from './Restart.jsx';
 
 // Settings "Engines": the remote Engines this Client is connected to (ported from the old desktop page's engine tabs in 2.87.13).
 // The /api/remote-servers endpoints, their validation and their error texts: connect with an address and a pairing code or token (POST /api/remote-servers), edit
@@ -23,6 +24,7 @@ import { UnlinkDialog, linkEngineKey, readLinks } from './ServiceLinks.jsx';
 // Every device has its own engine name, and "Rename" changes it: this machine through `/api/system/engine-name`, a remote row (linked ones too) through
 // `PUT /api/remote-servers/:id/name`, which renames that engine itself, or only the row here when the engine is too old (`name_source: 'local'`). A server
 // without these routes shows no Rename for this machine, and the remote rows keep the name field of "Edit connection" (no `can_rename`).
+// "Restart T-Agent" is on the row of this machine (Restart.jsx), from the `restart` field of `/api/system/version`; not in a pane of the multi-column view.
 
 export function errorLabel(code) {
   return ({
@@ -396,6 +398,7 @@ export function EnginesGroup({ state, ui, linksVersion, onLinksChanged }) {
   const [unlinking, setUnlinking] = useState(null);
   const [localVersion, setLocalVersion] = useState(null);
   const [localName, setLocalName] = useState(null); // { name, default_name, custom } of /api/system/engine-name, or null on an older server (no Rename)
+  const [localRestart, setLocalRestart] = useState(null); // { supported, reason, bootId } from /api/system/version, or null on an older server (no Restart)
   const [renaming, setRenaming] = useState(null); // the target of RenameDialog
   const [checking, setChecking] = useState(null); // id of the Engine being checked
   const [rowFeedback, setRowFeedback] = useState({}); // id -> { message, error }
@@ -413,6 +416,8 @@ export function EnginesGroup({ state, ui, linksVersion, onLinksChanged }) {
       ]);
       setServers(Array.isArray(list) ? list : []);
       setLocalVersion(version && version.app_version ? version.app_version : null);
+      const restart = restartInfo(version);
+      setLocalRestart(restart ? { ...restart, bootId: version.boot_id || null } : null);
       setLocalName(own && typeof own.name === 'string' ? own : null);
       setLinks(linked || []);
       if (!keep) say('');
@@ -458,6 +463,7 @@ export function EnginesGroup({ state, ui, linksVersion, onLinksChanged }) {
     await changed(null);
     say('Saved');
   };
+  const restartHere = Boolean(localRestart) && !state.pane; // a pane leaves restarts to the top page, as it does updates
   const remove = async server => {
     const link = linkOf(server);
     if (link) { setUnlinking(link); return; }
@@ -476,7 +482,12 @@ export function EnginesGroup({ state, ui, linksVersion, onLinksChanged }) {
           </Box>
           <Typography className="h5-engine-meta" variant="caption" color="text.secondary"><span id="h5-engine-local-version">{versionText(localVersion)}</span></Typography>
           {switches ? <ShowInList {...showProps('local')} /> : null}
-          {localName ? <Box sx={ACTIONS}><Button size="small" variant="outlined" className="h5-engine-rename" onClick={() => setRenaming({ kind: 'local', current: localName })}>{t('Rename')}</Button></Box> : null}
+          {localName || restartHere ? (
+            <Box sx={ACTIONS}>
+              {localName ? <Button size="small" variant="outlined" className="h5-engine-rename" onClick={() => setRenaming({ kind: 'local', current: localName })}>{t('Rename')}</Button> : null}
+              {restartHere ? <RestartButton restart={localRestart} bootId={localRestart.bootId} /> : null}
+            </Box>
+          ) : null}
         </Paper>
         {servers.map(server => (
           <EngineRow

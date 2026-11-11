@@ -19,6 +19,7 @@ function harness(overrides = {}) {
     store: overrides.store === undefined ? null : overrides.store,
     update: { status: 'available', remote_version: '2.0.0', restart_required: true },
     applying: false,
+    restartPending: false,
     calls: [],
     snapshot: quietSnapshot,
     result: async () => ({ stage: 'restarting', remote_version: box.update.remote_version }),
@@ -28,6 +29,7 @@ function harness(overrides = {}) {
     writeStore: value => { box.store = value; },
     updateState: () => box.update,
     isApplying: () => box.applying,
+    restartPending: () => box.restartPending,
     apply: options => { box.calls.push(options); return box.result(); },
     log() {},
     supervisor: () => (overrides.supervisor === undefined ? 'pm2' : overrides.supervisor),
@@ -57,6 +59,25 @@ test('restart update: applies after the quiet window, never with force', async (
   await box.auto.tick();
   assert.equal(box.calls.length, 1);
   assert.equal('force' in box.calls[0], false);
+});
+
+test('a pending restart from the page skips the tick: no update starts, with or without the quiet gate', async () => {
+  const box = harness();
+  box.restartPending = true;
+  box.update.restart_required = false;
+  await box.auto.tick();
+  assert.equal(box.calls.length, 0, 'an update that needs no restart waits as well');
+  box.update.restart_required = true;
+  await box.auto.tick();
+  box.clock += QUIET * 2;
+  await box.auto.tick();
+  assert.equal(box.calls.length, 0, 'nor one whose quiet window has passed');
+  assert.equal(box.store, null, 'no attempt is recorded');
+  box.restartPending = false;
+  await box.auto.tick();
+  box.clock += QUIET;
+  await box.auto.tick();
+  assert.equal(box.calls.length, 1, 'the scheduler works again once nothing is pending');
 });
 
 test('any reason resets the quiet window and hides quiet_until', async () => {

@@ -18,6 +18,7 @@ const { copyRelease, stageGithubArchive } = require('./archive-updater');
 const { prepareWorkspace, trackedChanges, dirtyError } = require('../lib/git-update-workspace');
 const { createAutoUpdate, AUTO_RESTART_REQUIRED, DEFAULT_QUIET_MS } = require('./auto-update');
 const { detectSupervisor } = require('../lib/update-supervisor');
+const { createServerRestart } = require('../lib/server-restart');
 
 const projectRoot = path.resolve(__dirname, '..');
 const runningCommit = (() => {
@@ -400,6 +401,8 @@ async function applyArchiveUpdate(checked) {
 
 async function apply(options = {}) {
   if (applyPromise) return applyPromise;
+  // A restart was accepted and the process exits within a second: an update started now would be cut off halfway. Nothing is saved, the state stays as it is.
+  if (serverRestart.pending()) throw Object.assign(new Error('RESTART_PENDING'), { statusCode: 409 });
   applyPromise = runApply(options).catch(error => {
     if (error.message === AUTO_RESTART_REQUIRED) throw error; // the state is what the re-check just saved: available
     saveState({
@@ -428,11 +431,22 @@ function writeAutoStore(value) {
 
 const supervisor = () => detectSupervisor({ env: process.env, ppid: process.ppid, hasIpc: typeof process.send === 'function', platform: process.platform });
 
+// POST /api/system/restart. The exit and the timer are this module's own, as in runApply, so a test that runs this file in a sandbox sees them.
+const serverRestart = createServerRestart({
+  supervisor,
+  isApplying: () => Boolean(applyPromise),
+  bootId,
+  log: logUpdate,
+  exit: code => process.exit(code),
+  schedule: (fn, ms) => setTimeout(fn, ms).unref(),
+});
+
 const autoUpdate = createAutoUpdate({
   readStore: readAutoStore,
   writeStore: writeAutoStore,
   updateState: () => state,
   isApplying: () => Boolean(applyPromise),
+  restartPending: () => serverRestart.pending(),
   apply,
   log: logUpdate,
   supervisor,
@@ -478,4 +492,8 @@ function start() {
 const setIdleProbe = fn => autoUpdate.setIdleProbe(fn);
 const setAutoUpdateEnabled = enabled => autoUpdate.setEnabled(enabled);
 
-module.exports = { apply, check, markNotified, publicState, readLocalManifest, start, npmEnv, bootId, setIdleProbe, setAutoUpdateEnabled };
+const restartSupport = () => serverRestart.support();
+const requestRestart = () => serverRestart.request();
+const restartPending = () => serverRestart.pending();
+
+module.exports = { apply, check, markNotified, publicState, readLocalManifest, start, npmEnv, bootId, setIdleProbe, setAutoUpdateEnabled, restartSupport, requestRestart, restartPending };

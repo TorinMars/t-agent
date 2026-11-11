@@ -5,7 +5,7 @@ import IconButton from '@mui/material/IconButton';
 import { named, t } from './common.jsx';
 import { Icon } from './Icons.jsx';
 import {
-  MIN_COLUMN_WIDTH, STORAGE_KEY, newId, canAdd, canClose, canOfferColumns, columnsFor, forgetMessage, paneUrl, readLayout, readPaneMessage, writeLayout,
+  MIN_COLUMN_WIDTH, STORAGE_KEY, newId, canAdd, canClose, canOfferColumns, columnsFor, forgetMessage, openMessage, paneUrl, readLayout, readPaneMessage, targetColumn, writeLayout,
 } from './columns.mjs';
 
 // The multi-column view of a wide screen: the top page shows a row of iframes of itself in pane mode (`/h5?pane=<id>`), each a whole copy of the page
@@ -23,6 +23,7 @@ const FOCUS_CHECK_MS = 300;
 const readStored = () => { try { return localStorage.getItem(STORAGE_KEY); } catch { return null; } };
 const writeStored = value => { try { localStorage.setItem(STORAGE_KEY, value); } catch { /* not remembered */ } };
 const frames = () => [...document.querySelectorAll('#h5-columns iframe[data-pane-id]')];
+const frameOf = id => frames().find(el => el.dataset.paneId === id);
 
 export function startColumns(ui) {
   if (!canOfferColumns(location.search, window.top !== window)) { ui.set({ columns: null }); return; }
@@ -54,7 +55,7 @@ export function startColumns(ui) {
     const now = get();
     const open = now.ids.filter(item => !now.closing.includes(item));
     if (!open.includes(id) || !canClose(open)) return;
-    const frame = frames().find(el => el.dataset.paneId === id);
+    const frame = frameOf(id);
     try { frame?.contentWindow?.postMessage(forgetMessage(), location.origin); } catch { /* already gone */ }
     put({ closing: [...now.closing, id], focus: now.focus === id ? null : now.focus });
     setTimeout(() => {
@@ -66,6 +67,34 @@ export function startColumns(ui) {
   };
   ui.actions.focusColumn = id => { if (get().focus !== id && get().ids.includes(id)) put({ focus: id }); };
 
+  // Open requests for the columns. A message posted before the pane's page has loaded would reach the iframe's first empty document and be lost, so
+  // each one waits until that iframe element has fired `load` (or its pane said 'ready'); a strip drawn again has new iframe elements.
+  const loadedFrames = new WeakSet();
+  const pending = new Map(); // id -> [message]
+  const deliver = id => {
+    const frame = frameOf(id);
+    const list = pending.get(id);
+    if (!list || !frame || !loadedFrames.has(frame)) return;
+    pending.delete(id);
+    for (const message of list) { try { frame.contentWindow.postMessage(message, location.origin); } catch { /* gone */ } }
+  };
+  ui.actions.columnLoaded = (id, frame) => { if (frame) loadedFrames.add(frame); deliver(id); };
+  // The top page itself would select a session after load (h5.js: a ?openChat= link): while the strip is shown the hidden normal view stays as it is,
+  // and the focused column (else the first) is asked to show it, scrolled into view and outlined. False when the strip is not shown (the caller goes
+  // on as usual) or the target is not usable.
+  ui.actions.openInColumn = target => {
+    const now = get();
+    if (!now || !now.shown) return false;
+    const message = openMessage(target);
+    const id = targetColumn(now.ids.filter(item => !now.closing.includes(item)), now.focus);
+    if (!message || !id) return false;
+    pending.set(id, [...(pending.get(id) || []), message]);
+    deliver(id);
+    if (now.focus !== id) put({ focus: id });
+    setTimeout(() => { const column = document.querySelector(`#h5-columns .h5-column[data-pane-id="${id}"]`); if (column) column.scrollIntoView({ block: 'nearest', inline: 'nearest' }); }, 0);
+    return true;
+  };
+
   // Messages from the panes: same origin only, and only from one of the strip's own iframes, about itself.
   window.addEventListener('message', event => {
     if (event.origin !== location.origin || !get() || !get().shown) return;
@@ -73,7 +102,7 @@ export function startColumns(ui) {
     const message = frame && readPaneMessage(event.data);
     if (!message || message.paneId !== frame.dataset.paneId) return;
     const id = message.paneId;
-    if (message.event === 'ready') put({ ready: { ...get().ready, [id]: true } });
+    if (message.event === 'ready') { put({ ready: { ...get().ready, [id]: true } }); ui.actions.columnLoaded(id, frame); }
     else if (message.event === 'focus') ui.actions.focusColumn(id);
     else put({ titles: { ...get().titles, [id]: { title: message.title, session: message.session } } });
   });
@@ -161,7 +190,7 @@ export function ColumnStrip({ state, ui }) {
                 </IconButton>
               </Box>
               <Box component="iframe" src={paneUrl(id)} title={name ? `${label}: ${name}` : label} data-pane-id={id}
-                allow="clipboard-read; clipboard-write; microphone; screen-wake-lock"
+                allow="clipboard-read; clipboard-write; microphone; screen-wake-lock" onLoad={event => ui.actions.columnLoaded(id, event.currentTarget)}
                 sx={{ flex: '1 1 auto', minHeight: 0, width: '100%', border: 0, display: 'block', bgcolor: '#121212' }} />
               {focused ? <Box aria-hidden="true" className="h5-column-outline" sx={{ position: 'absolute', inset: 0, pointerEvents: 'none', boxShadow: theme => `inset 0 0 0 1px ${theme.palette.primary.main}` }} /> : null}
             </Box>

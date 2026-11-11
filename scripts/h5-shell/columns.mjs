@@ -69,4 +69,18 @@ export function readPaneMessage(data) {
   return message;
 }
 export const forgetMessage = () => ({ type: MESSAGE_TYPE, event: 'forget' });
+// What the top page asks a column to show when something in the top page would select a session while the strip is shown (a notification click,
+// a ?openChat= link): { type, event: 'open', sourceKey ('local', 'remote:3' ...), taskId, terminalId? (when known), conversationId? (a chat) }.
+// null when the target is not usable.
+export function openMessage({ sourceKey, taskId, terminalId, conversationId } = {}) {
+  const key = typeof sourceKey === 'string' ? sourceKey.trim() : '';
+  const id = Number(taskId);
+  if (!key || !Number.isInteger(id) || id <= 0) return null;
+  const message = { type: MESSAGE_TYPE, event: 'open', sourceKey: key, taskId: id };
+  if (terminalId !== undefined && terminalId !== null && String(terminalId)) message.terminalId = String(terminalId);
+  if (conversationId !== undefined && conversationId !== null && String(conversationId)) message.conversationId = String(conversationId);
+  return message;
+}
+// The column a request to open goes to: the focused one, else the first one (columns being closed do not count).
+export const targetColumn = (ids, focus) => (focus && ids.includes(focus) ? focus : ids[0] || null);
 export const paneUrl = id => `/h5?pane=${encodeURIComponent(id)}`;

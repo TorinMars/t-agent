@@ -3,7 +3,8 @@
 // terminal again); a reload keeps the mode, the order and the ids; add and close a column (the last one cannot be closed, at most 6, a closed pane
 // gets 'forget'); sideways scrolling with snapping when the columns do not fit; focus by a click into a column (none taken on load); pane messages
 // from a foreign origin, from the top page itself or about another column are ignored; the top page holds no terminal socket while the strip is
-// shown; the switch is not offered below the wide breakpoint, on a phone, or on a pane page.
+// shown; the switch is not offered below the wide breakpoint, on a phone, or on a pane page. While the strip is shown, a ?openChat= link leaves the
+// hidden normal view alone and sends `open` to the focused column (else the first).
 // H5_SHOT_DIR=<dir> saves screenshots of the header switch and of the strip at 2000x1150 there.
 const { chromium } = require('playwright');
 const fs = require('node:fs');
@@ -37,6 +38,13 @@ async function openPage(browser, { viewport, touch = false, storage = REMEMBERED
       window.frameFocusCalls = 0;
       const own = HTMLIFrameElement.prototype.focus;
       HTMLIFrameElement.prototype.focus = function focus(...args) { window.frameFocusCalls += 1; return own.apply(this, args); };
+    }
+    // Every pane message a column receives, from its start, in the top page's `paneInbox`: [pane id, data, origin].
+    if (window !== window.top) {
+      window.addEventListener('message', event => {
+        if (!event.data || event.data.type !== 't-agent-pane') return;
+        try { (window.top.paneInbox = window.top.paneInbox || []).push([new URLSearchParams(location.search).get('pane'), event.data, event.origin]); } catch { /* another origin */ }
+      });
     }
     window.sockets = [];
     window.FakeSocket = class {
@@ -77,6 +85,7 @@ const terminalSocketCount = page => page.evaluate(() => window.sockets.filter(s 
 const frameIds = page => page.evaluate(() => [...document.querySelectorAll('#h5-columns iframe')].filter(el => el.closest('.h5-column').style.display !== 'none' && getComputedStyle(el.closest('.h5-column')).display !== 'none').map(el => el.dataset.paneId));
 const frameSrcs = page => page.evaluate(() => [...document.querySelectorAll('#h5-columns iframe')].map(el => el.getAttribute('src')));
 const stored = page => page.evaluate(() => JSON.parse(localStorage.getItem('h5-columns') || 'null'));
+const opens = page => page.evaluate(() => (window.paneInbox || []).filter(([, data]) => data.event === 'open'));
 const paneFrame = (page, id) => page.frames().find(frame => frame.url().endsWith(`/h5?pane=${id}`));
 async function waitFrames(page, count) {
   await page.waitForFunction(n => document.querySelectorAll('#h5-columns .h5-column').length === n && [...document.querySelectorAll('#h5-columns .h5-column')].every(el => getComputedStyle(el).display !== 'none'), count, { timeout: 5000 });
@@ -282,6 +291,21 @@ async function shownTerminal(page, name) {
       assert.ok(fit.scroll <= fit.client + 1, `${label}: four columns fit (${JSON.stringify(fit)})`);
       assert.ok(fit.widths.every(w => Math.abs(w - 500) <= 2), `${label}: each 500px (${fit.widths})`);
       assert.deepEqual(await openTerminalSockets(page), []);
+      // A ?openChat= link while the strip is shown and no column is focused: the first column gets `open` once its
+      // page has loaded; the hidden normal view still brings back its remembered terminal, shown when the strip is left.
+      const four = await frameIds(page);
+      await page.goto(`${ORIGIN}/h5?openChat=1:conv-9`);
+      await waitFrames(page, 4);
+      await page.waitForFunction(() => (window.paneInbox || []).some(([, data]) => data.event === 'open'), null, { timeout: 10000 });
+      assert.deepEqual(await opens(page), [[four[0], { type: 't-agent-pane', event: 'open', sourceKey: 'local', taskId: 1, conversationId: 'conv-9' }, ORIGIN]], `${label}: the link went to the first column`);
+      // (The outline is checked in the 1440 case: here the pages inside the columns, still the normal page until pane mode, take the focus on load.)
+      await page.waitForTimeout(500);
+      assert.equal(await terminalSocketCount(page), 0, `${label}: the top page opened no terminal socket`);
+      await page.locator('#h5-columns-toggle').click();
+      await shownTerminal(page, 'Terminal 1');
+      assert.equal(await page.locator('#h5-agent').isVisible(), false, `${label}: the normal view did not open the chat`);
+      await page.locator('#h5-columns-open').click();
+      await waitFrames(page, 4);
       if (SHOTS) {
         await page.waitForFunction(() => [...document.querySelectorAll('#h5-columns iframe')].every(el => el.contentDocument && el.contentDocument.getElementById('h5-app')), null, { timeout: 10000 });
         await page.waitForTimeout(1500);

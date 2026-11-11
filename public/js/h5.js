@@ -3336,7 +3336,10 @@
     for (const from of listedSources()) if (!reads.has(from)) reads.set(from, loadSource(from));
     renderTasks();
     syncFeeds();
-    if (link && await openChatFromLink({ taskId: Number(link[1]), conversationId: link[2] })) return;
+    // While the multi-column view is shown (Columns.jsx) the link goes to the focused column (else the first) and the hidden normal view still brings
+    // back its remembered task below.
+    if (link && columnsShown()) ui.actions.openInColumn({ sourceKey: LOCAL.key, taskId: Number(link[1]), conversationId: link[2] });
+    else if (link && await openChatFromLink({ taskId: Number(link[1]), conversationId: link[2] })) return;
     // The remembered service and task when it is listed and answers in time; else the remembered task of another listed service; else no task and the list.
     const listed = listedSources();
     const tried = [assumed, LOCAL, ...listed].filter((from, index, all) => listed.includes(from) && all.indexOf(from) === index);

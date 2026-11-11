@@ -84,3 +84,15 @@ test('pane messages: only the agreed shape is read', async () => {
   assert.deepEqual(forgetMessage(), { type: 't-agent-pane', event: 'forget' });
   assert.equal(paneUrl('ab1'), '/h5?pane=ab1');
 });
+
+test('an open request: the agreed message, to the focused column or else the first', async () => {
+  const { openMessage, targetColumn } = await load();
+  assert.deepEqual(openMessage({ sourceKey: 'local', taskId: 2, terminalId: 'd1' }), { type: 't-agent-pane', event: 'open', sourceKey: 'local', taskId: 2, terminalId: 'd1' });
+  assert.deepEqual(openMessage({ sourceKey: 'remote:3', taskId: '9' }), { type: 't-agent-pane', event: 'open', sourceKey: 'remote:3', taskId: 9 }, 'no terminalId when it is not known');
+  assert.deepEqual(openMessage({ sourceKey: 'local', taskId: 1, conversationId: 'c-1' }), { type: 't-agent-pane', event: 'open', sourceKey: 'local', taskId: 1, conversationId: 'c-1' });
+  for (const bad of [{}, { sourceKey: 'local' }, { sourceKey: '', taskId: 1 }, { sourceKey: 'local', taskId: 0 }, { sourceKey: 'local', taskId: 'x' }]) assert.equal(openMessage(bad), null, JSON.stringify(bad));
+  assert.equal(targetColumn(['a', 'b', 'c'], 'b'), 'b');
+  assert.equal(targetColumn(['a', 'b', 'c'], null), 'a');
+  assert.equal(targetColumn(['a', 'c'], 'b'), 'a', 'a focus on a column that is gone falls back to the first');
+  assert.equal(targetColumn([], null), null);
+});

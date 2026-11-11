@@ -1181,7 +1181,10 @@
   let menuScope = null;
   // The optional name typed in the New session dialog. It is kept while moving between its lists (Claude session, Back) and names what is created.
   let newName = '';
-  let menuCreate = -1; // the item that Enter in the name field runs (New Terminal, New Claude session)
+  let menuCreate = -1; // the item that Enter in the name field runs in a sub-list (New Claude session, New Codex session)
+  // The keyboard way of each item of the first list of the New session dialog (Claude session, Codex session, New Terminal): Enter on the highlighted choice
+  // makes a NEW session of that kind at once, where a press on Claude / Codex session opens its sub-list (`menuPick`, `NewSessionDialog`). null: not a choice.
+  let menuQuick = [];
   let menuTask = null; // the ref (`taskRef`) of the task whose "+" opened the New session dialog (or whose "⋯" opened its sheet)
   let creating = 0; // counts the terminals asked for from the New session dialog; closing the dialog counts too, so an answer for a dialog that was closed is dropped
 
@@ -1190,6 +1193,7 @@
     menuScope = null;
     menuRuns = [];
     menuCreate = -1;
+    menuQuick = [];
     menuTask = null;
     newName = '';
     creating += 1;
@@ -1204,14 +1208,16 @@
   }
   // The typed name, as the server will keep it (an empty name: the default "Terminal N" / "Claude N").
   const takeName = () => newName.replace(/\s+/g, ' ').trim();
-  // items: [label, run, kind, create]; kind 'danger' is drawn as a warning, 'raw' is a name that is not translated; create: Enter in the name field runs it.
+  // items: [label, run, kind, create, quick]; kind 'danger' is drawn as a warning, 'raw' is a name that is not translated; create: Enter in the name field runs it;
+  // quick: the item is a choice of the keyboard list (`pick` in the state), and Enter on it runs `quick` instead of `run`.
   // naming: the New session dialog of the task `menuTask`, with the optional name field above the choices; `extra` adds its own fields (the task's title and service,
   // the sub-list shown, busy and error).
   // anchor: the "⋯" of a session row: the actions are a popup under it instead of the sheet from the bottom.
   function showMenu(title, items, { naming = false, anchor = null, extra = null } = {}) {
     menuRuns = items.map(item => item[1]);
     menuCreate = items.findIndex(item => item[3]);
-    ui.set({ menu: { title, items: items.map(([label, , kind]) => ({ label, kind: kind || null })), rename: null, renameValue: '', naming, task: naming ? menuTask : null, name: newName, anchor, ...extra } });
+    menuQuick = items.map(item => item[4] || null);
+    ui.set({ menu: { title, items: items.map(([label, , kind, , quick]) => ({ label, kind: kind || null, pick: Boolean(quick) })), rename: null, renameValue: '', naming, task: naming ? menuTask : null, name: newName, anchor, ...extra } });
   }
   // The rename field takes the place of the row in the task list ({ kind, id, task } of the row, `task` being its ref: `default` is a terminal id in every task); the sheet of
   // actions goes away.
@@ -1326,6 +1332,8 @@
   ui.actions.menuCancel = closeTerminalMenu;
   ui.actions.menuName = value => { newName = String(value || ''); };
   ui.actions.menuNameSubmit = () => { const run = menuRuns[menuCreate]; if (run) run(); };
+  // Enter on the highlighted choice of the New session dialog (from the name field or from the choice itself): a new session of that kind, with the typed name.
+  ui.actions.menuPick = index => { const run = menuQuick[index]; if (run && !(ui.get().menu || {}).busy) run(); };
   ui.actions.menuRename = async value => {
     const row = menuRow;
     const scope = menuScope;
@@ -1357,18 +1365,20 @@
 
   // ── Session: a plain terminal, or a Claude / Codex session of the task directory (new or resumed) ──
   const SESSION_KINDS = [['claude', 'Claude session'], ['codex', 'Codex session']];
-  // The New session dialog (`NewSessionDialog` in TaskDrawer.jsx). sub: null for the first list (New Terminal, Claude session, Codex session), else the label of the
+  // The New session dialog (`NewSessionDialog` in TaskDrawer.jsx). sub: null for the first list (Claude session, Codex session, New Terminal), else the label of the
   // sub-list shown (Claude session: New Claude session, the earlier sessions, Back). The dialog names the task and, when it is not on this machine, its service.
   function showSessionMenu(sub, items) {
     const hit = resolveRef(menuTask);
     const extra = { sub, taskTitle: hit ? hit.item.title : '', service: hit ? serviceOf(hit.from) : null, busy: false, error: '' };
     showMenu(tr(sub || 'New session'), items, { naming: true, extra });
   }
+  // The first list, in the order of the keyboard choices: Claude session (highlighted first), Codex session, New Terminal. A press on a session kind opens its
+  // sub-list; Enter on the highlighted one (`menuPick`) makes a new session of that kind at once, as "New Claude session" in the sub-list does.
   function openSessionMenu() {
     menuRow = null;
     showSessionMenu(null, [
-      ['New Terminal', () => void startSession({}), null, true],
-      ...SESSION_KINDS.map(([agent, label]) => [label, () => void openAgentSessions(agent, label)]),
+      ...SESSION_KINDS.map(([agent, label]) => [label, () => void openAgentSessions(agent, label), null, false, () => void startSession({ agent })]),
+      ['New Terminal', () => void startSession({}), null, false, () => void startSession({})],
     ]);
   }
   ui.actions.openSessionMenu = openSessionMenu;
@@ -2421,6 +2431,24 @@
       if (box) { box.focus(); box.select(); } else if (tries < 10) setTimeout(() => focusSearch(tries + 1), 30);
     };
     setTimeout(focusSearch, 0);
+  }, true);
+  // Cmd+Shift+O (Apple) or Ctrl+Shift+O (others) opens the New session dialog for the task shown, on its own service, also from inside the terminal: this listens
+  // in the capture phase, before xterm (Ctrl+O alone stays the terminal's). The browser's own Cmd/Ctrl+Shift+O (the bookmarks manager in Chrome and Firefox) is
+  // prevented whenever the page gets the key. With no task shown, another dialog, a menu or the copy view open (the phone's task sheet does not count), it does
+  // nothing; a held key opens the dialog once.
+  const otherModalOpen = () => Boolean(document.querySelector('.MuiModal-root:not(.MuiModal-hidden):not(#h5-tasks), dialog[open]')) || ui.get().copyText !== null;
+  document.addEventListener('keydown', event => {
+    if (mindmap || !deskKeys() || event.defaultPrevented || !event.shiftKey || event.altKey) return;
+    if (APPLE ? !(event.metaKey && !event.ctrlKey) : !(event.ctrlKey && !event.metaKey)) return;
+    const key = (event.key || '').toLowerCase();
+    if (key !== 'o' && !(event.code === 'KeyO' && !/^[a-z]$/.test(key))) return; // another layout: the key in the place of O
+    const menu = ui.get().menu;
+    const already = Boolean(menu && menu.naming); // the dialog is open already: the key stays with it
+    if (!already && (!task || otherModalOpen())) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (already || event.repeat) return;
+    ui.actions.addSession(taskRef(source, task.id));
   }, true);
   // Typing with nothing editable focused goes to the terminal: the key is sent and the terminal takes the focus, so the next keys go to it directly.
   // Keys with Cmd stay the browser's (and Ctrl ones on other systems: reload, tabs ...); function keys (F1-F12) and lone modifiers are left alone. A focused

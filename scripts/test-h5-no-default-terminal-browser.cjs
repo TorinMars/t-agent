@@ -128,7 +128,7 @@ async function scenario(browser, wide) {
   // The empty state opens the New session dialog of the task, which creates the first terminal.
   await page.locator('#h5-empty-new').click();
   await page.locator('#h5-new-session').waitFor(WAIT);
-  assert.deepEqual(await page.locator('#h5-new-session #h5-term-menu-actions button').allTextContents(), ['New Terminal', 'Claude session', 'Codex session'], `${label}: the New session dialog`);
+  assert.deepEqual(await page.locator('#h5-new-session #h5-term-menu-actions button').allTextContents(), ['Claude session', 'Codex session', 'New Terminal'], `${label}: the New session dialog`);
   await page.locator('#h5-new-session #h5-term-menu-actions button', { hasText: 'New Terminal' }).click();
   await page.locator('#h5-new-session').waitFor({ state: 'detached', ...WAIT });
   await page.locator('.h5-xterm').first().waitFor(WAIT);

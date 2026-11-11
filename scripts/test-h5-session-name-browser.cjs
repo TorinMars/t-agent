@@ -179,7 +179,7 @@ async function checkOtherTask({ page, requests, size, press, list, shown, base, 
       await page.waitForTimeout(300);
       assert.equal(await page.locator('#h5-term-menu .h5-menu-panel').isVisible().catch(() => false), false, `${size}: no sheet from the bottom`);
       assert.equal(await page.locator('#h5-tasks #h5-new-name-input').count(), 0, `${size}: nothing is drawn in the task list`);
-      assert.deepEqual(await page.locator('#h5-new-session #h5-term-menu-actions button').allTextContents(), ['New Terminal', 'Claude session', 'Codex session']);
+      assert.deepEqual(await page.locator('#h5-new-session #h5-term-menu-actions button').allTextContents(), ['Claude session', 'Codex session', 'New Terminal']);
       assert.equal(await page.locator('#h5-new-session-task').textContent(), 'Task 6', `${size}: the dialog names its task`);
       let d = await dialogBox();
       assert.ok(d.field.height >= (wide ? 36 : 44) - 0.5, `${size}: the field is ${d.field.height}px high`);
@@ -213,13 +213,15 @@ async function checkOtherTask({ page, requests, size, press, list, shown, base, 
         await page.locator('#h5-tasks').waitFor({ state: 'hidden' });
         await openSheet();
       } else {
-        // Escape closes the dialog and is not passed on to the terminal; Enter in the field runs New Terminal with the name.
+        // Escape closes the dialog and is not passed on to the terminal; Enter in the field runs the highlighted choice with the name (Claude session is
+        // highlighted first; Up wraps to New Terminal, the last).
         const before = await page.evaluate(() => window.sent.length);
         await page.locator('#h5-new-name-input').press('Escape');
         await page.locator('#h5-new-session').waitFor({ state: 'detached' });
         assert.equal(await page.evaluate(n => window.sent.slice(n).some(data => data.includes('\x1b')), before), false, 'Escape is not sent to the terminal');
         await page.locator(`${taskRow('Task 6')} .h5-task-add`).click();
         await page.locator('#h5-new-name-input').fill('Review');
+        await page.locator('#h5-new-name-input').press('ArrowUp');
         await page.locator('#h5-new-name-input').press('Enter');
         await page.locator('#h5-new-session').waitFor({ state: 'detached' });
         assert.deepEqual(requests.at(-1), ['POST', '/api/tasks/6/terminals', { title: 'Review' }]);

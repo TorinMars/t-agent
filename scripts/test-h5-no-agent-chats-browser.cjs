@@ -145,7 +145,7 @@ async function check(env, h, { wide, remote, label }) {
   await h.press(page.locator('#h5-tasks .h5-task-row:has(.h5-task-item[aria-current="true"]) .h5-task-add'));
   await page.locator('#h5-new-session #h5-term-menu-actions button').first().waitFor();
   await page.waitForTimeout(300);
-  assert.deepEqual(await page.locator('#h5-new-session #h5-term-menu-actions button').allTextContents(), ['New Terminal', 'Claude session', 'Codex session'], `${label}: the New session dialog`);
+  assert.deepEqual(await page.locator('#h5-new-session #h5-term-menu-actions button').allTextContents(), ['Claude session', 'Codex session', 'New Terminal'], `${label}: the New session dialog`);
   await h.press(page.locator('#h5-term-menu-cancel'));
   await page.locator('#h5-new-session').waitFor({ state: 'detached' });
 

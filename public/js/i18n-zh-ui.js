@@ -1443,6 +1443,11 @@ I18n.add({
   "Move up": "上移",
   "Move down": "下移",
   "Move to bottom": "移到最后",
+  "Drag to reorder": "拖动调整顺序",
+  "Picked up at position {1} of {2}. Press Up or Down to move, Space to drop, Escape to cancel.": "已拿起，位于第 {1} 位，共 {2} 位。按上或下方向键移动，按空格键放下，按 Esc 取消。",
+  "Moved to position {1} of {2}": "已移到第 {1} 位，共 {2} 位",
+  "Dropped at position {1} of {2}": "已放在第 {1} 位，共 {2} 位",
+  "Reorder cancelled": "已取消调整顺序",
   "Could not save the task order: {1}": "保存任务顺序失败：{1}",
   "Its tasks can be moved once this device is updated": "这台设备更新后才能调整它的任务顺序",
 });

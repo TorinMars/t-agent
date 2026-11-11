@@ -39,6 +39,9 @@ async function openPage(browser, viewport) {
     if (url.pathname === '/h5') return route.fulfill({ contentType: 'text/html', body: fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8') });
     if (/^\/(js|css|vendor)\//.test(url.pathname)) return route.fulfill({ contentType: TYPES[path.extname(url.pathname)] || 'text/plain', body: fs.readFileSync(path.join(root, 'public', url.pathname)) });
     if (url.pathname === '/api/remote-servers') return json([]);
+    // The shared task order is offered (this machine has an instance id), so every task row has its drag grip, which must own a 44px target too.
+    if (url.pathname === '/api/system/version') return json({ instance_id: '6c1d1c1e-0000-4000-8000-00000000000a' });
+    if (url.pathname === '/api/task-order') return json({ order: [], updated_at: 0 });
     if (url.pathname === '/api/tasks' && method === 'GET') return json(TASKS);
     if (url.pathname === '/api/task-groups') return json([{ key: 'doing', name: 'In progress', sort_order: 1 }, { key: 'todo', name: 'To do', sort_order: 2 }]);
     if (url.pathname === '/api/tasks/terminal-activity') return json({ 1: { 'h5-default': 'running' } });
@@ -186,6 +189,7 @@ function measure(min) {
       await page.locator('#h5-tasks').waitFor({ state: 'visible' });
       await page.locator('#h5-tasks .h5-terminal-more').first().waitFor();
       await check('task-sheet');
+      assert.ok(await page.locator('#h5-tasks .h5-task-grip').count() > 0, `${viewport.width}px: the task rows have drag grips (checked above)`);
       await page.locator('#h5-tasks .h5-terminal-more').first().tap();
       await page.locator('#h5-session-menu-actions').waitFor();
       await check('terminal-menu');

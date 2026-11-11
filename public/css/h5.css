@@ -205,3 +205,5 @@ body.h5-tasks-open .h5-agent { border-bottom-left-radius: 28px; overflow: hidden
 .h5-file-text :is(.hljs-tag, .hljs-name, .hljs-deletion) { color: #f29da8; }
 .h5-file-text .hljs-emphasis { font-style: italic; }
 .h5-file-text .hljs-strong { font-weight: bold; }
+/* A task being dragged by its grip (TaskDrawer.jsx useTaskDrag): the grabbing hand everywhere, and no text selection. */
+html[data-task-drag="pointer"], html[data-task-drag="pointer"] * { cursor: grabbing !important; user-select: none !important; -webkit-user-select: none !important; }

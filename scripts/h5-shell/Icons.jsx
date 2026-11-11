@@ -123,6 +123,9 @@ const DRAWN = {
   // Shown at 14px inside the thin strip, not 22px: they mark the direction and are not buttons.
   chevronUp: 'M6 15l6-6 6 6',
   chevronDown: 'M6 9l6 6 6-6',
+  // Drag to reorder (the grip at the left edge of a task row): six dots in two columns. The library's `drag` (4936456) is a four-way move arrow, not a
+  // grip. Each dot is a circle of radius 0.75, so the 1.5 stroke fills it: a 3px dot on the 24 grid.
+  dragHandle: 'M9 5.75a0.75 0.75 0 1 0 0 1.5a0.75 0.75 0 1 0 0-1.5z M15 5.75a0.75 0.75 0 1 0 0 1.5a0.75 0.75 0 1 0 0-1.5z M9 11.25a0.75 0.75 0 1 0 0 1.5a0.75 0.75 0 1 0 0-1.5z M15 11.25a0.75 0.75 0 1 0 0 1.5a0.75 0.75 0 1 0 0-1.5z M9 16.75a0.75 0.75 0 1 0 0 1.5a0.75 0.75 0 1 0 0-1.5z M15 16.75a0.75 0.75 0 1 0 0 1.5a0.75 0.75 0 1 0 0-1.5z',
 };
 
 export function Icon({ name, size = 24 }) {

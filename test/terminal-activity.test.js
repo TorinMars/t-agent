@@ -1,8 +1,14 @@
 const test = require('node:test');
+const { mock } = require('node:test');
 const assert = require('node:assert/strict');
 const { createActivityTracker, parsePs } = require('../lib/terminal-activity');
 
-const tick = ms => new Promise(resolve => setTimeout(resolve, ms));
+// The tracker is driven only by timers and Date.now(), so the tests run on a mocked clock:
+// with real timers a busy machine delays the poll interval and the result depends on the load.
+// The clock starts far from 0 because the tracker's "last input/output" times start at 0.
+test.beforeEach(() => mock.timers.enable({ apis: ['setInterval', 'setTimeout', 'Date'], now: 1_000_000 }));
+test.afterEach(() => mock.timers.reset());
+const tick = async ms => { mock.timers.tick(ms); await Promise.resolve(); };
 
 test('running while a non-shell process owns the foreground, done after it returns, idle after ack', async () => {
   const pty = { process: 'bash' };

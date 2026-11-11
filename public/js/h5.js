@@ -2847,9 +2847,23 @@
   const PASTE_LINE_CHARS = 200;
   const bracketedPaste = target => Boolean(target.term && target.term.modes && target.term.modes.bracketedPasteMode);
   const asPaste = (target, text) => bracketedPaste(target) && (/[\n\t]/.test(text) || text.length > PASTE_LINE_CHARS);
+  // Does the terminal's input line already hold typed text? Read from the xterm screen (public/js/terminal-input-line.js); a line it cannot understand counts
+  // as empty, which keeps the plain send.
+  function inputLineHasText(target) {
+    try {
+      return Boolean(window.TerminalInputLine && target.term && TerminalInputLine.read(target.term.buffer.active).hasText);
+    } catch { return false; }
+  }
+  // The owner's rule: when the input line is empty the translation is typed as before; when it already has text, the translation goes on a NEW line after
+  // it, and the caller's Enter then sends the whole input. The line break is a carriage return inside ONE bracketed paste (Claude Code, Codex and zsh take a
+  // pasted line break as a new line, not as Enter). Without bracketed paste a line break would make a shell run the line, so a space joins the two instead.
   function sendTranslation(target, raw) {
     const text = pasteText(raw);
     if (!text) return false;
+    if (inputLineHasText(target)) {
+      if (bracketedPaste(target)) return send(target, `\x1b[200~\r${text.replace(/\n/g, '\r')}\x1b[201~`);
+      return send(target, ` ${TerminalTranslate.sanitize(text)}`);
+    }
     if (asPaste(target, text)) return send(target, `\x1b[200~${text.replace(/\n/g, '\r')}\x1b[201~`);
     if (!text.includes('\n')) return send(target, text);
     return send(target, TerminalTranslate.sanitize(text));
@@ -2869,7 +2883,8 @@
     return send(target, asPaste(target, text) ? `\x1b[200~${keys}\x1b[201~` : keys);
   }
   // Two ways to send what is in the box. Translate button: translate first, then send the English result (sendTranslation). Send arrow: send the text as typed
-  // (sendTyped), with no translation and no request to the translator. Both are followed by one Enter. A box with only spaces sends nothing.
+  // (sendTyped), with no translation and no request to the translator. Both are followed by one Enter (after text already on the input line, the translation
+  // goes on a new line first, so that Enter sends both). A box with only spaces sends nothing.
   // The box never blocks typing: while a translation runs the user can keep typing; after the send only the text that was sent is taken out of the box, and the
   // keyboard is dismissed only when nothing is left. When the translation fails nothing is sent, the error is shown and the text stays in the box.
   async function submitBox(translateFirst) {

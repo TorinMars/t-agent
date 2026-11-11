@@ -8,7 +8,7 @@ import { FileTreeSheet } from './FileTree.jsx';
 import { Header } from './Header.jsx';
 import { SettingsDrawer } from './Settings.jsx';
 import { TaskDialog } from './TaskDialogs.jsx';
-import { TaskDrawer } from './TaskDrawer.jsx';
+import { NewSessionDialog, NewTaskDialog, TaskDrawer } from './TaskDrawer.jsx';
 import { BottomArea, TerminalArea } from './Terminal.jsx';
 import { measureTerminalBox, trackTerminalBox } from './terminal-box.mjs';
 import { TermMenu } from './TermMenu.jsx';
@@ -65,6 +65,9 @@ export function App({ ui }) {
       <Lazy open={state.retainUrl !== null}><RetainDialog state={state} ui={ui} /></Lazy>
       <Lazy open={Boolean(state.pasteSheet)}><PasteDialog state={state} ui={ui} /></Lazy>
       <Lazy open={Boolean(state.taskDialog)}><TaskDialog state={state} ui={ui} /></Lazy>
+      {/* The two create dialogs: they lie over the task sheet of a phone, outside it, so it closing after a create does not take them away mid-animation. */}
+      <Lazy open={Boolean(state.menu && state.menu.naming)}><NewSessionDialog state={state} ui={ui} /></Lazy>
+      <Lazy open={state.newTaskOpen}><NewTaskDialog state={state} ui={ui} /></Lazy>
       <Notice state={state} ui={ui} />
     </ThemeProvider>
   );

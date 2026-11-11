@@ -1,6 +1,8 @@
-// The "Session" list of a task's "+" (and the rename field) go away with the task they are drawn under: in real Chromium at phone size (touch) and computer
-// size (pointer, permanent sidebar). Collapsing that task, Collapse all, another task becoming the selected one, folding the sidebar, closing the sheet and
-// changing the Engine all take the list away; collapsing a different task does not. Every case runs on a fresh page and all of them are reported.
+// The New session dialog of a task's "+" and the task list behind it, in real Chromium at phone size (touch) and computer size (pointer, permanent sidebar).
+// The dialog used to be a list drawn under its task, which had to go away whenever that task collapsed; it is a modal dialog now, so the list behind it
+// cannot be used while it is open: a tap on a task row only closes the dialog (it collapses nothing and selects nothing). A name typed into a dialog that was
+// closed is not kept, a Claude list that arrives after its dialog was closed does not replace the choices of a dialog opened again, the "+" of a collapsed task
+// expands it, and the rename field still goes away with its task. Every case runs on a fresh page and all of them are reported.
 const { chromium } = require('playwright');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -65,9 +67,15 @@ async function openPage(browser, wide) {
   };
   const sheetClosed = async () => { if (!wide) await page.locator('#h5-tasks').waitFor({ state: 'hidden' }); };
   const shown = title => page.waitForFunction(name => document.getElementById('h5-task-name').textContent === name, title);
-  const openPanel = async title => { await press(add(title)); await choices.first().waitFor(); assert.deepEqual(await choices.allTextContents(), CHOICES, 'the choices of the list'); };
-  const gone = async text => { await panel.waitFor({ state: 'detached', ...SHORT }).catch(() => assert.fail(`${text}: the Session list is still open`)); };
-  const owner = () => panel.evaluate(node => node.parentElement.querySelector('.h5-task-title').textContent);
+  const openPanel = async title => {
+    await press(add(title));
+    await choices.first().waitFor();
+    await page.waitForTimeout(250); // faded in
+    assert.deepEqual(await choices.allTextContents(), CHOICES, 'the choices of the dialog');
+  };
+  const cancel = async () => { await press(page.locator('#h5-term-menu-cancel')); await gone('after Cancel'); };
+  const gone = async text => { await panel.waitFor({ state: 'detached', ...SHORT }).catch(() => assert.fail(`${text}: the New session dialog is still open`)); };
+  const owner = () => page.locator('#h5-new-session-task').textContent();
   // Alpha is the selected task, with its sessions listed.
   await openSheet();
   await press(item('Alpha'));
@@ -76,75 +84,57 @@ async function openPage(browser, wide) {
   await sheetClosed();
   await openSheet();
   await list('Phone terminals').locator('.h5-terminal-row').nth(1).waitFor();
-  return { context, page, server, pageErrors, wide, press, item, add, list, panel, choices, openSheet, sheetClosed, shown, openPanel, gone, owner };
+  return { context, page, server, pageErrors, wide, press, item, add, list, panel, choices, openSheet, sheetClosed, shown, openPanel, cancel, gone, owner };
 }
 
 const CASES = [
-  ['collapsing the selected task closes its Session list, and it opens again', async t => {
+  ['a tap on the task list behind the dialog only closes the dialog', async t => {
     await t.openPanel('Alpha');
-    await t.press(t.item('Alpha'));
-    await t.list('Phone terminals').waitFor({ state: 'detached' });
-    await t.gone('after the collapse');
-    assert.equal(await t.item('Alpha').getAttribute('aria-expanded'), 'false', 'the task is collapsed');
-    await t.press(t.item('Alpha')); // opening the task does not bring the list back
+    assert.equal(await t.owner(), 'Alpha', 'the dialog names its task');
+    // Where the row of Alpha is (above the dialog): the backdrop of the dialog is there, so the tap closes the dialog and does not collapse Alpha.
+    const box = await t.item('Alpha').boundingBox();
+    const paper = await t.page.locator('#h5-new-session .MuiDialog-paper').boundingBox();
+    const y = box.y + box.height / 2;
+    assert.ok(y < paper.y, `the row is outside the dialog (${y} < ${paper.y})`);
+    if (t.wide) await t.page.mouse.click(box.x + 20, y); else await t.page.touchscreen.tap(box.x + 20, y);
+    await t.gone('after a tap beside it');
+    assert.equal(await t.item('Alpha').getAttribute('aria-expanded'), 'true', 'Alpha was not collapsed');
     await t.list('Phone terminals').waitFor();
-    await t.page.waitForTimeout(150);
-    assert.equal(await t.panel.count(), 0, 'expanding the task does not bring the list back');
-    await t.openPanel('Alpha');
-    assert.equal(await t.owner(), 'Alpha', 'under its task');
+    assert.equal(await t.page.locator('#h5-task-name').textContent(), 'Alpha', 'the shown task did not change');
+    if (!t.wide) assert.equal(await t.page.locator('#h5-tasks').isVisible(), true, 'the sheet stays');
+    assert.deepEqual(t.server.posts, [], 'nothing was created');
   }],
-  ['the "+" of a collapsed selected task opens the task, so one tap on the task closes both', async t => {
+  ['the "+" of a collapsed selected task expands it, so the new session is listed', async t => {
     await t.press(t.item('Alpha'));
     await t.list('Phone terminals').waitFor({ state: 'detached' });
     await t.openPanel('Alpha');
     assert.equal(await t.item('Alpha').getAttribute('aria-expanded'), 'true', 'the task is expanded by its "+"');
+    await t.cancel();
     await t.list('Phone terminals').waitFor();
-    await t.press(t.item('Alpha'));
-    await t.gone('after one tap on the task');
-    assert.equal(await t.item('Alpha').getAttribute('aria-expanded'), 'false', 'and the task is collapsed');
   }],
-  ['creating a session still works after a collapse, with a fresh name', async t => {
+  ['a name typed in a dialog that was closed is not kept; a fresh name is used', async t => {
     await t.openPanel('Alpha');
     await t.page.locator('#h5-new-name-input').fill('Abandoned');
-    await t.press(t.item('Alpha'));
-    await t.gone('after the collapse');
+    await t.cancel();
     await t.openPanel('Alpha');
     assert.equal(await t.page.locator('#h5-new-name-input').inputValue(), '', 'the abandoned name is not kept');
     await t.page.locator('#h5-new-name-input').fill('Review');
     await t.press(t.choices.filter({ hasText: 'New Terminal' }));
     await t.page.waitForFunction(() => document.getElementById('h5-session-name').textContent === 'Review');
     assert.deepEqual(t.server.posts, [['/api/tasks/1/terminals', { title: 'Review' }]], 'one terminal, in that task, with that name');
+    await t.gone('after New Terminal');
     await t.sheetClosed();
   }],
-  ['the "+" of a task that is not selected: collapsing that task closes the list', async t => {
-    await t.openPanel('Beta');
-    assert.equal(await t.owner(), 'Beta', 'under its task');
-    await t.press(t.item('Beta'));
-    await t.gone('after the collapse');
-  }],
-  ['collapsing a different task leaves the list and the typed name alone', async t => {
-    await t.press(t.item('Gamma'));
-    await t.list('Gamma').waitFor();
-    await t.openPanel('Alpha');
-    await t.page.locator('#h5-new-name-input').fill('Keep me');
-    await t.press(t.item('Gamma'));
-    await t.list('Gamma').waitFor({ state: 'detached' });
-    await t.page.waitForTimeout(150);
-    assert.equal(await t.panel.count(), 1, 'the list stays');
-    assert.equal(await t.page.locator('#h5-new-name-input').inputValue(), 'Keep me', 'with the typed name');
+  ['the "+" of a task of the other service with the same id: that task, on that service', async t => {
+    await t.openPanel('Remote one');
+    assert.equal(await t.owner(), 'Remote one', 'the dialog names the task');
+    assert.equal(await t.page.locator('#h5-new-session-service').textContent(), 'VPS', 'and its service');
     await t.press(t.choices.filter({ hasText: 'New Terminal' }));
-    await t.page.waitForFunction(() => document.getElementById('h5-session-name').textContent === 'Keep me');
-    assert.deepEqual(t.server.posts, [['/api/tasks/1/terminals', { title: 'Keep me' }]], 'the name is used');
+    await t.gone('after New Terminal');
+    await t.shown('Remote one');
+    assert.deepEqual(t.server.posts, [['/api/remote-servers/7/tasks/1/terminals', {}]], 'on the remote service, not Alpha (id 1 too)');
   }],
-  ['Collapse all closes the list; Expand all does not', async t => {
-    await t.openPanel('Alpha');
-    await t.press(t.page.locator('#h5-expand-all'));
-    await t.page.waitForTimeout(150);
-    assert.equal(await t.panel.count(), 1, 'Expand all leaves the list');
-    await t.press(t.page.locator('#h5-collapse-all'));
-    await t.gone('after Collapse all');
-  }],
-  ['a Claude list that arrives after the collapse does not replace a list opened again', async t => {
+  ['a Claude list that arrives after its dialog was closed does not replace a dialog opened again', async t => {
     let release;
     t.server.holdSessions = { seen: false, released: new Promise(resolve => { release = resolve; }) };
     const held = t.server.holdSessions;
@@ -152,23 +142,16 @@ const CASES = [
     await t.press(t.choices.filter({ hasText: 'Claude session' }));
     await t.choices.filter({ hasText: 'Loading' }).waitFor();
     while (!held.seen) await t.page.waitForTimeout(20);
-    await t.press(t.item('Alpha'));
-    await t.gone('after the collapse');
+    await t.cancel();
     await t.openPanel('Alpha');
     t.server.holdSessions = null;
     release();
     await t.page.waitForTimeout(300);
-    assert.deepEqual(await t.choices.allTextContents(), CHOICES, 'the list opened again keeps its choices');
+    assert.deepEqual(await t.choices.allTextContents(), CHOICES, 'the dialog opened again keeps its choices');
     // The sub-list itself still arrives when nothing happened meanwhile.
     await t.press(t.choices.filter({ hasText: 'Claude session' }));
     await t.choices.filter({ hasText: 'Older session' }).waitFor();
     assert.deepEqual(await t.choices.allTextContents(), ['New Claude session', 'Older session', 'Back'], 'the Claude list');
-  }],
-  ['opening a task of another service closes the list', async t => {
-    await t.openPanel('Alpha');
-    await t.press(t.item('Remote one'));
-    await t.press(t.list('Remote one').locator('.h5-terminal-main').first());
-    await t.gone('after a task of the other service was opened');
   }],
   ['a collapse takes the rename field away for good', async t => {
     const rows = t.list('Phone terminals').locator('.h5-terminal-row');
@@ -184,31 +167,26 @@ const CASES = [
     await t.page.waitForTimeout(150);
     assert.equal(await t.page.locator('#h5-term-rename').count(), 0, 'expanding the task does not bring the rename field back');
   }],
-  ['closing the sheet closes the list', async t => {
-    await t.openPanel('Alpha');
-    await t.press(t.page.locator('#h5-close-tasks'));
-    await t.sheetClosed();
-    await t.openSheet();
-    assert.equal(await t.panel.count(), 0, 'not there when the sheet opens again');
-  }, 'phone'],
-  ['another task becoming the selected one closes the list', async t => {
-    await t.press(t.item('Beta'));
-    await t.list('Beta').waitFor();
-    await t.list('Beta').locator('.h5-terminal-row').first().waitFor();
-    await t.openPanel('Alpha');
-    await t.press(t.list('Beta').locator('.h5-terminal-main').first());
-    await t.shown('Beta');
-    await t.gone('after Beta was selected');
-    assert.deepEqual(t.server.posts, [], 'nothing was created');
-  }, 'PC'],
-  ['folding the sidebar closes the list', async t => {
-    await t.openPanel('Alpha');
-    await t.press(t.page.locator('#h5-sidebar-toggle'));
+  ['Collapse all takes the rename field away', async t => {
+    const rows = t.list('Phone terminals').locator('.h5-terminal-row');
+    await t.press(rows.nth(1).locator('.h5-terminal-more'));
+    await t.press(t.page.locator('#h5-session-menu [role="menuitem"]', { hasText: 'Rename' }));
+    await t.page.locator('#h5-term-rename-input').waitFor();
+    await t.page.waitForTimeout(350);
+    await t.page.locator('#h5-collapse-all').evaluate(node => node.click());
+    await t.page.locator('#h5-term-rename').waitFor({ state: 'detached', ...SHORT });
+  }],
+  ['folding the sidebar takes the rename field away', async t => {
+    const rows = t.list('Phone terminals').locator('.h5-terminal-row');
+    await t.press(rows.nth(1).locator('.h5-terminal-more'));
+    await t.press(t.page.locator('#h5-session-menu [role="menuitem"]', { hasText: 'Rename' }));
+    await t.page.locator('#h5-term-rename-input').waitFor();
+    await t.page.locator('#h5-sidebar-toggle').evaluate(node => node.click());
     await t.page.locator('#h5-tasks').waitFor({ state: 'detached' });
     await t.press(t.page.locator('#h5-sidebar-toggle'));
     await t.item('Alpha').waitFor();
     await t.page.waitForTimeout(150);
-    assert.equal(await t.panel.count(), 0, 'not there when the sidebar comes back');
+    assert.equal(await t.page.locator('#h5-term-rename').count(), 0, 'not there when the sidebar comes back');
   }, 'PC'],
 ];
 
@@ -238,5 +216,5 @@ const CASES = [
     await browser.close();
   }
   if (failures.length) { console.error(`${failures.length} case(s) failed`); process.exit(1); }
-  console.log('The Session list and the rename field go away with their task (phone, PC).');
+  console.log('The New session dialog keeps the list behind it out of reach, and the rename field goes away with its task (phone, PC).');
 })().catch(error => { console.error(error); process.exit(1); });

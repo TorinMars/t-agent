@@ -521,6 +521,7 @@ I18n.add({
   "Session": "会话",
   "New Terminal": "新开终端",
   "New session": "新建会话",
+  "Creating…": "正在创建…",
   "Claude session": "Claude 会话",
   "Codex session": "Codex 会话",
   "New Claude session": "新建 Claude 会话",

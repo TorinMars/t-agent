@@ -36,12 +36,14 @@ export const initialState = () => ({
   taskList: { note: null, groups: [], sections: [] },
   archived: { supported: false, open: false, status: 'idle', busy: null, count: null, rows: [] }, // the Archived section at the end of the task list (h5.js `showArchived`)
   creatingTask: false,
-  // { title, items: [{ label, kind }], naming, task, name, rename, renameValue } while the terminal / chat actions or the Session list are open.
-  // naming: the Session list of the "+" of task `task` (its ref), drawn under that task in the task list; rename: { kind, id, task } of the row whose name field is shown in its place;
+  newTaskOpen: false, // the New task dialog (TaskDrawer.jsx `NewTaskDialog`) is open
+  // { title, items: [{ label, kind }], naming, task, name, rename, renameValue } while the terminal / chat actions or the New session dialog are open.
+  // naming: the New session dialog of the "+" of task `task` (its ref), with { sub, taskTitle, service, busy, error } (TaskDrawer.jsx `NewSessionDialog`);
+  // rename: { kind, id, task } of the row whose name field is shown in its place;
   // anchor: the "⋯" button of a session row, whose actions are a popup under it (TermMenu.jsx); null for the sheet from the bottom.
   menu: null,
   empty: 'Choose a task to open its phone terminal', // what the terminal area says when there is no terminal; null when one is shown
-  emptyCreate: false, // the terminal area also offers a button that opens the task's Session list (the task has no terminal)
+  emptyCreate: false, // the terminal area also offers a button that opens the task's New session dialog (the task has no terminal)
   mods: {},
   osk: false, // the terminal on-screen keyboard (Osk.jsx) is shown; the "Terminal keyboard" button of row 2 toggles it (h5.js `toggleKeyboard`)
   translating: false,

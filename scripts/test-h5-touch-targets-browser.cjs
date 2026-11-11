@@ -184,9 +184,16 @@ function measure(min) {
       if (!(await page.locator('#h5-tasks').isVisible())) await page.locator('#h5-open-tasks').tap();
       await page.locator('#h5-tasks .h5-task-add').first().tap();
       await page.locator('#h5-new-name-input').waitFor();
-      await check('session-menu');
+      await check('session-menu'); // the New session dialog
       await page.locator('#h5-term-menu-cancel').tap();
       await page.locator('#h5-new-name-input').waitFor({ state: 'detached' });
+      // The New task dialog.
+      if (!(await page.locator('#h5-tasks').isVisible())) await page.locator('#h5-open-tasks').tap();
+      await page.locator('#h5-add-task').tap();
+      await page.locator('#h5-new-task-title').waitFor();
+      await check('new-task');
+      await page.locator('#h5-new-task-cancel').tap();
+      await page.locator('#h5-new-task-dialog').waitFor({ state: 'detached' });
       // The settings sheet, from the gear of the task sheet.
       if (!(await page.locator('#h5-tasks').isVisible())) await page.locator('#h5-open-tasks').tap();
       await page.locator('#h5-tasks').waitFor({ state: 'visible' });

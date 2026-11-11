@@ -1,7 +1,6 @@
 // The session name fields of the task list, in real Chromium at phone size (390x844, touch) and computer size (1440x900, pointer, permanent sidebar):
-// the "Session" list of a task's "+" (with its optional name field) is drawn right under that task, indented like its session rows, and the rename field
-// takes the place of the row being renamed. Both stay inside the sidebar and inside the visible area, also with the iPhone keyboard open (a smaller
-// visual viewport). Enter saves, Escape / Cancel / leaving the rename field cancel. A session of a task that is not selected has the same "⋯" and renames
+// the "+" of a task opens the New session dialog (with its optional name field), which stays above the iPhone keyboard, and the rename field takes the place
+// of the row being renamed, inside the sidebar and inside the visible area, also with the iPhone keyboard open (a smaller visual viewport). Enter saves, Escape / Cancel / leaving the rename field cancel. A session of a task that is not selected has the same "⋯" and renames
 // that session of that task, on this machine and on a remote Engine, without leaving the task and terminal that are shown.
 const { chromium } = require('playwright');
 const fs = require('node:fs');
@@ -169,47 +168,43 @@ async function checkOtherTask({ page, requests, size, press, list, shown, base, 
       await openSheet();
       await page.locator('#h5-tasks .h5-terminal-list[aria-label="Phone terminals"] .h5-terminal-row').nth(3).waitFor();
 
-      // ── The "+" of the task: its Session list right under the task row, not a sheet at the bottom of the screen ──
+      // ── The "+" of the task: the New session dialog (not a sheet at the bottom of the screen, nothing drawn in the list) ──
+      const dialogBox = () => page.evaluate(() => {
+        const box = node => { const r = node.getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, height: r.height }; };
+        const input = document.getElementById('h5-new-name-input');
+        return { paper: box(document.querySelector('#h5-new-session .MuiDialog-paper')), field: box(input.closest('.MuiInputBase-root')), visible: window.visualViewport.height, focused: document.activeElement === input };
+      });
       await press(page.locator(`${taskRow('Task 6')} .h5-task-add`));
       await page.locator('#h5-new-session').waitFor();
       await page.waitForTimeout(300);
       assert.equal(await page.locator('#h5-term-menu .h5-menu-panel').isVisible().catch(() => false), false, `${size}: no sheet from the bottom`);
+      assert.equal(await page.locator('#h5-tasks #h5-new-name-input').count(), 0, `${size}: nothing is drawn in the task list`);
       assert.deepEqual(await page.locator('#h5-new-session #h5-term-menu-actions button').allTextContents(), ['New Terminal', 'Claude session', 'Codex session']);
-      let g = await geometry(page, { field: '#h5-new-name-input', task: 'Task 6' });
-      assertInside(g, `${size} new session`);
-      assert.ok(g.field.top >= g.row.bottom - 0.5 && g.field.top - g.row.bottom < 40, `${size}: the name field is right below its task row (${g.row.bottom} -> ${g.field.top})`);
-      assert.ok(Math.abs(g.field.left - (g.sessionRow.left + 3)) <= 1, `${size}: aligned with the session rows (${g.field.left} vs ${g.sessionRow.left})`);
-      assert.ok(g.field.height >= (wide ? 36 : 44) - 0.5, `${size}: the field is ${g.field.height}px high`);
-      assert.equal(g.focused, wide, wide ? 'a computer: the name field takes the focus' : 'a touch screen: no keyboard pops up on its own');
-      // The choices are below the field, and the sessions of the task follow the list.
-      const order = await page.evaluate(() => {
-        const top = selector => document.querySelector(selector).getBoundingClientRect().top;
-        return top('#h5-new-name-input') < top('#h5-new-session #h5-term-menu-actions') && top('#h5-new-session') < top('#h5-tasks .h5-terminal-list[aria-label="Phone terminals"]');
-      });
-      assert.ok(order, `${size}: field, choices, then the sessions of the task`);
+      assert.equal(await page.locator('#h5-new-session-task').textContent(), 'Task 6', `${size}: the dialog names its task`);
+      let d = await dialogBox();
+      assert.ok(d.field.height >= (wide ? 36 : 44) - 0.5, `${size}: the field is ${d.field.height}px high`);
+      assert.equal(d.focused, true, `${size}: the name field takes the focus, as in the other dialogs`);
+      assert.ok(d.field.top > d.paper.top && d.field.bottom < d.paper.bottom, `${size}: the field is in the dialog`);
 
       if (!wide) {
-        // The iPhone keyboard: the sheet gets shorter with the visual viewport and the focused field stays in view above the keyboard.
-        await page.locator('#h5-new-name-input').tap();
+        // The iPhone keyboard: the dialog moves into the visible area above it.
         await page.evaluate(height => window.setKeyboard(height), KEYBOARD);
         await page.waitForTimeout(300);
-        g = await geometry(page, { field: '#h5-new-name-input', task: 'Task 6' });
-        assert.ok(Math.abs(g.drawer.height - (844 - KEYBOARD)) <= 1, `the sheet follows the visual viewport (${g.drawer.height})`);
-        assertInside(g, 'phone new session, keyboard open');
+        d = await dialogBox();
+        assert.ok(d.paper.top >= 0 && d.paper.bottom <= d.visible + 0.5, `the dialog stays above the keyboard (${d.paper.top}-${d.paper.bottom}, visible ${d.visible})`);
+        assert.ok(d.field.bottom <= d.visible, 'the field is above the keyboard');
         await page.evaluate(() => window.setKeyboard(0));
-        // Cancel closes the list; the sheet stays.
+        // Cancel closes the dialog; the sheet stays.
         await page.locator('#h5-term-menu-cancel').tap();
         await page.locator('#h5-new-session').waitFor({ state: 'detached' });
         assert.equal(await page.locator('#h5-tasks').isVisible(), true, 'the sheet stays open');
-        // The "+" of a task that is not open: the sheet stays and the list is under that task.
+        // The "+" of a task that is not open: the sheet stays under the dialog, which names that task.
         await page.locator(`${taskRow('Task 2')} .h5-task-add`).tap();
         await page.locator('#h5-new-session').waitFor();
         await page.waitForTimeout(300);
         assert.equal(await page.locator('#h5-tasks').isVisible(), true, 'the sheet stays open for the "+" of another task');
-        g = await geometry(page, { field: '#h5-new-name-input', task: 'Task 2' });
-        assert.ok(g.field.top >= g.row.bottom - 0.5 && g.field.top - g.row.bottom < 40, `under Task 2 (${g.row.bottom} -> ${g.field.top})`);
-        // The "+" again closes it.
-        await page.locator(`${taskRow('Task 2')} .h5-task-add`).tap();
+        assert.equal(await page.locator('#h5-new-session-task').textContent(), 'Task 2', 'the dialog names Task 2');
+        await page.locator('#h5-term-menu-cancel').tap();
         await page.locator('#h5-new-session').waitFor({ state: 'detached' });
         // Back to Task 6 for the rename checks.
         await page.locator('.h5-task-item', { hasText: 'Task 6' }).tap(); // close
@@ -218,7 +213,7 @@ async function checkOtherTask({ page, requests, size, press, list, shown, base, 
         await page.locator('#h5-tasks').waitFor({ state: 'hidden' });
         await openSheet();
       } else {
-        // Escape closes the list and is not passed on to the terminal; Enter in the field runs New Terminal with the name.
+        // Escape closes the dialog and is not passed on to the terminal; Enter in the field runs New Terminal with the name.
         const before = await page.evaluate(() => window.sent.length);
         await page.locator('#h5-new-name-input').press('Escape');
         await page.locator('#h5-new-session').waitFor({ state: 'detached' });
@@ -240,7 +235,7 @@ async function checkOtherTask({ page, requests, size, press, list, shown, base, 
       await page.locator('#h5-term-rename').waitFor();
       await page.locator('#h5-session-menu').waitFor({ state: 'detached' });
       await page.waitForTimeout(300);
-      g = await geometry(page, { field: '#h5-term-rename-input' });
+      let g = await geometry(page, { field: '#h5-term-rename-input' });
       assertInside(g, `${size} rename`);
       const above = await rows.nth(0).boundingBox(); // the row before it stays where it is
       assert.ok(Math.abs(g.form.top - (above.y + above.height)) <= 2, `${size}: the rename field is in place of the row, right under the row before it (${above.y + above.height} -> ${g.form.top})`);

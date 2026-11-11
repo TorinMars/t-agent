@@ -1288,13 +1288,14 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     });
     assert.ok(atEnd, 'the "+" sits at the right end of the task row');
     await page.locator('#h5-tasks .h5-task-row:has(.h5-task-item[aria-current="true"]) .h5-task-add').tap();
-    assert.deepEqual(await page.locator('#h5-term-menu-actions button').allTextContents(), ['New Terminal', 'Claude session', 'Codex session'], 'the "+" opens the Session menu');
-    // The optional name field above the Session lists: placeholder, limit, the name stays when moving between the lists, and Enter creates.
+    await page.locator('#h5-new-session #h5-term-menu-actions button').first().waitFor();
+    assert.deepEqual(await page.locator('#h5-new-session #h5-term-menu-actions button').allTextContents(), ['New Terminal', 'Claude session', 'Codex session'], 'the "+" opens the New session dialog');
+    // The optional name field above the choices: placeholder, limit, the name stays when moving between the lists, and Enter creates.
     const nameField = page.locator('#h5-new-name-input');
     assert.equal(await nameField.getAttribute('placeholder'), 'Name (optional)');
     assert.equal(await nameField.getAttribute('maxlength'), '40');
     assert.equal(await nameField.inputValue(), '', 'the name starts empty');
-    assert.notEqual(await page.evaluate(() => document.activeElement && document.activeElement.id), 'h5-new-name-input', 'the field is not focused on its own (no keyboard pops up)');
+    await page.waitForFunction(() => document.activeElement && document.activeElement.id === 'h5-new-name-input'); // focused, like the fields of the other dialogs
     await nameField.fill('  \u8bc4\u5ba1  \u{1F680} ');
     // The name stays while moving between the lists.
     await page.locator('#h5-term-menu-actions button', { hasText: 'Claude session' }).tap();
@@ -1357,7 +1358,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     chats.length = 0;
     await page.locator('#h5-open-tasks').tap();
     await page.locator('#h5-tasks .h5-task-row:has(.h5-task-item[aria-current="true"]) .h5-task-add').tap();
-    assert.equal(await page.locator('#h5-new-name-input').inputValue(), '', 'a new Session sheet starts with an empty name');
+    assert.equal(await page.locator('#h5-new-name-input').inputValue(), '', 'a new New session dialog starts with an empty name');
     await page.locator('#h5-term-menu-actions button', { hasText: 'New Terminal' }).tap();
     await page.locator('#h5-tasks').waitFor({ state: 'hidden' });
     await page.waitForFunction(() => window.sockets.length === 2);

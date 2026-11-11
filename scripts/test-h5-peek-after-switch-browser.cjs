@@ -99,8 +99,13 @@ const hasRows = (list, names) => list.rows.length === names.length && names.ever
 const listed = (page, title, names, count, what) => until(page, title, list => hasRows(list, names) && !list.note && list.count === `${count} ${count === 1 ? 'session' : 'sessions'}`, what);
 const noted = (page, title, note, what) => until(page, title, list => list.note === note && !list.rows.length, what);
 
-// The "+" of a task selects it and leaves the list on screen, at both sizes (the sheet of a phone stays open), and needs no earlier expansion.
-const pick = ({ page, how }, title) => page.locator('#h5-tasks .h5-task-row', { hasText: title }).locator('.h5-task-add')[how]();
+// The "+" of a task selects it and leaves the list on screen, at both sizes (the sheet of a phone stays open), and needs no earlier expansion. It opens the
+// New session dialog over the list, which is cancelled here: the task stays selected.
+const pick = async ({ page, how }, title) => {
+  await page.locator('#h5-tasks .h5-task-row', { hasText: title }).locator('.h5-task-add')[how]();
+  await page.locator('#h5-new-session #h5-term-menu-cancel')[how]();
+  await page.locator('#h5-new-session').waitFor({ state: 'detached' });
+};
 const toggle = ({ page, how }, title) => page.locator('#h5-tasks .h5-task-item', { hasText: title })[how]();
 const releaseAll = state => { for (const entry of state.held.splice(0)) entry.resolve(); };
 

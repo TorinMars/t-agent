@@ -1,6 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
+import Dialog from '@mui/material/Dialog';
+import DialogActions from '@mui/material/DialogActions';
+import DialogContent from '@mui/material/DialogContent';
+import DialogContentText from '@mui/material/DialogContentText';
+import DialogTitle from '@mui/material/DialogTitle';
 import Divider from '@mui/material/Divider';
 import InputAdornment from '@mui/material/InputAdornment';
 import Drawer from '@mui/material/Drawer';
@@ -66,34 +71,75 @@ const escapeCancels = ui => event => {
   ui.actions.menuCancel();
 };
 
-// The "Session" list of the "+" of a task, drawn right under that task's row and indented like its session rows (instead of a sheet at the bottom of
-// the screen, far from the "+"): the optional name field, then the choices (New Terminal, Claude session, ...; their sub-lists replace them here).
-// Enter in the field runs the first choice. The field takes the focus on a computer; on a touch screen it does not, so no keyboard covers the choices.
-function NewSession({ menu, ui, pointer }) {
-  const ref = useRef(null);
-  useInView(ref);
+// The two create dialogs lie over the page like the task dialogs (TaskDialogs.jsx: a MUI Dialog, so the back gesture, Escape and a tap beside them close
+// them). They fill only the visible area (--h5-height follows the visual viewport, h5.js `fitViewport`), so with the on-screen keyboard up the dialog sits above
+// it; on a phone the margins are smaller, and only the fields scroll while the title and the buttons stay. The focused field is kept in view when the keyboard
+// opens or closes.
+const CREATE_DIALOG_SX = {
+  bottom: 'auto',
+  height: 'var(--h5-height, 100%)',
+  '& .MuiDialog-paper': { [TOUCH]: { m: 2, width: 'calc(100% - 32px)', maxHeight: 'calc(100% - 32px)' } },
+};
+const DIALOG_FORM_SX = { display: 'flex', flexDirection: 'column', minHeight: 0, flex: '1 1 auto' };
+function useFocusedInView(open) {
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    if (!open || !viewport) return undefined;
+    const show = () => {
+      const active = document.activeElement;
+      if (active && active.closest && active.closest('.MuiDialog-paper')) active.scrollIntoView({ block: 'nearest' });
+    };
+    viewport.addEventListener('resize', show);
+    return () => viewport.removeEventListener('resize', show);
+  }, [open]);
+}
+
+// The New session dialog of the "+" of a task and of "New session" in the empty terminal area (h5.js `addSession`, `menu.naming`): the task's title (and its
+// service when it is not this machine), the optional name field, then the choices as full-width buttons (New Terminal, Claude session, Codex session; their
+// sub-lists replace them here) and Cancel. Enter in the field runs the first choice. The field takes the focus, as in the other dialogs. While the terminal
+// is being made nothing can be pressed and the dialog does not close; a failure is shown under the choices.
+export function NewSessionDialog({ state, ui }) {
+  const menu = state.menu && state.menu.naming ? state.menu : null;
+  const open = Boolean(menu);
+  const [shown, setShown] = useState(menu); // what was last shown, kept while the dialog fades out
+  if (menu && menu !== shown) setShown(menu);
+  const view = menu || shown;
+  useFocusedInView(open);
+  const busy = Boolean(view && view.busy);
+  const close = () => { if (!busy) ui.actions.menuCancel(); };
   return (
-    <Box ref={ref} id="h5-new-session" className="h5-new-session" role="group" aria-labelledby="h5-new-session-title" sx={{ ml: 1.75, mb: 0.5, pl: 0.125, borderLeft: 1, borderColor: 'divider' }}>
-      <Box sx={{ ml: '3px' }}>
-        <Typography id="h5-new-session-title" variant="caption" component="h3" color="text.secondary" sx={{ display: 'block', px: 0.75, pt: 0.25, overflowWrap: 'anywhere' }}>{menu.title}</Typography>
-        <Box component="form" id="h5-new-name" className="h5-menu-name" autoComplete="off" sx={{ py: 0.5 }} onSubmit={event => { event.preventDefault(); ui.actions.menuNameSubmit(); }}>
-          <TextField
-            id="h5-new-name-input" name="name" size="small" fullWidth autoFocus={pointer} defaultValue={menu.name} placeholder={t('Name (optional)')}
-            onChange={event => ui.actions.menuName(event.target.value)} onKeyDown={escapeCancels(ui)}
-            slotProps={{ input: { sx: { fontSize: 14 } }, htmlInput: { maxLength: 40, enterKeyHint: 'go', autoCapitalize: 'off', spellCheck: false, 'aria-label': t('Name (optional)') } }}
-          />
+    <Dialog id="h5-new-session" open={open} onClose={close} fullWidth maxWidth="xs" aria-labelledby="h5-new-session-title" sx={CREATE_DIALOG_SX}>
+      {view ? (
+        <Box component="form" id="h5-new-name" className="h5-menu-name" autoComplete="off" sx={DIALOG_FORM_SX} onSubmit={event => { event.preventDefault(); ui.actions.menuNameSubmit(); }}>
+          <DialogTitle id="h5-new-session-title" sx={{ pb: 0.5 }}>{t('New session')}</DialogTitle>
+          <DialogContent>
+            <DialogContentText id="h5-new-session-task" variant="body2" translate="no" sx={{ overflowWrap: 'anywhere' }}>{view.taskTitle}</DialogContentText>
+            {view.service ? <Typography id="h5-new-session-service" variant="caption" component="p" color="text.secondary" translate="no" sx={{ overflowWrap: 'anywhere' }}>{view.service}</Typography> : null}
+            <TextField
+              id="h5-new-name-input" key={view.task} name="name" size="small" fullWidth autoFocus defaultValue={view.name} placeholder={t('Name (optional)')} disabled={busy}
+              onChange={event => ui.actions.menuName(event.target.value)} sx={{ mt: 1.5 }}
+              slotProps={{ input: { sx: { fontSize: 14 } }, htmlInput: { maxLength: 40, enterKeyHint: 'go', autoCapitalize: 'off', spellCheck: false, 'aria-label': t('Name (optional)') } }}
+            />
+            {view.sub ? <Typography id="h5-new-session-sub" variant="subtitle2" component="h3" color="text.secondary" sx={{ mt: 1.5 }}>{t(view.sub)}</Typography> : null}
+            <Box id="h5-term-menu-actions" className="h5-menu-actions" role="group" aria-label={t(view.sub || 'New session')} sx={{ display: 'flex', flexDirection: 'column', gap: 1, mt: view.sub ? 1 : 1.5 }}>
+              {view.items.map((item, index) => (
+                <Button
+                  key={`${index}:${item.label}`} variant="outlined" fullWidth disabled={busy} className={item.kind === 'danger' ? 'danger' : undefined} onClick={() => ui.actions.menuRun(index)}
+                  sx={{ justifyContent: 'flex-start', textAlign: 'left', overflowWrap: 'anywhere', minHeight: 40 }}
+                >
+                  {item.kind === 'raw' ? item.label : t(item.label)}
+                </Button>
+              ))}
+            </Box>
+            {busy ? <Typography id="h5-new-session-busy" role="status" variant="body2" color="text.secondary" sx={{ mt: 1 }}>{t('Creating…')}</Typography> : null}
+            {view.error ? <Typography id="h5-new-session-error" role="alert" variant="body2" color="error" sx={{ mt: 1, overflowWrap: 'anywhere' }}>{view.error}</Typography> : null}
+          </DialogContent>
+          <DialogActions>
+            <Button id="h5-term-menu-cancel" className="h5-menu-cancel" color="inherit" disabled={busy} onClick={close}>{t('Cancel')}</Button>
+          </DialogActions>
         </Box>
-        <List id="h5-term-menu-actions" className="h5-menu-actions" dense disablePadding>
-          {menu.items.map((item, index) => (
-            <ListItemButton key={`${index}:${item.label}`} component="button" className={item.kind === 'danger' ? 'danger' : undefined} onClick={() => ui.actions.menuRun(index)}
-              sx={{ width: '100%', minHeight: 36, py: 0.25, px: 0.75, borderRadius: 2, fontSize: 14, textAlign: 'left', overflowWrap: 'anywhere', color: item.kind === 'danger' ? 'error.main' : undefined }}>
-              {item.kind === 'raw' ? item.label : t(item.label)}
-            </ListItemButton>
-          ))}
-        </List>
-        <Button id="h5-term-menu-cancel" className="h5-menu-cancel" size="small" onClick={() => ui.actions.menuCancel()} sx={{ ml: 0.25, mb: 0.25 }}>{t('Cancel')}</Button>
-      </Box>
-    </Box>
+      ) : null}
+    </Dialog>
   );
 }
 
@@ -173,7 +219,7 @@ function Tasks({ state, ui, query, filter }) {
   const filtering = Boolean(needle) || filter !== 'all';
   // A search keeps the tasks whose name matches, or that have a matching session in a list that is open. Running and Pending keep the tasks that have such a session, known from the feeds.
   const keep = task => {
-    if (!filtering || (state.menu && state.menu.naming && state.menu.task === task.ref)) return true; // the task whose Session list is open stays, whatever the filter
+    if (!filtering) return true;
     if (filter !== 'all' && !task[filter]) return false;
     const rows = (task.sessions && task.sessions.rows) || [];
     return !needle || task.title.toLowerCase().includes(needle) || rows.some(row => row.title.toLowerCase().includes(needle));
@@ -207,9 +253,8 @@ function Tasks({ state, ui, query, filter }) {
             </ListItemButton>
             {/* "⋯" (move, working directory, delete) left of the "+", which stays at the right end of the row */}
             {task.add ? <IconButton className="h5-task-more" size="small" sx={{ p: 0.5 }} aria-label={t('Task actions')} title={t('Task actions')} aria-haspopup="dialog" onClick={() => ui.actions.taskMore(task.ref)}><Icon name="taskMore" size={20} /></IconButton> : null}
-            {task.add ? <IconButton className="h5-task-add" size="small" sx={{ p: 0.5 }} aria-label={t('Session')} title={t('Session')} onClick={() => ui.actions.addSession(task.ref)}><AddIcon /></IconButton> : null}
+            {task.add ? <IconButton className="h5-task-add" size="small" sx={{ p: 0.5 }} aria-label={t('Session')} title={t('Session')} aria-haspopup="dialog" onClick={() => ui.actions.addSession(task.ref)}><AddIcon /></IconButton> : null}
           </Box>
-          {state.menu && state.menu.naming && state.menu.task === task.ref ? <NewSession menu={state.menu} ui={ui} pointer={state.input === 'pointer'} /> : null}
           {task.expanded && task.sessions ? <Sessions ui={ui} taskId={task.ref} sessions={task.sessions} menu={state.menu} /> : null}
         </Box>
       ))}
@@ -222,26 +267,29 @@ function Tasks({ state, ui, query, filter }) {
 // The folder name the server makes from a task title (titleToSlug in routes/tasks.js and services/engine-tasks.js), for the default path shown.
 const slug = title => title.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9\u4e00-\u9fff\-_.]/g, '').replace(/^-+|-+$/g, '') || 'task';
 
-function Panel({ state, ui }) {
+// The New task dialog, opened by "New task" at the end of the task list (h5.js `openNewTask`; `newTaskOpen` in the store). Every opening starts empty, on
+// this machine. Create makes the task (h5.js `createTask`); the dialog closes once it is made and the new task is opened. While it is being made nothing can
+// be pressed and the dialog does not close; a failure is a notice, and with a working directory the field says so too.
+export function NewTaskDialog({ state, ui }) {
+  const open = Boolean(state.newTaskOpen);
   const [title, setTitle] = useState('');
   const [workDir, setWorkDir] = useState('');
   const [dirError, setDirError] = useState('');
   const [base, setBase] = useState(null); // the folder new tasks of this machine go under (the user's setting, TASKS_BASE_DIR, else ~/tasks)
-  const [adding, setAdding] = useState(false);
   const [on, setOn] = useState('local'); // "Create on": the service a new task is made on; this machine unless chosen
-  const [query, setQuery] = useState('');
-  const [filter, setFilter] = useState('all');
+  useFocusedInView(open);
+  useEffect(() => { if (open) { setTitle(''); setWorkDir(''); setDirError(''); setOn('local'); } }, [open]);
   // The services a task can be made on: online and in the list. A choice that went offline or was hidden meanwhile falls back to this machine, or the first that is left.
   const targets = state.sources.filter(source => !source.offline && !source.hidden);
   const picked = targets.find(source => source.key === on) || targets.find(source => source.key === 'local') || targets[0];
   const onKey = picked ? picked.key : 'local';
   const target = ui.actions.newTaskTarget ? ui.actions.newTaskTarget(onKey) : { local: true };
   useEffect(() => {
-    if (!adding || !target.local) return;
+    if (!open || !target.local) return;
     let live = true;
     api('GET', '/auth/me').then(user => { if (live) setBase((user && user.effective_work_dir) || null); }).catch(() => {});
     return () => { live = false; };
-  }, [adding, target.local]);
+  }, [open, target.local]);
   // An empty field keeps the default rule: the path shown is only a hint and is never sent.
   const defaultPath = target.local && base ? `${base.replace(/\/+$/, '')}/${slug(title.trim() || 'task')}` : '';
   const submit = async event => {
@@ -251,9 +299,49 @@ function Panel({ state, ui }) {
     if (!value || state.creatingTask) return;
     if (dir && ui.actions.isAbsolutePath && !ui.actions.isAbsolutePath(dir)) { setDirError('Enter an absolute path'); return; }
     setDirError('');
-    if (await ui.actions.createTask(value, dir, onKey)) { setTitle(''); setWorkDir(''); setAdding(false); }
-    else if (dir) setDirError('The task was not created. Check the working directory.');
+    if (!(await ui.actions.createTask(value, dir, onKey)) && dir) setDirError('The task was not created. Check the working directory.');
   };
+  const busy = state.creatingTask;
+  const close = () => ui.actions.closeNewTask();
+  return (
+    <Dialog id="h5-new-task-dialog" open={open} onClose={close} fullWidth maxWidth="xs" aria-labelledby="h5-new-task-title-label" sx={CREATE_DIALOG_SX}>
+      <Box component="form" id="h5-new-task" className="h5-new-task" autoComplete="off" onSubmit={submit} sx={DIALOG_FORM_SX}>
+        <DialogTitle id="h5-new-task-title-label">{t('New task')}</DialogTitle>
+        <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+          {state.sources.length > 1 ? (
+            <Box id="h5-new-task-on-row" component="label" sx={{ display: 'flex', alignItems: 'center', gap: 1.5, color: 'text.secondary', fontSize: 14 }}>
+              <span style={{ whiteSpace: 'nowrap' }}>{t('Create on')}</span>
+              <NativeSelect fullWidth value={onKey} inputProps={{ id: 'h5-new-task-on', 'aria-label': t('Create on') }} onChange={event => setOn(event.target.value)}>
+                {targets.map(source => <option key={source.key} value={source.key}>{deviceText(source)}</option>)}
+              </NativeSelect>
+            </Box>
+          ) : null}
+          <TextField
+            id="h5-new-task-title" autoFocus size="small" fullWidth placeholder={t('New task title')} value={title} onChange={event => setTitle(event.target.value)} sx={{ mt: 0.5 }}
+            slotProps={{ htmlInput: { maxLength: 200, enterKeyHint: 'done', 'aria-label': t('New task title'), style: { paddingTop: 7, paddingBottom: 7 } } }}
+          />
+          <TextField
+            id="h5-new-task-dir" size="small" fullWidth label={t('Working directory')} value={workDir} placeholder={defaultPath || t('Default folder')}
+            onChange={event => { setWorkDir(event.target.value); setDirError(''); }} error={Boolean(dirError)}
+            sx={{ '& .MuiInputLabel-root': { pointerEvents: 'none' } }} // a tap on the label over the outline reaches the field (a whole 44px target on a narrow phone)
+            helperText={<span id="h5-new-task-dir-help">{dirError ? t(dirError) : target.local
+              ? `${t('Leave empty to use the default:')} ${defaultPath || t('a folder named after the task under the tasks folder')}`
+              : t('Absolute path on the remote engine. Leave empty to use a folder named after the task under that engine’s tasks folder.')}</span>}
+            slotProps={{ inputLabel: { shrink: true }, htmlInput: { autoCapitalize: 'off', spellCheck: false, 'aria-label': t('Working directory'), style: { paddingTop: 7, paddingBottom: 7 } } }}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button id="h5-new-task-cancel" color="inherit" onClick={close} disabled={busy}>{t('Cancel')}</Button>
+          <Button id="h5-new-task-create" type="submit" variant="contained" disabled={busy}>{t('Create')}</Button>
+        </DialogActions>
+      </Box>
+    </Dialog>
+  );
+}
+
+function Panel({ state, ui }) {
+  const [query, setQuery] = useState('');
+  const [filter, setFilter] = useState('all');
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
       <Box className="h5-sheet-header" sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', px: 1.5, py: 0.25, borderBottom: 1, borderColor: 'divider' }}>
@@ -279,40 +367,14 @@ function Panel({ state, ui }) {
           ))}
         </Box>
       </Box>
-      {/* Basis 0: a long list (an open Session list) scrolls inside its own space instead of squeezing the rows below it (the settings row). */}
+      {/* Basis 0: a long list (many open tasks) scrolls inside its own space instead of squeezing the rows below it (the settings row). */}
       <List id="h5-task-list" className="h5-task-list" disablePadding sx={{ flex: '1 1 0', minHeight: 0, overflowY: 'auto', px: 0.5, pb: 0.5 }}>
         <Tasks state={state} ui={ui} query={query} filter={filter} />
         {/* Archived tasks are not searched: the entry goes away while a search or a filter is on. */}
         {query.trim() || filter !== 'all' ? null : <ArchivedTasks archived={state.archived} ui={ui} />}
       </List>
-      {adding ? (
-        <Box component="form" id="h5-new-task" className="h5-new-task" autoComplete="off" onSubmit={submit} sx={{ display: 'flex', flexDirection: 'column', gap: 1, px: 2, pb: 1 }}>
-          {state.sources.length > 1 ? (
-            <Box id="h5-new-task-on-row" component="label" sx={{ display: 'flex', alignItems: 'center', gap: 1.5, color: 'text.secondary', fontSize: 14 }}>
-              <span style={{ whiteSpace: 'nowrap' }}>{t('Create on')}</span>
-              <NativeSelect fullWidth value={onKey} inputProps={{ id: 'h5-new-task-on', 'aria-label': t('Create on') }} onChange={event => setOn(event.target.value)}>
-                {targets.map(source => <option key={source.key} value={source.key}>{deviceText(source)}</option>)}
-              </NativeSelect>
-            </Box>
-          ) : null}
-          <Box sx={{ display: 'flex', gap: 1 }}>
-            <TextField
-              id="h5-new-task-title" autoFocus size="small" fullWidth placeholder={t('New task title')} value={title} onChange={event => setTitle(event.target.value)}
-              slotProps={{ htmlInput: { maxLength: 200, enterKeyHint: 'done', 'aria-label': t('New task title'), style: { paddingTop: 7, paddingBottom: 7 } } }}
-            />
-            <Button type="submit" variant="contained" disabled={state.creatingTask} sx={{ flex: '0 0 auto', height: 36 }}>{t('Create')}</Button>
-          </Box>
-          <TextField
-            id="h5-new-task-dir" size="small" fullWidth label={t('Working directory')} value={workDir} placeholder={defaultPath || t('Default folder')}
-            onChange={event => { setWorkDir(event.target.value); setDirError(''); }} error={Boolean(dirError)}
-            helperText={<span id="h5-new-task-dir-help">{dirError ? t(dirError) : target.local
-              ? `${t('Leave empty to use the default:')} ${defaultPath || t('a folder named after the task under the tasks folder')}`
-              : t('Absolute path on the remote engine. Leave empty to use a folder named after the task under that engine’s tasks folder.')}</span>}
-            slotProps={{ inputLabel: { shrink: true }, htmlInput: { autoCapitalize: 'off', spellCheck: false, 'aria-label': t('Working directory'), style: { paddingTop: 7, paddingBottom: 7 } } }}
-          />
-        </Box>) : null}
       <Box sx={{ px: 1.5, pb: 0.75, [TOUCH]: { pt: 0.5, pb: 1 } }}>
-        <Button id="h5-add-task" fullWidth variant="contained" size="medium" startIcon={<AddIcon />} onClick={() => setAdding(open => !open)} sx={{ borderRadius: 3, py: 0.5, textTransform: 'none', fontSize: 14 }}>{t('New task')}</Button>
+        <Button id="h5-add-task" fullWidth variant="contained" size="medium" startIcon={<AddIcon />} aria-haspopup="dialog" onClick={() => ui.actions.openNewTask()} sx={{ borderRadius: 3, py: 0.5, textTransform: 'none', fontSize: 14 }}>{t('New task')}</Button>
       </Box>
       <Divider />
       <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', minHeight: 36 }}>

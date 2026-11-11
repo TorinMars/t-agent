@@ -12,6 +12,7 @@ import RefreshIcon from '@mui/icons-material/Refresh';
 import { named, t } from './common.jsx';
 import { Icon } from './Icons.jsx';
 import { UpdateButton } from './Update.jsx';
+import { ColumnsToggle } from './Columns.jsx';
 
 export function Header({ state, ui }) {
   const docked = state.wide && !state.sidebarCollapsed; // the permanent sidebar is shown, so the task name opens nothing
@@ -41,6 +42,7 @@ export function Header({ state, ui }) {
             </Box>
           </Box>
         </ButtonBase>
+        <ColumnsToggle state={state} ui={ui} />
         {state.terminalWidth ? <WidthButton width={state.terminalWidth} ui={ui} /> : null}
         <IconButton id="h5-refresh" {...named(refresh)} onClick={() => ui.actions.refresh()}>
           <RefreshIcon />

@@ -10,6 +10,7 @@ import { SettingsDrawer } from './Settings.jsx';
 import { TaskDialog } from './TaskDialogs.jsx';
 import { NewSessionDialog, NewTaskDialog, TaskDrawer } from './TaskDrawer.jsx';
 import { BottomArea, TerminalArea } from './Terminal.jsx';
+import { ColumnStrip } from './Columns.jsx';
 import { measureTerminalBox, trackTerminalBox } from './terminal-box.mjs';
 import { TermMenu } from './TermMenu.jsx';
 import { theme } from './theme.mjs';
@@ -68,6 +69,7 @@ export function App({ ui }) {
       {/* The two create dialogs: they lie over the task sheet of a phone, outside it, so it closing after a create does not take them away mid-animation. */}
       <Lazy open={Boolean(state.menu && state.menu.naming)}><NewSessionDialog state={state} ui={ui} /></Lazy>
       <Lazy open={state.newTaskOpen}><NewTaskDialog state={state} ui={ui} /></Lazy>
+      <ColumnStrip state={state} ui={ui} />
       <Notice state={state} ui={ui} />
     </ThemeProvider>
   );

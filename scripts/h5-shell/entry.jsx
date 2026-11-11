@@ -8,6 +8,7 @@ import { createBackLayers } from './back.mjs';
 import { startAttentionFeed } from './attention-feed.mjs';
 import { api, t } from './common.jsx';
 import { RAW_KINDS, kindOf } from './file-kinds.mjs';
+import { startColumns } from './Columns.jsx';
 // T-Attention settings slots: the modules of other T-Attention parts that register Settings content (attention-slots.mjs) are imported here, e.g.
 import './PluginSettings.jsx';
 
@@ -76,6 +77,10 @@ ui.actions.toggleSidebar = () => {
   if (collapsed && menu && (menu.rename || menu.anchor)) ui.actions.menuCancel();
   ui.set({ sidebarCollapsed: collapsed });
 };
+
+// The multi-column view (Columns.jsx): its remembered state is read before the first render, so a restored strip is drawn at once and h5.js finds
+// `columns.shown` when it starts (it then opens no terminal socket of its own).
+startColumns(ui);
 
 const root = createRoot(document.getElementById('h5-root'));
 flushSync(() => root.render(<App ui={ui} />));

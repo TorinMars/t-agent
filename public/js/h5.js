@@ -1629,7 +1629,7 @@
 
   function connect() {
     hideShown();
-    if (!task || !terminalId) return;
+    if (!task || !terminalId || columnsShown()) return; // the multi-column view shows its own columns: this page opens no terminal (see below)
     const key = warmKey(source, task.id, terminalId);
     const kept = warm.find(item => item.key === key && !item.disposed);
     if (kept) { showWarm(kept); return; }
@@ -2158,6 +2158,19 @@
     session = null;
     if (s) disposeSession(s);
   }
+  // ── Multi-column view (scripts/h5-shell/Columns.jsx) ──
+  // While the column strip of a wide screen is shown, every column is an iframe of this page in pane mode, with its own terminals. This page's own
+  // terminal is hidden under the strip, so it holds no socket: the warm terminals and an early socket are closed, `connect` opens nothing, and
+  // going back connects the task and terminal that were shown before (they stay selected). The feed, notices, notifications and updates go on here.
+  function columnsShown() { return Boolean(ui.get().columns && ui.get().columns.shown); }
+  let columnsParked = columnsShown();
+  ui.subscribe(() => {
+    const shown = columnsShown();
+    if (shown === columnsParked) return;
+    columnsParked = shown;
+    if (shown) { dropEarlySocket(); closeWarm(); return; }
+    setTimeout(() => { if (!columnsShown()) connect(); }, 0); // after the shell has drawn the page again, so the terminal box has its size
+  });
   function disposeSession(s) {
     if (s.disposed) return;
     if (session === s) session = null;
@@ -3400,7 +3413,7 @@
       prefetch(`${assumed.tasksBase}/${savedId}/terminals`);
       if (assumed.key !== 'local') prefetch(infoUrl(assumed));
       const savedTerminal = store.get(`terminal:${assumed.key}:${savedId}`);
-      if (savedTerminal) openEarlySocket(assumed, savedId, savedTerminal);
+      if (savedTerminal && !columnsShown()) openEarlySocket(assumed, savedId, savedTerminal);
     }
     renderTasks(); // "Loading…"
     // A phone with nothing to bring back opens on the task sheet at once; that does not wait for the lists.
@@ -3414,7 +3427,10 @@
     for (const from of listedSources()) if (!reads.has(from)) reads.set(from, loadSource(from));
     renderTasks();
     syncFeeds();
-    if (link && await openChatFromLink({ taskId: Number(link[1]), conversationId: link[2] })) return;
+    // While the multi-column view is shown (Columns.jsx) the link goes to the focused column (else the first) and the hidden normal view still brings
+    // back its remembered task below.
+    if (link && columnsShown()) ui.actions.openInColumn({ sourceKey: LOCAL.key, taskId: Number(link[1]), conversationId: link[2] });
+    else if (link && await openChatFromLink({ taskId: Number(link[1]), conversationId: link[2] })) return;
     // The remembered service and task when it is listed and answers in time; else the remembered task of another listed service; else no task and the list.
     const listed = listedSources();
     const tried = [assumed, LOCAL, ...listed].filter((from, index, all) => listed.includes(from) && all.indexOf(from) === index);

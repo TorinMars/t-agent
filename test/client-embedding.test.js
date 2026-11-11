@@ -86,6 +86,12 @@ test('hidden login entrance, embedded Clients still authenticate and HTTPS cooki
     assert.equal((await response.json()).error, 'CLIENT_ORIGIN_REQUIRED');
   }
   assert.equal((await call('/api/tasks', { cookie })).status, 200);
+  // A column of the multi-column view: the page frames itself (`/h5?pane=<id>`). The page may be framed by its own origin (and the configured
+  // embedding origins) and by nothing else; no X-Frame-Options forbids the same-origin frame.
+  const pane = await call('/h5?pane=k3x9', { cookie, headers: { 'Sec-Fetch-Dest': 'iframe', 'Sec-Fetch-Site': 'same-origin' } });
+  assert.equal(pane.status, 200);
+  assert.equal(pane.headers.get('content-security-policy'), "frame-ancestors 'self' https://hub.example.com");
+  assert.equal(pane.headers.get('x-frame-options'), null);
   const logout = await call('/auth/logout', { cookie, body: {} });
   assert.equal(logout.status, 200);
   assert.match(logout.headers.get('set-cookie'), /^embedding-client\.sid=;/);

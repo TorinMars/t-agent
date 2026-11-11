@@ -165,6 +165,11 @@ async function shownTerminal(page, name) {
       await paneFrame(page, ids[0]).evaluate(id => parent.postMessage({ type: 't-agent-pane', paneId: id, event: 'ready' }, location.origin), ids[0]);
       await page.waitForFunction(id => document.querySelector(`.h5-column[data-pane-id="${id}"][data-ready]`), ids[0], { timeout: 3000 });
       assert.equal(await nameOf(1), 'Column 2', `${label}: a message about another column, or from the top page, is ignored`);
+      // A pane's own 'focus' message is read. The real focus is still in the third column (clicked above), and the top page's own check of its active
+      // element (every 300 ms) may not have seen that yet: when it does, it rightly moves the focus back to the third column. That check must have
+      // nothing left to report, so the focus leaves the iframes first (a person using the first column would have moved it there too).
+      await page.evaluate(() => document.activeElement.blur());
+      await page.waitForFunction(() => document.activeElement === document.body, null, { timeout: 3000 });
       await paneFrame(page, ids[0]).evaluate(id => parent.postMessage({ type: 't-agent-pane', paneId: id, event: 'focus' }, location.origin), ids[0]);
       await page.waitForFunction(id => { const el = document.querySelector('.h5-column[data-focused]'); return el && el.dataset.paneId === id; }, ids[0], { timeout: 3000 });
       // The third column is sent to another origin (its window stays the iframe's), and posts from there.

@@ -1,7 +1,7 @@
 // Pane mode (scripts/h5-shell/pane.mjs, "Pane mode" in DESIGN.md): the page (/h5?pane=<id>) inside real 480x900 iframes of a test parent page, in Chromium
 // on a computer (mouse, no touch), with the API mocked. Checks: each pane remembers its own task and terminal (two panes, two sessions) and the normal view
 // keeps its own; a new pane starts at the task list with nothing selected; a pane opens no terminal activity stream and no T-Attention stream and polls
-// the activity instead; a loading pane takes no focus, a click does; `open` from the parent shows that task and terminal; no notice, sound or system notification and no attention or update reads in a pane; no Update or Attention button; phone layout
+// the activity instead; a loading pane takes no focus, a click does; `open` from the parent shows that task and terminal; no notice, sound or system notification (the page makes none at all now) and no attention or update reads in a pane; no Update or Attention button; phone layout
 // with desktop input (Enter translates and sends, a click focuses the terminal, no on-screen keyboard buttons), the height of the iframe; no history
 // entries for the top page; the messages to the parent (ready, title, focus) on this origin only; `forget` from the parent clears only that pane's keys,
 // and the same message from anywhere else is ignored; a top-level `/h5?pane=` is the normal page (streams, reminders, Update and Attention buttons).
@@ -21,7 +21,6 @@ const SEED = {
   'pane:a:h5-task:local': '1', 'pane:a:h5-terminal:local:1': 't1',
   'h5-task:local': '1', 'h5-terminal:local:1': 't2',
   'pane:c:h5-task:local': '1',
-  'h5-attention-notify': '1',
 };
 const PARENT = paneIds => `<!doctype html><html><head><meta charset="utf-8"><style>body{margin:0;display:flex;gap:8px}iframe{width:480px;height:900px;border:0;flex:0 0 auto}</style></head><body>
 <script>
@@ -63,6 +62,7 @@ async function setup(context) {
       live.dispatchEvent(new MessageEvent('change', { data: JSON.stringify(change) }));
       return true;
     };
+    // The page shows no system notifications any more (only Telegram reminds outside the page): any made would be counted here.
     window.notes = [];
     window.Notification = class { constructor(title) { window.notes.push(title); } close() {} };
     window.Notification.permission = 'granted';
@@ -226,7 +226,7 @@ const socketClient = url => new URL(url).searchParams.get('clientId');
     await until(async () => (await page.evaluate(() => window.messages)).filter(m => m.frame === 1 && m.data.event === 'focus').length > focusBefore, 'focus on a press');
     await page.keyboard.press('Escape');
 
-    // ── open: the parent asks a pane to show a task and terminal (a notification clicked in the top page) ──
+    // ── open: the parent asks a pane to show a task and terminal, or a chat (a `?openChat=` link the top page handles while its columns are shown) ──
     const openIn = (frame, request) => frame.evaluate(data => window.frames[1].postMessage({ type: 't-agent-pane', event: 'open', ...data }, location.origin), request);
     await a.evaluate(() => window.parent.frames[1].postMessage({ type: 't-agent-pane', event: 'open', sourceKey: 'local', taskId: 1, terminalId: 't1' }, location.origin)); // another pane
     await openIn(page, { sourceKey: 'remote:9', taskId: 1, terminalId: 't1' }); // an unknown service
@@ -293,8 +293,9 @@ const socketClient = url => new URL(url).searchParams.get('clientId');
     await top.waitForFunction(() => window.activityStream.opens.includes('/api/tasks/terminal-activity/stream'));
     await top.waitForFunction(() => window.streams.some(s => s.url.endsWith('/api/attention/stream') && s.readyState === 1));
     assert.equal(await top.evaluate(() => window.emitChange({ kind: 'updated', item: { id: 5, title: 'Ping', status: 'waiting_user' }, previous: { id: 5, status: 'working' }, event: { actor: 'claude' } })), true);
-    await top.waitForFunction(() => window.notes.length === 1 && window.tones > 0);
+    await top.waitForFunction(() => window.tones > 0); // the top page reminds: a sound and a notice
     await top.locator('.MuiSnackbar-root', { hasText: 'Ping' }).waitFor();
+    assert.equal(await top.evaluate(() => window.notes.length), 0, 'no system notification, not even in the top page');
     await top.close();
 
     assert.deepEqual(pageErrors, [], 'no browser runtime errors');

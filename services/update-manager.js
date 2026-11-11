@@ -18,6 +18,7 @@ const { copyRelease, stageGithubArchive } = require('./archive-updater');
 const { prepareWorkspace, trackedChanges, dirtyError } = require('../lib/git-update-workspace');
 const { createAutoUpdate, AUTO_RESTART_REQUIRED, DEFAULT_QUIET_MS } = require('./auto-update');
 const { detectSupervisor } = require('../lib/update-supervisor');
+const { createServerRestart } = require('../lib/server-restart');
 
 const projectRoot = path.resolve(__dirname, '..');
 const runningCommit = (() => {
@@ -442,6 +443,16 @@ const autoUpdate = createAutoUpdate({
   setIntervalFn: (fn, ms) => setInterval(fn, ms),
 });
 
+// POST /api/system/restart. The exit and the timer are this module's own, as in runApply, so a test that runs this file in a sandbox sees them.
+const serverRestart = createServerRestart({
+  supervisor,
+  isApplying: () => Boolean(applyPromise),
+  bootId,
+  log: logUpdate,
+  exit: code => process.exit(code),
+  schedule: (fn, ms) => setTimeout(fn, ms).unref(),
+});
+
 function publicState() {
   let localManifest = null;
   try { localManifest = readLocalManifest(); } catch {}
@@ -478,4 +489,7 @@ function start() {
 const setIdleProbe = fn => autoUpdate.setIdleProbe(fn);
 const setAutoUpdateEnabled = enabled => autoUpdate.setEnabled(enabled);
 
-module.exports = { apply, check, markNotified, publicState, readLocalManifest, start, npmEnv, bootId, setIdleProbe, setAutoUpdateEnabled };
+const restartSupport = () => serverRestart.support();
+const requestRestart = () => serverRestart.request();
+
+module.exports = { apply, check, markNotified, publicState, readLocalManifest, start, npmEnv, bootId, setIdleProbe, setAutoUpdateEnabled, restartSupport, requestRestart };

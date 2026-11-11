@@ -19,7 +19,7 @@ router.get('/version', (req, res) => {
   let manifest;
   try { manifest = updates.readLocalManifest(); }
   catch { return res.status(500).json({ error: 'INVALID_LOCAL_VERSION' }); }
-  res.json({ ...manifest, boot_id: updates.bootId, is_update_admin: isAdmin(req), engine_name: engineName.engineNameState(db()).name });
+  res.json({ ...manifest, boot_id: updates.bootId, is_update_admin: isAdmin(req), engine_name: engineName.engineNameState(db()).name, restart: updates.restartSupport() });
 });
 
 // The name of this Engine (services/engine-name.js), which every machine connected to it shows. Behind the session and same-origin gates of /api.
@@ -36,7 +36,7 @@ router.put('/engine-name', (req, res) => {
 });
 
 router.get('/update-status', (req, res) => {
-  res.json({ ...updates.publicState(), is_update_admin: isAdmin(req) });
+  res.json({ ...updates.publicState(), is_update_admin: isAdmin(req), restart: updates.restartSupport() });
 });
 
 router.post('/check-update', async (req, res) => {
@@ -53,6 +53,19 @@ router.post('/apply-update', async (req, res) => {
   if (!req.body || req.body.confirm !== true) return res.status(400).json({ error: 'UPDATE_CONFIRMATION_REQUIRED' });
   updates.apply({ force: req.body.force === true }).catch(error => console.error('[apply-update]', error.message));
   res.status(202).json({ accepted: true, status: updates.publicState() });
+});
+
+// Restart this service (lib/server-restart.js): 202 { accepted, boot_id } with the current boot_id, then exit 75 for the process manager.
+// Every terminal ends; the page reloads once a different boot_id answers. Browser-only: there is no /v1 twin.
+router.post('/restart', (req, res) => {
+  if (!isAdmin(req)) return res.status(403).json({ error: 'UPDATE_ADMIN_REQUIRED' });
+  if (!req.body || req.body.confirm !== true) return res.status(400).json({ error: 'CONFIRMATION_REQUIRED' });
+  try { res.status(202).json(updates.requestRestart()); }
+  catch (error) {
+    if (error.statusCode) return res.status(error.statusCode).json({ error: error.message });
+    console.error('[restart]', error.message);
+    res.status(500).json({ error: 'RESTART_FAILED' });
+  }
 });
 
 router.post('/auto-update', (req, res) => {

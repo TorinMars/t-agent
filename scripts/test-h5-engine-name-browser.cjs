@@ -159,7 +159,8 @@ async function testNamesShown(browser) {
   await page.locator('#h5-add-task').tap();
   await page.locator('#h5-new-task-on').waitFor();
   assert.deepEqual(await page.locator('#h5-new-task-on option').allTextContents(), ['MacBook \u00B7 This machine', 'VPS', 'Old box', 'Peer'], 'Create on: the names');
-  await page.locator('#h5-add-task').tap();
+  await page.locator('#h5-new-task-cancel').tap(); // New task is a dialog now
+  await page.locator('#h5-new-task-dialog').waitFor({ state: 'detached' });
 
   // The header line of a remote task names its device.
   const item = page.locator('#h5-task-list .h5-source[data-source="remote:7"] .h5-task-item').first();
@@ -223,13 +224,14 @@ async function testRenameLocal(browser) {
   await t.closed();
   assert.deepEqual(writesTo(world, '/api/system/engine-name').at(-1)[2], { name: '\u5DE5\u4F5C\u7AD9 Mac' }, 'the trimmed name is sent');
   await page.waitForFunction(() => document.querySelector('.h5-engine-row[data-engine="local"] .h5-engine-name').textContent === '\u5DE5\u4F5C\u7AD9 Mac');
-  assert.equal(await page.locator('#h5-engines-feedback').textContent(), 'Saved');
+  await page.locator('#h5-engines-feedback', { hasText: 'Saved' }).waitFor(); // written after the refresh that renames the row
   await t.closeSettings();
   await t.sheet();
   await t.waitHeader('local', '\u5DE5\u4F5C\u7AD9 Mac');
   await page.locator('#h5-add-task').tap();
   assert.equal(await page.locator('#h5-new-task-on option').first().textContent(), '\u5DE5\u4F5C\u7AD9 Mac \u00B7 This machine', 'Create on follows');
-  await page.locator('#h5-add-task').tap();
+  await page.locator('#h5-new-task-cancel').tap(); // New task is a dialog now
+  await page.locator('#h5-new-task-dialog').waitFor({ state: 'detached' });
 
   await t.openEngines();
   await t.openRename('local');
@@ -418,7 +420,8 @@ async function testOlderServer(browser) {
   assert.equal(await t.header('local').locator('.h5-source-hint').count(), 0, 'older: no hint next to "This machine"');
   await page.locator('#h5-add-task').tap();
   assert.deepEqual(await page.locator('#h5-new-task-on option').allTextContents(), ['This machine', 'VPS', 'Old box', 'Peer'], 'older: Create on as today');
-  await page.locator('#h5-add-task').tap();
+  await page.locator('#h5-new-task-cancel').tap(); // New task is a dialog now
+  await page.locator('#h5-new-task-dialog').waitFor({ state: 'detached' });
   await t.openEngines();
   await page.waitForFunction(() => Boolean(document.getElementById('h5-engine-local-version')) && document.getElementById('h5-engine-local-version').textContent === 'v2.99.0');
   assert.equal(await t.engineName('local'), 'This machine', 'older: the label as today');

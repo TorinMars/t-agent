@@ -622,6 +622,8 @@ async function checkListScrolling(browser, viewport, touch) {
       await page.locator('#h5-design-body h1', { hasText: 'Read me' }).waitFor();
       await page.keyboard.press('Escape');
       await viewer.waitFor({ state: 'hidden' });
+      // The viewer has left the page, but the focus comes back to the tree a moment later; an Escape before that lands on the body and closes nothing.
+      await page.waitForFunction(() => document.querySelector('#h5-files-sheet .h5-files-panel').contains(document.activeElement));
       await page.keyboard.press('Escape');
       await panel.waitFor({ state: 'hidden' });
 

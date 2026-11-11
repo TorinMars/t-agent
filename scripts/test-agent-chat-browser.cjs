@@ -119,7 +119,6 @@ window.base = '/api/tasks/${task.id}/agent';
 window.notices = [];
 window.closes = 0;
 window.titles = [];
-AgentChat.setOpenHandler(data => window.opened.push(data));
 window.openChat = async (agent, choice) => { const conversation = await AgentChat.open(window.api, base, agent, choice); window.conversation = conversation; window.view = AgentChat.mount(document.getElementById('host'), { api: window.api, base, conversation, onClose: () => { window.closes++; }, onTitle: title => window.titles.push(title), notify: m => window.notices.push(m) }); return conversation; };
 </script>`));
 const server = http.createServer(app);
@@ -134,11 +133,16 @@ const server = http.createServer(app);
     await page.addInitScript(() => {
       // The page's speech model (voice-input.js) is replaced by a fake with the same attach() contract: a click toggles the recording, the
       // text goes into the textarea it was given (and an input event), and the button gets the class "listening" while it records.
-      // Notifications: the page is hidden when window.away is set; the notifications the page makes are collected.
+      // No system notifications: the page is hidden when window.away is set; every Notification made and every permission request is counted
+      // (both must stay 0), and so is a notification shown through the service worker.
       window.away = false;
       window.notes = [];
-      window.opened = [];
-      window.Notification = class { static permission = 'granted'; static requestPermission() { return Promise.resolve('granted'); } constructor(title, options) { this.title = title; this.options = options; window.notes.push(this); } close() {} };
+      window.permissionAsks = 0;
+      window.Notification = class { static permission = 'default'; static requestPermission() { window.permissionAsks += 1; return Promise.resolve('granted'); } constructor(title, options) { this.title = title; this.options = options; window.notes.push(this); } close() {} };
+      if (navigator.serviceWorker) {
+        const reg = { showNotification: (title, options) => { window.notes.push({ title, options }); return Promise.resolve(); } };
+        navigator.serviceWorker.getRegistration = () => Promise.resolve(reg);
+      }
       Object.defineProperty(document, 'hidden', { configurable: true, get: () => window.away });
       document.hasFocus = () => !window.away;
       window.voice = { attached: 0, started: 0, stopped: 0, textarea: null, base: '', keep: false, keepCalls: [], keepListeners: new Set() };
@@ -383,15 +387,9 @@ const server = http.createServer(app);
     for (let i = 0; i < 100 && received.at(-1).text !== 'queued plain'; i += 1) await page.waitForTimeout(50);
     assert.equal(received.at(-1).text, 'queued plain', 'collapsed, Enter sends');
     await page.waitForSelector('.ac-stop', { state: 'detached' });
-    // The notification: the chat, the last thing the agent said, one per chat; a click shows the chat.
-    await page.waitForFunction(() => notes.length === 1);
-    const note = await page.evaluate(() => ({ title: notes[0].title, body: notes[0].options.body, tag: notes[0].options.tag, data: notes[0].options.data }));
-    assert.match(note.title, /^Claude: /);
-    assert.equal(note.body, 'Got the queued message.');
-    assert.match(note.tag, /^agent-chat:/);
-    assert.deepEqual([note.data.taskId, note.data.remote, note.data.page], [task.id, false, '/harness']);
-    await page.evaluate(() => notes[0].onclick());
-    assert.deepEqual(await page.evaluate(() => opened.map(data => data.conversationId)), [note.data.conversationId], 'a click asks the page to show that chat');
+    // A turn that ends while the page is hidden makes no system notification either.
+    await page.waitForTimeout(300);
+    assert.deepEqual(await page.evaluate(() => [notes.length, permissionAsks]), [0, 0], 'no Notification is made and the permission is never asked for');
     await page.evaluate(() => { window.away = false; });
     await page.click('.ac-mode-label');
     await page.click('.ac-mode-item[data-mode="edits"]');
@@ -869,6 +867,7 @@ const server = http.createServer(app);
     await page.waitForSelector('.ac-subagent-note');
     await page.locator('.ac-subagent[data-view=""]').click();
     await page.waitForFunction(() => document.body.innerText.includes('Main agent is back.'));
+    assert.deepEqual(await page.evaluate(() => [notes.length, permissionAsks]), [0, 0], 'no system notification and no permission request in the whole run');
     console.log('Agent chat view: streaming, permissions, stop, access level, attachments, reopen, Codex questions and steering, tool steps, choices and reviews passed.');
   } finally {
     await browser.close();

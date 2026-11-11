@@ -479,7 +479,7 @@
     } catch { /* refused (low battery, power saver): not worth telling the person */ }
   }
 
-  // from, item: the task and its service (`item` null: no task is shown). target: where to go in the task, { terminal: id } or { chat: row } (a notification link, see
+  // from, item: the task and its service (`item` null: no task is shown). target: where to go in the task, { terminal: id } or { chat: row } (a chat link, see
   // `openChatFromLink`); without one, the task opens on its terminal. stay: the task sheet of a phone stays open (the "+" of a task that was not selected opens the New session
   // dialog over the sheet). remember: false for a fallback at page load, so the service that was remembered is tried again on the next one.
   function selectTask(from, item, target = null, { stay = false, remember = true } = {}) {
@@ -1449,7 +1449,7 @@
   }
   ui.actions.openMindmaps = openMindmaps;
 
-  // ── Agent chat: the same Claude / Codex sessions as a conversation view instead of a terminal. The task sheet neither lists nor creates chats; a notification link opens one (`openChatFromLink`). ──
+  // ── Agent chat: the same Claude / Codex sessions as a conversation view instead of a terminal. The task sheet neither lists nor creates chats; a chat link opens one (`openChatFromLink`). ──
   const agentView = $('h5-agent');
   const chatApi = { get: url => api('GET', url), post: (url, body) => api('POST', url, body), patch: (url, body) => api('PATCH', url, body), del: url => api('DELETE', url) };
   let agentChat = null;
@@ -3328,7 +3328,7 @@
     else retain(result.url);
   }
 
-  // ── A click on the notification that a chat's turn ended: the task is selected and the chat opens (the chat is shown at once when it is the open one). ──
+  // ── A link to a chat (`?openChat=<task id>:<conversation id>`): the task is selected and the chat opens (the chat is shown at once when it is the open one). ──
   // Resolves to whether it went there. A chat of a remote Engine is not opened from here.
   async function openChatFromLink({ taskId, conversationId }) {
     if (!taskId) return false;
@@ -3341,8 +3341,7 @@
     selectTask(LOCAL, item, { chat: row });
     return true;
   }
-  if (typeof AgentChat !== 'undefined' && AgentChat.setOpenHandler) AgentChat.setOpenHandler(data => { if (!data.remote) void openChatFromLink(data); });
-  // The same for the service worker that shows these notifications (the phone shows them only through it).
+  // The service worker makes the page installable as a Home Screen app (public/sw.js); it shows no notifications.
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
 
   // The input mode can change while the page is open (a mouse or a touch screen attached): the terminal font, the layout measurements and the wake lock follow.
@@ -3366,7 +3365,7 @@
     const remembered = /^remote:(\d+)$/.exec(store.get('source') || '');
     const assumed = remembered ? remoteSource(Number(remembered[1]), '') : LOCAL;
     if (remembered) sources = [LOCAL, assumed];
-    // The page opened by a click on a notification: ?openChat=<task id>:<conversation id>.
+    // The page opened with a link to a chat: ?openChat=<task id>:<conversation id>.
     const link = /^(\d+):(.+)$/.exec(new URLSearchParams(location.search).get('openChat') || '');
     const savedId = Number(store.get(`task:${assumed.key}`));
     if (savedId > 0 && !link) {

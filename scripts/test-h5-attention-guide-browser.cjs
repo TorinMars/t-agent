@@ -1,8 +1,8 @@
 // The T-Attention first-run guide (scripts/h5-shell/AttentionGuide.jsx, guide-model.mjs) on the MUI page in real Chromium, with the API stubbed
 // by Playwright routes (GET /api/attention/plugins, GET / PUT /api/attention/settings/guide, the claude install, pairing, the notifier test):
 // - phone 390x844 (touch): a fresh Client shows the guide at the top of the panel (0/3, step 1 open, 44px targets, fits the width); "Install on
-//   this machine" (POST /plugins/claude/install) finishes step 1; "Allow system notifications" asks the browser; "Page and system notifications
-//   only" (PUT { pageOnly }) finishes step 2; "Test this page" shows a toast, plays the sound, shows a system notification and saves { tested };
+//   this machine" (POST /plugins/claude/install) finishes step 1; step 2 offers no system notifications; "This page only" (PUT { pageOnly })
+//   finishes step 2; "Test this page" shows a toast, plays the sound, makes no system notification and saves { tested };
 //   "All set" stays until the panel closes; opened again, the guide is gone.
 // - phone 320x640 (touch): the guide fits; Close (aria-label = title "Hide setup guide") saves { dismissed }; Settings → T-Attention has
 //   "Show setup guide", which brings it back there (PUT { dismissed: false }); "Set up Telegram" from the panel opens Settings → T-Attention.
@@ -35,10 +35,12 @@ async function openPage(browser, { viewport, touch = true, db: start = {} }) {
     window.WebSocket = class { constructor() { this.readyState = 0; setTimeout(() => { this.readyState = 1; this.onopen?.(); }, 0); } send() {} close() { this.readyState = 3; } };
     window.WebSocket.OPEN = 1;
     window.EventSource = class extends EventTarget { constructor(url) { super(); this.url = url; setTimeout(() => this.dispatchEvent(new Event('open')), 0); } close() {} };
+    // No system notifications: every Notification made and every permission request is counted; both stay 0.
     window.notes = [];
+    window.permissionAsks = 0;
     window.Notification = class { constructor(title, options = {}) { window.notes.push({ title, body: options.body, tag: options.tag }); } close() {} };
     window.Notification.permission = 'default';
-    window.Notification.requestPermission = async () => { window.Notification.permission = 'granted'; return 'granted'; };
+    window.Notification.requestPermission = async () => { window.permissionAsks += 1; window.Notification.permission = 'granted'; return 'granted'; };
     window.tones = 0;
     window.AudioContext = class {
       constructor() { this.state = 'running'; this.currentTime = 0; this.destination = {}; }
@@ -139,10 +141,9 @@ async function openPanel(page, how) {
       assert.equal(await guide(page).locator('.h5-guide-count').textContent(), '1/3');
       assert.ok(await page.locator('#h5-guide-telegram').isVisible(), 'Set up Telegram is offered');
 
-      await page.locator('#h5-guide-allow')[how]();
-      await page.locator('#h5-guide .h5-guide-notify-on').waitFor();
-      assert.equal(await page.locator('#h5-guide-allow').count(), 0, 'asked once; system notifications are on');
-      assert.equal(await stepDone(page, 'notify'), 'false', 'the browser permission alone does not finish step 2');
+      assert.equal(await page.locator('#h5-guide-allow').count(), 0, 'no "Allow system notifications" button');
+      assert.equal(await guide(page).getByText(/system notification/i).count(), 0, 'step 2 offers no system notifications');
+      assert.equal(await page.locator('#h5-guide-page-only').textContent(), 'This page only');
       await page.locator('#h5-guide-page-only')[how]();
       await page.waitForFunction(() => document.querySelector('#h5-guide .h5-guide-step[data-step="notify"]').dataset.done === 'true');
       assert.deepEqual(await openStep(page), ['test']);
@@ -153,7 +154,7 @@ async function openPanel(page, how) {
       await page.locator('.MuiSnackbar-root .MuiAlert-message', { hasText: 'T-Attention test: reminders on this page work' }).waitFor();
       await page.locator('#h5-guide .h5-guide-all-done').waitFor();
       assert.ok(await page.evaluate(() => window.tones) > tones, 'the sound played');
-      assert.equal((await page.evaluate(() => window.notes)).filter(note => note.tag === 'attention-test').length, 1, 'a system notification');
+      assert.deepEqual(await page.evaluate(() => [window.notes.length, window.permissionAsks]), [0, 0], 'no system notification, no permission request');
       assert.equal(await guide(page).locator('.h5-guide-count').textContent(), '3/3');
       assert.deepEqual(puts(calls), [{ pageOnly: true }, { tested: true }]);
       assert.deepEqual(await openStep(page), [], 'all done: no step is open');

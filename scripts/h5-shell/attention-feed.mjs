@@ -1,24 +1,22 @@
 // The live side of T-Attention on the page (started once by entry.jsx, before the panel is ever opened, so the "Needs you" badge and the reminders
 // work from the start): reads the list (GET /api/attention), follows GET /api/attention/stream (server-sent events, event 'change'), keeps
 // `state.attention` in the store and registers the actions the panel (Attention.jsx) and the Settings group (AttentionSettings.jsx) call.
-// Reminders: a change that moves a task INTO waiting_user, failed or review gives a toast (not for a plain Claude turn end, showsNotice), a system notification (only when the user enabled it in
-// Settings and the browser granted it) and a short sound made with WebAudio (no audio file; on by default, off in Settings). A change this page made
-// itself (the user's own tap here) gives none.
+// Reminders: a change that moves a task INTO waiting_user, failed or review gives a toast (not for a plain Claude turn end, showsNotice) and a short
+// sound made with WebAudio (no audio file; on by default, off in Settings). A change this page made itself (the user's own tap here) gives none.
+// There are no system (browser / OS) notifications: reminders away from the page come from the server's notifiers (Telegram, services/attention-notify.js).
 import { applyChange, needsCount, reminderFor, showsNotice } from './attention-model.mjs';
 
 export const BASE = '/api/attention';
 const LIST_URL = `${BASE}?include_done=1&limit=200`;
 const OWN_MS = 8000; // a change event for a task this page changed within this time, made by 'user', is this page's own
 const RETRY_MS = [1000, 2000, 5000, 10000, 30000, 60000];
-const SOUND_KEY = 'h5-attention-sound'; // '0' = off (default on)
-const NOTIFY_KEY = 'h5-attention-notify'; // '1' = system notifications on (default off; needs the browser's permission)
+const SOUND_KEY = 'h5-attention-sound'; // '0' = off (default on). An old 'h5-attention-notify' value (system notifications, removed) is ignored.
 
 const read = key => { try { return localStorage.getItem(key); } catch { return null; } };
 const write = (key, value) => { try { if (value === null) localStorage.removeItem(key); else localStorage.setItem(key, value); } catch { /* not remembered */ } };
 
 export function prefs() {
-  const permission = typeof Notification === 'undefined' ? 'unsupported' : Notification.permission;
-  return { sound: read(SOUND_KEY) !== '0', notify: read(NOTIFY_KEY) === '1' && permission === 'granted', permission };
+  return { sound: read(SOUND_KEY) !== '0' };
 }
 
 // Two short soft tones (about 0.3 s). The AudioContext is made on the first use and resumed on the user's first tap of the page, since browsers
@@ -51,20 +49,6 @@ export function playSound() {
     });
     return true;
   } catch { return false; }
-}
-
-// A system notification: the Notification constructor where it works, else the page's service worker (Android Chrome has no constructor).
-export function showSystemNotification(title, body, { tag, onClick } = {}) {
-  if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return false;
-  const options = { body, tag, icon: '/icons/icon-192.png' };
-  try {
-    const shown = new Notification(title, options);
-    shown.onclick = () => { try { window.focus(); } catch { /* no focus */ } if (onClick) onClick(); shown.close(); };
-    return true;
-  } catch {
-    if (navigator.serviceWorker && navigator.serviceWorker.ready) navigator.serviceWorker.ready.then(reg => reg.showNotification(title, options)).catch(() => {});
-    return true;
-  }
 }
 
 export function startAttentionFeed(ui, { t = text => text, api, EventSourceImpl } = {}) {
@@ -112,9 +96,7 @@ export function startAttentionFeed(ui, { t = text => text, api, EventSourceImpl 
     if (!note || isOwn(change)) return;
     const head = `${t(note.label)}: ${note.title}`;
     if (showsNotice(change)) ui.notify(note.reason ? `${head} — ${note.reason}` : head, note.status === 'failed' ? 'error' : 'info');
-    const settings = prefs();
-    if (settings.notify) showSystemNotification(`T-Attention · ${t(note.label)}`, note.reason ? `${note.title}\n${note.reason}` : note.title, { tag: `attention-${note.id}`, onClick: () => ui.actions.openAttention({ item: note.id }) });
-    if (settings.sound) playSound();
+    if (prefs().sound) playSound();
   }
 
   function onChange(message) {
@@ -200,18 +182,9 @@ export function startAttentionFeed(ui, { t = text => text, api, EventSourceImpl 
   ui.actions.attentionDetail = id => api('GET', `${BASE}/${encodeURIComponent(id)}`);
   // A new AI summary (the server writes it into context.summary later and sends a change event; session only).
   ui.actions.attentionSummarize = id => api('POST', `${BASE}/${encodeURIComponent(id)}/summarize`, {});
-  // Settings (AttentionSettings.jsx): sound, system notifications.
+  // Settings (AttentionSettings.jsx): the sound.
   ui.actions.attentionPrefs = () => prefs();
   ui.actions.attentionSetSound = on => { write(SOUND_KEY, on ? null : '0'); if (on) playSound(); };
-  ui.actions.attentionSetNotify = async on => {
-    if (!on) { write(NOTIFY_KEY, null); return prefs(); }
-    if (typeof Notification === 'undefined') return prefs();
-    let permission = Notification.permission;
-    if (permission === 'default' && Notification.requestPermission) permission = await Notification.requestPermission();
-    write(NOTIFY_KEY, permission === 'granted' ? '1' : null);
-    return prefs();
-  };
-  ui.actions.attentionTestNotify = () => showSystemNotification(`T-Attention · ${t('Test')}`, t('System notifications work'), { tag: 'attention-test' });
 
   // A wide screen shows one of them at a time: a file viewer or file tree that opens while this panel is open takes its place.
   const others = s => Boolean((s.design && s.design.open) || (s.files && s.files.open));

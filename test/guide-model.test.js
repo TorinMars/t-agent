@@ -70,7 +70,7 @@ test('step 3 after one test worked; all done hides the guide; a closed guide doe
   assert.deepEqual(state.steps.map(doneLine), ['Claude Code on this machine reports here.', 'A notifier is on and set up.', 'A test worked.']);
   assert.equal(doneLine({ done: false, how: null }), '');
   assert.equal(doneLine({ done: true, how: 'paired' }), 'Another machine is connected.');
-  assert.equal(doneLine({ done: true, how: 'pageOnly' }), 'Page and system notifications only.');
+  assert.equal(doneLine({ done: true, how: 'pageOnly' }), 'This page only.');
 });
 
 test('a broken overview answer gives a guide with nothing done', async () => {

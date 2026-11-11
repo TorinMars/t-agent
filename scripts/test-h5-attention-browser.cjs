@@ -3,8 +3,9 @@
 // - phone 390x844 (touch): row 2 has Docs and Attention (no Files button) and the "Needs you" badge; the full-screen sheet with the groups in order
 //   (Done & failed folded) and the order inside a group; source badge and reason; quick add (POST body); the circle marks done (PATCH); the edit
 //   view (history, PATCH of the changed fields only, link) and delete with a confirmation; a live event moving a task into Needs you gives a
-//   toast, the badge, a system notification and a sound, a change made on this page gives none; a lost stream connects again and reads the list
-//   again; the Android back button and Escape close one layer; Settings "T-Attention": tokens (create shown once, revoke), sound, notifications,
+//   toast, the badge and a sound but never a system notification (Notification is never made, the permission never asked for, even with an old
+//   stored 'h5-attention-notify' = '1'), a change made on this page gives none; a lost stream connects again and reads the list
+//   again; the Android back button and Escape close one layer; Settings "T-Attention": tokens (create shown once, revoke), sound (no system notification controls),
 //   AI summary (off by default, provider / model, privacy note), Plugins (GET /api/attention/plugins: chips, activity, setup steps with Copy, notifier
 //   modes, a plugin that failed to load, Refresh; above the notifier settings; a notifier's settings: the form from the manifest schema with
 //   the saved values, a secret never filled in, Save, Test, the enable switch and its "Disabled" chip; the claude row's "Update the hooks" install button and the pairing dialog
@@ -98,11 +99,18 @@ async function openPage(browser, { viewport, touch = true, notify = true }) {
     };
     window.emitChange = change => { const live = window.streams.filter(s => s.readyState === 1).at(-1); const event = new MessageEvent('change', { data: JSON.stringify(change) }); live.dispatchEvent(event); };
     window.dropStream = () => { const live = window.streams.filter(s => s.readyState === 1).at(-1); live.readyState = 2; live.dispatchEvent(new Event('error')); };
-    // System notifications and sound.
+    // No system notifications: every Notification made (directly or through the service worker) and every permission request is counted; both
+    // stay 0. The permission is 'granted' and the old setting is stored, so only the code itself could make one.
     window.notes = [];
+    window.permissionAsks = 0;
     window.Notification = class { constructor(title, options = {}) { window.notes.push({ title, body: options.body, tag: options.tag }); } close() {} };
     window.Notification.permission = 'granted';
-    window.Notification.requestPermission = async () => 'granted';
+    window.Notification.requestPermission = async () => { window.permissionAsks += 1; return 'granted'; };
+    if (navigator.serviceWorker) {
+      const reg = { showNotification: (title, options = {}) => { window.notes.push({ title, body: options.body, tag: options.tag }); return Promise.resolve(); } };
+      try { Object.defineProperty(navigator.serviceWorker, 'ready', { configurable: true, get: () => Promise.resolve(reg) }); } catch { /* left as it is */ }
+      navigator.serviceWorker.getRegistration = () => Promise.resolve(reg);
+    }
     window.tones = 0;
     window.AudioContext = class {
       constructor() { this.state = 'running'; this.currentTime = 0; this.destination = {}; }
@@ -110,7 +118,7 @@ async function openPage(browser, { viewport, touch = true, notify = true }) {
       createOscillator() { window.tones += 1; return { type: '', frequency: {}, connect() {}, start() {}, stop() {} }; }
       createGain() { return { gain: { setValueAtTime() {}, exponentialRampToValueAtTime() {} }, connect() {} }; }
     };
-    try { if (on) localStorage.setItem('h5-attention-notify', '1'); } catch { /* none */ }
+    try { if (on) localStorage.setItem('h5-attention-notify', '1'); } catch { /* none */ } // the old system notification setting: ignored
     window.confirm = () => true;
   }, { notify });
   await page.route(`${ORIGIN}/**`, async route => {
@@ -345,14 +353,14 @@ const pluginsFit = page => page.evaluate(() => [...document.querySelectorAll('#h
       assert.equal(await row(page, 2).count(), 0);
       await notice(page).filter({ hasText: 'Task deleted' }).waitFor();
 
-      // A live event moves a task into Needs you: toast, badge, system notification, sound.
+      // A live event moves a task into Needs you: toast, badge, sound, and no system notification.
       const tonesBefore = await page.evaluate(() => window.tones);
       const moved = { ...db.items.find(item => item.id === 3), status: 'waiting_user', attention_reason: 'Approve the plan?', updated_at: new Date().toISOString() };
       await page.evaluate(change => window.emitChange(change), { kind: 'updated', item: moved, previous: { ...moved, status: 'working' }, event: { actor: 'claude', type: 'status', from_status: 'working', to_status: 'waiting_user' } });
       await notice(page).filter({ hasText: 'Needs you: Refactor login — Approve the plan?' }).waitFor();
       await page.waitForFunction(() => document.getElementById('h5-attention').getAttribute('aria-label') === 'Attention (2)');
       assert.deepEqual(await idsIn(page, 'needs'), [3, 1], 'the newest change first');
-      assert.deepEqual(await page.evaluate(() => window.notes), [{ title: 'T-Attention · Needs you', body: 'Refactor login\nApprove the plan?', tag: 'attention-3' }]);
+      assert.deepEqual(await page.evaluate(() => [window.notes, window.permissionAsks]), [[], 0], 'no Notification is made and the permission is not asked for');
       assert.ok(await page.evaluate(() => window.tones) > tonesBefore, 'a sound was played');
       // A change made on this page gives no reminder (the edit view moves task 5 to review; the stream then reports it, actor 'user').
       await row(page, 5).locator('.h5-attention-open').tap();
@@ -364,21 +372,21 @@ const pluginsFit = page => page.evaluate(() => [...document.querySelectorAll('#h
       const tonesMine = await page.evaluate(() => window.tones);
       await page.evaluate(change => window.emitChange(change), { kind: 'updated', item: mine, previous: { ...mine, status: 'todo' }, event: { actor: 'user', type: 'status' } });
       await page.waitForTimeout(300);
-      assert.equal(await page.evaluate(() => window.notes.length), 1, 'no notification for this page\'s own change');
+      assert.equal(await page.evaluate(() => window.notes.length), 0, 'no notification for this page\'s own change');
       assert.equal(await page.evaluate(() => window.tones), tonesMine, 'no sound for this page\'s own change');
       // The same status from another program (a listener) does remind.
       const failed = { ...db.items.find(item => item.id === 8), status: 'failed', attention_reason: 'Card declined', updated_at: new Date().toISOString() };
       await page.evaluate(change => window.emitChange(change), { kind: 'updated', item: failed, previous: { ...failed, status: 'todo' }, event: { actor: 'cli' } });
       await notice(page).filter({ hasText: 'Failed: Pay invoice — Card declined' }).waitFor();
-      assert.equal(await page.evaluate(() => window.notes.length), 2);
-      // A plain Claude turn end: the task moves to Review, the sound and the system notification stay, but no in-page notice.
+      assert.equal(await page.evaluate(() => window.notes.length), 0);
+      // A plain Claude turn end: the task moves to Review, the sound stays, but no in-page notice.
       const quiet = { ...db.items.find(item => item.id === 4), status: 'review', attention_reason: 'Plain answer', updated_at: new Date().toISOString() };
       const tonesQuiet = await page.evaluate(() => window.tones);
       await page.evaluate(change => window.emitChange(change), { kind: 'updated', item: quiet, previous: { ...quiet, status: 'working' }, event: { actor: 'claude', type: 'status' }, plain_turn_end: true });
       await page.waitForFunction(() => document.querySelector('#h5-attention-sheet .h5-attention-group[data-group="review"] .h5-attention-row[data-id="4"]'));
       await page.waitForTimeout(300);
       assert.equal(await notice(page).filter({ hasText: `Review: ${quiet.title}` }).count(), 0, 'no in-page notice for a plain turn end');
-      assert.equal(await page.evaluate(() => window.notes.length), 3, 'the system notification is not changed');
+      assert.equal(await page.evaluate(() => window.notes.length), 0, 'still no system notification');
       assert.ok(await page.evaluate(() => window.tones) > tonesQuiet, 'the sound is not changed');
       // The review after sub-agents: the same change without the marker does show the notice.
       const finished = { ...quiet, attention_reason: 'All sub-agents finished', updated_at: new Date().toISOString() };
@@ -672,9 +680,8 @@ const pluginsFit = page => page.evaluate(() => [...document.querySelectorAll('#h
       await backToList('rules');
       if (SHOTS) { await page.locator('#h5-plugins').scrollIntoViewIfNeeded(); await page.screenshot({ path: path.join(SHOTS, 'h5-attention-plugins-phone.png') }); }
       assert.equal(await page.locator('#h5-attention-sound').isChecked(), true, 'sound is on by default');
-      assert.equal(await page.locator('#h5-attention-notify-state').textContent(), 'System notifications are on');
-      await page.locator('#h5-attention-notify-test').tap();
-      assert.equal(await page.evaluate(() => window.notes.at(-1).title), 'T-Attention · Test');
+      for (const id of ['h5-attention-notify-state', 'h5-attention-notify-on', 'h5-attention-notify-off', 'h5-attention-notify-test']) assert.equal(await page.locator(`#${id}`).count(), 0, `no system notification control: ${id}`);
+      assert.equal(await page.getByText(/system notification/i).count(), 0, 'Settings offer no system notifications');
       await page.locator('#h5-attention-sound').tap();
       assert.equal(await page.evaluate(() => localStorage.getItem('h5-attention-sound')), '0');
       await page.locator('#h5-attention-token-create').tap();
@@ -689,15 +696,13 @@ const pluginsFit = page => page.evaluate(() => [...document.querySelectorAll('#h
       await page.locator('#h5-attention-tokens .h5-attention-token[data-id="1"] .h5-attention-token-revoke').tap();
       await page.locator('#h5-attention-tokens .h5-attention-token[data-id="1"] .h5-attention-token-revoked').waitFor();
       assert.deepEqual(calls.filter(call => call.method === 'DELETE' && call.path.startsWith('/api/attention/tokens/')).map(call => call.path), ['/api/attention/tokens/1']);
-      await page.locator('#h5-attention-notify-off').tap();
-      await page.locator('#h5-attention-notify-on').waitFor();
-      assert.equal(await page.evaluate(() => localStorage.getItem('h5-attention-notify')), null);
-      // With sound and notifications off a reminder is a toast only.
+      // With the sound off a reminder is a toast only.
       const before = await page.evaluate(() => [window.notes.length, window.tones]);
       const again = { ...db.items.find(item => item.id === 4), status: 'review', updated_at: new Date().toISOString() };
       await page.evaluate(change => window.emitChange(change), { kind: 'updated', item: again, previous: { ...again, status: 'todo' }, event: { actor: 'claude' } });
       await notice(page).filter({ hasText: 'Review: Write the release notes' }).waitFor();
       assert.deepEqual(await page.evaluate(() => [window.notes.length, window.tones]), before);
+      assert.deepEqual(await page.evaluate(() => [window.notes.length, window.permissionAsks]), [0, 0], 'no system notification in the whole run');
       assert.deepEqual(errors, []);
       await context.close();
     }

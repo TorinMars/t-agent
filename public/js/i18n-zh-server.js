@@ -29,6 +29,7 @@ I18n.add({
   "PAIRING_RATE_LIMITED": "尝试过于频繁，请一分钟后再试",
   "REMOTE_ALREADY_EXISTS": "这个地址已经添加为远程 Engine；请先移除它，再进行关联",
   "ARCHIVE_UNSUPPORTED": "这个 Engine 的版本过旧，不支持归档，请先升级",
+  "MINDMAPS_UNSUPPORTED": "这个服务的版本过旧，不支持共享思维导图，请先升级",
   ", error code {1}": "，错误码 {1}",
   "Only regular files can be opened": "只能打开普通文件",
   "Permission denied: the terminal user cannot read this file": "没有权限：终端用户无法读取这个文件",

@@ -1,7 +1,11 @@
-// Mind maps HTTP API, mounted at /api/mindmaps after the session, access and login gates and the same-origin rule for mutations (see "Mind maps" in DESIGN.md).
+// Mind maps HTTP API (see "Mind maps" in DESIGN.md). One router, mounted twice:
+// - /api/mindmaps for the browser session, after the session, access and login gates and the same-origin rule for mutations;
+// - /v1/mindmaps for other services (routes/engine-v1.js), with `authenticate` (an Engine token) as its first layer.
+// Both use the same service instance, so writes of one map run one at a time whichever path they come in by.
 //
-// This router parses its own JSON bodies. server.js keeps the global parsers (32 MB, before the session) off this path, so a body is read only after the
-// gates have let the request through, and the limit here is the one that counts. The other routes keep the global parser and its limit.
+// This router parses its own JSON bodies. server.js keeps the global parsers (32 MB, before the session) off both paths, so a body is read only after the
+// gates (or the token check) have let the request through, and the limit here is the one that counts. The other routes keep the global parser and its limit.
+// The Client's proxy for another service's maps (routes/remote-servers.js) uses the same parser, so it accepts and refuses exactly what this router does.
 const express = require('express');
 const { MindmapError, LIMITS } = require('../services/mindmap');
 
@@ -13,21 +17,31 @@ function sendError(res, status, code, message, extra = {}) {
 }
 
 const sendInvalid = res => sendError(res, 400, 'INVALID_MINDMAP', 'The request is not a valid mind map');
+const sendTooLarge = res => sendError(res, 413, 'MINDMAP_TOO_LARGE', 'The mind map is too large (limit: 8 MB)');
+const sendNotFound = res => sendError(res, 404, 'MINDMAP_NOT_FOUND', 'Mind map not found');
 
-function createMindmapRouter({ service }) {
-  if (!service) throw new Error('createMindmapRouter needs the mind map service');
-  const router = express.Router();
+// The JSON parser of a mind map write, with the answers of this API: 400 INVALID_MINDMAP and 413 MINDMAP_TOO_LARGE.
+// req.is() is null without a body, so a POST with no body at all is allowed (both of its fields are optional).
+function createMindmapBodyParser() {
   const json = express.json({ limit: BODY_LIMIT });
-
-  // req.is() is null without a body, so a POST with no body at all is allowed (both of its fields are optional).
-  function parseBody(req, res, next) {
+  return function parseMindmapBody(req, res, next) {
     if (req.is('application/json') === false) return sendInvalid(res);
     return json(req, res, error => {
       if (!error) return next();
-      if (error.type === 'entity.too.large') return sendError(res, 413, 'MINDMAP_TOO_LARGE', 'The mind map is too large (limit: 8 MB)');
+      if (error.type === 'entity.too.large') return sendTooLarge(res);
       return sendInvalid(res);
     });
-  }
+  };
+}
+
+// `service` is the mind map service, or `getService` a function that returns it (made on first use, for a router built when its module loads).
+function createMindmapRouter({ service, getService, authenticate } = {}) {
+  if (!service && !getService) throw new Error('createMindmapRouter needs the mind map service');
+  const maps = () => service || getService();
+  const router = express.Router();
+  // Before any body is read.
+  if (authenticate) router.use(authenticate);
+  const parseBody = createMindmapBodyParser();
 
   const wrap = handler => async (req, res) => {
     try {
@@ -41,16 +55,16 @@ function createMindmapRouter({ service }) {
     return undefined;
   };
 
-  router.get('/', wrap(async (req, res) => res.json({ maps: await service.list() })));
-  router.post('/', parseBody, wrap(async (req, res) => res.status(201).json(await service.create(req.body))));
-  router.get('/:id', wrap(async (req, res) => res.json(await service.get(req.params.id))));
-  router.put('/:id', parseBody, wrap(async (req, res) => res.json(await service.update(req.params.id, req.body))));
+  router.get('/', wrap(async (req, res) => res.json({ maps: await maps().list() })));
+  router.post('/', parseBody, wrap(async (req, res) => res.status(201).json(await maps().create(req.body))));
+  router.get('/:id', wrap(async (req, res) => res.json(await maps().get(req.params.id))));
+  router.put('/:id', parseBody, wrap(async (req, res) => res.json(await maps().update(req.params.id, req.body))));
   router.delete('/:id', wrap(async (req, res) => {
-    await service.remove(req.params.id);
+    await maps().remove(req.params.id);
     res.status(204).end();
   }));
 
   return router;
 }
 
-module.exports = { createMindmapRouter, BODY_LIMIT };
+module.exports = { createMindmapRouter, createMindmapBodyParser, sendError, sendNotFound, sendTooLarge, BODY_LIMIT };

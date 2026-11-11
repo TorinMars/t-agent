@@ -42,6 +42,20 @@ Translation, voice input and OSS upload used by a linked service, with this serv
 
 The bodies, answers, error messages and status codes are those of the `/api` routes.
 
+## Mind maps
+
+The mind maps stored on this service, for the other services connected to it (plain remote Engines and service links alike); see "Mind maps" in `DESIGN.md`. Capability `mindmaps` (in `/v1/info`; additive, `api_version` stays 1). Any Engine token; it is checked before the body is read. Maps belong to no task, so per-task visibility does not apply.
+
+- `GET /v1/mindmaps`: `{ maps: [{ id, title, revision, created_at, updated_at, size }] }`, newest first.
+- `POST /v1/mindmaps` `{ title?, data? }`: 201 with the full map.
+- `GET /v1/mindmaps/:id`: the full map `{ id, title, data, revision, created_at, updated_at }`.
+- `PUT /v1/mindmaps/:id` `{ revision, title?, data? }`: `{ id, title, revision, updated_at }`; a stale `revision` is 409 `MINDMAP_CONFLICT` with `current_revision`.
+- `DELETE /v1/mindmaps/:id`: 204; the map goes to the trash.
+
+The bodies, answers, error messages (`{ error, message }`), status codes and limits are exactly those of `/api/mindmaps`: `data` at most 8 MiB serialised (413 `MINDMAP_TOO_LARGE`), at most 2000 maps (409 `MINDMAP_LIMIT`), 400 `INVALID_MINDMAP`, 404 `MINDMAP_NOT_FOUND`, 500 `MINDMAP_STORAGE_FAILED`. Both paths share one store, so writes of one map run one at a time whichever path they come in by.
+
+The Client's proxy is `/api/remote-servers/:id/mindmaps` and `/api/remote-servers/:id/mindmaps/:mapId`, with the same answers. It reads `/v1/info` first: an Engine without the capability gets 501 `MINDMAPS_UNSUPPORTED`, an offline one 502 (`REMOTE_OFFLINE` through a tunnel, `REMOTE_CONNECTION_FAILED` or `REMOTE_TIMEOUT` otherwise). It refuses a bad map id (404 `MINDMAP_NOT_FOUND`) and a body over the limit (413 / 400) before anything is forwarded, and passes the Engine's errors on with their status, code, `message` and `current_revision`.
+
 ## Tasks and documents
 
 - `GET /v1/task-groups`

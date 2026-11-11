@@ -275,4 +275,15 @@ function createMindmapService({ dataDir, now = () => new Date(), log = message =
   return { list, get, create, update, remove, dir, trashDir };
 }
 
-module.exports = { createMindmapService, MindmapError, LIMITS };
+// A map id as the service makes them: a lowercase version 4 UUID. Used by the Client's proxy to refuse a bad id before anything is forwarded.
+const isMindmapId = id => typeof id === 'string' && UUID.test(id);
+
+// The one service of this server's data folder, shared by /api/mindmaps and /v1/mindmaps: its queues are what make writes of one map, and creates
+// against the map limit, run one at a time, so a second instance on the same folder would break that.
+let shared = null;
+function getMindmapService() {
+  if (!shared) shared = createMindmapService({ dataDir: dataHome.paths().root });
+  return shared;
+}
+
+module.exports = { createMindmapService, getMindmapService, isMindmapId, MindmapError, LIMITS };

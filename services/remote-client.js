@@ -48,15 +48,19 @@ function request(baseUrl, pathname, token, { expectText = false, method = 'GET',
         if (res.statusCode < 200 || res.statusCode >= 300) {
           let code = `REMOTE_HTTP_${res.statusCode}`;
           let peerError = null;
+          let peerBody = null;
           try {
             const parsed = JSON.parse(body);
             if (/^[A-Z0-9_]+$/.test(parsed.error || '')) code = parsed.error;
             if (typeof parsed.error === 'string') peerError = parsed.error;
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) peerBody = parsed;
           } catch {}
           const error = new Error(code);
           error.statusCode = res.statusCode;
           // The peer's own words, which may be a sentence and not a code. Only services/linked-capabilities.js passes them on.
           error.peerError = peerError;
+          // The whole JSON error body. A caller picks the fields it passes on (the mind map proxy: `message` and `current_revision`); never logged.
+          error.peerBody = peerBody;
           return reject(error);
         }
         if (expectText) return resolve(body);

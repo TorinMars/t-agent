@@ -473,6 +473,10 @@ async function testHidden(browser, wide) {
   await page.evaluate(() => window.H5UI.actions.nextActiveSession());
   await page.waitForTimeout(150);
   assert.equal(await t.shownName(), 'Alpha', `${label}: the next-session button leaves it out too`);
+  // Opening Alpha closes the phone's task sheet, and once its exit animation ends the page takes the sheet's history entry back off (back.mjs,
+  // history.go). Wait for that: a reload sent while that history.go is pending is aborted (net::ERR_ABORTED).
+  if (!wide) await page.locator('#h5-tasks').waitFor({ state: 'hidden' });
+  await page.waitForFunction(() => !(history.state && history.state.h5Layer));
 
   // A reload keeps it, and a hidden device's task is not the remembered selection.
   const opensBefore = await page.evaluate(() => window.activityStream.opens.length);

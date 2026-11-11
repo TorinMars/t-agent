@@ -88,13 +88,14 @@
   // A source is one service whose tasks are in the list: this machine, or a connected service (a remote Engine or a linked service). Each keeps its own list:
   // `tasks`, `groups`, `status` ('new' until its first answer, 'ready', or 'offline' when its last read failed) and `failure` (what that read said).
   const withList = from => Object.assign(from, { tasks: [], groups: DEFAULT_GROUPS, status: 'new', failure: '', loadSeq: 0, checkedAt: 0 });
-  const LOCAL = withList({ key: 'local', label: 'This machine', tasksBase: '/api/tasks', groupsBase: '/api/task-groups', wsPath: '/terminal/ws', activityBase: '/api/tasks' });
+  const LOCAL = withList({ key: 'local', label: 'This machine', tasksBase: '/api/tasks', groupsBase: '/api/task-groups', wsPath: '/terminal/ws', activityBase: '/api/tasks', mindmapBase: '/api/mindmaps' });
   const remoteSource = (id, name) => withList({
     key: `remote:${id}`, label: name,
     tasksBase: `/api/remote-servers/${id}/tasks`,
     groupsBase: `/api/remote-servers/${id}/task-groups`,
     wsPath: `/api/remote-servers/${id}/terminal/ws`,
     activityBase: `/api/remote-servers/${id}`, // {activityBase}/terminal-activity and /terminal-subagents
+    mindmapBase: `/api/remote-servers/${id}/mindmaps`, // the mind map view lists and edits its maps there
   });
   let sources = [LOCAL];
   // The devices left out of the task list ("Show in task list" in Settings, `/api/task-list/hidden-devices`). Display only: a hidden device stays connected.
@@ -103,6 +104,8 @@
   let hiddenSupported = false; // an older server has no such route: nothing is hidden and the switches do not appear
   let hiddenSeq = 0;
   let listReady = false; // both the services and what is hidden are known: until then the list says "Loading…", so a hidden device never flashes by
+  let mindmap = null; // the open mind map view (see "Mind maps" below); here because publishSources tells it when the services change
+  let mindmapSourcesSent = '';
   // The sources of the list, in list order. At least one device always stays visible. A source without a name is the remembered one, assumed before the list of services has answered.
   function listedSources() {
     const named = sources.filter(item => item === LOCAL || item.label);
@@ -294,6 +297,7 @@
       sourceKey: source.key,
       sourceLabel: task && source !== LOCAL ? source.label : '', // the header says which service the shown task is on when it is not this machine
     });
+    syncMindmapSources();
   }
 
   // Reads the connected services. One that is still there keeps its object: requests in flight, sockets and warm terminals compare it.
@@ -1366,7 +1370,17 @@
 
   // ── Mind maps (public/js/mindmap.js): a full-window view over the terminal, independent of the tasks; the terminal stays connected underneath ──
   const mindmapView = $('h5-mindmap');
-  let mindmap = null;
+  // The services whose maps the view lists: the same ones, in the same order, as the task list (a device hidden from the list is left out). Until the
+  // services and what is hidden are known, none: the view says "Loading…", so a hidden device's maps never flash by.
+  const mindmapSources = () => (listReady ? listedSources() : []).map(from => ({ key: from.key, label: from.label, base: from.mindmapBase, online: from.status !== 'offline' }));
+  function syncMindmapSources() {
+    if (!mindmap) return;
+    const list = mindmapSources();
+    const text = JSON.stringify(list);
+    if (text === mindmapSourcesSent) return; // `publishSources` runs on every selection; the view hears only of a real change
+    mindmapSourcesSent = text;
+    mindmap.setSources(list);
+  }
   // The same height rule as fitViewport: visualViewport.height is believed only while something that raises a keyboard is focused (iOS Home Screen apps report wrong small heights).
   function fitMindmapView() {
     const viewport = window.visualViewport;
@@ -1394,7 +1408,9 @@
     mindmapView.hidden = false;
     window.visualViewport?.addEventListener('resize', fitMindmapView);
     window.visualViewport?.addEventListener('scroll', fitMindmapView);
-    mindmap = MindMap.mount(mindmapView, { onClose: closeMindmaps, notify: (message, kind) => tell(message, kind), onLayers: layers => ui.set({ mindmapLayers: layers }) });
+    const list = mindmapSources();
+    mindmapSourcesSent = JSON.stringify(list);
+    mindmap = MindMap.mount(mindmapView, { onClose: closeMindmaps, notify: (message, kind) => tell(message, kind), onLayers: layers => ui.set({ mindmapLayers: layers }), sources: list });
     fitMindmapView();
   }
   ui.actions.openMindmaps = openMindmaps;
@@ -3320,6 +3336,7 @@
     void loadLinks(); // the "⋯" of a task needs it, the list does not wait for it
     await Promise.all([loadSources(), loadHidden()]);
     listReady = true;
+    syncMindmapSources();
     for (const from of listedSources()) if (!reads.has(from)) reads.set(from, loadSource(from));
     renderTasks();
     syncFeeds();

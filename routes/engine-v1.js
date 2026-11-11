@@ -129,6 +129,8 @@ function infoHandler(req, res) {
       'tasks:reorder', 'documents:create', 'documents:watch', 'files:assets', 'files:image', 'paths:validate', 'terminal:activity', 'terminal:activity-stream',
       'todos:read', 'todos:write',
       'terminal:interactive', 'terminal:control', 'terminal:multiple', 'token:pairing',
+      // terminals:order: PUT /v1/tasks/:id/terminals/order stores the order of a task's terminals, and GET /v1/tasks/:id/terminals answers in it.
+      'terminals:order',
       // fs:read-any: GET /v1/fs/content and /v1/fs/image read a file at any path (read only, as the terminal user).
       'fs:read-any',
       // files:raw: GET /v1/tasks/:id/files/raw and /v1/fs/raw stream a PDF, audio or video file with Range support.
@@ -397,6 +399,14 @@ router.post('/tasks/:id/terminals', requireEngineAuth('terminal:execute'), (req,
   const task = tasks.ownedTask(principal(req), req.params.id);
   if (!task) return res.status(404).json({ error: 'TASK_NOT_FOUND' });
   try { res.status(201).json(terminal.createTerminal(task.id, req.body)); }
+  catch (error) { errorResponse(res, error); }
+});
+
+// The shared order of the task's terminals (capability terminals:order): `{ order: [terminal id, ...] }` -> `{ order }`.
+router.put('/tasks/:id/terminals/order', requireEngineAuth('terminal:execute'), (req, res) => {
+  const task = tasks.ownedTask(principal(req), req.params.id);
+  if (!task) return res.status(404).json({ error: 'TASK_NOT_FOUND' });
+  try { res.json(terminal.setTerminalOrder(task.id, req.body && req.body.order)); }
   catch (error) { errorResponse(res, error); }
 });
 

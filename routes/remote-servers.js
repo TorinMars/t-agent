@@ -644,6 +644,18 @@ for (const method of ['get', 'post']) {
   });
 }
 
+// The order of a task's terminals, on an Engine that advertises 'terminals:order' (an older one answers 501 TERMINAL_ORDER_UNSUPPORTED before anything is
+// sent: it has no such route). Only `order` is forwarded; the Engine checks it.
+router.put('/:id/tasks/:taskId/terminals/order', async (req, res) => {
+  const target = remoteTarget(req, res);
+  if (!target) return;
+  const supported = await remoteHas(target, res, 'terminals:order');
+  if (supported === null) return;
+  if (!supported) return res.status(501).json({ error: 'TERMINAL_ORDER_UNSUPPORTED' });
+  try { res.json(await request(target.row.base_url, `${taskPath(req)}/terminals/order`, target.token, { method: 'PUT', body: { order: req.body ? req.body.order : undefined } })); }
+  catch (error) { res.status(error.statusCode || 502).json({ error: safeError(error) }); }
+});
+
 router.patch('/:id/tasks/:taskId/terminals/:terminalId', async (req, res) => {
   const row = getServer(req);
   if (!row) return res.status(404).json({ error: 'REMOTE_NOT_FOUND' });

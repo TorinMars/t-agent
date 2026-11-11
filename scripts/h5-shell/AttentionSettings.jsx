@@ -12,7 +12,7 @@ import { BASE } from './attention-feed.mjs';
 import { attentionSettingsSlots } from './attention-slots.mjs';
 import { AttentionGuide } from './AttentionGuide.jsx';
 
-// The "T-Attention" group of the settings sheet: the reminders of this page (sound, system notifications; remembered in this browser) and the
+// The "T-Attention" group of the settings sheet: the reminders of this page (the in-page notice and the sound; remembered in this browser) and the
 // CLI tokens (`Authorization: Bearer tatt_...` for the `t-attention` CLI and the listener plugins; only /api/attention* accepts them).
 // The token endpoints take the browser session only. A new token is shown once, here, and never again.
 // Below them: the components other parts registered (attention-slots.mjs; for example the plugin list).
@@ -143,17 +143,9 @@ function SummarySettings({ opened }) {
   );
 }
 
+// The reminders of this page: the in-page notice and the sound. There are no system notifications; reminders away from the page come from the
+// notifiers set up under Plugins (Telegram).
 function Reminders({ ui, prefs, setPrefs }) {
-  const [feedback, say] = useFeedback();
-  const notify = async on => {
-    const next = await ui.actions.attentionSetNotify(on);
-    setPrefs(next);
-    if (on && next.permission === 'denied') say('The browser blocks notifications for this page. Allow them in the browser’s site settings.', true);
-    else if (on && next.permission === 'unsupported') say('This browser has no system notifications', true);
-    else say('');
-  };
-  const state = prefs.permission === 'unsupported' ? 'This browser has no system notifications'
-    : prefs.notify ? 'System notifications are on' : prefs.permission === 'denied' ? 'The browser blocks notifications for this page' : 'System notifications are off';
   return (
     <>
       <Typography variant="subtitle2" component="h3" sx={{ fontWeight: 700, mt: 1 }}>{t('Reminders on this device')}</Typography>
@@ -162,22 +154,12 @@ function Reminders({ ui, prefs, setPrefs }) {
         control={<Checkbox checked={prefs.sound} onChange={event => { ui.actions.attentionSetSound(event.target.checked); setPrefs(ui.actions.attentionPrefs()); }} slotProps={{ input: { id: 'h5-attention-sound' } }} />}
         label={t('Play a short sound')}
       />
-      <Hint id="h5-attention-notify-state">{t(state)}</Hint>
-      {prefs.notify ? (
-        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-          <Button id="h5-attention-notify-test" variant="outlined" onClick={() => { if (!ui.actions.attentionTestNotify()) say('Could not show a notification', true); }}>{t('Send a test notification')}</Button>
-          <Button id="h5-attention-notify-off" variant="outlined" color="inherit" onClick={() => void notify(false)}>{t('Turn off system notifications')}</Button>
-        </Box>
-      ) : prefs.permission === 'unsupported' ? null : (
-        <Button id="h5-attention-notify-on" variant="contained" onClick={() => void notify(true)}>{t('Enable system notifications')}</Button>
-      )}
-      <Feedback id="h5-attention-notify-feedback" feedback={feedback} />
     </>
   );
 }
 
 export function AttentionSettings({ ui }) {
-  const [prefs, setPrefs] = useState(() => ui.actions.attentionPrefs ? ui.actions.attentionPrefs() : { sound: true, notify: false, permission: 'unsupported' });
+  const [prefs, setPrefs] = useState(() => ui.actions.attentionPrefs ? ui.actions.attentionPrefs() : { sound: true });
   const [opened, setOpened] = useState(0);
   const open = () => {
     if (ui.actions.attentionPrefs) setPrefs(ui.actions.attentionPrefs());

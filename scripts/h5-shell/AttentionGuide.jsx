@@ -76,23 +76,16 @@ function ClaudeStep({ overview, busy, run, onPair }) {
   );
 }
 
-function NotifyStep({ ui, place, overview, prefs, setPrefs, busy, run, save }) {
+// No system (browser) notifications: the choice is a notifier (Telegram) or this page only (its notice and sound).
+function NotifyStep({ ui, place, overview, busy, run, save }) {
   const telegram = telegramNotifier(overview);
-  const allow = async () => {
-    const next = await ui.actions.attentionSetNotify(true);
-    setPrefs(next);
-    if (next.permission === 'denied') return { error: 'The browser blocks notifications for this page. Allow them in the browser’s site settings.' };
-    return next.notify ? 'System notifications are on' : '';
-  };
   return (
     <>
       <Line>{t('Get a Telegram message or call when a task needs you, or use only this page.')}</Line>
       <Actions>
-        {prefs.permission !== 'unsupported' && !prefs.notify ? <Button id="h5-guide-allow" size="small" variant="outlined" disabled={busy} sx={SMALL} onClick={() => void run(allow)}>{t('Allow system notifications')}</Button> : null}
         {telegram ? <Button id="h5-guide-telegram" size="small" variant="contained" disabled={busy} sx={SMALL} onClick={() => openTelegramSetup(ui, place)}>{t('Set up Telegram')}</Button> : null}
-        <Button id="h5-guide-page-only" size="small" variant="outlined" disabled={busy} sx={SMALL} onClick={() => void run(async () => { await save({ pageOnly: true }); return ''; })}>{t('Page and system notifications only')}</Button>
+        <Button id="h5-guide-page-only" size="small" variant="outlined" disabled={busy} sx={SMALL} onClick={() => void run(async () => { await save({ pageOnly: true }); return ''; })}>{t('This page only')}</Button>
       </Actions>
-      {prefs.notify ? <Line className="h5-guide-notify-on">{t('System notifications are on')}</Line> : null}
     </>
   );
 }
@@ -108,7 +101,6 @@ function TestStep({ ui, overview, prefs, busy, run, save }) {
   const testPage = () => run(async () => {
     ui.notify(t('T-Attention test: reminders on this page work'), 'success');
     if (prefs.sound) playSound();
-    if (prefs.notify && ui.actions.attentionTestNotify) ui.actions.attentionTestNotify();
     await save({ tested: true });
     return '';
   });
@@ -134,7 +126,7 @@ export function AttentionGuide({ ui, place = 'panel', active }) {
   const [picked, setPicked] = useState(null); // the step the person opened (null: the first open step)
   const [pairing, setPairing] = useState(false); // the pairing dialog; kept here so it stays open when step 1 turns done
   const [stay, setStay] = useState(false); // drawn once while this panel or group is open: it stays to say "All set" after the last step
-  const [prefs, setPrefs] = useState(() => (ui.actions.attentionPrefs ? ui.actions.attentionPrefs() : { sound: true, notify: false, permission: 'unsupported' }));
+  const [prefs, setPrefs] = useState(() => (ui.actions.attentionPrefs ? ui.actions.attentionPrefs() : { sound: true }));
   const [busy, setBusy] = useState(false);
   const [feedback, say] = useFeedback();
   const load = async () => {
@@ -174,7 +166,7 @@ export function AttentionGuide({ ui, place = 'panel', active }) {
     return <>{dialog}<Button id="h5-guide-show" size="small" sx={{ alignSelf: 'flex-start', ...SMALL }} onClick={() => void show()}>{t('Show setup guide')}</Button></>;
   }
   const openKey = picked || state.current;
-  const props = { ui, place, overview, prefs, setPrefs, busy, run, save };
+  const props = { ui, place, overview, prefs, busy, run, save };
   return (
     <Paper
       id={place === 'settings' ? 'h5-guide-settings' : 'h5-guide'} className="h5-guide" data-place={place} variant="outlined" component="section" aria-labelledby={`h5-guide-title-${place}`}

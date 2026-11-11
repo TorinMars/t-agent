@@ -22,7 +22,7 @@ export function createChatStore({ api, base, conversation, agent = '', notify = 
   let state = {
     items: [], pending: [], status: 'idle', canSteer: false, canFork: false, loaded: false, title: conversation.title, mode: conversation.mode,
     model: conversation.model || '', effort: conversation.effort || '', context: conversation.context || null, limits: conversation.limits || [],
-    lastTurn: null, // the latest turn that ended while this page watched: { n, ok, stopped } (the host page may tell the person)
+    lastTurn: null, // the latest turn that ended while this page watched: { n, ok, stopped } (the Run button shows it finished)
     translate: conversation.translate === true, // the translation switch of this chat
     collapseKeyboard: conversation.collapseKeyboard !== false, // leave the input box after sending (on by default), also per chat
     runningSince: null, queue: [], serverQueue: false, suggestion: '',

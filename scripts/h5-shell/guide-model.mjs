@@ -59,7 +59,7 @@ export function doneLine(step) {
   if (step.how === 'here') return 'Claude Code on this machine reports here.';
   if (step.how === 'paired') return 'Another machine is connected.';
   if (step.how === 'notifier') return 'A notifier is on and set up.';
-  if (step.how === 'pageOnly') return 'Page and system notifications only.';
+  if (step.how === 'pageOnly') return 'This page only.';
   if (step.how === 'tested') return 'A test worked.';
   return '';
 }

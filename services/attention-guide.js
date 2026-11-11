@@ -1,7 +1,7 @@
 // T-Attention first-run guide (scripts/h5-shell/AttentionGuide.jsx): what the guide needs to remember per owner, beside what the plugin
 // overview (GET /api/attention/plugins) already tells: { dismissed, pageOnly, paired, tested, updatedAt }.
 //   dismissed  the person closed the guide ("Show setup guide" in Settings brings it back)
-//   pageOnly   step 2 was answered with "Page and system notifications only" (no notifier plugin needed)
+//   pageOnly   step 2 was answered with "This page only" (no notifier plugin needed)
 //   paired     step 1 was done with a pairing code for another machine (the overview only sees this machine)
 //   tested     step 3: one test (a notifier's or the page's) worked
 // Stored as plain JSON in system_state ('attention-guide:<owner>'); nothing secret. Served by GET / PUT /api/attention/settings/guide

@@ -60,5 +60,6 @@ export const initialState = () => ({
   // T-Attention (attention-feed.mjs, Attention.jsx): { open, status: idle | loading | ready | error, items, needs (the waiting_user count, the badge
   // on #h5-attention), live (the stream is connected), focus (a task id whose edit view opens) }
   attention: { open: false, status: 'idle', items: null, needs: 0, live: false, focus: null },
+  columns: null, // the multi-column view of a wide screen (Columns.jsx `startColumns`): null on a page that never offers it (a pane, a framed page)
   activeCount: 0, // running or pending terminal sessions of the listed services (the badge on #h5-cycle; h5.js `showActiveCount`)
 });

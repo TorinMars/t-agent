@@ -10,6 +10,7 @@ import { SettingsDrawer } from './Settings.jsx';
 import { TaskDialog } from './TaskDialogs.jsx';
 import { TaskDrawer } from './TaskDrawer.jsx';
 import { BottomArea, TerminalArea } from './Terminal.jsx';
+import { ColumnStrip } from './Columns.jsx';
 import { measureTerminalBox, trackTerminalBox } from './terminal-box.mjs';
 import { TermMenu } from './TermMenu.jsx';
 import { theme } from './theme.mjs';
@@ -65,6 +66,7 @@ export function App({ ui }) {
       <Lazy open={state.retainUrl !== null}><RetainDialog state={state} ui={ui} /></Lazy>
       <Lazy open={Boolean(state.pasteSheet)}><PasteDialog state={state} ui={ui} /></Lazy>
       <Lazy open={Boolean(state.taskDialog)}><TaskDialog state={state} ui={ui} /></Lazy>
+      <ColumnStrip state={state} ui={ui} />
       <Notice state={state} ui={ui} />
     </ThemeProvider>
   );

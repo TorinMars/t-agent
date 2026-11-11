@@ -1571,7 +1571,7 @@
 
   function connect() {
     hideShown();
-    if (!task || !terminalId) return;
+    if (!task || !terminalId || columnsShown()) return; // the multi-column view shows its own columns: this page opens no terminal (see below)
     const key = warmKey(source, task.id, terminalId);
     const kept = warm.find(item => item.key === key && !item.disposed);
     if (kept) { showWarm(kept); return; }
@@ -2100,6 +2100,19 @@
     session = null;
     if (s) disposeSession(s);
   }
+  // ── Multi-column view (scripts/h5-shell/Columns.jsx) ──
+  // While the column strip of a wide screen is shown, every column is an iframe of this page in pane mode, with its own terminals. This page's own
+  // terminal is hidden under the strip, so it holds no socket: the warm terminals and an early socket are closed, `connect` opens nothing, and
+  // going back connects the task and terminal that were shown before (they stay selected). The feed, notices, notifications and updates go on here.
+  function columnsShown() { return Boolean(ui.get().columns && ui.get().columns.shown); }
+  let columnsParked = columnsShown();
+  ui.subscribe(() => {
+    const shown = columnsShown();
+    if (shown === columnsParked) return;
+    columnsParked = shown;
+    if (shown) { dropEarlySocket(); closeWarm(); return; }
+    setTimeout(() => { if (!columnsShown()) connect(); }, 0); // after the shell has drawn the page again, so the terminal box has its size
+  });
   function disposeSession(s) {
     if (s.disposed) return;
     if (session === s) session = null;
@@ -3310,7 +3323,7 @@
       prefetch(`${assumed.tasksBase}/${savedId}/terminals`);
       if (assumed.key !== 'local') prefetch(infoUrl(assumed));
       const savedTerminal = store.get(`terminal:${assumed.key}:${savedId}`);
-      if (savedTerminal) openEarlySocket(assumed, savedId, savedTerminal);
+      if (savedTerminal && !columnsShown()) openEarlySocket(assumed, savedId, savedTerminal);
     }
     renderTasks(); // "Loading…"
     // A phone with nothing to bring back opens on the task sheet at once; that does not wait for the lists.

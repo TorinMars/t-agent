@@ -1481,3 +1481,4 @@ One line per release, added by `scripts/release.js`. Older notes are in `git log
 > v2.101.0 Multi-column view, Cmd/Ctrl+Shift+O keyboard flow for New session, translate-and-send appends on a new line, a clearer copy bar, no system notifications, no flicker opening a remote session, and agent chat suggestions no longer lost.
 > v2.102.0 Update linked services together from the Update dialog, and restart T-Agent from Settings.
 > v2.103.0 One flat task list across devices with a device tag before each task name, drag and menu sorting, and one shared order across browsers and linked services.
+> v2.104.0 Drag handle with reorder animation, task rename that can also rename the folder and move its Claude/Codex sessions, and automatic restart when the code on disk is newer than the running process.

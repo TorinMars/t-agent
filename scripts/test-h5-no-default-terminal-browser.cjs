@@ -125,11 +125,12 @@ async function scenario(browser, wide) {
   assert.equal(shells.length, spawned, `${label}: the controls spawn nothing`);
   await page.locator('#h5-translate-input').fill('').catch(() => {});
 
-  // The empty state opens the Session list of the task, which creates the first terminal.
+  // The empty state opens the New session dialog of the task, which creates the first terminal.
   await page.locator('#h5-empty-new').click();
   await page.locator('#h5-new-session').waitFor(WAIT);
-  assert.deepEqual(await page.locator('#h5-term-menu-actions button').allTextContents(), ['New Terminal', 'Claude session', 'Codex session'], `${label}: the existing panel`);
-  await page.locator('#h5-term-menu-actions button', { hasText: 'New Terminal' }).click();
+  assert.deepEqual(await page.locator('#h5-new-session #h5-term-menu-actions button').allTextContents(), ['New Terminal', 'Claude session', 'Codex session'], `${label}: the New session dialog`);
+  await page.locator('#h5-new-session #h5-term-menu-actions button', { hasText: 'New Terminal' }).click();
+  await page.locator('#h5-new-session').waitFor({ state: 'detached', ...WAIT });
   await page.locator('.h5-xterm').first().waitFor(WAIT);
   await page.waitForFunction(() => !document.querySelector('#h5-empty'), null, WAIT);
   const ids = await listed(task.id);

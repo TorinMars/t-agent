@@ -221,7 +221,10 @@ async function testTwoServices(browser, wide) {
   await t.sheet();
   await t.press(t.row('remote:7', 'Alpha').locator('.h5-task-add'));
   await page.waitForFunction(() => document.getElementById('h5-task-name').textContent === 'Alpha' && document.getElementById('h5-task-service')?.textContent === 'VPS');
-  await t.press(page.locator('#h5-term-menu-actions button', { hasText: 'New Terminal' }));
+  assert.equal(await page.locator('#h5-new-session-task').textContent(), 'Alpha', `${label}: the New session dialog names the row's task`);
+  assert.equal(await page.locator('#h5-new-session-service').textContent(), 'VPS', `${label}: and its service`);
+  await t.press(page.locator('#h5-new-session #h5-term-menu-actions button', { hasText: 'New Terminal' }));
+  await page.locator('#h5-new-session').waitFor({ state: 'detached' });
   if (!wide) await page.locator('#h5-tasks').waitFor({ state: 'hidden' }); // creating a terminal closes the sheet of a phone
   await t.waitSocket('/api/remote-servers/7/terminal/ws');
   assert.ok(lastWrite(world, 'POST', '/api/remote-servers/7/tasks/1/terminals'), `${label}: "+" made the terminal on the row's service`);
@@ -336,6 +339,7 @@ async function testNewTask(browser, wide) {
   await page.fill('#h5-new-task-title', 'Made there');
   await t.press(page.locator('#h5-new-task button[type="submit"]'));
   await page.waitForFunction(() => document.getElementById('h5-task-name').textContent === 'Made there');
+  await page.locator('#h5-new-task-dialog').waitFor({ state: 'detached' }); // the New task dialog closes once the task is made
   assert.deepEqual(lastWrite(world, 'POST', '/api/remote-servers/7/tasks'), ['POST', '/api/remote-servers/7/tasks', { title: 'Made there' }], `${label}: made on the chosen service`);
   assert.equal(lastWrite(world, 'POST', '/api/tasks'), undefined, `${label}: not on this machine`);
   assert.deepEqual(world.pageErrors, [], `${label}: no page errors`);
@@ -353,6 +357,8 @@ async function testOneService(browser, wide) {
   await t.press(page.locator('#h5-add-task'));
   await page.locator('#h5-new-task-title').waitFor();
   assert.equal(await page.locator('#h5-new-task-on').count(), 0, `${label}: no "Create on" with one service`);
+  await t.press(page.locator('#h5-new-task-cancel'));
+  await page.locator('#h5-new-task-dialog').waitFor({ state: 'detached' });
   assert.equal(await page.locator('#h5-archived-toggle').count(), 1, `${label}: Archived is there`);
   await t.openEngines();
   await page.locator('#h5-engine-empty').waitFor();

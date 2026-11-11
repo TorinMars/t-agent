@@ -467,8 +467,8 @@
   }
 
   // from, item: the task and its service (`item` null: no task is shown). target: where to go in the task, { terminal: id } or { chat: row } (a notification link, see
-  // `openChatFromLink`); without one, the task opens on its terminal. stay: the task sheet of a phone stays open (the "+" of a task that was not selected shows its Session
-  // list in the sheet, under that task). remember: false for a fallback at page load, so the service that was remembered is tried again on the next one.
+  // `openChatFromLink`); without one, the task opens on its terminal. stay: the task sheet of a phone stays open (the "+" of a task that was not selected opens the New session
+  // dialog over the sheet). remember: false for a fallback at page load, so the service that was remembered is tried again on the next one.
   function selectTask(from, item, target = null, { stay = false, remember = true } = {}) {
     const next = item ? from : LOCAL;
     // A chat open over another task is put away.
@@ -484,7 +484,7 @@
     void syncWakeLock();
     const ref = item ? taskRef(next, item.id) : null;
     if (item) { peeks.delete(ref); expanded.add(ref); } // the other open lists stay open
-    // The Session list of the task that was selected: its choices act on the selected task, so they cannot stay under another one (the "+" of a task lands here too, and then opens its own).
+    // The New session dialog acts on the selected task, so it cannot stay open for another one (the "+" of a task lands here too, and then opens its own).
     const menu = ui.get().menu;
     if (menu && menu.naming && !(item && menu.task === ref)) closeTerminalMenu();
     wantedTerminal = target && target.terminal ? target.terminal : null;
@@ -577,9 +577,9 @@
   }
   function closeTasks() {
     if (isWide()) return; // the sidebar stays
-    // The Session list, the rename field and the popup of a row are drawn inside the sheet or point into it: they go with it.
+    // The rename field and the popup of a row are drawn inside the sheet or point into it: they go with it. The New session dialog lies over the page and stays.
     const menu = ui.get().menu;
-    if (menu && (menu.naming || menu.rename || menu.anchor)) closeTerminalMenu();
+    if (menu && (menu.rename || menu.anchor)) closeTerminalMenu();
     clearInterval(namesTimer);
     ui.set({ tasksOpen: false });
   }
@@ -710,6 +710,7 @@
     ui.set({ creatingTask: true });
     try {
       const created = await api('POST', current.tasksBase, workDir ? { title, work_dir: workDir } : { title });
+      ui.set({ newTaskOpen: false }); // the New task dialog closes once the task is made
       if (!sources.includes(current)) return true;
       await loadSource(current);
       selectTask(current, findTask(current, created.id) || created);
@@ -719,6 +720,9 @@
       return false;
     } finally { ui.set({ creatingTask: false }); }
   };
+  // The New task dialog (`NewTaskDialog` in TaskDrawer.jsx), opened by "New task" at the end of the task list. It cannot be closed while the task is being made.
+  ui.actions.openNewTask = () => ui.set({ newTaskOpen: true });
+  ui.actions.closeNewTask = () => { if (!ui.get().creatingTask) ui.set({ newTaskOpen: false }); };
   // The service a new task is made on, for the new-task form: its default folder rule is shown only for this machine (a remote one keeps its own).
   ui.actions.newTaskTarget = (key = 'local') => {
     const from = sources.find(item => item.key === key) || LOCAL;
@@ -1091,7 +1095,7 @@
   // ── Phone terminals ──
   function showEmpty(text, { create = false } = {}) { ui.set({ empty: text, emptyCreate: create }); }
   // The selected task has no terminal: nothing connects and nothing is spawned, and nothing of a terminal that is gone is kept (the one remembered for this task,
-  // an early socket, hidden warm views). A terminal only comes from the person: the button of the empty state opens the same Session list as the "+" of the task.
+  // an early socket, hidden warm views). A terminal only comes from the person: the button of the empty state opens the same New session dialog as the "+" of the task.
   function showNoTerminal() {
     terminalId = null;
     wantedTerminal = null;
@@ -1102,12 +1106,8 @@
     closeWarm(item => item.source === from && item.task.id === taskId);
     showEmpty('This task has no terminal yet', { create: true });
   }
-  ui.actions.newSessionFromEmpty = () => {
-    if (!task) return;
-    ui.actions.openTasks(); // a phone's task sheet, or the folded sidebar of a computer
-    const menu = ui.get().menu;
-    if (!(menu && menu.naming && menuTask === taskRef(source, task.id))) ui.actions.addSession(taskRef(source, task.id)); // the "+" would close a list that is already open
-  };
+  // The dialog lies over the page: neither the phone's task sheet nor a folded sidebar is opened for it.
+  ui.actions.newSessionFromEmpty = () => { if (task) ui.actions.addSession(taskRef(source, task.id)); };
 
   // The list of the selected task could not be read: the next open of the list reads it again.
   function retryTerminals() { if (task && terminalsState === 'error') terminalsLoaded = loadTerminals(); }
@@ -1157,19 +1157,20 @@
   }
 
   // ── Terminal actions: rename, reopen, restart in the working directory, delete ──
-  // One `menu` state serves the actions of a terminal, the actions of a chat and the "Session" choices of the "+" of a task. Its items are
+  // One `menu` state serves the actions of a terminal, the actions of a chat and the choices of the New session dialog of the "+" of a task. Its items are
   // { label, kind } in the state and their functions are kept here, in the order shown. The actions of a session row are a popup under its "⋯" (`menu.anchor`, TermMenu.jsx); the
-  // actions of a task are a sheet from the bottom (TermMenu.jsx); the Session choices (`naming`, under the task `task`) and the rename field (`rename`, in place of that row) are drawn in the task list (TaskDrawer.jsx),
-  // where the person tapped.
+  // actions of a task are a sheet from the bottom (TermMenu.jsx); the New session choices (`naming`, for the task `task`) are a dialog (`NewSessionDialog` in TaskDrawer.jsx) and
+  // the rename field (`rename`, in place of that row) is drawn in the task list (TaskDrawer.jsx), where the person tapped.
   let menuRuns = [];
   let menuRow = null;
   // { from, taskId, row, taskTitle }: the Engine and the task of that terminal, and the row. Rename, Restart and Delete go there, whichever task is selected
   // by then. `taskTitle` is only set for a task that is not selected, so its name can be shown in the confirmation.
   let menuScope = null;
-  // The optional name typed in the "Session" sheet. It is kept while moving between its lists (Claude session, Back) and names what is created.
+  // The optional name typed in the New session dialog. It is kept while moving between its lists (Claude session, Back) and names what is created.
   let newName = '';
   let menuCreate = -1; // the item that Enter in the name field runs (New Terminal, New Claude session)
-  let menuTask = null; // the ref (`taskRef`) of the task whose "+" opened the Session list
+  let menuTask = null; // the ref (`taskRef`) of the task whose "+" opened the New session dialog (or whose "⋯" opened its sheet)
+  let creating = 0; // counts the terminals asked for from the New session dialog; closing the dialog counts too, so an answer for a dialog that was closed is dropped
 
   function closeTerminalMenu() {
     menuRow = null;
@@ -1178,23 +1179,26 @@
     menuCreate = -1;
     menuTask = null;
     newName = '';
+    creating += 1;
     ui.set({ menu: null });
   }
-  // The Session list and the rename field drawn under a task go when that task is collapsed (without an id: under any task). The sheet and the popup of actions are modal: nothing behind them can be tapped (a popup whose row has gone closes by itself, TermMenu.jsx).
+  // The rename field drawn under a task goes when that task is collapsed (without an id: under any task). The New session dialog, the sheet and the popup of actions are modal:
+  // nothing behind them can be tapped (a popup whose row has gone closes by itself, TermMenu.jsx).
   function closeListMenu(ref = null) {
     const menu = ui.get().menu;
-    const owner = menu && (menu.naming ? menu.task : menu.rename ? menu.rename.task : null);
+    const owner = menu && menu.rename ? menu.rename.task : null;
     if (owner != null && (ref === null || ref === owner)) closeTerminalMenu();
   }
   // The typed name, as the server will keep it (an empty name: the default "Terminal N" / "Claude N").
   const takeName = () => newName.replace(/\s+/g, ' ').trim();
   // items: [label, run, kind, create]; kind 'danger' is drawn as a warning, 'raw' is a name that is not translated; create: Enter in the name field runs it.
-  // naming: the Session list, with the optional name field above it, drawn under the task `menuTask` in the task list.
+  // naming: the New session dialog of the task `menuTask`, with the optional name field above the choices; `extra` adds its own fields (the task's title and service,
+  // the sub-list shown, busy and error).
   // anchor: the "⋯" of a session row: the actions are a popup under it instead of the sheet from the bottom.
-  function showMenu(title, items, { naming = false, anchor = null } = {}) {
+  function showMenu(title, items, { naming = false, anchor = null, extra = null } = {}) {
     menuRuns = items.map(item => item[1]);
     menuCreate = items.findIndex(item => item[3]);
-    ui.set({ menu: { title, items: items.map(([label, , kind]) => ({ label, kind: kind || null })), rename: null, renameValue: '', naming, task: naming ? menuTask : null, name: newName, anchor } });
+    ui.set({ menu: { title, items: items.map(([label, , kind]) => ({ label, kind: kind || null })), rename: null, renameValue: '', naming, task: naming ? menuTask : null, name: newName, anchor, ...extra } });
   }
   // The rename field takes the place of the row in the task list ({ kind, id, task } of the row, `task` being its ref: `default` is a terminal id in every task); the sheet of
   // actions goes away.
@@ -1305,7 +1309,7 @@
       }
     } catch (error) { tell(`Could not delete the terminal: ${error.message}`, 'error'); }
   }
-  ui.actions.menuRun = index => { const run = menuRuns[index]; if (run) run(); };
+  ui.actions.menuRun = index => { const run = menuRuns[index]; if (run && !(ui.get().menu || {}).busy) run(); }; // nothing more while a new terminal is being made
   ui.actions.menuCancel = closeTerminalMenu;
   ui.actions.menuName = value => { newName = String(value || ''); };
   ui.actions.menuNameSubmit = () => { const run = menuRuns[menuCreate]; if (run) run(); };
@@ -1340,27 +1344,48 @@
 
   // ── Session: a plain terminal, or a Claude / Codex session of the task directory (new or resumed) ──
   const SESSION_KINDS = [['claude', 'Claude session'], ['codex', 'Codex session']];
-  function showSessionMenu(title, items) { showMenu(tr(title), items, { naming: true }); }
+  // The New session dialog (`NewSessionDialog` in TaskDrawer.jsx). sub: null for the first list (New Terminal, Claude session, Codex session), else the label of the
+  // sub-list shown (Claude session: New Claude session, the earlier sessions, Back). The dialog names the task and, when it is not on this machine, its service.
+  function showSessionMenu(sub, items) {
+    const hit = resolveRef(menuTask);
+    const extra = { sub, taskTitle: hit ? hit.item.title : '', service: hit ? serviceOf(hit.from) : null, busy: false, error: '' };
+    showMenu(tr(sub || 'New session'), items, { naming: true, extra });
+  }
   function openSessionMenu() {
     menuRow = null;
-    showSessionMenu('Session', [
-      ['New Terminal', () => { const title = takeName(); closeTerminalMenu(); closeTasks(); void createTerminal(title ? { title } : {}); }, null, true],
+    showSessionMenu(null, [
+      ['New Terminal', () => void startSession({}), null, true],
       ...SESSION_KINDS.map(([agent, label]) => [label, () => void openAgentSessions(agent, label)]),
     ]);
   }
   ui.actions.openSessionMenu = openSessionMenu;
-  // The "+" of any task: a task that is not shown is selected first, then the menu adds a session to it.
+  // A choice of the New session dialog. The dialog stays while the terminal is made (busy: nothing in it can be pressed and it cannot be closed), shows a failure in
+  // place, and closes when the terminal is there; the new terminal opens and the phone's task sheet closes, as before.
+  async function startSession(options) {
+    const menu = ui.get().menu;
+    if (!menu || !menu.naming || menu.busy) return;
+    const title = takeName();
+    const run = (creating += 1);
+    const patchMenu = patch => ui.set(state => ({ menu: state.menu && { ...state.menu, ...patch } }));
+    patchMenu({ busy: true, error: '' });
+    let made = false;
+    let failure = null;
+    try { made = await createTerminal({ ...options, ...(title ? { title } : {}) }); } catch (error) { failure = error; }
+    if (run !== creating) return; // the dialog was closed meanwhile (another task was selected, the task left the list)
+    if (failure) { patchMenu({ busy: false, error: tr(`Could not create the terminal: ${failure.message}`) }); return; }
+    closeTerminalMenu();
+    if (made) closeTasks();
+  }
+  // The "+" of any task: a task that is not shown is selected first (the phone's sheet stays open), then the New session dialog adds a session to it.
   ui.actions.addSession = ref => {
     const hit = resolveRef(ref);
     if (!hit) return;
     const { from, item } = hit;
     const own = taskRef(from, item.id);
-    const menu = ui.get().menu;
-    if (menu && menu.naming && menuTask === own) { closeTerminalMenu(); return; } // the "+" again closes its list
     if (!isShown(from, item.id)) selectTask(from, item, null, { stay: true });
-    else if (!expanded.has(own)) { expanded.add(own); renderTasks(); } // as for a task that is not selected: the list goes with an open task, so one tap on the task closes both
+    else if (!expanded.has(own)) { expanded.add(own); renderTasks(); } // as for a task that is not selected: its sessions are listed, so the new one is seen there
     menuTask = own;
-    newName = ''; // a new "Session" list starts with an empty name
+    newName = ''; // a new dialog starts with an empty name
     openSessionMenu();
   };
 
@@ -1461,12 +1486,7 @@
     try { rows = await api('GET', `${from.tasksBase}/${current.id}/agent-sessions?agent=${agent}`); }
     catch (error) { if (current === task) tell(`Could not load sessions: ${error.message}`, 'error'); }
     if (current !== task || ui.get().menu !== loading) return;
-    const start = sessionId => () => {
-      const title = takeName();
-      closeTerminalMenu();
-      closeTasks();
-      void createTerminal({ agent, session_id: sessionId, ...(title ? { title } : {}) });
-    };
+    const start = sessionId => () => void startSession({ agent, session_id: sessionId });
     showSessionMenu(label, [
       [`New ${label}`, start(undefined), null, true],
       ...(Array.isArray(rows) ? rows : []).map(row => [row.title, start(row.id), 'raw']),
@@ -1474,25 +1494,28 @@
     ]);
   }
 
+  // Makes a terminal in the selected task and opens it. Resolves to true when it was made and opened, false when there is nothing more to do (no task, another task
+  // was selected meanwhile, the task was archived on another device); rejects with the server's error, which the New session dialog shows.
   async function createTerminal(options = {}) {
-    if (!task) return;
+    if (!task) return false;
     const current = task;
     const from = source;
     leaveChat();
     try {
       await terminalsLoaded; // a new one made while the list is on its way is not wiped by that list (a task with no terminal answers an empty one)
-      if (current !== task) return;
+      if (current !== task) return false;
       const row = await api('POST', `${from.tasksBase}/${current.id}/terminals`, options);
       if (!row || !row.terminal_id) throw new Error('The engine returned no terminal');
-      if (current !== task) return;
+      if (current !== task) return false;
       terminals.push(row);
       terminalId = row.terminal_id;
       store.set(`terminal:${from.key}:${current.id}`, terminalId);
       renderTabs();
       connect();
+      return true;
     } catch (error) {
-      if (error.message === 'TASK_ARCHIVED') { archivedElsewhere(from, current.id); return; }
-      tell(`Could not create the terminal: ${error.message}`, 'error');
+      if (error.message === 'TASK_ARCHIVED') { archivedElsewhere(from, current.id); return false; }
+      throw error;
     }
   }
 

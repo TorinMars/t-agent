@@ -314,6 +314,7 @@ async function stale(browser) {
   await page.locator('#h5-term-menu-actions button', { hasText: 'New Terminal' }).click();
   await h.toast('This task was archived on another device');
   await h.gone('Gamma');
+  await page.locator('#h5-new-session').waitFor({ state: 'detached' }); // the New session dialog of a task that left the list closes, with no error in it
   assert.doesNotMatch(await h.lastNotice(), /Could not create/, `${label}: no create error`);
   await page.waitForFunction(() => document.getElementById('h5-task-name').textContent === 'Choose a task');
 

@@ -105,8 +105,8 @@ function SessionPopup({ menu, ui, keepFocus }) {
 }
 
 // The sheet from the bottom with the actions of a chat or of a task ("⋯"); the actions of a session row are a popup under its "⋯" (`SessionPopup`). The
-// "Session" list of the "+" of a task (`menu.naming`) and the rename field (`menu.rename`) are not shown here: they are drawn in the task list, where the
-// person tapped (TaskDrawer.jsx).
+// New session dialog of the "+" of a task (`menu.naming`, `NewSessionDialog`) and the rename field (`menu.rename`, drawn in the task list where the person
+// tapped) are not shown here (TaskDrawer.jsx).
 // On a phone it is as wide as the window (at most 480px, centred). Beside the permanent sidebar it rises inside the sidebar's width, under the "⋯" that
 // opened it, instead of floating over the middle of the window far from it.
 export function TermMenu({ state, ui }) {

@@ -9,6 +9,7 @@ import { startAttentionFeed } from './attention-feed.mjs';
 import { detectPane, paneKeyPrefix, startPane } from './pane.mjs';
 import { api, t } from './common.jsx';
 import { RAW_KINDS, kindOf } from './file-kinds.mjs';
+import { arrangeTasks, mergeOrder, moveKey, sameOrder, stepTarget } from './task-order.mjs';
 import { startColumns } from './Columns.jsx';
 // T-Attention settings slots: the modules of other T-Attention parts that register Settings content (attention-slots.mjs) are imported here, e.g.
 import './PluginSettings.jsx';
@@ -30,6 +31,8 @@ if (paneId) startPane(ui, paneId);
 ui.media = { wideQuery, inputMode };
 // The kind of a file (file-kinds.mjs), for h5.js: it decides how the file sheet reads a file (text, image or raw bytes).
 ui.fileKinds = { kindOf, isRaw: kind => RAW_KINDS.has(kind) };
+// The rules of the shared task order (task-order.mjs), for h5.js: where each task goes, and the whole order to save after a move.
+ui.taskOrder = { arrangeTasks, mergeOrder, moveKey, sameOrder, stepTarget };
 let notices = 0;
 ui.notify = (message, type = 'info') => {
   const text = String(message === undefined || message === null ? '' : message).trim();

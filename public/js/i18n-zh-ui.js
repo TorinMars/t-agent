@@ -1439,4 +1439,10 @@ I18n.add({
   "Restart T-Agent on this computer? Every terminal is closed and its screen is cleared. The page reloads when the service is back.": "要重启这台电脑上的 T-Agent 吗？所有终端都会关闭，屏幕内容会被清空。服务恢复后页面会重新加载。",
   "T-Agent is back, reloading…": "T-Agent 已恢复，正在重新加载…",
   "Restarting…": "正在重启…",
+  "Move to top": "移到最前",
+  "Move up": "上移",
+  "Move down": "下移",
+  "Move to bottom": "移到最后",
+  "Could not save the task order: {1}": "保存任务顺序失败：{1}",
+  "Its tasks can be moved once this device is updated": "这台设备更新后才能调整它的任务顺序",
 });

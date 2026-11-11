@@ -24,7 +24,8 @@ import SettingsIcon from '@mui/icons-material/Settings';
 import MoreHorizIcon from '@mui/icons-material/MoreHoriz';
 import UnfoldLessIcon from '@mui/icons-material/UnfoldLess';
 import UnfoldMoreIcon from '@mui/icons-material/UnfoldMore';
-import { DeviceName, DomIcon, Pill, api, deviceText, t, terminalMark } from './common.jsx';
+import { DomIcon, Pill, api, deviceParts, deviceText, t, terminalMark } from './common.jsx';
+import { shortName, tagColor } from './task-order.mjs';
 import { TOUCH } from './theme.mjs';
 import { Icon } from './Icons.jsx';
 import { ArchivedTasks } from './ArchivedTasks.jsx';
@@ -257,18 +258,176 @@ function Sessions({ ui, taskId, sessions, menu }) {
   );
 }
 
-// The small header row of a service in the list: its name (this machine's with a "This machine" hint), and "Offline" when it is. An offline service shows just this, no error text.
-function SourceHeader({ section, first }) {
+// The device tag in front of a task name (shown when more than one device is listed): the device's name cut to 8 characters (the full name, "Offline" and
+// why its tasks cannot be moved are the `title`), in the colour its instance id gives it on every client (task-order.mjs). An offline device's tag is muted.
+function DeviceTag({ device, unplaced }) {
+  const parts = deviceParts(device);
+  const { index, color, background } = tagColor(device.instanceId);
+  const title = [deviceText(device), device.offline ? t('Offline') : '', unplaced ? t('Its tasks can be moved once this device is updated') : ''].filter(Boolean).join(' · ');
   return (
-    <Box component="h3" className="h5-source-header" data-source={section.key} sx={{ display: 'flex', alignItems: 'baseline', gap: 1, m: 0, px: 0.75, pt: first ? 0.5 : 1, pb: 0.25, fontSize: 12, lineHeight: 1.3, fontWeight: 600, color: 'text.secondary', borderTop: first ? 0 : 1, borderColor: 'divider' }}>
-      <DeviceName source={section} className="h5-source-name" hintClassName="h5-source-hint" />
-      {section.offline ? <Box component="span" className="h5-source-offline" sx={{ flex: '0 0 auto', color: 'warning.main' }}>{t('Offline')}</Box> : null}
+    <Box
+      component="span" className="h5-device-tag" data-source={device.key} data-color={index} data-offline={device.offline ? 'true' : undefined} title={title} translate="no"
+      sx={{
+        flex: '0 0 auto', display: 'inline-block', boxSizing: 'border-box', maxWidth: 104, height: 20, px: 0.75, borderRadius: 10, border: 1,
+        fontSize: 11, fontWeight: 600, lineHeight: '18px', letterSpacing: 0, textTransform: 'none', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+        ...(device.offline
+          ? { color: 'text.disabled', bgcolor: 'transparent', borderColor: 'divider', borderStyle: 'dashed' }
+          : { color, bgcolor: background, borderColor: 'transparent' }),
+      }}
+    >
+      {device.local && !device.name ? parts.name /* "This machine" of an older server: a short word, never cut */ : shortName(parts.name)}
     </Box>
   );
 }
 
-function Tasks({ state, ui, query, filter }) {
-  const { note, sections } = state.taskList;
+// Sorting the list by dragging a task row (its main button; "⋯" and "+" are left alone). With a mouse the row follows after a move of 5px, so a click still
+// opens and closes it; on a touch screen a press held for 400ms without moving starts the drag (moving first scrolls the list as usual, and a short tap
+// opens the row). A line shows where it goes; near the top or the bottom edge the list scrolls; Escape (or a cancelled touch) puts it back. The drop asks
+// h5.js to move the task (`reorderTask`: before the row under the pointer, or after the last row), which saves the whole order. The rows are the ones
+// shown, so with a search or a filter on, a task goes next to the task it was dropped on.
+const DRAG_MOVE_PX = 5;
+const LONG_PRESS_MS = 400;
+const TOUCH_SLOP_PX = 8;
+const EDGE_PX = 40;
+const MAX_SCROLL_PX = 14;
+function useTaskDrag(listRef, ui) {
+  const [drop, setDrop] = useState(null); // { ref, target, after } while dragging
+  const live = useRef(null);
+  useEffect(() => () => { if (live.current) live.current.stop(); }, []);
+  const begin = (ref, x, y, touch) => {
+    if (live.current) live.current.stop();
+    const state = { ref, x, y, touch, started: false, target: null, after: false, timer: 0, frame: 0 };
+    const rows = () => [...(listRef.current ? listRef.current.querySelectorAll('.h5-task[data-movable="true"]') : [])];
+    const aim = () => {
+      const list = rows();
+      if (!list.length) return;
+      let target = null;
+      let after = false;
+      for (const row of list) {
+        const box = row.getBoundingClientRect();
+        if (state.y < box.top + box.height / 2) { target = row.dataset.ref; break; }
+      }
+      if (!target) { target = list[list.length - 1].dataset.ref; after = true; }
+      if (target !== state.target || after !== state.after) {
+        state.target = target;
+        state.after = after;
+        setDrop({ ref, target, after });
+      }
+    };
+    // Near an edge of the list it scrolls, faster the closer the pointer is; the target follows.
+    const scroll = () => {
+      state.frame = 0;
+      const list = listRef.current;
+      if (!state.started || !list) return;
+      const box = list.getBoundingClientRect();
+      const top = state.y - box.top;
+      const bottom = box.bottom - state.y;
+      const step = top < EDGE_PX ? -Math.ceil(MAX_SCROLL_PX * (1 - Math.max(top, 0) / EDGE_PX)) : bottom < EDGE_PX ? Math.ceil(MAX_SCROLL_PX * (1 - Math.max(bottom, 0) / EDGE_PX)) : 0;
+      if (step) {
+        const before = list.scrollTop;
+        list.scrollTop += step;
+        if (list.scrollTop !== before) aim();
+        state.frame = requestAnimationFrame(scroll);
+      }
+    };
+    const start = () => {
+      state.started = true;
+      ui.actions.taskDragging(true);
+      document.documentElement.setAttribute('data-task-drag', '');
+      aim();
+      if (!state.frame) state.frame = requestAnimationFrame(scroll);
+    };
+    // The click that a mouse button lifted after a drag sends would open or close a row: it is swallowed once (it comes right after the pointerup). A finger
+    // lifted after a drag sends none (its touchend is cancelled), unless the browser would not let it be cancelled.
+    const swallowClick = () => {
+      const eat = event => { event.preventDefault(); event.stopPropagation(); };
+      window.addEventListener('click', eat, { capture: true, once: true });
+      setTimeout(() => window.removeEventListener('click', eat, { capture: true }), 400);
+    };
+    const stop = () => {
+      clearTimeout(state.timer);
+      if (state.frame) cancelAnimationFrame(state.frame);
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', onPointerUp);
+      window.removeEventListener('pointercancel', cancel);
+      window.removeEventListener('touchmove', onTouchMove, { passive: false });
+      window.removeEventListener('touchend', onTouchEnd, { passive: false });
+      window.removeEventListener('touchcancel', cancel);
+      window.removeEventListener('keydown', onKey, true);
+      window.removeEventListener('contextmenu', onMenu, true);
+      document.documentElement.removeAttribute('data-task-drag');
+      if (live.current === state) live.current = null;
+      if (state.started) { if (!state.clickless) swallowClick(); setDrop(null); }
+    };
+    state.stop = stop;
+    function cancel() {
+      const started = state.started;
+      stop();
+      if (started) ui.actions.taskDragging(false);
+    }
+    const finish = () => {
+      const { started, target, after } = state;
+      stop();
+      if (!started) return;
+      if (target) ui.actions.reorderTask(ref, target, after);
+      else ui.actions.taskDragging(false);
+    };
+    const move = (nx, ny) => {
+      state.y = ny;
+      if (!state.started) {
+        const far = Math.hypot(nx - state.x, ny - state.y0);
+        if (touch) { if (far > TOUCH_SLOP_PX) stop(); return; } // the finger moved first: a scroll, not a drag
+        if (far > DRAG_MOVE_PX) start();
+        return;
+      }
+      aim();
+      if (!state.frame) state.frame = requestAnimationFrame(scroll);
+    };
+    state.y0 = y;
+    function onPointerMove(event) { if (event.pointerType !== 'touch') move(event.clientX, event.clientY); }
+    function onPointerUp(event) { if (event.pointerType !== 'touch') finish(); }
+    function onTouchMove(event) {
+      const point = event.touches[0];
+      if (!point) return;
+      if (state.started && event.cancelable) event.preventDefault(); // the list does not scroll under the dragged row
+      move(point.clientX, point.clientY);
+    }
+    function onTouchEnd(event) {
+      if (state.started && event.cancelable) { event.preventDefault(); state.clickless = true; } // no click after a drag
+      finish();
+    }
+    function onKey(event) {
+      if (event.key !== 'Escape' || !state.started) return;
+      event.preventDefault();
+      event.stopPropagation();
+      cancel();
+    }
+    // A long press opens the context menu of a touch browser (Android Chrome): not on a row being held for a drag.
+    function onMenu(event) { if (touch || state.started) event.preventDefault(); }
+    if (touch) {
+      window.addEventListener('touchmove', onTouchMove, { passive: false });
+      window.addEventListener('touchend', onTouchEnd, { passive: false });
+      window.addEventListener('touchcancel', cancel);
+      state.timer = setTimeout(start, LONG_PRESS_MS);
+    } else {
+      window.addEventListener('pointermove', onPointerMove);
+      window.addEventListener('pointerup', onPointerUp);
+      window.addEventListener('pointercancel', cancel);
+    }
+    window.addEventListener('keydown', onKey, true);
+    window.addEventListener('contextmenu', onMenu, true);
+    live.current = state;
+  };
+  // The handlers of the main button of a row that can be moved.
+  const bind = task => (task.movable ? {
+    onPointerDown: event => { if (event.pointerType !== 'touch' && event.button === 0) begin(task.ref, event.clientX, event.clientY, false); },
+    onTouchStart: event => { if (event.touches.length === 1) begin(task.ref, event.touches[0].clientX, event.touches[0].clientY, true); else if (live.current) live.current.stop(); },
+  } : {});
+  return { drop, bind };
+}
+
+function Tasks({ state, ui, query, filter, drag }) {
+  const { note, tasks } = state.taskList;
   if (note) return <Typography className="h5-list-note" color="text.secondary" sx={{ py: 3, textAlign: 'center' }}>{t(note)}</Typography>;
   const needle = query.trim().toLowerCase();
   const filtering = Boolean(needle) || filter !== 'all';
@@ -279,44 +438,46 @@ function Tasks({ state, ui, query, filter }) {
     const rows = (task.sessions && task.sessions.rows) || [];
     return !needle || task.title.toLowerCase().includes(needle) || rows.some(row => row.title.toLowerCase().includes(needle));
   };
-  const shown = (sections || []).map(section => ({
-    ...section,
-    groups: section.groups.map(group => ({ ...group, tasks: group.tasks.filter(keep) })).filter(group => group.tasks.length),
-  })).filter(section => !filtering || section.groups.length); // while searching, a service without a match goes altogether
+  // One flat list in the shared order (h5.js `renderTasks`): no section per device and no group titles; a search or a filter keeps that order.
+  const shown = (tasks || []).filter(keep);
   if (filtering && !shown.length) return <Typography className="h5-list-note" color="text.secondary" sx={{ py: 3, textAlign: 'center' }}>{t('No matching sessions')}</Typography>;
-  // Each service is one section, this machine first; its groups inside it, the way a list of one service has them. Reordering is per group: there is no way to drag a task to another service.
-  return shown.map((section, index) => (
-    <Box key={section.key} component="section" className="h5-source" data-source={section.key}>
-      {section.header ? <SourceHeader section={section} first={index === 0} /> : null}
-      {section.groups.map(group => (
-    <Box key={group.key} component="section">
-      {group.tasks.map(task => (
-        <Box key={task.ref} sx={{ borderBottom: 1, borderColor: 'divider', '&:last-of-type': { borderBottom: 0 } }}>
-          <Box className={task.add ? 'h5-task-row' : undefined} sx={{ display: 'flex', alignItems: 'center', gap: 0.5, borderRadius: 2, [TOUCH]: { gap: 1 } }}>
-            <ListItemButton
-              component="button" className="h5-task-item" aria-current={task.selected ? 'true' : undefined} aria-expanded={task.expanded}
-              onClick={() => ui.actions.toggleTask(task.ref)}
-              sx={{ flex: '1 1 auto', minWidth: 0, minHeight: 36, py: 0, px: 0.75, borderRadius: 2, textAlign: 'left', overflowWrap: 'anywhere', fontSize: 14, lineHeight: 1.25 }}
-            >
-              <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', gap: 1, width: '100%' }}>
-                {task.expanded ? <ExpandMoreIcon fontSize="small" /> : <ChevronRightIcon fontSize="small" />}
-                <Box component="span" sx={{ minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-                  <Box component="span" className="h5-task-title" sx={{ fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.3 }}>{task.title}</Box>
-                  {task.count != null ? <Box component="span" className="h5-task-count" sx={{ fontSize: 12, color: 'text.secondary' }}>{task.count} {t(task.count === 1 ? 'session' : 'sessions')}</Box> : null}
-                </Box>
+  const { drop } = drag;
+  return shown.map(task => {
+    const dragged = Boolean(drop && drop.ref === task.ref);
+    const line = drop && drop.target === task.ref ? (drop.after ? 'bottom' : 'top') : null;
+    return (
+      <Box
+        key={task.ref} className="h5-task" data-ref={task.ref} data-source={task.source} data-movable={task.movable ? 'true' : undefined} data-dragging={dragged ? 'true' : undefined}
+        sx={{ position: 'relative', borderBottom: 1, borderColor: 'divider', '&:last-of-type': { borderBottom: 0 }, opacity: dragged ? 0.45 : 1 }}
+      >
+        {line ? <Box className="h5-task-drop" aria-hidden="true" sx={{ position: 'absolute', left: 4, right: 4, height: 3, borderRadius: 2, bgcolor: 'primary.main', zIndex: 1, pointerEvents: 'none', [line]: -2 }} /> : null}
+        <Box className={task.add ? 'h5-task-row' : undefined} sx={{ display: 'flex', alignItems: 'center', gap: 0.5, borderRadius: 2, [TOUCH]: { gap: 1 } }}>
+          <ListItemButton
+            component="button" className="h5-task-item" aria-current={task.selected ? 'true' : undefined} aria-expanded={task.expanded}
+            onClick={() => ui.actions.toggleTask(task.ref)} {...drag.bind(task)}
+            sx={{
+              flex: '1 1 auto', minWidth: 0, minHeight: 36, py: 0, px: 0.75, borderRadius: 2, textAlign: 'left', overflowWrap: 'anywhere', fontSize: 14, lineHeight: 1.25,
+              // A press held on a row that can be moved is a drag, not a text selection or the callout of iOS.
+              ...(task.movable ? { userSelect: 'none', WebkitUserSelect: 'none', WebkitTouchCallout: 'none' } : {}),
+            }}
+          >
+            <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', gap: 1, width: '100%', minWidth: 0 }}>
+              {task.expanded ? <ExpandMoreIcon fontSize="small" /> : <ChevronRightIcon fontSize="small" />}
+              {task.device ? <DeviceTag device={task.device} unplaced={task.unplaced} /> : null}
+              <Box component="span" sx={{ minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+                <Box component="span" className="h5-task-title" sx={{ fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.3 }}>{task.title}</Box>
+                {task.count != null ? <Box component="span" className="h5-task-count" sx={{ fontSize: 12, color: 'text.secondary' }}>{task.count} {t(task.count === 1 ? 'session' : 'sessions')}</Box> : null}
               </Box>
-            </ListItemButton>
-            {/* "⋯" (move, working directory, delete) left of the "+", which stays at the right end of the row */}
-            {task.add ? <IconButton className="h5-task-more" size="small" sx={{ p: 0.5 }} aria-label={t('Task actions')} title={t('Task actions')} aria-haspopup="dialog" onClick={() => ui.actions.taskMore(task.ref)}><Icon name="taskMore" size={20} /></IconButton> : null}
-            {task.add ? <IconButton className="h5-task-add" size="small" sx={{ p: 0.5 }} aria-label={t('New session')} title={t('New session') + NEW_SESSION_KEYS} aria-haspopup="dialog" onClick={() => ui.actions.addSession(task.ref)}><AddIcon /></IconButton> : null}
-          </Box>
-          {task.expanded && task.sessions ? <Sessions ui={ui} taskId={task.ref} sessions={task.sessions} menu={state.menu} /> : null}
+            </Box>
+          </ListItemButton>
+          {/* "⋯" (move, working directory, delete) left of the "+", which stays at the right end of the row */}
+          {task.add ? <IconButton className="h5-task-more" size="small" sx={{ p: 0.5 }} aria-label={t('Task actions')} title={t('Task actions')} aria-haspopup="dialog" onClick={() => ui.actions.taskMore(task.ref)}><Icon name="taskMore" size={20} /></IconButton> : null}
+          {task.add ? <IconButton className="h5-task-add" size="small" sx={{ p: 0.5 }} aria-label={t('New session')} title={t('New session') + NEW_SESSION_KEYS} aria-haspopup="dialog" onClick={() => ui.actions.addSession(task.ref)}><AddIcon /></IconButton> : null}
         </Box>
-      ))}
-    </Box>
-      ))}
-    </Box>
-  ));
+        {task.expanded && task.sessions ? <Sessions ui={ui} taskId={task.ref} sessions={task.sessions} menu={state.menu} /> : null}
+      </Box>
+    );
+  });
 }
 
 // The folder name the server makes from a task title (titleToSlug in routes/tasks.js and services/engine-tasks.js), for the default path shown.
@@ -397,6 +558,8 @@ export function NewTaskDialog({ state, ui }) {
 function Panel({ state, ui }) {
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('all');
+  const listRef = useRef(null);
+  const drag = useTaskDrag(listRef, ui);
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
       <Box className="h5-sheet-header" sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', px: 1.5, py: 0.25, borderBottom: 1, borderColor: 'divider' }}>
@@ -423,8 +586,8 @@ function Panel({ state, ui }) {
         </Box>
       </Box>
       {/* Basis 0: a long list (many open tasks) scrolls inside its own space instead of squeezing the rows below it (the settings row). */}
-      <List id="h5-task-list" className="h5-task-list" disablePadding sx={{ flex: '1 1 0', minHeight: 0, overflowY: 'auto', px: 0.5, pb: 0.5 }}>
-        <Tasks state={state} ui={ui} query={query} filter={filter} />
+      <List id="h5-task-list" ref={listRef} className="h5-task-list" data-dragging={drag.drop ? 'true' : undefined} disablePadding sx={{ flex: '1 1 0', minHeight: 0, overflowY: 'auto', px: 0.5, pb: 0.5, 'html[data-task-drag] &, html[data-task-drag] & *': { cursor: 'grabbing', userSelect: 'none' } }}>
+        <Tasks state={state} ui={ui} query={query} filter={filter} drag={drag} />
         {/* Archived tasks are not searched: the entry goes away while a search or a filter is on. */}
         {query.trim() || filter !== 'all' ? null : <ArchivedTasks archived={state.archived} ui={ui} />}
       </List>

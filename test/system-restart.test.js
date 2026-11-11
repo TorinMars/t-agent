@@ -38,7 +38,8 @@ stub('../services/update-manager', {
   apply: options => { world.applies.push(options); return Promise.resolve(); },
 });
 stub('../middleware/auth', (req, res, next) => next());
-stub('../db', {});
+// Only the instance id of /api/system/version is read from it.
+stub('../db', { prepare: () => ({ get: () => ({ value: 'instance-1' }) }) });
 stub('../services/engine-name', { engineNameState: () => ({ name: 'test-engine' }) });
 
 let server;
@@ -111,7 +112,7 @@ test('while an update is being applied the answer is 409 UPDATE_IN_PROGRESS', as
 test('both GET answers carry restart: { supported: true, reason: null } under a process manager, next to their usual fields', async () => {
   const version = await call('GET', '/api/system/version');
   assert.equal(version.status, 200);
-  assert.deepEqual(version.body, { app_version: '1.2.3', boot_id: 'boot-1', is_update_admin: true, engine_name: 'test-engine', restart: { supported: true, reason: null } });
+  assert.deepEqual(version.body, { app_version: '1.2.3', boot_id: 'boot-1', is_update_admin: true, engine_name: 'test-engine', instance_id: 'instance-1', restart: { supported: true, reason: null } });
   const status = await call('GET', '/api/system/update-status');
   assert.deepEqual(status.body, { status: 'current', boot_id: 'boot-1', is_update_admin: true, restart: { supported: true, reason: null } });
 });

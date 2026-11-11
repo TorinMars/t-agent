@@ -10,7 +10,7 @@ Authorization: Bearer tae_xxx
 
 - `GET /v1/health`: `{ ok: true, capabilities: ['service-links'] }`, without a token. A service that links reads it first; an older one answers only `{ ok: true }`.
 - `POST /v1/pair`
-- `GET /v1/info`: the identity (`engine_id`, `name`), versions, role and capabilities.
+- `GET /v1/info`: the identity (`engine_id`, `name`), versions, role and capabilities. `engine_id` is the stable `instance_id` of `engine_identity`; it names this Engine's tasks in the shared task order.
 - `GET /v1/capabilities`: the same answer.
 - `PUT /v1/engine-name`: `engine:admin`. Body `{ name }`: trimmed, 1 to 60 characters, no control characters or line breaks; `''` or `null` resets to the default (`ENGINE_NAME` or the host name). Answer `{ name, default_name, custom }`. Error 400 `INVALID_ENGINE_NAME`. Capability `engine-name`. A Client that reads `/v1/info` of an Engine with this capability shows the `name` it reports.
 
@@ -42,6 +42,15 @@ Translation, voice input and OSS upload used by a linked service, with this serv
 - `POST /v1/linked-services/oss/upload-policy`: as `POST /api/oss/upload-policy`, 4 KB.
 
 The bodies, answers, error messages and status codes are those of the `/api` routes.
+
+### Shared task order
+
+The order of the task list, shared by linked services; see "Shared task order" in `DESIGN.md`. The capability is `task-order` (in `/v1/info`). Only a token issued for a live service link is accepted, as for `/v1/linked-services`: any other Engine token gets 403 `LINKED_ONLY`; a missing or revoked token gets 401.
+
+- `GET /v1/task-order`: `{ order: [key, ...], updated_at }`. A key is `<instance id>:<task id>` (`^[A-Za-z0-9-]{1,64}:\d{1,12}$`), the instance id being the `engine_id` of the Engine that owns the task; `updated_at` is in milliseconds, 0 when the order was never set.
+- `PUT /v1/task-order`: body `{ order, updated_at }`, at most 5000 distinct keys (duplicates are dropped, the first kept), `updated_at` a non-negative integer. Stored only when `updated_at` is newer than the stored one (last writer wins); keys of the stored list that the new one lacks are kept after the key that came before them. The answer is the stored value either way. Error 400 `INVALID_TASK_ORDER`. It is never sent on to another service.
+
+The list is a list of keys only: it names task ids, never a title, so per-task visibility does not filter it (a key of a hidden task stays in place, so the owner's order is not lost).
 
 ## Mind maps
 

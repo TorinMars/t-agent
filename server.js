@@ -179,6 +179,7 @@ app.use('/api/agent-config', require('./routes/agent-config').createClientRouter
 app.use('/api/file-sync', require('./routes/file-sync').browser);
 app.use('/api/remote-servers', require('./routes/remote-servers'));
 app.use('/api/task-list/hidden-devices', require('./routes/task-list-prefs').createTaskListPrefsRouter());
+app.use('/api/task-order', require('./routes/task-order').createTaskOrderRouter());
 app.use('/api/remote-tokens', require('./routes/remote-tokens'));
 app.use('/api/service-links', require('./routes/service-links'));
 app.use('/api/remote/v1', require('./routes/remote-api'));
@@ -545,6 +546,8 @@ server.listen(config.port, config.host, () => {
   const listeningPort = server.address().port;
   serverLock.update({ port: listeningPort });
   serviceLinks.start({ port: listeningPort });
+  // The shared task order follows the links from here on (services/task-order.js).
+  require('./services/task-order').getTaskOrder().start();
   const anyHost = ['0.0.0.0', '::', '', 'localhost'].includes(config.host);
   terminal.setHookEndpoint(`http://${anyHost ? '127.0.0.1' : config.host}:${listeningPort}/hooks/terminal-activity`);
   attentionLocalUrl = `http://${anyHost ? '127.0.0.1' : config.host}:${listeningPort}`;
@@ -580,5 +583,5 @@ server.listen(config.port, config.host, () => {
 });
 
 // Do not let frpc become an orphan process after the Client exits.
-process.on('exit', () => { frpRouter.service.stop(); sshTunnelRouter.service.stop(); attentionMarket.stop(); serviceLinks.stop(); });
+process.on('exit', () => { frpRouter.service.stop(); sshTunnelRouter.service.stop(); attentionMarket.stop(); serviceLinks.stop(); require('./services/task-order').getTaskOrder().stop(); });
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => process.exit(0));

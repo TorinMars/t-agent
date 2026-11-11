@@ -20,13 +20,20 @@ const owner = req => req.session.user.login;
 const safeError = error => (/^[A-Z0-9_]+$/.test(error.message || '') ? error.message : 'REMOTE_CONNECTION_FAILED');
 
 // `name_source` is 'engine' when the name is the one the Engine keeps itself (services/engine-name.js), 'local' when it was typed here.
-// Every row can be renamed (PUT /:id/name), linked rows too.
-function publicServer(row, named = engineNames.engineNamedIds(db)) {
+// Every row can be renamed (PUT /:id/name), linked rows too. `instance_id` is the Engine's own identity (the first part of its keys in the shared task
+// order, services/task-order.js): what its /v1/info last reported, else the peer's id in the link record, else null.
+function instanceIdOf(row, instances) {
+  if (instances.has(Number(row.id))) return instances.get(Number(row.id));
+  const link = getServiceLinks().linkForServer(row.id);
+  return link && engineNames.reportedInstanceId({ instance_id: link.peer_instance_id }) || null;
+}
+function publicServer(row, named = engineNames.engineNamedIds(db), instances = engineNames.remoteInstanceIds(db)) {
   return {
     id: row.id, name: row.name, base_url: row.base_url, enabled: Boolean(row.enabled),
     status: row.status, remote_version: row.remote_version, last_checked_at: row.last_checked_at,
     last_error: row.last_error, created_at: row.created_at,
     name_source: engineNames.nameSource(row.id, named), can_rename: true,
+    instance_id: instanceIdOf(row, instances),
   };
 }
 
@@ -97,7 +104,8 @@ function proxyFiles(method, suffix = '') {
 router.get('/', (req, res) => {
   const rows = db.prepare('SELECT * FROM remote_servers WHERE owner_id = ? ORDER BY created_at ASC').all(owner(req));
   const named = engineNames.engineNamedIds(db);
-  res.json(rows.map(row => publicServer(row, named)));
+  const instances = engineNames.remoteInstanceIds(db);
+  res.json(rows.map(row => publicServer(row, named, instances)));
   // After the answer: names of rows not read in the last minute are refreshed for the next read.
   getRemoteInfo().refreshStale(rows, row => ({ baseUrl: row.base_url, token: decryptToken(row.token_cipher, config.sessionSecret) }));
 });

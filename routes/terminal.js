@@ -231,6 +231,9 @@ function terminalWorkDir(task, id) {
 // event=session: the Claude session the terminal now runs. Only a Claude terminal of this task takes it, only a
 // well-formed id, and only one that Claude started in the directory the terminal's shell starts in (its own directory, or the directory
 // its live shell really started in when that one was missing and the shell fell back to the task's).
+// `/clear` (source `clear`) does not move the binding: the terminal stays on its original conversation, so a new shell resumes that one.
+// The id Claude really runs is kept on the live shell (`currentAgentSessionId`) for the per-process facts (the sub-agent count) and is
+// dropped with that shell. Every other source (`startup`, `resume`, `compact`, a fork) rebinds as before.
 function bindReportedSession(taskId, id, report) {
   if (!report || typeof report !== 'object') return 400;
   const sessionId = report.session_id;
@@ -241,12 +244,17 @@ function bindReportedSession(taskId, id, report) {
   const live = sessions.get(sessionKey(taskId, id));
   const allowed = [row.work_dir || os.homedir(), live && live.startDir].filter(Boolean).map(realDir);
   if (!allowed.includes(realDir(report.cwd))) return 400;
-  if (row.agent_session_id !== sessionId) {
-    db.prepare('UPDATE task_terminals SET agent_session_id = ? WHERE task_id = ? AND terminal_id = ?').run(sessionId, taskId, id);
-    activityStream.notify(); // the sub-agent count now follows the new session
-  }
+  const rebind = !(report.source === 'clear' && row.agent_session_id) && row.agent_session_id !== sessionId;
+  const running = live ? liveAgentSessionId(live, row.agent_session_id) : row.agent_session_id;
+  if (live) live.currentAgentSessionId = sessionId;
+  if (rebind) db.prepare('UPDATE task_terminals SET agent_session_id = ? WHERE task_id = ? AND terminal_id = ?').run(sessionId, taskId, id);
+  if (rebind || running !== sessionId) activityStream.notify(); // the sub-agent count now follows the new session
   return 204;
 }
+
+// The Claude session a live shell really runs: the one its SessionStart hook reported last (after /clear it differs from the binding),
+// else the bound one.
+const liveAgentSessionId = (live, bound) => (live && live.currentAgentSessionId) || bound;
 
 /** Handles one hook report; returns an HTTP status code. `body` is the parsed JSON body (event=session only). */
 function reportHook(taskId, requestedTerminalId, token, event, body) {
@@ -889,7 +897,8 @@ function activitySnapshot(taskIds) {
 }
 
 /** Running sub-agents of the live Claude terminals of the given tasks: { [taskId]: { [terminalId]: count } } (terminals with none are left out).
- *  Only a terminal whose shell is alive and that is bound to a Claude session (agent_session_id) can have one; see runningSubagents. */
+ *  Only a terminal whose shell is alive and that is bound to a Claude session (agent_session_id) can have one; see runningSubagents.
+ *  The count reads the session the live shell really runs (after /clear, the cleared one), not only the binding. */
 function subagentSnapshot(taskIds, home) {
   const result = {};
   const wanted = taskIds ? new Set(taskIds.map(String)) : null; // null: every task (the push stream's shared refresh)
@@ -898,7 +907,7 @@ function subagentSnapshot(taskIds, home) {
   for (const row of rows) {
     const live = sessions.get(sessionKey(row.task_id, row.terminal_id));
     if ((wanted && !wanted.has(String(row.task_id))) || !live) continue;
-    const count = runningSubagents(live.startDir || row.work_dir, row.agent_session_id, home);
+    const count = runningSubagents(live.startDir || row.work_dir, liveAgentSessionId(live, row.agent_session_id), home);
     if (count) (result[row.task_id] ||= {})[row.terminal_id] = count;
   }
   return result;

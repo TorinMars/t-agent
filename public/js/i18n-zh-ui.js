@@ -1688,4 +1688,19 @@ I18n.add({
   "Save failed: {1}": "保存失败：{1}",
   "Action failed: {1}": "操作失败：{1}",
   "T-Agent did not accept the widget token": "T-Agent 不接受悬浮窗的令牌",
+
+  // ---- One Telegram sender for linked devices (NotifierSettings.jsx) ----
+  "This device sends Telegram notifications for all linked devices": "这台设备为所有关联设备发送 Telegram 通知",
+  "Devices that send through this one:": "通过这台设备发送的设备：",
+  "No linked device sends through this one yet.": "还没有关联设备通过这台设备发送。",
+  "Several linked devices are logged in to Telegram. Choose the one that sends; the others stop sending.": "有多台关联设备登录了 Telegram。请选择由哪一台发送，其他设备会停止发送。",
+  "Use this device as the sender": "改由这台设备发送",
+  "This device hands its notifications to that device and does not use Telegram itself.": "这台设备把通知交给那台设备发送，自己不使用 Telegram。",
+  "This device is logged in to Telegram too, but it does not send. The same login on two devices at once makes them log each other out.": "这台设备也登录了 Telegram，但不负责发送。同一个登录同时在两台设备上使用，会让它们互相把对方挤下线。",
+  "Log out here": "在这台设备上退出",
+  "Log in on this device instead": "改为在这台设备上登录",
+  "This device is now the sender": "现在由这台设备发送",
+  "Sent through the sender device": "已通过发送设备发出",
+  "Not sent: the sender device could not send it": "未发送：发送设备没能发出",
+  "Not sent: the sender device is offline": "未发送：发送设备离线",
 });

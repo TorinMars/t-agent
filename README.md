@@ -866,6 +866,8 @@ Setup: open **Settings → T-Attention**, tap the row **telegram** under Plugins
 3. Enter account 2 as a username (`@name`) or a numeric user id, and the ring time (default 30 s). Use **Send test message** and **Test call**.
 4. Choose per status: **Message**, **Call** or **Off**; optionally "call only if still in that status after M minutes", quiet hours, the hourly limits (default 20 messages and 6 calls) and the page address used to make links absolute.
 
+With linked devices (service links), only one device sends to Telegram (the same Telegram login on two machines at once makes them log each other out): the device where Telegram is set up, or the one you pick with **Use this device as the sender**; the other devices make their own decisions and hand the message or call to it ("Telegram notifications are sent through <name>"), and if it is offline the notification is not sent (shown as "Not sent: the sender device is offline"). See "One Telegram sender for linked devices" under "T-Attention notifiers" in `DESIGN.md`.
+
 A call only rings (no voice) and hangs up when answered, declined or after the ring time. Account 2 must allow calls from account 1 (Privacy and Security → Calls); when a call is not possible (privacy settings, flood wait), a message is sent instead. The same item and status is sent at most once in 10 minutes.
 
 Security: the login of account 1 (a session string) is **full access to that Telegram account**. It is stored encrypted on the Client together with `api_hash`, is never logged and never sent to the browser; **Log out of Telegram** ends it on Telegram and deletes it. Telegram may restrict accounts that automate too much, so keep the limits low and preferably use a secondary account as account 1.

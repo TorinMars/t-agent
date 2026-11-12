@@ -346,6 +346,10 @@ function createAttentionNotify(options) {
   const getOwner = options.getOwner || (() => require('./single-user').ensureSingleUser(db).login);
   const isForeground = typeof options.isForeground === 'function' ? options.isForeground : () => false;
   const host = options.host === undefined ? require('os').hostname() : options.host;
+  // One Telegram sender for linked devices (services/attention-relay.js): { handles(name), target(name), send(peer, payload), sendTest(peer, input),
+  // view(name), useThisDevice() }. Without it every notifier sends here, as before. Set after creation with setRelay() (server.js).
+  let relay = options.relay || null;
+  const RELAY_RETRY_MS = 30 * 1000; // a relay that failed is tried once more after this long, never again
   // The session of an item is open on a screen: its context names a T-Agent terminal (context.tagent, written by the Claude listener or tied by a
   // terminal token) of THIS engine (no context.host, or this machine's name) and that terminal is in the foreground now. Then nothing is sent.
   function onScreen(item) {
@@ -504,10 +508,15 @@ function createAttentionNotify(options) {
   const windows = new Map(); // `${notifier}:${kind}` -> [times]
   const pending = new Map(); // itemId -> Map(key -> { handle, status })
   const recent = [];
+  // `via`: the linked device a delivery was relayed to; `origin`: the linked device a relayed delivery came from (names only).
   function remember(entry) {
-    recent.unshift({ at: new Date(now()).toISOString(), ...entry });
+    const stored = { at: new Date(now()).toISOString(), ...entry };
+    recent.unshift(stored);
     recent.length = Math.min(recent.length, RECENT_MAX);
-    log(entry.outcome === 'error' ? 'warn' : 'info', `${entry.notifier} item ${entry.item_id} ${entry.status} ${entry.mode}: ${entry.outcome}${entry.detail ? ` (${entry.detail})` : ''}`);
+    const where = `${entry.via ? ` via ${entry.via}` : ''}${entry.origin ? ` from ${entry.origin}` : ''}`;
+    const bad = ['error', 'relay_failed', 'relay_offline'].includes(entry.outcome);
+    log(bad ? 'warn' : 'info', `${entry.notifier} item ${entry.item_id} ${entry.status} ${entry.mode}: ${entry.outcome}${where}${entry.detail ? ` (${entry.detail})` : ''}`);
+    return stored;
   }
   function allow(name, kind, rules) {
     const key = `${name}:${kind}`;
@@ -526,15 +535,58 @@ function createAttentionNotify(options) {
 
   const safeError = error => String((error && (error.errorMessage || error.message)) || error || 'error').slice(0, 300);
 
-  // One delivery through one notifier. A failed or refused call falls back to a message.
-  async function deliver({ plugin, owner, rules, item, previous, mode, reason }) {
-    const base = { notifier: plugin.name, item_id: item.id, status: item.status, mode };
+  // A delivery of a notifier another linked device sends for this one (services/attention-relay.js): this device has made every decision (status,
+  // foreground, dedupe, quiet hours, a delayed call's wait); the sender applies its rate limits and sends. One retry after 30 s when it fails,
+  // kept with the delayed calls of the item, so a status change or an edit drops it. Nothing is ever sent from here instead.
+  async function relayOut({ plugin, owner, rules, item, previous, mode, reason, target, attempt }) {
+    const base = { notifier: plugin.name, item_id: item.id, status: item.status, mode, via: target.name };
+    const payload = { notifier: plugin.name, mode, reason, item: require('./attention-relay').relayItem(item), link: absoluteLink(item, rules.publicUrl) };
+    try {
+      const answer = await relay.send(target.peer, payload);
+      if (answer.outcome === 'error') return remember({ ...base, outcome: 'relay_failed', detail: answer.detail || 'the sender could not send' });
+      return remember({ ...base, outcome: 'relayed', detail: answer.outcome });
+    } catch (failure) {
+      const offline = Boolean(failure && failure.offline);
+      const code = failure && failure.code ? failure.code : 'RELAY_FAILED';
+      const retry = attempt === 0;
+      const entry = remember({ ...base, outcome: offline ? 'relay_offline' : 'relay_failed', detail: `${code}${retry ? '; one retry in 30 s' : ''}` });
+      if (retry) {
+        const key = `relay:${plugin.name}:${item.id}:${item.status}:${mode}`;
+        const map = pending.get(item.id) || new Map();
+        pending.set(item.id, map);
+        if (map.has(key)) timers.clearTimeout(map.get(key).handle);
+        const handleId = timers.setTimeout(() => {
+          map.delete(key);
+          if (!map.size) pending.delete(item.id);
+          if (byName.get(plugin.name) !== plugin || !isEnabled(plugin.name, owner)) return undefined;
+          let current = item;
+          try { current = (typeof options.getItem === 'function' && options.getItem(item.id)) || item; } catch { current = item; }
+          if (current.status !== item.status) return undefined;
+          if (onScreen(current)) return remember({ ...base, outcome: 'foreground', detail: 'the session is open on screen' });
+          return deliver({ plugin, owner, rules: getRules(owner), item: current, previous, mode, reason, attempt: 1 }).catch(error => log('warn', `delivery failed: ${safeError(error)}`));
+        }, RELAY_RETRY_MS);
+        map.set(key, { handle: handleId, status: item.status });
+      }
+      return entry;
+    }
+  }
+
+  // One delivery through one notifier. A failed or refused call falls back to a message. A notifier another linked device sends for this one is
+  // relayed there (relayOut). `origin` (a delivery relayed TO this device: { instance_id, name }) and `link` come from services/attention-relay.js.
+  async function deliver({ plugin, owner, rules, item, previous, mode, reason, origin = null, link: givenLink, attempt = 0 }) {
+    if (!origin && relay && relay.handles(plugin.name)) {
+      let target = null;
+      try { target = await relay.target(plugin.name); } catch (error) { log('warn', `${plugin.name}: the sender is not known: ${safeError(error)}`); }
+      if (target) return relayOut({ plugin, owner, rules, item, previous, mode, reason, target, attempt });
+    }
+    const base = { notifier: plugin.name, item_id: item.id, status: item.status, mode, ...(origin ? { origin: origin.name } : {}) };
     const config = store(plugin.name).read(owner);
     if (typeof plugin.ready === 'function' && !plugin.ready(config)) return remember({ ...base, outcome: 'skipped', detail: 'not set up' });
-    const link = absoluteLink(item, rules.publicUrl);
+    const link = origin ? (givenLink || '') : absoluteLink(item, rules.publicUrl);
     const pluginLog = (level, message) => log(level, `${plugin.name}: ${message}`);
     const values = effectiveValues(schemaOf(plugin.name), readSettings(plugin.name, owner).values);
-    const send = async (kind, why, extra = {}) => plugin.notify({ item, previous, reason: why, mode: kind, config, values, log: pluginLog, link, ...extra });
+    const from = origin ? { origin: { name: origin.name } } : {};
+    const send = async (kind, why, extra = {}) => plugin.notify({ item, previous, reason: why, mode: kind, config, values, log: pluginLog, link, ...from, ...extra });
     const message = async (why, extra) => {
       if (!allow(plugin.name, 'message', rules)) return remember({ ...base, mode: 'message', outcome: 'rate_limited' });
       await send('message', why, extra);
@@ -640,6 +692,9 @@ function createAttentionNotify(options) {
       const schema = schemaOf(plugin.name);
       const settings = readSettings(plugin.name, owner);
       if (configured === null && schema.some(field => field.required)) configured = requiredSet(schema, settings.values);
+      // Another linked device sends for this one: set up as far as this device is concerned.
+      const sender = relay && relay.handles(plugin.name) ? relayView(plugin.name) : null;
+      if (sender && sender.sender && !sender.sender.self) { configured = true; summary = `Sent through ${String(sender.sender.name).slice(0, 80)}`; }
       const statuses = {};
       for (const status of rules.statuses) statuses[status] = modeOf(rules, plugin.name, status);
       const where = origins.get(plugin.name) || { origin: 'builtin', dev: false };
@@ -698,6 +753,8 @@ function createAttentionNotify(options) {
     if (manifest.test === false) throw new NotifyError('This plugin has no test', 400);
     const settings = readSettings(plugin.name, owner);
     if (!settings.enabled) return { ok: false, message: 'The plugin is turned off' };
+    const relayed = await testThroughSender(plugin.name, 'message');
+    if (relayed) return { ok: relayed.ok, message: relayed.message };
     const config = store(plugin.name).read(owner);
     const secrets = secretsOf(plugin.name, owner);
     const clean = text => scrubSecrets(String(text).slice(0, 300), secrets);
@@ -717,6 +774,68 @@ function createAttentionNotify(options) {
     }
   }
 
+  // ---- One Telegram sender for linked devices (services/attention-relay.js) ----
+  // Telegram (or another relayed notifier) is set up and switched on here, so this device can send.
+  function localReady(name) {
+    const plugin = byName.get(name);
+    if (!plugin) return false;
+    const owner = getOwner();
+    if (!isEnabled(plugin.name, owner)) return false;
+    if (typeof plugin.ready === 'function') return plugin.ready(store(plugin.name).read(owner)) === true;
+    return requiredSet(schemaOf(plugin.name), readSettings(plugin.name, owner).values);
+  }
+  // The sender side of a relayed delivery: the item, mode and reason as the origin decided them. The sender's own rate limits apply, and the
+  // dedupe key holds the origin's instance id (two devices may have items with the same id). Quiet hours and the foreground rule were the origin's.
+  async function acceptRelay({ notifier, mode, reason, item, link, origin }) {
+    const plugin = byName.get(notifier);
+    if (!plugin) throw new NotifyError('Unknown notifier', 404);
+    const owner = getOwner();
+    const base = { notifier: plugin.name, item_id: item.id, status: item.status, mode, origin: origin.name };
+    if (!isEnabled(plugin.name, owner)) { remember({ ...base, outcome: 'skipped', detail: 'turned off' }); return { outcome: 'skipped', detail: 'turned off' }; }
+    const key = `${plugin.name}:${origin.instance_id}:${item.id}:${item.status}`;
+    if (sentAt.has(key) && now() - sentAt.get(key) < DEDUPE_MS) { remember({ ...base, outcome: 'duplicate' }); return { outcome: 'duplicate' }; }
+    sentAt.set(key, now());
+    const entry = await deliver({ plugin, owner, rules: getRules(owner), item, previous: null, mode, reason, origin, link });
+    return { outcome: entry.outcome, ...(entry.detail ? { detail: String(entry.detail).slice(0, 200) } : {}) };
+  }
+  // The Settings test of a linked device, sent here: the sample card with "From <device>". Answers { ok, outcome?, message }, never a secret.
+  async function relayTest({ notifier, kind, origin }) {
+    const plugin = byName.get(notifier);
+    if (!plugin) throw new NotifyError('Unknown notifier', 404);
+    const owner = getOwner();
+    if (!isEnabled(plugin.name, owner)) return { ok: false, message: 'The plugin is turned off' };
+    const config = store(plugin.name).read(owner);
+    if (typeof plugin.ready === 'function' && !plugin.ready(config)) return { ok: false, message: 'The plugin is not set up yet' };
+    const secrets = secretsOf(plugin.name, owner);
+    const base = getRules(owner).publicUrl;
+    try {
+      const result = await plugin.test(config, { kind, link: base ? `${base}/` : '', values: effectiveValues(schemaOf(plugin.name), readSettings(plugin.name, owner).values), owner, origin: { name: origin.name }, log: (level, message) => log(level, `${plugin.name}: ${message}`) });
+      const ok = !(result && result.ok === false);
+      log(ok ? 'info' : 'warn', `${plugin.name}: test from ${origin.name} ${ok ? 'sent' : 'failed'}`);
+      return { ok, ...(result && typeof result.outcome === 'string' ? { outcome: result.outcome.slice(0, 40) } : {}), message: result && typeof result.message === 'string' ? scrubSecrets(result.message.slice(0, 300), secrets) : (ok ? 'Test sent' : 'Test failed') };
+    } catch (error) {
+      const message = scrubSecrets(safeError(error), secrets);
+      log('warn', `${plugin.name}: test from ${origin.name} failed: ${message}`);
+      return { ok: false, message };
+    }
+  }
+  // A test on a device that is not the sender goes through the sender. null: this device sends (or nobody does), so the test runs here.
+  async function testThroughSender(name, kind) {
+    if (!relay || !relay.handles(name)) return null;
+    let target = null;
+    try { target = await relay.target(name); } catch { target = null; }
+    if (!target) return null;
+    try {
+      const answer = await relay.sendTest(target.peer, { notifier: name, kind });
+      return { ok: answer.ok, outcome: answer.outcome, message: answer.message || (answer.ok ? 'Test sent' : 'Test failed'), via: target.name };
+    } catch (failure) {
+      const message = failure && failure.offline ? 'The sender device is offline; try again when it is online' : failure && failure.code === 'NOT_SENDER' ? 'The sender device has changed; try again' : 'The sender device could not send the test';
+      log('warn', `${name}: test through ${target.name} failed: ${failure && failure.code ? failure.code : 'RELAY_FAILED'}`);
+      return { ok: false, message, via: target.name };
+    }
+  }
+  const relayView = name => { if (!relay) return null; try { return relay.view(name); } catch { return null; } };
+
   // Browser API (session only, same origin): /api/attention-notify/...
   function createRouter(routerOptions = {}) {
     const router = express.Router();
@@ -732,9 +851,31 @@ function createAttentionNotify(options) {
         status: typeof plugin.status === 'function' ? plugin.status(store(plugin.name).read(who), who) : {},
       })),
       recent: recent.slice(0, 20),
+      // The single Telegram sender of the linked devices (null without services/attention-relay.js).
+      relay: relayView('telegram'),
     });
     router.get('/config', (req, res) => res.json(view(owner(req))));
     router.put('/config', (req, res) => { saveRules(owner(req), req.body); res.json(view(owner(req))); });
+    // The sender switch and a test through the sender (services/attention-relay.js). Before the plugin routes: `relay` is no plugin name.
+    const needRelay = () => { if (!relay) throw new NotifyError('Linked devices are not available', 404); return relay; };
+    router.get('/relay', (req, res, next) => { try { needRelay(); res.json(relayView('telegram')); } catch (error) { next(error); } });
+    router.put('/relay/sender', async (req, res, next) => {
+      try {
+        if (!req.body || req.body.use !== 'self') throw new NotifyError('Invalid request');
+        const result = await needRelay().useThisDevice();
+        res.json({ ...result, relay: relayView('telegram') });
+      } catch (error) { next(error); }
+    });
+    router.post('/relay/test', async (req, res, next) => {
+      try {
+        needRelay();
+        const kind = req.body && req.body.kind === 'call' ? 'call' : 'message';
+        const result = await testThroughSender('telegram', kind);
+        if (!result) throw new NotifyError('This device sends Telegram notifications itself', 409);
+        if (!result.ok) throw new NotifyError(result.message, 502);
+        res.json({ ok: true, outcome: result.outcome, via: result.via });
+      } catch (error) { next(error); }
+    });
     // A plugin may add its own endpoints (for Telegram: the login steps) under /api/attention-notify/<name>/. The sub-router of a plugin is
     // made on its first request and looked up by name on every request, so a reloaded or removed plugin is served by its current object.
     const subs = new WeakMap();
@@ -745,6 +886,12 @@ function createAttentionNotify(options) {
       sub.post('/test', async (req, res, next) => {
         try {
           const kind = req.body && req.body.kind === 'call' ? 'call' : 'message';
+          // Not the sender: the test goes through the device that sends (this one may be logged in, but must not use Telegram).
+          const relayed = await testThroughSender(plugin.name, kind);
+          if (relayed) {
+            if (!relayed.ok) throw new NotifyError(relayed.message, 502);
+            return res.json({ ok: true, outcome: relayed.outcome, via: relayed.via });
+          }
           const base = getRules(owner(req)).publicUrl;
           res.json(await plugin.test(store(plugin.name).read(owner(req)), { kind, link: base ? `${base}/` : '' }));
         } catch (error) { next(error); }
@@ -767,7 +914,8 @@ function createAttentionNotify(options) {
 
   return {
     handle, listener, createRouter, getRules, saveRules, notifiers, overview, defaultOwner: () => getOwner(),
-    getPluginConfig, savePluginConfig, testPlugin, isEnabled, reload, purgePlugin,
+    getPluginConfig, savePluginConfig, testPlugin, isEnabled, reload, purgePlugin, localReady, acceptRelay, relayTest,
+    setRelay(value) { relay = value || null; },
     has: name => byName.has(name),
     rules: owner => getRules(owner),
     recent: () => recent.slice(),

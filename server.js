@@ -90,6 +90,15 @@ const attentionNotify = require('./services/attention-notify').start({
   // Nothing is sent for a session that is open on a screen (the page reports presence over the terminal WebSocket).
   isForeground: (taskId, terminalId) => terminal.isTerminalForeground(taskId, terminalId),
 });
+// One Telegram sender for the linked devices (services/attention-relay.js): a device that is not the sender relays its deliveries over the service link
+// (POST /v1/attention/notify-relay on the sender, routes/engine-v1.js). It watches the links once the server listens.
+const attentionRelay = require('./services/attention-relay').createAttentionRelay({
+  db, notify: attentionNotify, serviceLinks: require('./services/service-links').getServiceLinks(), request: require('./services/remote-client').request,
+  identity: () => { const { engine_id: instanceId, name } = require('./services/engine-identity').getEngineIdentity(); return { instance_id: instanceId, name }; },
+  readInfo: peer => require('./services/remote-info').readRemoteInfo({ baseUrl: peer.baseUrl, token: peer.token, serverId: peer.remoteServerId }, { timeoutMs: 3000 }),
+});
+attentionNotify.setRelay(attentionRelay);
+require('./services/attention-relay').setDefaultRelay(attentionRelay);
 // The plugin marketplace (services/attention-market.js): the official index is marketplace.json on the branch the update check reads.
 const attentionMarket = require('./services/attention-market').createMarket({
   dataDir: attentionDataDir, notify: attentionNotify,
@@ -581,6 +590,8 @@ server.listen(config.port, config.host, () => {
   require('./services/task-order').getTaskOrder().start();
   // The rules and skills sync watches the shared layer and the links from here on (services/rule-sync.js).
   require('./services/rule-sync').getRuleSync().start();
+  // The Telegram sender choice follows the links from here on (services/attention-relay.js).
+  attentionRelay.start();
   const anyHost = ['0.0.0.0', '::', '', 'localhost'].includes(config.host);
   terminal.setHookEndpoint(`http://${anyHost ? '127.0.0.1' : config.host}:${listeningPort}/hooks/terminal-activity`);
   attentionLocalUrl = `http://${anyHost ? '127.0.0.1' : config.host}:${listeningPort}`;

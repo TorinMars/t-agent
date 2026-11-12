@@ -13,6 +13,8 @@ import { loginInProgress } from './plugins-model.mjs';
 // T-Attention notifier settings, drawn on the pages of the plugin list (PluginSettings.jsx): the Telegram login (account 1) and account 2 on Telegram's
 // page, and the rules of all notifiers (mode per status and notifier, delay before a call, quiet hours, hourly limits, the page address for links) on their own. Server side: services/attention-notify.js and
 // plugins/notifiers/telegram. The session string and the api_hash never come back from the server; secret fields start empty.
+// Linked devices share one Telegram sender (services/attention-relay.js, `relay` in GET /config): on the sender the page lists the devices that send
+// through it; on another device it names the sender, sends its test through it, and offers "Use this device as the sender" and "Log out here".
 const BASE = '/api/attention-notify';
 // "Finished" is the review status: the agent ended its turn and the result is ready to look at.
 const STATUS_LABELS = { waiting_user: 'Needs you', review: 'Finished (ready for review)', failed: 'Failed', working: 'Working', todo: 'To do', done: 'Done', cancelled: 'Cancelled' };
@@ -22,6 +24,7 @@ const OUTCOME_LABELS = {
   sent: 'Sent', fallback_sent: 'Sent as a message (the call failed)', call_failed: 'Call failed', call_timeout: 'Rang, no answer', call_answered: 'Answered',
   call_declined: 'Declined', call_scheduled: 'Call planned', duplicate: 'Skipped: sent less than 10 minutes ago', quiet_hours: 'Skipped: quiet hours',
   rate_limited: 'Skipped: hourly limit reached', skipped: 'Skipped: not set up', error: 'Error', foreground: 'Skipped: the session was open on screen',
+  relayed: 'Sent through the sender device', relay_failed: 'Not sent: the sender device could not send it', relay_offline: 'Not sent: the sender device is offline',
 };
 const QR_POLL_MS = 2000;
 const API_HELP = [
@@ -32,8 +35,59 @@ const API_HELP = [
 ];
 const timeZone = () => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch { return ''; } };
 
-function TelegramPart({ telegram, onChanged }) {
+// The one sender of the linked devices. `relay` is null without linked devices that can relay (or on an older server): then nothing is drawn.
+function RelayPart({ relay, status, busy, run, logout }) {
+  const sender = relay && relay.sender;
+  if (!relay || !relay.linked || !sender) return null;
+  const testThrough = () => run(() => api('POST', `${BASE}/relay/test`, { kind: 'message' }), result => `Test message sent through ${result.via || sender.name}`);
+  const useHere = () => run(() => api('PUT', `${BASE}/relay/sender`, { use: 'self' }), 'This device is now the sender');
+  const useHereButton = <Button id="h5-tg-use-here" variant="contained" disabled={busy} onClick={() => void useHere()}>{t('Use this device as the sender')}</Button>;
+  if (sender.self) {
+    return (
+      <Box id="h5-tg-relay" data-role="sender" sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+        <Hint id="h5-tg-relay-note">{t('This device sends Telegram notifications for all linked devices')}</Hint>
+        {relay.relaying && relay.relaying.length ? (
+          <>
+            <Hint>{t('Devices that send through this one:')}</Hint>
+            <Box id="h5-tg-relay-list" component="ul" sx={{ m: 0, pl: 3, typography: 'body2', color: 'text.secondary', overflowWrap: 'anywhere' }}>
+              {relay.relaying.map(device => <li key={device.name} data-online={device.online ? '1' : '0'}>{`${device.name} · ${t(device.online ? 'Online' : 'Offline')}`}</li>)}
+            </Box>
+          </>
+        ) : <Hint id="h5-tg-relay-list-empty">{t('No linked device sends through this one yet.')}</Hint>}
+        {relay.conflict ? (
+          <>
+            <Hint id="h5-tg-relay-conflict">{t('Several linked devices are logged in to Telegram. Choose the one that sends; the others stop sending.')}</Hint>
+            {useHereButton}
+          </>
+        ) : null}
+      </Box>
+    );
+  }
+  return (
+    <Box id="h5-tg-relay" data-role="relaying" sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+      <Typography id="h5-tg-relay-note" variant="body2" sx={{ overflowWrap: 'anywhere' }}>
+        {t(`Telegram notifications are sent through ${sender.name}`)}
+        {' · '}
+        <Box component="span" id="h5-tg-relay-online" sx={{ color: sender.online ? 'success.main' : 'warning.main' }}>{t(sender.online ? 'Online' : 'Offline')}</Box>
+      </Typography>
+      <Hint>{t('This device hands its notifications to that device and does not use Telegram itself.')}</Hint>
+      <Button id="h5-tg-relay-test" variant="outlined" disabled={busy} onClick={() => void testThrough()}>{t('Send test message')}</Button>
+      {status.loggedIn ? (
+        <>
+          <Hint id="h5-tg-relay-own">{t('This device is logged in to Telegram too, but it does not send. The same login on two devices at once makes them log each other out.')}</Hint>
+          {useHereButton}
+          <Button id="h5-tg-logout-here" variant="outlined" color="error" disabled={busy} onClick={logout}>{t('Log out here')}</Button>
+        </>
+      ) : null}
+    </Box>
+  );
+}
+
+function TelegramPart({ telegram, relay, onChanged }) {
   const status = telegram.status || {};
+  // Another linked device sends: the login of this device is hidden unless the person asks for it.
+  const relaying = Boolean(relay && relay.linked && relay.sender && !relay.sender.self);
+  const [loginHere, setLoginHere] = useState(false);
   const [login, setLogin] = useState({ apiId: '', apiHash: '', phone: '', code: '', password: '' });
   const [target, setTarget] = useState('');
   const [busy, setBusy] = useState(false);
@@ -94,7 +148,11 @@ function TelegramPart({ telegram, onChanged }) {
       <Hint id="h5-tg-state">{status.loggedIn
         ? `${t('Account 1:')} ${account ? `${account.name}${account.username ? ` (@${account.username})` : ''}` : ''} ${status.phone || ''}`
         : t('Not logged in')}</Hint>
-      {!status.loggedIn && !['code', 'password', 'qr'].includes(status.step) ? (
+      <RelayPart relay={relay} status={status} busy={busy} run={run} logout={logout} />
+      {relaying && !status.loggedIn && !loginHere && !['code', 'password', 'qr'].includes(status.step) ? (
+        <Button id="h5-tg-login-here" variant="text" disabled={busy} onClick={() => setLoginHere(true)}>{t('Log in on this device instead')}</Button>
+      ) : null}
+      {!status.loggedIn && (!relaying || loginHere) && !['code', 'password', 'qr'].includes(status.step) ? (
         <>
           <Hint>{t('Account 1 sends the messages and rings account 2. It needs an api_id and api_hash of your own:')}</Hint>
           <Link id="h5-tg-api-link" variant="body2" href="https://my.telegram.org/apps" target="_blank" rel="noopener noreferrer" sx={{ alignSelf: 'flex-start' }}>https://my.telegram.org/apps</Link>
@@ -143,7 +201,7 @@ function TelegramPart({ telegram, onChanged }) {
           <Button variant="outlined" disabled={busy} onClick={() => void cancel()}>{t('Cancel')}</Button>
         </>
       ) : null}
-      {status.loggedIn ? (
+      {status.loggedIn && !relaying ? (
         <>
           <Field id="h5-tg-target" label="Account 2 (username or user id)" value={target} onChange={event => setTarget(event.target.value)} placeholder="@username" />
           <Hint id="h5-tg-target-state">{status.target ? `${t('Sends to:')} ${status.target.name}${status.target.username ? ` (@${status.target.username})` : ''}` : t('No account 2 chosen yet')}</Hint>
@@ -231,7 +289,7 @@ function RulesPart({ data, onChanged }) {
           <Box id="h5-notify-recent" sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
             {data.recent.slice(0, 10).map((entry, index) => (
               <Typography key={index} variant="caption" color="text.secondary" sx={{ overflowWrap: 'anywhere' }}>
-                {`${new Date(entry.at).toLocaleString()} · #${entry.item_id} ${t(STATUS_LABELS[entry.status] || entry.status)} · ${t(OUTCOME_LABELS[entry.outcome] || entry.outcome)}`}
+                {`${new Date(entry.at).toLocaleString()} · #${entry.item_id} ${t(STATUS_LABELS[entry.status] || entry.status)} · ${t(OUTCOME_LABELS[entry.outcome] || entry.outcome)}${entry.via ? ` · ${t(`Through ${entry.via}`)}` : ''}${entry.origin ? ` · ${t(`From ${entry.origin}`)}` : ''}`}
               </Typography>
             ))}
           </Box>
@@ -263,7 +321,7 @@ export function TelegramSetup({ onChanged, onLogin }) {
   return (
     <Box id="h5-notifier-settings" sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
       <Hint>{t('Get a Telegram message or call when an item needs you. The Telegram login of account 1 is full access to that account: it is stored encrypted on this client and never sent to the browser.')}</Hint>
-      {telegram ? <TelegramPart telegram={telegram} onChanged={changed} /> : null}
+      {telegram ? <TelegramPart telegram={telegram} relay={data.relay || null} onChanged={changed} /> : null}
       <Feedback id="h5-notifier-feedback" feedback={feedback} />
     </Box>
   );

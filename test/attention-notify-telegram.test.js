@@ -897,3 +897,46 @@ test('notifications: a timed-out connect is removed so the next notification ret
   assert.equal(state.messages.length, 1);
   plugin.close();
 });
+
+// ---- One Telegram sender for linked devices (services/attention-relay.js) ----
+test('a relayed card says which device it is from, escaped, and the line fits in the length limit', () => {
+  const html = messageHtml({ item: { status: 'waiting_user', title: 'Fix the build', source: 'claude' }, link: LINK, origin: { name: 'K01 <office> & co' } });
+  assert.equal(html, [`${NEEDS_YOU} <b>Needs you</b> \u00b7 <b>Fix the build</b>`, 'From K01 &lt;office&gt; &amp; co', '', 'claude', `<a href="${LINK}">Open in T-Agent</a>`].join('\n'));
+  assert.equal(parsed(html).text.split('\n')[1], 'From K01 <office> & co');
+  assert.equal(messageText({ item: { status: 'failed', title: 'x' }, origin: { name: 'K01' } }), '\u274c Failed \u00b7 x\nFrom K01');
+  assert.equal(messageText({ item: { status: 'failed', title: 'x' }, origin: { name: '' } }), '\u274c Failed \u00b7 x', 'no name, no line');
+  const long = messageText({ item: fullItem({ title: 'T'.repeat(200), attention_reason: 'r'.repeat(5000) }), link: LINK, origin: { name: `Device ${'n'.repeat(200)}` } });
+  assert.ok(long.length <= MESSAGE_MAX, `${long.length}`);
+  assert.match(long, /\nFrom Device n+\u2026\n/, 'the name is cut, the line stays');
+});
+
+test('end to end through the service: a delivery relayed to the sender reaches Telegram with "From <device>", and its test too', async () => {
+  const { gram, state } = mockGram();
+  const plugin = createTelegramNotifier({ loadGram: () => gram, timers: fakeTimers() });
+  const db = new Database(':memory:');
+  db.exec('CREATE TABLE system_state (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP)');
+  const logs = [];
+  const service = createAttentionNotify({ db, sessionSecret: SECRET, onChange: null, getOwner: () => 'owner', notifiers: [plugin], log: (level, message) => logs.push(message) });
+  db.prepare("INSERT INTO system_state (key, value) VALUES ('attention-notify:telegram:owner', ?)").run(require('../lib/token-crypto').encryptToken(JSON.stringify(savedConfig()), SECRET));
+  assert.equal(service.localReady('telegram'), true);
+  const origin = { instance_id: '22222222-2222-4222-8222-222222222222', name: 'K01' };
+  const relayed = { notifier: 'telegram', mode: 'message', reason: 'status', item: { id: 4, title: 'Approve', status: 'waiting_user', source: 'claude', context: {} }, link: LINK, origin };
+  assert.deepEqual(await service.acceptRelay(relayed), { outcome: 'sent' });
+  assert.equal(state.messages[0].message, `${NEEDS_YOU} <b>Needs you</b> \u00b7 <b>Approve</b>\nFrom K01\n\nclaude\n<a href="${LINK}">Open in T-Agent</a>`);
+  assert.deepEqual(await service.acceptRelay(relayed), { outcome: 'duplicate' }, 'the same delivery of the same device');
+  assert.equal(state.messages.length, 1);
+  // The rate limit of this device holds for relayed deliveries.
+  service.saveRules('owner', { rateLimit: { message: 1 } });
+  assert.deepEqual(await service.acceptRelay({ ...relayed, item: { ...relayed.item, id: 5 } }), { outcome: 'rate_limited' });
+  const test = await service.relayTest({ notifier: 'telegram', kind: 'message', origin });
+  assert.equal(test.ok, true);
+  assert.match(state.messages.at(-1).message, /^.+\nFrom K01\n\n/);
+  // Logged out: the sender says so, with no secret.
+  db.prepare("DELETE FROM system_state WHERE key = 'attention-notify:telegram:owner'").run();
+  assert.equal(service.localReady('telegram'), false);
+  assert.deepEqual(await service.relayTest({ notifier: 'telegram', kind: 'message', origin }), { ok: false, message: 'The plugin is not set up yet' });
+  assert.deepEqual(await service.acceptRelay({ ...relayed, item: { ...relayed.item, id: 6 } }), { outcome: 'skipped', detail: 'not set up' });
+  assert.equal(logs.join('\n').includes(SESSION) || logs.join('\n').includes(API_HASH), false);
+  assert.match(logs.join('\n'), /telegram item 4 waiting_user message: sent from K01/);
+  plugin.close();
+});

@@ -116,7 +116,8 @@ function changedFiles(context) {
   };
 }
 // The values of the card, cleaned and cut to fit MESSAGE_MAX. `fit` is called in order of importance, which is not the order they are shown in.
-function cardOf({ item, link, reason, error }) {
+// `origin` ({ name }): the linked device the item belongs to, when another device relayed it here (services/attention-relay.js): a "From <name>" line.
+function cardOf({ item, link, reason, error, origin }) {
   const context = contextOf(item);
   const pending = context.pending && typeof context.pending === 'object' ? context.pending : null;
   const status = STATUS_LABELS[item.status] || oneLine(item.status, 30) || 'Update';
@@ -124,7 +125,9 @@ function cardOf({ item, link, reason, error }) {
   const emoji = STATUS_EMOJI[item.status] || OTHER_STATUS_EMOJI;
   const href = httpLink(link);
   const note = reason === 'call_failed' ? `(A call was not possible: ${oneLine(error || 'unknown error', 200)})` : '';
-  let left = MESSAGE_MAX - GROUP_GAPS - (emoji.length + 1 + status.length + 3 + title.length) - (note ? note.length + 1 : 0) - (href ? LINK_LABEL.length + 2 + href.length + 1 : 0);
+  const fromName = origin && typeof origin === 'object' ? oneLine(origin.name, 60) : '';
+  const from = fromName ? `From ${fromName}` : '';
+  let left = MESSAGE_MAX - GROUP_GAPS - (emoji.length + 1 + status.length + 3 + title.length) - (from ? from.length + 1 : 0) - (note ? note.length + 1 : 0) - (href ? LINK_LABEL.length + 2 + href.length + 1 : 0);
   const fit = (value, extra = 0) => {
     if (!value) return '';
     const room = left - extra - 1;
@@ -147,13 +150,13 @@ function cardOf({ item, link, reason, error }) {
   const changed = fit(files.changed, 9);
   const paths = changed ? files.paths.map(path => fit(path, 2)).filter(Boolean) : [];
   const more = changed ? fit(files.more) : '';
-  return { emoji, status, title, needs, command, reason: reasonText, asked, quote, changed, paths, more, note, where, href };
+  return { emoji, status, title, from, needs, command, reason: reasonText, asked, quote, changed, paths, more, note, where, href };
 }
 function renderCard(card, format) {
   const { text: plain, bold, italic, pre, quote, code: mono, link } = format;
   const where = card.where.map(part => (part.kind === 'code' ? mono(part.value) : plain(part.value))).join(' \u00b7 ');
   const groups = [
-    [`${card.emoji} ${bold(card.status)}${card.title ? ` \u00b7 ${bold(card.title)}` : ''}`],
+    [`${card.emoji} ${bold(card.status)}${card.title ? ` \u00b7 ${bold(card.title)}` : ''}`, card.from && plain(card.from)],
     [card.needs && `${bold('Needs:')} ${plain(card.needs)}`, card.command && pre(card.command), card.reason && `${bold('Reason:')} ${plain(card.reason)}`],
     [card.asked && `${bold('You asked:')} ${plain(card.asked)}`, card.quote && quote(card.quote)],
     [card.changed && `${bold('Changed:')} ${plain(card.changed)}`, ...card.paths.map(path => `\u2022 ${plain(path)}`), card.more && plain(card.more)],
@@ -359,7 +362,7 @@ function createTelegramNotifier(options = {}) {
   const callSeconds = config => Math.min(120, Math.max(5, Number(config.callSeconds) || DEFAULT_CALL_SECONDS));
 
   // ---- The contract interface ----
-  async function notify({ item, reason, mode, config, log, link, error }) {
+  async function notify({ item, reason, mode, config, log, link, error, origin }) {
     if (!ready(config)) throw new TelegramError('Telegram is not set up');
     if (mode === 'call') {
       try {
@@ -372,14 +375,14 @@ function createTelegramNotifier(options = {}) {
         return { fallback: 'message', error: why };
       }
     }
-    try { await sendMessage(config, { item, link, reason, error }, log); return { outcome: 'sent' }; }
+    try { await sendMessage(config, { item, link, reason, error, origin }, log); return { outcome: 'sent' }; }
     catch (failure) { throw new TelegramError(explain(failure), 502); }
   }
-  async function test(config, { kind = 'message', link = '', log } = {}) {
+  async function test(config, { kind = 'message', link = '', log, origin } = {}) {
     if (!ready(config)) throw new TelegramError('Log in and choose account 2 first', 409);
     try {
       if (kind === 'call') return { ok: true, outcome: await ring(config, callSeconds(config)) };
-      await sendMessage(config, { item: SAMPLE_ITEM, link }, log);
+      await sendMessage(config, { item: SAMPLE_ITEM, link, origin }, log);
       return { ok: true, outcome: 'sent' };
     } catch (failure) { throw new TelegramError(explain(failure), 502); }
   }

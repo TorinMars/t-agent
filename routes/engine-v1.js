@@ -51,6 +51,9 @@ const engineAttention = require('./attention').createEngineAttentionRouter({
   instanceId: () => getEngineIdentity().engine_id,
   tokenActive: tokenId => Boolean(db.prepare('SELECT 1 FROM engine_access_tokens WHERE id = ? AND revoked_at IS NULL').get(tokenId)),
 });
+// One Telegram sender for linked devices (services/attention-relay.js): relayed deliveries, the sender switch and the status a peer reads. Link tokens
+// only; before /attention so that its item routes never see these paths.
+router.use('/attention/notify-relay', require('../services/attention-relay').createEngineRouter());
 router.use('/attention', engineAttention);
 const pairingAttempts = new Map();
 
@@ -163,6 +166,9 @@ function infoHandler(req, res) {
       // attention:remote: GET|POST /v1/attention, GET|PATCH|DELETE /v1/attention/:id, POST /v1/attention/:id/move and /summarize, GET /v1/attention/stream,
       // the item routes of /api/attention. A Client proxies another service's T-Attention items only when it has this.
       ATTENTION_REMOTE,
+      // notify:relay: GET /v1/attention/notify-relay/status, PUT /sender, POST / and /test, the one Telegram sender of linked devices (link tokens only).
+      // A linked service without it keeps sending by itself and is never chosen as the sender.
+      require('../services/attention-relay').CAPABILITY,
       // engine-name: PUT /v1/engine-name renames this Engine; `name` above is the current one.
       engineName.CAPABILITY,
       // task-order: GET|PUT /v1/task-order, the shared task order of linked services (link tokens only).

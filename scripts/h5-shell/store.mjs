@@ -22,6 +22,7 @@ export const initialState = () => ({
   // How the page is used, decided by media queries (never by the user agent; entry.jsx keeps it current):
   // 'pointer' = a mouse or trackpad and no touch screen (a computer), 'touch' = everything else (phones, tablets, an iPad with a trackpad).
   input: 'touch',
+  terminalFont: null, // { size, family } of the page's terminals (h5.js), for the multi-column view's minimum column width
   hasKeyboard: false, // a hardware keyboard was used (a trusted keydown while no on-screen keyboard was open): the computer shortcuts work in touch mode too
   sidebarCollapsed: false, // wide layout only: the permanent task sidebar is folded away (remembered in localStorage)
   tasksOpen: false,

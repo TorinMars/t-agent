@@ -182,6 +182,7 @@ app.use('/api/frp', frpRouter);
 const sshTunnelRouter = require('./routes/ssh-tunnel').createSshTunnelRouter();
 app.use('/api/ssh-tunnel', sshTunnelRouter);
 app.use('/api/agent-config', require('./routes/agent-config').createClientRouter({ db: require('./db'), sessionSecret: require('./config').sessionSecret }));
+app.use('/api/rule-sync', require('./routes/rule-sync').createBrowserRouter());
 app.use('/api/file-sync', require('./routes/file-sync').browser);
 app.use('/api/remote-servers', require('./routes/remote-servers'));
 app.use('/api/task-list/hidden-devices', require('./routes/task-list-prefs').createTaskListPrefsRouter());
@@ -554,6 +555,8 @@ server.listen(config.port, config.host, () => {
   serviceLinks.start({ port: listeningPort });
   // The shared task order follows the links from here on (services/task-order.js).
   require('./services/task-order').getTaskOrder().start();
+  // The rules and skills sync watches the shared layer and the links from here on (services/rule-sync.js).
+  require('./services/rule-sync').getRuleSync().start();
   const anyHost = ['0.0.0.0', '::', '', 'localhost'].includes(config.host);
   terminal.setHookEndpoint(`http://${anyHost ? '127.0.0.1' : config.host}:${listeningPort}/hooks/terminal-activity`);
   attentionLocalUrl = `http://${anyHost ? '127.0.0.1' : config.host}:${listeningPort}`;

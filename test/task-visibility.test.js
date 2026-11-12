@@ -203,7 +203,8 @@ const REVIEWED_ROUTES = new Set([
 ]);
 // /mindmaps: maps belong to no task. /task-order: a list of keys (instance id and task id), never a task's content, and link tokens only.
 // /peer-fs: files of the home folder by path, like /fs; the task list of GET /peer-fs/info is filtered with visibleTo.
-const REVIEWED_MOUNTS = new Set(['/file-sync', '/linked-services', '/task-order', '/apps', '/agent-config', '/fs', '/peer-fs', '/mindmaps']);
+// /rule-sync: Claude and Codex rules and skills, no task.
+const REVIEWED_MOUNTS = new Set(['/file-sync', '/linked-services', '/task-order', '/apps', '/agent-config', '/fs', '/peer-fs', '/mindmaps', '/rule-sync']);
 const GUARDED = /^\/(tasks|terminal-sessions)\/:id(\/|$)/;
 
 test('every /v1 route has been reviewed, and the guard runs before all of them', () => {

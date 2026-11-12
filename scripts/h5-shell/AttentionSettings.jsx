@@ -11,6 +11,7 @@ import TextField from './TextField.jsx';
 import { BASE } from './attention-feed.mjs';
 import { attentionSettingsSlots } from './attention-slots.mjs';
 import { AttentionGuide } from './AttentionGuide.jsx';
+import { ScopeLabel, ScopedHeading, SyncNote, useSyncAfterSave } from './ScopeLabel.jsx';
 
 // The "T-Attention" group of the settings sheet: the reminders of this page (the in-page notice and the sound; remembered in this browser) and the
 // CLI tokens (`Authorization: Bearer tatt_...` for the `t-attention` CLI and the listener plugins; only /api/attention* accepts them).
@@ -64,7 +65,7 @@ function TokenList({ opened }) {
   };
   return (
     <>
-      <Typography variant="subtitle2" component="h3" sx={{ fontWeight: 700, mt: 1 }}>{t('CLI tokens')}</Typography>
+      <ScopedHeading label={<ScopeLabel />}><Typography variant="subtitle2" component="h3" sx={{ fontWeight: 700, mt: 1 }}>{t('CLI tokens')}</Typography></ScopedHeading>
       <Hint>{t('The t-attention command and the listener plugins (for example Claude Code hooks) sign in with a token. A token can only read and change T-Attention tasks.')}</Hint>
       <Box id="h5-attention-tokens" sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
         {tokens && tokens.length ? tokens.map(token => (
@@ -107,6 +108,7 @@ function SummarySettings({ opened }) {
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [feedback, say] = useFeedback();
+  const [synced, track] = useSyncAfterSave('attention-summary');
   const load = async () => {
     try {
       const data = (await api('GET', `${BASE}/settings/summary`)) || {};
@@ -121,14 +123,14 @@ function SummarySettings({ opened }) {
   useEffect(() => { if (opened) void load(); }, [opened]); // eslint-disable-line react-hooks/exhaustive-deps -- read each time the group is opened
   const save = async () => {
     setBusy(true);
-    try { await api('PUT', `${BASE}/settings/summary`, { enabled: form.enabled, provider: form.provider, model: form.model.trim() }); await load(); say('Saved'); }
+    try { await api('PUT', `${BASE}/settings/summary`, { enabled: form.enabled, provider: form.provider, model: form.model.trim() }); await load(); say('Saved'); void track(); }
     catch (error) { say(`${t('Failed')}: ${errorText(error)}`, true); }
     finally { setBusy(false); }
   };
   const ids = Object.keys(providers);
   return (
     <>
-      <Typography variant="subtitle2" component="h3" sx={{ fontWeight: 700, mt: 1 }}>{t('AI summary')}</Typography>
+      <ScopedHeading label={<ScopeLabel id="attention-summary" scope="shared" />}><Typography variant="subtitle2" component="h3" sx={{ fontWeight: 700, mt: 1 }}>{t('AI summary')}</Typography></ScopedHeading>
       <FormControlLabel
         control={<Checkbox checked={form.enabled} disabled={!loaded} onChange={event => setForm(current => ({ ...current, enabled: event.target.checked }))} slotProps={{ input: { id: 'h5-attention-summary-enabled' } }} />}
         label={t('Write a 3-line summary when a task needs you or is ready for review')}
@@ -140,6 +142,7 @@ function SummarySettings({ opened }) {
       <Hint id="h5-attention-summary-privacy">{t('When this is on, the task’s goal, latest prompt, last reply, pending question, changed file names and the last messages of the session are sent to the chosen provider, with the translation key saved under Voice and translation. Nothing is sent while it is off.')}</Hint>
       <Button id="h5-attention-summary-save" variant="contained" disabled={busy || !loaded} onClick={() => void save()}>{t('Save')}</Button>
       <Feedback id="h5-attention-summary-feedback" feedback={feedback} />
+      <SyncNote id="h5-attention-summary-sync" note={synced} />
     </>
   );
 }
@@ -149,7 +152,7 @@ function SummarySettings({ opened }) {
 function Reminders({ ui, prefs, setPrefs }) {
   return (
     <>
-      <Typography variant="subtitle2" component="h3" sx={{ fontWeight: 700, mt: 1 }}>{t('Reminders on this device')}</Typography>
+      <ScopedHeading label={<ScopeLabel />}><Typography variant="subtitle2" component="h3" sx={{ fontWeight: 700, mt: 1 }}>{t('Reminders on this device')}</Typography></ScopedHeading>
       <Hint>{t('When a task starts to need you, fails or is ready for review, this page shows a notice. A change you make on this page gives no reminder.')}</Hint>
       <FormControlLabel
         control={<Checkbox checked={prefs.sound} onChange={event => { ui.actions.attentionSetSound(event.target.checked); setPrefs(ui.actions.attentionPrefs()); }} slotProps={{ input: { id: 'h5-attention-sound' } }} />}
@@ -170,6 +173,7 @@ export function AttentionSettings({ ui, request = null }) {
   return (
     <Group id="attention" title="T-Attention" onOpen={open} request={request}>
       {/* The first-run guide, or its "Show setup guide" button once it is closed or done (AttentionGuide.jsx). */}
+      <ScopeLabel subject="Setup guide" sx={{ alignSelf: 'flex-start' }} />
       <AttentionGuide ui={ui} place="settings" active={opened} />
       <Reminders ui={ui} prefs={prefs} setPrefs={setPrefs} />
       {/* SLOT: the settings of other T-Attention parts (attention-slots.mjs: the plugin list, then the agent skill). Nothing is drawn when none is registered. */}

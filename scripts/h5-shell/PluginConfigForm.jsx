@@ -8,6 +8,7 @@ import TextField from './TextField.jsx';
 import { api, errorText, t } from './common.jsx';
 import { Feedback, Field, Hint, useFeedback } from './Form.jsx';
 import { BASE } from './attention-feed.mjs';
+import { SyncNote, useSyncAfterSave } from './ScopeLabel.jsx';
 import { formFromConfig, formProblem, numberInput, valuesFromForm } from './plugin-config-model.mjs';
 
 // The settings of one notifier on its page in Settings → T-Attention → Plugins (PluginSettings.jsx): the enable switch, the form drawn from the
@@ -61,6 +62,7 @@ export default function PluginConfigForm({ notifier, onChanged, onRules }) {
   const [form, setForm] = useState(null);
   const [busy, setBusy] = useState(true); // the first read starts at once
   const [feedback, say] = useFeedback();
+  const [synced, track] = useSyncAfterSave(name === 'telegram' ? 'telegram' : 'notifier-plugins'); // only a shared setting is followed
   const url = `${BASE}/plugins/${encodeURIComponent(name)}`;
   const take = next => { setConfig(next); setForm(formFromConfig(next)); };
   const run = async (work, done) => {
@@ -69,7 +71,7 @@ export default function PluginConfigForm({ notifier, onChanged, onRules }) {
   };
   useEffect(() => { void run(async () => take(await api('GET', `${url}/config`))); }, [url]); // eslint-disable-line react-hooks/exhaustive-deps -- read when the page opens
   const onValue = (key, value) => setForm(current => ({ ...current, values: { ...current.values, [key]: value } }));
-  const save = body => run(async () => { take(await api('PUT', `${url}/config`, body)); if (onChanged) await onChanged(); }, () => say('Saved'));
+  const save = body => run(async () => { take(await api('PUT', `${url}/config`, body)); if (onChanged) await onChanged(); }, () => { say('Saved'); void track(); });
   const saveForm = () => {
     const problem = formProblem(config.schema, form, { secretsSet: form.secretsSet });
     if (problem) { say(problem.message, true); return; }
@@ -96,6 +98,7 @@ export default function PluginConfigForm({ notifier, onChanged, onRules }) {
         </Box>
       ) : null}
       <Feedback id={`h5-plugin-config-feedback-${name}`} feedback={feedback} />
+      <SyncNote id={`h5-plugin-config-sync-${name}`} note={synced} />
     </Box>
   );
 }

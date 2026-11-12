@@ -7,6 +7,7 @@ import { api, t } from './common.jsx';
 import { Feedback, Hint, failure, useFeedback } from './Form.jsx';
 import TextField from './TextField.jsx';
 import { registerAttentionSettings } from './attention-slots.mjs';
+import { ScopeLabel, SyncNote, useSyncAfterSave } from './ScopeLabel.jsx';
 
 // The "Desktop window (macOS)" part of the Settings group "T-Attention": the switch of the native floating window (services/attention-widget.js), the
 // language it shows and a status line. GET / PUT /api/attention/widget/settings { enabled, language, platform_supported, swiftc, running, building,
@@ -32,6 +33,7 @@ function WidgetSettings({ opened }) {
   const [setting, setSetting] = useState(null); // null until read; { missing: true } on an older server
   const [busy, setBusy] = useState(false);
   const [feedback, say] = useFeedback();
+  const [synced, track] = useSyncAfterSave('widget-language');
   const timer = useRef(null);
   const show = data => setSetting({ enabled: data.enabled !== false, language: data.language || 'auto', platform_supported: Boolean(data.platform_supported), swiftc: Boolean(data.swiftc), running: Boolean(data.running), building: Boolean(data.building), last_error: data.last_error || null });
   const load = async () => {
@@ -51,7 +53,7 @@ function WidgetSettings({ opened }) {
   const save = async patch => {
     setBusy(true);
     setSetting(current => ({ ...current, ...patch }));
-    try { show(await api('PUT', SETTINGS_URL, patch)); say('Saved'); }
+    try { show(await api('PUT', SETTINGS_URL, patch)); say('Saved'); if (patch.language !== undefined) void track(); }
     catch (error) { say(failure(error), true); await load(); }
     finally { setBusy(false); }
   };
@@ -66,6 +68,8 @@ function WidgetSettings({ opened }) {
         sx={{ m: 0, alignSelf: 'flex-start', gap: 0.5 }} label={label}
         control={<Switch size="small" checked={setting.enabled} disabled={busy || !usable} onChange={event => void save({ enabled: event.target.checked })} slotProps={{ input: { id: 'h5-attention-widget-enabled', 'aria-label': label, style: INPUT_INSIDE } }} />}
       />
+      {/* The switch is this Mac's own; the language of the window is one setting for all linked devices. */}
+      <ScopeLabel id="widget-enabled" subject="On or off" sx={{ alignSelf: 'flex-start' }} />
       <Hint>{t('A small window that stays above other windows on this Mac and shows the tasks that need you, from this machine and the connected devices.')}</Hint>
       <TextField
         id="h5-attention-widget-language" select label={t('Window language')} size="small" fullWidth value={setting.language} disabled={busy || !usable}
@@ -73,10 +77,12 @@ function WidgetSettings({ opened }) {
       >
         {LANGUAGES.map(([value, text]) => <option key={value} value={value}>{t(text)}</option>)}
       </TextField>
+      <ScopeLabel id="widget-language" scope="shared" subject="Window language" sx={{ alignSelf: 'flex-start' }} />
       <Typography id="h5-attention-widget-status" variant="body2" color={status.error ? 'error' : 'text.secondary'} sx={{ overflowWrap: 'anywhere' }}>
         {`${t('Status')}: ${t(status.text)}`}
       </Typography>
       <Feedback id="h5-attention-widget-feedback" feedback={feedback} />
+      <SyncNote id="h5-attention-widget-sync" note={synced} />
     </Box>
   );
 }

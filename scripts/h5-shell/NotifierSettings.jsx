@@ -9,6 +9,7 @@ import TextField from './TextField.jsx';
 import { api, t } from './common.jsx';
 import { Feedback, Field, Hint, failure, useFeedback } from './Form.jsx';
 import { loginInProgress } from './plugins-model.mjs';
+import { SyncNote, useSyncAfterSave } from './ScopeLabel.jsx';
 
 // T-Attention notifier settings, drawn on the pages of the plugin list (PluginSettings.jsx): the Telegram login (account 1) and account 2 on Telegram's
 // page, and the rules of all notifiers (mode per status and notifier, delay before a call, quiet hours, hourly limits, the page address for links) on their own. Server side: services/attention-notify.js and
@@ -224,6 +225,7 @@ function RulesPart({ data, onChanged }) {
   const [form, setForm] = useState(null);
   const [busy, setBusy] = useState(false);
   const [feedback, say] = useFeedback();
+  const [synced, track] = useSyncAfterSave('notify-rules');
   useEffect(() => {
     const rules = data.rules;
     if (!rules) return;
@@ -252,6 +254,7 @@ function RulesPart({ data, onChanged }) {
       });
       await onChanged();
       say('Saved');
+      void track();
     } catch (error) { say(failure(error), true); }
     finally { setBusy(false); }
   };
@@ -283,6 +286,7 @@ function RulesPart({ data, onChanged }) {
       <Hint>{t('The same item and status is sent at most once in 10 minutes. A call that is not possible is sent as a message. Telegram may limit accounts that send too much automatically, so keep the limits low.')}</Hint>
       <Button id="h5-notify-save" variant="contained" disabled={busy} onClick={() => void save()}>{t('Save')}</Button>
       <Feedback id="h5-notify-feedback" feedback={feedback} />
+      <SyncNote id="h5-notify-sync" note={synced} />
       {data.recent && data.recent.length ? (
         <>
           <Typography variant="subtitle2" component="strong" sx={{ mt: 1 }}>{t('Recent notifications')}</Typography>

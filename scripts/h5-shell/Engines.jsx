@@ -21,6 +21,7 @@ import { PeerFsSwitch } from './PeerFs.jsx';
 import { RuleSyncSection } from './RuleSync.jsx';
 import { RemoteAccessSection } from './RemoteAccess.jsx';
 import { ADVANCED_SECTIONS } from './settings-target.mjs';
+import { ScopeLabel, SettingsSyncStatus, SyncNote, useSyncAfterSave } from './ScopeLabel.jsx';
 
 // Settings "Devices" (until the sheet was tidied up the groups "Engines", "Linked services", "Rules and skills sync" and "Remote service"), top to
 // bottom: the device list (this machine first, then every remote Engine this Client is connected to, linked ones included), "Link a device"
@@ -411,7 +412,7 @@ function Advanced({ open, onToggle, children }) {
           id="h5-devices-advanced-toggle" aria-expanded={open ? 'true' : 'false'} aria-controls="h5-devices-advanced" onClick={() => onToggle(!open)}
           sx={{ width: '100%', minHeight: 44, justifyContent: 'space-between', gap: 1, borderRadius: 1, font: 'inherit', textAlign: 'left' }}
         >
-          <span>{t('Advanced')}</span>
+          <Box component="span" sx={{ display: 'flex', alignItems: 'baseline', flexWrap: 'wrap', columnGap: 1, rowGap: 0.5, minWidth: 0 }}><span>{t('Advanced')}</span><ScopeLabel /></Box>
           <ExpandMoreIcon aria-hidden="true" sx={{ color: 'text.secondary', transition: 'transform 150ms', transform: open ? 'rotate(180deg)' : 'none' }} />
         </ButtonBase>
       </SubHeading>
@@ -445,6 +446,7 @@ export function DevicesGroup({ state, ui, request = null }) {
   const [editing, setEditing] = useState(null);
   const [updating, setUpdating] = useState(null);
   const [feedback, say] = useFeedback();
+  const [shownSynced, trackShown] = useSyncAfterSave('task-list-devices');
   const [opened, setOpened] = useState(0); // goes up each time the group opens: the parts below read their data again
   const load = async ({ keep = false } = {}) => {
     try {
@@ -492,7 +494,7 @@ export function DevicesGroup({ state, ui, request = null }) {
   const visibleDevices = devices.filter(key => !hidden.keys.includes(key));
   const switches = hidden.supported && devices.length > 1;
   const setVisible = async (device, visible) => {
-    try { await ui.actions.setDeviceVisible(device, visible); }
+    try { await ui.actions.setDeviceVisible(device, visible); void trackShown(); }
     catch (error) { say(`${t(errorLabel(codeOf(error)))}`, true); }
   };
   const showProps = device => (switches ? { device, hidden: hidden.keys.includes(device), last: visibleDevices.length === 1 && visibleDevices[0] === device, onChange: (key, visible) => void setVisible(key, visible) } : null);
@@ -515,7 +517,11 @@ export function DevicesGroup({ state, ui, request = null }) {
   const remoteOpened = advanced ? opened + advancedOpened : 0;
   return (
     <Group id="devices" title="Devices" request={request} onOpen={() => { void load(); setOpened(count => count + 1); }}>
+      <SettingsSyncStatus opened={opened} />
       <Hint>{t('Devices are the machines whose tasks and terminals this page shows. This machine is always first. To add another one, link it below.')}</Hint>
+      {/* What the list changes: the names (and Restart) are this device's own; which devices the task list shows is one set for all linked devices. */}
+      <ScopeLabel id="engine-name" subject="Device names" />
+      {switches ? <ScopeLabel id="task-list-devices" scope="shared" subject="Show in task list" /> : null}
       <Box id="h5-engine-list" sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
         <Paper variant="outlined" className="h5-engine-row" data-engine="local" sx={{ display: 'flex', flexDirection: 'column', gap: 0.75, p: 1 }}>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
@@ -541,6 +547,7 @@ export function DevicesGroup({ state, ui, request = null }) {
         {servers.length ? null : <Hint id="h5-engine-empty">{t('No other devices yet')}</Hint>}
       </Box>
       <Feedback id="h5-engines-feedback" feedback={feedback} />
+      <SyncNote id="h5-engines-sync" note={shownSynced} />
       <ServiceLinksSection state={state} ui={ui} version={linksVersion} opened={opened} onChanged={onLinksChanged} />
       <PeerFsSwitch opened={opened} />
       <RuleSyncSection state={state} opened={opened} />

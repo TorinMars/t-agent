@@ -4,6 +4,7 @@ import Button from '@mui/material/Button';
 import Typography from '@mui/material/Typography';
 import { Pill, api, errorText, t } from './common.jsx';
 import { Feedback, Hint, Section, useFeedback } from './Form.jsx';
+import { ScopeLabel } from './ScopeLabel.jsx';
 
 // "Agent skills", a part of the Settings group "Tasks and files" (`#h5-sec-agent-skills`): the skills that come with T-Agent (t-attention, tcli;
 // services/agent-skills.js) for Claude Code and Codex on the machine that runs this Client, from GET /api/agent-skills, read each time the group
@@ -109,7 +110,7 @@ export function AgentSkillsSection({ opened }) {
     finally { setBusy(false); }
   };
   return (
-    <Section id="agent-skills" title="Agent skills">
+    <Section id="agent-skills" title="Agent skills" aside={<ScopeLabel />}>
       <Hint>{t('Skills teach Claude Code and Codex to use T-Agent’s commands. They are installed on the machine that runs this Client, for both agents.')}</Hint>
       <Box id="h5-agent-skills" aria-busy={data ? 'false' : 'true'} sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
         {data ? list.map(skill => <SkillCard key={skill.name} skill={skill} busy={busy} onInstall={() => void run(skill.name)} />) : <Hint id="h5-agent-skills-loading">{t('Loading…')}</Hint>}

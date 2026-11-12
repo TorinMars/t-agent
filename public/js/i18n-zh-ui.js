@@ -1676,4 +1676,16 @@ I18n.add({
   "Xcode command line tools needed: xcode-select --install": "需要 Xcode 命令行工具：xcode-select --install",
   "Building the window…": "正在构建浮窗…",
   "Not running. Turn the switch off and on to start it again.": "未运行。关掉再打开开关即可重新启动。",
+  // The macOS desktop widget (widgets/macos/strings.json), served by GET /api/attention/widget/strings.
+  "Only among tasks at the same level": "只能放在同级任务之间",
+  "Only among tasks with the same status": "只能放在相同状态的任务之间",
+  "Only within the same machine": "只能在同一台机器内移动",
+  "Unknown task": "任务不存在",
+  "Target is on another machine": "目标任务在另一台机器上",
+  "Tasks have different parents": "两个任务的父任务不同",
+  "T-Agent refused this change": "T-Agent 拒绝了这次修改",
+  "Tasks": "任务",
+  "Save failed: {1}": "保存失败：{1}",
+  "Action failed: {1}": "操作失败：{1}",
+  "T-Agent did not accept the widget token": "T-Agent 不接受悬浮窗的令牌",
 });

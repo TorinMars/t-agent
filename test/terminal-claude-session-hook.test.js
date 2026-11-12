@@ -7,7 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 const http = require('node:http');
 const vm = require('node:vm');
-const { spawn } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
 const { EventEmitter } = require('node:events');
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 't-agent-session-hook-'));
@@ -155,6 +155,104 @@ test('without a hook endpoint the commands stay as before', () => {
   for (const key of ['TA_HOOK_URL', 'TA_HOOK_TOKEN', 'TA_CLAUDE_SETTINGS']) delete process.env[key];
   assert.equal(terminal.reopenCommand(task.id, row.terminal_id, task.work_dir), `claude --session-id ${boundSession(row.terminal_id)}`);
   terminal.controlSession(task.id, 'delete', row.terminal_id);
+});
+
+// Names given in T-Agent reach Claude as its session display name (`--name`), through the PTY environment only.
+const NAME = '--name "$TA_SESSION_NAME"';
+const sessionFile = id => path.join(claudeFolder, `${id}.jsonl`);
+
+test('a Claude terminal named at creation starts Claude with --name; the name itself is only in the environment', () => {
+  terminal.setHookEndpoint('http://127.0.0.1:9/hooks/terminal-activity');
+  // Quotes, $, backticks and a newline: the shell would read them in a typed line. The name is user content in any script.
+  const typedName = 'Fix "login" $HOME `id` \'x\'\n\u767b\u5f55 \u{1F600}';
+  const row = terminal.createTerminal(task.id, { agent: 'claude', title: typedName });
+  const pty = open(task.id, row.terminal_id);
+  const sessionId = boundSession(row.terminal_id);
+  assert.deepEqual(pty.input, [`claude --session-id ${sessionId} ${NAME} ${HOOK}\r`], '--name comes before --settings');
+  const stored = 'Fix "login" $HOME `id` \'x\' \u767b\u5f55 \u{1F600}'; // a terminal name has no control characters: the newline became a space
+  assert.equal(row.title, stored);
+  assert.equal(pty.options.env.TA_SESSION_NAME, stored, 'the exact stored name');
+  assert.ok(!pty.input[0].includes('login') && !pty.input[0].includes('`'), 'nothing of the name is typed');
+  // A real shell gives Claude the exact name as one argument and runs nothing from it (claude is replaced by a program that prints its arguments).
+  const printArgs = `'${process.execPath}' -e 'console.log(JSON.stringify(process.argv.slice(1)))' --`;
+  for (const shell of ['/bin/sh', '/bin/zsh', '/bin/bash'].filter(candidate => fs.existsSync(candidate))) {
+    const out = spawnSync(shell, ['-c', pty.input[0].replace(/\r$/, '').replace(/^claude/, printArgs)], { env: { PATH: process.env.PATH, ...pty.options.env }, encoding: 'utf8' });
+    assert.equal(out.status, 0, `${shell}: ${out.stderr}`);
+    const args = JSON.parse(out.stdout);
+    assert.deepEqual(args.slice(0, 4), ['--session-id', sessionId, '--name', stored], shell);
+    assert.equal(args[4], '--settings');
+  }
+
+  // Claude writes the name to the session file as its custom-title (checked against Claude Code 2.1.322); the listing shows it unchanged.
+  fs.mkdirSync(claudeFolder, { recursive: true });
+  fs.writeFileSync(sessionFile(sessionId), [{ type: 'custom-title', customTitle: stored, sessionId }, { type: 'user', message: { content: 'hello' } }].map(item => JSON.stringify(item)).join('\n') + '\n');
+  assert.equal(terminal.listTerminals(task.id).find(item => item.terminal_id === row.terminal_id).title, stored);
+  terminal.controlSession(task.id, 'delete', row.terminal_id);
+});
+
+test('a Claude terminal without a name gets no --name and no TA_SESSION_NAME, also when the server has an outer one', () => {
+  terminal.setHookEndpoint('http://127.0.0.1:9/hooks/terminal-activity');
+  process.env.TA_SESSION_NAME = 'outer terminal name';
+  try {
+    const row = terminal.createTerminal(task.id, { agent: 'claude' });
+    const pty = open(task.id, row.terminal_id);
+    assert.deepEqual(pty.input, [`claude --session-id ${boundSession(row.terminal_id)} ${HOOK}\r`]);
+    assert.equal(pty.options.env.TA_SESSION_NAME, undefined, 'the outer terminal\'s name is not passed on');
+    assert.equal(terminal.reopenCommand(task.id, row.terminal_id, task.work_dir), `claude --session-id ${boundSession(row.terminal_id)} ${HOOK}`);
+    terminal.controlSession(task.id, 'delete', row.terminal_id);
+    // A named terminal gets its own name, not the outer one.
+    const named = terminal.createTerminal(task.id, { agent: 'claude', title: 'Inner' });
+    assert.equal(open(task.id, named.terminal_id).options.env.TA_SESSION_NAME, 'Inner');
+    terminal.controlSession(task.id, 'delete', named.terminal_id);
+  } finally { delete process.env.TA_SESSION_NAME; }
+});
+
+test('a rename in T-Agent reaches Claude at the next start: reopen and resume pass the new name', () => {
+  terminal.setHookEndpoint('http://127.0.0.1:9/hooks/terminal-activity');
+  const row = terminal.createTerminal(task.id, { agent: 'claude' });
+  const pty = open(task.id, row.terminal_id);
+  const sessionId = boundSession(row.terminal_id);
+  assert.deepEqual(pty.input, [`claude --session-id ${sessionId} ${HOOK}\r`], 'not named yet');
+  const renamed = 'Renamed \u91cd\u547d\u540d "q" $x';
+  terminal.renameTerminal(task.id, row.terminal_id, renamed);
+  assert.deepEqual(pty.input, [`claude --session-id ${sessionId} ${HOOK}\r`], 'nothing is typed into the running session');
+
+  // No session file yet: the same id starts again, now with the name.
+  assert.equal(terminal.reopenCommand(task.id, row.terminal_id, task.work_dir), `claude --session-id ${sessionId} ${NAME} ${HOOK}`);
+  terminal.controlSession(task.id, 'restart-workdir', row.terminal_id);
+  const second = open(task.id, row.terminal_id);
+  assert.deepEqual(second.input, [`claude --session-id ${sessionId} ${NAME} ${HOOK}\r`]);
+  assert.equal(second.options.env.TA_SESSION_NAME, renamed);
+
+  // With a session file the terminal resumes it under the newest name.
+  fs.mkdirSync(claudeFolder, { recursive: true });
+  fs.writeFileSync(sessionFile(sessionId), `${JSON.stringify({ type: 'user', message: { content: 'hello' } })}\n`);
+  terminal.renameTerminal(task.id, row.terminal_id, 'Second name');
+  terminal.controlSession(task.id, 'restart-workdir', row.terminal_id);
+  const third = open(task.id, row.terminal_id);
+  assert.deepEqual(third.input, [`claude --resume ${sessionId} ${NAME} ${HOOK}\r`]);
+  assert.equal(third.options.env.TA_SESSION_NAME, 'Second name');
+  terminal.controlSession(task.id, 'delete', row.terminal_id);
+});
+
+test('without a hook endpoint a named Claude terminal still gets --name; Codex and plain shells never do', () => {
+  terminal.setHookEndpoint(null);
+  const row = terminal.createTerminal(task.id, { agent: 'claude', title: 'No hook' });
+  const pty = open(task.id, row.terminal_id);
+  assert.deepEqual(pty.input, [`claude --session-id ${boundSession(row.terminal_id)} ${NAME}\r`]);
+  assert.equal(pty.options.env.TA_SESSION_NAME, 'No hook');
+  terminal.controlSession(task.id, 'delete', row.terminal_id);
+  terminal.setHookEndpoint('http://127.0.0.1:9/hooks/terminal-activity');
+  const codex = terminal.createTerminal(task.id, { agent: 'codex', title: 'Named Codex' });
+  const codexPty = open(task.id, codex.terminal_id);
+  assert.deepEqual(codexPty.input, ['codex\r'], 'Codex has no start-time name option');
+  assert.equal(codexPty.options.env.TA_SESSION_NAME, undefined);
+  const plain = terminal.createTerminal(task.id, { title: 'Named shell' });
+  const plainPty = open(task.id, plain.terminal_id);
+  assert.deepEqual(plainPty.input, []);
+  assert.equal(plainPty.options.env.TA_SESSION_NAME, undefined);
+  terminal.controlSession(task.id, 'delete', codex.terminal_id);
+  terminal.controlSession(task.id, 'delete', plain.terminal_id);
 });
 
 function runHook(env, input) {

@@ -93,6 +93,18 @@ test('with the switch on a Claude terminal gets the t-agent-peers MCP server; th
   terminal.controlSession(task.id, 'delete', row.terminal_id);
 });
 
+test('a named Claude terminal puts --name before --settings and keeps --mcp-config last', () => {
+  terminal.setHookEndpoint(ENDPOINT);
+  peerFsSettings().setEnabled(true);
+  const row = terminal.createTerminal(task.id, { agent: 'claude', title: 'Peer "named" $x' });
+  const pty = open(task.id, row.terminal_id);
+  const sessionId = boundSession(row.terminal_id);
+  assert.deepEqual(pty.input, [`claude --session-id ${sessionId} --name "$TA_SESSION_NAME" ${SETTINGS} ${MCP}\r`]);
+  assert.equal(pty.options.env.TA_SESSION_NAME, 'Peer "named" $x');
+  assert.equal(terminal.reopenCommand(task.id, row.terminal_id, task.work_dir), `claude --session-id ${sessionId} --name "$TA_SESSION_NAME" ${SETTINGS} ${MCP}`);
+  terminal.controlSession(task.id, 'delete', row.terminal_id);
+});
+
 test('with the switch on a Codex terminal gets the server through -c overrides and passes the variables on', () => {
   terminal.setHookEndpoint(ENDPOINT);
   peerFsSettings().setEnabled(true);

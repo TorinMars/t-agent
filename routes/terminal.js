@@ -130,8 +130,23 @@ function withSessionHook(agent, command, peer = peerFsOn()) {
   return command;
 }
 
+// A Claude terminal the person named (at creation or by a rename: title_custom) starts Claude with that name as the session's display name
+// ("Agent terminals" in DESIGN.md): `--name "$TA_SESSION_NAME"`, the name itself only in the PTY environment, so quotes, `$` or backticks in it are
+// never parsed by the shell. Claude writes it to the session file as its custom-title (a resume with a new name appends one), so the name shows in
+// Claude's prompt box, its /resume picker and the terminal title. It goes right after the base command: --settings and --mcp-config follow
+// (--mcp-config takes several values, so it stays last). Codex has no option to name a session at start, so it gets none.
+const CLAUDE_NAME_FLAG = '--name "$TA_SESSION_NAME"';
+function sessionName(taskId, id) {
+  if (id === 'default') return null;
+  const row = db.prepare('SELECT agent, title, title_custom FROM task_terminals WHERE task_id = ? AND terminal_id = ?').get(taskId, id);
+  return row && row.agent === 'claude' && row.title_custom && row.title ? row.title : null;
+}
+function withSessionName(agent, command, name) {
+  return command && name && agent === 'claude' ? `${command} ${CLAUDE_NAME_FLAG}` : command;
+}
+
 const HOOK_ENV_KEYS = ['TA_HOOK_URL', 'TA_HOOK_TOKEN', 'TA_CLAUDE_SETTINGS', 'TA_ATTENTION_URL', 'TA_ATTENTION_TOKEN', 'TA_ATTENTION_HOOK', 'TA_ATTENTION_CLI',
-  'TA_PEER_URL', 'TA_PEER_TASK', 'TA_PEER_TERMINAL', 'TA_MCP_CONFIG', 'TA_PEER_MCP_COMMAND', 'TA_PEER_MCP_ARGS', 'TA_TCLI'];
+  'TA_PEER_URL', 'TA_PEER_TASK', 'TA_PEER_TERMINAL', 'TA_MCP_CONFIG', 'TA_PEER_MCP_COMMAND', 'TA_PEER_MCP_ARGS', 'TA_TCLI', 'TA_SESSION_NAME'];
 // The server's own environment may already hold these (a server started from inside a t-agent terminal): they belong to
 // that outer terminal and are never passed on.
 function withoutInheritedHookEnv(env) {
@@ -429,6 +444,8 @@ function createTerminal(taskId, options = {}) {
 // A new shell for an agent terminal that was closed or restarted resumes the session it is bound to.
 // A Claude session that never got a message has no file to resume, and a Codex session that was never bound starts fresh.
 // `workDir` is the directory the new shell starts in (the terminal's own directory), where the agent looks for the session.
+// A Claude terminal the person named passes that name again (so a rename done in T-Agent reaches Claude at the next start; the shell's
+// TA_SESSION_NAME holds the same sessionName() value).
 function reopenCommand(taskId, id, workDir, peer = peerFsOn()) {
   const row = id === 'default' ? null : db.prepare('SELECT agent, agent_session_id FROM task_terminals WHERE task_id = ? AND terminal_id = ?').get(taskId, id);
   if (!row || !row.agent) return null;
@@ -437,10 +454,12 @@ function reopenCommand(taskId, id, workDir, peer = peerFsOn()) {
     const bound = db.prepare('SELECT agent_session_id FROM task_terminals WHERE task_id = ? AND terminal_id = ?').get(taskId, id);
     row.agent_session_id = bound && bound.agent_session_id;
   }
-  if (!row.agent_session_id) return withSessionHook(row.agent, startupCommand(row.agent), peer);
+  const name = sessionName(taskId, id);
+  const typed = command => withSessionHook(row.agent, withSessionName(row.agent, command, name), peer);
+  if (!row.agent_session_id) return typed(startupCommand(row.agent));
   const exists = listSessions(row.agent, workDir, undefined, 200).some(entry => entry.id === row.agent_session_id);
-  if (exists) return withSessionHook(row.agent, startupCommand(row.agent, row.agent_session_id), peer);
-  return withSessionHook(row.agent, row.agent === 'claude' ? newClaudeCommand(row.agent_session_id) : startupCommand(row.agent), peer);
+  if (exists) return typed(startupCommand(row.agent, row.agent_session_id));
+  return typed(row.agent === 'claude' ? newClaudeCommand(row.agent_session_id) : startupCommand(row.agent));
 }
 
 // Sessions of an agent CLI that were run in the task's working directory (newest first). A new terminal starts there, so the list of
@@ -510,6 +529,7 @@ function getOrCreateSession(ownerTaskId, workDir, dirWarning, id = 'default') {
   let pty;
   let shell;
   const peer = peerFsOn(); // one reading for the shell's environment and its startup command
+  const name = sessionName(ownerTaskId, id); // the same for the environment and the command (reopenCommand reads it again, in the same tick)
   try {
     repairSpawnHelperPermissions(path.resolve(__dirname, '..'));
     const nodePty = require('node-pty');
@@ -558,6 +578,7 @@ function getOrCreateSession(ownerTaskId, workDir, dirWarning, id = 'default') {
         ...utf8LocaleEnv(process.env),
         ...hookEnv(ownerTaskId, id, peer),
         ...attentionEnv(ownerTaskId, id, baseEnv),
+        ...(name ? { TA_SESSION_NAME: name } : {}),
       },
     });
   } catch (e) {
@@ -567,7 +588,7 @@ function getOrCreateSession(ownerTaskId, workDir, dirWarning, id = 'default') {
   }
 
   const pending = pendingStartup.get(taskId);
-  const startup = pending ? withSessionHook(pending.agent, pending.command, peer) : reopenCommand(ownerTaskId, id, workDir, peer);
+  const startup = pending ? withSessionHook(pending.agent, withSessionName(pending.agent, pending.command, name), peer) : reopenCommand(ownerTaskId, id, workDir, peer);
   pendingStartup.delete(taskId);
   if (startup) pty.write(`${startup}\r`);
 

@@ -20,6 +20,7 @@ import { RULES_PAGE, findPlugin, listenerActivity, listenerChips, loginCommand, 
 import { canUninstall, installAction, installSummary, showManualSteps } from './plugins-model.mjs';
 import { PairingDialog } from './PairingDialog.jsx';
 import PluginMarket from './PluginMarket.jsx';
+import { ScopeLabel, ScopedHeading } from './ScopeLabel.jsx';
 
 // The "Plugins" section of the Settings group "T-Attention", in two levels. The list: one compact row per plugin of this Client (name, kind, chips and one
 // short line), from GET /api/attention/plugins (services/attention-plugins.js), read when the group opens, with the Refresh button and on the way back from
@@ -160,6 +161,7 @@ function PluginPage({ page, data, onBack, onChanged, onLogin, onRules }) {
         </Toolbar>
       </AppBar>
       <Box className="h5-plugin-page-body" sx={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 1.25, p: 2 }}>
+        <PageScope page={page} />
         {rules ? <NotifierRules onChanged={onChanged} /> : null}
         {!rules && !data ? <Hint>{t('Loading…')}</Hint> : null}
         {!rules && data && !plugin ? <Hint>{t('This plugin was not found on this Client.')}</Hint> : null}
@@ -168,6 +170,15 @@ function PluginPage({ page, data, onBack, onChanged, onLogin, onRules }) {
       </Box>
     </Drawer>
   );
+}
+
+// The scope label at the top of a plugin's page: the rules and the notifiers are shared, Telegram is sent through one device, a listener is set up on
+// this machine (ScopeLabel.jsx).
+function PageScope({ page }) {
+  if (page.kind === RULES_PAGE.kind) return <ScopeLabel id="notify-rules" scope="shared" sx={{ alignSelf: 'flex-start' }} />;
+  if (page.kind === 'notifier' && page.name === 'telegram') return <ScopeLabel id="telegram" scope="telegram" sx={{ alignSelf: 'flex-start' }} />;
+  if (page.kind === 'notifier') return <ScopeLabel id="notifier-plugins" scope="shared" sx={{ alignSelf: 'flex-start' }} />;
+  return <ScopeLabel sx={{ alignSelf: 'flex-start' }} />;
 }
 
 // One row of the list: a real button (keyboard focus, ripple) with a chevron; everything inside is phrasing content.
@@ -187,6 +198,7 @@ function PluginRow({ kind, plugin, loggingIn, onOpen }) {
         <Box component="span" sx={{ display: 'flex', alignItems: 'baseline', gap: 1, minWidth: 0, flexWrap: 'wrap' }}>
           <Box component="strong" translate="no" sx={{ overflowWrap: 'anywhere' }}>{plugin.name}</Box>
           <Typography variant="caption" component="span" color="text.secondary" className="h5-plugin-kind">{t(KIND_LABELS[kind])}</Typography>
+          {kind === 'notifier' && plugin.name === 'telegram' ? <ScopeLabel id="telegram" scope="telegram" /> : null}
         </Box>
         <Chips chips={row.chips} />
         {row.error ? <RowLine color="error" className="h5-plugin-error">{t(row.error)}</RowLine> : null}
@@ -197,10 +209,10 @@ function PluginRow({ kind, plugin, loggingIn, onOpen }) {
   );
 }
 
-function PluginList({ id, title, empty, children }) {
+function PluginList({ id, title, empty, label = null, children }) {
   return (
     <Box id={id} sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-      <Typography variant="subtitle2" component="strong">{t(title)}</Typography>
+      <ScopedHeading label={label}><Typography variant="subtitle2" component="strong">{t(title)}</Typography></ScopedHeading>
       {children.length ? children : <Hint>{t(empty)}</Hint>}
     </Box>
   );
@@ -257,14 +269,14 @@ function PluginSlot({ ui, opened }) {
         {!data && loading ? <Hint id="h5-plugins-loading">{t('Loading…')}</Hint> : null}
         {data ? (
           <>
-            <PluginList id="h5-plugins-listeners" title="Listeners" empty="No listener plugins found">
+            <PluginList id="h5-plugins-listeners" title="Listeners" empty="No listener plugins found" label={<ScopeLabel />}>
               {data.listeners.map(listener => <PluginRow key={listener.name} kind="listener" plugin={listener} onOpen={() => open({ kind: 'listener', name: listener.name })} />)}
             </PluginList>
-            <PluginList id="h5-plugins-notifiers" title="Notifiers" empty="No notifier plugins found">
+            <PluginList id="h5-plugins-notifiers" title="Notifiers" empty="No notifier plugins found" label={<ScopeLabel id="notifier-plugins" scope="shared" />}>
               {data.notifiers.map(notifier => <PluginRow key={notifier.name} kind="notifier" plugin={notifier} loggingIn={notifier.name === 'telegram' && loggingIn} onOpen={() => open({ kind: 'notifier', name: notifier.name })} />)}
             </PluginList>
             <Box id="h5-plugins-rules" sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-              <Typography variant="subtitle2" component="strong">{t('Rules for all notifiers')}</Typography>
+              <ScopedHeading label={<ScopeLabel id="notify-rules" scope="shared" />}><Typography variant="subtitle2" component="strong">{t('Rules for all notifiers')}</Typography></ScopedHeading>
               <ButtonBase id="h5-plugins-rules-open" className="h5-plugin-rules" onClick={() => open(RULES_PAGE)} sx={ROW_LOOK}>
                 <RowText>
                   <Box component="strong">{t('Message and call rules')}</Box>

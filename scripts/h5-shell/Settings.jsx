@@ -18,6 +18,7 @@ import { AttentionSettings } from './AttentionSettings.jsx';
 import { AgentSkillsSection } from './AgentSkillsSettings.jsx';
 import { Feedback, Field, Group, Hint, ROW, Section, failure, useFeedback } from './Form.jsx';
 import { settingsTarget } from './settings-target.mjs';
+import { ScopeLabel, SyncNote, useSyncAfterSave } from './ScopeLabel.jsx';
 
 // The address this page was opened at, to come back to after a login or a switch: `/` or `/h5` (an iPhone Home Screen app starts at /h5).
 const pagePath = () => (/^\/h5(\/|$)/.test(location.pathname) ? '/h5' : '/');
@@ -53,7 +54,7 @@ function WorkdirSection({ opened }) {
   };
   useOnOpen(opened, load);
   return (
-    <Section id="workdir" title="Working directory">
+    <Section id="workdir" title="Working directory" aside={<ScopeLabel id="workdir" />}>
       <Field id="h5-workdir" label="Working directory" value={value} onChange={event => setValue(event.target.value)} placeholder="e.g. /Users/yourname/tasks" />
       <Hint>{t('Root directory for md files of new tasks; created if missing. Clear it to restore the default.')}</Hint>
       <Button id="h5-workdir-save" variant="contained" disabled={busy} onClick={() => void save()}>{t('Save')}</Button>
@@ -80,6 +81,7 @@ function OssAgentAccess({ opened }) {
   const [setting, setSetting] = useState({ loaded: false, supported: true, enabled: false });
   const [busy, setBusy] = useState(false);
   const [feedback, say] = useFeedback();
+  const [synced, track] = useSyncAfterSave('oss-agent-access');
   const read = async () => Boolean((await api('GET', '/api/oss/agent-access') || {}).enabled);
   const load = async () => {
     try { setSetting({ loaded: true, supported: true, enabled: await read() }); say(''); }
@@ -96,6 +98,7 @@ function OssAgentAccess({ opened }) {
       const saved = await api('PUT', '/api/oss/agent-access', { enabled });
       setSetting(current => ({ ...current, enabled: Boolean(saved && saved.enabled) }));
       say('Saved');
+      void track();
     } catch (error) {
       say(failure(error), true);
       try { const now = await read(); setSetting(current => ({ ...current, enabled: now })); } // show what is really in effect
@@ -110,8 +113,10 @@ function OssAgentAccess({ opened }) {
         sx={{ m: 0, alignSelf: 'flex-start', gap: 0.5 }} label={label}
         control={<Switch size="small" checked={setting.enabled} disabled={!setting.loaded || busy} onChange={event => void change(event.target.checked)} slotProps={{ input: { id: 'h5-oss-agent-enabled', 'aria-label': label, style: { left: 0, width: '100%' } } }} />}
       />
+      <ScopeLabel id="oss-agent-access" scope="shared" sx={{ alignSelf: 'flex-start' }} />
       <Hint>{t('Claude and Codex sessions in T-Agent terminals can list, upload, download, copy, move and delete files in this bucket with the tcli command. The access key never leaves this server.')}</Hint>
       <Feedback id="h5-oss-agent-feedback" feedback={feedback} />
+      <SyncNote id="h5-oss-agent-sync" note={synced} />
     </Box>
   );
 }
@@ -122,6 +127,7 @@ function OssSection({ opened }) {
   const [shared, setShared] = useState(null);
   const [busy, setBusy] = useState(false);
   const [feedback, say] = useFeedback();
+  const [synced, track] = useSyncAfterSave('oss');
   const set = key => event => setForm(current => ({ ...current, [key]: event.target.value }));
   const load = async () => {
     try {
@@ -140,12 +146,13 @@ function OssSection({ opened }) {
       const saved = remove ? await api('DELETE', '/api/oss/config') : await api('PUT', '/api/oss/config', payload);
       await load();
       say(!remove && !saved.enabled ? 'Settings saved, but upload is not enabled. Tick “Enable image and file upload” above and save again.' : remove ? 'Deleted' : 'Saved');
+      void track();
     } catch (error) { say(failure(error), true); }
     finally { setBusy(false); }
   };
   useOnOpen(opened, load);
   return (
-    <Section id="oss" title="Image and file upload">
+    <Section id="oss" title="Image and file upload" aside={<ScopeLabel id="oss" scope="shared" />}>
       <SharedFrom id="h5-oss-shared" from={shared} />
       <FormControlLabel control={<Checkbox checked={form.enabled} onChange={event => setForm(current => ({ ...current, enabled: event.target.checked }))} slotProps={{ input: { id: 'h5-oss-enabled' } }} />} label={t('Enable image and file upload')} />
       {OSS_FIELDS.map(([key, label]) => (
@@ -156,6 +163,7 @@ function OssSection({ opened }) {
       <Button id="h5-oss-save" variant="contained" disabled={busy} onClick={() => void persist(false)}>{t('Save')}</Button>
       <Button id="h5-oss-clear" variant="outlined" color="error" disabled={busy} onClick={() => void persist(true)}>{t('Delete settings')}</Button>
       <Feedback id="h5-oss-feedback" feedback={feedback} />
+      <SyncNote id="h5-oss-sync" note={synced} />
       <OssAgentAccess opened={opened} />
     </Section>
   );
@@ -168,6 +176,7 @@ function TranslateSection({ opened }) {
   const [shared, setShared] = useState(null);
   const [busy, setBusy] = useState(false);
   const [feedback, say] = useFeedback();
+  const [synced, track] = useSyncAfterSave('translate');
   const saved = providers[current] || {};
   const draft = drafts[current] || {};
   const field = key => (draft[key] !== undefined ? draft[key] : key === 'apiKey' ? '' : saved[key] || '');
@@ -191,12 +200,13 @@ function TranslateSection({ opened }) {
       else await api('PUT', '/api/translate/config', { provider: current, apiKey: field('apiKey').trim(), baseUrl: field('baseUrl').trim(), model: field('model').trim() });
       await load();
       say(remove ? 'Translation settings deleted' : 'Translation settings saved');
+      void track();
     } catch (error) { say(failure(error), true); }
     finally { setBusy(false); }
   };
   useOnOpen(opened, load);
   return (
-    <Section id="translate" title="Translation">
+    <Section id="translate" title="Translation" aside={<ScopeLabel id="translate" scope="shared" />}>
       <SharedFrom id="h5-tr-shared" from={shared} />
       <TextField id="h5-tr-provider" select label={t('Translation service')} size="small" fullWidth value={current} onChange={event => setCurrent(event.target.value)} slotProps={{ select: { native: true } }}>
         {Object.keys(providers).map(id => <option key={id} value={id}>{`${providers[id].label}${providers[id].hasApiKey ? ` (${t('Key saved')})` : ''}`}</option>)}
@@ -208,6 +218,7 @@ function TranslateSection({ opened }) {
       <Button id="h5-tr-save" variant="contained" disabled={busy} onClick={() => void save(false)}>{t('Save')}</Button>
       <Button id="h5-tr-clear" variant="outlined" color="error" disabled={busy} onClick={() => void save(true)}>{t('Delete all settings')}</Button>
       <Feedback id="h5-tr-feedback" feedback={feedback} />
+      <SyncNote id="h5-tr-sync" note={synced} />
     </Section>
   );
 }
@@ -221,6 +232,8 @@ function VoiceSwitch() {
   return (
     <>
       <FormControlLabel control={<Checkbox checked={enabled} onChange={event => Voice.setEnabled(event.target.checked)} slotProps={{ input: { id: 'h5-vi-enabled' } }} />} label={t('Enable voice input')} />
+      {/* The switch is kept in this browser (voice-input.js), not on the server: it is this device's own even when the rest is shared. */}
+      <ScopeLabel scope="device" subject="Voice input on or off" sx={{ alignSelf: 'flex-start' }} />
       <Hint>{t('Applies at once on this device, without Save. When off, the microphone buttons are hidden and the microphone is not used.')}</Hint>
     </>
   );
@@ -231,6 +244,7 @@ function VoiceSection({ opened }) {
   const [form, setForm] = useState({ apiKey: '', region: '', language: '', model: '', noise: '', hotwords: '', vocab: '', url: '' });
   const [busy, setBusy] = useState(false);
   const [feedback, say] = useFeedback();
+  const [synced, track] = useSyncAfterSave('voice');
   const set = key => event => setForm(current => ({ ...current, [key]: event.target.value }));
   const load = async () => {
     try {
@@ -248,6 +262,7 @@ function VoiceSection({ opened }) {
       else await api('PUT', '/api/speech/config', { apiKey: form.apiKey.trim(), region: form.region, language: form.language, model: form.model.trim(), endpoint: form.url.trim(), noiseThreshold: form.noise.trim(), hotwords: form.hotwords, vocabularyId: form.vocab.trim() });
       await load();
       say(remove ? 'Voice input settings deleted' : 'Voice input settings saved');
+      void track();
     } catch (error) { say(failure(error), true); }
     finally { setBusy(false); }
   };
@@ -256,7 +271,7 @@ function VoiceSection({ opened }) {
   const region = config.regions[form.region];
   const keyHint = config.keySource === 'saved' ? 'Saved; leave empty to keep it' : config.keySource === 'environment' ? 'Using DASHSCOPE_API_KEY from the server; enter a key here to override it' : 'API Key';
   return (
-    <Section id="voice" title="Voice input">
+    <Section id="voice" title="Voice input" aside={<ScopeLabel id="voice" scope="shared" />}>
       <SharedFrom id="h5-vi-shared" from={config.shared} />
       <VoiceSwitch />
       <Field id="h5-vi-key" label="Alibaba Cloud API Key" type="password" autoComplete="new-password" value={form.apiKey} onChange={set('apiKey')} placeholder={t(keyHint)} />
@@ -278,6 +293,7 @@ function VoiceSection({ opened }) {
       <Button id="h5-vi-save" variant="contained" disabled={busy} onClick={() => void save(false)}>{t('Save')}</Button>
       <Button id="h5-vi-clear" variant="outlined" color="error" disabled={busy} onClick={() => void save(true)}>{t('Delete all settings')}</Button>
       <Feedback id="h5-vi-feedback" feedback={feedback} />
+      <SyncNote id="h5-vi-sync" note={synced} />
     </Section>
   );
 }
@@ -319,7 +335,7 @@ function AccountGroup({ request }) {
     + (!info.local && info.loopbackOnly ? ` ${t('Note: the service currently listens only on')} ${info.host}. ${t('To let other devices connect, set HOST=0.0.0.0 in .env and restart the service.')}` : '');
   return (
     <Group id="account" title="Account and access" onOpen={load} request={request}>
-      <Section id="access" title="Access mode">
+      <Section id="access" title="Access mode" aside={<ScopeLabel id="access" />}>
         <Typography id="h5-access-title" variant="body2" component="strong" sx={{ fontWeight: 600 }}>{loaded ? t(info.local ? 'Local access only' : 'Authenticator + allow external access') : ''}</Typography>
         <Hint id="h5-access-hint">{hint}</Hint>
         {info.local && info.bound ? (
@@ -330,7 +346,7 @@ function AccountGroup({ request }) {
         <Button id="h5-access-switch" variant="contained" disabled={busy || !loaded} onClick={() => void switchMode()}>{loaded ? t(info.local ? 'Switch to: authenticator + external access' : 'Switch to: local access only (no verification)') : ''}</Button>
         <Feedback id="h5-access-feedback" feedback={feedback} />
       </Section>
-      <Section id="authenticator" title="Authenticator">
+      <Section id="authenticator" title="Authenticator" aside={<ScopeLabel id="authenticator" />}>
         <Hint>{t('Computer and phone share the same page and binding. Logins last 30 days and renew while in use; after 30 days of inactivity you must verify again. After replacing, the old authenticator, recovery codes and other devices’ logins stop working immediately.')}</Hint>
         <Button id="h5-authenticator-replace" component="a" href={`/auth/setup?return_to=${pagePath()}`} variant="outlined">{t('Replace authenticator')}</Button>
       </Section>

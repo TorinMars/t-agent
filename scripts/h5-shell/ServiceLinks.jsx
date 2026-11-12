@@ -10,6 +10,7 @@ import Typography from '@mui/material/Typography';
 import { Pill, api, t } from './common.jsx';
 import { copyText } from './Attention.jsx';
 import { EngineDialog, Feedback, Field, Hint, Section, failure, useFeedback } from './Form.jsx';
+import { ScopeLabel } from './ScopeLabel.jsx';
 import { codeGroups, countdownText, secondsLeft } from './plugins-model.mjs';
 
 // "Link a device" in Settings → Devices (until the sheet was tidied up the group "Linked services"): two T-Agent services that see and operate each
@@ -271,7 +272,7 @@ export function ServiceLinksSection({ state, ui, version, opened, onChanged }) {
   const changed = async key => { onChanged(); if (ui.actions.enginesChanged) await ui.actions.enginesChanged(key); };
   if (!links) return null;
   return (
-    <Section id="link" title="Link a device">
+    <Section id="link" title="Link a device" aside={<ScopeLabel />}>
       <Hint>{t('Link another T-Agent service, so that both see and operate each other’s tasks, terminals and sessions. This is the recommended way to add a device: generate a code on one, and join with it on the other.')}</Hint>
       <Box id="h5-link-list" sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
         {links.map(link => <LinkRow key={link.id} link={link} onUnlink={() => setUnlinking(link)} />)}

@@ -14,6 +14,7 @@ import Typography from '@mui/material/Typography';
 import TextField from './TextField.jsx';
 import { Pill, api, t } from './common.jsx';
 import { Feedback, Hint, Section, failure, useFeedback } from './Form.jsx';
+import { ScopeLabel } from './ScopeLabel.jsx';
 import { SharedClaudeSettings } from './SharedClaudeSettings.jsx';
 
 // "Rules and skills sync", a part of Settings → Devices (GET / PUT /api/rule-sync and its actions, routes/rule-sync.js): one linked service is the source of a shared layer of
@@ -350,7 +351,7 @@ export function RuleSyncSection({ state, opened }) {
   const act = (action, done) => run(() => api('POST', `${BASE}/${action}`, {}), done, action === 'reset-source' ? () => void findSource() : null);
   useEffect(() => { if (opened) void load(); }, [opened]); // eslint-disable-line react-hooks/exhaustive-deps -- load only reads
   return (
-    <Section id="rule-sync" title="Rules and skills sync">
+    <Section id="rule-sync" title="Rules and skills sync" aside={<ScopeLabel id="rule-sync" />}>
       <Hint>{t('Share one set of Claude rules and skills (and the same rules for Codex) from one linked service to the others. Your own CLAUDE.md content and skills without the sync marker are never sent or changed.')}</Hint>
       {data ? (
         <>

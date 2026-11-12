@@ -4,6 +4,7 @@ import FormControlLabel from '@mui/material/FormControlLabel';
 import Switch from '@mui/material/Switch';
 import { api, t } from './common.jsx';
 import { Feedback, Hint, Section, failure, useFeedback } from './Form.jsx';
+import { ScopeLabel } from './ScopeLabel.jsx';
 
 // The peer file access switch of this Engine ("Peer file access" in DESIGN.md), a part of the Devices group (`#h5-sec-peer-fs`): whether the Claude
 // and Codex sessions started here get the read-only `t-agent-peers` tools, and whether linked devices may read this Engine's files.
@@ -51,6 +52,7 @@ export function PeerFsSwitch({ opened }) {
           sx={{ m: 0, alignSelf: 'flex-start', gap: 0.5 }} label={label}
           control={<Switch size="small" checked={setting.enabled} disabled={!setting.loaded || busy} onChange={event => void change(event.target.checked)} slotProps={{ input: { id: 'h5-peer-fs-enabled', 'aria-label': label, style: INPUT_INSIDE } }} />}
         />
+        <ScopeLabel id="peer-fs" sx={{ alignSelf: 'flex-start' }} />
         <Hint>{t('Claude and Codex sessions started here get tools to read files on linked devices, and linked devices can read this device’s files the same way. Read only: only the home folder, and sensitive files such as ~/.ssh and .env files are left out. Applies to sessions started after the change.')}</Hint>
         <Feedback id="h5-peer-fs-feedback" feedback={feedback} />
       </Box>

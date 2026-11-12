@@ -7,19 +7,23 @@ import Drawer from '@mui/material/Drawer';
 import IconButton from '@mui/material/IconButton';
 import LinearProgress from '@mui/material/LinearProgress';
 import ListItemButton from '@mui/material/ListItemButton';
+import NativeSelect from '@mui/material/NativeSelect';
 import OutlinedInput from '@mui/material/OutlinedInput';
 import Typography from '@mui/material/Typography';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import { alpha } from '@mui/material/styles';
-import { Pill, errorText, named, t } from './common.jsx';
+import { Pill, deviceParts, deviceText, errorText, named, t } from './common.jsx';
+import { DeviceTag } from './TaskDrawer.jsx';
+import { shortName } from './task-order.mjs';
 import { Field } from './Form.jsx';
 import TextField from './TextField.jsx';
 import { Icon } from './Icons.jsx';
 import { AttentionGuide } from './AttentionGuide.jsx';
 import { DRAG_SX, useListDrag } from './list-drag.jsx';
 import {
-  MAX_INDENT, PRIORITIES, PRIORITY_LABELS, REMIND_STATUSES, STATUSES, STATUS_LABELS, buildTree, childrenOf, contextFilePath, contextOf, groupItems, hasTree, jumpBack,
-  moveLocal, onThisMachine, overdue, parentChoices, patchFor, pendingLine, readCollapsed, rollbackItems, safeLink, statusOfGroup, stepMove, timeline,
+  MAX_INDENT, PRIORITIES, PRIORITY_LABELS, REMIND_STATUSES, STATUSES, STATUS_LABELS, buildTree, childrenOf, collapseId, contextFilePath, contextOf, engineOf, groupItems,
+  hasTree, jumpBack, keyOf, moveLocal, onThisMachine, overdue, parentChoices, parseKey, patchFor, pendingLine, readCollapsed, rollbackItems, safeLink, statusOfGroup,
+  stepMove, timeline,
 } from './attention-model.mjs';
 
 // T-Attention: the tasks agents and services report (through listener plugins, the `t-attention` CLI) and the user's own, in one list
@@ -30,6 +34,9 @@ import {
 // A server with sub-tasks (`hasTree`): inside a group a sub-task is drawn under its parent (`buildTree`, collapsible), a row shows its custom status and
 // result, Review rows have Confirm / Reject and Needs you rows Handled, and a held row is dragged to reorder its group or dropped on another group's title
 // to change its status (`POST /api/attention/:id/move`, useListDrag of list-drag.jsx). Every such change is drawn at once and put back when it fails.
+// Several engines (`state.attention.engines`, attention-feed.mjs): one list, each group in engine blocks (this machine first), every row with the engine
+// tag of the task list (`DeviceTag`) in front of its title; a row is named by its `key` (ids repeat between engines), every request goes to its engine,
+// and a row is dragged only among the rows of its own engine. With one engine the panel looks as it always did (no tags, no "on <engine>").
 
 const MONO = 'ui-monospace, Menlo, monospace';
 const REASON_COLOR = { waiting_user: 'warning.light', review: 'info.light', failed: 'error.light' };
@@ -49,12 +56,12 @@ function secondLine(item, fields) {
 
 // One row. `node` (the tree, buildTree) gives its indent and, for a sub-task of a task in another group, that parent (`node.parent`, the "↳" hint);
 // `fold` is the collapse button of a parent; `act` runs a row button (Confirm, Reject, Handled); `hold` are the drag props (useListDrag) or null.
-function Row({ item, node, ui, onOpen, fields, fold, act, busy, hold }) {
+function Row({ item, node, ui, onOpen, fields, fold, act, busy, hold, tag }) {
   const done = item.status === 'done';
   const second = secondLine(item, fields);
   const late = overdue(item);
   const toggle = async () => {
-    try { await ui.actions.attentionUpdate(item.id, { status: done ? 'todo' : 'done' }); }
+    try { await ui.actions.attentionUpdate(keyOf(item), { status: done ? 'todo' : 'done' }); }
     catch (error) { ui.notify(`${t('Could not update the task')}: ${error.message}`, 'error'); }
   };
   const mark = done ? 'Mark as not done' : 'Mark as done';
@@ -63,20 +70,21 @@ function Row({ item, node, ui, onOpen, fields, fold, act, busy, hold }) {
   const custom = fields && item.custom_status ? String(item.custom_status) : '';
   return (
     <Box
-      className="h5-attention-row" data-id={item.id} data-status={item.status} data-depth={node ? node.depth : 0} {...(hold || {})}
+      className="h5-attention-row" data-id={item.id} data-key={keyOf(item)} data-engine={engineOf(item)} data-status={item.status} data-depth={node ? node.depth : 0} {...(hold || {})}
       sx={{ display: 'flex', alignItems: 'flex-start', borderBottom: 1, borderColor: 'divider', pl: `${indent * INDENT_PX}px`, ...(hold ? ROW_SX : {}) }}
     >
       <IconButton className="h5-attention-check" {...named(t(mark))} aria-pressed={done} onClick={() => void toggle()} sx={{ flex: '0 0 auto', mt: 0.25, ml: 0.5, color: done ? 'success.light' : 'text.secondary' }}>
         <Icon name={done ? 'attentionDone' : 'attentionOpen'} size={22} />
       </IconButton>
       <Box sx={{ flex: '1 1 auto', minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-        <ListItemButton className="h5-attention-open" onClick={() => onOpen(item.id)} sx={{ flex: '0 0 auto', minWidth: 0, display: 'block', py: 1, pl: 0.5, pr: fold ? 0.5 : 2 }}>
+        <ListItemButton className="h5-attention-open" onClick={() => onOpen(keyOf(item))} sx={{ flex: '0 0 auto', minWidth: 0, display: 'block', py: 1, pl: 0.5, pr: fold ? 0.5 : 2 }}>
           {node && node.parent ? (
             <Box className="h5-attention-parent-hint" sx={{ fontSize: 12, lineHeight: 1.35, color: 'text.secondary', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {'↳ '}{node.parent.title}
             </Box>
           ) : null}
           <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 0.75, minWidth: 0 }}>
+            {tag ? <Box component="span" className="h5-attention-engine" sx={{ flex: '0 0 auto', display: 'inline-flex', mt: '0.5px' }}><DeviceTag device={tag} /></Box> : null}
             <Box className="h5-attention-title" sx={{ flex: '1 1 auto', minWidth: 0, fontSize: 15, lineHeight: 1.35, overflowWrap: 'anywhere', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', color: done || item.status === 'cancelled' ? 'text.secondary' : 'text.primary', textDecoration: done ? 'line-through' : 'none' }}>{item.title}</Box>
             {custom ? <Pill className="h5-attention-custom" label={custom} title={custom} tone="info" sx={{ flex: '0 1 auto', maxWidth: '45%', height: 20, mt: '1px', fontSize: 12, px: 1, display: 'inline-block', lineHeight: '18px', overflow: 'hidden', textOverflow: 'ellipsis' }} /> : null}
           </Box>
@@ -121,18 +129,20 @@ function Fold({ id, open, count, onToggle }) {
 // their parent; past MAX_INDENT the rows are drawn at that indent without more lines.
 function Node({ node, group, ctx }) {
   const { item, children } = node;
-  const open = !ctx.collapsed.has(item.id);
+  const engine = engineOf(item);
+  const open = !ctx.collapsed.has(collapseId(item));
   const count = children.length;
-  const fold = count ? <Fold id={item.id} open={open} count={count} onToggle={ctx.toggleCollapsed} /> : null;
+  const fold = count ? <Fold id={collapseId(item)} open={open} count={count} onToggle={ctx.toggleCollapsed} /> : null;
+  const movable = ctx.hold && ctx.movable(engine);
   return (
-    <Box className="h5-attention-node" data-id={item.id} data-group={group} data-movable={ctx.hold ? 'true' : undefined} role="listitem" sx={{ position: 'relative' }}>
-      <Row item={item} node={node} ui={ctx.ui} onOpen={ctx.onOpen} fields={ctx.fields} fold={fold} act={ctx.act} busy={ctx.busy.has(item.id)} hold={ctx.hold ? ctx.hold() : null} />
+    <Box className="h5-attention-node" data-id={item.id} data-key={keyOf(item)} data-engine={engine} data-group={group} data-movable={movable ? 'true' : undefined} role="listitem" sx={{ position: 'relative' }}>
+      <Row item={item} node={node} ui={ctx.ui} onOpen={ctx.onOpen} fields={ctx.fields(engine)} fold={fold} act={ctx.act} busy={ctx.busy.has(keyOf(item))} hold={movable ? ctx.hold() : null} tag={ctx.tagOf(engine)} />
       {count && open ? (
         <Box
-          className="h5-attention-level" data-level={`${group}:${item.id}`} role="list" aria-label={item.title}
+          className="h5-attention-level" data-level={`${group}:${collapseId(item)}`} role="list" aria-label={item.title}
           sx={{ position: 'relative', ...(node.depth < MAX_INDENT ? { '&::before': { content: '""', position: 'absolute', left: `${CIRCLE_X + node.indent * INDENT_PX}px`, top: 0, bottom: 0, borderLeft: 1, borderColor: 'divider', pointerEvents: 'none' } } : {}) }}
         >
-          {children.map(child => <Node key={child.item.id} node={child} group={group} ctx={ctx} />)}
+          {children.map(child => <Node key={keyOf(child.item)} node={child} group={group} ctx={ctx} />)}
         </Box>
       ) : null}
     </Box>
@@ -158,24 +168,41 @@ function RejectDialog({ item, onCancel, onReject }) {
   );
 }
 
-function QuickAdd({ ui }) {
+// The engine a new task goes to when more than one is listed (`h5-attention-add-on`, an engine key); this machine unless another was chosen.
+const ADD_ON_KEY = 'h5-attention-add-on';
+
+function QuickAdd({ ui, engines }) {
   const [title, setTitle] = useState('');
   const [busy, setBusy] = useState(false);
+  const [on, setOn] = useState(() => readKey(ADD_ON_KEY) || 'local');
+  // A choice that left the list (unlinked, hidden, offline) falls back to this machine, or the first engine that is left.
+  const picked = engines.find(engine => engine.key === on) || engines.find(engine => engine.key === 'local') || engines[0];
+  const engine = picked ? picked.key : 'local';
+  const choose = key => { setOn(key); if (key === 'local') removeKey(ADD_ON_KEY); else writeKey(ADD_ON_KEY, key); };
   const submit = async event => {
     event.preventDefault();
     const text = title.trim();
     if (!text || busy) return;
     setBusy(true);
-    try { await ui.actions.attentionCreate({ title: text }); setTitle(''); }
-    catch (error) { ui.notify(`${t('Could not add the task')}: ${error.message}`, 'error'); }
+    try { await ui.actions.attentionCreate({ title: text }, engine); setTitle(''); }
+    catch (error) { ui.notify(`${t('Could not add the task')}: ${errorText(error)}`, 'error'); }
     finally { setBusy(false); }
   };
   return (
     <Box component="form" id="h5-attention-add-form" onSubmit={event => void submit(event)} sx={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 1, px: 1.5, py: 1, borderBottom: 1, borderColor: 'divider' }}>
       <OutlinedInput
         id="h5-attention-add-input" size="small" fullWidth value={title} onChange={event => setTitle(event.target.value)} placeholder={t('Add a task')} disabled={busy}
-        inputProps={{ 'aria-label': t('Add a task'), maxLength: 300, enterKeyHint: 'done' }} sx={{ fontSize: 15 }}
+        inputProps={{ 'aria-label': t('Add a task'), maxLength: 300, enterKeyHint: 'done' }} sx={{ flex: '1 1 auto', fontSize: 15, minWidth: 0 }}
       />
+      {engines.length > 1 ? (
+        <NativeSelect
+          value={engine} onChange={event => choose(event.target.value)} disabled={busy} disableUnderline
+          inputProps={{ id: 'h5-attention-add-on', 'aria-label': t('Add on'), title: deviceText(picked) }}
+          sx={{ flex: '0 0 auto', maxWidth: 120, fontSize: 13, color: 'text.secondary', '& select': { py: 0, minHeight: 44, boxSizing: 'border-box', display: 'flex', alignItems: 'center', textOverflow: 'ellipsis' } }}
+        >
+          {engines.map(entry => <option key={entry.key} value={entry.key}>{`${t('on')} ${entry.local && !entry.name ? deviceParts(entry).name : shortName(deviceParts(entry).name, 12)}`}</option>)}
+        </NativeSelect>
+      ) : null}
       <IconButton id="h5-attention-add" type="submit" {...named(t('Add task'))} disabled={busy || !title.trim()}><Icon name="add" size={22} /></IconButton>
     </Box>
   );
@@ -191,8 +218,10 @@ const HEAD = { fontSize: 12, fontWeight: 600, color: 'text.secondary', textTrans
 // path (h5.js `ui.actions.openAnyPath`: GET /api/fs/content of the local Engine) every absolute path opens; without it a file opens in the file
 // sheet when it lies inside the working directory of a task of this machine (h5.js `openLocalPath`), else only its path is shown. Returns the
 // action, or null when the file cannot be opened here.
-export function contextFileAction(ui, absolute) {
+// A file of another engine's task (`engine`, 'remote:7') opens on that engine when it reads any path (h5.js `canOpenAnyPath`), else only its path shows.
+export function contextFileAction(ui, absolute, engine = 'local') {
   if (!absolute) return null;
+  if (engine !== 'local') return ui.actions.canOpenAnyPath && ui.actions.canOpenAnyPath(engine) ? () => ui.actions.openAnyPath(absolute, engine) : null;
   if (typeof ui.actions.openAnyPath === 'function') return () => ui.actions.openAnyPath(absolute);
   if (ui.actions.canOpenLocalPath && ui.actions.canOpenLocalPath(absolute)) return () => ui.actions.openLocalPath(absolute);
   return null;
@@ -219,16 +248,20 @@ function ContextCard({ item, state, ui, onLeave }) {
   const pending = context.pending && context.pending.text ? context.pending : null;
   const files = Array.isArray(context.files) ? context.files.slice(0, 50) : [];
   const summary = context.summary && context.summary.text ? context.summary : null;
-  const localHost = state.attention && state.attention.host;
+  // The host of the item's own engine (the `host` of its list); its way back is a task of that engine in the one task list.
+  const engine = engineOf(item);
+  const owner = ((state.attention && state.attention.engines) || []).find(entry => entry.key === engine);
+  const localHost = owner ? owner.host : engine === 'local' ? state.attention && state.attention.host : null;
   const here = onThisMachine(context, localHost);
-  const jump = jumpBack(context, { sourceKey: 'local', groups: state.taskList && state.taskList.groups, localHost }); // `groups`: this machine's tasks of the one list, by group
+  // `groups`: this machine's tasks of the one list, by group; `tasks`: every row of the one list (another engine's task is found there)
+  const jump = jumpBack(context, { sourceKey: engine, groups: state.taskList && state.taskList.groups, tasks: state.taskList && state.taskList.tasks, localHost });
   const reply = String(context.last_reply || '').trim();
   const turns = Number(context.turns) || 0;
   const place = [context.cwd, context.branch].filter(Boolean);
   if (!context.goal && !reply && !pending && !files.length && !summary && !place.length && !jump) return null;
   const refresh = async () => {
     setAsking(true);
-    try { await ui.actions.attentionSummarize(item.id); ui.notify(t('A new summary was asked for')); }
+    try { await ui.actions.attentionSummarize(keyOf(item)); ui.notify(t('A new summary was asked for')); }
     catch (error) { ui.notify(`${t('Could not ask for a summary')}: ${errorText(error)}`, 'error'); }
     finally { setAsking(false); }
   };
@@ -275,7 +308,7 @@ function ContextCard({ item, state, ui, onLeave }) {
             <Box component="ul" id="h5-attention-context-files" aria-label={t('Changed files')} sx={{ listStyle: 'none', m: 0, mt: 0.75, p: 0 }}>
               {files.map(file => {
                 const absolute = contextFilePath(context, file);
-                const open = here ? contextFileAction(ui, absolute) : null;
+                const open = here ? contextFileAction(ui, absolute, engine) : null;
                 const counts = (
                   <Box component="span" sx={{ flex: '0 0 auto', fontFamily: MONO, fontSize: 12 }}>
                     <Box component="span" sx={{ color: 'success.light' }}>{`+${Number(file.added) || 0}`}</Box>{' '}
@@ -339,7 +372,8 @@ function Timeline({ events, titleOf }) {
 }
 
 // The edit view of one task. The form starts from the item; Save sends only the changed fields (PATCH). The history is read when it opens.
-function EditDialog({ item, items, fields, movable, state, wide, ui, onClose, onLeave, onOpen, onMove }) {
+function EditDialog({ item, items, fields, movable, tag, state, wide, ui, onClose, onLeave, onOpen, onMove }) {
+  const key = keyOf(item);
   const [form, setForm] = useState(() => ({
     title: item.title || '', notes: item.notes || '', status: item.status, priority: item.priority || 'none', due_date: item.due_date || '',
     ...(fields ? { custom_status: item.custom_status || '', result: item.result || '', parent_id: item.parent_id == null ? '' : String(item.parent_id) } : {}),
@@ -350,9 +384,9 @@ function EditDialog({ item, items, fields, movable, state, wide, ui, onClose, on
   const [error, setError] = useState('');
   useEffect(() => {
     let live = true;
-    ui.actions.attentionDetail(item.id).then(data => { if (live) setEvents(Array.isArray(data && data.events) ? data.events : []); }).catch(() => { if (live) setEvents([]); });
+    ui.actions.attentionDetail(key).then(data => { if (live) setEvents(Array.isArray(data && data.events) ? data.events : []); }).catch(() => { if (live) setEvents([]); });
     return () => { live = false; };
-  }, [item.id, item.updated_at]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [key, item.updated_at]); // eslint-disable-line react-hooks/exhaustive-deps
   const set = key => event => setForm(current => ({ ...current, [key]: event.target.value }));
   const save = async () => {
     const body = patchFor(item, form);
@@ -360,13 +394,13 @@ function EditDialog({ item, items, fields, movable, state, wide, ui, onClose, on
     if (body.title !== undefined && !body.title) { setError(t('The title cannot be empty')); return; }
     setBusy(true);
     setError('');
-    try { await ui.actions.attentionUpdate(item.id, body); ui.notify(t('Saved'), 'success'); onClose(); }
+    try { await ui.actions.attentionUpdate(key, body); ui.notify(t('Saved'), 'success'); onClose(); }
     catch (failure) { setError(`${t('Could not save')}: ${failure.message}`); }
     finally { setBusy(false); }
   };
   const remove = async () => {
     setBusy(true);
-    try { await ui.actions.attentionDelete(item.id); setConfirming(false); ui.notify(t('Task deleted'), 'success'); onClose(); }
+    try { await ui.actions.attentionDelete(key); setConfirming(false); ui.notify(t('Task deleted'), 'success'); onClose(); }
     catch (failure) {
       // A task with sub-tasks is refused (409 HAS_CHILDREN): they are deleted or moved first.
       const children = failure.status === 409 && failure.data && failure.data.error === 'HAS_CHILDREN';
@@ -376,17 +410,19 @@ function EditDialog({ item, items, fields, movable, state, wide, ui, onClose, on
     finally { setBusy(false); }
   };
   const link = safeLink(item.link_url);
-  const children = fields ? childrenOf(items, item.id) : [];
-  const choices = fields ? parentChoices(items, item) : [];
-  const titleOf = id => { const found = items.find(entry => entry.id === id); return found ? found.title : ''; };
-  const steps = movable ? [['up', 'Move up'], ['down', 'Move down'], ['top', 'Move to top']].map(([step, label]) => ({ step, label, move: stepMove(items, item.id, step) })) : [];
+  const children = fields ? childrenOf(items, key) : [];
+  const choices = fields ? parentChoices(items, item) : []; // the tasks of its own engine only
+  const titleOf = id => { const found = items.find(entry => entry.id === id && engineOf(entry) === engineOf(item)); return found ? found.title : ''; };
+  const steps = movable ? [['up', 'Move up'], ['down', 'Move down'], ['top', 'Move to top']].map(([step, label]) => ({ step, label, move: stepMove(items, key, step) })) : [];
   return (
     <Dialog
       open onClose={onClose} fullScreen={!wide} fullWidth maxWidth="sm" aria-labelledby="h5-attention-edit-title" id="h5-attention-edit"
       slotProps={{ paper: { sx: { backgroundImage: 'none', ...(wide ? {} : { pt: 'env(safe-area-inset-top)', pb: 'env(safe-area-inset-bottom)' }) } } }}
     >
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, pl: 2, pr: 1, py: 0.5, borderBottom: 1, borderColor: 'divider' }}>
-        <Typography id="h5-attention-edit-title" variant="subtitle1" component="h2" sx={{ flex: '1 1 auto', fontWeight: 600 }}>{t('Edit task')}</Typography>
+        <Typography id="h5-attention-edit-title" variant="subtitle1" component="h2" sx={{ flex: '0 1 auto', fontWeight: 600 }}>{t('Edit task')}</Typography>
+        {tag ? <Box id="h5-attention-edit-engine" sx={{ display: 'inline-flex', minWidth: 0 }}><DeviceTag device={tag} /></Box> : null}
+        <Box sx={{ flex: '1 1 auto' }} />
         <IconButton id="h5-attention-edit-close" {...named(t('Close'))} onClick={onClose}><Icon name="close" size={22} /></IconButton>
       </Box>
       <Box sx={{ flex: '1 1 auto', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2, px: 2, pt: 2.5, pb: 2 }}>
@@ -418,7 +454,7 @@ function EditDialog({ item, items, fields, movable, state, wide, ui, onClose, on
         {steps.length ? (
           <Box id="h5-attention-edit-move" role="group" aria-label={t('Order')} sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
             {steps.map(({ step, label, move }) => (
-              <Button key={step} id={`h5-attention-move-${step}`} size="small" variant="outlined" color="inherit" disabled={!move} onClick={() => onMove(item.id, move)}>{t(label)}</Button>
+              <Button key={step} id={`h5-attention-move-${step}`} size="small" variant="outlined" color="inherit" disabled={!move} onClick={() => onMove(key, move)}>{t(label)}</Button>
             ))}
           </Box>
         ) : null}
@@ -427,8 +463,8 @@ function EditDialog({ item, items, fields, movable, state, wide, ui, onClose, on
             <Typography id="h5-attention-children-title" variant="subtitle2" component="h3" sx={{ mb: 0.25 }}>{`${t('Sub-tasks')} (${children.length})`}</Typography>
             <Box component="ul" sx={{ listStyle: 'none', m: 0, p: 0 }}>
               {children.map(child => (
-                <Box component="li" key={child.id}>
-                  <ButtonBase className="h5-attention-child" data-id={child.id} onClick={() => onOpen(child.id)} sx={{ width: '100%', justifyContent: 'flex-start', gap: 1, minHeight: 36, px: 0.5, borderRadius: 1, fontSize: 14, color: 'primary.light', textAlign: 'left', 'html[data-input="touch"] &': { minHeight: 44 } }}>
+                <Box component="li" key={keyOf(child)}>
+                  <ButtonBase className="h5-attention-child" data-id={child.id} onClick={() => onOpen(keyOf(child))} sx={{ width: '100%', justifyContent: 'flex-start', gap: 1, minHeight: 36, px: 0.5, borderRadius: 1, fontSize: 14, color: 'primary.light', textAlign: 'left', 'html[data-input="touch"] &': { minHeight: 44 } }}>
                     <Box component="span" sx={{ flex: '1 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{child.title}</Box>
                     <Box component="span" sx={{ flex: '0 0 auto', fontSize: 12, color: 'text.secondary' }}>{t(STATUS_LABELS[child.status] || 'To do')}</Box>
                   </ButtonBase>
@@ -445,7 +481,7 @@ function EditDialog({ item, items, fields, movable, state, wide, ui, onClose, on
           ><span translate="no">{item.link_label || item.link_url}</span></Button>
         ) : null}
         <Typography variant="caption" color="text.secondary" component="div" id="h5-attention-edit-meta" sx={{ overflowWrap: 'anywhere' }}>
-          {`${t('Source')}: `}<span translate="no">{item.source || 'user'}</span>{item.created_at ? ` · ${t('Created')} ${when(item.created_at)}` : ''}{item.updated_at ? ` · ${t('Updated')} ${when(item.updated_at)}` : ''}
+          {`${t('Source')}: `}<span translate="no">{item.source || 'user'}</span>{tag ? <>{' · '}<span translate="no">{deviceText(tag)}</span></> : null}{item.created_at ? ` · ${t('Created')} ${when(item.created_at)}` : ''}{item.updated_at ? ` · ${t('Updated')} ${when(item.updated_at)}` : ''}
         </Typography>
         {error ? <Typography id="h5-attention-edit-error" role="alert" variant="body2" color="error">{error}</Typography> : null}
         <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
@@ -475,16 +511,18 @@ function EditDialog({ item, items, fields, movable, state, wide, ui, onClose, on
 const COLLAPSED_KEY = 'h5-attention-collapsed'; // the ids of the parents whose sub-tasks are hidden (JSON list); default: shown
 const readKey = key => { try { return localStorage.getItem(key); } catch { return null; } };
 const writeKey = (key, value) => { try { localStorage.setItem(key, value); } catch { /* not remembered */ } };
+const removeKey = key => { try { localStorage.removeItem(key); } catch { /* not remembered */ } };
 
 // The drag of a T-Attention row (useListDrag, list-drag.jsx): a row is held (a finger 400 ms; a mouse held, or moved 4px) and moves among the rows drawn
-// at its own level of its group (its siblings), its sub-tasks with it; the title of another group is a drop target. `move` is the panel's move.
+// at its own level of its group (its siblings) of its own engine, its sub-tasks with it; the title of another group is a drop target. `move` is the
+// panel's move. The rows of another engine are no place for it: dragged over them, its slot stays at the nearest edge of its own engine's block.
 function attentionDrag(moveRef) {
   return {
-    rows: list => [...list.querySelectorAll('.h5-attention-node[data-id]')],
-    key: el => el.dataset.id,
+    rows: list => [...list.querySelectorAll('.h5-attention-node[data-key]')],
+    key: el => el.dataset.key,
     group: el => (el.parentElement && el.parentElement.dataset.level) || '',
     row: handle => handle.closest('.h5-attention-node'),
-    peers: (list, row) => [...row.parentElement.querySelectorAll(':scope > .h5-attention-node[data-movable="true"]')],
+    peers: (list, row) => [...row.parentElement.querySelectorAll(':scope > .h5-attention-node[data-movable="true"]')].filter(el => el.dataset.engine === row.dataset.engine),
     head: row => row,
     floatClass: 'h5-task-float h5-attention-float',
     clamp: false,
@@ -496,13 +534,13 @@ function attentionDrag(moveRef) {
     targets: (list, row) => [...list.querySelectorAll('.h5-attention-drop[data-group]')].filter(el => el.dataset.group !== row.dataset.group),
     drop: (ui, s, others, say) => {
       const after = s.index >= others.length;
-      const target = Number((after ? others[others.length - 1] : others[s.index]).ref);
-      moveRef.current(Number(s.ref), after ? { after: target } : { before: target });
+      const target = Number((after ? others[others.length - 1] : others[s.index]).el.dataset.id);
+      moveRef.current(s.ref, after ? { after: target } : { before: target });
       say(t(`Moved to position ${s.index + 1} of ${s.rows.length}`));
     },
     dropOn: (ui, s, target) => {
       const status = statusOfGroup(target.dataset.group);
-      if (status) moveRef.current(Number(s.ref), { position: 'top', status });
+      if (status) moveRef.current(s.ref, { position: 'top', status }); // the status changes on the item's own engine
     },
   };
 }
@@ -514,7 +552,7 @@ const DROP_SX = theme => ({
 });
 
 // The scrolling list of the groups. It is drawn inside the sheet, so the drag (and its touchmove guard) is set up when the list is there.
-function GroupList({ ui, attention, groups, items, fields, movable, showClosed, setShowClosed, collapsed, toggleCollapsed, onOpen, act, busy, move, open }) {
+function GroupList({ ui, attention, groups, items, fields, fieldsOf, movable, movableOf, tagOf, showClosed, setShowClosed, collapsed, toggleCollapsed, onOpen, act, busy, move, open }) {
   const listRef = useRef(null);
   const hostRef = useRef(null);
   const liveRef = useRef(null);
@@ -522,7 +560,8 @@ function GroupList({ ui, attention, groups, items, fields, movable, showClosed, 
   moveRef.current = move;
   const spec = useMemo(() => attentionDrag(moveRef), []);
   const drag = useListDrag(listRef, hostRef, liveRef, ui, spec);
-  const ctx = { ui, onOpen, fields, act, busy, collapsed, toggleCollapsed, hold: movable ? drag.hold : null };
+  const ctx = { ui, onOpen, fields: fieldsOf, movable: movableOf, tagOf, act, busy, collapsed, toggleCollapsed, hold: movable ? drag.hold : null };
+  const failed = attention.status === 'ready' && Array.isArray(attention.failed) ? attention.failed : [];
   return (
     <Box sx={theme => ({ flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column', ...DRAG_SX(theme), ...DROP_SX(theme) })}>
       <Box id="h5-attention-body" ref={listRef} sx={{ position: 'relative', flex: '1 1 auto', minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', pb: 2 }}>
@@ -534,6 +573,12 @@ function GroupList({ ui, attention, groups, items, fields, movable, showClosed, 
             <Button id="h5-attention-retry" variant="outlined" onClick={() => ui.actions.attentionReload()}>{t('Try again')}</Button>
           </Box>
         ) : null}
+        {/* An engine whose list could not be read (the others go on); it is read again as its stream reconnects. */}
+        {failed.map(entry => (
+          <Box key={entry.key} className="h5-attention-failed" data-engine={entry.key} role="status" sx={{ px: 2, py: 0.75, fontSize: 12, lineHeight: 1.4, color: 'text.secondary', borderBottom: 1, borderColor: 'divider', overflowWrap: 'anywhere' }}>
+            {t(`Could not load ${entry.name}`)}
+          </Box>
+        ))}
         {attention.status === 'ready' && !items.length ? <Box id="h5-attention-empty" role="status" sx={{ p: 3, textAlign: 'center', color: 'text.secondary' }}>{t('No tasks yet')}</Box> : null}
         {items.length ? groups.map(group => {
           const folded = group.folded && !showClosed;
@@ -556,7 +601,7 @@ function GroupList({ ui, attention, groups, items, fields, movable, showClosed, 
               )}
               {folded || !tree.length ? null : (
                 <Box className="h5-attention-level" data-level={`${group.key}:root`} role="list">
-                  {tree.map(node => <Node key={node.item.id} node={node} group={group.key} ctx={ctx} />)}
+                  {tree.map(node => <Node key={keyOf(node.item)} node={node} group={group.key} ctx={ctx} />)}
                 </Box>
               )}
             </Box>
@@ -582,19 +627,42 @@ export function AttentionPanel({ state, ui }) {
   const busyRef = useRef(new Set());
   const [collapsed, setCollapsed] = useState(() => readCollapsed(readKey(COLLAPSED_KEY)));
   const items = attention.items || [];
-  // A server with sub-tasks (the items have `parent_id`) gets the tree, the new fields and the drag; without /move (`noMove`) the drag is left out.
-  const fields = hasTree(items);
-  const movable = fields && !attention.noMove;
-  const groups = useMemo(() => groupItems(items, { keepEmpty: fields }), [items, fields]);
+  // The engines of the list, this machine first (attention-feed.mjs); with more than one every row has its engine tag.
+  const engines = useMemo(() => (Array.isArray(attention.engines) && attention.engines.length ? attention.engines : [{ key: 'local', local: true, label: 'This machine', name: '' }]), [attention.engines]);
+  const tagged = engines.length > 1;
+  const tags = useMemo(() => new Map(engines.map(engine => [engine.key, engine])), [engines]);
+  const tagOf = engine => (tagged ? tags.get(engine) || { key: engine, label: engine, name: '' } : null);
+  // An engine with sub-tasks (its items have `parent_id`) gets the tree, the new fields and the drag; one without /move (`noMove`) has no drag.
+  const treeEngines = useMemo(() => new Set(engines.map(engine => engine.key).filter(key => hasTree(items.filter(item => engineOf(item) === key)))), [engines, items]);
+  const noMove = Array.isArray(attention.noMove) ? attention.noMove : [];
+  const fields = treeEngines.size > 0;
+  const fieldsOf = engine => treeEngines.has(engine);
+  const movableOf = engine => treeEngines.has(engine) && !noMove.includes(engine);
+  const movable = engines.some(engine => movableOf(engine.key));
+  const order = useMemo(() => engines.map(engine => engine.key), [engines]);
+  const groups = useMemo(() => groupItems(items, { keepEmpty: fields, engines: order }), [items, fields, order]);
   const close = () => { setEditing(null); ui.actions.closeAttention(); };
-  // Opened for one task (a system notification was tapped): its edit view.
+  // The item a key names, or a bare id (an older caller: a task of this machine).
+  const find = ref => {
+    if (ref == null) return null;
+    const parsed = typeof ref === 'number' ? { engine: 'local', id: ref } : parseKey(ref);
+    return items.find(entry => keyOf(entry) === ref) || (parsed ? items.find(entry => entry.id === parsed.id && engineOf(entry) === parsed.engine) : null) || null;
+  };
+  // Opened for one task: its edit view.
   useEffect(() => {
     if (!open || attention.focus == null) return;
-    if (items.some(item => item.id === attention.focus)) { setEditing(attention.focus); ui.set(s => ({ attention: { ...s.attention, focus: null } })); }
+    const found = find(attention.focus);
+    if (found) { setEditing(keyOf(found)); ui.set(s => ({ attention: { ...s.attention, focus: null } })); }
   }, [open, attention.focus, items]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (!open) { setEditing(null); setRejecting(null); } }, [open]);
-  const item = editing == null ? null : items.find(entry => entry.id === editing);
-  useEffect(() => { if (editing != null && !item && attention.status === 'ready') { setEditing(null); ui.notify(t('This task was deleted')); } }, [editing, item]); // eslint-disable-line react-hooks/exhaustive-deps
+  const item = editing == null ? null : items.find(entry => keyOf(entry) === editing);
+  // The task went away: deleted, or its engine left the list (then nothing is said: it was not deleted).
+  useEffect(() => {
+    if (editing == null || item || attention.status !== 'ready') return;
+    setEditing(null);
+    const parsed = parseKey(editing);
+    if (!parsed || tags.has(parsed.engine)) ui.notify(t('This task was deleted'));
+  }, [editing, item]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const toggleCollapsed = id => setCollapsed(current => {
     const next = new Set(current);
@@ -615,34 +683,36 @@ export function AttentionPanel({ state, ui }) {
       return null;
     }
   };
-  const move = (id, body) => optimistic(list => moveLocal(list, id, body), () => ui.actions.attentionMove(id, body), 'Could not move the task');
+  const move = (key, body) => optimistic(list => moveLocal(list, key, body), () => ui.actions.attentionMove(key, body), 'Could not move the task');
   // The row buttons: Confirm (Review → Done), Reject (Review → Working, with a note), Handled (Needs you → Working, with a note). One request at a time.
-  const send = async (id, body) => {
-    if (busyRef.current.has(id)) return;
-    busyRef.current.add(id);
+  // `key`: the item's key (ids repeat between engines); the request goes to its engine.
+  const send = async (key, body) => {
+    if (busyRef.current.has(key)) return;
+    busyRef.current.add(key);
     setBusy(new Set(busyRef.current));
     try {
       await optimistic(
-        list => list.map(entry => (entry.id === id ? { ...entry, status: body.status, ...(body.attention_reason === null ? { attention_reason: null } : {}) } : entry)),
-        () => ui.actions.attentionUpdate(id, body), 'Could not update the task',
+        list => list.map(entry => (keyOf(entry) === key ? { ...entry, status: body.status, ...(body.attention_reason === null ? { attention_reason: null } : {}) } : entry)),
+        () => ui.actions.attentionUpdate(key, body), 'Could not update the task',
       );
     } finally {
-      busyRef.current.delete(id);
+      busyRef.current.delete(key);
       setBusy(new Set(busyRef.current));
     }
   };
   const act = (entry, name) => {
-    if (busyRef.current.has(entry.id)) return;
-    if (name === 'Confirm') void send(entry.id, { status: 'done' });
-    else if (name === 'Handled') void send(entry.id, { status: 'working', attention_reason: null, activity: { kind: 'note', text: 'Handled' } });
-    else if (name === 'Reject') setRejecting(entry.id);
+    const key = keyOf(entry);
+    if (busyRef.current.has(key)) return;
+    if (name === 'Confirm') void send(key, { status: 'done' });
+    else if (name === 'Handled') void send(key, { status: 'working', attention_reason: null, activity: { kind: 'note', text: 'Handled' } });
+    else if (name === 'Reject') setRejecting(key);
   };
   const reject = reason => {
-    const id = rejecting;
+    const key = rejecting;
     setRejecting(null);
-    if (id != null) void send(id, { status: 'working', attention_reason: null, activity: { kind: 'note', text: reason ? `Rejected: ${reason}` : 'Rejected' } });
+    if (key != null) void send(key, { status: 'working', attention_reason: null, activity: { kind: 'note', text: reason ? `Rejected: ${reason}` : 'Rejected' } });
   };
-  const rejectItem = rejecting == null ? null : items.find(entry => entry.id === rejecting);
+  const rejectItem = rejecting == null ? null : items.find(entry => keyOf(entry) === rejecting);
 
   const contents = (
     <>
@@ -655,17 +725,18 @@ export function AttentionPanel({ state, ui }) {
         </Box>
         <IconButton id="h5-attention-close" {...named(t('Close'))} onClick={close}><Icon name="close" size={22} /></IconButton>
       </Box>
-      <QuickAdd ui={ui} />
+      {/* A new task can go to this machine and to every engine whose list was read. */}
+      <QuickAdd ui={ui} engines={engines.filter(engine => engine.key === 'local' || engine.ready)} />
       {attention.status === 'loading' ? <LinearProgress id="h5-attention-loading" aria-label={t('Loading…')} sx={{ flex: '0 0 auto' }} /> : null}
       <GroupList
-        ui={ui} attention={attention} groups={groups} items={items} fields={fields} movable={movable} showClosed={showClosed} setShowClosed={setShowClosed}
+        ui={ui} attention={attention} groups={groups} items={items} fields={fields} fieldsOf={fieldsOf} movable={movable} movableOf={movableOf} tagOf={tagOf} showClosed={showClosed} setShowClosed={setShowClosed}
         collapsed={collapsed} toggleCollapsed={toggleCollapsed} onOpen={setEditing} act={act} busy={busy} move={move} open={open}
       />
-      {rejectItem ? <RejectDialog key={rejectItem.id} item={rejectItem} onCancel={() => setRejecting(null)} onReject={reject} /> : null}
+      {rejectItem ? <RejectDialog key={keyOf(rejectItem)} item={rejectItem} onCancel={() => setRejecting(null)} onReject={reject} /> : null}
       {/* onLeave: the user goes to a terminal or a file from the context card; the edit view closes, and on a phone the sheet too. */}
       {item ? (
         <EditDialog
-          key={item.id} item={item} items={items} fields={fields} movable={movable} state={state} wide={side} ui={ui} onClose={() => setEditing(null)}
+          key={keyOf(item)} item={item} items={items} fields={fieldsOf(engineOf(item))} movable={movableOf(engineOf(item))} tag={tagOf(engineOf(item))} state={state} wide={side} ui={ui} onClose={() => setEditing(null)}
           onLeave={() => { setEditing(null); if (!side) ui.actions.closeAttention(); }} onOpen={setEditing} onMove={move}
         />
       ) : null}

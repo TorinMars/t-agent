@@ -375,3 +375,115 @@ test('context file paths: relative to the folder, or already absolute', async ()
   assert.equal(contextFilePath({ cwd: 'relative' }, { path: 'a' }), null);
   assert.equal(contextFilePath({ cwd: '/w' }, {}), null);
 });
+
+// ── Several engines in one list (this machine and connected services) ──
+const on = (engine, id, status, parent, order, extra = {}) => ({ ...tree(id, status, parent, order, extra), engine, key: `${engine}:${id}` });
+
+test('engines: keys, tagging and reading a key back', async () => {
+  const { engineOf, itemKey, keyOf, parseKey, tagItem } = await load();
+  const raw = item(5, 'todo', { source: 'claude' });
+  const tagged = tagItem(raw, 'remote:7');
+  assert.deepEqual([tagged.engine, tagged.key, tagged.source, tagged.id], ['remote:7', 'remote:7:5', 'claude', 5], 'the reporter source stays');
+  assert.equal(raw.key, undefined, 'the answer is not changed');
+  assert.equal(keyOf(raw), 5, 'an untagged item is named by its id');
+  assert.equal(engineOf(raw), 'local');
+  assert.equal(itemKey('local', 3), 'local:3');
+  assert.deepEqual(parseKey('remote:7:5'), { engine: 'remote:7', id: 5 });
+  assert.deepEqual(parseKey('local:12'), { engine: 'local', id: 12 });
+  assert.deepEqual(parseKey(9), { engine: 'local', id: 9 }, 'a bare id is this machine');
+  assert.deepEqual(parseKey('9'), { engine: 'local', id: 9 });
+  assert.equal(parseKey('remote:7:x'), null);
+  assert.equal(parseKey(''), null);
+});
+
+test('attentionEngines: the listed devices, remote ones only when online with attention:remote; this machine alone before the list is known', async () => {
+  const { attentionEngines } = await load();
+  const local = { key: 'local', label: 'This machine', name: 'mac', listed: true, capabilities: null, instanceId: 'i-local' };
+  const k01 = { key: 'remote:7', label: 'K01', listed: true, capabilities: ['attention:remote'], instanceId: 'i-k01' };
+  const old = { key: 'remote:8', label: 'Old', listed: true, capabilities: ['tasks:archive'] };
+  const unknown = { key: 'remote:9', label: 'New', listed: true, capabilities: null };
+  const hidden = { key: 'remote:10', label: 'Hidden', listed: false, hidden: true, capabilities: ['attention:remote'] };
+  const offline = { key: 'remote:11', label: 'Away', listed: true, offline: true, capabilities: ['attention:remote'] };
+  assert.deepEqual(attentionEngines([local, k01, old, unknown, hidden, offline]).map(engine => engine.key), ['local', 'remote:7']);
+  assert.deepEqual(attentionEngines([local, k01])[1], { key: 'remote:7', local: false, label: 'K01', name: '', instanceId: 'i-k01' });
+  assert.deepEqual(attentionEngines(undefined).map(engine => engine.key), ['local'], 'a page without h5.js');
+  assert.deepEqual(attentionEngines([{ key: 'local', label: 'This machine' }]).map(engine => engine.key), ['local'], 'an older sources shape');
+  assert.deepEqual(attentionEngines([{ ...local, listed: false }, { ...k01, listed: false }]).map(engine => engine.key), ['local'], 'not known yet');
+  assert.deepEqual(attentionEngines([{ ...local, listed: false, hidden: true }, k01]).map(engine => engine.key), ['remote:7'], 'this machine hidden from the list');
+  assert.deepEqual(attentionEngines([{ ...local, listed: false, hidden: true }, old]).map(engine => engine.key), ['local'], 'never nothing');
+});
+
+test('groups of several engines: this machine first, then the engines in list order, each block by sort_order', async () => {
+  const { groupItems } = await load();
+  const items = [
+    on('remote:7', 1, 'todo', null, 90), on('local', 1, 'todo', null, 10), on('remote:3', 2, 'todo', null, 50),
+    on('local', 2, 'todo', null, 20), on('remote:7', 2, 'todo', null, 5), on('remote:7', 3, 'waiting_user', null, 1),
+  ];
+  const groups = groupItems(items, { engines: ['local', 'remote:7', 'remote:3'] });
+  assert.deepEqual(groups.map(group => group.key), ['needs', 'todo']);
+  assert.deepEqual(groups[1].items.map(entry => entry.key), ['local:2', 'local:1', 'remote:7:1', 'remote:7:2', 'remote:3:2']);
+  assert.deepEqual(groupItems(items).find(group => group.key === 'todo').items.slice(0, 2).map(entry => entry.key), ['local:2', 'local:1'], 'this machine first without an order');
+});
+
+test('trees of several engines: a parent_id means an item of the same engine, even when the ids repeat', async () => {
+  const { buildTree, childrenOf, descendantsOf, groupItems, parentChoices, visibleRows } = await load();
+  const items = [
+    on('local', 1, 'todo', null, 30), on('local', 2, 'todo', 1, 20),
+    on('remote:7', 1, 'todo', null, 30), on('remote:7', 2, 'todo', null, 25), on('remote:7', 3, 'todo', 2, 10),
+    on('remote:7', 4, 'review', 1, 5),
+  ];
+  const todo = groupItems(items, { engines: ['local', 'remote:7'] }).find(group => group.key === 'todo');
+  const nodes = buildTree(todo.items, items);
+  const keys = list => list.map(node => (node.children.length ? [node.item.key, keys(node.children)] : node.item.key));
+  assert.deepEqual(keys(nodes), [['local:1', ['local:2']], 'remote:7:1', ['remote:7:2', ['remote:7:3']]]);
+  assert.deepEqual(visibleRows(nodes, new Set(['remote:7:2'])).map(row => row.key), ['local:1', 'local:2', 'remote:7:1', 'remote:7:2']);
+  const review = groupItems(items).find(group => group.key === 'review');
+  assert.equal(buildTree(review.items, items)[0].parent.key, 'remote:7:1', 'the parent of another group is the one of the same engine');
+  assert.deepEqual(childrenOf(items, 'remote:7:1').map(entry => entry.key), ['remote:7:4']);
+  assert.deepEqual(childrenOf(items, 'local:1').map(entry => entry.key), ['local:2']);
+  assert.deepEqual([...descendantsOf(items, 'remote:7:2')], ['remote:7:3']);
+  const choices = parentChoices(items, items[3]).map(entry => entry.key);
+  assert.deepEqual(choices.sort(), ['remote:7:1', 'remote:7:4'], 'the Parent select lists only its own engine, never itself or a sub-task');
+});
+
+test('moves of several engines: neighbours of the same engine only, keys in, ids in the body', async () => {
+  const { moveLocal, rollbackItems, stepMove } = await load();
+  const items = [on('local', 1, 'todo', null, 30), on('local', 2, 'todo', null, 20), on('remote:7', 1, 'todo', null, 100), on('remote:7', 2, 'todo', null, 50)];
+  const moved = moveLocal(items, 'remote:7:2', { before: 1 });
+  assert.equal(moved.find(entry => entry.key === 'remote:7:2').sort_order, 101, 'before remote 1, not local 1');
+  assert.equal(moved.find(entry => entry.key === 'local:1').sort_order, 30);
+  assert.equal(moveLocal(items, 'local:1', { position: 'top', status: 'review' }).find(entry => entry.key === 'local:1').status, 'review');
+  assert.equal(moveLocal(items, 'remote:7:9', { before: 1 }), null);
+  assert.deepEqual(stepMove(items, 'remote:7:1', 'up'), null, 'the first of its engine: the local rows above are not its siblings');
+  assert.deepEqual(stepMove(items, 'remote:7:2', 'top'), { before: 1 });
+  assert.deepEqual(stepMove(items, 'local:2', 'down'), null, 'the last of this machine');
+  const back = rollbackItems(moved, items, moved);
+  assert.deepEqual(back.map(entry => entry.sort_order), items.map(entry => entry.sort_order));
+});
+
+test('changes of several engines: the key decides, so equal ids of two engines never mix', async () => {
+  const { applyChange, needsCount } = await load();
+  const items = [on('local', 1, 'todo', null, 1), on('remote:7', 1, 'todo', null, 1)];
+  const next = applyChange(items, { kind: 'updated', item: { ...items[1], status: 'waiting_user', updated_at: '2026-11-02T00:00:00Z' } });
+  assert.deepEqual(next.map(entry => entry.status), ['todo', 'waiting_user']);
+  assert.equal(needsCount(next), 1);
+  assert.deepEqual(applyChange(next, { kind: 'deleted', item: items[0] }).map(entry => entry.key), ['remote:7:1']);
+  assert.equal(applyChange(next, { kind: 'created', item: on('remote:3', 1, 'todo', null, 1) }).length, 3);
+});
+
+test('collapsed parents: ids of this machine, keys of another engine', async () => {
+  const { collapseId, readCollapsed } = await load();
+  assert.deepEqual([...readCollapsed('[1,"remote:7:5","x","remote:7:y",null]')], [1, 'remote:7:5']);
+  assert.equal(collapseId(on('local', 4, 'todo', null, 1)), 4);
+  assert.equal(collapseId(on('remote:7', 4, 'todo', null, 1)), 'remote:7:4');
+  assert.equal(collapseId(item(4, 'todo')), 4);
+});
+
+test('jump back to a task of another engine: its row of the one list, on that engine\'s host', async () => {
+  const { jumpBack } = await load();
+  const context = { host: 'k01', tagent: { task_id: 9, terminal_id: 'h5-abc' }, session: { resume: 'claude --resume s1' } };
+  const tasks = [{ id: 9, ref: 'local|9', source: 'local' }, { id: 9, ref: 'remote:7|9', source: 'remote:7' }];
+  assert.deepEqual(jumpBack(context, { sourceKey: 'remote:7', tasks, localHost: 'K01' }), { kind: 'terminal', taskId: 'remote:7|9', terminalId: 'h5-abc' });
+  assert.equal(jumpBack(context, { sourceKey: 'remote:3', tasks, localHost: 'k01' }).kind, 'copy', 'that engine\'s task is not listed');
+  assert.equal(jumpBack(context, { sourceKey: 'remote:7', tasks, localHost: 'other' }).kind, 'copy', 'it ran on yet another machine');
+});

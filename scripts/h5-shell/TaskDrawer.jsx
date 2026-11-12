@@ -271,7 +271,7 @@ function Sessions({ ui, taskId, sessions, menu, drag }) {
 // `title`), in the colour its instance id gives it on every client (task-order.mjs). An offline device's tag is muted (dashed, disabled text). With the
 // task's sessions open (`expanded`) the tag shows it in the same width: its 1px border takes the tag's own colour (solid; the text colour for an
 // offline tag) and the tint gets stronger.
-function DeviceTag({ device, unplaced, expanded }) {
+export function DeviceTag({ device, unplaced, expanded }) {
   const parts = deviceParts(device);
   const { index, color, background, open } = tagColor(device.instanceId);
   const title = [deviceText(device), device.offline ? t('Offline') : '', unplaced ? t('Its tasks can be moved once this device is updated') : ''].filter(Boolean).join(' · ');

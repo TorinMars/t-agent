@@ -29,7 +29,7 @@ export const initialState = () => ({
   taskName: '', // empty: "Choose a task"
   sessionName: '',
   terminalAgent: null, // 'claude' / 'codex' when the current terminal is that agent's, null for a plain shell: picks the presets of the saved commands list
-  sources: [{ key: 'local', label: 'This machine' }], // every connected service: { key, label, offline, hidden }
+  sources: [{ key: 'local', label: 'This machine' }], // every connected service: { key, label, name, offline, hidden, listed, instanceId, capabilities }
   sourceKey: 'local', // the service of the shown task
   sourceLabel: '', // its name when it is not this machine (shown in the header)
   hiddenDevices: { supported: false, keys: [] }, // the devices left out of the list ("Show in task list"); `supported`: false on an older server
@@ -63,7 +63,8 @@ export const initialState = () => ({
   taskDialog: null, // { kind: 'delete' | 'workdir' | 'archive' | 'visibility', id, title, workDir, error, busy, status, devices } a confirmation or form of a task; `status` (loading | ready | error) and `devices` belong to 'visibility'
   notice: null, // { id, message, type } the last floating notice
   // T-Attention (attention-feed.mjs, Attention.jsx): { open, status: idle | loading | ready | error, items, needs (the waiting_user count, the badge
-  // on #h5-attention), live (the stream is connected), focus (a task id whose edit view opens) }
+  // on #h5-attention), live (the stream is connected), focus (a task id whose edit view opens) }; with several engines also engines, failed, noMove
+  // (see "Every engine in one list" in DESIGN.md)
   attention: { open: false, status: 'idle', items: null, needs: 0, live: false, focus: null },
   columns: null, // the multi-column view of a wide screen (Columns.jsx `startColumns`): null on a page that never offers it (a pane, a framed page)
   activeCount: 0, // running or pending terminal sessions of the listed services (the badge on #h5-cycle; h5.js `showActiveCount`)

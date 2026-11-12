@@ -10,10 +10,11 @@
 //   would (h5.js `ui.actions.paneOpen`);
 // - a sideways wheel or trackpad swipe (or Shift+wheel) that nothing inside the pane can scroll is posted as `scroll-x` ({ dx }) and the top page
 //   scrolls its strip: the gesture never reaches xterm, and a vertical one is never touched; Ctrl+Alt+Left / Right (Ctrl+Option on a Mac) is posted as
-//   `step` ({ step: -1 | 1 }) and never reaches the terminal (see "Multi-column view" in DESIGN.md);
+//   `step` ({ step: -1 | 1 }), with Shift as `move` (this column one place left / right), and never reaches the terminal (see "Multi-column view"
+//   in DESIGN.md);
 // - the page takes no focus by itself until the person pressed a pointer or a key in this pane (`H5Pane.engaged()`): otherwise every column would pull the
 //   focus into its frame as it loads.
-import { columnStep, sidewaysDelta } from './columns.mjs';
+import { columnMove, columnStep, deviceOfRow, sidewaysDelta } from './columns.mjs';
 
 export const PANE_ID = /^[a-z0-9]{1,16}$/;
 export const PANE_MESSAGE = 't-agent-pane';
@@ -80,14 +81,18 @@ export function startPane(ui, id, { win = window, doc = document } = {}) {
   });
   win.H5Pane = pane;
 
-  // The task and session shown (the header's two lines), once the page has started and on every change.
+  // The task and session shown (the header's two lines) and, when the task list tags the shown task, its device (the header's engine tag; the column's
+  // tab draws the same tag), once the page has started and on every change.
   let started = false;
   let title = null;
   const sendTitle = () => {
     const state = ui.get();
-    const next = { title: state.taskName || '', session: state.sessionName || '' };
-    if (title && title.title === next.title && title.session === next.session) return;
-    title = next;
+    const row = state.taskList && Array.isArray(state.taskList.tasks) ? state.taskList.tasks.find(item => item.selected && item.device) : null;
+    const device = deviceOfRow(row);
+    const next = { title: state.taskName || '', session: state.sessionName || '', ...(device ? { device } : {}) };
+    const key = JSON.stringify(next);
+    if (title === key) return;
+    title = key;
     post('title', next);
   };
   ui.subscribe(() => { if (started) sendTitle(); });
@@ -114,13 +119,16 @@ export function startPane(ui, id, { win = window, doc = document } = {}) {
     event.stopPropagation();
     post('scroll-x', { dx });
   }, { capture: true, passive: false });
-  // Ctrl+Alt+Left / Right: the previous / next column, never a key for the terminal (xterm would send it as a word move).
+  // Ctrl+Alt+Left / Right: the previous / next column; with Shift: this column one place left / right. Never a key for the terminal (xterm would send
+  // it as a word move or a selection).
   win.addEventListener('keydown', event => {
     const step = event.isComposing ? 0 : columnStep(event);
-    if (!step) return;
+    const move = event.isComposing ? 0 : columnMove(event);
+    if (!step && !move) return;
     event.preventDefault();
     event.stopPropagation();
-    post('step', { step }); // a held key moves on, one column per repeat
+    if (step) post('step', { step }); // a held key moves on, one column per repeat
+    else post('move', { step: move });
   }, true);
 
   win.addEventListener('message', event => {

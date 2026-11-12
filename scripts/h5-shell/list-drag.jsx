@@ -9,7 +9,7 @@ import { t } from './common.jsx';
 // `data-drop-over` and puts the row back in its place) and `dropOn(ui, s, target, say)` (the row was dropped on a target).
 export const DRAG_MOVE_PX = 4;
 export const HOLD_MS = 400;
-const HOLD_SLOP_PX = 8;
+export const HOLD_SLOP_PX = 8;
 const EDGE_PX = 40;
 const MAX_SCROLL_PX = 14;
 export const SHIFT_MS = 180; // the rows sliding out of the way, and to their new places after an order change

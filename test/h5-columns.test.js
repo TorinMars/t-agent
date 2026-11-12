@@ -198,3 +198,68 @@ test('reveal and edges: the scroll that shows a column whole, and which sides hi
   assert.deepEqual(hiddenEdges({ scrollLeft: 1740, scrollWidth: 3180, clientWidth: 1440 }), { left: true, right: false });
   assert.deepEqual(hiddenEdges({ scrollLeft: 1739.5, scrollWidth: 3180, clientWidth: 1440 }), { left: true, right: false }, 'rounding');
 });
+
+test('reorder: a column moved to a place or one step, and the stored order', async () => {
+  const { moveColumn, shiftColumn, readLayout, writeLayout } = await load();
+  const ids = ['a', 'b', 'c', 'd'];
+  assert.deepEqual(moveColumn(ids, 'a', 2), ['b', 'c', 'a', 'd']);
+  assert.deepEqual(moveColumn(ids, 'd', 0), ['d', 'a', 'b', 'c']);
+  assert.deepEqual(moveColumn(ids, 'b', 99), ['a', 'c', 'd', 'b'], 'clamped to the end');
+  assert.deepEqual(moveColumn(ids, 'c', -5), ['c', 'a', 'b', 'd'], 'clamped to the start');
+  assert.equal(moveColumn(ids, 'b', 1), ids, 'the same place: the same array');
+  assert.equal(moveColumn(ids, 'x', 0), ids, 'an unknown id');
+  assert.deepEqual(ids, ['a', 'b', 'c', 'd'], 'the input is not changed');
+  assert.deepEqual(shiftColumn(ids, 'b', 1), ['a', 'c', 'b', 'd']);
+  assert.deepEqual(shiftColumn(ids, 'b', -1), ['b', 'a', 'c', 'd']);
+  assert.equal(shiftColumn(ids, 'a', -1), ids, 'the first stays');
+  assert.equal(shiftColumn(ids, 'd', 1), ids, 'the last stays');
+  assert.equal(shiftColumn(ids, 'b', 2), ids, 'one step only');
+  assert.equal(shiftColumn(ids, 'x', 1), ids);
+  // The order is what is stored, and it comes back as it was.
+  const moved = moveColumn(ids, 'a', 3);
+  assert.deepEqual(readLayout(writeLayout({ on: true, ids: moved })), { on: true, ids: ['b', 'c', 'd', 'a'] });
+});
+
+test('the DOM order of the columns never follows a reorder: kept ids in their old order, new ones at the end', async () => {
+  const { mountOrder } = await load();
+  assert.deepEqual(mountOrder([], ['a', 'b', 'c']), ['a', 'b', 'c'], 'a fresh page creates them in the stored order');
+  assert.deepEqual(mountOrder(['a', 'b', 'c'], ['c', 'a', 'b']), ['a', 'b', 'c'], 'a reorder moves nothing');
+  assert.deepEqual(mountOrder(['a', 'b', 'c'], ['c', 'a']), ['a', 'c'], 'a closed column goes, the others keep their order');
+  assert.deepEqual(mountOrder(['a', 'b'], ['b', 'a', 'n']), ['a', 'b', 'n'], 'a new one at the end');
+  assert.deepEqual(mountOrder(null, ['x']), ['x']);
+});
+
+test('pane messages: the device of a tab, and column moves', async () => {
+  const { readPaneMessage, readDevice, deviceOfRow, tagOf } = await load();
+  assert.deepEqual(readPaneMessage({ type: 't-agent-pane', paneId: 'ab1', event: 'title', title: 'Fix', session: 'T1', device: { name: ' K01 ', instanceId: 'i-1', local: false, extra: 1 } }),
+    { paneId: 'ab1', event: 'title', title: 'Fix', session: 'T1', device: { name: 'K01', instanceId: 'i-1', local: false, offline: false } });
+  assert.deepEqual(readPaneMessage({ type: 't-agent-pane', paneId: 'ab1', event: 'title', title: 'Fix', device: { local: true } }).device,
+    { name: '', instanceId: '', local: true, offline: false }, 'this machine of an older server has no name');
+  for (const bad of [null, 'K01', {}, { name: '' }, { name: 42 }, { local: 'yes' }]) assert.equal(readDevice(bad), null, JSON.stringify(bad));
+  assert.equal('device' in readPaneMessage({ type: 't-agent-pane', paneId: 'ab1', event: 'title', title: 'Fix', device: { name: '' } }), false, 'no usable device: none');
+  assert.equal(readDevice({ name: 'x'.repeat(200) }).name.length, 80);
+  assert.equal(readDevice({ name: 'Off', offline: true }).offline, true);
+  // From a tagged task row of the pane's list (h5.js deviceTag): this machine is named by `name`, a remote device by `label`.
+  assert.deepEqual(deviceOfRow({ device: { key: 'local', local: true, label: 'This machine', name: 'MacBook', instanceId: 'm1', offline: false } }), { name: 'MacBook', instanceId: 'm1', local: true, offline: false });
+  assert.deepEqual(deviceOfRow({ device: { key: 'remote:7', local: false, label: 'VPS', name: '', instanceId: 'v1', offline: true } }), { name: 'VPS', instanceId: 'v1', local: false, offline: true });
+  assert.equal(deviceOfRow({ device: null }), null);
+  assert.equal(deviceOfRow(null), null);
+  // Back into the shape DeviceTag draws.
+  assert.deepEqual(tagOf({ name: 'MacBook', instanceId: 'm1', local: true, offline: false }), { key: 'local', local: true, name: 'MacBook', label: 'MacBook', instanceId: 'm1', offline: false });
+  assert.deepEqual(tagOf({ name: 'VPS', instanceId: 'v1', local: false, offline: true }), { key: 'remote', local: false, name: '', label: 'VPS', instanceId: 'v1', offline: true });
+  assert.equal(tagOf(null), null);
+  assert.deepEqual(readPaneMessage({ type: 't-agent-pane', paneId: 'ab1', event: 'move', step: 1 }), { paneId: 'ab1', event: 'move', step: 1 });
+  assert.deepEqual(readPaneMessage({ type: 't-agent-pane', paneId: 'ab1', event: 'move', step: -1 }), { paneId: 'ab1', event: 'move', step: -1 });
+  for (const step of [undefined, 0, 2, '1']) assert.equal(readPaneMessage({ type: 't-agent-pane', paneId: 'ab1', event: 'move', step }), null, String(step));
+});
+
+test('column move keys: Ctrl+Alt+Shift+Left / Right, never the step keys', async () => {
+  const { columnMove, columnStep } = await load();
+  assert.equal(columnMove({ key: 'ArrowRight', ctrlKey: true, altKey: true, shiftKey: true }), 1);
+  assert.equal(columnMove({ key: 'ArrowLeft', ctrlKey: true, altKey: true, shiftKey: true }), -1);
+  for (const other of [{ key: 'ArrowRight', ctrlKey: true, altKey: true }, { key: 'ArrowRight', ctrlKey: true, shiftKey: true }, { key: 'ArrowRight', altKey: true, shiftKey: true },
+    { key: 'ArrowRight', ctrlKey: true, altKey: true, shiftKey: true, metaKey: true }, { key: 'ArrowUp', ctrlKey: true, altKey: true, shiftKey: true }, {}]) {
+    assert.equal(columnMove(other), 0, JSON.stringify(other));
+  }
+  assert.equal(columnStep({ key: 'ArrowRight', ctrlKey: true, altKey: true, shiftKey: true }), 0, 'a move is never a step');
+});

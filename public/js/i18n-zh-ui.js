@@ -788,6 +788,8 @@ I18n.add({
   "Add column": "添加一栏",
   "Close column": "关闭此栏",
   "Column {1}": "第 {1} 栏",
+  "Column tabs": "栏标签",
+  "Column moved to position {1} of {2}": "此栏已移到第 {1} 位，共 {2} 栏",
   "Expand the sidebar": "展开侧边栏",
   "Plan usage": "套餐用量",
   "Usage": "用量",

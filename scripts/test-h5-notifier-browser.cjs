@@ -24,7 +24,7 @@ const html = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8').replace(
       window.calls = [];
       window.confirm = () => true;
       const rules = { statuses: ['waiting_user', 'failed', 'review'], modes: {}, callDelayMinutes: 0, quietHours: { enabled: false, start: '22:00', end: '08:00', timeZone: '' }, rateLimit: { message: 20, call: 6 }, publicUrl: '' };
-      window.server = { rules, tg: { loggedIn: false, step: 'none', apiId: null, hasApiHash: false, phone: '', account: null, target: null, callSeconds: 30 } };
+      window.server = { recent: [{ at: '2026-11-12T10:00:00.000Z', notifier: 'telegram', item_id: 4, status: 'review', mode: 'message', outcome: 'foreground', detail: 'the session is open on screen' }], rules, tg: { loggedIn: false, step: 'none', apiId: null, hasApiHash: false, phone: '', account: null, target: null, callSeconds: 30 } };
       const view = () => ({ rules: server.rules, statuses: ['todo', 'working', 'waiting_user', 'review', 'done', 'failed', 'cancelled'], modes: ['message', 'call', 'off'], notifiers: [{ name: 'telegram', label: 'Telegram', configFields: [], status: server.tg }], recent: server.recent || [] });
       window.svgOf = n => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="${n}" height="10" fill="#000"/></svg>`;
       window.fetch = async (url, options = {}) => {
@@ -119,6 +119,13 @@ const html = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8').replace(
     await page.locator('#h5-notify-mode-telegram-waiting_user').waitFor({ state: 'visible' });
     assert.equal(await page.locator('.h5-plugin-page').count(), 2);
     assert.equal(await page.locator('.h5-plugin-page[data-name="rules"] .h5-plugin-page-title').textContent(), 'Message and call rules');
+    // The status choices read as what happened: finished (review), needs you, failed; and the foreground rule is said under them.
+    const rulesText = await page.locator('.h5-plugin-page[data-name="rules"]').textContent();
+    for (const label of ['Finished (ready for review) · Telegram', 'Needs you · Telegram', 'Failed · Telegram']) assert.ok(rulesText.includes(label), `the choice "${label}" is shown`);
+    assert.ok(!rulesText.includes('Review · Telegram'), 'the old label is gone');
+    assert.equal(await page.locator('#h5-notify-foreground').textContent(), 'No message while the session is open on a screen you used in the last 5 minutes.');
+    // A skip because the session was on screen is named in the recent list.
+    assert.equal(await page.locator('#h5-notify-recent').textContent().then(text => text.includes('#4 Finished (ready for review) · Skipped: the session was open on screen')), true);
     // Rules: the defaults are echoed (three statuses send a message, the others are off), then saved changed.
     assert.equal(await page.inputValue('#h5-notify-mode-telegram-waiting_user'), 'message');
     assert.equal(await page.inputValue('#h5-notify-mode-telegram-done'), 'off');

@@ -140,6 +140,41 @@ test('terminal tokens: in memory only, not in the token list, work as Bearer tok
   assert.equal(s.service.terminalTokenCount(), 0);
 });
 
+test('terminal tokens tie the items they write to their terminal (context.tagent), never overwriting one; other writers are unaffected', async t => {
+  const s = await startServer(t);
+  const { token: termToken } = s.service.issueTerminalToken({ taskId: 12, terminalId: 'ab-1' });
+  const term = { Authorization: `Bearer ${termToken}` };
+  const patch = (id, body, headers) => fetch(`${s.base}/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body) });
+  const put = (ref, body, headers) => fetch(`${s.base}/by-ref/${ref}`, { method: 'PUT', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body) });
+  const mine = { task_id: '12', terminal_id: 'ab-1' };
+  // Create (the t-attention skill registering a task from a T-Agent terminal): tied, other context kept.
+  const created = await (await post(s.base, { title: 'Skill task', status: 'working', context: { goal: 'ship it' } }, term)).json();
+  assert.deepEqual(created.context, { goal: 'ship it', tagent: mine });
+  // A body that names a tagent itself (the Claude listener) keeps its own.
+  const listener = await (await put('claude:s1', { title: 'Listener', status: 'working', context: { tagent: { task_id: '12', terminal_id: 'other' } } }, term)).json();
+  assert.deepEqual(listener.context.tagent, { task_id: '12', terminal_id: 'other' });
+  const later = await (await put('claude:s1', { status: 'review', context: { last_reply: 'done' } }, term)).json();
+  assert.deepEqual(later.context.tagent, { task_id: '12', terminal_id: 'other' }, 'an existing tagent is never overwritten');
+  // Items made elsewhere: the session (the page) and a normal CLI token make no tagent; a terminal token's update adds it when it is missing.
+  const byUser = s.service.create({ title: 'By hand' }, { actor: 'user' });
+  assert.equal(byUser.context, null);
+  const { token: cliToken } = s.service.createToken({ name: 'cli' });
+  const cli = await (await post(s.base, { title: 'CLI' }, { Authorization: `Bearer ${cliToken}` })).json();
+  assert.equal(cli.context, null);
+  const cliPatched = await (await patch(cli.id, { status: 'review' }, { Authorization: `Bearer ${cliToken}` })).json();
+  assert.equal(cliPatched.context, null);
+  const tied = await (await patch(byUser.id, { status: 'waiting_user' }, term)).json();
+  assert.deepEqual(tied.context, { tagent: mine });
+  // A terminal of another task cannot move it.
+  const { token: otherToken } = s.service.issueTerminalToken({ taskId: 13, terminalId: 'zz' });
+  const kept = await (await patch(byUser.id, { status: 'review' }, { Authorization: `Bearer ${otherToken}` })).json();
+  assert.deepEqual(kept.context.tagent, mine);
+  // Clearing the whole context, or removing tagent by name, is respected.
+  assert.equal((await (await patch(created.id, { context: null }, term)).json()).context, null);
+  const removed = await (await patch(listener.id, { context: { tagent: null } }, term)).json();
+  assert.equal(removed.context.tagent, undefined);
+});
+
 test('pairing: one active 6-digit code for 10 minutes; a claim gives the page URL and one token, once', async t => {
   const clock = { at: Date.parse('2026-11-08T10:00:00Z') };
   const s = await startServer(t, { clock });

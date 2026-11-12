@@ -1885,6 +1885,7 @@
     if (agentChat) agentChat.destroy();
     agentChat = null;
     agentFor = null;
+    queueMicrotask(syncPresence); // the terminal under the chat may be in the foreground again
     agentView.hidden = true;
     agentView.style.height = agentView.style.top = '';
     if (window.visualViewport) {
@@ -1914,6 +1915,7 @@
       } });
     agentFor = { source: source.key, taskId: task.id, conversation: conversation.id, title: conversation.title };
     renderTabs();
+    queueMicrotask(syncPresence); // a terminal hidden under the chat is not in the foreground
   }
   async function openAgentSessions(agent, label) {
     const current = task;
@@ -2011,6 +2013,7 @@
     s.term.blur();
     s.clipboard?.dismiss(); // a copy request of a terminal that is no longer shown goes away
     scheduleWheelSync();
+    syncPresence();
   }
   function showWarm(s) {
     warm = [s, ...warm.filter(item => item !== s)];
@@ -2024,7 +2027,57 @@
     if (!s.ws) { clearTimeout(s.timer); s.timer = null; open(s); }
     ackShown();
     focusTerminalSoon(s);
+    syncPresence();
   }
+  // ── Foreground presence (`{ type: 'presence', foreground }`, a binary control frame; routes/terminal.js, lib/terminal-presence.js) ──
+  // Every connected terminal socket tells the server whether this terminal is in the foreground: it is the one shown in this page (not hidden
+  // under a chat), the page is visible, and the person used the page (pointerdown, keydown, touchstart, wheel, input; loading the page counts) in
+  // the last PRESENCE_IDLE_MS. The T-Attention notifiers send nothing for a session in the foreground. It is sent once after every (re)connect (with the
+  // history snapshot) and then only when the value changes: a terminal shown or hidden, a chat opened or closed, visibilitychange, the idle timer
+  // running out, activity after it ran out. Only to a server that speaks the binary protocol: an old text-protocol server would type it into the shell.
+  // In the multi-column view each pane is a page of its own with its own sockets and visibility; the activity is shared by the top page and all
+  // its panes (one record on the top window, `__tAgentActivity`), so using one column keeps every visible column in the foreground.
+  const PRESENCE_IDLE_MS = 5 * 60 * 1000;
+  const activity = (() => {
+    if (PANE) { try { const shared = window.top.__tAgentActivity; if (shared && shared.listeners) return shared; } catch { /* no shared record: own one */ } }
+    const own = { at: Date.now(), listeners: new Set() };
+    if (!PANE) window.__tAgentActivity = own;
+    return own;
+  })();
+  const activeNow = () => Date.now() - activity.at < PRESENCE_IDLE_MS;
+  function noteActivity() {
+    const now = Date.now();
+    const before = activity.at;
+    activity.at = now;
+    if (now - before < 1000) return; // nobody changes state within a second; the idle timers read `at` when they fire
+    for (const fn of [...activity.listeners]) { try { fn(); } catch { activity.listeners.delete(fn); } }
+  }
+  for (const type of ['pointerdown', 'keydown', 'touchstart', 'wheel', 'input']) document.addEventListener(type, noteActivity, { capture: true, passive: true });
+  let idleTimer = 0;
+  function onActivityChange() {
+    clearTimeout(idleTimer);
+    idleTimer = 0;
+    const left = activity.at + PRESENCE_IDLE_MS - Date.now();
+    if (left > 0) idleTimer = setTimeout(onActivityChange, left + 50);
+    syncPresence();
+  }
+  activity.listeners.add(onActivityChange);
+  window.addEventListener('pagehide', () => activity.listeners.delete(onActivityChange));
+  window.addEventListener('pageshow', () => { activity.listeners.add(onActivityChange); onActivityChange(); }); // back from the page cache
+  document.addEventListener('visibilitychange', () => syncPresence());
+  const foregroundOf = s => shownTerminal() === s && activeNow();
+  function sendPresence(s, force = false) {
+    const ws = s.ws;
+    if (s.disposed || !ws || ws.readyState !== WebSocket.OPEN || TerminalProtocol.state(ws).mode !== 'binary') return;
+    const foreground = foregroundOf(s);
+    if (!force && s.presenceWs === ws && s.presence === foreground) return;
+    s.presenceWs = ws;
+    s.presence = foreground;
+    try { TerminalProtocol.send(ws, { type: 'presence', foreground }); } catch { /* closing */ }
+  }
+  function syncPresence() { for (const s of warm) sendPresence(s); }
+  queueMicrotask(onActivityChange); // starts the idle timer once the whole page script has run
+
   // Closes the warm sessions of one terminal (it is restarted or deleted), or all of them.
   function closeWarm(match = () => true) {
     for (const s of warm.filter(match)) disposeSession(s);
@@ -2501,7 +2554,7 @@
       heartbeat.touch();
       const message = TerminalProtocol.parse(ws, event.data); // null: terminal output, never a control message
       if (message) {
-        if (message.type === 'history') replay(s, ws, message);
+        if (message.type === 'history') { replay(s, ws, message); sendPresence(s, true); } // once after every (re)connect
         return; // history-page, pong
       }
       s.term.write(typeof event.data === 'string' ? event.data : new Uint8Array(event.data));

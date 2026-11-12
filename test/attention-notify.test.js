@@ -48,7 +48,7 @@ function fakeNotifier(name = 'fake', behaviour = {}) {
     },
   };
 }
-function setup({ notifiers, clock = { now: Date.parse('2026-11-08T12:00:00Z') } } = {}) {
+function setup({ notifiers, clock = { now: Date.parse('2026-11-08T12:00:00Z') }, ...extra } = {}) {
   const db = makeDb();
   const bus = fakeBus();
   const timers = fakeTimers();
@@ -56,7 +56,7 @@ function setup({ notifiers, clock = { now: Date.parse('2026-11-08T12:00:00Z') } 
   const fake = fakeNotifier();
   const service = notify.createAttentionNotify({
     db, sessionSecret: SECRET, onChange: bus.onChange, getOwner: () => 'owner', notifiers: notifiers || [fake.plugin],
-    log: (level, message) => logs.push(`${level} ${message}`), now: () => clock.now, timers,
+    log: (level, message) => logs.push(`${level} ${message}`), now: () => clock.now, timers, ...extra,
   });
   return { db, bus, timers, logs, fake, service, clock };
 }
@@ -79,6 +79,86 @@ test('only the statuses in the rules notify, and only when the status changes', 
   bus.emit(change('updated', item(6, 'waiting_user'), item(6, 'working')));
   await settle();
   assert.deepEqual(fake.calls.slice(3).map(call => call.item.id), [5]);
+});
+
+test('the default rules notify only on entering waiting_user, failed or review: never working, done, todo or cancelled', async () => {
+  const { bus, fake, service } = setup();
+  assert.deepEqual(service.getRules('owner').statuses, ['waiting_user', 'failed', 'review']);
+  bus.emit(change('created', item(1, 'working'), null));
+  bus.emit(change('updated', item(1, 'done'), item(1, 'working')));
+  bus.emit(change('created', item(2, 'todo'), null));
+  bus.emit(change('updated', item(2, 'cancelled'), item(2, 'todo')));
+  bus.emit(change('updated', item(3, 'working'), item(3, 'review')));
+  await settle();
+  assert.equal(fake.calls.length, 0);
+  bus.emit(change('updated', item(3, 'review'), item(3, 'working')));
+  await settle();
+  assert.deepEqual(fake.calls.map(call => [call.item.id, call.item.status]), [[3, 'review']]);
+});
+
+test('nothing is sent while the session of the item is in the foreground on this engine; in the background it is', async () => {
+  const shown = new Set(['7:term-a']);
+  const asked = [];
+  const { bus, fake, service } = setup({ host: 'this-mac', isForeground: (taskId, terminalId) => { asked.push([taskId, terminalId]); return shown.has(`${taskId}:${terminalId}`); } });
+  const tagent = (task, terminal) => ({ tagent: { task_id: task, terminal_id: terminal } });
+  bus.emit(change('updated', item(1, 'review', { context: tagent('7', 'term-a') }), item(1, 'working')));
+  await settle();
+  assert.equal(fake.calls.length, 0, 'open on screen: no message');
+  const skipped = service.recent()[0];
+  assert.equal(skipped.outcome, 'foreground');
+  assert.equal(skipped.detail, 'the session is open on screen');
+  assert.deepEqual(asked, [['7', 'term-a']]);
+  // The same item later, in the background: it is sent (the skip did not count as sent for the 10-minute dedupe).
+  shown.clear();
+  bus.emit(change('updated', item(1, 'working', { context: tagent('7', 'term-a') }), item(1, 'review')));
+  bus.emit(change('updated', item(1, 'review', { context: tagent('7', 'term-a') }), item(1, 'working')));
+  await settle();
+  assert.deepEqual(fake.calls.map(call => call.item.id), [1]);
+  assert.equal(service.recent()[0].outcome, 'sent');
+  // Without context.tagent (made by hand, the CLI outside a T-Agent terminal, another listener) it is always sent.
+  shown.add('7:term-a');
+  bus.emit(change('created', item(2, 'waiting_user'), null));
+  bus.emit(change('created', item(3, 'failed', { context: { cwd: '/x' } }), null));
+  // A session of another machine (context.host) is never this engine's terminal, even with the same ids.
+  bus.emit(change('created', item(4, 'waiting_user', { context: { host: 'other-pc', ...tagent('7', 'term-a') } }), null));
+  // This machine's name counts as this engine.
+  bus.emit(change('created', item(5, 'waiting_user', { context: { host: 'this-mac', ...tagent('7', 'term-a') } }), null));
+  await settle();
+  assert.deepEqual(fake.calls.map(call => call.item.id), [1, 2, 3, 4]);
+  assert.equal(service.recent().find(entry => entry.item_id === 5).outcome, 'foreground');
+});
+
+test('a foreground check that throws counts as background; the default is never foreground', async () => {
+  const thrower = setup({ isForeground: () => { throw new Error('boom'); } });
+  thrower.bus.emit(change('created', item(1, 'review', { context: { tagent: { task_id: '1', terminal_id: 'a' } } }), null));
+  const plain = setup();
+  plain.bus.emit(change('created', item(1, 'review', { context: { tagent: { task_id: '1', terminal_id: 'a' } } }), null));
+  await settle();
+  assert.equal(thrower.fake.calls.length, 1);
+  assert.equal(plain.fake.calls.length, 1);
+});
+
+test('a delayed call checks the foreground again when it is due', async () => {
+  let shown = false;
+  const items = new Map();
+  const { bus, fake, timers, service } = setup({ isForeground: () => shown, getItem: id => items.get(id) });
+  service.saveRules('owner', { callDelayMinutes: 5, modes: { fake: { waiting_user: 'call' } } });
+  const context = { tagent: { task_id: '3', terminal_id: 'b' } };
+  items.set(1, item(1, 'waiting_user', { context }));
+  items.set(2, item(2, 'waiting_user', { context }));
+  bus.emit(change('created', items.get(1), null));
+  assert.equal(service.recent()[0].outcome, 'call_scheduled', 'in the background at the change: the call is planned');
+  shown = true; // the person opened the session before the call was due
+  timers.fire();
+  await settle();
+  assert.equal(fake.calls.length, 0);
+  assert.equal(service.recent()[0].outcome, 'foreground');
+  shown = false;
+  bus.emit(change('created', items.get(2), null));
+  timers.fire();
+  await settle();
+  assert.deepEqual(fake.calls.map(call => [call.item.id, call.mode, call.reason]), [[2, 'call', 'still']]);
+  service.stop();
 });
 
 test('rules are stored encrypted per user and validated', () => {

@@ -105,6 +105,8 @@ function createAttentionRoutes({ service, summary = null, plugins = null, instal
   }
   // A token that creates an item without a source is a command-line caller, not the person in the browser (used on create only).
   const defaultSource = req => (req.attentionAuth.kind === 'token' ? 'cli' : 'user');
+  // A terminal token's T-Agent terminal: its creates and updates tie the item to that terminal (tieToTerminal in services/attention.js).
+  const tagentOf = req => (req.attentionAuth.kind === 'token' && req.attentionAuth.tagent) || null;
   const sessionOnly = (req, res, next) => (req.attentionAuth && req.attentionAuth.kind === 'session' ? next() : sendError(res, 403, 'TOKEN_NOT_ALLOWED', 'An attention token cannot manage tokens; use the browser'));
 
   router.use((req, res, next) => {
@@ -237,7 +239,7 @@ function createAttentionRoutes({ service, summary = null, plugins = null, instal
     res.json({ items: service.list(listQuery(req.query)), host: os.hostname(), ...(instanceId ? { instance_id: instanceId() } : {}) });
   }));
 
-  router.post('/', wrap((req, res) => res.status(201).json(service.create(req.body, { actor: actor(req), defaultSource: defaultSource(req) }))));
+  router.post('/', wrap((req, res) => res.status(201).json(service.create(req.body, { actor: actor(req), defaultSource: defaultSource(req), tagent: tagentOf(req) }))));
 
   router.get('/by-ref/:ref', wrap((req, res) => {
     const found = service.detailByRef(req.params.ref);
@@ -246,7 +248,7 @@ function createAttentionRoutes({ service, summary = null, plugins = null, instal
   }));
 
   router.put('/by-ref/:ref', wrap((req, res) => {
-    const { created, item } = service.upsertByRef(req.params.ref, req.body, { actor: actor(req), defaultSource: defaultSource(req) });
+    const { created, item } = service.upsertByRef(req.params.ref, req.body, { actor: actor(req), defaultSource: defaultSource(req), tagent: tagentOf(req) });
     res.status(created ? 201 : 200).json(item);
   }));
 
@@ -260,7 +262,7 @@ function createAttentionRoutes({ service, summary = null, plugins = null, instal
   router.patch('/:id', wrap((req, res) => {
     const id = idOf(req.params.id);
     if (id === null) return sendError(res, 404, 'NOT_FOUND', 'Task not found');
-    return res.json(service.update(id, req.body, { actor: actor(req) }));
+    return res.json(service.update(id, req.body, { actor: actor(req), tagent: tagentOf(req) }));
   }));
 
   // { before | after | position, status?, reason? } -> { item, items } (see move in services/attention.js).
@@ -304,7 +306,7 @@ function createAttentionRoutes({ service, summary = null, plugins = null, instal
       return sendError(res, 429, 'RATE_LIMITED', 'Too many requests with this token; try again later');
     }
     perToken.add(tokenKey);
-    req.attentionAuth = { kind: 'token', id: auth.id, name: auth.name, scopes: Array.isArray(auth.scopes) ? auth.scopes : [] };
+    req.attentionAuth = { kind: 'token', id: auth.id, name: auth.name, scopes: Array.isArray(auth.scopes) ? auth.scopes : [], tagent: auth.tagent || null };
     // Ends here in every case: an unmatched address is a JSON 404, never the session path, the gates or the pages.
     parseJson(req, res, () => router(req, res, error => (error ? sendFailure(res, error) : sendError(res, 404, 'NOT_FOUND', 'Not found'))));
   }

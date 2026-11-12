@@ -14,13 +14,14 @@ import { loginInProgress } from './plugins-model.mjs';
 // page, and the rules of all notifiers (mode per status and notifier, delay before a call, quiet hours, hourly limits, the page address for links) on their own. Server side: services/attention-notify.js and
 // plugins/notifiers/telegram. The session string and the api_hash never come back from the server; secret fields start empty.
 const BASE = '/api/attention-notify';
-const STATUS_LABELS = { waiting_user: 'Needs you', review: 'Review', failed: 'Failed', working: 'Working', todo: 'To do', done: 'Done', cancelled: 'Cancelled' };
+// "Finished" is the review status: the agent ended its turn and the result is ready to look at.
+const STATUS_LABELS = { waiting_user: 'Needs you', review: 'Finished (ready for review)', failed: 'Failed', working: 'Working', todo: 'To do', done: 'Done', cancelled: 'Cancelled' };
 const STATUS_ORDER = ['waiting_user', 'failed', 'review', 'working', 'todo', 'done', 'cancelled'];
 const MODE_LABELS = { off: 'Off', message: 'Message', call: 'Call' };
 const OUTCOME_LABELS = {
   sent: 'Sent', fallback_sent: 'Sent as a message (the call failed)', call_failed: 'Call failed', call_timeout: 'Rang, no answer', call_answered: 'Answered',
   call_declined: 'Declined', call_scheduled: 'Call planned', duplicate: 'Skipped: sent less than 10 minutes ago', quiet_hours: 'Skipped: quiet hours',
-  rate_limited: 'Skipped: hourly limit reached', skipped: 'Skipped: not set up', error: 'Error',
+  rate_limited: 'Skipped: hourly limit reached', skipped: 'Skipped: not set up', error: 'Error', foreground: 'Skipped: the session was open on screen',
 };
 const QR_POLL_MS = 2000;
 const API_HELP = [
@@ -207,6 +208,7 @@ function RulesPart({ data, onChanged }) {
           {(data.modes || ['message', 'call', 'off']).map(mode => <option key={mode} value={mode}>{t(MODE_LABELS[mode] || mode)}</option>)}
         </TextField>
       )))}
+      <Hint id="h5-notify-foreground">{t('No message while the session is open on a screen you used in the last 5 minutes.')}</Hint>
       <Field id="h5-notify-delay" label="Call only if still in that status after (minutes, 0 = at once)" type="number" value={form.delay} onChange={set('delay')} htmlInput={{ inputMode: 'numeric', min: 0, max: 1440 }} />
       <FormControlLabel control={<Checkbox checked={form.quiet} onChange={event => setForm(current => ({ ...current, quiet: event.target.checked }))} slotProps={{ input: { id: 'h5-notify-quiet' } }} />} label={t('Quiet hours (nothing is sent)')} />
       {form.quiet ? (

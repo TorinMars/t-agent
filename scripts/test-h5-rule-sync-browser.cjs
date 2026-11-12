@@ -2,7 +2,8 @@
 // the role echo and change, the source part (shared file path, Create it, skill checkboxes, receivers, Sync now, a cap error), the receiver part (the
 // followed source, Reset, conflicts), the leftover import line when off, an error notice, the editor of the shared rules (load, save with the base
 // revision, Ctrl/Cmd+S, the unsaved-changes question, the 409 flow with Load the latest / Overwrite, errors, no source), and the local changes a receiver
-// replaced with Dismiss. H5_SHOT_DIR=<dir> saves screenshots at 390px there.
+// replaced with Dismiss, and the shared Claude settings (the source's key checklist with its status line scripts, the receiver's "Keep this device's own
+// value", an older receiver that gets rules and skills only, Chinese). H5_SHOT_DIR=<dir> saves screenshots at 390px there.
 const { chromium } = require('playwright');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -22,17 +23,37 @@ const base = (fields = {}) => ({
   received: { revision: null, synced_at: null, conflicts: [] }, revision: null, bundle_error: null, warnings: [], local_error: null, last_change_at: null, targets: [],
   ...fields,
 });
+// The shared Claude settings part of the view (services/rule-sync.js claudeSettingsView).
+const AVAILABLE = [
+  { key: 'statusLine', preview: 'bash ~/.claude/statusline-command.sh --with-a-very-long-argument-list-that-must-wrap-on-a-phone-screen' },
+  { key: 'model', preview: 'opus' },
+  { key: 'permissions.defaultMode', preview: 'acceptEdits' },
+  { key: 'spinnerTipsEnabled', preview: 'false' },
+];
+const claudeSource = (keys = ['statusLine', 'spinnerTipsEnabled']) => ({
+  settings_path: '/Users/me/.claude/settings.json', settings_error: null, shared_keys: keys, defaults: false,
+  available: AVAILABLE.map(item => ({ ...item, shared: keys.includes(item.key) })),
+  files: keys.includes('statusLine') ? [{ name: 'statusline-command.sh', path: '/Users/me/.claude/statusline-command.sh', size: 812 }] : [],
+  warnings: [{ path: '/Users/me/.claude/link.sh', warning: 'symlink' }],
+});
+const claudeReceiver = (keep = []) => ({
+  file_path: '/Users/me/.claude/shared/claude-settings.json', file_error: null, statusline_dir: '/Users/me/.claude/shared/statusline', keep_local: keep,
+  received: [{ key: 'statusLine', preview: 'bash ~/.claude/shared/statusline/statusline-command.sh' }, { key: 'model', preview: 'opus' }].map(item => ({ ...item, kept_local: keep.includes(item.key) })),
+  files: [{ name: 'statusline-command.sh', path: '/Users/me/.claude/shared/statusline/statusline-command.sh' }],
+});
 const sourceView = (fields = {}) => base({
+  claude_settings: claudeSource(),
   role: 'source', import_line_present: true, revision: REV, last_change_at: '2026-11-12T08:00:00Z',
   skills: [{ name: 'deploy', shared: true, synced: false }, { name: 'notes', shared: false, synced: false }, { name: 'linked-skill', symlink: true, shared: false }],
   targets: [
     { id: 'l1', name: 'Office computer with a very long name that must wrap or cut', online: true, status: 'up-to-date', role: 'receive', revision: REV, last_push_at: '2026-11-12T08:00:05Z', last_error: null, conflicts: [{ skill: 'company', reason: 'local' }] },
     { id: 'l2', name: 'Laptop', online: true, status: 'not-receiving', role: 'off', revision: null, last_push_at: null, last_error: null, conflicts: [] },
-    { id: 'l3', name: 'Old box', online: false, status: 'offline', role: null, revision: null, last_push_at: null, last_error: 'REMOTE_TIMEOUT', conflicts: [] },
+    { id: 'l3', name: 'Old box', online: false, status: 'offline', role: null, revision: null, last_push_at: null, last_error: 'REMOTE_TIMEOUT', conflicts: [], claude_settings_supported: false },
   ],
   ...fields,
 });
 const receiveView = (fields = {}) => base({
+  claude_settings: claudeReceiver(),
   role: 'receive', import_line_present: true, following: { instance_id: '11111111-1111-4111-8111-111111111111', name: 'Home Mac', since: '2026-11-10T00:00:00Z' },
   received: { revision: REV, synced_at: '2026-11-12T08:00:05Z', conflicts: [{ skill: 'company', reason: 'local' }] },
   ...fields,
@@ -85,6 +106,8 @@ async function openPage(browser, { wide = false, model }) {
         if (body.role) model.view = { source: sourceView, receive: receiveView, off: base }[body.role]({ import_line_present: model.view.import_line_present });
         if (body.skills) model.view = { ...model.view, skills: model.view.skills.map(skill => ({ ...skill, shared: body.skills.includes(skill.name) })) };
         if (body.codex !== undefined) model.view = { ...model.view, codex: body.codex };
+        if (body.claude_settings_keys) model.view = { ...model.view, claude_settings: claudeSource(body.claude_settings_keys) };
+        if (body.keep_local) model.view = { ...model.view, claude_settings: claudeReceiver(body.keep_local) };
         return json(model.view);
       }
       if (pathname === '/api/rule-sync/create-shared') { model.view = { ...model.view, shared_rules_exists: true }; return json(model.view); }
@@ -382,6 +405,56 @@ async function testNoSourceAndLocalChanges(browser, { wide = false } = {}) {
   await context.close();
 }
 
+async function testClaudeSettings(browser, { wide = false } = {}) {
+  const model = { view: sourceView(), calls: [] };
+  const { context, page } = await openPage(browser, { wide, model });
+  const { tap, open, shot } = helpers(page, wide);
+  await open();
+  // The source: a checkbox per allowlisted key with its value in short, the scripts sent with the status line, what was skipped.
+  await page.locator('#h5-claude-settings').waitFor();
+  assert.match(await page.locator('#h5-claude-settings').innerText(), /Applied to Claude sessions started by T-Agent on receiving devices; their own settings\.json is not changed\./);
+  assert.deepEqual(await page.locator('.h5-claude-settings-key').evaluateAll(rows => rows.map(row => row.dataset.key)), ['statusLine', 'model', 'permissions.defaultMode', 'spinnerTipsEnabled']);
+  assert.equal(await page.locator('#h5-claude-settings-key-statusLine').isChecked(), true);
+  assert.equal(await page.locator('#h5-claude-settings-key-model').isChecked(), false);
+  assert.equal(await page.locator('#h5-claude-settings-key-permissions-defaultMode').isChecked(), false);
+  assert.match(await page.locator('.h5-claude-settings-key[data-key="model"]').innerText(), /model\s+opus/);
+  assert.equal(await page.locator('.h5-claude-settings-file').innerText(), '/Users/me/.claude/statusline-command.sh');
+  assert.match(await page.locator('#h5-claude-settings-warnings').innerText(), /\/Users\/me\/\.claude\/link\.sh \(a link, not sent\)/);
+  assert.match(await page.locator('.h5-rule-sync-target[data-target="l3"] .h5-rule-sync-no-settings').innerText(), /update T-Agent there to share Claude settings/);
+  await assertFits(page, wide ? 'claude settings source wide' : 'claude settings source 390', !wide);
+  if (!wide) await shot('claude-settings-source', '#h5-claude-settings');
+  await tap('#h5-claude-settings-key-model');
+  await waitCall(page, model, call => call.method === 'PUT' && call.body.claude_settings_keys);
+  assert.deepEqual(lastCall(model).body, { claude_settings_keys: ['statusLine', 'spinnerTipsEnabled', 'model'] });
+  await page.waitForFunction(() => document.querySelector('#h5-claude-settings-key-model').checked);
+  await tap('#h5-claude-settings-key-statusLine');
+  await waitCall(page, model, call => call.method === 'PUT' && call.body.claude_settings_keys && !call.body.claude_settings_keys.includes('statusLine'));
+  await page.locator('#h5-claude-settings-files').waitFor({ state: 'detached' });
+
+  // A receiver: the received keys, each with "Keep this device's own value".
+  await tap('#h5-rule-sync-role-receive');
+  await waitCall(page, model, call => call.method === 'PUT' && call.body.role === 'receive');
+  await page.locator('#h5-claude-settings-received').waitFor();
+  assert.deepEqual(await page.locator('.h5-claude-settings-received').evaluateAll(rows => rows.map(row => row.dataset.key)), ['statusLine', 'model']);
+  assert.equal(await page.locator('#h5-claude-settings-keep-model').isChecked(), false);
+  assert.match(await page.locator('#h5-claude-settings-statusline').innerText(), /\/Users\/me\/\.claude\/shared\/statusline/);
+  await assertFits(page, wide ? 'claude settings receive wide' : 'claude settings receive 390', !wide);
+  if (!wide) await shot('claude-settings-receive', '#h5-claude-settings');
+  await tap('#h5-claude-settings-keep-model');
+  await waitCall(page, model, call => call.method === 'PUT' && call.body.keep_local);
+  assert.deepEqual(lastCall(model).body, { keep_local: ['model'] });
+  await page.waitForFunction(() => document.querySelector('#h5-claude-settings-keep-model').checked);
+  await tap('#h5-claude-settings-keep-model');
+  await waitCall(page, model, call => call.method === 'PUT' && call.body.keep_local && call.body.keep_local.length === 0);
+  await page.waitForFunction(() => !document.querySelector('#h5-claude-settings-keep-model').checked);
+  // Nothing received yet.
+  model.view = receiveView({ claude_settings: { ...claudeReceiver(), received: [], files: [] } });
+  await tap('#h5-rule-sync-codex'); // any save reads the view again
+  await page.locator('#h5-claude-settings-none').waitFor();
+  assert.equal(await page.locator('#h5-claude-settings-none').innerText(), 'No Claude settings received yet.');
+  await context.close();
+}
+
 async function testChinese(browser) {
   const model = { view: sourceView(), calls: [] };
   const { context, page } = await openPage(browser, { model });
@@ -403,6 +476,24 @@ async function testChinese(browser) {
   await assertEditorFits(page, 'Chinese editor 390', false);
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'rule-sync-editor-zh.png') });
   await context.close();
+
+  // The shared Claude settings in Chinese, source and receiver, at 390px.
+  for (const view of [sourceView(), receiveView()]) {
+    const other = await openPage(browser, { model: { view, calls: [] } });
+    await other.page.evaluate(() => { localStorage.setItem('ta-lang', 'zh'); });
+    await other.page.reload();
+    await other.page.waitForFunction(() => window.H5UI && window.H5UI.get().sources.length > 0);
+    await helpers(other.page, false).open();
+    await other.page.locator('#h5-claude-settings').waitFor();
+    const text = await other.page.locator('#h5-claude-settings').innerText();
+    assert.match(text, /Claude \u8bbe\u7f6e/, 'the heading is translated');
+    if (view.role === 'source') assert.match(text, /\u4e0d\u4f1a\u4fee\u6539\u90a3\u4e9b\u8bbe\u5907\u81ea\u5df1\u7684 settings\.json/);
+    else assert.match(text, /\u4fdd\u7559\u8fd9\u53f0\u8bbe\u5907\u81ea\u5df1\u7684\u503c/);
+    assert.doesNotMatch(text, /Keep this device|Applied to Claude sessions|Claude settings/, 'no English left');
+    await assertFits(other.page, `Chinese claude settings ${view.role} 390`, true);
+    if (SHOTS) { await other.page.locator('#h5-claude-settings').scrollIntoViewIfNeeded(); await other.page.screenshot({ path: path.join(SHOTS, `rule-sync-claude-settings-${view.role}-zh.png`) }); }
+    await other.context.close();
+  }
 }
 
 (async () => {
@@ -417,6 +508,8 @@ async function testChinese(browser) {
     await testEditor(browser, { wide: true });
     await testNoSourceAndLocalChanges(browser);
     await testNoSourceAndLocalChanges(browser, { wide: true });
+    await testClaudeSettings(browser);
+    await testClaudeSettings(browser, { wide: true });
     await testChinese(browser);
     assert.deepEqual(pageErrors, [], 'no page errors');
     console.log('h5 rule sync: ok');

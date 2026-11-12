@@ -167,6 +167,8 @@ function infoHandler(req, res) {
       require('../services/rule-sync').CAPABILITY,
       // rule-sync:edit: GET / PUT /v1/rule-sync/shared read and write the shared rules file while this Engine is the source (routes/rule-sync.js).
       require('../services/rule-sync').EDIT_CAPABILITY,
+      // rule-sync:claude-settings: a bundle may carry `claude_settings` (shared Claude settings, injected at session start); older receivers get bundles without it.
+      require('../services/rule-sync').SETTINGS_CAPABILITY,
       'engine:update', 'pm2:manage', 'apps:manage', 'agent-config:manage', 'file-sync:manage', 'workspace:manage', 'agent-chat:manage',
     ],
   });

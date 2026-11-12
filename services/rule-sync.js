@@ -9,6 +9,8 @@
 //   <codex>/AGENTS.md                  the shared rules inside a managed block, nothing outside the block is touched
 //   <data>/rule-sync/applied-bundle.json   on a receiver: the last applied bundle and a hash of every file written from it (the guard below)
 //   <data>/rule-sync/overwritten/<time>/   on a receiver: local edits of synced files, saved before the guard put the synced version back
+//   <claude>/shared/claude-settings.json   on a receiver: the shared Claude settings, injected at session start (services/shared-claude-settings.js)
+//   <claude>/shared/statusline/<name>      on a receiver: the scripts of a shared status line
 //
 // The setting is one system_state row, `rule_sync_v1`. Transport: the source PUTs a bundle to /v1/rule-sync/bundle of every linked receiver; a receiver
 // has no route that reads its rules or skills back, so it never sends them anywhere. The shared rules file can be edited from the page of any linked
@@ -17,11 +19,14 @@ const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const claudeShared = require('./shared-claude-settings');
 
 const STATE_KEY = 'rule_sync_v1';
 const CAPABILITY = 'rule-sync:receive';
 // GET / PUT /v1/rule-sync/shared: the shared rules file of the source can be read and written from a linked service.
 const EDIT_CAPABILITY = 'rule-sync:edit';
+// The bundle may carry `claude_settings`. An older receiver recomputes the revision without it and would refuse the bundle, so it gets one without the field.
+const SETTINGS_CAPABILITY = 'rule-sync:claude-settings';
 const ROLES = Object.freeze(['off', 'source', 'receive']);
 const ROUTE = '/v1/rule-sync';
 const MARKER = '.t-agent-sync.json';
@@ -62,7 +67,10 @@ function layout({ env = process.env, home = os.homedir() } = {}) {
   const codexDir = env.CODEX_HOME && path.isAbsolute(env.CODEX_HOME) ? path.resolve(env.CODEX_HOME) : path.join(home, '.codex');
   const sharedRules = path.join(claudeDir, 'shared', 'CLAUDE.shared.md');
   return {
-    claudeDir, codexDir, sharedRules,
+    claudeDir, codexDir, sharedRules, home,
+    claudeSettings: path.join(claudeDir, 'settings.json'),
+    sharedClaudeSettings: path.join(claudeDir, 'shared', 'claude-settings.json'),
+    statuslineDir: path.join(claudeDir, 'shared', 'statusline'),
     claudeMd: path.join(claudeDir, 'CLAUDE.md'),
     skillsDir: path.join(claudeDir, 'skills'),
     codexAgents: path.join(codexDir, 'AGENTS.md'),
@@ -207,11 +215,14 @@ function skillHash(files) {
   for (const file of [...files].sort(byKey('path'))) hash.update(`${file.path}\0${file.mode}\0${file.content_base64}\0`);
   return hash.digest('hex');
 }
-// The revision of a bundle: the hash of its content, so the same rules and skills give the same revision on every machine.
-function revisionOf(rules, skills) {
+// The revision of a bundle: the hash of its content, so the same rules, skills and shared Claude settings give the same revision on every machine. Without
+// shared settings it is the revision older services compute from the rules and skills alone.
+function revisionOf(rules, skills, claudeSettings = null) {
   const hash = crypto.createHash('sha256');
   hash.update(`rules\0${rules}\0`);
   for (const skill of [...skills].sort(byKey('name'))) hash.update(`skill\0${skill.name}\0${skillHash(skill.files)}\0`);
+  const settings = claudeShared.settingsHash(claudeSettings);
+  if (settings) hash.update(`claude_settings\0${settings}\0`);
   return hash.digest('hex');
 }
 
@@ -261,8 +272,10 @@ function readSkillFiles(root, name, warnings, budget) {
   return files;
 }
 
-// What the source sends: its shared rules file (empty when there is none) and the chosen skills. Throws RULE_SYNC_TOO_LARGE over a cap.
-function buildBundle({ paths, skills: chosen, source }) {
+// What the source sends: its shared rules file (empty when there is none), the chosen skills and, with `claudeKeys`, the chosen keys of its Claude
+// settings.json with the status line scripts. `legacy` is the same bundle without the settings, for a receiver that does not know them. Throws
+// RULE_SYNC_TOO_LARGE over a cap.
+function buildBundle({ paths, skills: chosen, source, claudeKeys = null }) {
   const warnings = [];
   const rules = withoutNotice(readText(paths.sharedRules));
   const budget = { bytes: Buffer.byteLength(rules) };
@@ -277,7 +290,16 @@ function buildBundle({ paths, skills: chosen, source }) {
     if (stat.isSymbolicLink() || !stat.isDirectory()) { warnings.push({ skill: name, warning: stat.isSymbolicLink() ? 'symlink' : 'skipped' }); continue; }
     skills.push({ name, files: readSkillFiles(dir, name, warnings, budget) });
   }
-  return { bundle: { source, revision: revisionOf(rules, skills), rules, skills }, warnings };
+  const legacy = { source, revision: revisionOf(rules, skills), rules, skills };
+  if (!claudeKeys) return { bundle: legacy, legacy, warnings, claude: null };
+  const claude = claudeShared.collect({ claudeDir: paths.claudeDir, home: paths.home, keys: claudeKeys });
+  for (const file of claude.shared.files) {
+    budget.bytes += Buffer.from(file.content_base64, 'base64').length;
+    if (budget.bytes > LIMITS.totalBytes) throw tooLarge('total', `statusline/${file.path}`);
+  }
+  if (claudeShared.isEmpty(claude.shared)) return { bundle: legacy, legacy, warnings, claude };
+  const bundle = { ...legacy, revision: revisionOf(rules, skills, claude.shared), claude_settings: claude.shared };
+  return { bundle, legacy, warnings, claude };
 }
 
 // A bundle as received, checked completely before anything is written. Throws 400 RULE_SYNC_INVALID_BUNDLE or 413 RULE_SYNC_TOO_LARGE.
@@ -318,8 +340,11 @@ function parseBundle(body) {
     }
     return { name: skill.name, files, hash: skillHash(files) };
   });
-  if (revisionOf(body.rules, skills) !== body.revision) invalid('revision does not match the content');
-  return { source: { instance_id: source.instance_id, name }, revision: body.revision, rules: body.rules, skills };
+  // Shared Claude settings (optional; a bundle of an older source has none, which means nothing is shared).
+  const claudeSettings = claudeShared.parseShared(body.claude_settings, { invalid, tooLarge });
+  if (claudeSettings) for (const file of claudeSettings.files) { total += file.data.length; if (total > LIMITS.totalBytes) throw tooLarge('total', `statusline/${file.path}`); }
+  if (revisionOf(body.rules, skills, claudeSettings && claudeSettings.raw) !== body.revision) invalid('revision does not match the content');
+  return { source: { instance_id: source.instance_id, name }, revision: body.revision, rules: body.rules, skills, claudeSettings };
 }
 
 // One skill into <skills root>/<name>: built in a temporary folder, then renamed into place. A folder without our marker (a local skill), a symlink or a
@@ -406,7 +431,39 @@ function normalizeState(value) {
     },
     // On a receiver: synced files that were changed here and put back by the guard, newest first.
     local_changes: Array.isArray(given.local_changes) ? given.local_changes.slice(0, KEEP.localChanges) : [],
+    // On a source: the Claude settings keys it shares; null until the person chooses, which means claudeShared.DEFAULT_KEYS. Denied keys never stay.
+    claude_settings_keys: claudeShared.cleanKeys(given.claude_settings_keys),
+    // On a receiver: the received keys not injected here, so this machine's own settings.json value wins.
+    keep_local: claudeShared.cleanKeys(given.keep_local) || [],
   };
+}
+const sharedKeysOf = state => state.claude_settings_keys || [...claudeShared.DEFAULT_KEYS];
+
+// The shared Claude settings that a Claude session started by T-Agent here gets with `--settings` (routes/terminal.js): only on a receiver that follows a
+// source, from <claude>/shared/claude-settings.json, without the keys kept local. A missing file gives {}; a malformed one gives {} and is logged once.
+const reportedSettingsErrors = new Map();
+function sessionClaudeSettings({ db, env = process.env, home = os.homedir(), log = console } = {}) {
+  let state;
+  try {
+    const row = db.prepare('SELECT value FROM system_state WHERE key = ?').get(STATE_KEY);
+    state = normalizeState(row ? JSON.parse(row.value) : {});
+  } catch { return {}; }
+  if (state.role !== 'receive' || !state.following) return {};
+  const file = layout({ env, home }).sharedClaudeSettings;
+  let values;
+  try { values = claudeShared.readFileValues(file); } catch (error) {
+    let signature = error.message;
+    try { const stat = fs.statSync(file); signature = `${stat.mtimeMs}:${stat.size}`; } catch { /* the message is the signature */ }
+    if (reportedSettingsErrors.get(file) !== signature) {
+      reportedSettingsErrors.set(file, signature);
+      log.warn(`[rule-sync] ${file} cannot be read, so no shared Claude settings are added to new sessions: ${error.message}`);
+    }
+    return {};
+  }
+  reportedSettingsErrors.delete(file);
+  if (!values) return {};
+  for (const key of state.keep_local) delete values[key];
+  return claudeShared.nest(values);
 }
 
 const errorCode = error => (/^[A-Z0-9_]+$/.test((error && (error.code || error.message)) || '') ? (error.code || error.message) : 'RULE_SYNC_FAILED');
@@ -464,6 +521,43 @@ function createRuleSync({ db, serviceLinks = null, request = null, identity = ()
     };
   }
 
+  // The shared Claude settings of a bundle on this receiver: the status line scripts into <claude>/shared/statusline/ (a link or a file at that folder's
+  // name is left alone, and the status line is then not shared), the values into <claude>/shared/claude-settings.json with the status line command
+  // pointing to the copies here. Scripts that the last bundle wrote and this one has not are removed; nothing shared removes the settings file.
+  // Returns what was written: { text (the file, or null), files: [{ path, mode, content_base64, sha256 }] }.
+  function writeClaudeSettings(shared, sourceName, previous) {
+    const values = { ...((shared && shared.values) || {}) };
+    const files = (shared && shared.files) || [];
+    const dirStat = lstatOrNull(paths.statuslineDir);
+    const dirSafe = !dirStat || (dirStat.isDirectory() && !dirStat.isSymbolicLink());
+    const written = [];
+    if (dirSafe) {
+      for (const file of files) {
+        writeAtomic(path.join(paths.statuslineDir, file.path), file.data, fileMode(file.mode));
+        written.push({ path: file.path, mode: file.mode, content_base64: file.content_base64, ref: file.ref, sha256: sha256(file.data) });
+      }
+      for (const name of previous || []) {
+        if (files.some(file => file.path === name)) continue;
+        const target = path.join(paths.statuslineDir, name);
+        const stat = lstatOrNull(target);
+        if (stat && stat.isFile()) fs.rmSync(target, { force: true });
+      }
+    }
+    // A status line whose scripts could not be written here would run the source's paths: it is left out.
+    if (values.statusLine) {
+      if (files.length && !dirSafe) delete values.statusLine;
+      else values.statusLine = claudeShared.rewriteStatusLine(values.statusLine, written, paths);
+    }
+    if (!Object.keys(values).length) {
+      const stat = lstatOrNull(paths.sharedClaudeSettings);
+      if (stat && stat.isFile()) fs.rmSync(paths.sharedClaudeSettings, { force: true });
+      return { text: null, files: written, keys: [] };
+    }
+    const text = claudeShared.fileText(values, sourceName);
+    writeAtomic(paths.sharedClaudeSettings, text, 0o644);
+    return { text, files: written, keys: Object.keys(values) };
+  }
+
   // PUT /v1/rule-sync/bundle. Synchronous from start to end, so two bundles never interleave.
   function receive(body) {
     const state = load();
@@ -495,11 +589,14 @@ function createRuleSync({ db, serviceLinks = null, request = null, identity = ()
       else if (result.written) written.push(skill.name);
     }
     const removed = removeStaleSkills(root, new Set(bundle.skills.map(skill => skill.name)));
+    const before = readApplied();
+    const previousScripts = before && before.claude_settings ? before.claude_settings.files.map(file => file.path) : [];
+    const claudeSettings = writeClaudeSettings(bundle.claudeSettings, following.name, previousScripts);
     save({ ...load(), following, received: { revision: bundle.revision, synced_at: syncedAt, conflicts } });
     const clashing = new Set(conflicts.map(item => item.skill));
-    recordApplied(bundle, { following, notice, codex, syncedAt, skills: bundle.skills.filter(skill => !clashing.has(skill.name)) });
+    recordApplied(bundle, { following, notice, codex, syncedAt, skills: bundle.skills.filter(skill => !clashing.has(skill.name)), claudeSettings });
     rewatch();
-    return { revision: bundle.revision, applied: { rules: true, codex, skills: written, removed, conflicts } };
+    return { revision: bundle.revision, applied: { rules: true, codex, skills: written, removed, conflicts, claude_settings: claudeSettings.keys, statusline_files: claudeSettings.files.map(file => file.path) } };
   }
 
   // ----- Receiver: the guard of the synced copies -----
@@ -524,7 +621,7 @@ function createRuleSync({ db, serviceLinks = null, request = null, identity = ()
   function clearApplied() {
     if (store) { try { fs.rmSync(store.applied, { force: true }); } catch { /* nothing kept */ } }
   }
-  function recordApplied(bundle, { following, notice, codex, syncedAt, skills }) {
+  function recordApplied(bundle, { following, notice, codex, syncedAt, skills, claudeSettings }) {
     if (!store) return;
     try {
       privateDir(store.dir);
@@ -536,6 +633,11 @@ function createRuleSync({ db, serviceLinks = null, request = null, identity = ()
           name: skill.name, hash: skill.hash,
           files: skill.files.map(file => ({ path: file.path, mode: file.mode, content_base64: file.content_base64, sha256: sha256(file.data) })),
         })),
+        // The shared Claude settings file as written (null when nothing is shared) and the status line scripts.
+        claude_settings: claudeSettings ? {
+          text: claudeSettings.text, sha256: claudeSettings.text === null ? null : sha256(claudeSettings.text),
+          files: claudeSettings.files.map(file => ({ path: file.path, mode: file.mode, content_base64: file.content_base64, sha256: file.sha256 })),
+        } : null,
       };
       writeAtomic(store.applied, JSON.stringify(record), 0o600);
     } catch (error) {
@@ -580,6 +682,31 @@ function createRuleSync({ db, serviceLinks = null, request = null, identity = ()
       const inner = codexInner(text);
       if (inner === null || sha256(inner) !== applied.hashes.codex) {
         changes.push({ paths: [paths.codexAgents], saved: text === null ? [] : [{ rel: 'codex/AGENTS.md', data: text }], restore: () => writeCodex(applied.rules, applied.notice) });
+      }
+    }
+    // The shared Claude settings file and the status line scripts: edited or deleted ones are put back. Other files in that folder are not ours to compare.
+    const settings = applied.claude_settings;
+    if (settings && settings.text !== null && typeof settings.text === 'string') {
+      const now = readText(paths.sharedClaudeSettings);
+      if (now === null || sha256(now) !== settings.sha256) {
+        changes.push({
+          paths: [paths.sharedClaudeSettings], saved: now === null ? [] : [{ rel: 'claude/shared/claude-settings.json', data: now }],
+          restore: () => writeAtomic(paths.sharedClaudeSettings, settings.text, 0o644),
+        });
+      }
+    }
+    const scriptsDir = lstatOrNull(paths.statuslineDir);
+    if (settings && Array.isArray(settings.files) && (!scriptsDir || (scriptsDir.isDirectory() && !scriptsDir.isSymbolicLink()))) {
+      for (const file of settings.files) {
+        const target = path.join(paths.statuslineDir, file.path);
+        const stat = lstatOrNull(target);
+        if (stat && !stat.isFile()) continue; // a link or a folder put there is the user's
+        const data = stat ? fs.readFileSync(target) : null;
+        if (data && sha256(data) === file.sha256) continue;
+        changes.push({
+          paths: [target], saved: data ? [{ rel: `claude/shared/statusline/${file.path}`, data }] : [],
+          restore: () => writeAtomic(target, Buffer.from(file.content_base64, 'base64'), fileMode(file.mode)),
+        });
       }
     }
     let root = null;
@@ -676,7 +803,7 @@ function createRuleSync({ db, serviceLinks = null, request = null, identity = ()
     if (state.role !== 'source') { snapshot = null; return null; }
     const previous = snapshot && snapshot.bundle ? snapshot.bundle.revision : null;
     try {
-      snapshot = buildBundle({ paths, skills: state.skills, source: self() });
+      snapshot = buildBundle({ paths, skills: state.skills, source: self(), claudeKeys: sharedKeysOf(state) });
     } catch (error) {
       snapshot = { error: error instanceof RuleSyncError ? { code: error.code, ...error.extra } : { code: errorCode(error) } };
       if (!(error instanceof RuleSyncError)) log.error('[rule-sync] reading the shared layer failed:', error && error.message);
@@ -697,9 +824,12 @@ function createRuleSync({ db, serviceLinks = null, request = null, identity = ()
     try { return serviceLinks.peers(); } catch { return []; }
   };
   function entryOf(peer) {
-    if (!targets.has(peer.id)) targets.set(peer.id, { status: 'unknown', role: null, revision: null, following: null, last_push_at: null, last_error: null, conflicts: [] });
+    if (!targets.has(peer.id)) targets.set(peer.id, { status: 'unknown', role: null, revision: null, following: null, last_push_at: null, last_error: null, conflicts: [], settings: null });
     return targets.get(peer.id);
   }
+
+  // The bundle for one peer: without the shared Claude settings when it does not know them.
+  const bundleFor = (built, entry) => (entry && entry.settings === false ? built.legacy : built.bundle);
 
   async function syncOnce(peer, force) {
     if (load().role !== 'source' || !request) return;
@@ -711,6 +841,8 @@ function createRuleSync({ db, serviceLinks = null, request = null, identity = ()
         Object.assign(entry, { status: 'unsupported', role: null, last_error: null });
         return;
       }
+      // A receiver that does not know the shared Claude settings gets the bundle without them (and with the revision it computes).
+      entry.settings = info.capabilities.includes(SETTINGS_CAPABILITY);
       const status = await request(peer.baseUrl, `${ROUTE}/status`, peer.token, { timeoutMs: times.requestTimeoutMs });
       Object.assign(entry, {
         role: status && ROLES.includes(status.role) ? status.role : null,
@@ -723,11 +855,12 @@ function createRuleSync({ db, serviceLinks = null, request = null, identity = ()
       const me = self().instance_id;
       if (entry.following && entry.following.instance_id !== me) { Object.assign(entry, { status: 'other-source', last_error: 'RULE_SYNC_OTHER_SOURCE' }); return; }
       if (!built || !built.bundle) { Object.assign(entry, { status: 'error', last_error: (built && built.error && built.error.code) || 'RULE_SYNC_FAILED' }); return; }
-      if (!force && entry.following && entry.revision === built.bundle.revision) { Object.assign(entry, { status: 'up-to-date', last_error: null }); return; }
-      const answer = await request(peer.baseUrl, `${ROUTE}/bundle`, peer.token, { method: 'PUT', body: built.bundle, timeoutMs: times.pushTimeoutMs });
+      const bundle = bundleFor(built, entry);
+      if (!force && entry.following && entry.revision === bundle.revision) { Object.assign(entry, { status: 'up-to-date', last_error: null }); return; }
+      const answer = await request(peer.baseUrl, `${ROUTE}/bundle`, peer.token, { method: 'PUT', body: bundle, timeoutMs: times.pushTimeoutMs });
       Object.assign(entry, {
         status: 'up-to-date', last_error: null, last_push_at: iso(),
-        revision: answer && typeof answer.revision === 'string' ? answer.revision : built.bundle.revision,
+        revision: answer && typeof answer.revision === 'string' ? answer.revision : bundle.revision,
         following: { instance_id: me, name: self().name },
         conflicts: answer && answer.applied && Array.isArray(answer.applied.conflicts) ? answer.applied.conflicts : [],
       });
@@ -774,9 +907,9 @@ function createRuleSync({ db, serviceLinks = null, request = null, identity = ()
   function retry() {
     if (load().role !== 'source') return Promise.resolve();
     const built = currentSnapshot();
-    const revision = built && built.bundle ? built.bundle.revision : null;
     return Promise.all(peers().filter(peer => peer.online).filter(peer => {
       const entry = targets.get(peer.id);
+      const revision = built && built.bundle ? bundleFor(built, entry).revision : null;
       return !entry || entry.status !== 'up-to-date' || entry.revision !== revision;
     }).map(peer => syncPeer(peer)));
   }
@@ -802,12 +935,16 @@ function createRuleSync({ db, serviceLinks = null, request = null, identity = ()
     };
     if (state.role === 'source') {
       watchOne(path.dirname(paths.sharedRules), false, scheduleCheck);
+      // settings.json and the status line scripts directly in <claude> (scripts deeper down are left to the poll).
+      const scripts = snapshot && snapshot.claude ? snapshot.claude.scripts.filter(item => path.dirname(item.path) === paths.claudeDir).map(item => item.name) : [];
+      watchOne(paths.claudeDir, false, scheduleCheck, new Set([path.basename(paths.claudeSettings), ...scripts]));
       for (const name of state.skills) watchOne(path.join(paths.skillsDir, name), true, scheduleCheck);
       return;
     }
     const applied = state.role === 'receive' && state.following ? readApplied() : null;
     if (!applied) return;
     watchOne(path.dirname(paths.sharedRules), false, scheduleGuard);
+    if (applied.claude_settings && applied.claude_settings.files.length) watchOne(paths.statuslineDir, false, scheduleGuard);
     watchOne(paths.claudeDir, false, scheduleGuard, new Set([path.basename(paths.claudeMd)]));
     if (applied.codex) watchOne(paths.codexDir, false, scheduleGuard, new Set([path.basename(paths.codexAgents)]));
     const names = applied.skills.map(skill => skill.name);
@@ -846,6 +983,39 @@ function createRuleSync({ db, serviceLinks = null, request = null, identity = ()
 
   // ----- The browser's view and actions -----
 
+  // The shared Claude settings part of the view. Source: the allowlisted keys present in its settings.json with a short preview, the chosen ones, the
+  // status line scripts that go with them. Receiver: the received keys (from its claude-settings.json) and the ones kept local. Off: null.
+  function claudeSettingsView(state) {
+    if (state.role === 'source') {
+      const collected = claudeShared.collect({ claudeDir: paths.claudeDir, home: paths.home, keys: sharedKeysOf(state) });
+      return {
+        settings_path: collected.settingsPath,
+        settings_error: collected.error,
+        shared_keys: collected.keys,
+        defaults: !state.claude_settings_keys,
+        available: Object.entries(collected.present).map(([key, value]) => ({ key, preview: claudeShared.preview(key, value), shared: collected.keys.includes(key) })),
+        files: collected.scripts,
+        warnings: collected.warnings,
+      };
+    }
+    if (state.role === 'receive') {
+      let values = null;
+      let error = null;
+      try { values = claudeShared.readFileValues(paths.sharedClaudeSettings); } catch { error = 'invalid-json'; }
+      const applied = readApplied();
+      const files = applied && applied.claude_settings ? applied.claude_settings.files.map(file => ({ name: file.path, path: path.join(paths.statuslineDir, file.path) })) : [];
+      return {
+        file_path: paths.sharedClaudeSettings,
+        file_error: error,
+        statusline_dir: paths.statuslineDir,
+        received: Object.entries(values || {}).map(([key, value]) => ({ key, preview: claudeShared.preview(key, value), kept_local: state.keep_local.includes(key) })),
+        keep_local: state.keep_local,
+        files,
+      };
+    }
+    return null;
+  }
+
   function overview() {
     const state = load();
     const claudeMd = readText(paths.claudeMd);
@@ -882,12 +1052,16 @@ function createRuleSync({ db, serviceLinks = null, request = null, identity = ()
         return {
           id: peer.id, name: peer.name, online: Boolean(peer.online), status: peer.online ? entry.status : 'offline',
           role: entry.role, revision: entry.revision, last_push_at: entry.last_push_at, last_error: entry.last_error, conflicts: entry.conflicts,
+          // false: an older T-Agent that gets the rules and skills only; its up-to-date revision is `expected_revision`.
+          claude_settings_supported: entry.settings,
+          expected_revision: built && built.bundle ? bundleFor(built, entry).revision : null,
         };
       }) : [],
+      claude_settings: claudeSettingsView(state),
     };
   }
 
-  // PUT /api/rule-sync `{ role?, codex?, skills? }`.
+  // PUT /api/rule-sync `{ role?, codex?, skills?, claude_settings_keys?, keep_local? }`. The keys must be allowlisted (claudeShared.KEYS).
   function update(body) {
     const given = body && typeof body === 'object' && !Array.isArray(body) ? body : fail('RULE_SYNC_INVALID_SETTINGS', 400);
     const state = load();
@@ -898,6 +1072,14 @@ function createRuleSync({ db, serviceLinks = null, request = null, identity = ()
       if (!Array.isArray(given.skills) || given.skills.length > LIMITS.skills || !given.skills.every(validSkillName)) fail('RULE_SYNC_INVALID_SETTINGS', 400, { field: 'skills' });
       next.skills = [...new Set(given.skills)].sort();
     }
+    const keyList = (value, field) => {
+      if (!Array.isArray(value) || value.length > claudeShared.KEYS.length * 2 || !value.every(key => typeof key === 'string' && claudeShared.allowedKey(key))) {
+        fail('RULE_SYNC_INVALID_SETTINGS', 400, { field });
+      }
+      return claudeShared.cleanKeys(value);
+    };
+    if (given.claude_settings_keys !== undefined) next.claude_settings_keys = keyList(given.claude_settings_keys, 'claude_settings_keys');
+    if (given.keep_local !== undefined) next.keep_local = keyList(given.keep_local, 'keep_local');
     save(next);
     if (next.role !== 'off') {
       try { ensureImport(); } catch (error) { localError = errorCode(error); }
@@ -908,6 +1090,7 @@ function createRuleSync({ db, serviceLinks = null, request = null, identity = ()
     if (next.role === 'source') {
       const roleChanged = state.role !== 'source';
       if (roleChanged || state.codex !== next.codex) snapshot = null; // the own Codex block is written with the next snapshot
+      // A new choice of Claude settings changes the bundle: refreshSnapshot below builds it and the push sends it.
       refreshSnapshot();
       setImmediate(() => { pushAll(); });
     }
@@ -1105,5 +1288,6 @@ module.exports = {
   createRuleSync, getRuleSync, RuleSyncError, layout, buildBundle, parseBundle, revisionOf,
   withImportLine, withoutImportLine, withCodexBlock, withoutCodexBlock, hasImportLine, hasCodexBlock,
   syncedNotice, withoutNotice, codexInner,
-  STATE_KEY, CAPABILITY, EDIT_CAPABILITY, ROLES, MARKER, LIMITS, IMPORT_COMMENT, CODEX_BEGIN, CODEX_END, TIMING,
+  sessionClaudeSettings, claudeShared,
+  STATE_KEY, CAPABILITY, EDIT_CAPABILITY, SETTINGS_CAPABILITY, ROLES, MARKER, LIMITS, IMPORT_COMMENT, CODEX_BEGIN, CODEX_END, TIMING,
 };

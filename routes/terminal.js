@@ -61,10 +61,20 @@ const SESSION_HOOK_SCRIPT = path.resolve(__dirname, '..', 'scripts', 'claude-ses
 const shellQuote = value => `'${String(value).replace(/'/g, `'\\''`)}'`;
 // With peer file access on, the same settings also allow the read-only tools of the `t-agent-peers` MCP server, so reading
 // a linked engine's file does not ask each time.
+// On a machine that receives the rules and skills sync, the shared Claude settings (<claude>/shared/claude-settings.json, without the keys kept
+// local; "Shared Claude settings (injected at session start)" in DESIGN.md) come first and T-Agent's own parts go on top, so the hook and the
+// peer permission are never lost. Shared settings cannot hold hooks or permission rules; `permissions.defaultMode` shares the `permissions` object.
+function sharedClaudeSettings() {
+  try { return require('../services/rule-sync').sessionClaudeSettings({ db }); } catch (error) {
+    console.warn(`[terminal] could not read the shared Claude settings: ${error.message}`);
+    return {};
+  }
+}
 function claudeSettings(peer = false) {
   const command = `${shellQuote(process.execPath)} ${shellQuote(SESSION_HOOK_SCRIPT)} >/dev/null 2>&1 || true`;
-  const settings = { hooks: { SessionStart: [{ hooks: [{ type: 'command', command, timeout: 10 }] }] } };
-  if (peer) settings.permissions = { allow: [`mcp__${PEER_MCP_NAME}`] };
+  const shared = sharedClaudeSettings();
+  const settings = { ...shared, hooks: { SessionStart: [{ hooks: [{ type: 'command', command, timeout: 10 }] }] } };
+  if (peer) settings.permissions = { ...(shared.permissions || {}), allow: [`mcp__${PEER_MCP_NAME}`] };
   return JSON.stringify(settings);
 }
 

@@ -14,6 +14,7 @@ import Typography from '@mui/material/Typography';
 import TextField from './TextField.jsx';
 import { Pill, api, t } from './common.jsx';
 import { Feedback, Hint, Section, failure, useFeedback } from './Form.jsx';
+import { SharedClaudeSettings } from './SharedClaudeSettings.jsx';
 
 // "Rules and skills sync", a part of Settings → Devices (GET / PUT /api/rule-sync and its actions, routes/rule-sync.js): one linked service is the source of a shared layer of
 // Claude rules, chosen skills and the same rules for Codex; services that receive only take it and never send anything. The shared rules can be edited
@@ -93,7 +94,9 @@ function Targets({ targets, revision }) {
     <Box id="h5-rule-sync-targets" sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
       {targets.map(target => {
         const [label, tone] = STATUS[target.status] || STATUS.unknown;
-        const behind = target.status === 'up-to-date' && revision && target.revision !== revision;
+        // An older receiver gets the bundle without the shared Claude settings, so its revision is `expected_revision`.
+        const expected = target.expected_revision || revision;
+        const behind = target.status === 'up-to-date' && expected && target.revision !== expected;
         return (
           <Paper key={target.id} variant="outlined" className="h5-rule-sync-target" data-target={target.id} sx={{ p: 1.25, display: 'flex', flexDirection: 'column', gap: 0.5 }}>
             <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, minWidth: 0 }}>
@@ -102,6 +105,7 @@ function Targets({ targets, revision }) {
             </Box>
             {target.revision ? <Hint>{`${t('Revision')} ${short(target.revision)}${target.last_push_at ? ` · ${when(target.last_push_at)}` : ''}`}</Hint> : null}
             {target.last_error ? <Typography variant="body2" color="error" className="h5-rule-sync-error" sx={{ overflowWrap: 'anywhere' }}>{codeText(target.last_error)}</Typography> : null}
+            {target.claude_settings_supported === false ? <Typography variant="body2" color="text.secondary" className="h5-rule-sync-no-settings" sx={{ overflowWrap: 'anywhere' }}>{t('Gets the rules and skills only; update T-Agent there to share Claude settings.')}</Typography> : null}
             {(target.conflicts || []).length ? (
               <Typography variant="body2" color="warning.main" className="h5-rule-sync-conflicts" sx={{ overflowWrap: 'anywhere' }}>
                 {`${t('Not synced')}: ${target.conflicts.map(conflictText).join('; ')}`}
@@ -144,6 +148,7 @@ function SourcePart({ data, busy, save, act }) {
           })}
         </Box>
       ) : <Hint id="h5-rule-sync-no-skills">{t('No skills on this machine yet.')}</Hint>}
+      <SharedClaudeSettings data={data} busy={busy} save={save} />
       {data.bundle_error ? (
         <Typography id="h5-rule-sync-bundle-error" variant="body2" color="error" sx={{ overflowWrap: 'anywhere' }}>
           {`${t(LIMITS[data.bundle_error.limit] || codeText(data.bundle_error.code))}${data.bundle_error.item ? `: ${data.bundle_error.item}` : ''}. ${t('Nothing is sent until it is fixed.')}`}
@@ -160,7 +165,7 @@ function SourcePart({ data, busy, save, act }) {
   );
 }
 
-function ReceivePart({ data, busy, act }) {
+function ReceivePart({ data, busy, save, act }) {
   const conflicts = (data.received && data.received.conflicts) || [];
   return (
     <>
@@ -180,6 +185,7 @@ function ReceivePart({ data, busy, act }) {
           <Hint>{t('Your own skills are never overwritten. Rename one of them to sync it.')}</Hint>
         </Box>
       ) : null}
+      <SharedClaudeSettings data={data} busy={busy} save={save} />
     </>
   );
 }
@@ -362,7 +368,7 @@ export function RuleSyncSection({ state, opened }) {
           <SharedRules shared={shared} busy={busy} onEdit={() => setEditing(true)} />
           {data.role !== 'off' ? <Hint id="h5-rule-sync-import">{`${t('Claude reads the shared rules through this line at the top of')} ${data.claude_md_path}: ${data.import_line}`}</Hint> : null}
           {data.role === 'source' ? <SourcePart data={data} busy={busy} save={save} act={act} /> : null}
-          {data.role === 'receive' ? <ReceivePart data={data} busy={busy} act={act} /> : null}
+          {data.role === 'receive' ? <ReceivePart data={data} busy={busy} save={save} act={act} /> : null}
           {data.role === 'off' && (data.import_line_present || data.codex_block_present) ? (
             <>
               <Hint id="h5-rule-sync-leftover">{t('The import line (and the managed block in Codex AGENTS.md) are still there. The shared files and synced skills stay until you delete them.')}</Hint>

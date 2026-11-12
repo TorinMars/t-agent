@@ -13,7 +13,7 @@ const Database = require('better-sqlite3');
 const sync = require('../services/rule-sync');
 const { createEngineRouter, createBrowserRouter } = require('../routes/rule-sync');
 
-const { createRuleSync, layout, buildBundle, parseBundle, revisionOf, syncedNotice, withoutNotice, MARKER, CAPABILITY, EDIT_CAPABILITY, IMPORT_COMMENT, CODEX_BEGIN, CODEX_END, LIMITS } = sync;
+const { createRuleSync, layout, buildBundle, parseBundle, revisionOf, syncedNotice, withoutNotice, MARKER, CAPABILITY, EDIT_CAPABILITY, IMPORT_COMMENT, CODEX_BEGIN, CODEX_END, LIMITS, claudeShared, sessionClaudeSettings, SETTINGS_CAPABILITY, STATE_KEY } = sync;
 const SOURCE_ID = '11111111-1111-4111-8111-111111111111';
 const OTHER_ID = '33333333-3333-4333-8333-333333333333';
 const RECEIVER_ID = '22222222-2222-4222-8222-222222222222';
@@ -186,7 +186,7 @@ test('a receiver writes the rules, the import line, Codex and the skills with ma
   write(b.paths.codexAgents, 'Local Codex rule.\n');
   b.service.update({ role: 'receive' });
   const answer = b.service.receive(bundle);
-  assert.deepEqual(answer, { revision: bundle.revision, applied: { rules: true, codex: true, skills: ['deploy'], removed: [], conflicts: [] } });
+  assert.deepEqual(answer, { revision: bundle.revision, applied: { rules: true, codex: true, skills: ['deploy'], removed: [], conflicts: [], claude_settings: [], statusline_files: [] } });
   assert.equal(read(b.paths.sharedRules), `${HOME_NOTICE}\n\nUse short sentences.\n`, 'the notice on top says where to edit');
   assert.match(read(b.paths.claudeMd), /^<!-- Managed by T-Agent/);
   assert.equal(read(b.paths.codexAgents), `${CODEX_BEGIN}\n${HOME_NOTICE}\nUse short sentences.\n${CODEX_END}\n\nLocal Codex rule.\n`, 'the same notice is the first line in the block');
@@ -411,7 +411,7 @@ test('a change is pushed once after the debounce, and a bundle over a cap is rep
   a.service.update({ role: 'source', skills: ['tool'] });
   a.service.start();
   await until(() => a.puts().length === 1, 'first push');
-  assert.deepEqual(watchers.map(item => item.dir).sort(), [path.dirname(a.paths.sharedRules), path.join(a.paths.skillsDir, 'tool')].sort());
+  assert.deepEqual(watchers.map(item => item.dir).sort(), [path.dirname(a.paths.sharedRules), a.paths.claudeDir, path.join(a.paths.skillsDir, 'tool')].sort(), 'settings.json is watched in the Claude folder');
 
   for (const text of ['Two.\n', 'Three.\n', 'Four.\n']) {
     write(a.paths.sharedRules, text);
@@ -835,6 +835,288 @@ test('guard: turning the role off or resetting the source stops it, and the file
   assert.equal(plain.guardCheck(), null);
 });
 
+// ---- Shared Claude settings (injected at session start) ----
+
+const FULL = [CAPABILITY, EDIT_CAPABILITY, SETTINGS_CAPABILITY];
+// A source's settings.json with shareable keys, keys that are never shared and a status line that runs a script in ~/.claude.
+const SOURCE_SETTINGS = {
+  statusLine: { type: 'command', command: 'bash ~/.claude/statusline-command.sh', padding: 0 },
+  model: 'opus', effortLevel: 'high', switchModelsOnFlag: true, agentPushNotifEnabled: false, spinnerTipsEnabled: false, outputStyle: 'Explanatory',
+  alwaysThinkingEnabled: true, cleanupPeriodDays: 90, includeCoAuthoredBy: false, skipDangerousModePermissionPrompt: true,
+  permissions: { defaultMode: 'acceptEdits', allow: ['Bash(*)'], deny: ['Read(.env)'], additionalDirectories: ['/srv'] },
+  env: { ANTHROPIC_API_KEY: 'sk-secret', ANTHROPIC_BASE_URL: 'https://proxy' }, apiKeyHelper: 'cat ~/.key', awsAuthRefresh: 'aws sso login',
+  hooks: { Stop: [{ hooks: [{ type: 'command', command: 'say done' }] }] }, mcpServers: { x: { command: 'x' } }, enabledMcpjsonServers: ['x'], forceLoginMethod: 'console',
+  theme: 'dark',
+};
+function settingsSource(t, settings = SOURCE_SETTINGS, options = {}) {
+  const a = machine(t, { id: SOURCE_ID, name: 'Home Mac', ...options });
+  write(path.join(a.paths.claudeDir, 'settings.json'), JSON.stringify(settings, null, 2));
+  write(path.join(a.paths.claudeDir, 'statusline-command.sh'), '#!/bin/bash\necho "$(cat ~/.claude/cache.txt)"\n', 0o755);
+  write(a.paths.sharedRules, 'Rule one.\n');
+  return a;
+}
+const storeState = (m, value) => m.db.prepare(`INSERT INTO system_state (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
+  ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(STATE_KEY, JSON.stringify(value));
+const stateOf = m => JSON.parse(m.db.prepare('SELECT value FROM system_state WHERE key = ?').get(STATE_KEY).value);
+const sharedFileOf = m => JSON.parse(read(m.paths.sharedClaudeSettings));
+
+test('claude settings: the allowlist is explicit and the denylist wins, word by word', () => {
+  assert.deepEqual(claudeShared.KEYS, ['statusLine', 'model', 'effortLevel', 'modelSettings', 'switchModelsOnFlag', 'permissions.defaultMode', 'skipDangerousModePermissionPrompt',
+    'agentPushNotifEnabled', 'outputStyle', 'spinnerTipsEnabled', 'includeCoAuthoredBy', 'cleanupPeriodDays', 'alwaysThinkingEnabled']);
+  for (const key of claudeShared.KEYS) assert.equal(claudeShared.allowedKey(key), true, key);
+  for (const key of ['env', 'apiKeyHelper', 'awsAuthRefresh', 'awsCredentialExport', 'hooks', 'permissions.allow', 'permissions.deny', 'permissions.ask',
+    'permissions.additionalDirectories', 'mcpServers', 'enabledMcpjsonServers', 'forceLoginMethod', 'ANTHROPIC_MODEL', 'primaryApiKey', 'oauthAccount',
+    'authToken', 'sessionToken', 'clientSecret', 'password', 'gcpCredentials', 'theme', 'permissions']) {
+    assert.equal(claudeShared.allowedKey(key), false, key);
+  }
+  assert.equal(claudeShared.deniedName('includeCoAuthoredBy'), false, '"Authored" is not "auth"');
+  assert.equal(claudeShared.deniedName('authorization'), true);
+  assert.deepEqual(claudeShared.cleanKeys(['env', 'model', 'model', 'hooks', 'statusLine']), ['statusLine', 'model']);
+  // A value is checked too: a denied name inside it, or the wrong type, drops the key.
+  assert.equal(claudeShared.validValue('modelSettings', { opus: { effortLevel: 'high' } }), true);
+  assert.equal(claudeShared.validValue('modelSettings', { opus: { apiKey: 'x' } }), false);
+  assert.equal(claudeShared.validValue('modelSettings', { hooks: {} }), false);
+  assert.equal(claudeShared.validValue('switchModelsOnFlag', 'yes'), false);
+  assert.equal(claudeShared.validValue('cleanupPeriodDays', 0), false);
+  assert.equal(claudeShared.validValue('statusLine', { type: 'command' }), false);
+});
+
+test('claude settings: the source shares the defaults first; model, effort and permission mode stay off', t => {
+  const a = settingsSource(t);
+  const view = a.service.update({ role: 'source' });
+  const settings = view.claude_settings;
+  assert.equal(settings.settings_path, path.join(a.paths.claudeDir, 'settings.json'));
+  assert.equal(settings.defaults, true);
+  assert.deepEqual(settings.shared_keys, ['statusLine', 'switchModelsOnFlag', 'agentPushNotifEnabled', 'outputStyle', 'spinnerTipsEnabled']);
+  assert.deepEqual(settings.available.map(item => item.key), ['statusLine', 'model', 'effortLevel', 'switchModelsOnFlag', 'permissions.defaultMode', 'skipDangerousModePermissionPrompt',
+    'agentPushNotifEnabled', 'outputStyle', 'spinnerTipsEnabled', 'includeCoAuthoredBy', 'cleanupPeriodDays', 'alwaysThinkingEnabled'], 'only allowlisted keys that are present');
+  const preview = Object.fromEntries(settings.available.map(item => [item.key, item.preview]));
+  assert.equal(preview.statusLine, 'bash ~/.claude/statusline-command.sh');
+  assert.equal(preview.model, 'opus');
+  assert.equal(preview['permissions.defaultMode'], 'acceptEdits');
+  assert.equal(preview.cleanupPeriodDays, '90');
+  assert.ok(!JSON.stringify(view).includes('sk-secret'), 'no denied value reaches the page');
+  assert.deepEqual(settings.files, [{ name: 'statusline-command.sh', path: path.join(a.paths.claudeDir, 'statusline-command.sh'), size: fs.statSync(path.join(a.paths.claudeDir, 'statusline-command.sh')).size }]);
+  const { bundle } = a.service.refreshSnapshot();
+  assert.deepEqual(Object.keys(bundle.claude_settings.values), ['statusLine', 'switchModelsOnFlag', 'agentPushNotifEnabled', 'outputStyle', 'spinnerTipsEnabled']);
+  // A choice is stored and echoed; a key outside the allowlist is refused.
+  const chosen = a.service.update({ claude_settings_keys: ['model', 'permissions.defaultMode'] }).claude_settings;
+  assert.deepEqual(chosen.shared_keys, ['model', 'permissions.defaultMode']);
+  assert.equal(chosen.defaults, false);
+  assert.deepEqual(chosen.files, [], 'no status line, no scripts');
+  assert.deepEqual(a.service.refreshSnapshot().bundle.claude_settings, { values: { model: 'opus', 'permissions.defaultMode': 'acceptEdits' }, files: [] });
+  for (const keys of [['env'], ['hooks'], ['permissions.allow'], ['apiKeyHelper'], 'model', [1]]) {
+    refusedWith(() => a.service.update({ claude_settings_keys: keys }), 'RULE_SYNC_INVALID_SETTINGS', 400);
+    refusedWith(() => a.service.update({ keep_local: keys }), 'RULE_SYNC_INVALID_SETTINGS', 400);
+  }
+  assert.deepEqual(a.service.update({ claude_settings_keys: [] }).claude_settings.shared_keys, []);
+  assert.equal(a.service.refreshSnapshot().bundle.claude_settings, undefined, 'nothing chosen: the bundle has no settings');
+});
+
+test('claude settings: a denied key never enters the bundle, even when the stored choice was edited by hand', t => {
+  const a = settingsSource(t);
+  a.service.update({ role: 'source' });
+  storeState(a, { ...stateOf(a), claude_settings_keys: ['env', 'hooks', 'apiKeyHelper', 'permissions.allow', 'mcpServers', 'ANTHROPIC_API_KEY', 'theme', 'model'] });
+  const { bundle } = a.service.refreshSnapshot();
+  assert.deepEqual(bundle.claude_settings.values, { model: 'opus' });
+  assert.ok(!JSON.stringify(bundle).includes('sk-secret'));
+  assert.ok(!JSON.stringify(bundle).includes('Bash(*)'));
+  assert.deepEqual(a.service.overview().claude_settings.shared_keys, ['model']);
+  // A settings.json that is not JSON shares nothing and says so.
+  write(path.join(a.paths.claudeDir, 'settings.json'), '{ "model": ');
+  assert.equal(a.service.overview().claude_settings.settings_error, 'invalid-json');
+  assert.equal(a.service.refreshSnapshot().bundle.claude_settings, undefined);
+});
+
+test('claude settings: status line scripts are collected safely and the command is rewritten on the receiver (~ and absolute, quoted)', t => {
+  const a = settingsSource(t, { statusLine: { type: 'command', command: 'bash ~/.claude/statusline-command.sh | "$HOME/.claude/tools/fmt.py" --x; cat ~/.claude/link.sh ~/.claude/big.sh /etc/hosts' } });
+  write(path.join(a.paths.claudeDir, 'tools', 'fmt.py'), 'print(1)\n', 0o644);
+  write(path.join(a.home, 'elsewhere.sh'), 'x');
+  fs.symlinkSync(path.join(a.home, 'elsewhere.sh'), path.join(a.paths.claudeDir, 'link.sh'));
+  write(path.join(a.paths.claudeDir, 'big.sh'), Buffer.alloc(claudeShared.LIMITS.fileBytes + 1));
+  const view = a.service.update({ role: 'source' }).claude_settings;
+  assert.deepEqual(view.files.map(file => file.name), ['statusline-command.sh', 'fmt.py']);
+  assert.deepEqual(view.warnings, [{ path: path.join(a.paths.claudeDir, 'link.sh'), warning: 'symlink' }, { path: path.join(a.paths.claudeDir, 'big.sh'), warning: 'too-large' }], '/etc/hosts is outside the Claude folder and ignored');
+  const { bundle } = a.service.refreshSnapshot();
+  assert.deepEqual(bundle.claude_settings.files.map(({ content_base64: content, ...rest }) => rest), [
+    { path: 'statusline-command.sh', mode: 0o755, ref: '~/.claude/statusline-command.sh' },
+    { path: 'fmt.py', mode: 0o644, ref: '"$HOME/.claude/tools/fmt.py"' },
+  ]);
+
+  // A receiver with the default Claude folder: the ~ form.
+  const b = machine(t, { id: RECEIVER_ID });
+  b.service.update({ role: 'receive' });
+  const answer = b.service.receive(bundle);
+  assert.deepEqual(answer.applied.statusline_files, ['statusline-command.sh', 'fmt.py']);
+  const script = path.join(b.paths.claudeDir, 'shared', 'statusline', 'statusline-command.sh');
+  assert.equal(read(script), '#!/bin/bash\necho "$(cat ~/.claude/cache.txt)"\n', 'the script text is kept as it is');
+  assert.equal(modeOf(script), 0o755);
+  assert.equal(modeOf(path.join(b.paths.statuslineDir, 'fmt.py')), 0o644);
+  assert.equal(sharedFileOf(b).statusLine.command, 'bash ~/.claude/shared/statusline/statusline-command.sh | ~/.claude/shared/statusline/fmt.py --x; cat ~/.claude/link.sh ~/.claude/big.sh /etc/hosts');
+
+  // A receiver with a custom Claude folder that has a space: the absolute path, quoted.
+  const customHome = tempHome(t);
+  const custom = path.join(customHome, 'my claude');
+  const c = machine(t, { id: OTHER_ID, env: { CLAUDE_CONFIG_DIR: custom } });
+  c.service.update({ role: 'receive' });
+  c.service.receive(bundle);
+  const quoted = `'${path.join(custom, 'shared', 'statusline', 'statusline-command.sh')}'`;
+  assert.ok(sharedFileOf(c).statusLine.command.startsWith(`bash ${quoted} | '${path.join(custom, 'shared', 'statusline', 'fmt.py')}' --x`), sharedFileOf(c).statusLine.command);
+  assert.equal(claudeShared.sharedScriptWord('s.sh', { claudeDir: '/opt/claude', home: '/home/me' }), '/opt/claude/shared/statusline/s.sh', 'no quotes when none are needed');
+  assert.equal(claudeShared.sharedScriptWord('s.sh', { claudeDir: "/opt/it's", home: '/home/me' }), `'/opt/it'\\''s/shared/statusline/s.sh'`);
+});
+
+test('claude settings: the receiver writes claude-settings.json with the notice, keeps keys local and injects only there', t => {
+  const a = settingsSource(t);
+  a.service.update({ role: 'source', claude_settings_keys: ['statusLine', 'model', 'permissions.defaultMode', 'spinnerTipsEnabled'] });
+  const { bundle } = a.service.refreshSnapshot();
+  const b = machine(t, { id: RECEIVER_ID });
+  write(path.join(b.paths.claudeDir, 'settings.json'), '{ "model": "sonnet" }\n');
+  b.service.update({ role: 'receive' });
+  const answer = b.service.receive(bundle);
+  assert.deepEqual(answer.applied.claude_settings, ['statusLine', 'model', 'permissions.defaultMode', 'spinnerTipsEnabled']);
+  const file = sharedFileOf(b);
+  assert.deepEqual(Object.keys(file), ['_comment', 'statusLine', 'model', 'permissions', 'spinnerTipsEnabled'], 'the notice is the first key');
+  assert.match(file._comment, /^Synced by T-Agent from Home Mac and injected into the Claude Code sessions T-Agent starts \(--settings\); settings\.json is not changed\./);
+  assert.deepEqual(file.permissions, { defaultMode: 'acceptEdits' });
+  assert.equal(read(path.join(b.paths.claudeDir, 'settings.json')), '{ "model": "sonnet" }\n', 'the receiver\'s settings.json is never written');
+  assert.equal(exists(path.join(a.paths.claudeDir, 'shared', 'claude-settings.json')), false, 'the source keeps no copy');
+
+  const injected = sessionClaudeSettings({ db: b.db, env: {}, home: b.home });
+  assert.deepEqual(injected, { statusLine: { ...SOURCE_SETTINGS.statusLine, command: 'bash ~/.claude/shared/statusline/statusline-command.sh' }, model: 'opus', permissions: { defaultMode: 'acceptEdits' }, spinnerTipsEnabled: false });
+  assert.deepEqual(sessionClaudeSettings({ db: a.db, env: {}, home: a.home }), {}, 'the source injects nothing: its settings.json has the values');
+
+  // Keep local: this machine's own model wins.
+  const view = b.service.update({ keep_local: ['model'] }).claude_settings;
+  assert.deepEqual(view.keep_local, ['model']);
+  assert.deepEqual(view.received.map(item => [item.key, item.kept_local]), [['statusLine', false], ['model', true], ['permissions.defaultMode', false], ['spinnerTipsEnabled', false]]);
+  assert.deepEqual(view.files.map(item => item.name), ['statusline-command.sh']);
+  assert.equal(view.file_path, b.paths.sharedClaudeSettings);
+  assert.equal(sessionClaudeSettings({ db: b.db, env: {}, home: b.home }).model, undefined);
+  assert.equal(read(b.paths.sharedClaudeSettings).includes('"opus"'), true, 'the received value is still kept in the file');
+
+  // Role off: nothing injected. A malformed file: nothing, and one log line.
+  b.service.update({ role: 'off' });
+  assert.deepEqual(sessionClaudeSettings({ db: b.db, env: {}, home: b.home }), {});
+  b.service.update({ role: 'receive' });
+  b.service.receive(bundle);
+  write(b.paths.sharedClaudeSettings, '{ broken');
+  const lines = [];
+  const log = { warn: line => lines.push(line) };
+  assert.deepEqual(sessionClaudeSettings({ db: b.db, env: {}, home: b.home, log }), {});
+  assert.deepEqual(sessionClaudeSettings({ db: b.db, env: {}, home: b.home, log }), {});
+  assert.equal(lines.length, 1);
+  assert.equal(b.service.overview().claude_settings.file_error, 'invalid-json');
+
+  // The source shares nothing any more: the file and the scripts go.
+  a.service.update({ claude_settings_keys: [] });
+  const empty = a.service.refreshSnapshot().bundle;
+  b.service.receive(empty);
+  assert.equal(exists(b.paths.sharedClaudeSettings), false);
+  assert.equal(exists(path.join(b.paths.statuslineDir, 'statusline-command.sh')), false);
+  assert.deepEqual(b.service.overview().claude_settings.received, []);
+});
+
+test('claude settings: the guard puts back an edited claude-settings.json and status line script, with a backup', t => {
+  const a = settingsSource(t);
+  a.service.update({ role: 'source' });
+  const b = machine(t, { id: RECEIVER_ID });
+  b.service.update({ role: 'receive' });
+  b.service.receive(a.service.refreshSnapshot().bundle);
+  const record = JSON.parse(read(path.join(b.dataDir, 'rule-sync', 'applied-bundle.json')));
+  assert.equal(record.claude_settings.sha256, crypto.createHash('sha256').update(read(b.paths.sharedClaudeSettings)).digest('hex'));
+  assert.deepEqual(record.claude_settings.files.map(file => file.path), ['statusline-command.sh']);
+  const synced = read(b.paths.sharedClaudeSettings);
+  const script = path.join(b.paths.statuslineDir, 'statusline-command.sh');
+  const scriptText = read(script);
+  write(b.paths.sharedClaudeSettings, '{ "model": "mine" }\n');
+  write(script, 'echo local\n');
+  const entry = b.service.guardCheck();
+  assert.deepEqual(entry.paths, [b.paths.sharedClaudeSettings, script]);
+  assert.equal(read(b.paths.sharedClaudeSettings), synced);
+  assert.equal(read(script), scriptText);
+  assert.equal(modeOf(script), 0o755);
+  assert.equal(read(path.join(entry.backup_dir, 'claude', 'shared', 'claude-settings.json')), '{ "model": "mine" }\n');
+  assert.equal(read(path.join(entry.backup_dir, 'claude', 'shared', 'statusline', 'statusline-command.sh')), 'echo local\n');
+  fs.rmSync(script);
+  fs.rmSync(b.paths.sharedClaudeSettings);
+  const deleted = b.service.guardCheck();
+  assert.equal(deleted.backup_dir, null);
+  assert.equal(read(script), scriptText);
+  assert.equal(read(b.paths.sharedClaudeSettings), synced);
+  // Another file in the status line folder is not ours to compare.
+  write(path.join(b.paths.statuslineDir, 'mine.sh'), 'x');
+  assert.equal(b.service.guardCheck(), null);
+});
+
+test('claude settings: the revision covers them; an older receiver gets the bundle without them and stays up to date', async t => {
+  const a0 = settingsSource(t);
+  a0.service.update({ role: 'source' });
+  const first = a0.service.refreshSnapshot();
+  assert.equal(first.legacy.revision, revisionOf('Rule one.\n', []), 'without settings the revision is the one older services compute');
+  assert.notEqual(first.bundle.revision, first.legacy.revision);
+  assert.equal(first.bundle.revision, revisionOf('Rule one.\n', [], first.bundle.claude_settings));
+  write(path.join(a0.paths.claudeDir, 'settings.json'), JSON.stringify({ ...SOURCE_SETTINGS, spinnerTipsEnabled: true }));
+  const second = a0.service.refreshSnapshot();
+  assert.notEqual(second.bundle.revision, first.bundle.revision, 'a changed value is a new revision');
+  write(path.join(a0.paths.claudeDir, 'statusline-command.sh'), 'echo changed\n', 0o755);
+  assert.notEqual(a0.service.refreshSnapshot().bundle.revision, second.bundle.revision, 'a changed script is a new revision');
+
+  // An older receiver checks the revision over the rules and skills only: the full bundle would be refused, so it gets the legacy one.
+  const oldReceiver = machine(t, { id: RECEIVER_ID });
+  const newReceiver = machine(t, { id: OTHER_ID });
+  oldReceiver.service.update({ role: 'receive' });
+  newReceiver.service.update({ role: 'receive' });
+  const peers = [{ id: 'old', name: 'Old', machine: oldReceiver, capabilities: [CAPABILITY, EDIT_CAPABILITY] }, { id: 'new', name: 'New', machine: newReceiver, capabilities: FULL }];
+  const a = linkedSource(t, () => peers);
+  write(path.join(a.paths.claudeDir, 'settings.json'), JSON.stringify(SOURCE_SETTINGS));
+  write(path.join(a.paths.claudeDir, 'statusline-command.sh'), '#!/bin/sh\n', 0o755);
+  write(a.paths.sharedRules, 'Rule one.\n');
+  a.service.update({ role: 'source' });
+  await a.service.pushAll();
+  const sent = Object.fromEntries(a.puts().map(call => [call.peer, call.body]));
+  assert.equal(sent.old.claude_settings, undefined);
+  assert.equal(sent.old.revision, revisionOf('Rule one.\n', []));
+  const oldParse = body => revisionOf(body.rules, body.skills.map(skill => ({ name: skill.name, files: skill.files }))) === body.revision;
+  assert.equal(oldParse(sent.old), true, 'what an older receiver computes matches');
+  assert.equal(oldParse(sent.new), false, 'the full bundle would not');
+  assert.ok(sent.new.claude_settings.values.statusLine);
+  assert.equal(exists(oldReceiver.paths.sharedClaudeSettings), false);
+  assert.equal(exists(newReceiver.paths.sharedClaudeSettings), true);
+  const targets = Object.fromEntries(a.service.overview().targets.map(target => [target.id, target]));
+  assert.equal(targets.old.claude_settings_supported, false);
+  assert.equal(targets.old.expected_revision, targets.old.revision);
+  assert.equal(targets.new.claude_settings_supported, true);
+  assert.equal(targets.new.expected_revision, a.service.overview().revision);
+  await a.service.pushAll();
+  await a.service.retry();
+  assert.equal(a.puts().length, 2, 'both are up to date: nothing is sent again');
+  // A bundle of an older source (no claude_settings) is still accepted.
+  assert.equal(newReceiver.service.receive(sourceBundle(tempHome(t)).bundle).applied.claude_settings.length, 0);
+  assert.equal(exists(newReceiver.paths.sharedClaudeSettings), false, 'nothing shared any more');
+});
+
+test('claude settings: a receiver checks the shape, drops keys it may not inject and refuses a wrong revision', t => {
+  const b = machine(t, { id: RECEIVER_ID });
+  b.service.update({ role: 'receive' });
+  const make = claudeSettings => ({ ...handBundle([], 'R.\n'), claude_settings: claudeSettings, revision: revisionOf('R.\n', [], claudeSettings) });
+  for (const [value, reason] of [[[], 'claude_settings'], [{ values: [] }, 'claude_settings values'], [{ values: {}, files: {} }, 'claude_settings files'],
+    [{ values: {}, files: [{ path: '../x', mode: 0o644, content_base64: '' }] }, 'claude_settings file name'],
+    [{ values: {}, files: [{ path: 'a.sh', mode: 0o644, content_base64: '!!' }] }, 'content']]) {
+    assert.throws(() => b.service.receive(make(value)), error => error.code === 'RULE_SYNC_INVALID_BUNDLE' && error.extra.reason === reason, reason);
+  }
+  const many = Array.from({ length: 6 }, (_, index) => ({ path: `s${index}.sh`, mode: 0o644, content_base64: '' }));
+  refusedWith(() => b.service.receive(make({ values: {}, files: many })), 'RULE_SYNC_TOO_LARGE', 413);
+  refusedWith(() => b.service.receive(make({ values: {}, files: [{ path: 'big.sh', mode: 0o644, content_base64: Buffer.alloc(claudeShared.LIMITS.fileBytes + 1).toString('base64') }] })), 'RULE_SYNC_TOO_LARGE', 413);
+  const tampered = make({ values: { model: 'opus' }, files: [] });
+  tampered.claude_settings.values.model = 'haiku';
+  refusedWith(() => b.service.receive(tampered), 'RULE_SYNC_INVALID_BUNDLE', 400);
+  assert.equal(exists(b.paths.sharedClaudeSettings), false, 'nothing was written');
+  // Denied, unknown and badly typed keys are dropped; the revision is still checked over what was sent.
+  b.service.receive(make({ values: { env: { ANTHROPIC_API_KEY: 'x' }, hooks: {}, apiKeyHelper: 'x', 'permissions.allow': ['Bash'], futureKey: 1, model: 'opus', spinnerTipsEnabled: 'no' }, files: [] }));
+  assert.deepEqual(sharedFileOf(b), { _comment: sharedFileOf(b)._comment, model: 'opus' });
+});
+
 // ---- Routes ----
 
 async function listen(t, app) {
@@ -1001,6 +1283,11 @@ test('two real services: the source shares rules and a skill over the link, and 
   write(path.join(a.claude, 'skills', 'shared-tool', 'run.sh'), '#!/bin/sh\n', 0o755);
   write(path.join(a.claude, 'skills', 'private', 'SKILL.md'), 'Not shared.\n');
   write(path.join(a.claude, 'skills', 'company', 'SKILL.md'), 'Would clash.\n');
+  // Shared Claude settings: the status line (with its script) is shared by default, the model is not, credentials never are.
+  write(path.join(a.claude, 'settings.json'), JSON.stringify({ statusLine: { type: 'command', command: 'bash ~/.claude/statusline-command.sh' }, model: 'opus', env: { ANTHROPIC_API_KEY: 'sk-e2e' } }));
+  write(path.join(a.claude, 'statusline-command.sh'), '#!/bin/bash\necho hi\n', 0o755);
+  write(path.join(b.claude, 'settings.json'), '{ "model": "sonnet" }\n');
+  assert.ok(info.body.capabilities.includes(SETTINGS_CAPABILITY));
   assert.equal((await b.call('PUT', '/api/rule-sync', { role: 'receive' })).body.role, 'receive');
   assert.equal((await a.call('POST', '/api/rule-sync/create-shared', {})).body.shared_rules_exists, true);
   fs.appendFileSync(path.join(a.claude, 'shared', 'CLAUDE.shared.md'), 'Shared rule one.\n');
@@ -1022,6 +1309,18 @@ test('two real services: the source shares rules and a skill over the link, and 
   assert.equal(read(path.join(b.claude, 'skills', 'company', 'SKILL.md')), 'Company skill.\n', 'the company skill is untouched');
   const view = (await a.call('GET', '/api/rule-sync')).body;
   assert.deepEqual(view.targets[0].conflicts, [{ skill: 'company', reason: 'local' }]);
+  assert.equal(view.targets[0].claude_settings_supported, true);
+  assert.deepEqual(view.claude_settings.available.map(item => [item.key, item.shared]), [['statusLine', true], ['model', false]]);
+  const receivedSettings = JSON.parse(read(path.join(b.claude, 'shared', 'claude-settings.json')));
+  assert.deepEqual(receivedSettings.statusLine, { type: 'command', command: 'bash ~/.claude/shared/statusline/statusline-command.sh' });
+  assert.equal(receivedSettings.model, undefined);
+  assert.ok(!JSON.stringify(receivedSettings).includes('sk-e2e'));
+  assert.equal(read(path.join(b.claude, 'shared', 'statusline', 'statusline-command.sh')), '#!/bin/bash\necho hi\n');
+  assert.equal(read(path.join(b.claude, 'settings.json')), '{ "model": "sonnet" }\n', 'the receiver\'s settings.json is untouched');
+  const keep = await b.call('PUT', '/api/rule-sync', { keep_local: ['statusLine'] });
+  assert.equal(keep.status, 200, keep.text);
+  assert.deepEqual(keep.body.claude_settings.received, [{ key: 'statusLine', preview: 'bash ~/.claude/shared/statusline/statusline-command.sh', kept_local: true }]);
+  assert.equal((await b.call('PUT', '/api/rule-sync', { keep_local: ['env'] })).status, 400);
   const onB = (await b.call('GET', '/api/rule-sync')).body;
   assert.equal(onB.following.instance_id.length, 36);
   assert.equal(onB.targets.length, 0, 'a receiver lists no targets');

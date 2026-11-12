@@ -20,7 +20,7 @@ test('groups come in the fixed order, empty ones left out, closed statuses toget
   assert.deepEqual(groupItems([item(1, 'strange')]).map(group => group.key), ['todo'], 'an unknown status is listed under To do');
 });
 
-test('within a group: priority, then due date (none last), then the newest update, then id', async () => {
+test('within a group of an older server (no sort_order): priority, then due date (none last), then the newest update, then id', async () => {
   const { groupItems } = await load();
   const list = [
     item(1, 'todo', { priority: 'low' }),
@@ -35,10 +35,149 @@ test('within a group: priority, then due date (none last), then the newest updat
   assert.deepEqual(groupItems(list)[0].items.map(entry => entry.id), [3, 2, 4, 6, 5, 1, 7, 8]);
 });
 
+test('within a group of a server with sort_order: the highest first, ties by the highest id; priority does not count', async () => {
+  const { groupItems } = await load();
+  const list = [
+    item(1, 'todo', { sort_order: 10, priority: 'high' }),
+    item(2, 'todo', { sort_order: 30 }),
+    item(3, 'todo', { sort_order: 20, due_date: '2026-01-01' }),
+    item(4, 'todo', { sort_order: 20 }),
+    item(5, 'todo', { sort_order: -1 }),
+  ];
+  assert.deepEqual(groupItems(list)[0].items.map(entry => entry.id), [2, 4, 3, 1, 5]);
+});
+
+test('hasTree: a list with the parent_id key comes from a server with sub-tasks', async () => {
+  const { hasTree } = await load();
+  assert.equal(hasTree([item(1, 'todo', { parent_id: null })]), true);
+  assert.equal(hasTree([item(1, 'todo')]), false, 'an older server');
+  assert.equal(hasTree([]), false);
+  assert.equal(hasTree(null), false);
+});
+
+const tree = (id, status, parent, order, extra = {}) => item(id, status, { parent_id: parent, sort_order: order, ...extra });
+const shape = nodes => nodes.map(node => (node.children.length ? [node.item.id, shape(node.children)] : node.item.id));
+
+test('buildTree: sub-tasks under their parent in the same group, depth first, in the group order', async () => {
+  const { buildTree, groupItems } = await load();
+  const all = [
+    tree(1, 'todo', null, 100), tree(2, 'todo', 1, 50), tree(3, 'todo', 1, 60), tree(4, 'todo', 3, 10), tree(5, 'todo', null, 90), tree(6, 'todo', null, 95),
+  ];
+  const nodes = buildTree(groupItems(all)[0].items, all);
+  assert.deepEqual(shape(nodes), [[1, [[3, [4]], 2]], 6, 5]);
+  assert.equal(nodes[0].children[0].children[0].depth, 2);
+  assert.equal(nodes[0].parent, null);
+});
+
+test('buildTree: a sub-task whose parent is in another group is a top-level row with that parent; an unknown parent is a plain row', async () => {
+  const { buildTree, groupItems } = await load();
+  const all = [tree(1, 'working', null, 10), tree(2, 'review', 1, 5), tree(3, 'review', 99, 4), tree(4, 'review', 2, 3)];
+  const review = groupItems(all).find(group => group.key === 'review');
+  const nodes = buildTree(review.items, all);
+  assert.deepEqual(shape(nodes), [[2, [4]], 3]);
+  assert.equal(nodes[0].parent.id, 1, 'the parent of another group, for the hint');
+  assert.equal(nodes[1].parent, null, 'a parent that is not known');
+  assert.equal(nodes[0].children[0].parent, null, 'a sub-task drawn under its parent has no hint');
+});
+
+test('buildTree: deep trees stop indenting at MAX_INDENT; a cycle in the data never loops', async () => {
+  const { buildTree, MAX_INDENT } = await load();
+  const chain = [tree(1, 'todo', null, 9), tree(2, 'todo', 1, 8), tree(3, 'todo', 2, 7), tree(4, 'todo', 3, 6), tree(5, 'todo', 4, 5), tree(6, 'todo', 5, 4)];
+  let node = buildTree(chain)[0];
+  const indents = [];
+  while (node) { indents.push([node.depth, node.indent]); node = node.children[0]; }
+  assert.equal(MAX_INDENT, 3);
+  assert.deepEqual(indents, [[0, 0], [1, 1], [2, 2], [3, 3], [4, 3], [5, 3]]);
+  const cycle = [tree(1, 'todo', 2, 2), tree(2, 'todo', 1, 1), tree(3, 'todo', 3, 0)];
+  const nodes = buildTree(cycle);
+  assert.deepEqual(shape(nodes).flat(Infinity).sort(), [1, 2, 3], 'every row is drawn once');
+});
+
+test('visibleRows: a collapsed parent hides its sub-tasks at every depth', async () => {
+  const { buildTree, visibleRows } = await load();
+  const all = [tree(1, 'todo', null, 9), tree(2, 'todo', 1, 8), tree(3, 'todo', 2, 7), tree(4, 'todo', null, 6)];
+  const nodes = buildTree(all);
+  assert.deepEqual(visibleRows(nodes).map(row => row.id), [1, 2, 3, 4]);
+  assert.deepEqual(visibleRows(nodes, new Set([2])).map(row => row.id), [1, 2, 4]);
+  assert.deepEqual(visibleRows(nodes, new Set([1])).map(row => [row.id, row.hasChildren]), [[1, true], [4, false]]);
+});
+
+test('readCollapsed: a JSON list of ids; anything else is none', async () => {
+  const { readCollapsed } = await load();
+  assert.deepEqual([...readCollapsed('[1,2]')], [1, 2]);
+  assert.deepEqual([...readCollapsed('{"a":1}')], []);
+  assert.deepEqual([...readCollapsed('not json')], []);
+  assert.deepEqual([...readCollapsed(null)], []);
+  assert.deepEqual([...readCollapsed('[1,"x",null]')], [1]);
+});
+
+test('children, descendants and the Parent choices (never the task itself or one of its sub-tasks)', async () => {
+  const { childrenOf, descendantsOf, parentChoices } = await load();
+  const all = [tree(1, 'todo', null, 9), tree(2, 'working', 1, 8), tree(3, 'todo', 2, 7), tree(4, 'todo', null, 6), tree(5, 'todo', 1, 10)];
+  assert.deepEqual(childrenOf(all, 1).map(entry => entry.id), [5, 2]);
+  assert.deepEqual([...descendantsOf(all, 1)].sort(), [2, 3, 5]);
+  assert.deepEqual(parentChoices(all, all[0]).map(entry => entry.id), [4]);
+  assert.deepEqual(parentChoices(all, all[2]).map(entry => entry.id).sort(), [1, 2, 4, 5]);
+  assert.deepEqual([...descendantsOf([tree(1, 'todo', 2, 0), tree(2, 'todo', 1, 0)], 1)], [2], 'a cycle stops');
+});
+
+test('moveLocal: the moved task goes between its new neighbours, to the top or bottom, or into another status', async () => {
+  const { moveLocal, groupItems } = await load();
+  const all = [tree(1, 'todo', null, 30), tree(2, 'todo', null, 20), tree(3, 'todo', null, 10), tree(4, 'working', null, 5)];
+  const ids = list => groupItems(list).map(group => [group.key, group.items.map(entry => entry.id)]);
+  assert.deepEqual(ids(moveLocal(all, 3, { before: 1 })), [['working', [4]], ['todo', [3, 1, 2]]]);
+  assert.deepEqual(ids(moveLocal(all, 1, { after: 2 })), [['working', [4]], ['todo', [2, 1, 3]]]);
+  assert.deepEqual(ids(moveLocal(all, 1, { after: 3 })), [['working', [4]], ['todo', [2, 3, 1]]]);
+  assert.deepEqual(ids(moveLocal(all, 3, { position: 'top' })), [['working', [4]], ['todo', [3, 1, 2]]]);
+  assert.deepEqual(ids(moveLocal(all, 1, { position: 'bottom' })), [['working', [4]], ['todo', [2, 3, 1]]]);
+  const moved = moveLocal(all, 2, { position: 'top', status: 'working' });
+  assert.deepEqual(ids(moved), [['working', [2, 4]], ['todo', [1, 3]]]);
+  assert.equal(all[1].status, 'todo', 'the old list is not changed');
+  assert.equal(moveLocal(all, 9, { before: 1 }), null);
+  assert.equal(moveLocal(all, 1, { before: 4 }), null, 'a target in another group');
+});
+
+test('stepMove: up, down and to the top among the siblings drawn at the same level', async () => {
+  const { stepMove } = await load();
+  const all = [tree(1, 'todo', null, 30), tree(2, 'todo', 1, 25), tree(3, 'todo', 1, 24), tree(4, 'todo', null, 20), tree(5, 'todo', null, 10)];
+  assert.deepEqual(stepMove(all, 4, 'up'), { before: 1 });
+  assert.deepEqual(stepMove(all, 4, 'down'), { after: 5 });
+  assert.deepEqual(stepMove(all, 5, 'top'), { before: 1 });
+  assert.equal(stepMove(all, 1, 'up'), null);
+  assert.equal(stepMove(all, 5, 'down'), null);
+  assert.deepEqual(stepMove(all, 3, 'up'), { before: 2 }, 'a sub-task moves among its siblings');
+  assert.equal(stepMove(all, 3, 'down'), null);
+  assert.equal(stepMove(all, 9, 'up'), null);
+});
+
+test('rollbackItems: only the tasks the shown change touched go back, unless a newer copy came meanwhile', async () => {
+  const { rollbackItems } = await load();
+  const before = [tree(1, 'todo', null, 3), tree(2, 'todo', null, 2), tree(3, 'todo', null, 1)];
+  const shown = before.map(entry => (entry.id === 3 ? { ...entry, sort_order: 4 } : entry));
+  assert.deepEqual(rollbackItems(shown, before, shown), before);
+  const newer = { ...shown[2], title: 'From the server' };
+  const now = [shown[0], { ...shown[1], title: 'Live' }, newer];
+  const back = rollbackItems(now, before, shown);
+  assert.equal(back[2], newer, 'a newer copy stays');
+  assert.equal(back[1].title, 'Live', 'an untouched task keeps its live copy');
+});
+
+test('statusOfGroup: the status a drop on a group title gives', async () => {
+  const { statusOfGroup } = await load();
+  assert.deepEqual(['needs', 'review', 'working', 'todo', 'closed', 'x'].map(statusOfGroup), ['waiting_user', 'review', 'working', 'todo', 'done', null]);
+});
+
 test('the Needs you count is the number of waiting_user tasks', async () => {
   const { needsCount } = await load();
   assert.equal(needsCount([item(1, 'waiting_user'), item(2, 'review'), item(3, 'waiting_user')]), 2);
   assert.equal(needsCount(null), 0);
+});
+
+test('a reorder change with the same updated_at still replaces the copy (the renumbered neighbours of /move)', async () => {
+  const { applyChange } = await load();
+  const list = [item(1, 'todo', { sort_order: 10 }), item(2, 'todo', { sort_order: 20 })];
+  const next = applyChange(list, { kind: 'updated', reorder: true, event: null, item: item(1, 'todo', { sort_order: 30 }) });
+  assert.equal(next[0].sort_order, 30);
 });
 
 test('a change event adds, replaces or removes a task, and returns a new list', async () => {
@@ -87,11 +226,34 @@ test('a reminder only for a move INTO waiting_user, failed or review', async () 
   assert.equal(reminderFor({ kind: 'deleted', item: item(1, 'failed') }), null);
 });
 
+test('a change of the order alone is never a reminder', async () => {
+  const { reminderFor } = await load();
+  const waiting = item(1, 'waiting_user', { sort_order: 5 });
+  assert.equal(reminderFor({ kind: 'updated', item: waiting, previous: { ...waiting, sort_order: 2 }, event: { type: 'updated', data: { sort_order: 5 } } }), null);
+  assert.equal(reminderFor({ kind: 'updated', item: waiting, previous: null, event: { type: 'moved', from_status: 'waiting_user', to_status: 'waiting_user' } }), null, 'a move event without previous');
+  assert.ok(reminderFor({ kind: 'updated', item: waiting, previous: item(1, 'working'), event: { type: 'moved', from_status: 'working', to_status: 'waiting_user' } }), 'a move into Needs you is one');
+  // The server's /move: every task whose order changed comes with reorder: true; the renumbered neighbours with event: null.
+  assert.equal(reminderFor({ kind: 'updated', item: waiting, previous: item(1, 'working'), reorder: true, event: null }), null, 'a renumbered neighbour');
+  assert.equal(reminderFor({ kind: 'updated', item: waiting, previous: item(1, 'working'), reorder: true, event: { type: 'updated', data: { sort_order: 5, move: { position: 'top' } } } }), null);
+  assert.ok(reminderFor({ kind: 'updated', item: waiting, previous: item(1, 'working'), reorder: true, event: { type: 'status', from_status: 'working', to_status: 'waiting_user', data: { status: 'waiting_user', move: { position: 'top' } } } }), 'a drop that changed the status');
+});
+
 test('only web links and page addresses of this app can be opened', async () => {
   const { safeLink } = await load();
   assert.deepEqual(safeLink('https://example.test/pr/1'), { url: 'https://example.test/pr/1', external: true });
   assert.deepEqual(safeLink('/?openChat=c1'), { url: '/?openChat=c1', external: false });
   for (const bad of ['javascript:alert(1)', '//evil.test/x', '/\\evil.test', 'data:text/html,x', 'ftp://x', '', null, 'https://a b']) assert.equal(safeLink(bad), null, String(bad));
+});
+
+test('the edit form: custom status, result and parent only when the form has them; empty clears (null)', async () => {
+  const { patchFor } = await load();
+  const base = item(1, 'todo', { notes: '', custom_status: 'Blocked', result: null, parent_id: 4 });
+  const same = { title: 'T1', notes: '', status: 'todo', priority: 'none', due_date: '', custom_status: 'Blocked', result: '', parent_id: '4' };
+  assert.equal(patchFor(base, same), null);
+  assert.deepEqual(patchFor(base, { ...same, custom_status: '  ', result: ' Shipped ', parent_id: '' }), { custom_status: null, result: 'Shipped', parent_id: null });
+  assert.deepEqual(patchFor(base, { ...same, parent_id: '7' }), { parent_id: 7 });
+  const { custom_status: _c, result: _r, parent_id: _p, ...old } = same;
+  assert.equal(patchFor(base, old), null, 'an older server form has none of them');
 });
 
 test('the edit form sends only what changed; empty notes and due date clear them', async () => {
@@ -137,6 +299,33 @@ test('timeline sentences: activity kinds, status changes, created; quiet context
   assert.deepEqual(eventSentence({ type: 'updated', data: { title: 'x', priority: 'high', context: {} } }), { key: 'Changed', text: 'title, priority', kind: 'updated' });
   assert.equal(eventSentence({ type: 'updated', data: { context: {}, attention_reason: 'x' } }), null);
   assert.equal(eventSentence({ type: 'weird' }), null);
+});
+
+test('timeline sentences of the sub-task fields: custom status, result, parent, and moves', async () => {
+  const { eventSentences, timeline } = await load();
+  const titleOf = id => (id === 4 ? 'Parent task' : '');
+  assert.deepEqual(eventSentences({ type: 'updated', data: { custom_status: 'Blocked' } }), [{ key: 'Custom status', text: 'Blocked', kind: 'custom_status' }]);
+  assert.deepEqual(eventSentences({ type: 'updated', data: { custom_status: null } })[0].key, 'Custom status cleared');
+  assert.deepEqual(eventSentences({ type: 'updated', data: { result: { from: null, to: 'Shipped' } } })[0], { key: 'Result', text: 'Shipped', kind: 'result' });
+  assert.deepEqual(eventSentences({ type: 'updated', data: { parent_id: 4 } }, titleOf)[0], { key: 'Moved under', text: 'Parent task', kind: 'parent', joined: true });
+  assert.equal(eventSentences({ type: 'updated', data: { parent_id: 9 } }, titleOf)[0].text, '#9', 'a parent that is not known');
+  assert.equal(eventSentences({ type: 'updated', data: { parent_id: null } })[0].key, 'Now top-level');
+  assert.deepEqual(eventSentences({ type: 'updated', data: { title: 'x', result: 'r', due_date: null } }).map(entry => [entry.key, entry.text]), [['Changed', 'title, due date'], ['Result', 'r']]);
+  assert.deepEqual(eventSentences({ type: 'updated', data: { sort_order: 5 } }), [], 'the order alone says nothing');
+  assert.deepEqual(eventSentences({ type: 'moved', data: { before: 2 } }).map(entry => entry.key), ['Moved']);
+  assert.deepEqual(eventSentences({ type: 'updated', data: { sort_order: 30, move: { before: 2 }, reason: 'drag' } }).map(entry => entry.key), ['Moved'], 'the server stores a move as an update with data.move');
+  assert.deepEqual(eventSentences({ type: 'status', to_status: 'working', data: { status: 'working', sort_order: 9, move: { position: 'top' } } }).map(entry => entry.key), ['Started working']);
+  assert.deepEqual(eventSentences({ type: 'activity', data: { kind: 'note', text: 'Handled' } }), [{ key: 'Handled', text: '', kind: 'note' }]);
+  assert.deepEqual(eventSentences({ type: 'activity', data: { kind: 'note', text: 'Rejected: Missing tests' } }), [{ key: 'Rejected', text: 'Missing tests', kind: 'note' }]);
+  assert.deepEqual(eventSentences({ type: 'activity', data: { kind: 'note', text: 'Rejected' } }), [{ key: 'Rejected', text: '', kind: 'note' }]);
+  assert.equal(eventSentences({ type: 'activity', data: { kind: 'note', text: 'Rejectedly done' } })[0].key, 'Note', 'only that note');
+  assert.deepEqual(eventSentences({ type: 'status', to_status: 'working', data: { status: 'working', custom_status: 'Retry' } }).map(entry => entry.key), ['Started working', 'Custom status']);
+  const at = minute => new Date(2026, 10, 6, 9, minute).toISOString();
+  const days = timeline([
+    { id: 5, at: at(5), type: 'moved' }, { id: 4, at: at(4), type: 'moved' }, { id: 3, at: at(3), type: 'updated', data: { sort_order: 1 } },
+    { id: 2, at: at(2), type: 'updated', data: { sort_order: 2, move: { after: 3 } } }, { id: 1, at: at(1), type: 'activity', data: { kind: 'note', text: 'Handled' } },
+  ]);
+  assert.deepEqual(days[0].items.map(entry => [entry.id, entry.key]), [[1, 'Handled'], [5, 'Moved']], 'a run of moves is one sentence, at the last one');
 });
 
 test('timeline: oldest first, grouped by local day', async () => {

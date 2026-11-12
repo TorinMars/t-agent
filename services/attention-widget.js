@@ -126,6 +126,7 @@ function createWidgetLauncher({
   let lastError = null;
   let swiftc; // undefined: not looked for yet; null: missing (looked for at `swiftcCheckedAt`); else its path
   let swiftcCheckedAt = 0;
+  let sdkRoot = null; // the macOS SDK path from xcrun, passed to swiftc as SDKROOT
 
   const run = (file, args, options) => new Promise(resolve => {
     try {
@@ -146,6 +147,11 @@ function createWidgetLauncher({
     const found = await run('/usr/bin/xcrun', ['--find', 'swiftc'], { timeout: LOOKUP_TIMEOUT_MS });
     const file = firstLine(found.stdout);
     if (found.error || !path.isAbsolute(file)) return null;
+    // swiftc run by its own path (not through the xcrun shim) does not know where the macOS SDK is and fails with "unable to load standard
+    // library for target ..."; xcrun tells it through SDKROOT, so the build passes the SDK path the same way.
+    const sdk = await run('/usr/bin/xcrun', ['--sdk', 'macosx', '--show-sdk-path'], { timeout: LOOKUP_TIMEOUT_MS });
+    const sdkPath = firstLine(sdk.stdout);
+    sdkRoot = !sdk.error && path.isAbsolute(sdkPath) ? sdkPath : null;
     swiftc = file;
     return swiftc;
   }
@@ -167,7 +173,9 @@ function createWidgetLauncher({
   async function build(compiler) {
     fs.mkdirSync(folder, { recursive: true, mode: 0o700 });
     const temporary = path.join(folder, `${BINARY}.${pid}.tmp`);
-    const result = await run(compiler, ['-O', '-swift-version', '5', '-framework', 'AppKit', sourcePath, '-o', temporary], { timeout: BUILD_TIMEOUT_MS });
+    const result = await run(compiler, ['-O', '-swift-version', '5', '-framework', 'AppKit', sourcePath, '-o', temporary], {
+      timeout: BUILD_TIMEOUT_MS, env: { ...env, ...(sdkRoot ? { SDKROOT: sdkRoot } : {}) },
+    });
     if (result.error) {
       try { fs.rmSync(temporary, { force: true }); } catch { /* nothing was written */ }
       const reason = result.error.killed ? 'timed out after 600 s' : firstLine(result.stderr.split('\n').find(line => /error/i.test(line)) || result.stderr) || result.error.message;

@@ -393,9 +393,10 @@ function launcherKit({ platform = 'darwin', env = { PATH: '/usr/bin', HOME: '/Us
   const calls = { exec: [], spawn: [], logs: [] };
   const children = [];
   const execFile = (file, args, options, callback) => {
-    calls.exec.push({ file, args, timeout: options.timeout });
+    calls.exec.push({ file, args, timeout: options.timeout, env: options.env });
     setImmediate(() => {
       if (file === '/usr/bin/xcode-select') return tools ? callback(null, '/Library/Developer/CommandLineTools\n', '') : callback(Object.assign(new Error('no tools'), { code: 2 }), '', 'error: unable to get active developer directory');
+      if (file === '/usr/bin/xcrun' && args.includes('--show-sdk-path')) return callback(null, '/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk\n', '');
       if (file === '/usr/bin/xcrun') return callback(null, '/Library/Developer/CommandLineTools/usr/bin/swiftc\n', '');
       if (buildFails) return callback(Object.assign(new Error('exit 1'), { code: 1 }), '', 'warning: x\nTAttentionWidget.swift:3:1: error: cannot find foo in scope\n');
       fs.writeFileSync(args[args.indexOf('-o') + 1], 'binary');
@@ -427,6 +428,8 @@ test('launcher: builds once, spawns with the parent pid, the url and a new token
   assert.equal(build.args[6], '-o');
   assert.match(build.args[7], /t-attention-widget\.4242\.tmp$/, 'built to a temporary name first');
   assert.equal(build.timeout, 600000);
+  // swiftc by its own path needs the SDK from xcrun (without it: "unable to load standard library for target ...").
+  assert.equal(build.env.SDKROOT, '/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk');
   assert.equal(fs.readFileSync(kit.launcher.paths.binary, 'utf8'), 'binary');
   assert.equal(fs.existsSync(build.args[7]), false, 'the temporary file was renamed');
   assert.equal(JSON.parse(fs.readFileSync(kit.launcher.paths.stampFile, 'utf8')).version, '9.9.9');

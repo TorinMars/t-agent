@@ -202,7 +202,8 @@ const REVIEWED_ROUTES = new Set([
   'PUT /tasks/reorder', 'POST /terminal-sessions',
 ]);
 // /mindmaps: maps belong to no task. /task-order: a list of keys (instance id and task id), never a task's content, and link tokens only.
-const REVIEWED_MOUNTS = new Set(['/file-sync', '/linked-services', '/task-order', '/apps', '/agent-config', '/fs', '/mindmaps']);
+// /rule-sync: Claude and Codex rules and skills, no task.
+const REVIEWED_MOUNTS = new Set(['/file-sync', '/linked-services', '/task-order', '/apps', '/agent-config', '/fs', '/mindmaps', '/rule-sync']);
 const GUARDED = /^\/(tasks|terminal-sessions)\/:id(\/|$)/;
 
 test('every /v1 route has been reviewed, and the guard runs before all of them', () => {

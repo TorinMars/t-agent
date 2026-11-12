@@ -135,6 +135,8 @@ The order of the task list is shared: a reorder made in any browser of a service
 
 A linked service also shares its translation, voice input and OSS upload: when a service has one of these not configured, it uses the linked service that has it, without copying any key. A service's own configuration always comes first. For OSS, the other side's bucket must allow uploads from this page's address in its CORS rule.
 
+Rules and skills can be shared too (Settings → Rules and skills sync). One linked service is the source: you write shared Claude rules in `~/.claude/shared/CLAUDE.shared.md` and tick the skills under `~/.claude/skills/` to share. Linked services set to "Receive only" get that file, one managed import line at the top of their `~/.claude/CLAUDE.md`, the chosen skills (each with a `.t-agent-sync.json` marker) and, if enabled, the same rules in a managed block of `~/.codex/AGENTS.md`. A receiving service never sends anything, and the rest of each machine's `CLAUDE.md`, its own skills and the text outside the Codex block are never sent or changed; a local skill with the same name as a shared one is left alone and reported. Running sessions see new rules after they restart. See "Rules and skills sync" in `DESIGN.md`.
+
 ### Security boundary
 
 - The Client uses no username or password: browsers on computers and phones must first bind an authenticator and then log in with a 6-digit TOTP code; business pages and browser APIs cannot be used without binding.

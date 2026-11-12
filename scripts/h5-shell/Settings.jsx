@@ -15,6 +15,7 @@ import CloseIcon from '@mui/icons-material/Close';
 import { api, t } from './common.jsx';
 import { EnginesGroup } from './Engines.jsx';
 import { ServiceLinksGroup } from './ServiceLinks.jsx';
+import { RuleSyncGroup } from './RuleSync.jsx';
 import { AttentionSettings } from './AttentionSettings.jsx';
 import { Feedback, Field, Group, Hint, ROW, failure, useFeedback } from './Form.jsx';
 
@@ -400,6 +401,7 @@ export function SettingsDrawer({ state, ui }) {
         <VoiceGroup />
         <EnginesGroup state={state} ui={ui} linksVersion={linksVersion} onLinksChanged={linksChanged} />
         <ServiceLinksGroup state={state} ui={ui} version={linksVersion} onChanged={linksChanged} />
+        <RuleSyncGroup />
         <RemoteGroup />
         <AttentionSettings ui={ui} />
         <AccessGroup />

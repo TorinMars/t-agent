@@ -40,6 +40,14 @@ function hookToken(taskId, id) {
   return crypto.createHmac('sha256', hookSecret).update(`${Number(taskId)}:${id}`).digest('hex');
 }
 
+// Whether `token` is the hook token of this task's terminal (the X-T-Agent-* headers of the peer file relay, routes/peer-fs.js).
+function verifyHookToken(taskId, id, token) {
+  if (typeof id !== 'string' || !/^[a-zA-Z0-9_-]{1,64}$/.test(id) || typeof token !== 'string') return false;
+  const expected = Buffer.from(hookToken(taskId, id));
+  const given = Buffer.from(token);
+  return given.length === expected.length && crypto.timingSafeEqual(given, expected);
+}
+
 // Claude terminals follow the session Claude really runs (after /clear, /resume, a fork): Claude is started with
 // `--settings "$TA_CLAUDE_SETTINGS"`, a JSON string in the PTY environment that adds one SessionStart hook for that
 // process only (the person's own Claude settings and hooks are not touched and still apply). The hook
@@ -865,4 +873,4 @@ function closeTaskTerminals(taskId) {
   for (const item of [...listTerminals(taskId), ...phone]) controlSession(taskId, 'close', item.terminal_id);
 }
 
-module.exports = { terminalWorkDir, setHookEndpoint, setAttentionTerminals, attentionEnv, reportHook, activitySnapshot, subagentSnapshot, serveActivityStream, acknowledgeActivity, controlSession, handleWs, listTerminals, createTerminal, listAgentSessions, reopenCommand, renameTerminal, terminalCwd, assertTerminal, closeTaskTerminals, liveTerminalIds, updateIdleTerminals, setTerminalOrder, forgetTerminalOrder };
+module.exports = { terminalWorkDir, setHookEndpoint, setAttentionTerminals, attentionEnv, reportHook, verifyHookToken, activitySnapshot, subagentSnapshot, serveActivityStream, acknowledgeActivity, controlSession, handleWs, listTerminals, createTerminal, listAgentSessions, reopenCommand, renameTerminal, terminalCwd, assertTerminal, closeTaskTerminals, liveTerminalIds, updateIdleTerminals, setTerminalOrder, forgetTerminalOrder };

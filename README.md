@@ -133,6 +133,8 @@ A task's "⋯" menu sets which linked services may see it. Every task and every 
 
 The order of the task list is shared: a reorder made in any browser of a service, or on a linked service, shows up in every browser of both services. The newest order wins, and a service that was offline catches up when its link comes back.
 
+Claude and Codex sessions started on a service can read the files of its linked services (read only): the home folder of the other side's terminal user, without sensitive paths such as `~/.ssh`, `~/.aws`, `.env` files, keys and the T-Agent data folder. One switch in Settings (on by default) turns this off on a service in both directions. Endpoints: `/v1/peer-fs/{info,list,read,search}` on the service that is read (capability `peer-fs:read`), `/api/peer-fs/{engines,list,read,search}` for the session's MCP server on this machine (authenticated by the terminal's hook token), and `GET` / `PUT /api/peer-fs/settings`. See "Peer file access" in `DESIGN.md`.
+
 A linked service also shares its translation, voice input and OSS upload: when a service has one of these not configured, it uses the linked service that has it, without copying any key. A service's own configuration always comes first. For OSS, the other side's bucket must allow uploads from this page's address in its CORS rule.
 
 ### Security boundary

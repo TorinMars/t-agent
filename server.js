@@ -100,6 +100,10 @@ const attentionRoutes = require('./routes/attention').createAttentionRoutes({ se
 // Pairing claims (`t-attention pair`) come from other machines without a session or token: answered here, before the Bearer path and the gates.
 app.use('/api/attention/pairing/claim', attentionRoutes.claim);
 app.use('/api/attention', attentionRoutes.bearer);
+// The peer file relay (routes/peer-fs.js) for the `t-agent-peers` MCP server of a session in a T-Agent terminal: authenticated by that terminal's hook
+// token in X-T-Agent-* headers and taken only from this machine, so it sits before the session and the gates. A request without those headers goes on.
+const peerFsRoutes = require('./routes/peer-fs');
+app.use('/api/peer-fs', peerFsRoutes.createPeerFsRelayRouter());
 
 // The mind map routes (routes/mindmap.js: /api/mindmaps, /v1/mindmaps and the proxy /api/remote-servers/:id/mindmaps) and /v1/linked-services
 // (routes/linked-services.js) parse their own JSON after the gates or the token check, with their own limits: a body this parser has read would make theirs
@@ -157,6 +161,8 @@ app.use('/api/agent-chat', require('./routes/agent-chat').createAgentChatSummary
 app.use('/api/tasks', require('./routes/tasks'));
 // Read-only preview of a file at any path, as the terminal user (services/fs-read.js); the session check is the /api gate above.
 app.use('/api/fs', require('./routes/fs-read').createFsReadRouter());
+// The switch of peer file access (GET / PUT /api/peer-fs/settings), behind the login like every setting.
+app.use('/api/peer-fs', peerFsRoutes.createPeerFsSettingsRouter());
 app.use('/api/task-groups', require('./routes/task-groups'));
 app.use('/api/bookmarks', require('./routes/bookmarks'));
 app.use('/api/attention', attentionRoutes.router);

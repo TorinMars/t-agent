@@ -1491,4 +1491,6 @@ I18n.add({
   "Task and folder renamed": "任务和文件夹已重命名",
   "Task renamed": "任务已重命名",
   "Could not close the terminals:": "无法关闭终端：",
+  "Sessions can read files on linked engines": "会话可读取已链接引擎上的文件",
+  "Claude and Codex sessions started here get tools to read files on linked engines, and linked engines can read this engine’s files the same way. Read only: only the home folder, and sensitive files such as ~/.ssh and .env files are left out. Applies to sessions started after the change.": "在这里启动的 Claude 和 Codex 会话会获得读取已链接引擎上文件的工具，已链接的引擎也能以同样方式读取本引擎的文件。只读：仅限主目录，~/.ssh、.env 等敏感文件不包括在内。对更改之后启动的会话生效。",
 });

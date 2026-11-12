@@ -14,6 +14,7 @@ import { DeviceName, Pill, api, errorText, t } from './common.jsx';
 import { EngineDialog, Feedback, Field, Group, Hint, failure, useFeedback } from './Form.jsx';
 import { UnlinkDialog, linkEngineKey, readLinks } from './ServiceLinks.jsx';
 import { RestartButton, restartInfo } from './Restart.jsx';
+import { PeerFsSwitch } from './PeerFs.jsx';
 
 // Settings "Engines": the remote Engines this Client is connected to (ported from the old desktop page's engine tabs in 2.87.13).
 // The /api/remote-servers endpoints, their validation and their error texts: connect with an address and a pairing code or token (POST /api/remote-servers), edit
@@ -406,6 +407,7 @@ export function EnginesGroup({ state, ui, linksVersion, onLinksChanged }) {
   const [editing, setEditing] = useState(null);
   const [updating, setUpdating] = useState(null);
   const [feedback, say] = useFeedback();
+  const [opened, setOpened] = useState(0); // goes up each time the group opens, for the peer file access switch
   const load = async ({ keep = false } = {}) => {
     try {
       const [list, version, linked, own] = await Promise.all([
@@ -472,7 +474,7 @@ export function EnginesGroup({ state, ui, linksVersion, onLinksChanged }) {
     catch (error) { say(failure(error), true); }
   };
   return (
-    <Group id="engines" title="Engines" onOpen={load}>
+    <Group id="engines" title="Engines" onOpen={() => { void load(); setOpened(count => count + 1); }}>
       <Hint>{t('Engines are the machines whose tasks and terminals this page shows. This machine is always there; connect other Clients with their address and a pairing code made under “Remote service” on that Client.')}</Hint>
       <Box id="h5-engine-list" sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
         <Paper variant="outlined" className="h5-engine-row" data-engine="local" sx={{ display: 'flex', flexDirection: 'column', gap: 0.75, p: 1 }}>
@@ -500,6 +502,7 @@ export function EnginesGroup({ state, ui, linksVersion, onLinksChanged }) {
       </Box>
       <Button id="h5-engine-connect-open" variant="contained" onClick={() => setConnecting(true)}>{t('Connect remote service')}</Button>
       <Feedback id="h5-engines-feedback" feedback={feedback} />
+      <PeerFsSwitch opened={opened} />
       <ConnectDialog state={state} open={connecting} onClose={() => setConnecting(false)} onDone={created => { setConnecting(false); void changed(null); say(`${t('Connected')}: ${created && created.name ? created.name : ''}`); }} />
       <EditDialog state={state} server={editing} onClose={() => setEditing(null)} onDone={server => { setEditing(null); void changed(`remote:${server.id}`); say('Saved'); }} />
       <UnlinkDialog link={unlinking} onClose={() => setUnlinking(null)} onDone={async link => { setUnlinking(null); onLinksChanged(); if (ui.actions.enginesChanged) await ui.actions.enginesChanged(linkEngineKey(link)); say('Unlinked'); }} />

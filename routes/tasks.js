@@ -235,6 +235,14 @@ router.post('/:id/terminals', (req, res) => {
   catch (error) { res.status(error.statusCode || 400).json({ error: error.message || 'TERMINAL_CREATE_FAILED' }); }
 });
 
+// The order of the task's terminals, shared by every device: `{ order: [terminal id, ...] }` -> `{ order }` (routes/terminal.js setTerminalOrder).
+router.put('/:id/terminals/order', (req, res) => {
+  const task = db.prepare('SELECT id FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, ownerFilter(req));
+  if (!task) return res.status(404).json({ error: 'TASK_NOT_FOUND' });
+  try { res.json(terminal.setTerminalOrder(task.id, req.body && req.body.order)); }
+  catch (error) { res.status(error.statusCode || 400).json({ error: error.message || 'TERMINAL_ORDER_FAILED' }); }
+});
+
 router.get('/:id/agent-sessions', (req, res) => {
   const task = db.prepare('SELECT id, work_dir FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, ownerFilter(req));
   if (!task) return res.status(404).json({ error: 'TASK_NOT_FOUND' });
@@ -289,6 +297,7 @@ router.delete('/:id', (req, res) => {
   require('../services/agent-chat').getAgentChat().stopTask(task.id);
   db.prepare('DELETE FROM tasks WHERE id = ?').run(req.params.id);
   getTaskVisibility().forgetTask(task.id);
+  terminal.forgetTerminalOrder(task.id);
   if (!deleteDirectory) return res.json({ success: true });
   try { res.json({ success: true, directory_deleted: workspaceTools.removeTaskDirectory(task) }); }
   catch (error) { res.json({ success: true, directory_deleted: false, directory_error: error.message }); }

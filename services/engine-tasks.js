@@ -143,6 +143,7 @@ function deleteTask(principalId, id, { deleteDirectory = false } = {}) {
   const result = db.prepare('DELETE FROM tasks WHERE id = ? AND user_id = ?').run(id, principalId);
   if (!result.changes) throw Object.assign(new Error('TASK_NOT_FOUND'), { statusCode: 404 });
   getTaskVisibility().forgetTask(task.id);
+  require('../routes/terminal').forgetTerminalOrder(task.id);
   if (!deleteDirectory) return { success: true };
   try { return { success: true, directory_deleted: workspaceTools.removeTaskDirectory(task) }; }
   catch (error) { return { success: true, directory_deleted: false, directory_error: error.message }; }

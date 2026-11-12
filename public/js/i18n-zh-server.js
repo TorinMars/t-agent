@@ -4,6 +4,8 @@ I18n.add({
   "TASK_NOT_FOUND": "找不到这个任务",
   "INVALID_VISIBILITY": "设备列表无效，请重新打开后再试",
   "INVALID_TASK_ORDER": "任务顺序无效，请刷新页面后再试",
+  "INVALID_TERMINAL_ORDER": "会话顺序无效，请刷新页面后再试",
+  "TERMINAL_ORDER_UNSUPPORTED": "这个服务的版本过旧，无法调整会话顺序，请先升级",
   "CONFIRM_REQUIRED": "需要确认后才能继续",
   "CONFIRMATION_REQUIRED": "需要确认后才能重启服务",
   "NO_PROCESS_MANAGER": "服务不在进程管理器（如 PM2）下运行，重启后不会自动启动",

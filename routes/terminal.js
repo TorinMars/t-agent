@@ -229,13 +229,79 @@ function withAgentSessions(taskId, rows) {
 
 // Each row also has work_dir: the terminal's own directory (terminalWorkDir), so the page can resolve file links against it and show it
 // when it is not the task's current one.
+// The rows are in the order the person put them in (setTerminalOrder); terminals that order does not name (new ones) come after, oldest first.
 function listTerminals(taskId) {
   const stored = db.prepare('SELECT title FROM task_default_terminal_titles WHERE task_id = ?').get(taskId);
   const task = db.prepare('SELECT id, work_dir FROM tasks WHERE id = ?').get(taskId) || { id: taskId, work_dir: null };
   const defaultDir = defaultRemoved(taskId) ? null : terminalWorkDir(task, 'default');
-  return withAgentSessions(taskId, [...(defaultRemoved(taskId) ? [] : [{ terminal_id: 'default', title: stored ? stored.title : 'Terminal 1', work_dir: defaultDir }]), ...db.prepare(
+  return withAgentSessions(taskId, inStoredOrder(taskId, [...(defaultRemoved(taskId) ? [] : [{ terminal_id: 'default', title: stored ? stored.title : 'Terminal 1', work_dir: defaultDir }]), ...db.prepare(
     "SELECT terminal_id, title, work_dir FROM task_terminals WHERE task_id = ? AND substr(terminal_id, 1, 3) != 'h5-' ORDER BY rowid"
-  ).all(taskId).map(row => ({ ...row, work_dir: row.work_dir || task.work_dir || null }))]);
+  ).all(taskId).map(row => ({ ...row, work_dir: row.work_dir || task.work_dir || null }))]));
+}
+
+// The order of a task's terminals, as the person dragged them (PUT …/tasks/:id/terminals/order, see "Terminal order" in DESIGN.md). One system_state
+// row per task, `terminal_order_v1:<task id>`, holding a JSON list of terminal ids; no schema change. Every device and linked service lists the
+// terminals in this order. A write keeps only terminals that exist, a deleted terminal is taken out and a deleted task's row is removed, so the list
+// never holds more than the task's terminals.
+const MAX_TERMINAL_ORDER = 500;
+const MAX_TERMINAL_ID = 128;
+const orderKey = taskId => `terminal_order_v1:${Number(taskId)}`;
+
+function storedOrder(taskId) {
+  const row = db.prepare('SELECT value FROM system_state WHERE key = ?').get(orderKey(taskId));
+  if (!row) return [];
+  try {
+    const value = JSON.parse(row.value);
+    return Array.isArray(value) ? value.filter(id => typeof id === 'string') : [];
+  } catch { return []; }
+}
+
+function writeOrder(taskId, ids) {
+  if (!ids.length) { forgetTerminalOrder(taskId); return; }
+  db.prepare(`INSERT INTO system_state (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP`).run(orderKey(taskId), JSON.stringify(ids));
+}
+
+function forgetTerminalOrder(taskId) {
+  db.prepare('DELETE FROM system_state WHERE key = ?').run(orderKey(taskId));
+}
+
+// `rows` (with terminal_id) sorted by the stored order; rows it does not name keep their relative order after the named ones.
+function inStoredOrder(taskId, rows) {
+  const order = storedOrder(taskId);
+  if (!order.length) return rows;
+  const rank = new Map();
+  order.forEach((id, index) => { if (!rank.has(id)) rank.set(id, index); });
+  const position = (row, index) => (rank.has(row.terminal_id) ? rank.get(row.terminal_id) : order.length + index);
+  return rows.map((row, index) => ({ row, at: position(row, index) })).sort((a, b) => a.at - b.at).map(entry => entry.row);
+}
+
+// `value`: terminal ids in the wanted order. Ids that are not terminals of the task are ignored; terminals it leaves out keep their relative order after
+// the listed ones. Answers { order }, the whole stored order after the change. 400 INVALID_TERMINAL_ORDER when `value` is not a list of strings (at most
+// MAX_TERMINAL_ORDER, each at most MAX_TERMINAL_ID long); 409 TASK_ARCHIVED like a new terminal.
+function setTerminalOrder(taskId, value) {
+  if (!Array.isArray(value) || value.length > MAX_TERMINAL_ORDER || !value.every(id => typeof id === 'string' && id.length <= MAX_TERMINAL_ID)) {
+    throw Object.assign(new Error('INVALID_TERMINAL_ORDER'), { statusCode: 400 });
+  }
+  assertTaskNotArchived(taskId);
+  const current = listedTerminalIds(taskId);
+  const present = new Set(current);
+  const listed = [...new Set(value)].filter(id => present.has(id));
+  const named = new Set(listed);
+  const order = [...listed, ...current.filter(id => !named.has(id))];
+  writeOrder(taskId, order);
+  return { order };
+}
+
+// The ids listTerminals answers, in the same order, without reading the agents' session files.
+function listedTerminalIds(taskId) {
+  const rows = db.prepare("SELECT terminal_id FROM task_terminals WHERE task_id = ? AND substr(terminal_id, 1, 3) != 'h5-' ORDER BY rowid").all(taskId);
+  return inStoredOrder(taskId, [...(defaultRemoved(taskId) ? [] : [{ terminal_id: 'default' }]), ...rows]).map(row => row.terminal_id);
+}
+
+function dropFromOrder(taskId, id) {
+  const order = storedOrder(taskId);
+  if (order.includes(id)) writeOrder(taskId, order.filter(item => item !== id));
 }
 
 // A terminal created for an agent session types its command once, when its shell is first spawned.
@@ -529,6 +595,7 @@ function controlSession(taskId, action, requestedTerminalId) {
   } else if (action === 'delete') {
     db.prepare('DELETE FROM task_terminals WHERE task_id = ? AND terminal_id = ?').run(id, selectedId);
   }
+  if (action === 'delete') dropFromOrder(id, selectedId);
   return { success: true, action, had_session: Boolean(session) };
 }
 
@@ -798,4 +865,4 @@ function closeTaskTerminals(taskId) {
   for (const item of [...listTerminals(taskId), ...phone]) controlSession(taskId, 'close', item.terminal_id);
 }
 
-module.exports = { terminalWorkDir, setHookEndpoint, setAttentionTerminals, attentionEnv, reportHook, activitySnapshot, subagentSnapshot, serveActivityStream, acknowledgeActivity, controlSession, handleWs, listTerminals, createTerminal, listAgentSessions, reopenCommand, renameTerminal, terminalCwd, assertTerminal, closeTaskTerminals, liveTerminalIds, updateIdleTerminals };
+module.exports = { terminalWorkDir, setHookEndpoint, setAttentionTerminals, attentionEnv, reportHook, activitySnapshot, subagentSnapshot, serveActivityStream, acknowledgeActivity, controlSession, handleWs, listTerminals, createTerminal, listAgentSessions, reopenCommand, renameTerminal, terminalCwd, assertTerminal, closeTaskTerminals, liveTerminalIds, updateIdleTerminals, setTerminalOrder, forgetTerminalOrder };

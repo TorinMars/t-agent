@@ -69,8 +69,9 @@ Commands
 Options
   --json                 print the JSON answer
 
-Limits: uploads up to 1 GiB (64 MiB through a
-service link tunnel), downloads up to 2 GiB.
+Limits: uploads up to 1 GiB, downloads up to
+2 GiB, also through a service link tunnel (an
+older linked T-Agent takes 64 MiB uploads).
 Types a browser would run as a page (HTML,
 SVG, XML, JS, CSS) are stored as
 application/octet-stream.

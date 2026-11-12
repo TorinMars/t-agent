@@ -9,7 +9,9 @@ const express = require('express');
 const { createOssImages } = require('../services/oss-images');
 const { createOssFiles } = require('../services/oss-files');
 const { createOssAgentSettings } = require('../services/oss-agent-settings');
-const { createTcliRelayRouter, createOssFilesEngineRouter, CAPABILITY, TUNNEL_PUT_MAX_BYTES } = require('../routes/tcli');
+const WebSocket = require('ws');
+const { createTcliRelayRouter, createOssFilesEngineRouter, CAPABILITY } = require('../routes/tcli');
+const { getHub, startTunnelClient, tunnelBase, TUNNEL_WS_OPTIONS, LEGACY_REQUEST_BODY_BYTES } = require('../lib/service-link-tunnel');
 const { createOssRouter } = require('../routes/oss');
 const { request: remoteRequest } = require('../services/remote-client');
 const { createFakeOss, memoryDb, CONFIG, SECRET } = require('./helpers/fake-oss');
@@ -267,7 +269,7 @@ test('linked provider: without an own bucket the call goes to the provider\'s /v
   assert.ok(local.fake.calls.some(entry => entry[0] === 'list'));
 });
 
-test('linked provider: one without oss:files is 501 OSS_FILES_UNSUPPORTED, an unreachable one 502, a tunnel upload over 64 MiB 413', async () => {
+test('linked provider: one without oss:files is 501 OSS_FILES_UNSUPPORTED, an unreachable one 502, an offline tunnel 502', async () => {
   const oldBase = await providerApp(engine(), { capabilities: ['peer-fs:read'], ossRoutes: false });
   const local = engine({ configured: false });
   const base = await relayApp(local, { linked: { providerFor: async () => ({ id: 'old', name: 'Old', baseUrl: oldBase, token: 'link-token' }) } });
@@ -282,16 +284,105 @@ test('linked provider: one without oss:files is 501 OSS_FILES_UNSUPPORTED, an un
   const alone = await relayApp(engine({ configured: false }), { linked: { providerFor: async () => null } });
   assert.equal((await call(alone, 'GET', '/list')).body.error, 'OSS_NOT_CONFIGURED');
 
-  // Through a service link tunnel the body is buffered on the way and limited to 64 MiB: refused before anything is sent.
+  // A provider behind a service link tunnel that is not up: offline before anything is sent.
   const tunnelPeer = { id: 'tun', name: 'Tunnel', baseUrl: 'tunnel://00000000-0000-4000-8000-000000000000', token: 'link-token' };
   const tunnel = await relayApp(engine({ configured: false }), {
     linked: { providerFor: async () => tunnelPeer },
     request: async (baseUrl, route) => { assert.equal(route, '/v1/info'); return { capabilities: [CAPABILITY] }; },
   });
-  const tooBig = await raw(tunnel, 'PUT', '/api/tcli/oss/object?key=big.bin', { ...hookHeaders(), 'Content-Length': String(TUNNEL_PUT_MAX_BYTES + 1) }, req => { req.write('abc'); });
-  assert.equal(tooBig.status, 413);
-  assert.equal(tooBig.body.error, 'TOO_LARGE');
-  assert.match(tooBig.body.message, /64 MiB/);
+  const offlinePut = await raw(tunnel, 'PUT', '/api/tcli/oss/object?key=big.bin', { ...hookHeaders(), 'Content-Length': '3' }, req => { req.end('abc'); });
+  assert.deepEqual([offlinePut.status, offlinePut.body.error, offlinePut.body.provider], [502, 'LINKED_PROVIDER_OFFLINE', 'Tunnel']);
+});
+
+// A real service link tunnel on the shared hub, as server.js runs it: the provider app is B's local server behind startTunnelClient.
+async function tunnelTo(providerBase, client = {}) {
+  const linkId = crypto.randomUUID();
+  const wss = new WebSocket.WebSocketServer({ noServer: true, ...TUNNEL_WS_OPTIONS });
+  const server = http.createServer((req, res) => res.writeHead(404).end());
+  server.on('upgrade', (req, socket, head) => wss.handleUpgrade(req, socket, head, ws => getHub().accept(linkId, ws)));
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const tunnel = startTunnelClient({
+    url: `http://127.0.0.1:${server.address().port}`, token: 'tunnel-token', linkId, localPort: Number(new URL(providerBase).port), ...client,
+  });
+  test.after(() => { tunnel.stop(); getHub().drop(linkId); for (const ws of wss.clients) ws.terminate(); server.closeAllConnections(); server.close(); });
+  const deadline = Date.now() + 5000;
+  while (!getHub().isOnline(linkId)) {
+    if (Date.now() > deadline) throw new Error('the tunnel did not come up');
+    await new Promise(resolve => setTimeout(resolve, 5));
+  }
+  return { linkId, base: tunnelBase(linkId) };
+}
+
+const until = async (check, what) => {
+  const deadline = Date.now() + 5000;
+  while (!(await check())) {
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+    await new Promise(resolve => setTimeout(resolve, 5));
+  }
+};
+
+test('linked provider through a real service link tunnel: an upload over the old 64 MiB streams, comes back as a download, and an abort leaves nothing', async () => {
+  const remote = engine();
+  const providerBase = await providerApp(remote);
+  const link = await tunnelTo(providerBase);
+  const peer = { id: 'tun', name: 'Studio', baseUrl: link.base, token: 'link-token' };
+  const base = await relayApp(engine({ configured: false }), { linked: { providerFor: async () => peer } });
+
+  // Larger than the old limit of the tunnel; the size reaches the provider as ?size= (the tunnel drops Content-Length).
+  const body = Buffer.alloc(LEGACY_REQUEST_BODY_BYTES + 3 * 1024 * 1024 + 5);
+  crypto.randomFillSync(body, 0, 1024 * 1024);
+  crypto.randomFillSync(body, body.length - 1024 * 1024);
+  const put = await call(base, 'PUT', '/object', { query: { key: 'big/one.bin' }, body, headers: { ...hookHeaders(), 'Content-Type': 'application/zip' } });
+  assert.equal(put.status, 200, JSON.stringify(put.body));
+  assert.equal(put.body.size, body.length);
+  assert.ok(remote.fake.objects.get('big/one.bin').body.equals(body));
+  const got = await call(base, 'GET', '/object', { query: { key: 'big/one.bin' } });
+  assert.equal(got.status, 200);
+  assert.equal(got.headers.get('content-length'), String(body.length));
+  assert.ok(got.body.equals(body), 'the download through the tunnel is the same bytes');
+  assert.equal(getHub().streamCount(link.linkId), 0);
+
+  // The terminal goes away half way: the provider never stores a half object, the stream is released, the tunnel keeps working.
+  const announced = 32 * 1024 * 1024;
+  await new Promise(resolve => {
+    const req = http.request(new URL('/api/tcli/oss/object?key=big/half.bin', base), { method: 'PUT', headers: { ...hookHeaders(), 'Content-Length': String(announced) } });
+    req.on('error', () => {});
+    req.on('close', resolve);
+    const chunk = Buffer.alloc(1024 * 1024, 7);
+    let sent = 0;
+    const more = () => {
+      while (sent < 8 * 1024 * 1024) {
+        sent += chunk.length;
+        if (!req.write(chunk)) { req.once('drain', more); return; }
+      }
+      setTimeout(() => req.destroy(), 200);
+    };
+    more();
+  });
+  await until(() => getHub().streamCount(link.linkId) === 0, 'the tunnel stream to be released');
+  await until(() => remote.fake.calls.filter(entry => entry[0] === 'putStream' && entry[1] === 'big/half.bin').length === 1, 'the provider to start the upload');
+  await new Promise(resolve => setTimeout(resolve, 100));
+  assert.equal(remote.fake.objects.has('big/half.bin'), false, 'no half object');
+  const list = await call(base, 'GET', '/list', { query: { prefix: 'big/' } });
+  assert.deepEqual(list.body.objects.map(object => object.key), ['big/one.bin']);
+});
+
+test('linked provider through the tunnel of an older service: uploads over its 64 MiB are refused before anything is sent', async () => {
+  const remote = engine();
+  const providerBase = await providerApp(remote);
+  // An older tunnel client takes 64 MiB; one that announces it is the same to this side.
+  const link = await tunnelTo(providerBase, { maxRequestBodyBytes: LEGACY_REQUEST_BODY_BYTES });
+  assert.equal(getHub().requestBodyLimit(link.linkId), LEGACY_REQUEST_BODY_BYTES);
+  const peer = { id: 'old-tun', name: 'Older', baseUrl: link.base, token: 'link-token' };
+  const base = await relayApp(engine({ configured: false }), { linked: { providerFor: async () => peer } });
+  const tooBig = await raw(base, 'PUT', '/api/tcli/oss/object?key=big.bin', { ...hookHeaders(), 'Content-Length': String(LEGACY_REQUEST_BODY_BYTES + 1) }, req => { req.write('abc'); });
+  assert.deepEqual([tooBig.status, tooBig.body.error, tooBig.body.provider], [413, 'TOO_LARGE', 'Older']);
+  assert.match(tooBig.body.message, /at most 64 MiB per object; update T-Agent there/);
+  assert.equal(remote.fake.calls.some(entry => entry[0] === 'putStream'), false, 'nothing was sent');
+  // Within the limit it works as before.
+  const small = Buffer.from('small file');
+  assert.equal((await call(base, 'PUT', '/object', { query: { key: 'small.txt' }, body: small })).status, 200);
+  assert.deepEqual(remote.fake.objects.get('small.txt').body, small);
 });
 
 test('engine routes /v1/oss/files: the provider\'s size comes from ?size= when the tunnel dropped Content-Length', async () => {

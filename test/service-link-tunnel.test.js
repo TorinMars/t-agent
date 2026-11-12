@@ -1070,3 +1070,213 @@ test('the access gate lets a tunnelled /v1 request through as local without mark
   });
   assert.ok(direct['set-cookie']);
 });
+
+// ---------------------------------------------------------------------------
+// Streamed request bodies
+// ---------------------------------------------------------------------------
+
+const { Readable } = require('node:stream');
+const { LEGACY_REQUEST_BODY_BYTES } = require('../lib/service-link-tunnel');
+
+// A generated body of `total` bytes in 64 KiB chunks, each with its index in front, so lost, doubled or reordered chunks change the hash.
+function generatedBody(total, chunkBytes = 64 * 1024) {
+  const state = { produced: 0 };
+  const stream = new Readable({
+    read() {
+      if (state.produced >= total) { this.push(null); return; }
+      const size = Math.min(chunkBytes, total - state.produced);
+      const chunk = Buffer.alloc(size, state.produced % 251);
+      if (size >= 8) chunk.writeBigUInt64BE(BigInt(state.produced), 0);
+      state.produced += size;
+      this.push(chunk);
+    },
+  });
+  state.stream = stream;
+  return state;
+}
+
+async function hashOf(total) {
+  const hash = crypto.createHash('sha256');
+  for await (const chunk of generatedBody(total).stream) hash.update(chunk);
+  return hash.digest('hex');
+}
+
+// Sends `source` into a hub request the way routes/tcli.js does: write until write() is false, then wait for 'drain'.
+function pumpInto(req, source) {
+  source.on('data', chunk => {
+    if (req.write(chunk) === false) {
+      source.pause();
+      req.once('drain', () => source.resume());
+    }
+  });
+  source.on('end', () => req.end());
+}
+
+// B's local server: hashes and counts a request body; `paused` holds the reader back until resumed.
+function receivingHandler(received, { paused = false } = {}) {
+  return (req, res) => {
+    if (req.url !== '/v1/upload') return res.end('fast');
+    const hash = crypto.createHash('sha256');
+    received.req = req;
+    received.complete = false;
+    if (paused) req.pause();
+    req.on('data', chunk => {
+      if (received.bytes === 0) received.firstAt = Date.now();
+      received.bytes += chunk.length;
+      hash.update(chunk);
+    });
+    req.on('end', () => {
+      received.complete = true;
+      received.hash = hash.digest('hex');
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ bytes: received.bytes }));
+    });
+    req.on('close', () => { received.closed = true; });
+    return undefined;
+  };
+}
+
+function startUpload(hub, linkId, onResponse = () => {}) {
+  const req = hub.request(new URL('/v1/upload', `${tunnelBase(linkId)}/`), { method: 'PUT', headers: { 'content-type': 'application/octet-stream' }, timeout: 30_000 }, onResponse);
+  return req;
+}
+
+test('B announces the body it takes in its hello; a B that announces nothing is held to the old 64 MiB', async t => {
+  const hub = createHub();
+  const link = await startLink(t, { hub, client: { maxRequestBodyBytes: 3 * 1024 * 1024 } });
+  assert.equal(hub.requestBodyLimit(link.linkId), 3 * 1024 * 1024);
+  assert.equal(hub.requestBodyLimit(crypto.randomUUID()), null, 'offline: unknown');
+  const defaults = await startLink(t, { hub });
+  assert.equal(hub.requestBodyLimit(defaults.linkId), 1024 * 1024 * 1024);
+
+  // An older B: the same protocol version, a hello without maxBody.
+  const linkId = crypto.randomUUID();
+  const acceptor = await startAcceptor(t, hub, linkId);
+  const old = new WebSocket(`ws://127.0.0.1:${acceptor.port}/v1/service-links/tunnel`, { headers: { Authorization: `Bearer ${TOKEN}` } });
+  t.after(() => old.terminate());
+  old.on('open', () => old.send(JSON.stringify({ t: 'hello', v: 1, side: 'client', window: 512 * 1024, linkId })));
+  await until(() => hub.isOnline(linkId), 'the old client hello');
+  assert.equal(hub.requestBodyLimit(linkId), LEGACY_REQUEST_BODY_BYTES);
+  assert.equal(LEGACY_REQUEST_BODY_BYTES, 64 * 1024 * 1024);
+});
+
+test('A stops a body above the limit B announced and cancels the stream', async t => {
+  const hub = createHub();
+  const received = { bytes: 0 };
+  const link = await startLink(t, { hub, handler: receivingHandler(received), client: { maxRequestBodyBytes: 256 * 1024 } });
+  const failure = new Promise(resolve => {
+    const req = startUpload(hub, link.linkId);
+    req.on('error', resolve);
+    pumpInto(req, generatedBody(1024 * 1024).stream);
+  });
+  assert.equal((await failure).message, 'TUNNEL_BODY_TOO_LARGE');
+  // The cancel may come before B's local request has even connected; either way B never sees a complete body.
+  await delay(200);
+  assert.ok(!received.req || received.closed, 'no local request is left open');
+  assert.notEqual(received.complete, true);
+  assert.ok(received.bytes <= 256 * 1024);
+  await until(() => hub.streamCount(link.linkId) === 0, 'the stream to be released');
+  assert.equal((await hubCall(hub, link.linkId, '/v1/fast')).body, 'fast');
+});
+
+test('a 256 MiB upload streams through: B reads it while A is still sending, and A never holds more than about one window', async t => {
+  const total = 256 * 1024 * 1024;
+  const hub = createHub({ heartbeatMs: 60_000 });
+  const received = { bytes: 0 };
+  const link = await startLink(t, { hub, handler: receivingHandler(received) });
+  const body = generatedBody(total);
+  let producedAtFirstByte = null;
+  let maxQueued = 0;
+  let maxBuffers = 0;
+  const baseline = process.memoryUsage().arrayBuffers;
+  const sampler = setInterval(() => {
+    if (producedAtFirstByte === null && received.bytes > 0) producedAtFirstByte = body.produced;
+    for (const channel of hub.tunnels.get(link.linkId).streams.values()) maxQueued = Math.max(maxQueued, channel.queuedBytes);
+    maxBuffers = Math.max(maxBuffers, process.memoryUsage().arrayBuffers - baseline);
+  }, 5);
+  t.after(() => clearInterval(sampler));
+  const answer = await new Promise((resolve, reject) => {
+    const req = startUpload(hub, link.linkId, res => {
+      const chunks = [];
+      res.on('data', chunk => chunks.push(chunk));
+      res.on('end', () => resolve({ status: res.statusCode, body: JSON.parse(Buffer.concat(chunks).toString()) }));
+    });
+    req.on('error', reject);
+    pumpInto(req, body.stream);
+  });
+  clearInterval(sampler);
+  assert.deepEqual(answer, { status: 200, body: { bytes: total } });
+  assert.equal(received.hash, await hashOf(total), 'every byte arrived once and in order');
+  assert.ok(producedAtFirstByte !== null && producedAtFirstByte < 16 * 1024 * 1024, `B started reading after ${producedAtFirstByte} bytes were produced`);
+  // One window (512 KiB) plus the chunk that crossed it.
+  assert.ok(maxQueued <= 512 * 1024 + 64 * 1024, `queued on A at most ${maxQueued}`);
+  // A and B run in this process: all their buffers together stay far below the body (garbage not yet collected counts too).
+  assert.ok(maxBuffers < 96 * 1024 * 1024, `buffers grew by at most ${maxBuffers}`);
+  await until(() => hub.streamCount(link.linkId) === 0, 'the stream to be released');
+});
+
+test('a receiver that stops reading holds the uploader back after a bounded amount, with a small window too', async t => {
+  const total = 24 * 1024 * 1024;
+  const hub = createHub({ heartbeatMs: 60_000, streamWindowBytes: 128 * 1024 });
+  const received = { bytes: 0 };
+  const link = await startLink(t, { hub, handler: receivingHandler(received, { paused: true }), client: { streamWindowBytes: 128 * 1024 } });
+  const body = generatedBody(total);
+  const answer = new Promise((resolve, reject) => {
+    const req = startUpload(hub, link.linkId, res => { res.resume(); res.on('end', () => resolve(res.statusCode)); });
+    req.on('error', reject);
+    pumpInto(req, body.stream);
+  });
+  await until(() => received.req, 'the request to reach B');
+  await delay(300);
+  const heldAt = body.produced;
+  await delay(300);
+  assert.equal(body.produced, heldAt, 'the producer on A waits');
+  // What is in flight: about one window each on A and in the tunnel, and the loopback socket buffers of B's local hop.
+  assert.ok(heldAt < 12 * 1024 * 1024, `held after ${heldAt} bytes`);
+  // Meanwhile other streams on the same tunnel keep working.
+  assert.equal((await hubCall(hub, link.linkId, '/v1/fast', { timeout: 2000 })).body, 'fast');
+  received.req.resume();
+  assert.equal(await answer, 200);
+  assert.equal(received.bytes, total);
+  assert.equal(received.hash, await hashOf(total));
+});
+
+test('an uploader that leaves mid-way cancels the local request on B, frees the stream, and the tunnel keeps working', async t => {
+  const hub = createHub();
+  const received = { bytes: 0 };
+  const link = await startLink(t, { hub, handler: receivingHandler(received) });
+  const req = startUpload(hub, link.linkId);
+  const events = [];
+  req.on('error', error => events.push(error.message));
+  req.on('close', () => events.push('close'));
+  const body = generatedBody(512 * 1024 * 1024);
+  pumpInto(req, body.stream);
+  await until(() => received.bytes > 2 * 1024 * 1024, 'part of the body to arrive');
+  body.stream.pause();
+  req.destroy();
+  await until(() => received.closed, 'the local request to stop');
+  assert.equal(received.complete, false, 'never seen as a complete body');
+  await until(() => hub.streamCount(link.linkId) === 0, 'the stream to be released');
+  assert.ok(events.includes('close'));
+  assert.ok(body.produced < 64 * 1024 * 1024, 'nothing was read ahead');
+  assert.equal((await hubCall(hub, link.linkId, '/v1/fast')).body, 'fast');
+  assert.equal(hub.tunnels.get(link.linkId).sending.size, 0, 'nothing left in the pump');
+});
+
+test('a tunnel that dies mid-upload fails the request with REMOTE_OFFLINE and stops the local request on B', async t => {
+  const hub = createHub();
+  const received = { bytes: 0 };
+  const link = await startLink(t, { hub, handler: receivingHandler(received) });
+  const body = generatedBody(512 * 1024 * 1024);
+  const failure = new Promise(resolve => {
+    const req = startUpload(hub, link.linkId);
+    req.on('error', resolve);
+    pumpInto(req, body.stream);
+  });
+  await until(() => received.bytes > 2 * 1024 * 1024, 'part of the body to arrive');
+  hub.drop(link.linkId);
+  assert.equal((await failure).message, 'REMOTE_OFFLINE');
+  body.stream.destroy();
+  await until(() => received.closed, 'the local request to stop');
+  assert.equal(received.complete, false);
+});

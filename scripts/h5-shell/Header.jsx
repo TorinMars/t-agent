@@ -13,11 +13,17 @@ import { named, t } from './common.jsx';
 import { Icon } from './Icons.jsx';
 import { UpdateButton } from './Update.jsx';
 import { ColumnsToggle } from './Columns.jsx';
+import { DeviceTag } from './TaskDrawer.jsx';
 
 export function Header({ state, ui }) {
   const docked = state.wide && !state.sidebarCollapsed; // the permanent sidebar is shown, so the task name opens nothing
   const fold = state.sidebarCollapsed ? 'Expand the sidebar' : 'Collapse the sidebar';
   const refresh = t('Refresh the page');
+  // The device of the shown task, as the task list tags it: its row's own engine tag (h5.js tags the rows whenever the order can be changed or more than one
+  // device is listed), drawn by the same DeviceTag in its closed look. Without a tag (one device and no sorting, or a task its list does not show) the
+  // header names a remote device in plain text, as before, and this machine not at all.
+  const shown = state.taskList && Array.isArray(state.taskList.tasks) ? state.taskList.tasks.find(row => row.selected && row.device) : null;
+  const tag = shown ? shown.device : null;
   return (
     <AppBar position="static" color="default" enableColorOnDark elevation={0} className="h5-header" sx={{ flex: '0 0 auto', borderBottom: 1, borderColor: 'divider' }}>
       <Toolbar variant="dense" disableGutters sx={{ px: 1, gap: 1, minHeight: 44 }}>
@@ -30,14 +36,19 @@ export function Header({ state, ui }) {
         <ButtonBase
           id="h5-open-tasks" className="h5-task-button" aria-expanded={state.tasksOpen && !state.sidebarCollapsed} aria-haspopup="dialog" aria-controls="h5-tasks"
           onClick={() => ui.actions.openTasks()}
-          sx={{ flex: '1 1 auto', minWidth: 0, justifyContent: 'flex-start', gap: 1, px: 1, py: 0.5, borderRadius: 1, textAlign: 'left', pointerEvents: docked ? 'none' : 'auto' }}
+          // With a tag (20px, taller than the caption) the button's padding gives the room, so the header stays as tall as before.
+          sx={{ flex: '1 1 auto', minWidth: 0, justifyContent: 'flex-start', gap: 1, px: 1, py: tag ? 0.25 : 0.5, borderRadius: 1, textAlign: 'left', pointerEvents: docked ? 'none' : 'auto' }}
         >
           {state.wide ? null : <MenuIcon fontSize="small" aria-hidden="true" />}
           <Box sx={{ minWidth: 0, flex: '1 1 auto' }}>
             <Typography id="h5-task-name" className="h5-task-name" variant="subtitle1" component="div" noWrap sx={{ fontWeight: 600, lineHeight: 1.3 }}>{state.taskName || t('Choose a task')}</Typography>
-            <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 0.5, minWidth: 0 }}>
-              {/* The service of the shown task when it is not this machine, on the line of the session name. */}
-              {state.sourceLabel ? <Typography id="h5-task-service" className="h5-task-service" variant="caption" component="div" color="primary.light" noWrap translate="no" title={state.sourceLabel} sx={{ flex: '0 1 auto', maxWidth: '60%', lineHeight: 1.3, fontWeight: 600 }}>{state.sourceLabel}</Typography> : null}
+            <Box className="h5-task-subline" sx={{ display: 'flex', alignItems: tag ? 'center' : 'baseline', gap: 0.5, minWidth: 0 }}>
+              {/* The device of the shown task on the line of the session name: its engine tag, else the name of a remote service in plain text. */}
+              {tag ? (
+                <Box id="h5-task-service" className="h5-task-service h5-task-device" component="span" sx={{ flex: '0 1 auto', minWidth: 0, display: 'inline-flex', maxWidth: '60%' }}>
+                  <DeviceTag device={tag} />
+                </Box>
+              ) : state.sourceLabel ? <Typography id="h5-task-service" className="h5-task-service" variant="caption" component="div" color="primary.light" noWrap translate="no" title={state.sourceLabel} sx={{ flex: '0 1 auto', maxWidth: '60%', lineHeight: 1.3, fontWeight: 600 }}>{state.sourceLabel}</Typography> : null}
               <Typography id="h5-session-name" className="h5-session-name" variant="caption" component="div" color="text.secondary" noWrap translate="no" sx={{ flex: '1 1 auto', minWidth: 0, lineHeight: 1.3 }}>{state.sessionName || ' '}</Typography>
             </Box>
           </Box>

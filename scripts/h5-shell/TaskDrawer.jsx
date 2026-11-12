@@ -228,7 +228,7 @@ function RenameRow({ menu, ui, row }) {
 // The sessions under a task: its terminals. Every session row has "⋯" actions, for the task the row is under. With `sessions.movable` (h5.js: the
 // service saves the order and the task has two or more terminals) a terminal row is held to drag it among the task's own rows (`SESSION_DRAG`); while a
 // row of the list is being renamed, none of them moves. The rows never select text or show the touch callout, so a long press is only the drag.
-const SESSION_ROW_SX = { userSelect: 'none', WebkitUserSelect: 'none', WebkitTouchCallout: 'none' };
+const HELD_ROW_SX = { userSelect: 'none', WebkitUserSelect: 'none', WebkitTouchCallout: 'none' };
 function Sessions({ ui, taskId, sessions, menu, drag }) {
   const renaming = Boolean(menu && menu.rename && menu.rename.task === taskId);
   const movable = row => Boolean(sessions.movable && !renaming && row.kind === 'terminal');
@@ -240,7 +240,7 @@ function Sessions({ ui, taskId, sessions, menu, drag }) {
         {row.more && menu && menu.rename && menu.rename.task === taskId && menu.rename.kind === row.kind && menu.rename.id === row.id ? <RenameRow menu={menu} ui={ui} row={row} /> : (
         <Box
           className="h5-terminal-row" data-session={row.kind === 'terminal' ? row.id : undefined} data-movable={movable(row) ? 'true' : undefined} {...(movable(row) && drag ? drag.hold() : {})}
-          sx={{ display: 'flex', alignItems: 'center', gap: 0.5, [TOUCH]: { gap: 1 }, borderRadius: 2, borderLeft: 3, borderColor: row.current ? 'primary.main' : 'transparent', bgcolor: row.current ? 'action.selected' : undefined, ...SESSION_ROW_SX }}
+          sx={{ display: 'flex', alignItems: 'center', gap: 0.5, [TOUCH]: { gap: 1 }, borderRadius: 2, borderLeft: 3, borderColor: row.current ? 'primary.main' : 'transparent', bgcolor: row.current ? 'action.selected' : undefined, ...HELD_ROW_SX }}
         >
           <ListItemButton
             component="button" className="h5-terminal-main" aria-current={row.current ? 'true' : undefined}
@@ -295,18 +295,23 @@ export function DeviceTag({ device, unplaced, expanded }) {
   );
 }
 
-// Sorting the list (h5.js "Task order"). The grip is the engine tag at the left edge of a row that can be moved (`TaskTag`): only it starts a drag, so
-// a tap, a long press and a swipe on the rest of the row do what they did before sorting existed. With a mouse the drag starts after a move of 4px; a
-// finger needs no long press (the tag has `touch-action: none`, so it never scrolls the list) and starts after 4px too; a plain tap or click on the tag
-// (no drag started) opens or closes the task's sessions, like a tap on the row. From the keyboard the tag is a button: Space or Enter picks the task up,
-// Up and Down move it, Space or Enter drops it and Escape (or leaving the tag) puts it back; a live region says where it is. The row button stays the
-// keyboard's way to open and close the task.
+// Sorting the list (h5.js "Task order"). A row that can be moved is picked up two ways. Its engine tag at the left edge (`TaskTag`) drags at once: with a
+// mouse after a move of 4px; a finger needs no long press (the tag has `touch-action: none`, so it never scrolls the list) and starts after 4px too; a
+// plain tap or click on the tag (no drag started) opens or closes the task's sessions, like a tap on the row. The rest of the row's line (`.h5-task-head`,
+// not its "⋯" and "+") is held, like a session row: a finger held still for HOLD_MS picks the task up (a short vibration); a finger that moves more than
+// HOLD_SLOP_PX before that scrolls the list, and a short tap opens or closes the task as before; a release after the hold opens nothing (its click is
+// swallowed). The line keeps `touch-action: auto` and never selects text or shows the touch callout or the context menu while pressed. A mouse picks the
+// task up after HOLD_MS or a move of DRAG_MOVE_PX; a plain click opens or closes it, and the click after a drag is swallowed. From the keyboard the tag
+// is a button: Space or Enter picks the task up, Up and Down move it, Space or Enter drops it and Escape (or leaving the tag) puts it back; a live region
+// says where it is. The row button stays the keyboard's way to open and close the task.
 // While dragging, a copy of the row floats under the pointer, its place in the list is an empty slot of the same height, and the other rows slide out of
 // the way (transforms only: the rows are measured once when the drag starts, and nothing is laid out again per frame). Near the top or the bottom edge the
 // list scrolls. The drop asks h5.js to move the task (`reorderTask`: before the task now after the slot, or after the last one), which saves the whole
 // order; the copy settles into the slot. The rows are the ones shown, so with a search or a filter on, a task goes next to the tasks it was dropped between.
 // Every other change of the order (a menu move, a newer order from the server, a save that failed and moved back) slides the rows to their new places
-// too (FLIP, in `useListDrag`'s layout effect). `prefers-reduced-motion: reduce` makes every move instant.
+// too (FLIP, in `useListDrag`'s layout effect: each row, open or closed, slides by the difference of its own top, so rows with session lists of other
+// heights land right, and a change that comes while the last one still slides starts from where the rows are seen). `prefers-reduced-motion: reduce`
+// makes every move instant.
 // The sessions of a task are sorted the same way (h5.js "Session order"), within their own task only (`SESSION_DRAG`): the whole row is the grip, but it has
 // to be held. A finger held still for HOLD_MS picks the row up (a short vibration where the phone has one); a finger that moves more than HOLD_SLOP_PX
 // before that is scrolling the list, and a short tap opens the session as before. The row keeps `touch-action: auto`, so the list scrolls from it; once the
@@ -316,7 +321,8 @@ export function DeviceTag({ device, unplaced, expanded }) {
 // The hook, its timings and the drag styles are shared with the T-Attention list (list-drag.jsx).
 // What differs between the two lists that are sorted by dragging. `rows`: the rows the slides follow; `key`: a row's name; `group`: rows move only among
 // the rows of their own group; `peers`: the rows a picked one moves among; `head`: the part that is copied; `clamp`: the copy stays inside its peers;
-// `hold`: a press must be held (or, with a mouse, moved) to pick the row up; `drop`: the row was dropped somewhere else.
+// `hold`: a press on the grip must be held (or, with a mouse, moved) to pick the row up (a row's `hold()` props always must); `ignore`: the controls of a
+// held row that never start a drag; `drop`: the row was dropped somewhere else.
 const TASK_DRAG = {
   rows: list => [...list.querySelectorAll('.h5-task[data-ref]')],
   key: el => el.dataset.ref,
@@ -326,7 +332,8 @@ const TASK_DRAG = {
   head: row => row.querySelector('.h5-task-head') || row,
   floatClass: 'h5-task-float',
   clamp: false,
-  hold: false,
+  hold: false, // the tag drags at once; the row's line is held (`hold()` on `.h5-task-head`)
+  ignore: '.h5-task-tag, .h5-task-more, .h5-task-add, input, textarea',
   focus: (list, ref) => [...list.querySelectorAll('.h5-task[data-movable="true"]')].find(el => el.dataset.ref === ref)?.querySelector('button.h5-task-tag') || null,
   dragging: (ui, on) => ui.actions.taskDragging(on),
   tap: (ui, ref) => ui.actions.toggleTask(ref),
@@ -416,7 +423,11 @@ function Tasks({ state, ui, query, filter, drag, sessionDrag }) {
         key={task.ref} className="h5-task" data-ref={task.ref} data-source={task.source} data-movable={task.movable ? 'true' : undefined}
         sx={{ position: 'relative', borderBottom: 1, borderColor: 'divider', '&:last-of-type': { borderBottom: 0 } }}
       >
-        <Box className={task.add ? 'h5-task-head h5-task-row' : 'h5-task-head'} sx={{ display: 'flex', alignItems: 'center', gap: 0.5, borderRadius: 2, [TOUCH]: { gap: 1 } }}>
+        {/* A row that can be moved is held on its line to drag it (the tag drags at once): no text selection or touch callout, but it still scrolls. */}
+        <Box
+          className={task.add ? 'h5-task-head h5-task-row' : 'h5-task-head'} {...(task.movable ? drag.hold() : {})}
+          sx={{ display: 'flex', alignItems: 'center', gap: 0.5, borderRadius: 2, [TOUCH]: { gap: 1 }, ...(task.movable ? HELD_ROW_SX : {}) }}
+        >
           {task.device ? <TaskTag task={task} ui={ui} drag={drag} /> : null}
           <ListItemButton
             component="button" className="h5-task-item" aria-current={task.selected ? 'true' : undefined} aria-expanded={task.expanded}

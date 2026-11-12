@@ -753,4 +753,6 @@ I18n.add({
   "A Git worktree or submodule inside the folder would break: {1}": "文件夹里的 Git 工作树或子模块会失效：{1}",
   "A Git repository with linked worktrees inside the folder would break:": "文件夹里带有关联工作树的 Git 仓库会失效：",
   "A Git repository with linked worktrees inside the folder would break: {1}": "文件夹里带有关联工作树的 Git 仓库会失效：{1}",
+  "The skill file of this install is missing: {1}": "这个安装里的技能文件不见了：{1}",
+  "The skill could not be written": "技能无法写入",
 });

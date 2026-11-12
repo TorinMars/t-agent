@@ -116,7 +116,7 @@ function withSessionHook(agent, command, peer = peerFsOn()) {
   return command;
 }
 
-const HOOK_ENV_KEYS = ['TA_HOOK_URL', 'TA_HOOK_TOKEN', 'TA_CLAUDE_SETTINGS', 'TA_ATTENTION_URL', 'TA_ATTENTION_TOKEN', 'TA_ATTENTION_HOOK',
+const HOOK_ENV_KEYS = ['TA_HOOK_URL', 'TA_HOOK_TOKEN', 'TA_CLAUDE_SETTINGS', 'TA_ATTENTION_URL', 'TA_ATTENTION_TOKEN', 'TA_ATTENTION_HOOK', 'TA_ATTENTION_CLI',
   'TA_PEER_URL', 'TA_PEER_TASK', 'TA_PEER_TERMINAL', 'TA_MCP_CONFIG', 'TA_PEER_MCP_COMMAND', 'TA_PEER_MCP_ARGS'];
 // The server's own environment may already hold these (a server started from inside a t-agent terminal): they belong to
 // that outer terminal and are never passed on.
@@ -139,11 +139,13 @@ function hookEnv(taskId, id, peer = peerFsOn()) {
 // T-Attention in T-Agent terminals (B in "T-Attention: easy listener install"): every shell this server starts, where TA_HOOK_URL is set,
 // also gets TA_ATTENTION_URL (this Client's loopback address), TA_ATTENTION_TOKEN (a token for this terminal only, held in memory by
 // services/attention.js and ended when the shell ends) and TA_ATTENTION_HOOK (this install's Claude listener hook, which the hook command
-// in rules/claude/settings.json uses when <data folder>/listeners/claude-hook.path is missing). So Claude started in such a terminal reports
+// in rules/claude/settings.json uses when <data folder>/listeners/claude-hook.path is missing), plus TA_ATTENTION_CLI (this install's
+// scripts/t-attention.js, the command the t-attention agent skill runs, see "T-Attention agent skill"). So Claude started in such a terminal reports
 // with no setup once ~/.claude/settings.json has the hooks. When the terminal user's attention-client.json points to another server
 // (`t-attention pair` / `login` to a central Client), the URL and token are left out, so that choice wins; the hook path is still set.
 // Set by server.js when it listens: { url, issue(taskId, terminalId) -> token, revoke(taskId, terminalId) }.
 const ATTENTION_HOOK = path.resolve(__dirname, '..', 'plugins', 'listeners', 'claude', 'hook.js');
+const ATTENTION_CLI = path.resolve(__dirname, '..', 'scripts', 't-attention.js');
 let attentionTerminals = null;
 function setAttentionTerminals(provider) { attentionTerminals = provider || null; }
 
@@ -161,7 +163,7 @@ function pairedElsewhere(env) {
 // The T-Attention variables of a new shell; env is the shell's environment without them (its HOME and data folder variables).
 function attentionEnv(taskId, id, env) {
   if (!hookEndpoint || !attentionTerminals) return {};
-  const out = { TA_ATTENTION_HOOK: ATTENTION_HOOK };
+  const out = { TA_ATTENTION_HOOK: ATTENTION_HOOK, TA_ATTENTION_CLI: ATTENTION_CLI };
   if (pairedElsewhere(env)) return out;
   try {
     out.TA_ATTENTION_TOKEN = attentionTerminals.issue(taskId, id);

@@ -1555,7 +1555,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     const more = page.locator('#h5-tasks .h5-terminal-row').nth(1).locator('.h5-terminal-more');
     await more.tap();
     await page.locator('#h5-session-menu').waitFor({ state: 'visible' });
-    assert.deepEqual(await page.locator('#h5-session-menu [role="menuitem"]').allTextContents(), ['Copy text', 'Rename', 'Reopen', 'Restart in the working directory', 'Delete'], 'the open terminal also offers Copy text');
+    assert.deepEqual(await page.locator('#h5-session-menu [role="menuitem"]').allTextContents(), ['Copy text', 'Rename', 'Reopen', 'Move up', 'Restart in the working directory', 'Delete'], 'the open terminal also offers Copy text (and, as the last of its task, Move up)');
     await page.locator('#h5-session-menu [role="menuitem"]', { hasText: 'Rename' }).tap();
     await page.locator('#h5-term-rename-input').fill('Build logs');
     await page.locator('#h5-term-rename button').tap(); // the field is in place of the row (the popup closed at "Rename"); Save does not blur it

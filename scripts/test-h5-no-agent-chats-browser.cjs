@@ -151,10 +151,11 @@ async function check(env, h, { wide, remote, label }) {
 
   // ── Terminals keep their actions, under the selected task and the others ──
   await h.openMenu('Phone terminals', 'Terminal 2');
-  assert.deepEqual(await h.actions.allTextContents(), ['Rename', 'Reopen', RESTART, 'Delete'], `${label}: the actions of a terminal of the selected task`);
+  // This machine sorts sessions: the last of the selected task's terminals moves up, the first of Beta's down. The mocked remote Engine does not say 'terminals:order'.
+  assert.deepEqual(await h.actions.allTextContents(), ['Rename', 'Reopen', ...(remote ? [] : ['Move up']), RESTART, 'Delete'], `${label}: the actions of a terminal of the selected task`);
   await h.closeMenu();
   await h.openMenu('Beta', 'Terminal 1');
-  assert.deepEqual(await h.actions.allTextContents(), ['Rename', 'Open', RESTART, 'Delete'], `${label}: the actions of a terminal of another task`);
+  assert.deepEqual(await h.actions.allTextContents(), ['Rename', 'Open', ...(remote ? [] : ['Move down']), RESTART, 'Delete'], `${label}: the actions of a terminal of another task`);
   await h.press(h.action('Rename'));
   await page.locator('#h5-term-rename-input').fill('Docs shell');
   await page.locator('#h5-term-rename-input').press('Enter');

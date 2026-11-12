@@ -151,7 +151,7 @@ async function toast(page, text) {
     await page.locator('#h5-open-tasks').tap();
     await page.locator('#h5-tasks .h5-terminal-row', { hasText: 'Claude work' }).locator('.h5-terminal-more').tap();
     await page.locator('#h5-session-menu').waitFor({ state: 'visible' });
-    assert.deepEqual(await page.locator('#h5-session-menu [role="menuitem"]').allTextContents(), ['Rename', 'Reopen', 'Restart in the working directory', 'Delete'], 'Rename is offered for an agent terminal');
+    assert.deepEqual(await page.locator('#h5-session-menu [role="menuitem"]').allTextContents(), ['Rename', 'Reopen', 'Move up', 'Move down', 'Restart in the working directory', 'Delete'], 'Rename is offered for an agent terminal (the middle session also moves up and down)');
     await page.locator('#h5-session-menu [role="menuitem"]', { hasText: 'Rename' }).tap();
     await page.locator('#h5-term-rename-input').fill('My review');
     await page.locator('#h5-term-rename button').tap();

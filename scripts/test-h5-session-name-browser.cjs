@@ -112,7 +112,9 @@ async function checkOtherTask({ page, requests, size, press, list, shown, base, 
   const askRename = async index => {
     await press(rows.nth(index).locator('.h5-terminal-more'));
     await page.locator('#h5-session-menu [role="menuitem"]', { hasText: 'Rename' }).waitFor();
-    assert.deepEqual(await page.locator('#h5-session-menu [role="menuitem"]').allTextContents(), index === 4 ? ['Rename', 'Open', 'Delete'] : ['Rename', 'Open', 'Restart in the working directory', 'Delete'], `${size}: what can be done from another task`);
+    // The first row of a task of this machine can move down (session order); the mocked remote Engine does not say 'terminals:order'.
+    const moves = base === '/api/tasks' && index === 0 ? ['Move down'] : [];
+    assert.deepEqual(await page.locator('#h5-session-menu [role="menuitem"]').allTextContents(), index === 4 ? ['Rename', 'Open', 'Delete'] : ['Rename', 'Open', ...moves, 'Restart in the working directory', 'Delete'], `${size}: what can be done from another task`);
     await press(page.locator('#h5-session-menu [role="menuitem"]', { hasText: 'Rename' }));
     await page.locator('#h5-term-rename-input').waitFor();
     await page.locator('#h5-session-menu').waitFor({ state: 'detached' });

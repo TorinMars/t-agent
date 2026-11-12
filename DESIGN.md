@@ -1830,3 +1830,4 @@ One line per release, added by `scripts/release.js`. Older notes are in `git log
 > v2.116.1 The desktop window builds on every Mac: swiftc gets the macOS SDK path from xcrun (it failed with "unable to load standard library for target").
 > v2.117.0 Settings of linked devices kept as one set (everything except the working directory, access and authenticator, device name, desktop window switch, peer file access, restart and rules-sync role; values sealed per link), Telegram notifications sent by one device for all, scope labels on every setting, and column tabs in the multi-column view with hold-drag reorder.
 > v2.118.0 A name given to a Claude session (at creation, or a rename in T-Agent) becomes Claude's own session name with --name, shown in Claude's prompt box and /resume picker.
+> v2.119.0 A Claude terminal stays bound to its original session after /clear, so reopening it resumes the original conversation

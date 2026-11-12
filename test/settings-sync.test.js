@@ -337,7 +337,7 @@ test('the global save hook reaches a started service; a value written by the syn
 
 test('only the shared groups are in the registry; per-device settings and Telegram never are', () => {
   const keys = defaultRegistry({ db, sessionSecret: SECRET }).map(entry => entry.key);
-  assert.deepEqual(keys, ['translate', 'voice', 'oss', 'oss-agent-access', 'attention-summary', 'notify-rules', 'notifier-plugins', 'widget-language', 'task-list-devices']);
+  assert.deepEqual(keys, ['translate', 'voice', 'oss', 'oss-agent-access', 'attention-summary', 'notify-rules', 'notifier-plugins', 'widget-language', 'task-list-devices', 'browser-sites']);
   assert.deepEqual(Object.entries(SCOPES).filter(([, scope]) => scope === 'shared').map(([key]) => key), keys);
   for (const key of ['workdir', 'access', 'authenticator', 'engine-name', 'widget-enabled', 'peer-fs', 'restart', 'rule-sync']) {
     assert.equal(SCOPES[key], 'device', key);
@@ -372,10 +372,12 @@ test('every registry adapter round-trips its setting with the secrets, and the s
     notify.savePluginConfig('telegram', owner, { enabled: true, values: { url: 'https://telegram.example.test', token: 'telegram-REGISTRY-5' } });
     const widget = require('../services/attention-widget').createWidgetSettings({ db });
     widget.save({ enabled: false, language: 'zh' });
+    const browserSites = require('../services/browser-sites').sitesFor(db);
+    browserSites.save('github.com', { title: 'GitHub', summary: 'Code hosting' });
     db.prepare("INSERT OR REPLACE INTO engine_identity (key, value) VALUES ('instance_id', ?)").run(ID_A);
     require('../routes/task-list-prefs').importFromSync({ db }, owner, [ID_B]);
 
-    assert.deepEqual([...new Set(changed)].sort(), ['attention-summary', 'notifier-plugins', 'notify-rules', 'oss', 'oss-agent-access', 'translate', 'voice', 'widget-language'].sort(), 'every save path calls the hook');
+    assert.deepEqual([...new Set(changed)].sort(), ['attention-summary', 'browser-sites', 'notifier-plugins', 'notify-rules', 'oss', 'oss-agent-access', 'translate', 'voice', 'widget-language'].sort(), 'every save path calls the hook');
 
     const registry = defaultRegistry({ db, sessionSecret: SECRET });
     const saved = Object.fromEntries(registry.map(entry => [entry.key, entry.read(owner)]));
@@ -392,13 +394,20 @@ test('every registry adapter round-trips its setting with the secrets, and the s
     assert.deepEqual(saved['task-list-devices'], [ID_B]);
 
     changed.length = 0;
-    for (const entry of registry) entry.write(owner, null);
-    for (const entry of registry) assert.equal(entry.read(owner), null, `${entry.key} cleared`);
+    // browser-sites has merge (CRDT) semantics, not replace: write(null) is a no-op (deletions travel as per-site tombstones inside the value), so it
+    // is handled on its own below and left out of the generic clear / round-trip loops that assume replace semantics.
+    const replaceEntries = registry.filter(entry => entry.key !== 'browser-sites');
+    for (const entry of replaceEntries) entry.write(owner, null);
+    for (const entry of replaceEntries) assert.equal(entry.read(owner), null, `${entry.key} cleared`);
+    assert.equal(require('../services/browser-sites').exportForSync({ db }, owner).sites['github.com'].title, 'GitHub', 'browser-sites: write(null) by a peer never wipes it');
     assert.equal(notify.getPluginConfig('telegram', owner).values.token.set, true, 'clearing the plugins leaves Telegram alone');
     assert.equal(widget.read().enabled, false, 'the window switch stays');
     assert.equal(widget.read().language, 'auto');
-    for (const entry of registry) entry.write(owner, saved[entry.key]);
-    for (const entry of registry) assert.deepEqual(entry.read(owner), saved[entry.key], `${entry.key} round-trips`);
+    for (const entry of replaceEntries) entry.write(owner, saved[entry.key]);
+    for (const entry of replaceEntries) assert.deepEqual(entry.read(owner), saved[entry.key], `${entry.key} round-trips`);
+    // browser-sites: an incoming set merges per site; a newer peer entry wins, and the whole value round-trips.
+    require('../services/browser-sites').importFromSync({ db }, owner, { sites: { 'news.com': { site: 'news.com', title: 'News', updated_at: Date.now() + 1000, updated_by: 'peer' } }, tombstones: {} });
+    assert.equal(browserSites.get('news.com').title, 'News', 'browser-sites: a peer entry merges in');
     assert.deepEqual(changed, [], 'a write by the sync never calls the hook');
 
     assert.equal(translator.isConfigured(owner), true);

@@ -1,0 +1,584 @@
+{
+  "version": 1,
+  "about": "Redaction vectors of the T-Agent browser extension (contract section 5). lib/browser-redact.js (server) and extensions/chrome/redact.js (extension) must both give these results. keys: keyIsSecret(name, value) for query, JSON and form names. headers: redactHeaders(headers). urls: redactUrl(url). bodies: redactBody(body, mime). json: redactJson(value).",
+  "rules": [
+    "A secret value becomes \"<redacted:N>\", N = the length of the original value (string characters; the digits of a number; the JSON text of an object or array).",
+    "Names are split into words at separators and camelCase; the words author, authors, authored, authoring, authorship, coauthor, coauthors, authority, authorities are dropped; the rest, joined with \"_\", is matched with the contract pattern (case-insensitive).",
+    "A whole number (a number, or 1 to 9 digits as text) under a name whose only matching words are \"tokens\" or \"sessions\" (max_tokens, total_tokens, sessions) is a count and is kept.",
+    "Booleans and null are never redacted. A value that already is \"<redacted:N>\" is kept unchanged.",
+    "Header names cookie, set-cookie, authorization, proxy-authorization are always redacted; other header names use the header pattern; a header value with \"Bearer <token>\" or a whole JWT is redacted.",
+    "The headers referer, location, content-location and :path keep their URL with the query redacted.",
+    "URLs: query parameters and a fragment of the form a=b&c=d are redacted by name, or when the value is a JWT. Values are written back as \"<redacted:N>\" (not percent-encoded), N = the length of the decoded value.",
+    "Bodies: JSON (by mime or a leading { or [) is parsed, redacted and written back with JSON.stringify (compact); an urlencoded form (by mime or shape) is redacted like a query; other text is kept unless it is a whole JWT."
+  ],
+  "keys": [
+    {
+      "name": "token",
+      "value": "abc",
+      "secret": true
+    },
+    {
+      "name": "access_token",
+      "value": "abc",
+      "secret": true
+    },
+    {
+      "name": "accessToken",
+      "value": "abc",
+      "secret": true
+    },
+    {
+      "name": "refresh-token",
+      "value": "abc",
+      "secret": true
+    },
+    {
+      "name": "id_token",
+      "value": "abc",
+      "secret": true
+    },
+    {
+      "name": "client_secret",
+      "value": "s",
+      "secret": true
+    },
+    {
+      "name": "secretKey",
+      "value": "s",
+      "secret": true
+    },
+    {
+      "name": "session",
+      "value": "s",
+      "secret": true
+    },
+    {
+      "name": "session_id",
+      "value": "s",
+      "secret": true
+    },
+    {
+      "name": "sessionid",
+      "value": "s",
+      "secret": true
+    },
+    {
+      "name": "JSESSIONID",
+      "value": "s",
+      "secret": true
+    },
+    {
+      "name": "password",
+      "value": "p",
+      "secret": true
+    },
+    {
+      "name": "Passwd",
+      "value": "p",
+      "secret": true
+    },
+    {
+      "name": "new_password",
+      "value": "p",
+      "secret": true
+    },
+    {
+      "name": "pwd",
+      "value": "p",
+      "secret": true
+    },
+    {
+      "name": "user_pwd",
+      "value": "p",
+      "secret": true
+    },
+    {
+      "name": "api_key",
+      "value": "k",
+      "secret": true
+    },
+    {
+      "name": "apiKey",
+      "value": "k",
+      "secret": true
+    },
+    {
+      "name": "api-key",
+      "value": "k",
+      "secret": true
+    },
+    {
+      "name": "apikey",
+      "value": "k",
+      "secret": true
+    },
+    {
+      "name": "x-api-key",
+      "value": "k",
+      "secret": true
+    },
+    {
+      "name": "auth",
+      "value": "a",
+      "secret": true
+    },
+    {
+      "name": "authorization",
+      "value": "a",
+      "secret": true
+    },
+    {
+      "name": "authToken",
+      "value": "a",
+      "secret": true
+    },
+    {
+      "name": "oauth_token",
+      "value": "a",
+      "secret": true
+    },
+    {
+      "name": "x-auth",
+      "value": "a",
+      "secret": true
+    },
+    {
+      "name": "signature",
+      "value": "s",
+      "secret": true
+    },
+    {
+      "name": "X-Amz-Signature",
+      "value": "s",
+      "secret": true
+    },
+    {
+      "name": "csrf",
+      "value": "c",
+      "secret": true
+    },
+    {
+      "name": "csrfmiddlewaretoken",
+      "value": "c",
+      "secret": true
+    },
+    {
+      "name": "_csrf",
+      "value": "c",
+      "secret": true
+    },
+    {
+      "name": "XSRF-TOKEN",
+      "value": "x",
+      "secret": true
+    },
+    {
+      "name": "cookie",
+      "value": "c",
+      "secret": true
+    },
+    {
+      "name": "ticket",
+      "value": "t",
+      "secret": true
+    },
+    {
+      "name": "code_verifier",
+      "value": "v",
+      "secret": true
+    },
+    {
+      "name": "next_page_token",
+      "value": "n",
+      "secret": true
+    },
+    {
+      "name": "session",
+      "value": 12345,
+      "secret": true
+    },
+    {
+      "name": "token",
+      "value": 42,
+      "secret": true
+    },
+    {
+      "name": "author",
+      "value": "Ann",
+      "secret": false
+    },
+    {
+      "name": "authors",
+      "value": "Ann",
+      "secret": false
+    },
+    {
+      "name": "authorName",
+      "value": "Ann",
+      "secret": false
+    },
+    {
+      "name": "author_id",
+      "value": "u1",
+      "secret": false
+    },
+    {
+      "name": "coauthors",
+      "value": "Bo",
+      "secret": false
+    },
+    {
+      "name": "authority",
+      "value": "a.com",
+      "secret": false
+    },
+    {
+      "name": ":authority",
+      "value": "a.com",
+      "secret": false
+    },
+    {
+      "name": "max_tokens",
+      "value": 1024,
+      "secret": false
+    },
+    {
+      "name": "total_tokens",
+      "value": 77,
+      "secret": false
+    },
+    {
+      "name": "tokens",
+      "value": 3,
+      "secret": false
+    },
+    {
+      "name": "max_tokens",
+      "value": "1024",
+      "secret": false
+    },
+    {
+      "name": "sessions",
+      "value": 2,
+      "secret": false
+    },
+    {
+      "name": "tokens",
+      "value": [
+        "a"
+      ],
+      "secret": true
+    },
+    {
+      "name": "token",
+      "value": "1024",
+      "secret": true
+    },
+    {
+      "name": "user",
+      "value": "ann",
+      "secret": false
+    },
+    {
+      "name": "email",
+      "value": "a@b.c",
+      "secret": false
+    },
+    {
+      "name": "code",
+      "value": "1234",
+      "secret": false
+    },
+    {
+      "name": "state",
+      "value": "xyz",
+      "secret": false
+    },
+    {
+      "name": "description",
+      "value": "session notes",
+      "secret": false
+    },
+    {
+      "name": "is_authenticated",
+      "value": true,
+      "secret": false
+    },
+    {
+      "name": "session",
+      "value": null,
+      "secret": false
+    }
+  ],
+  "headers": [
+    {
+      "in": {
+        "Cookie": "a=1; b=2",
+        "Set-Cookie": "sid=abc; HttpOnly",
+        "Authorization": "Bearer abc.def",
+        "Proxy-Authorization": "Basic Zm9vOmJhcg=="
+      },
+      "out": {
+        "Cookie": "<redacted:8>",
+        "Set-Cookie": "<redacted:17>",
+        "Authorization": "<redacted:14>",
+        "Proxy-Authorization": "<redacted:18>"
+      }
+    },
+    {
+      "in": {
+        "X-CSRF-Token": "c1",
+        "X-XSRF-TOKEN": "x1",
+        "X-Api-Key": "k1",
+        "X-Session-Id": "s1",
+        "X-Amz-Security-Token": "t1",
+        "X-Goog-Api-Key": "g1",
+        "X-Hub-Signature-256": "sha256=ff"
+      },
+      "out": {
+        "X-CSRF-Token": "<redacted:2>",
+        "X-XSRF-TOKEN": "<redacted:2>",
+        "X-Api-Key": "<redacted:2>",
+        "X-Session-Id": "<redacted:2>",
+        "X-Amz-Security-Token": "<redacted:2>",
+        "X-Goog-Api-Key": "<redacted:2>",
+        "X-Hub-Signature-256": "<redacted:9>"
+      }
+    },
+    {
+      "in": {
+        "X-Custom": "Bearer eyJ0eXAi.abc.def",
+        "X-Forward-Auth-Value": "zz",
+        "X-Id-Token": "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.c2lnbmF0dXJlLXZhbHVl",
+        "X-Something": "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.c2lnbmF0dXJlLXZhbHVl",
+        "Content-Type": "application/json",
+        "Accept": "*/*",
+        "User-Agent": "Mozilla/5.0"
+      },
+      "out": {
+        "X-Custom": "<redacted:23>",
+        "X-Forward-Auth-Value": "<redacted:2>",
+        "X-Id-Token": "<redacted:61>",
+        "X-Something": "<redacted:61>",
+        "Content-Type": "application/json",
+        "Accept": "*/*",
+        "User-Agent": "Mozilla/5.0"
+      }
+    },
+    {
+      "in": {
+        "Referer": "https://app.test/cb?code=1&state=s&access_token=tok123",
+        "Location": "/next?session=abc&page=2",
+        ":path": "/api?api_key=k&q=1",
+        ":authority": "app.test",
+        ":method": "GET",
+        "X-Author": "ann",
+        "Origin": "https://app.test"
+      },
+      "out": {
+        "Referer": "https://app.test/cb?code=1&state=s&access_token=<redacted:6>",
+        "Location": "/next?session=<redacted:3>&page=2",
+        ":path": "/api?api_key=<redacted:1>&q=1",
+        ":authority": "app.test",
+        ":method": "GET",
+        "X-Author": "ann",
+        "Origin": "https://app.test"
+      }
+    },
+    {
+      "in": [
+        {
+          "name": "authorization",
+          "value": "Bearer t"
+        },
+        {
+          "name": "accept",
+          "value": "text/html"
+        }
+      ],
+      "out": [
+        {
+          "name": "authorization",
+          "value": "<redacted:8>"
+        },
+        {
+          "name": "accept",
+          "value": "text/html"
+        }
+      ]
+    },
+    {
+      "in": {
+        "Authorization": "<redacted:12>"
+      },
+      "out": {
+        "Authorization": "<redacted:12>"
+      }
+    }
+  ],
+  "urls": [
+    {
+      "in": "https://app.test/path?q=hello&token=abc123&page=2",
+      "out": "https://app.test/path?q=hello&token=<redacted:6>&page=2"
+    },
+    {
+      "in": "https://app.test/login?username=ann&password=hunter2",
+      "out": "https://app.test/login?username=ann&password=<redacted:7>"
+    },
+    {
+      "in": "https://app.test/a?apiKey=k&api_key=k2&x=1",
+      "out": "https://app.test/a?apiKey=<redacted:1>&api_key=<redacted:2>&x=1"
+    },
+    {
+      "in": "https://app.test/oauth/callback#access_token=abc&token_type=Bearer&expires_in=3600",
+      "out": "https://app.test/oauth/callback#access_token=<redacted:3>&token_type=<redacted:6>&expires_in=3600"
+    },
+    {
+      "in": "https://app.test/page#section-2",
+      "out": "https://app.test/page#section-2"
+    },
+    {
+      "in": "https://app.test/q?author=ann&authority=x&max_tokens=10",
+      "out": "https://app.test/q?author=ann&authority=x&max_tokens=10"
+    },
+    {
+      "in": "https://app.test/q?jwt=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.c2lnbmF0dXJlLXZhbHVl&v=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.c2lnbmF0dXJlLXZhbHVl",
+      "out": "https://app.test/q?jwt=<redacted:61>&v=<redacted:61>"
+    },
+    {
+      "in": "https://app.test/q?session=a%20b%2Bc&redirect=%2Fhome",
+      "out": "https://app.test/q?session=<redacted:5>&redirect=%2Fhome"
+    },
+    {
+      "in": "https://app.test/plain",
+      "out": "https://app.test/plain"
+    },
+    {
+      "in": "https://app.test/q?flag&token=&sig=1",
+      "out": "https://app.test/q?flag&token=<redacted:0>&sig=1"
+    },
+    {
+      "in": "https://app.test/q?token=<redacted:6>",
+      "out": "https://app.test/q?token=<redacted:6>"
+    }
+  ],
+  "bodies": [
+    {
+      "in": "{\"username\":\"ann\",\"password\":\"hunter2\",\"remember\":true}",
+      "mime": "application/json",
+      "out": "{\"username\":\"ann\",\"password\":\"<redacted:7>\",\"remember\":true}"
+    },
+    {
+      "in": "{\"user\":{\"name\":\"ann\",\"auth\":{\"type\":\"otp\",\"code\":\"123\"}},\"items\":[{\"id\":1,\"secret\":\"s\"},{\"id\":2,\"token\":\"t\"}]}",
+      "mime": "application/json",
+      "out": "{\"user\":{\"name\":\"ann\",\"auth\":\"<redacted:27>\"},\"items\":[{\"id\":1,\"secret\":\"<redacted:1>\"},{\"id\":2,\"token\":\"<redacted:1>\"}]}"
+    },
+    {
+      "in": "{\"data\":\"eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.c2lnbmF0dXJlLXZhbHVl\",\"author\":\"ann\",\"max_tokens\":256,\"tokens\":[\"a\",\"b\"]}",
+      "mime": "",
+      "out": "{\"data\":\"<redacted:61>\",\"author\":\"ann\",\"max_tokens\":256,\"tokens\":\"<redacted:9>\"}"
+    },
+    {
+      "in": "username=ann&password=hunter2&csrf_token=abc&remember=1",
+      "mime": "application/x-www-form-urlencoded",
+      "out": "username=ann&password=<redacted:7>&csrf_token=<redacted:3>&remember=1"
+    },
+    {
+      "in": "grant_type=refresh_token&refresh_token=r1&client_id=c&client_secret=s",
+      "mime": "",
+      "out": "grant_type=refresh_token&refresh_token=<redacted:2>&client_id=c&client_secret=<redacted:1>"
+    },
+    {
+      "in": "plain text with token=abc inside a sentence",
+      "mime": "text/plain",
+      "out": "plain text with token=abc inside a sentence"
+    },
+    {
+      "in": "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.c2lnbmF0dXJlLXZhbHVl",
+      "mime": "text/plain",
+      "out": "<redacted:61>"
+    },
+    {
+      "in": "[{\"session\":\"a\"},{\"sessions\":2}]",
+      "mime": "application/json",
+      "out": "[{\"session\":\"<redacted:1>\"},{\"sessions\":2}]"
+    },
+    {
+      "in": "{\"password\":\"<redacted:7>\"}",
+      "mime": "application/json",
+      "out": "{\"password\":\"<redacted:7>\"}"
+    },
+    {
+      "in": "not json {",
+      "mime": "application/json",
+      "out": "not json {"
+    }
+  ],
+  "json": [
+    {
+      "in": {
+        "a": {
+          "b": {
+            "c": {
+              "password": "p",
+              "list": [
+                {
+                  "api_key": "k"
+                },
+                "x"
+              ]
+            }
+          }
+        },
+        "author": "ann"
+      },
+      "out": {
+        "a": {
+          "b": {
+            "c": {
+              "password": "<redacted:1>",
+              "list": [
+                {
+                  "api_key": "<redacted:1>"
+                },
+                "x"
+              ]
+            }
+          }
+        },
+        "author": "ann"
+      }
+    },
+    {
+      "in": {
+        "auth": {
+          "user": "u",
+          "pass": "p"
+        },
+        "token": 12345,
+        "ok": true,
+        "sessionInfo": null
+      },
+      "out": {
+        "auth": "<redacted:23>",
+        "token": "<redacted:5>",
+        "ok": true,
+        "sessionInfo": null
+      }
+    },
+    {
+      "in": {
+        "headers_like": {
+          "Authorization": "x"
+        },
+        "value": "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.c2lnbmF0dXJlLXZhbHVl"
+      },
+      "out": {
+        "headers_like": {
+          "Authorization": "<redacted:1>"
+        },
+        "value": "<redacted:61>"
+      }
+    }
+  ]
+}

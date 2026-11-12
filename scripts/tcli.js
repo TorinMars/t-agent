@@ -23,11 +23,18 @@ const HELP = `tcli: the T-Agent command line for agent sessions
 Usage: tcli <group> <command> [options]
 
 Groups
-  oss    objects in the OSS bucket of
-         "Image and file upload"
-         (tcli oss help)
+  oss      objects in the OSS bucket of
+           "Image and file upload"
+           (tcli oss help)
+  browser  drive this computer's browser
+           through the T-Agent extension
+           (tcli browser help)
 
-  help   this text
+  site     what the model has learnt about each
+           website, shared across devices
+           (tcli site help)
+
+  help     this text
 
 tcli works inside a T-Agent terminal: it uses
 TA_HOOK_URL and TA_HOOK_TOKEN, which T-Agent
@@ -428,6 +435,12 @@ const GROUPS = {
     },
   },
 };
+// The site capability library group lives in its own file (scripts/tcli-site.js), like `tcli browser` in scripts/tcli-browser.js.
+GROUPS.site = require('./tcli-site').GROUP;
+
+// Groups in their own modules get the shared helpers and run their commands themselves (`run(command, args, ctx)`).
+const helpers = { send, readJson, failureOf, networkFailure, CliError, usage, EXIT, humanSize };
+GROUPS.browser = require('./tcli-browser').createBrowserGroup(helpers);
 
 async function main(argv = process.argv.slice(2), { env = process.env, stdout = process.stdout, stderr = process.stderr, cwd = process.cwd() } = {}) {
   const out = text => stdout.write(`${text}\n`);
@@ -440,6 +453,7 @@ async function main(argv = process.argv.slice(2), { env = process.env, stdout = 
     if (!group) throw usage(`Unknown group "${groupName}"; see tcli help`);
     if (!commandName) { stderr.write(group.help); return EXIT.usage; }
     if (commandName === 'help' || commandName === '--help' || commandName === '-h') { stdout.write(group.help); return EXIT.ok; }
+    if (group.run) return await group.run(commandName, rest, { relay: () => relayFromEnv(env), out, stdout, stderr, cwd });
     const command = group.commands[commandName];
     if (!command) throw usage(`Unknown command "${groupName} ${commandName}"; see tcli ${groupName} help`);
     const { flags, positional } = parseArgs(rest, command);
@@ -454,8 +468,10 @@ async function main(argv = process.argv.slice(2), { env = process.env, stdout = 
   }
 }
 
+// Exported before main() runs: scripts/tcli-site.js (and tcli-browser.js) require these helpers lazily while a command runs, so they must be in place
+// before the `if (require.main)` block below starts a command.
+module.exports = { main, parseArgs, relayFromEnv, formatList, formatStat, humanSize, GROUPS, EXIT, callJson, usage, CliError };
+
 if (require.main === module) {
   main().then(code => { process.exitCode = code; });
 }
-
-module.exports = { main, parseArgs, relayFromEnv, formatList, formatStat, humanSize, GROUPS, EXIT };

@@ -6,7 +6,7 @@
 export const SETTINGS_GROUPS = ['tasks-files', 'voice-translate', 'devices', 'attention', 'account'];
 
 const SECTIONS = {
-  workdir: 'tasks-files', oss: 'tasks-files', 'agent-skills': 'tasks-files',
+  workdir: 'tasks-files', oss: 'tasks-files', 'agent-skills': 'tasks-files', 'browser-ext': 'tasks-files',
   voice: 'voice-translate', translate: 'voice-translate',
   link: 'devices', 'peer-fs': 'devices', 'rule-sync': 'devices', advanced: 'devices', connect: 'devices', remote: 'devices',
   access: 'account', authenticator: 'account',

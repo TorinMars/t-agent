@@ -790,4 +790,15 @@ I18n.add({
   "The task does not need you": "这个任务不需要你处理",
   "enabled must be true or false": "enabled 必须是 true 或 false",
   "language must be one of: {1}": "language 必须是以下之一：{1}",
+  // ---- Browser extension ----
+  "BROWSER_NOT_CONNECTED": "没有连接装有 T-Agent 扩展的浏览器",
+  "BROWSER_TIMEOUT": "浏览器没有及时响应",
+  "BROWSER_NOT_FOUND": "没有这个已配对的浏览器",
+  "PAIR_CODE_INVALID": "配对码错误、已使用或已过期",
+  "TOO_MANY_BROWSERS": "已配对的浏览器太多，请先移除一个",
+  "INVALID_NAME": "名称无效",
+  "There is no paired browser with this id": "没有这个 ID 的已配对浏览器",
+  "At most 20 browsers can be paired; remove one first": "最多只能配对 20 个浏览器，请先移除一个",
+  "The pairing code is wrong, used or expired. Make a new one in T-Agent Settings.": "配对码错误、已使用或已过期。请在 T-Agent 设置里重新生成。",
+  "No browser with the T-Agent extension is connected. Pair one in Settings → Tasks and files → Browser extension.": "没有连接装有 T-Agent 扩展的浏览器。请在“设置 → 任务和文件 → 浏览器扩展”里配对。",
 });

@@ -1,11 +1,16 @@
 ---
 name: tcli
-description: Manage files in the user's object storage (OSS bucket) with the tcli command of T-Agent. Use it when you need to upload, download, list, copy, move or delete files in the user's OSS or cloud storage, share a file by link, put an image or a build somewhere reachable on the web, or read a file the user says is in the bucket.
+description: The tcli command of T-Agent. Use it to manage files in the user's object storage (OSS bucket) - upload, download, list, copy, move or delete files, share a file by link, put an image or a build somewhere reachable on the web - and to drive the user's own Chrome through the T-Agent browser extension - open and read web pages, click and type, take screenshots, inspect network requests and record how a site works, with the user's logged-in sessions.
 ---
 
 # tcli
 
-`tcli` is the command line of T-Agent, the service that runs this terminal. Its first command group is `oss`: files in the object storage bucket that the user set up in T-Agent (Settings → Tasks and files → Image and file upload). More groups may come later; `tcli help` lists what this version has.
+`tcli` is the command line of T-Agent, the service that runs this terminal. Its command groups:
+
+- `oss`: files in the object storage bucket that the user set up in T-Agent (Settings → Tasks and files → Image and file upload).
+- `browser`: the user's Chrome on this computer, through the T-Agent browser extension (Settings → Tasks and files → Browser extension). See "Browser" below.
+
+More groups may come later; `tcli help` lists what this version has.
 
 The bucket and its access key belong to T-Agent. The command asks the T-Agent server to do the work, so you never see or need the secret. Do not look for it.
 
@@ -132,6 +137,105 @@ These rules are strict. "Confirmation" means the user said yes in this conversat
 - Uploads and downloads go through the T-Agent server and can take a while. Tell the user before you move a large file (over about 100 MB), and run one big transfer at a time.
 - For a whole folder, upload the files one by one into one dated prefix, or pack them first (`tar -czf site.tar.gz site/`) and upload the archive. Say how many files you uploaded.
 - Do not print a large or binary file to standard output; write it with `-o <file>`.
+
+## Browser
+
+`tcli browser` drives Chrome on the computer that runs T-Agent, through the T-Agent extension. It is the user's real browser, logged in to their accounts: what you do there, you do as the user. `tcli browser help` lists every option.
+
+Before the first command, check the connection:
+
+```bash
+${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser status
+```
+
+Exit `4` with "No browser is connected": tell the user to pair Chrome in T-Agent (Settings → Tasks and files → Browser extension), or to open Chrome if it is paired but offline. Do not try to start a browser yourself.
+
+### The tab rule
+
+The extension may only use two kinds of tabs:
+
+- tabs T-Agent opened itself (`browser open`), kept in a Chrome tab group named "T-Agent";
+- tabs the user handed over with the extension button ("Let T-Agent use this tab"). The user can take them back at any time.
+
+Every other tab answers `TAB_NOT_ALLOWED` (exit `2`); `chrome://` pages, the Chrome Web Store and other extension pages answer `TAB_NOT_SCRIPTABLE`. Do not try to get around this. If you need a page the user has open, ask them to hand that tab over, or open the same address in a new tab. `close` on a handed tab only releases it; it is never closed.
+
+`--tab T` picks a tab by its number from `browser tabs`. Without it, a command uses the tab the last command used, else the active T-Agent tab.
+
+### Commands
+
+```bash
+${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser tabs                         # tabs you may use (* = active)
+${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser open https://example.com     # a new tab in the T-Agent group
+${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser go https://example.com/next  # navigate (--tab T, --no-wait)
+${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser back                         # also: forward, reload, activate <tab>, close [tab]
+
+${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser snapshot                     # one line per element: e12 button "Sign in"
+${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser snapshot --text              # the readable text (--html for HTML)
+${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser snapshot --selector main     # only part of the page
+${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser query 'table tr' --all       # elements matching a CSS selector
+
+${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser click e12
+${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser type e7 'red shoes' --clear --submit
+${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser press Enter                  # Tab, Escape, ArrowDown, a (--modifiers Meta)
+${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser select e9 large              # also: hover <target>, scroll [--dy 600]
+${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser wait --text 'Order placed' --timeout 20000   # or --selector, --url, --idle MS
+
+${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser eval 'document.title'        # JS in the page (--file f.js)
+${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser shot -o page.png             # screenshot (--full for the whole page)
+${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser console                      # console lines and uncaught errors
+```
+
+A `<target>` is a ref from the last snapshot (`e12`), `css:<selector>`, `text:<visible text>` (the first match) or `x,y` in viewport pixels. Refs are best.
+
+### How to work on a page
+
+1. `snapshot` to see the page; act on refs (`click e12`, `type e7 ...`).
+2. After anything that changes the page (a click that opens a dialog, a navigation, a submit), `snapshot` again. Refs are only valid until the next snapshot or navigation: `REF_NOT_FOUND` means take a new snapshot.
+3. When a page loads content late, `wait` for it (`--text`, `--selector`, `--idle 1000`) instead of sleeping.
+4. Prefer `snapshot --text` or `--selector` over `--html`: HTML is large and costs context. `shot` when the layout matters or the user wants to see it.
+5. `ELEMENT_NOT_INTERACTABLE`: the element is hidden or covered; scroll to it, close the dialog in front of it, or choose another element.
+
+### Network and recordings: find a site's API
+
+```bash
+${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser net start --filter /api/     # capture (a yellow "debugging" bar appears)
+${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser net list --type XHR,Fetch    # r7 GET 200 XHR 2.0 KB 31ms https://...
+${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser net get r7                   # headers and body of one request
+${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser net stop
+${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser fetch /api/cart -H 'Accept: application/json'   # fetch inside the page, with its cookies
+
+${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser record start                 # clicks, input, navigation, network, DOM changes
+${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser record stop
+${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser record show rec_...          # what was recorded
+${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser record items rec_... -o rec.jsonl   # every item, one JSON per line
+```
+
+- To learn how a site works, capture or record while you (or the user) do the task once in the page, then read the XHR / Fetch requests: their URLs, methods, parameters and response shapes are the site's API. Then call it with `browser fetch` from the page, which carries the user's cookies, instead of clicking through the page again.
+- `DEBUGGER_BUSY` means DevTools is open on that tab; ask the user to close it.
+- Recordings are kept in T-Agent for 14 days. `record rm <id> --yes` deletes one (ask first, as for any delete).
+
+### Secrets in the browser
+
+- Cookies, `Authorization` headers, tokens, passwords, API keys and similar values are shown as `<redacted:N>` (N is the length) everywhere: in `net`, `fetch` and recordings. That is on purpose.
+- `--raw` (on `net get` and `fetch`) shows the real values, to you only; T-Agent never stores them. Use it only when the task cannot be done without the real value, never print raw values back to the user, and never write them into files, notes, code, commits or anything that leaves this conversation.
+- Do not type passwords or payment details unless the user gave them to you for this exact step. Never read the browser's saved passwords, and never send the user's data to another site.
+
+### Safe practice in the browser
+
+1. **Ask before anything that changes something for the user**: sending a message or an email, posting, buying, paying, booking, deleting, changing settings or accepting terms. Show what you will do and wait for a yes. Reading and looking around need no confirmation.
+2. Stay on the sites the task is about.
+3. Close the tabs you opened when you are done (`browser close`), unless the user wants to keep them.
+4. When a page shows a login, a CAPTCHA or a two-factor prompt, ask the user to complete it in Chrome, then go on.
+
+### Browser errors
+
+| Code | Meaning | What to do |
+|---|---|---|
+| `BROWSER_NOT_CONNECTED` (exit `4`) | No paired Chrome is connected | Ask the user to open Chrome, or to pair it in Settings → Tasks and files → Browser extension. |
+| `BROWSER_TIMEOUT` (exit `4`) | The browser did not answer in time | Try once more; pass `--timeout` for slow pages. |
+| `TAB_NOT_ALLOWED` (exit `2`) | Not a T-Agent tab | See "The tab rule". |
+| `TAB_NOT_FOUND`, `REF_NOT_FOUND`, `ELEMENT_NOT_FOUND`, `REQUEST_NOT_FOUND` (exit `3`) | Gone or stale | `browser tabs` or a new `snapshot`, then try again. |
+| `UNKNOWN_METHOD` | The extension is older than this command | Ask the user to update the extension (reload it in `chrome://extensions`). |
 
 ## Exit codes and what to tell the user
 

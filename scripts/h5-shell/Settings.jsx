@@ -16,6 +16,8 @@ import { api, t } from './common.jsx';
 import { DevicesGroup } from './Engines.jsx';
 import { AttentionSettings } from './AttentionSettings.jsx';
 import { AgentSkillsSection } from './AgentSkillsSettings.jsx';
+import { BrowserExtSection } from './BrowserExtSettings.jsx';
+import { BrowserSitesSection } from './BrowserSites.jsx';
 import { Feedback, Field, Group, Hint, ROW, Section, failure, useFeedback } from './Form.jsx';
 import { settingsTarget } from './settings-target.mjs';
 import { ScopeLabel, SyncNote, useSyncAfterSave } from './ScopeLabel.jsx';
@@ -395,7 +397,8 @@ function LogoutRow({ ui }) {
   );
 }
 
-// "Tasks and files": where new tasks are kept, the image and file upload (with the agents' tcli access to it), then the agent skills.
+// "Tasks and files": where new tasks are kept, the image and file upload (with the agents' tcli access to it), the agent skills, then the browser
+// extension that `tcli browser` drives.
 function TasksFilesGroup({ request }) {
   const [opened, setOpened] = useState(0);
   return (
@@ -403,6 +406,8 @@ function TasksFilesGroup({ request }) {
       <WorkdirSection opened={opened} />
       <OssSection opened={opened} />
       <AgentSkillsSection opened={opened} />
+      <BrowserExtSection opened={opened} />
+      <BrowserSitesSection opened={opened} />
     </Group>
   );
 }

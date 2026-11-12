@@ -62,6 +62,14 @@ const SKILLS = Object.freeze([
     token: TCLI_TOKEN,
     replace: cliPath => `node "\${TA_TCLI:-${cliPath}}"`,
   }),
+  Object.freeze({
+    name: 'browser',
+    description: 'Teaches Claude Code and Codex to drive the user’s browser with tcli browser, learn how a site works, and build up a reusable site entry with tcli site (the site capability library).',
+    sourceFile: path.join(ROOT, 'rules', 'skills', 'browser', 'SKILL.md'),
+    cliPath: path.join(ROOT, 'scripts', 'tcli.js'),
+    token: TCLI_TOKEN,
+    replace: cliPath => `node "\${TA_TCLI:-${cliPath}}"`,
+  }),
 ]);
 const SKILL_NAMES = Object.freeze(SKILLS.map(skill => skill.name));
 const findSkill = name => SKILLS.find(skill => skill.name === name) || null;

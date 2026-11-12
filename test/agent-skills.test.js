@@ -32,7 +32,7 @@ function sandbox({ claudeEnv = false, codexEnv = false, tcliSource = null } = {}
   const claude = env.CLAUDE_CONFIG_DIR || path.join(home, '.claude');
   const codex = env.CODEX_HOME || path.join(home, '.codex');
   const dataDir = path.join(root, 'data');
-  const own = { 't-attention': { cliPath: '/opt/t agent/scripts/t-attention.js' }, tcli: { cliPath: '/opt/t agent/scripts/tcli.js' } };
+  const own = { 't-attention': { cliPath: '/opt/t agent/scripts/t-attention.js' }, tcli: { cliPath: '/opt/t agent/scripts/tcli.js' }, browser: { cliPath: '/opt/t agent/scripts/tcli.js' } };
   if (tcliSource !== null) { own.tcli.sourceFile = path.join(root, 'tcli.source.md'); fs.writeFileSync(own.tcli.sourceFile, tcliSource); }
   const service = skills.createAgentSkills({ env, homedir: () => home, terminalUser: () => ({ user: null }), dataDir, skills: own, now: () => new Date('2026-11-12T10:20:30.456Z') });
   return { root, home, env, claude, codex, dataDir, own, service, file: (dir, name) => path.join(dir, 'skills', name, 'SKILL.md') };
@@ -42,7 +42,7 @@ test('the list has both skills in order, each with a description and the state f
   const box = sandbox();
   const view = box.service.list();
   assert.deepEqual(Object.keys(view).sort(), ['old_task_tracker', 'skills', 'user']);
-  assert.deepEqual(view.skills.map(skill => skill.name), ['t-attention', 'tcli']);
+  assert.deepEqual(view.skills.map(skill => skill.name), ['t-attention', 'tcli', 'browser']);
   for (const skill of view.skills) {
     assert.ok(skill.description.length > 40 && !skill.description.includes('\n'), `${skill.name}: one line`);
     assert.deepEqual(skill.claude, { installed: false, path: box.file(box.claude, skill.name), current: false, conflict: null });
@@ -75,7 +75,9 @@ test('install writes each skill for Claude and Codex with this machine\'s CLI pa
   const attention = box.service.install('t-attention');
   assert.deepEqual([attention.results.claude.action, attention.results.codex.action], ['installed', 'installed']);
   assert.ok(fs.readFileSync(box.file(box.codex, 't-attention'), 'utf8').includes('"${TA_ATTENTION_CLI:-/opt/t agent/scripts/t-attention.js}"'));
-  assert.ok(attention.status.skills.every(skill => skill.claude.current && skill.codex.current));
+  const browser = box.service.install('browser');
+  assert.deepEqual([browser.results.claude.action, browser.results.codex.action], ['installed', 'installed']);
+  assert.ok(browser.status.skills.every(skill => skill.claude.current && skill.codex.current));
 
   const again = box.service.install('tcli');
   assert.deepEqual([again.results.claude.action, again.results.codex.action], ['unchanged', 'unchanged']);
@@ -192,7 +194,7 @@ test('remove-old moves task-tracker into the backups once t-attention is in plac
   assert.deepEqual(result.moved, [{ agent: 'claude', from: old, to: path.join(backup, 'claude', 'task-tracker') }]);
   assert.equal(fs.readFileSync(path.join(backup, 'claude', 'task-tracker', 'SKILL.md'), 'utf8'), 'old');
   assert.deepEqual(result.status.old_task_tracker, { claude: false, codex: false });
-  assert.deepEqual(result.status.skills.map(skill => skill.name), ['t-attention', 'tcli'], 'the status is the full list');
+  assert.deepEqual(result.status.skills.map(skill => skill.name), ['t-attention', 'tcli', 'browser'], 'the status is the full list');
 });
 
 test('the first installer is a view of the same files: what one installs, the other sees', () => {
@@ -240,7 +242,7 @@ test('routes: the login is needed, writes need same-origin proof; list, install 
     loggedIn = true;
     const list = await request(server, 'GET', '/api/agent-skills');
     assert.equal(list.status, 200);
-    assert.deepEqual(list.body.skills.map(skill => skill.name), ['t-attention', 'tcli']);
+    assert.deepEqual(list.body.skills.map(skill => skill.name), ['t-attention', 'tcli', 'browser']);
     assert.equal((await request(server, 'POST', '/api/agent-skills/tcli/install')).body.error, 'CLIENT_ORIGIN_REQUIRED', 'a write without proof');
     assert.equal((await request(server, 'POST', '/api/agent-skills/tcli/install', { ...XHR, Origin: 'https://evil.example' })).status, 403);
     const installed = await request(server, 'POST', '/api/agent-skills/tcli/install', XHR);
@@ -288,11 +290,19 @@ test('server.js mounts the agent skills router, and the old routes before the T-
 // The commands and flags of the tcli CLI contract (scripts/tcli.js) the skill may use.
 const OSS_COMMANDS = new Set(['ls', 'stat', 'get', 'put', 'cp', 'mv', 'rm', 'url']);
 const FLAGS = new Set(['recursive', 'all', 'max', 'json', 'force', 'prefix', 'content-type', 'yes', 'expires']);
-const SHORT_FLAGS = new Set(['o']);
+const SHORT_FLAGS = new Set(['o', 'H', 'X', 'd']);
+// `tcli browser` (scripts/tcli-browser.js): its commands, its sub-commands of net and record, and every flag they take.
+const BROWSER = require('../scripts/tcli.js').GROUPS.browser;
+const BROWSER_COMMANDS = new Set([...Object.keys(BROWSER.commands), 'net', 'record', 'help']);
+const BROWSER_SUBCOMMANDS = { net: new Set(Object.keys(BROWSER.net)), record: new Set(Object.keys(BROWSER.record)) };
+for (const command of [...Object.values(BROWSER.commands), ...Object.values(BROWSER.net), ...Object.values(BROWSER.record)]) {
+  for (const flag of [...(command.values || []), ...(command.bools || []), ...(command.multi || [])]) FLAGS.add(flag);
+}
+for (const flag of ['tab', 'browser', 'timeout']) FLAGS.add(flag);
 
 test('tcli SKILL.md: valid frontmatter, only commands and flags of the CLI contract, short enough', () => {
   const lines = TCLI_SOURCE.split('\n');
-  assert.ok(lines.length <= 250, `${lines.length} lines`);
+  assert.ok(lines.length <= 380, `${lines.length} lines`);
   const match = /^---\n([\s\S]*?)\n---\n/.exec(TCLI_SOURCE);
   assert.ok(match, 'frontmatter between --- lines at the top');
   const fields = Object.fromEntries(match[1].split('\n').map(line => { const at = line.indexOf(':'); return [line.slice(0, at).trim(), line.slice(at + 1).trim()]; }));
@@ -302,11 +312,13 @@ test('tcli SKILL.md: valid frontmatter, only commands and flags of the CLI contr
   for (const word of ['OSS', 'upload', 'download', 'link', 'image']) assert.ok(fields.description.includes(word), word);
 
   // Every command after the CLI token, and every inline `oss <command>` mention.
-  const calls = [...TCLI_SOURCE.matchAll(/\$\{TA_TCLI:\+node\} "\$\{TA_TCLI:-tcli\}" ([a-z]+)(?: ([a-z]+))?/g)];
+  const calls = [...TCLI_SOURCE.matchAll(/\$\{TA_TCLI:\+node\} "\$\{TA_TCLI:-tcli\}" ([a-z]+)(?: ([a-z]+))?(?: ([a-z]+))?/g)];
   assert.ok(calls.length >= 10);
-  for (const [, group, command] of calls) {
-    assert.ok(group === 'oss' || group === 'help', `group ${group}`);
+  for (const [, group, command, sub] of calls) {
+    assert.ok(group === 'oss' || group === 'browser' || group === 'help', `group ${group}`);
     if (group === 'oss') assert.ok(OSS_COMMANDS.has(command), `oss ${command}`);
+    if (group === 'browser') assert.ok(BROWSER_COMMANDS.has(command), `browser ${command}`);
+    if (group === 'browser' && BROWSER_SUBCOMMANDS[command]) assert.ok(BROWSER_SUBCOMMANDS[command].has(sub), `browser ${command} ${sub}`);
   }
   const used = new Set([...TCLI_SOURCE.matchAll(/`oss ([a-z]+)/g)].map(found => found[1]));
   assert.deepEqual([...used].filter(name => !OSS_COMMANDS.has(name)), []);
@@ -327,6 +339,10 @@ test('tcli SKILL.md: valid frontmatter, only commands and flags of the CLI contr
   assert.ok(!/pm2 (?:restart|stop|delete|reload)|systemctl|launchctl/.test(TCLI_SOURCE));
   assert.ok(!/accessKeySecret|ALIBABA_CLOUD|OSS_ACCESS_KEY/i.test(TCLI_SOURCE), 'no hint at where the secret is kept');
   assert.ok(!/[\u4e00-\u9fff]/.test(TCLI_SOURCE), 'English only');
+  // The browser part: the tab rule, the redaction rule and where to pair.
+  for (const text of ['## Browser', 'TAB_NOT_ALLOWED', '"T-Agent"', '<redacted:N>', '--raw', 'Settings → Tasks and files → Browser extension', '`snapshot` again', 'Ask before anything that changes something']) {
+    assert.ok(TCLI_SOURCE.includes(text), text);
+  }
 });
 
 test('every bundled skill has a source file whose name matches its folder', () => {

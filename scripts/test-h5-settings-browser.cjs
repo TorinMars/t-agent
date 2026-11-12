@@ -82,7 +82,7 @@ const html = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8').replace(
     // Working directory: the effective default is shown; an unchanged default stays inherited, a new path is saved, clearing restores the default.
     // Its group "Tasks and files" reads both of its parts when it opens.
     await openGroup('tasks-files');
-    assert.deepEqual(await page.locator('#h5-set-tasks-files .h5-setting-subheading').allTextContents(), ['Working directory', 'Image and file upload', 'Agent skills']);
+    assert.deepEqual(await page.locator('#h5-set-tasks-files .h5-setting-subheading').allTextContents(), ['Working directory', 'Image and file upload', 'Agent skills', 'Browser extension', 'Site library']);
     await page.waitForFunction(() => document.getElementById('h5-workdir').value === '/home/t/tasks');
     await page.click('#h5-workdir-save');
     await page.waitForFunction(() => calls.some(call => call.url === '/auth/settings'));

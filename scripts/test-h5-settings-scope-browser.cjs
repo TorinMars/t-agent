@@ -145,7 +145,7 @@ async function assertFits(page, label) {
   assert.ok(result.scroll <= 0, `${label}: no horizontal page scroll`);
 }
 
-const TASKS = ['device This device only', 'shared Shared across devices', 'shared Shared across devices', 'device This device only'];
+const TASKS = ['device This device only', 'shared Shared across devices', 'shared Shared across devices', 'device This device only', 'shared Shared across devices'];
 const VOICE = ['shared Shared across devices', 'shared Shared across devices'];
 const DEVICES = ['device Device names: This device only', 'shared Show in task list: Shared across devices', 'device This device only', 'device This device only', 'device This device only', 'device This device only'];
 const ATTENTION = [
@@ -165,7 +165,7 @@ async function testLinkedPhone(browser) {
   assert.equal(await page.locator('#h5-sec-oss [data-setting="oss"] .h5-scope-detail').textContent(), 'Waiting to reach K02');
   assert.equal(await page.getAttribute('#h5-sec-oss [data-setting="oss"] .h5-scope-label', 'title'), 'Changes here are copied to every linked device\nWaiting to reach K02');
   assert.equal(await page.getAttribute('#h5-sec-workdir .h5-scope-label', 'title'), 'Only this device uses this');
-  assert.deepEqual(await page.locator('#h5-set-tasks-files .h5-setting-subheading').allTextContents(), ['Working directory', 'Image and file upload', 'Agent skills'], 'headings keep their text');
+  assert.deepEqual(await page.locator('#h5-set-tasks-files .h5-setting-subheading').allTextContents(), ['Working directory', 'Image and file upload', 'Agent skills', 'Site library'], 'headings keep their text'); // Browser extension renders only once its loopback route answers
   await assertFits(page, '390 Tasks and files');
   if (SHOTS) { await page.locator('#h5-set-tasks-files').scrollIntoViewIfNeeded(); await page.evaluate(() => document.getElementById('h5-set-tasks-files').scrollIntoView({ block: 'start' })); await settled(page); await page.screenshot({ path: path.join(SHOTS, 'settings-scope-tasks-files-390.png') }); }
   await toggleGroup(page, 'tasks-files', press);
@@ -294,9 +294,9 @@ async function testChinese(browser) {
   const { context, page, errors, press } = await openPage(browser, { width: 390, zh: true });
   await openSheet(page);
   await toggleGroup(page, 'tasks-files', press);
-  await page.waitForFunction(() => document.getElementById('h5-oss-agent-enabled') && document.querySelectorAll('#h5-set-tasks-files .h5-scope').length === 4);
+  await page.waitForFunction(() => document.getElementById('h5-oss-agent-enabled') && document.querySelectorAll('#h5-set-tasks-files .h5-scope').length === 5);
   const texts = await page.locator('#h5-set-tasks-files .h5-scope').allInnerTexts();
-  assert.deepEqual(texts.map(text => text.replace(/\s+/g, ' ')), ['\u4ec5\u672c\u673a', '\u6240\u6709\u8bbe\u5907\u5171\u4eab \u7b49\u5f85\u540c\u6b65\u5230 K02', '\u6240\u6709\u8bbe\u5907\u5171\u4eab', '\u4ec5\u672c\u673a']);
+  assert.deepEqual(texts.map(text => text.replace(/\s+/g, ' ')), ['\u4ec5\u672c\u673a', '\u6240\u6709\u8bbe\u5907\u5171\u4eab \u7b49\u5f85\u540c\u6b65\u5230 K02', '\u6240\u6709\u8bbe\u5907\u5171\u4eab', '\u4ec5\u672c\u673a', '\u6240\u6709\u8bbe\u5907\u5171\u4eab']);
   await assertFits(page, 'zh Tasks and files');
   await toggleGroup(page, 'tasks-files', press);
   await toggleGroup(page, 'devices', press);

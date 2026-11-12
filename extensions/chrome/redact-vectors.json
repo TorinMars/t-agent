@@ -1,0 +1,544 @@
+{
+  "note": "Generated from test/fixtures/browser-redact-vectors.json by scripts/sync-extension-redact.js",
+  "cases": [
+    {
+      "input": {
+        "token": "abc"
+      },
+      "expected": {
+        "token": "<redacted:3>"
+      }
+    },
+    {
+      "input": {
+        "access_token": "abc"
+      },
+      "expected": {
+        "access_token": "<redacted:3>"
+      }
+    },
+    {
+      "input": {
+        "accessToken": "abc"
+      },
+      "expected": {
+        "accessToken": "<redacted:3>"
+      }
+    },
+    {
+      "input": {
+        "refresh-token": "abc"
+      },
+      "expected": {
+        "refresh-token": "<redacted:3>"
+      }
+    },
+    {
+      "input": {
+        "id_token": "abc"
+      },
+      "expected": {
+        "id_token": "<redacted:3>"
+      }
+    },
+    {
+      "input": {
+        "client_secret": "s"
+      },
+      "expected": {
+        "client_secret": "<redacted:1>"
+      }
+    },
+    {
+      "input": {
+        "secretKey": "s"
+      },
+      "expected": {
+        "secretKey": "<redacted:1>"
+      }
+    },
+    {
+      "input": {
+        "session": "s"
+      },
+      "expected": {
+        "session": "<redacted:1>"
+      }
+    },
+    {
+      "input": {
+        "session_id": "s"
+      },
+      "expected": {
+        "session_id": "<redacted:1>"
+      }
+    },
+    {
+      "input": {
+        "sessionid": "s"
+      },
+      "expected": {
+        "sessionid": "<redacted:1>"
+      }
+    },
+    {
+      "input": {
+        "JSESSIONID": "s"
+      },
+      "expected": {
+        "JSESSIONID": "<redacted:1>"
+      }
+    },
+    {
+      "input": {
+        "password": "p"
+      },
+      "expected": {
+        "password": "<redacted:1>"
+      }
+    },
+    {
+      "input": {
+        "Passwd": "p"
+      },
+      "expected": {
+        "Passwd": "<redacted:1>"
+      }
+    },
+    {
+      "input": {
+        "new_password": "p"
+      },
+      "expected": {
+        "new_password": "<redacted:1>"
+      }
+    },
+    {
+      "input": {
+        "pwd": "p"
+      },
+      "expected": {
+        "pwd": "<redacted:1>"
+      }
+    },
+    {
+      "input": {
+        "user_pwd": "p"
+      },
+      "expected": {
+        "user_pwd": "<redacted:1>"
+      }
+    },
+    {
+      "input": {
+        "api_key": "k"
+      },
+      "expected": {
+        "api_key": "<redacted:1>"
+      }
+    },
+    {
+      "input": {
+        "apiKey": "k"
+      },
+      "expected": {
+        "apiKey": "<redacted:1>"
+      }
+    },
+    {
+      "input": {
+        "api-key": "k"
+      },
+      "expected": {
+        "api-key": "<redacted:1>"
+      }
+    },
+    {
+      "input": {
+        "apikey": "k"
+      },
+      "expected": {
+        "apikey": "<redacted:1>"
+      }
+    },
+    {
+      "input": {
+        "x-api-key": "k"
+      },
+      "expected": {
+        "x-api-key": "<redacted:1>"
+      }
+    },
+    {
+      "input": {
+        "auth": "a"
+      },
+      "expected": {
+        "auth": "<redacted:1>"
+      }
+    },
+    {
+      "input": {
+        "authorization": "a"
+      },
+      "expected": {
+        "authorization": "<redacted:1>"
+      }
+    },
+    {
+      "input": {
+        "authToken": "a"
+      },
+      "expected": {
+        "authToken": "<redacted:1>"
+      }
+    },
+    {
+      "input": {
+        "oauth_token": "a"
+      },
+      "expected": {
+        "oauth_token": "<redacted:1>"
+      }
+    },
+    {
+      "input": {
+        "x-auth": "a"
+      },
+      "expected": {
+        "x-auth": "<redacted:1>"
+      }
+    },
+    {
+      "input": {
+        "signature": "s"
+      },
+      "expected": {
+        "signature": "<redacted:1>"
+      }
+    },
+    {
+      "input": {
+        "X-Amz-Signature": "s"
+      },
+      "expected": {
+        "X-Amz-Signature": "<redacted:1>"
+      }
+    },
+    {
+      "input": {
+        "csrf": "c"
+      },
+      "expected": {
+        "csrf": "<redacted:1>"
+      }
+    },
+    {
+      "input": {
+        "csrfmiddlewaretoken": "c"
+      },
+      "expected": {
+        "csrfmiddlewaretoken": "<redacted:1>"
+      }
+    },
+    {
+      "input": {
+        "_csrf": "c"
+      },
+      "expected": {
+        "_csrf": "<redacted:1>"
+      }
+    },
+    {
+      "input": {
+        "XSRF-TOKEN": "x"
+      },
+      "expected": {
+        "XSRF-TOKEN": "<redacted:1>"
+      }
+    },
+    {
+      "input": {
+        "cookie": "c"
+      },
+      "expected": {
+        "cookie": "<redacted:1>"
+      }
+    },
+    {
+      "input": {
+        "ticket": "t"
+      },
+      "expected": {
+        "ticket": "<redacted:1>"
+      }
+    },
+    {
+      "input": {
+        "code_verifier": "v"
+      },
+      "expected": {
+        "code_verifier": "<redacted:1>"
+      }
+    },
+    {
+      "input": {
+        "next_page_token": "n"
+      },
+      "expected": {
+        "next_page_token": "<redacted:1>"
+      }
+    },
+    {
+      "input": {
+        "session": 12345
+      },
+      "expected": {
+        "session": "<redacted:5>"
+      }
+    },
+    {
+      "input": {
+        "token": 42
+      },
+      "expected": {
+        "token": "<redacted:2>"
+      }
+    },
+    {
+      "input": {
+        "author": "Ann"
+      },
+      "expected": {
+        "author": "Ann"
+      }
+    },
+    {
+      "input": {
+        "authors": "Ann"
+      },
+      "expected": {
+        "authors": "Ann"
+      }
+    },
+    {
+      "input": {
+        "authorName": "Ann"
+      },
+      "expected": {
+        "authorName": "Ann"
+      }
+    },
+    {
+      "input": {
+        "author_id": "u1"
+      },
+      "expected": {
+        "author_id": "u1"
+      }
+    },
+    {
+      "input": {
+        "coauthors": "Bo"
+      },
+      "expected": {
+        "coauthors": "Bo"
+      }
+    },
+    {
+      "input": {
+        "authority": "a.com"
+      },
+      "expected": {
+        "authority": "a.com"
+      }
+    },
+    {
+      "input": {
+        ":authority": "a.com"
+      },
+      "expected": {
+        ":authority": "a.com"
+      }
+    },
+    {
+      "input": {
+        "max_tokens": 1024
+      },
+      "expected": {
+        "max_tokens": 1024
+      }
+    },
+    {
+      "input": {
+        "total_tokens": 77
+      },
+      "expected": {
+        "total_tokens": 77
+      }
+    },
+    {
+      "input": {
+        "tokens": 3
+      },
+      "expected": {
+        "tokens": 3
+      }
+    },
+    {
+      "input": {
+        "max_tokens": "1024"
+      },
+      "expected": {
+        "max_tokens": "1024"
+      }
+    },
+    {
+      "input": {
+        "sessions": 2
+      },
+      "expected": {
+        "sessions": 2
+      }
+    },
+    {
+      "input": {
+        "tokens": [
+          "a"
+        ]
+      },
+      "expected": {
+        "tokens": "<redacted:5>"
+      }
+    },
+    {
+      "input": {
+        "token": "1024"
+      },
+      "expected": {
+        "token": "<redacted:4>"
+      }
+    },
+    {
+      "input": {
+        "user": "ann"
+      },
+      "expected": {
+        "user": "ann"
+      }
+    },
+    {
+      "input": {
+        "email": "a@b.c"
+      },
+      "expected": {
+        "email": "a@b.c"
+      }
+    },
+    {
+      "input": {
+        "code": "1234"
+      },
+      "expected": {
+        "code": "1234"
+      }
+    },
+    {
+      "input": {
+        "state": "xyz"
+      },
+      "expected": {
+        "state": "xyz"
+      }
+    },
+    {
+      "input": {
+        "description": "session notes"
+      },
+      "expected": {
+        "description": "session notes"
+      }
+    },
+    {
+      "input": {
+        "is_authenticated": true
+      },
+      "expected": {
+        "is_authenticated": true
+      }
+    },
+    {
+      "input": {
+        "session": null
+      },
+      "expected": {
+        "session": null
+      }
+    },
+    {
+      "input": {
+        "a": {
+          "b": {
+            "c": {
+              "password": "p",
+              "list": [
+                {
+                  "api_key": "k"
+                },
+                "x"
+              ]
+            }
+          }
+        },
+        "author": "ann"
+      },
+      "expected": {
+        "a": {
+          "b": {
+            "c": {
+              "password": "<redacted:1>",
+              "list": [
+                {
+                  "api_key": "<redacted:1>"
+                },
+                "x"
+              ]
+            }
+          }
+        },
+        "author": "ann"
+      }
+    },
+    {
+      "input": {
+        "auth": {
+          "user": "u",
+          "pass": "p"
+        },
+        "token": 12345,
+        "ok": true,
+        "sessionInfo": null
+      },
+      "expected": {
+        "auth": "<redacted:23>",
+        "token": "<redacted:5>",
+        "ok": true,
+        "sessionInfo": null
+      }
+    },
+    {
+      "input": {
+        "headers_like": {
+          "Authorization": "x"
+        },
+        "value": "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.c2lnbmF0dXJlLXZhbHVl"
+      },
+      "expected": {
+        "headers_like": {
+          "Authorization": "<redacted:1>"
+        },
+        "value": "<redacted:61>"
+      }
+    }
+  ]
+}

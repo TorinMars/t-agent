@@ -1,0 +1,32 @@
+{
+  "manifest_version": 3,
+  "name": "T-Agent Browser",
+  "version": "1.0.0",
+  "permissions": [
+    "tabs",
+    "tabGroups",
+    "scripting",
+    "debugger",
+    "storage",
+    "alarms"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "options_page": "options.html",
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "T-Agent Browser"
+  },
+  "icons": {
+    "16": "icons/16.png",
+    "32": "icons/32.png",
+    "48": "icons/48.png",
+    "128": "icons/128.png"
+  },
+  "minimum_chrome_version": "116"
+}

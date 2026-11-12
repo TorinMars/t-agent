@@ -128,9 +128,19 @@ app.use('/api/attention', attentionRoutes.bearer);
 // token in X-T-Agent-* headers and taken only from this machine, so it sits before the session and the gates. A request without those headers goes on.
 const peerFsRoutes = require('./routes/peer-fs');
 app.use('/api/peer-fs', peerFsRoutes.createPeerFsRelayRouter());
+// The browser extension (services/browser-bridge.js, routes/browser-ext.js): its pairing (the one-time code is the credential, this machine only) and
+// the relay of `tcli browser` (the terminal credential, this machine only) come before the session and the gates; its WebSocket is in the upgrade below.
+const browserBridge = require('./services/browser-bridge').getBrowserBridge();
+const browserRecordings = require('./services/browser-recordings').getBrowserRecordings();
+const browserExtRoutes = require('./routes/browser-ext');
+app.use('/api/browser-ext/pair', browserExtRoutes.createBrowserPairRouter({ bridge: () => browserBridge }));
+app.use('/api/tcli/browser', browserExtRoutes.createBrowserRelayRouter({ bridge: () => browserBridge, recordings: () => browserRecordings }));
 // The tcli relay (routes/tcli.js, `tcli oss` in a T-Agent terminal): the same terminal credential and this-machine rule, before the body parsers too,
 // so an upload is streamed as it comes. A request without the X-T-Agent-* headers goes on.
 app.use('/api/tcli', require('./routes/tcli').createTcliRelayRouter());
+// The site library relay (routes/browser-sites.js, `tcli site` in a T-Agent terminal): same terminal credential and this-machine rule, so it sits
+// here with the other tcli relays. A request without the X-T-Agent-* headers (and every /api/tcli/oss request) is passed on untouched.
+app.use('/api/tcli', require('./routes/browser-sites').createSiteRelayRouter());
 
 // The mind map routes (routes/mindmap.js: /api/mindmaps, /v1/mindmaps and the proxy /api/remote-servers/:id/mindmaps), /v1/attention (routes/attention.js,
 // the token is checked first), /v1/linked-services (routes/linked-services.js) and /v1/oss/files (routes/tcli.js, a streamed upload of any type) parse their
@@ -191,6 +201,8 @@ app.use('/api/tasks', require('./routes/tasks'));
 app.use('/api/fs', require('./routes/fs-read').createFsReadRouter());
 // The switch of peer file access (GET / PUT /api/peer-fs/settings), behind the login like every setting.
 app.use('/api/peer-fs', peerFsRoutes.createPeerFsSettingsRouter());
+// Settings → Tasks and files → Browser extension: paired browsers, pairing codes, rename and remove.
+app.use('/api/browser-ext', browserExtRoutes.createBrowserPageRouter({ bridge: () => browserBridge, localUrl: () => attentionLocalUrl }));
 app.use('/api/task-groups', require('./routes/task-groups'));
 app.use('/api/bookmarks', require('./routes/bookmarks'));
 // The agent skills installer (routes/agent-skills.js: t-attention and tcli), and its first routes for t-attention only (routes/attention-skill.js, for
@@ -203,6 +215,8 @@ app.use('/api/attention', attentionRoutes.router);
 app.use('/api/mindmaps', require('./routes/mindmap').createMindmapRouter({ service: require('./services/mindmap').getMindmapService() }));
 app.use('/api/system', require('./routes/system'));
 app.use('/api/oss', require('./routes/oss').createOssRouter());
+// The site capability library the Settings "Site library" viewer reads (routes/browser-sites.js); the session check is the /api gate above.
+app.use('/api/browser-sites', require('./routes/browser-sites').createBrowserSitesRouter());
 app.use('/api/environment', require('./routes/environment').createEnvironmentRouter());
 app.use('/api/translate', require('./routes/translate').createTranslateRouter());
 app.use('/api/speech', require('./routes/speech').createSpeechRouter());
@@ -548,6 +562,12 @@ server.on('upgrade', (req, socket, head) => {
     tunnelWss.handleUpgrade(req, socket, head, ws => getLinkHub().accept(linkId, ws));
     return;
   }
+  // The browser extension's socket: after the access check above; the bridge takes it only from this machine and an extension Origin, and the
+  // token in its first message is the credential (no page login).
+  if (engineUrl.pathname === '/api/browser-ext/ws') {
+    browserBridge.handleUpgrade(req, socket, head);
+    return;
+  }
   const engineMatch = engineUrl.pathname.match(/^\/v1\/terminal-sessions\/(\d+)\/stream$/);
   if (engineMatch) {
     pruneExpiredTickets();
@@ -633,8 +653,10 @@ server.listen(config.port, config.host, () => {
     inputs: require('./lib/terminal-recent-input').recentInputTimes(),
   }));
   updates.start();
+  // Browser recordings older than 14 days, or over 2 GiB in all, are removed now and every 6 hours (services/browser-recordings.js).
+  browserRecordings.startCleanup();
 });
 
 // Do not let frpc become an orphan process after the Client exits.
-process.on('exit', () => { attentionWidget.stop(); frpRouter.service.stop(); sshTunnelRouter.service.stop(); attentionMarket.stop(); serviceLinks.stop(); require('./services/task-order').getTaskOrder().stop(); require('./services/settings-sync').getSettingsSync().stop(); });
+process.on('exit', () => { browserBridge.closeAll(); attentionWidget.stop(); frpRouter.service.stop(); sshTunnelRouter.service.stop(); attentionMarket.stop(); serviceLinks.stop(); require('./services/task-order').getTaskOrder().stop(); require('./services/settings-sync').getSettingsSync().stop(); });
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => process.exit(0));

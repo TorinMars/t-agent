@@ -29,5 +29,6 @@ test('the parts of Devices that sit in Advanced are known, and unknown ids open 
   assert.deepEqual([...ADVANCED_SECTIONS].sort(), ['advanced', 'connect', 'remote']);
   for (const id of ['connect', 'advanced', 'link', 'peer-fs', 'authenticator']) assert.ok(settingsTarget(id), id);
   assert.deepEqual(settingsTarget('agent-skills'), { group: 'tasks-files', section: 'agent-skills' });
+  assert.deepEqual(settingsTarget('browser-ext'), { group: 'tasks-files', section: 'browser-ext' });
   for (const id of ['', 'nothing', 'toString', '__proto__', null, undefined, 3, {}]) assert.equal(settingsTarget(id), null, String(id));
 });

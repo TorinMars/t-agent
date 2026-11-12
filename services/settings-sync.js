@@ -42,7 +42,7 @@ const NEVER = Object.freeze({ updated_at: 0, updated_by: '', hash: null });
 // The setting groups the page shows, and where each one lives: 'shared' (this registry), 'device' (never synced), 'telegram' (its own plugin).
 const SCOPES = Object.freeze({
   translate: 'shared', voice: 'shared', oss: 'shared', 'oss-agent-access': 'shared', 'attention-summary': 'shared', 'notify-rules': 'shared',
-  'notifier-plugins': 'shared', 'widget-language': 'shared', 'task-list-devices': 'shared',
+  'notifier-plugins': 'shared', 'widget-language': 'shared', 'task-list-devices': 'shared', 'browser-sites': 'shared',
   workdir: 'device', access: 'device', authenticator: 'device', 'engine-name': 'device', 'widget-enabled': 'device', 'peer-fs': 'device',
   restart: 'device', 'rule-sync': 'device',
   telegram: 'telegram',
@@ -540,6 +540,10 @@ function defaultRegistry({ db, sessionSecret }) {
     entry('notifier-plugins', () => require('./attention-notify'), { secret: true, exportName: 'exportPluginsForSync', importName: 'importPluginsFromSync' }),
     entry('widget-language', () => require('./attention-widget')),
     entry('task-list-devices', () => require('../routes/task-list-prefs')),
+    // The site capability library (services/browser-sites.js): the whole shared set travels, merged per site on import (last-writer-wins with
+    // tombstones), so two devices that each edit a different site keep both. It holds no raw secrets, so syncing it is safe. Merge semantics, not
+    // replace: a null from a peer is a no-op (deletions travel as per-site tombstones inside the value), so it is not cleared by write(null).
+    entry('browser-sites', () => require('./browser-sites')),
   ];
 }
 

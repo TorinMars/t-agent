@@ -13,9 +13,9 @@ import RadioGroup from '@mui/material/RadioGroup';
 import Typography from '@mui/material/Typography';
 import TextField from './TextField.jsx';
 import { Pill, api, t } from './common.jsx';
-import { Feedback, Group, Hint, failure, useFeedback } from './Form.jsx';
+import { Feedback, Hint, Section, failure, useFeedback } from './Form.jsx';
 
-// Settings "Rules and skills sync" (GET / PUT /api/rule-sync and its actions, routes/rule-sync.js): one linked service is the source of a shared layer of
+// "Rules and skills sync", a part of Settings → Devices (GET / PUT /api/rule-sync and its actions, routes/rule-sync.js): one linked service is the source of a shared layer of
 // Claude rules, chosen skills and the same rules for Codex; services that receive only take it and never send anything. The shared rules can be edited
 // here on every service (GET / PUT /api/rule-sync/shared): the text is always saved on the source. A receiver shows the local edits its guard replaced.
 // See "Rules and skills sync" in DESIGN.md.
@@ -88,7 +88,7 @@ function Heading({ children }) {
 }
 
 function Targets({ targets, revision }) {
-  if (!targets.length) return <Hint id="h5-rule-sync-no-targets">{t('No linked services yet. Link one under Linked services.')}</Hint>;
+  if (!targets.length) return <Hint id="h5-rule-sync-no-targets">{t('No linked devices yet. Link one under “Link a device” above.')}</Hint>;
   return (
     <Box id="h5-rule-sync-targets" sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
       {targets.map(target => {
@@ -315,7 +315,8 @@ function LocalChanges({ changes, busy, act }) {
   );
 }
 
-export function RuleSyncGroup({ state }) {
+// `opened` goes up each time the Devices group opens: the settings are read again then.
+export function RuleSyncSection({ state, opened }) {
   const [data, setData] = useState(null);
   const [busy, setBusy] = useState(false);
   const [shared, setShared] = useState(null); // where the shared rules are saved: { source } or { error }; null while it is looked up
@@ -341,8 +342,9 @@ export function RuleSyncGroup({ state }) {
   // A new role can change where the source is.
   const save = changes => run(() => api('PUT', BASE, changes), 'Saved', changes.role ? () => void findSource() : null);
   const act = (action, done) => run(() => api('POST', `${BASE}/${action}`, {}), done, action === 'reset-source' ? () => void findSource() : null);
+  useEffect(() => { if (opened) void load(); }, [opened]); // eslint-disable-line react-hooks/exhaustive-deps -- load only reads
   return (
-    <Group id="rule-sync" title="Rules and skills sync" onOpen={load}>
+    <Section id="rule-sync" title="Rules and skills sync">
       <Hint>{t('Share one set of Claude rules and skills (and the same rules for Codex) from one linked service to the others. Your own CLAUDE.md content and skills without the sync marker are never sent or changed.')}</Hint>
       {data ? (
         <>
@@ -373,6 +375,6 @@ export function RuleSyncGroup({ state }) {
       ) : null}
       <Feedback id="h5-rule-sync-feedback" feedback={feedback} />
       <SharedRulesDialog open={editing} wide={Boolean(state && state.wide)} onClose={() => setEditing(false)} onSaved={() => { if (data && data.role === 'source') void load(); }} />
-    </Group>
+    </Section>
   );
 }

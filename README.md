@@ -38,7 +38,7 @@ For implementation details see [Component architecture](docs/ARCHITECTURE.md), a
 ### Client
 
 - **One page for computers and phones** (since 2.88.0): `/` and `/h5` serve the same React / Material UI page (dark theme). From 900px wide the task list is a sidebar that can be folded, the terminal or chat fills the rest, and documents and files open in a side panel; below 900px the phone layout is used (task drawer, two-row key bar, bottom sheets). With a mouse and keyboard (pointer mode) the key bar is hidden, the draft box is always shown and typing goes to the terminal. The old desktop page (`/web`) was removed: `/web`, `/index.html` and `/h5.html` lead to `/`. The last release with two pages is tagged `v2.87.11-two-pages`.
-- The tasks of this machine and of every connected service are in **one list**, each service under its own small header (there is nothing to switch). Connect, edit, check, update and remove Engines, and choose which devices are shown ("Show in task list"), in **Settings → Engines**.
+- The tasks of this machine and of every connected service are in **one list**, each service under its own small header (there is nothing to switch). Connect, edit, check, update and remove Engines, and choose which devices are shown ("Show in task list"), in **Settings → Devices**.
 - Create tasks (title and an optional working directory; the effective default path is shown), move a task to another group, edit its working directory and delete it (optionally with its directory) from the task "⋯" menu. Groups themselves (create / rename / delete), drag-sort, priority, due date and document paths are no longer edited in the page (the endpoints stay).
 - **Archive a task** instead of deleting it: its folder, documents, to-dos and sessions stay and it can be restored later. Archiving closes its terminals and stops its agent chats; until it is restored it starts no shell or agent, and it is out of the task list (a shared link keeps working). Endpoints: `POST {tasks}/:id/archive`, `POST {tasks}/:id/restore`, `GET {tasks}?archived=1`, on this machine and on an Engine that has the `tasks:archive` capability.
 - **Rename a task** from its ⋯ menu. Optionally the working folder is renamed too (same parent folder); its Claude Code and Codex sessions move with it and still resume from the new folder. The task's terminals must be closed first (the dialog offers to close them). Endpoint: `POST {tasks}/:id/rename-folder` with `{ name, title? }`, on this machine and on an Engine that has the `tasks:rename-folder` capability.
@@ -115,7 +115,7 @@ If t-agent runs as root on a Linux server, Claude Code in the web terminal refus
 ### Multiple Engines
 
 - One Client can save and switch between several remote Engines.
-- Connect with a pairing code (Settings → Engines); the online, offline and authentication-expired states are shown there, with Check, Edit, Update and Remove. When loading the tasks of an Engine fails, its task list shows the error instead of tasks.
+- Connect with a pairing code (Settings → Devices → Advanced → Connect a remote engine); the device list in Settings → Devices shows the online, offline and authentication-expired states, with Check, Edit, Update and Remove. When loading the tasks of an Engine fails, its task list shows the error instead of tasks.
 - Create tasks on a specific remote Engine. **A remote task uses the same UI and features as a local task**: the design document, the working directory, moving and deleting, several terminals and agent sessions, image upload, file previews and the terminal run state.
 - Every page feature works the same for local and remote tasks.
 - Every Engine connection has admin rights; view / operate / manage are no longer distinguished. Features are enabled by the capabilities the Engine declares: capabilities an old Engine lacks (ordering, automatic document refresh, relative-path images, path validation, run state and so on) are disabled automatically while the rest works as usual. The Engine must be upgraded to v2.29.0 or later for the full feature set.
@@ -127,7 +127,7 @@ If t-agent runs as root on a Linux server, Claude Code in the web terminal refus
 
 ### Service links
 
-Link two T-Agent services so that each sees and operates all the tasks, terminals and sessions of the other, as remote Engines. In Settings, service A makes a 6-digit linking code; service B enters A's address and the code. B may be behind NAT: only B has to reach A. A must allow external access, and B may be local-only. Linking grants the other side full admin on this service. The other side's own remote Engines are not forwarded. Unlink from either side.
+Link two T-Agent services so that each sees and operates all the tasks, terminals and sessions of the other, as remote Engines. In Settings → Devices → Link a device, service A makes a 6-digit linking code; service B enters A's address and the code. B may be behind NAT: only B has to reach A. A must allow external access, and B may be local-only. Linking grants the other side full admin on this service. The other side's own remote Engines are not forwarded. Unlink from either side.
 
 A task's "⋯" menu sets which linked services may see it. Every task and every new link starts as allowed; a hidden task looks to that service as if it did not exist, and its open terminals and streams end at once. A linked peer has full admin on this service. Per-task visibility is not a security boundary against it: `/v1/fs/*` reads any path, a shell in another visible task can read the same files, and `/v1/tokens` can mint a token with no link id, which this check does not cover.
 
@@ -137,7 +137,7 @@ Claude and Codex sessions started on a service can read the files of its linked 
 
 A linked service also shares its translation, voice input and OSS upload: when a service has one of these not configured, it uses the linked service that has it, without copying any key. A service's own configuration always comes first. For OSS, the other side's bucket must allow uploads from this page's address in its CORS rule.
 
-Rules and skills can be shared too (Settings → Rules and skills sync). One linked service is the source: you write shared Claude rules in `~/.claude/shared/CLAUDE.shared.md` and tick the skills under `~/.claude/skills/` to share. Linked services set to "Receive only" get that file, one managed import line at the top of their `~/.claude/CLAUDE.md`, the chosen skills (each with a `.t-agent-sync.json` marker) and, if enabled, the same rules in a managed block of `~/.codex/AGENTS.md`. A receiving service never sends anything, and the rest of each machine's `CLAUDE.md`, its own skills and the text outside the Codex block are never sent or changed; a local skill with the same name as a shared one is left alone and reported. The shared rules can also be edited from the page of any linked service (Settings → Rules and skills sync → Edit shared rules); the text is always saved on the source, which then sends it on. On a receiver the shared file starts with a note that says where to edit it, and local edits of the synced files are put back: the edited copy is first saved under `~/.tagent/rule-sync/overwritten/` and Settings shows what was replaced. Running sessions see new rules after they restart. See "Rules and skills sync" in `DESIGN.md`.
+Rules and skills can be shared too (Settings → Devices → Rules and skills sync). One linked service is the source: you write shared Claude rules in `~/.claude/shared/CLAUDE.shared.md` and tick the skills under `~/.claude/skills/` to share. Linked services set to "Receive only" get that file, one managed import line at the top of their `~/.claude/CLAUDE.md`, the chosen skills (each with a `.t-agent-sync.json` marker) and, if enabled, the same rules in a managed block of `~/.codex/AGENTS.md`. A receiving service never sends anything, and the rest of each machine's `CLAUDE.md`, its own skills and the text outside the Codex block are never sent or changed; a local skill with the same name as a shared one is left alone and reported. The shared rules can also be edited from the page of any linked service (Settings → Rules and skills sync → Edit shared rules); the text is always saved on the source, which then sends it on. On a receiver the shared file starts with a note that says where to edit it, and local edits of the synced files are put back: the edited copy is first saved under `~/.tagent/rule-sync/overwritten/` and Settings shows what was replaced. Running sessions see new rules after they restart. See "Rules and skills sync" in `DESIGN.md`.
 
 ### Security boundary
 
@@ -199,7 +199,7 @@ When the install finishes, the end of the terminal output shows "open this in a 
 
 ### Access mode: authenticator + external access, or local only
 
-**The first time you open the page in a browser on this machine** after the install, first choose the access mode (you can switch any time later under Settings → Access mode):
+**The first time you open the page in a browser on this machine** after the install, first choose the access mode (you can switch any time later under Settings → Account and access):
 
 - **Authenticator + allow external access**: see the next section. Phones, other computers and remote clients can all connect.
 - **Local access only · no verification**: only direct access from this machine (`127.0.0.1` / `localhost`) is accepted, with no code; other devices, requests forwarded by a reverse proxy or tunnel, and requests whose `Host` is not a loopback name (against DNS rebinding) always get 404, **including remote connections that use this machine as an engine (`/v1`) and share links**. Other users / processes on the same machine can also reach it, so use it only on a personal computer.
@@ -270,7 +270,7 @@ Open a task to see its sessions. A new task has no terminal: the terminal area s
 
 ### 2. Connect a remote Engine
 
-Open **Settings → Engines** (the gear at the bottom of the task list) and click "Connect remote service":
+Open **Settings → Devices** (the gear at the bottom of the task list), unfold "Advanced" and click "Connect remote service" under "Connect a remote engine" (to see each other both ways, use "Link a device" above it instead):
 
 1. Enter the URL, for example `http://192.168.1.20` or `https://engine.example.com`.
 2. The port may be left empty when the default HTTP/HTTPS port is used; when connecting directly to a custom port enter it, such as `3100`.
@@ -279,14 +279,14 @@ Open **Settings → Engines** (the gear at the bottom of the task list) and clic
 
 The URL may only contain the protocol and the host; do not include `/v1` or any other path. When using an HTTPS reverse proxy you usually enter the domain and leave the port empty.
 
-After connecting, the Engine is listed in Settings → Engines with its version and state, and its tasks appear in the task list, under the name of that server.
+After connecting, the Engine is listed in Settings → Devices with its version and state, and its tasks appear in the task list, under the name of that server.
 
 ### Let another Client connect to this Client
 
 The Client already includes a standard Engine service on the same port, so no separate Engine install is needed:
 
-1. In the Client to be connected, open "Settings → Remote service → Allow other clients to connect as an engine" and generate a pairing code.
-2. In the other Client open Settings → Engines → "Connect remote service" and enter a reachable IP/domain of the Client being connected, the actual port and the pairing code; the URL does not include `/v1` or a page path.
+1. In the Client to be connected, open "Settings → Devices → Advanced → Let other clients connect to this one" and generate a pairing code.
+2. In the other Client open Settings → Devices → Advanced → "Connect remote service" and enter a reachable IP/domain of the Client being connected, the actual port and the pairing code; the URL does not include `/v1` or a page path.
 3. After connecting you can manage that Client's local tasks, files and terminals; the other remote Engines it has connected are not forwarded. A connection obtained by pairing has admin rights and can be revoked from the same settings entry of the connected Client.
 
 The connected Client must allow remote access. Set `HOST=0.0.0.0` in `.env` to open listening, and for plain HTTP on a trusted intranet also set `CLIENT_ALLOW_HTTP=true`. A visitor exchanges the one-time pairing code for an independent Token, and no browser login session or authenticator needs to be shared.
@@ -301,7 +301,7 @@ Remote terminals likewise support starting several independent terminals, reopen
 
 ### 4. Manage remote connections and task groups
 
-When the server IP, the port or the HTTPS domain changes, open Settings → Engines, choose "Edit connection" on that Engine, change the name, URL or port, test the connection and save.
+When the server IP, the port or the HTTPS domain changes, open Settings → Devices, choose "Edit connection" on that Engine, change the name, URL or port, test the connection and save.
 
 The Client keeps using the saved Token. The new address is only saved when it can reach `/v1/info` with the Token, so a failed test never damages the original connection. "Remove connection" deletes only the connection; the data on the remote machine stays.
 
@@ -309,7 +309,7 @@ A task's "⋯" menu moves it to another group. Creating, renaming and deleting g
 
 ### 5. Upgrade a remote Engine from the Client
 
-Settings → Engines offers "Check for updates" on each remote Engine. The Client decrypts the saved Token on the server and proxies the following operations; the Token is never sent to the browser:
+Settings → Devices offers "Check for updates" on each remote Engine. The Client decrypts the saved Token on the server and proxies the following operations; the Token is never sent to the browser:
 
 1. Ask the remote Engine to check for a new version on its configured branch.
 2. Show the current version, the target version, the install type and any check error.
@@ -829,13 +829,13 @@ Local and remote tasks use the same panel. A remote Engine must support the `fil
 
 ### Terminal Chinese-to-English input (DeepSeek / Zhipu GLM)
 
-The draft box below the terminal translates and sends: type Chinese and use translate-and-send (the button, or Enter on a hardware keyboard; Cmd/Ctrl+Enter or Shift+Enter makes a new line, and the Return of an on-screen keyboard is always a new line), and DeepSeek or Zhipu GLM translates it into English, types it into the current terminal and submits it with Enter (handy for giving instructions to Claude Code / Codex). Set it up in **Settings → Translation**: DeepSeek (the endpoint defaults to `https://api.deepseek.com` and the model to `deepseek-flash`) or Zhipu GLM (default `https://open.bigmodel.cn/api/paas/v4`, model `glm-5.3-flash`, with thinking pushed to the lowest level to avoid timeouts), and the matching API key; each provider's key is stored separately, switching providers never loses the key saved for the other one (leaving the key empty when saving keeps the stored key); keys are stored encrypted on the Client and are never sent to the browser or remote engines, and translation happens on the Client, so terminals of remote engines work too. Input without any Chinese (plain English) is sent as-is and no endpoint is called. Control characters in the translation are removed and the text is collapsed into one line; when the terminal is not connected nothing is sent and the input is kept.
+The draft box below the terminal translates and sends: type Chinese and use translate-and-send (the button, or Enter on a hardware keyboard; Cmd/Ctrl+Enter or Shift+Enter makes a new line, and the Return of an on-screen keyboard is always a new line), and DeepSeek or Zhipu GLM translates it into English, types it into the current terminal and submits it with Enter (handy for giving instructions to Claude Code / Codex). Set it up in **Settings → Voice and translation** (the "Translation" part): DeepSeek (the endpoint defaults to `https://api.deepseek.com` and the model to `deepseek-flash`) or Zhipu GLM (default `https://open.bigmodel.cn/api/paas/v4`, model `glm-5.3-flash`, with thinking pushed to the lowest level to avoid timeouts), and the matching API key; each provider's key is stored separately, switching providers never loses the key saved for the other one (leaving the key empty when saving keeps the stored key); keys are stored encrypted on the Client and are never sent to the browser or remote engines, and translation happens on the Client, so terminals of remote engines work too. Input without any Chinese (plain English) is sent as-is and no endpoint is called. Control characters in the translation are removed and the text is collapsed into one line; when the terminal is not connected nothing is sent and the input is kept.
 
 ### Voice input (Alibaba Cloud real-time speech recognition)
 
 Next to the draft box there is a 🎤 button. Click it (on a computer) or hold it (on a touch screen) and speak: the recognized text appears in the box after each sentence ends, after the text that is already there. Click it again to stop. Nothing is translated or sent to the terminal until you press Enter as usual, so you can read and correct the text first. A recording stops by itself after 5 minutes.
 
-Setup: open **Settings → Voice input**, enter the Alibaba Cloud Model Studio API key, and choose the **region the key was created in** (China (Beijing) or Singapore; a key only works in its own region). Language (default Chinese), model (default `fun-asr-realtime`) and an optional endpoint (for a workspace-specific `wss://` address) can be changed there. For a single-user install the key can also be given as `DASHSCOPE_API_KEY` in `.env`; a key saved in the dialog overrides it. The phone page uses the settings made on the desktop page.
+Setup: open **Settings → Voice and translation** (the "Voice input" part), enter the Alibaba Cloud Model Studio API key, and choose the **region the key was created in** (China (Beijing) or Singapore; a key only works in its own region). Language (default Chinese), model (default `fun-asr-realtime`) and an optional endpoint (for a workspace-specific `wss://` address) can be changed there. For a single-user install the key can also be given as `DASHSCOPE_API_KEY` in `.env`; a key saved in the dialog overrides it. The phone page uses the settings made on the desktop page.
 
 While you speak, a small sound wave next to the 🎤 button shows how loud your voice is. The audio goes **straight from the browser to Alibaba Cloud** and does not pass through the Client server, so it uses none of the server's bandwidth (about 32 KB/s while speaking). The Client only keeps the settings and, for each recording, asks Alibaba for a one-minute temporary token (`POST /api/speech/token`); the real key is stored encrypted on the Client and is never sent to the browser. The browser needs a secure page to use the microphone: `https://` or `http://localhost` (a plain `http://` LAN address is refused by the browser).
 
@@ -916,7 +916,7 @@ When an Agent is interrupted midway with Esc or Ctrl+C, the end hook is not trig
 
 **Hook reports**: the environment of the terminal PTY has `TA_HOOK_URL` and `TA_HOOK_TOKEN` (the token is computed per task and terminal with HMAC and only exists in that PTY), and the hook command only reports with `curl` to `POST /hooks/terminal-activity` when `TA_HOOK_URL` exists; running the same configuration in an ordinary terminal does nothing, and when the service is unreachable it never blocks the Agent. The hook configuration is in `rules/claude/settings.json` and `rules/codex/hooks.json`, and is merged into the machine by the "User-level rules and default configuration sync" below; hooks that already exist locally are kept. Claude terminals also get `TA_CLAUDE_SETTINGS` and start with `--settings "$TA_CLAUDE_SETTINGS"`: a `SessionStart` hook for that process only (`scripts/claude-session-hook.js`, no change to `~/.claude`) reports the session id after `/clear`, `/resume` or a fork (`event=session`), so the terminal keeps resuming the conversation Claude really runs.
 
-**Linked engines in sessions**: while "Sessions can read files on linked engines" (Settings → Engines) is on, Claude and Codex started in a T-Agent terminal also get the read-only MCP server `t-agent-peers` (`scripts/peer-mcp.js`) for that process only: Claude with `--mcp-config "$TA_MCP_CONFIG"`, Codex with `-c mcp_servers.t-agent-peers.*` overrides. Its tools `list_engines`, `list_dir`, `read_file` and `search` read the files of linked engines through this engine (home folder only, sensitive files left out); nothing in `~/.claude` or `~/.codex` is changed, and your own MCP servers keep working. The switch applies to sessions started after the change.
+**Linked engines in sessions**: while "Sessions can read files on linked devices" (Settings → Devices) is on, Claude and Codex started in a T-Agent terminal also get the read-only MCP server `t-agent-peers` (`scripts/peer-mcp.js`) for that process only: Claude with `--mcp-config "$TA_MCP_CONFIG"`, Codex with `-c mcp_servers.t-agent-peers.*` overrides. Its tools `list_engines`, `list_dir`, `read_file` and `search` read the files of linked engines through this engine (home folder only, sensitive files left out); nothing in `~/.claude` or `~/.codex` is changed, and your own MCP servers keep working. The switch applies to sessions started after the change.
 
 - Run `ta` (or `claude` / `codex` with the sync function) once on the target machine, and only then is the configuration written to `~/.claude/settings.json` and `~/.codex/hooks.json`.
 - Codex requires hooks to be reviewed and trusted: after first entering Codex type `/hooks` to approve; before approval Codex does not run them.

@@ -110,7 +110,7 @@ I18n.add({
   "# {1} ## Project description": "# {1} ## 项目说明",
   "# AGENTS.md ## Working conventions": "# AGENTS.md ## 工作约定",
   "Access mode not chosen yet: open http://127.0.0.1:{1}/ in a browser on this machine and choose “Authenticator + external access” or “Local access only”.": "尚未选择访问模式：请在本机浏览器打开 http://127.0.0.1:{1}/ 选择“身份验证器 + 允许外网访问”或“仅本机访问”。",
-  "Access mode: local access only (no verification). Change it to authenticator + external access under Settings → Access mode.": "访问模式：仅本机访问（无需验证）。可在 设置 → 访问模式 中改为身份验证器 + 允许外网访问。",
+  "Access mode: local access only (no verification). Change it to authenticator + external access under Settings → Account and access.": "访问模式：仅本机访问（无需验证）。可在 设置 → 账号和访问 中改为身份验证器 + 允许外网访问。",
   "Add Co-Authored-By to commits": "提交附带 Co-Authored-By",
   "Address": "访问地址",
   "Already up to date": "已是最新版本",

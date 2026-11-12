@@ -9,13 +9,14 @@ import Paper from '@mui/material/Paper';
 import Typography from '@mui/material/Typography';
 import { Pill, api, t } from './common.jsx';
 import { copyText } from './Attention.jsx';
-import { EngineDialog, Feedback, Field, Group, Hint, failure, useFeedback } from './Form.jsx';
+import { EngineDialog, Feedback, Field, Hint, Section, failure, useFeedback } from './Form.jsx';
 import { codeGroups, countdownText, secondsLeft } from './plugins-model.mjs';
 
-// Settings "Linked services": two T-Agent services that see and operate each other's tasks, terminals and sessions. Service A generates a 6-digit code
-// (POST /api/service-links/code), service B enters A's address and the code (POST /api/service-links/join with confirm: true). A linked service is then an
-// ordinary remote Engine in /api/remote-servers (its row is matched by `remote_server_id`), so the rest of the page does not change. See "Settings, Engines and
-// Update" in DESIGN.md. After a join or an unlink the task list is read again with ui.actions.enginesChanged, as Engines.jsx does.
+// "Link a device" in Settings → Devices (until the sheet was tidied up the group "Linked services"): two T-Agent services that see and operate each
+// other's tasks, terminals and sessions. Service A generates a 6-digit code (POST /api/service-links/code), service B enters A's address and the code
+// (POST /api/service-links/join with confirm: true). A linked service is then an ordinary remote Engine in /api/remote-servers (its row is matched by
+// `remote_server_id`), so the rest of the page does not change. See "Settings, Devices and Update" in DESIGN.md. After a join or an unlink the task list is
+// read again with ui.actions.enginesChanged, as the device list does.
 
 const LIST = '/api/service-links';
 const POLL_EVERY = 3; // seconds between two reads of the list while the code dialog is open
@@ -119,7 +120,7 @@ function CodeDialog({ open, onClose, onLinked }) {
         ) : null}
         {made && !linked ? (
           <>
-            <Typography variant="body2" color="text.secondary">{t('On the other service, open Settings → Linked services and enter this address and code.')}</Typography>
+            <Typography variant="body2" color="text.secondary">{t('On the other service, open Settings → Devices → Link a device (Settings → Linked services on older versions) and enter this address and code.')}</Typography>
             <Typography variant="body2" component="div" sx={{ overflowWrap: 'anywhere' }}>
               {t('Address of this service:')} <Box component="code" id="h5-link-address" translate="no" sx={{ userSelect: 'all' }}>{address}</Box>
             </Typography>
@@ -202,7 +203,7 @@ function JoinDialog({ state, open, onClose, onJoined }) {
   );
 }
 
-// Ends a link, from the list below and from the Engines list. A link the other side already ended only has its row removed, so it says that instead.
+// Ends a link, from the list below and from the device list. A link the other side already ended only has its row removed, so it says that instead.
 export function UnlinkDialog({ link, onClose, onDone }) {
   const last = useRef(null);
   if (link) last.current = link; // the text stays while the dialog closes
@@ -254,9 +255,9 @@ function LinkRow({ link, onUnlink }) {
   );
 }
 
-// `version` goes up after a change made in this group or in the Engines group, which show the same links.
-export function ServiceLinksGroup({ state, ui, version, onChanged }) {
-  const [links, setLinks] = useState(null); // null: not read yet, or a server without linking; the group is then not drawn at all
+// `version` goes up after a change made here or in the device list above, which shows the same links; `opened` goes up each time the Devices group opens.
+export function ServiceLinksSection({ state, ui, version, opened, onChanged }) {
+  const [links, setLinks] = useState(null); // null: not read yet, or a server without linking; the part is then not drawn at all
   const [generating, setGenerating] = useState(false);
   const [joining, setJoining] = useState(false);
   const [unlinking, setUnlinking] = useState(null);
@@ -265,15 +266,16 @@ export function ServiceLinksGroup({ state, ui, version, onChanged }) {
     try { setLinks(await readLinks()); if (!keep) say(''); }
     catch (error) { say(failure(error), true); }
   };
-  useEffect(() => { void load({ keep: true }); }, [version]); // eslint-disable-line react-hooks/exhaustive-deps -- read when the sheet opens, to know whether to draw the group
+  useEffect(() => { void load({ keep: true }); }, [version]); // eslint-disable-line react-hooks/exhaustive-deps -- read when the sheet opens, to know whether to draw the part
+  useEffect(() => { if (opened) void load(); }, [opened]); // eslint-disable-line react-hooks/exhaustive-deps -- load only reads
   const changed = async key => { onChanged(); if (ui.actions.enginesChanged) await ui.actions.enginesChanged(key); };
   if (!links) return null;
   return (
-    <Group id="service-links" title="Linked services" onOpen={load}>
-      <Hint>{t('Link another T-Agent service, so that both services see and operate each other’s tasks, terminals and sessions.')}</Hint>
+    <Section id="link" title="Link a device">
+      <Hint>{t('Link another T-Agent service, so that both see and operate each other’s tasks, terminals and sessions. This is the recommended way to add a device: generate a code on one, and join with it on the other.')}</Hint>
       <Box id="h5-link-list" sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
         {links.map(link => <LinkRow key={link.id} link={link} onUnlink={() => setUnlinking(link)} />)}
-        {links.length ? null : <Hint id="h5-link-empty">{t('No linked services yet')}</Hint>}
+        {links.length ? null : <Hint id="h5-link-empty">{t('No linked devices yet')}</Hint>}
       </Box>
       <Button id="h5-link-generate" variant="contained" onClick={() => setGenerating(true)}>{t('Generate a linking code')}</Button>
       <Button id="h5-link-join" variant="outlined" onClick={() => setJoining(true)}>{t('Join another service')}</Button>
@@ -281,6 +283,6 @@ export function ServiceLinksGroup({ state, ui, version, onChanged }) {
       <CodeDialog open={generating} onClose={() => setGenerating(false)} onLinked={() => void changed(null)} />
       <JoinDialog state={state} open={joining} onClose={() => setJoining(false)} onJoined={link => { setJoining(false); void changed(linkEngineKey(link)); say(`${t('Linked:')} ${link.name}`); }} />
       <UnlinkDialog link={unlinking} onClose={() => setUnlinking(null)} onDone={link => { setUnlinking(null); void changed(linkEngineKey(link)); say('Unlinked'); }} />
-    </Group>
+    </Section>
   );
 }

@@ -1,4 +1,4 @@
-// Settings "Rules and skills sync" (scripts/h5-shell/RuleSync.jsx) in real Chromium at 390px (touch) and 1440px (mouse), against a mocked /api/rule-sync:
+// Settings → Devices → "Rules and skills sync" (scripts/h5-shell/RuleSync.jsx) in real Chromium at 390px (touch) and 1440px (mouse), against a mocked /api/rule-sync:
 // the role echo and change, the source part (shared file path, Create it, skill checkboxes, receivers, Sync now, a cap error), the receiver part (the
 // followed source, Reset, conflicts), the leftover import line when off, an error notice, the editor of the shared rules (load, save with the base
 // revision, Ctrl/Cmd+S, the unsaved-changes question, the 409 flow with Load the latest / Overwrite, errors, no source), and the local changes a receiver
@@ -104,14 +104,13 @@ function helpers(page, wide) {
   const press = locator => (wide ? locator.click() : locator.tap());
   const settled = () => page.waitForFunction(() => !document.getAnimations().some(animation => animation.playState === 'running' && animation.effect.getComputedTiming().iterations !== Infinity));
   const open = async () => {
-    await page.evaluate(() => window.H5UI.set({ settingsOpen: true }));
+    // The old group id still opens its part, now in Settings → Devices (h5.js openSettings, settings-target.mjs).
+    await page.evaluate(() => window.H5UI.actions.openSettings('rule-sync'));
     await page.locator('#h5-settings').waitFor({ state: 'visible' });
-    await settled();
-    const summary = page.locator('#h5-set-rule-sync .MuiAccordionSummary-root');
-    await summary.scrollIntoViewIfNeeded();
-    await press(summary);
-    await page.waitForFunction(() => Boolean(document.querySelector('#h5-set-rule-sync .MuiCollapse-entered')));
+    await page.waitForFunction(() => Boolean(document.querySelector('#h5-set-devices > .MuiCollapse-entered')));
     await page.locator('#h5-rule-sync-role').waitFor();
+    await page.locator('#h5-sec-rule-sync').scrollIntoViewIfNeeded();
+    await settled();
   };
   const tap = async selector => { const target = page.locator(selector); await target.scrollIntoViewIfNeeded(); await settled(); await press(target); };
   const shot = async (name, selector) => { if (SHOTS) { if (selector) await page.locator(selector).scrollIntoViewIfNeeded(); await settled(); await page.screenshot({ path: path.join(SHOTS, `rule-sync-${name}.png`), fullPage: false }); } };
@@ -120,7 +119,7 @@ function helpers(page, wide) {
 
 async function assertFits(page, label, touch) {
   const result = await page.evaluate(() => {
-    const scope = document.querySelector('#h5-set-rule-sync');
+    const scope = document.querySelector('#h5-sec-rule-sync');
     const inner = document.documentElement.clientWidth;
     const outside = [...scope.querySelectorAll('*')].filter(el => { const r = el.getBoundingClientRect(); return r.width > 0 && (r.right > inner + 0.5 || r.left < -0.5); }).map(el => el.id || el.className || el.tagName);
     const small = [...scope.querySelectorAll('button, label')].filter(el => el.getBoundingClientRect().width > 0).map(el => { const r = el.getBoundingClientRect(); return { id: el.id || el.className, height: r.height }; }).filter(item => item.height < 44);
@@ -392,7 +391,7 @@ async function testChinese(browser) {
   const { open } = helpers(page, false);
   assert.equal(await page.evaluate(() => I18n.get()), 'zh');
   await open();
-  assert.match(await page.locator('#h5-set-rule-sync').innerText(), /\u89c4\u5219\u548c\u6280\u80fd\u540c\u6b65/);
+  assert.match(await page.locator('#h5-sec-rule-sync').innerText(), /\u89c4\u5219\u548c\u6280\u80fd\u540c\u6b65/);
   await assertFits(page, 'Chinese 390', true);
   // The editor in Chinese: "Edit shared rules" and "Saved on Home Mac".
   await page.locator('#h5-rule-sync-edit').waitFor();

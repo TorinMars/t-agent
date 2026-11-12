@@ -1,5 +1,5 @@
 // Engine names on the phone page, in real Chromium with the routes mocked: every place that names a device shows the engine's own name, this machine with a
-// "This machine" hint (the device tags of the task list, the header line of the shown task, "Create on", Settings \u2192 Engines, Linked services, the task's "Visible to");
+// "This machine" hint (the device tags of the task list, the header line of the shown task, "Create on", Settings \u2192 Devices (the device list and Link a device), the task's "Visible to");
 // Rename in Settings \u2192 Engines for this machine (with a reset to the default), a remote engine that renames itself, an older one that is renamed only here
 // (with a note), and a linked row; validation, busy and server errors; long Chinese names at 320px; and an older server that keeps today's labels.
 // H5_SHOT_DIR=<dir> saves 390px screenshots of the list with its device tags and of the Engines group.
@@ -122,7 +122,8 @@ function tools(page) {
     for (const node of document.querySelectorAll('#h5-task-list .h5-task .h5-device-tag')) if (!seen.has(node.dataset.source)) seen.set(node.dataset.source, node.title);
     return [...seen.values()];
   });
-  const group = async id => {
+  const group = async part => {
+    const id = { engines: 'devices', 'service-links': 'devices' }[part] || part; // both are in Devices since the settings sheet was tidied up
     const summary = page.locator(`#h5-set-${id} .MuiAccordionSummary-root`);
     await summary.scrollIntoViewIfNeeded();
     if (await summary.getAttribute('aria-expanded') !== 'true') await summary.tap();
@@ -196,7 +197,7 @@ async function testNamesShown(browser) {
   assert.equal(await page.locator('.h5-engine-row .h5-engine-visible').count(), 4, 'Engines: "Show in task list" on every row');
   const box = await t.engineRow('local').locator('.h5-engine-rename').boundingBox();
   assert.ok(box.height >= 44, `Engines: Rename is a 44px target (${box.height})`);
-  if (SHOTS) await page.locator('#h5-set-engines').screenshot({ path: path.join(SHOTS, 'engine-name-engines-390.png') });
+  if (SHOTS) await page.locator('#h5-set-devices').screenshot({ path: path.join(SHOTS, 'engine-name-engines-390.png') });
 
   // "Edit connection" of a row that can be renamed has no name field any more: the name has one way to change.
   await t.engineRow(7).locator('.h5-engine-edit').tap();
@@ -207,7 +208,7 @@ async function testNamesShown(browser) {
 
   await t.group('service-links');
   await page.locator('.h5-link-row .h5-link-name').waitFor();
-  assert.equal(await page.locator('.h5-link-row .h5-link-name').textContent(), 'Peer', 'Linked services: the name');
+  assert.equal(await page.locator('.h5-link-row .h5-link-name').textContent(), 'Peer', 'Link a device: the name');
   assert.deepEqual(world.pageErrors, []);
   await context.close();
 }
@@ -410,7 +411,7 @@ async function testLongNames(browser) {
   assert.equal(await cut('.h5-engine-row[data-engine="7"] .h5-engine-name'), true, 'Engines: a remote name is cut');
   assert.equal(await t.engineRow(7).locator('.h5-engine-name').getAttribute('title'), long);
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= 320), 'no horizontal scroll');
-  if (SHOTS) await page.locator('#h5-set-engines').screenshot({ path: path.join(SHOTS, 'engine-name-long-320.png') });
+  if (SHOTS) await page.locator('#h5-set-devices').screenshot({ path: path.join(SHOTS, 'engine-name-long-320.png') });
   await t.openRename(7);
   assert.equal(await page.locator('#h5-engine-rename-current').textContent(), long, 'dialog: the full name');
   const wraps = await page.evaluate(() => { const node = document.getElementById('h5-engine-rename-current'); return node.scrollWidth <= node.clientWidth; });

@@ -1,5 +1,6 @@
-// Browser test of the phone settings groups (the Material UI shell, scripts/h5-shell/Settings.jsx): working directory, image upload, translation, voice input,
-// remote service and access mode, on a phone-sized page.
+// Browser test of the phone settings groups (the Material UI shell, scripts/h5-shell/Settings.jsx): Tasks and files (working directory, image upload),
+// Voice and translation, the remote access part of Devices → Advanced, and Account and access, on a phone-sized page. The order, the aliases of the old
+// group ids, 320 / 390 px and Chinese are in scripts/test-h5-settings-layout-browser.cjs.
 const { chromium } = require('playwright');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -43,6 +44,8 @@ const html = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8').replace(
         if (url === '/api/remote-tokens/pairing') return reply({ code: 'ABCD-1234' });
         if (url === '/api/remote-tokens/5' && method === 'DELETE') { state.tokens = []; return reply({ ok: true }); }
         if (url === '/auth/mode') return reply(state.modeReply || { error: 'AUTH_CODE_INVALID' }, state.modeReply ? 200 : 400);
+        if (url === '/api/remote-servers') return reply([]);
+        if (url === '/api/peer-fs/settings' || url.startsWith('/api/rule-sync')) return reply({ error: 'NOT_FOUND' }, 404); // an older server: those parts are not drawn
         throw new Error(`unexpected ${method} ${url}`);
       };
     });
@@ -61,7 +64,7 @@ const html = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8').replace(
     // Linked services is read when the sheet opens: an older server answers 404 and the group is not drawn.
     const calls = () => page.evaluate(() => window.calls.filter(call => !call.url.startsWith('/api/system/') && !call.url.startsWith('/api/service-links') && !/^\/api\/attention(\?|$)/.test(call.url)));
     assert.equal((await calls()).length, 0, 'nothing is read until a group is opened');
-    assert.deepEqual(await page.locator('.h5-setting-group .MuiAccordionSummary-content').allTextContents(), ['Working directory', 'Image and file upload', 'Translation', 'Voice input', 'Engines', 'Rules and skills sync', 'Remote service', 'T-Attention', 'Access mode']);
+    assert.deepEqual(await page.locator('.h5-setting-group .MuiAccordionSummary-content').allTextContents(), ['Tasks and files', 'Voice and translation', 'Devices', 'T-Attention', 'Account and access']);
     // One row style for every top-level row (Language, the group headers, Log out): same height, label size, letter spacing and left edge; Log out is last.
     const rows = await page.evaluate(() => [...document.querySelectorAll('#h5-settings .h5-settings-body > *')].map(el => {
       const head = el.querySelector('.MuiAccordionSummary-root') || el;
@@ -69,15 +72,17 @@ const html = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8').replace(
       const style = getComputedStyle(label);
       return { id: el.id, height: Math.round(head.getBoundingClientRect().height), size: style.fontSize, spacing: style.letterSpacing, left: Math.round(label.getBoundingClientRect().left), text: label.textContent };
     }));
-    assert.equal(rows.length, 11);
-    assert.deepEqual(rows.map(row => row.text), ['Language', 'Working directory', 'Image and file upload', 'Translation', 'Voice input', 'Engines', 'Rules and skills sync', 'Remote service', 'T-Attention', 'Access mode', 'Log out']);
+    assert.equal(rows.length, 7);
+    assert.deepEqual(rows.map(row => row.text), ['Language', 'Tasks and files', 'Voice and translation', 'Devices', 'T-Attention', 'Account and access', 'Log out']);
     assert.equal(rows.at(-1).id, 'h5-logout', 'the Log out row itself is the button');
     for (const key of ['height', 'size', 'spacing', 'left']) assert.equal(new Set(rows.map(row => row[key])).size, 1, `all rows share one ${key}: ${JSON.stringify(rows)}`);
     assert.ok(rows[0].height >= 44, 'a row is a 44px touch target');
     assert.equal(await page.locator('#h5-settings').getByText('Log out', { exact: true }).count(), 1, 'the Log out text is not repeated');
 
     // Working directory: the effective default is shown; an unchanged default stays inherited, a new path is saved, clearing restores the default.
-    await openGroup('workdir');
+    // Its group "Tasks and files" reads both of its parts when it opens.
+    await openGroup('tasks-files');
+    assert.deepEqual(await page.locator('#h5-set-tasks-files .h5-setting-subheading').allTextContents(), ['Working directory', 'Image and file upload']);
     await page.waitForFunction(() => document.getElementById('h5-workdir').value === '/home/t/tasks');
     await page.click('#h5-workdir-save');
     await page.waitForFunction(() => calls.some(call => call.url === '/auth/settings'));
@@ -95,8 +100,7 @@ const html = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8').replace(
     assert.equal(await page.inputValue('#h5-workdir'), '/home/t/tasks', 'clearing the path shows the default in effect');
     assert.equal(await page.evaluate(() => state.work_dir), null);
 
-    // Image and file upload: values are echoed, the secret is never shown, and an empty secret is sent so the server keeps the saved one.
-    await openGroup('oss');
+    // Image and file upload (the second part of the same group): values are echoed, the secret is never shown, and an empty secret is sent so the server keeps the saved one.
     await page.waitForFunction(() => document.getElementById('h5-oss-bucket').value === 'b1');
     assert.equal(await page.inputValue('#h5-oss-accessKeySecret'), '');
     assert.equal(await page.locator('#h5-oss-secret-hint').textContent(), 'Secret saved; leave empty to keep it.');
@@ -110,8 +114,9 @@ const html = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8').replace(
     await page.click('#h5-oss-clear');
     await page.waitForFunction(() => state.oss.hasAccessKeySecret === false && document.getElementById('h5-oss-bucket').value === '');
 
-    // Translation: one key per provider; unsaved input survives switching providers; the saved key is never shown.
-    await openGroup('translate');
+    // Translation (in "Voice and translation", after voice input): one key per provider; unsaved input survives switching providers; the saved key is never shown.
+    await openGroup('voice-translate');
+    assert.deepEqual(await page.locator('#h5-set-voice-translate .h5-setting-subheading').allTextContents(), ['Voice input', 'Translation']);
     await page.waitForFunction(() => document.getElementById('h5-tr-model').value === 'deepseek-chat');
     assert.deepEqual(await page.locator('#h5-tr-provider option').allTextContents(), ['DeepSeek (Key saved)', 'GLM']);
     assert.equal(await page.inputValue('#h5-tr-key'), '');
@@ -134,7 +139,6 @@ const html = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8').replace(
     await page.waitForFunction(() => state.tr.provider === 'deepseek' && !state.tr.providers.glm.hasApiKey);
 
     // Voice input: the key is never echoed, the address in use follows the region and a custom endpoint, an empty noise filter is the service default.
-    await openGroup('voice');
     await page.waitForFunction(() => document.getElementById('h5-vi-model').value === 'asr-1');
     assert.equal(await page.getAttribute('#h5-vi-key', 'placeholder'), 'API Key');
     assert.equal(await page.locator('#h5-vi-effective').textContent(), 'Address in use: wss://cn.example/ws');
@@ -155,8 +159,13 @@ const html = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8').replace(
     await page.click('#h5-vi-clear');
     await page.waitForFunction(() => state.vi.keySource === 'none' && document.getElementById('h5-vi-region').value === 'cn' && document.getElementById('h5-vi-noise').value === '');
 
-    // Remote service: tokens are drawn as text, a pairing code can be made, a token can be revoked.
-    await openGroup('remote');
+    // Let other clients connect to this one (Devices → Advanced, folded at first; until the sheet was tidied up the group "Remote service"): tokens are
+    // drawn as text, a pairing code can be made, a token can be revoked. The list is read only when "Advanced" unfolds.
+    await openGroup('devices');
+    assert.equal(await page.getAttribute('#h5-devices-advanced-toggle', 'aria-expanded'), 'false');
+    assert.equal(await page.locator('#h5-token-create').isVisible(), false, 'the one-way options are folded away');
+    assert.equal((await calls()).filter(call => call.url === '/api/remote-tokens').length, 0, 'nothing of Advanced is read while it is folded');
+    await page.locator('#h5-devices-advanced-toggle').tap();
     await page.waitForSelector('.h5-token-row');
     assert.equal(await page.locator('#h5-remote-origin').textContent(), 'http://app.test');
     assert.equal(await page.locator('.h5-token-row img').count(), 0);
@@ -168,8 +177,9 @@ const html = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8').replace(
     await page.waitForFunction(() => !document.querySelector('.h5-token-row'));
     assert.equal(await page.locator('#h5-token-list').textContent(), 'No tokens created yet');
 
-    // Access mode: external access is on; switching to local access only asks first, and a refused code is explained.
-    await openGroup('access');
+    // Access mode (in "Account and access"): external access is on; switching to local access only asks first, and a refused code is explained.
+    await openGroup('account');
+    assert.deepEqual(await page.locator('#h5-set-account .h5-setting-subheading').allTextContents(), ['Access mode', 'Authenticator']);
     await page.waitForFunction(() => document.getElementById('h5-access-switch').textContent !== '');
     assert.equal(await page.locator('#h5-access-title').textContent(), 'Authenticator + allow external access');
     assert.match(await page.locator('#h5-access-hint').textContent(), /listens only on 127\.0\.0\.1/);

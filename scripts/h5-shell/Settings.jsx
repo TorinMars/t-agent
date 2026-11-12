@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import AppBar from '@mui/material/AppBar';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
@@ -7,17 +7,15 @@ import Checkbox from '@mui/material/Checkbox';
 import Drawer from '@mui/material/Drawer';
 import FormControlLabel from '@mui/material/FormControlLabel';
 import IconButton from '@mui/material/IconButton';
-import Paper from '@mui/material/Paper';
 import TextField from './TextField.jsx';
 import Toolbar from '@mui/material/Toolbar';
 import Typography from '@mui/material/Typography';
 import CloseIcon from '@mui/icons-material/Close';
 import { api, t } from './common.jsx';
-import { EnginesGroup } from './Engines.jsx';
-import { ServiceLinksGroup } from './ServiceLinks.jsx';
-import { RuleSyncGroup } from './RuleSync.jsx';
+import { DevicesGroup } from './Engines.jsx';
 import { AttentionSettings } from './AttentionSettings.jsx';
-import { Feedback, Field, Group, Hint, ROW, failure, useFeedback } from './Form.jsx';
+import { Feedback, Field, Group, Hint, ROW, Section, failure, useFeedback } from './Form.jsx';
+import { settingsTarget } from './settings-target.mjs';
 
 // The address this page was opened at, to come back to after a login or a switch: `/` or `/h5` (an iPhone Home Screen app starts at /h5).
 const pagePath = () => (/^\/h5(\/|$)/.test(location.pathname) ? '/h5' : '/');
@@ -26,7 +24,10 @@ const OSS_FIELDS = [
   ['region', 'Region (e.g. oss-cn-hangzhou)'], ['bucket', 'Bucket'], ['accessKeyId', 'AccessKey ID'],
   ['accessKeySecret', 'AccessKey Secret'], ['prefix', 'Object path prefix'], ['publicBaseUrl', 'Public HTTPS address (optional)'],
 ];
-function WorkdirGroup() {
+// A part of a group reads its data each time the group opens: `opened` counts the openings (0 before the first one).
+const useOnOpen = (opened, load) => useEffect(() => { if (opened) void load(); }, [opened]); // eslint-disable-line react-hooks/exhaustive-deps -- load only reads
+
+function WorkdirSection({ opened }) {
   const [value, setValue] = useState('');
   const known = useRef({ saved: '', custom: null });
   const [busy, setBusy] = useState(false);
@@ -48,17 +49,18 @@ function WorkdirGroup() {
     catch (error) { say(failure(error), true); }
     finally { setBusy(false); }
   };
+  useOnOpen(opened, load);
   return (
-    <Group id="workdir" title="Working directory" onOpen={load}>
+    <Section id="workdir" title="Working directory">
       <Field id="h5-workdir" label="Working directory" value={value} onChange={event => setValue(event.target.value)} placeholder="e.g. /Users/yourname/tasks" />
       <Hint>{t('Root directory for md files of new tasks; created if missing. Clear it to restore the default.')}</Hint>
       <Button id="h5-workdir-save" variant="contained" disabled={busy} onClick={() => void save()}>{t('Save')}</Button>
       <Feedback id="h5-workdir-feedback" feedback={feedback} />
-    </Group>
+    </Section>
   );
 }
 
-// The first lines of a settings group whose feature this service gets from a linked service (`shared_from` of its config, which an older server does not send).
+// The first lines of a settings part whose feature this service gets from a linked service (`shared_from` of its config, which an older server does not send).
 function SharedFrom({ id, from }) {
   if (!from) return null;
   return (
@@ -69,7 +71,7 @@ function SharedFrom({ id, from }) {
   );
 }
 
-function OssGroup() {
+function OssSection({ opened }) {
   const [form, setForm] = useState({ enabled: false, region: '', bucket: '', accessKeyId: '', accessKeySecret: '', prefix: '', publicBaseUrl: '' });
   const [hasSecret, setHasSecret] = useState(false);
   const [shared, setShared] = useState(null);
@@ -96,8 +98,9 @@ function OssGroup() {
     } catch (error) { say(failure(error), true); }
     finally { setBusy(false); }
   };
+  useOnOpen(opened, load);
   return (
-    <Group id="oss" title="Image and file upload" onOpen={load}>
+    <Section id="oss" title="Image and file upload">
       <SharedFrom id="h5-oss-shared" from={shared} />
       <FormControlLabel control={<Checkbox checked={form.enabled} onChange={event => setForm(current => ({ ...current, enabled: event.target.checked }))} slotProps={{ input: { id: 'h5-oss-enabled' } }} />} label={t('Enable image and file upload')} />
       {OSS_FIELDS.map(([key, label]) => (
@@ -108,11 +111,11 @@ function OssGroup() {
       <Button id="h5-oss-save" variant="contained" disabled={busy} onClick={() => void persist(false)}>{t('Save')}</Button>
       <Button id="h5-oss-clear" variant="outlined" color="error" disabled={busy} onClick={() => void persist(true)}>{t('Delete settings')}</Button>
       <Feedback id="h5-oss-feedback" feedback={feedback} />
-    </Group>
+    </Section>
   );
 }
 
-function TranslateGroup() {
+function TranslateSection({ opened }) {
   const [providers, setProviders] = useState({});
   const [current, setCurrent] = useState('');
   const [drafts, setDrafts] = useState({}); // input that is not saved yet survives switching providers
@@ -145,8 +148,9 @@ function TranslateGroup() {
     } catch (error) { say(failure(error), true); }
     finally { setBusy(false); }
   };
+  useOnOpen(opened, load);
   return (
-    <Group id="translate" title="Translation" onOpen={load}>
+    <Section id="translate" title="Translation">
       <SharedFrom id="h5-tr-shared" from={shared} />
       <TextField id="h5-tr-provider" select label={t('Translation service')} size="small" fullWidth value={current} onChange={event => setCurrent(event.target.value)} slotProps={{ select: { native: true } }}>
         {Object.keys(providers).map(id => <option key={id} value={id}>{`${providers[id].label}${providers[id].hasApiKey ? ` (${t('Key saved')})` : ''}`}</option>)}
@@ -158,7 +162,7 @@ function TranslateGroup() {
       <Button id="h5-tr-save" variant="contained" disabled={busy} onClick={() => void save(false)}>{t('Save')}</Button>
       <Button id="h5-tr-clear" variant="outlined" color="error" disabled={busy} onClick={() => void save(true)}>{t('Delete all settings')}</Button>
       <Feedback id="h5-tr-feedback" feedback={feedback} />
-    </Group>
+    </Section>
   );
 }
 
@@ -176,7 +180,7 @@ function VoiceSwitch() {
   );
 }
 
-function VoiceGroup() {
+function VoiceSection({ opened }) {
   const [config, setConfig] = useState({ regions: {}, languages: {}, keySource: 'none', shared: null });
   const [form, setForm] = useState({ apiKey: '', region: '', language: '', model: '', noise: '', hotwords: '', vocab: '', url: '' });
   const [busy, setBusy] = useState(false);
@@ -201,11 +205,12 @@ function VoiceGroup() {
     } catch (error) { say(failure(error), true); }
     finally { setBusy(false); }
   };
+  useOnOpen(opened, load);
   const labelOf = item => (typeof item === 'string' ? item : item.label);
   const region = config.regions[form.region];
   const keyHint = config.keySource === 'saved' ? 'Saved; leave empty to keep it' : config.keySource === 'environment' ? 'Using DASHSCOPE_API_KEY from the server; enter a key here to override it' : 'API Key';
   return (
-    <Group id="voice" title="Voice input" onOpen={load}>
+    <Section id="voice" title="Voice input">
       <SharedFrom id="h5-vi-shared" from={config.shared} />
       <VoiceSwitch />
       <Field id="h5-vi-key" label="Alibaba Cloud API Key" type="password" autoComplete="new-password" value={form.apiKey} onChange={set('apiKey')} placeholder={t(keyHint)} />
@@ -227,75 +232,12 @@ function VoiceGroup() {
       <Button id="h5-vi-save" variant="contained" disabled={busy} onClick={() => void save(false)}>{t('Save')}</Button>
       <Button id="h5-vi-clear" variant="outlined" color="error" disabled={busy} onClick={() => void save(true)}>{t('Delete all settings')}</Button>
       <Feedback id="h5-vi-feedback" feedback={feedback} />
-    </Group>
+    </Section>
   );
 }
 
-function RemoteGroup() {
-  const [tokens, setTokens] = useState([]);
-  const [code, setCode] = useState('');
-  const [copyLabel, setCopyLabel] = useState('Copy');
-  const [busy, setBusy] = useState(false);
-  const [feedback, say] = useFeedback();
-  const codeNode = useRef(null);
-  const load = async () => {
-    try { setTokens(await api('GET', '/api/remote-tokens')); say(''); }
-    catch (error) { say(failure(error), true); }
-  };
-  const revoke = async token => {
-    if (!confirm(t('Once revoked, remote connections using it stop working immediately.'))) return;
-    try { await api('DELETE', `/api/remote-tokens/${token.id}`); await load(); }
-    catch (error) { say(failure(error), true); }
-  };
-  const create = async () => {
-    setBusy(true);
-    try {
-      const created = await api('POST', '/api/remote-tokens/pairing', {});
-      setCode(created.code);
-      setCopyLabel('Copy');
-      say('Pairing code created. Valid for 10 minutes, single use.');
-    } catch (error) { say(failure(error), true); }
-    finally { setBusy(false); }
-  };
-  const copy = async () => {
-    try { await navigator.clipboard.writeText(code); setCopyLabel('Copied'); }
-    catch {
-      const range = document.createRange();
-      range.selectNodeContents(codeNode.current);
-      const selection = window.getSelection();
-      selection.removeAllRanges();
-      selection.addRange(range);
-      setCopyLabel('Press and hold to copy');
-    }
-  };
-  return (
-    <Group id="remote" title="Remote service" onOpen={load}>
-      <Hint>{t('This client can also act as an engine so other clients can reach its tasks, files and terminals. On the other client choose “Connect remote” and enter this client’s address and a pairing code. The pairing code is valid for 10 minutes and can be used once.')}</Hint>
-      <Hint>{t('Connect address:')} <code id="h5-remote-origin">{location.origin}</code></Hint>
-      <Box id="h5-token-list" className="h5-token-list" sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-        {tokens.length ? tokens.map(token => (
-          <Paper key={token.id} variant="outlined" className="h5-token-row" sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, p: 1 }}>
-            <div>
-              <strong>{token.name}</strong>
-              <Typography variant="caption" component="small" color="text.secondary" sx={{ display: 'block', overflowWrap: 'anywhere' }}>{`${token.token_prefix}… · ${token.scopes}`}</Typography>
-            </div>
-            <Button size="small" onClick={() => void revoke(token)}>{t('Revoke')}</Button>
-          </Paper>
-        )) : <Hint>{t('No tokens created yet')}</Hint>}
-      </Box>
-      <Button id="h5-token-create" variant="contained" disabled={busy} onClick={() => void create()}>{t('Generate pairing code')}</Button>
-      {code ? (
-        <Paper id="h5-token-created" variant="outlined" className="h5-token-created" sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, p: 1 }}>
-          <code id="h5-token-code" ref={codeNode} style={{ fontSize: 18, letterSpacing: 1, overflowWrap: 'anywhere', userSelect: 'all' }}>{code}</code>
-          <Button id="h5-token-copy" size="small" variant="outlined" onClick={() => void copy()}>{t(copyLabel)}</Button>
-        </Paper>
-      ) : <span id="h5-token-created" hidden />}
-      <Feedback id="h5-remote-feedback" feedback={feedback} />
-    </Group>
-  );
-}
-
-function AccessGroup() {
+// "Account and access": the access mode, then the authenticator. Log out is the row right under this group (LogoutRow).
+function AccountGroup({ request }) {
   const [info, setInfo] = useState({ local: false, loopbackOnly: false, host: '', bound: false });
   const [loaded, setLoaded] = useState(false);
   const [code, setCode] = useState('');
@@ -330,19 +272,22 @@ function AccessGroup() {
     : 'An authenticator login is required; phones, other computers and remote clients can connect.')
     + (!info.local && info.loopbackOnly ? ` ${t('Note: the service currently listens only on')} ${info.host}. ${t('To let other devices connect, set HOST=0.0.0.0 in .env and restart the service.')}` : '');
   return (
-    <Group id="access" title="Access mode" onOpen={load}>
-      <Typography id="h5-access-title" variant="subtitle2" component="strong">{loaded ? t(info.local ? 'Local access only' : 'Authenticator + allow external access') : ''}</Typography>
-      <Hint id="h5-access-hint">{hint}</Hint>
-      {info.local && info.bound ? (
-        <Box id="h5-access-code-row">
-          <Field id="h5-access-code" label="6-digit authenticator code (verified when switching back to external access)" value={code} onChange={event => setCode(event.target.value)} autoComplete="one-time-code" htmlInput={{ inputMode: 'numeric', maxLength: 6 }} />
-        </Box>
-      ) : <span id="h5-access-code-row" hidden />}
-      <Button id="h5-access-switch" variant="contained" disabled={busy || !loaded} onClick={() => void switchMode()}>{loaded ? t(info.local ? 'Switch to: authenticator + external access' : 'Switch to: local access only (no verification)') : ''}</Button>
-      <Feedback id="h5-access-feedback" feedback={feedback} />
-      <Typography variant="subtitle2" component="strong" sx={{ mt: 1 }}>{t('Authenticator')}</Typography>
-      <Hint>{t('Computer and phone share the same page and binding. Logins last 30 days and renew while in use; after 30 days of inactivity you must verify again. After replacing, the old authenticator, recovery codes and other devices’ logins stop working immediately.')}</Hint>
-      <Button id="h5-authenticator-replace" component="a" href={`/auth/setup?return_to=${pagePath()}`} variant="outlined">{t('Replace authenticator')}</Button>
+    <Group id="account" title="Account and access" onOpen={load} request={request}>
+      <Section id="access" title="Access mode">
+        <Typography id="h5-access-title" variant="body2" component="strong" sx={{ fontWeight: 600 }}>{loaded ? t(info.local ? 'Local access only' : 'Authenticator + allow external access') : ''}</Typography>
+        <Hint id="h5-access-hint">{hint}</Hint>
+        {info.local && info.bound ? (
+          <Box id="h5-access-code-row">
+            <Field id="h5-access-code" label="6-digit authenticator code (verified when switching back to external access)" value={code} onChange={event => setCode(event.target.value)} autoComplete="one-time-code" htmlInput={{ inputMode: 'numeric', maxLength: 6 }} />
+          </Box>
+        ) : <span id="h5-access-code-row" hidden />}
+        <Button id="h5-access-switch" variant="contained" disabled={busy || !loaded} onClick={() => void switchMode()}>{loaded ? t(info.local ? 'Switch to: authenticator + external access' : 'Switch to: local access only (no verification)') : ''}</Button>
+        <Feedback id="h5-access-feedback" feedback={feedback} />
+      </Section>
+      <Section id="authenticator" title="Authenticator">
+        <Hint>{t('Computer and phone share the same page and binding. Logins last 30 days and renew while in use; after 30 days of inactivity you must verify again. After replacing, the old authenticator, recovery codes and other devices’ logins stop working immediately.')}</Hint>
+        <Button id="h5-authenticator-replace" component="a" href={`/auth/setup?return_to=${pagePath()}`} variant="outlined">{t('Replace authenticator')}</Button>
+      </Section>
     </Group>
   );
 }
@@ -378,10 +323,39 @@ function LogoutRow({ ui }) {
   );
 }
 
-// The settings sheet that rises from the bottom (opened by the gear at the bottom of the task sidebar): the Client configuration, translation and voice input.
+// "Tasks and files": where new tasks are kept, then the image and file upload.
+function TasksFilesGroup({ request }) {
+  const [opened, setOpened] = useState(0);
+  return (
+    <Group id="tasks-files" title="Tasks and files" onOpen={() => setOpened(count => count + 1)} request={request}>
+      <WorkdirSection opened={opened} />
+      <OssSection opened={opened} />
+    </Group>
+  );
+}
+
+// "Voice and translation": voice input, then the translation service. Each part says when a linked service provides it (SharedFrom).
+function VoiceTranslateGroup({ request }) {
+  const [opened, setOpened] = useState(0);
+  return (
+    <Group id="voice-translate" title="Voice and translation" onOpen={() => setOpened(count => count + 1)} request={request}>
+      <VoiceSection opened={opened} />
+      <TranslateSection opened={opened} />
+    </Group>
+  );
+}
+
+// The settings sheet that rises from the bottom (opened by the gear at the bottom of the task sidebar). Top to bottom: Language, Tasks and files,
+// Voice and translation, Devices (Engines.jsx), T-Attention, Account and access, Log out. `state.settingsTarget` ({ id, seq }, set by
+// `ui.actions.openSettings(id)` in h5.js) opens one group and shows one part of it; old group ids still work (settings-target.mjs).
 export function SettingsDrawer({ state, ui }) {
-  const [linksVersion, setLinksVersion] = useState(0); // Engines and Linked services show the same links: a change in one reads both again
-  const linksChanged = () => setLinksVersion(version => version + 1);
+  const request = useMemo(() => {
+    const target = state.settingsTarget && settingsTarget(state.settingsTarget.id);
+    return target ? { ...target, seq: state.settingsTarget.seq } : null;
+  }, [state.settingsTarget]);
+  const requestFor = group => (request && request.group === group ? request : null);
+  // A target is used once: the sheet opened again later (the gear, or `settingsOpen` set directly) starts folded.
+  useEffect(() => { if (!state.settingsOpen && state.settingsTarget) ui.set({ settingsTarget: null }); }, [state.settingsOpen]); // eslint-disable-line react-hooks/exhaustive-deps -- only a closed sheet drops it
   return (
     <Drawer
       anchor="bottom" id="h5-settings" open={state.settingsOpen} onClose={() => ui.actions.closeSettings()} aria-labelledby="h5-settings-title"
@@ -395,16 +369,11 @@ export function SettingsDrawer({ state, ui }) {
       </AppBar>
       <Box className="h5-settings-body" sx={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto', pb: 1 }}>
         <LanguageRow />
-        <WorkdirGroup />
-        <OssGroup />
-        <TranslateGroup />
-        <VoiceGroup />
-        <EnginesGroup state={state} ui={ui} linksVersion={linksVersion} onLinksChanged={linksChanged} />
-        <ServiceLinksGroup state={state} ui={ui} version={linksVersion} onChanged={linksChanged} />
-        <RuleSyncGroup state={state} />
-        <RemoteGroup />
-        <AttentionSettings ui={ui} />
-        <AccessGroup />
+        <TasksFilesGroup request={requestFor('tasks-files')} />
+        <VoiceTranslateGroup request={requestFor('voice-translate')} />
+        <DevicesGroup state={state} ui={ui} request={requestFor('devices')} />
+        <AttentionSettings ui={ui} request={requestFor('attention')} />
+        <AccountGroup request={requestFor('account')} />
         <LogoutRow ui={ui} />
       </Box>
     </Drawer>

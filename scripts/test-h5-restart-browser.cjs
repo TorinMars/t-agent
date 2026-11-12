@@ -1,4 +1,4 @@
-// "Restart T-Agent" on the "This machine" row of Settings → Engines (scripts/h5-shell/Restart.jsx) in real Chromium at 390px, with the API mocked: the
+// "Restart T-Agent" on the "This machine" row of Settings → Devices (scripts/h5-shell/Restart.jsx) in real Chromium at 390px, with the API mocked: the
 // confirmation, `POST /api/system/restart { confirm: true }`, no reload while the old process still answers, the reload once another boot_id answers,
 // "Refresh now" when it takes long, the disabled button with its reason, no button on an older server or in a pane of the multi-column view, and the
 // error texts. H5_SHOT_DIR=<dir> saves a screenshot of the confirmation.
@@ -84,15 +84,15 @@ async function open(browser, w, { at = '/h5', width = 390 } = {}) {
   await page.goto(`${ORIGIN}${at}`);
   return { context, page };
 }
-// Opens Settings → Engines in `frame` (the page, or a pane's frame) and waits for the row of this machine.
+// Opens Settings → Devices in `frame` (the page, or a pane's frame) and waits for the row of this machine.
 async function openEngines(frame) {
   await frame.locator('#h5-open-tasks').waitFor();
   await frame.evaluate(() => window.H5UI.actions.openSettings());
   await frame.locator('#h5-settings').waitFor({ state: 'visible' });
-  const summary = frame.locator('#h5-set-engines .MuiAccordionSummary-root');
+  const summary = frame.locator('#h5-set-devices .MuiAccordionSummary-root');
   await summary.scrollIntoViewIfNeeded();
   await summary.click();
-  await frame.waitForFunction(() => Boolean(document.querySelector('#h5-set-engines .MuiCollapse-entered')));
+  await frame.waitForFunction(() => Boolean(document.querySelector('#h5-set-devices .MuiCollapse-entered')));
   await frame.waitForFunction(() => (document.getElementById('h5-engine-local-version') || {}).textContent === 'v2.101.0');
 }
 const dialog = page => page.locator('#h5-restart-dialog [role="dialog"]');

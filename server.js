@@ -580,7 +580,7 @@ server.listen(config.port, config.host, () => {
   console.log(`             LAN: http://${getLocalIP()}:${listeningPort}`);
   const clientAuth = getClientAuth();
   if (clientAuth.accessMode() === 'local') {
-    console.log('Access mode: local access only (no verification). Change it to authenticator + external access under Settings → Access mode.');
+    console.log('Access mode: local access only (no verification). Change it to authenticator + external access under Settings → Account and access.');
   } else if (clientAuth.accessMode() === 'unset') {
     console.log(`Access mode not chosen yet: open http://127.0.0.1:${listeningPort}/ in a browser on this machine and choose “Authenticator + external access” or “Local access only”.`);
     console.log('If you cannot open a browser on this machine (for example on a remote server), run node scripts/client-auth-setup.js in a terminal on the server to bind an authenticator and enable external access.');

@@ -10,7 +10,7 @@ import Typography from '@mui/material/Typography';
 import { api, errorText, t } from './common.jsx';
 import { watchRestart } from './restart-wait.mjs';
 
-// "Restart T-Agent" on the "This machine" row of Settings → Engines (Engines.jsx). `restart` is the `restart` field of `GET /api/system/version`
+// "Restart T-Agent" on the "This machine" row of Settings → Devices (Engines.jsx). `restart` is the `restart` field of `GET /api/system/version`
 // ({ supported, reason }): without it (an older server) there is no button; with `supported: false` the button is disabled and says why. A confirmation,
 // then `POST /api/system/restart { confirm: true }` (202 { accepted, boot_id }), then `/api/system/version` every second until another `boot_id` answers,
 // and the page reloads (restart-wait.mjs, the same rule as the manual update in Update.jsx; "Refresh now" after 20 s). A pane of the multi-column view

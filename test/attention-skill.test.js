@@ -190,7 +190,7 @@ test('the terminal user decides where the skill goes when the service drops priv
 test('a missing source file is a clear error', () => {
   const box = sandbox();
   const service = skill.createAttentionSkill({ env: box.env, homedir: () => box.home, terminalUser: () => ({ user: null }), dataDir: box.dataDir, sourceFile: path.join(box.root, 'nope.md') });
-  assert.throws(() => service.status(), error => error.code === 'ATTENTION_SKILL_SOURCE_MISSING' && error.statusCode === 500);
+  assert.throws(() => service.status(), error => error.code === 'AGENT_SKILL_SOURCE_MISSING' && error.statusCode === 500);
 });
 
 // ---- Routes ----

@@ -174,7 +174,9 @@ app.use('/api/fs', require('./routes/fs-read').createFsReadRouter());
 app.use('/api/peer-fs', peerFsRoutes.createPeerFsSettingsRouter());
 app.use('/api/task-groups', require('./routes/task-groups'));
 app.use('/api/bookmarks', require('./routes/bookmarks'));
-// The T-Attention agent skill installer (routes/attention-skill.js); before the T-Attention router, which answers every other /api/attention path.
+// The agent skills installer (routes/agent-skills.js: t-attention and tcli), and its first routes for t-attention only (routes/attention-skill.js, for
+// older pages), mounted before the T-Attention router, which answers every other /api/attention path.
+app.use('/api/agent-skills', require('./routes/agent-skills').createAgentSkillsRouter());
 app.use('/api/attention/skill', require('./routes/attention-skill').createAttentionSkillRouter());
 app.use('/api/attention', attentionRoutes.router);
 // The same service instance as /v1/mindmaps (routes/engine-v1.js), so writes of one map run one at a time whichever path they come in by.

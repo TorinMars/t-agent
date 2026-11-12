@@ -27,6 +27,8 @@ function mockServer() {
   const routes = {
     '/auth/me': { work_dir: null, effective_work_dir: '/home/t/tasks', access_mode: 'remote', authenticator_bound: true, listen_host: '0.0.0.0' },
     '/api/oss/config': { enabled: false, hasAccessKeySecret: false },
+    '/api/oss/agent-access': { enabled: true },
+    '/api/agent-skills': { skills: ['t-attention', 'tcli'].map(name => ({ name, description: `The ${name} skill.`, claude: { installed: true, current: true, conflict: null, path: `/home/t/.claude/skills/${name}/SKILL.md` }, codex: { installed: false, current: false, conflict: null, path: `/home/t/.codex/skills/${name}/SKILL.md` } })), old_task_tracker: { claude: false, codex: false }, user: null },
     '/api/translate/config': { provider: 'deepseek', providers: { deepseek: { label: 'DeepSeek', hasApiKey: true, baseUrl: 'https://api.deepseek.com', model: 'deepseek-chat' } } },
     '/api/speech/config': { keySource: 'none', region: 'cn', regions: { cn: { label: 'China', endpoint: 'wss://cn.example/ws' } }, language: 'zh', languages: { zh: 'Chinese' }, model: 'asr-1', noiseThreshold: null, hotwords: '', vocabularyId: '', endpoint: '' },
     '/api/remote-servers': servers,
@@ -111,8 +113,9 @@ async function testLayout(browser, width) {
 
   // The parts of each group, in order.
   await openGroup(page, 'tasks-files');
-  assert.deepEqual(await page.locator('#h5-set-tasks-files .h5-setting-subheading').allTextContents(), ['Working directory', 'Image and file upload']);
+  assert.deepEqual(await page.locator('#h5-set-tasks-files .h5-setting-subheading').allTextContents(), ['Working directory', 'Image and file upload', 'Agent skills']);
   await page.locator('#h5-workdir').waitFor();
+  await page.waitForFunction(() => document.querySelectorAll('#h5-agent-skills .h5-agent-skill').length === 2 && document.getElementById('h5-oss-agent-enabled'));
   await assertFits(page, `${width} Tasks and files`);
   await openGroup(page, 'voice-translate');
   assert.deepEqual(await page.locator('#h5-set-voice-translate .h5-setting-subheading').allTextContents(), ['Voice input', 'Translation']);
@@ -152,7 +155,7 @@ async function testLayout(browser, width) {
   await page.locator('#h5-engine-connect-cancel').tap();
   await page.locator('#h5-engine-connect').waitFor({ state: 'detached' });
 
-  // T-Attention: the guide, the reminders, the plugins, the agent skill, the AI summary, the CLI tokens.
+  // T-Attention: the guide, the reminders, the plugins, the pointer to the agent skills, the AI summary, the CLI tokens.
   await openGroup(page, 'attention');
   const order = await page.evaluate(() => [...document.querySelectorAll('#h5-set-attention .MuiAccordionDetails-root > *')].map(el => (el.dataset.slot ? `slot:${el.dataset.slot}` : el.tagName === 'H3' ? el.textContent : '')).filter(Boolean));
   const at = name => order.indexOf(name);
@@ -174,7 +177,7 @@ async function testAliases(browser) {
     ['workdir', 'tasks-files', 'workdir'], ['oss', 'tasks-files', 'oss'], ['voice', 'voice-translate', 'voice'], ['translate', 'voice-translate', 'translate'],
     ['engines', 'devices', ''], ['service-links', 'devices', 'link'], ['rule-sync', 'devices', 'rule-sync'], ['peer-fs', 'devices', 'peer-fs'],
     ['remote', 'devices', 'remote'], ['advanced', 'devices', 'advanced'], ['access', 'account', 'access'], ['attention', 'attention', ''],
-    ['devices', 'devices', ''], ['account', 'account', ''],
+    ['devices', 'devices', ''], ['account', 'account', ''], ['agent-skills', 'tasks-files', 'agent-skills'], ['attention-skill', 'tasks-files', 'agent-skills'],
   ];
   let seq = 0;
   for (const [id, group, section] of cases) {

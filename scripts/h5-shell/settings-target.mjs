@@ -1,17 +1,18 @@
 // Which folding group of the settings sheet (Settings.jsx) to open, and which part of it to show, for `ui.actions.openSettings(id)` (h5.js).
 // The groups: tasks-files, voice-translate, devices, attention, account. A part ("section", `#h5-sec-<id>`) has an id that is unique in the whole
 // sheet, so a section id alone is enough. The groups before the sheet was tidied up (engines, service-links, rule-sync, remote, workdir, oss,
-// translate, voice, access) are kept as aliases of the group and section that took their place.
+// translate, voice, access) are kept as aliases of the group and section that took their place, and so is `attention-skill` (the agent skill card
+// that moved from T-Attention into "Agent skills" of Tasks and files).
 export const SETTINGS_GROUPS = ['tasks-files', 'voice-translate', 'devices', 'attention', 'account'];
 
 const SECTIONS = {
-  workdir: 'tasks-files', oss: 'tasks-files',
+  workdir: 'tasks-files', oss: 'tasks-files', 'agent-skills': 'tasks-files',
   voice: 'voice-translate', translate: 'voice-translate',
   link: 'devices', 'peer-fs': 'devices', 'rule-sync': 'devices', advanced: 'devices', connect: 'devices', remote: 'devices',
   access: 'account', authenticator: 'account',
 };
 // Old group ids that are not a section id of their own.
-const ALIASES = { engines: ['devices', ''], 'service-links': ['devices', 'link'] };
+const ALIASES = { engines: ['devices', ''], 'service-links': ['devices', 'link'], 'attention-skill': ['tasks-files', 'agent-skills'] };
 
 // The parts of the Devices group that sit inside its folded "Advanced" part: opening one of them opens "Advanced" too.
 export const ADVANCED_SECTIONS = new Set(['advanced', 'connect', 'remote']);

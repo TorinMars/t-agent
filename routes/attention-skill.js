@@ -1,6 +1,7 @@
-// The T-Attention agent skill installer (services/attention-skill.js), for the browser's settings: the normal login and same-origin writes, like every
-// setting. Mounted in server.js at /api/attention/skill before the T-Attention router; an attention token (Bearer tatt_) never gets here, because the
-// Bearer path of routes/attention.js answers every /api/attention* request it carries. See "T-Attention agent skill" in DESIGN.md.
+// The first routes of the t-attention agent skill (services/attention-skill.js, a view of services/agent-skills.js), kept for older pages; the page
+// now uses /api/agent-skills (routes/agent-skills.js). The normal login and same-origin writes, like every setting. Mounted in server.js at
+// /api/attention/skill before the T-Attention router; an attention token (Bearer tatt_) never gets here, because the Bearer path of routes/attention.js
+// answers every /api/attention* request it carries. See "Agent skills" in DESIGN.md.
 //   GET  /                -> { claude: { installed, path, current, conflict }, codex: {...}, old_task_tracker: { claude, codex }, cli, user }
 //   POST /install         -> { ok, results: { claude: { action, path, conflict? }, codex }, status }
 //   POST /remove-old      -> { ok, moved: [{ agent, from, to }], skipped: [{ agent, path, reason }], backup, status }

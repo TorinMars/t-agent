@@ -19,7 +19,7 @@ test('the old group ids open the group and part that took their place', async ()
     workdir: ['tasks-files', 'workdir'], oss: ['tasks-files', 'oss'],
     voice: ['voice-translate', 'voice'], translate: ['voice-translate', 'translate'],
     engines: ['devices', ''], 'service-links': ['devices', 'link'], 'rule-sync': ['devices', 'rule-sync'], remote: ['devices', 'remote'],
-    access: ['account', 'access'],
+    access: ['account', 'access'], 'attention-skill': ['tasks-files', 'agent-skills'],
   };
   for (const [id, [group, section]] of Object.entries(cases)) assert.deepEqual(settingsTarget(id), { group, section }, id);
 });
@@ -28,5 +28,6 @@ test('the parts of Devices that sit in Advanced are known, and unknown ids open 
   const { settingsTarget, ADVANCED_SECTIONS } = await load();
   assert.deepEqual([...ADVANCED_SECTIONS].sort(), ['advanced', 'connect', 'remote']);
   for (const id of ['connect', 'advanced', 'link', 'peer-fs', 'authenticator']) assert.ok(settingsTarget(id), id);
+  assert.deepEqual(settingsTarget('agent-skills'), { group: 'tasks-files', section: 'agent-skills' });
   for (const id of ['', 'nothing', 'toString', '__proto__', null, undefined, 3, {}]) assert.equal(settingsTarget(id), null, String(id));
 });

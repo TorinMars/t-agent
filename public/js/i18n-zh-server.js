@@ -755,4 +755,7 @@ I18n.add({
   "A Git repository with linked worktrees inside the folder would break: {1}": "文件夹里带有关联工作树的 Git 仓库会失效：{1}",
   "The skill file of this install is missing: {1}": "这个安装里的技能文件不见了：{1}",
   "The skill could not be written": "技能无法写入",
+  "No such agent skill: {1}": "没有这个智能体技能：{1}",
+  "Teaches Claude Code and Codex to register their work and their sub-agents in T-Attention, to ask you when they need you, and to wait for your confirmation of finished work.": "教 Claude Code 和 Codex 把自己的工作和子智能体登记到 T-Attention，需要你时来问你，完成的工作等你确认。",
+  "Teaches Claude Code and Codex to list, upload, download, copy, move and delete files in the bucket of \"Image and file upload\" with the tcli command.": "教 Claude Code 和 Codex 用 tcli 命令列出、上传、下载、复制、移动和删除“图片和文件上传”所用存储桶里的文件。",
 });

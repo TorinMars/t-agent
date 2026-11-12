@@ -8,6 +8,7 @@ const path = require('node:path');
 const client = require('../lib/attention-client');
 const pluginsLocal = require('../lib/attention-plugins-local');
 const listenerInstall = require('../lib/listener-install');
+const importer = require('../lib/attention-import');
 
 const EXIT = { ok: 0, usage: 1, auth: 2, notFound: 3, server: 4 };
 const STATUSES = ['todo', 'working', 'waiting_user', 'review', 'done', 'failed', 'cancelled'];
@@ -20,11 +21,31 @@ const GROUPS = [
   { label: 'Done & failed', statuses: ['done', 'failed', 'cancelled'] },
 ];
 const STATUS_LABELS = { todo: 'To do', working: 'Working', waiting_user: 'Needs you', review: 'Review', done: 'Done', failed: 'Failed', cancelled: 'Cancelled' };
-const VALUE_FLAGS = new Set(['url', 'token', 'title', 'notes', 'priority', 'due', 'status', 'ref', 'reason', 'link', 'label', 'note', 'q', 'limit', 'timeout', 'name', 'kind']);
-const BOOL_FLAGS = new Set(['json', 'all', 'help', 'no-check', 'no-hooks', 'yes', 'purge']);
+const VALUE_FLAGS = new Set(['url', 'token', 'title', 'notes', 'priority', 'due', 'status', 'ref', 'reason', 'link', 'label', 'note', 'q', 'limit', 'timeout', 'name', 'kind', 'parent', 'custom-status', 'result', 'before', 'after', 'source']);
+const BOOL_FLAGS = new Set(['json', 'all', 'help', 'no-check', 'no-hooks', 'yes', 'purge', 'top', 'bottom', 'tree', 'dry-run']);
+// Status spellings: the names above and SELF-ATTENTION's ("In Progress", "Completed — Awaiting Confirmation", ...), compared in lower case
+// without anything but letters.
+const STATUS_ALIASES = {
+  todo: 'todo', working: 'working', waitinguser: 'waiting_user', review: 'review', done: 'done', failed: 'failed', cancelled: 'cancelled', canceled: 'cancelled',
+  notstarted: 'todo', inprogress: 'working', awaitingresponse: 'waiting_user', completedawaitingconfirmation: 'review', completedconfirmed: 'done',
+};
+const normalizeStatus = value => STATUS_ALIASES[String(value || '').toLowerCase().replace(/[^a-z]/g, '')] || null;
+// The home view (list --tree): the groups in this order; finished items are only counted.
+const TREE_GROUPS = [
+  { key: 'needs_you', label: 'Needs you', statuses: ['waiting_user', 'review'] },
+  { key: 'working', label: 'Working', statuses: ['working'] },
+  { key: 'todo', label: 'To do', statuses: ['todo'] },
+];
+// confirm, reject, handled: status helpers on top of PATCH. from: the statuses they accept.
+const HELPERS = {
+  confirm: { from: ['review'], body: () => ({ status: 'done' }) },
+  reject: { from: ['review'], body: reason => ({ status: 'working', attention_reason: null, activity: { kind: 'note', text: reason ? `Rejected: ${reason}` : 'Rejected' } }) },
+  handled: { from: ['waiting_user'], body: () => ({ status: 'working', attention_reason: null, activity: { kind: 'note', text: 'Handled' } }) },
+};
 const MARKET_TIMEOUT_MS = 120000; // a download may take up to 60 s on the server
 // CLI flag -> API field; an empty value clears the field (null).
-const FIELD_FLAGS = { title: 'title', notes: 'notes', priority: 'priority', due: 'due_date', status: 'status', reason: 'attention_reason', link: 'link_url', label: 'link_label' };
+const FIELD_FLAGS = { title: 'title', notes: 'notes', priority: 'priority', due: 'due_date', status: 'status', reason: 'attention_reason', link: 'link_url', label: 'link_label', 'custom-status': 'custom_status', result: 'result' };
+const ITEM_FLAGS = ['title', 'notes', 'priority', 'due', 'status', 'ref', 'reason', 'link', 'label', 'parent', 'custom-status', 'result'];
 const LISTENER_HOOK = path.resolve(__dirname, '..', 'plugins', 'listeners', 'claude', 'hook.js');
 
 const HELP = `t-attention: tasks that need you (T-Attention)
@@ -32,17 +53,30 @@ const HELP = `t-attention: tasks that need you (T-Attention)
 Usage: t-attention <command> [options]
 
 Commands
-  add <title>             create a task
+  add <title>             create a task (prints its id)
   list                    open tasks, grouped
     --status a,b          only these statuses
     --all                 include done, failed, cancelled
     --q <text>            search title, notes, reason
+    --tree                the home view (also: tree):
+                          subtasks under their parent
   show <id|ref:R>         one task and its history
   update <id|ref:R>       change fields (see below)
   done|review|fail|cancel|wait|work <id|ref:R> [--reason T]
                           set the status
+  confirm <id|ref:R>      review -> done
+  reject <id|ref:R> [--reason T]
+                          review -> working, with a note
+  handled <id|ref:R>      waiting_user -> working
+  move <id|ref:R> --before T | --after T | --top
+    | --bottom [--status S] [--reason T]
+                          reorder inside its group
   upsert --ref R          create or update by ref
-  rm <id|ref:R>           delete a task
+  rm <id|ref:R>           delete a task (not one that
+                          has subtasks)
+  import-tasks-md <file> [--dry-run] [--source S]
+                          import a SELF-ATTENTION
+                          TASKS.md (again: updates)
   login --url U --token T save the server and token,
                           then add the Claude Code hooks
   pair <code> --url U     connect this machine with a
@@ -70,11 +104,13 @@ Fields
   --title T  --notes T  --priority high|medium|low|none
   --due YYYY-MM-DD  --status S  --ref R  --reason T
   --link URL  --label T     (an empty value clears it)
+  --parent <id|ref:R>  --custom-status T  --result T
   --note T                  update, upsert: add a note
                             to the task's timeline
 
 Statuses: todo working waiting_user review
-  done failed cancelled
+  done failed cancelled (also In Progress,
+  Not Started, Completed - Confirmed, ...)
 
 Options
   --json                  print JSON
@@ -129,15 +165,27 @@ function fieldsFrom(flags) {
       if (!value.trim()) throw new UsageError('The title cannot be empty');
       body.title = value.trim();
     } else if (field === 'status') {
-      if (!STATUSES.includes(value)) throw new UsageError(`Unknown status: ${value} (use ${STATUSES.join(', ')})`);
-      body.status = value;
+      body.status = statusFlag(value);
     } else if (field === 'priority') {
       body.priority = value || 'none';
     } else {
       body[field] = value === '' ? null : value;
     }
   }
+  if (flags.parent !== undefined) {
+    const value = String(flags.parent).trim();
+    if (!value) body.parent_id = null;
+    else if (/^ref:./.test(value)) body.parent_ref = value.slice(4);
+    else if (/^#?\d+$/.test(value)) body.parent_id = Number(value.replace('#', ''));
+    else throw new UsageError(`--parent needs a task id or ref:<ref>: ${value}`);
+  }
   return body;
+}
+
+function statusFlag(value) {
+  const status = normalizeStatus(value);
+  if (!status) throw new UsageError(`Unknown status: ${value} (use ${STATUSES.join(', ')})`);
+  return status;
 }
 
 function only(flags, allowed, command) {
@@ -194,6 +242,7 @@ function extras(item) {
   const parts = [];
   if (item.priority && item.priority !== 'none') parts.push(`!${item.priority}`);
   if (item.due_date) parts.push(`due ${item.due_date}`);
+  if (item.custom_status) parts.push(`[${oneLine(item.custom_status)}]`);
   if (item.status === 'failed' || item.status === 'cancelled') parts.push(STATUS_LABELS[item.status].toLowerCase());
   return parts.length ? `  ${parts.join(' ')}` : '';
 }
@@ -218,6 +267,81 @@ function formatList(items) {
     out.push(`${group.label} (${members.length})`);
     for (const item of members) out.push(...itemLines(item, idWidth));
   }
+  return out.join('\n');
+}
+
+// MM-DD HH:MM in local time.
+function shortTime(iso) {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '';
+  const pad = value => String(value).padStart(2, '0');
+  return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+// The items of one group, depth-first: children under their parent (sort_order order among siblings, as the list comes). A child whose parent is
+// in another group (or not in the list) is a top-level row. -> [{ item, depth, prefix }]
+function treeRows(items) {
+  const ids = new Set(items.map(item => item.id));
+  const children = new Map();
+  const roots = [];
+  for (const item of items) {
+    const parent = item.parent_id;
+    if (parent !== null && parent !== undefined && parent !== item.id && ids.has(parent)) {
+      if (!children.has(parent)) children.set(parent, []);
+      children.get(parent).push(item);
+    } else {
+      roots.push(item);
+    }
+  }
+  const out = [];
+  const seen = new Set();
+  const visit = (item, lead, last, depth) => {
+    if (seen.has(item.id)) return;
+    seen.add(item.id);
+    out.push({ item, depth, prefix: depth === 0 ? '' : `${lead}${last ? '\u2514 ' : '\u251c '}` });
+    const kids = children.get(item.id) || [];
+    const next = depth === 0 ? '' : `${lead}${last ? '  ' : '\u2502 '}`;
+    kids.forEach((kid, index) => visit(kid, next, index === kids.length - 1, depth + 1));
+  };
+  for (const root of roots) visit(root, '', true, 0);
+  for (const item of items) visit(item, '', true, 0); // a parent loop: shown as top-level rows
+  return out;
+}
+
+// The second line of a home-view row: what the person must do for waiting_user, else the result (or the reason of a review).
+function treeDetail(item) {
+  if (item.status === 'waiting_user') return item.attention_reason || item.result || '';
+  if (item.status === 'review') return item.result || item.attention_reason || '';
+  return item.result || '';
+}
+
+// groups: [{ key, label, rows: [{ item, depth, prefix }] }]
+function treeGroups(items) {
+  return TREE_GROUPS.map(group => ({
+    ...group,
+    rows: group.statuses.flatMap(status => treeRows(items.filter(item => item.status === status))),
+  }));
+}
+
+function formatTree(items, doneCount) {
+  const cols = width();
+  const out = [];
+  for (const group of treeGroups(items)) {
+    if (!group.rows.length && group.key !== 'needs_you') continue;
+    if (out.length) out.push('');
+    out.push(`${group.label} (${group.rows.length})`);
+    if (!group.rows.length) out.push('  Nothing needs you.');
+    for (const { item, prefix } of group.rows) {
+      const head = `  ${prefix}#${item.id} `;
+      const tail = `  ${STATUS_LABELS[item.status] || item.status}${item.custom_status ? ` \u00b7 ${oneLine(item.custom_status)}` : ''}${item.updated_at ? `  ${shortTime(item.updated_at)}` : ''}`;
+      const room = Math.max(12, cols - head.length - tail.length);
+      out.push(clip(head + clip(oneLine(item.title), room) + tail, cols));
+      const detail = oneLine(treeDetail(item));
+      if (detail) out.push(clip(`${' '.repeat(head.length)}${detail}`, cols));
+    }
+  }
+  if (out.length) out.push('');
+  out.push(`Done: ${doneCount}`);
   return out.join('\n');
 }
 
@@ -296,6 +420,9 @@ function formatItem(item, events) {
   section('Where', where);
 
   const fields = [];
+  if (item.custom_status) fields.push(`Custom:   ${item.custom_status}`);
+  if (item.result) fields.push(`Result:   ${item.result}`);
+  if (item.parent_id) fields.push(`Parent:   #${item.parent_id}`);
   if (item.priority && item.priority !== 'none') fields.push(`Priority: ${item.priority}`);
   if (item.due_date) fields.push(`Due:      ${item.due_date}`);
   if (item.attention_reason && !needs.length) fields.push(`Reason:   ${item.attention_reason}`);
@@ -344,7 +471,7 @@ async function run(argv, { env = process.env, print, printError, ask = defaultAs
   }
 
   if (command === 'add') {
-    only(flags, ['notes', 'priority', 'due', 'status', 'ref', 'reason', 'link', 'label'], 'add');
+    only(flags, ITEM_FLAGS.filter(flag => flag !== 'title'), 'add');
     const title = oneLine(args.join(' '));
     if (!title) throw new UsageError('add needs a title: t-attention add "Buy milk"');
     const body = { ...fieldsFrom(flags), title, source: 'cli' };
@@ -354,15 +481,30 @@ async function run(argv, { env = process.env, print, printError, ask = defaultAs
     return EXIT.ok;
   }
 
+  if (command === 'tree' || ((command === 'list' || command === 'ls') && flags.tree)) {
+    only(flags, ['tree'], command);
+    if (args.length) throw new UsageError(`${command} takes no arguments`);
+    const api = connect(flags, env);
+    const open = await api.list({ limit: 1000 });
+    const finished = await api.list({ status: 'done,failed,cancelled', limit: 1000 });
+    if (json) {
+      const groups = treeGroups(open).map(group => ({ key: group.key, label: group.label, items: group.rows.map(row => ({ ...row.item, depth: row.depth })) }));
+      print(JSON.stringify({ groups, done: finished.length }, null, 2));
+    } else {
+      print(formatTree(open, finished.length));
+    }
+    return EXIT.ok;
+  }
+
   if (command === 'list' || command === 'ls') {
     only(flags, ['status', 'all', 'q', 'limit'], 'list');
     if (args.length) throw new UsageError('list takes no arguments; use --q <text> to search');
     let status;
     if (flags.status !== undefined) {
       const wanted = String(flags.status).split(',').map(s => s.trim()).filter(Boolean);
-      const bad = wanted.filter(s => !STATUSES.includes(s));
+      const bad = wanted.filter(s => !normalizeStatus(s));
       if (bad.length || !wanted.length) throw new UsageError(`Unknown status: ${bad.join(', ') || '(empty)'}`);
-      status = wanted.join(',');
+      status = [...new Set(wanted.map(normalizeStatus))].join(',');
     }
     const items = await connect(flags, env).list({ status, q: flags.q, limit: flags.limit, include_done: flags.all ? 1 : undefined });
     if (json) print(JSON.stringify({ items }, null, 2));
@@ -387,7 +529,7 @@ async function run(argv, { env = process.env, print, printError, ask = defaultAs
   }
 
   if (command === 'update') {
-    only(flags, ['title', 'notes', 'priority', 'due', 'status', 'ref', 'reason', 'link', 'label', 'note'], 'update');
+    only(flags, [...ITEM_FLAGS, 'note'], 'update');
     const spec = target(args[0], 'update');
     const body = fieldsFrom(flags);
     if (flags.ref !== undefined) body.external_ref = flags.ref === '' ? null : flags.ref;
@@ -410,8 +552,66 @@ async function run(argv, { env = process.env, print, printError, ask = defaultAs
     return EXIT.ok;
   }
 
+  if (Object.prototype.hasOwnProperty.call(HELPERS, command)) {
+    only(flags, command === 'reject' ? ['reason'] : [], command);
+    const helper = HELPERS[command];
+    const api = connect(flags, env);
+    const spec = target(args[0], command);
+    const current = spec.ref ? await api.findByRef(spec.ref) : (await api.get(spec.id)).item;
+    if (!current) throw notFoundRef(spec.ref);
+    if (!helper.from.includes(current.status)) {
+      const wanted = helper.from.map(status => STATUS_LABELS[status]).join(' or ');
+      throw new client.AttentionClientError('invalid', `#${current.id} is ${STATUS_LABELS[current.status] || current.status}, not ${wanted}: ${command} does not apply`, { status: 400, code: 'WRONG_STATUS' });
+    }
+    let reason = '';
+    if (flags.reason !== undefined) {
+      reason = oneLine(flags.reason);
+      if (Array.from(reason).length > 480) throw new UsageError('--reason can be at most 480 characters');
+    }
+    const item = await api.update(current.id, helper.body(reason));
+    show(item, `#${item.id} ${oneLine(item.title)}: ${STATUS_LABELS[item.status] || item.status}`);
+    return EXIT.ok;
+  }
+
+  if (command === 'move') {
+    only(flags, ['before', 'after', 'top', 'bottom', 'status', 'reason'], 'move');
+    const placements = ['before', 'after', 'top', 'bottom'].filter(name => flags[name] !== undefined);
+    if (placements.length !== 1) throw new UsageError('move needs exactly one of --before T, --after T, --top or --bottom');
+    const spec = target(args[0], 'move');
+    const api = connect(flags, env);
+    const body = {};
+    const where = placements[0];
+    if (where === 'top' || where === 'bottom') body.position = where;
+    else body[where] = await resolveId(api, target(flags[where], `--${where}`));
+    if (flags.status !== undefined) body.status = statusFlag(flags.status);
+    if (flags.reason !== undefined && oneLine(flags.reason)) body.reason = oneLine(flags.reason);
+    const result = await api.move(await resolveId(api, spec), body);
+    const others = result.items.filter(entry => entry.id !== result.item.id).length;
+    show(result, `Moved #${result.item.id} ${oneLine(result.item.title)} (${STATUS_LABELS[result.item.status] || result.item.status})${others ? `; ${others} other task${others === 1 ? '' : 's'} renumbered` : ''}`);
+    return EXIT.ok;
+  }
+
+  if (command === 'import-tasks-md') {
+    only(flags, ['dry-run', 'source'], command);
+    if (args.length !== 1) throw new UsageError('import-tasks-md needs the path of a TASKS.md file');
+    const source = flags.source === undefined ? importer.SOURCE : String(flags.source).trim();
+    if (!/^[A-Za-z0-9._:@-]{1,64}$/.test(source)) throw new UsageError('--source may only contain letters, digits and . _ : @ -');
+    let text;
+    try { text = fs.readFileSync(args[0], 'utf8'); } catch (error) { throw new UsageError(`Cannot read ${args[0]}: ${error.code || error.message}`); }
+    const parsed = importer.parseTasksMd(text);
+    if (!parsed.hasHistory && !parsed.rows.length) throw new UsageError(`${args[0]} does not look like a SELF-ATTENTION TASKS.md (no task rows, no "## Status history")`);
+    const plan = importer.planImport(parsed, { source });
+    if (flags['dry-run']) {
+      show({ dry_run: true, file: args[0], rows: plan.entries.map(entry => ({ id: entry.id, ref: entry.ref, status: entry.fields.status, parent: entry.parent, history: entry.history.length, title: entry.fields.title })), skipped: plan.skipped, warnings: plan.warnings }, formatImportPlan(args[0], plan));
+      return EXIT.ok;
+    }
+    const summary = await importer.runImport(connect(flags, env), plan);
+    show({ file: args[0], ...summary }, formatImportSummary(args[0], summary));
+    return EXIT.ok;
+  }
+
   if (command === 'upsert') {
-    only(flags, ['title', 'notes', 'priority', 'due', 'status', 'ref', 'reason', 'link', 'label', 'note'], 'upsert');
+    only(flags, [...ITEM_FLAGS, 'note'], 'upsert');
     if (!flags.ref) throw new UsageError('upsert needs --ref <ref>');
     if (args.length) throw new UsageError('upsert takes no arguments; give the title with --title');
     const body = { ...fieldsFrom(flags), source: 'cli' };
@@ -481,6 +681,35 @@ async function run(argv, { env = process.env, print, printError, ask = defaultAs
   }
 
   throw new UsageError(`Unknown command: ${command} (t-attention --help)`);
+}
+
+// ---------- import ----------
+function importLines(skipped, warnings) {
+  const out = [];
+  if (skipped.length) out.push('', 'Skipped', ...skipped.map(entry => clip(`  ${entry.id}: ${oneLine(entry.reason)}`, width())));
+  if (warnings.length) out.push('', 'Warnings', ...warnings.map(text => clip(`  ${oneLine(text)}`, width())));
+  return out;
+}
+
+function formatImportPlan(file, plan) {
+  const cols = width();
+  const out = [`Dry run, nothing was sent: ${plan.entries.length} task${plan.entries.length === 1 ? '' : 's'} from ${file}`];
+  for (const entry of plan.entries) {
+    const facts = [entry.fields.status, entry.parent ? `under ${entry.parent}` : '', entry.history.length ? `${entry.history.length} history` : ''].filter(Boolean).join(', ');
+    out.push(clip(`  ${entry.id} -> ${entry.ref} (${facts}) ${oneLine(entry.fields.title)}`, cols));
+  }
+  out.push(...importLines(plan.skipped, plan.warnings));
+  return out.join('\n');
+}
+
+function formatImportSummary(file, summary) {
+  const cols = width();
+  const out = [`Imported ${file}: ${summary.created} created, ${summary.updated} updated, ${summary.skipped.length} skipped, ${summary.notes} history note${summary.notes === 1 ? '' : 's'}`];
+  for (const row of summary.rows) {
+    out.push(clip(`  ${row.id} -> #${row.item_id} ${STATUS_LABELS[row.status] || row.status}${row.parent_id ? ` (under #${row.parent_id})` : ''} ${oneLine(row.title)}`, cols));
+  }
+  out.push(...importLines(summary.skipped, summary.warnings));
+  return out.join('\n');
 }
 
 // ---------- plugins ----------
@@ -780,6 +1009,7 @@ async function main(argv = process.argv.slice(2), options = {}) {
       let message = error.message;
       if (error && error.kind === 'auth' && error.status && error.status !== 403) message = `${message} (check the token: t-attention login)`;
       if (error && error.kind === 'conflict' && error.body && error.body.id) message = `${message} (#${error.body.id})`;
+      if (error && error.kind === 'conflict' && error.body && Array.isArray(error.body.children)) message = `${message} (subtasks: ${error.body.children.map(id => `#${id}`).join(', ')})`;
       printError(`t-attention: ${message}`);
       if (error instanceof UsageError) printError('Run t-attention --help for usage.');
     }
@@ -791,4 +1021,4 @@ if (require.main === module) {
   main().then(code => { process.exitCode = code; });
 }
 
-module.exports = { main, parseArgs, formatList, formatItem, formatPlugins, EXIT };
+module.exports = { main, parseArgs, formatList, formatItem, formatTree, formatPlugins, normalizeStatus, EXIT };

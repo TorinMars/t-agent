@@ -336,10 +336,17 @@ t-attention wait 12 --reason "Approve the migration"
 t-attention done 12              # also review, fail, cancel, work
 t-attention upsert --ref ci:nightly --title "Nightly build" --status failed --reason "3 tests failed"
 t-attention update 12 --note "Asked the team about the migration"   # a timeline entry
-t-attention rm 12
+t-attention rm 12                # refused while it has subtasks
+t-attention add "Sub-agent: write the parser" --parent 12 --status "In Progress"
+t-attention update 13 --custom-status Blocked --result "Waiting for the API key"
+t-attention tree                 # the home view: Needs you, Working, To do, Done: N, subtasks under their parent
+t-attention confirm 13           # review -> done; reject 13 --reason "..." and handled 14 too
+t-attention move 13 --top        # or --before 9 / --after 9 / --bottom, optionally --status working
+t-attention import-tasks-md ~/SELF-ATTENTION/TASKS.md --dry-run   # import a SELF-ATTENTION task list (again: updates)
 ```
 
 - `show` prints the task's context card first: goal, progress (last reply, turns, changed files), what it needs from you (with the command waiting for permission), folder, branch and the command to resume the Claude session.
+- Statuses can also be given the SELF-ATTENTION way (`"In Progress"`, `"Completed - Confirmed"`, ...).
 - Every command takes `--json`. Exit codes: 0 ok, 1 usage (also a value the server refuses), 2 not logged in or token refused, 3 not found, 4 server or network error.
 - Config: `--url` / `--token` > `TA_ATTENTION_URL` / `TA_ATTENTION_TOKEN` > `~/.tagent/attention-client.json` (mode 600, written by `login`; `TAGENT_HOME` moves the folder).
 - `login` also records where the Claude Code listener lives (`~/.tagent/listeners/claude-hook.path`) and adds the listener hooks to `~/.claude/settings.json` (it keeps everything else there and makes a `.t-agent.bak` copy before the first change; `--no-hooks` skips this; `ta` syncs the same hooks). With that, every Claude Code session becomes one task: working while it runs, Needs you on a permission prompt or a question, Review when the turn ends, Failed on an API error. Without a login the hook does nothing.

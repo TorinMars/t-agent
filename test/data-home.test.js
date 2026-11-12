@@ -327,6 +327,55 @@ test('a schema 9 database gets tasks.archived_at (schema 10), with a copy taken 
   assert.equal(fs.readdirSync(path.join(root, 'backups')).length, 1, 'no second copy');
 });
 
+test('a schema 10 database gets the T-Attention tree columns (schema 11), with a copy taken first; items and events are kept and a second start changes nothing', t => {
+  const root = temp(t);
+  assert.equal(openDb({ TAGENT_HOME: root }).status, 0);
+  // A database of the previous generation: attention_items without parent_id, custom_status and result (the table as schema.sql made it
+  // before), user_version 10. The table is made again because a column with REFERENCES cannot be dropped.
+  const file = path.join(root, 'db.sqlite');
+  const schema = fs.readFileSync(path.join(ROOT, 'db', 'schema.sql'), 'utf8');
+  const create = schema.match(/CREATE TABLE IF NOT EXISTS attention_items \([^;]*\);/)[0]
+    .replace(/^\s*--.*$/gm, '').replace(/^\s*(parent_id|custom_status|result)\b.*$/gm, '').replace(/completed_at\s+TEXT,/, 'completed_at TEXT');
+  const old = new Database(file);
+  old.pragma('foreign_keys = OFF');
+  old.exec('DROP INDEX IF EXISTS idx_attention_items_parent; DROP INDEX IF EXISTS idx_attention_items_status; DROP TABLE attention_items;');
+  old.exec(create);
+  old.exec('CREATE INDEX idx_attention_items_status ON attention_items (status, sort_order)');
+  const item = old.prepare("INSERT INTO attention_items (title, status, sort_order, created_at, updated_at) VALUES ('kept item', 'working', 3, 'x', 'x')").run().lastInsertRowid;
+  old.prepare("INSERT INTO attention_events (item_id, at, actor, type) VALUES (?, 'x', 'user', 'created')").run(item);
+  old.pragma('user_version = 10');
+  old.close();
+
+  const result = openDb({ TAGENT_HOME: root });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, new RegExp(`schema 10 is migrated to ${CODE_SCHEMA}; a copy of the database before the migration is in `));
+  const after = new Database(file);
+  assert.equal(after.pragma('user_version', { simple: true }), CODE_SCHEMA);
+  const columns = after.prepare('PRAGMA table_info(attention_items)').all().map(column => column.name);
+  for (const name of ['parent_id', 'custom_status', 'result']) assert.ok(columns.includes(name), name);
+  assert.ok(after.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_attention_items_parent'").get(), 'the parent index');
+  assert.deepEqual(after.prepare('SELECT title, status, sort_order, parent_id, custom_status, result FROM attention_items WHERE id = ?').get(item),
+    { title: 'kept item', status: 'working', sort_order: 3, parent_id: null, custom_status: null, result: null });
+  assert.equal(after.prepare('SELECT COUNT(*) AS n FROM attention_events WHERE item_id = ?').get(item).n, 1);
+  // parent_id refers to another item: a child of a missing item is refused by the database too.
+  after.pragma('foreign_keys = ON');
+  assert.throws(() => after.prepare("INSERT INTO attention_items (title, parent_id, created_at, updated_at) VALUES ('orphan', 999, 'x', 'x')").run(), /FOREIGN KEY/);
+  after.prepare("INSERT INTO attention_items (title, parent_id, created_at, updated_at) VALUES ('child', ?, 'x', 'x')").run(item);
+  after.close();
+  const copies = fs.readdirSync(path.join(root, 'backups'));
+  assert.equal(copies.length, 1);
+  assert.match(copies[0], new RegExp(`^db-schema-10-before-${CODE_SCHEMA}-.+\\.sqlite$`));
+  const copy = new Database(path.join(root, 'backups', copies[0]), { readonly: true });
+  assert.equal(copy.pragma('user_version', { simple: true }), 10, 'the copy is the database as it was');
+  assert.ok(!copy.prepare('PRAGMA table_info(attention_items)').all().some(column => column.name === 'parent_id'));
+  copy.close();
+
+  const again = openDb({ TAGENT_HOME: root });
+  assert.equal(again.status, 0, again.stderr);
+  assert.doesNotMatch(again.stdout, /is migrated/);
+  assert.equal(fs.readdirSync(path.join(root, 'backups')).length, 1, 'no second copy');
+});
+
 test('a schema 8 database gets the T-Attention tables (schema 9), with a copy taken first; existing data is kept and a second start changes nothing', t => {
   const root = temp(t);
   assert.equal(openDb({ TAGENT_HOME: root }).status, 0);

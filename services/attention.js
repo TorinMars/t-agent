@@ -1,5 +1,13 @@
 // T-Attention (attention hub): one central list of work items that agents, services and the person create and update.
-// Tables attention_items, attention_events and attention_tokens (db/schema.sql, schema 9). Self-contained: it never reads or changes tasks, terminals or chats.
+// Tables attention_items, attention_events and attention_tokens (db/schema.sql, schema 9; parent_id, custom_status and result since schema 11).
+// Self-contained: it never reads or changes tasks, terminals or chats.
+//
+// - Tree: parent_id names another item (or null). An unknown parent or one that would make a cycle is refused and nothing is applied; an item
+//   with children cannot be deleted (409 HAS_CHILDREN). Statuses of parents and children are independent. A body may give parent_ref (an
+//   external_ref) instead of parent_id; it is resolved inside the transaction.
+// - Order: inside a status group (GROUPS: waiting_user, review, working, todo, finished = done | failed | cancelled) items are shown by
+//   sort_order DESC, then id DESC. move() places an item (and its descendants in the same group) before / after another item of the group or at
+//   its top / bottom, optionally changing its status in the same transaction, and renumbers the group where needed.
 //
 // - Every change writes its event row in the same transaction and is then published on the in-process bus: onChange(fn) -> unsubscribe,
 //   fn({ kind: 'created' | 'updated' | 'deleted', item, previous, event }). Notifiers and the SSE stream subscribe to it.
@@ -23,9 +31,13 @@ const FINISHED = new Set(['done', 'failed', 'cancelled']);
 const PRIORITIES = Object.freeze(['high', 'medium', 'low', 'none']);
 const ACTIVITY_KINDS = Object.freeze(['prompt', 'permission', 'question', 'resumed', 'turn_end', 'error', 'session_end', 'note']);
 const PENDING_KINDS = Object.freeze(['permission', 'question', 'error']);
-const LIMITS = Object.freeze({ contextBytes: 32768, excerptBytes: 8192, activityText: 500, contextFiles: 50, summaryText: 600, title: 300, notes: 20000, externalRef: 200, attentionReason: 500, linkUrl: 2000, linkLabel: 200, source: 64, metaBytes: 8192, tokenName: 80, listDefault: 200, listMax: 1000, events: 100 });
+const LIMITS = Object.freeze({ customStatus: 100, result: 500, contextBytes: 32768, excerptBytes: 8192, activityText: 500, contextFiles: 50, summaryText: 600, title: 300, notes: 20000, externalRef: 200, attentionReason: 500, linkUrl: 2000, linkLabel: 200, source: 64, metaBytes: 8192, tokenName: 80, listDefault: 200, listMax: 1000, events: 100 });
 // The fields a create / update body may carry. Anything else in a body is ignored (newer callers may send more).
-const FIELDS = ['title', 'notes', 'status', 'priority', 'due_date', 'source', 'external_ref', 'attention_reason', 'link_url', 'link_label', 'meta', 'sort_order'];
+const FIELDS = ['title', 'notes', 'status', 'priority', 'due_date', 'source', 'external_ref', 'attention_reason', 'link_url', 'link_label', 'meta', 'sort_order', 'parent_id', 'custom_status', 'result'];
+// The groups an item is shown and ordered in (the page's sections; "Needs you" shows waiting_user and review). A move stays inside one group.
+const GROUPS = Object.freeze(['waiting_user', 'review', 'working', 'todo', 'finished']);
+const groupOf = status => (FINISHED.has(status) ? 'finished' : status);
+const statusesOf = group => (group === 'finished' ? [...FINISHED] : [group]);
 const TOKEN_PATTERN = /^tatt_[A-Za-z0-9_-]{43}$/;
 // Control characters other than tab, line feed and carriage return.
 const CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/;
@@ -103,6 +115,19 @@ function sortOrder(value) {
   return value;
 }
 
+// A task id: a positive integer (a JSON number, or digits in a string).
+function idValue(value) {
+  if (typeof value === 'string' && /^\d{1,15}$/.test(value.trim())) value = Number(value.trim());
+  return Number.isSafeInteger(value) && value > 0 ? value : null;
+}
+
+function parentId(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const id = idValue(value);
+  if (id === null) throw invalid('parent_id must be a task id');
+  return id;
+}
+
 function source(value) {
   const name = text('source', LIMITS.source, { singleLine: true })(value);
   if (name === null) return null;
@@ -123,6 +148,9 @@ const VALIDATORS = {
   link_label: text('link_label', LIMITS.linkLabel, { singleLine: true }),
   meta,
   sort_order: sortOrder,
+  parent_id: parentId,
+  custom_status: text('custom_status', LIMITS.customStatus, { singleLine: true }),
+  result: text('result', LIMITS.result, { singleLine: true }),
 };
 
 // The fields present in a body, validated. Unknown fields are ignored; a body that is not an object is refused.
@@ -131,6 +159,12 @@ function readFields(body) {
   const out = {};
   // context, activity and excerpt are read by readBody.
   for (const field of FIELDS) if (Object.prototype.hasOwnProperty.call(body, field)) out[field] = VALIDATORS[field](body[field]);
+  // parent_ref: the parent named by its external_ref, resolved to parent_id inside the transaction ('' or null: no parent).
+  if (Object.prototype.hasOwnProperty.call(body, 'parent_ref')) {
+    if (Object.prototype.hasOwnProperty.call(body, 'parent_id')) throw invalid('Give parent_id or parent_ref, not both');
+    const ref = text('parent_ref', LIMITS.externalRef, { singleLine: true })(body.parent_ref);
+    out.parent_id = ref === null ? null : { ref };
+  }
   return out;
 }
 
@@ -272,10 +306,22 @@ const TOKEN_SCOPES = Object.freeze(['market']);
 const scopesOf = row => String((row && row.scopes) || '').split(/\s+/).filter(scope => TOKEN_SCOPES.includes(scope));
 const tokenView = row => ({ id: row.id, name: row.name, created_at: row.created_at, last_used_at: row.last_used_at, revoked_at: row.revoked_at, market: scopesOf(row).includes('market') });
 
+// Schema 11: the tree and outcome columns of attention_items (db/index.js runs this at start; the service runs it too, for a database made
+// from an older schema.sql). parent_id refers to another item; deleting a parent that still has children is refused (the service answers 409
+// before the database would).
+function ensureTreeColumns(db) {
+  const columns = db.prepare('PRAGMA table_info(attention_items)').all().map(column => column.name);
+  if (!columns.includes('parent_id')) db.exec('ALTER TABLE attention_items ADD COLUMN parent_id INTEGER REFERENCES attention_items(id)');
+  if (!columns.includes('custom_status')) db.exec('ALTER TABLE attention_items ADD COLUMN custom_status TEXT');
+  if (!columns.includes('result')) db.exec('ALTER TABLE attention_items ADD COLUMN result TEXT');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_attention_items_parent ON attention_items (parent_id)');
+}
+
 function createAttentionService({ db, now = () => new Date() } = {}) {
   if (!db) throw new Error('createAttentionService needs a database');
   // attention_tokens.scopes was added after schema 9 shipped (db/index.js adds it at start; a database made from an older schema.sql gets it here).
   if (!db.prepare('PRAGMA table_info(attention_tokens)').all().some(column => column.name === 'scopes')) db.exec('ALTER TABLE attention_tokens ADD COLUMN scopes TEXT');
+  ensureTreeColumns(db);
   const listeners = new Set();
   const internalListeners = new Set();
   const stamp = () => now().toISOString();
@@ -318,9 +364,15 @@ function createAttentionService({ db, now = () => new Date() } = {}) {
     return rowToEvent(selectEvent.get(id));
   }
 
-  function list({ status, q, limit, includeDone = false } = {}) {
+  function list({ status, q, limit, includeDone = false, parent } = {}) {
     const where = [];
     const params = [];
+    if (parent !== undefined && parent !== null && parent !== '') {
+      const id = idValue(parent);
+      if (id === null) throw invalid('parent must be a task id');
+      where.push('parent_id = ?');
+      params.push(id);
+    }
     let statuses = null;
     if (status !== undefined && status !== null && status !== '') {
       statuses = (Array.isArray(status) ? status : String(status).split(',')).map(value => String(value).trim()).filter(Boolean);
@@ -381,9 +433,32 @@ function createAttentionService({ db, now = () => new Date() } = {}) {
     return item ? { item, events: events(item.id) } : null;
   }
 
+  // Inside a transaction: parent_ref ({ ref }) becomes the id of the item with that external_ref.
+  function resolveParent(fields) {
+    if (!fields.parent_id || typeof fields.parent_id !== 'object') return fields;
+    const parent = selectByRef.get(fields.parent_id.ref);
+    if (!parent) throw invalid('Unknown parent');
+    return { ...fields, parent_id: parent.id };
+  }
+
+  // Inside a transaction: the parent must exist and must not be the item itself or one of its descendants.
+  function checkParent(itemId, parent) {
+    if (parent === null || parent === undefined) return;
+    let row = selectItem.get(parent);
+    if (!row) throw invalid('Unknown parent');
+    const seen = new Set();
+    while (row && !seen.has(row.id)) {
+      if (row.id === itemId) throw invalid('Parent cycle');
+      seen.add(row.id);
+      row = row.parent_id === null || row.parent_id === undefined ? null : selectItem.get(row.parent_id);
+    }
+  }
+
   // Inside a transaction. fields: validated (readFields).
-  function insertItem({ fields, context, activity: entry }, actor, defaultSource) {
+  function insertItem({ fields: given, context, activity: entry }, actor, defaultSource) {
+    const fields = resolveParent(given);
     if (!fields.title) throw invalid('title cannot be empty');
+    checkParent(null, fields.parent_id);
     if (fields.external_ref && selectByRef.get(fields.external_ref)) {
       const existing = selectByRef.get(fields.external_ref);
       throw new AttentionError('EXTERNAL_REF_EXISTS', 'A task with this external_ref already exists', 409, { id: existing.id });
@@ -403,6 +478,9 @@ function createAttentionService({ db, now = () => new Date() } = {}) {
       link_url: fields.link_url ?? null,
       link_label: fields.link_label ?? null,
       meta: fields.meta ?? null,
+      parent_id: fields.parent_id ?? null,
+      custom_status: fields.custom_status ?? null,
+      result: fields.result ?? null,
       context: null,
       sort_order: order,
       created_at: at,
@@ -422,14 +500,16 @@ function createAttentionService({ db, now = () => new Date() } = {}) {
     return { kind: 'created', item, previous: null, event, activity: activityEvent };
   }
 
-  // Inside a transaction. Returns null when nothing changed.
-  function updateRow(before, { fields, context, activity: entry }, actor) {
+  // Inside a transaction. Returns null when nothing changed. extra: more keys for the event's data (a move's placement and reason).
+  function updateRow(before, { fields: given, context, activity: entry }, actor, extra = null) {
+    const fields = resolveParent(given);
     const changes = {};
     for (const [field, value] of Object.entries(fields)) {
       if (field === 'title' && value === null) throw invalid('title cannot be empty');
       if (field === 'source' && value === null) continue; // source cannot be emptied
       if (before[field] !== value) changes[field] = value;
     }
+    if (changes.parent_id !== undefined) checkParent(before.id, changes.parent_id);
     if (changes.external_ref) {
       const other = selectByRef.get(changes.external_ref);
       if (other && other.id !== before.id) throw new AttentionError('EXTERNAL_REF_EXISTS', 'A task with this external_ref already exists', 409, { id: other.id });
@@ -455,6 +535,7 @@ function createAttentionService({ db, now = () => new Date() } = {}) {
     const data = {};
     for (const field of Object.keys(changes)) if (FIELDS.includes(field)) data[field] = field === 'meta' ? item.meta : changes[field];
     if (changedKeys.length) data.context = changedKeys;
+    if (extra) Object.assign(data, extra);
     const event = writeEvent(before.id, at, actorOf(actor), statusChanged ? 'status' : 'updated', before.status, item.status, data);
     const activityEvent = entry ? writeEvent(before.id, at, actorOf(actor), 'activity', item.status, item.status, entry) : null;
     return { kind: 'updated', item, previous: rowToItem(before), event, activity: activityEvent };
@@ -497,6 +578,8 @@ function createAttentionService({ db, now = () => new Date() } = {}) {
     const change = db.transaction(() => {
       const before = selectItem.get(Number(id));
       if (!before) throw new AttentionError('NOT_FOUND', 'Task not found', 404);
+      const children = db.prepare('SELECT id FROM attention_items WHERE parent_id = ? ORDER BY id').all(before.id).map(row => row.id);
+      if (children.length) throw new AttentionError('HAS_CHILDREN', 'This task has subtasks; delete them or give them another parent first', 409, { children });
       db.prepare('DELETE FROM attention_items WHERE id = ?').run(before.id);
       const item = rowToItem(before);
       // The item's events go with it (ON DELETE CASCADE), so the deleted event is only published, not stored.
@@ -505,6 +588,115 @@ function createAttentionService({ db, now = () => new Date() } = {}) {
     })();
     emit(change);
     return true;
+  }
+
+  // The body of a move: exactly one of before / after (a task id) or position ('top' | 'bottom'); optional status and reason.
+  function readMove(body) {
+    if (!body || typeof body !== 'object' || Array.isArray(body)) throw invalid('The request body must be a JSON object');
+    const given = ['before', 'after', 'position'].filter(key => body[key] !== undefined && body[key] !== null && body[key] !== '');
+    if (given.length !== 1) throw invalid('Give exactly one of before, after or position');
+    const placement = {};
+    if (given[0] === 'position') {
+      if (body.position !== 'top' && body.position !== 'bottom') throw invalid("position must be 'top' or 'bottom'");
+      placement.position = body.position;
+    } else {
+      const target = idValue(body[given[0]]);
+      if (target === null) throw invalid(`${given[0]} must be a task id`);
+      placement[given[0]] = target;
+    }
+    const status = body.status === undefined || body.status === null || body.status === '' ? undefined : VALIDATORS.status(body.status);
+    const reason = text('reason', LIMITS.activityText, { singleLine: true })(body.reason);
+    return { placement, status, reason };
+  }
+
+  // The items of a group in display order.
+  function groupRows(group) {
+    const statuses = statusesOf(group);
+    return db.prepare(`SELECT * FROM attention_items WHERE status IN (${statuses.map(() => '?').join(',')}) ORDER BY sort_order DESC, id DESC`).all(...statuses);
+  }
+  // Depth-first: the item, then its descendants inside `rows` (children in display order). A child whose parent is not in `rows` (another
+  // group) is not reached: it is a top-level row of its own group.
+  function subtree(id, rows) {
+    const children = new Map();
+    for (const row of rows) {
+      if (row.parent_id === null || row.parent_id === undefined) continue;
+      if (!children.has(row.parent_id)) children.set(row.parent_id, []);
+      children.get(row.parent_id).push(row.id);
+    }
+    const out = [];
+    const seen = new Set();
+    const visit = node => {
+      if (seen.has(node)) return;
+      seen.add(node);
+      out.push(node);
+      for (const child of children.get(node) || []) visit(child);
+    };
+    visit(id);
+    return out;
+  }
+
+  // POST /:id/move. The item and its descendants in the group it ends up in are placed as one block; a status change and the placement are one
+  // transaction. The group keeps its own sort_order values, reassigned in the new order (made strictly decreasing first, so ties are
+  // renumbered), so only the items between the old and the new place change. The moved item gets an event (its data has sort_order, the status
+  // when it changed, move: the placement, and reason) and a new updated_at; the other items whose sort_order changed keep updated_at and get
+  // no event row. Every item whose sort_order or status changed is published as an 'updated' change with reorder: true (event null for the
+  // others). Returns { item, items: [every item whose sort_order changed] }.
+  function move(id, body, { actor } = {}) {
+    const request = readMove(body);
+    const result = db.transaction(() => {
+      const before = selectItem.get(Number(id));
+      if (!before) throw new AttentionError('NOT_FOUND', 'Task not found', 404);
+      const status = request.status || before.status;
+      const group = groupOf(status);
+      const rows = groupRows(group).filter(row => row.id !== before.id);
+      const members = [...rows, { ...before, status }];
+      const block = subtree(before.id, members);
+      const blockSet = new Set(block);
+      const rest = rows.filter(row => !blockSet.has(row.id)).map(row => row.id);
+      let at;
+      if (request.placement.position) {
+        at = request.placement.position === 'top' ? 0 : rest.length;
+      } else {
+        const targetId = request.placement.before || request.placement.after;
+        const target = selectItem.get(targetId);
+        if (!target) throw invalid('Unknown target');
+        if (target.id === before.id) throw invalid('A task cannot be moved next to itself');
+        if (groupOf(target.status) !== group) throw invalid('Target is in another group');
+        if (blockSet.has(target.id)) throw invalid('A task cannot be moved next to its own subtask');
+        at = rest.indexOf(target.id);
+        if (request.placement.after) {
+          // After the target and the descendants that follow it.
+          const following = new Set(subtree(target.id, rows.filter(row => !blockSet.has(row.id))));
+          at += 1;
+          while (at < rest.length && following.has(rest[at])) at += 1;
+        }
+      }
+      const order = [...rest.slice(0, at), ...block, ...rest.slice(at)];
+      // The group's values, highest first, made strictly decreasing.
+      const values = members.map(row => row.sort_order).sort((a, b) => b - a);
+      for (let i = 1; i < values.length; i += 1) if (values[i] >= values[i - 1]) values[i] = values[i - 1] - 1;
+      const byId = new Map(members.map(row => [row.id, row]));
+      const moved = [];
+      const ownValue = values[order.indexOf(before.id)];
+      const placementData = { move: request.placement, ...(request.reason ? { reason: request.reason } : {}) };
+      const fields = { sort_order: ownValue, ...(request.status ? { status: request.status } : {}) };
+      const own = updateRow(before, { fields, context: undefined, activity: null }, actor, placementData);
+      const others = [];
+      order.forEach((itemId, index) => {
+        if (itemId === before.id) return;
+        const row = byId.get(itemId);
+        if (row.sort_order === values[index]) return;
+        db.prepare('UPDATE attention_items SET sort_order = ? WHERE id = ?').run(values[index], itemId);
+        const item = get(itemId);
+        others.push({ kind: 'updated', item, previous: rowToItem(row), event: null, reorder: true });
+        moved.push(item);
+      });
+      if (own && own.previous.sort_order !== own.item.sort_order) moved.unshift(own.item);
+      return { own, others, item: get(before.id), moved };
+    })();
+    if (result.own) emit({ ...result.own, reorder: true });
+    for (const change of result.others) emit(change);
+    return { item: result.item, items: result.moved };
   }
 
   // Tokens
@@ -627,7 +819,7 @@ function createAttentionService({ db, now = () => new Date() } = {}) {
     return { url: active.url, token: created.token, name: created.name, id: created.id };
   }
 
-  return { list, get, sourceStats, getByRef, events, detail, detailByRef, create, update, upsertByRef, remove, onChange, onChangeInternal, listTokens, createToken, revokeToken, verifyToken, tokenActive,
+  return { list, get, sourceStats, getByRef, events, detail, detailByRef, create, update, upsertByRef, remove, move, onChange, onChangeInternal, listTokens, createToken, revokeToken, verifyToken, tokenActive,
     issueTerminalToken, revokeTerminalToken, terminalTokenCount, createPairing, pairingStatus, cancelPairing, claimPairing, getGuide: guide.get, saveGuide: guide.save };
 }
 
@@ -639,7 +831,7 @@ function defaultService() {
 }
 
 module.exports = {
-  createAttentionService, defaultService, AttentionError, PAIRING, TOKEN_SCOPES, ACTIVITY_KINDS, PENDING_KINDS, STATUSES, PRIORITIES, FINISHED, LIMITS, TOKEN_PATTERN, hashToken,
+  createAttentionService, defaultService, ensureTreeColumns, groupOf, GROUPS, AttentionError, PAIRING, TOKEN_SCOPES, ACTIVITY_KINDS, PENDING_KINDS, STATUSES, PRIORITIES, FINISHED, LIMITS, TOKEN_PATTERN, hashToken,
   // In-process subscribers (notifiers) of this server's list.
   onChange: fn => defaultService().onChange(fn),
 };

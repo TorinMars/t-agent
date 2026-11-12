@@ -154,7 +154,8 @@ async function pick(page, name) {
       const { context, page } = await openPage(browser, { viewport: { width: 1440, height: 900 }, phone: false });
       await page.locator('#h5-columns-open').waitFor();
       await page.locator('#h5-columns-open').click();
-      await page.waitForFunction(() => document.querySelectorAll('#h5-columns iframe').length === 3
+      // First use at 1440px: two columns (each at least an 80-column terminal wide; columns.mjs minColumnWidth).
+      await page.waitForFunction(() => document.querySelectorAll('#h5-columns iframe').length === 2
         && [...document.querySelectorAll('#h5-columns iframe')].every(el => el.contentDocument && el.contentDocument.getElementById('h5-app') && el.contentWindow.H5Pane));
       const ids = await page.evaluate(() => [...document.querySelectorAll('#h5-columns iframe')].map(el => el.dataset.paneId));
       const frame = id => page.frames().find(item => item.url().endsWith(`/h5?pane=${id}`));

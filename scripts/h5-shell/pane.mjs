@@ -8,8 +8,13 @@
 //   on `{ type: 't-agent-pane', event: 'forget' }` from its parent window on this origin (answered with `forgotten`); `{ ..., event: 'open', sourceKey,
 //   taskId, terminalId?, conversationId? }` from there opens that task and terminal as a tap in the list would, or that agent chat as a `?openChat=` link
 //   would (h5.js `ui.actions.paneOpen`);
+// - a sideways wheel or trackpad swipe (or Shift+wheel) that nothing inside the pane can scroll is posted as `scroll-x` ({ dx }) and the top page
+//   scrolls its strip: the gesture never reaches xterm, and a vertical one is never touched; Ctrl+Alt+Left / Right (Ctrl+Option on a Mac) is posted as
+//   `step` ({ step: -1 | 1 }) and never reaches the terminal (see "Multi-column view" in DESIGN.md);
 // - the page takes no focus by itself until the person pressed a pointer or a key in this pane (`H5Pane.engaged()`): otherwise every column would pull the
 //   focus into its frame as it loads.
+import { columnStep, sidewaysDelta } from './columns.mjs';
+
 export const PANE_ID = /^[a-z0-9]{1,16}$/;
 export const PANE_MESSAGE = 't-agent-pane';
 export const paneKeyPrefix = id => `pane:${id}:`;
@@ -38,6 +43,28 @@ export function forgetPaneKeys(id, stores = [globalThis.localStorage, globalThis
     } catch { /* storage blocked: nothing was kept */ }
   }
   return removed;
+}
+
+// Parts of the page that keep every wheel event for themselves (an editor with its own scrollbars, the mind map's canvas, an open dialog).
+const OWN_WHEEL = '.monaco-editor, #h5-mindmap, .MuiModal-root, dialog[open]';
+// Whether something under `target` can still scroll sideways by `dx` (it takes the gesture, not the strip): the wide terminal (moved with a transform
+// on .xterm-screen inside `.h5-xterm.h5-wide`, public/js/terminal-gestures.js) until its edge, and any element that scrolls sideways itself.
+export function scrollsInside(target, dx, win = window) {
+  for (let el = target && target.nodeType === 1 ? target : target && target.parentElement; el && el !== win.document.documentElement; el = el.parentElement) {
+    if (el.matches(OWN_WHEEL)) return true;
+    if (el.classList.contains('h5-xterm') && el.classList.contains('h5-wide')) {
+      const screen = el.querySelector('.xterm-screen');
+      if (!screen) return false;
+      const max = screen.offsetWidth - el.clientWidth;
+      const offset = el.getBoundingClientRect().left - screen.getBoundingClientRect().left;
+      return dx > 0 ? offset < max - 0.5 : offset > 0.5;
+    }
+    if (el.scrollWidth > el.clientWidth + 1) {
+      const overflow = win.getComputedStyle(el).overflowX;
+      if ((overflow === 'auto' || overflow === 'scroll') && (dx > 0 ? el.scrollLeft + el.clientWidth < el.scrollWidth - 1 : el.scrollLeft > 0)) return true;
+    }
+  }
+  return false;
 }
 
 // Starts pane mode for the pane `id` (from detectPane): sets `window.H5Pane` for the other scripts of the page and talks to the parent.
@@ -77,6 +104,24 @@ export function startPane(ui, id, { win = window, doc = document } = {}) {
   doc.addEventListener('keydown', engage, true);
   doc.addEventListener('pointerdown', focused, true);
   win.addEventListener('focus', () => { if (engaged) focused(); }); // a focus the page took by itself is not the person's
+
+  // Sideways scrolling of the strip from inside the pane, before anything in the page (capture on the window): passive: false, since a gesture the
+  // strip takes is cancelled here so xterm never scrolls or reports it.
+  win.addEventListener('wheel', event => {
+    const dx = sidewaysDelta(event, win.innerWidth);
+    if (!dx || scrollsInside(event.target, dx, win)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    post('scroll-x', { dx });
+  }, { capture: true, passive: false });
+  // Ctrl+Alt+Left / Right: the previous / next column, never a key for the terminal (xterm would send it as a word move).
+  win.addEventListener('keydown', event => {
+    const step = event.isComposing ? 0 : columnStep(event);
+    if (!step) return;
+    event.preventDefault();
+    event.stopPropagation();
+    post('step', { step }); // a held key moves on, one column per repeat
+  }, true);
 
   win.addEventListener('message', event => {
     if (event.source !== win.parent || event.origin !== win.location.origin) return;

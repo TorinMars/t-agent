@@ -1,11 +1,15 @@
 // The multi-column view of the page (scripts/h5-shell/Columns.jsx, columns.mjs), in real Chromium with mocked servers, at 1440x900 and 2000x1150:
 // the header switch shows the default number of iframes of the page in pane mode (`/h5?pane=<id>`) and goes back to the normal view (the same
-// terminal again); a reload keeps the mode, the order and the ids; add and close a column (the last one cannot be closed, at most 6, a closed pane
-// gets 'forget'); sideways scrolling with snapping when the columns do not fit; focus by a click into a column (none taken on load); pane messages
+// terminal again); a reload keeps the mode, the order and the ids; add and close a column (the last one cannot be closed, at most 12, a closed pane
+// gets 'forget'); sideways scrolling when the columns do not fit; focus by a click into a column (none taken on load); pane messages
 // from a foreign origin, from the top page itself or about another column are ignored; the top page holds no terminal socket while the strip is
 // shown; the switch is not offered below the wide breakpoint, on a phone, or on a pane page. While the strip is shown, a ?openChat= link leaves the
 // hidden normal view alone and sends `open` to the focused column (else the first).
-// H5_SHOT_DIR=<dir> saves screenshots of the header switch and of the strip at 2000x1150 there.
+// Scrolling (1440x900, 5 columns): each column keeps the minimum width of an 80-column terminal (the pane's terminal gets at least 80 columns), the
+// strip overflows with its own scrollbar and edge shadows only where columns are hidden; a sideways wheel inside a pane scrolls the strip and a
+// vertical one does not; Shift+wheel over a column's bar scrolls it; Ctrl+Alt+Right inside a pane moves the focus and scrolls, and never reaches the
+// terminal; a new column is scrolled into view; 12 columns, not 13; with reduced motion the strip scrolls at once.
+// H5_SHOT_DIR=<dir> saves screenshots of the header switch, of the strip at 2000x1150 and of 5 overflowing columns at 1440x900 (2x) there.
 const { chromium } = require('playwright');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -23,8 +27,8 @@ const TERMINALS = { 1: [{ terminal_id: 'default', title: 'Terminal 1' }], 2: [{ 
 const REMEMBERED = { 'h5-task:local': '1', 'h5-terminal:local:1': 'default' };
 const pageErrors = [];
 
-async function openPage(browser, { viewport, touch = false, storage = REMEMBERED, url = '/h5' }) {
-  const context = await browser.newContext({ viewport, ...(touch ? { isMobile: true, hasTouch: true } : {}) });
+async function openPage(browser, { viewport, touch = false, storage = REMEMBERED, url = '/h5', scale = 1, reducedMotion = 'no-preference' }) {
+  const context = await browser.newContext({ viewport, deviceScaleFactor: scale, reducedMotion, ...(touch ? { isMobile: true, hasTouch: true } : {}) });
   const page = await context.newPage();
   page.on('pageerror', error => pageErrors.push(error.message));
   // The remembered storage is written once, by the top page (not again on a reload, and not by the columns).
@@ -86,6 +90,42 @@ const frameIds = page => page.evaluate(() => [...document.querySelectorAll('#h5-
 const frameSrcs = page => page.evaluate(() => [...document.querySelectorAll('#h5-columns iframe')].map(el => el.getAttribute('src')));
 const stored = page => page.evaluate(() => JSON.parse(localStorage.getItem('h5-columns') || 'null'));
 const opens = page => page.evaluate(() => (window.paneInbox || []).filter(([, data]) => data.event === 'open'));
+// The minimum column width the page should use: an 80-column terminal at 13px Menlo (pointer mode), the terminal's inset (8px), the column border
+// (1px) and xterm's vertical scrollbar (0 with overlay scrollbars), never below 480.
+const expectedMinWidth = page => page.evaluate(() => {
+  const context = document.createElement('canvas').getContext('2d');
+  context.font = '13px Menlo, Monaco, "Courier New", monospace';
+  const char = context.measureText('W'.repeat(32)).width / 32;
+  const probe = document.createElement('div');
+  probe.style.cssText = 'position:absolute;width:100px;height:100px;overflow-y:scroll';
+  document.body.append(probe);
+  const scrollbar = probe.offsetWidth - probe.clientWidth;
+  probe.remove();
+  return Math.max(480, Math.ceil(80 * char + 9 + scrollbar));
+});
+const stripState = page => page.evaluate(() => {
+  const strip = document.getElementById('h5-columns-strip');
+  const box = strip.getBoundingClientRect();
+  const focused = document.querySelector('.h5-column[data-focused]');
+  return {
+    left: strip.scrollLeft, max: strip.scrollWidth - strip.clientWidth, scroll: strip.scrollWidth, client: strip.clientWidth,
+    overflow: strip.hasAttribute('data-overflow'), scrollClass: strip.classList.contains('h5-columns-scroll'),
+    edges: [...document.querySelectorAll('.h5-columns-edge')].filter(el => el.hasAttribute('data-shown') && getComputedStyle(el).opacity === '1').map(el => el.dataset.side),
+    widths: [...strip.querySelectorAll('.h5-column')].map(el => el.getBoundingClientRect().width),
+    focus: focused ? focused.dataset.paneId : null,
+    focusWhole: focused ? (() => { const r = focused.getBoundingClientRect(); return r.left >= box.left - 1 && r.right <= box.right + 1; })() : null,
+    active: document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.paneId || null : null,
+  };
+});
+// Waits until exactly these edge shadows are shown (after their short fade), then returns them.
+async function edgesShown(page, sides) {
+  const want = [...sides].sort().join(',');
+  try {
+    await page.waitForFunction(w => [...document.querySelectorAll('.h5-columns-edge')].filter(el => el.hasAttribute('data-shown') && getComputedStyle(el).opacity === '1').map(el => el.dataset.side).sort().join(',') === w
+      && [...document.querySelectorAll('.h5-columns-edge:not([data-shown])')].every(el => getComputedStyle(el).opacity === '0'), want, { timeout: 3000 });
+  } catch { /* the assertion below reports what is shown */ }
+  return (await stripState(page)).edges.sort();
+}
 const paneFrame = (page, id) => page.frames().find(frame => frame.url().endsWith(`/h5?pane=${id}`));
 async function waitFrames(page, count) {
   await page.waitForFunction(n => document.querySelectorAll('#h5-columns .h5-column').length === n && [...document.querySelectorAll('#h5-columns .h5-column')].every(el => getComputedStyle(el).display !== 'none'), count, { timeout: 5000 });
@@ -96,7 +136,8 @@ async function shownTerminal(page, name) {
 }
 
 (async () => {
-  const browser = await chromium.launch({ headless: true, ...(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {}) });
+  // Scrollbars are drawn (headless Chromium hides them by default), so the strip's own scrollbar takes its place as on a real screen.
+  const browser = await chromium.launch({ headless: true, ignoreDefaultArgs: ['--hide-scrollbars'], ...(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {}) });
   try {
     // ── 1440x900: the whole cycle ──
     {
@@ -109,8 +150,17 @@ async function shownTerminal(page, name) {
       assert.equal(await open.getAttribute('aria-pressed'), 'false');
       assert.equal(await page.locator('#h5-columns').count(), 0, `${label}: the normal view at first`);
 
-      // On: floor(1440 / 420) = 3 columns, each an iframe of /h5?pane=<id>; the page under it is hidden and holds no terminal socket.
+      // On: floor(1440 / min width) = 2 columns (the min width fits an 80-column terminal, about 636px), each an iframe of /h5?pane=<id>, sharing
+      // the width evenly (2 x 720) with no sideways scrolling; the page under it is hidden and holds no terminal socket.
       await open.click();
+      await waitFrames(page, 2);
+      const minWidth = await expectedMinWidth(page);
+      const two = await page.evaluate(() => { const strip = document.getElementById('h5-columns-strip'); return { scroll: strip.scrollWidth, client: strip.clientWidth, widths: [...document.querySelectorAll('.h5-column')].map(el => el.getBoundingClientRect().width), overflow: strip.hasAttribute('data-overflow') }; });
+      assert.ok(two.scroll <= two.client + 1 && !two.overflow, `${label}: two columns fit (${JSON.stringify(two)})`);
+      assert.ok(two.widths.every(w => Math.abs(w - 720) <= 2), `${label}: each 720px (${two.widths})`);
+      assert.deepEqual(await edgesShown(page, []), [], `${label}: no edge shadow when nothing is hidden`);
+      // A third column does not fit: the strip scrolls sideways instead of squeezing, and the new column was scrolled into view.
+      await page.locator('#h5-columns-add').click();
       await waitFrames(page, 3);
       const ids = await frameIds(page);
       assert.equal(new Set(ids).size, 3, `${label}: three distinct ids (${ids})`);
@@ -123,16 +173,18 @@ async function shownTerminal(page, name) {
       assert.equal(await page.locator('#h5-columns-toggle').getAttribute('title'), 'Multi-column view');
       assert.equal(await page.locator('#h5-columns-add').getAttribute('aria-label'), 'Add column');
       assert.equal(await page.locator('.h5-column-close').first().getAttribute('title'), 'Close column');
-      // The columns share the width evenly (3 x 480) with no sideways scrolling, and the close strip sits above each pane, not over it.
+      // The close strip sits above each pane, not over it.
       const fit = await page.evaluate(() => {
         const strip = document.getElementById('h5-columns-strip');
         const column = document.querySelector('.h5-column');
-        return { scroll: strip.scrollWidth, client: strip.clientWidth, width: column.getBoundingClientRect().width, bar: column.querySelector('.h5-column-bar').getBoundingClientRect().bottom, frame: column.querySelector('iframe').getBoundingClientRect().top, snap: getComputedStyle(strip).scrollSnapType };
+        return { scroll: strip.scrollWidth, client: strip.clientWidth, left: strip.scrollLeft, width: column.getBoundingClientRect().width, bar: column.querySelector('.h5-column-bar').getBoundingClientRect().bottom, frame: column.querySelector('iframe').getBoundingClientRect().top, snap: getComputedStyle(strip).scrollSnapType };
       });
-      assert.ok(fit.scroll <= fit.client + 1, `${label}: three columns fit (${JSON.stringify(fit)})`);
-      assert.ok(Math.abs(fit.width - 480) <= 2, `${label}: each column is 480px (${fit.width})`);
+      assert.ok(fit.scroll > fit.client + 50, `${label}: three columns do not fit: the strip scrolls (${JSON.stringify(fit)})`);
+      assert.ok(Math.abs(fit.width - minWidth) <= 1, `${label}: at their minimum width ${minWidth} (${fit.width})`);
+      await page.waitForFunction(() => { const strip = document.getElementById('h5-columns-strip'); return strip.scrollLeft >= strip.scrollWidth - strip.clientWidth - 1; }, null, { timeout: 3000 });
       assert.ok(fit.bar <= fit.frame + 0.5, `${label}: the close strip is above the pane (${JSON.stringify(fit)})`);
-      assert.match(fit.snap, /x mandatory/);
+      assert.equal(fit.snap, 'none', `${label}: no snapping (a small sideways scroll stays where it is)`);
+      await page.evaluate(() => document.getElementById('h5-columns-strip').scrollTo({ left: 0 }));
       // No focus is taken on load by the top page: it calls no focus on an iframe. (The page inside each iframe is today the normal page, which
       // focuses its terminal when it shows one; pane mode must not do that on load. Then no column is [data-focused] until it is clicked.)
       assert.equal(await page.evaluate(() => window.frameFocusCalls), 0, `${label}: the top page focuses no column`);
@@ -150,8 +202,10 @@ async function shownTerminal(page, name) {
       assert.equal(await page.locator('.h5-column[data-focused] .h5-column-outline').count(), 1, `${label}: the focused column has its outline`);
       assert.equal(await page.evaluate(() => document.activeElement && document.activeElement.dataset.paneId), ids[1], `${label}: its iframe has the focus`);
       b = await box(2);
-      await page.mouse.click(b.x + b.width / 2, b.y + 120);
+      await page.mouse.click(b.x + 60, b.y + 120); // the third column is partly hidden: a click on what shows of it focuses it
       await page.waitForFunction(id => { const el = document.querySelector('.h5-column[data-focused]'); return el && el.dataset.paneId === id; }, ids[2], { timeout: 3000 });
+      // and scrolls it whole into view.
+      await page.waitForFunction(() => { const strip = document.getElementById('h5-columns-strip'); const box = document.querySelector('.h5-column[data-focused]').getBoundingClientRect(); return box.right <= strip.getBoundingClientRect().right + 1; }, null, { timeout: 3000 });
       assert.equal(await page.locator('.h5-column[data-focused]').count(), 1, `${label}: one focused column`);
 
       // Messages: a pane about itself is read; one about another column, one from the top page and one from a foreign origin are ignored.
@@ -189,6 +243,7 @@ async function shownTerminal(page, name) {
       assert.equal(await page.evaluate(() => document.querySelector('.h5-column[data-focused]').dataset.paneId), ids[0], `${label}: and its focus`);
 
       // Reload: the strip comes back with the same ids in the same order, and the top page opens no terminal socket at all (not even the early one).
+      await page.evaluate(() => document.getElementById('h5-columns-strip').scrollTo({ left: 0 }));
       await page.reload();
       await waitFrames(page, 3);
       assert.deepEqual(await frameIds(page), ids, `${label}: a reload keeps mode, order and ids`);
@@ -196,7 +251,8 @@ async function shownTerminal(page, name) {
       assert.equal(await terminalSocketCount(page), 0, `${label}: after the reload the top page never opened a terminal socket`);
       assert.equal(await page.evaluate(() => window.frameFocusCalls), 0, `${label}: no focus taken by the top page after the reload`);
 
-      // Add: a new id at the end. Four columns (4 x 380 > 1440) scroll sideways and snap to column edges.
+      // Add: a new id at the end, scrolled into view.
+      await page.evaluate(() => document.getElementById('h5-columns-strip').scrollTo({ left: 0 }));
       await page.locator('#h5-columns-add').click();
       await waitFrames(page, 4);
       const four = await frameIds(page);
@@ -204,32 +260,24 @@ async function shownTerminal(page, name) {
       assert.equal(ids.includes(four[3]), false, `${label}: a new column gets a new id`);
       assert.deepEqual((await stored(page)).ids, four);
       const scroll = await page.evaluate(() => { const strip = document.getElementById('h5-columns-strip'); return { scroll: strip.scrollWidth, client: strip.clientWidth, left: strip.scrollLeft, width: document.querySelector('.h5-column').getBoundingClientRect().width }; });
-      assert.ok(scroll.scroll >= 4 * 380 && scroll.scroll > scroll.client + 50, `${label}: four columns do not fit: the strip scrolls sideways (${JSON.stringify(scroll)})`);
-      assert.ok(Math.abs(scroll.width - 380) <= 1, `${label}: at their minimum width (${scroll.width})`);
-      assert.ok(scroll.left > 0, `${label}: the new column was scrolled into view (${scroll.left})`);
-      // At most 6.
+      assert.ok(scroll.scroll >= 4 * minWidth && scroll.scroll > scroll.client + 50, `${label}: four columns do not fit: the strip scrolls sideways (${JSON.stringify(scroll)})`);
+      assert.ok(Math.abs(scroll.width - minWidth) <= 1, `${label}: at their minimum width (${scroll.width})`);
+      await page.waitForFunction(() => { const strip = document.getElementById('h5-columns-strip'); return strip.scrollLeft >= strip.scrollWidth - strip.clientWidth - 1; }, null, { timeout: 3000 });
+      // Six columns for what follows.
       await page.locator('#h5-columns-add').click();
       await page.locator('#h5-columns-add').click();
       await waitFrames(page, 6);
-      assert.equal(await page.locator('#h5-columns-add').isDisabled(), true, `${label}: no seventh column`);
-      await page.locator('#h5-columns-add').click({ force: true });
-      await page.waitForTimeout(200);
-      assert.equal((await frameIds(page)).length, 6);
       const six = await frameIds(page);
-      // Six columns (6 x 380 = 2280 in 1440): a sideways wheel over the strip moves it, and it rests on a column edge (scroll snapping).
+      await page.waitForFunction(() => { const strip = document.getElementById('h5-columns-strip'); return strip.scrollLeft >= strip.scrollWidth - strip.clientWidth - 1; }, null, { timeout: 3000 }); // the new one's smooth scroll ended
+      // A sideways wheel over a column's bar moves the strip and it stays where it was moved (no snapping back).
       await page.evaluate(() => document.getElementById('h5-columns-strip').scrollTo({ left: 0 }));
       await page.waitForTimeout(300);
       const bar = await page.locator('.h5-column-bar').first().boundingBox();
       await page.mouse.move(bar.x + 60, bar.y + bar.height / 2);
-      await page.mouse.wheel(300, 0); // nearer to the edge at 380 than to 0: mandatory snapping takes the nearest edge
+      await page.mouse.wheel(300, 0);
       await page.waitForTimeout(900);
-      const snapped = await page.evaluate(() => {
-        const strip = document.getElementById('h5-columns-strip');
-        const edges = [...strip.querySelectorAll('.h5-column')].map(el => el.offsetLeft - strip.offsetLeft);
-        return { left: strip.scrollLeft, max: strip.scrollWidth - strip.clientWidth, edges };
-      });
-      assert.ok(snapped.left > 0, `${label}: a sideways wheel scrolls the strip (${JSON.stringify(snapped)})`);
-      assert.ok(Math.abs(snapped.left - 380) <= 1, `${label}: and it rests on a column edge (${JSON.stringify(snapped)})`);
+      const moved = await page.evaluate(() => document.getElementById('h5-columns-strip').scrollLeft);
+      assert.ok(Math.abs(moved - 300) <= 2, `${label}: a sideways wheel over a bar scrolls the strip by its amount (${moved})`);
 
       // Close the second column: it gets 'forget' first; the other iframes stay the same elements (not reloaded); the id is forgotten.
       await page.evaluate(() => { window.forgets = []; document.querySelectorAll('#h5-columns iframe').forEach(el => { el.marker = el.dataset.paneId; }); });
@@ -285,26 +333,164 @@ async function shownTerminal(page, name) {
       await context.close();
     }
 
-    // ── 2000x1150: first use opens 4 columns that share the width; screenshot ──
+    // ── 1440x900, five columns: minimum width, scrollbar, edge shadows, sideways scrolling from inside a pane, keys, 12 at most ──
+    {
+      const label = 'scroll 1440x900';
+      const ids5 = ['s1', 's2', 's3', 's4', 's5'];
+      const storage = { ...REMEMBERED, 'h5-columns': JSON.stringify({ on: true, ids: ids5 }) };
+      for (const id of ids5) { storage[`pane:${id}:h5-task:local`] = '1'; storage[`pane:${id}:h5-terminal:local:1`] = 'default'; }
+      const { context, page } = await openPage(browser, { viewport: { width: 1440, height: 900 }, storage, scale: SHOTS ? 2 : 1 });
+      await waitFrames(page, 5);
+      await page.waitForFunction(() => [...document.querySelectorAll('#h5-columns iframe')].every(el => el.contentDocument && el.contentDocument.getElementById('h5-app')), null, { timeout: 10000 });
+      const minWidth = await expectedMinWidth(page);
+      console.log(`${label}: minimum column width ${minWidth}px`);
+      assert.ok(minWidth >= 480 && minWidth < 900, `${label}: a plausible minimum width (${minWidth})`);
+      let st = await stripState(page);
+      assert.ok(st.widths.every(w => Math.abs(w - minWidth) <= 1), `${label}: no column is squeezed below ${minWidth} (${st.widths})`);
+      assert.ok(st.scroll > st.client && st.scroll >= 5 * minWidth - 2, `${label}: the strip overflows (${JSON.stringify(st)})`);
+      assert.equal(st.overflow, true, `${label}: data-overflow`);
+      assert.equal(st.scrollClass, true, `${label}: the strip has its scrollbar class`);
+      const bar = await page.evaluate(() => { const strip = document.getElementById('h5-columns-strip'); return strip.offsetHeight - strip.clientHeight; });
+      assert.equal(bar, 10, `${label}: the strip draws its own 10px scrollbar, not an overlay one (${bar})`);
+      assert.deepEqual(await edgesShown(page, ['right']), ['right'], `${label}: at the start only the right edge shadow`);
+      // The pane's terminal is sized to at least 80 columns (its resize message).
+      const paneCols = await page.waitForFunction(() => {
+        const win = document.querySelector('#h5-columns iframe[data-pane-id="s1"]').contentWindow;
+        const sizes = (win.sockets || []).flatMap(s => s.sent).map(text => { try { return JSON.parse(text); } catch { return null; } }).filter(m => m && m.type === 'resize');
+        return sizes.length ? sizes[sizes.length - 1].cols : 0;
+      }, null, { timeout: 10000 });
+      console.log(`${label}: the first pane's terminal has ${await paneCols.jsonValue()} columns`);
+      assert.ok(await paneCols.jsonValue() >= 80, `${label}: an 80-column terminal fits a column (${await paneCols.jsonValue()})`);
+
+      // A sideways wheel inside the first pane (over its terminal) scrolls the strip; xterm does not see it.
+      const frame1 = await page.locator('#h5-columns iframe[data-pane-id="s1"]').boundingBox();
+      await page.mouse.move(frame1.x + frame1.width / 2, frame1.y + frame1.height / 2);
+      // (At a device scale of 2 the browser reports half of Playwright's delta: the pane forwards what it got.)
+      await paneFrame(page, 's1').evaluate(() => { window.wheels = []; window.addEventListener('wheel', event => window.wheels.push([event.deltaX, event.defaultPrevented]), true); }); // after the pane's own listener, same node and phase
+      await page.mouse.wheel(250, 0);
+      await page.waitForFunction(() => document.getElementById('h5-columns-strip').scrollLeft >= 100, null, { timeout: 3000 });
+      st = await stripState(page);
+      const seen = await paneFrame(page, 's1').evaluate(() => window.wheels);
+      assert.equal(seen.length, 1, `${label}: one wheel event in the pane`);
+      assert.ok(Math.abs(st.left - seen[0][0]) <= 2, `${label}: the strip moved by the wheel's amount (${st.left}, ${JSON.stringify(seen)})`);
+      assert.equal(seen[0][1], true, `${label}: and the pane cancelled it (xterm and the browser do not act on it)`);
+      assert.deepEqual(await edgesShown(page, ['left', 'right']), ['left', 'right'], `${label}: in the middle both edge shadows`);
+      // A vertical wheel there does not move the strip.
+      await page.evaluate(() => document.getElementById('h5-columns-strip').scrollTo({ left: 0 }));
+      await page.waitForTimeout(100);
+      await page.mouse.move(frame1.x + frame1.width / 2, frame1.y + frame1.height / 2);
+      await page.mouse.wheel(0, 300);
+      await page.waitForTimeout(500);
+      assert.equal((await stripState(page)).left, 0, `${label}: a vertical wheel inside a pane leaves the strip alone`);
+      // Shift+wheel over a column's bar scrolls the strip.
+      const bar1 = await page.locator('.h5-column[data-pane-id="s1"] .h5-column-bar').boundingBox();
+      await page.mouse.move(bar1.x + 60, bar1.y + bar1.height / 2);
+      await page.keyboard.down('Shift');
+      await page.mouse.wheel(0, 200);
+      await page.keyboard.up('Shift');
+      await page.waitForFunction(() => document.getElementById('h5-columns-strip').scrollLeft >= 50, null, { timeout: 3000 });
+      // At the end: only the left shadow.
+      await page.evaluate(() => { const strip = document.getElementById('h5-columns-strip'); strip.scrollTo({ left: strip.scrollWidth }); });
+      assert.deepEqual(await edgesShown(page, ['left']), ['left'], `${label}: at the end only the left edge shadow`);
+
+      // Ctrl+Alt+Right inside a pane: the focus moves to the next column, into its frame, and it is scrolled whole into view; the key never
+      // reaches the first pane's terminal.
+      await page.evaluate(() => document.getElementById('h5-columns-strip').scrollTo({ left: 0 }));
+      await page.waitForTimeout(200);
+      await page.mouse.click(frame1.x + frame1.width / 2, frame1.y + frame1.height / 2);
+      await page.waitForFunction(() => { const el = document.querySelector('.h5-column[data-focused]'); return el && el.dataset.paneId === 's1'; }, null, { timeout: 3000 });
+      const pane1 = paneFrame(page, 's1');
+      const sentBefore = await pane1.evaluate(() => window.sockets.flatMap(s => s.sent).filter(text => !text.startsWith('{')).length);
+      await page.keyboard.press('Control+Alt+ArrowRight');
+      await page.waitForFunction(() => { const el = document.querySelector('.h5-column[data-focused]'); return el && el.dataset.paneId === 's2'; }, null, { timeout: 3000 });
+      await page.keyboard.press('Control+Alt+ArrowRight');
+      await page.waitForFunction(() => { const el = document.querySelector('.h5-column[data-focused]'); return el && el.dataset.paneId === 's3'; }, null, { timeout: 3000 });
+      await page.waitForFunction(() => { const strip = document.getElementById('h5-columns-strip'); const r = document.querySelector('.h5-column[data-focused]').getBoundingClientRect(); return r.right <= strip.getBoundingClientRect().right + 1; }, null, { timeout: 3000 });
+      st = await stripState(page);
+      assert.equal(st.focusWhole, true, `${label}: the focused third column is whole in view (${JSON.stringify(st)})`);
+      assert.ok(st.left > 0, `${label}: the strip scrolled to it`);
+      assert.equal(st.active, 's3', `${label}: its frame has the focus`);
+      assert.equal(await pane1.evaluate(() => window.sockets.flatMap(s => s.sent).filter(text => !text.startsWith('{')).length), sentBefore, `${label}: the key never reached the first pane's terminal`);
+      // From inside the third pane (the focus is in its frame now) and from the top page: back to the second.
+      await page.keyboard.press('Control+Alt+ArrowLeft');
+      await page.waitForFunction(() => { const el = document.querySelector('.h5-column[data-focused]'); return el && el.dataset.paneId === 's2'; }, null, { timeout: 3000 });
+      await page.locator('#h5-columns-add').focus();
+      await page.keyboard.press('Control+Alt+ArrowLeft');
+      await page.waitForFunction(() => { const el = document.querySelector('.h5-column[data-focused]'); return el && el.dataset.paneId === 's1'; }, null, { timeout: 3000 });
+      await page.waitForFunction(() => document.getElementById('h5-columns-strip').scrollLeft <= 1, null, { timeout: 3000 });
+
+      if (SHOTS) {
+        await page.evaluate(() => document.getElementById('h5-columns-strip').scrollTo({ left: 700 }));
+        await page.waitForTimeout(800);
+        fs.mkdirSync(SHOTS, { recursive: true });
+        await page.screenshot({ path: path.join(SHOTS, 'columns-scroll-1440x900.png') });
+        await page.evaluate(() => document.getElementById('h5-columns-strip').scrollTo({ left: 0 }));
+        await page.waitForTimeout(500);
+        await page.screenshot({ path: path.join(SHOTS, 'columns-scroll-start-1440x900.png') });
+      }
+
+      // Adding a column scrolls it whole into view, smoothly (not in the same frame).
+      await page.evaluate(() => document.getElementById('h5-columns-strip').scrollTo({ left: 0 }));
+      await page.waitForTimeout(200);
+      await page.locator('#h5-columns-add').click();
+      await waitFrames(page, 6);
+      await page.waitForFunction(() => { const strip = document.getElementById('h5-columns-strip'); const last = [...strip.querySelectorAll('.h5-column')].at(-1).getBoundingClientRect(); const box = strip.getBoundingClientRect(); return last.left >= box.left - 1 && last.right <= box.right + 1; }, null, { timeout: 3000 });
+      const smooth = await page.evaluate(() => { const before = document.getElementById('h5-columns-strip').scrollLeft; window.H5UI.actions.stepColumn(-1); return [before, document.getElementById('h5-columns-strip').scrollLeft]; });
+      assert.ok(smooth[0] > 0, `${label}: the new column was scrolled into view (${smooth})`);
+      // 12 columns at most.
+      while (!(await page.locator('#h5-columns-add').isDisabled())) await page.locator('#h5-columns-add').click();
+      await waitFrames(page, 12);
+      await page.locator('#h5-columns-add').click({ force: true });
+      await page.waitForTimeout(200);
+      assert.equal((await frameIds(page)).length, 12, `${label}: twelve columns, not thirteen`);
+      assert.equal((await stored(page)).ids.length, 12);
+      st = await stripState(page);
+      assert.ok(st.widths.every(w => Math.abs(w - minWidth) <= 1), `${label}: twelve columns keep the minimum width`);
+      await context.close();
+    }
+
+    // ── Reduced motion: the strip scrolls at once ──
+    {
+      const label = 'reduced motion';
+      const ids5 = ['r1', 'r2', 'r3', 'r4', 'r5'];
+      const { context, page } = await openPage(browser, { viewport: { width: 1440, height: 900 }, storage: { ...REMEMBERED, 'h5-columns': JSON.stringify({ on: true, ids: ids5 }) }, reducedMotion: 'reduce' });
+      await waitFrames(page, 5);
+      const jump = await page.evaluate(() => {
+        const strip = document.getElementById('h5-columns-strip');
+        window.H5UI.actions.stepColumn(-1); // no focus: the last column
+        return { left: strip.scrollLeft, max: strip.scrollWidth - strip.clientWidth };
+      });
+      assert.ok(jump.max > 0 && Math.abs(jump.left - jump.max) <= 1, `${label}: scrolled to the last column in the same frame (${JSON.stringify(jump)})`);
+      await context.close();
+      // Without it the same step is smooth: nothing has moved yet in the same frame.
+      const normal = await openPage(browser, { viewport: { width: 1440, height: 900 }, storage: { ...REMEMBERED, 'h5-columns': JSON.stringify({ on: true, ids: ids5 }) } });
+      await waitFrames(normal.page, 5);
+      const glide = await normal.page.evaluate(() => { const strip = document.getElementById('h5-columns-strip'); window.H5UI.actions.stepColumn(-1); return strip.scrollLeft; });
+      assert.ok(glide < 5, `motion: a smooth scroll (${glide} right after the step)`);
+      await normal.page.waitForFunction(() => { const strip = document.getElementById('h5-columns-strip'); return strip.scrollLeft >= strip.scrollWidth - strip.clientWidth - 1; }, null, { timeout: 3000 });
+      await normal.context.close();
+    }
+
+    // ── 2000x1150: first use opens 3 columns that share the width; screenshot ──
     {
       const label = '2000x1150';
       const { context, page } = await openPage(browser, { viewport: { width: 2000, height: 1150 } });
       await shownTerminal(page, 'Terminal 1');
       if (SHOTS) { fs.mkdirSync(SHOTS, { recursive: true }); await page.screenshot({ path: path.join(SHOTS, 'columns-header-2000.png'), clip: { x: 1400, y: 0, width: 600, height: 60 } }); }
       await page.locator('#h5-columns-open').click();
-      await waitFrames(page, 4);
+      await waitFrames(page, 3);
       for (const src of await frameSrcs(page)) assert.match(src, PANE_URL);
-      const fit = await page.evaluate(() => { const strip = document.getElementById('h5-columns-strip'); return { scroll: strip.scrollWidth, client: strip.clientWidth, widths: [...document.querySelectorAll('.h5-column')].map(el => Math.round(el.getBoundingClientRect().width)) }; });
-      assert.ok(fit.scroll <= fit.client + 1, `${label}: four columns fit (${JSON.stringify(fit)})`);
-      assert.ok(fit.widths.every(w => Math.abs(w - 500) <= 2), `${label}: each 500px (${fit.widths})`);
+      const fit = await page.evaluate(() => { const strip = document.getElementById('h5-columns-strip'); return { scroll: strip.scrollWidth, client: strip.clientWidth, widths: [...document.querySelectorAll('.h5-column')].map(el => el.getBoundingClientRect().width) }; });
+      assert.ok(fit.scroll <= fit.client + 1, `${label}: three columns fit (${JSON.stringify(fit)})`);
+      assert.ok(fit.widths.every(w => Math.abs(w - 2000 / 3) <= 2), `${label}: each a third (${fit.widths})`);
       assert.deepEqual(await openTerminalSockets(page), []);
       // A ?openChat= link while the strip is shown and no column is focused: the first column gets `open` once its
       // page has loaded; the hidden normal view still brings back its remembered terminal, shown when the strip is left.
-      const four = await frameIds(page);
+      const three = await frameIds(page);
       await page.goto(`${ORIGIN}/h5?openChat=1:conv-9`);
-      await waitFrames(page, 4);
+      await waitFrames(page, 3);
       await page.waitForFunction(() => (window.paneInbox || []).some(([, data]) => data.event === 'open'), null, { timeout: 10000 });
-      assert.deepEqual(await opens(page), [[four[0], { type: 't-agent-pane', event: 'open', sourceKey: 'local', taskId: 1, conversationId: 'conv-9' }, ORIGIN]], `${label}: the link went to the first column`);
+      assert.deepEqual(await opens(page), [[three[0], { type: 't-agent-pane', event: 'open', sourceKey: 'local', taskId: 1, conversationId: 'conv-9' }, ORIGIN]], `${label}: the link went to the first column`);
       // (The outline is checked in the 1440 case: here the pages inside the columns, still the normal page until pane mode, take the focus on load.)
       await page.waitForTimeout(500);
       assert.equal(await terminalSocketCount(page), 0, `${label}: the top page opened no terminal socket`);
@@ -312,7 +498,7 @@ async function shownTerminal(page, name) {
       await shownTerminal(page, 'Terminal 1');
       assert.equal(await page.locator('#h5-agent').isVisible(), false, `${label}: the normal view did not open the chat`);
       await page.locator('#h5-columns-open').click();
-      await waitFrames(page, 4);
+      await waitFrames(page, 3);
       if (SHOTS) {
         await page.waitForFunction(() => [...document.querySelectorAll('#h5-columns iframe')].every(el => el.contentDocument && el.contentDocument.getElementById('h5-app')), null, { timeout: 10000 });
         await page.waitForTimeout(1500);

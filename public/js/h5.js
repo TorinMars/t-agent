@@ -11,6 +11,13 @@
   // The computer keyboard shortcuts (typing to the terminal, Escape back to it, Cmd/Ctrl+K): on a computer, and on a touch device once a hardware keyboard was used.
   const deskKeys = () => pointerMode() || Boolean(ui.get().hasKeyboard);
   const terminalFontSize = () => (pointerMode() ? 13 : 11);
+  const TERMINAL_FONT_FAMILY = 'Menlo, Monaco, "Courier New", monospace';
+  // The terminal font, for the multi-column view's minimum column width (an 80-column terminal must fit; scripts/h5-shell/Columns.jsx).
+  const publishTerminalFont = () => {
+    const now = ui.get().terminalFont;
+    if (!now || now.size !== terminalFontSize() || now.family !== TERMINAL_FONT_FAMILY) ui.set({ terminalFont: { size: terminalFontSize(), family: TERMINAL_FONT_FAMILY } });
+  };
+  publishTerminalFont();
   const APPLE = /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent || '');
   const tell = (message, type = 'info') => notify(message, type);
   const tr = text => (typeof I18n !== 'undefined' ? I18n.t(text) : text);
@@ -2103,7 +2110,7 @@
       allowProposedApi: true, // needed by the Unicode 11 addon
       cursorBlink: true,
       fontSize: terminalFontSize(), // 13px on a computer, 11px on a phone
-      fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+      fontFamily: TERMINAL_FONT_FAMILY,
       theme: { background: '#121212' },
       scrollback: 5000,
       // Hyperlinks printed by programs with OSC 8 (the visible text may differ from the real address): only http(s) is opened, after
@@ -3860,6 +3867,7 @@
     const input = ui.get().input;
     if (input === lastInput) return;
     lastInput = input;
+    publishTerminalFont();
     if (session && !session.disposed) { session.term.options.fontSize = terminalFontSize(); refit(session); }
     fitViewport();
     autosize();

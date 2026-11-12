@@ -385,7 +385,8 @@ async function testMouseDrag(browser) {
   await page.setViewportSize({ width: 1280, height: 330 });
   await t.settle();
   const list = page.locator('#h5-task-list');
-  const scrollable = await list.evaluate(node => node.scrollHeight > node.clientHeight);
+  // Wait for the page to lay out at the new size: on a busy machine one read right after the resize can still see the old height.
+  const scrollable = await page.waitForFunction(() => { const node = document.getElementById('h5-task-list'); return node.scrollHeight > node.clientHeight; }, null, { timeout: 5000 }).then(() => true, () => false);
   if (scrollable) {
     const a = await t.grip((await t.titles())[0]).boundingBox(); // the first row, in view at the top
     const edge = await list.boundingBox();
@@ -990,7 +991,7 @@ async function testFlip(browser) {
   // recorded; from the frame before the change to the one after it, no row jumps (it moves no more than a frame of sliding, far less than the slide left).
   await page.evaluate(() => {
     window.frames = [];
-    const take = () => { window.frames.push(Object.fromEntries([...document.querySelectorAll('#h5-task-list .h5-task')].map(node => [node.querySelector('.h5-task-title').textContent, node.getBoundingClientRect().top]))); if (window.frames.length < 400) window.frameLoop = requestAnimationFrame(take); };
+    const take = () => { window.frames.push({ at: performance.now(), rows: Object.fromEntries([...document.querySelectorAll('#h5-task-list .h5-task')].map(node => [node.querySelector('.h5-task-title').textContent, node.getBoundingClientRect().top])) }); if (window.frames.length < 400) window.frameLoop = requestAnimationFrame(take); };
     take();
   });
   world.order = { order: [V(2), L(2), L(3), L(1), V(1)], updated_at: 120 };
@@ -1002,12 +1003,22 @@ async function testFlip(browser) {
   await t.waitTitles(['Beta', 'Gamma', 'Alpha', 'Delta', 'Echo']);
   await t.settle();
   const frames = await page.evaluate(() => { cancelAnimationFrame(window.frameLoop); return window.frames; });
-  let jump = 0;
+  // Measured as speed, not as the step between two frames: on a busy machine frames are dropped and a smooth slide covers more ground between two
+  // frames, while a jump to the end moves the row its whole remaining distance within one short frame. A slide of this length never goes faster than
+  // about 1.5 px/ms; the jump this guards against (the row restarting from where the first slide would end) moved about 4 px/ms.
+  let speed = 0;
+  let step = 0;
   for (let index = Math.max(mark, 1); index < frames.length; index += 1) {
-    for (const title of Object.keys(frames[index])) if (title in frames[index - 1]) jump = Math.max(jump, Math.abs(frames[index][title] - frames[index - 1][title]));
+    const elapsed = Math.max(frames[index].at - frames[index - 1].at, 16);
+    for (const title of Object.keys(frames[index].rows)) {
+      if (!(title in frames[index - 1].rows)) continue;
+      const moved = Math.abs(frames[index].rows[title] - frames[index - 1].rows[title]);
+      step = Math.max(step, moved);
+      speed = Math.max(speed, moved / elapsed);
+    }
   }
-  const echoLeft = Math.abs(frames[mark - 1].Echo - frames.at(-1).Echo);
-  assert.ok(jump < 40 && echoLeft > 40, `${label}: a change mid-slide starts the rows where they were seen (largest step ${jump.toFixed(1)}px between frames; Echo had ${echoLeft.toFixed(0)}px to go)`);
+  const echoLeft = Math.abs(frames[mark - 1].rows.Echo - frames.at(-1).rows.Echo);
+  assert.ok(speed < 3 && echoLeft > 40, `${label}: a change mid-slide starts the rows where they were seen (fastest ${speed.toFixed(2)} px/ms, largest step ${step.toFixed(1)}px; Echo had ${echoLeft.toFixed(0)}px to go)`);
   await t.settle();
   assert.deepEqual((await t.dragView()).moved, [], `${label}: all in place at the end`);
   assert.deepEqual(world.pageErrors, [], `${label}: no page errors`);

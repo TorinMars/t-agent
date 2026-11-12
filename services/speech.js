@@ -2,6 +2,7 @@
 // This service only keeps the configuration and hands the browser a short-lived token, so the real API key never leaves the server.
 // Configuration is saved per user in system_state, the API key is stored encrypted and never sent back to the frontend. DASHSCOPE_API_KEY in the server environment is used when no key is saved.
 const { encryptToken, decryptToken } = require('../lib/token-crypto');
+const syncStore = require('./settings-sync-store');
 
 const REGIONS = {
   beijing: { label: 'China (Beijing)', endpoint: 'wss://dashscope.aliyuncs.com/api-ws/v1/inference' },
@@ -115,10 +116,12 @@ function createSpeech({ db, sessionSecret, env = process.env, fetchImpl = (...ar
       if (!/^[\w.\-:/]{1,80}$/.test(next.model)) throw new SpeechError('Invalid model name');
       db.prepare(`INSERT INTO system_state (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP`).run(key(owner), encryptToken(JSON.stringify(next), sessionSecret));
+      syncStore.settingChanged(SYNC_GROUP);
       return safe(next);
     },
     clearConfig(owner) {
       db.prepare('DELETE FROM system_state WHERE key = ?').run(key(owner));
+      syncStore.settingChanged(SYNC_GROUP);
       return safe(defaults());
     },
     // Asks Alibaba for a short-lived token and returns what the browser needs to open the WebSocket by itself.
@@ -151,4 +154,10 @@ function createSpeech({ db, sessionSecret, env = process.env, fetchImpl = (...ar
   };
 }
 
-module.exports = { REGIONS, LANGUAGES, TOKEN_TTL_SECONDS, TIMEOUT_MS, createSpeech, SpeechError };
+// Settings sync across linked devices (services/settings-sync.js): the whole stored configuration, the API key included, or null. Only the sync
+// calls these, and it sends the value encrypted; a page never gets it. The key in the server environment (DASHSCOPE_API_KEY) is not part of it.
+const SYNC_GROUP = 'voice';
+const exportForSync = ({ db, sessionSecret }, owner) => syncStore.readState(db, `speech:${owner}`, sessionSecret);
+const importFromSync = ({ db, sessionSecret }, owner, value) => syncStore.writeState(db, `speech:${owner}`, syncStore.objectOrNull(value), sessionSecret);
+
+module.exports = { SYNC_GROUP, exportForSync, importFromSync, REGIONS, LANGUAGES, TOKEN_TTL_SECONDS, TIMEOUT_MS, createSpeech, SpeechError };

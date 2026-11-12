@@ -509,7 +509,9 @@ async function startService(t, tag) {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 't-agent-linked-'));
   const child = spawn(process.execPath, ['-r', PRELOAD, 'server.js'], {
     cwd: path.resolve(__dirname, '..'),
-    env: { ...process.env, DASHSCOPE_API_KEY: '', FAKE_UPSTREAM_TAG: tag, HOST: '127.0.0.1', PORT: '0', NODE_ENV: 'test', SESSION_SECRET: SECRET, T_AGENT_DATA_DIR: temp, T_AGENT_DB_PATH: path.join(temp, 'db.sqlite'), TASKS_BASE_DIR: path.join(temp, 'tasks'), SINGLE_USER_ID: 'local', UPDATE_CHECK_ENABLED: 'false', ACCESS_MODE: 'local' },
+    env: { ...process.env, DASHSCOPE_API_KEY: '', FAKE_UPSTREAM_TAG: tag, HOST: '127.0.0.1', PORT: '0', NODE_ENV: 'test', SESSION_SECRET: SECRET, T_AGENT_DATA_DIR: temp, T_AGENT_DB_PATH: path.join(temp, 'db.sqlite'), TASKS_BASE_DIR: path.join(temp, 'tasks'), SINGLE_USER_ID: 'local', UPDATE_CHECK_ENABLED: 'false', ACCESS_MODE: 'local',
+      // The delegation is what is tested here: with settings sync on, the linked device would get its own copy of the key and never delegate.
+      SETTINGS_SYNC_ENABLED: 'false' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let output = '';

@@ -1,6 +1,7 @@
 // Backend of the terminal's "Chinese-to-English input": calls the DeepSeek / Zhipu GLM (both OpenAI-compatible) chat endpoints. Configuration is saved per user in system_state, the API key is stored encrypted and never sent back to the frontend.
 // Each provider stores its own {apiKey, baseUrl, model}; switching providers only changes "currently used" and never overwrites or loses the other provider's saved key.
 const { encryptToken, decryptToken } = require('../lib/token-crypto');
+const syncStore = require('./settings-sync-store');
 
 // The whole text of one request may be long (a pasted log or document); one provider call gets at most CHUNK_CHARS of it.
 // Longer text is split at line breaks (a very long line at a sentence end) and translated piece by piece, in order.
@@ -215,10 +216,12 @@ function createTranslator({ db, sessionSecret, fetchImpl = (...args) => fetch(..
       next.enabled = body.enabled !== false;
       db.prepare(`INSERT INTO system_state (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP`).run(key(owner), encryptToken(JSON.stringify(next), sessionSecret));
+      syncStore.settingChanged(SYNC_GROUP);
       return safe(next);
     },
     clearConfig(owner) {
       db.prepare('DELETE FROM system_state WHERE key = ?').run(key(owner));
+      syncStore.settingChanged(SYNC_GROUP);
       return safe(defaults());
     },
     translate: async (owner, input) => {
@@ -293,4 +296,10 @@ function splitForTranslation(source, limit = CHUNK_CHARS) {
   return parts;
 }
 
-module.exports = { PROVIDERS, glmReasoning, createTranslator, TranslatorError, MAX_INPUT_CHARS, CHUNK_CHARS, TIMEOUT_MS, splitForTranslation, hasCjk, needsProvider, translationTimeoutMs };
+// Settings sync across linked devices (services/settings-sync.js): the whole stored configuration, API keys included, or null. Only the sync calls
+// these, and it sends the value encrypted; a page never gets it.
+const SYNC_GROUP = 'translate';
+const exportForSync = ({ db, sessionSecret }, owner) => syncStore.readState(db, `translator:${owner}`, sessionSecret);
+const importFromSync = ({ db, sessionSecret }, owner, value) => syncStore.writeState(db, `translator:${owner}`, syncStore.objectOrNull(value), sessionSecret);
+
+module.exports = { SYNC_GROUP, exportForSync, importFromSync, PROVIDERS, glmReasoning, createTranslator, TranslatorError, MAX_INPUT_CHARS, CHUNK_CHARS, TIMEOUT_MS, splitForTranslation, hasCjk, needsProvider, translationTimeoutMs };

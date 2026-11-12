@@ -42,6 +42,8 @@ module.exports = {
   updateRepository: process.env.UPDATE_GITHUB_REPOSITORY || 'TorinMars/t-agent',
   updateRef: process.env.UPDATE_GITHUB_REF || process.env.UPDATE_GIT_BRANCH || 'main',
   updateCheckEnabled: process.env.UPDATE_CHECK_ENABLED !== 'false',
+  // Settings sync across linked devices (services/settings-sync.js). 'false' turns it off on this service: it is not offered to peers and never runs.
+  settingsSyncEnabled: process.env.SETTINGS_SYNC_ENABLED !== 'false',
   updateCheckIntervalMs: positiveInteger(process.env.UPDATE_CHECK_INTERVAL_SECONDS, 1800) * 1000,
   updateCheckStartupDelayMs: positiveInteger(process.env.UPDATE_CHECK_STARTUP_DELAY_SECONDS, 30) * 1000,
   updateAutoQuietMs: positiveInteger(process.env.UPDATE_AUTO_QUIET_SECONDS, 600) * 1000,

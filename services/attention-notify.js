@@ -11,6 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const express = require('express');
 const { encryptToken, decryptToken } = require('../lib/token-crypto');
+const syncStore = require('./settings-sync-store');
 
 const STATUSES = ['todo', 'working', 'waiting_user', 'review', 'done', 'failed', 'cancelled'];
 const MODES = ['message', 'call', 'off'];
@@ -430,6 +431,7 @@ function createAttentionNotify(options) {
   function saveRules(owner, body) {
     const next = normalizeRules(body, getRules(owner), [...byName.keys()]);
     writeState(rulesKey(owner), next);
+    syncStore.settingChanged(SYNC_RULES);
     return next;
   }
   const modeOf = (rules, name, status) => (rules.modes[name] && rules.modes[name][status]) || 'message';
@@ -459,7 +461,10 @@ function createAttentionNotify(options) {
     }
     return { enabled: true, values };
   }
-  const writeSettings = (name, owner, settings) => writeState(settingsKey(name, owner), { enabled: settings.enabled !== false, values: settings.values || {} });
+  const writeSettings = (name, owner, settings) => {
+    writeState(settingsKey(name, owner), { enabled: settings.enabled !== false, values: settings.values || {} });
+    if (name !== UNSYNCED_PLUGIN) syncStore.settingChanged(SYNC_PLUGINS);
+  };
   const isEnabled = (name, owner) => readSettings(name, owner).enabled;
 
   // The store a plugin gets for its own settings. A read gives its own values plus the manifest settings (with defaults); a write of a
@@ -662,6 +667,8 @@ function createAttentionNotify(options) {
       const rules = readState(row.key);
       if (rules && rules.modes && rules.modes[name]) { delete rules.modes[name]; writeState(row.key, rules); }
     }
+    syncStore.settingChanged(SYNC_RULES);
+    syncStore.settingChanged(SYNC_PLUGINS);
     return removed;
   }
 
@@ -799,7 +806,48 @@ function start(options) {
   return createAttentionNotify({ ...options, onChange });
 }
 
+// ---- Settings sync across linked devices (services/settings-sync.js) ----
+// Two groups: the rules (attention-notify:<owner>, as stored), and the manifest settings with the switch of every notifier plugin except Telegram
+// ({ <plugin>: { enabled, values } } from attention-plugin:<plugin>:<owner>, secrets included; the sync sends them encrypted). A plugin's own store
+// (attention-notify:<plugin>:<owner>) holds its runtime state and is never synced, and Telegram keeps all of its settings per device.
+const SYNC_RULES = 'notify-rules';
+const SYNC_PLUGINS = 'notifier-plugins';
+const UNSYNCED_PLUGIN = 'telegram';
+const PLUGIN_NAME = /^[a-z0-9][a-z0-9-]{0,40}$/;
+const exportRulesForSync = ({ db, sessionSecret }, owner) => syncStore.readState(db, `attention-notify:${owner}`, sessionSecret);
+const importRulesFromSync = ({ db, sessionSecret }, owner, value) => syncStore.writeState(db, `attention-notify:${owner}`, syncStore.objectOrNull(value), sessionSecret);
+// The plugins whose manifest settings are stored for this owner, Telegram left out.
+function storedPluginNames(db, owner) {
+  const suffix = `:${owner}`;
+  return db.prepare("SELECT key FROM system_state WHERE key LIKE 'attention-plugin:%'").all().map(row => row.key)
+    .filter(key => key.endsWith(suffix)).map(key => key.slice('attention-plugin:'.length, key.length - suffix.length))
+    .filter(name => PLUGIN_NAME.test(name) && name !== UNSYNCED_PLUGIN).sort();
+}
+function exportPluginsForSync({ db, sessionSecret }, owner) {
+  const plugins = {};
+  for (const name of storedPluginNames(db, owner)) {
+    const stored = syncStore.readState(db, `attention-plugin:${name}:${owner}`, sessionSecret);
+    if (syncStore.isPlainObject(stored)) plugins[name] = { enabled: stored.enabled !== false, values: syncStore.isPlainObject(stored.values) ? stored.values : {} };
+  }
+  return Object.keys(plugins).length ? plugins : null;
+}
+function importPluginsFromSync({ db, sessionSecret }, owner, value) {
+  const given = syncStore.objectOrNull(value) || {};
+  const invalid = () => Object.assign(new Error('INVALID_SYNC_VALUE'), { statusCode: 400 });
+  for (const [name, settings] of Object.entries(given)) {
+    if (!PLUGIN_NAME.test(name) || !syncStore.isPlainObject(settings) || typeof settings.enabled !== 'boolean' || !syncStore.isPlainObject(settings.values)) throw invalid();
+  }
+  db.transaction(() => {
+    for (const name of storedPluginNames(db, owner)) if (!Object.hasOwn(given, name)) syncStore.writeState(db, `attention-plugin:${name}:${owner}`, null);
+    for (const [name, settings] of Object.entries(given)) {
+      if (name === UNSYNCED_PLUGIN) continue;
+      syncStore.writeState(db, `attention-plugin:${name}:${owner}`, { enabled: settings.enabled, values: settings.values }, sessionSecret);
+    }
+  })();
+}
+
 module.exports = {
+  SYNC_RULES, SYNC_PLUGINS, exportRulesForSync, importRulesFromSync, exportPluginsForSync, importPluginsFromSync,
   start, createAttentionNotify, loadNotifiers, scanNotifiers, scanNotifierFolders, dropRequireCache, normalizeRules,
   validateConfigSchema, normalizeConfigValues, effectiveValues, publicValues, scrubSecrets, checkManifest, CONFIG_TYPES, inQuietHours, absoluteLink, defaultRules, NotifyError, STATUSES, MODES, DEDUPE_MS,
 };

@@ -209,6 +209,7 @@ app.use('/api/file-sync', require('./routes/file-sync').browser);
 app.use('/api/remote-servers', require('./routes/remote-servers'));
 app.use('/api/task-list/hidden-devices', require('./routes/task-list-prefs').createTaskListPrefsRouter());
 app.use('/api/task-order', require('./routes/task-order').createTaskOrderRouter());
+app.use('/api/settings-sync', require('./routes/settings-sync').createSettingsSyncRouter());
 app.use('/api/remote-tokens', require('./routes/remote-tokens'));
 app.use('/api/service-links', require('./routes/service-links'));
 app.use('/api/remote/v1', require('./routes/remote-api'));
@@ -579,6 +580,8 @@ server.listen(config.port, config.host, () => {
   serviceLinks.start({ port: listeningPort });
   // The shared task order follows the links from here on (services/task-order.js).
   require('./services/task-order').getTaskOrder().start();
+  // The settings linked devices keep as one set follow the links from here on (services/settings-sync.js).
+  if (config.settingsSyncEnabled) require('./services/settings-sync').getSettingsSync().start();
   // The rules and skills sync watches the shared layer and the links from here on (services/rule-sync.js).
   require('./services/rule-sync').getRuleSync().start();
   const anyHost = ['0.0.0.0', '::', '', 'localhost'].includes(config.host);
@@ -618,5 +621,5 @@ server.listen(config.port, config.host, () => {
 });
 
 // Do not let frpc become an orphan process after the Client exits.
-process.on('exit', () => { attentionWidget.stop(); frpRouter.service.stop(); sshTunnelRouter.service.stop(); attentionMarket.stop(); serviceLinks.stop(); require('./services/task-order').getTaskOrder().stop(); });
+process.on('exit', () => { attentionWidget.stop(); frpRouter.service.stop(); sshTunnelRouter.service.stop(); attentionMarket.stop(); serviceLinks.stop(); require('./services/task-order').getTaskOrder().stop(); require('./services/settings-sync').getSettingsSync().stop(); });
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => process.exit(0));

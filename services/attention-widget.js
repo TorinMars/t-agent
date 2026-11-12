@@ -17,6 +17,7 @@ const crypto = require('node:crypto');
 const childProcess = require('node:child_process');
 const nodeFs = require('node:fs');
 const path = require('node:path');
+const syncStore = require('./settings-sync-store');
 
 const SETTINGS_KEY = 'attention_widget_settings_v1';
 const PAGE_LANGUAGE_KEY = 'attention_widget_page_language_v1';
@@ -65,6 +66,7 @@ function createWidgetSettings({ db }) {
       next.language = body.language;
     }
     writeKey(SETTINGS_KEY, next);
+    if (body.language !== undefined) syncStore.settingChanged(SYNC_GROUP);
     return next;
   }
   // The language of the page this person last loaded (true: Chinese). Written only when it changes.
@@ -270,4 +272,19 @@ function createWidgetLauncher({
   return { start, ensure, setEnabled, status, verifyToken, stop: kill, paths: { folder, binary, stampFile, sourcePath }, rebuildReason, blocked: () => blocked, idle: () => pending || Promise.resolve() };
 }
 
-module.exports = { createWidgetSettings, createWidgetLauncher, blockedReason, WidgetError, SETTINGS_KEY, PAGE_LANGUAGE_KEY, LANGUAGES };
+// Settings sync across linked devices (services/settings-sync.js): only the language of the window ('en' | 'zh'; null is 'auto', the default).
+// The switch (`enabled`) stays per device.
+const SYNC_GROUP = 'widget-language';
+function exportForSync({ db }) {
+  const stored = syncStore.readState(db, SETTINGS_KEY);
+  return stored && ['en', 'zh'].includes(stored.language) ? stored.language : null;
+}
+function importFromSync({ db }, owner, value) {
+  if (value !== null && !['en', 'zh'].includes(value)) throw Object.assign(new Error('INVALID_SYNC_VALUE'), { statusCode: 400 });
+  const stored = syncStore.readState(db, SETTINGS_KEY);
+  const next = syncStore.isPlainObject(stored) ? { ...stored } : {};
+  next.language = value || 'auto';
+  syncStore.writeState(db, SETTINGS_KEY, next);
+}
+
+module.exports = { SYNC_GROUP, exportForSync, importFromSync, createWidgetSettings, createWidgetLauncher, blockedReason, WidgetError, SETTINGS_KEY, PAGE_LANGUAGE_KEY, LANGUAGES };

@@ -12,6 +12,7 @@
 const { encryptToken, decryptToken } = require('../lib/token-crypto');
 const { PROVIDERS, glmReasoning } = require('./translator');
 const { AttentionError } = require('./attention');
+const syncStore = require('./settings-sync-store');
 
 const TRIGGER_STATUSES = new Set(['waiting_user', 'review']);
 const MODEL = /^[\w.\-:/]{1,80}$/;
@@ -78,6 +79,7 @@ function createAttentionSummary({ db, sessionSecret, attention, translator, owne
     }
     db.prepare(`INSERT INTO system_state (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP`).run(key(user), encryptToken(JSON.stringify(next), sessionSecret));
+    syncStore.settingChanged(SYNC_GROUP);
     return view(user, next);
   }
 
@@ -176,4 +178,10 @@ let shared = null;
 const setSharedSummary = summary => { shared = summary || null; };
 const sharedSummary = () => shared;
 
-module.exports = { createAttentionSummary, setSharedSummary, sharedSummary, SYSTEM_PROMPT };
+// Settings sync across linked devices (services/settings-sync.js): the stored { enabled, provider, model }, or null. The API keys are the
+// translator's and travel with its settings.
+const SYNC_GROUP = 'attention-summary';
+const exportForSync = ({ db, sessionSecret }, owner) => syncStore.readState(db, `attention-summary:${owner}`, sessionSecret);
+const importFromSync = ({ db, sessionSecret }, owner, value) => syncStore.writeState(db, `attention-summary:${owner}`, syncStore.objectOrNull(value), sessionSecret);
+
+module.exports = { SYNC_GROUP, exportForSync, importFromSync, createAttentionSummary, setSharedSummary, sharedSummary, SYSTEM_PROMPT };

@@ -23,36 +23,50 @@ test('only a top-level page without any pane parameter offers the view', async (
   assert.equal(canOfferColumns('', true), false, 'a framed page never offers it');
 });
 
-test('the minimum column width fits an 80-column terminal, at least 480, 640 when it cannot be measured', async () => {
-  const { minColumnWidth, MIN_COLUMN_FLOOR, FALLBACK_COLUMN_WIDTH, TERMINAL_SIDE_PADDING } = await load();
-  assert.equal(MIN_COLUMN_FLOOR, 480);
-  assert.equal(FALLBACK_COLUMN_WIDTH, 640);
-  assert.equal(TERMINAL_SIDE_PADDING, 9, 'the terminal inset (4 + 4) and the column border');
-  assert.equal(minColumnWidth(7.82666015625, 9), 636, '13px Menlo: ceil(80 x 7.83 + 9)');
-  assert.equal(minColumnWidth(7.82666015625, 9 + 15), 651, 'with a 15px classic scrollbar');
-  assert.equal(minColumnWidth(7.82666015625), 636, 'the default padding is the terminal side padding');
-  assert.equal(minColumnWidth(8, 0), 640);
-  assert.equal(minColumnWidth(6.6, 9), 537, '11px');
-  assert.equal(minColumnWidth(4, 9), 480, 'never below 480');
-  for (const bad of [0, -3, NaN, Infinity, undefined, null, 'x', 500]) assert.equal(minColumnWidth(bad, 9), 640, String(bad));
-  assert.equal(minColumnWidth(8, -5), 640, 'a negative padding counts as none');
+test('a column is at least a quarter of the strip and never narrower than 360px', async () => {
+  const { minColumnWidth, MIN_COLUMN_WIDTH, VISIBLE_COLUMNS } = await load();
+  assert.equal(MIN_COLUMN_WIDTH, 360);
+  assert.equal(VISIBLE_COLUMNS, 4);
+  assert.equal(minColumnWidth(1440), 360, '1440 / 4');
+  assert.equal(minColumnWidth(1920), 480);
+  assert.equal(minColumnWidth(2560), 640);
+  assert.equal(minColumnWidth(1441), 360, 'rounded down, so four still fit');
+  assert.equal(minColumnWidth(1999), 499);
+  assert.equal(minColumnWidth(1000), 360, 'a narrow window: never below 360 (fewer fit and the strip scrolls)');
+  assert.equal(minColumnWidth(900), 360);
+  for (const bad of [0, -3, NaN, Infinity, undefined, null, 'x']) assert.equal(minColumnWidth(bad), 360, String(bad));
 });
 
-test('the default number of columns is floor(width / column width), 2 to 4', async () => {
-  const { defaultCount } = await load();
-  assert.equal(defaultCount(1440, 636), 2);
-  assert.equal(defaultCount(2000, 636), 3);
-  assert.equal(defaultCount(2560, 636), 4);
-  assert.equal(defaultCount(3840, 636), 4);
-  assert.equal(defaultCount(1000, 636), 2, 'at least 2 (the second one scrolls)');
-  assert.equal(defaultCount(1440, 0), 3, 'no usable width: 420');
+test('up to four columns share the visible width; more are a quarter each and scroll', async () => {
+  const { columnWidth } = await load();
+  assert.equal(columnWidth(1440, 1), 1440);
+  assert.equal(columnWidth(1440, 2), 720);
+  assert.equal(columnWidth(1440, 4), 360, 'four fit at 1440');
+  assert.equal(columnWidth(1440, 5), 360, 'a fifth makes the strip scroll; each stays a quarter');
+  assert.equal(columnWidth(1920, 3), 640);
+  assert.equal(columnWidth(1920, 4), 480);
+  assert.equal(columnWidth(1920, 12), 480);
+  assert.equal(columnWidth(1000, 2), 500);
+  assert.equal(columnWidth(1000, 3), 360, 'three do not fit at 1000: 360 each');
+  assert.equal(columnWidth(1000, 0), 1000, 'no count counts as one');
+  assert.equal(columnWidth(0, 3), 360, 'no usable width: the floor');
+});
+
+test('the first use opens floor(width / 360) columns, 2 to 4', async () => {
+  const { defaultCount, columnsFor } = await load();
+  assert.equal(defaultCount(1440), 4, 'four on a 1440px screen');
+  assert.equal(defaultCount(1920), 4);
+  assert.equal(defaultCount(3840), 4, 'never more than 4');
+  assert.equal(defaultCount(1439), 3);
+  assert.equal(defaultCount(1080), 3);
+  assert.equal(defaultCount(1079), 2);
+  assert.equal(defaultCount(1000), 2);
   assert.equal(defaultCount(900), 2);
-  assert.equal(defaultCount(1260), 3);
-  assert.equal(defaultCount(1440), 3);
-  assert.equal(defaultCount(1680), 4);
-  assert.equal(defaultCount(2000), 4);
-  assert.equal(defaultCount(3840), 4);
-  assert.equal(defaultCount(500), 2);
+  assert.equal(defaultCount(500), 2, 'at least 2 (the second one scrolls)');
+  assert.equal(defaultCount(undefined), 2);
+  assert.equal(columnsFor([], 1440).length, 4);
+  assert.equal(columnsFor([], 1000).length, 2);
+  assert.deepEqual(columnsFor(['a', 'b'], 1920), ['a', 'b'], 'stored columns are kept as they are');
 });
 
 test('new ids are short, valid and never taken', async () => {
@@ -80,10 +94,8 @@ test('the stored layout is cleaned and round-trips', async () => {
 
 test('columns: first use makes the default count, at most 12, the last one stays', async () => {
   const { columnsFor, addColumn, closeColumn, canAdd, canClose, MAX_COLUMNS } = await load();
-  assert.equal(columnsFor([], 1440).length, 3);
-  assert.equal(columnsFor([], 2000).length, 4);
-  assert.equal(columnsFor([], 1440, Math.random, 636).length, 2, 'by the measured column width');
-  assert.equal(columnsFor([], 2000, Math.random, 636).length, 3);
+  assert.equal(columnsFor([], 1440).length, 4);
+  assert.equal(columnsFor([], 1200).length, 3);
   assert.deepEqual(columnsFor(['a', 'b'], 2000), ['a', 'b'], 'stored ids come back as they were');
   let ids = ['a'];
   while (canAdd(ids)) ids = addColumn(ids);

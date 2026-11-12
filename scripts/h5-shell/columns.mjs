@@ -3,21 +3,22 @@
 
 export const STORAGE_KEY = 'h5-columns'; // { on: boolean, ids: [id, ...] }, one per device
 export const MAX_COLUMNS = 12;
-// The width of a column: never narrower than an 80-column terminal at the pane's terminal font (minColumnWidth); wider windows share the space evenly,
-// and when the columns do not fit the strip scrolls sideways (nothing is squeezed).
-export const TERMINAL_COLUMNS = 80;
-export const MIN_COLUMN_FLOOR = 480; // px; never narrower, whatever the font measures
-export const FALLBACK_COLUMN_WIDTH = 640; // px; when the character width cannot be measured
-// The space beside the terminal's cells inside a column: the inset of `.h5-terminal .h5-xterm` (4px on each side, public/css/h5.css) and the
-// column's 1px left border. xterm's vertical scrollbar is measured by the caller and added to it.
-export const TERMINAL_SIDE_PADDING = 8 + 1;
-export const minColumnWidth = (charWidth, padding = TERMINAL_SIDE_PADDING) => {
-  const char = Number(charWidth);
-  const extra = Number(padding);
-  if (!Number.isFinite(char) || char <= 0 || char > 100) return FALLBACK_COLUMN_WIDTH;
-  return Math.max(MIN_COLUMN_FLOOR, Math.ceil(TERMINAL_COLUMNS * char + (Number.isFinite(extra) && extra > 0 ? extra : 0)));
+// The width of a column: up to VISIBLE_COLUMNS columns share the strip's visible width evenly; with more, each one is a quarter of that width and the
+// strip scrolls sideways (nothing is squeezed). Never narrower than MIN_COLUMN_WIDTH, so a narrow window fits fewer and scrolls earlier.
+export const VISIBLE_COLUMNS = 4;
+export const MIN_COLUMN_WIDTH = 360; // px
+// The minimum width of each column (its `flex-basis` and `min-width`) for a strip whose visible width is stripWidth px.
+export const minColumnWidth = stripWidth => {
+  const width = Number(stripWidth);
+  return Number.isFinite(width) && width > 0 ? Math.max(MIN_COLUMN_WIDTH, Math.floor(width / VISIBLE_COLUMNS)) : MIN_COLUMN_WIDTH;
 };
-export const DEFAULT_COLUMN_WIDTH = 420; // the first use opens floor(width / column width) columns, 2 to 4
+// The width each of `count` columns gets: the visible width shared evenly, but never below minColumnWidth (then the strip scrolls).
+export const columnWidth = (stripWidth, count) => {
+  const min = minColumnWidth(stripWidth);
+  const width = Number(stripWidth);
+  const n = Math.max(1, Math.floor(Number(count)) || 1);
+  return Number.isFinite(width) && width > 0 ? Math.max(min, width / n) : min;
+};
 export const MESSAGE_TYPE = 't-agent-pane';
 export const PANE_EVENTS = new Set(['ready', 'focus', 'title', 'scroll-x', 'step']);
 const SCROLL_MAX = 10000; // px of one forwarded sideways scroll
@@ -38,7 +39,8 @@ export function canOfferColumns(search, framed) {
   try { return !new URLSearchParams(search || '').has('pane'); } catch { return false; }
 }
 
-export const defaultCount = (width, columnWidth = DEFAULT_COLUMN_WIDTH) => Math.max(2, Math.min(4, Math.floor((Number(width) || 0) / (Number(columnWidth) > 0 ? Number(columnWidth) : DEFAULT_COLUMN_WIDTH))));
+// The number of columns the first use opens: as many as fit at MIN_COLUMN_WIDTH, at least 2 and at most VISIBLE_COLUMNS (4 from 1440px).
+export const defaultCount = width => Math.max(2, Math.min(VISIBLE_COLUMNS, Math.floor((Number(width) || 0) / MIN_COLUMN_WIDTH)));
 
 // A new short id that is not taken: 6 characters of [a-z0-9].
 export function newId(taken = [], random = Math.random) {
@@ -62,10 +64,10 @@ export function readLayout(raw) {
 export const writeLayout = layout => JSON.stringify({ on: Boolean(layout.on), ids: layout.ids.slice(0, MAX_COLUMNS) });
 
 // The ids to show when the view is turned on: the stored ones, or on first use the default number of new ones.
-export function columnsFor(ids, width, random = Math.random, columnWidth = DEFAULT_COLUMN_WIDTH) {
+export function columnsFor(ids, width, random = Math.random) {
   if (ids.length) return ids.slice(0, MAX_COLUMNS);
   const made = [];
-  for (let i = 0; i < defaultCount(width, columnWidth); i += 1) made.push(newId(made, random));
+  for (let i = 0; i < defaultCount(width); i += 1) made.push(newId(made, random));
   return made;
 }
 export const canAdd = ids => ids.length < MAX_COLUMNS;

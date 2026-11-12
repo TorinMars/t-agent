@@ -2,7 +2,7 @@
 // A part registers its component once, from its own module:
 //
 //   import { registerAttentionSettings } from './attention-slots.mjs';
-//   registerAttentionSettings({ id: 'plugins', order: 50, Component: PluginSlot });
+//   registerAttentionSettings({ id: 'plugins', order: 30, Component: PluginSlot });
 //
 // and its module is imported for that side effect in entry.jsx (the marked line "T-Attention settings slots"). The component gets { ui, opened } (the
 // page store: `ui.notify`, `ui.actions`; `opened` counts the openings of the group, 0 before the first one: the group's content stays mounted while it

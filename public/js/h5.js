@@ -870,8 +870,12 @@
     } catch { /* reload anyway */ }
     location.reload();
   };
-  ui.actions.openSettings = () => ui.set({ settingsOpen: true }); // the settings themselves are the shell's (scripts/h5-shell/Settings.jsx)
-  ui.actions.closeSettings = () => ui.set({ settingsOpen: false });
+  // The settings themselves are the shell's (scripts/h5-shell/Settings.jsx). `group` (optional) opens one group of the sheet and shows one part of it:
+  // a group id (devices, voice-translate, ...), a part id (remote, rule-sync, ...) or a group id from before the sheet was tidied up (engines, translate,
+  // access, ...); see scripts/h5-shell/settings-target.mjs. Without it the sheet opens with every group folded.
+  let settingsSeq = 0;
+  ui.actions.openSettings = group => ui.set({ settingsOpen: true, settingsTarget: typeof group === 'string' && group ? { id: group, seq: ++settingsSeq } : null });
+  ui.actions.closeSettings = () => ui.set({ settingsOpen: false, settingsTarget: null });
   ui.actions.toggleTask = ref => { const hit = resolveRef(ref); if (hit) toggleTask(hit.from, hit.item); };
   // A tap on a session row: on the selected task it goes to the terminal or chat; on another task it selects that task and shows the session.
   ui.actions.openRow = (ref, row) => {

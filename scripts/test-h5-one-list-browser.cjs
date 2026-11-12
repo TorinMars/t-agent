@@ -146,10 +146,10 @@ function tools(page, wide) {
   const openEngines = async () => {
     await page.evaluate(() => window.H5UI.actions.openSettings());
     await page.locator('#h5-settings').waitFor({ state: 'visible' });
-    const summary = page.locator('#h5-set-engines .MuiAccordionSummary-root');
+    const summary = page.locator('#h5-set-devices .MuiAccordionSummary-root');
     await summary.scrollIntoViewIfNeeded();
     if (await summary.getAttribute('aria-expanded') !== 'true') await press(summary);
-    await page.waitForFunction(() => Boolean(document.querySelector('#h5-set-engines .MuiCollapse-entered')));
+    await page.waitForFunction(() => Boolean(document.querySelector('#h5-set-devices .MuiCollapse-entered')));
   };
   const closeSettings = async () => { await page.evaluate(() => window.H5UI.actions.closeSettings()); await page.locator('#h5-settings .h5-sheet-panel').waitFor({ state: 'hidden' }); };
   return { press, section, row, sheet, socketPath, waitSocket, shownName, service, openTask, taskMenu, menuItem, notice, openEngines, closeSettings };

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
+import ButtonBase from '@mui/material/ButtonBase';
 import CircularProgress from '@mui/material/CircularProgress';
 import Dialog from '@mui/material/Dialog';
 import DialogActions from '@mui/material/DialogActions';
@@ -9,14 +10,23 @@ import DialogTitle from '@mui/material/DialogTitle';
 import FormControlLabel from '@mui/material/FormControlLabel';
 import Paper from '@mui/material/Paper';
 import Switch from '@mui/material/Switch';
+import Collapse from '@mui/material/Collapse';
 import Typography from '@mui/material/Typography';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import { DeviceName, Pill, api, errorText, t } from './common.jsx';
-import { EngineDialog, Feedback, Field, Group, Hint, failure, useFeedback } from './Form.jsx';
-import { UnlinkDialog, linkEngineKey, readLinks } from './ServiceLinks.jsx';
+import { EngineDialog, Feedback, Field, Group, Hint, Section, SubHeading, failure, useFeedback } from './Form.jsx';
+import { ServiceLinksSection, UnlinkDialog, linkEngineKey, readLinks } from './ServiceLinks.jsx';
 import { RestartButton, restartInfo } from './Restart.jsx';
 import { PeerFsSwitch } from './PeerFs.jsx';
+import { RuleSyncSection } from './RuleSync.jsx';
+import { RemoteAccessSection } from './RemoteAccess.jsx';
+import { ADVANCED_SECTIONS } from './settings-target.mjs';
 
-// Settings "Engines": the remote Engines this Client is connected to (ported from the old desktop page's engine tabs in 2.87.13).
+// Settings "Devices" (until the sheet was tidied up the groups "Engines", "Linked services", "Rules and skills sync" and "Remote service"), top to
+// bottom: the device list (this machine first, then every remote Engine this Client is connected to, linked ones included), "Link a device"
+// (ServiceLinks.jsx, the recommended way to add one), the peer file access switch (PeerFs.jsx), "Rules and skills sync" (RuleSync.jsx), and the
+// folded "Advanced" part with the one-way options: "Connect a remote engine" (the connect form below) and "Let other clients connect to this one"
+// (RemoteAccess.jsx). The device list was ported from the old desktop page's engine tabs in 2.87.13.
 // The /api/remote-servers endpoints, their validation and their error texts: connect with an address and a pairing code or token (POST /api/remote-servers), edit
 // the name and address (PUT, the saved token is reused and never sent to the browser), remove (DELETE), check (POST /:id/check), and update a remote
 // Engine (/:id/check-update, /:id/apply-update, then /:id/update-status until it is back). After every change the task list is
@@ -392,8 +402,36 @@ function EngineRow({ server, link, busy, show, onCheck, onUpdate, onEdit, onRena
   );
 }
 
-// `linksVersion` goes up after a change of the linked services; `onLinksChanged` reports one made here.
-export function EnginesGroup({ state, ui, linksVersion, onLinksChanged }) {
+// The folded "Advanced" part of the Devices group. Its content stays mounted while it is folded; `onToggle` reports a new state.
+function Advanced({ open, onToggle, children }) {
+  return (
+    <Section id="advanced">
+      <SubHeading>
+        <ButtonBase
+          id="h5-devices-advanced-toggle" aria-expanded={open ? 'true' : 'false'} aria-controls="h5-devices-advanced" onClick={() => onToggle(!open)}
+          sx={{ width: '100%', minHeight: 44, justifyContent: 'space-between', gap: 1, borderRadius: 1, font: 'inherit', textAlign: 'left' }}
+        >
+          <span>{t('Advanced')}</span>
+          <ExpandMoreIcon aria-hidden="true" sx={{ color: 'text.secondary', transition: 'transform 150ms', transform: open ? 'rotate(180deg)' : 'none' }} />
+        </ButtonBase>
+      </SubHeading>
+      <Collapse in={open} id="h5-devices-advanced" unmountOnExit={false}>
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>{children}</Box>
+      </Collapse>
+    </Section>
+  );
+}
+
+// `request`: { section, seq } from `ui.actions.openSettings(id)` (settings-target.mjs); a part inside "Advanced" unfolds it too.
+export function DevicesGroup({ state, ui, request = null }) {
+  // The device list and "Link a device" show the same links: a change in one makes both read again.
+  const [linksVersion, setLinksVersion] = useState(0);
+  const onLinksChanged = () => setLinksVersion(version => version + 1);
+  const wantsAdvanced = target => Boolean(target) && ADVANCED_SECTIONS.has(target.section);
+  const [advanced, setAdvanced] = useState(() => wantsAdvanced(request));
+  const [advancedOpened, setAdvancedOpened] = useState(0);
+  const toggleAdvanced = next => { setAdvanced(next); if (next) setAdvancedOpened(count => count + 1); };
+  useEffect(() => { if (wantsAdvanced(request) && !advanced) toggleAdvanced(true); }, [request]); // eslint-disable-line react-hooks/exhaustive-deps -- only a new request unfolds it
   const [servers, setServers] = useState([]);
   const [links, setLinks] = useState([]);
   const [unlinking, setUnlinking] = useState(null);
@@ -407,7 +445,7 @@ export function EnginesGroup({ state, ui, linksVersion, onLinksChanged }) {
   const [editing, setEditing] = useState(null);
   const [updating, setUpdating] = useState(null);
   const [feedback, say] = useFeedback();
-  const [opened, setOpened] = useState(0); // goes up each time the group opens, for the peer file access switch
+  const [opened, setOpened] = useState(0); // goes up each time the group opens: the parts below read their data again
   const load = async ({ keep = false } = {}) => {
     try {
       const [list, version, linked, own] = await Promise.all([
@@ -458,7 +496,7 @@ export function EnginesGroup({ state, ui, linksVersion, onLinksChanged }) {
     catch (error) { say(`${t(errorLabel(codeOf(error)))}`, true); }
   };
   const showProps = device => (switches ? { device, hidden: hidden.keys.includes(device), last: visibleDevices.length === 1 && visibleDevices[0] === device, onChange: (key, visible) => void setVisible(key, visible) } : null);
-  // After a rename: this list, the task list and every other place that names a device (the same refresh as any change here); the Linked services list too.
+  // After a rename: this list, the task list and every other place that names a device (the same refresh as any change here); the links list too.
   const renamed = async target => {
     setRenaming(null);
     if (target.kind === 'remote' && linkOf(target.server)) onLinksChanged();
@@ -473,9 +511,11 @@ export function EnginesGroup({ state, ui, linksVersion, onLinksChanged }) {
     try { await api('DELETE', `/api/remote-servers/${server.id}`); await changed(`remote:${server.id}`); say('Removed'); }
     catch (error) { say(failure(error), true); }
   };
+  // The remote access list is read when "Advanced" unfolds, and again each time the group opens while it is unfolded.
+  const remoteOpened = advanced ? opened + advancedOpened : 0;
   return (
-    <Group id="engines" title="Engines" onOpen={() => { void load(); setOpened(count => count + 1); }}>
-      <Hint>{t('Engines are the machines whose tasks and terminals this page shows. This machine is always there; connect other Clients with their address and a pairing code made under “Remote service” on that Client.')}</Hint>
+    <Group id="devices" title="Devices" request={request} onOpen={() => { void load(); setOpened(count => count + 1); }}>
+      <Hint>{t('Devices are the machines whose tasks and terminals this page shows. This machine is always first. To add another one, link it below.')}</Hint>
       <Box id="h5-engine-list" sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
         <Paper variant="outlined" className="h5-engine-row" data-engine="local" sx={{ display: 'flex', flexDirection: 'column', gap: 0.75, p: 1 }}>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
@@ -498,11 +538,20 @@ export function EnginesGroup({ state, ui, linksVersion, onLinksChanged }) {
             onRename={server.can_rename ? () => setRenaming({ kind: 'remote', server }) : null}
           />
         ))}
-        {servers.length ? null : <Hint id="h5-engine-empty">{t('No remote engines connected yet')}</Hint>}
+        {servers.length ? null : <Hint id="h5-engine-empty">{t('No other devices yet')}</Hint>}
       </Box>
-      <Button id="h5-engine-connect-open" variant="contained" onClick={() => setConnecting(true)}>{t('Connect remote service')}</Button>
       <Feedback id="h5-engines-feedback" feedback={feedback} />
+      <ServiceLinksSection state={state} ui={ui} version={linksVersion} opened={opened} onChanged={onLinksChanged} />
       <PeerFsSwitch opened={opened} />
+      <RuleSyncSection state={state} opened={opened} />
+      <Advanced open={advanced} onToggle={toggleAdvanced}>
+        <Hint id="h5-devices-advanced-hint">{t('Linking (above) is the recommended way to add a device. The options here connect one way only: for a device that should not see this one, or one on an older version.')}</Hint>
+        <Section id="connect" title="Connect a remote engine" level={4}>
+          <Hint>{t('Enter the address of another client and a pairing code made under “Let other clients connect to this one” on that client. Only this side sees the other.')}</Hint>
+          <Button id="h5-engine-connect-open" variant="contained" onClick={() => setConnecting(true)}>{t('Connect remote service')}</Button>
+        </Section>
+        <RemoteAccessSection opened={remoteOpened} />
+      </Advanced>
       <ConnectDialog state={state} open={connecting} onClose={() => setConnecting(false)} onDone={created => { setConnecting(false); void changed(null); say(`${t('Connected')}: ${created && created.name ? created.name : ''}`); }} />
       <EditDialog state={state} server={editing} onClose={() => setEditing(null)} onDone={server => { setEditing(null); void changed(`remote:${server.id}`); say('Saved'); }} />
       <UnlinkDialog link={unlinking} onClose={() => setUnlinking(null)} onDone={async link => { setUnlinking(null); onLinksChanged(); if (ui.actions.enginesChanged) await ui.actions.enginesChanged(linkEngineKey(link)); say('Unlinked'); }} />

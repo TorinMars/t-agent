@@ -286,4 +286,4 @@ function PluginSlot({ ui, opened }) {
   );
 }
 
-registerAttentionSettings({ id: 'plugins', order: 50, Component: PluginSlot });
+registerAttentionSettings({ id: 'plugins', order: 30, Component: PluginSlot }); // before the agent skill (40): the notifiers come right after the reminders

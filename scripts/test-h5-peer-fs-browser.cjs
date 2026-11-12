@@ -1,4 +1,4 @@
-// Browser test of the peer file access switch in Settings → Engines (scripts/h5-shell/PeerFs.jsx), with the routes mocked: it is read when the
+// Browser test of the peer file access switch in Settings → Devices (scripts/h5-shell/PeerFs.jsx), with the routes mocked: it is read when the
 // group opens and echoes the server's value, a change is saved at once, a refused save shows the error and the value in effect, it is read
 // again each time the group opens, an older server (404) shows nothing, and the Chinese page shows the dictionary text.
 const { chromium } = require('playwright');
@@ -45,11 +45,11 @@ async function openPage(browser, { supported = true, enabled = false, zh = false
   await page.locator('#h5-settings').waitFor({ state: 'visible' });
   const peerCalls = () => page.evaluate(() => window.calls.filter(call => call.url === '/api/peer-fs/settings'));
   const toggleGroup = async () => {
-    await page.locator('#h5-set-engines .MuiAccordionSummary-root').tap();
+    await page.locator('#h5-set-devices .MuiAccordionSummary-root').tap();
   };
   const openGroup = async () => {
     await toggleGroup();
-    await page.waitForFunction(() => Boolean(document.querySelector('#h5-set-engines .MuiCollapse-entered')));
+    await page.waitForFunction(() => Boolean(document.querySelector('#h5-set-devices .MuiCollapse-entered')));
   };
   return { page, errors, peerCalls, openGroup, toggleGroup };
 }
@@ -60,17 +60,17 @@ async function openPage(browser, { supported = true, enabled = false, zh = false
     // A current server, the switch off.
     {
       const { page, errors, peerCalls, openGroup, toggleGroup } = await openPage(browser, { enabled: false });
-      assert.equal((await peerCalls()).length, 0, 'nothing is read until the Engines group is opened');
+      assert.equal((await peerCalls()).length, 0, 'nothing is read until the Devices group is opened');
       await openGroup();
       await page.waitForFunction(() => { const input = document.getElementById('h5-peer-fs-enabled'); return input && !input.disabled; });
       assert.equal(await page.isChecked('#h5-peer-fs-enabled'), false, 'the saved value (off) is echoed');
       const label = await page.getAttribute('#h5-peer-fs-enabled', 'aria-label');
-      assert.equal(label, 'Sessions can read files on linked engines');
+      assert.equal(label, 'Sessions can read files on linked devices');
       const text = await page.locator('#h5-peer-fs').textContent();
       assert.match(text, /home folder/);
       assert.match(text, /~\/\.ssh and \.env/);
       assert.match(text, /Read only/);
-      assert.match(text, /linked engines can read this engine’s files/);
+      assert.match(text, /linked devices can read this device’s files/);
       assert.match(text, /sessions started after the change/);
 
       // Turn it on: saved at once.
@@ -91,7 +91,7 @@ async function openPage(browser, { supported = true, enabled = false, zh = false
       await page.evaluate(() => { window.peer.enabled = false; });
       const before = (await peerCalls()).filter(call => call.method === 'GET').length;
       await toggleGroup();
-      await page.waitForFunction(() => !document.querySelector('#h5-set-engines .Mui-expanded'));
+      await page.waitForFunction(() => !document.querySelector('#h5-set-devices .Mui-expanded'));
       await openGroup();
       await page.waitForFunction(count => window.calls.filter(call => call.url === '/api/peer-fs/settings' && call.method === 'GET').length > count, before);
       await page.waitForFunction(() => !document.getElementById('h5-peer-fs-enabled').checked);
@@ -131,7 +131,7 @@ async function openPage(browser, { supported = true, enabled = false, zh = false
       await openGroup();
       await page.waitForFunction(() => { const input = document.getElementById('h5-peer-fs-enabled'); return input && !input.disabled; });
       const label = await page.getAttribute('#h5-peer-fs-enabled', 'aria-label');
-      assert.equal(label, I18nZh('Sessions can read files on linked engines'));
+      assert.equal(label, I18nZh('Sessions can read files on linked devices'));
       assert.ok(!/[A-Za-z]{4,}/.test((await page.locator('#h5-peer-fs .MuiTypography-root').first().textContent()).replace(/Claude|Codex|ssh|env/g, '')), 'the hint is translated');
       assert.deepEqual(errors, []);
       await page.close();

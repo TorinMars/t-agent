@@ -15,7 +15,8 @@ import { AttentionGuide } from './AttentionGuide.jsx';
 // The "T-Attention" group of the settings sheet: the reminders of this page (the in-page notice and the sound; remembered in this browser) and the
 // CLI tokens (`Authorization: Bearer tatt_...` for the `t-attention` CLI and the listener plugins; only /api/attention* accepts them).
 // The token endpoints take the browser session only. A new token is shown once, here, and never again.
-// Below them: the components other parts registered (attention-slots.mjs; for example the plugin list).
+// Order: the setup guide, the reminders, the components other parts registered (attention-slots.mjs: the plugin list with the notifiers, then the agent
+// skill), the AI summary, the CLI tokens.
 const when = value => { const at = Date.parse(value || ''); return Number.isFinite(at) ? new Date(at).toLocaleString() : ''; };
 
 function TokenList({ opened }) {
@@ -93,7 +94,7 @@ function TokenList({ opened }) {
 }
 
 // The AI summary (off by default): GET / PUT /api/attention/settings/summary { enabled, provider, model, providers }. The providers are the translation
-// providers and their saved keys (Settings "Translation"): the server sends `providers` as a list [{ id, label, hasApiKey, model }] (never a key);
+// providers and their saved keys (Settings → Voice and translation → Translation): the server sends `providers` as a list [{ id, label, hasApiKey, model }] (never a key);
 // a map { id: { label, hasApiKey } } and GET /api/translate/config (when `providers` is missing) are read too. A refused save shows the server's
 // message (409 SUMMARY_PROVIDER_NOT_CONFIGURED: no key saved for that provider).
 const providerMap = list => {
@@ -136,7 +137,7 @@ function SummarySettings({ opened }) {
         {ids.map(id => <option key={id} value={id}>{`${(providers[id] && providers[id].label) || id}${providers[id] && providers[id].hasApiKey === false ? ` (${t('no key saved')})` : ''}`}</option>)}
       </TextField>
       <Field id="h5-attention-summary-model" label="Model (optional)" value={form.model} disabled={!loaded} onChange={event => setForm(current => ({ ...current, model: event.target.value }))} placeholder={t('The provider’s default model')} />
-      <Hint id="h5-attention-summary-privacy">{t('When this is on, the task’s goal, latest prompt, last reply, pending question, changed file names and the last messages of the session are sent to the chosen provider, with the key saved under Translation. Nothing is sent while it is off.')}</Hint>
+      <Hint id="h5-attention-summary-privacy">{t('When this is on, the task’s goal, latest prompt, last reply, pending question, changed file names and the last messages of the session are sent to the chosen provider, with the translation key saved under Voice and translation. Nothing is sent while it is off.')}</Hint>
       <Button id="h5-attention-summary-save" variant="contained" disabled={busy || !loaded} onClick={() => void save()}>{t('Save')}</Button>
       <Feedback id="h5-attention-summary-feedback" feedback={feedback} />
     </>
@@ -158,7 +159,8 @@ function Reminders({ ui, prefs, setPrefs }) {
   );
 }
 
-export function AttentionSettings({ ui }) {
+// `request`: { section, seq } from `ui.actions.openSettings('attention')` (settings-target.mjs) opens the group from outside.
+export function AttentionSettings({ ui, request = null }) {
   const [prefs, setPrefs] = useState(() => ui.actions.attentionPrefs ? ui.actions.attentionPrefs() : { sound: true });
   const [opened, setOpened] = useState(0);
   const open = () => {
@@ -166,14 +168,14 @@ export function AttentionSettings({ ui }) {
     setOpened(count => count + 1);
   };
   return (
-    <Group id="attention" title="T-Attention" onOpen={open}>
+    <Group id="attention" title="T-Attention" onOpen={open} request={request}>
       {/* The first-run guide, or its "Show setup guide" button once it is closed or done (AttentionGuide.jsx). */}
       <AttentionGuide ui={ui} place="settings" active={opened} />
       <Reminders ui={ui} prefs={prefs} setPrefs={setPrefs} />
+      {/* SLOT: the settings of other T-Attention parts (attention-slots.mjs: the plugin list, then the agent skill). Nothing is drawn when none is registered. */}
+      {attentionSettingsSlots().map(({ id, Component }) => <Box key={id} className="h5-attention-slot" data-slot={id} sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}><Component ui={ui} opened={opened} /></Box>)}
       <SummarySettings opened={opened} />
       <TokenList opened={opened} />
-      {/* SLOT: the settings of other T-Attention parts (attention-slots.mjs, e.g. the plugin list). Nothing is drawn when none is registered. */}
-      {attentionSettingsSlots().map(({ id, Component }) => <Box key={id} className="h5-attention-slot" data-slot={id} sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}><Component ui={ui} opened={opened} /></Box>)}
     </Group>
   );
 }

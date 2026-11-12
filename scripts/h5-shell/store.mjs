@@ -26,6 +26,7 @@ export const initialState = () => ({
   sidebarCollapsed: false, // wide layout only: the permanent task sidebar is folded away (remembered in localStorage)
   tasksOpen: false,
   settingsOpen: false,
+  settingsTarget: null, // { id, seq }: the group (and part) of the settings sheet to open, from ui.actions.openSettings(id) (settings-target.mjs)
   taskName: '', // empty: "Choose a task"
   sessionName: '',
   terminalAgent: null, // 'claude' / 'codex' when the current terminal is that agent's, null for a plain shell: picks the presets of the saved commands list

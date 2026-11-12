@@ -116,7 +116,7 @@
   // First open after a fresh install: choose the access mode.
   function showModeChoice() {
     title.textContent = 'Choose an access mode';
-    description.textContent = 'Installation is done. Choose how to access T-Agent; you can change it any time under Settings → Access mode.';
+    description.textContent = 'Installation is done. Choose how to access T-Agent; you can change it any time under Settings → Account and access.';
     content.innerHTML = `<div class="mode-options">
       <button type="button" class="mode-option" id="mode-remote"><strong>Authenticator + allow external access</strong><span>Log in with authenticator codes; phones, other computers and remote clients can connect. Requires binding an authenticator first.</span></button>
       <button type="button" class="mode-option" id="mode-local"><strong>Local access only · no verification</strong><span>Only accepts access from this machine (127.0.0.1) with no code; other devices and remote clients cannot connect.</span></button>

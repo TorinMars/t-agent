@@ -227,7 +227,7 @@ async function checkUpdateModal(page, label, touch) {
 }
 
 async function checkEngines(page, label, touch) {
-  await openSettingsGroup(page, touch, 'engines');
+  await openSettingsGroup(page, touch, 'devices');
   await page.locator('.h5-engine-row[data-engine="7"]').waitFor();
   assert.equal(await page.locator('#h5-engine-local-version').textContent(), 'v2.87.12');
   const row = page.locator('.h5-engine-row[data-engine="7"]');
@@ -235,7 +235,11 @@ async function checkEngines(page, label, touch) {
   assert.match(await row.locator('.h5-engine-meta').textContent(), /http:\/\/10\.0\.0\.7:14002 · v2\.87\.0/);
   await shot(page, `${label}-engines`);
 
-  // Connect: the same errors as the desktop page; a wrong pairing code is refused, the right one adds the Engine to the list and to the selector.
+  // Connect (in the folded "Advanced" part of Devices): the same errors as the desktop page; a wrong pairing code is refused, the right one adds the
+  // Engine to the list and to the selector.
+  await page.locator('#h5-devices-advanced-toggle').click();
+  await page.locator('#h5-engine-connect-open').waitFor({ state: 'visible' });
+  await page.waitForFunction(() => !document.getAnimations().some(animation => animation.playState === 'running'));
   await page.locator('#h5-engine-connect-open').click();
   await page.locator('#h5-engine-connect [role="dialog"]').waitFor({ state: 'visible' });
   assert.equal(await page.locator('#h5-engine-connect .MuiDialog-paperFullScreen').count(), touch ? 1 : 0, `${label}: full screen only on the phone`);
@@ -309,7 +313,7 @@ async function checkEngines(page, label, touch) {
   // The shown Engine is removed: the task list goes back to this machine.
   await openSidebar(page, touch);
   await page.locator('.h5-task-item', { hasText: 'Task on Cloud box' }).waitFor();
-  await openSettingsGroup(page, touch, 'engines');
+  await openSettingsGroup(page, touch, 'devices');
   await page.locator('.h5-engine-row[data-engine="7"]').waitFor();
   page.once('dialog', dialog => dialog.accept());
   await page.locator('.h5-engine-row[data-engine="7"] .h5-engine-remove').click();

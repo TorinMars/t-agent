@@ -1,4 +1,4 @@
-// Settings "Linked services" (scripts/h5-shell/ServiceLinks.jsx) and the linked rows of Engines (Engines.jsx) in real Chromium at 390px (touch), 320px (touch) and
+// Settings → Devices → "Link a device" (scripts/h5-shell/ServiceLinks.jsx) and the linked rows of the device list (Engines.jsx) in real Chromium at 390px (touch), 320px (touch) and
 // 1440px (mouse), against a mocked /api/service-links: the code dialog and its countdown, the localhost warning, the success state, the join form and its
 // confirmation, every error text, the list states, unlink, the Engines row, the back gesture, and an older server (404) showing nothing.
 // H5_SHOT_DIR=<dir> saves screenshots at 390px there.
@@ -74,11 +74,14 @@ function helpers(page, wide) {
   const press = locator => (wide ? locator.click() : locator.tap());
   const settled = () => page.waitForFunction(() => !document.getAnimations().some(animation => animation.playState === 'running' && animation.effect.getComputedTiming().iterations !== Infinity));
   const openSettings = async () => { await page.evaluate(() => window.H5UI.set({ settingsOpen: true })); await page.locator('#h5-settings').waitFor({ state: 'visible' }); await settled(); };
-  const openGroup = async id => {
+  // "engines" (the device list) and "service-links" (Link a device) are both in the Devices group: a group that is already open stays open.
+  const openGroup = async part => {
+    const id = { engines: 'devices', 'service-links': 'devices' }[part] || part;
     const summary = page.locator(`#h5-set-${id} .MuiAccordionSummary-root`);
     await summary.scrollIntoViewIfNeeded();
-    await press(summary);
+    if (await summary.getAttribute('aria-expanded') !== 'true') await press(summary);
     await page.waitForFunction(groupId => Boolean(document.querySelector(`#h5-set-${groupId} .MuiCollapse-entered`)), id);
+    if (part === 'service-links') { await page.locator('#h5-sec-link').waitFor(); await page.locator('#h5-sec-link').scrollIntoViewIfNeeded(); }
   };
   // Press a control inside the moving sheet: wait until it has stopped first, so a tap cannot land beside it.
   const tap = async selector => { const target = page.locator(selector); await target.scrollIntoViewIfNeeded(); await settled(); await press(target); };
@@ -105,9 +108,9 @@ async function testOldServer(browser) {
   const { context, page } = await openPage(browser, { model });
   const { openSettings, openGroup } = helpers(page, false);
   await openSettings();
-  await page.waitForFunction(() => document.querySelector('#h5-set-engines'));
+  await page.waitForFunction(() => document.querySelector('#h5-set-devices'));
   await page.waitForFunction(() => performance.getEntriesByType('resource').some(entry => entry.name.endsWith('/api/service-links') && entry.responseEnd > 0));
-  assert.equal(await page.locator('#h5-set-service-links').count(), 0, 'an older server shows no Linked services group');
+  assert.equal(await page.locator('#h5-sec-link').count(), 0, 'an older server shows no Link a device part');
   model.servers.push(server(7, 'Plain'));
   await openGroup('engines');
   await page.locator('.h5-engine-row[data-engine="7"]').waitFor();
@@ -129,7 +132,7 @@ async function testCode(browser) {
   assert.equal(await page.locator('#h5-link-code').innerText(), '123 456', 'the six digits are grouped for reading');
   assert.equal(await page.locator('#h5-link-address').innerText(), ORIGIN);
   assert.equal(await page.locator('#h5-link-address-warning').count(), 0, 'a real address has no warning');
-  assert.match(await page.locator('#h5-link-code-dialog').innerText(), /On the other service, open Settings → Linked services and enter this address and code\./);
+  assert.match(await page.locator('#h5-link-code-dialog').innerText(), /On the other service, open Settings → Devices → Link a device \(Settings → Linked services on older versions\) and enter this address and code\./);
   await tap('#h5-link-copy');
   await page.waitForFunction(() => window.copied.length === 1);
   assert.deepEqual(await page.evaluate(() => window.copied), ['123456'], 'the copied text has no space');

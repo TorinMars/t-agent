@@ -224,9 +224,14 @@ async function openSettings(page) {
   await page.evaluate(() => window.H5UI.set({ settingsOpen: true }));
   await page.locator('#h5-settings').waitFor({ state: 'visible' });
 }
-const openGroup = async (page, id) => {
-  await page.locator(`#h5-set-${id} .MuiAccordionSummary-root`).click();
+// The parts and the groups that hold them since the settings sheet was tidied up: opening a group that is already open leaves it open.
+const GROUP_OF = { oss: 'tasks-files', translate: 'voice-translate', voice: 'voice-translate' };
+const openGroup = async (page, part) => {
+  const id = GROUP_OF[part] || part;
+  const summary = page.locator(`#h5-set-${id} .MuiAccordionSummary-root`);
+  if (await summary.getAttribute('aria-expanded') !== 'true') await summary.click();
   await page.waitForFunction(groupId => Boolean(document.querySelector(`#h5-set-${groupId} .MuiCollapse-entered`)), id);
+  await page.locator(`#h5-sec-${part}`).scrollIntoViewIfNeeded();
 };
 const enabled = (page, id) => page.waitForFunction(button => !document.getElementById(button).disabled, id);
 
@@ -241,13 +246,13 @@ async function settingsShared(browser) {
     await shown.waitFor();
     assert.equal(await shown.textContent(), `Provided by ${PROVIDER}`, group);
     const details = await page.evaluate(id => { const node = document.getElementById(id); const details = node.parentElement; return { first: details.querySelector('p, span, label') === node || details.firstElementChild === node, next: node.nextElementSibling.textContent }; }, line);
-    assert.ok(details.first, `${group}: the line is at the top of the group`);
+    assert.ok(details.first, `${group}: the line is at the top of its part, under the heading`);
     assert.equal(details.next, CHARGE, group);
     for (const id of empties) assert.equal(await page.inputValue(`#${id}`), '', `${group}: ${id} starts empty`);
     assert.equal(await page.locator(`#${save}`).isEnabled(), true, `${group}: the form stays usable`);
     if (group === 'translate' && process.env.H5_SHOT_DIR) {
       fs.mkdirSync(process.env.H5_SHOT_DIR, { recursive: true });
-      await page.locator(`#h5-set-${group}`).screenshot({ path: path.join(process.env.H5_SHOT_DIR, 'settings-translate-shared-390.png') });
+      await page.locator(`#h5-sec-${group}`).screenshot({ path: path.join(process.env.H5_SHOT_DIR, 'settings-translate-shared-390.png') });
     }
     if (group === 'voice') assert.equal(await page.locator('#h5-vi-effective').count(), 0, 'the address of the linked service is not known here');
     await page.locator(`#${save}`).click();

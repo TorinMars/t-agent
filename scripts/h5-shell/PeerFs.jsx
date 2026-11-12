@@ -3,10 +3,10 @@ import Box from '@mui/material/Box';
 import FormControlLabel from '@mui/material/FormControlLabel';
 import Switch from '@mui/material/Switch';
 import { api, t } from './common.jsx';
-import { Feedback, Hint, failure, useFeedback } from './Form.jsx';
+import { Feedback, Hint, Section, failure, useFeedback } from './Form.jsx';
 
-// The peer file access switch of this Engine ("Peer file access" in DESIGN.md), in the Engines group: whether the Claude and Codex
-// sessions started here get the read-only `t-agent-peers` tools, and whether linked engines may read this Engine's files.
+// The peer file access switch of this Engine ("Peer file access" in DESIGN.md), a part of the Devices group (`#h5-sec-peer-fs`): whether the Claude
+// and Codex sessions started here get the read-only `t-agent-peers` tools, and whether linked devices may read this Engine's files.
 // It is read each time the group opens (`opened` goes up) and saved at once, without Save. An older server answers 404: nothing is drawn.
 // The switch sits on the left edge of the group: MUI's hidden input is three thumbs wide and starts one thumb to the left, so it would
 // stick out of the sheet. It is kept on the thumb; the whole label is the click target anyway.
@@ -43,15 +43,17 @@ export function PeerFsSwitch({ opened }) {
     } finally { setBusy(false); }
   };
   if (!setting.supported) return <span id="h5-peer-fs" hidden />;
-  const label = t('Sessions can read files on linked engines');
+  const label = t('Sessions can read files on linked devices');
   return (
-    <Box id="h5-peer-fs" sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
-      <FormControlLabel
-        sx={{ m: 0, alignSelf: 'flex-start', gap: 0.5 }} label={label}
-        control={<Switch size="small" checked={setting.enabled} disabled={!setting.loaded || busy} onChange={event => void change(event.target.checked)} slotProps={{ input: { id: 'h5-peer-fs-enabled', 'aria-label': label, style: INPUT_INSIDE } }} />}
-      />
-      <Hint>{t('Claude and Codex sessions started here get tools to read files on linked engines, and linked engines can read this engine’s files the same way. Read only: only the home folder, and sensitive files such as ~/.ssh and .env files are left out. Applies to sessions started after the change.')}</Hint>
-      <Feedback id="h5-peer-fs-feedback" feedback={feedback} />
-    </Box>
+    <Section id="peer-fs">
+      <Box id="h5-peer-fs" sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+        <FormControlLabel
+          sx={{ m: 0, alignSelf: 'flex-start', gap: 0.5 }} label={label}
+          control={<Switch size="small" checked={setting.enabled} disabled={!setting.loaded || busy} onChange={event => void change(event.target.checked)} slotProps={{ input: { id: 'h5-peer-fs-enabled', 'aria-label': label, style: INPUT_INSIDE } }} />}
+        />
+        <Hint>{t('Claude and Codex sessions started here get tools to read files on linked devices, and linked devices can read this device’s files the same way. Read only: only the home folder, and sensitive files such as ~/.ssh and .env files are left out. Applies to sessions started after the change.')}</Hint>
+        <Feedback id="h5-peer-fs-feedback" feedback={feedback} />
+      </Box>
+    </Section>
   );
 }

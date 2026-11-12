@@ -52,8 +52,8 @@ const measure = page => page.evaluate(() => {
 async function openSwitch(page) {
   await page.evaluate(() => window.H5UI.set({ settingsOpen: true }));
   await page.locator('#h5-settings').waitFor({ state: 'visible' });
-  await page.locator('#h5-set-voice .MuiAccordionSummary-root').click();
-  await page.waitForFunction(() => Boolean(document.querySelector('#h5-set-voice .MuiCollapse-entered')));
+  await page.locator('#h5-set-voice-translate .MuiAccordionSummary-root').click();
+  await page.waitForFunction(() => Boolean(document.querySelector('#h5-set-voice-translate .MuiCollapse-entered')));
   return page.locator('#h5-vi-enabled');
 }
 async function closeSettings(page) {

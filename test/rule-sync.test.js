@@ -2,6 +2,7 @@
 // roles, the source loop, the routes, and two real server.js processes with their own throwaway HOME. Nothing here touches the real ~/.claude or ~/.codex.
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -12,7 +13,7 @@ const Database = require('better-sqlite3');
 const sync = require('../services/rule-sync');
 const { createEngineRouter, createBrowserRouter } = require('../routes/rule-sync');
 
-const { createRuleSync, layout, buildBundle, parseBundle, revisionOf, MARKER, CAPABILITY, IMPORT_COMMENT, CODEX_BEGIN, CODEX_END, LIMITS } = sync;
+const { createRuleSync, layout, buildBundle, parseBundle, revisionOf, syncedNotice, withoutNotice, MARKER, CAPABILITY, EDIT_CAPABILITY, IMPORT_COMMENT, CODEX_BEGIN, CODEX_END, LIMITS } = sync;
 const SOURCE_ID = '11111111-1111-4111-8111-111111111111';
 const OTHER_ID = '33333333-3333-4333-8333-333333333333';
 const RECEIVER_ID = '22222222-2222-4222-8222-222222222222';
@@ -42,40 +43,54 @@ const until = async (check, label, ms = 5000) => {
   }
 };
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+// The rules a receiver wrote, without the notice line on top.
+const rulesOf = file => withoutNotice(read(file));
+const HOME_NOTICE = syncedNotice('Home Mac');
 
-// A machine: its own home, database and service. `env` stays empty so the defaults resolve under the throwaway home.
+// A machine: its own home, database, data folder and service. `env` stays empty so the defaults resolve under the throwaway home.
 function machine(t, { id, name, env = {}, ...options } = {}) {
   const home = tempHome(t);
   const db = database(t);
-  const service = createRuleSync({ db, env, home, identity: () => ({ instance_id: id, name }), log: quiet, timing: { pollMs: 0, retryMs: 0, debounceMs: 30 }, ...options });
+  const dataDir = path.join(home, 'tagent-data');
+  const service = createRuleSync({ db, env, home, dataDir, identity: () => ({ instance_id: id, name }), log: quiet, timing: { pollMs: 0, retryMs: 0, debounceMs: 30, guardPollMs: 0, guardDebounceMs: 30 }, ...options });
   t.after(() => service.stop());
-  return { home, db, service, paths: service.paths };
+  return { home, db, dataDir, service, paths: service.paths };
 }
 
-// A source with linked peers that answer through the services of other machines, as a remote Engine would (errors carry statusCode and the code).
+// A machine with linked peers that answer through the services of other machines, as a remote Engine would (errors carry statusCode, the code and the
+// JSON body). A peer: { id, name, machine, online?, instanceId?, capabilities?, unreachable? }.
 function linkedSource(t, peersOf, options = {}) {
+  return linkedMachine(t, peersOf, { id: SOURCE_ID, name: 'Home Mac', ...options });
+}
+function linkedMachine(t, peersOf, { id, name, ...options }) {
   const calls = [];
   const listeners = new Set();
   const links = { list: peersOf };
   const serviceLinks = {
-    peers: () => links.list().map(peer => ({ id: peer.id, name: peer.name, online: peer.online !== false, baseUrl: `tunnel://${peer.id}`, token: 'tae_x', remoteServerId: 1 })),
+    peers: () => links.list().map((peer, index) => ({ id: peer.id, name: peer.name, online: peer.online !== false, baseUrl: `tunnel://${peer.id}`, token: 'tae_x', remoteServerId: index + 1, instanceId: peer.instanceId || null })),
     onChange: fn => { listeners.add(fn); return () => listeners.delete(fn); },
     noteUnauthorized() {},
   };
   const byBase = () => new Map(links.list().map(peer => [`tunnel://${peer.id}`, peer]));
   async function request(base, route, token, opts = {}) {
     const peer = byBase().get(base);
-    calls.push({ peer: peer.id, route, method: opts.method || 'GET' });
-    if (route === '/v1/info') return { capabilities: peer.capabilities || [CAPABILITY] };
+    calls.push({ peer: peer.id, route, method: opts.method || 'GET', body: opts.body });
+    // A tunnel that is down: an error without a status, as services/remote-client.js gives.
+    if (peer.unreachable) throw new Error('LINK_OFFLINE');
+    if (route === '/v1/info') return { capabilities: peer.capabilities || [CAPABILITY, EDIT_CAPABILITY] };
+    if (peer.capabilities && !peer.capabilities.includes(EDIT_CAPABILITY) && route === '/v1/rule-sync/shared') throw Object.assign(new Error('REMOTE_HTTP_404'), { statusCode: 404 });
     try {
       if (route === '/v1/rule-sync/status') return JSON.parse(JSON.stringify(peer.machine.service.receiverStatus()));
       if (route === '/v1/rule-sync/bundle' && opts.method === 'PUT') return peer.machine.service.receive(JSON.parse(JSON.stringify(opts.body)));
+      if (route === '/v1/rule-sync/shared' && opts.method === 'PUT') return peer.machine.service.writeShared(JSON.parse(JSON.stringify(opts.body)));
+      if (route === '/v1/rule-sync/shared') return peer.machine.service.readShared();
     } catch (error) {
-      throw Object.assign(new Error(error.code || error.message), { statusCode: error.statusCode || 500 });
+      const body = error.code ? { error: error.code, ...error.extra } : null;
+      throw Object.assign(new Error(error.code || error.message), { statusCode: error.statusCode || 500, peerBody: body });
     }
     throw Object.assign(new Error('REMOTE_HTTP_404'), { statusCode: 404 });
   }
-  const source = machine(t, { id: SOURCE_ID, name: 'Home Mac', serviceLinks, request, ...options });
+  const source = machine(t, { id, name, serviceLinks, request, ...options });
   return { ...source, calls, emit: id => listeners.forEach(fn => fn(id)), puts: () => calls.filter(call => call.method === 'PUT') };
 }
 
@@ -172,9 +187,9 @@ test('a receiver writes the rules, the import line, Codex and the skills with ma
   b.service.update({ role: 'receive' });
   const answer = b.service.receive(bundle);
   assert.deepEqual(answer, { revision: bundle.revision, applied: { rules: true, codex: true, skills: ['deploy'], removed: [], conflicts: [] } });
-  assert.equal(read(b.paths.sharedRules), 'Use short sentences.\n');
+  assert.equal(read(b.paths.sharedRules), `${HOME_NOTICE}\n\nUse short sentences.\n`, 'the notice on top says where to edit');
   assert.match(read(b.paths.claudeMd), /^<!-- Managed by T-Agent/);
-  assert.equal(read(b.paths.codexAgents), `${CODEX_BEGIN}\nUse short sentences.\n${CODEX_END}\n\nLocal Codex rule.\n`);
+  assert.equal(read(b.paths.codexAgents), `${CODEX_BEGIN}\n${HOME_NOTICE}\nUse short sentences.\n${CODEX_END}\n\nLocal Codex rule.\n`, 'the same notice is the first line in the block');
   const skill = path.join(b.paths.skillsDir, 'deploy');
   assert.equal(read(path.join(skill, 'SKILL.md')), '# Deploy\n');
   assert.equal(modeOf(path.join(skill, 'scripts/run.sh')), 0o755);
@@ -348,7 +363,7 @@ test('the source pushes only to linked receivers, and a receiver never pushes', 
   a.service.update({ role: 'source' });
   await a.service.pushAll();
   assert.deepEqual(a.puts().map(call => call.peer), ['r'], 'only the receiver gets a bundle');
-  assert.equal(read(receiver.paths.sharedRules), 'Shared.\n');
+  assert.equal(rulesOf(receiver.paths.sharedRules), 'Shared.\n');
   assert.equal(exists(idle.paths.sharedRules), false);
   const targets = Object.fromEntries(a.service.overview().targets.map(target => [target.id, target]));
   assert.equal(targets.r.status, 'up-to-date');
@@ -406,7 +421,7 @@ test('a change is pushed once after the debounce, and a bundle over a cap is rep
   await until(() => a.puts().length === 2, 'the change was pushed');
   await sleep(200);
   assert.equal(a.puts().length, 2, 'several events within the debounce make one push');
-  assert.equal(read(receiver.paths.sharedRules), 'Four.\n');
+  assert.equal(rulesOf(receiver.paths.sharedRules), 'Four.\n');
   assert.ok(a.service.overview().last_change_at);
   // An event without a content change pushes nothing.
   watchers.forEach(item => item.onEvent('change'));
@@ -439,11 +454,385 @@ test('a receiver that comes online is pushed to at once; a failed push is retrie
   assert.equal(a.puts().length, 0);
   receiver.service.update({ role: 'receive' });
   await until(() => a.puts().length === 1, 'the retry found it receiving');
-  assert.equal(read(receiver.paths.sharedRules), 'Rules.\n');
+  assert.equal(rulesOf(receiver.paths.sharedRules), 'Rules.\n');
   const calls = a.calls.length;
   await sleep(250);
   assert.equal(a.puts().length, 1, 'an up-to-date peer is not pushed again');
   assert.equal(a.calls.length, calls, 'and not asked again by the retry');
+});
+
+// ---- The notice on a receiver ----
+
+test('a receiver puts the notice on top of the shared rules; the bundle revision is over the rules only', t => {
+  const { bundle } = sourceBundle(tempHome(t), { rules: 'Rule one.\n' });
+  const b = machine(t, { id: RECEIVER_ID });
+  b.service.update({ role: 'receive' });
+  b.service.receive(bundle);
+  const text = read(b.paths.sharedRules);
+  assert.equal(text.split('\n')[0], HOME_NOTICE);
+  assert.match(HOME_NOTICE, /^<!-- Synced by T-Agent from Home Mac\. Edit it on Home Mac or in the T-Agent page \(Settings > Rules and skills sync\); changes made here are replaced\. -->$/);
+  assert.equal(b.service.receiverStatus().revision, revisionOf('Rule one.\n', []));
+  assert.equal(bundle.revision, revisionOf('Rule one.\n', []), 'the header is not in the revision');
+  // A receiver that becomes the source sends the rules without its old notice, so the revision is the same.
+  b.service.update({ role: 'source' });
+  assert.equal(b.service.overview().revision, bundle.revision);
+  assert.equal(b.service.readShared().content, 'Rule one.\n');
+  assert.equal(syncedNotice('Evil --> name\nnext'), '<!-- Synced by T-Agent from Evil - name next. Edit it on Evil - name next or in the T-Agent page (Settings > Rules and skills sync); changes made here are replaced. -->', 'a name cannot end the comment or break the line');
+  assert.match(syncedNotice(''), /from the source\./);
+});
+
+// ---- Editing the shared rules on the source ----
+
+test('the source reads and writes its shared rules: atomic, mode kept, 409 on a stale base, 413, 400 and 403', async t => {
+  const receiver = machine(t, { id: RECEIVER_ID });
+  receiver.service.update({ role: 'receive' });
+  const a = linkedSource(t, () => [{ id: 'r', name: 'Office', machine: receiver }]);
+  refusedWith(() => a.service.readShared(), 'RULE_SYNC_NOT_SOURCE', 403);
+  refusedWith(() => a.service.writeShared({ content: 'x', base_revision: 'f'.repeat(64) }), 'RULE_SYNC_NOT_SOURCE', 403);
+  a.service.update({ role: 'source' });
+  await a.service.pushAll();
+
+  // No file yet: empty content; the first write creates <claude>/shared.
+  const empty = a.service.readShared();
+  assert.deepEqual({ ...empty, updated_at: null }, { content: '', content_revision: crypto.createHash('sha256').update('').digest('hex'), size: 0, updated_at: null, exists: false });
+  const first = a.service.writeShared({ content: 'Rule A.\n', base_revision: empty.content_revision });
+  assert.equal(read(a.paths.sharedRules), 'Rule A.\n');
+  assert.equal(modeOf(a.paths.sharedRules), 0o644);
+  assert.equal(first.size, 8);
+  assert.ok(first.updated_at);
+
+  fs.chmodSync(a.paths.sharedRules, 0o600);
+  const inodeBefore = fs.statSync(a.paths.sharedRules).ino;
+  const second = a.service.writeShared({ content: 'Rule B é.\n', base_revision: first.content_revision });
+  assert.equal(read(a.paths.sharedRules), 'Rule B é.\n');
+  assert.equal(modeOf(a.paths.sharedRules), 0o600, 'the mode is kept');
+  assert.notEqual(fs.statSync(a.paths.sharedRules).ino, inodeBefore, 'written to a new file and renamed into place');
+  assert.deepEqual(fs.readdirSync(path.dirname(a.paths.sharedRules)), ['CLAUDE.shared.md'], 'no temporary file is left');
+  assert.equal(a.service.readShared().content_revision, second.content_revision);
+
+  // Someone changed the file meanwhile: 409 with the current text, nothing written.
+  write(a.paths.sharedRules, 'Edited by hand.\n');
+  assert.throws(() => a.service.writeShared({ content: 'Mine.\n', base_revision: second.content_revision }), error => error.code === 'RULE_SYNC_SHARED_CHANGED' && error.statusCode === 409
+    && error.extra.current.content === 'Edited by hand.\n' && error.extra.current.content_revision === a.service.readShared().content_revision);
+  assert.equal(read(a.paths.sharedRules), 'Edited by hand.\n');
+
+  const base = a.service.readShared().content_revision;
+  assert.throws(() => a.service.writeShared({ content: 'x'.repeat(LIMITS.fileBytes + 1), base_revision: base }), error => error.code === 'RULE_SYNC_TOO_LARGE' && error.statusCode === 413);
+  for (const body of [null, { content: 1, base_revision: base }, { content: 'a\0b', base_revision: base }, { content: 'bad \ud800', base_revision: base }, { content: 'x' }, { content: 'x', base_revision: 'abc' }]) {
+    refusedWith(() => a.service.writeShared(body), 'RULE_SYNC_INVALID_CONTENT', 400);
+  }
+  assert.equal(read(a.paths.sharedRules), 'Edited by hand.\n', 'nothing refused was written');
+
+  // A write is pushed to the receivers (debounced like any change of the file).
+  const puts = a.puts().length;
+  a.service.writeShared({ content: 'Pushed rule.\n', base_revision: base });
+  await until(() => a.puts().length === puts + 1, 'the edit was pushed');
+  assert.equal(rulesOf(receiver.paths.sharedRules), 'Pushed rule.\n');
+});
+
+test('a symlinked shared rules file on the source is written through', t => {
+  const a = machine(t, { id: SOURCE_ID, name: 'Home Mac' });
+  const dotfiles = path.join(a.home, 'dotfiles', 'shared.md');
+  write(dotfiles, 'Linked.\n', 0o640);
+  fs.mkdirSync(path.dirname(a.paths.sharedRules), { recursive: true });
+  fs.symlinkSync(dotfiles, a.paths.sharedRules);
+  a.service.update({ role: 'source' });
+  const view = a.service.readShared();
+  assert.equal(view.content, 'Linked.\n');
+  a.service.writeShared({ content: 'Changed.\n', base_revision: view.content_revision });
+  assert.equal(fs.lstatSync(a.paths.sharedRules).isSymbolicLink(), true);
+  assert.equal(read(dotfiles), 'Changed.\n');
+  assert.equal(modeOf(dotfiles), 0o640);
+});
+
+// ---- Finding the source from any service ----
+
+// A source machine with a shared rules file, and a receiver that already follows it.
+function sourceAndReceiver(t, { instanceId = SOURCE_ID, capabilities } = {}) {
+  const src = machine(t, { id: SOURCE_ID, name: 'Home Mac' });
+  write(src.paths.sharedRules, 'Shared rule.\n');
+  src.service.update({ role: 'source' });
+  const peer = { id: 's', name: 'Home link', machine: src, instanceId, capabilities };
+  const rec = linkedMachine(t, () => [peer], { id: RECEIVER_ID, name: 'Office' });
+  rec.service.update({ role: 'receive' });
+  rec.service.receive(buildBundle({ paths: src.paths, skills: [], source: { instance_id: SOURCE_ID, name: 'Home Mac' } }).bundle);
+  return { src, rec, peer };
+}
+
+test('the editor on the source itself works on the local file', async t => {
+  const a = machine(t, { id: SOURCE_ID, name: 'Home Mac' });
+  write(a.paths.sharedRules, 'Local.\n');
+  a.service.update({ role: 'source' });
+  const view = await a.service.sharedForBrowser();
+  assert.equal(view.content, 'Local.\n');
+  assert.deepEqual(view.source, { name: 'Home Mac', local: true });
+  const saved = await a.service.saveSharedForBrowser({ content: 'Local 2.\n', base_revision: view.content_revision });
+  assert.deepEqual(saved.source, { name: 'Home Mac', local: true });
+  assert.equal(read(a.paths.sharedRules), 'Local 2.\n');
+});
+
+test('a receiver edits the rules of the source it follows; a stale base gets 409 with the current text', async t => {
+  const { src, rec } = sourceAndReceiver(t);
+  const view = await rec.service.sharedForBrowser();
+  assert.equal(view.content, 'Shared rule.\n');
+  assert.deepEqual(view.source, { name: 'Home Mac', local: false, remote_server_id: 1 });
+  assert.equal(rec.calls.filter(call => call.route === '/v1/rule-sync/status').length, 1, 'the link knows the instance: only the source is asked');
+  const saved = await rec.service.saveSharedForBrowser({ content: 'From the office.\n', base_revision: view.content_revision });
+  assert.equal(saved.content_revision, src.service.readShared().content_revision);
+  assert.equal(read(src.paths.sharedRules), 'From the office.\n', 'written on the source, not here');
+  assert.deepEqual(rec.calls.filter(call => call.method === 'PUT').map(call => call.body), [{ content: 'From the office.\n', base_revision: view.content_revision }]);
+  await assert.rejects(rec.service.saveSharedForBrowser({ content: 'Late.\n', base_revision: view.content_revision }),
+    error => error.code === 'RULE_SYNC_SHARED_CHANGED' && error.statusCode === 409 && error.extra.current.content === 'From the office.\n' && error.extra.source.name === 'Home Mac');
+});
+
+test('a receiver whose link does not know the instance finds its source through the status answers', async t => {
+  const { rec } = sourceAndReceiver(t, { instanceId: null });
+  const view = await rec.service.sharedForBrowser();
+  assert.equal(view.content, 'Shared rule.\n');
+  assert.equal(view.source.name, 'Home Mac');
+});
+
+test('with the role off the one linked source is found; several sources are 409, none is 404', async t => {
+  const src = machine(t, { id: SOURCE_ID, name: 'Home Mac' });
+  write(src.paths.sharedRules, 'Found.\n');
+  src.service.update({ role: 'source' });
+  const idle = machine(t, { id: RECEIVER_ID, name: 'Idle' });
+  const old = { id: 'old', name: 'Old box', machine: idle, capabilities: ['tasks:read'] };
+  const list = [{ id: 'i', name: 'Idle', machine: idle }, old, { id: 's', name: 'Home link', machine: src }];
+  const off = linkedMachine(t, () => list, { id: OTHER_ID, name: 'Laptop' });
+  const view = await off.service.sharedForBrowser();
+  assert.equal(view.content, 'Found.\n');
+  assert.deepEqual(view.source, { name: 'Home Mac', local: false, remote_server_id: 3 });
+  const saved = await off.service.saveSharedForBrowser({ content: 'From the laptop.\n', base_revision: view.content_revision });
+  assert.ok(saved.content_revision);
+  assert.equal(read(src.paths.sharedRules), 'From the laptop.\n');
+
+  const second = machine(t, { id: '44444444-4444-4444-8444-444444444444', name: 'Work Mac' });
+  second.service.update({ role: 'source' });
+  list.push({ id: 'w', name: 'Work link', machine: second });
+  await assert.rejects(off.service.sharedForBrowser(), error => error.code === 'RULE_SYNC_SEVERAL_SOURCES' && error.statusCode === 409 && error.extra.sources.join() === 'Home Mac,Work Mac');
+
+  list.splice(0, list.length, { id: 'i', name: 'Idle', machine: idle }, { id: 'gone', name: 'Away', machine: idle, online: false });
+  await assert.rejects(off.service.sharedForBrowser(), error => error.code === 'RULE_SYNC_NO_SOURCE' && error.statusCode === 404 && error.extra.unreachable.join() === 'Away');
+  const lonely = machine(t, { id: OTHER_ID });
+  await assert.rejects(lonely.service.sharedForBrowser(), error => error.code === 'RULE_SYNC_NO_SOURCE');
+});
+
+test('a source that is offline is 502 ENGINE_OFFLINE; one too old to edit is 501', async t => {
+  const { rec, peer } = sourceAndReceiver(t);
+  peer.online = false;
+  await assert.rejects(rec.service.sharedForBrowser(), error => error.code === 'ENGINE_OFFLINE' && error.statusCode === 502 && error.extra.source.name === 'Home Mac');
+  peer.online = true;
+  peer.unreachable = true;
+  await assert.rejects(rec.service.saveSharedForBrowser({ content: 'x', base_revision: 'f'.repeat(64) }), error => error.code === 'ENGINE_OFFLINE' && error.statusCode === 502);
+  peer.unreachable = false;
+  peer.capabilities = [CAPABILITY];
+  await assert.rejects(rec.service.sharedForBrowser(), error => error.code === 'RULE_SYNC_EDIT_UNSUPPORTED' && error.statusCode === 501);
+  // Found without the following too (role off): same answer.
+  rec.service.update({ role: 'off' });
+  await assert.rejects(rec.service.sharedForBrowser(), error => error.code === 'RULE_SYNC_EDIT_UNSUPPORTED' && error.statusCode === 501);
+});
+
+// ---- The guard on a receiver ----
+
+// A receiver that got a bundle with rules, two skills and Codex, next to its own company skill.
+function guardedReceiver(t, options = {}) {
+  const src = tempHome(t);
+  const b = machine(t, { id: RECEIVER_ID, ...options });
+  write(b.paths.claudeMd, '# My rules\n\nCompany rule.\n');
+  write(b.paths.codexAgents, 'Local Codex rule.\n');
+  write(path.join(b.paths.skillsDir, 'company', 'SKILL.md'), 'Company skill.\n');
+  b.service.update({ role: 'receive' });
+  const { bundle } = sourceBundle(src, { rules: 'Rule one.\n', skills: { deploy: { 'SKILL.md': '# Deploy\n', 'scripts/run.sh': { text: '#!/bin/sh\n', mode: 0o755 } }, notes: { 'SKILL.md': 'Notes.\n' }, company: { 'SKILL.md': 'Shared company.\n' } } });
+  b.service.receive(bundle);
+  return { ...b, src, bundle, skill: name => path.join(b.paths.skillsDir, name), backups: () => { try { return fs.readdirSync(path.join(b.dataDir, 'rule-sync', 'overwritten')).sort(); } catch { return []; } } };
+}
+
+test('the receiver keeps the applied bundle privately with a hash of every written file', t => {
+  const b = guardedReceiver(t);
+  const file = path.join(b.dataDir, 'rule-sync', 'applied-bundle.json');
+  assert.equal(modeOf(file), 0o600);
+  assert.equal(modeOf(path.dirname(file)), 0o700);
+  const record = JSON.parse(read(file));
+  assert.equal(record.revision, b.bundle.revision);
+  assert.equal(record.hashes.shared.length, 64);
+  assert.equal(record.hashes.codex.length, 64);
+  assert.deepEqual(record.skills.map(skill => skill.name), ['deploy', 'notes'], 'a skill that clashed with a local one is not kept');
+  assert.deepEqual(record.skills[0].files.map(item => item.path), ['SKILL.md', 'scripts/run.sh']);
+  assert.equal(b.service.guardCheck(), null, 'nothing changed');
+  assert.equal(b.service.overview().guard_active, true);
+});
+
+test('guard: an edited shared rules file is saved, put back and reported', t => {
+  const b = guardedReceiver(t);
+  const synced = read(b.paths.sharedRules);
+  write(b.paths.sharedRules, 'My local edit.\n');
+  const entry = b.service.guardCheck();
+  assert.deepEqual(entry.paths, [b.paths.sharedRules]);
+  assert.equal(read(b.paths.sharedRules), synced, 'the synced version is back');
+  assert.equal(read(path.join(entry.backup_dir, 'claude', 'shared', 'CLAUDE.shared.md')), 'My local edit.\n');
+  assert.equal(modeOf(path.join(entry.backup_dir, 'claude', 'shared', 'CLAUDE.shared.md')), 0o600);
+  assert.equal(modeOf(entry.backup_dir), 0o700);
+  assert.equal(path.dirname(entry.backup_dir), path.join(b.dataDir, 'rule-sync', 'overwritten'));
+  const changes = b.service.overview().local_changes;
+  assert.equal(changes.length, 1);
+  assert.deepEqual({ ...changes[0], at: null }, { at: null, paths: [b.paths.sharedRules], backup_dir: entry.backup_dir, source: 'Home Mac', restored: true });
+  assert.equal(b.service.guardCheck(), null, 'after the restore nothing differs');
+  // Deleted: put back, nothing to save.
+  fs.rmSync(b.paths.sharedRules);
+  const deleted = b.service.guardCheck();
+  assert.equal(deleted.backup_dir, null);
+  assert.equal(read(b.paths.sharedRules), synced);
+  assert.equal(b.service.dismissLocalChanges().local_changes.length, 0, 'dismissed');
+});
+
+test('guard: a deleted skill file and an extra file in a marked skill folder are put back and removed, with a backup', t => {
+  const b = guardedReceiver(t);
+  fs.rmSync(path.join(b.skill('deploy'), 'SKILL.md'));
+  write(path.join(b.skill('deploy'), 'extra', 'mine.md'), 'Added here.\n');
+  write(path.join(b.skill('notes'), 'SKILL.md'), 'Edited notes.\n');
+  write(path.join(b.skill('deploy'), '.DS_Store'), 'finder');
+  const entry = b.service.guardCheck();
+  assert.deepEqual(entry.paths, [
+    path.join(b.skill('deploy'), 'SKILL.md'), path.join(b.skill('deploy'), 'extra', 'mine.md'), path.join(b.skill('notes'), 'SKILL.md'),
+  ]);
+  assert.equal(read(path.join(b.skill('deploy'), 'SKILL.md')), '# Deploy\n');
+  assert.equal(exists(path.join(b.skill('deploy'), 'extra')), false, 'the extra file is gone from the skill');
+  assert.equal(modeOf(path.join(b.skill('deploy'), 'scripts', 'run.sh')), 0o755);
+  assert.equal(read(path.join(b.skill('notes'), 'SKILL.md')), 'Notes.\n');
+  assert.ok(exists(path.join(b.skill('deploy'), MARKER)), 'the marker is written again');
+  assert.equal(read(path.join(entry.backup_dir, 'claude', 'skills', 'deploy', 'extra', 'mine.md')), 'Added here.\n');
+  assert.equal(read(path.join(entry.backup_dir, 'claude', 'skills', 'notes', 'SKILL.md')), 'Edited notes.\n');
+  assert.equal(exists(path.join(entry.backup_dir, 'claude', 'skills', 'deploy', 'SKILL.md')), false, 'a deleted file has nothing to save');
+  // The whole folder deleted: built again.
+  fs.rmSync(b.skill('notes'), { recursive: true });
+  assert.deepEqual(b.service.guardCheck().paths, [b.skill('notes')]);
+  assert.equal(read(path.join(b.skill('notes'), 'SKILL.md')), 'Notes.\n');
+  assert.deepEqual(fs.readdirSync(b.paths.skillsDir).sort(), ['company', 'deploy', 'notes'], 'no temporary folder is left');
+});
+
+test('guard: an import line taken out is added again without touching the rest of CLAUDE.md', t => {
+  const b = guardedReceiver(t);
+  write(b.paths.claudeMd, '# My rules\n\nCompany rule, changed today.\n');
+  const entry = b.service.guardCheck();
+  assert.deepEqual(entry.paths, [b.paths.claudeMd]);
+  assert.equal(read(b.paths.claudeMd), `${IMPORT_COMMENT}\n@~/.claude/shared/CLAUDE.shared.md\n\n# My rules\n\nCompany rule, changed today.\n`);
+  // Any other change of CLAUDE.md is the user's own.
+  write(b.paths.claudeMd, `${read(b.paths.claudeMd)}More of my own rules.\n`);
+  assert.equal(b.service.guardCheck(), null);
+});
+
+test('guard: the inside of the Codex block is put back, text outside it is never compared', t => {
+  const b = guardedReceiver(t);
+  const synced = read(b.paths.codexAgents);
+  write(b.paths.codexAgents, synced.replace('Rule one.', 'Rule one, edited.'));
+  assert.deepEqual(b.service.guardCheck().paths, [b.paths.codexAgents]);
+  assert.equal(read(b.paths.codexAgents), synced);
+  write(b.paths.codexAgents, `${synced}Another local Codex rule.\n`);
+  assert.equal(b.service.guardCheck(), null);
+});
+
+test('guard: unmarked skill folders, links and a folder whose marker was removed are never touched', t => {
+  const b = guardedReceiver(t);
+  write(path.join(b.skill('company'), 'SKILL.md'), 'Company skill, edited.\n');
+  write(path.join(b.skill('company'), 'new.md'), 'new');
+  fs.rmSync(path.join(b.skill('notes'), MARKER));
+  write(path.join(b.skill('notes'), 'SKILL.md'), 'Mine now.\n');
+  assert.equal(b.service.guardCheck(), null);
+  assert.equal(read(path.join(b.skill('company'), 'SKILL.md')), 'Company skill, edited.\n');
+  assert.equal(read(path.join(b.skill('notes'), 'SKILL.md')), 'Mine now.\n');
+  // A link in place of a received skill: left alone.
+  const outside = path.join(b.home, 'elsewhere');
+  write(path.join(outside, 'keep.md'), 'keep');
+  fs.rmSync(b.skill('deploy'), { recursive: true });
+  fs.symlinkSync(outside, b.skill('deploy'));
+  assert.equal(b.service.guardCheck(), null);
+  assert.deepEqual(fs.readdirSync(outside), ['keep.md']);
+});
+
+test('guard: watch events are debounced into one restore, and its own writes do not start it again', async t => {
+  const watchers = [];
+  const watch = (dir, options, onEvent) => { watchers.push({ dir, recursive: options.recursive, onEvent }); return Object.assign(new EventEmitter(), { close() {} }); };
+  const b = guardedReceiver(t, { watch, timing: { pollMs: 0, retryMs: 0, debounceMs: 30, guardPollMs: 0, guardDebounceMs: 60 } });
+  b.service.start();
+  const dirs = watchers.map(item => item.dir);
+  assert.ok(dirs.includes(path.dirname(b.paths.sharedRules)));
+  assert.ok(dirs.includes(b.paths.claudeDir));
+  assert.ok(dirs.includes(b.skill('deploy')) && dirs.includes(b.skill('notes')));
+  assert.ok(!dirs.includes(b.skill('company')), 'an unmarked skill is not watched');
+  const fire = name => watchers.forEach(item => item.onEvent('change', name));
+
+  // An editor's save in several steps: one restore.
+  write(b.paths.sharedRules, 'Step 1.\n');
+  fire('CLAUDE.shared.md');
+  await sleep(10);
+  write(b.paths.sharedRules, 'Step 2.\n');
+  fire('CLAUDE.shared.md');
+  await until(() => b.service.overview().local_changes.length === 1, 'restored');
+  assert.equal(rulesOf(b.paths.sharedRules), 'Rule one.\n');
+  assert.equal(read(path.join(b.service.overview().local_changes[0].backup_dir, 'claude', 'shared', 'CLAUDE.shared.md')), 'Step 2.\n');
+  const stat = fs.statSync(b.paths.sharedRules);
+
+  // The events of our own restore (and any later ones) change nothing.
+  for (let i = 0; i < 5; i += 1) { fire('CLAUDE.shared.md'); fire(null); await sleep(20); }
+  await sleep(150);
+  assert.equal(b.service.overview().local_changes.length, 1, 'no second restore');
+  assert.equal(b.backups().length, 1);
+  const after = fs.statSync(b.paths.sharedRules);
+  assert.equal(after.ino, stat.ino, 'the file was not written again');
+  assert.equal(after.mtimeMs, stat.mtimeMs);
+  // An event for another file in ~/.claude starts nothing.
+  write(b.paths.sharedRules, 'Unseen edit.\n');
+  watchers.filter(item => item.dir === b.paths.claudeDir).forEach(item => item.onEvent('change', 'history.jsonl'));
+  await sleep(150);
+  assert.equal(read(b.paths.sharedRules), 'Unseen edit.\n', 'only CLAUDE.md counts in the config folder (the poll catches the rest)');
+});
+
+test('guard: the 30 s poll restores without any event; only the 20 newest backup folders are kept', async t => {
+  const b = guardedReceiver(t, { watch: () => { throw new Error('no watch here'); }, timing: { pollMs: 0, retryMs: 0, debounceMs: 30, guardPollMs: 40, guardDebounceMs: 30 } });
+  b.service.start();
+  write(b.paths.sharedRules, 'Polled.\n');
+  await until(() => b.service.overview().local_changes.length === 1, 'the poll restored it');
+  b.service.stop();
+  for (let i = 0; i < 22; i += 1) { write(b.paths.sharedRules, `Edit ${i}.\n`); b.service.guardCheck(); }
+  const kept = b.backups();
+  assert.equal(kept.length, 20);
+  assert.equal(read(path.join(b.dataDir, 'rule-sync', 'overwritten', kept.at(-1), 'claude', 'shared', 'CLAUDE.shared.md')), 'Edit 21.\n', 'the newest is kept');
+  assert.equal(b.service.overview().local_changes.length, 20, 'the last 20 entries');
+});
+
+test('guard: a new bundle saves a local edit before it replaces it', t => {
+  const b = guardedReceiver(t);
+  write(b.paths.sharedRules, 'Edited just before.\n');
+  const { bundle } = sourceBundle(b.src, { rules: 'Rule two.\n', skills: { deploy: { 'SKILL.md': '# Deploy\n', 'scripts/run.sh': { text: '#!/bin/sh\n', mode: 0o755 } }, notes: { 'SKILL.md': 'Notes.\n' } } });
+  b.service.receive(bundle);
+  assert.equal(rulesOf(b.paths.sharedRules), 'Rule two.\n');
+  const [entry] = b.service.overview().local_changes;
+  assert.equal(entry.restored, false);
+  assert.equal(read(path.join(entry.backup_dir, 'claude', 'shared', 'CLAUDE.shared.md')), 'Edited just before.\n');
+  assert.equal(b.service.guardCheck(), null, 'the new bundle is the one guarded now');
+});
+
+test('guard: turning the role off or resetting the source stops it, and the files stay as they are', t => {
+  const b = guardedReceiver(t);
+  b.service.update({ role: 'off' });
+  assert.equal(exists(path.join(b.dataDir, 'rule-sync', 'applied-bundle.json')), false);
+  assert.equal(b.service.overview().guard_active, false);
+  write(b.paths.sharedRules, 'Kept.\n');
+  assert.equal(b.service.guardCheck(), null);
+  assert.equal(read(b.paths.sharedRules), 'Kept.\n');
+
+  const c = guardedReceiver(t);
+  c.service.resetSource();
+  write(path.join(c.skill('deploy'), 'SKILL.md'), 'Kept too.\n');
+  assert.equal(c.service.guardCheck(), null);
+  assert.equal(read(path.join(c.skill('deploy'), 'SKILL.md')), 'Kept too.\n');
+  // Without a data folder there is no guard at all.
+  const plain = createRuleSync({ db: database(t), env: {}, home: tempHome(t), identity: () => ({ instance_id: RECEIVER_ID }), log: quiet });
+  plain.update({ role: 'receive' });
+  plain.receive(sourceBundle(tempHome(t)).bundle);
+  write(plain.paths.sharedRules, 'Free.\n');
+  assert.equal(plain.guardCheck(), null);
 });
 
 // ---- Routes ----
@@ -488,7 +877,8 @@ test('routes: the browser router needs a login and the same origin; the Engine r
   assert.equal(put.status, 200);
   assert.equal(put.body.revision, bundle.revision);
   const status = await call('GET', '/v1/rule-sync/status', undefined, engine);
-  assert.deepEqual(Object.keys(status.body).sort(), ['codex', 'conflicts', 'following', 'revision', 'role', 'synced_at']);
+  assert.deepEqual(Object.keys(status.body).sort(), ['codex', 'conflicts', 'following', 'instance_id', 'name', 'revision', 'role', 'synced_at']);
+  assert.equal(status.body.instance_id, RECEIVER_ID, 'the status says who answers, so a linked service can find the source');
   const other = await call('PUT', '/v1/rule-sync/bundle', { ...bundle, source: { instance_id: OTHER_ID, name: 'X' } }, engine);
   assert.equal(other.status, 409);
   assert.equal(other.body.error, 'RULE_SYNC_OTHER_SOURCE');
@@ -499,6 +889,49 @@ test('routes: the browser router needs a login and the same origin; the Engine r
   assert.equal((await call('PUT', '/v1/rule-sync/bundle', bundle, engine)).body.error, 'RULE_SYNC_NOT_RECEIVING');
   assert.equal((await call('POST', '/api/rule-sync/remove-import', {})).body.import_line_present, false);
   assert.equal((await call('GET', '/v1/rule-sync/bundle', undefined, engine)).status, 404, 'nothing reads a bundle back');
+});
+
+test('routes: the shared rules on the Engine API and in the browser, and dismissing local changes', async t => {
+  const a = machine(t, { id: SOURCE_ID, name: 'Home Mac' });
+  write(a.paths.sharedRules, 'Route rule.\n');
+  const app = express();
+  const guard = (req, res, next) => (req.get('authorization') === 'Bearer good' ? next() : res.status(401).json({ error: 'ENGINE_TOKEN_REQUIRED' }));
+  app.use('/api/rule-sync', createBrowserRouter({ getService: () => a.service, requireAuth: (req, res, next) => next() }));
+  app.use('/v1/rule-sync', createEngineRouter({ getService: () => a.service, guard }));
+  const call = await listen(t, app);
+  const engine = { 'Content-Type': 'application/json', Authorization: 'Bearer good' };
+
+  assert.equal((await call('GET', '/v1/rule-sync/shared', undefined, {})).status, 401);
+  assert.equal((await call('PUT', '/v1/rule-sync/shared', { content: 'x', base_revision: 'f'.repeat(64) }, { 'Content-Type': 'application/json' })).status, 401);
+  const notSource = await call('GET', '/v1/rule-sync/shared', undefined, engine);
+  assert.deepEqual([notSource.status, notSource.body.error], [403, 'RULE_SYNC_NOT_SOURCE']);
+  a.service.update({ role: 'source' });
+
+  const got = await call('GET', '/v1/rule-sync/shared', undefined, engine);
+  assert.equal(got.status, 200);
+  assert.deepEqual(Object.keys(got.body).sort(), ['content', 'content_revision', 'exists', 'size', 'updated_at']);
+  const put = await call('PUT', '/v1/rule-sync/shared', { content: 'Engine edit.\n', base_revision: got.body.content_revision }, engine);
+  assert.equal(put.status, 200);
+  assert.deepEqual(Object.keys(put.body).sort(), ['content_revision', 'size', 'updated_at']);
+  const stale = await call('PUT', '/v1/rule-sync/shared', { content: 'Stale.\n', base_revision: got.body.content_revision }, engine);
+  assert.equal(stale.status, 409);
+  assert.equal(stale.body.error, 'RULE_SYNC_SHARED_CHANGED');
+  assert.equal(stale.body.current.content, 'Engine edit.\n');
+
+  const view = await call('GET', '/api/rule-sync/shared');
+  assert.equal(view.body.content, 'Engine edit.\n');
+  assert.deepEqual(view.body.source, { name: 'Home Mac', local: true });
+  assert.equal((await call('PUT', '/api/rule-sync/shared', { content: 'x', base_revision: view.body.content_revision }, { 'Content-Type': 'application/json' })).status, 403, 'a write needs the same-origin header');
+  const saved = await call('PUT', '/api/rule-sync/shared', { content: 'Browser edit.\n', base_revision: view.body.content_revision });
+  assert.equal(saved.status, 200);
+  assert.equal(saved.body.source.local, true);
+  assert.equal(read(a.paths.sharedRules), 'Browser edit.\n');
+  // Over 1 MiB is the service's 413, not the 64 kB parser of the other routes.
+  const big = await call('PUT', '/api/rule-sync/shared', { content: 'x'.repeat(LIMITS.fileBytes + 1), base_revision: saved.body.content_revision });
+  assert.deepEqual([big.status, big.body.error, big.body.limit], [413, 'RULE_SYNC_TOO_LARGE', 'file']);
+  assert.equal((await call('PUT', '/api/rule-sync', { skills: Array.from({ length: 1500 }, (_, i) => `${'s'.repeat(60)}${i}`) })).status, 413, 'the other routes keep the small parser');
+  const dismissed = await call('POST', '/api/rule-sync/dismiss-local-changes', {});
+  assert.deepEqual(dismissed.body.local_changes, []);
 });
 
 // ---- Two real services ----
@@ -536,7 +969,7 @@ async function startService(t, extraEnv = {}) {
   });
   const url = `http://127.0.0.1:${port}`;
   return {
-    url, home, claude: path.join(home, '.claude'),
+    url, home, claude: path.join(home, '.claude'), data: path.join(temp, 'data'),
     async call(method, route, body, headers = HEADERS) {
       const response = await fetch(`${url}${route}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
       const text = await response.text();
@@ -601,4 +1034,39 @@ test('two real services: the source shares rules and a skill over the link, and 
   const pushed = await a.call('POST', '/api/rule-sync/push', {});
   assert.equal(pushed.status, 200, pushed.text);
   assert.match(read(path.join(b.claude, 'shared', 'CLAUDE.shared.md')), /Shared rule two\./);
+  assert.match(read(path.join(b.claude, 'shared', 'CLAUDE.shared.md')), /^<!-- Synced by T-Agent from .+\. Edit it on .+ or in the T-Agent page/, 'the receiver copy has the notice');
+  assert.doesNotMatch(read(path.join(a.claude, 'shared', 'CLAUDE.shared.md')), /Synced by T-Agent/, 'the original has none');
+
+  // Editing from the receiver's page goes to the source over the tunnel.
+  assert.ok(info.body.capabilities.includes(EDIT_CAPABILITY));
+  const onSource = (await a.call('GET', '/api/rule-sync/shared')).body;
+  assert.equal(onSource.source.local, true);
+  const remote = await b.call('GET', '/api/rule-sync/shared');
+  assert.equal(remote.status, 200, remote.text);
+  assert.equal(remote.body.source.local, false);
+  assert.equal(typeof remote.body.source.remote_server_id, 'number');
+  assert.equal(remote.body.content, onSource.content);
+  assert.equal(remote.body.content_revision, onSource.content_revision);
+  const edited = `${remote.body.content}Written from the receiver.\n`;
+  const saved = await b.call('PUT', '/api/rule-sync/shared', { content: edited, base_revision: remote.body.content_revision });
+  assert.equal(saved.status, 200, saved.text);
+  assert.equal(read(path.join(a.claude, 'shared', 'CLAUDE.shared.md')), edited, 'written on the source');
+  const stale = await b.call('PUT', '/api/rule-sync/shared', { content: 'Late.\n', base_revision: remote.body.content_revision });
+  assert.equal(stale.status, 409);
+  assert.equal(stale.body.error, 'RULE_SYNC_SHARED_CHANGED');
+  assert.equal(stale.body.current.content, edited);
+  // The source pushes the edit back to the receiver by itself (debounced).
+  await until(() => /Written from the receiver\./.test(read(path.join(b.claude, 'shared', 'CLAUDE.shared.md'))), 'the edit came back to the receiver', 15000);
+
+  // The guard of the receiver: a local edit is saved under its data folder and replaced.
+  const sharedOnB = path.join(b.claude, 'shared', 'CLAUDE.shared.md');
+  await until(async () => (await b.call('GET', '/api/rule-sync')).body.guard_active, 'the guard is on');
+  const synced = read(sharedOnB);
+  fs.writeFileSync(sharedOnB, 'Local edit on the receiver.\n');
+  await until(async () => (await b.call('GET', '/api/rule-sync')).body.local_changes.length === 1, 'the receiver put it back', 15000);
+  assert.equal(read(sharedOnB), synced);
+  const [entry] = (await b.call('GET', '/api/rule-sync')).body.local_changes;
+  assert.equal(path.relative(b.data, entry.backup_dir).split(path.sep).slice(0, 2).join('/'), 'rule-sync/overwritten');
+  assert.equal(read(path.join(entry.backup_dir, 'claude', 'shared', 'CLAUDE.shared.md')), 'Local edit on the receiver.\n');
+  assert.deepEqual((await b.call('POST', '/api/rule-sync/dismiss-local-changes', {})).body.local_changes, []);
 });

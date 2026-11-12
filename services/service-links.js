@@ -357,7 +357,7 @@ function createServiceLinks({ db, sessionSecret, identity, tunnel = tunnelModule
         const row = serverOf(link);
         if (!row) return [];
         try {
-          return [{ id: link.id, name: link.name, online: isOnline(link), remoteServerId: link.remote_server_id, baseUrl: row.base_url, token: tokenOf(row) }];
+          return [{ id: link.id, name: link.name, online: isOnline(link), remoteServerId: link.remote_server_id, instanceId: link.peer_instance_id || null, baseUrl: row.base_url, token: tokenOf(row) }];
         } catch { return []; } // a token that cannot be decrypted is a link that cannot be used
       });
     },

@@ -401,7 +401,7 @@ export function SettingsDrawer({ state, ui }) {
         <VoiceGroup />
         <EnginesGroup state={state} ui={ui} linksVersion={linksVersion} onLinksChanged={linksChanged} />
         <ServiceLinksGroup state={state} ui={ui} version={linksVersion} onChanged={linksChanged} />
-        <RuleSyncGroup />
+        <RuleSyncGroup state={state} />
         <RemoteGroup />
         <AttentionSettings ui={ui} />
         <AccessGroup />

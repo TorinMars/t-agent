@@ -150,6 +150,8 @@ function infoHandler(req, res) {
       'task-order',
       // rule-sync:receive: GET /v1/rule-sync/status and PUT /v1/rule-sync/bundle (routes/rule-sync.js); the bundle is applied only when this Engine's role is receive.
       require('../services/rule-sync').CAPABILITY,
+      // rule-sync:edit: GET / PUT /v1/rule-sync/shared read and write the shared rules file while this Engine is the source (routes/rule-sync.js).
+      require('../services/rule-sync').EDIT_CAPABILITY,
       'engine:update', 'pm2:manage', 'apps:manage', 'agent-config:manage', 'file-sync:manage', 'workspace:manage', 'agent-chat:manage',
     ],
   });
@@ -207,7 +209,8 @@ router.use('/apps', appsRouter);
 
 // Agent (Claude / Codex) default configuration: pushed from the Client's "Agent config" page, owner tokens only.
 router.use('/agent-config', require('./agent-config').createEngineRouter({ guard: requireEngineAuth('engine:admin') }));
-// Rules and skills sync (routes/rule-sync.js): GET /v1/rule-sync/status and PUT /v1/rule-sync/bundle, admin tokens only. Capability rule-sync:receive.
+// Rules and skills sync (routes/rule-sync.js): GET /v1/rule-sync/status, PUT /v1/rule-sync/bundle (capability rule-sync:receive) and GET / PUT
+// /v1/rule-sync/shared (capability rule-sync:edit), admin tokens only.
 router.use('/rule-sync', require('./rule-sync').createEngineRouter({ guard: requireEngineAuth('engine:admin') }));
 // Workspace tools (import unmanaged directories, clean up code directories): shared with the local /api/tasks/workspace/* via services/workspace-tools.
 const workspaceTools = require('../services/workspace-tools');

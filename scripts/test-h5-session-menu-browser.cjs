@@ -125,8 +125,8 @@ async function run(browser, wide) {
   const first = await page.evaluate(() => window.firstBox);
   const last = (await h.boxes(SELECTED, 1)).items.at(-1);
   assert.ok(first.transform === 'none' && Math.abs(first.top - last.top) <= 1 && Math.abs(first.bottom - last.bottom) <= 1, `${label}: the items are in their final place from the first frame ${JSON.stringify([first, last])}`);
-  assert.deepEqual(await h.items.allTextContents(), ['Rename', 'Reopen', 'Restart in the working directory', 'Delete'], `${label}: the actions`);
-  assert.deepEqual(await h.items.evaluateAll(nodes => nodes.map(node => node.classList.contains('danger'))), [false, false, true, true], `${label}: the danger style`);
+  assert.deepEqual(await h.items.allTextContents(), ['Rename', 'Reopen', 'Move up', 'Move down', 'Restart in the working directory', 'Delete'], `${label}: the actions (a middle session also moves up and down)`);
+  assert.deepEqual(await h.items.evaluateAll(nodes => nodes.map(node => node.classList.contains('danger'))), [false, false, false, false, true, true], `${label}: the danger style`);
   assert.equal(await page.locator('#h5-session-menu-actions').getAttribute('aria-label'), 'Terminal 2', `${label}: the list is named after the session`);
   assert.equal(await page.locator('#h5-term-menu .h5-menu-panel').count(), 0, `${label}: no sheet from the bottom`);
   if (!wide) for (const item of (await h.boxes(SELECTED, 1)).items) assert.ok(item.height >= 44, `${label}: a 44px item (${item.height})`);
@@ -140,7 +140,7 @@ async function run(browser, wide) {
   await h.more('Beta', 0).evaluate(node => node.scrollIntoView({ block: 'start' }));
   await h.open('Beta', 0);
   assertBelow(await h.boxes('Beta', 0), `${label} other task`);
-  assert.deepEqual(await h.items.allTextContents(), ['Rename', 'Open', 'Restart in the working directory', 'Delete'], `${label}: the actions of another task`);
+  assert.deepEqual(await h.items.allTextContents(), ['Rename', 'Open', 'Move down', 'Restart in the working directory', 'Delete'], `${label}: the actions of another task (its first session moves down)`);
   await page.keyboard.press('Escape');
   await h.gone('Escape');
   await h.press(page.locator('.h5-task-item', { hasText: 'Beta' }));

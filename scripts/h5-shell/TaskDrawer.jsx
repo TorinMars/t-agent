@@ -225,15 +225,23 @@ function RenameRow({ menu, ui, row }) {
   );
 }
 
-// The sessions under a task: its terminals. Every session row has "⋯" actions, for the task the row is under.
-function Sessions({ ui, taskId, sessions, menu }) {
+// The sessions under a task: its terminals. Every session row has "⋯" actions, for the task the row is under. With `sessions.movable` (h5.js: the
+// service saves the order and the task has two or more terminals) a terminal row is held to drag it among the task's own rows (`SESSION_DRAG`); while a
+// row of the list is being renamed, none of them moves. The rows never select text or show the touch callout, so a long press is only the drag.
+const SESSION_ROW_SX = { userSelect: 'none', WebkitUserSelect: 'none', WebkitTouchCallout: 'none' };
+function Sessions({ ui, taskId, sessions, menu, drag }) {
+  const renaming = Boolean(menu && menu.rename && menu.rename.task === taskId);
+  const movable = row => Boolean(sessions.movable && !renaming && row.kind === 'terminal');
   return (
-    <List className="h5-terminal-list" role="group" aria-label={sessions.label} dense disablePadding sx={{ ml: 1.75, mb: 0.125, pl: 0.125, borderLeft: 1, borderColor: 'divider' }}>
+    <List className="h5-terminal-list" data-task={taskId} role="group" aria-label={sessions.label} dense disablePadding sx={{ ml: 1.75, mb: 0.125, pl: 0.125, borderLeft: 1, borderColor: 'divider' }}>
       {sessions.note ? <Typography className="h5-peek-note" variant="body2" color="text.secondary" sx={{ px: 1, py: 0.75 }}>{t(sessions.note)}</Typography> : null}
       {sessions.rows.map(row => (
         <React.Fragment key={`${row.kind}:${row.id}`}>
         {row.more && menu && menu.rename && menu.rename.task === taskId && menu.rename.kind === row.kind && menu.rename.id === row.id ? <RenameRow menu={menu} ui={ui} row={row} /> : (
-        <Box className="h5-terminal-row" sx={{ display: 'flex', alignItems: 'center', gap: 0.5, [TOUCH]: { gap: 1 }, borderRadius: 2, borderLeft: 3, borderColor: row.current ? 'primary.main' : 'transparent', bgcolor: row.current ? 'action.selected' : undefined }}>
+        <Box
+          className="h5-terminal-row" data-session={row.kind === 'terminal' ? row.id : undefined} data-movable={movable(row) ? 'true' : undefined} {...(movable(row) && drag ? drag.hold() : {})}
+          sx={{ display: 'flex', alignItems: 'center', gap: 0.5, [TOUCH]: { gap: 1 }, borderRadius: 2, borderLeft: 3, borderColor: row.current ? 'primary.main' : 'transparent', bgcolor: row.current ? 'action.selected' : undefined, ...SESSION_ROW_SX }}
+        >
           <ListItemButton
             component="button" className="h5-terminal-main" aria-current={row.current ? 'true' : undefined}
             selected={row.current} onClick={() => ui.actions.openRow(taskId, row)}
@@ -298,8 +306,16 @@ function DeviceTag({ device, unplaced, expanded }) {
 // list scrolls. The drop asks h5.js to move the task (`reorderTask`: before the task now after the slot, or after the last one), which saves the whole
 // order; the copy settles into the slot. The rows are the ones shown, so with a search or a filter on, a task goes next to the tasks it was dropped between.
 // Every other change of the order (a menu move, a newer order from the server, a save that failed and moved back) slides the rows to their new places
-// too (FLIP, in `useTaskDrag`'s layout effect). `prefers-reduced-motion: reduce` makes every move instant.
+// too (FLIP, in `useListDrag`'s layout effect). `prefers-reduced-motion: reduce` makes every move instant.
+// The sessions of a task are sorted the same way (h5.js "Session order"), within their own task only (`SESSION_DRAG`): the whole row is the grip, but it has
+// to be held. A finger held still for HOLD_MS picks the row up (a short vibration where the phone has one); a finger that moves more than HOLD_SLOP_PX
+// before that is scrolling the list, and a short tap opens the session as before. The row keeps `touch-action: auto`, so the list scrolls from it; once the
+// row is picked up, the list's touchmove is cancelled instead (a non-passive listener, which iOS Safari needs too). A mouse picks the row up after HOLD_MS
+// or a move of DRAG_MOVE_PX; a plain click opens the session, and the click after a drag (or a hold) is swallowed. The copy stays inside the task's own
+// rows. The "⋯" of a session row offers Move up and Move down for the keyboard (h5.js).
 const DRAG_MOVE_PX = 4;
+const HOLD_MS = 400;
+const HOLD_SLOP_PX = 8;
 const EDGE_PX = 40;
 const MAX_SCROLL_PX = 14;
 const SHIFT_MS = 180; // the rows sliding out of the way, and to their new places after an order change
@@ -310,22 +326,81 @@ const slide = (node, y, ms) => {
   node.style.transform = y ? `translate3d(0, ${y}px, 0)` : '';
 };
 const unslide = node => { node.style.transition = ''; node.style.transform = ''; };
+// Where a row is in the scrolling list's own coordinates: offsets, so a slide in progress does not count, and scrolling does not change it.
+function topIn(el, list) {
+  let top = 0;
+  let node = el;
+  while (node && node !== list) { top += node.offsetTop; node = node.offsetParent; }
+  return node === list ? top : el.getBoundingClientRect().top - list.getBoundingClientRect().top + list.scrollTop;
+}
 
-function useTaskDrag(listRef, hostRef, liveRef, ui) {
+// What differs between the two lists that are sorted by dragging. `rows`: the rows the slides follow; `key`: a row's name; `group`: rows move only among
+// the rows of their own group; `peers`: the rows a picked one moves among; `head`: the part that is copied; `clamp`: the copy stays inside its peers;
+// `hold`: a press must be held (or, with a mouse, moved) to pick the row up; `drop`: the row was dropped somewhere else.
+const TASK_DRAG = {
+  rows: list => [...list.querySelectorAll('.h5-task[data-ref]')],
+  key: el => el.dataset.ref,
+  group: () => '',
+  row: handle => handle.closest('.h5-task'),
+  peers: list => [...list.querySelectorAll('.h5-task[data-movable="true"]')],
+  head: row => row.querySelector('.h5-task-head') || row,
+  floatClass: 'h5-task-float',
+  clamp: false,
+  hold: false,
+  focus: (list, ref) => [...list.querySelectorAll('.h5-task[data-movable="true"]')].find(el => el.dataset.ref === ref)?.querySelector('button.h5-task-tag') || null,
+  dragging: (ui, on) => ui.actions.taskDragging(on),
+  tap: (ui, ref) => ui.actions.toggleTask(ref),
+  drop: (ui, s, others) => {
+    const after = s.index >= others.length;
+    const target = (after ? others[others.length - 1] : others[s.index]).ref;
+    ui.actions.reorderTask(s.ref, target, after);
+  },
+};
+const sessionsOf = row => row.closest('.h5-terminal-list');
+const SESSION_DRAG = {
+  rows: list => [...list.querySelectorAll('.h5-terminal-list[data-task] > .h5-terminal-row[data-session]')],
+  key: el => `${sessionsOf(el).dataset.task}\n${el.dataset.session}`,
+  group: el => sessionsOf(el).dataset.task,
+  row: handle => handle.closest('.h5-terminal-row'),
+  peers: (list, row) => [...sessionsOf(row).querySelectorAll(':scope > .h5-terminal-row[data-movable="true"]')],
+  head: row => row,
+  floatClass: 'h5-task-float h5-session-float',
+  clamp: true,
+  hold: true,
+  focus: () => null,
+  dragging: (ui, on) => ui.actions.sessionDragging(on),
+  tap: null, // a tap is the row's own click: it opens the session
+  drop: (ui, s, others, say) => {
+    const ids = others.map(item => item.el.dataset.session);
+    ids.splice(s.index, 0, s.rows[s.from].el.dataset.session);
+    ui.actions.reorderSessions(sessionsOf(s.rows[s.from].el).dataset.task, ids);
+    say(t(`Moved to position ${s.index + 1} of ${s.rows.length}`));
+  },
+};
+
+function useListDrag(listRef, hostRef, liveRef, ui, spec) {
   const live = useRef(null); // the drag in progress (pressed, picked up, or settling)
-  // `rows`: ref -> { el, top } at the last commit; `dropped`: the places the rows were shown at when a drag ended (its slides are cleared at the commit
-  // that moves them); `focus`: the grip to focus again after a drop from the keyboard (moving a row's element takes the focus away).
+  // `rows`: key -> { el, top, group } at the last commit; `dropped`: the places the rows were shown at when a drag ended (its slides are cleared at the
+  // commit that moves them, or when it settles), and the grip to focus again after a drop from the keyboard (moving a row's element takes the focus away).
   const flip = useRef({ rows: new Map(), order: [], dropped: null });
   useEffect(() => () => { if (live.current) live.current.abort(); }, []);
+  // A row that was held until it was picked up keeps the finger: the list must not scroll under it (a passive or a late listener could not stop that).
+  useEffect(() => {
+    const list = listRef.current;
+    if (!list || !spec.hold) return undefined;
+    const keep = event => { if (live.current && live.current.picked && event.cancelable) event.preventDefault(); };
+    list.addEventListener('touchmove', keep, { passive: false });
+    return () => list.removeEventListener('touchmove', keep);
+  }, [listRef, spec.hold]);
   const say = text => { if (liveRef.current) liveRef.current.textContent = text; };
 
   useLayoutEffect(() => {
     const memo = flip.current;
     const list = listRef.current;
     if (!list) { memo.rows = new Map(); memo.order = []; return; }
-    const els = [...list.querySelectorAll('.h5-task[data-ref]')];
-    const now = new Map(els.map(el => [el.dataset.ref, { el, top: el.offsetTop }]));
-    const order = els.map(el => el.dataset.ref);
+    const els = spec.rows(list);
+    const now = new Map(els.map(el => [spec.key(el), { el, top: topIn(el, list), group: spec.group(el) }]));
+    const order = [...now.keys()];
     const before = memo.rows;
     const was = memo.order;
     const shownAt = new Map([...before].map(([ref, row]) => [ref, row.top]));
@@ -335,17 +410,25 @@ function useTaskDrag(listRef, hostRef, liveRef, ui) {
       memo.dropped = null;
       for (const node of dropped.nodes) unslide(node);
       for (const [ref, top] of dropped.at) shownAt.set(ref, top);
-      if (dropped.focus) { const grip = gripOf(list, dropped.focus); if (grip && document.activeElement !== grip) grip.focus({ preventScroll: true }); }
+      if (dropped.focus) { const grip = spec.focus(list, dropped.focus); if (grip && document.activeElement !== grip) grip.focus({ preventScroll: true }); }
     }
     memo.rows = now;
     memo.order = order;
     if (dragging || reducedMotion()) return;
-    // Only a change of the order moves rows; rows that came or went (a search, a new task) and a row that opened do not.
+    // Only a change of the order inside a group moves its rows; rows that came or went (a search, a new task) and a row that opened do not.
     const common = order.filter(ref => before.has(ref) && before.get(ref).el === now.get(ref).el);
     const old = was.filter(ref => common.includes(ref));
-    if (old.every((ref, index) => ref === common[index])) return;
+    const inGroups = refs => {
+      const groups = new Map();
+      for (const ref of refs) { const group = now.get(ref).group; if (!groups.has(group)) groups.set(group, []); groups.get(group).push(ref); }
+      return groups;
+    };
+    const oldGroups = inGroups(old);
+    const changed = new Set([...inGroups(common)].filter(([group, refs]) => refs.some((ref, index) => ref !== (oldGroups.get(group) || [])[index])).map(([group]) => group));
+    if (!changed.size) return;
     const moved = [];
     for (const ref of common) {
+      if (!changed.has(now.get(ref).group)) continue;
       const delta = shownAt.get(ref) - now.get(ref).top;
       if (Math.abs(delta) < 1) continue;
       slide(now.get(ref).el, delta, 0);
@@ -357,14 +440,15 @@ function useTaskDrag(listRef, hostRef, liveRef, ui) {
     setTimeout(() => { for (const node of moved) if (!node.style.transform) node.style.transition = ''; }, SHIFT_MS + 60);
   });
 
-  const begin = (ref, grip, pointer) => {
+  const begin = (handle, pointer) => {
     if (live.current) live.current.abort();
     const list = listRef.current;
     const host = hostRef.current;
-    const row = grip.closest('.h5-task');
+    const row = spec.row(handle);
     if (!list || !host || !row) return;
+    const ref = spec.key(row);
     const keyboard = !pointer;
-    const s = { ref, picked: false, frame: 0, rows: [], from: 0, index: 0, y: pointer ? pointer.y : 0, motion: !reducedMotion() };
+    const s = { ref, picked: false, frame: 0, timer: 0, rows: [], from: 0, index: 0, y: pointer ? pointer.y : 0, motion: !reducedMotion() };
     live.current = s;
     const rowsShown = () => s.rows.length;
     const place = (top, animate) => {
@@ -390,10 +474,16 @@ function useTaskDrag(listRef, hostRef, liveRef, ui) {
       slide(item.el, shift, s.motion ? SHIFT_MS : 0);
     }
     const slotTop = () => { const slot = s.rows[s.from]; return s.box.top + slot.top + slot.shift - list.scrollTop; };
-    // Pointer: the copy follows the pointer inside the list; the slot goes where the copy's top edge passed the middle of a row above it, or its bottom
-    // edge the middle of a row below it (the places measured at the start, in the list's own coordinates, so scrolling does not change them).
+    const first = () => s.rows[0];
+    const last = () => s.rows[s.rows.length - 1];
+    // Pointer: the copy follows the pointer inside the list (and, `clamp`, inside its own rows); the slot goes where the copy's top edge passed the middle
+    // of a row above it, or its bottom edge the middle of a row below it (the places measured at the start, in the list's own coordinates).
     const aim = () => {
-      const top = Math.min(Math.max(s.y - s.grab, s.box.top - s.headHeight / 2), s.box.bottom - s.headHeight / 2);
+      let top = Math.min(Math.max(s.y - s.grab, s.box.top - s.headHeight / 2), s.box.bottom - s.headHeight / 2);
+      if (spec.clamp) {
+        const base = s.box.top - list.scrollTop;
+        top = Math.min(Math.max(top, base + first().top), base + last().top + last().height - s.headHeight);
+      }
       place(top, false);
       const upper = top - s.box.top + list.scrollTop;
       const lower = upper + s.headHeight;
@@ -404,13 +494,15 @@ function useTaskDrag(listRef, hostRef, liveRef, ui) {
       });
       if (index !== s.index) { s.index = index; arrange(); }
     };
-    // Near an edge of the list it scrolls, faster the closer the pointer is; the slot follows.
+    // Near an edge of the list it scrolls, faster the closer the pointer is; the slot follows. Rows kept inside their group scroll only while part of
+    // the group is out of view on that side.
     const scroll = () => {
       s.frame = 0;
       if (!s.picked || keyboard) return;
       const top = s.y - s.box.top;
       const bottom = s.box.bottom - s.y;
-      const step = top < EDGE_PX ? -Math.ceil(MAX_SCROLL_PX * (1 - Math.max(top, 0) / EDGE_PX)) : bottom < EDGE_PX ? Math.ceil(MAX_SCROLL_PX * (1 - Math.max(bottom, 0) / EDGE_PX)) : 0;
+      let step = top < EDGE_PX ? -Math.ceil(MAX_SCROLL_PX * (1 - Math.max(top, 0) / EDGE_PX)) : bottom < EDGE_PX ? Math.ceil(MAX_SCROLL_PX * (1 - Math.max(bottom, 0) / EDGE_PX)) : 0;
+      if (spec.clamp && ((step < 0 && first().top >= list.scrollTop) || (step > 0 && last().top + last().height <= list.scrollTop + list.clientHeight))) step = 0;
       if (!step) return;
       const was = list.scrollTop;
       list.scrollTop += step;
@@ -419,19 +511,19 @@ function useTaskDrag(listRef, hostRef, liveRef, ui) {
     };
     const position = () => `${s.index + 1}`;
     const pick = () => {
-      s.rows = [...list.querySelectorAll('.h5-task[data-movable="true"]')].map(el => ({ el, ref: el.dataset.ref, top: el.offsetTop, height: el.offsetHeight, shift: 0 }));
+      s.rows = spec.peers(list, row).map(el => ({ el, ref: spec.key(el), top: topIn(el, list), height: el.offsetHeight, shift: 0 }));
       s.from = s.index = s.rows.findIndex(item => item.el === row);
       if (s.from < 0) { stop(); live.current = null; return; }
       s.picked = true;
       s.box = list.getBoundingClientRect();
-      const head = row.querySelector('.h5-task-head') || row;
+      const head = spec.head(row);
       const box = head.getBoundingClientRect();
       s.headHeight = box.height;
       s.grab = keyboard ? 0 : s.y - box.top;
-      // The floating copy: the row's own line (not its sessions), lifted. It is `position: fixed`; where its (0, 0) really is gets measured, so an
+      // The floating copy: the row's own line (not a task's sessions), lifted. It is `position: fixed`; where its (0, 0) really is gets measured, so an
       // ancestor that makes a containing block (a transformed sheet) cannot move it off the pointer.
       const float = document.createElement('div');
-      float.className = 'h5-task-float';
+      float.className = spec.floatClass;
       float.setAttribute('aria-hidden', 'true');
       float.inert = true;
       const body = document.createElement('div');
@@ -452,7 +544,7 @@ function useTaskDrag(listRef, hostRef, liveRef, ui) {
       row.setAttribute('data-drag-slot', 'true');
       list.setAttribute('data-dragging', 'true');
       document.documentElement.setAttribute('data-task-drag', keyboard ? 'keyboard' : 'pointer');
-      ui.actions.taskDragging(true);
+      spec.dragging(ui, true);
       void body.offsetWidth;
       body.classList.add('h5-task-float-lifted');
       if (keyboard) say(t(`Picked up at position ${position()} of ${rowsShown()}. Press Up or Down to move, Space to drop, Escape to cancel.`));
@@ -460,12 +552,14 @@ function useTaskDrag(listRef, hostRef, liveRef, ui) {
     const stop = () => {
       if (s.frame) cancelAnimationFrame(s.frame);
       s.frame = 0;
+      if (s.timer) clearTimeout(s.timer);
+      s.timer = 0;
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
       window.removeEventListener('pointercancel', onCancel);
       window.removeEventListener('keydown', onKey, true);
       window.removeEventListener('contextmenu', onMenu, true);
-      grip.removeEventListener('blur', onBlur);
+      handle.removeEventListener('blur', onBlur);
       list.removeEventListener('scroll', onScroll);
       list.removeAttribute('data-dragging');
       document.documentElement.removeAttribute('data-task-drag');
@@ -479,7 +573,7 @@ function useTaskDrag(listRef, hostRef, liveRef, ui) {
         for (const node of memo.dropped.nodes) unslide(node);
         memo.dropped = null;
       }
-      if (s.refocus) { const again = gripOf(list, ref); if (again && document.activeElement !== again) again.focus({ preventScroll: true }); }
+      if (s.refocus) { const again = spec.focus(list, ref); if (again && document.activeElement !== again) again.focus({ preventScroll: true }); }
       if (live.current === s) live.current = null;
     };
     // Drop (`save`) or put back. The copy settles into the slot; the order is saved at once, and the commit that moves the rows clears their slides,
@@ -497,11 +591,8 @@ function useTaskDrag(listRef, hostRef, liveRef, ui) {
         owner: s, nodes: s.rows.map(item => item.el), focus: s.refocus ? ref : null,
         at: new Map(s.rows.map(item => [item.ref, item.top + item.shift])),
       };
-      if (save && s.index !== s.from) {
-        const after = s.index >= others.length;
-        const target = (after ? others[others.length - 1] : others[s.index]).ref;
-        ui.actions.reorderTask(ref, target, after);
-      } else ui.actions.taskDragging(false);
+      if (save && s.index !== s.from) spec.drop(ui, s, others, say);
+      else spec.dragging(ui, false);
       setTimeout(clear, s.motion ? SETTLE_MS + 20 : 0);
     };
     // Keyboard: one row per press; the list scrolls to keep the slot in view, and the copy sits on the slot.
@@ -517,31 +608,36 @@ function useTaskDrag(listRef, hostRef, liveRef, ui) {
       place(slotTop(), true);
       say(t(`Moved to position ${position()} of ${rowsShown()}`));
     };
-    s.abort = () => { stop(); if (s.picked) { s.picked = false; for (const item of s.rows) unslide(item.el); ui.actions.taskDragging(false); } clear(); };
-    // The click a mouse button sends after a drag lands on what is under it: it is swallowed once (it comes right after the pointerup).
+    s.abort = () => { stop(); if (s.picked) { s.picked = false; for (const item of s.rows) unslide(item.el); spec.dragging(ui, false); } clear(); };
+    // The click a mouse button sends after a drag lands on what is under it, and so may the release of a finger that held a row still: it is swallowed
+    // once (it comes right after the pointerup). When none comes (a finger that moved sends none), the click of the next press is not the drag's.
     const swallowClick = () => {
       const eat = event => { event.preventDefault(); event.stopPropagation(); };
+      const done = () => { window.removeEventListener('click', eat, { capture: true }); window.removeEventListener('pointerdown', done, { capture: true }); };
       window.addEventListener('click', eat, { capture: true, once: true });
-      setTimeout(() => window.removeEventListener('click', eat, { capture: true }), 400);
+      window.addEventListener('pointerdown', done, { capture: true, once: true });
+      setTimeout(done, 400);
     };
     function onMove(event) {
       if (event.pointerId !== pointer.id) return;
       s.y = event.clientY;
       if (!s.picked) {
-        if (Math.hypot(event.clientX - pointer.x, event.clientY - pointer.y) <= DRAG_MOVE_PX) return;
+        const far = Math.hypot(event.clientX - pointer.x, event.clientY - pointer.y);
+        if (spec.hold && !pointer.mouse) { if (far > HOLD_SLOP_PX) { stop(); live.current = null; } return; } // the finger is scrolling the list
+        if (far <= DRAG_MOVE_PX) return;
         pick();
         if (!s.picked) return;
       }
       aim();
       if (!s.frame) s.frame = requestAnimationFrame(scroll);
     }
-    // A press that never became a drag is a tap on the tag: it opens or closes the task's sessions, like the row.
+    // A press that never became a drag is a tap: on a task's tag it opens or closes the task's sessions, like the row; on a session row its own click runs.
     function onUp(event) {
       if (event.pointerId !== pointer.id) return;
       const tap = !s.picked;
-      if (s.picked && pointer.mouse) swallowClick();
+      if (s.picked && (pointer.mouse || spec.hold)) swallowClick();
       end(true);
-      if (tap) ui.actions.toggleTask(ref);
+      if (tap && spec.tap) spec.tap(ui, ref);
     }
     function onCancel(event) { if (event.pointerId === pointer.id) end(false); }
     function onKey(event) {
@@ -564,11 +660,11 @@ function useTaskDrag(listRef, hostRef, liveRef, ui) {
     }
     function onBlur() { if (live.current === s && s.picked) { end(false); say(t('Reorder cancelled')); } }
     function onScroll() { if (s.picked) place(slotTop(), true); } // the same target as the move that scrolled, so its slide goes on
-    // A long press on the tag would open the context menu of a touch browser (Android Chrome).
+    // A long press would open the context menu of a touch browser (Android Chrome).
     function onMenu(event) { event.preventDefault(); }
     window.addEventListener('keydown', onKey, true);
     if (keyboard) {
-      grip.addEventListener('blur', onBlur);
+      handle.addEventListener('blur', onBlur);
       list.addEventListener('scroll', onScroll);
       pick();
       return;
@@ -577,25 +673,46 @@ function useTaskDrag(listRef, hostRef, liveRef, ui) {
     window.addEventListener('pointerup', onUp);
     window.addEventListener('pointercancel', onCancel);
     if (!pointer.mouse) window.addEventListener('contextmenu', onMenu, true);
+    // A held press picks the row up where it is.
+    if (spec.hold) {
+      s.timer = setTimeout(() => {
+        s.timer = 0;
+        if (live.current !== s || s.picked) return;
+        pick();
+        if (!s.picked) return;
+        if (!pointer.mouse && typeof navigator.vibrate === 'function') { try { navigator.vibrate(10); } catch { /* not allowed here */ } }
+        aim();
+      }, HOLD_MS);
+    }
   };
-  // The props of the tag of a row that can be moved.
-  const grip = task => ({
+  const pressed = event => ({ id: event.pointerId, x: event.clientX, y: event.clientY, mouse: event.pointerType === 'mouse' });
+  const primary = event => event.isPrimary && !(event.pointerType === 'mouse' && event.button !== 0);
+  // The props of the tag of a task row that can be moved.
+  const grip = () => ({
     onPointerDown: event => {
-      if (!event.isPrimary || (event.pointerType === 'mouse' && event.button !== 0)) return;
+      if (!primary(event)) return;
       event.preventDefault(); // no text selection, and a mouse does not move the focus to the tag
-      begin(task.ref, event.currentTarget, { id: event.pointerId, x: event.clientX, y: event.clientY, mouse: event.pointerType === 'mouse' });
+      begin(event.currentTarget, pressed(event));
     },
     onKeyDown: event => {
       if ((event.key !== ' ' && event.key !== 'Enter') || event.repeat || (live.current && live.current.picked)) return;
       event.preventDefault();
       event.stopPropagation();
-      begin(task.ref, event.currentTarget, null);
+      begin(event.currentTarget, null);
     },
     onContextMenu: event => event.preventDefault(),
   });
-  return { grip };
+  // The props of a session row that can be moved: the whole row except its "⋯". Nothing is cancelled here, so a press that is not held stays a tap or a
+  // scroll; a context menu is cancelled only while the row is pressed.
+  const hold = () => ({
+    onPointerDown: event => {
+      if (!primary(event) || (event.target.closest && event.target.closest('.h5-terminal-more'))) return;
+      begin(event.currentTarget, pressed(event));
+    },
+    onContextMenu: event => { if (live.current) event.preventDefault(); },
+  });
+  return { grip, hold };
 }
-const gripOf = (list, ref) => [...list.querySelectorAll('.h5-task[data-movable="true"]')].find(el => el.dataset.ref === ref)?.querySelector('button.h5-task-tag') || null;
 
 // The engine tag is the one control at the left edge of a task row (`TaskTag`): it names the device, shows whether the task is open, and is the drag
 // grip. It is as wide as its pill and as tall as the row, so on a touch screen its target is 44px tall (the row is 44px), and the hit area (`::after`)
@@ -629,13 +746,20 @@ function TaskTag({ task, ui, drag }) {
   }
   return <Box component="span" className="h5-task-tag" onClick={() => ui.actions.toggleTask(task.ref)} sx={TAG_SX}>{tag}</Box>;
 }
-// The drag (useTaskDrag): the row's place is an empty slot (dashed, softly tinted), and the copy that floats under the pointer is lifted: a raised
+// The drag (useListDrag): the row's place is an empty slot (dashed, softly tinted), and the copy that floats under the pointer is lifted: a raised
 // background, a soft shadow with a faint primary outline, 2% larger, its engine tag picked out (a solid ring in the tag's colour and a shadow under it).
 const DRAG_SX = theme => ({
   // Not `visibility: hidden`: that would take the focus from the grip of a task moved with the keyboard.
   '& .h5-task[data-drag-slot] > *': { opacity: 0, pointerEvents: 'none' },
   '& .h5-task[data-drag-slot]::before': {
     content: '""', position: 'absolute', inset: '3px 2px', borderRadius: '8px', pointerEvents: 'none',
+    border: `1.5px dashed ${alpha(theme.palette.primary.main, 0.55)}`, backgroundColor: alpha(theme.palette.primary.main, 0.08),
+  },
+  // A session row being dragged (SESSION_DRAG): the same slot, inside the row's own rounded box, and the same lifted copy.
+  '& .h5-terminal-row[data-drag-slot]': { position: 'relative', backgroundColor: 'transparent', borderColor: 'transparent' },
+  '& .h5-terminal-row[data-drag-slot] > *': { opacity: 0, pointerEvents: 'none' },
+  '& .h5-terminal-row[data-drag-slot]::before': {
+    content: '""', position: 'absolute', inset: '2px 0', borderRadius: '8px', pointerEvents: 'none',
     border: `1.5px dashed ${alpha(theme.palette.primary.main, 0.55)}`, backgroundColor: alpha(theme.palette.primary.main, 0.08),
   },
   '& .h5-task-float': { position: 'fixed', left: 0, top: 0, zIndex: 5, pointerEvents: 'none', willChange: 'transform' },
@@ -649,7 +773,7 @@ const DRAG_SX = theme => ({
 });
 const VISUALLY_HIDDEN = { position: 'absolute', width: '1px', height: '1px', overflow: 'hidden', clip: 'rect(0 0 0 0)', whiteSpace: 'nowrap' };
 
-function Tasks({ state, ui, query, filter, drag }) {
+function Tasks({ state, ui, query, filter, drag, sessionDrag }) {
   const { note, tasks } = state.taskList;
   if (note) return <Typography className="h5-list-note" color="text.secondary" sx={{ py: 3, textAlign: 'center' }}>{t(note)}</Typography>;
   const needle = query.trim().toLowerCase();
@@ -692,7 +816,7 @@ function Tasks({ state, ui, query, filter, drag }) {
           {task.add ? <IconButton className="h5-task-more" size="small" sx={{ p: 0.5 }} aria-label={t('Task actions')} title={t('Task actions')} aria-haspopup="dialog" onClick={() => ui.actions.taskMore(task.ref)}><Icon name="taskMore" size={20} /></IconButton> : null}
           {task.add ? <IconButton className="h5-task-add" size="small" sx={{ p: 0.5 }} aria-label={t('New session')} title={t('New session') + NEW_SESSION_KEYS} aria-haspopup="dialog" onClick={() => ui.actions.addSession(task.ref)}><AddIcon /></IconButton> : null}
         </Box>
-        {task.expanded && task.sessions ? <Sessions ui={ui} taskId={task.ref} sessions={task.sessions} menu={state.menu} /> : null}
+        {task.expanded && task.sessions ? <Sessions ui={ui} taskId={task.ref} sessions={task.sessions} menu={state.menu} drag={sessionDrag} /> : null}
       </Box>
     );
   });
@@ -779,7 +903,8 @@ function Panel({ state, ui }) {
   const listRef = useRef(null);
   const floatRef = useRef(null);
   const liveRef = useRef(null);
-  const drag = useTaskDrag(listRef, floatRef, liveRef, ui);
+  const drag = useListDrag(listRef, floatRef, liveRef, ui, TASK_DRAG);
+  const sessionDrag = useListDrag(listRef, floatRef, liveRef, ui, SESSION_DRAG);
   return (
     <Box sx={theme => ({ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, ...DRAG_SX(theme) })}>
       <Box className="h5-sheet-header" sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', px: 1.5, py: 0.25, borderBottom: 1, borderColor: 'divider' }}>
@@ -807,11 +932,11 @@ function Panel({ state, ui }) {
       </Box>
       {/* Basis 0: a long list (many open tasks) scrolls inside its own space instead of squeezing the rows below it (the settings row). */}
       <List id="h5-task-list" ref={listRef} className="h5-task-list" disablePadding sx={{ flex: '1 1 0', minHeight: 0, overflowY: 'auto', px: 0.5, pb: 0.5 }}>
-        <Tasks state={state} ui={ui} query={query} filter={filter} drag={drag} />
+        <Tasks state={state} ui={ui} query={query} filter={filter} drag={drag} sessionDrag={sessionDrag} />
         {/* Archived tasks are not searched: the entry goes away while a search or a filter is on. */}
         {query.trim() || filter !== 'all' ? null : <ArchivedTasks archived={state.archived} ui={ui} />}
       </List>
-      {/* The floating copy of a dragged row goes in here (useTaskDrag), and a keyboard move is announced in the live region. */}
+      {/* The floating copy of a dragged row goes in here (useListDrag), and a keyboard move or a session moved is announced in the live region. */}
       <Box ref={floatRef} className="h5-task-float-host" />
       <Box id="h5-task-order-live" ref={liveRef} aria-live="assertive" aria-atomic="true" sx={VISUALLY_HIDDEN} />
       <Box sx={{ px: 1.5, pb: 0.75, [TOUCH]: { pt: 0.5, pb: 1 } }}>

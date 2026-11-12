@@ -1462,6 +1462,7 @@ I18n.add({
   "Dropped at position {1} of {2}": "已放在第 {1} 位，共 {2} 位",
   "Reorder cancelled": "已取消调整顺序",
   "Could not save the task order: {1}": "保存任务顺序失败：{1}",
+  "Could not save the session order: {1}": "保存会话顺序失败：{1}",
   "Its tasks can be moved once this device is updated": "这台设备更新后才能调整它的任务顺序",
   "Rename task": "重命名任务",
   "Rename the folder too": "也重命名文件夹",

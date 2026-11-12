@@ -150,6 +150,9 @@
   // Archiving tasks: the local Client always, a remote Engine with 'tasks:archive'. An Engine that has not said yet shows no archive UI.
   // `archiveMissing`: its answers showed that this source does not implement archiving (`noArchiving`), which holds until the page is loaded again.
   const archives = from => !from.archiveMissing && (from.key === 'local' || Boolean(Array.isArray(from.capabilities) && from.capabilities.includes('tasks:archive')));
+  // Sorting the sessions of a task ("Session order" below): the local Client always, a remote Engine with 'terminals:order'. An Engine that has not said
+  // yet offers no sorting; one whose proxy answered TERMINAL_ORDER_UNSUPPORTED (an older Engine) loses the capability until its info is read again.
+  const ordersTerminals = from => from.key === 'local' || Boolean(Array.isArray(from.capabilities) && from.capabilities.includes('terminals:order'));
   // The service of the task that is shown, set by selecting a task (this machine when none is shown). There is no switch: all the services are in one list.
   let source = LOCAL;
   let task = null;
@@ -157,6 +160,10 @@
   let terminals = [];
   let terminalsState = 'none'; // what `terminals` is for the selected task: 'loading', 'ready' or 'error'
   let terminalsSeq = 0; // the newest `loadTerminals`: an older one is ignored when it answers, also when the same task was selected again
+  // The session order ("Session order" below). `dragging`: a session row is being dragged, and the list is not drawn again until the drop (`later`: it was
+  // asked to be). `saves`: by task ref, the order last saved from here, { order, end }, `end` being the `clock` when the save settled (null while it runs);
+  // `clock` counts the starts and the ends of the saves, so a list read can tell whether it started before one settled.
+  const sessionOrder = { dragging: false, later: false, saves: new Map(), clock: 0 };
   let terminalId = null;
   const expanded = new Set(); // the refs (`taskRef`) of the tasks whose sessions are listed in the task sheet (a tap on a task opens and closes its list; it does not open the task); any number can be open
   const peeks = new Map(); // ref -> the sessions of an expanded task that is not the selected one: { source, taskId, status, terminals }
@@ -412,7 +419,7 @@
   // The sessions of the selected task: its terminals, each with "⋯" actions. Agent chats are not listed in the task sheet.
   function ownSessions() {
     return {
-      label: 'Phone terminals', note: null,
+      label: 'Phone terminals', note: null, movable: ordersTerminals(source) && terminals.length > 1,
       rows: [
         ...terminals.map(row => ({ kind: 'terminal', id: row.terminal_id, title: row.title, agent: row.agent || null, otherDir: otherDir(row, task), current: row.terminal_id === terminalId && !agentChat, more: true })), // no row is current while a chat covers the terminal
       ],
@@ -428,7 +435,7 @@
       ...peek.terminals.map(row => ({ kind: 'terminal', id: row.terminal_id, title: row.title, agent: row.agent || null, otherDir: otherDir(row, item), current: false, more: true })),
     ];
     if (!rows.length) rows.push({ kind: 'open', id: 'open', title: tr('Open this task'), agent: null, current: false, more: false });
-    return { label, note: null, rows };
+    return { label, note: null, rows, movable: ordersTerminals(from) && peek.terminals.length > 1 };
   }
 
   // The groups of one service in the order they are drawn, each with its tasks in list order (groups without tasks left out).
@@ -562,11 +569,109 @@
   }
   ui.actions.taskDragging = on => { if (on) taskOrder.dragging = true; else endDrag(); };
   ui.actions.reorderTask = (ref, target, after = false) => { endDrag(); reorderTask(ref, target, after); };
+
+  // ── Session order: the terminals of a task in the order the person put them (a held row is dragged in TaskDrawer.jsx; "Move up" / "Move down" in its "⋯") ──
+  // The server keeps the order of each task (`PUT {tasksBase}/:id/terminals/order` with the whole order; `GET …/terminals` answers in it, new terminals
+  // last), so every client lists the same order on its next read; nothing is pushed. A move here shows at once (the rows slide) and saves the task's whole
+  // order. A list read that started before a save settled may be older than it, so it is put in the saved order (`inSavedOrder`). A failed save moves the
+  // rows back and says so. Everything that lists the selected task's terminals (the task sheet, the next running or pending session) reads `terminals` in
+  // its order; nothing sorts it.
+  // The rows in the order of `ids` (terminal ids); rows that `ids` does not name keep their order after them.
+  function arrangeRows(rows, ids) {
+    const place = new Map(ids.map((id, index) => [id, index]));
+    const at = row => (place.has(row.terminal_id) ? place.get(row.terminal_id) : Infinity);
+    return rows.map((row, index) => ({ row, index })).sort((a, b) => at(a.row) - at(b.row) || a.index - b.index).map(entry => entry.row);
+  }
+  const sameRows = (a, b) => a.length === b.length && a.every((row, index) => row === b[index]);
+  function inSavedOrder(ref, rows, asked) {
+    const saved = sessionOrder.saves.get(ref);
+    if (!saved || !Array.isArray(rows) || (saved.end !== null && asked >= saved.end)) return rows;
+    return arrangeRows(rows, saved.order);
+  }
+  // The terminals listed under a task: `terminals` for the selected one, its peek for another (null while they are not read).
+  function sessionRows(from, item) {
+    if (isShown(from, item.id)) return terminalsState === 'ready' ? terminals : null;
+    const peek = peeks.get(taskRef(from, item.id));
+    return peek && peek.status === 'ready' ? peek.terminals : null;
+  }
+  function putSessionRows(from, item, rows) {
+    if (isShown(from, item.id)) terminals = rows;
+    else { const peek = peeks.get(taskRef(from, item.id)); if (peek) peek.terminals = rows; }
+  }
+  // Puts the sessions of the task `ref` in the order `ids` and saves it. False when nothing changed.
+  function reorderSessions(ref, ids) {
+    const hit = resolveRef(ref);
+    if (!hit || !ordersTerminals(hit.from)) return false;
+    const { from, item } = hit;
+    const rows = sessionRows(from, item);
+    if (!rows) return false;
+    const next = arrangeRows(rows, ids);
+    if (sameRows(next, rows)) return false;
+    putSessionRows(from, item, next);
+    renderTasks();
+    void saveSessionOrder(from, item, next.map(row => row.terminal_id), rows.map(row => row.terminal_id));
+    return true;
+  }
+  async function saveSessionOrder(from, item, order, before) {
+    const ref = taskRef(from, item.id);
+    const mine = { order, end: null };
+    sessionOrder.clock += 1;
+    sessionOrder.saves.set(ref, mine);
+    try {
+      const answer = await api('PUT', `${from.tasksBase}/${item.id}/terminals/order`, { order });
+      if (sessionOrder.saves.get(ref) !== mine) return; // a newer move is on its way
+      if (answer && Array.isArray(answer.order)) mine.order = answer.order.filter(id => typeof id === 'string');
+      mine.end = (sessionOrder.clock += 1);
+      const rows = sessionRows(from, item);
+      const next = rows && arrangeRows(rows, mine.order);
+      if (next && !sameRows(next, rows)) { putSessionRows(from, item, next); renderTasks(); }
+    } catch (error) {
+      if (error.message === 'TERMINAL_ORDER_UNSUPPORTED' && Array.isArray(from.capabilities)) from.capabilities = from.capabilities.filter(name => name !== 'terminals:order');
+      if (sessionOrder.saves.get(ref) === mine) {
+        sessionOrder.saves.delete(ref);
+        const rows = sessionRows(from, item);
+        if (rows) putSessionRows(from, item, arrangeRows(rows, before));
+      }
+      renderTasks();
+      tell(`Could not save the session order: ${error.message}`, 'error');
+    }
+  }
+  // The live region of the task list (TaskDrawer.jsx) says where a session went.
+  const sayOrder = text => { const node = document.getElementById('h5-task-order-live'); if (node) node.textContent = text; };
+  // "Move up" / "Move down" in the "⋯" of a session row (`openTerminalMenu`, `openOtherMenu`): each only where the row can go that way.
+  function sessionSteps(from, item, id) {
+    const rows = ordersTerminals(from) ? sessionRows(from, item) : null;
+    const at = rows ? rows.findIndex(row => row.terminal_id === id) : -1;
+    if (at < 0 || rows.length < 2) return [];
+    const move = by => {
+      closeTerminalMenu();
+      const ids = (sessionRows(from, item) || []).map(row => row.terminal_id);
+      const index = ids.indexOf(id);
+      const to = index + by;
+      if (index < 0 || to < 0 || to >= ids.length) return;
+      ids.splice(index, 1);
+      ids.splice(to, 0, id);
+      if (reorderSessions(taskRef(from, item.id), ids)) sayOrder(tr(`Moved to position ${to + 1} of ${ids.length}`));
+    };
+    return [...(at > 0 ? [['Move up', () => move(-1)]] : []), ...(at < rows.length - 1 ? [['Move down', () => move(1)]] : [])];
+  }
+  // A drag of a session row (TaskDrawer.jsx): while it runs the list is not drawn again (a terminal list read meanwhile is kept and shown at the drop), so
+  // the rows do not move under the finger. The drop puts the task's sessions in the order shown.
+  ui.actions.sessionDragging = on => {
+    sessionOrder.dragging = Boolean(on);
+    if (!on && sessionOrder.later) { sessionOrder.later = false; renderTasks(); }
+  };
+  ui.actions.reorderSessions = (ref, ids) => {
+    const later = sessionOrder.later;
+    Object.assign(sessionOrder, { dragging: false, later: false });
+    if (!reorderSessions(ref, ids) && later) renderTasks(); // one drawing for the drop and what came meanwhile
+  };
   // The engine tag at the left edge of a task row (TaskDrawer.jsx draws it): shown whenever the order can be changed (it is the drag grip) or more than
   // one device is listed. Only an older server (no sorting) with this machine alone has no tags.
   const deviceTag = from => ({ key: from.key, local: from === LOCAL, label: from.label, name: from.name || '', instanceId: from.instanceId, offline: from.status === 'offline' });
 
   function renderTasks() {
+    if (sessionOrder.dragging) { sessionOrder.later = true; return; } // a session row is being dragged: the list is drawn again at the drop
     showArchived(); // first: the entry is there with an empty list too, and `readInfo` of an expanded list may just have changed what the Engine can do
     if (!listReady) { note('Loading…'); return; }
     const listed = listedSources();
@@ -673,6 +778,7 @@
       renderTasks();
     }, PEEK_WAIT_MS);
     await actionsDone(from, item.id);
+    const asked = sessionOrder.clock;
     const [rows] = await Promise.all([
       api('GET', `${from.tasksBase}/${item.id}/terminals`).catch(error => { if (error.status === 404) void recheckSource(from); return null; }),
       // What the Engine can do decides the actions of these rows (`controlsTerminals`). An Engine that does not answer must not hold the list back.
@@ -682,7 +788,7 @@
     if (!expanded.has(ref) || isShown(from, item.id) || (peeks.get(ref) && peeks.get(ref).seq > mine.seq)) return; // the selected task is listed from `terminals`
     peeks.set(ref, mine);
     mine.status = Array.isArray(rows) ? 'ready' : 'error';
-    mine.terminals = Array.isArray(rows) ? rows : [];
+    mine.terminals = Array.isArray(rows) ? inSavedOrder(ref, rows, asked) : [];
     renderTasks();
   }
   // A wide screen (a computer, a landscape tablet) shows the task list as a permanent sidebar next to the terminal: it is never closed,
@@ -1402,7 +1508,8 @@
         await actionsDone(from, current.id); // a Restart or Delete started from its row before it was selected, or from a carried row since
         if (seq !== terminalsSeq) return;
         const started = actionsStarted(from, current.id);
-        rows = await api('GET', `${from.tasksBase}/${current.id}/terminals`);
+        const asked = sessionOrder.clock;
+        rows = inSavedOrder(taskRef(from, current.id), await api('GET', `${from.tasksBase}/${current.id}/terminals`), asked);
         if (seq !== terminalsSeq) return;
         if (actionsStarted(from, current.id) === started) break; // else this list may be older than that action: read again once it is done
       }
@@ -1520,6 +1627,7 @@
       // Agent terminals too: a name given here is kept (title_custom) and wins over the Claude / Codex session title from then on.
       ['Rename', () => askRename(row.title)],
       ['Reopen', () => { closeTerminalMenu(); closeTasks(); switchTerminal(row); }],
+      ...sessionSteps(source, task, row.terminal_id),
       ['Restart in the working directory', () => void restartTerminal(target), 'danger'],
       ['Delete', () => void deleteTerminal(target), 'danger'],
     ], { anchor });
@@ -1534,6 +1642,7 @@
     showMenu(entry.title, [
       ['Rename', () => askRename(entry.title)],
       ['Open', () => { closeTerminalMenu(); ui.actions.openRow(taskRef(from, item.id), { kind: row.kind, id: row.id }); }],
+      ...sessionSteps(from, item, entry.terminal_id),
       ...(controlsTerminals(from) ? [
         ['Restart in the working directory', () => void restartTerminal(target), 'danger'],
         ['Delete', () => void deleteTerminal(target), 'danger'],

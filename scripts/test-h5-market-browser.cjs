@@ -174,7 +174,10 @@ const marketCalls = calls => calls.filter(call => call.method === 'GET' && call.
 const installs = calls => calls.filter(call => call.path === '/api/attention/market/install');
 const prepares = calls => calls.filter(call => call.path === '/api/attention/market/prepare');
 // Nothing in the market panel or an open dialog is wider than the viewport, and no box scrolls sideways.
+// The tap ripple (`.MuiTouchRipple-root` and its circles) is clipped on purpose while it grows, so it is left out: a measure taken during the
+// ripple of the tap that opened a dialog would otherwise count it as overflow.
 const overflow = page => page.evaluate(() => [...document.querySelectorAll('#h5-market *, .MuiDialog-paper, .MuiDialog-paper *')]
+  .filter(node => !node.closest('.MuiTouchRipple-root'))
   .filter(node => node.getBoundingClientRect().width && (node.getBoundingClientRect().right > innerWidth + 0.5 || (node.scrollWidth > node.clientWidth + 1 && getComputedStyle(node).overflowX !== 'visible' && node.tagName !== 'INPUT')))
   .map(node => `${node.tagName}.${String(node.className).slice(0, 60)}`));
 const smallButtons = (page, selector) => page.evaluate(sel => [...document.querySelectorAll(sel)].map(node => node.getBoundingClientRect()).filter(r => r.width && (r.width < 44 || r.height < 44)).map(r => [r.width, r.height]), selector);

@@ -105,8 +105,10 @@ export function startAttentionFeed(ui, { t = text => text, api, EventSourceImpl,
     let change;
     try { change = JSON.parse(message.data); } catch { return; }
     if (!change || !change.item) return;
+    // An update sent without `previous` is compared with the copy the page had (so a change of the order alone is never a reminder).
+    const known = change.kind === 'updated' && !change.previous ? (current().items || []).find(item => item.id === change.item.id) : null;
     patch({ items: applyChange(current().items || [], change) });
-    remind(change);
+    remind(known ? { ...change, previous: known } : change);
   }
 
   function connect() {
@@ -176,6 +178,25 @@ export function startAttentionFeed(ui, { t = text => text, api, EventSourceImpl,
     if (item && item.id != null) replace(item);
     return item;
   };
+  // Move a task (POST /api/attention/:id/move, body { before | after | position, status?, reason? }): the answer's `item` and `items` (every task whose
+  // order changed) replace the page's copies. A server without /move (404 / 405) sets `noMove`, and the panel stops offering the drag.
+  ui.actions.attentionMove = async (id, body) => {
+    markOwn(id);
+    let data;
+    try { data = await api('POST', `${BASE}/${encodeURIComponent(id)}/move`, body); }
+    catch (error) {
+      if ((error.status === 404 && !(error.data && error.data.error === 'NOT_FOUND')) || error.status === 405) patch({ noMove: true });
+      throw error;
+    }
+    let items = current().items || [];
+    for (const item of [...(Array.isArray(data && data.items) ? data.items : []), ...(data && data.item ? [data.item] : [])]) {
+      if (item && item.id != null) { markOwn(item.id); items = applyChange(items, { kind: 'updated', item }); }
+    }
+    patch({ items });
+    return data;
+  };
+  // The panel's own copy of the list while a request is on its way (a move or a row button shown at once), and putting it back when it failed.
+  ui.actions.attentionShow = items => patch({ items });
   ui.actions.attentionDelete = async id => {
     markOwn(id);
     await api('DELETE', `${BASE}/${encodeURIComponent(id)}`);

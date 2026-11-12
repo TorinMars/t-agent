@@ -17,6 +17,8 @@ const home = path.join(root, 'home');
 fs.mkdirSync(home);
 process.env.HOME = home;
 const db = require('../db');
+// Peer file access off: these commands are the ones without the `t-agent-peers` MCP server (test/terminal-peer-mcp.test.js has those).
+require('../services/peer-fs-settings').peerFsSettings().setEnabled(false);
 const tasks = require('../services/engine-tasks');
 const shells = [];
 const terminalPath = path.resolve(__dirname, '../routes/terminal.js');

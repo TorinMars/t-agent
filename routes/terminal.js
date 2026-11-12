@@ -14,6 +14,7 @@ const { clipboardShimEnv } = require('../lib/clipboard-shims');
 const { listSessions, startupCommand, newClaudeCommand, runningSubagents, SESSION_ID } = require('../lib/agent-sessions');
 const { resolveTerminalUser, userCanEnter, terminalEnvFor } = require('../lib/terminal-user');
 const { processCwd, cwdInRoot } = require('../lib/terminal-cwd');
+const { peerFsSettings } = require('../services/peer-fs-settings');
 
 // Sessions are keyed by task ID and terminal ID; omitted IDs name the implicit `default` terminal, which only older tasks have (lib/task-default-terminal.js).
 const sessions = new Map();
@@ -54,19 +55,69 @@ function verifyHookToken(taskId, id, token) {
 // (scripts/claude-session-hook.js) posts { session_id, source, cwd } to the hook endpoint with event=session.
 const SESSION_HOOK_SCRIPT = path.resolve(__dirname, '..', 'scripts', 'claude-session-hook.js');
 const shellQuote = value => `'${String(value).replace(/'/g, `'\\''`)}'`;
-function claudeSettings() {
+// With peer file access on, the same settings also allow the read-only tools of the `t-agent-peers` MCP server, so reading
+// a linked engine's file does not ask each time.
+function claudeSettings(peer = false) {
   const command = `${shellQuote(process.execPath)} ${shellQuote(SESSION_HOOK_SCRIPT)} >/dev/null 2>&1 || true`;
-  return JSON.stringify({ hooks: { SessionStart: [{ hooks: [{ type: 'command', command, timeout: 10 }] }] } });
+  const settings = { hooks: { SessionStart: [{ hooks: [{ type: 'command', command, timeout: 10 }] }] } };
+  if (peer) settings.permissions = { allow: [`mcp__${PEER_MCP_NAME}`] };
+  return JSON.stringify(settings);
 }
 
-// The command typed for a Claude terminal, with the session hook when the hook endpoint is known (the same condition
-// that puts TA_CLAUDE_SETTINGS into the PTY environment).
-function withSessionHook(agent, command) {
-  if (!command || agent !== 'claude' || !hookEndpoint) return command;
-  return `${command} --settings "$TA_CLAUDE_SETTINGS"`;
+// Peer file access ("Peer file access" in DESIGN.md, MCP part): when the switch of services/peer-fs-settings.js is on and the hook endpoint
+// is known, every Claude and Codex session started here gets the read-only `t-agent-peers` MCP server (scripts/peer-mcp.js), added for
+// that process only on its command line (the person's own MCP servers and config files are not touched and still apply). The server
+// calls this Engine's relay at TA_PEER_URL with TA_PEER_TASK, TA_PEER_TERMINAL and the terminal's TA_HOOK_TOKEN. The token is only
+// ever in the environment: the command lines reference variables, so `ps` shows no secret.
+//  - Claude: `--mcp-config "$TA_MCP_CONFIG"` (a JSON string). Claude starts stdio MCP servers with its whole environment, so the
+//    TA_* variables reach the server as they are. `--mcp-config` takes several values, so it stays the last option of the line.
+//  - Codex: three `-c` overrides. command and args come from TA_PEER_MCP_COMMAND / TA_PEER_MCP_ARGS (TOML values, so paths need no
+//    quoting in the typed line); Codex starts MCP servers with a filtered environment, so `env_vars` names the variables it passes on.
+const PEER_MCP_NAME = 't-agent-peers';
+const PEER_MCP_SCRIPT = path.resolve(__dirname, '..', 'scripts', 'peer-mcp.js');
+const PEER_FORWARDED_ENV = ['TA_PEER_URL', 'TA_PEER_TASK', 'TA_PEER_TERMINAL', 'TA_HOOK_TOKEN'];
+const CLAUDE_PEER_FLAGS = '--mcp-config "$TA_MCP_CONFIG"';
+const CODEX_PEER_FLAGS = [
+  `-c "mcp_servers.${PEER_MCP_NAME}.command=$TA_PEER_MCP_COMMAND"`,
+  `-c "mcp_servers.${PEER_MCP_NAME}.args=$TA_PEER_MCP_ARGS"`,
+  `-c 'mcp_servers.${PEER_MCP_NAME}.env_vars=${JSON.stringify(PEER_FORWARDED_ENV)}'`,
+].join(' ');
+// A TOML basic string (JSON's escapes are TOML's, but TOML also wants DEL and the other control characters escaped).
+const tomlString = value => `"${String(value).replace(/[\\"\u0000-\u001f\u007f]/g, ch => (ch === '\\' || ch === '"' ? `\\${ch}` : `\\u${ch.charCodeAt(0).toString(16).padStart(4, '0')}`))}"`;
+
+// Whether new sessions get the peer tools: only with a known hook endpoint (the relay is on the same server) and the switch on.
+function peerFsOn() {
+  if (!hookEndpoint) return false;
+  try { return peerFsSettings().enabled(); } catch (error) {
+    console.warn(`[terminal] could not read the peer file access switch: ${error.message}`);
+    return false;
+  }
 }
 
-const HOOK_ENV_KEYS = ['TA_HOOK_URL', 'TA_HOOK_TOKEN', 'TA_CLAUDE_SETTINGS', 'TA_ATTENTION_URL', 'TA_ATTENTION_TOKEN', 'TA_ATTENTION_HOOK'];
+function peerEnv(taskId, id) {
+  return {
+    TA_PEER_URL: `${hookEndpoint.replace(/^([a-z]+:\/\/[^/]+).*$/i, '$1')}/api/peer-fs`, // the hook endpoint's origin
+    TA_PEER_TASK: String(Number(taskId)),
+    TA_PEER_TERMINAL: String(id),
+    TA_MCP_CONFIG: JSON.stringify({ mcpServers: { [PEER_MCP_NAME]: { type: 'stdio', command: process.execPath, args: [PEER_MCP_SCRIPT] } } }),
+    TA_PEER_MCP_COMMAND: tomlString(process.execPath),
+    TA_PEER_MCP_ARGS: `[${tomlString(PEER_MCP_SCRIPT)}]`,
+  };
+}
+
+// The command typed for an agent terminal. Claude gets the session hook when the hook endpoint is known (the same condition that
+// puts TA_CLAUDE_SETTINGS into the PTY environment); with `peer` (the same value hookEnv got for this shell) Claude and Codex also
+// get the `t-agent-peers` MCP server.
+function withSessionHook(agent, command, peer = peerFsOn()) {
+  if (!command || !hookEndpoint) return command;
+  const on = Boolean(peer);
+  if (agent === 'claude') return `${command} --settings "$TA_CLAUDE_SETTINGS"${on ? ` ${CLAUDE_PEER_FLAGS}` : ''}`;
+  if (agent === 'codex' && on) return `${command} ${CODEX_PEER_FLAGS}`;
+  return command;
+}
+
+const HOOK_ENV_KEYS = ['TA_HOOK_URL', 'TA_HOOK_TOKEN', 'TA_CLAUDE_SETTINGS', 'TA_ATTENTION_URL', 'TA_ATTENTION_TOKEN', 'TA_ATTENTION_HOOK',
+  'TA_PEER_URL', 'TA_PEER_TASK', 'TA_PEER_TERMINAL', 'TA_MCP_CONFIG', 'TA_PEER_MCP_COMMAND', 'TA_PEER_MCP_ARGS'];
 // The server's own environment may already hold these (a server started from inside a t-agent terminal): they belong to
 // that outer terminal and are never passed on.
 function withoutInheritedHookEnv(env) {
@@ -75,12 +126,13 @@ function withoutInheritedHookEnv(env) {
   return next;
 }
 
-function hookEnv(taskId, id) {
+function hookEnv(taskId, id, peer = peerFsOn()) {
   if (!hookEndpoint) return {};
   return {
     TA_HOOK_URL: `${hookEndpoint}?task=${Number(taskId)}&terminal=${encodeURIComponent(id)}`,
     TA_HOOK_TOKEN: hookToken(taskId, id),
-    TA_CLAUDE_SETTINGS: claudeSettings(),
+    TA_CLAUDE_SETTINGS: claudeSettings(peer),
+    ...(peer ? peerEnv(taskId, id) : {}),
   };
 }
 
@@ -343,7 +395,8 @@ function createTerminal(taskId, options = {}) {
   }
   const count = listTerminals(taskId).length + 1;
   const title = named || (command ? `${AGENT_LABELS[agent]} ${count}` : `Terminal ${count}`);
-  if (command) pendingStartup.set(sessionKey(taskId, id), withSessionHook(agent, command));
+  // The agent's options are added when the shell starts (getOrCreateSession), from the same switch reading as its environment.
+  if (command) pendingStartup.set(sessionKey(taskId, id), { agent, command });
   // The terminal keeps the task's working directory of this moment, whatever the task's directory becomes later.
   const task = db.prepare('SELECT work_dir FROM tasks WHERE id = ?').get(taskId);
   const workDir = (task && task.work_dir) || null;
@@ -355,7 +408,7 @@ function createTerminal(taskId, options = {}) {
 // A new shell for an agent terminal that was closed or restarted resumes the session it is bound to.
 // A Claude session that never got a message has no file to resume, and a Codex session that was never bound starts fresh.
 // `workDir` is the directory the new shell starts in (the terminal's own directory), where the agent looks for the session.
-function reopenCommand(taskId, id, workDir) {
+function reopenCommand(taskId, id, workDir, peer = peerFsOn()) {
   const row = id === 'default' ? null : db.prepare('SELECT agent, agent_session_id FROM task_terminals WHERE task_id = ? AND terminal_id = ?').get(taskId, id);
   if (!row || !row.agent) return null;
   if (!row.agent_session_id) {
@@ -363,10 +416,10 @@ function reopenCommand(taskId, id, workDir) {
     const bound = db.prepare('SELECT agent_session_id FROM task_terminals WHERE task_id = ? AND terminal_id = ?').get(taskId, id);
     row.agent_session_id = bound && bound.agent_session_id;
   }
-  if (!row.agent_session_id) return withSessionHook(row.agent, startupCommand(row.agent));
+  if (!row.agent_session_id) return withSessionHook(row.agent, startupCommand(row.agent), peer);
   const exists = listSessions(row.agent, workDir, undefined, 200).some(entry => entry.id === row.agent_session_id);
-  if (exists) return withSessionHook(row.agent, startupCommand(row.agent, row.agent_session_id));
-  return withSessionHook(row.agent, row.agent === 'claude' ? newClaudeCommand(row.agent_session_id) : startupCommand(row.agent));
+  if (exists) return withSessionHook(row.agent, startupCommand(row.agent, row.agent_session_id), peer);
+  return withSessionHook(row.agent, row.agent === 'claude' ? newClaudeCommand(row.agent_session_id) : startupCommand(row.agent), peer);
 }
 
 // Sessions of an agent CLI that were run in the task's working directory (newest first). A new terminal starts there, so the list of
@@ -435,6 +488,7 @@ function getOrCreateSession(ownerTaskId, workDir, dirWarning, id = 'default') {
 
   let pty;
   let shell;
+  const peer = peerFsOn(); // one reading for the shell's environment and its startup command
   try {
     repairSpawnHelperPermissions(path.resolve(__dirname, '..'));
     const nodePty = require('node-pty');
@@ -481,7 +535,7 @@ function getOrCreateSession(ownerTaskId, workDir, dirWarning, id = 'default') {
         // Pick UTF-8 from the locales actually installed on this machine (C.UTF-8 / en_US / zh_CN ...),
         // otherwise zsh shows Chinese directory names as \M-^ garbage.
         ...utf8LocaleEnv(process.env),
-        ...hookEnv(ownerTaskId, id),
+        ...hookEnv(ownerTaskId, id, peer),
         ...attentionEnv(ownerTaskId, id, baseEnv),
       },
     });
@@ -491,7 +545,8 @@ function getOrCreateSession(ownerTaskId, workDir, dirWarning, id = 'default') {
     return { startupError: e };
   }
 
-  const startup = pendingStartup.get(taskId) || reopenCommand(ownerTaskId, id, workDir);
+  const pending = pendingStartup.get(taskId);
+  const startup = pending ? withSessionHook(pending.agent, pending.command, peer) : reopenCommand(ownerTaskId, id, workDir, peer);
   pendingStartup.delete(taskId);
   if (startup) pty.write(`${startup}\r`);
 

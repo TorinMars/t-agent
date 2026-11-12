@@ -77,6 +77,14 @@ function createOssImages({ db, sessionSecret, createClient = options => new OSS(
     getConfig(owner) { return safe(read(owner)); },
     // The condition `signUpload` refuses on, for the routes that may send the call to a linked service (services/linked-capabilities.js).
     isConfigured(owner) { return Boolean(read(owner).enabled); },
+    // For services/oss-files.js: a client of the configured bucket, or null when upload is not enabled. The secret stays inside the client;
+    // what is returned next to it holds none.
+    openClient(owner) {
+      const config = read(owner);
+      if (!config.enabled) return null;
+      const client = createClient({ region: config.region, bucket: config.bucket, accessKeyId: config.accessKeyId, accessKeySecret: config.accessKeySecret, secure: true, authorizationV4: true });
+      return { client, region: config.region, bucket: config.bucket, prefix: config.prefix, publicBaseUrl: config.publicBaseUrl };
+    },
     saveConfig(owner, body) {
       if (!body || typeof body !== 'object' || Array.isArray(body)) throw new OssImageError('Invalid OSS configuration');
       const old = read(owner);
@@ -155,4 +163,4 @@ function createOssImages({ db, sessionSecret, createClient = options => new OSS(
     },
   };
 }
-module.exports = { createOssImages, OssImageError, MAX_IMAGE_BYTES, MAX_FILE_BYTES, signPolicy, fileName, fileType, attachment };
+module.exports = { createOssImages, OssImageError, MAX_IMAGE_BYTES, MAX_FILE_BYTES, ACTIVE_TYPE, signPolicy, fileName, fileType, attachment };

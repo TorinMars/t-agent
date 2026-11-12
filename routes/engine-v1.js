@@ -19,6 +19,7 @@ const terminal = require('./terminal');
 const { createTaskFilesRouter } = require('./task-files');
 const { createFsReadRouter } = require('./fs-read');
 const { createPeerFsEngineRouter, CAPABILITY: PEER_FS } = require('./peer-fs');
+const { createOssFilesEngineRouter, CAPABILITY: OSS_FILES } = require('./tcli');
 const documents = require('../services/task-documents');
 const { resolveAsset, validateMdPath } = require('../services/task-assets');
 const { serveFileWatch } = require('../lib/file-watch-sse');
@@ -154,6 +155,9 @@ function infoHandler(req, res) {
       SERVICE_LINKS,
       // linked-services: /v1/linked-services, a linked service's use of this service's translation, voice input and OSS upload. A peer without it is never used.
       LINKED_SERVICES,
+      // oss:files: GET /v1/oss/files/list, /stat, GET|PUT /object and POST /copy, /move, /remove, /sign, the objects of this service's own OSS bucket
+      // for `tcli oss` in a linked service's terminals (routes/tcli.js). A linked service without it answers 501 OSS_FILES_UNSUPPORTED to tcli.
+      OSS_FILES,
       // mindmaps: GET|POST /v1/mindmaps and GET|PUT|DELETE /v1/mindmaps/:id, the same API as /api/mindmaps. A Client proxies another service's maps only when it has this.
       MINDMAPS,
       // attention:remote: GET|POST /v1/attention, GET|PATCH|DELETE /v1/attention/:id, POST /v1/attention/:id/move and /summarize, GET /v1/attention/stream,
@@ -282,6 +286,11 @@ router.use('/fs', requireEngineAuth('files:read'), createFsReadRouter());
 router.use('/peer-fs', requireEngineAuth('files:read'), createPeerFsEngineRouter({
   tasksFor: req => visibleTo(req, tasks.listTasks(principal(req)), task => task.id),
 }));
+
+// The objects of this service's own OSS bucket (routes/tcli.js), for `tcli oss` in a linked service's terminals: the same shapes as the local relay
+// /api/tcli/oss. A host administration operation (a service link's token has it). server.js keeps the global body parsers off this path, so an
+// upload is streamed; this service's own agent-access switch applies.
+router.use('/oss/files', requireEngineAuth('engine:admin'), createOssFilesEngineRouter());
 
 router.get('/task-groups', requireEngineAuth('tasks:read'), (req, res) => {
   try { res.json(withVisibleCounts(req, taskGroups.listGroups(db, principal(req)))); }

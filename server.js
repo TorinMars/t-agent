@@ -109,11 +109,15 @@ app.use('/api/attention', attentionRoutes.bearer);
 // token in X-T-Agent-* headers and taken only from this machine, so it sits before the session and the gates. A request without those headers goes on.
 const peerFsRoutes = require('./routes/peer-fs');
 app.use('/api/peer-fs', peerFsRoutes.createPeerFsRelayRouter());
+// The tcli relay (routes/tcli.js, `tcli oss` in a T-Agent terminal): the same terminal credential and this-machine rule, before the body parsers too,
+// so an upload is streamed as it comes. A request without the X-T-Agent-* headers goes on.
+app.use('/api/tcli', require('./routes/tcli').createTcliRelayRouter());
 
 // The mind map routes (routes/mindmap.js: /api/mindmaps, /v1/mindmaps and the proxy /api/remote-servers/:id/mindmaps), /v1/attention (routes/attention.js,
-// the token is checked first) and /v1/linked-services (routes/linked-services.js) parse their own JSON after the gates or the token check, with their own limits: a body this parser has read would make theirs
-// do nothing. Every other route keeps these parsers. Case-insensitive, like Express routing.
-const OWN_PARSERS = /^\/(?:api\/mindmaps|api\/remote-servers\/[^/]+\/mindmaps|v1\/mindmaps|v1\/attention|v1\/linked-services)(?:\/|$)/i;
+// the token is checked first), /v1/linked-services (routes/linked-services.js) and /v1/oss/files (routes/tcli.js, a streamed upload of any type) parse their
+// own bodies after the gates or the token check, with their own limits: a body this parser has read would make theirs do nothing. Every other route keeps
+// these parsers. Case-insensitive, like Express routing.
+const OWN_PARSERS = /^\/(?:api\/mindmaps|api\/remote-servers\/[^/]+\/mindmaps|v1\/mindmaps|v1\/attention|v1\/linked-services|v1\/oss\/files)(?:\/|$)/i;
 const exceptOwnParsers = parser => (req, res, next) => (OWN_PARSERS.test(req.path) ? next() : parser(req, res, next));
 app.use(exceptOwnParsers(express.json({ limit: '32mb' })));
 app.use(exceptOwnParsers(express.urlencoded({ extended: true })));

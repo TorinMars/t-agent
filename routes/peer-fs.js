@@ -9,6 +9,7 @@
 //  - settings: GET / PUT /api/peer-fs/settings `{ enabled }`, behind the browser login like the other settings.
 const express = require('express');
 const { ERRORS, errorBody, failure, createPeerFs } = require('../services/peer-fs');
+const { fromThisMachine, isTerminalRequest, verifyTerminalRequest } = require('../lib/terminal-relay-auth');
 
 const CAPABILITY = 'peer-fs:read';
 const INFO_TIMEOUT_MS = 3000;
@@ -62,16 +63,7 @@ function createPeerFsEngineRouter({ peerFs = createPeerFs(), settings = defaultS
 }
 
 // \u2500\u2500 Local relay \u2500\u2500
-const LOOPBACK = /^(?:127\.\d{1,3}\.\d{1,3}\.\d{1,3}|::1|::ffff:127\.\d{1,3}\.\d{1,3}\.\d{1,3})$/;
-// From this machine: a loopback peer, or the address the server was reached on (the hook endpoint uses HOST when it is not a wildcard), and no
-// proxy in between (a reverse proxy on this machine would make every visitor look local).
-function fromThisMachine(req) {
-  const remote = req.socket && req.socket.remoteAddress;
-  if (!remote) return false;
-  if (req.headers['x-forwarded-for'] !== undefined || req.headers.forwarded !== undefined || req.headers['x-real-ip'] !== undefined) return false;
-  return LOOPBACK.test(remote) || remote === req.socket.localAddress;
-}
-
+// The terminal credential and the this-machine rule are shared with the tcli relay (lib/terminal-relay-auth.js).
 const RELAY_PATHS = ['/engines', '/list', '/read', '/search'];
 const FORWARD_KEYS = {
   list: ['path'],
@@ -100,16 +92,10 @@ function createPeerFsRelayRouter({
   const router = express.Router();
 
   router.use(RELAY_PATHS, (req, res, next) => {
-    const taskHeader = req.get('x-t-agent-task');
-    const terminalHeader = req.get('x-t-agent-terminal');
-    const token = req.get('x-t-agent-token');
-    if (taskHeader === undefined && terminalHeader === undefined && token === undefined) return next('router');
-    if (!isLocal(req)) return next('router');
+    if (!isTerminalRequest(req, isLocal)) return next('router');
     if (req.method !== 'GET') return next('router');
-    if (!taskHeader || !terminalHeader || !token) return sendRelayError(res, 'PEER_FS_AUTH_REQUIRED');
-    if (!/^\d{1,12}$/.test(taskHeader) || !verifyToken(Number(taskHeader), terminalHeader, token)) return sendRelayError(res, 'PEER_FS_AUTH_INVALID');
-    const task = db.prepare('SELECT id, user_id FROM tasks WHERE id = ?').get(Number(taskHeader));
-    if (!task) return sendRelayError(res, 'PEER_FS_AUTH_INVALID');
+    const { error, task } = verifyTerminalRequest(req, { db, verifyToken });
+    if (error) return sendRelayError(res, `PEER_FS_${error}`);
     if (!settings().enabled()) return sendRelayError(res, 'PEER_FS_DISABLED');
     req.peerFsOwner = task.user_id;
     next();

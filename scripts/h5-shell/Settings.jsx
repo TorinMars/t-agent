@@ -7,6 +7,7 @@ import Checkbox from '@mui/material/Checkbox';
 import Drawer from '@mui/material/Drawer';
 import FormControlLabel from '@mui/material/FormControlLabel';
 import IconButton from '@mui/material/IconButton';
+import Switch from '@mui/material/Switch';
 import TextField from './TextField.jsx';
 import Toolbar from '@mui/material/Toolbar';
 import Typography from '@mui/material/Typography';
@@ -14,6 +15,7 @@ import CloseIcon from '@mui/icons-material/Close';
 import { api, t } from './common.jsx';
 import { DevicesGroup } from './Engines.jsx';
 import { AttentionSettings } from './AttentionSettings.jsx';
+import { AgentSkillsSection } from './AgentSkillsSettings.jsx';
 import { Feedback, Field, Group, Hint, ROW, Section, failure, useFeedback } from './Form.jsx';
 import { settingsTarget } from './settings-target.mjs';
 
@@ -71,6 +73,49 @@ function SharedFrom({ id, from }) {
   );
 }
 
+// "Let agent sessions manage OSS files (tcli)": whether the Claude and Codex sessions in this Client's terminals may use the bucket through the tcli
+// command (GET / PUT /api/oss/agent-access, on by default). Read each time the group opens and saved at once, without Save; an older server answers
+// 404 and nothing is drawn. Its hidden input is kept on the thumb, like the peer file access switch (PeerFs.jsx).
+function OssAgentAccess({ opened }) {
+  const [setting, setSetting] = useState({ loaded: false, supported: true, enabled: false });
+  const [busy, setBusy] = useState(false);
+  const [feedback, say] = useFeedback();
+  const read = async () => Boolean((await api('GET', '/api/oss/agent-access') || {}).enabled);
+  const load = async () => {
+    try { setSetting({ loaded: true, supported: true, enabled: await read() }); say(''); }
+    catch (error) {
+      if (error.status === 404) { setSetting({ loaded: true, supported: false, enabled: false }); say(''); return; }
+      say(failure(error), true);
+    }
+  };
+  useOnOpen(opened, load);
+  const change = async enabled => {
+    setBusy(true);
+    setSetting(current => ({ ...current, enabled }));
+    try {
+      const saved = await api('PUT', '/api/oss/agent-access', { enabled });
+      setSetting(current => ({ ...current, enabled: Boolean(saved && saved.enabled) }));
+      say('Saved');
+    } catch (error) {
+      say(failure(error), true);
+      try { const now = await read(); setSetting(current => ({ ...current, enabled: now })); } // show what is really in effect
+      catch { setSetting(current => ({ ...current, enabled: !enabled })); }
+    } finally { setBusy(false); }
+  };
+  if (!setting.supported) return <span id="h5-oss-agent" hidden />;
+  const label = t('Let agent sessions manage OSS files (tcli)');
+  return (
+    <Box id="h5-oss-agent" sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, borderTop: 1, borderColor: 'divider', pt: 1.5 }}>
+      <FormControlLabel
+        sx={{ m: 0, alignSelf: 'flex-start', gap: 0.5 }} label={label}
+        control={<Switch size="small" checked={setting.enabled} disabled={!setting.loaded || busy} onChange={event => void change(event.target.checked)} slotProps={{ input: { id: 'h5-oss-agent-enabled', 'aria-label': label, style: { left: 0, width: '100%' } } }} />}
+      />
+      <Hint>{t('Claude and Codex sessions in T-Agent terminals can list, upload, download, copy, move and delete files in this bucket with the tcli command. The access key never leaves this server.')}</Hint>
+      <Feedback id="h5-oss-agent-feedback" feedback={feedback} />
+    </Box>
+  );
+}
+
 function OssSection({ opened }) {
   const [form, setForm] = useState({ enabled: false, region: '', bucket: '', accessKeyId: '', accessKeySecret: '', prefix: '', publicBaseUrl: '' });
   const [hasSecret, setHasSecret] = useState(false);
@@ -111,6 +156,7 @@ function OssSection({ opened }) {
       <Button id="h5-oss-save" variant="contained" disabled={busy} onClick={() => void persist(false)}>{t('Save')}</Button>
       <Button id="h5-oss-clear" variant="outlined" color="error" disabled={busy} onClick={() => void persist(true)}>{t('Delete settings')}</Button>
       <Feedback id="h5-oss-feedback" feedback={feedback} />
+      <OssAgentAccess opened={opened} />
     </Section>
   );
 }
@@ -323,13 +369,14 @@ function LogoutRow({ ui }) {
   );
 }
 
-// "Tasks and files": where new tasks are kept, then the image and file upload.
+// "Tasks and files": where new tasks are kept, the image and file upload (with the agents' tcli access to it), then the agent skills.
 function TasksFilesGroup({ request }) {
   const [opened, setOpened] = useState(0);
   return (
     <Group id="tasks-files" title="Tasks and files" onOpen={() => setOpened(count => count + 1)} request={request}>
       <WorkdirSection opened={opened} />
       <OssSection opened={opened} />
+      <AgentSkillsSection opened={opened} />
     </Group>
   );
 }

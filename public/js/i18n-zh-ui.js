@@ -1643,10 +1643,15 @@ I18n.add({
   "Kept: the new skill is not installed there": "已保留：那里还没有安装新技能",
   "Kept: the rules and skills sync manages it": "已保留：它由规则和技能同步管理",
   "The old task-tracker skill was moved to": "旧的 task-tracker 技能已移到",
-  "The t-attention skill teaches Claude Code and Codex to register their work and their sub-agents here, to ask you when they need you, and to wait for your confirmation of finished work. It is installed on the machine that runs this Client.": "t-attention 技能教 Claude Code 和 Codex 把自己的工作和子智能体登记到这里，需要你时来问你，完成的工作等你确认。它安装在运行这个 Client 的机器上。",
   "A skill folder that the rules and skills sync manages is never overwritten here. Update the skill on the source service instead.": "由规则和技能同步管理的技能文件夹不会在这里被覆盖。请在来源服务上更新这个技能。",
   "The old task-tracker skill is still installed. It teaches the earlier tracker, so agents could report to both. Replacing it installs t-attention and moves task-tracker into the backups folder of this Client (nothing is deleted).": "旧的 task-tracker 技能还在。它教的是以前的任务跟踪器，智能体可能会两边都汇报。替换会安装 t-attention，并把 task-tracker 移到这个 Client 的备份文件夹（不会删除任何东西）。",
   "Replace the old task-tracker skill": "替换旧的 task-tracker 技能",
+  // Settings "Tasks and files" -> "Agent skills" (scripts/h5-shell/AgentSkillsSettings.jsx), its pointer in T-Attention, and the tcli switch of the upload.
+  "Agent skills": "智能体技能",
+  "Skills teach Claude Code and Codex to use T-Agent’s commands. They are installed on the machine that runs this Client, for both agents.": "技能教 Claude Code 和 Codex 使用 T-Agent 的命令。它们安装在运行这个 Client 的机器上，两个智能体都会装。",
+  "Agent skill: Settings → Tasks and files → Agent skills": "智能体技能：设置 → 任务和文件 → 智能体技能",
+  "Let agent sessions manage OSS files (tcli)": "允许智能体会话管理 OSS 文件（tcli）",
+  "Claude and Codex sessions in T-Agent terminals can list, upload, download, copy, move and delete files in this bucket with the tcli command. The access key never leaves this server.": "T-Agent 终端里的 Claude 和 Codex 会话可以用 tcli 命令列出、上传、下载、复制、移动和删除这个存储桶里的文件。访问密钥永远不会离开这台服务器。",
   // The settings sheet after it was tidied up (scripts/h5-shell/Settings.jsx, Engines.jsx, RemoteAccess.jsx).
   "Tasks and files": "任务和文件",
   "Voice and translation": "语音和翻译",

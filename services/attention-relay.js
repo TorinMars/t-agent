@@ -301,8 +301,9 @@ function createAttentionRelay(options) {
 
   // ---- For the page (GET /api/attention-notify/config `relay`) ----
   // Never waits; a stale peer is asked again for the next read.
+  const refreshInBackground = () => { for (const peer of peers()) if (peer.online && !fresh(entryOf(peer.id))) void refresh(peer); };
   function view(name = 'telegram') {
-    for (const peer of peers()) if (peer.online && !fresh(entryOf(peer.id))) void refresh(peer);
+    refreshInBackground();
     const own = me();
     const sender = resolve(name);
     const linked = peers().filter(peer => entryOf(peer.id).supported === true);
@@ -320,6 +321,17 @@ function createAttentionRelay(options) {
     };
   }
 
+  // ---- For the scope label of the settings sheet (GET /api/settings-sync `telegram`) ----
+  // { sender_name, self, conflict } of the device that sends now (its name as the page shows it: this device's own name, or the link's name), or null
+  // when no device has Telegram. From what is known now, like view(): never a wait, and a stale peer is asked again only once its cache ran out.
+  function summary(name = 'telegram') {
+    refreshInBackground();
+    const sender = resolve(name);
+    if (sender.none) return null;
+    const senderName = sender.self ? me().name : String((sender.peer && sender.peer.name) || '');
+    return { sender_name: senderName.slice(0, 80), self: sender.self, conflict: sender.conflict };
+  }
+
   function start() {
     if (unsubscribe || !serviceLinks || typeof serviceLinks.onChange !== 'function') return;
     unsubscribe = serviceLinks.onChange(id => {
@@ -333,7 +345,7 @@ function createAttentionRelay(options) {
   function stop() { if (unsubscribe) unsubscribe(); unsubscribe = null; }
 
   return {
-    handles: name => RELAYED.has(name), target, send, sendTest, resolve, view, status, accept, acceptTest, acceptChoice, readChoice, useThisDevice,
+    handles: name => RELAYED.has(name), target, send, sendTest, resolve, view, summary, status, accept, acceptTest, acceptChoice, readChoice, useThisDevice,
     refreshStale, start, stop, attach(service) { notify = service; },
   };
 }

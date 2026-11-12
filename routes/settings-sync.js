@@ -1,7 +1,8 @@
 // Settings sync across linked devices (services/settings-sync.js). See "Settings sync across linked devices" in DESIGN.md.
 //
-// Page: GET /api/settings-sync -> { supported, scopes, keys, peers } (which setting groups are shared, per device or Telegram's, and how far each
-// shared one has reached), POST /api/settings-sync/now -> a round with every online linked peer, then the same answer. Behind the session and the
+// Page: GET /api/settings-sync -> { supported, scopes, keys, peers, telegram } (which setting groups are shared, per device or Telegram's, how far each
+// shared one has reached, and `telegram` { sender_name, self, conflict } of the device that sends Telegram now, or null when none has it: from the cache
+// of services/attention-relay.js, never a wait), POST /api/settings-sync/now -> a round with every online linked peer, then the same answer. Behind the session and the
 // same-origin gates of /api. No value, key or hash is in either answer. With the sync turned off: { supported: false }, every group 'device'.
 // Linked services: GET /v1/settings-sync[?public_key=], POST /v1/settings-sync/pull { instance_id, public_key, keys } -> { instance_id, sealed },
 // PUT /v1/settings-sync { instance_id, public_key, sealed } -> { applied, ignored }. Only a token issued for a live service link gets in, like
@@ -15,20 +16,30 @@ function send(res, error, next) {
   return next(error);
 }
 
-function createSettingsSyncRouter({ service = require('../services/settings-sync').getSettingsSync(), requireAuth = require('../middleware/auth') } = {}) {
+// Who sends Telegram, for the scope label: null without a relay (or when it fails), so the label keeps its general text.
+function telegramSender(relay) {
+  try { return relay && typeof relay.summary === 'function' ? relay.summary('telegram') : null; } catch { return null; }
+}
+
+function createSettingsSyncRouter({
+  service = require('../services/settings-sync').getSettingsSync(),
+  requireAuth = require('../middleware/auth'),
+  getRelay = () => require('../services/attention-relay').getDefaultRelay(),
+} = {}) {
   const router = express.Router();
   router.use(requireAuth);
   const { syncEnabled, SCOPES } = require('../services/settings-sync');
+  const answer = () => ({ ...service.view(), telegram: telegramSender(getRelay()) });
   // Turned off on this service (SETTINGS_SYNC_ENABLED=false): every setting stays on this device.
   const off = () => ({ supported: false, scopes: Object.fromEntries(Object.entries(SCOPES).map(([group, scope]) => [group, scope === 'shared' ? 'device' : scope])), keys: [], peers: [] });
   router.get('/', (req, res, next) => {
-    try { res.set('Cache-Control', 'no-store').json(syncEnabled() ? service.view() : off()); } catch (error) { send(res, error, next); }
+    try { res.set('Cache-Control', 'no-store').json(syncEnabled() ? answer() : off()); } catch (error) { send(res, error, next); }
   });
   router.post('/now', async (req, res, next) => {
     try {
       if (!syncEnabled()) return res.set('Cache-Control', 'no-store').json(off());
       await service.syncAll();
-      res.set('Cache-Control', 'no-store').json(service.view());
+      res.set('Cache-Control', 'no-store').json(answer());
     } catch (error) { send(res, error, next); }
   });
   return router;

@@ -49,7 +49,7 @@ export function ScopeLabel({ id = null, scope: fallback = 'device', subject = ''
   if (!labelsShown(sync)) return null;
   const scope = scopeOf(sync, id, fallback);
   const details = scope === 'shared' ? detailLine(sync, id, { t }) : '';
-  const text = `${subject ? `${t(subject)}: ` : ''}${t(scopeText(scope, sync.sender))}`;
+  const text = `${subject ? `${t(subject)}: ` : ''}${t(scopeText(scope, sync.telegram))}`;
   const title = [t(scopeTitle(scope)), details].filter(Boolean).join('\n');
   return (
     <Box component="span" className="h5-scope" data-scope={scope} data-setting={id || ''} sx={{ display: 'inline-flex', alignItems: 'center', flexWrap: 'wrap', columnGap: 0.75, rowGap: 0.25, minWidth: 0, maxWidth: '100%', ...sx }}>

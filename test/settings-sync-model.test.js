@@ -36,6 +36,12 @@ test('the scope comes from the server, else from the page; unknown scopes are dr
   assert.equal(scopeText('device'), 'This device only');
   assert.equal(scopeText('telegram'), 'Telegram: one device sends');
   assert.equal(scopeText('telegram', normalizeSync(answer({ telegram: { sender_name: 'K01' } })).sender), 'Sent through K01');
+  assert.equal(scopeText('telegram', normalizeSync(answer({ telegram: { sender_name: 'K01', self: false, conflict: false } })).telegram), 'Sent through K01');
+  assert.equal(scopeText('telegram', normalizeSync(answer({ telegram: { sender_name: 'T01', self: true, conflict: false } })).telegram), 'Sent through this device (T01)');
+  assert.equal(scopeText('telegram', normalizeSync(answer({ telegram: { sender_name: 'T01', self: true, conflict: true } })).telegram), 'Telegram: choose a sender');
+  assert.equal(scopeText('telegram', normalizeSync(answer({ telegram: null })).telegram), 'Telegram: one device sends', 'nobody has Telegram');
+  assert.equal(scopeText('telegram', normalizeSync(answer()).telegram), 'Telegram: one device sends', 'an older server says nothing');
+  assert.equal(scopeText('telegram', normalizeSync(null).telegram), 'Telegram: one device sends');
   assert.equal(scopeTitle('shared'), 'Changes here are copied to every linked device');
   assert.equal(scopeTitle('device'), 'Only this device uses this');
 });

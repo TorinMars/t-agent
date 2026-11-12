@@ -470,14 +470,14 @@ test('a receiver puts the notice on top of the shared rules; the bundle revision
   b.service.receive(bundle);
   const text = read(b.paths.sharedRules);
   assert.equal(text.split('\n')[0], HOME_NOTICE);
-  assert.match(HOME_NOTICE, /^<!-- Synced by T-Agent from Home Mac\. Edit it on Home Mac or in the T-Agent page \(Settings > Rules and skills sync\); changes made here are replaced\. -->$/);
+  assert.match(HOME_NOTICE, /^<!-- Synced by T-Agent from Home Mac\. Edit it on Home Mac or in the T-Agent page \(Settings > Devices > Rules and skills sync\); changes made here are replaced\. -->$/);
   assert.equal(b.service.receiverStatus().revision, revisionOf('Rule one.\n', []));
   assert.equal(bundle.revision, revisionOf('Rule one.\n', []), 'the header is not in the revision');
   // A receiver that becomes the source sends the rules without its old notice, so the revision is the same.
   b.service.update({ role: 'source' });
   assert.equal(b.service.overview().revision, bundle.revision);
   assert.equal(b.service.readShared().content, 'Rule one.\n');
-  assert.equal(syncedNotice('Evil --> name\nnext'), '<!-- Synced by T-Agent from Evil - name next. Edit it on Evil - name next or in the T-Agent page (Settings > Rules and skills sync); changes made here are replaced. -->', 'a name cannot end the comment or break the line');
+  assert.equal(syncedNotice('Evil --> name\nnext'), '<!-- Synced by T-Agent from Evil - name next. Edit it on Evil - name next or in the T-Agent page (Settings > Devices > Rules and skills sync); changes made here are replaced. -->', 'a name cannot end the comment or break the line');
   assert.match(syncedNotice(''), /from the source\./);
 });
 
@@ -801,6 +801,31 @@ test('guard: the 30 s poll restores without any event; only the 20 newest backup
   assert.equal(b.service.overview().local_changes.length, 20, 'the last 20 entries');
 });
 
+test('a notice written by an older version is still ours: the guard keeps it, and the next bundle writes the new place', t => {
+  const b = guardedReceiver(t);
+  const OLD = '<!-- Synced by T-Agent from Home Mac. Edit it on Home Mac or in the T-Agent page (Settings > Rules and skills sync); changes made here are replaced. -->';
+  const sha = text => crypto.createHash('sha256').update(text).digest('hex');
+  // The files and the applied bundle as an older version left them.
+  const file = path.join(b.dataDir, 'rule-sync', 'applied-bundle.json');
+  const record = JSON.parse(read(file));
+  const oldShared = read(b.paths.sharedRules).replace(HOME_NOTICE, OLD);
+  const oldCodex = read(b.paths.codexAgents).replace(HOME_NOTICE, OLD);
+  assert.ok(oldShared.startsWith(`${OLD}\n\n`) && oldCodex.includes(OLD));
+  write(b.paths.sharedRules, oldShared);
+  write(b.paths.codexAgents, oldCodex);
+  const inner = oldCodex.slice(oldCodex.indexOf(CODEX_BEGIN) + CODEX_BEGIN.length + 1, oldCodex.indexOf(CODEX_END) - 1);
+  write(file, JSON.stringify({ ...record, notice: OLD, hashes: { shared: sha(oldShared), codex: sha(inner) } }), 0o600);
+  assert.equal(b.service.guardCheck(), null, 'the old notice is not a local edit');
+  assert.equal(rulesOf(b.paths.sharedRules), 'Rule one.\n', 'the old line counts as the notice');
+  // The next bundle writes the new place in both files.
+  const { bundle } = sourceBundle(b.src, { rules: 'Rule two.\n', skills: { deploy: { 'SKILL.md': '# Deploy\n', 'scripts/run.sh': { text: '#!/bin/sh\n', mode: 0o755 } }, notes: { 'SKILL.md': 'Notes.\n' } } });
+  b.service.receive(bundle);
+  assert.equal(read(b.paths.sharedRules), `${HOME_NOTICE}\n\nRule two.\n`);
+  assert.ok(read(b.paths.codexAgents).includes(HOME_NOTICE) && !read(b.paths.codexAgents).includes(OLD));
+  assert.equal(b.service.overview().local_changes.length, 0, 'nothing was saved as a local edit');
+  assert.equal(b.service.guardCheck(), null);
+});
+
 test('guard: a new bundle saves a local edit before it replaces it', t => {
   const b = guardedReceiver(t);
   write(b.paths.sharedRules, 'Edited just before.\n');
@@ -978,6 +1003,7 @@ test('claude settings: the receiver writes claude-settings.json with the notice,
   const file = sharedFileOf(b);
   assert.deepEqual(Object.keys(file), ['_comment', 'statusLine', 'model', 'permissions', 'spinnerTipsEnabled'], 'the notice is the first key');
   assert.match(file._comment, /^Synced by T-Agent from Home Mac and injected into the Claude Code sessions T-Agent starts \(--settings\); settings\.json is not changed\./);
+  assert.match(file._comment, /Choose the keys on Home Mac \(Settings > Devices > Rules and skills sync\)/);
   assert.deepEqual(file.permissions, { defaultMode: 'acceptEdits' });
   assert.equal(read(path.join(b.paths.claudeDir, 'settings.json')), '{ "model": "sonnet" }\n', 'the receiver\'s settings.json is never written');
   assert.equal(exists(path.join(a.paths.claudeDir, 'shared', 'claude-settings.json')), false, 'the source keeps no copy');

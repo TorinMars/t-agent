@@ -5,7 +5,7 @@ import Typography from '@mui/material/Typography';
 import { t } from './common.jsx';
 import { Hint } from './Form.jsx';
 
-// The "Claude settings" part of Settings > Rules and skills sync (rendered from RuleSync.jsx; `claude_settings` of GET /api/rule-sync). On the source:
+// The "Claude settings" part of Settings > Devices > Rules and skills sync (rendered from RuleSync.jsx; `claude_settings` of GET /api/rule-sync). On the source:
 // a checkbox per allowlisted key of its settings.json (PUT `claude_settings_keys`) and the status line scripts that go with them. On a receiver: the
 // received keys, each with "Keep this device's own value" (PUT `keep_local`). The values are injected into the Claude sessions T-Agent starts on the
 // receivers; no settings.json is written. See "Shared Claude settings (injected at session start)" in DESIGN.md.

@@ -207,9 +207,10 @@ const REVIEWED_ROUTES = new Set([
 // /attention: T-Attention items, which are not tasks and never read a task, a work directory or a terminal (routes/attention.js).
 // /oss/files: objects of this service's own OSS bucket (routes/tcli.js), never a task, a work directory or a terminal.
 // /settings-sync: the settings linked services keep as one set (routes/settings-sync.js), never a task, and link tokens only.
+// /device-settings: the allowlisted per-device settings of the page (routes/device-settings.js), never a task, and link tokens only.
 // /attention/notify-relay: takes a notification card a linked device sends to this Telegram sender (services/attention-relay.js); it gives out
 // nothing about this service's tasks, and link tokens only.
-const REVIEWED_MOUNTS = new Set(['/file-sync', '/linked-services', '/task-order', '/settings-sync', '/apps', '/agent-config', '/fs', '/peer-fs', '/mindmaps', '/rule-sync', '/attention', '/attention/notify-relay', '/oss/files']);
+const REVIEWED_MOUNTS = new Set(['/file-sync', '/linked-services', '/task-order', '/settings-sync', '/device-settings', '/apps', '/agent-config', '/fs', '/peer-fs', '/mindmaps', '/rule-sync', '/attention', '/attention/notify-relay', '/oss/files']);
 const GUARDED = /^\/(tasks|terminal-sessions)\/:id(\/|$)/;
 
 test('every /v1 route has been reviewed, and the guard runs before all of them', () => {

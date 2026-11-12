@@ -2,9 +2,10 @@ import { useEffect, useState } from 'react';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import Typography from '@mui/material/Typography';
-import { Pill, api, errorText, t } from './common.jsx';
+import { Pill, errorText, t } from './common.jsx';
 import { Feedback, Hint, Section, useFeedback } from './Form.jsx';
 import { ScopeLabel } from './ScopeLabel.jsx';
+import { useDeviceTarget } from './DeviceTarget.jsx';
 
 // "Agent skills", a part of the Settings group "Tasks and files" (`#h5-sec-agent-skills`): the skills that come with T-Agent (t-attention, tcli;
 // services/agent-skills.js) for Claude Code and Codex on the machine that runs this Client, from GET /api/agent-skills, read each time the group
@@ -81,25 +82,30 @@ function SkillCard({ skill, busy, onInstall }) {
   );
 }
 
-export function AgentSkillsSection({ opened }) {
+// The skills of the device chosen in "Settings for" (DeviceTarget.jsx): this one, or a linked one through the link.
+export function AgentSkillsSection(props) {
+  const device = useDeviceTarget();
+  return <AgentSkillsPart key={device.key} {...props} call={device.api} remote={device.remote} name={device.name} />;
+}
+function AgentSkillsPart({ opened, call, remote, name }) {
   const [data, setData] = useState(null);
   const [busy, setBusy] = useState(false);
   const [feedback, say] = useFeedback();
   const load = async () => {
-    try { setData(await api('GET', BASE)); } catch (error) { say(`${t('Failed')}: ${errorText(error)}`, true); }
+    try { setData(await call('GET', BASE)); } catch (error) { say(`${t('Failed')}: ${errorText(error)}`, true); }
   };
   useEffect(() => { if (opened) void load(); }, [opened]); // eslint-disable-line react-hooks/exhaustive-deps -- read each time the group is opened
   const list = data && Array.isArray(data.skills) ? data.skills : [];
   const old = data && data.old_task_tracker ? AGENTS.filter(agent => data.old_task_tracker[agent.key]) : [];
   const synced = list.some(skill => AGENTS.some(agent => skill[agent.key] && skill[agent.key].conflict === 'rule-sync'));
-  const run = async (name, replaceOld = false) => {
+  const run = async (skillName, replaceOld = false) => {
     setBusy(true);
     try {
-      const result = await api('POST', `${BASE}/${encodeURIComponent(name)}/install`);
-      const lines = installLines(result).map(line => `${name} · ${line}`);
+      const result = await call('POST', `${BASE}/${encodeURIComponent(skillName)}/install`);
+      const lines = installLines(result).map(line => `${skillName} · ${line}`);
       let next = result.status || null;
       if (replaceOld) {
-        const moved = await api('POST', `${BASE}/t-attention/remove-old`);
+        const moved = await call('POST', `${BASE}/t-attention/remove-old`);
         next = moved.status || next;
         for (const item of moved.moved || []) lines.push(`${agentName(item.agent)}: ${t('The old task-tracker skill was moved to')} ${item.to}`);
         for (const item of moved.skipped || []) if (item.reason !== 'missing') lines.push(`${agentName(item.agent)}: ${t(SKIPS[item.reason] || item.reason)}`);
@@ -111,7 +117,7 @@ export function AgentSkillsSection({ opened }) {
   };
   return (
     <Section id="agent-skills" title="Agent skills" aside={<ScopeLabel />}>
-      <Hint>{t('Skills teach Claude Code and Codex to use T-Agent’s commands. They are installed on the machine that runs this Client, for both agents.')}</Hint>
+      <Hint>{remote ? t(`Skills teach Claude Code and Codex to use T-Agent’s commands. They are installed on ${name}, for both agents.`) : t('Skills teach Claude Code and Codex to use T-Agent’s commands. They are installed on the machine that runs this Client, for both agents.')}</Hint>
       <Box id="h5-agent-skills" aria-busy={data ? 'false' : 'true'} sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
         {data ? list.map(skill => <SkillCard key={skill.name} skill={skill} busy={busy} onInstall={() => void run(skill.name)} />) : <Hint id="h5-agent-skills-loading">{t('Loading…')}</Hint>}
       </Box>

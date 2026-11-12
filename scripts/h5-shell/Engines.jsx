@@ -22,6 +22,7 @@ import { RuleSyncSection } from './RuleSync.jsx';
 import { RemoteAccessSection } from './RemoteAccess.jsx';
 import { ADVANCED_SECTIONS } from './settings-target.mjs';
 import { ScopeLabel, SettingsSyncStatus, SyncNote, useSyncAfterSave } from './ScopeLabel.jsx';
+import { LocalOnly, refreshDeviceTargets } from './DeviceTarget.jsx';
 
 // Settings "Devices" (until the sheet was tidied up the groups "Engines", "Linked services", "Rules and skills sync" and "Remote service"), top to
 // bottom: the device list (this machine first, then every remote Engine this Client is connected to, linked ones included), "Link a device"
@@ -427,7 +428,8 @@ function Advanced({ open, onToggle, children }) {
 export function DevicesGroup({ state, ui, request = null }) {
   // The device list and "Link a device" show the same links: a change in one makes both read again.
   const [linksVersion, setLinksVersion] = useState(0);
-  const onLinksChanged = () => setLinksVersion(version => version + 1);
+  // A link that comes or goes also changes the devices of "Settings for" (DeviceTarget.jsx).
+  const onLinksChanged = () => { setLinksVersion(version => version + 1); void refreshDeviceTargets(); };
   const wantsAdvanced = target => Boolean(target) && ADVANCED_SECTIONS.has(target.section);
   const [advanced, setAdvanced] = useState(() => wantsAdvanced(request));
   const [advancedOpened, setAdvancedOpened] = useState(0);
@@ -520,7 +522,7 @@ export function DevicesGroup({ state, ui, request = null }) {
       <SettingsSyncStatus opened={opened} />
       <Hint>{t('Devices are the machines whose tasks and terminals this page shows. This machine is always first. To add another one, link it below.')}</Hint>
       {/* What the list changes: the names (and Restart) are this device's own; which devices the task list shows is one set for all linked devices. */}
-      <ScopeLabel id="engine-name" subject="Device names" />
+      <ScopeLabel id="engine-name" subject="Device names" follow={false} />
       {switches ? <ScopeLabel id="task-list-devices" scope="shared" subject="Show in task list" /> : null}
       <Box id="h5-engine-list" sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
         <Paper variant="outlined" className="h5-engine-row" data-engine="local" sx={{ display: 'flex', flexDirection: 'column', gap: 0.75, p: 1 }}>
@@ -552,12 +554,14 @@ export function DevicesGroup({ state, ui, request = null }) {
       <PeerFsSwitch opened={opened} />
       <RuleSyncSection state={state} opened={opened} />
       <Advanced open={advanced} onToggle={toggleAdvanced}>
-        <Hint id="h5-devices-advanced-hint">{t('Linking (above) is the recommended way to add a device. The options here connect one way only: for a device that should not see this one, or one on an older version.')}</Hint>
-        <Section id="connect" title="Connect a remote engine" level={4}>
-          <Hint>{t('Enter the address of another client and a pairing code made under “Let other clients connect to this one” on that client. Only this side sees the other.')}</Hint>
-          <Button id="h5-engine-connect-open" variant="contained" onClick={() => setConnecting(true)}>{t('Connect remote service')}</Button>
-        </Section>
-        <RemoteAccessSection opened={remoteOpened} />
+        <LocalOnly id="h5-devices-advanced-remote">
+          <Hint id="h5-devices-advanced-hint">{t('Linking (above) is the recommended way to add a device. The options here connect one way only: for a device that should not see this one, or one on an older version.')}</Hint>
+          <Section id="connect" title="Connect a remote engine" level={4}>
+            <Hint>{t('Enter the address of another client and a pairing code made under “Let other clients connect to this one” on that client. Only this side sees the other.')}</Hint>
+            <Button id="h5-engine-connect-open" variant="contained" onClick={() => setConnecting(true)}>{t('Connect remote service')}</Button>
+          </Section>
+          <RemoteAccessSection opened={remoteOpened} />
+        </LocalOnly>
       </Advanced>
       <ConnectDialog state={state} open={connecting} onClose={() => setConnecting(false)} onDone={created => { setConnecting(false); void changed(null); say(`${t('Connected')}: ${created && created.name ? created.name : ''}`); }} />
       <EditDialog state={state} server={editing} onClose={() => setEditing(null)} onDone={server => { setEditing(null); void changed(`remote:${server.id}`); say('Saved'); }} />

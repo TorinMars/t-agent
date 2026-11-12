@@ -61,8 +61,8 @@ const html = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8').replace(
       await page.waitForFunction(groupId => Boolean(document.querySelector(`#h5-set-${groupId} .MuiCollapse-entered`)), id);
     };
     // T-Attention reads its list (and opens its live stream) when the page loads, for the badge of row 2: not a settings read either.
-    // Linked services is read when the sheet opens: an older server answers 404 and the group is not drawn.
-    const calls = () => page.evaluate(() => window.calls.filter(call => !call.url.startsWith('/api/system/') && !call.url.startsWith('/api/service-links') && !/^\/api\/attention(\?|$)/.test(call.url)));
+    // Linked services is read when the sheet opens: an older server answers 404 and the group is not drawn. So is the device list of "Settings for".
+    const calls = () => page.evaluate(() => window.calls.filter(call => !call.url.startsWith('/api/system/') && !call.url.startsWith('/api/service-links') && call.url !== '/api/device-settings/devices' && !/^\/api\/attention(\?|$)/.test(call.url)));
     assert.equal((await calls()).length, 0, 'nothing is read until a group is opened');
     assert.deepEqual(await page.locator('.h5-setting-group .MuiAccordionSummary-content').allTextContents(), ['Tasks and files', 'Voice and translation', 'Devices', 'T-Attention', 'Account and access']);
     // One row style for every top-level row (Language, the group headers, Log out): same height, label size, letter spacing and left edge; Log out is last.

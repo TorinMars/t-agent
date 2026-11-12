@@ -19,6 +19,7 @@ import { AgentSkillsSection } from './AgentSkillsSettings.jsx';
 import { Feedback, Field, Group, Hint, ROW, Section, failure, useFeedback } from './Form.jsx';
 import { settingsTarget } from './settings-target.mjs';
 import { ScopeLabel, SyncNote, useSyncAfterSave } from './ScopeLabel.jsx';
+import { DeviceSelector, LocalOnly, refreshDeviceTargets, useDeviceTarget } from './DeviceTarget.jsx';
 
 // The address this page was opened at, to come back to after a login or a switch: `/` or `/h5` (an iPhone Home Screen app starts at /h5).
 const pagePath = () => (/^\/h5(\/|$)/.test(location.pathname) ? '/h5' : '/');
@@ -30,14 +31,19 @@ const OSS_FIELDS = [
 // A part of a group reads its data each time the group opens: `opened` counts the openings (0 before the first one).
 const useOnOpen = (opened, load) => useEffect(() => { if (opened) void load(); }, [opened]); // eslint-disable-line react-hooks/exhaustive-deps -- load only reads
 
-function WorkdirSection({ opened }) {
+// The working directory of the device chosen in "Settings for" (DeviceTarget.jsx): this one, or a linked one through the link.
+function WorkdirSection(props) {
+  const device = useDeviceTarget();
+  return <WorkdirPart key={device.key} {...props} call={device.api} />;
+}
+function WorkdirPart({ opened, call }) {
   const [value, setValue] = useState('');
   const known = useRef({ saved: '', custom: null });
   const [busy, setBusy] = useState(false);
   const [feedback, say] = useFeedback();
   const load = async () => {
     try {
-      const user = await api('GET', '/auth/me');
+      const user = await call('GET', '/auth/me');
       known.current = { saved: user.work_dir || user.effective_work_dir || '', custom: user.work_dir || null };
       setValue(known.current.saved);
       say('');
@@ -48,7 +54,7 @@ function WorkdirSection({ opened }) {
     // An unchanged default path keeps inheriting the default; clearing the field restores it.
     const work_dir = entered === known.current.saved ? known.current.custom : entered || null;
     setBusy(true);
-    try { await api('PUT', '/auth/settings', { work_dir }); await load(); say('Saved'); }
+    try { await call('PUT', '/auth/settings', { work_dir }); await load(); say('Saved'); }
     catch (error) { say(failure(error), true); }
     finally { setBusy(false); }
   };
@@ -233,7 +239,7 @@ function VoiceSwitch() {
     <>
       <FormControlLabel control={<Checkbox checked={enabled} onChange={event => Voice.setEnabled(event.target.checked)} slotProps={{ input: { id: 'h5-vi-enabled' } }} />} label={t('Enable voice input')} />
       {/* The switch is kept in this browser (voice-input.js), not on the server: it is this device's own even when the rest is shared. */}
-      <ScopeLabel scope="device" subject="Voice input on or off" sx={{ alignSelf: 'flex-start' }} />
+      <ScopeLabel scope="device" subject="Voice input on or off" follow={false} sx={{ alignSelf: 'flex-start' }} />
       <Hint>{t('Applies at once on this device, without Save. When off, the microphone buttons are hidden and the microphone is not used.')}</Hint>
     </>
   );
@@ -336,19 +342,23 @@ function AccountGroup({ request }) {
   return (
     <Group id="account" title="Account and access" onOpen={load} request={request}>
       <Section id="access" title="Access mode" aside={<ScopeLabel id="access" />}>
-        <Typography id="h5-access-title" variant="body2" component="strong" sx={{ fontWeight: 600 }}>{loaded ? t(info.local ? 'Local access only' : 'Authenticator + allow external access') : ''}</Typography>
-        <Hint id="h5-access-hint">{hint}</Hint>
-        {info.local && info.bound ? (
-          <Box id="h5-access-code-row">
-            <Field id="h5-access-code" label="6-digit authenticator code (verified when switching back to external access)" value={code} onChange={event => setCode(event.target.value)} autoComplete="one-time-code" htmlInput={{ inputMode: 'numeric', maxLength: 6 }} />
-          </Box>
-        ) : <span id="h5-access-code-row" hidden />}
-        <Button id="h5-access-switch" variant="contained" disabled={busy || !loaded} onClick={() => void switchMode()}>{loaded ? t(info.local ? 'Switch to: authenticator + external access' : 'Switch to: local access only (no verification)') : ''}</Button>
-        <Feedback id="h5-access-feedback" feedback={feedback} />
+        <LocalOnly id="h5-access-remote">
+          <Typography id="h5-access-title" variant="body2" component="strong" sx={{ fontWeight: 600 }}>{loaded ? t(info.local ? 'Local access only' : 'Authenticator + allow external access') : ''}</Typography>
+          <Hint id="h5-access-hint">{hint}</Hint>
+          {info.local && info.bound ? (
+            <Box id="h5-access-code-row">
+              <Field id="h5-access-code" label="6-digit authenticator code (verified when switching back to external access)" value={code} onChange={event => setCode(event.target.value)} autoComplete="one-time-code" htmlInput={{ inputMode: 'numeric', maxLength: 6 }} />
+            </Box>
+          ) : <span id="h5-access-code-row" hidden />}
+          <Button id="h5-access-switch" variant="contained" disabled={busy || !loaded} onClick={() => void switchMode()}>{loaded ? t(info.local ? 'Switch to: authenticator + external access' : 'Switch to: local access only (no verification)') : ''}</Button>
+          <Feedback id="h5-access-feedback" feedback={feedback} />
+        </LocalOnly>
       </Section>
       <Section id="authenticator" title="Authenticator" aside={<ScopeLabel id="authenticator" />}>
-        <Hint>{t('Computer and phone share the same page and binding. Logins last 30 days and renew while in use; after 30 days of inactivity you must verify again. After replacing, the old authenticator, recovery codes and other devices’ logins stop working immediately.')}</Hint>
-        <Button id="h5-authenticator-replace" component="a" href={`/auth/setup?return_to=${pagePath()}`} variant="outlined">{t('Replace authenticator')}</Button>
+        <LocalOnly id="h5-authenticator-remote">
+          <Hint>{t('Computer and phone share the same page and binding. Logins last 30 days and renew while in use; after 30 days of inactivity you must verify again. After replacing, the old authenticator, recovery codes and other devices’ logins stop working immediately.')}</Hint>
+          <Button id="h5-authenticator-replace" component="a" href={`/auth/setup?return_to=${pagePath()}`} variant="outlined">{t('Replace authenticator')}</Button>
+        </LocalOnly>
       </Section>
     </Group>
   );
@@ -419,6 +429,8 @@ export function SettingsDrawer({ state, ui }) {
   const requestFor = group => (request && request.group === group ? request : null);
   // A target is used once: the sheet opened again later (the gear, or `settingsOpen` set directly) starts folded.
   useEffect(() => { if (!state.settingsOpen && state.settingsTarget) ui.set({ settingsTarget: null }); }, [state.settingsOpen]); // eslint-disable-line react-hooks/exhaustive-deps -- only a closed sheet drops it
+  // The linked devices of "Settings for" are read each time the sheet opens.
+  useEffect(() => { if (state.settingsOpen) void refreshDeviceTargets(); }, [state.settingsOpen]);
   return (
     <Drawer
       anchor="bottom" id="h5-settings" open={state.settingsOpen} onClose={() => ui.actions.closeSettings()} aria-labelledby="h5-settings-title"
@@ -431,6 +443,7 @@ export function SettingsDrawer({ state, ui }) {
         </Toolbar>
       </AppBar>
       <Box className="h5-settings-body" sx={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto', pb: 1 }}>
+        <DeviceSelector />
         <LanguageRow />
         <TasksFilesGroup request={requestFor('tasks-files')} />
         <VoiceTranslateGroup request={requestFor('voice-translate')} />

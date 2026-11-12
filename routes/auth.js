@@ -1,10 +1,9 @@
 const express = require('express');
-const fs = require('fs');
 const path = require('path');
-const os = require('os');
 const QRCode = require('qrcode');
 const db = require('../db');
 const { ensureSingleUser } = require('../services/single-user');
+const { effectiveWorkDir, saveWorkDir } = require('../services/work-dir');
 const requireAuth = require('../middleware/auth');
 const { getClientAuth, safeReturnTo, isSecureClientCookie, isLocalInitialization, SESSION_TTL } = require('../services/client-auth');
 const { clientCookieSameSite } = require('../lib/client-embedding');
@@ -107,20 +106,9 @@ router.post('/login', (req, res) => {
 
 // PUT /auth/settings — update the working path
 router.put('/settings', requireAuth, (req, res) => {
-  const { work_dir } = req.body;
-  if (work_dir !== null && work_dir !== undefined && typeof work_dir !== 'string') return res.status(400).json({ error: 'INVALID_WORK_DIRECTORY' });
-  const username = req.session.user.login;
-
-  let finalWorkDir = work_dir ? work_dir.trim() : null;
-  if (finalWorkDir) {
-    try {
-      fs.mkdirSync(finalWorkDir, { recursive: true });
-    } catch (e) {
-      return res.status(400).json({ error: `Failed to create the working directory: ${e.message}` });
-    }
-  }
-
-  db.prepare('UPDATE users SET work_dir = ? WHERE username = ?').run(finalWorkDir, username);
+  let finalWorkDir;
+  try { finalWorkDir = saveWorkDir(db, req.session.user.login, (req.body || {}).work_dir); }
+  catch (error) { return res.status(error.status || 400).json(error.body || { error: 'INVALID_WORK_DIRECTORY' }); }
   req.session.user.work_dir = finalWorkDir;
   res.json({ success: true, work_dir: finalWorkDir });
 });
@@ -140,7 +128,7 @@ router.post('/logout', (req, res) => {
 router.get('/me', requireAuth, (req, res) => {
   res.json({
     ...req.session.user,
-    effective_work_dir: req.session.user.work_dir || process.env.TASKS_BASE_DIR || path.join(os.homedir(), 'tasks'),
+    effective_work_dir: effectiveWorkDir(req.session.user.work_dir),
     authenticator_bound: getClientAuth().status(req.session).bound,
     access_mode: getClientAuth().accessMode(),
     listen_host: config.host,

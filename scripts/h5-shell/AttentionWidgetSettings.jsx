@@ -8,6 +8,7 @@ import { Feedback, Hint, failure, useFeedback } from './Form.jsx';
 import TextField from './TextField.jsx';
 import { registerAttentionSettings } from './attention-slots.mjs';
 import { ScopeLabel, SyncNote, useSyncAfterSave } from './ScopeLabel.jsx';
+import { useDeviceTarget } from './DeviceTarget.jsx';
 
 // The "Desktop window (macOS)" part of the Settings group "T-Attention": the switch of the native floating window (services/attention-widget.js), the
 // language it shows and a status line. GET / PUT /api/attention/widget/settings { enabled, language, platform_supported, swiftc, running, building,
@@ -29,7 +30,13 @@ export function widgetStatus(setting) {
   return { text: 'Not running. Turn the switch off and on to start it again.', error: false };
 }
 
-function WidgetSettings({ opened }) {
+// The window of the device chosen in "Settings for" (DeviceTarget.jsx): its switch and status are read and saved there. The language is one setting
+// for all linked devices and is always saved here (settings sync copies it); a linked device takes only the switch (routes/device-settings.js).
+function WidgetSettings(props) {
+  const device = useDeviceTarget();
+  return <WidgetPart key={device.key} {...props} call={device.api} remote={device.remote} name={device.name} />;
+}
+function WidgetPart({ opened, call, remote, name }) {
   const [setting, setSetting] = useState(null); // null until read; { missing: true } on an older server
   const [busy, setBusy] = useState(false);
   const [feedback, say] = useFeedback();
@@ -37,7 +44,7 @@ function WidgetSettings({ opened }) {
   const timer = useRef(null);
   const show = data => setSetting({ enabled: data.enabled !== false, language: data.language || 'auto', platform_supported: Boolean(data.platform_supported), swiftc: Boolean(data.swiftc), running: Boolean(data.running), building: Boolean(data.building), last_error: data.last_error || null });
   const load = async () => {
-    try { show(await api('GET', SETTINGS_URL)); }
+    try { show(await call('GET', SETTINGS_URL)); }
     catch (error) {
       if (error.status === 404) { setSetting({ missing: true }); return; }
       say(failure(error), true);
@@ -53,7 +60,15 @@ function WidgetSettings({ opened }) {
   const save = async patch => {
     setBusy(true);
     setSetting(current => ({ ...current, ...patch }));
-    try { show(await api('PUT', SETTINGS_URL, patch)); say('Saved'); if (patch.language !== undefined) void track(); }
+    try {
+      if (remote && patch.language !== undefined) {
+        // Saved on this device and copied by the sync; the switch and the status shown stay the chosen device's.
+        const saved = await api('PUT', SETTINGS_URL, { language: patch.language });
+        setSetting(current => ({ ...current, language: (saved && saved.language) || patch.language }));
+      } else show(await call('PUT', SETTINGS_URL, patch));
+      say('Saved');
+      if (patch.language !== undefined) void track();
+    }
     catch (error) { say(failure(error), true); await load(); }
     finally { setBusy(false); }
   };
@@ -70,7 +85,7 @@ function WidgetSettings({ opened }) {
       />
       {/* The switch is this Mac's own; the language of the window is one setting for all linked devices. */}
       <ScopeLabel id="widget-enabled" subject="On or off" sx={{ alignSelf: 'flex-start' }} />
-      <Hint>{t('A small window that stays above other windows on this Mac and shows the tasks that need you, from this machine and the connected devices.')}</Hint>
+      <Hint>{remote ? t(`A small window that stays above other windows on ${name} and shows the tasks that need you, from that machine and its connected devices.`) : t('A small window that stays above other windows on this Mac and shows the tasks that need you, from this machine and the connected devices.')}</Hint>
       <TextField
         id="h5-attention-widget-language" select label={t('Window language')} size="small" fullWidth value={setting.language} disabled={busy || !usable}
         onChange={event => void save({ language: event.target.value })} slotProps={{ select: { native: true } }}

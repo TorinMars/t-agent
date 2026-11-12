@@ -364,27 +364,32 @@ function createAttentionWidgetRoutes({
     return api(req, res, error => (error ? sendFailure(res, error) : sendError(res, 404, 'NOT_FOUND', 'Not found')));
   }
 
-  // The settings card (AttentionWidgetSettings.jsx): the switch, the language and the status line.
-  const settingsRouter = express.Router();
-  const answer = async req => {
-    if (req) settings.notePageLanguage(wantsChinese(req));
-    return { ...settings.read(), ...(await launcher.status()) };
+  // The settings card (AttentionWidgetSettings.jsx): the switch, the language and the status line. `peerSettings` is the same card for a linked
+  // device's page (routes/device-settings.js, GET / PUT /v1/device-settings/attention/widget/settings): it never notes the page language, which is
+  // the language of this machine's own page and not of a page somewhere else.
+  const settingsRouterFor = ({ notePage }) => {
+    const router = express.Router();
+    const answer = async req => {
+      if (notePage) settings.notePageLanguage(wantsChinese(req));
+      return { ...settings.read(), ...(await launcher.status()) };
+    };
+    router.use((req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
+    router.get('/', handle(async (req, res) => res.json(await answer(req))));
+    router.put('/', handle(async (req, res) => {
+      const before = settings.read();
+      const saved = settings.save(req.body);
+      // Started or stopped at once; the answer waits a moment for a quick start (a build can take minutes: `building` says so meanwhile).
+      if (saved.enabled !== before.enabled) {
+        let timer;
+        await Promise.race([launcher.setEnabled(saved.enabled), new Promise(resolve => { timer = setTimeout(resolve, settleMs); })]);
+        clearTimeout(timer);
+      }
+      res.json(await answer(req));
+    }));
+    return router;
   };
-  settingsRouter.use((req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
-  settingsRouter.get('/', handle(async (req, res) => res.json(await answer(req))));
-  settingsRouter.put('/', handle(async (req, res) => {
-    const before = settings.read();
-    const saved = settings.save(req.body);
-    // Started or stopped at once; the answer waits a moment for a quick start (a build can take minutes: `building` says so meanwhile).
-    if (saved.enabled !== before.enabled) {
-      let timer;
-      await Promise.race([launcher.setEnabled(saved.enabled), new Promise(resolve => { timer = setTimeout(resolve, settleMs); })]);
-      clearTimeout(timer);
-    }
-    res.json(await answer(req));
-  }));
 
-  return { bearer, settings: settingsRouter };
+  return { bearer, settings: settingsRouterFor({ notePage: true }), peerSettings: settingsRouterFor({ notePage: false }) };
 }
 
 module.exports = { createAttentionWidgetRoutes, tagColorIndex, widgetItem, parseItemKey, createDictionary, readStringList, STRINGS_FILE };

@@ -21,6 +21,59 @@ function sendError(res, status, code, message, extra = {}) {
   return res.status(status).json({ error: code, message, ...extra });
 }
 
+// An AttentionError as its JSON answer (with `id` / `children` when it has them); anything else is logged and answered 500.
+function sendFailure(res, error) {
+  if (error instanceof AttentionError) return sendError(res, error.statusCode, error.code, error.message, { ...(error.id !== undefined ? { id: error.id } : {}), ...(Array.isArray(error.children) ? { children: error.children } : {}) });
+  console.error(`T-Attention API: ${error.stack || error.message}`);
+  return sendError(res, 500, 'INTERNAL_ERROR', 'The attention service failed');
+}
+const wrap = handler => (req, res) => {
+  try { return handler(req, res); } catch (error) { return sendFailure(res, error); }
+};
+const idOf = value => (/^\d{1,15}$/.test(String(value)) ? Number(value) : null);
+const isTrue = value => ['1', 'true', 'yes'].includes(String(value || '').toLowerCase());
+// The list filters of GET / (the same on /api/attention and /v1/attention). parent=<id>: only the children of that item.
+const listQuery = query => ({ status: query.status, q: query.q, limit: query.limit, includeDone: isTrue(query.include_done), parent: query.parent });
+
+// Server-sent events of the change bus: `retry`, `event: change` with { kind, item, previous, event, ... } for every change, a comment line every
+// heartbeatMs. `active()` is asked at every heartbeat; false ends the stream (a revoked token). Returns the stream's handle ({ close }).
+function serveChangeStream(req, res, service, { heartbeatMs, active = () => true, onClose = () => {} }) {
+  res.status(200).set({ 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-store', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
+  res.flushHeaders();
+  res.write('retry: 3000\n: connected\n\n');
+  let closed = false;
+  const stream = {
+    close() {
+      if (closed) return;
+      closed = true;
+      unsubscribe();
+      clearInterval(timer);
+      onClose(stream);
+      res.end();
+    },
+  };
+  const unsubscribe = service.onChange(change => {
+    if (!closed) res.write(`event: change\ndata: ${JSON.stringify(change)}\n\n`);
+  });
+  const timer = setInterval(() => {
+    if (!active()) return stream.close();
+    res.write(': heartbeat\n\n');
+  }, heartbeatMs);
+  if (timer.unref) timer.unref();
+  req.on('close', () => stream.close());
+  return stream;
+}
+
+// The JSON parser of the token paths (here and /v1/attention): 400 INVALID_JSON, 413 BODY_TOO_LARGE. A body an earlier parser read is left as it is.
+function createJsonParser() {
+  const parse = express.json({ limit: '256kb' });
+  return (req, res, next) => parse(req, res, error => {
+    if (!error) return next();
+    if (error.status === 413) return sendError(res, 413, 'BODY_TOO_LARGE', 'The request body is too large');
+    return sendError(res, 400, 'INVALID_JSON', 'The request body is not valid JSON');
+  });
+}
+
 // Sliding count per key inside a window; used for failed token attempts (per address) and for requests per token.
 function createCounter({ windowMs, max, now = Date.now }) {
   const hits = new Map();
@@ -36,7 +89,7 @@ function createCounter({ windowMs, max, now = Date.now }) {
   };
 }
 
-function createAttentionRoutes({ service, summary = null, plugins = null, installer = null, market = null, pairingClaims = { windowMs: 60 * 1000, max: 5, lockMs: 60 * 1000, requests: 30 }, heartbeatMs = 25000, failedAuth = { windowMs: 15 * 60 * 1000, max: 20 }, tokenRequests = { windowMs: 60 * 1000, max: 600 }, now = Date.now } = {}) {
+function createAttentionRoutes({ service, summary = null, plugins = null, installer = null, market = null, instanceId = null, pairingClaims = { windowMs: 60 * 1000, max: 5, lockMs: 60 * 1000, requests: 30 }, heartbeatMs = 25000, failedAuth = { windowMs: 15 * 60 * 1000, max: 20 }, tokenRequests = { windowMs: 60 * 1000, max: 600 }, now = Date.now } = {}) {
   if (!service) throw new Error('createAttentionRoutes needs the attention service');
   const failures = createCounter({ ...failedAuth, now });
   const perToken = createCounter({ ...tokenRequests, now });
@@ -52,15 +105,7 @@ function createAttentionRoutes({ service, summary = null, plugins = null, instal
   }
   // A token that creates an item without a source is a command-line caller, not the person in the browser (used on create only).
   const defaultSource = req => (req.attentionAuth.kind === 'token' ? 'cli' : 'user');
-  const wrap = handler => (req, res) => {
-    try { return handler(req, res); } catch (error) {
-      if (error instanceof AttentionError) return sendError(res, error.statusCode, error.code, error.message, { ...(error.id !== undefined ? { id: error.id } : {}), ...(Array.isArray(error.children) ? { children: error.children } : {}) });
-      console.error(`T-Attention API: ${error.stack || error.message}`);
-      return sendError(res, 500, 'INTERNAL_ERROR', 'The attention service failed');
-    }
-  };
   const sessionOnly = (req, res, next) => (req.attentionAuth && req.attentionAuth.kind === 'session' ? next() : sendError(res, 403, 'TOKEN_NOT_ALLOWED', 'An attention token cannot manage tokens; use the browser'));
-  const idOf = value => (/^\d{1,15}$/.test(String(value)) ? Number(value) : null);
 
   router.use((req, res, next) => {
     if (!req.attentionAuth) req.attentionAuth = { kind: 'session' };
@@ -175,40 +220,21 @@ function createAttentionRoutes({ service, summary = null, plugins = null, instal
   // Server-sent events: `event: change` with { kind, item, previous, event } for every change, a comment line every heartbeatMs.
   // A token's stream ends when the token is revoked.
   router.get('/stream', (req, res) => {
-    res.status(200).set({ 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-store', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
-    res.flushHeaders();
-    res.write('retry: 3000\n: connected\n\n');
     const tokenId = req.attentionAuth.kind === 'token' ? req.attentionAuth.id : null;
-    let closed = false;
-    const stream = {
-      tokenId,
-      close() {
-        if (closed) return;
-        closed = true;
-        unsubscribe();
-        clearInterval(timer);
-        streams.delete(stream);
-        res.end();
-      },
-    };
-    const unsubscribe = service.onChange(change => {
-      if (!closed) res.write(`event: change\ndata: ${JSON.stringify(change)}\n\n`);
+    const stream = serveChangeStream(req, res, service, {
+      heartbeatMs,
+      active: () => tokenId === null || service.tokenActive(tokenId),
+      onClose: closing => streams.delete(closing),
     });
-    const timer = setInterval(() => {
-      if (tokenId !== null && !service.tokenActive(tokenId)) return stream.close();
-      res.write(': heartbeat\n\n');
-    }, heartbeatMs);
-    if (timer.unref) timer.unref();
+    stream.tokenId = tokenId;
     streams.add(stream);
-    req.on('close', () => stream.close());
   });
 
   router.get('/', wrap((req, res) => {
-    const includeDone = ['1', 'true', 'yes'].includes(String(req.query.include_done || '').toLowerCase());
     // `host`: this machine's name, as the Claude listener writes it into context.host (os.hostname()). The page opens the files of a context only
-    // when they are on this machine.
-    // parent=<id>: only the children of that item.
-    res.json({ items: service.list({ status: req.query.status, q: req.query.q, limit: req.query.limit, includeDone, parent: req.query.parent }), host: os.hostname() });
+    // when they are on this machine. `instance_id`: this Engine's own identity (engine_identity, the first part of a shared task order key), so a
+    // page that lists the items of several services can key them `<instance_id>:<id>`.
+    res.json({ items: service.list(listQuery(req.query)), host: os.hostname(), ...(instanceId ? { instance_id: instanceId() } : {}) });
   }));
 
   router.post('/', wrap((req, res) => res.status(201).json(service.create(req.body, { actor: actor(req), defaultSource: defaultSource(req) }))));
@@ -253,8 +279,6 @@ function createAttentionRoutes({ service, summary = null, plugins = null, instal
 
   router.use((req, res) => sendError(res, 404, 'NOT_FOUND', 'Not found'));
 
-  const parseJson = express.json({ limit: '256kb' });
-
   // Bearer requests to /api/attention*. Requests without an Authorization: Bearer header go on to the session path unchanged.
   function bearer(req, res, next) {
     const header = req.get('authorization');
@@ -282,12 +306,9 @@ function createAttentionRoutes({ service, summary = null, plugins = null, instal
     perToken.add(tokenKey);
     req.attentionAuth = { kind: 'token', id: auth.id, name: auth.name, scopes: Array.isArray(auth.scopes) ? auth.scopes : [] };
     // Ends here in every case: an unmatched address is a JSON 404, never the session path, the gates or the pages.
-    const done = error => {
-      if (error) return sendError(res, error.status === 413 ? 413 : 400, error.status === 413 ? 'BODY_TOO_LARGE' : 'INVALID_JSON', error.status === 413 ? 'The request body is too large' : 'The request body is not valid JSON');
-      return sendError(res, 404, 'NOT_FOUND', 'Not found');
-    };
-    parseJson(req, res, error => (error ? done(error) : router(req, res, done)));
+    parseJson(req, res, () => router(req, res, error => (error ? sendFailure(res, error) : sendError(res, 404, 'NOT_FOUND', 'Not found'))));
   }
+  const parseJson = createJsonParser();
 
   // POST /api/attention/pairing/claim { code, name } -> { url, token }. No session and no token (a Bearer header is ignored: the code is the
   // credential and works once). Per address: at most pairingClaims.requests requests a minute, and pairingClaims.max wrong codes inside
@@ -335,4 +356,76 @@ function createAttentionRoutes({ service, summary = null, plugins = null, instal
   return { router, bearer, claim, closeStreams };
 }
 
-module.exports = { createAttentionRoutes, createCounter };
+// T-Attention of this service for the other services connected to it: /v1/attention (routes/engine-v1.js), see "Shared across connected services"
+// under "T-Attention" in DESIGN.md. The same service instance and the same shapes as /api/attention, for the item routes only: no tokens, settings,
+// plugins, market, pairing, skill installer or by-ref. The item stays here; the other service reads and edits it in place.
+// - `authenticate` (the Engine token, middleware/engine-auth.js) runs first, before any body is read; reads then need the scope `attention:read`,
+//   writes `attention:write` (every Engine token is admin, `*`, which has both).
+// - Event actor: 'user'. An Engine token is the same person on another device, as in the browser; it is not a CLI or listener token.
+// - The stream ends when `tokenActive(tokenId)` turns false (the token was revoked or its service link removed), checked at every heartbeat.
+// - `getService` / `getSummary` are asked on each request, so the router can be made when routes/engine-v1.js loads, before server.js made the summary.
+function createEngineAttentionRouter({ service = null, getService = null, summary = null, getSummary = null, authenticate, instanceId = () => null, tokenActive = () => true, owner = () => require('../services/single-user').ensureSingleUser().login, heartbeatMs = 25000 } = {}) {
+  if (!service && !getService) throw new Error('createEngineAttentionRouter needs the attention service');
+  if (typeof authenticate !== 'function') throw new Error('createEngineAttentionRouter needs authenticate');
+  const items = () => service || getService();
+  const summaryOf = () => (getSummary ? getSummary() : summary);
+  const actor = { actor: 'user' };
+  const streams = new Set();
+  const router = express.Router();
+  const parseJson = createJsonParser();
+  const scope = required => (req, res, next) => {
+    const scopes = req.engineAuth && req.engineAuth.scopes;
+    const values = scopes instanceof Set ? scopes : new Set(scopes || []);
+    if (values.has('*') || values.has(required)) return next();
+    return res.status(403).json({ error: 'ENGINE_SCOPE_REQUIRED', required_scope: required });
+  };
+  const read = scope('attention:read');
+  const write = scope('attention:write');
+
+  router.use(authenticate);
+  router.use((req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
+
+  router.get('/stream', read, (req, res) => {
+    const tokenId = req.engineAuth.tokenId;
+    streams.add(serveChangeStream(req, res, items(), { heartbeatMs, active: () => tokenActive(tokenId), onClose: closing => streams.delete(closing) }));
+  });
+  router.get('/', read, wrap((req, res) => res.json({ items: items().list(listQuery(req.query)), host: os.hostname(), instance_id: instanceId() })));
+  router.post('/', write, parseJson, wrap((req, res) => res.status(201).json(items().create(req.body, { ...actor, defaultSource: 'user' }))));
+  router.get('/:id', read, wrap((req, res) => {
+    const id = idOf(req.params.id);
+    const found = id === null ? null : items().detail(id);
+    if (!found) return sendError(res, 404, 'NOT_FOUND', 'Task not found');
+    return res.json(found);
+  }));
+  router.patch('/:id', write, parseJson, wrap((req, res) => {
+    const id = idOf(req.params.id);
+    if (id === null) return sendError(res, 404, 'NOT_FOUND', 'Task not found');
+    return res.json(items().update(id, req.body, actor));
+  }));
+  router.post('/:id/move', write, parseJson, wrap((req, res) => {
+    const id = idOf(req.params.id);
+    if (id === null) return sendError(res, 404, 'NOT_FOUND', 'Task not found');
+    return res.json(items().move(id, req.body, actor));
+  }));
+  // The owner's own summary setting decides (409 SUMMARY_DISABLED when it is off there); the summary runs and is stored on the owner.
+  router.post('/:id/summarize', write, wrap((req, res) => {
+    const id = idOf(req.params.id);
+    const current = summaryOf();
+    if (!current) return sendError(res, 404, 'NOT_FOUND', 'Not found');
+    if (id === null) return sendError(res, 404, 'NOT_FOUND', 'Task not found');
+    const { started } = current.summarize(owner(), id);
+    return res.status(202).json({ started });
+  }));
+  router.delete('/:id', write, wrap((req, res) => {
+    const id = idOf(req.params.id);
+    if (id === null) return sendError(res, 404, 'NOT_FOUND', 'Task not found');
+    items().remove(id, actor);
+    return res.status(204).end();
+  }));
+  router.use((req, res) => sendError(res, 404, 'NOT_FOUND', 'Not found'));
+
+  router.closeStreams = () => { for (const stream of [...streams]) stream.close(); };
+  return router;
+}
+
+module.exports = { createAttentionRoutes, createEngineAttentionRouter, createCounter };

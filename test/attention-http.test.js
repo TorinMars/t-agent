@@ -213,7 +213,9 @@ test('login gate: a logged-out request reaches /api/attention only with a token,
   assert.equal((await call('/api/attention')).status, 404, 'logged out without a token: the gate 404');
   const listed = await call('/api/attention', { headers: bearer(token) });
   assert.equal(listed.status, 200);
-  assert.deepEqual(await listed.json(), { items: [], host: require('node:os').hostname() }, 'the list names this machine (context.host of a listener here)');
+  const answer = await listed.json();
+  assert.match(answer.instance_id, /^[0-9a-f-]{36}$/, 'the list names this Engine (the first part of a shared item key)');
+  assert.deepEqual(answer, { items: [], host: require('node:os').hostname(), instance_id: answer.instance_id }, 'the list names this machine (context.host of a listener here)');
   const upsert = await call(`/api/attention/by-ref/${encodeURIComponent('claude:abc')}`, { method: 'PUT', headers: bearer(token), body: { title: 'hello', status: 'working', source: 'claude' } });
   assert.equal(upsert.status, 201);
   assert.equal((await upsert.json()).source, 'claude');

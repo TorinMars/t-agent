@@ -154,7 +154,7 @@ function sourceFiles(dir, out = []) {
     if (['node_modules', '.git', 'data', 'logs', 'tasks', 'vendor'].includes(entry.name)) continue;
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) sourceFiles(full, out);
-    else if (/\.(js|cjs|html|css|sh|py|sql|md|json|yml|yaml|svg|example)$/.test(entry.name) && entry.name !== 'package-lock.json') out.push(full);
+    else if (/\.(js|cjs|html|css|sh|py|sql|md|json|yml|yaml|svg|example|swift)$/.test(entry.name) && entry.name !== 'package-lock.json') out.push(full);
   }
   return out;
 }

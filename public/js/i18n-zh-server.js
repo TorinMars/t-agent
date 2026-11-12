@@ -533,6 +533,18 @@ I18n.add({
   // T-Attention (services/attention.js, routes/attention.js)
   "A task with this external_ref already exists": "已有使用该 external_ref 的任务",
   "Task not found": "任务不存在",
+  // T-Attention tree and manual order (schema 11)
+  "Unknown parent": "上级任务不存在",
+  "Parent cycle": "上级任务不能是它自己或它的下级任务",
+  "This task has subtasks; delete them or give them another parent first": "这个任务还有子任务；请先删除它们，或把它们移到其他上级任务下",
+  "Give parent_id or parent_ref, not both": "parent_id 和 parent_ref 只能给一个",
+  "{1} must be a task id": "{1} 必须是任务编号",
+  "Give exactly one of before, after or position": "before、after、position 必须且只能给一个",
+  "position must be 'top' or 'bottom'": "position 只能是 'top' 或 'bottom'",
+  "Unknown target": "目标任务不存在",
+  "A task cannot be moved next to itself": "任务不能相对于它自己移动",
+  "Target is in another group": "目标任务在另一个分组中",
+  "A task cannot be moved next to its own subtask": "任务不能移动到它自己的子任务旁边",
   "Token not found": "令牌不存在",
   "Not found": "未找到",
   "An attention token cannot manage tokens; use the browser": "T-Attention 令牌不能管理令牌，请在浏览器中操作",

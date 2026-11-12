@@ -385,3 +385,201 @@ test('plugins without a server config or network still prints the local check an
     await fake.close();
   }
 });
+
+// ---------- tree, custom status, result, status helpers, move (schema 11) ----------
+const { realServer } = require('./fixtures/attention-real-server');
+
+test('add, update and upsert send parent, custom status and result; statuses accept the SELF-ATTENTION spellings', async () => {
+  const fake = await fakeServer();
+  const env = auth(fake);
+  try {
+    const parent = await run(['add', 'Parent', '--ref', 'sa:T1'], { env });
+    assert.equal(parent.code, 0, parent.stderr);
+    const child = await run(['add', 'Child', '--parent', '1', '--custom-status', 'Blocked', '--result', 'Found it', '--status', 'In Progress', '--json'], { env });
+    assert.equal(child.code, 0, child.stderr);
+    assert.deepEqual(fake.requests.at(-1).body, { title: 'Child', status: 'working', custom_status: 'Blocked', result: 'Found it', parent_id: 1, source: 'cli' });
+    const item = JSON.parse(child.stdout);
+    assert.deepEqual([item.parent_id, item.custom_status, item.result], [1, 'Blocked', 'Found it']);
+    await run(['add', 'By ref', '--parent', 'ref:sa:T1', '--status', 'Completed \u2014 Awaiting Confirmation'], { env });
+    assert.deepEqual(fake.requests.at(-1).body, { title: 'By ref', status: 'review', parent_ref: 'sa:T1', source: 'cli' });
+    assert.equal(fake.items.get(3).parent_id, 1);
+
+    assert.equal((await run(['update', '2', '--parent', '', '--custom-status', '', '--result', ''], { env })).code, 0);
+    assert.deepEqual(fake.requests.at(-1).body, { custom_status: null, result: null, parent_id: null });
+    assert.equal((await run(['update', '2', '--parent', 'nope'], { env })).code, 1);
+    await run(['upsert', '--ref', 'sa:T9', '--title', 'Nine', '--parent', 'ref:sa:T1', '--result', 'r'], { env });
+    assert.deepEqual(fake.requests.at(-1).body, { title: 'Nine', result: 'r', parent_ref: 'sa:T1', source: 'cli' });
+
+    const spellings = { 'not started': 'todo', IN_PROGRESS: 'working', 'Awaiting Response': 'waiting_user', 'completed - confirmed': 'done', 'Waiting-User': 'waiting_user', canceled: 'cancelled' };
+    for (const [given, status] of Object.entries(spellings)) {
+      assert.equal((await run(['update', '2', '--status', given], { env })).code, 0, given);
+      assert.equal(fake.requests.at(-1).body.status, status, given);
+    }
+    await run(['list', '--status', 'Not Started,in progress'], { env });
+    assert.equal(fake.requests.at(-1).query.status, 'todo,working');
+    assert.equal((await run(['update', '2', '--status', 'Completed'], { env })).code, 1, 'not a status');
+
+    const shown = await run(['show', '3'], { env });
+    assert.match(shown.stdout, /Parent: {3}#1/);
+    await run(['update', '2', '--custom-status', 'Blocked', '--result', 'Half'], { env });
+    const detail = await run(['show', '2'], { env });
+    assert.match(detail.stdout, /Custom: {3}Blocked\nResult: {3}Half/);
+
+    // A task with subtasks cannot be removed: 409 is exit 1 with the message.
+    const refused = await run(['rm', '1'], { env });
+    assert.equal(refused.code, 1);
+    assert.match(refused.stderr, /has subtasks; .* \(subtasks: #3, #4\)/);
+  } finally {
+    await fake.close();
+  }
+});
+
+test('confirm, reject and handled check the status and send the helper PATCH; move sends the placement', async () => {
+  const fake = await fakeServer();
+  const env = auth(fake);
+  try {
+    await run(['add', 'In review', '--status', 'review', '--reason', 'Claude finished'], { env });
+    await run(['add', 'Needs me', '--status', 'waiting_user', '--reason', 'Allow Bash?', '--ref', 'claude:s1'], { env });
+    await run(['add', 'Doing', '--status', 'working'], { env });
+
+    const confirmed = await run(['confirm', '1'], { env });
+    assert.equal(confirmed.code, 0, confirmed.stderr);
+    assert.deepEqual(fake.requests.at(-1).body, { status: 'done' });
+    assert.match(confirmed.stdout, /^#1 In review: Done/);
+    const again = await run(['confirm', '1'], { env });
+    assert.equal(again.code, 1);
+    assert.match(again.stderr, /#1 is Done, not Review: confirm does not apply/);
+    assert.equal(fake.requests.at(-1).method, 'GET', 'nothing sent');
+
+    fake.items.get(1).status = 'review';
+    assert.equal((await run(['reject', '1', '--reason', 'Tests fail'], { env })).code, 0);
+    assert.deepEqual(fake.requests.at(-1).body, { status: 'working', attention_reason: null, activity: { kind: 'note', text: 'Rejected: Tests fail' } });
+    fake.items.get(1).status = 'review';
+    await run(['reject', '1'], { env });
+    assert.deepEqual(fake.requests.at(-1).body.activity, { kind: 'note', text: 'Rejected' });
+    assert.equal((await run(['reject', '2'], { env })).code, 1, 'waiting_user is not review');
+
+    const handled = await run(['handled', 'ref:claude:s1', '--json'], { env });
+    assert.equal(handled.code, 0, handled.stderr);
+    assert.deepEqual(fake.requests.at(-1).body, { status: 'working', attention_reason: null, activity: { kind: 'note', text: 'Handled' } });
+    assert.equal(JSON.parse(handled.stdout).status, 'working');
+    assert.equal((await run(['handled', '3'], { env })).code, 1);
+    assert.equal((await run(['handled', '3', '--reason', 'x'], { env })).code, 1, 'handled takes no --reason');
+
+    const moved = await run(['move', '3', '--before', 'ref:claude:s1', '--status', 'in progress', '--reason', 'first'], { env });
+    assert.equal(moved.code, 0, moved.stderr);
+    assert.deepEqual(fake.requests.at(-1), { method: 'POST', path: '/api/attention/3/move', query: {}, auth: `Bearer ${TOKEN}`, body: { before: 2, status: 'working', reason: 'first' } });
+    await run(['move', '3', '--top'], { env });
+    assert.deepEqual(fake.requests.at(-1).body, { position: 'top' });
+    await run(['move', '3', '--after', '1'], { env });
+    assert.deepEqual(fake.requests.at(-1).body, { after: 1 });
+    assert.equal((await run(['move', '3'], { env })).code, 1, 'a placement is needed');
+    assert.equal((await run(['move', '3', '--top', '--bottom'], { env })).code, 1, 'only one placement');
+    const json = JSON.parse((await run(['move', '3', '--bottom', '--json'], { env })).stdout);
+    assert.equal(json.item.id, 3);
+    assert.ok(Array.isArray(json.items));
+  } finally {
+    await fake.close();
+  }
+});
+
+test('tree: the home view against the real service, depth-first with branch marks, phone width, Done as a count; --json groups', async () => {
+  const server = await realServer();
+  const env = { TA_ATTENTION_URL: server.url, TA_ATTENTION_TOKEN: server.token, TZ: 'UTC' };
+  try {
+    const { service } = server;
+    const main = service.create({ title: 'Main session', status: 'working', custom_status: 'Coordinating' });
+    const sub1 = service.create({ title: 'Sub-agent one', status: 'working', parent_id: main.id });
+    service.create({ title: 'Grandchild', status: 'working', parent_id: sub1.id, result: 'Wrote the parser' });
+    service.create({ title: 'Sub-agent two', status: 'working', parent_id: main.id, custom_status: 'Blocked' });
+    service.create({ title: 'Review me', status: 'review', parent_id: main.id, result: 'Added the importer' });
+    service.create({ title: 'Answer me', status: 'waiting_user', attention_reason: 'Pick a date' });
+    service.create({ title: '\u5199\u5468\u62a5', status: 'todo' });
+    service.create({ title: 'Finished', status: 'done' });
+    service.create({ title: 'Broken', status: 'failed' });
+
+    const tree = await run(['tree'], { env });
+    assert.equal(tree.code, 0, tree.stderr);
+    const lines = tree.stdout.trimEnd().split('\n');
+    const when = '\\d\\d-\\d\\d \\d\\d:\\d\\d';
+    const expected = [
+      /^Needs you \(2\)$/,
+      new RegExp(`^  #6 Answer me  Needs you  ${when}$`),
+      /^ {5}Pick a date$/,
+      new RegExp(`^  #5 Review me  Review  ${when}$`),
+      /^ {5}Added the importer$/,
+      /^$/,
+      /^Working \(4\)$/,
+      new RegExp(`^  #1 Main session  Working \u00b7 Coordinating  ${when}$`),
+      new RegExp(`^  \u251c #4 Sub-agent two  Working \u00b7 Blocked  ${when}$`),
+      new RegExp(`^  \u2514 #2 Sub-agent one  Working  ${when}$`),
+      new RegExp(`^    \u2514 #3 Grandchild  Working  ${when}$`),
+      /^ {9}Wrote the parser$/,
+      /^$/,
+      /^To do \(1\)$/,
+      new RegExp(`^  #7 \u5199\u5468\u62a5  To do  ${when}$`),
+      /^$/,
+      /^Done: 2$/,
+    ];
+    assert.equal(lines.length, expected.length, tree.stdout);
+    lines.forEach((line, index) => assert.match(line, expected[index], `line ${index + 1}: ${line}`));
+    assert.match(lines[1], new RegExp(`${new Date(service.get(6).updated_at).toISOString().slice(5, 10)} ${new Date(service.get(6).updated_at).toISOString().slice(11, 16)}$`), 'MM-DD HH:MM (TZ=UTC here)');
+    assert.equal((await run(['list', '--tree'], { env })).stdout, tree.stdout, 'list --tree is the same view');
+
+    // Long titles are cut to the terminal width (at most 100 columns; 80 when not a terminal).
+    service.create({ title: 'A very long title '.repeat(10), status: 'todo' });
+    for (const line of (await run(['tree'], { env })).stdout.split('\n')) assert.ok(Array.from(line).length <= 80, line);
+
+    const json = JSON.parse((await run(['tree', '--json'], { env })).stdout);
+    assert.deepEqual(json.groups.map(group => group.key), ['needs_you', 'working', 'todo']);
+    assert.deepEqual(json.groups[1].items.map(item => [item.title, item.depth]), [['Main session', 0], ['Sub-agent two', 1], ['Sub-agent one', 1], ['Grandchild', 2]]);
+    assert.equal(json.groups[1].items[1].custom_status, 'Blocked');
+    assert.equal(json.done, 2);
+    assert.equal((await run(['tree', '--status', 'todo'], { env })).code, 1, 'tree takes no filters');
+  } finally {
+    await server.close();
+  }
+  // An empty list still shows the Needs you heading and the count.
+  const empty = await realServer();
+  try {
+    const out = await run(['tree'], { env: { TA_ATTENTION_URL: empty.url, TA_ATTENTION_TOKEN: empty.token } });
+    assert.equal(out.stdout, 'Needs you (0)\n  Nothing needs you.\n\nDone: 0\n');
+  } finally {
+    await empty.close();
+  }
+});
+
+test('move, confirm and rm against the real service: order, group mismatch and children', async () => {
+  const server = await realServer();
+  const env = { TA_ATTENTION_URL: server.url, TA_ATTENTION_TOKEN: server.token };
+  try {
+    const { service } = server;
+    const a = service.create({ title: 'A' });
+    const b = service.create({ title: 'B' });
+    const c = service.create({ title: 'C', parent_id: a.id });
+    const w = service.create({ title: 'W', status: 'working' });
+    const order = () => service.list({ status: 'todo' }).map(item => item.title);
+    assert.deepEqual(order(), ['C', 'B', 'A']);
+    const moved = await run(['move', String(a.id), '--top'], { env });
+    assert.equal(moved.code, 0, moved.stderr);
+    assert.match(moved.stdout, /^Moved #1 A \(To do\); 2 other tasks renumbered/);
+    assert.deepEqual(order(), ['A', 'C', 'B'], 'the child follows its parent');
+    const mismatch = await run(['move', String(b.id), '--before', String(w.id)], { env });
+    assert.equal(mismatch.code, 1);
+    assert.match(mismatch.stderr, /Target is in another group/);
+    assert.equal((await run(['move', String(b.id), '--before', String(w.id), '--status', 'In Progress'], { env })).code, 0);
+    assert.deepEqual(service.list({ status: 'working' }).map(item => item.title), ['B', 'W']);
+    const removed = await run(['rm', String(a.id), '--json'], { env });
+    assert.equal(removed.code, 1);
+    assert.equal(JSON.parse(removed.stderr).error, 'HAS_CHILDREN');
+    service.update(c.id, { status: 'review' });
+    assert.equal((await run(['confirm', String(c.id)], { env })).code, 0);
+    assert.equal(service.get(c.id).status, 'done');
+    service.update(b.id, { status: 'review', attention_reason: 'Finished' });
+    assert.equal((await run(['reject', String(b.id), '--reason', 'Not yet'], { env })).code, 0);
+    assert.deepEqual([service.get(b.id).status, service.get(b.id).attention_reason], ['working', null]);
+    assert.deepEqual(service.events(b.id)[0].data, { kind: 'note', text: 'Rejected: Not yet' });
+  } finally {
+    await server.close();
+  }
+});

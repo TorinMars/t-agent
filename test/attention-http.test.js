@@ -312,3 +312,67 @@ test('the per-token request limit answers 429', { timeout: 10000 }, async t => {
   for (let i = 0; i < 4; i += 1) statuses.push((await fetch(`http://127.0.0.1:${server.address().port}/api/attention`, { headers: bearer(token) })).status);
   assert.deepEqual(statuses, [200, 200, 200, 429]);
 });
+
+test('tree, custom status, result, move and delete with children over HTTP (session and token); the stream carries the reorder', { timeout: 30000 }, async t => {
+  const { call } = await startServer(t, 'local');
+  const { token } = await (await call('/api/attention/tokens', { method: 'POST', headers: XHR, body: { name: 'agent' } })).json();
+  const post = async (body, headers = bearer(token)) => (await call('/api/attention', { method: 'POST', headers, body })).json();
+  const stream = sse(await call('/api/attention/stream', { headers: bearer(token) }));
+  await stream.until(/: connected/);
+
+  const parent = await post({ title: 'Parent', external_ref: 'sa:T1' });
+  const child = await post({ title: 'Child', parent_ref: 'sa:T1', custom_status: 'Blocked', result: 'Found the cause' });
+  assert.deepEqual([child.parent_id, child.custom_status, child.result], [parent.id, 'Blocked', 'Found the cause']);
+  const other = await post({ title: 'Other' }, XHR);
+  assert.equal(other.parent_id, null);
+
+  const unknown = await call('/api/attention', { method: 'POST', headers: bearer(token), body: { title: 'x', parent_id: 999999 } });
+  assert.equal(unknown.status, 400);
+  assert.deepEqual(await unknown.json(), { error: 'VALIDATION_FAILED', message: 'Unknown parent' });
+  const cycle = await call(`/api/attention/${parent.id}`, { method: 'PATCH', headers: XHR, body: { parent_id: child.id, title: 'renamed' } });
+  assert.equal(cycle.status, 400);
+  assert.deepEqual(await cycle.json(), { error: 'VALIDATION_FAILED', message: 'Parent cycle' });
+  assert.equal((await (await call(`/api/attention/${parent.id}`)).json()).item.title, 'Parent', 'nothing applied');
+  const byRef = await call(`/api/attention/by-ref/${encodeURIComponent('sa:T2')}`, { method: 'PUT', headers: bearer(token), body: { title: 'By ref', parent_ref: 'sa:missing' } });
+  assert.equal(byRef.status, 400);
+
+  // parent=<id> lists the children; the list carries the new fields.
+  const children = await (await call(`/api/attention?parent=${parent.id}`)).json();
+  assert.deepEqual(children.items.map(item => item.id), [child.id]);
+  assert.equal((await call('/api/attention?parent=abc')).status, 400);
+  const all = (await (await call('/api/attention')).json()).items;
+  assert.ok(all.every(item => 'parent_id' in item && 'custom_status' in item && 'result' in item));
+
+  const refused = await call(`/api/attention/${parent.id}`, { method: 'DELETE', headers: bearer(token) });
+  assert.equal(refused.status, 409);
+  const refusedBody = await refused.json();
+  assert.deepEqual([refusedBody.error, refusedBody.children], ['HAS_CHILDREN', [child.id]]);
+  assert.equal((await call(`/api/attention/${parent.id}`)).status, 200, 'nothing deleted');
+
+  // Order now: Other, Child, Parent (newest first). Move the parent to the top: its child follows.
+  const moved = await call(`/api/attention/${parent.id}/move`, { method: 'POST', headers: bearer(token), body: { position: 'top', reason: 'first' } });
+  assert.equal(moved.status, 200);
+  const movedBody = await moved.json();
+  assert.equal(movedBody.item.id, parent.id);
+  assert.deepEqual(movedBody.items.map(item => item.id), [parent.id, other.id], 'the child keeps its value (it stays second)');
+  assert.deepEqual((await (await call('/api/attention')).json()).items.map(item => item.title), ['Parent', 'Child', 'Other']);
+  const changes = changesIn(await stream.until(/"reorder":true[^]*"reorder":true/));
+  const reorders = changes.filter(change => change.reorder);
+  assert.equal(reorders.length, 2, 'one change per item whose order changed');
+  assert.equal(reorders[0].item.id, parent.id);
+  assert.equal(reorders[0].event.actor, 'agent');
+  assert.deepEqual(reorders[0].event.data.move, { position: 'top' });
+  assert.ok(reorders.slice(1).every(change => change.event === null && change.kind === 'updated'));
+  const latest = new Map([[child.id, child.sort_order], ...reorders.map(change => [change.item.id, change.item.sort_order])]);
+  assert.ok(latest.get(parent.id) > latest.get(child.id) && latest.get(child.id) > latest.get(other.id), 'the stream alone gives the new order');
+
+  // With a status: one transaction; a target in another group is refused (session path, same-origin rule applies).
+  const mismatch = await call(`/api/attention/${other.id}/move`, { method: 'POST', headers: XHR, body: { before: parent.id, status: 'working' } });
+  assert.equal(mismatch.status, 400);
+  assert.deepEqual(await mismatch.json(), { error: 'VALIDATION_FAILED', message: 'Target is in another group' });
+  assert.equal((await call(`/api/attention/${other.id}/move`, { method: 'POST', body: { position: 'top' } })).status, 403, 'a browser mutation needs same-origin proof');
+  const toWorking = await (await call(`/api/attention/${other.id}/move`, { method: 'POST', headers: XHR, body: { position: 'top', status: 'working' } })).json();
+  assert.equal(toWorking.item.status, 'working');
+  assert.equal((await call('/api/attention/999999/move', { method: 'POST', headers: XHR, body: { position: 'top' } })).status, 404);
+  stream.reader.cancel();
+});

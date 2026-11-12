@@ -92,6 +92,9 @@ if (!terminalColumns.includes('work_dir')) {
 // T-Attention items got the context column during schema 9 (before its release); a database made by an earlier build of it gets the column here.
 const attentionColumns = db.prepare('PRAGMA table_info(attention_items)').all().map(column => column.name);
 if (!attentionColumns.includes('context')) db.exec('ALTER TABLE attention_items ADD COLUMN context TEXT');
+// Schema 11: parent_id (the tree), custom_status and result of T-Attention items, and the index on parent_id. Nullable columns, so the items of
+// an older database simply have no parent, custom status or result.
+require('../services/attention').ensureTreeColumns(db);
 // attention_tokens.scopes (extra token permissions, 'market' = "Can manage plugins"): a nullable column, so an older version that does not know
 // it still reads and writes the table (its new tokens simply have no scope); no schema bump.
 if (!db.prepare('PRAGMA table_info(attention_tokens)').all().some(column => column.name === 'scopes')) db.exec('ALTER TABLE attention_tokens ADD COLUMN scopes TEXT');

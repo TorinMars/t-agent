@@ -222,10 +222,15 @@ CREATE TABLE IF NOT EXISTS attention_items (
   link_label       TEXT,
   meta             TEXT,                             -- a JSON object of at most 8 KiB
   context          TEXT,                             -- recall card: JSON object of at most 32 KiB (goal, last_reply, pending, files, summary, ...)
-  sort_order       INTEGER NOT NULL DEFAULT 0,
+  sort_order       INTEGER NOT NULL DEFAULT 0,       -- display order inside a status group, highest first (ties: higher id first)
   created_at       TEXT    NOT NULL,
   updated_at       TEXT    NOT NULL,
-  completed_at     TEXT                              -- set while the status is done / failed / cancelled
+  completed_at     TEXT,                             -- set while the status is done / failed / cancelled
+  -- Schema 11 (db/index.js adds them to an older database, and makes the index on parent_id there and in services/attention.js, because
+  -- this file runs before the columns exist on an older database):
+  parent_id        INTEGER REFERENCES attention_items(id),  -- the parent item or NULL, an item with children cannot be deleted
+  custom_status    TEXT,                             -- free one-line text beside the status (at most 100), e.g. 'Blocked'
+  result           TEXT                              -- one-line outcome (at most 500)
 );
 CREATE INDEX IF NOT EXISTS idx_attention_items_status ON attention_items (status, sort_order);
 

@@ -4,6 +4,8 @@
 // 'activity' and `excerpt` is never stored (tests read it from `requests`).
 // `handler` may answer a request itself (return anything but false). `legacy: true` acts like a server from before
 // GET /api/attention/by-ref/:ref: an HTML 404 for it, as Express answers an unknown route.
+// Tree fields (schema 11): parent_id, custom_status and result are stored as sent (parent_ref is resolved), DELETE of an item with children is
+// a 409 HAS_CHILDREN, GET ?parent=<id> lists children, and POST /:id/move answers { item, items: [item] } (the order itself is not modelled).
 const http = require('node:http');
 
 const TOKEN = 'tatt_test-token';
@@ -20,7 +22,8 @@ function fakeServer({ token = TOKEN, handler, legacy = false } = {}) {
   };
   // Applies a body to an item like the service: context merge, activity event, excerpt dropped.
   const apply = (item, body) => {
-    const { context, activity, excerpt, ...fields } = body; // eslint-disable-line no-unused-vars
+    const { context, activity, excerpt, parent_ref: parentRef, ...fields } = body; // eslint-disable-line no-unused-vars
+    if (parentRef !== undefined) fields.parent_id = parentRef ? ([...items.values()].find(entry => entry.external_ref === parentRef) || {}).id ?? null : null;
     const from = item.status;
     Object.assign(item, fields);
     if (context && typeof context === 'object') {
@@ -34,10 +37,10 @@ function fakeServer({ token = TOKEN, handler, legacy = false } = {}) {
   };
   const make = body => {
     const at = new Date().toISOString();
-    const item = { id: nextId++, title: body.title, notes: body.notes ?? null, status: body.status || 'todo', priority: body.priority || 'none', due_date: body.due_date ?? null, source: body.source || 'user', external_ref: body.external_ref ?? null, attention_reason: body.attention_reason ?? null, link_url: body.link_url ?? null, link_label: body.link_label ?? null, meta: body.meta ?? null, context: null, created_at: at, updated_at: at };
+    const item = { id: nextId++, title: body.title, notes: body.notes ?? null, status: body.status || 'todo', priority: body.priority || 'none', due_date: body.due_date ?? null, source: body.source || 'user', external_ref: body.external_ref ?? null, attention_reason: body.attention_reason ?? null, link_url: body.link_url ?? null, link_label: body.link_label ?? null, meta: body.meta ?? null, parent_id: body.parent_id ?? null, custom_status: body.custom_status ?? null, result: body.result ?? null, context: null, sort_order: nextId, created_at: at, updated_at: at };
     items.set(item.id, item);
     addEvent(item, 'created', null, null, item.status);
-    apply(item, { context: body.context, activity: body.activity });
+    apply(item, { context: body.context, activity: body.activity, ...(body.parent_ref !== undefined ? { parent_ref: body.parent_ref } : {}) });
     return item;
   };
   const server = http.createServer((req, res) => {
@@ -62,6 +65,7 @@ function fakeServer({ token = TOKEN, handler, legacy = false } = {}) {
         const statuses = url.searchParams.get('status');
         if (statuses) list = list.filter(item => statuses.split(',').includes(item.status));
         else if (!url.searchParams.get('include_done')) list = list.filter(item => !['done', 'failed', 'cancelled'].includes(item.status));
+        if (url.searchParams.get('parent')) list = list.filter(item => item.parent_id === Number(url.searchParams.get('parent')));
         return send(200, { items: list });
       }
       if (!parts.length && req.method === 'POST') {
@@ -86,8 +90,17 @@ function fakeServer({ token = TOKEN, handler, legacy = false } = {}) {
       const item = items.get(Number(parts[0]));
       if (!item) return send(404, { error: 'NOT_FOUND', message: 'Task not found' });
       if (req.method === 'GET') return send(200, { item, events: events.get(item.id) || [] });
+      if (parts[1] === 'move' && req.method === 'POST') {
+        if (body.status) apply(item, { status: body.status });
+        return send(200, { item, items: [item] });
+      }
       if (req.method === 'PATCH') return send(200, apply(item, body));
-      if (req.method === 'DELETE') { items.delete(item.id); return send(204); }
+      if (req.method === 'DELETE') {
+        const children = [...items.values()].filter(entry => entry.parent_id === item.id).map(entry => entry.id);
+        if (children.length) return send(409, { error: 'HAS_CHILDREN', message: 'This task has subtasks; delete them or give them another parent first', children });
+        items.delete(item.id);
+        return send(204);
+      }
       return send(405, { error: 'METHOD', message: 'Method not allowed' });
     });
   });

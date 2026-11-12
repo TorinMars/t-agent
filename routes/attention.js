@@ -54,7 +54,7 @@ function createAttentionRoutes({ service, summary = null, plugins = null, instal
   const defaultSource = req => (req.attentionAuth.kind === 'token' ? 'cli' : 'user');
   const wrap = handler => (req, res) => {
     try { return handler(req, res); } catch (error) {
-      if (error instanceof AttentionError) return sendError(res, error.statusCode, error.code, error.message, error.id !== undefined ? { id: error.id } : {});
+      if (error instanceof AttentionError) return sendError(res, error.statusCode, error.code, error.message, { ...(error.id !== undefined ? { id: error.id } : {}), ...(Array.isArray(error.children) ? { children: error.children } : {}) });
       console.error(`T-Attention API: ${error.stack || error.message}`);
       return sendError(res, 500, 'INTERNAL_ERROR', 'The attention service failed');
     }
@@ -207,7 +207,8 @@ function createAttentionRoutes({ service, summary = null, plugins = null, instal
     const includeDone = ['1', 'true', 'yes'].includes(String(req.query.include_done || '').toLowerCase());
     // `host`: this machine's name, as the Claude listener writes it into context.host (os.hostname()). The page opens the files of a context only
     // when they are on this machine.
-    res.json({ items: service.list({ status: req.query.status, q: req.query.q, limit: req.query.limit, includeDone }), host: os.hostname() });
+    // parent=<id>: only the children of that item.
+    res.json({ items: service.list({ status: req.query.status, q: req.query.q, limit: req.query.limit, includeDone, parent: req.query.parent }), host: os.hostname() });
   }));
 
   router.post('/', wrap((req, res) => res.status(201).json(service.create(req.body, { actor: actor(req), defaultSource: defaultSource(req) }))));
@@ -234,6 +235,13 @@ function createAttentionRoutes({ service, summary = null, plugins = null, instal
     const id = idOf(req.params.id);
     if (id === null) return sendError(res, 404, 'NOT_FOUND', 'Task not found');
     return res.json(service.update(id, req.body, { actor: actor(req) }));
+  }));
+
+  // { before | after | position, status?, reason? } -> { item, items } (see move in services/attention.js).
+  router.post('/:id/move', wrap((req, res) => {
+    const id = idOf(req.params.id);
+    if (id === null) return sendError(res, 404, 'NOT_FOUND', 'Task not found');
+    return res.json(service.move(id, req.body, { actor: actor(req) }));
   }));
 
   router.delete('/:id', wrap((req, res) => {

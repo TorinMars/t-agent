@@ -1660,4 +1660,20 @@ I18n.add({
   "Let other clients connect to this one": "让其他客户端连接到这台",
   "Linking (above) is the recommended way to add a device. The options here connect one way only: for a device that should not see this one, or one on an older version.": "推荐用上面的关联来添加设备。这里的选项只单向连接：用于不应看到这台的设备，或旧版本的设备。",
   "Enter the address of another client and a pairing code made under “Let other clients connect to this one” on that client. Only this side sees the other.": "填写另一个客户端的地址，以及在那个客户端“让其他客户端连接到这台”里生成的配对码。只有这一边能看到另一边。",
+  // The T-Attention desktop window (macOS): its own words (widgets/macos/strings.json, served by GET /api/attention/widget/strings) and its settings
+  // card (scripts/h5-shell/AttentionWidgetSettings.jsx).
+  "Done: {1}": "已完成：{1}",
+  "Quit": "退出",
+  "Could not reach T-Agent": "无法连接 T-Agent",
+  "Delete failed: {1}": "删除失败：{1}",
+  "Move failed: {1}": "移动失败：{1}",
+  "Nothing needs you": "没有需要你处理的事",
+  "Desktop window (macOS)": "桌面浮窗（macOS）",
+  "A small window that stays above other windows on this Mac and shows the tasks that need you, from this machine and the connected devices.": "一个停在这台 Mac 其他窗口上方的小窗口，显示这台机器和已连接设备上需要你处理的任务。",
+  "Window language": "浮窗语言",
+  "Same as this page": "跟随此页面",
+  "Not supported on this system": "此系统不支持",
+  "Xcode command line tools needed: xcode-select --install": "需要 Xcode 命令行工具：xcode-select --install",
+  "Building the window…": "正在构建浮窗…",
+  "Not running. Turn the switch off and on to start it again.": "未运行。关掉再打开开关即可重新启动。",
 });

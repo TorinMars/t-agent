@@ -12,6 +12,7 @@ const { isMindmapId, LIMITS: MINDMAP_LIMITS } = require('../services/mindmap');
 const { createMindmapBodyParser, sendNotFound: sendMindmapNotFound, sendTooLarge: sendMindmapTooLarge, BODY_LIMIT: MINDMAP_BODY_LIMIT } = require('./mindmap');
 const { getRemoteInfo, readRemoteInfo } = require('../services/remote-info');
 const engineNames = require('../services/engine-name');
+const { getRemoteAttention, RemoteAttentionError } = require('../services/remote-attention');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -779,71 +780,50 @@ router.get('/:id/mindmaps/:mapId', checkMindmapId, proxyMindmaps('GET', mindmapP
 router.put('/:id/mindmaps/:mapId', checkMindmapId, parseMindmapBody, checkMindmapSize, proxyMindmaps('PUT', mindmapPath));
 router.delete('/:id/mindmaps/:mapId', checkMindmapId, proxyMindmaps('DELETE', mindmapPath));
 
-// ── T-Attention items of a connected service: the item routes of /api/attention, forwarded to its /v1/attention. An item stays on that service; nothing
-// is copied here, and its notifiers and reminders stay there too. Per-task visibility does not apply (items are not tasks).
-// An Engine without the capability 'attention:remote' answers 501 ATTENTION_REMOTE_UNSUPPORTED before anything is sent (the answer of /v1/info is kept
-// for ATTENTION_INFO_MS per row, so a page that polls or reconnects its stream does not read it every time); an offline one 502 with the code `request`
-// gives (REMOTE_OFFLINE through a tunnel, REMOTE_CONNECTION_FAILED or REMOTE_TIMEOUT otherwise). An error of the owning service keeps its status, code,
-// message and the `id` / `children` of its 409s. A bad item id is "not found" here, as it is there, without a request.
-const ATTENTION_REMOTE = 'attention:remote';
-const ATTENTION_INFO_MS = 30_000;
+// ── T-Attention items of a connected service: the item routes of /api/attention, forwarded to its /v1/attention through services/remote-attention.js
+// (the capability check, the error mapping; the desktop window's merged list uses the same helper). An item stays on that service; nothing is copied
+// here, and its notifiers and reminders stay there too. Per-task visibility does not apply (items are not tasks). A bad item id is "not found" here, as
+// it is there, without a request.
 const ATTENTION_LIST_QUERY = ['status', 'q', 'limit', 'include_done', 'parent'];
-const attentionSupport = new Map(); // row id -> { at, supported, baseUrl }
-
-async function remoteHasAttention(target, res) {
-  const cached = attentionSupport.get(Number(target.row.id));
-  if (cached && cached.baseUrl === target.row.base_url && Date.now() - cached.at < ATTENTION_INFO_MS) return cached.supported;
-  const supported = await remoteHas(target, res, ATTENTION_REMOTE);
-  if (supported !== null) attentionSupport.set(Number(target.row.id), { at: Date.now(), supported, baseUrl: target.row.base_url });
-  return supported;
-}
 
 function checkAttentionId(req, res, next) {
   return /^\d{1,15}$/.test(req.params.itemId) ? next() : res.status(404).json({ error: 'NOT_FOUND', message: 'Task not found' });
 }
 
+const sendRemoteAttentionError = (res, error) => {
+  if (error instanceof RemoteAttentionError) return res.status(error.statusCode).json(error.body);
+  return res.status(error.statusCode || 502).json({ error: safeError(error) });
+};
+
 // Resolves the row and the capability; null when an answer has been sent.
 async function attentionTarget(req, res) {
   const target = remoteTarget(req, res);
   if (!target) return null;
-  const supported = await remoteHasAttention(target, res);
-  if (supported === null) return null;
-  if (!supported) { res.status(501).json({ error: 'ATTENTION_REMOTE_UNSUPPORTED' }); return null; }
+  try {
+    if (!(await getRemoteAttention().supported(target.row, target.token))) { res.status(501).json({ error: 'ATTENTION_REMOTE_UNSUPPORTED' }); return null; }
+  } catch (error) { sendRemoteAttentionError(res, error); return null; }
   return target;
 }
 
 function proxyAttention(method, upstream, { success = 200 } = {}) {
   return async (req, res) => {
-    const target = await attentionTarget(req, res);
+    const target = remoteTarget(req, res);
     if (!target) return;
     try {
-      const result = await request(target.row.base_url, upstream(req), target.token, {
-        method,
-        ...(['POST', 'PATCH'].includes(method) ? { body: req.body ?? {} } : {}),
-        // DELETE answers 204 with no body.
-        ...(method === 'DELETE' ? { expectText: true } : {}),
-      });
+      const result = await getRemoteAttention().call(target.row, { method, path: upstream(req), body: req.body, token: target.token });
       if (method === 'DELETE') return res.status(204).end();
       res.set('Cache-Control', 'no-store');
       res.status(success).json(result);
-    } catch (error) {
-      const peer = error.peerBody || {};
-      res.status(error.statusCode || 502).json({
-        error: safeError(error),
-        ...(typeof peer.message === 'string' ? { message: peer.message } : {}),
-        ...(Number.isSafeInteger(peer.id) ? { id: peer.id } : {}),
-        ...(Array.isArray(peer.children) ? { children: peer.children.filter(Number.isSafeInteger) } : {}),
-      });
-    }
+    } catch (error) { sendRemoteAttentionError(res, error); }
   };
 }
 
-const attentionItemPath = req => `/v1/attention/${encodeURIComponent(req.params.itemId)}`;
+const attentionItemPath = req => `/${encodeURIComponent(req.params.itemId)}`;
 function attentionListPath(req) {
   const query = new URLSearchParams();
   for (const key of ATTENTION_LIST_QUERY) if (typeof req.query[key] === 'string') query.set(key, req.query[key]);
   const search = query.toString();
-  return `/v1/attention${search ? `?${search}` : ''}`;
+  return search ? `?${search}` : '';
 }
 // The owner's change stream, piped unbuffered (through the tunnel too). It ends when the owner ends it (its token revoked, the link removed) or the
 // connection drops; the page reconnects.
@@ -853,7 +833,7 @@ router.get('/:id/attention/stream', async (req, res) => {
   streamRemote(req, res, target.row.base_url, target.token, '/v1/attention/stream', { sse: true });
 });
 router.get('/:id/attention', proxyAttention('GET', attentionListPath));
-router.post('/:id/attention', proxyAttention('POST', () => '/v1/attention', { success: 201 }));
+router.post('/:id/attention', proxyAttention('POST', () => '', { success: 201 }));
 router.get('/:id/attention/:itemId', checkAttentionId, proxyAttention('GET', attentionItemPath));
 router.patch('/:id/attention/:itemId', checkAttentionId, proxyAttention('PATCH', attentionItemPath));
 router.delete('/:id/attention/:itemId', checkAttentionId, proxyAttention('DELETE', attentionItemPath));
@@ -868,5 +848,8 @@ router.put('/:id/tasks/:taskId/document/:kind', async (req, res) => {
     res.json(await request(row.base_url, `/v1/tasks/${encodeURIComponent(req.params.taskId)}/documents/${req.params.kind}`, decryptToken(row.token_cipher, config.sessionSecret), { method: 'PUT', body: req.body }));
   } catch (error) { res.status(error.statusCode || 502).json({ error: safeError(error) }); }
 });
+
+// The instance id of a row (as GET / answers it), for the desktop window's engine colours (routes/attention-widget.js).
+router.instanceIdOf = row => instanceIdOf(row, engineNames.remoteInstanceIds(db));
 
 module.exports = router;

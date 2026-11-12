@@ -104,6 +104,14 @@ const attentionInstaller = attentionPluginsService.createListenerInstaller({ ser
 const attentionRoutes = require('./routes/attention').createAttentionRoutes({ service: attentionService, summary: attentionSummary, plugins: attentionPlugins, installer: attentionInstaller, market: attentionMarket, instanceId: () => require('./services/engine-identity').getEngineIdentity().engine_id });
 // Pairing claims (`t-attention pair`) come from other machines without a session or token: answered here, before the Bearer path and the gates.
 app.use('/api/attention/pairing/claim', attentionRoutes.claim);
+// The T-Attention desktop window (macOS; services/attention-widget.js, routes/attention-widget.js): its API takes only the token of the window this
+// server started, from this machine, so it is answered here, before the attention Bearer path and the gates. Its settings (/settings) take the browser
+// session and go on to the session path. The window is built and started after the server listens.
+const attentionWidgetService = require('./services/attention-widget');
+const attentionWidgetSettings = attentionWidgetService.createWidgetSettings({ db });
+const attentionWidget = attentionWidgetService.createWidgetLauncher({ settings: attentionWidgetSettings, dataDir: attentionDataDir });
+const attentionWidgetRoutes = require('./routes/attention-widget').createAttentionWidgetRoutes({ service: attentionService, launcher: attentionWidget, settings: attentionWidgetSettings, db });
+app.use('/api/attention/widget', attentionWidgetRoutes.bearer);
 app.use('/api/attention', attentionRoutes.bearer);
 // The peer file relay (routes/peer-fs.js) for the `t-agent-peers` MCP server of a session in a T-Agent terminal: authenticated by that terminal's hook
 // token in X-T-Agent-* headers and taken only from this machine, so it sits before the session and the gates. A request without those headers goes on.
@@ -178,6 +186,7 @@ app.use('/api/bookmarks', require('./routes/bookmarks'));
 // older pages), mounted before the T-Attention router, which answers every other /api/attention path.
 app.use('/api/agent-skills', require('./routes/agent-skills').createAgentSkillsRouter());
 app.use('/api/attention/skill', require('./routes/attention-skill').createAttentionSkillRouter());
+app.use('/api/attention/widget/settings', attentionWidgetRoutes.settings);
 app.use('/api/attention', attentionRoutes.router);
 // The same service instance as /v1/mindmaps (routes/engine-v1.js), so writes of one map run one at a time whichever path they come in by.
 app.use('/api/mindmaps', require('./routes/mindmap').createMindmapRouter({ service: require('./services/mindmap').getMindmapService() }));
@@ -422,6 +431,8 @@ function sendClientPage(req, res, page = 'h5.html') {
   if (auth.setupRequired) return res.redirect(`${config.loginPath}/setup?return_to=${encodeURIComponent(returnTo)}`);
   if (auth.loginRequired) return res.redirect(`${config.loginPath}?return_to=${encodeURIComponent(returnTo)}`);
   req.session.user = ensureSingleUser();
+  // 'auto' of the desktop window's language follows the language of this page (its ta-lang cookie).
+  attentionWidgetSettings.notePageLanguage(wantsChinese(req));
   // Each script and style is named by the hash of its content (lib/static-assets.js), so it is cached for a year and any change gets a new URL.
   let html = staticAssets.rewritePage(fs.readFileSync(path.join(__dirname, 'public', page), 'utf8'), { zh: wantsChinese(req) });
   html = html.replace('</head>', `<meta name="t-agent-login-path" content="${escapeHtml(config.loginPath)}">\n</head>`);
@@ -579,6 +590,8 @@ server.listen(config.port, config.host, () => {
     revoke: (taskId, terminalId) => attentionService.revokeTerminalToken({ taskId, terminalId }),
   });
   console.log(`Server running at http://localhost:${listeningPort}`);
+  // The T-Attention desktop window (macOS): found, built when needed and started in the background; never delays or stops the server.
+  void attentionWidget.start({ url: attentionLocalUrl });
   // Make the brotli / gzip copies of the pages' scripts and styles now, in the background, so the first visitor already gets them.
   for (const page of ['h5.html']) { try { staticAssets.rewritePage(fs.readFileSync(path.join(__dirname, 'public', page), 'utf8')); } catch { /* the page is not there */ } }
   frpRouter.service.autoStart();
@@ -605,5 +618,5 @@ server.listen(config.port, config.host, () => {
 });
 
 // Do not let frpc become an orphan process after the Client exits.
-process.on('exit', () => { frpRouter.service.stop(); sshTunnelRouter.service.stop(); attentionMarket.stop(); serviceLinks.stop(); require('./services/task-order').getTaskOrder().stop(); });
+process.on('exit', () => { attentionWidget.stop(); frpRouter.service.stop(); sshTunnelRouter.service.stop(); attentionMarket.stop(); serviceLinks.stop(); require('./services/task-order').getTaskOrder().stop(); });
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => process.exit(0));

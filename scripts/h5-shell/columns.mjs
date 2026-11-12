@@ -20,7 +20,7 @@ export const columnWidth = (stripWidth, count) => {
   return Number.isFinite(width) && width > 0 ? Math.max(min, width / n) : min;
 };
 export const MESSAGE_TYPE = 't-agent-pane';
-export const PANE_EVENTS = new Set(['ready', 'focus', 'title', 'scroll-x', 'step']);
+export const PANE_EVENTS = new Set(['ready', 'focus', 'title', 'scroll-x', 'step', 'move']);
 const SCROLL_MAX = 10000; // px of one forwarded sideways scroll
 const ID = /^[a-z0-9]{1,16}$/;
 const TEXT_MAX = 200;
@@ -74,26 +74,65 @@ export const canAdd = ids => ids.length < MAX_COLUMNS;
 export const canClose = ids => ids.length > 1; // the last column is never closed: leaving the view is the toggle
 export const addColumn = (ids, random = Math.random) => (canAdd(ids) ? [...ids, newId(ids, random)] : ids);
 export const closeColumn = (ids, id) => (canClose(ids) ? ids.filter(item => item !== id) : ids);
+// The order with `id` moved to `index` (clamped to the ends); the same array when nothing changes (an unknown id, the same place).
+export function moveColumn(ids, id, index) {
+  const from = ids.indexOf(id);
+  const to = Math.max(0, Math.min(ids.length - 1, Math.floor(Number(index)) || 0));
+  if (from < 0 || from === to) return ids;
+  const next = ids.filter(item => item !== id);
+  next.splice(to, 0, id);
+  return next;
+}
+// One place left (-1) or right (1); at an end it stays.
+export const shiftColumn = (ids, id, by) => (ids.includes(id) && (by === 1 || by === -1) ? moveColumn(ids, id, ids.indexOf(id) + by) : ids);
+// The order the columns' elements keep in the page: the ids that were already there in their old order, then the new ones. Only the CSS `order` of a
+// column shows where it is: moving an iframe's element in the DOM reloads its page (and drops its terminal connection), so a reorder never moves one.
+export function mountOrder(mounted, ids) {
+  const kept = (mounted || []).filter(id => ids.includes(id));
+  return [...kept, ...ids.filter(id => !kept.includes(id))];
+}
 
-// A message from a pane: { type: 't-agent-pane', paneId, event: 'ready' | 'focus' | 'title' | 'scroll-x' | 'step', title?, session?, dx?, step? }.
-// 'scroll-x': a sideways wheel or trackpad swipe inside the pane that nothing in it scrolls (dx in px, nonzero, at most 10000 either way);
-// 'step': Ctrl+Alt+Left / Right pressed inside the pane (step -1 or 1). Anything else is null.
+// A message from a pane: { type: 't-agent-pane', paneId, event: 'ready' | 'focus' | 'title' | 'scroll-x' | 'step' | 'move', title?, session?,
+// device?, dx?, step? }. 'title': the task and session shown, and the device of that task when the pane's list tags it (`device`: { name, instanceId,
+// local, offline }, kept only with a name or as this machine); 'scroll-x': a sideways wheel or trackpad swipe inside the pane that nothing in it
+// scrolls (dx in px, nonzero, at most 10000 either way); 'step': Ctrl+Alt+Left / Right pressed inside the pane, 'move': Ctrl+Alt+Shift+Left / Right
+// (step -1 or 1). Anything else is null.
 // The caller checks the origin and that the sender is one of its own iframes (and that its id is this paneId).
 export function readPaneMessage(data) {
   if (!data || typeof data !== 'object' || data.type !== MESSAGE_TYPE || !isPaneId(data.paneId) || !PANE_EVENTS.has(data.event)) return null;
   const text = value => (typeof value === 'string' ? value.trim().slice(0, TEXT_MAX) : '');
   const message = { paneId: data.paneId, event: data.event };
-  if (data.event === 'title') { message.title = text(data.title); message.session = text(data.session); }
+  if (data.event === 'title') {
+    message.title = text(data.title);
+    message.session = text(data.session);
+    const device = readDevice(data.device);
+    if (device) message.device = device;
+  }
   if (data.event === 'scroll-x') {
     if (typeof data.dx !== 'number' || !Number.isFinite(data.dx) || data.dx === 0) return null;
     message.dx = Math.max(-SCROLL_MAX, Math.min(SCROLL_MAX, data.dx));
   }
-  if (data.event === 'step') {
+  if (data.event === 'step' || data.event === 'move') {
     if (data.step !== 1 && data.step !== -1) return null;
     message.step = data.step;
   }
   return message;
 }
+
+// The device of a pane's task as its tab shows it (the same engine tag as the task list): a name (this machine may have none: an older server), the
+// instance id that gives the tag its colour, and whether it is this machine or offline. Anything unusable is null.
+export function readDevice(value) {
+  if (!value || typeof value !== 'object') return null;
+  const name = typeof value.name === 'string' ? value.name.trim().slice(0, 80) : '';
+  const local = value.local === true;
+  if (!name && !local) return null;
+  const instanceId = typeof value.instanceId === 'string' ? value.instanceId.slice(0, 80) : '';
+  return { name, instanceId, local, offline: value.offline === true };
+}
+// What a pane says about its task's device (from the row of the task list that is selected and tagged), or null without one.
+export const deviceOfRow = row => (row && row.device ? readDevice({ name: row.device.local ? row.device.name : row.device.label, instanceId: row.device.instanceId, local: row.device.local, offline: row.device.offline }) : null);
+// The shape DeviceTag (TaskDrawer.jsx) draws: this machine is named by `name`, a remote device by `label`.
+export const tagOf = device => (device ? { key: device.local ? 'local' : 'remote', local: device.local, name: device.local ? device.name : '', label: device.name, instanceId: device.instanceId, offline: device.offline } : null);
 
 // The sideways part of a wheel event in px, or 0 when it is not a sideways scroll: |deltaX| > |deltaY| (a sideways trackpad swipe or tilt wheel), or
 // Shift with a vertical wheel (systems that do not turn it into deltaX themselves). A pinch (ctrlKey) or Cmd+wheel is never sideways.
@@ -109,6 +148,11 @@ export function sidewaysDelta({ deltaX = 0, deltaY = 0, deltaMode = 0, shiftKey 
 // The column step of a key: Ctrl+Alt+Left = -1, Ctrl+Alt+Right = 1 (Ctrl+Option on a Mac), else 0. Cmd or Shift with them is another key.
 export function columnStep({ key, ctrlKey = false, altKey = false, metaKey = false, shiftKey = false } = {}) {
   if (!ctrlKey || !altKey || metaKey || shiftKey) return 0;
+  return key === 'ArrowLeft' ? -1 : key === 'ArrowRight' ? 1 : 0;
+}
+// The move of a key: Ctrl+Alt+Shift+Left = -1, Ctrl+Alt+Shift+Right = 1 (Ctrl+Option+Shift on a Mac): the focused column one place left / right.
+export function columnMove({ key, ctrlKey = false, altKey = false, metaKey = false, shiftKey = false } = {}) {
+  if (!ctrlKey || !altKey || metaKey || !shiftKey) return 0;
   return key === 'ArrowLeft' ? -1 : key === 'ArrowRight' ? 1 : 0;
 }
 // The column a step moves the focus to: the previous or next open column, stopping at the ends; with no focus, the first (right) or last (left).

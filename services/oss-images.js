@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const OSS = require('ali-oss');
 const { encryptToken, decryptToken } = require('../lib/token-crypto');
+const syncStore = require('./settings-sync-store');
 
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 const MAX_FILE_BYTES = 100 * 1024 * 1024;
@@ -100,10 +101,12 @@ function createOssImages({ db, sessionSecret, createClient = options => new OSS(
       if (next.prefix) next.prefix += '/';
       db.prepare(`INSERT INTO system_state (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP`).run(key(owner), encryptToken(JSON.stringify(next), sessionSecret));
+      syncStore.settingChanged(SYNC_GROUP);
       return safe(next);
     },
     clearConfig(owner) {
       db.prepare('DELETE FROM system_state WHERE key = ?').run(key(owner));
+      syncStore.settingChanged(SYNC_GROUP);
       return safe(defaults());
     },
     // The browser uploads the file straight to OSS with a form POST; this only signs what that POST may contain (one object key, one
@@ -163,4 +166,10 @@ function createOssImages({ db, sessionSecret, createClient = options => new OSS(
     },
   };
 }
-module.exports = { createOssImages, OssImageError, MAX_IMAGE_BYTES, MAX_FILE_BYTES, ACTIVE_TYPE, signPolicy, fileName, fileType, attachment };
+// Settings sync across linked devices (services/settings-sync.js): the whole stored configuration, the AccessKey secret included, or null. Only the
+// sync calls these, and it sends the value encrypted; a page never gets it.
+const SYNC_GROUP = 'oss';
+const exportForSync = ({ db, sessionSecret }, owner) => syncStore.readState(db, `oss-images:${owner}`, sessionSecret);
+const importFromSync = ({ db, sessionSecret }, owner, value) => syncStore.writeState(db, `oss-images:${owner}`, syncStore.objectOrNull(value), sessionSecret);
+
+module.exports = { SYNC_GROUP, exportForSync, importFromSync, createOssImages, OssImageError, MAX_IMAGE_BYTES, MAX_FILE_BYTES, ACTIVE_TYPE, signPolicy, fileName, fileType, attachment };

@@ -38,6 +38,8 @@ router.use('/file-sync', require('./file-sync').engine);
 router.use('/linked-services', require('./linked-services').createLinkedServicesRouter());
 // The shared task order between linked services (routes/task-order.js), link tokens only. It holds keys, not tasks, so per-task visibility leaves it alone.
 router.use('/task-order', require('./task-order').createEngineTaskOrderRouter());
+// Settings sync between linked services (routes/settings-sync.js), link tokens only; the values travel sealed for the link.
+router.use('/settings-sync', require('./settings-sync').createEngineSettingsSyncRouter());
 // Mind maps of this service, for the other services connected to it (routes/mindmap.js, the same router and service as /api/mindmaps). The token is checked
 // before any body is read; server.js keeps the global JSON parser off this path. Maps belong to no task, so per-task visibility does not apply to them.
 router.use('/mindmaps', require('./mindmap').createMindmapRouter({ getService: require('../services/mindmap').getMindmapService, authenticate: requireEngineAuth() }));
@@ -167,6 +169,8 @@ function infoHandler(req, res) {
       engineName.CAPABILITY,
       // task-order: GET|PUT /v1/task-order, the shared task order of linked services (link tokens only).
       'task-order',
+      // settings:sync: GET|PUT /v1/settings-sync and POST /v1/settings-sync/pull, the settings linked services keep as one set (link tokens only).
+      ...(require('../services/settings-sync').syncEnabled() ? [require('../services/settings-sync').CAPABILITY] : []),
       // rule-sync:receive: GET /v1/rule-sync/status and PUT /v1/rule-sync/bundle (routes/rule-sync.js); the bundle is applied only when this Engine's role is receive.
       require('../services/rule-sync').CAPABILITY,
       // rule-sync:edit: GET / PUT /v1/rule-sync/shared read and write the shared rules file while this Engine is the source (routes/rule-sync.js).

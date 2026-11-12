@@ -13,6 +13,7 @@ import RadioGroup from '@mui/material/RadioGroup';
 import Typography from '@mui/material/Typography';
 import TextField from './TextField.jsx';
 import { Pill, api, t } from './common.jsx';
+import { useDeviceTarget } from './DeviceTarget.jsx';
 import { Feedback, Hint, Section, failure, useFeedback } from './Form.jsx';
 import { ScopeLabel } from './ScopeLabel.jsx';
 import { SharedClaudeSettings } from './SharedClaudeSettings.jsx';
@@ -193,7 +194,7 @@ function ReceivePart({ data, busy, save, act }) {
 
 // The editor of the shared rules: full screen on a phone, a large dialog on a wide screen. Saves to the source with the revision the text was loaded at;
 // when the file changed meanwhile (409) the person chooses to load the latest text or to overwrite it. Ctrl+S / Cmd+S saves.
-function SharedRulesDialog({ open, wide, onClose, onSaved }) {
+function SharedRulesDialog({ open, wide, onClose, onSaved, call = api }) {
   const [loaded, setLoaded] = useState(null); // the last text read from or saved on the source: { content, content_revision, source }
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
@@ -208,7 +209,7 @@ function SharedRulesDialog({ open, wide, onClose, onSaved }) {
     let live = true;
     setLoaded(null); setText(''); setConflict(null); setAsking(false); say('');
     setBusy(true);
-    api('GET', `${BASE}/shared`)
+    call('GET', `${BASE}/shared`)
       .then(data => { if (live) { setLoaded(data); setText(data.content); } })
       .catch(error => { if (live) say(sharedError(error), true); })
       .finally(() => { if (live) setBusy(false); });
@@ -220,7 +221,7 @@ function SharedRulesDialog({ open, wide, onClose, onSaved }) {
     setBusy(true);
     const content = text;
     try {
-      const answer = await api('PUT', `${BASE}/shared`, { content, base_revision: base || loaded.content_revision });
+      const answer = await call('PUT', `${BASE}/shared`, { content, base_revision: base || loaded.content_revision });
       setLoaded(current => ({ ...current, content, content_revision: answer.content_revision, source: answer.source || current.source }));
       setConflict(null);
       say('Saved. The receivers get it automatically within a few seconds. Running Claude and Codex sessions read it after a restart.');
@@ -322,8 +323,13 @@ function LocalChanges({ changes, busy, act }) {
   );
 }
 
-// `opened` goes up each time the Devices group opens: the settings are read again then.
-export function RuleSyncSection({ state, opened }) {
+// `opened` goes up each time the Devices group opens: the settings are read again then. The settings are those of the device chosen in
+// "Settings for" (DeviceTarget.jsx): this one, or a linked one through the link.
+export function RuleSyncSection(props) {
+  const device = useDeviceTarget();
+  return <RuleSyncPart key={device.key} {...props} call={device.api} />;
+}
+function RuleSyncPart({ state, opened, call }) {
   const [data, setData] = useState(null);
   const [busy, setBusy] = useState(false);
   const [shared, setShared] = useState(null); // where the shared rules are saved: { source } or { error }; null while it is looked up
@@ -331,11 +337,11 @@ export function RuleSyncSection({ state, opened }) {
   const [feedback, say] = useFeedback();
   const findSource = async () => {
     setShared(null);
-    try { setShared({ source: (await api('GET', `${BASE}/shared`)).source }); }
+    try { setShared({ source: (await call('GET', `${BASE}/shared`)).source }); }
     catch (error) { setShared({ error: error.status === 404 && !ERRORS[error.message] ? t('This service does not support it') : sharedError(error) }); }
   };
   const load = async () => {
-    try { setData(await api('GET', BASE)); say(''); void findSource(); }
+    try { setData(await call('GET', BASE)); say(''); void findSource(); }
     catch (error) { say(error.status === 404 ? 'This service does not support it' : failure(error), true); }
   };
   const run = async (work, done, after) => {
@@ -347,8 +353,8 @@ export function RuleSyncSection({ state, opened }) {
     } finally { setBusy(false); }
   };
   // A new role can change where the source is.
-  const save = changes => run(() => api('PUT', BASE, changes), 'Saved', changes.role ? () => void findSource() : null);
-  const act = (action, done) => run(() => api('POST', `${BASE}/${action}`, {}), done, action === 'reset-source' ? () => void findSource() : null);
+  const save = changes => run(() => call('PUT', BASE, changes), 'Saved', changes.role ? () => void findSource() : null);
+  const act = (action, done) => run(() => call('POST', `${BASE}/${action}`, {}), done, action === 'reset-source' ? () => void findSource() : null);
   useEffect(() => { if (opened) void load(); }, [opened]); // eslint-disable-line react-hooks/exhaustive-deps -- load only reads
   return (
     <Section id="rule-sync" title="Rules and skills sync" aside={<ScopeLabel id="rule-sync" />}>
@@ -381,7 +387,7 @@ export function RuleSyncSection({ state, opened }) {
         </>
       ) : null}
       <Feedback id="h5-rule-sync-feedback" feedback={feedback} />
-      <SharedRulesDialog open={editing} wide={Boolean(state && state.wide)} onClose={() => setEditing(false)} onSaved={() => { if (data && data.role === 'source') void load(); }} />
+      <SharedRulesDialog open={editing} wide={Boolean(state && state.wide)} onClose={() => setEditing(false)} onSaved={() => { if (data && data.role === 'source') void load(); }} call={call} />
     </Section>
   );
 }

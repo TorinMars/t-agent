@@ -120,6 +120,8 @@ const attentionWidgetService = require('./services/attention-widget');
 const attentionWidgetSettings = attentionWidgetService.createWidgetSettings({ db });
 const attentionWidget = attentionWidgetService.createWidgetLauncher({ settings: attentionWidgetSettings, dataDir: attentionDataDir });
 const attentionWidgetRoutes = require('./routes/attention-widget').createAttentionWidgetRoutes({ service: attentionService, launcher: attentionWidget, settings: attentionWidgetSettings, db });
+// The window switch of this Mac for a linked device's page (GET / PUT /v1/device-settings/attention/widget/settings, routes/device-settings.js).
+require('./routes/device-settings').registerWidgetSettings(attentionWidgetRoutes.peerSettings);
 app.use('/api/attention/widget', attentionWidgetRoutes.bearer);
 app.use('/api/attention', attentionRoutes.bearer);
 // The peer file relay (routes/peer-fs.js) for the `t-agent-peers` MCP server of a session in a T-Agent terminal: authenticated by that terminal's hook
@@ -219,6 +221,8 @@ app.use('/api/remote-servers', require('./routes/remote-servers'));
 app.use('/api/task-list/hidden-devices', require('./routes/task-list-prefs').createTaskListPrefsRouter());
 app.use('/api/task-order', require('./routes/task-order').createTaskOrderRouter());
 app.use('/api/settings-sync', require('./routes/settings-sync').createSettingsSyncRouter());
+// The per-device settings of a linked device, read and written from this page (routes/device-settings.js).
+app.use('/api/device-settings', require('./routes/device-settings').createDeviceSettingsRouter());
 app.use('/api/remote-tokens', require('./routes/remote-tokens'));
 app.use('/api/service-links', require('./routes/service-links'));
 app.use('/api/remote/v1', require('./routes/remote-api'));

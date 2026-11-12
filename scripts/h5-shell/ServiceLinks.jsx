@@ -11,6 +11,7 @@ import { Pill, api, t } from './common.jsx';
 import { copyText } from './Attention.jsx';
 import { EngineDialog, Feedback, Field, Hint, Section, failure, useFeedback } from './Form.jsx';
 import { ScopeLabel } from './ScopeLabel.jsx';
+import { LocalOnly } from './DeviceTarget.jsx';
 import { codeGroups, countdownText, secondsLeft } from './plugins-model.mjs';
 
 // "Link a device" in Settings → Devices (until the sheet was tidied up the group "Linked services"): two T-Agent services that see and operate each
@@ -273,17 +274,19 @@ export function ServiceLinksSection({ state, ui, version, opened, onChanged }) {
   if (!links) return null;
   return (
     <Section id="link" title="Link a device" aside={<ScopeLabel />}>
-      <Hint>{t('Link another T-Agent service, so that both see and operate each other’s tasks, terminals and sessions. This is the recommended way to add a device: generate a code on one, and join with it on the other.')}</Hint>
-      <Box id="h5-link-list" sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-        {links.map(link => <LinkRow key={link.id} link={link} onUnlink={() => setUnlinking(link)} />)}
-        {links.length ? null : <Hint id="h5-link-empty">{t('No linked devices yet')}</Hint>}
-      </Box>
-      <Button id="h5-link-generate" variant="contained" onClick={() => setGenerating(true)}>{t('Generate a linking code')}</Button>
-      <Button id="h5-link-join" variant="outlined" onClick={() => setJoining(true)}>{t('Join another service')}</Button>
-      <Feedback id="h5-link-feedback" feedback={feedback} />
-      <CodeDialog open={generating} onClose={() => setGenerating(false)} onLinked={() => void changed(null)} />
-      <JoinDialog state={state} open={joining} onClose={() => setJoining(false)} onJoined={link => { setJoining(false); void changed(linkEngineKey(link)); say(`${t('Linked:')} ${link.name}`); }} />
-      <UnlinkDialog link={unlinking} onClose={() => setUnlinking(null)} onDone={link => { setUnlinking(null); void changed(linkEngineKey(link)); say('Unlinked'); }} />
+      <LocalOnly id="h5-link-remote">
+        <Hint>{t('Link another T-Agent service, so that both see and operate each other’s tasks, terminals and sessions. This is the recommended way to add a device: generate a code on one, and join with it on the other.')}</Hint>
+        <Box id="h5-link-list" sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+          {links.map(link => <LinkRow key={link.id} link={link} onUnlink={() => setUnlinking(link)} />)}
+          {links.length ? null : <Hint id="h5-link-empty">{t('No linked devices yet')}</Hint>}
+        </Box>
+        <Button id="h5-link-generate" variant="contained" onClick={() => setGenerating(true)}>{t('Generate a linking code')}</Button>
+        <Button id="h5-link-join" variant="outlined" onClick={() => setJoining(true)}>{t('Join another service')}</Button>
+        <Feedback id="h5-link-feedback" feedback={feedback} />
+        <CodeDialog open={generating} onClose={() => setGenerating(false)} onLinked={() => void changed(null)} />
+        <JoinDialog state={state} open={joining} onClose={() => setJoining(false)} onJoined={link => { setJoining(false); void changed(linkEngineKey(link)); say(`${t('Linked:')} ${link.name}`); }} />
+        <UnlinkDialog link={unlinking} onClose={() => setUnlinking(null)} onDone={link => { setUnlinking(null); void changed(linkEngineKey(link)); say('Unlinked'); }} />
+      </LocalOnly>
     </Section>
   );
 }

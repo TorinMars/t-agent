@@ -6,6 +6,8 @@ import { alpha } from '@mui/material/styles';
 import { api, t } from './common.jsx';
 import { Feedback, Hint, Section, failure, onAnyGroupOpen, useFeedback } from './Form.jsx';
 import { detailLine, keyEntry, labelsShown, normalizeSync, outcomeText, peerStatus, saveOutcome, scopeOf, scopeText, scopeTitle } from './settings-sync.mjs';
+import { deviceScopeText, deviceScopeTitle } from './device-target.mjs';
+import { useDeviceTarget } from './DeviceTarget.jsx';
 
 // The scope labels of the settings sheet ("Settings sync" in DESIGN.md): next to the heading of each part, what a change there affects. "Shared across
 // devices" (copied to every linked device), "This device only", or Telegram's one sender. The data is GET /api/settings-sync (settings-sync.mjs), kept
@@ -44,15 +46,19 @@ const LOOK = {
 
 // One label. `id` is the setting's id on the route (its `scopes` decide); `scope` is the scope the page knows when the route does not name the part
 // (the parts that are always this device's own, such as the agent skills). `subject` names one control of a part ("Window language: ...").
-export function ScopeLabel({ id = null, scope: fallback = 'device', subject = '', sx }) {
+// While a linked device is chosen in "Settings for" (DeviceTarget.jsx), a per-device label names it ("K01 only"); `follow={false}` keeps "This
+// device only" for a part that stays with this browser or this page whichever device is chosen (the voice input switch, the reminders, device names).
+export function ScopeLabel({ id = null, scope: fallback = 'device', subject = '', follow = true, sx }) {
   const { sync } = useSettingsSync();
+  const target = useDeviceTarget();
   if (!labelsShown(sync)) return null;
   const scope = scopeOf(sync, id, fallback);
+  const other = scope === 'device' && follow && target.remote ? target.name : '';
   const details = scope === 'shared' ? detailLine(sync, id, { t }) : '';
-  const text = `${subject ? `${t(subject)}: ` : ''}${t(scopeText(scope, sync.sender))}`;
-  const title = [t(scopeTitle(scope)), details].filter(Boolean).join('\n');
+  const text = `${subject ? `${t(subject)}: ` : ''}${t(other ? deviceScopeText(other) : scopeText(scope, sync.sender))}`;
+  const title = [t(other ? deviceScopeTitle(other) : scopeTitle(scope)), details].filter(Boolean).join('\n');
   return (
-    <Box component="span" className="h5-scope" data-scope={scope} data-setting={id || ''} sx={{ display: 'inline-flex', alignItems: 'center', flexWrap: 'wrap', columnGap: 0.75, rowGap: 0.25, minWidth: 0, maxWidth: '100%', ...sx }}>
+    <Box component="span" className="h5-scope" data-scope={scope} data-setting={id || ''} data-device={other ? String(target.device.id) : 'local'} sx={{ display: 'inline-flex', alignItems: 'center', flexWrap: 'wrap', columnGap: 0.75, rowGap: 0.25, minWidth: 0, maxWidth: '100%', ...sx }}>
       <Box component="span" className="h5-scope-label" title={title} sx={{ ...PILL, ...LOOK[scope] }}>{text}</Box>
       {details ? <Typography component="span" variant="caption" color="text.secondary" className="h5-scope-detail" sx={{ overflowWrap: 'anywhere', minWidth: 0 }}>{details}</Typography> : null}
     </Box>

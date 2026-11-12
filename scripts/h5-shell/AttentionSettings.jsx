@@ -12,6 +12,7 @@ import { BASE } from './attention-feed.mjs';
 import { attentionSettingsSlots } from './attention-slots.mjs';
 import { AttentionGuide } from './AttentionGuide.jsx';
 import { ScopeLabel, ScopedHeading, SyncNote, useSyncAfterSave } from './ScopeLabel.jsx';
+import { LocalOnly } from './DeviceTarget.jsx';
 
 // The "T-Attention" group of the settings sheet: the reminders of this page (the in-page notice and the sound; remembered in this browser) and the
 // CLI tokens (`Authorization: Bearer tatt_...` for the `t-attention` CLI and the listener plugins; only /api/attention* accepts them).
@@ -66,30 +67,33 @@ function TokenList({ opened }) {
   return (
     <>
       <ScopedHeading label={<ScopeLabel />}><Typography variant="subtitle2" component="h3" sx={{ fontWeight: 700, mt: 1 }}>{t('CLI tokens')}</Typography></ScopedHeading>
-      <Hint>{t('The t-attention command and the listener plugins (for example Claude Code hooks) sign in with a token. A token can only read and change T-Attention tasks.')}</Hint>
-      <Box id="h5-attention-tokens" sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-        {tokens && tokens.length ? tokens.map(token => (
-          <Paper key={token.id} variant="outlined" className="h5-attention-token" data-id={token.id} sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, p: 1 }}>
-            <Box sx={{ minWidth: 0 }}>
-              <Box component="strong" sx={{ overflowWrap: 'anywhere' }}>{token.name}</Box>
-              <Typography variant="caption" component="small" color="text.secondary" sx={{ display: 'block', overflowWrap: 'anywhere' }}>
-                {`${t('Created')} ${when(token.created_at)} · ${token.last_used_at ? `${t('Last used')} ${when(token.last_used_at)}` : t('Never used')}`}
-              </Typography>
-            </Box>
-            {token.revoked_at ? <Typography variant="caption" color="text.secondary" className="h5-attention-token-revoked">{t('Revoked')}</Typography>
-              : <Button size="small" className="h5-attention-token-revoke" onClick={() => void revoke(token)}>{t('Revoke')}</Button>}
+      {/* A new token is shown once: it never crosses a link, so another device's tokens are made on its own page. */}
+      <LocalOnly id="h5-attention-tokens-remote">
+        <Hint>{t('The t-attention command and the listener plugins (for example Claude Code hooks) sign in with a token. A token can only read and change T-Attention tasks.')}</Hint>
+        <Box id="h5-attention-tokens" sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+          {tokens && tokens.length ? tokens.map(token => (
+            <Paper key={token.id} variant="outlined" className="h5-attention-token" data-id={token.id} sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, p: 1 }}>
+              <Box sx={{ minWidth: 0 }}>
+                <Box component="strong" sx={{ overflowWrap: 'anywhere' }}>{token.name}</Box>
+                <Typography variant="caption" component="small" color="text.secondary" sx={{ display: 'block', overflowWrap: 'anywhere' }}>
+                  {`${t('Created')} ${when(token.created_at)} · ${token.last_used_at ? `${t('Last used')} ${when(token.last_used_at)}` : t('Never used')}`}
+                </Typography>
+              </Box>
+              {token.revoked_at ? <Typography variant="caption" color="text.secondary" className="h5-attention-token-revoked">{t('Revoked')}</Typography>
+                : <Button size="small" className="h5-attention-token-revoke" onClick={() => void revoke(token)}>{t('Revoke')}</Button>}
+            </Paper>
+          )) : tokens ? <Hint>{t('No tokens created yet')}</Hint> : null}
+        </Box>
+        <Field id="h5-attention-token-name" label="Token name" value={name} onChange={event => setName(event.target.value)} placeholder={t('e.g. laptop claude')} htmlInput={{ maxLength: 60 }} />
+        <Button id="h5-attention-token-create" variant="contained" disabled={busy} onClick={() => void create()}>{t('Create token')}</Button>
+        {created ? (
+          <Paper id="h5-attention-token-created" variant="outlined" sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, p: 1 }}>
+            <code id="h5-attention-token-value" ref={codeNode} translate="no" style={{ fontSize: 13, overflowWrap: 'anywhere', wordBreak: 'break-all', userSelect: 'all' }}>{created.token}</code>
+            <Button id="h5-attention-token-copy" size="small" variant="outlined" onClick={() => void copy()} sx={{ flex: '0 0 auto' }}>{t(copyLabel)}</Button>
           </Paper>
-        )) : tokens ? <Hint>{t('No tokens created yet')}</Hint> : null}
-      </Box>
-      <Field id="h5-attention-token-name" label="Token name" value={name} onChange={event => setName(event.target.value)} placeholder={t('e.g. laptop claude')} htmlInput={{ maxLength: 60 }} />
-      <Button id="h5-attention-token-create" variant="contained" disabled={busy} onClick={() => void create()}>{t('Create token')}</Button>
-      {created ? (
-        <Paper id="h5-attention-token-created" variant="outlined" sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, p: 1 }}>
-          <code id="h5-attention-token-value" ref={codeNode} translate="no" style={{ fontSize: 13, overflowWrap: 'anywhere', wordBreak: 'break-all', userSelect: 'all' }}>{created.token}</code>
-          <Button id="h5-attention-token-copy" size="small" variant="outlined" onClick={() => void copy()} sx={{ flex: '0 0 auto' }}>{t(copyLabel)}</Button>
-        </Paper>
-      ) : null}
-      <Feedback id="h5-attention-token-feedback" feedback={feedback} />
+        ) : null}
+        <Feedback id="h5-attention-token-feedback" feedback={feedback} />
+      </LocalOnly>
     </>
   );
 }
@@ -152,7 +156,7 @@ function SummarySettings({ opened }) {
 function Reminders({ ui, prefs, setPrefs }) {
   return (
     <>
-      <ScopedHeading label={<ScopeLabel />}><Typography variant="subtitle2" component="h3" sx={{ fontWeight: 700, mt: 1 }}>{t('Reminders on this device')}</Typography></ScopedHeading>
+      <ScopedHeading label={<ScopeLabel follow={false} />}><Typography variant="subtitle2" component="h3" sx={{ fontWeight: 700, mt: 1 }}>{t('Reminders on this device')}</Typography></ScopedHeading>
       <Hint>{t('When a task starts to need you, fails or is ready for review, this page shows a notice. A change you make on this page gives no reminder.')}</Hint>
       <FormControlLabel
         control={<Checkbox checked={prefs.sound} onChange={event => { ui.actions.attentionSetSound(event.target.checked); setPrefs(ui.actions.attentionPrefs()); }} slotProps={{ input: { id: 'h5-attention-sound' } }} />}
@@ -174,7 +178,7 @@ export function AttentionSettings({ ui, request = null }) {
     <Group id="attention" title="T-Attention" onOpen={open} request={request}>
       {/* The first-run guide, or its "Show setup guide" button once it is closed or done (AttentionGuide.jsx). */}
       <ScopeLabel subject="Setup guide" sx={{ alignSelf: 'flex-start' }} />
-      <AttentionGuide ui={ui} place="settings" active={opened} />
+      <LocalOnly id="h5-guide-settings-remote"><AttentionGuide ui={ui} place="settings" active={opened} /></LocalOnly>
       <Reminders ui={ui} prefs={prefs} setPrefs={setPrefs} />
       {/* SLOT: the settings of other T-Attention parts (attention-slots.mjs: the plugin list, then the agent skill). Nothing is drawn when none is registered. */}
       {attentionSettingsSlots().map(({ id, Component }) => <Box key={id} className="h5-attention-slot" data-slot={id} sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}><Component ui={ui} opened={opened} /></Box>)}

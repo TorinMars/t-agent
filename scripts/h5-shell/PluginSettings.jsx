@@ -21,6 +21,7 @@ import { canUninstall, installAction, installSummary, showManualSteps } from './
 import { PairingDialog } from './PairingDialog.jsx';
 import PluginMarket from './PluginMarket.jsx';
 import { ScopeLabel, ScopedHeading } from './ScopeLabel.jsx';
+import { OwnPageNote, useDeviceTarget } from './DeviceTarget.jsx';
 
 // The "Plugins" section of the Settings group "T-Attention", in two levels. The list: one compact row per plugin of this Client (name, kind, chips and one
 // short line), from GET /api/attention/plugins (services/attention-plugins.js), read when the group opens, with the Refresh button and on the way back from
@@ -235,6 +236,7 @@ function Tabs({ tab, onTab }) {
 }
 
 function PluginSlot({ ui, opened }) {
+  const device = useDeviceTarget(); // the listeners are each device's own: with a linked device chosen they are changed on its own page
   const [tab, setTab] = useState('installed');
   const [pages, setPages] = useState([]); // the open pages; more than one when the rules are opened from a notifier's page
   const [loggingIn, setLoggingIn] = useState(false); // a Telegram login was left half way: the row says so (the server keeps it until it times out)
@@ -270,7 +272,8 @@ function PluginSlot({ ui, opened }) {
         {data ? (
           <>
             <PluginList id="h5-plugins-listeners" title="Listeners" empty="No listener plugins found" label={<ScopeLabel />}>
-              {data.listeners.map(listener => <PluginRow key={listener.name} kind="listener" plugin={listener} onOpen={() => open({ kind: 'listener', name: listener.name })} />)}
+              {device.remote ? [<OwnPageNote key="remote" id="h5-plugins-listeners-remote" />]
+                : data.listeners.map(listener => <PluginRow key={listener.name} kind="listener" plugin={listener} onOpen={() => open({ kind: 'listener', name: listener.name })} />)}
             </PluginList>
             <PluginList id="h5-plugins-notifiers" title="Notifiers" empty="No notifier plugins found" label={<ScopeLabel id="notifier-plugins" scope="shared" />}>
               {data.notifiers.map(notifier => <PluginRow key={notifier.name} kind="notifier" plugin={notifier} loggingIn={notifier.name === 'telegram' && loggingIn} onOpen={() => open({ kind: 'notifier', name: notifier.name })} />)}

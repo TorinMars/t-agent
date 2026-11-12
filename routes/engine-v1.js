@@ -18,6 +18,7 @@ const updates = require('../services/update-manager');
 const terminal = require('./terminal');
 const { createTaskFilesRouter } = require('./task-files');
 const { createFsReadRouter } = require('./fs-read');
+const { createPeerFsEngineRouter, CAPABILITY: PEER_FS } = require('./peer-fs');
 const documents = require('../services/task-documents');
 const { resolveAsset, validateMdPath } = require('../services/task-assets');
 const { serveFileWatch } = require('../lib/file-watch-sse');
@@ -135,6 +136,8 @@ function infoHandler(req, res) {
       'fs:read-any',
       // files:raw: GET /v1/tasks/:id/files/raw and /v1/fs/raw stream a PDF, audio or video file with Range support.
       'files:raw',
+      // peer-fs:read: GET /v1/peer-fs/info, /list, /read and /search, the read-only home folder for the sessions of linked Engines (routes/peer-fs.js).
+      PEER_FS,
       // service-links: POST /v1/service-links/join and the reverse tunnel at /v1/service-links/tunnel.
       SERVICE_LINKS,
       // linked-services: /v1/linked-services, a linked service's use of this service's translation, voice input and OSS upload. A peer without it is never used.
@@ -249,6 +252,12 @@ router.use('/tasks/:id/files', requireEngineAuth(), createTaskFilesRouter({
 
 // A file at any path on this machine, read only and with the terminal user's identity (services/fs-read.js).
 router.use('/fs', requireEngineAuth('files:read'), createFsReadRouter());
+
+// Peer file access (routes/peer-fs.js): the terminal user's home folder without sensitive paths, read only, for the sessions of linked Engines.
+// `tasks` in /v1/peer-fs/info are the non-archived tasks this token may see.
+router.use('/peer-fs', requireEngineAuth('files:read'), createPeerFsEngineRouter({
+  tasksFor: req => visibleTo(req, tasks.listTasks(principal(req)), task => task.id),
+}));
 
 router.get('/task-groups', requireEngineAuth('tasks:read'), (req, res) => {
   try { res.json(withVisibleCounts(req, taskGroups.listGroups(db, principal(req)))); }

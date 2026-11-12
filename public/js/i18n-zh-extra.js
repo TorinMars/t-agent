@@ -30,6 +30,12 @@ I18n.add({
   '{1} returned an error: {2} (HTTP {3}, error code {4})': '{1} 返回错误：{2}（HTTP {3}，错误码 {4}）',
   '{1} returned an error (HTTP {2}): {3}': '{1} 返回错误（HTTP {2}）：{3}',
 
+  // ---- One Telegram sender for linked devices (NotifierSettings.jsx) ----
+  'Telegram notifications are sent through {1}': 'Telegram 通知通过 {1} 发送',
+  'Test message sent through {1}': '测试消息已通过 {1} 发出',
+  'Through {1}': '经 {1}',
+  'From {1}': '来自 {1}',
+
   // ---- Engines and connections ----
   'Address: {1}': '地址：{1}',
   'Address: {1} · last checked {2}': '地址：{1} · 上次检查 {2}',

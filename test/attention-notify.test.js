@@ -400,3 +400,66 @@ test('with the real attention service: one notification per status, the summary 
   assert.deepEqual(fake.calls.slice(1).map(call => [call.item.status, call.mode, call.item.context.summary.text]), [['review', 'call', 'Doing: a\nProgress: done\nNeeds: review']]);
   service.stop();
 });
+
+// ---- One Telegram sender for linked devices: deliver() with a relay (services/attention-relay.js; the full flow is test/attention-notify-relay.test.js) ----
+function fakeRelay({ target = { peer: { name: 'A', online: true }, name: 'A' }, send } = {}) {
+  const sent = [];
+  return {
+    sent,
+    handles: name => name === 'telegram',
+    target: async name => (name === 'telegram' ? target : null),
+    send: async (peer, payload) => { sent.push({ peer, payload }); if (send) return send(payload); return { outcome: 'sent' }; },
+    sendTest: async () => ({ ok: true, outcome: 'sent' }),
+    view: () => ({ sender: target ? { name: target.name, self: false, online: true } : null }),
+  };
+}
+
+test('with a sender on another device, Telegram is relayed there and never sent here; other notifiers are untouched', async () => {
+  const telegram = fakeNotifier('telegram');
+  const other = fakeNotifier('fake');
+  const relay = fakeRelay();
+  const { bus, service } = setup({ notifiers: [telegram.plugin, other.plugin], relay });
+  bus.emit(change('updated', item(1, 'waiting_user', { link_url: '/h5', context: { excerpt: 'secret transcript', pending: { text: 'Approve' } } }), item(1, 'working')));
+  await settle();
+  assert.equal(telegram.calls.length, 0);
+  assert.equal(other.calls.length, 1, 'a notifier that is not relayed sends here as before');
+  assert.equal(relay.sent.length, 1);
+  assert.deepEqual(relay.sent[0].payload, { notifier: 'telegram', mode: 'message', reason: 'status', item: { id: 1, title: 'Item 1', status: 'waiting_user', source: 'claude', attention_reason: null, context: { pending: { text: 'Approve' } } }, link: '' });
+  const entry = service.recent().find(row => row.notifier === 'telegram');
+  assert.equal(entry.outcome, 'relayed');
+  assert.equal(entry.via, 'A');
+  // The rate limit is the sender's: this device does not count relayed deliveries.
+  service.saveRules('owner', { rateLimit: { message: 1 } });
+  for (const id of [2, 3, 4]) bus.emit(change('updated', item(id, 'failed'), item(id, 'working')));
+  await settle();
+  assert.equal(relay.sent.length, 4);
+  // The plugin row says who sends.
+  const row = service.overview('owner').find(entry => entry.name === 'telegram');
+  assert.deepEqual([row.configured, row.summary], [true, 'Sent through A']);
+});
+
+test('a relay that fails is logged, retried once after 30 s, and the plugin here is never used instead', async () => {
+  const telegram = fakeNotifier('telegram');
+  let failing = true;
+  const relay = fakeRelay({ send: () => { if (failing) throw Object.assign(new Error('REMOTE_HTTP_500'), { code: 'REMOTE_HTTP_500', offline: false }); return { outcome: 'call_timeout' }; } });
+  const { bus, service, timers } = setup({ notifiers: [telegram.plugin], relay });
+  service.saveRules('owner', { modes: { telegram: { waiting_user: 'call' } } });
+  bus.emit(change('updated', item(1, 'waiting_user'), item(1, 'working')));
+  await settle();
+  assert.equal(service.recent()[0].outcome, 'relay_failed');
+  assert.equal(service.recent()[0].detail, 'REMOTE_HTTP_500; one retry in 30 s');
+  assert.equal(timers.count(), 1);
+  failing = false;
+  timers.fire();
+  await settle();
+  assert.equal(service.recent()[0].outcome, 'relayed');
+  assert.equal(service.recent()[0].detail, 'call_timeout');
+  assert.equal(relay.sent.at(-1).payload.mode, 'call');
+  assert.equal(telegram.calls.length, 0);
+  // No sender elsewhere (this device sends, or nobody does): the plugin here, as before.
+  const local = setup({ notifiers: [telegram.plugin], relay: fakeRelay({ target: null }) });
+  local.bus.emit(change('updated', item(2, 'waiting_user'), item(2, 'working')));
+  await settle();
+  assert.equal(telegram.calls.length, 1);
+  assert.equal(telegram.calls[0].origin, undefined);
+});

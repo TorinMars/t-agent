@@ -73,6 +73,7 @@ test('without the attention provider (or the hook endpoint) a shell gets no T-At
   assert.equal(env.TA_ATTENTION_URL, undefined);
   assert.equal(env.TA_ATTENTION_TOKEN, undefined);
   assert.equal(env.TA_ATTENTION_HOOK, undefined);
+  assert.equal(env.TA_ATTENTION_CLI, undefined);
   terminal.controlSession(task.id, 'delete', row.terminal_id);
 });
 
@@ -89,6 +90,7 @@ test('each shell gets the loopback URL, its own token and the hook path; the tok
   const envB = open(b.terminal_id).options.env;
   assert.equal(envA.TA_ATTENTION_URL, URL_HERE);
   assert.equal(envA.TA_ATTENTION_HOOK, HOOK);
+  assert.equal(envA.TA_ATTENTION_CLI, path.resolve(__dirname, '../scripts/t-attention.js'), 'the command of the t-attention skill');
   assert.match(envA.TA_ATTENTION_TOKEN, /^tatt_[A-Za-z0-9_-]{43}$/);
   assert.notEqual(envA.TA_ATTENTION_TOKEN, envB.TA_ATTENTION_TOKEN, 'one token per terminal');
   assert.ok(service.verifyToken(envA.TA_ATTENTION_TOKEN));

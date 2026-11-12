@@ -13,6 +13,7 @@ import { arrangeTasks, mergeOrder, moveKey, sameOrder, stepTarget } from './task
 import { startColumns } from './Columns.jsx';
 // T-Attention settings slots: the modules of other T-Attention parts that register Settings content (attention-slots.mjs) are imported here, e.g.
 import './PluginSettings.jsx';
+import './AttentionSkillSettings.jsx';
 
 // One breakpoint for the shell and for h5.js (which reads it from `H5UI.media.wideQuery`), so the two can never disagree.
 const wideQuery = window.matchMedia('(min-width: 900px)');

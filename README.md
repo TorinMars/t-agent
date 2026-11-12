@@ -366,6 +366,8 @@ t-attention plugins link ~/code/my-plugin    # dev: use a local folder in place
 
 `install` downloads the plugin, prints what it contains (source, pinned commit, files, warnings such as "Can run other programs") and asks before installing. A plugin runs code; install only plugins you trust. How to publish one: `plugins/README.md`.
 
+**Agent skill.** Settings -> T-Attention -> Agent skill installs the `t-attention` skill for Claude Code (`~/.claude/skills/t-attention`) and Codex (`~/.codex/skills/t-attention`) on the machine that runs the Client. It teaches agents to register their work and their sub-agents as tasks, to put finished work in review and wait for your confirmation, to ask you through "Needs you" when they are blocked, and to show your tasks when you ask. If the old `task-tracker` skill is there, "Replace the old task-tracker skill" moves it into `~/.tagent/backups/` (nothing is deleted). A skill folder managed by the rules and skills sync is never overwritten.
+
 ## Tokens and pairing
 
 ### Permissions

@@ -518,7 +518,7 @@ const pluginsFit = page => page.evaluate(() => [...document.querySelectorAll('#h
       assert.equal(await page.locator('#h5-attention-tokens .h5-attention-token').count(), 1);
       // Plugins: read when the group opened, one compact row per plugin; no forms, steps or per-plugin reads on the list.
       await page.locator('#h5-plugins .h5-plugin').first().waitFor();
-      assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('#h5-set-attention .h5-attention-slot')].map(node => node.dataset.slot)), ['plugins']);
+      assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('#h5-set-attention .h5-attention-slot')].map(node => node.dataset.slot)), ['skill', 'plugins'], 'the agent skill card (AttentionSkillSettings.jsx) comes before the plugins');
       const listRow = (kind, name) => page.locator(`#h5-plugins .h5-plugin-${kind}[data-name="${name}"]`);
       const chipsOf = (kind, name) => listRow(kind, name).locator('.h5-plugin-chip').allTextContents();
       const detail = name => page.locator(`.h5-plugin-page[data-name="${name}"]`);

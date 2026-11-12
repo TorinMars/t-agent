@@ -22,8 +22,6 @@ const TRANSFER_IDLE_MS = 10 * 60_000; // a linked transfer that stops moving for
 const CAPABILITY_CACHE_MS = 60_000;
 const SMALL_ANSWER_BYTES = 64 * 1024;
 const JSON_LIMIT = '2mb'; // 1000 keys of up to 1023 bytes
-// The tunnel of a service link buffers a request body and takes at most 64 MiB (lib/service-link-tunnel.js maxRequestBodyBytes).
-const TUNNEL_PUT_MAX_BYTES = 64 * 1024 * 1024;
 
 const RELAY_ERRORS = {
   TCLI_AUTH_REQUIRED: [401, 'The terminal headers X-T-Agent-Task, X-T-Agent-Terminal and X-T-Agent-Token are required'],
@@ -120,7 +118,16 @@ function transportFor(target) {
   const { TUNNEL_PROTOCOL, getHub } = require('../lib/service-link-tunnel');
   return target.protocol === TUNNEL_PROTOCOL ? getHub() : target.protocol === 'https:' ? https : http;
 }
-const isTunnel = baseUrl => /^tunnel:/i.test(String(baseUrl || ''));
+
+// The largest upload a provider behind a service link tunnel takes: what its tunnel client announced (a T-Agent from before streamed request
+// bodies announces nothing and takes 64 MiB), or null when it is not a tunnel. An offline tunnel is the provider being offline.
+function tunnelUploadLimit(peer) {
+  const { isTunnelBase, linkIdOf, getHub } = require('../lib/service-link-tunnel');
+  if (!isTunnelBase(peer.baseUrl)) return null;
+  const limit = getHub().requestBodyLimit(linkIdOf(peer.baseUrl));
+  if (limit === null) throw providerFailure(peer, 0);
+  return limit;
+}
 
 // An error answer of the provider as one of ours: its OSS codes pass through, a refused token is the link failing, anything else is a failure.
 function providerFailure(peer, status, parsed) {
@@ -193,15 +200,17 @@ function remoteBackend(peer, request) {
       response.pipe(res);
     },
     async upload(key, req, { size, contentType }) {
-      if (isTunnel(peer.baseUrl) && size > TUNNEL_PUT_MAX_BYTES) {
-        throw Object.assign(new OssFilesError('TOO_LARGE', 'Through a service link tunnel tcli uploads at most 64 MiB per object'), { provider: peer.name || null });
+      const tunnelLimit = tunnelUploadLimit(peer);
+      if (tunnelLimit !== null && size > tunnelLimit) {
+        const mib = Math.floor(tunnelLimit / (1024 * 1024));
+        throw Object.assign(new OssFilesError('TOO_LARGE', `Through its service link tunnel the linked service takes at most ${mib} MiB per object; update T-Agent there to upload up to 1 GiB`), { provider: peer.name || null });
       }
       const { upstream, response: pending } = open('PUT', target('/object', { key, size: String(size) }), {
         'Content-Type': contentType, 'Content-Length': String(size), Accept: 'application/json',
       }, TRANSFER_IDLE_MS);
       let answered = false;
       pending.then(() => { answered = true; }, () => {});
-      // Backpressure for a direct connection; the tunnel takes the whole body before it sends (up to the limit above).
+      // Backpressure on both transports: a direct connection's socket, or the tunnel stream's credit (write() is false once a window is queued).
       req.on('data', chunk => {
         if (upstream.write(chunk) === false && typeof req.pause === 'function') {
           req.pause();
@@ -306,4 +315,4 @@ function createOssFilesEngineRouter({ files = defaultFiles, settings = defaultSe
   return router;
 }
 
-module.exports = { CAPABILITY, RELAY_ERRORS, TUNNEL_PUT_MAX_BYTES, createTcliRelayRouter, createOssFilesEngineRouter };
+module.exports = { CAPABILITY, RELAY_ERRORS, createTcliRelayRouter, createOssFilesEngineRouter };

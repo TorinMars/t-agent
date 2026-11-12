@@ -115,15 +115,15 @@ test('terminals keep their own directory after the task working directory change
   assert.equal(terminal.reportHook(task.id, claude.terminal_id, token, 'session', { session_id: cleared, source: 'clear', cwd: newDir }), 400);
   assert.equal(boundSession(claude.terminal_id), sessionId);
   assert.equal(terminal.reportHook(task.id, claude.terminal_id, token, 'session', { session_id: cleared, source: 'clear', cwd: oldDir }), 204);
-  assert.equal(boundSession(claude.terminal_id), cleared);
+  assert.equal(boundSession(claude.terminal_id), sessionId, '/clear keeps the original conversation bound');
   fs.writeFileSync(path.join(projectFolder(oldDir), `${cleared}.jsonl`), jsonl([{ type: 'user', message: { content: 'after clear' } }]));
 
-  // A respawned shell starts in the old directory and resumes the conversation there.
+  // A respawned shell starts in the old directory and resumes the original conversation there.
   terminal.controlSession(task.id, 'restart-workdir', claude.terminal_id);
   const again = open(task.id, claude.terminal_id).pty;
   assert.equal(again.options.cwd, oldDir);
-  assert.deepEqual(again.input, [`claude --resume ${cleared} ${HOOK}\r`]);
-  assert.equal(terminal.reopenCommand(task.id, claude.terminal_id, oldDir), `claude --resume ${cleared} ${HOOK}`);
+  assert.deepEqual(again.input, [`claude --resume ${sessionId} ${HOOK}\r`]);
+  assert.equal(terminal.reopenCommand(task.id, claude.terminal_id, oldDir), `claude --resume ${sessionId} ${HOOK}`);
   terminal.controlSession(task.id, 'restart-workdir', 'default');
   assert.equal(open(task.id, 'default').pty.options.cwd, oldDir, 'the default terminal also stays');
 

@@ -92,5 +92,5 @@ test('the tracker change callback, a closed session and an ack reach the stream 
   const source = require('node:fs').readFileSync(require.resolve('../routes/terminal.js'), 'utf8');
   assert.match(source, /createActivityTracker\(pty, shell, \(\) => activityStream\.notify\(\)\)/);
   assert.equal((source.match(/activityStream\.notify\(\)/g) || []).length, 4, 'tracker changes, natural exit, close / restart / delete and a Claude session rebind');
-  assert.match(source, /UPDATE task_terminals SET agent_session_id = \? WHERE task_id = \? AND terminal_id = \?'\)\.run\(sessionId, taskId, id\);\n\s*activityStream\.notify\(\);/, 'a rebind pushes the sub-agent count of the new session');
+  assert.match(source, /UPDATE task_terminals SET agent_session_id = \? WHERE task_id = \? AND terminal_id = \?'\)\.run\(sessionId, taskId, id\);\n\s*if \(rebind \|\| running !== sessionId\) activityStream\.notify\(\);/, 'a rebind, or a /clear that changes the live session, pushes the sub-agent count of the new session');
 });

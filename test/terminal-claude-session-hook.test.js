@@ -52,6 +52,7 @@ const task = tasks.createTask('owner', { title: 'session hook' });
 const other = tasks.createTask('owner', { title: 'other task' });
 const claudeFolder = path.join(home, '.claude', 'projects', path.resolve(task.work_dir).replace(/[^A-Za-z0-9]/g, '-'));
 const HOOK = '--settings "$TA_CLAUDE_SETTINGS"';
+const sessionFile = id => path.join(claudeFolder, `${id}.jsonl`);
 
 function open(taskId, id) {
   const ws = new Socket();
@@ -88,7 +89,14 @@ test('a new Claude terminal starts with its session id and the per-process sessi
   terminal.controlSession(task.id, 'close', row.terminal_id);
 });
 
-test('a reported session rebinds the terminal; reopening then resumes that session', () => {
+const subagentFolder = id => path.join(claudeFolder, id, 'subagents');
+const writeSubagent = id => {
+  fs.mkdirSync(subagentFolder(id), { recursive: true });
+  fs.writeFileSync(path.join(subagentFolder(id), 'agent-one.jsonl'), `${JSON.stringify({ type: 'user', message: { content: 'work' } })}\n`);
+};
+const subagentsOf = id => (JSON.parse(JSON.stringify(terminal.subagentSnapshot([task.id], home)))[task.id] || {})[id] || 0;
+
+test('invalid session reports are refused and change nothing', () => {
   terminal.setHookEndpoint('http://127.0.0.1:9/hooks/terminal-activity');
   const row = terminal.createTerminal(task.id, { agent: 'claude' });
   const pty = open(task.id, row.terminal_id);
@@ -97,35 +105,105 @@ test('a reported session rebinds the terminal; reopening then resumes that sessi
   const cleared = '0f0e0d0c-1111-4222-8333-444455556666';
   const report = (body, extra = {}) => terminal.reportHook(extra.task ?? task.id, extra.terminal ?? row.terminal_id, extra.token ?? token, 'session', body);
 
-  assert.equal(report({ session_id: cleared, source: 'clear', cwd: task.work_dir }, { token: 'f'.repeat(64) }), 403, 'wrong token');
-  assert.equal(report({ session_id: cleared, source: 'clear', cwd: task.work_dir }, { token: '' }), 403, 'no token');
-  assert.equal(report({ session_id: cleared, source: 'clear', cwd: task.work_dir }, { task: other.id }), 403, 'token of another task');
-  const second = terminal.createTerminal(task.id, { agent: 'claude' });
-  assert.equal(report({ session_id: cleared, source: 'clear', cwd: task.work_dir }, { terminal: second.terminal_id }), 403, 'token of another terminal');
-  assert.equal(report({ session_id: '../../etc', source: 'clear', cwd: task.work_dir }), 400, 'malformed session id');
-  assert.equal(report({ session_id: 42, source: 'clear', cwd: task.work_dir }), 400, 'not a string');
-  assert.equal(report(undefined), 400, 'no body');
-  assert.equal(report({ session_id: cleared, source: 'clear', cwd: other.work_dir }), 400, 'a session of another directory');
-  assert.equal(report({ session_id: cleared, source: 'clear' }), 400, 'no directory');
+  for (const source of ['clear', 'resume']) {
+    assert.equal(report({ session_id: cleared, source, cwd: task.work_dir }, { token: 'f'.repeat(64) }), 403, 'wrong token');
+    assert.equal(report({ session_id: cleared, source, cwd: task.work_dir }, { token: '' }), 403, 'no token');
+    assert.equal(report({ session_id: cleared, source, cwd: task.work_dir }, { task: other.id }), 403, 'token of another task');
+    const second = terminal.createTerminal(task.id, { agent: 'claude' });
+    assert.equal(report({ session_id: cleared, source, cwd: task.work_dir }, { terminal: second.terminal_id }), 403, 'token of another terminal');
+    terminal.controlSession(task.id, 'delete', second.terminal_id);
+    assert.equal(report({ session_id: '../../etc', source, cwd: task.work_dir }), 400, 'malformed session id');
+    assert.equal(report({ session_id: 42, source, cwd: task.work_dir }), 400, 'not a string');
+    assert.equal(report(undefined), 400, 'no body');
+    assert.equal(report({ session_id: cleared, source, cwd: other.work_dir }), 400, 'a session of another directory');
+    assert.equal(report({ session_id: cleared, source }), 400, 'no directory');
+  }
   assert.equal(boundSession(row.terminal_id), original, 'nothing rejected changed the binding');
+  // A rejected report does not change the live session either: the sub-agent count still reads the original one.
+  writeSubagent(cleared);
+  assert.equal(subagentsOf(row.terminal_id), 0);
+  fs.rmSync(path.join(claudeFolder, cleared), { recursive: true, force: true });
+  terminal.controlSession(task.id, 'delete', row.terminal_id);
+});
+
+test('/clear keeps the binding: a new shell resumes the original conversation', () => {
+  terminal.setHookEndpoint('http://127.0.0.1:9/hooks/terminal-activity');
+  const row = terminal.createTerminal(task.id, { agent: 'claude' });
+  const pty = open(task.id, row.terminal_id);
+  const token = pty.options.env.TA_HOOK_TOKEN;
+  const original = boundSession(row.terminal_id);
+  const cleared = '0f0e0d0c-1111-4222-8333-444455556667';
+  const clearedAgain = '0f0e0d0c-1111-4222-8333-444455556668';
+  const report = body => terminal.reportHook(task.id, row.terminal_id, token, 'session', body);
+  fs.mkdirSync(claudeFolder, { recursive: true });
+  fs.writeFileSync(sessionFile(original), `${JSON.stringify({ type: 'user', message: { content: 'original prompt' } })}\n`);
 
   assert.equal(report({ session_id: original, source: 'startup', cwd: task.work_dir }), 204, 'startup reports the same id');
   assert.equal(boundSession(row.terminal_id), original);
   assert.equal(report({ session_id: cleared, source: 'clear', cwd: task.work_dir }), 204);
-  assert.equal(boundSession(row.terminal_id), cleared, '/clear moved the terminal to the new session');
+  assert.equal(boundSession(row.terminal_id), original, '/clear does not move the terminal to the new session');
+  fs.writeFileSync(sessionFile(cleared), `${JSON.stringify({ type: 'user', message: { content: 'after clear' } })}\n`);
+  assert.equal(terminal.reopenCommand(task.id, row.terminal_id, task.work_dir), `claude --resume ${original} ${HOOK}`);
+  assert.equal(terminal.listTerminals(task.id).find(item => item.terminal_id === row.terminal_id).title, 'original prompt', 'the name follows the bound session');
 
-  // The cleared session has no message yet (no file): a new shell starts that id again instead of the old conversation.
-  assert.equal(terminal.reopenCommand(task.id, row.terminal_id, task.work_dir), `claude --session-id ${cleared} ${HOOK}`);
-  fs.mkdirSync(claudeFolder, { recursive: true });
-  fs.writeFileSync(path.join(claudeFolder, `${cleared}.jsonl`), `${JSON.stringify({ type: 'user', message: { content: 'after clear' } })}\n`);
-  assert.equal(terminal.reopenCommand(task.id, row.terminal_id, task.work_dir), `claude --resume ${cleared} ${HOOK}`);
-  assert.equal(terminal.listTerminals(task.id).find(item => item.terminal_id === row.terminal_id).title, 'after clear', 'the sidebar title follows');
+  // The sub-agent count follows the session the live shell really runs.
+  writeSubagent(cleared);
+  assert.equal(subagentsOf(row.terminal_id), 1, 'sub-agents of the cleared session are counted while its shell lives');
+  // A second /clear: the binding is still the original; the live id is the newest.
+  assert.equal(report({ session_id: clearedAgain, source: 'clear', cwd: task.work_dir }), 204);
+  assert.equal(boundSession(row.terminal_id), original);
+  assert.equal(subagentsOf(row.terminal_id), 0, 'the first cleared session is no longer the running one');
+  writeSubagent(clearedAgain);
+  assert.equal(subagentsOf(row.terminal_id), 1);
 
-  // After a restart of the shell the new PTY types the resume command of the current session.
+  // A restart drops the live id: the new shell resumes the original, and the count reads the original again.
   terminal.controlSession(task.id, 'restart-workdir', row.terminal_id);
-  assert.deepEqual(open(task.id, row.terminal_id).input, [`claude --resume ${cleared} ${HOOK}\r`]);
+  assert.deepEqual(open(task.id, row.terminal_id).input, [`claude --resume ${original} ${HOOK}\r`]);
+  assert.equal(subagentsOf(row.terminal_id), 0, 'the cleared sessions are not counted after the shell ended');
+  writeSubagent(original);
+  assert.equal(subagentsOf(row.terminal_id), 1, 'the original session is counted');
+  for (const id of [original, cleared, clearedAgain]) fs.rmSync(path.join(claudeFolder, id), { recursive: true, force: true });
   terminal.controlSession(task.id, 'close', row.terminal_id);
-  terminal.controlSession(task.id, 'delete', second.terminal_id);
+  assert.equal(subagentsOf(row.terminal_id), 0, 'a closed shell has no sub-agents');
+  terminal.controlSession(task.id, 'delete', row.terminal_id);
+});
+
+test('/resume and startup still rebind the terminal; reopening then resumes that session', () => {
+  terminal.setHookEndpoint('http://127.0.0.1:9/hooks/terminal-activity');
+  const row = terminal.createTerminal(task.id, { agent: 'claude' });
+  const pty = open(task.id, row.terminal_id);
+  const token = pty.options.env.TA_HOOK_TOKEN;
+  const original = boundSession(row.terminal_id);
+  const picked = '0f0e0d0c-1111-4222-8333-444455556669';
+  const started = '0f0e0d0c-1111-4222-8333-44445555666a';
+  const report = body => terminal.reportHook(task.id, row.terminal_id, token, 'session', body);
+
+  // A /clear and then /resume of another conversation: the binding moves to the picked one.
+  assert.equal(report({ session_id: '0f0e0d0c-1111-4222-8333-44445555666b', source: 'clear', cwd: task.work_dir }), 204);
+  assert.equal(boundSession(row.terminal_id), original);
+  assert.equal(report({ session_id: picked, source: 'resume', cwd: task.work_dir }), 204);
+  assert.equal(boundSession(row.terminal_id), picked, '/resume moves the terminal to the picked session');
+  // The picked session has no message yet (no file): a new shell starts that id again instead of the old conversation.
+  assert.equal(terminal.reopenCommand(task.id, row.terminal_id, task.work_dir), `claude --session-id ${picked} ${HOOK}`);
+  fs.mkdirSync(claudeFolder, { recursive: true });
+  fs.writeFileSync(sessionFile(picked), `${JSON.stringify({ type: 'user', message: { content: 'picked conversation' } })}\n`);
+  assert.equal(terminal.reopenCommand(task.id, row.terminal_id, task.work_dir), `claude --resume ${picked} ${HOOK}`);
+  assert.equal(terminal.listTerminals(task.id).find(item => item.terminal_id === row.terminal_id).title, 'picked conversation', 'the sidebar title follows');
+  writeSubagent(picked);
+  assert.equal(subagentsOf(row.terminal_id), 1);
+
+  // A fresh start (source startup, e.g. Claude started again by hand in the same shell) rebinds too; compact keeps the id.
+  assert.equal(report({ session_id: started, source: 'startup', cwd: task.work_dir }), 204);
+  assert.equal(boundSession(row.terminal_id), started);
+  assert.equal(subagentsOf(row.terminal_id), 0);
+  assert.equal(report({ session_id: started, source: 'compact', cwd: task.work_dir }), 204);
+  assert.equal(boundSession(row.terminal_id), started);
+
+  // After a restart of the shell the new PTY types the command of the bound session.
+  terminal.controlSession(task.id, 'restart-workdir', row.terminal_id);
+  assert.deepEqual(open(task.id, row.terminal_id).input, [`claude --session-id ${started} ${HOOK}\r`]);
+  fs.rmSync(path.join(claudeFolder, picked), { recursive: true, force: true });
+  terminal.controlSession(task.id, 'delete', row.terminal_id);
 });
 
 test('only Claude terminals take a session report', () => {
@@ -159,7 +237,6 @@ test('without a hook endpoint the commands stay as before', () => {
 
 // Names given in T-Agent reach Claude as its session display name (`--name`), through the PTY environment only.
 const NAME = '--name "$TA_SESSION_NAME"';
-const sessionFile = id => path.join(claudeFolder, `${id}.jsonl`);
 
 test('a Claude terminal named at creation starts Claude with --name; the name itself is only in the environment', () => {
   terminal.setHookEndpoint('http://127.0.0.1:9/hooks/terminal-activity');

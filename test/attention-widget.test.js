@@ -528,6 +528,9 @@ test('launcher: not on Linux, not in test mode, CI, a T-Agent terminal or with T
     assert.match((await kit.launcher.status()).last_error, /^Not started: /);
   }
   assert.equal(blockedReason({ CI: 'false' }), null);
+  // Under PM2 the service starts the window even when PM2 carries a T-Agent terminal's variables.
+  assert.equal(blockedReason({ TA_HOOK_TOKEN: 'x', pm_id: '0' }), null);
+  assert.match(blockedReason({ TA_HOOK_TOKEN: 'x' }), /inside a T-Agent terminal/);
   assert.equal(blockedReason({}), null);
 
   const noTools = launcherKit({ tools: false });

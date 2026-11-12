@@ -90,7 +90,9 @@ function blockedReason(env) {
   if (env.NODE_ENV === 'test') return 'Not started: the server runs in test mode';
   if (env.TA_WIDGET_DISABLED === '1') return 'Not started: TA_WIDGET_DISABLED=1';
   if (env.CI && env.CI !== 'false' && env.CI !== '0') return 'Not started: the server runs in CI';
-  if (env.TA_PEER_TASK || env.TA_HOOK_TOKEN) return 'Not started: the server runs inside a T-Agent terminal';
+  // A server an agent started by hand inside a T-Agent terminal is a development copy. A server under PM2 (`pm_id`) is the real service even
+  // when the PM2 daemon was first started from a T-Agent terminal and handed that terminal's variables on to everything it starts.
+  if ((env.TA_PEER_TASK || env.TA_HOOK_TOKEN) && env.pm_id === undefined) return 'Not started: the server runs inside a T-Agent terminal';
   return null;
 }
 

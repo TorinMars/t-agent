@@ -27,6 +27,7 @@ const { Pm2Error } = require('../services/pm2-manager');
 const { createAppsHandlers, mountAppsRoutes, defaultService: defaultAppsService } = require('./apps');
 
 const MINDMAPS = 'mindmaps';
+const ATTENTION_REMOTE = 'attention:remote';
 
 const router = express.Router();
 // Before every route, so that a route added later under /tasks/:id is covered too (middleware/task-visibility.js).
@@ -39,6 +40,17 @@ router.use('/task-order', require('./task-order').createEngineTaskOrderRouter())
 // Mind maps of this service, for the other services connected to it (routes/mindmap.js, the same router and service as /api/mindmaps). The token is checked
 // before any body is read; server.js keeps the global JSON parser off this path. Maps belong to no task, so per-task visibility does not apply to them.
 router.use('/mindmaps', require('./mindmap').createMindmapRouter({ getService: require('../services/mindmap').getMindmapService, authenticate: requireEngineAuth() }));
+// T-Attention items of this service, for the other services connected to it (routes/attention.js createEngineAttentionRouter: the same service instance and
+// shapes as /api/attention, item routes only). The token is checked before any body is read (server.js keeps the global JSON parser off this path); reads
+// need `attention:read`, writes `attention:write`. Items belong to no task, so per-task visibility does not apply to them.
+const engineAttention = require('./attention').createEngineAttentionRouter({
+  getService: () => require('../services/attention').defaultService(),
+  getSummary: () => require('../services/attention-summary').sharedSummary(),
+  authenticate: requireEngineAuth(),
+  instanceId: () => getEngineIdentity().engine_id,
+  tokenActive: tokenId => Boolean(db.prepare('SELECT 1 FROM engine_access_tokens WHERE id = ? AND revoked_at IS NULL').get(tokenId)),
+});
+router.use('/attention', engineAttention);
 const pairingAttempts = new Map();
 
 function errorResponse(res, error) {
@@ -144,6 +156,9 @@ function infoHandler(req, res) {
       LINKED_SERVICES,
       // mindmaps: GET|POST /v1/mindmaps and GET|PUT|DELETE /v1/mindmaps/:id, the same API as /api/mindmaps. A Client proxies another service's maps only when it has this.
       MINDMAPS,
+      // attention:remote: GET|POST /v1/attention, GET|PATCH|DELETE /v1/attention/:id, POST /v1/attention/:id/move and /summarize, GET /v1/attention/stream,
+      // the item routes of /api/attention. A Client proxies another service's T-Attention items only when it has this.
+      ATTENTION_REMOTE,
       // engine-name: PUT /v1/engine-name renames this Engine; `name` above is the current one.
       engineName.CAPABILITY,
       // task-order: GET|PUT /v1/task-order, the shared task order of linked services (link tokens only).

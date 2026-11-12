@@ -170,4 +170,10 @@ function createAttentionSummary({ db, sessionSecret, attention, translator, owne
   return { getSettings, saveSettings, summarize, start, running: () => new Set(running), stop: unsubscribe, promptFor, parseAnswer };
 }
 
-module.exports = { createAttentionSummary, SYSTEM_PROMPT };
+// The summary of this server (made in server.js with the translator), for /v1/attention/:id/summarize (routes/engine-v1.js), whose router is made
+// when its module loads. Null until server.js sets it: that route then answers 404, like /api/attention/:id/summarize without a summary.
+let shared = null;
+const setSharedSummary = summary => { shared = summary || null; };
+const sharedSummary = () => shared;
+
+module.exports = { createAttentionSummary, setSharedSummary, sharedSummary, SYSTEM_PROMPT };

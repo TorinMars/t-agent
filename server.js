@@ -76,6 +76,8 @@ const attentionSummary = require('./services/attention-summary').createAttention
   db, sessionSecret: config.sessionSecret, attention: attentionService,
   translator: require('./services/translator').createTranslator({ db, sessionSecret: config.sessionSecret }),
 });
+// The same summary behind /v1/attention/:id/summarize (routes/engine-v1.js), for the other services connected to this one.
+require('./services/attention-summary').setSharedSummary(attentionSummary);
 // T-Attention notifiers (Telegram ...): subscribes to the onChange bus of services/attention.js; without that module it only serves its settings.
 // It gets the same service instance as the routes and the summary: its public onChange bus (never the excerpt) and get(id) for delayed calls.
 // Made here, before the routes, because the plugin overview (GET /api/attention/plugins) reads it; its router is mounted further down.
@@ -96,7 +98,8 @@ let attentionLocalUrl = null;
 const attentionPluginsService = require('./services/attention-plugins');
 const attentionPlugins = attentionPluginsService.createPluginOverview({ service: attentionService, notify: attentionNotify, autoTerminal: () => Boolean(attentionLocalUrl), userListeners: () => attentionPluginStore.userFolders(attentionDataDir, 'listener') });
 const attentionInstaller = attentionPluginsService.createListenerInstaller({ service: attentionService, overview: attentionPlugins, localUrl: () => attentionLocalUrl });
-const attentionRoutes = require('./routes/attention').createAttentionRoutes({ service: attentionService, summary: attentionSummary, plugins: attentionPlugins, installer: attentionInstaller, market: attentionMarket });
+// `instance_id` in the list answer: this Engine's own identity, as the shared task order uses it (services/task-order.js).
+const attentionRoutes = require('./routes/attention').createAttentionRoutes({ service: attentionService, summary: attentionSummary, plugins: attentionPlugins, installer: attentionInstaller, market: attentionMarket, instanceId: () => require('./services/engine-identity').getEngineIdentity().engine_id });
 // Pairing claims (`t-attention pair`) come from other machines without a session or token: answered here, before the Bearer path and the gates.
 app.use('/api/attention/pairing/claim', attentionRoutes.claim);
 app.use('/api/attention', attentionRoutes.bearer);
@@ -105,10 +108,10 @@ app.use('/api/attention', attentionRoutes.bearer);
 const peerFsRoutes = require('./routes/peer-fs');
 app.use('/api/peer-fs', peerFsRoutes.createPeerFsRelayRouter());
 
-// The mind map routes (routes/mindmap.js: /api/mindmaps, /v1/mindmaps and the proxy /api/remote-servers/:id/mindmaps) and /v1/linked-services
-// (routes/linked-services.js) parse their own JSON after the gates or the token check, with their own limits: a body this parser has read would make theirs
+// The mind map routes (routes/mindmap.js: /api/mindmaps, /v1/mindmaps and the proxy /api/remote-servers/:id/mindmaps), /v1/attention (routes/attention.js,
+// the token is checked first) and /v1/linked-services (routes/linked-services.js) parse their own JSON after the gates or the token check, with their own limits: a body this parser has read would make theirs
 // do nothing. Every other route keeps these parsers. Case-insensitive, like Express routing.
-const OWN_PARSERS = /^\/(?:api\/mindmaps|api\/remote-servers\/[^/]+\/mindmaps|v1\/mindmaps|v1\/linked-services)(?:\/|$)/i;
+const OWN_PARSERS = /^\/(?:api\/mindmaps|api\/remote-servers\/[^/]+\/mindmaps|v1\/mindmaps|v1\/attention|v1\/linked-services)(?:\/|$)/i;
 const exceptOwnParsers = parser => (req, res, next) => (OWN_PARSERS.test(req.path) ? next() : parser(req, res, next));
 app.use(exceptOwnParsers(express.json({ limit: '32mb' })));
 app.use(exceptOwnParsers(express.urlencoded({ extended: true })));

@@ -7,9 +7,12 @@
 //   <claude>/CLAUDE.md                 one managed import line at the top, nothing else is touched
 //   <claude>/skills/<name>/            a shared skill; on a receiver it carries the marker file .t-agent-sync.json
 //   <codex>/AGENTS.md                  the shared rules inside a managed block, nothing outside the block is touched
+//   <data>/rule-sync/applied-bundle.json   on a receiver: the last applied bundle and a hash of every file written from it (the guard below)
+//   <data>/rule-sync/overwritten/<time>/   on a receiver: local edits of synced files, saved before the guard put the synced version back
 //
 // The setting is one system_state row, `rule_sync_v1`. Transport: the source PUTs a bundle to /v1/rule-sync/bundle of every linked receiver; a receiver
-// has no route that reads anything back, so it never sends rules or skills anywhere.
+// has no route that reads its rules or skills back, so it never sends them anywhere. The shared rules file can be edited from the page of any linked
+// service: the edit always goes to the source (GET / PUT /v1/rule-sync/shared there), which then pushes it as usual.
 const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
@@ -17,6 +20,8 @@ const path = require('path');
 
 const STATE_KEY = 'rule_sync_v1';
 const CAPABILITY = 'rule-sync:receive';
+// GET / PUT /v1/rule-sync/shared: the shared rules file of the source can be read and written from a linked service.
+const EDIT_CAPABILITY = 'rule-sync:edit';
 const ROLES = Object.freeze(['off', 'source', 'receive']);
 const ROUTE = '/v1/rule-sync';
 const MARKER = '.t-agent-sync.json';
@@ -34,7 +39,12 @@ const IMPORT_COMMENT = '<!-- Managed by T-Agent (rules and skills sync): the nex
 const CODEX_BEGIN = '<!-- t-agent shared rules: begin (managed by T-Agent, do not edit inside) -->';
 const CODEX_END = '<!-- t-agent shared rules: end -->';
 const SHARED_TEMPLATE = '# Shared rules\n\nRules in this file are shared by T-Agent with the linked machines that receive them.\n';
-const TIMING = Object.freeze({ debounceMs: 2_000, pollMs: 30_000, retryMs: 60_000, requestTimeoutMs: 10_000, pushTimeoutMs: 120_000 });
+// The first line of the shared rules file on a receiver (and inside its Codex block): where to edit them. Never part of the bundle revision.
+const NOTICE_LINE = /^<!-- Synced by T-Agent from [^\n]*-->\r?\n(?:\r?\n)?/;
+const KEEP = Object.freeze({ backups: 20, localChanges: 20 });
+const TIMING = Object.freeze({
+  debounceMs: 2_000, pollMs: 30_000, retryMs: 60_000, requestTimeoutMs: 10_000, pushTimeoutMs: 120_000, guardDebounceMs: 2_000, guardPollMs: 30_000,
+});
 
 class RuleSyncError extends Error {
   constructor(code, statusCode = 400, extra = {}) { super(code); this.name = 'RuleSyncError'; this.code = code; this.statusCode = statusCode; this.extra = extra; }
@@ -62,6 +72,7 @@ function layout({ env = process.env, home = os.homedir() } = {}) {
 }
 
 const isMissing = error => error && (error.code === 'ENOENT' || error.code === 'ENOTDIR');
+const sha256 = data => crypto.createHash('sha256').update(data).digest('hex');
 function lstatOrNull(file) {
   try { return fs.lstatSync(file); } catch (error) { if (isMissing(error)) return null; throw error; }
 }
@@ -134,14 +145,14 @@ function findBlock(lines) {
   const end = lines.findIndex((line, index) => index > begin && lineMatches(line, CODEX_END));
   return end < 0 ? null : { begin, end };
 }
-function codexBlock(rules) {
+function codexBlock(rules, notice = '') {
   // The marker lines themselves never appear inside, or the next update would find the wrong end.
   const inner = String(rules || '').split('\n').filter(line => !lineMatches(line, CODEX_BEGIN) && !lineMatches(line, CODEX_END)).join('\n').replace(/\s+$/, '');
-  return `${CODEX_BEGIN}\n${inner ? `${inner}\n` : ''}${CODEX_END}`;
+  return `${CODEX_BEGIN}\n${notice ? `${notice}\n` : ''}${inner ? `${inner}\n` : ''}${CODEX_END}`;
 }
-// The block placed at the top on the first write; afterwards only its inside changes.
-function withCodexBlock(text, rules) {
-  const block = codexBlock(rules);
+// The block placed at the top on the first write; afterwards only its inside changes. `notice` (a receiver's) is the first line inside.
+function withCodexBlock(text, rules, notice = '') {
+  const block = codexBlock(rules, notice);
   if (!text) return `${block}\n`;
   const lines = text.split('\n');
   const found = findBlock(lines);
@@ -157,6 +168,22 @@ function withoutCodexBlock(text) {
   return [...lines.slice(0, found.begin), ...lines.slice(after)].join('\n');
 }
 const hasCodexBlock = text => typeof text === 'string' && Boolean(findBlock(text.split('\n')));
+// The text between the two marker lines, or null when there is no block.
+function codexInner(text) {
+  if (typeof text !== 'string') return null;
+  const lines = text.split('\n');
+  const found = findBlock(lines);
+  return found ? lines.slice(found.begin + 1, found.end).join('\n') : null;
+}
+
+// The notice a receiver puts on top of the shared rules file and inside its Codex block. The name cannot end the comment or break the line.
+function syncedNotice(name) {
+  const clean = String(name || '').replace(/[\r\n\t]+/g, ' ').replace(/-{2,}/g, '-').replace(/[<>]/g, '').trim().slice(0, LIMITS.nameLength) || 'the source';
+  return `<!-- Synced by T-Agent from ${clean}. Edit it on ${clean} or in the T-Agent page (Settings > Rules and skills sync); changes made here are replaced. -->`;
+}
+const withNotice = (rules, notice) => `${notice}\n\n${rules}`;
+// The rules without a receiver's notice: a service that was a receiver and became the source does not send its old notice on.
+const withoutNotice = text => String(text || '').replace(NOTICE_LINE, '');
 
 // ---------------------------------------------------------------------------
 // Skills and the bundle
@@ -237,7 +264,7 @@ function readSkillFiles(root, name, warnings, budget) {
 // What the source sends: its shared rules file (empty when there is none) and the chosen skills. Throws RULE_SYNC_TOO_LARGE over a cap.
 function buildBundle({ paths, skills: chosen, source }) {
   const warnings = [];
-  const rules = readText(paths.sharedRules) || '';
+  const rules = withoutNotice(readText(paths.sharedRules));
   const budget = { bytes: Buffer.byteLength(rules) };
   if (budget.bytes > LIMITS.fileBytes) throw tooLarge('file', path.basename(paths.sharedRules));
   const names = [...new Set(chosen)].filter(validSkillName).sort();
@@ -297,7 +324,7 @@ function parseBundle(body) {
 
 // One skill into <skills root>/<name>: built in a temporary folder, then renamed into place. A folder without our marker (a local skill), a symlink or a
 // file at that name is a conflict and is left alone.
-function writeSkill(root, skill, marker) {
+function writeSkill(root, skill, marker, { force = false } = {}) {
   const target = path.join(root, skill.name);
   const stat = lstatOrNull(target);
   if (stat && stat.isSymbolicLink()) return { conflict: { skill: skill.name, reason: 'symlink' } };
@@ -305,7 +332,7 @@ function writeSkill(root, skill, marker) {
   if (stat) {
     const existing = readMarker(target);
     if (!existing) return { conflict: { skill: skill.name, reason: 'local' } };
-    if (existing.skill_hash === skill.hash) {
+    if (!force && existing.skill_hash === skill.hash) {
       writeAtomic(path.join(target, MARKER), `${JSON.stringify({ ...marker, skill_hash: skill.hash }, null, 2)}\n`);
       return { unchanged: true };
     }
@@ -377,14 +404,18 @@ function normalizeState(value) {
       synced_at: typeof received.synced_at === 'string' ? received.synced_at : null,
       conflicts: Array.isArray(received.conflicts) ? received.conflicts : [],
     },
+    // On a receiver: synced files that were changed here and put back by the guard, newest first.
+    local_changes: Array.isArray(given.local_changes) ? given.local_changes.slice(0, KEEP.localChanges) : [],
   };
 }
 
 const errorCode = error => (/^[A-Z0-9_]+$/.test((error && (error.code || error.message)) || '') ? (error.code || error.message) : 'RULE_SYNC_FAILED');
 const unref = timer => { if (timer && timer.unref) timer.unref(); return timer; };
 
-function createRuleSync({ db, serviceLinks = null, request = null, identity = () => ({ instance_id: null, name: '' }), env = process.env, home = os.homedir(), now = Date.now, log = console, timing = {}, watch = fs.watch }) {
+function createRuleSync({ db, serviceLinks = null, request = null, identity = () => ({ instance_id: null, name: '' }), env = process.env, home = os.homedir(), now = Date.now, log = console, timing = {}, watch = fs.watch, dataDir = null }) {
   const paths = layout({ env, home });
+  // The receiver's own records (the guard); without a data folder there is no guard.
+  const store = dataDir ? { dir: path.join(dataDir, 'rule-sync'), applied: path.join(dataDir, 'rule-sync', 'applied-bundle.json'), backups: path.join(dataDir, 'rule-sync', 'overwritten') } : null;
   const times = { ...TIMING, ...timing };
   const targets = new Map(); // link id -> what the source last learned about that peer
   const runs = new Map(); // link id -> the sync running for it
@@ -396,6 +427,7 @@ function createRuleSync({ db, serviceLinks = null, request = null, identity = ()
   let timers = [];
   let watchers = [];
   let debounce = null;
+  let guardDebounce = null;
 
   const iso = () => new Date(now()).toISOString();
   function load() {
@@ -412,13 +444,17 @@ function createRuleSync({ db, serviceLinks = null, request = null, identity = ()
   }
 
   const ensureImport = () => editUserFile(paths.claudeMd, text => withImportLine(text, paths.importLine));
-  const writeCodex = rules => editUserFile(paths.codexAgents, text => withCodexBlock(text, rules));
+  const writeCodex = (rules, notice = '') => editUserFile(paths.codexAgents, text => withCodexBlock(text, rules, notice));
 
   // ----- Receiver -----
 
   function receiverStatus() {
     const state = load();
+    const me = self();
     return {
+      // Who answers: a linked service that looks for the source of the shared rules (sharedTarget) matches it with `following`.
+      instance_id: me.instance_id,
+      name: me.name,
       role: state.role,
       following: state.following ? { instance_id: state.following.instance_id, name: state.following.name } : null,
       revision: state.received.revision,
@@ -440,10 +476,13 @@ function createRuleSync({ db, serviceLinks = null, request = null, identity = ()
     const following = { instance_id: bundle.source.instance_id, name: bundle.source.name || (state.following && state.following.name) || '', since: (state.following && state.following.since) || syncedAt };
     // The source is remembered first: a failure further down still leaves this service following it.
     save({ ...state, following });
+    // Local edits of the files written from the last bundle are saved first: the new bundle never replaces them without a note.
+    guardCheck({ restore: false });
 
-    editUserFile(paths.sharedRules, () => bundle.rules);
+    const notice = syncedNotice(following.name);
+    editUserFile(paths.sharedRules, () => withNotice(bundle.rules, notice));
     ensureImport();
-    const codex = state.codex ? (writeCodex(bundle.rules), true) : false;
+    const codex = state.codex ? (writeCodex(bundle.rules, notice), true) : false;
 
     fs.mkdirSync(paths.skillsDir, { recursive: true, mode: 0o755 });
     const root = fs.realpathSync(paths.skillsDir);
@@ -457,7 +496,177 @@ function createRuleSync({ db, serviceLinks = null, request = null, identity = ()
     }
     const removed = removeStaleSkills(root, new Set(bundle.skills.map(skill => skill.name)));
     save({ ...load(), following, received: { revision: bundle.revision, synced_at: syncedAt, conflicts } });
+    const clashing = new Set(conflicts.map(item => item.skill));
+    recordApplied(bundle, { following, notice, codex, syncedAt, skills: bundle.skills.filter(skill => !clashing.has(skill.name)) });
+    rewatch();
     return { revision: bundle.revision, applied: { rules: true, codex, skills: written, removed, conflicts } };
+  }
+
+  // ----- Receiver: the guard of the synced copies -----
+  //
+  // After a bundle is applied, the receiver keeps it in <data>/rule-sync/applied-bundle.json with a SHA-256 of every file it wrote: the shared rules file
+  // (with the notice), the inside of the Codex block, every file of every skill folder it owns (the ones with the marker) and the list of files in each.
+  // When one of them is changed here (edited, deleted, a file added to a marked skill folder, or the import line taken out of CLAUDE.md), the changed
+  // version is saved to <data>/rule-sync/overwritten/<time>/ and the synced version is put back. Hashes are compared, never events, so the guard's own
+  // writes do not start it again.
+
+  function privateDir(dir) {
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    fs.chmodSync(dir, 0o700);
+  }
+  function readApplied() {
+    if (!store) return null;
+    try {
+      const value = JSON.parse(fs.readFileSync(store.applied, 'utf8'));
+      return value && value.version === 1 && value.source && Array.isArray(value.skills) && value.hashes ? value : null;
+    } catch { return null; }
+  }
+  function clearApplied() {
+    if (store) { try { fs.rmSync(store.applied, { force: true }); } catch { /* nothing kept */ } }
+  }
+  function recordApplied(bundle, { following, notice, codex, syncedAt, skills }) {
+    if (!store) return;
+    try {
+      privateDir(store.dir);
+      const record = {
+        version: 1, source: { instance_id: following.instance_id, name: following.name }, revision: bundle.revision, synced_at: syncedAt, notice, codex,
+        rules: bundle.rules,
+        hashes: { shared: sha256(withNotice(bundle.rules, notice)), codex: codex ? (inner => (inner === null ? null : sha256(inner)))(codexInner(readText(paths.codexAgents))) : null },
+        skills: skills.map(skill => ({
+          name: skill.name, hash: skill.hash,
+          files: skill.files.map(file => ({ path: file.path, mode: file.mode, content_base64: file.content_base64, sha256: sha256(file.data) })),
+        })),
+      };
+      writeAtomic(store.applied, JSON.stringify(record), 0o600);
+    } catch (error) {
+      localError = errorCode(error);
+      log.error('[rule-sync] keeping the applied bundle failed:', error && error.message);
+    }
+  }
+
+  // The files in a skill folder: path -> sha256 (null for a link or a special file). Never follows a link; .git, .DS_Store and the marker are skipped.
+  function scanSkill(dir) {
+    const found = new Map();
+    const walk = (folder, relative) => {
+      for (const entry of fs.readdirSync(folder, { withFileTypes: true })) {
+        if (SKIPPED.has(entry.name) || (!relative && entry.name === MARKER)) continue;
+        const rel = relative ? `${relative}/${entry.name}` : entry.name;
+        const full = path.join(folder, entry.name);
+        if (entry.isDirectory()) walk(full, rel);
+        else found.set(rel, entry.isFile() ? sha256(fs.readFileSync(full)) : null);
+      }
+    };
+    walk(dir, '');
+    return found;
+  }
+
+  // What differs from the applied bundle: [{ paths, saved: [{ rel, data }], restore }].
+  function localDifferences(applied, state) {
+    const changes = [];
+    const shared = readText(paths.sharedRules);
+    if (shared === null || sha256(shared) !== applied.hashes.shared) {
+      changes.push({
+        paths: [paths.sharedRules], saved: shared === null ? [] : [{ rel: 'claude/shared/CLAUDE.shared.md', data: shared }],
+        restore: () => editUserFile(paths.sharedRules, () => withNotice(applied.rules, applied.notice)),
+      });
+    }
+    // Only the managed import line of CLAUDE.md is ours; the rest of the file is never compared.
+    const claudeMd = readText(paths.claudeMd);
+    if (!hasImportLine(claudeMd, paths.importLine)) {
+      changes.push({ paths: [paths.claudeMd], saved: claudeMd === null ? [] : [{ rel: 'claude/CLAUDE.md', data: claudeMd }], restore: ensureImport });
+    }
+    if (applied.codex && state.codex && applied.hashes.codex) {
+      const text = readText(paths.codexAgents);
+      const inner = codexInner(text);
+      if (inner === null || sha256(inner) !== applied.hashes.codex) {
+        changes.push({ paths: [paths.codexAgents], saved: text === null ? [] : [{ rel: 'codex/AGENTS.md', data: text }], restore: () => writeCodex(applied.rules, applied.notice) });
+      }
+    }
+    let root = null;
+    try { root = fs.realpathSync(paths.skillsDir); } catch { /* no skills folder any more: every owned skill is missing */ }
+    for (const skill of applied.skills) {
+      const dir = root ? path.join(root, skill.name) : path.join(paths.skillsDir, skill.name);
+      const stat = lstatOrNull(dir);
+      // A link or a file at that name, or a folder without the marker: not ours, never touched.
+      if (stat && (stat.isSymbolicLink() || !stat.isDirectory() || !readMarker(dir))) continue;
+      const expected = new Map(skill.files.map(file => [file.path, file.sha256]));
+      const actual = stat ? scanSkill(dir) : new Map();
+      const changed = [];
+      const saved = [];
+      for (const [rel, hash] of expected) {
+        if (!actual.has(rel)) changed.push(rel);
+        else if (actual.get(rel) !== hash) {
+          changed.push(rel);
+          if (actual.get(rel) !== null) saved.push({ rel: `claude/skills/${skill.name}/${rel}`, data: fs.readFileSync(path.join(dir, ...rel.split('/'))) });
+        }
+      }
+      for (const [rel, hash] of actual) {
+        if (expected.has(rel)) continue;
+        changed.push(rel);
+        if (hash !== null) saved.push({ rel: `claude/skills/${skill.name}/${rel}`, data: fs.readFileSync(path.join(dir, ...rel.split('/'))) });
+      }
+      if (!stat || changed.length) {
+        changes.push({
+          paths: stat ? changed.sort().map(rel => path.join(paths.skillsDir, skill.name, ...rel.split('/'))) : [path.join(paths.skillsDir, skill.name)],
+          saved,
+          restore: () => {
+            fs.mkdirSync(paths.skillsDir, { recursive: true, mode: 0o755 });
+            const real = fs.realpathSync(paths.skillsDir);
+            const files = skill.files.map(file => ({ path: file.path, mode: file.mode, content_base64: file.content_base64, data: Buffer.from(file.content_base64, 'base64') }));
+            const marker = { source: applied.source, revision: applied.revision, synced_at: applied.synced_at };
+            writeSkill(real, { name: skill.name, files, hash: skill.hash }, marker, { force: true });
+          },
+        });
+      }
+    }
+    return changes;
+  }
+
+  // The changed versions into a new folder <data>/rule-sync/overwritten/<time>/ (0700, files 0600); only the 20 newest folders are kept.
+  function saveOverwritten(items) {
+    if (!items.length) return null;
+    privateDir(store.backups);
+    const stamp = iso().replace(/:/g, '-');
+    let dir = path.join(store.backups, stamp);
+    for (let index = 1; lstatOrNull(dir); index += 1) dir = path.join(store.backups, `${stamp}-${String(index).padStart(3, '0')}`); // sorts after `stamp`
+    fs.mkdirSync(dir, { mode: 0o700 });
+    for (const item of items) {
+      const target = path.join(dir, ...item.rel.split('/'));
+      fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
+      fs.writeFileSync(target, item.data, { mode: 0o600, flag: 'wx' });
+    }
+    const folders = fs.readdirSync(store.backups, { withFileTypes: true }).filter(entry => entry.isDirectory() && !entry.isSymbolicLink()).map(entry => entry.name).sort();
+    for (const name of folders.slice(0, Math.max(0, folders.length - KEEP.backups))) fs.rmSync(path.join(store.backups, name), { recursive: true, force: true });
+    return dir;
+  }
+
+  // Compare, save what was changed here, and (unless `restore` is false, as before a new bundle is written) put the synced version back.
+  // Returns the entry added to `local_changes`, or null when nothing differs.
+  function guardCheck({ restore = true } = {}) {
+    if (!store) return null;
+    const state = load();
+    if (state.role !== 'receive' || !state.following) return null;
+    const applied = readApplied();
+    if (!applied || applied.source.instance_id !== state.following.instance_id) return null;
+    try {
+      const changes = localDifferences(applied, state);
+      if (!changes.length) return null;
+      // Saved first: when that fails nothing is put back, so an edit is never lost.
+      const backupDir = saveOverwritten(changes.flatMap(change => change.saved));
+      if (restore) for (const change of changes) change.restore();
+      const entry = { at: iso(), paths: changes.flatMap(change => change.paths), backup_dir: backupDir, source: applied.source.name || '', restored: restore };
+      const now = load();
+      save({ ...now, local_changes: [entry, ...now.local_changes].slice(0, KEEP.localChanges) });
+      return entry;
+    } catch (error) {
+      localError = errorCode(error);
+      log.error('[rule-sync] checking the synced files failed:', error && error.message);
+      return null;
+    }
+  }
+  function scheduleGuard() {
+    if (guardDebounce) clearTimeout(guardDebounce);
+    guardDebounce = unref(setTimeout(() => { guardDebounce = null; guardCheck(); }, times.guardDebounceMs));
   }
 
   // ----- Source -----
@@ -576,20 +785,34 @@ function createRuleSync({ db, serviceLinks = null, request = null, identity = ()
     for (const watcher of watchers) { try { watcher.close(); } catch { /* already closed */ } }
     watchers = [];
   }
-  // fs.watch where it works; the poll catches whatever it misses.
+  // fs.watch where it works; the poll catches whatever it misses. A source watches its shared layer; a receiver watches the files it wrote (the guard).
+  // `only` keeps the events of one folder to the names that matter (an event without a name is always taken).
   function rewatch() {
     closeWatchers();
     const state = load();
-    if (!started || state.role !== 'source') return;
-    const watchOne = (dir, recursive) => {
+    if (!started) return;
+    const watchOne = (dir, recursive, onEvent, only = null) => {
       try {
-        const watcher = watch(dir, { recursive, persistent: false }, () => scheduleCheck());
+        const watcher = watch(dir, { recursive, persistent: false }, (event, name) => {
+          if (!only || !name || only.has(String(name).split(path.sep)[0])) onEvent();
+        });
         watcher.on('error', () => { try { watcher.close(); } catch { /* gone */ } });
         watchers.push(watcher);
       } catch { /* missing folder or no recursive watch here: the poll covers it */ }
     };
-    watchOne(path.dirname(paths.sharedRules), false);
-    for (const name of state.skills) watchOne(path.join(paths.skillsDir, name), true);
+    if (state.role === 'source') {
+      watchOne(path.dirname(paths.sharedRules), false, scheduleCheck);
+      for (const name of state.skills) watchOne(path.join(paths.skillsDir, name), true, scheduleCheck);
+      return;
+    }
+    const applied = state.role === 'receive' && state.following ? readApplied() : null;
+    if (!applied) return;
+    watchOne(path.dirname(paths.sharedRules), false, scheduleGuard);
+    watchOne(paths.claudeDir, false, scheduleGuard, new Set([path.basename(paths.claudeMd)]));
+    if (applied.codex) watchOne(paths.codexDir, false, scheduleGuard, new Set([path.basename(paths.codexAgents)]));
+    const names = applied.skills.map(skill => skill.name);
+    if (names.length) watchOne(paths.skillsDir, false, scheduleGuard, new Set(names));
+    for (const name of names) watchOne(path.join(paths.skillsDir, name), true, scheduleGuard);
   }
 
   function start() {
@@ -604,6 +827,7 @@ function createRuleSync({ db, serviceLinks = null, request = null, identity = ()
     }
     if (times.pollMs > 0) timers.push(unref(setInterval(() => { check(); }, times.pollMs)));
     if (times.retryMs > 0) timers.push(unref(setInterval(() => { retry(); }, times.retryMs)));
+    if (times.guardPollMs > 0) timers.push(unref(setInterval(() => { guardCheck(); }, times.guardPollMs)));
     rewatch();
     setImmediate(() => { if (started) check(); });
   }
@@ -615,6 +839,8 @@ function createRuleSync({ db, serviceLinks = null, request = null, identity = ()
     timers = [];
     if (debounce) clearTimeout(debounce);
     debounce = null;
+    if (guardDebounce) clearTimeout(guardDebounce);
+    guardDebounce = null;
     closeWatchers();
   }
 
@@ -644,6 +870,8 @@ function createRuleSync({ db, serviceLinks = null, request = null, identity = ()
       skills,
       following: state.following,
       received: state.received,
+      local_changes: state.local_changes,
+      guard_active: Boolean(store && state.role === 'receive' && state.following && readApplied()),
       revision: built && built.bundle ? built.bundle.revision : null,
       bundle_error: built && built.error ? built.error : null,
       warnings: built && built.warnings ? built.warnings : [],
@@ -675,6 +903,8 @@ function createRuleSync({ db, serviceLinks = null, request = null, identity = ()
       try { ensureImport(); } catch (error) { localError = errorCode(error); }
     }
     if (next.role !== 'source') { snapshot = null; targets.clear(); }
+    // Leaving the receive role ends the guard; the files stay as they are.
+    if (next.role !== 'receive') clearApplied();
     if (next.role === 'source') {
       const roleChanged = state.role !== 'source';
       if (roleChanged || state.codex !== next.codex) snapshot = null; // the own Codex block is written with the next snapshot
@@ -703,6 +933,13 @@ function createRuleSync({ db, serviceLinks = null, request = null, identity = ()
   function resetSource() {
     const state = load();
     save({ ...state, following: null, received: { revision: null, synced_at: null, conflicts: [] } });
+    clearApplied();
+    rewatch();
+    return overview();
+  }
+
+  function dismissLocalChanges() {
+    save({ ...load(), local_changes: [] });
     return overview();
   }
 
@@ -713,8 +950,139 @@ function createRuleSync({ db, serviceLinks = null, request = null, identity = ()
     return overview();
   }
 
+  // ----- The shared rules file, edited from any linked service -----
+
+  // GET /v1/rule-sync/shared on the source. `content_revision` is the SHA-256 of `content`; a write must name the revision it started from.
+  function readShared() {
+    if (load().role !== 'source') fail('RULE_SYNC_NOT_SOURCE', 403);
+    const current = userFile(paths.sharedRules);
+    const content = withoutNotice(current.text);
+    let updatedAt = null;
+    if (current.text !== null) { try { updatedAt = fs.statSync(current.file).mtime.toISOString(); } catch { /* removed meanwhile */ } }
+    return { content, content_revision: sha256(content), size: Buffer.byteLength(content), updated_at: updatedAt, exists: current.text !== null };
+  }
+
+  // PUT /v1/rule-sync/shared `{ content, base_revision }` on the source: written atomically (keeping the mode, through a symlink), then pushed as any
+  // change of the file is (debounced). 409 RULE_SYNC_SHARED_CHANGED with the current text when the file changed after `base_revision`.
+  function writeShared(body) {
+    if (load().role !== 'source') fail('RULE_SYNC_NOT_SOURCE', 403);
+    const given = body && typeof body === 'object' && !Array.isArray(body) ? body : fail('RULE_SYNC_INVALID_CONTENT', 400, { field: 'body' });
+    const { content, base_revision: base } = given;
+    if (typeof content !== 'string') fail('RULE_SYNC_INVALID_CONTENT', 400, { field: 'content' });
+    if (typeof base !== 'string' || !REVISION.test(base)) fail('RULE_SYNC_INVALID_CONTENT', 400, { field: 'base_revision' });
+    if (content.includes('\0')) fail('RULE_SYNC_INVALID_CONTENT', 400, { field: 'content', reason: 'nul' });
+    if (!content.isWellFormed()) fail('RULE_SYNC_INVALID_CONTENT', 400, { field: 'content', reason: 'utf8' });
+    if (Buffer.byteLength(content) > LIMITS.fileBytes) throw tooLarge('file', path.basename(paths.sharedRules));
+    const now = readShared();
+    if (now.content_revision !== base) {
+      fail('RULE_SYNC_SHARED_CHANGED', 409, { current: { content: now.content, content_revision: now.content_revision, updated_at: now.updated_at } });
+    }
+    const target = userFile(paths.sharedRules);
+    if (target.text !== content) writeAtomic(target.file, content, target.mode);
+    try { ensureImport(); } catch (error) { localError = errorCode(error); }
+    rewatch();
+    scheduleCheck();
+    const saved = readShared();
+    return { content_revision: saved.content_revision, updated_at: saved.updated_at, size: saved.size };
+  }
+
+  // What a linked service says about itself for the editor: role, instance and whether it takes edits. `offline` when it cannot be reached.
+  async function probe(peer) {
+    const timeoutMs = times.requestTimeoutMs;
+    try {
+      const info = await request(peer.baseUrl, '/v1/info', peer.token, { timeoutMs });
+      const capabilities = info && Array.isArray(info.capabilities) ? info.capabilities : [];
+      if (!capabilities.includes(CAPABILITY)) return { peer, role: null, edit: false };
+      const status = await request(peer.baseUrl, `${ROUTE}/status`, peer.token, { timeoutMs });
+      return {
+        peer, role: status && ROLES.includes(status.role) ? status.role : null, edit: capabilities.includes(EDIT_CAPABILITY),
+        instance_id: status && typeof status.instance_id === 'string' ? status.instance_id : null, name: status && typeof status.name === 'string' ? status.name : '',
+      };
+    } catch (error) {
+      return { peer, role: null, edit: false, offline: !error.statusCode };
+    }
+  }
+  const sourceOf = (found, name) => ({ name: name || found.name || found.peer.name || '', local: false, remote_server_id: found.peer.remoteServerId ?? null });
+
+  // Where the shared rules live: this service when it is the source; else the source a receiver follows; else the one linked service whose role is source.
+  async function sharedTarget() {
+    const state = load();
+    if (state.role === 'source') return { local: true, source: { name: self().name, local: true } };
+    if (!request) fail('RULE_SYNC_NO_SOURCE', 404);
+    const linked = peers();
+    const online = linked.filter(peer => peer.online);
+    let probes = null;
+    if (state.role === 'receive' && state.following) {
+      const wanted = state.following.instance_id;
+      let peer = linked.find(candidate => candidate.instanceId === wanted);
+      let found = null;
+      if (!peer) {
+        probes = await Promise.all(online.map(probe));
+        found = probes.find(item => item.instance_id === wanted) || null;
+        peer = found && found.peer;
+      }
+      if (peer) {
+        const name = state.following.name || peer.name;
+        if (!peer.online) fail('ENGINE_OFFLINE', 502, { source: { name, local: false, remote_server_id: peer.remoteServerId ?? null } });
+        if (!found) found = await probe(peer);
+        if (found.offline) fail('ENGINE_OFFLINE', 502, { source: sourceOf(found, name) });
+        // A followed source that is no longer the source: look for the current one below.
+        if (found.role === 'source') {
+          if (!found.edit) fail('RULE_SYNC_EDIT_UNSUPPORTED', 501, { source: sourceOf(found, name) });
+          return { peer, source: sourceOf(found, name) };
+        }
+      }
+    }
+    if (!probes) probes = await Promise.all(online.map(probe));
+    const sources = probes.filter(item => item.role === 'source');
+    if (sources.length > 1) fail('RULE_SYNC_SEVERAL_SOURCES', 409, { sources: sources.map(item => item.name || item.peer.name) });
+    if (!sources.length) {
+      const unreachable = [...linked.filter(peer => !peer.online), ...probes.filter(item => item.offline).map(item => item.peer)].map(peer => peer.name);
+      fail('RULE_SYNC_NO_SOURCE', 404, { unreachable });
+    }
+    const [found] = sources;
+    if (!found.edit) fail('RULE_SYNC_EDIT_UNSUPPORTED', 501, { source: sourceOf(found) });
+    return { peer: found.peer, source: sourceOf(found) };
+  }
+
+  // The source's answer, or its error passed on with its status and fields (a 409 carries `current`).
+  async function remoteShared(target, method, body) {
+    const { peer, source } = target;
+    try {
+      return await request(peer.baseUrl, `${ROUTE}/shared`, peer.token, { method, body, timeoutMs: times.requestTimeoutMs, maxBytes: 8 * MIB });
+    } catch (error) {
+      if (!error.statusCode) fail('ENGINE_OFFLINE', 502, { source });
+      if (error.statusCode === 401) {
+        if (serviceLinks && typeof serviceLinks.noteUnauthorized === 'function') { try { serviceLinks.noteUnauthorized(peer.remoteServerId); } catch { /* checked again later */ } }
+        fail('ENGINE_UNAUTHORIZED', 502, { source });
+      }
+      const answer = error.peerBody || {};
+      if (typeof answer.error === 'string' && /^RULE_SYNC_[A-Z0-9_]+$/.test(answer.error)) {
+        const { error: code, ...extra } = answer;
+        fail(code, error.statusCode, { ...extra, source });
+      }
+      if (error.statusCode === 404) fail('RULE_SYNC_EDIT_UNSUPPORTED', 501, { source });
+      fail(errorCode(error), error.statusCode >= 400 && error.statusCode < 600 ? error.statusCode : 502, { source });
+    }
+  }
+
+  // GET / PUT /api/rule-sync/shared: the same answers as the source's, plus `source: { name, local, remote_server_id? }`.
+  async function sharedForBrowser() {
+    const target = await sharedTarget();
+    const answer = target.local ? readShared() : await remoteShared(target, 'GET');
+    return { ...answer, source: target.source };
+  }
+  async function saveSharedForBrowser(body) {
+    const target = await sharedTarget();
+    if (target.local) return { ...writeShared(body), source: target.source };
+    const given = body && typeof body === 'object' && !Array.isArray(body) ? body : {};
+    const answer = await remoteShared(target, 'PUT', { content: given.content, base_revision: given.base_revision });
+    return { ...answer, source: target.source };
+  }
+
   return {
-    paths, receiverStatus, receive, overview, update, createShared, pushNow, resetSource, removeImport,
+    paths, receiverStatus, receive, overview, update, createShared, pushNow, resetSource, removeImport, dismissLocalChanges,
+    readShared, writeShared, sharedForBrowser, saveSharedForBrowser, guardCheck,
     check, retry, pushAll, syncPeer, refreshSnapshot, start, stop,
   };
 }
@@ -728,6 +1096,7 @@ function getRuleSync() {
     serviceLinks: require('./service-links').getServiceLinks(),
     request: (...args) => require('./remote-client').request(...args),
     identity: () => { const { engine_id: instanceId, name } = getEngineIdentity(); return { instance_id: instanceId, name }; },
+    dataDir: require('../lib/data-home').paths().root,
   });
   return singleton;
 }
@@ -735,5 +1104,6 @@ function getRuleSync() {
 module.exports = {
   createRuleSync, getRuleSync, RuleSyncError, layout, buildBundle, parseBundle, revisionOf,
   withImportLine, withoutImportLine, withCodexBlock, withoutCodexBlock, hasImportLine, hasCodexBlock,
-  STATE_KEY, CAPABILITY, ROLES, MARKER, LIMITS, IMPORT_COMMENT, CODEX_BEGIN, CODEX_END, TIMING,
+  syncedNotice, withoutNotice, codexInner,
+  STATE_KEY, CAPABILITY, EDIT_CAPABILITY, ROLES, MARKER, LIMITS, IMPORT_COMMENT, CODEX_BEGIN, CODEX_END, TIMING,
 };

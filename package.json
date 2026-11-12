@@ -4,7 +4,8 @@
   "description": "T-Agent task client with browser terminals",
   "main": "server.js",
   "bin": {
-    "t-attention": "scripts/t-attention.js"
+    "t-attention": "scripts/t-attention.js",
+    "tcli": "scripts/tcli.js"
   },
   "scripts": {
     "start": "node server.js",

@@ -26,6 +26,14 @@ function createOssRouter(options = {}) {
   });
   router.put('/config', (req, res) => res.json(service.saveConfig(owner(req), req.body)));
   router.delete('/config', (req, res) => res.json(service.clearConfig(owner(req))));
+  // "Agent sessions can use OSS with tcli" (services/oss-agent-settings.js): GET / PUT { enabled }.
+  const agentAccess = options.agentAccess || (() => require('../services/oss-agent-settings').ossAgentSettings());
+  router.get('/agent-access', (req, res) => res.set('Cache-Control', 'no-store').json({ enabled: agentAccess().enabled() }));
+  router.put('/agent-access', (req, res) => {
+    const enabled = req.body && req.body.enabled;
+    if (typeof enabled !== 'boolean') return res.status(400).json({ error: 'VALIDATION_FAILED', message: 'enabled must be true or false' });
+    res.json(agentAccess().setEnabled(enabled));
+  });
   // The browser uploads to OSS itself; this only signs what that upload may contain.
   router.post('/upload-policy', express.json({ limit: '4kb' }), async (req, res, next) => {
     try {

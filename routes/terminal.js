@@ -131,7 +131,7 @@ function withSessionHook(agent, command, peer = peerFsOn()) {
 }
 
 const HOOK_ENV_KEYS = ['TA_HOOK_URL', 'TA_HOOK_TOKEN', 'TA_CLAUDE_SETTINGS', 'TA_ATTENTION_URL', 'TA_ATTENTION_TOKEN', 'TA_ATTENTION_HOOK', 'TA_ATTENTION_CLI',
-  'TA_PEER_URL', 'TA_PEER_TASK', 'TA_PEER_TERMINAL', 'TA_MCP_CONFIG', 'TA_PEER_MCP_COMMAND', 'TA_PEER_MCP_ARGS'];
+  'TA_PEER_URL', 'TA_PEER_TASK', 'TA_PEER_TERMINAL', 'TA_MCP_CONFIG', 'TA_PEER_MCP_COMMAND', 'TA_PEER_MCP_ARGS', 'TA_TCLI'];
 // The server's own environment may already hold these (a server started from inside a t-agent terminal): they belong to
 // that outer terminal and are never passed on.
 function withoutInheritedHookEnv(env) {
@@ -140,11 +140,16 @@ function withoutInheritedHookEnv(env) {
   return next;
 }
 
+// tcli (scripts/tcli.js, "tcli (agent command line)" in DESIGN.md): the agent command line of this install. It reads TA_HOOK_URL and TA_HOOK_TOKEN
+// and calls the relay /api/tcli on the hook endpoint's origin, so it is set in every shell that has them.
+const TCLI = path.resolve(__dirname, '..', 'scripts', 'tcli.js');
+
 function hookEnv(taskId, id, peer = peerFsOn()) {
   if (!hookEndpoint) return {};
   return {
     TA_HOOK_URL: `${hookEndpoint}?task=${Number(taskId)}&terminal=${encodeURIComponent(id)}`,
     TA_HOOK_TOKEN: hookToken(taskId, id),
+    TA_TCLI: TCLI,
     TA_CLAUDE_SETTINGS: claudeSettings(peer),
     ...(peer ? peerEnv(taskId, id) : {}),
   };

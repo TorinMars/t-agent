@@ -5,7 +5,7 @@ import IconButton from '@mui/material/IconButton';
 import { named, t } from './common.jsx';
 import { Icon } from './Icons.jsx';
 import {
-  FALLBACK_COLUMN_WIDTH, STORAGE_KEY, TERMINAL_SIDE_PADDING, newId, canAdd, canClose, canOfferColumns, columnStep, columnsFor, forgetMessage, hiddenEdges,
+  STORAGE_KEY, newId, canAdd, canClose, canOfferColumns, columnStep, columnsFor, forgetMessage, hiddenEdges,
   minColumnWidth, openMessage, paneUrl, readLayout, readPaneMessage, revealLeft, sidewaysDelta, stepTarget, targetColumn, writeLayout,
 } from './columns.mjs';
 
@@ -28,35 +28,6 @@ const frameOf = id => frames().find(el => el.dataset.paneId === id);
 const stripEl = () => document.getElementById('h5-columns-strip');
 const columnEl = id => document.querySelector(`#h5-columns .h5-column[data-pane-id="${id}"]`);
 const reducedMotion = () => { try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch { return false; } };
-
-// The minimum width of a column: an 80-column terminal at the page's terminal font (`state.terminalFont`, from h5.js) with the terminal's inset and
-// xterm's vertical scrollbar (0 with overlay scrollbars). The character width is measured on a canvas as xterm measures it (the average of a run of
-// 'W'); without a font or a canvas it is FALLBACK_COLUMN_WIDTH. Measured once per font.
-const widths = new Map();
-function scrollbarWidth() {
-  try {
-    const probe = document.createElement('div');
-    probe.style.cssText = 'position:absolute;top:-9999px;left:-9999px;width:100px;height:100px;overflow-y:scroll;visibility:hidden';
-    document.body.append(probe);
-    const width = probe.offsetWidth - probe.clientWidth;
-    probe.remove();
-    return Math.max(0, width);
-  } catch { return 0; }
-}
-export function columnWidthFor(font) {
-  if (!font || !(font.size > 0) || !font.family) return FALLBACK_COLUMN_WIDTH;
-  const key = `${font.size}px ${font.family}`;
-  if (widths.has(key)) return widths.get(key);
-  let char = 0;
-  try {
-    const context = document.createElement('canvas').getContext('2d');
-    context.font = key;
-    char = context.measureText('W'.repeat(32)).width / 32;
-  } catch { char = 0; }
-  const width = minColumnWidth(char, TERMINAL_SIDE_PADDING + scrollbarWidth());
-  widths.set(key, width);
-  return width;
-}
 
 // Scrolls the strip so the column is whole in view (from its start when it is wider than the view): smooth, or at once with reduced motion.
 function revealColumn(id) {
@@ -81,14 +52,13 @@ export function startColumns(ui) {
     writeStored(writeLayout({ on: next.enabled, ids: next.ids.filter(id => !next.closing.includes(id)) }));
   };
   ui.set({ columns: { enabled: false, shown: false, ids: [], focus: null, titles: {}, ready: {}, closing: [] } });
-  const columnWidth = () => columnWidthFor(ui.get().terminalFont);
-  put({ enabled: stored.on, ids: stored.on ? columnsFor(stored.ids, window.innerWidth, Math.random, columnWidth()) : stored.ids });
+  put({ enabled: stored.on, ids: stored.on ? columnsFor(stored.ids, window.innerWidth) : stored.ids });
   wideQuery.addEventListener('change', () => put({}));
 
   ui.actions.toggleColumns = () => {
     const now = get();
     if (now.enabled) { put({ enabled: false, focus: null }); return; }
-    put({ enabled: true, focus: null, ids: columnsFor(now.ids.filter(id => !now.closing.includes(id)), window.innerWidth, Math.random, columnWidth()) }); // the focus is not taken: the person clicks a column
+    put({ enabled: true, focus: null, ids: columnsFor(now.ids.filter(id => !now.closing.includes(id)), window.innerWidth) }); // the focus is not taken: the person clicks a column
   };
   ui.actions.addColumn = () => {
     const now = get();
@@ -214,7 +184,10 @@ export function ColumnStrip({ state, ui }) {
   const strip = useRef(null);
   const count = useRef(0);
   const [edges, setEdges] = useState({ overflow: false, left: false, right: false });
-  const columnWidth = columnWidthFor(state.terminalFont);
+  // The strip's visible width, observed: each column is at least a quarter of it (and at least MIN_COLUMN_WIDTH; minColumnWidth in columns.mjs), so
+  // up to four share it evenly and more scroll sideways. Before the first measurement the window's width stands in for it.
+  const [stripWidth, setStripWidth] = useState(() => window.innerWidth);
+  const columnWidth = minColumnWidth(stripWidth);
   useLayoutEffect(() => {
     if (!shown) return undefined;
     document.documentElement.setAttribute('data-columns', '');
@@ -245,6 +218,7 @@ export function ColumnStrip({ state, ui }) {
     let frame = 0;
     const measure = () => {
       frame = 0;
+      if (el.clientWidth > 0) setStripWidth(el.clientWidth);
       const next = { overflow: el.scrollWidth > el.clientWidth + 1, ...hiddenEdges(el) };
       setEdges(now => (now.overflow === next.overflow && now.left === next.left && now.right === next.right ? now : next));
     };

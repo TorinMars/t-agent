@@ -12,12 +12,6 @@
   const deskKeys = () => pointerMode() || Boolean(ui.get().hasKeyboard);
   const terminalFontSize = () => (pointerMode() ? 13 : 11);
   const TERMINAL_FONT_FAMILY = 'Menlo, Monaco, "Courier New", monospace';
-  // The terminal font, for the multi-column view's minimum column width (an 80-column terminal must fit; scripts/h5-shell/Columns.jsx).
-  const publishTerminalFont = () => {
-    const now = ui.get().terminalFont;
-    if (!now || now.size !== terminalFontSize() || now.family !== TERMINAL_FONT_FAMILY) ui.set({ terminalFont: { size: terminalFontSize(), family: TERMINAL_FONT_FAMILY } });
-  };
-  publishTerminalFont();
   const APPLE = /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent || '');
   const tell = (message, type = 'info') => notify(message, type);
   const tr = text => (typeof I18n !== 'undefined' ? I18n.t(text) : text);
@@ -3867,7 +3861,6 @@
     const input = ui.get().input;
     if (input === lastInput) return;
     lastInput = input;
-    publishTerminalFont();
     if (session && !session.disposed) { session.term.options.fontSize = terminalFontSize(); refit(session); }
     fitViewport();
     autosize();

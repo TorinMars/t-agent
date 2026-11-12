@@ -1,4 +1,5 @@
-// T-Attention notifiers: tells the user on another channel (Telegram first) when an attention item enters a status that needs them.
+// T-Attention notifiers: tells the user on another channel (Telegram first) when an attention item enters a status that needs them, unless
+// the item's T-Agent session is open on a screen right now (onScreen: the terminal's foreground presence, routes/terminal.js).
 // It subscribes in-process to the onChange bus of services/attention.js and loads notifier plugins from plugins/notifiers/<name>/
 // (manifest.json + index.js with { name, label, configFields, notify(), test() }).
 // Rules and plugin settings are per user, encrypted in system_state (no schema change):
@@ -335,13 +336,25 @@ function defaultLog(level, message) {
 // options: db, sessionSecret, onChange (the bus of services/attention.js; optional), getItem(id) (the current item, so a delayed call carries what
 // arrived after its status change, such as context.summary; optional), getOwner (the user for background events),
 // notifiers (plugins; default: loaded from plugins/notifiers), skipped (with injected notifiers: broken ones for the overview),
-// log(level, message), now(), timers { setTimeout, clearTimeout }.
+// log(level, message), now(), timers { setTimeout, clearTimeout }, isForeground(taskId, terminalId) (true while a page of this engine shows that
+// T-Agent terminal in the foreground: routes/terminal.js isTerminalForeground; default: never), host (this machine's name, default os.hostname()).
 function createAttentionNotify(options) {
   const { db, sessionSecret } = options;
   const log = options.log || defaultLog;
   const now = options.now || (() => Date.now());
   const timers = options.timers || { setTimeout: (fn, ms) => { const handle = setTimeout(fn, ms); if (handle.unref) handle.unref(); return handle; }, clearTimeout };
   const getOwner = options.getOwner || (() => require('./single-user').ensureSingleUser(db).login);
+  const isForeground = typeof options.isForeground === 'function' ? options.isForeground : () => false;
+  const host = options.host === undefined ? require('os').hostname() : options.host;
+  // The session of an item is open on a screen: its context names a T-Agent terminal (context.tagent, written by the Claude listener or tied by a
+  // terminal token) of THIS engine (no context.host, or this machine's name) and that terminal is in the foreground now. Then nothing is sent.
+  function onScreen(item) {
+    const context = item && item.context;
+    const tagent = context && context.tagent;
+    if (!tagent || !tagent.task_id || !tagent.terminal_id) return false;
+    if (context.host && host && context.host !== host) return false; // a session of another machine
+    try { return isForeground(String(tagent.task_id), String(tagent.terminal_id)) === true; } catch { return false; }
+  }
   // notifiers (injected plugins) skip the folder scan; then `skipped` may list broken ones for the overview. extraFolders() gives the user
   // plugin folders (lib/plugin-store.js), read again on every reload().
   const extraFolders = typeof options.extraFolders === 'function' ? options.extraFolders : () => [];
@@ -558,6 +571,7 @@ function createAttentionNotify(options) {
     const rules = getRules(owner);
     if (!rules.statuses.includes(item.status)) return tasks;
     const quiet = inQuietHours(rules.quietHours, new Date(now()));
+    const foreground = onScreen(item);
     for (const plugin of notifiers) {
       const mode = modeOf(rules, plugin.name, item.status);
       if (mode === 'off') continue;
@@ -565,6 +579,7 @@ function createAttentionNotify(options) {
       const base = { notifier: plugin.name, item_id: item.id, status: item.status, mode };
       const key = `${plugin.name}:${item.id}:${item.status}`;
       if (sentAt.has(key) && now() - sentAt.get(key) < DEDUPE_MS) { remember({ ...base, outcome: 'duplicate' }); continue; }
+      if (foreground) { remember({ ...base, outcome: 'foreground', detail: 'the session is open on screen' }); continue; } // not marked as sent
       if (quiet) { remember({ ...base, outcome: 'quiet_hours' }); continue; }
       sentAt.set(key, now());
       if (mode === 'call' && rules.callDelayMinutes > 0) {
@@ -579,6 +594,7 @@ function createAttentionNotify(options) {
           if (inQuietHours(latest.quietHours, new Date(now()))) return remember({ ...base, outcome: 'quiet_hours' });
           let current = item;
           try { current = (typeof options.getItem === 'function' && options.getItem(item.id)) || item; } catch { current = item; }
+          if (onScreen(current)) return remember({ ...base, outcome: 'foreground', detail: 'the session is open on screen' }); // checked again when the call is due
           void deliver({ plugin, owner, rules: latest, item: current, previous, mode: 'call', reason: 'still' });
         }, rules.callDelayMinutes * 60 * 1000);
         map.set(key, { handle: handleId, status: item.status });

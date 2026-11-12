@@ -85,6 +85,8 @@ const attentionDataDir = dataHome.paths().root;
 const attentionNotify = require('./services/attention-notify').start({
   db, sessionSecret: config.sessionSecret, onChange: attentionService.onChange, getItem: id => attentionService.get(id),
   extraFolders: () => attentionPluginStore.userFolders(attentionDataDir, 'notifier'),
+  // Nothing is sent for a session that is open on a screen (the page reports presence over the terminal WebSocket).
+  isForeground: (taskId, terminalId) => terminal.isTerminalForeground(taskId, terminalId),
 });
 // The plugin marketplace (services/attention-market.js): the official index is marketplace.json on the branch the update check reads.
 const attentionMarket = require('./services/attention-market').createMarket({

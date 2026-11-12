@@ -15,6 +15,7 @@ const { listSessions, startupCommand, newClaudeCommand, runningSubagents, SESSIO
 const { resolveTerminalUser, userCanEnter, terminalEnvFor } = require('../lib/terminal-user');
 const { processCwd, cwdInRoot } = require('../lib/terminal-cwd');
 const { peerFsSettings } = require('../services/peer-fs-settings');
+const { createPresence } = require('../lib/terminal-presence');
 
 // Sessions are keyed by task ID and terminal ID; omitted IDs name the implicit `default` terminal, which only older tasks have (lib/task-default-terminal.js).
 const sessions = new Map();
@@ -28,6 +29,9 @@ const FLOW_HIGH = 1024 * 1024;
 const FLOW_LOW = 256 * 1024;
 const FLOW_POLL_MS = 20;
 const AUTH_CACHE_MS = 1000;            // how long a successful access check is trusted
+// Which terminals are on screen: the page reports { type: 'presence', foreground } per socket (lib/terminal-presence.js); the
+// T-Attention notifiers send nothing for a session that is in the foreground (services/attention-notify.js, wired in server.js).
+const presence = createPresence();
 
 // Agent hooks (Claude Code / Codex) report activity back through this endpoint.
 // The token is an HMAC of task + terminal, so it needs no storage and is only
@@ -786,6 +790,7 @@ function handleWs(ws, req, sessionUser, requestedTaskId = null, requestedTermina
       return true;
     }
     if (data.type === 'ping' && binaryControl) { sendControl({ type: 'pong' }); return true; }
+    if (data.type === 'presence') { presence.report(key, ws, data.foreground); return true; }
     if (data.type === 'resize') {
       if (!Number.isInteger(data.cols) || !Number.isInteger(data.rows) || data.cols < 1 || data.rows < 1 || data.cols > 1000 || data.rows > 1000) return true;
       s.activity?.noteInput();
@@ -822,6 +827,7 @@ function handleWs(ws, req, sessionUser, requestedTaskId = null, requestedTermina
   });
 
   ws.on('close', () => {
+    presence.drop(key, ws);
     if (s.ws === ws) {
       s.ws = null;
     }
@@ -924,10 +930,17 @@ function liveTerminalIds(taskId) {
   return ids;
 }
 
+// True while a page shows this terminal in the foreground (see lib/terminal-presence.js); false for an unknown terminal.
+function isTerminalForeground(taskId, requestedTerminalId) {
+  if (!Number.isInteger(Number(taskId)) || Number(taskId) < 1 || typeof requestedTerminalId !== 'string') return false;
+  return presence.isForeground(sessionKey(taskId, requestedTerminalId));
+}
+const presenceSnapshot = () => presence.snapshot();
+
 function closeTaskTerminals(taskId) {
   // Legacy phone-only shells are not listed any more, but one may still be running.
   const phone = db.prepare("SELECT terminal_id FROM task_terminals WHERE task_id = ? AND substr(terminal_id, 1, 3) = 'h5-'").all(taskId);
   for (const item of [...listTerminals(taskId), ...phone]) controlSession(taskId, 'close', item.terminal_id);
 }
 
-module.exports = { terminalWorkDir, setHookEndpoint, setAttentionTerminals, attentionEnv, reportHook, verifyHookToken, activitySnapshot, subagentSnapshot, serveActivityStream, acknowledgeActivity, controlSession, handleWs, listTerminals, createTerminal, listAgentSessions, reopenCommand, renameTerminal, terminalCwd, assertTerminal, closeTaskTerminals, liveTerminalIds, updateIdleTerminals, setTerminalOrder, forgetTerminalOrder };
+module.exports = { terminalWorkDir, setHookEndpoint, setAttentionTerminals, attentionEnv, reportHook, verifyHookToken, activitySnapshot, subagentSnapshot, serveActivityStream, acknowledgeActivity, controlSession, handleWs, listTerminals, createTerminal, listAgentSessions, reopenCommand, renameTerminal, terminalCwd, assertTerminal, closeTaskTerminals, liveTerminalIds, updateIdleTerminals, setTerminalOrder, forgetTerminalOrder, isTerminalForeground, presenceSnapshot };

@@ -852,7 +852,9 @@ The installed app and the web page share the same OSS settings. After saving the
 
 ### T-Attention notifications (Telegram)
 
-When a T-Attention item enters a status that needs you (by default **Needs you**, **Failed** and **Review**), the Client can tell you on Telegram: your Telegram **account 1** sends a message to, or rings, your **account 2** (for example the account on the phone you carry). It uses the MTProto user API through the npm package `telegram` (gramjs), not a bot.
+When a T-Attention item enters a status that needs you (by default **Needs you**, **Failed** and **Finished (ready for review)**), the Client can tell you on Telegram: your Telegram **account 1** sends a message to, or rings, your **account 2** (for example the account on the phone you carry). It uses the MTProto user API through the npm package `telegram` (gramjs), not a bot.
+
+Nothing is sent while the session is open on a screen: when the item belongs to a T-Agent terminal that a page shows, in a visible tab, and you used that page (or another column of the same multi-column view) in the last 5 minutes. Skips are listed as "Skipped: the session was open on screen" under Recent notifications.
 
 Setup: open **Settings → T-Attention**, tap the row **telegram** under Plugins; the message and call rules are the row **Message and call rules** under the plugin list.
 

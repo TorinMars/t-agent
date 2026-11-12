@@ -270,10 +270,18 @@ function excerpt(value) {
   if (bytes.length <= LIMITS.excerptBytes) return clean;
   return bytes.subarray(bytes.length - LIMITS.excerptBytes).toString('utf8').replace(/^\uFFFD+/, ''); // a cut character at the start is dropped
 }
-// The whole body: the stored fields, the context patch, the activity entry and the excerpt.
-function readBody(body) {
+// The whole body: the stored fields, the context patch, the activity entry and the excerpt. tagent: the T-Agent terminal of the terminal
+// token that sends it (verifyToken), or null; see tieToTerminal.
+function readBody(body, tagent = null) {
   const fields = readFields(body);
-  return { fields, context: contextPatch(body.context), activity: activity(body.activity), excerpt: excerpt(body.excerpt), plainTurnEnd: body.plain_turn_end === true };
+  return { fields, context: contextPatch(body.context), activity: activity(body.activity), excerpt: excerpt(body.excerpt), plainTurnEnd: body.plain_turn_end === true, tagent };
+}
+// A write with a terminal token ties the item to that terminal: context.tagent is set from the token when the item has none and the patch does
+// not name it (also not to remove it) and does not clear the whole context. An existing tagent is never overwritten. Returns the context patch.
+function tieToTerminal(patch, current, tagent) {
+  if (!tagent || patch === null || (current && current.tagent)) return patch;
+  if (patch && Object.prototype.hasOwnProperty.call(patch, 'tagent')) return patch;
+  return { ...(patch || {}), tagent: { task_id: tagent.task_id, terminal_id: tagent.terminal_id } };
 }
 const parseJson = value => { if (!value) return null; try { return JSON.parse(value); } catch { return null; } };
 const contextKeysChanged = (before, after) => [...new Set([...Object.keys(before || {}), ...Object.keys(after || {})])]
@@ -455,7 +463,7 @@ function createAttentionService({ db, now = () => new Date() } = {}) {
   }
 
   // Inside a transaction. fields: validated (readFields).
-  function insertItem({ fields: given, context, activity: entry }, actor, defaultSource) {
+  function insertItem({ fields: given, context, activity: entry, tagent }, actor, defaultSource) {
     const fields = resolveParent(given);
     if (!fields.title) throw invalid('title cannot be empty');
     checkParent(null, fields.parent_id);
@@ -487,7 +495,7 @@ function createAttentionService({ db, now = () => new Date() } = {}) {
       updated_at: at,
       completed_at: FINISHED.has(status) ? at : null,
     };
-    const mergedContext = mergeContext(null, context);
+    const mergedContext = mergeContext(null, tieToTerminal(context, null, tagent));
     row.context = mergedContext ? JSON.stringify(mergedContext) : null;
     const columns = Object.keys(row);
     const id = db.prepare(`INSERT INTO attention_items (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`).run(...columns.map(column => row[column])).lastInsertRowid;
@@ -501,7 +509,7 @@ function createAttentionService({ db, now = () => new Date() } = {}) {
   }
 
   // Inside a transaction. Returns null when nothing changed. extra: more keys for the event's data (a move's placement and reason).
-  function updateRow(before, { fields: given, context, activity: entry }, actor, extra = null) {
+  function updateRow(before, { fields: given, context, activity: entry, tagent }, actor, extra = null) {
     const fields = resolveParent(given);
     const changes = {};
     for (const [field, value] of Object.entries(fields)) {
@@ -515,7 +523,7 @@ function createAttentionService({ db, now = () => new Date() } = {}) {
       if (other && other.id !== before.id) throw new AttentionError('EXTERNAL_REF_EXISTS', 'A task with this external_ref already exists', 409, { id: other.id });
     }
     const beforeContext = parseJson(before.context);
-    const afterContext = mergeContext(beforeContext, context);
+    const afterContext = mergeContext(beforeContext, tieToTerminal(context, beforeContext, tagent));
     const changedKeys = contextKeysChanged(beforeContext, afterContext);
     if (changedKeys.length) changes.context = afterContext ? JSON.stringify(afterContext) : null;
     const at = stamp();
@@ -541,15 +549,16 @@ function createAttentionService({ db, now = () => new Date() } = {}) {
     return { kind: 'updated', item, previous: rowToItem(before), event, activity: activityEvent };
   }
 
-  function create(body, { actor, defaultSource } = {}) {
-    const parts = readBody(body);
+  // tagent (create, update, upsertByRef): the terminal of a terminal token (routes/attention.js), see tieToTerminal.
+  function create(body, { actor, defaultSource, tagent } = {}) {
+    const parts = readBody(body, tagent);
     const change = db.transaction(() => insertItem(parts, actor, defaultSource))();
     emit(change, parts);
     return change.item;
   }
 
-  function update(id, body, { actor } = {}) {
-    const parts = readBody(body);
+  function update(id, body, { actor, tagent } = {}) {
+    const parts = readBody(body, tagent);
     const change = db.transaction(() => {
       const before = selectItem.get(Number(id));
       if (!before) throw new AttentionError('NOT_FOUND', 'Task not found', 404);
@@ -560,10 +569,10 @@ function createAttentionService({ db, now = () => new Date() } = {}) {
   }
 
   // The listener path: create the item of this external_ref when it is missing, else update it. Returns { created, item }.
-  function upsertByRef(ref, body, { actor, defaultSource } = {}) {
+  function upsertByRef(ref, body, { actor, defaultSource, tagent } = {}) {
     const externalRef = VALIDATORS.external_ref(ref);
     if (!externalRef) throw invalid('external_ref cannot be empty');
-    const parts = readBody(body);
+    const parts = readBody(body, tagent);
     delete parts.fields.external_ref; // the address names the item; a different body value cannot move it
     const change = db.transaction(() => {
       const before = selectByRef.get(externalRef);
@@ -734,7 +743,7 @@ function createAttentionService({ db, now = () => new Date() } = {}) {
     revokeTerminalToken({ taskId, terminalId });
     const token = `tatt_${crypto.randomBytes(32).toString('base64url')}`;
     terminalSeq += 1;
-    const entry = { id: `terminal:${terminalSeq}`, name: `terminal ${key}`.slice(0, LIMITS.tokenName), hash: hashToken(token), key };
+    const entry = { id: `terminal:${terminalSeq}`, name: `terminal ${key}`.slice(0, LIMITS.tokenName), hash: hashToken(token), key, tagent: { task_id: String(Number(taskId)), terminal_id: String(terminalId) } };
     terminalByKey.set(key, entry);
     terminalByHash.set(entry.hash, entry);
     return { id: entry.id, name: entry.name, token };
@@ -754,7 +763,7 @@ function createAttentionService({ db, now = () => new Date() } = {}) {
   function verifyToken(token) {
     if (typeof token !== 'string' || !TOKEN_PATTERN.test(token)) return null;
     const terminal = terminalByHash.get(hashToken(token));
-    if (terminal) return { id: terminal.id, name: terminal.name, kind: 'terminal', scopes: [] };
+    if (terminal) return { id: terminal.id, name: terminal.name, kind: 'terminal', scopes: [], tagent: { ...terminal.tagent } };
     const row = db.prepare('SELECT * FROM attention_tokens WHERE token_hash = ?').get(hashToken(token));
     if (!row || row.revoked_at) return null;
     db.prepare('UPDATE attention_tokens SET last_used_at = ? WHERE id = ?').run(stamp(), row.id);

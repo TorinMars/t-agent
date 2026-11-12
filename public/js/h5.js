@@ -138,7 +138,9 @@
   function readInfo(from) {
     if (from.infoPending) return from.infoPending;
     const pending = api('GET', infoUrl(from)).then(info => {
+      const before = Array.isArray(from.capabilities) ? from.capabilities.join('\n') : null;
       from.capabilities = Array.isArray(info && info.capabilities) ? info.capabilities : [];
+      if (from.capabilities.join('\n') !== before && sources.includes(from)) publishSources(); // T-Attention reads an Engine that has 'attention:remote'
       return info;
     }).finally(() => { if (from.infoPending === pending) from.infoPending = null; });
     from.infoPending = pending;
@@ -310,9 +312,15 @@
   function note(text) { ui.set({ taskList: { note: text, groups: [], tasks: [], sortable: false } }); }
   // The task list the shell draws: a note (loading, an error, no tasks), or the tasks of every listed device in one flat list in the shared order (see
   // "Task order" below), each task with its device tag and the sessions listed under it when it is open. `groups` is this machine's own, for T-Attention's way back.
+  // `sources` also tells T-Attention (attention-feed.mjs) which Engines to read: `listed` (in the task list: known and not hidden; false for all until the
+  // services and what is hidden are known), `instanceId` (the colour of its tag) and `capabilities` (null until its `/info` was read; this machine: null).
   function publishSources() {
+    const listed = listReady ? listedSources() : [];
     ui.set({
-      sources: sources.filter(item => item === LOCAL || item.label).map(item => ({ key: item.key, label: item.label, name: item.name || '', offline: item.status === 'offline', hidden: hiddenDevices.has(item.key) })),
+      sources: sources.filter(item => item === LOCAL || item.label).map(item => ({
+        key: item.key, label: item.label, name: item.name || '', offline: item.status === 'offline', hidden: hiddenDevices.has(item.key),
+        listed: listed.includes(item), instanceId: item.instanceId || null, capabilities: item !== LOCAL && Array.isArray(item.capabilities) ? item.capabilities : null,
+      })),
       sourceKey: source.key,
       sourceLabel: task && source !== LOCAL ? source.label : '', // the header says which service the shown task is on when it is not this machine
     });
@@ -3735,9 +3743,15 @@
   ui.actions.canOpenLocalPath = absolute => Boolean(localTaskFor(absolute));
   // The preview of any path for T-Attention: the central list belongs to this Client, so its files are read with the local Engine's any-path read
   // (`GET /api/fs/content`, read only, as the terminal user), whatever Engine the page shows. Attention.jsx calls it only for a context of this machine.
-  ui.actions.openAnyPath = absolute => {
+  // An item of another Engine (`sourceKey`, its T-Attention list is read there) opens its files on that Engine, when it reads any path ('fs:read-any').
+  ui.actions.canOpenAnyPath = (sourceKey = 'local') => {
+    const from = sources.find(item => item.key === sourceKey);
+    return Boolean(from && (from === LOCAL || (from.status !== 'offline' && readsAnyPath(from))));
+  };
+  ui.actions.openAnyPath = (absolute, sourceKey = 'local') => {
     if (typeof absolute !== 'string' || !(absolute.startsWith('/') || absolute === '~' || absolute.startsWith('~/'))) return false;
-    void openFileSheet(absolute, { link: true, absolute: true, from: LOCAL });
+    if (!ui.actions.canOpenAnyPath(sourceKey)) return false;
+    void openFileSheet(absolute, { link: true, absolute: true, from: sources.find(item => item.key === sourceKey) });
     return true;
   };
   ui.actions.openLocalPath = absolute => {
@@ -3841,6 +3855,7 @@
     void loadLinks(); // the "⋯" of a task needs it, the list does not wait for it
     await Promise.all([loadSources(), loadHidden(), loadOrder()]);
     listReady = true;
+    publishSources(); // what is listed is known now (T-Attention follows it)
     markListsKnown();
     syncMindmapSources();
     for (const from of listedSources()) if (!reads.has(from)) reads.set(from, loadSource(from));

@@ -2,6 +2,43 @@
 // list, and which change is a reminder. No DOM, no requests, so test/attention-model.test.js runs it in Node. Items are the JSON of `attention_items`
 // (see "T-Attention" in DESIGN.md): { id, title, notes, status, priority, due_date, source, attention_reason, link_url, link_label, updated_at, ... }.
 // A server with sub-tasks adds `parent_id`, `custom_status`, `result` and `sort_order` (see `hasTree`); an older one sends none of them.
+// One list of several engines (this machine and every connected service that has T-Attention, see "T-Attention on the page" in DESIGN.md): the feed
+// tags each item with `engine` (the key of its engine, as h5.js names it: 'local', 'remote:7') and `key` ('<engine>:<id>'), since ids repeat between
+// engines. `item.source` stays what it always was: who reported the task ('claude', 'user', ...). Every function here names an item by its `key` when it
+// has one, else by its `id` (an untagged list, as the tests and an older page build it), and a `parent_id` always means an item of the same engine.
+
+// ── Engines ──
+export const REMOTE_CAPABILITY = 'attention:remote';
+export const engineOf = item => (item && item.engine) || 'local';
+export const keyOf = item => (item && item.key != null ? item.key : item ? item.id : null);
+export const itemKey = (engine, id) => `${engine}:${id}`;
+// An item as the feed keeps it: tagged with its engine and key (a new object; the item of the answer is not changed).
+export const tagItem = (item, engine) => (item && item.id != null ? { ...item, engine, key: itemKey(engine, item.id) } : item);
+// A key ('local:5', 'remote:7:5') or a bare id (an item of this machine) as { engine, id }; null when it cannot be read.
+export function parseKey(ref) {
+  if (typeof ref === 'number') return Number.isFinite(ref) ? { engine: 'local', id: ref } : null;
+  const text = String(ref == null ? '' : ref);
+  const cut = text.lastIndexOf(':');
+  const id = Number(cut < 0 ? text : text.slice(cut + 1));
+  if (!text || !Number.isFinite(id)) return null;
+  return { engine: cut < 0 ? 'local' : text.slice(0, cut), id };
+}
+// The engines whose items the list shows, from `state.sources` of h5.js (the devices of the one task list, in list order, this machine first): the ones
+// listed there (not hidden by "Show in task list"), and of those the remote ones only when online and advertising REMOTE_CAPABILITY. Before h5.js has
+// said what is listed (or on a page without it), and whenever nothing would be left, this machine alone.
+export function attentionEngines(sources) {
+  const list = Array.isArray(sources) ? sources.filter(source => source && source.key) : [];
+  const local = list.find(source => source.key === 'local') || { key: 'local', label: 'This machine', name: '' };
+  const pick = source => ({ key: source.key, local: source.key === 'local', label: source.label || '', name: source.name || '', instanceId: source.instanceId || null });
+  const listed = list.filter(source => source.listed === true);
+  const out = listed.filter(source => source.key === 'local' || (!source.offline && Array.isArray(source.capabilities) && source.capabilities.includes(REMOTE_CAPABILITY)));
+  return (out.length ? out : [local]).map(pick);
+}
+const parentKeyOf = item => {
+  const parent = idOf(item && item.parent_id);
+  if (parent === null) return null;
+  return item.key != null ? itemKey(engineOf(item), parent) : parent;
+};
 
 export const STATUSES = ['todo', 'working', 'waiting_user', 'review', 'done', 'failed', 'cancelled'];
 export const PRIORITIES = ['high', 'medium', 'low', 'none'];
@@ -53,12 +90,22 @@ export function compareItems(a, b) {
   return (Number(a.id) || 0) - (Number(b.id) || 0);
 }
 
-// [{ key, label, folded, items }] in GROUPS order; empty groups are left out unless `keepEmpty`.
-export function groupItems(items, { keepEmpty = false } = {}) {
+// The order of the engine blocks inside a group: `engines` (keys, this machine first), an engine that is not in it after them. Without `engines`:
+// this machine first, the others together.
+const engineRank = engines => {
+  const at = new Map((engines || ['local']).map((key, index) => [key, index]));
+  return item => (at.has(engineOf(item)) ? at.get(engineOf(item)) : at.size);
+};
+
+// [{ key, label, folded, items }] in GROUPS order; empty groups are left out unless `keepEmpty`. Inside a group the items of one engine are one block,
+// in the order of `engines` (this machine first), each block in the order of `compareItems`.
+export function groupItems(items, { keepEmpty = false, engines = null } = {}) {
   const buckets = Object.fromEntries(GROUPS.map(group => [group.key, []]));
   for (const item of items || []) if (item && item.id != null) buckets[groupOf(item)].push(item);
+  const rank = engineRank(engines);
+  const compare = (a, b) => rank(a) - rank(b) || compareItems(a, b);
   return GROUPS
-    .map(group => ({ key: group.key, label: group.label, folded: Boolean(group.folded), items: buckets[group.key].sort(compareItems) }))
+    .map(group => ({ key: group.key, label: group.label, folded: Boolean(group.folded), items: buckets[group.key].sort(compare) }))
     .filter(group => keepEmpty || group.items.length);
 }
 
@@ -78,90 +125,99 @@ const idOf = value => (value === null || value === undefined || value === '' ? n
 // even on a cycle in the data. Returns [{ item, depth, indent, parent, children: [...] }].
 export function buildTree(items, all = items) {
   const list = items || [];
-  const inGroup = new Map(list.map(item => [item.id, item]));
-  const known = new Map((all || []).filter(item => item && item.id != null).map(item => [item.id, item]));
+  const inGroup = new Map(list.map(item => [keyOf(item), item]));
+  const known = new Map((all || []).filter(item => item && item.id != null).map(item => [keyOf(item), item]));
   const kids = new Map();
   for (const item of list) {
-    const parent = idOf(item.parent_id);
-    if (parent !== null && parent !== item.id && inGroup.has(parent)) {
+    const parent = parentKeyOf(item);
+    if (parent !== null && parent !== keyOf(item) && inGroup.has(parent)) {
       if (!kids.has(parent)) kids.set(parent, []);
       kids.get(parent).push(item);
     }
   }
   const seen = new Set();
   const node = (item, depth, parent) => {
-    seen.add(item.id);
-    const children = (kids.get(item.id) || []).filter(child => !seen.has(child.id)).map(child => node(child, depth + 1, null));
+    seen.add(keyOf(item));
+    const children = (kids.get(keyOf(item)) || []).filter(child => !seen.has(keyOf(child))).map(child => node(child, depth + 1, null));
     return { item, depth, indent: Math.min(depth, MAX_INDENT), parent, children };
   };
   const roots = [];
   for (const item of list) {
-    if (seen.has(item.id)) continue;
-    const parent = idOf(item.parent_id);
-    if (parent !== null && parent !== item.id && inGroup.has(parent)) continue; // drawn under its parent
-    roots.push(node(item, 0, parent !== null && parent !== item.id ? known.get(parent) || null : null));
+    if (seen.has(keyOf(item))) continue;
+    const parent = parentKeyOf(item);
+    if (parent !== null && parent !== keyOf(item) && inGroup.has(parent)) continue; // drawn under its parent
+    roots.push(node(item, 0, parent !== null && parent !== keyOf(item) ? known.get(parent) || null : null));
   }
   // A cycle inside the group (a data error) leaves rows that no root reached: they are drawn as top-level rows.
-  for (const item of list) if (!seen.has(item.id)) roots.push(node(item, 0, null));
+  for (const item of list) if (!seen.has(keyOf(item))) roots.push(node(item, 0, null));
   return roots;
 }
 
-// The rows a tree shows, top to bottom ([{ id, depth, indent, hasChildren }]); the sub-tasks of an id in `collapsed` are left out.
+// The rows a tree shows, top to bottom ([{ id, key, depth, indent, hasChildren }]); the sub-tasks of a key (or id) in `collapsed` are left out.
 export function visibleRows(tree, collapsed = new Set()) {
   const out = [];
   const walk = nodes => {
     for (const entry of nodes) {
-      out.push({ id: entry.item.id, depth: entry.depth, indent: entry.indent, hasChildren: entry.children.length > 0 });
-      if (!collapsed.has(entry.item.id)) walk(entry.children);
+      out.push({ id: entry.item.id, key: keyOf(entry.item), depth: entry.depth, indent: entry.indent, hasChildren: entry.children.length > 0 });
+      if (!collapsed.has(keyOf(entry.item))) walk(entry.children);
     }
   };
   walk(tree || []);
   return out;
 }
 
-// The direct sub-tasks of an id (any group), in the order of `compareItems`.
-export const childrenOf = (items, id) => (items || []).filter(item => item && idOf(item.parent_id) === id && item.id !== id).sort(compareItems);
+// The direct sub-tasks of a key (or id) (any group), in the order of `compareItems`.
+export const childrenOf = (items, ref) => (items || []).filter(item => item && parentKeyOf(item) === ref && keyOf(item) !== ref).sort(compareItems);
 
-// The ids of every sub-task of an id, at any depth (any group). Never loops.
-export function descendantsOf(items, id) {
+// The keys (or ids) of every sub-task of a key (or id), at any depth (any group). Never loops.
+export function descendantsOf(items, ref) {
   const out = new Set();
-  const queue = [id];
+  const queue = [ref];
   while (queue.length) {
     const current = queue.shift();
     for (const item of items || []) {
-      if (item && idOf(item.parent_id) === current && !out.has(item.id) && item.id !== id) { out.add(item.id); queue.push(item.id); }
+      if (item && parentKeyOf(item) === current && !out.has(keyOf(item)) && keyOf(item) !== ref) { out.add(keyOf(item)); queue.push(keyOf(item)); }
     }
   }
   return out;
 }
 
-// The tasks the Parent select offers for `item`: every other task that is not one of its sub-tasks, in the list's order (by group).
+// The tasks the Parent select offers for `item`: every other task of its own engine that is not one of its sub-tasks, in the list's order (by group).
 export function parentChoices(items, item) {
-  const blocked = descendantsOf(items, item.id);
-  blocked.add(item.id);
-  return groupItems(items).flatMap(group => group.items).filter(entry => !blocked.has(entry.id));
+  const blocked = descendantsOf(items, keyOf(item));
+  blocked.add(keyOf(item));
+  const engine = engineOf(item);
+  return groupItems(items).flatMap(group => group.items).filter(entry => !blocked.has(keyOf(entry)) && engineOf(entry) === engine);
 }
 
-// The collapsed parents remembered in localStorage: a JSON list of ids. Bad data reads as none.
+// The collapsed parents remembered in localStorage: a JSON list of ids (this machine's tasks) and keys ('remote:7:5', another engine's). Bad data reads
+// as none.
+const COLLAPSED_KEY_RE = /^[a-z][\w-]*(?::[\w-]+)*:\d+$/;
 export function readCollapsed(text) {
-  try { const list = JSON.parse(text || '[]'); return new Set(Array.isArray(list) ? list.filter(id => Number.isFinite(id)) : []); } catch { return new Set(); }
+  try {
+    const list = JSON.parse(text || '[]');
+    return new Set(Array.isArray(list) ? list.filter(id => Number.isFinite(id) || (typeof id === 'string' && id.length <= 200 && COLLAPSED_KEY_RE.test(id))) : []);
+  } catch { return new Set(); }
 }
+// The name a collapsed parent is remembered by: its id for a task of this machine (as before there were engines), else its key.
+export const collapseId = item => (engineOf(item) === 'local' ? item.id : keyOf(item));
 
 // ── Moving: the body of POST /api/attention/:id/move, and the list the page shows before the answer ──
 
 // The status a drop on the title of a group gives: the group's first status ("Done & failed" gives done).
 export const statusOfGroup = key => (GROUPS.find(group => group.key === key) || { statuses: [] }).statuses[0] || null;
 
-// The list after `id` moved, as the page draws it until the server answers: `move` is the body of /move ({ before } | { after } | { position, status }).
-// Only the moved item changes: its `sort_order` goes between its new neighbours of the group (or above / below all of them) and, with `status`, its
-// status. Its sub-tasks need no change: they are drawn under it. null when the move cannot be shown (an unknown id).
-export function moveLocal(items, id, move) {
+// The list after the item `ref` (its key, or id) moved, as the page draws it until the server answers: `move` is the body of /move ({ before } |
+// { after } | { position, status }, with the ids of its own engine). Only the moved item changes: its `sort_order` goes between its new neighbours of the
+// group and engine (or above / below all of them) and, with `status`, its status. Its sub-tasks need no change: they are drawn under it. null when the
+// move cannot be shown (an unknown item).
+export function moveLocal(items, ref, move) {
   const list = Array.isArray(items) ? items : [];
-  const moving = list.find(item => item.id === id);
+  const moving = list.find(item => keyOf(item) === ref);
   if (!moving || !move) return null;
   const status = move.status || moving.status;
   const next = { ...moving, status };
-  const peers = list.filter(item => item.id !== id && groupOf(item) === groupOf(next)).sort(compareItems);
+  const peers = list.filter(item => keyOf(item) !== ref && groupOf(item) === groupOf(next) && engineOf(item) === engineOf(moving)).sort(compareItems);
   const at = item => order(item) ?? 0;
   let value;
   const target = move.before ?? move.after;
@@ -173,33 +229,34 @@ export function moveLocal(items, id, move) {
   } else if (move.position === 'bottom') value = peers.length ? Math.min(...peers.map(at)) - 1 : 0;
   else value = peers.length ? Math.max(...peers.map(at)) + 1 : 0;
   next.sort_order = value;
-  return list.map(item => (item.id === id ? next : item));
+  return list.map(item => (keyOf(item) === ref ? next : item));
 }
 
 // The list after a change drawn at once (`shown`, made from `before`) failed: every item that change touched goes back to its copy in `before`, unless a
 // newer copy (a live event, an answer) replaced it in `now` meanwhile.
 export function rollbackItems(now, before, shown) {
-  const was = new Map((before || []).map(item => [item.id, item]));
-  const touched = new Map((shown || []).filter(item => was.get(item.id) !== item).map(item => [item.id, item]));
-  return (now || []).map(item => (touched.get(item.id) === item && was.has(item.id) ? was.get(item.id) : item));
+  const was = new Map((before || []).map(item => [keyOf(item), item]));
+  const touched = new Map((shown || []).filter(item => was.get(keyOf(item)) !== item).map(item => [keyOf(item), item]));
+  return (now || []).map(item => (touched.get(keyOf(item)) === item && was.has(keyOf(item)) ? was.get(keyOf(item)) : item));
 }
 
-// The move of a keyboard step in the edit view ('up', 'down', 'top') among the item's siblings of its group (the rows drawn at the same level next to it):
-// the body of /move, or null when it cannot go there.
-export function stepMove(items, id, step) {
-  const item = (items || []).find(entry => entry.id === id);
+// The move of a keyboard step in the edit view ('up', 'down', 'top') among the item's siblings of its group and engine (the rows of its engine drawn at
+// the same level next to it): the body of /move (with ids), or null when it cannot go there. `ref` is the item's key (or id).
+export function stepMove(items, ref, step) {
+  const item = (items || []).find(entry => keyOf(entry) === ref);
   if (!item) return null;
   const group = groupItems(items).find(entry => entry.key === groupOf(item));
   if (!group) return null;
   const find = nodes => {
     for (const entry of nodes) {
-      if (entry.item.id === id) return nodes;
+      if (keyOf(entry.item) === ref) return nodes;
       const deeper = find(entry.children);
       if (deeper) return deeper;
     }
     return null;
   };
-  const siblings = (find(buildTree(group.items, items)) || []).map(entry => entry.item.id);
+  const siblings = (find(buildTree(group.items, items)) || []).filter(entry => engineOf(entry.item) === engineOf(item)).map(entry => entry.item.id);
+  const id = item.id;
   const index = siblings.indexOf(id);
   if (step === 'top') return index > 0 ? { before: siblings[0] } : null;
   if (step === 'up') return index > 0 ? { before: siblings[index - 1] } : null;
@@ -215,9 +272,9 @@ export const needsCount = items => (items || []).filter(item => item && item.sta
 export function applyChange(items, change) {
   const list = Array.isArray(items) ? items : [];
   if (!change || !change.item || change.item.id == null) return list;
-  const id = change.item.id;
-  const at = list.findIndex(item => item.id === id);
-  if (change.kind === 'deleted') return at < 0 ? list : list.filter(item => item.id !== id);
+  const id = keyOf(change.item);
+  const at = list.findIndex(item => keyOf(item) === id);
+  if (change.kind === 'deleted') return at < 0 ? list : list.filter(item => keyOf(item) !== id);
   if (at < 0) return [...list, change.item];
   // An older copy (a late event after a newer list was read) does not replace a newer one.
   if (time(change.item.updated_at) && time(list[at].updated_at) > time(change.item.updated_at)) return list;
@@ -400,13 +457,22 @@ export function onThisMachine(context, localHost) {
   return !host || !here || host === here;
 }
 
-export function jumpBack(context, { sourceKey, groups, localHost } = {}) {
+// An item of another engine (`sourceKey` 'remote:7'): `tasks` is `state.taskList.tasks` (the rows of the one list, each with its `source` and `ref`), and
+// its terminal opens when that engine's task is listed there (`taskId` is then the row's ref, which `ui.actions.openRow` takes); `localHost` is then the
+// host of that engine's answer.
+export function jumpBack(context, { sourceKey, groups, tasks, localHost } = {}) {
   const tagent = context && context.tagent;
-  if (tagent && tagent.task_id != null && tagent.terminal_id && sourceKey === 'local' && onThisMachine(context, localHost)) {
-    for (const group of groups || []) {
-      for (const task of group.tasks || []) {
-        if (String(task.id) === String(tagent.task_id)) return { kind: 'terminal', taskId: task.id, terminalId: String(tagent.terminal_id) };
+  if (tagent && tagent.task_id != null && tagent.terminal_id && onThisMachine(context, localHost)) {
+    const terminalId = String(tagent.terminal_id);
+    if (sourceKey === 'local') {
+      for (const group of groups || []) {
+        for (const task of group.tasks || []) {
+          if (String(task.id) === String(tagent.task_id)) return { kind: 'terminal', taskId: task.id, terminalId };
+        }
       }
+    } else if (sourceKey) {
+      const task = (tasks || []).find(row => row && row.source === sourceKey && row.ref && String(row.id) === String(tagent.task_id));
+      if (task) return { kind: 'terminal', taskId: task.ref, terminalId };
     }
   }
   const resume = context && context.session && context.session.resume;

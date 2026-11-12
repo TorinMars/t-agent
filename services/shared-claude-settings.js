@@ -255,7 +255,7 @@ function parseShared(value, { invalid, tooLarge }) {
 // to this machine's copies of the scripts).
 function fileText(values, sourceName) {
   const name = String(sourceName || '').replace(/[\r\n\t]+/g, ' ').trim().slice(0, 200) || 'the source';
-  const comment = `Synced by T-Agent from ${name} and injected into the Claude Code sessions T-Agent starts (--settings); settings.json is not changed. Choose the keys on ${name} (Settings > Rules and skills sync); changes made here are replaced.`;
+  const comment = `Synced by T-Agent from ${name} and injected into the Claude Code sessions T-Agent starts (--settings); settings.json is not changed. Choose the keys on ${name} (Settings > Devices > Rules and skills sync); changes made here are replaced.`;
   return `${JSON.stringify({ _comment: comment, ...nest(values) }, null, 2)}\n`;
 }
 // The flat values of that file (null when it is missing; throws on a malformed file).

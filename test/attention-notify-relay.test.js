@@ -307,6 +307,9 @@ test('the sender switch: two logged-in devices agree on one, "Use this device" m
   assert.deepEqual(before.b.sender, { name: 'A', self: false, online: true });
   assert.equal(before.a.conflict, true);
   assert.equal(before.b.conflict, true);
+  // The scope label of the settings sheet (GET /api/settings-sync `telegram`) says the same, and that someone must choose.
+  assert.deepEqual(a.relay.summary(), { sender_name: 'A', self: true, conflict: true });
+  assert.deepEqual(b.relay.summary(), { sender_name: 'A', self: false, conflict: true });
   await Promise.all(a.service.handle(change(item(1, 'waiting_user'), item(1, 'working'))));
   await Promise.all(b.service.handle(change(item(1, 'waiting_user'), item(1, 'working'))));
   assert.deepEqual(a.calls.map(call => call.origin ? call.origin.name : 'own'), ['own', 'B']);
@@ -317,6 +320,7 @@ test('the sender switch: two logged-in devices agree on one, "Use this device" m
   assert.equal(switched.body.told, 1);
   assert.equal(switched.body.relay.sender.self, true);
   assert.equal(switched.body.relay.explicit, true);
+  assert.deepEqual(b.relay.summary(), { sender_name: 'B', self: true, conflict: false });
   assert.equal(a.relay.readChoice().instance_id, ID.B, 'A got the choice');
   const put = a.received.find(entry => entry.method === 'PUT' && entry.path === '/v1/attention/notify-relay/sender');
   assert.ok(put);
@@ -454,6 +458,9 @@ test('without linked devices nothing changes: Telegram sends here, and the page 
   const view = (await a.call('GET', '/api/attention-notify/config')).body.relay;
   assert.equal(view.linked, 0);
   assert.deepEqual(view.sender, { name: 'A', self: true, online: true });
+  assert.deepEqual(a.relay.summary(), { sender_name: 'A', self: true, conflict: false });
+  a.ready = false;
+  assert.equal(a.relay.summary(), null, 'no device has Telegram: nothing to name');
   assert.equal(a.requests.length, 0, 'no request to anyone');
 });
 

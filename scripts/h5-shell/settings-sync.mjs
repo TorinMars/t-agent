@@ -1,7 +1,7 @@
 // The model behind the scope labels of the settings sheet (ScopeLabel.jsx): what a change to one setting affects ("Shared across devices", "This device
 // only", Telegram's one sender) and how far a shared change got. Data: GET /api/settings-sync
 //   { supported, scopes: { <id>: 'shared'|'device'|'telegram' }, keys: [{ key, scope, updated_at, updated_by_name, synced_peers, pending_peers }],
-//     peers: [{ name, online, supported, last_sync_at, last_error }] }
+//     peers: [{ name, online, supported, last_sync_at, last_error }], telegram: { sender_name, self, conflict } | null }
 // An older server answers 404: no labels at all (the page as before). With no linked device the labels are not shown either: on one machine the
 // difference means nothing. Pure functions, no React; `t` translates (the page passes I18n.t).
 import { relativeTime, timeOf } from './plugins-model.mjs';
@@ -12,7 +12,7 @@ const names = list => (Array.isArray(list) ? list.filter(name => typeof name ===
 
 // The answer of the route, or null / { supported: false } when there is none. Unknown scopes are dropped.
 export function normalizeSync(data) {
-  if (!data || typeof data !== 'object' || data.supported === false) return { supported: false, scopes: {}, keys: [], peers: [], sender: '' };
+  if (!data || typeof data !== 'object' || data.supported === false) return { supported: false, scopes: {}, keys: [], peers: [], sender: '', telegram: { name: '', self: false, conflict: false } };
   const scopes = {};
   for (const [id, scope] of Object.entries(data.scopes && typeof data.scopes === 'object' ? data.scopes : {})) if (SCOPES.includes(scope)) scopes[id] = scope;
   const keys = (Array.isArray(data.keys) ? data.keys : []).filter(entry => entry && typeof entry.key === 'string').map(entry => ({
@@ -22,10 +22,11 @@ export function normalizeSync(data) {
   const peers = (Array.isArray(data.peers) ? data.peers : []).filter(peer => peer && typeof peer.name === 'string' && peer.name).map(peer => ({
     name: peer.name, online: peer.online !== false, supported: peer.supported !== false, last_sync_at: peer.last_sync_at || null, last_error: peer.last_error ? String(peer.last_error) : '',
   }));
-  // The device that sends Telegram, when the server says (an optional field; without it the label says one device sends).
+  // The device that sends Telegram, when the server says (`telegram` is null when no device has Telegram, and missing on an older server; without a
+  // name the label says one device sends). `self`: it is this device; `conflict`: more than one device has Telegram and nobody chose.
   const telegram = data.telegram && typeof data.telegram === 'object' ? data.telegram : {};
-  const sender = [data.telegram_sender, telegram.sender_name, telegram.sender].find(value => typeof value === 'string' && value.trim()) || '';
-  return { supported: true, scopes, keys, peers, sender: sender.trim() };
+  const sender = ([data.telegram_sender, telegram.sender_name, telegram.sender].find(value => typeof value === 'string' && value.trim()) || '').trim();
+  return { supported: true, scopes, keys, peers, sender, telegram: { name: sender, self: telegram.self === true, conflict: telegram.conflict === true } };
 }
 
 // Labels are shown when the server knows about settings sync and at least one device is linked.
@@ -34,10 +35,15 @@ export const labelsShown = sync => Boolean(sync && sync.supported && sync.peers.
 // The scope of a setting: what the server says, else the scope the page knows for it (`fallback`).
 export const scopeOf = (sync, id, fallback = null) => (id && sync && sync.scopes[id]) || fallback;
 
-// The words of the label, untranslated.
+// The words of the label, untranslated. `sender` is the sync's `telegram` ({ name, self, conflict }) or just the sender's name.
 export function scopeText(scope, sender = '') {
   if (scope === 'shared') return 'Shared across devices';
-  if (scope === 'telegram') return sender ? `Sent through ${sender}` : 'Telegram: one device sends';
+  if (scope === 'telegram') {
+    const { name = '', self = false, conflict = false } = typeof sender === 'string' ? { name: sender } : (sender || {});
+    if (conflict) return 'Telegram: choose a sender';
+    if (self) return name ? `Sent through this device (${name})` : 'Sent through this device';
+    return name ? `Sent through ${name}` : 'Telegram: one device sends';
+  }
   return 'This device only';
 }
 export function scopeTitle(scope) {

@@ -184,10 +184,13 @@ function codexInner(text) {
   return found ? lines.slice(found.begin + 1, found.end).join('\n') : null;
 }
 
-// The notice a receiver puts on top of the shared rules file and inside its Codex block. The name cannot end the comment or break the line.
+// The notice a receiver puts on top of the shared rules file and inside its Codex block. The name cannot end the comment or break the line. It names
+// the place in the page (SETTINGS_PLACE); a file written by an older version says "Settings > Rules and skills sync" and is still ours: NOTICE_LINE
+// takes any notice line, the guard compares with the notice kept in the applied bundle, and the next bundle writes the new one.
+const SETTINGS_PLACE = 'Settings > Devices > Rules and skills sync';
 function syncedNotice(name) {
   const clean = String(name || '').replace(/[\r\n\t]+/g, ' ').replace(/-{2,}/g, '-').replace(/[<>]/g, '').trim().slice(0, LIMITS.nameLength) || 'the source';
-  return `<!-- Synced by T-Agent from ${clean}. Edit it on ${clean} or in the T-Agent page (Settings > Rules and skills sync); changes made here are replaced. -->`;
+  return `<!-- Synced by T-Agent from ${clean}. Edit it on ${clean} or in the T-Agent page (${SETTINGS_PLACE}); changes made here are replaced. -->`;
 }
 const withNotice = (rules, notice) => `${notice}\n\n${rules}`;
 // The rules without a receiver's notice: a service that was a receiver and became the source does not send its old notice on.

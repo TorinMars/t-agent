@@ -528,6 +528,29 @@ test('/v1/settings-sync takes only a live service-link token; /api/settings-sync
   const now = await call(url, 'POST', '/api/settings-sync/now', {});
   assert.equal(now.status, 200);
   assert.ok(Array.isArray(now.body.peers));
+  assert.equal(page.body.telegram, null, 'no relay: no Telegram sender to name');
+});
+
+test('/api/settings-sync names the device that sends Telegram, from the relay summary, without a wait', async () => {
+  const { createSettingsSyncRouter } = require('../routes/settings-sync');
+  const { a } = pairOf();
+  let summary = { sender_name: 'K01', self: false, conflict: false };
+  let calls = 0;
+  const relay = { summary: name => { calls += 1; assert.equal(name, 'telegram'); if (summary instanceof Error) throw summary; return summary; } };
+  const app = express();
+  app.use(express.json());
+  app.use('/api/settings-sync', createSettingsSyncRouter({ service: a.service, requireAuth: (req, res, next) => next(), getRelay: () => relay }));
+  const url = await listen(app);
+  assert.deepEqual((await call(url, 'GET', '/api/settings-sync')).body.telegram, { sender_name: 'K01', self: false, conflict: false });
+  summary = { sender_name: 'T01', self: true, conflict: true };
+  assert.deepEqual((await call(url, 'POST', '/api/settings-sync/now', {})).body.telegram, { sender_name: 'T01', self: true, conflict: true });
+  summary = null;
+  assert.equal((await call(url, 'GET', '/api/settings-sync')).body.telegram, null, 'nobody has Telegram');
+  summary = new Error('broken');
+  const failed = await call(url, 'GET', '/api/settings-sync');
+  assert.equal(failed.status, 200, 'a failing relay never breaks the route');
+  assert.equal(failed.body.telegram, null);
+  assert.equal(calls, 4);
 });
 
 // ---- Two real services ----

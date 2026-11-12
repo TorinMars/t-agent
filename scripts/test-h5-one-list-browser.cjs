@@ -3,6 +3,8 @@
 // closed; the actions of a row hit that row's service, whichever task is shown. Running counts add up, the next-session button crosses services, search finds both. An offline service
 // adds no rows (or keeps the rows it had, with a muted tag), does not disturb the others and comes back on its own. New task with "Create on". A remembered remote task, and a fallback when it is offline or hidden.
 // One service looks as it did. The Archived section across services. "Show in task list": hiding removes rows, counts and feeds, the last switch is disabled, it survives a reload.
+// The header names the device of the shown task with the same engine tag as its row in the list (the DeviceTag pill, closed look), on this machine too,
+// whenever the list tags its rows; one device without sorting names none (a remote one in plain text). It fits at 320px and keeps the header's height.
 // H5_SHOT_DIR=<dir> saves screenshots of a list with two services.
 const { chromium } = require('playwright');
 const fs = require('node:fs');
@@ -14,6 +16,8 @@ const ORIGIN = 'http://h5.test';
 const TYPES = { '.js': 'application/javascript', '.css': 'text/css', '.html': 'text/html' };
 const LOCAL_STREAM = '/api/tasks/terminal-activity/stream';
 const REMOTE_STREAM = '/api/remote-servers/7/terminal-activity/stream';
+const LOCAL_ID = '6c1d1c1e-0000-4000-8000-00000000000a';
+const VPS_ID = '9f2b7a33-0000-4000-8000-00000000000b';
 const GROUPS = [{ key: 'doing', name: 'In progress', sort_order: 1 }, { key: 'todo', name: 'To do', sort_order: 2 }];
 
 function makeService(prefix, base) {
@@ -25,9 +29,10 @@ function makeService(prefix, base) {
     activity: {},
   };
 }
-function makeWorld({ remote = true, hiddenRoute = true, hidden = [], linked = false } = {}) {
+// `ids`: the devices have instance ids and the server keeps the task order (the list can be sorted, so its rows are tagged even with one device).
+function makeWorld({ remote = true, hiddenRoute = true, hidden = [], linked = false, ids = false } = {}) {
   const world = {
-    remote, hiddenRoute, hidden, linked, writes: [], reads: [], pageErrors: [],
+    remote, hiddenRoute, hidden, linked, ids, writes: [], reads: [], pageErrors: [],
     local: makeService('/api/tasks', 'local'),
     vps: makeService('/api/remote-servers/7/tasks', 'remote'),
   };
@@ -48,7 +53,9 @@ async function serve(world, route) {
   else world.reads.push(pathname);
   if (pathname === '/h5') return route.fulfill({ contentType: 'text/html', body: fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8') });
   if (/^\/(js|css|vendor)\//.test(pathname)) return route.fulfill({ contentType: TYPES[path.extname(pathname)] || 'text/plain', body: fs.readFileSync(path.join(root, 'public', pathname)) });
-  if (pathname === '/api/remote-servers') return json(route, world.remote ? [{ id: 7, name: 'VPS', status: 'online', base_url: 'http://10.0.0.7:14002', enabled: true }] : []);
+  if (pathname === '/api/remote-servers') return json(route, world.remote ? [{ id: 7, name: 'VPS', status: 'online', base_url: 'http://10.0.0.7:14002', enabled: true, ...(world.ids ? { instance_id: VPS_ID } : {}) }] : []);
+  if (world.ids && pathname === '/api/system/version') return json(route, { app_version: '2.103.0', boot_id: 'b1', engine_name: 'MacBook', instance_id: LOCAL_ID });
+  if (world.ids && pathname === '/api/task-order') return json(route, { order: [], updated_at: 1 });
   if (pathname === '/api/service-links') return json(route, { supported: true, links: world.linked ? [{ id: 'l1', remote_server_id: 7, peer_url: 'http://peer.test', peer_name: 'VPS', role: 'initiator', online: true, state: 'online', shared: {} }] : [] });
   if (pathname === '/api/task-list/hidden-devices') {
     if (!world.hiddenRoute) return json(route, { error: 'not found' }, 404);
@@ -90,8 +97,8 @@ async function serve(world, route) {
   return json(route, { error: 'not mocked' }, 404);
 }
 
-async function open(browser, world, wide, { storage = {} } = {}) {
-  const context = await browser.newContext(wide ? { viewport: { width: 1280, height: 800 } } : { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+async function open(browser, world, wide, { storage = {}, scale = 1 } = {}) {
+  const context = await browser.newContext(wide ? { viewport: { width: 1280, height: 800 } } : { viewport: { width: 390, height: 844 }, deviceScaleFactor: scale, isMobile: true, hasTouch: true });
   const page = await context.newPage();
   page.on('pageerror', error => world.pageErrors.push(error.message));
   await page.addInitScript(values => {
@@ -188,7 +195,8 @@ async function testTwoServices(browser, wide) {
   // Opening a task on each reaches the right socket and tasks base.
   await t.openTask('local', 'Alpha');
   await t.waitSocket('/terminal/ws');
-  assert.equal(await t.service(), null, `${label}: this machine is not named in the header`);
+  assert.equal(await t.service(), 'This machine', `${label}: the list tags its rows, so the header tags this machine too`);
+  assert.equal(await page.locator('#h5-task-service > .h5-device-tag').count(), 1, `${label}: as a tag`);
   await t.openTask('remote:7', 'Alpha');
   await t.waitSocket('/api/remote-servers/7/terminal/ws');
   assert.equal(await t.service(), 'VPS', `${label}: the header names the service`);
@@ -384,7 +392,7 @@ async function testRemembered(browser, wide) {
   await page.reload();
   await page.waitForFunction(() => document.getElementById('h5-task-name').textContent === 'Alpha');
   await t.waitSocket('/terminal/ws');
-  assert.equal(await t.service(), null, `${label}: on this machine`);
+  assert.equal(await t.service(), 'This machine', `${label}: on this machine (the offline service is still listed, so the rows and the header are tagged)`);
   await page.waitForFunction(() => window.sockets.every(item => item.readyState === 3 || new URL(item.url).pathname === '/terminal/ws'));
   assert.equal(await page.locator('.h5-list-note').count(), 0, `${label}: no error in the list`);
   // Back online, the remembered service is tried again on the next load.
@@ -461,6 +469,7 @@ async function testHidden(browser, wide) {
   await page.waitForFunction(() => window.H5UI.get().activeCount === 1);
   await page.waitForFunction(url => !window.activityStream.open(url), REMOTE_STREAM);
   assert.equal(await t.service(), 'VPS', `${label}: the task keeps being shown`);
+  assert.equal(await page.locator('#h5-task-service .h5-device-tag').count(), 0, `${label}: its device is not in the list: named in plain text, no tag`);
   assert.equal(await page.evaluate(() => window.sockets.filter(item => item.readyState === 1).length), opened, `${label}: its terminal stays connected`);
   // Search, the Archived section.
   await page.locator('#h5-task-search-input').fill('Alpha');
@@ -534,6 +543,74 @@ async function testOlderServer(browser, wide) {
   await context.close();
 }
 
+// The header's device tag: the same pill as the row's tag in the list (same colour from the instance id, same size, border, font and short name), in its
+// closed look; it fits a 320px phone without wrapping and keeps the header as tall as without it. One device and no sorting: no tag in the header.
+const TAG_LOOK = node => { const style = getComputedStyle(node); const box = node.getBoundingClientRect(); return { text: node.textContent, color: node.dataset.color, fg: style.color, bg: style.backgroundColor, border: `${style.borderTopWidth} ${style.borderTopStyle} ${style.borderTopColor}`, radius: style.borderTopLeftRadius, font: `${style.fontSize} ${style.fontWeight} ${style.lineHeight}`, padding: `${style.paddingLeft} ${style.paddingRight}`, height: box.height, expanded: node.dataset.expanded || null }; };
+async function testHeaderTag(browser) {
+  const label = 'header tag';
+  const { tagColorIndex } = await import('./h5-shell/task-order.mjs');
+  const world = makeWorld({ ids: true });
+  const { context, page } = await open(browser, world, false, { scale: 3 });
+  const t = tools(page, false);
+  const header = () => page.evaluate(() => {
+    const bar = document.querySelector('.h5-header');
+    const button = document.getElementById('h5-open-tasks');
+    const name = document.getElementById('h5-task-name');
+    const session = document.getElementById('h5-session-name');
+    return {
+      height: bar.getBoundingClientRect().height, overflow: bar.scrollWidth - bar.clientWidth, buttonOverflow: button.scrollWidth - button.clientWidth,
+      nameHeight: name.getBoundingClientRect().height, nameLines: Math.round(name.getBoundingClientRect().height / parseFloat(getComputedStyle(name).lineHeight)),
+      subline: document.querySelector('.h5-task-subline').getBoundingClientRect().height, sessionWidth: session.getBoundingClientRect().width,
+      sessionRight: session.getBoundingClientRect().right, buttonRight: button.getBoundingClientRect().right,
+    };
+  });
+  const plain = await header(); // no task shown yet: no tag
+  await t.sheet();
+  await t.row('remote:7', 'Beta').waitFor();
+  const rowLook = await t.row('remote:7', 'Beta').locator('.h5-device-tag').evaluate(TAG_LOOK); // a closed row of VPS
+  const localLook = await t.row('local', 'Beta').locator('.h5-device-tag').evaluate(TAG_LOOK);
+  await t.openTask('remote:7', 'Alpha');
+  await page.waitForFunction(() => document.querySelector('#h5-task-service > .h5-device-tag'));
+  const tag = await page.locator('#h5-task-service > .h5-device-tag').evaluate(TAG_LOOK);
+  assert.equal(await t.service(), 'VPS', `${label}: the header tags the device`);
+  assert.equal(Number(tag.color), tagColorIndex(VPS_ID), `${label}: in the colour of its instance id`);
+  assert.deepEqual(tag, rowLook, `${label}: the same pill as the row's tag in the list`);
+  assert.equal(tag.expanded, null, `${label}: in its closed look`);
+  assert.equal(tag.height, 20, `${label}: 20px high`);
+  assert.equal(await page.locator('#h5-task-service > .h5-device-tag').getAttribute('title'), 'VPS', `${label}: the full name is its title`);
+  assert.equal(await page.locator('#h5-session-name').textContent(), 'Alpha shell', `${label}: followed by the session name`);
+  const withTag = await header();
+  assert.ok(Math.abs(withTag.height - plain.height) < 1, `${label}: the header keeps its height (${withTag.height} / ${plain.height})`);
+  assert.ok(withTag.overflow <= 0 && withTag.buttonOverflow <= 0 && withTag.nameLines === 1, `${label}: nothing wraps or overflows at 390 (${JSON.stringify(withTag)})`);
+  if (process.env.H5_SHOT_DIR) { fs.mkdirSync(process.env.H5_SHOT_DIR, { recursive: true }); await page.locator('.h5-header').screenshot({ path: path.join(process.env.H5_SHOT_DIR, 'header-tag-390.png') }); }
+  // This machine's task: its own tag.
+  await t.openTask('local', 'Beta');
+  await page.waitForFunction(() => document.querySelector('#h5-task-service > .h5-device-tag')?.dataset.source === 'local');
+  const local = await page.locator('#h5-task-service > .h5-device-tag').evaluate(TAG_LOOK);
+  assert.equal(local.text, 'MacBook', `${label}: this machine by its engine name`);
+  assert.equal(Number(local.color), tagColorIndex(LOCAL_ID), `${label}: in its colour`);
+  assert.deepEqual({ ...local, expanded: null }, { ...localLook, expanded: null }, `${label}: the same pill as its row`);
+  // 320px: one line each, no overflow, the session name still shown beside the tag.
+  await page.setViewportSize({ width: 320, height: 640 });
+  await page.waitForTimeout(150);
+  const narrow = await header();
+  assert.ok(narrow.overflow <= 0 && narrow.buttonOverflow <= 0 && narrow.nameLines === 1, `${label}: nothing wraps or overflows at 320 (${JSON.stringify(narrow)})`);
+  assert.ok(narrow.subline <= 21 && narrow.sessionWidth > 20 && narrow.sessionRight <= narrow.buttonRight + 0.5, `${label}: the tag and the session name on one line at 320 (${JSON.stringify(narrow)})`);
+  assert.ok(Math.abs(narrow.height - plain.height) < 1, `${label}: the same height at 320`);
+  assert.deepEqual(world.pageErrors, [], `${label}: no page errors`);
+  await context.close();
+
+  // One device, no sorting (an older server): the list has no tags, nor has the header.
+  const alone = makeWorld({ remote: false });
+  const one = await open(browser, alone, false);
+  const o = tools(one.page, false);
+  await o.openTask('local', 'Alpha');
+  assert.equal(await one.page.locator('.h5-header .h5-device-tag').count(), 0, `${label}: one device: no tag in the header`);
+  assert.equal(await o.service(), null, `${label}: and no device named`);
+  assert.deepEqual(alone.pageErrors, [], `${label}: no page errors (one device)`);
+  await one.context.close();
+}
+
 (async () => {
   const browser = await chromium.launch({ headless: true, ...(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {}) });
   try {
@@ -548,6 +625,7 @@ async function testOlderServer(browser, wide) {
       await testOlderServer(browser, wide);
       await testOfflineAndReturn(browser, wide);
     }
+    await testHeaderTag(browser);
     console.log('h5 one list: ok');
   } finally {
     await browser.close();

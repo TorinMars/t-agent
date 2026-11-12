@@ -2,9 +2,11 @@
 // with the routes mocked: no section per device; an engine tag at the left edge of each row with the device's name and a colour that comes from its instance
 // id (also with one device while sorting is offered; none and the chevron with an older server and one device); the tag is the drag grip and shows whether
 // the task is open (no separate grip, no chevron); the order from the API applied, new tasks first; a drag that starts on a row's tag, with the mouse (and
-// Escape) and with a finger (no long press), saves the right whole order and opens nothing, a tap or click on the tag opens or closes the task, while a
-// drag, a long press or a swipe on the rest of the row does not reorder (a tap still opens it, a swipe still scrolls); during a drag the row's place is an
-// empty slot, a lifted copy floats under the pointer and the other rows slide (transforms); the keyboard
+// Escape) and with a finger (no long press), saves the right whole order and opens nothing, a tap or click on the tag opens or closes the task; the rest of
+// the row is held to drag it (a finger 400 ms still, with a short vibration; a mouse held, or moved 4px): a swipe before that scrolls the list, a tap or
+// click opens or closes the task, a release after a hold opens nothing, "⋯" and "+" never drag, a row that cannot move does not; during a drag the row's
+// place is an empty slot, a lifted copy floats under the pointer and the other rows slide (transforms), the list scrolls at its edge; every order change
+// (a drop, a menu move, a newer order) slides each row from where it was shown, an open row with its sessions too; the keyboard
 // moves a task from its tag with an announcement, Escape puts it back; reduced motion moves everything at once; menu moves and a newer order slide the rows;
 // the menu moves; keys of devices not shown are kept in place; a failed save moves back; a newer order is applied on refresh, after a drag;
 // groups and the "Move to" of a group stay; an Engine without an instance id is placed last and cannot be moved until its id is known; an older server (404)
@@ -94,6 +96,18 @@ async function open(browser, world, wide) {
     };
     window.WebSocket.OPEN = 1;
     window.WebSocket.CONNECTING = 0;
+    window.vibrations = [];
+    Object.defineProperty(navigator, 'vibrate', { configurable: true, value: pattern => { window.vibrations.push(pattern); return true; } });
+    // Every slide of a task row after an order change (a Web Animation, list-drag.jsx) as it starts: the row and the offset it starts from.
+    window.flips = [];
+    const animate = Element.prototype.animate;
+    Element.prototype.animate = function (keyframes, options) {
+      if (this.classList.contains('h5-task')) {
+        const y = (String((keyframes[0] || {}).transform || '').match(/translate3d\([^,]+,\s*(-?[\d.]+)px/) || [])[1];
+        window.flips.push({ title: this.querySelector('.h5-task-title').textContent, from: y === undefined ? null : Number(y) });
+      }
+      return animate.call(this, keyframes, options);
+    };
   });
   await page.addInitScript(activityStreamMock);
   await page.route(`${ORIGIN}/**`, route => serve(world, route));
@@ -294,13 +308,16 @@ async function testMouseDrag(browser) {
   assert.equal(await page.evaluate(() => document.activeElement.classList.contains('h5-task-tag')), true, `${label}: the tag takes the keyboard focus`);
   assert.equal(await grip.locator('.h5-device-tag').evaluate(node => getComputedStyle(node).outlineStyle), 'solid', `${label}: a focus ring on the tag`);
   await page.evaluate(() => document.activeElement.blur());
-  // A drag on the row itself (not the grip) moves nothing and shows no drag.
+  // A press and a move of the mouse on the row itself (not the grip) picks it up too; Escape puts it back and nothing is saved or opened.
   await t.mouseDrag('Gamma', 'Echo', { onRow: true, release: false });
-  assert.equal((await t.dragView()).float, null, `${label}: no drag from the row`);
+  assert.equal((await t.dragView()).float?.title, 'Gamma', `${label}: a drag from the row's body`);
+  await page.keyboard.press('Escape');
+  await t.dragDone();
   await page.mouse.up();
   await page.waitForTimeout(150);
   await t.waitTitles(FIRST);
-  assert.equal(t.puts(world), 0, `${label}: a drag on the row saves nothing`);
+  assert.equal(t.puts(world), 0, `${label}: put back: nothing saved`);
+  assert.equal(await t.expanded('Gamma'), 'false', `${label}: and nothing opened`);
   // A click on the tag opens the task, like the row; a second one closes it. Nothing is saved.
   await grip.click();
   await page.waitForFunction(() => [...document.querySelectorAll('.h5-task')].some(node => node.querySelector('.h5-task-title').textContent === 'Gamma' && node.querySelector('.h5-task-item').getAttribute('aria-expanded') === 'true'));
@@ -543,13 +560,12 @@ async function testTouch(browser) {
   await page.waitForFunction(() => [...document.querySelectorAll('.h5-task')].some(node => node.querySelector('.h5-task-title').textContent === 'Alpha' && node.querySelector('.h5-task-item').getAttribute('aria-expanded') === 'true'));
   await f.tap(centre(await t.box('Alpha')));
   await page.waitForTimeout(200);
-  // A long press on the row, then a move, is not a drag (only the tag drags).
-  const alpha = await t.box('Alpha');
-  await f.drag(centre(await t.box('Gamma')), { x: alpha.x + 60, y: alpha.y + alpha.height * 0.25 }, { hold: 500, release: false });
-  assert.equal((await t.dragView()).float, null, `${label}: a long press on the row is not a drag`);
-  await f.touch('touchEnd');
+  // A long press on the row (not its tag) picks it up too (testRowHold); here it goes back to its place.
+  await f.drag(centre(await t.box('Gamma')), centre(await t.box('Gamma')), { hold: 500, steps: 2 });
+  await t.dragDone();
   await page.waitForTimeout(300);
   await t.waitTitles(['Beta', 'Gamma', 'Echo', 'Alpha', 'Delta']);
+  assert.equal(await t.expanded('Gamma'), 'false', `${label}: a release after the hold opens nothing`);
   // "⋯" and "+" still work with a tap (they are not part of the drag).
   await t.press(t.row('Echo').locator('.h5-task-more'));
   await page.locator('#h5-term-menu-actions').first().waitFor();
@@ -754,6 +770,250 @@ async function testOlderAlone(browser, wide) {
   await context.close();
 }
 
+// The rows' tops in the list's own coordinates (offsets: a slide in progress does not count), by title.
+const tops = page => page.evaluate(() => Object.fromEntries([...document.querySelectorAll('#h5-task-list .h5-task')].map(node => [node.querySelector('.h5-task-title').textContent, node.offsetTop])));
+// Every row that moved slid from where it was shown: its transition starts at (old top + its slide then - new top). At a drop the rows are mostly shown in
+// their new places already (`shownShift`: their slides during the drag), so there nothing needs to move (`some` false), but nothing may jump either.
+function checkFlips(label, flips, before, after, shownShift = {}, some = true) {
+  const moved = Object.keys(after).filter(title => title in before && Math.abs(before[title] + (shownShift[title] || 0) - after[title]) >= 1);
+  if (some) assert.ok(moved.length > 0, `${label}: some rows moved`);
+  for (const title of Object.keys(after).filter(item => !moved.includes(item))) assert.ok(!flips.some(item => item.title === title && Math.abs(item.from) >= 1), `${label}: ${title} was in place and does not jump`);
+  for (const title of moved) {
+    const flip = flips.find(item => item.title === title);
+    assert.ok(flip, `${label}: ${title} slid (${JSON.stringify(flips)})`);
+    const want = before[title] + (shownShift[title] || 0) - after[title];
+    assert.ok(Math.abs(flip.from - want) < 1.5, `${label}: ${title} slid from where it was shown (${flip.from} / ${want})`);
+  }
+}
+
+// A task row held on its body (not its tag), with a finger: 400 ms still picks it up (a short vibration), a move before that scrolls, a tap opens, a
+// release after a hold opens nothing; "⋯" and "+" never drag; the drop slides the rows (FLIP from where they were shown); the list scrolls at its edge.
+async function testRowHold(browser) {
+  const label = 'row hold (touch)';
+  const world = makeWorld();
+  const { context, page } = await open(browser, world, false);
+  const t = tools(page, false);
+  await t.sheet();
+  await t.waitTitles(FIRST);
+  const f = await finger(page);
+  const head = t.row('Gamma').locator('.h5-task-head');
+  const look = await head.evaluate(node => { const style = getComputedStyle(node); return { touch: style.touchAction, select: style.userSelect || style.webkitUserSelect }; });
+  assert.deepEqual(look, { touch: 'auto', select: 'none' }, `${label}: the row scrolls and selects no text`); // (-webkit-touch-callout is iOS only: Chromium has no computed value)
+  // Held still: picked up at HOLD_MS, with a vibration; not before.
+  await f.touch('touchStart', centre(await t.box('Gamma')).x, centre(await t.box('Gamma')).y);
+  await page.waitForTimeout(250);
+  assert.equal((await t.dragView()).float, null, `${label}: not yet at 250 ms`);
+  await page.waitForTimeout(300);
+  const held = await t.dragView();
+  assert.equal(held.slot, 'Gamma', `${label}: picked up after the hold`);
+  assert.equal(held.float && held.float.title, 'Gamma', `${label}: the lifted copy`);
+  assert.deepEqual(await page.evaluate(() => window.vibrations), [10], `${label}: a light vibration`);
+  // The context menu of a long press is cancelled while the row is held.
+  assert.equal(await page.evaluate(() => { const node = document.querySelector('#h5-task-list .h5-task[data-drag-slot] .h5-task-item'); const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true }); node.dispatchEvent(event); return event.defaultPrevented; }), true, `${label}: no context menu`);
+  // Released where it is: nothing saved, nothing opened (the click of the release is swallowed).
+  await f.touch('touchEnd');
+  await t.dragDone();
+  await page.waitForTimeout(300);
+  assert.equal(await t.expanded('Gamma'), 'false', `${label}: a release after the hold does not toggle`);
+  assert.equal(t.puts(world), 0, `${label}: nothing saved`);
+  // Held, then moved to the top half of Echo: the rows slide, the drop saves, and the rows slide from where they were shown.
+  const echo = await t.box('Echo');
+  await f.drag(centre(await t.box('Gamma')), { x: echo.x + 60, y: echo.y + echo.height * 0.25 }, { hold: 500, release: false });
+  await page.waitForTimeout(250);
+  const view = await t.dragView();
+  assert.equal(view.slot, 'Gamma', `${label}: the slot`);
+  assert.deepEqual(view.moved, ['Echo', 'Alpha', 'Delta'], `${label}: the rows between slid down`);
+  if (SHOTS) { fs.mkdirSync(SHOTS, { recursive: true }); await page.screenshot({ path: path.join(SHOTS, 'task-row-hold-drag-390.png') }); }
+  const before = await tops(page);
+  const shown = await page.evaluate(() => Object.fromEntries([...document.querySelectorAll('#h5-task-list .h5-task')].map(node => [node.querySelector('.h5-task-title').textContent, (m => (m ? Number(m[1]) : 0))(/translate3d\([^,]+,\s*(-?[\d.]+)px/.exec(node.style.transform))])));
+  await page.evaluate(() => { window.flips = []; });
+  await f.touch('touchEnd');
+  await t.waitTitles(['Beta', 'Gamma', 'Echo', 'Alpha', 'Delta']);
+  await t.dragDone();
+  assert.deepEqual(t.lastPut(world)[2], { order: [L(2), L(3), V(2), HIDDEN_KEY, L(1), V(1)] }, `${label}: the hold-drag saved the whole order`);
+  checkFlips(`${label}: drop`, await page.evaluate(() => window.flips), before, await tops(page), shown, false);
+  await page.waitForTimeout(300);
+  assert.equal(await t.expanded('Gamma'), 'false', `${label}: the drop opens nothing`);
+  // A quick tap on the row still opens and closes it.
+  await f.tap(centre(await t.box('Alpha')));
+  await page.waitForFunction(() => [...document.querySelectorAll('.h5-task')].some(node => node.querySelector('.h5-task-title').textContent === 'Alpha' && node.querySelector('.h5-task-item').getAttribute('aria-expanded') === 'true'));
+  await page.waitForTimeout(250);
+  await f.tap(centre(await t.box('Alpha')));
+  await page.waitForFunction(() => [...document.querySelectorAll('.h5-task')].some(node => node.querySelector('.h5-task-title').textContent === 'Alpha' && node.querySelector('.h5-task-item').getAttribute('aria-expanded') === 'false'));
+  await page.waitForTimeout(250);
+  // "⋯" and "+" held and moved never drag.
+  const saved = t.puts(world);
+  for (const button of ['.h5-task-more', '.h5-task-add']) {
+    const at = middle(await t.row('Echo').locator(button).boundingBox());
+    await f.drag(at, { x: at.x, y: at.y - 60 }, { hold: 500, release: false });
+    assert.equal((await t.dragView()).float, null, `${label}: ${button} does not drag`);
+    await f.touch('touchEnd');
+    await page.waitForTimeout(250);
+    if (await page.locator('#h5-term-menu-cancel').count()) { await page.locator('#h5-term-menu-cancel').first().tap(); await page.waitForTimeout(300); }
+    if (await page.locator('#h5-new-session').count() && await page.locator('#h5-new-session').isVisible()) { await page.keyboard.press('Escape'); await page.waitForTimeout(300); }
+  }
+  assert.equal(t.puts(world), saved, `${label}: nothing saved from the buttons`);
+  // A swipe before the hold scrolls the list and drags nothing; held at the bottom edge, a picked-up row scrolls the list.
+  await page.setViewportSize({ width: 390, height: 420 });
+  await t.settle();
+  const list = page.locator('#h5-task-list');
+  const second = await t.box((await t.titles())[1]);
+  await f.drag(centre(second), { x: second.x + 60, y: second.y - 80 }, { steps: 8 });
+  await page.waitForTimeout(400);
+  assert.ok(await list.evaluate(node => node.scrollTop > 20), `${label}: a swipe on a row scrolls the list`);
+  assert.equal((await t.dragView()).float, null, `${label}: and is no drag`);
+  await list.evaluate(node => { node.scrollTop = 0; });
+  await page.waitForTimeout(100);
+  const first = await t.box((await t.titles())[0]);
+  const edge = await list.boundingBox();
+  await f.drag(centre(first), { x: first.x + 60, y: edge.y + edge.height - 4 }, { hold: 500, release: false });
+  await page.waitForFunction(() => document.getElementById('h5-task-list').scrollTop > 0);
+  assert.ok((await t.dragView()).float, `${label}: still dragging while it scrolls`);
+  await f.touch('touchEnd');
+  await t.dragDone();
+  assert.deepEqual(world.pageErrors, [], `${label}: no page errors`);
+  await context.close();
+}
+
+// The same with a mouse: held 400 ms (or pressed and moved 4px) on the row's body; a plain click toggles; the click after a drag or a hold is swallowed;
+// "⋯" and "+" never drag; a row that cannot be moved does not; reduced motion moves at once.
+async function testRowHoldMouse(browser) {
+  const label = 'row hold (mouse)';
+  const world = makeWorld({ older: true });
+  const { context, page } = await open(browser, world, true);
+  const t = tools(page, true);
+  await t.sheet();
+  await t.waitTitles([...FIRST, 'Foxtrot']);
+  // Held still: picked up; the release opens nothing.
+  const gamma = await t.box('Gamma');
+  await page.mouse.move(gamma.x + 60, gamma.y + gamma.height / 2);
+  await page.mouse.down();
+  await page.waitForTimeout(550);
+  assert.equal((await t.dragView()).slot, 'Gamma', `${label}: a held mouse picks the row up`);
+  assert.deepEqual(await page.evaluate(() => window.vibrations), [], `${label}: no vibration for a mouse`);
+  await page.mouse.up();
+  await t.dragDone();
+  await page.waitForTimeout(200);
+  assert.equal(await t.expanded('Gamma'), 'false', `${label}: the click after the hold is swallowed`);
+  // A plain click toggles.
+  await t.row('Gamma').locator('.h5-task-item').click();
+  await page.waitForFunction(() => [...document.querySelectorAll('.h5-task')].some(node => node.querySelector('.h5-task-title').textContent === 'Gamma' && node.querySelector('.h5-task-item').getAttribute('aria-expanded') === 'true'));
+  await t.settle();
+  // Pressed and moved on an open row (with its sessions, taller): the drop saves, its click is swallowed, every row slides from where it was shown.
+  await t.mouseDrag('Gamma', 'Echo', { onRow: true, release: false });
+  await page.waitForTimeout(250);
+  assert.equal((await t.dragView()).slot, 'Gamma', `${label}: an open row drags`);
+  const before = await tops(page);
+  const shown = await page.evaluate(() => Object.fromEntries([...document.querySelectorAll('#h5-task-list .h5-task')].map(node => [node.querySelector('.h5-task-title').textContent, (m => (m ? Number(m[1]) : 0))(/translate3d\([^,]+,\s*(-?[\d.]+)px/.exec(node.style.transform))])));
+  await page.evaluate(() => { window.flips = []; });
+  await page.mouse.up();
+  await t.waitTitles(['Beta', 'Gamma', 'Echo', 'Alpha', 'Delta', 'Foxtrot']);
+  await t.dragDone();
+  checkFlips(`${label}: drop of an open row`, await page.evaluate(() => window.flips), before, await tops(page), shown, false);
+  await page.waitForTimeout(200);
+  assert.equal(await t.expanded('Gamma'), 'true', `${label}: the click after the drag is swallowed (still open)`);
+  assert.equal(t.puts(world), 1, `${label}: one save`);
+  // "⋯" and "+" pressed and moved never drag.
+  for (const button of ['.h5-task-more', '.h5-task-add']) {
+    const at = middle(await t.row('Echo').locator(button).boundingBox());
+    await page.mouse.move(at.x, at.y);
+    await page.mouse.down();
+    await page.mouse.move(at.x, at.y + 30, { steps: 5 });
+    await page.waitForTimeout(450);
+    assert.equal((await t.dragView()).float, null, `${label}: ${button} does not drag`);
+    await page.mouse.up();
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(300);
+  }
+  // A row that cannot be moved (its device has no instance id) does not drag from its body either.
+  await t.mouseDrag('Foxtrot', 'Beta', { onRow: true, release: false });
+  await page.waitForTimeout(450);
+  assert.equal((await t.dragView()).float, null, `${label}: an unplaced row does not drag`);
+  await page.mouse.up();
+  await page.waitForTimeout(200);
+  assert.equal(t.puts(world), 1, `${label}: still one save`);
+  // Reduced motion: the row's drag and its drop move at once.
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await t.mouseDrag('Alpha', 'Beta', { onRow: true, release: false });
+  const view = await t.dragView();
+  assert.equal(view.slot, 'Alpha', `${label}: reduced motion still drags`);
+  assert.ok(view.transitions.every(value => value === '' || value === 'none'), `${label}: without a transition (${view.transitions})`);
+  await page.evaluate(() => { window.flips = []; });
+  await page.mouse.up();
+  await t.waitTitles(['Alpha', 'Beta', 'Gamma', 'Echo', 'Delta', 'Foxtrot']);
+  await t.dragDone();
+  assert.deepEqual(await page.evaluate(() => window.flips), [], `${label}: the drop slides nothing`);
+  assert.deepEqual(world.pageErrors, [], `${label}: no page errors`);
+  await context.close();
+}
+
+// Order changes that are not drags slide each row from where it was shown, also with an open row whose sessions make it taller: a newer order from the
+// server, a menu move, a failed save that moves back, and a second change that comes while the first still slides.
+async function testFlip(browser) {
+  const label = 'flip';
+  const world = makeWorld();
+  const { context, page } = await open(browser, world, true);
+  const t = tools(page, true);
+  await t.sheet();
+  await t.waitTitles(FIRST);
+  await t.press(t.row('Alpha').locator('.h5-task-item'));
+  await page.locator('.h5-task .h5-terminal-list').first().waitFor();
+  await t.settle();
+  assert.ok((await t.row('Alpha').boundingBox()).height > (await t.row('Beta').boundingBox()).height + 20, `${label}: the open row is taller`);
+  const change = async (what, run, wanted) => {
+    const before = await tops(page);
+    await page.evaluate(() => { window.flips = []; });
+    await run();
+    await t.waitTitles(wanted);
+    await page.waitForTimeout(30);
+    const during = await page.evaluate(() => document.getAnimations().filter(animation => animation.playState === 'running' && animation.effect.target?.classList.contains('h5-task')).length);
+    assert.ok(during > 0, `${label}: ${what}: the rows are sliding`);
+    checkFlips(`${label}: ${what}`, await page.evaluate(() => window.flips), before, await tops(page));
+    await t.settle();
+    assert.deepEqual((await t.dragView()).moved, [], `${label}: ${what}: and end in place`);
+  };
+  world.order = { order: [L(3), L(1), V(1), V(2), L(2)], updated_at: 99 };
+  await change('a newer order from the server', () => page.evaluate(() => document.dispatchEvent(new Event('visibilitychange'))), ['Gamma', 'Alpha', 'Delta', 'Echo', 'Beta']);
+  await change('a menu move', async () => { await t.menu('Beta'); await t.press(t.item('Move to top')); }, ['Beta', 'Gamma', 'Alpha', 'Delta', 'Echo']);
+  world.failPut = true;
+  let release;
+  world.holdPut = new Promise(resolve => { release = resolve; });
+  await t.menu('Alpha');
+  await t.press(t.item('Move to bottom'));
+  await t.waitTitles(['Beta', 'Gamma', 'Delta', 'Echo', 'Alpha']);
+  await t.settle();
+  await change('a failed save moving back', () => release(), ['Beta', 'Gamma', 'Alpha', 'Delta', 'Echo']);
+  await t.notice('Could not save the task order');
+  world.holdPut = null;
+  world.failPut = false;
+  // A second order while the first one slides: the rows start from where they are seen, not from where the first slide ends. Each frame's places are
+  // recorded; from the frame before the change to the one after it, no row jumps (it moves no more than a frame of sliding, far less than the slide left).
+  await page.evaluate(() => {
+    window.frames = [];
+    const take = () => { window.frames.push(Object.fromEntries([...document.querySelectorAll('#h5-task-list .h5-task')].map(node => [node.querySelector('.h5-task-title').textContent, node.getBoundingClientRect().top]))); if (window.frames.length < 400) window.frameLoop = requestAnimationFrame(take); };
+    take();
+  });
+  world.order = { order: [V(2), L(2), L(3), L(1), V(1)], updated_at: 120 };
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+  await t.waitTitles(['Echo', 'Beta', 'Gamma', 'Alpha', 'Delta']);
+  await page.waitForTimeout(50);
+  world.order = { order: [L(2), L(3), L(1), V(1), V(2)], updated_at: 121 };
+  const mark = await page.evaluate(() => { const at = window.frames.length; document.dispatchEvent(new Event('visibilitychange')); return at; });
+  await t.waitTitles(['Beta', 'Gamma', 'Alpha', 'Delta', 'Echo']);
+  await t.settle();
+  const frames = await page.evaluate(() => { cancelAnimationFrame(window.frameLoop); return window.frames; });
+  let jump = 0;
+  for (let index = Math.max(mark, 1); index < frames.length; index += 1) {
+    for (const title of Object.keys(frames[index])) if (title in frames[index - 1]) jump = Math.max(jump, Math.abs(frames[index][title] - frames[index - 1][title]));
+  }
+  const echoLeft = Math.abs(frames[mark - 1].Echo - frames.at(-1).Echo);
+  assert.ok(jump < 40 && echoLeft > 40, `${label}: a change mid-slide starts the rows where they were seen (largest step ${jump.toFixed(1)}px between frames; Echo had ${echoLeft.toFixed(0)}px to go)`);
+  await t.settle();
+  assert.deepEqual((await t.dragView()).moved, [], `${label}: all in place at the end`);
+  assert.deepEqual(world.pageErrors, [], `${label}: no page errors`);
+  await context.close();
+}
+
 (async () => {
   const browser = await chromium.launch({ headless: true, ...(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {}) });
   try {
@@ -777,6 +1037,12 @@ async function testOlderAlone(browser, wide) {
     console.log('  keyboard: ok');
     await testMotion(browser);
     console.log('  motion: ok');
+    await testRowHold(browser);
+    console.log('  row hold (touch): ok');
+    await testRowHoldMouse(browser);
+    console.log('  row hold (mouse): ok');
+    await testFlip(browser);
+    console.log('  flip: ok');
     await testUnknownId(browser);
     console.log('  unknown instance id: ok');
     console.log('h5 task order: ok');

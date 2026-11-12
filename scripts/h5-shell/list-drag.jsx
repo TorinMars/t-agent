@@ -20,6 +20,24 @@ const slide = (node, y, ms) => {
   node.style.transform = y ? `translate3d(0, ${y}px, 0)` : '';
 };
 const unslide = node => { node.style.transition = ''; node.style.transform = ''; };
+// The slide of a row after an order change (FLIP) is a Web Animation, not a transition: React may move the row's element in the DOM, which cancels a CSS
+// transition on it (the row would jump), while an animation goes on. A second change that comes while the first one slides starts each row from where it
+// is seen: the part of its slide still to go (`slidBy`).
+const flips = new WeakMap(); // row element -> { animation, from }: its running slide and the offset it started from
+const unflip = node => { const running = flips.get(node); if (running) { running.animation.cancel(); flips.delete(node); } };
+const flipFrom = (node, from) => {
+  unflip(node);
+  if (typeof node.animate !== 'function') return;
+  const animation = node.animate([{ transform: `translate3d(0, ${from}px, 0)` }, { transform: 'none' }], { duration: SHIFT_MS, easing: 'ease-out' });
+  flips.set(node, { animation, from });
+  animation.onfinish = () => { if (flips.get(node)?.animation === animation) flips.delete(node); };
+};
+const slidBy = node => {
+  const running = flips.get(node);
+  if (!running || running.animation.playState === 'finished' || running.animation.playState === 'idle') return 0;
+  const progress = running.animation.effect.getComputedTiming().progress; // eased: the share of the way done
+  return running.from * (1 - (typeof progress === 'number' ? progress : 1));
+};
 // Where a row is in the scrolling list's own coordinates: offsets, so a slide in progress does not count, and scrolling does not change it.
 function topIn(el, list) {
   let top = 0;
@@ -35,13 +53,14 @@ export function useListDrag(listRef, hostRef, liveRef, ui, spec) {
   const flip = useRef({ rows: new Map(), order: [], dropped: null });
   useEffect(() => () => { if (live.current) live.current.abort(); }, []);
   // A row that was held until it was picked up keeps the finger: the list must not scroll under it (a passive or a late listener could not stop that).
+  // Every list has it: a row of any of them can be held (`hold()`), even one whose grip drags at once (`grip()`, the task list).
   useEffect(() => {
     const list = listRef.current;
-    if (!list || !spec.hold) return undefined;
+    if (!list) return undefined;
     const keep = event => { if (live.current && live.current.picked && event.cancelable) event.preventDefault(); };
     list.addEventListener('touchmove', keep, { passive: false });
     return () => list.removeEventListener('touchmove', keep);
-  }, [listRef, spec.hold]);
+  }, [listRef]);
   const say = text => { if (liveRef.current) liveRef.current.textContent = text; };
   const markDragging = on => { if (spec.dragging) spec.dragging(ui, on); };
 
@@ -77,18 +96,13 @@ export function useListDrag(listRef, hostRef, liveRef, ui, spec) {
     const oldGroups = inGroups(old);
     const changed = new Set([...inGroups(common)].filter(([group, refs]) => refs.some((ref, index) => ref !== (oldGroups.get(group) || [])[index])).map(([group]) => group));
     if (!changed.size) return;
-    const moved = [];
+    const seen = new Map(common.filter(ref => changed.has(now.get(ref).group)).map(ref => [ref, shownAt.get(ref) + slidBy(now.get(ref).el)])); // read all first
     for (const ref of common) {
       if (!changed.has(now.get(ref).group)) continue;
-      const delta = shownAt.get(ref) - now.get(ref).top;
-      if (Math.abs(delta) < 1) continue;
-      slide(now.get(ref).el, delta, 0);
-      moved.push(now.get(ref).el);
+      const delta = seen.get(ref) - now.get(ref).top;
+      if (Math.abs(delta) < 1) unflip(now.get(ref).el); // shown where it is now: a slide still going would move it off
+      else flipFrom(now.get(ref).el, delta); // from where it was shown to where it is
     }
-    if (!moved.length) return;
-    void list.offsetHeight; // one style flush for all of them, then they slide from where they were shown to where they are
-    for (const node of moved) slide(node, 0, SHIFT_MS);
-    setTimeout(() => { for (const node of moved) if (!node.style.transform) node.style.transition = ''; }, SHIFT_MS + 60);
   });
 
   const begin = (handle, pointer) => {
@@ -99,6 +113,8 @@ export function useListDrag(listRef, hostRef, liveRef, ui, spec) {
     if (!list || !host || !row) return;
     const ref = spec.key(row);
     const keyboard = !pointer;
+    // A press that must be held (`hold()`: a finger still for HOLD_MS, a mouse held or moved) or one that drags at once (`grip()`: after DRAG_MOVE_PX).
+    const held = Boolean(pointer && pointer.held);
     const s = { ref, picked: false, frame: 0, timer: 0, rows: [], from: 0, index: 0, y: pointer ? pointer.y : 0, motion: !reducedMotion(), targets: [], target: null };
     live.current = s;
     const rowsShown = () => s.rows.length;
@@ -172,6 +188,7 @@ export function useListDrag(listRef, hostRef, liveRef, ui, spec) {
     const position = () => `${s.index + 1}`;
     const pick = () => {
       s.rows = spec.peers(list, row).map(el => ({ el, ref: spec.key(el), top: topIn(el, list), height: el.offsetHeight, shift: 0 }));
+      for (const item of s.rows) unflip(item.el); // a slide of an order change still going ends where the row is
       s.from = s.index = s.rows.findIndex(item => item.el === row);
       if (s.from < 0) { stop(); live.current = null; return; }
       s.picked = true;
@@ -287,7 +304,7 @@ export function useListDrag(listRef, hostRef, liveRef, ui, spec) {
       s.y = event.clientY;
       if (!s.picked) {
         const far = Math.hypot(event.clientX - pointer.x, event.clientY - pointer.y);
-        if (spec.hold && !pointer.mouse) { if (far > HOLD_SLOP_PX) { stop(); live.current = null; } return; } // the finger is scrolling the list
+        if (held && !pointer.mouse) { if (far > HOLD_SLOP_PX) { stop(); live.current = null; } return; } // the finger is scrolling the list
         if (far <= DRAG_MOVE_PX) return;
         pick();
         if (!s.picked) return;
@@ -295,13 +312,14 @@ export function useListDrag(listRef, hostRef, liveRef, ui, spec) {
       aim();
       if (!s.frame) s.frame = requestAnimationFrame(scroll);
     }
-    // A press that never became a drag is a tap: on a task's tag it opens or closes the task's sessions, like the row; on a session row its own click runs.
+    // A press that never became a drag is a tap: on a task's tag (a grip) it opens or closes the task's sessions, like the row; on a held row (a task row,
+    // a session row) the row's own click runs.
     function onUp(event) {
       if (event.pointerId !== pointer.id) return;
       const tap = !s.picked;
-      if (s.picked && (pointer.mouse || spec.hold)) swallowClick();
+      if (s.picked && (pointer.mouse || held)) swallowClick();
       end(true);
-      if (tap && spec.tap) spec.tap(ui, ref);
+      if (tap && !held && spec.tap) spec.tap(ui, ref);
     }
     function onCancel(event) { if (event.pointerId === pointer.id) end(false); }
     function onKey(event) {
@@ -338,7 +356,7 @@ export function useListDrag(listRef, hostRef, liveRef, ui, spec) {
     window.addEventListener('pointercancel', onCancel);
     if (!pointer.mouse) window.addEventListener('contextmenu', onMenu, true);
     // A held press picks the row up where it is.
-    if (spec.hold) {
+    if (held) {
       s.timer = setTimeout(() => {
         s.timer = 0;
         if (live.current !== s || s.picked) return;
@@ -349,14 +367,14 @@ export function useListDrag(listRef, hostRef, liveRef, ui, spec) {
       }, HOLD_MS);
     }
   };
-  const pressed = event => ({ id: event.pointerId, x: event.clientX, y: event.clientY, mouse: event.pointerType === 'mouse' });
+  const pressed = (event, held) => ({ id: event.pointerId, x: event.clientX, y: event.clientY, mouse: event.pointerType === 'mouse', held });
   const primary = event => event.isPrimary && !(event.pointerType === 'mouse' && event.button !== 0);
   // The props of the tag of a task row that can be moved.
   const grip = () => ({
     onPointerDown: event => {
       if (!primary(event)) return;
       event.preventDefault(); // no text selection, and a mouse does not move the focus to the tag
-      begin(event.currentTarget, pressed(event));
+      begin(event.currentTarget, pressed(event, Boolean(spec.hold)));
     },
     onKeyDown: event => {
       if ((event.key !== ' ' && event.key !== 'Enter') || event.repeat || (live.current && live.current.picked)) return;
@@ -366,12 +384,12 @@ export function useListDrag(listRef, hostRef, liveRef, ui, spec) {
     },
     onContextMenu: event => event.preventDefault(),
   });
-  // The props of a row that is held to move it (a session row, a T-Attention row): the whole row except its "⋯" (`spec.ignore`: the controls in the row). Nothing is cancelled here, so a press that is not held stays a tap or a
-  // scroll; a context menu is cancelled only while the row is pressed.
+  // The props of a row that is held to move it (a task row, a session row, a T-Attention row): the whole row except its "⋯" (`spec.ignore`: the controls
+  // in the row). Nothing is cancelled here, so a press that is not held stays a tap or a scroll; a context menu is cancelled only while the row is pressed.
   const hold = () => ({
     onPointerDown: event => {
       if (!primary(event) || (event.target.closest && event.target.closest(spec.ignore || '.h5-terminal-more'))) return;
-      begin(event.currentTarget, pressed(event));
+      begin(event.currentTarget, pressed(event, true));
     },
     onContextMenu: event => { if (live.current) event.preventDefault(); },
   });

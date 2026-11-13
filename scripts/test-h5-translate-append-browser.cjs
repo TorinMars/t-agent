@@ -2,6 +2,8 @@
 // through a mocked terminal socket; the translator is mocked. The owner's rule: an empty input line gets the translation and Enter, as before; a line that
 // already has text gets a line break and the translation after it (one bracketed paste starting with a carriage return, or, without bracketed paste, a
 // space and the translation), and then the same Enter sends the whole input. The send arrow is unchanged. The server is mocked (no data folder is used).
+// Claude Code 2.1.323 draws its pointer as U+276F + U+00A0 (no-break space); the image-link cases upload a picture through the key bar (OSS mocked), check
+// the link the page types, draw Claude Code's echo of it (broken over rows at the terminal's width) and translate after it, on a desktop and a phone.
 const { chromium } = require('playwright');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -18,9 +20,13 @@ const TERMINALS = { 1: [{ terminal_id: 'h5-default', title: 'Terminal 1' }] };
 const CLAUDE = '❯';
 const CODEX = '›';
 const RULE = '─'.repeat(30);
+const NBSP = '\u00a0';
+const LINK = 'https://tagent-img.oss-cn-beijing.aliyuncs.com/terminal-images/2026-11-13/0b3c1f9e-2d4a-4c1b-9e8f-6a7b8c9d0e1f.png';
+const DESKTOP = { viewport: { width: 1280, height: 800 } };
+const PHONE = { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 3 };
 
-async function openPage(browser) {
-  const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+async function openPage(browser, device = DESKTOP) {
+  const context = await browser.newContext(device);
   const page = await context.newPage();
   page.on('pageerror', error => pageErrors.push(error.message));
   await page.addInitScript(() => {
@@ -54,10 +60,14 @@ async function openPage(browser) {
     if (terminals && method === 'GET') return json(TERMINALS[terminals[1]] || []);
     if (/^\/api\/tasks\/\d+\/agent\/conversations$/.test(url.pathname)) return json([]);
     if (url.pathname === '/api/agent-chat/summary') return json({ running: 0, queued: 0, submitted: 0 });
-    if (url.pathname === '/api/oss/config') return json({ enabled: false });
+    if (url.pathname === '/api/oss/config') return json({ enabled: true });
+    if (url.pathname === '/api/oss/upload-policy' && method === 'POST') {
+      return json({ host: 'https://bucket.oss.test', fields: { key: 'terminal-images/2026-11-13/shot.png', policy: 'p', 'x-oss-signature': 's' }, url: LINK, expiresAt: null });
+    }
     if (url.pathname === '/api/system/check-update' || url.pathname === '/api/system/update-status') return json({ status: 'up_to_date', local_version: '1.0.0' });
     return json({ error: 'not mocked' }, 404);
   });
+  await page.route('https://bucket.oss.test/**', route => route.fulfill({ status: 200, headers: { 'access-control-allow-origin': '*' }, body: '' }));
   await page.goto(`${ORIGIN}/h5`);
   await page.locator('#h5-tasks').waitFor({ state: 'visible' });
   await page.locator('.h5-task-item', { hasText: 'Fix login' }).click();
@@ -81,7 +91,8 @@ async function draw(page, rows, [column, row], bracketed) {
 }
 async function press(page, input, button, text) {
   const before = (await typedToTerminal(page)).length;
-  await input.click();
+  if (await page.evaluate(() => matchMedia('(pointer: coarse)').matches)) await input.focus(); // on a phone the key bar can sit over the box
+  else await input.click();
   await input.fill(text);
   await page.locator(button).click();
   await page.waitForFunction(count => window.sockets.at(-1).sent.filter(item => !item.startsWith('{')).length >= count + 2, before);
@@ -91,6 +102,40 @@ async function press(page, input, button, text) {
   return sent;
 }
 const translate = (page, input, text = 'one') => press(page, input, '#h5-translate-button', text);
+// The PTY size the page asked for last.
+const ptySize = page => page.evaluate(() => JSON.parse(window.sockets.at(-1).sent.filter(item => item.startsWith('{"type":"resize"')).at(-1)));
+// Uploads a picture with the key bar's image button and returns what the page typed for it.
+async function uploadImage(page) {
+  const before = (await typedToTerminal(page)).length;
+  const [chooser] = await Promise.all([page.waitForEvent('filechooser'), page.locator('#h5-image').click()]);
+  await chooser.setFiles({ name: 'shot.png', mimeType: 'image/png', buffer: Buffer.from('89504e470d0a1a0a', 'hex') });
+  await page.waitForFunction(count => window.sockets.at(-1).sent.filter(item => !item.startsWith('{')).length > count, before);
+  await page.locator('.h5-upload-overlay').waitFor({ state: 'detached' });
+  return (await typedToTerminal(page)).slice(before);
+}
+// Claude Code's input box holding the pasted link: the pointer and a no-break space, the link and its trailing space broken over rows of the terminal
+// width minus 4 (Claude Code's text column), the caret drawn inverse after the space. Returns the rows and the caret position.
+function claudeWithLink(cols) {
+  const text = `${LINK} `;
+  const width = cols - 4;
+  const parts = [];
+  for (let i = 0; i < text.length; i += width) parts.push(text.slice(i, i + width));
+  const rule = '─'.repeat(cols);
+  const rows = ['previous answer', rule, ...parts.map((part, i) => `${i ? '  ' : `${CLAUDE}${NBSP}`}${part}${i === parts.length - 1 ? '\x1b[7m \x1b[27m' : ''}`), rule, '  \x1b[2m? for shortcuts\x1b[22m'];
+  return { rows, caret: [2 + parts.at(-1).length, 1 + parts.length] };
+}
+// The image-link flow on one device: an empty Claude Code box, an upload, Claude Code's echo of the link, then translate-and-send.
+async function imageLinkFlow(browser, device, label) {
+  const { context, page, input } = await openPage(browser, device);
+  const { cols } = await ptySize(page);
+  await draw(page, ['previous answer', '─'.repeat(cols), `${CLAUDE}${NBSP}\x1b[7mT\x1b[27m\x1b[2mry "fix lint errors"\x1b[22m`, '─'.repeat(cols), '  \x1b[2m? for shortcuts\x1b[22m'], [2, 2], true);
+  assert.deepEqual(await uploadImage(page), [`\x1b[200~${LINK} \x1b[201~`], `${label}: the link and a trailing space go in as one bracketed paste, no Enter`);
+  const { rows, caret } = claudeWithLink(cols);
+  if (device === PHONE) assert.ok(rows.length > 5, `${label}: at ${cols} columns the link takes more than one row`);
+  await draw(page, rows, caret, true);
+  assert.deepEqual(await translate(page, input), ['\x1b[200~\rTranslated text\x1b[201~', '\r'], `${label}: a new line, the translation, then Enter`);
+  await context.close();
+}
 
 (async () => {
   const browser = await chromium.launch({ headless: true, ...(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {}) });
@@ -133,7 +178,19 @@ const translate = (page, input, text = 'one') => press(page, input, '#h5-transla
     assert.deepEqual(await press(page, input, '#h5-translate-send', 'as typed'), ['as typed', '\r'], 'send arrow next to shell text: unchanged');
     assert.equal(translations.length, asked, 'the send arrow makes no translate request');
 
+    // Claude Code 2.1.323's pointer is followed by a no-break space: an empty box is still empty, text is still text.
+    await draw(page, ['previous answer', RULE, `${CLAUDE}${NBSP}\x1b[7mT\x1b[27m\x1b[2mry "fix lint errors"\x1b[22m`, RULE], [2, 2], true);
+    assert.deepEqual(await translate(page, input), ['Translated text', '\r'], 'Claude Code (no-break space after the pointer), empty: typed, then Enter');
+    await draw(page, ['previous answer', RULE, `${CLAUDE}${NBSP}fix the login page\x1b[7m \x1b[27m`, RULE], [20, 2], true);
+    assert.deepEqual(await translate(page, input), ['\x1b[200~\rTranslated text\x1b[201~', '\r'], 'Claude Code (no-break space after the pointer) with text');
+    await draw(page, ['previous answer', RULE, `${CLAUDE}${NBSP}${LINK} \x1b[7m \x1b[27m`, RULE], [3 + LINK.length, 2], true);
+    assert.deepEqual(await translate(page, input), ['\x1b[200~\rTranslated text\x1b[201~', '\r'], 'an image link on one row of a wide terminal');
+
     await context.close();
+
+    // A picture uploaded with the key bar, then a translation: on a desktop and at a phone's width, where the link takes several rows.
+    await imageLinkFlow(browser, DESKTOP, 'desktop');
+    await imageLinkFlow(browser, PHONE, 'phone');
     assert.deepEqual(pageErrors, [], 'no page errors');
     console.log('h5 translate-and-send next to existing input: all checks passed');
   } finally {

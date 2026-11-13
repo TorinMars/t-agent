@@ -160,3 +160,63 @@ test('a real xterm screen: dim placeholder, inverse cursor, wrap and scrollback'
   assert.deepEqual(read(term.buffer.active), { known: true, hasText: true }, 'after scrolling, with text');
   term.dispose();
 });
+
+// Claude Code 2.1.323 draws its pointer as U+276F + U+00A0 (a no-break space, `PRt`/`B` in its prompt input), not U+276F + " ". The reader used to
+// accept only " " after a marker, so it never found Claude Code's input line and text already on it counted as empty: a translation after a pasted
+// image link went onto the same line and was sent with it. The link is what the page types after an upload (OSS URL + a trailing space); at a phone's
+// width Claude Code breaks it over separate rows of its own (the text column is the terminal width minus 4), the cursor after the space.
+const NBSP = ' ';
+const LINK = 'https://tagent-img.oss-cn-beijing.aliyuncs.com/terminal-images/2026-11-13/0b3c1f9e-2d4a-4c1b-9e8f-6a7b8c9d0e1f.png';
+function claudeLinkRows(cols, { focused = true } = {}) {
+  const text = `${LINK} `;
+  const width = cols - 4;
+  const parts = [];
+  for (let i = 0; i < text.length; i += width) parts.push(text.slice(i, i + width));
+  const rows = parts.map((part, i) => `${i ? '  ' : `${CLAUDE}${NBSP}`}${part}`);
+  if (focused) rows[rows.length - 1] += '[[i: ]]'; // the drawn caret after the trailing space
+  return { rows, cursor: [2 + parts.at(-1).length, rows.length - 1] };
+}
+
+test('Claude Code: the pointer is followed by a no-break space', () => {
+  const filled = ['', RULE, `${CLAUDE}${NBSP}fix the login page[[i: ]]`, RULE, '  [[d:? for shortcuts]]'];
+  assert.deepEqual(read(fakeBuffer(filled, { cursor: [20, 2] })), { known: true, hasText: true });
+  // Placeholders after the same pointer are still empty, and so is a box with only the caret.
+  const placeholder = ['', RULE, `${CLAUDE}${NBSP}[[i:T]][[d:ry "fix lint errors"]]`, RULE, '  [[d:? for shortcuts]]'];
+  assert.deepEqual(read(fakeBuffer(placeholder, { cursor: [2, 2] })), { known: true, hasText: false });
+  assert.deepEqual(read(fakeBuffer(['', RULE, `[[d:${CLAUDE}${NBSP}]][[i: ]]`, RULE], { cursor: [2, 2] })), { known: true, hasText: false });
+  // Multi-line input with the cursor on a later row: the marker row above it is found.
+  const multi = ['', RULE, `${CLAUDE}${NBSP}first line`, '  second[[i: ]]', RULE];
+  assert.deepEqual(read(fakeBuffer(multi, { cursor: [8, 3] })), { known: true, hasText: true });
+  // A no-break space typed alone is not text.
+  assert.deepEqual(read(fakeBuffer(['', RULE, `${CLAUDE}${NBSP}${NBSP}[[i: ]]`, RULE], { cursor: [3, 2] })), { known: true, hasText: false });
+});
+
+test('Claude Code: a pasted image link on the input line counts as text, at any width', () => {
+  for (const cols of [36, 40, 45, 50, 60, 80, 120]) {
+    const rule = '─'.repeat(cols);
+    for (const focused of [true, false]) {
+      const { rows, cursor } = claudeLinkRows(cols, { focused });
+      const screen = ['previous answer', rule, ...rows, rule, '  [[d:? for shortcuts]]'];
+      cursor[1] += 2;
+      assert.deepEqual(read(fakeBuffer(screen, { cursor, cols })), { known: true, hasText: true }, `${cols} columns, ${focused ? 'focused' : 'unfocused'}`);
+    }
+  }
+});
+
+test('a real xterm screen: Claude Code with a pasted image link, the pointer followed by U+00A0', async () => {
+  for (const cols of [40, 45, 57]) {
+    const rule = '─'.repeat(cols);
+    const text = `${LINK} `;
+    const width = cols - 4;
+    const parts = [];
+    for (let i = 0; i < text.length; i += width) parts.push(text.slice(i, i + width));
+    const body = parts.map((part, i) => `${i ? '  ' : `${CLAUDE}${NBSP}`}${part}${i === parts.length - 1 ? '\x1b[7m \x1b[27m' : ''}`).join('\r\n');
+    const term = await realScreen(`previous answer\r\n${rule}\r\n${body}\r\n${rule}\r\n  \x1b[2m? for shortcuts\x1b[22m\x1b[${2 + parts.length};${3 + parts.at(-1).length}H`, { cols, rows: 12 });
+    assert.equal(term.buffer.active.getLine(2).getCell(1).getChars(), NBSP, 'xterm keeps the no-break space in the cell');
+    assert.deepEqual(read(term.buffer.active), { known: true, hasText: true }, `${cols} columns`);
+    term.dispose();
+  }
+  const empty = await realScreen(`${'─'.repeat(30)}\r\n${CLAUDE}${NBSP}\x1b[7mT\x1b[27m\x1b[2mry "fix lint errors"\x1b[22m\r\n${'─'.repeat(30)}\x1b[2;3H`);
+  assert.deepEqual(read(empty.buffer.active), { known: true, hasText: false }, 'the placeholder after the same pointer');
+  empty.dispose();
+});

@@ -8,6 +8,8 @@
 //   - TUI markers at the start of the row, after spaces and an optional box border (U+2502 and similar): Claude Code U+276F and, in older versions boxed,
 //     ">"; Codex U+203A. Each must be followed by a space (or the end of the row).
 //   - Shell markers: the first "$ ", "% ", "# " or U+276F + space on the line (bash, zsh, root, starship / pure).
+//   - "A space" is any whitespace cell, the no-break space U+00A0 included: Claude Code (2.1.323) draws its pointer as U+276F + U+00A0, so with only " "
+//     its input line was never recognised and text already on it (a pasted image link, for example) was read as an empty line.
 // - Claude Code and Codex draw multi-line input as separate rows, not wrapped ones. When the cursor row has no marker, the rows above it are searched for a
 //   TUI marker, up to MAX_ROWS and never past a horizontal box border (the top of Claude Code's input box), so a line of the transcript above the box does not
 //   count. With a TUI marker, the rows below the cursor count only when a border closes the box within MAX_ROWS (Claude Code); otherwise (Codex, whose
@@ -26,7 +28,8 @@ const TerminalInputLine = (() => {
   const HORIZONTAL = '─━═╌╍┄┅┈┉';
   const BORDER = new RegExp(`^[\\u256d\\u2570\\u250c\\u2514\\u251c\\u2552\\u2558\\u2554\\u255a]?[${HORIZONTAL}]{3,}`);
   const SHELL_MARKERS = new Set(['$', '%', '#', MARKER_CLAUDE]);
-  const blank = cell => !cell || cell.ch === ' ' || cell.ch === '';
+  const WHITESPACE = /^\s*$/; // JavaScript's \s includes U+00A0 and the other Unicode spaces
+  const blank = cell => !cell || WHITESPACE.test(cell.ch);
 
   function cellOf(cell, x, y) {
     const ch = cell.getChars() || ' ';

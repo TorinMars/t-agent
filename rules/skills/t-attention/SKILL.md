@@ -192,7 +192,7 @@ Read the list with:
 
 (`list --tree` without `--json` prints the same view as plain text, which you may show as it is when the chat cannot render tables.)
 
-The answer is `{"groups": [{"key", "label", "items": [...]}], "done": N}`. The groups come in order: Needs you (the `waiting_user` tasks, then the `review` tasks), Working, To do. `done` is the number of finished tasks (done, failed and cancelled together). The CLI has already built the trees and placed them in their groups: each item is a task (id, title, status, custom status, notes, result, the reason or question for the user, its parent, the time of the last change) plus `depth` (0 for a top-level row, 1 for a child, and so on), in display order. Keep the groups and the order as they are; do not regroup.
+The answer is `{"groups": [{"key", "label", "items": [...]}], "done": N}`. The groups come in order: Needs you (the `waiting_user` tasks, then the `review` tasks), Working, To do. `done` is the number of finished tasks (done, failed and cancelled together). The CLI has already built the trees and placed them in their groups: each item is a task (id, title, status, custom status, notes, result, the reason or question for the user, its parent, the time of the last change) plus `depth` (0 for a top-level row, 1 for a child, and so on), in display order. A whole tree is in the group of its most urgent open task (a child that needs the user brings its tree into Needs you). Keep the groups and the order as they are; do not regroup.
 
 Write the view in this order. Write the headings and the column names in the user's language (translate the English ones below); task data stays as stored, never translated.
 

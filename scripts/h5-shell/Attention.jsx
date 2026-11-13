@@ -22,18 +22,26 @@ import { AttentionGuide } from './AttentionGuide.jsx';
 import { DRAG_SX, useListDrag } from './list-drag.jsx';
 import {
   MAX_INDENT, PRIORITIES, PRIORITY_LABELS, REMIND_STATUSES, STATUSES, STATUS_LABELS, buildTree, childrenOf, collapseId, contextFilePath, contextOf, engineOf, groupItems,
-  hasTree, jumpBack, keyOf, moveLocal, onThisMachine, overdue, parentChoices, parseKey, patchFor, pendingLine, readCollapsed, rollbackItems, safeLink, statusOfGroup,
-  stepMove, timeline,
+  groupOf, hasTree, homeDetail, homeGroups, jumpBack, keyOf, moveLocal, onThisMachine, overdue, parentChoices, parseKey, patchFor, pendingLine, readCollapsed, rollbackItems,
+  safeLink, shortTime, statusOfGroup, statusesOfGroup, stepMove, timeline,
 } from './attention-model.mjs';
 
 // T-Attention: the tasks agents and services report (through listener plugins, the `t-attention` CLI) and the user's own, in one list
 // ("Attention" in row 2). Phone: a full-screen sheet; wide: the right side panel. The list and the live
-// updates are in attention-feed.mjs (`state.attention`); this file only draws them and calls `ui.actions.attention*`. Groups: Needs you, Review,
-// Working, To do, Done & failed (folded). A tap on the circle marks a task done (from any status; on a done task it opens it again); a tap on
-// the row opens the edit view (a dialog: title, notes, status, priority, due date, link, history, delete).
-// A server with sub-tasks (`hasTree`): inside a group a sub-task is drawn under its parent (`buildTree`, collapsible), a row shows its custom status and
-// result, Review rows have Confirm / Reject and Needs you rows Handled, and a held row is dragged to reorder its group or dropped on another group's title
-// to change its status (`POST /api/attention/:id/move`, useListDrag of list-drag.jsx). Every such change is drawn at once and put back when it fails.
+// updates are in attention-feed.mjs (`state.attention`); this file only draws them and calls `ui.actions.attention*`. A tap on the circle marks a
+// task done (from any status; on a done task it opens it again); a tap on the row opens the edit view (a dialog: title, notes, status, priority,
+// due date, link, history, delete).
+// Phone: the "Home view" of the t-attention skill (`homeGroups`, the grouping of `t-attention list --tree`, lib/attention-home.js): the sections Needs
+// you (waiting_user, then review), Working and To do, each heading with a coloured dot (red, green, yellow; an empty section says "None"), whole trees
+// (a tree is in the section of its most urgent open task, a sub-task always under its parent), each row with its own status pill, the section's
+// detail line (Needs you: what you need to do; Working: custom status · notes; To do: nothing) and the time of its last change (MM-DD HH:MM). Then
+// "Done: N" (grey dot): finished tasks are only counted; a tap unfolds them (the closed group of the wide panel), so they can be opened again.
+// Wide: the groups Needs you, Review, Working, To do, Done & failed (folded); inside a group a sub-task is drawn under its parent (`buildTree`), one
+// whose parent is in another group in its own group with a "↳ parent" hint; a row shows its custom status and result.
+// A server with sub-tasks (`hasTree`): parents collapse, Review rows have Confirm / Reject and Needs you rows Handled, and a held row is dragged to
+// reorder it among its siblings of the same status group (the server's order is per status) or dropped on another section's title to change its
+// status (Needs you gives waiting_user, Done gives done; `POST /api/attention/:id/move`, useListDrag of list-drag.jsx). Every such change is drawn at
+// once and put back when it fails.
 // Several engines (`state.attention.engines`, attention-feed.mjs): one list, each group in engine blocks (this machine first), every row with the engine
 // tag of the task list (`DeviceTag`) in front of its title; a row is named by its `key` (ids repeat between engines), every request goes to its engine,
 // and a row is dragged only among the rows of its own engine. With one engine the panel looks as it always did (no tags, no "on <engine>").
@@ -46,6 +54,14 @@ const INDENT_PX = 16; // one level of sub-tasks
 const CIRCLE_X = 26; // the middle of the circle from the left edge of a row (its 44px button after 4px)
 const ROW_SX = { userSelect: 'none', WebkitUserSelect: 'none', WebkitTouchCallout: 'none' };
 const ACTION_SX = { minWidth: 0, px: 1.25, py: 0.25, fontSize: 13, lineHeight: 1.3, minHeight: 32 };
+// The phone: the dot of a section heading (theme colours) and the tone of a status pill.
+const SECTION_DOT = { needs_you: 'error.main', working: 'success.main', todo: 'warning.main', closed: 'text.disabled' };
+const STATUS_TONE = { waiting_user: 'warning', review: 'info', working: 'success', done: 'success', failed: 'error' };
+const PILL_SX = { height: 20, fontSize: 12, px: 1, flex: '0 0 auto' };
+const DETAIL_COLOR = { reason: null, confirm: 'info.light', progress: 'text.secondary' };
+function Dot({ section }) {
+  return <Box component="span" className="h5-attention-dot" data-section={section} aria-hidden="true" sx={{ flex: '0 0 auto', width: 8, height: 8, borderRadius: '50%', bgcolor: SECTION_DOT[section] || 'text.disabled' }} />;
+}
 
 // The second line of a row: the result of a task in Review or Done (when it has one), else what is pending (Needs you, Review, Failed).
 function secondLine(item, fields) {
@@ -56,9 +72,14 @@ function secondLine(item, fields) {
 
 // One row. `node` (the tree, buildTree) gives its indent and, for a sub-task of a task in another group, that parent (`node.parent`, the "↳" hint);
 // `fold` is the collapse button of a parent; `act` runs a row button (Confirm, Reject, Handled); `hold` are the drag props (useListDrag) or null.
-function Row({ item, node, ui, onOpen, fields, fold, act, busy, hold, tag }) {
+// `section` (the phone): the key of the Home view section it is drawn in ('closed' in the unfolded Done list); the row then has its status pill, the
+// section's detail line and its time.
+function Row({ item, node, ui, onOpen, fields, fold, act, busy, hold, tag, section }) {
   const done = item.status === 'done';
-  const second = secondLine(item, fields);
+  const home = Boolean(section);
+  const detail = home ? homeDetail(item, section) : null;
+  const second = home ? (fields && ['review', 'done'].includes(item.status) && item.result ? { kind: 'result', text: String(item.result) } : null) : secondLine(item, fields);
+  const updated = home ? shortTime(item.updated_at) : '';
   const late = overdue(item);
   const toggle = async () => {
     try { await ui.actions.attentionUpdate(keyOf(item), { status: done ? 'todo' : 'done' }); }
@@ -67,7 +88,7 @@ function Row({ item, node, ui, onOpen, fields, fold, act, busy, hold, tag }) {
   const mark = done ? 'Mark as not done' : 'Mark as done';
   const indent = node ? node.indent : 0;
   const actions = item.status === 'review' ? ['Confirm', 'Reject'] : item.status === 'waiting_user' ? ['Handled'] : [];
-  const custom = fields && item.custom_status ? String(item.custom_status) : '';
+  const custom = fields && item.custom_status && !home ? String(item.custom_status) : '';
   return (
     <Box
       className="h5-attention-row" data-id={item.id} data-key={keyOf(item)} data-engine={engineOf(item)} data-status={item.status} data-depth={node ? node.depth : 0} {...(hold || {})}
@@ -88,11 +109,18 @@ function Row({ item, node, ui, onOpen, fields, fold, act, busy, hold, tag }) {
             <Box className="h5-attention-title" sx={{ flex: '1 1 auto', minWidth: 0, fontSize: 15, lineHeight: 1.35, overflowWrap: 'anywhere', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', color: done || item.status === 'cancelled' ? 'text.secondary' : 'text.primary', textDecoration: done ? 'line-through' : 'none' }}>{item.title}</Box>
             {custom ? <Pill className="h5-attention-custom" label={custom} title={custom} tone="info" sx={{ flex: '0 1 auto', maxWidth: '45%', height: 20, mt: '1px', fontSize: 12, px: 1, display: 'inline-block', lineHeight: '18px', overflow: 'hidden', textOverflow: 'ellipsis' }} /> : null}
           </Box>
+          {detail ? (
+            <Box className={detail.kind === 'progress' ? 'h5-attention-progress' : 'h5-attention-reason'} data-kind={detail.kind} sx={{ mt: 0.25, fontSize: 13, lineHeight: 1.35, color: DETAIL_COLOR[detail.kind] || REASON_COLOR[item.status], overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {detail.kind === 'confirm' ? t(detail.text) : detail.text}
+            </Box>
+          ) : null}
           {second ? <Box className={second.kind === 'result' ? 'h5-attention-result' : 'h5-attention-reason'} sx={{ mt: 0.25, fontSize: 13, lineHeight: 1.35, color: second.kind === 'result' ? 'text.secondary' : REASON_COLOR[item.status], overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{second.text}</Box> : null}
-          {(item.source && item.source !== 'user') || (item.priority && item.priority !== 'none') || item.due_date || item.status === 'failed' || item.status === 'cancelled' ? (
-            <Box sx={{ mt: 0.5, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 0.75, fontSize: 12, color: 'text.secondary' }}>
+          {home || (item.source && item.source !== 'user') || (item.priority && item.priority !== 'none') || item.due_date || item.status === 'failed' || item.status === 'cancelled' ? (
+            <Box className={home ? 'h5-attention-meta' : undefined} sx={{ mt: 0.5, display: 'flex', flexWrap: 'wrap', alignItems: 'center', columnGap: 0.75, rowGap: 0.5, fontSize: 12, color: 'text.secondary' }}>
+              {home ? <Pill className="h5-attention-status" data-status={item.status} label={t(STATUS_LABELS[item.status] || 'To do')} tone={STATUS_TONE[item.status] || 'default'} sx={PILL_SX} /> : null}
+              {home && updated ? <Box component="span" className="h5-attention-updated" title={when(item.updated_at)} sx={{ fontVariantNumeric: 'tabular-nums' }}>{updated}</Box> : null}
               {item.source && item.source !== 'user' ? <Pill className="h5-attention-source" label={item.source} translate="no" sx={{ height: 20, fontSize: 12, px: 1 }} /> : null}
-              {item.status === 'failed' || item.status === 'cancelled' ? <Box component="span" sx={{ color: item.status === 'failed' ? 'error.light' : 'text.secondary' }}>{t(STATUS_LABELS[item.status])}</Box> : null}
+              {!home && (item.status === 'failed' || item.status === 'cancelled') ? <Box component="span" sx={{ color: item.status === 'failed' ? 'error.light' : 'text.secondary' }}>{t(STATUS_LABELS[item.status])}</Box> : null}
               {item.priority && item.priority !== 'none' ? <Box component="span" className="h5-attention-priority" sx={{ color: PRIORITY_COLOR[item.priority] }}>{t(PRIORITY_LABELS[item.priority])}</Box> : null}
               {item.due_date ? <Box component="span" className="h5-attention-due" data-late={late || undefined} sx={{ color: late ? 'error.light' : 'text.secondary' }}>{`${t('Due')} ${item.due_date}`}</Box> : null}
             </Box>
@@ -135,8 +163,8 @@ function Node({ node, group, ctx }) {
   const fold = count ? <Fold id={collapseId(item)} open={open} count={count} onToggle={ctx.toggleCollapsed} /> : null;
   const movable = ctx.hold && ctx.movable(engine);
   return (
-    <Box className="h5-attention-node" data-id={item.id} data-key={keyOf(item)} data-engine={engine} data-group={group} data-movable={movable ? 'true' : undefined} role="listitem" sx={{ position: 'relative' }}>
-      <Row item={item} node={node} ui={ctx.ui} onOpen={ctx.onOpen} fields={ctx.fields(engine)} fold={fold} act={ctx.act} busy={ctx.busy.has(keyOf(item))} hold={movable ? ctx.hold() : null} tag={ctx.tagOf(engine)} />
+    <Box className="h5-attention-node" data-id={item.id} data-key={keyOf(item)} data-engine={engine} data-group={group} data-status={item.status} data-sgroup={groupOf(item)} data-movable={movable ? 'true' : undefined} role="listitem" sx={{ position: 'relative' }}>
+      <Row item={item} node={node} ui={ctx.ui} onOpen={ctx.onOpen} fields={ctx.fields(engine)} fold={fold} act={ctx.act} busy={ctx.busy.has(keyOf(item))} hold={movable ? ctx.hold() : null} tag={ctx.tagOf(engine)} section={ctx.home ? group : undefined} />
       {count && open ? (
         <Box
           className="h5-attention-level" data-level={`${group}:${collapseId(item)}`} role="list" aria-label={item.title}
@@ -514,15 +542,16 @@ const writeKey = (key, value) => { try { localStorage.setItem(key, value); } cat
 const removeKey = key => { try { localStorage.removeItem(key); } catch { /* not remembered */ } };
 
 // The drag of a T-Attention row (useListDrag, list-drag.jsx): a row is held (a finger 400 ms; a mouse held, or moved 4px) and moves among the rows drawn
-// at its own level of its group (its siblings) of its own engine, its sub-tasks with it; the title of another group is a drop target. `move` is the
-// panel's move. The rows of another engine are no place for it: dragged over them, its slot stays at the nearest edge of its own engine's block.
+// at its own level of its group (its siblings) of its own engine and status group (the server keeps one order per status; on the phone a level can
+// hold several statuses), its sub-tasks with it; the title of a group or section whose statuses do not include the row's is a drop target. `move` is
+// the panel's move. The rows of another engine are no place for it: dragged over them, its slot stays at the nearest edge of its own engine's block.
 function attentionDrag(moveRef) {
   return {
     rows: list => [...list.querySelectorAll('.h5-attention-node[data-key]')],
     key: el => el.dataset.key,
     group: el => (el.parentElement && el.parentElement.dataset.level) || '',
     row: handle => handle.closest('.h5-attention-node'),
-    peers: (list, row) => [...row.parentElement.querySelectorAll(':scope > .h5-attention-node[data-movable="true"]')].filter(el => el.dataset.engine === row.dataset.engine),
+    peers: (list, row) => [...row.parentElement.querySelectorAll(':scope > .h5-attention-node[data-movable="true"]')].filter(el => el.dataset.engine === row.dataset.engine && el.dataset.sgroup === row.dataset.sgroup),
     head: row => row,
     floatClass: 'h5-task-float h5-attention-float',
     clamp: false,
@@ -531,7 +560,7 @@ function attentionDrag(moveRef) {
     focus: () => null,
     dragging: null,
     tap: null, // a tap is the row's own click: it opens the edit view
-    targets: (list, row) => [...list.querySelectorAll('.h5-attention-drop[data-group]')].filter(el => el.dataset.group !== row.dataset.group),
+    targets: (list, row) => [...list.querySelectorAll('.h5-attention-drop[data-group]')].filter(el => !statusesOfGroup(el.dataset.group).includes(row.dataset.status)),
     drop: (ui, s, others, say) => {
       const after = s.index >= others.length;
       const target = Number((after ? others[others.length - 1] : others[s.index]).el.dataset.id);
@@ -551,8 +580,56 @@ const DROP_SX = theme => ({
   '& .h5-attention-drop[data-drop-over] .h5-attention-drop-hint': { display: 'inline' },
 });
 
-// The scrolling list of the groups. It is drawn inside the sheet, so the drag (and its touchmove guard) is set up when the list is there.
-function GroupList({ ui, attention, groups, items, fields, fieldsOf, movable, movableOf, tagOf, showClosed, setShowClosed, collapsed, toggleCollapsed, onOpen, act, busy, move, open }) {
+// The phone list (the Home view): the sections with their dotted headings (each a drop target; empty: "None"), then "Done: N", which unfolds the
+// finished tasks (`closed`, the closed group of `groupItems`) but the ones already drawn in a section (a finished parent kept above an open sub-task),
+// so no task is drawn twice. `home` is `homeGroups`.
+function HomeSections({ home, closed, items, movable, showClosed, setShowClosed, ctx }) {
+  const hintOf = key => (movable ? <Box component="span" className="h5-attention-drop-hint" aria-hidden="true" sx={{ ml: 'auto', pl: 1 }}>{`\u2192 ${t(STATUS_LABELS[statusOfGroup(key)])}`}</Box> : null);
+  const head = { px: 2, gap: 1, minHeight: 44, boxSizing: 'border-box', display: 'flex', alignItems: 'center', fontSize: 13, fontWeight: 600, borderBottom: 1, borderColor: 'divider' };
+  const drawn = new Set();
+  const walk = nodes => nodes.forEach(node => { drawn.add(keyOf(node.item)); walk(node.children); });
+  home.sections.forEach(section => walk(section.nodes));
+  const finished = closed ? closed.items.filter(item => !drawn.has(keyOf(item))) : [];
+  const tree = showClosed ? buildTree(finished, items) : [];
+  const count = finished.length;
+  return (
+    <>
+      {home.sections.map(section => (
+        <Box component="section" key={section.key} className="h5-attention-group" data-group={section.key} data-empty={section.nodes.length ? undefined : 'true'} aria-label={t(section.label)}>
+          <Box className={movable ? 'h5-attention-group-title h5-attention-drop' : 'h5-attention-group-title'} data-group={section.key} sx={{ ...head, pt: 1, color: 'text.primary' }}>
+            <Dot section={section.key} />
+            <Box component="span" className="h5-attention-group-label" sx={{ minWidth: 0 }}>{t(section.label)}</Box>
+            {hintOf(section.key)}
+          </Box>
+          {section.nodes.length ? (
+            <Box className="h5-attention-level" data-level={`${section.key}:root`} role="list">
+              {section.nodes.map(node => <Node key={keyOf(node.item)} node={node} group={section.key} ctx={ctx} />)}
+            </Box>
+          ) : (
+            <Box className="h5-attention-none" sx={{ px: 2, py: 1.25, fontSize: 13, color: 'text.secondary', borderBottom: 1, borderColor: 'divider' }}>{t('None')}</Box>
+          )}
+        </Box>
+      ))}
+      <Box component="section" className="h5-attention-group" data-group="closed" data-empty={count ? undefined : 'true'} aria-label={t('Done & failed')}>
+        <ButtonBase id="h5-attention-closed-toggle" className={movable ? 'h5-attention-drop' : undefined} data-group="closed" aria-expanded={showClosed} disabled={!count && !movable} onClick={() => setShowClosed(value => !value)} sx={{ ...head, width: '100%', justifyContent: 'flex-start', color: 'text.secondary' }}>
+          <Dot section="closed" />
+          <span className="h5-attention-group-title">{t(`Done: ${home.done}`)}</span>
+          {count ? <Box component="span" aria-hidden="true" sx={{ display: 'inline-flex', transform: showClosed ? 'rotate(90deg)' : 'none', transition: 'transform 120ms', '@media (prefers-reduced-motion: reduce)': { transition: 'none' } }}><Icon name="treeChevron" size={14} /></Box> : null}
+          {hintOf('closed')}
+        </ButtonBase>
+        {tree.length ? (
+          <Box className="h5-attention-level" data-level="closed:root" role="list">
+            {tree.map(node => <Node key={keyOf(node.item)} node={node} group="closed" ctx={ctx} />)}
+          </Box>
+        ) : null}
+      </Box>
+    </>
+  );
+}
+
+// The scrolling list of the groups. It is drawn inside the sheet, so the drag (and its touchmove guard) is set up when the list is there. `home` (the
+// phone): the Home view sections (`homeGroups`) instead of the groups.
+function GroupList({ ui, attention, groups, home, items, fields, fieldsOf, movable, movableOf, tagOf, showClosed, setShowClosed, collapsed, toggleCollapsed, onOpen, act, busy, move, open }) {
   const listRef = useRef(null);
   const hostRef = useRef(null);
   const liveRef = useRef(null);
@@ -560,7 +637,7 @@ function GroupList({ ui, attention, groups, items, fields, fieldsOf, movable, mo
   moveRef.current = move;
   const spec = useMemo(() => attentionDrag(moveRef), []);
   const drag = useListDrag(listRef, hostRef, liveRef, ui, spec);
-  const ctx = { ui, onOpen, fields: fieldsOf, movable: movableOf, tagOf, act, busy, collapsed, toggleCollapsed, hold: movable ? drag.hold : null };
+  const ctx = { ui, onOpen, fields: fieldsOf, movable: movableOf, tagOf, act, busy, collapsed, toggleCollapsed, hold: movable ? drag.hold : null, home: Boolean(home) };
   const failed = attention.status === 'ready' && Array.isArray(attention.failed) ? attention.failed : [];
   return (
     <Box sx={theme => ({ flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column', ...DRAG_SX(theme), ...DROP_SX(theme) })}>
@@ -580,7 +657,10 @@ function GroupList({ ui, attention, groups, items, fields, fieldsOf, movable, mo
           </Box>
         ))}
         {attention.status === 'ready' && !items.length ? <Box id="h5-attention-empty" role="status" sx={{ p: 3, textAlign: 'center', color: 'text.secondary' }}>{t('No tasks yet')}</Box> : null}
-        {items.length ? groups.map(group => {
+        {items.length && home ? (
+          <HomeSections home={home} closed={groups.find(group => group.key === 'closed')} items={items} movable={movable} showClosed={showClosed} setShowClosed={setShowClosed} ctx={ctx} />
+        ) : null}
+        {items.length && !home ? groups.map(group => {
           const folded = group.folded && !showClosed;
           const head = `${t(group.label)} (${group.items.length})`;
           const status = statusOfGroup(group.key);
@@ -641,6 +721,8 @@ export function AttentionPanel({ state, ui }) {
   const movable = engines.some(engine => movableOf(engine.key));
   const order = useMemo(() => engines.map(engine => engine.key), [engines]);
   const groups = useMemo(() => groupItems(items, { keepEmpty: fields, engines: order }), [items, fields, order]);
+  // The phone: the Home view of the t-attention skill (the same grouping as `t-attention list --tree`).
+  const home = useMemo(() => (side ? null : homeGroups(items, { engines: order })), [side, items, order]);
   const close = () => { setEditing(null); ui.actions.closeAttention(); };
   // The item a key names, or a bare id (an older caller: a task of this machine).
   const find = ref => {
@@ -729,7 +811,7 @@ export function AttentionPanel({ state, ui }) {
       <QuickAdd ui={ui} engines={engines.filter(engine => engine.key === 'local' || engine.ready)} />
       {attention.status === 'loading' ? <LinearProgress id="h5-attention-loading" aria-label={t('Loading…')} sx={{ flex: '0 0 auto' }} /> : null}
       <GroupList
-        ui={ui} attention={attention} groups={groups} items={items} fields={fields} fieldsOf={fieldsOf} movable={movable} movableOf={movableOf} tagOf={tagOf} showClosed={showClosed} setShowClosed={setShowClosed}
+        ui={ui} attention={attention} groups={groups} home={home} items={items} fields={fields} fieldsOf={fieldsOf} movable={movable} movableOf={movableOf} tagOf={tagOf} showClosed={showClosed} setShowClosed={setShowClosed}
         collapsed={collapsed} toggleCollapsed={toggleCollapsed} onOpen={setEditing} act={act} busy={busy} move={move} open={open}
       />
       {rejectItem ? <RejectDialog key={keyOf(rejectItem)} item={rejectItem} onCancel={() => setRejecting(null)} onReject={reject} /> : null}

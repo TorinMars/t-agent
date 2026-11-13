@@ -502,15 +502,14 @@ test('tree: the home view against the real service, depth-first with branch mark
     assert.equal(tree.code, 0, tree.stderr);
     const lines = tree.stdout.trimEnd().split('\n');
     const when = '\\d\\d-\\d\\d \\d\\d:\\d\\d';
+    // The tree of "Main session" has a task in review, so the whole tree is in Needs you (after the waiting_user one), its review child first.
     const expected = [
-      /^Needs you \(2\)$/,
+      /^Needs you \(6\)$/,
       new RegExp(`^  #6 Answer me  Needs you  ${when}$`),
       /^ {5}Pick a date$/,
-      new RegExp(`^  #5 Review me  Review  ${when}$`),
-      /^ {5}Added the importer$/,
-      /^$/,
-      /^Working \(4\)$/,
       new RegExp(`^  #1 Main session  Working \u00b7 Coordinating  ${when}$`),
+      new RegExp(`^  \u251c #5 Review me  Review  ${when}$`),
+      /^ {7}Added the importer$/,
       new RegExp(`^  \u251c #4 Sub-agent two  Working \u00b7 Blocked  ${when}$`),
       new RegExp(`^  \u2514 #2 Sub-agent one  Working  ${when}$`),
       new RegExp(`^    \u2514 #3 Grandchild  Working  ${when}$`),
@@ -532,9 +531,19 @@ test('tree: the home view against the real service, depth-first with branch mark
 
     const json = JSON.parse((await run(['tree', '--json'], { env })).stdout);
     assert.deepEqual(json.groups.map(group => group.key), ['needs_you', 'working', 'todo']);
-    assert.deepEqual(json.groups[1].items.map(item => [item.title, item.depth]), [['Main session', 0], ['Sub-agent two', 1], ['Sub-agent one', 1], ['Grandchild', 2]]);
-    assert.equal(json.groups[1].items[1].custom_status, 'Blocked');
+    assert.deepEqual(json.groups[0].items.map(item => [item.title, item.depth]), [['Answer me', 0], ['Main session', 0], ['Review me', 1], ['Sub-agent two', 1], ['Sub-agent one', 1], ['Grandchild', 2]]);
+    assert.equal(json.groups[0].items[3].custom_status, 'Blocked');
+    assert.deepEqual(json.groups[1].items, [], 'Working is empty: its tree is in Needs you');
     assert.equal(json.done, 2);
+    // A finished parent with an open sub-task is drawn to keep it under it (and still counted); a finished child of an open task is only counted.
+    const shipped = service.create({ title: 'Shipped', status: 'done' });
+    service.create({ title: 'Follow-up', status: 'todo', parent_id: shipped.id });
+    service.create({ title: 'Old step', status: 'done', parent_id: main.id });
+    const kept = JSON.parse((await run(['tree', '--json'], { env })).stdout);
+    const todo = kept.groups[2].items.map(item => [item.title, item.status, item.depth]);
+    assert.deepEqual(todo.slice(todo.findIndex(([title]) => title === 'Shipped')).slice(0, 2), [['Shipped', 'done', 0], ['Follow-up', 'todo', 1]]);
+    assert.ok(!kept.groups.some(group => group.items.some(item => item.title === 'Old step')), 'a finished leaf is only counted');
+    assert.equal(kept.done, 4);
     assert.equal((await run(['tree', '--status', 'todo'], { env })).code, 1, 'tree takes no filters');
   } finally {
     await server.close();

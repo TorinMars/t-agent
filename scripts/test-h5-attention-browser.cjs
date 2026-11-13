@@ -1,7 +1,7 @@
 // T-Attention on the MUI page (scripts/h5-shell/Attention.jsx, attention-feed.mjs, AttentionSettings.jsx) in real Chromium, with the API
 // (/api/attention*) mocked by Playwright routes and the live stream (EventSource), Notification and AudioContext stubbed in the page:
-// - phone 390x844 (touch): row 2 has Docs and Attention (no Files button) and the "Needs you" badge; the full-screen sheet with the groups in order
-//   (Done & failed folded) and the order inside a group; source badge and reason; quick add (POST body); the circle marks done (PATCH); the edit
+// - phone 390x844 (touch): row 2 has Docs and Attention (no Files button) and the "Needs you" badge; the full-screen sheet with the Home view
+//   sections in order (Needs you, Working, To do; "Done: N" folded) and the order inside a section; source badge and reason; quick add (POST body); the circle marks done (PATCH); the edit
 //   view (history, PATCH of the changed fields only, link) and delete with a confirmation; a live event moving a task into Needs you gives a
 //   toast, the badge and a sound but never a system notification (Notification is never made, the permission never asked for, even with an old
 //   stored 'h5-attention-notify' = '1'), a change made on this page gives none; a lost stream connects again and reads the list
@@ -268,21 +268,25 @@ const pluginsFit = page => page.evaluate(() => [...document.querySelectorAll('#h
       assert.equal(await page.evaluate(() => window.streams.length), 1, 'the live stream is open');
       assert.equal(await page.evaluate(() => window.streams[0].url), '/api/attention/stream');
 
-      // Open: the groups in order; Done & failed folded; the order inside a group.
+      // Open: the Home view (an older server: no parent_id): Needs you (waiting_user, then review), Working, To do, then "Done: N" folded; the
+      // order inside a section.
       await page.locator('#h5-attention').tap();
       const sheet = page.locator('#h5-attention-sheet .h5-attention-panel');
       await sheet.waitFor({ state: 'visible' });
       await settled(page, '#h5-attention-sheet .h5-attention-panel');
       const box = await sheet.boundingBox();
       assert.ok(box.width === 390 && Math.abs(box.height - 844) <= 1 && box.y === 0, `full-screen sheet (${JSON.stringify(box)})`);
-      assert.deepEqual(await groupKeys(page), ['needs', 'review', 'working', 'todo', 'closed']);
+      assert.deepEqual(await groupKeys(page), ['needs_you', 'working', 'todo', 'closed']);
+      assert.deepEqual(await idsIn(page, 'needs_you'), [1, 2], 'waiting_user, then review');
       assert.deepEqual(await idsIn(page, 'todo'), [8, 5, 4], 'priority, then the earlier due date');
-      assert.deepEqual(await idsIn(page, 'closed'), [], 'Done & failed is folded');
+      assert.deepEqual(await idsIn(page, 'closed'), [], 'the finished tasks are folded');
       assert.equal(await page.locator('#h5-attention-closed-toggle').getAttribute('aria-expanded'), 'false');
-      assert.equal(await page.locator('#h5-attention-closed-toggle').textContent(), 'Done & failed (2)');
+      assert.equal(await page.locator('#h5-attention-closed-toggle .h5-attention-group-title').textContent(), 'Done: 2');
+      assert.equal(await row(page, 3).locator('.h5-attention-status').textContent(), 'Working', 'each row has its status');
+      assert.equal(await row(page, 2).locator('.h5-attention-reason').textContent(), 'Claude finished. Review the result.');
       assert.equal(await row(page, 1).locator('.h5-attention-source').textContent(), 'claude', 'the source badge');
       assert.equal(await row(page, 1).locator('.h5-attention-reason').textContent(), 'Allow Bash: npm test', 'a row that needs the user shows what is pending');
-      assert.equal(await row(page, 7).locator('.h5-attention-reason').count(), 0, 'Done & failed is folded');
+      assert.equal(await row(page, 7).locator('.h5-attention-reason').count(), 0, 'the finished tasks are folded');
       assert.equal(await row(page, 3).locator('.h5-attention-reason').count(), 0, 'a working task shows no reason');
       assert.equal(await row(page, 4).locator('.h5-attention-source').count(), 0, 'no badge for the user\'s own task');
       await page.locator('#h5-attention-closed-toggle').tap();
@@ -306,7 +310,8 @@ const pluginsFit = page => page.evaluate(() => [...document.querySelectorAll('#h
       await row(page, 2).locator('.h5-attention-check').tap();
       await page.waitForFunction(() => document.querySelector('#h5-attention-sheet .h5-attention-group[data-group="closed"] .h5-attention-row[data-id="2"]'));
       assert.deepEqual(calls.filter(call => call.method === 'PATCH').map(call => [call.path, call.body]), [['/api/attention/2', { status: 'done' }]]);
-      assert.deepEqual(await groupKeys(page), ['needs', 'working', 'todo', 'closed'], 'an empty group is left out');
+      assert.deepEqual(await groupKeys(page), ['needs_you', 'working', 'todo', 'closed'], 'an empty section stays');
+      assert.equal(await page.locator('#h5-attention-closed-toggle .h5-attention-group-title').textContent(), 'Done: 3');
 
       // The edit view: history, PATCH of the changed fields, the link, the Android back button.
       await row(page, 4).locator('.h5-attention-open').tap();
@@ -359,7 +364,7 @@ const pluginsFit = page => page.evaluate(() => [...document.querySelectorAll('#h
       await page.evaluate(change => window.emitChange(change), { kind: 'updated', item: moved, previous: { ...moved, status: 'working' }, event: { actor: 'claude', type: 'status', from_status: 'working', to_status: 'waiting_user' } });
       await notice(page).filter({ hasText: 'Needs you: Refactor login — Approve the plan?' }).waitFor();
       await page.waitForFunction(() => document.getElementById('h5-attention').getAttribute('aria-label') === 'Attention (2)');
-      assert.deepEqual(await idsIn(page, 'needs'), [3, 1], 'the newest change first');
+      assert.deepEqual(await idsIn(page, 'needs_you'), [3, 1], 'the newest change first');
       assert.deepEqual(await page.evaluate(() => [window.notes, window.permissionAsks]), [[], 0], 'no Notification is made and the permission is not asked for');
       assert.ok(await page.evaluate(() => window.tones) > tonesBefore, 'a sound was played');
       // A change made on this page gives no reminder (the edit view moves task 5 to review; the stream then reports it, actor 'user').
@@ -383,7 +388,7 @@ const pluginsFit = page => page.evaluate(() => [...document.querySelectorAll('#h
       const quiet = { ...db.items.find(item => item.id === 4), status: 'review', attention_reason: 'Plain answer', updated_at: new Date().toISOString() };
       const tonesQuiet = await page.evaluate(() => window.tones);
       await page.evaluate(change => window.emitChange(change), { kind: 'updated', item: quiet, previous: { ...quiet, status: 'working' }, event: { actor: 'claude', type: 'status' }, plain_turn_end: true });
-      await page.waitForFunction(() => document.querySelector('#h5-attention-sheet .h5-attention-group[data-group="review"] .h5-attention-row[data-id="4"]'));
+      await page.waitForFunction(() => document.querySelector('#h5-attention-sheet .h5-attention-group[data-group="needs_you"] .h5-attention-row[data-id="4"]'));
       await page.waitForTimeout(300);
       assert.equal(await notice(page).filter({ hasText: `Review: ${quiet.title}` }).count(), 0, 'no in-page notice for a plain turn end');
       assert.equal(await page.evaluate(() => window.notes.length), 0, 'still no system notification');

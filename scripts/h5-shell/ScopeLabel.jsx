@@ -12,10 +12,10 @@ import { noteLinked, useDeviceTarget, useSettingsTab } from './DeviceTarget.jsx'
 
 // The scope labels of the settings sheet ("Settings sync" in DESIGN.md): next to the heading of each part, what a change there affects. "Shared across
 // devices" (copied to every linked device), "This device only", or Telegram's one sender. The data is GET /api/settings-sync (settings-sync.mjs), kept
-// in one small store for the whole sheet: read when the sheet opens (it decides whether the tabs at the top are drawn, DeviceTarget.jsx), each time a
-// group opens, after "Sync now" and while a shared save is copied. An older server (404) and a single machine (no linked device) show no label and no
-// tabs at all, so the sheet looks as before. Inside a tab the pill is left out where it says what the tab says already (settings-tabs.mjs
-// labelRedundant); its details line stays.
+// in one small store for the whole sheet: read when the sheet opens (it decides whether the tabs at the top have a Shared tab, DeviceTarget.jsx), each
+// time a group opens, after "Sync now" and while a shared save is copied. An older server (404), a single machine (no linked device) and the sync
+// turned off show no label at all (and no Shared tab), so nothing says a change is copied. Inside a tab the pill is left out where it says what the tab
+// says already (settings-tabs.mjs labelRedundant); its details line stays.
 const SYNC_URL = '/api/settings-sync';
 let snapshot = { loaded: false, sync: normalizeSync(null) };
 const listeners = new Set();

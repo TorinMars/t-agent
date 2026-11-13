@@ -9,6 +9,9 @@
 //   the chosen tab when it has parts there.
 // - phone 320 and 390: the tab row scrolls with its scroll buttons, nothing is wider than the screen, every button and tab is a 44px target.
 // - Chinese 320: the tabs, the notes and the line under them are translated; device names are not.
+// - the settings sync turned off (GET /api/settings-sync answers `off()` of routes/settings-sync.js) while the device list has K01: no Shared tab;
+//   this device's tab draws every part, K01 can be chosen and shows its per-device parts, no pill says a change is copied, a remembered Shared tab
+//   falls back to this device and stays remembered, and `openSettings` of a shared part stays on this device.
 // H5_SHOT_DIR=<dir> saves 390px (3x) screenshots of the sheet in each tab.
 const { chromium } = require('playwright');
 const fs = require('node:fs');
@@ -29,13 +32,16 @@ const DEVICES = { devices: [
   { id: 5, name: 'Sleeping', online: false, supported: true },
 ] };
 
-function mockServer({ scopes, devices }) {
+// `syncOff`: GET /api/settings-sync answers as a service with SETTINGS_SYNC_ENABLED=false does (routes/settings-sync.js `off()`).
+function mockServer({ scopes, devices, syncOff }) {
   window.calls = [];
   window.confirm = () => true;
   const skills = home => ({ skills: ['t-attention', 'tcli'].map(name => ({ name, description: `The ${name} skill.`, claude: { installed: false, current: false, conflict: null, path: `${home}/.claude/skills/${name}/SKILL.md` }, codex: { installed: false, current: false, conflict: null, path: `${home}/.codex/skills/${name}/SKILL.md` } })), old_task_tracker: { claude: false, codex: false }, user: null });
   const local = {
     '/auth/me': { work_dir: null, effective_work_dir: '/home/t/tasks', access_mode: 'remote', authenticator_bound: true, listen_host: '0.0.0.0' },
-    '/api/settings-sync': { supported: true, scopes, keys: [], peers: [{ name: 'K01', online: true, supported: true, last_sync_at: new Date().toISOString(), last_error: null }] },
+    '/api/settings-sync': syncOff
+      ? { supported: false, scopes: Object.fromEntries(Object.entries(scopes).map(([id, scope]) => [id, scope === 'shared' ? 'device' : scope])), keys: [], peers: [] }
+      : { supported: true, scopes, keys: [], peers: [{ name: 'K01', online: true, supported: true, last_sync_at: new Date().toISOString(), last_error: null }] },
     '/api/device-settings/devices': devices,
     '/api/oss/config': { enabled: false, hasAccessKeySecret: false },
     '/api/oss/agent-access': { enabled: true },
@@ -82,7 +88,7 @@ function mockServer({ scopes, devices }) {
   };
 }
 
-async function openPage(browser, { width = 390, zh = false, stored = null } = {}) {
+async function openPage(browser, { width = 390, zh = false, stored = null, syncOff = false } = {}) {
   const context = await browser.newContext({ viewport: { width, height: 800 }, hasTouch: true, isMobile: true, deviceScaleFactor: SHOTS ? 3 : 1 });
   const page = await context.newPage();
   const errors = [];
@@ -95,7 +101,7 @@ async function openPage(browser, { width = 390, zh = false, stored = null } = {}
   }, [zh ? 'zh' : '', stored]);
   await page.addStyleTag({ content: read('public/css/h5.css') });
   const scopes = Object.fromEntries([...SHARED.map(id => [id, 'shared']), ...DEVICE.map(id => [id, 'device']), ['telegram', 'telegram']]);
-  await page.evaluate(mockServer, { scopes, devices: DEVICES });
+  await page.evaluate(mockServer, { scopes, devices: DEVICES, syncOff });
   for (const file of ['public/js/i18n.js', 'public/js/i18n-zh-ui.js', 'public/js/i18n-zh-server.js', 'public/js/i18n-zh-extra.js', 'public/js/h5-shell.js']) await page.addScriptTag({ content: read(file) });
   // This device's engine name comes with the sources (h5.js, not loaded here); the switches of "Show in task list" too.
   await page.evaluate(() => {
@@ -292,6 +298,64 @@ async function testOpenSettings(browser) {
   await context.close();
 }
 
+// The settings sync turned off on this service, K01 still linked: the tabs are this device, K01 and the others, without Shared.
+const ALL_LOCAL = {
+  'tasks-files': { headings: ['Working directory', 'Image and file upload', 'Agent skills', 'Browser extension', 'Site library'], marks: [] },
+  'voice-translate': { headings: ['Voice input', 'Translation'], marks: [] },
+  devices: { headings: ['Link a device', 'Rules and skills sync', 'Advanced'], marks: ['#h5-engine-list'] },
+  // The desktop window is one part again, its switch the heading (as without tabs).
+  attention: { headings: ['Reminders on this device', 'Plugins', 'AI summary', 'CLI tokens'], marks: ['#h5-plugins-listeners', '#h5-plugins-notifiers', '#h5-plugins-rules', '#h5-plugins-tab-market', '#h5-attention-widget-enabled', '#h5-attention-widget-language', '#h5-guide-show', '#h5-skill-pointer', '#h5-attention-token-create', '#h5-attention-sound'] },
+  account: { headings: ['Access mode', 'Authenticator'], marks: [] },
+};
+async function testSyncOff(browser) {
+  let { context, page, errors } = await openPage(browser, { syncOff: true });
+  await openSheet(page);
+  const tabs = await page.locator('#h5-settings-tabs [role="tab"]').evaluateAll(nodes => nodes.map(node => [node.dataset.tab, node.innerText.replace(/\s+/g, ' ').trim(), node.getAttribute('aria-disabled') === 'true' || node.disabled]));
+  assert.deepEqual(tabs, [
+    ['local', 'T01 This device', false], ['2', 'K01', false], ['3', 'Old Mac Update Old Mac first', true], ['4', 'Away Offline', true], ['5', 'Sleeping Offline', false],
+  ], 'no Shared tab without the sync');
+  assert.equal(await chosenTab(page), 'local', 'this device is the first tab');
+  assert.equal(await page.locator('#h5-settings-tab-hint').innerText(), 'Changes here are saved on this device');
+  assert.equal(await page.getAttribute('#h5-settings-tab-local', 'title'), 'Changes here are saved on this device');
+  // This device's tab draws every part (the shared ones are this device's own now); no status line of the sync and no pill.
+  assert.deepEqual(await shownGroups(page), ['tasks-files', 'voice-translate', 'devices', 'attention', 'account']);
+  assert.deepEqual(await partsOfTab(page), ALL_LOCAL);
+  assert.equal(await page.locator('#h5-sec-settings-sync').count(), 0, 'no "Settings sync" status line');
+  assert.equal(await page.locator('#h5-settings .h5-scope').count(), 0, 'no pill says a change is copied');
+  assert.equal(await page.locator('.h5-engine-visible-input').count() > 0, true, 'the "Show in task list" switches are on the device rows');
+  await assertFits(page, '390 sync off local');
+  await shot(page, 'settings-tabs-sync-off-local-390');
+  // K01 can be chosen: its per-device parts, read on K01.
+  await chooseTab(page, '2');
+  assert.deepEqual(await shownGroups(page), Object.keys(EXPECTED['2']));
+  assert.deepEqual(await partsOfTab(page), EXPECTED['2']);
+  assert.equal(await page.locator('#h5-workdir').inputValue(), '/k01/work');
+  assert.equal(await page.locator('#h5-settings-tab-hint').innerText(), 'These settings are read and saved on K01');
+  assert.ok((await page.evaluate(() => window.calls.map(call => call.url))).includes('/api/device-settings/2/auth/me'), 'K01 is read through the link');
+  assert.equal(await page.locator('#h5-settings .h5-scope').count(), 0);
+  await assertFits(page, '390 sync off K01');
+  await shot(page, 'settings-tabs-sync-off-k01-390');
+  // A shared part opened from code stays on this device: there is no Shared tab to move to.
+  await page.evaluate(() => window.H5UI.actions.openSettings('translate'));
+  await page.waitForFunction(() => document.getElementById('h5-settings-tab-local').getAttribute('aria-selected') === 'true' && document.querySelector('#h5-set-voice-translate > .MuiCollapse-entered'));
+  assert.equal(await page.locator('#h5-settings-tab-shared').count(), 0);
+  assert.deepEqual(errors, []);
+  await context.close();
+  // A remembered Shared tab: this device for now, and still remembered for when the sync is back.
+  ({ context, page, errors } = await openPage(browser, { syncOff: true, stored: 'shared' }));
+  await openSheet(page);
+  assert.equal(await chosenTab(page), 'local');
+  assert.equal(await page.evaluate(() => localStorage.getItem('t-agent.settings-tab')), 'shared');
+  assert.deepEqual(errors, []);
+  await context.close();
+  // A remembered K01 tab is chosen again without the sync.
+  ({ context, page, errors } = await openPage(browser, { syncOff: true, stored: '2' }));
+  await openSheet(page);
+  assert.equal(await chosenTab(page), '2');
+  assert.deepEqual(errors, []);
+  await context.close();
+}
+
 async function testNarrow(browser, zh) {
   const { context, page, errors } = await openPage(browser, { width: 320, zh });
   await openSheet(page);
@@ -336,6 +400,7 @@ async function testNarrow(browser, zh) {
     await testTabs(browser);
     await testRememberedDisabled(browser);
     await testOpenSettings(browser);
+    await testSyncOff(browser);
     await testNarrow(browser, false);
     await testNarrow(browser, true);
     console.log('h5 settings tabs browser test passed');

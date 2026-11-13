@@ -434,6 +434,7 @@ I18n.add({
   "This device": "本机",
   "Shared": "共享",
   "Only this device uses these settings": "只有本机使用这些设置",
+  "Changes here are saved on this device": "这里的修改只保存在本机",
   "Which devices the task list shows. One choice for all linked devices.": "任务列表显示哪些设备。所有关联设备共用这一个选择。",
   "This PM2 process is already linked to another app": "这个 PM2 进程已经关联了别的应用",
   "Name (optional)": "名称（可选）",

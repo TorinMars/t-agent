@@ -23,8 +23,8 @@ const html = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8').replace(
     await page.evaluate(() => {
       window.calls = [];
       window.confirm = () => true;
-      const rules = { statuses: ['waiting_user', 'failed', 'review'], modes: {}, callDelayMinutes: 0, quietHours: { enabled: false, start: '22:00', end: '08:00', timeZone: '' }, rateLimit: { message: 20, call: 6 }, publicUrl: '' };
-      window.server = { recent: [{ at: '2026-11-12T10:00:00.000Z', notifier: 'telegram', item_id: 4, status: 'review', mode: 'message', outcome: 'foreground', detail: 'the session is open on screen' }], rules, tg: { loggedIn: false, step: 'none', apiId: null, hasApiHash: false, phone: '', account: null, target: null, callSeconds: 30 } };
+      const rules = { statuses: ['waiting_user', 'failed', 'review'], modes: {}, messageDelayMinutes: 3, callDelayMinutes: 0, quietHours: { enabled: false, start: '22:00', end: '08:00', timeZone: '' }, rateLimit: { message: 20, call: 6 }, publicUrl: '' };
+      window.server = { recent: [{ at: '2026-11-12T10:03:00.000Z', notifier: 'telegram', item_id: 5, status: 'waiting_user', mode: 'message', outcome: 'cancelled', detail: 'the status changed' }, { at: '2026-11-12T10:01:00.000Z', notifier: 'telegram', item_id: 5, status: 'waiting_user', mode: 'message', outcome: 'message_scheduled', detail: '3 min' }, { at: '2026-11-12T10:00:00.000Z', notifier: 'telegram', item_id: 4, status: 'review', mode: 'message', outcome: 'foreground', detail: 'the session is open on screen' }], rules, tg: { loggedIn: false, step: 'none', apiId: null, hasApiHash: false, phone: '', account: null, target: null, callSeconds: 30 } };
       const view = () => ({ rules: server.rules, statuses: ['todo', 'working', 'waiting_user', 'review', 'done', 'failed', 'cancelled'], modes: ['message', 'call', 'off'], notifiers: [{ name: 'telegram', label: 'Telegram', configFields: [], status: server.tg }], recent: server.recent || [] });
       window.svgOf = n => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="${n}" height="10" fill="#000"/></svg>`;
       window.fetch = async (url, options = {}) => {
@@ -126,12 +126,21 @@ const html = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8').replace(
     assert.equal(await page.locator('#h5-notify-foreground').textContent(), 'No message while the session is open on a screen you used in the last 5 minutes.');
     // A skip because the session was on screen is named in the recent list.
     assert.equal(await page.locator('#h5-notify-recent').textContent().then(text => text.includes('#4 Finished (ready for review) · Skipped: the session was open on screen')), true);
+    // A message that waited and was dropped is named too.
+    const recentText = await page.locator('#h5-notify-recent').textContent();
+    assert.ok(recentText.includes('#5 Needs you · Message planned'), recentText);
+    assert.ok(recentText.includes('#5 Needs you · Not sent: it changed before the wait ended'), recentText);
+    // The wait before a message: echoed from the rules, with the hint that "Needs you" waits too.
+    assert.equal(await page.inputValue('#h5-notify-message-delay'), '3');
+    assert.equal(await page.locator('label[for="h5-notify-message-delay"]').textContent().then(text => text.replace(/\s*\*$/, '')), 'Send a message only if still in that status after (minutes, 0 = at once)');
+    assert.equal(await page.locator('#h5-notify-message-delay-hint').textContent(), 'Nothing is sent if you looked at the session during the wait. This also delays "Needs you" (a permission prompt or a question waits too); use 0 to get messages at once.');
     // Rules: the defaults are echoed (three statuses send a message, the others are off), then saved changed.
     assert.equal(await page.inputValue('#h5-notify-mode-telegram-waiting_user'), 'message');
     assert.equal(await page.inputValue('#h5-notify-mode-telegram-done'), 'off');
     await page.selectOption('#h5-notify-mode-telegram-waiting_user', 'call');
     await page.selectOption('#h5-notify-mode-telegram-review', 'off');
     await page.fill('#h5-notify-delay', '5');
+    await page.fill('#h5-notify-message-delay', '10');
     await page.locator('#h5-notify-quiet').check();
     await page.fill('#h5-notify-quiet-start', '23:00');
     await page.fill('#h5-notify-limit-calls', '3');
@@ -143,6 +152,7 @@ const html = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8').replace(
     assert.equal(saved.modes.telegram.waiting_user, 'call');
     assert.equal(saved.modes.telegram.review, 'off');
     assert.equal(saved.callDelayMinutes, '5');
+    assert.equal(saved.messageDelayMinutes, '10');
     assert.equal(saved.quietHours.enabled, true);
     assert.equal(saved.quietHours.start, '23:00');
     assert.ok(saved.quietHours.timeZone, 'the browser time zone is sent');

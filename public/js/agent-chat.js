@@ -3,6 +3,7 @@
 // agent-chat-ui.js, fetched when the first chat is mounted.
 //
 //   const chat = AgentChat.mount(element, { api, base, conversation, onClose });  (also: onTitle, onOpenChat, notify, draft)
+//   chat.setForeground(true | false): the page shows the chat on a screen the person uses (the T-Attention notifiers send nothing for its session)
 //   api:  { get(url), post(url, body), patch(url, body), del(url) }, each returning the parsed JSON (the host adds its own auth headers)
 //   base: `<tasks base>/<task id>/agent`
 // The view loads a snapshot of the conversation, then follows the server-sent events after the snapshot's sequence number. Everything the
@@ -97,15 +98,18 @@ const AgentChat = (() => {
     let view = null;
     let disposed = false;
     let wantFocus = false;
+    let foreground = null;
     const notify = options.notify || (() => {});
     loadBundle().then(ui => {
       if (disposed) return;
       view = ui.mount(container, { ...options, agent: AGENTS[options.conversation.agent] || AGENTS.claude });
       if (wantFocus) view.focus();
+      if (foreground !== null && view.setForeground) view.setForeground(foreground);
     }).catch(error => { if (!disposed) notify(error.message); });
     return {
       focus() { wantFocus = true; if (view) view.focus(); },
       setView(id) { if (view) view.setView(id); }, // shows the main agent ('') or the sub-agent started by the Task call `id`
+      setForeground(value) { foreground = value === true; if (view && view.setForeground) view.setForeground(foreground); },
       destroy() { disposed = true; if (view) view.destroy(); view = null; },
     };
   }

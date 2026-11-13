@@ -14,6 +14,14 @@ const COMMAND = /^\/[A-Za-z][\w:.-]*(\s|$)/;
 
 const RETRY_EVENTS_MS = 2000;
 const RETRY_LOAD_MS = 4000;
+// Presence (capability `presence`): while the page shows the chat in the foreground it says so every PRESENCE_REFRESH_MS (the server stops believing a
+// report it has not heard again for about 50 s, so a frozen page counts as away), and once when it stops. The report belongs to this page's event
+// stream (`viewer` on the events URL) and ends with it.
+const PRESENCE_REFRESH_MS = 20000;
+const viewerId = () => {
+  try { if (globalThis.crypto && typeof globalThis.crypto.randomUUID === 'function') return globalThis.crypto.randomUUID(); } catch { /* fall back */ }
+  return `v${Date.now().toString(36)}${Math.random().toString(36).slice(2, 12)}`;
+};
 
 export function createChatStore({ api, base, conversation, agent = '', notify = () => {}, EventSourceImpl = globalThis.EventSource }) {
   const url = suffix => `${base}/conversations/${conversation.id}${suffix}`;
@@ -42,6 +50,10 @@ export function createChatStore({ api, base, conversation, agent = '', notify = 
   let source = null;
   let retry = null;
   let disposed = false;
+  const viewer = viewerId();
+  let presenceSupported = false; // the snapshot says the Engine takes presence reports (an older one has no such route)
+  let foreground = false;
+  let presenceTimer = null;
 
   function publish(patch = {}) {
     state = { ...state, ...patch };
@@ -108,12 +120,27 @@ export function createChatStore({ api, base, conversation, agent = '', notify = 
 
   function follow() {
     if (disposed) return;
-    source = new EventSourceImpl(`${url('/events')}?after=${seq}`);
+    source = new EventSourceImpl(`${url('/events')}?after=${seq}&viewer=${encodeURIComponent(viewer)}`);
+    source.onopen = () => { if (foreground) reportPresence(); }; // a new stream: the server knows nothing of this page yet
     source.onmessage = message => { try { apply(JSON.parse(message.data)); } catch { /* a malformed frame is skipped */ } };
     source.addEventListener('reset', () => { source.close(); void load(); });
     source.addEventListener('gone', () => { source.close(); notify('This chat no longer exists'); });
     // EventSource would reconnect to the same URL with an old `after`; reconnect by hand so no event is applied twice or missed.
     source.onerror = () => { source.close(); source = null; if (!disposed) retry = setTimeout(follow, RETRY_EVENTS_MS); };
+  }
+
+  function reportPresence() {
+    clearTimeout(presenceTimer);
+    presenceTimer = null;
+    if (disposed || !presenceSupported) return;
+    Promise.resolve().then(() => api.post(url('/presence'), { viewer, foreground })).catch(() => { /* offline, or the stream is reconnecting: the next report says it again */ });
+    if (foreground) presenceTimer = setTimeout(reportPresence, PRESENCE_REFRESH_MS);
+  }
+  function setForeground(value) {
+    const next = value === true;
+    if (next === foreground) return;
+    foreground = next;
+    reportPresence();
   }
 
   async function load() {
@@ -143,6 +170,7 @@ export function createChatStore({ api, base, conversation, agent = '', notify = 
           : !queueTouched && Array.isArray(snapshot.queue) && snapshot.queue.length ? { queue: queueOf(snapshot.queue) } : {}),
       });
       for (const entry of state.queue) queued = Math.max(queued, entry.id);
+      presenceSupported = Boolean(snapshot.capabilities && snapshot.capabilities.presence);
       follow();
       if (state.commandsSupported) void loadCommands();
     } catch (error) {
@@ -416,10 +444,11 @@ export function createChatStore({ api, base, conversation, agent = '', notify = 
   return {
     getState: () => state,
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
-    prepareMessage, dismissSuggestion, load, send, fork, newChat, stop, answer, setMode, loadModels, choose, loadCommands, setTranslate, setCollapseKeyboard, refreshLimits, rename, enqueue, unqueue, editQueued, forceSend, sendQueued, apply,
+    setForeground, prepareMessage, dismissSuggestion, load, send, fork, newChat, stop, answer, setMode, loadModels, choose, loadCommands, setTranslate, setCollapseKeyboard, refreshLimits, rename, enqueue, unqueue, editQueued, forceSend, sendQueued, apply,
     destroy() {
       disposed = true;
       clearTimeout(retry);
+      clearTimeout(presenceTimer);
       if (source) source.close();
       listeners.clear();
     },

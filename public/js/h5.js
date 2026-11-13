@@ -2042,7 +2042,11 @@
   // running out, activity after it ran out. Only to a server that speaks the binary protocol: an old text-protocol server would type it into the shell.
   // In the multi-column view each pane is a page of its own with its own sockets and visibility; the activity is shared by the top page and all
   // its panes (one record on the top window, `__tAgentActivity`), so using one column keeps every visible column in the foreground.
+  // A page that is left (pagehide: the app switched, the tab closed or put in the page cache) says false at once, even where the browser still
+  // reports it visible; the server also stops believing a "true" from a socket that went quiet (a frozen page sends no pings, lib/terminal-presence.js).
+  // The agent chat shown over the terminal reports the same rule for its own session (`setForeground` of the chat, POST .../presence).
   const PRESENCE_IDLE_MS = 5 * 60 * 1000;
+  let pageLeft = false;
   const activity = (() => {
     if (PANE) { try { const shared = window.top.__tAgentActivity; if (shared && shared.listeners) return shared; } catch { /* no shared record: own one */ } }
     const own = { at: Date.now(), listeners: new Set() };
@@ -2067,10 +2071,11 @@
     syncPresence();
   }
   activity.listeners.add(onActivityChange);
-  window.addEventListener('pagehide', () => activity.listeners.delete(onActivityChange));
-  window.addEventListener('pageshow', () => { activity.listeners.add(onActivityChange); onActivityChange(); }); // back from the page cache
+  window.addEventListener('pagehide', () => { activity.listeners.delete(onActivityChange); pageLeft = true; syncPresence(); });
+  window.addEventListener('pageshow', () => { pageLeft = false; activity.listeners.add(onActivityChange); onActivityChange(); }); // back from the page cache
   document.addEventListener('visibilitychange', () => syncPresence());
-  const foregroundOf = s => shownTerminal() === s && activeNow();
+  const foregroundOf = s => !pageLeft && shownTerminal() === s && activeNow();
+  const chatForeground = () => Boolean(agentChat) && !agentView.hidden && !pageLeft && document.visibilityState === 'visible' && activeNow();
   function sendPresence(s, force = false) {
     const ws = s.ws;
     if (s.disposed || !ws || ws.readyState !== WebSocket.OPEN || TerminalProtocol.state(ws).mode !== 'binary') return;
@@ -2080,7 +2085,10 @@
     s.presence = foreground;
     try { TerminalProtocol.send(ws, { type: 'presence', foreground }); } catch { /* closing */ }
   }
-  function syncPresence() { for (const s of warm) sendPresence(s); }
+  function syncPresence() {
+    for (const s of warm) sendPresence(s);
+    if (agentChat && agentChat.setForeground) agentChat.setForeground(chatForeground());
+  }
   queueMicrotask(onActivityChange); // starts the idle timer once the whole page script has run
 
   // Closes the warm sessions of one terminal (it is restarted or deleted), or all of them.

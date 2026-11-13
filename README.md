@@ -876,7 +876,9 @@ Setup: open **Settings → T-Attention**, tap the row **telegram** under Plugins
 1. Create an app at [my.telegram.org](https://my.telegram.org) → API development tools to get `api_id` and `api_hash`.
 2. Enter them and the phone number of account 1, press **Send code**, enter the code Telegram sends, and the two-step verification password if account 1 has one.
 3. Enter account 2 as a username (`@name`) or a numeric user id, and the ring time (default 30 s). Use **Send test message** and **Test call**.
-4. Choose per status: **Message**, **Call** or **Off**; optionally "call only if still in that status after M minutes", quiet hours, the hourly limits (default 20 messages and 6 calls) and the page address used to make links absolute.
+4. Choose per status: **Message**, **Call** or **Off**; the wait before a message (default 3 minutes, 0 = at once: the message is sent only if the item is still in that status and you did not look at the session meanwhile; "Needs you" waits too), optionally "call only if still in that status after M minutes", quiet hours, the hourly limits (default 20 messages and 6 calls) and the page address used to make links absolute.
+
+Nothing is sent for a session you can see: its T-Agent terminal, or the agent chat that runs it, is shown on a page you used in the last 5 minutes (a hidden, left or frozen page does not count).
 
 With linked devices (service links), only one device sends to Telegram (the same Telegram login on two machines at once makes them log each other out): the device where Telegram is set up, or the one you pick with **Use this device as the sender**; the other devices make their own decisions and hand the message or call to it ("Telegram notifications are sent through <name>"), and if it is offline the notification is not sent (shown as "Not sent: the sender device is offline"). See "One Telegram sender for linked devices" under "T-Attention notifiers" in `DESIGN.md`.
 

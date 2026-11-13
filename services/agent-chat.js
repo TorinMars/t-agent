@@ -6,6 +6,7 @@
 const fs = require('fs');
 const { randomUUID } = require('crypto');
 const claude = require('../lib/agent-chat/claude');
+const { createPresence } = require('../lib/terminal-presence');
 const codex = require('../lib/agent-chat/codex');
 
 const ADAPTERS = { claude, codex };
@@ -29,8 +30,14 @@ const clip = (text, length) => (text.length > length ? `${text.slice(0, length -
 // After Stop the adapter gets this long to end the turn by itself; then the turn is ended here, so a stuck agent cannot leave the chat running for good.
 const STOP_GRACE_MS = 5000;
 
-function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS, limitsPollMs = LIMITS_POLL_MS, limitsTurnGapMs = LIMITS_TURN_GAP_MS }) {
+// A viewer is one event stream of a page (`?viewer=<id>` on the events URL): letters, digits, '_' and '-'.
+const VIEWER_ID = /^[A-Za-z0-9_-]{8,64}$/;
+
+function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS, limitsPollMs = LIMITS_POLL_MS, limitsTurnGapMs = LIMITS_TURN_GAP_MS, presence = createPresence() }) {
   const runtimes = new Map(); // conversation id -> runtime
+  // Which chats are on a screen (the T-Attention notifiers send nothing for their session): a page that shows a chat reports
+  // { viewer, foreground } (POST .../presence, repeated every 20 s while true); the report holds only while that viewer's event stream is open.
+  const viewers = new Map(); // `${conversation id}:${viewer}` -> the stream's presence handle { readyState }
 
   const rowOf = (taskId, id) => db.prepare('SELECT * FROM agent_conversations WHERE id = ? AND task_id = ?').get(id, taskId);
   const publicRow = (row, rt) => ({
@@ -200,12 +207,14 @@ function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS,
       conversation: publicRow(db.prepare('SELECT * FROM agent_conversations WHERE id = ?').get(id), rt),
       items: [...rt.items.values()], pending: pendingList(rt), status: rt.status, seq: rt.seq, queue: readQueue(id), suggestion: rt.status === 'running' ? null : rt.suggestion || null,
       runningMs: rt.status === 'running' && rt.startedAt ? Date.now() - rt.startedAt : 0,
-      capabilities: { ...(adapters[rt.agent].CAPABILITIES || {}), serverQueue: true }, // the Client sends the queued messages itself
+      // serverQueue: the Client sends the queued messages itself; presence: the page may report that it shows the chat (reportPresence).
+      capabilities: { ...(adapters[rt.agent].CAPABILITIES || {}), serverQueue: true, presence: true },
     };
   }
 
   // Calls `send` for every event after `after`; returns the unsubscribe function, or null when events were dropped and the client must reload.
-  function subscribe(task, id, after, send) {
+  // `viewer`: the page's id for this stream, so its presence reports (reportPresence) live as long as the stream.
+  function subscribe(task, id, after, send, { viewer } = {}) {
     const row = rowOf(task.id, id);
     if (!row) throw fail('CONVERSATION_NOT_FOUND', 404);
     const rt = runtimeFor(row, task);
@@ -214,7 +223,47 @@ function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS,
     for (const event of rt.events) if (event.seq > after) send(event);
     rt.subscribers.add(send);
     watchLimits(rt);
-    return () => rt.subscribers.delete(send);
+    let stream = null;
+    if (typeof viewer === 'string' && VIEWER_ID.test(viewer)) {
+      const key = `${id}:${viewer}`;
+      const older = viewers.get(key);
+      if (older) { older.readyState = 3; presence.drop(id, older); }
+      stream = { readyState: 1 };
+      viewers.set(key, stream);
+      stream.key = key;
+    }
+    return () => {
+      rt.subscribers.delete(send);
+      if (stream) {
+        stream.readyState = 3;
+        presence.drop(id, stream);
+        if (viewers.get(stream.key) === stream) viewers.delete(stream.key);
+      }
+    };
+  }
+
+  // { viewer, foreground }: whether the page of that open event stream shows the chat in the foreground. A viewer without an open stream is
+  // ignored ({ ok: false }): the page sends it again with its next report.
+  function reportPresence(task, id, { viewer, foreground } = {}) {
+    const row = rowOf(task.id, id);
+    if (!row) throw fail('CONVERSATION_NOT_FOUND', 404);
+    if (typeof viewer !== 'string' || !VIEWER_ID.test(viewer) || typeof foreground !== 'boolean') throw fail('INVALID_PRESENCE');
+    const stream = viewers.get(`${id}:${viewer}`);
+    if (!stream) return { ok: false };
+    return { ok: presence.report(id, stream, foreground) };
+  }
+
+  // A chat of this server runs the agent session `sessionId` and a page shows it in the foreground (or did at some moment since `since`, a time
+  // in ms). For services/attention-notify.js: context.session of an item written by the Claude (or Codex) listener for a chat's session.
+  function isSessionForeground(agent, sessionId, since) {
+    if (typeof sessionId !== 'string' || !sessionId) return false;
+    const ids = new Set();
+    try {
+      for (const row of db.prepare('SELECT id, agent FROM agent_conversations WHERE session_id = ?').all(sessionId)) if (!agent || row.agent === agent) ids.add(row.id);
+    } catch { /* an older database: only the chats in memory */ }
+    for (const rt of runtimes.values()) if (rt.sessionId === sessionId && (!agent || rt.agent === agent)) ids.add(rt.id);
+    for (const id of ids) if (since === undefined ? presence.isForeground(id) : presence.seenSince(id, Number(since))) return true;
+    return false;
   }
 
   // In the order the chats were created, which never changes: a chat that gets a message does not jump in the lists that show them in this order
@@ -770,7 +819,7 @@ function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS,
     return false;
   }
 
-  return { list, create, snapshot, subscribe, sendMessage, interrupt, answerPermission, setMode, setPreferences, listModels, setOpened, setTranslate, setCollapseKeyboard, refreshUsage, fork, setQueue, queueAdd, queueRemove, queueEdit, queueSendNow, summary, activity, listCommands, rename, remove, stopTask, taskBusy, refreshLimits };
+  return { list, create, snapshot, subscribe, reportPresence, isSessionForeground, sendMessage, interrupt, answerPermission, setMode, setPreferences, listModels, setOpened, setTranslate, setCollapseKeyboard, refreshUsage, fork, setQueue, queueAdd, queueRemove, queueEdit, queueSendNow, summary, activity, listCommands, rename, remove, stopTask, taskBusy, refreshLimits };
 }
 
 let shared = null;

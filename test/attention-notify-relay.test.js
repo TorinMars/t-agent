@@ -75,6 +75,7 @@ async function makeDevice(t, name, { ready = false, older = false, capabilities 
     db, sessionSecret: SECRET, onChange: bus.onChange, getOwner: () => 'owner', notifiers: [plugin], log, now: () => clock.now, timers,
     ...(isForeground ? { isForeground } : {}),
   });
+  device.service.saveRules('owner', { messageDelayMinutes: 0 }); // these tests are about the relay: messages go at once
   // The service links of this device: peers() as services/service-links.js gives them, linkForToken() for the tokens this device issued.
   const listeners = new Set();
   device.serviceLinks = {
@@ -522,6 +523,8 @@ test('two real services over a service-link tunnel: an item on B that needs you 
   const nameOfA = (await linkOf(b)).name;
   const nameOfB = (await linkOf(a)).name;
   await until(async () => ((await b.call('GET', '/api/attention-notify/config')).body.relay.sender || {}).name === nameOfA, 'B knows that A sends', 10000);
+  // Messages at once (the default waits 3 minutes; the wait itself is tested in test/attention-notify.test.js).
+  assert.equal((await b.call('PUT', '/api/attention-notify/config', { messageDelayMinutes: 0 })).status, 200);
   // An item on B enters waiting_user.
   const created = await b.call('POST', '/api/attention', { title: 'Relay me', status: 'working' });
   assert.equal(created.status, 201, created.text);

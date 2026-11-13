@@ -25,6 +25,7 @@ export function mount(container, { api, base, conversation, agent, onClose, onTi
     root: host,
     focus: () => { if (handle.current) handle.current.focus(); },
     setView: id => { if (handle.current) handle.current.setView(id); },
+    setForeground: value => store.setForeground(value), // the page shows the chat on a screen the person uses (presence for the notifiers)
     destroy() {
       store.destroy();
       root.unmount();

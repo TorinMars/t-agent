@@ -393,6 +393,7 @@ for (const [method, suffix, upstream] of [
   ['post', '/conversations/:cid/queue/:eid/edit', req => `${conversationPath(req)}/queue/${encodeURIComponent(req.params.eid)}/edit`],
   ['post', '/conversations/:cid/queue/:eid/send', req => `${conversationPath(req)}/queue/${encodeURIComponent(req.params.eid)}/send`],
   ['post', '/conversations/:cid/permissions/:rid', req => `${conversationPath(req)}/permissions/${encodeURIComponent(req.params.rid)}`],
+  ['post', '/conversations/:cid/presence', req => `${conversationPath(req)}/presence`],
 ]) {
   router[method](`/:id/tasks/:taskId/agent${suffix}`, forwardJson(method.toUpperCase(), upstream));
 }
@@ -400,6 +401,8 @@ router.get('/:id/tasks/:taskId/agent/conversations/:cid/events', (req, res) => {
   const target = remoteTarget(req, res);
   if (!target) return;
   const query = new URLSearchParams({ after: String(req.query.after || '0') });
+  // The page's stream id goes on, so its presence reports (POST .../presence) reach the Engine that runs the chat.
+  if (typeof req.query.viewer === 'string' && /^[A-Za-z0-9_-]{8,64}$/.test(req.query.viewer)) query.set('viewer', req.query.viewer);
   streamRemote(req, res, target.row.base_url, target.token, `${conversationPath(req)}/events?${query}`, { sse: true });
 });
 

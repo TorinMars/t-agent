@@ -48,7 +48,8 @@ function fakeNotifier(name = 'fake', behaviour = {}) {
     },
   };
 }
-function setup({ notifiers, clock = { now: Date.parse('2026-11-08T12:00:00Z') }, ...extra } = {}) {
+// messageDelay: the minutes a message waits; most tests send at once (0), the delay tests pass a number, and `null` keeps the stored default.
+function setup({ notifiers, clock = { now: Date.parse('2026-11-08T12:00:00Z') }, messageDelay = 0, ...extra } = {}) {
   const db = makeDb();
   const bus = fakeBus();
   const timers = fakeTimers();
@@ -58,6 +59,7 @@ function setup({ notifiers, clock = { now: Date.parse('2026-11-08T12:00:00Z') },
     db, sessionSecret: SECRET, onChange: bus.onChange, getOwner: () => 'owner', notifiers: notifiers || [fake.plugin],
     log: (level, message) => logs.push(`${level} ${message}`), now: () => clock.now, timers, ...extra,
   });
+  if (messageDelay !== null) service.saveRules('owner', { messageDelayMinutes: messageDelay });
   return { db, bus, timers, logs, fake, service, clock };
 }
 const item = (id, status, extra = {}) => ({ id, title: `Item ${id}`, status, source: 'claude', attention_reason: null, link_url: null, ...extra });
@@ -370,7 +372,7 @@ test('HTTP: config read and save, plugin routes and test, same-origin and errors
 });
 
 // The real wire-up of server.js: services/attention.js publishes the changes and the notifier reads the current item for a delayed call.
-test('with the real attention service: one notification per status, the summary update (actor summary) adds none, a delayed call carries it', async () => {
+test('with the real attention service: one notification per status, the summary update (actor summary) adds none, a delayed message and call carry it', async () => {
   const { createAttentionService } = require('../services/attention');
   const db = new Database(':memory:');
   db.pragma('foreign_keys = ON');
@@ -385,11 +387,17 @@ test('with the real attention service: one notification per status, the summary 
   const created = attention.upsertByRef('claude:s1', { title: 'Fix login', status: 'working', source: 'claude' }, { actor: 'claude' }).item;
   attention.upsertByRef('claude:s1', { status: 'waiting_user', context: { pending: { kind: 'permission', text: 'Allow npm test?', command: 'npm test' } } }, { actor: 'claude' });
   await settle();
-  assert.deepEqual(fake.calls.map(call => [call.item.id, call.item.status, call.mode]), [[created.id, 'waiting_user', 'message']]);
-  assert.equal(fake.calls[0].item.context.pending.text, 'Allow npm test?');
+  // The default rules: the message waits 3 minutes, and the summary update (same status) neither sends nor drops it.
+  assert.equal(service.getRules('owner').messageDelayMinutes, 3);
+  assert.equal(fake.calls.length, 0, 'the message waits');
   attention.update(created.id, { context: { summary: { text: 'Doing: a\nProgress: b\nNeeds: c', at: '2026-11-08T12:00:05.000Z', model: 'm' } } }, { actor: 'summary' });
   await settle();
-  assert.equal(fake.calls.length, 1, 'the summary update notifies nobody');
+  assert.equal(timers.count(), 1, 'the summary update notifies nobody and keeps the waiting message');
+  timers.fire();
+  await settle();
+  assert.deepEqual(fake.calls.map(call => [call.item.id, call.item.status, call.mode, call.reason]), [[created.id, 'waiting_user', 'message', 'still']]);
+  assert.equal(fake.calls[0].item.context.pending.text, 'Allow npm test?');
+  assert.equal(fake.calls[0].item.context.summary.text, 'Doing: a\nProgress: b\nNeeds: c', 'the message carries what arrived during the wait');
   // A delayed call for review: the summary that arrives after the status change is in the item the call gets.
   service.saveRules('owner', { callDelayMinutes: 2, modes: { fake: { review: 'call' } } });
   attention.upsertByRef('claude:s1', { status: 'review', context: { pending: null } }, { actor: 'claude' });
@@ -462,4 +470,235 @@ test('a relay that fails is logged, retried once after 30 s, and the plugin here
   await settle();
   assert.equal(telegram.calls.length, 1);
   assert.equal(telegram.calls[0].origin, undefined);
+});
+
+// ---- The wait before a message (messageDelayMinutes) ----
+const MINUTE = 60 * 1000;
+test('a message waits messageDelayMinutes (default 3) and is sent if the item is still in that status; waiting_user waits too', async () => {
+  const items = new Map();
+  const { bus, fake, timers, service, clock } = setup({ messageDelay: null, getItem: id => items.get(id) });
+  assert.equal(service.getRules('owner').messageDelayMinutes, 3, 'the default');
+  for (const [id, status] of [[1, 'waiting_user'], [2, 'review'], [3, 'failed']]) {
+    items.set(id, item(id, status));
+    bus.emit(change('updated', items.get(id), item(id, 'working')));
+  }
+  await settle();
+  assert.equal(fake.calls.length, 0, 'nothing at once, also not for "Needs you"');
+  assert.equal(timers.count(), 3);
+  assert.deepEqual(service.recent().slice(0, 3).map(entry => [entry.item_id, entry.outcome, entry.detail]), [[3, 'message_scheduled', '3 min'], [2, 'message_scheduled', '3 min'], [1, 'message_scheduled', '3 min']]);
+  assert.equal(service.pendingCount(), 3);
+  // What arrived during the wait is in the message (the current item from getItem).
+  items.set(2, item(2, 'review', { context: { summary: { text: 'Done: the fix' } } }));
+  clock.now += 3 * MINUTE;
+  timers.fire();
+  await settle();
+  assert.deepEqual(fake.calls.map(call => [call.item.id, call.item.status, call.mode, call.reason]), [[1, 'waiting_user', 'message', 'still'], [2, 'review', 'message', 'still'], [3, 'failed', 'message', 'still']]);
+  assert.equal(fake.calls[1].item.context.summary.text, 'Done: the fix');
+  assert.equal(service.pendingCount(), 0);
+  // 0 = at once: no timer.
+  service.saveRules('owner', { messageDelayMinutes: 0 });
+  items.set(4, item(4, 'review'));
+  bus.emit(change('created', items.get(4), null));
+  await settle();
+  assert.deepEqual([fake.calls.at(-1).item.id, fake.calls.at(-1).reason, timers.count()], [4, 'status', 0]);
+});
+
+test('a waiting message is dropped when the item changes status, is handled by the user, is deleted or is gone, or the rules or the plugin change', async () => {
+  const items = new Map();
+  const { bus, fake, timers, service } = setup({ messageDelay: 5, getItem: id => items.get(id) });
+  const enter = (id, status = 'waiting_user') => { items.set(id, item(id, status)); bus.emit(change('updated', items.get(id), item(id, 'working'))); };
+  enter(1); enter(2); enter(3); enter(4); enter(5); enter(6, 'review');
+  assert.equal(timers.count(), 6);
+  // 1: the user answered the prompt, the agent works again.
+  items.set(1, item(1, 'working'));
+  bus.emit(change('updated', items.get(1), item(1, 'waiting_user')));
+  // 2: the user edited it in the page (same status).
+  bus.emit(change('updated', items.get(2), items.get(2), 'user'));
+  // 3: deleted.
+  bus.emit(change('deleted', items.get(3), items.get(3), 'user'));
+  items.delete(3);
+  // A listener refreshing the same status keeps the wait.
+  bus.emit(change('updated', item(4, 'waiting_user', { context: { last_reply: 'x' } }), items.get(4)));
+  assert.equal(timers.count(), 3, 'three waits were dropped at once');
+  assert.deepEqual(service.recent().filter(entry => entry.outcome === 'cancelled').map(entry => [entry.item_id, entry.detail]).sort(), [[1, 'the status changed'], [2, 'you changed the item'], [3, 'the item was deleted']]);
+  // 4: gone without a bus event (getItem has nothing); 5: in another status already; 6: the rules no longer send review.
+  items.delete(4);
+  items.set(5, item(5, 'done'));
+  service.saveRules('owner', { modes: { fake: { review: 'off' } } });
+  timers.fire();
+  await settle();
+  assert.equal(fake.calls.length, 0);
+  const why = service.recent().filter(entry => entry.outcome === 'cancelled').map(entry => [entry.item_id, entry.detail]);
+  assert.deepEqual(why.filter(([id]) => id >= 4).sort(), [[4, 'the item is gone'], [5, 'the status changed'], [6, 'the rules changed']]);
+  // The plugin switched off while it waited.
+  const plugin = setup({ messageDelay: 2 });
+  plugin.bus.emit(change('created', item(7, 'failed'), null));
+  plugin.service.savePluginConfig('fake', 'owner', { enabled: false });
+  plugin.timers.fire();
+  await settle();
+  assert.equal(plugin.fake.calls.length, 0);
+  assert.equal(plugin.service.recent()[0].detail, 'the plugin was turned off');
+});
+
+test('a waiting message is not sent when the session is on screen when it is due, or was at some moment during the wait', async () => {
+  let now = false;
+  let seenFrom = null; // isForeground with `since` says true when the session was on screen at or after this time
+  const asked = [];
+  const { bus, fake, timers, service, clock } = setup({
+    messageDelay: 3,
+    isForeground: (taskId, terminalId, since) => { asked.push(since); return now || (since !== undefined && seenFrom !== null && seenFrom >= since); },
+  });
+  const context = { tagent: { task_id: '9', terminal_id: 'term-z' } };
+  bus.emit(change('created', item(1, 'review', { context }), null));
+  assert.deepEqual(asked, [undefined], 'at the change: is it on screen now');
+  const scheduledAt = clock.now;
+  clock.now += 3 * MINUTE;
+  now = true;
+  timers.fire();
+  await settle();
+  assert.equal(fake.calls.length, 0);
+  assert.deepEqual([service.recent()[0].outcome, service.recent()[0].detail], ['foreground', 'the session was open on screen during the wait']);
+  assert.equal(asked.at(-1), scheduledAt, 'at the end: on screen since the wait began');
+  // Seen for a moment in the middle of the wait, away again at the end.
+  now = false;
+  bus.emit(change('created', item(2, 'review', { context }), null));
+  clock.now += MINUTE;
+  seenFrom = clock.now;
+  clock.now += 2 * MINUTE;
+  timers.fire();
+  await settle();
+  assert.equal(fake.calls.length, 0, 'the person could already see the result');
+  assert.equal(service.recent()[0].outcome, 'foreground');
+  // Not seen during the wait: sent. A foreground skip does not count as sent, so the dedupe does not hold it back.
+  bus.emit(change('created', item(3, 'review', { context }), null));
+  clock.now += 3 * MINUTE;
+  timers.fire();
+  await settle();
+  assert.deepEqual(fake.calls.map(call => call.item.id), [3]);
+  // On screen at the change: skipped at once, nothing waits.
+  now = true;
+  bus.emit(change('created', item(4, 'review', { context }), null));
+  assert.equal(timers.count(), 0);
+  assert.equal(service.recent()[0].outcome, 'foreground');
+});
+
+test('dedupe and the hourly limit count only what is actually sent; quiet hours are checked again when the wait ends', async () => {
+  const { bus, fake, timers, service, clock } = setup({ messageDelay: 3 });
+  service.saveRules('owner', { rateLimit: { message: 1 } });
+  const flip = id => { bus.emit(change('updated', item(id, 'working'), item(id, 'review'))); bus.emit(change('updated', item(id, 'review'), item(id, 'working'))); };
+  bus.emit(change('created', item(1, 'review'), null));
+  flip(1); // dropped and planned again: the dropped wait was never sent, so it neither dedupes nor uses the limit
+  flip(1);
+  assert.equal(timers.count(), 1);
+  clock.now += 3 * MINUTE;
+  timers.fire();
+  await settle();
+  assert.deepEqual(fake.calls.map(call => call.item.id), [1]);
+  // Sent once: the same item and status within 10 minutes is a duplicate at the change (nothing waits).
+  flip(1);
+  assert.equal(timers.count(), 0);
+  assert.equal(service.recent()[0].outcome, 'duplicate');
+  // The limit (1 per hour) was used by the one that went out: the next waits, then is refused when due.
+  bus.emit(change('created', item(2, 'review'), null));
+  timers.fire();
+  await settle();
+  assert.equal(fake.calls.length, 1);
+  assert.equal(service.recent()[0].outcome, 'rate_limited');
+  // Quiet hours that begin during the wait.
+  clock.now += 2 * 60 * MINUTE;
+  bus.emit(change('created', item(3, 'review'), null));
+  service.saveRules('owner', { quietHours: { enabled: true, start: '00:00', end: '23:59', timeZone: 'UTC' } });
+  timers.fire();
+  await settle();
+  assert.equal(fake.calls.length, 1);
+  assert.equal(service.recent()[0].outcome, 'quiet_hours');
+});
+
+test('a call keeps its own delay; with mode call the message delay does not apply', async () => {
+  const { bus, fake, timers, service } = setup({ messageDelay: 3 });
+  service.saveRules('owner', { modes: { fake: { waiting_user: 'call' } }, callDelayMinutes: 0 });
+  bus.emit(change('created', item(1, 'waiting_user'), null));
+  await settle();
+  assert.deepEqual(fake.calls.map(call => [call.item.id, call.mode, call.reason]), [[1, 'call', 'status']], 'the call goes at once');
+  service.saveRules('owner', { callDelayMinutes: 7 });
+  bus.emit(change('created', item(2, 'waiting_user'), null));
+  assert.deepEqual([service.recent()[0].outcome, service.recent()[0].detail], ['call_scheduled', '7 min']);
+  timers.fire();
+  await settle();
+  assert.deepEqual(fake.calls.slice(1).map(call => [call.item.id, call.mode, call.reason]), [[2, 'call', 'still']]);
+});
+
+test('the message delay is validated, and rules without it (saved or synced by an older version) get the default', () => {
+  const { db, service } = setup({ messageDelay: null });
+  assert.equal(service.saveRules('owner', { messageDelayMinutes: '10' }).messageDelayMinutes, 10);
+  assert.equal(service.saveRules('owner', { messageDelayMinutes: 0 }).messageDelayMinutes, 0);
+  assert.equal(service.saveRules('owner', { messageDelayMinutes: 120 }).messageDelayMinutes, 120);
+  assert.equal(service.saveRules('owner', { statuses: ['review'] }).messageDelayMinutes, 120, 'a save without it keeps it');
+  for (const bad of [-1, 121, 2.5, 'soon']) assert.throws(() => service.saveRules('owner', { messageDelayMinutes: bad }), /The delay before a message must be a whole number of minutes from 0 to 120/);
+  // An older device's rules object (no messageDelayMinutes), as the settings sync stores it.
+  const older = { statuses: ['failed', 'review'], modes: {}, callDelayMinutes: 4, quietHours: { enabled: false, start: '22:00', end: '08:00', timeZone: '' }, rateLimit: { message: 20, call: 6 }, publicUrl: '' };
+  notify.importRulesFromSync({ db, sessionSecret: SECRET }, 'owner', older);
+  const rules = service.getRules('owner');
+  assert.deepEqual([rules.messageDelayMinutes, rules.callDelayMinutes, rules.statuses], [3, 4, ['failed', 'review']]);
+  // A value an older or broken device stored out of range falls back too.
+  notify.importRulesFromSync({ db, sessionSecret: SECRET }, 'owner', { ...older, messageDelayMinutes: 999, callDelayMinutes: 'x' });
+  assert.deepEqual([service.getRules('owner').messageDelayMinutes, service.getRules('owner').callDelayMinutes], [3, 0]);
+  // The field travels with the synced rules, and an older device keeps it when it saves (normalizeRules keeps what it does not know).
+  service.saveRules('owner', { messageDelayMinutes: 8 });
+  assert.equal(notify.exportRulesForSync({ db, sessionSecret: SECRET }, 'owner').messageDelayMinutes, 8);
+  const kept = notify.normalizeRules({ statuses: ['failed'] }, { ...notify.defaultRules(), messageDelayMinutes: 8 }, ['fake']);
+  assert.equal(kept.messageDelayMinutes, 8);
+});
+
+// ---- On screen: the terminal of THIS server whatever the host name, and the agent chat that runs the session ----
+test('a terminal of this server is on screen whatever host name the listener wrote; an unknown terminal of another host is not asked', async () => {
+  const shown = new Set(['7:3c1e0a52-1111-4222-8333-444455556666']);
+  const local = new Set(['7:3c1e0a52-1111-4222-8333-444455556666']);
+  const asked = [];
+  let hostName = '192.168.1.224';
+  const { bus, fake, service } = setup({
+    host: () => hostName,
+    isForeground: (taskId, terminalId) => { asked.push(`${taskId}:${terminalId}`); return shown.has(`${taskId}:${terminalId}`); },
+    isLocalTerminal: (taskId, terminalId) => local.has(`${taskId}:${terminalId}`),
+  });
+  const ctx = (hostWritten, terminal = '3c1e0a52-1111-4222-8333-444455556666') => ({ context: { host: hostWritten, tagent: { task_id: '7', terminal_id: terminal } } });
+  // The regression: the listener wrote the name the Mac had then (an IP from DHCP); the server's name is another one now. The terminal is local.
+  bus.emit(change('created', item(1, 'review', ctx('192.168.1.245')), null));
+  await settle();
+  assert.equal(fake.calls.length, 0);
+  assert.equal(service.recent()[0].outcome, 'foreground');
+  // A terminal this server does not know, written on another machine: never this engine's, the presence is not even asked.
+  asked.length = 0;
+  bus.emit(change('created', item(2, 'review', ctx('other-pc', '9a9a9a9a-0000-4000-8000-000000000000')), null));
+  await settle();
+  assert.deepEqual(fake.calls.map(call => call.item.id), [2]);
+  assert.deepEqual(asked, []);
+  // The host name is read at the check, not once: an unknown terminal with the name this machine has NOW is asked.
+  hostName = 'torins-mac';
+  bus.emit(change('created', item(3, 'review', ctx('torins-mac', 'b0b0b0b0-0000-4000-8000-000000000000')), null));
+  await settle();
+  assert.deepEqual(asked, ['7:b0b0b0b0-0000-4000-8000-000000000000']);
+  assert.deepEqual(fake.calls.map(call => call.item.id), [2, 3], 'asked, and not on screen');
+});
+
+test('an item whose session runs in an agent chat of this server is on screen while the chat is', async () => {
+  let chatShown = true;
+  const asked = [];
+  const { bus, fake, service } = setup({ isSessionForeground: (agent, sessionId, since) => { asked.push([agent, sessionId, since]); return chatShown && sessionId === 'sess-chat-1'; } });
+  const session = id => ({ context: { session: { agent: 'claude', id, resume: 'claude --resume x' } } });
+  bus.emit(change('created', item(1, 'waiting_user', session('sess-chat-1')), null));
+  bus.emit(change('created', item(2, 'waiting_user', session('sess-terminal-2')), null));
+  await settle();
+  assert.deepEqual(fake.calls.map(call => call.item.id), [2]);
+  assert.equal(service.recent().find(entry => entry.item_id === 1).outcome, 'foreground');
+  assert.deepEqual(asked.map(([agent, id]) => [agent, id]), [['claude', 'sess-chat-1'], ['claude', 'sess-terminal-2']]);
+  chatShown = false;
+  bus.emit(change('created', item(3, 'review', session('sess-chat-1')), null));
+  await settle();
+  assert.deepEqual(fake.calls.map(call => call.item.id), [2, 3]);
+  // A check that throws counts as not on screen.
+  const thrower = setup({ isSessionForeground: () => { throw new Error('boom'); } });
+  thrower.bus.emit(change('created', item(1, 'review', session('sess-chat-1')), null));
+  await settle();
+  assert.equal(thrower.fake.calls.length, 1);
 });

@@ -101,6 +101,9 @@ test('Claude listener -> core -> SSE, timeline, context, notifier and CLI on a r
   assert.equal(made.status, 201);
   const { token } = await made.json();
   assert.match(token, /^tatt_/);
+  // Messages at once (the default waits 3 minutes; the wait is tested in test/attention-notify.test.js).
+  const rules = await fetch(`${base}/api/attention-notify/config`, { method: 'PUT', headers: { ...XHR, 'Content-Type': 'application/json' }, body: JSON.stringify({ messageDelayMinutes: 0 }) });
+  assert.equal(rules.status, 200);
   const byRef = async ref => {
     const response = await fetch(`${base}/api/attention/by-ref/${encodeURIComponent(ref)}`, { headers: { Authorization: `Bearer ${token}` } });
     return response.status === 404 ? null : response.json();

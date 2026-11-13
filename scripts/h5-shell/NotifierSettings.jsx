@@ -12,7 +12,7 @@ import { loginInProgress } from './plugins-model.mjs';
 import { SyncNote, useSyncAfterSave } from './ScopeLabel.jsx';
 
 // T-Attention notifier settings, drawn on the pages of the plugin list (PluginSettings.jsx): the Telegram login (account 1) and account 2 on Telegram's
-// page, and the rules of all notifiers (mode per status and notifier, delay before a call, quiet hours, hourly limits, the page address for links) on their own. Server side: services/attention-notify.js and
+// page, and the rules of all notifiers (mode per status and notifier, delays before a message and a call, quiet hours, hourly limits, the page address for links) on their own. Server side: services/attention-notify.js and
 // plugins/notifiers/telegram. The session string and the api_hash never come back from the server; secret fields start empty.
 // Linked devices share one Telegram sender (services/attention-relay.js, `relay` in GET /config): on the sender the page lists the devices that send
 // through it; on another device it names the sender, sends its test through it, and offers "Use this device as the sender" and "Log out here".
@@ -23,7 +23,7 @@ const STATUS_ORDER = ['waiting_user', 'failed', 'review', 'working', 'todo', 'do
 const MODE_LABELS = { off: 'Off', message: 'Message', call: 'Call' };
 const OUTCOME_LABELS = {
   sent: 'Sent', fallback_sent: 'Sent as a message (the call failed)', call_failed: 'Call failed', call_timeout: 'Rang, no answer', call_answered: 'Answered',
-  call_declined: 'Declined', call_scheduled: 'Call planned', duplicate: 'Skipped: sent less than 10 minutes ago', quiet_hours: 'Skipped: quiet hours',
+  call_declined: 'Declined', call_scheduled: 'Call planned', message_scheduled: 'Message planned', cancelled: 'Not sent: it changed before the wait ended', duplicate: 'Skipped: sent less than 10 minutes ago', quiet_hours: 'Skipped: quiet hours',
   rate_limited: 'Skipped: hourly limit reached', skipped: 'Skipped: not set up', error: 'Error', foreground: 'Skipped: the session was open on screen',
   relayed: 'Sent through the sender device', relay_failed: 'Not sent: the sender device could not send it', relay_offline: 'Not sent: the sender device is offline',
 };
@@ -235,7 +235,7 @@ function RulesPart({ data, onChanged }) {
       for (const status of STATUS_ORDER) modes[notifier.name][status] = rules.statuses.includes(status) ? ((rules.modes[notifier.name] || {})[status] || 'message') : 'off';
     }
     setForm({
-      modes, delay: String(rules.callDelayMinutes), quiet: Boolean(rules.quietHours.enabled), start: rules.quietHours.start, end: rules.quietHours.end,
+      modes, messageDelay: rules.messageDelayMinutes === undefined ? null : String(rules.messageDelayMinutes), // null: a server without the wait delay: String(rules.callDelayMinutes), quiet: Boolean(rules.quietHours.enabled), start: rules.quietHours.start, end: rules.quietHours.end,
       messages: String(rules.rateLimit.message), calls: String(rules.rateLimit.call), publicUrl: rules.publicUrl || '',
     });
   }, [data]);
@@ -248,7 +248,7 @@ function RulesPart({ data, onChanged }) {
     setBusy(true);
     try {
       await api('PUT', `${BASE}/config`, {
-        statuses, modes: form.modes, callDelayMinutes: form.delay.trim(), publicUrl: form.publicUrl.trim(),
+        statuses, modes: form.modes, ...(form.messageDelay === null ? {} : { messageDelayMinutes: form.messageDelay.trim() }), callDelayMinutes: form.delay.trim(), publicUrl: form.publicUrl.trim(),
         quietHours: { enabled: form.quiet, start: form.start, end: form.end, timeZone: timeZone() },
         rateLimit: { message: form.messages.trim(), call: form.calls.trim() },
       });
@@ -270,6 +270,12 @@ function RulesPart({ data, onChanged }) {
         </TextField>
       )))}
       <Hint id="h5-notify-foreground">{t('No message while the session is open on a screen you used in the last 5 minutes.')}</Hint>
+      {form.messageDelay === null ? null : (
+        <>
+          <Field id="h5-notify-message-delay" label="Send a message only if still in that status after (minutes, 0 = at once)" type="number" value={form.messageDelay} onChange={set('messageDelay')} htmlInput={{ inputMode: 'numeric', min: 0, max: 120 }} />
+          <Hint id="h5-notify-message-delay-hint">{t('Nothing is sent if you looked at the session during the wait. This also delays "Needs you" (a permission prompt or a question waits too); use 0 to get messages at once.')}</Hint>
+        </>
+      )}
       <Field id="h5-notify-delay" label="Call only if still in that status after (minutes, 0 = at once)" type="number" value={form.delay} onChange={set('delay')} htmlInput={{ inputMode: 'numeric', min: 0, max: 1440 }} />
       <FormControlLabel control={<Checkbox checked={form.quiet} onChange={event => setForm(current => ({ ...current, quiet: event.target.checked }))} slotProps={{ input: { id: 'h5-notify-quiet' } }} />} label={t('Quiet hours (nothing is sent)')} />
       {form.quiet ? (

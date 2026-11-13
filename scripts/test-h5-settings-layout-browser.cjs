@@ -158,7 +158,7 @@ async function testLayout(browser, width) {
 
   // T-Attention: the guide, the reminders, the plugins, the pointer to the agent skills, the AI summary, the CLI tokens.
   await openGroup(page, 'attention');
-  const order = await page.evaluate(() => [...document.querySelectorAll('#h5-set-attention .MuiAccordionDetails-root > *')].map(el => (el.dataset.slot ? `slot:${el.dataset.slot}` : el.tagName === 'H3' ? el.textContent : '')).filter(Boolean));
+  const order = await page.evaluate(() => [...document.querySelectorAll('#h5-set-attention .MuiAccordionDetails-root > *')].map(el => (el.dataset.slot ? `slot:${el.dataset.slot}` : el.tagName === 'SECTION' && el.querySelector('h3') ? el.querySelector('h3').textContent : '')).filter(Boolean));
   const at = name => order.indexOf(name);
   assert.ok(at('Reminders on this device') >= 0 && at('AI summary') > at('Reminders on this device') && at('CLI tokens') > at('AI summary'), `T-Attention order: ${order}`);
   for (const slot of order.filter(item => item.startsWith('slot:'))) assert.ok(at(slot) > at('Reminders on this device') && at(slot) < at('AI summary'), `the slots sit between the reminders and the AI summary: ${order}`);

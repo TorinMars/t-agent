@@ -22,9 +22,20 @@ export function useFeedback() {
 }
 export function Feedback({ id, feedback }) {
   if (!feedback.message) return <p id={id} hidden />;
-  return <Typography id={id} role="status" variant="body2" color={feedback.error ? 'error' : 'text.secondary'} sx={{ overflowWrap: 'anywhere', whiteSpace: 'pre-line' }}>{feedback.message}</Typography>;
+  return <Typography id={id} role="status" variant="body2" color={feedback.error ? 'error' : 'text.secondary'} sx={{ ...HINT, overflowWrap: 'anywhere', whiteSpace: 'pre-line' }}>{feedback.message}</Typography>;
 }
-export const Hint = ({ children, id }) => <Typography id={id} variant="body2" color="text.secondary" sx={{ overflowWrap: 'anywhere' }}>{children}</Typography>;
+
+// The type scale of an open group, from strong to quiet: the group title (the 16px row label, ROW), the heading of a part (SubHeading: 15px bold;
+// 14px semi-bold for a part inside a part), the fields and their labels (16px), then the helper text: 13px (never smaller than 12px) with a 1.5 line
+// height in the secondary text colour, so a note reads as a note under its control and an open group is not a wall of same-size text.
+export const HINT = { fontSize: '0.8125rem', lineHeight: 1.5 };
+// Helper text. Test hook: `.h5-setting-hint`.
+export const Hint = ({ children, id, sx }) => <Typography id={id} variant="body2" color="text.secondary" className="h5-setting-hint" sx={{ ...HINT, overflowWrap: 'anywhere', ...sx }}>{children}</Typography>;
+
+// The buttons of a part, on one row that wraps. One rule for every part: at most one main action, first and contained (Save, Generate…); every other
+// action outlined (deleting: outlined in the error colour); none in a part inside a part (Advanced) is contained. Buttons keep their own width: a lone
+// button directly in a part or a group is not stretched either (`Section`, `Group`). Test hook: `.h5-setting-actions`.
+export const Actions = ({ id, children, sx }) => <Box id={id} className="h5-setting-actions" sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 1, ...sx }}>{children}</Box>;
 export const Field = ({ id, label, htmlInput, ...props }) => (
   <TextField id={id} label={t(label)} size="small" fullWidth autoComplete="off" slotProps={{ htmlInput: { autoCapitalize: 'off', spellCheck: false, ...htmlInput } }} {...props} />
 );
@@ -91,25 +102,44 @@ export function Group({ id, title, onOpen, request = null, children }) {
       <AccordionSummary expandIcon={<ExpandMoreIcon />} sx={{ ...ROW, '&.Mui-expanded': { minHeight: ROW_HEIGHT }, '& .MuiAccordionSummary-content': { my: 0 } }}>
         <span className="h5-setting-label">{t(title)}</span>
       </AccordionSummary>
-      <AccordionDetails sx={{ display: 'flex', flexDirection: 'column', gap: 1.5, px: 2, pt: 0, pb: 2 }}>{children}</AccordionDetails>
+      <AccordionDetails sx={{ display: 'flex', flexDirection: 'column', gap: 1.5, px: 2, pt: 0, pb: 2.5, ...FLOW }}>{children}</AccordionDetails>
     </Accordion>
   );
 }
 
-// The heading of a part of a group: the same small bold line as the parts of T-Attention ("Reminders on this device", "CLI tokens").
-// `level` 4 is a part inside a part (the two parts of "Advanced" in Devices).
+// The heading of a part of a group: the same bold line as the parts of T-Attention ("Reminders on this device", "CLI tokens"), 15px (HINT above).
+// `level` 4 is a part inside a part (the two parts of "Advanced" in Devices): 14px semi-bold.
 export const SubHeading = ({ id, level = 3, children }) => (
-  <Typography id={id} variant="subtitle2" component={`h${level}`} className="h5-setting-subheading" sx={{ fontWeight: level === 3 ? 700 : 600, mt: level === 3 ? 0.5 : 0, overflowWrap: 'anywhere' }}>{children}</Typography>
+  <Typography
+    id={id} variant="subtitle2" component={`h${level}`} className="h5-setting-subheading"
+    sx={{ fontSize: level === 3 ? '0.9375rem' : '0.875rem', lineHeight: 1.4, fontWeight: level === 3 ? 700 : 600, color: 'text.primary', overflowWrap: 'anywhere' }}
+  >{children}</Typography>
 );
 
-// One part of a group (`#h5-sec-<id>`, settings-target.mjs): an optional heading, then its fields. A part that follows anything else is set apart by a divider.
+// The flow inside a group and a part: a lone button keeps its own width (Actions), and a hint right under a heading, a field or a checkbox sits closer
+// to it than the 12px between controls, so it reads as that control's note.
+const FLOW = {
+  '& > .MuiButton-root': { alignSelf: 'flex-start' },
+  '& > :is(.h5-setting-subheading, .h5-scoped-heading, .h5-setting-minor, .MuiFormControl-root, .MuiFormControlLabel-root) + .h5-setting-hint': { mt: -0.75 },
+  '& > .h5-setting-hint + .h5-setting-hint': { mt: -0.5 },
+};
+// A top-level part after anything else is set apart by a full-width divider; a part inside a part (level 4) has none, only a little more space.
+const PART = {
+  3: { gap: 1.5, '* + &': { borderTop: 1, borderColor: 'divider', pt: 2.5, mt: 0.5 } },
+  4: { gap: 1.25, '* + &': { mt: 0.5 } },
+};
+// The look of a top-level part for a container that is not a `Section` (the T-Attention slots, attention-slots.mjs).
+export const PART_SX = { display: 'flex', flexDirection: 'column', minWidth: 0, ...PART[3], ...FLOW };
+
+// One part of a group (`#h5-sec-<id>`, settings-target.mjs): an optional heading, then its fields. A top-level part that follows anything else is set
+// apart by a divider (PART).
 // `aside`: drawn after the heading on the same line (wrapping under it on a narrow screen), the scope label of the part (ScopeLabel.jsx).
 export function Section({ id, title, level = 3, aside = null, children, sx }) {
   const heading = title ? <SubHeading id={`h5-sec-${id}-title`} level={level}>{t(title)}</SubHeading> : null;
   return (
     <Box
       component="section" id={`h5-sec-${id}`} className="h5-setting-section" aria-labelledby={title ? `h5-sec-${id}-title` : undefined}
-      sx={{ display: 'flex', flexDirection: 'column', gap: 1.5, minWidth: 0, scrollMarginTop: 8, '* + &': { borderTop: 1, borderColor: 'divider', pt: 2 }, ...sx }}
+      sx={[{ display: 'flex', flexDirection: 'column', minWidth: 0, scrollMarginTop: 8, ...PART[level === 4 ? 4 : 3], ...FLOW }, ...(Array.isArray(sx) ? sx : [sx])]}
     >
       {heading && aside ? <Box className="h5-scoped-heading" sx={{ display: 'flex', alignItems: 'baseline', flexWrap: 'wrap', columnGap: 1, rowGap: 0.5, minWidth: 0, '& > .h5-scope': { flex: '1 1 10rem' } }}>{heading}{aside}</Box> : heading}
       {children}

@@ -50,20 +50,20 @@ export function RemoteAccessSection({ opened }) {
   };
   return (
     <Section id="remote" title="Let other clients connect to this one" level={4}>
-      <Hint>{t('Another client can connect to this one as a remote engine and reach its tasks, files and terminals. On the other client open Settings → Devices → Advanced, choose “Connect remote service” and enter this address and a pairing code. The pairing code is valid for 10 minutes and can be used once.')}</Hint>
+      <Hint>{t('Another client can add this one as a remote engine and reach its tasks, files and terminals: there, choose Devices → Advanced → “Connect remote service” and enter this address and a pairing code (valid for 10 minutes, single use).')}</Hint>
       <Hint>{t('Connect address:')} <code id="h5-remote-origin">{location.origin}</code></Hint>
       <Box id="h5-token-list" className="h5-token-list" sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
         {tokens.length ? tokens.map(token => (
           <Paper key={token.id} variant="outlined" className="h5-token-row" sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, p: 1 }}>
             <Box sx={{ minWidth: 0 }}>
-              <Box component="strong" sx={{ overflowWrap: 'anywhere' }}>{token.name}</Box>
+              <Box component="strong" sx={{ fontSize: '0.875rem', fontWeight: 600, overflowWrap: 'anywhere' }}>{token.name}</Box>
               <Typography variant="caption" component="small" color="text.secondary" sx={{ display: 'block', overflowWrap: 'anywhere' }}>{`${token.token_prefix}… · ${token.scopes}`}</Typography>
             </Box>
             <Button size="small" onClick={() => void revoke(token)}>{t('Revoke')}</Button>
           </Paper>
         )) : <Hint>{t('No tokens created yet')}</Hint>}
       </Box>
-      <Button id="h5-token-create" variant="contained" disabled={busy} onClick={() => void create()}>{t('Generate pairing code')}</Button>
+      <Button id="h5-token-create" variant="outlined" disabled={busy} onClick={() => void create()}>{t('Generate pairing code')}</Button>
       {code ? (
         <Paper id="h5-token-created" variant="outlined" className="h5-token-created" sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, p: 1 }}>
           <code id="h5-token-code" ref={codeNode} style={{ fontSize: 18, letterSpacing: 1, overflowWrap: 'anywhere', userSelect: 'all' }}>{code}</code>

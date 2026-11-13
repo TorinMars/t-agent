@@ -191,7 +191,7 @@ function BrowserRow({ browser, onRename, onRemove }) {
   return (
     <Box component="li" className="h5-browser-row" data-browser={browser.browser_id} data-online={browser.online ? 'true' : 'false'} sx={{ display: 'flex', flexDirection: 'column', gap: 0.75, p: 1.5, borderRadius: 1, border: 1, borderColor: 'divider', minWidth: 0 }}>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', minWidth: 0 }}>
-        <Box component="span" className="h5-browser-name" translate="no" sx={{ fontWeight: 600, overflowWrap: 'anywhere', minWidth: 0, flex: '1 1 8rem' }}>{browser.name}</Box>
+        <Box component="span" className="h5-browser-name" translate="no" sx={{ fontWeight: 600, fontSize: '0.9375rem', overflowWrap: 'anywhere', minWidth: 0, flex: '1 1 8rem' }}>{browser.name}</Box>
         <Pill className="h5-browser-state" label={t(browser.online ? 'Online' : 'Offline')} tone={browser.online ? 'success' : 'default'} />
         {browser.active ? <Pill className="h5-browser-active" label={t('Commands go here')} tone="primary" /> : null}
       </Box>
@@ -227,8 +227,8 @@ function BrowserExtPart({ opened }) {
   return (
     <Section id="browser-ext" title="Browser extension" aside={<ScopeLabel follow={false} />}>
       <LocalOnly id="h5-browser-ext-remote">
-        <Box id="h5-browser-ext" sx={{ display: 'flex', flexDirection: 'column', gap: 1.5, minWidth: 0 }}>
-          <Hint>{t('Lets agent sessions use Chrome on this computer with tcli browser: open pages, click and type, read the page and its network traffic, and record how a site works. Only tabs T-Agent opened (the “T-Agent” tab group) and tabs you hand over with the extension button can be used. Cookies, tokens and passwords are hidden in what it reads.')}</Hint>
+        <Box id="h5-browser-ext" sx={{ display: 'flex', flexDirection: 'column', gap: 1.5, minWidth: 0, '& > .h5-setting-hint:first-of-type': { mt: -0.75 } }}>
+          <Hint>{t('Lets agent sessions use Chrome on this computer with tcli browser: open pages, click, type and read pages and their network traffic. Only tabs T-Agent opened (its “T-Agent” tab group) and tabs you hand over can be used. Cookies, tokens and passwords are hidden.')}</Hint>
           {status.browsers.length ? (
             <Box component="ul" id="h5-browser-list" sx={{ listStyle: 'none', m: 0, p: 0, display: 'flex', flexDirection: 'column', gap: 1 }}>
               {status.browsers.map(browser => <BrowserRow key={browser.browser_id} browser={browser} onRename={() => setRenaming(browser)} onRemove={() => setRemoving(browser)} />)}

@@ -146,7 +146,7 @@ async function assertFits(page, label) {
       await page.waitForFunction(() => document.getElementById('h5-oss-agent-enabled') && !document.getElementById('h5-oss-agent-enabled').disabled);
       assert.equal(await page.locator('#h5-oss-agent-enabled').isChecked(), true);
       assert.equal(await page.locator('#h5-oss-agent-enabled').evaluate(node => node.closest('#h5-sec-oss') !== null), true, 'the switch is a part of Image and file upload');
-      assert.match(await page.locator('#h5-oss-agent').innerText(), /^Let agent sessions manage OSS files \(tcli\)\n+Claude and Codex sessions in T-Agent terminals can list, upload, download, copy, move and delete files in this bucket with the tcli command\. The access key never leaves this server\./);
+      assert.match(await page.locator('#h5-oss-agent').innerText(), /^Let agent sessions manage OSS files \(tcli\)\n+Claude and Codex sessions in T-Agent terminals can manage files in this bucket with tcli \(list, upload, download, copy, move, delete\)\. The access key stays on this server\./);
       await assertFits(page, 'phone before');
       await shot('phone-before');
       await shot('phone-oss', '#h5-oss-agent');

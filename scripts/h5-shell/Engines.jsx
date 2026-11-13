@@ -400,7 +400,7 @@ function ShownDevices({ servers, localName, showProps }) {
 
 // The buttons of a row (44px on a touch screen, from the theme), and the line of its name (a long name is cut, `DeviceName`).
 const ACTIONS = { display: 'flex', flexWrap: 'wrap', gap: 0.5 };
-const NAME = { flex: '1 1 auto', minWidth: 0, display: 'flex', alignItems: 'baseline', gap: 0.75, fontWeight: 700 };
+const NAME = { flex: '1 1 auto', minWidth: 0, display: 'flex', alignItems: 'baseline', gap: 0.75, fontWeight: 700, fontSize: '0.9375rem' };
 
 // `link`: this Engine is a linked service (ServiceLinks.jsx). Its address and token belong to the link, so they cannot be edited, and removing it ends the link.
 // `show`: the props of its "Show in task list" switch, or null when the switches do not appear.
@@ -431,9 +431,11 @@ function EngineRow({ server, link, busy, show, onCheck, onUpdate, onEdit, onRena
 }
 
 // The folded "Advanced" part of the Devices group. Its content stays mounted while it is folded; `onToggle` reports a new state.
+// The toggle is a 44px row right under the divider; the unfolded content is set in from the left behind a thin rule, so its parts (level 4, no
+// dividers of their own) read as the inside of Advanced and not as more parts of Devices.
 function Advanced({ open, onToggle, children }) {
   return (
-    <Section id="advanced">
+    <Section id="advanced" sx={{ gap: 0, '* + &': { pt: 1 } }}>
       <SubHeading>
         <ButtonBase
           id="h5-devices-advanced-toggle" aria-expanded={open ? 'true' : 'false'} aria-controls="h5-devices-advanced" onClick={() => onToggle(!open)}
@@ -444,7 +446,7 @@ function Advanced({ open, onToggle, children }) {
         </ButtonBase>
       </SubHeading>
       <Collapse in={open} id="h5-devices-advanced" unmountOnExit={false}>
-        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>{children}</Box>
+        <Box className="h5-devices-advanced-body" sx={{ display: 'flex', flexDirection: 'column', gap: 2, mt: 1, mb: 0.5, ml: 0.25, pl: 1.75, borderLeft: 2, borderColor: 'divider' }}>{children}</Box>
       </Collapse>
     </Section>
   );
@@ -553,7 +555,7 @@ export function DevicesGroup({ state, ui, request = null }) {
       {tabScope === 'shared' && switches ? <ShownDevices servers={servers} localName={localName} showProps={showProps} /> : null}
       {listShown ? (
         <>
-          <Hint>{t('Devices are the machines whose tasks and terminals this page shows. This machine is always first. To add another one, link it below.')}</Hint>
+          <Hint>{t('The machines whose tasks and terminals this page shows, this one first. To add one, link it below.')}</Hint>
           {/* What the list changes: the names (and Restart) are this device's own; which devices the task list shows is one set for all linked devices. */}
           <ScopeLabel id="engine-name" subject="Device names" follow={false} />
           {rowSwitches ? <ScopeLabel id="task-list-devices" scope="shared" subject="Show in task list" /> : null}
@@ -592,10 +594,10 @@ export function DevicesGroup({ state, ui, request = null }) {
           <RuleSyncSection state={state} opened={opened} />
           <Advanced open={advanced} onToggle={toggleAdvanced}>
             <LocalOnly id="h5-devices-advanced-remote">
-              <Hint id="h5-devices-advanced-hint">{t('Linking (above) is the recommended way to add a device. The options here connect one way only: for a device that should not see this one, or one on an older version.')}</Hint>
+              <Hint id="h5-devices-advanced-hint">{t('One-way connections, for a device that should not see this one or runs an older version. Linking above is the recommended way.')}</Hint>
               <Section id="connect" title="Connect a remote engine" level={4}>
-                <Hint>{t('Enter the address of another client and a pairing code made under “Let other clients connect to this one” on that client. Only this side sees the other.')}</Hint>
-                <Button id="h5-engine-connect-open" variant="contained" onClick={() => setConnecting(true)}>{t('Connect remote service')}</Button>
+                <Hint>{t('Enter the other client’s address and a pairing code made there under “Let other clients connect to this one”. Only this side sees the other.')}</Hint>
+                <Button id="h5-engine-connect-open" variant="outlined" onClick={() => setConnecting(true)}>{t('Connect remote service')}</Button>
               </Section>
               <RemoteAccessSection opened={remoteOpened} />
             </LocalOnly>

@@ -70,7 +70,7 @@ async function openPage(browser, { supported = true, enabled = false, zh = false
       assert.match(text, /home folder/);
       assert.match(text, /~\/\.ssh and \.env/);
       assert.match(text, /Read only/);
-      assert.match(text, /linked devices can read this device’s files/);
+      assert.match(text, /those devices can read this one’s the same way/);
       assert.match(text, /sessions started after the change/);
 
       // Turn it on: saved at once.

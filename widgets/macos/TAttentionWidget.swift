@@ -806,6 +806,10 @@ final class ActionButton: PanelButton {
 
     required init?(coder: NSCoder) { fatalError("not used") }
 
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: super.intrinsicContentSize.width - 4, height: 18)
+    }
+
     override func menu(for event: NSEvent) -> NSMenu? { contextMenu() }
 
     // super.mouseDown tracks the press until the mouse goes up and sends the action from inside.
@@ -1228,10 +1232,14 @@ func renderView(_ view: NSView, to path: String, background: NSColor) -> Bool {
 
 // MARK: - Controller
 
-let widgetSize = NSSize(width: 76, height: 72)
-let detailWidth: CGFloat = 320
-let detailPadding: CGFloat = 12
-let detailMaxHeight: CGFloat = 520
+/// The collapsed window is a small pill: the count, and a red badge with the Needs you count when there is one.
+/// Its width follows what it shows (widgetMinWidth at least); the height is fixed.
+let widgetHeight: CGFloat = 26
+let widgetMinWidth: CGFloat = 38
+let widgetSize = NSSize(width: widgetMinWidth, height: widgetHeight)
+let detailWidth: CGFloat = 288
+let detailPadding: CGFloat = 10
+let detailMaxHeight: CGFloat = 440
 let screenMargin: CGFloat = 8
 let panelGap: CGFloat = 8
 let hideDelay: TimeInterval = 0.3
@@ -1381,57 +1389,73 @@ final class WidgetController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         root.menu = makeMenu([])
         widgetRoot = root
 
-        let background = makeBackground(radius: 14)
+        let background = makeBackground(radius: widgetHeight / 2)
         background.frame = root.bounds
+        background.autoresizingMask = [.width, .height]
         root.addSubview(background)
 
         countLabel.alignment = .center
         countLabel.textColor = .labelColor
-        countLabel.translatesAutoresizingMaskIntoConstraints = false
-        caption.stringValue = L("Tasks")
-        caption.font = .systemFont(ofSize: 11)
-        caption.textColor = .secondaryLabelColor
-        caption.translatesAutoresizingMaskIntoConstraints = false
+        countLabel.font = .monospacedDigitSystemFont(ofSize: 14, weight: .semibold)
+        caption.stringValue = L("Tasks")  // no longer drawn: the window's tooltip and accessibility label
+        root.toolTip = caption.stringValue
+        root.setAccessibilityLabel(caption.stringValue)
 
         badge.wantsLayer = true
         badge.layer?.backgroundColor = NSColor.systemRed.cgColor
-        badge.layer?.cornerRadius = 9
-        badge.translatesAutoresizingMaskIntoConstraints = false
+        badge.layer?.cornerRadius = badgeHeight / 2
         badge.isHidden = true
-        badgeLabel.font = .systemFont(ofSize: 11, weight: .bold)
+        badgeLabel.font = .monospacedDigitSystemFont(ofSize: 10, weight: .bold)
         badgeLabel.textColor = .white
-        badgeLabel.translatesAutoresizingMaskIntoConstraints = false
+        badgeLabel.alignment = .center
         badge.addSubview(badgeLabel)
 
         root.addSubview(countLabel)
-        root.addSubview(caption)
         root.addSubview(badge)
-        NSLayoutConstraint.activate([
-            countLabel.centerXAnchor.constraint(equalTo: root.centerXAnchor),
-            countLabel.centerYAnchor.constraint(equalTo: root.centerYAnchor, constant: -8),
-            caption.centerXAnchor.constraint(equalTo: root.centerXAnchor),
-            caption.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -7),
-            badge.topAnchor.constraint(equalTo: root.topAnchor, constant: 4),
-            badge.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -4),
-            badge.heightAnchor.constraint(equalToConstant: 18),
-            badge.widthAnchor.constraint(greaterThanOrEqualToConstant: 18),
-            badgeLabel.centerXAnchor.constraint(equalTo: badge.centerXAnchor),
-            badgeLabel.centerYAnchor.constraint(equalTo: badge.centerYAnchor),
-            badgeLabel.leadingAnchor.constraint(greaterThanOrEqualTo: badge.leadingAnchor, constant: 5),
-            badgeLabel.trailingAnchor.constraint(lessThanOrEqualTo: badge.trailingAnchor, constant: -5),
-        ])
         widget.contentView = root
         updateCollapsed()
     }
 
+    private let badgeHeight: CGFloat = 16
+
     private func updateCollapsed() {
-        let text = summary.map { String($0.unfinished) } ?? "\u{2013}"
-        let size: CGFloat = text.count <= 2 ? 30 : (text.count == 3 ? 24 : 18)
-        countLabel.font = .monospacedDigitSystemFont(ofSize: size, weight: .semibold)
-        countLabel.stringValue = text
+        countLabel.stringValue = summary.map { String($0.unfinished) } ?? "\u{2013}"
         let needs = summary?.needs.count ?? 0
         badge.isHidden = needs == 0
         badgeLabel.stringValue = String(needs)
+        layoutCollapsed()
+    }
+
+    /// Lays the pill out from left to right (count, then the badge) and fits the window's width to it. The width
+    /// changes only between drags; the edge nearer the screen's side stays where it is.
+    private func layoutCollapsed() {
+        let side: CGFloat = 9
+        let gap: CGFloat = 5
+        countLabel.sizeToFit()
+        let countSize = countLabel.frame.size
+        var badgeWidth: CGFloat = 0
+        if !badge.isHidden {
+            badgeLabel.sizeToFit()
+            badgeWidth = max(badgeHeight, ceil(badgeLabel.frame.width) + 8)
+        }
+        let content = ceil(countSize.width) + (badge.isHidden ? 0 : gap + badgeWidth)
+        let width = max(widgetMinWidth, content + side * 2)
+        var x = (width - content) / 2
+        countLabel.frame = NSRect(x: x, y: floor((widgetHeight - countSize.height) / 2), width: ceil(countSize.width),
+                                  height: countSize.height)
+        x += ceil(countSize.width) + gap
+        if !badge.isHidden {
+            badge.frame = NSRect(x: x, y: (widgetHeight - badgeHeight) / 2, width: badgeWidth, height: badgeHeight)
+            let labelHeight = badgeLabel.frame.height
+            badgeLabel.frame = NSRect(x: 0, y: floor((badgeHeight - labelHeight) / 2), width: badgeWidth, height: labelHeight)
+        }
+        guard !dragging, abs(widget.frame.width - width) > 0.5 else { return }
+        var frame = widget.frame
+        let visible = (widget.screen ?? NSScreen.main)?.visibleFrame
+        if let visible = visible, frame.midX > visible.midX { frame.origin.x = frame.maxX - width }  // keep the right edge
+        frame.size = NSSize(width: width, height: widgetHeight)
+        widget.setFrame(keptOnScreen(frame), display: !options.offscreen)
+        if detail.isVisible { positionDetail() }
     }
 
     private func initialOrigin() -> NSPoint {
@@ -1441,10 +1465,10 @@ final class WidgetController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         if defaults.object(forKey: "x") != nil, defaults.object(forKey: "y") != nil {
             let saved = NSRect(x: defaults.double(forKey: "x"), y: defaults.double(forKey: "y"),
-                               width: widgetSize.width, height: widgetSize.height)
+                               width: widget.frame.width, height: widgetHeight)
             return keptOnScreen(saved).origin
         }
-        return NSPoint(x: visible.maxX - widgetSize.width - 16, y: visible.maxY - widgetSize.height - 16)
+        return NSPoint(x: visible.maxX - widget.frame.width - 16, y: visible.maxY - widgetHeight - 16)
     }
 
     /// Moves rect fully inside the screen it overlaps most, or the main screen if it overlaps none.
@@ -1469,6 +1493,7 @@ final class WidgetController: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func dragEnded() {
         dragging = false
+        layoutCollapsed()  // a width change held back during the drag
         widget.setFrame(keptOnScreen(widget.frame), display: true)
         if options.persistPosition {
             defaults.set(Double(widget.frame.origin.x), forKey: "x")
@@ -1600,9 +1625,16 @@ final class WidgetController: NSObject, NSApplicationDelegate, NSMenuDelegate {
             fieldWidth -= made.intrinsicContentSize.width + 6
             pill = made
         }
-        let field = makeField(rowText(row), width: fieldWidth)
-        view.addSubview(field)
         let key = row.key
+        let actionButtons = row.actions.map { makeActionButton($0, key) }
+        let buttonsWidth = actionButtons.reduce(0) { $0 + $1.intrinsicContentSize.width } + CGFloat(max(actionButtons.count - 1, 0)) * 6
+        // The buttons sit beside the second line when the title takes one line and the second line leaves room for
+        // them; otherwise they take a line of their own under the text.
+        let inline = !actionButtons.isEmpty && !row.detail.isEmpty
+            && lineWidth(rowText(row, titleOnly: true)) <= fieldWidth
+            && lineWidth(rowText(row, detailOnly: true)) + 8 + buttonsWidth <= fullWidth
+        let field = makeField(rowText(row, raiseDetail: inline), width: fieldWidth)
+        view.addSubview(field)
         NSLayoutConstraint.activate([
             field.topAnchor.constraint(equalTo: view.topAnchor),
             field.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -1615,20 +1647,32 @@ final class WidgetController: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 view.bottomAnchor.constraint(greaterThanOrEqualTo: pill.bottomAnchor),
             ])
         }
-        if row.actions.isEmpty {
+        if actionButtons.isEmpty {
             field.bottomAnchor.constraint(equalTo: view.bottomAnchor).isActive = true
         } else {
-            view.actionButtons = row.actions.map { makeActionButton($0, key) }
+            view.actionButtons = actionButtons
             let buttons = NSStackView(views: view.actionButtons)
             buttons.orientation = .horizontal
             buttons.spacing = 6
             buttons.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview(buttons)
-            NSLayoutConstraint.activate([
-                buttons.topAnchor.constraint(equalTo: field.bottomAnchor, constant: 4),
-                buttons.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-                buttons.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            ])
+            if inline {
+                NSLayoutConstraint.activate([
+                    buttons.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+                    buttons.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+                    buttons.topAnchor.constraint(greaterThanOrEqualTo: pill?.bottomAnchor ?? view.topAnchor, constant: 2),
+                    field.bottomAnchor.constraint(lessThanOrEqualTo: view.bottomAnchor),
+                ])
+                let hug = view.bottomAnchor.constraint(equalTo: field.bottomAnchor)
+                hug.priority = .defaultLow
+                hug.isActive = true
+            } else {
+                NSLayoutConstraint.activate([
+                    buttons.topAnchor.constraint(equalTo: field.bottomAnchor, constant: 4),
+                    buttons.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+                    buttons.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+                ])
+            }
         }
         view.onPress = { [weak self] in self?.rowPressed(key) }
         view.onDragBegin = { [weak self] in self?.rowDragBegan(key) }
@@ -1660,7 +1704,24 @@ final class WidgetController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         ])
     }
 
-    private func rowText(_ row: Row) -> NSAttributedString {
+    /// The width of text drawn on one line.
+    private func lineWidth(_ text: NSAttributedString) -> CGFloat {
+        ceil(text.boundingRect(with: NSSize(width: 10_000, height: 100), options: [.usesLineFragmentOrigin]).width)
+    }
+
+    /// The text of a row: the title (with the custom status) and the second line. titleOnly and detailOnly give one
+    /// part, each with the indent of a sub-task, for measuring; raiseDetail drops the second line a little, to the
+    /// middle of buttons drawn beside it.
+    private func rowText(_ row: Row, titleOnly: Bool = false, detailOnly: Bool = false,
+                         raiseDetail: Bool = false) -> NSAttributedString {
+        if titleOnly || detailOnly {
+            var prefix = ""
+            if row.isChild { prefix = String(repeating: "   ", count: min(row.depth, 3) - 1) + "\u{2514} " }
+            if detailOnly { return plain(prefix + row.detail, size: 11) }
+            let title = NSMutableAttributedString(attributedString: plain(prefix + (row.title.isEmpty ? "\u{2013}" : row.title)))
+            if !row.custom.isEmpty { title.append(plain("  " + row.custom, size: 11)) }
+            return title
+        }
         let out = NSMutableAttributedString()
         var indent: CGFloat = 0
         if row.isChild {
@@ -1676,6 +1737,11 @@ final class WidgetController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if !row.detail.isEmpty {
             out.append(plain("\n" + row.detail, size: 11, color: .secondaryLabelColor))
         }
+        if raiseDetail {
+            let lowered = NSMutableParagraphStyle()
+            lowered.paragraphSpacingBefore = 3
+            out.addAttribute(.paragraphStyle, value: lowered, range: NSRange(location: titleEnd, length: out.length - titleEnd))
+        }
         if indent > 0 {  // wrapped title lines and the second line start under the title, not under the mark
             let title = NSMutableParagraphStyle()
             title.headIndent = indent
@@ -1683,6 +1749,7 @@ final class WidgetController: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let detail = NSMutableParagraphStyle()
             detail.firstLineHeadIndent = indent
             detail.headIndent = indent
+            detail.paragraphSpacingBefore = raiseDetail ? 3 : 0
             out.addAttribute(.paragraphStyle, value: detail, range: NSRange(location: titleEnd, length: out.length - titleEnd))
         }
         return out
@@ -1692,12 +1759,12 @@ final class WidgetController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let header = addLine(plain(title, weight: .semibold))
         sectionHeaders[section] = header
         if rows.isEmpty {
-            addLine(plain(empty, color: .tertiaryLabelColor), after: 12)
+            addLine(plain(empty, color: .tertiaryLabelColor), after: 9)
             return
         }
         sectionTitles[rows[0].key] = header
         for (index, row) in rows.enumerated() {
-            addRow(row, after: index == rows.count - 1 ? 12 : 5)
+            addRow(row, after: index == rows.count - 1 ? 9 : 4)
         }
     }
 
@@ -2300,6 +2367,9 @@ final class WidgetController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// Puts the loaded language on what is already built; forms and menus are built when they open.
     private func stringsChanged() {
         caption.stringValue = L("Tasks")
+        widgetRoot?.toolTip = caption.stringValue
+        widgetRoot?.setAccessibilityLabel(caption.stringValue)
+        updateCollapsed()  // the width of the pill may change with the font of the new language
         plusButton.toolTip = L("New task")
         plusButton.setAccessibilityLabel(L("New task"))
         widgetRoot?.menu = makeMenu([])
@@ -2472,6 +2542,9 @@ final class WidgetController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var testCount: String { countLabel.stringValue }
     var testBadge: String { badge.isHidden ? "" : badgeLabel.stringValue }
     var testCaption: String { caption.stringValue }
+    var testTooltip: String { widgetRoot?.toolTip ?? "" }
+    var testWidgetWidth: CGFloat { widget.frame.width }
+    var testWidgetHeight: CGFloat { widget.frame.height }
     var testOnScreen: Bool { widget.isVisible || detail.isVisible }
     var testLines: [String] {
         stack.arrangedSubviews.compactMap { view in
@@ -2912,11 +2985,13 @@ func runSelfTest() -> Never {
     check("panel: the order of the board", mouse.testOrder == "needs[local:1 local:2 local:3 remote:7:1] "
           + "working[local:4 local:5 local:6 local:7 remote:7:2 remote:7:3] todo[local:8 local:9 local:10] done 3")
     check("panel: count and badge", mouse.testCount == "13" && mouse.testBadge == "4")
+    check("pill: one short line that fits the count and the badge", mouse.testWidgetHeight == widgetHeight
+          && mouse.testWidgetWidth > widgetMinWidth && mouse.testWidgetWidth <= 80)
     check("panel: section titles, the Done line and the failed engine", mouse.testLines.contains("\u{1F534} Needs you")
           && mouse.testLines.contains("\u{1F7E2} Working") && mouse.testLines.contains("\u{1F7E1} To do")
           && mouse.testLines.contains("\u{26AA} Done: 3") && mouse.testLines.contains("Could not load K02"))
     check("panel: rows carry an engine tag with two engines", mouse.testHasPill("local:4") && mouse.testHasPill("remote:7:2"))
-    check("panel: the caption", mouse.testCaption == "Tasks")
+    check("panel: the caption is the tooltip", mouse.testCaption == "Tasks" && mouse.testTooltip == "Tasks")
     check("panel: nothing was sent while loading", network.isEmpty)
 
     var placed: (String, MoveSpec, String?)?

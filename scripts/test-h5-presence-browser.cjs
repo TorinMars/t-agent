@@ -12,9 +12,10 @@ const ORIGIN = 'http://h5.test';
 const TYPES = { '.js': 'application/javascript', '.css': 'text/css', '.html': 'text/html' };
 const TERMINALS = [1, 2, 3].map(i => ({ terminal_id: `t${i}`, title: `Term ${i}` }));
 const IDLE_MS = 5 * 60 * 1000;
+const CHAT = { id: 'c1', agent: 'claude', session_id: 'sess-chat', title: 'Chat one', mode: 'ask', updated_at: '2026-11-13 10:00:00', running: false, pending: false, translate: false, collapseKeyboard: true, opened: { web: null, h5: null } };
 const pageErrors = [];
 
-async function openPage(browser, { viewport, phone }) {
+async function openPage(browser, { viewport, phone, query = '' }) {
   const context = await browser.newContext({ viewport, ...(phone ? { isMobile: true, hasTouch: true } : {}) });
   const page = await context.newPage();
   page.on('pageerror', error => pageErrors.push(error.message));
@@ -44,6 +45,17 @@ async function openPage(browser, { viewport, phone }) {
     window.WebSocket = window.FakeSocket;
   });
   await page.addInitScript(activityStreamMock);
+  // The agent chat's event stream (scripts/agent-chat/store.mjs): a stub that opens at once and records its URL.
+  await page.addInitScript(() => {
+    window.chatStreams = [];
+    window.EventSource = class {
+      constructor(url) { this.url = url; this.closed = false; window.chatStreams.push(this); setTimeout(() => { if (!this.closed) this.onopen?.(); }, 0); }
+      addEventListener() {}
+      close() { this.closed = true; }
+    };
+  });
+  const presencePosts = [];
+  page.presencePosts = presencePosts;
   await context.route(`${ORIGIN}/**`, async route => {
     const url = new URL(route.request().url());
     const method = route.request().method();
@@ -56,11 +68,14 @@ async function openPage(browser, { viewport, phone }) {
     if (url.pathname === '/api/task-groups') return json([{ key: 'doing', name: 'In progress', sort_order: 1 }]);
     if (url.pathname === '/api/tasks/1/terminals') return json(TERMINALS);
     if (url.pathname === '/api/tasks/terminal-activity' || url.pathname === '/api/tasks/terminal-subagents') return json({});
-    if (url.pathname === '/api/tasks/1/agent/conversations') return json([]);
+    if (url.pathname === '/api/tasks/1/agent/conversations') return json(query.includes('openChat') ? [CHAT] : []);
+    if (url.pathname === '/api/tasks/1/agent/conversations/c1') return json({ conversation: CHAT, items: [], pending: [], status: 'idle', seq: 0, queue: [], suggestion: null, runningMs: 0, capabilities: { serverQueue: true, presence: true } });
+    if (url.pathname === '/api/tasks/1/agent/conversations/c1/presence' && method === 'POST') { presencePosts.push(JSON.parse(route.request().postData() || '{}')); return json({ ok: true }); }
+    if (url.pathname === '/api/tasks/1/agent/conversations/c1/commands') return json({ commands: [] });
     if (url.pathname === '/api/agent-chat/summary') return json({ running: 0, queued: 0, submitted: 0 });
     return json({ error: 'not mocked' }, 404);
   });
-  await page.goto(`${ORIGIN}/h5`);
+  await page.goto(`${ORIGIN}/h5${query}`);
   return { context, page };
 }
 
@@ -129,6 +144,12 @@ async function pick(page, name) {
       await expectPresence(page, first, [true, false, true, false, true, false, true], 'activity after the window ran out');
       assert.deepEqual(await presence(page, second), [true, false]);
 
+      // The page is left (pagehide: the app switched, the page put in the cache) while the browser still says visible: false at once; back: true.
+      await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true })));
+      await expectPresence(page, first, [true, false, true, false, true, false, true, false], 'a left page is not in the foreground');
+      await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: false })));
+      await expectPresence(page, first, [true, false, true, false, true, false, true, false, true], 'shown again (a page restored from the cache is reloaded by client-auth.js)');
+
       // A lost connection: the new socket says it again after its snapshot.
       await page.evaluate(i => { const socket = window.sockets[i]; socket.readyState = 3; socket.onclose?.({ code: 1006 }); }, first);
       await page.clock.runFor(1500);
@@ -146,6 +167,38 @@ async function pick(page, name) {
       await setHidden(page, false);
       assert.deepEqual(await presence(page, old), [], 'nothing to an old server');
       assert.equal(await page.evaluate(i => window.sockets[i].textPresence(), old), 0, 'never as a text frame (that would be typed into the shell)');
+      await context.close();
+    }
+
+    // ── An agent chat shown over the terminal: the chat reports for its session (POST .../presence with the viewer of its event stream) ──
+    {
+      const { context, page } = await openPage(browser, { viewport: { width: 390, height: 844 }, phone: true, query: '?openChat=1:c1' });
+      const posts = page.presencePosts;
+      const waitPosts = async (want, message) => {
+        for (let i = 0; i < 60 && JSON.stringify(posts.map(post => post.foreground)) !== JSON.stringify(want); i++) { await page.clock.runFor(50); await page.waitForTimeout(20); }
+        assert.deepEqual(posts.map(post => post.foreground), want, message);
+      };
+      await page.waitForFunction(() => window.chatStreams.length > 0, null, { timeout: 10000 });
+      await waitPosts([true], 'the shown chat says it is in the foreground once its stream is open');
+      const stream = await page.evaluate(() => window.chatStreams.at(-1).url);
+      const viewer = new URL(stream, 'http://x').searchParams.get('viewer');
+      assert.match(viewer, /^[A-Za-z0-9_-]{8,64}$/);
+      assert.ok(posts.every(post => post.viewer === viewer), 'the reports name the stream of this page');
+      // While shown it repeats the report (the server stops believing a quiet page after about 50 s).
+      await page.clock.runFor(21000);
+      await waitPosts([true, true], 'repeated every 20 s');
+      await setHidden(page, true);
+      await waitPosts([true, true, false], 'a hidden page');
+      await page.clock.runFor(45000);
+      assert.deepEqual(posts.map(post => post.foreground), [true, true, false], 'nothing is repeated while hidden');
+      await setHidden(page, false);
+      await waitPosts([true, true, false, true]);
+      await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true })));
+      await waitPosts([true, true, false, true, false], 'a left page');
+      await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: false })));
+      await waitPosts([true, true, false, true, false, true]);
+      await page.clock.runFor(IDLE_MS + 1000);
+      assert.equal(posts.at(-1).foreground, false, 'five minutes without the person');
       await context.close();
     }
 
@@ -192,6 +245,6 @@ async function pick(page, name) {
     }
 
     assert.deepEqual(pageErrors, [], 'no browser runtime errors');
-    console.log('Terminal presence: snapshot, switch, hidden page, five-minute idle and activity, reconnect, old server, columns with shared activity passed.');
+    console.log('Terminal presence: snapshot, switch, hidden page, pagehide, five-minute idle and activity, reconnect, old server, agent chat presence, columns with shared activity passed.');
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

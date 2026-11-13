@@ -70,7 +70,7 @@ test('the store loads the snapshot, follows events after its sequence number and
   const { options, sources } = harness({ snapshot: { items: [{ id: 'm1', kind: 'text', text: 'Hel' }], pending: [{ id: 'p1', tool: 'Bash' }], status: 'running', seq: 5, capabilities: { steer: true } } });
   const store = createChatStore(options);
   await store.load();
-  assert.equal(sources[0].url, '/b/conversations/c1/events?after=5');
+  assert.match(sources[0].url, /^\/b\/conversations\/c1\/events\?after=5&viewer=[A-Za-z0-9_-]{8,64}$/, 'the stream names this page (presence reports belong to it)');
   assert.deepEqual([store.getState().status, store.getState().canSteer, store.getState().pending.length], ['running', true, 1]);
   sources[0].emit({ seq: 5, op: 'append', id: 'm1', text: 'REPLAY' });
   sources[0].emit({ seq: 6, op: 'append', id: 'm1', text: 'lo' });

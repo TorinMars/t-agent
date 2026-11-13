@@ -218,7 +218,7 @@ test('a message sent while the agent works steers the running turn when the agen
   };
   const chat = createAgentChat({ db, adapters: { codex: adapter } });
   const conversation = chat.create(task, { agent: 'codex' });
-  assert.deepEqual((await chat.snapshot(task, conversation.id)).capabilities, { steer: true, serverQueue: true });
+  assert.deepEqual((await chat.snapshot(task, conversation.id)).capabilities, { steer: true, serverQueue: true, presence: true });
   await chat.sendMessage(task, conversation.id, { text: 'start' });
   await wait(() => adapter.calls.length === 1);
   const result = await chat.sendMessage(task, conversation.id, { text: 'and also this' });
@@ -1371,4 +1371,48 @@ test('Claude: a turn keeps Claude Code alive while a background task runs, close
   await run(next, {}, 'sess-bg');
   assert.equal(older.closes, 1, 'a new turn of the same session ends the process that was kept for background tasks');
   await sleep(80);
+});
+
+test('presence: a page that follows a chat says whether it shows it; it holds only while that stream is open and the page keeps reporting', async () => {
+  const clock = { now: 1000000 };
+  const { createPresence } = require('../lib/terminal-presence');
+  const adapter = fakeAdapter(async ({ ctx }) => { ctx.setSession('sess-presence-1'); return { ok: true }; });
+  const chat = createAgentChat({ db, adapters: { claude: adapter }, presence: createPresence({ now: () => clock.now, staleMs: 50000 }) });
+  const conversation = chat.create(task, { agent: 'claude' });
+  const seen = [];
+  const viewer = 'page-viewer-0001';
+  let stop = chat.subscribe(task, conversation.id, 0, event => seen.push(event), { viewer });
+  await chat.sendMessage(task, conversation.id, { text: 'hi' });
+  await wait(() => seen.some(event => event.op === 'status' && event.status === 'idle'));
+  assert.equal(chat.isSessionForeground('claude', 'sess-presence-1'), false, 'nothing reported yet');
+  assert.deepEqual(chat.reportPresence(task, conversation.id, { viewer, foreground: true }), { ok: true });
+  assert.equal(chat.isSessionForeground('claude', 'sess-presence-1'), true);
+  assert.equal(chat.isSessionForeground('', 'sess-presence-1'), true, 'any agent when none is named');
+  assert.equal(chat.isSessionForeground('codex', 'sess-presence-1'), false, 'another agent of the same id is not this chat');
+  assert.equal(chat.isSessionForeground('claude', 'sess-other'), false);
+  // A page that stops reporting (frozen) runs out after the stale time; one that reports again holds.
+  clock.now += 49000;
+  assert.equal(chat.isSessionForeground('claude', 'sess-presence-1'), true);
+  clock.now += 2000;
+  assert.equal(chat.isSessionForeground('claude', 'sess-presence-1'), false, 'not heard for more than 50 s');
+  const waitedSince = clock.now - 10000;
+  assert.equal(chat.isSessionForeground('claude', 'sess-presence-1', waitedSince), true, 'it was on screen during the last 10 s');
+  assert.equal(chat.isSessionForeground('claude', 'sess-presence-1', clock.now + 1), false);
+  chat.reportPresence(task, conversation.id, { viewer, foreground: true });
+  assert.equal(chat.isSessionForeground('claude', 'sess-presence-1'), true);
+  chat.reportPresence(task, conversation.id, { viewer, foreground: false });
+  assert.equal(chat.isSessionForeground('claude', 'sess-presence-1'), false, 'the page hid the chat');
+  chat.reportPresence(task, conversation.id, { viewer, foreground: true });
+  // The stream closes: the report goes with it; a viewer without an open stream is ignored.
+  stop();
+  assert.equal(chat.isSessionForeground('claude', 'sess-presence-1'), false);
+  assert.deepEqual(chat.reportPresence(task, conversation.id, { viewer, foreground: true }), { ok: false });
+  assert.equal(chat.isSessionForeground('claude', 'sess-presence-1'), false);
+  assert.throws(() => chat.reportPresence(task, conversation.id, { viewer: 'x', foreground: true }), /INVALID_PRESENCE/);
+  assert.throws(() => chat.reportPresence(task, conversation.id, { viewer, foreground: 'yes' }), /INVALID_PRESENCE/);
+  assert.throws(() => chat.reportPresence(task, 'nope', { viewer, foreground: true }), /CONVERSATION_NOT_FOUND/);
+  // A stream without a viewer id (an older page) never counts.
+  stop = chat.subscribe(task, conversation.id, 0, () => {});
+  assert.deepEqual(chat.reportPresence(task, conversation.id, { viewer: 'never-subscribed', foreground: true }), { ok: false });
+  stop();
 });

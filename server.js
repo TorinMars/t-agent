@@ -87,8 +87,11 @@ const attentionDataDir = dataHome.paths().root;
 const attentionNotify = require('./services/attention-notify').start({
   db, sessionSecret: config.sessionSecret, onChange: attentionService.onChange, getItem: id => attentionService.get(id),
   extraFolders: () => attentionPluginStore.userFolders(attentionDataDir, 'notifier'),
-  // Nothing is sent for a session that is open on a screen (the page reports presence over the terminal WebSocket).
-  isForeground: (taskId, terminalId) => terminal.isTerminalForeground(taskId, terminalId),
+  // Nothing is sent for a session that is open on a screen: its terminal (the page reports presence over the terminal WebSocket; a terminal of this
+  // server counts whatever host name the listener wrote) or the agent chat that runs its session (the chat page reports presence too).
+  isForeground: (taskId, terminalId, since) => terminal.isTerminalForeground(taskId, terminalId, since),
+  isLocalTerminal: (taskId, terminalId) => terminal.isLocalTerminal(taskId, terminalId),
+  isSessionForeground: (agent, sessionId, since) => require('./services/agent-chat').getAgentChat().isSessionForeground(agent, sessionId, since),
 });
 // One Telegram sender for the linked devices (services/attention-relay.js): a device that is not the sender relays its deliveries over the service link
 // (POST /v1/attention/notify-relay on the sender, routes/engine-v1.js). It watches the links once the server listens.

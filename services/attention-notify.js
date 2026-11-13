@@ -1,9 +1,11 @@
 // T-Attention notifiers: tells the user on another channel (Telegram first) when an attention item enters a status that needs them, unless
-// the item's T-Agent session is open on a screen right now (onScreen: the terminal's foreground presence, routes/terminal.js).
+// the item's session is open on a screen (onScreen: the foreground presence of its T-Agent terminal, routes/terminal.js, or of the agent chat that
+// runs its session, services/agent-chat.js). A message waits `messageDelayMinutes` (a call `callDelayMinutes`) and is sent only if the item is
+// still in that status and the session was not on a screen meanwhile.
 // It subscribes in-process to the onChange bus of services/attention.js and loads notifier plugins from plugins/notifiers/<name>/
 // (manifest.json + index.js with { name, label, configFields, notify(), test() }).
 // Rules and plugin settings are per user, encrypted in system_state (no schema change):
-//   attention-notify:<owner>          the rules (statuses, modes, quiet hours, call delay, rate limits, public page address)
+//   attention-notify:<owner>          the rules (statuses, modes, quiet hours, message and call delays, rate limits, public page address)
 //   attention-notify:<plugin>:<owner> the plugin's own settings (for Telegram: the session string and api_hash; never sent to the browser)
 //   attention-plugin:<plugin>:<owner> the manifest settings: { enabled, values } (the "config" schema of manifest.json; secrets never sent back)
 // A notifier error never reaches the attention API: the bus handler returns at once and every delivery is caught and logged.
@@ -19,6 +21,9 @@ const DEFAULT_STATUSES = ['waiting_user', 'failed', 'review'];
 const DEDUPE_MS = 10 * 60 * 1000; // the same item + status is not sent again within 10 minutes
 const HOUR_MS = 60 * 60 * 1000;
 const DEFAULT_RATE = { message: 20, call: 6 }; // per notifier per hour
+const DEFAULT_MESSAGE_DELAY = 3; // minutes a message waits (0 = at once)
+const MESSAGE_DELAY_MAX = 120;
+const CALL_DELAY_MAX = 1440;
 const RECENT_MAX = 50;
 const SECRET_KEY = /session|hash|token|secret|password|key/i;
 const PLUGINS_DIR = path.join(__dirname, '..', 'plugins', 'notifiers');
@@ -30,6 +35,9 @@ class NotifyError extends Error {
 const defaultRules = () => ({
   statuses: [...DEFAULT_STATUSES],
   modes: {}, // { <notifier>: { <status>: 'message' | 'call' | 'off' } }; a missing entry is 'message'
+  // A message is sent only if the item is still in that status after this many minutes and its session was not on a screen meanwhile (0 = at once).
+  // It applies to every status, "Needs you" (waiting_user) too: one rule, and 0 brings back messages at once.
+  messageDelayMinutes: DEFAULT_MESSAGE_DELAY,
   callDelayMinutes: 0, // a call is made only if the item is still in that status after this many minutes (0 = at once)
   quietHours: { enabled: false, start: '22:00', end: '08:00', timeZone: '' },
   rateLimit: { ...DEFAULT_RATE },
@@ -79,7 +87,8 @@ function normalizeRules(body, current, notifierNames) {
       next.modes[name] = clean;
     }
   }
-  next.callDelayMinutes = intIn(body.callDelayMinutes, 0, 1440, current.callDelayMinutes, 'The delay before a call must be a whole number of minutes from 0 to 1440');
+  next.messageDelayMinutes = intIn(body.messageDelayMinutes, 0, MESSAGE_DELAY_MAX, current.messageDelayMinutes, `The delay before a message must be a whole number of minutes from 0 to ${MESSAGE_DELAY_MAX}`);
+  next.callDelayMinutes = intIn(body.callDelayMinutes, 0, CALL_DELAY_MAX, current.callDelayMinutes, `The delay before a call must be a whole number of minutes from 0 to ${CALL_DELAY_MAX}`);
   if (body.quietHours !== undefined) {
     const quiet = body.quietHours || {};
     const start = quiet.start === undefined ? current.quietHours.start : String(quiet.start);
@@ -337,8 +346,11 @@ function defaultLog(level, message) {
 // options: db, sessionSecret, onChange (the bus of services/attention.js; optional), getItem(id) (the current item, so a delayed call carries what
 // arrived after its status change, such as context.summary; optional), getOwner (the user for background events),
 // notifiers (plugins; default: loaded from plugins/notifiers), skipped (with injected notifiers: broken ones for the overview),
-// log(level, message), now(), timers { setTimeout, clearTimeout }, isForeground(taskId, terminalId) (true while a page of this engine shows that
-// T-Agent terminal in the foreground: routes/terminal.js isTerminalForeground; default: never), host (this machine's name, default os.hostname()).
+// log(level, message), now(), timers { setTimeout, clearTimeout }, isForeground(taskId, terminalId, since?) (true while a page of this engine shows
+// that T-Agent terminal in the foreground, or with `since` (ms) did at some moment since then: routes/terminal.js isTerminalForeground; default:
+// never), isLocalTerminal(taskId, terminalId) (the terminal is one of this server: routes/terminal.js; default: unknown),
+// isSessionForeground(agent, sessionId, since?) (an agent chat of this server runs that session and a page shows it: services/agent-chat.js;
+// default: never), host (this machine's name: a string, or a function read at every check; default os.hostname() at every check).
 function createAttentionNotify(options) {
   const { db, sessionSecret } = options;
   const log = options.log || defaultLog;
@@ -346,19 +358,41 @@ function createAttentionNotify(options) {
   const timers = options.timers || { setTimeout: (fn, ms) => { const handle = setTimeout(fn, ms); if (handle.unref) handle.unref(); return handle; }, clearTimeout };
   const getOwner = options.getOwner || (() => require('./single-user').ensureSingleUser(db).login);
   const isForeground = typeof options.isForeground === 'function' ? options.isForeground : () => false;
-  const host = options.host === undefined ? require('os').hostname() : options.host;
+  const isLocalTerminal = typeof options.isLocalTerminal === 'function' ? options.isLocalTerminal : () => false;
+  const isSessionForeground = typeof options.isSessionForeground === 'function' ? options.isSessionForeground : () => false;
+  // Read at every check: os.hostname() of a Mac follows the network (DHCP or reverse DNS names it after an IP address), so a name taken once at
+  // the start soon differs from the one the listener writes.
+  const hostNow = typeof options.host === 'function' ? options.host : options.host === undefined ? () => require('os').hostname() : () => options.host;
   // One Telegram sender for linked devices (services/attention-relay.js): { handles(name), target(name), send(peer, payload), sendTest(peer, input),
   // view(name), useThisDevice() }. Without it every notifier sends here, as before. Set after creation with setRelay() (server.js).
   let relay = options.relay || null;
   const RELAY_RETRY_MS = 30 * 1000; // a relay that failed is tried once more after this long, never again
-  // The session of an item is open on a screen: its context names a T-Agent terminal (context.tagent, written by the Claude listener or tied by a
-  // terminal token) of THIS engine (no context.host, or this machine's name) and that terminal is in the foreground now. Then nothing is sent.
-  function onScreen(item) {
+  // The session of an item is open on a screen (now, or with `since` at some moment since then). Then nothing is sent. Either
+  // - its context names a T-Agent terminal (context.tagent, written by the Claude listener or tied by a terminal token) and that terminal is in the
+  //   foreground. A terminal of THIS server counts whatever context.host says (the host name changes with the network; terminal ids are UUIDs, so
+  //   another machine's never matches); only for a terminal this server does not know is the host compared, with the name read now; or
+  // - its context names an agent session (context.session { agent, id }) that an agent chat of this server runs, and the chat is in the foreground.
+  function onScreen(item, since) {
     const context = item && item.context;
-    const tagent = context && context.tagent;
-    if (!tagent || !tagent.task_id || !tagent.terminal_id) return false;
-    if (context.host && host && context.host !== host) return false; // a session of another machine
-    try { return isForeground(String(tagent.task_id), String(tagent.terminal_id)) === true; } catch { return false; }
+    if (!context || typeof context !== 'object') return false;
+    const tagent = context.tagent;
+    if (tagent && tagent.task_id && tagent.terminal_id) {
+      const taskId = String(tagent.task_id);
+      const terminalId = String(tagent.terminal_id);
+      let local = false;
+      try { local = isLocalTerminal(taskId, terminalId) === true; } catch { local = false; }
+      let host = '';
+      try { host = local ? '' : String(hostNow() || ''); } catch { host = ''; }
+      const elsewhere = !local && context.host && host && context.host !== host; // a session of another machine
+      if (!elsewhere) {
+        try { if (isForeground(taskId, terminalId, since) === true) return true; } catch { /* counts as background */ }
+      }
+    }
+    const session = context.session;
+    if (session && typeof session === 'object' && typeof session.id === 'string' && session.id) {
+      try { if (isSessionForeground(typeof session.agent === 'string' ? session.agent : '', session.id, since) === true) return true; } catch { /* background */ }
+    }
+    return false;
   }
   // notifiers (injected plugins) skip the folder scan; then `skipped` may list broken ones for the overview. extraFolders() gives the user
   // plugin folders (lib/plugin-store.js), read again on every reload().
@@ -430,7 +464,13 @@ function createAttentionNotify(options) {
     const base = defaultRules();
     const stored = readState(rulesKey(owner));
     if (!stored) return base;
-    return { ...base, ...stored, quietHours: { ...base.quietHours, ...stored.quietHours }, rateLimit: { ...base.rateLimit, ...stored.rateLimit }, modes: { ...stored.modes } };
+    // Rules saved by an older version (or synced from an older linked device) lack newer fields: those get their default, and a value out of range does too.
+    const minutes = (value, max, fallback) => (Number.isInteger(value) && value >= 0 && value <= max ? value : fallback);
+    return {
+      ...base, ...stored, quietHours: { ...base.quietHours, ...stored.quietHours }, rateLimit: { ...base.rateLimit, ...stored.rateLimit }, modes: { ...stored.modes },
+      messageDelayMinutes: minutes(stored.messageDelayMinutes, MESSAGE_DELAY_MAX, base.messageDelayMinutes),
+      callDelayMinutes: minutes(stored.callDelayMinutes, CALL_DELAY_MAX, base.callDelayMinutes),
+    };
   }
   function saveRules(owner, body) {
     const next = normalizeRules(body, getRules(owner), [...byName.keys()]);
@@ -508,10 +548,11 @@ function createAttentionNotify(options) {
     ].filter(value => typeof value === 'string' && value);
   }
 
-  // State in memory: the last sends (dedupe), the send times per notifier and kind (rate limit), the delayed calls and a short log for Settings.
+  // State in memory: the last sends (dedupe), the send times per notifier and kind (rate limit), the delayed sends and a short log for Settings.
+  // A restart drops the delayed sends (they are timers): an item that entered its status less than the delay before the restart is not sent.
   const sentAt = new Map(); // `${notifier}:${itemId}:${status}` -> time
   const windows = new Map(); // `${notifier}:${kind}` -> [times]
-  const pending = new Map(); // itemId -> Map(key -> { handle, status })
+  const pending = new Map(); // itemId -> Map(key -> { handle, status, base })
   const recent = [];
   // `via`: the linked device a delivery was relayed to; `origin`: the linked device a relayed delivery came from (names only).
   function remember(entry) {
@@ -531,11 +572,29 @@ function createAttentionNotify(options) {
     list.push(now());
     return true;
   }
-  function cancel(itemId) {
+  // Delayed work of an item, under `key`: a message or a call that waits (`base` set: its drop is logged as 'cancelled'), or the one retry of a
+  // relay. It is dropped when the item changes status, is deleted or is edited by the user (cancel); a later one under the same key replaces it.
+  function later(item, key, ms, run, base = null) {
+    let map = pending.get(item.id);
+    if (!map) pending.set(item.id, map = new Map());
+    if (map.has(key)) timers.clearTimeout(map.get(key).handle);
+    const entry = { status: item.status, base };
+    entry.handle = timers.setTimeout(() => {
+      if (map.get(key) !== entry) return undefined;
+      map.delete(key);
+      if (!map.size && pending.get(item.id) === map) pending.delete(item.id);
+      return run();
+    }, ms);
+    map.set(key, entry);
+  }
+  function cancel(itemId, why = '') {
     const map = pending.get(itemId);
     if (!map) return;
-    for (const entry of map.values()) timers.clearTimeout(entry.handle);
     pending.delete(itemId);
+    for (const entry of map.values()) {
+      timers.clearTimeout(entry.handle);
+      if (entry.base && why) remember({ ...entry.base, outcome: 'cancelled', detail: why });
+    }
   }
 
   const safeError = error => String((error && (error.errorMessage || error.message)) || error || 'error').slice(0, 300);
@@ -556,21 +615,14 @@ function createAttentionNotify(options) {
       const retry = attempt === 0;
       const entry = remember({ ...base, outcome: offline ? 'relay_offline' : 'relay_failed', detail: `${code}${retry ? '; one retry in 30 s' : ''}` });
       if (retry) {
-        const key = `relay:${plugin.name}:${item.id}:${item.status}:${mode}`;
-        const map = pending.get(item.id) || new Map();
-        pending.set(item.id, map);
-        if (map.has(key)) timers.clearTimeout(map.get(key).handle);
-        const handleId = timers.setTimeout(() => {
-          map.delete(key);
-          if (!map.size) pending.delete(item.id);
+        later(item, `relay:${plugin.name}:${item.id}:${item.status}:${mode}`, RELAY_RETRY_MS, () => {
           if (byName.get(plugin.name) !== plugin || !isEnabled(plugin.name, owner)) return undefined;
           let current = item;
           try { current = (typeof options.getItem === 'function' && options.getItem(item.id)) || item; } catch { current = item; }
           if (current.status !== item.status) return undefined;
           if (onScreen(current)) return remember({ ...base, outcome: 'foreground', detail: 'the session is open on screen' });
           return deliver({ plugin, owner, rules: getRules(owner), item: current, previous, mode, reason, attempt: 1 }).catch(error => log('warn', `delivery failed: ${safeError(error)}`));
-        }, RELAY_RETRY_MS);
-        map.set(key, { handle: handleId, status: item.status });
+        });
       }
       return entry;
     }
@@ -615,14 +667,44 @@ function createAttentionNotify(options) {
     }
   }
 
-  // Decides what to send for one change. Returns the promises of the deliveries started (tests wait for them).
+  // A message or call that waits `minutes` after the status change (messageDelayMinutes, callDelayMinutes). When the time comes it is sent only if
+  // the plugin is still loaded and switched on, the rules still send this mode for this status, the item still exists in the same status (it was
+  // not handled: a status change, a delete or an edit by the user drop it at once, see handle), it is not quiet hours, nothing was sent for the
+  // same item and status in the last 10 minutes, and its session was not on a screen at any moment of the wait (onScreen with `since`). Dedupe
+  // and the hourly limits count only what is actually sent: the time is noted for dedupe when it goes out, and deliver() counts the limit.
+  function sendLater({ plugin, owner, item, previous, mode, minutes, base, key }) {
+    const since = now();
+    const dropped = detail => remember({ ...base, outcome: 'cancelled', detail });
+    later(item, key, minutes * 60 * 1000, () => {
+      if (byName.get(plugin.name) !== plugin) return undefined; // removed or replaced (reloaded) while it waited
+      if (!isEnabled(plugin.name, owner)) return dropped('the plugin was turned off');
+      const latest = getRules(owner);
+      if (!latest.statuses.includes(item.status) || modeOf(latest, plugin.name, item.status) !== mode) return dropped('the rules changed');
+      let current = item;
+      if (typeof options.getItem === 'function') {
+        try { current = options.getItem(item.id); } catch { current = item; }
+        if (!current) return dropped('the item is gone');
+      }
+      if (current.status !== item.status) return dropped('the status changed');
+      if (inQuietHours(latest.quietHours, new Date(now()))) return remember({ ...base, outcome: 'quiet_hours' });
+      if (sentAt.has(key) && now() - sentAt.get(key) < DEDUPE_MS) return remember({ ...base, outcome: 'duplicate' });
+      if (onScreen(current, since)) return remember({ ...base, outcome: 'foreground', detail: 'the session was open on screen during the wait' });
+      sentAt.set(key, now());
+      return deliver({ plugin, owner, rules: latest, item: current, previous, mode, reason: 'still' }).catch(error => log('warn', `delivery failed: ${safeError(error)}`));
+    }, base);
+    remember({ ...base, outcome: mode === 'call' ? 'call_scheduled' : 'message_scheduled', detail: `${minutes} min` });
+  }
+
+  // Decides what to send for one change. Returns the promises of the deliveries started at once (tests wait for them).
   function handle(change) {
     const tasks = [];
     if (!change || !change.item) return tasks;
     const { kind, item, previous, event } = change;
     const statusChanged = !previous || previous.status !== item.status;
-    // The item was handled or moved on: delayed calls for it are dropped (also when the user edits it in the page).
-    if (kind === 'deleted' || statusChanged || (event && event.actor === 'user')) cancel(item.id);
+    // The item was handled or moved on: what waits for it is dropped (also when the user edits it in the page).
+    if (kind === 'deleted') cancel(item.id, 'the item was deleted');
+    else if (statusChanged) cancel(item.id, 'the status changed');
+    else if (event && event.actor === 'user') cancel(item.id, 'you changed the item');
     if (kind === 'deleted' || !statusChanged) return tasks;
     const owner = getOwner();
     const rules = getRules(owner);
@@ -638,26 +720,9 @@ function createAttentionNotify(options) {
       if (sentAt.has(key) && now() - sentAt.get(key) < DEDUPE_MS) { remember({ ...base, outcome: 'duplicate' }); continue; }
       if (foreground) { remember({ ...base, outcome: 'foreground', detail: 'the session is open on screen' }); continue; } // not marked as sent
       if (quiet) { remember({ ...base, outcome: 'quiet_hours' }); continue; }
+      const minutes = mode === 'call' ? rules.callDelayMinutes : rules.messageDelayMinutes;
+      if (minutes > 0) { sendLater({ plugin, owner, item, previous, mode, minutes, base, key }); continue; }
       sentAt.set(key, now());
-      if (mode === 'call' && rules.callDelayMinutes > 0) {
-        const map = pending.get(item.id) || new Map();
-        pending.set(item.id, map);
-        const handleId = timers.setTimeout(() => {
-          map.delete(key);
-          if (!map.size) pending.delete(item.id);
-          const latest = getRules(owner);
-          if (byName.get(plugin.name) !== plugin) return undefined; // removed or replaced (reloaded) while the call waited
-          if (!isEnabled(plugin.name, owner)) return undefined; // switched off while the call waited
-          if (inQuietHours(latest.quietHours, new Date(now()))) return remember({ ...base, outcome: 'quiet_hours' });
-          let current = item;
-          try { current = (typeof options.getItem === 'function' && options.getItem(item.id)) || item; } catch { current = item; }
-          if (onScreen(current)) return remember({ ...base, outcome: 'foreground', detail: 'the session is open on screen' }); // checked again when the call is due
-          void deliver({ plugin, owner, rules: latest, item: current, previous, mode: 'call', reason: 'still' });
-        }, rules.callDelayMinutes * 60 * 1000);
-        map.set(key, { handle: handleId, status: item.status });
-        remember({ ...base, outcome: 'call_scheduled', detail: `${rules.callDelayMinutes} min` });
-        continue;
-      }
       tasks.push(deliver({ plugin, owner, rules, item, previous, mode, reason: 'status' }));
     }
     return tasks;

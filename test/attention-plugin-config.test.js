@@ -58,6 +58,7 @@ function makeService({ plugin, manifest = { config: SCHEMA }, db = makeDb(), tim
     db, sessionSecret: SECRET, onChange: null, getOwner: () => 'owner', notifiers: [fake.plugin || fake], manifests: { [(fake.plugin || fake).name]: manifest },
     log: () => {}, ...(timers ? { timers } : {}), ...rest,
   });
+  service.saveRules('owner', { messageDelayMinutes: 0 }); // messages at once; the wait is tested in test/attention-notify.test.js
   return { service, db, fake };
 }
 

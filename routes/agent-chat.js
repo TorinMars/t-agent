@@ -55,6 +55,8 @@ function createAgentChatRouter({ service = getAgentChat(), authenticate = requir
   router.delete('/conversations/:cid', handle((task, req) => service.remove(task, req.params.cid)));
   router.post('/conversations/:cid/messages', whileActive((task, req) => service.sendMessage(task, req.params.cid, req.body || {})));
   router.post('/conversations/:cid/interrupt', handle((task, req) => service.interrupt(task, req.params.cid)));
+  // { viewer, foreground }: the page that follows the events with ?viewer=<id> shows the chat (or not); see reportPresence in services/agent-chat.js.
+  router.post('/conversations/:cid/presence', handle((task, req) => service.reportPresence(task, req.params.cid, req.body || {})));
   router.post('/conversations/:cid/permissions/:rid', handle((task, req) => service.answerPermission(task, req.params.cid, req.params.rid, req.body || {})));
 
   // Server-sent events: every change of the conversation after `after`. A client whose `after` is older than the kept events gets `reset` and reloads.
@@ -69,7 +71,7 @@ function createAgentChatRouter({ service = getAgentChat(), authenticate = requir
     res.flushHeaders();
     let unsubscribe;
     try {
-      unsubscribe = service.subscribe(task, req.params.cid, after, event => res.write(`data: ${JSON.stringify(event)}\n\n`));
+      unsubscribe = service.subscribe(task, req.params.cid, after, event => res.write(`data: ${JSON.stringify(event)}\n\n`), { viewer: typeof req.query.viewer === 'string' ? req.query.viewer : undefined });
     } catch (error) {
       res.write(`event: gone\ndata: ${JSON.stringify({ error: error.message })}\n\n`);
       return res.end();

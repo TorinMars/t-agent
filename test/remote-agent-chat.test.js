@@ -171,3 +171,30 @@ test('deleting a task through the Engine interrupts pending chat work', async ()
   assert.equal(running.signal.aborted, true, 'deletion aborts the adapter on the Engine');
   assert.equal((await call(target, 'GET', `${base}/${id}`)).status, 404);
 });
+
+test('chat presence reaches the Engine through the Client proxy: the viewer id goes with the stream, and the report with it', async () => {
+  const [direct, viaProxy] = targets();
+  for (const target of [direct, viaProxy]) {
+    const base = `/tasks/${second.id}/agent`; // the test before deletes `mine`
+    const sessionId = `session-presence-${target.prefix.replace(/\W/g, '')}`;
+    const id = (await call(target, 'POST', `${base}/conversations`, { agent: 'claude', session_id: sessionId })).body.id;
+    const url = `${base}/conversations/${id}`;
+    const snapshot = await call(target, 'GET', url);
+    assert.equal(snapshot.body.capabilities && snapshot.body.capabilities.presence, true, JSON.stringify(snapshot));
+    const viewer = `viewer-${target.prefix.replace(/\W/g, '')}`.slice(0, 64);
+    const controller = new AbortController();
+    const stream = await fetch(target.base + target.prefix + `${url}/events?after=0&viewer=${viewer}`, { headers: target.headers, signal: controller.signal });
+    assert.equal(stream.status, 200);
+    let answer = null;
+    for (let i = 0; i < 100 && !(answer && answer.ok); i++) { // the proxy opens the upstream stream a moment after its own
+      answer = (await call(target, 'POST', `${url}/presence`, { viewer, foreground: true })).body;
+      if (!answer.ok) await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    assert.deepEqual(answer, { ok: true });
+    assert.equal(service.isSessionForeground('claude', sessionId), true, 'the Engine that runs the chat knows it is on screen');
+    controller.abort();
+    for (let i = 0; i < 200 && service.isSessionForeground('claude', sessionId); i++) await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal(service.isSessionForeground('claude', sessionId), false);
+    assert.equal((await call(target, 'DELETE', url)).status, 200);
+  }
+});

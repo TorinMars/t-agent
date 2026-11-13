@@ -847,6 +847,7 @@ function handleWs(ws, req, sessionUser, requestedTaskId = null, requestedTermina
 
   ws.on('message', (msg, isBinary) => {
     if (!authorized()) return;
+    presence.touch(key, ws); // the page is alive (it pings every 15 s), so its presence report still holds
     const str = msg.toString();
     if (binaryControl) {
       // Only binary frames are control messages; text is always terminal input, whatever it looks like.
@@ -975,10 +976,20 @@ function liveTerminalIds(taskId) {
   return ids;
 }
 
-// True while a page shows this terminal in the foreground (see lib/terminal-presence.js); false for an unknown terminal.
-function isTerminalForeground(taskId, requestedTerminalId) {
+// True while a page shows this terminal in the foreground (see lib/terminal-presence.js); false for an unknown terminal. With `since` (a time in
+// ms): also true when it was in the foreground at some moment since then (a delayed notification asks whether the person could see it meanwhile).
+function isTerminalForeground(taskId, requestedTerminalId, since) {
   if (!Number.isInteger(Number(taskId)) || Number(taskId) < 1 || typeof requestedTerminalId !== 'string') return false;
-  return presence.isForeground(sessionKey(taskId, requestedTerminalId));
+  const key = sessionKey(taskId, requestedTerminalId);
+  return since === undefined ? presence.isForeground(key) : presence.seenSince(key, Number(since));
+}
+// The terminal belongs to this server: its shell runs here, or it is a terminal row of the task (terminal ids are UUIDs, so another machine's
+// terminal never matches). The T-Attention notifiers use it instead of comparing host names (services/attention-notify.js onScreen).
+function isLocalTerminal(taskId, requestedTerminalId) {
+  if (!Number.isInteger(Number(taskId)) || Number(taskId) < 1 || typeof requestedTerminalId !== 'string' || !requestedTerminalId) return false;
+  if (sessions.has(sessionKey(taskId, requestedTerminalId))) return true;
+  if (requestedTerminalId === 'default') return false; // every task has one: the id alone says nothing
+  try { return Boolean(db.prepare('SELECT 1 FROM task_terminals WHERE task_id = ? AND terminal_id = ?').get(Number(taskId), requestedTerminalId)); } catch { return false; }
 }
 const presenceSnapshot = () => presence.snapshot();
 
@@ -988,4 +999,4 @@ function closeTaskTerminals(taskId) {
   for (const item of [...listTerminals(taskId), ...phone]) controlSession(taskId, 'close', item.terminal_id);
 }
 
-module.exports = { terminalWorkDir, setHookEndpoint, setAttentionTerminals, attentionEnv, reportHook, verifyHookToken, activitySnapshot, subagentSnapshot, serveActivityStream, acknowledgeActivity, controlSession, handleWs, listTerminals, createTerminal, listAgentSessions, reopenCommand, renameTerminal, terminalCwd, assertTerminal, closeTaskTerminals, liveTerminalIds, updateIdleTerminals, setTerminalOrder, forgetTerminalOrder, isTerminalForeground, presenceSnapshot };
+module.exports = { terminalWorkDir, setHookEndpoint, setAttentionTerminals, attentionEnv, reportHook, verifyHookToken, activitySnapshot, subagentSnapshot, serveActivityStream, acknowledgeActivity, controlSession, handleWs, listTerminals, createTerminal, listAgentSessions, reopenCommand, renameTerminal, terminalCwd, assertTerminal, closeTaskTerminals, liveTerminalIds, updateIdleTerminals, setTerminalOrder, forgetTerminalOrder, isTerminalForeground, isLocalTerminal, presenceSnapshot };

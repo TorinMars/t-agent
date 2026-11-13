@@ -151,3 +151,63 @@ test('the presence tracker: one foreground socket keeps the terminal in the fore
   assert.equal(presence.report('2:y', c, false), true, 'a new window');
   assert.equal(presence.isForeground('2:y'), false);
 });
+
+test('a report holds only while the page keeps talking: any frame refreshes it, silence for staleMs ends it; seenSince remembers the last moment', () => {
+  const clock = { at: 100000 };
+  const presence = createPresence({ now: () => clock.at, staleMs: 50000 });
+  const a = { readyState: 1 };
+  presence.report('1:x', a, true);
+  clock.at += 40000;
+  assert.equal(presence.isForeground('1:x'), true);
+  presence.touch('1:x', a); // a ping
+  clock.at += 40000;
+  assert.equal(presence.isForeground('1:x'), true, 'the ping kept it');
+  clock.at += 11000;
+  assert.equal(presence.isForeground('1:x'), false, 'a frozen page (no frame for more than 50 s) counts as away');
+  // It was last seen when it went quiet: 50 s after the ping.
+  const quietAt = clock.at - 1000;
+  assert.equal(presence.seenSince('1:x', quietAt - 5000), true, 'it was on screen 5 s before it went quiet');
+  assert.equal(presence.seenSince('1:x', quietAt + 1), false);
+  presence.touch('1:x', a); // the page wakes up and pings: its last report (true) holds again
+  assert.equal(presence.isForeground('1:x'), true);
+  // Turning false or closing remembers the moment.
+  clock.at += 1000;
+  presence.report('1:x', a, false);
+  const hiddenAt = clock.at;
+  clock.at += 60000;
+  assert.equal(presence.isForeground('1:x'), false);
+  assert.equal(presence.seenSince('1:x', hiddenAt - 1), true);
+  assert.equal(presence.seenSince('1:x', hiddenAt + 1), false);
+  presence.report('1:x', a, true);
+  clock.at += 1000;
+  a.readyState = 3;
+  const closedAt = clock.at;
+  assert.equal(presence.isForeground('1:x'), false, 'closed');
+  clock.at += 5000;
+  assert.equal(presence.seenSince('1:x', closedAt - 500), true, 'a closed socket that was in the foreground is remembered');
+  assert.equal(presence.seenSince('1:x', closedAt + 1), false);
+  assert.equal(presence.seenSince('1:x', undefined), false, 'without a time only now counts');
+  assert.equal(presence.seenSince('9:none', 0), false, 'an unknown key');
+  presence.touch('9:none', a); // a frame of a socket that never reported: nothing to keep
+  assert.deepEqual(presence.snapshot(), {});
+});
+
+test('the terminal module: frames keep the report, since asks about the wait, and isLocalTerminal knows the terminals of this server', () => {
+  const id = terminal.createTerminal(task.id).terminal_id;
+  const ws = connect(id, 'page-since');
+  const before = Date.now();
+  control(ws, { type: 'presence', foreground: true });
+  control(ws, { type: 'ping' });
+  assert.equal(terminal.isTerminalForeground(task.id, id), true);
+  assert.equal(terminal.isTerminalForeground(task.id, id, before), true);
+  ws.close();
+  assert.equal(terminal.isTerminalForeground(task.id, id), false);
+  assert.equal(terminal.isTerminalForeground(task.id, id, before), true, 'it was on screen during the wait');
+  assert.equal(terminal.isTerminalForeground(task.id, id, Date.now() + 1000), false);
+  assert.equal(terminal.isLocalTerminal(task.id, id), true);
+  assert.equal(terminal.isLocalTerminal(String(task.id), id), true, 'the ids of context.tagent are strings');
+  assert.equal(terminal.isLocalTerminal(task.id, '6f1d2c3b-0000-4000-8000-000000000000'), false, 'another machine\'s terminal');
+  assert.equal(terminal.isLocalTerminal(task.id, 'default'), false, 'the default id alone says nothing');
+  assert.equal(terminal.isLocalTerminal(0, id), false);
+  assert.equal(terminal.isLocalTerminal(task.id, undefined), false);
+});

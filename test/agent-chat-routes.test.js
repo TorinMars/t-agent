@@ -214,3 +214,20 @@ test('the slash commands of a chat are read with GET', async () => {
   assert.deepEqual(answer.body, { supported: false, commands: [] }, 'the test agent has no commands');
   assert.equal((await call('GET', `${url}/conversations/nope/commands`)).status, 404);
 });
+
+test('presence: POST .../presence counts while the events stream of the same viewer is open, and ends with it', async () => {
+  const url = `/api/tasks/${mine.id}/agent`;
+  const id = (await call('POST', `${url}/conversations`, { agent: 'claude', session_id: 'sess-route-presence' })).body.id;
+  const viewer = 'route-viewer-01';
+  assert.deepEqual((await call('POST', `${url}/conversations/${id}/presence`, { viewer, foreground: true })).body, { ok: false }, 'no stream yet');
+  const controller = new AbortController();
+  const response = await fetch(`${base}${url}/conversations/${id}/events?after=0&viewer=${viewer}`, { signal: controller.signal });
+  assert.equal(response.headers.get('content-type'), 'text/event-stream');
+  assert.deepEqual((await call('POST', `${url}/conversations/${id}/presence`, { viewer, foreground: true })).body, { ok: true });
+  assert.equal(service.isSessionForeground('claude', 'sess-route-presence'), true);
+  assert.equal((await call('POST', `${url}/conversations/${id}/presence`, { viewer, foreground: 1 })).body.error, 'INVALID_PRESENCE');
+  controller.abort();
+  for (let i = 0; i < 100 && service.isSessionForeground('claude', 'sess-route-presence'); i++) await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(service.isSessionForeground('claude', 'sess-route-presence'), false, 'the closed stream takes its presence with it');
+  assert.equal((await call('POST', `/api/tasks/${theirs.id}/agent/conversations/${id}/presence`, { viewer, foreground: true })).status, 404, 'not the task of the person');
+});

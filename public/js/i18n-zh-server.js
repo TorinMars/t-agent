@@ -579,6 +579,7 @@ I18n.add({
   "Save a {1} API key in the translation settings first": "请先在翻译设置中保存 {1} 的 API 密钥",
   "The AI summary is switched off; turn it on in Settings first": "AI 摘要未开启，请先在设置中开启",
   "The delay before a call must be a whole number of minutes from 0 to 1440": "打电话前的等待时间必须是 0 到 1440 之间的整数分钟",
+  "The delay before a message must be a whole number of minutes from 0 to 120": "发消息前的等待时间必须是 0 到 120 之间的整数分钟",
   "The message limit must be a whole number from 1 to 200": "消息上限必须是 1 到 200 之间的整数",
   "The call limit must be a whole number from 0 to 60": "电话上限必须是 0 到 60 之间的整数",
   "Account 1 does not know this user id yet: send it a message first, or use the username": "账号 1 还不认识这个用户 ID：请先给它发一条消息，或改用用户名",

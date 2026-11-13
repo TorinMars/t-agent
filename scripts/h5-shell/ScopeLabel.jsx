@@ -7,16 +7,19 @@ import { api, t } from './common.jsx';
 import { Feedback, Hint, Section, failure, onAnyGroupOpen, useFeedback } from './Form.jsx';
 import { detailLine, keyEntry, labelsShown, normalizeSync, outcomeText, peerStatus, saveOutcome, scopeOf, scopeText, scopeTitle } from './settings-sync.mjs';
 import { deviceScopeText, deviceScopeTitle } from './device-target.mjs';
-import { useDeviceTarget } from './DeviceTarget.jsx';
+import { labelRedundant } from './settings-tabs.mjs';
+import { noteLinked, useDeviceTarget, useSettingsTab } from './DeviceTarget.jsx';
 
 // The scope labels of the settings sheet ("Settings sync" in DESIGN.md): next to the heading of each part, what a change there affects. "Shared across
 // devices" (copied to every linked device), "This device only", or Telegram's one sender. The data is GET /api/settings-sync (settings-sync.mjs), kept
-// in one small store for the whole sheet: read each time a group opens (the sheet reads nothing before), after "Sync now" and while a shared save is copied.
-// An older server (404) and a single machine (no linked device) show no label at all, so the sheet looks as before.
+// in one small store for the whole sheet: read when the sheet opens (it decides whether the tabs at the top are drawn, DeviceTarget.jsx), each time a
+// group opens, after "Sync now" and while a shared save is copied. An older server (404) and a single machine (no linked device) show no label and no
+// tabs at all, so the sheet looks as before. Inside a tab the pill is left out where it says what the tab says already (settings-tabs.mjs
+// labelRedundant); its details line stays.
 const SYNC_URL = '/api/settings-sync';
 let snapshot = { loaded: false, sync: normalizeSync(null) };
 const listeners = new Set();
-const emit = next => { snapshot = next; for (const listener of listeners) listener(); };
+const emit = next => { snapshot = next; for (const listener of listeners) listener(); noteLinked(labelsShown(next.sync)); };
 const subscribe = listener => { listeners.add(listener); return () => listeners.delete(listener); };
 let reading = null;
 
@@ -46,15 +49,25 @@ const LOOK = {
 
 // One label. `id` is the setting's id on the route (its `scopes` decide); `scope` is the scope the page knows when the route does not name the part
 // (the parts that are always this device's own, such as the agent skills). `subject` names one control of a part ("Window language: ...").
-// While a linked device is chosen in "Settings for" (DeviceTarget.jsx), a per-device label names it ("K01 only"); `follow={false}` keeps "This
-// device only" for a part that stays with this browser or this page whichever device is chosen (the voice input switch, the reminders, device names).
+// In a linked device's tab (DeviceTarget.jsx), a per-device label names it ("K01 only"); `follow={false}` keeps "This device only" for a part that
+// stays with this browser or this page whichever device is shown (the voice input switch, the reminders, device names). A label whose scope is the
+// tab's draws only its details line (or nothing).
 export function ScopeLabel({ id = null, scope: fallback = 'device', subject = '', follow = true, sx }) {
   const { sync } = useSettingsSync();
   const target = useDeviceTarget();
+  const { scope: tab } = useSettingsTab();
   if (!labelsShown(sync)) return null;
   const scope = scopeOf(sync, id, fallback);
   const other = scope === 'device' && follow && target.remote ? target.name : '';
   const details = scope === 'shared' ? detailLine(sync, id, { t }) : '';
+  if (labelRedundant({ scope, tabScope: tab, follow, remote: target.remote })) {
+    if (!details) return null;
+    return (
+      <Box component="span" className="h5-scope" data-scope={scope} data-setting={id || ''} data-pill="none" sx={{ display: 'inline-flex', alignItems: 'center', minWidth: 0, maxWidth: '100%', ...sx }}>
+        <Typography component="span" variant="caption" color="text.secondary" className="h5-scope-detail" sx={{ overflowWrap: 'anywhere', minWidth: 0 }}>{details}</Typography>
+      </Box>
+    );
+  }
   const text = `${subject ? `${t(subject)}: ` : ''}${t(other ? deviceScopeText(other) : scopeText(scope, sync.telegram))}`;
   const title = [t(other ? deviceScopeTitle(other) : scopeTitle(scope)), details].filter(Boolean).join('\n');
   return (

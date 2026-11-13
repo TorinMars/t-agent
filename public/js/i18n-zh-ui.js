@@ -429,9 +429,12 @@ I18n.add({
   "This directory cannot be deleted (protected or shared with other tasks); the task was not deleted": "这个目录不能删除（受保护，或被其他任务共用），任务没有被删除",
   "This engine is managed by Docker. Update the image on the host": "该 Engine 由 Docker 管理，请在宿主机更新镜像",
   "This machine": "本机",
-  // "Settings for" at the top of the settings sheet: the settings of a linked device (DeviceTarget.jsx, device-target.mjs).
+  // The tabs at the top of the settings sheet: what a change belongs to (SettingsTabs.jsx, settings-tabs.mjs). "Settings for" names the tab row.
   "Settings for": "设置对象",
   "This device": "本机",
+  "Shared": "共享",
+  "Only this device uses these settings": "只有本机使用这些设置",
+  "Which devices the task list shows. One choice for all linked devices.": "任务列表显示哪些设备。所有关联设备共用这一个选择。",
   "This PM2 process is already linked to another app": "这个 PM2 进程已经关联了别的应用",
   "Name (optional)": "名称（可选）",
   "Terminal name": "终端名称",

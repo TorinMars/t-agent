@@ -21,7 +21,7 @@ import { canUninstall, installAction, installSummary, showManualSteps } from './
 import { PairingDialog } from './PairingDialog.jsx';
 import PluginMarket from './PluginMarket.jsx';
 import { ScopeLabel, ScopedHeading } from './ScopeLabel.jsx';
-import { OwnPageNote, useDeviceTarget } from './DeviceTarget.jsx';
+import { OwnPageNote, useDeviceTarget, useSettingsTab } from './DeviceTarget.jsx';
 
 // The "Plugins" section of the Settings group "T-Attention", in two levels. The list: one compact row per plugin of this Client (name, kind, chips and one
 // short line), from GET /api/attention/plugins (services/attention-plugins.js), read when the group opens, with the Refresh button and on the way back from
@@ -235,8 +235,14 @@ function Tabs({ tab, onTab }) {
   );
 }
 
+// With the tabs of the sheet (SettingsTabs.jsx) the list is split: Shared holds the notifiers and their rules; a device tab holds the listeners and the
+// marketplace (plugins are installed on this machine), and a linked device's tab only says to open that device's own page for them.
 function PluginSlot({ ui, opened }) {
-  const device = useDeviceTarget(); // the listeners are each device's own: with a linked device chosen they are changed on its own page
+  const device = useDeviceTarget(); // the listeners are each device's own: in a linked device's tab they are changed on its own page
+  const { scope } = useSettingsTab();
+  const listeners = scope !== 'shared';
+  const notifiers = scope !== 'device';
+  const market = scope === null || (scope === 'device' && !device.remote);
   const [tab, setTab] = useState('installed');
   const [pages, setPages] = useState([]); // the open pages; more than one when the rules are opened from a notifier's page
   const [loggingIn, setLoggingIn] = useState(false); // a Telegram login was left half way: the row says so (the server keeps it until it times out)
@@ -264,38 +270,46 @@ function PluginSlot({ ui, opened }) {
         <Typography variant="subtitle2" component="h3" sx={{ fontWeight: 700 }}>{t('Plugins')}</Typography>
         <IconButton id="h5-plugins-refresh" size="small" disabled={loading || !opened} onClick={() => { void load(); setMarketRefresh(n => n + 1); }} {...named(t('Refresh'))} sx={{ mr: -0.5 }}><Icon name="reload" size={20} /></IconButton>
       </Box>
-      <Tabs tab={tab} onTab={key => { setTab(key); if (key === 'market') setMarketShown(true); }} />
-      <Box id="h5-plugins-panel-installed" role="tabpanel" aria-labelledby="h5-plugins-tab-installed" hidden={tab !== 'installed'} sx={{ display: tab === 'installed' ? 'flex' : 'none', flexDirection: 'column', gap: 1.5 }}>
+      {market ? <Tabs tab={tab} onTab={key => { setTab(key); if (key === 'market') setMarketShown(true); }} /> : null}
+      <Box id="h5-plugins-panel-installed" role={market ? 'tabpanel' : undefined} aria-labelledby={market ? 'h5-plugins-tab-installed' : undefined} hidden={market && tab !== 'installed'} sx={{ display: !market || tab === 'installed' ? 'flex' : 'none', flexDirection: 'column', gap: 1.5 }}>
       <Hint>{t('Listeners report what the agents do; notifiers send the reminders. The checks are about the machine that runs this Client.')}</Hint>
       <Box id="h5-plugins" aria-busy={loading ? 'true' : 'false'} sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
         {!data && loading ? <Hint id="h5-plugins-loading">{t('Loading…')}</Hint> : null}
         {data ? (
           <>
-            <PluginList id="h5-plugins-listeners" title="Listeners" empty="No listener plugins found" label={<ScopeLabel />}>
-              {device.remote ? [<OwnPageNote key="remote" id="h5-plugins-listeners-remote" />]
-                : data.listeners.map(listener => <PluginRow key={listener.name} kind="listener" plugin={listener} onOpen={() => open({ kind: 'listener', name: listener.name })} />)}
-            </PluginList>
-            <PluginList id="h5-plugins-notifiers" title="Notifiers" empty="No notifier plugins found" label={<ScopeLabel id="notifier-plugins" scope="shared" />}>
-              {data.notifiers.map(notifier => <PluginRow key={notifier.name} kind="notifier" plugin={notifier} loggingIn={notifier.name === 'telegram' && loggingIn} onOpen={() => open({ kind: 'notifier', name: notifier.name })} />)}
-            </PluginList>
-            <Box id="h5-plugins-rules" sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-              <ScopedHeading label={<ScopeLabel id="notify-rules" scope="shared" />}><Typography variant="subtitle2" component="strong">{t('Rules for all notifiers')}</Typography></ScopedHeading>
-              <ButtonBase id="h5-plugins-rules-open" className="h5-plugin-rules" onClick={() => open(RULES_PAGE)} sx={ROW_LOOK}>
-                <RowText>
-                  <Box component="strong">{t('Message and call rules')}</Box>
-                  <RowLine>{t('When to notify, quiet hours, hourly limits, page address')}</RowLine>
-                </RowText>
-                <Chevron />
-              </ButtonBase>
-            </Box>
+            {listeners ? (
+              <PluginList id="h5-plugins-listeners" title="Listeners" empty="No listener plugins found" label={<ScopeLabel />}>
+                {device.remote ? [<OwnPageNote key="remote" id="h5-plugins-listeners-remote" />]
+                  : data.listeners.map(listener => <PluginRow key={listener.name} kind="listener" plugin={listener} onOpen={() => open({ kind: 'listener', name: listener.name })} />)}
+              </PluginList>
+            ) : null}
+            {notifiers ? (
+              <PluginList id="h5-plugins-notifiers" title="Notifiers" empty="No notifier plugins found" label={<ScopeLabel id="notifier-plugins" scope="shared" />}>
+                {data.notifiers.map(notifier => <PluginRow key={notifier.name} kind="notifier" plugin={notifier} loggingIn={notifier.name === 'telegram' && loggingIn} onOpen={() => open({ kind: 'notifier', name: notifier.name })} />)}
+              </PluginList>
+            ) : null}
+            {notifiers ? (
+              <Box id="h5-plugins-rules" sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                <ScopedHeading label={<ScopeLabel id="notify-rules" scope="shared" />}><Typography variant="subtitle2" component="strong">{t('Rules for all notifiers')}</Typography></ScopedHeading>
+                <ButtonBase id="h5-plugins-rules-open" className="h5-plugin-rules" onClick={() => open(RULES_PAGE)} sx={ROW_LOOK}>
+                  <RowText>
+                    <Box component="strong">{t('Message and call rules')}</Box>
+                    <RowLine>{t('When to notify, quiet hours, hourly limits, page address')}</RowLine>
+                  </RowText>
+                  <Chevron />
+                </ButtonBase>
+              </Box>
+            ) : null}
           </>
         ) : null}
       </Box>
       <Feedback id="h5-plugins-feedback" feedback={feedback} />
       </Box>
-      <Box id="h5-plugins-panel-market" role="tabpanel" aria-labelledby="h5-plugins-tab-market" hidden={tab !== 'market'} sx={{ display: tab === 'market' ? 'block' : 'none' }}>
-        {marketShown && opened ? <PluginMarket refresh={marketRefresh} onChanged={() => void load()} /> : null}
-      </Box>
+      {market ? (
+        <Box id="h5-plugins-panel-market" role="tabpanel" aria-labelledby="h5-plugins-tab-market" hidden={tab !== 'market'} sx={{ display: tab === 'market' ? 'block' : 'none' }}>
+          {marketShown && opened ? <PluginMarket refresh={marketRefresh} onChanged={() => void load()} /> : null}
+        </Box>
+      ) : null}
       {pages.map(page => <PluginPage key={pageKey(page)} page={page} data={data} onBack={back} onChanged={load} onLogin={setLoggingIn} onRules={() => open(RULES_PAGE)} />)}
     </>
   );

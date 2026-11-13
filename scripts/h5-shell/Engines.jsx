@@ -13,7 +13,7 @@ import Switch from '@mui/material/Switch';
 import Collapse from '@mui/material/Collapse';
 import Typography from '@mui/material/Typography';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
-import { DeviceName, Pill, api, errorText, t } from './common.jsx';
+import { DeviceName, Pill, api, deviceText, errorText, t } from './common.jsx';
 import { EngineDialog, Feedback, Field, Group, Hint, Section, SubHeading, failure, useFeedback } from './Form.jsx';
 import { ServiceLinksSection, UnlinkDialog, linkEngineKey, readLinks } from './ServiceLinks.jsx';
 import { RestartButton, restartInfo } from './Restart.jsx';
@@ -21,8 +21,8 @@ import { PeerFsSwitch } from './PeerFs.jsx';
 import { RuleSyncSection } from './RuleSync.jsx';
 import { RemoteAccessSection } from './RemoteAccess.jsx';
 import { ADVANCED_SECTIONS } from './settings-target.mjs';
-import { ScopeLabel, SettingsSyncStatus, SyncNote, useSyncAfterSave } from './ScopeLabel.jsx';
-import { LocalOnly, refreshDeviceTargets } from './DeviceTarget.jsx';
+import { ScopeLabel, SettingsSyncStatus, SyncNote, refreshSettingsSync, useSyncAfterSave } from './ScopeLabel.jsx';
+import { InTab, LocalOnly, refreshDeviceTargets, useSettingsTab } from './DeviceTarget.jsx';
 
 // Settings "Devices" (until the sheet was tidied up the groups "Engines", "Linked services", "Rules and skills sync" and "Remote service"), top to
 // bottom: the device list (this machine first, then every remote Engine this Client is connected to, linked ones included), "Link a device"
@@ -38,6 +38,8 @@ import { LocalOnly, refreshDeviceTargets } from './DeviceTarget.jsx';
 // `PUT /api/remote-servers/:id/name`, which renames that engine itself, or only the row here when the engine is too old (`name_source: 'local'`). A server
 // without these routes shows no Rename for this machine, and the remote rows keep the name field of "Edit connection" (no `can_rename`).
 // "Restart T-Agent" is on the row of this machine (Restart.jsx), from the `restart` field of `/api/system/version`; not in a pane of the multi-column view.
+// With the tabs of the sheet (SettingsTabs.jsx), Shared holds the "Settings sync" status line and "Show in task list" (one switch per device, in a
+// list of its own); a device tab holds the device list (without the switches), Link a device, the file access switch, Rules and skills sync and Advanced.
 
 export function errorLabel(code) {
   return ({
@@ -372,6 +374,30 @@ function ShowInList({ device, hidden, last, onChange }) {
   );
 }
 
+// "Show in task list" in the Shared tab: the name of each device and its switch, one row each (the device list itself is in the device tabs).
+function ShownDevices({ servers, localName, showProps }) {
+  const rows = [{ key: 'local', source: { key: 'local', name: localName ? localName.name : '' } }, ...servers.map(server => ({ key: `remote:${server.id}`, source: { key: `remote:${server.id}`, label: server.name } }))];
+  return (
+    <Section id="task-list-devices" title="Show in task list" aside={<ScopeLabel id="task-list-devices" scope="shared" />}>
+      <Hint>{t('Which devices the task list shows. One choice for all linked devices.')}</Hint>
+      <Box id="h5-shown-devices" sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+        {rows.map(({ key, source }) => {
+          const show = showProps(key);
+          return (
+            <Box key={key} component="label" className="h5-shown-device h5-engine-visible" data-device={key} sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, minHeight: 44, minWidth: 0, cursor: 'pointer' }}>
+              <Box component="strong" sx={NAME}><DeviceName source={source} className="h5-engine-name" /></Box>
+              <Switch
+                size="small" checked={!show.hidden} disabled={show.last} onChange={event => show.onChange(key, event.target.checked)}
+                slotProps={{ input: { className: 'h5-engine-visible-input', 'aria-label': t(`Show ${deviceText(source)} in task list`), style: { left: 0, width: '100%' } } }}
+              />
+            </Box>
+          );
+        })}
+      </Box>
+    </Section>
+  );
+}
+
 // The buttons of a row (44px on a touch screen, from the theme), and the line of its name (a long name is cut, `DeviceName`).
 const ACTIONS = { display: 'flex', flexWrap: 'wrap', gap: 0.5 };
 const NAME = { flex: '1 1 auto', minWidth: 0, display: 'flex', alignItems: 'baseline', gap: 0.75, fontWeight: 700 };
@@ -428,8 +454,9 @@ function Advanced({ open, onToggle, children }) {
 export function DevicesGroup({ state, ui, request = null }) {
   // The device list and "Link a device" show the same links: a change in one makes both read again.
   const [linksVersion, setLinksVersion] = useState(0);
-  // A link that comes or goes also changes the devices of "Settings for" (DeviceTarget.jsx).
-  const onLinksChanged = () => { setLinksVersion(version => version + 1); void refreshDeviceTargets(); };
+  // A link that comes or goes also changes the tabs of the sheet (DeviceTarget.jsx) and the devices of the settings sync.
+  const onLinksChanged = () => { setLinksVersion(version => version + 1); void refreshDeviceTargets(); void refreshSettingsSync(); };
+  const { scope: tabScope } = useSettingsTab(); // null without tabs: every part, as before
   const wantsAdvanced = target => Boolean(target) && ADVANCED_SECTIONS.has(target.section);
   const [advanced, setAdvanced] = useState(() => wantsAdvanced(request));
   const [advancedOpened, setAdvancedOpened] = useState(0);
@@ -517,52 +544,64 @@ export function DevicesGroup({ state, ui, request = null }) {
   };
   // The remote access list is read when "Advanced" unfolds, and again each time the group opens while it is unfolded.
   const remoteOpened = advanced ? opened + advancedOpened : 0;
+  // In the Shared tab the switches are a list of their own; in a device tab the rows have none.
+  const rowSwitches = switches && tabScope === null;
+  const listShown = tabScope !== 'shared';
   return (
     <Group id="devices" title="Devices" request={request} onOpen={() => { void load(); setOpened(count => count + 1); }}>
-      <SettingsSyncStatus opened={opened} />
-      <Hint>{t('Devices are the machines whose tasks and terminals this page shows. This machine is always first. To add another one, link it below.')}</Hint>
-      {/* What the list changes: the names (and Restart) are this device's own; which devices the task list shows is one set for all linked devices. */}
-      <ScopeLabel id="engine-name" subject="Device names" follow={false} />
-      {switches ? <ScopeLabel id="task-list-devices" scope="shared" subject="Show in task list" /> : null}
-      <Box id="h5-engine-list" sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-        <Paper variant="outlined" className="h5-engine-row" data-engine="local" sx={{ display: 'flex', flexDirection: 'column', gap: 0.75, p: 1 }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
-            <Box component="strong" sx={NAME}><DeviceName source={{ key: 'local', name: localName ? localName.name : '' }} className="h5-engine-name" hintClassName="h5-engine-hint" /></Box>
-            <Pill tone="success" label={t('Local')} sx={{ flexShrink: 0 }} />
+      <InTab part="settings-sync"><SettingsSyncStatus opened={opened} /></InTab>
+      {tabScope === 'shared' && switches ? <ShownDevices servers={servers} localName={localName} showProps={showProps} /> : null}
+      {listShown ? (
+        <>
+          <Hint>{t('Devices are the machines whose tasks and terminals this page shows. This machine is always first. To add another one, link it below.')}</Hint>
+          {/* What the list changes: the names (and Restart) are this device's own; which devices the task list shows is one set for all linked devices. */}
+          <ScopeLabel id="engine-name" subject="Device names" follow={false} />
+          {rowSwitches ? <ScopeLabel id="task-list-devices" scope="shared" subject="Show in task list" /> : null}
+          <Box id="h5-engine-list" sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+            <Paper variant="outlined" className="h5-engine-row" data-engine="local" sx={{ display: 'flex', flexDirection: 'column', gap: 0.75, p: 1 }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
+                <Box component="strong" sx={NAME}><DeviceName source={{ key: 'local', name: localName ? localName.name : '' }} className="h5-engine-name" hintClassName="h5-engine-hint" /></Box>
+                <Pill tone="success" label={t('Local')} sx={{ flexShrink: 0 }} />
+              </Box>
+              <Typography className="h5-engine-meta" variant="caption" color="text.secondary"><span id="h5-engine-local-version">{versionText(localVersion)}</span></Typography>
+              {rowSwitches ? <ShowInList {...showProps('local')} /> : null}
+              {localName || restartHere ? (
+                <Box sx={ACTIONS}>
+                  {localName ? <Button size="small" variant="outlined" className="h5-engine-rename" onClick={() => setRenaming({ kind: 'local', current: localName })}>{t('Rename')}</Button> : null}
+                  {restartHere ? <RestartButton restart={localRestart} bootId={localRestart.bootId} /> : null}
+                </Box>
+              ) : null}
+            </Paper>
+            {servers.map(server => (
+              <EngineRow
+                key={server.id} server={server} link={linkOf(server)} busy={checking === server.id} show={rowSwitches ? showProps(`remote:${server.id}`) : null} feedback={rowFeedback[server.id] || { message: '', error: false }}
+                onCheck={() => void check(server)} onUpdate={() => setUpdating(server)} onEdit={() => setEditing(server)} onRemove={() => void remove(server)}
+                onRename={server.can_rename ? () => setRenaming({ kind: 'remote', server }) : null}
+              />
+            ))}
+            {servers.length ? null : <Hint id="h5-engine-empty">{t('No other devices yet')}</Hint>}
           </Box>
-          <Typography className="h5-engine-meta" variant="caption" color="text.secondary"><span id="h5-engine-local-version">{versionText(localVersion)}</span></Typography>
-          {switches ? <ShowInList {...showProps('local')} /> : null}
-          {localName || restartHere ? (
-            <Box sx={ACTIONS}>
-              {localName ? <Button size="small" variant="outlined" className="h5-engine-rename" onClick={() => setRenaming({ kind: 'local', current: localName })}>{t('Rename')}</Button> : null}
-              {restartHere ? <RestartButton restart={localRestart} bootId={localRestart.bootId} /> : null}
-            </Box>
-          ) : null}
-        </Paper>
-        {servers.map(server => (
-          <EngineRow
-            key={server.id} server={server} link={linkOf(server)} busy={checking === server.id} show={showProps(`remote:${server.id}`)} feedback={rowFeedback[server.id] || { message: '', error: false }}
-            onCheck={() => void check(server)} onUpdate={() => setUpdating(server)} onEdit={() => setEditing(server)} onRemove={() => void remove(server)}
-            onRename={server.can_rename ? () => setRenaming({ kind: 'remote', server }) : null}
-          />
-        ))}
-        {servers.length ? null : <Hint id="h5-engine-empty">{t('No other devices yet')}</Hint>}
-      </Box>
+        </>
+      ) : null}
       <Feedback id="h5-engines-feedback" feedback={feedback} />
       <SyncNote id="h5-engines-sync" note={shownSynced} />
-      <ServiceLinksSection state={state} ui={ui} version={linksVersion} opened={opened} onChanged={onLinksChanged} />
-      <PeerFsSwitch opened={opened} />
-      <RuleSyncSection state={state} opened={opened} />
-      <Advanced open={advanced} onToggle={toggleAdvanced}>
-        <LocalOnly id="h5-devices-advanced-remote">
-          <Hint id="h5-devices-advanced-hint">{t('Linking (above) is the recommended way to add a device. The options here connect one way only: for a device that should not see this one, or one on an older version.')}</Hint>
-          <Section id="connect" title="Connect a remote engine" level={4}>
-            <Hint>{t('Enter the address of another client and a pairing code made under “Let other clients connect to this one” on that client. Only this side sees the other.')}</Hint>
-            <Button id="h5-engine-connect-open" variant="contained" onClick={() => setConnecting(true)}>{t('Connect remote service')}</Button>
-          </Section>
-          <RemoteAccessSection opened={remoteOpened} />
-        </LocalOnly>
-      </Advanced>
+      {listShown ? (
+        <>
+          <ServiceLinksSection state={state} ui={ui} version={linksVersion} opened={opened} onChanged={onLinksChanged} />
+          <PeerFsSwitch opened={opened} />
+          <RuleSyncSection state={state} opened={opened} />
+          <Advanced open={advanced} onToggle={toggleAdvanced}>
+            <LocalOnly id="h5-devices-advanced-remote">
+              <Hint id="h5-devices-advanced-hint">{t('Linking (above) is the recommended way to add a device. The options here connect one way only: for a device that should not see this one, or one on an older version.')}</Hint>
+              <Section id="connect" title="Connect a remote engine" level={4}>
+                <Hint>{t('Enter the address of another client and a pairing code made under “Let other clients connect to this one” on that client. Only this side sees the other.')}</Hint>
+                <Button id="h5-engine-connect-open" variant="contained" onClick={() => setConnecting(true)}>{t('Connect remote service')}</Button>
+              </Section>
+              <RemoteAccessSection opened={remoteOpened} />
+            </LocalOnly>
+          </Advanced>
+        </>
+      ) : null}
       <ConnectDialog state={state} open={connecting} onClose={() => setConnecting(false)} onDone={created => { setConnecting(false); void changed(null); say(`${t('Connected')}: ${created && created.name ? created.name : ''}`); }} />
       <EditDialog state={state} server={editing} onClose={() => setEditing(null)} onDone={server => { setEditing(null); void changed(`remote:${server.id}`); say('Saved'); }} />
       <UnlinkDialog link={unlinking} onClose={() => setUnlinking(null)} onDone={async link => { setUnlinking(null); onLinksChanged(); if (ui.actions.enginesChanged) await ui.actions.enginesChanged(linkEngineKey(link)); say('Unlinked'); }} />

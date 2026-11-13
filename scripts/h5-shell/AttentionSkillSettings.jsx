@@ -16,4 +16,4 @@ function SkillPointer({ ui }) {
   );
 }
 
-registerAttentionSettings({ id: 'skill', order: 40, Component: SkillPointer });
+registerAttentionSettings({ id: 'skill', order: 40, Component: SkillPointer, part: 'attention-skill' }); // with Agent skills: a device tab

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import Box from '@mui/material/Box';
 import Accordion from '@mui/material/Accordion';
 import AccordionDetails from '@mui/material/AccordionDetails';
@@ -55,9 +55,15 @@ function reveal(group, section) {
 let groupOpened = null;
 export const onAnyGroupOpen = listener => { groupOpened = listener; };
 
+// Which groups the chosen tab of the sheet has parts in (Settings.jsx gives `group => boolean`; settings-tabs.mjs groupShown). A group with nothing in
+// the tab stays mounted, so it keeps its state, but is hidden. Without a provider every group is shown.
+export const GroupShown = createContext(null);
+
 // One folding group. Its data is read each time it is opened (`onOpen`). `request`: { section, seq } from `ui.actions.openSettings(id)`
 // (settings-target.mjs) opens the group from outside and, once it has unfolded, scrolls to that section; a new request is a new object.
 export function Group({ id, title, onOpen, request = null, children }) {
+  const shown = useContext(GroupShown);
+  const hidden = Boolean(shown) && !shown(id);
   const [open, setOpen] = useState(false);
   const node = useRef(null);
   const pending = useRef(null); // the section to show once the opening animation has ended
@@ -77,7 +83,8 @@ export function Group({ id, title, onOpen, request = null, children }) {
   };
   return (
     <Accordion
-      ref={node} id={`h5-set-${id}`} className="h5-setting-group" expanded={open} disableGutters square elevation={0} sx={{ '&::before': { display: 'none' }, borderBottom: 1, borderColor: 'divider', bgcolor: 'transparent' }}
+      ref={node} id={`h5-set-${id}`} className="h5-setting-group" expanded={open} disableGutters square elevation={0} hidden={hidden}
+      sx={{ '&::before': { display: 'none' }, borderBottom: 1, borderColor: 'divider', bgcolor: 'transparent', '&[hidden]': { display: 'none' } }}
       onChange={(_, expanded) => { setOpen(expanded); if (expanded) { if (groupOpened) groupOpened(); onOpen(); } }}
       slotProps={{ transition: { unmountOnExit: false, onEntered: entered } }}
     >

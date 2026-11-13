@@ -87,7 +87,7 @@ function sharedError(error) {
 }
 
 function Heading({ children }) {
-  return <Typography variant="subtitle2" component="strong" sx={{ mt: 0.5 }}>{children}</Typography>;
+  return <Typography variant="subtitle2" component="strong" className="h5-setting-minor" sx={{ mt: 1, fontWeight: 600 }}>{children}</Typography>;
 }
 
 function Targets({ targets, revision }) {
@@ -358,7 +358,7 @@ function RuleSyncPart({ state, opened, call }) {
   useEffect(() => { if (opened) void load(); }, [opened]); // eslint-disable-line react-hooks/exhaustive-deps -- load only reads
   return (
     <Section id="rule-sync" title="Rules and skills sync" aside={<ScopeLabel id="rule-sync" />}>
-      <Hint>{t('Share one set of Claude rules and skills (and the same rules for Codex) from one linked service to the others. Your own CLAUDE.md content and skills without the sync marker are never sent or changed.')}</Hint>
+      <Hint>{t('Share one set of Claude rules and skills (and the rules for Codex) from one linked service to the others. Your own CLAUDE.md content and unmarked skills are never sent or changed.')}</Hint>
       {data ? (
         <>
           <RadioGroup id="h5-rule-sync-role" value={data.role} onChange={event => void save({ role: event.target.value })} aria-label={t('Role')}>

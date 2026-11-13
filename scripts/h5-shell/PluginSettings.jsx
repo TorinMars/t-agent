@@ -8,7 +8,7 @@ import IconButton from '@mui/material/IconButton';
 import Toolbar from '@mui/material/Toolbar';
 import Typography from '@mui/material/Typography';
 import { Pill, api, errorText, named, t } from './common.jsx';
-import { Feedback, Hint, useFeedback } from './Form.jsx';
+import { Feedback, Hint, SubHeading, useFeedback } from './Form.jsx';
 import { Icon } from './Icons.jsx';
 import { copyText } from './Attention.jsx';
 import { BASE } from './attention-feed.mjs';
@@ -213,7 +213,7 @@ function PluginRow({ kind, plugin, loggingIn, onOpen }) {
 function PluginList({ id, title, empty, label = null, children }) {
   return (
     <Box id={id} sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-      <ScopedHeading label={label}><Typography variant="subtitle2" component="strong">{t(title)}</Typography></ScopedHeading>
+      <ScopedHeading label={label}><Typography variant="subtitle2" component="strong" className="h5-setting-minor" sx={{ fontWeight: 600 }}>{t(title)}</Typography></ScopedHeading>
       {children.length ? children : <Hint>{t(empty)}</Hint>}
     </Box>
   );
@@ -266,8 +266,8 @@ function PluginSlot({ ui, opened }) {
   const back = () => { setPages(current => current.slice(0, -1)); void load(); };
   return (
     <>
-      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, mt: 1 }}>
-        <Typography variant="subtitle2" component="h3" sx={{ fontWeight: 700 }}>{t('Plugins')}</Typography>
+      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, my: -0.5 }}>
+        <SubHeading>{t('Plugins')}</SubHeading>
         <IconButton id="h5-plugins-refresh" size="small" disabled={loading || !opened} onClick={() => { void load(); setMarketRefresh(n => n + 1); }} {...named(t('Refresh'))} sx={{ mr: -0.5 }}><Icon name="reload" size={20} /></IconButton>
       </Box>
       {market ? <Tabs tab={tab} onTab={key => { setTab(key); if (key === 'market') setMarketShown(true); }} /> : null}
@@ -290,7 +290,7 @@ function PluginSlot({ ui, opened }) {
             ) : null}
             {notifiers ? (
               <Box id="h5-plugins-rules" sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                <ScopedHeading label={<ScopeLabel id="notify-rules" scope="shared" />}><Typography variant="subtitle2" component="strong">{t('Rules for all notifiers')}</Typography></ScopedHeading>
+                <ScopedHeading label={<ScopeLabel id="notify-rules" scope="shared" />}><Typography variant="subtitle2" component="strong" className="h5-setting-minor" sx={{ fontWeight: 600 }}>{t('Rules for all notifiers')}</Typography></ScopedHeading>
                 <ButtonBase id="h5-plugins-rules-open" className="h5-plugin-rules" onClick={() => open(RULES_PAGE)} sx={ROW_LOOK}>
                   <RowText>
                     <Box component="strong">{t('Message and call rules')}</Box>

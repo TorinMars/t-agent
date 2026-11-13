@@ -38,13 +38,13 @@ export function installLines(result) {
   }).filter(Boolean);
 }
 
-// What the button of one skill says and whether it can be pressed: { label, primary, disabled }.
+// What the button of one skill says and whether it can be pressed: { label, disabled }.
 export function skillButton(skill) {
   const states = skill ? AGENTS.map(agent => skill[agent.key]).filter(Boolean) : [];
   const writable = states.filter(state => !state.conflict);
-  if (!skill || skill.error || !writable.length) return { label: 'Install', primary: false, disabled: true };
-  if (writable.every(state => state.installed && state.current)) return { label: 'Up to date', primary: false, disabled: true };
-  return { label: states.some(state => state.installed) ? 'Update' : 'Install', primary: true, disabled: false };
+  if (!skill || skill.error || !writable.length) return { label: 'Install', disabled: true };
+  if (writable.every(state => state.installed && state.current)) return { label: 'Up to date', disabled: true };
+  return { label: states.some(state => state.installed) ? 'Update' : 'Install', disabled: false };
 }
 
 function AgentRow({ agent, state }) {
@@ -52,7 +52,7 @@ function AgentRow({ agent, state }) {
   return (
     <Box className="h5-skill-agent" data-agent={agent.key} sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
       <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, flexWrap: 'wrap' }}>
-        <Box component="span" translate="no" sx={{ fontWeight: 600 }}>{agent.name}</Box>
+        <Box component="span" translate="no" sx={{ fontWeight: 600, fontSize: '0.875rem' }}>{agent.name}</Box>
         <Pill className="h5-skill-chip" data-state={chip.label} label={t(chip.label)} tone={chip.tone} sx={{ whiteSpace: 'normal', height: 'auto', minHeight: 24, py: 0.25, textAlign: 'center' }} />
       </Box>
       {state && state.path ? <Typography variant="caption" color="text.secondary" className="h5-skill-path" translate="no" sx={{ overflowWrap: 'anywhere' }}>{state.path}</Typography> : null}
@@ -68,13 +68,14 @@ function SkillCard({ skill, busy, onInstall }) {
       sx={{ display: 'flex', flexDirection: 'column', gap: 1.25, p: 1.5, borderRadius: 1, border: 1, borderColor: 'divider', minWidth: 0 }}
     >
       <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.25 }}>
-        <Typography id={`h5-agent-skill-${skill.name}-name`} component="h4" variant="body1" translate="no" sx={{ fontWeight: 700, fontFamily: 'monospace' }}>{skill.name}</Typography>
+        <Typography id={`h5-agent-skill-${skill.name}-name`} component="h4" variant="body1" translate="no" sx={{ fontWeight: 700, fontFamily: 'monospace', fontSize: '0.9375rem' }}>{skill.name}</Typography>
         <Typography variant="body2" color="text.secondary" className="h5-agent-skill-description" sx={{ overflowWrap: 'anywhere' }}>{t(skill.description || '')}</Typography>
       </Box>
       {AGENTS.map(agent => <AgentRow key={agent.key} agent={agent} state={skill[agent.key]} />)}
       {skill.error ? <Typography variant="body2" color="error" className="h5-agent-skill-error" sx={{ overflowWrap: 'anywhere' }}>{t(skill.error)}</Typography> : null}
+      {/* A card's button is outlined, like the buttons of a device row (Actions in Form.jsx): the part has two cards, so neither is the part's main action. */}
       <Box>
-        <Button id={`h5-agent-skill-install-${skill.name}`} className="h5-agent-skill-install" variant={button.primary ? 'contained' : 'outlined'} disabled={busy || button.disabled} onClick={onInstall}>
+        <Button id={`h5-agent-skill-install-${skill.name}`} className="h5-agent-skill-install" variant="outlined" disabled={busy || button.disabled} onClick={onInstall}>
           {t(button.label)}
         </Button>
       </Box>

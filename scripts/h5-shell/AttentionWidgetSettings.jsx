@@ -4,7 +4,7 @@ import FormControlLabel from '@mui/material/FormControlLabel';
 import Switch from '@mui/material/Switch';
 import Typography from '@mui/material/Typography';
 import { api, t } from './common.jsx';
-import { Feedback, Hint, failure, useFeedback } from './Form.jsx';
+import { Feedback, HINT, Hint, SubHeading, failure, useFeedback } from './Form.jsx';
 import TextField from './TextField.jsx';
 import { registerAttentionSettings } from './attention-slots.mjs';
 import { ScopeLabel, SyncNote, useSyncAfterSave } from './ScopeLabel.jsx';
@@ -82,7 +82,7 @@ function WidgetPart({ opened, call, remote, name }) {
   const switchShown = scope !== 'shared';
   const languageShown = scope !== 'device';
   return (
-    <Box id="h5-attention-widget" sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+    <Box id="h5-attention-widget" sx={{ display: 'flex', flexDirection: 'column', gap: 1.5, '& > .MuiFormControlLabel-root + .h5-scope + .h5-setting-hint, & > .MuiFormControlLabel-root + .h5-setting-hint': { mt: -0.75 } }}>
       {switchShown ? (
         <>
           <FormControlLabel
@@ -93,7 +93,7 @@ function WidgetPart({ opened, call, remote, name }) {
           <ScopeLabel id="widget-enabled" subject="On or off" sx={{ alignSelf: 'flex-start' }} />
           <Hint>{remote ? t(`A small window that stays above other windows on ${name} and shows the tasks that need you, from that machine and its connected devices.`) : t('A small window that stays above other windows on this Mac and shows the tasks that need you, from this machine and the connected devices.')}</Hint>
         </>
-      ) : <Typography id="h5-attention-widget-title" variant="subtitle2" component="h3" sx={{ fontWeight: 700, mt: 1 }}>{label}</Typography>}
+      ) : <SubHeading id="h5-attention-widget-title">{label}</SubHeading>}
       {languageShown ? (
         <>
           <TextField
@@ -106,7 +106,7 @@ function WidgetPart({ opened, call, remote, name }) {
         </>
       ) : null}
       {switchShown ? (
-        <Typography id="h5-attention-widget-status" variant="body2" color={status.error ? 'error' : 'text.secondary'} sx={{ overflowWrap: 'anywhere' }}>
+        <Typography id="h5-attention-widget-status" variant="body2" color={status.error ? 'error' : 'text.secondary'} sx={{ ...HINT, overflowWrap: 'anywhere' }}>
           {`${t('Status')}: ${t(status.text)}`}
         </Typography>
       ) : null}

@@ -59,7 +59,7 @@ function PeerFsPart({ opened, call }) {
           control={<Switch size="small" checked={setting.enabled} disabled={!setting.loaded || busy} onChange={event => void change(event.target.checked)} slotProps={{ input: { id: 'h5-peer-fs-enabled', 'aria-label': label, style: INPUT_INSIDE } }} />}
         />
         <ScopeLabel id="peer-fs" sx={{ alignSelf: 'flex-start' }} />
-        <Hint>{t('Claude and Codex sessions started here get tools to read files on linked devices, and linked devices can read this device’s files the same way. Read only: only the home folder, and sensitive files such as ~/.ssh and .env files are left out. Applies to sessions started after the change.')}</Hint>
+        <Hint>{t('Sessions started here can read files on linked devices, and those devices can read this one’s the same way. Read only, home folder only; sensitive files such as ~/.ssh and .env are left out. Applies to sessions started after the change.')}</Hint>
         <Feedback id="h5-peer-fs-feedback" feedback={feedback} />
       </Box>
     </Section>

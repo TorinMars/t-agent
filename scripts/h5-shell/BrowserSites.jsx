@@ -97,7 +97,7 @@ export function BrowserSitesSection({ opened }) {
   const sites = data && Array.isArray(data.sites) ? data.sites : [];
   return (
     <Section id="browser-sites" title="Site library" aside={<ScopeLabel id="browser-sites" scope="shared" />}>
-      <Hint>{t('What agent sessions have learnt about each website, so they build up over time. Agents read and write this with the tcli site command; it is shared across your linked devices.')}</Hint>
+      <Hint>{t('What agent sessions have learnt about each website, read and written with tcli site. Shared across your linked devices.')}</Hint>
       <Box id="h5-browser-sites" aria-busy={data ? 'false' : 'true'} sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
         {!data ? <Hint id="h5-browser-sites-loading">{t('Loading…')}</Hint> : sites.length ? sites.map(item => (
           <Box

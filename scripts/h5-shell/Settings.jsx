@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import AppBar from '@mui/material/AppBar';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
@@ -18,10 +18,12 @@ import { AttentionSettings } from './AttentionSettings.jsx';
 import { AgentSkillsSection } from './AgentSkillsSettings.jsx';
 import { BrowserExtSection } from './BrowserExtSettings.jsx';
 import { BrowserSitesSection } from './BrowserSites.jsx';
-import { Feedback, Field, Group, Hint, ROW, Section, failure, useFeedback } from './Form.jsx';
+import { Feedback, Field, Group, GroupShown, Hint, ROW, Section, failure, useFeedback } from './Form.jsx';
 import { settingsTarget } from './settings-target.mjs';
-import { ScopeLabel, SyncNote, useSyncAfterSave } from './ScopeLabel.jsx';
-import { DeviceSelector, LocalOnly, refreshDeviceTargets, useDeviceTarget } from './DeviceTarget.jsx';
+import { groupShown, tabForTarget } from './settings-tabs.mjs';
+import { ScopeLabel, SyncNote, refreshSettingsSync, useSyncAfterSave } from './ScopeLabel.jsx';
+import { InTab, LocalOnly, chooseTab, refreshDeviceTargets, useDeviceTarget, useSettingsTab } from './DeviceTarget.jsx';
+import { SettingsTabs } from './SettingsTabs.jsx';
 
 // The address this page was opened at, to come back to after a login or a switch: `/` or `/h5` (an iPhone Home Screen app starts at /h5).
 const pagePath = () => (/^\/h5(\/|$)/.test(location.pathname) ? '/h5' : '/');
@@ -33,7 +35,7 @@ const OSS_FIELDS = [
 // A part of a group reads its data each time the group opens: `opened` counts the openings (0 before the first one).
 const useOnOpen = (opened, load) => useEffect(() => { if (opened) void load(); }, [opened]); // eslint-disable-line react-hooks/exhaustive-deps -- load only reads
 
-// The working directory of the device chosen in "Settings for" (DeviceTarget.jsx): this one, or a linked one through the link.
+// The working directory of the device whose tab is chosen (DeviceTarget.jsx): this one, or a linked one through the link.
 function WorkdirSection(props) {
   const device = useDeviceTarget();
   return <WorkdirPart key={device.key} {...props} call={device.api} />;
@@ -398,16 +400,16 @@ function LogoutRow({ ui }) {
 }
 
 // "Tasks and files": where new tasks are kept, the image and file upload (with the agents' tcli access to it), the agent skills, then the browser
-// extension that `tcli browser` drives.
+// extension that `tcli browser` drives and its site library. Each part is drawn in the tabs that hold it (InTab, settings-tabs.mjs).
 function TasksFilesGroup({ request }) {
   const [opened, setOpened] = useState(0);
   return (
     <Group id="tasks-files" title="Tasks and files" onOpen={() => setOpened(count => count + 1)} request={request}>
-      <WorkdirSection opened={opened} />
-      <OssSection opened={opened} />
-      <AgentSkillsSection opened={opened} />
-      <BrowserExtSection opened={opened} />
-      <BrowserSitesSection opened={opened} />
+      <InTab part="workdir"><WorkdirSection opened={opened} /></InTab>
+      <InTab part="oss"><OssSection opened={opened} /></InTab>
+      <InTab part="agent-skills"><AgentSkillsSection opened={opened} /></InTab>
+      <InTab part="browser-ext"><BrowserExtSection opened={opened} /></InTab>
+      <InTab part="browser-sites"><BrowserSitesSection opened={opened} /></InTab>
     </Group>
   );
 }
@@ -417,25 +419,38 @@ function VoiceTranslateGroup({ request }) {
   const [opened, setOpened] = useState(0);
   return (
     <Group id="voice-translate" title="Voice and translation" onOpen={() => setOpened(count => count + 1)} request={request}>
-      <VoiceSection opened={opened} />
-      <TranslateSection opened={opened} />
+      <InTab part="voice"><VoiceSection opened={opened} /></InTab>
+      <InTab part="translate"><TranslateSection opened={opened} /></InTab>
     </Group>
   );
 }
 
-// The settings sheet that rises from the bottom (opened by the gear at the bottom of the task sidebar). Top to bottom: Language, Tasks and files,
-// Voice and translation, Devices (Engines.jsx), T-Attention, Account and access, Log out. `state.settingsTarget` ({ id, seq }, set by
-// `ui.actions.openSettings(id)` in h5.js) opens one group and shows one part of it; old group ids still work (settings-target.mjs).
+// The settings sheet that rises from the bottom (opened by the gear at the bottom of the task sidebar). Top to bottom: the title, the tab row while a
+// device is linked (SettingsTabs.jsx: Shared, this device, each linked device), then Language, Tasks and files, Voice and translation, Devices
+// (Engines.jsx), T-Attention, Account and access, Log out. Language and Log out belong to this browser and are drawn in every tab; a group with
+// nothing in the chosen tab is hidden. `state.settingsTarget` ({ id, seq }, set by `ui.actions.openSettings(id)` in h5.js) opens one group and shows
+// one part of it, on the tab that holds that part; old group ids still work (settings-target.mjs).
 export function SettingsDrawer({ state, ui }) {
   const request = useMemo(() => {
     const target = state.settingsTarget && settingsTarget(state.settingsTarget.id);
     return target ? { ...target, seq: state.settingsTarget.seq } : null;
   }, [state.settingsTarget]);
-  const requestFor = group => (request && request.group === group ? request : null);
+  const { tab, scope } = useSettingsTab();
+  // A request is passed on once its tab is shown: the first time the tabs are known with it, the sheet moves to the tab that holds its part.
+  const [placed, setPlaced] = useState(null);
+  useEffect(() => {
+    if (!request || tab === null || placed === request.seq) return;
+    const wanted = tabForTarget(request, tab);
+    if (wanted !== tab) chooseTab(wanted);
+    setPlaced(request.seq);
+  }, [request, tab]); // eslint-disable-line react-hooks/exhaustive-deps -- `placed` only marks a request as done
+  const passed = request && (tab === null || placed === request.seq) ? request : null;
+  const requestFor = group => (passed && passed.group === group ? passed : null);
+  const shown = useCallback(group => groupShown(group, scope), [scope]);
   // A target is used once: the sheet opened again later (the gear, or `settingsOpen` set directly) starts folded.
   useEffect(() => { if (!state.settingsOpen && state.settingsTarget) ui.set({ settingsTarget: null }); }, [state.settingsOpen]); // eslint-disable-line react-hooks/exhaustive-deps -- only a closed sheet drops it
-  // The linked devices of "Settings for" are read each time the sheet opens.
-  useEffect(() => { if (state.settingsOpen) void refreshDeviceTargets(); }, [state.settingsOpen]);
+  // The linked devices and the settings sync (whether a device is linked: the tabs) are read each time the sheet opens.
+  useEffect(() => { if (state.settingsOpen) { void refreshDeviceTargets(); void refreshSettingsSync(); } }, [state.settingsOpen]);
   return (
     <Drawer
       anchor="bottom" id="h5-settings" open={state.settingsOpen} onClose={() => ui.actions.closeSettings()} aria-labelledby="h5-settings-title"
@@ -446,15 +461,17 @@ export function SettingsDrawer({ state, ui }) {
           <Typography id="h5-settings-title" variant="h6" component="h2">{t('Settings')}</Typography>
           <IconButton id="h5-close-settings" aria-label={t('Close')} edge="end" onClick={() => ui.actions.closeSettings()}><CloseIcon /></IconButton>
         </Toolbar>
+        <SettingsTabs state={state} />
       </AppBar>
       <Box className="h5-settings-body" sx={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto', pb: 1 }}>
-        <DeviceSelector />
         <LanguageRow />
-        <TasksFilesGroup request={requestFor('tasks-files')} />
-        <VoiceTranslateGroup request={requestFor('voice-translate')} />
-        <DevicesGroup state={state} ui={ui} request={requestFor('devices')} />
-        <AttentionSettings ui={ui} request={requestFor('attention')} />
-        <AccountGroup request={requestFor('account')} />
+        <GroupShown.Provider value={shown}>
+          <TasksFilesGroup request={requestFor('tasks-files')} />
+          <VoiceTranslateGroup request={requestFor('voice-translate')} />
+          <DevicesGroup state={state} ui={ui} request={requestFor('devices')} />
+          <AttentionSettings ui={ui} request={requestFor('attention')} />
+          <AccountGroup request={requestFor('account')} />
+        </GroupShown.Provider>
         <LogoutRow ui={ui} />
       </Box>
     </Drawer>

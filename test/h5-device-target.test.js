@@ -1,6 +1,6 @@
-// The model behind "Settings for" at the top of the settings sheet (scripts/h5-shell/device-target.mjs): which linked devices can be chosen, which
-// device a remembered choice still means, the URL a per-device part calls, and the label and note texts. The real sheet is
-// scripts/test-h5-device-settings-browser.cjs.
+// The model behind the linked device tabs of the settings sheet (scripts/h5-shell/device-target.mjs): which linked devices can be chosen, the URL a
+// per-device part calls, and the label and note texts. The tabs themselves are test/h5-settings-tabs.test.js; the real sheet is
+// scripts/test-h5-device-settings-browser.cjs and scripts/test-h5-settings-tabs-browser.cjs.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
@@ -29,27 +29,11 @@ test('the answer is cleaned: bad entries are dropped and `supported` is true, fa
   assert.deepEqual(normalizeDevices({ devices: 'x' }), []);
 });
 
-test('the selector shows only when a linked device has the feature; an older or unknown one cannot be chosen', async () => {
-  const { normalizeDevices, selectable, selectorShown } = await load();
+test('a device can be chosen when it has the feature, online or not; an older or unknown one cannot', async () => {
+  const { normalizeDevices, selectable } = await load();
   const devices = normalizeDevices(answer);
-  assert.equal(selectorShown(devices), true);
   assert.deepEqual(devices.filter(selectable).map(device => device.name), ['K01', 'Sleeping'], 'an offline device that has it can be chosen');
-  assert.equal(selectorShown(devices.filter(device => !device.supported)), false, 'only older devices: no selector');
-  assert.equal(selectorShown([]), false, 'a single machine: no selector');
-});
-
-test('a remembered choice stays only while that device is still linked and has the feature; otherwise this device', async () => {
-  const { normalizeDevices, pickDevice } = await load();
-  const devices = normalizeDevices(answer);
-  assert.equal(pickDevice('7', devices).name, 'K01');
-  assert.equal(pickDevice(7, devices).name, 'K01');
-  assert.equal(pickDevice('9', devices), null, 'an older device');
-  assert.equal(pickDevice('11', devices), null, 'not known to have it');
-  assert.equal(pickDevice('8', devices), null, 'the device went away');
-  assert.equal(pickDevice(null, devices), null);
-  assert.equal(pickDevice('', devices), null);
-  assert.equal(pickDevice('7abc', devices), null);
-  assert.equal(pickDevice('-7', devices), null);
+  assert.equal(selectable(null), false);
 });
 
 test('one place decides the URL: this device keeps the page path, a linked one goes through /api/device-settings/<id>', async () => {
@@ -65,36 +49,13 @@ test('one place decides the URL: this device keeps the page path, a linked one g
   assert.equal(devicePath(k01, '/apiary/x'), '/api/device-settings/7/apiary/x', 'only a whole /api segment is taken off');
 });
 
-test('option, label and note texts name the device', async () => {
-  const { optionText, deviceScopeText, deviceScopeTitle, ownPageText } = await load();
-  assert.equal(optionText(null), 'This device');
-  assert.equal(optionText({ id: 7, name: 'K01', online: true, supported: true }), 'K01');
-  assert.equal(optionText({ id: 12, name: 'Sleeping', online: false, supported: true }), 'Sleeping (Offline)');
-  assert.equal(optionText({ id: 9, name: 'Old Mac', online: true, supported: false }), 'Old Mac (Update Old Mac first)');
-  assert.equal(optionText({ id: 11, name: 'Away', online: false, supported: null }), 'Away (Offline)');
-  const shout = text => text.toUpperCase();
-  assert.equal(optionText(null, { t: shout }), 'THIS DEVICE', 'the words go through `t`');
+test('label and note texts name the device', async () => {
+  const { deviceScopeText, deviceScopeTitle, ownPageText } = await load();
   assert.equal(deviceScopeText('K01'), 'K01 only');
   assert.equal(deviceScopeText(''), 'This device only');
   assert.equal(deviceScopeTitle('K01'), 'Only K01 uses this. Changes here are saved on K01.');
   assert.equal(deviceScopeTitle(''), 'Only this device uses this');
   assert.equal(ownPageText('K01'), 'Open K01’s own page to change this');
-});
-
-test('the choice is remembered per viewer, and a storage that refuses or is missing is no error', async () => {
-  const { readStored, writeStored, STORAGE_KEY } = await load();
-  const map = new Map();
-  const storage = { getItem: key => (map.has(key) ? map.get(key) : null), setItem: (key, value) => map.set(key, value), removeItem: key => map.delete(key) };
-  writeStored(storage, 7);
-  assert.equal(map.get(STORAGE_KEY), '7');
-  assert.equal(readStored(storage), '7');
-  writeStored(storage, null);
-  assert.equal(map.has(STORAGE_KEY), false, 'this device is no entry');
-  const broken = { getItem() { throw new Error('denied'); }, setItem() { throw new Error('denied'); }, removeItem() { throw new Error('denied'); } };
-  assert.equal(readStored(broken), null);
-  assert.doesNotThrow(() => writeStored(broken, 7));
-  assert.equal(readStored(null), null);
-  assert.doesNotThrow(() => writeStored(null, 7));
 });
 
 test('the Chinese texts exist for every template the model builds', () => {
@@ -108,7 +69,7 @@ test('the Chinese texts exist for every template the model builds', () => {
   for (const file of ['i18n-zh-server.js', 'i18n-zh-extra.js', 'i18n-zh-ui.js']) vm.runInContext(fs.readFileSync(path.join(root, file), 'utf8'), sandbox);
   const { I18n } = sandbox;
   for (const text of ['K01 only', 'Update K01 first', 'Only K01 uses this. Changes here are saved on K01.', 'Open K01’s own page to change this', 'Settings for', 'This device',
-    'Parts marked “K01 only” are read and saved on K01. Shared parts are the same on every device.', 'DEVICE_SETTING_NOT_ALLOWED', 'DEVICE_SETTINGS_UNSUPPORTED', 'DEVICE_NOT_LINKED']) {
+    'DEVICE_SETTING_NOT_ALLOWED', 'DEVICE_SETTINGS_UNSUPPORTED', 'DEVICE_NOT_LINKED']) {
     assert.notEqual(I18n.t(text), text, `no translation for: ${text}`);
     assert.ok(I18n.t(text).includes('K01') || !text.includes('K01'), `the name stays: ${text}`);
   }

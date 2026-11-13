@@ -8,7 +8,7 @@ import { Feedback, Hint, failure, useFeedback } from './Form.jsx';
 import TextField from './TextField.jsx';
 import { registerAttentionSettings } from './attention-slots.mjs';
 import { ScopeLabel, SyncNote, useSyncAfterSave } from './ScopeLabel.jsx';
-import { useDeviceTarget } from './DeviceTarget.jsx';
+import { useDeviceTarget, useSettingsTab } from './DeviceTarget.jsx';
 
 // The "Desktop window (macOS)" part of the Settings group "T-Attention": the switch of the native floating window (services/attention-widget.js), the
 // language it shows and a status line. GET / PUT /api/attention/widget/settings { enabled, language, platform_supported, swiftc, running, building,
@@ -30,13 +30,15 @@ export function widgetStatus(setting) {
   return { text: 'Not running. Turn the switch off and on to start it again.', error: false };
 }
 
-// The window of the device chosen in "Settings for" (DeviceTarget.jsx): its switch and status are read and saved there. The language is one setting
-// for all linked devices and is always saved here (settings sync copies it); a linked device takes only the switch (routes/device-settings.js).
+// The window of the device whose tab is chosen (DeviceTarget.jsx): its switch and status are read and saved there. The language is one setting for all
+// linked devices and is always saved here (settings sync copies it); a linked device takes only the switch (routes/device-settings.js). With the tabs
+// of the sheet the part is split: the switch, its hint and the status in the device tabs, the language (under the part's name) in Shared.
 function WidgetSettings(props) {
   const device = useDeviceTarget();
   return <WidgetPart key={device.key} {...props} call={device.api} remote={device.remote} name={device.name} />;
 }
 function WidgetPart({ opened, call, remote, name }) {
+  const { scope } = useSettingsTab();
   const [setting, setSetting] = useState(null); // null until read; { missing: true } on an older server
   const [busy, setBusy] = useState(false);
   const [feedback, say] = useFeedback();
@@ -77,25 +79,37 @@ function WidgetPart({ opened, call, remote, name }) {
   const label = t('Desktop window (macOS)');
   const status = widgetStatus(setting);
   const usable = setting.platform_supported;
+  const switchShown = scope !== 'shared';
+  const languageShown = scope !== 'device';
   return (
     <Box id="h5-attention-widget" sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-      <FormControlLabel
-        sx={{ m: 0, alignSelf: 'flex-start', gap: 0.5 }} label={label}
-        control={<Switch size="small" checked={setting.enabled} disabled={busy || !usable} onChange={event => void save({ enabled: event.target.checked })} slotProps={{ input: { id: 'h5-attention-widget-enabled', 'aria-label': label, style: INPUT_INSIDE } }} />}
-      />
-      {/* The switch is this Mac's own; the language of the window is one setting for all linked devices. */}
-      <ScopeLabel id="widget-enabled" subject="On or off" sx={{ alignSelf: 'flex-start' }} />
-      <Hint>{remote ? t(`A small window that stays above other windows on ${name} and shows the tasks that need you, from that machine and its connected devices.`) : t('A small window that stays above other windows on this Mac and shows the tasks that need you, from this machine and the connected devices.')}</Hint>
-      <TextField
-        id="h5-attention-widget-language" select label={t('Window language')} size="small" fullWidth value={setting.language} disabled={busy || !usable}
-        onChange={event => void save({ language: event.target.value })} slotProps={{ select: { native: true } }}
-      >
-        {LANGUAGES.map(([value, text]) => <option key={value} value={value}>{t(text)}</option>)}
-      </TextField>
-      <ScopeLabel id="widget-language" scope="shared" subject="Window language" sx={{ alignSelf: 'flex-start' }} />
-      <Typography id="h5-attention-widget-status" variant="body2" color={status.error ? 'error' : 'text.secondary'} sx={{ overflowWrap: 'anywhere' }}>
-        {`${t('Status')}: ${t(status.text)}`}
-      </Typography>
+      {switchShown ? (
+        <>
+          <FormControlLabel
+            sx={{ m: 0, alignSelf: 'flex-start', gap: 0.5 }} label={label}
+            control={<Switch size="small" checked={setting.enabled} disabled={busy || !usable} onChange={event => void save({ enabled: event.target.checked })} slotProps={{ input: { id: 'h5-attention-widget-enabled', 'aria-label': label, style: INPUT_INSIDE } }} />}
+          />
+          {/* The switch is this Mac's own; the language of the window is one setting for all linked devices. */}
+          <ScopeLabel id="widget-enabled" subject="On or off" sx={{ alignSelf: 'flex-start' }} />
+          <Hint>{remote ? t(`A small window that stays above other windows on ${name} and shows the tasks that need you, from that machine and its connected devices.`) : t('A small window that stays above other windows on this Mac and shows the tasks that need you, from this machine and the connected devices.')}</Hint>
+        </>
+      ) : <Typography id="h5-attention-widget-title" variant="subtitle2" component="h3" sx={{ fontWeight: 700, mt: 1 }}>{label}</Typography>}
+      {languageShown ? (
+        <>
+          <TextField
+            id="h5-attention-widget-language" select label={t('Window language')} size="small" fullWidth value={setting.language} disabled={busy || !usable}
+            onChange={event => void save({ language: event.target.value })} slotProps={{ select: { native: true } }}
+          >
+            {LANGUAGES.map(([value, text]) => <option key={value} value={value}>{t(text)}</option>)}
+          </TextField>
+          <ScopeLabel id="widget-language" scope="shared" subject="Window language" sx={{ alignSelf: 'flex-start' }} />
+        </>
+      ) : null}
+      {switchShown ? (
+        <Typography id="h5-attention-widget-status" variant="body2" color={status.error ? 'error' : 'text.secondary'} sx={{ overflowWrap: 'anywhere' }}>
+          {`${t('Status')}: ${t(status.text)}`}
+        </Typography>
+      ) : null}
       <Feedback id="h5-attention-widget-feedback" feedback={feedback} />
       <SyncNote id="h5-attention-widget-sync" note={synced} />
     </Box>

@@ -71,12 +71,15 @@ I18n.add({
   'Starting…': '正在启动…',
   'Started': '已启动',
 
-  // ---- Settings of a linked device (DeviceTarget.jsx, device-target.mjs) ----
+  // ---- Settings of a linked device (DeviceTarget.jsx, device-target.mjs, the tabs of SettingsTabs.jsx and settings-tabs.mjs) ----
   '{1} only': '仅 {1}',
   'Update {1} first': '请先升级 {1}',
   'Only {1} uses this. Changes here are saved on {2}.': '只有 {1} 使用这项设置。这里的修改保存在 {2} 上。',
   'Open {1}’s own page to change this': '请打开 {1} 自己的页面来修改这项设置',
-  'Parts marked “{1} only” are read and saved on {2}. Shared parts are the same on every device.': '标有“仅 {1}”的部分会读取并保存到 {2}。共享的部分在每台设备上都一样。',
+  'These settings are read and saved on {1}': '这些设置会读取并保存到 {1}',
+  '{1} is offline. Its settings can be read and saved again once it is back online.': '{1} 已离线。等它重新上线后才能再读取和保存它的设置。',
+  '{1} is too old to be changed from here. Update {2} first.': '{1} 的版本过旧，不能在这里修改。请先升级 {2}。',
+  'Show {1} in task list': '在任务列表中显示 {1}',
   'Skills teach Claude Code and Codex to use T-Agent’s commands. They are installed on {1}, for both agents.': '技能让 Claude Code 和 Codex 学会使用 T-Agent 的命令。它们会安装在 {1} 上，两个智能体都可使用。',
   'A small window that stays above other windows on {1} and shows the tasks that need you, from that machine and its connected devices.': '一个停留在 {1} 其他窗口上方的小窗口，显示那台机器及其连接设备上需要你处理的任务。',
 

@@ -12,13 +12,15 @@ import { BASE } from './attention-feed.mjs';
 import { attentionSettingsSlots } from './attention-slots.mjs';
 import { AttentionGuide } from './AttentionGuide.jsx';
 import { ScopeLabel, ScopedHeading, SyncNote, useSyncAfterSave } from './ScopeLabel.jsx';
-import { LocalOnly } from './DeviceTarget.jsx';
+import { InTab, LocalOnly, useSettingsTab } from './DeviceTarget.jsx';
+import { partShown } from './settings-tabs.mjs';
 
 // The "T-Attention" group of the settings sheet: the reminders of this page (the in-page notice and the sound; remembered in this browser) and the
 // CLI tokens (`Authorization: Bearer tatt_...` for the `t-attention` CLI and the listener plugins; only /api/attention* accepts them).
 // The token endpoints take the browser session only. A new token is shown once, here, and never again.
 // Order: the setup guide, the reminders, the components other parts registered (attention-slots.mjs: the plugin list with the notifiers, then the agent
-// skill), the AI summary, the CLI tokens.
+// skill), the AI summary, the CLI tokens. With the tabs of the sheet each is drawn in the tab that holds it (settings-tabs.mjs); a slot that names its
+// `part` is drawn only in that part's tabs, the others split their own controls (the plugin list, the desktop window).
 const when = value => { const at = Date.parse(value || ''); return Number.isFinite(at) ? new Date(at).toLocaleString() : ''; };
 
 function TokenList({ opened }) {
@@ -170,6 +172,7 @@ function Reminders({ ui, prefs, setPrefs }) {
 export function AttentionSettings({ ui, request = null }) {
   const [prefs, setPrefs] = useState(() => ui.actions.attentionPrefs ? ui.actions.attentionPrefs() : { sound: true });
   const [opened, setOpened] = useState(0);
+  const { scope } = useSettingsTab();
   const open = () => {
     if (ui.actions.attentionPrefs) setPrefs(ui.actions.attentionPrefs());
     setOpened(count => count + 1);
@@ -177,13 +180,15 @@ export function AttentionSettings({ ui, request = null }) {
   return (
     <Group id="attention" title="T-Attention" onOpen={open} request={request}>
       {/* The first-run guide, or its "Show setup guide" button once it is closed or done (AttentionGuide.jsx). */}
-      <ScopeLabel subject="Setup guide" sx={{ alignSelf: 'flex-start' }} />
-      <LocalOnly id="h5-guide-settings-remote"><AttentionGuide ui={ui} place="settings" active={opened} /></LocalOnly>
-      <Reminders ui={ui} prefs={prefs} setPrefs={setPrefs} />
+      <InTab part="attention-guide">
+        <ScopeLabel subject="Setup guide" sx={{ alignSelf: 'flex-start' }} />
+        <LocalOnly id="h5-guide-settings-remote"><AttentionGuide ui={ui} place="settings" active={opened} /></LocalOnly>
+      </InTab>
+      <InTab part="reminders"><Reminders ui={ui} prefs={prefs} setPrefs={setPrefs} /></InTab>
       {/* SLOT: the settings of other T-Attention parts (attention-slots.mjs: the plugin list, then the agent skill). Nothing is drawn when none is registered. */}
-      {attentionSettingsSlots().map(({ id, Component }) => <Box key={id} className="h5-attention-slot" data-slot={id} sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}><Component ui={ui} opened={opened} /></Box>)}
-      <SummarySettings opened={opened} />
-      <TokenList opened={opened} />
+      {attentionSettingsSlots().filter(slot => !slot.part || partShown(slot.part, scope)).map(({ id, Component }) => <Box key={id} className="h5-attention-slot" data-slot={id} sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}><Component ui={ui} opened={opened} /></Box>)}
+      <InTab part="attention-summary"><SummarySettings opened={opened} /></InTab>
+      <InTab part="cli-tokens"><TokenList opened={opened} /></InTab>
     </Group>
   );
 }

@@ -89,6 +89,56 @@ test('the tab entries: Shared, this device under its name, then each linked devi
   assert.equal(tabHint(null, DEVICES), '');
 });
 
+test('without the settings sync (no Shared tab) the tabs are this device and each linked device, and this device\'s tab holds every part', async () => {
+  const { tabEntries, tabHint, tabScope, resolveTab, tabForTarget, partShown, groupShown, PARTS } = await load('settings-tabs.mjs');
+  const { settingsTarget, SETTINGS_GROUPS } = await load('settings-target.mjs');
+  const off = { shared: false };
+  // When the tabs are drawn: a linked device in the device list is enough; the sync only adds Shared. Both answers are waited for.
+  const { tabsShown } = await load('settings-tabs.mjs');
+  assert.deepEqual(tabsShown({ loaded: true, linked: false, devices: DEVICES }), { shown: true, shared: false }, 'sync off (or no peer) with K01 linked');
+  assert.deepEqual(tabsShown({ loaded: true, linked: true, devices: DEVICES }), { shown: true, shared: true }, 'sync on: as before');
+  assert.deepEqual(tabsShown({ loaded: true, linked: true, devices: [] }), { shown: true, shared: true }, 'sync peers without a device list (an older device list): Shared and this device');
+  assert.deepEqual(tabsShown({ loaded: true, linked: false, devices: [] }), { shown: false, shared: false }, 'no linked device: no tabs');
+  assert.deepEqual(tabsShown({ loaded: true, linked: null, devices: DEVICES }), { shown: false, shared: false }, 'the settings sync has not answered yet');
+  assert.deepEqual(tabsShown({ loaded: false, linked: true, devices: [] }), { shown: false, shared: false }, 'the device list has not answered yet');
+  // The entries: no Shared, K01 can be chosen, the older and unknown devices stay disabled.
+  const entries = tabEntries(DEVICES, { localName: 'T01', ...off });
+  assert.deepEqual(entries.map(entry => [entry.value, entry.label, entry.disabled]), [
+    ['local', 'T01', false], ['7', 'K01', false], ['9', 'Old Mac', true], ['11', 'Away', true], ['12', 'Sleeping', false],
+  ]);
+  assert.equal(entries[0].title, 'Changes here are saved on this device');
+  assert.equal(entries.some(entry => /copied/.test(entry.title)), false, 'nothing says a change is copied');
+  // The line under the tabs never says a change is copied.
+  assert.equal(tabHint('local', DEVICES, off), 'Changes here are saved on this device');
+  assert.equal(tabHint('7', DEVICES, off), 'These settings are read and saved on K01');
+  assert.equal(tabHint('shared', DEVICES, off), '');
+  // This device's tab draws every part and every group; a linked device's tab only the per-device parts, as with the sync.
+  assert.equal(tabScope('local', off), null);
+  assert.equal(tabScope('7', off), 'device');
+  assert.equal(tabScope('shared', off), 'shared');
+  assert.equal(Object.keys(PARTS).every(id => partShown(id, tabScope('local', off))), true, 'nothing becomes unreachable');
+  assert.deepEqual(SETTINGS_GROUPS.filter(group => groupShown(group, tabScope('local', off))), SETTINGS_GROUPS);
+  assert.equal(partShown('translate', tabScope('7', off)), false);
+  assert.equal(partShown('workdir', tabScope('7', off)), true);
+  // The remembered tab: Shared falls back to this device and stays remembered; the first tab is this device.
+  assert.deepEqual(resolveTab(null, DEVICES, off), { tab: 'local', forget: false });
+  assert.deepEqual(resolveTab('shared', DEVICES, off), { tab: 'local', forget: false }, 'kept for when the sync is back');
+  assert.deepEqual(resolveTab('7', DEVICES, off), { tab: '7', forget: false }, 'K01 can be chosen without the sync');
+  assert.deepEqual(resolveTab('9', DEVICES, off), { tab: 'local', forget: false });
+  assert.deepEqual(resolveTab('8', DEVICES, off), { tab: 'local', forget: true });
+  assert.equal(resolveTab('junk', DEVICES, off).tab, 'local');
+  // Opening a part from code never picks the missing Shared tab.
+  const at = (id, current) => tabForTarget(settingsTarget(id), current, off);
+  assert.equal(at('translate', '7'), 'local', 'a shared part opens on this device');
+  assert.equal(at('oss', 'local'), 'local');
+  assert.equal(at('voice-translate', '7'), 'local', 'a group with only shared parts opens on this device');
+  assert.equal(at('voice-translate', 'local'), 'local');
+  assert.equal(at('attention', '7'), '7');
+  assert.equal(at('account', 'local'), 'local');
+  assert.equal(at('workdir', '7'), 'local');
+  for (const id of [...Object.keys(PARTS), ...SETTINGS_GROUPS]) for (const current of ['local', '7']) assert.notEqual(at(id, current), 'shared', `${id} from ${current}`);
+});
+
 test('a pill is left out only where it repeats the tab', async () => {
   const { labelRedundant, tabScope } = await load('settings-tabs.mjs');
   assert.equal(tabScope('shared'), 'shared');
@@ -136,7 +186,7 @@ test('the Chinese texts exist for every text the tabs show', () => {
   const { I18n } = sandbox;
   for (const text of ['Shared', 'This device', 'Settings for', 'Offline', 'Update K01 first', 'Changes here are copied to every linked device', 'Only this device uses these settings',
     'These settings are read and saved on K01', 'K01 is offline. Its settings can be read and saved again once it is back online.',
-    'K01 is too old to be changed from here. Update K01 first.', 'Show K01 in task list', 'Which devices the task list shows. One choice for all linked devices.']) {
+    'K01 is too old to be changed from here. Update K01 first.', 'Changes here are saved on this device', 'Show K01 in task list', 'Which devices the task list shows. One choice for all linked devices.']) {
     assert.notEqual(I18n.t(text), text, `no translation for: ${text}`);
     assert.ok(I18n.t(text).includes('K01') || !text.includes('K01'), `the name stays: ${text}`);
   }

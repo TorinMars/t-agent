@@ -1,8 +1,10 @@
 // The tabs at the top of the settings sheet ("Settings of a linked device" in DESIGN.md): Shared, then this device, then each linked device. A tab
 // shows only the parts whose changes belong to it: Shared holds the parts copied to every linked device (and Telegram, one setting with one sender),
 // a device tab holds the "This device only" parts of that device (a linked device's are read and saved through /api/device-settings, DeviceTarget.jsx).
-// Pure functions, no React: which part is in which tab, which group has anything in a tab, the tab a part opened from code needs, the tab entries and
-// the remembered choice. `t` translates.
+// The Shared tab exists only while the settings sync shares with a linked device (`shared`, DeviceTarget.jsx). Without it (the sync is turned off,
+// or no linked device takes part in it) the tabs are this device and each linked device, and this device's tab draws every part: the shared ones
+// are then this device's own. Pure functions, no React: which part is in which tab, which group has anything in a tab, the tab a part opened from
+// code needs, the tab entries and the remembered choice. `t` translates; `shared` is true unless said otherwise.
 import { selectable } from './device-target.mjs';
 
 const plain = text => text;
@@ -46,10 +48,21 @@ export const PARTS = {
   authenticator: ['account', 'device'],
 };
 
-// The scope of the parts a tab holds: 'shared' for Shared, 'device' for this device and every linked device, null when there are no tabs.
-export function tabScope(tab) {
+// Whether the tabs are drawn, and whether one of them is Shared. `loaded`: the device list was read; `linked`: what the settings sync said (true: it
+// shares with a linked device, false: it does not, or it is turned off; null: not read yet); `devices`: the linked devices of the device list. The
+// tabs wait for both answers, then are drawn while there is a linked device in either; the sync alone decides whether there is a Shared tab.
+export function tabsShown({ loaded, linked, devices }) {
+  const shared = linked === true;
+  const shown = Boolean(loaded) && linked !== null && linked !== undefined && (shared || (Array.isArray(devices) && devices.length > 0));
+  return { shown, shared: shown && shared };
+}
+
+// The scope of the parts a tab holds: 'shared' for Shared, 'device' for this device and every linked device, null (every part) when there are no
+// tabs, and for this device's tab while there is no Shared tab.
+export function tabScope(tab, { shared = true } = {}) {
   if (tab === null || tab === undefined || tab === '') return null;
-  return tab === SHARED_TAB ? 'shared' : 'device';
+  if (tab === SHARED_TAB) return 'shared';
+  return tab === LOCAL_TAB && !shared ? null : 'device';
 }
 const holds = (scope, partScope) => (scope === 'shared' ? partScope === 'shared' || partScope === 'telegram' : partScope === scope);
 
@@ -66,24 +79,27 @@ export function groupShown(group, scope) {
 
 // The tab a target of `ui.actions.openSettings(id)` ({ group, section }, settings-target.mjs) needs, from the current tab. A part: the tab that holds
 // it (a per-device part opens on this device's tab, whichever device was shown). A whole group: the current tab when it has parts of that group, else
-// Shared when the group has shared parts, else this device. No tabs: null.
-export function tabForTarget(target, current) {
+// Shared when the group has shared parts, else this device. Without a Shared tab, this device's tab holds what Shared would. No tabs: null.
+export function tabForTarget(target, current, { shared = true } = {}) {
   if (current === null || current === undefined) return null;
   if (!target) return current;
-  if (target.section && Object.hasOwn(PARTS, target.section)) return holds('shared', PARTS[target.section][1]) ? SHARED_TAB : LOCAL_TAB;
-  if (groupShown(target.group, tabScope(current))) return current;
-  return groupShown(target.group, 'shared') ? SHARED_TAB : LOCAL_TAB;
+  const home = shared ? SHARED_TAB : LOCAL_TAB;
+  if (target.section && Object.hasOwn(PARTS, target.section)) return holds('shared', PARTS[target.section][1]) ? home : LOCAL_TAB;
+  if (groupShown(target.group, tabScope(current, { shared }))) return current;
+  return groupShown(target.group, 'shared') ? home : LOCAL_TAB;
 }
 
-// The tab to show: the remembered one when it still means something, else Shared. A device that is no longer linked is forgotten (`forget`); one that
-// is linked but cannot be chosen now (an older version, or offline and not known) falls back to Shared for now and is kept.
-export function resolveTab(stored, devices) {
+// The tab to show: the remembered one when it still means something, else the first tab (Shared, or this device without a Shared tab). A device that
+// is no longer linked is forgotten (`forget`); one that is linked but cannot be chosen now (an older version, or offline and not known) falls back for
+// now and is kept, as is a remembered Shared while there is no Shared tab (it comes back with the sync).
+export function resolveTab(stored, devices, { shared = true } = {}) {
+  const first = shared ? SHARED_TAB : LOCAL_TAB;
   if (stored === LOCAL_TAB) return { tab: LOCAL_TAB, forget: false };
   const id = Number(stored);
-  if (stored === null || stored === undefined || stored === SHARED_TAB || !/^\d+$/.test(String(stored)) || !Number.isSafeInteger(id) || id <= 0) return { tab: SHARED_TAB, forget: false };
+  if (stored === null || stored === undefined || stored === SHARED_TAB || !/^\d+$/.test(String(stored)) || !Number.isSafeInteger(id) || id <= 0) return { tab: first, forget: false };
   const device = (devices || []).find(item => item.id === id);
-  if (!device) return { tab: SHARED_TAB, forget: true };
-  return selectable(device) ? { tab: String(id), forget: false } : { tab: SHARED_TAB, forget: false };
+  if (!device) return { tab: first, forget: true };
+  return selectable(device) ? { tab: String(id), forget: false } : { tab: first, forget: false };
 }
 
 // The device a tab stands for, or null for Shared and this device.
@@ -93,12 +109,16 @@ export function deviceOfTab(tab, devices) {
   return selectable(device) ? device : null;
 }
 
+// The words of this device's tab: with a Shared tab it holds what only this device uses; without one it holds every part, all saved on this device.
+const localText = shared => (shared ? 'Only this device uses these settings' : 'Changes here are saved on this device');
+
 // The entries of the tab row: { value, label, note, disabled, title, local }. `localName` is this device's engine name ('' on an older server: the
-// tab then says just "This device"). A linked device that cannot be chosen is shown disabled with the reason under its name.
-export function tabEntries(devices, { localName = '', t = plain } = {}) {
+// tab then says just "This device"). A linked device that cannot be chosen is shown disabled with the reason under its name. No Shared entry without
+// the sync (`shared` false).
+export function tabEntries(devices, { localName = '', t = plain, shared = true } = {}) {
   const entries = [
-    { value: SHARED_TAB, label: t('Shared'), note: '', disabled: false, title: t('Changes here are copied to every linked device'), local: false },
-    { value: LOCAL_TAB, label: localName || t('This device'), note: localName ? t('This device') : '', disabled: false, title: t('Only this device uses these settings'), local: true },
+    ...(shared ? [{ value: SHARED_TAB, label: t('Shared'), note: '', disabled: false, title: t('Changes here are copied to every linked device'), local: false }] : []),
+    { value: LOCAL_TAB, label: localName || t('This device'), note: localName ? t('This device') : '', disabled: false, title: t(localText(shared)), local: true },
   ];
   for (const device of devices || []) {
     const offline = device.supported === null || !device.online;
@@ -112,10 +132,10 @@ export function tabEntries(devices, { localName = '', t = plain } = {}) {
 }
 
 // The line under the tab row: what a change in the chosen tab affects.
-export function tabHint(tab, devices, { t = plain } = {}) {
+export function tabHint(tab, devices, { t = plain, shared = true } = {}) {
   if (tab === null) return '';
-  if (tab === SHARED_TAB) return t('Changes here are copied to every linked device');
-  if (tab === LOCAL_TAB) return t('Only this device uses these settings');
+  if (tab === SHARED_TAB) return shared ? t('Changes here are copied to every linked device') : '';
+  if (tab === LOCAL_TAB) return t(localText(shared));
   const device = deviceOfTab(tab, devices);
   if (!device) return '';
   return device.online ? t(`These settings are read and saved on ${device.name}`) : t(`${device.name} is offline. Its settings can be read and saved again once it is back online.`);

@@ -7,7 +7,9 @@
 //   guide, listeners) show "Open K01's own page to change this". Nothing is wider than the screen.
 // - the tab is remembered in localStorage (and the device chosen in "Settings for" before the tabs is read once) and goes back to Shared when K01 is
 //   no longer linked; a localStorage that throws is no error.
-// - no linked device in the settings sync, and an older server (404): no tabs, every part on this device.
+// - no linked device at all, and an older server (404): no tabs, every part on this device.
+// - K01 in the device list but no linked device in the settings sync: the tabs are This device, K01 and Old Mac (no Shared), and K01's tab still
+//   reads through /api/device-settings/2/....
 // - Chinese 390: the tabs, the line under them and the note are translated.
 // H5_SHOT_DIR=<dir> saves 390px (3x) screenshots of the sheet with K01 chosen.
 const { chromium } = require('playwright');
@@ -276,14 +278,31 @@ async function testRemembered(browser) {
   await opened.context.close();
 }
 
-// No linked device in the settings sync, or an older server: no tabs, and the per-device parts are this device's even with K01 remembered.
-async function testHidden(browser, peers, label) {
-  const { context, page, errors } = await openPage(browser, { peers, stored: '2' });
+// No linked device, or an older server: no tabs, and the per-device parts are this device's even with K01 remembered.
+async function testHidden(browser, { peers, devices }, label) {
+  const { context, page, errors } = await openPage(browser, { peers, devices, stored: '2' });
   await openSheet(page);
   assert.equal(await page.locator('#h5-settings-tabs').count(), 0, `${label}: no tabs`);
   await toggleGroup(page, 'devices');
   await page.waitForFunction(() => window.calls.some(call => call.url === '/api/peer-fs/settings'));
   assert.equal((await callsTo(page, '/api/device-settings/2/')).length, 0, `${label}: nothing goes to K01`);
+  assert.deepEqual(errors, []);
+  await context.close();
+}
+
+// K01 is linked but the settings sync shares with nobody: the tabs are drawn without Shared, and K01's tab is still read through the link.
+async function testWithoutSyncPeers(browser) {
+  const { context, page, errors } = await openPage(browser, { peers: [], stored: '2' });
+  await openSheet(page);
+  await page.locator('#h5-settings-tabs').waitFor({ state: 'visible' });
+  const tabs = await page.locator('#h5-settings-tabs [role="tab"]').evaluateAll(nodes => nodes.map(node => [node.dataset.tab, node.disabled || node.getAttribute('aria-disabled') === 'true']));
+  assert.deepEqual(tabs, [['local', false], ['2', false], ['3', true]]);
+  assert.equal(await chosenTab(page), '2', 'the remembered K01 tab');
+  await toggleGroup(page, 'devices');
+  await page.waitForFunction(() => window.calls.some(call => call.url === '/api/device-settings/2/peer-fs/settings'));
+  assert.equal((await callsTo(page, '/api/peer-fs/settings')).length, 0, 'nothing is read on this device for K01');
+  await chooseTab(page, 'local');
+  assert.equal(await page.locator('#h5-settings-tab-hint').innerText(), 'Changes here are saved on this device');
   assert.deepEqual(errors, []);
   await context.close();
 }
@@ -310,8 +329,9 @@ async function testChinese(browser) {
   try {
     await testChooseK01(browser);
     await testRemembered(browser);
-    await testHidden(browser, [], 'no linked device');
-    await testHidden(browser, null, 'an older server');
+    await testHidden(browser, { peers: [], devices: { devices: [] } }, 'no linked device');
+    await testHidden(browser, { peers: null, devices: null }, 'an older server');
+    await testWithoutSyncPeers(browser);
     await testChinese(browser);
     console.log('h5 device settings browser test passed');
   } finally {

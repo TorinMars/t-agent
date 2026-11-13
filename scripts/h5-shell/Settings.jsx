@@ -435,15 +435,15 @@ export function SettingsDrawer({ state, ui }) {
     const target = state.settingsTarget && settingsTarget(state.settingsTarget.id);
     return target ? { ...target, seq: state.settingsTarget.seq } : null;
   }, [state.settingsTarget]);
-  const { tab, scope } = useSettingsTab();
+  const { tab, scope, shared } = useSettingsTab();
   // A request is passed on once its tab is shown: the first time the tabs are known with it, the sheet moves to the tab that holds its part.
   const [placed, setPlaced] = useState(null);
   useEffect(() => {
     if (!request || tab === null || placed === request.seq) return;
-    const wanted = tabForTarget(request, tab);
+    const wanted = tabForTarget(request, tab, { shared });
     if (wanted !== tab) chooseTab(wanted);
     setPlaced(request.seq);
-  }, [request, tab]); // eslint-disable-line react-hooks/exhaustive-deps -- `placed` only marks a request as done
+  }, [request, tab, shared]); // eslint-disable-line react-hooks/exhaustive-deps -- `placed` only marks a request as done
   const passed = request && (tab === null || placed === request.seq) ? request : null;
   const requestFor = group => (passed && passed.group === group ? passed : null);
   const shown = useCallback(group => groupShown(group, scope), [scope]);

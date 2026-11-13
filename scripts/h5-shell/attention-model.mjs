@@ -6,6 +6,8 @@
 // tags each item with `engine` (the key of its engine, as h5.js names it: 'local', 'remote:7') and `key` ('<engine>:<id>'), since ids repeat between
 // engines. `item.source` stays what it always was: who reported the task ('claude', 'user', ...). Every function here names an item by its `key` when it
 // has one, else by its `id` (an untagged list, as the tests and an older page build it), and a `parent_id` always means an item of the same engine.
+// The phone list is the "Home view" (`homeGroups`): its grouping is lib/attention-home.js, shared with `t-attention list --tree`.
+import attentionHome from '../../lib/attention-home.js';
 
 // ── Engines ──
 export const REMOTE_CAPABILITY = 'attention:remote';
@@ -153,6 +155,53 @@ export function buildTree(items, all = items) {
   return roots;
 }
 
+// ── The phone list: the Home view of the t-attention skill ──
+
+// The sections of the phone list, top to bottom (then the "Done: N" line): Needs you (waiting_user, then review), Working, To do.
+export const HOME_SECTIONS = attentionHome.HOME_SECTIONS.map(section => ({ key: section.key, label: section.label, statuses: [...section.statuses] }));
+
+// The phone list (lib/attention-home.js `homeView`, the grouping of `t-attention list --tree`): every section (an empty one too) with whole trees, a
+// tree in the section of its most urgent open task, each row with its own status; finished tasks only counted (`done`), except a finished parent
+// that keeps an open sub-task under it. Inside a section the trees of one engine keep the order of `engines` (this machine first) after the status
+// order of the shared rules, and `compareItems` decides between equals. Nodes have the shape of `buildTree` ({ item, depth, indent, parent: null,
+// children }), so they draw (and collapse) the same way. An older server (no `parent_id`) gives one row per task, in the section of its status.
+// -> { sections: [{ key, label, statuses, nodes }], done }
+export function homeGroups(items, { engines = null } = {}) {
+  const rank = engineRank(engines);
+  const view = attentionHome.homeView(items, { keyOf, parentOf: parentKeyOf, compare: (a, b) => rank(a) - rank(b) || compareItems(a, b) });
+  const node = entry => ({ item: entry.item, depth: entry.depth, indent: Math.min(entry.depth, MAX_INDENT), parent: null, children: entry.children.map(node) });
+  return { sections: view.sections.map(section => ({ key: section.key, label: section.label, statuses: section.statuses, nodes: section.nodes.map(node) })), done: view.done };
+}
+
+// The line under the title of a phone row, by its section (the columns of the Home view): Needs you shows what the user has to do (what is pending,
+// else the reason; a review with neither waits for the user's confirmation), Working the custom status and the first line of the notes, To do
+// nothing. A row of another status in Needs you (the parent of a task that needs the user) shows nothing there. -> { kind, text } or null; `kind`
+// 'reason', 'confirm' (the English text to translate) or 'progress'.
+export function homeDetail(item, section) {
+  if (!item) return null;
+  if (section === 'needs_you') {
+    if (item.status !== 'waiting_user' && item.status !== 'review') return null;
+    const text = pendingLine(item);
+    if (text) return { kind: 'reason', text };
+    return item.status === 'review' ? { kind: 'confirm', text: 'Waits for your confirmation' } : null;
+  }
+  if (section === 'working') {
+    const note = String(item.notes || '').split('\n').map(line => line.trim()).find(Boolean) || '';
+    const text = [String(item.custom_status || '').trim(), note].filter(Boolean).join(' \u00b7 ');
+    return text ? { kind: 'progress', text } : null;
+  }
+  return null;
+}
+
+// A time as MM-DD HH:MM in local time ('' for none), as the Home view writes it.
+export function shortTime(value) {
+  const at = Date.parse(value || '');
+  if (!Number.isFinite(at)) return '';
+  const date = new Date(at);
+  const pad = n => String(n).padStart(2, '0');
+  return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
 // The rows a tree shows, top to bottom ([{ id, key, depth, indent, hasChildren }]); the sub-tasks of a key (or id) in `collapsed` are left out.
 export function visibleRows(tree, collapsed = new Set()) {
   const out = [];
@@ -204,8 +253,9 @@ export const collapseId = item => (engineOf(item) === 'local' ? item.id : keyOf(
 
 // ── Moving: the body of POST /api/attention/:id/move, and the list the page shows before the answer ──
 
-// The status a drop on the title of a group gives: the group's first status ("Done & failed" gives done).
-export const statusOfGroup = key => (GROUPS.find(group => group.key === key) || { statuses: [] }).statuses[0] || null;
+// The status a drop on the title of a group gives: the group's first status ("Done & failed" gives done; the phone's Needs you gives waiting_user).
+export const statusesOfGroup = key => ([...GROUPS, ...HOME_SECTIONS].find(group => group.key === key) || { statuses: [] }).statuses;
+export const statusOfGroup = key => statusesOfGroup(key)[0] || null;
 
 // The list after the item `ref` (its key, or id) moved, as the page draws it until the server answers: `move` is the body of /move ({ before } |
 // { after } | { position, status }, with the ids of its own engine). Only the moved item changes: its `sort_order` goes between its new neighbours of the

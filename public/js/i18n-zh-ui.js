@@ -1684,6 +1684,7 @@ I18n.add({
   // The T-Attention desktop window (macOS): its own words (widgets/macos/strings.json, served by GET /api/attention/widget/strings) and its settings
   // card (scripts/h5-shell/AttentionWidgetSettings.jsx).
   "Done: {1}": "已完成：{1}",
+  "Waits for your confirmation": "等你确认",
   "Quit": "退出",
   "Could not reach T-Agent": "无法连接 T-Agent",
   "Delete failed: {1}": "删除失败：{1}",

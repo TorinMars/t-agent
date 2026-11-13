@@ -225,8 +225,7 @@ async function testPhone(browser) {
 
   // One list: this machine's block first, then K01's, each by sort_order; ids repeat, keys do not.
   assert.deepEqual(await keysIn(page, 'todo'), ['local:10', 'local:11', 'local:14', 'remote:7:10', 'remote:7:11', 'remote:7:14']);
-  assert.deepEqual(await keysIn(page, 'review'), ['local:2', 'remote:7:1', 'remote:7:3', 'remote:7:4']);
-  assert.deepEqual(await keysIn(page, 'needs'), ['local:1', 'remote:7:2']);
+  assert.deepEqual(await keysIn(page, 'needs_you'), ['local:1', 'remote:7:2', 'local:2', 'remote:7:1', 'remote:7:3', 'remote:7:4'], 'Needs you: waiting_user, then review');
   // The engine tag of the task list in front of every title.
   assert.equal(await row(page, 'local:10').locator('.h5-attention-engine .h5-device-tag').textContent(), 'mac');
   assert.equal(await row(page, 'remote:7:10').locator('.h5-attention-engine .h5-device-tag').textContent(), 'K01');
@@ -279,10 +278,12 @@ async function testPhone(browser) {
   await page.waitForFunction(() => document.querySelector('#h5-attention-body .h5-attention-group[data-group="working"] .h5-attention-row[data-key="remote:7:4"]'));
   assert.deepEqual([last(world, 'PATCH').path, last(world, 'PATCH').body], ['/api/remote-servers/7/attention/4', { status: 'working', attention_reason: null, activity: { kind: 'note', text: 'Rejected: Missing tests' } }]);
 
+  // Local 11 went to Review, so its whole tree (local 10) is in Needs you now.
+  assert.equal(await page.locator('#h5-attention-body .h5-attention-group[data-group="needs_you"] .h5-attention-level[data-level="needs_you:10"] .h5-attention-row[data-key="local:11"]').count(), 1);
   // Drag: K01's last To do row held and dragged over this machine's rows to the top: it stays in K01's block (before K01's 10, on K01's URL).
   const f = await finger(page);
   await page.locator('#h5-attention-body').evaluate(list => { const group = list.querySelector('.h5-attention-group[data-group="todo"]'); list.scrollTop = group.offsetTop - 20; });
-  const target = await box(row(page, 'local:10'));
+  const target = await box(row(page, 'local:14'));
   assert.ok((await box(row(page, 'remote:7:14'))).y + 40 < 844, 'both rows are on the screen');
   await f.holdDrag(at(await box(row(page, 'remote:7:14'))), at(target, 0.3), { release: false });
   assert.equal(await page.locator('#h5-attention-body .h5-attention-node[data-key="remote:7:14"]').getAttribute('data-drag-slot'), 'true');
@@ -291,8 +292,8 @@ async function testPhone(browser) {
   await settledDrag(page);
   const moved = world.calls.filter(call => /\/move$/.test(call.path));
   assert.deepEqual(moved.map(call => [call.path, call.body]), [['/api/remote-servers/7/attention/14/move', { before: 10 }]], 'snapped to the top of its own engine');
-  assert.deepEqual(await keysIn(page, 'todo'), ['local:10', 'local:14', 'remote:7:14', 'remote:7:10', 'remote:7:11'], 'local 11 went to Review above');
-  // A drop on the title of "Done & failed": the status changes on K01.
+  assert.deepEqual(await keysIn(page, 'todo'), ['local:14', 'remote:7:14', 'remote:7:10', 'remote:7:11']);
+  // A drop on the "Done: N" title: the status changes on K01.
   const closed = page.locator(`${SHEET} .h5-attention-drop[data-group="closed"]`);
   await page.locator('#h5-attention-body').evaluate(list => { list.scrollTop = list.scrollHeight; });
   await f.holdDrag(at(await box(row(page, 'remote:7:14'))), at(await box(closed)), { release: false });

@@ -9,6 +9,7 @@ const client = require('../lib/attention-client');
 const pluginsLocal = require('../lib/attention-plugins-local');
 const listenerInstall = require('../lib/listener-install');
 const importer = require('../lib/attention-import');
+const home = require('../lib/attention-home');
 
 const EXIT = { ok: 0, usage: 1, auth: 2, notFound: 3, server: 4 };
 const STATUSES = ['todo', 'working', 'waiting_user', 'review', 'done', 'failed', 'cancelled'];
@@ -30,12 +31,6 @@ const STATUS_ALIASES = {
   notstarted: 'todo', inprogress: 'working', awaitingresponse: 'waiting_user', completedawaitingconfirmation: 'review', completedconfirmed: 'done',
 };
 const normalizeStatus = value => STATUS_ALIASES[String(value || '').toLowerCase().replace(/[^a-z]/g, '')] || null;
-// The home view (list --tree): the groups in this order; finished items are only counted.
-const TREE_GROUPS = [
-  { key: 'needs_you', label: 'Needs you', statuses: ['waiting_user', 'review'] },
-  { key: 'working', label: 'Working', statuses: ['working'] },
-  { key: 'todo', label: 'To do', statuses: ['todo'] },
-];
 // confirm, reject, handled: status helpers on top of PATCH. from: the statuses they accept.
 const HELPERS = {
   confirm: { from: ['review'], body: () => ({ status: 'done' }) },
@@ -278,36 +273,6 @@ function shortTime(iso) {
   return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
-// The items of one group, depth-first: children under their parent (sort_order order among siblings, as the list comes). A child whose parent is
-// in another group (or not in the list) is a top-level row. -> [{ item, depth, prefix }]
-function treeRows(items) {
-  const ids = new Set(items.map(item => item.id));
-  const children = new Map();
-  const roots = [];
-  for (const item of items) {
-    const parent = item.parent_id;
-    if (parent !== null && parent !== undefined && parent !== item.id && ids.has(parent)) {
-      if (!children.has(parent)) children.set(parent, []);
-      children.get(parent).push(item);
-    } else {
-      roots.push(item);
-    }
-  }
-  const out = [];
-  const seen = new Set();
-  const visit = (item, lead, last, depth) => {
-    if (seen.has(item.id)) return;
-    seen.add(item.id);
-    out.push({ item, depth, prefix: depth === 0 ? '' : `${lead}${last ? '\u2514 ' : '\u251c '}` });
-    const kids = children.get(item.id) || [];
-    const next = depth === 0 ? '' : `${lead}${last ? '  ' : '\u2502 '}`;
-    kids.forEach((kid, index) => visit(kid, next, index === kids.length - 1, depth + 1));
-  };
-  for (const root of roots) visit(root, '', true, 0);
-  for (const item of items) visit(item, '', true, 0); // a parent loop: shown as top-level rows
-  return out;
-}
-
 // The second line of a home-view row: what the person must do for waiting_user, else the result (or the reason of a review).
 function treeDetail(item) {
   if (item.status === 'waiting_user') return item.attention_reason || item.result || '';
@@ -315,18 +280,19 @@ function treeDetail(item) {
   return item.result || '';
 }
 
-// groups: [{ key, label, rows: [{ item, depth, prefix }] }]
+// The home view (list --tree, lib/attention-home.js, the same as the phone list of the page): Needs you (waiting_user, then review), Working, To
+// do, each with whole trees (a tree is in the section of its most urgent open task); finished tasks are only counted, a finished parent with an
+// open task under it is drawn. items: open and finished tasks. -> { groups: [{ key, label, statuses, rows: [{ item, depth, prefix }] }], done }
 function treeGroups(items) {
-  return TREE_GROUPS.map(group => ({
-    ...group,
-    rows: group.statuses.flatMap(status => treeRows(items.filter(item => item.status === status))),
-  }));
+  const view = home.homeView(items);
+  return { groups: view.sections.map(section => ({ key: section.key, label: section.label, statuses: section.statuses, rows: home.homeRows(section.nodes) })), done: view.done };
 }
 
-function formatTree(items, doneCount) {
+function formatTree(items) {
   const cols = width();
   const out = [];
-  for (const group of treeGroups(items)) {
+  const { groups, done: doneCount } = treeGroups(items);
+  for (const group of groups) {
     if (!group.rows.length && group.key !== 'needs_you') continue;
     if (out.length) out.push('');
     out.push(`${group.label} (${group.rows.length})`);
@@ -487,11 +453,14 @@ async function run(argv, { env = process.env, print, printError, ask = defaultAs
     const api = connect(flags, env);
     const open = await api.list({ limit: 1000 });
     const finished = await api.list({ status: 'done,failed,cancelled', limit: 1000 });
+    // Finished tasks too: they are counted, and a finished parent keeps an open sub-task under it.
+    const all = [...open, ...finished];
     if (json) {
-      const groups = treeGroups(open).map(group => ({ key: group.key, label: group.label, items: group.rows.map(row => ({ ...row.item, depth: row.depth })) }));
-      print(JSON.stringify({ groups, done: finished.length }, null, 2));
+      const view = treeGroups(all);
+      const groups = view.groups.map(group => ({ key: group.key, label: group.label, items: group.rows.map(row => ({ ...row.item, depth: row.depth })) }));
+      print(JSON.stringify({ groups, done: view.done }, null, 2));
     } else {
-      print(formatTree(open, finished.length));
+      print(formatTree(all));
     }
     return EXIT.ok;
   }
@@ -1021,4 +990,4 @@ if (require.main === module) {
   main().then(code => { process.exitCode = code; });
 }
 
-module.exports = { main, parseArgs, formatList, formatItem, formatTree, formatPlugins, normalizeStatus, EXIT };
+module.exports = { main, parseArgs, formatList, formatItem, formatTree, treeGroups, formatPlugins, normalizeStatus, EXIT };

@@ -93,6 +93,105 @@ test('buildTree: deep trees stop indenting at MAX_INDENT; a cycle in the data ne
   assert.deepEqual(shape(nodes).flat(Infinity).sort(), [1, 2, 3], 'every row is drawn once');
 });
 
+// ── The phone list: the Home view (lib/attention-home.js, shared with `t-attention list --tree`) ──
+const sections = view => Object.fromEntries(view.sections.map(section => [section.key, shape(section.nodes)]));
+
+test('homeGroups: Needs you (waiting_user trees, then review), Working, To do, every section kept; Done counts done, failed and cancelled', async () => {
+  const { homeGroups, HOME_SECTIONS } = await load();
+  assert.deepEqual(HOME_SECTIONS.map(section => section.key), ['needs_you', 'working', 'todo']);
+  const view = homeGroups([
+    tree(1, 'review', null, 50), tree(2, 'waiting_user', null, 10), tree(3, 'working', null, 5), tree(4, 'done', null, 1), tree(5, 'failed', null, 2),
+    tree(6, 'cancelled', null, 3), tree(7, 'review', null, 60),
+  ]);
+  assert.deepEqual(view.sections.map(section => [section.key, section.label]), [['needs_you', 'Needs you'], ['working', 'Working'], ['todo', 'To do']]);
+  assert.deepEqual(sections(view), { needs_you: [2, 7, 1], working: [3], todo: [] }, 'waiting_user before review, each by sort_order; an empty section stays');
+  assert.equal(view.done, 3);
+  const empty = homeGroups([]);
+  assert.deepEqual(sections(empty), { needs_you: [], working: [], todo: [] });
+  assert.equal(empty.done, 0);
+});
+
+test('homeGroups: a tree stays together in the section of its most urgent open task, each row with its own status', async () => {
+  const { homeGroups } = await load();
+  const items = [
+    tree(1, 'working', null, 90), tree(2, 'todo', 1, 10), tree(3, 'working', 1, 5), // a working tree with a todo child: Working
+    tree(10, 'working', null, 80), tree(11, 'review', 10, 1), tree(12, 'working', 10, 2), // a review child pulls its tree into Needs you
+    tree(20, 'todo', null, 70), tree(21, 'todo', 20, 1), tree(22, 'waiting_user', 21, 1), // a waiting_user grandchild: Needs you, first
+    tree(30, 'todo', null, 60), tree(31, 'todo', 30, 1),
+  ];
+  const view = homeGroups(items);
+  assert.deepEqual(sections(view), { needs_you: [[20, [[21, [22]]]], [10, [11, 12]]], working: [[1, [3, 2]]], todo: [[30, [31]]] });
+  const working = view.sections[1].nodes[0];
+  assert.deepEqual([working.item.status, working.children[0].item.status, working.children[1].item.status], ['working', 'working', 'todo'], 'siblings by status, then sort_order');
+  assert.deepEqual([working.depth, working.children[1].depth, working.children[1].indent, working.parent], [0, 1, 1, null]);
+});
+
+test('homeGroups: finished tasks are only counted, but a finished parent keeps its open sub-task under it', async () => {
+  const { homeGroups } = await load();
+  const view = homeGroups([
+    tree(1, 'done', null, 9), tree(2, 'todo', 1, 1), tree(3, 'done', 1, 2), // a done parent with an open child and a done one
+    tree(4, 'working', null, 8), tree(5, 'failed', 4, 1), // a failed leaf under an open task: counted only
+    tree(6, 'done', null, 7), tree(7, 'cancelled', 6, 1), // a finished tree: counted only
+  ]);
+  assert.deepEqual(sections(view), { needs_you: [], working: [4], todo: [[1, [2]]] });
+  assert.equal(view.done, 5);
+});
+
+test('homeGroups: an older server (no parent_id) lists every task in the section of its status; a cycle never loops; an unknown parent is a plain row', async () => {
+  const { homeGroups } = await load();
+  const old = homeGroups([item(1, 'todo', { priority: 'high' }), item(2, 'todo'), item(3, 'review'), item(4, 'working'), item(5, 'done')]);
+  assert.deepEqual(sections(old), { needs_you: [3], working: [4], todo: [1, 2] });
+  assert.equal(old.done, 1);
+  const cycle = homeGroups([tree(1, 'todo', 2, 2), tree(2, 'todo', 1, 1), tree(3, 'todo', 3, 0), tree(4, 'working', 99, 5)]);
+  assert.deepEqual(sections(cycle).todo.flat(Infinity).sort(), [1, 2, 3], 'every row once');
+  assert.deepEqual(sections(cycle).working, [4]);
+});
+
+test('homeGroups: several engines keep their trees apart (ids repeat), this machine first among equals', async () => {
+  const { homeGroups } = await load();
+  const items = [on('remote:7', 1, 'todo', null, 30), on('remote:7', 2, 'review', 1, 5), on('local', 1, 'todo', null, 10), on('local', 2, 'todo', 1, 20)];
+  const view = homeGroups(items, { engines: ['local', 'remote:7'] });
+  const keys = list => list.map(node => (node.children.length ? [node.item.key, keys(node.children)] : node.item.key));
+  assert.deepEqual(view.sections.map(section => keys(section.nodes)), [[['remote:7:1', ['remote:7:2']]], [], [['local:1', ['local:2']]]]);
+  const both = homeGroups([on('remote:7', 5, 'todo', null, 30), on('local', 6, 'todo', null, 10)], { engines: ['local', 'remote:7'] });
+  assert.deepEqual(keys(both.sections[2].nodes), ['local:6', 'remote:7:5']);
+});
+
+test('homeGroups gives the same sections, rows and Done count as `t-attention list --tree` for the same data', async () => {
+  const { homeGroups } = await load();
+  const cli = require('../scripts/t-attention.js');
+  const items = [
+    tree(1, 'working', null, 100, { custom_status: 'Coordinating' }), tree(2, 'working', 1, 40), tree(3, 'working', 2, 30), tree(4, 'working', 1, 50),
+    tree(5, 'review', 1, 60), tree(6, 'waiting_user', null, 10), tree(7, 'todo', null, 20), tree(8, 'done', null, 5), tree(9, 'failed', null, 6),
+    tree(10, 'done', null, 7), tree(11, 'todo', 10, 1), tree(12, 'cancelled', 1, 2), tree(13, 'review', null, 90), tree(14, 'todo', 99, 3),
+    tree(15, 'waiting_user', 7, 1), tree(16, 'todo', 16, 4),
+  ];
+  const flat = nodes => nodes.flatMap(node => [[node.item.id, node.depth], ...flat(node.children)]);
+  const page = homeGroups(items);
+  const command = cli.treeGroups(items);
+  assert.deepEqual(page.sections.map(section => [section.key, flat(section.nodes)]), command.groups.map(group => [group.key, group.rows.map(row => [row.item.id, row.depth])]));
+  assert.equal(page.done, command.done);
+  assert.deepEqual(command.groups[0].rows.map(row => row.item.id), [6, 7, 15, 13, 1, 5, 4, 2, 3], 'a sanity check of the shared order');
+  assert.deepEqual(command.groups[2].rows.map(row => row.item.id), [16, 14, 10, 11], 'a finished root after the open ones');
+});
+
+test('homeDetail: what you need to do in Needs you, custom status and notes in Working, nothing in To do; times as MM-DD HH:MM', async () => {
+  const { homeDetail, shortTime } = await load();
+  assert.deepEqual(homeDetail(item(1, 'waiting_user', { attention_reason: 'Pick a date' }), 'needs_you'), { kind: 'reason', text: 'Pick a date' });
+  assert.deepEqual(homeDetail(item(1, 'waiting_user', { attention_reason: 'Old', context: { pending: { text: 'Allow Bash' } } }), 'needs_you'), { kind: 'reason', text: 'Allow Bash' });
+  assert.deepEqual(homeDetail(item(2, 'review'), 'needs_you'), { kind: 'confirm', text: 'Waits for your confirmation' });
+  assert.deepEqual(homeDetail(item(2, 'review', { attention_reason: 'Check the PR' }), 'needs_you'), { kind: 'reason', text: 'Check the PR' });
+  assert.equal(homeDetail(item(3, 'working', { custom_status: 'Busy' }), 'needs_you'), null, 'the parent of a task that needs you');
+  assert.deepEqual(homeDetail(item(3, 'working', { custom_status: 'In testing', notes: '\n Due Friday \nmore' }), 'working'), { kind: 'progress', text: 'In testing · Due Friday' });
+  assert.deepEqual(homeDetail(item(4, 'todo', { notes: 'Waits for 41' }), 'working'), { kind: 'progress', text: 'Waits for 41' });
+  assert.equal(homeDetail(item(4, 'working'), 'working'), null);
+  assert.equal(homeDetail(item(5, 'todo', { notes: 'x', custom_status: 'y' }), 'todo'), null);
+  const at = new Date(2026, 2, 2, 14, 5);
+  assert.equal(shortTime(at.toISOString()), '03-02 14:05');
+  assert.equal(shortTime(''), '');
+  assert.equal(shortTime('nope'), '');
+});
+
 test('visibleRows: a collapsed parent hides its sub-tasks at every depth', async () => {
   const { buildTree, visibleRows } = await load();
   const all = [tree(1, 'todo', null, 9), tree(2, 'todo', 1, 8), tree(3, 'todo', 2, 7), tree(4, 'todo', null, 6)];
@@ -165,6 +264,7 @@ test('rollbackItems: only the tasks the shown change touched go back, unless a n
 test('statusOfGroup: the status a drop on a group title gives', async () => {
   const { statusOfGroup } = await load();
   assert.deepEqual(['needs', 'review', 'working', 'todo', 'closed', 'x'].map(statusOfGroup), ['waiting_user', 'review', 'working', 'todo', 'done', null]);
+  assert.equal(statusOfGroup('needs_you'), 'waiting_user', 'a drop on the phone\'s Needs you');
 });
 
 test('the Needs you count is the number of waiting_user tasks', async () => {

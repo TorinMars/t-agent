@@ -20,6 +20,16 @@
       "author": "T-Agent",
       "homepage": "https://github.com/TorinMars/t-agent/tree/main/plugins/notifiers/telegram",
       "tags": ["telegram", "messages", "calls"]
+    },
+    {
+      "name": "email",
+      "kind": "notifier",
+      "builtIn": true,
+      "version": "1.0.0",
+      "description": "Sends T-Attention messages by email from your own mailbox over SMTP (Gmail and 163 Mail built in, or any SMTP server).",
+      "author": "T-Agent",
+      "homepage": "https://github.com/TorinMars/t-agent/tree/main/plugins/notifiers/email",
+      "tags": ["email", "smtp", "gmail", "163", "messages"]
     }
   ]
 }

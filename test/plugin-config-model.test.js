@@ -49,3 +49,28 @@ test('numberInput gives the HTML attributes of a number field', async () => {
   assert.deepEqual(numberInput({ integer: true, min: 5, max: 120 }), { inputMode: 'numeric', min: 5, max: 120, step: 1 });
   assert.deepEqual(numberInput({}), { inputMode: 'decimal' });
 });
+
+test('showWhen hides a field (and skips its checks) until its select has a listed value; a select shows the help of the chosen option', async () => {
+  const { fieldShown, fieldHelp, formProblem } = await load();
+  const schema = [
+    { key: 'provider', label: 'Provider', type: 'select', help: 'Pick one', options: [{ value: 'gmail', label: 'Gmail', help: 'Create an app password' }, { value: 'custom', label: 'Other' }], default: 'gmail' },
+    { key: 'host', label: 'SMTP server', type: 'string', required: true, showWhen: { key: 'provider', values: ['custom'] } },
+  ];
+  assert.equal(fieldShown(schema[0], {}), true);
+  assert.equal(fieldShown(schema[1], { provider: 'gmail' }), false);
+  assert.equal(fieldShown(schema[1], { provider: 'custom' }), true);
+  assert.equal(formProblem(schema, { values: { provider: 'gmail', host: '' } }), null, 'a hidden required field is not checked');
+  assert.deepEqual(formProblem(schema, { values: { provider: 'custom', host: '' } }), { key: 'host', message: 'SMTP server is required' });
+  assert.equal(fieldHelp(schema[0], { provider: 'gmail' }), 'Create an app password');
+  assert.equal(fieldHelp(schema[0], { provider: 'custom' }), 'Pick one', 'an option without help: the field help');
+  assert.equal(fieldHelp(schema[1], {}), '');
+});
+
+test('helpParts turns https addresses into links and keeps the punctuation and other text around them', async () => {
+  const { helpParts } = await load();
+  assert.deepEqual(helpParts('Create one at https://myaccount.google.com/apppasswords. Then enter it.'), [{ text: 'Create one at ' }, { href: 'https://myaccount.google.com/apppasswords' }, { text: '. Then enter it.' }]);
+  assert.deepEqual(helpParts('(see https://a.example/x)'), [{ text: '(see ' }, { href: 'https://a.example/x' }, { text: ')' }]);
+  assert.deepEqual(helpParts('\u5728 https://a.example/b\uff0c'), [{ text: '\u5728 ' }, { href: 'https://a.example/b' }, { text: '\uff0c' }]);
+  assert.deepEqual(helpParts('no link, javascript:alert(1) or http://plain.example'), [{ text: 'no link, javascript:alert(1) or http://plain.example' }]);
+  assert.deepEqual(helpParts(''), []);
+});

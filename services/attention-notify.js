@@ -65,8 +65,9 @@ function publicUrl(value) {
   } catch { throw new NotifyError('The page address must be an http(s) URL without credentials, query or fragment'); }
 }
 
-// Validates a rules body against the current rules; fields left out keep their saved value.
-function normalizeRules(body, current, notifierNames) {
+// Validates a rules body against the current rules; fields left out keep their saved value. modesOf(name): the modes that notifier allows
+// (manifest `modes`, see checkManifest; default all of MODES).
+function normalizeRules(body, current, notifierNames, modesOf = () => MODES) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) throw new NotifyError('Invalid notification rules');
   const next = { ...current, quietHours: { ...current.quietHours }, rateLimit: { ...current.rateLimit }, modes: { ...current.modes } };
   if (body.statuses !== undefined) {
@@ -82,6 +83,7 @@ function normalizeRules(body, current, notifierNames) {
       for (const [status, mode] of Object.entries(perStatus)) {
         if (!STATUSES.includes(status)) throw new NotifyError('Unknown status');
         if (!MODES.includes(mode)) throw new NotifyError('Unknown mode');
+        if (!modesOf(name).includes(mode)) throw new NotifyError(mode === 'call' ? `${name} cannot make calls` : `${name} cannot send messages`);
         clean[status] = mode;
       }
       next.modes[name] = clean;
@@ -149,7 +151,7 @@ function validateConfigSchema(config) {
     if (typeof field[name] !== 'string' || field[name].length > max) throw new Error(`config field ${field.key}: ${name} must be text of at most ${max} characters`);
     return field[name];
   };
-  return config.map((field, index) => {
+  const fields = config.map((field, index) => {
     if (!field || typeof field !== 'object' || Array.isArray(field)) throw new Error(`config field ${index + 1} is not an object`);
     if (typeof field.key !== 'string' || !CONFIG_KEY.test(field.key)) throw new Error(`config field ${index + 1}: key must be letters, digits or _ and start with a letter`);
     if (seen.has(field.key)) throw new Error(`config field ${field.key} is listed twice`);
@@ -165,6 +167,11 @@ function validateConfigSchema(config) {
         const value = typeof option === 'string' ? option : option && option.value;
         const label = typeof option === 'string' ? option : option && option.label;
         if (typeof value !== 'string' || !value || value.length > 100 || typeof label !== 'string' || !label || label.length > 120) throw new Error(`config field ${field.key}: every option needs a value and a label`);
+        // An option's own help, shown under the select while that option is chosen (for example the setup steps of one provider).
+        if (option && typeof option === 'object' && option.help !== undefined) {
+          if (typeof option.help !== 'string' || option.help.length > 300) throw new Error(`config field ${field.key}: an option's help must be text of at most 300 characters`);
+          return { value, label, help: option.help };
+        }
         return { value, label };
       });
       if (new Set(clean.options.map(option => option.value)).size !== clean.options.length) throw new Error(`config field ${field.key}: an option value is listed twice`);
@@ -184,9 +191,23 @@ function validateConfigSchema(config) {
       try { clean.default = checkValue(clean, field.default); } catch (error) { throw new Error(`config field ${field.key}: the default is not valid (${error.message})`); }
       if (clean.default === undefined) delete clean.default;
     }
+    if (field.showWhen !== undefined) clean.showWhen = field.showWhen;
     return clean;
   });
+  // showWhen { key, values }: the field is shown (and a required one required) only while the select `key` has one of `values`.
+  for (const field of fields) {
+    if (field.showWhen === undefined) continue;
+    const when = field.showWhen;
+    const select = when && typeof when === 'object' && !Array.isArray(when) ? fields.find(other => other.key === when.key && other !== field) : null;
+    if (!select || select.type !== 'select') throw new Error(`config field ${field.key}: showWhen.key must name a select field`);
+    if (!Array.isArray(when.values) || !when.values.length || when.values.some(value => !select.options.some(option => option.value === value))) throw new Error(`config field ${field.key}: showWhen.values must be options of ${select.key}`);
+    field.showWhen = { key: select.key, values: [...new Set(when.values)] };
+  }
+  return fields;
 }
+
+// The field is shown for these values (the values in effect, defaults filled in): no showWhen, or its select has one of the listed values.
+const fieldShown = (field, values = {}) => !field.showWhen || field.showWhen.values.includes(values[field.showWhen.key]);
 
 // One value against its field: the clean value, or undefined for "no value" (an empty string or null). Throws NotifyError with a message for the page.
 function checkValue(field, value) {
@@ -236,8 +257,9 @@ function normalizeConfigValues(schema, body, current = {}) {
     else value = checkValue(field, raw);
     if (value !== undefined) next[field.key] = value;
   }
+  const shown = effectiveValues(schema, next);
   for (const field of schema) {
-    if (field.required && next[field.key] === undefined && field.default === undefined) throw new NotifyError(`${field.label} is required`);
+    if (field.required && next[field.key] === undefined && field.default === undefined && fieldShown(field, shown)) throw new NotifyError(`${field.label} is required`);
   }
   return next;
 }
@@ -326,13 +348,19 @@ function dropRequireCache(folder) {
 }
 
 // The settings part of a notifier manifest: `config` validated (an invalid schema skips the plugin), `test` (default true: every notifier has
-// test()) and `customUi` (the name of a section the page draws itself, above the generic form).
+// test()), `customUi` (the name of a section the page draws itself, above the generic form) and `modes` (what the rules may choose for it:
+// a list of MODES; 'off' is always allowed; default all, so email can say ["message", "off"]).
 function checkManifest(manifest) {
   let config;
   try { config = validateConfigSchema(manifest.config); } catch (error) { throw new Error(`invalid config in manifest.json: ${error.message}`); }
   if (manifest.test !== undefined && typeof manifest.test !== 'boolean') throw new Error('invalid manifest.json: test must be true or false');
   if (manifest.customUi !== undefined && manifest.customUi !== null && (typeof manifest.customUi !== 'string' || !/^[a-z][a-z0-9-]{0,40}$/.test(manifest.customUi))) throw new Error('invalid manifest.json: customUi must be a short name');
-  return { ...manifest, config, test: manifest.test !== false, customUi: manifest.customUi || null };
+  let modes = [...MODES];
+  if (manifest.modes !== undefined && manifest.modes !== null) {
+    if (!Array.isArray(manifest.modes) || !manifest.modes.length || manifest.modes.some(mode => !MODES.includes(mode)) || new Set(manifest.modes).size !== manifest.modes.length) throw new Error(`invalid manifest.json: modes must be a list of ${MODES.join(', ')}`);
+    modes = MODES.filter(mode => mode === 'off' || manifest.modes.includes(mode));
+  }
+  return { ...manifest, config, test: manifest.test !== false, customUi: manifest.customUi || null, modes };
 }
 
 function loadNotifiers(dir = PLUGINS_DIR, log = defaultLog) {
@@ -473,12 +501,18 @@ function createAttentionNotify(options) {
     };
   }
   function saveRules(owner, body) {
-    const next = normalizeRules(body, getRules(owner), [...byName.keys()]);
+    const next = normalizeRules(body, getRules(owner), [...byName.keys()], modesOf);
     writeState(rulesKey(owner), next);
     syncStore.settingChanged(SYNC_RULES);
     return next;
   }
-  const modeOf = (rules, name, status) => (rules.modes[name] && rules.modes[name][status]) || 'message';
+  // A mode the notifier does not allow (saved before, or synced from an older device) counts as a message, or off without messages.
+  const modesOf = name => (manifests.get(name) || {}).modes || MODES;
+  const modeOf = (rules, name, status) => {
+    const mode = (rules.modes[name] && rules.modes[name][status]) || 'message';
+    const allowed = modesOf(name);
+    return allowed.includes(mode) ? mode : allowed.includes('message') ? 'message' : 'off';
+  };
 
   // The manifest settings of one plugin for one user: { enabled, values } in attention-plugin:<name>:<owner> (encrypted as a whole, so the
   // secrets too). The first read moves the values of schema keys the plugin kept in its own store (attention-notify:<name>:<owner>, for
@@ -919,7 +953,7 @@ function createAttentionNotify(options) {
       modes: MODES,
       subscribed: Boolean(unsubscribe),
       notifiers: notifiers.map(plugin => ({
-        name: plugin.name, label: plugin.label || plugin.name, configFields: plugin.configFields || [],
+        name: plugin.name, label: plugin.label || plugin.name, configFields: plugin.configFields || [], modes: modesOf(plugin.name),
         status: typeof plugin.status === 'function' ? plugin.status(store(plugin.name).read(who), who) : {},
       })),
       recent: recent.slice(0, 20),
@@ -1062,5 +1096,5 @@ function importPluginsFromSync({ db, sessionSecret }, owner, value) {
 module.exports = {
   SYNC_RULES, SYNC_PLUGINS, exportRulesForSync, importRulesFromSync, exportPluginsForSync, importPluginsFromSync,
   start, createAttentionNotify, loadNotifiers, scanNotifiers, scanNotifierFolders, dropRequireCache, normalizeRules,
-  validateConfigSchema, normalizeConfigValues, effectiveValues, publicValues, scrubSecrets, checkManifest, CONFIG_TYPES, inQuietHours, absoluteLink, defaultRules, NotifyError, STATUSES, MODES, DEDUPE_MS,
+  validateConfigSchema, normalizeConfigValues, fieldShown, effectiveValues, publicValues, scrubSecrets, checkManifest, CONFIG_TYPES, inQuietHours, absoluteLink, defaultRules, NotifyError, STATUSES, MODES, DEDUPE_MS,
 };

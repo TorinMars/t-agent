@@ -1,7 +1,9 @@
 // Browser test of the T-Attention notifier settings (scripts/h5-shell/NotifierSettings.jsx) on a phone-sized page, reached through the plugin list:
 // the Telegram login steps (api_id / api_hash / phone -> code -> 2FA password, and the QR login: the code from the server, its refresh, polling only while
 // Telegram's page is open, a login left half way shown on the row and again on the page, the 2FA password after the scan), account 2 (the ring time is in the manifest form, PluginConfigForm, not here), the test buttons, the rules (mode per status, delay,
-// quiet hours, limits, page address) and that secret fields are never filled from the server. The server is a fake fetch.
+// quiet hours, limits, page address) and that secret fields are never filled from the server; the email notifier: only the modes it allows
+// (no call) in the rules, and its manifest form (Gmail / 163 / other SMTP server: provider help with a link, the server fields only for
+// "Other SMTP server"). The server is a fake fetch.
 const { chromium } = require('playwright');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -9,6 +11,8 @@ const assert = require('node:assert/strict');
 const root = path.resolve(__dirname, '..');
 // H5_TEST_WIDTH: the viewport width (390 by default; run it with 320 too).
 const WIDTH = Number(process.env.H5_TEST_WIDTH) || 390;
+const { checkManifest } = require(path.join(root, 'services/attention-notify.js'));
+const EMAIL_SCHEMA = checkManifest(JSON.parse(fs.readFileSync(path.join(root, 'plugins/notifiers/email/manifest.json'), 'utf8'))).config;
 const html = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '').replace(/<link\b[^>]*>/g, '');
 
 (async () => {
@@ -20,12 +24,13 @@ const html = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8').replace(
     await page.route('http://app.test/', route => route.fulfill({ contentType: 'text/html', body: html }));
     await page.goto('http://app.test/');
     await page.addStyleTag({ content: fs.readFileSync(path.join(root, 'public/css/h5.css'), 'utf8') });
-    await page.evaluate(() => {
+    await page.evaluate(emailSchema => {
       window.calls = [];
+      window.emailConfig = { name: 'email', enabled: true, schema: emailSchema, test: true, customUi: null, values: { provider: 'gmail', fromName: 'T-Agent', security: 'ssl', password: { set: false } } };
       window.confirm = () => true;
       const rules = { statuses: ['waiting_user', 'failed', 'review'], modes: {}, messageDelayMinutes: 3, callDelayMinutes: 0, quietHours: { enabled: false, start: '22:00', end: '08:00', timeZone: '' }, rateLimit: { message: 20, call: 6 }, publicUrl: '' };
       window.server = { recent: [{ at: '2026-11-12T10:03:00.000Z', notifier: 'telegram', item_id: 5, status: 'waiting_user', mode: 'message', outcome: 'cancelled', detail: 'the status changed' }, { at: '2026-11-12T10:01:00.000Z', notifier: 'telegram', item_id: 5, status: 'waiting_user', mode: 'message', outcome: 'message_scheduled', detail: '3 min' }, { at: '2026-11-12T10:00:00.000Z', notifier: 'telegram', item_id: 4, status: 'review', mode: 'message', outcome: 'foreground', detail: 'the session is open on screen' }], rules, tg: { loggedIn: false, step: 'none', apiId: null, hasApiHash: false, phone: '', account: null, target: null, callSeconds: 30 } };
-      const view = () => ({ rules: server.rules, statuses: ['todo', 'working', 'waiting_user', 'review', 'done', 'failed', 'cancelled'], modes: ['message', 'call', 'off'], notifiers: [{ name: 'telegram', label: 'Telegram', configFields: [], status: server.tg }], recent: server.recent || [] });
+      const view = () => ({ rules: server.rules, statuses: ['todo', 'working', 'waiting_user', 'review', 'done', 'failed', 'cancelled'], modes: ['message', 'call', 'off'], notifiers: [{ name: 'telegram', label: 'Telegram', configFields: [], status: server.tg }, { name: 'email', label: 'Email', configFields: [], modes: ['message', 'off'], status: { configured: false, summary: 'Not set up' } }], recent: server.recent || [] });
       window.svgOf = n => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="${n}" height="10" fill="#000"/></svg>`;
       window.fetch = async (url, options = {}) => {
         const method = options.method || 'GET';
@@ -36,7 +41,9 @@ const html = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8').replace(
         if (url.startsWith('/api/system/')) return reply({});
         // The rest of the Settings group "T-Attention" (the notifier settings are drawn in its slot) and the list for the row 2 badge.
         if (url === '/api/attention/tokens') return reply({ tokens: [] });
-        if (url === '/api/attention/plugins') return reply({ listeners: [], notifiers: [{ name: 'telegram', version: '1.0.0', description: 'Telegram', loaded: true, error: null, enabled: true, configured: server.tg.loggedIn, summary: server.tg.loggedIn ? 'Logged in as Account One' : 'Not logged in', statuses: {}, settings: true, test: true, customUi: 'telegram' }] });
+        if (url === '/api/attention/plugins') return reply({ listeners: [], notifiers: [{ name: 'telegram', version: '1.0.0', description: 'Telegram', loaded: true, error: null, enabled: true, configured: server.tg.loggedIn, summary: server.tg.loggedIn ? 'Logged in as Account One' : 'Not logged in', statuses: {}, settings: true, test: true, customUi: 'telegram' }, { name: 'email', version: '1.0.0', description: 'Email', loaded: true, error: null, enabled: true, configured: false, summary: 'Not set up', statuses: {}, settings: true, test: true, customUi: null }] });
+        if (url === '/api/attention/plugins/email/config' && method === 'GET') return reply(emailConfig);
+        if (url === '/api/attention/plugins/email/config' && method === 'PUT') { const { password, ...rest } = body.values || {}; emailConfig.values = { ...emailConfig.values, ...rest, password: { set: Boolean(password) || emailConfig.values.password.set } }; return reply(emailConfig); }
         if (url === '/api/attention/plugins/telegram/config') return reply({ name: 'telegram', enabled: true, schema: [], test: true, customUi: 'telegram', values: {} });
         if (url === '/api/attention/settings/summary') return reply({ enabled: false, provider: 'deepseek', model: '', providers: [{ id: 'deepseek', label: 'DeepSeek', hasApiKey: false, model: 'deepseek-chat' }] });
         if (url.startsWith('/api/attention') && !url.startsWith('/api/attention-notify')) return reply({ items: [], host: 'mac' });
@@ -53,7 +60,7 @@ const html = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8').replace(
         if (url === '/api/attention-notify/telegram/logout') { server.tg = { loggedIn: false, step: 'none', apiId: null, hasApiHash: false, phone: '', account: null, target: null, callSeconds: 30 }; return reply(server.tg); }
         throw new Error(`unexpected ${method} ${url}`);
       };
-    });
+    }, EMAIL_SCHEMA);
     await page.addScriptTag({ content: fs.readFileSync(path.join(root, 'public/js/h5-shell.js'), 'utf8') });
     await page.evaluate(() => window.H5UI.set({ settingsOpen: true }));
     await page.locator('#h5-settings').waitFor({ state: 'visible' });
@@ -139,6 +146,7 @@ const html = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8').replace(
     assert.equal(await page.inputValue('#h5-notify-mode-telegram-done'), 'off');
     await page.selectOption('#h5-notify-mode-telegram-waiting_user', 'call');
     await page.selectOption('#h5-notify-mode-telegram-review', 'off');
+    await page.selectOption('#h5-notify-mode-email-review', 'off');
     await page.fill('#h5-notify-delay', '5');
     await page.fill('#h5-notify-message-delay', '10');
     await page.locator('#h5-notify-quiet').check();
@@ -158,6 +166,21 @@ const html = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8').replace(
     assert.ok(saved.quietHours.timeZone, 'the browser time zone is sent');
     assert.deepEqual(saved.rateLimit, { message: '20', call: '3' });
     assert.equal(saved.publicUrl, 'https://t.example.com');
+    // Email cannot ring: its choices are only Message and Off, and its modes are saved with the others.
+    assert.deepEqual(await page.locator('#h5-notify-mode-email-waiting_user option').evaluateAll(options => options.map(option => option.value)), ['message', 'off']);
+    assert.deepEqual(await page.locator('#h5-notify-mode-telegram-waiting_user option').evaluateAll(options => options.map(option => option.value)), ['message', 'call', 'off']);
+    assert.equal(saved.modes.email.waiting_user, 'message');
+    assert.equal(saved.modes.email.done, 'off');
+    // Saving again without touching anything keeps the delay and the quiet hours echoed from the rules.
+    await page.selectOption('#h5-notify-mode-email-failed', 'off');
+    await page.locator('#h5-notify-save').click();
+    await page.waitForFunction(() => window.calls.filter(call => call.url === '/api/attention-notify/config' && call.method === 'PUT').length === 2);
+    await page.waitForFunction(() => /Saved/.test(document.querySelector('#h5-notify-feedback').textContent));
+    const again = (await notifyCalls()).filter(call => call.url === '/api/attention-notify/config' && call.method === 'PUT').at(-1).body;
+    assert.equal(again.callDelayMinutes, '5');
+    assert.deepEqual([again.quietHours.enabled, again.quietHours.start, again.quietHours.end], [true, '23:00', '08:00']);
+    assert.equal(again.modes.email.failed, 'off');
+    assert.equal(again.modes.telegram.failed, 'message');
     await back().click();
     await page.locator('.h5-plugin-page[data-name="rules"]').waitFor({ state: 'detached' });
     assert.ok(await page.locator('#h5-tg-logout').isVisible(), 'back on the plugin page');
@@ -203,6 +226,42 @@ const html = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8').replace(
     await page.locator('#h5-tg-target').waitFor({ state: 'visible' });
     await page.waitForTimeout(2500);
     assert.equal(await qrCalls(), settled, 'polling stops when the QR step ends');
+    // The email page: the manifest form. Gmail first, with its app password steps and a link; the server fields only for another SMTP server.
+    await back().tap();
+    await page.locator('.h5-plugin-page').waitFor({ state: 'detached' });
+    await page.locator('#h5-plugins .h5-plugin-notifier[data-name="email"]').tap();
+    await page.locator('#h5-plugin-config-email-provider').waitFor({ state: 'visible' });
+    assert.equal(await page.inputValue('#h5-plugin-config-email-provider'), 'gmail');
+    const emailForm = page.locator('.h5-plugin-config[data-name="email"]');
+    const providerHelp = page.locator('#h5-plugin-config-email-provider-helper-text');
+    assert.match(await providerHelp.textContent(), /2-Step Verification/);
+    assert.equal(await providerHelp.locator('a').getAttribute('href'), 'https://myaccount.google.com/apppasswords');
+    assert.equal(await providerHelp.locator('a').getAttribute('target'), '_blank');
+    for (const key of ['host', 'port', 'security']) assert.equal(await page.locator(`#h5-plugin-config-email-${key}`).count(), 0, `${key} is hidden for Gmail`);
+    assert.equal(await page.inputValue('#h5-plugin-config-email-password'), '', 'the password field starts empty');
+    await page.selectOption('#h5-plugin-config-email-provider', '163');
+    assert.match(await providerHelp.textContent(), /authorization code/);
+    assert.equal(await providerHelp.locator('a').count(), 0);
+    assert.equal(await page.locator('#h5-plugin-config-email-host').count(), 0, 'still hidden for 163');
+    await page.selectOption('#h5-plugin-config-email-provider', 'custom');
+    await page.locator('#h5-plugin-config-email-host').waitFor({ state: 'visible' });
+    assert.equal(await page.inputValue('#h5-plugin-config-email-security'), 'ssl');
+    assert.equal(await page.locator('#h5-plugin-config-email-port').count(), 1);
+    // A required field that is shown is checked: the host stays optional in the schema, the address is required.
+    await emailForm.locator('.h5-plugin-config-save').tap();
+    await page.locator('#h5-plugin-config-feedback-email', { hasText: 'Sender email address is required' }).waitFor();
+    await page.fill('#h5-plugin-config-email-address', 'me@example.com');
+    await page.fill('#h5-plugin-config-email-password', 'app-password-1');
+    await page.fill('#h5-plugin-config-email-host', 'smtp.example.com');
+    await page.selectOption('#h5-plugin-config-email-security', 'starttls');
+    await emailForm.locator('.h5-plugin-config-save').tap();
+    await page.locator('#h5-plugin-config-feedback-email', { hasText: 'Saved' }).waitFor();
+    const emailSave = (await page.evaluate(() => window.calls.filter(call => call.url === '/api/attention/plugins/email/config' && call.method === 'PUT'))).at(-1).body.values;
+    assert.deepEqual([emailSave.provider, emailSave.address, emailSave.password, emailSave.host, emailSave.security, emailSave.port], ['custom', 'me@example.com', 'app-password-1', 'smtp.example.com', 'starttls', '']);
+    assert.equal(await page.inputValue('#h5-plugin-config-email-password'), '', 'the saved password is not shown again');
+    assert.equal(await page.getAttribute('#h5-plugin-config-email-password', 'placeholder'), 'Saved; leave empty to keep it');
+    const formBox = await emailForm.boundingBox();
+    assert.ok(formBox.x >= 0 && formBox.x + formBox.width <= WIDTH, `the form fits the phone width: ${JSON.stringify(formBox)}`);
     assert.deepEqual(errors, []);
     console.log('h5 notifier settings: ok');
   } finally {

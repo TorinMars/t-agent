@@ -744,7 +744,7 @@ async function connect() {
     send({
       type: 'hello',
       token: config.token,
-      version: '1.0.0',
+      version: chrome.runtime.getManifest?.().version || null, // the version in manifest.json
       protocol: 1,
       browser: {
         name: config.name || `Chrome on ${navigator.platform}`,

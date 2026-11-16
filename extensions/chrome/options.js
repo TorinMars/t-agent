@@ -22,7 +22,7 @@ document.querySelector('#pair').addEventListener('submit', async e => {
       body: JSON.stringify({
         code: document.querySelector('#code').value.trim(),
         name: name.value,
-        version: '1.0.0',
+        version: chrome.runtime.getManifest?.().version || null, // the version in manifest.json
         user_agent: navigator.userAgent
       })
     });

@@ -107,7 +107,7 @@ test('unpacked extension contract in local headless Chromium', {
   }), base);
   for (let n = 0; n < 100 && !hello; n++) await delay(50);
   assert.equal(hello?.protocol, 1);
-  assert.equal(hello?.version, '1.0.0');
+  assert.equal(hello?.version, require('../manifest.json').version, 'hello carries the manifest version');
   assert.equal(hello.methods.length, 25);
   const cmd = async (method, params = {}) => {
     const id = `c_${++seq}`;

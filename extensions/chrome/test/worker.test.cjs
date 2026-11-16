@@ -64,6 +64,7 @@ test('worker protocol, tab policy and capture lifecycle without network', {
     },
     runtime: {
       id: 'fixture-extension',
+      getManifest: () => require('../manifest.json'),
       onMessage: signal()
     },
     alarms: {
@@ -234,6 +235,7 @@ test('worker protocol, tab policy and capture lifecycle without network', {
   };
   await t.test('hello, ping, error envelope and persistent handed tabs', async () => {
     assert.equal(socket.messages[0].token, 'tab_fixture');
+    assert.equal(socket.messages[0].version, require('../manifest.json').version, 'hello carries the manifest version');
     assert.deepEqual(socket.messages[0].methods, methods);
     assert.equal(methods.length, 25);
     intervals.find(i => i.ms === 20000).fn();

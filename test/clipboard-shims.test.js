@@ -305,9 +305,11 @@ test('routes/terminal.js spawns every PTY with the shim folder first in PATH and
 });
 
 test('the codex wrapper sets SSH_TTY to the terminal and passes arguments, stdin and the exit code through', async () => {
-  const run = await inPty(`tty; codex resume abc 'two words'; echo "exit $?"`, baseEnv({ FAKE_CODEX_EXIT: '7' }));
-  const tty = run.output.split(/\r?\n/)[0].trim();
-  assert.match(tty, /^\/dev\//);
+  // The terminal's name is read from a marked line, not from the first line: on Linux the line break of the first
+  // output of a new PTY has been seen missing ("/dev/pts/0SSH_TTY=...").
+  const run = await inPty(`printf 'TTY=[%s]\\n' "$(tty)"; codex resume abc 'two words'; echo "exit $?"`, baseEnv({ FAKE_CODEX_EXIT: '7' }));
+  const tty = (run.output.match(/(?<!SSH_)TTY=\[([^\]]*)\]/) || [])[1] || '';
+  assert.match(tty, /^\/dev\//, JSON.stringify(run.output));
   assert.ok(run.output.includes(`SSH_TTY=[${tty}] SSH_CONNECTION=[unset]`), JSON.stringify(run.output));
   assert.match(run.output, /arg=\[resume\]\r?\narg=\[abc\]\r?\narg=\[two words\]\r?\nexit 7/);
   const piped = await inPty(`printf 'hello' | codex exec -`);

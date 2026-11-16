@@ -5,10 +5,13 @@
 // It subscribes in-process to the onChange bus of services/attention.js and loads notifier plugins from plugins/notifiers/<name>/
 // (manifest.json + index.js with { name, label, configFields, notify(), test() }).
 // Rules and plugin settings are per user, encrypted in system_state (no schema change):
-//   attention-notify:<owner>          the rules (statuses, modes, quiet hours, message and call delays, rate limits, public page address)
+//   attention-notify:<owner>          the rules (statuses, modes, quiet hours, message and call delays, rate limits, public page address, agent messages)
 //   attention-notify:<plugin>:<owner> the plugin's own settings (for Telegram: the session string and api_hash; never sent to the browser)
 //   attention-plugin:<plugin>:<owner> the manifest settings: { enabled, values } (the "config" schema of manifest.json; secrets never sent back)
 // A notifier error never reaches the attention API: the bus handler returns at once and every delivery is caught and logged.
+// Direct messages (sendDirect, `tcli notify` through routes/tcli-notify.js): a free-form message of an agent session, sent through every notifier
+// whose plugin exports `direct: true`, with the switch, readiness, quiet hours, a 60 s dedupe and the hourly message limit, but none of the item rules.
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const express = require('express');
@@ -25,6 +28,9 @@ const DEFAULT_MESSAGE_DELAY = 3; // minutes a message waits (0 = at once)
 const MESSAGE_DELAY_MAX = 120;
 const CALL_DELAY_MAX = 1440;
 const RECENT_MAX = 50;
+// Direct messages: the same notifier + title + text is not sent again within a minute; the limits of what an agent may send.
+const DIRECT_DEDUPE_MS = 60 * 1000;
+const DIRECT_LIMITS = { text: 3000, title: 200, from: 200, link: 1000 };
 const SECRET_KEY = /session|hash|token|secret|password|key/i;
 const PLUGINS_DIR = path.join(__dirname, '..', 'plugins', 'notifiers');
 
@@ -42,6 +48,7 @@ const defaultRules = () => ({
   quietHours: { enabled: false, start: '22:00', end: '08:00', timeZone: '' },
   rateLimit: { ...DEFAULT_RATE },
   publicUrl: '', // the page address used to make links absolute in messages
+  agentMessages: true, // agent sessions may send direct messages (tcli notify)
 });
 
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -103,6 +110,10 @@ function normalizeRules(body, current, notifierNames, modesOf = () => MODES) {
     next.rateLimit = { message: intIn(rate.message, 1, 200, current.rateLimit.message, 'The message limit must be a whole number from 1 to 200'), call: intIn(rate.call, 0, 60, current.rateLimit.call, 'The call limit must be a whole number from 0 to 60') };
   }
   if (body.publicUrl !== undefined) next.publicUrl = publicUrl(body.publicUrl);
+  if (body.agentMessages !== undefined) {
+    if (typeof body.agentMessages !== 'boolean') throw new NotifyError('The agent messages switch must be on or off');
+    next.agentMessages = body.agentMessages;
+  }
   return next;
 }
 
@@ -129,6 +140,47 @@ function absoluteLink(item, base) {
   if (/^https?:\/\//i.test(link)) return link;
   if (base && link.startsWith('/') && !link.startsWith('//')) return base + link;
   return base ? `${base}/` : '';
+}
+
+// ---- Direct messages (tcli notify) ----
+// What an agent may send, cleaned: `text` (required, at most 3000 characters; newlines kept, a run of empty lines folded to one, other control and
+// direction characters removed), `title` and `from` on one line, `link` only http(s) without credentials. Refusals are NotifyError with a `code`.
+const CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g;
+const directError = (code, message, statusCode = 400) => Object.assign(new NotifyError(message, statusCode), { code });
+const cleanLine = value => String(value).replace(CONTROL, ' ').replace(/\s+/g, ' ').trim();
+const cleanText = value => String(value).replace(/\r\n?/g, '\n').replace(/\t/g, ' ').replace(CONTROL, '')
+  .split('\n').map(line => line.trimEnd()).join('\n').replace(/\n{3,}/g, '\n\n').trim();
+const cutLine = (value, max) => (value.length > max ? value.slice(0, max).replace(/[\ud800-\udbff]$/, '') : value);
+function directLink(value) {
+  if (typeof value !== 'string' || value.trim().length > DIRECT_LIMITS.link) return '';
+  try {
+    const url = new URL(value.trim());
+    return /^https?:$/.test(url.protocol) && !url.username && !url.password && url.href.length <= DIRECT_LIMITS.link ? url.href : '';
+  } catch { return ''; }
+}
+function normalizeDirect(input = {}) {
+  if (typeof input.text !== 'string' || !cleanText(input.text)) throw directError('TEXT_REQUIRED', 'The message text is required');
+  const text = cleanText(input.text);
+  if (text.length > DIRECT_LIMITS.text) throw directError('TEXT_TOO_LONG', `The message text is longer than ${DIRECT_LIMITS.text} characters`);
+  if (input.title !== undefined && input.title !== null && typeof input.title !== 'string') throw directError('INVALID_TITLE', 'The title must be text');
+  const title = input.title ? cleanLine(input.title) : '';
+  if (title.length > DIRECT_LIMITS.title) throw directError('TITLE_TOO_LONG', `The title is longer than ${DIRECT_LIMITS.title} characters`);
+  const from = typeof input.from === 'string' ? cutLine(cleanLine(input.from), DIRECT_LIMITS.from) : '';
+  let link = '';
+  if (input.link !== undefined && input.link !== null && input.link !== '') {
+    link = directLink(input.link);
+    if (!link) throw directError('INVALID_LINK', `The link must be an http(s) address of at most ${DIRECT_LIMITS.link} characters, without a user name or password`);
+  }
+  return { title, text, from, link };
+}
+// `via`: the notifiers to use. Missing, 'all' or a list that holds 'all': every one (null); else a Set of names (a list, or names joined by commas).
+function selectVia(via) {
+  if (via === undefined || via === null || via === 'all') return null;
+  const names = typeof via === 'string' ? via.split(',').map(name => name.trim()).filter(Boolean) : via;
+  if (!Array.isArray(names) || !names.length || names.length > 20 || names.some(name => typeof name !== 'string' || !/^[a-z0-9][a-z0-9-]{0,40}$/.test(name))) {
+    throw directError('INVALID_VIA', 'via must be all or a list of notifier names such as telegram,email');
+  }
+  return names.includes('all') ? null : new Set(names);
 }
 
 // ---- Manifest-driven plugin settings (manifest "config", "test", "customUi") ----
@@ -498,6 +550,7 @@ function createAttentionNotify(options) {
       ...base, ...stored, quietHours: { ...base.quietHours, ...stored.quietHours }, rateLimit: { ...base.rateLimit, ...stored.rateLimit }, modes: { ...stored.modes },
       messageDelayMinutes: minutes(stored.messageDelayMinutes, MESSAGE_DELAY_MAX, base.messageDelayMinutes),
       callDelayMinutes: minutes(stored.callDelayMinutes, CALL_DELAY_MAX, base.callDelayMinutes),
+      agentMessages: typeof stored.agentMessages === 'boolean' ? stored.agentMessages : base.agentMessages,
     };
   }
   function saveRules(owner, body) {
@@ -595,7 +648,8 @@ function createAttentionNotify(options) {
     recent.length = Math.min(recent.length, RECENT_MAX);
     const where = `${entry.via ? ` via ${entry.via}` : ''}${entry.origin ? ` from ${entry.origin}` : ''}`;
     const bad = ['error', 'relay_failed', 'relay_offline'].includes(entry.outcome);
-    log(bad ? 'warn' : 'info', `${entry.notifier} item ${entry.item_id} ${entry.status} ${entry.mode}: ${entry.outcome}${where}${entry.detail ? ` (${entry.detail})` : ''}`);
+    const what = entry.kind === 'direct' ? 'direct message' : `item ${entry.item_id} ${entry.status} ${entry.mode}`;
+    log(bad ? 'warn' : 'info', `${entry.notifier} ${what}: ${entry.outcome}${where}${entry.detail ? ` (${entry.detail})` : ''}`);
     return stored;
   }
   function allow(name, kind, rules) {
@@ -942,6 +996,113 @@ function createAttentionNotify(options) {
   }
   const relayView = name => { if (!relay) return null; try { return relay.view(name); } catch { return null; } };
 
+  // ---- Direct messages (tcli notify, routes/tcli-notify.js) ----
+  // A free-form message of an agent session through every selected notifier whose plugin exports `direct: true`. Per notifier: switched off or not
+  // set up is `skipped`, quiet hours `quiet_hours`, the same title + text within 60 s `duplicate`, over the hourly message limit `rate_limited`
+  // (the same allow() as item messages, so both count against one limit); else it is sent here, or relayed to the linked Telegram sender (that
+  // device applies its own limit; quiet hours and dedupe were decided here). Logged in the recent list with item_id null and kind 'direct'.
+  // A relay that fails is not tried again: the command that asked reports the result at once.
+  const directSent = new Map(); // `${notifier}:${sha256 of title + text}` -> time
+  const directKey = (name, message) => `${name}:${crypto.createHash('sha256').update(`${message.title}\n${message.text}`).digest('hex')}`;
+  const directPlugins = () => notifiers.filter(plugin => plugin.direct === true);
+  const directBase = (plugin, extra = {}) => ({ notifier: plugin.name, item_id: null, kind: 'direct', mode: 'message', ...extra });
+  // Where one notifier would send now: switched on, the linked sender (Telegram on a device that is not the sender), and whether it can send.
+  async function directRoute(plugin, owner) {
+    const enabled = isEnabled(plugin.name, owner);
+    let target = null;
+    if (enabled && relay && relay.handles(plugin.name)) {
+      try { target = await relay.target(plugin.name); } catch (error) { log('warn', `${plugin.name}: the sender is not known: ${safeError(error)}`); }
+    }
+    let ready = Boolean(target);
+    if (enabled && !target) {
+      try {
+        ready = typeof plugin.ready === 'function' ? plugin.ready(store(plugin.name).read(owner)) === true : requiredSet(schemaOf(plugin.name), readSettings(plugin.name, owner).values);
+      } catch { ready = false; }
+    }
+    return { plugin, enabled, target, ready };
+  }
+  // Sends on this device (also for a direct message relayed here: `origin`). The plugin gets { reason: 'direct', mode: 'message', item: null, message }.
+  async function directLocal({ plugin, owner, rules, message, origin = null }) {
+    const base = directBase(plugin, origin ? { origin: origin.name } : {});
+    const config = store(plugin.name).read(owner);
+    if (typeof plugin.ready === 'function' && !plugin.ready(config)) return remember({ ...base, outcome: 'skipped', detail: 'not set up' });
+    if (!allow(plugin.name, 'message', rules)) return remember({ ...base, outcome: 'rate_limited' });
+    try {
+      await plugin.notify({
+        reason: 'direct', mode: 'message', item: null, message: { title: message.title, text: message.text, from: message.from }, link: message.link || '',
+        config, values: effectiveValues(schemaOf(plugin.name), readSettings(plugin.name, owner).values), log: (level, text) => log(level, `${plugin.name}: ${text}`),
+        origin: origin ? { name: origin.name } : null,
+      });
+      return remember({ ...base, outcome: 'sent' });
+    } catch (error) {
+      return remember({ ...base, outcome: 'error', detail: scrubSecrets(safeError(error), secretsOf(plugin.name, owner)) });
+    }
+  }
+  async function directRelay({ plugin, message, target }) {
+    const base = directBase(plugin, { via: target.name });
+    const payload = { notifier: plugin.name, mode: 'message', reason: 'direct', message: { title: message.title, text: message.text, from: message.from }, link: message.link || '' };
+    try {
+      const answer = await relay.send(target.peer, payload);
+      if (answer.outcome === 'error') return remember({ ...base, outcome: 'relay_failed', detail: answer.detail || 'the sender could not send' });
+      return remember({ ...base, outcome: 'relayed', detail: answer.outcome });
+    } catch (failure) {
+      const offline = Boolean(failure && failure.offline);
+      const code = failure && failure.code ? failure.code : 'RELAY_FAILED';
+      // A sender of a version before direct messages refuses the reason.
+      const older = !offline && failure && failure.statusCode === 400 && code === 'INVALID_REASON';
+      return remember({ ...base, outcome: offline ? 'relay_offline' : 'relay_failed', detail: older ? 'The sender device needs a T-Agent update' : code });
+    }
+  }
+  async function directOne({ route, owner, rules, message, quiet }) {
+    const { plugin } = route;
+    const base = directBase(plugin);
+    if (!route.enabled) return remember({ ...base, outcome: 'skipped', detail: 'turned off' });
+    if (!route.ready) return remember({ ...base, outcome: 'skipped', detail: 'not set up' });
+    if (quiet) return remember({ ...base, outcome: 'quiet_hours' });
+    const key = directKey(plugin.name, message);
+    if (directSent.has(key) && now() - directSent.get(key) < DIRECT_DEDUPE_MS) return remember({ ...base, outcome: 'duplicate' });
+    directSent.set(key, now()); // before the send, so the same message sent twice at once goes out once
+    const entry = route.target ? await directRelay({ plugin, message, target: route.target }) : await directLocal({ plugin, owner, rules, message });
+    const delivered = entry.outcome === 'sent' || (entry.outcome === 'relayed' && entry.detail === 'sent');
+    if (!delivered) directSent.delete(key); // what was not sent may be sent again at once
+    return entry;
+  }
+  const directAnswer = entry => ({ notifier: entry.notifier, outcome: entry.outcome, ...(entry.detail ? { detail: String(entry.detail).slice(0, 300) } : {}), ...(entry.via ? { via: entry.via } : {}) });
+  // { owner, title, text, from, link, via } -> { results: [{ notifier, outcome, detail?, via? }] }. Throws NotifyError with `code`: 400 for bad input,
+  // 403 NOTIFY_AGENT_ACCESS_OFF when the rules switch agent messages off, 409 NOTIFY_NOT_CONFIGURED when no selected notifier can send.
+  async function sendDirect({ owner = getOwner(), title, text, from, link, via } = {}) {
+    const message = normalizeDirect({ title, text, from, link });
+    const chosen = selectVia(via);
+    const rules = getRules(owner);
+    if (rules.agentMessages === false) throw directError('NOTIFY_AGENT_ACCESS_OFF', 'Agent messages are turned off in Settings → T-Attention → Rules for all notifiers', 403);
+    const routes = await Promise.all(directPlugins().filter(plugin => !chosen || chosen.has(plugin.name)).map(plugin => directRoute(plugin, owner)));
+    if (!routes.some(route => route.ready)) throw directError('NOTIFY_NOT_CONFIGURED', 'No notifier can send messages. Set up Telegram or email in Settings → T-Attention', 409);
+    for (const [key, at] of directSent) if (now() - at >= DIRECT_DEDUPE_MS) directSent.delete(key);
+    const quiet = inQuietHours(rules.quietHours, new Date(now()));
+    const entries = await Promise.all(routes.map(route => directOne({ route, owner, rules, message, quiet })));
+    return { results: entries.map(directAnswer) };
+  }
+  // The sender side of a relayed direct message (services/attention-relay.js): its own switch, readiness and rate limit; no quiet hours or dedupe.
+  async function acceptRelayDirect({ notifier, message, link, origin }) {
+    const plugin = byName.get(notifier);
+    if (!plugin || plugin.direct !== true) throw new NotifyError('Unknown notifier', 404);
+    const owner = getOwner();
+    if (!isEnabled(plugin.name, owner)) { remember({ ...directBase(plugin, { origin: origin.name }), outcome: 'skipped', detail: 'turned off' }); return { outcome: 'skipped', detail: 'turned off' }; }
+    const entry = await directLocal({ plugin, owner, rules: getRules(owner), message: { ...message, link: link || '' }, origin });
+    return { outcome: entry.outcome, ...(entry.detail ? { detail: String(entry.detail).slice(0, 200) } : {}) };
+  }
+  // GET /api/tcli/notify/status: the switch, quiet hours now, and each notifier that can send direct messages.
+  async function directStatus(owner = getOwner()) {
+    const rules = getRules(owner);
+    const routes = await Promise.all(directPlugins().map(plugin => directRoute(plugin, owner)));
+    const quiet = rules.quietHours;
+    return {
+      agentMessages: rules.agentMessages !== false,
+      quietHours: { enabled: Boolean(quiet.enabled), start: quiet.start, end: quiet.end, timeZone: quiet.timeZone || '', active: inQuietHours(quiet, new Date(now())) },
+      notifiers: routes.map(route => ({ name: route.plugin.name, label: route.plugin.label || route.plugin.name, enabled: route.enabled, ready: route.ready, ...(route.target ? { via: route.target.name } : {}) })),
+    };
+  }
+
   // Browser API (session only, same origin): /api/attention-notify/...
   function createRouter(routerOptions = {}) {
     const router = express.Router();
@@ -1020,7 +1181,7 @@ function createAttentionNotify(options) {
 
   return {
     handle, listener, createRouter, getRules, saveRules, notifiers, overview, defaultOwner: () => getOwner(),
-    getPluginConfig, savePluginConfig, testPlugin, isEnabled, reload, purgePlugin, localReady, acceptRelay, relayTest,
+    getPluginConfig, savePluginConfig, testPlugin, isEnabled, reload, purgePlugin, localReady, acceptRelay, relayTest, sendDirect, acceptRelayDirect, directStatus,
     setRelay(value) { relay = value || null; },
     has: name => byName.has(name),
     rules: owner => getRules(owner),
@@ -1097,4 +1258,5 @@ module.exports = {
   SYNC_RULES, SYNC_PLUGINS, exportRulesForSync, importRulesFromSync, exportPluginsForSync, importPluginsFromSync,
   start, createAttentionNotify, loadNotifiers, scanNotifiers, scanNotifierFolders, dropRequireCache, normalizeRules,
   validateConfigSchema, normalizeConfigValues, fieldShown, effectiveValues, publicValues, scrubSecrets, checkManifest, CONFIG_TYPES, inQuietHours, absoluteLink, defaultRules, NotifyError, STATUSES, MODES, DEDUPE_MS,
+  normalizeDirect, DIRECT_LIMITS, DIRECT_DEDUPE_MS,
 };

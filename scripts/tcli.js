@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // tcli: the command line of agent sessions in T-Agent terminals. It talks to the T-Agent that started the terminal, through the local relay
 // /api/tcli (routes/tcli.js) on the origin of TA_HOOK_URL, with the terminal's hook token (TA_HOOK_TOKEN). The T-Agent makes the real calls, so no
-// cloud key is ever in this process. Groups of commands live in GROUPS below; `oss` works on the bucket of "Image and file upload".
+// cloud key is ever in this process. Groups of commands live in GROUPS below; `oss` works on the bucket of "Image and file upload", `notify`
+// sends the user a message through the T-Attention notifiers (scripts/tcli-notify.js).
 // See "tcli (agent command line)" in DESIGN.md. Node built-ins only.
 const fs = require('node:fs');
 const path = require('node:path');
@@ -33,6 +34,10 @@ Groups
   site     what the model has learnt about each
            website, shared across devices
            (tcli site help)
+
+  notify   send the user a short message on
+           Telegram or email
+           (tcli notify help)
 
   help     this text
 
@@ -174,11 +179,11 @@ function readJson(response) {
 }
 
 // A JSON call: resolves with the answer, rejects with a CliError.
-function callJson(relay, method, route, { query, body } = {}) {
+function callJson(relay, method, route, { query, body, timeoutMs = META_TIMEOUT_MS } = {}) {
   return new Promise((resolve, reject) => {
     const payload = body === undefined ? null : Buffer.from(JSON.stringify(body));
     const req = send(relay, method, route, {
-      query, timeoutMs: META_TIMEOUT_MS,
+      query, timeoutMs,
       headers: { Accept: 'application/json', ...(payload ? { 'Content-Type': 'application/json', 'Content-Length': String(payload.length) } : {}) },
     });
     req.on('timeout', () => req.destroy(Object.assign(new Error('timed out'), { code: 'TIMEOUT' })));
@@ -441,8 +446,9 @@ GROUPS.site = require('./tcli-site').GROUP;
 // Groups in their own modules get the shared helpers and run their commands themselves (`run(command, args, ctx)`).
 const helpers = { send, readJson, failureOf, networkFailure, CliError, usage, EXIT, humanSize };
 GROUPS.browser = require('./tcli-browser').createBrowserGroup(helpers);
+GROUPS.notify = require('./tcli-notify').createNotifyGroup({ ...helpers, parseArgs, callJson });
 
-async function main(argv = process.argv.slice(2), { env = process.env, stdout = process.stdout, stderr = process.stderr, cwd = process.cwd() } = {}) {
+async function main(argv = process.argv.slice(2), { env = process.env, stdin = process.stdin, stdout = process.stdout, stderr = process.stderr, cwd = process.cwd() } = {}) {
   const out = text => stdout.write(`${text}\n`);
   const json = argv.includes('--json');
   const [groupName, commandName, ...rest] = argv;
@@ -453,7 +459,7 @@ async function main(argv = process.argv.slice(2), { env = process.env, stdout = 
     if (!group) throw usage(`Unknown group "${groupName}"; see tcli help`);
     if (!commandName) { stderr.write(group.help); return EXIT.usage; }
     if (commandName === 'help' || commandName === '--help' || commandName === '-h') { stdout.write(group.help); return EXIT.ok; }
-    if (group.run) return await group.run(commandName, rest, { relay: () => relayFromEnv(env), out, stdout, stderr, cwd });
+    if (group.run) return await group.run(commandName, rest, { relay: () => relayFromEnv(env), out, stdin, stdout, stderr, cwd });
     const command = group.commands[commandName];
     if (!command) throw usage(`Unknown command "${groupName} ${commandName}"; see tcli ${groupName} help`);
     const { flags, positional } = parseArgs(rest, command);

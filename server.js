@@ -144,6 +144,9 @@ app.use('/api/tcli', require('./routes/tcli').createTcliRelayRouter());
 // The site library relay (routes/browser-sites.js, `tcli site` in a T-Agent terminal): same terminal credential and this-machine rule, so it sits
 // here with the other tcli relays. A request without the X-T-Agent-* headers (and every /api/tcli/oss request) is passed on untouched.
 app.use('/api/tcli', require('./routes/browser-sites').createSiteRelayRouter());
+// The notify relay (routes/tcli-notify.js, `tcli notify` in a T-Agent terminal): a direct message to the user through the notifiers, same credential
+// and this-machine rule; the message is sent by the T-Attention notifiers made above.
+app.use('/api/tcli', require('./routes/tcli-notify').createNotifyRelayRouter({ notify: () => attentionNotify }));
 
 // The mind map routes (routes/mindmap.js: /api/mindmaps, /v1/mindmaps and the proxy /api/remote-servers/:id/mindmaps), /v1/attention (routes/attention.js,
 // the token is checked first), /v1/linked-services (routes/linked-services.js) and /v1/oss/files (routes/tcli.js, a streamed upload of any type) parse their

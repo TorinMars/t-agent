@@ -1,9 +1,9 @@
 // Browser test of the T-Attention notifier settings (scripts/h5-shell/NotifierSettings.jsx) on a phone-sized page, reached through the plugin list:
 // the Telegram login steps (api_id / api_hash / phone -> code -> 2FA password, and the QR login: the code from the server, its refresh, polling only while
 // Telegram's page is open, a login left half way shown on the row and again on the page, the 2FA password after the scan), account 2 (the ring time is in the manifest form, PluginConfigForm, not here), the test buttons, the rules (mode per status, delay,
-// quiet hours, limits, page address) and that secret fields are never filled from the server; the email notifier: only the modes it allows
-// (no call) in the rules, and its manifest form (Gmail / 163 / other SMTP server: provider help with a link, the server fields only for
-// "Other SMTP server"). The server is a fake fetch.
+// quiet hours, limits, page address, the agent messages switch of tcli notify, agent messages in the recent list) and that secret fields are never filled
+// from the server; the email notifier: only the modes it allows (no call) in the rules, and its manifest form (Gmail / 163 / other SMTP server:
+// provider help with a link, the server fields only for "Other SMTP server"). The server is a fake fetch.
 const { chromium } = require('playwright');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -28,8 +28,8 @@ const html = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8').replace(
       window.calls = [];
       window.emailConfig = { name: 'email', enabled: true, schema: emailSchema, test: true, customUi: null, values: { provider: 'gmail', fromName: 'T-Agent', security: 'ssl', password: { set: false } } };
       window.confirm = () => true;
-      const rules = { statuses: ['waiting_user', 'failed', 'review'], modes: {}, messageDelayMinutes: 3, callDelayMinutes: 0, quietHours: { enabled: false, start: '22:00', end: '08:00', timeZone: '' }, rateLimit: { message: 20, call: 6 }, publicUrl: '' };
-      window.server = { recent: [{ at: '2026-11-12T10:03:00.000Z', notifier: 'telegram', item_id: 5, status: 'waiting_user', mode: 'message', outcome: 'cancelled', detail: 'the status changed' }, { at: '2026-11-12T10:01:00.000Z', notifier: 'telegram', item_id: 5, status: 'waiting_user', mode: 'message', outcome: 'message_scheduled', detail: '3 min' }, { at: '2026-11-12T10:00:00.000Z', notifier: 'telegram', item_id: 4, status: 'review', mode: 'message', outcome: 'foreground', detail: 'the session is open on screen' }], rules, tg: { loggedIn: false, step: 'none', apiId: null, hasApiHash: false, phone: '', account: null, target: null, callSeconds: 30 } };
+      const rules = { statuses: ['waiting_user', 'failed', 'review'], modes: {}, messageDelayMinutes: 3, callDelayMinutes: 0, quietHours: { enabled: false, start: '22:00', end: '08:00', timeZone: '' }, rateLimit: { message: 20, call: 6 }, publicUrl: '', agentMessages: true };
+      window.server = { recent: [{ at: '2026-11-12T10:05:00.000Z', notifier: 'telegram', item_id: null, kind: 'direct', mode: 'message', outcome: 'duplicate' }, { at: '2026-11-12T10:04:00.000Z', notifier: 'telegram', item_id: null, kind: 'direct', mode: 'message', outcome: 'relayed', via: 'T01', detail: 'sent' }, { at: '2026-11-12T10:03:00.000Z', notifier: 'telegram', item_id: 5, status: 'waiting_user', mode: 'message', outcome: 'cancelled', detail: 'the status changed' }, { at: '2026-11-12T10:01:00.000Z', notifier: 'telegram', item_id: 5, status: 'waiting_user', mode: 'message', outcome: 'message_scheduled', detail: '3 min' }, { at: '2026-11-12T10:00:00.000Z', notifier: 'telegram', item_id: 4, status: 'review', mode: 'message', outcome: 'foreground', detail: 'the session is open on screen' }], rules, tg: { loggedIn: false, step: 'none', apiId: null, hasApiHash: false, phone: '', account: null, target: null, callSeconds: 30 } };
       const view = () => ({ rules: server.rules, statuses: ['todo', 'working', 'waiting_user', 'review', 'done', 'failed', 'cancelled'], modes: ['message', 'call', 'off'], notifiers: [{ name: 'telegram', label: 'Telegram', configFields: [], status: server.tg }, { name: 'email', label: 'Email', configFields: [], modes: ['message', 'off'], status: { configured: false, summary: 'Not set up' } }], recent: server.recent || [] });
       window.svgOf = n => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="${n}" height="10" fill="#000"/></svg>`;
       window.fetch = async (url, options = {}) => {
@@ -137,6 +137,14 @@ const html = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8').replace(
     const recentText = await page.locator('#h5-notify-recent').textContent();
     assert.ok(recentText.includes('#5 Needs you · Message planned'), recentText);
     assert.ok(recentText.includes('#5 Needs you · Not sent: it changed before the wait ended'), recentText);
+    // A direct message of an agent session (tcli notify) is named as such, without an item number, with its own dedupe text.
+    assert.ok(recentText.includes('Agent message · Sent through the sender device · Through T01'), recentText);
+    assert.ok(recentText.includes('Agent message · Skipped: the same message was sent less than a minute ago'), recentText);
+    assert.ok(!recentText.includes('#null'), recentText);
+    // The agent messages switch: echoed (on), with its hint.
+    assert.equal(await page.locator('#h5-notify-agent-messages').isChecked(), true);
+    assert.equal(await page.locator('label:has(#h5-notify-agent-messages)').textContent(), 'Let agent sessions send messages (tcli notify)');
+    assert.match(await page.locator('#h5-notify-agent-messages-hint').textContent(), /^An agent in a T-Agent terminal can send you a short message/);
     // The wait before a message: echoed from the rules, with the hint that "Needs you" waits too.
     assert.equal(await page.inputValue('#h5-notify-message-delay'), '3');
     assert.equal(await page.locator('label[for="h5-notify-message-delay"]').textContent().then(text => text.replace(/\s*\*$/, '')), 'Send a message only if still in that status after (minutes, 0 = at once)');
@@ -153,6 +161,7 @@ const html = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8').replace(
     await page.fill('#h5-notify-quiet-start', '23:00');
     await page.fill('#h5-notify-limit-calls', '3');
     await page.fill('#h5-notify-public-url', 'https://t.example.com');
+    await page.locator('#h5-notify-agent-messages').uncheck();
     await page.locator('#h5-notify-save').click();
     await page.waitForFunction(() => /Saved/.test(document.querySelector('#h5-notify-feedback').textContent));
     const saved = (await notifyCalls()).filter(call => call.url === '/api/attention-notify/config' && call.method === 'PUT').at(-1).body;
@@ -166,6 +175,9 @@ const html = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8').replace(
     assert.ok(saved.quietHours.timeZone, 'the browser time zone is sent');
     assert.deepEqual(saved.rateLimit, { message: '20', call: '3' });
     assert.equal(saved.publicUrl, 'https://t.example.com');
+    assert.equal(saved.agentMessages, false);
+    assert.equal(saved.quietHours.end, '08:00', 'the fields the page did not change are echoed and sent as they were');
+    assert.equal(await page.locator('#h5-notify-agent-messages').isChecked(), false, 'the saved value is echoed');
     // Email cannot ring: its choices are only Message and Off, and its modes are saved with the others.
     assert.deepEqual(await page.locator('#h5-notify-mode-email-waiting_user option').evaluateAll(options => options.map(option => option.value)), ['message', 'off']);
     assert.deepEqual(await page.locator('#h5-notify-mode-telegram-waiting_user option').evaluateAll(options => options.map(option => option.value)), ['message', 'call', 'off']);
@@ -181,6 +193,7 @@ const html = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8').replace(
     assert.deepEqual([again.quietHours.enabled, again.quietHours.start, again.quietHours.end], [true, '23:00', '08:00']);
     assert.equal(again.modes.email.failed, 'off');
     assert.equal(again.modes.telegram.failed, 'message');
+    assert.equal(again.agentMessages, false, 'the agent switch is echoed too');
     await back().click();
     await page.locator('.h5-plugin-page[data-name="rules"]').waitFor({ state: 'detached' });
     assert.ok(await page.locator('#h5-tg-logout').isVisible(), 'back on the plugin page');

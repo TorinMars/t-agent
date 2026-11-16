@@ -12,7 +12,7 @@ import { loginInProgress } from './plugins-model.mjs';
 import { SyncNote, useSyncAfterSave } from './ScopeLabel.jsx';
 
 // T-Attention notifier settings, drawn on the pages of the plugin list (PluginSettings.jsx): the Telegram login (account 1) and account 2 on Telegram's
-// page, and the rules of all notifiers (mode per status and notifier, delays before a message and a call, quiet hours, hourly limits, the page address for links) on their own. Server side: services/attention-notify.js and
+// page, and the rules of all notifiers (mode per status and notifier, delays before a message and a call, quiet hours, hourly limits, the page address for links, the agent messages switch of tcli notify) on their own. Server side: services/attention-notify.js and
 // plugins/notifiers/telegram. The session string and the api_hash never come back from the server; secret fields start empty.
 // Linked devices share one Telegram sender (services/attention-relay.js, `relay` in GET /config): on the sender the page lists the devices that send
 // through it; on another device it names the sender, sends its test through it, and offers "Use this device as the sender" and "Log out here".
@@ -29,6 +29,8 @@ const OUTCOME_LABELS = {
   rate_limited: 'Skipped: hourly limit reached', skipped: 'Skipped: not set up', error: 'Error', foreground: 'Skipped: the session was open on screen',
   relayed: 'Sent through the sender device', relay_failed: 'Not sent: the sender device could not send it', relay_offline: 'Not sent: the sender device is offline',
 };
+// A direct message of an agent session (tcli notify; item_id null in the recent list) is deduped for a minute, not 10.
+const DIRECT_OUTCOME_LABELS = { duplicate: 'Skipped: the same message was sent less than a minute ago' };
 const QR_POLL_MS = 2000;
 const API_HELP = [
   'Open my.telegram.org/apps and log in with the phone number of account 1.',
@@ -241,9 +243,11 @@ function RulesPart({ data, onChanged }) {
       }
     }
     setForm({
-      modes, messageDelay: rules.messageDelayMinutes === undefined ? null : String(rules.messageDelayMinutes), // null: a server without the wait delay
+      // messageDelay / agentMessages null: a server without the wait delay / without agent messages (the field is hidden and not sent).
+      modes, messageDelay: rules.messageDelayMinutes === undefined ? null : String(rules.messageDelayMinutes),
       delay: String(rules.callDelayMinutes), quiet: Boolean(rules.quietHours.enabled), start: rules.quietHours.start, end: rules.quietHours.end,
       messages: String(rules.rateLimit.message), calls: String(rules.rateLimit.call), publicUrl: rules.publicUrl || '',
+      agentMessages: rules.agentMessages === undefined ? null : rules.agentMessages !== false,
     });
   }, [data]);
   if (!form) return null;
@@ -258,6 +262,7 @@ function RulesPart({ data, onChanged }) {
         statuses, modes: form.modes, ...(form.messageDelay === null ? {} : { messageDelayMinutes: form.messageDelay.trim() }), callDelayMinutes: form.delay.trim(), publicUrl: form.publicUrl.trim(),
         quietHours: { enabled: form.quiet, start: form.start, end: form.end, timeZone: timeZone() },
         rateLimit: { message: form.messages.trim(), call: form.calls.trim() },
+        ...(form.agentMessages === null ? {} : { agentMessages: form.agentMessages }),
       });
       await onChanged();
       say('Saved');
@@ -296,6 +301,12 @@ function RulesPart({ data, onChanged }) {
         <Field id="h5-notify-limit-calls" label="Calls per hour" type="number" value={form.calls} onChange={set('calls')} htmlInput={{ inputMode: 'numeric', min: 0, max: 60 }} />
       </Box>
       <Field id="h5-notify-public-url" label="Page address for links (optional)" value={form.publicUrl} onChange={set('publicUrl')} placeholder={location.origin} />
+      {form.agentMessages === null ? null : (
+        <>
+          <FormControlLabel control={<Checkbox checked={form.agentMessages} onChange={event => setForm(current => ({ ...current, agentMessages: event.target.checked }))} slotProps={{ input: { id: 'h5-notify-agent-messages' } }} />} label={t('Let agent sessions send messages (tcli notify)')} />
+          <Hint id="h5-notify-agent-messages-hint">{t('An agent in a T-Agent terminal can send you a short message on every notifier that supports it, for example when a long task is done or it needs your decision. Quiet hours and the hourly limit apply.')}</Hint>
+        </>
+      )}
       <Hint>{t('The same item and status is sent at most once in 10 minutes. A call that is not possible is sent as a message. Telegram may limit accounts that send too much automatically, so keep the limits low.')}</Hint>
       <Button id="h5-notify-save" variant="contained" disabled={busy} onClick={() => void save()}>{t('Save')}</Button>
       <Feedback id="h5-notify-feedback" feedback={feedback} />
@@ -306,7 +317,7 @@ function RulesPart({ data, onChanged }) {
           <Box id="h5-notify-recent" sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
             {data.recent.slice(0, 10).map((entry, index) => (
               <Typography key={index} variant="caption" color="text.secondary" sx={{ overflowWrap: 'anywhere' }}>
-                {`${new Date(entry.at).toLocaleString()} · #${entry.item_id} ${t(STATUS_LABELS[entry.status] || entry.status)} · ${t(OUTCOME_LABELS[entry.outcome] || entry.outcome)}${entry.via ? ` · ${t(`Through ${entry.via}`)}` : ''}${entry.origin ? ` · ${t(`From ${entry.origin}`)}` : ''}`}
+                {`${new Date(entry.at).toLocaleString()} · ${entry.item_id === null ? t('Agent message') : `#${entry.item_id} ${t(STATUS_LABELS[entry.status] || entry.status)}`} · ${t((entry.item_id === null && DIRECT_OUTCOME_LABELS[entry.outcome]) || OUTCOME_LABELS[entry.outcome] || entry.outcome)}${entry.via ? ` · ${t(`Through ${entry.via}`)}` : ''}${entry.origin ? ` · ${t(`From ${entry.origin}`)}` : ''}`}
               </Typography>
             ))}
           </Box>

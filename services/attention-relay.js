@@ -12,6 +12,8 @@
 // The choice is set from Settings ("Use this device as the sender"), stored on every device and sent to the linked ones with PUT
 // /v1/attention/notify-relay/sender; the newest `updated_at` wins. A device that was offline gets it when its link comes up (both sides compare). A
 // peer's PUT is never sent on, so there is no loop. Linked devices without `notify:relay` (older versions) are never a sender and never told anything.
+// A direct message of an agent session (`tcli notify`, attention-notify.js sendDirect) is relayed the same way, with reason 'direct' and a `message`
+// instead of an item; a sender of a version before it answers 400 INVALID_REASON.
 const express = require('express');
 
 const CAPABILITY = 'notify:relay';
@@ -72,6 +74,14 @@ function relayItem(item) {
     context: clean,
   };
 }
+// A direct message on the wire: { title, text, from }, cleaned and cut like attention-notify.js normalizeDirect; null when there is no text.
+const CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g;
+const oneLine = (value, max) => (typeof value === 'string' ? value.replace(CONTROL, ' ').replace(/\s+/g, ' ').trim().slice(0, max) : '');
+function relayMessage(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || typeof value.text !== 'string') return null;
+  const body = value.text.replace(/\r\n?/g, '\n').replace(/\t/g, ' ').replace(CONTROL, '').trim().slice(0, 3000);
+  return body ? { title: oneLine(value.title, 200), text: body, from: oneLine(value.from, 200) } : null;
+}
 const cleanLink = value => {
   if (typeof value !== 'string' || !value || value.length > 2000) return '';
   try { const url = new URL(value); return /^https?:$/.test(url.protocol) && !url.username && !url.password ? url.href : ''; } catch { return ''; }
@@ -83,7 +93,7 @@ const cleanChoice = value => {
   return { instance_id: id, updated_at: value.updated_at };
 };
 
-// options: db, notify (services/attention-notify.js: localReady(name), acceptRelay(input), relayTest(input)), serviceLinks (peers(), onChange(),
+// options: db, notify (services/attention-notify.js: localReady(name), acceptRelay(input), acceptRelayDirect(input), relayTest(input)), serviceLinks (peers(), onChange(),
 // linkForToken()), request (services/remote-client.js), identity() -> { instance_id, name }, readInfo(peer) -> /v1/info, now, log(level, message).
 function createAttentionRelay(options) {
   const { db, serviceLinks, request } = options;
@@ -273,13 +283,24 @@ function createAttentionRelay(options) {
     const given = body && typeof body === 'object' && !Array.isArray(body) ? body : {};
     if (!RELAYED.has(given.notifier)) throw fault('UNKNOWN_NOTIFIER', 400);
     if (!['message', 'call'].includes(given.mode)) throw fault('INVALID_MODE', 400);
-    if (!['status', 'still'].includes(given.reason)) throw fault('INVALID_REASON', 400);
+    if (!['status', 'still', 'direct'].includes(given.reason)) throw fault('INVALID_REASON', 400);
+    if (given.reason === 'direct') return acceptDirect(link, given);
     const item = relayItem(given.item);
     if (!item.status) throw fault('INVALID_ITEM', 400);
     const sender = resolve(given.notifier);
     if (!sender.self) throw fault('NOT_SENDER', 409);
     const origin = { instance_id: String(link.peer_instance_id || link.id), name: String(link.name || 'Linked service').slice(0, 80) };
     return notify.acceptRelay({ notifier: given.notifier, mode: given.mode, reason: given.reason, item, link: cleanLink(given.link), origin });
+  }
+  // A direct message: always a message, never an item; the sender's own switch, readiness and rate limit apply (attention-notify.js acceptRelayDirect).
+  async function acceptDirect(link, given) {
+    if (given.mode !== 'message') throw fault('INVALID_MODE', 400);
+    const message = relayMessage(given.message);
+    if (!message) throw fault('INVALID_MESSAGE', 400);
+    const sender = resolve(given.notifier);
+    if (!sender.self) throw fault('NOT_SENDER', 409);
+    const origin = { instance_id: String(link.peer_instance_id || link.id), name: String(link.name || 'Linked service').slice(0, 80) };
+    return notify.acceptRelayDirect({ notifier: given.notifier, message, link: cleanLink(given.link), origin });
   }
   async function acceptTest(link, body) {
     const given = body && typeof body === 'object' && !Array.isArray(body) ? body : {};
@@ -396,4 +417,4 @@ function createEngineRouter(options = {}) {
   return router;
 }
 
-module.exports = { createAttentionRelay, createEngineRouter, setDefaultRelay, getDefaultRelay, relayItem, RelayError, CAPABILITY, ROUTE, STATE_KEY, CACHE_MS };
+module.exports = { createAttentionRelay, createEngineRouter, setDefaultRelay, getDefaultRelay, relayItem, relayMessage, RelayError, CAPABILITY, ROUTE, STATE_KEY, CACHE_MS };

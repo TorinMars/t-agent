@@ -43,6 +43,8 @@ plugins/notifiers/<name>/
   index.js        { name, label, configFields, notify(), test() } and optional ready(), status(), routes(), close(), direct
 ```
 
+`direct: true` says the notifier also takes free-form messages of agent sessions (`tcli notify`): `notify({ reason: 'direct', mode: 'message', item: null, message: { title, text, from }, link, config, values, log, origin })`, where `text` is at most 3000 characters with newlines and `origin` (`{ name }` or null) is the linked device it was relayed from. See "Direct messages" under "T-Attention notifiers" in `DESIGN.md`.
+
 ### Settings in the manifest (`config`, `test`, `customUi`)
 
 Simple settings are described in the manifest; the server validates and stores them (per user, encrypted, with an on / off switch) and Settings -> T-Attention -> Plugins draws the form. Example:

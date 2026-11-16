@@ -299,6 +299,9 @@ for (const command of [...Object.values(BROWSER.commands), ...Object.values(BROW
   for (const flag of [...(command.values || []), ...(command.bools || []), ...(command.multi || [])]) FLAGS.add(flag);
 }
 for (const flag of ['tab', 'browser', 'timeout']) FLAGS.add(flag);
+// `tcli notify` (scripts/tcli-notify.js): a message, or `notify status`.
+const NOTIFY = require('../scripts/tcli.js').GROUPS.notify;
+for (const flag of NOTIFY.values) FLAGS.add(flag);
 
 test('tcli SKILL.md: valid frontmatter, only commands and flags of the CLI contract, short enough', () => {
   const lines = TCLI_SOURCE.split('\n');
@@ -315,7 +318,8 @@ test('tcli SKILL.md: valid frontmatter, only commands and flags of the CLI contr
   const calls = [...TCLI_SOURCE.matchAll(/\$\{TA_TCLI:\+node\} "\$\{TA_TCLI:-tcli\}" ([a-z]+)(?: ([a-z]+))?(?: ([a-z]+))?/g)];
   assert.ok(calls.length >= 10);
   for (const [, group, command, sub] of calls) {
-    assert.ok(group === 'oss' || group === 'browser' || group === 'help', `group ${group}`);
+    assert.ok(group === 'oss' || group === 'browser' || group === 'notify' || group === 'help', `group ${group}`);
+    if (group === 'notify') assert.ok(command === undefined || command === 'status', `notify ${command}`);
     if (group === 'oss') assert.ok(OSS_COMMANDS.has(command), `oss ${command}`);
     if (group === 'browser') assert.ok(BROWSER_COMMANDS.has(command), `browser ${command}`);
     if (group === 'browser' && BROWSER_SUBCOMMANDS[command]) assert.ok(BROWSER_SUBCOMMANDS[command].has(sub), `browser ${command} ${sub}`);
@@ -340,6 +344,10 @@ test('tcli SKILL.md: valid frontmatter, only commands and flags of the CLI contr
   assert.ok(!/accessKeySecret|ALIBABA_CLOUD|OSS_ACCESS_KEY/i.test(TCLI_SOURCE), 'no hint at where the secret is kept');
   assert.ok(!/[\u4e00-\u9fff]/.test(TCLI_SOURCE), 'English only');
   // The browser part: the tab rule, the redaction rule and where to pair.
+  // The notify part: when to use it, no secrets, the user's rules are not worked around, its errors.
+  for (const text of ['## Notify the user', 'NOTIFY_NOT_CONFIGURED', 'NOTIFY_AGENT_ACCESS_OFF', 'Never put secrets', 'do not try again', 'Let agent sessions send messages (tcli notify)', 'at most a few messages per task']) {
+    assert.ok(TCLI_SOURCE.includes(text), text);
+  }
   for (const text of ['## Browser', 'TAB_NOT_ALLOWED', '"T-Agent"', '<redacted:N>', '--raw', 'Settings → Tasks and files → Browser extension', '`snapshot` again', 'Ask before anything that changes something']) {
     assert.ok(TCLI_SOURCE.includes(text), text);
   }

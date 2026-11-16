@@ -702,3 +702,136 @@ test('an item whose session runs in an agent chat of this server is on screen wh
   await settle();
   assert.equal(thrower.fake.calls.length, 1);
 });
+
+// ---- Direct messages (sendDirect, tcli notify) ----
+// Two fake notifiers that take direct messages ('fake' and 'mail') and one that does not ('legacy').
+function directSetup({ mailReady = true, ...extra } = {}) {
+  const fake = fakeNotifier('fake');
+  fake.plugin.direct = true;
+  const mail = fakeNotifier('mail', { ready: () => mailReady });
+  mail.plugin.direct = true;
+  const legacy = fakeNotifier('legacy');
+  const ctx = setup({ notifiers: [fake.plugin, mail.plugin, legacy.plugin], ...extra });
+  return { ...ctx, fake, mail, legacy };
+}
+
+test('sendDirect sends through every notifier with direct: true, with the message and no item, and logs it as an agent message', async () => {
+  const { service, fake, mail, legacy, logs } = directSetup();
+  const answer = await service.sendDirect({ owner: 'owner', title: ' Build \u0007done ', text: 'Line 1\r\n\r\n\r\n\tLine 2‮ ', from: 'Fix CI · Claude 1', link: 'https://t.example.com/' });
+  assert.deepEqual(answer, { results: [{ notifier: 'fake', outcome: 'sent' }, { notifier: 'mail', outcome: 'sent' }] });
+  assert.equal(legacy.calls.length, 0, 'a plugin without direct: true gets nothing');
+  for (const calls of [fake.calls, mail.calls]) {
+    assert.equal(calls.length, 1);
+    const [call] = calls;
+    assert.equal(call.reason, 'direct');
+    assert.equal(call.mode, 'message');
+    assert.equal(call.item, null);
+    assert.deepEqual(call.message, { title: 'Build done', text: 'Line 1\n\n Line 2', from: 'Fix CI · Claude 1' });
+    assert.equal(call.link, 'https://t.example.com/');
+    assert.equal(call.origin, null);
+  }
+  const recent = service.recent().filter(entry => entry.kind === 'direct');
+  assert.deepEqual(recent.map(entry => [entry.notifier, entry.item_id, entry.mode, entry.outcome]).sort(), [['fake', null, 'message', 'sent'], ['mail', null, 'message', 'sent']]);
+  assert.ok(logs.some(line => line === 'info fake direct message: sent'), logs.join('\n'));
+  assert.ok(!logs.join('\n').includes('Line 1'), 'the text is never logged');
+});
+
+test('sendDirect: via selects notifiers, and the input limits are checked', async () => {
+  const { service, fake, mail } = directSetup();
+  assert.deepEqual((await service.sendDirect({ text: 'one', via: ['mail'] })).results.map(result => result.notifier), ['mail']);
+  assert.deepEqual((await service.sendDirect({ text: 'two', via: 'fake,mail' })).results.map(result => result.notifier), ['fake', 'mail']);
+  assert.deepEqual((await service.sendDirect({ text: 'three', via: ['all'] })).results.map(result => result.notifier), ['fake', 'mail']);
+  assert.equal(fake.calls.length, 2);
+  assert.equal(mail.calls.length, 3);
+  const refused = async (input, code, status = 400) => {
+    await assert.rejects(service.sendDirect(input), error => error.code === code && error.statusCode === status, code);
+  };
+  await refused({ text: '' }, 'TEXT_REQUIRED');
+  await refused({ text: ' \n\u0007 ' }, 'TEXT_REQUIRED');
+  await refused({ text: 42 }, 'TEXT_REQUIRED');
+  await refused({ text: 'x'.repeat(3001) }, 'TEXT_TOO_LONG');
+  await refused({ text: 'ok', title: 't'.repeat(201) }, 'TITLE_TOO_LONG');
+  await refused({ text: 'ok', title: 5 }, 'INVALID_TITLE');
+  for (const link of ['javascript:alert(1)', 'ftp://x.example/', 'https://user:pw@x.example/', `https://x.example/${'a'.repeat(1000)}`, 'not a url']) await refused({ text: 'ok', link }, 'INVALID_LINK');
+  for (const via of [[], ['Bad Name'], 'tele gram', [1], {}]) await refused({ text: 'ok', via }, 'INVALID_VIA');
+  // Only a notifier that does not exist or takes no direct messages is selected: none can send.
+  await refused({ text: 'ok', via: ['legacy'] }, 'NOTIFY_NOT_CONFIGURED', 409);
+  await refused({ text: 'ok', via: ['email'] }, 'NOTIFY_NOT_CONFIGURED', 409);
+  assert.equal((await service.sendDirect({ text: 'x'.repeat(3000) })).results.length, 2, '3000 characters are allowed');
+  // A long from is cut, never refused (the server makes it).
+  await service.sendDirect({ text: 'from', from: 'f'.repeat(500), via: ['fake'] });
+  assert.equal(fake.calls.at(-1).message.from.length, 200);
+});
+
+test('sendDirect respects the switch, the plugin switch and ready, and refuses when nothing can send', async () => {
+  const ctx = directSetup({ mailReady: false });
+  const { service, fake, mail } = ctx;
+  assert.deepEqual((await service.sendDirect({ text: 'hi' })).results, [{ notifier: 'fake', outcome: 'sent' }, { notifier: 'mail', outcome: 'skipped', detail: 'not set up' }]);
+  assert.equal(mail.calls.length, 0);
+  service.savePluginConfig('fake', 'owner', { enabled: false });
+  await assert.rejects(service.sendDirect({ text: 'hi again' }), error => error.code === 'NOTIFY_NOT_CONFIGURED' && error.statusCode === 409 && /Set up Telegram or email in Settings → T-Attention/.test(error.message));
+  service.savePluginConfig('fake', 'owner', { enabled: true });
+  // The rules switch: off refuses with 403, and a missing field is on.
+  assert.equal(service.getRules('owner').agentMessages, true);
+  service.saveRules('owner', { agentMessages: false });
+  await assert.rejects(service.sendDirect({ text: 'blocked' }), error => error.code === 'NOTIFY_AGENT_ACCESS_OFF' && error.statusCode === 403 && /Rules for all notifiers/.test(error.message));
+  assert.throws(() => service.saveRules('owner', { agentMessages: 'no' }), /on or off/);
+  assert.equal(service.getRules('owner').agentMessages, false, 'a refused save keeps the value');
+  service.saveRules('owner', { messageDelayMinutes: 1 });
+  assert.equal(service.getRules('owner').agentMessages, false, 'a save without the field keeps it');
+  service.saveRules('owner', { agentMessages: true });
+  assert.equal(fake.calls.length, 1);
+  // Status: the switch, quiet hours and each direct notifier.
+  const status = await service.directStatus('owner');
+  assert.equal(status.agentMessages, true);
+  assert.equal(status.quietHours.active, false);
+  assert.deepEqual(status.notifiers, [{ name: 'fake', label: 'Fake', enabled: true, ready: true }, { name: 'mail', label: 'Fake', enabled: true, ready: false }]);
+});
+
+test('rules saved by an older version have no agentMessages and get it on; an invalid stored value is the default', () => {
+  const { db, service } = directSetup();
+  const { encryptToken } = require('../lib/token-crypto');
+  const write = value => db.prepare(`INSERT INTO system_state (key, value) VALUES ('attention-notify:owner', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(encryptToken(JSON.stringify(value), SECRET));
+  write({ statuses: ['failed'], modes: {} });
+  assert.equal(service.getRules('owner').agentMessages, true);
+  write({ statuses: ['failed'], modes: {}, agentMessages: 'yes' });
+  assert.equal(service.getRules('owner').agentMessages, true);
+  write({ statuses: ['failed'], modes: {}, agentMessages: false });
+  assert.equal(service.getRules('owner').agentMessages, false);
+  assert.equal(notify.defaultRules().agentMessages, true);
+});
+
+test('sendDirect: quiet hours skip, the same text within a minute is a duplicate, and the hourly limit is shared with item messages', async () => {
+  const clock = { now: Date.parse('2026-11-08T12:00:00Z') };
+  const { service, fake, mail, bus } = directSetup({ clock });
+  service.saveRules('owner', { quietHours: { enabled: true, start: '11:00', end: '13:00', timeZone: 'UTC' } });
+  assert.deepEqual((await service.sendDirect({ text: 'quiet' })).results.map(result => result.outcome), ['quiet_hours', 'quiet_hours']);
+  assert.equal(fake.calls.length + mail.calls.length, 0);
+  assert.equal((await service.directStatus('owner')).quietHours.active, true);
+  service.saveRules('owner', { quietHours: { enabled: false } });
+  // Dedupe: the same title + text per notifier within 60 s.
+  assert.deepEqual((await service.sendDirect({ title: 'T', text: 'same' })).results.map(result => result.outcome), ['sent', 'sent']);
+  assert.deepEqual((await service.sendDirect({ title: 'T', text: 'same' })).results.map(result => result.outcome), ['duplicate', 'duplicate']);
+  assert.deepEqual((await service.sendDirect({ title: 'Other', text: 'same' })).results.map(result => result.outcome), ['sent', 'sent'], 'another title is another message');
+  clock.now += 61 * 1000;
+  assert.deepEqual((await service.sendDirect({ title: 'T', text: 'same' })).results.map(result => result.outcome), ['sent', 'sent'], 'after a minute it goes again');
+  // A failed send is not remembered for dedupe.
+  fake.plugin.notify = async () => { throw new Error('mail server down'); };
+  assert.deepEqual((await service.sendDirect({ text: 'retry me', via: ['fake'] })).results, [{ notifier: 'fake', outcome: 'error', detail: 'mail server down' }]);
+  fake.plugin.notify = async args => { fake.calls.push(args); return { outcome: 'sent' }; };
+  assert.equal((await service.sendDirect({ text: 'retry me', via: ['fake'] })).results[0].outcome, 'sent');
+  // The limit: item messages and direct messages count against the same hourly limit of a notifier.
+  const limited = directSetup();
+  limited.service.saveRules('owner', { rateLimit: { message: 2 } });
+  limited.bus.emit(change('created', item(1, 'failed'), null));
+  await settle();
+  assert.equal(limited.fake.calls.length, 1);
+  assert.equal((await limited.service.sendDirect({ text: 'first', via: ['fake'] })).results[0].outcome, 'sent');
+  assert.deepEqual((await limited.service.sendDirect({ text: 'second', via: ['fake'] })).results, [{ notifier: 'fake', outcome: 'rate_limited' }]);
+  limited.bus.emit(change('created', item(2, 'failed'), null));
+  await settle();
+  assert.equal(limited.fake.calls.length, 2, 'the item message is over the limit too');
+  assert.equal(limited.service.recent().find(entry => entry.notifier === 'fake' && entry.item_id === 2).outcome, 'rate_limited');
+  assert.equal(limited.service.recent().find(entry => entry.kind === 'direct' && entry.outcome === 'rate_limited').item_id, null);
+  assert.equal((await limited.service.sendDirect({ text: 'second', via: ['fake'] })).results[0].outcome, 'rate_limited', 'a limited message is not a duplicate later');
+});

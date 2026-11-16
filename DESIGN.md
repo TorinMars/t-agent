@@ -1940,3 +1940,4 @@ One line per release, added by `scripts/release.js`. Older notes are in `git log
 > v2.125.0 T-Attention desktop window takes less room: the floating counter is a 26 pt pill (count and Needs you badge), the hover panel is 288 x at most 440 pt with row buttons beside the second line
 > v2.125.1 Browser extension 1.0.1: tcli browser back / forward work after a click on a link (falls back to the page's history when Chrome skips entries left without a user gesture)
 > v2.125.2 Browser extension 1.0.2 reports the version in its manifest (it always said 1.0.0); the codex wrapper test reads the terminal name from a marked line
+> v2.126.0 Email notifier (Gmail and 163 presets, other SMTP servers, encrypted app password / authorization code) and tcli notify: agent sessions message the user through Telegram (also through the linked sender) and email, with a switch in the notifier rules; notifiers that are not set up leave no line in the recent list

@@ -1,0 +1,80 @@
+{
+  "name": "email",
+  "version": "1.0.0",
+  "kind": "notifier",
+  "description": "Sends T-Attention messages by email from your own mailbox over SMTP (Gmail and 163 Mail built in, or any SMTP server).",
+  "test": true,
+  "modes": ["message", "off"],
+  "config": [
+    {
+      "key": "provider",
+      "label": "Email provider",
+      "type": "select",
+      "default": "gmail",
+      "options": [
+        { "value": "gmail", "label": "Gmail", "help": "Gmail needs 2-Step Verification on the Google account. Then create an app password at https://myaccount.google.com/apppasswords and enter it below. Your Google password does not work here." },
+        { "value": "163", "label": "163 Mail (NetEase)", "help": "163 Mail: on mail.163.com open Settings, then POP3/SMTP/IMAP, turn on the SMTP service and copy the authorization code it shows. Enter that code below; your login password does not work here." },
+        { "value": "custom", "label": "Other SMTP server", "help": "Enter the SMTP server, port and security from your provider's help page. Most providers want an app password here, not the login password." }
+      ]
+    },
+    {
+      "key": "address",
+      "label": "Sender email address",
+      "type": "string",
+      "required": true,
+      "placeholder": "you@gmail.com",
+      "help": "The mailbox that sends the emails. It also logs in to the SMTP server."
+    },
+    {
+      "key": "password",
+      "label": "App password or authorization code",
+      "type": "secret",
+      "required": true,
+      "help": "Gmail: the app password. 163: the authorization code. Never the login password. It is stored encrypted and never shown again."
+    },
+    {
+      "key": "to",
+      "label": "Send to (optional)",
+      "type": "string",
+      "placeholder": "me@example.com, other@example.com",
+      "help": "One or more addresses, separated by commas. Empty: the emails go to the sender address."
+    },
+    {
+      "key": "fromName",
+      "label": "Sender name",
+      "type": "string",
+      "default": "T-Agent",
+      "help": "The name the emails come from."
+    },
+    {
+      "key": "host",
+      "label": "SMTP server",
+      "type": "string",
+      "placeholder": "smtp.example.com",
+      "showWhen": { "key": "provider", "values": ["custom"] }
+    },
+    {
+      "key": "security",
+      "label": "Security",
+      "type": "select",
+      "default": "ssl",
+      "options": [
+        { "value": "ssl", "label": "SSL/TLS (usually port 465)" },
+        { "value": "starttls", "label": "STARTTLS (usually port 587)" },
+        { "value": "none", "label": "None (only for a server on this computer)" }
+      ],
+      "showWhen": { "key": "provider", "values": ["custom"] }
+    },
+    {
+      "key": "port",
+      "label": "Port",
+      "type": "number",
+      "integer": true,
+      "min": 1,
+      "max": 65535,
+      "placeholder": "465",
+      "help": "Empty: 465 for SSL/TLS, 587 for STARTTLS, 25 for none.",
+      "showWhen": { "key": "provider", "values": ["custom"] }
+    }
+  ]
+}

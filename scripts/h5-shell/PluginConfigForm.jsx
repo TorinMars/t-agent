@@ -3,24 +3,38 @@ import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import Checkbox from '@mui/material/Checkbox';
 import FormControlLabel from '@mui/material/FormControlLabel';
+import Link from '@mui/material/Link';
 import Switch from '@mui/material/Switch';
 import TextField from './TextField.jsx';
 import { api, errorText, t } from './common.jsx';
 import { Feedback, Field, Hint, useFeedback } from './Form.jsx';
 import { BASE } from './attention-feed.mjs';
 import { SyncNote, useSyncAfterSave } from './ScopeLabel.jsx';
-import { formFromConfig, formProblem, numberInput, valuesFromForm } from './plugin-config-model.mjs';
+import { fieldHelp, fieldShown, formFromConfig, formProblem, helpParts, numberInput, valuesFromForm } from './plugin-config-model.mjs';
 
 // The settings of one notifier on its page in Settings → T-Attention → Plugins (PluginSettings.jsx): the enable switch, the form drawn from the
 // manifest's `config` schema, Save and Test; read when the page opens. Server side: GET/PUT /api/attention/plugins/:name/config and
 // POST /api/attention/plugins/:name/test (services/attention-notify.js). The form echoes the values in effect (defaults filled in); secrets
 // never come back from the server: their field starts empty, "Saved; leave empty to keep it" says one is saved, and only a typed value is sent.
 // The per-status rules are a page of their own (`onRules`); a plugin's own section (manifest `customUi`, Telegram's login) is drawn above this form.
+// A field with `showWhen` is drawn only while its select has one of the listed values; a select shows the help of the chosen option. An https
+// address in a help text is a link (opens in a new tab).
+
+// The translated help with its https addresses as links.
+function HelpText({ text }) {
+  if (!text) return null;
+  const parts = helpParts(t(text));
+  if (!parts.some(part => part.href)) return parts.map(part => part.text).join('');
+  return parts.map((part, index) => (part.href
+    ? <Link key={index} href={part.href} target="_blank" rel="noopener noreferrer" sx={{ overflowWrap: 'anywhere' }}>{part.href}</Link>
+    : <span key={index}>{part.text}</span>));
+}
 
 function ConfigField({ name, field, form, secretsSet, onValue, onClear, busy }) {
   const id = `h5-plugin-config-${name}-${field.key}`;
   const value = form.values[field.key];
-  const help = field.help ? t(field.help) : undefined;
+  const helpText = fieldHelp(field, form.values);
+  const help = helpText ? <HelpText text={helpText} /> : undefined;
   if (field.type === 'boolean') {
     return (
       <Box>
@@ -89,7 +103,7 @@ export default function PluginConfigForm({ notifier, onChanged, onRules }) {
             control={<Switch checked={form.enabled} disabled={busy} onChange={event => void save({ enabled: event.target.checked })} slotProps={{ input: { id: `h5-plugin-enabled-${name}` } }} />}
             label={form.enabled ? t('Turned on') : t('Turned off: sends nothing')} sx={{ ml: 0, gap: 1 }}
           />
-          {schema.map(field => <ConfigField key={field.key} name={name} field={field} form={form} secretsSet={form.secretsSet} onValue={onValue} onClear={clear} busy={busy} />)}
+          {schema.filter(field => fieldShown(field, form.values)).map(field => <ConfigField key={field.key} name={name} field={field} form={form} secretsSet={form.secretsSet} onValue={onValue} onClear={clear} busy={busy} />)}
           <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
             {schema.length ? <Button variant="contained" className="h5-plugin-config-save" disabled={busy} onClick={saveForm}>{t('Save')}</Button> : null}
             {config.test ? <Button variant="outlined" className="h5-plugin-config-test" disabled={busy || !form.enabled} onClick={() => void test()}>{t('Test')}</Button> : null}

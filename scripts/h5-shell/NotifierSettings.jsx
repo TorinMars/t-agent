@@ -21,6 +21,8 @@ const BASE = '/api/attention-notify';
 const STATUS_LABELS = { waiting_user: 'Needs you', review: 'Finished (ready for review)', failed: 'Failed', working: 'Working', todo: 'To do', done: 'Done', cancelled: 'Cancelled' };
 const STATUS_ORDER = ['waiting_user', 'failed', 'review', 'working', 'todo', 'done', 'cancelled'];
 const MODE_LABELS = { off: 'Off', message: 'Message', call: 'Call' };
+// The modes one notifier allows (`modes` of each notifier in GET /config, from its manifest; email has no call), else every mode.
+const modesFor = (data, notifier) => (Array.isArray(notifier.modes) && notifier.modes.length ? notifier.modes : data.modes || ['message', 'call', 'off']);
 const OUTCOME_LABELS = {
   sent: 'Sent', fallback_sent: 'Sent as a message (the call failed)', call_failed: 'Call failed', call_timeout: 'Rang, no answer', call_answered: 'Answered',
   call_declined: 'Declined', call_scheduled: 'Call planned', message_scheduled: 'Message planned', cancelled: 'Not sent: it changed before the wait ended', duplicate: 'Skipped: sent less than 10 minutes ago', quiet_hours: 'Skipped: quiet hours',
@@ -232,10 +234,15 @@ function RulesPart({ data, onChanged }) {
     const modes = {};
     for (const notifier of notifiers) {
       modes[notifier.name] = {};
-      for (const status of STATUS_ORDER) modes[notifier.name][status] = rules.statuses.includes(status) ? ((rules.modes[notifier.name] || {})[status] || 'message') : 'off';
+      const allowed = modesFor(data, notifier);
+      for (const status of STATUS_ORDER) {
+        const mode = rules.statuses.includes(status) ? ((rules.modes[notifier.name] || {})[status] || 'message') : 'off';
+        modes[notifier.name][status] = allowed.includes(mode) ? mode : allowed.includes('message') ? 'message' : 'off';
+      }
     }
     setForm({
-      modes, messageDelay: rules.messageDelayMinutes === undefined ? null : String(rules.messageDelayMinutes), // null: a server without the wait delay: String(rules.callDelayMinutes), quiet: Boolean(rules.quietHours.enabled), start: rules.quietHours.start, end: rules.quietHours.end,
+      modes, messageDelay: rules.messageDelayMinutes === undefined ? null : String(rules.messageDelayMinutes), // null: a server without the wait delay
+      delay: String(rules.callDelayMinutes), quiet: Boolean(rules.quietHours.enabled), start: rules.quietHours.start, end: rules.quietHours.end,
       messages: String(rules.rateLimit.message), calls: String(rules.rateLimit.call), publicUrl: rules.publicUrl || '',
     });
   }, [data]);
@@ -266,7 +273,7 @@ function RulesPart({ data, onChanged }) {
           key={`${notifier.name}-${status}`} id={`h5-notify-mode-${notifier.name}-${status}`} select size="small" fullWidth
           label={`${t(STATUS_LABELS[status])} · ${notifier.label}`} value={form.modes[notifier.name][status]} onChange={setMode(notifier.name, status)} slotProps={{ select: { native: true } }}
         >
-          {(data.modes || ['message', 'call', 'off']).map(mode => <option key={mode} value={mode}>{t(MODE_LABELS[mode] || mode)}</option>)}
+          {modesFor(data, notifier).map(mode => <option key={mode} value={mode}>{t(MODE_LABELS[mode] || mode)}</option>)}
         </TextField>
       )))}
       <Hint id="h5-notify-foreground">{t('No message while the session is open on a screen you used in the last 5 minutes.')}</Hint>
